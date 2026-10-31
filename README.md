@@ -1,8 +1,7 @@
 # X4 Multiplayer — public development
 
 Free to download, build, use, modify and share for purposes permitted by the
-[PolyForm Noncommercial License 1.0.0](LICENSE.md). Commercial use outside those
-purposes requires **Lith7ium's explicit written permission**. See
+[PolyForm Noncommercial License 1.0.0](LICENSE.md). See
 [licensing and commercial requests](LICENSING.md) and [required notices](NOTICE.txt).
 This is source-available software with a noncommercial restriction, not an
 OSI-approved open-source project.
