@@ -1137,6 +1137,10 @@ checks 3.9, probe 1.1, relay wait 0.08. perf-Pbare (near-minimal gate) outside
 21.4 ms. 4 clients p50 32 ms on this PC. FP keys cost nothing measurable.
 World captures (diagnostic) are 60 of the 70 frames over 100 ms in play22-long.
 Needed: a tick rate key or agreed per-tick dt (FP agent).
+PLAY36 (build133 = smoke with the fp-redirect branch merged, default off; Play35L +
+physics_scenes 'viewpoints', view_scenes, viewpoint_standins 4): play36-long and
+play36-long2, 36003 ticks each: relay pass, 0 mismatches, census 0 at 121 captures,
+median frame 35 ms.
 OPTION B SLICE 1, FIRST LIVE FIX (user: "go fix"; branch contrib/ferrite-fp-redirect,
 f8b7752f shadow, ba15c7b0 redirect, not yet on smoke). The first value to part between
 Windows and Linux is written during the snapshot load by the flight-parameter writer

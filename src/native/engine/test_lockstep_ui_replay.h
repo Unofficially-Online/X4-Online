@@ -43,15 +43,45 @@ static void *test_uirep_find(void *map,uint64_t id,unsigned flags) {
     if(id==0x7001) return test_uirep_target;
     return NULL;
 }
+static unsigned char test_uirep_p1[0x7000],*test_uirep_universe;
 static int test_uirep_enter(unsigned k) {
     test_uirep_log('{',NULL,k,0);
     if(!test_uirep_enter_ok) return 0;
+    if(test_uirep_universe) {void *p=pslots[k].player;memcpy(test_uirep_universe+VPS_SINGLETON,&p,8);}
     pstk_scope_slot=k;return 1;
 }
-static int test_uirep_leave(unsigned k) {pstk_scope_slot=0;test_uirep_log('}',NULL,k,0);return test_uirep_leave_ok;}
+static int test_uirep_leave(unsigned k) {
+    if(test_uirep_universe) {void *p=test_uirep_p1;memcpy(test_uirep_universe+VPS_SINGLETON,&p,8);}
+    pstk_scope_slot=0;test_uirep_log('}',NULL,k,0);return test_uirep_leave_ok;
+}
 static uint64_t test_uirep_portable(uint64_t runtime) {return runtime==0x7001?0x123456^test_uirep_portable_salt:0;}
-static uint64_t test_uirep_forward(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f) {
-    test_uirep_log('F',(void*)(uintptr_t)a,b,c);assert(d==4 && e==5 && f==6);return 77;
+static uint64_t test_uirep_forward(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h) {
+    test_uirep_log('F',(void*)(uintptr_t)a,b,c);assert(d==4 && e==5 && f==6);(void)g;(void)h;return 77;
+}
+/* The generic calls: what reaches the trampoline, with the singleton of the moment. */
+static uint64_t test_uirep_call_args[UIREP_ARGS];
+/* The queue editor: the queue's length and X4's answer. */
+static uint32_t test_uirep_orders;static uint64_t test_uirep_queue_answer;static int test_uirep_queue_strings;
+static char test_uirep_queue_string[UIREP_STRING_MAX+1];
+static uint32_t test_uirep_num_orders(uint64_t ctl) {assert(ctl==0x7001);return test_uirep_orders;}
+static uint64_t test_uirep_queue_fwd(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h) {
+    uint64_t v[UIREP_ARGS]={a,b,c,d,e,f,g,h};memcpy(test_uirep_call_args,v,sizeof(v));
+    if(test_uirep_queue_strings) snprintf(test_uirep_queue_string,sizeof(test_uirep_queue_string),"%s",(const char*)(uintptr_t)b);
+    test_uirep_log('Q',(void*)(uintptr_t)a,b,c);return test_uirep_queue_answer;
+}
+static unsigned char test_uirep_call_vector[16];
+static char test_uirep_call_string[UIREP_STRING_MAX+1];
+static uint64_t test_uirep_call_fwd(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h) {
+    uint64_t v[UIREP_ARGS]={a,b,c,d,e,f,g,h};memcpy(test_uirep_call_args,v,sizeof(v));
+    test_uirep_log('K',pnat_player(),a,g);return 55+(g&0xff)+(e&0xff)*2;
+}
+static uint64_t test_uirep_call_vec_fwd(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h) {
+    if(c) memcpy(test_uirep_call_vector,(const void*)(uintptr_t)c,16);
+    return test_uirep_call_fwd(a,b,c,d,e,f,g,h);
+}
+static uint64_t test_uirep_call_str_fwd(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h) {
+    if(b) snprintf(test_uirep_call_string,sizeof(test_uirep_call_string),"%s",(const char*)(uintptr_t)b);
+    return test_uirep_call_fwd(a,b,c,d,e,f,g,h);
 }
 static void test_uirep_reset(void) {
     test_uirep_call_count=0;test_uirep_available=1;test_uirep_drive_on=0;test_uirep_enter_ok=test_uirep_leave_ok=1;test_uirep_portable_salt=0;
@@ -108,7 +138,7 @@ static void test_ui_replay(void) {
     pnat_armed=1;pnat_mode=PNAT_MODE_STOCK;pstk_capturing=1;
     assert(!uirep_arm_using(7) && !strcmp(uirep_arm_why,"needs_all_stock_slots"));
     pslot_armed=1;assert(!uirep_arm_using(7) && !strcmp(uirep_arm_why,"needs_present"));
-    pres_armed=1;assert(!uirep_arm_using(0) && !uirep_arm_using(8) && !strcmp(uirep_arm_why,"families"));
+    pres_armed=1;assert(!uirep_arm_using(0) && !uirep_arm_using(0x100) && !strcmp(uirep_arm_why,"families"));
     pstk_slot_mask=1;assert(!uirep_arm_using(7) && !strcmp(uirep_arm_why,"needs_all_stock_slots"));pstk_slot_mask=3;
     assert(uirep_arm_using(7) && uirep_armed && uirep_arm_using(7) && !uirep_arm_using(3) && !strcmp(uirep_arm_why,"rerun"));
     test_ui_replay_section();
@@ -230,15 +260,15 @@ static void test_ui_replay(void) {
      test_uirep_portable_salt=1;assert(!uirep_frame(203,&why) && !strcmp(why,"ui_ref_mismatch") && uirep_failed);test_uirep_portable_salt=0;uirep_failed=0;uirep_why="-";}
     /* Order hooks: captured in the UI for Lua to run, forwarded otherwise. Guards refuse with the failure value. */
     test_uirep_call_count=0;uirep_queue_head=uirep_queue_count=0;memset(uirep_ring,0,sizeof(uirep_ring));
-    assert(uirep_orders_clear2(0x7001,1,0,4,5,6)==77 && test_uirep_count('F')==1);
-    assert(uirep_guard_create3(0x7001,1,2,4,5,6)==77 && test_uirep_count('F')==2 && !uirep_guard_refused);
+    assert(uirep_orders_clear2(0x7001,1,0,4,5,6,7,8)==77 && test_uirep_count('F')==1);
+    assert(uirep_guard_create3(0x7001,1,2,4,5,6,7,8)==77 && test_uirep_count('F')==2 && !uirep_guard_refused);
     uirep_ui_depth=1;test_uirep_call_count=0;
-    assert(uirep_orders_clear(0x7001,0,0,0,0,0)==1 && uirep_orders_clear2(0x7001,1,1,0,0,0)==1 && !test_uirep_call_count && uirep_queue_count==2);
-    assert(!uirep_guard_enable(0x7001,1,2,4,5,6) && !uirep_guard_adjust(1,1,2,4,5,0) && uirep_guard_refused==2 && !test_uirep_call_count);
-    assert(uirep_guard_adjust(1,1,2,4,5,6)==77 && uirep_guard_refused==2 && test_uirep_count('F')==1);test_uirep_call_count=0;   /* check-only: a query */
+    assert(uirep_orders_clear(0x7001,0,0,0,0,0,7,8)==1 && uirep_orders_clear2(0x7001,1,1,0,0,0,7,8)==1 && !test_uirep_call_count && uirep_queue_count==2);
+    assert(!uirep_guard_enable(0x7001,1,2,4,5,6,7,8) && !uirep_guard_adjust(1,1,2,4,5,0,7,8) && uirep_guard_refused==2 && !test_uirep_call_count);
+    assert(uirep_guard_adjust(1,1,2,4,5,6,7,8)==77 && uirep_guard_refused==2 && test_uirep_count('F')==1);test_uirep_call_count=0;   /* check-only: a query */
     {char text[256];assert(uirep_refusals_text(text,sizeof(text)) && strstr(text,"200:EnableOrder:not_replayed_yet"));}
-    InterlockedExchange(&uirep_replaying,1);assert(uirep_guard_enable(0x7001,1,2,4,5,6)==77);assert(uirep_orders_clear2(0x7001,1,2,4,5,6)==77);InterlockedExchange(&uirep_replaying,0);
-    uirep_stopped=1;assert(uirep_guard_enable(0x7001,1,2,4,5,6)==77);uirep_stopped=0;
+    InterlockedExchange(&uirep_replaying,1);assert(uirep_guard_enable(0x7001,1,2,4,5,6,7,8)==77);assert(uirep_orders_clear2(0x7001,1,2,4,5,6,7,8)==77);InterlockedExchange(&uirep_replaying,0);
+    uirep_stopped=1;assert(uirep_guard_enable(0x7001,1,2,4,5,6,7,8)==77);uirep_stopped=0;
     uirep_ui_depth=0;
     /* Lua's own event, in order with them; the Lua-run list; no scope opens for them natively. */
     {unsigned char lua_event[3]={2,0,0};assert(uirep_push(UIREP_OP_LUA_CALL,lua_event,3));}
@@ -257,6 +287,163 @@ static void test_ui_replay(void) {
      assert(!uirep_push(UIREP_OP_LUA_CALL,big,1) && uirep_queue_count==UIREP_QUEUE);
      unsigned n=uirep_take(201,UIREP_SECTION_MAX,section);assert(n && section[3]==UIREP_EVENTS_MAX && uirep_queue_count==UIREP_QUEUE-UIREP_EVENTS_MAX);
      uirep_queue_head=uirep_queue_count=0;}
+    /* Generic calls: autopilot, dock and weapon hooks capture by their spec and apply through the trampoline with the
+     * slot's player. A fake Universe: slot 1's player, swapped for slot 2's inside its scope. */
+    {   static unsigned char universe[0x400];test_uirep_universe=universe;
+        void *u=universe,*p1=test_uirep_p1;memcpy(region+PNAT_UNIVERSE,&u,8);memcpy(universe+VPS_SINGLETON,&p1,8);
+        assert(pnat_player()==test_uirep_p1);
+        uirep_queue_head=uirep_queue_count=0;memset(uirep_ring,0,sizeof(uirep_ring));test_uirep_call_count=0;
+        for(unsigned i=UIREP_H_AP_START;i<UIREP_HOOKS;i++) uirep_fn.forward[i]=test_uirep_call_fwd;
+        uirep_fn.forward[UIREP_H_AP_START]=test_uirep_call_vec_fwd;uirep_fn.forward[UIREP_H_WMODE]=test_uirep_call_str_fwd;
+        unsigned saved_families=uirep_families;uirep_families=UIREP_FAMILIES;
+        __attribute__((aligned(16))) float offset[4]={1.5f,-2.0f,3.25f,0.0f};
+        /* Outside the local phases every hook is X4's own; a check-only call is a query everywhere. */
+        assert(uirep_call_ap_start((uint64_t)(uintptr_t)test_uirep_p1,(uint64_t)(uintptr_t)test_uirep_target,(uint64_t)(uintptr_t)offset,1,1,3,0,0)==55+2 &&
+               test_uirep_count('K')==1 && !uirep_queue_count);
+        uirep_ui_depth=1;
+        assert(uirep_call_ap_start((uint64_t)(uintptr_t)test_uirep_p1,(uint64_t)(uintptr_t)test_uirep_target,(uint64_t)(uintptr_t)offset,1,0,3,1,0)==55+1 &&
+               test_uirep_count('K')==2 && !uirep_queue_count);
+        /* Captured: nothing runs here, the event holds the target and the offset. */
+        assert(uirep_call_ap_start((uint64_t)(uintptr_t)test_uirep_p1,(uint64_t)(uintptr_t)test_uirep_target,(uint64_t)(uintptr_t)offset,1,0,3,0,0)==1 &&
+               test_uirep_count('K')==2 && uirep_queue_count==1);
+        /* Stop predicts its answer through the check-only variant: one forward with the flag set, then it is queued. */
+        assert(uirep_call_ap_stop((uint64_t)(uintptr_t)test_uirep_p1,1,0,1,0,0,0,0)==57 && test_uirep_count('K')==3 &&
+               test_uirep_call_args[4]==1 && uirep_queue_count==2);
+        /* Another player, an unknown component, a long string: refused, nothing runs, nothing queued. */
+        LONG64 refused=uirep_refused;
+        assert(!uirep_call_quickdock((uint64_t)(uintptr_t)test_uirep_player,0,0,0,0,0,0,0) && uirep_refused==refused+1);
+        assert(!uirep_call_dockat(0x9999,0,0,0,0,0,0,0) && uirep_refused==refused+2);
+        {static char longmode[UIREP_STRING_MAX+2];memset(longmode,'x',sizeof(longmode)-1);
+         assert(!uirep_call_wmode(0x7001,(uint64_t)(uintptr_t)longmode,0,0,0,0,0,0) && uirep_refused==refused+3);}
+        {char text[512];assert(uirep_refusals_text(text,sizeof(text)) && strstr(text,"QuickDock:not_the_player") && strstr(text,"RequestDockAt:unmapped") &&
+                               strstr(text,"SetWeaponMode:string"));}
+        assert(test_uirep_count('K')==3 && uirep_queue_count==2);
+        /* Ids, bytes, words and strings. */
+        assert(uirep_call_wgroup_set(0x7001,0x7001,1,0x01020304,0,0,0,0)==1 && uirep_call_wmode(0x7001,(uint64_t)(uintptr_t)"attackenemies",0,0,0,0,0,0)==1);
+        assert(uirep_call_undock((uint64_t)(uintptr_t)test_uirep_p1,0,0,0,0,0,0,0)==55+0 && test_uirep_call_args[1]==1 && uirep_queue_count==5);
+        uirep_ui_depth=0;test_uirep_call_count=0;
+        /* On the wire, staged, applied in slot 2's scope: the player is slot 2's, the target resolved, the offset copied. */
+        length=uirep_take(300,UIREP_SECTION_MAX,section);assert(length && section[3]==5 && !uirep_queue_count);
+        {uint16_t c16=0;const char *w="";assert(uirep_section_ok(2,section,length,&c16,&w));
+         unsigned char bad[UIREP_SECTION_MAX];memcpy(bad,section,length);bad[5]-=1;assert(!uirep_section_ok(2,bad,length,&c16,&w) && !strcmp(w,"ui_call"));
+         uirep_families=UIREP_FAMILY_TRAVEL;assert(!uirep_section_ok(2,section,length,&c16,&w) && !strcmp(w,"ui_call"));uirep_families=UIREP_FAMILIES;}
+        assert(uirep_stage(2,section,length,301,&why));
+        memset(test_uirep_call_vector,0,16);LONG64 applied=uirep_calls_applied;
+        assert(uirep_frame(303,&why) && uirep_calls_applied==applied+5);
+        unsigned seen=0;
+        for(unsigned i=0;i<test_uirep_call_count;i++) if(test_uirep_calls[i].what=='K') {
+            assert(test_uirep_calls[i].scope==2 && test_uirep_calls[i].a==test_uirep_player);++seen;
+        }
+        assert(seen==5 && !memcmp(test_uirep_call_vector,offset,16));
+        assert(!strcmp(test_uirep_call_string,"attackenemies"));
+        /* The second call's arguments were the weapon group's: ids as ids, the bool, the word. */
+        /* Slot 1 applies canonical, with slot 1's player. */
+        uirep_ui_depth=1;stats.slot=1;assert(uirep_call_quickdock((uint64_t)(uintptr_t)test_uirep_p1,0,0,0,0,0,0,0)==1);uirep_ui_depth=0;
+        length=uirep_take(310,UIREP_SECTION_MAX,section);assert(uirep_stage(1,section,length,311,&why));test_uirep_call_count=0;
+        assert(uirep_frame(313,&why) && test_uirep_count('K')==1 && test_uirep_calls[0].a==test_uirep_p1 && test_uirep_calls[0].scope==0 && !test_uirep_count('{'));
+        stats.slot=2;
+        /* The receipt: autopilot on and the weapon groups, from the canonical bank for slot 1 and slot 2's store. */
+        {   static __attribute__((aligned(16))) unsigned char ship1[0x700],ship2[0x700];
+            pilot_slot saved_slots[2];memcpy(saved_slots,pilot_slots,sizeof(saved_slots));
+            pilot_slots[0].resolved=pilot_slots[1].resolved=1;pilot_slots[0].object=ship1;pilot_slots[1].object=ship2;
+            *(int32_t*)(ship1+UIREP_GROUP_PRIMARY)=0;*(int32_t*)(ship1+UIREP_GROUP_PRIMARY+4)=1;
+            *(int32_t*)(ship2+UIREP_GROUP_PRIMARY)=2;*(int32_t*)(ship2+UIREP_GROUP_PRIMARY+4)=-1;
+            *(uint64_t*)(region+UIREP_AUTOPILOT)=0x1234;
+            pslots[2].length=pslot_store_init(pslots[2].store);
+            unsigned at=test_pslot_store_offset(UIREP_AUTOPILOT);memset(pslots[2].store+at,0,8);
+            char text[192];assert(uirep_frame_text(text,sizeof(text)) && strstr(text,"/1/0.1,") && strstr(text,"/0/2.-1"));
+            *(uint64_t*)(pslots[2].store+at)=7;assert(uirep_frame_text(text,sizeof(text)) && strstr(text,"/1/2.-1"));
+            uirep_families=UIREP_FAMILY_TRAVEL;assert(uirep_frame_text(text,sizeof(text)) && !strstr(text,"/1/0.1"));uirep_families=UIREP_FAMILIES;
+            memcpy(pilot_slots,saved_slots,sizeof(saved_slots));*(uint64_t*)(region+UIREP_AUTOPILOT)=0;pslots[2].length=0;
+        }
+        /* The stock record: dock and weapon keys replayed, the autopilot key run here, all off without their family. */
+        assert(pstk_verdict_slot(PSTK_ACTION,0xaf,2)==PSTK_REPLAY && pstk_verdict_slot(PSTK_ACTION,0xd3,2)==PSTK_REPLAY);
+        assert(pstk_verdict_slot(PSTK_ACTION,0x8c,2)==PSTK_REPLAY && pstk_verdict_slot(PSTK_ACTION,0x9e,1)==PSTK_REPLAY &&
+               pstk_verdict_slot(PSTK_ACTION,0x9,2)==PSTK_REPLAY && pstk_verdict_slot(PSTK_ACTION,0x141,2)==PSTK_REPLAY);
+        assert(pstk_verdict_slot(PSTK_ACTION,0xb3,2)==PSTK_LOCAL && pstk_verdict(PSTK_ACTION,0x13f)==PSTK_REFUSE);
+        uirep_families=UIREP_FAMILY_TRAVEL;
+        assert(pstk_verdict(PSTK_ACTION,0xaf)==PSTK_REFUSE && pstk_verdict(PSTK_ACTION,0x8c)==PSTK_REFUSE && pstk_verdict(PSTK_ACTION,0xb3)==PSTK_REFUSE);
+        uirep_families=saved_families;
+        memset(region+PNAT_UNIVERSE,0,8);test_uirep_universe=NULL;
+        for(unsigned i=UIREP_H_CLEAR;i<UIREP_HOOKS;i++) uirep_fn.forward[i]=test_uirep_forward;
+    }
+    /* The queue editor (family queue): captured in the UI as Lua-run events in call order; a create answers with the
+     * index it predicts (queue length + 1 + creates in flight); applied, X4's index becomes the alias the slot's events
+     * captured before it applied are mapped through; gone and slot ships run nothing, the same everywhere. */
+    {   uirep_queue_head=uirep_queue_count=0;memset(uirep_ring,0,sizeof(uirep_ring));test_uirep_call_count=0;
+        unsigned saved_families=uirep_families,saved_capture=pstk_capture_slot;uirep_families=UIREP_FAMILY_QUEUE;pstk_capture_slot=2;
+        uirep_queue_reset();uirep_num_orders_override=test_uirep_num_orders;test_uirep_orders=3;test_uirep_queue_answer=9;
+        for(unsigned i=UIREP_H_CREATE3;i<=UIREP_H_DEPLOY;i++) uirep_fn.forward[i]=test_uirep_queue_fwd;
+        uirep_fn.forward[UIREP_H_LOOP]=uirep_fn.forward[UIREP_H_LOOP_CURRENT]=test_uirep_queue_fwd;
+        const uint64_t wait=(uint64_t)(uintptr_t)"Wait",move=(uint64_t)(uintptr_t)"MoveWait";
+        /* Outside the local phases X4's own. */
+        assert(uirep_guard_create3(0x7001,move,0,0,0,0,0,0)==9 && test_uirep_count('Q')==1 && !uirep_queue_count);
+        uirep_ui_depth=1;test_uirep_call_count=0;
+        assert(uirep_guard_create3(0x7001,move,0,0,0,0,0,0)==4 && uirep_guard_create3(0x7001,wait,0,0,0,0,0,0)==5);   /* 3 + 1, then one in flight */
+        assert(uirep_guard_create3(0x7001,wait,1,0,0,0,0,0)==0);                     /* the planned default order: not in the queue */
+        assert(uirep_guard_enable(0x7001,4,0,0,0,0,0,0)==1);
+        assert(uirep_guard_adjust(0x7001,5,1,1,0,1,0,0)==9 && test_uirep_count('Q')==1 && test_uirep_call_args[5]==1);   /* check only: a query */
+        assert(uirep_guard_adjust(0x7001,5,1,1,0,0,0,0)==9 && test_uirep_count('Q')==2 && test_uirep_call_args[5]==1);   /* predicted by the query */
+        assert(uirep_guard_reset(0x7001,4,1,0,0,0,0,0)==0 && uirep_guard_loop(0x7001,4,0,0,0,0,0,0)==9 && test_uirep_count('Q')==3);
+        assert(!test_uirep_queue_strings && uirep_queue_count==7 && uirep_q_captured==7 && uirep_q_captured_creates==2);
+        /* Refused, nothing runs, nothing queued: unknown, a slot ship, a long definition. */
+        {   LONG64 refused=uirep_refused;unsigned char *saved_object=pilot_slots[1].object;static char longdef[UIREP_STRING_MAX+2];
+            memset(longdef,'x',sizeof(longdef)-1);
+            assert(!uirep_guard_create3(0x9999,move,0,0,0,0,0,0) && !uirep_guard_create3(0x7001,(uint64_t)(uintptr_t)longdef,0,0,0,0,0,0));
+            pilot_slots[1].object=test_uirep_target;assert(!uirep_guard_enable(0x7001,4,0,0,0,0,0,0));pilot_slots[1].object=saved_object;
+            char text[512];assert(uirep_refused==refused+3 && uirep_refusals_text(text,sizeof(text)) && strstr(text,"CreateOrder3:unmapped") &&
+                                  strstr(text,"CreateOrder3:string") && strstr(text,"EnableOrder:slot_ship"));
+            assert(uirep_queue_count==7 && test_uirep_count('Q')==3);
+        }
+        uirep_ui_depth=0;
+        /* On the wire: Lua-run (no scope, nothing native), its length checked, the family required. */
+        length=uirep_take(400,UIREP_SECTION_MAX,section);assert(length && section[3]==7);
+        {uint16_t c16=0;const char *w="";assert(uirep_section_ok(2,section,length,&c16,&w));
+         unsigned char bad[UIREP_SECTION_MAX];memcpy(bad,section,length);bad[5]-=1;assert(!uirep_section_ok(2,bad,length,&c16,&w) && !strcmp(w,"ui_queue"));
+         uirep_families=UIREP_FAMILY_ORDERS;assert(!uirep_section_ok(2,section,length,&c16,&w) && !strcmp(w,"ui_queue"));uirep_families=UIREP_FAMILY_QUEUE;}
+        assert(uirep_stage(2,section,length,401,&why));test_uirep_call_count=0;
+        assert(uirep_frame(403,&why) && uirep_frame_events==7 && !test_uirep_call_count);
+        /* Applied in call order (the Lua core hands each to gate.ui_replay_queue_run): X4 puts the creates at 6 and 7. */
+        {   char what[96];unsigned at=UIREP_HEAD;const unsigned char *events[7];unsigned lengths[7];
+            for(unsigned i=0;i<7;i++) {assert(section[at]==UIREP_OP_QUEUE);events[i]=section+at+2;lengths[i]=section[at+1];at+=2u+section[at+1];}
+            test_uirep_queue_strings=1;test_uirep_queue_answer=6;
+            assert(uirep_queue_run(2,events[0],lengths[0],what,sizeof(what))==1 && !strcmp(what,"CreateOrder3=6/4") && !strcmp(test_uirep_queue_string,"MoveWait"));
+            test_uirep_queue_answer=7;assert(uirep_queue_run(2,events[1],lengths[1],what,sizeof(what))==1 && !strcmp(what,"CreateOrder3=7/5"));
+            test_uirep_queue_answer=0;assert(uirep_queue_run(2,events[2],lengths[2],what,sizeof(what))==1 && uirep_q_applied[1]==2);
+            test_uirep_queue_strings=0;test_uirep_queue_answer=1;
+            assert(uirep_queue_run(2,events[3],lengths[3],what,sizeof(what))==1 && test_uirep_call_args[1]==6 && !strcmp(what,"EnableOrder=1"));
+            assert(uirep_queue_run(2,events[4],lengths[4],what,sizeof(what))==1 && test_uirep_call_args[1]==7 && test_uirep_call_args[2]==1 &&
+                   test_uirep_call_args[3]==1 && !test_uirep_call_args[5]);   /* the call itself, not the query */
+            assert(uirep_queue_run(2,events[5],lengths[5],what,sizeof(what))==1 && test_uirep_call_args[1]==6 && test_uirep_call_args[2]==1 &&
+                   !strcmp(what,"ResetOrder"));
+            assert(uirep_queue_run(2,events[6],lengths[6],what,sizeof(what))==1 && test_uirep_call_args[1]==6);
+            assert(uirep_q_calls==7 && uirep_q_creates==2 && uirep_q_moved==2 && uirep_q_mapped==4);
+            /* Another slot's index is its own; an event captured after the creates applied means what it says. */
+            assert(uirep_q_map(1,0x7001,4,0)==4 && uirep_q_map(2,0x7001,4,1)==4 && uirep_q_map(2,0x7001,5,1)==7 && uirep_q_map(2,0x7002,4,0)==4);   /* one more mapped: 5 */
+            /* Captured now: nothing in flight (both applied), seen 2: its 4 is today's 4. */
+            uirep_ui_depth=1;assert(uirep_q_own_applied()==2 && uirep_guard_create3(0x7001,wait,0,0,0,0,0,0)==4 && uirep_guard_enable(0x7001,4,0,0,0,0,0,0)==1);
+            uirep_ui_depth=0;length=uirep_take(410,UIREP_SECTION_MAX,section);assert(length && section[3]==2);
+            test_uirep_queue_answer=4;assert(uirep_queue_run(2,section+UIREP_HEAD+2,section[UIREP_HEAD+1],what,sizeof(what))==1 && uirep_q_applied[1]==3);
+            at=UIREP_HEAD+2u+section[UIREP_HEAD+1];
+            assert(uirep_queue_run(2,section+at+2,section[at+1],what,sizeof(what))==1 && test_uirep_call_args[1]==4 && uirep_q_mapped==5);
+            /* Gone: nothing runs, the create is numbered all the same; references that differ and a bad length stop. */
+            unsigned char gone[64];unsigned n=0;gone[n++]=UIREP_H_CREATE3;gone[n++]=0;gone[n++]=0;uirep_put_ref(gone+n,0x9999);n+=UIREP_REF;
+            gone[n++]=4;memcpy(gone+n,"Wait",4);n+=4;gone[n++]=0;gone[n++]=0;gone[n++]=0;gone[n++]=9;gone[n++]=0;gone[n++]=0;gone[n++]=0;
+            LONG64 calls=uirep_q_calls;
+            assert(uirep_queue_run(2,gone,n,what,sizeof(what))==0 && !strcmp(what,"CreateOrder3 gone") && uirep_q_calls==calls && uirep_q_applied[1]==4 &&
+                   uirep_q_skipped==1 && uirep_q_map(2,0x9999,9,0)==0);
+            assert(uirep_queue_run(2,gone,n-1,what,sizeof(what))==-1 && !strcmp(what,"decode"));
+            test_uirep_portable_salt=1;assert(uirep_queue_run(2,events[3],lengths[3],what,sizeof(what))==-1 && !strcmp(what,"ref_mismatch"));test_uirep_portable_salt=0;
+            /* A slot ship (a PlayerController flies it) runs nothing, the same everywhere. */
+            unsigned char *saved_object=pilot_slots[0].object;pilot_slots[0].object=test_uirep_target;
+            assert(uirep_queue_run(2,events[3],lengths[3],what,sizeof(what))==0 && !strcmp(what,"EnableOrder slot_ship"));pilot_slots[0].object=saved_object;
+            char status[1024];assert(uirep_status(status,sizeof(status)) && strstr(status,"queue=9/9/2 creates=4 mapped=6 moved=3"));
+        }
+        uirep_num_orders_override=NULL;uirep_queue_reset();uirep_families=saved_families;pstk_capture_slot=saved_capture;
+        for(unsigned i=UIREP_H_CLEAR;i<UIREP_HOOKS;i++) uirep_fn.forward[i]=test_uirep_forward;
+        uirep_queue_head=uirep_queue_count=0;memset(uirep_ring,0,sizeof(uirep_ring));test_uirep_call_count=0;
+    }
+    uirep_families=UIREP_FAMILIES;   /* every hook */
     /* Install on executable fake bytes: every patch one CAS, every stride run for real, everything back. */
     for(unsigned i=0;i<UIREP_HOOKS;i++) {
         memset(region+uirep_hooks[i].rva,0xcc,0x20);memcpy(region+uirep_hooks[i].rva,uirep_hooks[i].bytes,uirep_hooks[i].prefix);

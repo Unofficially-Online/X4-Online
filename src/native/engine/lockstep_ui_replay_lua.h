@@ -41,7 +41,8 @@ static int lua_ui_replay_stage(lua_State *L) {
 static int lua_ui_replay_push(lua_State *L) {
     double op=p_lua_tonumber(L,1);size_t length=0;const char *text=p_lua_tolstring(L,2,&length);
     unsigned char data[UIREP_EVENT_MAX];unsigned n=0;
-    if(!accept_ui() || !uirep_armed || op!=UIREP_OP_LUA_CALL) {p_lua_pushnumber(L,0);return 1;}
+    int queue=(op==UIREP_OP_QUEUE_PARAM || op==UIREP_OP_QUEUE_LIST) && (uirep_families&UIREP_FAMILY_QUEUE);
+    if(!accept_ui() || !uirep_armed || (op!=UIREP_OP_LUA_CALL && !queue)) {p_lua_pushnumber(L,0);return 1;}
     if(length>2*UIREP_EVENT_MAX) {uirep_note_refusal(uirep_op_name((unsigned)op),"too_long");p_lua_pushnumber(L,0);return 1;}
     if(!pstk_unhex(text,length,data,sizeof(data),&n)) {uirep_note_refusal(uirep_op_name((unsigned)op),"encoding");p_lua_pushnumber(L,0);return 1;}
     p_lua_pushnumber(L,uirep_push((unsigned)op,data,n));return 1;
@@ -103,6 +104,37 @@ static int lua_ui_replay_fail(lua_State *L) {
         uirep_async_fail(why);
     }
     return 0;
+}
+/* gate.ui_replay_missile_hold(1|0): the missile family's scripted secondary trigger, for runs without people; this
+ * client's record carries it as if the button were held (lockstep_pilot_stock.h, PSTK_FLAG_FIRE2). */
+static int lua_ui_replay_missile_hold(lua_State *L) {
+    double on=p_lua_tonumber(L,1);
+    int ok=accept_ui() && uirep_armed && (uirep_families&UIREP_FAMILY_MISSILES) && pfire_armed && (on==0 || on==1);
+    if(ok) pstk_fire2_scripted=on==1;
+    p_lua_pushnumber(L,ok);return 1;
+}
+/* gate.ui_replay_queue_run(slot, hex): one queue editor event, every client in the probe's frame: 1 and X4's answer,
+ * 0 and why nothing ran (the same everywhere); a decode error or references that differ stop (164). */
+static int lua_ui_replay_queue_run(lua_State *L) {
+    double slot=p_lua_tonumber(L,1);size_t length=0;const char *text=p_lua_tolstring(L,2,&length);
+    unsigned char data[UIREP_EVENT_MAX];unsigned n=0;char what[96]="refused";int r=-1;
+    if(accept_ui() && uirep_armed && (uirep_families&UIREP_FAMILY_QUEUE) && InterlockedCompareExchange(&uirep_replaying,0,0) &&
+       isfinite(slot) && floor(slot)==slot && slot>=1 && slot<=PILOT_SLOTS && text && pstk_unhex(text,length,data,sizeof(data),&n))
+        r=uirep_queue_run((unsigned)slot,data,n,what,sizeof(what));
+    if(r<0) uirep_async_fail(!strcmp(what,"ref_mismatch")?"ui_ref_mismatch":"ui_queue");
+    p_lua_pushnumber(L,r>0);p_lua_pushlstring(L,what,strlen(what));return 2;
+}
+/* gate.ui_replay_queue_seen(): this client's slot's applied creates, carried by its queue events (the Lua ones too). */
+static int lua_ui_replay_queue_seen(lua_State *L) {
+    p_lua_pushnumber(L,accept_ui() && uirep_armed?(double)uirep_q_own_applied():0.0);return 1;
+}
+/* gate.ui_replay_queue_index(slot, decimal controllable, index, seen): the order index a Lua-run queue event meant. */
+static int lua_ui_replay_queue_index(lua_State *L) {
+    double slot=p_lua_tonumber(L,1),index=p_lua_tonumber(L,3),seen=p_lua_tonumber(L,4);size_t length=0;const char *text=p_lua_tolstring(L,2,&length);
+    uint64_t ctl=text && length && length<21?strtoull(text,NULL,10):0;
+    if(!accept_ui() || !uirep_armed || !isfinite(slot) || slot<1 || slot>PILOT_SLOTS || !isfinite(index) || index<0 || index>4294967295.0 ||
+       floor(index)!=index || !isfinite(seen) || seen<0 || seen>65535) {p_lua_pushnumber(L,isfinite(index)?index:0.0);return 1;}
+    p_lua_pushnumber(L,(double)uirep_q_map((unsigned)slot,ctl,(uint32_t)index,(uint32_t)seen));return 1;
 }
 /* gate.ui_replay_saved(16 hex): the decimal runtime ID of a saved object, nil when not exactly one (scripted runs). */
 static int lua_ui_replay_saved(lua_State *L) {

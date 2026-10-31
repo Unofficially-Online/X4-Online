@@ -7,8 +7,10 @@
 X4LAN_UI_REPLAY_CORE={}
 local K=X4LAN_UI_REPLAY_CORE
 local ffi=require('ffi')
-K.FAMILY={travel=1,target=2,orders=4}
+K.FAMILY={travel=1,target=2,orders=4,autopilot=8,dock=16,weapons=32,missiles=64,queue=128}
+K.ALL=63   -- true: the families of the first runs; missiles (pilot fire, target) and queue are listed by name
 K.OP_ORDERS_CLEAR,K.OP_ORDERS_CLEAR2,K.OP_LUA_CALL=0x41,0x42,0x43
+K.OP_QUEUE,K.OP_QUEUE_PARAM,K.OP_QUEUE_LIST=0x44,0x45,0x46   -- the queue editor (lockstep_ui_replay.h)
 K.EVENT_MAX=200
 K.REF_HEX=24
 local TAG={['nil']=0,['false']=1,['true']=2,number=3,string=4,luaid=5,id=6,table=7}
@@ -16,8 +18,8 @@ local DEPTH_MAX,ITEMS_MAX,STRING_MAX=4,32,64
 
 -- true = every family; a list names them. Returns the mask, or nil and the reason.
 function K.families(value)
- if value==true then return 7 end
- if type(value)~='table' or #value==0 then return nil,'native_gate_ui_replay must be true or a list of travel, target, orders' end
+ if value==true then return K.ALL end
+ if type(value)~='table' or #value==0 then return nil,'native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue' end
  local mask=0
  for _,name in ipairs(value) do
   local bit=K.FAMILY[name]
@@ -164,6 +166,12 @@ K.UNBLOCKED={
  travel={'InteractMenu.buttonTravelMode','hotkey.INPUT_ACTION_ADDON_DETAILMONITOR_TRAVELMODE'},
  orders={'InteractMenu.orderAttack','InteractMenu.orderMoveWait','InteractMenu.orderDock','InteractMenu.orderFollow',
   'MapMenu.orderMoveWait','MapMenu.orderAttack','MapMenu.orderFollow'},
+ autopilot={'hotkey.INPUT_ACTION_ADDON_DETAILMONITOR_A_SHIFT'},
+ -- The map's order rows and the interact menu's queue entries whose calls are all captured (not the default order's
+ -- confirm: ResetOrderLoop is not; not ProceedWithOrders).
+ queue={'MapMenu.buttonNewOrder','MapMenu.buttonOrderUp','MapMenu.buttonOrderDown','MapMenu.removeOrder','MapMenu.buttonSetOrderParam',
+  'MapMenu.setOrderParamFromMode','MapMenu.slidercellSetOrderParam','MapMenu.buttonStartOrders','MapMenu.buttonDockToTrade',
+  'InteractMenu.buttonRemoveOrder','InteractMenu.setOrderImmediate'},
 }
 function K.unblocked(mask)
  local out={}
@@ -178,6 +186,7 @@ function K.session(p)
  local gate,C,env,log,mask=p.gate,p.C,p.env,p.log,p.mask
  local S={replaying=false,captured=0,refused=0,applied=0,unblocked=K.unblocked(mask)}
  local orders=math.floor(mask/K.FAMILY.orders)%2==1
+ local queue=math.floor(mask/K.FAMILY.queue)%2==1
  local function decimal(id)
   local kind=type(id)
   if kind=='number' then return string.format('%.0f',id) end
@@ -221,15 +230,24 @@ function K.session(p)
    if gate.ui_replay_push(K.OP_LUA_CALL,hex)==1 then S.captured=S.captured+1 end   -- a native refusal counts and logs itself
    return 0
   end
-  -- Order parameters of queued orders: the queue editor, refused until it can be replayed.
-  env.SetOrderParam=function(...)
-   if S.replaying then return stock.SetOrderParam(...) end
-   return refuse('SetOrderParam','not_replayed_yet')
+ end
+ -- Order parameters of queued orders (the queue editor): captured with the queue family, with the count of this slot's
+ -- creates applied so far (the index they mean is mapped at apply), refused without it.
+ if orders or queue then
+  local function param(name,op)
+   return function(...)
+    if S.replaying then return stock[name](...) end
+    if not queue then return refuse(name,'not_replayed_yet') end
+    local n=select('#',...)
+    if n<3 then return refuse(name,'arguments') end
+    if is_slot_ship((...)) then return refuse(name,'slot_ship') end
+    local hex,why=K.encode_call({gate.ui_replay_queue_seen(),...},n+1,ctx)
+    if not hex then return refuse(name,why) end
+    if gate.ui_replay_push(op,hex)==1 then S.captured=S.captured+1 end
+   end
   end
-  env.RemoveOrderListParam=function(...)
-   if S.replaying then return stock.RemoveOrderListParam(...) end
-   return refuse('RemoveOrderListParam','not_replayed_yet')
-  end
+  env.SetOrderParam=param('SetOrderParam',K.OP_QUEUE_PARAM)
+  env.RemoveOrderListParam=param('RemoveOrderListParam',K.OP_QUEUE_LIST)
  end
  -- One due event; ok, what happened. A reference that is gone is the same on every client, a refusal too.
  local function run(slot,op,hex)
@@ -251,6 +269,26 @@ function K.session(p)
    if op==K.OP_ORDERS_CLEAR then return pcall(C.RemoveAllOrders,id),'clear' end
    local flags=tonumber(hex:sub(K.REF_HEX+1,K.REF_HEX+2),16)
    return pcall(C.RemoveAllOrders2,id,flags%2==1,flags>=2),'clear2'
+  end
+  -- The queue editor's FFI calls run natively (index mapping, X4's answer); its Lua parameters here, mapped the same way.
+  if op==K.OP_QUEUE then
+   local ok,what=gate.ui_replay_queue_run(slot,hex)
+   return ok==1,what
+  end
+  if op==K.OP_QUEUE_PARAM or op==K.OP_QUEUE_LIST then
+   local args,n=K.decode_call(hex,ctx)
+   if not args then
+    if n=='mismatch' then gate.ui_replay_fail('ui_ref_mismatch') elseif n~='gone' then gate.ui_replay_fail('ui_lua_decode') end
+    return false,n
+   end
+   if type(args[1])~='number' or n<4 then gate.ui_replay_fail('ui_lua_decode');return false,'decode' end
+   local call={}
+   for i=2,n do call[i-1]=args[i] end
+   if is_slot_ship(call[1]) then return false,'slot_ship' end
+   call[2]=gate.ui_replay_queue_index(slot,decimal(call[1]),call[2],args[1])
+   local name=op==K.OP_QUEUE_PARAM and 'SetOrderParam' or 'RemoveOrderListParam'
+   local ok,result=pcall(stock[name],unpack(call,1,n-1))
+   return ok,ok and name..'@'..tostring(call[2]) or tostring(result)
   end
   gate.ui_replay_fail('ui_lua_op')
   return false,'op'
@@ -344,6 +382,28 @@ function K.script(plan,start,tools)
   elseif op=='target_none' then call=function() return tools.env.RemoveSofttarget() end
   elseif op=='match' then call=function() return tools.gate.pilot_stock_inject('state',0x5b,e[3]) end
   elseif op=='input' then call=function() return tools.gate.pilot_stock_inject(e[3],e[4],e[5]) end
+  -- The flight families: autopilot by Lua (no guidance needed) and by the FFI toggle, dock, undock, weapon groups.
+  elseif op=='ap_to' then call=function() return tools.env.StartAutoPilot(tools.slot_lua(e[3])) end
+  elseif op=='ap_stop' then call=function() return tools.env.StopAutoPilot() end
+  elseif op=='ap_toggle' then call=function() return tools.C.ToggleAutoPilot(false) end
+  elseif op=='quickdock' then call=function() return tools.C.QuickDock() end
+  elseif op=='dock_at' then call=function() return tools.C.RequestDockAt(tools.saved_id(e[3]),false) end
+  elseif op=='undock' then call=function() return ffi.string(tools.C.UndockPlayerShip(false)) end
+  elseif op=='wgroup' then call=function() return tools.C.SetDefensibleActiveWeaponGroup(tools.slot_id(tools.own_slot),e[3]==1,e[4]) end
+  elseif op=='wkey' then call=function() return tools.gate.pilot_stock_inject('action',e[3],0) end
+  -- Missiles: the secondary trigger held (1) or released (0), carried by this client's record.
+  elseif op=='missile' then call=function() return tools.gate.ui_replay_missile_hold(e[3]) end
+  -- The queue editor as the map's rows call it: a create, its parameter and the enable in one Lua call, a move, a removal.
+  elseif op=='q_move' then call=function()
+    local id=tools.saved_id(e[3]);local idx=tools.C.CreateOrder(id,'MoveWait',false)
+    if idx>0 then tools.env.SetOrderParam(tools.saved_lua(e[3]),idx,1,nil,{tools.saved_lua(e[4]),{e[5],e[6],e[7]}});tools.C.EnableOrder(id,idx) end
+    return idx end
+  elseif op=='q_wait' then call=function()
+    local id=tools.saved_id(e[3]);local idx=tools.C.CreateOrder(id,'Wait',false)
+    if idx>0 then tools.C.EnableOrder(id,idx) end
+    return idx end
+  elseif op=='q_adjust' then call=function() return tools.C.AdjustOrder(tools.saved_id(e[3]),e[4],e[5],true,false,false) end
+  elseif op=='q_remove' then call=function() return tools.C.RemoveOrder(tools.saved_id(e[3]),e[4],false,false) end
   elseif op=='clear' then call=function() return tools.C.RemoveAllOrders2(tools.saved_id(e[3]),false,false) end
   elseif op=='attack' then call=function() return tools.env.CreateOrder(tools.saved_lua(e[3]),'Attack',{primarytarget=tools.saved_lua(e[4])},false,false,false,nil,nil,nil,true) end
   elseif op=='move' then call=function() return tools.env.CreateOrder(tools.saved_lua(e[3]),'MoveWait',{destination={tools.saved_lua(e[4]),{e[5],e[6],e[7]}}},false,false,false,nil,nil,nil,true) end

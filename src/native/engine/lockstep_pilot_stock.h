@@ -73,7 +73,8 @@
 #define PSTK_FLAG_AIM 4u      /* the aim point (ship frame) and mouse steering flag of this frame */
 #define PSTK_FLAG_VIEW 8u     /* the view of this frame: cockpit/floating bits, FOV factor, soft target */
 #define PSTK_FLAG_FIRE 16u    /* primary fire held (only with native_gate_pilot_fire, lockstep_pilot_fire.h) */
-#define PSTK_FLAGS_KNOWN (PSTK_FLAG_ACTIVE|PSTK_FLAG_CURSOR|PSTK_FLAG_AIM|PSTK_FLAG_VIEW|PSTK_FLAG_FIRE)
+#define PSTK_FLAG_FIRE2 32u   /* secondary fire held (missiles: pilot fire and the UI replay's missile family) */
+#define PSTK_FLAGS_KNOWN (PSTK_FLAG_ACTIVE|PSTK_FLAG_CURSOR|PSTK_FLAG_AIM|PSTK_FLAG_VIEW|PSTK_FLAG_FIRE|PSTK_FLAG_FIRE2)
 #define PSTK_SHOOT_VTABLE 0x2b7d1a8u  /* U::PlayerShootController */
 #define PSTK_AIM_SLOT 21u
 #define PSTK_AIM_RVA 0x7e8650u        /* PlayerShootController::vfunc21 */
@@ -127,7 +128,14 @@ static int pfire_armed;       /* lockstep_pilot_fire.h */
 static int pstk_focused(void);
 /* The trigger of the record applied at each slot's last tick (native_gate_pilot_fire). */
 static uint64_t pstk_fire_tick[PILOT_SLOTS];
-static unsigned char pstk_fire_on[PILOT_SLOTS];
+static unsigned char pstk_fire_on[PILOT_SLOTS],pstk_fire2_on[PILOT_SLOTS];
+static int pstk_fire2_scripted;   /* gate.ui_replay_missile_hold: a scripted secondary trigger for runs without people */
+static int pstk_focused(void);
+/* The secondary trigger the record carries: only with pilot fire and the UI replay's missile family (else X4's own
+ * secondary fire is refused as before). */
+static int pstk_fire2_held(void) {
+    return pfire_armed && (uirep_families&UIREP_FAMILY_MISSILES) && (((pnat_fire_buttons()&4) && pstk_focused()) || pstk_fire2_scripted);
+}
 static float pstk_aim_replay[3];
 static unsigned char pstk_aim_steer_replay;
 static int pstk_aim_valid_replay,pstk_aim_installed;
@@ -152,6 +160,12 @@ static int pstk_listed(const uint16_t *list,unsigned count,int id) {
 static unsigned pstk_verdict(unsigned kind,int id) {
     /* Match speed follows the soft target: with the target replayed it can be replayed too. */
     if(kind==PSTK_STATE && id==0x5b && (uirep_families&UIREP_FAMILY_TARGET)) return PSTK_REPLAY;
+    /* The UI replay's families (lockstep_ui_replay.h): dock and weapon keys ride the record into their stock handlers in
+     * the slot's scope; the autopilot key runs on the client's own dispatch, where its start and stop are captured with
+     * the target its own guidance names (the guidance is not the same on every client). */
+    if(kind==PSTK_ACTION && (uirep_families&UIREP_FAMILY_DOCK) && (id==0xaf || id==0xd3)) return PSTK_REPLAY;
+    if(kind==PSTK_ACTION && (uirep_families&UIREP_FAMILY_WEAPONS) && ((id>=0x8 && id<=0xb) || (id>=0x8b && id<=0x9e) || id==0x141)) return PSTK_REPLAY;
+    if(kind==PSTK_ACTION && (uirep_families&UIREP_FAMILY_AUTOPILOT) && id==0xb3) return PSTK_LOCAL;
     if(kind==PSTK_ACTION) return pstk_listed(pstk_replay_actions,PSTK_COUNT(pstk_replay_actions),id)?PSTK_REPLAY:
         pstk_listed(pstk_refuse_actions,PSTK_COUNT(pstk_refuse_actions),id)?PSTK_REFUSE:PSTK_LOCAL;
     if(kind==PSTK_STATE) return pstk_listed(pstk_replay_states,PSTK_COUNT(pstk_replay_states),id)?PSTK_REPLAY:
@@ -178,7 +192,7 @@ static int pstk_slot_record_ok(const pstk_record *r,unsigned slot) {
 }
 /* The stock handlers a replayed id may reach (anything else registered under a
  * replay id fails closed); production pointers are image+RVA (pnat_use_image). */
-static const unsigned pstk_handlers[]={0xd86c80,0xd870b0,0xd87f70,0x71bac0,0x71c640};
+static const unsigned pstk_handlers[]={0xd86c80,0xd870b0,0xd87f70,0x71bac0,0x71c640,0xaf1db0}; /* af1db0: weapon groups, UI replay only */
 #define PSTK_HANDLERS (sizeof(pstk_handlers)/sizeof(*pstk_handlers))
 static const void *pstk_handler_ptrs[PSTK_HANDLERS];
 static int pstk_handler_ok(const void *handler) {
@@ -302,6 +316,7 @@ static int pstk_capture(uint64_t tick,unsigned char out[PSTK_BYTES_MAX],unsigned
      * A dead slot has no aim and no view to record: its records are consumed and ignored. */
     int own_dead=pstk_capture_slot>=1 && pstk_capture_slot<=PILOT_SLOTS && pilot_slots[pstk_capture_slot-1].dead;
     if(pfire_armed && (pnat_fire_buttons()&1) && pstk_focused()) pstk_build.flags|=PSTK_FLAG_FIRE;
+    if(pstk_fire2_held()) pstk_build.flags|=PSTK_FLAG_FIRE2;
     if(pstk_capture_slot==1 && !own_dead && pstk_aim_sample(pstk_build.aim,&pstk_build.steer)) {pstk_build.flags|=PSTK_FLAG_AIM;InterlockedIncrement64(&pstk_aim_samples);}
     else {memset(pstk_build.aim,0,sizeof(pstk_build.aim));pstk_build.steer=0;if(pstk_capture_slot==1 && !own_dead) InterlockedIncrement64(&pstk_aim_sample_failures);}
     if(!own_dead && pview_sample(&pstk_build.view,&pstk_build.fov,&pstk_build.target)) pstk_build.flags|=PSTK_FLAG_VIEW;
@@ -561,7 +576,7 @@ static int pstk_frame(uint64_t tick,const char **why) {
     unsigned char *map=pnat_input+0x63e0;
     if(pilot_slots[0].dead) { /* consumed and ignored: its hash stays in the declared state, cursor and aim stay neutral */
         pview_replay(1,tick,0,0,0.0f,0);
-        pstk_fire_tick[0]=tick;pstk_fire_on[0]=0;
+        pstk_fire_tick[0]=tick;pstk_fire_on[0]=0;pstk_fire2_on[0]=0;
     } else {
         for(unsigned i=0;i<r.count;i++) { /* every handler is a stock one before any runs */
             pstk_event *x=&r.events[i];
@@ -580,7 +595,7 @@ static int pstk_frame(uint64_t tick,const char **why) {
         pstk_aim_valid_replay=(r.flags&PSTK_FLAG_AIM)!=0;memcpy(pstk_aim_replay,r.aim,sizeof(pstk_aim_replay));pstk_aim_steer_replay=r.steer;
         pstk_aim_tick=tick;
         pview_replay(1,tick,(r.flags&PSTK_FLAG_VIEW)!=0,r.view,r.fov,r.target);
-        pstk_fire_tick[0]=tick;pstk_fire_on[0]=(r.flags&PSTK_FLAG_FIRE)!=0;
+        pstk_fire_tick[0]=tick;pstk_fire_on[0]=(r.flags&PSTK_FLAG_FIRE)!=0;pstk_fire2_on[0]=(r.flags&PSTK_FLAG_FIRE2)!=0;
         pstk_cursor_tick=tick;pstk_frame_events=r.count;
     }
     pstk_frame_hash=pstk_fnv(e->bytes,e->length,PSTK_DOMAIN);
@@ -603,7 +618,7 @@ static int pstk_frame(uint64_t tick,const char **why) {
         /* A dead slot's record is consumed the same way: pslot_replay skips it (not seated). */
         int dead=pilot_slots[k-1].dead!=0;
         pview_replay(k,tick,!dead && (q.flags&PSTK_FLAG_VIEW)!=0,q.view,q.fov,q.target);
-        pstk_fire_tick[k-1]=tick;pstk_fire_on[k-1]=!dead && (q.flags&PSTK_FLAG_FIRE)!=0;
+        pstk_fire_tick[k-1]=tick;pstk_fire_on[k-1]=!dead && (q.flags&PSTK_FLAG_FIRE)!=0;pstk_fire2_on[k-1]=!dead && (q.flags&PSTK_FLAG_FIRE2)!=0;
         InterlockedIncrement64(&pstk_records);
     }
     return 1;

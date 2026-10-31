@@ -24,6 +24,16 @@ static unsigned char test_pfire_stop(void *weapon) {
     if(controller && *(uintptr_t*)controller==(uintptr_t)(image+PFIRE_MINDLESS_VTABLE)) {controller[PFIRE_FLAG]=0;return 1;}
     memset(gun+PFIRE_CONTROLLER,0,8);return 0; /* any other controller is deleted */
 }
+static unsigned test_pfire_shots;static void *test_pfire_shot_target;
+static void test_pfire_shoot_at(void *launcher,void *target,void *list,unsigned char large,float range,unsigned char flag) {
+    static unsigned char controllers[8][16];uint64_t *l=list;
+    assert(launcher && target && l && !l[0] && !l[1] && !l[2] && !large && range==0.0f && !flag);
+    unsigned char *c=controllers[test_pfire_shots%8];uintptr_t vtable=(uintptr_t)(image+0x2b7fcc0u);memcpy(c,&vtable,8);  /* basic */
+    memcpy((unsigned char*)launcher+PFIRE_CONTROLLER,&c,8);test_pfire_shot_target=target;++test_pfire_shots;
+}
+static void test_pfire_missile_tick(uint64_t tick,int held) {
+    stats.issued=pilot_frame_tick=tick;pstk_fire_tick[1]=tick;pstk_fire2_on[1]=(unsigned char)(held!=0);assert(pfire_before_release());
+}
 static void *test_pfire_find(void *map,uint64_t runtime,unsigned flags) {
     assert(!map && flags==4);
     for(unsigned i=0;i<test_pfire_object_count;i++) if(test_pfire_objects[i].runtime==runtime) return test_pfire_objects[i].object;
@@ -195,6 +205,64 @@ static void test_pilot_fire(void) {
            !pfire_wanted(&pilot_slots[0],1,9));
     /* Script fire of one slot: a shooter and a target. */
     pfire_script_mask=2;assert(!pfire_wanted(&pilot_slots[0],1,10+113) && pfire_wanted(&pilot_slots[1],2,10+106));pfire_script_mask=0;
+    /* The UI replay's weapon family: a group change re-leases the slot's guns, old triggers cleared; without it nothing changes. */
+    {   static unsigned char ship3[0x800],gun4[0x400],gun5[0x400];static uint64_t only4[1]={0xc2},only5[1]={0xc3};static unsigned char groups3[2][0x18];
+        test_pfire_object(ship3,0xc1,0x7777,zone);test_pfire_object(gun4,0xc2,PFIRE_WEAPON_VTABLE,ship3);test_pfire_object(gun5,0xc3,PFIRE_WEAPON_VTABLE,ship3);
+        uint64_t *a=only4,*e=only4+1;memcpy(groups3[0],&a,8);memcpy(groups3[0]+8,&e,8);a=only5;e=only5+1;memcpy(groups3[1],&a,8);memcpy(groups3[1]+8,&e,8);
+        unsigned char *g3=groups3[0],*g3e=groups3[0]+2*0x18;memcpy(ship3+PFIRE_GROUPS,&g3,8);memcpy(ship3+PFIRE_GROUPS+8,&g3e,8);
+        uint32_t act=0;memcpy(ship3+PFIRE_ACTIVE,&act,4);
+        pfire_mode=PFIRE_RECORD;memset(pfire_slots,0,sizeof(pfire_slots));pilot_slot_count=1;pilot_start=50;pilot_stop=60;
+        pilot_slots[0]=(pilot_slot){.saved=0x53,.object=ship3,.resolved=1,.driving=1};pilot_slots[0].record.buttons=1;
+        unsigned saved_families=uirep_families;uirep_families=UIREP_FAMILY_WEAPONS;
+        stats.issued=pilot_frame_tick=50;assert(pfire_before_release() && pfire_slots[0].count==1 && pfire_slots[0].guns[0].runtime==0xc2);
+        unsigned char *c4=*(unsigned char**)(gun4+PFIRE_CONTROLLER);assert(c4 && c4[PFIRE_FLAG]==1);
+        act=1;memcpy(ship3+PFIRE_ACTIVE,&act,4);stats.issued=pilot_frame_tick=51;
+        assert(pfire_before_release() && pfire_relets==1 && pfire_slots[0].count==1 && pfire_slots[0].guns[0].runtime==0xc3 && !c4[PFIRE_FLAG]);
+        unsigned char *c5=*(unsigned char**)(gun5+PFIRE_CONTROLLER);assert(c5 && c5[PFIRE_FLAG]==1);
+        uirep_families=0;act=0;memcpy(ship3+PFIRE_ACTIVE,&act,4);stats.issued=pilot_frame_tick=52;
+        assert(pfire_before_release() && pfire_relets==1 && pfire_slots[0].guns[0].runtime==0xc3);
+        uirep_families=saved_families;pfire_relets=0;
+    }
+    /* The missile family: slot 2's active secondary group, its launchers only, shoots at slot 2's soft target while the
+     * record holds the secondary trigger; a new target re-aims, a release, a group without launchers, the window end. */
+    {   static unsigned char ship5[0x800],ml1[0x400],ml2[0x400],gun6[0x400],target1[0x400],target2[0x400],player2[0x7000],groups5[2][0x18];
+        static uint64_t sec[3]={0xd2,0xd3,0xd4};
+        test_pfire_object(ship5,0xd1,0x7777,zone);test_pfire_object(ml1,0xd2,PFIRE_LAUNCHER_VTABLE,ship5);
+        test_pfire_object(ml2,0xd3,PFIRE_LAUNCHER_VTABLE,ship5);test_pfire_object(gun6,0xd4,PFIRE_WEAPON_VTABLE,ship5);
+        test_pfire_object(target1,0xe1,0x7777,zone);test_pfire_object(target2,0xe2,0x7777,zone);
+        uint64_t *a=sec,*e=sec+3;memcpy(groups5[0],&a,8);memcpy(groups5[0]+8,&e,8);
+        unsigned char *g5=groups5[0],*g5e=groups5[0]+2*0x18;memcpy(ship5+PFIRE_GROUPS2,&g5,8);memcpy(ship5+PFIRE_GROUPS2+8,&g5e,8);
+        uint32_t act=0;memcpy(ship5+PFIRE_ACTIVE2,&act,4);
+        unsigned char *saved_player=pslots[2].player;pslots[2].player=player2;memset(player2+PFIRE_SOFT_TARGET,0,8);
+        pfire_mode=PFIRE_RECORD;memset(pfire_slots,0,sizeof(pfire_slots));memset(pfire_missiles,0,sizeof(pfire_missiles));
+        memset(pilot_slots,0,sizeof(pilot_slots));pilot_slot_count=2;pilot_start=70;pilot_stop=80;
+        pilot_slots[1]=(pilot_slot){.saved=0x54,.object=ship5,.resolved=1,.driving=1};
+        unsigned saved_families=uirep_families;uirep_families=UIREP_FAMILY_MISSILES|UIREP_FAMILY_TARGET;
+        pfire_shoot_at_override=test_pfire_shoot_at;test_pfire_shots=0;unsigned stops=test_pfire_stops;
+        test_pfire_missile_tick(70,1);assert(pfire_missile_no_target==1 && !test_pfire_shots && !pfire_missiles[1].shooting);
+        uint64_t id=0xe1;memcpy(player2+PFIRE_SOFT_TARGET,&id,8);
+        test_pfire_missile_tick(71,1);
+        assert(test_pfire_shots==2 && pfire_missile_starts==1 && pfire_missiles[1].shooting && pfire_missiles[1].count==2 &&
+               pfire_missiles[1].target==0xe1 && test_pfire_shot_target==target1 && *(void**)(ml1+PFIRE_CONTROLLER) && *(void**)(ml2+PFIRE_CONTROLLER) &&
+               !*(void**)(gun6+PFIRE_CONTROLLER));
+        char text[96];assert(pfire_frame_text(text,sizeof(text)) && strstr(text,":M0.0/1.2"));
+        test_pfire_missile_tick(72,1);assert(test_pfire_shots==2 && pfire_missile_starts==1);   /* held: nothing new */
+        id=0xe2;memcpy(player2+PFIRE_SOFT_TARGET,&id,8);
+        test_pfire_missile_tick(73,1);
+        assert(test_pfire_stops==stops+2 && pfire_missile_stops==1 && test_pfire_shots==4 && pfire_missile_starts==2 &&
+               test_pfire_shot_target==target2 && pfire_missiles[1].target==0xe2);
+        test_pfire_missile_tick(74,0);assert(pfire_missile_stops==2 && !pfire_missiles[1].shooting && !*(void**)(ml1+PFIRE_CONTROLLER));
+        act=1;memcpy(ship5+PFIRE_ACTIVE2,&act,4);
+        test_pfire_missile_tick(75,1);assert(pfire_missile_empty==1 && !pfire_missiles[1].shooting && test_pfire_shots==4);  /* group 1: none */
+        act=0;memcpy(ship5+PFIRE_ACTIVE2,&act,4);
+        test_pfire_missile_tick(76,1);assert(pfire_missile_starts==3 && test_pfire_shots==6);
+        test_pfire_missile_tick(81,1);assert(pfire_missile_stops==3 && !pfire_missiles[1].shooting);   /* the window end stops */
+        char status[1024];assert(pfire_status(status,sizeof(status)) && strstr(status,"missiles=3/3/1/1"));
+        /* Without the family nothing of this runs. */
+        uirep_families=UIREP_FAMILY_TARGET;test_pfire_missile_tick(77,1);assert(test_pfire_shots==6 && !pfire_missiles[1].shooting);
+        uirep_families=saved_families;pfire_shoot_at_override=NULL;pslots[2].player=saved_player;memset(pfire_missiles,0,sizeof(pfire_missiles));
+        pfire_missile_starts=pfire_missile_stops=pfire_missile_empty=pfire_missile_no_target=0;pstk_fire_tick[1]=0;pstk_fire2_on[1]=0;
+    }
     /* Reset to default off. */
     pfire_armed=0;pfire_mode=PFIRE_OFF;pfire_pins_checked=0;pfire_released=0;pfire_stage="off";memset(pfire_slots,0,sizeof(pfire_slots));
     pfire_frames=pfire_tick=pfire_triggered=pfire_lease_waits=pfire_installs=pfire_replaced_at_lease=pfire_cleared=pfire_receipt_tick=pfire_receipt=0;
@@ -204,5 +272,5 @@ static void test_pilot_fire(void) {
     pilot_armed=0;memset(image+PFIRE_START,0,16);memset(image+PFIRE_STOP,0,16);memset(image+PFIRE_RELOAD,0,16);pfire_now=saved_now;
     stats.issued=saved_issued;stats.active=saved_active;world_identity_installed=saved_identity;ui_thread=saved_ui;
     printf("pilot fire group discovery/lease/replace/wait/trigger/travel mask/simulation re-take (H3k2)/trigger restore/lost gun/"
-           "local fail-closed/window end let-go/stop/script/receipt tests PASS\n");
+           "local fail-closed/window end let-go/stop/script/receipt/group re-lease/missiles at the soft target tests PASS\n");
 }

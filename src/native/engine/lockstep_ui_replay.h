@@ -16,6 +16,17 @@
  *             orders  RemoveAllOrders, RemoveAllOrders2 captured natively, Lua CreateOrder wrapped in Lua
  *                     (tools/dev/native_gate_ui_replay_core.lua), the queue editor's FFI mutators refused
  *                     here with their failure value (UIREP_GUARD), counted.
+ *             autopilot  0x72bf20 (start: player, target, offset, flags) and 0x72bb10 (stop), where ToggleAutoPilot,
+ *                     the key (TOGGLE_AUTOPILOT 0xb3, now run on the client's own dispatch so it reaches them) and Lua
+ *                     StartAutoPilot / StopAutoPilot end: the target is resolved on the capturing client from its own
+ *                     guidance (the mission manager, which stays local) and travels with the event.
+ *             dock    0x730ff0 (QuickDock's core), RequestDockAt, RequestDockAtReason, 0x72fe40 (UndockPlayerShip's
+ *                     core); the keys DOCK_ACTION 0xaf and UNDOCK 0xd3 ride the stock record into 71bac0 in the slot's scope.
+ *             weapons SetDefensibleActiveWeaponGroup, SetWeaponGroup, SetWeaponMode; the group keys (0x8..0xb, 0x8b..0x9e,
+ *                     ammo 0x141) ride the stock record into af1db0 in the slot's scope.
+ *             These are generic calls (op 5): a hook's arguments by a spec (the player, components as references, bytes,
+ *             words, 16-byte vectors, strings), a check-only argument passes through and predicts the return value,
+ *             and the apply calls the same function through its trampoline with the slot's player.
  *   apply     native events in path_release after the stock records of the tick, slot 1 canonical, slot k
  *             in its slot scope: 0x710ed0 for travel in a scope (md/modes.xml does not listen on P_k),
  *             0x9fd120 / 0x9fd330 on slot 1 (MD on every client); 0x3e73f0 / 0x3e7560 for the soft target.
@@ -53,13 +64,20 @@
 #define UIREP_PAGE 0x1000u
 #define UIREP_STRIDE 0x40u
 #define UIREP_STUB 0x20u                  /* in a hook's stride: the jump the entry patch targets */
-enum {UIREP_OP_ACTIVITY_START=1,UIREP_OP_ACTIVITY_STOP=2,UIREP_OP_TARGET_SET=3,UIREP_OP_TARGET_CLEAR=4,
-    UIREP_OP_LUA_FIRST=0x40,UIREP_OP_ORDERS_CLEAR=0x41,UIREP_OP_ORDERS_CLEAR2=0x42,UIREP_OP_LUA_CALL=0x43};
+enum {UIREP_OP_ACTIVITY_START=1,UIREP_OP_ACTIVITY_STOP=2,UIREP_OP_TARGET_SET=3,UIREP_OP_TARGET_CLEAR=4,UIREP_OP_CALL=5,
+    UIREP_OP_LUA_FIRST=0x40,UIREP_OP_ORDERS_CLEAR=0x41,UIREP_OP_ORDERS_CLEAR2=0x42,UIREP_OP_LUA_CALL=0x43,
+    UIREP_OP_QUEUE=0x44,UIREP_OP_QUEUE_PARAM=0x45,UIREP_OP_QUEUE_LIST=0x46};
 enum {UIREP_H_UI=0,UIREP_H_START,UIREP_H_STOP,UIREP_H_CLEAR,UIREP_H_CLEAR2,UIREP_H_CREATE3,UIREP_H_ENABLE,UIREP_H_ADJUST,UIREP_H_REMOVE2,
-    UIREP_H_RESET,UIREP_H_PLANNED_ENABLE,UIREP_H_PLANNED_REMOVE,UIREP_H_DEPLOY,UIREP_HOOKS};
+    UIREP_H_RESET,UIREP_H_PLANNED_ENABLE,UIREP_H_PLANNED_REMOVE,UIREP_H_DEPLOY,
+    UIREP_H_AP_START,UIREP_H_AP_STOP,UIREP_H_QUICKDOCK,UIREP_H_DOCKAT,UIREP_H_DOCKREASON,UIREP_H_UNDOCK,
+    UIREP_H_WGROUP_ACTIVE,UIREP_H_WGROUP_SET,UIREP_H_WMODE,UIREP_H_LOOP,UIREP_H_LOOP_CURRENT,UIREP_HOOKS};
+#define UIREP_ARGS 8u
+#define UIREP_STRING_MAX 48u
+#define UIREP_AUTOPILOT 0x2f4b7d8u        /* the input bank's autopilot target (SIM, per slot) */
+#define UIREP_GROUP_PRIMARY 0x668u        /* Defensible: active primary weapon group, +0x66c the secondary */
 enum {UIREP_S_TARGET_CLEAR=0,UIREP_S_TARGET_SET=1,UIREP_SITES=2};
 typedef void (*uirep_activity_fn)(void *,int,unsigned char);
-typedef uint64_t (*uirep_forward_fn)(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
+typedef uint64_t (*uirep_forward_fn)(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
 typedef struct {
     void (*ui_move)(void *);
     uirep_activity_fn start,stop;                  /* 0x9fd120, 0x9fd330 */
@@ -72,7 +90,7 @@ typedef struct {
     int (*enter)(unsigned);                        /* pslot_enter */
     int (*leave)(unsigned);                        /* pslot_leave */
     uint64_t (*portable)(uint64_t);                /* world_identity_portable */
-    uirep_forward_fn forward[UIREP_HOOKS];         /* the trampolines of the order hooks */
+    uirep_forward_fn forward[UIREP_HOOKS];         /* the trampolines of the call hooks */
 } uirep_fns;
 typedef struct {unsigned char op,length;unsigned char data[UIREP_EVENT_MAX];} uirep_event;
 typedef struct {uint64_t tick;unsigned present,length;unsigned char bytes[UIREP_SECTION_MAX];} uirep_staged;
@@ -94,20 +112,35 @@ static uint64_t uirep_frame_tick,uirep_frame_hash,uirep_results_hash,uirep_resul
 static unsigned uirep_frame_events;
 static volatile LONG64 uirep_captured,uirep_refused,uirep_taken,uirep_staged_count,uirep_applied_native,uirep_applied_lua,uirep_stale,
     uirep_passed,uirep_scope_start,uirep_scope_stop,uirep_scope_refused,uirep_scope_nested,uirep_unavailable,uirep_guard_refused,uirep_target_passed,uirep_lua_errors,
-    uirep_waits;
+    uirep_waits,uirep_calls_applied;
 
 /* ---- pins and sites (build 9.00) ---- */
 static void uirep_ui_move(void *self);
 static void uirep_activity_start(void *a,int activity,unsigned char flag);
 static void uirep_activity_stop(void *a,int activity,unsigned char flag);
-static uint64_t uirep_orders_clear(uint64_t id,uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e);
-static uint64_t uirep_orders_clear2(uint64_t id,uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e);
+static uint64_t uirep_orders_clear(uint64_t id,uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g);
+static uint64_t uirep_orders_clear2(uint64_t id,uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g);
+static uint64_t uirep_call(unsigned hook,uint64_t a[UIREP_ARGS]);
+#define UIREP_CALL(n,hook) static uint64_t uirep_call_##n(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h) { \
+    uint64_t args[UIREP_ARGS]={a,b,c,d,e,f,g,h};return uirep_call(hook,args);}
+UIREP_CALL(ap_start,UIREP_H_AP_START)
+UIREP_CALL(ap_stop,UIREP_H_AP_STOP)
+UIREP_CALL(quickdock,UIREP_H_QUICKDOCK)
+UIREP_CALL(dockat,UIREP_H_DOCKAT)
+UIREP_CALL(dockreason,UIREP_H_DOCKREASON)
+UIREP_CALL(undock,UIREP_H_UNDOCK)
+UIREP_CALL(wgroup_active,UIREP_H_WGROUP_ACTIVE)
+UIREP_CALL(wgroup_set,UIREP_H_WGROUP_SET)
+UIREP_CALL(wmode,UIREP_H_WMODE)
 static int uirep_local_phase(void);
 static void uirep_guard_refuse(unsigned slot);
-/* The queue editor's FFI mutators: a call from the UI gets the failure value, the others pass, and so does a call
- * with its check-only flag (the menus ask that to enable a button; it changes nothing). */
-#define UIREP_GUARD(n,slot,checkonly) static uint64_t uirep_guard_##n(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f) { \
-    if((checkonly) || InterlockedCompareExchange(&uirep_replaying,0,0) || uirep_stopped || !uirep_local_phase()) return uirep_fn.forward[slot](a,b,c,d,e,f); \
+static uint64_t uirep_queue_call(unsigned hook,uint64_t a[UIREP_ARGS]);
+/* The queue editor's FFI mutators: with the queue family they are captured (uirep_queue_call); with the orders family
+ * alone a call from the UI gets the failure value, the others pass, and so does a call with its check-only flag (the
+ * menus ask that to enable a button; it changes nothing). */
+#define UIREP_GUARD(n,slot,checkonly) static uint64_t uirep_guard_##n(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h) { \
+    if(uirep_families&UIREP_FAMILY_QUEUE) {uint64_t args[UIREP_ARGS]={a,b,c,d,e,f,g,h};return uirep_queue_call(slot,args);} \
+    if((checkonly) || InterlockedCompareExchange(&uirep_replaying,0,0) || uirep_stopped || !uirep_local_phase()) return uirep_fn.forward[slot](a,b,c,d,e,f,g,h); \
     uirep_guard_refuse(slot);return 0;}
 UIREP_GUARD(create3,UIREP_H_CREATE3,0)
 UIREP_GUARD(enable,UIREP_H_ENABLE,0)
@@ -117,6 +150,10 @@ UIREP_GUARD(reset,UIREP_H_RESET,0)
 UIREP_GUARD(planned_enable,UIREP_H_PLANNED_ENABLE,b&0xff) /* (controllable, checkonly) */
 UIREP_GUARD(planned_remove,UIREP_H_PLANNED_REMOVE,0)
 UIREP_GUARD(deploy,UIREP_H_DEPLOY,0)
+UIREP_GUARD(loop,UIREP_H_LOOP,c&0xff)                  /* (controllable, idx, checkonly) */
+UIREP_GUARD(loop_current,UIREP_H_LOOP_CURRENT,e&0xff)  /* (controllable, idx, enabled, forcestates, checkonly) */
+#define UIREP_QUEUE_HOOK (UIREP_FAMILY_ORDERS|UIREP_FAMILY_QUEUE)
+#define UIREP_NUM_ORDERS 0x1f7370u           /* GetNumOrders (the queue editor family) */
 #define UIREP_ENTRY5 {0x48,0x89,0x5c,0x24,0x08}   /* mov [rsp+8],rbx */
 #define UIREP_ENTRY7 {0x48,0x8b,0xc4,0x48,0x89,0x58,0x10}   /* mov rax,rsp; mov [rax+0x10],rbx */
 static const struct {const char *name;unsigned rva,prefix,family;unsigned char bytes[9];void *wrapper;unsigned pin;const char *sha;} uirep_hooks[UIREP_HOOKS]={
@@ -125,15 +162,78 @@ static const struct {const char *name;unsigned rva,prefix,family;unsigned char b
     {"StopActivity",0x9fd330u,7,UIREP_FAMILY_TRAVEL,UIREP_ENTRY7,(void*)uirep_activity_stop,501,"0b1d88c092f89e0479b3375abbd2a3c91fd96e4436b08decf71f7f6a441361b3"},
     {"RemoveAllOrders",0x1fe640u,5,UIREP_FAMILY_ORDERS,UIREP_ENTRY5,(void*)uirep_orders_clear,130,"5b18900b96d3f47edef7c8fd2fd6e547f5f94eeeb20c7992332d64b4a0ecfc2e"},
     {"RemoveAllOrders2",0x1fe6d0u,5,UIREP_FAMILY_ORDERS,UIREP_ENTRY5,(void*)uirep_orders_clear2,152,"27222818e2b7d5f90e2fc31f3e5b58f2f5014415de540580b4720f5e96bff171"},
-    {"CreateOrder3",0x1f3b30u,5,UIREP_FAMILY_ORDERS,UIREP_ENTRY5,(void*)uirep_guard_create3,459,"5a806d32b71aa8658b46c2611794995ce5d02d1246906b42189043ac9df52f75"},
-    {"EnableOrder",0x1f3d40u,5,UIREP_FAMILY_ORDERS,UIREP_ENTRY5,(void*)uirep_guard_enable,204,"b85f431536a8c264ad38455f0bb2fa5a95f5164764e8e30d4871ab59e8510a19"},
-    {"AdjustOrder",0x1f2da0u,5,UIREP_FAMILY_ORDERS,UIREP_ENTRY5,(void*)uirep_guard_adjust,195,"204f34e28d4a7abea9e0577b4f76ff7ff270a6144c56099b0ef64eaf6d94f5f6"},
-    {"RemoveOrder2",0x1fe9d0u,5,UIREP_FAMILY_ORDERS,UIREP_ENTRY5,(void*)uirep_guard_remove2,214,"a03780a483599329386676186590d88cf4c440e5154f81579a082447a46e40b6"},
-    {"ResetOrder",0x1fef70u,5,UIREP_FAMILY_ORDERS,UIREP_ENTRY5,(void*)uirep_guard_reset,279,"bb81c2c0928e55754bb709555a6bbe6ac21669b9ae895f12cec327e2fd5c272a"},
-    {"EnablePlannedDefaultOrder",0x1f3e10u,5,UIREP_FAMILY_ORDERS,UIREP_ENTRY5,(void*)uirep_guard_planned_enable,229,"1d5004fd5e115c97cc150dc2873d9c6904a8aa8c80e066c166ae7e927856e93b"},
-    {"RemovePlannedDefaultOrder",0x1feed0u,5,UIREP_FAMILY_ORDERS,UIREP_ENTRY5,(void*)uirep_guard_planned_remove,150,"313a8f3739710504ac59d2723414bf80fa94d7db010664b730b58443219aa31e"},
-    {"CreateDeployToStationOrder",0x1f37b0u,5,UIREP_FAMILY_ORDERS,UIREP_ENTRY5,(void*)uirep_guard_deploy,256,"2bdd9fdcb3a132a402b87fe3d4fbd66f8d5f6f33d891b511735a6016b951d0ea"},
+    {"CreateOrder3",0x1f3b30u,5,UIREP_QUEUE_HOOK,UIREP_ENTRY5,(void*)uirep_guard_create3,459,"5a806d32b71aa8658b46c2611794995ce5d02d1246906b42189043ac9df52f75"},
+    {"EnableOrder",0x1f3d40u,5,UIREP_QUEUE_HOOK,UIREP_ENTRY5,(void*)uirep_guard_enable,204,"b85f431536a8c264ad38455f0bb2fa5a95f5164764e8e30d4871ab59e8510a19"},
+    {"AdjustOrder",0x1f2da0u,5,UIREP_QUEUE_HOOK,UIREP_ENTRY5,(void*)uirep_guard_adjust,195,"204f34e28d4a7abea9e0577b4f76ff7ff270a6144c56099b0ef64eaf6d94f5f6"},
+    {"RemoveOrder2",0x1fe9d0u,5,UIREP_QUEUE_HOOK,UIREP_ENTRY5,(void*)uirep_guard_remove2,214,"a03780a483599329386676186590d88cf4c440e5154f81579a082447a46e40b6"},
+    {"ResetOrder",0x1fef70u,5,UIREP_QUEUE_HOOK,UIREP_ENTRY5,(void*)uirep_guard_reset,279,"bb81c2c0928e55754bb709555a6bbe6ac21669b9ae895f12cec327e2fd5c272a"},
+    {"EnablePlannedDefaultOrder",0x1f3e10u,5,UIREP_QUEUE_HOOK,UIREP_ENTRY5,(void*)uirep_guard_planned_enable,229,"1d5004fd5e115c97cc150dc2873d9c6904a8aa8c80e066c166ae7e927856e93b"},
+    {"RemovePlannedDefaultOrder",0x1feed0u,5,UIREP_QUEUE_HOOK,UIREP_ENTRY5,(void*)uirep_guard_planned_remove,150,"313a8f3739710504ac59d2723414bf80fa94d7db010664b730b58443219aa31e"},
+    {"CreateDeployToStationOrder",0x1f37b0u,5,UIREP_QUEUE_HOOK,UIREP_ENTRY5,(void*)uirep_guard_deploy,256,"2bdd9fdcb3a132a402b87fe3d4fbd66f8d5f6f33d891b511735a6016b951d0ea"},
+    {"AutopilotStart",0x72bf20u,7,UIREP_FAMILY_AUTOPILOT,UIREP_ENTRY7,(void*)uirep_call_ap_start,0x7ff,"a8d10c65bdbeef5d4aac9e565c4562e33eeea441daa605da14a20acfe2ceff0b"},
+    {"AutopilotStop",0x72bb10u,5,UIREP_FAMILY_AUTOPILOT,UIREP_ENTRY5,(void*)uirep_call_ap_stop,0x2aa,"6880a359c6abb1e6ee0559b302a767be9dff61a265f4fafd263de018fad587a7"},
+    {"QuickDock",0x730ff0u,5,UIREP_FAMILY_DOCK,{0x48,0x89,0x5c,0x24,0x20},(void*)uirep_call_quickdock,0x570,"a46ad31c65cc70596298af1066c9b6c0aeafe1efa1dc13125eae4c6439d20f85"},
+    {"RequestDockAt",0x1ef750u,5,UIREP_FAMILY_DOCK,UIREP_ENTRY5,(void*)uirep_call_dockat,0xba,"72d522f3f44a40eaf4a36fd6af8a33b432f6e4a990fe132123f19b862e9cc98c"},
+    {"RequestDockAtReason",0x1ef810u,5,UIREP_FAMILY_DOCK,UIREP_ENTRY5,(void*)uirep_call_dockreason,0x14a,"2187f9f074819ec9deebdfe877e0d070b132a7602c4cda00d3184d5ee5cd9205"},
+    {"Undock",0x72fe40u,5,UIREP_FAMILY_DOCK,{0x48,0x89,0x5c,0x24,0x10},(void*)uirep_call_undock,0x66d,"78799231170be696549e7b046455c4bd617894d7ea26171de23fb22edf92f6b5"},
+    {"SetDefensibleActiveWeaponGroup",0x224430u,5,UIREP_FAMILY_WEAPONS,UIREP_ENTRY5,(void*)uirep_call_wgroup_active,0x8d,"58e10c804156e1cfb1d49ef497c7ec6f3637a291fec33f31781b94d3813032da"},
+    {"SetWeaponGroup",0x224ba0u,5,UIREP_FAMILY_WEAPONS,UIREP_ENTRY5,(void*)uirep_call_wgroup_set,0xc8,"cfc9c8abc9ffaf9f378e7d23a0239bc64260afa0f8f2c484161dd35b7c72aae6"},
+    {"SetWeaponMode",0x1ba7b0u,5,UIREP_FAMILY_WEAPONS,UIREP_ENTRY5,(void*)uirep_call_wmode,0xd9,"e1decc7cc69776b44f33e8f234c78bfab909d42181f23f26bc10c987865482b2"},
+    {"SetOrderLoop",0x200640u,5,UIREP_FAMILY_QUEUE,UIREP_ENTRY5,(void*)uirep_guard_loop,0x94,"ad863e7eba6a6ad800b06c78353561a5ac742c7c5f6ee5b8b13b683c33d2f241"},
+    {"SetCurrentLoopOrder",0x1ff850u,5,UIREP_FAMILY_QUEUE,UIREP_ENTRY5,(void*)uirep_guard_loop_current,0xb7,"a1bf2c2658233879bb4cffe0403b0de1fe38b145cc4b908db008498228bb57b0"},
 };
+/* The generic calls: argument spec (P the player, C a component pointer, I a UniverseID, b a byte, w a word, V a
+ * pointer to 16 bytes, s a string, k the check-only flag: set, the call is a query and passes; - passed through as 0),
+ * and what a captured call returns (the check-only variant's answer, or 1). */
+enum {UIREP_RET_ONE=0,UIREP_RET_PREDICT=1};
+typedef struct {unsigned hook;const char *spec;unsigned char returns;} uirep_call_spec;
+static const uirep_call_spec uirep_call_specs[]={
+    {UIREP_H_AP_START,"PCVbbbk",UIREP_RET_ONE},       /* player, target, offset, r9, 5th, flag (+0xc3 of the guidance), check only */
+    {UIREP_H_AP_STOP,"Pbbbk",UIREP_RET_PREDICT},
+    {UIREP_H_QUICKDOCK,"P",UIREP_RET_ONE},
+    {UIREP_H_DOCKAT,"Ik",UIREP_RET_PREDICT},          /* container, check only */
+    {UIREP_H_DOCKREASON,"Ik",UIREP_RET_PREDICT},
+    {UIREP_H_UNDOCK,"Pk",UIREP_RET_PREDICT},          /* player, check only: the status UndockPlayerShip turns into its text */
+    {UIREP_H_WGROUP_ACTIVE,"Ibw",UIREP_RET_ONE},      /* defensible, primary, group (1-based) */
+    {UIREP_H_WGROUP_SET,"IIbwb",UIREP_RET_ONE},       /* defensible, weapon, primary, group, active */
+    {UIREP_H_WMODE,"Is",UIREP_RET_ONE}};              /* weapon, mode */
+#define UIREP_CALL_SPECS (sizeof(uirep_call_specs)/sizeof(*uirep_call_specs))
+/* The queue editor (family queue), Lua-run events in call order, applied in the probe's frame: q is an order index
+ * (as the capturing menu saw the queue), the create's answer is predicted (UIREP_RET_ORDER), void returns nothing. */
+enum {UIREP_RET_ORDER=2,UIREP_RET_VOID=3};
+static const uirep_call_spec uirep_queue_specs[]={
+    {UIREP_H_CREATE3,"Isbbb",UIREP_RET_ORDER},        /* controllable, order definition, default, override, temporary */
+    {UIREP_H_DEPLOY,"I",UIREP_RET_ORDER},
+    {UIREP_H_ENABLE,"Iq",UIREP_RET_ONE},
+    {UIREP_H_ADJUST,"Iqqbbk",UIREP_RET_PREDICT},      /* idx, newidx, enabled, forcestates, check only */
+    {UIREP_H_REMOVE2,"Iqbkb",UIREP_RET_PREDICT},      /* idx, playercancelled, check only, onlyimmediate */
+    {UIREP_H_RESET,"Iqb",UIREP_RET_VOID},             /* idx, usedefault */
+    {UIREP_H_PLANNED_ENABLE,"Ik",UIREP_RET_PREDICT},
+    {UIREP_H_PLANNED_REMOVE,"I",UIREP_RET_VOID},
+    {UIREP_H_LOOP,"Iqk",UIREP_RET_PREDICT},
+    {UIREP_H_LOOP_CURRENT,"Iqbbk",UIREP_RET_VOID}};
+static const uirep_call_spec *uirep_queue_spec_of(unsigned hook) {
+    for(unsigned i=0;i<sizeof(uirep_queue_specs)/sizeof(*uirep_queue_specs);i++) if(uirep_queue_specs[i].hook==hook) return &uirep_queue_specs[i];
+    return NULL;
+}
+/* hook, seen (2), the arguments, the predicted index (4) of a create; 0 = not a valid queue event. */
+static unsigned uirep_queue_length(const unsigned char *data,unsigned n) {
+    const uirep_call_spec *c=n>=3?uirep_queue_spec_of(data[0]):NULL;unsigned at=3;
+    if(!c) return 0;
+    for(unsigned i=0;c->spec[i];i++) {
+        unsigned need=c->spec[i]=='I'?UIREP_REF:c->spec[i]=='q'?4:c->spec[i]=='b'?1:0;
+        if(c->spec[i]=='s') {if(at>=n || data[at]>UIREP_STRING_MAX) return 0;need=1u+data[at];}
+        if(need>n-at) return 0;
+        at+=need;
+    }
+    if(c->returns==UIREP_RET_ORDER) {if(n-at<4) return 0;at+=4;}
+    return at;
+}
+static const uirep_call_spec *uirep_spec_of(unsigned hook) {
+    for(unsigned i=0;i<UIREP_CALL_SPECS;i++) if(uirep_call_specs[i].hook==hook) return &uirep_call_specs[i];
+    return NULL;
+}
+static int uirep_spec_checkonly(const char *spec) {const char *k=strchr(spec,'k');return k?(int)(k-spec):-1;}
 /* The soft target blocks: five bytes inside one aligned 16-byte block (one CAS), the continuation behind each
  * block. The clear block starts across a 16-byte boundary, so the patch sits on the lookup's result in front of
  * it (mov rbx,rax; test rax,rax; jne 0xaecfdc): the stride repeats those and goes on to the stock error path at
@@ -152,6 +252,8 @@ static const struct {unsigned rva,size;const char *sha;} uirep_pin_table[]={
     {0x3e73f0u,355,"bac88a495e92607e803b53d50bb580380adcfeca989e59cc465d4ccbd0dd586c"},   /* target set */
     {0x3e7560u,288,"a9edb6b8cfea1d92476c39ac4f09760431e347dba5a66ddb14242241be5abeee"},   /* target clear */
     {0xaecb60u,1915,"eec1c6e468a9a2dfa26dab7fd4915b96aea64f5d4a78d7c8d4afc1e48d32fa57"},  /* the UI's writer, both sites */
+    {0xaf1db0u,0x1ccc,"bd760df9eaf2e6bb4203a012be153bdfef709853df591149f4f86cefa7e42eae"},  /* the weapon group keys' handler */
+    {UIREP_NUM_ORDERS,0xae,"3986c71ab2b808b44a27f37c0e7ff3338b09f6a8057187ba5ea8c4a9eb133bd6"},  /* GetNumOrders: the queue's length (+0x4b0) */
 };
 #define UIREP_PIN_COUNT (sizeof(uirep_pin_table)/sizeof(*uirep_pin_table))
 static int uirep_pins(void) {
@@ -197,9 +299,13 @@ static const char *uirep_op_name(unsigned op) {
     case UIREP_OP_ACTIVITY_STOP:return "activity_stop";
     case UIREP_OP_TARGET_SET:return "target_set";
     case UIREP_OP_TARGET_CLEAR:return "target_clear";
+    case UIREP_OP_CALL:return "call";
     case UIREP_OP_ORDERS_CLEAR:return "orders_clear";
     case UIREP_OP_ORDERS_CLEAR2:return "orders_clear2";
     case UIREP_OP_LUA_CALL:return "lua_call";
+    case UIREP_OP_QUEUE:return "queue";
+    case UIREP_OP_QUEUE_PARAM:return "queue_param";
+    case UIREP_OP_QUEUE_LIST:return "queue_list_param";
     default:return "?";
     }
 }
@@ -321,16 +427,64 @@ static void uirep_target_clear_stub(unsigned char *component) {
 }
 
 /* ---- orders: the FFI side (Lua runs them, in order with the Lua calls) ---- */
-static uint64_t uirep_orders_clear(uint64_t id,uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e) {
-    if(!uirep_capture_now()) {InterlockedIncrement64(&uirep_passed);return uirep_fn.forward[UIREP_H_CLEAR](id,a,b,c,d,e);}
+static uint64_t uirep_orders_clear(uint64_t id,uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g) {
+    if(!uirep_capture_now()) {InterlockedIncrement64(&uirep_passed);return uirep_fn.forward[UIREP_H_CLEAR](id,a,b,c,d,e,f,g);}
     unsigned char data[UIREP_REF];uirep_put_ref(data,id);
     return (uint64_t)uirep_push(UIREP_OP_ORDERS_CLEAR,data,sizeof(data));
 }
-static uint64_t uirep_orders_clear2(uint64_t id,uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e) {
-    if(!uirep_capture_now()) {InterlockedIncrement64(&uirep_passed);return uirep_fn.forward[UIREP_H_CLEAR2](id,a,b,c,d,e);}
+static uint64_t uirep_orders_clear2(uint64_t id,uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g) {
+    if(!uirep_capture_now()) {InterlockedIncrement64(&uirep_passed);return uirep_fn.forward[UIREP_H_CLEAR2](id,a,b,c,d,e,f,g);}
     unsigned char data[UIREP_REF+1];uirep_put_ref(data,id);
     data[UIREP_REF]=(unsigned char)(((a&0xff)!=0)|(((b&0xff)!=0)<<1));
     return (uint64_t)uirep_push(UIREP_OP_ORDERS_CLEAR2,data,sizeof(data));
+}
+/* ---- generic calls ---- */
+static unsigned char *uirep_component(uint64_t runtime);
+static uint64_t uirep_forward(unsigned hook,const uint64_t a[UIREP_ARGS]) {
+    return uirep_fn.forward[hook](a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7]);
+}
+static uint64_t uirep_call(unsigned hook,uint64_t a[UIREP_ARGS]) {
+    const uirep_call_spec *c=uirep_spec_of(hook);
+    if(!c || !uirep_capture_now()) {InterlockedIncrement64(&uirep_passed);return uirep_forward(hook,a);}
+    int k=uirep_spec_checkonly(c->spec);
+    if(k>=0 && (a[k]&0xffu)) return uirep_forward(hook,a);   /* a query changes nothing */
+    unsigned char data[UIREP_EVENT_MAX];unsigned n=0;const char *why=NULL;
+    data[n++]=(unsigned char)hook;
+    for(unsigned i=0;c->spec[i] && !why;i++) {
+        switch(c->spec[i]) {
+        case 'P': if((unsigned char*)(uintptr_t)a[i]!=pnat_player()) why="not_the_player";break;
+        case 'C': {
+            uint64_t id=a[i]?uirep_component_id((const unsigned char*)(uintptr_t)a[i]):0;
+            if(!id || !uirep_check_of(id)) why="unmapped";else {uirep_put_ref(data+n,id);n+=UIREP_REF;}
+            break;
+        }
+        case 'I': if(!a[i] || !uirep_component(a[i]) || !uirep_check_of(a[i])) why="unmapped";else {uirep_put_ref(data+n,a[i]);n+=UIREP_REF;} break;
+        case 'b': data[n++]=(unsigned char)a[i];break;
+        case 'w': for(unsigned b=0;b<4;b++) data[n++]=(unsigned char)(a[i]>>(8*b));break;
+        case 'V': if(!a[i] || !read_local((const void*)(uintptr_t)a[i],data+n,16)) why="vector";else n+=16;break;
+        case 's': {
+            const char *s=(const char*)(uintptr_t)a[i];size_t len=s?strnlen(s,UIREP_STRING_MAX+1):0;
+            if(!s || len>UIREP_STRING_MAX) why="string";else {data[n++]=(unsigned char)len;memcpy(data+n,s,len);n+=(unsigned)len;}
+            break;
+        }
+        default:break;   /* k, - */
+        }
+    }
+    if(why) {uirep_note_refusal(uirep_hooks[hook].name,why);return 0;}
+    if(!uirep_push(UIREP_OP_CALL,data,n)) return 0;
+    if(c->returns==UIREP_RET_PREDICT && k>=0) {a[k]=1;return uirep_forward(hook,a);}
+    return 1;
+}
+/* The bytes a call's arguments take on the wire; 0 = not a valid call. */
+static unsigned uirep_call_length(const uirep_call_spec *c,const unsigned char *data,unsigned n) {
+    unsigned at=1;
+    for(unsigned i=0;c->spec[i];i++) {
+        unsigned need=c->spec[i]=='C' || c->spec[i]=='I'?UIREP_REF:c->spec[i]=='b'?1:c->spec[i]=='w'?4:c->spec[i]=='V'?16:0;
+        if(c->spec[i]=='s') {if(at>=n || data[at]>UIREP_STRING_MAX) return 0;need=1u+data[at];}
+        if(need>n-at) return 0;
+        at+=need;
+    }
+    return at;
 }
 static void uirep_ui_move(void *self) {
     InterlockedIncrement(&uirep_ui_depth);
@@ -359,6 +513,17 @@ static int uirep_event_ok(unsigned slot,unsigned op,const unsigned char *data,un
     case UIREP_OP_LUA_CALL:
         if(!(uirep_families&UIREP_FAMILY_ORDERS) || !n) {*why="ui_orders";return 0;}
         return 1;
+    case UIREP_OP_QUEUE:
+        if(!(uirep_families&UIREP_FAMILY_QUEUE) || !n || uirep_queue_length(data,n)!=n) {*why="ui_queue";return 0;}
+        return 1;
+    case UIREP_OP_QUEUE_PARAM:case UIREP_OP_QUEUE_LIST:
+        if(!(uirep_families&UIREP_FAMILY_QUEUE) || !n) {*why="ui_queue";return 0;}
+        return 1;
+    case UIREP_OP_CALL: {
+        const uirep_call_spec *c=n && data[0]<UIREP_HOOKS?uirep_spec_of(data[0]):NULL;
+        if(!c || !(uirep_families&uirep_hooks[data[0]].family) || uirep_call_length(c,data,n)!=n) {*why="ui_call";return 0;}
+        return 1;
+    }
     default:*why="ui_op";return 0;
     }
 }
@@ -447,6 +612,30 @@ static int uirep_run_native(unsigned slot,unsigned op,const unsigned char *data,
         uirep_set_hint(hint);
         break;
     }
+    case UIREP_OP_CALL: {
+        const uirep_call_spec *c=uirep_spec_of(data[0]);uint64_t a[UIREP_ARGS]={0};
+        static __attribute__((aligned(16))) unsigned char vectors[UIREP_ARGS][16];static char strings[UIREP_ARGS][UIREP_STRING_MAX+1];
+        unsigned at=1;
+        for(unsigned i=0;c->spec[i];i++) {
+            switch(c->spec[i]) {
+            case 'P': a[i]=(uint64_t)(uintptr_t)pnat_player();break;
+            case 'C':case 'I': {
+                int resolved=uirep_resolve(data+at,&runtime,&component);at+=UIREP_REF;
+                if(resolved<0) {*why="ui_ref_mismatch";return 0;}
+                if(!resolved) {InterlockedIncrement64(&uirep_stale);InterlockedIncrement64(&uirep_applied_native);return 1;}
+                a[i]=c->spec[i]=='C'?(uint64_t)(uintptr_t)component:runtime;
+                break;
+            }
+            case 'b': a[i]=data[at++];break;
+            case 'w': {uint32_t w=0;for(unsigned b=0;b<4;b++) w|=(uint32_t)data[at+b]<<(8*b);at+=4;a[i]=w;break;}
+            case 'V': memcpy(vectors[i],data+at,16);at+=16;a[i]=(uint64_t)(uintptr_t)vectors[i];break;
+            case 's': {unsigned len=data[at++];memcpy(strings[i],data+at,len);strings[i][len]=0;at+=len;a[i]=(uint64_t)(uintptr_t)strings[i];break;}
+            default:a[i]=0;break;
+            }
+        }
+        uirep_forward(data[0],a);InterlockedIncrement64(&uirep_calls_applied);
+        break;
+    }
     default:break;
     }
     InterlockedIncrement64(&uirep_applied_native);return 1;
@@ -459,6 +648,136 @@ static int uirep_run_section(unsigned slot,const uirep_staged *e,const char **wh
         at+=2u+length;
     }
     return 1;
+}
+/* ---- the queue editor (family queue) ----
+ * The map's order rows: FFI CreateOrder/CreateOrder2/CreateOrder3 (one function), CreateDeployToStationOrder,
+ * EnableOrder, AdjustOrder, RemoveOrder/RemoveOrder2, ResetOrder, Enable/RemovePlannedDefaultOrder, SetOrderLoop,
+ * SetCurrentLoopOrder (hooked here) and Lua SetOrderParam / RemoveOrderListParam (wrapped by the Lua core): Lua-run
+ * events, applied in call order in the probe's frame on every client, the capturing one included and not earlier.
+ * A create answers at once with what the menu goes on with: the index the order will have, predicted as the queue's
+ * length (GetNumOrders) + 1 + this client's creates on that queue still in flight. Its apply records the index X4 gave
+ * (an alias); the slot's later events that were captured before it applied (their seen count of the slot's applied
+ * creates is lower than its number) take the real index for the predicted one. Every client derives the same aliases
+ * from the same events: a prediction that misses moves where an edit lands, never whether the clients agree. The
+ * cost: the capturing menu sees its own edit after the delay, and a read-back in the same frame (GetNumOrders,
+ * GetPlannedDefaultOrder) still sees the queue before it. */
+#define UIREP_Q_ALIASES 32u
+#define UIREP_Q_PENDING 32u
+typedef struct {unsigned slot;uint64_t ctl;uint32_t predicted,real,seq;} uirep_q_alias;
+static uirep_q_alias uirep_q_aliases[UIREP_Q_ALIASES];
+static unsigned uirep_q_alias_count;
+static uint64_t uirep_q_pending_ctl[UIREP_Q_PENDING];
+static uint32_t uirep_q_pending_seq[UIREP_Q_PENDING],uirep_q_captured_creates,uirep_q_applied[PILOT_SLOTS];
+static volatile LONG64 uirep_q_captured,uirep_q_calls,uirep_q_mapped,uirep_q_moved,uirep_q_creates,uirep_q_skipped;
+static uint32_t (*uirep_num_orders_override)(uint64_t); /* tests */
+static void uirep_queue_reset(void) {
+    memset(uirep_q_aliases,0,sizeof(uirep_q_aliases));uirep_q_alias_count=0;memset(uirep_q_pending_ctl,0,sizeof(uirep_q_pending_ctl));
+    memset(uirep_q_pending_seq,0,sizeof(uirep_q_pending_seq));uirep_q_captured_creates=0;memset(uirep_q_applied,0,sizeof(uirep_q_applied));
+    uirep_q_captured=uirep_q_calls=uirep_q_mapped=uirep_q_moved=uirep_q_creates=uirep_q_skipped=0;
+}
+static uint32_t uirep_q_own_applied(void) {unsigned s=pstk_capture_slot;return s>=1 && s<=PILOT_SLOTS?uirep_q_applied[s-1]:0;}
+static unsigned uirep_q_pending_of(uint64_t ctl) {
+    unsigned n=0;uint32_t applied=uirep_q_own_applied();
+    for(unsigned i=0;i<UIREP_Q_PENDING;i++) if(uirep_q_pending_ctl[i]==ctl && uirep_q_pending_seq[i]>applied) ++n;
+    return n;
+}
+static int uirep_slot_ship(uint64_t runtime) {
+    unsigned char *object=runtime?uirep_component(runtime):NULL;
+    for(unsigned i=0;object && i<pilot_slot_count && i<PILOT_SLOTS;i++) if(pilot_slots[i].object==object) return 1;
+    return 0;
+}
+static uint32_t uirep_num_orders(uint64_t ctl) {
+    return uirep_num_orders_override?uirep_num_orders_override(ctl):((uint32_t(*)(uint64_t))(void*)(pnat_base+UIREP_NUM_ORDERS))(ctl);
+}
+/* The index an event of this slot meant: the real one of a create it could not have seen applied. */
+static uint32_t uirep_q_map(unsigned slot,uint64_t ctl,uint32_t index,uint32_t seen) {
+    for(unsigned i=uirep_q_alias_count;i-->0 && uirep_q_alias_count-i<=UIREP_Q_ALIASES;) {
+        const uirep_q_alias *a=&uirep_q_aliases[i%UIREP_Q_ALIASES];
+        if(a->slot==slot && a->ctl==ctl && a->predicted==index && seen<a->seq) {
+            if(a->real!=index) InterlockedIncrement64(&uirep_q_mapped);
+            return a->real;
+        }
+    }
+    return index;
+}
+static uint64_t uirep_queue_call(unsigned hook,uint64_t a[UIREP_ARGS]) {
+    const uirep_call_spec *c=uirep_queue_spec_of(hook);
+    if(!c || !uirep_capture_now()) {InterlockedIncrement64(&uirep_passed);return uirep_forward(hook,a);}
+    int k=uirep_spec_checkonly(c->spec);
+    if(k>=0 && (a[k]&0xffu)) return uirep_forward(hook,a);   /* a query changes nothing */
+    unsigned char data[UIREP_EVENT_MAX];unsigned n=0;const char *why=NULL;uint32_t seen=uirep_q_own_applied(),predicted=0;
+    data[n++]=(unsigned char)hook;data[n++]=(unsigned char)seen;data[n++]=(unsigned char)(seen>>8);
+    for(unsigned i=0;c->spec[i] && !why;i++) {
+        switch(c->spec[i]) {
+        case 'I':
+            if(!a[i] || !uirep_component(a[i]) || !uirep_check_of(a[i])) why="unmapped";
+            else if(uirep_slot_ship(a[i])) why="slot_ship";   /* a PlayerController flies it: no queue (the Lua side alike) */
+            else {uirep_put_ref(data+n,a[i]);n+=UIREP_REF;}
+            break;
+        case 'q': if(a[i]>0xffffffffu) why="index";else for(unsigned b=0;b<4;b++) data[n++]=(unsigned char)(a[i]>>(8*b));break;
+        case 'b': data[n++]=(unsigned char)a[i];break;
+        case 's': {
+            const char *s=(const char*)(uintptr_t)a[i];size_t len=s?strnlen(s,UIREP_STRING_MAX+1):0;
+            if(!s || len>UIREP_STRING_MAX) why="string";else {data[n++]=(unsigned char)len;memcpy(data+n,s,len);n+=(unsigned)len;}
+            break;
+        }
+        default:break;   /* k */
+        }
+    }
+    if(seen>0xffffu) why="seen";
+    if(!why && c->returns==UIREP_RET_ORDER) {
+        int planned_default=hook==UIREP_H_CREATE3 && (a[2]&0xffu);   /* the planned default order is not in the queue: 0 */
+        predicted=planned_default?0:uirep_num_orders(a[0])+1u+uirep_q_pending_of(a[0]);
+        for(unsigned b=0;b<4;b++) data[n++]=(unsigned char)(predicted>>(8*b));
+    }
+    if(why) {uirep_note_refusal(uirep_hooks[hook].name,why);return 0;}
+    if(!uirep_push(UIREP_OP_QUEUE,data,n)) return 0;
+    InterlockedIncrement64(&uirep_q_captured);
+    if(c->returns==UIREP_RET_ORDER) {
+        if(predicted) {uint32_t seq=++uirep_q_captured_creates;uirep_q_pending_ctl[seq%UIREP_Q_PENDING]=a[0];uirep_q_pending_seq[seq%UIREP_Q_PENDING]=seq;}
+        return predicted;
+    }
+    if(c->returns==UIREP_RET_PREDICT && k>=0) {a[k]=1;return uirep_forward(hook,a);}
+    return c->returns==UIREP_RET_ONE;
+}
+/* One queue event of slot `slot` (the probe's frame, every client): 1 = X4 ran it (its answer in what), 0 = nothing ran,
+ * the same everywhere (the controllable is gone or a slot ship), -1 = stop (decode, references differ). */
+static int uirep_queue_run(unsigned slot,const unsigned char *data,unsigned n,char *what,size_t capacity) {
+    const uirep_call_spec *c=n?uirep_queue_spec_of(data[0]):NULL;uint64_t a[UIREP_ARGS]={0},ctl=0;
+    static char strings[UIREP_ARGS][UIREP_STRING_MAX+1];
+    if(!c || slot<1 || slot>PILOT_SLOTS || uirep_queue_length(data,n)!=n) {snprintf(what,capacity,"decode");return -1;}
+    uint32_t seen=data[1]|(uint32_t)data[2]<<8,predicted=0;unsigned at=3;int gone=0;
+    for(unsigned i=0;c->spec[i];i++) {
+        switch(c->spec[i]) {
+        case 'I': {
+            uint64_t runtime=0;unsigned char *component=NULL;int resolved=uirep_resolve(data+at,&runtime,&component);at+=UIREP_REF;
+            if(resolved<0) {snprintf(what,capacity,"ref_mismatch");return -1;}
+            if(!resolved) gone=1;
+            a[i]=runtime;if(!i) ctl=runtime;
+            break;
+        }
+        case 'q': {uint32_t w=0;for(unsigned b=0;b<4;b++) w|=(uint32_t)data[at+b]<<(8*b);at+=4;a[i]=uirep_q_map(slot,ctl,w,seen);break;}
+        case 'b': a[i]=data[at++];break;
+        case 's': {unsigned len=data[at++];memcpy(strings[i],data+at,len);strings[i][len]=0;at+=len;a[i]=(uint64_t)(uintptr_t)strings[i];break;}
+        default:a[i]=0;break;   /* k: the call itself */
+        }
+    }
+    if(c->returns==UIREP_RET_ORDER) for(unsigned b=0;b<4;b++) predicted|=(uint32_t)data[at+b]<<(8*b);
+    const char *name=uirep_hooks[data[0]].name;uint64_t result=0;
+    if(!gone && uirep_slot_ship(ctl)) {gone=2;}
+    if(!gone) {result=uirep_forward(data[0],a);InterlockedIncrement64(&uirep_q_calls);}
+    else InterlockedIncrement64(&uirep_q_skipped);
+    if(c->returns==UIREP_RET_ORDER && predicted) {   /* numbered on every client alike, whether it ran or not */
+        uirep_q_alias *al=&uirep_q_aliases[uirep_q_alias_count++%UIREP_Q_ALIASES];
+        al->slot=slot;al->ctl=ctl;al->predicted=predicted;al->real=gone?0:(uint32_t)result;al->seq=++uirep_q_applied[slot-1];
+        InterlockedIncrement64(&uirep_q_creates);
+        if(al->real!=predicted) InterlockedIncrement64(&uirep_q_moved);
+    }
+    if(gone) snprintf(what,capacity,"%s %s",name,gone==2?"slot_ship":"gone");
+    else if(c->returns==UIREP_RET_VOID) snprintf(what,capacity,"%s",name);
+    else if(c->returns==UIREP_RET_ORDER) snprintf(what,capacity,"%s=%u/%u",name,(unsigned)(uint32_t)result,(unsigned)predicted);
+    else snprintf(what,capacity,"%s=%u",name,(unsigned)(result&0xffu));
+    return gone?0:1;
 }
 static int uirep_has_native(const uirep_staged *e) {
     unsigned count=e->bytes[3],at=UIREP_HEAD;
@@ -519,6 +838,18 @@ static void uirep_result(uint64_t tick,int ok) {
     unsigned char b=(unsigned char)(ok!=0);uirep_results_hash=pstk_fnv(&b,1,uirep_results_hash^UIREP_DOMAIN);
     if(!ok) InterlockedIncrement64(&uirep_lua_errors);
 }
+/* An image region's bytes in slot k's store (the slot's own values while no scope is open). */
+static int uirep_store_read(const pslot_slot *s,unsigned rva,void *out,unsigned size) {
+    unsigned n=0;
+    if(!s->length) return 0;
+    for(unsigned i=0;i<VPL_REGION_COUNT;i++) {
+        const vpl_region *r=&vpl_regions[i];
+        if(r->base!=VPL_BASE_IMAGE || !(PSLOT_CLASSES>>r->cls&1u)) continue;
+        if(rva>=r->offset && rva+size<=r->offset+r->size) {memcpy(out,s->store+n+(rva-r->offset),size);return 1;}
+        n+=r->size;
+    }
+    return 0;
+}
 static int uirep_frame_text(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"PUIREP_1:%llu:%u:%016llx:%016llx",(unsigned long long)uirep_frame_tick,uirep_frame_events,(unsigned long long)uirep_frame_hash,
         (unsigned long long)(uirep_results_tick==uirep_frame_tick?uirep_results_hash:0));
@@ -527,6 +858,14 @@ static int uirep_frame_text(char *out,size_t capacity) {
         if(player) {read_local(player+UIREP_PLAYER_ACTIVITY,&activity,4);read_local(player+PRES_TARGET,&target,8);}
         if(target && !uirep_component(target)) target=0;   /* dead: 9fcd70 clears it when someone asks, which is not simulation */
         int more=snprintf(out+n,capacity-(size_t)n,"%s%d/%llx",k==1?"|":",",activity,(unsigned long long)target);
+        if(more<0) return 0;
+        n+=more;
+        if(!(uirep_families&(UIREP_FAMILY_AUTOPILOT|UIREP_FAMILY_DOCK|UIREP_FAMILY_WEAPONS))) continue;
+        /* autopilot on (the bank's target, slot 1 live, slot k in its store), active primary/secondary group of the ship */
+        uint64_t autopilot=0;int32_t groups[2]={-2,-2};const unsigned char *ship=pilot_slots[k-1].resolved?pilot_slots[k-1].object:NULL;
+        if(k==1) read_local(pnat_base+UIREP_AUTOPILOT,&autopilot,8);else uirep_store_read(&pslots[k],UIREP_AUTOPILOT,&autopilot,8);
+        if(ship) read_local(ship+UIREP_GROUP_PRIMARY,groups,8);
+        more=snprintf(out+n,capacity-(size_t)n,"/%d/%d.%d",autopilot!=0,groups[0],groups[1]);
         if(more<0) return 0;
         n+=more;
     }
@@ -600,7 +939,7 @@ static int uirep_install(void) {
     if(!uirep_fn.ui_move) uirep_fn.ui_move=(void(*)(void*))uirep_stride(UIREP_H_UI);
     if(!uirep_fn.start) uirep_fn.start=(uirep_activity_fn)uirep_stride(UIREP_H_START);
     if(!uirep_fn.stop) uirep_fn.stop=(uirep_activity_fn)uirep_stride(UIREP_H_STOP);
-    for(unsigned i=UIREP_H_CLEAR;i<UIREP_HOOKS;i++) if(!uirep_fn.forward[i]) uirep_fn.forward[i]=(uirep_forward_fn)uirep_stride(i);
+    for(unsigned i=UIREP_H_CLEAR;i<UIREP_HOOKS;i++) if(!uirep_fn.forward[i]) uirep_fn.forward[i]=(uirep_forward_fn)uirep_stride(i); /* guards and calls */
     for(unsigned i=0;i<UIREP_HOOKS;i++) {
         int32_t rel=(int32_t)((intptr_t)(uirep_stride(i)+UIREP_STUB)-(intptr_t)(pnat_base+uirep_hooks[i].rva+5));
         uirep_patched[i][0]=0xe9;memcpy(uirep_patched[i]+1,&rel,4);
@@ -636,6 +975,7 @@ static int uirep_pass(uint64_t tick) {
     }
     if(!uirep_installed) {
         if(rid_mode!=RID_SET) return uirep_fail("ui_runtime_ids"); /* set right before the load, after the arming */
+        if((uirep_families&UIREP_FAMILY_MISSILES) && !pfire_armed) return uirep_fail("ui_missiles_need_fire"); /* the launchers: pilot fire */
         if(!uirep_install()) return uirep_fail("ui_install");
         uirep_stage_name="live";return 1;
     }
@@ -651,15 +991,18 @@ static void uirep_restore(void) {
 /* Arming (Lua, before the first admitted tick, after gate.pilot_stock and gate.pilot_present). */
 static const char *uirep_arm_why="-";
 static int uirep_refuse(const char *why) {uirep_arm_why=why;return 0;}
+static const unsigned char *uirep_slot_player(unsigned slot) {return slot==1?pnat_player():slot<=PILOT_SLOTS?pslots[slot].player:NULL;}
 static int uirep_arm_using(unsigned families) {
     if(uirep_armed) return uirep_families==families?1:uirep_refuse("rerun");
     if(!families || (families&~UIREP_FAMILIES)) return uirep_refuse("families");
+    /* Missiles fly at the slot's soft target: only the target family makes it the same on every client. */
+    if((families&UIREP_FAMILY_MISSILES) && !(families&UIREP_FAMILY_TARGET)) return uirep_refuse("missiles_need_target");
     if(!pnat_armed || pnat_mode!=PNAT_MODE_STOCK || !pstk_capturing) return uirep_refuse("needs_stock");
     if(pilot_slot_count<1 || pstk_slot_mask!=(1u<<pilot_slot_count)-1u || (pilot_slot_count>=2 && !pslot_armed)) return uirep_refuse("needs_all_stock_slots");
     if(!pres_armed) return uirep_refuse("needs_present");
     uirep_families=families;uirep_failed=0;uirep_stopped=0;uirep_stage_name="armed";uirep_why="-";uirep_restored=1;uirep_installed=0;uirep_arm_why="-";
     memset(uirep_ring,0,sizeof(uirep_ring));uirep_queue_head=uirep_queue_count=0;uirep_refusal_head=uirep_refusal_tail=0;
-    uirep_frame_tick=uirep_results_tick=0;
+    uirep_frame_tick=uirep_results_tick=0;uirep_queue_reset();
     uirep_armed=1;return 1;
 }
 static int uirep_arm(unsigned families) {
@@ -682,9 +1025,12 @@ static int uirep_refusals_text(char *out,size_t capacity) {
 }
 static int uirep_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"ui_replay=%s why=%s families=%x installed=%d restored=%d captured=%lld refused=%lld guard=%lld taken=%lld waits=%lld queued=%u staged=%lld "
-        "native=%lld lua=%lld lua_errors=%lld stale=%lld passed=%lld target_passed=%lld scope=%lld/%lld/%lld nested=%lld unavailable=%lld",uirep_stage_name,uirep_why,uirep_families,uirep_installed,uirep_restored,
+        "native=%lld calls=%lld lua=%lld lua_errors=%lld stale=%lld passed=%lld target_passed=%lld scope=%lld/%lld/%lld nested=%lld unavailable=%lld",uirep_stage_name,uirep_why,uirep_families,uirep_installed,uirep_restored,
         (long long)uirep_captured,(long long)uirep_refused,(long long)uirep_guard_refused,(long long)uirep_taken,(long long)uirep_waits,uirep_queue_count,(long long)uirep_staged_count,
-        (long long)uirep_applied_native,(long long)uirep_applied_lua,(long long)uirep_lua_errors,(long long)uirep_stale,(long long)uirep_passed,(long long)uirep_target_passed,
+        (long long)uirep_applied_native,(long long)uirep_calls_applied,(long long)uirep_applied_lua,(long long)uirep_lua_errors,(long long)uirep_stale,(long long)uirep_passed,(long long)uirep_target_passed,
         (long long)uirep_scope_start,(long long)uirep_scope_stop,(long long)uirep_scope_refused,(long long)uirep_scope_nested,(long long)uirep_unavailable);
+    if(n>0 && (size_t)n<capacity && (uirep_families&UIREP_FAMILY_QUEUE))
+        n+=snprintf(out+n,capacity-(size_t)n," queue=%lld/%lld/%lld creates=%lld mapped=%lld moved=%lld",(long long)uirep_q_captured,(long long)uirep_q_calls,
+            (long long)uirep_q_skipped,(long long)uirep_q_creates,(long long)uirep_q_mapped,(long long)uirep_q_moved);
     return n>0 && (size_t)n<capacity?n:0;
 }

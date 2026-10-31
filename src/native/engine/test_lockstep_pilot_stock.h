@@ -80,7 +80,7 @@ static void test_pstk_codec(void) {
     /* Refusals: version, flags, count/length, id, values, SPACE id, non-replay id, cursor and aim bits without their flag. */
     unsigned char c[PSTK_BYTES_MAX];
     memcpy(c,b,n);c[0]=2;assert(!pstk_decode(c,n,&d));
-    memcpy(c,b,n);c[1]=32;assert(!pstk_decode(c,n,&d));
+    memcpy(c,b,n);c[1]=64;assert(!pstk_decode(c,n,&d));
     memcpy(c,b,n);assert(!pstk_decode(c,n-1,&d));c[42]=32;assert(!pstk_decode(c,n,&d));
     memcpy(c,b,n);c[43]=0x00;c[44]=0x42;assert(!pstk_decode(c,n,&d));                 /* state id 512 */
     memcpy(c,b,n);c[45]=2;assert(!pstk_decode(c,n,&d));                                 /* state value 2 */

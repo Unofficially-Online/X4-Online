@@ -95,7 +95,8 @@ static const void *pdeath_player;
 #define PDEATH_HULL 0x280u               /* Destructible hull, double */
 #define PDEATH_HULL_EPSILON 1e-07        /* 518210's test for a hull at zero */
 /* UI replay (lockstep_ui_replay.h, stop reason 164): what the piloting path needs to know of it. */
-enum {UIREP_FAMILY_TRAVEL=1,UIREP_FAMILY_TARGET=2,UIREP_FAMILY_ORDERS=4,UIREP_FAMILIES=7};
+enum {UIREP_FAMILY_TRAVEL=1,UIREP_FAMILY_TARGET=2,UIREP_FAMILY_ORDERS=4,UIREP_FAMILY_AUTOPILOT=8,UIREP_FAMILY_DOCK=16,UIREP_FAMILY_WEAPONS=32,
+    UIREP_FAMILY_MISSILES=64,UIREP_FAMILY_QUEUE=128,UIREP_FAMILIES=255};  /* the implemented ones */
 static int uirep_armed,uirep_failed;
 static unsigned uirep_families;
 static volatile LONG uirep_ui_depth,uirep_dispatch_depth;  /* inside slot 6 / the slot 4 dispatch of presentation ids */

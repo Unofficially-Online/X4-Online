@@ -527,7 +527,15 @@ static void test_pilot_slots(void) {
     assert(pstk_capture(8,rec,&length,&why) && !(rec[1]&PSTK_FLAG_AIM) && (rec[1]&PSTK_FLAG_VIEW) && pstk_aim_samples==samples &&
            pstk_aim_sample_failures==failures);  /* aim is slot 1's only */
     assert(rec[1]&PSTK_FLAG_FIRE);
-    pnat_dispatch_state(map,0x18,0);assert(!(pnat_fire_buttons()&1));pfire_armed=0;
+    pnat_dispatch_state(map,0x18,0);assert(!(pnat_fire_buttons()&1));
+    /* The secondary trigger rides the record only with the missile family (held with the focus, or scripted). */
+    {   unsigned saved_families=uirep_families;pnat_dispatch_state(map,0x19,1);assert(pnat_fire_buttons()&4);
+        uirep_families=0;assert(!pstk_fire2_held());
+        uirep_families=UIREP_FAMILY_MISSILES|UIREP_FAMILY_TARGET;assert(pstk_fire2_held());
+        pfire_armed=0;assert(!pstk_fire2_held());pfire_armed=1;
+        pnat_dispatch_state(map,0x19,0);assert(!(pnat_fire_buttons()&4) && !pstk_fire2_held());
+        pstk_fire2_scripted=1;assert(pstk_fire2_held());pstk_fire2_scripted=0;uirep_families=saved_families;}
+    pfire_armed=0;
     /* Staging: slot 2's record from client 2 (echo checked), slot 1's from client 1; a slot-2 record
      * with travel and a slot outside the stock set are refused. */
     pstk_record r1;memset(&r1,0,sizeof(r1));r1.capture16=8;r1.count=1;r1.events[0]=(pstk_event){PSTK_STATE,0xd,1};

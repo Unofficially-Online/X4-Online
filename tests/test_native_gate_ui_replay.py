@@ -121,7 +121,7 @@ def values(table):
 class CodecTests(unittest.TestCase):
     def test_families(self):
         lua, _ = client()
-        cases = {'true': 7, "{'travel'}": 1, "{'target','orders'}": 6, "{'travel','target','orders'}": 7}
+        cases = {'true': 63, "{'travel'}": 1, "{'target','orders'}": 6, "{'travel','target','orders'}": 7, "{'autopilot','dock','weapons'}": 56, "{'target','missiles'}": 66, "{'orders','queue'}": 132}
         for text, mask in cases.items():
             self.assertEqual(lua.eval(f'X4LAN_UI_REPLAY_CORE.families({text})'), mask, text)
         for text in ('false', '{}', "{'seta'}", "{'travel','travel'}", "'travel'"):
@@ -251,6 +251,51 @@ class SessionTests(unittest.TestCase):
         lua.execute('S.replaying=true;env.SetOrderParam(1,2,3);env.CreateOrder(make_id("100"));S.replaying=false')
         self.assertEqual(len(values(g.stock_calls)), 2)
 
+    def test_the_queue_family_captures_parameters_and_maps_their_index_at_apply(self):
+        lua, g = client()
+        lua.execute('''
+          env.SetOrderParam=function(id,idx,param,list,value)
+            stock_calls[#stock_calls+1]='SetOrderParam:'..tostring(ids[id])..':'..idx..':'..param..':'..tostring(list)..':'..tostring(value);return true end
+          gate.ui_replay_queue_seen=function() return 2 end
+          gate.ui_replay_queue_index=function(slot,ctl,idx,seen) mapped=slot..'/'..ctl..'/'..idx..'/'..seen;return idx==5 and 7 or idx end
+          gate.ui_replay_queue_run=function(slot,hex) stock_calls[#stock_calls+1]='queue_run:'..slot..':'..hex;return 1,'EnableOrder=1' end
+          S=new_session({mask=4+128})
+          env.SetOrderParam(make_id('100'),5,1,nil,true)
+          SLOT_SHIPS['200']=2;env.SetOrderParam(make_id('200'),5,1,nil,true);SLOT_SHIPS={}
+        ''')
+        self.assertEqual(values(g.stock_calls), [])   # nothing runs at capture
+        pushed = values(g.pushed)
+        self.assertEqual(len(pushed), 1)
+        self.assertEqual(pushed[0][1], 0x45)
+        self.assertTrue(any('what=SetOrderParam why=slot_ship' in l for l in values(g.logs)))
+        lua.execute(f"DUE={{[50]='2:69:{pushed[0][2]};2:68:ab01'}};S.apply(50)")
+        self.assertEqual(values(g.stock_calls), ['SetOrderParam:100:7:1:nil:true', 'queue_run:2:ab01'])
+        self.assertEqual(g.mapped, '2/100/5/2')
+        self.assertEqual(values(g.results), ['50:1', '50:1'])
+        self.assertTrue(any('result=applied what=SetOrderParam@7' in l for l in values(g.logs)))
+        self.assertTrue(any('result=applied what=EnableOrder=1' in l for l in values(g.logs)))
+        self.assertIsNone(g.FAILED)
+        self.assertTrue(g.S.unblocked['MapMenu.buttonNewOrder'])
+        self.assertIsNone(g.S.unblocked['MapMenu.buttonDefaultOrderConfirm'])
+
+    def test_queue_script_ops_call_the_entries_as_the_map_rows_do(self):
+        lua, g = client()
+        lua.execute('''
+          gate.ui_replay_queue_seen=function() return 0 end
+          C.CreateOrder=function(id,def,default) stock_calls[#stock_calls+1]='CreateOrder:'..tostring(id)..':'..def..':'..tostring(default);return 4 end
+          C.EnableOrder=function(id,idx) stock_calls[#stock_calls+1]='EnableOrder:'..tostring(id)..':'..idx;return true end
+          C.AdjustOrder=function(id,a,b,c,d,e) stock_calls[#stock_calls+1]='AdjustOrder:'..tostring(id)..':'..a..':'..b..':'..tostring(c)..':'..tostring(d)..':'..tostring(e);return true end
+          C.RemoveOrder=function(id,a,b,c) stock_calls[#stock_calls+1]='RemoveOrder:'..tostring(id)..':'..a..':'..tostring(b)..':'..tostring(c);return true end
+          plan={{0,'q_move','F','S',1,2,3},{1,'q_wait','F'},{2,'q_adjust','F',2,1},{3,'q_remove','F',1}}
+          tools={gate=gate,C=C,env=env,own_slot=1,saved_id=function(s) return 7ULL end,saved_lua=function(s) return make_id(s=='F' and '100' or '300') end}
+          S=new_session({mask=4+128,script=X4LAN_UI_REPLAY_CORE.script(plan,40,tools)})
+          for t=40,44 do S.frame(t) end
+        ''')
+        self.assertEqual(values(g.stock_calls), ['CreateOrder:7ULL:MoveWait:false', 'EnableOrder:7ULL:4', 'CreateOrder:7ULL:Wait:false',
+                                                 'EnableOrder:7ULL:4', 'AdjustOrder:7ULL:2:1:true:false:false', 'RemoveOrder:7ULL:1:false:false'])
+        self.assertEqual([p[1] for p in values(g.pushed)], [0x45])   # the parameter, through the wrapper
+        self.assertTrue(any('UI_REPLAY_SCRIPT tick=40 op=q_move ok=true result=4' in l for l in values(g.logs)))
+
     def test_a_family_off_leaves_the_globals_alone(self):
         lua, g = client()
         lua.execute('before=env.CreateOrder;S=new_session({mask=3});same=before==env.CreateOrder')
@@ -302,6 +347,38 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(any('UI_REPLAY_STATUS tick=720' in l for l in logs))
         with self.assertRaises(Exception):
             lua.execute("X4LAN_UI_REPLAY_CORE.script({{1,'nope'}},40,tools)")
+
+    def test_flight_script_ops_reach_the_stock_entries(self):
+        lua, g = client()
+        lua.execute('''
+          C.ToggleAutoPilot=function(c) stock_calls[#stock_calls+1]='ToggleAutoPilot:'..tostring(c);return true end
+          C.QuickDock=function() stock_calls[#stock_calls+1]='QuickDock';return true end
+          C.RequestDockAt=function(id,c) stock_calls[#stock_calls+1]='RequestDockAt:'..tostring(id)..':'..tostring(c);return true end
+          C.UndockPlayerShip=function(c) stock_calls[#stock_calls+1]='Undock:'..tostring(c);return 'granted' end
+          C.SetDefensibleActiveWeaponGroup=function(id,p,n) stock_calls[#stock_calls+1]='Group:'..tostring(id)..':'..tostring(p)..':'..n end
+          env.StartAutoPilot=function(target) stock_calls[#stock_calls+1]='StartAutoPilot:'..tostring(ids[target]);return true end
+          env.StopAutoPilot=function() stock_calls[#stock_calls+1]='StopAutoPilot' end
+          plan={{0,'ap_to',1},{1,'ap_stop'},{2,'ap_toggle'},{3,'quickdock'},{4,'dock_at','st'},{5,'undock'},{6,'wgroup',1,2},{7,'wkey',140}}
+          tools={gate=gate,C=C,env=env,own_slot=2,slot_id=function(s) return s+1000ULL end,slot_lua=function(s) return make_id(tostring(s+1000)) end,
+            saved_id=function(s) return 7ULL end,saved_lua=function(s) return make_id('100') end}
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script(plan,40,tools)})
+          for t=40,48 do S.frame(t) end
+        ''')
+        self.assertEqual(values(g.stock_calls), ['StartAutoPilot:1001', 'StopAutoPilot', 'ToggleAutoPilot:false', 'QuickDock', 'RequestDockAt:7ULL:false',
+                                                 'Undock:false', 'Group:1002ULL:true:2', 'inject:action/140/0'])
+        logs = values(g.logs)
+        self.assertTrue(any('UI_REPLAY_SCRIPT tick=45 op=undock ok=true result=granted' in l for l in logs))
+
+    def test_the_missile_op_holds_and_releases_the_recorded_trigger(self):
+        lua, g = client()
+        lua.execute('''
+          gate.ui_replay_missile_hold=function(v) stock_calls[#stock_calls+1]='missile:'..v;return 1 end
+          plan={{0,'missile',1},{2,'missile',0}}
+          tools={gate=gate,C=C,env=env,own_slot=1}
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script(plan,40,tools)})
+          for t=40,43 do S.frame(t) end
+        ''')
+        self.assertEqual(values(g.stock_calls), ['missile:1', 'missile:0'])
 
     def test_the_slot_column_is_logged_as_it_changes(self):
         lua, g = client()
@@ -369,9 +446,9 @@ class ProbeTests(unittest.TestCase):
             self.assertEqual(c.errors(), [], c.values('logs')[-3:])
             calls = c.values('ui_calls')
             self.assertEqual(calls[0], 'pins')
-            self.assertIn('arm:7', calls)
+            self.assertIn('arm:63', calls)
             logs = c.values('logs')
-            self.assertTrue(any('UI_REPLAY_ARMED' in line and 'families=7' in line for line in logs))
+            self.assertTrue(any('UI_REPLAY_ARMED' in line and 'families=63' in line for line in logs))
             self.assertTrue(any('INPUT_SECTION ARMED section=ui owner=ui' in line for line in logs))
         # Client 2's UI event rides its blob next to its stock record; every client stages it for slot 2.
         section = '01090001' + '01020100'
@@ -396,6 +473,23 @@ class ProbeTests(unittest.TestCase):
             self.assertTrue(any(f'script={count}' in line and 'UI_REPLAY_ARMED' in line for line in c.values('logs')))
         self.assertEqual(clients[0].values('injected'), [f'{self.stock.WINDOW[0]+7}/action/303/0'])
         self.assertEqual(clients[1].values('injected'), [])
+
+    def test_the_script_tools_pass_one_value_to_the_stock_entries(self):
+        """U6: slot_id handed assert's message to ffi.new as a second initializer, so target_slot and wgroup failed live."""
+        prelude = PROBE_MOCK + '''
+          gate.pilot_ship=function(s) return 1000+s end
+          local ffi=require('ffi')
+          ffi.new=function(t,...) assert(select('#',...)<=1,'too many initializers for '..t);return {t=t,v=...} end
+          ffi.C.SetSofttarget=function(id,s) ui_calls[#ui_calls+1]='soft:'..id.t..':'..id.v;return true end
+        '''
+        cfg = dict(native_gate_pilot_present=True, native_gate_runtime_ids=True, native_gate_ui_replay=['target'],
+                   native_gate_ui_replay_script=[[[7, 'target_slot', 2]], []])
+        clients = [self.stock.StockClient(k, slots_all=True, prelude=prelude, **cfg) for k in (1, 2)]
+        self.stock.run(clients, 13)
+        rows = [line for line in clients[0].values('logs') if 'UI_REPLAY_SCRIPT' in line]
+        self.assertEqual(len(rows), 1)
+        self.assertIn('op=target_slot ok=true', rows[0])
+        self.assertIn('soft:UniverseID:1002', clients[0].values('ui_calls'))
 
     def test_its_rows_are_written_on_ticks_the_status_stride_holds(self):
         clients = self.clients(native_gate_status_stride=1000, native_gate_ui_replay_script=[[[7, 'travel_key']], []])
@@ -503,12 +597,12 @@ def failures(text):
 class OptionTests(unittest.TestCase):
     def test_rules(self):
         self.assertEqual(failures(stock_config()), [])
-        for value in ('true', "{'travel'}", "{'target','orders'}"):
+        for value in ('true', "{'travel'}", "{'target','orders'}", "{'orders','queue'}"):
             self.assertEqual(failures(stock_config(native_gate_ui_replay=value)), [], value)
         for rule, override in (
-                ('native_gate_ui_replay must be true or a list of travel, target, orders', dict(native_gate_ui_replay='1')),
-                ('native_gate_ui_replay must be true or a list of travel, target, orders', dict(native_gate_ui_replay="{'seta'}")),
-                ('native_gate_ui_replay must be true or a list of travel, target, orders', dict(native_gate_ui_replay="{'travel','travel'}")),
+                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue', dict(native_gate_ui_replay='1')),
+                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue', dict(native_gate_ui_replay="{'seta'}")),
+                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue', dict(native_gate_ui_replay="{'travel','travel'}")),
                 ("native_gate_ui_replay needs native_gate_pilot_stock_slots = 'all'", dict(native_gate_ui_replay='true', native_gate_pilot_stock_slots=None)),
                 ("native_gate_ui_replay needs native_gate_pilot_stock_slots = 'all'", dict(native_gate_ui_replay='true', native_gate_pilot_stock=None)),
                 ('native_gate_ui_replay needs native_gate_pilot_present', dict(native_gate_ui_replay='true', native_gate_pilot_present=None)),
@@ -516,7 +610,9 @@ class OptionTests(unittest.TestCase):
                 ('native_gate_ui_replay needs native_gate_runtime_ids in set mode', dict(native_gate_ui_replay='true', native_gate_runtime_ids="'observe'")),
                 ('native_gate_ui_replay needs native_gate_world_identities', dict(native_gate_ui_replay='true', native_gate_world_identities=None)),
                 ('native_gate_ui_replay_script needs native_gate_ui_replay', dict(native_gate_ui_replay_script='{}')),
-                ('native_gate_ui_replay_fleet needs native_gate_ui_replay', dict(native_gate_ui_replay_fleet="{'a'}"))):
+                ('native_gate_ui_replay_fleet needs native_gate_ui_replay', dict(native_gate_ui_replay_fleet="{'a'}")),
+                ('native_gate_ui_replay missiles needs the target family', dict(native_gate_ui_replay="{'missiles'}")),
+                ('native_gate_ui_replay missiles needs native_gate_pilot_fire', dict(native_gate_ui_replay="{'target','missiles'}"))):
             self.assertIn(rule, failures(stock_config(**override)), override)
         self.assertIn('native_gate_ui_replay', (DEV/'check_gate_options.py').read_text(encoding='utf-8'))
         # Reached from the checker's entry point.
@@ -556,9 +652,59 @@ class BuilderTests(unittest.TestCase):
         self.assertIn("'attack','0000000000176a13'", script)
         self.assertIn("'dock','0000000000176a13','00000000000abcde'", script)
 
+    def test_flight_block(self):
+        lines = self.lines('--ui-replay', 'autopilot,dock,weapons', '--ui-replay-script', '--window', '40', '900', '--ui-replay-dock', '00000000000abcde')
+        self.assertIn("X4LAN_CONFIG.native_gate_ui_replay = {'autopilot','dock','weapons'}", lines)
+        script = next(line for line in lines if 'native_gate_ui_replay_script' in line)
+        for row in ("{60,'ap_to',2}", "{180,'ap_toggle'}", "{200,'wkey',140}", "{260,'wgroup',1,1}", "{30,'ap_to',1}", "{150,'ap_stop'}",
+                    "{320,'quickdock'}", "{350,'undock'}", "{380,'dock_at','00000000000abcde'}"):
+            self.assertIn(row, script)
+        self.assertNotIn('travel', script)
+        only = next(line for line in self.lines('--ui-replay', 'autopilot', '--ui-replay-script', '--window', '40', '900') if 'ui_replay_script' in line)
+        self.assertIn("'ap_to'", only)
+        self.assertNotIn("'wkey'", only)
+        self.assertNotIn("'quickdock'", only)
+        with self.assertRaises(ValueError):
+            self.lines('--ui-replay', 'travel,autopilot', '--ui-replay-script', '--window', '40', '900')
+        text = chr(10).join(lines).replace('@X4LANE_CLIENTS@', '2') + chr(10) + 'X4LAN_CONFIG.native_gate_runtime_ids = true' + chr(10) + 'X4LAN_CONFIG.native_gate_world_identities = true' + chr(10)
+        self.assertEqual(failures(text), [])
+
+    def test_missile_block(self):
+        lines = self.lines('--ui-replay', 'target,missiles', '--fire', 'record', '--ui-replay-script', '--window', '40', '900')
+        self.assertIn("X4LAN_CONFIG.native_gate_ui_replay = {'target','missiles'}", lines)
+        script = next(line for line in lines if 'native_gate_ui_replay_script' in line)
+        for row in ("{60,'target_slot',2}", "{120,'missile',1}", "{420,'missile',0}", "{90,'target_slot',1}", "{150,'missile',1}",
+                    "{300,'target_none'}", "{450,'missile',0}"):
+            self.assertIn(row, script)
+        self.assertNotIn("'match'", script)
+        for extra in (['--ui-replay', 'missiles', '--fire', 'record'], ['--ui-replay', 'target,missiles'],
+                      ['--ui-replay', 'travel,target,missiles', '--fire', 'record', '--ui-replay-script', '--window', '40', '900'],
+                      ['--ui-replay', 'target,missiles,weapons', '--fire', 'record', '--ui-replay-script', '--window', '40', '900']):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                self.lines(*extra)
+        text = chr(10).join(lines).replace('@X4LANE_CLIENTS@', '2') + chr(10) + 'X4LAN_CONFIG.native_gate_runtime_ids = true' + chr(10) + 'X4LAN_CONFIG.native_gate_world_identities = true' + chr(10)
+        self.assertFalse([f for f in failures(text) if 'ui_replay' in f['rule']])
+
+    def test_queue_block(self):
+        lines = self.lines('--ui-replay', 'orders,queue', '--ui-replay-fleet', '0000000000176a13', '--ui-replay-script', '--window', '40', '900')
+        self.assertIn("X4LAN_CONFIG.native_gate_ui_replay = {'orders','queue'}", lines)
+        script = next(line for line in lines if 'native_gate_ui_replay_script' in line)
+        for row in ("{500,'clear','0000000000176a13'}", "{501,'q_move','0000000000176a13','0000000000000729',3000,100000,3000}",
+                    "{502,'q_wait','0000000000176a13'}", "{600,'q_adjust','0000000000176a13',2,1}", "{700,'q_remove','0000000000176a13',1}",
+                    "{550,'q_wait','0000000000176a13'}", "{650,'q_remove','0000000000176a13',3}"):
+            self.assertIn(row, script)
+        self.assertNotIn("'attack'", script)
+        self.assertIn("X4LAN_CONFIG.native_gate_ui_replay = {'queue'}", self.lines('--ui-replay', 'queue', '--ui-replay-fleet', '0000000000176a13'))
+        for extra in (['--ui-replay', 'queue', '--ui-replay-script', '--window', '40', '900'],
+                      ['--ui-replay', 'queue', '--ui-replay-fleet', '0000000000176a13', '--ui-replay-script', '--window', '40', '900']):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                self.lines(*extra)
+        text = chr(10).join(lines).replace('@X4LANE_CLIENTS@', '2') + chr(10) + 'X4LAN_CONFIG.native_gate_runtime_ids = true' + chr(10) + 'X4LAN_CONFIG.native_gate_world_identities = true' + chr(10)
+        self.assertEqual(failures(text), [])
+
     def test_refusals(self):
         for extra in (['--ui-replay', 'seta'], ['--ui-replay-script'], ['--ui-replay-fleet', '0000000000176a13'],
-                      ['--ui-replay', '--ui-replay-dock', '00000000000abcde'], ['--ui-replay', 'travel', '--ui-replay-fleet', '0000000000176a13']):
+                      ['--ui-replay', 'travel', '--ui-replay-dock', '00000000000abcde'], ['--ui-replay', 'travel', '--ui-replay-fleet', '0000000000176a13']):
             with self.subTest(extra=extra), self.assertRaises(ValueError):
                 self.lines(*extra)
         args = players.defaults(players.build_parser().parse_args(['config', '--players', '2', '--mode', 'factions', '--source', 'stock', '--present',

@@ -80,7 +80,8 @@ RESPAWN_MD = 'md/native_gate_pilot_respawn.xml'   # native_gate_pilot_respawn: X
 ORDERS_FILES = ('ui/native_gate_player_orders_core.lua', 'ui/native_gate_player_orders.lua')
 MUX_FILES = ('ui/native_gate_inputs_core.lua',)   # protocol 3 input multiplexer (pilot, orders, hit claims)
 UI_REPLAY_FILES = ('ui/native_gate_ui_replay_core.lua',)
-UI_REPLAY_FAMILIES = ('travel', 'target', 'orders')
+UI_REPLAY_FAMILIES = ('travel', 'target', 'orders', 'autopilot', 'dock', 'weapons', 'missiles', 'queue')
+UI_REPLAY_FLIGHT = ('autopilot', 'dock', 'weapons')
 # The scripted run without people, per client, ticks relative to the window start: the J key's record and the FFI
 # entry for travel, target and match speed; slot 1 as well, it takes the same path through its own functions.
 # Travel spans 240..300 ticks: a drive charges for seconds before it engages. Meant for runs without --stock-script: the
@@ -88,7 +89,26 @@ UI_REPLAY_FAMILIES = ('travel', 'target', 'orders')
 UI_REPLAY_DEMO = {1: ((60, 'travel'), (300, 'travel_stop'), (540, 'target_slot', 2), (580, 'match', 1), (680, 'match', 0), (720, 'target_none')),
                   2: ((30, 'travel_key'), (330, 'travel_key'), (360, 'travel'), (600, 'travel_stop'), (605, 'input', 'state', 0xd, 1), (655, 'input', 'state', 0xd, 0),
                       (620, 'target_slot', 1), (690, 'match', 1), (740, 'match', 0), (780, 'target_none'))}
+# The flight families, a run of their own (autopilot and travel would fight): each slot flies to the other on autopilot and
+# stops, selects primary group 2 by its key and group 1 by the FFI, asks to dock and undock (nothing near: X4 refuses on every
+# client alike; with --ui-replay-dock slot 2 asks that station).
+UI_REPLAY_FLIGHT_DEMO = {1: ((60, 'ap_to', 2), (180, 'ap_toggle'), (200, 'wkey', 0x8c), (260, 'wgroup', 1, 1), (300, 'quickdock'), (330, 'undock')),
+                         2: ((30, 'ap_to', 1), (150, 'ap_stop'), (180, 'wkey', 0x8c), (240, 'wgroup', 1, 1), (320, 'quickdock'), (350, 'undock'))}
+# Missiles (--ui-replay target,missiles --fire record|script): each slot targets the other and holds the secondary trigger;
+# its launchers fly at that target. Client 2 drops its target while holding (the launchers stop), client 1 releases.
+UI_REPLAY_MISSILE_DEMO = {1: ((60, 'target_slot', 2), (120, 'missile', 1), (420, 'missile', 0), (480, 'target_none')),
+                          2: ((90, 'target_slot', 1), (150, 'missile', 1), (300, 'target_none'), (450, 'missile', 0))}
+UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'target_slot': 'target', 'target_none': 'target',
+                       'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
+                       'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons'}
 UI_REPLAY_FLEET_ORDERS = 500        # window-relative tick of the scripted orders, client 1's
+# The queue editor (--ui-replay orders,queue --ui-replay-fleet <ship>): both clients edit the fleet ship's queue by
+# index as the map's rows do. Client 1 clears it, adds MoveWait (create + parameter + enable) and Wait in the next two
+# ticks (their indices predicted before the clear applied: mapped), moves Wait to the front, removes it; client 2 adds a
+# Wait and removes it. FLEET and SECTOR stand for the ship and the stock sector.
+UI_REPLAY_QUEUE_DEMO = {1: ((500, 'clear', 'FLEET'), (501, 'q_move', 'FLEET', 'SECTOR', 3000, 100000, 3000), (502, 'q_wait', 'FLEET'),
+                            (600, 'q_adjust', 'FLEET', 2, 1), (700, 'q_remove', 'FLEET', 1)),
+                        2: ((550, 'q_wait', 'FLEET'), (650, 'q_remove', 'FLEET', 3))}
 UI_REPLAY_WINDOW = 800              # the script's last event, window-relative
 OWN_KEYS = re.compile(r'native_gate_player_identity[a-z_]*|native_gate_player_orders[a-z_]*')
 CREATE = re.compile(r'(\d+)=([a-z][a-z0-9_]*_macro)@(-?\d+),(-?\d+),(-?\d+)(?:/(-?\d+))?(?:#(\d+))?')
@@ -260,28 +280,44 @@ def ui_replay_lines(args):
     if args.ui_replay != 'all' and (not names or any(n not in UI_REPLAY_FAMILIES for n in names) or len(set(names)) != len(names)):
         raise ValueError(f"--ui-replay is all or a comma list of {', '.join(UI_REPLAY_FAMILIES)}")
     orders = args.ui_replay == 'all' or 'orders' in names
-    if args.ui_replay_fleet and not orders:
-        raise ValueError('--ui-replay-fleet needs the orders family')
+    queue = 'queue' in names
+    if args.ui_replay_fleet and not (orders or queue):
+        raise ValueError('--ui-replay-fleet needs the orders or the queue family')
+    if queue and args.ui_replay_script and not (args.ui_replay_fleet and orders):
+        raise ValueError('--ui-replay queue with --ui-replay-script needs the orders family and --ui-replay-fleet (the plan clears its queue first)')
     if args.ui_replay_fleet and args.mode != 'coop':
         raise ValueError("--ui-replay-fleet needs --mode coop: slot factions are not `player`, the stock UI orders `player` ships")
-    if args.ui_replay_dock and not args.ui_replay_fleet:
-        raise ValueError('--ui-replay-dock needs --ui-replay-fleet')
+    dock = args.ui_replay == 'all' or 'dock' in names
+    if 'missiles' in names and ('target' not in names or getattr(args, 'fire', 'off') == 'off'):
+        raise ValueError('--ui-replay missiles needs the target family and --fire record or script (pilot fire leases the launchers)')
+    if args.ui_replay_dock and not (args.ui_replay_fleet or dock):
+        raise ValueError('--ui-replay-dock needs --ui-replay-fleet or the dock family')
     lines = ['X4LAN_CONFIG.native_gate_ui_replay = ' + ('true' if args.ui_replay == 'all' else '{' + ','.join(repr(n) for n in names) + '}')]
     if args.ui_replay_fleet:
         lines.append(f'X4LAN_CONFIG.native_gate_ui_replay_fleet = {sandbox.lua_list([repr(s) for s in args.ui_replay_fleet])}')
     if args.ui_replay_script:
         if args.window[1] - args.window[0] < UI_REPLAY_WINDOW:
             raise ValueError(f'--ui-replay-script needs a window of {UI_REPLAY_WINDOW} ticks (--window 40 {40 + UI_REPLAY_WINDOW})')
-        families = names if args.ui_replay != 'all' else list(UI_REPLAY_FAMILIES)
+        families = names if args.ui_replay != 'all' else [f for f in UI_REPLAY_FAMILIES if f != 'missiles']   # all = true: missiles is named
+        explicit = args.ui_replay != 'all'   # all: the first demo (travel, target, orders) as before
+        flight = explicit and any(f in UI_REPLAY_FLIGHT for f in families)
+        missiles = 'missiles' in families
+        if flight and ('travel' in families or 'target' in families or missiles):
+            raise ValueError('--ui-replay-script: the flight families (autopilot, dock, weapons) run without travel, target and missiles')
+        if missiles and 'travel' in families:
+            raise ValueError('--ui-replay-script: missiles run without travel (its own plan: target and missiles)')
+        demo = UI_REPLAY_FLIGHT_DEMO if flight else UI_REPLAY_MISSILE_DEMO if missiles else UI_REPLAY_DEMO
         plans = []
         for client in range(1, args.players + 1):
-            plan = []
-            for row in UI_REPLAY_DEMO[1 if client == 1 else 2]:
-                kind = {'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel'}.get(row[1], 'target')
-                if kind in families:
-                    plan.append(row)
+            plan = [row for row in demo[1 if client == 1 else 2] if UI_REPLAY_OP_FAMILY[row[1]] in families]
+            if client == 2 and args.ui_replay_dock and flight and 'dock' in families:
+                plan.append((380, 'dock_at', args.ui_replay_dock))
+            if queue and args.ui_replay_fleet:
+                ship = args.ui_replay_fleet[0]
+                plan += [tuple(ship if v == 'FLEET' else identity.STOCK_SECTOR if v == 'SECTOR' else v for v in row)
+                         for row in UI_REPLAY_QUEUE_DEMO[1 if client == 1 else 2]]
             # Client 1 commands the fleet: attack the next fixture, then move, then dock if a station was given.
-            if client == 1 and args.ui_replay_fleet:
+            elif client == 1 and args.ui_replay_fleet:
                 ship = args.ui_replay_fleet[0]
                 plan += [(UI_REPLAY_FLEET_ORDERS, 'attack', ship, sandbox.FIXTURES[-1]),
                          (UI_REPLAY_FLEET_ORDERS + 60, 'clear', ship),

@@ -230,3 +230,99 @@ Guard: FFI mutators of a family that is armed but not replayed yet return their 
   to see. Target and orders never ran in these runs: their first ticks were after 193.
   Open, not observed: a drive stopped by simulation outside the slot's scope (0x6d9190's player branch compares with slot 1's ship)
   leaves P_k's activity at travel until the next J key; UI_REPLAY_SLOTS against PILOT_SHIPS would show it.
+
+10. FLIGHT FAMILIES: AUTOPILOT, DOCK, WEAPONS (31 October; default off, stop reason 164 as before)
+  native_gate_ui_replay = {'autopilot','dock','weapons'} (each alone too; true = all six families).
+  Generic calls (op 5): a hook's arguments by a spec, captured in the local phases, applied through the hook's trampoline in
+  the slot's scope (slot 1 canonical) with the slot's player; a check-only argument passes and predicts the return value.
+  Autopilot [F]: ToggleAutoPilot -> 0x72bdc0, which stops through 0x72bb10 when the bank's autopilot target 0x2f4b7d8 is set,
+    else starts 0x72bf20(player, target, offset, ...) at the active guidance: the mission manager 0x6cf1658's active mission,
+    objective +0x2c0, first target. The mission manager is one per world and its active mission is the client's own, so the
+    start is captured below the guidance read: 0x72bf20 and 0x72bb10 are hooked, the target travels as a reference. The key
+    TOGGLE_AUTOPILOT 0xb3 now runs on the client's own dispatch (it was refused) and reaches them the same way; Lua
+    StartAutoPilot(target) / StopAutoPilot() call them directly. Guidance (SetGuidance) stays local, as the presentation it is.
+    0x72bf20 writes player+0x8a540.. (P_k's own) and the bank (slot k's in its scope), draws once from the thread's RNG word
+    (every client, same place). The slot's controller then answers d8dd50 with 1 from its snapshot: the Agent flies.
+  Dock [F]: QuickDock -> 0x730ff0(player) (also the DOCK_ACTION key through 71bac0), RequestDockAt / RequestDockAtReason
+    (container, checkonly) -> 0x730ca0, UndockPlayerShip -> 0x72fe40(player, checkonly) (also UNDOCK through 71bac0). Hooked: 0x730ff0,
+    both RequestDockAt exports, 0x72fe40. The keys 0xaf and 0xd3 ride the stock record into 71bac0 in the slot's scope.
+  Weapons [F]: SetDefensibleActiveWeaponGroup, SetWeaponGroup, SetWeaponMode hooked at the exports (component IDs, a string).
+    The group keys (CYCLE_* 0x8..0xb, SELECT_*_1..10 0x8b..0x9e, ammo 0x141) are af1db0's, which writes the group (+0x668 primary,
+    +0x66c secondary) itself and calls 0x4e6030: they ride the stock record and af1db0 is accepted as a replay handler (pinned).
+    With pilot fire on, a slot's group change re-leases its guns the same tick (old triggers cleared, relets= in PFIRE status).
+  Receipt: with these families each slot's column grows /autopilot on/primary.secondary group: act/target/ap/g1.g2.
+  Known: af1db0 and 71bac0 play their UI sounds where they run, so a replayed key of slot k sounds on every client (as slot 1's
+    keys already did). The menus' guidance and autopilot button states are client k's own. Missiles, turret group modes,
+    drones and deployables are not in these families.
+  U5 (no people): overlay --base .local/census/overlay-Play36L ... --players 2 --mode coop --source stock --present --window 40 900
+    --battle calm --ui-replay autopilot,dock,weapons --ui-replay-script [--ui-replay-dock <saved station>] [--fire script]
+    Absolute ticks (window 40, delay 3). Slot 2: autopilot to slot 1's ship 70, stop 190 (Lua); key SELECT_PRIMARY_WEAPONGROUP_2
+    220; FFI group 1 at 280; quick dock 360, undock 390, [dock request at the station 420]. Slot 1: autopilot to slot 2's ship 100,
+    FFI toggle (stops it) 220, key group 2 240, FFI group 1 300, quick dock 340, undock 370.
+    Pass: relay pass, 0 mismatches, census 0, no stop 155/164; UI_REPLAY_SLOTS: slot 2 ap=1 from 73 to 193, slot 1 from 103 to
+    223, primary group 1 from 223 (slot 2) and 243 (slot 1), back to 0 at 283 / 303, identical on both clients; PILOT_SHIPS: each
+    autopiloted ship turns to the other and closes in; UI_REPLAY_STATUS calls= rising equally on both, refused=0 (a refusal names
+    its hook and reason in UI_REPLAY_REFUSED_NATIVE); quick dock and undock without a station near are X4's refusals, the same
+    everywhere. If ap stays 0: send UI_REPLAY_SCRIPT rows (StartAutoPilot's answer) and UI_REPLAY_STATUS.
+
+11. MISSILES AT THE REPLAYED SOFT TARGET (31 October; default off: native_gate_ui_replay lists 'missiles', stop 164 / 112)
+  native_gate_ui_replay = {'target','missiles'} with native_gate_pilot_fire ('record' or 'script'). true does not include it.
+  Trigger: the secondary fire states (0x19, 0x31) stay refused locally as before; with the family the stock record carries them as
+    a new flag (PSTK_FLAG_FIRE2 = 32), held with the focus, or scripted by gate.ui_replay_missile_hold(1|0). The record reaches
+    every client at capture + delay like the primary trigger.
+  Launch [F]: what the AI's <shoot_at> uses, nothing new: 0x81ac60(launcher, target, empty list, 0, range 0 = the macro's, 0)
+    installs a BasicShootController on the launcher (+0x318), which aims, locks and launches on its own in Weapon::Move
+    (simulation, every client the same); 0x819680 deletes it. Pinned (81ac60 size 0x3fc), verified on the pinned image.
+  Per tick in path_release (pilot fire's place, slot order): slot k's soft target is P_k+0x6dd0 (slot 1: the canonical player),
+    which the target family sets on every client at the same tick. Held and a target: the active secondary group's launchers
+    (+0x650 groups, +0x66c active, U::MissileLauncher vtable 0x2b02988 only, below the ship) get the controller; a new target or
+    secondary group stops and re-aims, a release, a lost target and the window end stop. Without launchers: counted (empty).
+  Receipt: PFIRE_1 folds each slot's shooting/target/launchers and appends :M<shooting>.<launchers>/... per slot; PFIRE status
+    adds missiles=starts/stops/no launchers/held without target. Refusals: missiles without target (arm: missiles_need_target),
+    without pilot fire (first pass: ui_missiles_need_fire), both also in check_gate_options and the builder.
+  Known: the local secondary fire button state, lock tone and HUD lock are client k's own presentation; the launch itself is the
+    controller's. Whether X4 launches at a ship of the same faction (coop: all slots are `player`) is not known; if :M shows 1.n
+    and no missile leaves, run factions hostile. Bombs (PlayerShootController bomb launcher) and turret missiles are not in it.
+  U6 (no people): overlay --base .local/census/overlay-Play36L ... --players 2 --mode factions --relations hostile --source stock
+    --present --window 40 900 --battle calm --fire record --ui-replay target,missiles --ui-replay-script
+    Absolute ticks (window 40, delay 3). Slot 1 targets slot 2's ship 103, holds 163, releases 463, drops the target 523. Slot 2
+    targets slot 1's ship 133, holds 193, drops the target 343 (still holding: its launchers stop), releases 493.
+    Pass: relay pass, 0 mismatches, census 0, no stop 112/155/164; the PFIRE receipt identical on both clients with :M1.n for slot 1
+    from 163 to 463 and for slot 2 from 193 to 343 (n = its launchers, > 0); PFIRE status missiles=2/2/0/~150 on both (the last:
+    slot 2's held ticks without a target); missiles leave the launchers and fly at the other ship (PILOT_SHIPS hull may drop).
+    If missiles=../../>0 (no launchers): the slot ship's secondary group is empty; give --ships a pair with missile launchers.
+
+12. THE ORDER QUEUE EDITOR (31 October; default off: native_gate_ui_replay lists 'queue', stop 164)
+  Design: no shadow of the order contents. A local shadow would answer GetOrderParams, GetOrders, GetPlannedDefaultOrder and
+    the rest from client-side copies, i.e. re-implement the order system; instead every edit is an event in call order and
+    the only thing the menu needs at once, the index a create returns, is predicted and corrected where it lands.
+  Captured (with the family; with orders alone they stay refused as before): the FFI CreateOrder/CreateOrder2/CreateOrder3
+    (one function 0x1f3b30), CreateDeployToStationOrder, EnableOrder, AdjustOrder, RemoveOrder/RemoveOrder2, ResetOrder,
+    Enable/RemovePlannedDefaultOrder, SetOrderLoop and SetCurrentLoopOrder (new hooks 0x200640, 0x1ff850, pinned), and the
+    Lua SetOrderParam / RemoveOrderListParam. A check-only call is a query and passes; a captured call with a check-only
+    variant answers with that query's result. All are Lua-run events (0x44 FFI, 0x45/0x46 parameters), applied in the
+    probe's frame on every client in call order, so a create, its parameters and its enable run in the menu's order.
+  Index: a create answers with GetNumOrders + 1 + this client's creates on that queue still in flight (0 for the planned
+    default order, which is not in the queue). Its apply numbers it (per slot, on every client) and records where X4 put it.
+    Each queue event carries how many of its slot's creates had applied when it was captured; an index argument of an
+    event captured before a create applied that equals that create's prediction is replaced by X4's index. Every client
+    derives the same mapping from the same events, so a missed prediction moves where an edit lands, never whether the
+    clients agree. Slot ships (a PlayerController flies them) and gone controllables run nothing, the same everywhere.
+  Cost (known): the capturing menu sees its own edit after the delay; a read-back in the same frame (GetNumOrders after a
+    create, GetPlannedDefaultOrder in buttonNewOrder/copyDefaultOrderForPlanning) still sees the queue before it, so the
+    menu can show the old state for a frame or so. An index captured while someone else's edit or the AI's own progress
+    (an order finishing) is in flight is applied as captured: the same everywhere, possibly not what the person meant.
+  Unblocked with the family: MapMenu buttonNewOrder, buttonOrderUp/Down, removeOrder, buttonSetOrderParam,
+    setOrderParamFromMode, slidercellSetOrderParam, buttonStartOrders, buttonDockToTrade; InteractMenu buttonRemoveOrder,
+    setOrderImmediate. Still blocked: buttonDefaultOrderConfirm (ResetOrderLoop is not captured), ProceedWithOrders,
+    sync points, assignments, fleet units.
+  Status: UI_REPLAY_STATUS adds queue=captured/ran/skipped creates= mapped= moved=.
+  U7 (no people): overlay --base .local/census/overlay-Play36L ... --players 2 --mode coop --source stock --present
+    --window 40 900 --battle calm --ui-replay orders,queue --ui-replay-fleet 0000000000176a13 --ui-replay-script
+    Absolute ticks (window 40, delay 3). Client 1: clear 543, MoveWait (create, parameter, enable) 544, Wait 545, Wait moved
+    from 2 to 1 at 643, order 1 removed 743. Client 2: Wait 593, order 3 removed 693.
+    Expected queue (the fleet column of the log): 0 / MoveWait / MoveWait,Wait / MoveWait,Wait,Wait / Wait,MoveWait,Wait /
+    Wait,MoveWait / MoveWait (X4 may refuse a move in front of the running order: then the same refusal on both clients).
+    Pass: relay pass, 0 mismatches, census 0, no stop 164; the fleet queue column and the UI_REPLAY_APPLIED rows (X4's
+    answers, e.g. CreateOrder3=1/1) identical on both clients; UI_REPLAY_STATUS queue=6/9/0 (client 1) and 3/9/0 (client 2),
+    creates=3 on both, mapped and moved equal on both (non-zero only if the ship had orders before the clear); no UI_REPLAY_REFUSED rows.

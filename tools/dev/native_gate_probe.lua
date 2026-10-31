@@ -1388,7 +1388,10 @@ function pilot_view.arm_ui_replay(slot,window)
  end
  -- What the scripted runs and the apply call; the stock menus declare the same.
  for _,line in ipairs({'void StartPlayerActivity(const char*);','void StopPlayerActivity(const char*);','bool SetSofttarget(UniverseID,const char*const);',
-   'bool RemoveAllOrders(UniverseID);','bool RemoveAllOrders2(UniverseID,bool,bool);'}) do pcall(ffi.cdef,line) end
+   'bool RemoveAllOrders(UniverseID);','bool RemoveAllOrders2(UniverseID,bool,bool);','bool ToggleAutoPilot(bool);','bool QuickDock(void);',
+   'bool RequestDockAt(UniverseID,bool);','const char* UndockPlayerShip(bool);','void SetDefensibleActiveWeaponGroup(UniverseID,bool,uint32_t);',
+   'uint32_t CreateOrder(UniverseID,const char*,bool);','bool EnableOrder(UniverseID,size_t);','bool AdjustOrder(UniverseID,size_t,size_t,bool,bool,bool);',
+   'bool RemoveOrder(UniverseID,size_t,bool,bool);'}) do pcall(ffi.cdef,line) end
  local armed,refused=gate.ui_replay(mask)
  assert(armed==1,'ui replay refused: '..tostring(refused))
  local function slot_ships()
@@ -1399,10 +1402,11 @@ function pilot_view.arm_ui_replay(slot,window)
   end
   return out
  end
- local tools={gate=gate,C=ffi.C,env=_G,
-  slot_id=function(s) return ffi.new('UniverseID',assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved')) end,
-  saved_id=function(saved) return ConvertStringTo64Bit(assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved')) end,
-  saved_lua=function(saved) return ConvertStringToLuaID(assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved')) end}
+ local tools={gate=gate,C=ffi.C,env=_G,own_slot=slot,
+  slot_id=function(s) return ffi.new('UniverseID',(assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved'))) end,  -- one value: assert returns its message too
+  slot_lua=function(s) return ConvertStringToLuaID(string.format('%.0f',(assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved')))) end,
+  saved_id=function(saved) return ConvertStringTo64Bit((assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved'))) end,
+  saved_lua=function(saved) return ConvertStringToLuaID((assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved'))) end}
  local plan=cfg.native_gate_ui_replay_script   -- one plan per client, {} or false for none
  assert(plan==nil or plan==false or type(plan)=='table','ui replay refused: invalid script')
  plan=plan and plan[slot] or nil

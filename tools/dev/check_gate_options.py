@@ -362,11 +362,11 @@ def pilot_death_rules(config_text, enabled):
     return failures
 
 
-UI_REPLAY_FAMILIES = ('travel', 'target', 'orders')
+UI_REPLAY_FAMILIES = ('travel', 'target', 'orders', 'autopilot', 'dock', 'weapons', 'missiles', 'queue')
 
 
 def ui_replay_rules(config_text, enabled):
-    """native_gate_ui_replay (lockstep_ui_replay.h, stop reason 164): true or a list of travel, target, orders. Every
+    """native_gate_ui_replay (lockstep_ui_replay.h, stop reason 164): true or a list of families (UI_REPLAY_FAMILIES). Every
     client captures its own slot, so every slot is a stock slot; client k's UI must be slot k's (the presentation);
     components travel as runtime IDs, so those must be the same on every client."""
     value = lua_value(config_text, 'native_gate_ui_replay')
@@ -379,7 +379,12 @@ def ui_replay_rules(config_text, enabled):
     if value != 'true':
         names = lua_modes(value)
         if not value.startswith('{') or not names or any(n not in UI_REPLAY_FAMILIES for n in names) or len(set(names)) != len(names):
-            return failures + [dict(rule='native_gate_ui_replay must be true or a list of travel, target, orders', bits=[value])]
+            return failures + [dict(rule='native_gate_ui_replay must be true or a list of ' + ', '.join(UI_REPLAY_FAMILIES), bits=[value])]
+        # Missiles fly at the slot's soft target (the target family) from the launchers pilot fire leases (stop 164 otherwise).
+        if 'missiles' in names and 'target' not in names:
+            failures.append(dict(rule='native_gate_ui_replay missiles needs the target family', bits=[value]))
+        if 'missiles' in names and lua_value(config_text, 'native_gate_pilot_fire') in (None, 'false', 'nil'):
+            failures.append(dict(rule='native_gate_ui_replay missiles needs native_gate_pilot_fire', bits=['native_gate_pilot_fire']))
     if lua_value(config_text, 'native_gate_pilot_stock') != 'true' or (lua_value(config_text, 'native_gate_pilot_stock_slots') or '').strip('\'"') != 'all':
         failures.append(dict(rule="native_gate_ui_replay needs native_gate_pilot_stock_slots = 'all'", bits=['native_gate_pilot_stock_slots']))
     if lua_value(config_text, 'native_gate_pilot_present') in (None, 'false', 'nil'):

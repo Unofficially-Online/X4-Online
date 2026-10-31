@@ -74,6 +74,18 @@
 #define PFIRE_GROUPS 0x638u
 #define PFIRE_ACTIVE 0x668u
 #define PFIRE_GUNS 16u
+/* Missiles (the UI replay's missile family, lockstep_ui_replay.h): the slot's secondary group (+0x650 groups, +0x66c active,
+ * as the group cycle 0x4e4e20 reads them), its U::MissileLauncher weapons. While the record's secondary trigger is held and
+ * the slot's soft target (its player's +0x6dd0, replayed by the target family) exists, each launcher gets the controller the
+ * AI's <shoot_at> installs: 0x81ac60(launcher, target, empty list, 0, range 0 = the macro's, 0), a BasicShootController that
+ * aims, locks and launches by itself in Weapon::Move; released (or the target or group changed), 0x819680 stops it. Every
+ * client, path_release, slot order. */
+#define PFIRE_GROUPS2 0x650u
+#define PFIRE_ACTIVE2 0x66cu
+#define PFIRE_LAUNCHER_VTABLE 0x2b02988u  /* U::MissileLauncher */
+#define PFIRE_SHOOT_AT 0x81ac60u
+#define PFIRE_SOFT_TARGET 0x6dd0u
+static const unsigned char *uirep_slot_player(unsigned slot);  /* lockstep_ui_replay.h: P_1 or slot k's P_k */
 #define PFIRE_STOP_REASON 112u
 #define PFIRE_DOMAIN 0x5046495245315631ULL /* "PFIRE1V1" */
 enum {PFIRE_OFF,PFIRE_RECORD,PFIRE_SCRIPT};
@@ -84,7 +96,8 @@ static const struct {unsigned rva,size;const char *sha;} pfire_pins_list[]={
     {PFIRE_STOP,0x25cu,"a323ec4c4597f75ad11b44a7b7527c45abb9e4a960f832e59dcc5d37bd669694"},
     {PFIRE_RELOAD,250u,"e47963e6bdc2e6a0facf04d22d94c0ae8e58b166db860fda0d9edfcb85442849"},
     {0x7e58a0u,0xbu,"9dd5800bf9ca5c2937f710272b8e16835452fc2c0d6dbcbbf0ee0e796f666176"},  /* Mindless slot 14: flag != 0 */
-    {0x7e58b0u,0x9u,"9babe5dc4dedce743a2daf48c90b7b0f48cc6759837f769fdc1a95034b815c99"}}; /* Mindless slot 31: set flag */
+    {0x7e58b0u,0x9u,"9babe5dc4dedce743a2daf48c90b7b0f48cc6759837f769fdc1a95034b815c99"}, /* Mindless slot 31: set flag */
+    {PFIRE_SHOOT_AT,0x3fcu,"4fc605b1000cc534a25f8249ac9d4b468ab46cc0c8b460f4b20bc5aef8662e88"}}; /* <shoot_at>'s controller installer (missiles) */
 static const struct {unsigned slot,target;} pfire_vtable_slots[]={{0x70u,0x7e58a0u},{0x88u,0xa3a20u},{0xe0u,0x9c980u},{0xf8u,0x7e58b0u}};
 /* The player controller classes, recognised by vtable: each pinned by slots
  * that only that class uses (PlayerShootController slots 10/11, the bomb
@@ -99,13 +112,18 @@ typedef unsigned char (*pfire_reload_fn)(void *,double);
 static int (*pfire_now)(double *)=pnat_time_tls;   /* the frame's game time, as the FFI readers pass it */
 static uint64_t pfire_reload_skips;
 typedef struct {unsigned char *object,*controller;uint64_t runtime;unsigned char flag,foreign;} pfire_gun;
-typedef struct {unsigned count,leased,empty;pfire_gun guns[PFIRE_GUNS];} pfire_slot;
+typedef struct {unsigned count,leased,empty;int32_t group;pfire_gun guns[PFIRE_GUNS];} pfire_slot;
+typedef struct {unsigned count,shooting;int32_t group;uint64_t target;pfire_gun launchers[PFIRE_GUNS];} pfire_missile_slot;
+typedef void (*pfire_shoot_at_fn)(void *,void *,void *,unsigned char,float,unsigned char);
+static pfire_missile_slot pfire_missiles[PILOT_SLOTS];
+static uint64_t pfire_missile_starts,pfire_missile_stops,pfire_missile_empty,pfire_missile_no_target;
+static pfire_shoot_at_fn pfire_shoot_at_override; /* tests */
 static pfire_slot pfire_slots[PILOT_SLOTS];
 static int pfire_mode,pfire_armed,pfire_pins_checked,pfire_released;
 static unsigned pfire_script_mask;   /* PFIRE_SCRIPT: bit s-1 = slot s fires; 0 = every slot */
 static uint64_t pfire_frames,pfire_tick,pfire_triggered,pfire_lease_waits,pfire_installs,pfire_replaced_at_lease,pfire_cleared,
     pfire_receipt_tick,pfire_receipt,pfire_replaced_by_sim,pfire_retaken,pfire_retake_waits,pfire_trigger_restored,pfire_guns_lost,
-    pfire_let_go;
+    pfire_let_go,pfire_relets;
 /* The last replacement seen: tick, slot (1-based), gun index, class, local. */
 static uint64_t pfire_last_tick;
 static unsigned pfire_last_slot,pfire_last_gun;
@@ -155,14 +173,16 @@ static int pfire_under(unsigned char *component,const unsigned char *ship) {
     return 0;
 }
 /* The guns of the ship's active primary group, in group order. */
-static unsigned pfire_collect(unsigned char *ship,pfire_gun out[PFIRE_GUNS]) {
+static unsigned pfire_collect_in(unsigned char *ship,pfire_gun out[PFIRE_GUNS],unsigned groups_at,unsigned active_at,unsigned vtable);
+static unsigned pfire_collect(unsigned char *ship,pfire_gun out[PFIRE_GUNS]) {return pfire_collect_in(ship,out,PFIRE_GROUPS,PFIRE_ACTIVE,PFIRE_WEAPON_VTABLE);}
+static unsigned pfire_collect_in(unsigned char *ship,pfire_gun out[PFIRE_GUNS],unsigned groups_at,unsigned active_at,unsigned vtable) {
     unsigned char *groups[2]={NULL,NULL},*ids[2]={NULL,NULL};uint32_t active=0;unsigned n=0;
-    if(!read_local(ship+PFIRE_GROUPS,groups,16) || !read_local(ship+PFIRE_ACTIVE,&active,4) || !groups[0] ||
+    if(!read_local(ship+groups_at,groups,16) || !read_local(ship+active_at,&active,4) || !groups[0] ||
        groups[1]<groups[0] || (size_t)(groups[1]-groups[0])%0x18 || active>=(size_t)(groups[1]-groups[0])/0x18 ||
        !read_local(groups[0]+(size_t)active*0x18,ids,16) || !ids[0] || ids[1]<ids[0] || (size_t)(ids[1]-ids[0])%8) return 0;
     for(unsigned char *at=ids[0];at<ids[1] && n<PFIRE_GUNS;at+=8) {
         uint64_t runtime=0;unsigned char *gun;
-        if(!read_local(at,&runtime,8) || !(gun=pfire_find(runtime)) || !pfire_is(gun,PFIRE_WEAPON_VTABLE) || !pfire_under(gun,ship)) continue;
+        if(!read_local(at,&runtime,8) || !(gun=pfire_find(runtime)) || !pfire_is(gun,vtable) || !pfire_under(gun,ship)) continue;
         out[n].object=gun;out[n].runtime=runtime;out[n].controller=NULL;out[n].flag=out[n].foreign=0;++n;
     }
     return n;
@@ -176,6 +196,7 @@ static unsigned char pfire_wanted(const pilot_slot *s,unsigned slot,uint64_t tic
 static int pfire_lease(pfire_slot *f,unsigned char *ship) {
     pfire_gun found[PFIRE_GUNS];unsigned n=pfire_collect(ship,found);
     if(!n) {++f->empty;return 1;}
+    if(!read_local(ship+PFIRE_ACTIVE,&f->group,4)) return 0;
     for(unsigned i=0;i<n;i++) {
         unsigned char firing=0;
         if(!read_local(found[i].object+PFIRE_FIRING,&firing,1)) return 0;
@@ -271,6 +292,34 @@ static int pfire_end(const pilot_slot *s,pfire_slot *f,unsigned slot) {
     }
     return 1;
 }
+/* Missiles of one slot this tick (end: the window is over or the session stops: whatever shoots stops). */
+static void pfire_missiles_stop(pfire_missile_slot *m) {
+    for(unsigned l=0;l<m->count;l++)
+        if(pfire_find(m->launchers[l].runtime)==m->launchers[l].object) ((pfire_shoot_fn)(image+PFIRE_STOP))(m->launchers[l].object);
+    m->shooting=0;m->count=0;++pfire_missile_stops;
+}
+static uint64_t pfire_slot_target(unsigned slot) {
+    const unsigned char *player=uirep_slot_player(slot);uint64_t target=0;
+    if(player) read_local(player+PFIRE_SOFT_TARGET,&target,8);
+    return target;
+}
+static int pfire_missiles_tick(const pilot_slot *s,unsigned slot,uint64_t tick,int end) {
+    pfire_missile_slot *m=&pfire_missiles[slot-1];
+    int want=!end && pstk_fire_tick[slot-1]==tick && pstk_fire2_on[slot-1];
+    uint64_t target=want?pfire_slot_target(slot):0;unsigned char *object=target?pfire_find(target):NULL;int32_t group=-2;
+    read_local(s->object+PFIRE_ACTIVE2,&group,4);
+    if(want && !object) ++pfire_missile_no_target;
+    if(m->shooting && (!want || !object || target!=m->target || group!=m->group)) pfire_missiles_stop(m);
+    if(!want || !object || m->shooting) return 1;
+    m->count=pfire_collect_in(s->object,m->launchers,PFIRE_GROUPS2,PFIRE_ACTIVE2,PFIRE_LAUNCHER_VTABLE);
+    if(!m->count) {++pfire_missile_empty;return 1;}
+    pfire_shoot_at_fn shoot_at=pfire_shoot_at_override?pfire_shoot_at_override:(pfire_shoot_at_fn)(void*)(image+PFIRE_SHOOT_AT);
+    for(unsigned l=0;l<m->count;l++) {
+        uint64_t list[3]={0,0,0};   /* no further targets: one target, a basic controller */
+        shoot_at(m->launchers[l].object,object,list,0,0.0f,0);
+    }
+    m->shooting=1;m->target=target;m->group=group;++pfire_missile_starts;return 1;
+}
 /* path_release, MoveWorker, after the pilot frame for this tick is published. */
 static int pfire_before_release(void) {
     if(!pfire_armed) return 1;
@@ -279,9 +328,19 @@ static int pfire_before_release(void) {
     for(unsigned i=0;i<pilot_slot_count;i++) {
         pilot_slot *s=&pilot_slots[i];pfire_slot *f=&pfire_slots[i];
         if(tick<pilot_start || !s->resolved) continue;
+        if(uirep_families&UIREP_FAMILY_MISSILES) pfire_missiles_tick(s,i+1,tick,tick>pilot_stop);
         if(tick>pilot_stop) {if(!pfire_end(s,f,i+1)) return 0;continue;}
         if(!f->leased && !pfire_lease(f,s->object)) {pfire_stage="lease";return 0;}
         if(!f->leased) continue;
+        /* The UI replay's weapon family changes a slot's active group (lockstep_ui_replay.h), the same tick on every
+         * client: the old guns' triggers are cleared and the new group is leased. */
+        int32_t group=0;
+        if((uirep_families&UIREP_FAMILY_WEAPONS) && read_local(s->object+PFIRE_ACTIVE,&group,4) && group!=f->group) {
+            if(!pfire_end(s,f,i+1)) return 0;
+            f->leased=0;f->count=0;++pfire_relets;
+            if(!pfire_lease(f,s->object)) {pfire_stage="lease";return 0;}
+            if(!f->leased) continue;
+        }
         unsigned char want=pfire_wanted(s,i+1,tick);
         if(!pfire_hold(s,f,i+1,want)) return 0;
         if(want) ++pfire_triggered;
@@ -304,8 +363,18 @@ static int pfire_frame_text(char *out,size_t capacity) {
             fold+=lockstep_seed(PFIRE_DOMAIN,stats.issued,pilot_slots[i].saved,g,bits,((uint64_t)active<<32)|magazine);
         }
     }
+    for(unsigned i=0;(uirep_families&UIREP_FAMILY_MISSILES) && i<pilot_slot_count;i++)
+        fold+=lockstep_seed(PFIRE_DOMAIN^0x4dULL,stats.issued,pilot_slots[i].saved,pfire_missiles[i].shooting,
+            pfire_missiles[i].shooting?pfire_missiles[i].target:0,pfire_missiles[i].count);
     pfire_receipt_tick=stats.issued;pfire_receipt=fold;pfire_frame_firing=firing;
     int n=snprintf(out,capacity,"PFIRE_1:%llu:%u:%016llx",(unsigned long long)stats.issued,firing,(unsigned long long)fold);
+    /* Missiles: per slot shooting.launchers after the fold, the target in the fold (runtime IDs agree on every client). */
+    for(unsigned i=0;n>0 && (size_t)n<capacity && (uirep_families&UIREP_FAMILY_MISSILES) && i<pilot_slot_count;i++) {
+        const pfire_missile_slot *m=&pfire_missiles[i];
+        int more=snprintf(out+n,capacity-(size_t)n,"%s%u.%u",i?"/":":M",m->shooting,m->count);
+        if(more<0) return 0;
+        n+=more;
+    }
     return n>0 && (size_t)n<capacity?n:0;
 }
 /* The guns as the receipt reads them (slot:gun:active:last shot bits:magazine:controller class). */
@@ -342,18 +411,20 @@ static int pfire_arm(int mode) {
     if(pfire_armed) return mode==pfire_mode && stats.active;
     if((mode!=PFIRE_RECORD && mode!=PFIRE_SCRIPT) || !pilot_armed || !stats.active || stats.issued || GetCurrentThreadId()!=ui_thread ||
        !world_identity_installed || !pfire_pins()) {pfire_stage="refused";return 0;}
-    memset(pfire_slots,0,sizeof(pfire_slots));pfire_mode=mode;pfire_armed=1;pfire_released=0;pfire_stage="armed";return 1;
+    memset(pfire_slots,0,sizeof(pfire_slots));memset(pfire_missiles,0,sizeof(pfire_missiles));pfire_mode=mode;pfire_armed=1;pfire_released=0;pfire_stage="armed";return 1;
 }
 static int pfire_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"mode=%s armed=%d frames=%llu tick=%llu triggered=%llu installs=%llu replaced_at_lease=%llu lease_waits=%llu "
-        "replaced_by_sim=%llu retaken=%llu retake_waits=%llu trigger_restored=%llu guns_lost=%llu let_go=%llu "
+        "replaced_by_sim=%llu retaken=%llu retake_waits=%llu trigger_restored=%llu guns_lost=%llu let_go=%llu relets=%llu "
+        "missiles=%llu/%llu/%llu/%llu "
         "last_replaced=t%llu/s%u/g%u/%s/%s cleared=%llu firing=%u receipt=%016llx stage=%s failures=%lld",
         pfire_mode==PFIRE_RECORD?"record":pfire_mode==PFIRE_SCRIPT?"script":"off",
         pfire_armed,(unsigned long long)pfire_frames,(unsigned long long)pfire_tick,(unsigned long long)pfire_triggered,
         (unsigned long long)pfire_installs,(unsigned long long)pfire_replaced_at_lease,(unsigned long long)pfire_lease_waits,
         (unsigned long long)pfire_replaced_by_sim,(unsigned long long)pfire_retaken,(unsigned long long)pfire_retake_waits,
         (unsigned long long)pfire_trigger_restored,(unsigned long long)pfire_guns_lost,(unsigned long long)pfire_let_go,
-        (unsigned long long)pfire_last_tick,pfire_last_slot,pfire_last_gun,pfire_last_class,pfire_last_local?"local":"sim",
+        (unsigned long long)pfire_relets,(unsigned long long)pfire_missile_starts,(unsigned long long)pfire_missile_stops,
+        (unsigned long long)pfire_missile_empty,(unsigned long long)pfire_missile_no_target,(unsigned long long)pfire_last_tick,pfire_last_slot,pfire_last_gun,pfire_last_class,pfire_last_local?"local":"sim",
         (unsigned long long)pfire_cleared,pfire_frame_firing,(unsigned long long)pfire_receipt,pfire_stage,(long long)pfire_failures);
     for(unsigned i=0;n>0 && (size_t)n<capacity && i<pilot_slot_count;i++)
         n+=snprintf(out+n,capacity-(size_t)n," s%u=%u/%u/%u",i+1,pfire_slots[i].leased,pfire_slots[i].count,pfire_slots[i].empty);
