@@ -299,8 +299,9 @@ static int view_trigger_apply(void *object,int index,int *result) {
     ++view_trigger_blocked;*result=current;return 1;
 }
 static int view_triggers_arm(int mode) {
-    if((mode!=VIEW_TRIGGER_BLOCK && mode!=VIEW_TRIGGER_OBSERVE) || !view_installed || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
+    /* An identical re-arm (the UI reloads after the snapshot load) is accepted even after the first tick. */
     if(view_trigger_mode) return view_trigger_mode==mode;
+    if((mode!=VIEW_TRIGGER_BLOCK && mode!=VIEW_TRIGGER_OBSERVE) || !view_installed || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
     if(!view_trigger_sites_ok()) {view_stage="trigger_sites";return 0;}
     memset(view_trigger_counts,0,sizeof(view_trigger_counts));view_trigger_blocked=0;view_trigger_mode=mode;return 1;
 }
@@ -430,8 +431,8 @@ static int view_ui_camera_ok(void) {
 }
 /* Before the first admitted frame, on the frame thread, with view points installed. */
 static int view_ui_arm(int mode) {
+    if(view_ui_mode) return view_ui_mode==mode; /* identical re-arm after a UI reload */
     if((mode!=VIEW_UI_BLOCK && mode!=VIEW_UI_OBSERVE) || !view_installed || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
-    if(view_ui_mode) return view_ui_mode==mode;
     if(!view_ui_camera_ok()) {view_stage="ui_camera";return 0;}
     memset(view_ui_counts,0,sizeof(view_ui_counts));view_ui_blocked=view_ui_local=0;view_ui_mode=mode;return 1;
 }
@@ -658,7 +659,7 @@ static void view_refresh_chain(void *object) {
  * distance 0) and its rooms follow it. No container (player outside a ship or
  * station): the player object is used and counted (ship_misses=). */
 enum {VIEW_SOURCE_PLAYER,VIEW_SOURCE_SHIP};
-static int view_source_mode;
+static int view_source_mode,view_source_armed;
 static uint64_t view_ship_misses;
 #define VIEW_OCCUPIED_SCAN 64u
 static unsigned char *view_occupied(unsigned char *player) {
@@ -674,10 +675,11 @@ static unsigned char *view_occupied(unsigned char *player) {
 }
 /* Before the first admitted frame, on the MoveWorker. */
 static int view_source_arm(const char *name) {
-    if(!name || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
-    if(!strcmp(name,"player")) view_source_mode=VIEW_SOURCE_PLAYER;
-    else if(!strcmp(name,"ship")) view_source_mode=VIEW_SOURCE_SHIP;
-    else return 0;
+    int mode=!name?-1:!strcmp(name,"player")?VIEW_SOURCE_PLAYER:!strcmp(name,"ship")?VIEW_SOURCE_SHIP:-1;
+    if(mode<0) return 0;
+    /* After the first tick or from the reloaded UI, only an identical re-arm is accepted. */
+    if(stats.issued || GetCurrentThreadId()!=ui_thread) return view_source_armed && view_source_mode==mode;
+    view_source_mode=mode;view_source_armed=1;
     view_ship_misses=0;return 1;
 }
 /* Slot 6 of every admitted frame: latch the viewpoints for the next frames. */
