@@ -194,7 +194,7 @@ static BOOL WINAPI mt_try_enter(CRITICAL_SECTION *lock) {
 /* The MoveWorker's frame-start WaitForSingleObject(g_semSimStart, INFINITE). */
 static DWORD WINAPI mt_wait(HANDLE handle,DWORD milliseconds) {
     int counted=handle && handle==*(HANDLE volatile*)(image+MT_SEM_START);
-    if(counted) {gate_sim_end();InterlockedIncrement64(&mt_worker_waits);}
+    if(counted) {gate_sim_end();rf_worker_end();InterlockedIncrement64(&mt_worker_waits);}
     DWORD result=WaitForSingleObject(handle,milliseconds);
     if(counted) InterlockedIncrement64(&mt_worker_wakes);
     return result;

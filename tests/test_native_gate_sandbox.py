@@ -60,7 +60,7 @@ def config_args(*extra):
 
 
 PROBE_STUBS = '''
-              X4LAN_CONFIG={native_gate_test=true,test_profile='45841',slot='%s',native_gate_hash='clock',
+              X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',slot='%s',native_gate_hash='clock',
                 native_gate_snapshot_sha=string.rep('a',64),port=12345,token=string.rep('c',32),
                 native_gate_serial_pathing=true,native_gate_world_identities=true,
                 native_gate_bullet_rng=true,native_gate_nav_rng=true,native_gate_agent_rng=true,native_gate_ship_rng=true}  -- the base overlay always has both (merged_config checks)

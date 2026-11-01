@@ -42,7 +42,21 @@
  * and keyed after admission. Row and status code is shared by both platforms.
  *
  * Platform part (lockstep_gate.c / linux/gate_fp_redirect.h) defines FR_COMP_A, FR_COMP_B, FR_W_FROM_BUFFER,
- * FR_M_PARAMS / FR_M_ARGS (M's native argument order), installs the hooks and sets the fr_native_* pointers. */
+ * FR_M_PARAMS / FR_M_ARGS (M's native argument order), installs the hooks and sets the fr_native_* pointers.
+ *
+ * FR27, native_gate_fp_redirect_solver = 'shadow' | 'redirect' (default off; after fp_redirect): the GetSafePos solver
+ * (Windows 0x14e4320, Linux 0x1a4b9f0) as one portable implementation, lockstep_safe_pos.h, on both executables. Its
+ * entry jumps to the platform hook (or, with the step chain's FR25 capture on, that capture's entry hook routes the call
+ * here). Each call with a box list runs both: 'redirect' runs native on a copy of the boxes and the point and ours on
+ * the game's, 'shadow' the reverse; the points and the box order are compared (sp=max_ulp:differing:compared, sp_order).
+ * A move direction (not reimplemented) runs native alone (sp_move); Linux calls with its x flag 0, which Windows does
+ * not have, count in sp_x0 (ours follows Windows).
+ *
+ * FR30, native_gate_fp_redirect_drones = 'shadow' | 'redirect' (default off; after fp_redirect): the four factors of
+ * get_attackstrength's drone path that the two compilers round differently (lockstep_drone_factors.h) at their
+ * native instructions on both executables (fdr_*, below; the sites in lockstep_fp_drones_win.h and
+ * linux/gate_fp_drones.h). Every pass runs the native instruction and ours on the same inputs and compares them
+ * (dr=max_ulp:differing:compared, per site); 'redirect' keeps ours, 'shadow' native. */
 #include <float.h>
 #include "lockstep_spline_length.h"
 #if defined(__FAST_MATH__) || !defined(FLT_EVAL_METHOD) || FLT_EVAL_METHOD!=0
@@ -558,6 +572,204 @@ static int fr_arm_ready(int mode,uint64_t ticks) {
     for(unsigned h=0;h<FR_HITS;h++) fr_hits[h]=0;
     return 1;
 }
+/* ---- FR27: the GetSafePos solver (lockstep_safe_pos.h), the call and its counters; the platform installs the entry. ---- */
+#include "lockstep_safe_pos.h"
+enum {FSP_OFF=0,FSP_SHADOW=1,FSP_REDIRECT=2};
+static int fsp_mode,fsp_installed,fsp_route; /* fsp_route: through the step chain's entry hook (FR25), which owns the entry */
+static const char *fsp_stage="idle";
+static volatile LONG64 fsp_calls,fsp_ours,fsp_n,fsp_diff,fsp_max_ulp,fsp_order,fsp_move,fsp_invalid,fsp_x0,fsp_nocopy;
+typedef void (*fsp_native_fn)(const void *args,void *vec,float *p); /* the native solver with the platform's other arguments */
+/* The box order after both solvers, the bytes each box means (+0x24..+0x2f are padding the Linux swap leaves). */
+static int fsp_same_order(const unsigned char *a,const unsigned char *b,size_t n) {
+    for(size_t i=0;i<n;i++,a+=FSP_BOX,b+=FSP_BOX) if(memcmp(a,b,0x24) || memcmp(a+0x30,b+0x30,FSP_BOX-0x30)) return 0;
+    return 1;
+}
+static void fsp_run(fsp_native_fn native,const void *args,void *vec,float *p,float r,const float *dir,float a5,int allow_y,
+                    const float *move,float a9,int x0) {
+    InterlockedIncrement64(&fsp_calls);
+    const int mode=fsp_mode;
+    if(mode==FSP_OFF || !stats.active) {native(args,vec,p);return;}
+    if(move) {InterlockedIncrement64(&fsp_move);native(args,vec,p);return;}
+    uintptr_t b=0,e=0;float probe[4];
+    if(!vec || !p || !dir || !read_local(vec,&b,8) || !read_local((const unsigned char*)vec+8,&e,8) || e<b || (e-b)%FSP_BOX ||
+       (e-b)/FSP_BOX>FSP_MAX_BOXES || !read_local(p,probe,16) || !read_local(dir,probe,16)) {
+        InterlockedIncrement64(&fsp_invalid);native(args,vec,p);return;
+    }
+    unsigned char *begin=(unsigned char*)b;const size_t n=(e-b)/FSP_BOX,bytes=n*FSP_BOX;
+    if(x0) InterlockedIncrement64(&fsp_x0);
+    unsigned char *raw=(unsigned char*)malloc(bytes+32),*copy=raw?(unsigned char*)(((uintptr_t)raw+15)&~(uintptr_t)15):NULL;
+    if(copy && bytes && !read_local(begin,copy,bytes)) {free(raw);InterlockedIncrement64(&fsp_invalid);native(args,vec,p);return;}
+    if(!copy) { /* no compare: the mode's own solver on the game's memory */
+        InterlockedIncrement64(&fsp_nocopy);
+        if(mode==FSP_REDIRECT) {fsp_solve(begin,n,p,r,dir,a5,allow_y,NULL,a9);InterlockedIncrement64(&fsp_ours);}
+        else native(args,vec,p);
+        return;
+    }
+    _Alignas(16) float other[4];memcpy(other,p,16);
+    uintptr_t cv[3]={(uintptr_t)copy,(uintptr_t)(copy+bytes),(uintptr_t)(copy+bytes)};
+    if(mode==FSP_REDIRECT) {native(args,cv,other);fsp_solve(begin,n,p,r,dir,a5,allow_y,NULL,a9);InterlockedIncrement64(&fsp_ours);}
+    else {fsp_solve(copy,n,other,r,dir,a5,allow_y,NULL,a9);native(args,vec,p);}
+    uint32_t x[4],y[4];memcpy(x,p,16);memcpy(y,other,16);
+    InterlockedIncrement64(&fsp_n);
+    if(memcmp(x,y,16)) {
+        InterlockedIncrement64(&fsp_diff);
+        LONG64 d=0;for(int k=0;k<3;k++) {const LONG64 u=(LONG64)fr_ulp(x[k],y[k]);if(u>d) d=u;}
+        LONG64 now=fsp_max_ulp;
+        while(d>now) {const LONG64 seen=InterlockedCompareExchange64(&fsp_max_ulp,d,now);if(seen==now) break;now=seen;}
+    }
+    if(!fsp_same_order(begin,copy,n)) InterlockedIncrement64(&fsp_order);
+    free(raw);
+}
+/* Shared arm checks: fp_redirect armed, before the first admitted frame on the UI thread, the portable math's known
+ * answers and the solver's own (fsp_selftest: lockstep_safe_pos.h compiled as written). */
+static int fsp_arm_ready(int mode) {
+    if(mode!=FSP_SHADOW && mode!=FSP_REDIRECT) {fsp_stage="mode";return 0;}
+    if(!fr_installed || !stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) {fsp_stage="refused";return 0;}
+    if(x4pm_kat()!=X4PM_KAT_EXPECTED || !fsp_selftest()) {fsp_stage="kat";return 0;}
+    fsp_calls=fsp_ours=fsp_n=fsp_diff=fsp_max_ulp=fsp_order=fsp_move=fsp_invalid=fsp_x0=fsp_nocopy=0;
+    return 1;
+}
+static int fsp_lua_mode(const char *text,size_t length) {
+    if(text && length==6 && !memcmp(text,"shadow",6)) return FSP_SHADOW;
+    return text && length==8 && !memcmp(text,"redirect",8)?FSP_REDIRECT:-1;
+}
+/* ---- FR30: the drone factors (lockstep_drone_factors.h) at four sites of get_attackstrength's drone path ----
+ * Each site is the native instruction(s) that compute one factor (the native op) plus, on Linux, the next instruction
+ * when the five bytes of a jmp reach into it (the tail). Its first five bytes become a jmp to the site's stub on the
+ * fp redirect page (Windows fr_page, Linux the thunk page):
+ *   +0x00 lea rsp,[rsp-0x80] (Linux's red zone); push site; call [+0x58] -> the platform's common entry (in the gate)
+ *   +0x0d lea rsp,[rsp+0x88]; the tail (as the executable holds it); jmp [+0x60] -> the instruction after the site
+ *   +0x24 the native op (its RIP operands read the copies at +0x4c/+0x50 of the image's constants, pinned); movss
+ *         [r11+0x74],out; (Linux's threshold: movups of the second register it writes); ret
+ * The common entry saves rax, rcx, rdx, rsi, rdi, r8-r11 and xmm0-15 in a 16-aligned frame (fdr_frame), runs the
+ * native op on the live registers (they still hold the inputs; its result lands in the frame), calls fdr_seen(site,
+ * frame) and loads every register back from the frame, the result register as fdr_seen left it: native in 'shadow',
+ * ours in 'redirect'. So exactly one register changes, by the factor's value; the flags the stub changes are dead at
+ * every site (each back address is followed by a comiss before any branch). */
+#include "lockstep_drone_factors.h"
+enum {FDR_OFF=0,FDR_SHADOW=1,FDR_REDIRECT=2};
+#define FDR_STUB_SIZE 0x70u
+#define FDR_RET 0x0du  /* the common entry's return address in the stub */
+#define FDR_MINI 0x24u /* the native op: the return address + 0x17 */
+#define FDR_IN_STACK 0xffu
+typedef struct {
+    uint32_t site,back;          /* Windows RVA / Linux VA; back = the address after the site's bytes */
+    uint8_t kind,in_xmm,out_xmm; /* in_xmm FDR_IN_STACK: the input is the float at the function's rsp + in_stack */
+    uint8_t in_stack,op_len;     /* op_len: the native op's bytes, the rest of site..back is the tail */
+    int8_t second;               /* a second register the native op writes (-1 none) */
+    uint8_t rip[2];              /* offsets of the native op's RIP disp32s (0: none) */
+    uint32_t konst[2],konst_at[2]; /* the values they read and where the image holds them (pinned) */
+    const char *orig;            /* the site's bytes, site..back */
+    const char *name;
+} fdr_site;
+#if defined(_WIN32)
+/* Windows 0x4f1eb0 (registers as the instruction stream holds them there): the spread s in xmm1 (0x4f20e8..0x4f20fc),
+ * the time loss p in xmm6 (0x4f248e) with 100 - p in xmm0, the rolled x in xmm0 (0x4f251b) with 100 - x in xmm1, p16
+ * in xmm1 (movaps xmm1,xmm14 at 0x4f2774) with 250 in xmm2. */
+static const fdr_site fdr_sites[FDR_SITES]={
+    {0x4f2100u,0x4f2108u,FDR_SPREAD,1,1,0,8,-1,{4,0},{0x3ea2f983u,0},{0x2cbe394u,0},"\xf3\x0f\x59\x0d\x8c\xc2\x7c\x02","spread"},
+    {0x4f24c1u,0x4f24c6u,FDR_TIME,6,0,0,5,-1,{0,0},{0,0},{0,0},"\xf3\x41\x0f\x59\xc0","time"},
+    {0x4f252bu,0x4f2530u,FDR_ROLL,0,1,0,5,-1,{0,0},{0,0},{0,0},"\xf3\x41\x0f\x59\xc8","roll"},
+    {0x4f2778u,0x4f2784u,FDR_MISS,1,1,0,12,-1,{8,0},{0x39d1b718u,0},{0x2cbe0b8u,0},"\xf3\x0f\x5c\xca\xf3\x0f\x59\x0d\x34\xb9\x7c\x02","miss"},
+};
+#else
+/* Linux 0x1ded490: s in xmm7 (0x1dedf95), the time loss in xmm1 with 100 - p in xmm0 and 100 in xmm6 (0x1dee21d), x in
+ * xmm1 (0x1dedaf4) likewise, p16 at [rsp+0x4c] (stored at 0x1ded501) with p16 - 250 in xmm7 and 0 in xmm1 (0x1dee2bd,
+ * 0x1dee2ab). The time and roll sites' jmp reaches into mulss xmm0,[rsp+0x48]: their tail. */
+static const fdr_site fdr_sites[FDR_SITES]={
+    {0x1dedf9au,0x1dedfa2u,FDR_SPREAD,7,7,0,8,-1,{4,0},{0x40490fdbu,0},{0x2e27154u,0},"\xf3\x0f\x5e\x3d\xb2\x91\x03\x01","spread"},
+    {0x1dee22au,0x1dee234u,FDR_TIME,1,0,0,4,-1,{0,0},{0,0},{0,0},"\xf3\x0f\x5e\xc6\xf3\x0f\x59\x44\x24\x48","time"},
+    {0x1dedb03u,0x1dedb0du,FDR_ROLL,1,0,0,4,-1,{0,0},{0,0},{0,0},"\xf3\x0f\x5e\xc6\xf3\x0f\x59\x44\x24\x48","roll"},
+    {0x1dee2c1u,0x1dee2d9u,FDR_MISS,FDR_IN_STACK,1,0x4c,24,2,{4,16},{0x3e99999au,0x443b8000u},{0x2d286fcu,0x2c793c0u},
+     "\xf3\x0f\x10\x15\x33\xa4\xf3\x00\xf3\x0f\x59\xd7\xf3\x0f\x5e\x15\xeb\xb0\xe8\x00\xf3\x0f\x58\xca","miss"},
+};
+#endif
+/* The common entry's frame: the shadow space, the general registers, the function's rsp, the site, the native result,
+ * xmm0-15. */
+typedef struct {uint64_t shadow[4],gpr[9],rsp;uint32_t site,native;uint64_t pad;unsigned char xmm[16][16];} fdr_frame;
+_Static_assert(offsetof(fdr_frame,rsp)==0x68 && offsetof(fdr_frame,site)==0x70 && offsetof(fdr_frame,native)==0x74 &&
+               offsetof(fdr_frame,xmm)==0x80 && sizeof(fdr_frame)==0x180,"fdr_frame is the common entry's layout");
+static int fdr_mode,fdr_installed;
+static const char *fdr_stage="idle";
+static volatile LONG64 fdr_n[FDR_SITES],fdr_diff[FDR_SITES],fdr_ours,fdr_max_ulp,fdr_off;
+/* The site's input as it was when the stub was entered. */
+static float fdr_input(const fdr_site *s,const fdr_frame *f) {
+    float x;
+    if(s->in_xmm==FDR_IN_STACK) memcpy(&x,(const unsigned char*)(uintptr_t)f->rsp+s->in_stack,4);
+    else memcpy(&x,f->xmm[s->in_xmm],4);
+    return x;
+}
+/* The common entry's call: native in f->native, ours from the input; the result register's lane 0 gets the mode's. */
+static void fdr_seen(uint64_t site,fdr_frame *f) {
+    const fdr_site *s=&fdr_sites[site%FDR_SITES];
+    const float r=fdr_value(s->kind,fdr_input(s,f));uint32_t ours;memcpy(&ours,&r,4);
+    const uint32_t native=f->native;uint32_t out=native;
+    InterlockedIncrement64(&fdr_n[site%FDR_SITES]);
+    if(ours!=native) {
+        InterlockedIncrement64(&fdr_diff[site%FDR_SITES]);
+        const LONG64 d=(LONG64)fr_ulp(ours,native);LONG64 now=fdr_max_ulp;
+        while(d>now) {const LONG64 seen=InterlockedCompareExchange64(&fdr_max_ulp,d,now);if(seen==now) break;now=seen;}
+    }
+    if(fdr_mode==FDR_REDIRECT && stats.active) {out=ours;InterlockedIncrement64(&fdr_ours);}
+    else if(fdr_mode==FDR_REDIRECT) InterlockedIncrement64(&fdr_off);
+    memcpy(f->xmm[s->out_xmm],&out,4);
+}
+/* [REX] 0F op modrm for xmm reg and [r11+disp]: movss (F3, 0x11) to disp8, movups (0x11) to disp32. */
+static unsigned fdr_r11_store(unsigned char *p,int scalar,unsigned reg,uint32_t disp) {
+    unsigned n=0;if(scalar) p[n++]=0xf3;
+    p[n++]=(unsigned char)(0x41|(reg>=8?4:0));p[n++]=0x0f;p[n++]=0x11;
+    if(disp<0x80) {p[n++]=(unsigned char)(0x43|(reg&7)<<3);p[n++]=(unsigned char)disp;}
+    else {p[n++]=(unsigned char)(0x83|(reg&7)<<3);memcpy(p+n,&disp,4);n+=4;}
+    return n;
+}
+/* Site i's stub (FDR_STUB_SIZE bytes; position independent but for the two pointers). */
+static void fdr_stub_write(unsigned char *p,unsigned i,const void *common,const void *back) {
+    const fdr_site *s=&fdr_sites[i];const unsigned len=s->back-s->site,tail=len-s->op_len;
+    static const unsigned char head[0x15]={0x48,0x8d,0x64,0x24,0x80,0x6a,0x00,0xff,0x15,0x4b,0,0,0,0x48,0x8d,0xa4,0x24,0x88,0,0,0};
+    memset(p,0xcc,FDR_STUB_SIZE);memcpy(p,head,sizeof(head));p[6]=(unsigned char)i;
+    unsigned n=sizeof(head);memcpy(p+n,s->orig+s->op_len,tail);n+=tail;
+    p[n++]=0xff;p[n++]=0x25;int32_t d=(int32_t)(0x60-(n+4));memcpy(p+n,&d,4);
+    unsigned m=FDR_MINI;memcpy(p+m,s->orig,s->op_len);
+    for(unsigned k=0;k<2;k++) if(s->rip[k]) {
+        d=(int32_t)((0x4c+4*k)-(FDR_MINI+s->rip[k]+4));memcpy(p+FDR_MINI+s->rip[k],&d,4);memcpy(p+0x4c+4*k,&s->konst[k],4);
+    }
+    m+=s->op_len;m+=fdr_r11_store(p+m,1,s->out_xmm,0x74);
+    if(s->second>=0) m+=fdr_r11_store(p+m,0,(unsigned)s->second,0x80+0x10u*(unsigned)s->second);
+    p[m]=0xc3;
+    memcpy(p+0x58,&common,8);memcpy(p+0x60,&back,8);
+}
+/* The common entry's body (AT&T; the platform adds its prologue and the call of fdr_seen with (site, frame) in its two
+ * first argument registers). Entered from a stub: [rsp] the stub's return address, [rsp+8] the site; the function's rsp
+ * is that + 0x90 (the push, the red zone gap). After push rbp / mov rbp,rsp: rbp + 0x98. */
+#define FDR_ASM_SAVE \
+    " andq $-16,%rsp\n subq $0x180,%rsp\n" \
+    " movq %rax,0x20(%rsp)\n movq %rcx,0x28(%rsp)\n movq %rdx,0x30(%rsp)\n movq %rsi,0x38(%rsp)\n movq %rdi,0x40(%rsp)\n" \
+    " movq %r8,0x48(%rsp)\n movq %r9,0x50(%rsp)\n movq %r10,0x58(%rsp)\n movq %r11,0x60(%rsp)\n" \
+    " leaq 0x98(%rbp),%rax\n movq %rax,0x68(%rsp)\n movl 0x10(%rbp),%eax\n movl %eax,0x70(%rsp)\n" \
+    " movups %xmm0,0x80(%rsp)\n movups %xmm1,0x90(%rsp)\n movups %xmm2,0xa0(%rsp)\n movups %xmm3,0xb0(%rsp)\n" \
+    " movups %xmm4,0xc0(%rsp)\n movups %xmm5,0xd0(%rsp)\n movups %xmm6,0xe0(%rsp)\n movups %xmm7,0xf0(%rsp)\n" \
+    " movups %xmm8,0x100(%rsp)\n movups %xmm9,0x110(%rsp)\n movups %xmm10,0x120(%rsp)\n movups %xmm11,0x130(%rsp)\n" \
+    " movups %xmm12,0x140(%rsp)\n movups %xmm13,0x150(%rsp)\n movups %xmm14,0x160(%rsp)\n movups %xmm15,0x170(%rsp)\n" \
+    " movq 8(%rbp),%rax\n addq $0x17,%rax\n movq %rsp,%r11\n callq *%rax\n"
+#define FDR_ASM_RESTORE \
+    " movups 0x80(%rsp),%xmm0\n movups 0x90(%rsp),%xmm1\n movups 0xa0(%rsp),%xmm2\n movups 0xb0(%rsp),%xmm3\n" \
+    " movups 0xc0(%rsp),%xmm4\n movups 0xd0(%rsp),%xmm5\n movups 0xe0(%rsp),%xmm6\n movups 0xf0(%rsp),%xmm7\n" \
+    " movups 0x100(%rsp),%xmm8\n movups 0x110(%rsp),%xmm9\n movups 0x120(%rsp),%xmm10\n movups 0x130(%rsp),%xmm11\n" \
+    " movups 0x140(%rsp),%xmm12\n movups 0x150(%rsp),%xmm13\n movups 0x160(%rsp),%xmm14\n movups 0x170(%rsp),%xmm15\n" \
+    " movq 0x20(%rsp),%rax\n movq 0x28(%rsp),%rcx\n movq 0x30(%rsp),%rdx\n movq 0x38(%rsp),%rsi\n movq 0x40(%rsp),%rdi\n" \
+    " movq 0x48(%rsp),%r8\n movq 0x50(%rsp),%r9\n movq 0x58(%rsp),%r10\n movq 0x60(%rsp),%r11\n" \
+    " movq %rbp,%rsp\n popq %rbp\n retq\n"
+/* fdr_seen for the common entry (referenced from its asm: kept). */
+static void *const fdr_hook_calls[1] __attribute__((used))={(void*)fdr_seen};
+/* Shared arm checks: fp_redirect armed, before the first admitted frame on the UI thread, the factors' known answers. */
+static int fdr_arm_ready(int mode) {
+    if(mode!=FDR_SHADOW && mode!=FDR_REDIRECT) {fdr_stage="mode";return 0;}
+    if(!fr_installed || !stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) {fdr_stage="refused";return 0;}
+    if(!fdr_selftest()) {fdr_stage="kat";return 0;}
+    for(unsigned i=0;i<FDR_SITES;i++) fdr_n[i]=fdr_diff[i]=0;
+    fdr_ours=fdr_max_ulp=fdr_off=0;
+    return 1;
+}
 static int fr_status(char *out,size_t cap) {
     static const char *const names[FR_LEN]={"f0","f4","f24","m","f0_out","f4_out","p0","p4","p8","pc","w0","w4","w8","wc"};
     int n=snprintf(out,cap,"installed=%u restored=%u mode=%s stage=%s calls=%lld compared=%lld load_compared=%lld skipped=%lld unfinished=%lld no_context=%lld orphans=%lld m_branch=%lld v8_branch=%lld comp_changed=%lld",
@@ -611,6 +823,23 @@ static int fr_status(char *out,size_t cap) {
     /* FR24 (Windows only; zeros on Linux, whose own division is the reference): fac=max_ulp:differing:compared. */
     m=snprintf(out+n,cap-(size_t)n," fac=%lld:%lld:%lld fac_hits=%lld fac_written=%lld",(long long)fr_max_ulp[FR_FAC],(long long)fr_diff[FR_FAC],
         (long long)fr_n[FR_FAC],(long long)fr_hits[FR_HIT_FAC],(long long)fr_fac_written);
+    if(m<=0 || (size_t)m>=cap-(size_t)n) return 0;
+    n+=m;
+    /* FR27 (both): the solver; sp=max_ulp:differing:compared of the point, native vs ours. */
+    m=snprintf(out+n,cap-(size_t)n," solver=%s sp_stage=%s sp_entry=%s sp_calls=%lld sp_ours=%lld sp=%lld:%lld:%lld sp_order=%lld sp_move=%lld sp_invalid=%lld sp_x0=%lld sp_nocopy=%lld",
+        fsp_mode==FSP_SHADOW?"shadow":fsp_mode==FSP_REDIRECT?"redirect":"off",fsp_stage,!fsp_installed?"-":fsp_route?"chain":"own",(long long)fsp_calls,
+        (long long)fsp_ours,(long long)fsp_max_ulp,(long long)fsp_diff,(long long)fsp_n,(long long)fsp_order,(long long)fsp_move,(long long)fsp_invalid,
+        (long long)fsp_x0,(long long)fsp_nocopy);
+    if(m<=0 || (size_t)m>=cap-(size_t)n) return 0;
+    n+=m;
+    /* FR30 (both): the drone factors; dr=max_ulp:differing:compared over the four sites, then per site
+     * differing/compared, dr_ours the results written, dr_off calls after the gate stopped (native kept). */
+    LONG64 dn=0,dd=0;for(unsigned i=0;i<FDR_SITES;i++) {dn+=fdr_n[i];dd+=fdr_diff[i];}
+    m=snprintf(out+n,cap-(size_t)n," drones=%s dr_stage=%s dr=%lld:%lld:%lld dr_sites=%s:%lld/%lld,%s:%lld/%lld,%s:%lld/%lld,%s:%lld/%lld dr_ours=%lld dr_off=%lld",
+        fdr_mode==FDR_SHADOW?"shadow":fdr_mode==FDR_REDIRECT?"redirect":"off",fdr_stage,(long long)fdr_max_ulp,(long long)dd,(long long)dn,
+        fdr_sites[0].name,(long long)fdr_diff[0],(long long)fdr_n[0],fdr_sites[1].name,(long long)fdr_diff[1],(long long)fdr_n[1],
+        fdr_sites[2].name,(long long)fdr_diff[2],(long long)fdr_n[2],fdr_sites[3].name,(long long)fdr_diff[3],(long long)fdr_n[3],
+        (long long)fdr_ours,(long long)fdr_off);
     return m>0 && (size_t)m<cap-(size_t)n?n+m:0;
 }
 static void fr_hex(char *out,const unsigned char *bytes,size_t n) {

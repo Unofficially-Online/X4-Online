@@ -31,9 +31,10 @@ static void **test_pslot_factory(void *universe,void **out,void *parent,void *co
     memcpy(test_pnat_universe+VPS_SINGLETON,&p2,8);--*(int*)(p1+0x40);test_pslot_rng+=2;
     *out=p2;return out;
 }
+static int test_pslot_p1_stood;   /* slot 1 stood up: X4 deleted its PlayerController, 9fc550 answers none for it */
 static void *test_pslot_controller_of(void *key) {
     assert(key==pnat_base+PNAT_CONTROLLER_KEY);
-    if(test_pslot_singleton()!=test_pslot_p2) return test_pnat_controller;
+    if(test_pslot_singleton()!=test_pslot_p2) return test_pslot_p1_stood?NULL:test_pnat_controller;
     void *c=NULL;memcpy(&c,test_pslot_ship2+0x200,8);return c==(void*)test_pslot_c2?c:NULL;
 }
 static unsigned char test_pslot_room_is(void *self,int cls) {assert(self==test_pslot_room);return cls==PSLOT_ROOM_CLASS;}
@@ -311,6 +312,18 @@ static void test_crash_note(void) {
     assert(crash_note_filter(&info)==EXCEPTION_EXECUTE_HANDLER && test_crash_previous_calls==2);   /* once only */
     {   FILE *f=fopen(note,"rb");char back[4096];size_t got=f?fread(back,1,sizeof(back)-1,f):0;if(f) fclose(f);back[got]=0;
         assert(got && strstr(back,"NATIVE_GATE CRASH tick=1599 code=c0000005") && !strstr(strstr(back,"\n")+1,"CRASH"));}
+    /* First chance (footlook: X4's own handler ended the process before the filter): an access violation in X4's image
+     * writes a CRASH_FIRST_CHANCE line, at most CRASH_NOTE_FIRST of them, and handles nothing; one elsewhere writes none. */
+    {   unsigned char *saved_image=image;static unsigned char fake_image[64];void *saved_address=test_crash_record.ExceptionAddress;
+        image=fake_image;crash_note_first_count=0;test_crash_record.ExceptionAddress=fake_image+8;
+        assert(crash_note_first_chance(&info)==EXCEPTION_CONTINUE_SEARCH && crash_note_first_count==1);
+        test_crash_record.ExceptionAddress=(void*)(uintptr_t)0x10;assert(crash_note_first_chance(&info)==EXCEPTION_CONTINUE_SEARCH && crash_note_first_count==1);
+        test_crash_record.ExceptionAddress=fake_image+8;
+        for(unsigned i=0;i<CRASH_NOTE_FIRST+2;i++) assert(crash_note_first_chance(&info)==EXCEPTION_CONTINUE_SEARCH);
+        FILE *f=fopen(note,"rb");char back[16384];size_t got=f?fread(back,1,sizeof(back)-1,f):0;if(f) fclose(f);back[got]=0;
+        unsigned lines=0;for(const char *c=back;(c=strstr(c,"CRASH_FIRST_CHANCE tick=1599 code=c0000005 at=8 "));c++) ++lines;
+        assert(lines==CRASH_NOTE_FIRST && crash_note_vectored);
+        image=saved_image;test_crash_record.ExceptionAddress=saved_address;crash_note_first_count=0;}
     SetUnhandledExceptionFilter(kept);crash_note_armed=0;crash_note_entered=0;crash_note_previous=NULL;crash_note_path[0][0]=0;
     /* Through Lua, where the probe arms it: right after loading the gate, before gate.start names the UI thread
      * (build120 refused here: accept_ui). */
@@ -333,6 +346,21 @@ static void test_pslot_reset(void) {
     memset((void*)pslot_getter_render,0,sizeof(pslot_getter_render));pslot_callers=0;pslot_caller_tail=(unsigned)pslot_caller_head;pslot_caller_dropped=0;
     test_pslot_assist_value=1;test_pslot_mode_value=0;render_rng_in_slot=0;
 }
+/* X4's 3d8420 as the body stage uses it (lockstep_pilot_foot_body.h): with a target, ConnectTo at the player slot (the
+ * parent becomes the target; mode 1 lands elsewhere, mode 2 faults); without one, off the parent. */
+static __attribute__((aligned(16))) unsigned char test_pfbody_filter_object[16],test_pfbody_elsewhere[0x100];
+static unsigned test_pfbody_calls,test_pfbody_mode;
+static unsigned char *test_pfbody_singleton;
+static void *test_pfbody_target;
+static void test_pfbody_connect(void *component,const void *filter,void *target,void *extra) {
+    ++test_pfbody_calls;test_pfbody_singleton=test_pslot_singleton();test_pfbody_target=target;
+    assert(component==test_pslot_p2 && filter==test_pfbody_filter_object && !extra);
+    if(test_pfbody_mode==2) RaiseException(EXCEPTION_ACCESS_VIOLATION,0,0,NULL);
+    if(target) {assert(!*(void**)(test_pslot_p2+0x70));void *at=test_pfbody_mode==1?(void*)test_pfbody_elsewhere:target;memcpy(test_pslot_p2+0x70,&at,8);}
+    else memset(test_pslot_p2+0x70,0,8);
+}
+static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *input,unsigned char *p1,unsigned char *p2);   /* test_lockstep_pilot_foot_slots.h */
+static void test_pilot_death_foot_block(unsigned char *region,unsigned char *input,unsigned char *p1,unsigned char *p2);   /* test_lockstep_pilot_death_foot.h */
 static void test_pilot_slots(void) {
     pstk_focus_forced=1;
     unsigned char *saved_image_base=pnat_base;pnat_fns saved_fns=pnat_fn;pstk_fns saved_pstk=pstk_fn;pslot_fns saved_slots=pslot_fn;
@@ -718,6 +746,62 @@ static void test_pilot_slots(void) {
         assert(pslot_seat(2) && pslots[2].seated && pslots[2].roomless && pslots[2].room==test_pslot_ship2 && test_pslot_singleton()==p1);
         assert(pslot_release(2) && !pslots[2].seated && *(void**)test_pslot_c2==(void*)(pnat_base+PSLOT_VTABLE));
         test_pslot_parent=test_pslot_room;memcpy(test_pslot_ship2+0x200,&agent,8);memcpy(test_pslot_ship2+PSLOT_ROOM,&room,8);}
+    /* Bodies (lockstep_pilot_foot_body.h): P_2 into its seat's room through X4's connect at the player slot, in its
+     * scope; checked every live pass; off again before the seats' release (the upward pointer back); a connect that
+     * lands elsewhere or faults, a roomless seat, a moved body: stop 185. The kill guard at KillRecursive from take-1 (before
+     * the first body is in a room) to stop+1 (after the last left), its site checked every live pass. */
+    {   void *agent=test_pslot_agent2,*room=test_pslot_room;
+        test_pslot_reset();assert(pslot_arm_using(3));pslots[2].player=p2;pslot_p1=p1;memset(p2+0x70,0,8);
+        memcpy(test_pslot_ship2+0x200,&agent,8);memcpy(test_pslot_ship2+PSLOT_ROOM,&room,8);test_pslot_parent=test_pslot_room;stats.issued=6;
+        assert(pslot_seat(2) && pslots[2].seated && !pslots[2].roomless && *(void**)(p2+0x70)==room);
+        pfbody_connect=test_pfbody_connect;pfbody_filter=test_pfbody_filter_object;
+        pfoot_armed=0;assert(!pfbody_arm_using() && !strcmp(pstk_arm_why,"bodies_without_foot"));pfoot_armed=1;
+        memcpy(region+PFBODY_KILL_SITE,pfbody_kill_bytes,sizeof(pfbody_kill_bytes));
+        assert(pfbody_arm_using() && pfbody_armed && !strcmp(pfbody_stage,"armed") && !pfbody_kill_installed);
+        uint64_t start=pilot_start,stop=pilot_stop;pilot_start=10;pilot_stop=40;   /* take 7: the seats at 6, the bodies after them */
+        test_pfbody_calls=0;test_pfbody_mode=0;
+        assert(pfbody_pass(6,0) && !test_pfbody_calls && pfbody_pass(6,1) && pfbody_mask==2 && test_pfbody_calls==1 && test_pfbody_singleton==p2 &&
+               test_pfbody_target==room && *(void**)(p2+0x70)==room && test_pslot_singleton()==p1 && !pstk_scope_slot && !strcmp(pfbody_stage,"connected"));
+        {   int32_t at;memcpy(&at,region+PFBODY_KILL_SITE+1,4);   /* X4's 6-byte call is a 5-byte call to the near page now */
+            assert(pfbody_kill_installed && region[PFBODY_KILL_SITE]==0xe8 && region+PFBODY_KILL_SITE+5+at==pslot_page+PFBODY_KILL_STUB &&
+                   !memcmp(region+PFBODY_KILL_SITE+5,pfbody_kill_bytes+5,3) && pfbody_kill_intact());}
+        assert(pfbody_pass(7,1) && pfbody_pass(20,1) && pfbody_checks==2 && !strcmp(pfbody_stage,"live"));
+        /* The site no longer ours: stop. */
+        region[PFBODY_KILL_SITE+1]^=1;assert(!pfbody_pass(20,1) && !strcmp(pfbody_why,"body_kill_lost"));region[PFBODY_KILL_SITE+1]^=1;
+        pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";pfbody_checks=2;pfbody_stage="live";
+        {char row[256];assert(pfbody_status(row,sizeof(row)) && strstr(row," bodies=live bodies_why=- bodies_mask=2 connects=1/0 body_checks=2"));}
+        /* stop+1: off before the release, the upward pointer back; the release then finds the seat as it left it. */
+        assert(pfbody_pass(41,0) && !pfbody_mask && test_pfbody_calls==2 && !test_pfbody_target && test_pfbody_singleton==p2 && *(void**)(p2+0x70)==room &&
+               !strcmp(pfbody_stage,"released") && pfbody_disconnects==1);
+        assert(!pfbody_kill_installed && !memcmp(region+PFBODY_KILL_SITE,pfbody_kill_bytes,8));   /* X4's call back */
+        assert(pfbody_kill_install());   /* for the live checks below */
+        assert(pslot_release(2) && !pslots[2].seated && !*(void**)(p2+0x70));
+        /* Moved off the room while live: stop. */
+        memset(p2+0x70,0,8);assert(pslot_seat(2));assert(pfbody_connect_slot(2) && pfbody_mask==2);
+        {void *other=test_pfbody_elsewhere;memcpy(p2+0x70,&other,8);}
+        assert(!pfbody_pass(21,1) && !strcmp(pfbody_why,"body_moved") && pfoot_failed && !strcmp(pfoot_why,"body_moved"));
+        memcpy(p2+0x70,&room,8);pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";
+        assert(pfbody_disconnect_slot(2) && !pfbody_mask && pslot_release(2));memset(p2+0x70,0,8);
+        /* A connect that lands elsewhere: off again, the upward pointer back, stop; a fault: stop, the pointer back. */
+        assert(pslot_seat(2));test_pfbody_mode=1;test_pfbody_calls=0;
+        assert(!pfbody_connect_slot(2) && !strcmp(pfbody_why,"body_connect") && test_pfbody_calls==2 && !test_pfbody_target && *(void**)(p2+0x70)==room &&
+               !pfbody_mask && test_pslot_singleton()==p1 && !pstk_scope_slot);
+        pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";test_pfbody_mode=2;
+        assert(!pfbody_connect_slot(2) && !strcmp(pfbody_why,"body_connect_fault") && *(void**)(p2+0x70)==room && !pfbody_mask && test_pslot_singleton()==p1);
+        pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";test_pfbody_mode=0;
+        assert(pslot_release(2));memset(p2+0x70,0,8);
+        /* A seat without a cockpit room has no player slot to sit at: refused. */
+        memset(test_pslot_ship2+PSLOT_ROOM,0,8);test_pslot_parent=test_pslot_ship2;
+        assert(pslot_seat(2) && pslots[2].roomless && !pfbody_connect_slot(2) && !strcmp(pfbody_why,"body_seat") && !pfbody_mask);
+        pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";
+        /* At take-1 such a seat gets no body (counted), the session goes on. */
+        assert(pfbody_pass(6,1) && !pfbody_mask && pfbody_roomless==1 && !pfbody_failed);
+        assert(pslot_release(2));test_pslot_parent=test_pslot_room;memcpy(test_pslot_ship2+PSLOT_ROOM,&room,8);memset(p2+0x70,0,8);
+        assert(pfbody_kill_uninstall());
+        pfbody_armed=0;pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";pfbody_stage="off";pfbody_mask=0;pfbody_connects=pfbody_disconnects=pfbody_checks=0;
+        pfbody_connect=NULL;pfbody_filter=NULL;pfoot_armed=0;pilot_start=start;pilot_stop=stop;}
+    /* Slots 2..N on foot (lockstep_pilot_foot_slots.h) and the bodies parked around a get-up. */
+    test_pilot_foot_slots_block(region,input,p1,p2);
     /* A slot ship's death (lockstep_pilot_death.h): the session goes on, the slot's records consumed and ignored; a
      * controller change with another cause still stops; the ship MD built becomes the slot's at a fixed tick. */
     {   void *agent=test_pslot_agent2,*room=test_pslot_room;void *null=NULL;
@@ -903,6 +987,8 @@ static void test_pilot_slots(void) {
         *(uint64_t*)(test_pslot_ship2+8)=0;*(uint64_t*)(test_pnat_ship+8)=0;
         memcpy(test_pslot_ship2+0x200,&agent,8);memset(test_pslot_c2,0,sizeof(test_pslot_c2));
         pilot_start=10;pilot_stop=40;pstk_flight=0;*flight=0;memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));memset(pstk_ring,0,sizeof(pstk_ring));pnat_controller=controller;pnat_ship=test_pnat_ship;}
+    /* Death and on foot together (test_lockstep_pilot_death_foot.h): each combination the two modules share pslot_* in. */
+    test_pilot_death_foot_block(region,input,p1,p2);
     /* The PlayerController branches are the stock prologue, then an indirect jump to the continuation. */
     {   static void (*const branches[3])(void)={pslot_player6,pslot_player7,pslot_player10};
         for(unsigned i=0;i<3;i++) {
@@ -1019,6 +1105,13 @@ static void test_pilot_slots_arming_order(const char *path) {
     assert(pnat_arm_stock(1,3u) && !pnat_arm_stock(0,3u)); /* the reload's identical rerun */
     /* The call site on the real bytes: installed and restored with the boot hold's word next to it. */
     assert(pslot_hook_install() && pslot_hook_intact() && image[PSLOT_CALL_SITE]==0xe8 && memcmp(image+PSLOT_CALL_SITE,pslot_call_bytes,5));
+    /* The bodies' kill guard on the real bytes (lockstep_pilot_foot_body.h): KillRecursive's first call, X4's spare query
+     * ([rax+0x1408] with rax the component's vtable from [rcx]), its answer tested next; re-pointed to the near page and back. */
+    {   assert(!memcmp(image+PFBODY_KILL_SITE,pfbody_kill_bytes,8) && image[PFBODY_KILL_RVA+0xd]==0x48 && image[PFBODY_KILL_RVA+0xe]==0x8b &&
+               image[PFBODY_KILL_RVA+0xf]==0x01 && image[PFBODY_KILL_SITE+8]==0x0f && image[PFBODY_KILL_SITE+9]==0x85);
+        int32_t at;assert(pfbody_kill_install() && pfbody_kill_intact() && image[PFBODY_KILL_SITE]==0xe8);
+        memcpy(&at,image+PFBODY_KILL_SITE+1,4);assert(image+PFBODY_KILL_SITE+5+at==pslot_page+PFBODY_KILL_STUB && image[PFBODY_KILL_SITE+5]==0x00);
+        assert(pfbody_kill_uninstall() && !memcmp(image+PFBODY_KILL_SITE,pfbody_kill_bytes,8));}
     assert(pslot_hook_uninstall() && !memcmp(image+PSLOT_CALL_SITE,pslot_call_bytes,5));
     /* Presentation on the real bytes: its pins with the boot hold installed, the refill call re-pointed and restored. */
     pres_armed=0;pres_pins_checked=0;render_rng_installed=1;pres_fns saved_pres=pres_fn;

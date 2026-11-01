@@ -16,6 +16,7 @@ from native_world_action import manifest_wire as action_manifest_wire
 from native_world_find_rng import manifest_wire as find_manifest_wire,verify_input_files as find_verify_inputs
 from native_world_position_rng import manifest_wire as position_rng_wire
 import native_gate_player_orders as player_orders
+import native_gate_defaults as session_defaults
 
 
 def _snapshot_starts(path):
@@ -132,12 +133,19 @@ def main():
     p.add_argument('--spawn-rng', choices=('observe', 'key'), help='the Linux gate: ship loadouts on the generator\'s explicit state')
     p.add_argument('--find-order', choices=('observe', 'sort'), help='the Linux gate: find_* candidate lists on saved IDs (needs --world-identities)')
     p.add_argument('--loadout-order', choices=('observe', 'canonical'), help="the Linux gate: what a station wants to restock does not depend on the macros' heap addresses (native_gate_loadout_order)")
+    p.add_argument('--fork-save', metavar='TICK[,TICK...][:NAME]', help='the Linux gate: at tick TICK fork X4; the child writes save/mpjoin/NAME.xml.gz (default join_TICK; with several ticks NAME followed by each tick) while the session goes on (native_gate_fork_save, D14; reports/LOCKSTEP-NONBLOCKING-SAVE-20261101.txt)')
+    p.add_argument('--fork-save-budget-ms', type=int, default=50, help='how long the tick may wait for the quiet point (1..2000, default 50)')
+    p.add_argument('--fork-save-watchdog', type=int, default=600, help="seconds before the child's own alarm ends it (2..3600, default 600)")
+    p.add_argument('--fork-save-every', type=int, help='repeat the request every N ticks under the same name, the file replaced (repeated-fork runs)')
+    p.add_argument('--fork-save-slot', type=int, help='only this client slot forks (default every client of the overlay)')
     p.add_argument('--attention-all', action='store_true', help="the Linux gate: every portable object's attention timer re-evaluates at its first admitted call and draws from (tick, ID) (native_gate_attention_all with the hook of native_gate_attention_initial_refresh; needs --world-identities)")
     p.add_argument('--step-trace', nargs='+', metavar='SAVED_ID', help="the Linux gate: the Linear flight model's step, entry and exit, for up to four saved IDs (diagnostic; needs --world-identities)")
     p.add_argument('--step-trace-ticks', type=int, default=3, help='ticks 1..N of the step trace (default 3, at most 600)')
     p.add_argument('--fp-redirect', choices=('shadow', 'writer', 'redirect'), help='both gates: the flight parameter refresh recomputed by strict code next to the native one, ulp per field (Option B slice 1; shadow writes nothing, writer writes the writer\'s +0x0..+0xc, redirect also the spline segment length where Windows inlines BezierSpline::Set)')
     p.add_argument('--fp-redirect-watch', nargs='+', metavar='SAVED_ID', help='FP_REDIRECT_ROWs (inputs and results) for up to four saved IDs (needs --fp-redirect and --world-identities)')
     p.add_argument('--fp-redirect-ticks', type=int, default=3, help='ticks 1..N of the FP_REDIRECT_ROWs (default 3, at most 600)')
+    p.add_argument('--fp-redirect-solver', choices=('shadow', 'redirect'), help='FR27: the GetSafePos solver on one portable implementation (needs --fp-redirect)')
+    p.add_argument('--fp-redirect-drones', choices=('shadow', 'redirect'), help='FR30: the drone factors of get_attackstrength in Windows\' order on both executables (needs --fp-redirect)')
     p.add_argument('--coverage', type=int, metavar='TICKS', help='the Linux gate: which listed functions run in ticks 1..TICKS (diagnostic; needs --coverage-list)')
     p.add_argument('--coverage-list', type=Path, help='the function list (virtual addresses, one per line), copied next to the gate as coverage.txt')
     p.add_argument('--loadout-order-rows', type=int, nargs=2, metavar=('FROM', 'TO'), help='LOADOUT_ROWs in this tick window, at most 600 ticks (needs --loadout-order and --world-identities)')
@@ -189,6 +197,9 @@ def main():
     p.add_argument('--world-hash-stride', type=int, help='hash every imported component at tick1 and every N ticks; read-only, requires --world-identities')
     p.add_argument('--world-hash-schema', choices=('WORLD_IMPORTED_1','WORLD_IMPORTED_2'), default='WORLD_IMPORTED_1', help='opt-in enriched Nav timing/owned pending state; legacy raw timing remains the default')
     p.add_argument('--world-hash-watch', action='append', default=[], metavar='SAVED_ID', help='retain canonical hash bytes for up to64 saved IDs (16 lowercase hex digits); requires --world-hash-stride')
+    p.add_argument('--fp-attack-capture', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='FR29b, both gates: FP_ATTACK_ROWs of the attack computation (get_attackstrength and its sub-calls, apply) in ticks FIRST..LAST; requires --fp-redirect and --world-identities')
+    p.add_argument('--fp-attack-watch', action='append', default=[], metavar='SAVED_ID', help='FR29b: only calls whose attacker or target is one of these saved IDs (up to 32); requires --fp-attack-capture')
+    p.add_argument('--world-health-ticks', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='FR28, both gates: a WORLD_HEALTH row (stored hull and shield, game time) per world-hash watch on every tick FIRST..LAST; requires --world-hash-watch')
     p.add_argument('--world-trace-ticks', type=int, help='read-only native motion trace for watched imported ships through tick2..12; requires serial pathing and all motion diagnostic hooks')
     p.add_argument('--world-trace-early', action='store_true', help='configure watched identities before loading and observe postload/first-pathing/AI producer boundaries')
     p.add_argument('--world-queue-trace', action='store_true', help='read-only manager enqueue and Agent pending append provenance; requires early world trace')
@@ -236,6 +247,11 @@ def main():
     p.add_argument('--attention-initial-refresh', action='store_true', help='align first native fixture attention refresh deadline')
     p.add_argument('--session-clients', action='store_true',
                    help='native input wire 3: N=2..8 clients from the lane session (@X4LANE_CLIENTS@); relay needs --clients {clients}')
+    p.add_argument('--bare', action='store_true',
+                   help='native_gate_defaults = false: the bare gate, only the keys these flags set (census runs of single modules). '
+                        'Without it a battle snapshot overlay is a session with the default stack (tools/dev/native_gate_defaults.lua, '
+                        'reports/LOCKSTEP-DEFAULTS-20261101.txt); the Linux gate, clock or fixed-tick boots and the two-player '
+                        'fixtures are always bare (the default stack needs the battle snapshot and the Windows modules)')
     p.add_argument('--out', type=Path, required=True)
     args = p.parse_args()
     if args.session_clients and (args.command_test or args.player_probe or args.docking_state or args.docking_shape_rng):
@@ -289,6 +305,12 @@ def main():
         p.error('--world-hash-schema WORLD_IMPORTED_2 requires --world-hash-stride')
     if args.world_hash_watch and (args.world_hash_stride is None or len(args.world_hash_watch)>64 or len(set(args.world_hash_watch))!=len(args.world_hash_watch) or any(len(s)!=16 or any(c not in '0123456789abcdef' for c in s) or int(s,16)==0 for s in args.world_hash_watch)):
         p.error('--world-hash-watch requires stride,1..64 unique nonzero16-digit lowercase hex IDs')
+    if args.world_health_ticks and (not args.world_hash_watch or not 1<=args.world_health_ticks[0]<=args.world_health_ticks[1]):
+        p.error('--world-health-ticks requires --world-hash-watch and ticks 1 <= FIRST <= LAST')
+    if args.fp_attack_capture and (not args.fp_redirect or not args.world_identities or not 1<=args.fp_attack_capture[0]<=args.fp_attack_capture[1]):
+        p.error('--fp-attack-capture requires --fp-redirect, --world-identities and ticks 1 <= FIRST <= LAST')
+    if args.fp_attack_watch and (not args.fp_attack_capture or len(args.fp_attack_watch)>32 or len(set(args.fp_attack_watch))!=len(args.fp_attack_watch) or any(len(s)!=16 or any(c not in '0123456789abcdef' for c in s) or int(s,16)==0 for s in args.fp_attack_watch)):
+        p.error('--fp-attack-watch requires --fp-attack-capture and 1..32 unique nonzero 16-digit lowercase hex IDs')
     if args.world_trace_ticks is not None:
         if not 2<=args.world_trace_ticks<=12 or not args.world_hash_watch or args.world_hash_stride!=1 or not args.serial_pathing:
             p.error('--world-trace-ticks requires ticks2..12, world watches, hash stride1, and serial pathing')
@@ -426,8 +448,9 @@ def main():
         # world identities and the world hash are ported (src/native/engine/linux/gate_world.h).
         if not args.snapshot or args.mode != 'clock':
             p.error('--gate-so supports the snapshot boot with --mode clock only')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
-                   'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch'}
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
+                   'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch',
+                   'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
             p.error('not ported to the Linux gate: ' + ', '.join('--' + k.replace('_', '-') for k in unported))
@@ -497,8 +520,23 @@ def main():
         # Protocol 3 input multiplexer (pilot, orders and hit claim sections share one blob).
         shutil.copy2(root/'tools/dev/native_gate_inputs_core.lua',args.out/'ui/native_gate_inputs_core.lua')
         ui_files = 'ui/native_gate_inputs_core.lua\n'+ui_files
+    # The session defaults (native_gate_defaults.lua): a battle snapshot session on the Windows gate runs the default stack;
+    # every other overlay is the bare gate, said in its config and in the probe's log (DEFAULTS_OFF).
+    fixtures = [name for name in ('command_test', 'player_probe', 'docking_state', 'docking_shape_rng', 'docking_shape_refresh')
+                if getattr(args, name, None)]
+    bare_why = ('--bare' if args.bare else 'the Linux gate runs the core subset' if args.gate_so else
+                'a fixed-tick boot' if not args.snapshot else 'clock mode' if args.mode != 'battle' else
+                'two-player fixtures: ' + ', '.join(fixtures) if fixtures else None)
+    if bare_why:
+        ui_files = 'ui/native_gate_defaults.lua\n' + ui_files
+        shutil.copy2(root/'tools/dev/native_gate_defaults.lua', args.out/'ui/native_gate_defaults.lua')
+        print(f'DEFAULTS_OFF native_gate_defaults = false ({bare_why})')
+    else:
+        ui_files = '\n'.join(session_defaults.ship_files(args.out, ui_files.split())) + '\n'
+        print('DEFAULTS session overlay: the default stack (tools/dev/native_gate_defaults.lua) on top of these flags')
     (args.out/'ui.xml.files').write_text(ui_files)
-    (args.out/'ui/config.lua.append').write_text('''X4LAN_CONFIG.enabled = false
+    (args.out/'ui/config.lua.append').write_text(('X4LAN_CONFIG.native_gate_defaults = false  -- ' + bare_why + '\n' if bare_why else '') +
+                                                 '''X4LAN_CONFIG.enabled = false
 X4LAN_CONFIG.native_gate_test = true
 X4LAN_CONFIG.native_gate_hash = "%s"
 X4LAN_CONFIG.native_gate_start_time = 5
@@ -622,6 +660,28 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--find-order needs --gate-so, the snapshot boot and --world-identities')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write(f"X4LAN_CONFIG.native_gate_find_order = '{args.find_order}'\n")
+    if args.fork_save:
+        ticks, _, name = args.fork_save.partition(':')
+        ticks = ticks.split(',')
+        name = name or (f'join_{ticks[0]}' if len(ticks) == 1 else 'join')
+        # Several ticks: each file is NAME followed by its tick, at most 15 characters in all.
+        longest = len(name) + (len(ticks[-1]) if len(ticks) > 1 else 0)
+        if not args.gate_so or not args.snapshot or not all(t.isdigit() and 2 <= int(t) <= 10**9 for t in ticks) or \
+                any(int(a) >= int(b) for a, b in zip(ticks, ticks[1:])) or not 1 <= len(name) <= longest <= 15 or \
+                any(not (ch.isascii() and (ch.isalnum() or ch in '_-')) for ch in name) or (len(ticks) > 1 and args.fork_save_every):
+            p.error('--fork-save needs --gate-so, the snapshot boot, increasing ticks 2..10^9 (several only without --fork-save-every) '
+                    'and a name of letters, digits, _ or -, at most 15 characters with the tick')
+        tick = ticks[0] if len(ticks) == 1 else '{' + ', '.join(ticks) + '}'
+        if not 1 <= args.fork_save_budget_ms <= 2000 or not 2 <= args.fork_save_watchdog <= 3600 or \
+                (args.fork_save_every is not None and not 2 <= args.fork_save_every <= 10**6) or \
+                (args.fork_save_slot is not None and not 1 <= args.fork_save_slot <= 8):
+            p.error('--fork-save-budget-ms 1..2000, --fork-save-watchdog 2..3600, --fork-save-every 2..10^6, --fork-save-slot 1..8')
+        every = (f', every = {args.fork_save_every}' if args.fork_save_every else '') + (f", slot = 'p{args.fork_save_slot}'" if args.fork_save_slot else '')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write(f"X4LAN_CONFIG.native_gate_fork_save = {{tick = {tick}, name = '{name}', budget_ms = {args.fork_save_budget_ms}, "
+                         f"watchdog_s = {args.fork_save_watchdog}{every}}}\n")
+    elif args.fork_save_budget_ms != 50 or args.fork_save_watchdog != 600 or args.fork_save_every is not None or args.fork_save_slot is not None:
+        p.error('--fork-save-budget-ms, --fork-save-watchdog, --fork-save-every and --fork-save-slot need --fork-save')
     if args.attention_all:
         if not args.gate_so or not args.snapshot or not args.world_identities:
             p.error('--attention-all needs --gate-so, the snapshot boot and --world-identities')
@@ -639,6 +699,10 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             config.write(f'X4LAN_CONFIG.native_gate_step_trace_ticks = {args.step_trace_ticks}\n')
     if args.fp_redirect_watch and not args.fp_redirect:
         p.error('--fp-redirect-watch needs --fp-redirect')
+    if args.fp_redirect_solver and not args.fp_redirect:
+        p.error('--fp-redirect-solver needs --fp-redirect')
+    if args.fp_redirect_drones and not args.fp_redirect:
+        p.error('--fp-redirect-drones needs --fp-redirect')
     if args.fp_redirect:
         ids = [i.lower() for i in args.fp_redirect_watch or []]
         if len(ids) > 4 or any(len(i) != 16 or any(c not in '0123456789abcdef' for c in i) for i in ids) or (ids and not args.world_identities):
@@ -650,6 +714,10 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             if ids:
                 config.write('X4LAN_CONFIG.native_gate_fp_redirect_watch = {' + ', '.join(f"'{i}'" for i in ids) + '}\n')
             config.write(f'X4LAN_CONFIG.native_gate_fp_redirect_ticks = {args.fp_redirect_ticks}\n')
+            if args.fp_redirect_solver:
+                config.write(f"X4LAN_CONFIG.native_gate_fp_redirect_solver = '{args.fp_redirect_solver}'\n")
+            if args.fp_redirect_drones:
+                config.write(f"X4LAN_CONFIG.native_gate_fp_redirect_drones = '{args.fp_redirect_drones}'\n")
     if args.coverage or args.coverage_list:
         if not args.gate_so or not args.coverage or not args.coverage_list or not 1 <= args.coverage <= 6000 or not args.coverage_list.is_file():
             p.error('--coverage needs --gate-so, 1..6000 ticks and an existing --coverage-list')
@@ -749,6 +817,9 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
                 config.write(f'X4LAN_CONFIG.native_gate_world_hash_schema = {args.world_hash_schema!r}\n')
                 config.write('X4LAN_CONFIG.native_gate_world_timing_fields = true\n')
             if args.world_hash_watch:config.write('X4LAN_CONFIG.native_gate_world_hash_watch = {'+','.join(repr(s) for s in args.world_hash_watch)+'}\n')
+            if args.world_health_ticks:config.write('X4LAN_CONFIG.native_gate_world_health_ticks = {%d,%d}\n' % tuple(args.world_health_ticks))
+            if args.fp_attack_capture:config.write('X4LAN_CONFIG.native_gate_fp_attack_capture = {%d,%d}\n' % tuple(args.fp_attack_capture))
+            if args.fp_attack_watch:config.write('X4LAN_CONFIG.native_gate_fp_attack_watch = {'+','.join(repr(s) for s in args.fp_attack_watch)+'}\n')
             if args.world_trace_ticks is not None:config.write(f'X4LAN_CONFIG.native_gate_world_trace_ticks = {args.world_trace_ticks}\n')
             if args.world_trace_early:config.write('X4LAN_CONFIG.native_gate_world_trace_early = true\n')
             if args.world_queue_trace:config.write('X4LAN_CONFIG.native_gate_world_queue_trace = true\n')

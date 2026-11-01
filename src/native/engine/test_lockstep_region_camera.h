@@ -618,6 +618,17 @@ static void test_region_camera(void) {
         assert(rc_mining_near(test_rcp_sector_a,here,test_rcp_zone_a)==0 && !rc_mining_foreign);
         static __declspec(align(16)) unsigned char loose[0x100];memset(loose,0,sizeof(loose));
         assert(rc_mining_near(test_rcp_cluster,here,loose)==0 && rc_mining_foreign==1 && rc_mining_calls==5);
+        /* Hybrid sectors (lockstep_hybrid.h): this client's owned point (ship_b, view index 1) counts for a frame inside
+         * its sector only; the latch names it. 49990 m from ship_b, about 50016 m from ship_a. */
+        {   const float near_b[4]={5,6+49990.0f,7,0};const int saved_index=hyb_view_index,saved_active=hyb_active;
+            unsigned char *saved_sector=hyb_sector[1];const LONG64 mining_calls=rc_mining_calls,mining_near=rc_mining_near_count;
+            assert(rc_mining_near(test_rcp_cluster,near_b,test_rcp_zone_b)==1 && rc_shape_own==-1);
+            hyb_view_index=1;rc_shape_latch();assert(rc_shape_own==1 && rc_shape_count==2);
+            hyb_active=1;hyb_sector[1]=test_rcp_sector_a;assert(rc_mining_near(test_rcp_cluster,near_b,test_rcp_zone_b)==0);
+            hyb_sector[1]=test_rcp_sector_b;assert(rc_mining_near(test_rcp_cluster,near_b,test_rcp_zone_b)==1);
+            hyb_view_index=saved_index;hyb_active=saved_active;hyb_sector[1]=saved_sector;rc_shape_latch();assert(rc_shape_own==-1);
+            rc_mining_calls=mining_calls;rc_mining_near_count=mining_near; /* the counts below are the rows' */
+        }
         /* Rows (site 0x109): the cluster's key, near flag, best squared distance and candidates. */
         rc_pick_rows=0;rc_pick_rows_ticks=(unsigned)stats.issued+10;*(uint64_t*)(test_rcp_cluster+8)=0x999;
         assert(rc_mining_near(test_rcp_cluster,here,test_rcp_zone_b)==1 && rc_pick_rows==1);
@@ -857,7 +868,7 @@ static void test_region_camera(void) {
     for(unsigned i=0;i<RC_SITES;i++) assert(rc_site_state(i)==(rc_sites[i].group==RC_TRAFFIC?1:0));
     assert(rc_join_point(14) && rc_install_waits==2); /* installed: nothing more to do */
     assert(rc_remove_patches());rc_patched=0;
-    /* Bounded: a pass that never finishes stops the gate (reason 130) without writing a site. */
+    /* Bounded: a pass that never finishes stops the gate (reason 165) without writing a site. */
     test_rc_reset();test_rc_pages();rc_installed=1;rc_mode=RC_VIEW;rc_armed_groups=1u<<RC_TRAFFIC;task[MT_READY]=0;
     stats.issued=15;assert(rc_frame(15));
     for(unsigned i=1;i<RC_INSTALL_WAITS;i++) assert(rc_join_point(15));

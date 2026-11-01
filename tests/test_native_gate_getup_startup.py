@@ -21,7 +21,7 @@ class GetUpStartupTests(unittest.TestCase):
             for old,new in {'@X4LANE_TOKEN@':'a'*32,'@X4LANE_PORT@':'42000','@X4LANE_SLOT@':'p1'}.items():cls.config=cls.config.replace(old,new)
             configuration(cls.config)  # Includes required actor_diag and exact closed contract.
             cls.modules=[(name,(out/name).read_text()) for name in (out/'ui.xml.files').read_text().splitlines()]
-        cls.expected_order=['ui/native_gate_getup_diagnostic.lua','ui/native_gate_player_origin.lua',
+        cls.expected_order=['ui/native_gate_defaults.lua','ui/native_gate_getup_diagnostic.lua','ui/native_gate_player_origin.lua',
             'ui/native_gate_transition.lua','ui/native_gate_player.lua','ui/native_gate_probe.lua']
 
     def runtime(self,backend=None,config=None,overrides=None):

@@ -13,6 +13,9 @@
  *             target  the two simulation blocks inlined in the UI's soft target writer 0xaecb60 (0xaecfdc
  *                     clear, 0xaed115 set) jump to a stub; the UI half keeps running at once. Match speed
  *                     (state 0x5b) leaves the refused list: it reads the target through 9fcd70, per scope.
+ *                     Outside the local phases only MD's set/clear_player_target is the simulation's (stock at
+ *                     once); the UI's own writes there (its target element dying with its component) are
+ *                     captured like a click (uirep_target_route; reports/LOCKSTEP-SUIT-VIEW-20261101.txt).
  *             orders  RemoveAllOrders, RemoveAllOrders2 captured natively, Lua CreateOrder wrapped in Lua
  *                     (tools/dev/native_gate_ui_replay_core.lua), the queue editor's FFI mutators refused
  *                     here with their failure value (UIREP_GUARD), counted.
@@ -24,6 +27,12 @@
  *                     core); the keys DOCK_ACTION 0xaf and UNDOCK 0xd3 ride the stock record into 71bac0 in the slot's scope.
  *             weapons SetDefensibleActiveWeaponGroup, SetWeaponGroup, SetWeaponMode; the group keys (0x8..0xb, 0x8b..0x9e,
  *                     ammo 0x141) ride the stock record into af1db0 in the slot's scope.
+ *             flight  0x710d50, the player's flight assist toggle, where ToggleFlightAssist (a tail jump on the singleton)
+ *                     and the key's handler 71bac0 (TOGGLE_FLIGHT_ASSIST 0xdd, already on the stock record) end: it flips the
+ *                     player's +0x6aac/+0x6aad and sets the controller 9fc550 gives (0x710ad0 / 0x710cb0); in slot k's scope
+ *                     those are P_k and C_k. The HUD's own-ship buttons (crosshair handling.lua) CycleTurretMode,
+ *                     CycleTurretMissile, ToggleDrones and CycleNextDroneMode find the ship through the singleton (+0x70
+ *                     walk, +0x308 vector: slot k's ship in its scope). Applied in slot k's scope on every client.
  *             These are generic calls (op 5): a hook's arguments by a spec (the player, components as references, bytes,
  *             words, 16-byte vectors, strings), a check-only argument passes through and predicts the return value,
  *             and the apply calls the same function through its trampoline with the slot's player.
@@ -34,7 +43,12 @@
  *   section   version | capture tick low 16 bits | count | events: op u8, length u8, data. A component is
  *             its runtime ID u64 and a 32-bit check of its portable ID (little endian): runtime IDs are the
  *             same on every client under native_gate_runtime_ids, a check that differs stops the session.
- *   receipt   PUIREP_1:tick:events:hash:results|activity/target of every slot's player joins the pilot receipt, so
+ *   events  (P3, slot 1 only) AddUITriggeredEvent and SignalObject from slot 1's menus as Lua-run events (op 0x47): MD's
+ *             player.entity is slot 1's player, so the event means the same on every client; a section of another slot
+ *             holding one stops (ui_events). Slots 2+ are refused by the Lua core (and by lockstep_ui_guard.h natively).
+ *   guard     lockstep_ui_guard.h (native_gate_ui_guard): what no armed family captures is refused in the local phases.
+ *   receipt   PUIREP_1:tick:events:hash:results|activity/target of every slot's player (with the flight family also
+ *             /f<assist>.<drones armed, +0x6a4..+0x6a6> of the slot's player and ship) joins the pilot receipt, so
  *             an event that took on one client only shows at once, whatever it was.
  * Refused at capture (nothing ran anywhere, nothing diverged): counted and logged (UI_REPLAY_REFUSED). A
  * section or reference that fails, a hook lost, a fault in a replayed call: stop reason 164. */
@@ -66,15 +80,29 @@
 #define UIREP_STUB 0x20u                  /* in a hook's stride: the jump the entry patch targets */
 enum {UIREP_OP_ACTIVITY_START=1,UIREP_OP_ACTIVITY_STOP=2,UIREP_OP_TARGET_SET=3,UIREP_OP_TARGET_CLEAR=4,UIREP_OP_CALL=5,
     UIREP_OP_LUA_FIRST=0x40,UIREP_OP_ORDERS_CLEAR=0x41,UIREP_OP_ORDERS_CLEAR2=0x42,UIREP_OP_LUA_CALL=0x43,
-    UIREP_OP_QUEUE=0x44,UIREP_OP_QUEUE_PARAM=0x45,UIREP_OP_QUEUE_LIST=0x46};
+    UIREP_OP_QUEUE=0x44,UIREP_OP_QUEUE_PARAM=0x45,UIREP_OP_QUEUE_LIST=0x46,UIREP_OP_LUA_GLOBAL=0x47,
+    UIREP_OP_MISSION=0x48,UIREP_OP_CONVERSATION=0x49};   /* lockstep_ui_missions.h */
+/* The events family (P3, slot 1 only): Lua C globals the Lua core wraps by name and replays, numbered 1.. on the wire
+ * (native_gate_ui_replay_core.lua K.GLOBALS: AddUITriggeredEvent, SignalObject). */
+#define UIREP_LUA_GLOBALS 2u
+/* The trade family (lockstep_ui_trade.h, included at the end): its two Lua-run ops, its section rule and its part of a pass. */
+#define UITRADE_OP_LUA 0x58u
+#define UITRADE_OP_FFI 0x59u
+static int uitrade_event_ok(unsigned slot,unsigned op,const unsigned char *data,unsigned n,const char **why);
+static int uitrade_pass(uint64_t tick);
+static void uitrade_restore(void);
+static const char *uitrade_why_text;
 enum {UIREP_H_UI=0,UIREP_H_START,UIREP_H_STOP,UIREP_H_CLEAR,UIREP_H_CLEAR2,UIREP_H_CREATE3,UIREP_H_ENABLE,UIREP_H_ADJUST,UIREP_H_REMOVE2,
     UIREP_H_RESET,UIREP_H_PLANNED_ENABLE,UIREP_H_PLANNED_REMOVE,UIREP_H_DEPLOY,
     UIREP_H_AP_START,UIREP_H_AP_STOP,UIREP_H_QUICKDOCK,UIREP_H_DOCKAT,UIREP_H_DOCKREASON,UIREP_H_UNDOCK,
-    UIREP_H_WGROUP_ACTIVE,UIREP_H_WGROUP_SET,UIREP_H_WMODE,UIREP_H_LOOP,UIREP_H_LOOP_CURRENT,UIREP_HOOKS};
+    UIREP_H_WGROUP_ACTIVE,UIREP_H_WGROUP_SET,UIREP_H_WMODE,UIREP_H_LOOP,UIREP_H_LOOP_CURRENT,
+    UIREP_H_FASSIST,UIREP_H_TURRET_MODE,UIREP_H_TURRET_MISSILE,UIREP_H_DRONES,UIREP_H_DRONE_MODE,UIREP_HOOKS};
 #define UIREP_ARGS 8u
 #define UIREP_STRING_MAX 48u
 #define UIREP_AUTOPILOT 0x2f4b7d8u        /* the input bank's autopilot target (SIM, per slot) */
 #define UIREP_GROUP_PRIMARY 0x668u        /* Defensible: active primary weapon group, +0x66c the secondary */
+#define UIREP_PLAYER_ASSIST 0x6aacu       /* the player's flight assist on (0x710d50; IsFlightAssistActive reads it) */
+#define UIREP_SHIP_DRONES 0x6a4u          /* Defensible: drones armed, types 2, 1, 3 (ToggleDrones reads them) */
 enum {UIREP_S_TARGET_CLEAR=0,UIREP_S_TARGET_SET=1,UIREP_SITES=2};
 typedef void (*uirep_activity_fn)(void *,int,unsigned char);
 typedef uint64_t (*uirep_forward_fn)(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
@@ -132,9 +160,28 @@ UIREP_CALL(undock,UIREP_H_UNDOCK)
 UIREP_CALL(wgroup_active,UIREP_H_WGROUP_ACTIVE)
 UIREP_CALL(wgroup_set,UIREP_H_WGROUP_SET)
 UIREP_CALL(wmode,UIREP_H_WMODE)
+UIREP_CALL(fassist,UIREP_H_FASSIST)
+UIREP_CALL(turret_mode,UIREP_H_TURRET_MODE)
+UIREP_CALL(turret_missile,UIREP_H_TURRET_MISSILE)
+UIREP_CALL(drones,UIREP_H_DRONES)
+UIREP_CALL(drone_mode,UIREP_H_DRONE_MODE)
 static int uirep_local_phase(void);
 static void uirep_guard_refuse(unsigned slot);
 static uint64_t uirep_queue_call(unsigned hook,uint64_t a[UIREP_ARGS]);
+/* The build and assets families (lockstep_ui_build.h, included at the end): their parts (op 0x50) on the wire, and their
+ * open batch, which an event of another family closes first. */
+#define UIBUILD_OP_PART 0x50u
+static int uibuild_event_ok(unsigned slot,unsigned op,const unsigned char *data,unsigned n,const char **why);
+static void uibuild_before_push(unsigned op);
+/* The faction family (lockstep_ui_faction.h, included at the end): a part of one claimed call's record (op 0x5a, Lua-run),
+ * its section rule, its prerequisite at the first pass and its part of every pass. */
+#define UIFAC_OP_PART 0x5au
+static int uifac_event_ok(unsigned slot,unsigned op,const unsigned char *data,unsigned n,const char **why);
+static int uifac_ready(void);
+static int uifac_pass(uint64_t tick);
+static const char *uifac_why;
+static void uicons_cid_ui(int enter);   /* lockstep_ui_construct.h: the construction ID counter at this client's UI move */
+static void uicons_cid_probe(int on);
 /* The queue editor's FFI mutators: with the queue family they are captured (uirep_queue_call); with the orders family
  * alone a call from the UI gets the failure value, the others pass, and so does a call with its check-only flag (the
  * menus ask that to enable a button; it changes nothing). */
@@ -181,6 +228,13 @@ static const struct {const char *name;unsigned rva,prefix,family;unsigned char b
     {"SetWeaponMode",0x1ba7b0u,5,UIREP_FAMILY_WEAPONS,UIREP_ENTRY5,(void*)uirep_call_wmode,0xd9,"e1decc7cc69776b44f33e8f234c78bfab909d42181f23f26bc10c987865482b2"},
     {"SetOrderLoop",0x200640u,5,UIREP_FAMILY_QUEUE,UIREP_ENTRY5,(void*)uirep_guard_loop,0x94,"ad863e7eba6a6ad800b06c78353561a5ac742c7c5f6ee5b8b13b683c33d2f241"},
     {"SetCurrentLoopOrder",0x1ff850u,5,UIREP_FAMILY_QUEUE,UIREP_ENTRY5,(void*)uirep_guard_loop_current,0xb7,"a1bf2c2658233879bb4cffe0403b0de1fe38b145cc4b908db008498228bb57b0"},
+    /* The flight family: the player's flight assist toggle below ToggleFlightAssist (its export starts RIP-relative), and the
+     * HUD's own-ship buttons at their exports (the UI guard's prefixes and pins: covered by this family there). */
+    {"FlightAssistToggle",0x710d50u,6,UIREP_FAMILY_FLIGHT,{0x40,0x53,0x48,0x83,0xec,0x20},(void*)uirep_call_fassist,0xb0,"b10eb334b7e2a05d9526df15f161003812990101f23fd7b9b27dc9fd1394885f"},
+    {"CycleTurretMode",0xb01ff0u,7,UIREP_FAMILY_FLIGHT,{0x40,0x53,0x55,0x48,0x83,0xec,0x28},(void*)uirep_call_turret_mode,0xc4,"352dbd161746b89f47b1dd0ae830ecfdc230b785fb6b0ebafcfa71f51b180d46"},
+    {"CycleTurretMissile",0xb01ed0u,5,UIREP_FAMILY_FLIGHT,{0x48,0x89,0x5c,0x24,0x18},(void*)uirep_call_turret_missile,0x113,"d4ad4e38bd44aa947dce004b02c8a047fb42f130f77e8d910aa036550d70711d"},
+    {"ToggleDrones",0xb0b390u,6,UIREP_FAMILY_FLIGHT,{0x40,0x53,0x48,0x83,0xec,0x20},(void*)uirep_call_drones,0xaa,"9e369e342f929eb58a3debf44020b4c8fddf4d145419551a55a2848c7daa72b4"},
+    {"CycleNextDroneMode",0xb01e70u,6,UIREP_FAMILY_FLIGHT,{0x40,0x53,0x48,0x83,0xec,0x20},(void*)uirep_call_drone_mode,0x54,"8f31760ccdabee6ec964695a4ddbcc372d6a376faa94c3dbd6d47623dcab4e69"},
 };
 /* The generic calls: argument spec (P the player, C a component pointer, I a UniverseID, b a byte, w a word, V a
  * pointer to 16 bytes, s a string, k the check-only flag: set, the call is a query and passes; - passed through as 0),
@@ -196,7 +250,12 @@ static const uirep_call_spec uirep_call_specs[]={
     {UIREP_H_UNDOCK,"Pk",UIREP_RET_PREDICT},          /* player, check only: the status UndockPlayerShip turns into its text */
     {UIREP_H_WGROUP_ACTIVE,"Ibw",UIREP_RET_ONE},      /* defensible, primary, group (1-based) */
     {UIREP_H_WGROUP_SET,"IIbwb",UIREP_RET_ONE},       /* defensible, weapon, primary, group, active */
-    {UIREP_H_WMODE,"Is",UIREP_RET_ONE}};              /* weapon, mode */
+    {UIREP_H_WMODE,"Is",UIREP_RET_ONE},               /* weapon, mode */
+    {UIREP_H_FASSIST,"P",UIREP_RET_ONE},              /* the player: its assist, its controller's (void) */
+    {UIREP_H_TURRET_MODE,"w",UIREP_RET_ONE},          /* turret group number of the singleton's ship, 1-based (void) */
+    {UIREP_H_TURRET_MISSILE,"w",UIREP_RET_ONE},
+    {UIREP_H_DRONES,"w",UIREP_RET_ONE},               /* drone type 1..3 (void) */
+    {UIREP_H_DRONE_MODE,"w",UIREP_RET_ONE}};
 #define UIREP_CALL_SPECS (sizeof(uirep_call_specs)/sizeof(*uirep_call_specs))
 /* The queue editor (family queue), Lua-run events in call order, applied in the probe's frame: q is an order index
  * (as the capturing menu saw the queue), the create's answer is predicted (UIREP_RET_ORDER), void returns nothing. */
@@ -254,7 +313,17 @@ static const struct {unsigned rva,size;const char *sha;} uirep_pin_table[]={
     {0xaecb60u,1915,"eec1c6e468a9a2dfa26dab7fd4915b96aea64f5d4a78d7c8d4afc1e48d32fa57"},  /* the UI's writer, both sites */
     {0xaf1db0u,0x1ccc,"bd760df9eaf2e6bb4203a012be153bdfef709853df591149f4f86cefa7e42eae"},  /* the weapon group keys' handler */
     {UIREP_NUM_ORDERS,0xae,"3986c71ab2b808b44a27f37c0e7ff3338b09f6a8057187ba5ea8c4a9eb133bd6"},  /* GetNumOrders: the queue's length (+0x4b0) */
+    {0x1135bc0u,0x300,"d0148366c93c695bedf997aad74fe065379ced6b1b147d5d73d14d1c442dce72"},   /* MD set_player_target: its call at 0x1135ea0 */
+    {0x1135f20u,0x3a,"7ed58062e2316ef6581bf44921b466a3aac4b45a8924f506d4fbc16303832af2"},    /* MD clear_player_target: its call at 0x1135f36 */
 };
+/* MD's two soft target actions (MD::SetPlayerTargetAction / ClearPlayerTargetAction, vtable slot 3): the return addresses of their
+ * calls toward 0xaecb60 name the simulation's own route (uirep_target_route). */
+#define UIREP_MD_SET_FN 0x1135bc0u
+#define UIREP_MD_SET_VTABLE 0x2c74740u
+#define UIREP_MD_SET_RETURN 0x1135ea6u    /* behind call [rax+0x240] at 0x1135ea0: UI::CUIController vfunc 72 0xb3f7c0 -> 0xaeb150 */
+#define UIREP_MD_CLEAR_FN 0x1135f20u
+#define UIREP_MD_CLEAR_VTABLE 0x2c747b8u
+#define UIREP_MD_CLEAR_RETURN 0x1135f3bu  /* behind call 0xae8080 at 0x1135f36: -> 0xaebef0 -> 0xae8460 */
 #define UIREP_PIN_COUNT (sizeof(uirep_pin_table)/sizeof(*uirep_pin_table))
 static int uirep_pins(void) {
     if(!uirep_pins_checked) {
@@ -265,6 +334,8 @@ static int uirep_pins(void) {
             if(!(ok=hash_ok(image+uirep_pin_table[i].rva,uirep_pin_table[i].size,uirep_pin_table[i].sha))) pin_failed_rva=uirep_pin_table[i].rva;
         for(unsigned i=0;ok && i<UIREP_SITES;i++)
             if(!(ok=!memcmp(image+uirep_sites[i].rva,uirep_sites[i].bytes,5))) pin_failed_rva=uirep_sites[i].rva;
+        if(ok && ((void**)(image+UIREP_MD_SET_VTABLE))[3]!=(void*)(image+UIREP_MD_SET_FN)) {ok=0;pin_failed_rva=UIREP_MD_SET_VTABLE;}
+        if(ok && ((void**)(image+UIREP_MD_CLEAR_VTABLE))[3]!=(void*)(image+UIREP_MD_CLEAR_FN)) {ok=0;pin_failed_rva=UIREP_MD_CLEAR_VTABLE;}
         uirep_pins_checked=ok?1:-1;
     }
     return uirep_pins_checked==1;
@@ -306,12 +377,19 @@ static const char *uirep_op_name(unsigned op) {
     case UIREP_OP_QUEUE:return "queue";
     case UIREP_OP_QUEUE_PARAM:return "queue_param";
     case UIREP_OP_QUEUE_LIST:return "queue_list_param";
+    case UIREP_OP_LUA_GLOBAL:return "lua_global";
+    case UIREP_OP_MISSION:return "mission";
+    case UIREP_OP_CONVERSATION:return "conversation";
+    case UITRADE_OP_LUA:return "trade_lua";
+    case UITRADE_OP_FFI:return "trade_ffi";
+    case UIFAC_OP_PART:return "faction_part";
     default:return "?";
     }
 }
 /* One event of this client's slot, in call order. 0 = refused, nothing ran. */
 static int uirep_push(unsigned op,const unsigned char *data,unsigned length) {
     const char *why=NULL;
+    uibuild_before_push(op);
     if(!uirep_armed || !pstk_capturing) why="not_capturing";
     else if(length>UIREP_EVENT_MAX) why="too_long";
     else if(!pstk_capture_start || stats.issued<pstk_capture_start || stats.issued>pilot_stop) why="not_live";
@@ -398,7 +476,85 @@ static void uirep_activity_stop(void *a,int activity,unsigned char flag) {
     InterlockedIncrement64(&uirep_passed);uirep_fn.stop(a,activity,flag);
 }
 
-/* ---- soft target: the blocks of 0xaecb60; outside a local phase (MD) the stock functions at once ---- */
+/* ---- soft target: the blocks of 0xaecb60 ----
+ * Who writes outside the local phases (live census missile1, 1 November; reports/LOCKSTEP-SUIT-VIEW-20261101.txt): slot 2's ship
+ * died at 1733 while it was slot 1's soft target. On client 1 the UI's target element of that ship went with it (its destructor
+ * 0xaeb4e0 -> 0xaeb970 -> 0xaecb60, from the simulation's kill, in no local phase): the target manager cleared it and chose the
+ * next one, both blocks ran stock at once (target_passed=2), and slot 1's +0x6dd0 changed on client 1 alone. Client 2's UI targets
+ * for slot 2, its element of that ship was nobody's target, nothing ran. MD's Player_Changed_Target then took one more shared
+ * runtime ID on client 1 and the world parted. The target manager is presentation: what it writes follows this client's view.
+ * The simulation's own writes are MD's set_player_target and clear_player_target (every client, the same tick), named by their
+ * call's return address among the image return addresses above 0xaecb60. So, outside a local phase:
+ *   MD on the stack                     stock at once (target_md=; target_passed counts every stock call);
+ *   the replay applying, past the window stock at once, as before;
+ *   anything else on the frame thread   the UI's own: this client's slot event like a click (target_ui=, target_route=);
+ *   anything else elsewhere             refused, nothing runs anywhere (target_ui=../n).
+ * A route the walk cannot unwind is "not MD": captured or refused, never applied on one client. */
+#define UIREP_ROUTE_DEPTH 12u             /* image frames looked at above 0xaecb60 */
+#define UIREP_ROUTE_SHOWN 6u              /* of the last UI route, in the status */
+#define UIREP_ROUTE_OWN 8u                /* our frames between the walk and the stride */
+enum {UIREP_ROUTE_STOCK,UIREP_ROUTE_CAPTURE,UIREP_ROUTE_REFUSE};
+static volatile LONG64 uirep_target_ui,uirep_target_ui_refused,uirep_target_md,uirep_route_faults;
+static uint32_t uirep_route_last[UIREP_ROUTE_SHOWN];
+static unsigned uirep_route_last_count;
+static volatile int uirep_route_reached;  /* the last walk got to the stride (tests) */
+static unsigned (*uirep_route_override)(unsigned site,uint32_t *frames,unsigned capacity);  /* tests: the frames above 0xaecb60 */
+/* The image return addresses above a context inside an image function, by the unwind tables (X4's own .pdata), at most capacity;
+ * frames outside the image (a hook of ours) are unwound and not listed; stops at the first frame without a table. */
+static unsigned uirep_route_unwind(CONTEXT *c,const unsigned char *base,uint32_t *frames,unsigned capacity) {
+    unsigned n=0;
+    for(unsigned step=0;n<capacity && step<2*UIREP_ROUTE_DEPTH;step++) {
+        DWORD64 module=0;PRUNTIME_FUNCTION fn=RtlLookupFunctionEntry(c->Rip,&module,NULL);
+        if(!fn) break;
+        PVOID handler=NULL;DWORD64 frame=0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER,module,c->Rip,fn,c,&handler,&frame,NULL);
+        uintptr_t rip=(uintptr_t)c->Rip;
+        if(!rip) break;
+        if(rip>=(uintptr_t)base && rip-(uintptr_t)base<VPL_IMAGE_SPAN) frames[n++]=(uint32_t)(rip-(uintptr_t)base);
+    }
+    return n;
+}
+/* From the stub: our frames by their tables up to the stride (on the replay's page, no table), which runs in 0xaecb60's own frame
+ * and moves no stack before its call, so the unwound context is 0xaecb60's at the block; it goes on from the block's resume
+ * (inside 0xaecb60's range and not an epilogue, unlike the patched site's jump). A fault counts and ends the walk. */
+static __attribute__((noinline)) unsigned uirep_route_walk(unsigned site,uint32_t *frames,unsigned capacity) {
+    CONTEXT c;volatile unsigned n=0;
+    uirep_route_reached=0;
+    __try {
+        uintptr_t page=(uintptr_t)uirep_page;unsigned own=0;int reached=0;
+        RtlCaptureContext(&c);
+        while(page && own<UIREP_ROUTE_OWN) {
+            if((uintptr_t)c.Rip>=page && (uintptr_t)c.Rip<page+UIREP_PAGE) {reached=1;break;}
+            DWORD64 module=0;PRUNTIME_FUNCTION fn=RtlLookupFunctionEntry(c.Rip,&module,NULL);
+            if(!fn) break;
+            PVOID handler=NULL;DWORD64 frame=0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER,module,c.Rip,fn,&c,&handler,&frame,NULL);
+            ++own;
+        }
+        if(reached) {
+            uirep_route_reached=1;
+            c.Rip=(DWORD64)(uintptr_t)(pnat_base+uirep_sites[site].resume);
+            n=uirep_route_unwind(&c,pnat_base,frames,capacity);
+        }
+    }
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {
+        InterlockedIncrement64(&uirep_route_faults);n=0;
+    }
+    return n;
+}
+/* What a block's call is: the capture of this client's slot, the stock function at once, or nothing. */
+static int uirep_target_route(unsigned site) {
+    if(uirep_capture_now()) return UIREP_ROUTE_CAPTURE;   /* a local phase */
+    if(InterlockedCompareExchange(&uirep_replaying,0,0) || uirep_stopped) return UIREP_ROUTE_STOCK;
+    uint32_t frames[UIREP_ROUTE_DEPTH];
+    unsigned n=uirep_route_override?uirep_route_override(site,frames,UIREP_ROUTE_DEPTH):uirep_route_walk(site,frames,UIREP_ROUTE_DEPTH);
+    if(n>UIREP_ROUTE_DEPTH) n=UIREP_ROUTE_DEPTH;
+    for(unsigned i=0;i<n;i++)
+        if(frames[i]==UIREP_MD_SET_RETURN || frames[i]==UIREP_MD_CLEAR_RETURN) {InterlockedIncrement64(&uirep_target_md);return UIREP_ROUTE_STOCK;}
+    if(GetCurrentThreadId()!=ui_thread) {InterlockedIncrement64(&uirep_target_ui_refused);return UIREP_ROUTE_REFUSE;}
+    uirep_route_last_count=n<UIREP_ROUTE_SHOWN?n:UIREP_ROUTE_SHOWN;memcpy(uirep_route_last,frames,uirep_route_last_count*sizeof(*frames));
+    InterlockedIncrement64(&uirep_target_ui);return UIREP_ROUTE_CAPTURE;
+}
 static uint64_t uirep_component_id(const unsigned char *component) {
     uint64_t id=0;if(component) read_local(component+UIREP_ID,&id,8);return id;
 }
@@ -408,19 +564,23 @@ static void uirep_target_set_stub(unsigned char *component,unsigned char *elemen
     unsigned char flag=0,offset[UIREP_OFFSET];
     memset(offset,0,sizeof(offset));
     read_local(element+UIREP_ELEMENT_FLAG,&flag,1);read_local(element+UIREP_ELEMENT_OFFSET,offset,UIREP_OFFSET);
-    if(!uirep_capture_now()) {
+    const int route=uirep_target_route(UIREP_S_TARGET_SET);
+    if(route==UIREP_ROUTE_STOCK) {
         InterlockedIncrement64(&uirep_target_passed);
         uirep_fn.target_set(component+UIREP_ASSOCIATION,offset,flag);return;
     }
+    if(route==UIREP_ROUTE_REFUSE) return;
     uint64_t id=uirep_component_id(component);unsigned char data[UIREP_REF+1+UIREP_OFFSET];
     uirep_put_ref(data,id);data[UIREP_REF]=flag;memcpy(data+UIREP_REF+1,offset,UIREP_OFFSET);
     if(uirep_push(UIREP_OP_TARGET_SET,data,sizeof(data))) uirep_set_hint(id);
 }
 static void uirep_target_clear_stub(unsigned char *component) {
-    if(!uirep_capture_now()) {
+    const int route=uirep_target_route(UIREP_S_TARGET_CLEAR);
+    if(route==UIREP_ROUTE_STOCK) {
         InterlockedIncrement64(&uirep_target_passed);
         uirep_fn.target_clear(component+UIREP_ASSOCIATION);return;
     }
+    if(route==UIREP_ROUTE_REFUSE) return;
     unsigned char data[UIREP_REF];uint64_t id=uirep_component_id(component);
     uirep_put_ref(data,id);
     if(uirep_push(UIREP_OP_TARGET_CLEAR,data,sizeof(data))) uirep_set_hint(0);
@@ -487,12 +647,13 @@ static unsigned uirep_call_length(const uirep_call_spec *c,const unsigned char *
     return at;
 }
 static void uirep_ui_move(void *self) {
-    InterlockedIncrement(&uirep_ui_depth);
+    if(InterlockedIncrement(&uirep_ui_depth)==1) uicons_cid_ui(1);   /* the station editor's ID draws stay local (lockstep_ui_construct.h) */
     __try {uirep_fn.ui_move(self);}
-    __finally {InterlockedDecrement(&uirep_ui_depth);}
+    __finally {if(!InterlockedDecrement(&uirep_ui_depth)) uicons_cid_ui(0);}
 }
 
 /* ---- the section ---- */
+static int uimis_event_ok(unsigned slot,unsigned op,const unsigned char *data,unsigned n,const char **why);   /* lockstep_ui_missions.h */
 static int uirep_event_ok(unsigned slot,unsigned op,const unsigned char *data,unsigned n,const char **why) {
     switch(op) {
     case UIREP_OP_ACTIVITY_START:case UIREP_OP_ACTIVITY_STOP:
@@ -519,11 +680,18 @@ static int uirep_event_ok(unsigned slot,unsigned op,const unsigned char *data,un
     case UIREP_OP_QUEUE_PARAM:case UIREP_OP_QUEUE_LIST:
         if(!(uirep_families&UIREP_FAMILY_QUEUE) || !n) {*why="ui_queue";return 0;}
         return 1;
+    case UIREP_OP_LUA_GLOBAL:   /* slot 1 only: MD's player.entity is slot 1's player */
+        if(!(uirep_families&UIREP_FAMILY_EVENTS) || slot!=1 || n<2 || !data[0] || data[0]>UIREP_LUA_GLOBALS) {*why="ui_events";return 0;}
+        return 1;
+    case UITRADE_OP_LUA:case UITRADE_OP_FFI: return uitrade_event_ok(slot,op,data,n,why);
     case UIREP_OP_CALL: {
         const uirep_call_spec *c=n && data[0]<UIREP_HOOKS?uirep_spec_of(data[0]):NULL;
         if(!c || !(uirep_families&uirep_hooks[data[0]].family) || uirep_call_length(c,data,n)!=n) {*why="ui_call";return 0;}
         return 1;
     }
+    case UIBUILD_OP_PART:return uibuild_event_ok(slot,op,data,n,why);
+    case UIFAC_OP_PART:return uifac_event_ok(slot,op,data,n,why);   /* lockstep_ui_faction.h */
+    case UIREP_OP_MISSION:case UIREP_OP_CONVERSATION:return uimis_event_ok(slot,op,data,n,why);   /* lockstep_ui_missions.h */
     default:*why="ui_op";return 0;
     }
 }
@@ -858,16 +1026,27 @@ static int uirep_frame_text(char *out,size_t capacity) {
         if(player) {read_local(player+UIREP_PLAYER_ACTIVITY,&activity,4);read_local(player+PRES_TARGET,&target,8);}
         if(target && !uirep_component(target)) target=0;   /* dead: 9fcd70 clears it when someone asks, which is not simulation */
         int more=snprintf(out+n,capacity-(size_t)n,"%s%d/%llx",k==1?"|":",",activity,(unsigned long long)target);
-        if(more<0) return 0;
+        if(more<0 || (size_t)more>=capacity-(size_t)n) return 0;
         n+=more;
-        if(!(uirep_families&(UIREP_FAMILY_AUTOPILOT|UIREP_FAMILY_DOCK|UIREP_FAMILY_WEAPONS))) continue;
-        /* autopilot on (the bank's target, slot 1 live, slot k in its store), active primary/secondary group of the ship */
-        uint64_t autopilot=0;int32_t groups[2]={-2,-2};const unsigned char *ship=pilot_slots[k-1].resolved?pilot_slots[k-1].object:NULL;
-        if(k==1) read_local(pnat_base+UIREP_AUTOPILOT,&autopilot,8);else uirep_store_read(&pslots[k],UIREP_AUTOPILOT,&autopilot,8);
-        if(ship) read_local(ship+UIREP_GROUP_PRIMARY,groups,8);
-        more=snprintf(out+n,capacity-(size_t)n,"/%d/%d.%d",autopilot!=0,groups[0],groups[1]);
-        if(more<0) return 0;
-        n+=more;
+        const unsigned char *ship=pilot_slots[k-1].resolved?pilot_slots[k-1].object:NULL;
+        if(uirep_families&(UIREP_FAMILY_AUTOPILOT|UIREP_FAMILY_DOCK|UIREP_FAMILY_WEAPONS)) {
+            /* autopilot on (the bank's target, slot 1 live, slot k in its store), active primary/secondary group of the ship */
+            uint64_t autopilot=0;int32_t groups[2]={-2,-2};
+            if(k==1) read_local(pnat_base+UIREP_AUTOPILOT,&autopilot,8);else uirep_store_read(&pslots[k],UIREP_AUTOPILOT,&autopilot,8);
+            if(ship) read_local(ship+UIREP_GROUP_PRIMARY,groups,8);
+            more=snprintf(out+n,capacity-(size_t)n,"/%d/%d.%d",autopilot!=0,groups[0],groups[1]);
+            if(more<0 || (size_t)more>=capacity-(size_t)n) return 0;
+            n+=more;
+        }
+        if(uirep_families&UIREP_FAMILY_FLIGHT) {
+            /* the flight family: the slot's player's flight assist (P_k's own field), its ship's drones armed (types 2, 1, 3) */
+            unsigned char assist=0,drones[3]={0,0,0};
+            if(player) read_local(player+UIREP_PLAYER_ASSIST,&assist,1);
+            if(ship) read_local(ship+UIREP_SHIP_DRONES,drones,3);
+            more=snprintf(out+n,capacity-(size_t)n,"/f%u.%u%u%u",assist!=0,drones[0]!=0,drones[1]!=0,drones[2]!=0);
+            if(more<0 || (size_t)more>=capacity-(size_t)n) return 0;
+            n+=more;
+        }
     }
     return n>0 && (size_t)n<capacity?n:0;
 }
@@ -961,6 +1140,16 @@ static int uirep_intact(void) {
     if(uirep_families&UIREP_FAMILY_TARGET) for(unsigned i=0;i<UIREP_SITES;i++) if(memcmp(pnat_base+uirep_sites[i].rva,uirep_site_patched[i],5)) return 0;
     return 1;
 }
+/* The UI guard (lockstep_ui_guard.h, included at the end): its pass and restore ride the replay's. */
+static int uiguard_armed;
+static const char *uiguard_why_text;
+static int uiguard_pass(uint64_t tick);
+static void uiguard_restore(void);
+static int uirep_guard_pass(uint64_t tick) {
+    return (uitrade_pass(tick) || uirep_fail(uitrade_why_text)) && (uifac_pass(tick) || uirep_fail(uifac_why)) && (uiguard_pass(tick) || uirep_fail(uiguard_why_text));
+}
+static int uimis_ready(void);   /* lockstep_ui_missions.h, included at the end */
+static const char *uimis_why;
 /* Lua found a problem (a refused section, a reference): the next pass stops, on the frame thread. */
 static void uirep_async_fail(const char *why) {
     uirep_fail(why);pnat_async_fail(why);
@@ -971,20 +1160,26 @@ static int uirep_pass(uint64_t tick) {
     if(tick>pilot_stop) {
         uirep_stopped=1;
         if(uirep_installed) {uirep_uninstall();if(!uirep_restored) return uirep_fail("ui_restore");uirep_stage_name="stopped";}
-        return 1;
+        return uirep_guard_pass(tick);
     }
     if(!uirep_installed) {
         if(rid_mode!=RID_SET) return uirep_fail("ui_runtime_ids"); /* set right before the load, after the arming */
         if((uirep_families&UIREP_FAMILY_MISSILES) && !pfire_armed) return uirep_fail("ui_missiles_need_fire"); /* the launchers: pilot fire */
+        if(!uimis_ready()) return uirep_fail(uimis_why);   /* missions, conversation: the guard with their groups */
+        if(!uifac_ready()) return uirep_fail(uifac_why);   /* faction: armed, with the guard */
         if(!uirep_install()) return uirep_fail("ui_install");
-        uirep_stage_name="live";return 1;
+        uirep_stage_name="live";return uirep_guard_pass(tick);
     }
     if(!uirep_intact()) return uirep_fail("ui_hook_lost");
-    return 1;
+    return uirep_guard_pass(tick);
 }
+static void pss_restore(void);   /* lockstep_player_settings.h (through lockstep_ui_faction.h, included at the end) */
 static void uirep_restore(void) {
     if(!uirep_armed) return;
     uirep_stopped=1;
+    uiguard_restore();
+    uitrade_restore();
+    pss_restore();
     if(uirep_installed) uirep_uninstall();
     if(uirep_installed) uirep_stage_name="restore_refused";
 }
@@ -1032,5 +1227,23 @@ static int uirep_status(char *out,size_t capacity) {
     if(n>0 && (size_t)n<capacity && (uirep_families&UIREP_FAMILY_QUEUE))
         n+=snprintf(out+n,capacity-(size_t)n," queue=%lld/%lld/%lld creates=%lld mapped=%lld moved=%lld",(long long)uirep_q_captured,(long long)uirep_q_calls,
             (long long)uirep_q_skipped,(long long)uirep_q_creates,(long long)uirep_q_mapped,(long long)uirep_q_moved);
+    if(n>0 && (size_t)n<capacity && (uirep_families&UIREP_FAMILY_TARGET)) {
+        /* the soft target outside the local phases: the UI's own captured/refused, MD's, the last UI route (image return RVAs) */
+        char route[UIREP_ROUTE_SHOWN*9+2]="-";int k=0;
+        for(unsigned i=0;i<uirep_route_last_count && i<UIREP_ROUTE_SHOWN;i++) k+=snprintf(route+k,sizeof(route)-(size_t)k,"%s%x",i?",":"",uirep_route_last[i]);
+        n+=snprintf(out+n,capacity-(size_t)n," target_ui=%lld/%lld target_md=%lld target_route=%s route_faults=%lld",(long long)uirep_target_ui,
+            (long long)uirep_target_ui_refused,(long long)uirep_target_md,route,(long long)uirep_route_faults);
+    }
     return n>0 && (size_t)n<capacity?n:0;
 }
+/* The UI guard: containment for what no armed family replays yet (native_gate_ui_guard, default off). */
+#include "lockstep_ui_guard.h"
+#include "lockstep_pilot_foot_guard.h"   /* slot 1 on foot: the docked menu's GetUp claimed (lockstep_pilot_foot.h) */
+/* The build and assets families: claims on the guard's hooks (native_gate_ui_replay lists build/assets, default off). */
+#include "lockstep_ui_build.h"
+/* Missions and conversations of slot 1 (families missions, conversation; captured in the guard's hook). */
+#include "lockstep_ui_missions.h"
+/* The trade family of the replay (native_gate_ui_replay lists trade, default off). */
+#include "lockstep_ui_trade.h"
+/* The faction family: the player faction's settings for every slot (claims on the guard's hooks; uses the trade scope). */
+#include "lockstep_ui_faction.h"

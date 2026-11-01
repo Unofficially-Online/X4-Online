@@ -55,5 +55,25 @@ class CensusPerfTests(unittest.TestCase):
             self.assertEqual(result['rest_ms'],25.5)  # outside - probe - pre
 
 
+    def test_render_split_and_render_only_frames(self):
+        with tempfile.TemporaryDirectory() as root:
+            run=Path(root);client=run/'client1';(client/'installed').mkdir(parents=True)
+            (client/'installed/x4_lan_lab-config.lua').write_text('')
+            lines=[f'[X4LAN] NATIVE_GATE FRAME_TIMING tick={t} frames=1 wait_us=100 frame_us=2000 outside_us=30000 pace_us=0 sum_pace_us=0 '
+                   f'sim_us={20000+t} probe_us=1500 slot10_us=3000 sim_rest_us={17000+t} rframes={t%3} rframe_us={0 if t%3==0 else 9000+t}'
+                   for t in range(3,9)]
+            (client/'engine-output.log').write_text('\n'.join(lines)+'\n')
+            result=native(run)['client1']
+            self.assertEqual((result['sim_ms'],result['slot10_ms'],result['sim_rest_ms']),(20.01,3.0,17.01))
+            self.assertEqual(result['rframes_per_step'],1.0)   # 0,1,2,0,1,2
+            self.assertEqual(result['rframe_ms'],9.01)         # gaps without a render-only frame are not counted
+            self.assertEqual(result['probe_ms'],1.5)
+        with tempfile.TemporaryDirectory() as root:          # an older gate: no split fields
+            run=Path(root);client=run/'client1';(client/'installed').mkdir(parents=True)
+            (client/'installed/x4_lan_lab-config.lua').write_text('')
+            (client/'engine-output.log').write_text('[X4LAN] NATIVE_GATE FRAME_TIMING tick=5 frames=1 wait_us=1 frame_us=2 outside_us=3 sim_us=4\n')
+            self.assertNotIn('slot10_ms',native(run)['client1'])
+
+
 if __name__=='__main__':
     unittest.main()

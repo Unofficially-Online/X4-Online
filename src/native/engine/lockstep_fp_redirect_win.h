@@ -22,6 +22,7 @@
 #define FR_P_PARAMS void *o20,unsigned char *slot,uint64_t flag,double time,uint64_t a5,uint64_t a6 /* rcx, rdx, r8b, xmm3, two on the stack */
 #define FR_P_ARGS o20,slot,flag,time,a5,a6
 #include "lockstep_fp_redirect.h"
+#include "lockstep_fp_attack.h" /* FR29b: the attack capture (its Windows part below, lockstep_fp_attack_win.h) */
 #define FR_REFRESH 0xea1e80u
 #define FR_REFRESH_SIZE 0xb9fu
 #define FR_REFRESH_SHA "2db0c3a56629a30189d8112ee5e9dec726ddabec4805380cdb7e8a6ec4c2deff"
@@ -55,7 +56,12 @@
 #define FR_FAC_DONE 0x80000u    /* fr_done bit 19 */
 #define FR_SZ_STUB (FR_FAC_STUB+0x20u+FR_LEN_STUB_SIZE) /* FR26: the size radius stub (0xc60): jmp [rip] -> fr_size_hook */
 #define FR_SZ_DONE 0x100000u    /* fr_done bit 20 */
-#define FR_CODE (FR_SZ_STUB+0x20u) /* bytes of stub code on the page (0xc80) */
+#define FR_SP_ENTRY_STUB (FR_SZ_STUB+0x20u) /* FR27: the solver's entry stub (0xc80): jmp [rip] -> fsp_hook_w */
+#define FR_SP_TRAMP (FR_SP_ENTRY_STUB+0x20u) /* 0xca0: mov rax,rsp; mov [rax+0x18],rbx; jmp [rip] -> 0x14e4327 */
+#define FR_SP_DONE 0x200000u    /* fr_done bit 21: the solver's entry jump (not when the step chain's FR25 hook owns it) */
+#define FR_FA_STUB (FR_SP_TRAMP+0x20u) /* FR29b: the attack capture's stubs (0xcc0..0xda0): one jmp [rip] -> hook per kind */
+#define FR_DR_STUB (FR_FA_STUB+0x20u*(FA_KINDS-1u)) /* FR30: the drone factor sites' stubs (0xda0..0xf60, FDR_STUB_SIZE each) */
+#define FR_CODE (FR_DR_STUB+FDR_STUB_SIZE*FDR_SITES) /* bytes of stub code on the page (0xf60) */
 #define FR_P_BLOCK 0x6dcbb0u /* the first call 0x6dc610 from its table load to the +0x0..+0x1c block's end */
 #define FR_P_BLOCK_SIZE 0x1eeu
 #define FR_P_BLOCK_SHA "120b298b57b3001f3ae6971073a4d86d63fb4822e1be030e0631c42d50c4f9b7"
@@ -267,6 +273,28 @@ static int fr_status_win(char *out,size_t cap) {
 }
 static unsigned char *fr_page;
 static uint32_t fr_done;
+/* FR27 (lockstep_fp_redirect.h fsp_run, lockstep_safe_pos.h): the GetSafePos solver 0x14e4320 (rcx the boxes vector,
+ * rdx the point, xmm2 radius, r9 the direction, then a5, a word the solver never reads, the allow-y byte, the move
+ * direction and a9; its callers 0x7870ae, 0x7875c6 and 0x837179 read only the point after it). Its entry, mov rax,rsp;
+ * mov [rax+0x18],rbx (7 bytes, no rip operand), becomes jmp rel32 to the entry stub; the trampoline replays both and
+ * jumps to 0x14e4327 (FR25's scheme; with the step chain armed, its entry hook owns those bytes and routes the call
+ * here: stc_sp_route). Pins: the solver's 0x567 bytes through the view (FR25's), the entry's 5 original bytes raw. */
+#define FR_SP_SOLVER 0x14e4320u
+#define FR_SP_RESUME 0x14e4327u
+#define FR_SP_SIZE 0x567u
+#define FR_SP_SHA "20b7ad8293e574399b0f9478be79216349b1981a9c1a4faf7a9e4808153dde07"
+static const unsigned char fr_sp_original[5]={0x48,0x8b,0xc4,0x48,0x89};
+typedef uint64_t (*fsp_w_fn)(void *,float *,float,float *,float,uint64_t,uint64_t,float *,float);
+typedef struct {fsp_w_fn fn;float r;float *dir;float a5;uint64_t a6,a7;float *move;float a9;} fsp_w_args;
+static fsp_w_fn fsp_w_original; /* our trampoline, or the step chain's (FR25) when its hook routes here */
+static void fsp_w_native(const void *args,void *vec,float *p) {
+    const fsp_w_args *a=(const fsp_w_args*)args;a->fn(vec,p,a->r,a->dir,a->a5,a->a6,a->a7,a->move,a->a9);
+}
+static uint64_t fsp_hook_w(void *vec,float *p,float r,float *dir,float a5,uint64_t a6,uint64_t a7,float *move,float a9) {
+    const fsp_w_args a={fsp_w_original,r,dir,a5,a6,a7,move,a9};
+    fsp_run(fsp_w_native,&a,vec,p,r,dir,a5,(int)(a7&0xffu),move,a9,0);
+    return 0; /* the solver returns nothing its callers read */
+}
 /* G4 with the slot: the refresh's path with the getters begins here. */
 static float fr_g4_slot_hook(void *comp,void *o20,void *buf,void *slot) {
     fr_begin(slot);
@@ -382,6 +410,8 @@ static void fr_fac_write_stub(unsigned char *p) {
 /* 0x00 mov r9,r15; jmp [rip] -> fr_g4_slot_hook | 0x20/0x40/0x60 jmp [rip] -> G0, M4, M0 hooks | 0x80 the tail:
  * mov rcx,r15; sub rsp,0x20; call [rip] -> fr_tail_hook; add rsp,0x20; mov r13d,0x300; jmp [rip] -> 0xea29c2 |
  * 0xc0 jmp [rip] -> fr_params_hook | 0xe0 -> fr_mulps_hook | 0x100 the v stub | 0x160 jmp [rip] -> fr_writer_run. */
+static void fa_write_code(unsigned char *p);
+static void fdr_write_code(unsigned char *p);
 static void fr_write_code(unsigned char *p) {
     memset(p,0xcc,FR_CODE);
     p[0]=0x4d;p[1]=0x89;p[2]=0xf9;fr_write_jump(p+3,(void*)fr_g4_slot_hook);
@@ -406,10 +436,16 @@ static void fr_write_code(unsigned char *p) {
     fr_vel_write_stub(p+FR_VEL_STUB);
     fr_fac_write_stub(p+FR_FAC_STUB);
     fr_write_jump(p+FR_SZ_STUB,(void*)fr_size_hook); /* FR26: the redirected call lands here; the hook returns to 0xd00433 */
+    fr_write_jump(p+FR_SP_ENTRY_STUB,(void*)fsp_hook_w); /* FR27: the solver's entry jump lands here */
+    memcpy(p+FR_SP_TRAMP,"\x48\x8b\xc4\x48\x89\x58\x18",7);fr_write_jump(p+FR_SP_TRAMP+7,(void*)(image+FR_SP_RESUME));
+    fa_write_code(p); /* FR29b */
+    fdr_write_code(p); /* FR30 */
 }
 static int32_t fr_rel(uint32_t from,const void *target) {return (int32_t)((intptr_t)target-(intptr_t)(image+from+5));}
 static int32_t fr_rel_ours(unsigned i) {return fr_rel(fr_sites[i].site,fr_page+fr_sites[i].stub);}
 static int32_t fr_rel_native(unsigned i) {return fr_rel(fr_sites[i].site,image+fr_sites[i].target);}
+#include "lockstep_fp_attack_win.h"
+#include "lockstep_fp_drones_win.h" /* FR30 */
 /* 0 original, 1 ours, -1 anything else. */
 static int fr_site_state(unsigned i) {
     unsigned char now[5];if(!read_local(image+fr_sites[i].site,now,5) || now[0]!=0xe8) return -1;
@@ -459,7 +495,9 @@ static int fr_len_overlaps(const void *source,size_t bytes) {
     if(fr_done&FR_FAC_DONE && c<b && c+5>a) return 1;
     const uintptr_t z=(uintptr_t)(image+FR_SZ_SITE);
     if(fr_done&FR_SZ_DONE && z<b && z+5>a) return 1;
-    return 0;
+    const uintptr_t e=(uintptr_t)(image+FR_SP_SOLVER);
+    if(fr_done&FR_SP_DONE && e<b && e+5>a) return 1;
+    return fa_overlaps(a,b) || fdr_overlaps(a,b); /* FR29b, FR30 */
 }
 static void fr_len_unpatch_copy(const void *source,void *copy,size_t bytes) {
     const uintptr_t a=(uintptr_t)source;
@@ -493,6 +531,12 @@ static void fr_len_unpatch_copy(const void *source,void *copy,size_t bytes) {
         const uintptr_t s=(uintptr_t)(image+FR_SZ_SITE);
         for(unsigned k=0;k<5;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=fr_sz_original[k];
     }
+    if(fr_done&FR_SP_DONE) {
+        const uintptr_t s=(uintptr_t)(image+FR_SP_SOLVER);
+        for(unsigned k=0;k<5;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=fr_sp_original[k];
+    }
+    fa_unpatch_copy(a,(unsigned char*)copy,bytes); /* FR29b */
+    fdr_unpatch_copy(a,(unsigned char*)copy,bytes); /* FR30 */
 }
 /* No other module has patched site i's tail (site..back): its raw bytes are what the original-byte view shows. (Not
  * fp_patch_overlaps: the exact-reciprocal view answers 'yes' for the whole image once it is armed, which it is
@@ -641,6 +685,28 @@ static int fr_sz_pins_ok(void) {
            read_local(image+FR_SZ_GETTER,getter,6) && !memcmp(getter,fr_sz_getter,6) &&
            read_local(image+FR_AFF_TWO,&two,4) && two==0x40000000u;
 }
+/* FR27: the solver's entry: 0 original, 1 our jump, -1 anything else (raw bytes); clear = the raw bytes are what the
+ * view shows (no other module's patch there); pins: the solver's bytes through the view. */
+static unsigned char *fr_sp_stub(void) {return fr_page+FR_SP_ENTRY_STUB;}
+static int fr_sp_reach(void) {
+    const intptr_t d=(intptr_t)fr_sp_stub()-(intptr_t)(image+FR_SP_SOLVER+5);
+    return d>INT32_MIN && d<INT32_MAX;
+}
+static void fr_sp_jump(unsigned char out[5]) {out[0]=0xe9;const int32_t d=fr_rel(FR_SP_SOLVER,fr_sp_stub());memcpy(out+1,&d,4);}
+static int fr_sp_state(void) {
+    unsigned char now[5],ours[5];memcpy(now,(const void*)(image+FR_SP_SOLVER),5);
+    if(!memcmp(now,fr_sp_original,5)) return 0;
+    if(fr_page && fr_sp_reach()) {fr_sp_jump(ours);if(!memcmp(now,ours,5)) return 1;}
+    return -1;
+}
+static int fr_sp_clear(void) {
+    unsigned char viewed[5];
+    return read_local(image+FR_SP_SOLVER,viewed,5) && !memcmp((const void*)(image+FR_SP_SOLVER),viewed,5);
+}
+static int fr_sp_pins_ok(void) {
+    static unsigned char body[FR_SP_SIZE];
+    return read_local(image+FR_SP_SOLVER,body,FR_SP_SIZE) && hash_ok(body,FR_SP_SIZE,FR_SP_SHA) && !memcmp(body,fr_sp_original,5);
+}
 /* FR22: the BezierSpline vtable's ComputeLength slot: native first, then ours on a BezierSpline's segment. */
 typedef void (*fr_bl_fn)(void *,uint32_t);
 static void fr_bl_hook(unsigned char *segment,uint32_t n) {
@@ -711,8 +777,20 @@ static unsigned char *fr_alloc_page(void) {
 static int fr_site_cas(unsigned i,int32_t expected,int32_t value) {
     unsigned char e[4],v[4];memcpy(e,&expected,4);memcpy(v,&value,4);return view_cas_bytes(fr_sites[i].site+1,e,v,4);
 }
+/* FR27 first: the solver back to native (our entry jump, or the step chain's route). */
+static void fsp_restore(void) {
+    if(!fsp_installed) return;
+    if(fsp_route) {stc_sp_route=NULL;fsp_route=0;fsp_installed=0;fsp_mode=FSP_OFF;fsp_stage="restored";return;}
+    if(fr_done&FR_SP_DONE && fr_sp_state()==1) {
+        unsigned char jump[5];fr_sp_jump(jump);
+        if(view_cas_bytes(FR_SP_SOLVER,jump,fr_sp_original,5)) {fr_done&=~FR_SP_DONE;fsp_installed=0;fsp_mode=FSP_OFF;fsp_stage="restored";}
+    }
+}
 static void fr_restore(void) {
     if(!fr_installed) return;
+    fdr_restore(); /* FR30 first: the drone factor sites back to their instructions */
+    fa_restore(); /* FR29b: its call sites back to the callees */
+    fsp_restore();
     /* G4 first: no new refresh begins while the rest goes back. */
     for(unsigned i=0;i<FR_SITES;i++)
         if((fr_done>>i)&1u && fr_site_state(i)==1 && fr_site_cas(i,fr_rel_ours(i),fr_rel_native(i))) fr_done&=~(1u<<i);
@@ -751,7 +829,7 @@ static void fr_restore(void) {
         unsigned char call[5];fr_sz_call(call);
         if(view_cas_bytes(FR_SZ_SITE,call,fr_sz_original,5)) fr_done&=~FR_SZ_DONE;
     }
-    if(!fr_done) {fr_installed=0;fr_restored=1;fr_mode=FR_OFF;}
+    if(!fr_done && !fa_done && !fdr_done) {fr_installed=0;fr_restored=1;fr_mode=FR_OFF;}
 }
 /* Before the snapshot load and the first admitted frame, on the MoveWorker; a rerun with the same mode is accepted. */
 static int fr_arm(int mode,uint64_t ticks) {
@@ -846,8 +924,29 @@ static int fr_owned(void) {
     if(fr_done&FR_VEL_DONE && fr_vel_state()!=1) return 0;
     if(fr_done&FR_FAC_DONE && fr_fac_state()!=1) return 0;
     if(fr_done&FR_SZ_DONE && fr_sz_state()!=1) return 0;
+    if(fr_done&FR_SP_DONE && fr_sp_state()!=1) return 0;
+    if(fsp_route && (stc_sp_route!=fsp_hook_w || stc_sp_entry_state()!=1)) return 0;
+    if(!fa_owned()) return 0; /* FR29b */
+    if(!fdr_owned()) return 0; /* FR30 */
     unsigned char want[FR_CODE];fr_write_code(want);
     return !memcmp(fr_page,want,FR_CODE);
+}
+/* FR27: gate.fp_redirect_solver(mode), after fp_redirect (UI thread, before the first admitted frame). With the step
+ * chain armed (its FR25 hook on the entry) the call is routed through that hook; else our own entry jump. */
+static int fsp_arm(int mode) {
+    if(fsp_installed) return fsp_mode==mode;
+    if(!fsp_arm_ready(mode)) return 0;
+    if(!fr_sp_pins_ok()) {fsp_stage="pins";return 0;}
+    if(stc_sp_entry_done && stc_sp_entry_state()==1 && stc_page) {
+        fsp_w_original=(fsp_w_fn)(void*)(stc_page+STC_SP_TRAMP);fsp_mode=mode;fsp_route=1;fsp_installed=1;
+        stc_sp_route=fsp_hook_w;fsp_stage="armed";return 1;
+    }
+    if(!fr_page || fr_sp_state()!=0 || !fr_sp_clear()) {fsp_stage="pins";return 0;}
+    if(!fr_sp_reach()) {fsp_stage="page";return 0;}
+    fsp_w_original=(fsp_w_fn)(void*)(fr_page+FR_SP_TRAMP);fsp_mode=mode;fsp_route=0;
+    unsigned char jump[5];fr_sp_jump(jump);
+    if(!view_cas_bytes(FR_SP_SOLVER,fr_sp_original,jump,5)) {fsp_mode=FSP_OFF;fsp_stage="cas";return 0;}
+    fr_done|=FR_SP_DONE;fsp_installed=1;fsp_stage="armed";return 1;
 }
 static int fr_check(void) {
     if(InterlockedCompareExchange64(&fr_failures,0,0)) return 0;

@@ -18,6 +18,15 @@
     </do_else>
    </actions>
   </cue>
+  <!-- The UI guard and the events family (native_gate_ui_guard, native_gate_ui_replay events; the scripted op ui_event): what
+       reaches MD, in each client's own log. With the guard and without events nothing does; with events slot 1's arrives on
+       every client at the same time, slot 2's nowhere. -->
+  <cue name="GuardEvent" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiGuard'"/></conditions>
+   <actions>
+    <debug_text text="'[X4LAN] UI_GUARD_MD_EVENT control=%s value=%s time=%s'.[event.param2, event.param3, player.age]"/>
+   </actions>
+  </cue>
   <!-- native_gate_ui_replay_min_hull: the slot ships keep at least that hull percentage (the missile run's target is the
        player's own ship), set at the same tick on every client. -->
   <cue name="MinHull" instantiate="true">
@@ -32,6 +41,76 @@
      <debug_text text="'[X4LAN] UI_REPLAY_MIN_HULL_REFUSED time=%s'.[player.age]"/>
     </do_else>
    </actions>
+  </cue>
+  <!-- Missions and conversations (native_gate_ui_replay missions, conversation; reports/LOCKSTEP-UI-MISSIONS-20261101.txt):
+       a test offer whose client is a cue actor, made from the probe's frame at the same tick on every client (script op
+       mis_fixture, in every client's plan). Slot 1's accept, briefing, active mission, abort and talk then arrive here on
+       every client at the same game time; slot 2's nowhere. Rows only: every client's own log. -->
+  <cue name="MissionFixture" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiMissions'" control="'Fixture'"/></conditions>
+   <actions>
+    <set_value name="$Mission" exact="this"/>
+    <set_value name="$Location" exact="event.param3.$location"/>
+    <create_cue_actor name="$Client" cue="this">
+     <select faction="faction.argon" race="race.argon"/>
+     <name name="'X4LAN Test Client'"/>
+     <owner exact="faction.argon"/>
+    </create_cue_actor>
+    <create_offer cue="$Mission" actor="$Client" location="$Location" name="'X4LAN test offer'" description="'X4LAN UI missions test'"
+                  difficulty="level.easy" faction="faction.argon" type="missiontype.fight" reward="1000"/>
+    <debug_text text="'[X4LAN] UI_MISSIONS_MD_OFFER cue=%s client=%s time=%s'.[$Mission, $Client, player.age]"/>
+   </actions>
+   <cues>
+    <cue name="FixtureAccept">
+     <conditions><event_object_signalled object="$Client" param="'accept'"/></conditions>
+     <actions>
+      <create_mission cue="$Mission" offercue="$Mission" name="'X4LAN test mission'" description="'X4LAN UI missions test'"
+                      difficulty="level.easy" faction="faction.argon" type="missiontype.fight" reward="1000"/>
+      <set_objective cue="$Mission" step="1" action="objective.flyto" object="$Location"/>
+      <debug_text text="'[X4LAN] UI_MISSIONS_MD_ACCEPTED offer=%s time=%s'.[event.param2, player.age]"/>
+     </actions>
+    </cue>
+    <cue name="FixtureDecline" instantiate="true">
+     <conditions><event_object_signalled object="$Client" param="'decline'"/></conditions>
+     <actions><debug_text text="'[X4LAN] UI_MISSIONS_MD_DECLINED offer=%s time=%s'.[event.param2, player.age]"/></actions>
+    </cue>
+    <cue name="FixtureBriefingStarted" instantiate="true">
+     <conditions><event_briefing_started cue="$Mission"/></conditions>
+     <actions><debug_text text="'[X4LAN] UI_MISSIONS_MD_BRIEFING started target=%s time=%s'.[event.param, player.age]"/></actions>
+    </cue>
+    <cue name="FixtureBriefingCancelled" instantiate="true">
+     <conditions><event_briefing_cancelled cue="$Mission"/></conditions>
+     <actions><debug_text text="'[X4LAN] UI_MISSIONS_MD_BRIEFING cancelled time=%s'.[player.age]"/></actions>
+    </cue>
+    <cue name="FixtureBriefingButton" instantiate="true">
+     <conditions><event_briefing_interact_button_clicked cue="$Mission"/></conditions>
+     <actions><debug_text text="'[X4LAN] UI_MISSIONS_MD_BRIEFING button time=%s'.[player.age]"/></actions>
+    </cue>
+    <cue name="FixtureAborted">
+     <conditions><event_mission_aborted cue="$Mission"/></conditions>
+     <actions>
+      <remove_mission cue="$Mission" type="aborted"/>
+      <debug_text text="'[X4LAN] UI_MISSIONS_MD_ABORTED time=%s'.[player.age]"/>
+     </actions>
+    </cue>
+   </cues>
+  </cue>
+  <!-- A conversation of our own: two choices; the chosen section and every conversation's end are logged. -->
+  <cue name="Talk" instantiate="true">
+   <conditions><event_conversation_started conversation="X4LAN_Talk"/></conditions>
+   <actions>
+    <debug_text text="'[X4LAN] UI_MISSIONS_MD_TALK started actor=%s time=%s'.[event.object, player.age]"/>
+    <add_player_choice text="'X4LAN choice A'" section="x4lan_talk_a" position="top_left"/>
+    <add_player_choice text="'X4LAN choice B'" section="x4lan_talk_b" position="top_right"/>
+   </actions>
+  </cue>
+  <cue name="TalkSection" instantiate="true">
+   <conditions><event_conversation_next_section sectionprefix="x4lan_talk_"/></conditions>
+   <actions><debug_text text="'[X4LAN] UI_MISSIONS_MD_TALK section=%s time=%s'.[event.param, player.age]"/></actions>
+  </cue>
+  <cue name="TalkFinished" instantiate="true">
+   <conditions><event_conversation_finished/></conditions>
+   <actions><debug_text text="'[X4LAN] UI_MISSIONS_MD_CONVERSATION_FINISHED actor=%s outcome=%s time=%s'.[event.object, event.param, player.age]"/></actions>
   </cue>
  </cues>
 </mdscript>

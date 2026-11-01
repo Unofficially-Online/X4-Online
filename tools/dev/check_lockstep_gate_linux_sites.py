@@ -438,6 +438,89 @@ def check_linux(path, constants, sites, tls):
        elf.read(deployable - 12, 12) == bytes.fromhex('8b44244c85c00f849d000000') and rip_target(elf, 0x1df832c, 5, 1, b'\xe9') == deployable - 12 and
        elf.read(0x1df81a5, 5) == bytes.fromhex('448b54244c') and elf.read(c['LX_LL_REST_DEPLOYABLE_EXIT_VA'], 3) == bytes.fromhex('4d85f6') and
        inside('ll_rest_deployable', c['LX_LL_REST_DEPLOYABLE_EXIT_VA'], 3))
+    # Non-blocking save by fork (gate_fork_save.h): the serializer, its only caller and every global it reads or the child
+    # changes; the wait objects of the census; the locks held across fork; rpmalloc's spin words; the sound switch.
+    def at(site, va, length, disp_at, prefix):
+        if not inside(site, va, length):
+            raise AssertionError(f'{va:#x} outside {site}')
+        return rip_target(elf, va, length, disp_at, prefix)
+
+    def call(site, va):
+        return at(site, va, 5, 1, b'\xe8')
+
+    def code(site, va, data):
+        return inside(site, va, len(data)) and elf.read(va, len(data)) == data
+    ok('fs_deferred_save_call', at('fs_deferred_save_call', 0xfecd70, 7, 3, b'\x0f\xb6\x3d') == c['LX_FS_PENDING_ONLINE_VA'] and
+       call('fs_deferred_save_call', 0xfecd77) == c['LX_FS_SAVE_VA'] and by_name['fs_save_entry']['va'] == c['LX_FS_SAVE_VA'])
+    ok('fs_save_countdown', at('fs_save_countdown', 0xfebe26, 6, 2, b'\x8b\x05') == c['LX_FS_COUNTDOWN_VA'])
+    ok('fs_save_entry_checks', call('fs_save_entry', 0x1cd3d4b) == c['LX_FS_POSSIBLE_VA'] and by_name['fs_saving_possible_head']['va'] == c['LX_FS_POSSIBLE_VA'] and
+       at('fs_save_entry', 0x1cd3d70, 7, 3, b'\x48\x8b\x3d') == c['LX_FS_GAME_CLIENT_VA'] and call('fs_save_entry', 0x1cd3d85) == by_name['fs_modified_check']['va'] and
+       at('fs_save_entry', 0x1cd3d97, 8, 3, b'\x48\x83\x3d') == c['LX_FS_UNIVERSE_VA'])
+    ok('fs_construction_wait', at('fs_save_entry', 0x1cd3da1, 7, 3, b'\x48\x8b\x1d') == c['LX_FS_CSG_VA'] and code('fs_save_entry', 0x1cd3da8, bytes.fromhex('488d4308')) and
+       code('fs_save_entry', 0x1cd3db7, bytes.fromhex('488b436848394370')) and code('fs_save_entry', 0x1cd3dc1, bytes.fromhex('488d7b38')) and
+       call('fs_save_entry', 0x1cd3dc8) == 0x1a23f70 and by_name['fs_condvar_wait']['va'] == 0x1a23f70)
+    ok('fs_save_folder_and_compression', at('fs_save_entry', 0x1cd3de7, 7, 3, b'\x48\x8b\x15') == c['LX_FS_SAVE_DIR_VA'] and
+       at('fs_save_entry', 0x1cd3e14, 7, 2, b'\x80\x3d') == c['LX_FS_COMPRESS_VA'])
+    ok('fs_save_thread_flags', at('fs_save_flags', 0x1cd3f3d, 8, 4, b'\x44\x0f\xb6\x2d') == c['LX_FS_WRITER_THREAD_VA'] and
+       at('fs_save_flags', 0x1cd3f61, 7, 3, b'\x0f\xb6\x05') == c['LX_FS_FORMATTER_JOB_VA'])
+    ok('fs_save_pathing_gate', at('fs_save_pathing', 0x1cd570b, 7, 3, b'\x48\x8b\x1d') == c['LX_PATH_MANAGER_VA'] and
+       code('fs_save_pathing', 0x1cd5712, bytes.fromhex('488dbbf0000000')) and call('fs_save_pathing', 0x1cd5719) == 0x1a52bb0 and
+       code('fs_save_pathing', 0x1cd5788, bytes.fromhex('488dbbf8000000')) and call('fs_save_pathing', 0x1cd5796) == 0x1a236a0 and
+       by_name['fs_rwgate_write']['va'] == 0x1a52bb0 and code('fs_rwgate_write', 0x1a52bb5, bytes.fromhex('4883c710')) and
+       at('fs_rwgate_write', 0x1a52bcf, 5, 1, b'\xe9') == 0x1a44df0 and code('fs_rwgate_write_wait', 0x1a44df1, bytes.fromhex('488d6f38')) and
+       code('fs_rwgate_write_wait', 0x1a44e05, bytes.fromhex('8b03')) and code('fs_rwgate_write_wait', 0x1a44e0f, bytes.fromhex('488d7b70')))
+    ok('fs_save_online', at('fs_save_online', 0x1cd6042, 7, 3, b'\x48\x8b\x05') == c['LX_FS_GAME_CLIENT_VA'] and
+       code('fs_save_online', 0x1cd6049, bytes.fromhex('488b98e0030000')) and code('fs_save_online', 0x1cd6050, bytes.fromhex('80bb1c85010000')) and
+       code('fs_save_finish', 0x1cd620a, bytes.fromhex('80bb1d85010000')) and at('fs_save_finish', 0x1cd6211, 6, 2, b'\x0f\x84') == 0x1cd64f4)
+    ok('fs_save_names', at('fs_save_finish', 0x1cd622f, 7, 3, b'\x48\x8b\x0d') == c['LX_FS_FILE_NAME_VA'] and
+       at('fs_save_finish', 0x1cd6240, 7, 3, b'\x48\x8b\x35') == c['LX_FS_SAVE_DIR_VA'] and
+       at('fs_save_names', 0x1cd4aa1, 7, 3, b'\x48\x8d\x35') == c['LX_FS_FILE_NAME_VA'] and at('fs_save_names', 0x1cd4ab4, 7, 3, b'\x48\x8d\x35') == c['LX_FS_SAVE_NAME_VA'] and
+       at('fs_save_dir_init', 0x8a0d60, 7, 3, b'\x48\x8d\x1d') == c['LX_FS_SAVE_DIR_VA'] and elf.read(at('fs_save_dir_init', 0x8a0d73, 7, 3, b'\x48\x8d\x35'), 6) == b'save\\\x00')
+    ok('fs_save_after_rename', at('fs_save_after_rename', 0x1cd6370, 7, 3, b'\x0f\xb6\x05') == c['LX_FS_ONLINE_DONE_VA'] and call('fs_save_after_rename', 0x1cd63b2) == 0x1d66460)
+    ok('fs_modified_dialog', at('fs_modified_check', 0xfb4c1d, 7, 2, b'\x80\x3d') == c['LX_FS_MODIFIED_WARN_VA'] and
+       elf.read(at('fs_modified_check', 0xfb4c38, 7, 3, b'\x48\x8d\x15'), 13) == b'gameModified\x00')
+    ok('fs_sim_start_wait', at('move_worker_frame_start', 0x12125ae, 7, 3, b'\x48\x8d\x3d') == c['LX_FS_SIM_START_VA'] and
+       call('move_worker_frame_start', 0x12125b5) == 0x1a23cc0 and by_name['fs_sem_wait']['va'] == 0x1a23cc0 and
+       code('fs_sem_wait', 0x1a23cd2, bytes.fromhex('488d6b28')) and code('fs_sem_wait', 0x1a23cef, bytes.fromhex('8b4358')) and
+       code('fs_condvar_wait', 0x1a23f72, bytes.fromhex('4883c608')))
+    ok('fs_frame_end_kicks', at('fs_move_worker_frame_end', 0x121276f, 7, 3, b'\x48\x8b\x1d') == c['LX_FS_MASS_VA'] and
+       code('fs_move_worker_frame_end', 0x121278c, bytes.fromhex('488d6b70')) and code('fs_move_worker_frame_end', 0x1212798, bytes.fromhex('80bba000000000')) and
+       code('fs_move_worker_frame_end', 0x12127a8, bytes.fromhex('488dbbd8000000')) and
+       at('fs_move_worker_frame_end', 0x12127c4, 7, 3, b'\x48\x8b\x3d') == c['LX_FS_REGION_VA'] and call('fs_move_worker_frame_end', 0x12127cd) == 0x12d1680)
+    ok('fs_mass_park', code('fs_mass_park', 0x11f96fe, bytes.fromhex('498d5f70')) and call('fs_mass_park', 0x11f9705) == c['LX_MUTEX_LOCK_VA'] and
+       code('fs_mass_park', 0x11f970a, bytes.fromhex('41c687a000000001')) and code('fs_mass_park', 0x11f972e, bytes.fromhex('488db8d8000000')) and
+       call('fs_mass_park', 0x11f9735) == 0x1a23f70)
+    ok('fs_region_park', code('fs_region_park', 0x12ef383, bytes.fromhex('488dab40010000')) and code('fs_region_park', 0x12ef39a, bytes.fromhex('c6836801000001')) and
+       code('fs_region_park', 0x12ef3b5, bytes.fromhex('488dbba0010000')))
+    ok('fs_path_kick_wait', code('fs_path_kick_wait', 0x13e3679, bytes.fromhex('488d7b70')) and call('fs_path_kick_wait', 0x13e367d) == 0x1a23cc0)
+    ok('fs_job_manager', at('path_run_batches', 0x13e3de7, 7, 3, b'\x48\x8b\x3d') == c['LX_FS_JTM_VA'] and call('path_run_batches', 0x13e3e0a) == 0x1a55930 and
+       code('fs_jtm_worker_loop', 0x1a54e2a, bytes.fromhex('8b80bc050000')) and code('fs_jtm_worker_loop', 0x1a54e3c, bytes.fromhex('488db858050000')) and
+       call('fs_jtm_worker_loop', 0x1a54e43) == 0x1a23cc0 and code('fs_jtm_worker_loop', 0x1a54e5e, bytes.fromhex('488d87c0050000')) and
+       code('fs_jtm_queue_head', 0x1a55943, bytes.fromhex('8b87bc050000')) and code('fs_jtm_queue_head', 0x1a55951, bytes.fromhex('4c8db7c0050000')) and
+       call('fs_jtm_queue_head', 0x1a5596d) == c['LX_MUTEX_LOCK_VA'])
+    ok('fs_xml_open_lock', at('fs_xml_open_lock', 0x1068e38, 7, 3, b'\x4c\x8d\x35') == c['LX_FS_XML_LOCK_VA'] and call('fs_xml_open_lock', 0x1068e42) == c['LX_MUTEX_LOCK_VA'] and
+       at('fs_xml_open_lock', 0x1068eab, 7, 2, b'\x80\x3d') == c['LX_FS_XML_LOCK_VA'] + 0x48 and at('fs_xml_open_lock', 0x1068e91, 7, 3, b'\x4c\x8d\x25') == c['LX_FS_XML_LOCK_VA'] + 0x50)
+    for name, va, target, lock in (('fs_event_lock', 0x16b866e, 'LX_FS_EVENT_LOCK_VA', 7), ('fs_md_registry_lock', 0x11c69ce, 'LX_FS_MD_REGISTRY_VA', 10),
+                                   ('fs_region_lock', 0x12dbf5c, 'LX_FS_REGION_LOCK_VA', 7)):
+        ok(name, at(name, va, 7, 3, b'\x48\x8d\x3d') == c[target] and call(name, va + lock) == c['LX_MUTEX_LOCK_VA'] and
+           (lock == 7 or elf.read(va + 7, 3) == bytes.fromhex('4989c5')))  # mov r13,rax between them leaves rdi alone
+    ok('fs_timerbase_lock', at('move_worker_frame_start', 0x12125d1, 7, 3, b'\x48\x8d\x1d') == c['LX_FS_TIMERBASE_VA'] and
+       call('move_worker_frame_start', 0x12125ff) == c['LX_MUTEX_LOCK_VA'])
+    ok('fs_rpmalloc_words', at('fs_rp_global_lock', 0x24388ab, 8, 4, b'\xf0\x0f\xb1\x15') == c['LX_FS_RP_GLOBAL_VA'] and
+       code('fs_rp_cache_select', 0x2438be0, b'\xb8' + struct.pack('<I', c['LX_FS_RP_CACHES'])) and
+       code('fs_rp_cache_select', 0x2438bef, b'\x48\x69\xc3' + struct.pack('<I', c['LX_FS_RP_CACHE_STRIDE'])) and
+       at('fs_rp_cache_select', 0x2438bf6, 7, 3, b'\x48\x8d\x15') == c['LX_FS_RP_CACHE_VA'] and code('fs_rp_cache_lock', 0x2438d01, bytes.fromhex('f0410fb137')))
+    # What the child writes in the image (flags, strings, spin words) lies in the writable data, past the RELRO part.
+    relro = [s for s in elf.segments if s['type'] == 0x6474e552]
+    writable = [s for s in elf.segments if s['type'] == 1 and s['flags'] & 2]
+    written = [c[k] for k in ('LX_FS_FORMATTER_JOB_VA', 'LX_FS_WRITER_THREAD_VA', 'LX_FS_MODIFIED_WARN_VA', 'LX_FS_ONLINE_DONE_VA', 'LX_FS_FILE_NAME_VA',
+                              'LX_FS_SAVE_NAME_VA', 'LX_FS_SAVE_DIR_VA', 'LX_FS_RP_GLOBAL_VA')] + \
+              [c['LX_FS_RP_CACHE_VA'] + i * c['LX_FS_RP_CACHE_STRIDE'] for i in range(c['LX_FS_RP_CACHES'])]
+    ok('fs_writes_in_writable_data', len(relro) == 1 and len(writable) == 1 and all(
+        writable[0]['vaddr'] <= va and va + 32 <= writable[0]['vaddr'] + writable[0]['memsz'] and
+        not relro[0]['vaddr'] <= va < relro[0]['vaddr'] + relro[0]['memsz'] for va in written))
+    ok('fs_sound_switch', code('fs_sound_play_head', 0x1a62537, bytes.fromhex('807f7800')) and by_name['fs_sound_play_head']['va'] == 0x1a62520 and
+       at('fs_sound_manager_use', 0xa69e6a, 7, 3, b'\x48\x8b\x3d') == c['LX_FS_SOUND_VA'] and call('fs_sound_manager_use', 0xa69e75) == 0x1a62520)
     # The exact-reciprocal preload (src/native/portable_math/preload) rewrites these windows:
     # no pin may cover one and no gate patch may touch one.
     windows = [(int(a, 16), int(n)) for a, n in re.findall(r'\{0x([0-9a-f]+)u,(\d+),', XRCP_H.read_text(encoding='utf-8'))]

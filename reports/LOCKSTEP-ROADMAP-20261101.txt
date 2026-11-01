@@ -1,0 +1,142 @@
+LOCKSTEP ROADMAP (living to-do list; update in place, newest state wins)
+Started 1 November 2026. User priority (1 Nov ~09:15): features complete first, performance later. Sources: the census report (reports/LOCKSTEP-CENSUS-20261028.txt), the UI guard and
+replay reports, the Option B notes, and the public rundown "How X4 Online Works" (1 Nov, revised by the user:
+latency, peer links, NAT, encryption, attention, non-blocking saves).
+State: [running] an agent or run is on it, [next] starts when its predecessor lands, [later] after a decision
+or a precondition, [open] known, not scheduled.
+
+A. PLAYABILITY (people sessions)
+ 1. [stage 1 live: r1 1.3 frames/step, 36 FPS, in sync. Stage 3 live (r4b): 11 objects drawn smoothed in 68-195
+    render frames, restored every time, in sync. Stage 2 (camera) armed in r3b but applied 0 frames: the demo flight has no
+    camera motion of its own; needs a scripted look-around test] Render frames between steps: keep 30 simulation steps per second, render extra frames in which
+    game time does not advance, camera and mouse look at the monitor's rate, display-only interpolation of ship
+    motion. Branch contrib/ferrite-render-frames, report LOCKSTEP-RENDER-FRAMES-20261101.txt. Measured: X4's own
+    frame costs ~28 ms per step (2 instances on one PC), so 60 steps/s is out of reach (hz60: 0.50x).
+ 2. [running: offline done, live next] Hide the input delay for the own ship: the own ship answers the controls
+    at once on the own screen (display only) while the shared simulation catches up underneath; other players'
+    ships drawn where they are expected to be and corrected as steps arrive (the Elite Dangerous approach).
+    Branch contrib/ferrite-predict2, report LOCKSTEP-OWN-SHIP-PREDICTION-20261101.txt (lockstep_own_predict.h,
+    native_gate_own_predict, default off; works on one frame per step, join interface for item 1 in its
+    section 5; live-test spec O1/O2/P1/P2/G in section 11).
+ 3. [next] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
+    pilot delay from it (today fixed: lookahead 1, delay 3 = 100 ms); later adjust it during a session at an
+    agreed step. Cope with spikes and dropouts better than a pause for everyone (a client stalled past a bound
+    is dropped; needs item 16). Data, relay --latency-ms 100 (1 Nov): lookahead 1 0.38x speed, lookahead 3 +
+    delay 5 0.76x, both in sync; model: step = max(frame, (round trip + frame) / (lookahead + 1)).
+ 4. [running 1 Nov ~09:20: agents trade (X4-Multiplayer-trade), missions+conversations (X4-Multiplayer-missions),
+    construction+crew+assets (X4-Multiplayer-build); money default: coop shares the player wallet, factions mode pays from
+    each player's own faction account] Menus the guard still refuses: trading (slot 1 first; a trade offer needs a portable reference; whose
+    money pays for slot k is a decision), mission offers and conversations for slots 2+ (their MD scope),
+    construction, crew and assets. LOCKSTEP-UI-GUARD-20261101.txt section 7c.
+ 4b. MISSIONS, USER DECISION (1 Nov): personal missions per player in every session mode: each player has its own
+    offers, missions, rewards and reputation (agent X4-Multiplayer-missions: slot 1 first, then one generic mission type
+    end to end for slot 2, then all generic missions). Story/plot missions are per player too, as a SEPARATE work item
+    with its own testing, handling and rewriting (player-specific state, cutscenes, plot flags); not started.
+ 4d. [running 1 Nov] Player faction settings (user): blacklists (banned sectors/factions), fight rules, trade rules
+    create/edit, default responses, station settings left refused by trade (supply overrides, module pause), every player,
+    coop and factions mode (agent X4-Multiplayer-faction, family bit 32768).
+ 4e. [running 1 Nov] Station construction (user): plan commit (modules), upgrades/removals, construction budget and
+    supply, hiring a construction ship, every player, both modes (agent X4-Multiplayer-construct, extends the build family).
+ 5. [G4 passed 1 Nov] Live tests G4 (flight family, scripted) and G5 (people) from the guard report section 7e; missiles
+    with ships that carry launchers (the test scouts have none).
+
+ 4c. [running] On foot (user). Live 1 Nov: slot 1 gets up and walks on both clients (w1bfoot/s1k1, build161) but the
+    wharf scenario splits (transient digest at 65-72, 4 ships' motion by 1800 during the approach/dock, 146 objects after
+    the get-up; agent X4-Multiplayer-footsync); bodies at the seats for slots 2..N (native_gate_pilot_foot_bodies) stay in sync
+    (b1body/b1body2: 1200 ticks, 0 mismatches; whether a seated figure is visible needs a close camera, not answered by the
+    automatic screenshots). Slots 2..N walking, seeing each other and hiring: designed, not built.
+    players walking around stations, seeing each other on foot, and hiring crew by
+    walking up to NPCs (approach, talk, hire choice, payment, assignment), slot 1 then slots 2..N (agent X4-Multiplayer-onfoot).
+ 5b. [running] Missiles live (missile1, build149: slot 2 = Argon Elite a5374 with 9 smart missiles): missile fire replayed, slot
+    1 killed 3 times and respawned, in sync to 1732. Slot 2 destroyed at 1733 -> spacesuit: from ~1740 the client that presents
+    slot 2 evaluates one more view point and the worlds split (agent X4-Multiplayer-suitview).
+ 5c. [done 1 Nov: w15 vs L8 = only the timing pair through 600] Windows/Linux damage (FR29b capture live: the 546 split is in the drone damage path of
+    get_attackstrength, agent FR30): FR29 traced the 546 split to get_attackstrength (out-of-sight combat) without finding the
+    differing instruction; FR29b capture being built (fp-redirect).
+
+B. NETWORKING (rundown section "Latency")
+ 6. [later, only if 3 is not enough] Direct player-to-player input links: each client also sends its input
+    record to the other players; a step uses whichever copy arrives first, checked against the relay's bundle;
+    the relay stays the referee for timeouts, dropouts and checksums. Helps most when players are close to each
+    other and far from the server. Costs: routers block direct links, players see each other's IP addresses.
+ 7. [offline done, live test open] Getting through home routers: UPnP/IGD port mapping where the router allows it; otherwise the
+    relay introduces the two peers for UDP hole punching; a pair that cannot connect keeps using the relay. Branch
+    contrib/ferrite-nat, report LOCKSTEP-NAT-TRAVERSAL-20261101.txt: C module for both gates (nat_link_path: direct / relay /
+    pending), PCP -> NAT-PMP -> UPnP with lease and release, relay --rendezvous-port (NGNAT/1, own thread), NAT simulation.
+    Simulated: all punchable pairs direct in <1.5 s; symmetric vs symmetric or port-restricted -> relay unless a port is mapped.
+    Next: live plan section 9 (this PC <-> VPS), then wiring into B6.
+ 8. [offline done, live test next] Encrypt and authenticate the direct links: one symmetric session key handed out
+    by the relay (an AEAD such as ChaCha20-Poly1305) against outsiders; every player signs its own records with a
+    personal key (e.g. Ed25519) whose public half the relay gives everyone at the start, so no player can send inputs
+    as another. Consider the same for the relay path, which today is a shared token over plain UDP.
+    1 Nov: branch contrib/ferrite-crypto, report LOCKSTEP-WIRE-CRYPTO-20261101.txt. Opt-in (relay --wire-crypto,
+    probe native_gate_wire_crypto) on the relay path for protocols 3/4, Monocypher 4.0.2 vendored; X25519 handshake
+    with the pinned relay key and per-slot psk, sealed datagrams, signed records and permits, group key and peer
+    record seal/open for item 6. Cost per tick: client 0.15 ms (N=2) to 0.55 ms (N=8), relay 0.27 to 1.1 ms.
+    Next: live tests W1-W4 (report section 8) and lane provisioning of per-slot credentials.
+
+B9. [offline done, live test next] Everything on by default, fail loudly (user decision 1 Nov): session defaults
+    (tools/dev/native_gate_defaults.lua, branch contrib/ferrite-defaults, reports/LOCKSTEP-DEFAULTS-20261101.txt): a session
+    config with only slot/port/token/clients and the identity plan runs the full people stack; every skipped default,
+    refusal, degraded counter and stop is an ERROR row plus an in-game info line. Live spec D1 in the report (section 9).
+
+C. PERFORMANCE
+ 9. [1 Nov: study done (not feasible in pure lockstep); benchmark M0-M3 running; HYBRID model agent running,
+    worktree X4-Multiplayer-hybrid: a sector one player is alone in is simulated in full only by that client, its
+    outcomes published as lockstep inputs; design + a first slice] Asymmetric attention: today a sector is high attention on every PC as soon as any
+    player is in it (view points, attention_all), so every PC simulates every player's sector in full. Study
+    done (LOCKSTEP-ATTENTION-STUDY-20261101.txt, branch contrib/ferrite-attention): not feasible in lockstep -
+    high and low attention are different simulations (flight model, physics bodies, shots vs scripted damage,
+    AI branches, state-writing transitions); a split/hybrid needs an authority boundary X4 lacks. Next: measure
+    the price of one extra bubble with native_gate_view_points_mask and native_gate_sample_profile (study
+    section 8), then cut the shared cost symmetrically (parallel physics scenes, bubble size, C10).
+    1 Nov, measured (attm0..3, build163): sim_us ~29 ms; a remote quiet bubble ~1-1.5 ms, the own bubble ~4 ms, the
+    low-attention universe + sync ~24 ms. User request: build the HYBRID model anyway. [offline done, live test next]
+    Design + slice H1: reports/LOCKSTEP-HYBRID-SECTORS-20261101.txt, branch contrib/ferrite-hybrid
+    (native_gate_hybrid, default off, stop 187, input kind 0x59): owner-only high attention for a sector one player is
+    alone in, the outside evaluated without the owners everywhere, owner record + proxy table, census filter (outside
+    roots declared), private slot receipts; no handover (a player crossing stops). Open channels to measure: runtime
+    ID head, MD attention events, job ordinals, cluster-level regions. Live spec section 10 (runs HA/HB/HP/HS).
+10. [open] Per-step cost: split X4's frame into simulation and render time (item 1 adds the status field); trim
+    what play mode still runs; one X4 per PC (players) versus two in our tests.
+11. [done 1 Nov] First live mixed session mix3 (runMix3.sh): 2 Windows lane clients here + 1 Linux X4 on the VPS, relay on
+    the VPS, W14/L7 comparison config at 60 steps/s dt, 3600 steps in 188 s = ~20 steps/s (Windows frames = steps, ~20 fps;
+    the software-rendered Linux VPS is the likely limit, unmeasured: add frame timing on both sides next time). Census:
+    W vs L 5/68/280 at 600/1800/3000, W vs W 1/12/161: the comparison config lacks the play stack, so long runs drift
+    even between the two Windows clients. Next: port the people-config keys to the Linux gate (needed for 12 anyway).
+12. [running] Option B, Windows and Linux bit-identical: FR29 (damage 1 float ulp at tick 546 on ship 07336a),
+    then W15/L8, then 6000-tick comparisons, then player inputs on a Linux peer, then a live mixed session.
+13. [later] Dedicated Linux server that also simulates, so the universe keeps going when players leave.
+14. [running 1 Nov, user request; agent in X4-Multiplayer-hotjoin] Joining a running session
+    (hot join). Stages: J1 save at step T + load in a third lane equals the running world (census 0): needs the join
+    side table (the loader re-rolls AI-wait deadlines and MD cue delays, LOCKSTEP-NONBLOCKING-SAVE-20261101.txt) and
+    the gate's own state carried with the save; J2 the relay admits a new slot, the joiner replays the input journal
+    from T at full speed and enters the barrier at an announced step (Windows v1 with a short agreed pause); J3 the
+    Linux server's fork-save as the non-blocking variant. Original plan:
+    Joining a running session without pausing it: the Linux server forks at an agreed step;
+    the child writes the save while the parent keeps simulating (Factorio's non-blocking save works this way on
+    Linux and macOS); the new player loads that save and replays the steps since from the relay's input journal
+    until it has caught up. To check first: a forked child keeps only the forking thread (X4's save path must not
+    wait on other threads), copy-on-write memory, Steam and file handles in the child, and that save + load
+    round-trips to the same world (the snapshot load used by every test suggests yes).
+15. [later] Player drop and rejoin (with 3 and 14).
+15b. [running 1 Nov, user; agent in X4-Multiplayer-starts] Multiple starts: (1) a session from any stock X4 game
+    start, not only the creative test save (one client creates the new game and saves it, every client loads that
+    save, or every client runs the same new game if that proves reproducible); (2) each player picks their own
+    start (ship + loadout, sector/position, money, inventory, blueprints, reputation) in one shared universe,
+    applied by the player identity plan on every client at the same step. User caution: some starts change the map
+    or world (e.g. the start with a player station): each start is classed per-player safe / session base only /
+    per-player with world parts rebuilt deterministically (station built on every client at the same step);
+    unclassified or world-changing starts picked per player are refused loudly, never partly applied.
+
+E. CORRECTNESS TAILS
+16. [open] play42f3: client 1 ran one more due event at tick 10 (1 of 8 boots of the combat config);
+    overlay-Boot42 (event rows for 20 ticks) to catch it again.
+17. [open] GetSafePos move-direction path stays native (sp_move); Linux's x flag ignored.
+18. [open] Control restore with an open map at session end (p4-short1); the Xenon fighter group in play39p
+    (3 objects); U6 torpedo launch counter; 0a540e model +0x120 1-ulp writer.
+
+F. HOUSEKEEPING
+19. [later, user] 31 merged worktrees of mine are safe to remove (list in .local/census/CLEANUP-20261101.txt);
+    old pre-rewrite worktrees (~142 GiB), x4lan-test and x4-linux (~66 GiB) and other contributors' worktrees
+    are the user's decision.

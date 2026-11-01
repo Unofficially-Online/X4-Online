@@ -34,7 +34,7 @@ RE = Path(os.environ.get('X4_RE', ROOT.parent / 'x4-re'))
 MD_XSD = RE / 'gamescripts/resolved/base/libraries/md.xsd'
 
 HARNESS = '''
-  X4LAN_CONFIG={native_gate_test=true,test_profile='45841',slot='p1',native_gate_hash='battle',
+  X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',slot='p1',native_gate_hash='battle',
     native_gate_snapshot_sha=string.rep('a',64),port=12345,token=string.rep('c',32)}
   X4LAN_SHA256={digest=function() return string.rep('b',64) end}
   logs={};loads=0;reports=0;boots=0;is_menu=true;callbacks={};raised={}

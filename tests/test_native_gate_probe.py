@@ -240,6 +240,67 @@ class SnapshotProbeTests(unittest.TestCase):
         self.assertEqual(self.lua.globals().reports,1)
         self.assertTrue(any('pilot record refused slot=1' in line for line in self.lua.globals().logs.values()))
 
+    HYBRID_GATE = '''
+      X4LAN_CONFIG.native_gate_pilot_source='wire'
+      X4LAN_CONFIG.native_gate_pilot_delay=4
+      X4LAN_CONFIG.native_gate_pilot_suppress_local=true
+      X4LAN_CONFIG.native_gate_clients=2
+      X4LAN_CONFIG.native_gate_view_points='players'
+      local gate=package.loadlib('gate')();order={}
+      gate.wire=function(version,clients) return (version==3 and clients==2) and 1 or 0 end
+      gate.pilot_inputs=function() return 1 end
+      gate.pilot_inputs_status=function() return 'armed=1 source=wire failures=0' end
+      gate.pilot_inputs_frame=function() return 'PILOT_1:1:0:0000000000000000' end
+      gate.pilot_apply=function(slot,record) return 1 end
+      gate.pilot_capture=function() return '01'..string.rep('1',54) end
+      gate.propose=function(tick,blob) order[#order+1]='blob:'..blob;return 1 end
+      gate.report=function(tick) reports=reports+1;state.report_tick=tick;return 1 end
+      gate.view_points=function(mode) order[#order+1]='view';return 1 end
+      gate.view_points_frame=function(tick) order[#order+1]='latch:'..tick;return 1 end
+      gate.view_points_status=function() return 'mode=players' end
+      gate.hybrid=function(mask,tick,poses,...) assert(select('#',...)==0);order[#order+1]='hybrid:'..mask..':'..tick..':'..poses;return native or 1 end
+      gate.hybrid_status=function() return 'armed=1 active=0 why=none' end
+      gate.hybrid_frame=function(tick) order[#order+1]='frame:'..tick;return 1 end
+      gate.hybrid_apply=function(tick,n,payloads) order[#order+1]='apply:'..tick..':'..n..':'..payloads;return 'HYB_1|'..tick..'|0|0|0|0000000000000000' end
+      gate.hybrid_proposal=function(tick,budget) order[#order+1]='propose:'..tick..':'..budget;return '01'..string.rep('0',48) end
+      gate.hybrid_private=function(slot) return slot==2 and 1 or 0 end
+      gate.hybrid_inside=function() return 0 end
+      gate.hybrid_census=function() return nil end
+    '''
+
+    def test_hybrid_arms_after_view_points_rides_the_input_mux_and_frames_after_the_latch(self):
+        self.lua.execute(self.PILOT_PREREQUISITES+self.HYBRID_GATE+"X4LAN_CONFIG.native_gate_hybrid={owners={2},tick=30}")
+        self.lua.execute(MUX);self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.lua.execute("state.boot_phase=3;state.issued=1;is_menu=false;state.wire_version=3;state.clients=2;"
+                         "state.inputs={'01'..string.rep('a',54),'01'..string.rep('c',54)}")
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        order=list(self.lua.globals().order.values())
+        self.assertEqual(order[:2],['view','hybrid:2:30:4'])
+        self.assertLess(order.index('apply:1:2:,'),order.index('latch:1'))
+        self.assertEqual(order.index('frame:1'),order.index('latch:1')+1)
+        propose=next(i for i,o in enumerate(order) if o.startswith('propose:1:'))
+        self.assertTrue(order[propose+1].startswith('blob:4d01') and order[propose+1].endswith('5919'+'01'+'0'*48))
+        lines=list(self.lua.globals().logs.values())
+        self.assertTrue(any('INPUT_SECTION ARMED section=hybrid owner=hybrid' in line for line in lines))
+        self.assertTrue(any('HYBRID_ARMED owners=2 tick=30 poses=4' in line for line in lines))
+        self.assertTrue(any('HYBRID tick=1 armed=1 active=0' in line for line in lines))
+        self.assertFalse(any('ERROR' in line for line in lines))
+        # Refusals: the table's shape and prerequisites at load, the gate's refusal at arming.
+        for config in ('X4LAN_CONFIG.native_gate_hybrid={owners={3},tick=30}','X4LAN_CONFIG.native_gate_hybrid={owners={2},tick=1}',
+                       'X4LAN_CONFIG.native_gate_hybrid={owners={2,2},tick=30}','X4LAN_CONFIG.native_gate_hybrid={owners={2},tick=30,poses=6}',
+                       'X4LAN_CONFIG.native_gate_hybrid={owners={2},tick=30,extra=1}','X4LAN_CONFIG.native_gate_hybrid=true',
+                       "X4LAN_CONFIG.native_gate_hybrid={owners={2},tick=30};X4LAN_CONFIG.native_gate_view_points='observe'"):
+            self.setUp()
+            self.lua.execute(self.PILOT_PREREQUISITES+self.HYBRID_GATE+config)
+            self.lua.execute(MUX)
+            with self.assertRaises(LuaError,msg=config):self.lua.execute(SOURCE)
+            self.assertEqual(self.lua.globals().loads,0,config)
+        self.setUp()
+        self.lua.execute(self.PILOT_PREREQUISITES+self.HYBRID_GATE+"X4LAN_CONFIG.native_gate_hybrid={owners={2},tick=30};native=0")
+        self.lua.execute(MUX);self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,0)
+        self.assertTrue(any('hybrid refused armed=1 active=0 why=none' in line for line in self.lua.globals().logs.values()))
+
     def test_pilot_requires_its_prerequisites_and_an_exclusive_request_entry(self):
         cases=['X4LAN_CONFIG.native_gate_serial_pathing=nil','X4LAN_CONFIG.native_gate_world_identities=nil',
                'X4LAN_CONFIG.native_gate_player_request_observer=true',"X4LAN_CONFIG.native_gate_pilot_source='wire'",
@@ -514,7 +575,9 @@ class SnapshotProbeTests(unittest.TestCase):
         self.assertTrue(any('HIT_CLAIMS_REFUSED tick=3 slot=1' in line for line in lines))
         self.assertTrue(any('PILOT_INPUTS tick=2 ' in line for line in lines))
         self.assertFalse(any('PILOT_INPUTS tick=3 ' in line for line in lines))
-        self.assertFalse(any('ERROR' in line for line in lines))
+        # A refused claim is loud (reports/LOCKSTEP-DEFAULTS-20261101.txt): an ERROR row, nothing else is an error.
+        self.assertTrue(any('ERROR HIT_CLAIMS_REFUSED tick=3 slot=1' in line for line in lines))
+        self.assertFalse(any('ERROR' in line and 'HIT_CLAIMS_REFUSED' not in line for line in lines))
 
     def test_pilot_fire_arms_and_adds_its_receipt_to_the_declared_state(self):
         for mode,expected in (('true','record'),("'script'",'script')):
@@ -695,7 +758,9 @@ class SnapshotProbeTests(unittest.TestCase):
         self.assertIn('PILOT_NATIVE_REFUSED tick=1 kind=range id=0x11 input=FIRE_PRIMARY_WEAPON value=-1',refused[1])
         self.assertEqual(self.lua.globals().refusal_calls,2)
         self.assertNotIn('TOGGLE_TRAVEL_MODE',self.lua.globals().hashed_data)
-        self.assertFalse(any('ERROR' in line for line in lines))
+        # Refused inputs are loud: ERROR rows (the info line at most every 90 ticks), nothing else is an error.
+        self.assertTrue(all('ERROR PILOT_NATIVE_REFUSED' in line for line in refused))
+        self.assertFalse(any('ERROR' in line and 'PILOT_NATIVE_REFUSED' not in line for line in lines))
         # The other client of the same table arms the device sampler; requests=false keeps the channels.
         self.setUp()
         self.lua.execute(self.PILOT_SANDBOX+self.PILOT_NATIVE+"X4LAN_CONFIG.slot='p2';X4LAN_CONFIG.native_gate_pilot_capture_source={'native','device'}"
@@ -785,6 +850,41 @@ class SnapshotProbeTests(unittest.TestCase):
             self.assertTrue(any('RENDER_RNG_SPLIT tick=1 mode='+mode+' armed=1' in line for line in lines))
             self.assertTrue(any('RENDER_RNG_SPLIT_STOP mode='+mode in line for line in lines))
             self.assertFalse(any('ERROR' in line for line in lines))
+
+    def test_sample_profile_arms_logs_ticks_and_rows_at_stop(self):
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_sample_profile=2
+          local gate=package.loadlib('gate')();periods={}
+          gate.sample_profile=function(ms,...) assert(select('#',...)==0);periods[#periods+1]=ms;return 1 end
+          gate.sample_profile_status=function() return 'armed=1 period_ms=2 modules=90 samples=7 step=5 stage=sampling' end
+          local rows={'index=0 kind=mark label=moveworker_run rva=ef4400 count=7 step=5','index=1 kind=inner rva=ba600 site=0 count=3 step=3'}
+          gate.sample_profile_row=function(i) return rows[i+1] end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(list(self.lua.globals().periods.values()),[2]);self.assertEqual(self.lua.globals().loads,1)
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        self.lua.execute('%sstate.active=0;state.reason=1;update()' % STOP_FIELDS)
+        lines=list(self.lua.globals().logs.values())
+        self.assertTrue(any('SAMPLE_PROFILE_ARMED ms=2' in line for line in lines))
+        self.assertTrue(any('SAMPLE_PROFILE tick=1 armed=1 period_ms=2' in line for line in lines))
+        self.assertTrue(any('SAMPLE_PROFILE_STOP armed=1' in line for line in lines))
+        self.assertTrue(any('SAMPLE_PROFILE_ROW index=0 kind=mark label=moveworker_run' in line for line in lines))
+        self.assertTrue(any('SAMPLE_PROFILE_ROW index=1 kind=inner rva=ba600' in line for line in lines))
+        self.assertFalse(any('ERROR' in line for line in lines))
+        for config in ("X4LAN_CONFIG.native_gate_sample_profile=0","X4LAN_CONFIG.native_gate_sample_profile=51",
+                       "X4LAN_CONFIG.native_gate_sample_profile=2.5","X4LAN_CONFIG.native_gate_sample_profile='2'",
+                       "X4LAN_CONFIG.native_gate_sample_profile=true","X4LAN_CONFIG.native_gate_sample_profile=2;native=0"):
+            self.setUp()
+            self.lua.execute(config+'''
+              local gate=package.loadlib('gate')()
+              gate.sample_profile=function() return native or 1 end
+              gate.sample_profile_status=function() return 'stage=tables' end
+              gate.sample_profile_row=function() return nil end
+            ''')
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0,config)
+            self.assertTrue(any('sample profile refused stage=tables' in line for line in self.lua.globals().logs.values()),config)
 
     def test_render_rng_split_refuses_unknown_modes_and_native_refusal(self):
         for value,native in (("'yes'",1),('1',1),("'SPLIT'",1),('true',0)):
@@ -1543,6 +1643,39 @@ class SnapshotProbeTests(unittest.TestCase):
             """)
             self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
             self.assertEqual(self.lua.globals().loads,0)
+            self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
+
+    def test_view_points_mask_arms_after_view_points(self):
+        for mask in (0,1,2,15):
+            self.setUp()
+            self.lua.execute("""
+              X4LAN_CONFIG.native_gate_view_points='players'
+              X4LAN_CONFIG.native_gate_view_points_mask=%d
+              local gate=package.loadlib('gate')();order={}
+              gate.view_points=function(mode) order[#order+1]='view';return 1 end
+              gate.view_points_frame=function() return 1 end
+              gate.view_points_status=function() return 'mode=players' end
+              gate.view_points_mask=function(m,...) assert(select('#',...)==0);order[#order+1]='mask:'..m;return 1 end
+            """ % mask)
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(list(self.lua.globals().order.values()),['view','mask:%d' % mask]);self.assertEqual(self.lua.globals().loads,1)
+            self.assertTrue(any('VIEW_POINTS_MASK_ARMED mask=%d' % mask in line for line in self.lua.globals().logs.values()))
+        for config,why in (("X4LAN_CONFIG.native_gate_view_points_mask=1",'view points mask needs native_gate_view_points'),
+                           ("X4LAN_CONFIG.native_gate_view_points='observe';X4LAN_CONFIG.native_gate_view_points_mask=1",'view points mask refused'),
+                           ("X4LAN_CONFIG.native_gate_view_points='players';X4LAN_CONFIG.native_gate_view_points_mask=16",'view points mask refused'),
+                           ("X4LAN_CONFIG.native_gate_view_points='players';X4LAN_CONFIG.native_gate_view_points_mask=1.5",'view points mask refused'),
+                           ("X4LAN_CONFIG.native_gate_view_points='players';X4LAN_CONFIG.native_gate_view_points_mask='1'",'view points mask refused'),
+                           ("X4LAN_CONFIG.native_gate_view_points='players';X4LAN_CONFIG.native_gate_view_points_mask=1;native=0",'view points mask refused')):
+            self.setUp()
+            self.lua.execute(config+"""
+              local gate=package.loadlib('gate')()
+              gate.view_points=function() return 1 end
+              gate.view_points_frame=function() return 1 end
+              gate.view_points_status=function() return 'mode=players' end
+              gate.view_points_mask=function() return native or 1 end
+            """)
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0,why)
             self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
 
     def test_region_camera_arms_after_the_synced_region_pass_and_updates_every_tick(self):
@@ -3272,6 +3405,68 @@ class SnapshotProbeTests(unittest.TestCase):
             self.assertEqual(self.lua.globals().loads,0)
             self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
 
+    def test_fork_save_arms_on_the_first_admitted_tick_and_repeats(self):
+        """native_gate_fork_save (D14): armed with the profile's save folder once admitted, a line per change of
+        state, and with every=K the next request K ticks after the last, past the current tick."""
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_fork_save={tick=5,name='join',every=4,budget_ms=80}
+          local gate=package.loadlib('gate')();calls={};fs_state='off'
+          gate.platform=function() return 'linux' end
+          gate.fork_save=function(tick,name,folder,budget,watchdog)
+            calls[#calls+1]=table.concat({tick,name,folder,budget,watchdog},',');fs_state='armed';return 1
+          end
+          gate.fork_save_status=function() return 'state='..fs_state..' tick=0' end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(list(self.lua.globals().calls.values()),[])  # not before admission
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        self.assertEqual(list(self.lua.globals().calls.values()),['5,join,fake/45841/save,80,0'])
+        self.lua.execute("fs_state='running';state.issued=2;update()")
+        self.lua.execute("state.issued=3;update()")
+        self.lua.execute("fs_state='done';state.issued=12;update()")  # 9 passed while it ran: the next is 13+
+        self.assertEqual(list(self.lua.globals().calls.values()),['5,join,fake/45841/save,80,0','17,join,fake/45841/save,80,0'])
+        lines=[line for line in self.lua.globals().logs.values() if 'FORK_SAVE' in line]
+        self.assertEqual(sum('state=running' in line for line in lines),1)
+        self.assertTrue(any('FORK_SAVE at=12 state=done' in line for line in lines))
+        self.assertTrue(any('FORK_SAVE_ARMED request=2 tick=17 name=join ok=1 at=12' in line for line in lines))
+        # A list of ticks: each file named after its tick; a tick that passed while the child ran is skipped.
+        self.setUp()
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_fork_save={tick={5,7,20},name='j'}
+          local gate=package.loadlib('gate')();calls={};fs_state='off'
+          gate.platform=function() return 'linux' end
+          gate.fork_save=function(tick,name) calls[#calls+1]=tick..':'..name;fs_state='armed';return 1 end
+          gate.fork_save_status=function() return 'state='..fs_state..' tick=0' end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute("update();fs_state='running';state.issued=5;update();fs_state='done';state.issued=8;update()")
+        self.assertEqual(list(self.lua.globals().calls.values()),['5:j5','20:j20'])
+        self.assertTrue(any('FORK_SAVE_SKIPPED tick=7 at=8' in line for line in self.lua.globals().logs.values()))
+        # slot='p2': this client (p1) never forks, its status is still logged.
+        self.setUp()
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_fork_save={tick=5,name='join',slot='p2'}
+          local gate=package.loadlib('gate')();calls=0
+          gate.platform=function() return 'linux' end
+          gate.fork_save=function() calls=calls+1;return 1 end
+          gate.fork_save_status=function() return 'state=off tick=0' end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update();state.issued=2;update()')
+        self.assertEqual(self.lua.globals().calls,0)
+        self.assertTrue(any('FORK_SAVE at=1 state=off' in line for line in self.lua.globals().logs.values()))
+        # Only the Linux gate has it.
+        self.setUp()
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_fork_save={tick=5,name='join'}
+          local gate=package.loadlib('gate')()
+        ''')
+        with self.assertRaisesRegex(LuaError,'native_gate_fork_save needs the Linux gate'):
+            self.lua.execute(SOURCE)
+
     def test_mass_traffic_arms_before_loading_and_logs_every_admitted_tick(self):
         for value,mode in (('true','sync'),("'observe'",'observe')):
             self.setUp()
@@ -4887,7 +5082,7 @@ class SnapshotProbeTests(unittest.TestCase):
     def setUp(self):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         self.lua.execute('''
-          X4LAN_CONFIG={native_gate_test=true,test_profile='45841',slot='p1',
+          X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',slot='p1',
             native_gate_hash='clock',native_gate_snapshot_sha=string.rep('a',64),
             port=12345,token=string.rep('c',32)}
           X4LAN_SHA256={digest=function() return string.rep('b',64) end}

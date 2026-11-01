@@ -265,12 +265,14 @@ class CreationTraceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'frozen'):compose(source,out,'construction',True)
 
     def test_production_abort_drains_closure_once_and_preserves_original_error(self):
-        source=(ROOT/'tools/dev/native_gate_probe.lua').read_text();abort=source[source.index("SetScript('onUpdate',function()") :]
+        source=(ROOT/'tools/dev/native_gate_probe.lua').read_text();start=source.index("SetScript('onUpdate',function()")
+        abort=source[start:source.index(chr(10)+'end)'+chr(10),start)+5]
         for failure in ('action','once','permanent'):
             with self.subTest(failure=failure):
                 lua=LuaRuntime(unpack_returned_tuples=True);lua.execute((ROOT/'tools/dev/native_creation_trace.lua').read_text())
                 lua.globals().failure=failure
                 lua.execute('''logs={};stops=0;native_owned=true;armed=true;done=false;stopped=false
+                  ticklog={flush=function() end,notice=function() end,try=function(fn,...) return pcall(fn,...) end};pilot_view={}
                   log=function(s)logs[#logs+1]=s end
                   cfg={native_gate_creation_trace_schema=1,native_gate_construction_test=true,native_gate_registry_md_trace=true,native_gate_player_observer=true}
                   gate={poll=function()return {creation_trace_schema=1,active=stopped and 0 or 1,restored=stopped and 1 or 0,issued=5}end,

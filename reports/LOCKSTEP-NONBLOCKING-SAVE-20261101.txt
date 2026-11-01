@@ -1,0 +1,316 @@
+LOCKSTEP NON-BLOCKING SAVE (ROADMAP D14): JOIN A RUNNING SESSION FROM A FORKED SAVE
+1 November 2026 | branch contrib/ferrite-forksave | offline: no X4 launched, no VPS contact, nothing live measured
+
+SUMMARY
+- Built, default off: the fork-and-save in the Linux gate (src/native/engine/linux/gate_fork_save.h). At an agreed
+  tick the gate's frame hook (main thread, between two steps) checks that every engine thread is parked, takes the
+  engine locks the save needs plus rpmalloc's spin words, forks, and releases everything at once. The child runs the
+  engine's own serializer GameClass::Save synchronously and _exits; the parent goes on with the next step and reaps
+  the child later. 31 new pinned sites and 25 decode checks tie every address to the pinned Linux X4 9.00 build.
+- Wired for a live run: probe key native_gate_fork_save (single tick, list of ticks, every=K, one slot only),
+  build_native_gate_overlay.py --fork-save, linux_gate_live.py bundle --fork-save. FORK_SAVE status lines carry the
+  fork cost, the child's result (file size and SHA-256), the parent's step intervals before and during the child and
+  the copy-on-write fault counts.
+- Prototyped, not wired: the relay's join messages, permit hold, journal replay and handover
+  (tools/dev/native_gate_join.py, tested against the relay's own Barrier and journal format); tools/dev/save_diff.py
+  to compare two saves element by element (the census of a joiner without runtime IDs).
+- Offline result: the Linux gate check passes (unit tests on the synthetic image and on the executable's bytes, the
+  Lua bridge, all 26 engine scenarios). The fork tests use real threads named as X4 names its own, real fork() and
+  real /proc: refusals for a running thread, a held lock, pathing readers, an unparked MassTraffic, a pending engine
+  save, a held spin word, "not possible" and a hanging serializer (watchdog) all fail closed.
+- The decisive open question is not the fork but save -> load equality. X4's loader re-draws the deadlines of blocked
+  AI waits and pending MD cue delays and takes attention and nav deadlines from the loading frames (this repository's
+  own load modules document each); the keyed load modules make two loaders agree with each other, not a loader with
+  a world that has run since. A joiner's world at the fork tick will therefore differ from the server's in those
+  fields unless the server ships their live values (section 7). The live test measures that first.
+- Catch-up needs a joiner that steps faster than the session. With the measured X4 frame costs (Linux census
+  p50 23-47 ms, Windows ~28 ms with two instances) a 30 Hz session leaves a margin of 0 to ~13 steps/s, i.e. minutes
+  of catch-up or none; the handover then needs a bounded pause or a slower session (section 5).
+
+Labels: [F] read from the pinned Linux executable (bin-linux/X4, X4 9.00, SHA-256 113f73d7...5f20) in this study, and
+each such address pinned in gate_sites.h and decoded by check_lockstep_gate_linux_sites.py; [F-prior] from the static
+save-fork study of 25 October (x4-re/coord/reports/save-fork.md), cross-checked where cited; [M] measured offline on
+synthetic peers (WSL2, gcc 13.3); [I] inference.
+
+1. THE SAVE PATH ON LINUX
+1.1 Entry and arguments
+- GameClass::Save 0x1cd3d30 (bool online) -> bool. Its only caller is the deferred-save step at 0xfecd77 in the
+  GameClient frame update (MoveWorker), which passes the byte 0x3db68fc [F]. U::RequestSaveGame only queues: it sets a
+  3-frame countdown (0x3db68f8), the names and a temporary pause [F-prior; countdown F].
+- No file argument: the serializer reads three libstdc++ strings: the file name 0x3db6900 and display name 0x3db6920
+  (copied into the header at 0x1cd4aa1/0x1cd4ab4) and the folder 0x3e035c0, initialised to "save\" by 0x8a0d60 [F].
+  The temporary file is <folder>temp_save, the final one <folder><name>.xml.gz (.xml when the compresssaves byte
+  0x3d8e080 is 0), renamed after removing both old variants [F for names and flag; sequence F-prior].
+1.2 Checks and waits at entry [F]
+- IsSavingPossible(online) 0x1de5ef0 must return 1 (it reads GameClient state and the thread's CurTime).
+- The game-modified check 0xfb4b80: if the hash differs and the one-time byte 0x3d8e25c is set, it clears the byte,
+  raises the UI event 'gameModified' and the save returns false.
+- The universe pointer 0x3db6948 must be set.
+- ConstructionSequence manager *(0x3e50930): XLib::Mutex +8; if its pending list (+0x68 != +0x70) is not empty, ONE
+  wait on the condition +0x38 (no loop), then unlock. A job thread must complete a job to wake it.
+1.3 Threads the save normally uses
+- Two default-on bytes: 0x3d8f112 (compression, SHA-512 signature and writes on a job thread, URI &usethread=, read
+  at 0x1cd3f3d) and 0x3d8f111 (XML formatting job, read at 0x1cd3f61); -nosavemultithreading (parser 0x1dac080)
+  clears both [F for the reads and the parser; job semantics F-prior]. With both 0 everything runs on the calling
+  thread [F-prior].
+- The pathing block: RWGate::WriteLock(PathingManager+0xf0) = lock the writer mutex (pthread at +0x100, XLib::Mutex
+  +0xf8), lock +0x128, and if the reader count +0xf0 is not 0 one wait on +0x160; then ApplyResults 0x13d0bc0, the
+  pathing export, unlock +0xf8 [F].
+- XML open-file table, XLib::Mutex 0x3e74e80: an open waits while its file name is in the table (condition 0x3e74ed0)
+  and, for a writer, while the busy byte 0x3e74ec8 is set, then sets it [F].
+- Online: OnlineManager = *(GameClient 0x3daab80)+0x3e0. +0x1851c set: venture export; +0x1851d == 0: set it, then a
+  synchronous HTTP send 0x9de250 (libcurl) [F; curl F-prior].
+- After the rename, on success and with byte 0x3db68a3 == 0: 0x1d66460 (online mode start, directory scans, XML jobs)
+  [F for the call, contents F-prior]. The file is complete on disk before it.
+- Sound: the MD cue release at entry can reach sound play 0x1a62520 [F-prior]; that function returns at once when its
+  manager's byte +0x78 is 0, and the manager is *(0x3db6c08) (26 call sites load it directly) [F].
+- No Vulkan, Steam or thread-identity call (pthread_self, SDL_ThreadID) in the direct-call closure [F, direct calls
+  only; virtual Export calls are not covered by a static closure].
+1.4 Thread-local words the save reads [F]
+Over the serializer's direct-call closure (11,302 functions; the HTTP and online-mode edges excluded):
+  CurTime fs:-0x2728        775 reads, 0 writes; the serializer itself reads it for the header (0x1cd4b51)
+  previous time fs:-0x2628   3 reads
+  view index fs:-0x2620      17 reads; written only by MoveWorker::Run and PathingManager::Run (set to 1); every other
+                             thread, the main thread included, keeps 0
+  RNG word fs:-0x2720        110 uses, 55 writes: the save path draws
+  rpmalloc thread flag fs:-0x2730 and several lazily initialised thread caches
+So a serializer run on any thread but the MoveWorker reads the other view buffer and another clock unless it is given
+the MoveWorker's words [I from F]. The child copies them (2.6).
+1.5 Thread names (pthread_setname_np in 0x1a22cd0, so /proc/<tid>/comm, at most 15 characters) [F]
+'Main()', 'Rendering', 'Movement worker', 'JobThread #%02u', 'Pathing Manager', 'MassTrafficUpdateTask' (comm
+'MassTrafficUpda'), 'RegionManager', 'Gravidar', 'NavMesh calculation task', 'Nav spline calculation task',
+'Async File Saver', 'Async File Loader', 'Asset Enabling Process', 'VideoAsset', 'WorkshopSync Worker',
+'DLC Sync Worker', 'OpenTrackThread'.
+
+2. WHAT THE CHILD INHERITS AND HOW THE GATE HANDLES IT
+2.1 Threads. The child has only the forking thread [POSIX]. Every wait on another thread is a deadlock; the quiet point
+  (section 3) makes sure none is needed: no construction job pending, no queued job, no pathing reader, no XML
+  writer busy; both save threading bytes are cleared in the child, and QueueJob is made a no-op there (JTM +0x5bc = 0:
+  QueueJob logs and returns, 0x1a55943 [F]) so a stray job is dropped instead of queued for a worker that is gone.
+  A caller that then waits for that job still hangs: the watchdog bounds it.
+2.2 Locks. XLib::Mutex = pthread_mutexattr at +0, recursive pthread mutex at +8 (ctor 0x1a23520) [F]. A mutex held by
+  any thread at fork stays locked in the child forever; one held by the forking thread belongs to the parent's TID.
+  The gate trylocks eleven of them in a fixed order and holds them across fork: TimerBase 0x3db8280 (every log line),
+  the event queue 0x3eedf60, the MD name registry 0x3e7e760, 0x3eb3a60 (RegionManager's closure), the XML table
+  0x3e74e80, ConstructionSequence +8, the job queue JTM+0x5c0, PathingManager +0xf8 and +0x128, MassTraffic +0x70,
+  RegionManager +0x138; each mutex's kind must be recursive. The child re-initialises each with its own attribute; the
+  parent unlocks in reverse order. Any busy lock fails the attempt; the loop retries within the budget.
+2.3 Allocators. The engine heap is rpmalloc 1.4.x, embedded (rpmalloc_* exported; operator new/delete 0x1a3dc40 /
+  0x1a3d980 are X4's) [F]. Its global spin word 0x72f87e8 and the spin words of its 63 global span caches
+  (0x72f89a0 + i*0x6410; clamp 0x3f, lock cmpxchg [r15]) have no fork handler [F]. The gate takes all 64 (compare-
+  exchange 0 -> 1) right before fork and clears them in both processes. malloc/free are glibc's (imports) [F]; glibc's
+  fork() makes its arenas and stdio consistent in the child [POSIX/glibc].
+2.4 Descriptors. Shared with the parent: the relay socket, the engine log (-logfile engine-output.log, a FILE* every
+  thread writes), X11 and Vulkan device descriptors, audio and Steam channels. The child replaces every inherited
+  descriptor except read-only regular files, directories and its result pipe with /dev/null (dup2: numbers are kept, so
+  none is reused by the save file and nothing written reaches a shared channel). Closing would not shut a socket for
+  the parent; dup2 is used so that no stale FILE* can write into the new save. [M: the test's inherited socket and
+  stdout are /dev/null in the child; the parent's socket still works.]
+2.5 Signals. X4 installs signal(SIGWINCH), a sigaction loop in 0x24a2370 and libcurl's SIGPIPE handling; no SIGCHLD
+  handler and no fork or pthread_atfork import in the executable [F static; shared libraries not checked]. The child
+  sets the fatal signals to their defaults (a crash just ends it, no crash handler or report), ignores SIGPIPE,
+  unblocks everything and arms alarm(watchdog). The parent tolerates a child reaped elsewhere (ECHILD): the pipe decides.
+2.6 Thread context. The child copies the MoveWorker's CurTime, previous time, view index and RNG word (from the thread
+  block recorded at arming) into its own [M in the test, I for the engine: 1.4]. Shared mappings (MAP_SHARED: Vulkan
+  or lavapipe memory, audio rings, Steam IPC) stay shared after fork; the save path does not write them per the static
+  closure [I], and sound play is switched off (manager +0x78 = 0) in the child [F for the switch].
+2.7 The child's private engine changes, before the serializer: 0x3d8f111 = 0x3d8f112 = 0 (synchronous save),
+  JTM+0x5bc = 0, 0x3d8e25c = 0 (no 'gameModified' failure), 0x3db68a3 = 1 (skip 0x1d66460), OnlineManager +0x1851d = 1
+  when +0x1851c is set (skip the HTTP send), sound off, and the three strings as libstdc++ short strings (folder
+  save\mpjoin\, file and display name the request's name, 1..15 characters of [A-Za-z0-9_-]). The save lands in
+  <profile>/save/mpjoin/<name>.xml.gz, a subfolder the game's save list does not show, so no user save slot and no
+  temp_save of the parent's is ever touched [I for the save list]. Then IsSavingPossible(0), GameClass::Save(0), the
+  SHA-256 of the file, a record per stage on the pipe, _exit. The child runs at nice 10.
+
+3. THE FORK POINT
+- Where: the gate's FrameTick hook on the main thread after the completed frame's bookkeeping, before its report
+  (gate_linux.c gate_tick). The main loop calls FrameTick only after the MoveWorker posted semSimDone 0x3daab20 and
+  holds no mutex across the call (0x72faf0..0x72fb16) [F]. The world is the state after `completed` steps: what the
+  joiner loads as its tick 0 and what the journal's row of that tick describes.
+- Why not the MoveWorker: nothing of the gate runs there at a quiet moment, and after semSimDone it still kicks
+  MassTraffic and RegionManager and runs the Gravidar publish before it parks on the semaphore 0x3e59e20 (mutex +0,
+  condition +0x28, count +0x58) [F]. Only FrameTick posts that semaphore, so once parked it cannot move while the gate
+  holds the frame [I from F].
+- Quiet point, all checked again under the held locks [F for every object; I that the list is complete]:
+  thread census of /proc/self/task: 'Movement worker' (exactly one, the thread that armed, by kernel TID) in a futex
+  inside the semaphore's condition; every 'JobThread #' inside JTM+0x558's; 'Pathing Manager' inside +0x70's;
+  MassTraffic inside +0xd8, RegionManager inside +0x1a0; every other engine-named thread blocked in a system call (a
+  thread preempted outside one counts as running); other threads (audio, SDL, Steam, Mesa) are counted, not required.
+  Engine state: no engine save pending (0x3db68f8 == 0), construction list empty, job semaphore count 0 and the
+  manager running, pathing readers 0, XML busy byte 0, MassTraffic +0xa0 == 1, RegionManager +0x168 == 1, the
+  MoveWorker's semaphore count 0, universe and GameClient present.
+- Budget: native_gate_fork_save budget_ms (default 50) of retries every 200 us at the agreed tick; the whole session
+  waits that long at most (the server is a lockstep client). Not quiet in time: the request fails with the reason and
+  the blocking thread or lock named; the session goes on; the relay can ask for another tick.
+
+4. WHAT WAS BUILT (all default off)
+- src/native/engine/linux/gate_fork_save.h: the module above; Lua gate.fork_save(tick, name, save_folder [, budget_ms
+  [, watchdog_s]]) on the UI thread of an admitted session, gate.fork_save_status(). Status line FORK_SAVE fields:
+  state reason blocker attempts threads engine other_running wait_us census_us hold_us fork_us pid stage possible saved
+  bytes sha save_us child_us exit signal fds flags child_maxrss_kb child_minflt parent_minflt before_frames
+  before_mean_us before_max_us during_frames during_mean_us during_max_us. Never stops the session: a refusal or a
+  failure only fails the request; finish() never kills a running child (its alarm ends it).
+- gate_sites.h: LX_FS_* addresses, 31 fs_ pins (verified at gate start with every other pin);
+  check_lockstep_gate_linux_sites.py: 25 fs_ decode checks (each address read from pinned code; every byte the child
+  writes in the image lies in the writable data segment past GNU_RELRO, which ends at 0x3d8c000).
+- Probe (tools/dev/native_gate_probe.lua): native_gate_fork_save={tick=N | tick={N1,N2,...}, name=..., budget_ms,
+  watchdog_s, every=K, slot='pN'}; FORK_SAVE_ARMED, FORK_SAVE (each change of state), FORK_SAVE_SKIPPED, FORK_SAVE_STOP.
+  Several ticks name each file NAME<tick>; every=K reuses NAME (repeated-fork runs).
+- build_native_gate_overlay.py --fork-save TICK[,TICK...][:NAME] [--fork-save-every K] [--fork-save-slot N]
+  [--fork-save-budget-ms MS] [--fork-save-watchdog S]; linux_gate_live.py bundle passes the same options through.
+- tools/dev/native_gate_join.py (prototype, section 5) and tools/dev/save_diff.py (section 9, L-FS3).
+- Tests: src/native/engine/linux/test_gate_fork_save.h (in test_gate_linux), test_gate_lua.lua, tests/
+  test_lockstep_gate_linux.py (overlay options, fs_ references on the executable), tests/test_native_gate_probe.py
+  (arming, list, every, slot), tests/test_native_gate_join.py, tests/test_save_diff.py.
+
+5. JOIN PROTOCOL (design; prototype tools/dev/native_gate_join.py)
+Messages, authenticated by the session token like NGSTATE/NGGO, no change for existing clients:
+  joiner -> relay   NGJOIN|1|token|slot|nonce              join as a slot nobody plays yet
+  relay  -> server  NGFORK|1|token|server|F|name           F = released + lead (lead > the permit window)
+  server -> relay   NGFORKACK|1|token|server|F|name        the server's probe armed gate.fork_save(F, ...); until then the
+                                                           relay holds the permit of tick F, so the arm always lands in
+                                                           a frame before F (the gate refuses F <= issued)
+  server -> relay   NGFORKED|1|token|server|F|state|bytes|sha   from the FORK_SAVE status; failed: ask again for a later F
+  relay  -> joiner  NGSAVE|1|token|slot|F|bytes|sha        fetch out of band (sha-checked) and boot from it with
+                                                           native_gate_snapshot_sha = sha, the same snapshot boot as tests
+  catch-up          the joiner's own wire, unchanged: its gate counts from its load (t = session tick - F); for its
+                    NGSTATE t the relay answers NGGO t+1 with exactly the blobs the session's permit of F+t+1 carried
+                    (journal rows of F+t, or F+t-k with lookahead k); unpaced. Its game time (and from t=1 its digest)
+                    must equal the server's journaled row of F+t, else NGSTOP: the loaded world is not the server's.
+  relay  -> all     NGHANDOVER|1|token|slot|H              once the joiner is within handover_gap ticks of the live
+                    tick: live permits beyond H wait until the joiner reported H-F; from H on it is a full client, its
+                    ticks still offset by F in the relay.
+Absent slots: clients are configured with the session's maximum N from the start; until a slot joins, the relay
+reports for it with the server's digest and clocks and an empty blob, so nobody waits for it. Not built in the relay.
+Catch-up arithmetic [I]: gap after the fork G = (save + transfer + load seconds) x session rate; time to close it
+G / (joiner steps/s - session steps/s). With save 20 s, transfer 5 s, load 60 s at 30 Hz: G = 2,550 ticks; a joiner at
+40 steps/s needs 255 s, at 30 steps/s never. Measured frame costs (Linux census table p50 23-47 ms unpaced, one run at
+88 ms with a read cost since removed; Windows
+~28 ms with two instances per PC) put an unpaced joiner at about 21-43 steps/s, so the margin over a 30 Hz session is
+between none and about 13 steps/s. Ways out, in order of cost: render less during catch-up (the discard layer gave the
+VPS ~23 fps against ~1 with lavapipe); a short lower session rate during catch-up; a bounded final pause of everyone
+of (remaining gap / joiner rate). Without a margin D14 is no better than pause-save-load; the live test measures the
+joiner's unpaced rate (L-FS4).
+
+6. MEMORY AND TIMING COST (copy-on-write)
+- fork() copies the page tables and write-protects every private page: cost grows with the mapped size; for a
+  multi-GiB process on a VM tens to a few hundred milliseconds are typical [I; linux_gate_live assumes ~6 GiB per
+  instance]. Everyone's step waits for it once (the server is a lockstep client). Status: fork_us, hold_us.
+- Afterwards the parent pays one fault and a 4 KiB copy (2 MiB with transparent huge pages) at its first write to each
+  page while the child lives; the first steps after the fork carry most of it [I]. Status: parent_minflt (pages copied
+  in the parent), during_mean_us/during_max_us against before_mean_us/before_max_us (step intervals at the gate's hook).
+- The child writes too: the serializer's ID passes touch every component, so its own copies can approach the heap in
+  size: peak memory up to about twice X4's resident size [I]. Status: child_maxrss_kb, child_minflt. A host with strict
+  overcommit (vm.overcommit_memory=2) can refuse the fork (reason fork).
+- The child competes for CPU with the parent's simulation and job threads for the length of the save; it runs at nice 10.
+- [M] synthetic, a small test process: fork 0.9-1.0 ms, locks held 1.2 ms, census 0.2 ms, child 1.1-1.5 ms.
+
+7. SAVE -> LOAD EQUALITY (the open question)
+What this repository already shows about X4's load [F-prior from the cited headers and reports]:
+- blocked AI Waits: WaitAction::Reattach has no saved deadline and re-evaluates the duration at load
+  (lockstep_ai_wait_rng.h; 18,943 waits re-rolled in the census snapshot);
+- pending MD cue delays: Cue_ResumeAfterLoad evaluates the delay again (lockstep_md_resume_rng.h; 263 cues);
+- attention dues and nav parameter/probe deadlines come from the loading frames (gate_attention.h, gate_nav.h);
+- runtime IDs: objects made after the snapshot get IDs in load order on a loader, in creation order on the server
+  (LOCKSTEP-LINUX-PORT-PLAN-20261030.txt, RUNTIME IDS); the census keys by saved ID, and a fork save writes its own IDs.
+The keyed load modules make every loader agree with every other loader. A server that has run F ticks holds the live
+values instead, so the joiner differs in exactly these fields [I]. Design (not built): a join side table written by
+the child next to the save, from the frozen world at F and the gate's identity maps: per blocked wait (saved or created
+ID, script, PC, slot) its deadline; per pending cue its due time; per object its attention due and nav deadlines; the
+created identities. The joiner's existing hooks at those load sites (ai_wait, md_resume, attention, nav, created
+identities) apply the table instead of drawing. Whether the save keeps everything else is what L-FS3 measures.
+
+8. RISKS (most important first)
+1. Save -> load inequality (section 7): the joiner never matches without the side table. Measured by L-FS3.
+2. No catch-up margin (section 5): with joiner frames no faster than the session's, the join needs a pause anyway.
+3. A lock or wait the static closure cannot see (virtual Export calls, member mutexes): the child hangs. Bounded by
+   the watchdog (alarm, then SIGKILL from the parent past watchdog + 5 s); L-FS2 counts hangs and captures the
+   futex address of any hang to extend the lock list.
+4. Fork latency on the VPS with a ~6 GiB process: one late step for everybody (fork_us). If it is hundreds of
+   milliseconds: transparent huge pages for X4's heap, or fork earlier from a smaller helper is not possible (the
+   world is in X4's heap) - the cost is the price of the approach.
+5. Copy-on-write memory: up to ~2x resident size; a host without the headroom refuses the fork or swaps.
+6. The census of the quiet point refuses forever in a busy world (MassTraffic or RegionManager rarely parked at the
+   step boundary, a JobThread always busy): reason and blocker say which; a larger budget or another tick.
+7. /proc/<tid>/syscall unavailable (unusual kernels or sandboxes): census_unavailable, fails closed.
+7a. Fork handlers of loaded libraries (SDL3, OpenAL, Mesa/lavapipe, libsteam_api; X4 itself registers none [F]) run in
+   the parent inside fork(). One that waits for a thread of its own would stall the parent and so the session (the
+   relay's timeout then stops everyone); nothing in the gate can bound that. Not checkable offline: the libraries are
+   the VPS's. If L-FS1 shows it, the alternative is glibc's _Fork (2.34+, looked up at run time; no handlers) with the
+   child then also unable to trust glibc malloc held by a non-engine thread at that instant (a child hang, bounded by
+   the watchdog, instead of a parent hang).
+8. Engine behaviour that depends on thread identity beyond the four copied words, or a parent-only resource the
+   save path touches through a virtual call (MAP_SHARED memory): only a live run shows it.
+9. The game-modified dialog suppression and the online/save-list skips change what the child does compared with a
+   normal save; a normal save of the same tick may differ in header fields (L-FS3 compares).
+
+9. LIVE-TEST SPEC FOR THE VPS (the coordinator runs these; none was run here)
+Common: two Linux X4 9.00 on the VPS with linux_gate_live.py, the census key set of runs 26L-28L (loadout order,
+attention, nav key on top of bundle 24), stride 60, the X4MP discard layer, and the new options. Client 1 plays the
+server; client 2 is the control. Record free -m before, during and after the save, and
+/sys/kernel/mm/transparent_hugepage/enabled.
+
+L-FS1 one fork and save
+  bundle ... --ticks 1200 --fork-save 600:join_600 --fork-save-slot 1 [--fork-save-budget-ms 200]
+  Pass when all hold:
+  a. client1 log: FORK_SAVE_ARMED request=1 tick=600 ok=1; FORK_SAVE at=600.. state=running; later state=done
+     reason=ok saved=1 bytes>0; sha256sum of case1/home/.config/EgoSoft/X4/45841/save/mpjoin/join_600.xml.gz equals the
+     status sha.
+  b. the parent's timing: in relay.json released_at, the interval of the fork tick is at most p50(540..599) +
+     fork_us + 20 ms; over the ticks while the child runs (during_frames) p50 within +10% and p90 within +20% of
+     540..599; FORK_SAVE before_*/during_* agree. Note fork_us, hold_us, wait_us, census_us, parent_minflt,
+     child_maxrss_kb, child_minflt, save_us.
+  c. the session is unaffected: both clients stop with reason 1, the relay verdict and census counts at 660..1200 are
+     within the run-to-run spread of the same keys without --fork-save (a control run of the same bundle minus the
+     option).
+  d. hygiene: no client1 log lines from the child (no duplicates between the fork and done), no relay packet from a
+     new source, Xvfb and the Steam client unaffected (client 2 ran on).
+  If state=failed: the reason and blocker are the result (which thread or lock was not quiet at a step boundary);
+  rerun with --fork-save-budget-ms 500 before anything else.
+L-FS2 repeated forks (hangs, timing spread)
+  --ticks 6000 --fork-save 300:join --fork-save-every 300 --fork-save-watchdog 300 --fork-save-slot 1  (19 requests)
+  Pass: every FORK_SAVE_ARMED request ends in state=done; no watchdog, killed or child_signal; the fork_us and
+  during_* spread. On any child that runs past 2 x the longest save_us so far, before its watchdog: as root
+  cat /proc/<pid>/wchan /proc/<pid>/syscall /proc/<pid>/stack and, if available, gdb -p <pid> -batch -ex bt; the
+  futex address (second field of syscall) names the lock to add to the held set.
+L-FS3 the save loads, and equals the server's world (no runtime IDs needed)
+  One child at a time: a listed tick that passes while the previous child still runs is skipped. G = the smallest
+  tick gap longer than L-FS1's child_us at the session rate, plus a margin.
+  Server run: --fork-save 600,<600+G>,<600+2G>:j --fork-save-slot 1 (files j600, j<600+G>, j<600+2G>).
+  Joiner run: a new bundle with --snapshot j600.xml.gz (the joiner's snapshot boot), same keys, --ticks 2G+60,
+  --fork-save <G>,<2G>:k (files k<G>, k<2G>).
+  Pass, in order of what it proves:
+  a. the save loads: the joiner pair admits and runs (the gate's snapshot SHA is j600's);
+  b. python tools/dev/save_diff.py j<600+G>.xml.gz k<G>.xml.gz: equal, or the differing attributes by name and path:
+     what save -> load loses plus what grew from it in G ticks (expected first: waits, cue delays, attention and nav
+     deadlines; section 7);
+  c. save_diff j<600+2G> k<2G>: the same attribute kinds (the loaded world then evolves like the server's apart from
+     them), else the first new kind is the next divergence to chase.
+  The joiner pair's two clients must also agree with each other (their own census, as any run). Equal save files
+  require the same element order in both processes; if save_diff stops at a structural difference first, that order
+  is itself a finding (the save walks a container in address or runtime-ID order).
+L-FS4 the joiner's catch-up rate (the D14 go/no-go number)
+  The joiner pair of L-FS3 without pacing (no native_gate_tick_hz) for 600 ticks: steps per second from relay.json
+  released_at, against the session's rate. The margin decides between catch-up, a slower session during catch-up or a
+  bounded final pause (section 5).
+
+10. OFFLINE CHECKS RUN (WSL2 Ubuntu 24.04, gcc 13.3.0; Windows Python 3.12 for the Python tests)
+- tools/dev/check_lockstep_gate_linux.py --cc gcc --x4 bin-linux/X4: LINUX GATE CHECK PASS (unit tests with the
+  executable image incl. the new pins, Lua bridge with 110 methods, 26 engine scenarios). [M] synthetic peers only.
+- test_gate_linux fork tests: the save (child checks: flags, names, thread words, eleven re-initialised mutexes, 64
+  cleared spin words, socket and stdout on /dev/null; parent: channels untouched, locks and words free, its own
+  bytes unchanged) and the refusals listed in the summary.
+- The unit test binary ran 140 more times in a row without a failure (one earlier run ended without its final line
+  after both fork tests had passed; not reproduced; the fork test now also puts the main thread's words back).
+- tests/test_lockstep_gate_linux.py, test_native_gate_probe.py, test_native_gate_join.py, test_save_diff.py,
+  test_native_gate_scenarios.py, test_native_gate_check_options.py, test_native_gate.py: pass. The whole Windows suite
+  (tools/dev/check.py) has 44 errors and failures in modules that import none of the changed files (symbolic links
+  without the privilege, Linux starters, path separators, the native transport, the world launcher); the two that
+  slice the probe source (test_native_creation_load, test_native_creation_trace) fail the same way on the base commit
+  e457b4c9.
+
+11. FILES
+src/native/engine/linux/gate_fork_save.h, test_gate_fork_save.h, gate_sites.h, gate_linux.c, test_gate_linux.c,
+test_gate_lua.lua; tools/dev/check_lockstep_gate_linux_sites.py, native_gate_probe.lua, build_native_gate_overlay.py,
+linux_gate_live.py, native_gate_join.py, save_diff.py; tests/test_lockstep_gate_linux.py, test_native_gate_probe.py,
+test_native_gate_join.py, test_save_diff.py. Study scripts (read-only ELF analysis) stayed outside the repository.

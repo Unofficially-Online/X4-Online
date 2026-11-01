@@ -1,0 +1,545 @@
+Lockstep render-only frames: 30 steps per second, more frames on screen, 2026-11-01
+===================================================================================
+
+Offline work on contrib/ferrite-render-frames (base 621defba). Nothing here ran in X4. [F] = read
+in the pinned X4.exe 9.00 (disassembly; RVAs), or in the gate's own source; [I] = inference, to be
+confirmed by the live runs in section 9. No game code or text is reproduced here.
+
+1. Short version
+----------------
+- Stage 1 is built, default off: native_gate_render_fps = N (Windows gate, protocol 4). Between
+  two admitted steps the gate runs extra X4 frames in which game, real and unpaused time do not
+  move and no simulation code runs: only VBI slot 10 (render preparation) on the MoveWorker and
+  the main thread's draw and present. The steps stay exactly as they were (dt = 1/30, paced, one
+  report, one digest, one probe frame per step). Stop reason 182.
+- Stage 1 alone changes nothing visible: a render-only frame redraws the last step's image (same
+  world, same camera, render time frozen). It is the base the camera (stage 2) and interpolation
+  (stage 3) need, and it proves the hard part: extra frames that leave the world bit-identical.
+  Its visible result is a higher frame counter.
+- How many extra frames fit is set by the step's cost, not by the option: an extra frame needs
+  room before the next step's pace deadline. Coordinator data (build149, 2 clients on one PC):
+  X4's own frame per step 27.9 ms median (p90 40.8), probe 1.4 ms, gate 4.3 ms. At 30 Hz that
+  leaves about 1 ms, so in today's Play42P a render-only frame will be rare. Each frame costs
+  about slot 10 (2.1-2.6 ms in the frame-diet profile) on the MoveWorker, in parallel with the
+  main thread's draw of the previous lists (GPU bound). Room appears only as the step gets cheaper.
+- New measurement for that question, also without render frames: FRAME_TIMING now ends with
+  gate.render_split = slot10_us (slot 10 of the last step's MoveWorker frame) and sim_rest_us
+  (sim_us minus slot 10: universe update, BuildCache, UI and probe, input, sound, jobs), plus
+  rframes/rframe_us of the gap. census_perf --native reports their medians.
+- Stages 2 and 3 are built too (update, section 11), each behind its own default-off key on top of
+  native_gate_render_fps, stop reason 183: native_gate_render_camera (the presented camera's own
+  motion between the last two steps, extrapolated or interpolated, in the render-only frames) and
+  native_gate_render_motion (the moving objects of the camera's zone, likewise), the hook a display
+  predictor uses (section 12) and the live tests R3/R4 (section 15). R1 (section 9) passed: relay
+  pass, 0 mismatches, steps exact, per_step_x100 133/130, an extra frame about 2 ms.
+
+2. How an X4 frame is built (Windows, X4 9.00)
+----------------------------------------------
+Main thread, MainMessageLoop 0x12ae7d0 [F]: pumps window messages, processes held keys (per-key
+calls 0xd6700/0xd6980 under the input object's lock *0x6cf1560+0x8e28), waits for g_semSimDone in
+16 ms slices, then calls FrameTick 0xfa2d70 (the gate's hook sits on that call, 0x12ae9d2).
+FrameTick 0xfa2d70, not loading [F]:
+  1. Streamline/Reflex token and sleep (NVIDIA only), the fps counter (+0x238 frames, +0x248 fps).
+  2. dt from QPC, clamped to 1 s; with the gate's patch (0xfa3302 nop'd) dt is the word 0x6adfc60.
+     Only FrameTick reads that word; the three other references write it from the movie-capture
+     options (0xfa86a7, 0x121ea04, 0x122215f).
+  3. If dt > 0 (0xfa330f comisd, jbe 0xfa3384): under the TimerBase lock game time += dt*speed,
+     unpaused real time += dt when not paused, real time += dt. At dt = 0 the whole block is
+     skipped: no time moves.
+  4. PublishComponentViewCache 0xef41e0, main-thread path: waits until no MassTraffic/Region
+     reader holds the view cache, copies the MoveWorker's read/write bank indices (0x38f4ee0,
+     0x2f4b71c) to the indices other threads use (0x38f4eb4, 0x2f4b718).
+  5. Render-list flip (FlushDynamicMeshUploads, RenderFrameData_Reset of the consumed half, flip
+     0x6b66280); destroy queue; graphics state changes; head tracker update (g_HeadTrackerManager
+     +0x3b8, vfunc +0x18).
+  6. Releases g_semSimStart (the MoveWorker's next frame), then draws the PREVIOUS frame's lists
+     (BeginThreadedRenderFrame 0xfa23a0 reads real time for the render clock, RenderPreviousFrame
+     0xf9ff40, PresentAndFrameLimit 0xfa2ba0: sleeps to X4's frameratetarget when frameratelimit is
+     on, flags 0x6adfbb0/0x6adfbb4).
+MoveWorker, U::MoveWorker::Run 0xef4400, per frame [F]:
+  a. Gravidar PublishResults (0xef45d9; with native_gate_radar_serial the gravidar module points it
+     at gravidar_defer, which returns at once after the boot, and publishes in the pathing kick).
+  b. Wait g_semSimStart (0xef45ea; the mass traffic module counts it: mt_worker_parked()).
+  c. Pathing manager +0x88 = 0, pathing kick ReleaseSemaphore 0xef4614 (path_release with
+     native_gate_serial_pathing; the pass is joined there).
+  d. TimerBase::SyncThreadGameTime (TLS game time), zero 80 bytes at 0x391d150, view-block reset
+     0x97a160 of each universe camera.
+  e. VBI slots 0..16 from g_VbiTable (0x6cf1570): an entry that is NULL is skipped (0xef469b); while
+     loading (+0x130) the loading bank decides. Known slots: 1 Ticker (game- and real-time
+     timers), 3 GameClient::Move (universe update, BuildCache, the camera control update and view
+     bank refill, the index swap), 4 XIn::Base (device polling and input dispatch), 6 CUIController
+     (UI, every UI Lua script, the probe), 8 character animation, 9 sound, 10 GameRender::Move
+     (render banks: UI, characters, every camera), 11 JobEngine, 14 Steam.
+  f. Sound accumulator: only when the TLS game time is above the last frame's (0xef46d5 comisd,
+     jbe), then that time is stored.
+  g. Release g_semSimDone; kick the mass traffic pass (only if its task's ready byte +0x88 is set)
+     and the region pass (only if +0x140 is set and +0x144 is 0).
+One FrameTick pairs with one MoveWorker frame; the MoveWorker prepares frame N's lists in slot 10
+while the main thread draws frame N-1's [F, the pairing is the frameInFlight byte 0x31c20cc].
+
+X4's own pause [F]: FrameTick has no other branch for it; game time grows by dt*speed, unpaused
+time stops. The MoveWorker loop has no pause test at all, so in a paused game every slot, the
+pathing kick and both passes still run every frame; each system decides by its own elapsed time.
+[I] That is why a paused X4 still renders and its UI and camera work, and also why the pause is
+not a safe model for lockstep: everything per-frame that is not gated by elapsed game time (AI and
+MD schedulers' per-frame cursors, attention updates, the Gravidar round robin, the pathing batch
+cursor, the passes' RNG draws, UI-created IDs) would run once more per extra frame. Stage 1
+therefore takes the stricter form: no simulation slot and no pass runs at all.
+
+3. Stage 1: render-only frames (built, default off)
+---------------------------------------------------
+Files: src/native/engine/lockstep_render_frames.h (+ _lua.h), gate hooks in lockstep_gate.c
+(gate_tick, path_release, finish), lockstep_render_rng.h (slot 10 time), lockstep_mass_traffic.h
+(the MoveWorker's own time), lockstep_tick.h (gate_pace_peek), tools/dev/native_gate_probe.lua,
+tools/dev/check_gate_options.py, tools/dev/census_perf.py.
+
+A render-only frame is one more FrameTick between two steps, with
+  - the dt word set to 0.0 for that call only (CAS 1/hz -> 0, back by CAS right after it returns):
+    the native zero-dt path, no time advance [F];
+  - every g_VbiTable entry except slot 10 set to NULL (CAS from the saved value; done on the main
+    thread while the MoveWorker sits behind g_semSimStart, put back by CAS before the next step,
+    after g_semSimDone): the MoveWorker skips them natively [F]. No universe update, input
+    dispatch, UI, probe, animation, sound, jobs, Steam or timers;
+  - the pathing kick turned into a no-op (path_release returns at once: no pass, no join, none of
+    the step's per-frame gate work, no thread RNG seed);
+  - both pass ready bytes held at 0 (mt_hold, the stride's own mechanism): the frame's tail kicks
+    start no traffic or region pass [F: each kick needs its ready byte];
+  - the loop-top Gravidar publish a no-op (gravidar module), the sound step skipped by the equal
+    game time [F], the 80-byte scratch zeroing and the camera view-block reset repeated (both are
+    redone at the start of the next step frame before any slot runs [F: order in 0xef4400]).
+Slot 10 runs inside the render RNG split (its draws stay on the private render word), its effect
+objects take IDs from the view lists (native_gate_runtime_ids_local) and the presentation scope
+works per call. The main thread draws and presents as in any frame; X4's frame limit still holds.
+The view caches: no bank is swapped, so slot 10 and the main thread both read the bank the last
+step built; nothing writes a bank during a render-only frame [F for the swap, I for "nothing
+writes": BuildCache and the refill run in slot 3 only].
+
+Per-step work exactly once. The gate's frame hook now has three cases:
+  - boundary (the frame just run was a step): all checks, the joins (mass traffic, octrees, IDs,
+    region camera), created identities, the report sealed and sent, exactly as before;
+  - then the plan (rf_plan, pure): with the permit held and the pace deadline of the next step
+    (gate_pace_peek: the deadline the pace hold would use, without taking it), a render-only frame
+    starts no earlier than one frame interval after the previous frame start (interval =
+    1/min(native_gate_render_fps, X4's frameratetarget when its limit is on)) and only when its
+    expected cost (moving mean of measured frames + 1 ms) ends before the deadline; otherwise the
+    step: permit taken, pace hold, FrameTick with dt = 1/hz (unchanged code, factored into
+    gate_step). A missing permit after the deadline keeps drawing at the frame rate (counted
+    late=, the step then starts at most one frame late; the pace schedule catches up);
+  - continuation (the frame just run was render-only): every module check still runs, then
+    rf_after_frame (game, real and unpaused time bit-identical, the dt word back at 1/hz, the
+    masked table unchanged, else stop 182), the relay is drained, reports resent, timeout and
+    window checks as in lookahead_wait, and the plan again. The report, digest, joins, created
+    identities and the probe's frame are not repeated.
+Input: slot 4 does not run in a render-only frame, so X4's own pending-event vector (XIn::Base
++0x9158, taken under its lock +0x9130 by slot 4 0xdcc80 [F]) and the per-device polling simply
+wait for the next step's slot 4: nothing is consumed, lost or seen twice. The main loop's
+message pump and held-key processing run once per main-loop pass as before [F]; [I] they queue,
+they do not dispatch. The probe (slot 6) runs once per step: native_gate_probe.lua needs no
+render-frame branch. The pilot records, UI replay records and orders are captured in slot 6 of
+the step as today.
+Preconditions, checked at every boundary (status ready=/missing=): boot mode with the gate's dt
+word, protocol 4, serial pathing, radar serial (Gravidar publish moved), the render RNG split
+active, mass traffic and region pass 'sync', no portable or diagnostic transport, one step done,
+and three pins on X4.exe (FrameTick's zero-dt skip 0xfa3304+17, the slot loop 0xef4681+62, the
+sound compare 0xef46bf+28; SHA-256, checked once). Missing: no render-only frame, steps as before.
+The probe refuses the key unless the config names all of them (and runtime_ids_local with
+runtime_ids); check_gate_options.py has the same rule.
+Fail closed: any CAS that does not find the gate's own value, a moved time, a changed slot table,
+a MoveWorker that does not park within 5 s before the holds go back, or a pathing kick from a
+foreign caller stops the session with reason 182 (why=). finish() puts the dt word, the holds and
+the table back before any other restore; a foreign value is left in place and restored=0.
+
+Status: RENDER_FRAMES tick=... (status stride) and RENDER_FRAMES_STOP:
+  fps eff_fps x4_limit ready missing stage why steps rframes per_step_x100 (100 = one frame per
+  step) hist=0/1/2/3/4+ render-only frames per gap, last_gap max_gap, period_us mean_period_us
+  max_period_us (gate exit to next gate entry of a render-only frame), main_us (its FrameTick:
+  draw, present, frame limit), mw_us mw_frames (its MoveWorker frame, from the skipped pathing
+  kick to the next frame-start wait), slot10_r_us slot10_step_us, est_us interval_us, late
+  late_us_max, not_ready, holds, masked (entries nulled in the open gap), failures restored.
+FRAME_TIMING (every tick): ... sim_us=... probe_us=... slot10_us=... sim_rest_us=... rframes=...
+rframe_us=... (gate.render_split, Windows gate only; it works without render frames).
+
+4. What a render-only frame can still change, and why it is not the simulation
+------------------------------------------------------------------------------
+  writer per frame                         in a render-only frame
+  time advance (FrameTick)                 dt word 0: skipped [F]
+  view cache publish (FrameTick)           copies unchanged indices [F]
+  render-list flip, destroy queue, head    presentation; they ran concurrently with every step
+    tracker, present, fps counter           before [I]
+  Gravidar publish (loop top)              gravidar_defer: returns [F, gate source]
+  pathing kick and join                    skipped [built]
+  game time to TLS                         unchanged value [F]
+  80-byte scratch at 0x391d150, camera     redone at the next step frame before its slots [F]
+    view-block reset 0x97a160
+  slots 0-9, 11-16                         not called (NULL entries) [F loop, built mask]
+  slot 10 render: thread RNG               private render word (render split) [gate source]
+  slot 10 render: effect objects, IDs      view-list IDs (runtime_ids_local); whether a zero-dt
+                                            render walk spawns welding effects (0x89a7d0 takes its
+                                            time as a parameter) is not established [I, open]
+  slot 10: view-cache flag 0x100000        set on rendered components, consumed by the next
+    (0x75049a)                              BuildCache's attachment refresh; the camera and the
+                                            set are the step's own, so it is set again [I]
+  sound accumulator                        equal game time: skipped [F]
+  mass traffic and region kicks            ready bytes held at 0: no pass [F kick, built hold]
+  main loop key processing, message pump   queue only; dispatch is slot 4 [I]
+  resource streaming (main thread)         timing only; already asynchronous today [I]
+Effect objects created by a zero-dt render walk would be local objects on one client (view IDs);
+existing runs already tolerate camera-dependent local effects, but more slot-10 calls could create
+more. The census is the check (section 9); RENDER_RNG_SPLIT frame_ids= rising with frame_calls= is
+the early signal.
+
+5. Cost and room (the coordinator's question)
+---------------------------------------------
+X4's MoveWorker runs the simulation and the render preparation on one thread, one after the other,
+and the main thread draws while the MoveWorker computes the next frame [F]. A render-only frame
+therefore cannot overlap a step: it fits only into the time a step leaves before its deadline.
+  room per step  = 1/hz - (gate pre + report + sim_us), sim_us = slot10_us + sim_rest_us
+  frame cost     ~ max(slot 10 on the MoveWorker, the main thread's draw + present)
+Known numbers: slot 10 2.3 ms of a 17.3 ms MoveWorker frame in the frame-diet profile (camera
+render 2.1, UI render 0.2), slot 6 5.3 ms (Lua 0.6), BuildCache 3.9 ms; coordinator: sim_us 27.9 ms
+median, gate 4.3 ms, probe 1.4 ms. At 30 Hz (33.3 ms) that is about 1 ms of room: expect hist
+mostly 0 in Play42P and an fps near 30. Estimates for a cheaper step (to be measured): with 20 ms
+of step and a 5 ms frame, 2 extra frames (90 fps cap 60 -> 60 fps); at native_gate_tick_hz = 20,
+about 15-25 ms of room. Frames are uneven: the step frame stays on screen for the step's cost,
+render-only frames for their own; stage 3 has to place moving objects by display time, not by
+frame count. Keep native_gate_render_fps at or below X4's frameratetarget (the gate caps it there
+anyway, eff_fps= and x4_limit= show both).
+
+6. Stage 2: camera at full rate (first design; built in another form, section 11)
+-----------------------------------------------------
+Where the camera moves today [F]:
+  - slot 4, XIn::Base Move 0xdcc80: device polling, then it takes the whole pending event vector
+    (+0x9158 under +0x9130) and dispatches each 0x20-byte event (0x97190). The mouse-look axes go
+    to 0x122d970, which stores the value (it does not add) into the input-state object *0x6cf1520
+    +0x34c/+0x350 under its lock +0x320, only while look mode +0x348 is set.
+  - slot 3, UniverseFrameUpdate -> 0x9fd870: look keys (+0x31c bits), head tracker
+    (g_HeadTrackerManager+0x3b8), takes and zeroes the look values, then 0x97fe50 on the player
+    camera with the game and real time since its last run (smoothing, head look, chase orbit);
+    then the view-bank refill 0x9fe573 -> 0x979ce0 writes each camera's bank at the write index
+    0x2f4b71c, which the swap makes the read bank slot 10 uses (0x979ef0 reads it).
+So in a render-only frame no input arrives (slot 4 skipped) and the camera neither updates nor
+refills. Plan, all scoped to the render-only frame and restored bit-exactly before the next step:
+  1. Pending look input without consuming it: under +0x9130, read (not take) the event vector and
+     sum the mouse-axis events since the step; joystick/head tracker state read-only. Needs the
+     0x20-byte event layout (RE of 0x97190 and its callers; not done).
+  2. In the render-only branch of path_release (MoveWorker, before slot 10): save the player
+     camera's control block (local PosRot +0x590..+0x5cf, its time stamps +0x838/+0x840 and the
+     smoothing fields 0x97fe50 writes; extent to be read) and its read-bank table
+     (camera+0x30+bank*0x2b0, 0x2b0 bytes); run 0x97fe50 with the pending delta and the wall time
+     since the step; refill the table into the read bank (0x979ce0 with the write index pointed at
+     the read bank for the call: in a render-only frame no other thread uses the MoveWorker's
+     indices [I, to verify]); slot 10 renders.
+  3. After slot 10 (render wrapper exit, also on an exception): put the block and the table back;
+     the next step's slot 3 starts from exactly the state it would have had, consumes the real
+     input and moves the native camera to where the presentation camera already was (equal up to
+     smoothing). The simulation's camera-dependent systems keep the view points they use today.
+Risks: a main-thread reader of the read bank during the render-only frame (the main thread draws
+from the render lists [I, frame-diet report], not from the bank: to verify with a read watch);
+smoothing makes the native step land slightly elsewhere (a visible snap; feed the same deltas);
+cockpit mouse steering is ship input (pilot record), not camera look: stage 2 moves only
+head-look and external cameras, the own ship's motion needs stage 3 or the prediction module.
+
+7. Stage 3: smooth motion (first design; built in another form, section 11)
+-----------------------------------------------
+Where the renderer reads transforms: every component's model-view is 0x3de630(component, context
+anchor) composed with the camera context; 0x3de630 walks parents through the view cache of the
+reading thread's bank (MoveWorker: 0x38f4ee0) and their pose blocks (vc+0x28, PosRot) [F, and
+reports/LOCKSTEP-PREDICTION-20261029.txt]. The pose blocks are filled by BuildCache in slot 3 into
+the write bank; the previous step's poses stay in the other bank until the next BuildCache
+overwrites it [I: whether BuildCache rewrites every block or only changed ones decides whether the
+other bank is a complete "previous step"]. The prediction module's present mode already writes one
+pose block in slot 10 and restores it (predict_present_enter/leave), the pattern to extend.
+Plan: in render-only frames only, inside the slot 10 wrapper, for the components the camera can
+see (the camera's zone and its neighbours; cap the count), write a blended pose into the read
+bank's block and restore it after slot 10 (CAS, foreign changes left alone and counted):
+  interpolation  pose(N-1) -> pose(N) by alpha = time since step N / step length: smooth and never
+                 wrong, but everything (own ship included) is shown one step late (33 ms);
+  extrapolation  pose(N) + velocity * dt (velocity from N-1 -> N, or the bank's own velocity at
+                 +0x50 once its frame is known): no added delay, overshoots on changes, snaps back
+                 at the next step.
+Recommendation: extrapolation with a clamp for other objects, the prediction model for the own
+ship (lockstep_pilot_predict.h), the step frame itself unchanged. Effects, particles and HUD
+brackets stay at the step (as in prediction stage 1). Size: a per-object pose write and restore
+for hundreds of components per render-only frame, plus the visibility set; build after stage 2.
+
+8. Risks and open points (stage 1)
+----------------------------------
+- Benefit depends on room: with today's step cost at 30 Hz, few or no render-only frames (5).
+- Stage 1 shows identical frames: only the counter rises until stage 2/3 exist.
+- Slot 10 without slot 6 and 8: the UI and character render banks rebuild their draw lists from
+  unchanged state [I]; if one consumes a per-frame list that only its Move refills, the HUD or
+  characters would vanish in render-only frames (visible flicker). Screenshot check in 9.
+- Welding/effect spawns in a zero-dt render walk (section 4) [I, census].
+- A VBI (un)registration on another thread during a gap (online-mode switch, Steam): the restore
+  CAS fails and the session stops with 182; 24 functions reference g_VbiTable, the others are
+  handler constructors/destructors and UI init/shutdown [F refs, I roles].
+- Stop reason 182 is new; parallel branches checked locally have none above 181.
+- Linux gate: not built (gate.render_frames is absent there; the probe refuses the key).
+
+9. Live test (coordinator)
+--------------------------
+Base: .local/census/overlay-Play42P (2 clients, tick_hz 30, lookahead 1, serial pathing, radar
+serial, render RNG split, mass traffic and region pass sync, runtime_ids_local, frame_timing).
+Check first: python tools/dev/check_gate_options.py <config> (no REFUSED line).
+Run R0, the baseline split (no new option; any gate build from this branch): FRAME_TIMING rows
+carry slot10_us and sim_rest_us; census_perf --native gives slot10_ms, sim_rest_ms, sim_ms.
+Run R1, render-only frames, on both clients:
+  X4LAN_CONFIG.native_gate_render_fps = 60
+(60 = the lane profiles' frameratetarget; the gate caps at X4's target anyway.) Optional R2 with
+more room: R1 plus X4LAN_CONFIG.native_gate_tick_hz = 20 and the relay at --tick-hz 20.
+What proves what (per client log unless noted):
+ (a) the world stays identical:
+     relay summary 0 digest mismatches; census_compare 0 differing objects (~530,000);
+     RENDER_FRAMES_STOP failures=0 restored=1, STOP reason=1 (not 182), PATH restored=1;
+     RENDER_RNG_SPLIT frame_calls= is 1 + the tick's render-only frames, and frame_ids= (IDs
+     taken while slot 10 runs) per call no higher than in R0 (effect spawns, section 4).
+ (b) steps stay 1/30 s and once per step:
+     STOP max_dt_error=0 and the relay's --tick-hz check passes; census_perf simulated_per_wall
+     near 1.0 (as R0); FRAME_TIMING and RNG rows exactly one per tick, consecutive; RENDER_FRAMES
+     steps= equals the completed ticks since the first step; mw_frames= equals rframes= (one
+     skipped pathing kick per render-only frame, never a pass); MASS_TRAFFIC/REGION joins one per
+     stride tick as in R0; late= small; LOOKAHEAD_STOP resends= not above R0.
+ (c) the rendered rate went up:
+     RENDER_FRAMES per_step_x100 above 100 (200 = 60 fps at 30 Hz) and hist=; FRAME_TIMING
+     rframes= and rframe_us=; census_perf rframes_per_step; the lane tool's fps (and X4's own fps
+     counter, which counts render-only frames) against R0. If per_step_x100 stays near 100, read
+     missing= (not ready) or est_us/interval_us against the room (FRAME_TIMING sim_us + pre_us).
+Screenshot scenario (stage 1 shows no motion change; check that nothing is lost): both clients
+in their start ships, parked, cockpit view, HUD visible; take one screenshot per client at about
+tick 600 and one after switching to the external view; expect a complete HUD and cockpit (no
+missing UI, characters or flicker between frames), X4's fps counter on if the profile shows it.
+Fly a short stretch with the mouse: the ship and camera respond as in R0 (input lands in the next
+step: no change in feel is expected or wanted from stage 1).
+Stop and report: any stop 182 (why= names the check), a census difference (first tick and the
+object classes), per_step_x100 and the split numbers.
+
+10. Offline tests
+-----------------
+C (test_lockstep_gate.exe, with and without the pinned X4.exe; build_native_gate.py --test
+--native-image): plan cases (room, no room, missing permit, late), pace peek against the pace
+schedule, configuration and X4's frame limit cap, one render-only frame on fake engine memory
+(dt 0 and the masked table seen inside FrameTick, holds, the pathing kick returning without a
+release, the MoveWorker's time, slot 10 split), the gap closed (holds after the MoveWorker parks,
+table back), a pass the stride already holds left alone, refusals (loading, no slot 10, a dt word
+the gate does not own), fail closed (time moved, dt word changed, slot registered meanwhile, the
+MoveWorker not parking), a stop in the middle of a frame, the admission against a loopback relay
+(render while the deadline is far, wait for the next frame slot, step when no room, late frames
+while the permit is missing, timeout 7, relay stop 1, game time moved 5, the boundary without
+preconditions identical to lookahead_frame), status and split strings; on X4.exe the three pins
+and what they hold (dt load from the word, the zero-dt skip, the NULL-slot skip, the loading
+offset, the frame-limit globals), tamper refusal. Linux gate cross-compile unchanged.
+Python: tests/test_native_gate_render_frames.py (probe arming order, refusal, prerequisites,
+FRAME_TIMING split, option checker), test_native_gate_census_perf.py (split medians), and the
+existing probe, option, lookahead, nslot and other gate suites.
+
+11. Stages 2 and 3: built (update 2026-11-01, default off)
+----------------------------------------------------------
+Files: src/native/engine/lockstep_render_display.h (+ _lua.h), three calls in render_rng_execute
+(lockstep_render_rng.h), rf_gap_first/rf_ready_flag in lockstep_render_frames.h, the gate's tick
+check, finish() and Lua table (lockstep_gate.c), tools/dev/native_gate_probe.lua,
+tools/dev/check_gate_options.py. Both keys need native_gate_render_fps:
+  X4LAN_CONFIG.native_gate_render_camera = 'extrapolate' | 'interpolate'   (true = 'extrapolate')
+  X4LAN_CONFIG.native_gate_render_motion = 'extrapolate' | 'interpolate'   (true = 'extrapolate')
+  X4LAN_CONFIG.native_gate_render_display_rows = true                      (per-frame rows, optional)
+What the renderer reads [F, X4.exe 9.00, pinned; offsets in the header comment]:
+  - the view cache of a component for bank A (object+0xe0+A*0x80, A = *0x38f4ee0 on the MoveWorker):
+    +0x00 cached parent, +0x10/+0x18 children (a vector of referenced component pointers,
+    PropagateCacheFlags 0x3d46b0 -> CopyToViewCache 0x997be0), +0x28 the pose block (0x70 bytes,
+    16-byte aligned, 0x3d4845; +0x00 translation, +0x10/+0x20/+0x30 rotation rows, +0x40 scale).
+    The render walk 0x3de630 composes every model-view from these blocks (aligned mulps from them).
+  - the player camera's view bank for bank A (table = camera+0x30+A*0x2b0): +0x00 the anchor
+    (camera+0x770), 0x50-byte entries {key, translation row, three rotation rows} inline at +0x10
+    (capacity +0x290, inline while 8), count +0x2a0. The refill 0x9799f0 writes entry 0 for the root
+    (key 0), then the anchor and each live parent: the camera's pose in that component's frame. The
+    reader 0x979ef0 serves a component without an entry (the cockpit) from the anchor's entry plus
+    the view caches; the render's eye 0x9835a0 is the scene zone's entry, kept at camera+0x890.
+  So the camera relative to the cockpit and every object relative to the cockpit (through the pose
+  blocks) make the picture; the zone-level entries make the eye, culling and LOD.
+Built differently from sections 6 and 7, and why:
+  - No native camera update (0x97fe50) and no read of X4's input queue in a render-only frame:
+    calling the camera controller means owning everything it writes. Instead the camera's own
+    motion between the last two steps (its pose in the anchor's frame, entry 1 of the bank) is
+    continued or interpolated: mouse look, head look and the chase camera move smoothly, but a
+    mouse movement made after the step still shows at the next step (one step of input latency, as
+    before). The input-driven version needs the non-consuming queue read (section 6, step 1).
+  - No use of the other bank as "the previous step": the layer keeps its own history (each step's
+    sample), so cache intervals and dropped blocks cannot mix times.
+  - No writes into engine memory for objects: the view cache's +0x28 pointer is swapped (CAS) to a
+    private copy (the engine's 0x70 bytes, then the pose) and swapped back (CAS) after slot 10.
+Timing: a step's picture is built in its slot 10 and presented by the next FrameTick, the start of
+the gap's first render-only frame (t_first). A render-only frame starting at t is presented at
+about t + max(frame interval, measured period). Its offset s = (that - t_first) / (1/hz), clamped
+to 0..1. extrapolate: render-only frames draw step N advanced by s, the step frame stays as
+simulated; interpolate: every frame, the step frame included, draws step N-1 advanced by s (offset
+s-1 relative to N): never off the simulated path, one step (33 ms) late. Motion: position linear,
+rotation on the shortest arc (Exp/Log as lockstep_pilot_predict.h); a step beyond 1000 m or 0.5 rad
+(teleport, gate, highway, zone change, respawn) is drawn as simulated (snaps=, cam_snaps=).
+Stage 3 per step (step frame, slot 10 entry, before any predictor writes): the zone = the first bank
+entry from the anchor up of class 0x6d (IsOfClass, vtable +0x11e8); its children for bank A (cap
+4096, capped=), each with runtime ID, block pointer and pose, matched with the last step by pointer,
+ID and parent (reparented=). In a frame that draws an offset each moved child gets its private
+block; a block no longer holding the sampled pointer and pose is left alone (stale=), one a
+predictor presents is left alone (owned=). Children of a moved object follow it.
+Stage 2 per frame: D = C' C^-1 (C the camera in the anchor's frame, C' at the offset) changes every
+bank entry X to D M_X. The first chain member drawn displaced (stage 3, an override, a predictor's
+own swap: its block pointer or pose differs from the sample), K with parent entry P, makes the
+entries from P up follow it: M_P' = D M_K S'_K, G = M_P' M_P^-1, entries P.. and the root G M_X.
+The table is written when stage 2 is on or stage 3 draws a frame; entries go back after slot 10
+when they still hold what was written (else foreign=, stop 183), and in render-only frames the eye
+camera+0x890 that slot 10 made from them goes back too. Unit-tested on fake memory with the exact
+compositions (section 16).
+Not covered (visible only): the HUD (slot 6 does not run in render-only frames: brackets and the
+crosshair stay at the step's projection while the camera turns), effects that are not components,
+objects outside the camera's zone, input since the step (above), the step frame's view-block cache
+in interpolate mode (cam_cached=: X4 may have built view blocks from the bank before slot 10).
+
+12. Hook interface for a display predictor (lockstep_own_predict.h or any other)
+--------------------------------------------------------------------------------
+Order inside render_rng_execute (MoveWorker, every slot 10 call):
+  rdisp_sample()           the offset; in a step frame the step's sample (camera bank, chain, zone)
+  predict_present_enter()  the predictor's entry: its own swaps, or rdisp_override() calls
+  rdisp_enter()            stage 3 swaps, overrides, then the camera bank (follows all of them)
+  original slot 10
+  rdisp_leave()            bank and eye back, swaps back (CAS), in the wrapper's __finally
+  predict_present_leave()  the predictor's restores
+Entry points (all MoveWorker, slot 10):
+  double rdisp_display_offset(void)
+      the offset s at which the world is drawn in this call, in steps relative to the admitted
+      step: 0 in a step frame (extrapolate, or stage 3 off), -1..0 with interpolate, 0..1 in
+      render-only frames; 0 outside slot 10. Works with native_gate_render_fps alone (no key).
+      Wiring for lockstep_own_predict.h: opred_display_offset = rdisp_display_offset; at its arm.
+  int (*rdisp_owns)(const void *component)
+      set by the predictor (rdisp_owns = opred_owns): 1 = it swaps that component's pose itself in
+      this call; stage 3 leaves it alone (owned=) and the camera bank follows its displayed pose
+      (the chain test compares the block pointer and pose with the step's sample).
+  int rdisp_override(void *component, const float pose[12])
+      or the layer swaps for it: between rdisp_sample and rdisp_enter (i.e. inside
+      predict_present_enter), up to 4 components per call; pose = translation, x, y, z rows, 3
+      floats each, in the parent's frame; returns 1 when accepted (needs either key armed). Swapped,
+      restored and failing closed like stage 3; the bank follows.
+Stop reasons: 183 here; the predictor's branch uses 184. A predictor's own swap finds the engine's
+pointer: its entry runs before rdisp_enter.
+
+13. What stays identical
+------------------------
+  state                               during slot 10 only                   afterwards
+  objects' view cache +0x28           private block pointer (CAS)           the engine's pointer (CAS)
+  camera bank entries (bank A)        D/G-composed poses                    bit-identical (compared)
+  camera+0x890 eye (render-only)      recomputed by slot 10 from the bank   the step's bytes put back
+  pose blocks, children, IDs, parents never written                         -
+Readers of these during a render-only frame: none but slot 10 (stage 1: no other slot, pass, job or
+pathing kick runs). In a step frame (interpolate only) the pathing pass is joined before the slots,
+the passes start after them and slot 11 follows slot 10. Still client-local, as before: the render
+walk's 0x100000 flag and attachment-pose refresh, the model-view history vc+0x40, view-ID effects
+(welding) that depend on the camera; RENDER_RNG_SPLIT frame_ids= shows the last.
+
+14. Status and rows
+-------------------
+RENDER_DISPLAY (status stride) and RENDER_DISPLAY_STOP: camera= motion= stage= why= tick= s_last=
+s_max= samples= sample_fail= sample_us=last/mean/max frames= step_frames= render_frames=
+apply_us=last/mean/max zone= items= items_max= capped= zone_missing= moved= swapped= restores=
+owned= overrides= override_refused= stale= snaps= reparented= disp_m= disp_rad= (largest shown
+offset from the simulated pose) err_m=mean/max err_rad=mean/max err_n= err_hist= (edges 1 mm, 1 cm,
+3 cm, 10 cm, 30 cm, 1 m, 3 m: the one-step constant-motion prediction error of each moving object,
+measured at the next step) cam_written= cam_restored= eye_restored= cam_identity= cam_stale=
+cam_snaps= cam_resets= cam_cached= chain= chain_parent= cam_rad= cam_m= cam_err_m= cam_err_rad=
+cam_err_n= foreign= nested= failures= restored=.
+Error bounds from err (constant acceleration a: err = a T^2): the extrapolated display error at
+offset s is about err*s*(1+s)/2 (at most err at s = 1); interpolation is at most err/8 off the path
+between the two steps, plus the one-step lag.
+RENDER_DISPLAY_ROW (native_gate_render_display_rows): one per drawn frame: seq tick kind=step|render
+wall_ms (UTC epoch ms, for screenshots) s cam_mrad cam_mm (camera change shown) moved swapped
+stale table disp_mm (largest object offset shown).
+
+15. Live tests R3 (camera) and R4 (objects) (coordinator)
+---------------------------------------------------------
+Base: .local/census/overlay-R1 (people config + native_gate_render_fps = 60), both clients; check
+the config first (python tools/dev/check_gate_options.py <config>: no REFUSED line).
+  R3, camera:   X4LAN_CONFIG.native_gate_render_camera = 'extrapolate'
+                X4LAN_CONFIG.native_gate_render_display_rows = true
+  R3b:          the same with 'interpolate'
+  R4, objects:  R3's lines plus X4LAN_CONFIG.native_gate_render_motion = 'extrapolate'
+  R4b:          both keys 'interpolate'
+Scenario: the R1 run (900 steps); in its second half, on each client: hold mouse look (or the
+head-look key) and turn slowly for ~5 s; switch to the external (chase) view and turn the ship; for
+R4 fly past another ship or a station.
+(a) The world stays identical (per client unless noted): relay summary 0 digest mismatches,
+    census_compare 0 differing objects (as R1); STOP reason=1; RENDER_FRAMES_STOP failures=0
+    restored=1; RENDER_DISPLAY_STOP failures=0 restored=1 foreign=0 nested=0, swapped = restores
+    (R4), cam_written = cam_restored, eye_restored = the render rows with table=1; max_dt_error as
+    R1; RENDER_RNG_SPLIT frame_ids= per call not above R1 (camera-dependent effect spawns).
+(b) The display moved: R3: cam_written > 0 while turning (cam_identity grows while still),
+    cam_rad/cam_m about one step's turn, cam_err_m/cam_err_rad small while turning steadily; render
+    rows with 0 < s <= 1 and cam_mrad > 0. R3b: rows of both kinds with -1 <= s < 0, step rows
+    table=1, cam_cached (0 wanted). R4: zone=1, items= (the zone's children), moved > 0 when
+    something moves, swapped grows, stale small, snaps only at jumps, err_hist mostly below 3 cm in
+    steady flight, disp_m about speed/30 * s. sample_us (on the step frame) and apply_us: the cost.
+(c) Smoothness, screenshots in pairs within one step: with rows on, take bursts of screenshots
+    10-15 ms apart while turning; match each to the rows by wall_ms (the frame on screen is the
+    last row before the capture, presented about one frame after its slot 10). Two shots between
+    the same two step rows: identical in R1, different in R3/R4 by the rows' cam_mrad (camera) and
+    disp_mm (objects); the next step's shot continues in the same direction (extrapolate: no jump
+    back while turning steadily, a small settle when the turn stops). X4's fps counter as R1. HUD
+    brackets lag the turn by up to one step in render-only frames (expected).
+Stop and report: any stop 183 (why=), a census difference (first tick, classes), stale or
+chain_parent above a few, cam_cached > 0 in R3b, screenshots of anything drawn out of place.
+
+16. Offline tests (this update)
+-------------------------------
+test_lockstep_gate.exe with and without X4.exe (build_native_gate.py --test --native-image): pose
+arithmetic (compose, inverse, motion, advance, error), the display offset, arming refusals, the step
+sample and the slot 10 swaps on fake engine memory through the real render_rng_execute: extrapolate
+(objects and the own ship at s = 0.5; the bank: camera turned, the entries above the ship following
+its shown pose, root included, all within 1e-5; everything back bit for bit, the eye back), the
+measured error of constant motion (zero), rows and status, a predictor's own swap (owned, the bank
+follows it), the override and its refusals, stale blocks, an exception in slot 10 (all back), a
+teleport (snap) and a re-identified object, a foreign pointer and a foreign bank write (stop, the
+foreign value kept), nesting, interpolate (the step frame draws step N-1, render-only frames in
+between), camera only, not ready, stopped; on X4.exe the five pins and the layouts they hold (index
+load, table base/stride/capacity/count/entry size, anchor, eye offsets, children vector, the 0x70
+aligned block, the block load and the aligned mulps), tamper refusal. Python:
+tests/test_native_gate_render_display.py (probe arming order, refusals, status stride, rows drained
+once, the option checker) and tests/test_native_gate_render_frames.py.
+
+17. Risks and open points (stages 2 and 3)
+------------------------------------------
+- Static reading only: that slot 10 reads these caches only for bank A and nothing else reads them
+  during a render-only frame is the stage 1 argument plus the pins; the census is the proof.
+- The camera shows its own recent motion, not new input (section 11): extrapolate overshoots by up
+  to one step's turn when a turn stops, interpolate adds one step of lag.
+- Objects outside the camera's zone (other zones of the sector) stay at the step.
+- The HUD stays at the step's projection in render-only frames.
+- cam_cached in interpolate mode (view blocks of a step frame built before slot 10) may show a step
+  frame at the simulated camera: a backward twitch at the step rate; then use extrapolate.
+
+18. Fix: the arm crash of R3/R4 (update 2026-11-01)
+---------------------------------------------------
+Live: R3 (render_camera) and R4 (+ render_motion) on build155, 2 clients: X4.exe 0xC0000005 during
+arming, last line RENDER_FRAMES_ARMED, no RENDER_CAMERA_ARMED; r1b (render_fps alone, build156)
+passed, so the cause was the stage 2/3 arm.
+Cause [F, gate source]: the probe calls gate.render_camera/render_motion in its arming pass, after
+gate.render_frames and before gate.boot. The gate's image pointer (X4.exe's base) is set only by
+verify() inside the start, so at that point it was NULL. rdisp_arm checked its five pins there:
+hash_ok(image + 0x979ef0, ...) handed BCrypt the address 0x979ef0 of no mapping, an access violation
+on the UI thread. The offline tests had armed with the pins pre-marked as checked and image set, so
+they never ran that state.
+Fix (lockstep_render_display.h): the arm reads no engine memory. It records the mode as pending
+(status stage=pending, active=0); the gate's first tick (rdisp_check, main thread, after the start
+verified X4.exe) hashes the pins and activates (stage=armed), or stops the gate with 183 why=pins.
+Until then nothing is sampled, swapped or written (rdisp_override is refused too). A known pin
+mismatch still refuses the arm. Unchanged: the probe, the keys, the log lines, everything after
+activation.
+Stand-in tests (test_lockstep_render_display.h): the arm through the Lua binding itself
+(gate.render_camera/render_motion) with image NULL, as at the boot point; the first tick with bytes
+that are not X4.exe's (stop, why=pins) and with the pins holding; loading frames and first steps
+with no universe camera, a NULL camera and an empty bank (sample_fail, nothing written, no failure),
+then the camera appearing (frames drawn and restored). On the pinned X4.exe: armed pending before the
+start without a read, the pins hashed on the first tick against the real bytes, the boot point as
+the file holds it (g_Universe and the bank index zero) through the render wrapper, and a tampered pin
+stopping with why=pins. Checked against the old code: with the previous rdisp_arm the Lua-binding
+test takes the access violation (its SEH guard reports it: assertion !faulted), with the fix it
+passes.
+Rerun: R3 and R4 (section 15) with this build's x4lan_gate_64.dll. Expect RENDER_CAMERA_ARMED
+mode=... (and RENDER_MOTION_ARMED) right after RENDER_FRAMES_ARMED, then the boot as in r1b; the
+first RENDER_DISPLAY status line stage=armed (stage=failed why=pins would mean the in-memory bytes
+differ: report it), then the checks of section 15.

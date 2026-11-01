@@ -505,11 +505,14 @@ static int predict_frame(uint64_t tick) {
     predict_camera_sample();
     predict_last_tick=tick;++predict_frames;predict_stage="live";return 1;
 }
+/* Own-ship display prediction for stock piloting (lockstep_own_predict.h) shares this slot-10 call pair. */
+static int opred_present_enter(void);
+static void opred_present_leave(int entered);
 /* Slot 10 on the MoveWorker, from the render RNG split's wrapper, before the
  * original: put this tick's displayed pose into the ship's pose block [A]
  * after re-checking that the block still is the one slot 6 verified and holds
  * S(T). Returns 1 when substituted; predict_present_leave must follow. */
-static int predict_present_enter(void) {
+static int predict_present_enter_pilot(void) {
     if(!predict_armed || predict_mode!=PREDICT_PRESENT || !stats.active || stats.slot<1 || stats.slot>pilot_slot_count) return 0;
     ++predict_present_calls;
     if(predict_present_open) {InterlockedIncrement64(&predict_present_failures);predict_stage="present_nested";return 0;}
@@ -529,7 +532,7 @@ static int predict_present_enter(void) {
 }
 /* After the original (also on unwind): restore S(T) unless the engine wrote
  * the block meanwhile. A block left holding the displayed pose is a failure. */
-static void predict_present_leave(int entered) {
+static void predict_present_leave_pilot(int entered) {
     if(!entered) return;
     float current[16];
     if(!predict_present_open || !read_local(predict_present_block,current,sizeof(current))) {
@@ -539,6 +542,15 @@ static void predict_present_leave(int entered) {
         else {InterlockedIncrement64(&predict_present_failures);predict_stage="present_restore";}
     } else ++predict_present_foreign;
     predict_present_open=0;predict_present_block=NULL;
+}
+/* Both presenters: bit 0 the pilot prototype's substitution, bit 1 the stock slots' (own predict). */
+static int predict_present_enter(void) {
+    int own=opred_present_enter()?2:0;
+    return predict_present_enter_pilot()|own;
+}
+static void predict_present_leave(int entered) {
+    if(entered&1) predict_present_leave_pilot(1);
+    if(entered&2) opred_present_leave(1);
 }
 /* Main-thread gate tick: any present failure stops the gate (reason 101). */
 static int predict_check_live(void) {

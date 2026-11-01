@@ -17,7 +17,11 @@
 #define FR_M_ARGS flag,a,b,c
 #define FR_P_PARAMS void *o20,unsigned char *slot,uint64_t flag,uint64_t a4,uint64_t a5,double time /* rdi, rsi, edx, ecx, r8d, xmm0 */
 #define FR_P_ARGS o20,slot,flag,a4,a5,time
+/* FR27's solver calls the portable sinf/cosf/atan2f itself (the same code the preload gives the executable): compiled
+ * into this module (hidden symbols; x4pm_kat checked at arm). */
+#include "../../portable_math/portable_math.c"
 #include "lockstep_fp_redirect.h"
+#include "lockstep_fp_attack.h" /* FR29b: the attack capture (its Linux part: gate_fp_attack.h) */
 #define LXF_THUNK 0x800u /* the relocated prologue, then jmp [rip] -> the refresh + 6 */
 #define LXF_HOOK 0x840u  /* jmp [rip] -> fr_refresh_hook */
 #define LXF_STUBS 0x860u /* five jmp [rip] -> the getter, M and first-call hooks, 0x20 apart (to 0x900) */
@@ -28,6 +32,14 @@
 #define LXF_V_STUB 0x940u      /* movsd xmm0,fs:-0x2728 (moved); movss xmm1,[rsp] (d); call [rip] -> lxf_v_hook; jmp [rip] -> 0x148d812 */
 #define LXF_MULPS_STUB 0x980u  /* the branch's four argument moves (moved); call [rip] -> lxf_mulps_hook; jmp [rip] -> 0x148d953 */
 #define LXF_WRITER_STUB 0x9c0u /* the watched path's three argument moves (moved); call [rip] -> fr_writer_run; jmp [rip] -> 0x148cd63 */
+/* FR27: the GetSafePos solver 0x1a4b9f0 (rdi the boxes vector, rsi the point, rdx the direction, ecx the x flag, r8d the
+ * y flag, r9 the move direction, xmm0 radius, xmm1 a5, xmm2 a9; callers 0x115563c, 0x1d25dbb, 0x1d3702b read only the
+ * point after it). Its entry movabs rax (10 bytes, no rip operand) moves into a trampoline and its aligned 16-byte line
+ * gets a jmp to the entry stub (FR25's scheme, gate_step_trace.h; with the step chain armed, its entry hook owns the
+ * line and routes the call here: lxc_sp_route). The executable's file pin covers every byte. */
+#define LXF_SP_ENTRY 0xd00u /* jmp [rip] -> lxf_sp_hook (after the step chain's 0xcc0..0xcf8) */
+#define LXF_SP_TRAMP 0xd20u /* movabs rax (moved), jmp [rip] -> the solver + 10 */
+#define LXF_FA_STUB 0xd40u  /* FR29b: the attack capture's stubs (0xd40..0xe20): one jmp [rip] -> hook per kind */
 static const struct {uint32_t site,target;const char *name;} lxf_sites[LXF_SITES]={
     {LX_FR_G4_SITE_VA,LX_FR_G4_VA,"g4"},{LX_FR_G0_SITE_VA,LX_FR_G0_VA,"g0"},{LX_FR_M4_SITE_VA,LX_FR_M_VA,"m4"},{LX_FR_M0_SITE_VA,LX_FR_M_VA,"m0"},
     {LX_FR_P_SITE_VA,LX_FR_P_VA,"params"},
@@ -92,6 +104,33 @@ static int lxf_detour_swap(unsigned j,const unsigned char *expected,const unsign
     return gate_code_swap128(block,current,desired);
 }
 static unsigned lxf_done;
+typedef uint64_t (*lxf_sp_fn)(void *,float *,float *,uint32_t,uint32_t,float *,float,float,float);
+typedef struct {lxf_sp_fn fn;float *dir;uint32_t x,y;float *move;float r,a5,a9;} lxf_sp_args;
+static lxf_sp_fn lxf_sp_original; /* our trampoline, or the step chain's (FR25) when its hook routes here */
+static int lxf_sp_entry_done;
+static void lxf_sp_native(const void *args,void *vec,float *p) {
+    const lxf_sp_args *a=(const lxf_sp_args*)args;a->fn(vec,p,a->dir,a->x,a->y,a->move,a->r,a->a5,a->a9);
+}
+static uint64_t lxf_sp_hook(void *vec,float *p,float *dir,uint32_t x,uint32_t y,float *move,float r,float a5,float a9) {
+    const lxf_sp_args a={lxf_sp_original,dir,x,y,move,r,a5,a9};
+    fsp_run(lxf_sp_native,&a,vec,p,r,dir,a5,(int)(y&0xffu),move,a9,(x&0xffu)==0);
+    return 0; /* the solver returns nothing its callers read */
+}
+/* The solver's entry line: 0 original, 1 our jump (the rest of the line as it was), -1 anything else. */
+static void lxf_sp_lines(unsigned __int128 *original,unsigned __int128 *ours) {
+    unsigned char *at=LX(LX_SC_SP_SOLVER_VA);memcpy(original,at,16);
+    memcpy(original,lxc_sp_entry_original,LX_SC_SP_SOLVER_PROLOGUE);
+    const int32_t d=(int32_t)((intptr_t)(thunk+LXF_SP_ENTRY)-(intptr_t)(at+5));unsigned char j[5]={0xe9};memcpy(j+1,&d,4);
+    memcpy(ours,original,16);memcpy(ours,j,5);
+}
+static int lxf_sp_state(void) {
+    unsigned __int128 o,w,now;memcpy(&now,LX(LX_SC_SP_SOLVER_VA),16);
+    if(!thunk) return memcmp(&now,lxc_sp_entry_original,LX_SC_SP_SOLVER_PROLOGUE)?-1:0;
+    lxf_sp_lines(&o,&w);
+    if(!memcmp(&now,&o,16)) return 0;
+    if(!memcmp(&now,&w,16)) return 1;
+    return -1;
+}
 /* The refresh's entry: the whole refresh, its traversal included, between begin and end. */
 static void fr_refresh_hook(void *owner,void *slot,uint64_t flag) {
     InterlockedIncrement64(&fr_calls);
@@ -99,6 +138,8 @@ static void fr_refresh_hook(void *owner,void *slot,uint64_t flag) {
     fr_native_refresh(owner,slot,flag);
     if(c) fr_end(c);
 }
+#include "gate_fp_attack.h"
+#include "gate_fp_drones.h" /* FR30 */
 static void *lxf_stub_target(unsigned i) {
     return i==0?(void*)fr_g4_hook:i==1?(void*)fr_g0_hook:i==2?(void*)fr_m4_hook:i==3?(void*)fr_m0_hook:(void*)fr_params_hook;
 }
@@ -108,6 +149,11 @@ static void lxf_thunk_write(unsigned char *page) {
     lxw_jump_write(p+LX_FR_PROLOGUE,LX(LX_FR_REFRESH_VA)+LX_FR_PROLOGUE);
     for(unsigned i=0;i<LXF_SITES;i++) lxw_jump_write(page+LXF_STUBS+0x20u*i,lxf_stub_target(i));
     for(unsigned j=0;j<LXF_DETOURS;j++) lxf_detour_code(page+lxf_detours[j].stub,j);
+    lxw_jump_write(page+LXF_SP_ENTRY,(void*)lxf_sp_hook); /* FR27 */
+    memcpy(page+LXF_SP_TRAMP,lxc_sp_entry_original,LX_SC_SP_SOLVER_PROLOGUE);
+    lxw_jump_write(page+LXF_SP_TRAMP+LX_SC_SP_SOLVER_PROLOGUE,(void*)(LX(LX_SC_SP_SOLVER_VA)+LX_SC_SP_SOLVER_PROLOGUE));
+    fa_thunk_write(page); /* FR29b */
+    fdr_thunk_write(page); /* FR30 */
 }
 static unsigned char *lxf_site(unsigned i) {return LX(lxf_sites[i].site);}
 static unsigned char *lxf_stub(unsigned i) {return thunk+LXF_STUBS+0x20u*i;}
@@ -132,8 +178,20 @@ static int lxf_swap(unsigned i,const void *expected,const void *value) {
     memcpy((unsigned char*)&after+at,&v32,4);
     return gate_code_swap64(word,before,after);
 }
+/* FR27 first: the solver back to native (our entry line, or the step chain's route). */
+static void fsp_restore(void) {
+    if(!fsp_installed) return;
+    if(fsp_route) {lxc_sp_route=NULL;fsp_route=0;fsp_installed=0;fsp_mode=FSP_OFF;fsp_stage="restored";return;}
+    if(lxf_sp_entry_done && lxf_sp_state()==1) {
+        unsigned __int128 o,w;lxf_sp_lines(&o,&w);
+        if(gate_code_swap128(LX(LX_SC_SP_SOLVER_VA),w,o)) {lxf_sp_entry_done=0;fsp_installed=0;fsp_mode=FSP_OFF;fsp_stage="restored";}
+    }
+}
 static void fr_restore(void) {
     if(!fr_installed) return;
+    fdr_restore(); /* FR30 first: the drone factor sites back to their instructions */
+    fa_restore(); /* FR29b: its call sites back to the callees */
+    fsp_restore();
     /* The entry first: no new refresh enters our hooks while the inner sites go back. */
     if(lxf_done&LXF_ENTRY_DONE && gate_code_swap64(LX(LX_FR_REFRESH_VA),lxf_entry_patched,LX_FR_ENTRY_ORIGINAL)) lxf_done&=~LXF_ENTRY_DONE;
     for(unsigned j=0;j<LXF_DETOURS;j++) {
@@ -143,7 +201,7 @@ static void fr_restore(void) {
     }
     for(unsigned i=0;i<LXF_SITES;i++)
         if((lxf_done>>i)&1u && lxf_site_state(i)==1 && lxf_swap(i,lxf_stub(i),LX(lxf_sites[i].target))) lxf_done&=~(1u<<i);
-    if(!lxf_done) {fr_installed=0;fr_restored=1;fr_mode=FR_OFF;}
+    if(!lxf_done && !lxf_sp_entry_done && !fa_done && !fdr_done) {fr_installed=0;fr_restored=1;fr_mode=FR_OFF;}
 }
 /* Before the snapshot load and the first admitted frame, on the MoveWorker; a rerun with the same mode is accepted. */
 static int fr_arm(int mode,uint64_t ticks) {
@@ -172,12 +230,30 @@ static int fr_arm(int mode,uint64_t ticks) {
     lxf_done|=LXF_ENTRY_DONE;
     fr_stage="armed";return 1;
 }
+/* FR27: gate.fp_redirect_solver(mode), after fp_redirect. With the step chain armed (its FR25 hook on the entry line)
+ * the call is routed through that hook; else our own entry line. */
+static int fsp_arm(int mode) {
+    if(fsp_installed) return fsp_mode==mode;
+    if(!fsp_arm_ready(mode)) return 0;
+    if(!thunk) {fsp_stage="page";return 0;}
+    if(lxc_sp_entry_done && lxc_sp_entry_state()==1) {
+        lxf_sp_original=(lxf_sp_fn)(void*)(thunk+LXC_SP_TRAMP);fsp_mode=mode;fsp_route=1;fsp_installed=1;
+        lxc_sp_route=lxf_sp_hook;fsp_stage="armed";return 1;
+    }
+    if(lxf_sp_state()!=0 || ((uintptr_t)LX(LX_SC_SP_SOLVER_VA)&15)) {fsp_stage="pins";return 0;}
+    lxf_sp_original=(lxf_sp_fn)(void*)(thunk+LXF_SP_TRAMP);fsp_mode=mode;fsp_route=0;
+    unsigned __int128 o,w;lxf_sp_lines(&o,&w);
+    if(!gate_code_swap128(LX(LX_SC_SP_SOLVER_VA),o,w)) {fsp_mode=FSP_OFF;fsp_stage="cas";return 0;}
+    lxf_sp_entry_done=1;fsp_installed=1;fsp_stage="armed";return 1;
+}
 /* The thunk page is r-x for good; the entry and the sites must still lead there. */
 static int fr_owned(void) {
     if(lxf_done&LXF_ENTRY_DONE && rd64(LX(LX_FR_REFRESH_VA))!=lxf_entry_patched) return 0;
     for(unsigned i=0;i<LXF_SITES;i++) if((lxf_done>>i)&1u && lxf_site_state(i)!=1) return 0;
     for(unsigned j=0;j<LXF_DETOURS;j++) if(lxf_done&(LXF_DETOUR_DONE<<j) && lxf_detour_state(j)!=1) return 0;
-    return 1;
+    if(lxf_sp_entry_done && lxf_sp_state()!=1) return 0;
+    if(fsp_route && (lxc_sp_route!=lxf_sp_hook || lxc_sp_entry_state()!=1)) return 0;
+    return fa_owned() && fdr_owned(); /* FR29b, FR30 */
 }
 static int fr_check(void) {
     if(InterlockedCompareExchange64(&fr_failures,0,0)) return 0;

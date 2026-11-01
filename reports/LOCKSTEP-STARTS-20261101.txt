@@ -1,0 +1,271 @@
+LOCKSTEP STARTS: A SESSION FROM ANY USABLE STOCK START, A START PER PLAYER - 1 NOVEMBER 2026
+Branch contrib/ferrite-starts (from smoke d9c299dd). Offline design, code and tests: Python, LuaJIT,
+synthetic stock data and synthetic clients; both MD files validated against the game schema. No X4 run,
+no lane, no native change. Section 9 has the live tests for the coordinator, section 10 the people checklist.
+
+USER REQUEST (1 Nov): "multiple starts working": (1) a session can begin from any stock X4 game start, not only
+the creative test save; (2) each player can choose their own start (faction, ship, location, money, blueprints,
+inventory, reputation), all in one shared universe. Coordinator addition: some starts change the world (the start
+with a station); catalogue every start by what it touches, three classes enforced in code, refuse loudly, never
+apply a start in part, say which per-player effects come from MD and whether they are replayed or refused.
+
+1. A SESSION FROM A STOCK START: HOW EVERY CLIENT GETS THE SAME WORLD
+Option A, every client runs X4's own new game for start S with the same seed, the gate armed from the first frame:
+  refused. Evidence: reports/SHARED-START-20261023.txt, two fresh native worlds with seed 276944566 made 1381 and
+  1382 stations, 46/47 station identities absent/extra while 1335 tuples agreed. New-game generation (god placement,
+  job spawns, the start's own MD) runs during the load, before any gated tick exists (the gate admits ticks after
+  the boot hold of a loaded save), on worker threads and wall-clock time slices; and the census still sees an
+  intermittent load-time class on a loaded save (docs/LOCKSTEP-SCENARIOS.txt, sc-control tick 2). A census could
+  measure A, but it would have to make a generator deterministic that the gate never sees.
+Option B, one process makes the new game for S once, saves it, every client loads that save: RECOMMENDED and built.
+  It is today's proven snapshot path (native_gate_lane.py --snapshot-in, native_gate_snapshot_sha); only the save
+  differs. Whatever the start's new-game MD and god.xml did ran once, in one process, and is in the save.
+Tooling (tools/dev/native_gate_session_start.py, uses native_gate_scenarios.py capture/rebase):
+  spec             --base-start S --players N --mode M [--start K=ID ...] [--omit K=PARTS ...] -> spec.json
+  capture-overlay  X4's new game for S (battle MD copy whose only change is the gamestart guard, the snapshot
+                   script), the 12-ship battle fixture (the census anchor every full-stack overlay needs:
+                   native_gate_hash='battle', snapshot_fixture enrolment), and one hull per per-player start
+                   (section 5); prints the one-lane capture command (expects GAMESTART id=S, HULLS_READY)
+  register         reads the captured save read-only: header start == S, seed, player ship and sector, the
+                   fixture (Spawn.$ships), the hulls (X4LAN_SessionHulls.Create.$ships, each checked for macro,
+                   owner player, zone and sector of its start); sha256 -> session.json
+  rebase           binds a full-stack overlay to the session save (snapshot sha, fixture, watch list)
+  native_gate_players.py --session session.json then replaces every snapshot-005 default (player ship, fixture
+  actors, sectors) with the session save's and puts the per-player starts into the identity plan (default on);
+  it refuses a base overlay that boots another save ("rebase it"), another player count or mode than the spec,
+  and wire/script piloting of hulls (no Steering solver; stock or none).
+What makes a start usable as the session base (native_gate_gamestarts.session_base_refusal, enforced by spec):
+  not refused (section 2), the player in a ship (not a spacesuit) in open space of the main galaxy (the capture
+  warps player.ship to 0/100 km/0 of its sector and spawns the fixture there: the base start keeps its sector,
+  not its exact position), no fullscreen intro the capture cannot pass (boron1, pirate1: observed earlier).
+  Class b starts ARE allowed as the base: their world parts are in the save every client loads.
+  Usable today: custom_creative, custom_budgeted, x4ep1_gamestart_fight, _discover, _split2, _terran1,
+  _hyperion, _dlc_mini_02 (the last two untested by any capture). Not: docked or on-foot starts (trade,
+  scientist, boso, intro, tutorial, terran2, pirate2, boron2), the spacesuit start split1.
+
+2. CATALOGUE OF EVERY STOCK START (tools/dev/native_gate_gamestarts.py catalog)
+Read at setup from the game's own data, never copied into git (--libraries/--scripts or X4LAN_GAME_LIBRARIES /
+X4LAN_GAME_SCRIPTS: the resolved per-extension layout, base + ego_dlc_*; other mods are not read):
+  libraries/gamestarts.xml of the base game with every stock extension's diff applied (own reader of the stock
+    diff subset: add/replace/remove, [@a='v'], [n], comment()[. = 'text'], @attribute; an unknown selector, an
+    unmatched non-silent operation or a selector matching several nodes is an error, never skipped);
+  god.xml entries that exist only for one start (quota gamestart="<id>", <gamestart ref>);
+  MD and AI scripts keyed on the start: a cue with module="<id>" (its whole subtree) or a player.module == '<id>'
+    test (its cue). player.module != '<id>' runs for every other start, so it is not a part of <id>.
+Parts: player-level = ship + loadout, position, money, inventory, blueprints, research, reputation toward NPC
+factions (universe relations with the player). World-level = another galaxy, a start location in a player-owned
+station, god.xml stations/products of the start, universe god/jobs/masstraffic settings, relations between NPC
+factions, custom-editor blocks (stories, known space, people, stations), known space, and every start-keyed MD
+cue that does more than structure/logging. Presentation only (listed, not applied): info, cutscene, intro, type,
+loading screen, unlocks, the player's paint theme and timeline, encyclopedia entries, character macro and name.
+Unknown parts (e.g. loadout ref, ship modification/people) count as world parts: what the reader cannot name is
+not applied per player.
+Classes (enforced in code: classify, per_player_refusal, session_base_refusal, slot_kit):
+  a  per-player safe: player-level parts only
+  b  session base only: at least one world part. Only slot 1's (the save's) start; a per-player choice is refused
+  c  per-player with world parts rebuilt deterministically, each listed and applied by the identity plan at the
+     same tick on every client, never by running the start's own new-game MD. Rebuilt today: a start cue whose only
+     effect is the stock map uncover (md.LIB_Generic.UncoverMap_SectorsAndGates) with a literal sector list
+  -  refused: tutorials/no-save/hub/station designer (tags), debug and test starts, Timelines scenarios, another
+     galaxy, the two fullscreen-intro starts
+Result on the stock data of this PC (base + 7 DLC; 123 starts): 106 refused (79 no-save/tutorial tags, 23 debug,
+2 fullscreen intro, 2 tutorial), 15 class b, 2 class c, 0 class a.
+  start                        class base  per-player  loc     sector               world parts (count of start-keyed MD cues)
+  x4ep1_gamestart_fight        c     yes   yes         space   cluster_47_sector001  MD gs_fight Start: map uncover, 8 sectors,
+                                                                                      paranid stations, shipyards (rebuilt)
+  x4ep1_gamestart_discover     c     yes   yes         space   cluster_23_sector001  MD gs_discover Start: map uncover, 8 sectors,
+                                                                                      shipyards (rebuilt)
+  custom_creative              b     yes   no          space   cluster_14_sector001  custom editor custom+budget, known space,
+                                                                                      MD x4ep1_mentor_subscription (2), setup_dlc_timelines (1)
+  custom_budgeted              b     yes   no          space   cluster_14_sector001  as custom_creative
+  x4ep1_gamestart_split2       b     yes   no          space   cluster_421_sector001 MD gs_split2 (1), story_split (2)
+  x4ep1_gamestart_terran1      b     yes   no          space   cluster_101_sector001 god pioneers HQ, MD gs_terran1 (2),
+                                                                                      story_yaki (5), story_hq_discovery, story_boron (2), story_thefan
+  x4ep1_gamestart_hyperion     b     yes   no          space   cluster_30_sector001  MD gs_hyperion (creates ships), unknown
+                                                                                      loadout ref / ship modification / people
+  x4ep1_gamestart_dlc_mini_02  b     yes   no          space   cluster_05_sector001  custom block, MD gs_dlc_mini_02,
+                                                                                      story_unbihexium (6), unknown loadout ref
+  x4ep1_gamestart_split1       b     no    no          space   cluster_421_sector001 spacesuit start; MD gs_split1, story_split (2)
+  x4ep1_gamestart_trade        b     no    no          on foot cluster_19_sector001  player-owned station (location), god
+                                                                                      player factory, MD setup_gamestarts + gs_trade
+  x4ep1_gamestart_scientist    b     no    no          on foot cluster_01_sector001  god player HQ, MD gs_scientist,
+                                                                                      x4ep1_mentor_subscription (2)
+  x4ep1_gamestart_boso         b     no    no          on foot cluster_01_sector001  god player HQ, MD gs_boso
+  x4ep1_gamestart_terran2      b     no    no          on foot cluster_115_sector001 god pioneers HQ, MD gs_terran2, stories
+  x4ep1_gamestart_pirate2      b     no    no          on foot cluster_02_sector001  custom block, MD gs_pirate2, story_criminal (7)
+  x4ep1_gamestart_boron2       b     no    no          on foot cluster_606_sector001 custom block, god boron HQ, MD gs_boron2,
+                                                                                      story_boron (16), mentor subscription (2)
+  x4ep1_gamestart_intro        b     no    no          docked  cluster_29_sector002  god product (scaleplate), MD gs_intro
+  x4ep1_gamestart_tutorial     b     no    no          docked  cluster_06_sector001  MD gs_tutorial
+  (catalog --all lists the 106 refused ones with their reason; catalog --json carries every part.)
+MD effects (coordinator point 4): a start's new-game MD runs only where player.module is that start, i.e. only for
+the session base (in the capture, once). For a per-player start nothing of its MD runs. Per start:
+  fight, discover   their only MD effect is the map uncover: REPLAYED as a class c part (coop: the one player map;
+                    factions: X4 keeps map knowledge for the player faction only, so slot k must omit it)
+  every other start every start-keyed MD cue is a world part: REFUSED per player (class b)
+gamestarts.xml-only per-player parts (ship, loadout, position, money, inventory, blueprints, research,
+reputation) are resolved from the library and carried in the plan (section 5).
+
+3. THE STATION START STAYS CLASS b (x4ep1_gamestart_trade)
+World parts that block it: (1) the player-owned Teladi factory comes from god.xml (station
+x4ep1_gamestart_trade_playerfactory, quota for that start): the galaxy generator picks its modules at universe
+creation; (2) MD setup_gamestarts X4ep1_Gamestart_Trade pays its build plot, docks an M container transporter
+(loadout ref), gives the scout an AI pilot, hires manager/engineer/defence officers with transfers, fills units;
+(3) MD gs_trade marks trade offers/stations known; (4) the start location is that station's docking bay with the
+player on foot. Path to class c, not built here: an identity/construction step that creates the factory for slot
+k's faction from a fixed module plan (the construction agent's plan commit, lockstep_ui_construct.h) with the
+paid plot, a create step for the transporter, control entities and units, each listed in the plan; plus slot k
+starting on foot (lockstep_pilot_foot_slots.h K2) or an explicit "start in the ship" variant. It cannot be the
+session base yet either: the capture needs the player in a ship (on-foot capture = follow-up). Refused at setup:
+  spec ... --start 2=x4ep1_gamestart_trade -> "slot 2: start x4ep1_gamestart_trade is class b: player-owned station
+  station_gen_factory_base_01_macro (location); god station ...; MD base/md/gs_trade.xml Start ...; MD
+  base/md/setup_gamestarts.xml X4ep1_Gamestart_Trade ..."
+
+4. WHO PLAYS WHICH START
+Slot 1 plays the session base start S: the singleton player, its ship, money, reputation, blueprints and map are
+the save's. Slots 2..N each choose a class a or c start (spec --start K=ID); a class b start can only be chosen as
+the base (spec --base-start). So "each player chooses a start" = slot 1 picks S, the others pick per-player starts.
+
+5. PER-PLAYER STARTS: HULL IN THE SAVE, KIT AT THE SETUP TICK
+Ship + loadout + position: pilot slots need saved IDs fixed before the load (pilot manifest), so a ship created at
+the setup tick could not be flown. The capture therefore creates slot k's HULL once, in the session save: the
+start's ship macro with its stock loadout (create_loadout: engines/weapons/shields/turrets with their connection
+paths, ammunition, software, thrusters), at the start's zone position (find_zone of the start's zone macro, the
+stock position and yaw; slots taking the same start are 300 m apart on x), owned by the player, an Argon AI pilot,
+default Wait, fixed seed 5100+k (generated MD x4lan_session_hulls.xml, overlay only). register checks each hull.
+At the setup tick the identity plan's existing ship step takes the hull over (coop: unchanged/player; factions:
+x4lan_player<k> with overridenpc), no start placement is needed.
+Everything else is the plan key "kits" (identity plan format v1, optional; plans without kits keep their text and
+digest), applied by MD on every client at the same gated tick after the relations:
+  part         coop                                         factions (slot k = x4lan_player<k>)
+  money        ADDS to the one shared wallet (step wallet    SETS slot k's own account (wallet op=set: reward the
+               op=add): shared = base start money + sum of   delta to the player, transfer it to x4lan_player<k>;
+               slots 2..N's start money                      the player's wallet is read back unchanged)
+  reputation   one reputation set (the base start's):        slot k's faction toward each NPC faction of the start,
+               must be omitted                               both directions, after the mirror (step reputation)
+  blueprints   added to the one player library (per ware)    X4 keeps blueprints for the player faction only: omit
+  research     added (per ware)                              player faction only: omit
+  map uncover  the start's sectors (class c): known_sector    player faction's knowledge only: omit
+               per sector, then known runs the stock library
+  inventory    the player entity P_k of slot k is not reachable from MD (lockstep_pilot_slots.h): omit (both)
+  presentation not applied, listed by spec (encyclopedia, paint theme, character, intro)
+A part that cannot be applied must be named in --omit K=parts; without it the start is refused naming slot, start,
+mode and parts ("parts blueprints, inventory, known, research cannot be applied for slot 2 in factions mode; name
+them in --omit 2=... or choose another start"). The omitted list is in the plan text and in the kit step's
+APPLIED line (omitted=...), so a left-out part is never silent. An applicable part may be omitted on purpose.
+Kit rows: {slot 2..N, gamestart, money (credits, 0..1e12), reputation [{faction, value: millionths}] (factions),
+blueprints/research [ascending wares] (coop), known {sectors, faction?, shipyards} (coop), omitted [ascending]}.
+Lua (native_gate_player_identity_core.lua K.kits) and Python refuse the same kits with the same reason: kits,
+kit_invalid, kit_slot, kit_duplicate, kit_player_slot (factions: the player faction's start is the base),
+kit_gamestart, kit_money, kit_reputation, kit_reputation_mode, kit_faction, kit_value, kit_order, kit_wares,
+kit_ware, kit_library_mode, kit_known, kit_known_mode, kit_omitted, kit_omitted_conflict, key_unknown.
+Canonical text: ...|kits=<k>:<gamestart>:money=<m>:rep=<f>/<v>+..:bp=<w>+..:rs=<w>+..:known=<faction|->/<0|1>/
+<sector>+..:omit=<part>+.. (rows by slot, ';'). Steps per kit: kit, wallet, reputation*, blueprint*, research*,
+known_sector*, known. MD results (one APPLIED line each): wallet applied|unchanged|refused_wallet_invalid|
+refused_wallet_readback (money=<account> player=<wallet> or money=<shared> before=<old>), reputation applied|
+unchanged|refused_relation_readback (ab= ba=), blueprint/research applied|unchanged|refused_*_readback|
+refused_ware_invalid, known_sector applied|refused_known_invalid (count=), known applied|unchanged|
+refused_known_readback (known=<now>/<n> before=<was>). Any refusal stops the session at the fold tick (as before).
+
+6. FILES
+tools/dev/native_gate_gamestarts.py      catalogue, diff reader, classes, templates, slot kits (new)
+tools/dev/native_gate_session_start.py   spec, capture overlay + hull MD, register, rebase (new)
+tools/dev/native_gate_player_identity{.py,_core.lua,.lua,.xml}   kits: validation, text, steps, MD args, MD steps
+tools/dev/native_gate_players.py         --session (session save, fixture, hulls, kits; sha check), fixture-aware demo
+tools/dev/native_gate_snapshot.lua       native_gate_snapshot_hulls=N: request hulls after the fixture check, save
+                                         only after X4LAN_SessionHulls.Ready == N (else ERROR, no save)
+tools/dev/native_gate_scenarios.py       capture overlay takes an allowed set, extra MD and config lines
+tests/test_native_gate_session_start.py  (new); tests/test_native_gate_player_identity.py (find_sector list)
+docs/LOCKSTEP-REGISTRY.txt               section 6: MD screens, identity step kinds, session-save cue lists
+
+7. TESTS (offline)
+tests/test_native_gate_session_start.py (synthetic stock data written by the test): classes a/b/c/- with named
+world parts (player-owned station, god quota, keyed MD, NPC relation, universe god off, != tests ignored), stock
+diff application and its errors, refusals for base and per-player, template values, slot kit rules per mode,
+command line needs the data roots; spec offsets/seeds/refusals; hull MD content (no safe-position search) and the
+capture overlay; the capture script waits for the hulls and stops on -1 (LuaJIT); register (start, fixture, hulls,
+sha; wrong start/count/macro/zone/owner refused); rebase + players --session (ships, kits, session.json, sha
+mismatch, mode/players/source/ships/occupied refusals); kits Lua == Python (text, digest, steps) and 31 refusal
+reasons identical; the real glue on two synthetic clients per mode (identical steps, MD values: cents, millionths
+as floats, wares, sectors; compare PASS; a refused known step stops the session); MD structure.
+Opt-in: X4LAN_MD_SCHEMA=1 validates native_gate_player_identity.xml and a generated hull MD against the game's
+md.xsd (both valid, 1 Nov); X4LAN_GAME_LIBRARIES/SCRIPTS run the catalogue on the stock data (fight/discover c,
+trade/custom_creative b, custom_creative usable as base). Results on this branch: the new file 18 passed, 2 opt-in
+passed (88 s); identity, scenarios, registry, settings, UI replay/build/guard/missions, inputs, pilot foot: 240
+passed, 4 skipped; construct/trade/faction/launch/snapshot fixture 68 passed. No native source changed;
+build_native_gate.py --test passes on this branch (gate DLL built, every C test PASS).
+
+8. WHAT WORKS / WHAT REMAINS
+Works offline: catalogue and classes of every stock start, refusals naming start and parts, session spec, capture
+overlay with hulls, register, rebase, builder --session, kits through the real Lua core/glue and MD validated
+against the schema. Not run natively (all of section 9 is pending). Assumed, read back at run time:
+  - reward_player with a negative amount (the factions wallet when an account holds more than the start's money;
+    pool accounts start at 0, x4lan_trade.xml uses the same pattern), transfer_money into a faction account,
+    player.money/faction.money read back in the same action block;
+  - player.blueprints.{ware}.any.exists and ware.research.unlocked as readbacks (stock idioms);
+  - the stock map uncover called from our MD with our list; sector.isknown as its readback;
+  - a created hull (stock gamestart loadout via create_loadout) has a cockpit X4's stock control path can seat
+    P_k in (the snapshot-005 stock slots were scouts with working cockpits; a fighter fixture showed a flat panel).
+Open:
+  - inventory of slots 2..N (P_k's inventory needs a native step: P_k is not an MD entity);
+  - blueprints/research/map knowledge per pool faction (factions mode): X4 keeps them for the player faction only;
+  - class b per-player starts (station start: section 3); on-foot and docked starts as base or per player;
+  - the base start's exact stock position (the fixture capture warps player.ship to 0/100 km/0 of its sector);
+  - a fixture-free session save (the census stack is anchored on the 12-ship fixture today);
+  - hulls in more sectors than are covered: the builder's sector check applies (two sectors, or view scenes);
+  - presentation parts (paint theme belongs to lockstep_player_settings.h; encyclopedia, character).
+
+9. LIVE TESTS FOR THE COORDINATOR (no people; X4 closed; one lane capture, then the usual N-lane runs)
+Common: export X4LAN_GAME_LIBRARIES=<x4-re>/gamelibs/resolved X4LAN_GAME_SCRIPTS=<x4-re>/gamescripts/resolved;
+FIXED=.local/native-lockstep/snapshot-capture-overlay-v4/native/x4lan_fixedtick_64.dll; BASE = the current
+full-stack census overlay (e.g. .local/census/overlay-SandboxBase or overlay-Long4); DLL/probe of this branch.
+L1 session from another stock start, no per-player start (fight base, 2 clients, coop, scripted):
+  python tools/dev/native_gate_session_start.py spec --base-start x4ep1_gamestart_fight --players 2 --mode coop \
+    --out .local/sessions/L1/spec.json
+  python tools/dev/native_gate_session_start.py capture-overlay --spec .local/sessions/L1/spec.json \
+    --fixedtick-dll $FIXED --out .local/sessions/L1/capture-overlay --collect .local/sessions/L1/capture
+  (run the printed capture command; expect NATIVE_SNAPSHOT GAMESTART id=x4ep1_gamestart_fight, SAVED)
+  python tools/dev/native_gate_session_start.py register --spec .local/sessions/L1/spec.json \
+    --snapshot .local/sessions/L1/capture/native-snapshot/save_009.xml.gz --out .local/sessions/L1/session.json
+  python tools/dev/native_gate_session_start.py rebase --session .local/sessions/L1/session.json --base $BASE \
+    --out .local/sessions/L1/overlay-base
+  python tools/dev/native_gate_players.py overlay --session .local/sessions/L1/session.json \
+    --base .local/sessions/L1/overlay-base --gate-dll <dll> --probe tools/dev/native_gate_probe.lua \
+    --out .local/sessions/L1/overlay --players 2 --mode coop --source script
+  run 602 ticks with --snapshot-in <the session save> (.local/census/runStart.sh pattern, 5th argument).
+  Pass: STOP reason=1 restored=1 on both, players compare PASS (5 identity steps; orders demo on the session
+  fixture), relay verdict pass, census 0 differing objects.
+L2 two players, different starts in different sectors, factions (custom_creative base in Argon Prime, slot 2 the
+  fight start in cluster_47, stock piloting scripted):
+  spec --base-start custom_creative --players 2 --mode factions --start 2=x4ep1_gamestart_fight \
+    --omit 2=blueprints,inventory,known,research --out .local/sessions/L2/spec.json; capture-overlay (expect
+  NATIVE_SNAPSHOT HULLS_READY count=1 and "[X4LAN] SESSION_HULL slot=2 gamestart=x4ep1_gamestart_fight
+  macro=ship_par_s_fighter_01_a_macro zone=zone001_cluster_47_sector001_macro sector=cluster_47_sector001_macro
+  owner=player"); register; rebase; players overlay --session ... --players 2 --mode factions --source stock
+  --stock-script demo; run 642 ticks.
+  Expect on both clients, identical: PLAYER_IDENTITY_APPLIED ... step=ship slot=2 ship=<hull> source=saved
+  faction=x4lan_player2 result=applied owner=x4lan_player2; step=kit slot=2 gamestart=x4ep1_gamestart_fight
+  faction=x4lan_player2 omitted=blueprints+inventory+known+research result=applied; step=wallet ... op=set
+  money=5000 result=applied money=5000 player=<slot 1's unchanged>; step=reputation ... other=holyorder value=-32000
+  result=applied ab=-0.032 ba=-0.032, then other=paranid value=3200 (ab=0.0032), other=split value=-32000; READY md equal.
+  Pass: as L1 plus PILOT_INPUTS s2 driving=1 with growing applied counts in cluster_47 (REGION_CAMERA covers two
+  sectors), census 0.
+L3 coop with a class c rebuild (custom_creative base, slot 2 the discover start, stock scripted):
+  spec --base-start custom_creative --players 2 --mode coop --start 2=x4ep1_gamestart_discover --omit 2=inventory,reputation
+  Expect: wallet op=add money=5000 result=applied money=<old+5000> before=<old>; 18 blueprint and 3 research steps
+  applied|unchanged; 8 known_sector applied count=1..8; known sectors=8 faction=- shipyards=1 result=applied|unchanged
+  known=8/8; census 0 (the uncover runs set_known on every client in the same frame).
+L4 refusals (offline, no X4): spec ... --start 2=x4ep1_gamestart_trade (class b, parts named); --base-start
+  x4ep1_gamestart_trade (on foot); --start 2=x4ep1_gamestart_fight in factions without --omit (parts named);
+  players --session with the unrebased BASE ("rebase it"). Each exits 2 with the message, nothing written.
+Report back: capture logs (SESSION_HULL lines), session.json, the APPLIED/READY lines, census verdicts.
+
+10. PEOPLE CHECKLIST (two humans, L2 or L3 overlay with --source stock without --stock-script, --present)
+  [ ] client 1 starts where the base start puts it (sector of S, the fixture battle nearby); client 2 in its own
+      start's sector, in its start's ship (Paranid fighter for fight): cockpit view usable, controls respond
+  [ ] client 2's loadout: 3 engines, 2 lasers, a missile launcher with 10 guided missiles, satellites/beacons/probes 5
+  [ ] factions: client 2's money is its own (5000) and does not change client 1's; a trade by client 2 pays from it
+  [ ] factions: client 2's faction reputation toward Paranid/Holy Order/Split differs from client 1's as planned
+  [ ] coop: shared money = base money + 5000; discover's blueprints in the build menu; its 8 sectors on the map
+  [ ] both see the other's ship move where it is, no flicker; no PLAYER_IDENTITY refusal, no STOP other than 1
+  [ ] try a class b start for client 2 at setup (trade): refused before anything starts, parts named

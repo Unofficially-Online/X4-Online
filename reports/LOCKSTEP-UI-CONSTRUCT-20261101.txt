@@ -1,0 +1,266 @@
+LOCKSTEP UI REPLAY: BUILDING STATIONS FOR EVERY PLAYER (FAMILY 'build', STATION CONSTRUCTION)
+1 November 2026 | offline work on branch contrib/ferrite-construct (base: smoke 0bb57289). Static reading of the pinned Windows
+X4.exe 9.00 (RVAs, base 0x140000000) and of the extracted stock UI scripts and ffi.cdef prototypes in x4-re; nothing of them is
+copied here (API names, menu function names, RVAs and layouts only). No X4 was launched. [F] = read in the binary or the
+scripts; [I] = inference; "live" = what only a native run can show. Builds on reports/LOCKSTEP-UI-BUILD-20261101.txt (the build
+family: batches, parts, claims), LOCKSTEP-UI-TRADE-20261101.txt (the money model and the faction scope), LOCKSTEP-UI-GUARD-20261101.txt
+and LOCKSTEP-UI-REPLAY-20261030.txt.
+
+0. RESULT
+  No new family bit and no new op: station construction is part of the 'build' family (bit 4096, parts op 0x50), default off
+  with it, stop reason 164 as before. What a person does to build a station now reaches every client at the same tick:
+  - The station plan commit (station configuration, Confirm): the plan the person edited, with every added, removed, moved
+    and re-equipped module, travels whole as one record of the slot's batch and is committed on every client through X4's own
+    commit path (U::BuildTask on a sequence built from the record). The editor's local edits stay local as before.
+  - Cancelling a construction (interact menu, the user question) is a claim of the family; before this branch it was in no
+    inventory at all and ran on the clicking client only [found].
+  - The construction budget (money to the build storage) and hiring a builder (the fee; the order rides the order families)
+    are commit scopes of the family; a hire is refused whole when the order families are not armed.
+  - Factions mode: every slot builds its own stations. Slots 2+ run the construction claims and money in their own faction's
+    scope (the trade family's: X4's player faction = the slot's faction for the length of the call), so the plot, the
+    station's owner check, the money and the build task are x4lan_player<k>'s. The trade family is required for that.
+  - Cancelling a delivery to a build storage (CancelPlayerInvolvedTradeDeal) was also in no inventory [found]; it is a
+    guard entry now (refused, with the info line) because its trade deal ID's numbering is not shown to be the same everywhere.
+  - A divergence the station editor caused without any commit [found]: construction entry IDs come from one global counter
+    (0x38f4dd0) that the editor draws from on the editing client only. While the family is armed the counter is kept
+    canonical (section 2d) and its value joins the family's receipt, so a draw this misses is a digest mismatch, not a silent
+    split.
+
+1. THE STOCK PATHS [F]
+1a The plan commit. StationConfigurationMenu.buttonConfirm calls SetConstructionSequenceFromConstructionMap(menu.container,
+  menu.holomap) (0x1dc030) and refreshes 0.1 s later. The export: container = the component lookup 0xced70 and IsClass(0x62)
+  (vfunc +0x11e0); holomap = 0x1beb30 (lookup, class 0x3a); its behaviour at +0x2c0 must answer kind 2 (vfunc +0x18: a
+  construction map); the edited sequence is behaviour+0x300. Then 0x3f76f0(container, &out) gives the container's build context,
+  whose parents (+0x70) are walked to the first IsDerived(0x6f) (vfunc +0x11e8); SMem::Allocate(0x390, -, -, -, 16); both
+  objects' XLib references taken (+0x44 1->2, +0x40 +1); U::BuildTask's constructor 0x3aa1d0(task, &container, &parent,
+  [g_PlayerFaction 0x38f4bd0], sequence, 0, 0); the references given back (+0x40 -1, the interface at +0x38 released at zero);
+  the task kept when [+0x10] and [+0x18] are set and ([+0x28] clear or [+0x20] set), else logged and deleted (vfunc 0, 1).
+  The constructor copies the sequence (0xd57a50): every entry is made anew by 0xd57880 from the source entry's fields; an entry
+  ID 0 is drawn from the global counter 0x38f4dd0 under the lock 0x3d6b940; the upgrade plan is copied only when not empty
+  (0xe2acd0).
+  The sequence (0x38 bytes): a vector of entry pointers, a vector of bookmark indexes (+0x18), the current bookmark (+0x30), a
+  flag (+0x34). An entry (0x210): ID +0x00, macro +0x08, connection +0x10, predecessor entry +0x18, its connection +0x20, the
+  transform +0x30 (64 bytes: position x y z w, then three rotation rows; GetBuildMapConstructionPlan2 reads them so), the
+  module's upgrade plan +0x70 (0x198), fixed +0x208, a flag +0x209, bookmark +0x20a. A macro: its name std::string +0x20, its
+  definition +0x48; X4's macro database [0x6cf1628] finds a macro by name (0xa2f0d0(db, {name, length}, 0); AddMacroToConstructionMap
+  calls it so). A connection is an element (0x160 bytes) of the definition's table +0x170..+0x178, sorted by the hash of its
+  lower-case name at +8 (64-bit, basis 0x811c9dc5, multiply by 0x1000193 then xor), its name std::string +0x10: the plan
+  import (ConstructionPlanSequence::Import 0xe64cf0, the lookup at 0xe652cf) finds it by a lower bound over that hash.
+1b Module upgrades and removals. Adding, removing (RemoveItemFromConstructionMap2), copying, rotating and re-equipping modules
+  (the loadout mode's UpdateConstructionMapItemLoadout) are edits of the holomap's sequence: they reach the station only through
+  the commit, so the commit's record carries all of them. A module's equipment is its entry's upgrade plan: X4 converts it to a
+  UILoadout (version 1) by GetConstructionMapItemLoadout2(result, holomap, index, 0, 0) (macro based when no defensible is given:
+  0x16c5b0) and back by 0x16ede0(plan, macro, loadout). The default loadout level is SetStationModuleLoadoutLevel (claimed by the
+  build family already).
+1c The budget. StationConfigurationMenu.buttonConfirmMoney / buttonSetMoneyToEstimate move money between the player and the
+  build storage (TransferPlayerMoneyTo / TransferMoneyToPlayer): commit scopes of the build family since the build branch.
+1d Ware supply. The build storage buys its wares with its budget (simulation, every client); a person's own ships deliver
+  through the trade menu (the trade family); the build method, trade rules and price factors are the trade family's setters
+  (and the faction-settings work). The one station configuration call left was CancelPlayerInvolvedTradeDeal(container,
+  tradeid, checkonly) (buttonCancelTrade; helper.lua the same): in no inventory, so it ran locally [found]. Guarded now.
+1e Hiring a builder. Builders are construction vessels; NPC ones are hired, player-owned ones are just sent (no mission offer
+  [F]). MapMenu.selectCV (the map's mode the station configuration's "assign construction vessel" opens): IsBuilderBusy, then,
+  for a builder not the player's, TransferPlayerMoneyTo(GetBuilderHiringFee(), builder) after a money check, then
+  orderDeployToStation: RemoveAllOrders, CreateDeployToStationOrder, SetOrderParam(builder, index, 1, nil, station),
+  EnableOrder. InteractMenu.buttonDeployToStation: the same fee, then RemoveAllOrders2 and Lua CreateOrder(builder,
+  'DeployToStation', {station=...}). Firing a builder (station configuration) is RemoveOrder2 (the queue family). With
+  native_gate_pilot_block_orders both orderDeployToStation functions are refused (their names start with "order").
+1f Cancelling and changing. A new commit changes the plan. CancelConstruction(container, BuildTaskID) cancels a build task
+  (InteractMenu.buttonCancelConstruction / buttonCancelAllConstruction, the user question's confirm): in no inventory [found].
+  Removing a plot or build storage (RemoveBuildPlot2, RemoveBuildStorage) is claimed by the build family already.
+
+2. MECHANISM (src/native/engine/lockstep_ui_construct.h, lockstep_ui_build.h, tools/dev/native_gate_ui_build_core.lua)
+2a The record. SetConstructionSequenceFromConstructionMap is claim 29 of the family (spec "IQ": the container as a portable
+  reference, Q the holomap's plan). In a local phase the claim answers nothing (void), X4's function does not run, and the
+  record is written: version 1 | the station's planned sequence's fingerprint (Container vfunc +0x1200, 0x3f48a0: every
+  entry's ID, names, predecessor index, transform bits, flags; a fixed value without one) | the plot's size and centre as bits
+  (GetBuildPlotSize / GetBuildPlotCenterOffset) | the edited sequence's current bookmark and flag | the entries: ID (kept when
+  the station's planned sequence holds it, else 0), macro name, connection name or none, predecessor index (must be earlier),
+  its connection name or none, the 16 transform words (a 16-bit mask of the nonzero words, then those words: exact bits),
+  flags (fixed, +0x209, bookmark, loadout), and when the upgrade plan is not empty its UILoadout (X4's own conversion; every
+  string kept once per batch). Every name must find the same object again through the lookup the apply makes (else refused
+  'macro'/'connection'); a station that is not the slot faction's is refused 'owner'; no construction map 'holomap'; more than
+  200 entries 'entries'; a batch over 9456 bytes 'too_long' (about 40 bytes per entry, each distinct name once, each
+  loadout its macros: plans of well over 100 modules fit; the limit is the build family's 48 parts). Refused at the capture: nothing ran anywhere, a UI_BUILD_REFUSED row and the info line.
+2b The apply (every client, the capturing one included and not earlier; capture tick + delay, slot order). The base must still
+  match (else skipped=plan_changed: another commit of any slot landed in between), the plot too (plot_changed), the container
+  must be a station (container) of the slot's faction (owner), every macro must resolve and carry the same name, every
+  connection must resolve (macro / connection). Then own code following 0x1dc030: the source sequence is built in the gate's
+  memory (entry fields as X4's copy reads them; each entry's upgrade plan made by X4's 0xf16d0 and, with a loadout, filled by
+  X4's converter 0x16ede0), the build context and the parent walk, the allocation, the references, U::BuildTask's constructor
+  with X4's player faction as it is now, the references given back, X4's validity test and delete; then every source upgrade
+  plan freed by X4's 0xf03c0. The answer is the station's planned sequence's fingerprint after the commit (0 when X4 kept no
+  task): UI_BUILD_APPLIED ... what=SetConstructionSequenceFromConstructionMap task=<0|1> plan=<hex>, and it joins the batch hash.
+2c Factions mode. The construction claims (the plan, CancelConstruction, SetStationModuleLoadoutLevel, ReserveBuildPlot,
+  ExtendBuildPlot, PayBuildPlotSize, RemoveBuildPlot2, RemoveBuildStorage) and the money records made inside a construction
+  scope are open to slots 2+ when the trade family is armed: at the apply they run inside uitrade_scope_enter(k) (g_PlayerFaction
+  = the owner of slot k's ship), checked at the close. ReserveBuildPlot names the plot's faction by ID: slot k's "player" becomes
+  its own ID at the capture (the identity plan's, passed by the probe: gate.ui_build(factions, "player,x4lan_player2")), and the
+  apply skips any other (faction). Every other claim and scope stays slot 1's in factions mode: the Lua core refuses such a
+  scope's click for slots 2+ before anything runs (why=factions), and a construction scope without the trade family
+  (why=needs_trade). Coop: every slot, `player`'s wallet, no scope.
+2d The construction ID counter. The construction map draws entry IDs from 0x38f4dd0 on the editing client only (callers
+  0xe0adb0, 0xe0c9a0, 0xe0ce00, 0xe11a80, near the ConstructionMapBehavior [F]). Kept canonical while the family is armed and
+  the window open: its value is kept when this client's UI move starts (uirep_ui_move; the simulation ran before) and when the
+  probe's frame ends (the applies ran, every client alike), and put back at the probe frame's start and at the UI move's end
+  (under X4's own lock). New entries carry ID 0 and draw at the apply, every client from the same value. The counter joins the
+  receipt (UIBUILD_1:...:C<hex>); rewinds in UI_BUILD_STATUS (cid=kept/<rewinds>/<ids put back>).
+2e Hiring, budget, scopes (Lua). Scopes: ShipConfigurationMenu buttonConfirm, buttonInstallMod; StationConfigurationMenu
+  buttonConfirmMoney, buttonSetMoneyToEstimate, buttonBuyPlot, buttonConfirm (new: the plan goes out at the click's end);
+  MapMenu buttonBuyPlot, buttonSellShips, selectCV (new); InteractMenu buttonDeployToStation (new). The construction scopes
+  (K.CONSTRUCTION) mark their money records (gate.ui_build_add(id, hex, 1); the record's flag 2). A hire needs the order
+  families (selectCV: orders and queue; the interact menu: orders) or the click is refused whole; with them the order block
+  opens MapMenu.orderDeployToStation / InteractMenu.orderDeployToStation (K.UNBLOCK into the replay's unblocked set). The fee is
+  a record of the batch, the order the order families' events right behind it (the batch is closed first: call order).
+2f CancelConstruction is claim 30 ("Iu": the container, the BuildTaskID as a number; answer true). BuildTaskIDs are compared in
+  the receipt already (AddBuildTask6's answers), so a numbering that differs shows as a mismatch.
+2g Guard inventory: CancelConstruction and CancelPlayerInvolvedTradeDeal added to group build; the generated table has 285
+  entries (tools/dev/gen_ui_guard_table.py against the pinned image; --check passes).
+2h Pins (fail closed at the arming, 'pins_ui_construct:<rva>'): the stock commit 0x1dc030 whole (0x26b), U::BuildTask's
+  constructor, the sequence copy, the entry constructor (layout, counter, lock), the entry count, the upgrade plan's empty
+  test / init / free / converter, the macro lookup and AddMacroToConstructionMap (the database and its view), the holomap
+  lookup, the build context, SMem::Allocate, the planned-sequence getter and the Station vtable's slot 576, GetTrueOwner and the
+  Station vtable's slot 708 (the owner check; the trade family pins it only when armed), the entry reads of
+  GetBuildMapConstructionPlan2, the plan import's connection lookup, GetConstructionMapItemLoadout2 and its counts,
+  CompareMapConstructionSequenceWithPlanned. Lua: the v1 loadout layouts (UILoadout 160, macro data 32, group data 32, counts 36)
+  join K.LAYOUTS (checked against the menus' cdefs at the arming).
+
+3. WHAT IS REPLAYED, WHAT STAYS REFUSED, PER MODE
+  action (stock entry)                               coop, every slot          factions, slot 1       factions, slots 2+
+  plan commit, module add/remove/move/equip          replayed                  replayed               replayed (trade scope)
+  default module loadout level                       replayed                  replayed               replayed (trade scope)
+  plot reserve / extend / pay / remove               replayed                  replayed               replayed, own faction
+  budget (build storage money)                       replayed                  replayed               replayed, own account
+  hire an NPC builder (fee + order)                  replayed (orders,queue)   replayed               fee: own account
+  send an own builder / fire a builder               order families            order families         order families [I]
+  cancel a construction                              replayed                  replayed               replayed (trade scope)
+  cancel a delivery (CancelPlayerInvolvedTradeDeal)  refused (guard)           refused                refused
+  deliver wares with own ships                       trade family              trade family           trade family
+  save/import/export a library plan                  local (as before)         local                  local
+  ship purchase / upgrade at a shipyard              replayed (build report)   replayed               refused (factions)
+  Refused means: nothing ran anywhere, a row and the info line on that client.
+
+4. RISKS
+  - [I] The commit is own code mirroring 0x1dc030 (pinned whole): a later X4 build fails the pins; a misreading of the mirrored
+    reference handling would show at the first live commit (the stock function's own behaviour is the reference: the task row,
+    the station's planned modules on both screens).
+  - [I] The source sequence is the gate's memory; X4's copy reads only the fields listed in 1a (pinned 0xd57a50 / 0xd57880). If
+    the constructor kept a pointer into the source (it copies [F]) the freed plans would be read later: watch for faults after a
+    commit.
+  - [I] The counter guard assumes no simulation job draws construction IDs while this client's UI move runs (the trade report's
+    premise for g_PlayerFaction in slot 6). A violation is a :C mismatch in the receipt (fail closed), not a silent split. Draws
+    in other UI slots (render) are not put back: the same mismatch.
+  - [I] An existing module's entry is converted macro-based (as GetConstructionMapItemLoadout2 does without a defensible); the
+    stock loadout mode may read a built module's equipment component-based. The commit carries what the plan holds.
+  - [I] The base check skips a commit when anything in the planned sequence changed since the capture (two players editing the
+    same station within the delay: the later one is skipped on every client and must confirm again).
+  - [I] A plot for x4lan_player<k> (ReserveBuildPlot with that faction ID): X4 reserves NPC factions' plots through MD the same
+    way; whether the map shows it to that player is the presentation's (factions mode presents the `player` faction's view).
+  - [I] A fee paid for an order X4 then refuses at the apply (the builder became busy) is lost on every client alike; the stock
+    menu has the same order of calls.
+  - A plan over 200 entries or over the batch's 9456 bytes is refused (the person sees the info line; nothing happens).
+  - Library plans (Save/Import/Remove) stay local: they change this client's ConstructionDB only [I: NPC factions take their plans
+    by tag and faction, a player's local plan carries neither].
+
+5. VERIFIED AND NOT
+  C (src/native/engine/test_lockstep_ui_construct.h, in build_native_gate.py --test): on stand-ins behind the guard's real hook,
+  the build family's batches and parts: X4's connection lookup on sorted tables (lower case, misses); a three-module edited plan
+  (an existing module, a new one with a two-turret / one-group loadout and a denormal in its transform, one with an upper-case
+  connection name) captured as one record, nothing run; two clients apply it: X4's constructor sees the same source sequence
+  (IDs: known kept, new drawn at the apply; names, predecessor indexes, the exact transform words, flags, the loadout through the
+  converter), the container and the build parent through the walk, every reference given back, the player faction; skips
+  plan_changed, plot_changed, owner, macro; an invalid task deleted with answer 0; capture refusals holomap, macro,
+  connection, order, owner; CancelConstruction captured and run; factions mode: slot 2 refused without the trade family, with
+  it its own station committed inside its scope (X4's player faction is slot 2's during the constructor and the player's after),
+  the plot's faction ID rewritten and another refused, the money record scoped, the Lua record's scope flag at the step; the
+  scripted plan; the counter guard (put back at the probe frame's start and the UI move's end, kept across the apply, nothing
+  outside a UI move) and its receipt term. Pinned image: all 21 pins, each with a tampered byte refusing, the Station vtable
+  slots 576 and 708. A container that is not one is refused at the capture too ('container'). The build family's own test (31 claims) passes unchanged in substance.
+  Python (tests/test_native_gate_ui_construct.py; the build test updated for 31 claims): claims vs the inventory and the generated
+  table, the scoped claim list, the pins named; with x4-re: every wrapped/unblocked name is a stock menu function, the plan
+  commit's call site, the v1 layouts under LuaJIT with the stock typedefs and the prototypes; the Lua core (construction scopes
+  marked, factions refusals, hire preconditions and the unblocked entries, the scope at the apply incl. a refused scope, the
+  newest plot, the script ops); the probe's faction IDs; the registry.
+  Not live: nothing ran in X4. In particular until the first run: the mirrored commit in X4 (task row and the station's plan on
+  both screens), the counter guard against real editing, plots and budgets for x4lan_player2.
+
+6. LIVE TEST SPECS (coordinator; DLL, probe, ui/native_gate_ui_replay_core.lua and ui/native_gate_ui_build_core.lua of this branch;
+  the overlay as the build report's: native_gate_players.py overlay copies the build core and lists it before the probe)
+  What the snapshot gives a script (the build report's reading of save_009): the player owns the scout 00000000000ae79c (slot 1)
+  and in coop slot 2's scout 000000000007a8fe; 10,000 Cr; Argon Prime is sector 0000000000000729. The player owns no station:
+  the scripts reserve a plot first (the build family's 'plot' op) and work on it ('plot' = the slot's newest plot, recorded
+  at the apply of its ReserveBuildPlot on every client). No builder ID is known from the snapshot: hiring is in the people test.
+  C1 coop, scripted (two clients, no people). Append to the Play42P config:
+    X4LAN_CONFIG.native_gate_ui_guard = 'all'
+    X4LAN_CONFIG.native_gate_ui_replay = {'travel','target','orders','autopilot','dock','weapons','queue','missiles','build','assets'}
+    X4LAN_CONFIG.native_gate_ui_build_fund = 2000000
+    X4LAN_CONFIG.native_gate_ui_build_script = {{{60,'plot','0000000000000729',20000,0,-60000,2},{150,'plan','plot','prod_gen_refinedmetals_macro,-,-,-,0,0,0'},{240,'budget','plot',100000},{330,'cancel','plot'}},{{75,'plot','0000000000000729',-20000,0,-60000,2},{165,'plan','plot','prod_gen_refinedmetals_macro,-,-,-,0,0,0'},{255,'budget','plot',100000}}}
+    (window start 40, delay 3: slot 1 at 100, 190, 280, 370; slot 2 at 115, 205, 295.) 600 ticks are enough.
+    Pass: relay pass, 0 digest mismatches (the receipt now ends :M<money> after UIBUILD_1:...:C<counter>), no stop 164;
+      UI_BUILD_ARMED on both; UI_BUILD_APPLIED tick=103 slot=1 what=ReserveBuildPlot=<id> with the same <id> on both (0: X4 refused
+      the place, then the plan op logs a failed assert 'no plot reserved yet' and C1 is a mechanism pass only);
+      UI_BUILD_SCRIPT tick=190 op=plan ok=true result=plan on client 1; on both, when the batch applies (193..196),
+      UI_BUILD_APPLIED slot=1 what=SetConstructionSequenceFromConstructionMap task=<0|1> plan=<hex> with the same values on both
+      (task=0 on both: X4 kept no task for an unpaid plot: the mechanism passed, the build did not; send the X4 log's
+      "SetConstructionSequenceFromConstructionMap(): Failed to create valid build task" line if present);
+      UI_BUILD_SCRIPT tick=280 op=budget result=budget (or no_buildstorage), then TransferPlayerMoneyTo(100000,...) applied on both
+      and the receipt's :M falling by 100000 from that tick; tick=370 op=cancel result=cancel=true or no_task, CancelConstruction=1
+      on both when a task existed; slot 2 the same at its ticks;
+      UI_BUILD_STATUS on both: plan=<captured>/<refused>/<ran>/<valid>/<skipped> with ran/valid/skipped equal on both, cid=kept/...
+    Fail / send: any UIBUILD_1 mismatch (both clients' UI_BUILD_APPLIED rows, UI_BUILD_STATUS, the :C values), stop 164 (its why:
+      ui_build_*, ui_fault, ui_trade_scope), an arming refusal 'pins_ui_construct:<rva>', a crash after a plan apply (section 4).
+  C2 factions, scripted. As C1, with the identity plan line of overlay-Play42F2 instead of Play42P's:
+    X4LAN_CONFIG.native_gate_player_identity_plan = {["mode"]="factions",["occupied"]="player",["relations"]={{["a"]=1,["b"]=2,["relation"]="hostile"}},["reputation"]="mirror",["slots"]={{["faction"]="player",["ship"]="00000000000ae79c"},{["faction"]="x4lan_player2",["ship"]="000000000007a8fe"}},["starts"]={{["object"]="000000000007a8fe",["sector"]="0000000000000729",["x"]=0,["y"]=100000,["yaw"]=180,["z"]=800}},["tick"]=20,["version"]=1}
+    and the trade family (the faction scope) and money for x4lan_player2:
+    X4LAN_CONFIG.native_gate_ui_replay = {'travel','target','orders','autopilot','dock','weapons','queue','missiles','trade','build','assets'}
+    X4LAN_CONFIG.native_gate_ui_trade_fund = 3000000
+    plus, for slot 2 only, a refused ship purchase: add {300,'buy','000000000001b5af','ship_arg_s_scout_01_a_macro',90000,'X4LAN Scout B'}
+    to slot 2's list.
+    Pass: everything of C1, and: UI_BUILD_ARMED ... coop=false on both; slot 2's ReserveBuildPlot applied (both clients the same
+      id; its stand-in-free check: the plot's owner is x4lan_player2: GetComponentData(<id>,'owner') in a people check, optional);
+      slot 2's plan row on both (owner check passed inside its scope; skipped=owner would mean the plot is not x4lan_player2's);
+      slot 2's budget: TransferPlayerMoneyTo(...) scope on both and x4lan_player2's balance falling (UI_TRADE_MONEY /
+      UITRADE_1's second column), the `player` column not; UI_BUILD_REFUSED tick=340 op=script.buy why=factions on client 2 only;
+      UI_TRADE_STATUS scopes=<opened> counting slot 2's construction calls.
+    Fail / send: as C1, and UI_BUILD_APPLIED rows with skipped=scope or skipped=faction (the faction ID did not travel),
+      x4lan_player2's column 'n' (no account), the `player` column moving for slot 2's records.
+
+7. PEOPLE TEST CHECKLIST (two persons; Play42P + the first three lines of C1 without the script; P2 also with C2's plan line,
+  the trade family and native_gate_ui_trade_fund). Watch both screens for each step.
+  P1 coop
+    [ ] slot 1: map, build: place a plot in Argon Prime, size it, buy it (the money drops on both, the plot on both maps);
+    [ ] open the station configuration on the plot: add a dock and two production modules, connect them, move/rotate one, remove
+        one, equip a defence or dock module with turrets (loadout mode, confirm the loadout), set the default loadout level;
+        nothing appears on the other screen while editing; Confirm: within about 0.1 to 1 s (bigger plans need more parts) the
+        planned modules show on both (map, station overview); UI_BUILD_APPLIED ... task=1 plan=<hex> equal on both;
+    [ ] set the build storage's money (budget, Confirm) and "set to estimate": the storage's money and the player's on both;
+    [ ] assign a construction vessel (station configuration, assign; the map lists builders): pick an NPC builder: the fee leaves
+        on both and the builder's orders show DeployToStation on both; then fire it (station configuration); repeat with an own
+        builder if one exists (no fee);
+    [ ] change the plan (add a module, Confirm): the second commit on both; then both persons edit the same station and confirm
+        within a second: one applies, the other is skipped=plan_changed on both (confirm it again);
+    [ ] interact menu on the station: cancel the construction: on both;
+    [ ] build storage: cancel a delivery (if one is listed): refused with "Multiplayer: CancelPlayerInvolvedTradeDeal is not shared
+        for your slot yet - nothing happened." (expected);
+    [ ] slot 2 repeats the plot, plan, budget and hire on its own plot; slot 2 confirms a plan on slot 1's station: allowed in coop.
+  P2 factions
+    [ ] slot 2: plot, buy (x4lan_player2's money), plan, budget, hire: as P1 with x4lan_player2's account moving; the station is
+        x4lan_player2's on both (owner in the station overview / map legend);
+    [ ] slot 2 tries a plan on slot 1's station: refused (owner) with the info line; slot 2 tries a ship purchase or upgrade:
+        refused (factions) before anything runs;
+    [ ] slot 1 builds as in P1 (`player`).
+  Pass: relay pass, 0 mismatches (the :C counter equal), no stop 164; every step above with UI_BUILD_APPLIED rows equal on both at
+  the same tick and no UI_GUARD_REFUSED row for its entry (except the delivery cancel). Send: all UI_BUILD_* rows, UI_GUARD_REFUSED
+  rows (a station configuration entry this family does not take: a candidate), UI_BUILD_STATUS's plan= and cid= fields, Lua
+  errors after a click, the X4 log's SetConstructionSequenceFromConstructionMap lines, screenshots of the planned station on both.
+
+8. FILES
+  New: src/native/engine/lockstep_ui_construct.h, test_lockstep_ui_construct.h, tests/test_native_gate_ui_construct.py, this report.
+  Changed: lockstep_ui_build.h (two claims, the scoped claims, the plot faction ID, the scoped Lua records, the plan apply and
+  the faction scope in the step, receipt :C, status plan=/cid=, pins and binding at the arming), lockstep_ui_build_lua.h
+  (gate.ui_build's faction IDs, ui_build_add's scope flag, ui_build_step's scope value, gate.ui_build_plan), lockstep_ui_replay.h
+  (the UI move's two calls), lockstep_gate.c (the probe flag's edge, the method), lockstep_ui_guard_table.h (regenerated: 285),
+  test_lockstep_ui_build.h and test_lockstep_gate.c (signatures, stand-ins, the new tests), tools/dev/ui_guard_inventory.py,
+  tools/dev/native_gate_ui_build_core.lua (scopes, construction, hire, unblock, layouts, the scope at the apply, plots, script
+  ops), tools/dev/native_gate_probe.lua (faction IDs, cdefs, tools), tests/test_native_gate_ui_build.py (31 claims),
+  docs/LOCKSTEP-REGISTRY.txt (the build family's line, op 0x50, the claimers).

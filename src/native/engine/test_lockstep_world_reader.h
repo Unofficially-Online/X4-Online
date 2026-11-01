@@ -3,7 +3,8 @@
  * hashes, timing fields), WORLD_DETAIL rows, WORLD_BANKS, summaries and states over three
  * captures of a synthetic world (ships with health and vector or legacy Nav controllers, an
  * unknown controller, static objects, an unmapped parent, a removed object), and fail the same
- * way on a no-access page. The guarded capture makes no ReadProcessMemory call. */
+ * way on a no-access page. The guarded capture makes no ReadProcessMemory call. FR28's WORLD_HEALTH
+ * row of a watch reads the object at the call, and present=0 once it is gone. */
 #define WCR_OBJECTS 8
 static unsigned char wcr_ship[0x300],wcr_ship_controller[0x80],wcr_shield[0xa8],wcr_odd[0x300],wcr_odd_controller[0x80];
 static unsigned char wcr_nav_ship[0x300],wcr_nav[0xe0],wcr_slots[0x340],wcr_static[0x300],wcr_zone[0x300],wcr_orphan[0x300],wcr_stranger[0x40];
@@ -79,6 +80,15 @@ static void wcr_run(int (*reader)(const void *,void *,size_t),char *out,size_t c
     wcr_objects[4]=NULL;*(uint64_t*)(wcr_stranger+8)=2000; /* static object gone, the orphan's parent now the zone */
     assert(world_hash_capture_with(3,1,wcr_find));wcr_collect(out,capacity);
     assert(world_hash_capture_with(4,1,wcr_find));wcr_collect(out,capacity); /* nothing changed: no page */
+    /* FR28: WORLD_HEALTH reads the watched ship now, not at the capture; gone, it is present=0. */
+    char row[320];double now=12.5;memcpy(image+GAME_RVA,&now,8);world_health_find=wcr_find;
+    assert(world_health_row(0,4,row,sizeof(row)));wcr_append(out,capacity,row);
+    *(double*)(wcr_ship+0x280)=98.5;assert(world_health_row(0,5,row,sizeof(row)) && strstr(row," present=1 ") && strstr(row," hull=4058a00000000000 "));
+    unsigned char *ship=wcr_objects[1];wcr_objects[1]=NULL;
+    assert(world_health_row(0,5,row,sizeof(row)) && !strcmp(row,"tick=5 id=0000000000000511 present=0 time=4029000000000000 hull=- shield=-"));
+    wcr_objects[1]=ship;*(double*)(wcr_ship+0x280)=99.0;
+    assert(!world_health_row(2,5,row,sizeof(row)) && !world_health_row(0,5,row,40)); /* no third watch; no room */
+    world_health_find=NULL;
     *(void**)(wcr_ship+0x70)=noaccess;assert(!world_hash_capture_with(5,1,wcr_find));
     char failure[96];snprintf(failure,sizeof(failure),"FAILED stage=%s saved=%016llx",world_hash_stage,(unsigned long long)world_hash_failure_id);
     wcr_append(out,capacity,failure);
@@ -110,6 +120,8 @@ static void test_world_reader_equivalence(void) {
            strstr(guarded,"tick=1 objects=7 present=6 changed=7 ") && strstr(guarded,"tick=4 objects=7 present=5 changed=0 ") &&
            strstr(guarded,"domain=health bytes=") && strstr(guarded,"FAILED stage=topology saved=0000000000000511"));
     assert(strstr(guarded,"type=4000 flags=7 ") && strstr(guarded,"flags=f ") && strstr(guarded,"flags=31 "));
+    assert(strstr(guarded,"\ntick=4 id=0000000000000511 present=1 time=4029000000000000 hull=4058c00000000000 shield=4004000000000000"
+        "000000000000000000000000000000000000000000000000""00000007""00000000""0000000000000002""0""3f8000003f8000003f800000\n"));
     world_hash_reader=sample_read;
     for(unsigned d=0;d<WORLD_HASH_DOMAINS;d++) BCryptDestroyHash(world_sha_roots[d]);
     BCryptDestroyHash(world_sha_row);BCryptCloseAlgorithmProvider(world_sha_algorithm,0);

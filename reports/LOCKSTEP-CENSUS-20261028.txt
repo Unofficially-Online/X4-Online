@@ -1137,6 +1137,108 @@ checks 3.9, probe 1.1, relay wait 0.08. perf-Pbare (near-minimal gate) outside
 21.4 ms. 4 clients p50 32 ms on this PC. FP keys cost nothing measurable.
 World captures (diagnostic) are 60 of the 70 frames over 100 ms in play22-long.
 Needed: a tick rate key or agreed per-tick dt (FP agent).
+PER-PLAYER FACTION SETTINGS LIVE (playersettings 0bdb33bc + 8c72acf5, build169 = smoke after 8ea0c9e2; f3set2, factions
+mode, scripted, 602 ticks): relay pass, 0 mismatches; paint theme, logo, loadout level, illegal ware and ships-wait set per
+slot and applied on both clients at the same tick (slot 2's 'scope settings'); a fighter spawned for each faction at 420
+carries its owner's paint theme on both clients (player: painttheme_player_02, x4lan_player2: painttheme_player_03). The
+first run (f3set) parted at tick 1: X4 never initialises the player's global loadout quantity/quality fields (leftover
+memory per process) and the slot table copied them; they are no longer owned, copied or hashed.
+HYBRID SECTORS, FIRST SLICE (hybrid feadf12b, build168; hyba: slot 2 owns Grand Exchange from tick 60, census mode,
+1803 ticks): outside the owned sector the clients already differ at the 600 capture (membership 3548 vs 3549), and client
+1's step (29.35 ms) shows no saving against attm1 (29.4 ms); the predicted cross-border leaks are real and the gain in a
+quiet sector is within noise. Parked pending a decision (design: reports/LOCKSTEP-HYBRID-SECTORS-20261101.txt).
+ON FOOT, BOTH PLAYERS (footlook5, build166, people session): both players got up (2400/2460) and walked, 40002 ticks, no
+crash; relay equal until 11354 (the earlier wharf runs parted at 65-69).
+FACTION SETTINGS AND STATION CONSTRUCTION LIVE (faction 285e5064 + construct e4b7a1e3, build166 = smoke d2fa0023;
+scripted, 602 ticks, relay pass and 0 mismatches in all four): f1fac (coop) / f2fac (factions): blacklist create +
+default (slot 1), fight rule create + default (slot 2), ship blacklist / fight rule, ships wait, trade rule create +
+default, signal response; every op applied on both clients at the same tick with the same rule IDs (CreateBlacklist2=1,
+CreateFightRule=1), slot 2's in its own faction's scope in factions mode (scope=1). c1con (coop) / c2con (factions):
+both slots reserve a build plot (IDs equal on both clients) and commit a station plan (refined metals module,
+SetConstructionSequenceFromConstructionMap task=1) on both clients at the same tick; the scripted budget came before the
+build storage existed (no_buildstorage) and the scripted cancel failed in the test helper (GetNumBuildTasks argument):
+test-script issues, not sync.
+ATTENTION BENCHMARK (attm0-3, attm1p/2p, repeats; build163, 30 steps/s, two clients on one PC): X4's frame per step: both
+players in one sector 29.1/29.8 ms; slot 2 alone in Grand Exchange 29.4/27.9 (repeat 30.8/29.3); its sector forced low
+29.2/27.2 (repeat 28.4/26.3); no high attention at all 24.3/23.9. A second, remote high-attention bubble costs ~1-2 ms per
+step, the first ~4 ms; ~24 ms is the low-attention universe plus our sync work. Sampler (M1): ui_move 11-12 ms (40%),
+universe_update 6.5-7, positional_move 2.4, ai_director 1.9, zone_move 1.0, render_cameras 0.7-1.0, physics 0.2; gate
+code 11% of samples. All runs in sync (view_points_mask identical on every client).
+ON FOOT: the get-up crash (build163) was our pslot_enter calling slot 1's deleted seat controller after X4's stand-up
+(the check against X4's live controller only ran with the death module armed): fixed (footcrash 1cf5e82a). nav_mesh
+'sync' no longer stops at boot (footsync 95e82d7d). footlook5 (both players get up, build166) passed the get-ups.
+WINDOWS AND LINUX AGREE THROUGH TICK 600 (fp-redirect FR28-FR30 merged 76bbbb97): the last split (Xenon corvette
+07336a's shield at 546) was out-of-sight combat damage from drones: Windows forms the drone factor as (100-x)*0.01f,
+Linux as (100-x)/100 (one float ulp apart); three more sites of the same kind (spread *1/pi vs /pi, time loss, miss
+threshold). native_gate_fp_redirect_drones='redirect' (default off) runs one Windows-order implementation on both
+builds. w15 vs vps-linux-L8: every 30-tick capture through 600 differs only in the same-platform timing pair 176bf8/
+176cef (w14: 7 objects at 570/600), all 5 damage applies on 07336a equal. Found with the FR28 health rows and the
+FR29b get_attackstrength capture (its first Windows build crashed: the damage add's callers keep rcx/r8 across the
+call; fixed with register-preserving stubs).
+ON FOOT, SLOT 1 (onfoot e19d1d02, merged f4c638ec): native_gate_pilot_foot: slot 1 gets up (the docked menu's Get Up
+was unguarded and ran on one client only) and walks through the stock record on every client; hiring through the
+conversation replays the fee with the answer. Slots 2..N have no body in X4's world tree yet (agent on it).
+RENDER FRAMES BETWEEN STEPS, STAGE 1 LIVE (render-frames c096ad58, merged a48fe430, build150; r1: people config +
+native_gate_render_fps=60, 900 steps): relay pass, 0 mismatches, steps exact (max_dt_error 1.9e-15); extra zero-dt frames
+running only render preparation: 301 (client 1) and 273 (client 2) in 900 steps, 1.3 frames per step, X4's counter 36 FPS;
+an extra frame costs ~2 ms, but 781 of 900 steps left no time for one (a step uses nearly all of its 33 ms). HUD, cockpit
+and radar draw normally (milestones/render-frames-36fps-20261101.png). Stages 2 (camera between steps) and 3 (display-only
+interpolation) are being built. MISSILES LIVE (missile1, slot 2 = Argon Elite a5374 with smart missiles): fired and
+replayed, slot 1 died 3 times and respawned, in sync to 1732; slot 2's death at 1733 and its spacesuit split the worlds
+from ~1740 (the presenting client evaluates one more view point; agent on it).
+FLIGHT BUTTONS REPLAYED, LIVE (ui-guard a2d7c528, merged 621defba, build149; g4, 700 ticks, guard 'all' + families incl.
+events and flight, scripted): relay pass, 0 mismatches, census 0; UI_GUARD_STATUS installed=241 refused=0 on both
+clients; flight assist, drones, turret mode and drone mode replayed (UI_REPLAY_SLOTS identical on both clients, slot 1's
+flight assist off at 103 and on again at 223, slot 2's at 118/238); the HUD's TopLevelMenu event at tick 1 (and the
+scripted ones at 260/275) runs locally (why=ui_only); MapMenu from slot 1 replayed at 303 on both, from slot 2 refused
+why=slot. Mixed session (mix3): 2 Windows clients here + 1 Linux X4 on the VPS ran 3600 steps through a VPS relay at ~20
+steps/s; the comparison config drifts even Windows-vs-Windows over 3000 steps (it lacks the play stack). Relay
+--latency-ms 100: lookahead 1 0.38x, lookahead 3 + delay 5 0.76x, both census 0.
+WINDOWS VS LINUX, THE SAFE POSITION SOLVER (fp-redirect FR27 ba98c9c7 + fbb52f2d, merged
+50ad021b, build148): the GetSafePos solver (W 0x14e4320 / L 0x1a4b9f0) differed by 1-2 ulp
+with equal inputs: Windows adds the push-out segment as ((|c|+R)+R)+((r+r)+|c|), Linux
+((|c|+R)+r)*2, and Windows multiplies by 1/d where Linux divides by d (emulated on both
+executables' own bytes with the live inputs; no FMA, x87 or approximate instruction).
+native_gate_fp_redirect_solver = 'redirect' (default off) sends both builds through one
+implementation of our own in Windows' order (lockstep_safe_pos.h). The exact-reciprocal
+generator now follows MSVC switch arms and leaf functions in general: 859 windows, 1335
+instructions, none left in the inventory (was 824/1272, 63 left). Live: fr27 vs
+vps-linux-FR27 (60 ticks) solver outputs, get_safe_pos and creations equal for 09262b,
+084533, 0adbc2, 0adfae; w14 vs vps-linux-L7 (600 ticks): 2264 solver calls on both,
+Windows native equal to ours, Linux 27 replaced; census 2 differing objects at every
+30-tick capture through 540 (the known same-platform timing pair only), 7 at 570 and 600
+(medium ship 07336a and its four weapons, health): w13 had 2/2/2/9/35 at 30/60/120/300/600.
+Lane X4s now run at below-normal priority (user request: several instances made the
+desktop sluggish).
+MENUS THAT WOULD SPLIT THE SESSION ARE NOW REFUSED (UI guard 0be617bb, merged eded623c,
+build147; reports/LOCKSTEP-UI-GUARD-20261101.txt): native_gate_ui_guard = 'all' (default
+off) refuses, in the local phases only, the 280 world-changing stock UI entry points that
+no armed replay family takes (225 exports, 55 Lua globals: trade, construction, crew,
+assets, boarding, research, diplomacy, missions, conversations, AddUITriggeredEvent,
+SignalObject, ...); the person sees X4's own info line ("Multiplayer: ToggleFlightAssist
+is not shared between the players yet - nothing happened.", milestones/guard-info-line-
+20261101.png). New family 'events': slot 1's AddUITriggeredEvent / SignalObject replayed
+on every client at the same tick, slots 2+ refused. g1 (guard, scripted money, rename, UI
+event, flight assist, comm, signal; 700 ticks) and g2 (+ events): relay pass, 0
+mismatches; every scripted call refused on its own client only (money and name
+unchanged); g2 replays ProbeOne at 163 on both, its MD cue fires at game time 12.5497 on
+both, client 2's event and signal refused why=slot. A stock AddUITriggeredEvent at tick 1
+on each client is refused too (caller not named yet). Not replayed yet: conversations,
+mission offers of slots 2+, trade, flight assist and auto roll.
+PEOPLE CONFIG WITH COMBAT (build145/146): overlay-Play42P = Play41P + pilot fire
+'record', death + suit + respawn 300, crash note, missiles family. play42p-long (2
+clients, demo scripts, 36002 ticks): relay pass, 0 mismatches, census 0 at ten captures
+1800..34200. p4-people (4 clients, the same keys, 27002 ticks): relay pass, census 0 at
+9000/18000/27000 for 1v2, 1v3, 1v4. Combat (overlay-Play42F2: hostile factions, ships 800
+m apart, aim + scripted gun fire, victim decides hits): play42f4 6300 ticks relay pass,
+census 0 at 3 captures, slot 1 died 6 times and came back 5 times, 70 hits applied.
+Missiles never launched (both test ships have no launchers: missiles=0/0/empty/no
+target). Fixed on the way: a respawn needs md/native_gate_pilot_respawn.xml in the
+overlay (play42f stopped 163 respawn_no_ship), and the stock capture stopped 62 ticks
+past the pilot window with local_ring_full (b30696d9: no capture after the window).
+Open: play42f3 parted at tick 13 (client 1 ran one more due event at tick 10, then a
+GM_Patrol find at 12 differed), 1 of 8 boots of that config; overlay-Boot42 (event rows
+for 20 ticks) did not repeat it in 4 boots.
 BOTH PLAYERS SEE EACH OTHER (see3, cockpit eaa6c897 merged 10dd744c): the presented
 player kept slot 1's seat position inside slot k's cockpit room; for another ship model
 (ship_arg_s_fighter_01 vs the scout) that put the eye 0.39 m behind the pilot seat. The

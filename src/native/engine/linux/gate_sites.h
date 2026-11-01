@@ -282,6 +282,38 @@
 #define LX_LL_REST_UNIT_EXIT_VA 0x1e9e6b2u   /* where that loop leaves: frees the list [rsp+0x60] if any, returns */
 #define LX_LL_REST_DEPLOYABLE_VA 0x1df8193u  /* the deployable rest in map order, in 0x1df78e0 (Windows 0x5043ce in 0x504080) */
 #define LX_LL_REST_DEPLOYABLE_EXIT_VA 0x1df8230u /* where that loop leaves: frees the list r14 if any, returns */
+/* Non-blocking save by fork (gate_fork_save.h, native_gate_fork_save). The serializer and the globals it reads, the
+ * locks and wait objects of the quiet point, and the bytes the child changes; every address is tied to a pinned site
+ * by check_lockstep_gate_linux_sites.py. */
+#define LX_FS_SAVE_VA 0x1cd3d30u             /* GameClass::Save(bool online) -> bool, its only caller 0xfecd77 (Windows 0x9f0dd0) */
+#define LX_FS_POSSIBLE_VA 0x1de5ef0u         /* U::IsSavingPossible(bool online) -> 1 when possible */
+#define LX_FS_PENDING_ONLINE_VA 0x3db68fcu   /* byte: the deferred-save step passes it to the serializer */
+#define LX_FS_COUNTDOWN_VA 0x3db68f8u        /* int: frames until the engine's own deferred save; 0 = none pending */
+#define LX_FS_FILE_NAME_VA 0x3db6900u        /* std::string: file name without folder and extension */
+#define LX_FS_SAVE_NAME_VA 0x3db6920u        /* std::string: display name in the save header */
+#define LX_FS_SAVE_DIR_VA 0x3e035c0u         /* std::string "save\\", relative to the personal folder */
+#define LX_FS_COMPRESS_VA 0x3d8e080u         /* byte: compresssaves (.xml.gz, else .xml) */
+#define LX_FS_FORMATTER_JOB_VA 0x3d8f111u    /* byte: XML formatting on a job thread (-nosavemultithreading clears) */
+#define LX_FS_WRITER_THREAD_VA 0x3d8f112u    /* byte: compression, signature and writes on a job thread (likewise) */
+#define LX_FS_MODIFIED_WARN_VA 0x3d8e25cu    /* byte: the one-time 'gameModified' dialog that fails one save */
+#define LX_FS_ONLINE_DONE_VA 0x3db68a3u      /* byte: 0 = a successful save goes on to 0x1d66460 (online mode, save list) */
+#define LX_FS_GAME_CLIENT_VA 0x3daab80u      /* X4::GameClient*: +0x3e0 OnlineManager (+0x1851c initialised, +0x1851d data sent) */
+#define LX_FS_UNIVERSE_VA 0x3db6948u         /* the universe; the serializer refuses without one */
+#define LX_FS_CSG_VA 0x3e50930u              /* ConstructionSequence manager*: XLib::Mutex +8, cond +0x38, pending list +0x68..+0x70 */
+#define LX_FS_JTM_VA 0x3daab88u              /* JobThreadManager*: semaphore +0x558, running +0x5bc, queue XLib::Mutex +0x5c0 */
+#define LX_FS_MASS_VA 0x3e59f60u             /* MassTrafficUpdateTask*: XLib::Mutex +0x70, parked +0xa0, wake cond +0xd8 */
+#define LX_FS_REGION_VA 0x3e50148u           /* RegionManager*: XLib::Mutex +0x138, parked +0x168, wake cond +0x1a0 */
+#define LX_FS_SOUND_VA 0x3db6c08u            /* the sound manager*: sound play 0x1a62520 returns at once when +0x78 is 0 */
+#define LX_FS_SIM_START_VA 0x3e59e20u        /* XLib::Semaphore the MoveWorker waits on between frames */
+#define LX_FS_TIMERBASE_VA 0x3db8280u        /* XLib::Mutex: TimerBase, also taken by every log line */
+#define LX_FS_EVENT_LOCK_VA 0x3eedf60u       /* XLib::Mutex: the engine event queue */
+#define LX_FS_MD_REGISTRY_VA 0x3e7e760u      /* XLib::Mutex: the MD name registry (finished cues at save entry) */
+#define LX_FS_REGION_LOCK_VA 0x3eb3a60u      /* XLib::Mutex taken in 0x12dbe60 (RegionManager's closure) */
+#define LX_FS_XML_LOCK_VA 0x3e74e80u         /* XLib::Mutex: the XML open-file table; writer busy byte +0x48, cond +0x50 */
+#define LX_FS_RP_GLOBAL_VA 0x72f87e8u        /* rpmalloc's global spin word (heaps) */
+#define LX_FS_RP_CACHE_VA 0x72f89a0u         /* rpmalloc's global span caches: a spin word at the start of each */
+#define LX_FS_RP_CACHE_STRIDE 0x6410u
+#define LX_FS_RP_CACHES 63u
 typedef struct {const char *name;uint32_t va,length;const char *sha256;} lx_site;
 static const lx_site lx_sites[]={
     {"build_id_note",0x4002fc,0x24,"563a875a9b060e74466af5da02d3ec88586b7b3f4305c4840fe4b70452d0c464"},
@@ -395,6 +427,37 @@ static const lx_site lx_sites[]={
     {"undock_state",0x118d1c0,0x17b,"79f1a74439df157a685c6f3beba3c329ccc1fc561abe265822d15939f79c2cb9"},
     {"static_value",0xd58000,0x27,"a062371a0ca71707d40dcd41e6ecfe0a219ba9e10ff58bd67f2136a3d5d76b6c"},
     {"movement_value_set",0xe7ed30,0x29,"1e1b2abccd23b0c40a35722ede28ca40d004e9cd032156a21ad90043a108f8f2"},
-    {"movement_value_ref",0xd57f00,0x5,"fe5d0803355430c1264111b6534266cc4ee3a28ac617487a8aa094b3f344c0e9"},
+    {"movement_value_ref",0xd57f00,0x5,"fe5d0803355430c1264111b6534266cc4ee3a28ac617487a8aa094b3f344c0e9"},    /* Non-blocking save by fork (gate_fork_save.h). */
+    {"fs_deferred_save_call",0xfecd70,0x10,"518c8e9be577872e9a547c40c65b934fbd0a1621906e59b62e13315a089916ab"},
+    {"fs_save_countdown",0xfebe26,0x13,"a074e5c454ced03983f74a9d9ea2974dbe80dec87c15a3201b2fd8142e0b13fa"},
+    {"fs_save_entry",0x1cd3d30,0xf1,"a17c371bce1fa3a5912b0dc8a0bb6468aa50dfa6b9cf99b8393949d6a73c475a"},
+    {"fs_save_flags",0x1cd3f3d,0x50,"614a3224682e354f52f832af330dd126a34816177833cb57af417a7ab85fb622"},
+    {"fs_save_pathing",0x1cd570b,0x90,"19a81ce818400b8d4de3bb6c663394d3a7eacb7eebc4ff82d89fc2226aef72c1"},
+    {"fs_save_online",0x1cd6042,0x40,"a57b293f3e2a6087052696188105c161977a294e04478a224b14df6bcfa30cc9"},
+    {"fs_save_finish",0x1cd61fc,0x50,"707b1a44a229bc7486d6c1bccc9fb06c1748e7577f00c6f5632393de0c0b321c"},
+    {"fs_save_after_rename",0x1cd6365,0x52,"234510abdfc9215b1e2b86eb1476cd033bef156de51aa98c4a2661cea55220a5"},
+    {"fs_modified_check",0xfb4b80,0xd2,"d340ee5309a7fbc5525accb9bf176474f450ced90aa1d4c17e58565d0df57c6f"},
+    {"fs_saving_possible_head",0x1de5ef0,0x16,"d4f4984ff3792c5b3379a97a3970991da42503bc0fc415dff73d918b58fd69bc"},
+    {"fs_move_worker_frame_end",0x1212756,0x81,"fe4c2ddfeaacb214d8340ed1c0515f4096bdf26dc68ba5c077dbf0ffa9092048"},
+    {"fs_mass_park",0x11f96f9,0x41,"5e87c4b1e711ba3e1b2534555e57316dd3f3b23f0d5dbee29fe8e155edae7dc7"},
+    {"fs_region_park",0x12ef383,0x41,"0f31a4aa1f1090d7288d60138ea188592412bc427eff1e6f04b634ebf0077be6"},
+    {"fs_path_kick_wait",0x13e3679,0x9,"638179667ca1ed9799e2b5e79a668555d3eb8b0b91d727c2c7c75e73bf592a0f"},
+    {"fs_jtm_worker_loop",0x1a54e26,0x58,"659e48e845de5aabaa698640ee50831f3bad6712c11decafb35799d9f9f29ef7"},
+    {"fs_jtm_queue_head",0x1a55943,0x2f,"f1db8292c5aae2af3e6279515d8dbf6c85c9cb3d0decf365464b801035f01865"},
+    {"fs_xml_open_lock",0x1068e38,0x91,"f4049390f8b7fb2e2ea5d48090e43f0412e1785a6ff14e954e257664ddc56694"},
+    {"fs_rwgate_write",0x1a52bb0,0x24,"39775eff775d4c0a350b76bc188a2258c13d0b948c45de16fb1cc3d1abeb9b92"},
+    {"fs_rwgate_write_wait",0x1a44df0,0x3a,"e647783f45394cd4c06e1b641bdc12d8c9093df963662c028e1f5b31d90f11f1"},
+    {"fs_save_names",0x1cd4aa1,0x1f,"6692781c7674f786859c605135b3d1bb1619e68d9401d548393dd6b520718033"},
+    {"fs_sem_wait",0x1a23cc0,0x4f,"9870fec4c21bad5e9a894157ab8866e1975c028bbb050de4319105d200371619"},
+    {"fs_condvar_wait",0x1a23f70,0x1c,"7d184b24c9d31e3bb61eb32050bb342356deb00fe80742a91ffa0462f643ff85"},
+    {"fs_event_lock",0x16b866e,0xc,"825492a2f0b6eaff781e250be92875d72f085406ca6ccae33ef8a91ee0e3ec05"},
+    {"fs_md_registry_lock",0x11c69ce,0xf,"0cffcb1f6bc3b1544cb80ab72c319117c503db843121f16222ab391de08f906f"},
+    {"fs_region_lock",0x12dbf5c,0xc,"08e122ec7d2cda34daf251e301c909189b41ada47b08e6e9a31e17a03d9fdd7f"},
+    {"fs_rp_global_lock",0x24388a4,0x15,"4b804ac9fceb5fd2eef79ac814b37b798d0e8d7183e015a0020258d14dfb6f4a"},
+    {"fs_rp_cache_select",0x2438bd7,0x31,"591e6fcb7e004d8e0c297bf20f96380ba9d13ea3dc4f8121bfb4011d6bd226c8"},
+    {"fs_rp_cache_lock",0x2438cf0,0x20,"c2285541ee2e93dc7055b95d2d42ee38fb7c3bd7134c7183414ed879cdd8cf77"},
+    {"fs_sound_play_head",0x1a62520,0x60,"224dae565497fc9f6fd890b0f9b79fee64de293038204f9323263da729fbf5ea"},
+    {"fs_sound_manager_use",0xa69e6a,0x10,"032cfe9051445ae0fc464dc76e7ad7a776e67415c2fdff02bb5e185b18714393"},
+    {"fs_save_dir_init",0x8a0d60,0x1d,"9636ee83c514904556579b8ea6712c5c29074ee53204809a25883ad0f17728d0"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */

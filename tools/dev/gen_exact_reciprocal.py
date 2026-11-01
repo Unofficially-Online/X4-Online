@@ -27,21 +27,26 @@ becomes kinds 3 and 6: sqrtss r,s, then movss e,r and r[0] = 1/r[0] at the rcpss
 chain is kept only when both halves lie in accepted windows; otherwise both are
 rewritten one by one (kinds 2 and 1).
 
-Method: recursive descent from every function root (Windows .pdata roots and the
-WINDOWS_EXTRA_ROOTS below; Linux FDE starts, GCC jump-table targets and C++ landing
+Method: recursive descent from every function root (Windows .pdata roots, the switch arms of their
+MSVC jump tables and the leaf functions; Linux FDE starts, GCC jump-table targets and C++ landing
 pads), direct branches followed inside the function; calls, returns, indirect jumps and
-int3 end a path, so only reachable instructions qualify. On Windows this misses two kinds
-of code (FR26): MSVC leaf functions, which have no .pdata entry, and switch arms reached
-only through an MSVC jump table (the descent does not follow `jmp reg`). --inventory
-lists every approximate instruction of both kinds that the table leaves as it is;
-WINDOWS_EXTRA_ROOTS adds the few whose results reach the AI position chain. A window is refused when it would contain a branch, call,
-return, int3, an instruction that writes RSP, a decoded-path gap, or an inner
-instruction boundary that is a branch target, a function boundary, a jump-table or
-landing-pad target or (Windows) any 32-bit value in the image's data or aligned in
-.text, (Linux) any 64-bit pointer in its data; or when it touches another patch: on
-Windows within 16 bytes of a gate module's patch reference (gate pins over a window
-keep passing: hash_ok and read_local see the original bytes while installed), on Linux
-the x4mp-agent's pinned sites and the preload's decimal readers.
+int3 end a path, so only reachable instructions qualify. MSVC leaf functions have no unwind
+data, hence no .pdata entry: they are found as 16-byte aligned starts after padding or a ret
+that decoded direct calls/jmps or 8-byte data pointers (vtables) name, to a fixed point
+(FR27; FR26 listed five such roots by hand). An MSVC switch (cmp i,N; ja; mov r32,[base+i*4+T];
+add r64,base; jmp r64) is followed when its N+1 table entries all land in the function.
+--inventory lists every approximate instruction the table still leaves as it is. A window
+is refused when it would contain a branch, call, return, int3, an instruction that writes
+RSP, a decoded-path gap, or an inner instruction boundary that is a branch target, a
+function boundary, a jump-table or landing-pad target or (Windows) any 32-bit value in the
+image's data or aligned in .text, (Linux) any 64-bit pointer in its data; or when it touches
+another patch: on Windows within 16 bytes of a gate module's patch reference (gate pins
+over a window keep passing: hash_ok and read_local see the original bytes while
+installed), on Linux the x4mp-agent's pinned sites and the preload's decimal readers.
+Where the window forward from an instruction meets such an inner boundary, the window
+that ENDS with the instruction is tried instead (the fewest whole instructions before it
+on the same path; FR27): its end is where the trampoline jumps back, so that boundary
+may be anything.
 
   python tools/dev/gen_exact_reciprocal.py --windows <X4.exe> [--check | --inventory]
   python tools/dev/gen_exact_reciprocal.py --linux <X4> [--check]
@@ -49,6 +54,7 @@ the x4mp-agent's pinned sites and the preload's decimal readers.
 approximate instructions the Windows table does not rewrite.
 """
 import argparse
+import bisect
 import collections
 from pathlib import Path
 import re
@@ -71,18 +77,10 @@ COPIES = ('movaps', 'movups', 'movapd', 'movupd', 'movdqa', 'movdqu')
 CHAIN_REACH = 16
 STOP = ('ret', 'int3', 'hlt', 'ud2')
 MAX_INSNS = 4
-# Windows roots the .pdata descent cannot reach whose rcp(rsqrt) results feed the AI position chain (FR25/FR26: the
-# GetSafePos radius this.ship.size + 200m and this.assignedcontrolled.safesize/2, and the create_position offset
-# this.assignedcontrolled.speed + 10m, whose Windows values were rcpss(rsqrtss(x)) where Linux has sqrt(x)). A leaf
-# (no .pdata entry) is decoded from its start to the next .pdata function; a switch arm with its function's ranges.
-WINDOWS_EXTRA_ROOTS = (
-    (0xb34d0, 'leaf: bounding box set from half size and centre, radius +0x20 = |half| (the script size is 2 radius)'),
-    (0x6a1590, 'leaf: U::SphereBoundary vfunc 23, the bounding box of the sphere, radius +0x20'),
-    (0xd47470, 'leaf: bounding box set from three half sizes, radius +0x20'),
-    (0x14e0620, 'leaf: the script property safesize (case 0xd08ba6): |centre + sign(centre) half|'),
-    (0xcf36a2, 'switch arm of the component property evaluator 0xcedeb0 (jump table 0xd0bdf0): velocity, relvelocity, '
-               'speed, relspeed; speed and relspeed are |v| = rcp(rsqrt(v.v)) at 0xcf3897'),
-)
+# FR26's hand-listed roots, which the general leaf and switch follower must reach (windows_descent checks): the box
+# radius writers 0xb34d0, 0x6a1590, 0xd47470 and the safesize leaf 0x14e0620 (leaves), and the speed arm 0xcf36a2 of
+# the component property evaluator 0xcedeb0 (jump table 0xd0bdf0).
+FR26_ROOTS = (0xb34d0, 0x6a1590, 0xd47470, 0x14e0620, 0xcf36a2)
 # Data words equal to an inner boundary of an extra root's window only by coincidence: (value, RVA of the word). Each
 # is the first word of an UNWIND_INFO that a .pdata entry names (version 1, prolog size, code count, frame register)
 # and occurs nowhere else in the file; windows_tables verifies that before it ignores the word.
@@ -114,14 +112,16 @@ class Code:
 
 def descend(code, functions, tables=None):
     """Instructions reachable from each function's roots, and every direct branch target.
-    functions: [(roots, [(begin, end)])]. tables(ins, spans) -> extra targets of an
-    indirect jump table addressed by this instruction (Linux), or None."""
+    functions: [(roots, [(begin, end)])]. tables(ins, spans, run) -> extra targets of an
+    indirect jump table addressed by this instruction (run: the instructions decoded before it
+    on the same straight-line path, oldest first), or None."""
     decoded, targets = {}, set()
     for roots, spans in functions:
         inside = lambda a: any(b <= a < e for b, e in spans)  # noqa: E731
         todo = list(roots)
         while todo:
             a = todo.pop()
+            run = collections.deque(maxlen=8)
             while inside(a) and a not in decoded:
                 ins = code.insn(a)
                 if ins is None:
@@ -129,9 +129,10 @@ def descend(code, functions, tables=None):
                 decoded[a] = ins
                 m = ins.mnemonic
                 if tables:
-                    for t in tables(ins, spans):
+                    for t in tables(ins, spans, list(run)):
                         targets.add(t)
                         todo.append(t)
+                run.append(ins)
                 if m in STOP:
                     break
                 if m == 'jmp' or m.startswith('j') or m.startswith('loop'):
@@ -206,11 +207,41 @@ def chains(code, decoded, targets, words, marks):
     return found
 
 
+def copyable(ins):
+    """None when a window may hold this instruction next to a rewritten one, else why not."""
+    if ins.mnemonic in STOP or ins.mnemonic.startswith('j') or ins.mnemonic in ('call', 'loop', 'syscall'):
+        return 'branch'
+    if X.X86_REG_RSP in ins.regs_access()[1] or ins.mnemonic in ('push', 'pop', 'leave', 'enter'):
+        return 'rsp'
+    if ins.mnemonic in KINDS and ins.operands[1].type != X.X86_OP_REG:
+        return 'memory operand'
+    return None
+
+
+def backward(a, decoded, previous, targets, words, marks, taken):
+    """FR27: the window ENDING with the rewritten instruction at a, opened by the fewest whole instructions decoded
+    right before it on the same straight-line path (no inner boundary a branch target, function boundary or
+    referenced word, none of them already in a window, approximate or a branch); its end, a's successor, may be
+    anything since the trampoline jumps back there. Used only where the forward window met an inner target."""
+    seq, total, at = [decoded[a]], decoded[a].size, a
+    while total < 5:
+        if at in targets or at in words or at in marks:
+            return None
+        p = previous.get(at)
+        if p is None or p in taken or decoded[p].mnemonic in APPROX or copyable(decoded[p]):
+            return None
+        seq.insert(0, decoded[p])
+        total += decoded[p].size
+        at = p
+    return seq, total
+
+
 def windows(code, decoded, targets, words, marks, busy, chain=None):
     """Windows of whole instructions; chain {rsqrtss: (rcpss, end kind)} gives those halves kinds 3 and 4/5."""
     chain = chain or {}
     special = {a: SQRT for a in chain} | {b: kind for b, kind in chain.values()}
     sites = sorted(a for a, i in decoded.items() if i.mnemonic in KINDS)
+    previous = {a + i.size: a for a, i in decoded.items()}
     taken, rows, refused = set(), [], collections.Counter()
     for a in sites:
         if a in taken:
@@ -223,24 +254,29 @@ def windows(code, decoded, targets, words, marks, busy, chain=None):
             ins = decoded.get(nxt)
             if ins is None:
                 why = 'gap'
-            elif ins.mnemonic in STOP or ins.mnemonic.startswith('j') or ins.mnemonic in ('call', 'loop', 'syscall'):
+            elif copyable(ins) == 'branch':
                 why = 'branch'
             elif nxt in targets or nxt in words or nxt in marks:
                 why = 'inner target'
-            elif X.X86_REG_RSP in ins.regs_access()[1] or ins.mnemonic in ('push', 'pop', 'leave', 'enter'):
-                why = 'rsp'
-            elif ins.mnemonic in KINDS and ins.operands[1].type != X.X86_OP_REG:
-                why = 'memory operand'
             else:
-                seq.append(ins)
-                total += ins.size
+                why = copyable(ins)
+                if why is None:
+                    seq.append(ins)
+                    total += ins.size
+        start = a
+        if why == 'inner target':
+            back = backward(a, decoded, previous, targets, words, marks, taken)
+            if back:
+                seq, total = back
+                start, why = seq[0].address, None
         if why is None and len(seq) > MAX_INSNS:
             why = 'too many instructions'
-        if why is None and any(lo < a + total and a < hi for lo, hi in busy):
+        if why is None and any(lo < start + total and start < hi for lo, hi in busy):
             why = 'gate patch reference' if code.base < 0x400000 else 'other patch'
         if why:
             refused[why] += 1
             continue
+        a = start
         insns = []
         for ins in seq:
             kind = special.get(ins.address, KINDS.get(ins.mnemonic, 0))
@@ -276,7 +312,7 @@ def chain_line(kept, dropped):
             (f' ({dropped} not: a half outside the windows)' if dropped else '') + '.')
 
 
-def render(rows, refused, sites, covered, linear, kept, dropped, linux=False, roots=0):
+def render(rows, refused, sites, covered, linear, kept, dropped, linux=False, roots=(0, 0)):
     extra = ((', 5 rcpss c,r closing a copied chain (r[0] = 1/r[0])' if kept[1] else '') +
              (', 6 rcpss e,r closing a chain into e (movss e,r; r[0] = 1/r[0])' if kept[2] else ''))
     kinds = (' * instruction {offset, length, kind, RIP displacement offset}; kind 0 copy, 1 rcpss, 2 rsqrtss,',
@@ -293,10 +329,10 @@ def render(rows, refused, sites, covered, linear, kept, dropped, linux=False, ro
                'static const xrcp_window xrcp_linux_windows[XRCP_LINUX_WINDOWS]={']
     else:
         out = ['/* Generated by tools/dev/gen_exact_reciprocal.py for X4.exe 9.00 (SHA-256 19750a65...6891). Do not edit.',
-               f' * {sites} rcpss/rsqrtss instructions reachable from the .pdata roots and {roots} extra roots ({linear} by',
-               ' * linear sweep of the .pdata ranges; leaf functions have none: --inventory lists the rest); '
-               f'{covered} rewritten in',
-               f' * {len(rows)} windows; refused: ' + (', '.join(f'{k} {v}' for k, v in sorted(refused.items())) or 'none') + '.',
+               f' * {sites} rcpss/rsqrtss instructions reachable from the .pdata roots, {roots[1]} switch tables and {roots[0]}',
+               f' * leaf functions ({linear} by linear sweep of the .pdata ranges, which hold no leaf; --inventory lists the rest);',
+               f' * {covered} rewritten in {len(rows)} windows; refused: ' +
+               (', '.join(f'{k} {v}' for k, v in sorted(refused.items())) or 'none') + '.',
                chain_line(kept, dropped),
                ' * Row: window RVA, length, instruction count, FNV-1a 64 of the original bytes, then per',
                *kinds,
@@ -322,22 +358,117 @@ def linear_count(code, spans):
 # ---------------------------------------------------------------- Windows
 def leaf_end(pe, code, rva):
     """End of the code after rva that no .pdata entry covers: the next entry's begin (or the end of .text)."""
-    later = [b for b, _, _ in pe.entries if b > rva]
-    return min(later) if later else code.base + code.size
+    i = bisect.bisect_right(pe._starts, rva)
+    return pe._starts[i] if i < len(pe._starts) else code.base + code.size
 
 
-def extra_functions(pe, code):
-    """WINDOWS_EXTRA_ROOTS as descent functions; a leaf must start right after padding or a ret."""
-    functions = []
-    for root, _ in WINDOWS_EXTRA_ROOTS:
-        inside = pe.function_of(root)
-        if inside:
-            functions.append(([root], pe.ranges(inside[0])))
-        else:
-            if code.bytes[root - 1 - code.base] not in (0xcc, 0xc3):
-                raise SystemExit(f'extra root {root:#x} does not start a function')
-            functions.append(([root], [(root, leaf_end(pe, code, root))]))
-    return functions
+def gpr(name):
+    """The 64-bit register a general-purpose register name belongs to (eax -> rax, r8d -> r8)."""
+    if re.fullmatch(r'e[a-z]{2}', name or ''):
+        return 'r' + name[1:]
+    if re.fullmatch(r'r\d+[dwb]', name or ''):
+        return name[:-1]
+    return name
+
+
+def msvc_jump_tables(pe, code, followed):
+    """FR27: descent callback for MSVC x64 switches, `cmp i, N; ja default; (cdqe | movsxd r, i | mov r, i |
+    lea b, [__ImageBase])*; mov r32, [b + r*4 + T]; add r64, b; jmp r64`, whose table at RVA T holds N+1 int32 RVAs.
+    The arms are followed only when the whole pattern holds, the index is the compared value, nothing else writes it
+    or the base in between, and all N+1 entries land in the function's own ranges (the base is then the image base);
+    otherwise the switch stays unreached (--inventory lists what that leaves). followed {mov: (T, N+1)}."""
+    def tables(ins, spans, run):
+        if ins.mnemonic != 'mov' or len(ins.operands) != 2:
+            return ()
+        dst, src = ins.operands
+        if dst.type != X.X86_OP_REG or src.type != X.X86_OP_MEM or src.size != 4 or src.mem.scale != 4 or \
+                not src.mem.base or not src.mem.index or src.mem.segment or src.mem.disp <= 0:
+            return ()
+        name = ins.reg_name
+        base, index, out = gpr(name(src.mem.base)), gpr(name(src.mem.index)), gpr(name(dst.reg))
+        if base in ('rip', 'rsp'):
+            return ()
+        add = code.insn(ins.address + ins.size)
+        jump = add and code.insn(add.address + add.size)
+        if not (add and add.mnemonic == 'add' and add.op_str == f'{out}, {base}' and jump and jump.mnemonic == 'jmp' and
+                jump.op_str == out):
+            return ()
+        count, related = None, set()
+        for k in range(len(run) - 1, 0, -1):
+            cmp, ja = run[k - 1], run[k]
+            if ja.mnemonic != 'ja' or cmp.mnemonic != 'cmp' or cmp.operands[0].type != X.X86_OP_REG or \
+                    cmp.operands[1].type != X.X86_OP_IMM:
+                continue
+            related = {gpr(name(cmp.operands[0].reg))}
+            for b in run[k + 1:]:
+                ops = b.operands
+                if b.mnemonic == 'cdqe' and 'rax' in related:
+                    continue
+                if b.mnemonic in ('movsxd', 'mov') and len(ops) == 2 and all(o.type == X.X86_OP_REG for o in ops) and \
+                        gpr(name(ops[1].reg)) in related:
+                    related.add(gpr(name(ops[0].reg)))
+                    continue
+                if b.mnemonic == 'lea' and ops[0].type == X.X86_OP_REG and gpr(name(ops[0].reg)) == base and \
+                        ops[1].mem.base == X.X86_REG_RIP and b.address + b.size + ops[1].mem.disp == 0:
+                    continue
+                if {gpr(name(r)) for r in b.regs_access()[1]} & (related | {base}):
+                    related = set()
+                    break
+            count = cmp.operands[1].imm + 1
+            break
+        if count is None or index not in related or not 0 < count <= 4096:
+            return ()
+        raw = pe.read(src.mem.disp, 4 * count)
+        if not raw or len(raw) != 4 * count:
+            return ()
+        entries = struct.unpack(f'<{count}I', raw)
+        if not all(any(b <= t < e for b, e in spans) for t in entries):
+            return ()
+        followed[ins.address] = (src.mem.disp, count)
+        return entries
+    return tables
+
+
+def windows_descent(pe, code):
+    """FR27: every function's reachable instructions: the .pdata roots with their MSVC switch arms, then the leaf
+    functions (no unwind data, hence no .pdata entry) to a fixed point. A leaf start is a 16-byte aligned address
+    after int3 padding or a ret, outside every .pdata range, that a decoded direct call or jmp targets or an 8-byte
+    pointer in the image's data names (vtables, callbacks); a leaf is decoded from its start to the next .pdata
+    function. Returns (decoded, targets, leaves, followed switch tables)."""
+    import numpy as np
+    followed = {}
+    tables = msvc_jump_tables(pe, code, followed)
+    functions = [([root], pe.ranges(root)) for root in sorted({r for _, _, r in pe.entries})]
+    decoded, targets = descend(code, functions, tables)
+    lo, hi = code.base, code.base + code.size
+    named = set()
+    for name, va, size, off, raw_size, flags in pe.sections:
+        if name == '.text':
+            continue
+        q = np.frombuffer(pe.data[off:off + raw_size // 8 * 8], dtype='<u8')
+        named.update((q[(q >= 0x140000000 + lo) & (q < 0x140000000 + hi)] - 0x140000000).tolist())
+
+    def leaf_start(s):
+        return lo < s < hi and s % 16 == 0 and not pe.function_of(s) and code.bytes[s - 1 - lo] in (0xcc, 0xc3)
+
+    def direct(instructions):
+        out = set()
+        for ins in instructions:
+            if ins.mnemonic in ('call', 'jmp') and ins.operands and ins.operands[0].type == X.X86_OP_IMM:
+                out.add(ins.operands[0].imm)
+        return out
+    leaves, fresh = set(), {s for s in named | direct(decoded.values()) if leaf_start(s)}
+    while fresh:
+        leaves |= fresh
+        more, more_targets = descend(code, [([s], [(s, leaf_end(pe, code, s))]) for s in sorted(fresh)], tables)
+        new = {a: i for a, i in more.items() if a not in decoded}
+        decoded.update(new)
+        targets |= more_targets
+        fresh = {s for s in direct(new.values()) if leaf_start(s)} - leaves
+    for root in FR26_ROOTS:
+        if root not in decoded:
+            raise SystemExit(f'FR26 root {root:#x} not reached by the descent')
+    return decoded, targets, leaves, followed
 
 
 def windows_image(path):
@@ -348,12 +479,10 @@ def windows_image(path):
 
 def windows_tables(path):
     pe, code = windows_image(path)
-    functions = [([root], pe.ranges(root)) for root in sorted({r for _, _, r in pe.entries})]
-    extra = extra_functions(pe, code)
-    decoded, targets = descend(code, functions + extra)
+    decoded, targets, leaves, followed = windows_descent(pe, code)
     pins, refs, unresolved = lm.extract_sites(lm.gate_files(ROOT / 'src/native/engine'))
     busy = sorted((r['rva'] - 16, r['rva'] + 16) for r in refs if r['rva'] is not None)
-    marks = {b for b, _, _ in pe.entries} | {e for _, e, _ in pe.entries} | {roots[0] for roots, _ in extra if not pe.function_of(roots[0])}
+    marks = {b for b, _, _ in pe.entries} | {e for _, e, _ in pe.entries} | leaves
     words = referenced_words(pe, code)
     table = pe.read(*pe.exception)
     unwinds = {struct.unpack_from('<I', table, i + 8)[0] for i in range(0, len(table) - 11, 12)}
@@ -364,7 +493,7 @@ def windows_tables(path):
         words.discard(value)
     rows, refused, sites, covered, kept, dropped = rewrite(code, decoded, targets, words, marks, busy)
     return render(rows, refused, sites, covered, linear_count(code, [(b, e) for b, e, _ in pe.entries]), kept, dropped,
-                  roots=len(extra)), rows
+                  roots=(len(leaves), len(followed))), rows
 
 
 def windows_inventory(path, rows):
@@ -375,8 +504,7 @@ def windows_inventory(path, rows):
     import numpy as np
     pe, code = windows_image(path)
     covered = {a + off for a, _, insns, _ in rows for off, _, kind, _ in insns if kind}
-    functions = [([root], pe.ranges(root)) for root in sorted({r for _, _, r in pe.entries})]
-    decoded, _ = descend(code, functions + extra_functions(pe, code))
+    decoded, _, _, _ = windows_descent(pe, code)
     found = {}
     for b, e, root in pe.entries:
         for ins in code.md.disasm(code.bytes[b - code.base:e - code.base], b):
@@ -500,7 +628,7 @@ def linux_tables(path):
     pads = landing_pads(elf)
     jump_targets = set()
 
-    def tables(ins, spans):
+    def tables(ins, spans, run):
         """lea reg, [rip+T] with T in .rodata: T plus int32 entries that land in the function."""
         if ins.mnemonic != 'lea' or 'rip' not in ins.op_str:
             return ()

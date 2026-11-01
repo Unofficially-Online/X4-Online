@@ -115,6 +115,45 @@ static void test_fp_redirect_linux(void) {
     world_identity_installed=0;world_identity_count=0;
     printf("fp redirect prologue/sites/flow/rows/restore PASS\n");
 }
+/* FR27: the solver's own entry line on the synthetic image (its movabs, then jmp [rip] -> a stand-in native solver): the
+ * known answers, arm refusals, the call through the entry in 'redirect' (native on a copy, ours on the scene) and in
+ * 'shadow', Linux's x flag 0 counted, ownership, the exact restoration. */
+static unsigned tlsp_calls;
+static uint64_t tlsp_native(void *vec,float *p,float *dir,uint32_t x,uint32_t y,float *move,float r,float a5,float a9) {
+    (void)x;(void)move;++tlsp_calls;uintptr_t v[2];memcpy(v,vec,16);
+    fsp_solve((unsigned char*)v[0],(v[1]-v[0])/FSP_BOX,p,r,dir,a5,(int)(y&0xffu),NULL,a9);return 0;
+}
+static void test_fsp_linux(void) {
+    assert(fsp_selftest() && x4pm_kat()==X4PM_KAT_EXPECTED);
+    unsigned char code[24];memcpy(code,lxc_sp_entry_original,LX_SC_SP_SOLVER_PROLOGUE);code[10]=0xff;code[11]=0x25;memset(code+12,0,4);
+    void *target=(void*)tlsp_native;memcpy(code+16,&target,8);tl_write(LX(LX_SC_SP_SOLVER_VA),code,sizeof(code));
+    reset_session();stats.active=1;boot_mode=1;boot_phase=0;stats.issued=0;ui_thread=GetCurrentThreadId();
+    thunk=make_thunk();assert(thunk);
+    fr_installed=0;assert(!fsp_arm(FSP_REDIRECT) && !strcmp(fsp_stage,"refused"));
+    fr_installed=1;assert(!fsp_arm(7) && !strcmp(fsp_stage,"mode") && !lxc_sp_entry_done && lxf_sp_state()==0);
+    assert(fsp_arm(FSP_REDIRECT) && fsp_installed && !fsp_route && lxf_sp_state()==1 && fr_owned() && fsp_arm(FSP_REDIRECT) && !fsp_arm(FSP_SHADOW));
+    unsigned char *at=LX(LX_SC_SP_SOLVER_VA);int32_t rel;memcpy(&rel,at+1,4);
+    assert(at[0]==0xe9 && at+5+rel==thunk+LXF_SP_ENTRY && !memcmp(thunk+LXF_SP_TRAMP,lxc_sp_entry_original,LX_SC_SP_SOLVER_PROLOGUE));
+    typedef uint64_t (*entry_fn)(void *,float *,float *,uint32_t,uint32_t,float *,float,float,float);
+    const entry_fn entry=(entry_fn)(void*)at;
+    static __attribute__((aligned(16))) unsigned char boxes[3*FSP_BOX];__attribute__((aligned(16))) float p[4],dir[4];
+    static const uint32_t pa[4]={0x404dcb7cu,0x40626557u,0xbf030421u,0x3f800000u},da[4]={0x3f6ee60au,0xbd9c4598u,0xbeb3cc79u,0},
+        oa[4]={0x41f34a4au,0x3efe2f08u,0x41e3b01du,0x3f800000u};
+    uintptr_t vec[3]={(uintptr_t)boxes,(uintptr_t)(boxes+sizeof(boxes)),(uintptr_t)(boxes+sizeof(boxes))};
+    for(int mode=FSP_REDIRECT;mode>=FSP_SHADOW;mode--) {
+        fsp_mode=mode;memcpy(boxes,fsp_kat_a_boxes,sizeof(boxes));memcpy(p,pa,16);memcpy(dir,da,16);
+        entry(vec,p,dir,mode==FSP_SHADOW?0u:1u,1u,NULL,fr_f32(0x412ae48eu),fr_f32(0x3f96a609u),0.0f);
+        assert(!memcmp(p,oa,16));
+    }
+    assert(tlsp_calls==2 && fsp_calls==2 && fsp_ours==1 && fsp_n==2 && fsp_diff==0 && fsp_order==0 && fsp_x0==1);
+    char out[2048];assert(fr_status(out,sizeof(out))>0 && strstr(out," solver=shadow sp_stage=armed sp_entry=own sp_calls=2 sp_ours=1 sp=0:0:2 sp_order=0 sp_move=0 sp_invalid=0 sp_x0=1 sp_nocopy=0"));
+    /* ownership, then the restoration */
+    unsigned __int128 line,flipped;memcpy(&line,at,16);flipped=line^((unsigned __int128)1<<(8*2)); /* the jump's rel32 */
+    assert(gate_code_swap128(at,line,flipped) && !fr_owned() && gate_code_swap128(at,flipped,line) && fr_owned());
+    fr_restore();assert(!fsp_installed && fsp_mode==FSP_OFF && lxf_sp_state()==0 && !fr_installed && !memcmp(at,code,sizeof(code)));
+    fr_restored=0;fr_stage="idle";fsp_stage="idle";fsp_calls=fsp_ours=fsp_n=fsp_diff=fsp_max_ulp=fsp_order=fsp_move=fsp_invalid=fsp_x0=fsp_nocopy=0;
+    printf("fp redirect FR27 solver: known answers, own entry line, redirect/shadow through it, x flag, ownership, restore PASS\n");
+}
 /* The executable's bytes: what the hooks rely on, its L and M against ours, the patch and its exact restoration. */
 /* FR23: the Linear step's velocity block 0x13ee864..0x13ee893 entered with r15 = the bank, xmm4 = s (it spills s to [rsp]);
  * 0x13ee898 (after the store) jumps to test_lxv_back. */

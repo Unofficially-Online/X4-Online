@@ -10,7 +10,7 @@ class WireThreeProbeTests(unittest.TestCase):
     def setUp(self, config="slot='p3',native_gate_clients=3"):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         self.lua.execute('''
-          X4LAN_CONFIG={native_gate_test=true,test_profile='45841',%s,
+          X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',%s,
             native_gate_hash='clock',native_gate_snapshot_sha=string.rep('a',64),
             port=12345,token=string.rep('c',32)}
           X4LAN_SHA256={digest=function(data) hashed=data;return string.rep('b',64) end}

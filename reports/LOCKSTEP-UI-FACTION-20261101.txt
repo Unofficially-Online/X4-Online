@@ -1,0 +1,444 @@
+LOCKSTEP UI REPLAY, FAMILY 'FACTION': THE PLAYER FACTION'S SETTINGS FOR EVERY SLOT, COOP AND FACTIONS
+1 November 2026 | offline work on branch contrib/ferrite-faction (base: smoke 0bb57289). Static analysis of the pinned Windows X4.exe
+9.00 (RVAs, base 0x140000000) and of the extracted stock UI scripts and ffi prototypes in x4-re; nothing of them is copied here
+(API names, menu function names and RVAs only). No X4 was launched.
+[F] = read in the binary or the scripts; [I] = inference; "live" = what only a native run can show.
+Builds on reports/LOCKSTEP-UI-REPLAY-20261030.txt (the replay), LOCKSTEP-UI-GUARD-20261101.txt (the guard, its claims),
+LOCKSTEP-UI-TRADE-20261101.txt (the money model and the faction scope), LOCKSTEP-UI-BUILD-20261101.txt (claims, parts).
+
+0. RESULT (default off: native_gate_ui_replay lists 'faction', bit 32768; true does not include it; needs native_gate_ui_guard;
+  stop reason 164 as the replay)
+  - The player information menu's faction settings and the map's per-ship behaviour settings become records of the client's slot
+    and run on every client at capture tick + delay, slot order and call order, through X4's own functions: blacklists, fight
+    rules and trade rules (create, update, remove, the faction's defaults, a controllable's own), default responses to signals
+    (the faction's and a controllable's override and reset), the faction's build method, default weapon mode and name, the
+    player's own settings (ships and taxi wait for the player, global loadout level, trade loop cargo reservation, illegal wares,
+    logo, paint and clothing theme), station supply overrides, production and processing module pause, a defensible's resupply
+    level. 33 FFI exports, all taken as guard CLAIMS (no 'covered' bit, no new patch: the guard's hooks and pins).
+  - Rule IDs come out the same everywhere: X4 numbers rules with one counter per world manager (section 2), the replayed creates
+    run in the same order on every client. The capturing menu, which reads the new ID at once, gets a token; every client maps
+    token -> X4's ID when the create runs, and later records naming the token run with the real ID.
+  - Coop: every slot is `player`; any slot changes the shared player faction's settings for everyone. Factions mode: each slot's
+    records run in its faction scope (g_PlayerFaction = x4lan_playerk for the call, the trade family's scope), "player" faction
+    arguments and "player" in a rule's faction list become x4lan_playerk; a rule, station, ship or module must be the slot
+    faction's (else refused not_owner on every client). Seven settings live on X4's player entity, not the faction: coop every
+    slot, factions mode slot 1 only (section 3c).
+  - Factions mode, client k's own menus: a faction view (section 4) runs the player information menu's display functions and the
+    stock rule lists with X4's player faction = x4lan_playerk, so the person sees and edits the own faction's rules.
+  - The receipt joins the digest: the managers' counters and sizes, each slot faction's rule counts, the player's settings and a
+    hash of every record run or skipped: a setting that took on one client only is a mismatch at that tick.
+
+1. WHAT IS REPLAYED (lockstep_ui_faction.h uifac_claims; stock call sites [F] in menu_playerinfo.lua, menu_map.lua,
+  menu_station_overview.lua). Spec letters: I component (the subject), r rule ID, s string, F faction ID, b bool, f float,
+  B/G/T BlacklistInfo2/FightRuleInfo/TradeRuleInfo (by value, i.e. by pointer on Win64), L UILogo, O SupplyOverride* + count.
+  The menu's answer at capture: void nothing, bool true, a create its token.
+  entry (spec)                                         | call site                                       | answer  | slots
+  CreateBlacklist2 (B) UpdateBlacklist2 (B)            | playerinfo buttonBlacklistConfirm               | token/- | every
+  RemoveBlacklist (r) SetPlayerBlacklistDefault (rssb) | playerinfo Remove / Confirm (right behind create)| -       | every
+  SetControllableBlacklist (Irsb)                      | map dropdownOrdersBlacklist, checkbox override   | -       | every
+  CreateFightRule (G) UpdateFightRule (G)              | playerinfo buttonFightRuleConfirm               | token/- | every
+  RemoveFightRule (r) SetPlayerFightRuleDefault (rsb)  | playerinfo                                      | -       | every
+  SetControllableFightRule (Irsb)                      | map dropdownOrdersFightRule, checkbox override  | -       | every
+  CreateTradeRule (T) UpdateTradeRule (T)              | playerinfo buttonTradeRuleConfirm               | token/- | every
+  RemoveTradeRule (r) SetPlayerTradeRuleDefault (rsb)  | playerinfo                                      | -       | every
+  SetDefaultResponseToSignalForFaction2 (sbsFs)        | playerinfo global standing orders, map          | true    | every
+  ResetDefaultResponseToSignalForFaction (sFs)         | playerinfo                                      | -       | every
+  SetDefaultResponseToSignalForControllable (sbsI)     | map / playerinfo, controllable override         | true    | every
+  ResetResponseToSignalForControllable (sI)            | map / playerinfo (reset; the menu logs on false)| true    | every
+  SetFactionBuildMethod (Fs) SetFactionDefaultWeaponMode (Fs) | playerinfo                              | -       | every
+  SetPlayerFactionName (s)                             | playerinfo (g_PlayerFaction 0x1b93f0 [F])       | -       | every
+  SetPlayerShipsWaitForPlayer, SetPlayerTaxiWaitsForPlayer, SetPlayerTradeLoopCargoReservationSetting (b),
+  SetPlayerGlobalLoadoutLevel (f, xmm0), SetPlayerIllegalWare (sb), SetPlayerLogo (L), SetPlayerPaintTheme,
+  SetPlayerClothingTheme (s)                           | playerinfo                                      | -       | coop every;
+                                                                                                                       factions: slot 1
+  UpdateSupplyOverrides (IOn)                          | station_overview (supply)                       | -       | every
+  PauseProcessingModule, PauseProductionModule (Ib)    | station_overview (module pause)                 | -       | every
+  SetDefensibleLoadoutLevel (If, xmm1)                 | map dropdownOrdersResupply / override checkbox  | -       | every
+  Every spec and return was compared with the stock prototypes (x4-re data/x4_ffi.h, test), every struct layout with the stock
+  typedefs under LuaJIT (test; and at the arming against the menus' own cdefs, which refuses on a difference).
+
+2. RULE IDS: HOW X4 ALLOCATES THEM AND WHY THEY ARE THE SAME EVERYWHERE [F]
+  - Three world managers (pointers): blacklists [0x6cf1850], fight rules [0x6cf1878], trade rules [0x6cf17d8]. A create takes
+    ++counter, the manager's first dword, as the new ID: 0x371370 (`inc dword [rcx]`, CreateBlacklist2 -> 0x371370 with
+    g_PlayerFaction as the owner), CreateFightRule inline at 0x179285 (owner g_PlayerFaction stored at the rule's +0), 0x807760
+    (CreateTradeRule; owner g_PlayerFaction at +0). The other callers of the two create functions are CreateBlacklist (v1, no
+    stock menu calls it), SetContainerBuildAllowedFactions (0x1dc2a0, no stock menu calls it) and 0x11c7810 (not a UI path [I]).
+  - The rules sit in a tree per manager: header at +0x10 (+0x18 root, +0x30 leftmost, +0x38 count), node +8/+0x10 children,
+    +0x20 the ID, +0x28 the rule, the rule's +0 its owner faction (the listers 0x371280 / 0x807670 and the lookups of
+    RemoveBlacklist / RemoveFightRule / RemoveTradeRule read exactly these; all pinned). A remove erases the node and
+    decrements the count (0x371580, 0x808d60, 0x807930); the counter never goes back.
+  - So: the save gives every client the same counters; the simulation's own creates (if any) run in the simulation alike; the
+    replayed creates run in the probe's frame in the same order everywhere -> the same IDs. The receipt carries each counter
+    and size: a create that took on one client only is a mismatch at that tick.
+  - The capturing menu (menu_playerinfo.lua buttonBlacklistConfirm and its fight/trade twins) stores the create's answer as the
+    edited rule's ID and sets the defaults with it in the same click; later clicks (confirm again, remove) use the stored ID.
+    A predicted real ID could be wrong (another slot's create can apply first), so the answer is a token
+    0x7f000000 | slot << 16 | sequence (int32, never a real ID, nonzero so the menu goes on). The record of a create carries its
+    token; at the apply every client maps token -> X4's answer (a ring of 256); a later record of any kind naming a token runs
+    with the real ID, is skipped `token` when nobody mapped it (another client's sequence, evicted) and `depends` when X4 answered
+    0. A record whose token names another slot is malformed (stop). The same on every client: the map is filled at the apply.
+  - What the person sees on the capturing client: the edited rule stays on screen with its token until the menu re-reads the
+    list (the stock list then shows the real ID); confirming or removing it again works through the token.
+
+3. COOP, FACTIONS, AND WHO MAY CHANGE WHAT
+3a The faction scope (reused from lockstep_ui_trade.h uitrade_scope_enter / _leave, its pins checked at this family's arming):
+  every record of slot k runs with g_PlayerFaction = the owner of slot k's ship (coop and slot 1: `player`, nothing written).
+  [F] what reads g_PlayerFaction: the three creates (the new rule's owner), SetPlayer{Blacklist,FightRule,TradeRule}Default (the
+  faction's default table, faction data +0x280 +0x240..), SetPlayerFactionName (0x9d9f00 on g_PlayerFaction), the module pause
+  setters (their owner check [I]). The scope's counters (scopes= in UI_TRADE_STATUS when trade is armed) count both families.
+3b Faction ID arguments [F]: SetFactionBuildMethod, SetFactionDefaultWeaponMode, SetDefaultResponseToSignalForFaction2 and
+  ResetDefaultResponseToSignalForFaction look the faction up by name in g_FactionDB (FNV-1a of the ID), so "player" is the
+  real player faction whatever g_PlayerFaction is. The run rewrites "player" to the slot faction's ID (the Lua half reads it
+  from the slot ship's owner; the native half stops with ui_faction_view if that reading and the scope disagree); any other
+  faction ID is refused not_owner. "player" inside a blacklist's, fight rule's or trade rule's faction list becomes the slot
+  faction too (the stock menu shows `player` as "your faction"); other faction IDs in the lists are kept.
+3c The player entity's settings [F]: SetPlayerShipsWaitForPlayer, SetPlayerTaxiWaitsForPlayer, SetPlayerGlobalLoadoutLevel and
+  SetPlayerTradeLoopCargoReservationSetting write [[0x3d198f8]+0x230] +0x8a6b4 / +0x8a6b5 / +0x8a6a8 / +0x8a720;
+  SetPlayerIllegalWare its ware set (+0x8a6d0); SetPlayerPaintTheme / ClothingTheme call the entity (0x70a720 / 0x70a910);
+  SetPlayerLogo writes the logo into the entity's owner faction (vfunc +0x1610, `player` for X4's player). The canonical apply
+  changes X4's own player, the one the simulation reads; none of these fields is in the slot store (lockstep_virtual_players.h),
+  so every client's menu shows the shared value. Coop: every slot changes them (shared). Factions mode: x4lan_playerk has no
+  entity the simulation reads for its ships [I], so slots 2+ are refused at capture (UI_FACTION_REFUSED why=player_entity, the
+  info line, nothing on the wire) and a record that arrives anyway is skipped everywhere. With
+  native_gate_player_settings_per_slot every slot k has and changes its own values instead: section 13.
+3d Authority, at the apply on every client (the world is the same, so is the verdict):
+  rule IDs (native): a positive ID must name a rule of the slot's faction (not_owner; gone when no such rule; -1/0 pass as the
+  menu passes them: "the controllable's own setting off").
+  component subjects (Lua, as the trade family): the slot needs a ship (no_ship); the subject must not be another slot's ship
+  (slot_ship) and must be owned by the slot's faction (GetComponentData owner; not_owner). The own ship is allowed.
+  So coop: any slot edits every `player` rule, station, module and non-slot ship; factions: slot k only x4lan_playerk's.
+
+4. FACTIONS MODE: THE FACTION VIEW (client k's own UI only)
+  The stock queries the player information menu uses read g_PlayerFaction [F]: GetAllBlacklists 0x1808d0 / GetAllFightRules
+  0x182970 / GetAllTradeRules 0x1836f0 list g_PlayerFaction's rules (the listers of section 2), IsPlayer*Default read its
+  defaults, GetPlayerFactionName and GetPlayerMoney its name and account. Without a view client k would list slot 1's rules
+  (and every edit of them would be refused not_owner).
+  Built: gate.ui_faction_view(1/0) opens g_PlayerFaction = this client's slot faction around a stock Lua function, only on the
+  UI thread in a local phase (uirep_local_phase), never in an apply, a trade scope or a slot scope, never when this slot's
+  faction is the player faction (coop, slot 1: answers 0); nested calls keep the outer view (2); a close finds g_PlayerFaction
+  as it was opened (else the replay stops, 164, ui_faction_view); a pass never finds it open (ui_faction_view_open); an apply
+  inside it stops. The capture's entity rule still uses the true player faction. The Lua half wraps, once each exists:
+  PlayerInfoMenu.onShowMenu / refreshInfoFrame / onUpdate (the info frame and its empire tab: lists, details, defaults, name,
+  money, settings) and Helper.getBlackLists / getFightRules / updateTradeRules (also the map's rule dropdowns). Click handlers
+  are not wrapped: what they change is captured as above. Rows: UI_FACTION_VIEW_WRAPPED, views= in UI_FACTION_STATUS.
+  (Section 13 corrects and closes this paragraph: the build method is read through g_PlayerFaction [F GetPlayerBuildMethod
+  0x1d73b0], so the view already shows slot k's; the four getters by faction ID are rewritten with the key.)
+  Not in the view (read by faction ID "player", so they show `player`'s values on client k): the default responses to signals
+  (GetDefaultResponseToSignalForFaction2(..,"player",..)), the default weapon mode, the build method. Changing them works (the
+  apply rewrites "player"); the menu shows slot 1's value until a view for faction-ID queries exists (native query hooks).
+
+5. NATIVE AND LUA DETAILS
+  Wire: op 0x5a (Lua-run), one record per claimed call: claim | token (creates) | arguments by spec; strings with a length byte
+  (<= 254, 0xff = NULL), arrays <= 255 entries, a record <= 24 parts of 197 bytes, all parts or none (queue room checked first;
+  a part refused midway is a torn record: dropped on every client). Section rule: the family armed, index < count <= 24.
+  Apply: gate.ui_faction_part(slot, hex) reassembles per slot and walks the whole record (malformed: stop 164,
+  ui_faction_record); then the Lua half checks the subject and calls gate.ui_faction_run(slot, slot faction ID, verdict): the
+  component resolved (gone: skip; identities differ: stop ui_ref_mismatch), the faction relation (ui_faction_view on a
+  disagreement), the entity rule, faction IDs, rule IDs (tokens, owners), the scope, X4's function through its entry (the guard
+  passes an apply; a fault stops ui_fault with the scope closed), the token mapped, the hash folded.
+  Receipt (joins the pilot receipt through S.extras): |UIFAC_1:b<counter>.<size>,f..,t..;<slot 1 b.f.t>,<slot 2 b.f.t>;
+  w<ships wait><taxi waits><loop reserve>.<global loadout float bits>;h<hash>. 'x' a slot without a faction, '?' a manager that
+  cannot be read, 'w-' no player. Read only (guarded reads), in the probe's frame.
+  Rows: UI_FACTION_PINS ok=1, UI_FACTION_ARMED slot= families= claims=33 missing=<stock types not declared yet>,
+  UI_FACTION_REFUSED tick= op= why= (this client's capture refusals; info line "Multiplayer: <name> is not shared for your slot
+  yet - nothing happened." at most every 90 ticks), UI_FACTION_STATE (the receipt without the hash, plus the first signal's
+  default response of each slot faction, when it changes), UI_FACTION_STATUS every 120 ticks (captured refused out= in= torn
+  ran skipped scopes=opened/same tokens=mapped/unknown views=opened/nested/refused; lua=applied/skipped/parts/dropped/refused
+  view=), UI_FACTION_DROPPED, UI_FACTION_VIEW_WRAPPED; UI_REPLAY_APPLIED op=90 what=<name>[ scope][=<answer>] or
+  what=<name> skipped=<why>.
+  Pins (fail closed, gate.ui_faction_pins before any patch and again at the arming): the two listers, the blacklist create and
+  its constructor, CreateFightRule's inline create, the trade rule create, the four entity setters (whole bodies), plus the
+  trade family's pins (the scope, GetTrueOwner, the Ship vtable slot). The claimed entries' own pins are the guard's.
+  Stop whys (164): ui_faction_not_armed / _need_guard (first pass), ui_faction_record, ui_faction_overlap, ui_ref_mismatch,
+  ui_faction_view, ui_faction_rules_unreadable, ui_fault, ui_faction_scope, ui_faction_scope_open, ui_faction_view_open.
+
+6. WHAT STAYS REFUSED
+  Both modes (the guard, as before): the fleet group's command settings (subordinate groups, formations, fleet units, fleet name
+    and logo, ship stance, SetFleetManagement, SetEntityToPost: fleet/command work, not faction settings), the trade group's
+    TransferPlayerInventoryTo / TransferInventoryToPlayer / AddPlayerMoney (trader inventory), ClearTradeQueue,
+    ToggleFactionTradeRestriction, MakeRepairPriority (no stock menu calls them), the conflict group (diplomacy, relation boost,
+    boarding, research, terraforming).
+  Factions mode, slots 2+: the seven player-entity settings (section 3c); every rule, station, module or ship of another
+    faction (not_owner, at the apply).
+  Not guarded on purpose (local, inventory decision): player alerts, notification settings, the logbook, game options.
+
+7. COOP AND FACTIONS: WHAT WORKS WHERE
+  Scripted (no people), both modes, slots 1..N: every claim (tests on stand-ins in C, the Lua half in both modes, the script ops).
+  People, coop: the player information menu (empire tab: blacklists, fight rules, trade rules, global standing orders, the
+    faction settings, name, logo, themes, illegal wares) and the map's behaviour panel of every `player` ship and station work for
+    every person; the shared values show on both screens after the delay.
+  People, factions mode, client k: the view shows and edits x4lan_playerk's rules, defaults, name and money; new rules are
+    x4lan_playerk's; responses / weapon mode / build method change for x4lan_playerk but show slot 1's values (section 4); the
+    player's own settings are refused for slot k (slot 1 only); the map's behaviour panel of x4lan_playerk's ships and stations
+    depends on the stock map treating them as the player's (it does not [I, trade report section 8]): changes reach the replay
+    only where a stock control exists.
+
+8. RISKS AND UNKNOWNS
+  [I] The scope's and the view's premise: no simulation job reads g_PlayerFaction while the UI's slot 6 runs (the trade scope and
+      the presentation design rely on the same). The view widens the window to the player information menu's display.
+  [I] UI-side caches filled inside the view keep x4lan_playerk's data (UI only, client k only).
+  [I] The module pause setters' owner check against g_PlayerFaction (scan: they read it) and the trade loop / logo effects on
+      x4lan_playerk's ships in factions mode: unverified live.
+  [I] What the simulation does with x4lan_playerk's rules (AI of its ships reading their owner's defaults): the engine's logic.
+  [F] A token not yet applied: the capturing menu shows the edited rule under its token until it re-reads the list.
+  Known, the same everywhere: a person's two quick edits of one rule are two records (call order kept); a record skipped
+      (not_owner, gone, token, depends) changes nothing anywhere, the capturing menu may show its change until it re-reads.
+  [I] The receipt walks three small trees each frame in the probe's frame (guarded reads); a manager written concurrently by
+      a simulation thread would read torn [I: none seen writing them outside UI and MD paths].
+  Registration lines: UIREP_FAMILY_FACTION=32768 (the last bit the guard's 16-bit covered field holds; this family uses none),
+      op 0x5a, the claims line in docs/LOCKSTEP-REGISTRY.txt section 3; K.FAMILY, check_gate_options.py, native_gate_players.py;
+      uirep_event_ok, uirep_op_name, uirep_guard_pass (uifac_pass), the first pass (uifac_ready), the include; the core's attach,
+      S.ops / S.extras, the script dispatch; the probe's pins and arming; lockstep_gate.c includes and METHODs; the C tests.
+
+9. VERIFIED AND NOT
+  C (test_lockstep_ui_faction.h in build_native_gate.py --test): stand-ins of all 33 entries behind the guard's real hook and
+    shared routine, stand-in managers of X4's layout and X4's player: arming refusals (family, guard, a claim the table lacks,
+    claim_taken, claim_covered), the guard installing the claims whatever its groups; capture (nothing runs, the token, the
+    parts of a 200-faction trade rule, floats in xmm0/xmm1, unmapped and unreadable arguments refused, the entity rule); the
+    section rule; two clients applying the same wire in factions mode (the same rows, real IDs and receipt; the stand-ins see
+    x4lan_player2 as g_PlayerFaction, the token as the real ID, "player" as x4lan_player2 in arguments and lists); authority
+    (not_owner, gone, an unknown token, depends, another faction's ID, the Lua verdict, no faction, a disagreeing faction reading,
+    a gone or mismatched subject); coop (entity settings, no scope); torn, malformed, a foreign token, overlap, a fault, the
+    pass with a scope or a view left open; the view (local phase, apply, nesting, the entity rule inside it, a change inside).
+    Pinned image: all pins, every claim the export of its name with no covering family and no check-only argument, the three
+    rule lookups' manager globals and offsets, tampered bytes refusing.
+  Python (tests/test_native_gate_ui_faction.py): mirrors (bit, op, claims vs inventory, table and the other families' claims,
+    specs and returns vs the stock prototypes, layouts under LuaJIT), the Lua half in both modes (authority table, parts,
+    dropped records, rows, info line, state, receipt), the view's wrapping, the script ops through stand-ins of the stock
+    entries, the real probe arming the family after the guard with its pins first and the receipt joining the digest, refusals,
+    the option checker and the builder. Updated: the family lists in test_native_gate_ui_replay.py and _missions.py.
+  Not live: nothing ran in X4. Until the first run: the claims inside X4's real calls (structs by value from LuaJIT), the IDs and
+  counters, the scope inside the setters, the view in the stock menu, the entity fields, the module pause in factions mode.
+
+10. LIVE TEST SPEC (coordinator; DLL, probe and ui/native_gate_ui_replay_core.lua of this branch; config lines on top of
+  .local/census/overlay-Play42P; no new overlay files, no MD file needed)
+  Common lines (both runs):
+    X4LAN_CONFIG.native_gate_ui_guard = 'all'
+    X4LAN_CONFIG.native_gate_ui_replay = {'travel','target','orders','autopilot','dock','weapons','queue','missiles','events','flight','faction'}
+    X4LAN_CONFIG.native_gate_ui_replay_script = {{{60,'fac_blacklist','X4LAN BL One','sectortravel',true},{90,'fac_blacklist_ship','sectortravel'},{120,'fac_setting','ships_wait',false},{150,'fac_response',1,2},{180,'fac_blacklist_remove'}},{{75,'fac_fightrule','X4LAN FR Two','player',true},{105,'fac_fightrule_ship','attack'},{135,'fac_traderule','X4LAN TR Two',{'player'},true,true},{165,'fac_setting','ships_wait',true},{195,'fac_setting','weapon_mode','attack'},{225,'fac_fightrule_remove'}}}
+    (window start 40, delay 3. Client 1 captures at 100, 130, 160, 190, 220 -> applied 103, 133, 163, 193, 223; client 2 at 115,
+    145, 175, 205, 235, 265 -> 118, 148, 178, 208, 238, 268.) 600 ticks are enough. B0/F0/T0 = the save's counters, nb/nf/nt the
+    sizes, as UI_FACTION_STATE shows them before 103. fac_response picks signal 1's response 2 from the stock lists at run time;
+    if UI_REPLAY_SCRIPT op=fac_response says "no response 2", use {150,'fac_response',1,1} (nothing else changes).
+  F1 COOP (Play42P's own plan). Pass:
+    relay pass, 0 digest mismatches, census 0, no stop 164; on both clients UI_FACTION_PINS ok=1, UI_FACTION_ARMED slot=<k>
+      families=33791 claims=33 missing= (ideally empty), UI_GUARD_STATUS installed=244, no UI_GUARD_REFUSED naming a claimed entry;
+    UI_REPLAY_APPLIED op=90 on BOTH clients, identical, result=applied: 103 slot=1 CreateBlacklist2=<B0+1> and
+      SetPlayerBlacklistDefault; 118 slot=2 CreateFightRule=<F0+1> and SetPlayerFightRuleDefault; 133 slot=1
+      SetControllableBlacklist; 148 slot=2 SetControllableFightRule; 163 slot=1 SetPlayerShipsWaitForPlayer; 178 slot=2
+      CreateTradeRule=<T0+1>, SetPlayerTradeRuleDefault twice; 193 slot=1 SetDefaultResponseToSignalForFaction2=1; 208 slot=2
+      SetPlayerShipsWaitForPlayer; 223 slot=1 RemoveBlacklist; 238 slot=2 SetFactionDefaultWeaponMode; 268 slot=2
+      RemoveFightRule (no " scope" anywhere: coop);
+    UI_FACTION_STATE on both at the same ticks: b<B0+1>.<nb+1> from 103 and b<B0+1>.<nb> from 223; f<F0+1>.<nf+1> from 118,
+      f<F0+1>.<nf> from 268; t<T0+1>.<nt+1> from 178; both slot columns equal (one faction) and moving with them; w0.. from 163,
+      w1.. from 208; response=<signal 1>:<r>,<r> changing at 193 in both columns;
+    UI_FACTION_STATUS (360) on both: in=15/15 torn=0 ran=15 skipped=0 scopes=0/15 tokens=3/0; out=6/6 on client 1, 9/9 on client 2.
+    Fail / send: a step on one client only or at another tick (both clients' UI_FACTION_STATE and UI_REPLAY_APPLIED rows), stop
+      164 (its why and UI_FACTION_STATUS), UI_FACTION_REFUSED rows, UI_REPLAY_REFUSED_NATIVE naming faction_part, Lua errors.
+  F2 FACTIONS. The same lines plus the plan line copied verbatim from .local/census/overlay-Play42F2/ui/config.lua.append
+    (X4LAN_CONFIG.native_gate_player_identity_plan = {["mode"]="factions",... slot 2 x4lan_player2, ship 000000000007a8fe ...}).
+    Pass, everything of F1 except:
+    slot 2's rows carry " scope" (118 CreateFightRule scope=<F0+1>, SetPlayerFightRuleDefault scope; 148, 178 (three), 238, 268);
+      slot 1's do not; no row at 208: client 2 logs UI_FACTION_REFUSED tick=205 op=SetPlayerShipsWaitForPlayer why=player_entity
+      (and its info line), client 1 nothing; w stays 0.. from 163;
+    UI_FACTION_STATE: the counters as F1; the slot columns differ: slot 1's blacklist count +1 from 103, back from 223; slot 2's
+      fight count +1 from 118, back from 268, trade +1 from 178; slot 1's columns never move at 118/178/268, slot 2's never at
+      103/223 (the rules are owned by the right faction); response: only slot 1's column changes at 193;
+    UI_FACTION_STATUS (360): in=14/14 ran=14 scopes=8/6 tokens=3/0; out=6/6 on client 1, 8/8 on client 2.
+    Fail as F1, and: a slot column that moves for the other slot's record (the wrong owner: send both clients' UI_FACTION_STATE),
+      skipped=not_owner on slot 2's own records, stop 164 ui_faction_view (the two faction readings differ: send the row).
+
+11. PEOPLE TEST CHECKLIST (two persons; Play42P + the first two common lines, no script; P2 also with the factions plan line).
+  Send every UI_REPLAY_APPLIED / UI_FACTION_* / UI_GUARD_REFUSED row of both clients and any Lua error line of the X4 logs.
+  P1 coop
+    [ ] each person: player information -> empire -> blacklists: create one (a sector), tick a default, confirm: the rule shows on
+        both screens after a moment, with the same ID (UI_REPLAY_APPLIED CreateBlacklist2=<id> equal on both); edit its name,
+        confirm; remove it: gone on both.
+    [ ] the same for a fight rule and a trade rule (with "trade" default ticked).
+    [ ] global standing orders: change one signal's response, reset all: the same values on both screens.
+    [ ] faction settings: rename the faction, change logo, ship and taxi wait, global loadout level, build method, weapon mode,
+        illegal wares: each shows on the other screen too.
+    [ ] map -> own ship (and the other person's ship) -> behaviour: set a blacklist, a fight rule, a response override, resupply:
+        own ship applied on both; the other person's ship refused slot_ship on both (UI_REPLAY_APPLIED ... skipped / refused).
+    [ ] a station (if the player owns one): station overview -> pause a production module, change a supply override: both screens.
+  P2 factions (client 1 = player, client 2 = x4lan_player2)
+    [ ] client 2 opens player information: its money is x4lan_player2's (as the trade view), its rule lists start empty
+        (UI_FACTION_STATUS views= grows on client 2 only); client 1 sees the player's rules.
+    [ ] client 2 creates a blacklist and a trade rule: they appear in client 2's lists, not in client 1's; UI_FACTION_STATE slot 2's
+        column grows on both clients.
+    [ ] client 2 changes ships wait / loadout level / logo: refused with the info line on client 2; nothing changes anywhere.
+    [ ] client 2 changes a global standing order: applied (scope) on both; client 2's menu may still show the old value (section 4).
+    [ ] client 1 repeats P1's rule steps: only slot 1's column moves.
+    [ ] report whether client 2's player information menu shows wrong values, empty rows or Lua errors inside the view.
+
+12. FILES (the family; section 13 lists the per-slot settings' own)
+  New: src/native/engine/lockstep_ui_faction.h, lockstep_ui_faction_lua.h, test_lockstep_ui_faction.h,
+    tests/test_native_gate_ui_faction.py, this report.
+  Registration edits in shared files: lockstep_pilot_inputs.h (the bit), lockstep_ui_replay.h (op, section rule, op name, the
+    passes, the include), lockstep_gate.c (include, METHODs), test_lockstep_gate.c (the tests), native_gate_ui_replay_core.lua
+    (K.FAMILY, the families message, attach, the script dispatch, X4LAN_UI_FACTION), native_gate_probe.lua (pins, arming),
+    check_gate_options.py and native_gate_players.py (family name, the guard rule), docs/LOCKSTEP-REGISTRY.txt,
+    tests/test_native_gate_ui_replay.py and test_native_gate_ui_missions.py (the family list in the expected messages).
+
+13. PLAYER SETTINGS PER SLOT (native_gate_player_settings_per_slot = true; default off; branch contrib/ferrite-playersettings,
+  base smoke e44a7850; lockstep_player_settings.h; stop reason 164 through the replay, whys player_settings_*)
+13.1 RESULT
+  Factions mode, any number of slots (PILOT_SLOTS): every slot k whose faction x4lan_playerk is not the player faction has its
+  own values of the eight settings that live on (or are reached through) X4's single player object, changes them through the
+  faction family's replayed stock setters on every client at the same tick, and sees its own values in its menus. The
+  simulation's readers resolve the owner: what X4 does for "the player's faction" it now does for x4lan_playerk with slot k's
+  values (the paint theme of a ship built or generated for it, the clothing theme of its NPCs, its illegal wares, its logo).
+  Coop and slot 1: nothing changes. The receipt carries every slot's values (;P), so a setting that took on one client only is
+  a digest mismatch at that tick.
+13.2 WHERE X4 KEEPS THEM AND WHO READS THEM [F, the pinned X4.exe 9.00; a .text sweep for every displacement]
+  U::Player (Universe+0x230):
+    +0x6bb8 paint theme, +0x6bc0 the last valid one        set by 0x70a720 (SetPlayerPaintTheme), read by 0x6d83b0, the getter
+                                                           GetPlayerPaintTheme 0x1a48c0, AddBuildTask6 0x1c2195 (UI build), the
+                                                           player's vfunc 40 (availability check), save/load (vfuncs 568/569)
+    +0x6bc8 clothing theme, +0x6bd0 the last valid one     set by 0x70a910, read by 0x6bf530 (inline), GetPlayerClothingTheme
+    +0x8a6a8 / +0x8a6ac / +0x8a6b0 global loadout level,   setters and getters 0x1dcf40.., accessors 0x1548b0/c0/d0 and
+      quantity, quality                                    0xb61560/0xb61590, called only by Scripts::EvaluateKeywordProperty
+                                                           (0xcd5910: `player.loadoutlevel`, `player.loadoutquantity`, ..);
+                                                           quantity and quality are never constructed, loaded or saved (13.9)
+    +0x8a6b4 ships wait, +0x8a6b5 taxi waits               setters, getters ShouldPlayer*, accessors 0x1548e0/0x1548f0, again
+                                                           only EvaluateKeywordProperty (`player.shouldplayer*waitforplayer`)
+    +0x8a6d0 illegal wares (a vector: 4 inline, capacity   SetPlayerIllegalWare (push_back 0xcb8c0, erase 0x3170a0), the test
+      +0x20, size +0x28)                                   0x154900 called only by 0x8fa710, Lua GetWareData "playerillegal"
+    +0x8a720 trade loop cargo reservation, +0x8a730 the    read only by GetShipTradeLoopCargoReservationSetting 0x1eacb0 (the
+      per-ship overrides                                   map's behaviour panel and trade loop menu; no simulation reader)
+  The logo is the owner FACTION's: SetPlayerLogo and GetCurrentPlayerLogo ask the player's vfunc 706 (0x4b7680: the cover
+  +0x2c8, else the owner +0x2c0) and write / read faction data +0x280 -> +0x578 (file), +0x598 (personal); [I] objects show
+  their owner faction's logo.
+  The simulation's readers per owner faction:
+    0x6d83b0 (object, faction) -> paint theme: faction == g_PlayerFaction ? the player's : the macro's default (+0x7c0). Callers:
+      0x6d82e0 (apply a theme) from the build processor 0x393d70 (a built ship), ShipGenerator InitializeShip 0xc7e820 (MD and
+      spawned ships), the setter's repaint loop over g_PlayerFaction's objects (0x70a720), gamestart 0xab84d0, ventures.
+    0x6bf530 (NPC, faction): the same for clothing; NPC vfunc 179, the NPC generator 0xc76bc0, the setter's loop (0x70a910).
+    0x8fa710 (ware, faction, licence holder) -> illegal: faction == g_PlayerFaction ? the player's vector : the ware's own list
+      (+0x148); then the flag +0x140 &2 and the licence (+0x168, HasLicence 0x9dd220). Callers: Lua IsWareIllegalTo, the ware
+      filters, MD/AI ware lists, trade code (9 call sites).
+  Not readers of x4lan_playerk's ships [F scripts]: the waits (move.undock, order.wait.signal, orders.base) and the loadout level
+  (interrupt.restock) are read through the `player` keyword only for `isplayerowned` ships and against player.entity and
+  $PlayerTaxi (slot 1's body); x4lan_playerk's ships are not `isplayerowned` [I], so these settings are stored, replayed, shown
+  and in the receipt per slot, and take effect on slot k's ships only once the AI scripts know slot k's player (not this work).
+  The trade loop reservation's only reader is the map's menu (client k's own UI holds slot k's value, 13.3).
+13.3 WHAT IS BUILT
+  storage  a side table per slot (pss_slots), filled once when the slot's faction is first known (the arming, else the pass)
+    from X4's player, the ware vector rebuilt through X4's own push_back; the same on every client. Not on P_k: P_k exists only
+    while slot k is seated and is rebuilt per seat (lockstep_pilot_slots.h), no reader ever reads P_k's copy (the readers
+    resolve the owner faction, not the singleton), and the vector owns X4 heap memory. The logo lives where X4 keeps it, on
+    x4lan_playerk.
+  apply    the faction family's eight entity claims of slot k (factions mode) are captured (no refusal) and run on every client
+    in slot k's faction scope AND a settings scope: X4's player's fields hold slot k's values and its cover = x4lan_playerk (so
+    SetPlayerLogo writes x4lan_playerk's logo); X4's setter runs (its repaint / re-dress loop over g_PlayerFaction's objects is
+    over x4lan_playerk's); the fields go back into slot k's table and X4's player gets its own bytes back. Rows:
+    UI_REPLAY_APPLIED op=90 what=SetPlayerPaintTheme scope settings.
+  readers  0x6d83b0 and 0x8fa710 replaced in C, 0x6bf530 chooses in C and continues in X4's body (0x6bf5ad the theme, 0x6bf59d
+    the default, 0x6bf535 X4's own path); an E9 at each entry to a stub on a near page (CAS, whole bodies pinned, intact every
+    pass, restored at the stop). Slot k's faction -> slot k's value (the live field while slot k's scope holds it); the player
+    faction while a scope is open -> X4's player's saved value; everything else exactly X4's logic.
+  menus    client k's presentation scope (its whole UI and HUD, every frame; pres_settings_hook) and the faction view (the
+    player information menu; plus the cover) hold slot k's values in X4's player's fields: every stock getter shows slot k's
+    (themes, waits, loadout level, reservation, illegal wares; the logo in the view). The four getters by faction ID
+    (GetDefaultResponseToSignalForFaction2, HasDefaultResponseToSignalForFaction, GetAskToSignalForFaction,
+    GetFactionDefaultWeaponMode) get "player" rewritten to x4lan_playerk inside those scopes on the UI thread (stub: the
+    argument's register, the entry's copied first instructions, a jump behind them); the build method through g_PlayerFaction
+    in the view. A change of a field inside a UI scope is refused and discarded (refused=, the region named).
+  receipt  UIFAC_1:...;w..;P2:<ships wait><taxi><reserve>.<level bits>.<wares>.<paint>.<clothing>.<logo FNV-32><personal>,3:..;h..
+    ('x' a slot not in use); ;w is X4's player's own values also while a scope holds slot k's in its fields (13.9).
+  rows     PLAYER_SETTINGS_PINS ok=1, PLAYER_SETTINGS_ARMED slot= hooks=7 spawn=, PLAYER_SETTINGS_STATE (readable, every slot, on
+    change), PLAYER_SETTINGS_STATUS every 120 ticks (slots used/filled, fills, swaps apply/view/present, refused, reads per
+    reader slot/player/X4's own, rewrites, own faction ID), PLAYER_SETTINGS_SPAWN (the check below).
+  script   fac_setting 'paint' / 'clothing' (a theme by its 1-based place in the stock list, or its ID), 'logo' (1-based in
+    GetPlayerLogos, standard and custom), next to the existing ships_wait, taxi_wait, loop_reserve, loadout, illegal.
+  check    native_gate_player_settings_spawn = {tick, 'macro'}: at that tick, on every client in the probe's frame (the guard
+    bypassed, as native_gate_ui_trade_fund), SpawnObjectAtPos2(macro, the slot ship's sector, 2 km + 500 m * k above it, the
+    slot's faction) for every slot; the row names the new ship, its owner, its installed paint mod and the mod the slot's
+    theme gives that faction (GetPaintThemeMod).
+13.4 TESTS
+  C stand-ins (test_lockstep_player_settings.h): three slots in factions mode; arming refusals; the tables filled (the vector
+  on its own heap block); capture of slot 2's paint, clothing, wait, loadout, illegal wares (on and off) and logo; the apply on
+  two clients (the same rows, tables and receipt; X4's player byte-identical before and after; slot 2's ships repainted and
+  NPC re-dressed with slot 2's themes through the hooked readers, the others untouched; x4lan_player2's logo only); the
+  readers for every owner (slot table, X4's player, X4's own path, the macro defaults, the licence); slot 3 independent; the
+  view (fields, cover, the four getters' "player", the state row) and its refusal of a change; the presentation with the view
+  nested inside; another slot or an apply inside refused; a scope left open at a pass; a patch lost; coop; a slot table not in
+  use (skipped player_entity); the stop restoring every entry. Pinned image: the 21 pins, the 7 entries' bytes, the field
+  offsets and the calls as X4's code has them, tampering refused (a reader, a setter, the Player vtable's slot 706).
+  Python (tests/test_native_gate_player_settings.py): the fields, the getters against the stock prototypes and x4-re's names,
+  the pins recomputed from X4.exe, the registry; the Lua half (the slot faction told once, the rows, the spawn check on every
+  slot and its error row, nothing without the key); the script ops; the probe arming after the faction family with its pins
+  first, its refusals; the option checker.
+  Not live: nothing ran in X4.
+13.5 RISKS AND UNKNOWNS
+  [I] The premise of every scope here, as of the faction scope and the presentation: no simulation job reads X4's player's
+      settings fields, its cover or g_PlayerFaction while the UI thread holds them. The presentation scope now holds slot k's
+      settings for all of client k's UI each frame; a script evaluating `player.loadoutlevel` or the waits (0x1548b0..f0, not
+      hooked) concurrently would read slot k's value on client k only. A digest mismatch at that tick would show it.
+  [I] The cover (HasCover true) in client k's player information menu for the length of a wrapped function: a menu may show a
+      cover state; local only. Outside the view the logo icons (helper.lua callbacks) show `player`'s logo on client k.
+  [I] SpawnObjectAtPos2 in the probe's frame (the spawn check, a test fixture): the ship's generation draws must match on both
+      clients (runtime IDs set, pick order); a mismatch is the digest's.
+  [F] The waits and the loadout level do not reach x4lan_playerk's ships through stock scripts (13.2).
+  [design] Not in saves: a reload refills every table from X4's player (the save's values). The tables' vector blocks come
+      from X4's allocator and are not freed (one per slot). The map's GetPlayerBuildMethod outside the view shows slot 1's.
+  [F] AddBuildTask6 (UI builds) reads X4's player's paint theme directly: on client k inside the presentation that is slot
+      k's; the build family refuses slots 2+ in factions mode anyway.
+13.6 LIVE SPEC F3 (coordinator; DLL, probe and core of this branch; F2's lines (section 10) plus the key, the spawn check and
+  this plan; .local/census/overlay-Play42F2 as F2; the plan line copied verbatim from its ui/config.lua.append)
+    X4LAN_CONFIG.native_gate_player_settings_per_slot = true
+    X4LAN_CONFIG.native_gate_player_settings_spawn = {420,'ship_arg_s_fighter_01_a_macro'}
+    X4LAN_CONFIG.native_gate_ui_replay_script = {{{60,'fac_setting','paint',2},{90,'fac_setting','logo',2},{120,'fac_setting','loadout',0.25},{150,'fac_setting','clothing',1}},{{75,'fac_setting','paint',3},{105,'fac_setting','logo',3},{135,'fac_setting','loadout',0.75},{165,'fac_setting','illegal','spaceweed',true},{195,'fac_setting','ships_wait',false},{225,'fac_setting','clothing',2}}}
+  (window start 40, delay 3: client 1 captures 100/130/160/190 -> applied 103/133/163/193; client 2 115/145/175/205/235/265
+  -> 118/148/178/208/238/268. If a stock list holds fewer entries, UI_REPLAY_SCRIPT says "no paint theme 3" / "no logo 3":
+  use 1 or 2 instead, nothing else changes.)
+  Pass:
+    relay pass, 0 digest mismatches, census 0, no stop 164; on both clients PLAYER_SETTINGS_PINS ok=1, PLAYER_SETTINGS_ARMED
+      hooks=7 spawn=420/ship_arg_s_fighter_01_a_macro, UI_FACTION_ARMED as F2;
+    UI_REPLAY_APPLIED op=90 on BOTH clients, identical: 103 slot=1 SetPlayerPaintTheme, 133 SetPlayerLogo, 163
+      SetPlayerGlobalLoadoutLevel, 193 SetPlayerClothingTheme (no " scope", no " settings"); 118 slot=2 SetPlayerPaintTheme
+      scope settings, 148 SetPlayerLogo scope settings, 178 SetPlayerGlobalLoadoutLevel scope settings, 208 SetPlayerIllegalWare
+      scope settings, 238 SetPlayerShipsWaitForPlayer scope settings, 268 SetPlayerClothingTheme scope settings; no
+      UI_FACTION_REFUSED;
+    PLAYER_SETTINGS_STATE identical on both at the same ticks: slot=1's paint/logo/loadout/clothing change at 103/133/163/193
+      only, slot=2's at 118/148/178/268, its illegal= one more at 208, its wait=0/.. at 238; neither moves at the other's ticks;
+    UI_FACTION_STATE: w.. changes at 163 only (X4's player: slot 1's loadout); ;P2: changes at 118/148/178/208/238/268;
+    PLAYER_SETTINGS_SPAWN at 420 on both, the same ship IDs: slot=1 owner=player paint=<A> theme=<slot 1's theme 2>
+      expected=<A>; slot=2 owner=x4lan_player2 paint=<B> theme=<slot 2's theme 3> expected=<B>; A differs from B;
+    PLAYER_SETTINGS_STATUS (480): swaps=6/../.. on both (apply 6; present > 0 on client 2 only), refused=0/-, reads paint
+      slot >= 1 and player >= 1 (the two spawned ships).
+  Fail / send: a row on one client only or at another tick, stop 164 (its why, both STATUS rows), a spawn row whose paint
+    differs from expected or between the clients, refused > 0 (the region), Lua errors.
+13.7 PEOPLE CHECKLIST P3 (Play42F2 + section 10's common lines + the key; two persons)
+    [ ] client 2: player information -> faction settings: change the paint theme, uniform, logo, ships wait, taxi wait, global
+        loadout level, cargo reservation, illegal wares: each applies (no refusal, no info line); client 2 sees its values,
+        client 1 still its own; the same the other way round.
+    [ ] client 2: global standing orders show x4lan_player2's responses and weapon mode; change one: client 2 sees the change,
+        client 1 does not; the build method shows client 2's own.
+    [ ] client 2's ships (map -> own ship -> behaviour): the cargo reservation default shows client 2's global setting.
+    [ ] a ship built or spawned for each faction carries its owner's paint (and logo) on both screens.
+    [ ] send every PLAYER_SETTINGS_* / UI_FACTION_* / UI_REPLAY_APPLIED row of both clients and any Lua error line.
+13.8 FILES
+  New: src/native/engine/lockstep_player_settings.h, lockstep_player_settings_lua.h, test_lockstep_player_settings.h,
+    tests/test_native_gate_player_settings.py. Edits: lockstep_ui_faction.h (capture and apply of slot k's entity claims, the
+    view, the pass, the receipt, the include), lockstep_ui_replay.h (the restore), lockstep_pilot_present.h (pres_settings_hook),
+    lockstep_gate.c (include, METHODs), test_lockstep_gate.c, native_gate_ui_replay_core.lua (F.settings, the script ops),
+    native_gate_probe.lua (pins, arming, cdefs, session), check_gate_options.py, docs/LOCKSTEP-REGISTRY.txt (sections 3-5).
+13.9 CENSUS F3SET (build168, overlay-F3set): FIRST MISMATCH AT TICK 1, FIXED [F]
+  Both clients PLAYER_SETTINGS_PINS ok=1 / ARMED hooks=7; the relay: a digest mismatch at every tick (602/602), first 1;
+  f2fac (no key) 0. Every PILOT_RECEIPT part equal on both clients through tick 600 except ;P2's quantity and quality:
+  client 1 P2:111.00000000.00000000.00000000.., client 2 P2:111.00000000.32623361.32333635.. ("a3b2" "5632"). The STATE
+  rows matched (%.3f printed both as 0.000). Cause, on the pinned X4.exe: X4's player's constructor writes the level and the
+  waits (0x6faffe, 0x6fb004) but never +0x8a6ac (global loadout quantity) or +0x8a6b0 (quality); the load (0x6fdb79,
+  0x6fdba8/0x6fdbc0) and the save (0x701757, 0x7017cc/0x7017f5) skip them; the only other code naming them is the keyword
+  accessors, the getters and the setters (no stock Lua or script calls those). So they are heap bytes of each process, and
+  slot 2's table copied them from X4's player. Not the presented player: the presentation scope never touched them.
+  Fix: a slot's table holds the level (+0x8a6a8, 4 bytes) and the waits (+0x8a6b4, 2) as separate regions; quantity and
+  quality are no slot's (not filled, never exchanged, not in the receipt or STATE, which prints loadout=<level>); the fill
+  reads X4's player's own bytes (the saved ones while any scope holds a slot's); the family's ;w likewise. C test: two
+  clients, X4's player's quantity/quality zero on one and "a3b25632" on the other, client 2 presenting slot 2 while it fills
+  slot 3's table and takes the receipt and STATE: the same tables, receipt and rows. Python: the 8 sites naming the two
+  offsets in X4.exe's .text, the constructor's and the load's bytes.
+  Also in f3set: PLAYER_SETTINGS_SPAWN at 420 on both clients ended in "bad argument #1 to 'tostring' (value expected)":
+  GetComponentData was given SpawnObjectAtPos2's uint64 and answered nothing; it now gets the converted ID (the spawn
+  call itself had returned on both). Rerun F3 (13.6) unchanged with this branch's DLL, probe and core.

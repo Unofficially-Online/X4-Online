@@ -3,7 +3,8 @@
 -- (native_gate_player_identity_plan) as UI events; MD X4LAN_PlayerIdentity applies them in the next
 -- gated frame on every client: per-slot pool factions (factions mode), slot ship ownership (saved
 -- ships, or ships created from a fixed macro/seed/position), start placements (saved ships warped to a
--- fixed point of a saved sector), relations between the slot factions.
+-- fixed point of a saved sector), relations between the slot factions, per-player starts (kits: money,
+-- reputation, blueprints, research, map knowledge of slot k's own stock start; LOCKSTEP-STARTS-20261101).
 -- Pure plan logic: native_gate_player_identity_core.lua. Report: LOCKSTEP-PLAYER-IDENTITY-20261029.
 local cfg=X4LAN_CONFIG
 if not cfg or cfg.native_gate_player_identity~=true then return end
@@ -93,7 +94,11 @@ local function md_args(step,found)
  local a={ordinal=step.ordinal,ordname=tostring(step.ordinal),step=step.step,head=step.head,mode=P.mode,faction=step.faction or '',
   name=step.name or '',short=step.short or '',mirror=step.mirror or 0,source=step.source or '',
   occupiedpool=step.occupiedpool or 0,fa=step.fa or '',fb=step.fb or '',value=step.value or 0,
-  slotname=tostring(step.slot),macro='',seed=0,x=0,y=0,z=0,yaw=0,hassector=0,sectormacro=''}
+  slotname=tostring(step.slot),macro='',seed=0,x=0,y=0,z=0,yaw=0,hassector=0,sectormacro='',
+  -- per-player start steps (kit, wallet, reputation, blueprint, research, known_sector, known)
+  gamestart=step.gamestart or '',op=step.op or '',cents=step.cents or 0,other=step.other or '',ware=step.ware or '',
+  knownsector=step.knownsector or '',count=step.count or 0,kfaction=step.kfaction or '',hasfaction=step.hasfaction or 0,
+  shipyards=step.shipyards or 0}
  if step.source=='saved' then a.object=ConvertStringToLuaID(found[step.ship]) end
  if step.source=='create' then
   local c=step.create

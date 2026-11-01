@@ -19,16 +19,23 @@ sys.path.insert(0, str(ROOT / 'src'))
 from native.engine.build import compiler_path  # Zig 0.15.2 pin shared with the Windows modules
 
 ENGINE = ROOT / 'src/native/engine'
+# Monocypher 4.0.2 (third_party/monocypher-4.0.2): the opt-in wire crypto's primitives.
+MONOCYPHER = ROOT / 'third_party/monocypher-4.0.2/src'
+MONOCYPHER_SOURCES = [str(MONOCYPHER / 'monocypher.c'), str(MONOCYPHER / 'optional/monocypher-ed25519.c')]
 FLAGS = ['-target', 'x86_64-linux-gnu.2.17', '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror',
          '-Wno-misleading-indentation', '-mcx16', '-ffp-contract=off', '-fPIC', '-shared', '-fvisibility=hidden',
-         '-fasynchronous-unwind-tables', '-I', str(ENGINE), '-I', str(ENGINE / 'linux')]
+         '-fasynchronous-unwind-tables', '-I', str(ENGINE), '-I', str(ENGINE / 'linux'),
+         '-I', str(MONOCYPHER), '-I', str(MONOCYPHER / 'optional')]
 
 
 def build(zig, out):
     out.mkdir(parents=True, exist_ok=True)
     module = out / 'x4lan_gate.so'
-    subprocess.run([compiler_path(zig), 'cc', *FLAGS, str(ENGINE / 'linux/gate_linux.c'),
+    subprocess.run([compiler_path(zig), 'cc', *FLAGS, str(ENGINE / 'linux/gate_linux.c'), *MONOCYPHER_SOURCES,
                     '-ldl', '-lpthread', '-o', str(module)], check=True)
+    # The relay's wire crypto for a Linux relay host (tools/dev/native_gate_crypto.py, ctypes).
+    subprocess.run([compiler_path(zig), 'cc', *FLAGS, str(ENGINE / 'lockstep_wire_crypto_lib.c'), *MONOCYPHER_SOURCES,
+                    '-o', str(out / 'libx4mp_wire_crypto.so')], check=True)
     return module
 
 

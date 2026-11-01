@@ -258,7 +258,7 @@
  * Status: shape_refresh= the two stubs' calls, aligned=, unmapped= (no key: the
  * due time stays), near= / far= intervals, shape_native= (before the first
  * latch). The key table is insert-only (RC_SHAPE_KEYS); full stops the gate
- * (reason 130).
+ * (reason 165).
  * mining: AI mining's region object search 0x7884a0 (from
  * Scripts::FindRegionObjectWithYieldInSectorAction and 0x7880c0) returns
  * nothing when the region's class-0xf (Cluster) ancestor is the player
@@ -428,7 +428,7 @@
  * client. A model built while loading keeps its native seed until the ship's
  * next model change (snapshot 005 has no ship in a highway at tick 1). The
  * player branch (+0x80 = 1) and the acceleration factor stay native. Status:
- * highway_speed= keyed/unmapped. A failed check stops the gate with 130.
+ * highway_speed= keyed/unmapped. A failed check stops the gate with 165.
  * sc-highway97a (keyed +0x80, equal on both clients) still parts at 1155: x and
  * x velocity. The flight step vfunc14 0xeb0b70 seeds two more draws from the same
  * ID: the lateral wobble (0xeb0f19: FloatState on a local state set to the ID, for
@@ -466,13 +466,13 @@
  * pass is still running the install waits for a later gate tick (counted,
  * install_waits=, at most RC_INSTALL_WAITS ticks, then stop) and install_tick=
  * names the frame. Every gate tick re-checks sites, slots and pins (stop
- * reason 130). Stop withdraws the stand-in at once and restores the sites if no
+ * reason 165). Stop withdraws the stand-in at once and restores the sites if no
  * pass runs, else reports not restored. Pages are never freed. */
 #define RC_CUTSCENE 0x3d19900u
 #define RC_UNIVERSE 0x3d198f8u
 #define RC_PAGE_SIZE 0xa000u
 #define RC_STUB_SIZE 0x2000u
-#define RC_STOP_REASON 130u /* 101 is the prediction module's */
+#define RC_STOP_REASON 165u /* 130 until 1 November 2026 (the runtime IDs'); docs/LOCKSTEP-REGISTRY.txt */
 #define RC_MANAGER 0x100u   /* stand-in cutscene manager on the page; +0xb0 its camera */
 #define RC_SHADOW 0x400u    /* shadow universe; +0x230 the viewpoint, +0x3d0 the stand-in camera */
 #define RC_CAMERAS 0x1000u  /* two stand-in cameras, RC_CAMERA_SIZE apart */
@@ -701,7 +701,7 @@ static int rc_mode,rc_installed,rc_restored,rc_patched;
 static unsigned rc_armed_groups,rc_installed_groups;
 static unsigned char *rc_page,*rc_stubs;
 static unsigned char rc_site_done[RC_SITES],rc_call_done[RC_CALLS],rc_jump_done[RC_JUMPS];
-static unsigned rc_stop=RC_STOP_REASON; /* the stop reason of the last failure: 130, or a group's own */
+static unsigned rc_stop=RC_STOP_REASON; /* the stop reason of the last failure: 165, or a group's own */
 static unsigned rc_next; /* the stand-in camera written by the next update */
 static unsigned rc_next2; /* the same for viewpoint 2 */
 static void *volatile rc_vp2_zone,*volatile rc_vp2_sector; /* viewpoint 2's class-0x6d and class-0x58 ancestors */
@@ -1093,6 +1093,10 @@ static void *rc_lane_camera(void *camera,float *out,void *frame_zone) {
 }
 /* Shape refresh: the view points rc_frame latched for the next frame's physics steps (-1: none yet). */
 static void *volatile rc_shape_points[VIEW_MAX],*volatile rc_shape_sectors[VIEW_MAX],*volatile rc_shape_clusters[VIEW_MAX];
+/* Hybrid sectors (lockstep_hybrid.h): the index of this client's owned view point among the latched points (-1 none).
+ * The sector-filtered consumers below only ever match it inside its own sector; the cluster-filtered one (mining)
+ * skips it outside that sector, so the rest of the cluster sees the shared points only. */
+static volatile LONG rc_shape_own=-1;
 static volatile LONG rc_shape_count=-1;
 #define RC_SHAPE_KEYS 262144u
 static volatile LONG64 rc_shape_keys[RC_SHAPE_KEYS]; /* object keys whose due time was aligned (insert-only) */
@@ -1207,10 +1211,11 @@ static uint64_t rc_sound_choice(void *a,void *b,void *c,void *d) {
 /* Slot 6 (rc_frame): the latched view points and their sectors for the next frame's intervals; without
  * view points the player object's class-0x49 ancestor (or the player object). */
 static void rc_shape_latch(void) {
-    InterlockedExchange(&rc_shape_count,0);LONG n=0;
+    InterlockedExchange(&rc_shape_count,0);LONG n=0,own=-1;
     for(unsigned i=0;view_latched && i<view_count && i<VIEW_MAX;i++) {
         void *p=view_points[i];uint64_t id=0;
         if(!p || !read_local((unsigned char*)p+8,&id,8) || id!=view_ids[i]) continue;
+        if((int)i==hyb_view_index) own=n;
         rc_shape_points[n]=p;rc_shape_sectors[n]=rc_ancestor(p,0x58);rc_shape_clusters[n]=rc_ancestor(p,0xf);++n;
     }
     if(!n) {
@@ -1221,7 +1226,7 @@ static void rc_shape_latch(void) {
             rc_shape_points[0]=ship;rc_shape_sectors[0]=rc_ancestor(ship,0x58);rc_shape_clusters[0]=rc_ancestor(ship,0xf);n=1;
         }
     }
-    MemoryBarrier();InterlockedExchange(&rc_shape_count,n);
+    InterlockedExchange(&rc_shape_own,own);MemoryBarrier();InterlockedExchange(&rc_shape_count,n);
 }
 /* The thread class of a call: 0 MoveWorker (TLS+0x314 set), 1 the gate's thread, 2 any other. */
 static unsigned rc_thread_class(void) {
@@ -1242,9 +1247,11 @@ static int rc_mining_near(void *cluster,const float *pos,void *frame) {
         if(!rc_is_below(frame,cluster)) InterlockedIncrement64(&rc_mining_foreign);
         else {
             const double now=rc_thread_time();__declspec(align(16)) float f[16];int have_frame=0;
+            const LONG own=InterlockedCompareExchange(&rc_shape_own,0,0);
             for(LONG i=0;i<count && i<(LONG)VIEW_MAX;i++) {
                 void *point=rc_shape_points[i];
                 if(!point || rc_shape_clusters[i]!=cluster) continue;
+                if(i==own && !hyb_inside(frame)) continue; /* hybrid: the owner's ship counts inside its sector only */
                 if(!have_frame) {rc_gtr(frame,f,now,cluster);have_frame=1;}
                 __declspec(align(16)) float v[16];rc_gtr(point,v,now,cluster);
                 const float dx=v[0]-f[0],dy=v[1]-f[1],dz=v[2]-f[2];
@@ -1985,10 +1992,10 @@ static int rc_group_owned(unsigned g) {
 static unsigned rc_group_stop(unsigned g) {
     return g==RC_MINING?RC_MINING_STOP:g==RC_XS?RC_XS_STOP:g==RC_PROBE?RC_PROBE_STOP:g==RC_HIGHWAY_ROWS?RC_HIGHWAY_ROWS_STOP:RC_STOP_REASON;
 }
-/* The stop reason for the gate after a failed check or join: a group's own (166..169) or 130. */
+/* The stop reason for the gate after a failed check or join: a group's own (166..169) or 165. */
 static unsigned rc_stop_reason(void) {return rc_stop;}
 /* Main-thread tick check; a failure stops the gate with the failing group's reason (mining 166, xs_detail 167,
- * camera_probe 168, highway_rows 169), else 130. */
+ * camera_probe 168, highway_rows 169), else 165. */
 static int rc_check(void) {
     if(InterlockedCompareExchange64(&rc_failures,0,0)) return 0;
     static const unsigned own[4]={RC_MINING,RC_XS,RC_PROBE,RC_HIGHWAY_ROWS};

@@ -75,8 +75,9 @@ class LoadAcknowledgements(unittest.TestCase):
         from lupa.luajit21 import LuaRuntime
         source=(base.ROOT/'tools/dev/native_gate_probe.lua').read_text()
         setup=source[source.index('  local registry_activate,rng_activate'):source.index('  if rng_activate then rng_activate() end')+len('  if rng_activate then rng_activate() end')]
-        abort=source[source.index("SetScript('onUpdate',function()") :]
+        start=source.index("SetScript('onUpdate',function()");abort=source[start:source.index(chr(10)+'end)'+chr(10),start)+5]
         lua=LuaRuntime();lua.execute('''
+          ticklog={flush=function() end,notice=function() end,try=function(fn,...) return pcall(fn,...) end};pilot_view={}
           cfg={native_gate_registry_creation_schema=1,native_gate_creation_rng_schema=1,native_gate_player_observer=true}
           logs={};stops=0;done=false;armed=false;native_owned=true
           log=function(s)logs[#logs+1]=s end

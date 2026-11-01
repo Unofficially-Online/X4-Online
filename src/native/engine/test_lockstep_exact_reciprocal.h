@@ -136,7 +136,7 @@ static void test_exact_reciprocal(void) {
     assert(!xrcp_arm() && !strcmp(xrcp_stage,"pins") && !xrcp_installed);
     stats.issued=1;assert(!xrcp_arm() && !strcmp(xrcp_stage,"state"));stats.issued=0;
     boot_phase=2;assert(!xrcp_arm());boot_phase=0;ui_thread=GetCurrentThreadId()+1;assert(!xrcp_arm());
-    char out[320];assert(xrcp_status(out,sizeof(out))>0 && strstr(out,"installed=0 windows=824 rewritten=1272 "));
+    char out[320];assert(xrcp_status(out,sizeof(out))>0 && strstr(out,"installed=0 windows=859 rewritten=1335 "));
     xrcp_stage="idle";
     stats.active=saved_active;stats.issued=saved_issued;ui_thread=saved_ui;boot_mode=saved_boot;boot_phase=saved_phase;
     printf("exact reciprocal original-byte view/hash_ok/arm refusals PASS\n");
@@ -177,6 +177,31 @@ static unsigned txl_leaf_runs(void) {
     }
     return split;
 }
+/* FR27: two of the leaves the generator's general follower adds (no .pdata entry, reached by calls and vtables):
+ * 0x14df1d0 |b - a| (four callers, among them the property evaluator) and 0x970d30, U::SphereBoundary vfunc 12,
+ * max(|centre - p| - radius, 0); each rcp(rsqrt) chain must become one sqrtss. Returns the cases that differ from
+ * sqrt(x*x + (y*y + z*z)) of what each forms. */
+static unsigned txl_fr27_runs(void) {
+    typedef float (*dist_fn)(const float *,const float *);typedef float (*outside_fn)(const void *,const float *);
+    const dist_fn dist=(dist_fn)(void*)(image+0x14df1d0u);const outside_fn outside=(outside_fn)(void*)(image+0x970d30u);
+    uint32_t seed=0x2701u;unsigned split=0;
+    for(unsigned i=0;i<TXL_CASES;i++) {
+        float v[7];
+        for(unsigned k=0;k<7;k++) {
+            seed=seed*1664525u+1013904223u;const float m=1.0f+(float)(seed>>9)*(1.0f/8388608.0f);
+            seed=seed*1664525u+1013904223u;const int e=(int)(seed>>28)-4;
+            v[k]=ldexpf(m,e)*((seed>>8)&1?-1.0f:1.0f);
+        }
+        __declspec(align(16)) float a[4]={v[0],v[1],v[2],0},b[4]={v[3],v[4],v[5],0};
+        __declspec(align(16)) unsigned char sphere[0x30];memset(sphere,0,sizeof(sphere));
+        memcpy(sphere+0x10,b,16);const float radius=fabsf(v[6]);memcpy(sphere+0x20,&radius,4);
+        const float dx=b[0]-a[0],dy=b[1]-a[1],dz=b[2]-a[2],len=txl_len(dx,dy,dz);
+        split+=txl_bits(dist(a,b))!=txl_bits(len);
+        const float out=len-radius;
+        split+=txl_bits(outside(sphere,a))!=txl_bits(out>0.0f?out:0.0f);
+    }
+    return split;
+}
 static void test_exact_reciprocal_native_image(const char *path) {
     unsigned char *prior=image;image=test_pmath_map(path);
     assert(xrcp_pins());
@@ -189,6 +214,7 @@ static void test_exact_reciprocal_native_image(const char *path) {
     }
     assert(rewritten==XRCP_REWRITTEN);
     const unsigned leaf_native=txl_leaf_runs(); /* FR26: the leaf roots as the CPU's rcpss/rsqrtss leave them */
+    const unsigned fr27_native=txl_fr27_runs();
     /* A gate pin over a window: its SHA-256 of the original bytes, before and while installed. */
     const xrcp_window *w=&xrcp_windows[XRCP_WINDOWS/2];
     unsigned char *range=image+w->rva-64;char before[65];assert(digest_hex(range,256,before) && hash_ok(range,256,before));
@@ -211,6 +237,10 @@ static void test_exact_reciprocal_native_image(const char *path) {
     if(leaf_exact || leaf_native<TXL_CASES) {printf("exact reciprocal leaf roots: %u of %u split installed, %u native\n",leaf_exact,4*TXL_CASES,leaf_native);assert(0);}
     printf("exact reciprocal FR26 leaf roots 0xb34d0/0x6a1590/0xd47470/0x14e0620 on their own bytes: native %u of %u split from sqrt, installed 0 PASS\n",
            leaf_native,4*TXL_CASES);
+    const unsigned fr27_exact=txl_fr27_runs();
+    if(fr27_exact || fr27_native<TXL_CASES/2) {printf("exact reciprocal FR27 leaves: %u of %u split installed, %u native\n",fr27_exact,2*TXL_CASES,fr27_native);assert(0);}
+    printf("exact reciprocal FR27 leaves 0x14df1d0/0x970d30 (found by the generator's leaf follower) on their own bytes: native %u of %u split from sqrt, installed 0 PASS\n",
+           fr27_native,2*TXL_CASES);
     unsigned char raw[XRCP_MAX_WINDOW];SIZE_T got=0;
     assert(xrcp_owned() && xrcp_check() && ReadProcessMemory(GetCurrentProcess(),image+w->rva,raw,w->length,&got) && raw[0]==0xe9);
     char during[65];assert(digest_hex(range,256,during) && strcmp(before,during) && hash_ok(range,256,before));

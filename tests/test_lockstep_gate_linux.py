@@ -102,6 +102,16 @@ class Executables(unittest.TestCase):
                      'bank_write_selector', 'shield_source_vtable', 'no_pin_in_exact_reciprocal_window', 'no_patch_in_exact_reciprocal_window'):
             self.assertIn(name, findings)
 
+    def test_fork_save_references(self):
+        """gate_fork_save.h: the serializer, its globals, the census's wait objects, the held locks and spin words."""
+        c, table = sites.parse_sites()
+        findings = sites.check_linux(LINUX_EXE, c, table, sites.parse_tls())
+        for name in ('fs_deferred_save_call', 'fs_save_entry_checks', 'fs_construction_wait', 'fs_save_thread_flags', 'fs_save_pathing_gate',
+                     'fs_save_online', 'fs_save_names', 'fs_save_after_rename', 'fs_modified_dialog', 'fs_sim_start_wait', 'fs_frame_end_kicks',
+                     'fs_mass_park', 'fs_region_park', 'fs_path_kick_wait', 'fs_job_manager', 'fs_xml_open_lock', 'fs_event_lock',
+                     'fs_md_registry_lock', 'fs_region_lock', 'fs_timerbase_lock', 'fs_rpmalloc_words', 'fs_writes_in_writable_data', 'fs_sound_switch'):
+            self.assertIn(name, findings)
+
     @unittest.skipUnless(WINDOWS_EXE.is_file(), 'Windows X4.exe not available (set X4_WINDOWS_EXE)')
     def test_world_class_table_is_current(self):
         """gate_world_classes.h equals what the generator derives from both executables, and the
@@ -285,7 +295,7 @@ class ProbeLibrary(unittest.TestCase):
         from lupa.luajit21 import LuaRuntime
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.execute('''
-          X4LAN_CONFIG={native_gate_test=true,test_profile='45841',slot='p1',native_gate_hash='clock',
+          X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',slot='p1',native_gate_hash='clock',
             native_gate_snapshot_sha=string.rep('a',64),port=12345,token=string.rep('c',32)}
           X4LAN_SHA256={digest=function() return string.rep('b',64) end}
           logs={};paths={}
@@ -494,6 +504,23 @@ class Overlay(unittest.TestCase):
         config = (out / 'ui/config.lua.append').read_text()
         self.assertIn('native_gate_serial_pathing = true', config)
         self.assertIn('native_gate_path_determinism = 3', config)
+
+    def test_linux_overlay_takes_fork_save(self):
+        out = self.build(*self.snapshot, '--mode', 'clock', '--fork-save', '600')
+        self.assertIn("native_gate_fork_save = {tick = 600, name = 'join_600', budget_ms = 50, watchdog_s = 600}", (out / 'ui/config.lua.append').read_text())
+        out = self.build(*self.snapshot, '--mode', 'clock', '--fork-save', '1800:join-a_1', '--fork-save-budget-ms', '200', '--fork-save-watchdog', '120')
+        self.assertIn("native_gate_fork_save = {tick = 1800, name = 'join-a_1', budget_ms = 200, watchdog_s = 120}", (out / 'ui/config.lua.append').read_text())
+        out = self.build(*self.snapshot, '--mode', 'clock', '--fork-save', '600:join', '--fork-save-every', '300', '--fork-save-slot', '1')
+        self.assertIn("native_gate_fork_save = {tick = 600, name = 'join', budget_ms = 50, watchdog_s = 600, every = 300, slot = 'p1'}",
+                      (out / 'ui/config.lua.append').read_text())
+        out = self.build(*self.snapshot, '--mode', 'clock', '--fork-save', '600,602,660:join')
+        self.assertIn("native_gate_fork_save = {tick = {600, 602, 660}, name = 'join', budget_ms = 50, watchdog_s = 600}", (out / 'ui/config.lua.append').read_text())
+        for wrong in (('--fork-save', '0'), ('--fork-save', 'x'), ('--fork-save', '600,600'), ('--fork-save', '600,10000:join_twelve'),
+                      ('--fork-save', '600,660', '--fork-save-every', '60'), ('--fork-save', '600:sixteen_chars_xx'), ('--fork-save', "600:a'b"),
+                      ('--fork-save', '600', '--fork-save-watchdog', '1'), ('--fork-save-budget-ms', '10'), ('--fork-save-every', '300'),
+                      ('--fork-save', '600', '--fork-save-every', '1'), ('--fork-save', '600', '--fork-save-slot', '9'), ('--fork-save-slot', '1')):
+            with self.assertRaises(SystemExit, msg=wrong):
+                self.build(*self.snapshot, '--mode', 'clock', *wrong)
 
     def test_linux_overlay_takes_the_world_hash(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--world-hash-stride', '60',

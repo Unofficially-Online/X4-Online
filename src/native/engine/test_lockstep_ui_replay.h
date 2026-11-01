@@ -83,7 +83,19 @@ static uint64_t test_uirep_call_str_fwd(uint64_t a,uint64_t b,uint64_t c,uint64_
     if(b) snprintf(test_uirep_call_string,sizeof(test_uirep_call_string),"%s",(const char*)(uintptr_t)b);
     return test_uirep_call_fwd(a,b,c,d,e,f,g,h);
 }
+/* The soft target's route outside the local phases: the image return addresses above 0xaecb60, as the walk would find them. */
+static uint32_t test_uirep_route[UIREP_ROUTE_DEPTH];
+static unsigned test_uirep_route_count,test_uirep_route_site;
+static unsigned test_uirep_route_of(unsigned site,uint32_t *frames,unsigned capacity) {
+    unsigned n=test_uirep_route_count<capacity?test_uirep_route_count:capacity;
+    test_uirep_route_site=site;memcpy(frames,test_uirep_route,n*sizeof(*frames));return n;
+}
+static void test_uirep_route_set(unsigned n,const uint32_t *frames) {
+    assert(n<=UIREP_ROUTE_DEPTH);test_uirep_route_count=n;memcpy(test_uirep_route,frames,n*sizeof(*frames));uirep_route_override=test_uirep_route_of;
+}
+static DWORD WINAPI test_uirep_off_thread(LPVOID unused) {(void)unused;uirep_target_clear_stub(test_uirep_target);return 0;}
 static void test_uirep_reset(void) {
+    uirep_target_ui=uirep_target_ui_refused=uirep_target_md=uirep_route_faults=0;uirep_route_last_count=0;uirep_route_override=NULL;uirep_route_reached=0;
     test_uirep_call_count=0;test_uirep_available=1;test_uirep_drive_on=0;test_uirep_enter_ok=test_uirep_leave_ok=1;test_uirep_portable_salt=0;
     uirep_armed=0;uirep_families=0;uirep_failed=0;uirep_stopped=0;uirep_installed=0;uirep_restored=1;uirep_why="-";uirep_stage_name="off";
     uirep_queue_head=uirep_queue_count=0;uirep_refusal_head=uirep_refusal_tail=0;memset(uirep_ring,0,sizeof(uirep_ring));
@@ -138,7 +150,7 @@ static void test_ui_replay(void) {
     pnat_armed=1;pnat_mode=PNAT_MODE_STOCK;pstk_capturing=1;
     assert(!uirep_arm_using(7) && !strcmp(uirep_arm_why,"needs_all_stock_slots"));
     pslot_armed=1;assert(!uirep_arm_using(7) && !strcmp(uirep_arm_why,"needs_present"));
-    pres_armed=1;assert(!uirep_arm_using(0) && !uirep_arm_using(0x100) && !strcmp(uirep_arm_why,"families"));
+    pres_armed=1;assert(!uirep_arm_using(0) && !uirep_arm_using(UIREP_FAMILIES+1) && !strcmp(uirep_arm_why,"families"));
     pstk_slot_mask=1;assert(!uirep_arm_using(7) && !strcmp(uirep_arm_why,"needs_all_stock_slots"));pstk_slot_mask=3;
     assert(uirep_arm_using(7) && uirep_armed && uirep_arm_using(7) && !uirep_arm_using(3) && !strcmp(uirep_arm_why,"rerun"));
     test_ui_replay_section();
@@ -226,13 +238,41 @@ static void test_ui_replay(void) {
     test_uirep_element[UIREP_ELEMENT_FLAG]=1;
     stats.slot=2;stats.issued=200;uirep_queue_head=uirep_queue_count=0;memset(uirep_ring,0,sizeof(uirep_ring));test_uirep_call_count=0;
     uirep_set_hint(0x11);
-    uirep_target_clear_stub(test_uirep_target);assert(test_uirep_count('C')==1 && uirep_get_hint()==0xbeef && uirep_target_passed==1);  /* outside the local phases (MD): at once, stock */
-    uirep_target_set_stub(test_uirep_target,test_uirep_element);assert(test_uirep_count('T')==1 && uirep_target_passed==2 && test_uirep_calls[1].a==test_uirep_target+UIREP_ASSOCIATION && test_uirep_calls[1].b==1 && test_uirep_offset_seen[3]==0x43);
+    /* Outside the local phases, MD's clear_player_target / set_player_target (their call's return address above 0xaecb60): at once, stock. */
+    {static const uint32_t md_clear[]={0xae849au,0xaebf87u,0xae809fu,UIREP_MD_CLEAR_RETURN},md_set[]={0xaeb2b0u,0xb3f84bu,UIREP_MD_SET_RETURN,0x1111aaau};
+     test_uirep_route_set(4,md_clear);
+     uirep_target_clear_stub(test_uirep_target);
+     assert(test_uirep_count('C')==1 && uirep_get_hint()==0xbeef && uirep_target_passed==1 && uirep_target_md==1 && test_uirep_route_site==UIREP_S_TARGET_CLEAR);
+     test_uirep_route_set(4,md_set);
+     uirep_target_set_stub(test_uirep_target,test_uirep_element);
+     assert(test_uirep_count('T')==1 && uirep_target_passed==2 && test_uirep_calls[1].a==test_uirep_target+UIREP_ASSOCIATION && test_uirep_calls[1].b==1 && test_uirep_offset_seen[3]==0x43);
+     assert(uirep_target_md==2 && test_uirep_route_site==UIREP_S_TARGET_SET && !uirep_target_ui && !uirep_queue_count);}
     test_uirep_call_count=0;uirep_set_hint(0x11);InterlockedExchange(&pres_open,1);
     uirep_target_clear_stub(test_uirep_target);assert(!test_uirep_call_count && uirep_queue_count==1 && !uirep_get_hint());
     uirep_target_set_stub(test_uirep_target,test_uirep_element);assert(!test_uirep_call_count && uirep_queue_count==2 && uirep_get_hint()==0x7001);
     InterlockedExchange(&pres_open,0);
     length=uirep_take(200,UIREP_SECTION_MAX,section);assert(length==UIREP_HEAD+2+UIREP_REF+2+UIREP_REF+1+UIREP_OFFSET);
+    /* The UI's own writes outside the local phases (missile1: its target element dying with the slot ship, 0xaeb4e0 -> 0xaeb970 ->
+     * 0xaecb60): nothing at once, the very events a click makes, the route in the status. An address next to MD's is not MD. */
+    {static const uint32_t ui[]={0xaeba54u,0xaeb510u,0xad7064u,UIREP_MD_SET_RETURN-1u,UIREP_MD_CLEAR_RETURN+1u,0x9fdf8bu,0xef46b6u};
+     unsigned char again[UIREP_SECTION_MAX];char text[768];
+     test_uirep_route_set(7,ui);test_uirep_call_count=0;uirep_set_hint(0x11);
+     uirep_target_clear_stub(test_uirep_target);assert(!test_uirep_call_count && uirep_queue_count==1 && !uirep_get_hint() && uirep_target_ui==1);
+     uirep_target_set_stub(test_uirep_target,test_uirep_element);assert(!test_uirep_call_count && uirep_queue_count==2 && uirep_get_hint()==0x7001 && uirep_target_ui==2);
+     assert(uirep_take(200,UIREP_SECTION_MAX,again)==length && !memcmp(again,section,length) && uirep_target_passed==2 && uirep_target_md==2);
+     assert(uirep_status(text,sizeof(text)) && strstr(text," target_ui=2/0 target_md=2 target_route=aeba54,aeb510,ad7064,1135ea5,1135f3c,9fdf8b route_faults=0"));
+     /* Off the frame thread: refused, nothing runs anywhere, nothing queued; the shown route stays the frame thread's. */
+     HANDLE h=CreateThread(NULL,0,test_uirep_off_thread,NULL,0,NULL);assert(h);assert(WaitForSingleObject(h,5000)==WAIT_OBJECT_0);CloseHandle(h);
+     assert(!test_uirep_call_count && !uirep_queue_count && uirep_target_ui_refused==1 && uirep_target_ui==2 && uirep_route_last_count==6);
+     /* The replay applying and the time past the window stay stock, whatever the route. */
+     InterlockedExchange(&uirep_replaying,1);uirep_target_clear_stub(test_uirep_target);InterlockedExchange(&uirep_replaying,0);
+     assert(test_uirep_count('C')==1 && uirep_target_passed==3 && !uirep_queue_count);
+     uirep_stopped=1;uirep_target_set_stub(test_uirep_target,test_uirep_element);uirep_stopped=0;
+     assert(test_uirep_count('T')==1 && uirep_target_passed==4 && !uirep_queue_count && uirep_target_ui==2 && uirep_target_md==2);
+     /* No frame at all (a walk that unwinds nothing): not MD, captured. */
+     test_uirep_route_set(0,ui);test_uirep_call_count=0;uirep_target_clear_stub(test_uirep_target);
+     assert(!test_uirep_call_count && uirep_queue_count==1 && uirep_target_ui==3 && !uirep_route_last_count);
+     uirep_queue_head=uirep_queue_count=0;uirep_route_override=NULL;test_uirep_call_count=0;}
     /* Two clients apply it alike: the same calls in slot 2's scope, the same receipt, the local hint kept. */
     char receipt[2][192];
     for(unsigned client=0;client<2;client++) {
@@ -295,7 +335,7 @@ static void test_ui_replay(void) {
         uirep_queue_head=uirep_queue_count=0;memset(uirep_ring,0,sizeof(uirep_ring));test_uirep_call_count=0;
         for(unsigned i=UIREP_H_AP_START;i<UIREP_HOOKS;i++) uirep_fn.forward[i]=test_uirep_call_fwd;
         uirep_fn.forward[UIREP_H_AP_START]=test_uirep_call_vec_fwd;uirep_fn.forward[UIREP_H_WMODE]=test_uirep_call_str_fwd;
-        unsigned saved_families=uirep_families;uirep_families=UIREP_FAMILIES;
+        unsigned saved_families=uirep_families;uirep_families=UIREP_FAMILIES&~UIREP_FAMILY_FLIGHT;
         __attribute__((aligned(16))) float offset[4]={1.5f,-2.0f,3.25f,0.0f};
         /* Outside the local phases every hook is X4's own; a check-only call is a query everywhere. */
         assert(uirep_call_ap_start((uint64_t)(uintptr_t)test_uirep_p1,(uint64_t)(uintptr_t)test_uirep_target,(uint64_t)(uintptr_t)offset,1,1,3,0,0)==55+2 &&
@@ -326,7 +366,7 @@ static void test_ui_replay(void) {
         length=uirep_take(300,UIREP_SECTION_MAX,section);assert(length && section[3]==5 && !uirep_queue_count);
         {uint16_t c16=0;const char *w="";assert(uirep_section_ok(2,section,length,&c16,&w));
          unsigned char bad[UIREP_SECTION_MAX];memcpy(bad,section,length);bad[5]-=1;assert(!uirep_section_ok(2,bad,length,&c16,&w) && !strcmp(w,"ui_call"));
-         uirep_families=UIREP_FAMILY_TRAVEL;assert(!uirep_section_ok(2,section,length,&c16,&w) && !strcmp(w,"ui_call"));uirep_families=UIREP_FAMILIES;}
+         uirep_families=UIREP_FAMILY_TRAVEL;assert(!uirep_section_ok(2,section,length,&c16,&w) && !strcmp(w,"ui_call"));uirep_families=UIREP_FAMILIES&~UIREP_FAMILY_FLIGHT;}
         assert(uirep_stage(2,section,length,301,&why));
         memset(test_uirep_call_vector,0,16);LONG64 applied=uirep_calls_applied;
         assert(uirep_frame(303,&why) && uirep_calls_applied==applied+5);
@@ -353,8 +393,49 @@ static void test_ui_replay(void) {
             unsigned at=test_pslot_store_offset(UIREP_AUTOPILOT);memset(pslots[2].store+at,0,8);
             char text[192];assert(uirep_frame_text(text,sizeof(text)) && strstr(text,"/1/0.1,") && strstr(text,"/0/2.-1"));
             *(uint64_t*)(pslots[2].store+at)=7;assert(uirep_frame_text(text,sizeof(text)) && strstr(text,"/1/2.-1"));
-            uirep_families=UIREP_FAMILY_TRAVEL;assert(uirep_frame_text(text,sizeof(text)) && !strstr(text,"/1/0.1"));uirep_families=UIREP_FAMILIES;
+            uirep_families=UIREP_FAMILY_TRAVEL;assert(uirep_frame_text(text,sizeof(text)) && !strstr(text,"/1/0.1"));uirep_families=UIREP_FAMILIES&~UIREP_FAMILY_FLIGHT;
             memcpy(pilot_slots,saved_slots,sizeof(saved_slots));*(uint64_t*)(region+UIREP_AUTOPILOT)=0;pslots[2].length=0;
+        }
+        /* The flight family: flight assist on the player (the singleton's at the capture; slot 2's own, P_2, in its scope at
+         * the apply), the HUD's own-ship buttons by their number. Captured in the UI, nothing runs here; on the wire, staged,
+         * applied in slot 2's scope; refused on the wire without the family. Its receipt part: assist and drones armed. */
+        {   uirep_families=UIREP_FAMILY_FLIGHT;uirep_queue_head=uirep_queue_count=0;test_uirep_call_count=0;
+            assert(uirep_call_fassist((uint64_t)(uintptr_t)test_uirep_p1,0,0,0,0,0,0,0)==55 && test_uirep_count('K')==1);   /* outside: X4's own */
+            uirep_ui_depth=1;test_uirep_call_count=0;
+            assert(uirep_call_fassist((uint64_t)(uintptr_t)test_uirep_p1,0,0,0,0,0,0,0)==1 && uirep_call_turret_mode(3,0,0,0,0,0,0,0)==1 &&
+                   uirep_call_turret_missile(1,0,0,0,0,0,0,0)==1 && uirep_call_drones(2,0,0,0,0,0,0,0)==1 && uirep_call_drone_mode(3,0,0,0,0,0,0,0)==1);
+            assert(!test_uirep_call_count && uirep_queue_count==5);
+            {LONG64 refused=uirep_refused;   /* another player than the singleton: refused, nothing queued */
+             assert(!uirep_call_fassist((uint64_t)(uintptr_t)test_uirep_ship,0,0,0,0,0,0,0) && uirep_refused==refused+1 && uirep_queue_count==5);
+             char text[256];assert(uirep_refusals_text(text,sizeof(text)) && strstr(text,"FlightAssistToggle:not_the_player"));}
+            uirep_ui_depth=0;
+            length=uirep_take(320,UIREP_SECTION_MAX,section);assert(length && section[3]==5 && !uirep_queue_count);
+            {uint16_t c16=0;const char *w="";assert(uirep_section_ok(2,section,length,&c16,&w));
+             uirep_families=UIREP_FAMILY_WEAPONS;assert(!uirep_section_ok(2,section,length,&c16,&w) && !strcmp(w,"ui_call"));uirep_families=UIREP_FAMILY_FLIGHT;}
+            assert(uirep_stage(2,section,length,321,&why));
+            LONG64 applied=uirep_calls_applied;
+            assert(uirep_frame(323,&why) && uirep_calls_applied==applied+5 && test_uirep_count('K')==5);
+            static const uint64_t args[5]={0,3,1,2,3};
+            for(unsigned i=0,j=0;i<test_uirep_call_count;i++) {
+                if(test_uirep_calls[i].what!='K') continue;
+                assert(test_uirep_calls[i].scope==2 && test_uirep_calls[i].a==test_uirep_player);
+                assert(test_uirep_calls[i].b==(j?args[j]:(uint64_t)(uintptr_t)test_uirep_player));   /* the player argument is slot 2's */
+                ++j;
+            }
+            /* Slot 1 canonical: the singleton's own player, no scope. */
+            uirep_ui_depth=1;assert(uirep_call_fassist((uint64_t)(uintptr_t)test_uirep_p1,0,0,0,0,0,0,0)==1);uirep_ui_depth=0;
+            length=uirep_take(330,UIREP_SECTION_MAX,section);assert(uirep_stage(1,section,length,331,&why));test_uirep_call_count=0;
+            assert(uirep_frame(333,&why) && test_uirep_count('K')==1 && test_uirep_calls[0].a==test_uirep_p1 && test_uirep_calls[0].b==(uint64_t)(uintptr_t)test_uirep_p1 &&
+                   !test_uirep_calls[0].scope && !test_uirep_count('{'));
+            static __attribute__((aligned(16))) unsigned char ship1[0x700],ship2[0x700];
+            pilot_slot saved_slots[2];memcpy(saved_slots,pilot_slots,sizeof(saved_slots));
+            pilot_slots[0].resolved=pilot_slots[1].resolved=1;pilot_slots[0].object=ship1;pilot_slots[1].object=ship2;
+            test_uirep_p1[UIREP_PLAYER_ASSIST]=1;test_uirep_player[UIREP_PLAYER_ASSIST]=0;ship1[UIREP_SHIP_DRONES+1]=1;ship2[UIREP_SHIP_DRONES+2]=1;
+            char text[256];assert(uirep_frame_text(text,sizeof(text)) && strstr(text,"|0/0/f1.010,0/0/f0.001"));
+            test_uirep_player[UIREP_PLAYER_ASSIST]=1;assert(uirep_frame_text(text,sizeof(text)) && strstr(text,",0/0/f1.001"));
+            uirep_families=UIREP_FAMILY_TRAVEL;assert(uirep_frame_text(text,sizeof(text)) && !strstr(text,"/f"));
+            memcpy(pilot_slots,saved_slots,sizeof(saved_slots));test_uirep_p1[UIREP_PLAYER_ASSIST]=0;test_uirep_player[UIREP_PLAYER_ASSIST]=0;
+            uirep_families=UIREP_FAMILIES&~UIREP_FAMILY_FLIGHT;test_uirep_call_count=0;
         }
         /* The stock record: dock and weapon keys replayed, the autopilot key run here, all off without their family. */
         assert(pstk_verdict_slot(PSTK_ACTION,0xaf,2)==PSTK_REPLAY && pstk_verdict_slot(PSTK_ACTION,0xd3,2)==PSTK_REPLAY);
@@ -443,7 +524,7 @@ static void test_ui_replay(void) {
         for(unsigned i=UIREP_H_CLEAR;i<UIREP_HOOKS;i++) uirep_fn.forward[i]=test_uirep_forward;
         uirep_queue_head=uirep_queue_count=0;memset(uirep_ring,0,sizeof(uirep_ring));test_uirep_call_count=0;
     }
-    uirep_families=UIREP_FAMILIES;   /* every hook */
+    uirep_families=UIREP_FAMILIES&~UIREP_FAMILY_TRADE;   /* every hook of this header (trade: test_lockstep_ui_trade.h) */
     /* Install on executable fake bytes: every patch one CAS, every stride run for real, everything back. */
     for(unsigned i=0;i<UIREP_HOOKS;i++) {
         memset(region+uirep_hooks[i].rva,0xcc,0x20);memcpy(region+uirep_hooks[i].rva,uirep_hooks[i].bytes,uirep_hooks[i].prefix);
@@ -467,14 +548,29 @@ static void test_ui_replay(void) {
     assert(!memcmp(uirep_stride(UIREP_H_START),uirep_hooks[UIREP_H_START].bytes,7) && uirep_stride(UIREP_H_START)[7]==0xff && uirep_stride(UIREP_H_START)[8]==0x25);
     assert(uirep_fn.start==(uirep_activity_fn)uirep_stride(UIREP_H_START) && uirep_fn.forward[UIREP_H_DEPLOY]==(uirep_forward_fn)uirep_stride(UIREP_H_DEPLOY));
     {unsigned char t1[UIREP_STRIDE],t2[UIREP_STRIDE];assert(uirep_write_site(0,t1)<=UIREP_STRIDE && uirep_write_site(1,t2)<=UIREP_STRIDE);}
-    /* The soft target's strides, entered as their patches enter them. */
+    /* The soft target's strides, entered as their patches enter them (on MD's route: the stock functions). */
     uirep_fn=stubs;test_uirep_call_count=0;
+    {static const uint32_t md[]={UIREP_MD_SET_RETURN};test_uirep_route_set(1,md);}
     test_uirep_run_site(uirep_site_stride(UIREP_S_TARGET_SET),test_uirep_target,test_uirep_element,NULL);
     assert(test_uirep_count('T')==1 && test_uirep_calls[0].a==test_uirep_target+UIREP_ASSOCIATION && test_uirep_rbx_after==test_uirep_target && test_uirep_r13_after==test_uirep_element);
     test_uirep_run_site(uirep_site_stride(UIREP_S_TARGET_CLEAR),NULL,test_uirep_element,test_uirep_target);
     assert(test_uirep_count('C')==1 && test_uirep_calls[1].a==test_uirep_target+UIREP_ASSOCIATION && test_uirep_rbx_after==test_uirep_target);
     test_uirep_run_site(uirep_site_stride(UIREP_S_TARGET_CLEAR),(void*)1,test_uirep_element,NULL);  /* no component: X4's error path, nothing called */
     assert(test_uirep_count('C')==1 && test_uirep_rbx_after==NULL);
+    /* The real walk from both strides: this test's frames and the stub by their tables up to the stride on the page; the fake image
+     * at the block's resume has no table, so no MD: the UI's route, captured, nothing called, the registers kept. */
+    uirep_route_override=NULL;test_uirep_call_count=0;
+    {uint64_t issued=stats.issued,start=pstk_capture_start,stop=pilot_stop;LONG64 ui=uirep_target_ui,faults=uirep_route_faults;
+     stats.issued=200;pstk_capture_start=50;pilot_stop=1000;uirep_queue_head=uirep_queue_count=0;
+     uirep_route_reached=0;test_uirep_run_site(uirep_site_stride(UIREP_S_TARGET_SET),test_uirep_target,test_uirep_element,NULL);
+     assert(uirep_route_reached && !test_uirep_call_count && uirep_queue_count==1 && uirep_target_ui==ui+1 && !uirep_route_last_count);
+     assert(test_uirep_rbx_after==test_uirep_target && test_uirep_r13_after==test_uirep_element);
+     uirep_route_reached=0;test_uirep_run_site(uirep_site_stride(UIREP_S_TARGET_CLEAR),NULL,test_uirep_element,test_uirep_target);
+     assert(uirep_route_reached && !test_uirep_call_count && uirep_queue_count==2 && uirep_target_ui==ui+2 && test_uirep_rbx_after==test_uirep_target);
+     assert(uirep_route_faults==faults && uirep_queue[0].op==UIREP_OP_TARGET_SET && uirep_queue[1].op==UIREP_OP_TARGET_CLEAR);
+     /* A call that is not from a stride (directly from C): the walk never reaches the page, nothing unwound, still not MD. */
+     uirep_route_reached=0;uirep_target_clear_stub(test_uirep_target);assert(!uirep_route_reached && !test_uirep_call_count && uirep_queue_count==3);
+     uirep_queue_head=uirep_queue_count=0;stats.issued=issued;pstk_capture_start=start;pilot_stop=stop;}
     /* The pass: runtime IDs in set mode (armed after this module), installed once, intact checked, a lost patch stops with 164. */
     pilot_start=60;pilot_stop=1000;
     {int installed=uirep_installed;uirep_installed=0;rid_mode=RID_OBSERVE;
@@ -505,6 +601,33 @@ static void test_ui_replay(void) {
     pslot_armed=saved_slots;pres_armed=saved_present;rid_mode=saved_rid;pslots[2]=saved_pslot;pilot_start=0;
     printf("UI replay on stubs and an executable region verified\n");
 }
+/* X4's own unwind table (.pdata) inside the private mapping, for RtlAddFunctionTable. */
+static PRUNTIME_FUNCTION test_uirep_tables(const char *path,unsigned char *mapped,DWORD *count) {
+    FILE *file=fopen(path,"rb");IMAGE_DOS_HEADER dos;IMAGE_NT_HEADERS64 nt;
+    assert(file && fread(&dos,1,sizeof(dos),file)==sizeof(dos) && !fseek(file,dos.e_lfanew,SEEK_SET) && fread(&nt,1,sizeof(nt),file)==sizeof(nt));
+    fclose(file);
+    IMAGE_DATA_DIRECTORY d=nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+    *count=d.Size/(DWORD)sizeof(RUNTIME_FUNCTION);return (PRUNTIME_FUNCTION)(mapped+d.VirtualAddress);
+}
+/* A synthetic stack for a chain of image frames: 0xaecb60 at a block's resume, then each function's return address written where
+ * X4's own unwind data reads it (zero above the last). The walk's second half then lists the image return addresses it finds. */
+static uint64_t test_uirep_stack[0x4000];
+static unsigned test_uirep_chain(unsigned char *mapped,unsigned resume,const uint32_t *returns,unsigned count,uint32_t *frames,unsigned capacity) {
+    CONTEXT c,start;memset(test_uirep_stack,0,sizeof(test_uirep_stack));memset(&c,0,sizeof(c));
+    c.Rsp=(DWORD64)(uintptr_t)(test_uirep_stack+0x200);c.Rip=(DWORD64)(uintptr_t)(mapped+resume);start=c;
+    for(unsigned i=0;i<count;i++) {
+        CONTEXT probe=c;DWORD64 module=0;PVOID handler=NULL;DWORD64 frame=0;
+        PRUNTIME_FUNCTION fn=RtlLookupFunctionEntry(probe.Rip,&module,NULL);assert(fn && module==(DWORD64)(uintptr_t)mapped);
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER,module,probe.Rip,fn,&probe,&handler,&frame,NULL);
+        uint64_t *slot=(uint64_t*)(uintptr_t)(probe.Rsp-8);
+        assert(slot>=test_uirep_stack && slot<test_uirep_stack+0x4000-0x200);
+        *slot=(uint64_t)(uintptr_t)(mapped+returns[i]);
+        probe=c;RtlVirtualUnwind(UNW_FLAG_NHANDLER,module,probe.Rip,fn,&probe,&handler,&frame,NULL);
+        assert(probe.Rip==(DWORD64)(uintptr_t)(mapped+returns[i]));
+        c=probe;
+    }
+    return uirep_route_unwind(&start,mapped,frames,capacity);
+}
 /* The pinned image, read-only apart from a private mapping: pins, prefixes, the slots relied on, a whole install. */
 static void test_ui_replay_native_image(const char *path) {
     unsigned char *prior=image,*prior_base=pnat_base;uirep_fns saved_fn=uirep_fn;int saved_mode=pnat_mode;
@@ -513,6 +636,27 @@ static void test_ui_replay_native_image(const char *path) {
     /* Ship vtable slot 1008 is what CanStartTravelMode calls; slots 4 and 5 of the component's +0x48 interface. */
     {void **ship_vt=(void**)(image+0x2b7feb8u);assert(ship_vt[UIREP_SHIP_CAN_TRAVEL]==(void*)(image+0x7e1c80u));}
     {void **assoc=(void**)(image+0x2a93178u);assert(assoc[4]==(void*)(image+0x3e73f0u) && assoc[5]==(void*)(image+0x3e7560u));}
+    /* MD's two soft target actions: their vtable slot 3, the calls whose return addresses name MD's route, and vfunc 72 of
+     * UI::CUIController that set_player_target calls. */
+    {void **set_vt=(void**)(image+UIREP_MD_SET_VTABLE),**clear_vt=(void**)(image+UIREP_MD_CLEAR_VTABLE),**ui_vt=(void**)(image+0x2bc07f0u);
+     static const unsigned char vf72[]={0xff,0x90,0x40,0x02,0x00,0x00};int32_t rel=0;
+     assert(set_vt[3]==(void*)(image+UIREP_MD_SET_FN) && clear_vt[3]==(void*)(image+UIREP_MD_CLEAR_FN) && ui_vt[72]==(void*)(image+0xb3f7c0u));
+     assert(!memcmp(image+UIREP_MD_SET_RETURN-6,vf72,6) && image[UIREP_MD_CLEAR_RETURN-5]==0xe8);
+     memcpy(&rel,image+UIREP_MD_CLEAR_RETURN-4,4);assert(UIREP_MD_CLEAR_RETURN+(uint32_t)rel==0xae8080u);}
+    /* The walk's second half on X4's own unwind data (registered for this mapping), from either block's resume: MD's set route
+     * (0xaecb60 <- 0xaeb150 <- vfunc 72 0xb3f7c0 <- MD), its clear route (<- 0xae8460 <- 0xaebef0 <- 0xae8080 <- MD) and the UI's
+     * own from missile1 (<- 0xaeb970 <- the target element's destructor 0xaeb4e0, tail-called by 0xad7440 <- 0xad7050). */
+    {DWORD count=0;PRUNTIME_FUNCTION table=test_uirep_tables(path,image,&count);
+     assert(count>80000 && RtlAddFunctionTable(table,count,(DWORD64)(uintptr_t)image));
+     static const uint32_t md_set[]={0xaeb2b0u,0xb3f84bu,UIREP_MD_SET_RETURN},md_clear[]={0xae849au,0xaebf87u,0xae809fu,UIREP_MD_CLEAR_RETURN},
+         element[]={0xaeba54u,0xaeb510u,0xad7064u};
+     const struct {const uint32_t *returns;unsigned count;} chains[3]={{md_set,3},{md_clear,4},{element,3}};
+     for(unsigned site=0;site<UIREP_SITES;site++) for(unsigned i=0;i<3;i++) {
+         uint32_t frames[UIREP_ROUTE_DEPTH];
+         unsigned n=test_uirep_chain(image,uirep_sites[site].resume,chains[i].returns,chains[i].count,frames,UIREP_ROUTE_DEPTH);
+         assert(n==chains[i].count && !memcmp(frames,chains[i].returns,n*sizeof(*frames)));
+     }
+     assert(RtlDeleteFunctionTable(table));}
     /* CanStartTravelMode's own call and the stops' uses of the same fields (no other meaning of the offsets). */
     {static const unsigned char call[]={0x48,0xff,0xa0,0x80,0x1f,0x00,0x00};assert(!memcmp(image+0x177658u,call,sizeof(call)));}
     /* The exports that reach the two activity functions by a tail jump. */
@@ -532,6 +676,9 @@ static void test_ui_replay_native_image(const char *path) {
     uirep_uninstall();assert(!uirep_installed && uirep_restored);
     uirep_pins_checked=0;assert(uirep_pins());
     image[0x3e73f0u+3]^=1;uirep_pins_checked=0;assert(!uirep_pins() && pin_failed_rva==0x3e73f0u);image[0x3e73f0u+3]^=1;uirep_pins_checked=0;
+    image[UIREP_MD_SET_RETURN-4]^=1;assert(!uirep_pins() && pin_failed_rva==UIREP_MD_SET_FN);image[UIREP_MD_SET_RETURN-4]^=1;uirep_pins_checked=0;
+    {void **clear_vt=(void**)(image+UIREP_MD_CLEAR_VTABLE),*keep=clear_vt[3];clear_vt[3]=(void*)(image+UIREP_MD_SET_FN);
+     assert(!uirep_pins() && pin_failed_rva==UIREP_MD_CLEAR_VTABLE);clear_vt[3]=keep;uirep_pins_checked=0;assert(uirep_pins());}
     uirep_armed=0;uirep_families=0;
     if(uirep_page) {VirtualFree(uirep_page,0,MEM_RELEASE);uirep_page=NULL;}
     VirtualFree(image,0,MEM_RELEASE);

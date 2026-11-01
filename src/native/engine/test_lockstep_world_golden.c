@@ -1,6 +1,6 @@
 /* Golden text of the synthetic world (test_lockstep_world_scenario.h) from the Windows
  * world hash: WORLD_IMPORTED_2 and _1 captures over three ticks with their WORLD_OBJECT
- * pages, WORLD_DETAIL rows and WORLD_BANKS lines. The Linux gate prints the same world in
+ * pages, WORLD_DETAIL rows, WORLD_BANKS lines and (FR28) WORLD_HEALTH rows. The Linux gate prints the same world in
  * its layout (linux/test_gate_linux.c) and must match this text byte for byte.
  *   test_world_golden.exe X4.exe [out.txt]
  * Needs the pinned X4.exe for the layout pins the capture verifies; the file is read into
@@ -32,6 +32,7 @@ static void run(unsigned schema,const wscen_layout *layout) {
     *(void**)(image+0x6cf1500)=wscen_agent;world_hash_items=NULL;world_hash_changed=NULL;world_hash_count=0;world_hash_tick=0;
     world_hash_scans=world_hash_failures=0;world_hash_watch_count=0;world_hash_schema=1;
     TEST(world_hash_watch_add("000000000000004d",16) && world_hash_watch_add("000000000000004f",16));
+    world_health_find=golden_find;lua_argument=1;TEST(lua_world_health(NULL)==1 && !strcmp(exported,"nil")); /* no capture yet */
     for(unsigned tick=1;tick<=3;tick++) {
         wscen_step(tick);
         TEST(world_hash_capture_with(tick,schema,golden_find));
@@ -41,6 +42,14 @@ static void run(unsigned schema,const wscen_layout *layout) {
         for(unsigned page=1;page<=pages;page++) {lua_argument=page;TEST(lua_world_page(NULL)==1 && strcmp(exported,"nil"));emit(exported);}
         lua_argument=0;TEST(lua_world_detail(NULL)==1);unsigned rows=(unsigned)lua_result;TEST(rows==2*WORLD_HASH_DOMAINS);
         for(unsigned row=1;row<=rows;row++) {lua_argument=row;TEST(lua_world_detail(NULL)==1 && strcmp(exported,"nil"));emit("WORLD_DETAIL ");emit(exported);emit("\n");}
+        /* FR28: WORLD_HEALTH of both watches at this tick, then the second as if its object were gone. */
+        double now=7.25+tick;memcpy(image+GAME_RVA,&now,8);stats.issued=tick;
+        lua_argument=0;TEST(lua_world_health(NULL)==1 && lua_result==2);
+        for(unsigned row=1;row<=2;row++) {lua_argument=row;TEST(lua_world_health(NULL)==1 && strstr(exported," present=1 "));emit("WORLD_HEALTH ");emit(exported);emit("\n");}
+        lua_argument=3;TEST(lua_world_health(NULL)==1 && !strcmp(exported,"nil"));
+        uint64_t kept=world_hash_watches[1].runtime;world_hash_watches[1].runtime=170; /* 84's runtime: never present */
+        lua_argument=2;TEST(lua_world_health(NULL)==1 && strstr(exported," present=0 "));emit("WORLD_HEALTH ");emit(exported);emit("\n");
+        world_hash_watches[1].runtime=kept;
     }
 }
 int main(int argc,char **argv) {

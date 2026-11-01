@@ -2,7 +2,8 @@
 <!-- Lockstep player identity (config native_gate_player_identity, default off; driven only by
      native_gate_player_identity.lua). Every client receives the identical ordered steps of the
      session plan at the same gated tick. MD resolves factions, applies ownership, creates planned
-     ships, places start ships and sets relations, then writes exactly one PLAYER_IDENTITY_APPLIED
+     ships, places start ships, sets relations and applies per-player starts (kits: wallet, reputation,
+     blueprints, research, map knowledge), then writes exactly one PLAYER_IDENTITY_APPLIED
      line per step and returns one result row to Lua. It never invents plan content. Pool factions
      x4lan_player1..16 come from the base extension's libraries/factions.xml and are resolved through
      lookup.faction, so a missing pool refuses the setup instead of breaking script load. -->
@@ -194,6 +195,161 @@
       <set_value name="$ba" exact="$fb.relationto.{$fa}"/>
       <set_value name="$detail" exact="'ab=%s ba=%s'.[$ab, $ba]"/>
       <set_value name="$result" exact="if $ab - $a.$value gt 0.001 or $ab - $a.$value lt -0.001 or $ba - $a.$value gt 0.001 or $ba - $a.$value lt -0.001 then 'refused_relation_readback' else 'applied'"/>
+     </do_else>
+    </do_elseif>
+    <!-- Per-player starts (kits, LOCKSTEP-STARTS-20261101): the player-level parts of slot k's own stock start,
+         resolved at session setup and carried in the plan. Every step reads back what it changed. -->
+    <do_elseif value="$a.$step == 'kit'">
+     <set_value name="State.$known" exact="[]"/>
+     <set_value name="$detail" exact="'gamestart=%s'.[$a.$gamestart]"/>
+     <set_value name="$result" exact="'applied'"/>
+    </do_elseif>
+    <do_elseif value="$a.$step == 'wallet'">
+     <!-- factions: slot k's own pool account is set to the start's money (the player's wallet is moved through and
+          left as it was); coop: the start's money adds to the one shared wallet. -->
+     <set_value name="$f" exact="if $a.$faction == 'player' then faction.player else @State.$byId.{'$' + $a.$faction}"/>
+     <set_value name="$before" exact="player.money"/>
+     <do_if value="typeof $f != datatype.faction or ($a.$op == 'set' and not @State.$isPool.{'$' + $a.$faction}) or ($a.$op == 'add' and $f != faction.player) or $a.$cents lt 0">
+      <set_value name="$result" exact="'refused_wallet_invalid'"/>
+     </do_if>
+     <do_elseif value="$a.$op == 'add'">
+      <do_if value="$a.$cents gt 0">
+       <reward_player money="$a.$cents * 1ct"/>
+      </do_if>
+      <set_value name="$detail" exact="'money=%s before=%s'.[(player.money / 1ct)i, ($before / 1ct)i]"/>
+      <do_if value="player.money != $before + $a.$cents * 1ct">
+       <set_value name="$result" exact="'refused_wallet_readback'"/>
+      </do_if>
+      <do_elseif value="$a.$cents == 0">
+       <set_value name="$result" exact="'unchanged'"/>
+      </do_elseif>
+      <do_else>
+       <set_value name="$result" exact="'applied'"/>
+      </do_else>
+     </do_elseif>
+     <do_else>
+      <set_value name="$delta" exact="$a.$cents * 1ct - $f.money"/>
+      <do_if value="$delta gt 0ct">
+       <reward_player money="$delta"/>
+       <transfer_money from="faction.player" to="$f" amount="$delta"/>
+      </do_if>
+      <do_elseif value="$delta lt 0ct">
+       <transfer_money from="$f" to="faction.player" amount="-$delta"/>
+       <reward_player money="$delta"/>
+      </do_elseif>
+      <set_value name="$detail" exact="'money=%s player=%s'.[($f.money / 1ct)i, (player.money / 1ct)i]"/>
+      <do_if value="($f.money / 1ct)i != $a.$cents or player.money != $before">
+       <set_value name="$result" exact="'refused_wallet_readback'"/>
+      </do_if>
+      <do_elseif value="$delta == 0ct">
+       <set_value name="$result" exact="'unchanged'"/>
+      </do_elseif>
+      <do_else>
+       <set_value name="$result" exact="'applied'"/>
+      </do_else>
+     </do_else>
+    </do_elseif>
+    <do_elseif value="$a.$step == 'reputation'">
+     <!-- factions only: slot k's faction toward one NPC faction, both directions (after the mirror). -->
+     <set_value name="$f" exact="@State.$byId.{'$' + $a.$faction}"/>
+     <set_value name="$o" exact="@State.$byId.{'$' + $a.$other}"/>
+     <do_if value="typeof $f != datatype.faction or not @State.$isPool.{'$' + $a.$faction} or typeof $o != datatype.faction or @State.$isPool.{'$' + $a.$other} or $o == faction.player">
+      <set_value name="$result" exact="'refused_faction_invalid'"/>
+     </do_if>
+     <do_elseif value="$a.$value lt -1 or $a.$value gt 1">
+      <set_value name="$result" exact="'refused_relation_invalid'"/>
+     </do_elseif>
+     <do_else>
+      <set_value name="$d" exact="$f.relationto.{$o} - $a.$value"/>
+      <set_value name="$e" exact="$o.relationto.{$f} - $a.$value"/>
+      <set_value name="$same" exact="$d lt 0.000001 and $d gt -0.000001 and $e lt 0.000001 and $e gt -0.000001"/>
+      <set_faction_relation faction="$f" otherfaction="$o" value="$a.$value"/>
+      <set_faction_relation faction="$o" otherfaction="$f" value="$a.$value"/>
+      <set_value name="$ab" exact="$f.relationto.{$o}"/>
+      <set_value name="$ba" exact="$o.relationto.{$f}"/>
+      <set_value name="$detail" exact="'ab=%s ba=%s'.[$ab, $ba]"/>
+      <do_if value="$ab - $a.$value gt 0.000001 or $ab - $a.$value lt -0.000001 or $ba - $a.$value gt 0.000001 or $ba - $a.$value lt -0.000001">
+       <set_value name="$result" exact="'refused_relation_readback'"/>
+      </do_if>
+      <do_elseif value="$same">
+       <set_value name="$result" exact="'unchanged'"/>
+      </do_elseif>
+      <do_else>
+       <set_value name="$result" exact="'applied'"/>
+      </do_else>
+     </do_else>
+    </do_elseif>
+    <do_elseif value="$a.$step == 'blueprint' or $a.$step == 'research'">
+     <!-- coop only: the one player library (blueprints) and research of the player faction. -->
+     <set_value name="$w" exact="@ware.{$a.$ware}"/>
+     <do_if value="not $w">
+      <set_value name="$result" exact="'refused_ware_invalid'"/>
+     </do_if>
+     <do_elseif value="$a.$step == 'blueprint'">
+      <do_if value="@player.blueprints.{$w}.any.exists">
+       <set_value name="$result" exact="'unchanged'"/>
+      </do_if>
+      <do_else>
+       <add_blueprints wares="$w"/>
+       <set_value name="$result" exact="if @player.blueprints.{$w}.any.exists then 'applied' else 'refused_blueprint_readback'"/>
+      </do_else>
+     </do_elseif>
+     <do_elseif value="$w.research.unlocked">
+      <set_value name="$result" exact="'unchanged'"/>
+     </do_elseif>
+     <do_else>
+      <add_research ware="$w"/>
+      <set_value name="$result" exact="if $w.research.unlocked then 'applied' else 'refused_research_readback'"/>
+     </do_else>
+    </do_elseif>
+    <do_elseif value="$a.$step == 'known_sector'">
+     <set_value name="$m" exact="@macro.{$a.$knownsector}"/>
+     <do_if value="not $m or not State.$known?">
+      <set_value name="$result" exact="'refused_known_invalid'"/>
+     </do_if>
+     <do_else>
+      <append_to_list name="State.$known" exact="$m"/>
+      <set_value name="$detail" exact="'count=%s'.[State.$known.count]"/>
+      <set_value name="$result" exact="'applied'"/>
+     </do_else>
+    </do_elseif>
+    <do_elseif value="$a.$step == 'known'">
+     <!-- The start's own map uncover (class c world part), rebuilt with its literal sector list through the stock
+          library action at the same tick on every client; never the start's new-game MD itself. -->
+     <set_value name="$kf" exact="if $a.$hasfaction == 1 then @State.$byId.{'$' + $a.$kfaction} else null"/>
+     <do_if value="not State.$known? or State.$known.count != $a.$count or ($a.$hasfaction == 1 and typeof $kf != datatype.faction)">
+      <set_value name="$result" exact="'refused_known_invalid'"/>
+     </do_if>
+     <do_else>
+      <set_value name="$was" exact="0"/>
+      <do_all exact="State.$known.count" counter="$i">
+       <find_sector name="$s" macro="State.$known.{$i}"/>
+       <do_if value="@$s.isknown">
+        <set_value name="$was" operation="add"/>
+       </do_if>
+      </do_all>
+      <run_actions ref="md.LIB_Generic.UncoverMap_SectorsAndGates">
+       <param name="InitialMap" value="State.$known"/>
+       <param name="UncoverStationFaction" value="$kf"/>
+       <param name="UncoverShipyardsAndWharfs" value="$a.$shipyards == 1"/>
+      </run_actions>
+      <set_value name="$now" exact="0"/>
+      <do_all exact="State.$known.count" counter="$i">
+       <find_sector name="$s" macro="State.$known.{$i}"/>
+       <do_if value="@$s.isknown">
+        <set_value name="$now" operation="add"/>
+       </do_if>
+      </do_all>
+      <set_value name="$detail" exact="'known=%s/%s before=%s'.[$now, State.$known.count, $was]"/>
+      <do_if value="$now != State.$known.count">
+       <set_value name="$result" exact="'refused_known_readback'"/>
+      </do_if>
+      <do_elseif value="$was == State.$known.count">
+       <set_value name="$result" exact="'unchanged'"/>
+      </do_elseif>
+      <do_else>
+       <set_value name="$result" exact="'applied'"/>
+      </do_else>
      </do_else>
     </do_elseif>
     <do_elseif value="$a.$step == 'end'">

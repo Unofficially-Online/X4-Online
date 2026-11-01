@@ -12,7 +12,12 @@
  * every frame (so a relay stop is seen at once). Fail closed: a permit
  * beyond that window stops with reason 102, two different permits for one
  * tick with 103, and a permit returning a different local proposal with 56.
- * k = 0 is protocol 3 and never reaches this code. */
+ * k = 0 is protocol 3 and never reaches this code. With gate.wire_crypto
+ * (lockstep_wire_crypto_gate.h) every datagram goes through gate_wire_send and
+ * gate_wire_recv; stop 106 there ends the wait like any other stop reason.
+ * Opt-in peer links (lockstep_peer.h, default off) hook in through peer_*:
+ * with them off every call below is a no-op and this window behaves exactly as
+ * before. Protocol 5 (lockstep_adaptive.h) has its own frame and no peer links. */
 #define LOOKAHEAD_RING (GATE_LOOKAHEAD_MAX+1u)
 #define LOOKAHEAD_STOP_AHEAD 102u    /* a permit beyond the window, or for a tick without proposals */
 #define LOOKAHEAD_STOP_CONFLICT 103u /* two different permits for one tick */
@@ -26,10 +31,6 @@ static lookahead_report lookahead_reports[LOOKAHEAD_RING];
 static lookahead_permit lookahead_permits[LOOKAHEAD_RING];
 static char lookahead_scratch[GATE_CLIENTS_MAX][GATE_BLOB_HEX_MAX+1];
 static uint64_t lookahead_ready,lookahead_ahead_max,lookahead_idle,lookahead_resends,lookahead_stale,lookahead_duplicates;
-static void lookahead_reset(void) {
-    memset(lookahead_reports,0,sizeof(lookahead_reports));memset(lookahead_permits,0,sizeof(lookahead_permits));
-    lookahead_ready=lookahead_ahead_max=lookahead_idle=lookahead_resends=lookahead_stale=lookahead_duplicates=0;
-}
 /* Canonical decimal (no sign, no leading zero) at s[0..n): digits used, or 0. */
 static size_t lookahead_decimal(const char *s,size_t n,uint64_t *out) {
     size_t i=0;uint64_t value=0;
@@ -41,6 +42,12 @@ static size_t lookahead_decimal(const char *s,size_t n,uint64_t *out) {
     if(i) *out=value;
     return i;
 }
+#include "lockstep_peer.h"
+static void lookahead_reset(void) {
+    memset(lookahead_reports,0,sizeof(lookahead_reports));memset(lookahead_permits,0,sizeof(lookahead_permits));
+    lookahead_ready=lookahead_ahead_max=lookahead_idle=lookahead_resends=lookahead_stale=lookahead_duplicates=0;
+    peer_reset();
+}
 /* Keep the report of tick: its datagram and the sealed local proposal. The
  * ring holds k+1 consecutive ticks, so their slots never collide. */
 static int lookahead_seal(uint64_t tick,const char *packet,size_t length,const char *blob) {
@@ -51,21 +58,22 @@ static int lookahead_seal(uint64_t tick,const char *packet,size_t length,const c
     return 1;
 }
 static void lookahead_send(lookahead_report *r,ULONGLONG now) {
-    send(connection,r->packet,(int)r->length,0);r->sent=now;++stats.waits;
+    gate_wire_send(r->packet,r->length);r->sent=now;++stats.waits;
 }
 /* While waiting: every report of the window not sent for 100 ms. The report
  * of tick completed-k is the one the awaited permit needs. */
 static void lookahead_resend(uint64_t completed,ULONGLONG now) {
-    for(uint64_t t=completed>wire_lookahead?completed-wire_lookahead:0;t<=completed;t++) {
+    for(uint64_t t=peer_resend_from(completed>wire_lookahead?completed-wire_lookahead:0);t<=completed;t++) {
         lookahead_report *r=&lookahead_reports[t%LOOKAHEAD_RING];
         if(r->used && r->tick==t && now-r->sent>=LOOKAHEAD_RESEND_MS) {lookahead_send(r,now);++lookahead_resends;}
     }
 }
 /* NGGO|4|<token>|<slot>|<T>|<k>|<blob 1>|...|<blob N>. 1: held (or an
  * identical copy); 0: not this client's permit, malformed, or for a tick
- * already run (ignored); -1: a different local proposal (56); -2: beyond the
- * window or non-empty proposals before tick 0 (102); -3: a different copy of a
- * held permit (103). */
+ * already run (ignored; with peer links still checked); -1: a different local
+ * proposal (56); -2: beyond the window or non-empty proposals before tick 0
+ * (102); -3: a different copy of a held permit (103); -4: a peer copy differs
+ * (104, peer links only). */
 static int lookahead_permit_receive(const char *reply,size_t length,uint64_t completed) {
     char head[64],prefix[96];uint64_t tick=0,k=wire_lookahead;
     int n=snprintf(head,sizeof(head),"NGGO|4|%s|%u|",secret,stats.slot);
@@ -73,31 +81,35 @@ static int lookahead_permit_receive(const char *reply,size_t length,uint64_t com
        !lookahead_decimal(reply+n,length-(size_t)n,&tick)) return 0;
     int p=snprintf(prefix,sizeof(prefix),"%s%llu|%u",head,(unsigned long long)tick,wire_lookahead);
     if(p<=0 || (size_t)p>=sizeof(prefix) || length<(size_t)p || memcmp(reply,prefix,(size_t)p)) return 0;
-    if(tick<=completed) {++lookahead_stale;return 0;}
-    if(tick-completed>1+k) return -2;
+    int stale=tick<=completed;
+    if(stale && !peer_on()) {++lookahead_stale;return 0;}
+    if(!stale && tick-completed>1+k) return -2;
     const char *own="";
     if(tick>k) {
         uint64_t source=tick-1-k;const lookahead_report *r=&lookahead_reports[source%LOOKAHEAD_RING];
-        if(!r->used || r->tick!=source) return -2;
+        if(!r->used || r->tick!=source) {if(stale) {++lookahead_stale;return 0;} return -2;}
         own=r->blob;
     }
     int ok=gate_permit_blobs(reply,length,prefix,stats.slot,wire_clients,own,lookahead_scratch);
     if(ok<=0) return ok;
     if(tick<=k) for(unsigned i=0;i<wire_clients;i++) if(lookahead_scratch[i][0]) return -2;
+    if(stale) {++lookahead_stale;ok=peer_permit(tick,lookahead_scratch);return ok<0?ok:0;} /* peer links: a tick already run is checked */
     lookahead_permit *e=&lookahead_permits[tick%LOOKAHEAD_RING];
     if(e->used && e->tick==tick) {
         for(unsigned i=0;i<wire_clients;i++) if(strcmp(e->blobs[i],lookahead_scratch[i])) return -3;
-        ++lookahead_duplicates;return 1;
+        ++lookahead_duplicates;return peer_permit(tick,lookahead_scratch);
     }
     e->tick=tick;e->used=1;
     for(unsigned i=0;i<wire_clients;i++) memcpy(e->blobs[i],lookahead_scratch[i],strlen(lookahead_scratch[i])+1);
     if(tick-completed>lookahead_ahead_max) lookahead_ahead_max=tick-completed;
-    return 1;
+    return peer_permit(tick,lookahead_scratch);
 }
-/* The held permit for tick becomes s.inputs (the proposals of tick-1-k). */
+/* The held permit for tick becomes s.inputs (the proposals of tick-1-k); with
+ * peer links, never more than m ticks past the permits, else the peer records. */
 static int lookahead_take(uint64_t tick) {
+    if(peer_holds(tick)) return 0;
     lookahead_permit *e=&lookahead_permits[tick%LOOKAHEAD_RING];
-    if(!e->used || e->tick!=tick) return 0;
+    if(!e->used || e->tick!=tick) return peer_take(tick);
     for(unsigned i=0;i<wire_clients;i++) memcpy(blob_inputs[i],e->blobs[i],strlen(e->blobs[i])+1);
     e->used=0;return 1;
 }
@@ -116,7 +128,7 @@ static unsigned lookahead_datagram(char *reply,int count) {
     if((size_t)count!=strlen(reply)) return 0;
     if(lookahead_stop(reply,(size_t)count,stats.completed)) return 1;
     int accepted=lookahead_permit_receive(reply,(size_t)count,stats.completed);
-    return accepted==-1?56u:accepted==-2?LOOKAHEAD_STOP_AHEAD:accepted==-3?LOOKAHEAD_STOP_CONFLICT:0u;
+    return accepted==-1?56u:accepted==-2?LOOKAHEAD_STOP_AHEAD:accepted==-3?LOOKAHEAD_STOP_CONFLICT:accepted==-4?PEER_STOP_MISMATCH:0u;
 }
 /* Every datagram already queued, without blocking (bounded per call): held
  * permits are counted when they arrive and a relay stop is seen next frame. */
@@ -124,8 +136,9 @@ static unsigned lookahead_drain(char *reply,size_t capacity) {
     for(unsigned i=0;i<4*LOOKAHEAD_RING;i++) {
         u_long queued=0;
         if(ioctlsocket(connection,FIONREAD,&queued) || !queued) return 0;
-        int count=recv(connection,reply,(int)capacity-1,0);
+        int count=gate_wire_recv(reply,(int)capacity-1);
         if(count<0) {int error=WSAGetLastError();return error!=WSAETIMEDOUT&&error!=WSAEWOULDBLOCK?8u:0u;}
+        if(wcg.stop) return wcg.stop; /* wire crypto: an authentic datagram with invalid content */
         unsigned reason=lookahead_datagram(reply,count);
         if(reason) return reason;
     }
@@ -141,17 +154,27 @@ static unsigned lookahead_wait(char *reply,size_t capacity) {
         if(drift>0) return 5;
         if(closed_window()) return 6;
         unsigned reason=lookahead_drain(reply,capacity);
+        if(!reason) reason=peer_poll(now);
         if(reason) return reason;
         if(lookahead_take(want)) {if(!blocked) ++lookahead_ready;return 0;}
         if(now-start>timeout_ms) return 7;
         lookahead_resend(stats.completed,now);
+        if(wcg.stop) return wcg.stop;
         blocked=1;
-        int count=recv(connection,reply,(int)capacity-1,0);
+        if(peer_socket!=INVALID_SOCKET) { /* peer links: wake on either socket */
+            int ready=peer_block(25,&reason);
+            if(reason) return reason;
+            if(ready<0) return 8;
+            if(!ready) ++lookahead_idle;
+            continue;
+        }
+        int count=gate_wire_recv(reply,(int)capacity-1);
         if(count<0) {
             int error=WSAGetLastError();
             if(error!=WSAETIMEDOUT&&error!=WSAEWOULDBLOCK) return 8;
             ++lookahead_idle;continue;
         }
+        if(wcg.stop) return wcg.stop;
         reason=lookahead_datagram(reply,count);
         if(reason) return reason;
     }
@@ -161,7 +184,8 @@ static unsigned lookahead_wait(char *reply,size_t capacity) {
 static unsigned lookahead_frame(const char *packet,size_t length,char *reply,size_t capacity) {
     if(!lookahead_seal(stats.completed,packet,length,blob_proposal)) return 56;
     lookahead_send(&lookahead_reports[stats.completed%LOOKAHEAD_RING],GetTickCount64());
-    return lookahead_wait(reply,capacity);
+    unsigned reason=peer_sealed(stats.completed,lookahead_reports[stats.completed%LOOKAHEAD_RING].blob);
+    return reason?reason:lookahead_wait(reply,capacity);
 }
 static int lookahead_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"lookahead=%u ready=%llu ahead_max=%llu idle=%llu resends=%llu stale=%llu duplicates=%llu",wire_lookahead,

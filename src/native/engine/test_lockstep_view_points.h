@@ -92,6 +92,18 @@ static void test_view_points(void) {
     test_vp_a.parent=&test_vp_zone2;stats.issued=8;assert(view_frame(8) && view_previous_zone[0]==&test_vp_zone2 && test_vp_refreshed>7);
     pilot_slots[1].runtime=0x999;unsigned before=test_vp_refreshed;stats.issued=9;
     assert(view_frame(9) && view_count==1 && view_unreadable==1 && test_vp_refreshed>before); /* a mismatched slot is skipped */
+    /* A dead slot (lockstep_pilot_death.h: not resolved, no object), in its suit or not, is no viewpoint, and the latch reads the
+     * slots only: the client's own slot and what it presents change nothing (missile1: viewpoints=1 ids=1658d6 on both clients
+     * from slot 2's death on; reports/LOCKSTEP-SUIT-VIEW-20261101.txt). */
+    {unsigned saved_slot=stats.slot,saved_pres=pres_slot;pslot_slot saved_seat=pslots[2];void *sets[2][VIEW_MAX];unsigned counts[2];
+     pilot_slots[1].runtime=test_vp_b.id;pilot_slots[1].resolved=0;pilot_slots[1].object=NULL;pilot_slots[1].dead=1;
+     for(unsigned client=0;client<2;client++) {
+         stats.slot=client+1;pres_slot=client?2u:0u;memset(&pslots[2],0,sizeof(pslots[2]));
+         if(client) {pslots[2].seated=1;pslots[2].roomless=1;pslots[2].ship=pslots[2].room=(unsigned char*)&test_vp_b;}  /* seated in its suit */
+         assert(view_frame(9));counts[client]=view_count;memcpy(sets[client],view_points,sizeof(view_points));
+     }
+     assert(counts[0]==1 && counts[1]==1 && sets[0][0]==&test_vp_a && sets[1][0]==&test_vp_a && view_unreadable==1);
+     stats.slot=saved_slot;pres_slot=saved_pres;pslots[2]=saved_seat;pilot_slots[1].dead=0;}
     view_mode=VIEW_OBSERVE;pilot_slot_count=0;before=test_vp_refreshed;stats.issued=10;
     assert(view_frame(10) && view_count==1 && view_points[0]==&test_vp_player && view_source==2 && test_vp_refreshed==before); /* observe never refreshes */
     view_set_attention_override=NULL;pilot_slot_count=saved_pilots;memset(pilot_slots,0,sizeof(pilot_slots));
@@ -134,8 +146,9 @@ static void test_view_points(void) {
     view_tick=stats.issued=UINT64_MAX-1;view_frame_calls=view_frame_evaluations=view_frame_differ=UINT64_MAX;
     for(unsigned i=0;i<VIEW_LEVELS;i++) view_frame_levels[i]=UINT64_MAX;
     view_calls=view_evaluations=view_differ=view_first_differ=view_refreshes=view_latches=view_unreadable=UINT64_MAX;
-    view_foreign=view_failures=INT64_MAX;view_stage="frame_guard";view_ship_misses=UINT64_MAX;
+    view_foreign=view_failures=INT64_MAX;view_stage="frame_guard";view_ship_misses=UINT64_MAX;view_masked=UINT64_MAX;
     n=view_status(status,sizeof(status));assert(n>0 && n+strlen("[X4LAN] NATIVE_GATE VIEW_POINTS tick=18446744073709551615 \n")<2048);
+    view_masked=0;
     for(unsigned i=0;i<VIEW_SITES;i++) memset(image+view_sites[i].rva,0,7);
     memset(image+VIEW_CALL,0,6);*(void**)(image+VIEW_UNIVERSE)=NULL;test_vp_reset();
     VirtualFree(view_page,0,MEM_RELEASE);view_page=NULL;
@@ -421,4 +434,52 @@ static void test_view_source(void) {
     pilot_slot_count=saved_pilots;stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;view_installed=saved_installed;
     *(void**)(image+VIEW_UNIVERSE)=NULL;
     printf("view points ship source tests PASS\n");
+}
+/* native_gate_view_points_mask: masked slots leave the latched list on every client alike; the
+ * live player object's chain is recomputed at the first latch; mask 0 evaluates without a viewer. */
+static void test_view_mask(void) {
+    uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;
+    unsigned saved_pilots=pilot_slot_count;int saved_trigger=view_trigger_mode,saved_ui_mode=view_ui_mode,saved_rows=view_rows_armed;
+    view_trigger_mode=VIEW_TRIGGER_OFF;view_ui_mode=VIEW_UI_OFF;view_rows_armed=0;
+    if(!view_page) view_page=view_page_near();assert(view_page);
+    if(!view_lock_ready) {InitializeCriticalSection(&view_lock);view_lock_ready=1;}
+    test_vp_objects();test_vp_reset();ui_thread=GetCurrentThreadId();stats.active=1;stats.issued=0;
+    test_vp_player.parent=&test_vp_zone2;
+    /* Arming: installed, players mode, before the first admitted frame, on the MoveWorker, an integer 0..15. */
+    view_mode=VIEW_PLAYERS;assert(!view_mask_arm(2));view_installed=1;
+    view_mode=VIEW_OBSERVE;assert(!view_mask_arm(2));view_mode=VIEW_PLAYERS;
+    stats.issued=3;assert(!view_mask_arm(2));stats.issued=0;
+    ui_thread=GetCurrentThreadId()+1;assert(!view_mask_arm(2));ui_thread=GetCurrentThreadId();
+    assert(!view_mask_arm(-1) && !view_mask_arm(16) && !view_mask_arm(1.5) && !view_mask_arm(NAN) && view_slot_mask==VIEW_MASK_ALL);
+    assert(view_mask_arm(2) && view_slot_mask==2 && !view_masked);
+    /* Slots 1 (a) and 2 (b) resolved, mask 2: only b is a view point; the first latch recomputes the live
+     * player object's chain (zone2, which keeps its own attention) before b's (zone). */
+    view_active=1;view_set_attention_override=test_vp_set_attention;test_vp_refreshed=0;
+    pilot_slot_count=2;memset(pilot_slots,0,sizeof(pilot_slots));
+    pilot_slots[0].resolved=1;pilot_slots[0].object=(unsigned char*)&test_vp_a;pilot_slots[0].runtime=test_vp_a.id;
+    pilot_slots[1].resolved=1;pilot_slots[1].object=(unsigned char*)&test_vp_b;pilot_slots[1].runtime=test_vp_b.id;
+    stats.issued=5;assert(view_frame(5) && view_count==1 && view_points[0]==&test_vp_b && view_ids[0]==test_vp_b.id && view_masked==1);
+    assert(test_vp_refreshed==2 && test_vp_refresh_log[0]==&test_vp_zone2 && test_vp_refresh_log[1]==&test_vp_zone);
+    assert(view_attention(&test_vp_zone)==7); /* b's level, never a's 9 */
+    stats.issued=6;assert(view_frame(6) && view_count==1 && view_masked==2 && test_vp_refreshed==2); /* unchanged: no refresh */
+    char status[2048];assert(view_status(status,sizeof(status))>0 && strstr(status," mask=2 masked=2"));
+    /* Mask 0: no view point at all; every evaluation runs without a viewer. */
+    view_latched=0;view_count=0;test_vp_refreshed=0;view_slot_mask=0;
+    stats.issued=7;assert(view_frame(7) && view_count==0 && view_masked==4 && test_vp_refreshed==1 && test_vp_refresh_log[0]==&test_vp_zone2);
+    assert(view_attention(&test_vp_zone)==2);
+    /* All slots (the default): both, and no extra refresh of the player object at the first latch. */
+    view_latched=0;view_count=0;test_vp_refreshed=0;view_slot_mask=VIEW_MASK_ALL;
+    stats.issued=8;assert(view_frame(8) && view_count==2 && view_masked==4 && test_vp_refreshed==2+1);
+    assert(test_vp_refresh_log[0]==&test_vp_a && test_vp_refresh_log[1]==&test_vp_zone);
+    assert(view_attention(&test_vp_zone)==9);
+    /* Without pilot slots bit 0 is the player object. */
+    pilot_slot_count=0;view_latched=0;view_count=0;view_slot_mask=0;stats.issued=9;
+    assert(view_frame(9) && view_count==0 && view_masked==5);
+    view_slot_mask=1;stats.issued=10;assert(view_frame(10) && view_count==1 && view_points[0]==&test_vp_player && view_masked==5);
+    view_set_attention_override=NULL;view_slot_mask=VIEW_MASK_ALL;view_masked=0;view_active=0;
+    pilot_slot_count=saved_pilots;memset(pilot_slots,0,sizeof(pilot_slots));test_vp_player.parent=NULL;test_vp_objects();test_vp_reset();
+    view_trigger_mode=saved_trigger;view_ui_mode=saved_ui_mode;view_rows_armed=saved_rows;
+    stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;*(void**)(image+VIEW_UNIVERSE)=NULL;
+    VirtualFree(view_page,0,MEM_RELEASE);view_page=NULL;
+    printf("view points mask tests PASS\n");
 }

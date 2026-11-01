@@ -48,7 +48,20 @@
  * and for slot 1 X4's teleport_player, on every client in the same frame. At create+PDEATH_SEAT_LAG
  * (the MD answer can lag) every client takes the slot back: slot 1's controller and ship are latched
  * again and what its last records left held is released; slot k is seated as at the start with its
- * first store. A slot's input held across the death has to be pressed again. */
+ * first store. A slot's input held across the death has to be pressed again.
+ *
+ * On foot (native_gate_pilot_foot, _foot_slots, _foot_bodies; reports/LOCKSTEP-ON-FOOT-20261101.txt section 13). Who is
+ * aboard decides, from simulation state on every client:
+ *   seated     a death as above (slot 1 leaving, X4's stand-up still pending: the eject took the player, the GET_UP is
+ *              void; slot k's body leaves the room before the seat ends, if the kill guard has not taken it already).
+ *   off seat   slot 1 with no PlayerController after a GET_UP (X4 stood its player up), slot k walking: the ship's loss
+ *              is an asset's, not a death (no eject, no suit, deaths unchanged, event lost:k, PILOT_DEATH_STATUS
+ *              losses=). Slot 1 keeps walking as X4 has it and gets no ship (it cannot sit down in a session yet, W7).
+ *              Slot k walked in the seat room's frame, which goes with the ship: its walk ends (pfslot_lose), the seat's
+ *              pointers go back, and it waits stranded, as a dead slot without a suit (records consumed and ignored,
+ *              slot 1's view on client k), until the respawn, if armed, seats it in a new ship at its start.
+ *   killed     X4 killing its player on foot (a Player killed with what it stands in) reaches the game over: the guard
+ *              stops the session with player_killed (163), no game over, no menu, nothing saved. */
 #define PDEATH_STOP_REASON 163u
 #define PDEATH_LIFECYCLE 0xd3u                /* Component+0xd3: 1 dying, 2 dead (KillRecursive) */
 #define PDEATH_SEAT_LAG 15u                   /* past the identity's FOLD_LAG (10): the MD answer is back by then */
@@ -60,7 +73,12 @@
 #define PDEATH_KILL_SLOT (0x1548u/8u)         /* component vtable: Kill */
 #define PDEATH_KILL_REMOVED 13u               /* what vfunc76 kills the player's old suit with */
 enum {PDEATH_ALIVE,PDEATH_DEAD,PDEATH_CREATING};
-typedef struct {unsigned state,deaths,respawns;uint64_t dead_tick,create_tick,seat_tick,ship,suit_tick,suit;int in_suit;} pdeath_slot;
+typedef struct {
+    unsigned state,deaths,respawns;uint64_t dead_tick,create_tick,seat_tick,ship,suit_tick,suit;int in_suit;
+    int lost;unsigned losses;     /* the ship went while the slot was off its seat (an asset's loss, not a death) */
+} pdeath_slot;
+static int pfbody_release_slot(unsigned k);   /* lockstep_pilot_foot_body.h: slot k's body off its room */
+static void pfslot_lose(unsigned k);          /* lockstep_pilot_foot_slots.h: slot k's walk ends without its ship */
 static pdeath_slot pdeath_slots[PILOT_SLOTS];
 static unsigned pdeath_delay;
 static int pdeath_suit;
@@ -149,8 +167,10 @@ static int pdeath_die(unsigned k,uint64_t tick) {
             pstk_space_replay(0,now);
         }
         pstk_flight=0;pstk_flight_known=1;pnat_controller=NULL;pnat_ship=NULL;
+        pfoot_void_leave(tick);   /* a GET_UP X4 had not taken yet: the eject took the player into its suit */
     } else {
         pslot_slot *x=&pslots[k];unsigned char lifecycle=1;
+        if(!pfbody_release_slot(k)) {pdeath_why=pfbody_why;return 0;}   /* the body off its room before the seat ends */
         if(x->seated) {
             if(s->found==x->ship && read_local(x->ship+PDEATH_LIFECYCLE,&lifecycle,1) && !lifecycle && pslot_controller_has(x->ship,0,x->controller)==1) {
                 if(!pslot_release(k)) {pdeath_why=pslot_why;return 0;}
@@ -167,6 +187,32 @@ static int pdeath_die(unsigned k,uint64_t tick) {
     if(pdeath_delay) {d->create_tick=tick+pdeath_delay;d->seat_tick=d->create_tick+PDEATH_SEAT_LAG;}
     pdeath_event("die",k);
     if(pdeath_suit && k>=2) {d->suit_tick=tick+PDEATH_SUIT_LAG;d->suit=0;d->in_suit=0;pdeath_event("suit",k);}
+    return 1;
+}
+/* The slot is not aboard its ship: slot 1 off its seat with no PlayerController (X4 stood its player up; a player
+ * who was aboard sits in the eject's suit, which has one), slot k walking (lockstep_pilot_foot_slots.h). */
+static int pdeath_off_seat(unsigned k,const unsigned char *controller) {
+    if(k==1) return pfoot_armed && pfoot_state!=PFOOT_SEATED && !controller;
+    return pslots[k].seated && pslots[k].walking;
+}
+/* Its ship went while the slot was off its seat: the loss of an asset, not a death (header). */
+static int pdeath_lose(unsigned k,uint64_t tick) {
+    pilot_slot *s=&pilot_slots[k-1];pdeath_slot *d=&pdeath_slots[k-1];
+    if(pfire_armed) {(void)pfire_end(s,&pfire_slots[k-1],k);memset(&pfire_slots[k-1],0,sizeof(pfire_slots[k-1]));}
+    d->lost=1;++d->losses;d->ship=0;
+    pdeath_event("lost",k);
+    if(k==1) {pnat_ship=NULL;return 1;}   /* X4's player walks on; pilot_resolve finds no ship each pass */
+    /* Slot k: the walk in the seat room's frame ends before that room goes; then the seat's pointers. */
+    pfslot_lose(k);
+    if(!pfbody_release_slot(k)) {pdeath_why=pfbody_why;return 0;}   /* none while it walks (parked); for the order */
+    if(!pslot_release(k)) {pdeath_why=pslot_why;return 0;}
+    pstk_slot_frames[k-1].flight=0;pstk_slot_frames[k-1].flight_known=1;
+    if(k==pres_slot) {pres_anchor_home();pres_target_set=0;pres_local_target=0;pview_slot_target=0;}
+    /* Stranded: what a dead slot without a suit is, until a respawn seats it. */
+    s->dead=1;s->resolved=0;s->object=s->agent=s->solver=NULL;s->player=0;
+    pdeath_dead|=1u<<(k-1);
+    d->state=PDEATH_DEAD;d->dead_tick=tick;
+    if(pdeath_delay) {d->create_tick=tick+pdeath_delay;d->seat_tick=d->create_tick+PDEATH_SEAT_LAG;}
     return 1;
 }
 /* A dead slot k: into the suit MD built, on every client at the same tick. */
@@ -214,7 +260,7 @@ static int pdeath_seat(unsigned k,unsigned char *controller) {
     /* The local controls stayed active through the death: the edge the new flight control needs. */
     if(pstk_capturing && pstk_capture_slot==k && pstk_local_active==1) pstk_record_event(PSTK_SPACE,8,1u);
     pdeath_dead&=~(1u<<(k-1));
-    d->state=PDEATH_ALIVE;++d->respawns;
+    d->state=PDEATH_ALIVE;++d->respawns;d->lost=0;   /* a stranded slot has a ship again */
     pdeath_event("live",k);
     return 1;
 }
@@ -228,7 +274,9 @@ static int pdeath_pass(uint64_t tick,unsigned char *controller) {
     for(unsigned k=1;k<=pilot_slot_count;k++) {
         if(!(pstk_slot_mask>>(k-1)&1u)) continue;
         pilot_slot *s=&pilot_slots[k-1];pdeath_slot *d=&pdeath_slots[k-1];
-        if(!s->dead && pdeath_dying(s) && !pdeath_die(k,tick)) return 0;
+        if(!s->dead && !d->lost && pdeath_dying(s)) {   /* who is aboard decides (header) */
+            if(pdeath_off_seat(k,controller)?!pdeath_lose(k,tick):!pdeath_die(k,tick)) return 0;
+        }
         if(!s->dead) continue;
         if(pdeath_suit && k>=2 && !pdeath_suit_pass(k,tick)) return 0;
         if(!pdeath_delay) continue;
@@ -276,11 +324,14 @@ static int pdeath_ship(unsigned k,uint64_t runtime) {
 static int pdeath_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity," death=%s death_why=%s dead=%x delay=%u suit=%d guard=%d game_overs=%lld seats=%u/%u",pdeath_stage,pdeath_why,pdeath_dead,pdeath_delay,
         pdeath_suit,pdeath_guard_installed,(long long)pdeath_game_overs,pdeath_released,pdeath_retired);
+    unsigned losses=0;
     for(unsigned k=1;n>0 && (size_t)n<capacity && k<=pilot_slot_count;k++) {
         const pdeath_slot *d=&pdeath_slots[k-1];
-        int more=snprintf(out+n,capacity-(size_t)n," d%u=%u/%u/%u/%llu%s",k,d->state,d->deaths,d->respawns,(unsigned long long)d->dead_tick,d->in_suit?"/suit":"");
+        int more=snprintf(out+n,capacity-(size_t)n," d%u=%u/%u/%u/%llu%s%s",k,d->state,d->deaths,d->respawns,(unsigned long long)d->dead_tick,
+            d->in_suit?"/suit":"",d->lost?"/lost":"");
         if(more<0) return 0;
-        n+=more;
+        n+=more;losses+=d->losses;
     }
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," losses=%u",losses);   /* ships lost while off the seat */
     return n>0 && (size_t)n<capacity?n:0;
 }

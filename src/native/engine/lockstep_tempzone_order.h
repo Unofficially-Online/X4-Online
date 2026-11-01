@@ -73,8 +73,8 @@
  * lookup, the creator, the active check, the reference release, both request
  * blocks and RunPass's clear. Every gate tick re-checks the entry and the pins;
  * a failure (also a slot changed during a parked pass) stops the gate with
- * reason 144, shared with the transition rows (both census-zone diagnostics of
- * this class; the status lines name the module). Stop puts a parked slot back
+ * reason 144 (the transition rows, the other census-zone diagnostic of this
+ * class, have their own 145 since 1 November 2026). Stop puts a parked slot back
  * and restores the entry by CAS. */
 #define TZ_FIND 0x785db0u             /* zone at a position; create=1 makes one at it */
 #define TZ_FIND_SIZE 0xa8u

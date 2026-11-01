@@ -185,8 +185,18 @@ static void view_roll(void) {
 }
 static CRITICAL_SECTION view_lock;
 static int view_lock_ready;
+/* Hybrid sectors (lockstep_hybrid.h, native_gate_hybrid, default off): which latched points count for an
+ * object, which slots this client leaves out of the latch, where its own owned point is. */
+static int hyb_point_counts(unsigned i,const void *object);
+static int hyb_latch_skip(unsigned slot_index);
+static int hyb_latch_own(unsigned slot_index);
+static int hyb_latch_begin(uint64_t tick);
+static void hyb_latch_check(void);
+static void hyb_view_index_set(int index);
 /* One object's attention from the viewpoint set; the native implementation runs
- * with the shadow universe, once per viewpoint (none: once without a viewer). */
+ * with the shadow universe, once per viewpoint (none: once without a viewer).
+ * With hybrid sectors a client's own owned point counts only inside its sector;
+ * no counting point at all is the evaluation without a viewer. */
 static int view_evaluate(view_attention_fn native,void *object) {
     volatile uint64_t *slot=(volatile uint64_t *)(view_page+VIEW_PAGE_UNIVERSE);
     void **player=(void**)(view_page+VIEW_PAGE_SHADOW+0x230);
@@ -197,14 +207,15 @@ static int view_evaluate(view_attention_fn native,void *object) {
         unsigned char *universe=*(unsigned char*volatile*)(image+VIEW_UNIVERSE);void *p=NULL;
         if(universe && read_local(universe+0x230,&p,8) && p) {points[0]=p;n=1;}
     }
-    int best=0;++view_depth;
+    int best=0;unsigned counted=0;++view_depth;
     *slot=(uint64_t)(uintptr_t)(view_page+VIEW_PAGE_SHADOW);
-    if(!n) {*player=NULL;best=native(object);++view_evaluations;++view_frame_evaluations;}
     for(unsigned i=0;i<n;i++) {
+        if(!hyb_point_counts(i,object)) continue;
         *player=points[i];*slot=(uint64_t)(uintptr_t)(view_page+VIEW_PAGE_SHADOW);
-        int r=native(object);++view_evaluations;++view_frame_evaluations;
+        int r=native(object);++view_evaluations;++view_frame_evaluations;++counted;
         if(r>best) best=r;
     }
+    if(!counted) {*player=NULL;*slot=(uint64_t)(uintptr_t)(view_page+VIEW_PAGE_SHADOW);best=native(object);++view_evaluations;++view_frame_evaluations;}
     --view_depth;*player=saved_player;*slot=saved_slot;
     return best;
 }
@@ -680,6 +691,31 @@ static int view_source_arm(const char *name) {
     else return 0;
     view_ship_misses=0;return 1;
 }
+/* Measurement knob, DEFAULT OFF (native_gate_view_points_mask = 0..15, attention
+ * study C9, reports/LOCKSTEP-ATTENTION-STUDY-20261101.txt): which pilot slots count
+ * as view points, bit k-1 = slot k (without pilot slots bit 0 = the player object
+ * or its ship). A masked slot is left out of the latched list on every client
+ * alike, so its surroundings take the attention they would have without that
+ * player (low attention away from the other view points: no physics scene, the
+ * linear flight model, scripted combat), and every module that follows the latched
+ * list (scenes, stand-in cameras, policy) follows the reduced list. The universe
+ * stays identical between clients; it is a different universe than the unmasked
+ * run, which is the point: the A/B difference in frame time is the price of that
+ * slot's high-attention bubble. Mask 0: no view point, every evaluation runs
+ * without a viewer. At the first latch the live player object, which answered
+ * the evaluations before it, has its chain recomputed (as a former view point
+ * would). Not a play mode: a masked player's ship flies the low-attention model
+ * and cannot fire (shoot_at needs 'visible'). players mode only; before the first
+ * admitted frame, on the MoveWorker. Status: mask= masked= (slots left out, summed
+ * over latches). */
+#define VIEW_MASK_ALL 0xfu
+static unsigned view_slot_mask=VIEW_MASK_ALL;
+static uint64_t view_masked;
+static int view_mask_arm(double mask) {
+    if(!view_installed || view_mode!=VIEW_PLAYERS || stats.issued || GetCurrentThreadId()!=ui_thread ||
+       !isfinite(mask) || mask<0 || mask>VIEW_MASK_ALL || floor(mask)!=mask) return 0;
+    view_slot_mask=(unsigned)mask;view_masked=0;return 1;
+}
 /* Slot 6 of every admitted frame: latch the viewpoints for the next frames. */
 static int view_frame_locked(uint64_t tick);
 static int view_frame(uint64_t tick) {
@@ -689,14 +725,19 @@ static int view_frame(uint64_t tick) {
     return ok;
 }
 static int view_frame_locked(uint64_t tick) {
-    (void)tick;
-    void *points[VIEW_MAX];uint64_t ids[VIEW_MAX];unsigned n=0,source=0;
+    void *points[VIEW_MAX];uint64_t ids[VIEW_MAX];unsigned n=0,source=0;const int first=!view_latched;
+    /* Hybrid sectors: the split starts at this latch (every client alike); another client's owned slot is
+     * no view point here, this client's own owned slot is, and evaluates only inside its sector. */
+    const int hybrid_start=hyb_latch_begin(tick);int own_index=-1;
     if(pilot_slot_count) {
         source=1;
         for(unsigned i=0;i<pilot_slot_count && i<VIEW_MAX;i++) {
             pilot_slot *s=&pilot_slots[i];uint64_t id=0;
             if(!s->resolved || !s->object) continue;
+            if(!((view_slot_mask>>i)&1u)) {++view_masked;continue;}
+            if(hyb_latch_skip(i)) continue;
             if(!read_local(s->object+8,&id,8) || id!=s->runtime) {++view_unreadable;continue;}
+            if(hyb_latch_own(i)) own_index=(int)n;
             points[n]=s->object;ids[n]=id;++n;
         }
     } else {
@@ -706,9 +747,10 @@ static int view_frame_locked(uint64_t tick) {
             unsigned char *ship=view_occupied(p);
             if(ship) {p=ship;source=3;} else ++view_ship_misses;
         }
+        if(p && !(view_slot_mask&1u)) {++view_masked;p=NULL;}
         if(p && read_local((unsigned char*)p+8,&id,8)) {points[0]=p;ids[0]=id;n=1;}
     }
-    int changed=!view_latched || n!=view_count;
+    int changed=!view_latched || n!=view_count || hybrid_start;
     void *zones[VIEW_MAX];
     for(unsigned i=0;i<n;i++) {zones[i]=view_zone_of(points[i]);if(!changed && (points[i]!=view_points[i] || zones[i]!=view_previous_zone[i])) changed=1;}
     if(changed) {
@@ -717,12 +759,18 @@ static int view_frame_locked(uint64_t tick) {
     }
     memcpy(view_points,points,sizeof(points));memcpy(view_ids,ids,sizeof(ids));view_count=n;view_source=source;
     memcpy(view_previous_zone,zones,sizeof(zones));view_latched=1;++view_latches;
+    hyb_view_index_set(own_index); /* before the refreshes: they evaluate with the split */
     if(changed && view_mode==VIEW_PLAYERS) {
+        if(first && view_slot_mask!=VIEW_MASK_ALL) { /* the live player object answered before this latch */
+            unsigned char *universe=*(unsigned char*volatile*)(image+VIEW_UNIVERSE);void *p=NULL;
+            if(universe && read_local(universe+0x230,&p,8) && p) view_refresh_chain(p);
+        }
         for(unsigned i=0;i<view_previous_count;i++) { /* only a still-live former viewpoint */
             uint64_t id=0;if(read_local((unsigned char*)view_previous[i]+8,&id,8) && id==view_previous_ids[i]) view_refresh_chain(view_previous[i]);
         }
         for(unsigned i=0;i<n;i++) view_refresh_chain(points[i]);
     }
+    hyb_latch_check(); /* the H1 boundary: owners inside their sectors, nobody else in them */
     return 1;
 }
 static int view_status(char *out,size_t capacity) {
@@ -734,7 +782,7 @@ static int view_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"mode=%s armed=%ld installed=%d frame=%llu source=%s viewpoints=%u ids=%s calls=%llu evaluations=%llu "
         "levels=%s differ=%llu total_calls=%llu total_evaluations=%llu total_differ=%llu first_differ=%llu refreshes=%llu latches=%llu "
         "unreadable=%llu foreign=%lld restored=%d stage=%s failures=%lld triggers=%s:%llu/%llu/%llu/%llu/%llu blocked=%llu "
-        "source_mode=%s ship_misses=%llu cutscene=%llu/%llu/%llu/%llu callers=%s callers_other=%llu ui=%s:%llu/%llu/%llu/%llu/%llu/%llu ui_blocked=%llu ui_local=%llu",
+        "source_mode=%s ship_misses=%llu cutscene=%llu/%llu/%llu/%llu callers=%s callers_other=%llu ui=%s:%llu/%llu/%llu/%llu/%llu/%llu ui_blocked=%llu ui_local=%llu mask=%x masked=%llu",
         view_mode==VIEW_PLAYERS?"players":view_mode==VIEW_OBSERVE?"observe":"off",view_active,view_installed,
         (unsigned long long)(view_tick==UINT64_MAX?0:view_tick),view_source==1?"slots":view_source==2?"player":view_source==3?"ship":"none",view_count,
         view_count?ids:"-",(unsigned long long)(fresh?view_frame_calls:0),(unsigned long long)(fresh?view_frame_evaluations:0),levels,
@@ -750,6 +798,6 @@ static int view_status(char *out,size_t capacity) {
         view_ui_mode==VIEW_UI_BLOCK?"block":view_ui_mode==VIEW_UI_OBSERVE?"observe":"off",
         (unsigned long long)view_ui_counts[VIEW_UI_PRESENT],(unsigned long long)view_ui_counts[VIEW_UI_VIEW],(unsigned long long)view_ui_counts[VIEW_UI_DISPATCH],
         (unsigned long long)view_ui_counts[VIEW_UI_RENDER],(unsigned long long)view_ui_counts[VIEW_UI_SLOT6],(unsigned long long)view_ui_counts[VIEW_UI_CAMERA],
-        (unsigned long long)view_ui_blocked,(unsigned long long)view_ui_local);
+        (unsigned long long)view_ui_blocked,(unsigned long long)view_ui_local,view_slot_mask,(unsigned long long)view_masked);
     return n>0 && (size_t)n<capacity?n:0;
 }

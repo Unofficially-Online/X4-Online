@@ -6,8 +6,8 @@ local path=assert(arg[1],'module path required')
 local open=assert(package.loadlib(path,'luaopen_x4lan_gate'))
 local gate=assert(open(),'module did not resolve the Lua ABI')
 local core={'sha256','start','boot','load_requested','report','poll','stop','frame_timing','qpc_us','tick_rate','wire','propose',
- 'relay_host','lookahead','lookahead_status','platform','verify_stage',
- 'world_watch','world_capture','world_capture_nav_v2','world_page','world_detail','world_banks','saved_identity',
+ 'relay_host','lookahead','lookahead_status','peer_links','peer_status','wire_crypto','wire_crypto_status','platform','verify_stage',
+ 'world_watch','world_capture','world_capture_nav_v2','world_page','world_detail','world_banks','saved_identity','world_health',
  'path_determinism','path_determinism_status','path_budget','path_budget_status','region_rng','region_rng_status','region_rng_row',
  'ai_wait_rng','ai_wait_rng_status','ai_wait_rng_row','read_cost',
  'md_resume_rng','md_resume_rng_status','md_resume_rng_row','boot_hold','boot_hold_status',
@@ -15,7 +15,7 @@ local core={'sha256','start','boot','load_requested','report','poll','stop','fra
  'gravidar_key','gravidar_time','gravidar_key_status','gravidar','ai_schedule','ai_schedule_status','ai_schedule_fallbacks',
  'gravidar_deadlines','gravidar_deadlines_status','travel_snapshot','travel_snapshot_status',
  'runtime_ids','runtime_ids_status','runtime_ids_word','runtime_ids_map_row','runtime_ids_caller_row','runtime_ids_callers',
- 'script_rng','script_rng_status','script_rng_row','script_rng_own_entries','md_timed_rng','md_timed_rng_status','find_order','find_order_status','find_order_row','loadout_order','loadout_order_status','loadout_order_row','nav_key','attention_all','attention_all_status','step_trace','step_trace_arm','step_trace_status','step_trace_row','step_chain','fp_redirect','fp_redirect_watch','fp_redirect_status','fp_redirect_row','coverage','coverage_frame','coverage_status','coverage_row','nav_cadence','nav_cadence_status','nav_cadence_row','nav_cadence_watch','nav_probe_init','nav_params_init','created_identities','portable_created','created_load','created_identities_status','created_row','created_identity','created_runtime','gravidar_wide','gravidar_wide_status','spawn_rng','spawn_rng_status','spawn_rng_row'}
+ 'script_rng','script_rng_status','script_rng_row','script_rng_own_entries','md_timed_rng','md_timed_rng_status','find_order','find_order_status','find_order_row','loadout_order','loadout_order_status','loadout_order_row','nav_key','attention_all','attention_all_status','step_trace','step_trace_arm','step_trace_status','step_trace_row','step_chain','fp_redirect','fp_redirect_watch','fp_redirect_status','fp_redirect_row','fp_redirect_solver','coverage','coverage_frame','coverage_status','coverage_row','nav_cadence','nav_cadence_status','nav_cadence_row','nav_cadence_watch','nav_probe_init','nav_params_init','created_identities','portable_created','created_load','created_identities_status','created_row','created_identity','created_runtime','gravidar_wide','gravidar_wide_status','spawn_rng','spawn_rng_status','spawn_rng_row','fork_save','fork_save_status'},'fp_redirect_drones','fp_attack','fp_attack_watch','fp_attack_status','fp_attack_row'
 local count=0
 for _,name in ipairs(core) do assert(type(gate[name])=='function','missing gate.'..name) end
 for _ in pairs(gate) do count=count+1 end
@@ -50,10 +50,21 @@ assert(gate.boot(1,47000,token,5000,digest,70368744177664+4)==105)
 local summary,why=gate.world_capture(1)
 assert(summary==nil and why:match('stage=') and gate.world_page(0)==nil and gate.world_banks()==nil)
 assert(gate.poll()==nil and gate.stop()==0 and gate.load_requested()==0)
+-- Non-blocking save by fork: refused outside an admitted session; its status is readable once stopped.
+assert(gate.fork_save(600,'join_600','/tmp/x4save')==0)
+assert(gate.fork_save_status():match('^state=off tick=0 '))
 assert(gate.report(0,digest)==0 and gate.propose(0,'')==0)
 assert(gate.wire(3,3)==1,'still configurable: never started')
 assert(type(gate.qpc_us())=='number' and gate.qpc_us()>0)
 assert(gate.lookahead_status():match('^lookahead=0 '))
+-- Wire crypto (opt-in): needs protocol 3 and a well-formed credential; nothing is armed until then.
+assert(gate.wire(2,2)==1 and gate.wire_crypto('x4c1:'..string.rep('1',64)..':'..string.rep('2',64))==0,'wire crypto needs wire 3')
+assert(gate.wire(3,2)==1 and gate.wire_crypto('x4c1:short')==0 and gate.wire_crypto(nil)==0)
+assert(gate.wire_crypto_status():match('^armed=0 '))
+assert(gate.wire_crypto('x4c1:'..string.rep('1',64)..':'..string.rep('2',64))==1 and gate.wire_crypto_status():match('^armed=1 established=0 keyed=0 '))
+-- Armed under protocol 2 (a later gate.wire(2,2)): start/boot refuse with 10 before any pin is read.
+assert(gate.wire(2,2)==1 and gate.boot(1,47000,token,5000,digest,0)==10 and gate.start(1,47000,token,5000,digest,0)==10)
+assert(gate.wire(3,2)==1 and gate.boot(1,47000,token,5000,digest,0)==11,'armed with protocol 3: the file pin decides')
 -- A second load returns the same module state (X4 reloads its UI).
 local again=assert(package.loadlib(path,'luaopen_x4lan_gate'))()
 assert(again.wire(2,2)==1 and again.poll()==nil)

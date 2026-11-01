@@ -10,7 +10,7 @@ class LookaheadProbeTests(unittest.TestCase):
     def setUp(self, config="slot='p3',native_gate_clients=3,native_gate_lookahead=2"):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         self.lua.execute('''
-          X4LAN_CONFIG={native_gate_test=true,test_profile='45841',%s,
+          X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',%s,
             native_gate_hash='clock',native_gate_snapshot_sha=string.rep('a',64),
             port=12345,token=string.rep('c',32)}
           X4LAN_SHA256={digest=function(data) hashed=data;return string.rep('b',64) end}
@@ -127,6 +127,57 @@ class LookaheadProbeTests(unittest.TestCase):
         self.admitted()
         self.lua.execute('state.active=0;update()')
         self.assertTrue(any('LOOKAHEAD_STOP lookahead=2 ready=1 ahead_max=3' in line for line in self.logs()), self.logs())
+
+
+
+CREDENTIAL = 'x4c1:'+'1'*64+':'+'2'*64
+
+
+class WireCryptoProbeTests(LookaheadProbeTests.__bases__[0]):
+    """native_gate_wire_crypto (docs/LOCKSTEP-NSLOT-WIRE.txt, WIRE CRYPTO) in the probe, with a fake gate."""
+    setUp = LookaheadProbeTests.setUp
+    values = LookaheadProbeTests.values
+    logs = LookaheadProbeTests.logs
+    admitted = LookaheadProbeTests.admitted
+
+    def crypto(self, config=f"slot='p3',native_gate_clients=3,native_gate_lookahead=2,native_gate_wire_crypto='{CREDENTIAL}'", result=1):
+        self.setUp(config)
+        self.lua.execute(f"""
+          local load=package.loadlib;package.loadlib=function(path) local gate=load(path)()
+            gate.wire_crypto=function(credential) calls[#calls+1]='wire_crypto '..#credential;crypto_seen=credential;return {result} end
+            gate.wire_crypto_status=function() return crypto_status or 'armed=1 established=0 keyed=0 stop=0 key= roster=' end
+            return function() return gate end end""")
+
+    def test_credential_is_handed_to_the_gate_after_wire_and_window_and_never_logged(self):
+        self.crypto()
+        self.lua.execute("crypto_status='armed=1 established=1 keyed=1 stop=0 key="+'d'*64+" roster="+'e'*32+"'")
+        self.admitted()
+        self.assertEqual(self.values('calls'), ['wire 3/3', 'lookahead 2', 'wire_crypto 134', 'boot']*2)
+        self.assertEqual(self.lua.globals().crypto_seen, CREDENTIAL)
+        self.assertTrue(any(line.endswith('ARMED slot=p3 hash_scope=clock wire=3 clients=3 lookahead=2 wire_crypto=1') for line in self.logs()))
+        self.assertTrue(any(line.endswith('WIRE_CRYPTO_KEYED key='+'d'*64+' roster='+'e'*32) for line in self.logs()), self.logs())
+        self.assertFalse(any('ERROR' in line for line in self.logs()), self.logs())
+        # The fake gate's stop state is incomplete (as in LookaheadProbeTests): the status is still logged on the way out.
+        self.lua.execute('state.active=0;update()')
+        self.assertTrue(any('WIRE_CRYPTO_STOP armed=1 established=1 keyed=1' in line for line in self.logs()), self.logs())
+        self.assertFalse(any('2'*64 in line for line in self.logs()), 'the slot psk must never be logged')
+
+    def test_refused_or_missing_wire_crypto_never_boots(self):
+        self.crypto(result=0)
+        self.lua.execute(SOURCE);self.lua.execute('update();update()')
+        self.assertEqual(self.lua.globals().boots, 0)
+        self.assertTrue(any(line.endswith('REFUSED wire_crypto') for line in self.logs()))
+        self.setUp(f"slot='p3',native_gate_clients=3,native_gate_wire_crypto='{CREDENTIAL}'")   # an older gate DLL
+        self.lua.execute(SOURCE);self.lua.execute('update();update()')
+        self.assertEqual(self.lua.globals().boots, 0)
+        self.assertTrue(any(line.endswith('REFUSED wire_crypto') for line in self.logs()))
+
+    def test_wire_crypto_needs_protocol_3_and_a_string(self):
+        for config in (f"slot='p1',native_gate_wire_crypto='{CREDENTIAL}'",
+                       "slot='p1',native_gate_clients=2,native_gate_wire_crypto=true"):
+            self.setUp(config)
+            with self.assertRaisesRegex(LuaError, 'native_gate_wire_crypto needs the protocol 3 input wire', msg=config): self.lua.execute(SOURCE)
+            self.assertEqual((self.lua.globals().boots, self.lua.globals().loads), (0, 0))
 
 
 if __name__ == '__main__': unittest.main()

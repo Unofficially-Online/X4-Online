@@ -1,0 +1,293 @@
+LOCKSTEP UI REPLAY, FAMILY 'TRADE': TRADING WITHOUT SPLITTING THE SESSION, SLOT 1 AND SLOTS 2..N, COOP AND FACTIONS
+1 November 2026 | offline work on branch contrib/ferrite-trade (base: smoke a2e43713). Static analysis of the pinned Windows X4.exe
+9.00 (RVAs, base 0x140000000) and of the extracted stock UI and MD scripts, read locally in x4-re; nothing of them is copied here
+(API names, script file names and RVAs only). No X4 was launched.
+[F] = read in the binary or the scripts; [I] = inference; "live" = what only a native run can show.
+Builds on reports/LOCKSTEP-UI-REPLAY-20261030.txt (the replay) and reports/LOCKSTEP-UI-GUARD-20261101.txt (the guard, 7c).
+INTEGRATION NOTE (contrib/ferrite-integrate, 1 November 2026): the family bit is 1024 now, not 4096 (build took 4096; table
+in docs/LOCKSTEP-REGISTRY.txt); ops 0x58/0x59 are unchanged. In the live spec of section 11 read families=2047 for 5119 and
+UI_GUARD_STATUS installed=216 for 214 (the guard table has 282 entries: missions added StartBriefing/StopBriefing).
+
+0. RESULT (default off: native_gate_ui_replay lists 'trade', bit 4096; true does not include it; stop reason 164 as the replay)
+  - The trade menus' world changes become events of the client's slot, for EVERY slot, and run on every client at capture tick +
+    delay, in slot order and call order, through X4's own functions: buy/sell with the trade menu (AddTradeToShipQueue and the
+    docked trade's signal), the money transfers of the economy menus (station and manager accounts), price and stock overrides,
+    budgets, the trade menu's virtual cargo mode, and 17 FFI setters of station trade settings.
+  - Each slot pays from its own account: X4 keeps the player's money on the player FACTION (section 1), so every replayed call
+    of slot k runs with X4's player faction = slot k's faction for the length of the call (the faction scope, section 3). Coop:
+    one faction `player`, one shared wallet. Factions mode: x4lan_playerk's own account.
+  - Trade offers are no components: they travel as a portable reference (station + ware + buy/sell + mission flag + list +
+    place among the matching offers + their count), looked up again at the apply on every client, refused when it no longer
+    matches (section 4).
+  - Authority: what a call changes must belong to the slot's faction and be no other slot's ship; the slot's own ship trades
+    only through the docked trade computer (section 5). Refusals are the same on every client (the world is).
+  - The guard leaves the 27 replayed entries to the family when it is armed (covered=4096 in the generated table); what stays
+    refused is listed in section 7. With the G4 families plus trade the guard installs 214 entries (241 without trade).
+
+1. THE MONEY MODEL [F]
+  - g_PlayerFaction 0x38f4bd0 (U::FactionClass*, written only by FactionDB::Import) is what "the player's money" means:
+      Lua GetPlayerMoney 0x288080: [0x38f4bd0]+0x280 -> +0x2e0 (an account handle) -> 0x3178a0 (handle -> account, NULL when none;
+        then the dummy account [0x38f4bd8]) -> account vfunc +0x10 = balance in cents (x 0.01 for credits).
+      AddPlayerMoney 0x1762d0 -> 0x9dc550 (FactionClass::AddMoney: the same walk, deposit vfunc +0x60) on [0x38f4bd0].
+      Lua TransferPlayerMoneyTo 0x2881f0 (amount, container[, reason]) -> 0x9f9be0 / 0x9f9c30 -> 0x3f8430(container, amount,
+        [0x38f4bd0], reason): the faction account transfers (AccountClass vfunc +0x70: clamp +0x50, withdraw +0x68, deposit into
+        the target +0x60) to the container's account (handle at container+0x700, +0x708 = it is the container's own; without one
+        the dummy account). TransferMoneyToPlayer the other way.
+      0x9dc7a0 (after every faction money change): if the faction is [0x38f4bd0], a MoneyUpdatedEvent is posted (deferred) on the
+        singleton player [[0x3d198f8]+0x230] for MD.
+  - The player ENTITY holds no money; it only hears the event. Every faction has its own account (faction+0x280 -> +0x2e0), so
+    x4lan_player2 (the pool factions of the identity plan) has one [I: the walk is the same; T2 checks it]. Containers (stations,
+    ships) have their own or the dummy account (U::DummyAccount: a transfer out of it creates money, its balance getter draws
+    from the thread's RNG).
+  - Owner of an object: U::Object::GetTrueOwner = vfunc 708 (+0x1620) = 0x352b10 (mov rax,[rcx+0x348]; ret) for Ship, Station,
+    Container and Object alike; TransferPlayerMoneyTo itself compares it with [0x38f4bd0] (0x28840b).
+  MONEY DECISION (coordinator default) as built:
+    coop      every slot `player`: every slot's trades and transfers use the one player account (shared wallet).
+    factions  slot k = x4lan_playerk: slot k's calls run with [0x38f4bd0] = x4lan_playerk, so its money comes from and goes to its
+              own faction account; slot 1 keeps `player` (the plan's default). A plan that gives slot 1 a pool faction
+              (--occupied pool) gets the same scope for slot 1.
+    Slot k's faction is read at the apply as the owner of slot k's ship (every client the same; no ship: nothing runs).
+
+2. WHAT IS REPLAYED (lockstep_ui_trade.h, X4LAN_UI_TRADE at the end of tools/dev/native_gate_ui_replay_core.lua)
+  Lua C globals, wrapped by name in the Lua core (the menus look them up at each call; no base menu caches one [F: grep]):
+    op 0x58, global number, then the codec's arguments. Subject = the argument the authority rule checks.
+    1  AddTradeToShipQueue(offer, ship, amount, immediate[, flag])   subject: ship. menu_map buttonConfirmTrade (buy/sell rows
+       of the trade context), menu_interactmenu orderSalvageDeliver. The offer becomes the portable reference (section 4).
+    2  TransferPlayerMoneyTo(amount, container[, reason])           subject: container (station/manager accounts: menu_map
+       cash transfer, menu_playerinfo, menu_research, menu_station_overview)
+    3  TransferMoneyToPlayer(amount, container[, reason])           subject: container (the same menus, station configuration)
+    4  SetContainerWarePriceOverride(container, ware, isbuy, price) subject: container (helper.lua, menu_map, station config)
+    5  ClearContainerWarePriceOverride(container, ware, isbuy)      subject: container
+    6  SetContainerStockLimitOverride(container, ware, limit)       subject: container
+    7  ClearContainerStockLimitOverride(container, ware)            subject: container
+    8  SetMinBudget(container, credits)                             subject: container
+    9  SetMaxBudget(container, credits)                             subject: container
+    10 SignalObject(player, 'docked_player_trade_added', ship)      subject: ship. Only this signal; every other SignalObject stays
+       the events family's (slot 1) or the guard's. md/orders.xml PlayerTradeOrderAdded creates the trade computer on
+       event.param2 and reads nothing of the player [F], so it means the same for every slot; the apply names X4's own player.
+    11 SetVirtualCargoMode(container, on[, trades])                 subject: container. The trade context sets it on open and
+       clears it on close; it allocates the container's virtual cargo (+0x710) and refreshes a cached time (+0xa18, 0x41a910)
+       [F]. Replayed, every client keeps the same state (refused, every trade menu open showed the guard's info line).
+  FFI exports, hooked natively at their entries (the guard table's prefixes and pins, looked up by name), op 0x59, hook number,
+  then the arguments by spec; the subject is the first argument:
+    SetContainerTradeRule (container, TradeRuleID, ruletype, ware or NULL, value)   SetContainerWareIsBuyable / IsSellable
+    SetContainerBuyLimitOverride / SellLimitOverride (int32)                        ClearContainerBuyLimitOverride / SellLimitOverride
+    AddTradeWare / RemoveTradeWare      SetContainerGlobalPriceFactor / SetContainerBuildPriceFactor (float in xmm1)
+    SetContainerBuildMethod             SetContainerWorkforceFillCapacity          SetSupplyManual
+    SetShipTradeLoopCargoReservationOverride / RemoveShipTradeLoopCargoReservationOverride (ship)
+    UpdateProductionTradeOffers
+    Every one is void [F: ffi.cdef], so the capture answers nothing and the menu goes on; TradeRuleIDs travel as numbers: rules
+    are only created by CreateTradeRule, which stays refused, so every client has the same rules and IDs.
+  Capture: in the replay's local phases (this client's UI), not in the probe's own frame, not during an apply; nothing runs on
+    the capturing client before the apply. A value that does not encode (no component, a string over 48 bytes, an offer in no
+    list) is refused where it was made: counted, logged (UI_REPLAY_REFUSED / UI_REPLAY_REFUSED_NATIVE), nothing ran anywhere.
+  Apply: in the probe's frame of capture tick + delay on every client, slot order, call order (the Lua ones and the FFI ones of
+    a slot in the order the menu called them), after the authority check, inside the slot's faction scope (not for the signal:
+    MD runs later in the simulation, as slot 1's always did). X4's answers and refusals: UI_REPLAY_APPLIED rows, the receipt.
+
+3. THE FACTION SCOPE (lockstep_ui_trade.h uitrade_scope_enter / uitrade_scope_leave; gate.ui_trade_scope / _scope_end)
+  [0x38f4bd0] = the owner of slot k's ship for the length of one stock call, then back. It opens only during an apply
+  (uirep_replaying), on the frame thread, with no slot scope (pslot) and no presentation scope open; a second open is refused;
+  the close checks the value is still the one it wrote (else stop 164, why=ui_trade_scope, the value put back anyway); a fault
+  inside closes it (stop 164, why=ui_trade); a pass that finds it open closes it and stops (ui_trade_scope_open). When slot k's
+  faction is `player` (coop, slot 1) nothing is written (scopes=opened/same/refused in UI_TRADE_STATUS).
+  What it means: everything the stock function does "for the player" is slot k's faction: whose account pays or is paid,
+  whose ownership counts (the stock setters' own player-owned checks), whose logbook money line. The probe's frame runs in the
+  UI's VBI slot 6, where the presentation scope already swaps the canonical player's identity; simulation jobs run from slot 11
+  on [I: the presentation design's same premise, lockstep_pilot_present.h].
+  Known effects, the same on every client: a money change of x4lan_playerk inside the scope posts its MoneyUpdatedEvent on the
+  canonical player (0x9dc7a0 compares with [0x38f4bd0]), so MD's player-money listeners (notifications, logbook) hear slot k's
+  change as slot 1's.
+
+4. TRADE OFFERS: THE PORTABLE REFERENCE
+  At capture (client k): GetTradeData(offer).station; the offer is looked up in GetTradeList(station) (the station's own offers)
+  or, for the ware exchange between the trading ship and the station, GetWareExchangeTradeList(ship, station); from its entry:
+  ware, buy or sell, mission offer or not; then its place among the entries of that list with the same ware, kind and flag, and
+  their count. Wire: {s=<station as a component reference>, w=<ware>, c=kind | 4 mission | 8 exchange | 16*place | 4096*count}.
+  At the apply (every client, before the faction scope, in the canonical frame as the capture's list was read): the same list
+  of the same station; the matching entries; the count must be the same and the place must exist, else refused offer_changed
+  (the same on every client while the economy agrees; a divergent economy is a digest mismatch anyway). The raw offer ID never
+  travels (its numbering under runtime IDs is unverified, report 7c).
+
+5. AUTHORITY (Lua, at the apply, every client alike)
+  subject ID -> refused slot_ship when it is another slot's ship; no_ship when slot k has none; not_owner when the subject's
+  owner (GetComponentData 'owner') is not slot k's ship's owner; AddTradeToShipQueue on slot k's own ship only with immediate
+  (the docked trade computer: a person flies it, it takes no trade order; the stock menu offers the occupied ship only docked).
+  So: coop, any slot may manage every `player` station, trade with every `player` ship that is no slot ship, and with its own
+  ship docked; factions, slot k only with x4lan_playerk's objects. Money transfers only between the slot's faction and a
+  container it owns: the stock menus' fees to foreign containers (builder hiring, crew hiring, build plots, ship sale) belong
+  to flows that stay refused, so they stay refused too (paying a fee for nothing, or being paid for a ship sale that never
+  happened, would be consistent but wrong).
+
+6. NATIVE AND LUA DETAILS
+  Wire: the replay's section 'ui' (kind 0x55), version 1, as before; ops 0x58 (Lua) and 0x59 (FFI) are Lua-run (>= 0x40), so the
+  native apply in path_release skips them and the probe's frame runs them. Section rules (uirep_event_ok -> uitrade_event_ok):
+  the family armed, a Lua global number 1..11, an FFI event whose bytes are exactly its spec (bools 0/1, strings <= 48, NULL
+  only where the spec says z). Any slot (each one's faction pays).
+  Hooks: 17 five-byte jumps at the FFI entries (prefixes and pins from lockstep_ui_guard_table.h by name: kind FFI, group trade,
+  covered by 4096, no RIP-relative byte, no branch in the prefix), a page near the image (strides: prefix, jump back, wrapper),
+  installed at the replay's first pass, checked every pass (ui_trade_hook_lost), removed behind the window (ui_trade_restore),
+  with uirep_restore on a stop. Pins (fail closed, gate.ui_trade_pins before any patch and again at install): the 17 entries,
+  the 10 Lua globals' entries, GetPlayerMoney 0x288080, the handle resolver 0x3178a0, 0x9f9be0, 0x9f9c30, 0x9dc550, AddPlayerMoney,
+  GetTrueOwner 0x352b10, and the Ship vtable 0x2b84a98 slot 708 pointing at it.
+  Receipt (joins the pilot receipt, so the relay digest): |UITRADE_1:<each slot faction's balance in cents; x without a ship,
+  n for a faction without an account>;<slot 1 ship's trade loop override 0/1>;<slot 2 ...>. No container money: a container
+  without its own account answers through X4's dummy account, whose balance getter (DummyAccount vfunc 2, 0x96e0a0) draws from
+  the thread's RNG [F], and the receipt must not draw; the faction walk reads no dummy either. Rows: UI_TRADE_MONEY when it changes,
+  UI_TRADE_STATUS every 120 ticks (native counts: captured refused passed runs skipped scopes=opened/same/refused; Lua
+  lua=captured/applied/skipped/refused, view=), UI_TRADE_PINS at the arming, UI_TRADE_FUND, UI_TRADE_VIEW.
+  Test fixture native_gate_ui_trade_fund (credits, whole 1..1e9, needs the family): at the fleet tick (window start - 4) every
+  client gives every slot faction that is not `player` that much once, by the stock AddPlayerMoney inside that slot's faction
+  scope (the pool factions start with nothing to spend). Checked by the probe and check_gate_options.
+
+7. WHAT STAYS REFUSED (the guard keeps them; with the guard off they still run on one client, as today)
+  TransferPlayerInventoryTo, TransferInventoryToPlayer   NPC trader inventory (menu_trader_inventory): the inventory is the player
+      entity's; slot k's is P_k's, which a canonical apply does not reach (needs a slot-scope apply); with AddPlayerMoney.
+  AddPlayerMoney                                         the trader menus' price (blueprints, licences, inventory) and a debug
+      button; it goes with those flows (and AddLicence/AddInventory, assets group).
+  CreateTradeRule, UpdateTradeRule, RemoveTradeRule, SetPlayerTradeRuleDefault   player info's trade rules: a create answers the
+      new rule's ID the menu reads at once (the queue editor's problem), TradeRuleInfo carries arrays; in factions mode the rules
+      are the player faction's. Applying existing rules to stations (SetContainerTradeRule) IS replayed.
+  UpdateSupplyOverrides                                  an array of SupplyOverride structs (not built).
+  PauseProcessingModule, PauseProductionModule           the subject is a module: its owner check was not verified.
+  SetPlayerTradeLoopCargoReservationSetting              a player-wide setting whose storage was not read.
+  SetBuildTaskTransferredMoney                           build tasks (construction; the build family's).
+  ClearTradeQueue, ToggleFactionTradeRestriction, MakeRepairPriority   no base menu calls them [F].
+  Fees and payments to foreign containers by TransferPlayerMoneyTo / TransferMoneyToPlayer: refused at the apply (not_owner),
+      section 5. Their flows (hiring, build plots, ship sale) are other families' work.
+
+8. COOP AND FACTIONS: WHAT WORKS WHERE
+  Both modes, slots 1..N, scripted (no people) and through the replay: every entry of section 2 with the slot's own faction
+  paying and owning (tests: tests/test_native_gate_ui_trade.py ApplyTests in both modes; C: the scope on stand-ins).
+  People, coop: the stock menus already show every `player` ship, station and the shared wallet on every client, so the trade
+  context, station overview, station configuration, player info's cash transfers all reach the family.
+  People, factions mode, client k (k >= 2):
+    works [I: built, not live]: the docked trade with the own ship (map or docked menu -> station -> Trade): the trade view, this
+      client's UI only and reads only, adds the own slot ship to GetTradeShipList's answer and answers GetPlayerMoney with
+      x4lan_playerk's balance (so the menu prices against the right wallet; the top bar shows it too);
+    does NOT work, and why: managing x4lan_playerk's stations and non-slot ships through stock menus. The stock menus decide
+      "own" by the owner being [0x38f4bd0] (`player`), on client k too: x4lan_playerk's stations open as foreign stations
+      without controls. The replay supports them (scripted ops, the scope, the authority rule); the missing piece is a faction
+      view of the whole presentation ([0x38f4bd0] = x4lan_playerk inside client k's presentation scope). Not built: it would also
+      move map knowledge ("known to" is per faction: x4lan_playerk starts knowing nothing), relations, the logbook and every
+      other `player` check of the HUD to x4lan_playerk at once. Also: the identity plans give factions mode no non-slot ships,
+      and --ui-replay-fleet is coop only (builder), so trade orders for fleet ships are coop-only in practice.
+  Both: NPC trader inventory and trade rule creation (section 7).
+
+9. RISKS AND UNKNOWNS
+  [I] the scope's premise: no simulation job reads [0x38f4bd0] while the probe's frame runs (UI slot 6); the presentation scope
+      relies on the same.
+  [I] who pays when a trade ORDER executes later in the simulation (outside any scope): the engine's own logic for the ship's
+      owner; for x4lan_playerk's ships unverified (T3 checks it). The immediate trade computer (md/orders.xml create_trade_computer)
+      on an x4lan_playerk ship is unverified too.
+  [F] the trade menu's queries refresh caches on the client that runs them: GetCargoAfterTradeOrders 0x2b1350 creates and frees
+      a temporary virtual cargo through 0x3ff3a0 -> 0x41a910, which writes container+0xa18 (a time). A query is not guarded; if
+      the simulation reads +0xa18 before its own refresh, a menu open on one client could part the world [I]. The census / world
+      hash is the check; SetVirtualCargoMode itself is replayed now.
+  Known, the same everywhere: MoneyUpdatedEvent of slot k's money on slot 1's player entity (section 3); the capturing menu shows
+      the old money, cargo and settings until the apply (delay ticks), so a second click is a second trade; a menu that reads a
+      setter's result back in the same frame shows the old value for a frame.
+  Registration lines (for the merge with the parallel families): UIREP_FAMILY_TRADE=4096 (lockstep_pilot_inputs.h; 1024 and
+      2048 left to the others), ops 0x58/0x59 (lockstep_ui_replay.h), the family list in K.FAMILY, check_gate_options.py,
+      native_gate_players.py; the guard inventory's covered bits; one line each in uirep_event_ok, uirep_op_name, uirep_guard_pass,
+      uirep_restore, lua_ui_replay_push, the core's session/run/frame/script, the probe's pins, fund and local_mark; METHOD and
+      includes in lockstep_gate.c / test_lockstep_gate.c; the replay C test's "every hook" excludes trade (its own test).
+
+10. VERIFIED AND NOT
+  C (test_lockstep_ui_trade.h in build_native_gate.py --test): on a private executable region, the lookup in a stand-in guard
+    table and the pin refusals (not covered, a missing name, a changed byte); the install through the pass; every kind of hook
+    called for real through its patched entry (component, int32, string, NULL string, bool from a wider register, negative int32,
+    float in xmm1): outside the local phases X4's own with the arguments intact, inside them one event and nothing ran, the probe's
+    frame and an apply passed; refusals (no rule type, no component); the section rules and the registered op names; the apply:
+    factions mode (X4's function sees slot 2's faction, then the player faction is back), slot 1 and coop (nothing written), a
+    float and a NULL ware arriving, gone (the same everywhere), identities that differ (stop), no faction, a decode error, a scope
+    changed under the call (stop, value put back), a fault (stop, scope closed), scope refusals outside an apply, in a
+    presentation or slot scope, twice; balances through the account walk, a faction without an account (n, the dummy never read); the receipt in both modes and
+    without a ship; the pass (scope left open, hook lost, window end restores every byte); off without the family.
+    On the pinned image: all pins and the Ship vtable slot 708, every hooked entry the export of its name with covered 4096, the
+    Lua globals no exports, exactly 27 entries covered by trade, a tampered pin and slot refuse, a whole install and back.
+  Python (tests/test_native_gate_ui_trade.py; the guard and replay suites updated): the mirrors (family bit, ops, globals, the
+    exports against the inventory and the generated table, the specs against the stock ffi prototypes), capture (nothing runs, the
+    offer reference), the apply on two clients alike in factions and coop mode (scope or not, the stock call), offer_changed,
+    the second of two matching offers, the authority table in both modes, no ship, gone/mismatch, a scope that did not close,
+    the FFI path, the signal next to the events family, the fund once and only for pool factions, the receipt and rows, the trade
+    view (client 2 factions only), the script ops, the real probe arming the family with its pins first and the receipt joining
+    the digest, the refusals, the option checker and the builder.
+  Not live: nothing ran in X4. In particular until the first run: the scope inside X4's real calls, the money moving between the
+  accounts the walk names, the trade computer for an x4lan_playerk ship, the trade view in the stock menu.
+
+11. LIVE TEST SPEC (coordinator; DLL, probe and ui/native_gate_ui_replay_core.lua of this branch; config lines on top of
+  .local/census/overlay-Play42P with md/native_gate_ui_replay.xml in it as for G1/G4; no new overlay files)
+  Common lines (both runs):
+    X4LAN_CONFIG.native_gate_ui_guard = 'all'
+    X4LAN_CONFIG.native_gate_ui_replay = {'travel','target','orders','autopilot','dock','weapons','queue','missiles','events','flight','trade'}
+    X4LAN_CONFIG.native_gate_ui_replay_script = {{{60,'trade_to_ship',2000},{120,'trade_loop',1},{180,'trade_from_ship',500},{240,'trade_loop','clear'}},{{75,'trade_to_ship',1000},{135,'trade_to_ship',100,1},{150,'trade_loop',1},{195,'trade_from_ship',250},{255,'trade_loop','clear'}}}
+    (window start 40, delay 3. Client 1 captures at 100, 160, 220, 280 -> applied 103, 163, 223, 283; client 2 at 115, 175, 190,
+    235, 295 -> 118, 178, 193, 238, 298. trade_to_ship/from_ship: TransferPlayerMoneyTo/TransferMoneyToPlayer between the slot's
+    faction and its own ship's account, as the cash transfer rows call them; {135,...,1}: client 2 names slot 1's ship.)
+    700 ticks are enough. A ship without its own account transfers with X4's dummy account (section 1): money sent to it leaves
+    the faction, money taken from it arrives from nowhere; either way the faction column moves by exactly the amount.
+  T1 COOP (Play42P's own plan, mode coop). Pass:
+    relay pass, 0 digest mismatches, census 0, no stop 164; on both clients UI_TRADE_PINS ok=1, UI_REPLAY_ARMED ... families=5119,
+      UI_GUARD_STATUS installed=214, no UI_TRADE_FUND row (no pool faction), no UI_TRADE_VIEW row;
+    UI_REPLAY_APPLIED on BOTH clients, identical: tick=103 slot=1 op=88 result=applied what=TransferPlayerMoneyTo; 118 slot=2 op=88
+      applied TransferPlayerMoneyTo (no " scope": coop); 163 slot=1 op=89 applied SetShipTradeLoopCargoReservationOverride; 178 slot=2
+      op=88 result=refused what=TransferPlayerMoneyTo slot_ship; 193 slot=2 op=89 applied SetShipTradeLoopCargoReservationOverride;
+      223 slot=1 TransferMoneyToPlayer; 238 slot=2 TransferMoneyToPlayer; 283 slot=1 op=89 RemoveShipTradeLoopCargoReservationOverride;
+      298 slot=2 op=89 RemoveShipTradeLoopCargoReservationOverride;
+    MONEY, checked on both clients before and after (UI_TRADE_MONEY rows, UITRADE_1:<slot 1 faction>,<slot 2 faction> in cents;
+      in coop both columns are the one `player` account): P at 100; P-200000 from 103; P-300000 from 118; unchanged at 178;
+      P-250000 from 223; P-225000 from 238 (final: P - 2250 Cr); the same values at the same ticks on both clients;
+    loop flags (the two digits after the balances): slot 1 1 from 163 to 283, slot 2 1 from 193 to 298, else 0;
+    UI_TRADE_STATUS (tick 360) on both: runs=4 (the FFI ones), scopes=0/8/0 (eight calls, none needed a scope); lua=<c>/8/1/0
+      with c = 2 on client 1 and 3 on client 2 (their own Lua captures; the FFI ones count natively, captured=2 on each),
+      applied 8 and skipped 1 on both (the slot_ship refusal); no UI_GUARD_REFUSED row naming a trade entry.
+    Fail: a money step on one client only or at another tick (send UI_TRADE_MONEY of both), stop 164 with why=ui_trade_* (send the
+      why and UI_TRADE_STATUS), UI_REPLAY_REFUSED_NATIVE naming a trade entry (send the row), a refusal other than slot_ship.
+  T2 FACTIONS. The same lines plus, after them:
+    the plan line copied verbatim from .local/census/overlay-Play42F2/ui/config.lua.append
+      (X4LAN_CONFIG.native_gate_player_identity_plan = {["mode"]="factions",... slot 2 x4lan_player2, ship 000000000007a8fe ...})
+    X4LAN_CONFIG.native_gate_ui_trade_fund = 50000
+    Pass, everything of T1 except money and scope, and:
+    UI_TRADE_FUND tick=36 slot=2 faction=x4lan_player2 credits=50000 scope=1 on both clients; UI_TRADE_VIEW slot=2
+      faction=x4lan_player2 on client 2 only when its UI first asks for money (optional: only if a menu or the HUD asks);
+    UI_REPLAY_APPLIED 118 and 238: what=TransferPlayerMoneyTo scope / TransferMoneyToPlayer scope (slot 2 in its faction scope);
+      103 and 223 without " scope" (slot 1 is `player`); 178 refused slot_ship (slot 1's ship is another slot's);
+    MONEY on both clients (columns: slot 1 = player, slot 2 = x4lan_player2): X2 at 35 (expected 0, any value counts), X2+5000000
+      from 36; player P-200000 from 103, P-150000 from 223, never changing at 36, 118, 178, 238; x4lan_player2 X2+4900000 from 118,
+      X2+4925000 from 238, never changing at 103 and 223 (the account each slot pays from is its own);
+    UI_TRADE_STATUS (360) on both: scopes=5/4/0 (opened: the fund, slot 2's two transfers and its two loop FFI events; same:
+      slot 1's four calls), runs=4.
+    Fail as T1, and: x4lan_player2's column 'n' or not moving at 36 (no account behind the pool faction: send UI_TRADE_FUND and the
+      UITRADE rows), player's column moving at 118/238 or x4lan_player2's at 103/223 (the wrong account: send both clients' rows).
+  T3 OPTIONAL, a docked trade (both modes; needs a station both ships can dock at, the one of --ui-replay-dock / U5):
+    append to client k's plan (k = 1, then 2 in a second run): {300,'dock_at','<STATION>'} (dock family) and, once docked (the
+    coordinator moves the times), {420,'trade_buy','<STATION>','<WARE>',<N>,nil,1}: AddTradeToShipQueue(the station's sell offer of
+    <WARE>, own ship, N, immediate) and the docked trade's SignalObject, as the menu's confirm button. Pass: UI_REPLAY_APPLIED
+    ... what=AddTradeToShipQueue[ scope] and what=SignalObject on both clients at the same tick (no offer_changed, no slot_ship);
+    within some seconds the paying faction's column falls by about N x price and the ship's cargo holds <WARE> on both clients
+    (PILOT_SHIPS / census); in factions mode for slot 2: x4lan_player2's column falls, player's does not. If the trade computer
+    never trades for slot 2 in factions mode: send the rows (section 9, unverified).
+
+12. PEOPLE TEST CHECKLIST (two persons; Play42P + the common lines without the script; P2 also with the factions plan line and
+  native_gate_ui_trade_fund = 50000). Send every UI_REPLAY_APPLIED / UI_REPLAY_REFUSED / UI_REPLAY_REFUSED_NATIVE / UI_GUARD_REFUSED
+  row, UI_TRADE_MONEY and UI_TRADE_STATUS of both clients, and any Lua error line of the X4 logs.
+  P1 coop
+    [ ] each person docks the own ship at a trading station, opens map -> station -> Trade, buys one ware and sells it back: the
+        same UI_REPLAY_APPLIED rows (AddTradeToShipQueue, SignalObject docked_player_trade_added) on both clients at the same tick;
+        the shared money falls and rises identically on both screens and in UI_TRADE_MONEY; the cargo is the same on both.
+    [ ] no info line "SetVirtualCargoMode is not shared" when the trade menu opens or closes (it is replayed now).
+    [ ] each person opens the other person's ship in the map and tries to trade with it: refused slot_ship on both clients.
+    [ ] if the player owns a station: change a ware price (override), a stock limit, buy/sell allowed, a trade rule (existing),
+        the manager's budget (cash transfer): the station shows the same values on both screens after a moment.
+    [ ] player info -> trade rules -> create a rule: refused (UI_GUARD_REFUSED CreateTradeRule, the info line); nothing changes.
+    [ ] an NPC trader's inventory (buy a spacesuit item): refused (TransferInventoryToPlayer), nothing changes.
+  P2 factions
+    [ ] client 2's top bar money is x4lan_player2's (UI_TRADE_MONEY column 2 / 100), client 1's the player's.
+    [ ] client 2 docks its ship, opens the station's trade menu: its own ship is offered (the trade view); a buy charges
+        x4lan_player2's column only, on both clients; client 1's money does not move.
+    [ ] client 1 trades as in P1: only the player's column moves.
+    [ ] client 2 opens a player station (client 1's side) and tries its settings: the stock menu shows it as foreign (no
+        controls), or the change is refused not_owner on both clients; nothing changes.
+    [ ] report whether the trade context on client 2 shows wrong limits, empty rows or Lua errors (the trade view only adds the
+        ship and the money; the rest of the menu still reads the `player` faction).

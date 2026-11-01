@@ -122,7 +122,7 @@ def values(table):
 class CodecTests(unittest.TestCase):
     def test_families(self):
         lua, _ = client()
-        cases = {'true': 63, "{'travel'}": 1, "{'target','orders'}": 6, "{'travel','target','orders'}": 7, "{'autopilot','dock','weapons'}": 56, "{'target','missiles'}": 66, "{'orders','queue'}": 132}
+        cases = {'true': 63, "{'flight'}": 512, "{'travel'}": 1, "{'target','orders'}": 6, "{'travel','target','orders'}": 7, "{'autopilot','dock','weapons'}": 56, "{'target','missiles'}": 66, "{'orders','queue'}": 132}
         for text, mask in cases.items():
             self.assertEqual(lua.eval(f'X4LAN_UI_REPLAY_CORE.families({text})'), mask, text)
         for text in ('false', '{}', "{'seta'}", "{'travel','travel'}", "'travel'"):
@@ -749,12 +749,12 @@ def failures(text):
 class OptionTests(unittest.TestCase):
     def test_rules(self):
         self.assertEqual(failures(stock_config()), [])
-        for value in ('true', "{'travel'}", "{'target','orders'}", "{'orders','queue'}"):
+        for value in ('true', "{'travel'}", "{'target','orders'}", "{'orders','queue'}", "{'travel','flight'}"):
             self.assertEqual(failures(stock_config(native_gate_ui_replay=value)), [], value)
         for rule, override in (
-                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue', dict(native_gate_ui_replay='1')),
-                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue', dict(native_gate_ui_replay="{'seta'}")),
-                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue', dict(native_gate_ui_replay="{'travel','travel'}")),
+                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction', dict(native_gate_ui_replay='1')),
+                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction', dict(native_gate_ui_replay="{'seta'}")),
+                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction', dict(native_gate_ui_replay="{'travel','travel'}")),
                 ("native_gate_ui_replay needs native_gate_pilot_stock_slots = 'all'", dict(native_gate_ui_replay='true', native_gate_pilot_stock_slots=None)),
                 ("native_gate_ui_replay needs native_gate_pilot_stock_slots = 'all'", dict(native_gate_ui_replay='true', native_gate_pilot_stock=None)),
                 ('native_gate_ui_replay needs native_gate_pilot_present', dict(native_gate_ui_replay='true', native_gate_pilot_present=None)),

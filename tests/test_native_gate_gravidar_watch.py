@@ -14,7 +14,7 @@ census = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(census)
 
 HARNESS = '''
-  X4LAN_CONFIG={native_gate_test=true,test_profile='45841',slot='p1',native_gate_hash='clock',
+  X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',slot='p1',native_gate_hash='clock',
     native_gate_snapshot_sha=string.rep('a',64),port=12345,token=string.rep('c',32),
     native_gate_radar_serial=true,native_gate_world_identities=true,native_gate_gravidar_key_all=true,
     native_gate_gravidar_watch={'000000000009fb3b','000000000009f121'}}

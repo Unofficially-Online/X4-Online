@@ -10,7 +10,8 @@
 --     0x01 pilot (28 bytes, version byte 1), 0x48 'H' hit claims, 0x4f 'O' nav octree report (20 bytes,
 --     native_gate_nav_octree 'agreed'), 0x50 'P' orders (own v1 bytes), 0x53 'S' stock piloting
 --     record (lockstep_pilot_stock.h, version byte 3), 0x55 'U' UI replay events
---     (lockstep_ui_replay.h, version byte 1)
+--     (lockstep_ui_replay.h, version byte 1), 0x59 'Y' hybrid sector record (lockstep_hybrid.h,
+--     native_gate_hybrid, version byte 1)
 -- A container holding only a channel that has a legacy form is refused: one encoding per content.
 X4LAN_INPUT_MUX_CORE={}
 local K=X4LAN_INPUT_MUX_CORE
@@ -20,11 +21,13 @@ K.MAX_HEX=2*K.MAX_BYTES
 K.PILOT_BYTES,K.PILOT_VERSION=28,1
 K.HIT_BYTES,K.HIT_VERSION,K.HITS_MAX,K.HIT_WINDOW=26,1,8,8
 K.INCOMING,K.OUTGOING=1,2
-K.KIND={pilot=0x01,hits=0x48,octree=0x4f,orders=0x50,stock=0x53,ui=0x55}
-K.SECTIONS={'pilot','hits','octree','orders','stock','ui'}   -- wire order (ascending kind)
-K.PRIORITY={'stock','ui','pilot','orders','hits','octree'}   -- default packing order (stock flies a slot: first; octree waits for room)
+K.KIND={pilot=0x01,hits=0x48,octree=0x4f,orders=0x50,stock=0x53,ui=0x55,hybrid=0x59}
+K.SECTIONS={'pilot','hits','octree','orders','stock','ui','hybrid'}   -- wire order (ascending kind)
+K.PRIORITY={'stock','ui','pilot','orders','hits','octree','hybrid'}   -- default packing order (stock flies a slot: first; octree and the
+                                                              -- hybrid record, which shrinks to its budget, take the room left)
 K.STOCK_VERSION=3
 K.UI_VERSION=1
+K.HYBRID_VERSION=1
 K.OCTREE_BYTES=20
 K.ZERO=string.rep('0',16)
 
@@ -73,10 +76,13 @@ function K.decode(hex)
   elseif kind==K.KIND.ui then
    if byte(hex,at)~=K.UI_VERSION then return nil,'ui_version' end
    out.ui=payload
+  elseif kind==K.KIND.hybrid then
+   if byte(hex,at)~=K.HYBRID_VERSION then return nil,'hybrid_version' end
+   out.hybrid=payload
   else return nil,'kind' end
   last=kind;count=count+1;at=at+length
  end
- if count==0 or (count==1 and not out.hits and not out.octree and not out.stock and not out.ui) then return nil,'noncanonical' end
+ if count==0 or (count==1 and not out.hits and not out.octree and not out.stock and not out.ui and not out.hybrid) then return nil,'noncanonical' end
  return out
 end
 -- Shape of one section payload as the decoder requires it.
@@ -88,6 +94,7 @@ function K.section_ok(name,hex)
  if name=='octree' then return #hex==2*K.OCTREE_BYTES,'octree_length' end
  if name=='stock' then return byte(hex,1)==K.STOCK_VERSION,'stock_version' end
  if name=='ui' then return byte(hex,1)==K.UI_VERSION,'ui_version' end
+ if name=='hybrid' then return byte(hex,1)==K.HYBRID_VERSION,'hybrid_version' end
  return false,'kind'
 end
 -- Sections -> canonical blob ('' when empty) or nil,reason. encode(decode(x)) == x for every valid x.
@@ -101,7 +108,7 @@ function K.encode(sections)
   count=count+1
  end
  if count==0 then return '' end
- if count==1 and not sections.hits and not sections.octree and not sections.stock and not sections.ui then
+ if count==1 and not sections.hits and not sections.octree and not sections.stock and not sections.ui and not sections.hybrid then
   local hex=sections.pilot or sections.orders
   if #hex>K.MAX_HEX then return nil,'too_long' end
   return hex
@@ -122,7 +129,7 @@ function K.size(sections)
  local count,bytes=0,0
  for _,hex in pairs(sections) do count=count+1;bytes=bytes+#hex/2 end
  if count==0 then return 0 end
- if count==1 and not sections.hits and not sections.octree and not sections.stock and not sections.ui then return bytes end
+ if count==1 and not sections.hits and not sections.octree and not sections.stock and not sections.ui and not sections.hybrid then return bytes end
  return 2+2*count+bytes
 end
 
@@ -206,15 +213,17 @@ function K.mux(log)
   log('INPUT_SECTION ARMED section='..name..' owner='..owner)
  end
  -- pilot, orders and hits once each; octree may be listed too, otherwise it is offered last; stock may
- -- be listed too, otherwise it is offered first; ui may be listed too, otherwise it follows stock.
+ -- be listed too, otherwise it is offered first; ui may be listed too, otherwise it follows stock; hybrid
+ -- may be listed too, otherwise it comes after everything else.
  function M.set_priority(list)
-  assert(type(list)=='table' and #list>=#K.PRIORITY-3 and #list<=#K.PRIORITY,'input priority lists pilot, orders and hits once each')
+  assert(type(list)=='table' and #list>=#K.PRIORITY-4 and #list<=#K.PRIORITY,'input priority lists pilot, orders and hits once each')
   local seen,out={},{}
   for _,name in ipairs(list) do
    assert(K.KIND[name] and not seen[name],'input priority lists pilot, orders and hits once each');seen[name]=true;out[#out+1]=name
   end
   assert(seen.pilot and seen.orders and seen.hits,'input priority lists pilot, orders and hits once each')
   if not seen.octree then out[#out+1]='octree' end
+  if not seen.hybrid then out[#out+1]='hybrid' end
   if not seen.stock then table.insert(out,1,'stock') end
   if not seen.ui then
    for i,name in ipairs(out) do if name=='stock' then table.insert(out,i+1,'ui');break end end

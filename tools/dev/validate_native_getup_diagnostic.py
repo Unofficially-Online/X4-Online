@@ -27,7 +27,8 @@ SNAPSHOT='7816351056e6040d92ae9a4619ae2e15a577fa26a19134f11e20746317e61aa8'
 PASSIVE=('serial_pathing','world_identities','actor_diag','flight_diag','ai_diag','agent_diag','ship_diag','nav_diag','spline_diag',
          'world_trace_early','world_queue_trace','player_transition_observer','world_timing_fields')
 ALLOWED=set(PASSIVE)|set(('test hash start_time snapshot_sha trace_stride trace_window world_hash_stride world_hash_schema world_hash_watch '
-    'world_trace_ticks player_probe player_transition_manifest player_transition_last_tick player_origin_token diagnostic_contract player_transition_queue_evidence player_transition_prebind_receipt').split())
+    'world_trace_ticks player_probe player_transition_manifest player_transition_last_tick player_origin_token diagnostic_contract player_transition_queue_evidence player_transition_prebind_receipt '
+    'defaults').split())
 STATUS=set(('schema contract run epoch native_clients physical_slot options tick issued calls returns unwinds failures terminal_started '
     'terminal_finished closed restored reason stage session_pass parity_checked independent_native_players completed_release').split())
 
@@ -38,6 +39,8 @@ def configuration(config):
         values[name]=value.strip()
     required={name:'true' for name in PASSIVE};required.update(test='true',world_hash_stride='1',player_transition_last_tick='120')
     if any(values.get(k)!=v for k,v in required.items()):raise ValueError('diagnostic passive configuration missing')
+    # The closed passive configuration is the bare gate (native_gate_defaults = false; reports/LOCKSTEP-DEFAULTS-20261101.txt).
+    if values.get('defaults','false').split()[0]!='false':raise ValueError('diagnostic configuration needs the bare gate (native_gate_defaults = false)')
     if values.get('start_time','5')!='5' or values.get('trace_stride','1')!='1' or 'trace_window' in values:raise ValueError('diagnostic capture window differs')
     def quoted(name):
         value=values.get(name,'');m=re.fullmatch(r'([\'"])([^\'"\r\n]+)\1',value)

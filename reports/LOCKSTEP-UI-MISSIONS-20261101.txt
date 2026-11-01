@@ -1,0 +1,320 @@
+LOCKSTEP UI MISSIONS: MISSIONS AND CONVERSATIONS FOR EVERY PLAYER
+1 November 2026 | offline work on branch contrib/ferrite-missions (base: smoke a2e43713). Static analysis of the pinned Windows
+X4.exe 9.00 (RVAs, base 0x140000000) and of the extracted stock UI and MD scripts, read locally in x4-re; nothing of them is
+copied here (names of API functions, script files, cue names and RVAs only). No X4 was launched.
+[F] = read in the binary or the scripts; [I] = inference; "live" = what only a native run can show.
+Builds on reports/LOCKSTEP-UI-REPLAY-20261030.txt (the replay) and reports/LOCKSTEP-UI-GUARD-20261101.txt (the guard, P3).
+INTEGRATION NOTE (contrib/ferrite-integrate, 1 November 2026): the family bits are missions 2048 and conversation 16384 now,
+not 4096/8192 (build and assets hold those; table in docs/LOCKSTEP-REGISTRY.txt); ops 0x48/0x49 are unchanged. The guard's
+hook reaches uimis_guard through the claim dispatch (the arming claims the nine entries; another family's claim on one
+refuses it, ui_missions_claim_taken:<name>). The M1 spec's mask is 19455; entries=282 and installed=243 hold.
+
+1. DECISION: HOW MISSIONS WORK IN MULTIPLAYER
+1a The user's decision (1 November, through the coordinator)
+  Model (c), personal missions per player, in every session mode: each player has its own offers, missions, rewards and
+  reputation. Story and plot missions (d) are per player too, as a separate work item with its own testing, handling and
+  rewriting (section 5 lists what they need). Conversations follow (c). The base built now is (a): slot 1's missions and
+  conversations replayed solidly on every client, slots 2+ refused until (c) exists.
+
+1b The models that were compared (what each needs, how hard)
+  (a) slot 1 only (today's state, made solid): accept/decline (SignalObject), abort, active mission, briefings and the
+      conversation calls of slot 1 run on every client at the same step; slots 2+ refused with an info line. Needs nothing of
+      MD (MD's player is slot 1's [F 2f]); needs the replay of five FFI exports and eight Lua globals and a reference for
+      mission/offer IDs (MD cues, not components). Contained: BUILT here (section 3). Cost for people: player 2 has no
+      missions; player 2 sees player 1's missions in its own lists (one mission manager per process) and player 1's
+      conversation dialogs on its screen (one conversation manager per process).
+  (b) coop shared missions (any player accepts, the group owns it, the shared wallet pays): mechanically small (replay slot
+      k's accept canonically, as slot 1's), but objectives measured from the player (393 player.* reads in the 37 gm_*.xml,
+      195 of them player.entity [F count]: sector checks, distances, inventory) stay slot 1's; a mission accepted by player 2
+      near player 2 would be generated and judged around player 1. Rejected by the user's decision.
+  (c) personal missions per player (CHOSEN): MD must run a mission's cue tree with "the player" = slot k's player, the
+      mission manager and conversation manager must be slot k's, rewards and reputation slot k's faction's (factions mode)
+      or a per player account (coop), offers generated around slot k. Needs C1..C6 of section 4; large; not contained in this
+      step (section 4b says why and gives the order).
+  (d) story/plot: player-specific state (MD globals, the player entity's blackboard), cutscenes on the player's view,
+      teleports of the player, plot flags. Options were: disable in multiplayer, slot 1 only, or per player. User: per
+      player, separately (section 5).
+
+1c Order to build
+  1. (a) for slot 1, then the people test M2 (section 7) to learn what a real conversation and briefing do on two clients.
+  2. C1 MD slot scope (the foundation: player.* = slot k's inside slot k's cue trees), with its own read-only live probe.
+  3. C2 per slot mission manager and conversation manager (swapped with the slot scope and client k's presentation).
+  4. C5 replay of slot k's mission/conversation calls inside slot k's scope; C6 notifications to slot k's presentation.
+  5. One generic mission type end to end for slot 2: GM_Find_Object (section 4c), then C3 (rewards, reputation) and C4
+     (offers around slot k), then the other generic types one audit at a time (section 4d).
+  6. Non-mission conversations (1d), then story/plot (section 5), one plot at a time.
+
+1d Conversations that are not missions follow the same model
+  Per player under (c): the comm/talk menus of station managers and pilots (conversations.xml 'default'), trade through a
+  conversation (gTradeAction_start on player.computer [F conversations.xml]), hiring and crew delivery
+  (SignalObjectWithNPCSeed*, npc_missions), on-foot NPC use cases (NPC_UseCases on player.entity [F replay report 14]),
+  faction representatives and diplomacy agents (their relation changes are the slot's faction's in factions mode).
+  World-level, not per player: none known; a conversation is always between "the player" and an actor [I: the 642
+  listeners of event_conversation_started in the base game and the installed DLCs/mods were counted, not audited one by one].
+  In (a) they all are slot 1's (replayed) or refused (slots 2+), like missions.
+
+2. WHAT THE BINARY AND THE SCRIPTS SAY [F unless marked]
+2a The mission manager is X4::GameClient's, one per process
+  GameClient::Init 0x1223ce0 -> 0x12334b0 allocates 0x3d0 bytes, constructs with 0x1137710 and stores the pointer at
+  0x6cf1658 (GameClient::Shutdown clears it); 131 functions reference that pointer. Offers +0x48..+0x50 (entries of 0x350
+  bytes, ID at +0), missions +0x60..+0x68 (entries of 0x5d0 bytes, ID at +0). No owner or player field was found in the
+  paths read (AbortMission, SetActiveMission, StartBriefing, StopBriefing, MissionBriefingInteractButtonClicked): missions
+  belong to "the" player; there is no per-player key to use [F for these paths, I for the whole class].
+2b Mission and offer IDs are MD cues
+  Each export above finds its entry by ID, then U::ComponentRegistry::Find(g_UniverseIDMap 0x6cf1500, id, 0) and a
+  dynamic cast from U::UniverseID to MD::Cue (type descriptors 0x31fc508 -> 0x31fd4f8; the UniverseID base is at offset 0
+  of MD::Cue, vtable 0x2c75170). So the ID is the cue instance's runtime ID (the shared counter: the same on every client
+  under native_gate_runtime_ids), not a component. The replay's component reference (Find(map, id, 4) and a portable
+  identity, which world_identity_portable keeps for saved and created components) does not cover it [I], so an accept was
+  "unmapped" (guard report 4b's open question); the cue reference of 3c answers it.
+2c What each entry does to MD (event numbers from md_keywords.csv)
+  AbortMission 0x175860                 Cue_RaiseCueEvent(cue, 0x63b event_mission_aborted) at once
+  SetActiveMission 0x1b7010             0x113b760(manager, entry) / 0x113b920(manager,0,0,1): the active mission (guidance)
+  MissionBriefingInteractButtonClicked  0x1b49c0 -> 0x640 event_briefing_interact_button_clicked (rml_buildstation,
+                                        rml_deliver_fleet, rml_rescueship_2 listen)
+  StartBriefing 0x1bbcb0                mission or offer; submission: 0x641; else 0x11228d0 -> 0x63e event_briefing_started,
+                                        event.param = the render target texture name(s)
+  StopBriefing 0x1bc9e0                 submission: 0x642; else 0x1122990 (event_briefing_cancelled [I: the 0x63f path])
+  SignalObject 'accept'/'decline'       event_object_signalled on the offer's client; GenericMissions.AcceptMission does not
+                                        read the third argument (the offer ID) [F genericmissions.xml 1058..]
+2d A hole in the guard, closed: StartBriefing and StopBriefing were not inventoried
+  The gm_* briefing cues (97 play_cutscene in 37 gm_*.xml [F count]) react to event_briefing_started by creating a
+  presentation cluster and objects (e.g. GM_Find_Object.DisplayCutscene: create_presentation_cluster, create_object of a
+  lockbox [F]): on the one client that opened the briefing, shared runtime IDs were taken. Both exports are now in the
+  inventory's missions group (tools/dev/ui_guard_inventory.py; regenerated lockstep_ui_guard_table.h: 282 entries, the two
+  new ones resolved and pinned like the rest).
+2e The conversation manager is X4::GameClient's, one per process
+  GameClient::Init stores it at 0x38ee230 (0x1224bd1); 71 functions reference it. It is updated in U::UniverseFrameUpdate
+  (0x9fdef0 -> 0x1177d60) at game time; its state +0x1a0 is set to 1 at init and changed by 0x1178450 (fragment 0x11784a2)
+  in that update, which posts U::StartDialogEvent (deferred, thread block time) when entering states 4/5 with options at
+  +0x80 -> +0x60..+0x68. StartConversationFromMenu 0x276980 only queues a request (+0x1c0) while the state is 1 and
+  0x11792e0 answers false. The dialog's UI flag 0x38f4bfb (DialogMenuShown/Hidden) is read by UI code only (0xaf12b0,
+  CUIController vfunc66), not by the manager's update. [I] So the manager is driven by MD and replayed calls, not by a
+  client's screen: equal on every client if the replayed calls are; the receipt checks it every tick (3d).
+2f "The player" in MD is the singleton
+  Scripts::EvaluateKeywordProperty 0xcd5910 (player.*, faction.*, ...) calls U::GetPlayerSlot(0x3d196f0) 26 times and reads
+  0x3d196f0 73 times: player.entity, .ship, .sector, ... come from the Universe's player slot +0x230, the very slot the pilot
+  scope swaps to P_k (lockstep_pilot_slots.h). reward_player (Scripts::RewardPlayerAction::Execute 0xbc75a0) pays through
+  U::FactionClass::AddMoney(g_PlayerFaction 0x38f4bd0). Generic offers follow slot 1: GenericMissions.Manager.OnSectorChange
+  listens on event_object_changed_sector object="player.entity", EvaluateSectorMissions generates in player.sector, offers
+  are removed on the player's sector change (OfferMission RemoveOnSectorChange).
+2g The active mission is read by MD and AI
+  player.activemissionwaypoint (aiscripts/move.autopilot.xml: the player's autopilot following highways; conversations.xml
+  'way to mission objective' choice), player.activemissiontype (genericmissions.xml PlotMissionInterrupted). With
+  native_gate_guidance_local a client's own guidance is a mission there and the active one on that client alone (replay
+  report 14): a conversation of slot 1 while client 2 has its own guidance may offer different choices on the two clients
+  [I]. In (a) slot 1's SetActiveMission is replayed (the canonical active mission stays identical), slot 2's refused.
+
+3. (a) BUILT: SLOT 1'S MISSIONS AND CONVERSATIONS ON EVERY CLIENT (default off, stop reason 164)
+  native_gate_ui_replay lists 'missions' (bit 4096) and/or 'conversation' (bit 8192); true does not include them. Both need
+  native_gate_ui_guard with their groups ('all' or a list with missions/conversation): the guard's hook is where the native
+  capture happens and where slots 2+ are refused. Accepting an offer also needs 'events' (it is a SignalObject).
+3a Missions (op 0x48, lockstep_ui_missions.h): the guard's hook (uiguard_decide) asks uimis_guard before refusing. On slot
+  1's client, in a local phase, AbortMission, SetActiveMission, MissionBriefingInteractButtonClicked, StartBriefing and
+  StopBriefing become an event: which, the mission/offer as a cue reference (3c), StartBriefing's texture (48 bytes at most)
+  and flag, StopBriefing's flag; SetActiveMission(0) a zero reference. The menu gets what it expects (SetActiveMission: true;
+  the others are void). X4's function does not run there. Every client applies at capture + delay in the probe's frame, in
+  call order with the other Lua-run events (the replay's bypass: the guard passes), through the export with the resolved ID
+  (gate.ui_missions_run). A cue gone on a client: nothing there (counted, the same everywhere when the worlds agree); a cue
+  that is another one: stop (ui_ref_mismatch). Slots 2+, an ID that names no cue, a texture too long: the guard's refusal
+  (UI_GUARD_REFUSED row, info line).
+3b Conversations (op 0x49): the Lua core wraps StartConversationFromMenu, StartSubConversationFromMenu, ProceedFromMenu,
+  ReturnFromMenu, CancelConversation, UnsuspendConversation, SelectDialogOption, SelectBackOption by name (Helper's
+  closeMenuForNewConversation/Section/SubConversation/AndReturn/AndCancel reach them so). Slot 1: captured with the core's
+  codec (actors as component references, convparam tables as tables), applied on every client through the stock global.
+  Slots 2+: refused (UI_REPLAY_REFUSED why=slot) with an info line at most every 90 ticks ("Multiplayer: <name> works for
+  player 1 only for now - nothing happened."). The four without component arguments are captured natively as well, in the
+  guard's hook, when a script holds the C function itself (the core UI's dialog menu, ui/core/lua/dialogmenu.lua
+  leaveDialogMenu -> SelectDialogOption(button); whether it sees the wrapped global is unknown [I]): the button read with
+  lua_tonumber, the same event bytes as the Lua capture. The arming refuses when one of the eight globals is missing.
+3c Cue references: the ID (8 bytes) and a 32-bit check of the ID and the cue's script module name (cue +0x160 definition,
+  +0x150 module, +0x18 name, as lockstep_cue_name.h reads it; the vtable must be MD::Cue's). The Lua codec has two new tags
+  (8 a cue as Lua ID, 9 as 64-bit ID), tried after the component reference: the events family's SignalObject(actor, 'accept',
+  offer) now encodes when the missions or conversation family is armed (gate.ui_missions_cue_ref / _resolve). Without them
+  a cue stays unmapped (refused, as before).
+3d Receipt and rows: '|UIMIS_1:o<offers>/c<state>.<current>' joins the UI replay receipt (offers with missions, the
+  conversation manager's state and whether it holds a conversation with conversation): a capture or apply that took on one
+  client only, or a conversation manager that is not lockstep, is a digest mismatch at that tick. Not hashed (by design,
+  guidance_local's own missions): the mission count and the active mission: UI_MISSIONS_STATE rows on change
+  ("missions= offers= conversation=<state>.<current> active=<id>"). UI_MISSIONS_CAPTURED rows (via=native from the guard's
+  hook, via=lua from the wrappers), UI_REPLAY_APPLIED rows for ops 72/73 (X4's answer, e.g. SetActiveMission(<id>)=1),
+  UI_MISSIONS_STATUS every 120 ticks (captured per export, natively captured conversation calls, applied, gone, unmapped).
+3e Fail closed: gate.ui_missions (the probe, after gate.ui_guard) refuses without the families, without the guard or its
+  groups, and on a pin mismatch (pins_ui_missions:<rva>: SHA-256 of the five exports' bodies, the idle check in
+  StartConversationFromMenu, the conversation state writer, the two managers' creation); the replay's first pass stops with
+  164 (ui_missions_not_armed / _need_guard / _need_guard_group) when an older probe did not arm it; a section of slot 2+
+  holding op 0x48/0x49 is refused natively (ui_missions / ui_conversation) and by the Lua core (ui_lua_op); option checker
+  and builder refuse the families without the guard groups.
+3f Files: src/native/engine/lockstep_ui_missions.h, lockstep_ui_missions_lua.h, test_lockstep_ui_missions.h (new);
+  registration lines in lockstep_pilot_inputs.h (family bits), lockstep_ui_replay.h (ops, the section's default branch, the
+  pass check, the include), lockstep_ui_guard.h (the capture call in uiguard_decide), lockstep_gate.c (bindings),
+  test_lockstep_gate.c; tools/dev/native_gate_ui_replay_core.lua (families, cue tags, the conversation wrappers, the apply of
+  ops 0x48/0x49, the frame's rows and receipt, script ops, K.mission_tools), native_gate_probe.lua (declarations, arming,
+  tools), native_gate_ui_replay.xml (MD fixture, 3g), ui_guard_inventory.py + lockstep_ui_guard_table.h (StartBriefing,
+  StopBriefing), check_gate_options.py, native_gate_players.py (families, rules, the scripted plan, the MD copy);
+  tests/test_native_gate_ui_missions.py (new), one message line in tests/test_native_gate_ui_replay.py.
+  Family bits 4096/8192 leave 1024/2048 to the trade and build branches; the integrator renumbers if those took them.
+3g MD fixture (native_gate_ui_replay.xml, our own cues; validated against x4-re's md.xsd, X4LAN_MD_XSD=1 reruns it):
+  MissionFixture (event_ui_triggered X4LAN_UiMissions/Fixture, from the probe's frame on every client at the same tick):
+  a cue actor 'X4LAN Test Client' (Argon) and an offer 'X4LAN test offer' located at the given object; its children log
+  accept (create_mission 'X4LAN test mission' with a flyto objective), decline, briefing started/cancelled/button, abort
+  (remove_mission). Talk: conversation X4LAN_Talk with two choices (sections x4lan_talk_a/_b); TalkSection logs the
+  section; TalkFinished logs every conversation's end. Rows UI_MISSIONS_MD_* in each client's own X4 log with time=.
+  Script ops (native_gate_ui_replay_script): mis_fixture (canonical: in every client's plan, same tick), offer_accept,
+  offer_decline, briefing/briefing_stop/briefing_button ('offer' or 'mission'), mis_active, mis_none, mis_abort,
+  conv_start ('fixture' or a saved ID, optional conversation name), dialog (the wrapped global), dialog_native (the C
+  function itself: the guard's path), conv_cancel. The builder writes the plan of 7a with
+  --ui-replay events,missions,conversation --ui-guard all --ui-replay-script.
+3h Still refused or not covered
+  - Slots 2+: every mission and conversation call (model (c), section 4).
+  - SignalObjectWithNPCSeed / ...AndMissionID (hiring, crew delivery): guarded, not replayed (an NPCSeed is a client-side
+    template value; needs its own reference) [I].
+  - SignalObject of other menus (ware_mission_delivery, npc_mission_delivery, playerownedship_proceed, repairs_initiate):
+    replayed for slot 1 by the events family if their arguments encode (mission IDs now do), refused for slots 2+.
+  - Presentation on the other clients: slot 1's conversation dialogs and conversation menus (MD's open_conversation_menu)
+    open on every client [I: the manager is per process and identical]; a person on client 2 can only close them (their
+    calls are refused). The same for MD-started conversations (incoming comms). The mission lists show slot 1's missions.
+  - Briefing cutscenes: replayed on every client into the render target the capturing menu named; on the other clients no
+    menu shows it [I: harmless, objects are created alike].
+  - Linux: Windows only (as the replay).
+
+4. (c) PERSONAL MISSIONS PER PLAYER: WHAT IT NEEDS, WHY NOT IN THIS STEP, THE PATH
+4a What "the mission belongs to slot k" needs
+  C1 MD slot scope. MD frames of slot k's cue trees run with the singleton = P_k (pslot scope k), so every player.* of
+     those cues is slot k's [F 2f: the evaluator reads the slot the scope swaps]. Pieces: (i) ownership: a root cue instance
+     is slot k's when slot k's replayed call created it (accept, offer generation for k), descendants inherit (walk of the
+     cue's parent chain, or a table of roots by runtime ID, equal on every client because the calls are); (ii) the frame
+     hooks: the script RNG's MD frame scopes already see each MD frame and its cue on the frame thread (lockstep_script_rng_md.h,
+     used by lockstep_guidance_local.h): enter scope k at a slot-k frame, leave at its end, keep it across nested frames of
+     the same slot, refuse (stop) a nested frame of another slot's tree; (iii) P_k as an MD value: MD stores player.entity
+     as a runtime ID ($Player = player.entity) and resolves it with Find(map, id, 4) later: P_k needs a runtime ID in the
+     registry, the same on every client (today P_k is built by the factory and never connected [F lockstep_pilot_slots.h];
+     whether it is registered is unknown [I]); (iv) events on P_k: listeners such as event_object_changed_sector
+     object="player.entity" registered in scope k bind to P_k, which nothing moves in the component tree: slot k's sector
+     changes must be posted on P_k by our seat code [I].
+  C2 Per slot managers. A mission manager per slot (0x3d0 bytes, ctor 0x1137710) and a conversation manager per slot,
+     their pointers (0x6cf1658, 0x38ee230) swapped with the slot scope (MD's create_offer/create_mission/start_conversation
+     inside slot k's frames land in slot k's) and with client k's presentation scope (client k's HUD, map, briefing and
+     dialog read slot k's) [I: the UI readers must run inside the presentation scope; most are UI slot 6/10]. The
+     conversation manager's update (0x1177d60) once per slot in its scope. Saves: out of scope until session saves exist.
+  C3 Rewards and reputation. Factions mode: g_PlayerFaction (0x38f4bd0) = slot k's faction (x4lan_playerk) inside slot k's
+     frames: reward_player money, faction.player relations, ownership of rewarded objects. Coop mode (every slot `player`):
+     a personal wallet needs an account per slot (FactionClass +0x280 is the faction's account [F label]), swapped the same
+     way; personal reputation in coop has no carrier at all (relations are per faction) -> a user decision: shared
+     reputation in coop, or per slot factions in coop as well.
+  C4 Offers per player. GenericMissions.Manager reacts to slot 1's sector changes [F 2f]: per slot generation in scope k
+     (signal the manager's EvaluateSectorMissions instance in scope k when slot k changes sector, or our own small MD layer
+     that signals each $StaticGMCues entry's GenerateGenericMission with $Sector = slot k's sector, in scope k); the
+     generated trees are slot k's (C1 i).
+  C5 Slot k's calls in slot k's scope. The replay's Lua-run ops are canonical today; for (c) ops 0x47/0x48/0x49 of slot k
+     apply inside pslot scope k on every client (the native ops already do so in path_release); slot k's accept then reaches
+     the offer cue of slot k's manager.
+  C6 Notifications to slot k's screen (task 3). MD's UI side effects (show_notification, show_help, write_to_logbook,
+     speak/add_npc_line, mission HUD updates: Mission*UpdateEvent) are presentation, not world: inside slot k's frames they
+     must reach client k's UI and nobody else's. Where they post to the singleton's event source they reach P_k, which only
+     client k's presentation scope makes X4's player [I]; where they use global UI queues, a filter on the frame's slot drops
+     them on clients j != k [I]. Needs a census of those actions' targets (static, then a live row per action kind).
+4b Why one generic mission for slot 2 is not contained now
+  It needs C1 (with P_k registered and its events), C2 (a second mission manager, swapped in two scopes, plus the
+  conversation manager when the offer comes from a conversation), C5, C6 and for the payout C3: five engine-level pieces,
+  each needing its own live check, before the first mission can belong to slot 2. Built now instead: the parts every model
+  shares and (c) reuses unchanged: the cue references (C5 carries them), the capture of all mission/conversation entries,
+  the guard hole of 2d, the receipt of both managers (C2's per slot managers join it), the MD fixture and scripted ops (the
+  same plan, run as slot 2, is (c)'s first live test).
+4c The first (c) mission type: GM_Find_Object
+  Few player reads (9 [F count]): spawn place around player.sector (Setup_SpawnLocation), find_sector_in_range from
+  player.entity, the reward add_inventory entity="player.entity" (P_k's own inventory: the per-player inventory comes for
+  free with C1), relation debug reads, player.age; the objective is RML_FindObject (proximity of the player: slot k's under
+  C1). One briefing cutscene (lockbox orbit) like 2d. Steps: C1 + C2 (missions only) + C5 for its offer, accept, abort and
+  briefing, C6 for its notifications; then C3 for its credits (factions mode first). Live: scripted plan of 7a run with
+  client 2 as the actor, plus 'mis_fixture' for slot 2.
+4d The path to all generic missions
+  After GM_Find_Object: the audit per gm_*.xml of its player.* reads (393 in 37 files; 195 player.entity, 86 player.sector,
+  43 player.age, 22 player.ship, 14 player.zone [F counts]) and of its global state (md.$ lists shared by all players, e.g.
+  GenericMissions.Manager's $StaticGMCues and offer counts per sector: per slot limits or shared limits, a decision per
+  list); the briefing cutscenes either replayed (as in (a)) or made the client's own like guidance (local IDs for the
+  briefing cues on the client that opened it, the presentation cluster outside the census) [I]; mission threads
+  (missionthread) per slot; RML libraries (67 rml_*.xml, 348 player.* reads) come along with the gm_* that use them.
+
+5. (d) STORY AND PLOT MISSIONS PER PLAYER (separate work item; what it needs)
+  Player-specific state: plot progress in MD globals and in the player entity's blackboard (player.entity.$...): per slot
+  under C1 for the blackboard (P_k's), but md.$ globals and static cue states (a plot's cues are static, instantiate=false)
+  are one per world -> a per slot copy of a plot means instantiating its cue tree per slot or rewriting it (our own MD).
+  Cutscenes: play_cutscene on the player's view (story_*.xml 73, scenario_*.xml 56, x4ep1_*.xml 6, gm_* briefings 97 [F
+  counts]): a cutscene of slot k must play on client k only while the world it shows stays identical (cutscene objects on
+  every client, the camera on k's) [I]. Teleports and seat changes of the player (teleport_player, set_player_*): slot k's
+  seat through the pilot slots' seat code. Plot flags and unlocks shared by the world (faction relations, sector ownership,
+  research): world-level consequences of one player's plot reach everyone (a decision per plot).
+  Feasible first: plots with little player-specific state and no forced seat changes, e.g. the research and venture
+  stories (story_research_*.xml, story_ventures.xml: menus and MD flags), then faction plots (story_paranid, buccaneers),
+  last the main/tutorial scenarios (scenario_*.xml, tutorial*.xml: 711 and 518 player.* reads, forced camera and seat).
+  Until then: (a) keeps them slot 1's (their UI calls replayed, MD canonical); a per-plot "slot 1 only" flag is enough.
+
+6. VERIFIED AND NOT
+  C (test_lockstep_ui_missions.h in build_native_gate.py --test): cue references (resolved, gone, another module under the
+  ID, no cue, unreadable module), the capture of every export's encoding and answer, the dialog button from a stand-in Lua
+  stack, refusals (unmapped, long texture, slot 2, family off, replay off, before the window), the section rules for both
+  ops (directly and through the replay's own section check), the apply through stand-in exports (arguments, gone,
+  mismatch, decode), the arming prerequisites and the pass's stop, receipt and state text, and the guard's real hook on an
+  executable region (captured in a local phase, X4's function outside and at the apply, slot 2 refused with the guard's
+  rows). On the pinned image: the pins, the five event numbers at their instructions, StartBriefing's call of 0x11228d0, the
+  idle check and the manager pointers, the guard table holding every entry in its group, a tampered byte refusing.
+  Python (tests/test_native_gate_ui_missions.py, 23 tests): families and mirrors (Lua, C, Python, inventory, MD names), cue
+  references in the codec on two clients, conversation capture/apply/refusal/info line/native decoding/arming refusal,
+  mission ops through gate.ui_missions_run, the frame's rows and receipt, every script op and the canonical fixture, the
+  real probe arming after the guard on the mocked gate, the option checker and the builder. The existing replay and guard
+  suites and the related probe/option/players suites pass unchanged (one message line updated).
+  MD: the fixture validated against x4-re's md.xsd (lxml).
+  Not live: nothing ran in X4. In particular [I] until the first run: a cue actor as offer client and conversation partner;
+  the offer listed by GetCurrentMissionOffers; StartConversationFromMenu from the probe's frame; the dialog's button
+  numbers; the conversation manager equal on both clients through a conversation (the /c column); what client 2's screen
+  shows of slot 1's conversation; a stock briefing replayed on a client without the menu.
+
+7. LIVE TEST SPEC (coordinator; DLL, probe, ui/native_gate_ui_replay_core.lua and md/native_gate_ui_replay.xml of this
+  branch on top of .local/census/overlay-Play42P; no new overlay from here)
+7a M1 scripted, no people. Append to the Play42P config:
+  X4LAN_CONFIG.native_gate_ui_guard = 'all'
+  X4LAN_CONFIG.native_gate_ui_replay = {'travel','target','orders','autopilot','dock','weapons','queue','missiles','events','flight','missions','conversation'}
+  X4LAN_CONFIG.native_gate_ui_replay_script = {{{60,'mis_fixture',1},{120,'briefing','offer'},{150,'briefing_stop','offer'},{180,'offer_accept'},{240,'mis_active'},{270,'briefing','mission'},{300,'briefing_button','mission'},{330,'briefing_stop','mission'},{360,'conv_start','fixture'},{420,'dialog',1},{480,'conv_start','fixture'},{540,'dialog_native',2},{600,'mis_none'},{660,'mis_abort'}},{{60,'mis_fixture',1},{150,'offer_accept'},{250,'briefing','mission'},{400,'mis_abort'},{430,'dialog_native',1},{450,'conv_start','fixture'},{630,'mis_active'}}}
+  (Window start 40, delay 3: client 1 at 100, 160, 190, 220, 280, 310, 340, 370, 400, 460, 520, 580, 640, 700; client 2 at
+  100, 190, 290, 440, 470, 490, 670.) 800 ticks; Play42P's window is enough, stop after tick 760.
+  Pass: relay pass, 0 digest mismatches, census 0, no stop 164; on both clients UI_GUARD_ARMED ... entries=282,
+  UI_GUARD_STATUS installed=243, UI_MISSIONS_ARMED slot=<k> families=<mask>; every UI_MISSIONS_MD_* row's time= equal on
+  both X4 logs, every UI_REPLAY_APPLIED row identical on both, the UIMIS_1 part equal (no mismatch).
+    100 both: UI_REPLAY_SCRIPT op=mis_fixture ok=true; MD UI_MISSIONS_MD_OFFER on both; UI_MISSIONS_STATE offers +1 on both.
+    160/163: client 1 UI_MISSIONS_CAPTURED what=StartBriefing via=native; both UI_REPLAY_APPLIED tick=163 slot=1 op=72
+      result=applied what=StartBriefing(<offer>,x4lan_rt,0) and MD UI_MISSIONS_MD_BRIEFING started.
+    190/193: StopBriefing(<offer>,0); MD briefing cancelled. Client 2 at 190: UI_REPLAY_REFUSED what=SignalObject why=slot
+      args=accept, no MD row.
+    220/223: client 1's accept: UI_REPLAY_APPLIED tick=223 ... op=71 ... what=SignalObject(<client>,accept); MD
+      UI_MISSIONS_MD_ACCEPTED offer=<cue>; UI_MISSIONS_STATE missions +1, offers -1 on both.
+    280/283: SetActiveMission(<mission>)=1, UI_MISSIONS_STATE active=<mission> on both.
+    290 client 2: UI_GUARD_REFUSED tick=290 op=StartBriefing group=missions and its info line (client 2 only).
+    310..373: briefing started, button, cancelled rows on both at 313, 343, 373.
+    400/403: client 1 UI_MISSIONS_CAPTURED what=StartConversationFromMenu via=lua; both apply at 403; MD
+      UI_MISSIONS_MD_TALK started; the /c column leaves 1 at the same tick on both.
+    440 client 2: UI_GUARD_REFUSED op=AbortMission group=missions. 470: UI_GUARD_REFUSED op=SelectDialogOption
+      group=conversation. 490: UI_REPLAY_REFUSED what=StartConversationFromMenu why=slot + info line.
+    460/463: SelectDialogOption(1) on both; MD UI_MISSIONS_MD_TALK section=x4lan_talk_a or _b (the same on both) and
+      UI_MISSIONS_MD_CONVERSATION_FINISHED (if the section ends it).
+    520/523 and 580/583: the second conversation; at 580 UI_MISSIONS_CAPTURED what=SelectDialogOption via=native.
+    640/643: SetActiveMission(0)=1. 670 client 2: UI_GUARD_REFUSED op=SetActiveMission.
+    700/703: AbortMission(<mission>); MD UI_MISSIONS_MD_ABORTED; missions -1 on both.
+    UI_MISSIONS_STATUS: captured=1/2/1/2/2 on client 1 (abort/active/button/start/stop), 0/0/0/0/0 on client 2; applied= equal
+      on both; gone=0, unmapped=0.
+  Fail and what to send: a UI_REPLAY_SCRIPT ok=false 'no mission offer named' (the MD fixture is not in the overlay, or the
+  offer is not listed: send both clients' UI_MISSIONS_STATE rows and X4 log lines UI_MISSIONS_MD_*); result=refused
+  what=...:gone on one client only (the worlds differ before); stop 164 why=ui_ref_mismatch / ui_missions*; a digest
+  mismatch at the tick of a /c change (the conversation manager is not lockstep: send UI_MISSIONS_STATE rows of both); no
+  MD TALK row after 403 (the start was not taken: the manager was not idle or the cue actor is no partner; send the state
+  rows); a TALK section that differs between the clients.
+7b M2 people (two persons; Play42P + the first two lines of 7a, no script). Checklist:
+  Person 1: open the map's mission offers; open a briefing and close it; accept an offer; open the mission manager, set it
+    active and back; open its briefing (a gm_* with a cutscene, e.g. a find or patrol mission); abort it; Comm a station
+    manager from the interact menu and pick two choices; let an NPC hail you if one does; close a conversation with Esc.
+  Person 2 (at the same time where possible): the same actions. Each one does nothing, with the info line; watch what
+    appears of person 1's conversation and briefing on screen 2 and note it (expected in (a): the dialog appears there too).
+  Pass: relay pass, 0 mismatches; person 1's actions in UI_MISSIONS_CAPTURED / UI_REPLAY_APPLIED rows identical on both and
+    the mission in both clients' mission lists; person 2's in UI_GUARD_REFUSED / UI_REPLAY_REFUSED rows on client 2 only;
+    no stop. Send: UI_MISSIONS_*, UI_GUARD_REFUSED, UI_REPLAY_REFUSED/APPLIED rows, the X4 log's Lua errors after a refusal
+    (a menu that does not handle the refusal), screenshots of screen 2 during person 1's conversation and briefing.

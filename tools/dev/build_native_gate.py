@@ -9,6 +9,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'src'))
 from native.engine.build import compiler_path
 
+# Monocypher 4.0.2 (CC0 or BSD-2-Clause, third_party/monocypher-4.0.2): the wire crypto's
+# primitives (lockstep_wire_crypto.h). Compiled into the gate, its tests and the relay library.
+MONOCYPHER = ROOT/'third_party/monocypher-4.0.2'
+MONOCYPHER_INCLUDES = ['-I', str(MONOCYPHER/'src'), '-I', str(MONOCYPHER/'src/optional')]
+MONOCYPHER_SOURCES = [str(MONOCYPHER/'src/monocypher.c'), str(MONOCYPHER/'src/optional/monocypher-ed25519.c')]
+
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -25,9 +31,18 @@ def main():
     source = ROOT/'src/native/engine'
     common += [str(source/'portable_rotation.c'), str(ROOT/'src/native/portable_math/portable_math.c'),
                str(ROOT/'src/native/portable_math/portable_decimal.c')]
+    common += MONOCYPHER_INCLUDES+MONOCYPHER_SOURCES
     subprocess.run(common+['-shared', str(source/'lockstep_gate.c'), '-lbcrypt', '-lws2_32',
                           '-o', str(out/'x4lan_gate_64.dll')], check=True)
+    # The relay's wire crypto (tools/dev/native_gate_crypto.py loads it through ctypes).
+    subprocess.run(common+['-shared', str(source/'lockstep_wire_crypto_lib.c'), '-o', str(out/'x4mp_wire_crypto.dll')], check=True)
     if args.test:
+        # Monocypher's own test suite and vectors, then our known answers, layouts and fail-closed cases.
+        subprocess.run(common+[str(MONOCYPHER/'tests/test.c'), str(MONOCYPHER/'tests/utils.c'),
+                              '-o', str(out/'test_monocypher.exe')], check=True)
+        subprocess.run([str(out/'test_monocypher.exe')], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(common+[str(source/'test_lockstep_wire_crypto.c'), '-o', str(out/'test_wire_crypto.exe')], check=True)
+        subprocess.run([str(out/'test_wire_crypto.exe')], check=True)
         subprocess.run(common+[str(source/'test_rotation_xml_scope.c'),
                               '-o', str(out/'test_rotation_scope.exe')], check=True)
         subprocess.run([str(out/'test_rotation_scope.exe')], check=True)
@@ -137,6 +152,11 @@ def main():
         subprocess.run(common+[str(source/'test_lockstep_rotation_win.c'), '-lbcrypt', '-lws2_32',
                               '-o', str(out/'test_rotation_win.exe')], check=True)
         subprocess.run([str(out/'test_rotation_win.exe')]+([str(args.native_image.resolve())] if args.native_image else []), check=True)
+        # NAT traversal for the optional direct player links (roadmap B7): primitives, codecs
+        # and core refusals; the simulated-NAT matrix is tests/test_nat_traversal.py.
+        subprocess.run(common+[str(source/'test_lockstep_nat.c'), '-lbcrypt', '-lws2_32',
+                              '-o', str(out/'test_nat.exe')], check=True)
+        subprocess.run([str(out/'test_nat.exe')], check=True)
         subprocess.run(common+[str(source/'test_lockstep_world_nav.c'), '-lbcrypt', '-lws2_32',
                               '-o', str(out/'test_world_nav.exe')], check=True)
         subprocess.run([str(out/'test_world_nav.exe')]+([str(args.native_image.resolve())] if args.native_image else []), check=True)

@@ -20,7 +20,16 @@ K.RELATIONS={allied=0.75,neutral=0,hostile=-0.5}
 K.MODES={factions=true,coop=true}
 K.OCCUPIED={player=true,pool=true}
 K.REPUTATION={mirror=true,keep=true}
-local PLAN_KEYS={version=true,mode=true,tick=true,occupied=true,reputation=true,slots=true,relations=true,starts=true}
+local PLAN_KEYS={version=true,mode=true,tick=true,occupied=true,reputation=true,slots=true,relations=true,starts=true,kits=true}
+-- Per-player starts (kits): the player-level parts of slot k's stock start (native_gate_gamestarts.py resolves
+-- them at session setup; reports/LOCKSTEP-STARTS-20261101.txt).
+local KIT_KEYS={slot=true,gamestart=true,money=true,reputation=true,blueprints=true,research=true,known=true,omitted=true}
+local KIT_REPUTATION_KEYS={faction=true,value=true}
+local KIT_KNOWN_KEYS={sectors=true,faction=true,shipyards=true}
+K.KIT_PARTS={blueprints=true,inventory=true,known=true,reputation=true,research=true}
+K.KIT_ITEMS=64
+K.MONEY_MAX=1000000000000   -- credits
+K.VALUE_SCALE=1000000       -- reputation values travel as integer millionths
 local SLOT_KEYS={ship=true,create=true,faction=true}
 local CREATE_KEYS={macro=true,seed=true,sector=true,x=true,y=true,z=true,yaw=true}
 local RELATION_KEYS={a=true,b=true,relation=true}
@@ -139,7 +148,88 @@ local function validate(plan)
   if not integer(yaw,-180,180) then refuse('rotation_invalid') end
   P.starts[i]={object=r.object,sector=r.sector,x=r.x,y=r.y,z=r.z,yaw=yaw}
  end
+ P.kits=K.kits(plan,P,n)
  return P
+end
+local function ident(v) return type(v)=='string' and #v<=64 and v:match('^[a-z][a-z0-9_]*$')~=nil end
+local function ascending(t) for i=2,#t do if not (t[i-1]<t[i]) then return false end end return true end
+local function npc_faction(v) return ident(v) and v~='player' and v:match('^x4lan_player[0-9]+$')==nil end
+local function wares(r,key,factions)
+ local w=r[key]==nil and {} or r[key]
+ local ok,n=pcall(list,w,'kit_wares')
+ if not ok then refuse('kit_wares') end
+ if n>K.KIT_ITEMS then refuse('kit_wares') end
+ if n>0 and factions then refuse('kit_library_mode') end   -- one blueprint/research library: the player faction's
+ local out={}
+ for i=1,n do
+  if not ident(w[i]) then refuse('kit_ware') end
+  out[i]=w[i]
+ end
+ if not ascending(out) then refuse('kit_order') end
+ return out
+end
+-- Per-player starts: slot k (2..n) takes the player-level parts of its own stock start; slot 1 plays the session
+-- base start (the save). Factions: money on slot k's own account, reputation of slot k's faction. Coop: money
+-- adds to the one shared wallet, blueprints/research/map knowledge join the one player library. A part that
+-- cannot be applied for the slot is named in 'omitted' (never dropped silently). Same rules and reasons as Python.
+function K.kits(plan,P,n)
+ local m=plan.kits==nil and 0 or list(plan.kits,'kits')
+ if m>K.MAX_SLOTS then refuse('kits') end
+ local factions,out,seen=P.mode=='factions',{},{}
+ for i=1,m do
+  local r=plan.kits[i]
+  keys(r,KIT_KEYS,'kit_invalid')
+  if not integer(r.slot,2,n) then refuse('kit_slot') end
+  if seen[r.slot] then refuse('kit_duplicate') end
+  seen[r.slot]=true
+  if factions and P.slots[r.slot].faction=='player' then refuse('kit_player_slot') end   -- the base start's
+  if not ident(r.gamestart) then refuse('kit_gamestart') end
+  if not integer(r.money,0,K.MONEY_MAX) then refuse('kit_money') end
+  local rows=r.reputation==nil and {} or r.reputation
+  local ok,count=pcall(list,rows,'kit_reputation')
+  if not ok or count>K.KIT_ITEMS then refuse('kit_reputation') end
+  if count>0 and not factions then refuse('kit_reputation_mode') end   -- coop: one reputation set, the base start's
+  local reputation,names={},{}
+  for j=1,count do
+   local row=rows[j]
+   keys(row,KIT_REPUTATION_KEYS,'kit_reputation')
+   if not npc_faction(row.faction) then refuse('kit_faction') end
+   if not integer(row.value,-K.VALUE_SCALE,K.VALUE_SCALE) then refuse('kit_value') end
+   reputation[j]={faction=row.faction,value=row.value};names[j]=row.faction
+  end
+  if not ascending(names) then refuse('kit_order') end
+  local blueprints,research=wares(r,'blueprints',factions),wares(r,'research',factions)
+  local known=nil
+  if r.known~=nil then
+   keys(r.known,KIT_KNOWN_KEYS,'kit_known')
+   if factions then refuse('kit_known_mode') end   -- one map knowledge: the player faction's
+   local s=r.known.sectors
+   local okk,ns=pcall(list,s,'kit_known')
+   if not okk or ns<1 or ns>K.KIT_ITEMS or type(r.known.shipyards)~='boolean' then refuse('kit_known') end
+   local sectors,dup={},{}
+   for j=1,ns do
+    if not K.macro(s[j]) or dup[s[j]] then refuse('kit_known') end
+    dup[s[j]]=true;sectors[j]=s[j]
+   end
+   if r.known.faction~=nil and not npc_faction(r.known.faction) then refuse('kit_faction') end
+   known={sectors=sectors,faction=r.known.faction,shipyards=r.known.shipyards}
+  end
+  local omitted=r.omitted==nil and {} or r.omitted
+  local oko,no=pcall(list,omitted,'kit_omitted')
+  if not oko then refuse('kit_omitted') end
+  local omit={}
+  for j=1,no do
+   if type(omitted[j])~='string' or not K.KIT_PARTS[omitted[j]] then refuse('kit_omitted') end
+   omit[j]=omitted[j]
+  end
+  if not ascending(omit) then refuse('kit_omitted') end
+  local given={blueprints=#blueprints>0,research=#research>0,reputation=#reputation>0,known=known~=nil}
+  for _,o in ipairs(omit) do if given[o] then refuse('kit_omitted_conflict') end end
+  out[#out+1]={slot=r.slot,gamestart=r.gamestart,money=r.money,reputation=reputation,blueprints=blueprints,research=research,
+   known=known,omitted=omit}
+ end
+ table.sort(out,function(a,b) return a.slot<b.slot end)
+ return out
 end
 -- Validated, normalized plan or nil,reason.
 function K.validate(plan) return guarded(validate,plan) end
@@ -160,10 +250,21 @@ function K.canonical(P)
  for _,r in ipairs(P.relations) do relations[#relations+1]=r.a..'-'..r.b..':'..r.relation end
  local starts={}
  for _,r in ipairs(P.starts) do starts[#starts+1]=start_label(r) end
- -- Plans without starts keep their earlier text (and digest).
- return string.format('PIDENT_PLAN_1|mode=%s|tick=%d|occupied=%s|reputation=%s|slots=%s|relations=%s%s',P.mode,P.tick,P.occupied,
+ local kits={}
+ for _,k in ipairs(P.kits or {}) do kits[#kits+1]=K.kit_label(k) end
+ -- Plans without starts or kits keep their earlier text (and digest).
+ return string.format('PIDENT_PLAN_1|mode=%s|tick=%d|occupied=%s|reputation=%s|slots=%s|relations=%s%s%s',P.mode,P.tick,P.occupied,
   P.reputation,table.concat(rows,','),#relations>0 and table.concat(relations,',') or '-',
-  #starts>0 and '|starts='..table.concat(starts,',') or '')
+  #starts>0 and '|starts='..table.concat(starts,',') or '',#kits>0 and '|kits='..table.concat(kits,';') or '')
+end
+local function joined(t) return #t>0 and table.concat(t,'+') or '-' end
+function K.kit_label(k)
+ local rep={}
+ for _,r in ipairs(k.reputation) do rep[#rep+1]=string.format('%s/%d',r.faction,r.value) end
+ local known='-'
+ if k.known then known=string.format('%s/%d/%s',k.known.faction or '-',k.known.shipyards and 1 or 0,table.concat(k.known.sectors,'+')) end
+ return string.format('%d:%s:money=%d:rep=%s:bp=%s:rs=%s:known=%s:omit=%s',k.slot,k.gamestart,k.money,joined(rep),joined(k.blueprints),
+  joined(k.research),known,joined(k.omitted))
 end
 local function value_text(v) return v==0 and '0' or tostring(v) end
 -- Ordered setup steps. Each carries its machine-neutral head for the PLAYER_IDENTITY_APPLIED line;
@@ -193,6 +294,30 @@ function K.steps(P,digest)
  for _,r in ipairs(P.relations) do
   local s=add({step='relation',slot=0,a=r.a,b=r.b,fa=P.slots[r.a].faction,fb=P.slots[r.b].faction,relation=r.relation,value=r.value})
   head(s,string.format('pair=%d-%d factions=%s/%s relation=%s value=%s',r.a,r.b,s.fa,s.fb,r.relation,value_text(r.value)))
+ end
+ -- Per-player starts, after the relations (a kit's reputation overrides the mirror) and in slot order.
+ for _,k in ipairs(P.kits or {}) do
+  local faction=P.slots[k.slot].faction
+  local s=add({step='kit',slot=k.slot,gamestart=k.gamestart,faction=faction})
+  head(s,string.format('gamestart=%s faction=%s omitted=%s',k.gamestart,faction,joined(k.omitted)))
+  -- Money in cents for MD (exact below 2^53): factions sets slot k's own account, coop adds to the shared wallet.
+  s=add({step='wallet',slot=k.slot,faction=faction,op=factions and 'set' or 'add',cents=k.money*100})
+  head(s,string.format('wallet=%s op=%s money=%d',faction,s.op,k.money))
+  for _,r in ipairs(k.reputation) do
+   s=add({step='reputation',slot=k.slot,faction=faction,other=r.faction,value=r.value/K.VALUE_SCALE})
+   head(s,string.format('faction=%s other=%s value=%d',faction,r.faction,r.value))
+  end
+  for _,w in ipairs(k.blueprints) do s=add({step='blueprint',slot=k.slot,ware=w});head(s,'ware='..w) end
+  for _,w in ipairs(k.research) do s=add({step='research',slot=k.slot,ware=w});head(s,'ware='..w) end
+  if k.known then
+   for i,sector in ipairs(k.known.sectors) do
+    s=add({step='known_sector',slot=k.slot,knownsector=sector})
+    head(s,string.format('sector=%s index=%d',sector,i))
+   end
+   s=add({step='known',slot=k.slot,count=#k.known.sectors,kfaction=k.known.faction or '',hasfaction=k.known.faction and 1 or 0,
+    shipyards=k.known.shipyards and 1 or 0})
+   head(s,string.format('sectors=%d faction=%s shipyards=%d',s.count,k.known.faction or '-',s.shipyards))
+  end
  end
  local finish=add({step='end',slot=0})
  head(begin,string.format('mode=%s slots=%d occupied=%s reputation=%s steps=%d plan=%s',P.mode,#P.slots,P.occupied,P.reputation,#out,digest))

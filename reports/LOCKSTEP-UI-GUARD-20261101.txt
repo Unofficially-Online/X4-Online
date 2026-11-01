@@ -1,0 +1,331 @@
+LOCKSTEP UI GUARD: CONTAINMENT FOR STOCK UI ACTIONS NOT REPLAYED YET, AND THE FIRST P3 STEP
+1 November 2026 | offline work on branch contrib/ferrite-ui-guard (base: smoke 0875790b). Static analysis of the pinned Windows
+X4.exe 9.00 (RVAs, base 0x140000000) and of the extracted stock UI and MD scripts, read locally in x4-re; nothing of them is
+copied here (names of API functions, script files and RVAs only). No X4 was launched.
+[F] = read in the binary or the scripts; [I] = inference; "live" = what only a native run can show.
+Builds on reports/LOCKSTEP-UI-REPLAY-20261030.txt (the replay, its local phases, its families, its inventory).
+
+0. PROBLEM AND RESULT
+  Two people in the people config (overlay-Play42P) can still split the session with UI actions the replay neither replays nor
+  refuses: conversations, AddUITriggeredEvent, SignalObject*, missions, trade, construction, crew and assets. Each runs only on the
+  client that clicked; MD then runs on one client, the next shared runtime ID parts, the world diverges.
+  Built (all default off):
+  - native_gate_ui_guard = 'all' (or a list of groups): in the replay's local phases every world-changing stock UI entry point of
+    the inventory that no armed family captures is refused: the function does not run, it returns its failure/neutral value, the
+    refusal is counted by name, logged (UI_GUARD_REFUSED) and shown to the person in X4's own info line. 280 entry points: 225 FFI
+    exports and 55 Lua C globals. Simulation (MD, AI, jobs) calling the same functions passes untouched. Fail closed: pins of every
+    entry on the pinned build or the session does not start; a lost patch stops with 164.
+  - native_gate_ui_replay family 'events' (P3, first step): slot 1's AddUITriggeredEvent and SignalObject are captured and run on
+    every client at the same tick through the stock functions; slots 2+ refused. That includes accepting/declining a mission offer
+    (SignalObject 'accept'/'decline' to the offer's actor), slot 1 only.
+  The worst case with the guard on is "that menu action does nothing yet", never a split, within the limits of section 3.
+
+1. THE GUARD (lockstep_ui_guard.h, lockstep_ui_guard_lua.h, lockstep_ui_guard_table.h generated)
+1a Inventory [F names, our classification]: tools/dev/ui_guard_inventory.py, from the functions the base game's menus call
+  (gamelua/08/ui: 1949 FFI names in use, 665 not queries by name, plus the engine's Lua C globals used there). Kept: what changes
+  the world or reaches MD. Left local on purpose: widgets, map display and filters, options (the stock settings fingerprint
+  already covers the game options), cameras, read flags, logbook, player alerts, construction-map editing before its confirm,
+  custom game starts, guidance (native_gate_guidance_local: the client's own), online services, statistics.
+  Groups (count FFI/Lua): flight 50/8 (P0 left-overs: flight assist, turrets, drones, deployables, cover, seat, F-key PerformAction,
+  target monitor RaisePlayerInteractionEvent, and the P0 entries of the replay families), orders 23/4, fleet 26, trade 27/15,
+  faction 20 (player faction rules and identity), assets 22/12, build 10, conflict 16/1 (boarding, research, terraforming,
+  diplomacy), missions 5 (AbortMission, SetActiveMission, SignalObjectWithNPCSeed*, MissionBriefingInteractButtonClicked), events 2
+  (AddUITriggeredEvent, SignalObject), conversation 8 (StartConversationFromMenu, StartSubConversationFromMenu, ProceedFromMenu,
+  ReturnFromMenu, CancelConversation, UnsuspendConversation, SelectDialogOption, SelectBackOption), session 3/2 (NewGame,
+  NewMultiplayerGame, ConnectToMultiplayerGame, LoadGame: a client that loads leaves the shared world), cheat 4/3, editor 19.
+  34 entries are "covered": a replay family hooks them or what they end in (travel 0x9fd120/0x9fd330 below StartPlayerActivity,
+  the target sites below SetSofttarget and the radar clicks, the autopilot core, the dock and weapon hooks, the order hooks and the
+  Lua order wrappers). While such a family is armed the guard leaves the entry alone (17 of them are the very RVAs the replay
+  patches; the C test checks covered includes the hook's family for each). With the Play42P families 246 entries are installed.
+1b Table [F]: tools/dev/gen_ui_guard_table.py resolves each name on the pinned X4.exe (PE export, or the Lua C function the engine
+  registers under that global from x4-re's labels), decodes the entry with capstone and takes the shortest prefix of five or more
+  bytes: no branch except one conditional branch (3 entries), no call or return, RIP-relative displacements moved at install
+  (13 entries), nothing in the function jumps into it, inside one aligned 16-byte block (one CAS), no base relocation. Return
+  kinds from the stock ffi.cdef prototypes: zero for void/bool/integers/IDs/float, an empty string for const char* (3), a zeroed
+  struct with empty strings through the hidden pointer for UIFormationInfo and UICrewExchangeResult; the check-only argument by its
+  parameter name (15 entries: a call with it set is a query and passes). Pin: SHA-256 of up to 512 bytes from the entry (the
+  unwind range, no relocation). --check regenerates and compares (run by tests/test_native_gate_ui_guard.py when x4-re is at hand).
+1c When it refuses: uirep_local_phase() (UI thread and one of: UI slot 6 depth, render slot 10, the slot 4 dispatch of presentation
+  ids, an open presentation scope), and not uirep_replaying (an apply), not rid_probe_frame (the probe's own frame; the scripted
+  triggers clear it around each op like a person's click), not after the window, a check-only flag not set. Everything else passes:
+  other threads, the simulation phases, MD/AI calling the same exports or Lua functions.
+1d Hook [F own code]: a 5-byte jmp at the entry to a per-entry stub (mov r10d,index; jmp shared). The shared routine saves rcx, rdx,
+  r8, r9, r10 and xmm0..3, calls uiguard_decide(index, saved block) with rsp 16-aligned, restores everything and either jumps to the
+  entry's trampoline (the moved prefix, its jump back, the branch's absolute target) or returns the refusal value in rax and xmm0
+  (rax = the hidden pointer for a struct). Nothing of ours stays on the stack while X4's function runs. Region near the image
+  (rel32 reach to every entry checked; a displacement that does not reach fails the install). Installed with the replay at its
+  first pass, intact checked every pass (ui_guard_hook_lost, stop 164), removed behind the window (ui_guard_restore), restored on a
+  gate stop. Arming: gate.ui_guard(groups) after gate.ui_replay, before the first tick; pins of every entry first
+  (pins_ui_guard:<rva> refuses the arming and the probe asserts: fail closed on a build mismatch).
+1e Seen and counted: UI_GUARD_PINS ok=1, UI_GUARD_ARMED slot= groups= entries=; every refusal one row
+  UI_GUARD_REFUSED tick=<t> op=<name> group=<group> (64-row ring per frame, lost= counts overflow, the counters never lose);
+  UI_GUARD_STATUS (every 120 ticks) ui_guard=live why= groups= entries=280 installed=<n> passed= queries= refused=<n> lost=
+  by=<name>:<count>,... (most refused first); UI_GUARD_STOP at the end. The person sees X4's info line (ShowInfoLine 0x1ba8c0, at most
+  every 90 ticks): "Multiplayer: <name> is not shared between the players yet - nothing happened." (our text).
+  ShowInfoLine [F]: builds a string and calls a virtual (+0x2a8) of the GameClient's subsystem at +0x3b8; [I] pure presentation (it
+  touches no simulation object directly; the callee was not followed). It runs in the probe's frame, which the guard passes.
+
+2. THE EVENTS FAMILY (P3 first step; lockstep_ui_replay.h op 0x47, native_gate_ui_replay_core.lua)
+  native_gate_ui_replay lists 'events' (bit 256; true does not include it). The Lua core wraps AddUITriggeredEvent and SignalObject
+  by name: on slot 1's client a call in a local phase (gate.ui_replay_local: capture now and not the probe's frame) is encoded with
+  the existing codec (strings, numbers, tables, components as runtime ID + portable check) and pushed as a Lua-run event; at
+  capture tick + delay every client's probe frame calls the stock function with the same arguments, in slot order, the receipt
+  (PUIREP_1 results) joining the pilot receipt. Slots 2+: refused (UI_REPLAY_REFUSED what=<name> why=slot), nothing runs; a section
+  of slot 2+ carrying op 0x47 is refused natively (ui_events, stop 164). The probe's own AddUITriggeredEvent (fleet owner, MinHull,
+  respawn) and the simulation's pass to the stock function at once. A value that does not encode (a non-component 64-bit ID such
+  as a message ID) is refused (why=unmapped), consistently nowhere. The guard keeps its native hook on both as a backstop for a
+  cached reference.
+
+3. WHAT THE GUARD CANNOT DO (honest limits)
+  - Only the inventory. A world-changing entry classified "local" by mistake, or one only a DLC or a mod's menu calls (the
+    extracted UI is the base catalog 08), still runs on one client. The inventory is a reviewed list, not a proof.
+  - Only exports and registered Lua C globals. Engine UI code that changes the world without them is not seen: keys go through
+    the stock record (refused or replayed by the pstk verdicts as before); Anark widget callbacks into engine internals other than
+    the target writer are not inventoried [I: none found that is not an export].
+  - Symmetric automatic UI: an MD-started flow whose menu answers automatically on every client (e.g. a conversation menu that MD
+    opens on all clients) is refused on every client alike: no split, but that MD flow may wait forever. Slot 1's events replay keeps
+    AddUITriggeredEvent/SignalObject of such flows working (slot 1's client runs the handler too, once for everyone).
+  - Not guarded on purpose: guidance and the active mission's guidance (SetGuidance/EndGuidance, section 14 of the replay report),
+    Pause/Unpause, SaveGame, QuitGame, options, statistics (IncStatValue/SetStatValue), logbook, read flags, player alerts, online
+    ventures. A difference there is the client's own data, not simulation state [I for statistics: MD could read them; none seen].
+  - lockstep_player.h / lockstep_player_fire.h call SetSofttarget themselves (player command mode, not in the people config):
+    with the guard and without the target family such a call in a local phase would be refused.
+  - Live unknowns: ShowInfoLine visible in flight [I]; the call rate of guarded functions some menus call on open (UpdateProduction,
+    TriggerCompSlotAnimation, AddKnownItem, AddUITriggeredEvent) only fills the log; a stock Lua menu that errors on a refusal value
+    (the values were chosen from the call sites read, not from every caller) shows a Lua error in the debug log, nothing else.
+
+4. P3: CONVERSATIONS, MISSION OFFERS, UI EVENTS
+4a How a conversation flows [F scripts and binary]
+  - Start from a menu: Helper.closeMenuForNewConversation -> StartConversationFromMenu(conversation, actor, convparam) (0x276980), or
+    ProceedFromMenu (0x2765e0) when the menu itself belongs to a conversation; sub-conversations StartSubConversationFromMenu (0x276df0);
+    a conversation menu's section choice ProceedFromMenu(nextsection, choiceparam); return ReturnFromMenu (0x277130); close
+    CancelConversation (0x2772b0); UnsuspendConversation (0xb131c0) after a suspended menu. The interact menu's Talk/Comm uses the first.
+  - Choices in the dialog: dialogmenu.lua leaveDialogMenu -> SelectDialogOption(button) (0xb145e0). [F] It reads one integer, takes
+    the singleton at 0x38ee230 (one per process), walks its current option list (+0x80 -> +0x60..+0x68, entries of 0x90 bytes, button
+    at +0x40), on a match clears +0x1a6/+0x1a9 and calls 0x11798f0(+0x110) and 0x11789d0(manager). 0x11789d0 [F]: only with a
+    current conversation (+0x80) and state +0x1a0 in {4,5}; posts an event object through 0x99a720 at the thread block's time
+    (+0x300) and hands +0x130/+0x158/+0x160 to the conversation (0x11764a0 or 0x11762e0). [I] That is the chosen section and its
+    choice parameter arriving in MD as event_conversation_next_section (md/conversations.xml, genericmissions.xml, gm_*.xml,
+    diplomacy.xml listen for it [F]).
+  - DialogMenuShown/DialogMenuHidden (0xb150a0/0xb15060) [F]: a UI flag (0x38f4bfb) and input contexts, presentation only.
+  - What MD reads: the conversation cues address player.entity / the actor; player.entity is slot 1's player on every client [F,
+    replay report 3a]. The manager is one per client [F: a global], so a client holds one conversation at a time [I].
+4b Mission offers and missions [F]
+  - Accept/decline: menu_missionbriefing and menu_map call SignalObject(offer actor, 'accept'|'decline', offer as Lua ID); the
+    gm_*.xml cues listen with event_object_signalled object="$Client" param="'accept'" [F]. So acceptance is a SignalObject: the
+    events family carries it for slot 1. [I] Whether the offer's ID resolves in the component map (else why=unmapped, refused
+    everywhere) is a live question.
+  - AbortMission(id) 0x175860 and SetActiveMission(id|0) 0x1b7010 act on the mission manager 0x6cf1658: its mission list +0x60..+0x68,
+    entries of 0x5d0 bytes, id at +0; SetActiveMission(0) tail-calls 0x113b920(manager,0,0,1), SetActiveMission(id) 0x113b760(manager,
+    entry). One manager per world on every client, its active mission is the client's own guidance [F replay report 10]. Both guarded.
+  - SignalObjectWithNPCSeed / ...AndMissionID (hiring, crew delivery missions) and MissionBriefingInteractButtonClicked: guarded.
+4c AddUITriggeredEvent (0xb1c7c0, UI::XAnark::CoreLuaBindings) [F]: the menus' (screen, control, value) for MD's event_ui_triggered;
+  tutorials (scenario_tutorials.xml alone has 224 listeners), diplomacy, rml_buildstation listen. The probe's own fixtures use the same
+  route from its frame on every client at the same tick, which passed live (U5b, U7, U6c): the events family reuses that.
+4d Slots 2+ [I]: MD has no player for slot k: player.entity, player.computer and the conversation manager are slot 1's / the
+  client's single one. Re-raising slot k's event on every client would run slot 1's MD. Options, none built:
+  (1) MD in slot scope: run the cue's actions with the singleton = P_k (pslot_enter) when the event came from slot k. Needs MD's
+  player.* lookups to go through the singleton (unverified: MD may cache player.entity), and a per-slot conversation manager.
+  (2) Slot k's conversations as slot 1's MD with an actor/target parameter for k, in our own MD (a coop layer): own scripts, not the
+  stock ones. (3) Keep refusing (today).
+4e What remains, in order of value
+  - Conversations for slot 1 (StartConversationFromMenu, SelectDialogOption, ProceedFromMenu, ReturnFromMenu, CancelConversation as
+    Lua-run events, the same mechanism as 'events'). Risk to settle first: the non-capturing clients show slot 1's conversation
+    (MD opens it everywhere [I]); their manager must be in state 4/5 at the apply tick for the choice to take, and their own dialog
+    stays on screen until MD moves on. Needs a live look at +0x1a0 on both clients (a gate row) before it is armed.
+  - AbortMission for slot 1 as a generic native call (the mission ID as a 64-bit value, not a component reference).
+  - The economy menus (trade, construction, crew): each is a world change with its own read-back (prices, queues); per family like
+    the queue editor. Not started.
+  - Slots 2+ for anything that reaches MD: 4d.
+
+5. VERIFIED AND NOT
+  C (test_lockstep_ui_guard.h, in tools/dev/build_native_gate.py --test): on a private executable region, stand-ins of every
+  shape the table holds (integer and float arguments, stack arguments with the check-only flag, a tail jump, const char*, a struct
+  through the hidden pointer, a RIP-relative prefix, a conditional branch in the prefix, a Lua C function), each patched and called
+  for real: outside the local phases (all pass, results intact), from another thread, inside slot 6 / slot 10 / dispatch / scope
+  (refused with the right value), the probe's frame, an apply, a stopped replay (pass); counters, log, ring overflow, status; the
+  pass (install, intact, lost patch, window end, restore); arming refusals; the events op's section rules. On the pinned image: all
+  280 pins, every FFI entry is the export of its name, conditional branch targets, a whole install of 280 patches to their stubs and
+  back, entries the replay hooks left to it, a tampered byte refuses.
+  Python (tests/test_native_gate_ui_guard.py, test_native_gate_ui_replay.py): inventory = table, group lists in four mirrors, a fresh
+  generation equals the committed table, the events wrappers on two clients, slot 2 refused, probe and simulation untouched, the
+  guard's rows and info line, the scripted triggers, the real probe arming the guard on the mocked gate and its refusals, option
+  checker and builder.
+  Not live: nothing ran in X4. In particular [I] until the first run: the shared routine inside X4's real calls (LuaJIT FFI calls
+  with float and struct returns), that no simulation path calls an inventoried export on the UI thread in a local phase, ShowInfoLine
+  on screen, the events replay reaching MD on both clients at the same game time.
+
+6. LIVE TEST SPEC (coordinator; DLL and tools of this branch; the overlay derived from overlay-Play42P, not edited here)
+  Files: the probe and ui/native_gate_ui_replay_core.lua of this branch; md/native_gate_ui_replay.xml must be in the overlay (its new
+  cue GuardEvent writes the MD rows; native_gate_players.py copies it with --ui-guard or the events family).
+  G1 guard, no people (scripted). Append to the Play42P config:
+    X4LAN_CONFIG.native_gate_ui_guard = 'all'
+    X4LAN_CONFIG.native_gate_ui_replay_script = {{{60,'money',1000},{90,'rename',1,'GuardOne'},{120,'ui_event','ProbeOne',1},{150,'flight_assist'}},{{75,'money',1000},{105,'rename',2,'GuardTwo'},{135,'ui_event','ProbeTwo',2},{165,'comm',1},{195,'signal',1,'x4lan_guard'}}}
+    (ticks relative to the window start 40: client 1 at 100, 130, 160, 190; client 2 at 115, 145, 175, 205, 235.) A window of at least
+    400 ticks; Play42P's 36000 is fine, the coordinator may stop after tick 600.
+    Pass: relay pass, 0 digest mismatches, census 0, no stop 164; on both clients UI_GUARD_PINS ok=1 and UI_GUARD_ARMED slot=<k>
+    groups=16383 entries=280; UI_GUARD_STATUS installed=246 (the Play42P families leave 34 to the replay) on both;
+    client 1: UI_GUARD_REFUSED tick=100 op=AddPlayerMoney group=trade, tick=130 op=SetComponentName group=assets, tick=160
+      op=AddUITriggeredEvent group=events, tick=190 op=ToggleFlightAssist group=flight;
+    client 2: tick=115 AddPlayerMoney, 145 SetComponentName, 175 AddUITriggeredEvent, 205 StartConversationFromMenu group=conversation,
+      235 SignalObject group=events;
+    UI_REPLAY_SCRIPT op=money ok=true result=<m>-><m> and op=rename ok=true result=<name>-><name> (before and after equal: nothing ran);
+    no UI_GUARD_MD_EVENT line in either X4 log; UI_GUARD_STOP refused= at least 4 on client 1 and 5 on client 2 (any further row names
+    a stock call some menu or the HUD made on its own: send them). A screenshot of client 1 between ticks 100 and 130: the info line
+    "Multiplayer: AddPlayerMoney is not shared ...".
+    Fail: a refusal row missing (the hook did not see the call: send UI_GUARD_STATUS and the UI_REPLAY_SCRIPT rows), money or name
+    changed, any MD row, a digest mismatch near those ticks, stop 164 with why=ui_guard_* (send the why).
+  G2 guard + events, no people. As G1, and replace the families line:
+    X4LAN_CONFIG.native_gate_ui_replay = {'travel','target','orders','autopilot','dock','weapons','queue','missiles','events'}
+    Pass: as G1 except: client 1 has no refusal row at 160; both clients log UI_REPLAY_APPLIED tick=163 slot=1 op=71 result=applied
+    what=AddUITriggeredEvent(X4LAN_UiGuard,ProbeOne) and their X4 logs both hold "[X4LAN] UI_GUARD_MD_EVENT control=ProbeOne value=1
+    time=<t>" with the same t; client 2's ui_event at 175 and signal at 235 give UI_REPLAY_REFUSED what=AddUITriggeredEvent why=slot and
+    what=SignalObject why=slot (and no MD row for ProbeTwo anywhere); the receipt's results hash equal on both at 163.
+  G3 people (two persons, Play42P + both lines of G2, no script). Each person: open a trade offer and buy/sell; rename a ship;
+    comm/talk to an NPC; open the mission offers and accept one (client 1 and client 2 each); change a station's trade rule or a
+    ship's fight rule; try an order the families do not take (sync points, assignments).
+    Pass: relay pass, 0 mismatches; for each action a UI_GUARD_REFUSED row naming it on the acting client only and the info line on
+    its screen; client 1's mission accept either UI_REPLAY_APPLIED ... what=SignalObject(...) on both clients at the same tick (and
+    the mission appears for slot 1 on both) or UI_REPLAY_REFUSED what=SignalObject why=unmapped on client 1 (the offer is no
+    component: then accepting stays refused); client 2's accept refused why=slot. RUNTIME_IDS_CALLER: no Conversations /
+    GenericMissions / Notifications.OnPlayerOwnedChanged stack with route=shared on one client only.
+    Send: UI_GUARD_STATUS rows, all UI_GUARD_REFUSED rows, UI_REPLAY_REFUSED / UI_REPLAY_APPLIED rows, the X4 log lines with
+    UI_GUARD_MD_EVENT, any Lua error lines in the X4 log after a refusal (a menu that does not handle the refusal value).
+
+7. G1/G2 FINDINGS: THE TICK-1 EVENT, NAMED ROWS, UI-ONLY EVENTS, THE FLIGHT FAMILY (1 November, second step; default off)
+  Branch contrib/ferrite-ui-guard on smoke 420166e2. Static reading of the pinned X4.exe and x4-re's extracted UI and MD; no X4.
+7a The AddUITriggeredEvent at tick 1 on every client
+  Live (build147): g1 UI_GUARD_REFUSED tick=1 op=AddUITriggeredEvent group=events on both clients; g2 client 1
+    UI_REPLAY_REFUSED_NATIVE 1:lua_global:not_live (captured, the window had not begun), client 2 UI_REPLAY_REFUSED why=slot. The row
+    arrives in tick 1's probe frame right after the save's second load pass: the first UI frame after the load, the guard live
+    since tick 1's pass. The probe's own tick-1 event (battle fixture RestoreActors) runs inside its frame and passes.
+  Caller [F scripts]: menu_toplevel.lua listens for gameplanchange on the UI contract; at the first change to cockpit or external
+    after a load it opens TopLevelMenu (the HUD's top level sidebar button) when the player's occupied ship is not docked.
+    Helper's menu show (helper.lua) then calls AddUITriggeredEvent(menu name, '', menu param) = ('TopLevelMenu', '', nil). Every
+    client sits in an undocked ship at load: one call per client, slot 6 of the first UI frame. Later the same call comes on one
+    client only: after an undock (playerUndocked), and whenever the person closes a menu in flight (helper.lua closeMenu reopens
+    TopLevelMenu; the chat window's context menu too).
+    Excluded: helptext.lua hintcleared needs MD's remove_help (the event name clearhelptext has one reference, in 0x8cb630, whose
+    direct callers are all in Scripts::RemoveHelpAction 0xb7dfe0 [F]; no load cue removes help), hintclosed and helpoverlay need a
+    hint shown and closed,
+    the radar's togglemode a key; menu-open events of other menus need a person.
+  World effect [F binary]: AddUITriggeredEvent 0xb1c7c0 builds a U::UITriggeredEvent (screen, control, value) and posts it
+    deferred (0x99a720) on the singleton's event source at the thread block's time; MD's event_ui_triggered is its only consumer.
+    No MD script of the base game, its 7 DLCs or the two installed mods (x4-re resolved) names 'TopLevelMenu'; the unfiltered
+    listeners (scenario_advanced, x4ep1_mentor_subscription) check event.param for other screens; scenario_tutorials' debug cue
+    instantiates on any UI event but exists in the tutorial start only. Consistent with live [I]: in play39p-long (no guard)
+    client 2 opened and closed the map (MapMenu and TopLevelMenu events on one client) and the relay digest stayed equal until the
+    guidance divergence (replay report section 14).
+  Decision: UI-only, one per client: ('TopLevelMenu', '') runs where it was made, exactly that pair. Mirrors:
+    ui_guard_inventory.py UI_ONLY_EVENTS, lockstep_ui_guard.h uiguard_ui_only, native_gate_ui_replay_core.lua K.UI_ONLY (a test
+    compares them, and with x4-re at hand checks that no MD file names an allowed screen).
+    guard: the hook of the Lua C entry reads screen and control from the call's stack as the stock function does (lua_tolstring
+      of arguments 1 and 2; the gate's lua_tolstring, set at the arming) and lets the pair run: counted (UI_GUARD_STATUS
+      allowed=), one row UI_GUARD_PASSED tick=<t> op=AddUITriggeredEvent group=events args=TopLevelMenu/ why=ui_only, no info line.
+    events family: the wrapper runs it at once on any slot, nothing on the wire: UI_REPLAY_LOCAL what=AddUITriggeredEvent
+      args=TopLevelMenu/ why=ui_only.
+  Left canonical on purpose (world events: slot 1's replayed by the events family, slots 2+ refused; refused everywhere without
+    the family): the menu-open event of every other menu and every menu_close (diplomacy.xml instantiates a cue on any menu_close
+    during the agent introduction; x4ep1_mentor_subscription checks StationConfigurationMenu and MapMenu; DockedMenu '' is heard
+    by story_unbihexium and gs_terran2), TopLevelTabs (scenario_tutorials), hintclosed (story_criminal).
+  Named rows: a guard row of AddUITriggeredEvent or SignalObject ends in args=<screen>/<control> resp. args=<signal> (letters,
+    digits, _ . - kept, anything else '?', 20 characters each); the native ring row is tick:name:group:verdict:args. The Lua
+    core's UI_REPLAY_REFUSED rows carry the same args (why=slot, unmapped, ..., why=native when the gate refused the push; then
+    UI_REPLAY_REFUSED_NATIVE says why, e.g. not_live before the window).
+  Unverified until the next run: that tick 1's row is this call. A refusal at tick 1 with other args is another caller: send it.
+
+7b The flight family ('flight', bit 512 of native_gate_ui_replay; true does not include it)
+  What the stock functions write [F]:
+    ToggleFlightAssist 0x1bcbf0 (first instruction RIP-relative) loads the singleton [[0x3d198f8]+0x230] and tail-jumps to
+      0x710d50(player): lock +0x6aaf, the ship's capability (0x710e70: 0x55b090(player), the controlled ship through +0x308 and
+      the +0x70 walk, a class bit at ship+0x450), then flips +0x6aac (assist) and clears +0x6aad (suspended), and enables
+      0x710ad0(player, 1) or disables 0x710cb0 (9fc550(0x3d196f0): the player's controller, then 0xd9c050; a UI sound). The
+      fields are the SIM block +0x6aac..+0x6ab7 and the controller the seat gives: in slot k's scope P_k and C_k
+      (lockstep_pilot_slots.h), so the call in scope k is slot k's toggle, as the travel adapter is for travel. The key
+      TOGGLE_FLIGHT_ASSIST 0xdd goes 71bac0 -> 0x710d50 as well (plus a HUD notification 0x1257950) and already rides the stock
+      record (pstk_replay_actions), SUSPEND_FLIGHT_ASSIST 0x85 likewise: people's key presses were never refused.
+    The HUD's own-ship buttons (crosshair handling.lua, render slot 10): CycleTurretMode 0xb01ff0 and CycleTurretMissile 0xb01ed0
+      (turret group number, 1-based) walk the singleton's +0x70 parents to its ship (class 0x75), take the group (0x4defb0) and
+      cycle its mode (+0x308) resp. missile (with the thread block's time +0x300); ToggleDrones 0xb0b390 and CycleNextDroneMode
+      0xb01e70 (drone type 1..3) take 0x9f7a40 (the singleton's controlled ship) and call Defensible's arming (0x4ee280 /
+      0x4ee360 / 0x4ee440 on +0x6a4..+0x6a6) resp. SetUINextDroneMode 0x4eeb00. In scope k the singleton is P_k, seated in ship k.
+    ToggleFlightAssist's stock caller is the docked menu's button; the flight assist in flight is the key.
+  Built (lockstep_ui_replay.h, generic calls op 5, stop 164 as before): hooks 0x710d50 (prefix 6 bytes, pin 0xb0; below the
+    export as autopilot is below ToggleAutoPilot) and the four button exports (the guard's prefixes and pins). Specs: 0x710d50 "P"
+    (the singleton's player at the capture, else not_the_player; the slot's player at the apply), the others "w". Captured in
+    the local phases on client k, staged on every client, applied in path_release at capture + delay in slot k's scope (slot 1
+    canonical) through the trampoline. Outside the local phases X4's own (the key's replay through 71bac0, MD, AI, a boarding
+    operation's call). The guard leaves the five entries to the family (covered=512, regenerated table: with the Play42P families
+    plus events and flight 39 entries covered, installed=241).
+  Receipt: with the family each slot's column grows /f<assist>.<drones armed +0x6a4 +0x6a5 +0x6a6> (P_k's own +0x6aac, the slot
+    ship's flags; ToggleDrones type 1 is the middle digit, type 2 the first, type 3 the last): a toggle that took on one client is
+    a digest mismatch at that tick. The receipt buffer is 512 bytes now (four slots with every family exceeded 192).
+  SetAutoRoll is no ship toggle [F]: 0x24a5a0 writes the user option autoroll into the settings and the global byte 0x2f4b9be
+    (class OPTION of the player block: per machine, in the stock settings fingerprint). Its only stock caller is the user question
+    scenario_tutorials opens (tutorial start); the options menu writes the same option (SetAutorollOption). A difference is a
+    fingerprint desync at once (the session stops, it does not split). Per slot it needs 0x2f4b9be in the slot store (swapped by
+    the scope) and out of the fingerprint, slot 1's value canonical everywhere: not built. Not in the guard (an option, 1a).
+  Still refused in the flight group: the menus' settings of an explicit ship (SetAllTurretModes, SetTurretGroupMode2,
+    SetTurretGroupArmed, SetDroneMode, SetDroneTypeArmed, SetAllDronesArmed, SetWeaponArmed, SetAmmoOfWeapon,
+    SetAllowedWeaponSystems: any player ship, the fleet's kind of change), deployables (object creation), seat changes, cover,
+    PerformAction, RaisePlayerInteractionEvent, the soft target lock requests.
+  Not verified [I]: 0x710ad0's body (its prologue only; the key path runs it in scope k already); the disable sound on every client
+    for slot k (as the replayed keys' sounds); the HUD buttons showing the new state after the delay; turrets and drones on the
+    Play42P scouts (no turret groups or drone bays: X4 answers with its debug line, nothing changes, the same everywhere).
+
+7c Trade for slot 1 (P2): not built (quality over breadth). What it needs [F]: AddTradeToShipQueue (Lua C 0x2b2750; menu_map's
+  buy/sell rows, the interact menu) takes (trade offer as Lua ID, ship UniverseID, amount, immediate[, flag]). The offer is no
+  component: the codec refuses it (unmapped), and its raw ID is only right if every client numbers trade offers alike (the
+  economy makes them; unverified under runtime IDs). Needed first: a portable offer reference (container + ware + buy/sell,
+  resolved at the apply against that client's offers, nothing when absent: the same everywhere if the economy agrees) or a gate
+  row proving offer IDs equal on both clients. Then slot 1's AddTradeToShipQueue as a Lua-run event like the orders; the money
+  moves when the ship's trade order executes, in the simulation on every client. TransferPlayerMoneyTo / TransferMoneyToPlayer
+  (fees, build plots, ship sale, station accounts) are separate entries.
+  Slot k: the money is the owner faction's account. In coop every slot is `player` (one account: slot k's purchase spends the
+  shared wallet, consistent but shared); in factions mode slot k's ship is x4lan_playerk's, which the stock trade menu does not
+  offer [I: player-owned ships only], and MD's player.money cues (notifications) are slot 1's. Needs: whose account pays (the
+  slot faction's money scope) and those cues per slot.
+
+7d Verified offline
+  C (test_lockstep_ui_guard.h, test_lockstep_ui_replay.h; build_native_gate.py --test with the pinned image): the two events
+    entries alone on stand-ins with a stand-in Lua stack: ('TopLevelMenu','') runs and is counted allowed, other controls, a nil
+    control, an unreadable stack and SignalObject refused with their args in the rows; outside the local phases X4's own. Flight:
+    the five hooks capture (not_the_player for another player), the section is refused without the family, the apply in slot 2's
+    scope hands P_2 and the numbers, slot 1 applies canonical; the receipt's /f part on two slots. Pinned image: the new pins and
+    prefixes, a whole install with every family, the guard's covered rule for the shared RVAs.
+  Python (tests/test_native_gate_ui_guard.py, test_native_gate_ui_replay.py): the three UI-only mirrors, no MD names the screen
+    (x4-re), the wrapper's UI-only run on slots 1 and 2, named refusal rows, the guard's PASSED/REFUSED rows and info line, the new
+    script ops (ui_raw, turret_mode, turret_missile, drones, drone_mode), the family masks, checker and builder accept flight.
+  Not live: everything of this section.
+
+7e LIVE TEST SPEC (coordinator; DLL, probe and ui/native_gate_ui_replay_core.lua of this branch; overlay derived from
+  overlay-Play42P with md/native_gate_ui_replay.xml in it, as G1)
+  G4 named rows, UI-only, flight family, no people. Append to the Play42P config:
+    X4LAN_CONFIG.native_gate_ui_guard = 'all'
+    X4LAN_CONFIG.native_gate_ui_replay = {'travel','target','orders','autopilot','dock','weapons','queue','missiles','events','flight'}
+    X4LAN_CONFIG.native_gate_ui_replay_script = {{{60,'flight_assist'},{100,'drones',1},{140,'turret_mode',1},{180,'flight_assist'},{220,'ui_raw','TopLevelMenu',''},{260,'ui_raw','MapMenu','x4lan_g4'}},{{75,'flight_assist'},{115,'drones',2},{155,'drone_mode',1},{195,'flight_assist'},{235,'ui_raw','TopLevelMenu',''},{275,'ui_raw','MapMenu','x4lan_g4'}}}
+    (window start 40, delay 3: client 1 at 100, 140, 180, 220, 260, 300; client 2 at 115, 155, 195, 235, 275, 315.) 700 ticks.
+    Pass: relay pass, 0 digest mismatches, census 0, no stop 164; on both clients UI_GUARD_PINS ok=1, UI_GUARD_ARMED ... entries=280,
+      UI_GUARD_STATUS installed=241;
+      tick 1, both clients: UI_REPLAY_LOCAL what=AddUITriggeredEvent args=TopLevelMenu/ why=ui_only and UI_GUARD_PASSED tick=1
+        op=AddUITriggeredEvent group=events args=TopLevelMenu/ why=ui_only; no UI_GUARD_REFUSED at tick 1;
+      no UI_GUARD_REFUSED for ToggleFlightAssist, CycleTurretMode, ToggleDrones, CycleNextDroneMode; UI_REPLAY_SCRIPT ok=true for
+        every op; UI_REPLAY_STATUS calls= 8 more on both clients after 238;
+      UI_REPLAY_SLOTS identical on both clients: slot 1's /f assist digit flips at 103 and back at 223, slot 2's at 118 and back
+        at 238; slot 1's middle drone digit may flip at 143, slot 2's first at 158 (a scout without drones may keep 0: then only the
+        equality of both clients counts);
+      TopLevelMenu: client 1 at 260, client 2 at 275 each logs UI_REPLAY_LOCAL and UI_GUARD_PASSED on its own client only, nothing
+        pushed, no mismatch near those ticks;
+      MapMenu: client 1's at 300 gives, on both clients,
+        UI_REPLAY_APPLIED tick=303 slot=1 op=71 result=applied what=AddUITriggeredEvent(MapMenu,x4lan_g4);
+        client 2's at 315 UI_REPLAY_REFUSED what=AddUITriggeredEvent why=slot args=MapMenu/x4lan_g4.
+    Fail: a /f column that differs between the clients (send both UI_REPLAY_SLOTS and UI_REPLAY_STATUS), UI_REPLAY_REFUSED_NATIVE
+      ...FlightAssistToggle:not_the_player (send the row), stop 164 why=ui_fault (a replayed call faulted in the scope), a tick-1
+      refusal with other args (another caller: send it).
+  G5 people (two persons, Play42P + the first two lines of G4, no script). Each person: the flight assist key in flight, the HUD
+    weapon panel's turret mode and drone buttons, open and close the map and other menus several times; docked at a station the
+    docked menu's flight assist button; client 1 accepts a mission offer.
+    Pass: relay pass, 0 mismatches; UI_GUARD_PASSED args=TopLevelMenu/ on the client that closed a menu, never UI_GUARD_REFUSED
+      args=TopLevelMenu/; the /f columns follow each person's toggles on both clients 3 ticks later; no refusal of the five flight
+      entries. Send: every UI_GUARD_REFUSED and UI_REPLAY_REFUSED row (their args name each screen/control: candidates for the
+      UI-only list, which needs the MD check of 7a, or for the events family's canonical path), UI_GUARD_STATUS, UI_REPLAY_SLOTS.

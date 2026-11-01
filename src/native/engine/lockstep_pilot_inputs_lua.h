@@ -9,7 +9,33 @@ static int lua_pilot_inputs(lua_State *L) {
     p_lua_pushnumber(L,ok);return 1;
 }
 static int lua_pilot_inputs_status(lua_State *L) {
-    char out[4096];int n=accept_ui()?pilot_status(out,sizeof(out)):0;
+    static char out[16384];   /* stock, slots, presentation, death and foot rows together can pass 4 KiB (nil then) */
+    int n=accept_ui()?pilot_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* Every piloting module's stage and why in one short line, for the probe's STOP path: a status row is not written
+ * after a stop, and live w1foot (stop 185 at tick 37) lost its foot why that way. 0 when piloting is not armed. */
+static int pilot_why_text(char *out,size_t capacity) {
+    if(!pilot_armed) return 0;
+    int n=snprintf(out,capacity,"reason=%u pilot=%s native=%s fail=%s arm_why=%s",pilot_stop_reason(),pilot_stage?pilot_stage:"-",
+        pnat_stage?pnat_stage:"-",pnat_fail_stage?pnat_fail_stage:"-",pstk_arm_why[0]?pstk_arm_why:"-");
+    if(n>0 && (size_t)n<capacity && pfoot_armed)
+        n+=snprintf(out+n,capacity-(size_t)n," foot=%s foot_why=%s foot_state=%u foot_entries=%u/%lld",pfoot_stage,pfoot_why,pfoot_state,pfoot_entries,
+            (long long)pfoot_entries_late);
+    if(n>0 && (size_t)n<capacity && pfbody_armed) n+=snprintf(out+n,capacity-(size_t)n," bodies=%s bodies_why=%s bodies_mask=%x",pfbody_stage,pfbody_why,pfbody_mask);
+    if(n>0 && (size_t)n<capacity && pfslot_armed) {
+        n+=snprintf(out+n,capacity-(size_t)n," foot_slots=%s foot_slots_why=%s",pfslot_stage,pfslot_why);
+        for(unsigned k=2;n>0 && (size_t)n<capacity && k<=PILOT_SLOTS;k++) if(pslot_mask>>(k-1)&1u) n+=snprintf(out+n,capacity-(size_t)n," fs%u=%d",k,pfslots[k].walking);
+    }
+    if(n>0 && (size_t)n<capacity && pslot_armed) n+=snprintf(out+n,capacity-(size_t)n," slots=%s slots_why=%s",pslot_stage,pslot_why);
+    if(n>0 && (size_t)n<capacity && pdeath_armed) n+=snprintf(out+n,capacity-(size_t)n," death=%s death_why=%s",pdeath_stage,pdeath_why);
+    if(n>0 && (size_t)n<capacity && pres_armed) n+=snprintf(out+n,capacity-(size_t)n," present=%s present_why=%s",pres_stage,pres_why);
+    if(n>0 && (size_t)n<capacity && uirep_armed) n+=snprintf(out+n,capacity-(size_t)n," replay=%s replay_why=%s",uirep_stage_name,uirep_why);
+    return n>0 && (size_t)n<capacity?n:0;
+}
+/* gate.pilot_why(): pilot_why_text, or nil. */
+static int lua_pilot_why(lua_State *L) {
+    char out[768];int n=accept_ui()?pilot_why_text(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_pilot_inputs_frame(lua_State *L) {
@@ -159,6 +185,35 @@ static int lua_pilot_death(lua_State *L) {
     if(!isfinite(delay) || delay<0 || floor(delay)!=delay || (suit!=0 && suit!=1)) {p_lua_pushnumber(L,0);p_lua_pushlstring(L,pstk_arm_why,strlen(pstk_arm_why));return 2;}
     pstk_arm_refuse("thread");
     int ok=accept_ui() && pdeath_arm((unsigned)(delay>PILOT_TICK_MAX?PILOT_TICK_MAX+1u:delay),suit==1);
+    p_lua_pushnumber(L,ok);
+    if(ok) return 1;
+    p_lua_pushlstring(L,pstk_arm_why,strlen(pstk_arm_why));return 2;
+}
+/* gate.pilot_foot(): slot 1 gets up and walks through the stock record on every client (lockstep_pilot_foot.h, stop
+ * reason 185); the docked menu's GetUp is claimed in the UI guard. After gate.pilot_stock, before the first tick, on
+ * every client. 1, or 0 and the reason. */
+static int lua_pilot_foot(lua_State *L) {
+    pstk_arm_refuse("thread");
+    int ok=accept_ui() && pfoot_arm();
+    p_lua_pushnumber(L,ok);
+    if(ok) return 1;
+    p_lua_pushlstring(L,pstk_arm_why,strlen(pstk_arm_why));return 2;
+}
+/* gate.pilot_foot_bodies(): slots 2..N's players into their seats' rooms on every client (lockstep_pilot_foot_body.h,
+ * stop reason 185). After gate.pilot_foot and the stock slots, before the first tick. 1, or 0 and the reason. */
+static int lua_pilot_foot_bodies(lua_State *L) {
+    pstk_arm_refuse("thread");
+    int ok=accept_ui() && pfbody_arm();
+    p_lua_pushnumber(L,ok);
+    if(ok) return 1;
+    p_lua_pushlstring(L,pstk_arm_why,strlen(pstk_arm_why));return 2;
+}
+/* gate.pilot_foot_slots(): slots 2..N get up and walk on every client (lockstep_pilot_foot_slots.h, stop reason 185).
+ * After gate.pilot_foot (and gate.pilot_foot_bodies when used) and the stock slots, before the first tick. 1, or 0 and
+ * the reason. */
+static int lua_pilot_foot_slots(lua_State *L) {
+    pstk_arm_refuse("thread");
+    int ok=accept_ui() && pfslot_arm();
     p_lua_pushnumber(L,ok);
     if(ok) return 1;
     p_lua_pushlstring(L,pstk_arm_why,strlen(pstk_arm_why));return 2;

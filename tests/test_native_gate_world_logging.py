@@ -136,4 +136,60 @@ class WorldPageLogging(unittest.TestCase):
             self.assertTrue(parse([invalid])[1])
 
 
+def run_health(window, rows=2, count=None, watch="{'000000000007336a','0000000000073371'}"):
+    """FR28: the probe with native_gate_world_health_ticks; gate.world_health answers per watch."""
+    fixture=probe_fixture.SnapshotProbeTests();fixture.setUp();lua=fixture.lua
+    lua.globals().captures=lua.table_from(captures(),recursive=True)
+    lua.execute(f'''
+      X4LAN_CONFIG.native_gate_world_hash_stride=1
+      X4LAN_CONFIG.native_gate_world_hash_schema='WORLD_IMPORTED_2'
+      X4LAN_CONFIG.native_gate_world_hash_watch={watch}
+      X4LAN_CONFIG.native_gate_world_health_ticks={window}
+      local gate=package.loadlib('gate')()
+      gate.world_watch=function(saved) return 1 end
+      gate.world_capture_nav_v2=function(tick) captured_tick=tick;return captures[tick].summary end
+      gate.world_banks=function() return captures[captured_tick].banks end
+      gate.world_page=function(n)
+        if n==0 then return #captures[captured_tick].pages end
+        return captures[captured_tick].pages[n]
+      end
+      gate.world_detail=function(n) assert(n==0);return 0 end
+      gate.world_health=function(n)
+        if n==0 then return {count or rows} end
+        if n>{rows} then return nil end
+        return 'tick='..captured_tick..' id=row'..n..' present=1'
+      end
+      state.boot_phase=3;is_menu=false
+    ''')
+    lua.execute(probe_fixture.SOURCE)
+    for tick in (1,2,3):
+        lua.globals().state.issued=tick;lua.execute('update()')
+    return lua,list(lua.globals().logs.values())
+
+
+class WorldHealthLogging(unittest.TestCase):
+    def test_rows_on_every_window_tick_after_the_capture(self):
+        lua,logs=run_health('{2,3}')
+        self.assertEqual(lua.globals().reports,3)
+        self.assertFalse(any('NATIVE_GATE ERROR ' in text for text in logs))
+        rows=[line for text in logs for line in text.split('\n') if line.startswith('[X4LAN] NATIVE_GATE WORLD_HEALTH ')]
+        self.assertEqual(rows,[f'[X4LAN] NATIVE_GATE WORLD_HEALTH tick={t} id=row{i} present=1' for t in (2,3) for i in (1,2)])
+        # The census frames are unchanged by the rows between them.
+        observed,errors=parse(logs)
+        self.assertEqual(errors,[])
+        self.assertEqual([frame['tick'] for frame in observed],[1,2,3])
+
+    def test_a_missing_row_stops_the_gate(self):
+        lua,logs=run_health('{1,1}',count=3)
+        self.assertEqual(lua.globals().reports,0)
+        self.assertTrue(any('world health row unavailable 3' in text for text in logs))
+
+    def test_refused_windows(self):
+        for window,watch in (('{0,3}',None),('{3,2}',None),('{2}',None),("'2'",None),('{1,3}','{}')):
+            with self.subTest(window=window,watch=watch):
+                with self.assertRaises(Exception) as caught:
+                    run_health(window,watch=watch or "{'000000000007336a'}")
+                self.assertIn('native_gate_world_health_ticks must be',str(caught.exception))
+
+
 if __name__=='__main__':unittest.main()

@@ -96,7 +96,13 @@ static const void *pdeath_player;
 #define PDEATH_HULL_EPSILON 1e-07        /* 518210's test for a hull at zero */
 /* UI replay (lockstep_ui_replay.h, stop reason 164): what the piloting path needs to know of it. */
 enum {UIREP_FAMILY_TRAVEL=1,UIREP_FAMILY_TARGET=2,UIREP_FAMILY_ORDERS=4,UIREP_FAMILY_AUTOPILOT=8,UIREP_FAMILY_DOCK=16,UIREP_FAMILY_WEAPONS=32,
-    UIREP_FAMILY_MISSILES=64,UIREP_FAMILY_QUEUE=128,UIREP_FAMILIES=255};  /* the implemented ones */
+    UIREP_FAMILY_MISSILES=64,UIREP_FAMILY_QUEUE=128,UIREP_FAMILY_EVENTS=256,UIREP_FAMILY_FLIGHT=512,
+    UIREP_FAMILY_TRADE=1024,                            /* lockstep_ui_trade.h */
+    UIREP_FAMILY_MISSIONS=2048,                         /* lockstep_ui_missions.h */
+    UIREP_FAMILY_BUILD=4096,UIREP_FAMILY_ASSETS=8192,   /* lockstep_ui_build.h */
+    UIREP_FAMILY_CONVERSATION=16384,                    /* lockstep_ui_missions.h */
+    UIREP_FAMILY_FACTION=32768,                         /* lockstep_ui_faction.h (the last bit the guard's 16-bit 'covered' holds) */
+    UIREP_FAMILIES=1023|1024|2048|4096|8192|16384|32768};  /* the implemented ones (bits and ops: docs/LOCKSTEP-REGISTRY.txt) */
 static int uirep_armed,uirep_failed;
 static unsigned uirep_families;
 static volatile LONG uirep_ui_depth,uirep_dispatch_depth;  /* inside slot 6 / the slot 4 dispatch of presentation ids */
@@ -561,7 +567,7 @@ static int pilot_capture_native_controls(uint64_t tick,pilot_record *r,const cha
 /* 113 when a native-controls invariant failed, 155 a stock-piloting one, 161 one of the stock
  * slots 2..N, 162 their presentation, 164 the UI replay, 91 for every other pilot stop. */
 static unsigned pilot_stop_reason(void) {
-    return pnat_failed?(pnat_mode==PNAT_MODE_STOCK?(uirep_failed?164u:pres_failed?162u:pslot_failed?161u:pdeath_failed?163u:PSTK_STOP_REASON):PNAT_STOP_REASON):91u;
+    return pnat_failed?(pnat_mode==PNAT_MODE_STOCK?(uirep_failed?164u:pfoot_failed?PFOOT_STOP_REASON:pres_failed?162u:pslot_failed?161u:pdeath_failed?163u:PSTK_STOP_REASON):PNAT_STOP_REASON):91u;
 }
 /* The local ring keeps this client's proposed, not yet applied records with
  * their capture and apply ticks (presentation prediction input, later). */

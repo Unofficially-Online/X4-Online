@@ -262,6 +262,8 @@ static void test_pilot_stock(void) {
     assert(pstk_inject(PSTK_STATE,0xd,1) && !pstk_inject(PSTK_STATE,0x18,1) && !pstk_inject(PSTK_ACTION,0x7b,1) && !pstk_inject(PSTK_STATE,0xd,2));
     unsigned char rec[PSTK_BYTES_MAX],again[PSTK_BYTES_MAX];unsigned length=0,length2=0;const char *why="";
     stats.issued=7;assert(!pstk_capture(7,rec,&length,&why) && !strcmp(why,"not_live"));
+    /* Past the window (stop 40, delay 3): nothing would apply it, nothing is built or kept. */
+    why="";stats.issued=38;assert(!pstk_capture(38,rec,&length,&why) && !strcmp(why,"not_live") && !pstk_locals[38%PSTK_RING].used);
     /* Slot 1's aim of this frame: the camera pick (zone frame) as a point in the ship's frame, and +0x9053. */
     {   float pick[4]={100.0f,0.0f,50.0f,0.0f},distance=5.0f;void *picked=test_pstk_zone;
         memcpy(test_pnat_player+0x6c60,pick,16);memcpy(test_pnat_player+0x6c80,&distance,4);memcpy(test_pnat_player+0x6c88,&picked,8);}

@@ -1,0 +1,274 @@
+LOCKSTEP WIRE CRYPTO (ROADMAP B8) - 1 NOVEMBER 2026
+
+Branch contrib/ferrite-crypto (from e457b4c9). Offline work: C and Python tests, the
+Windows gate test harness, the Linux gate unit and Lua bridge tests under WSL. No X4 was
+started, no lane tool was run, no native session used this code yet (live-test spec in 8).
+Wire reference: docs/LOCKSTEP-NSLOT-WIRE.txt, section WIRE CRYPTO.
+
+1. RESULT
+Opt-in encryption and authentication of the protocol 3/4 relay path, with the record
+format and functions the peer links (B6) need. Default off; without both switches
+(relay --wire-crypto KEYFILE, probe native_gate_wire_crypto) every datagram, report and
+Lua surface is unchanged and the relay imports nothing new.
+- One symmetric session (group) key handed to every player by the relay (NGKEYS), as in
+  the user's rundown, for peer links. On the relay path every player additionally has its
+  own pair of keys with the relay from an X25519 handshake, so a player cannot forge
+  traffic to or from the relay in another player's name.
+- Every player signs its own input record (Ed25519, key pair fresh per session); the relay
+  hands out the public keys (roster) at the start, checks every report's signature and
+  forwards the signatures in every permit; every client checks every other slot's
+  signature and the relay's permit signature before it runs a tick.
+- Fail closed: anything not authentic or replayed is dropped and counted; an authentic
+  datagram with invalid content stops the gate (106); no handshake within the gate
+  timeout stops it (107); a bad report signature stops the session at the relay.
+- No primitive written here: Monocypher 4.0.2 is vendored unchanged (section 2); its own
+  test suite and vectors run in our build, plus RFC known answers and golden vectors of
+  our layouts recomputed by an independent implementation (Python cryptography/hashlib).
+
+2. LIBRARY
+Monocypher 4.0.2, third_party/monocypher-4.0.2 (monocypher.c/.h, optional/monocypher-
+ed25519.c/.h, tests/test.c, utils.c/.h, vectors.h, LICENCE.md, AUTHORS.md, PIN.txt).
+- Licence: CC0-1.0 or BSD-2-Clause at the recipient's choice. LICENSING.md requires that
+  third-party licences and attribution are preserved and does not restrict permissive
+  dependencies; done: NOTICE.txt and tools/distribution/THIRD-PARTY.txt name it, LICENCE.md
+  travels with the source, PIN.txt says to keep it with binaries that contain it.
+- Provenance: release tarball from monocypher.org (SHA-256 38d07179...0879c) compared with
+  the GitHub tag archive: identical sources except the release's version line. File
+  hashes in PIN.txt. Upstream records an external audit (Cure53; CHANGELOG 3.1.2).
+- Why: one C file plus header, no allocation, constant-time code, no platform
+  dependency, compiles under the project's -Wall -Wextra -Werror flags for Windows
+  (zig cc) and Linux (zig and gcc), and provides exactly the needed set: ChaCha20-
+  Poly1305 (IETF, RFC 8439), Ed25519 with SHA-512 (RFC 8032, optional file), X25519,
+  BLAKE2b. RFC-compatible Ed25519 and AEAD allow cross-checking against other libraries.
+- The relay stays standard-library Python: it loads x4mp_wire_crypto (the same C code,
+  src/native/engine/lockstep_wire_crypto_lib.c) through ctypes; the library refuses to
+  load when the known answers fail. The Python cryptography package is used only in
+  tests, as the independent reference.
+
+3. KEY HANDLING
+Choice: X25519 handshake, relay's long-term Ed25519 key pinned in the player's
+configuration, per-slot pre-shared key. Not a token-derived key, because:
+- a key derived from the session token is known to every token holder, i.e. every player
+  (no separation between players, the problem B8 exists to solve) and to anyone who sees
+  an invitation or log with the token; it gives no forward secrecy;
+- with ephemeral X25519 a recording of the session stays sealed even if a psk, the relay
+  key or the token leaks later; the relay is authenticated by a key that never leaves the
+  relay host; each player proves its slot with a psk only it holds.
+Material:
+- Relay key file (tools/dev/native_gate_crypto.py keygen): Ed25519 seed of the relay and
+  a psk master, 32 random bytes each, under .local/ (never committed).
+- Player credential (credential --key --token --slot): "x4c1:<relay public key>:<psk>"
+  with psk_K = BLAKE2b-256(master; "X4MP slot psk v1" | sid | K); sid = the session
+  token's 16 bytes, so a credential is valid for one session and one slot only.
+- Session start (first gated frame): HELLO (ephemeral X25519 key, the player's fresh
+  Ed25519 public key, MAC under the psk) -> WELCOME (relay ephemeral, relay signature of
+  the transcript) -> both derive one base key per direction (BLAKE2b-512 keyed with the
+  psk over the transcript and the X25519 secret). Then NGKEYREQ -> NGKEYS: the group key
+  (32 random bytes from the relay) and the roster of the N public keys, sent once every
+  slot finished its handshake. The player checks its own key at its slot and that keys are
+  distinct and non-zero; the relay refuses a public key already in the roster.
+- Distribution of public keys is by the relay (as in the rundown). Because a relay could
+  hand out a substituted key, each client logs WIRE_CRYPTO_KEYED key=<own key>
+  roster=<BLAKE2b-128 of the roster> and the relay report shows the same fingerprint and
+  every key: players compare these out of band (or over peer links later, section 5).
+Rekeying:
+- Relay path: new keys every session (new token, new ephemerals, new signing keys). Inside
+  a session a new subkey every 2^16 datagrams per direction (epoch = counter >> 16;
+  subkey = BLAKE2b(base; header fields | epoch)): no key protects more than 65,536
+  datagrams (about 16 minutes at 30 Hz with resends). The counter is 64-bit and a sender
+  refuses to seal past its end instead of reusing a nonce.
+- Group key: NGKEYS and peer headers carry a generation byte (1 now). Rotation when the
+  roster changes (player drop/rejoin, roadmap 15: a new NGKEYS generation valid from an
+  agreed tick) has its format but is not implemented, since drop/rejoin does not exist.
+- Not done: a ratchet inside a session (subkeys derive from the session base key, so a
+  memory dump of a running client exposes that session; past sessions stay sealed).
+Replay protection:
+- Nonce = channel, sender, receiver, generation and a 64-bit per-sender counter, under a
+  key per session and direction. A nonce built from (session, slot, tick, direction)
+  alone, as first suggested, would repeat: one tick legitimately produces several
+  different datagrams per direction (the report and its resends, up to k+1 permits, an
+  NGSTOP, NGKEYS), and a repeated ChaCha20-Poly1305 nonce with another plaintext breaks
+  confidentiality and integrity. The tick is bound where it matters instead: inside every
+  signed input record and permit, so a record can never move to another tick.
+- Window: the receiver drops a counter it saw and anything 1,024 counters below the
+  highest; only an authentic datagram moves the window (a forged far-future counter
+  cannot shift it). Peer links (group key, which every player holds) use no counter
+  window: replays there are handled by the signed (slot, tick) of each record.
+
+4. RECORD FORMAT, INTERFACES, COSTS
+Formats (byte-exact in docs/LOCKSTEP-NSLOT-WIRE.txt):
+- Sealed datagram: 16-byte header "X4C1" channel sender receiver generation counter(8)
+  | ciphertext | 16-byte tag; additional data = sid | header. 32 bytes overhead.
+- Input record (signed by the player): "X4MP input v1" | sid | slot | N | k | 0 | tick |
+  blob length | blob. Empty blobs are signed too, so the relay cannot silently drop one
+  player's input; it can only stall everyone.
+- Permit (signed once per tick by the relay): "X4MP permit v1" | sid | T | N | k | source
+  tick T-1-k | BLAKE2b-256 over every slot's (length, blob, record signature).
+- On the relay path the protocol 3/4 ASCII datagrams are the plaintext unchanged; a
+  report adds NUL + its signature, a permit adds NUL + N record signatures + the permit
+  signature. The parsers behind the wrapper are untouched.
+Byte overhead per datagram: report +97 (largest 746 sealed); permit +1+64*(N+1)+32 =
+225 bytes for N=2, 609 for N=8 (largest 4,521 sealed); handshake once: 88 + 104 bytes,
+sealed NGKEYREQ 77 and NGKEYS 110+32*N bytes. At 30 ticks/s: +2.9 KB/s up per client, +6.8
+KB/s (N=2) to +18.3 KB/s (N=8) down per client.
+CPU, measured on this PC (x86-64, Windows, zig cc -O2, Monocypher portable C;
+test_wire_crypto.exe WIRE_CRYPTO_COST lines, two runs):
+  seal/open    245 B 0.6/0.6 us   400 B 0.8-1.0/0.8 us   714 B 1.2/1.2-1.5 us
+               4,489 B 5.6-5.7/5.6-6.2 us
+  Ed25519      sign 22.6-23.3 us, verify 63.7-71.4 us (28 or 240-byte blobs)
+  X25519 49.6-51.0 us; records hash of 8 x 240 B 1.8-2.2 us
+  per tick, native client (1 sign, 1 seal, 1 open, N-1 record + 1 permit verify, 1 hash):
+               N=2 0.15-0.16 ms, N=8 0.53-0.58 ms
+  gate harness (wcg status, 4 reports and 3 permits incl. first calls): sign 36 us avg
+  relay, Python + ctypes, measured with the real Barrier (native_gate_crypto.py bench,
+  28-byte blobs, k=1): N=2 0.27 ms/tick (0.03 without crypto), N=4 0.51, N=8 1.12 (0.10
+  without crypto); N=8 with 240-byte blobs 1.47 ms.
+At 30 steps per second (33.3 ms) the client adds 0.5% (N=2) to 1.7% (N=8) of a step,
+the relay about 1% (N=2) to 3.4% (N=8) of one core. On the critical path (the last report
+of a tick until the next tick runs) the added latency is the relay's check of that one
+report plus the permit signature (about 0.1-0.15 ms in Python) and the client's permit
+check (0.15-0.55 ms); with lookahead >= 1 most of it overlaps the frame.
+Hooks:
+- Relay: native_gate_relay.py --wire-crypto KEYFILE [--wire-crypto-lib PATH]; class
+  RelayCrypto in tools/dev/native_gate_crypto.py (inbound/outbound wrapper around the
+  unchanged Barrier). Report section "wire_crypto"; journal lines gain "sigs".
+- Gate (Windows and Linux, shared lockstep_wire_crypto_gate.h): gate.wire_crypto(
+  credential), gate.wire_crypto_status(); gate_wire_send/gate_wire_recv replace send/recv
+  in the protocol 3 loop and lockstep_lookahead.h (identical calls when unarmed).
+- Probe: X4LAN_CONFIG.native_gate_wire_crypto (needs native_gate_clients); logs ARMED
+  ... wire_crypto=1, WIRE_CRYPTO_KEYED, WIRE_CRYPTO_STOP; refuses (REFUSED wire_crypto)
+  with a gate DLL that lacks it instead of running in the clear.
+Interface for the peer-link work (X4-Multiplayer-p2p; C header and x4c_* ABI):
+  wc_peer_key(&key, group, sid, generation, sender)      one per sender
+  wc_peer_seal(&tx, sid, own_secret, N, k, tick, blob, out, cap) -> bytes (one datagram
+      for every peer: AEAD under the sender's group subkey + the record signature)
+  wc_peer_open(keys[N], roster[N], sid, N, k, in, n, &slot, &tick, blob, &len, sig)
+      -> 1 authentic record, 0 not authentic, -2 authentic under the group key but forged
+         by a player (evidence, never applied)
+  wc_record_sign/wc_record_verify, wc_permit_sign/wc_permit_verify, wc_seal/wc_open
+  (single records and datagrams). The record signature in a peer datagram is the same one
+  the relay forwards in NGGO, so "checked against the relay's bundle" is a byte
+  comparison of (blob, signature) per slot and tick.
+  Rules for the caller: accept a record only for a tick not yet run and inside the permit
+  window; a record is idempotent per (slot, tick); two different validly signed records
+  of one (slot, tick) prove that player equivocated.
+
+5. THREAT MODEL
+Outsider on the path (reads, injects, replays, drops, delays; no key material):
+  Covered: confidentiality of inputs, digests, clocks and the token (sealed; the token
+  is no longer on the wire); integrity and authenticity of every datagram; replays
+  (counter window, signed ticks); forged permits, reports, NGSTOP or NGKEYS; pretending
+  to be the relay (needs the relay's signing key) or a player (needs that slot's psk);
+  recorded traffic stays sealed if keys leak later (ephemeral X25519).
+  Not covered: denial of service (dropping or delaying; an outsider who sees a player's
+  HELLO can replay it from another address first and so block that slot's handshake;
+  spoofing the relay's address with an oversize datagram still stops a gate with 8 as
+  before); traffic analysis (sizes and timing are visible: no padding, so idle and active
+  players differ in size); addresses and ports.
+Malicious player (holds its psk, its signing key, the group key and the token):
+  Covered: it cannot send reports as another slot (its relay keys are its own; the relay
+  checks every record signature against the roster); it cannot forge or move another
+  player's input record anywhere (relay path or peer links); it cannot claim another
+  slot at the handshake; a bad signature from it stops the session and names its slot;
+  on peer links a forgery is detected (-2) and two different signed records for one tick
+  are proof of equivocation.
+  Not covered: anything it does with its own inputs (game-level checks, e.g. the UI
+  guard); stalling or leaving (pause for everyone, as today); lying about its own digest
+  (the relay reports the desync, as today); reading everyone's inputs (lockstep needs
+  that); on peer links it can read all peer traffic and inject group-key datagrams in
+  another sender's name, which signatures reject; such injected datagrams reuse that
+  sender's nonces, so an outsider could then read those peer records too. If that
+  matters, peer links can use pairwise X25519 keys between players (roster entries) at
+  no format cost to the records.
+Malicious relay (holds its signing key and the psk master, distributes the roster):
+  Covered, as long as the roster it handed out is genuine (players compare WIRE_CRYPTO_KEYED
+  roster fingerprints): it cannot forge or alter a player's input record or move it to
+  another tick, cannot drop one player's input while advancing (empty inputs are signed
+  too), and every permit it signs commits to exactly the records it released; the input
+  journal keeps every signature, so a session can be audited afterwards.
+  Not covered: it reads everything (it is the referee, no end-to-end confidentiality
+  from it); it can substitute a player's public key in the roster and then forge that
+  player's records for the others unless fingerprints are compared (out of band now;
+  over direct peer links later); it can impersonate any player at the handshake (it holds
+  the master); it decides digest verdicts, can stall, stop or drop players; it can
+  withhold permits.
+Out of scope: the endpoints (a modified client, game memory), saves, Steam, the VPS host.
+On the default loopback relay (one PC) the crypto adds little security; it matters for a
+remote relay (VPS, mixed sessions) and for the peer links.
+
+6. TESTS (ALL PASS AT THIS REVISION)
+- tools/dev/build_native_gate.py --zig ... --test --native-image .../X4.exe: builds the
+  gate DLL and x4mp_wire_crypto.dll, then (new, first) Monocypher's own suite
+  (test_monocypher.exe: all vectors, "All tests OK") and test_wire_crypto.exe: RFC 8439
+  AEAD, RFC 8032 tests 1-2, RFC 7748, RFC 7693 known answers; 12 pinned golden layouts;
+  every single-bit flip of a datagram refused without moving the window; truncation,
+  extension, another session id or direction refused; replay, reordering inside and
+  beyond the window, a forged far-future counter; counter exhaustion; subkey epochs;
+  handshake refusals (another slot's psk, session, N, k, every changed HELLO byte, a
+  WELCOME from another relay key, every changed WELCOME byte, a low-order key);
+  credential parsing; wrong-slot and changed records; permits; roster checks; peer
+  records (outsider 0, a group-key holder's forgery and replay to another tick -2).
+  The gate harness (test_lockstep_gate.c, test_wire_crypto_gate): configuration rules, a
+  relay answering only with a forged WELCOME (107 at the timeout), the handshake with a
+  forged WELCOME ignored, signed reports, three sealed protocol 4 frames with every
+  signature checked and the right blobs admitted, the token absent from the wire, replay
+  / clear / tampered datagrams dropped, the verified-copy cache, a repeated NGKEYS,
+  protocol 3 permits, and stop 106 for a wrong-slot record signature, a permit signed by
+  another relay key, a changed roster and a permit without its signatures. The rest of
+  the existing native suite passes unchanged.
+- tests/test_native_gate_crypto.py (14): library goldens; the independent reference
+  (cryptography + hashlib) recomputes every golden value; random round trips both ways;
+  tamper/replay/window; peer records; in-process sessions N=3 (protocols 3 and 4) and
+  N=8 with every permit verified on every client and identical admitted inputs;
+  unsealed, forged, replayed, wrong-address reports dropped; wrong-slot signature stops
+  the session with NGSTOP; a report naming another slot dropped; key mismatches (another
+  slot's credential, another k or N, another token, another relay key) refused; HELLO
+  repeat/takeover; keys only after every handshake; a changed permit detected; the relay
+  process over real UDP (k=1, input journal: every journaled record verifies, report
+  section) and the CLI (keygen never overwrites, credential, refusals, selftest, bench).
+- tests/test_native_gate_lookahead_probe.py: 3 probe tests for native_gate_wire_crypto
+  (order of calls, ARMED/KEYED/STOP lines, the psk never logged, refusals).
+- tests/test_native_gate*.py and test_lockstep_gate_linux.py: 1,197 passed, 7 skipped.
+- Linux: build_native_gate_linux.py cross-builds x4lan_gate.so and
+  libx4mp_wire_crypto.so; under WSL Ubuntu 24.04 the gate unit test (gcc and zig builds)
+  and the Lua bridge (now including gate.wire_crypto and the start refusal) pass. The
+  full check_lockstep_gate_linux.py run is recorded in the commit message.
+
+7. LIMITS AND FOLLOW-UPS
+- No native run yet: the handshake inside X4's first gated frame, real loss and real
+  timing are unmeasured (section 8).
+- The lane runner does not yet provision per-slot credentials (it knows the token only
+  when it starts a session): a lane token (e.g. @X4LANE_WIRE_CRYPTO@ computed with
+  native_gate_crypto.credential) is the next small step; until then overlays carry the
+  credential by hand.
+- The Linux relay needs libx4mp_wire_crypto.so next to it (cross-built; on the VPS copy it
+  or build with gcc) and X4MP_WIRE_CRYPTO_LIB or --wire-crypto-lib.
+- Group-key rotation and pairwise peer keys come with drop/rejoin and B6.
+- A client whose N or k differs from the relay's is refused at the HELLO and ends with
+  107 after the timeout (instead of the unencrypted relay's lookahead_mismatch NGSTOP).
+- Linux getrandom is required (kernel 3.17+); without it the gate stops with 106.
+
+8. LIVE-TEST SPEC (not run; X4 closed rules, profile 45841, disposable worlds)
+Preparation: build with build_native_gate.py (gate DLL and x4mp_wire_crypto.dll);
+  native_gate_crypto.py keygen --out .local/crypto/relay.key; per session, after the
+  token is fixed: credential --key ... --token <token> --slot K for each client into its
+  overlay as X4LAN_CONFIG.native_gate_wire_crypto (secret: .local only).
+W1 loopback, 2 clients, protocol 4 k=1, the current scripted smoke configuration with
+  pilot records, relay --wire-crypto KEYFILE --input-journal FILE, 600 ticks.
+  Pass: both logs ARMED ... wire_crypto=1; WIRE_CRYPTO_KEYED on both with the same roster
+  value, equal to the relay report's wire_crypto.roster_fingerprint, each key equal to
+  that slot in wire_crypto.players; relay verdict pass, wire_crypto.failure null,
+  counts.bad_signature absent, dropped_* zero or near zero; WIRE_CRYPTO_STOP stop=0;
+  every journal line's sigs verify (tests/test_native_gate_crypto.py shows how); the
+  digest sequence equal to the same run without crypto (crypto must not change what is
+  simulated); frame_timing wait_us within about 0.3 ms of that run.
+W2 negative, short (stop at the handshake, no world state involved): (a) client 2 with
+  client 1's credential: relay counts hello_refused, client 2 stops 107 at its timeout;
+  (b) relay without --wire-crypto, clients with it: 107; (c) relay with it, one client
+  without: that client's reports are dropped (dropped_plain), the session ends with 7.
+W3 VPS relay (mixed Windows/Linux, as in run mix1): relay with --bind/--allow-from and
+  libx4mp_wire_crypto.so; same checks as W1; a packet capture on the Windows client shows
+  no "NGSTATE", "NGGO" or token bytes in UDP payloads after the HELLO/WELCOME.
+W4 people session (G5 style), 10 minutes, crypto on: no stop 106/107; desync indicator as
+  in the same session without crypto; players read their WIRE_CRYPTO_KEYED roster values
+  to each other before playing.

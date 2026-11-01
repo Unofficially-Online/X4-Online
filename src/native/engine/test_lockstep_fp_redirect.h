@@ -598,8 +598,114 @@ static void tfr_params_w(void *o20,unsigned char *slot,uint64_t flag,double time
 }
 extern uint32_t test_fr_tail_run(const void *stub,void *slot);
 extern char test_fr_tail_back[];
+/* ---- FR27: the GetSafePos solver (lockstep_safe_pos.h, fsp_run, fsp_arm). ---- */
+static uint32_t tfsp_seed;
+static float tfsp_rand(void) {tfsp_seed=tfsp_seed*1664525u+1013904223u;return (float)(tfsp_seed>>8)*(1.0f/16777216.0f);}
+static float tfsp_range(float a,float b) {return a+(b-a)*tfsp_rand();}
+typedef struct {_Alignas(16) unsigned char boxes[6*FSP_BOX];_Alignas(16) float p[4];_Alignas(16) float dir[4];unsigned n;float r,a5,a9;int y;} tfsp_scene;
+/* A random scene as the offline fuzz builds them: up to six boxes (half sizes, centres, positions, rows from a unit
+ * quaternion or the identity, the radius |half| or 0), a point among them, a radius, a unit direction (sometimes
+ * vertical), a5 0 or up to 1.5, allow-y, a9 25000, 0 or a few hundred. */
+static void tfsp_make(tfsp_scene *s) {
+    memset(s,0,sizeof(*s));s->n=1+(unsigned)(tfsp_rand()*6.0f);if(s->n>6) s->n=6;
+    const float scale=tfsp_rand()<0.34f?0.1f:tfsp_rand()<0.5f?1.0f:30.0f;
+    for(unsigned b=0;b<s->n;b++) {
+        float box[28];memset(box,0,sizeof(box));
+        for(int k=0;k<3;k++) {box[k]=tfsp_range(5.0f,300.0f)*scale;box[4+k]=tfsp_range(-100.0f,100.0f)*scale;box[12+k]=tfsp_range(-100.0f,100.0f)*scale;}
+        box[7]=1.0f;box[8]=tfsp_rand()<0.05f?0.0f:fsp_len3(box);
+        if(tfsp_rand()<0.2f) box[12]=box[13]=box[14]=0.0f;
+        if(tfsp_rand()<0.25f) {box[16]=box[21]=box[26]=1.0f;}
+        else {
+            float q[4],l=0.0f;for(int k=0;k<4;k++) {q[k]=tfsp_range(-1.0f,1.0f);l+=q[k]*q[k];}
+            l=fsp_sqrt(l);if(l<1e-3f) {q[0]=1.0f;l=1.0f;}
+            const float w=q[0]/l,x=q[1]/l,y=q[2]/l,z=q[3]/l;
+            const float m[9]={1-2*(y*y+z*z),2*(x*y-z*w),2*(x*z+y*w),2*(x*y+z*w),1-2*(x*x+z*z),2*(y*z-x*w),2*(x*z-y*w),2*(y*z+x*w),1-2*(x*x+y*y)};
+            for(int r=0;r<3;r++) for(int c=0;c<3;c++) box[16+4*r+c]=m[3*r+c];
+        }
+        memcpy(s->boxes+b*FSP_BOX,box,FSP_BOX);
+    }
+    for(int k=0;k<3;k++) {s->p[k]=tfsp_range(-60.0f,60.0f)*scale;s->dir[k]=tfsp_range(-1.0f,1.0f);}
+    if(tfsp_rand()<0.1f) s->dir[0]=s->dir[2]=0.0f;
+    const float dl=fsp_len3(s->dir);if(dl>1e-6f) for(int k=0;k<3;k++) s->dir[k]=s->dir[k]/dl;
+    s->r=tfsp_rand()<0.5f?tfsp_range(0.5f,50.0f):tfsp_range(50.0f,2000.0f)*scale;
+    s->a5=tfsp_rand()<0.6f?0.0f:tfsp_range(0.05f,1.5f);s->y=tfsp_rand()<0.5f;
+    s->a9=tfsp_rand()<0.34f?25000.0f:tfsp_rand()<0.5f?0.0f:tfsp_range(10.0f,500.0f)*scale;
+}
+typedef struct {float r;const float *dir;float a5,a9;int y,perturb;unsigned calls;} tfsp_args;
+/* A stand-in for the native solver: ours, and with perturb one ulp more on x afterwards. */
+static void tfsp_native(const void *args,void *vec,float *p) {
+    tfsp_args *a=(tfsp_args*)(uintptr_t)args;uintptr_t v[2];memcpy(v,vec,16);++a->calls;
+    if(v[1]<v[0] || (v[1]-v[0])%FSP_BOX) return; /* the refused vectors below */
+    fsp_solve((unsigned char*)v[0],(v[1]-v[0])/FSP_BOX,p,a->r,a->dir,a->a5,a->y,NULL,a->a9);
+    if(a->perturb) {uint32_t x;memcpy(&x,p,4);++x;memcpy(p,&x,4);}
+}
+static uint64_t tfsp_w_native(void *vec,float *p,float r,float *dir,float a5,uint64_t a6,uint64_t a7,float *move,float a9) {
+    (void)a6;(void)move;uintptr_t v[2];memcpy(v,vec,16);
+    fsp_solve((unsigned char*)v[0],(v[1]-v[0])/FSP_BOX,p,r,dir,a5,(int)(a7&0xff),NULL,a9);return 0;
+}
+static void test_fsp_synthetic(void) {
+    assert(fsp_selftest() && x4pm_kat()==X4PM_KAT_EXPECTED);
+    assert(fsp_lua_mode("redirect",8)==FSP_REDIRECT && fsp_lua_mode("shadow",6)==FSP_SHADOW && fsp_lua_mode("writer",6)<0 && fsp_lua_mode(NULL,0)<0);
+    const uint32_t saved_active=stats.active;stats.active=1;
+    static _Alignas(16) unsigned char boxes[3*FSP_BOX],kept[3*FSP_BOX];_Alignas(16) float p[4],dir[4];
+    static const uint32_t pa[4]={0x404dcb7cu,0x40626557u,0xbf030421u,0x3f800000u},da[4]={0x3f6ee60au,0xbd9c4598u,0xbeb3cc79u,0},
+        oa[4]={0x41f34a4au,0x3efe2f08u,0x41e3b01du,0x3f800000u};
+    memcpy(boxes,fsp_kat_a_boxes,sizeof(boxes));memcpy(kept,boxes,sizeof(boxes));memcpy(p,pa,16);memcpy(dir,da,16);
+    uintptr_t vec[3]={(uintptr_t)boxes,(uintptr_t)(boxes+sizeof(boxes)),(uintptr_t)(boxes+sizeof(boxes))};
+    tfsp_args a={fsp_f(0x412ae48eu),dir,fsp_f(0x3f96a609u),0.0f,1,0,0};
+    fsp_calls=fsp_ours=fsp_n=fsp_diff=fsp_max_ulp=fsp_order=fsp_move=fsp_invalid=fsp_x0=fsp_nocopy=0;
+    /* off: native alone */
+    fsp_mode=FSP_OFF;fsp_run(tfsp_native,&a,vec,p,a.r,dir,a.a5,1,NULL,a.a9,0);
+    assert(a.calls==1 && fsp_calls==1 && fsp_n==0 && !memcmp(p,oa,16));
+    /* redirect: native on a copy, ours on the scene; equal */
+    memcpy(boxes,kept,sizeof(boxes));memcpy(p,pa,16);fsp_mode=FSP_REDIRECT;
+    fsp_run(tfsp_native,&a,vec,p,a.r,dir,a.a5,1,NULL,a.a9,0);
+    assert(a.calls==2 && fsp_ours==1 && fsp_n==1 && fsp_diff==0 && fsp_order==0 && !memcmp(p,oa,16));
+    /* a native one ulp off: counted, ours stays on the scene */
+    memcpy(boxes,kept,sizeof(boxes));memcpy(p,pa,16);a.perturb=1;
+    fsp_run(tfsp_native,&a,vec,p,a.r,dir,a.a5,1,NULL,a.a9,1);
+    assert(fsp_n==2 && fsp_diff==1 && fsp_max_ulp==1 && fsp_x0==1 && !memcmp(p,oa,16));
+    /* shadow: native on the scene (its bits stay), ours on the copy */
+    memcpy(boxes,kept,sizeof(boxes));memcpy(p,pa,16);fsp_mode=FSP_SHADOW;
+    fsp_run(tfsp_native,&a,vec,p,a.r,dir,a.a5,1,NULL,a.a9,0);
+    {uint32_t x;memcpy(&x,p,4);assert(fsp_n==3 && fsp_diff==2 && fsp_ours==2 && x==oa[0]+1);}
+    a.perturb=0;
+    /* a move direction: native alone; an invalid vector: native alone */
+    const float move[4]={1,0,0,0};memcpy(p,pa,16);const unsigned before=a.calls;
+    fsp_run(tfsp_native,&a,vec,p,a.r,dir,a.a5,1,move,a.a9,0);assert(fsp_move==1 && a.calls==before+1 && fsp_n==3);
+    uintptr_t bad[3]={vec[1],vec[0],vec[0]};fsp_mode=FSP_REDIRECT;
+    fsp_run(tfsp_native,&a,bad,p,a.r,dir,a.a5,1,NULL,a.a9,0);assert(fsp_invalid==1 && a.calls==before+2 && fsp_n==3);
+    uintptr_t odd[3]={vec[0],vec[0]+FSP_BOX+4,vec[0]};
+    fsp_run(tfsp_native,&a,odd,p,a.r,dir,a.a5,1,NULL,a.a9,0);assert(fsp_invalid==2);
+    /* the box order compares what boxes mean (the padding +0x24..+0x2f does not count) */
+    memcpy(boxes,kept,sizeof(boxes));boxes[0x24]^=0xff;assert(fsp_same_order(boxes,kept,3));boxes[0x24]^=0xff;
+    boxes[0x30]^=1;assert(!fsp_same_order(boxes,kept,3));boxes[0x30]^=1;
+    /* the step chain's FR25 entry hook routes the call here while armed */
+    memcpy(boxes,kept,sizeof(boxes));memcpy(p,pa,16);fsp_w_original=tfsp_w_native;stc_sp_route=fsp_hook_w;
+    const LONG64 ours_before=fsp_ours;
+    stc_sp_solver(vec,p,a.r,dir,a.a5,0,1,NULL,a.a9);
+    assert(fsp_ours==ours_before+1 && fsp_diff==2 && !memcmp(p,oa,16));
+    stc_sp_route=NULL;fsp_w_original=NULL;
+    char out[2048];fsp_installed=1;fsp_route=1;fsp_stage="armed";
+    assert(fr_status(out,sizeof(out))>0 && strstr(out," solver=redirect sp_stage=armed sp_entry=chain sp_calls=8 sp_ours=3 sp=1:2:4 sp_order=0 sp_move=1 sp_invalid=2 sp_x0=1 sp_nocopy=0"));
+    fsp_installed=0;fsp_route=0;fsp_stage="idle";
+    /* arm refusals: the mode, fp_redirect not armed, the zero image's pins */
+    const DWORD saved_ui=ui_thread;const uint64_t saved_issued=stats.issued;const int saved_boot=boot_mode,saved_phase=boot_phase,saved_fr=fr_installed;
+    ui_thread=GetCurrentThreadId();stats.issued=0;boot_mode=0;boot_phase=0;fr_installed=0;
+    assert(!fsp_arm(7) && !strcmp(fsp_stage,"mode") && !fsp_arm(FSP_REDIRECT) && !strcmp(fsp_stage,"refused"));
+    fr_installed=1;assert(!fsp_arm(FSP_REDIRECT) && !strcmp(fsp_stage,"pins") && !fsp_installed);fr_installed=saved_fr;
+    ui_thread=saved_ui;stats.issued=saved_issued;boot_mode=saved_boot;boot_phase=saved_phase;
+    fsp_mode=FSP_OFF;fsp_stage="idle";stats.active=saved_active;
+    fsp_calls=fsp_ours=fsp_n=fsp_diff=fsp_max_ulp=fsp_order=fsp_move=fsp_invalid=fsp_x0=fsp_nocopy=0;
+    printf("fp redirect FR27 solver: known answers, modes/compare/move/invalid/x0/order, the step chain's route, status, arm refusals PASS\n");
+}
+#include "test_lockstep_fp_attack.h"
+#include "test_lockstep_fp_drones.h" /* FR30 */
 static void test_fp_redirect(void) {
     test_fr_vectors();
+    test_fsp_synthetic();
+    test_fa_synthetic();
+    test_fdr_synthetic();
     const uint64_t saved_issued=stats.issued;const DWORD saved_ui=ui_thread;const uint32_t saved_active=stats.active;
     const int saved_boot=boot_mode,saved_phase=boot_phase,saved_ids=world_identity_installed;
     world_identity_entry *prior=world_identities;const unsigned prior_count=world_identity_count;const LONG prior_sealed=world_identity_sealed;
@@ -1138,8 +1244,57 @@ static void test_fp_redirect_native_image(const char *path) {
         for(unsigned i=0;i<FR_LEN_SITES;i++) assert(fr_len_state(i)==1 && !fr_len_tail_clear(i)); /* ours, shown as the original */
         for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==1 && !fr_h_clear(i));
         assert(fr_pg_state()==1 && !fr_pg_clear() && (fr_done&FR_PG_DONE) && fr_owned());
+        {   /* FR27: the solver's entry through fsp_arm (our jump: the step chain is off here), then the executable's solver
+             * on its own bytes (exact reciprocal and the portable math installed, as in the lanes) through that entry on
+             * random scenes: 'redirect' runs native on a copy and ours on the scene, 'shadow' the reverse; they must agree
+             * bit for bit (no sp difference, no order difference), and both with ours called directly. */
+            assert(fr_sp_state()==0 && fr_sp_clear() && fr_sp_pins_ok() && !stc_sp_entry_done);
+            assert(!fsp_arm(7) && !strcmp(fsp_stage,"mode"));
+            assert(fsp_arm(FSP_REDIRECT) && fsp_installed && !fsp_route && fr_sp_state()==1 && !fr_sp_clear() && (fr_done&FR_SP_DONE));
+            assert(fr_sp_pins_ok() && fr_owned() && fsp_arm(FSP_REDIRECT) && !fsp_arm(FSP_SHADOW)); /* the view keeps the pin; a rerun */
+            /* this copy is mapped read-write: the solver with its callees and the two portable-math entries it calls
+             * (the sincos pair 0x1750253, atan2f 0x1a1a398) made executable */
+            static const uint32_t exec_pages[3][2]={{0x14e1000u,0x4000u},{0x1750000u,0x1000u},{0x1a1a000u,0x1000u}};
+            DWORD exec_old[3];
+            for(unsigned i=0;i<3;i++) {
+                assert(VirtualProtect(image+exec_pages[i][0],exec_pages[i][1],PAGE_EXECUTE_READWRITE,&exec_old[i]));
+                FlushInstructionCache(GetCurrentProcess(),image+exec_pages[i][0],exec_pages[i][1]);
+            }
+            unsigned char *saved_pm=pmath_page;pmath_page=pmath_alloc_page();assert(pmath_page && pmath_write_page());
+            for(unsigned i=0;i<PMATH_COUNT;i++) memcpy(pmath_original[i],image+pmath_sites[i].rva,5);
+            assert(pmath_switch(1)==1);
+            typedef uint64_t (*entry_fn)(void *,float *,float,float *,float,uint64_t,uint64_t,float *,float);
+            const entry_fn entry=(entry_fn)(void*)(image+FR_SP_SOLVER);
+            tfsp_seed=0x2727u;unsigned moved=0,searched=0,large=0;
+            for(int mode=FSP_REDIRECT;mode>=FSP_SHADOW;mode--) {
+                fsp_mode=mode;
+                for(unsigned i=0;i<1500;i++) {
+                    static tfsp_scene sc,t;tfsp_make(&sc);t=sc;
+                    uintptr_t vec[3]={(uintptr_t)sc.boxes,(uintptr_t)(sc.boxes+sc.n*FSP_BOX),(uintptr_t)(sc.boxes+sc.n*FSP_BOX)};
+                    const LONG64 n0=fsp_n,d0=fsp_diff,o0=fsp_order;float p0[4];memcpy(p0,sc.p,16);
+                    entry(vec,sc.p,sc.r,sc.dir,sc.a5,0x1234,(uint64_t)sc.y,NULL,sc.a9);
+                    if(fsp_n!=n0+1 || fsp_diff!=d0 || fsp_order!=o0) {printf("FR27 scene %u mode %d: n %lld diff %lld order %lld\n",i,mode,(long long)(fsp_n-n0),(long long)(fsp_diff-d0),(long long)(fsp_order-o0));assert(0);}
+                    fsp_solve(t.boxes,t.n,t.p,t.r,t.dir,t.a5,t.y,NULL,t.a9);
+                    assert(!memcmp(sc.p,t.p,16) && !memcmp(sc.boxes,t.boxes,t.n*FSP_BOX));
+                    moved+=memcmp(p0,sc.p,16)!=0;searched+=sc.a5!=0.0f;large+=sc.a9>0.0f && sc.a9<25000.0f;
+                }
+            }
+            assert(fsp_n==3000 && fsp_diff==0 && fsp_order==0 && fsp_calls==3000 && fsp_ours==1500 && fsp_move==0 && fsp_invalid==0);
+            assert(moved>1000 && searched>600);
+            assert(pmath_switch(0)==1);VirtualFree(pmath_page,0,MEM_RELEASE);pmath_page=saved_pm;
+            for(unsigned i=0;i<3;i++) {DWORD ignored;assert(VirtualProtect(image+exec_pages[i][0],exec_pages[i][1],exec_old[i],&ignored));}
+            fsp_mode=FSP_REDIRECT;
+            printf("fp redirect FR27 native image: the solver 0x14e4320's entry armed/owned (pins through the view), its own bytes (exact reciprocal, portable math) through the entry on 3000 random scenes ('redirect' and 'shadow'; %u moved, %u with the angle search, %u with a9 in range): native == ours, sp=0:0:3000, order 0 PASS\n",
+                   moved,searched,large);
+        }
+        test_fa_native_image(); /* FR29b, while armed */
+        test_fdr_native_image(); /* FR30, while armed (FR29b's sites too) */
         assert(fr_len_pins() && fr_h_pins_ok() && fr_pg_pins_ok() && fr_arm(FR_REDIRECT,3)); /* the view keeps the pins passing; a rerun is accepted */
         fr_restore();assert(!fr_installed && fr_restored && !fr_done && fr_len_state(0)==0 && fr_len_state(1)==0 && fr_tail_state()==0);
+        test_fa_native_image_restored(); /* FR29b: fr_restore took its sites back first */
+        test_fdr_native_image_restored(); /* FR30: likewise */
+        assert(!fsp_installed && fsp_mode==FSP_OFF && fr_sp_state()==0 && fr_sp_clear() && !strcmp(fsp_stage,"restored")); /* FR27 */
+        fsp_stage="idle";fsp_calls=fsp_ours=fsp_n=fsp_diff=fsp_max_ulp=fsp_order=fsp_move=fsp_invalid=fsp_x0=fsp_nocopy=0;
         for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==0);
         assert(fr_pg_state()==0 && fr_pg_clear());
         assert(fr_aff_state()==0 && fr_aff_clear() && fr_bl_state()==0 && *(void**)(image+FR_BL_SLOT)==(void*)(image+FR_BL_FN));

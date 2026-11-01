@@ -68,8 +68,11 @@ class ExactReciprocalSites(unittest.TestCase):
                         trampoline += size
                     offset += size
                 self.assertEqual(offset, length)
-                self.assertTrue(parts[0][2], 'a window starts at a rewritten instruction')
-                self.assertLess(length - parts[-1][1], 5, 'no instruction beyond the first five bytes is needed')
+                if parts[0][2]:   # a window starts at a rewritten instruction, needing nothing beyond its first 5 bytes
+                    self.assertLess(length - parts[-1][1], 5, 'no instruction beyond the first five bytes is needed')
+                else:             # FR27: or ends with one (forward an inner boundary was referenced), opened by no more
+                    self.assertTrue(parts[-1][2], 'a window holds a rewritten instruction at one end')
+                    self.assertLess(length - parts[0][1], 5, 'no instruction before the last five bytes is needed')
                 self.assertLessEqual(trampoline, 128, f'{rva:#x}: trampoline may exceed its 128-byte slot')
                 end = rva + length
 
@@ -80,6 +83,25 @@ class ExactReciprocalSites(unittest.TestCase):
         for site in (0xb34fd, 0x6a15c0, 0xcf3897, 0xd4749e, 0x14e0659):
             with self.subTest(site=hex(site)):
                 self.assertEqual(rows.get(site), '{0,4,3,0},{4,4,4,0}')
+
+    def test_fr27_leaves_switch_arms_and_backward_windows(self):
+        # FR27 (gen_exact_reciprocal.py windows_descent): the leaf functions and MSVC switch arms the FR26 inventory
+        # listed (63 instructions) are all rewritten; the two windows refused as 'inner target' now end with their
+        # instruction (0xeca464 mulps, rsqrtss; 0x10b43b9 movaps, rcpss).
+        rows = {int(rva, 16): insns for rva, _, _, _, insns in ROW.findall(HEADERS['windows'][0].read_text())}
+        chains = (0x7f2e1, 0x7f33a, 0xc52f5, 0x3ebc22, 0x3ebdec, 0x3ec5a7, 0x3ec76f, 0x83cd07, 0x86fbd2, 0x970bf0,
+                  0x970c25, 0x970c6e, 0x970d53, 0x970d90, 0x970de3, 0x9714e2, 0x971a0b, 0x971ac1, 0x972006, 0xd0b7dd,
+                  0xd8e6fc, 0xd8f31c, 0xd8fd1b, 0xdb312b, 0xdb3204, 0xe9771d, 0x14df1ef, 0x14dff89)
+        for site in chains:
+            with self.subTest(site=hex(site)):
+                self.assertEqual(rows.get(site), '{0,4,3,0},{4,4,4,0}')
+        for site, insns in ((0x7f22f, '{0,4,1,0},{4,4,0,0}'), (0xc5342, '{0,4,2,0},{4,4,0,0}'),
+                            (0x8e23e1, '{0,4,1,0},{4,8,0,0}'), (0xd71d0e, '{0,4,2,0},{4,4,0,0}'),
+                            (0xd71f82, '{0,4,2,0},{4,4,0,0}'), (0xeca464, '{0,4,0,0},{4,4,2,0}'),
+                            (0x10b43b9, '{0,3,0,0},{3,4,1,0}')):
+            with self.subTest(site=hex(site)):
+                self.assertEqual(rows.get(site), insns)
+        self.assertIn('refused: none', HEADERS['windows'][0].read_text())
 
     def test_linux_windows_avoid_the_agent_pins_and_the_decimal_readers(self):
         pinned = ROOT / 'src/rust/x4mp-agent/src/pinned.rs'

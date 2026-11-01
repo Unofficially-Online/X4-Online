@@ -506,7 +506,7 @@ class ProbeIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         self.lua.execute('''
-          X4LAN_CONFIG={native_gate_test=true,test_profile='45841',slot='p1',native_gate_hash='clock',
+          X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',slot='p1',native_gate_hash='clock',
             native_gate_snapshot_sha=string.rep('a',64),port=12345,token=string.rep('c',32),native_gate_player_orders=true,
             native_gate_clients=3}
           X4LAN_SHA256={digest=function(data) hashed=data;return string.rep('b',64) end}
@@ -618,8 +618,10 @@ class BuilderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             out = self.build(directory, self.PLAN)
             files = (out / 'ui.xml.files').read_text().splitlines()
-            self.assertEqual(files[:3], ['ui/native_gate_inputs_core.lua', 'ui/native_gate_player_orders_core.lua',
-                                         'ui/native_gate_player_orders.lua'])
+            # A battle snapshot session: the session defaults' files first (native_gate_defaults.lua), then the orders adapter.
+            self.assertEqual(files[:2], ['ui/native_gate_defaults.lua', 'ui/native_gate_inputs_core.lua'])
+            self.assertLess(files.index('ui/native_gate_player_orders_core.lua'), files.index('ui/native_gate_player_orders.lua'))
+            self.assertNotIn('native_gate_defaults', (out / 'ui/config.lua.append').read_text())
             self.assertEqual(files[-1], 'ui/native_gate_probe.lua')
             self.assertTrue((out / 'md/native_gate_player_orders.xml').is_file())
             config = (out / 'ui/config.lua.append').read_text()

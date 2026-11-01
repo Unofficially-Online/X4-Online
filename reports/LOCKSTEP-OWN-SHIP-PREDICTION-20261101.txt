@@ -1,0 +1,345 @@
+LOCKSTEP OWN-SHIP PREDICTION (roadmap A2: hide the input delay)
+1 November 2026 | offline implementation and unit tests; no X4 launched, no live result yet
+
+SUMMARY
+
+Goal (user): on the own screen the own ship answers the controls at once, while the shared simulation
+applies the same inputs d steps later underneath; the other players' ships are drawn where they are
+expected to be and corrected smoothly as their steps arrive. The prediction is display only; the census
+(about 530,000 objects compared between clients) must stay identical.
+
+Delivered on contrib/ferrite-predict2 (base: the smoke e457b4c9), default off, nothing changes without
+native_gate_own_predict:
+- src/native/engine/lockstep_own_predict.h: the predictor for stock piloting (the people config's path):
+  per slot an online-fitted command model (stock record -> X4's processed control channels) and response
+  model (channels -> body rates, acceleration limited), a prediction from the newest authoritative pose
+  every step, the correction policy of section 3, error measurement against the authoritative pose,
+  and the slot-10 display (a scoped pointer swap of the ship's published pose block, every byte back
+  before slot 10 returns). Stop reason 184 (present failures only).
+- src/native/engine/lockstep_own_predict_lua.h: gate.own_predict / own_predict_frame / own_predict_status.
+- lockstep_pilot_predict.h: the existing slot-10 call pair (predict_present_enter/leave, called by the
+  render split's wrapper) now serves both presenters; lockstep_render_rng.h is untouched (the render
+  frames branch edits it).
+- tools/dev/native_gate_probe.lua: arming per client, an OWN_PREDICT row per step written at once,
+  OWN_PREDICT_STATUS every 600 ticks, OWN_PREDICT_STOP. tools/dev/check_gate_options.py: the rules.
+- Tests: src/native/engine/test_lockstep_own_predict.h (in test_lockstep_gate.exe),
+  tests/test_native_gate_own_predict.py.
+What works offline: everything above on fake engine memory and a synthetic ship (section 9). Not verified:
+anything about the real engine (the layouts read are the ones lockstep_pilot_present.h and
+lockstep_pilot_eye.h already use live, but the prediction quality on X4's real flight model, the census
+with present on, and the look are open). The live-test spec is section 11.
+
+1. WHAT "HIDING THE DELAY" MEANS UNDER LOCKSTEP
+
+A record captured at tick c applies at c+d on every client (d = native_gate_pilot_delay: 3 ticks = 100 ms
+at 30 steps/s with lookahead 1; lookahead 3 + delay 5 = 167 ms, the 1 Nov latency test at 100 ms round
+trip). The simulated ship S(t) is therefore the latency-free ship N(t) shifted by d: N(T) = S(T+d). Showing
+an estimate of S(T+d) in the frame of tick T is exactly the native, delay-free motion of the own ship; the
+rest of the world stays at T (the "client a little ahead" of reports/LOCKSTEP-PREDICTION-20261029.txt).
+Every record that decides S(T+1..T+d) has been captured on this client by tick T: the own slot's
+prediction knows all of its inputs. Other players' records reach this client after the relay round
+trip; at tick T those applying up to about T+d-(round trip in steps) are known, the rest are guessed.
+
+Why a new module: lockstep_pilot_predict.h (29 Oct) predicts from pilot records (Q15 targets for the
+Agent's Steering). The people config flies with stock piloting (lockstep_pilot_stock.h: X4's own
+PlayerController path, replayed from each client's recorded dispatch stream of control ids, cursor
+outputs and SPACE edges), whose records carry no targets, and the option checker refuses the old
+predictor on stock clients. The new module reuses its rotation math, the view-cache pins and the slot-10
+call pair; the old predictor is unchanged and the two are exclusive (arming refuses).
+
+2. DESIGN
+
+2.1 Read every step (MoveWorker, VBI slot 6, after this tick's stock capture; guarded reads, no writes)
+- Pose S(T): the ship's published view-cache pose block [A] (object+0xe0+A*0x80: +0 cached parent, +0x28
+  the local PosRot, row 0 the translation, A = *0x38f4ee0 on this thread). This is exactly what slot 10
+  draws; the parent must be the live parent (+0x70).
+- Controls u(T): the slot's processed channels after this tick's update (input bank, report
+  LOCKSTEP-VIRTUAL-PLAYERS-RE section 2): yaw/pitch/roll 0x2f4b750..758, smoothed throttle 0x2f4b764,
+  x/y/z 0x2f4b788..790, flight control 0x2f4b828. Slot 1 from the canonical bank (the probe's frame runs
+  with the presentation scope paused), slots 2..N from their stores (lockstep_pilot_slots.h order).
+- Inputs: the stock record applied at T (staging ring; a consumed entry keeps its bytes), and the
+  pending ones applying at T+1..T+h: the own slot's from this client's capture ring (pstk_locals), other
+  slots' from the staging ring once they have arrived. Records are decoded with pstk_decode.
+
+2.2 Command model (records -> u)
+Features phi(t): the record's three cursor outputs (mouse steering; zero without the cursor flag), the
+held values of the seven replayed ranges (stick axes, throttle axis; the wheel 0xa is an impulse of its
+own tick), the held states of the 26 replayed states (keys), folded from the event stream in order.
+Model per channel: u(t) = W [u(t-1), phi(t), 1], multi-output recursive least squares (forgetting 0.999,
+no forgetting while the covariance trace is above 1e7, so no wind-up without excitation). This form holds
+static maps (mouse and stick), key ramps (a lag) and integrators (the throttle setpoint under the
+accelerate/decelerate keys). A channel uses its model after 30 samples and only while its one-step error
+(slow mean) is below 0.9x the error of holding the last value; a predicted value is clamped to the range
+seen plus a tenth. Otherwise it holds.
+
+2.3 Response model (u -> body rates)
+Body rates as lockstep_pilot_predict.h: linear x/y/z and angular x/y/z in the previous pose's frame, by
+finite difference. Per axis v(t) = a v(t-1) + b.u(t) + c (RLS, prior: constant velocity), i.e. a first
+order response towards a target linear in the controls. X4 limits the acceleration, which a linear model
+cannot express, so: a step change at 0.8x the envelope of changes or more (rise and fall kept apart) is
+the limit, not fitted (fitting it as linear drags the whole fit; seen in the synthetic tests), and a
+predicted change is clamped to the envelope. The envelope grows by half at most per step once
+established (one impulse cannot open it) and decays slowly (0.9999 per step). A step whose prediction
+error is beyond 4 sigma, leaves more than half of the change unexplained and comes with no control change
+is an impulse (a hit, a ram, an explosion): not fitted, unless refusals become frequent (above 12 % in the
+fast mean: then the model is the wrong one and fits again). An axis uses its model after 30 samples and
+only while its one-step error (slow mean, of the clamped prediction) is below 0.9x the error of constant
+velocity: never knowingly worse than dead reckoning. Flight control off: constant velocity.
+
+2.4 Prediction
+Every step from the newest authoritative S(T) and v(T): commands u(T+1..T+h) from the pending records (a
+missing one holds the previous controls and cursor), then velocities and poses. h = min(d, cap), cap
+native_gate_own_predict_horizon (default 10 steps = 333 ms). A model error never accumulates beyond one
+horizon. The measured full-horizon prediction P(T+h) is kept with three baselines for comparison when T+h
+is simulated: constant velocity from S(T) ("dead"), no prediction at all (S(T), "none": what the delay
+costs today), and the displayed pose ("display").
+
+2.5 Other players' ships
+Same model per slot, fitted on every client from the same authoritative ticks; predicted to the same
+T+h (where their owners see them, consistent with the own ship: every player ship is drawn d steps ahead
+of the world). Known records drive the first steps, the remaining ones hold the last known controls; when
+the real records arrive, the next step's prediction differs and the correction (3) takes the jump.
+native_gate_own_predict_others = false predicts the own ship only.
+
+3. CORRECTION POLICY (answers the coordinator's question; constants in lockstep_own_predict.h)
+
+The display is D(T) = P(T+h_eff) composed with a correction offset C. Every step:
+- smooth   C takes the jump between the previous display path continued to this step (its end state
+           advanced on the newest command) and the new prediction, and decays with exp(-dt/tau),
+           tau = native_gate_own_predict_tau (default 150 ms, 0..2000). A new own input causes no jump
+           (the continuation runs on it). The part of a jump inside a band of 5 cm plus 10 % of the
+           step's motion (2 mrad plus 10 % of its rotation) is shown at once: the steady update of an
+           accelerating ship is no lag (a 2 % band gave a display error several times the model's on
+           the synthetic ship; with 10 % it is within 15 % of it: 0.0165 against 0.0143 m).
+- snap     C beyond 20 m plus one step of the ship's own motion, or beyond 0.35 rad (20 degrees), is
+           dropped: the display jumps to the prediction (counted: snaps).
+- reset    a discontinuity clears the history, the models stay: D = S(T), the lead grows back over 2h
+           steps (counted by cause): the ship changed (respawn: pilot_slots object), the parent changed
+           (docking, undocking, a zone or highway change), a step 50 m off the ship's own previous
+           velocity (teleport, jump), an unreadable pose, a dead slot.
+- lead     h_eff moves towards its target by half a step per step: target 0 at travel speed (above
+           1200 m/s, back below 800 m/s) and while the predicted lead exceeds 300 m or 0.6 rad, else h.
+           So entering travel drive or a highway the lead shrinks over 2h steps instead of snapping, and
+           grows back after it.
+- horizon  capped at native_gate_own_predict_horizon steps; a delay above the cap is only partly hidden.
+- camera   the cockpit camera hangs under the ship (cockpit view: the render composes the world relative
+           to the cockpit through the ship's pose block), so it follows D, which is continuous except at a
+           snap or a reset; the correction decays at tau, so a correction never jerks the view.
+The cases asked about:
+  collisions, rams, hits, explosions: the impulse is in S(T+1) at once; the next prediction starts from it
+    (no accumulated error), the response fit refuses the step, the display converges over tau (snap only
+    if the path moved more than 20 m plus a step: a large explosion). Measured offline: a 1.5 m path jump
+    decays below 5 % within 40 steps (tau 150 ms, 60 steps/s), a 50 m jump snaps once and is not a reset.
+  docking / undocking: the ship's parent changes (station/dock): reset; while docked the ship does not
+    move, the lead is 0.
+  travel drive, highways: the lead ramps to 0 (speed rule); a zone or highway change is a parent change
+    (reset); a velocity step of 50 m in one step is a reset.
+  teleports, respawn: reset (jump / ship cause); a dead slot shows nothing predicted until it respawns.
+  other players' inputs inside the delay window: held, then corrected over tau when they arrive (the
+    "missing" count per row says how many of the h records were guessed).
+  flight control off (menus, map, autopilot): constant velocity, the lead stays (the ship keeps flying).
+  aiming and firing: section 6.
+
+4. DISPLAY TODAY (one frame per step) AND WHY THE CENSUS CANNOT SEE IT
+
+'present' (needs native_gate_render_rng_split = true): the render split's wrapper calls
+predict_present_enter() before slot 10 (GameRender::Move: every camera, the HUD draw) and
+predict_present_leave() in its __finally. There, on the MoveWorker only, for each predicted ship whose
+published block [A] still holds the sampled S(T) (1 cm, 1e-4) under the sampled parent: a private 16-byte
+aligned copy of the block (the 0x60 bytes: PosRot with its w lanes, then the scale and velocity words as
+the engine has them) with the displayed xyz rows; the entry [A]+0x28 is swapped to it by compare-and-swap
+and swapped back by compare-and-swap at the leave (an engine pointer that replaced ours stands: counted
+lost). This is lockstep_pilot_eye.h's published-pose technique, used live by the people config on the
+player's own block; here on the ships' blocks. The render walk (0x3de630) composes every object relative
+to the camera's cockpit through these blocks, so the cockpit view shows the world from the predicted own
+ship and the other players' ships at their predicted poses.
+Census argument: the module writes no engine memory outside slot 10; in slot 10 it changes one pointer
+per predicted ship in the bank only the MoveWorker reads during slot 10 (other threads read the other
+index), and puts it back before slot 10 returns, also on an exception. It draws no RNG and calls no engine
+code. What remains is what any client-local camera already exercises: slot-10 consumers of the drawn pose
+(LOD flag, motion-vector history, render-side welding effects, camera-distance effects; listed in the 29
+Oct report section 3), which the render split, native_gate_runtime_ids_local and the view fixes of the
+people config already isolate for per-client cameras. The census run of section 11 decides; 'swap' mode
+(the swap with the simulated pose itself) separates a swap effect from a pose effect if it differs.
+Precondition checks per call (fail closed per ship, counted): stale tick, another thread, block not S(T)
+(and not the previous step's, which a render-only frame on the other bank may show), parent changed,
+unreadable block, failed swap. A nested entry or a failed restore stops the gate (184).
+
+5. THE RENDER-FRAMES JOIN (lockstep_render_frames.h, contrib/ferrite-render-frames)
+
+Render-only frames run slot 10 only (no slot 6: no new step for this module), so between two steps the
+same predictions are presented again. The interface (all in lockstep_own_predict.h; no file of the render
+branch was edited):
+- double (*opred_display_offset)(void): set by the render module at its arm. Returns the display time of
+  the current slot 10 relative to this step, in steps, -1..1 (0 = the step itself, e.g. 0.5 half way to
+  the next step; -1+alpha if the interpolator draws the world between T-1 and T). The module advances the
+  displayed pose by that offset at its last rates and decays the correction by it. NULL (today): 0.
+- int opred_owns(const void *object): 1 while slot 10 draws that object at a predicted pose. The
+  interpolator runs inside predict_present_enter/leave (after the enter, before the leave) and leaves
+  these objects alone; outside that window it must skip the predicted slot ships itself.
+- int opred_display_pose(unsigned slot, double offset, float out[12]): a slot's displayed pose (zone
+  frame: position and the three axes) at any offset, for a module that wants to draw it itself.
+- The block check accepts S(T) or the previous step's pose (the other bank after a publish), counted as
+  present_previous.
+The prediction itself, its correction policy and the logs are the same with or without render frames.
+
+6. AIMING AND FIRING
+
+- Fire rides the record (PSTK_FLAG_FIRE / FIRE2) and applies at T+d: when the simulated ship reaches the
+  pose the player saw when pressing (up to the prediction error). The shot leaves from there.
+- Aim is recorded in the ship's frame (lockstep_pilot_stock.h): with nothing picked it is the cursor ray,
+  the same in the predicted and the simulated view (the camera sits in the cockpit), so the shot goes
+  where the player pointed relative to the ship. A picked point comes from X4's camera pick (717ed0, run
+  in UniverseFrameUpdate on the simulated camera), so it is off by the lead (about lead_pos / range plus
+  lead angle). Fix designed, not done: run the pick with the ship's live pose predicted.
+- Projectiles, impacts and NPCs are simulated and drawn at T; the own ship and the other players' ships
+  at T+d. A shot therefore appears d steps after the trigger, at the simulated muzzle (behind the drawn
+  ship by its lead). Against another player, aiming at the drawn (extrapolated) ship aims where the
+  simulation will have it when the shot is fired; against an NPC (drawn at T) the shot fires d steps
+  later. A shot can look like a hit and miss in the simulation (or the reverse); the simulation, and with
+  native_gate_hit_claims = 'victim' the victim's own client, stays authoritative.
+- HUD brackets, lead marks and distances are computed in slot 6 from the simulated state: off by the lead
+  while flying fast or turning (a rotation lead of 100 ms at 40 deg/s is 4 degrees). Mitigations designed
+  in the 29 Oct report (an offset export for the HUD Lua; the camera-table rewrite); not done.
+
+7. CONFIGURATION (per client: a value or a per-client table, like the device)
+
+  X4LAN_CONFIG.native_gate_own_predict = 'present'     -- or 'observe' (true), 'swap', false; {'present','observe'}
+  X4LAN_CONFIG.native_gate_own_predict_others = true   -- false: the own ship only
+  X4LAN_CONFIG.native_gate_own_predict_tau = 150       -- correction time constant, ms (0..2000)
+  X4LAN_CONFIG.native_gate_own_predict_horizon = 10    -- cap in steps (1..30); horizon = min(delay, cap)
+  X4LAN_CONFIG.native_gate_own_predict_rows = 1        -- an OWN_PREDICT row every N steps (0 none)
+Needs stock piloting with this client capturing its own slot (capture source 'stock'); 'present' and
+'swap' need native_gate_render_rng_split = true and the view-cache pins of lockstep_pilot_predict.h
+(0x3de630, 0x979ef0, 0xef41e0, verified against X4.exe 9.00 by the native-image test). Excludes
+native_gate_pilot_predict. Probe refusals happen before loading; the gate's reason is in the error row.
+
+8. LOGS (never hashed, never in the declared state)
+
+OWN_PREDICT_ARMED slot= mode= others= tau_ms= horizon_cap= rows=
+OWN_PREDICT tick=T h=H sK=h_eff/err_pos/err_ang/lead_pos/lead_ang/snaps/missing per predicted slot, written
+  at once every native_gate_own_predict_rows steps:
+    h_eff      the shown horizon (0 while travel or after a reset, H in flight)
+    err_pos/ang the error (m, rad) of the prediction made h steps ago against the authoritative pose that
+               landed now ('-' when none landed)
+    lead_pos/ang how far the shown pose is from the authoritative one now (m, rad): the visible lead
+    snaps      total snaps; missing: records guessed in this step's horizon
+  sK=- : nothing predicted this step (dead slot, unreadable pose).
+OWN_PREDICT_STATUS (every 600 ticks) / OWN_PREDICT_STOP: mode, horizon, cap, delay, tau, frames, stage,
+  failures, present_calls/applied/restored/lost/refused/stale/previous/thread; per slot: own, samples,
+  predictions, checked, h_eff, snaps, bounded, suspends, missing, actions, edges, nonfinite,
+  resets=read:,parent:,jump:,ship:,dead:, ready=<hex> (bits 0..6 command channels, 8..13 axes on their
+  model), command= and axes= sample counts, refused= per axis, model=/dead=/none=/display= position
+  mean/rms/max,angle mean/rms/max, lead= the same for the shown lead, hist= model position error
+  histogram (edges 0.01, 0.03, 0.1, 0.3, 1, 3, 10 m).
+
+9. TESTS AND OFFLINE RESULTS
+
+test_lockstep_gate.exe (with and without the pinned X4.exe) and pytest pass:
+- features: the fold (held ranges and states, wheel impulse, cursor per record, actions and SPACE edges
+  counted, non-finite values not taken), store offsets equal the slots' own walk, applied and pending
+  records from the right rings;
+- models: a static map, a lag and an integrator fitted exactly and used; an unexcited channel holds; a
+  first-order response fitted within 1e-4; an impulse refused, a control change fitted, the envelope not
+  opened by one impulse, the clamp; noise alone never beats constant velocity; degenerate RLS updates;
+  smoothing decay, snaps and the band;
+- observe end to end on fake engine memory: two stock slots over 1200 steps (h = 3), a truth ship that is
+  not of the model's form (mouse and stick added and clamped, a roll key ramp, a throttle integrator, an
+  acceleration-limited response), the own slot with every pending record, the other's arriving two steps
+  late (two of three guessed every step); observe writes no engine memory (checked around every frame).
+  Results (test harness step 1/60 s, h = 3):
+                       position mean/max (m)    angle mean (rad)   display mean (m)
+    own, model         0.0143 / 0.27            0.00068            0.0165
+    own, dead reckon.  0.0805 / 0.31            0.00269
+    own, none          9.39 (mean)                                                 (lead mean 9.4 m)
+    other, model       0.0370 / 0.31            0.00081            0.0519
+    other, dead        0.0806 / 0.31            0.00269
+  so on this truth the model is 5.6x better than dead reckoning in position and 4x in angle for the own
+  ship, about 2x and 3x for another player's ship with two of three inputs unknown;
+- correction policy on the same run: a ram (path jump 1.5 m) refused by the fit, no snap, decays below
+  5 % within 40 steps; an explosion (path jump 50 m) snaps once, no reset; travel speed: the lead ramps down
+  by half a step per step, suspends=1, back to h after slowing down; resets by cause (teleport, parent,
+  unreadable, new ship, dead) and the lead regrowing over 2h steps;
+- present through the real render_rng_execute: both ships swapped during the original, the drawn xyz the
+  displayed pose, the w lanes and following words the engine's, the entries and blocks back after slot
+  10, the own ship drawn ahead along its forward axis; a render-only frame (again in the same step, with a
+  display offset of half a step: the pose moved on by it; the other bank's previous pose accepted); an
+  engine pointer that replaced ours stands (lost); an exception restores both; a changed block, another
+  thread, a stale tick are refused per ship; 'swap' draws the block's own pose through the same swap; a
+  nested entry stops the gate with 184, nothing presents after;
+- arming refusals and the identical rerun; worst-case status 5760 bytes (buffer 8192), row 426 (512);
+- Python: the probe's arming per client, rows written at once and thinned by the stride, status and stop
+  rows, nothing in the hashes, refusals before loading (and the gate's reason in the error row), the
+  option checker's rules. The existing probe, stock, checker and sandbox suites pass (four failures in
+  test_native_creation_load/trace exist on the base commit too: their extracted probe tail has no ticklog).
+
+10. RISKS AND OPEN POINTS
+
+- The real flight model: X4's control scheme (d6d420) and solver (d93440) are not of the model's form
+  (assist, roll mix, response curves, boost, travel). The model only replaces hold/constant velocity
+  where it measures better; how much better on X4 is what O1 measures. RAW rows like the 29 Oct ones are
+  not added; the status carries the fit state (ready mask, sample counts, refusals).
+- Pose block [A] in slot 6 = what slot 10 draws: assumed from the 29 Oct static analysis and the live
+  present/eye scope; if slot 6 sees the previous step's block, everything is consistently one step
+  behind (the horizon is then short by one; O1's err rows show it as a constant lead error).
+- Velocity noise: finite differences of float32 zone positions (about 0.06 m/s at 20 km); heavy noise
+  (0.3 m/s in the Python replica of the fit) degrades the forward-axis fit. Far from a zone's origin the
+  linear model may stay on constant velocity.
+- Stage-1 artefacts (29 Oct report): HUD brackets and lead marks, frustum culling and LOD (camera table,
+  zone space), world-space effects stay simulated; the camera pick is simulated (section 6).
+- Slot-10 consumers that read the drawn pose and reach the simulation: none known beyond those the people
+  config already isolates; the census decides (P1). 'swap' separates the swap from the pose.
+- A presenting client (slot k >= 2) draws in the presentation scope; the ship swap happens before the
+  scope opens (predict_present_enter precedes pres_render_call), so slot k's ship is swapped as any other.
+- The thresholds (band, snap, travel speeds, lead bounds) are first guesses; O1/P2 rows give the numbers
+  to tune them.
+
+11. LIVE-TEST SPEC (coordinator; DLL and probe of this branch; overlay derived from overlay-Play42P)
+
+Common: start from the Play42P config unchanged (stock slots 'all', both clients capture, demo/demo2
+scripts, render split on, delay 3, lookahead 1). The demo scripts (relative to window start 40) throttle
+up, yaw, pitch, boost, travel (slot 1 at 370..520), stop and toggle assist: enough excitation for the fit
+and a travel phase for the suspension. 700 ticks unless said otherwise. For every run send both clients'
+OWN_PREDICT_ARMED, OWN_PREDICT_STATUS (600), OWN_PREDICT_STOP, every 30th OWN_PREDICT row (or all of
+them), the STOP line and the census verdict.
+Census and digests (every run): relay pass, 0 digest mismatches, census 0 - identical to a Play42P run
+without these lines (the module only reads in slot 6 and swaps pointers inside slot 10 only).
+
+O1 observe, no added latency. Append on both clients:
+    X4LAN_CONFIG.native_gate_own_predict = 'observe'
+  Pass: census 0; OWN_PREDICT rows on every tick on both clients, h=3; STATUS failures=0, samples about
+    the tick count for s1 and s2, resets=read:0 (else the pose block or parent read fails: send it),
+    ship:0, dead:0 (parent/jump may count around travel: send them); slot 1 h_eff 0 in rows during
+    travel (suspends>=1); ready= shows axes (bits 8..13) once the maneuvers have run.
+  Measure (send): STOP model= vs dead= vs none= per slot (model mean below dead mean is the first
+    success; how far below says how much of the delay the response model hides), display=, lead=, hist=,
+    snaps, missing (own slot about 0; the other slot 0 at this latency or small).
+O2 observe, LATENCY_MS=100 (runNLong2.sh passes it to the relay's --latency-ms), lookahead 3, delay 5:
+    Play42P with X4LAN_CONFIG.native_gate_lookahead = 3 and X4LAN_CONFIG.native_gate_pilot_delay = 5, plus
+    the O1 line. 1200 ticks.
+  Pass: census 0; h=5 in the rows; own slot missing 0; the other slot's missing per step now shows the
+    round trip (expected 3 to 4 of 5); snaps rare outside travel.
+  Measure: as O1; compare the other slot's model error with O1 (the cost of guessed inputs).
+P1 present on client 1 only, then swap (separation run if P1's census differs):
+    X4LAN_CONFIG.native_gate_own_predict = {'present','observe'}
+  Pass: census 0 (the main question); client 1 STATUS present_applied about 2 per tick (own and slot 2's
+    ship), present_restored = present_applied, present_lost 0, present_refused small (send any: it names
+    a block or parent mismatch), failures 0, no stop 184; client 2 as O1. Look (screenshots of client 1
+    flying the demo): no jitter of the cockpit, the world steady; slot 2's ship drawn about its speed x
+    100 ms ahead of its simulated position (client 2, observe only, draws it simulated).
+  If P1's census differs and O1's did not: X4LAN_CONFIG.native_gate_own_predict = {'swap','observe'}
+    (the same swap with the simulated pose). A difference with swap is the pointer swap itself (send the
+    first differing objects); none with swap is the drawn pose reaching the simulation through a slot-10
+    consumer (bisect with the 29 Oct list).
+P2 present on both, LATENCY_MS=100, lookahead 3, delay 5, 1200 ticks:
+    X4LAN_CONFIG.native_gate_own_predict = 'present'
+  Pass: census 0, both clients as P1.
+  Measure: lead= (how far ahead the own ship is shown: about speed x 167 ms), display= against model=
+    (the cost of the correction), snaps per minute.
+G people (two persons, Play42P + native_gate_own_predict = 'present', LATENCY_MS=100, lookahead 3,
+  delay 5): fly freely, dogfight each other, boost, travel, dock and undock, open the map in flight.
+  Judge: does the own ship answer the mouse and keys at once; does the other player's ship move smoothly
+  (corrections visible?); any cockpit jerk (when?). Pass: census 0, no stop 184. Send: STATUS/STOP of both
+  clients, the OWN_PREDICT rows around any reported jerk (the snaps column and h_eff say whether it was a
+  snap, a reset or the travel ramp).
+  Tune afterwards from the rows: native_gate_own_predict_tau (100..200), the band and snap constants.

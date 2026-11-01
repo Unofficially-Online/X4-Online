@@ -42,7 +42,9 @@ static int lua_ui_replay_push(lua_State *L) {
     double op=p_lua_tonumber(L,1);size_t length=0;const char *text=p_lua_tolstring(L,2,&length);
     unsigned char data[UIREP_EVENT_MAX];unsigned n=0;
     int queue=(op==UIREP_OP_QUEUE_PARAM || op==UIREP_OP_QUEUE_LIST) && (uirep_families&UIREP_FAMILY_QUEUE);
-    if(!accept_ui() || !uirep_armed || (op!=UIREP_OP_LUA_CALL && !queue)) {p_lua_pushnumber(L,0);return 1;}
+    int events=op==UIREP_OP_LUA_GLOBAL && (uirep_families&UIREP_FAMILY_EVENTS) && pstk_capture_slot==1;   /* slot 1 only */
+    int trade=op==UITRADE_OP_LUA && (uirep_families&UIREP_FAMILY_TRADE);   /* any slot: its own faction pays */
+    if(!accept_ui() || !uirep_armed || (op!=UIREP_OP_LUA_CALL && !queue && !events && !trade)) {p_lua_pushnumber(L,0);return 1;}
     if(length>2*UIREP_EVENT_MAX) {uirep_note_refusal(uirep_op_name((unsigned)op),"too_long");p_lua_pushnumber(L,0);return 1;}
     if(!pstk_unhex(text,length,data,sizeof(data),&n)) {uirep_note_refusal(uirep_op_name((unsigned)op),"encoding");p_lua_pushnumber(L,0);return 1;}
     p_lua_pushnumber(L,uirep_push((unsigned)op,data,n));return 1;
@@ -71,6 +73,11 @@ static int lua_ui_replay_lua(lua_State *L) {
     if(n<0) {uirep_async_fail("ui_lua_overflow");n=0;}
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
+/* gate.ui_replay_local(): 1 when a call now is this client's own UI (a local phase, not the probe's own frame, not an
+ * apply): what the Lua core's wrappers capture; 0 when the call runs as it is (simulation, the probe, a replay). */
+static int lua_ui_replay_local(lua_State *L) {
+    p_lua_pushnumber(L,accept_ui() && uirep_armed && uirep_capture_now() && !InterlockedCompareExchange(&rid_probe_frame,0,0));return 1;
+}
 /* gate.ui_replay_bypass(1|0): the probe's own calls of stock functions at apply reach them unchanged. */
 static int lua_ui_replay_bypass(lua_State *L) {
     double on=p_lua_tonumber(L,1);
@@ -84,7 +91,7 @@ static int lua_ui_replay_result(lua_State *L) {
     return 0;
 }
 static int lua_ui_replay_frame(lua_State *L) {
-    char out[192];int n=accept_ui() && uirep_armed?uirep_frame_text(out,sizeof(out)):0;
+    char out[512];int n=accept_ui() && uirep_armed?uirep_frame_text(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_ui_replay_status(lua_State *L) {

@@ -1,11 +1,15 @@
 """Loopback coordinator for opt-in native FrameTick gates; no engine memory access."""
 import argparse
 import hmac
+import importlib.util
+import heapq
 import json
 import math
 from pathlib import Path
+import random
 import socket
 import struct
+import sys
 import time
 
 # Protocol 3 (docs/LOCKSTEP-NSLOT-WIRE.txt): N=2..8 clients, one opaque input
@@ -18,6 +22,12 @@ STATE_MAX = {1: 512, 2: 512, 3: 1024}   # matches GATE_STATE_MAX in lockstep_wir
 # needs every client's report of tick T-1-k (of tick 0 for T <= k+1) and
 # carries the blobs sealed with tick T-1-k (empty for T <= k).
 LOOKAHEAD_MAX = 8
+# Peer links, extension 1 over protocol 4 (--peer-window M; tools/dev/native_gate_peer.py,
+# src/native/engine/lockstep_peer.h): clients also send each sealed proposal straight to the
+# other players and may run up to M ticks past the newest permit they hold on those copies.
+# The relay then accepts reports up to M ticks past its newest permit and hands out the
+# peer sockets' addresses once every client opted in (NGPHELLO). k + M <= LOOKAHEAD_MAX.
+PEER_VERSION = 1
 # native_gate_tick_hz (src/native/engine/lockstep_tick.h).
 TICK_RATES = (60, 40, 30, 20)
 HEX = frozenset('0123456789abcdef')
@@ -35,7 +45,10 @@ def canonical(value):
 
 
 def permit_carries_inputs(packet):
-    """A protocol 4 permit with any non-empty blob (NGGO|4|token|slot|T|k|blobs...)."""
+    """A protocol 4 or 5 permit with any non-empty blob (NGGO|4|token|slot|T|k|blobs..., NGGO|5|token|slot|T|source|
+    epoch|entry|mask|blobs...)."""
+    if packet.startswith(b'NGGO|5|'):
+        return any(packet.split(b'|')[9:])
     return packet.startswith(b'NGGO|4|') and any(packet.split(b'|')[6:])
 
 
@@ -105,7 +118,7 @@ class LiveInputs:
 
 class Barrier:
     def __init__(self, token, ticks=120, hold_tick=10, hold_seconds=3, compare=True, relative_real=False, live_inputs=False,
-                 observe=False, clients=2, remote=False, lookahead=0, tick_hz=60):
+                 observe=False, clients=2, remote=False, lookahead=0, tick_hz=60, peer_window=None):
         # remote: the caller already restricts sources (--allow-from); state reports may then
         # come from non-loopback addresses. Peers are still pinned per slot and authenticated.
         self.remote = remote
@@ -119,11 +132,17 @@ class Barrier:
             raise ValueError('live inputs carry protocol 2 commands; lookahead needs protocol 4')
         if tick_hz not in TICK_RATES:
             raise ValueError('tick rate must be 60, 40, 30 or 20')
+        if peer_window is not None and (type(peer_window) is not int or not lookahead or not 0 <= peer_window <= LOOKAHEAD_MAX-lookahead):
+            raise ValueError('peer window needs lookahead k >= 1 and 0 <= window <= 8-k')
         # native_gate_tick_hz of every client: each tick advances game and real time by 1/hz.
         self.tick_hz = tick_hz
         # 0: protocols 1-3, unchanged. k>0: only protocol 4 with the same k; any
         # other authenticated report fails the session (lookahead_mismatch_slot_S).
         self.lookahead = lookahead
+        # Peer links (None: off, the default). Reports may then run peer_window ticks past the
+        # newest permit; peer socket addresses (slot -> (ip, port), never written to a report)
+        # go out only once every client sent NGPHELLO: nobody's address unless all opted in.
+        self.peer_window, self.peer_addresses, self.peer_exchanged = peer_window, {}, False
         # Protocol 2 carries exactly two 8-hex commands; protocols 1, 3 and 4 admit N.
         self.clients, self.slots = clients, tuple(range(1, clients+1))
         self.token, self.limit = token, ticks
@@ -153,6 +172,10 @@ class Barrier:
     def receive(self, data, address, now):
         if self.live_inputs and data.startswith((b'NGCMD|', b'NGPOLL|')):
             return self.live_inputs.receive(data, address) if not self.done and not self.failed else []
+        if data.startswith(b'NGPHELLO|'):
+            return self.peer_hello(data, address)
+        if data.startswith(b'NGPFAIL|'):
+            return self.peer_fail(data, address)
         if len(data) > STATE_MAX[3 if data.startswith((b'NGSTATE|3|', b'NGSTATE|4|')) else 1] or (address[0] != '127.0.0.1' and not self.remote):
             return []
         try:
@@ -174,7 +197,7 @@ class Barrier:
                     return []
                 mismatch = mismatch or int(f[9]) != self.lookahead
             slot, tick = int(f[3]), int(f[4])
-            if slot not in self.slots or not 0 <= tick <= self.limit or tick > self.permitted():
+            if slot not in self.slots or not 0 <= tick <= self.limit or tick > self.accepted():
                 return []
             if any(len(value) != size or any(c not in '0123456789abcdef' for c in value)
                    for value, size in ((f[5], 16), (f[6], 16), (f[7], 64))):
@@ -214,6 +237,70 @@ class Barrier:
     def permitted(self):
         """Highest permit issued; reports of later ticks cannot exist yet."""
         return min(self.limit, self.released+1+self.lookahead) if self.released >= 0 else 0
+
+    def accepted(self):
+        """Highest tick a report may carry: the newest permit, with peer links up to
+        peer_window ticks later (a client runs at most that far past its permits)."""
+        extra = self.peer_window if self.peer_window and self.released >= 0 else 0
+        return min(self.limit, self.permitted()+extra)
+
+    def peer_hello(self, data, address):
+        """NGPHELLO|1|<token>|<slot>|<clients>|<k>|<m> from a client's peer socket (its opt-in).
+
+        Once every slot said hello, every hello is answered with NGPADDR|1|<token>|<slot>|<m>|
+        <last>|<ip:port of slot 1>|...|<slot N> (the addresses this relay saw; last = --ticks, past
+        which no client may run on peer records: the session ends there); a relay without
+        --peer-window, or another N/k/m, answers NGPREFUSE|1|<token>|<slot>|off or mismatch.
+        The hello must come from the host whose reports the slot is pinned to; the first
+        hello address of a slot is kept. Malformed or unauthenticated hellos are dropped."""
+        if len(data) > 128 or (address[0] != '127.0.0.1' and not self.remote) or self.failed or self.done:
+            return []
+        try:
+            f = data.decode('ascii').split('|')
+        except UnicodeError:
+            return []
+        if len(f) != 7 or f[0] != 'NGPHELLO' or f[1] != str(PEER_VERSION) or not hmac.compare_digest(f[2], self.token):
+            return []
+        if not all(canonical(value) for value in f[3:]):
+            return []
+        slot, clients, k, window = map(int, f[3:])
+        if slot not in self.slots or slot not in self.peers or self.peers[slot][0] != address[0]:
+            return []
+        if self.peer_window is None or (clients, k, window) != (self.clients, self.lookahead, self.peer_window):
+            reason = 'off' if self.peer_window is None else 'mismatch'
+            return [(address, f'NGPREFUSE|{PEER_VERSION}|{self.token}|{slot}|{reason}'.encode('ascii'))]
+        if self.peer_addresses.setdefault(slot, address) != address:
+            return []
+        if len(self.peer_addresses) < self.clients:
+            return []
+        book = '|'.join(f'{ip}:{port}' for ip, port in (self.peer_addresses[s] for s in self.slots))
+        targets = self.slots if not self.peer_exchanged else (slot,)
+        self.peer_exchanged = True
+        return [(self.peer_addresses[s], f'NGPADDR|{PEER_VERSION}|{self.token}|{s}|{self.peer_window}|{self.limit}|{book}'.encode('ascii'))
+                for s in targets]
+
+    def peer_fail(self, data, address):
+        """NGPFAIL|1|<token>|<slot>|<tick>|<reason>: a client stopped on a peer check (a peer copy
+        that differs from a permit, 104; two different peer copies, 108; two different permits, 103).
+        The session fails (peer_link_stop_<reason>_slot_<S>_tick_<T>) and every client gets NGSTOP
+        for the newest tick it reported, instead of waiting for its timeout. Only with
+        --peer-window, only from the slot's pinned host; anything else is dropped."""
+        if self.peer_window is None or len(data) > 128 or (address[0] != '127.0.0.1' and not self.remote) or self.done:
+            return []
+        try:
+            f = data.decode('ascii').split('|')
+        except UnicodeError:
+            return []
+        if len(f) != 6 or f[0] != 'NGPFAIL' or f[1] != str(PEER_VERSION) or not hmac.compare_digest(f[2], self.token):
+            return []
+        if not all(canonical(value) for value in f[3:]) or f[5] not in ('103', '104', '108'):
+            return []
+        slot = int(f[3])
+        if slot not in self.slots or slot not in self.peers or self.peers[slot][0] != address[0]:
+            return []
+        self.failed = self.failed or f'peer_link_stop_{f[5]}_slot_{slot}_tick_{f[4]}'
+        return [(self.peers[s], self.packet('NGSTOP', s, max(t for t, rows in self.states.items() if s in rows)))
+                for s in self.slots if s in self.peers]
 
     def unlocked(self, tick):
         """Permits released once every client's report of tick passed its checks."""
@@ -293,7 +380,8 @@ class Barrier:
                 'first_mismatch': self.mismatches[0] if self.mismatches else None, 'last_mismatch': last,
                 'mismatches': len(self.mismatches), 'slots': self.mismatch_slots.get(last, []) if last is not None else [],
                 'failure': self.failed, 'done': self.done, 'observe': self.observe, 'updated': round(now, 3),
-                **({'lookahead': self.lookahead, 'permitted': self.permitted()} if self.lookahead else {})}
+                **({'lookahead': self.lookahead, 'permitted': self.permitted()} if self.lookahead else {}),
+                **self.peer_summary()}
 
     def take_notices(self):
         notices, self.notices = self.notices, []
@@ -317,7 +405,46 @@ class Barrier:
                 'live_inputs': self.live_inputs.rows if self.live_inputs else None,
                 # Protocol 4 only: the permit window; released_at then names the
                 # tick whose reports released the permit for tick+1+lookahead.
-                **({'lookahead': self.lookahead} if self.lookahead else {})}
+                **({'lookahead': self.lookahead} if self.lookahead else {}),
+                **self.peer_summary()}
+
+    def peer_summary(self):
+        """Peer links only: the window and whether addresses went out (never the addresses)."""
+        if self.peer_window is None:
+            return {}
+        return {'peer_window': self.peer_window, 'peer_links': 'exchanged' if self.peer_exchanged else 'waiting'}
+
+
+class LinkDelay:
+    """Test only (--latency-ms, --latency-jitter-ms, --latency-spike): the extra one-way delay of each datagram.
+
+    Half the round trip each way, plus a uniform 0..jitter/2 per datagram and direction, plus half
+    the spike's extra round trip while a spike lasts (every period seconds from the start, for its
+    duration). With jitter datagrams may overtake each other, as on the internet.
+    """
+    def __init__(self, round_trip_ms=0.0, jitter_ms=0.0, spike=None, seed=None, start=0.0):
+        self.half, self.jitter = round_trip_ms/2000.0, jitter_ms/2000.0
+        self.spike, self.start = spike, start
+        self.random = random.Random(seed)
+
+    def __bool__(self):
+        return bool(self.half or self.jitter or self.spike)
+
+    def __call__(self, now):
+        delay = self.half+(self.random.uniform(0, self.jitter) if self.jitter else 0.0)
+        if self.spike:
+            period, duration, extra = self.spike
+            if (now-self.start) % period < duration/1000.0:
+                delay += extra/2000.0
+        return delay
+
+
+def parse_spike(text):
+    """PERIOD_S,DURATION_MS,EXTRA_MS (e.g. 20,2000,300: every 20 s, for 2 s, 300 ms more round trip)."""
+    period, duration, extra = (float(v) for v in text.split(','))
+    if not (1 <= period <= 3600 and 0 < duration < period*1000 and 0 < extra <= 5000):
+        raise ValueError('spike outside 1..3600 s, 0..period, 0..5000 ms')
+    return period, duration, extra
 
 
 def atomic_write(path, text):
@@ -352,6 +479,10 @@ def main():
     p.add_argument('--lookahead', type=int, default=0, metavar='K',
                    help='protocol 4: release the permit for tick T once every client reported tick T-1-K (0..8; '
                         '0 keeps protocols 1-3). Input delays must cover it: pilot >= K+2, orders >= K+1')
+    p.add_argument('--peer-window', type=int, default=None, metavar='M',
+                   help='peer links extension 1 (default off): accept reports up to M ticks past the newest permit and, once '
+                        'every client opted in, give each client the peer socket addresses of all (players then learn each '
+                        "other's IP addresses). Needs --lookahead K >= 1 and K+M <= 8")
     p.add_argument('--tick-hz', type=int, default=60, choices=TICK_RATES,
                    help="the clients' native_gate_tick_hz; the timestep and relative-real checks use 1/hz")
     p.add_argument('--input-journal', type=Path, metavar='FILE',
@@ -359,8 +490,49 @@ def main():
                         'its permits leave. The full --report is then written every 60 s and at the end instead of before each '
                         'release that carries inputs: that rewrite grows with the run (7 ms at 600 ticks, about 1 ms more per '
                         '100 ticks) and every pilot record is an input')
+    p.add_argument('--latency-ms', type=float, default=0, metavar='MS',
+                   help='test only: an added round trip for every client (half before a datagram is read, half before a '
+                        'reply leaves), to try internet latency with all clients on one PC; 0 (default) adds nothing')
+    p.add_argument('--latency-jitter-ms', type=float, default=0, metavar='MS',
+                   help='test only, with or without --latency-ms: every datagram waits a further uniform 0..MS/2 in each '
+                        'direction (datagrams may then overtake each other)')
+    p.add_argument('--latency-spike', type=str, default='', metavar='PERIOD_S,DURATION_MS,EXTRA_MS',
+                   help='test only: every PERIOD_S seconds from the start, for DURATION_MS, the round trip grows by EXTRA_MS')
+    p.add_argument('--latency-seed', type=int, default=None, help='test only: seed of the jitter draws')
+    adaptive = p.add_argument_group('protocol 5 (adaptive window, tools/dev/native_gate_adaptive.py)')
+    adaptive.add_argument('--adaptive', action='store_true',
+                          help='measure every client round trip at tick 0 and choose the window k (1..--lookahead) and the pilot '
+                               'delay (k+2+headroom) from it; clients need native_gate_lookahead = "adaptive"')
+    adaptive.add_argument('--adaptive-min', type=int, default=1, metavar='K', help='smallest window the relay chooses (default 1)')
+    adaptive.add_argument('--adaptive-target-hz', type=float, default=None, metavar='HZ',
+                          help='step rate the window should reach (default --tick-hz)')
+    adaptive.add_argument('--adaptive-margin-ms', type=float, default=10, metavar='MS',
+                          help='added to the slowest p90 round trip before the window is chosen (default 10)')
+    adaptive.add_argument('--adaptive-samples', type=int, default=8, metavar='N', help='round trips per client before the plan (default 8)')
+    adaptive.add_argument('--adaptive-measure-seconds', type=float, default=5, metavar='S',
+                          help='longest wait for the samples after the last tick 0 report; fewer than 2 then stop (default 5)')
+    adaptive.add_argument('--adaptive-headroom', type=int, default=0, metavar='H',
+                          help='pilot delay = k+2+H: lets session changes raise k by up to H with pilot records (default 0)')
+    adaptive.add_argument('--adaptive-changes', action='store_true',
+                          help='also change the window during the session (raise it when round trips grow)')
+    adaptive.add_argument('--adaptive-decrease', action='store_true',
+                          help='with --adaptive-changes: also lower it again (quiet ticks; refused by clients with pilot records)')
+    adaptive.add_argument('--adaptive-interval', type=float, default=2, metavar='S', help='session policy interval (default 2)')
+    adaptive.add_argument('--stall-report-ms', type=float, default=1000, metavar='MS',
+                          help='report a client the others have waited for this long (default 1000)')
+    adaptive.add_argument('--stall-drop-ms', type=float, default=0, metavar='MS',
+                          help='drop a client the others have waited for this long: its later proposals are empty for everyone and '
+                               'it is stopped (0, the default: never; drop/rejoin of slot-bound inputs is roadmap D15)')
     p.add_argument('--status-file', type=Path, help='observe mode: small live JSON status (desync flag, first/last mismatch), '
                    'rewritten atomically on every notice and at most once a second otherwise')
+    p.add_argument('--rendezvous-port', type=int, default=0, metavar='P',
+                   help='opt-in NGNAT/1 rendezvous for direct player links (roadmap B7, native_gate_rendezvous.py) on UDP P and '
+                        'P+1 of --bind, same token and --allow-from; a separate thread and sockets, the barrier is unchanged. '
+                        '0 (default): off')
+    p.add_argument('--wire-crypto', type=Path, metavar='KEYFILE',
+                   help='opt-in wire crypto (protocols 3 and 4): handshake, sealed datagrams, signed input records and permits '
+                        '(tools/dev/native_gate_crypto.py keygen/credential); every unsealed datagram is then dropped')
+    p.add_argument('--wire-crypto-lib', type=Path, metavar='PATH', help='the x4mp_wire_crypto library (default: the build output)')
     args = p.parse_args()
     allowed = set(filter(None, (part.strip() for part in args.allow_from.split(','))))
     if args.bind != '127.0.0.1':
@@ -373,11 +545,64 @@ def main():
     if not 2 <= args.clients <= CLIENTS_MAX: p.error('--clients must be 2..8')
     if not 0 <= args.lookahead <= LOOKAHEAD_MAX: p.error('--lookahead must be 0..8')
     if args.lookahead and args.live_inputs: p.error('--live-inputs needs protocol 2; --lookahead needs protocol 4')
-    barrier = Barrier(args.token, args.ticks, args.hold_tick, args.hold_seconds, relative_real=args.relative_real, live_inputs=args.live_inputs,
-                      observe=args.observe, clients=args.clients, remote=bool(allowed), lookahead=args.lookahead, tick_hz=args.tick_hz)
+    if args.peer_window is not None and (not args.lookahead or not 0 <= args.peer_window <= LOOKAHEAD_MAX-args.lookahead):
+        p.error('--peer-window needs --lookahead K >= 1 and 0 <= M <= 8-K')
+    if not 0 <= args.latency_ms <= 2000: p.error('--latency-ms must be 0..2000')
+    if args.rendezvous_port and (not 1024 <= args.rendezvous_port <= 65534 or args.port in (args.rendezvous_port, args.rendezvous_port+1)):
+        p.error('--rendezvous-port P needs 1024..65534 and P, P+1 apart from --port')
+    if not 0 <= args.latency_jitter_ms <= 2000: p.error('--latency-jitter-ms must be 0..2000')
+    try: spike = parse_spike(args.latency_spike) if args.latency_spike else None
+    except ValueError as error: p.error(f'--latency-spike: {error}')
+    if args.wire_crypto and args.live_inputs: p.error('--wire-crypto covers protocols 3 and 4; --live-inputs carries protocol 2 commands')
+    if args.wire_crypto and args.adaptive: p.error('--wire-crypto covers protocols 3 and 4; --adaptive is protocol 5')
+    if args.peer_window is not None and args.adaptive: p.error('--peer-window extends protocol 4; --adaptive is protocol 5')
+    # The crypto relay drops every unsealed datagram, NGPHELLO too; a sealed address exchange is not built yet.
+    if args.peer_window is not None and args.wire_crypto: p.error('--peer-window with --wire-crypto: the sealed peer address exchange is not built')
+    wire = None
+    if args.wire_crypto:
+        # Imported only when asked for: without --wire-crypto the relay is unchanged and needs no library.
+        import native_gate_crypto
+        try:
+            wire = native_gate_crypto.RelayCrypto(native_gate_crypto.Library(args.wire_crypto_lib),
+                                                  native_gate_crypto.load_key(args.wire_crypto), args.token, args.clients, args.lookahead)
+        except (OSError, ValueError, RuntimeError, KeyError) as error:
+            p.error(f'--wire-crypto: {error}')
+    if args.adaptive:
+        if not args.lookahead: p.error('--adaptive needs --lookahead K, the largest window the relay may choose')
+        if args.live_inputs: p.error('--adaptive needs protocol 5; --live-inputs needs protocol 2')
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from native_gate_adaptive import AdaptiveBarrier
+        try:
+            barrier = AdaptiveBarrier(args.token, args.ticks, args.hold_tick, args.hold_seconds, relative_real=args.relative_real,
+                                      observe=args.observe, clients=args.clients, remote=bool(allowed), kmax=args.lookahead,
+                                      kmin=args.adaptive_min, tick_hz=args.tick_hz, target_hz=args.adaptive_target_hz,
+                                      samples=args.adaptive_samples, margin_ms=args.adaptive_margin_ms,
+                                      measure_seconds=args.adaptive_measure_seconds, changes=args.adaptive_changes,
+                                      decrease=args.adaptive_decrease, headroom=args.adaptive_headroom,
+                                      interval_seconds=args.adaptive_interval, stall_report_ms=args.stall_report_ms,
+                                      stall_drop_ms=args.stall_drop_ms)
+        except ValueError as error: p.error(f'--adaptive: {error}')
+    else:
+        barrier = Barrier(args.token, args.ticks, args.hold_tick, args.hold_seconds, relative_real=args.relative_real, live_inputs=args.live_inputs,
+                          observe=args.observe, clients=args.clients, remote=bool(allowed), lookahead=args.lookahead, tick_hz=args.tick_hz,
+                          peer_window=args.peer_window)
+    poll = getattr(barrier, 'poll', None)
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind((args.bind, args.port));s.settimeout(.1)
+    rendezvous = None
+    if args.rendezvous_port:
+        spec = importlib.util.spec_from_file_location('native_gate_rendezvous', Path(__file__).with_name('native_gate_rendezvous.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        rendezvous = module.start_thread(args.token, args.bind, args.rendezvous_port, args.clients, allow=allowed or None,
+                                         allow_loopback=args.bind == '127.0.0.1')
+        print(f'NATIVE_GATE RENDEZVOUS ports={args.rendezvous_port},{args.rendezvous_port+1}', flush=True)
+    if wire: print(f'NATIVE_GATE RELAY WIRE_CRYPTO relay_key={wire.relay_public.hex()} clients={args.clients}', flush=True)
     print('NATIVE_GATE RELAY READY', flush=True)
+    def report_text():
+        summary = barrier.summary()
+        if wire: summary['wire_crypto'] = wire.summary()
+        return json.dumps(summary, indent=2)+'\n'
     last = None
     last_report = 0
     last_status, final_written = 0, False
@@ -391,19 +616,68 @@ def main():
     journal = args.input_journal.open('w', encoding='ascii') if args.input_journal else None
     journaled = -1
     checkpoint = 60 if journal else 1
+    # --latency-ms (and jitter, spikes): datagrams wait in each direction, ordered by their due time.
+    delay = LinkDelay(args.latency_ms, args.latency_jitter_ms, spike, args.latency_seed, time.perf_counter())
+    inbound, outbound, order = [], [], 0
+    if args.latency_ms: print(f'NATIVE_GATE RELAY LATENCY round_trip_ms={args.latency_ms:g}', flush=True)
+    if args.latency_jitter_ms or spike:
+        print(f'NATIVE_GATE RELAY JITTER jitter_ms={args.latency_jitter_ms:g} spike={args.latency_spike or "none"}', flush=True)
+
+    def deliver(packet, dest):
+        nonlocal order
+        if not delay:
+            try: s.sendto(packet, dest)
+            except ConnectionResetError: pass
+            return
+        order += 1
+        heapq.heappush(outbound, (time.perf_counter()+delay(time.perf_counter()), order, packet, dest))
     try:
         while True:
+            if delay or poll:
+                now = time.perf_counter()
+                while outbound and outbound[0][0] <= now:
+                    _, _, packet, dest = heapq.heappop(outbound)
+                    try: s.sendto(packet, dest)
+                    except ConnectionResetError: pass
+                # Protocol 5: pings, the plan once measured, stalls and the session policy run between datagrams.
+                wait = 0.005 if poll else 0.1
+                for queue in (inbound, outbound):
+                    if queue: wait = min(wait, max(0.0, queue[0][0]-now))
+                # Windows rounds a socket timeout up to its 15.6 ms timer tick, which made --latency-ms 100 a
+                # 125 ms round trip (measured 1 Nov). With an emulated link the socket is polled and the loop
+                # sleeps in high-resolution steps of at most 1 ms (time.sleep, Python 3.11+) instead.
+                s.settimeout(0.0 if delay else max(0.0005, wait))
             # Larger than any UDP payload: an oversize datagram is read whole
             # and refused by the barrier instead of raising WSAEMSGSIZE here.
             try: data, address = s.recvfrom(65536)
-            except (socket.timeout, ConnectionResetError):
+            except (socket.timeout, BlockingIOError, ConnectionResetError):
                 # Windows reports a previous UDP send to a closed peer as an
                 # ICMP port-unreachable error here. It supplies no state report;
                 # keep serving the other peer and preserve the admission gate.
+                data = None
+                if delay and wait > 0: time.sleep(min(wait, 0.001))
+            if data is not None and allowed and address[0] not in allowed:
+                data = None
+            replies = poll(time.perf_counter()) if poll else []
+            if delay:
+                if data is not None:
+                    order += 1
+                    heapq.heappush(inbound, (time.perf_counter()+delay(time.perf_counter()), order, data, address))
+                data = None
+                if inbound and inbound[0][0] <= time.perf_counter():
+                    _, _, data, address = heapq.heappop(inbound)
+            direct = []
+            if wire and data is not None:
+                # Handshakes and key requests are answered here; reports reach the barrier opened and
+                # signature-checked; everything else (unsealed, forged, replayed) is dropped.
+                data, direct = wire.inbound(data, address)
+                if wire.failure and not barrier.failed:
+                    barrier.failed = wire.failure
+                    print(f'NATIVE_GATE WIRE_CRYPTO failure={wire.failure}', flush=True)
+            if data is not None:
+                replies += barrier.receive(data, address, time.perf_counter())
+            elif not replies and not direct and not barrier.notices and (barrier.released, barrier.failed, barrier.done) == last:
                 continue
-            if allowed and address[0] not in allowed:
-                continue
-            replies = barrier.receive(data, address, time.perf_counter())
             notices = barrier.take_notices()
             for notice in notices:
                 print(notice, flush=True)
@@ -416,19 +690,23 @@ def main():
                 permit_carries_inputs(packet) for _,packet in replies)
             if journal and barrier.released > journaled:
                 for tick in range(journaled+1, barrier.released+1):
-                    journal.write(json.dumps({'tick': tick, 'released_at': round(barrier.released_at.get(tick, 0), 6),
-                                              'rows': barrier.states.get(tick, {})}, separators=(',', ':'))+'\n')
+                    line = {'tick': tick, 'released_at': round(barrier.released_at.get(tick, 0), 6), 'rows': barrier.states.get(tick, {})}
+                    if wire: line['sigs'] = wire.journal_sigs(tick)  # every released record stays verifiable
+                    journal.write(json.dumps(line, separators=(',', ':'))+'\n')
                 journal.flush()
                 journaled = barrier.released
             elif command_release and not journal:
-                if atomic_write(args.report, json.dumps(barrier.summary(), indent=2)+'\n'):
+                if atomic_write(args.report, report_text()):
                     last_report = time.perf_counter()
+            if wire:
+                # Sealed per destination; permits carry every record signature and the relay's own.
+                replies = [(dest, sealed) for dest, sealed in ((dest, wire.outbound(dest, packet)) for dest, packet in replies)
+                           if sealed is not None]+direct
+                wire.prune(barrier.released)
             for dest, packet in replies:
-                try: s.sendto(packet, dest)
-                except ConnectionResetError:
-                    # A departed peer must not prevent the other peer's STOP
-                    # or retry. Missing reports still cannot advance the gate.
-                    continue
+                # A departed peer must not prevent the other peer's STOP or retry (deliver
+                # ignores its reset). Missing reports still cannot advance the gate.
+                deliver(packet, dest)
             status = (barrier.released, barrier.failed, barrier.done)
             if status != last:
                 last = status
@@ -438,13 +716,13 @@ def main():
                 # released tick), immediately on stop/failure, atomic replace.
                 now = time.perf_counter()
                 if now-last_report >= checkpoint or barrier.failed or barrier.done:
-                    written = atomic_write(args.report, json.dumps(barrier.summary(), indent=2)+'\n')
+                    written = atomic_write(args.report, report_text())
                     # Nothing follows the last report, so it waits out a reader.
                     for _ in range(20):
                         if written or not (barrier.failed or barrier.done):
                             break
                         time.sleep(0.1)
-                        written = atomic_write(args.report, json.dumps(barrier.summary(), indent=2)+'\n')
+                        written = atomic_write(args.report, report_text())
                     if written:
                         last_report = now
                 diverged = f' first_mismatch={barrier.mismatches[0]} mismatches={len(barrier.mismatches)}' if barrier.mismatches else ''
@@ -459,6 +737,10 @@ def main():
     finally:
         s.close()
         if journal: journal.close()
+        if rendezvous:
+            rendezvous[1].set()
+            rendezvous[0].join(1)
+            for r in rendezvous[3]: r.close()
 
 
 if __name__ == '__main__': main()

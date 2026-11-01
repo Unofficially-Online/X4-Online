@@ -1,0 +1,241 @@
+LOCKSTEP NAT TRAVERSAL: DIRECT UDP PATHS BETWEEN PLAYERS THROUGH HOME ROUTERS (ROADMAP B7)
+1 November 2026 | offline work on branch contrib/ferrite-nat (base: smoke e457b4c9). No X4 was launched, no lane tool was run,
+no real router or remote host was contacted: every NAT is simulated, every gateway is a loopback fake, every socket is 127.0.0.1.
+[M] = measured here (simulation or loopback); [D] = design decision; "live" = what only the live plan of section 9 can show.
+For roadmap B6 (direct input links, agent X4-Multiplayer-p2p) and B8 (encryption, later). Default off everywhere.
+
+0. PROBLEM AND RESULT
+  B6 wants each client to send its input record straight to the other players as well as to the relay. Home routers drop
+  unsolicited UDP, so a direct path has to be made first, and for some router pairs it cannot be made at all.
+  Built:
+  - A client module in C, sans-IO core plus a winsock/BSD socket layer, written to drop into both gates (it compiles inside the
+    Windows lockstep_gate.c and the Linux gate_linux.c translation units with their flags [M]). It answers, per peer slot, the
+    question B6 asks: DIRECT (with the address to send to, from the module's socket, and the round trip), RELAY ("unreachable, use
+    the relay") or PENDING (still trying; use the relay meanwhile).
+  - Port mapping: PCP, then NAT-PMP, then UPnP IGD, with lease, renewal at half the lease, release, and handling of refusal,
+    conflicts (718), permanent-only routers (725), silent gateways and double NAT.
+  - Relay-assisted hole punching: the relay's opt-in rendezvous extension (NGNAT protocol 1, its own two UDP ports, its own thread;
+    the barrier and its timing are untouched) introduces registered players to each other; both probe at once; a path counts only
+    after an authenticated nonce round trip; keep-alives hold it; dead paths are detected and punched again; pairs that cannot be
+    punched (endpoint-dependent mapping on one side against endpoint-dependent mapping or port-dependent filtering on the other)
+    are recognised from a classification and go to the relay at once.
+  - A virtual-time simulation of NAT behaviours (RFC 4787 mapping and filtering, hairpinning, port allocation, timeouts, static
+    mappings, carrier-grade NAT nesting) that runs the real C core and the real relay code.
+  Result in simulation [M]: every pair that hole punching can connect is direct in 0.35-1.45 s; the two unpunchable pairs decide
+  RELAY in 1.1-1.35 s without spending a punching window; a port mapping on one side makes those pairs direct too.
+
+1. FILES
+  src/native/engine/lockstep_nat.h          sans-IO core: NGNAT codec (HMAC-SHA256), classification, rendezvous client, candidates,
+                                            probing, nonce confirmation, keep-alives, decisions. Portable C11, no OS calls.
+  src/native/engine/lockstep_nat_portmap.h  sans-IO PCP MAP / NAT-PMP / UPnP IGD (SSDP, description, SOAP) encoders and parsers.
+  src/native/engine/lockstep_nat_net.h      Windows/Linux sockets: nat_link (the API for B6) and the blocking port mapping.
+  src/native/engine/lockstep_sha256.h       include guard added (was included once per unit so far); otherwise unchanged.
+  src/native/engine/test_lockstep_nat.c     C unit tests (RFC 4231 HMAC vectors, codecs, PCP/NAT-PMP/UPnP, core refusals).
+  src/native/engine/test_lockstep_nat_tool.c  test tool: driver (simulation), link (real sockets), portmap (loopback fakes only).
+  tools/dev/native_gate_rendezvous.py       NGNAT/1 server (sans-IO class + two-socket loop + standalone CLI); wire spec in docstring.
+  tools/dev/native_gate_relay.py            new opt-in --rendezvous-port P (default 0 = off): starts the rendezvous thread on P, P+1.
+  tools/dev/nat_sim.py                      NAT/network simulation driving the C core.
+  tools/dev/nat_fake_gateway.py             loopback PCP/NAT-PMP server and UPnP IGD (SSDP + HTTP/SOAP) with refusal modes.
+  tools/dev/build_native_gate.py            --test also builds and runs test_lockstep_nat.c.
+  tests/test_nat_rendezvous.py, tests/test_nat_traversal.py.
+  Nothing is wired into the gates' Lua API yet: B6 owns the links and decides where the calls go (section 10).
+
+2. WIRE: NGNAT PROTOCOL 1 (a relay extension, versioned in every datagram)
+  ASCII, '|'-separated, the last field a MAC: the first 16 bytes of HMAC-SHA256 as 32 lowercase hex.
+  Rendezvous key Kr = HMAC-SHA256(key = the session token's 32 ASCII characters, "NGNAT|1|rendezvous"). The token itself never
+  appears in NGNAT datagrams (the lockstep wire still carries it in clear; B8).
+  client -> relay (Kr; padded with a '.' field to exactly 256 bytes):
+    HELLO|slot|inst|seq|lan|map|mapping|filter|pad    to P (registration, refreshed every 30 s) and once to P+1 (mapping test)
+    FTEST|slot|inst|seq|pad                           to P: "answer me from P+1" (filtering test)
+    ASK|slot|inst|seq|peer|pad                        to P
+    BYE|slot|inst|seq|pad                             to P
+  relay -> client (Kr; only to the request's source, never longer than the request):
+    SEEN|slot|inst|seq|port_index|observed|mapping    from the port the HELLO reached
+    FSEEN|slot|inst|seq                               from P+1
+    PEER|slot|inst|seq|peer|peer_inst|mapping|filter|public|lan|map|pairkey
+    WAIT|slot|inst|seq|peer                           the peer has not registered (yet)
+    GONE|slot|inst|seq
+  client <-> client (key = the 16-byte pair key from PEER, the same for both sides of a pair of instances):
+    PROBE|from|to|from_inst|to_inst|nonce   ACK|...|echoed nonce   CLOSE|...|nonce
+  inst: 16 hex, random per client start (a restart gets new pair keys); seq: canonical decimal, per request, replay-checked by the
+  relay (window 64); addresses a.b.c.d:port or '-'; mapping unknown|open|eim|edm; filter unknown|open|port.
+  The direct-link socket carries B6's own datagrams as well; anything starting "NGNAT|" belongs to this module, so B6 must not
+  use that prefix (nat_link_send refuses it).
+
+3. HOW A PATH IS MADE
+3a Classification [D, M]. One relay host with two ports. First the filtering test: FTEST to P, FSEEN comes back from P+1, to
+  which this socket has not sent yet: if it arrives, filtering does not depend on the port ("open": full cone or restricted); if
+  not within half the classify time (1 s), "port" (port-restricted or symmetric). Only then the mapping test: one HELLO to P+1;
+  the same observed address on P and P+1 = endpoint-independent mapping (eim), different = endpoint-dependent (edm, symmetric);
+  observed = own local address = no NAT (open). The order matters: the first version sent both HELLOs at once, the HELLO to P+1
+  opened the port-restricted filter for FSEEN, and the simulation showed port-restricted NATs classified as open [M, fixed].
+  The client reports its own classification in HELLO; the relay passes it on. The relay's own view (compare the latest HELLO on P
+  and on P+1) is only a diagnostic and the fallback: after a NAT re-maps, the refresh HELLO on P sees a new port while P+1 still
+  holds the old one, and that view would call an eim NAT edm (found by the lost-path test [M, fixed]).
+3b Rendezvous. A client asks for each wanted slot (ASK every 250 ms). The relay answers PEER with the peer's observed public
+  address, its mapped address (from PCP/NAT-PMP/UPnP, only if public), its LAN address (only when both have the same public IP),
+  its classification and the pair key; WAIT if the peer has not registered. While the peer's classification is still unknown the
+  client keeps asking for up to the classify time, so both sides decide on the same facts.
+3c Punching. If the pair is unpunchable (3a classes: edm against edm, or edm against filter "port"; no LAN candidate; no port
+  mapping on either side) the peer is RELAY at once ("unpunchable_nat_pair"). Otherwise both send PROBE to every candidate of the
+  other every 100 ms for up to 6 s. A PROBE that verifies under the pair key, names both instances and carries an unseen nonce is
+  answered with ACK to its source; that source also becomes a peer-reflexive candidate (at most two), which is what connects a
+  symmetric NAT to a cone NAT: the cone side learns the symmetric side's new port from its probe. An ACK that echoes an
+  outstanding nonce of ours proves the round trip over that exact address: the peer is DIRECT with the ACK's source address and
+  the measured round trip. For 600 ms afterwards better candidates (LAN, then mapped) may still take over.
+3d Keeping it. A probe to the path every 15 s; once 15 s pass without an answer, every second (consent check); after 30 s of
+  silence the path is lost: RELAY "path_lost", a fresh HELLO and a new punch 1 s later. The link layer can report its own
+  authenticated traffic (nat_core_alive), so a busy link never needs those probes to stay alive. A punch timeout or an absent peer
+  is retried every 30 s, three attempts; a CLOSE from the peer ends it for good.
+3e Decision timeline [M, simulation, 10 ms per NAT hop]: open/full-cone/restricted pairs 350-450 ms; with a port-restricted or
+  symmetric side 1.2-1.45 s (the 1 s filtering window); unpunchable 1.1-1.35 s; a peer that never registers: RELAY after 15 s.
+  A path lost because both NATs re-mapped: detected 30 s after the last answer, direct again 1.2 s later. Idle cost of a direct
+  pair: 238 datagrams in 10 minutes for both clients together, 57 of them to the relay.
+
+4. PORT MAPPING (lockstep_nat_net.h nat_portmap_*, blocking, bounded; call from a worker thread before opening the link)
+  Order: PCP MAP (RFC 6887; a 12-byte random nonce, client address as seen towards the gateway) -> NAT-PMP (RFC 6886) only when
+  the gateway answers PCP with "unsupported version" -> UPnP IGD (SSDP search, description, WANIPConnection:2/1 or
+  WANPPPConnection:1, GetExternalIPAddress, AddPortMapping). Each UDP exchange retransmits with doubling intervals inside its
+  timeout; an ICMP "port unreachable" ends it at once.
+  Lease: the requested lifetime (default 3600 s); the granted one is kept; renewal at half of it with the same nonce/port; release
+  with lifetime 0 or DeletePortMapping at session end. Refusals: PCP/NAT-PMP result codes by name; UPnP 718 (conflict) tries the
+  next external port (up to 4), 725 (only permanent leases) retries with lease 0 and relies on the release, 724 (same port values)
+  retries with the internal port, anything else (606 not authorised, ...) is a refusal. A private external address (another NAT
+  above the gateway) is released again and refused ("double_nat"). A lost renewal clears the advertised address
+  (nat_core_set_mapped with none). Discovery of the real gateway (routing table: GetBestRoute via a runtime-loaded iphlpapi, or
+  /proc/net/route) and the SSDP multicast happen only with allow_discovery; no test sets it and the test tool refuses every
+  non-loopback target.
+  Tested against the fakes [M]: PCP grant/renew/release with one nonce; NAT-PMP fallback; PCP refusal; silent gateway then UPnP;
+  UPnP grant (plain and chunked HTTP), conflict -> next port, permanent-only -> lease 0, refusal 606; double NAT for PCP and UPnP.
+  A UPnP mapping with lease 0 survives a crash until the router forgets it; its description names X4 Multiplayer.
+
+5. WHAT EACH NAT TYPE GETS (hole punching without port prediction; simulation [M] matches the textbook table)
+                     open   full cone  restricted  port-restr.  symmetric
+     open (no NAT)   direct direct     direct      direct       direct
+     full cone              direct     direct      direct       direct
+     restricted                        direct      direct       direct
+     port-restricted                               direct       RELAY (unless either side has a port mapping)
+     symmetric                                                  RELAY (unless either side has a port mapping)
+  Also measured: two players behind one router use their LAN addresses (without hairpinning in the router), or the router's
+  hairpin when LAN sharing is off; two customers of one carrier-grade NAT meet through its hairpin; a home NAT behind a CGN still
+  reaches a full-cone peer; 30 % packet loss still connects; eight players of all kinds: all 56 directed pairs as in the table.
+  Known gap: an address-dependent mapping (new port per peer IP, same port for both relay ports) looks "eim" to one relay address;
+  against port-dependent filtering punching then fails and falls back after the 6 s window ("punch_timeout"). Telling it apart
+  needs a second relay IP address. Symmetric NATs with predictable port allocation could be punched with port prediction; not
+  attempted (it sprays probes at guessed ports).
+  Most home routers are eim with port-dependent or address-dependent filtering (live: which ours is). Mobile and some ISP CGNs are
+  symmetric; those players stay on the relay unless their own side can map a port.
+
+6. PRIVACY AND SECURITY
+6a Addresses. A player who enables direct links shows his public IP address and port to every other player who enabled them;
+  that is inherent to a direct path. LAN addresses go only to players with the same public address. A player who does not enable
+  the feature never registers: the relay tells nobody his address and tells him nobody's (ASK from an unregistered slot is not
+  answered) [M]. Behind a carrier-grade NAT "same public address" also covers strangers at the same ISP: they would see the LAN
+  address (only), and the client sends probes to private addresses only in that case; switch LAN sharing off (share_lan = 0)
+  where that matters. B6 should make "direct links" a per-player opt-in shown in the UI, off by default.
+6b The relay is not a reflector [D, M]. It answers nothing that is not a well-formed request with a valid Kr MAC, so a spoofed
+  source without the session token gets no datagram at all; requests are padded to 256 bytes and no reply is longer than its
+  request (amplification <= 1; checked over 300 random requests); replies go only to the request's source, never to an address
+  named in a payload; per-source-IP (30/s, burst 60) and global (400/s) token buckets; replayed (slot, inst, seq) are ignored;
+  --allow-from applies to the rendezvous ports as to the barrier. The relay never forwards player traffic for NGNAT.
+6c Clients are not reflectors either. A client sends probes only to addresses the relay gave it (under Kr) or to sources of
+  authenticated probes (peer-reflexive, at most two per peer); never to multicast, broadcast or reserved addresses; loopback only in
+  tests. It answers only PROBEs that verify under the pair key with fresh nonces, one ACK of the same size each [M: replayed,
+  re-nonced and tampered probes get no answer]. Probe volume is bounded: at most 6 candidates x 10/s for 6 s per attempt, three
+  attempts, then every 30 s.
+6d Trust. Anyone holding the session token can register as any slot (as on the lockstep wire today); a malicious player could
+  point another at a wrong address or claim another's slot after the first instance leaves. The pair key keeps outsiders and
+  other players out of a pair's path confirmation, but rendezvous messages and pair keys travel in clear UDP, so an on-path
+  attacker who reads the token can do anything the relay can. B8 (per-player keys, AEAD on the links) closes this; until then
+  direct links carry exactly what the relay path carries, and the relay stays the referee (B6: checked against the relay bundle).
+
+7. TESTS [M] (Windows, Zig 0.15.2; Linux build cross-compiled, not run)
+  python tools/dev/build_native_gate.py --zig ... --test --native-image ...  (now includes test_lockstep_nat.exe)
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests/test_nat_rendezvous.py tests/test_nat_traversal.py
+    (X4LAN_ZIG=<zig>): 39 passed + 31 subtests, ~45 s cold (the gate-inclusion compile is ~33 s of it), stable over repeated runs.
+  - C unit tests; Linux cross-build of tool and unit test; the module inside both gates' translation units.
+  - Simulation: every NAT pair (15 combinations, both directions), port mappings rescuing the unpunchable pairs, one router (LAN /
+    hairpin / neither), LAN addresses never reaching remote players, carrier-grade NAT, address-dependent mapping, loss, eight
+    players, keep-alives over 300 s with a 30 s NAT timeout (one mapping per NAT, never re-created), lost path recovery for
+    restricted and port-restricted NATs with re-mapping ports, an absent peer, CLOSE, forged/replayed probes, a new port mapping
+    advertised at once.
+  - Real sockets: two link processes on loopback through native_gate_relay.py --rendezvous-port: both direct, data both ways,
+    the holding side sees the other's CLOSE; the relay flag off by default and refusing to overlap the barrier port.
+  - Port mapping against the loopback fakes (section 4); the tool refuses non-loopback gateways.
+  Not tested: a real router, the internet, a running X4, the Linux binaries at run time.
+
+8. LIMITS AND OPEN POINTS
+  - Live behaviour of real routers (section 9). The simulation's latencies are fixed; jitter only through loss.
+  - Address-dependent mapping detection and port prediction (section 5).
+  - NAT re-binding of an established path recovers through the 30 s dead-path rule, not instantly; a faster switch to an
+    authenticated new source address is possible later.
+  - IPv4 only. IPv6 would mostly remove NAT but needs firewall pinholes (PCP can open them); not attempted.
+  - Host firewalls: Windows Defender Firewall may ask to allow X4 on first bind; declined, it behaves like port-dependent
+    filtering at the host (the filtering test measures it). We open no firewall ports.
+  - The rendezvous thread shares the relay process (GIL) with the barrier; it wakes for a handful of datagrams at session start
+    and one HELLO per client every 30 s. It can also run as its own process (native_gate_rendezvous.py --port P).
+  - Pair keys and classification are per instance; a client restart re-registers and re-punches.
+
+9. LIVE-TEST PLAN (coordinator, later; this PC behind its home router, the VPS public). Not run.
+  Preconditions: the user agrees; the VPS firewall allows UDP P and P+1 for the rendezvous and the tool's link port (the
+  coordinator's decision; nothing here opens ports); a fresh 32-hex token; no X4 needed. Addresses below are placeholders; keep
+  real addresses out of committed evidence.
+  L0 Build: here `zig cc -target x86_64-windows-gnu ... src/native/engine/test_lockstep_nat_tool.c -lbcrypt -lws2_32`; on the VPS
+     `cc -std=gnu11 -O2 src/native/engine/test_lockstep_nat_tool.c -o nat_tool` (or the Zig Linux target).
+  L1 Relay with rendezvous on the VPS: `python3 tools/dev/native_gate_relay.py --bind <VPS> --allow-from <HOME_PUBLIC>,<VPS>
+     --port 47000 --rendezvous-port 47010 --token <T> --ticks 100000 --report /tmp/nat-live.json` (or the standalone
+     native_gate_rendezvous.py --bind <VPS> --allow-from ... --port 47010 --token <T>).
+  L2 Classification of the home router: here `nat_tool link --server <VPS>:47010 --token <T> --slot 1 --clients 2 --seconds 20`;
+     record the DESC line (mapping, filter). Expected for a typical home router: mapping=eim, filter=port or open.
+  L3 Direct path PC <-> VPS: VPS `./nat_tool link --server <VPS>:47010 --token <T> --slot 2 --clients 2 --seconds 120 --data
+     --hold --bind 0.0.0.0:0`; here the same with --slot 1. Expected: both "CHANGE ... PATH k direct", DATA both ways, round trip
+     close to ping between the two; record time to direct. If the VPS firewall blocks the link port, the VPS behaves as
+     port-restricted and the pair still connects (the VPS side punches outward).
+  L4 Idle hold: same as L3 with --seconds 900 and no traffic beyond keep-alives: the path must stay direct (no "relay
+     path_lost" line); records whether the home router's UDP timeout is above 15 s.
+  L5 Fallback: on the VPS drop UDP from <HOME_PUBLIC> to the link port only (temporary rule, removed afterwards), rerun L3:
+     expected "relay punch_timeout" after ~6 s on both sides, and the relay unaffected.
+  L6 Not a reflector: from the PC send a HELLO with a wrong token and one with a spoofed short length (a 20-line Python snippet with
+     tools/dev/native_gate_rendezvous.request); tcpdump on the VPS shows no reply. Compare request/reply sizes for valid requests.
+  L7 Two players behind the home router: two link processes here (slots 1, 2, --bind 0.0.0.0:0) with the VPS relay: expected
+     direct via their LAN addresses, never through the VPS; with share_lan off, direct only if the router hairpins.
+  L8 Port mapping on the home router: only with the user's explicit OK, because it changes router state. Needs a small change to
+     the test tool first (it refuses real gateways by design): an explicit --real-gateway <router IP> with methods pcp,natpmp,upnp,
+     a 300 s lease, then --renew and --release, and a check in the router UI that the mapping is gone afterwards.
+
+10. INTEGRATION FOR B6 (the direct input links)
+  #include "lockstep_nat_net.h" in lockstep_gate.c / gate_linux.c (checked to compile there). Per session, on the thread that owns
+  the links:
+    nat_config c; nat_config_defaults(&c); c.slot=..; c.clients=..; strcpy(c.token, session token); c.server[0]={relay ip, P};
+    c.server[1]={relay ip, P+1}; c.mapped = portmap external (optional); c.share_lan = player choice;
+    nat_link link; if(nat_link_open(&link,&c,0,0)) -> refused: everything RELAY.
+    each frame / receive loop: while((n=nat_link_recv(&link,now,buf,cap,&slot))>=0) {authenticate (B8), use, nat_core_alive}
+                               nat_link_service(&link,now);   /* returns the next due ms; cheap when nothing is due */
+    per peer: nat_link_path(&link,k,&addr,&rtt) -> NAT_PATH_DIRECT / NAT_PATH_RELAY / NAT_PATH_PENDING
+              nat_link_send(&link,k,data,len) -> 0 sent directly, -1 use the relay
+    session end: nat_link_close(&link); nat_portmap_release(&map) if one was acquired.
+  Port mapping: nat_portmap_acquire on a worker thread (bounded by timeout_ms per method), renew when nat_portmap_due, then
+  nat_core_set_mapped(&link.core, new external or none, now). The module never blocks in nat_link_*; nothing in it touches the
+  lockstep socket, the barrier or any engine state. Gate options (proposal): native_gate_direct_links = off|on,
+  native_gate_direct_lan = on|off, native_gate_portmap = off|pcp,natpmp,upnp; relay --rendezvous-port.
+
+11. LIVE RESULTS (coordinator, 1 November 2026; this PC behind its home router, the VPS public; addresses omitted)
+  Setup: tools/dev/native_gate_rendezvous.py on the VPS (UDP P=47010 and P+1 opened in the VPS firewall for the home
+  address only, with the user's OK), test_lockstep_nat_tool built here (zig cc, Windows) and on the VPS (cc, Linux).
+  L2 the home router: mapping=edm filter=port (a symmetric NAT: a new outside port per destination).
+  L3 PC <-> VPS with the VPS tool on an ephemeral port blocked by the VPS firewall: both sides decided 'relay
+     punch_timeout' after 7-8 s, as designed for symmetric vs port-restricted; nothing else affected.
+  L3b the VPS tool on a fixed port opened in its firewall (the VPS then behaves as an open peer): direct in 1.0 s (PC) /
+     2.4 s (VPS), round trip 11-13 ms (= ping), data both ways, held 120 s until the peer closed.
+  L7 two players behind the same router (two tools here): direct over the LAN in 1.3 / 2.3 s, never through the VPS.
+  L6 the rendezvous answered none of: 200 random bytes, a request signed with a wrong token, a 15-byte request; valid
+     requests from the tool are answered (L2-L7).
+  L8 port mapping on the real router (user's OK; the tool's new --real-gateway switch, loopback-only without it): PCP not
+     answered; NAT-PMP mapped UDP 47020 -> outside 47020 (lease 300 s), renewed, released; UPnP the same. So a player behind
+     a symmetric NAT can still accept direct links through a mapped port.
+  L4 (15 min idle hold on the direct path, --seconds 900 --hold): PASSED. PC (EDM, port-restricted) and VPS went
+     direct after 1.0 s / 2.4 s (rtt 10-12 ms) and stayed direct for the whole hold with keep-alives only; the PC's
+     only later change is at 899 s, peer_closed, when the VPS end (started 2 s earlier) finished its 900 s. The
+     home router kept the mapping open for 15 minutes. Test firewall rules on the VPS removed afterwards.
+  Conclusion: hole punching works where one side is reachable; symmetric home NATs need the port mapping (both methods work
+  on this router) or fall back to the relay cleanly.

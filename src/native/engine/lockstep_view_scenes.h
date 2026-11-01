@@ -1,6 +1,6 @@
 /* Physics near every view point, DEFAULT OFF: native_gate_view_scenes = true (needs
  * native_gate_physics_scenes = 'viewpoints'; a group of lockstep_region_camera.h,
- * stop reason 130).
+ * stop reason 165).
  *
  * A zone's physics scene comes from vtable slot 943 (U::Zone 0x83fe70, U::Highway
  * 0x5f9680): A ("Main") for the player object's sector, B ("Cutscene") for the active

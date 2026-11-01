@@ -24,11 +24,22 @@ RELATION_TEXT = {'allied': '0.75', 'neutral': '0', 'hostile': '-0.5'}   # Lua to
 MODES = ('factions', 'coop')
 OCCUPIED = ('player', 'pool')
 REPUTATION = ('mirror', 'keep')
-PLAN_KEYS = {'version', 'mode', 'tick', 'occupied', 'reputation', 'slots', 'relations', 'starts'}
+PLAN_KEYS = {'version', 'mode', 'tick', 'occupied', 'reputation', 'slots', 'relations', 'starts', 'kits'}
 SLOT_KEYS = {'ship', 'create', 'faction'}
 CREATE_KEYS = {'macro', 'seed', 'sector', 'x', 'y', 'z', 'yaw'}
 RELATION_KEYS = {'a', 'b', 'relation'}
 START_KEYS = {'object', 'sector', 'x', 'y', 'z', 'yaw'}
+# Per-player starts (kits): the player-level parts of slot k's stock start, applied at the setup tick
+# (tools/dev/native_gate_gamestarts.py resolves them; reports/LOCKSTEP-STARTS-20261101.txt).
+KIT_KEYS = {'slot', 'gamestart', 'money', 'reputation', 'blueprints', 'research', 'known', 'omitted'}
+KIT_REPUTATION_KEYS = {'faction', 'value'}
+KIT_KNOWN_KEYS = {'sectors', 'faction', 'shipyards'}
+KIT_PARTS = ('blueprints', 'inventory', 'known', 'reputation', 'research')   # what a kit may leave out, by name
+KIT_ITEMS = 64            # wares, reputation rows or known sectors per kit
+MONEY_MAX = 10 ** 12      # credits
+VALUE_SCALE = 1_000_000   # reputation values travel as integer millionths
+IDENT = re.compile(r'[a-z][a-z0-9_]*')
+POOL = re.compile(r'x4lan_player[0-9]+')
 SAVED = re.compile(r'[0-9a-f]{16}')
 MACRO = re.compile(r'[a-z][a-z0-9_]*_macro')
 APPLIED = re.compile(r'PLAYER_IDENTITY_APPLIED (tick=\d+ ordinal=\d+ .*?)\s*$')
@@ -179,7 +190,98 @@ def validate(plan):
         if not _int(yaw, -180, 180):
             raise Refused('rotation_invalid')
         P['starts'].append({'object': r['object'], 'sector': r['sector'], 'x': r['x'], 'y': r['y'], 'z': r['z'], 'yaw': yaw})
+    P['kits'] = _kits(plan, P, len(slots))
     return P
+
+
+def _ident(value):
+    return isinstance(value, str) and len(value) <= 64 and IDENT.fullmatch(value) is not None
+
+
+def _ascending(values):
+    return all(a < b for a, b in zip(values, values[1:]))
+
+
+def _npc_faction(value):
+    return _ident(value) and value != 'player' and not POOL.fullmatch(value)
+
+
+def _wares(r, key, factions):
+    wares = r.get(key, [])
+    if not isinstance(wares, list) or len(wares) > KIT_ITEMS:
+        raise Refused('kit_wares')
+    if wares and factions:
+        raise Refused('kit_library_mode')   # one blueprint/research library: the player faction's
+    if not all(_ident(w) for w in wares):
+        raise Refused('kit_ware')
+    if not _ascending(wares):
+        raise Refused('kit_order')
+    return list(wares)
+
+
+def _kits(plan, P, n):
+    """Per-player starts: slot k (2..n) takes the player-level parts of its own stock start; slot 1 plays the
+    session base start (the save). Factions: money on slot k's own account, reputation of slot k's faction.
+    Coop: money adds to the one shared wallet, blueprints/research/map knowledge join the one player library.
+    A part that cannot be applied for the slot is named in 'omitted' (never dropped silently)."""
+    kits = plan.get('kits', [])
+    if not isinstance(kits, list) or len(kits) > MAX_SLOTS:
+        raise Refused('kits')
+    factions, out, seen = P['mode'] == 'factions', [], set()
+    for r in kits:
+        _keys(r, KIT_KEYS, 'kit_invalid')
+        slot = r.get('slot')
+        if not _int(slot, 2, n):
+            raise Refused('kit_slot')
+        if slot in seen:
+            raise Refused('kit_duplicate')
+        seen.add(slot)
+        if factions and P['slots'][slot - 1]['faction'] == 'player':
+            raise Refused('kit_player_slot')   # the player faction's start is the session base
+        if not _ident(r.get('gamestart')):
+            raise Refused('kit_gamestart')
+        if not _int(r.get('money'), 0, MONEY_MAX):
+            raise Refused('kit_money')
+        rows = r.get('reputation', [])
+        if not isinstance(rows, list) or len(rows) > KIT_ITEMS:
+            raise Refused('kit_reputation')
+        if rows and not factions:
+            raise Refused('kit_reputation_mode')   # coop: one reputation set, the session base start's
+        reputation = []
+        for row in rows:
+            _keys(row, KIT_REPUTATION_KEYS, 'kit_reputation')
+            if not _npc_faction(row.get('faction')):
+                raise Refused('kit_faction')
+            if not _int(row.get('value'), -VALUE_SCALE, VALUE_SCALE):
+                raise Refused('kit_value')
+            reputation.append({'faction': row['faction'], 'value': row['value']})
+        if not _ascending([row['faction'] for row in reputation]):
+            raise Refused('kit_order')
+        blueprints, research = _wares(r, 'blueprints', factions), _wares(r, 'research', factions)
+        known = r.get('known')
+        if known is not None:
+            _keys(known, KIT_KNOWN_KEYS, 'kit_known')
+            if factions:
+                raise Refused('kit_known_mode')   # one map knowledge: the player faction's
+            sectors = known.get('sectors')
+            if (not isinstance(sectors, list) or not 1 <= len(sectors) <= KIT_ITEMS or len(set(sectors)) != len(sectors)
+                    or not all(isinstance(s, str) and len(s) <= 64 and MACRO.fullmatch(s) for s in sectors)
+                    or not isinstance(known.get('shipyards'), bool)):
+                raise Refused('kit_known')
+            if 'faction' in known and not _npc_faction(known['faction']):
+                raise Refused('kit_faction')
+            known = {'sectors': list(sectors), 'faction': known.get('faction'), 'shipyards': known['shipyards']}
+        omitted = r.get('omitted', [])
+        if (not isinstance(omitted, list) or not all(isinstance(o, str) and o in KIT_PARTS for o in omitted)
+                or not _ascending(omitted)):
+            raise Refused('kit_omitted')
+        given = {'blueprints': blueprints, 'research': research, 'reputation': reputation, 'known': known}
+        if any(given.get(o) for o in omitted):
+            raise Refused('kit_omitted_conflict')
+        out.append({'slot': slot, 'gamestart': r['gamestart'], 'money': r['money'], 'reputation': reputation,
+                    'blueprints': blueprints, 'research': research, 'known': known, 'omitted': list(omitted)})
+    out.sort(key=lambda k: k['slot'])
+    return out
 
 
 def _create_label(c):
@@ -194,13 +296,22 @@ def _start_label(r):
     return f"{r['object']}@{r['sector']}/{r['x']},{r['y']},{r['z']}/{r['yaw']}"
 
 
+def _kit_label(k):
+    rep = '+'.join(f"{r['faction']}/{r['value']}" for r in k['reputation']) or '-'
+    known = k['known']
+    known = f"{known['faction'] or '-'}/{1 if known['shipyards'] else 0}/{'+'.join(known['sectors'])}" if known else '-'
+    return (f"{k['slot']}:{k['gamestart']}:money={k['money']}:rep={rep}:bp={'+'.join(k['blueprints']) or '-'}"
+            f":rs={'+'.join(k['research']) or '-'}:known={known}:omit={'+'.join(k['omitted']) or '-'}")
+
+
 def canonical(P):
     rows = [f"{r['index']}:ship:{r['ship']}:{r['faction']}" if 'ship' in r else
             f"{r['index']}:create:{_create_label(r['create'])}:{r['faction']}" for r in P['slots']]
     relations = ','.join(f"{r['a']}-{r['b']}:{r['relation']}" for r in P['relations']) or '-'
     starts = ','.join(_start_label(r) for r in P['starts'])   # plans without starts keep their earlier text
     return (f"PIDENT_PLAN_1|mode={P['mode']}|tick={P['tick']}|occupied={P['occupied']}|reputation={P['reputation']}"
-            f"|slots={','.join(rows)}|relations={relations}" + (f'|starts={starts}' if starts else ''))
+            f"|slots={','.join(rows)}|relations={relations}" + (f'|starts={starts}' if starts else '')
+            + ('|kits=' + ';'.join(_kit_label(k) for k in P['kits']) if P['kits'] else ''))   # plans without kits keep their text
 
 
 def digest(P):
@@ -226,6 +337,22 @@ def steps(P, plan_digest=None):
     for r in P['relations']:
         fa, fb = P['slots'][r['a'] - 1]['faction'], P['slots'][r['b'] - 1]['faction']
         add('relation', 0, f"pair={r['a']}-{r['b']} factions={fa}/{fb} relation={r['relation']} value={RELATION_TEXT[r['relation']]}")
+    # Per-player starts, after the relations (a kit's reputation overrides the mirror) and in slot order.
+    for k in P['kits']:
+        slot, faction = k['slot'], P['slots'][k['slot'] - 1]['faction']
+        add('kit', slot, f"gamestart={k['gamestart']} faction={faction} omitted={'+'.join(k['omitted']) or '-'}")
+        add('wallet', slot, f"wallet={faction} op={'set' if factions else 'add'} money={k['money']}")
+        for r in k['reputation']:
+            add('reputation', slot, f"faction={faction} other={r['faction']} value={r['value']}")
+        for w in k['blueprints']:
+            add('blueprint', slot, f'ware={w}')
+        for w in k['research']:
+            add('research', slot, f'ware={w}')
+        if k['known']:
+            for i, s in enumerate(k['known']['sectors'], 1):
+                add('known_sector', slot, f'sector={s} index={i}')
+            add('known', slot, f"sectors={len(k['known']['sectors'])} faction={k['known']['faction'] or '-'} "
+                               f"shipyards={1 if k['known']['shipyards'] else 0}")
     add('end', 0, f'steps={len(out) + 1}')
     out[0]['text'] = (f"mode={P['mode']} slots={len(P['slots'])} occupied={P['occupied']} reputation={P['reputation']} "
                       f"steps={len(out)} plan={plan_digest}")
@@ -248,7 +375,7 @@ def relations_for(players, default='neutral', overrides=None):
 
 
 def build_plan(players, mode, ships=None, relation='neutral', overrides=None, occupied_ship=PLAYER_SHIP, occupied='player',
-               reputation='mirror', tick=20, creates=None, starts=None):
+               reputation='mirror', tick=20, creates=None, starts=None, kits=None):
     """Session plan for N slots. ships: saved IDs per slot (default DEFAULT_SHIPS); creates maps slot ->
     create spec (replaces that slot's saved ship). In factions mode slot k owns x4lan_player<k>, except the
     slot flying the occupied player ship, which keeps the vanilla player faction unless occupied='pool'.
@@ -274,6 +401,8 @@ def build_plan(players, mode, ships=None, relation='neutral', overrides=None, oc
         plan['relations'] = relations_for(players, relation, overrides)
     if starts:
         plan['starts'] = [dict(s) for s in starts]
+    if kits:
+        plan['kits'] = json.loads(json.dumps(kits))
     try:
         validate(plan)
     except Refused as error:

@@ -11,9 +11,15 @@ assert(cfg.enabled==false,'snapshot requires disabled multiplayer gameplay')
 -- Optional: other player starts (tools/dev/native_gate_scenarios.py capture-overlay).
 local gamestart=cfg.native_gate_snapshot_gamestart
 assert(gamestart==nil or (type(gamestart)=='string' and gamestart:match('^[A-Za-z0-9_]+$')),'invalid snapshot gamestart')
+-- Optional: hulls of per-player starts (tools/dev/native_gate_session_start.py). The overlay's generated MD
+-- X4LAN_SessionHulls creates them after the fixture check and before the save, so they get saved IDs.
+local hulls=cfg.native_gate_snapshot_hulls
+assert(hulls==nil or (type(hulls)=='number' and hulls%1==0 and hulls>=1 and hulls<=15),'invalid snapshot hull count')
 local fixed=assert(package.loadlib('./extensions/x4_lan_lab/native/x4lan_fixedtick_64.dll','luaopen_x4lan_fixedtick'))()
 local owner,spawned,ready,refreshed,saving,done,inspecting,nearby
+local hulls_raised,hulls_count
 local function log(s) DebugError('[X4LAN] NATIVE_SNAPSHOT '..s) end
+RegisterEvent('X4LAN_SessionHulls.Ready',function(_,count) hulls_count=tonumber(count) or -1 end)
 RegisterEvent('X4LAN_NativeGate.Ready',function(_,count)
  assert(tonumber(count)==12,'snapshot fixture incomplete');ready=C.GetCurrentGameTime()
  log('ACTORS_READY time='..string.format('%.17g',ready))
@@ -42,6 +48,16 @@ local function frame()
  if not inspecting then inspecting=true;AddUITriggeredEvent('X4LAN_NativeGate','InspectAttention',{});return end
  if nearby==nil then return end
  assert(nearby==12,'snapshot requires all 12 actors at nearby attention')
+ if hulls then
+  assert(hulls_raised or hulls_count==nil,'session hulls answered before the request')
+  if not hulls_raised then
+   hulls_raised=true;log('HULLS_REQUEST count='..hulls)
+   AddUITriggeredEvent('X4LAN_SessionHulls','Create',{count=hulls});return
+  end
+  if hulls_count==nil then return end
+  assert(hulls_count==hulls,'session hulls incomplete: '..tostring(hulls_count)..' of '..hulls)
+  if not refreshed then log('HULLS_READY count='..hulls) end
+ end
  if not refreshed then C.ReloadSaveList();refreshed=true;return end
  if not C.IsSaveListLoadingComplete() then return end
  for _,entry in pairs(GetSaveList({save_009=true}) or {}) do assert(entry.filename~='save_009','snapshot slot occupied') end

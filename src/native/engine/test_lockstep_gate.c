@@ -39,6 +39,8 @@
 #include "test_lockstep_gravidar_wide.h"
 #include "test_lockstep_command_order.h"
 #include "test_lockstep_view_points.h"
+#include "test_lockstep_hybrid.h"
+#include "test_lockstep_sample_profile.h"
 #include "test_lockstep_camera_offset.h"
 #include "test_lockstep_mass_traffic.h"
 #include "test_lockstep_gravidar_digest.h"
@@ -61,8 +63,18 @@
 #include "test_lockstep_pilot_slots.h"
 #include "test_lockstep_pilot_eye.h"
 #include "test_lockstep_ui_replay.h"
+#include "test_lockstep_ui_guard.h"
+#include "test_lockstep_ui_build.h"
+#include "test_lockstep_ui_missions.h"
+#include "test_lockstep_ui_trade.h"
+#include "test_lockstep_ui_faction.h"
+#include "test_lockstep_ui_construct.h"
+#include "test_lockstep_pilot_foot.h"
+#include "test_lockstep_pilot_foot_slots.h"
+#include "test_lockstep_pilot_death_foot.h"
 #include "test_lockstep_pilot_device.h"
 #include "test_lockstep_pilot_predict.h"
+#include "test_lockstep_own_predict.h"
 #include "test_lockstep_hit_claims.h"
 #include "test_lockstep_hit_native.h"
 #include "test_lockstep_pilot_fire.h"
@@ -960,6 +972,11 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_registry_origin_image.h"
 #include "test_lockstep_wire_v3.h"
 #include "test_lockstep_lookahead.h"
+#include "test_lockstep_render_frames.h"
+#include "test_lockstep_adaptive.h"
+#include "test_lockstep_wire_crypto_gate.h"
+#include "test_lockstep_render_display.h"
+#include "test_lockstep_peer.h"
 #include "test_lockstep_world_created.h"
 #include "test_lockstep_runtime_ids.h"
 #include "test_lockstep_guidance_local.h"
@@ -972,6 +989,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_body_order.h"
 #include "test_lockstep_shape_order.h"
 #include "test_lockstep_nav_octree.h"
+#include "test_lockstep_nav_mesh.h"
 #include "test_lockstep_event_rng.h"
 #include "test_lockstep_build_rng.h"
 #include "test_lockstep_ui_cargo.h"
@@ -988,17 +1006,26 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_step_chain.h"
 #include "test_lockstep_path_transforms.h"
 #include "test_lockstep_body_pose.h"
+#include "test_lockstep_player_settings.h"
 int main(int argc,char **argv) {
     assert(argc<=2);
-    if(argc==2) {test_solver_native_image(argv[1]);test_registry_md_native_image(argv[1]);test_request_native_image(argv[1]);test_registry_origin_native_image(argv[1]);test_event_order_native_image(argv[1]);test_render_rng_native_image(argv[1]);test_fo_native_image(argv[1]);test_pilot_native_image(argv[1]);test_pilot_native_controls_image(argv[1]);test_pilot_stock_image(argv[1]);test_virtual_players_image(argv[1]);test_mdt_native_image(argv[1]);test_mdr_native_image(argv[1]);test_region_rng_native_image(argv[1]);test_created_native_image(argv[1]);test_bullet_cadence_native_image(argv[1]);test_speak_timer_native_image(argv[1]);test_shield_canonical_native_image(argv[1]);test_nav_cadence_native_image(argv[1]);test_nav_player_native_image(argv[1]);test_command_order_native_image(argv[1]);test_region_camera_native_image(argv[1]);test_weapon_fire_native_image(argv[1]);test_motion_watch_native_image(argv[1]);test_wreck_watch_native_image(argv[1]);test_view_points_native_image(argv[1]);test_camera_offset_native_image(argv[1]);test_mass_traffic_native_image(argv[1]);test_predict_native_image(argv[1]);test_spawn_rng_native_image(argv[1]);test_hitn_native_image(argv[1]);test_pfire_native_image(argv[1]);test_gdl_native_image(argv[1]);test_ship_sound_native_image(argv[1]);test_physics_trace_native_image(argv[1]);test_body_order_native_image(argv[1]);test_shape_order_native_image(argv[1]);test_player_timer_native_image(argv[1]);test_engine_rng_native_image(argv[1]);test_nav_octree_native_image(argv[1]);test_warp_rng_native_image(argv[1]);test_transition_rows_native_image(argv[1]);test_tempzone_order_native_image(argv[1]);test_gravidar_posts_native_image(argv[1]);test_event_rng_native_image(argv[1]);test_build_rng_native_image(argv[1]);test_ui_cargo_native_image(argv[1]);test_supply_rows_native_image(argv[1]);test_ui_lazy_native_image(argv[1]);test_gravidar_wide_native_image(argv[1]);test_portable_math_native_image(argv[1]);test_exact_reciprocal_native_image(argv[1]);test_fp_env_native_image(argv[1]);test_tick_native_image(argv[1]);test_path_budget_native_image(argv[1]);test_decimal_native_image(argv[1]);test_supply_wants_native_image(argv[1]);test_loadout_order_native_image(argv[1]);test_order_canon_native_image(argv[1]);test_pick_order_native_image(argv[1]);test_macro_arena_native_image(argv[1]);test_build_rows_native_image(argv[1]);test_economy_load_native_image(argv[1]);test_pilot_slots_image(argv[1]);test_pilot_eye_image(argv[1]);}
+    if(argc==2) {test_solver_native_image(argv[1]);test_registry_md_native_image(argv[1]);test_request_native_image(argv[1]);test_registry_origin_native_image(argv[1]);test_event_order_native_image(argv[1]);test_render_rng_native_image(argv[1]);test_fo_native_image(argv[1]);test_pilot_native_image(argv[1]);test_pilot_native_controls_image(argv[1]);test_pilot_stock_image(argv[1]);test_virtual_players_image(argv[1]);test_mdt_native_image(argv[1]);test_mdr_native_image(argv[1]);test_region_rng_native_image(argv[1]);test_created_native_image(argv[1]);test_bullet_cadence_native_image(argv[1]);test_speak_timer_native_image(argv[1]);test_shield_canonical_native_image(argv[1]);test_nav_cadence_native_image(argv[1]);test_nav_player_native_image(argv[1]);test_command_order_native_image(argv[1]);test_region_camera_native_image(argv[1]);test_weapon_fire_native_image(argv[1]);test_motion_watch_native_image(argv[1]);test_wreck_watch_native_image(argv[1]);test_view_points_native_image(argv[1]);test_camera_offset_native_image(argv[1]);test_mass_traffic_native_image(argv[1]);test_predict_native_image(argv[1]);test_spawn_rng_native_image(argv[1]);test_hitn_native_image(argv[1]);test_pfire_native_image(argv[1]);test_gdl_native_image(argv[1]);test_ship_sound_native_image(argv[1]);test_physics_trace_native_image(argv[1]);test_body_order_native_image(argv[1]);test_shape_order_native_image(argv[1]);test_player_timer_native_image(argv[1]);test_engine_rng_native_image(argv[1]);test_nav_octree_native_image(argv[1]);test_nav_mesh_native_image(argv[1]);test_warp_rng_native_image(argv[1]);test_transition_rows_native_image(argv[1]);test_tempzone_order_native_image(argv[1]);test_gravidar_posts_native_image(argv[1]);test_event_rng_native_image(argv[1]);test_build_rng_native_image(argv[1]);test_ui_cargo_native_image(argv[1]);test_supply_rows_native_image(argv[1]);test_ui_lazy_native_image(argv[1]);test_gravidar_wide_native_image(argv[1]);test_portable_math_native_image(argv[1]);test_exact_reciprocal_native_image(argv[1]);test_fp_env_native_image(argv[1]);test_tick_native_image(argv[1]);test_path_budget_native_image(argv[1]);test_decimal_native_image(argv[1]);test_supply_wants_native_image(argv[1]);test_loadout_order_native_image(argv[1]);test_order_canon_native_image(argv[1]);test_pick_order_native_image(argv[1]);test_macro_arena_native_image(argv[1]);test_build_rows_native_image(argv[1]);test_economy_load_native_image(argv[1]);test_pilot_slots_image(argv[1]);test_pilot_eye_image(argv[1]);test_pilot_foot_image(argv[1]);}
     if(argc==2)test_wq_image_path=argv[1];
     if(argc==2) test_runtime_ids_native_image(argv[1]);
     if(argc==2) test_guidance_local_native_image(argv[1]);
     if(argc==2) test_ui_replay_native_image(argv[1]);
+    if(argc==2) test_ui_guard_native_image(argv[1]);
+    if(argc==2) test_ui_build_native_image(argv[1]);
+    if(argc==2) test_ui_construct_native_image(argv[1]);
+    if(argc==2) test_ui_missions_native_image(argv[1]);
+    if(argc==2) test_ui_trade_native_image(argv[1]);
+    if(argc==2) test_ui_faction_native_image(argv[1]);
+    if(argc==2) test_player_settings_native_image(argv[1]);
     if(argc==2) test_fp_redirect_native_image(argv[1]);
     if(argc==2) test_step_chain_native_image(argv[1]);
     if(argc==2) test_path_transforms_native_image(argv[1]);
     if(argc==2) test_body_pose_native_image(argv[1]);
+    if(argc==2) {test_render_frames_native_image(argv[1]);test_render_display_native_image(argv[1]);}
     test_registry_md_options();
     test_player_authority();
     test_actor_registry_roles();
@@ -1071,6 +1098,9 @@ int main(int argc,char **argv) {
     test_view_rows();
     test_view_ui();
     test_view_source();
+    test_view_mask();
+    test_hybrid();
+    test_sample_profile();
     test_camera_offset();
     test_mass_traffic();
     test_gravidar_digest();
@@ -1115,22 +1145,38 @@ int main(int argc,char **argv) {
     test_nav_octree();
     test_nav_octree_deadline();
     test_nav_octree_agreed();
+    test_nav_mesh();
     test_nav_octree_snapshot();
     test_pilot_inputs();
     test_pilot_native_controls();
     test_pilot_stock();
     test_pilot_slots();
     test_pilot_eye();
+    test_pilot_foot();
+    test_pilot_foot_diag();
     test_crash_note();
     test_ui_replay();
+    test_ui_guard();
+    test_ui_build();
+    test_ui_missions();
+    test_ui_trade();
+    test_ui_faction();
+    test_ui_construct();
+    test_player_settings();
     test_pilot_device();
     test_pilot_camera();
     test_pilot_predict();
+    test_own_predict();
     test_hit_claims();
     test_hit_native();
     test_pilot_fire();
     test_virtual_players();
     test_lookahead();
+    test_render_frames();
+    test_adaptive();
+    test_wire_crypto_gate();
+    test_render_display();
+    test_peer();
     assert(image);
     assert(!damage_install());damage_original_word=123;damage_patched_word=456;
     *(uint64_t*)(image+DAMAGE_ENTRY)=123;assert(damage_swap(123,456) && !damage_swap(123,789));

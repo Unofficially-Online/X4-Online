@@ -1,0 +1,378 @@
+LOCKSTEP SESSION DEFAULTS: EVERYTHING ON BY DEFAULT, FAIL LOUDLY NOT SILENTLY
+1 November 2026 | branch contrib/ferrite-defaults (base: smoke e1f24256) | offline work: Lua/Python unit tests and the
+gate build/test harness; no X4 was launched, no lane tool was run. The live test is section 9 (coordinator).
+
+0. DECISION AND RESULT
+  User (1 Nov): "everything should be on by default, fail loudly not silently". Coordinator's reading, implemented as is:
+  (1) the mod stays inert without a lockstep session; (2) once a session is configured, every feature and sync fix that
+  works is ON unless the session config sets that key to false; (3) diagnostics and measurement keys stay OFF (listed in
+  section 3); (4) every refusal, unsupported combination, skipped default, unmapped/degraded counter, failed arm or stop is
+  an ERROR row with the reason plus an in-game info line (X4's ShowInfoLine, the UI guard's path), and a stack that could
+  split stops before the boot.
+  Result: a session config with only native_gate_test, slot, port, token, native_gate_clients and the identity plan now
+  arms the people stack of Play42P plus the newer features (render frames 1-3, own-ship prediction, UI guard, all 16 UI
+  families, slot 1 on foot, per-slot player settings). Unit-tested end to end up to the boot: the probe accepts that stack,
+  arms it on a mock gate and folds its digest into the boot data (tests/test_native_gate_defaults.py, ProbeTests).
+
+1. MECHANISM
+  tools/dev/native_gate_defaults.lua (the one source of truth) defines X4LAN_NATIVE_GATE_DEFAULTS:
+  - D.ON: 172 entries {key, value, needs, why} in arming order (a key's prerequisites come before it). needs tokens: 'key'
+    (on), 'key=value', 'key~item' (a list holding item), '!key' (a conflict), '@wire3' (native_gate_clients), '@plan' (the
+    identity plan), '@fixed' (not protocol 5). Derived values: '@plan_ships' (pilot slots = the plan's slot ships),
+    '@plan_stock' / '@plan_nodevice' (one 'stock' / false per plan slot), '@plan_window' ({max(40, setup tick + 16), 72000}),
+    '@families' (every UI family whose prerequisites hold). '@credential' and '@configured' have no default (section 4).
+  - D.apply(cfg): only when native_gate_test is set. A session needs slot pN, port and token (else a refusal). Explicit
+    false or 'off' on a default key removes it (absent = off for every gate key) and is reported; a key the config sets is
+    kept; every absent key gets its default when its needs hold, otherwise it is SKIPPED with the reason. Explicit
+    combinations the relay or the gate refuses are errors (stop before the boot). Idempotent: the report stays in
+    cfg._native_gate_defaults (the overlay loads the module first, the probe applies again and gets the same report).
+  - native_gate_defaults = false: the bare gate (every key as configured, absent = off); logged as DEFAULTS_OFF.
+  - D.stack: every default key's effective value (the wire crypto credential only as set/off, it is a per-slot secret).
+    The probe folds SHA-256(stack) into the boot data ('|DEFAULTS_1|'): the relay compares the tick-0 digests, so a client
+    running another stack stops at tick 0 instead of splitting later (row DEFAULTS_STACK digest=...).
+  Load order: the overlay builders put ui/native_gate_defaults.lua FIRST in ui.xml.files (the identity and orders adapters
+  read X4LAN_CONFIG while loading). The probe refuses to start without the module unless native_gate_defaults = false
+  (ERROR DEFAULTS_MISSING + info line): a client without it would run another stack than its peers.
+  Python mirror: tools/dev/native_gate_defaults.py parses the Lua file (strict one-entry-per-line format) and applies it
+  the same way (tests compare both on several configs: applied keys, skipped keys and values are identical).
+  - check_gate_options.py checks a session config on its effective config (defaults applied); errors of the defaults are
+    failures; the CLI prints DEFAULTS and every DEFAULT_SKIPPED. An empty session config validates with no failure.
+  - native_gate_players.py: on a session base the overlay writes only the lines that differ from the defaults, and an
+    explicit false for every piloting/UI default its flags leave off (so the overlay runs what it validated); the final
+    config is checked with check_gate_options (a failure refuses the build). New --defaults-only (--source stock): writes
+    only the clients and the identity plan. The default stack's files are shipped (UI_FILES/MD_FILES in the mirror).
+    Bases without port/token (the existing tests' fragments) are unchanged. `config` still prints the full block.
+  - build_native_gate_overlay.py: a battle snapshot overlay on the Windows gate is a session with the default stack (its
+    files shipped, the module first); --bare, the Linux gate (core subset), fixed-tick boots, clock mode and the two-player
+    fixtures (command test, player probe, docking) write native_gate_defaults = false with the reason (printed).
+
+2. THE DEFAULTS (key without native_gate_, default, why [prerequisites])
+  hash                               'battle'               session world: the battle scope of snapshot 005 (12 fixture actors in the declared state)
+  snapshot_sha                       '7816351056e6040d92ae9a4619ae2e15a577... session world: the owned pristine 7.3 snapshot 005, booted without the fixed-tick DLL
+  snapshot_fixture                   {'0000000000176a13','0000000000176a74... session world: the saved fixture actors of snapshot 005, enrolled by saved ID [needs snapshot_sha hash=battle]
+  world_identities                   true                   saved-ID map: every keyed fix and the identity plan resolve objects through it
+  serial_pathing                     true                   pathing pass serialized at the gate join
+  seed_rng                           true                   per-tick seeded thread RNG words
+  flight_rng                         true                   flight model draws keyed
+  flight_full                        true                   every flight controller covered (avoidance refresh needs it)
+  avoidance_refresh                  true                   avoidance refresh keyed [needs flight_full]
+  steering_init                      true                   steering initialization keyed [needs flight_rng]
+  steering_schema                    2                      steering lifetime in the declared state
+  ai_diag                            true                   installs the AI hooks the radar needs (ai_rng is excluded by the keyed script RNG); AI rows only at the trace stride
+  radar_diag                         true                   installs the radar hooks radar_serial needs; rows only when drained [needs ai_diag]
+  radar_serial                       true                   radar passes serialized [needs radar_diag serial_pathing]
+  radar_rng                          true                   radar draws keyed [needs radar_serial]
+  radar_initial_refresh              true                   radar first refresh keyed [needs radar_rng]
+  agent_rng                          true                   agent draws keyed
+  agent_full                         true                   every agent covered (spline refresh and join need it)
+  spline_diag                        true                   installs the spline hooks spline_refresh and spline_join need; rows only at the trace stride
+  spline_refresh                     true                   spline refresh keyed [needs spline_diag agent_full]
+  spline_join                        true                   spline builds joined at the gate [needs spline_diag agent_full serial_pathing]
+  spline_join_all                    true                   every spline build joined [needs spline_join]
+  ship_rng                           true                   ship draws keyed
+  params_init                        true                   flight parameters initialized at a fixed point
+  weapon_diag                        true                   registers the fixture guns with the weapon module: their draws are keyed by actor and slot (lockstep_weapon.h); rows only at the trace stride
+  weapon_rng                         true                   weapon draws keyed
+  nav_rng                            true                   navigation draws keyed
+  nav_initial_refresh                true                   navigation first refresh keyed
+  attention_rng                      true                   attention draws keyed
+  attention_initial_refresh          true                   attention first refresh keyed
+  death_rng                          true                   death draws keyed
+  bullet_rng                         true                   bullet draws keyed
+  shape_rng                          true                   physics shape draws keyed
+  shape_initial_refresh              true                   physics shape first refresh keyed
+  interrupt_diag                     true                   installs the interrupt hooks the Windows script RNG keys on (no own entries); rows are trace rows
+  nested_actions                     true                   nested MD/AI actions observed: the Windows script RNG keys on them
+  actor_diag                         true                   the actors raw native state (hull bits, navigation, physics) joins the declared digest
+  strict_state                       true                   strict health and navigation state in the digest [needs actor_diag]
+  shield_refresh                     true                   shield refresh before the state read [needs actor_diag]
+  strict_physics                     true                   physics bodies and attention in the digest [needs actor_diag]
+  spline_state                       true                   spline state in the digest [needs strict_physics]
+  order_state                        true                   order queues in the digest (ui/native_gate_orders.lua)
+  fleet_state                        true                   fleet membership in the digest (ui/native_gate_fleet.lua)
+  rng_schema                         2                      the gate RNG schema is checked every tick (a mismatch stops the session)
+  world_hash_stride                  1800                   census: the world digest joins the report every 1800 ticks (a split stops at the relay)
+  world_hash_schema                  'WORLD_IMPORTED_2'     census with the enriched navigation fields [needs world_hash_stride]
+  world_hash_shields                 'canonical'            census shields in canonical form [needs world_hash_stride]
+  path_determinism                   3                      navigation stamps and pathing budget fixed [needs serial_pathing]
+  travel_snapshot                    true                   wingmen read a per-pass travel snapshot [needs serial_pathing path_determinism]
+  path_budget                        100                    pathing round robin by count, not by clock [needs serial_pathing]
+  path_transforms                    'sim'                  pathing reads simulation transforms, not view caches [needs serial_pathing]
+  body_pose                          'sim'                  new physics bodies take simulation poses
+  gravidar_key_all                   true                   Gravidar units keyed
+  gravidar_time_sync                 true                   Gravidar times on game time
+  gravidar_load_pass                 true                   Gravidar load pass fixed
+  gravidar_sector_order              true                   Gravidar sectors in a fixed order
+  gravidar_deadlines                 true                   Gravidar deadlines keyed [needs world_identities gravidar_time_sync]
+  gravidar_wide                      'sort'                 stations radar in a deterministic zone order [needs radar_serial world_identities]
+  event_order                        true                   due events in a fixed order
+  event_rng                          'key'                  event listeners draws keyed [needs world_identities event_order]
+  script_rng                         'key'                  MD and AI script draws keyed [needs world_identities interrupt_diag nested_actions]
+  script_rng_mask                    7                      script RNG scopes: AI, MD, boot [needs script_rng]
+  script_rng_unmapped                'key'                  AI owners without a portable ID keyed by marker and rank [needs script_rng]
+  ai_schedule                        true                   AI scripts scheduled in a fixed order
+  md_timed_rng                       true                   MD timed cues keyed
+  md_resume_rng                      true                   MD resumed cues keyed
+  ai_wait_rng                        true                   load-time AI waits keyed [needs world_identities]
+  boot_hold                          true                   the universe is held until the first gated frame
+  find_order                         'sort'                 find candidate lists in saved-ID order [needs world_identities]
+  region_rng                         'key'                  region passes keyed [needs world_identities]
+  spawn_rng                          'key'                  ship loadout generation keyed
+  created_identities                 true                   created objects get portable IDs [needs world_identities]
+  portable_created                   true                   created objects keyed by their creation frame [needs created_identities]
+  created_load                       true                   load-created objects keyed [needs world_identities created_identities]
+  speech_game_time                   true                   NPC speech on game time
+  weapon_fire_rng                    true                   weapon fire draws keyed [needs world_identities]
+  engine_refresh_rng                 true                   engine parameter refreshes keyed [needs world_identities]
+  player_timer                       true                   player timers on game time
+  ship_sound_rng                     'split'                ship sounds on their own RNG word
+  warp_rng                           true                   warp draws keyed [needs world_identities]
+  tempzone_order                     'order'                temporary zones in a fixed order [needs world_identities serial_pathing travel_snapshot]
+  build_rng                          true                   build storage reschedules keyed [needs world_identities]
+  economy_load_rng                   true                   economy schedule keyed at the load [needs world_identities]
+  loadout_order                      'canonical'            restock wishes in macro-id order
+  order_canon                        'canonical'            generated loadouts and script tables in id order
+  pick_order                         'canonical'            weighted library picks in file order
+  macro_arena                        true                   macros in id hash order
+  shape_order                        'sync'                 collision files loaded before the part is built
+  portable_math                      true                   CRT math entries on the portable library
+  exact_reciprocal                   true                   RCPSS/RSQRTSS exactly rounded
+  decimal                            true                   saved values read by the portable decimal reader
+  fp_env                             'default'              MXCSR 0x1f80 on every X4 thread
+  cutscene_ready                     true                   cutscene readiness at the join [needs serial_pathing]
+  speak_timer                        true                   speak timers on game time
+  fast_reads                         true                   small reads by a guarded copy (same values, faster)
+  tick_hz                            30                     30 simulation steps per second (the relay runs --tick-hz 30)
+  runtime_ids                        true                   runtime IDs allocated alike on every client [needs world_identities]
+  runtime_ids_barrier                true                   the runtime ID word joins the digest [needs runtime_ids]
+  runtime_ids_local                  true                   client-local objects take local runtime IDs [needs runtime_ids created_identities]
+  render_rng_split                   true                   the render runs on its own RNG word
+  bullet_cadence                     'every'                every bullet tested every frame (camera-independent) [needs bullet_rng]
+  nav_cadence                        'far'                  navigation refresh cadence camera-independent [needs nav_rng]
+  nav_probe_init                     true                   obstacle probe deadlines fixed [needs nav_cadence]
+  nav_params_init                    true                   parameter refresh deadlines fixed [needs nav_cadence]
+  nav_player                         true                   the player ship in the navigation cadence [needs nav_cadence]
+  attention_all                      true                   attention high on every client where any player is [needs attention_rng]
+  actor_rng_all                      true                   every portable ship keyed [needs world_identities agent_rng ship_rng]
+  view_points                        'players'              the players ships are the view points on every client
+  view_points_source                 'ship'                 view points at the ships [needs view_points]
+  view_triggers                      'block'                camera triggers blocked in the simulation [needs view_points]
+  view_ui                            'block'                UI view queries blocked in the simulation [needs view_points runtime_ids_local]
+  mass_traffic                       'sync'                 mass traffic joined at the gate
+  region_pass                        'sync'                 region passes joined at the gate
+  pass_stride                        2                      traffic and region passes every 2 ticks [needs mass_traffic=sync]
+  region_camera                      'view'                 region camera from the view points [needs view_points region_pass=sync]
+  region_fields                      'view'                 region fields from the view points [needs view_points]
+  field_fill                         'view'                 field fill from the view points [needs region_fields]
+  mass_traffic_camera                'view'                 mass traffic camera from the view points [needs view_points mass_traffic=sync]
+  effect_camera                      'view'                 effects from the view points [needs view_points]
+  highway_camera                     'view'                 highways from the view points [needs view_points]
+  highway_speed                      'key'                  highway speeds keyed [needs view_points world_identities]
+  physics_scenes                     'viewpoints'           physics scenes per view point [needs view_points]
+  view_scenes                        true                   a physics scene per sector [needs physics_scenes]
+  camera_context                     'view'                 camera context from the view points [needs view_points]
+  shape_refresh                      'view'                 shape refresh from the view points [needs view_points]
+  mining_camera                      'view'                 mining from the view points [needs view_points]
+  xs_camera                          'view'                 XS ships from the view points [needs view_points]
+  traffic_views                      'view'                 traffic views from the view points [needs view_points]
+  sound_rng                          'split'                sounds on their own RNG word [needs view_points]
+  viewpoint_policy                   'sector'               view point stand-ins per sector [needs mass_traffic_camera]
+  viewpoint_standins                 4                      four covered sectors [needs viewpoint_policy]
+  nav_octree                         'agreed'               navigation octrees shown when every client built them [needs world_identities @wire3]
+  nav_octree_snapshot                true                   octrees built from the requesting join [needs nav_octree]
+  status_stride                      60                     log thinning: every tick sampled and hashed, rows written every 60 ticks and before any stop
+  trace_stride                       60                     trace rows every 60 ticks instead of every tick
+  crash_note                         true                   fail loudly: an unhandled exception leaves a CRASH line (x4lan-crash.txt)
+  lookahead                          1                      protocol 4: a permit window of 1 tick (render frames, own-ship prediction and wire crypto need a fixed window) [needs @wire3]
+  lookahead_max                      4                      adaptive input delay (protocol 5): on only when the session sets native_gate_lookahead=adaptive (relay --adaptive) [needs lookahead=adaptive]
+  wire_crypto                        '@credential'          encrypted and signed relay path: on when the session has a credential (x4c1:...) and the relay --wire-crypto [needs @wire3 @fixed]
+  peer_window                        '@configured'          direct player links: on only when configured on every PC and the relay (--peer-window m); players see each other addresses [needs @wire3 @fixed !wire_crypto]
+  peer_rendezvous_port               '@configured'          NAT traversal for the peer links: on only when configured (relay --rendezvous-port) [needs peer_window]
+  player_identity                    true                   slot factions, ship ownership and starts from the identity plan [needs @plan world_identities hash=battle snapshot_sha]
+  pilot_slots                        '@plan_ships'          one slot ship per player, from the identity plan [needs player_identity]
+  pilot_inputs                       true                   lockstep piloting [needs pilot_slots @wire3 serial_pathing world_identities]
+  pilot_source                       'wire'                 each client captures its own slot and proposes it on the wire [needs pilot_inputs]
+  pilot_delay                        3                      pilot records apply 3 ticks after capture (lookahead + 2) [needs pilot_inputs @fixed]
+  pilot_window                       '@plan_window'         controls from the tick after the identity setup to tick 72000 (40 minutes) [needs pilot_inputs]
+  pilot_suppress_local               true                   local controls parked: input only through the records [needs pilot_inputs]
+  pilot_stock                        true                   every slot flies through X4s own player control path [needs pilot_inputs pilot_suppress_local pilot_source=wire]
+  pilot_stock_slots                  'all'                  every slot is a stock slot [needs pilot_stock]
+  pilot_capture_source               '@plan_stock'          every client captures its own slot (stock) [needs pilot_stock]
+  pilot_device                       '@plan_nodevice'       stock capture: no device sampler [needs pilot_stock]
+  pilot_present                      true                   client k presents slot k (camera, HUD, UI) [needs pilot_stock pilot_stock_slots render_rng_split]
+  pilot_ship_state                   true                   slot ships state in the receipt [needs pilot_inputs]
+  pilot_block_orders                 true                   stock menus that would act on one client are blocked; the UI replay reopens what it shares [needs pilot_inputs]
+  pilot_fire                         'record'               slot ships fire from the record trigger (record) [needs pilot_inputs actor_rng_all world_identities bullet_cadence=every]
+  hit_claims                         'victim'               player-versus-player hits decided by the victim slot [needs pilot_inputs world_identities pilot_source=wire bullet_cadence=every]
+  pilot_death                        true                   a slot ship death does not end the session [needs pilot_stock !pilot_foot_bodies !pilot_foot_slots]
+  pilot_respawn                      300                    a new slot ship after 300 ticks [needs pilot_death]
+  pilot_death_suit                   true                   a dead slot 2..N waits in its own spacesuit [needs pilot_death pilot_present pilot_ship_state]
+  ui_replay                          '@families'            stock UI actions as events of the slot: every family [needs pilot_stock_slots=all pilot_present runtime_ids world_identities]
+  ui_guard                           'all'                  every other world-changing stock UI entry refused, with an info line [needs ui_replay]
+  pilot_foot                         true                   slot 1 gets up and walks on every client [needs pilot_stock ui_replay ui_guard]
+  pilot_foot_bodies                  true                   slots 2..N in their seats rooms [needs pilot_foot pilot_stock_slots !pilot_death]
+  pilot_foot_slots                   true                   slots 2..N get up and walk [needs pilot_foot pilot_stock_slots !pilot_death]
+  player_settings_per_slot           true                   each slot its own faction settings [needs ui_replay~faction]
+  guidance_local                     true                   a client own guidance takes local runtime IDs [needs pilot_present runtime_ids_local script_rng md_timed_rng]
+  render_fps                         60                     render-only frames between the steps, up to 60 per second [needs @fixed lookahead tick_hz snapshot_sha serial_pathing radar_serial render_rng_split mass_traffic=sync region_pass=sync runtime_ids_local]
+  render_camera                      'extrapolate'          the camera moves in the render-only frames [needs render_fps]
+  render_motion                      'extrapolate'          moving objects drawn smoothed in the render-only frames [needs render_fps]
+  own_predict                        'present'              the own ship answers the controls at once (display only) [needs pilot_stock render_rng_split]
+  own_predict_rows                   0                      no per-step OWN_PREDICT row (diagnostic); OWN_PREDICT_STATUS every 600 ticks stays [needs own_predict]
+  Values equal Play42P's for every key both have, except pilot_window (Play42P {40,36000}, its run length; default
+  {40,72000} = native_gate_players.py's people window) and ui_replay (Play42P 8 families; default all 16).
+
+3. OFF BY DEFAULT
+  3a Diagnostics and measurement (D.DIAGNOSTIC; only log, capture, trace, profile, watch, mask for measurement; the hybrid
+  model is listed here because it is not yet correct):
+  frame_timing, probe_profile, sample_profile, world_hash_watch, world_health_ticks, world_trace_ticks,
+  world_trace_early, world_queue_trace, world_wait_manifest, world_wait_rng_manifest, world_action_manifest,
+  world_values, world_position, world_safe_position, world_find_rng_manifest, world_position_rng_manifest,
+  bullet_diag, death_diag, mass_diag, flight_diag, agent_diag, ship_diag, params_diag, nav_diag, velocity_diag,
+  shape_diag, attention_diag, damage_diag, contact_diag, contact_order, contact_properties, body_diag, boost_diag,
+  travel_diag, address_order, build_rows, supply_rows, supply_wants, effect_rows, traffic_rows, view_rows,
+  viewpoint_policy_rows, highway_rows, highway_rows_from, highway_trace, rng_rows, actor_rng_rows, command_order_rows,
+  created_rows, event_rows, event_rng_rows, script_rng_rows, script_rng_rows_ticks, script_rng_rows_window,
+  script_rng_natural, runtime_ids_rows, runtime_ids_callers, runtime_ids_caller_stride, loadout_order_rows,
+  order_canon_rows, pick_order_rows, ui_lazy_rows, transition_rows, render_display_rows, gravidar_watch,
+  gravidar_digest, gravidar_digest_rows, gravidar_posts, motion_watch, motion_watch_digest, motion_watch_doors,
+  motion_watch_orders, motion_watch_splines, motion_watch_zones, wreck_watch, draw_watch, draw_watch_frame,
+  nav_cadence_watch, nav_octree_sites, physics_trace, physics_trace_children, physics_trace_children_from,
+  physics_trace_from, physics_trace_saved, step_trace, step_trace_ticks, step_chain, trace_window, coverage,
+  thread_rng_census, camera_probe, view_points_mask, fp_attack_capture, fp_attack_watch, fp_redirect_watch,
+  fp_redirect_ticks, registry_md_trace, creation_trace_schema, job_rng, pilot_capture, pilot_observe_native,
+  player_observer, player_request_observer, player_solver_observer, player_transition_observer,
+  player_transition_queue_evidence, player_transition_prebind_receipt, npc_diag, npc_lifecycle, npc_pilot,
+  npc_trigger, npc_finish, npc_provenance, hybrid
+  Of these Play42P had on: frame_timing, probe_profile, world_hash_watch (64 IDs), bullet_diag, address_order,
+  runtime_ids_caller_stride, build_rows, pilot_capture (each only rows; the bullet keys are bullet_rng, the stock record is
+  captured without pilot_capture). own_predict_rows is set to 0 (its per-step row is a diagnostic; OWN_PREDICT_STATUS stays).
+  Kept ON although named *_diag, because something else needs them (checked in lua_boot and the probe): ai_diag (radar_diag
+  needs the AI bit; ai_rng is excluded by the keyed script RNG), radar_diag (radar_serial), spline_diag (spline refresh/join),
+  interrupt_diag + nested_actions (the Windows script RNG keys on them), actor_diag (the raw actor state joins the digest),
+  weapon_diag (registers the fixture guns: their draws are keyed by actor and slot, lockstep_weapon.h).
+  3b Not a default (D.EXCLUDED): fixtures, scripts for runs without people, experiments, alternatives, cross-platform:
+  missions, highway, highway_super, highway_target, player_tour, big_war, big_spawn, bigbattle, battle_engage,
+  command_test, management_test, construction_test, player_probe, docking_state, docking_shape_rng,
+  docking_shape_refresh, creation_rng_schema, registry_creation_schema, pilot_stock_script, pilot_local_script,
+  ui_replay_script, ui_build_script, ui_replay_fleet, ui_replay_min_hull, ui_trade_fund, ui_build_fund,
+  player_settings_spawn, hit_claims_script, pilot_fire_slots, camera_perturb, camera_offset, camera_anchor,
+  pilot_camera_follow, pilot_predict, virtual_players, player_orders, fork_save, play_mode, ui_cargo, ui_lazy,
+  body_order, command_order, nav_mesh, fp_redirect, fp_redirect_solver, fp_redirect_drones, npc_rng, npc_deadline,
+  ai_rng, interrupt_rng, boot_rng_anchor, travel_determinism, nav_key, timer_resolution, tick_pace,
+  world_timing_fields, creation_rng_manifest, diagnostic_contract, player_origin_token, player_transition_last_tick,
+  player_transition_manifest, registry_origin_schema, registry_origin_identity_schema, npc_pilot_origin,
+  npc_provenance_origin, shape_lifetimes, player_orders_capture
+  3c Tuning keys with the probe's own value when absent (D.TUNING): own_predict_horizon, own_predict_tau, own_predict_others, pilot_pad, pilot_invert, pilot_native_requests,
+  pilot_predict_horizon, pilot_predict_tau, pilot_predict_raw, nav_octree_delay, player_orders_delay,
+  boot_rng_anchor_mask, virtual_players_construct_tick, start_time
+  3d The session supplies: native_gate_test, native_gate_clients, native_gate_player_identity_plan, native_gate_relay_host,
+  native_gate_arm_timeout_ms, native_gate_input_priority, native_gate_defaults.
+
+4. CONFLICTS AND HOW THE DEFAULT STACK RESOLVES THEM
+  - Protocol: default protocol 4, lookahead 1, pilot delay 3, with render frames (60 fps, camera and motion extrapolated),
+    own-ship prediction 'present' and every feature that needs a fixed window. Adaptive delay (protocol 5) only when the
+    session sets native_gate_lookahead = 'adaptive' (relay --adaptive): then lookahead_max defaults to 4 and pilot_delay,
+    render_fps/camera/motion, wire crypto and peer links are skipped loudly ("protocol 5 ... excludes it").
+  - Wire crypto (protocols 3/4): on when the session sets the credential native_gate_wire_crypto = "x4c1:..." (relay
+    --wire-crypto); without one: DEFAULT_SKIPPED "the relay path is plain UDP with the shared token". Explicit crypto with
+    adaptive, or crypto with peer links: refused before the boot (the relay refuses both combinations).
+  - Peer links and NAT traversal: on only when the session sets native_gate_peer_window (and the rendezvous port) on every
+    PC and the relay; otherwise DEFAULT_SKIPPED "not configured" (players would see each other's addresses).
+  - Death vs on-foot bodies/slots (X4-Multiplayer-deathfoot is making them compatible): death, respawn 300 and the death
+    suit are ON; pilot_foot_bodies and pilot_foot_slots are SKIPPED: "excluded by native_gate_pilot_death (on): ... death won
+    by default". A session that sets bodies or slots explicitly wins over the default death (death skipped loudly). Both
+    explicit: the probe's and the checker's rule refuse it. When deathfoot lands: drop the '!' tokens of these three entries.
+  - UI guard and families: build, assets, faction need the guard, missions/conversation its groups, missiles pilot fire;
+    with one of these off the family is dropped from the list loudly (DEFAULT_SKIPPED native_gate_ui_replay:<family>).
+  - Option B (fp_redirect, _solver, _drones) stays off: 'redirect' moves Windows to Linux's order and the people stack does
+    not run on the Linux gate yet (roadmap 11/12). Hybrid sectors: off (diagnostic list, not yet correct). play_mode: off
+    (it removes the census rows a live comparison reads). Fixes not in Play42P (ui_cargo, body_order, command_order,
+    nav_mesh): off, not validated with the people stack.
+
+5. SILENT PATHS MADE LOUD (ERROR row + info line unless noted)
+  - Every boot refusal of the probe (15 sites: fixed tick, wire 3, lookahead, adaptive, wire crypto, peer window, relay
+    host, play mode, NPC rows, fast reads, tick rate, render frames/camera/motion/rows, start code): ERROR REFUSED <what>,
+    info "the session could not start - refused <what> (<reason name>)". Before: a plain REFUSED row, the start menu idle.
+  - Config refusals at load (every assert of the probe's top level): the probe body runs in pcall; ERROR CONFIG_REFUSED
+    <why> + info line, then the error is raised as before.
+  - Frame errors (asserts while arming or per tick): the existing ERROR row + ABORT, now with the info line "the session
+    stopped - <why>".
+  - Stops of the gate: the STOP row is followed by D.stop_notice: reason by name (D.STOP_REASONS, checked against the
+    registry) and the piloting why: ERROR SESSION_STOPPED reason=N (<name>) why=...; reason 1 (the relay) gets an info line
+    and a plain STOP_NOTICE row (the client cannot tell the relay's end from a mismatch the relay saw).
+  - Every default that cannot apply: ERROR DEFAULT_SKIPPED key=... why=... feature=..., one combined info line.
+  - Defaults refused (explicit combinations): ERROR DEFAULTS_REFUSED + info line + no boot. Module missing: DEFAULTS_MISSING.
+  - Degraded counters in module statuses (D.watcher): a growing failures / *_failures / unmapped / *_unmapped / fallback /
+    unknown / unsupported / refused / swap_refused / lost / torn counter, and the UI families' lua= skipped/dropped/refused
+    parts: ERROR DEGRADED status=<row> <counter>=N (+delta) tick=T on every growth; an info line at most every 1800 ticks per
+    counter (guard, missions and faction refusals already show their own info line: ERROR row only). Read from the 65
+    statuses the frame polls, the UI *_STATUS rows, and 14 more statuses read every 600 ticks for this only (engine refresh,
+    build RNG, portable math, exact reciprocal, fp env, decimal, macro arena, pick order, order canon, loadout order,
+    lookahead, wire crypto, peer, UI guard). Before: counters only at the stride or the stop. The first live run will show
+    which counters grow by design; those go to the module's own exception or a D.WATCH change.
+  - HIT_CLAIMS_REFUSED (a claim refused on every client) and PILOT_NATIVE_REFUSED (a refused flight input): ERROR rows, the
+    info line at most every 90 ticks. SHIP_ENROLL_REFUSED: ERROR + info. FORK_SAVE_SKIPPED: ERROR + info.
+  - UI replay families' refusals: their info line is shown also without the guard (notify was nil without it).
+  - The nav octree snapshot alone silently armed 'observe': ERROR DEGRADED nav_octree=observe.
+  - The build script tools' empty loadout fallback (scripted runs): ERROR UI_BUILD_LOADOUT_EMPTY row.
+  - The abort/stop path's status rows ran in pcall without a trace: a row that fails now writes ERROR STOP_ROW_FAILED <why>.
+  - Info lines raised at the start menu (refusals before the snapshot load, which X4 does not draw there) are queued and
+    shown again on the first frame with a game on screen; a ShowInfoLine that fails writes NOTICE_UNSHOWN.
+  Not changed: the C modules' counters themselves (the probe reads them), and the pcalls around ffi.cdef (a declaration
+  that exists already). The probe tests' configs set native_gate_defaults = false (they test one module
+  each on the bare gate); tests expecting "no ERROR" next to a refusal now expect the refusal's ERROR row.
+
+6. FILES
+  tools/dev/native_gate_defaults.lua (new), tools/dev/native_gate_defaults.py (new), tools/dev/native_gate_probe.lua,
+  tools/dev/check_gate_options.py, tools/dev/native_gate_players.py, tools/dev/build_native_gate_overlay.py,
+  tools/dev/validate_native_getup_diagnostic.py (the closed get-up contract allows native_gate_defaults = false),
+  tests/test_native_gate_defaults.py (new, 30 tests), option/probe/builder tests updated, docs/LOCKSTEP-REGISTRY.txt (one
+  sentence), reports/LOCKSTEP-ROADMAP-20261101.txt (item B9). Two tests that failed before this branch now pass
+  (test_native_creation_load/trace: their abort snippet ran past the onUpdate block and lacked ticklog).
+
+7. VERIFICATION (offline)
+  - PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q over the 135 gate test files (tests/test_native_gate*.py,
+    test_lockstep_*.py, test_native_*.py without the validator files that need a dev package): 1742 passed, 16 skipped,
+    0 failed (baseline at e1f24256: 5 failed; those are fixed here). Includes tests/test_native_gate.py,
+    test_lockstep_registry.py, test_native_gate_ui_guard.py, test_native_gate_ui_replay.py, the option and players tests.
+  - python tools/dev/build_native_gate.py --zig ... --test --native-image ...: see section 8.
+  - tools/dev/native_gate_defaults.py table / effective CONFIG print the table and an effective config.
+
+8. NATIVE BUILD
+  python tools/dev/build_native_gate.py --zig <engine-patches toolchain zig.exe> --test --native-image <x4-re X4.exe>: exit 0,
+  every native suite PASS (test_gate.exe from the repo root, no loopback retry needed), x4lan_gate_64.dll built under
+  .local/native-lockstep/build. No C source changed on this branch: the loud paths are in the probe and the defaults module.
+
+9. LIVE-TEST SPEC D1 (coordinator): the session defaults alone run the people stack
+  Build (no stack flags):
+    python tools/dev/build_native_gate_overlay.py --gate-dll <build dll> --snapshot <owned snapshot 005 save> --mode battle
+        --session-clients --out <base>          (prints "DEFAULTS session overlay")
+    python tools/dev/native_gate_players.py overlay --base <base> --out <D1> --gate-dll <dll> --probe tools/dev/native_gate_probe.lua
+        --players 2 --mode coop --source stock --defaults-only
+  The overlay's config: the base header (test, hash, profile, host, port, token, slot, clients; the snapshot lines the base
+  builder writes are equal to the defaults) plus the identity plan, nothing else; ui.xml.files starts with
+  ui/native_gate_defaults.lua. python tools/dev/check_gate_options.py <D1>/ui/config.lua.append: 0 failures, applied=166,
+  skipped=6. Relay as for Play42P: --clients 2 --lookahead 1 --tick-hz 30 (no --adaptive, --wire-crypto, --peer-window).
+  Run runPlay.sh with people (or --set native_gate_pilot_stock_script={'demo','demo2'} for a scripted comparison with Play42P).
+  Expect on both clients:
+    DEFAULTS version=1 applied=166 explicit=0 off=0 skipped=6; DEFAULTS_APPLIED rows; six ERROR DEFAULT_SKIPPED rows
+    (lookahead_max, wire_crypto, peer_window, peer_rendezvous_port, pilot_foot_bodies, pilot_foot_slots) and one info line;
+    DEFAULTS_STACK digest=<same on both>; ARMED ... wire=3 clients=2 lookahead=1; RENDER_FRAMES_ARMED fps=60,
+    RENDER_CAMERA/MOTION_ARMED mode=extrapolate, OWN_PREDICT_ARMED mode=present rows=0, UI_GUARD_ARMED groups=16383,
+    UI_REPLAY_ARMED families=65535, UI_TRADE/UI_BUILD/UI_MISSIONS/UI_FACTION/PLAYER_SETTINGS armed, PILOT_FOOT_ARMED,
+    PILOT_DEATH_ARMED respawn=300 suit=true, HIT_CLAIMS_ARMED policy=victim, PILOT_FIRE_ARMED mode=record; relay pass.
+  Compare with Play42P (same snapshot, plan, scripts): the census (WORLD_HASH at 1, 1800, ...) and the declared-state rows
+  should match tick for tick if the newer features stay display-only or idle; expected differences: no FRAME_TIMING,
+  PROBE_PROFILE, BULLET, ADDRESS_ORDER, RUNTIME_IDS_CALLER, BUILD_ROWS or PILOT_STOCK_CAPTURE rows and no watch rows of the 64
+  watched IDs (diagnostics off; add them with --set for a row-by-row comparison); the tick-0 digest differs from Play42P's
+  (DEFAULTS_1 in the boot data); the new modules' rows and statuses; ERROR DEGRADED rows wherever a counter grows (report
+  them: each is either a real degraded path or a counter to exempt).
+  If D1 splits: bisect with --set native_gate_<key>=false on the newest features first (own_predict, render_camera,
+  render_motion, render_fps, pilot_foot, player_settings_per_slot, the families trade/build/assets/missions/conversation/
+  faction via an explicit native_gate_ui_replay list); the stack digest changes with each such run on both clients alike.
+  Existing overlays carry their own probe copy and are unchanged. Play42P's config rebuilt with this probe and module gains
+  7 defaults (ui_guard, pilot_foot, render_fps/camera/motion, own_predict, own_predict_rows; player settings stay off: its
+  family list has no faction) and validates with 0 failures; native_gate_defaults = false keeps its stack exactly as it was (the loud rows stay).
+  Risks: trade/build/construct/missions/faction, player settings and own-ship prediction are offline-tested only; slot 1
+  on foot split the wharf scenario (footsync agent); render stage 2 armed but drew 0 frames live (no camera motion).

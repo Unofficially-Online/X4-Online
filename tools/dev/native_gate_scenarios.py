@@ -218,9 +218,10 @@ def compare(texts):
     return True, f'{len(reference)} identical lines on {len(texts)} clients ({summary}; {ends})'
 
 
-def capture_battle_md(gamestart):
-    """The battle fixture MD with only its gamestart guard changed (capture overlays only)."""
-    if gamestart not in STARTS:
+def capture_battle_md(gamestart, allowed=None):
+    """The battle fixture MD with only its gamestart guard changed (capture overlays only). allowed: the starts a
+    caller has checked itself (native_gate_session_start.py classifies every stock start); default STARTS."""
+    if gamestart not in (STARTS if allowed is None else allowed) or not re.fullmatch(r'[a-z][a-z0-9_]*', gamestart or ''):
         raise ValueError(f'unsupported gamestart {gamestart!r}; see the starts command')
     text = (DEV / 'native_gate_battle.xml').read_text(encoding='utf-8')
     if text.count(MODULE_GUARD) != 1:
@@ -228,25 +229,32 @@ def capture_battle_md(gamestart):
     return text.replace(MODULE_GUARD, f"player.module == '{gamestart}'")
 
 
-def build_capture_overlay(gamestart, fixedtick_dll, out):
-    """Overlay for tools/dev/native_gate_lane.py --capture-snapshot with another gamestart."""
-    md = capture_battle_md(gamestart)
+def build_capture_overlay(gamestart, fixedtick_dll, out, allowed=None, extra_md=None, extra_config=()):
+    """Overlay for tools/dev/native_gate_lane.py --capture-snapshot with another gamestart. extra_md: {name: text} of
+    further MD files (the session tool's hulls); extra_config: further config lines."""
+    md = capture_battle_md(gamestart, allowed)
     fixedtick_dll = Path(fixedtick_dll)
     if not fixedtick_dll.is_file():
         raise ValueError(f'fixed-tick DLL {fixedtick_dll} missing')
     out = Path(out)
     if out.exists():
         raise ValueError(f'{out} exists; refusing to overwrite')
+    extra_md = dict(extra_md or {})
+    for name in extra_md:
+        if not re.fullmatch(r'[a-z0-9_]+\.xml', name) or name == 'native_gate_battle.xml':
+            raise ValueError(f'capture MD name {name!r}')
     for directory in ('md', 'native', 'ui'):
         (out / directory).mkdir(parents=True)
     (out / 'md/native_gate_battle.xml').write_text(md, encoding='utf-8')
+    for name, text in sorted(extra_md.items()):
+        (out / 'md' / name).write_text(text, encoding='utf-8')
     shutil.copy2(fixedtick_dll, out / 'native/x4lan_fixedtick_64.dll')
     shutil.copy2(DEV / 'native_gate_snapshot.lua', out / 'ui/native_gate_snapshot.lua')
     (out / 'ui.xml.files').write_text('ui/native_gate_snapshot.lua\n')
     (out / 'ui/config.lua.append').write_text(
         'X4LAN_CONFIG.enabled = false\nX4LAN_CONFIG.test_profile = "45841"\n'
         'X4LAN_CONFIG.native_gate_snapshot = "capture"\n'
-        f'X4LAN_CONFIG.native_gate_snapshot_gamestart = "{gamestart}"\n')
+        f'X4LAN_CONFIG.native_gate_snapshot_gamestart = "{gamestart}"\n' + ''.join(line + '\n' for line in extra_config))
     write_manifest(out)
     return out
 

@@ -19,6 +19,12 @@ contain Jolt Physics 5.5.0 compiled from the official source tag, Copyright 2021
 Jorrit Rouwe, MIT License: third_party/JoltPhysics-5.5.0/LICENSE. Keep that license
 with every package that includes such a module.
 
+Native gate modules (x4lan_gate_64.dll, x4lan_gate.so) and the relay's wire crypto library
+(x4mp_wire_crypto.dll, libx4mp_wire_crypto.so) contain Monocypher 4.0.2, Copyright (c)
+2017-2023 Loup Vaillant, (c) 2017-2019 Michael Savage, (c) 2017-2023 Fabio Scotoni, dual-licensed
+CC0-1.0 or BSD-2-Clause: third_party/monocypher-4.0.2/LICENCE.md. Keep that licence with every
+package that includes such a module or library.
+
 X4: Foundations and its game assets are not included. Install X4 through Steam.
 This experimental mod is not an official Egosoft release. Steam and ZeroTier are
 separate products; neither is bundled here. Do not redistribute locally extracted

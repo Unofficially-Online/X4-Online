@@ -291,11 +291,15 @@ static void stc_sp_tr(void *self,void *mat,double time,void *anc,uint64_t flag) 
     if(on) st_sp_tr_end(&c,mat,self);
 }
 typedef uint64_t (*stc_solver_fn)(void *,float *,float,float *,float,uint64_t,uint64_t,float *,float);
+/* FR27 (lockstep_fp_redirect_win.h fsp_arm): while the fp redirect's solver is armed and this hook owns the entry, the
+ * call goes there (which runs native through this module's trampoline as it needs); NULL: native. */
+static stc_solver_fn volatile stc_sp_route;
 static uint64_t stc_sp_solver(void *boxes,float *p,float radius,float *dir,float a5,uint64_t a6,uint64_t a7,float *move,float a9) {
     st_sp_cap_ctx c;
     const int on=st_sp_cap_begin(&c,stc_sp_gs_ret,2,boxes,p,dir,move,st_bits(radius),st_bits(a5),(uint32_t)(a7&0xff),0xffffffffu,
                                  st_bits(a9),(uint32_t)a6,(uintptr_t)__builtin_return_address(0));
-    const uint64_t r=((stc_solver_fn)(void*)(stc_page+STC_SP_TRAMP))(boxes,p,radius,dir,a5,a6,a7,move,a9);
+    const stc_solver_fn route=stc_sp_route;
+    const uint64_t r=(route?route:(stc_solver_fn)(void*)(stc_page+STC_SP_TRAMP))(boxes,p,radius,dir,a5,a6,a7,move,a9);
     if(on) st_sp_cap_end(&c);
     return r;
 }
