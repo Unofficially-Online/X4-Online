@@ -1775,7 +1775,8 @@ local function frame()
   if not snapshot and ffi.C.GetCurrentGameTime()<(cfg.native_gate_start_time or 20) then return end
   -- Snapshot sessions: optionally idle in the start menu before arming (x4ls staggers this per client so clients that
   -- start one after another arm together, and a starting X4 never overlaps another client's snapshot load).
-  if snapshot and cfg.native_gate_load_hold and ffi.C.GetCurrentGameTime()<cfg.native_gate_load_hold then return end
+  -- Real seconds since this UI started: a background window's start menu may not advance game time.
+  if snapshot and cfg.native_gate_load_hold and getElapsedTime()<cfg.native_gate_load_hold then return end
   local data=snapshot and ('SNAPSHOT_BYTES_1|'..snapshot) or sample(0)
   if cfg.native_gate_snapshot_fixture then data=data..'|SNAPSHOT_FIXTURE_1|'..table.concat(cfg.native_gate_snapshot_fixture,',') end
   if cfg.native_gate_player_probe=='agreed-getup' or diagnostic then
@@ -1870,7 +1871,11 @@ local function frame()
    log('TICK_RATE_ARMED hz='..tostring(cfg.native_gate_tick_hz)..' pace='..tostring(pace))
   end
   local start=snapshot and gate.boot or gate.start
-  local code=start(tonumber(cfg.slot:sub(2)),cfg.port,cfg.token,60000,digest,options)
+  -- How long the gate waits for relay permits before stopping (reason 7); the gate accepts 1000..120000 ms.
+  local relay_timeout=cfg.native_gate_relay_timeout_ms or 60000
+  assert(type(relay_timeout)=='number' and relay_timeout%1==0 and relay_timeout>=1000 and relay_timeout<=120000,
+   'native_gate_relay_timeout_ms must be 1000..120000')
+  local code=start(tonumber(cfg.slot:sub(2)),cfg.port,cfg.token,relay_timeout,digest,options)
   if code~=0 then log('REFUSED code='..code..(gate.verify_stage and ' stage='..tostring(gate.verify_stage()) or ''));done=true;return end
   native_owned=true
   if cfg.native_gate_registry_md_trace then

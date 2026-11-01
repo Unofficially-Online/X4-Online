@@ -179,7 +179,9 @@ def run(o: Options, log=print):
             save_state(o, state)
             profile_id = profile.PROFILES[k - 1]
             hold = (o.clients - k) * o.stagger + 10 if o.snapshot else None
-            tail = f'X4LAN_CONFIG.native_gate_load_hold = {hold}\n' if hold else ''
+            tail = 'X4LAN_CONFIG.native_gate_relay_timeout_ms = 120000\n'  # early clients wait at the barrier
+            if hold:
+                tail += f'X4LAN_CONFIG.native_gate_load_hold = {hold}\n'
             extension.compose(o.overlay, view / 'extensions', k, port, token, o.clients, profile_id=profile_id,
                               config_tail=tail)
             profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot, fast=o.fast)
