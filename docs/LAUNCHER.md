@@ -87,3 +87,23 @@ Overlays are frozen: a builder refuses to write into an existing directory, and
 `native-inputs.jsonl` (input journal), `desync-status.json` (observe mode),
 `clientK/x4ls-cK.log` (each X4 log), and `summary.json` (passed, failed,
 relay-failed, or timeout).
+
+## Soak profile and determinism findings (1 November 2026)
+
+`python tools/build_soak_overlay.py --snapshot SAVE --gate-dll DLL --out DIR` builds the
+validated soak overlay (`src/lockstep/profiles/soak.lua` plus base flags and scripted
+pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-schema`,
+`--drop KEY`, `--set KEY=VALUE`.
+
+- **Session seed:** every client needs the same `-seed:` (x4ls passes 276944566).
+  Without it, X4 seeds each job's generator from a per-process seed and the clients
+  spawn different job ships from tick 0.
+- **Pathing bank:** without real-time pacing the clients may run with the pathing
+  bank offset by one. Schema `WORLD_IMPORTED_1` hashes the raw bank index and
+  reports ~10,000 ships at tick 1. It is equivalent state (census finding 9); use
+  `WORLD_IMPORTED_2`, which the builder defaults to.
+- **Camera anchor:** with `native_gate_camera_anchor = 'own'` client 2 allocated two
+  more runtime IDs at tick 4693, reproducibly; without it the same run held. Own
+  cameras are not yet simulation-neutral.
+- **No pacing:** unpaced runs diverged once at a timing-dependent tick (3919, not
+  reproduced); paced runs have held. Pacing costs little (0.85-0.92x vs 0.99x).

@@ -60,6 +60,10 @@ def main(argv=None):
     p.add_argument('--long', action='store_true', help='--play-mode and --no-pace (multi-hour soaks)')
     p.add_argument('--play-mode', action='store_true', help='keep the world hash in every digest but skip per-object pages')
     p.add_argument('--no-pace', action='store_true', help='do not hold clients to real time')
+    p.add_argument('--drop', action='append', default=[], metavar='native_gate_KEY',
+                   help='leave a key of profiles/soak.lua out (repeatable)')
+    p.add_argument('--set', action='append', default=[], metavar='native_gate_KEY=LUA_VALUE',
+                   help='extra key for the sandbox builder (repeatable), e.g. native_gate_trace_window={4650,4720}')
     p.add_argument('--world-schema', choices=('WORLD_IMPORTED_1', 'WORLD_IMPORTED_2'), default='WORLD_IMPORTED_2',
                    help='2 encodes Nav timing canonically (the pathing bank index is equivalent state, census finding 9)')
     args = p.parse_args(argv)
@@ -73,7 +77,8 @@ def main(argv=None):
              '--world-hash-schema', args.world_schema, '--out', base])
         shutil.copytree(base, keyed)
         with (keyed / 'ui/config.lua.append').open('a') as config:
-            config.write((ROOT / 'src/lockstep/profiles/soak.lua').read_text())
+            profile = (ROOT / 'src/lockstep/profiles/soak.lua').read_text().splitlines(keepends=True)
+            config.write(''.join(l for l in profile if not any(l.startswith(f'X4LAN_CONFIG.{k} ') for k in args.drop)))
             if args.long or args.play_mode:
                 config.write(PLAY_MODE)
             if args.long or args.no_pace:
@@ -82,7 +87,7 @@ def main(argv=None):
         run([DEV / 'native_gate_sandbox.py', 'overlay', '--base', keyed, '--gate-dll', args.gate_dll,
              '--probe', DEV / 'native_gate_probe.lua', '--out', args.out, '--slot1', player, '--slot2', fixture[2],
              '--controls', 'native', '--script-pilots', '--window', '30', str(args.window), '--world-stride', '300',
-             '--trace-stride', '3600', '--fp', 'default'])
+             '--trace-stride', '3600', '--fp', 'default', *[x for kv in args.set for x in ('--set', kv)]])
     print(run([DEV / 'gate_preflight.py', args.out]).strip())
     print(f'{args.out}: relay ticks for the full window: {args.window + 3}')
 
