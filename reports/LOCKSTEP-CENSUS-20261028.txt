@@ -1137,6 +1137,23 @@ checks 3.9, probe 1.1, relay wait 0.08. perf-Pbare (near-minimal gate) outside
 21.4 ms. 4 clients p50 32 ms on this PC. FP keys cost nothing measurable.
 World captures (diagnostic) are 60 of the 70 frames over 100 ms in play22-long.
 Needed: a tick rate key or agreed per-tick dt (FP agent).
+20 MINUTES ON THE MERGED BUILD (build138 = smoke e9ed0430, overlay-Play38L = Play36L +
+view_ui/view_triggers 'block'): play38-long 36003 ticks, relay pass, 0 mismatches, census
+0 at 18000 and 36000. play38-long2 (run beside it on the same PC) reached 35920 with 0
+mismatches and census 0 at 35700, then hit the lane tool's 1680 s limit (two pairs at
+once run slower).
+CAUSE B NARROWED (p4-causeb, zone watch with per-ship field digests): the first value
+difference is courier a1885's second step on a freshly started path (12813): previous
+pose, target, path, agent and flight parameters equal, current pose different; dock
+door and MoveWorker RNG differences follow at 12856-12857.
+TOUR RACE NAMED: when the player leaves, the battle drops to low attention and its ships
+switch to the linear model at the same tick on both clients; the next tick the target
+calls run in a different order per client and a target relative to another ship reads
+that ship's pose while it is being moved on another worker thread.
+WINDOWS VS LINUX: facing factor in the Linear step fixed; w12 vs vps-linux-L6:
+5/30/140/282/510 at 30/60/120/300/600. The remaining early roots are path points created
+by AI move actions (MoveToAction), already different when created; wingmen inherit their
+leader's point.
 SCENARIOS ON THE MERGED BUILD (build136 = smoke 0a9fc715; the scenario overlays brought up
 to the Play37L stack): smoke136 (Play37L, 902 ticks) relay pass, census 0. reg-missions3
 (3003 ticks) and reg-big7 (big battle, 6003 ticks) relay pass with no digest mismatch,
