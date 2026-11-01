@@ -49,7 +49,11 @@
 #define FR_AFF_STUB (FR_PG_STUB+FR_LEN_STUB_SIZE) /* FR22: the affine weight stub (0x8f0) */
 #define FR_AFF_DONE 0x10000u    /* fr_done bit 16 */
 #define FR_BL_DONE 0x20000u     /* fr_done bit 17: the BezierSpline vtable slot */
-#define FR_CODE (FR_AFF_STUB+FR_LEN_STUB_SIZE) /* bytes of stub code on the page (0xa00) */
+#define FR_VEL_STUB (FR_AFF_STUB+FR_LEN_STUB_SIZE) /* FR23: the velocity stub (0xa00): native's block, then a frame at +0x20 */
+#define FR_VEL_DONE 0x40000u    /* fr_done bit 18 */
+#define FR_FAC_STUB (FR_VEL_STUB+0x20u+FR_LEN_STUB_SIZE) /* FR24: the facing factor stub (0xb30): native's block, k, then a frame at +0x20 */
+#define FR_FAC_DONE 0x80000u    /* fr_done bit 19 */
+#define FR_CODE (FR_FAC_STUB+0x20u+FR_LEN_STUB_SIZE) /* bytes of stub code on the page (0xc60) */
 #define FR_P_BLOCK 0x6dcbb0u /* the first call 0x6dc610 from its table load to the +0x0..+0x1c block's end */
 #define FR_P_BLOCK_SIZE 0x1eeu
 #define FR_P_BLOCK_SHA "120b298b57b3001f3ae6971073a4d86d63fb4822e1be030e0631c42d50c4f9b7"
@@ -152,6 +156,43 @@ static const unsigned char fr_pg_original[5]={0xf3,0x0f,0x10,0x05,0xf0}; /* movs
 #define FR_AFF_PIN_SHA "31a326aaa1f30ba766f7541aa404efc8ff455dfe92422dc45e3cc0fad5b70a32"
 #define FR_AFF_TWO 0x2cbe918u
 static const unsigned char fr_aff_original[5]={0xf3,0x0f,0x5e,0xd1,0xf3}; /* divss xmm2,xmm1; the mulss's first byte */
+/* FR23 (lockstep_fp_redirect.h fr_vel_seen): the Linear step 0xeb27c0 (rdi the model, rsi the written pathing bank)
+ * stores the bank's velocity on the branch with [model+0x95] set as (s,s,s,0)*row2, s = xmm11 (the speed, maxss'ed
+ * with xmm12 = 0.0, xorps at 0xeb2873 and never written again in the step):
+ *   0xeb32fb je 0xeb331a ([rdi+0x95] clear: the other branch, a plain (0,0,s,0) store, untouched)
+ *   0xeb32fd movaps xmm2,xmm11; movaps xmm3,xmm11; unpcklps xmm2,xmm12; unpcklps xmm3,xmm11; movlhps xmm3,xmm2;
+ *   0xeb3310 mulps xmm3,[rsi+0x30]; 0xeb3314 movups [rsi+0x40],xmm3; 0xeb3318 jmp 0xeb331e (movups [rsi+0x50],xmm4)
+ * A jmp on the first movaps leads to a stub: that block as it stands (27 bytes, position independent), then the length
+ * stub's frame (V = xmm3): fr_vel_seen(0, rsi, xmm11[0]), which stores ours in 'redirect' and returns native's lane 0,
+ * so xmm2/xmm3 and every other register leave as native left them; back to 0xeb331e. Flags are dead (comiss at
+ * 0xeb3322 comes first); no branch of the step and no .text rel32 lands in 0xeb32fe..0xeb3301 (the step's only branch
+ * into the block's range is 0xeb32fb -> 0xeb331a, the other branch, which stays native). Pins: the whole step through
+ * the view (the world trace's pin, 0xeb27c0+5212) and the block's bytes from the site to the back address. */
+#define FR_VEL_SITE 0xeb32fdu
+#define FR_VEL_BACK 0xeb331eu
+#define FR_VEL_BLOCK 27u
+#define FR_VEL_PIN 0xeb27c0u
+#define FR_VEL_PIN_SIZE 5212u
+#define FR_VEL_PIN_SHA "7920e6e4ff99bf0d0c348eeab202b0a21f5e9d69c4005ba75d302eac7ea0c8a4"
+static const unsigned char fr_vel_block[FR_VEL_BACK-FR_VEL_SITE]={0x41,0x0f,0x28,0xd3,0x41,0x0f,0x28,0xdb,0x41,0x0f,0x14,0xd4,0x41,0x0f,0x14,0xdb,
+    0x0f,0x16,0xda,0x0f,0x59,0x5e,0x30,0x0f,0x11,0x5e,0x40,0xeb,0x04,0x0f,0x11,0x56,0x40}; /* through the other branch's store */
+#define fr_vel_original fr_vel_block /* the first 5 bytes: movaps xmm2,xmm11; the next movaps's first byte */
+/* FR24 (lockstep_fp_redirect.h fr_fac_seen): the same step's facing factor. m (the largest heading angle) is xmm1,
+ * stored at [rdi+0x98] by 0xeb3a6c; 0xeb3a7c comiss m,pi/2; 0xeb3a83 jbe 0xeb3a91 (above: +0x9c = 0, untouched); then
+ *   0xeb3a91 mulss xmm1,[0x2cbe484] (k = 0.636619747f); 0xeb3a99 movaps xmm0,xmm13 (1.0, loaded at 0xeb286a, callee-saved
+ *   and not written again before the epilogue); 0xeb3a9d subss xmm0,xmm1; 0xeb3aa1 movss [rdi+0x9c],xmm0
+ * A jmp on the mulss leads to a stub: that block with its operand on the stub page (a copy of k, which the pins hold
+ * equal to the image's), then the length stub's frame (V = xmm0): fr_fac_seen(0, [rdi+0x98] (m), xmm0[0] (native));
+ * xmm0[0] = its result, lanes 1-3 and xmm1 (m*k) as native left them; back to 0xeb3aa1, whose store and the comiss
+ * at 0xeb3aa9 (the blend toward 0.5) then take it. Flags are dead there (that comiss writes them). The step's only
+ * branch into 0xeb3a91..0xeb3aa0 is 0xeb3a83 (to its first byte); no .text rel32 lands inside. Pins: the whole step
+ * through the view (as FR23's), the block's bytes from the site to the back address and k. */
+#define FR_FAC_SITE 0xeb3a91u
+#define FR_FAC_BACK 0xeb3aa1u
+#define FR_FAC_K 0x2cbe484u
+#define FR_FAC_K_BITS 0x3f22f983u
+static const unsigned char fr_fac_block[FR_FAC_BACK-FR_FAC_SITE]={0xf3,0x0f,0x59,0x0d,0xeb,0xa9,0xe0,0x01,0x41,0x0f,0x28,0xc5,0xf3,0x0f,0x5c,0xc1};
+#define fr_fac_original fr_fac_block /* the first 5 bytes: the mulss's opcode, modrm and the rel32's first byte */
 static unsigned char *fr_page;
 static uint32_t fr_done;
 /* G4 with the slot: the refresh's path with the getters begins here. */
@@ -247,6 +288,25 @@ static void fr_aff_write_stub(unsigned char *p) {
     static const unsigned char args[]={0x66,0x0f,0x7e,0xca,0x66,0x41,0x0f,0x7e,0xc0,0xff,0x15};
     fr_stub_write(p,NULL,0,2,0,args,sizeof(args),(void*)fr_aff_seen,(void*)(image+FR_AFF_BACK));
 }
+/* FR23: the velocity stub: native's block (0xeb32fd..0xeb3317, without its jmp); jmp +3 to the frame at +0x20 (V = xmm3):
+ *   mov ecx,0; mov rdx,rsi (the bank); movd r8d,xmm11 (s); call [rip] -> fr_vel_seen; xmm3[0] = its result (native's
+ *   own lane 0); back to 0xeb331e. */
+static void fr_vel_write_stub(unsigned char *p) {
+    memset(p,0xcc,0x20);memcpy(p,fr_vel_block,FR_VEL_BLOCK);p[FR_VEL_BLOCK]=0xeb;p[FR_VEL_BLOCK+1]=(unsigned char)(0x20-(FR_VEL_BLOCK+2));
+    static const unsigned char args[]={0x48,0x89,0xf2,0x66,0x45,0x0f,0x7e,0xd8,0xff,0x15};
+    fr_stub_write(p+0x20,NULL,0,3,0,args,sizeof(args),(void*)fr_vel_seen,(void*)(image+FR_VEL_BACK));
+}
+/* FR24: the facing factor stub: mulss xmm1,[rip -> +0x18] (k's copy); movaps xmm0,xmm13; subss xmm0,xmm1; jmp +6 to the
+ * frame at +0x20 (V = xmm0): mov ecx,0; mov edx,[rdi+0x98] (m); movd r8d,xmm0 (native); call [rip] -> fr_fac_seen;
+ * xmm0[0] = its result; back to 0xeb3aa1. */
+static void fr_fac_write_stub(unsigned char *p) {
+    memset(p,0xcc,0x20);memcpy(p,fr_fac_block,sizeof(fr_fac_block));
+    const int32_t k_at=0x18-8;memcpy(p+4,&k_at,4); /* the mulss ends at +8 */
+    p[16]=0xeb;p[17]=(unsigned char)(0x20-18);
+    const uint32_t k=FR_FAC_K_BITS;memcpy(p+0x18,&k,4);
+    static const unsigned char args[]={0x8b,0x97,0x98,0x00,0x00,0x00,0x66,0x41,0x0f,0x7e,0xc0,0xff,0x15};
+    fr_stub_write(p+0x20,NULL,0,0,0,args,sizeof(args),(void*)fr_fac_seen,(void*)(image+FR_FAC_BACK));
+}
 /* 0x00 mov r9,r15; jmp [rip] -> fr_g4_slot_hook | 0x20/0x40/0x60 jmp [rip] -> G0, M4, M0 hooks | 0x80 the tail:
  * mov rcx,r15; sub rsp,0x20; call [rip] -> fr_tail_hook; add rsp,0x20; mov r13d,0x300; jmp [rip] -> 0xea29c2 |
  * 0xc0 jmp [rip] -> fr_params_hook | 0xe0 -> fr_mulps_hook | 0x100 the v stub | 0x160 jmp [rip] -> fr_writer_run. */
@@ -271,6 +331,8 @@ static void fr_write_code(unsigned char *p) {
     for(unsigned i=0;i<FR_H_SITES;i++) fr_h_write_stub(p+FR_H_STUB+FR_LEN_STUB_SIZE*i,i);
     fr_pg_write_stub(p+FR_PG_STUB);
     fr_aff_write_stub(p+FR_AFF_STUB);
+    fr_vel_write_stub(p+FR_VEL_STUB);
+    fr_fac_write_stub(p+FR_FAC_STUB);
 }
 static int32_t fr_rel(uint32_t from,const void *target) {return (int32_t)((intptr_t)target-(intptr_t)(image+from+5));}
 static int32_t fr_rel_ours(unsigned i) {return fr_rel(fr_sites[i].site,fr_page+fr_sites[i].stub);}
@@ -318,6 +380,10 @@ static int fr_len_overlaps(const void *source,size_t bytes) {
     if(fr_done&FR_PG_DONE && s<b && s+5>a) return 1;
     const uintptr_t f=(uintptr_t)(image+FR_AFF_SITE);
     if(fr_done&FR_AFF_DONE && f<b && f+5>a) return 1;
+    const uintptr_t v=(uintptr_t)(image+FR_VEL_SITE);
+    if(fr_done&FR_VEL_DONE && v<b && v+5>a) return 1;
+    const uintptr_t c=(uintptr_t)(image+FR_FAC_SITE);
+    if(fr_done&FR_FAC_DONE && c<b && c+5>a) return 1;
     return 0;
 }
 static void fr_len_unpatch_copy(const void *source,void *copy,size_t bytes) {
@@ -339,6 +405,14 @@ static void fr_len_unpatch_copy(const void *source,void *copy,size_t bytes) {
     if(fr_done&FR_AFF_DONE) {
         const uintptr_t s=(uintptr_t)(image+FR_AFF_SITE);
         for(unsigned k=0;k<5;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=fr_aff_original[k];
+    }
+    if(fr_done&FR_VEL_DONE) {
+        const uintptr_t s=(uintptr_t)(image+FR_VEL_SITE);
+        for(unsigned k=0;k<5;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=fr_vel_original[k];
+    }
+    if(fr_done&FR_FAC_DONE) {
+        const uintptr_t s=(uintptr_t)(image+FR_FAC_SITE);
+        for(unsigned k=0;k<5;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=fr_fac_original[k];
     }
 }
 /* No other module has patched site i's tail (site..back): its raw bytes are what the original-byte view shows. (Not
@@ -419,6 +493,51 @@ static int fr_aff_pins_ok(void) {
     return read_local(image+FR_AFF_PIN,block,FR_AFF_PIN_SIZE) && hash_ok(block,FR_AFF_PIN_SIZE,FR_AFF_PIN_SHA) &&
            read_local(image+FR_AFF_TWO,&two,4) && two==0x40000000u;
 }
+/* FR23: the velocity site, as the affine one; its pins: the step through the view and the block site..back. */
+static unsigned char *fr_vel_stub(void) {return fr_page+FR_VEL_STUB;}
+static int fr_vel_reach(void) {
+    const intptr_t d=(intptr_t)fr_vel_stub()-(intptr_t)(image+FR_VEL_SITE+5);
+    return d>INT32_MIN && d<INT32_MAX;
+}
+static void fr_vel_jump(unsigned char out[5]) {out[0]=0xe9;const int32_t d=fr_rel(FR_VEL_SITE,fr_vel_stub());memcpy(out+1,&d,4);}
+static int fr_vel_state(void) {
+    unsigned char now[5],ours[5];memcpy(now,(const void*)(image+FR_VEL_SITE),5);
+    if(!memcmp(now,fr_vel_original,5)) return 0;
+    if(fr_page && fr_vel_reach()) {fr_vel_jump(ours);if(!memcmp(now,ours,5)) return 1;}
+    return -1;
+}
+static int fr_vel_clear(void) {
+    unsigned char viewed[FR_VEL_BACK-FR_VEL_SITE];
+    return read_local(image+FR_VEL_SITE,viewed,sizeof(viewed)) && !memcmp((const void*)(image+FR_VEL_SITE),viewed,sizeof(viewed));
+}
+static int fr_vel_pins_ok(void) {
+    static unsigned char step[FR_VEL_PIN_SIZE];unsigned char block[FR_VEL_BACK-FR_VEL_SITE];
+    return read_local(image+FR_VEL_PIN,step,FR_VEL_PIN_SIZE) && hash_ok(step,FR_VEL_PIN_SIZE,FR_VEL_PIN_SHA) &&
+           read_local(image+FR_VEL_SITE,block,sizeof(block)) && !memcmp(block,fr_vel_block,sizeof(block));
+}
+/* FR24: the facing factor site, as the velocity one; its pins: the step through the view, the block site..back, k. */
+static unsigned char *fr_fac_stub(void) {return fr_page+FR_FAC_STUB;}
+static int fr_fac_reach(void) {
+    const intptr_t d=(intptr_t)fr_fac_stub()-(intptr_t)(image+FR_FAC_SITE+5);
+    return d>INT32_MIN && d<INT32_MAX;
+}
+static void fr_fac_jump(unsigned char out[5]) {out[0]=0xe9;const int32_t d=fr_rel(FR_FAC_SITE,fr_fac_stub());memcpy(out+1,&d,4);}
+static int fr_fac_state(void) {
+    unsigned char now[5],ours[5];memcpy(now,(const void*)(image+FR_FAC_SITE),5);
+    if(!memcmp(now,fr_fac_original,5)) return 0;
+    if(fr_page && fr_fac_reach()) {fr_fac_jump(ours);if(!memcmp(now,ours,5)) return 1;}
+    return -1;
+}
+static int fr_fac_clear(void) {
+    unsigned char viewed[FR_FAC_BACK-FR_FAC_SITE];
+    return read_local(image+FR_FAC_SITE,viewed,sizeof(viewed)) && !memcmp((const void*)(image+FR_FAC_SITE),viewed,sizeof(viewed));
+}
+static int fr_fac_pins_ok(void) {
+    static unsigned char step[FR_VEL_PIN_SIZE];unsigned char block[FR_FAC_BACK-FR_FAC_SITE];uint32_t k=0;
+    return read_local(image+FR_VEL_PIN,step,FR_VEL_PIN_SIZE) && hash_ok(step,FR_VEL_PIN_SIZE,FR_VEL_PIN_SHA) &&
+           read_local(image+FR_FAC_SITE,block,sizeof(block)) && !memcmp(block,fr_fac_block,sizeof(block)) &&
+           read_local(image+FR_FAC_K,&k,4) && k==FR_FAC_K_BITS;
+}
 /* FR22: the BezierSpline vtable's ComputeLength slot: native first, then ours on a BezierSpline's segment. */
 typedef void (*fr_bl_fn)(void *,uint32_t);
 static void fr_bl_hook(unsigned char *segment,uint32_t n) {
@@ -471,7 +590,7 @@ static int fr_pins(void) {
     return hash_ok(copy,FR_REFRESH_SIZE,FR_REFRESH_SHA) && hash_ok(block,FR_P_BLOCK_SIZE,FR_P_BLOCK_SHA) &&
         hash_ok(wsite,FR_W_SITE_BLOCK_SIZE,FR_W_SITE_BLOCK_SHA) && hash_ok(wbody,FR_W_BODY_SIZE,FR_W_BODY_SHA) &&
         read_local(image+FR_M_RVA,m,FR_M_SIZE) && hash_ok(m,FR_M_SIZE,FR_M_SHA) && fr_len_pins() && fr_h_pins_ok() && fr_pg_pins_ok() &&
-        fr_aff_pins_ok() && fr_bl_pins_ok();
+        fr_aff_pins_ok() && fr_bl_pins_ok() && fr_vel_pins_ok() && fr_fac_pins_ok();
 }
 static unsigned char *fr_alloc_page(void) {
     uintptr_t at=(uintptr_t)(image+FR_REFRESH)&~(uintptr_t)65535;
@@ -517,6 +636,14 @@ static void fr_restore(void) {
         if(view_cas_bytes(FR_AFF_SITE,jump,fr_aff_original,5)) fr_done&=~FR_AFF_DONE;
     }
     if(fr_done&FR_BL_DONE && fr_bl_state()==1 && fr_bl_swap((void*)fr_bl_hook,(void*)(image+FR_BL_FN))) fr_done&=~FR_BL_DONE;
+    if(fr_done&FR_VEL_DONE && fr_vel_state()==1) {
+        unsigned char jump[5];fr_vel_jump(jump);
+        if(view_cas_bytes(FR_VEL_SITE,jump,fr_vel_original,5)) fr_done&=~FR_VEL_DONE;
+    }
+    if(fr_done&FR_FAC_DONE && fr_fac_state()==1) {
+        unsigned char jump[5];fr_fac_jump(jump);
+        if(view_cas_bytes(FR_FAC_SITE,jump,fr_fac_original,5)) fr_done&=~FR_FAC_DONE;
+    }
     if(!fr_done) {fr_installed=0;fr_restored=1;fr_mode=FR_OFF;}
 }
 /* Before the snapshot load and the first admitted frame, on the MoveWorker; a rerun with the same mode is accepted. */
@@ -531,12 +658,14 @@ static int fr_arm(int mode,uint64_t ticks) {
         if(fr_h_state(i)!=0 || !fr_h_clear(i)) {fr_stage="pins";return 0;}
     if(fr_pg_state()!=0 || !fr_pg_clear()) {fr_stage="pins";return 0;}
     if(fr_aff_state()!=0 || !fr_aff_clear() || fr_bl_state()!=0) {fr_stage="pins";return 0;}
+    if(fr_vel_state()!=0 || !fr_vel_clear()) {fr_stage="pins";return 0;}
+    if(fr_fac_state()!=0 || !fr_fac_clear()) {fr_stage="pins";return 0;}
     if(!fr_pins()) {fr_stage="pins";return 0;}
     if(!fr_page) fr_page=fr_alloc_page();
     if(!fr_page) {fr_stage="page";return 0;}
     for(unsigned i=0;i<FR_LEN_SITES;i++) if(!fr_len_reach(i)) {fr_stage="page";return 0;}
     for(unsigned i=0;i<FR_H_SITES;i++) if(!fr_h_reach(i)) {fr_stage="page";return 0;}
-    if(!fr_pg_reach() || !fr_aff_reach()) {fr_stage="page";return 0;}
+    if(!fr_pg_reach() || !fr_aff_reach() || !fr_vel_reach() || !fr_fac_reach()) {fr_stage="page";return 0;}
     DWORD old,ignored;if(!VirtualProtect(fr_page,0x1000,PAGE_READWRITE,&old)) {fr_stage="page";return 0;}
     fr_write_code(fr_page);
     if(!VirtualProtect(fr_page,0x1000,PAGE_EXECUTE_READ,&ignored)) {fr_stage="page";return 0;}
@@ -570,6 +699,16 @@ static int fr_arm(int mode,uint64_t ticks) {
         if(!fr_bl_swap((void*)(image+FR_BL_FN),(void*)fr_bl_hook)) {fr_stage="cas";fr_restore();fr_installed=0;fr_mode=FR_OFF;return 0;}
         fr_done|=FR_BL_DONE;
     }
+    { /* FR23: the velocity store, likewise */
+        unsigned char jump[5];fr_vel_jump(jump);
+        if(!view_cas_bytes(FR_VEL_SITE,fr_vel_original,jump,5)) {fr_stage="cas";fr_restore();fr_installed=0;fr_mode=FR_OFF;return 0;}
+        fr_done|=FR_VEL_DONE;
+    }
+    { /* FR24: the facing factor, likewise */
+        unsigned char jump[5];fr_fac_jump(jump);
+        if(!view_cas_bytes(FR_FAC_SITE,fr_fac_original,jump,5)) {fr_stage="cas";fr_restore();fr_installed=0;fr_mode=FR_OFF;return 0;}
+        fr_done|=FR_FAC_DONE;
+    }
     for(unsigned k=1;k<=FR_SITES;k++) {
         const unsigned i=k%FR_SITES;
         if(i==0) {
@@ -590,6 +729,8 @@ static int fr_owned(void) {
     if(fr_done&FR_PG_DONE && fr_pg_state()!=1) return 0;
     if(fr_done&FR_AFF_DONE && fr_aff_state()!=1) return 0;
     if(fr_done&FR_BL_DONE && fr_bl_state()!=1) return 0;
+    if(fr_done&FR_VEL_DONE && fr_vel_state()!=1) return 0;
+    if(fr_done&FR_FAC_DONE && fr_fac_state()!=1) return 0;
     unsigned char want[FR_CODE];fr_write_code(want);
     return !memcmp(fr_page,want,FR_CODE);
 }

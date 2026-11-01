@@ -116,6 +116,24 @@ static void test_fp_redirect_linux(void) {
     printf("fp redirect prologue/sites/flow/rows/restore PASS\n");
 }
 /* The executable's bytes: what the hooks rely on, its L and M against ours, the patch and its exact restoration. */
+/* FR23: the Linear step's velocity block 0x13ee864..0x13ee893 entered with r15 = the bank, xmm4 = s (it spills s to [rsp]);
+ * 0x13ee898 (after the store) jumps to test_lxv_back. */
+__asm__(
+".text\n"
+"test_lxv_run:\n push %rbp\n push %r15\n push %rbx\n mov %rsp,%rbp\n sub $0x40,%rsp\n and $-16,%rsp\n mov %rsi,%r15\n movd %edx,%xmm4\n jmp *%rdi\n"
+"test_lxv_back:\n mov %rbp,%rsp\n pop %rbx\n pop %r15\n pop %rbp\n ret\n"
+);
+extern void test_lxv_run(void *entry,void *bank,uint32_t s);
+extern char test_lxv_back[];
+/* FR24: the Linear step's facing factor 0x13ee1a9..0x13ee1bf (m in xmm0, 1.0 in xmm1 as 0x13ee1a0 loads it from
+ * [rsp+0x184]); 0x13ee1c0 (the store to +0x8c) jumps to test_lxfac_back, which returns xmm1. */
+__asm__(
+".text\n"
+"test_lxfac_run:\n push %rbp\n mov %rsp,%rbp\n movd %esi,%xmm0\n movd %edx,%xmm1\n jmp *%rdi\n"
+"test_lxfac_back:\n movd %xmm1,%eax\n mov %rbp,%rsp\n pop %rbp\n ret\n"
+);
+extern uint32_t test_lxfac_run(void *entry,uint32_t m,uint32_t one);
+extern char test_lxfac_back[];
 static void test_fp_redirect_elf(void) {
     assert(rd64(LX(LX_FR_REFRESH_VA))==LX_FR_ENTRY_ORIGINAL && (LX_FR_REFRESH_VA&7)==0);
     for(unsigned i=0;i<LXF_SITES;i++) {
@@ -252,5 +270,48 @@ static void test_fp_redirect_elf(void) {
     for(unsigned i=0;i<LXF_SITES;i++) assert(!memcmp(lxf_site(i)-4,saved_sites[i],16));
     for(unsigned j=0;j<LXF_DETOURS;j++) assert(!memcmp(LX(lxf_detours[j].at),saved_detours[j],16));
     fr_restored=0;fr_stage="idle";
+    /* FR23: the Linear step's velocity store (the branch with [model+0x85] set) on its own bytes: native equals ours
+     * (fr_velocity, (r0*0 + 0*r1) + (s,s,s,0)*r2, what the Windows stub stores); Windows' (s,s,s,0)*r2 differs only at
+     * s = +-0, in the sign of zero lanes. */
+    {   assert(!memcmp(LX(0x13ee856),"\x41\x80\xbe\x85\x00\x00\x00\x00\x0f\x84",10) && !memcmp(LX(0x13ee864),"\x41\x0f\x28\x47\x10\x66\x0f\xef\xc9",9));
+        assert(!memcmp(LX(0x13ee877),"\x0f\x59\xc1\x41\x0f\x59\x4f\x20\x0f\x58\xc1\x0f\x28\xcc\x0f\x14\xcc\x0f\x16\xce\x41\x0f\x59\x4f\x30\x0f\x58\xc1\x41\x0f\x29\x47\x40",33));
+        unsigned char saved[14];memcpy(saved,LX(0x13ee898u),14);tlf_jump_code(0x13ee898u,(void*)test_lxv_back);
+        static unsigned char bank[0x60] __attribute__((aligned(16)));unsigned v_equal=0,v_split=0,v_zero=0;
+        for(unsigned i=0;i<20000;i++) {
+            uint32_t rows[12],ours[4],win[4],got[4];
+            for(unsigned k=0;k<12;k++) rows[k]=(k&3)==3?0:fr_bits(tfr_range(-1.0f,1.0f));
+            if(i%9==0) rows[3]=fr_bits(tfr_range(-1.0f,1.0f));
+            if(i%11==0) for(unsigned k=0;k<12;k+=4) rows[k]|=0x80000000u; /* every x negative */
+            const unsigned pick=i%5;
+            const uint32_t s=pick==0?0u:pick==1?0x80000000u:pick==2?fr_bits(tfr_range(0.0f,600.0f)):pick==3?fr_bits(tfr_range(-1e-30f,1e-30f)):0u;
+            memset(bank,0x5a,sizeof(bank));memcpy(bank+0x10,rows,48);
+            test_lxv_run(LX(0x13ee864u),bank,s);memcpy(got,bank+0x40,16);
+            fr_velocity(rows,s,ours);fr_velocity_windows(rows,s,win);
+            if(memcmp(got,ours,16)) {printf("fp redirect velocity %u: native %08x %08x %08x %08x ours %08x %08x %08x %08x\n",i,got[0],got[1],got[2],got[3],ours[0],ours[1],ours[2],ours[3]);assert(0);}
+            assert(bank[0x50]==0x5a);++v_equal;
+            if(memcmp(win,ours,16)) {++v_split;assert((s&0x7fffffffu)==0);}
+            v_zero+=(s&0x7fffffffu)==0;
+        }
+        tl_write(LX(0x13ee898u),saved,14);
+        assert(v_split>1000 && v_split<v_zero);
+        printf("fp redirect on the executable: the step's velocity store 0x13ee864 equals ours on %u cases; Windows' form splits %u, all at s = +-0 PASS\n",v_equal,v_split);
+    }
+    /* FR24: the Linear step's facing factor (m <= pi/2) on its own bytes: native equals ours (fr_facing, 1 - m/(pi/2));
+     * Windows' 1 - m*(2/pi) differs in about a tenth of the angles. The facts: 0x13ee1a0 loads 1.0 from [rsp+0x184]
+     * (stored from 0x2e24600), the divss's operand is pi/2, the store to +0x8c follows. */
+    {   assert(!memcmp(LX(0x13ee1a0),"\xf3\x0f\x10\x8c\x24\x84\x01\x00\x00\x0f\x28\xd0\xf3\x0f\x5e\x15",16) && !memcmp(LX(0x13ee1bc),"\xf3\x0f\x5c\xca\xf3\x41\x0f\x11\x8e\x8c\x00\x00\x00",13));
+        uint32_t pi2,one;memcpy(&pi2,LX(0x13ee1b4u+0x1a38fc0u),4);memcpy(&one,LX(0x2e24600u),4);assert(pi2==0x3fc90fdbu && one==0x3f800000u);
+        unsigned char saved[14];memcpy(saved,LX(0x13ee1c0u),14);tlf_jump_code(0x13ee1c0u,(void*)test_lxfac_back);
+        unsigned f_equal=0,f_split=0;
+        for(unsigned i=0;i<20000;i++) {
+            const uint32_t m=i%50==0?0u:i%50==1?0x3fc90fdbu:i%50==2?fr_bits(tfr_range(0.0f,1e-30f)):fr_bits(tfr_range(0.0f,1.57079637f));
+            const uint32_t got=test_lxfac_run(LX(0x13ee1a9u),m,0x3f800000u),ours=fr_facing(m);
+            if(got!=ours) {printf("fp redirect facing %u: m %08x native %08x ours %08x\n",i,m,got,ours);assert(0);}
+            ++f_equal;f_split+=fr_facing_windows(m)!=ours;
+        }
+        tl_write(LX(0x13ee1c0u),saved,14);
+        assert(fr_facing(0x3ee75aacu)==0x3f365b90u && f_split>1000);
+        printf("fp redirect on the executable: the step's facing factor 0x13ee1a9 equals ours on %u angles; Windows' form splits %u PASS\n",f_equal,f_split);
+    }
     printf("fp redirect on the executable: sites, frame facts, L %u and M %u equal (%u of them -0), patch/restore PASS\n",l_equal,m_equal,m_negzero);
 }

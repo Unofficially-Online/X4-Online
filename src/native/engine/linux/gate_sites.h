@@ -214,6 +214,14 @@
 #define LX_SC_HW_BANK_VA 0x15cf540u
 #define LX_SC_HW_BANK_SITE_VA 0x15cfa48u     /* the point map's (Windows 0x5f6643) */
 #define LX_SC_HW_BANK2_SITE_VA 0x15d000au    /* the same function's other path */
+/* FR24: the AddTargetPointToPathOrder queue 0x13e1040 (rdi manager, rsi the ship's runtime id, rdx the point, rcx the
+ * issuer; Windows 0xeadf30) at its four calls, each rel32 inside one 16-byte line; the formation propagation's
+ * (0x1447823, inlined in 0x1444c70: rbp its frame, O at rbp-0x140, r13 the leader's pending point; Windows 0xe99950). */
+#define LX_SC_OC_VA 0x13e1040u
+#define LX_SC_OC1_SITE_VA 0x1429c79u
+#define LX_SC_OC_FM_SITE_VA 0x1447823u
+#define LX_SC_OC3_SITE_VA 0x1c8d0c6u
+#define LX_SC_OC4_SITE_VA 0x1cf0b86u
 /* The flight parameter refresh (gate_fp_redirect.h, lockstep_fp_redirect.h; Option B slice 1). */
 #define LX_FR_REFRESH_VA 0x14378c0u          /* the refresh (Windows 0xea1e80) */
 #define LX_FR_ENTRY_ORIGINAL 0x5441554156415741ull /* push r15; push r14; push r13; push r12 */

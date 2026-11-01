@@ -1137,6 +1137,37 @@ checks 3.9, probe 1.1, relay wait 0.08. perf-Pbare (near-minimal gate) outside
 21.4 ms. 4 clients p50 32 ms on this PC. FP keys cost nothing measurable.
 World captures (diagnostic) are 60 of the 70 frames over 100 ms in play22-long.
 Needed: a tick rate key or agreed per-tick dt (FP agent).
+SCENARIOS ON THE MERGED BUILD (build136 = smoke 0a9fc715; the scenario overlays brought up
+to the Play37L stack): smoke136 (Play37L, 902 ticks) relay pass, census 0. reg-missions3
+(3003 ticks) and reg-big7 (big battle, 6003 ticks) relay pass with no digest mismatch,
+census 0 at every capture. reg-tour17 (3003 ticks): census 0 through 2400, then both
+clients stopped at 2467 because battle actor 1 switched to the linear flight model
+(LinearFlightControlModel), which strict state schema 2 refused as unsupported; the
+battle hash now accepts it as steering=linear:<generation> (31ccbcae).
+FOUR CLIENTS, CAUSE A NAMED: in p4-long2 a real key press on client 4's window opened
+the map (dispatch and uihold on that client only); the map's attention evaluations ran
+in the client-local UI path and changed two stations' attention level there. New,
+default off: native_gate_view_ui 'block' (an evaluation inside a client-local scope
+keeps the current level) and a scripted local key for tests. p4-long3's one-tick
+allocation split (cause B) is not named yet; native_gate_runtime_ids_rows records each
+tick's shared allocations for the next run.
+MAP OPEN NO LONGER SPLITS (p4long ca003f9d, merged e9ed0430): two ticks after the map
+opens, the client destroys a camera and ~Camera posts CameraLeftEvent; its handler
+0x6b8540 re-evaluates the player's cockpit outside the earlier scopes. native_gate_view_ui
+'block' now also covers every evaluation a camera event asks for (0x97dff0's body on the
+stack). p4-long4 (before): scripted map presses split client 4 at 3600 and client 1 at
+9600. p4-short1 (after, presses at 300/900, 1803 ticks): census 0 for all four clients at
+every capture (one relay mismatch on the last tick only: the control restore with a map
+still open). p4-long5 (after, presses at 3000/9000, 24603 ticks): no split from the
+presses; first split at 12783 ({1,4} vs {2,3}), the same container ship a1885 as
+p4-long3's client-3 split, starting with one extra shared allocation at 12782 on clients
+1/4 (cause B, a race around that ship; being named).
+TOUR: with the linear model accepted (reg-tour18, 3003 ticks) two battle NPCs flying the
+linear model part between the clients within ~20 ticks of the switch at 2467 (relay from
+2468; actor 9 = 176c95 from 2488, actor 3 from 2492); being named.
+WINDOWS VS LINUX: the Linear step stores velocity -0 for a ship at rest where Linux
+stores +0 (1741d4), fixed under native_gate_fp_redirect. w11 vs vps-linux-L6:
+7/39/172/343/591 differing at 30/60/120/300/600 (w10: 8/40/173/344/591).
 MENU ACTIONS, ROUND 2 (build135 = UI replay 167dcbb4, 2 clients, scripted, 902 ticks
 each, relay pass and no digest mismatch in all three): u5b autopilot/dock/weapons:
 autopilot on slot 2 73-193 and slot 1 103-223, primary group 1 from 224 / 244 and back

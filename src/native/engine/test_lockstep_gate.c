@@ -1025,6 +1025,7 @@ int main(int argc,char **argv) {
     test_world_created();
     test_runtime_ids();
     test_runtime_ids_local();
+    test_runtime_ids_rows();
     test_render_rng();
     test_relay_host();
     test_digest();
@@ -1050,6 +1051,7 @@ int main(int argc,char **argv) {
     test_command_order();
     test_view_points();
     test_view_rows();
+    test_view_ui();
     test_view_source();
     test_camera_offset();
     test_mass_traffic();

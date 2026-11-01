@@ -84,6 +84,22 @@ static const struct {uint32_t rva,size;const char *sha;} stc_pc_pins[5]={
     {0xe89f10u,0x20u,"2db860614caf74423c8856c499d25f2b6b767a6f8f698a716be77dc384505437"},
     {0xe8afd0u,0x30u,"312848c6c4a9ec93f8ff492cb384ced664cbd75c5e02ad00c6839901e9b8ab44"},
 };
+/* FR24 (lockstep_step_trace.h ST_OC_TAG): the pending points' creations. The queue 0xeadf30(rcx manager, rdx the ship's
+ * runtime id -> rdi, r8 the point -> r14, r9 the issuer -> rbp) copies the point into the new order with 0xeaa6f0(rcx
+ * order+0x10, rdx r14) at 0xeadf86 (rdi and rbp hold the ship and the issuer there; its fourteen callers all pass
+ * here); the formation propagation 0xe99950 builds each wingman's order inline and finishes the point with 0xeaa980(rcx
+ * order+0x10, rdx its template) at 0xe99ce9 (r12 the wingman's ship runtime id, loaded at 0xe99c57; the offset O at
+ * [rsp+0x30..0x6f], stored at 0xe99ab7..0xe99acd; the leader's pending point at [rsp+0x208], its rdx kept at entry).
+ * Both targets take rcx and rdx only and return rcx. Stubs: 26 mov r8,rdi; mov r9,rbp; 27 mov r8,r12; lea r9,[rsp+8]
+ * (the caller's rsp). Pinned: 0xeadf30, 0xeaa6f0, 0xe99950, 0xeaa980 to their ends. */
+#define STC_OC_Q_SITE 26u
+#define STC_OC_FM_SITE 27u
+static const struct {uint32_t rva,size;const char *sha;} stc_oc_pins[4]={
+    {0xeadf30u,0x8eu,"5b340dfed542b9b2deed1aee352bfe20627adebd7d33ab4a8d1bd45c684d30c7"},
+    {0xeaa6f0u,0x6du,"3585026bc4afdb07fa3d1af3488c353d92cf47ec4da0da825cdab13fb5c33c6d"},
+    {0xe99950u,0x41du,"6506eb284dadbee28369fd0ac239247762354dd0f2f028391aa9e2738be665b7"},
+    {0xeaa980u,0x202u,"852c64f8a3a26286d79d736f680c0d34ea571479e47d59deb60c017eaa7fabc0"},
+};
 static const struct {uint32_t site,target;const char *name;} stc_sites[ST_CHAIN_SITE_COUNT]={
     {0xeb37ff,STC_ASINF,"asin_cur"},{0xeb386f,STC_HELPER,"yaw"},{0xeb3892,STC_ASINF,"asin_target"},
     {0xeb38b5,STC_HELPER,"pitch"},{0xeb38f2,STC_HELPER,"roll"},{0xeb3912,STC_BUILDER,"builder"},
@@ -94,8 +110,9 @@ static const struct {uint32_t site,target;const char *name;} stc_sites[ST_CHAIN_
     {0x5f6643,STC_HW_BANK,"hw_bank"},{0xe95f7e,0xe89e40,"pc_add"},{0xe9acd0,0xe8afd0,"pc_add2"},{0xe8ef47,0xe89ed0,"pc_vec"},
     {0xe8ddc4,0xe89f10,"pc_clr1"},{0xe8deac,0xe89f10,"pc_clr2"},{0xe8df92,0xe89f10,"pc_clr3"},{0xe8f60d,0xe89f10,"pc_clr4"},
     {0xe90152,0xe89f10,"pc_clr5"},{0xe9acbc,0xe89f10,"pc_clr6"},{0xeb79ae,0xe89f10,"pc_clr7"},
+    {0xeadf86,0xeaa6f0,"oc_q"},{0xe99ce9,0xeaa980,"oc_fm"},
 };
-/* Stubs: the first eight 0x10 apart, FR18's and FR20's 0x20 apart from 0x80. */
+/* Stubs: the first eight 0x10 apart, the others (FR18 on) 0x20 apart from 0x80. */
 #define STC_CODE_BYTES (0x80u+0x20u*(ST_CHAIN_SITE_COUNT-8u))
 static unsigned stc_stub(unsigned i) {return i<8u?0x10u*i:0x80u+0x20u*(i-8u);}
 static const char *st_chain_site_name(unsigned i) {return i<ST_CHAIN_SITE_COUNT?stc_sites[i].name:"?";}
@@ -199,6 +216,26 @@ static uint64_t stc_point(unsigned site,unsigned which,void *a1,void *a2,void *a
 }
 #define STC_PC(i,which) static uint64_t stc_pc##i(void *a,void *b,void *c,void *d,void *e,void *f) {return stc_point(i,which,a,b,c,d,e,f);}
 STC_PC(16,1) STC_PC(17,2) STC_PC(18,3) STC_PC(19,4) STC_PC(20,5) STC_PC(21,6) STC_PC(22,7) STC_PC(23,8) STC_PC(24,9) STC_PC(25,10)
+/* FR24: the creations (the original once, then the entry for a watched ship). */
+typedef void *(*stc_copy_fn)(void *,const void *);
+static void *stc_oc_q(void *order_point,const void *point,uint64_t ship,uint64_t issuer) {
+    InterlockedIncrement64(&st_chain_hits[STC_OC_Q_SITE]);
+    void *r=((stc_copy_fn)(void*)(image+stc_sites[STC_OC_Q_SITE].target))(order_point,point);
+    uint64_t key;const int w=st_oc_watched(ship,&key);
+    if(w>=0) {uint32_t st[40];stc_stack(st);st_oc_note(w,key,0,(const unsigned char*)order_point,issuer,NULL,NULL,st+7,0);}
+    return r;
+}
+static void *stc_oc_fm(void *order_point,const void *tmpl,uint64_t ship,const unsigned char *frame) {
+    InterlockedIncrement64(&st_chain_hits[STC_OC_FM_SITE]);
+    void *r=((stc_copy_fn)(void*)(image+stc_sites[STC_OC_FM_SITE].target))(order_point,tmpl);
+    uint64_t key;const int w=st_oc_watched(ship,&key);
+    if(w>=0) {
+        uint32_t st[40];stc_stack(st);const unsigned char *leader=NULL;
+        if(!frame || !read_local(frame+0x208,&leader,8)) leader=NULL;
+        st_oc_note(w,key,1,(const unsigned char*)order_point,0,frame?frame+0x30:NULL,leader,st+7,0);
+    }
+    return r;
+}
 /* FR20: the path builder; for a watched agent the call stack, the description and the first point around it. */
 typedef uint64_t (*stc_ps_fn)(void *,void *,void *,void *);
 static uint64_t stc_pathset(void *agent,void *desc,void *a3,void *a4) {
@@ -244,7 +281,9 @@ static void *stc_hook(unsigned i) {
     case 22: return (void*)stc_pc22;
     case 23: return (void*)stc_pc23;
     case 24: return (void*)stc_pc24;
-    default: return (void*)stc_pc25;
+    case 25: return (void*)stc_pc25;
+    case 26: return (void*)stc_oc_q;
+    default: return (void*)stc_oc_fm;
     }
 }
 /* Stub i at page+stc_stub(i): jmp [rip] -> its hook (FR18's converter: mov rcx,r15 first; FR20's four conversion
@@ -256,6 +295,8 @@ static void stc_write_code(unsigned char *p) {
         unsigned char *s=p+stc_stub(i);
         if(i==STC_PT_SITE) {memcpy(s,agent,3);s+=3;}
         else if(i>=10 && i<=13) {memcpy(s,agent9,3);s+=3;}
+        else if(i==STC_OC_Q_SITE) {memcpy(s,"\x49\x89\xf8\x49\x89\xe9",6);s+=6;}            /* mov r8,rdi; mov r9,rbp */
+        else if(i==STC_OC_FM_SITE) {memcpy(s,"\x4d\x89\xe0\x4c\x8d\x4c\x24\x08",8);s+=8;} /* mov r8,r12; lea r9,[rsp+8] */
         memcpy(s,jump,6);memcpy(s+6,&hook,8);
     }
 }
@@ -322,6 +363,7 @@ static int st_chain_arm(void) {
        !hash_ok(image+STC_PT_CALLER2,STC_PT_CALLER2_SIZE,STC_PT_CALLER2_SHA) || !hash_ok(image+STC_HIER,STC_HIER_SIZE,STC_HIER_SHA) ||
        !hash_ok(image+STC_PS,STC_PS_SIZE,STC_PS_SHA) || !hash_ok(image+STC_PS_CALLER,STC_PS_CALLER_SIZE,STC_PS_CALLER_SHA)) {st_chain_stage="pins";return 0;}
     for(unsigned i=0;i<5u;i++) if(!hash_ok(image+stc_pc_pins[i].rva,stc_pc_pins[i].size,stc_pc_pins[i].sha)) {st_chain_stage="pins";return 0;}
+    for(unsigned i=0;i<4u;i++) if(!hash_ok(image+stc_oc_pins[i].rva,stc_oc_pins[i].size,stc_oc_pins[i].sha)) {st_chain_stage="pins";return 0;}
     if(!stc_page) stc_page=stc_alloc_page();
     if(!stc_page) {st_chain_stage="page";return 0;}
     DWORD old,ignored;if(!VirtualProtect(stc_page,0x1000,PAGE_READWRITE,&old)) {st_chain_stage="page";return 0;}

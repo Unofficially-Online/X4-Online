@@ -365,6 +365,11 @@ static void test_runtime_ids_local(void) {
         ui_thread=GetCurrentThreadId()+1u;TEST_RID_ROUTE(RID_ROUTE_SHARED,0x5c0017,0x5c7a99);ui_thread=GetCurrentThreadId();
         InterlockedExchange(&pres_open,0);
         TEST_RID_ROUTE(RID_ROUTE_SHARED,0x5c0017,0x5c7a99);
+        /* The stock dispatch of this client's presentation ids (a key of its own), on its own thread only. */
+        InterlockedExchange(&uirep_dispatch_depth,1);
+        TEST_RID_ROUTE(RID_ROUTE_UI,0x5c0017,0x5c7a99);
+        ui_thread=GetCurrentThreadId()+1u;TEST_RID_ROUTE(RID_ROUTE_SHARED,0x5c0017,0x5c7a99);ui_thread=GetCurrentThreadId();
+        InterlockedExchange(&uirep_dispatch_depth,0);
         /* A view call of this client's alone, on its own thread only. */
         rid_scope(1);TEST_RID_ROUTE(RID_ROUTE_UI,0x5c0017,0x5c7a99);
         const DWORD me=rid_scope_thread;rid_scope_thread=me+1u;TEST_RID_ROUTE(RID_ROUTE_SHARED,0x5c0017,0x5c7a99);rid_scope_thread=me;
@@ -442,14 +447,22 @@ static void test_runtime_ids_local(void) {
     {
         memset(rid_callers,0,sizeof(rid_callers));rid_caller_count=0;rid_caller_overflow=0;
         char row[192];const uint64_t calls=created_calls;test_rid_assign_calls=0;
+        rid_rows_on=1;memset(&rid_row_open,0,sizeof(rid_row_open));
         InterlockedExchange(&pres_open,1);
         const uint64_t local=rid_assign(object,image+0x3d2431);
         InterlockedExchange(&pres_open,0);
         assert((local&0x1ffffffu)>=0x1f00001u && test_rid_assign_calls==1 && (uint64_t)created_calls==calls+1u);
-        assert(rid_caller_count==1 && rid_caller_row(0,row,sizeof(row))>0 && strstr(row,"phase=play ") && strstr(row," route=ui count=1 frames=0,0,0,0,0,0,0,0"));
+        assert(rid_caller_count==1 && rid_caller_row(0,row,sizeof(row))>0 && strstr(row,"phase=play ") && strstr(row," route=ui count=1 frames=0,0,0,0,0,0,0,0 key="));
+        assert(!rid_row_open.count); /* a local allocation moves no shared ID: no row entry */
         const uint32_t head=*(uint32_t*)(a.map+0x50);
         const uint64_t shared=rid_assign(object,image+0x3d2431);
         assert(shared==head && test_rid_assign_calls==2 && rid_caller_count==2);
+        {   const uint32_t none[RID_FRAMES]={0};const uint32_t key=(uint32_t)rid_caller_hash(none,1,created_thread_class(),RID_ROUTE_SHARED,NULL);
+            assert(rid_row_open.count==1 && rid_row_open.keys==1 && rid_row_open.key[0]==key && rid_row_open.first==(uint32_t)shared && rid_row_open.last==(uint32_t)shared);
+            char want[16];snprintf(want,sizeof(want)," key=%08x",key);unsigned seen=0;
+            for(unsigned i=0;rid_caller_row(i,row,sizeof(row));i++) seen+=strstr(row," route=shared ")!=NULL && strstr(row,want)!=NULL;
+            assert(seen==1);}
+        rid_rows_on=0;memset(&rid_row_open,0,sizeof(rid_row_open));
         rid_sealed=0;const uint32_t next_head=*(uint32_t*)(a.map+0x50);
         const uint64_t load=rid_assign(object,image+0x3d2431);assert(load==next_head && rid_caller_count==3);
         unsigned loads=0;for(unsigned i=0;rid_caller_row(i,row,sizeof(row));i++) loads+=strstr(row,"phase=load")!=NULL && strstr(row," route=shared count=1 frames=3d2431,0,0,0,0,0,0,0")!=NULL;
@@ -465,6 +478,46 @@ static void test_runtime_ids_local(void) {
     test_rid_free_process(&a);test_rid_free_process(&b);
     *(void**)(image+RID_MAP)=saved_map;stats.active=saved_active;ui_thread=saved_ui;created_installed=saved_created;
     printf("runtime IDs local lists/routing/no-recycle tests PASS\n");
+}
+/* native_gate_runtime_ids_rows: one row per tick with shared allocations, closed at the gate boundary. */
+static void test_runtime_ids_rows(void) {
+    const int saved_mode=rid_mode,saved_sealed=rid_sealed;char row[1024];
+    rid_rows_on=0;rid_mode=RID_OBSERVE;rid_sealed=0;assert(!rid_rows_arm());
+    rid_mode=RID_SET;rid_sealed=1;assert(!rid_rows_arm());
+    rid_sealed=0;assert(rid_rows_arm() && rid_rows_on && !rid_rows && rid_rows_arm());
+    /* Before the seal and on a local route: nothing. */
+    rid_row_note(0x11,CREATED_MOVEWORKER,RID_ROUTE_SHARED,0x10001);assert(!rid_row_open.count);
+    rid_sealed=1;rid_row_note(0x11,CREATED_MOVEWORKER,RID_ROUTE_UI,0x3e00001);rid_row_note(0x11,CREATED_MOVEWORKER,RID_ROUTE_VIEW,0x3c00001);
+    assert(!rid_row_open.count);
+    /* A tick: keys sorted, counted, the slots' range, thread classes; the upper hash bits do not count. */
+    rid_row_note(0xab00000000000022ULL,CREATED_MOVEWORKER,RID_ROUTE_SHARED,0x10001);
+    rid_row_note(0x11,CREATED_OTHER,RID_ROUTE_SHARED,(9ULL<<25)|0x10002);
+    rid_row_note(0xcd00000000000022ULL,CREATED_MAIN,RID_ROUTE_SHARED,0x10003);
+    const uint64_t seq=rid_row_open.seq,sum=rid_row_open.sum;
+    rid_row_close(12689,0x1a8f00);assert(rid_rows==1 && !rid_row_open.count);
+    assert(rid_row(0,row,sizeof(row))>0);
+    char want[160];snprintf(want,sizeof(want),"index=0 tick=12689 next=00000000001a8f00 count=3 first=10001 last=10003 threads=1/1/1 seq=%016llx sum=%016llx keys=00000011:1,00000022:2",
+        (unsigned long long)seq,(unsigned long long)sum);
+    assert(!strcmp(row,want));
+    /* No allocation: no row. Order counts in seq, not in sum. */
+    rid_row_close(12690,0x1a8f00);assert(rid_rows==1);
+    rid_row_note(0x11,CREATED_MOVEWORKER,RID_ROUTE_SHARED,0x10004);rid_row_note(0x22,CREATED_MOVEWORKER,RID_ROUTE_SHARED,0x10005);rid_row_note(0x22,CREATED_MOVEWORKER,RID_ROUTE_SHARED,0x10006);
+    assert(rid_row_open.seq!=seq && rid_row_open.sum==sum);
+    rid_row_close(12691,0x1a8f03);assert(rid_rows==2 && rid_row(1,row,sizeof(row))>0 && strstr(row," keys=00000011:1,00000022:2") && strstr(row," threads=3/0/0 "));
+    assert(!rid_row(2,row,sizeof(row)));
+    /* More keys than a row holds: the rest are counted apart; the widest row fits the Lua buffer. */
+    for(uint32_t k=0;k<RID_ROW_KEYS+3u;k++) rid_row_note(0xffffffff-k,CREATED_MOVEWORKER,RID_ROUTE_SHARED,0x1ffffff);
+    rid_row_close(UINT64_MAX,UINT64_MAX);
+    rid_row_ring[2].count=rid_row_ring[2].first=rid_row_ring[2].last=UINT32_MAX;
+    for(unsigned i=0;i<RID_ROW_KEYS;i++) rid_row_ring[2].key_count[i]=UINT32_MAX;
+    assert(rid_row(2,row,sizeof(row))>0 && strstr(row," keys_other=3") && strstr(row,"keys=ffffffe0:4294967295,ffffffe1:") && rid_row_ring[2].keys==RID_ROW_KEYS);
+    /* The ring keeps the last RID_ROW_RING rows. */
+    rid_rows=RID_ROW_RING+5;assert(rid_row(4,row,sizeof(row))>0 && !strcmp(row,"index=4 evicted=1") && rid_row(5,row,sizeof(row))>0 && strncmp(row,"index=5 evicted",15));
+    /* Off: nothing is noted or closed. */
+    rid_rows_on=0;rid_rows=0;rid_row_note(0x11,CREATED_MOVEWORKER,RID_ROUTE_SHARED,0x10007);assert(!rid_row_open.count);
+    rid_row_close(1,1);assert(!rid_rows);
+    memset(rid_row_ring,0,sizeof(rid_row_ring));rid_mode=saved_mode;rid_sealed=saved_sealed;
+    printf("runtime IDs rows tick/keys/order/overflow/ring tests PASS\n");
 }
 static void test_runtime_ids_native_image(const char *path) {
     FILE *file=fopen(path,"rb");assert(file);IMAGE_DOS_HEADER dos;IMAGE_NT_HEADERS64 nt;

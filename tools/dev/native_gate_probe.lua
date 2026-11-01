@@ -565,7 +565,7 @@ local probe_last_us -- previous frame() wall time, native_gate_frame_timing only
 local camera_perturb=false -- this client perturbs its camera (native_gate_camera_perturb)
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
 local nav_cadence_cursor=0
-local row_cursors={coverage=0,step_trace=0,fp_redirect=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,nav_octree=0,nav_octree_lookup=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+local row_cursors={coverage=0,step_trace=0,fp_redirect=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,nav_octree=0,nav_octree_lookup=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
 local world_trace_rows,world_queue_rows,world_wait_rows,world_wait_rng_rows=0,0,0,0
 local world_action_rows,world_values_rows,world_values_unknown_rows,world_unknown_identity_rows=0,0,0,0
 local world_values_cursors_loaded=false
@@ -1478,6 +1478,10 @@ local function pilot_frame(s,tick)
   pilot_view.stock_proposal=record
   if cfg.native_gate_pilot_capture and record then log('PILOT_STOCK_CAPTURE tick='..tick..' record='..record) end
  end
+ -- Scripted local input (native_gate_pilot_local_script): this client's own presentation ids.
+ for _,e in ipairs(pilot_view.local_script and pilot_view.local_script[tick] or {}) do
+  ticklog.write('PILOT_LOCAL_PRESS tick='..tick..' kind='..e[1]..' id='..string.format('0x%x',e[2])..' queued='..tostring(gate.pilot_stock_local(e[1],e[2],e[3])))
+ end
  if (wire or cfg.native_gate_pilot_capture) and not stock_capture then
   -- Capture never changes local input. Only the wire needs it to succeed.
   local record,why=gate.pilot_capture()
@@ -1615,9 +1619,9 @@ local function sample(tick)
       if not dock and cfg.native_gate_steering_schema==2 then
        local at=raw:find(';steering=',1,true)
        -- slot: a stock slot's ship (lockstep_pilot_slots.h), generation and the Agent's model class.
-       local steering=at and (raw:match('^%d+:[0-9a-f]+:[0-9a-f]+',at+10) or raw:match('^none:%d+',at+10) or raw:match('^spline:%d+',at+10) or
+       local steering=at and (raw:match('^%d+:[0-9a-f]+:[0-9a-f]+',at+10) or raw:match('^none:%d+',at+10) or raw:match('^spline:%d+',at+10) or raw:match('^linear:%d+',at+10) or
         raw:match('^slot:%d+:[0-9a-f]+',at+10))
-       parts[#parts+1]='steering='..assert(steering,'native steering lifetime missing or unsupported')
+       parts[#parts+1]='steering='..assert(steering,'native steering lifetime missing or unsupported: '..tostring(raw:match(';steering=[^;]*'))..' id='..i)
       end
       if not dock and cfg.native_gate_spline_state then
        local values=assert(raw_field(raw,';spline_state=','^[^;]+'),'native spline state missing')
@@ -2134,6 +2138,18 @@ local function frame()
     assert((trig=='block' or trig=='observe') and gate.view_points_triggers and gate.view_points_triggers(trig)==1,'view triggers refused')
     log('VIEW_TRIGGERS_ARMED mode='..trig)
    end
+   -- Evaluations this client's own UI asks for (a presentation scope, slots 6 and 10, the
+   -- dispatch of presentation ids, a client-only view call; not the probe's frame) and every
+   -- evaluation a camera event asks for (Camera 0x97dff0 on the stack: a camera anchored,
+   -- moved or destroyed, e.g. two ticks after the map opens): 'block' keeps the current level
+   -- of every object whose runtime ID is shared (the UI's own objects, from the local lists,
+   -- evaluate as stock), 'observe' counts. Default off.
+   if cfg.native_gate_view_ui then
+    local ui=cfg.native_gate_view_ui
+    assert((ui=='block' or ui=='observe') and (ui~='block' or cfg.native_gate_runtime_ids_local==true) and
+     gate.view_points_ui and gate.runtime_ids_probe and gate.view_points_ui(ui)==1,'view ui refused')
+    log('VIEW_UI_ARMED mode='..ui)
+   end
    -- Viewpoint without pilot slots: 'ship' takes the container the local
    -- player occupies instead of the player object, whose position follows the
    -- camera; 'player' is the default.
@@ -2144,6 +2160,7 @@ local function frame()
    end
   end
   assert(not cfg.native_gate_view_triggers or cfg.native_gate_view_points,'view triggers need native_gate_view_points')
+  assert(not cfg.native_gate_view_ui or cfg.native_gate_view_points,'view ui needs native_gate_view_points')
   assert(not cfg.native_gate_view_points_source or cfg.native_gate_view_points,'view points source needs native_gate_view_points')
   assert(not cfg.native_gate_view_rows or cfg.native_gate_view_points,'view rows need native_gate_view_points')
   -- Mass traffic scheduling (U::MT::MassTrafficUpdateTask): 'sync' (or true)
@@ -3093,6 +3110,23 @@ local function frame()
     pilot_view.arm_stock()
     log('PILOT_STOCK_ARMED slot='..slot..' capture='..(capture and 1 or 0)..' slots='..mask..' script='..tostring(capture and script and
      (type(script)=='string' and script or 'list') or 'none'))
+    -- Scripted local input for runs without people (default off): {{slot,tick,kind,id,value},...},
+    -- absolute admitted ticks inside the pilot window; the slot's own client queues each at that tick
+    -- and its next pass runs it as a key of its own (presentation ids only, e.g. {4,3000,'action',0x71,0}:
+    -- client 4 opens the map, INPUT_ACTION_OPEN_MAP).
+    local local_plan=cfg.native_gate_pilot_local_script
+    if local_plan~=nil then
+     assert(type(local_plan)=='table' and gate.pilot_stock_local,'pilot local script refused')
+     local by,count={},0
+     for _,e in ipairs(local_plan) do
+      assert(type(e)=='table' and type(e[1])=='number' and e[1]%1==0 and e[1]>=1 and e[1]<=#cfg.native_gate_pilot_slots and
+       type(e[2])=='number' and e[2]%1==0 and e[2]>window[1] and e[2]<window[2] and (e[3]=='action' or e[3]=='state' or e[3]=='range') and
+       type(e[4])=='number' and e[4]%1==0 and e[4]>=0 and e[4]<512 and type(e[5])=='number','invalid pilot local script event')
+      if e[1]==slot then by[e[2]]=by[e[2]] or {};by[e[2]][#by[e[2]]+1]={e[3],e[4],e[5]};count=count+1 end
+     end
+     pilot_view.local_script=by
+     log('PILOT_LOCAL_SCRIPT_ARMED slot='..slot..' events='..count)
+    end
    end
    -- Presentation (lockstep_pilot_present.h, stop reason 162; every client of a stock slots session):
    -- client k's stock camera, HUD and UI present slot k's ship as the player, X4's own code in a
@@ -3476,6 +3510,14 @@ local function frame()
     gate.runtime_ids_callers and gate.runtime_ids_callers()==1,'runtime ids callers refused '..tostring(gate.runtime_ids_status and gate.runtime_ids_status()))
    log('RUNTIME_IDS_CALLERS_ARMED')
   end
+  -- Shared allocations per tick (RUNTIME_IDS_ROW: the tick's next ID and its callers' keys, written at once), so two
+  -- clients' rows name the allocation that landed a tick apart; RUNTIME_IDS_CALLER key= is the stack. Default off.
+  if cfg.native_gate_runtime_ids_rows then
+   assert(cfg.native_gate_runtime_ids_rows==true and cfg.native_gate_runtime_ids~=nil and cfg.native_gate_runtime_ids~='observe' and
+    cfg.native_gate_created_identities and gate.runtime_ids_rows and gate.runtime_ids_row and gate.runtime_ids_rows()==1,
+    'runtime ids rows refused '..tostring(gate.runtime_ids_status and gate.runtime_ids_status()))
+   log('RUNTIME_IDS_ROWS_ARMED')
+  end
   -- What only the view asks for (UI elements, ICom, effects, slots 6 and 10, a presentation scope) takes its IDs from its own lists.
   if cfg.native_gate_runtime_ids_local then
    assert(cfg.native_gate_runtime_ids_local==true and cfg.native_gate_runtime_ids~=nil and cfg.native_gate_runtime_ids~='observe' and cfg.native_gate_created_identities and
@@ -3536,7 +3578,8 @@ local function frame()
    for _=1,8192 do
     local row=gate.view_points_row(row_cursors.view)
     if not row then break end
-    log('VIEW_POINTS_ROW '..row);row_cursors.view=row_cursors.view+1
+    -- At once: rows of the ticks the status stride holds back were dropped with them.
+    ticklog.write('VIEW_POINTS_ROW '..row);row_cursors.view=row_cursors.view+1
    end
   end
  end
@@ -3565,6 +3608,13 @@ local function frame()
     if not row then break end
     -- A finer stride asks for ticks the status stride does not write, so these go out at once.
     if every then ticklog.write('RUNTIME_IDS_CALLER tick='..tick..' '..row) else log('RUNTIME_IDS_CALLER tick='..tick..' '..row) end
+   end
+  end
+  if cfg.native_gate_runtime_ids_rows then
+   for _=1,4096 do
+    local row=gate.runtime_ids_row(row_cursors.runtime_ids)
+    if not row then break end
+    ticklog.write('RUNTIME_IDS_ROW '..row);row_cursors.runtime_ids=row_cursors.runtime_ids+1
    end
   end
  end
@@ -3843,7 +3893,7 @@ SetScript('onUpdate',function()
  -- A presenting client's UI slot runs as its slot's player; the probe reads and reports as the canonical one.
  if cfg.native_gate_draw_watch_frame and gate and gate.draw_watch_frame_end then gate.draw_watch_frame_end() end
  local paused=gate and gate.pilot_present_pause and gate.pilot_present_pause()
- local probe_mark=cfg.native_gate_runtime_ids_local and gate and gate.runtime_ids_probe
+ local probe_mark=(cfg.native_gate_runtime_ids_local or cfg.native_gate_view_ui) and gate and gate.runtime_ids_probe
  if probe_mark then probe_mark(1) end
  local ok,error=pcall(frame)
  if probe_mark then probe_mark(0) end

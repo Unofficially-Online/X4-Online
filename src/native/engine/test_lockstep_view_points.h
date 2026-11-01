@@ -195,6 +195,34 @@ static void test_view_points_native_image(const char *path) {
     stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;boot_mode=saved_boot;boot_phase=saved_phase;
     VirtualFree(view_page,0,MEM_RELEASE);view_page=saved_page;test_vp_reset();
     assert(view_trigger_sites_ok()); /* nine calls to SetAttention: five camera enter/leave handlers, four cutscene shot sites */
+    /* native_gate_view_ui's camera scope: 0x97dff0's .pdata entry is exactly 0x97dff0..0x97ee40, its body holds every
+     * reference to the CameraLeftEvent (0x2bafca8) and CameraEnteredEvent (0x2bafce0) vtables in .text and its calls of
+     * PostEvent 0x99a3f0 (p4-long4's return address 0x97e65d among them), and ~Camera calls it at 0x9794d2. The handler
+     * 0x6b8540 that re-evaluated the cockpit tail-calls SetAttention (cmp rdx,rcx; jne; mov edx,1; jmp). */
+    assert(view_ui_camera_ok());
+    {   const IMAGE_DATA_DIRECTORY *pd=&nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];int found=0;
+        assert(pd->VirtualAddress && pd->Size>=12);
+        for(uint32_t at=pd->VirtualAddress;at+12<=pd->VirtualAddress+pd->Size;at+=12) {
+            uint32_t begin,end;memcpy(&begin,image+at,4);memcpy(&end,image+at+4,4);
+            if(begin<=0x97e65du && 0x97e65du<end) {assert(begin==VIEW_CAMERA_LO && end==VIEW_CAMERA_HI);found=1;}
+        }
+        assert(found);
+        unsigned leas=0,posts=0;
+        for(uint32_t at=0x1000;at+7<=0x1bc070cu;at++) { /* .text */
+            const unsigned char *p=image+at;
+            if((p[0]==0x48 || p[0]==0x4c) && p[1]==0x8d && (p[2]&0xc7)==0x05) {
+                int32_t d;memcpy(&d,p+3,4);uint32_t target=at+7+(uint32_t)d;
+                if(target==0x2bafca8u || target==0x2bafce0u) {assert(at>=VIEW_CAMERA_LO && at<VIEW_CAMERA_HI);++leas;}
+            }
+            if(at>=VIEW_CAMERA_LO && at+5<=VIEW_CAMERA_HI && p[0]==0xe8) {
+                int32_t d;memcpy(&d,p+1,4);if(at+5+(uint32_t)d==0x99a3f0u) {++posts;if(at+5==0x97e65du) found=2;}
+            }
+        }
+        assert(leas==10 && posts>=2 && found==2);
+        assert(!memcmp(image+0x6b8540,"\x48\x3b\xd1\x75\x0a\xba\x01\x00\x00\x00\xe9",11));
+        int32_t d;memcpy(&d,image+0x6b854b,4);assert(0x6b854fu+(uint32_t)d==VIEW_SET_ATTENTION);
+        assert(image[0x99c5ad]==0xff && image[0x99c5ae]==0x50 && image[0x99c5af]==0x20); /* the dispatch: call [rax+0x20] */
+    }
     assert(VirtualFree(image,0,MEM_RELEASE));image=prior;
     puts("view points native pins, slot-703 call, universe loads, tamper refusals and arm/restore verified");
 }
@@ -245,6 +273,116 @@ static void test_view_rows(void) {
     boot_phase=3;view_caller_note();assert(view_caller_count==1 && view_callers[0].trigger==0xffffffffu && view_callers[0].caller==0xffffffffu);
     view_caller_count=0;boot_mode=saved_boot2;boot_phase=saved_phase2;
     printf("view rows change/dedupe/format/eviction tests PASS\n");
+}
+/* native_gate_view_ui: an evaluation inside a client-local scope keeps a shared object's level. */
+static uint32_t test_vui_frames[4];static unsigned test_vui_frame_count,test_vui_native_calls;
+static unsigned test_vui_stack(uint32_t *frames,unsigned capacity) {
+    unsigned n=test_vui_frame_count<capacity?test_vui_frame_count:capacity;memcpy(frames,test_vui_frames,n*sizeof(*frames));return n;
+}
+static int test_vui_native(void *object) {(void)object;++test_vui_native_calls;return 7;}
+static int test_vui_refresh_scope=-1;
+static void test_vui_set_attention(void *object,int level) {(void)object;(void)level;test_vui_refresh_scope=(int)view_ui_scope();}
+static void test_view_ui(void) {
+    DWORD saved_ui=ui_thread;uint64_t saved_issued=stats.issued;int saved_installed=view_installed,saved_boot=boot_mode,saved_phase=boot_phase;
+    int saved_built=rid_local_built;
+    ui_thread=GetCurrentThreadId();stats.issued=0;view_ui_mode=VIEW_UI_OFF;view_ui_stack_override=test_vui_stack;test_vui_frame_count=0;
+    /* Arming: view points installed, before the first admitted frame, on the frame thread, the camera range as pinned
+     * (0x97dff0's entry, the ret ending its body, ~Camera's call into it); a rerun keeps the mode. */
+    view_installed=0;assert(!view_ui_arm(VIEW_UI_BLOCK));view_installed=1;
+    assert(!view_ui_arm(VIEW_UI_OFF) && !view_ui_arm(9));
+    stats.issued=3;assert(!view_ui_arm(VIEW_UI_BLOCK));stats.issued=0;
+    ui_thread=GetCurrentThreadId()+1;assert(!view_ui_arm(VIEW_UI_BLOCK));ui_thread=GetCurrentThreadId();
+    view_stage="idle";assert(!view_ui_arm(VIEW_UI_BLOCK) && !view_ui_mode && !strcmp(view_stage,"ui_camera")); /* zero image */
+    memcpy(image+VIEW_CAMERA_LO,"\x48\x89\x54\x24\x10\x48\x89\x4c\x24\x08",10);image[VIEW_CAMERA_HI-1]=0xc3;
+    {int32_t rel=(int32_t)(VIEW_CAMERA_LO-(VIEW_CAMERA_DTOR_CALL+5));image[VIEW_CAMERA_DTOR_CALL]=0xe8;memcpy(image+VIEW_CAMERA_DTOR_CALL+1,&rel,4);}
+    assert(view_ui_camera_ok());
+    image[VIEW_CAMERA_HI-1]=0xcc;assert(!view_ui_camera_ok());image[VIEW_CAMERA_HI-1]=0xc3;
+    image[VIEW_CAMERA_DTOR_CALL+1]^=1;assert(!view_ui_camera_ok());image[VIEW_CAMERA_DTOR_CALL+1]^=1;
+    image[VIEW_CAMERA_LO+4]^=1;assert(!view_ui_camera_ok());image[VIEW_CAMERA_LO+4]^=1;
+    view_stage="idle";
+    assert(view_ui_arm(VIEW_UI_BLOCK) && view_ui_mode==VIEW_UI_BLOCK && view_ui_arm(VIEW_UI_BLOCK) && !view_ui_arm(VIEW_UI_OBSERVE));
+    /* Scopes, in order: presentation scope, a client-only view call, the dispatch of presentation ids, slot 10, then (not
+     * in the probe's frame) slot 6 by the UI replay's depth or the stack; another thread or the gate's refresh: none. */
+    assert(view_ui_scope()==VIEW_UI_NONE);
+    InterlockedExchange(&pres_open,1);assert(view_ui_scope()==VIEW_UI_PRESENT);
+    view_refreshing=1;assert(view_ui_scope()==VIEW_UI_NONE);view_refreshing=0;
+    ui_thread=GetCurrentThreadId()+1;assert(view_ui_scope()==VIEW_UI_NONE);ui_thread=GetCurrentThreadId();
+    InterlockedExchange(&pres_open,0);
+    rid_scope(1);assert(view_ui_scope()==VIEW_UI_VIEW);rid_scope(0);
+    InterlockedExchange(&uirep_dispatch_depth,1);assert(view_ui_scope()==VIEW_UI_DISPATCH);InterlockedExchange(&uirep_dispatch_depth,0);
+    InterlockedExchange(&render_rng_in_slot,1);assert(view_ui_scope()==VIEW_UI_RENDER);InterlockedExchange(&render_rng_in_slot,0);
+    InterlockedExchange(&uirep_ui_depth,1);assert(view_ui_scope()==VIEW_UI_SLOT6);
+    InterlockedExchange(&rid_probe_frame,1);assert(view_ui_scope()==VIEW_UI_NONE);InterlockedExchange(&uirep_ui_depth,0);
+    test_vui_frames[0]=0x3d6fc2u;test_vui_frames[1]=0xb3bb3cu;test_vui_frame_count=2;assert(view_ui_scope()==VIEW_UI_NONE); /* the probe's frame */
+    InterlockedExchange(&rid_probe_frame,0);assert(view_ui_scope()==VIEW_UI_SLOT6);
+    test_vui_frames[1]=0xb3bb9eu;assert(view_ui_scope()==VIEW_UI_NONE); /* past the body */
+    test_vui_frames[1]=0x121c1f0u;assert(view_ui_scope()==VIEW_UI_RENDER);
+    test_vui_frames[1]=0x83497cu;assert(view_ui_scope()==VIEW_UI_NONE);
+    /* A camera event (p4-long4: ~Camera 0x9794a0 -> 0x97dff0 -> PostEvent -> dispatch 0x99c5b0 -> 0x6b8540's tail call):
+     * any return address in 0x97dff0's body, before the probe's-frame exemption and the slot-6/slot-10 search; the flags
+     * above still name their own scope; another thread or the gate's refresh: none. */
+    test_vui_frames[0]=0x99c5b0u;test_vui_frames[1]=0x99a4edu;test_vui_frames[2]=0x97e65du;test_vui_frames[3]=0x9794d7u;test_vui_frame_count=4;
+    assert(view_ui_scope()==VIEW_UI_CAMERA);
+    test_vui_frames[3]=0xb3bb3cu;assert(view_ui_scope()==VIEW_UI_CAMERA); /* inside UI::CUIController::Move */
+    InterlockedExchange(&rid_probe_frame,1);assert(view_ui_scope()==VIEW_UI_CAMERA); /* inside the probe's frame */
+    InterlockedExchange(&uirep_ui_depth,1);assert(view_ui_scope()==VIEW_UI_CAMERA);
+    InterlockedExchange(&uirep_ui_depth,0);InterlockedExchange(&rid_probe_frame,0);
+    InterlockedExchange(&pres_open,1);assert(view_ui_scope()==VIEW_UI_PRESENT);InterlockedExchange(&pres_open,0);
+    view_refreshing=1;assert(view_ui_scope()==VIEW_UI_NONE);view_refreshing=0;
+    ui_thread=GetCurrentThreadId()+1;assert(view_ui_scope()==VIEW_UI_NONE);ui_thread=GetCurrentThreadId();
+    test_vui_frames[2]=VIEW_CAMERA_LO;assert(view_ui_scope()==VIEW_UI_CAMERA);
+    test_vui_frames[2]=VIEW_CAMERA_HI-1;assert(view_ui_scope()==VIEW_UI_CAMERA);
+    test_vui_frames[2]=VIEW_CAMERA_HI;assert(view_ui_scope()==VIEW_UI_SLOT6); /* the next function; Move's frame remains */
+    test_vui_frames[3]=0x83497cu;assert(view_ui_scope()==VIEW_UI_NONE);
+    test_vui_frames[2]=VIEW_CAMERA_LO-1;assert(view_ui_scope()==VIEW_UI_NONE);
+    test_vui_frame_count=0;
+    /* Apply: shared objects keep their level ('block') or are counted ('observe'); the UI's own objects (local lists) evaluate. */
+    static unsigned char shared[0x200],own[0x200];memset(shared,0,sizeof(shared));memset(own,0,sizeof(own));
+    *(uint64_t*)(shared+8)=0x10042;*(int*)(shared+0x1ec)=6;*(uint64_t*)(own+8)=(3ULL<<25)|0x1f00001u;*(int*)(own+0x1ec)=2;
+    memset(view_ui_counts,0,sizeof(view_ui_counts));view_ui_blocked=view_ui_local=0;rid_local_built=1;int kept=-1;
+    assert(!view_ui_apply(shared,&kept) && kept==-1 && !view_ui_counts[VIEW_UI_PRESENT]); /* no scope */
+    InterlockedExchange(&pres_open,1);
+    assert(view_ui_apply(shared,&kept) && kept==6 && view_ui_counts[VIEW_UI_PRESENT]==1 && view_ui_blocked==1);
+    kept=-1;assert(!view_ui_apply(own,&kept) && kept==-1 && view_ui_counts[VIEW_UI_PRESENT]==2 && view_ui_local==1 && view_ui_blocked==1);
+    *(uint64_t*)(own+8)=(3ULL<<25)|0x1e00001u;assert(!view_ui_apply(own,&kept) && view_ui_local==2); /* block 30, the view list */
+    rid_local_built=0;assert(view_ui_apply(own,&kept) && kept==2 && view_ui_blocked==2); /* no local lists: shared */
+    rid_local_built=1;view_ui_mode=VIEW_UI_OBSERVE;assert(!view_ui_apply(shared,&kept) && view_ui_blocked==2 && view_ui_counts[VIEW_UI_PRESENT]==5);
+    InterlockedExchange(&pres_open,0);
+    /* The camera scope alike: the cockpit keeps its level, the HoloMap (local lists) evaluates; 'observe' counts. */
+    view_ui_mode=VIEW_UI_BLOCK;test_vui_frames[0]=0x99c5b0u;test_vui_frames[1]=0x97e65du;test_vui_frame_count=2;kept=-1;
+    assert(view_ui_apply(shared,&kept) && kept==6 && view_ui_counts[VIEW_UI_CAMERA]==1 && view_ui_blocked==3);
+    kept=-1;assert(!view_ui_apply(own,&kept) && kept==-1 && view_ui_counts[VIEW_UI_CAMERA]==2 && view_ui_local==3);
+    view_ui_mode=VIEW_UI_OBSERVE;assert(!view_ui_apply(shared,&kept) && kept==-1 && view_ui_counts[VIEW_UI_CAMERA]==3 && view_ui_blocked==3);
+    test_vui_frame_count=0;
+    /* Through the rewritten call: blocked in the scope without running the native evaluation, as stock outside it. */
+    if(!view_page) view_page=view_page_near();assert(view_page);
+    if(!view_lock_ready) {InitializeCriticalSection(&view_lock);view_lock_ready=1;}
+    test_vp_objects();test_vp_reset();view_installed=1;
+    static void *vtable[704];vtable[703]=(void*)test_vui_native;*(void***)shared=vtable;*(void***)own=vtable;
+    view_mode=VIEW_PLAYERS;view_active=1;view_ui_mode=VIEW_UI_BLOCK;boot_mode=1;boot_phase=3;stats.issued=40;test_vui_native_calls=0;
+    memset(view_ui_counts,0,sizeof(view_ui_counts));view_ui_blocked=view_ui_local=0;
+    assert(view_attention(shared)==7 && test_vui_native_calls==1 && !view_ui_blocked);
+    InterlockedExchange(&pres_open,1);
+    assert(view_attention(shared)==6 && test_vui_native_calls==1 && view_ui_blocked==1 && view_calls==2);
+    assert(view_attention(own)==7 && test_vui_native_calls==2 && view_ui_local==1);
+    InterlockedExchange(&pres_open,0);
+    test_vui_frames[0]=0x99c5b0u;test_vui_frames[1]=0x97e65du;test_vui_frame_count=2; /* a camera event, no flag */
+    assert(view_attention(shared)==6 && test_vui_native_calls==2 && view_ui_blocked==2 && view_ui_counts[VIEW_UI_CAMERA]==1);
+    test_vui_frame_count=0;assert(view_attention(shared)==7 && test_vui_native_calls==3 && view_ui_blocked==2);
+    boot_phase=2;InterlockedExchange(&pres_open,1);assert(view_attention(shared)==7 && view_ui_blocked==2);InterlockedExchange(&pres_open,0); /* loading */
+    char status[2048];assert(view_status(status,sizeof(status))>0 && strstr(status," ui=block:2/0/0/0/0/1 ui_blocked=2 ui_local=1"));
+    /* The gate's own refresh of a viewpoint chain is never a client-local scope. */
+    {   view_set_attention_fn saved_override=view_set_attention_override;
+        InterlockedExchange(&pres_open,1);boot_phase=3;shared[0xd1]=1;*(void**)(shared+0x70)=NULL;
+        view_set_attention_override=test_vui_set_attention;test_vui_refresh_scope=-1;view_refresh_chain(shared);
+        assert(test_vui_refresh_scope==VIEW_UI_NONE && !view_refreshing && view_ui_scope()==VIEW_UI_PRESENT);
+        InterlockedExchange(&pres_open,0);shared[0xd1]=0;view_set_attention_override=saved_override;}
+    view_ui_mode=VIEW_UI_OFF;assert(view_status(status,sizeof(status))>0 && strstr(status," ui=off:"));
+    test_vp_reset();view_ui_stack_override=NULL;rid_local_built=saved_built;memset(view_ui_counts,0,sizeof(view_ui_counts));view_ui_blocked=view_ui_local=0;
+    ui_thread=saved_ui;stats.issued=saved_issued;view_installed=saved_installed;boot_mode=saved_boot;boot_phase=saved_phase;
+    *(void**)(image+VIEW_UNIVERSE)=NULL;view_stage="idle";
+    memset(image+VIEW_CAMERA_LO,0,10);image[VIEW_CAMERA_HI-1]=0;memset(image+VIEW_CAMERA_DTOR_CALL,0,5);
+    printf("view ui scopes/camera events/block/observe/local objects tests PASS\n");
 }
 /* native_gate_view_points_source='ship': the occupied container (first non-null
  * entry of player+0x308..+0x310 that is an ancestor) replaces the player object. */

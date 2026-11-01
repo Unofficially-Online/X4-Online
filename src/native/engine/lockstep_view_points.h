@@ -304,6 +304,137 @@ static int view_triggers_arm(int mode) {
     if(!view_trigger_sites_ok()) {view_stage="trigger_sites";return 0;}
     memset(view_trigger_counts,0,sizeof(view_trigger_counts));view_trigger_blocked=0;view_trigger_mode=mode;return 1;
 }
+/* Evaluations a client's own UI asks for, DEFAULT OFF (native_gate_view_ui =
+ * 'block' | 'observe'). p4-long2 (4 own cockpits, build133): one input action on
+ * client 4 alone (PILOT_INPUTS dispatch 0/0/2 -> 1/0/12, a SPACE edge, uihold
+ * from 14731 to the end) opened the map: AddHoloMap 0x22c270 builds U::HoloMap
+ * in "the player's room" (in client 4's presentation scope that is slot 4's
+ * cockpit room) from UI::CUIController::Move. In that UI frame client 4 ran
+ * about 185 evaluations more than the others, two stations of sector 729
+ * changed level (MD ObjectChangedAttention, signal_leaks.xml, its cue instances
+ * created inside the scope: route=ui), and by the 15000 capture 614 objects of
+ * tempzone 2e2ce, the canonical player 11e12 among them, held other levels.
+ * None of the nine trigger sites above is on that path. With view points the
+ * level an evaluation computes no longer depends on the camera, but whether it
+ * runs does, and inside a presentation scope the canonical player wears slot
+ * k's identity (its parent is slot k's room), so what it computes for the player
+ * and its ancestors is per client too. So an evaluation on the frame thread
+ * inside a client-local scope is presentation, not simulation:
+ *   present  a presentation scope is open (lockstep_pilot_present.h: slot 6,
+ *            slot 10, the slot-4 dispatch of presentation ids, refill, pick);
+ *   view     a call this client makes alone for its own view (rid_scope);
+ *   dispatch the stock slot-4 dispatch of a presentation id (any client);
+ *   render   VBI slot 10, GameRender::Move (render_rng_in_slot; else its body
+ *            on the stack);
+ *   ui       VBI slot 6, UI::CUIController::Move (the UI replay's depth, else
+ *            its body on the stack), except the probe's own frame
+ *            (gate.runtime_ids_probe) and the gate's own viewpoint refresh.
+ * 'block' returns such an evaluation's current level (no change, no
+ * propagation, no event) unless the object is the client's own: its runtime ID
+ * comes from a local list (native_gate_runtime_ids_local, blocks 30/31: the
+ * HoloMap, UI elements, effects), which the UI needs evaluated as stock does
+ * (ui_local=). Without the local lists every object counts as shared, so the
+ * probe asks for them with 'block'. 'observe' only counts.
+ *
+ * camera: p4-long4 (presses: OPEN_MAP on client 4 at 3000, on client 1, which
+ * presents nothing, at 9000) parted both clients although the five camera
+ * handlers and all of the above were blocked. Two ticks after AddHoloMap (3001,
+ * 9001) a U::Camera died on that client: the deleting destructor 0x978fd0 ->
+ * ~Camera 0x9794a0 -> 0x97dff0(camera, its anchor, NULL), which posts
+ * CameraLeftEvent at once (PostEvent 0x99a3f0, dispatch 0x99c5b0) to the
+ * anchor's ancestors. Two of their handlers are none of the nine trigger
+ * sites: 0x6b8540 (if the target is the listener: SetAttention(it, 1) by
+ * tail call, so the evaluation's trigger is the dispatch 0x99c5b0 that every
+ * event shares) re-evaluated the canonical player's cockpit ae79f to 9 (it
+ * still held its loaded level on the other clients), and Room::vfunc701
+ * 0x76e6a0 re-evaluated its children through 0x3d597a. The player 11e12, its
+ * computer 11e13, its camera anchor scene ae7b8 and that scene's ui positions
+ * 11e14 followed by propagation: the census differs in exactly these five
+ * objects (attention only) at 3600 on client 4 and from 9600 on client 1. The
+ * frame thread was in no scope above (no flag; no UI::CUIController::Move or
+ * GameRender::Move frame on the captured stack), so view_ui let them through.
+ * 0x97dff0 is the only function that builds CameraLeftEvent/CameraEnteredEvent
+ * (all ten references to their vtables are in its body); it runs when a camera
+ * is anchored, re-anchored, re-parented with its anchor or destroyed, so on the
+ * clients whose camera did that. So the sixth scope:
+ *   camera   a return address in 0x97dff0's body (0x97dff0..0x97ee40) on the
+ *            stack: any evaluation a camera event's handler asks for, whatever
+ *            the handler and however it reaches SetAttention, and whatever
+ *            called the camera (UI, render, the probe's frame, the simulation;
+ *            region_camera's context stub, which posts the same events on every
+ *            client, then keeps them out on every client alike).
+ * It is tested before the probe's-frame exemption and the slot-6/slot-10 stack
+ * search. Arming checks 0x97dff0's entry and the destructor's call into it.
+ * Status: ui=mode:present/view/dispatch/render/ui/camera ui_blocked= ui_local=. */
+enum {VIEW_UI_OFF,VIEW_UI_BLOCK,VIEW_UI_OBSERVE};
+enum {VIEW_UI_NONE,VIEW_UI_PRESENT,VIEW_UI_VIEW,VIEW_UI_DISPATCH,VIEW_UI_RENDER,VIEW_UI_SLOT6,VIEW_UI_CAMERA,VIEW_UI_SCOPES};
+#define VIEW_UI_MOVE_LO 0xb3bad0u   /* UI::CUIController::Move */
+#define VIEW_UI_MOVE_HI 0xb3bb9eu
+#define VIEW_RENDER_LO 0x121c1f0u   /* GameRender::Move */
+#define VIEW_RENDER_HI 0x121c25au
+#define VIEW_CAMERA_LO 0x97dff0u    /* Camera 0x97dff0: posts CameraLeftEvent / CameraEnteredEvent (.pdata 0x97dff0..0x97ee40) */
+#define VIEW_CAMERA_HI 0x97ee40u
+#define VIEW_CAMERA_DTOR_CALL 0x9794d2u /* ~Camera 0x9794a0: call 0x97dff0 (camera, anchor +0x770, NULL) */
+#define VIEW_UI_STACK 62u
+static int view_ui_mode;
+static unsigned view_refreshing; /* the gate's own SetAttention calls (view_refresh_chain) */
+static uint64_t view_ui_counts[VIEW_UI_SCOPES],view_ui_blocked,view_ui_local;
+/* Tests only: the image return addresses of the evaluation's stack, innermost first. */
+static unsigned (*view_ui_stack_override)(uint32_t *frames,unsigned capacity);
+static unsigned view_ui_stack(uint32_t *frames,unsigned capacity) {
+    if(view_ui_stack_override) return view_ui_stack_override(frames,capacity);
+    void *raw[VIEW_UI_STACK];unsigned n=0;
+    USHORT got=RtlCaptureStackBackTrace(1,capacity<VIEW_UI_STACK?capacity:VIEW_UI_STACK,raw,NULL);
+    for(USHORT i=0;i<got;i++) {
+        unsigned char *p=raw[i];if(p<image || p>=image+0x6fa9000) continue;
+        frames[n++]=(uint32_t)(p-image);
+    }
+    return n;
+}
+/* Which client-local scope the frame thread is in (VIEW_UI_NONE: the simulation's own). */
+static unsigned view_ui_scope(void) {
+    if(GetCurrentThreadId()!=ui_thread || view_refreshing) return VIEW_UI_NONE;
+    if(InterlockedCompareExchange(&pres_open,0,0)) return VIEW_UI_PRESENT;
+    if(rid_scope_thread && rid_scope_thread==GetCurrentThreadId()) return VIEW_UI_VIEW;
+    if(InterlockedCompareExchange(&uirep_dispatch_depth,0,0)>0) return VIEW_UI_DISPATCH;
+    if(InterlockedCompareExchange(&render_rng_in_slot,0,0)) return VIEW_UI_RENDER;
+    uint32_t frames[VIEW_UI_STACK];const unsigned n=view_ui_stack(frames,VIEW_UI_STACK);
+    for(unsigned i=0;i<n;i++) if(frames[i]>=VIEW_CAMERA_LO && frames[i]<VIEW_CAMERA_HI) return VIEW_UI_CAMERA; /* a camera event */
+    if(InterlockedCompareExchange(&rid_probe_frame,0,0)) return VIEW_UI_NONE; /* the probe's frame: canonical gate work */
+    if(InterlockedCompareExchange(&uirep_ui_depth,0,0)>0) return VIEW_UI_SLOT6;
+    for(unsigned i=0;i<n;i++) {
+        if(frames[i]>=VIEW_UI_MOVE_LO && frames[i]<VIEW_UI_MOVE_HI) return VIEW_UI_SLOT6;
+        if(frames[i]>=VIEW_RENDER_LO && frames[i]<VIEW_RENDER_HI) return VIEW_UI_RENDER;
+    }
+    return VIEW_UI_NONE;
+}
+/* 1 when the evaluation is replaced by the object's current level (*result). */
+static int view_ui_apply(void *object,int *result) {
+    const unsigned scope=view_ui_scope();
+    if(scope==VIEW_UI_NONE) return 0;
+    ++view_ui_counts[scope];
+    uint64_t runtime=0;
+    if(read_local((unsigned char*)object+8,&runtime,8) && rid_local_of((uint32_t)runtime&0x1ffffffu)) {++view_ui_local;return 0;}
+    if(view_ui_mode!=VIEW_UI_BLOCK) return 0;
+    int current=0;if(!read_local((unsigned char*)object+0x1ec,&current,4)) {++view_unreadable;return 0;}
+    ++view_ui_blocked;*result=current;return 1;
+}
+/* The camera scope's range: 0x97dff0's entry (it spills rdx and rcx), the ret that ends its body at
+ * 0x97ee3f, and ~Camera's call into it. */
+static int view_ui_camera_ok(void) {
+    static const unsigned char entry[10]={0x48,0x89,0x54,0x24,0x10,0x48,0x89,0x4c,0x24,0x08};
+    unsigned char head[10],last=0,call[5];int32_t rel;
+    if(!read_local(image+VIEW_CAMERA_LO,head,10) || memcmp(head,entry,10) || !read_local(image+VIEW_CAMERA_HI-1,&last,1) || last!=0xc3) return 0;
+    if(!read_local(image+VIEW_CAMERA_DTOR_CALL,call,5) || call[0]!=0xe8) return 0;
+    memcpy(&rel,call+1,4);return VIEW_CAMERA_DTOR_CALL+5+(uint32_t)rel==VIEW_CAMERA_LO;
+}
+/* Before the first admitted frame, on the frame thread, with view points installed. */
+static int view_ui_arm(int mode) {
+    if((mode!=VIEW_UI_BLOCK && mode!=VIEW_UI_OBSERVE) || !view_installed || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
+    if(view_ui_mode) return view_ui_mode==mode;
+    if(!view_ui_camera_ok()) {view_stage="ui_camera";return 0;}
+    memset(view_ui_counts,0,sizeof(view_ui_counts));view_ui_blocked=view_ui_local=0;view_ui_mode=mode;return 1;
+}
 static void view_row_note(void *object,int level,int camera) {
     if(boot_mode && boot_phase!=3) return; /* loading evaluations are not compared */
     if(!view_rows_started) {memset(view_row_seen,0,sizeof(view_row_seen));view_rows_started=1;}
@@ -380,6 +511,9 @@ static int view_attention_locked(view_attention_fn native,void *object) {
     if(view_rows_armed) view_caller_note();
     if(view_trigger_mode && (!boot_mode || boot_phase==3)) {
         int kept;if(view_trigger_apply(object,view_trigger_match(view_row_trigger()),&kept)) return kept;
+    }
+    if(view_ui_mode && (!boot_mode || boot_phase==3)) {
+        int kept;if(view_ui_apply(object,&kept)) return kept;
     }
     int result=view_evaluate(native,object),camera=-1,evaluated=result;
     if(view_mode==VIEW_OBSERVE) {
@@ -497,7 +631,11 @@ static void view_refresh_chain(void *object) {
     unsigned char *p=object;
     for(unsigned depth=0;p && depth<17;depth++) {
         unsigned char own=0;if(!read_local(p+0xd1,&own,1)) return;
-        if(own) {(view_set_attention_override?view_set_attention_override:(view_set_attention_fn)(image+VIEW_SET_ATTENTION))(p,1);++view_refreshes;}
+        if(own) {
+            ++view_refreshing; /* the gate's own refresh: never a client-local scope (native_gate_view_ui) */
+            (view_set_attention_override?view_set_attention_override:(view_set_attention_fn)(image+VIEW_SET_ATTENTION))(p,1);
+            --view_refreshing;++view_refreshes;
+        }
         if(!read_local(p+0x70,&p,8)) return;
     }
 }
@@ -596,7 +734,7 @@ static int view_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"mode=%s armed=%ld installed=%d frame=%llu source=%s viewpoints=%u ids=%s calls=%llu evaluations=%llu "
         "levels=%s differ=%llu total_calls=%llu total_evaluations=%llu total_differ=%llu first_differ=%llu refreshes=%llu latches=%llu "
         "unreadable=%llu foreign=%lld restored=%d stage=%s failures=%lld triggers=%s:%llu/%llu/%llu/%llu/%llu blocked=%llu "
-        "source_mode=%s ship_misses=%llu cutscene=%llu/%llu/%llu/%llu callers=%s callers_other=%llu",
+        "source_mode=%s ship_misses=%llu cutscene=%llu/%llu/%llu/%llu callers=%s callers_other=%llu ui=%s:%llu/%llu/%llu/%llu/%llu/%llu ui_blocked=%llu ui_local=%llu",
         view_mode==VIEW_PLAYERS?"players":view_mode==VIEW_OBSERVE?"observe":"off",view_active,view_installed,
         (unsigned long long)(view_tick==UINT64_MAX?0:view_tick),view_source==1?"slots":view_source==2?"player":view_source==3?"ship":"none",view_count,
         view_count?ids:"-",(unsigned long long)(fresh?view_frame_calls:0),(unsigned long long)(fresh?view_frame_evaluations:0),levels,
@@ -608,6 +746,10 @@ static int view_status(char *out,size_t capacity) {
         (unsigned long long)view_trigger_counts[3],(unsigned long long)view_trigger_counts[4],(unsigned long long)view_trigger_blocked,
         view_source_mode==VIEW_SOURCE_SHIP?"ship":"player",(unsigned long long)view_ship_misses,
         (unsigned long long)view_trigger_counts[5],(unsigned long long)view_trigger_counts[6],(unsigned long long)view_trigger_counts[7],
-        (unsigned long long)view_trigger_counts[8],view_rows_armed?callers:"-",(unsigned long long)view_caller_other);
+        (unsigned long long)view_trigger_counts[8],view_rows_armed?callers:"-",(unsigned long long)view_caller_other,
+        view_ui_mode==VIEW_UI_BLOCK?"block":view_ui_mode==VIEW_UI_OBSERVE?"observe":"off",
+        (unsigned long long)view_ui_counts[VIEW_UI_PRESENT],(unsigned long long)view_ui_counts[VIEW_UI_VIEW],(unsigned long long)view_ui_counts[VIEW_UI_DISPATCH],
+        (unsigned long long)view_ui_counts[VIEW_UI_RENDER],(unsigned long long)view_ui_counts[VIEW_UI_SLOT6],(unsigned long long)view_ui_counts[VIEW_UI_CAMERA],
+        (unsigned long long)view_ui_blocked,(unsigned long long)view_ui_local);
     return n>0 && (size_t)n<capacity?n:0;
 }

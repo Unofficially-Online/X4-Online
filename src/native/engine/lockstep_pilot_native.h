@@ -889,6 +889,7 @@ static int pnat_pass(uint64_t tick,unsigned char *controller,pilot_refresh_fn re
             if(!pstk_frame(tick,&why)) return pnat_fail(why);
             if((pstk_slot_mask&~1u) && tick>=pstk_first_apply && !pslot_replay(tick)) return pnat_fail(pslot_why);
             if(uirep_armed && !uirep_frame(tick,&why)) return pnat_fail(why);
+            pstk_local_drain(); /* scripted local keys (native_gate_pilot_local_script), after the replay */
         }
         return 1;
     }

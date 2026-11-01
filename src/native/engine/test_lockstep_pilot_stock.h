@@ -231,6 +231,29 @@ static void test_pilot_stock(void) {
     assert(!test_pstk_call_count && pstk_build.count==4);
     pnat_refused=0;pnat_dispatch_action(map,0x130);pnat_dispatch_state(map,0x18,1);assert(!test_pstk_call_count && pnat_refused==2);
     pnat_dispatch_action(map,0xa9);assert(test_pstk_count('l')==1 && pstk_build.count==4);
+    /* Local keys name themselves. Scripted local input queues a presentation id (never a replay or refused id, never off
+     * the frame thread) and the pass runs it as this client's own key, through the local path, recording nothing. */
+    {   const pstk_local_key *last=&pstk_local_keys[(pstk_local_key_count-1)%PSTK_LOCAL_KEYS];
+        assert(pstk_local_key_count>=1 && last->id==0xa9 && last->kind==PSTK_ACTION && !last->scripted && last->tick==8);
+        const LONG64 pressed=pstk_local_pressed,ranges=pstk_local_ranges;pstk_local_queued=0;
+        assert(pstk_local_press(PSTK_ACTION,0xa9,0) && pstk_local_queued==1 && test_pstk_count('l')==1 && pstk_local_pressed==pressed);
+        assert(!pstk_local_press(PSTK_ACTION,0x12f,0) && !pstk_local_press(PSTK_ACTION,0x130,0) && !pstk_local_press(PSTK_ACTION,0xa9,1) &&
+               !pstk_local_press(PSTK_STATE,0xa9,2) && !pstk_local_press(PSTK_KINDS,0xa9,0) && !pstk_local_press(PSTK_ACTION,512,0));
+        ui_thread=GetCurrentThreadId()+1;assert(!pstk_local_press(PSTK_ACTION,0xa9,0));ui_thread=GetCurrentThreadId();
+        assert(pstk_local_queued==1);
+        pstk_local_drain();
+        assert(!pstk_local_queued && test_pstk_count('l')==2 && pstk_local_pressed==pressed+1 && pstk_build.count==4 && !uirep_dispatch_depth);
+        pstk_local_drain();assert(test_pstk_count('l')==2 && pstk_local_pressed==pressed+1); /* once */
+        for(unsigned i=0;i<PSTK_LOCAL_QUEUE;i++) assert(pstk_local_press(PSTK_ACTION,0xa9,0));
+        assert(!pstk_local_press(PSTK_ACTION,0xa9,0) && pstk_local_queued==PSTK_LOCAL_QUEUE);pstk_local_queued=0; /* full */
+        pstk_local_note(PSTK_RANGE,0x33,0);assert(pstk_local_ranges==ranges+1);
+        char keys[PSTK_LOCAL_KEYS*32+2];pstk_local_keys_text(keys,sizeof(keys));
+        assert(!strcmp(keys+strlen(keys)-14,"8:a:a9,8:a:a9*"));
+        char small[10];pstk_local_keys_text(small,sizeof(small));assert(strlen(small)<sizeof(small)); /* stops before an entry that does not fit */
+        const uint64_t saved_count=pstk_local_key_count;pstk_local_key_count=0;pstk_local_keys_text(keys,sizeof(keys));assert(!strcmp(keys,"-"));
+        for(unsigned i=0;i<PSTK_LOCAL_KEYS+3;i++) pstk_local_note(PSTK_STATE,0x40+(int)i,0);
+        pstk_local_keys_text(keys,sizeof(keys));assert(!strncmp(keys,"8:s:43,",7) && strstr(keys,",8:s:4a"));
+        pstk_local_key_count=saved_count;}
     /* Cursor: the stock body inside a flight window (local active, replayed off), outputs kept, zero to d95180. */
     test_pstk_call_count=0;pnat_cursor(controller);
     assert(test_pstk_calls[0].what=='C' && test_pstk_calls[0].flight==1 && !*flight && pstk_cursor_live[0]==0.25f && pstk_cursor_live_set &&

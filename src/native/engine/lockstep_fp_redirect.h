@@ -4,8 +4,9 @@
  * on Windows the spline segment length of the two composite builders that inline BezierSpline::Set (fr_len_seen,
  * FR10/FR11), the Bezier handle length s = d/3 there (fr_handle_seen, FR13) and the PointGuard formation angle
  * (fr_pg_seen, FR16), and (FR22) BezierSpline::ComputeLength's arc length (fr_bl_seen) and the AffineSpline knot
- * weight (fr_aff_seen) behind the highways' spline data; 'writer' redirects only the writer and shadows the length,
- * the handles, the angle, the arc length and the weight. Fail closed: a hooked site that no longer
+ * weight (fr_aff_seen) behind the highways' spline data, and (FR23) the Linear step's velocity store (fr_vel_seen)
+ * and (FR24) its facing factor (fr_fac_seen); 'writer' redirects only the writer and shadows the length, the handles,
+ * the angle, the arc length, the weight, the velocity and the facing factor. Fail closed: a hooked site that no longer
  * leads here stops the session (FR_STOP_REASON).
  *
  * The method ("recompute after native on both platforms", reports/LOCKSTEP-LINUX-PORT-PLAN-20261030.txt, Option B):
@@ -56,7 +57,7 @@
 #define FR_THREADS 128u
 enum {FR_OFF=0,FR_SHADOW=1,FR_REDIRECT=2,FR_WRITER=3}; /* redirect: shadow, the writer's +0x0..+0xc and (Windows) the
                                                      * spline length overwritten with ours; writer: only the writer's */
-enum {FR_F0=0,FR_F4,FR_F24,FR_M,FR_F0_OUT,FR_F4_OUT,FR_P0,FR_P4,FR_P8,FR_PC,FR_W0,FR_W4,FR_W8,FR_WC,FR_LEN,FR_HANDLE,FR_PG,FR_BL,FR_AFF,FR_FIELDS};
+enum {FR_F0=0,FR_F4,FR_F24,FR_M,FR_F0_OUT,FR_F4_OUT,FR_P0,FR_P4,FR_P8,FR_PC,FR_W0,FR_W4,FR_W8,FR_WC,FR_LEN,FR_HANDLE,FR_PG,FR_BL,FR_AFF,FR_VEL,FR_FAC,FR_FIELDS};
 enum {FR_SEEN_G4=1u,FR_SEEN_G0=2u,FR_SEEN_M4=4u,FR_SEEN_M0=8u,FR_SEEN_COMP=16u};
 typedef void (*fr_refresh_fn)(void *,void *,uint64_t);
 typedef float (*fr_getter_fn)(void *,void *,void *);
@@ -67,7 +68,7 @@ static fr_getter_fn fr_native_g4,fr_native_g0;
 static fr_m_fn fr_native_m;
 static fr_params_fn fr_native_params; /* the refresh's first call (Linux 0x148cb50, Windows 0x6dc610), on every path */
 enum {FR_HIT_G4=0,FR_HIT_G0,FR_HIT_M4,FR_HIT_M0,FR_HIT_PARAMS,FR_HIT_PARAMS_FLAG,FR_HIT_V,FR_HIT_MULPS,FR_HIT_WRITER,FR_HIT_LEN0,FR_HIT_LEN1,FR_HIT_HANDLE0,FR_HIT_HANDLE3=FR_HIT_HANDLE0+3,FR_HIT_PG,
-      FR_HIT_BL100,FR_HIT_BL10,FR_HIT_BLN,FR_HIT_BL_FOREIGN,FR_HIT_AFF,FR_HITS};
+      FR_HIT_BL100,FR_HIT_BL10,FR_HIT_BLN,FR_HIT_BL_FOREIGN,FR_HIT_AFF,FR_HIT_VEL,FR_HIT_FAC,FR_HITS};
 enum {FR_PSEEN_V=1u,FR_PSEEN_MULPS=2u};
 static uint32_t fr_k_read(void); /* the platform's table float K (below) */
 typedef uint64_t (*fr_writer_fn)(void *,void *,void *,void *);
@@ -201,6 +202,8 @@ static const char *fr_stage="idle";
 static volatile LONG64 fr_calls,fr_compared,fr_load_compared,fr_skipped,fr_nested,fr_unfinished,fr_no_context,fr_orphans;
 static volatile LONG64 fr_m_branch,fr_v8_branch,fr_comp_changed,fr_records,fr_dropped,fr_failures,fr_w_unread,fr_w_written,fr_len_written,fr_handle_written,fr_pg_written;
 static volatile LONG64 fr_bl_written,fr_aff_written; /* FR22 */
+static volatile LONG64 fr_vel_written; /* FR23 */
+static volatile LONG64 fr_fac_written; /* FR24 */
 static volatile LONG64 fr_n[FR_FIELDS],fr_diff[FR_FIELDS],fr_max_ulp[FR_FIELDS];
 /* Every stub's entries, counted before anything else: a hook that never fires shows as 0 here. */
 static volatile LONG64 fr_hits[FR_HITS];
@@ -477,6 +480,62 @@ static inline uint32_t fr_aff_seen(unsigned which,uint32_t sum,uint32_t dp) {
     if(ours!=native) InterlockedIncrement64(&fr_aff_written);
     return ours;
 }
+/* FR23: the Linear flight model step's velocity store (Windows 0xeb27c0, Linux 0x13ed050) on its branch with the
+ * model's flag set (Windows [model+0x95], Linux +0x85): the written pathing bank's vector4 = the speed s along the
+ * bank's rotation rows r0..r2 (+0x10, +0x20, +0x30). Linux (0x13ee864..0x13ee893) forms the whole product
+ *   v = (r0*0 + 0*r1) + (s,s,s,0)*r2        (mulps, mulps, addps, mulps, addps; lane by lane)
+ * Windows (0xeb32fd..0xeb3314) only the last term, v = (s,s,s,0)*r2. For any s other than +-0 both are the same bits
+ * (adding the two zero products to a nonzero value is exact); for s = +0 (a ship at rest, the speed clamped by maxss
+ * to +0) Windows stores -0 in every lane where r2 is negative, Linux +0 unless all three products are -0. Positions
+ * do not move (p + -0*dt = p), but the bank's bits do: 1741d4 (a container wingman waiting with forcerotation) differs
+ * from tick 2 in motion.bank0.vector4.x only (-0 / +0), for as long as it stands. Ours is Linux's order. */
+static inline void fr_velocity(const uint32_t rows[12],uint32_t s,uint32_t out[4]) {
+    const float z=0.0f,sf=fr_f32(s);
+    for(unsigned k=0;k<4;k++) {
+        const float a=fr_f32(rows[k])*z,b=z*fr_f32(rows[4+k]),c=(k<3u?sf:z)*fr_f32(rows[8+k]);
+        out[k]=fr_bits((a+b)+c);
+    }
+}
+static inline void fr_velocity_windows(const uint32_t rows[12],uint32_t s,uint32_t out[4]) {
+    const float z=0.0f,sf=fr_f32(s);
+    for(unsigned k=0;k<4;k++) out[k]=fr_bits((k<3u?sf:z)*fr_f32(rows[8+k]));
+}
+/* The platform hooks the store's block (native runs first and stores) and hands over the written bank and s (the
+ * speed's register); this returns lane 0 of native's product, so every register leaves as native left it. Off or not
+ * comparing: nothing. 'shadow' / 'writer': ours compared (vel; per call, the first differing lane). 'redirect': ours
+ * stored at bank+0x40, counted in vel_written where the bits change. */
+static inline uint32_t fr_vel_seen(unsigned which,unsigned char *bank,uint32_t s) {
+    (void)which;InterlockedIncrement64(&fr_hits[FR_HIT_VEL]);
+    uint32_t native[4];memcpy(native,bank+0x40,16);
+    if(!fr_comparing()) return native[0];
+    uint32_t rows[12],ours[4];memcpy(rows,bank+0x10,48);fr_velocity(rows,s,ours);
+    unsigned k=0;while(k<3u && ours[k]==native[k]) ++k;
+    fr_field(FR_VEL,ours[k],native[k]);
+    if(fr_mode==FR_REDIRECT && memcmp(ours,native,16)) {memcpy(bank+0x40,ours,16);InterlockedIncrement64(&fr_vel_written);}
+    return native[0];
+}
+/* FR24: the Linear step's facing factor (Windows 0xeb27c0, Linux 0x13ed050): m = the largest of the three angles
+ * between the ship's heading and its target (Windows [model+0x98], Linux +0x88, stored just before); for m <= pi/2
+ * the model's +0x9c (Linux +0x8c) = 1 - m/(pi/2), which the next step's speed takes (Windows 0xeb2dfb mulss) and,
+ * below 0.5, is blended toward 0.5 with the same operations on both. Linux divides (0x13ee1ac divss by 1.57079637f,
+ * 0x13ee1bc subss from 1.0); Windows multiplies by the rounded reciprocal (0xeb3a91 mulss by 0.636619747f, 0xeb3a9d
+ * subss from xmm13 = 1.0): another rounding, the last bit of the factor in about a tenth of the angles (0828fc, khaak
+ * Patrol leader: tick 43 model +0x9c 0.712334692 / 0.712334633 from equal inputs, its velocity one tick later).
+ * Ours is Linux's order. */
+static inline uint32_t fr_facing(uint32_t m) {const float a=fr_f32(m);return fr_bits(1.0f-a/1.57079637f);}
+static inline uint32_t fr_facing_windows(uint32_t m) {const float a=fr_f32(m);return fr_bits(1.0f-a*0.636619747f);}
+/* The platform hooks the factor's three instructions (native runs first) and hands over m and native's factor; this
+ * returns the factor the step goes on with. Off or not comparing: native. 'shadow' / 'writer': native, ours compared
+ * (fac). 'redirect': ours, counted in fac_written where the bits change. */
+static inline uint32_t fr_fac_seen(unsigned which,uint32_t m,uint32_t native) {
+    (void)which;InterlockedIncrement64(&fr_hits[FR_HIT_FAC]);
+    if(!fr_comparing()) return native;
+    const uint32_t ours=fr_facing(m);
+    fr_field(FR_FAC,ours,native);
+    if(fr_mode!=FR_REDIRECT) return native;
+    if(ours!=native) InterlockedIncrement64(&fr_fac_written);
+    return ours;
+}
 /* ---- Configuration, rows, status ---- */
 /* A saved ID to row; before arming. A loading-UI rerun: an ID already watched is accepted, a new one refused. */
 static int fr_watch(uint64_t id) {
@@ -493,7 +552,7 @@ static int fr_arm_ready(int mode,uint64_t ticks) {
     if(fr_id_count && !world_identity_installed) {fr_stage="needs";return 0;}
     fr_ticks=ticks;fr_calls=fr_compared=fr_load_compared=fr_skipped=fr_nested=fr_unfinished=fr_no_context=fr_orphans=0;
     fr_m_branch=fr_v8_branch=fr_comp_changed=fr_records=fr_dropped=fr_failures=fr_w_unread=fr_w_written=fr_len_written=fr_handle_written=fr_pg_written=0;
-    fr_bl_written=fr_aff_written=0;
+    fr_bl_written=fr_aff_written=fr_vel_written=fr_fac_written=0;
     fr_scan=fr_emitted=fr_scanned=fr_keyed=0;memset(fr_ordinal_tick,0xff,sizeof(fr_ordinal_tick));
     for(unsigned f=0;f<FR_FIELDS;f++) fr_n[f]=fr_diff[f]=fr_max_ulp[f]=0;
     for(unsigned h=0;h<FR_HITS;h++) fr_hits[h]=0;
@@ -542,6 +601,16 @@ static int fr_status(char *out,size_t cap) {
         (long long)fr_max_ulp[FR_BL],(long long)fr_diff[FR_BL],(long long)fr_n[FR_BL],(long long)fr_hits[FR_HIT_BL100],(long long)fr_hits[FR_HIT_BL10],
         (long long)fr_hits[FR_HIT_BLN],(long long)fr_hits[FR_HIT_BL_FOREIGN],(long long)fr_bl_written,(long long)fr_max_ulp[FR_AFF],(long long)fr_diff[FR_AFF],
         (long long)fr_n[FR_AFF],(long long)fr_hits[FR_HIT_AFF],(long long)fr_aff_written);
+    if(m<=0 || (size_t)m>=cap-(size_t)n) return 0;
+    n+=m;
+    /* FR23 (Windows only; zeros on Linux, whose own product is the reference): vel=max_ulp:differing:compared (per call). */
+    m=snprintf(out+n,cap-(size_t)n," vel=%lld:%lld:%lld vel_hits=%lld vel_written=%lld",(long long)fr_max_ulp[FR_VEL],(long long)fr_diff[FR_VEL],
+        (long long)fr_n[FR_VEL],(long long)fr_hits[FR_HIT_VEL],(long long)fr_vel_written);
+    if(m<=0 || (size_t)m>=cap-(size_t)n) return 0;
+    n+=m;
+    /* FR24 (Windows only; zeros on Linux, whose own division is the reference): fac=max_ulp:differing:compared. */
+    m=snprintf(out+n,cap-(size_t)n," fac=%lld:%lld:%lld fac_hits=%lld fac_written=%lld",(long long)fr_max_ulp[FR_FAC],(long long)fr_diff[FR_FAC],
+        (long long)fr_n[FR_FAC],(long long)fr_hits[FR_HIT_FAC],(long long)fr_fac_written);
     return m>0 && (size_t)m<cap-(size_t)n?n+m:0;
 }
 static void fr_hex(char *out,const unsigned char *bytes,size_t n) {

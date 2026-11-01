@@ -1381,6 +1381,68 @@ class SnapshotProbeTests(unittest.TestCase):
             self.assertEqual(self.lua.globals().loads,0)
             self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
 
+    def test_view_ui_arms_after_view_points_and_block_needs_the_local_lists(self):
+        for mode,local in (('block','true'),('observe','nil'),('observe','true')):
+            self.setUp()
+            self.lua.execute("""
+              X4LAN_CONFIG.native_gate_view_points='players'
+              X4LAN_CONFIG.native_gate_view_ui='%s'
+              X4LAN_CONFIG.native_gate_runtime_ids_local=%s
+              local gate=package.loadlib('gate')();order={}
+              gate.view_points=function(mode) order[#order+1]='view';return 1 end
+              gate.view_points_frame=function() return 1 end
+              gate.view_points_status=function() return 'mode=players' end
+              gate.runtime_ids_probe=function() end
+              gate.view_points_ui=function(m,...) assert(select('#',...)==0);order[#order+1]='ui:'..m;return 1 end
+            """ % (mode,local))
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            # (runtime_ids_local alone is refused later, at the load: this harness has no runtime IDs)
+            self.assertEqual(list(self.lua.globals().order.values()),['view','ui:'+mode]);self.assertEqual(self.lua.globals().loads,0 if local=='true' else 1)
+            self.assertTrue(any('VIEW_UI_ARMED mode='+mode in line for line in self.lua.globals().logs.values()))
+        for config,why in (("X4LAN_CONFIG.native_gate_view_ui='observe'",'view ui needs native_gate_view_points'),
+                           ("X4LAN_CONFIG.native_gate_view_points='players';X4LAN_CONFIG.native_gate_view_ui='block'",'view ui refused'),
+                           ("X4LAN_CONFIG.native_gate_view_points='players';X4LAN_CONFIG.native_gate_view_ui=true",'view ui refused')):
+            self.setUp()
+            self.lua.execute(config+"""
+              local gate=package.loadlib('gate')()
+              gate.view_points=function() return 1 end
+              gate.view_points_frame=function() return 1 end
+              gate.view_points_status=function() return 'mode=players' end
+              gate.runtime_ids_probe=function() end
+              gate.view_points_ui=function() return 1 end
+            """)
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0)
+            self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
+        # The probe's frame is marked for the gate with view ui alone too (its own evaluations are not the UI's).
+        self.assertIn(" local probe_mark=(cfg.native_gate_runtime_ids_local or cfg.native_gate_view_ui) and gate and gate.runtime_ids_probe",SOURCE)
+        # View rows go to the log at once: a held tick dropped them.
+        self.assertIn("ticklog.write('VIEW_POINTS_ROW '..row)",SOURCE)
+
+    def test_pilot_local_script_runs_presentation_ids_at_once(self):
+        text=SOURCE.replace(chr(13),'')
+        self.assertIn("for _,e in ipairs(pilot_view.local_script and pilot_view.local_script[tick] or {}) do\n"
+                      "  ticklog.write('PILOT_LOCAL_PRESS tick='..tick..' kind='..e[1]..' id='..string.format('0x%x',e[2])..' queued='..tostring(gate.pilot_stock_local(e[1],e[2],e[3])))",text)
+        # Validation: the slot's own events by tick, inside the pilot window.
+        block=text[text.index("    local local_plan=cfg.native_gate_pilot_local_script"):text.index("    log('PILOT_LOCAL_SCRIPT_ARMED slot='..slot..' events='..count)")]
+        lua=LuaRuntime(unpack_returned_tuples=True)
+        lua.execute("""
+          function run(plan,slot)
+            pilot_view={}
+            local fn=assert(loadstring('local cfg,gate,slot,window,pilot_view=...;'..[==[%s]==]..' return count end'))
+            local ok,count=pcall(fn,{native_gate_pilot_local_script=plan,native_gate_pilot_slots={'a','b','c','d'}},{pilot_stock_local=function() return 1 end},slot,{40,24600},pilot_view)
+            return ok,count,pilot_view.local_script
+          end
+        """ % block)
+        ok,count,by=lua.eval("run({{4,3000,'action',0x71,0},{1,6000,'action',0x71,0},{4,3000,'range',3,0.5}},4)")
+        self.assertTrue(ok);self.assertEqual(count,2);self.assertEqual(len(by[3000]),2);self.assertEqual(by[3000][1][2],0x71)
+        ok,count,by=lua.eval("run({{4,3000,'action',0x71,0},{1,6000,'action',0x71,0}},1)")
+        self.assertTrue(ok);self.assertEqual(count,1);self.assertIsNotNone(by[6000])
+        for bad in ("{{5,3000,'action',0x71,0}}","{{4,40,'action',0x71,0}}","{{4,24600,'action',0x71,0}}","{{4,3000,'key',0x71,0}}",
+                    "{{4,3000,'action',512,0}}","{{4,3000.5,'action',0x71,0}}","{{4,3000,'action',0x71}}","'map'"):
+            ok,message,_=lua.eval("run(%s,4)" % bad)
+            self.assertFalse(ok,bad);self.assertIn('pilot local script',str(message),bad)
+
     def test_view_points_source_arms_after_view_points(self):
         for src in ('ship','player'):
             self.setUp()
@@ -1896,6 +1958,25 @@ class SnapshotProbeTests(unittest.TestCase):
         text=SOURCE.replace(chr(13),'')
         self.assertIn("if every then ticklog.write('RUNTIME_IDS_CALLER tick='..tick..' '..row) else log('RUNTIME_IDS_CALLER tick='..tick..' '..row) end",text)
         self.assertIn('if tick%(every or 300)==0',text)
+
+    def test_runtime_ids_rows_arm_with_the_set_before_the_load_and_are_written_at_once(self):
+        rows="gate.runtime_ids_rows=function() order[#order+1]='runtime_ids_rows';return 1 end;gate.runtime_ids_row=function() end;"
+        ids="X4LAN_CONFIG.native_gate_world_identities=true;X4LAN_CONFIG.native_gate_created_identities=true;"
+        lines=self._runtime_ids_probe(rows+ids+"X4LAN_CONFIG.native_gate_runtime_ids=true;X4LAN_CONFIG.native_gate_runtime_ids_rows=true")
+        self.assertIn('ORDER runtime_ids 65536 runtime_ids_rows load_requested',lines)
+        self.assertIn('RUNTIME_IDS_ROWS_ARMED',lines)
+        for config in (rows+"X4LAN_CONFIG.native_gate_runtime_ids_rows=true",
+                       rows+ids+"X4LAN_CONFIG.native_gate_runtime_ids='observe';X4LAN_CONFIG.native_gate_runtime_ids_rows=true",
+                       rows+"X4LAN_CONFIG.native_gate_world_identities=true;X4LAN_CONFIG.native_gate_runtime_ids=true;X4LAN_CONFIG.native_gate_runtime_ids_rows=true",
+                       rows+ids+"X4LAN_CONFIG.native_gate_runtime_ids=true;X4LAN_CONFIG.native_gate_runtime_ids_rows=1",
+                       ids+"X4LAN_CONFIG.native_gate_runtime_ids=true;X4LAN_CONFIG.native_gate_runtime_ids_rows=true"):
+            lines=self._runtime_ids_probe(config)
+            self.assertIn('runtime ids rows refused',lines,config)
+            self.assertNotIn('load_requested',lines,config)
+        text=SOURCE.replace(chr(13),'')
+        self.assertIn("    local row=gate.runtime_ids_row(row_cursors.runtime_ids)\n    if not row then break end\n"
+                      "    ticklog.write('RUNTIME_IDS_ROW '..row);row_cursors.runtime_ids=row_cursors.runtime_ids+1",text)
+        self.assertIn(",runtime_ids=0} -- one upvalue",text)
 
     def test_runtime_ids_probe_mark_is_around_the_frame_and_caller_rows_reach_the_table(self):
         start=SOURCE.index(" local paused=gate and gate.pilot_present_pause")

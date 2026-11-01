@@ -63,6 +63,14 @@ static void ts_step(void *model,const void *vector,float dt,double time) {
 }
 /* FR21's stand-in banking: 2t + 1. */
 static float tsc_bank(void *hw,float t) {(void)hw;return 2.0f*t+1.0f;}
+/* FR24's stand-in queue (counts, answers 0x4242), and a caller for the propagation's stub with its frame in rbp and
+ * the leader's point in r13 (rdi 0, rcx 0). */
+static unsigned tsc_oc_calls;
+static uint64_t tsc_oc_queue(void *m,uint64_t s,void *p,uint64_t i) {(void)m;(void)s;(void)p;(void)i;++tsc_oc_calls;return 0x4242;}
+__asm__(".text\n"
+"test_lx_oc_fm_call:\n push %rbp\n push %r13\n push %rbx\n mov %rdi,%rax\n mov %rcx,%rbp\n mov %r8,%r13\n xor %edi,%edi\n xor %ecx,%ecx\n"
+" call *%rax\n pop %rbx\n pop %r13\n pop %rbp\n ret\n");
+extern uint64_t test_lx_oc_fm_call(const void *stub,uint64_t ship,void *point,const void *frame,const void *leader);
 static void tsc_stand_ins(void) {
     unsigned char call[14]={0x48,0x83,0xec,0x08,0xe8,0,0,0,0,0x48,0x83,0xc4,0x08,0xc3};
     const uint32_t asin_sites[2]={LX_SC_ASIN_TARGET_SITE_VA,LX_SC_ASIN_CUR_SITE_VA};
@@ -103,6 +111,13 @@ static void tsc_stand_ins(void) {
          tl_write(LX(s20[i])-4,pc,sizeof(pc));
      }}
     target=(void*)tsc_hier;memcpy(jump+6,&target,8);tl_write(LX(LX_SC_HIER_VA),jump,14);
+    /* FR24: the queue's four calls inside sub rsp,8; call; add rsp,8; ret, the queue a stand-in. */
+    {const uint32_t oc[4]={LX_SC_OC1_SITE_VA,LX_SC_OC_FM_SITE_VA,LX_SC_OC3_SITE_VA,LX_SC_OC4_SITE_VA};
+     for(unsigned i=0;i<4;i++) {
+         const int32_t r=(int32_t)(int64_t)((uintptr_t)LX(LX_SC_OC_VA)-(uintptr_t)(LX(oc[i])+5));memcpy(call+5,&r,4);
+         tl_write(LX(oc[i])-4,call,sizeof(call));
+     }}
+    target=(void*)tsc_oc_queue;memcpy(jump+6,&target,8);tl_write(LX(LX_SC_OC_VA),jump,14);
     /* FR19 */
     target=(void*)tsc_settarget;memcpy(jump+6,&target,8);tl_write(LX(LX_SG_FN_VA),jump,14);
     {unsigned char sg[15]={0x48,0x83,0xec,0x08,0xff,0x15,0,0,0,0,0x48,0x83,0xc4,0x08,0xc3};
@@ -358,6 +373,24 @@ static void test_step_chain_linux(void) {
     assert(!st_row(3*st_chunks,row,sizeof(row)));
     char status[1280];assert(st_status(status,sizeof(status)) && strstr(status,"installed=1 restored=0 ids=1 ticks=3 calls=8 watched_calls=3 records=3 dropped=0 stage=armed "
         "chain=armed chain_installed=1 chain_restored=0 chain_owned=1 chain_recorded=9 chain_no_slot=0 chain_hits=asin_target:8,asin_cur:8,builder:8"));
+    /* FR24: the queue's calls through stub 13 (plain) and 14 (the propagation: frame rbp, leader r13): the watched ship's
+     * kept (point, keys, site, O at frame-0x140, P), the other ship's not; the stand-in queue once each. */
+    {static unsigned char pt[0x90] __attribute__((aligned(16))),lead[0x90] __attribute__((aligned(16))),frm[0x200] __attribute__((aligned(16)));
+     for(unsigned i=0;i<0x90;i++) {pt[i]=(unsigned char)(0x20+i);lead[i]=(unsigned char)(0x60+i);}
+     const uint64_t ref=9101;memcpy(pt+8,&ref,8);memcpy(lead+8,&ref,8);
+     for(unsigned i=0;i<sizeof(frm);i++) frm[i]=(unsigned char)(0x90+i);
+     const uint64_t si=stats.issued;const unsigned sp=boot_phase;stats.issued=2;boot_phase=3;memset((void*)st_fm,0,sizeof(st_fm));st_oc_kept=0;tsc_oc_calls=0;
+     assert(((lxc_oc_fn)(void*)lxc_stub(13))(NULL,9102,pt,9101)==0x4242 && ((lxc_oc_fn)(void*)lxc_stub(13))(NULL,9101,pt,0)==0x4242);
+     assert(test_lx_oc_fm_call(lxc_stub(14),9102,pt,frm+0x180,lead)==0x4242);
+     assert(tsc_oc_calls==3 && st_oc_kept==2 && st_fm[0].ps_calls==2);
+     static st_record_t orr;st_fm_take(0,&orr);const uint32_t *o=orr.pathset,*o2=orr.pathset+ST_PS_WORDS;uint64_t k;
+     assert(o[0]==ST_OC_TAG && o[1]==2 && o[3]==0 && o[7]==1 && o[8]==LX_SC_OC1_SITE_VA && o[9]==0xffffffffu && o[44]==1);
+     assert(!memcmp(o+48,pt+0x20,0x40) && !memcmp(o+64,pt,0x90));
+     memcpy(&k,o+4,8);assert(k==0x7dd7c);memcpy(&k,o+40,8);assert(k==0x7dcd0);memcpy(&k,o+42,8);assert(k==0x7dcd0);
+     assert(o2[0]==ST_OC_TAG && o2[3]==1 && o2[8]==LX_SC_OC_FM_SITE_VA && !memcmp(o2+100,frm+0x40,0x40) && !memcmp(o2+116,lead+0x20,0x40));
+     memcpy(&k,o2+132,8);assert(k==0x7dcd0);memcpy(&k,o2+42,8);assert(k==0);
+     assert(st_chain_hits[13]==2 && st_chain_hits[14]==1);
+     stats.issued=si;boot_phase=sp;st_oc_kept=0;}
     /* Ownership: a changed rel32 is seen; then the restoration, byte-exact, the entry first. */
     unsigned char *b=LX(LX_SC_BUILDER_SITE_VA);memcpy(&rel,b+1,4);const int32_t moved=rel+1;tl_write(b+1,&moved,4);assert(!st_chain_owned());tl_write(b+1,&rel,4);
     assert(st_chain_owned());

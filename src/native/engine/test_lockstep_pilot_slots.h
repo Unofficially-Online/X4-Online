@@ -125,6 +125,8 @@ static void test_pslot_actor(void) {
     test_pslot_actor_call();assert(!test_pslot_lua_nil_seen && strstr(test_pslot_lua_text,";steering=slot:0:123"));
     {void *vt=image+0x2c4f480;memcpy(model,&vt,8);}
     test_pslot_actor_call();assert(!test_pslot_lua_nil_seen && strstr(test_pslot_lua_text,";steering=spline:0"));
+    {void *vt=image+0x2c4f610;memcpy(model,&vt,8);}
+    test_pslot_actor_call();assert(!test_pslot_lua_nil_seen && strstr(test_pslot_lua_text,";steering=linear:0"));
     memcpy(agent+0xf10,&zero,8);
     /* The Agent keeps its identity under the slot's controller; a stock PlayerController is not a slot's. */
     actor_components[2]=test_pslot_ship2;actor_ids[2]=id;

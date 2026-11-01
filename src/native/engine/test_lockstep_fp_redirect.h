@@ -289,6 +289,167 @@ static void test_fr_aff_stubs(void) {
     VirtualFree(page,0,MEM_RELEASE);
     printf("fp redirect affine weight: strict vectors, stub off/shadow/writer/redirect, registers kept PASS\n");
 }
+/* FR23: the velocity stub runs for real. test_fr_vel_run enters block[0xd0] with rsi = block[0xc0] (the bank),
+ * rdi = block[0xc8] (a model), xmm0-5 from +0x00..+0x5f, xmm11 (+0x60, lane 0 = s), xmm12 (+0x70), sentinels in rax,
+ * rcx, rdx, r8-r11, rsp 8 off 16; the back jump (planted at the back address) leads to test_fr_vel_back, which stores
+ * xmm0-5, xmm11, xmm12, rax, rcx, rdx, r8-r11 and rsi (+0x80..+0xb8). rbx holds the block throughout. */
+__asm__(
+".text\n"
+"test_fr_vel_run:\n push %rbp\n push %rbx\n push %rsi\n push %rdi\n mov %rsp,%rbp\n sub $0x40,%rsp\n movdqu %xmm11,(%rsp)\n movdqu %xmm12,0x10(%rsp)\n"
+" mov %rcx,%rbx\n mov 0xc0(%rbx),%rsi\n mov 0xc8(%rbx),%rdi\n"
+" movups (%rbx),%xmm0\n movups 0x10(%rbx),%xmm1\n movups 0x20(%rbx),%xmm2\n movups 0x30(%rbx),%xmm3\n movups 0x40(%rbx),%xmm4\n"
+" movups 0x50(%rbx),%xmm5\n movups 0x60(%rbx),%xmm11\n movups 0x70(%rbx),%xmm12\n"
+" movabs $0x0123456789abcdef,%rax\n movabs $0x1111111111111111,%rcx\n movabs $0x2222222222222222,%rdx\n movabs $0x8888888888888888,%r8\n"
+" movabs $0x9999999999999999,%r9\n movabs $0xaaaaaaaaaaaaaaaa,%r10\n movabs $0xbbbbbbbbbbbbbbbb,%r11\n and $-16,%rsp\n sub $8,%rsp\n jmp *0xd0(%rbx)\n"
+"test_fr_vel_back:\n movups %xmm0,(%rbx)\n movups %xmm1,0x10(%rbx)\n movups %xmm2,0x20(%rbx)\n movups %xmm3,0x30(%rbx)\n movups %xmm4,0x40(%rbx)\n"
+" movups %xmm5,0x50(%rbx)\n movups %xmm11,0x60(%rbx)\n movups %xmm12,0x70(%rbx)\n mov %rax,0x80(%rbx)\n mov %rcx,0x88(%rbx)\n mov %rdx,0x90(%rbx)\n"
+" mov %r8,0x98(%rbx)\n mov %r9,0xa0(%rbx)\n mov %r10,0xa8(%rbx)\n mov %r11,0xb0(%rbx)\n mov %rsi,0xb8(%rbx)\n"
+" lea -0x40(%rbp),%rsp\n movdqu (%rsp),%xmm11\n movdqu 0x10(%rsp),%xmm12\n mov %rbp,%rsp\n pop %rdi\n pop %rsi\n pop %rbx\n pop %rbp\n ret\n"
+);
+extern void test_fr_vel_run(unsigned char *block);
+extern char test_fr_vel_back[];
+#define TFV_BLOCK 0xd8u
+static __declspec(align(16)) unsigned char tfv_bank[0x60],tfv_model[0x100];
+/* One run from entry over rows r0..r2 (bank +0x10..+0x3f) and s; the block (registers after) and the bank's velocity
+ * (+0x40) and +0x50 out. xmm12 = 0 in every lane, as the step's xorps leaves it; xmm11's lanes 1-3 a pattern. */
+static void tfv_run(const void *entry,const uint32_t rows[12],uint32_t s,unsigned flag,unsigned char block[TFV_BLOCK],uint32_t vel[8]) {
+    for(unsigned k=0;k<0x60;k++) block[k]=(unsigned char)(0x40+k);
+    const uint32_t x11[4]={s,0x3f000000u,0x40000000u,0x40400000u},x12[4]={0,0,0,0};memcpy(block+0x60,x11,16);memcpy(block+0x70,x12,16);
+    memset(block+0x80,0,0x40);
+    memset(tfv_bank,0x5a,sizeof(tfv_bank));memcpy(tfv_bank+0x10,rows,48);tfv_model[0x95]=(unsigned char)flag;
+    void *b=tfv_bank,*m=tfv_model;memcpy(block+0xc0,&b,8);memcpy(block+0xc8,&m,8);memcpy(block+0xd0,&entry,8);
+    test_fr_vel_run(block);memcpy(vel,tfv_bank+0x40,32);
+}
+/* rows A: r0 (0.6,0,0.8), r1 (0,1,0), r2 (-0.8,0,0.6) (a yaw of about -53 degrees); rows B: every x negative, so even
+ * Linux's sum stays -0 in lane 0 at s = +0. */
+static const uint32_t tfv_rows_a[12]={0x3f19999au,0,0x3f4ccccdu,0, 0,0x3f800000u,0,0, 0xbf4ccccdu,0,0x3f19999au,0};
+static const uint32_t tfv_rows_b[12]={0xbf19999au,0,0x3f4ccccdu,0, 0xbf800000u,0,0,0, 0xbf4ccccdu,0,0x3f19999au,0};
+/* The stub against native's block alone (a copy of its 27 bytes, then the back jump): every register the same; the
+ * velocity native's (the reference run's) or, in 'redirect', ours. */
+static void tfv_check(const unsigned char *stub,const unsigned char *reference,const uint32_t rows[12],uint32_t s,const uint32_t want[4]) {
+    unsigned char a[TFV_BLOCK],b[TFV_BLOCK];uint32_t va[8],vb[8];
+    tfv_run(reference,rows,s,1,a,va);tfv_run(stub,rows,s,1,b,vb);
+    if(memcmp(vb,want,16)) {printf("fp redirect velocity stub: s %08x got %08x %08x %08x %08x want %08x %08x %08x %08x\n",s,vb[0],vb[1],vb[2],vb[3],want[0],want[1],want[2],want[3]);assert(0);}
+    assert(!memcmp(a,b,0xb8) && !memcmp(va+4,vb+4,16) && va[4]==0x5a5a5a5au);
+    uint32_t w[4];fr_velocity_windows(rows,s,w);assert(!memcmp(va,w,16));
+    uint64_t r[8];memcpy(r,b+0x80,64);
+    assert(r[0]==0x0123456789abcdefull && r[1]==0x1111111111111111ull && r[2]==0x2222222222222222ull && r[3]==0x8888888888888888ull);
+    assert(r[4]==0x9999999999999999ull && r[5]==0xaaaaaaaaaaaaaaaaull && r[6]==0xbbbbbbbbbbbbbbbbull && r[7]==(uint64_t)(uintptr_t)tfv_bank);
+}
+static void test_fr_vel_stubs(void) {
+    /* Strict vectors (numpy float32): rows A at s = +0: Windows (-0,0,0,0), Linux (0,0,0,0); at s = -0: Windows
+     * (0,-0,-0,0), Linux (0,0,0,0); at s = 250: (-200,0,150,0) both. Rows B at s = +0: (-0,0,0,0) both. */
+    static const uint32_t z4[4]={0,0,0,0},wa0[4]={0x80000000u,0,0,0},wan[4]={0,0x80000000u,0x80000000u,0},v250[4]={0xc3480000u,0,0x43160000u,0};
+    uint32_t o[4];
+    fr_velocity_windows(tfv_rows_a,0,o);assert(!memcmp(o,wa0,16));fr_velocity(tfv_rows_a,0,o);assert(!memcmp(o,z4,16));
+    fr_velocity_windows(tfv_rows_a,0x80000000u,o);assert(!memcmp(o,wan,16));fr_velocity(tfv_rows_a,0x80000000u,o);assert(!memcmp(o,z4,16));
+    fr_velocity_windows(tfv_rows_a,0x437a0000u,o);assert(!memcmp(o,v250,16));fr_velocity(tfv_rows_a,0x437a0000u,o);assert(!memcmp(o,v250,16));
+    fr_velocity_windows(tfv_rows_b,0,o);assert(!memcmp(o,wa0,16));fr_velocity(tfv_rows_b,0,o);assert(!memcmp(o,wa0,16));
+    unsigned char *page=fr_alloc_page(),*saved=fr_page;DWORD o2,i2;assert(page);
+    assert(VirtualProtect(page,0x1000,PAGE_READWRITE,&o2));fr_page=page;fr_write_code(page);fr_page=saved;
+    /* the reference: native's block alone at +0xf00, then jmp [rip] -> the harness's back */
+    memcpy(page+0xf00,fr_vel_block,FR_VEL_BLOCK);
+    {unsigned char back[14]={0xff,0x25,0,0,0,0};void *to=(void*)test_fr_vel_back;memcpy(back+6,&to,8);memcpy(page+0xf00+FR_VEL_BLOCK,back,14);}
+    assert(VirtualProtect(page,0x1000,PAGE_EXECUTE_READ,&i2));FlushInstructionCache(GetCurrentProcess(),page,0x1000);
+    {   unsigned char back[14]={0xff,0x25,0,0,0,0};void *to=(void*)test_fr_vel_back;memcpy(back+6,&to,8);
+        unsigned char *at=image+FR_VEL_BACK;DWORD old;assert(VirtualProtect(at,14,PAGE_EXECUTE_READWRITE,&old));
+        memcpy(at,back,14);FlushInstructionCache(GetCurrentProcess(),at,14);
+    }
+    const int saved_mode=fr_mode;const uint32_t saved_active=stats.active;stats.active=1;
+    const LONG64 n0=fr_n[FR_VEL],d0=fr_diff[FR_VEL],w0=fr_vel_written,h0=fr_hits[FR_HIT_VEL];
+    const unsigned char *stub=page+FR_VEL_STUB,*ref=page+0xf00;
+    fr_mode=FR_OFF;tfv_check(stub,ref,tfv_rows_a,0,wa0);              /* off: native's -0 */
+    fr_mode=FR_SHADOW;tfv_check(stub,ref,tfv_rows_a,0,wa0);           /* shadow: compared, native kept */
+    fr_mode=FR_WRITER;tfv_check(stub,ref,tfv_rows_a,0x80000000u,wan); /* writer only: the velocity shadowed */
+    fr_mode=FR_REDIRECT;tfv_check(stub,ref,tfv_rows_a,0,z4);          /* redirect: ours, Linux's +0 */
+    tfv_check(stub,ref,tfv_rows_a,0x437a0000u,v250);                    /* a moving ship: equal, nothing written */
+    tfv_check(stub,ref,tfv_rows_b,0,wa0);                               /* -0 both ways: nothing written */
+    /* 6 runs, compared 5, differing 3, written 1 */
+    assert(fr_n[FR_VEL]==n0+5 && fr_diff[FR_VEL]==d0+3 && fr_vel_written==w0+1 && fr_hits[FR_HIT_VEL]==h0+6);
+    char out[2048];assert(fr_status(out,sizeof(out))>0 && strstr(out," vel=0:") && strstr(out," vel_hits=") && strstr(out," vel_written="));
+    fr_mode=saved_mode;stats.active=saved_active;
+    memset(image+FR_VEL_BACK,0,14);
+    VirtualFree(page,0,MEM_RELEASE);
+    printf("fp redirect velocity: strict vectors, stub off/shadow/writer/redirect against native's block, registers kept PASS\n");
+}
+/* FR24: the facing factor stub runs for real. test_fr_fac_run enters block[0xd0] with rdi = block[0xc8] (a model whose
+ * +0x98 holds m), xmm0-5 from +0x00..+0x5f (xmm1 lane 0 = m), xmm13 from +0x60 (lane 0 = 1.0), sentinels in rax, rcx,
+ * rdx, r8-r11, rsp 8 off 16; the back jump leads to test_fr_fac_back, which stores xmm0-5, xmm13, rax, rcx, rdx, r8-r11
+ * and rdi (+0x80..+0xbf). rbx holds the block throughout. */
+__asm__(
+".text\n"
+"test_fr_fac_run:\n push %rbp\n push %rbx\n push %rsi\n push %rdi\n mov %rsp,%rbp\n sub $0x40,%rsp\n movdqu %xmm13,(%rsp)\n"
+" mov %rcx,%rbx\n mov 0xc8(%rbx),%rdi\n"
+" movups (%rbx),%xmm0\n movups 0x10(%rbx),%xmm1\n movups 0x20(%rbx),%xmm2\n movups 0x30(%rbx),%xmm3\n movups 0x40(%rbx),%xmm4\n"
+" movups 0x50(%rbx),%xmm5\n movups 0x60(%rbx),%xmm13\n"
+" movabs $0x0123456789abcdef,%rax\n movabs $0x1111111111111111,%rcx\n movabs $0x2222222222222222,%rdx\n movabs $0x8888888888888888,%r8\n"
+" movabs $0x9999999999999999,%r9\n movabs $0xaaaaaaaaaaaaaaaa,%r10\n movabs $0xbbbbbbbbbbbbbbbb,%r11\n and $-16,%rsp\n sub $8,%rsp\n jmp *0xd0(%rbx)\n"
+"test_fr_fac_back:\n movups %xmm0,(%rbx)\n movups %xmm1,0x10(%rbx)\n movups %xmm2,0x20(%rbx)\n movups %xmm3,0x30(%rbx)\n movups %xmm4,0x40(%rbx)\n"
+" movups %xmm5,0x50(%rbx)\n movups %xmm13,0x60(%rbx)\n mov %rax,0x80(%rbx)\n mov %rcx,0x88(%rbx)\n mov %rdx,0x90(%rbx)\n"
+" mov %r8,0x98(%rbx)\n mov %r9,0xa0(%rbx)\n mov %r10,0xa8(%rbx)\n mov %r11,0xb0(%rbx)\n mov %rdi,0xb8(%rbx)\n"
+" lea -0x40(%rbp),%rsp\n movdqu (%rsp),%xmm13\n mov %rbp,%rsp\n pop %rdi\n pop %rsi\n pop %rbx\n pop %rbp\n ret\n"
+);
+extern void test_fr_fac_run(unsigned char *block);
+extern char test_fr_fac_back[];
+#define TFC_BLOCK 0xd8u
+static __declspec(align(16)) unsigned char tfc_model[0x100];
+/* One run from entry with m; the block holds the registers after. xmm13 = (1.0, patterns), the other lanes patterns. */
+static void tfc_run(const void *entry,uint32_t m,unsigned char block[TFC_BLOCK]) {
+    for(unsigned k=0;k<0x60;k++) block[k]=(unsigned char)(0x40+k);
+    memcpy(block+0x10,&m,4);
+    const uint32_t x13[4]={0x3f800000u,0x3f000000u,0x40000000u,0x40400000u};memcpy(block+0x60,x13,16);memset(block+0x70,0,0x50);
+    memset(tfc_model,0x5a,sizeof(tfc_model));memcpy(tfc_model+0x98,&m,4);
+    void *mp=tfc_model;memcpy(block+0xc8,&mp,8);memcpy(block+0xd0,&entry,8);
+    test_fr_fac_run(block);
+}
+/* The stub against native's block alone (its 16 bytes with the operand on the page, then the back jump): every register
+ * the same as native's but xmm0's lane 0, which is native's factor or, in 'redirect', ours. */
+static void tfc_check(const unsigned char *stub,const unsigned char *reference,uint32_t m,uint32_t want) {
+    unsigned char a[TFC_BLOCK],b[TFC_BLOCK];uint32_t got,ref;
+    tfc_run(reference,m,a);tfc_run(stub,m,b);memcpy(&got,b,4);memcpy(&ref,a,4);
+    if(got!=want) {printf("fp redirect facing stub: m %08x got %08x want %08x\n",m,got,want);assert(0);}
+    assert(ref==fr_facing_windows(m) && !memcmp(a+4,b+4,0xbc));
+    uint64_t r[8];memcpy(r,b+0x80,64);
+    assert(r[0]==0x0123456789abcdefull && r[1]==0x1111111111111111ull && r[2]==0x2222222222222222ull && r[3]==0x8888888888888888ull);
+    assert(r[4]==0x9999999999999999ull && r[5]==0xaaaaaaaaaaaaaaaaull && r[6]==0xbbbbbbbbbbbbbbbbull && r[7]==(uint64_t)(uintptr_t)tfc_model);
+    uint32_t x1;memcpy(&x1,b+0x10,4);assert(x1==fr_bits(fr_f32(m)*0.636619747f)); /* xmm1 as native left it: m*k */
+}
+static void test_fr_fac_stubs(void) {
+    /* Strict vectors (numpy float32): 0828fc's tick-43 angle m = 3ee75aac: Windows 3f365b91 (its FR23 +0x9c), Linux
+     * 3f365b90 (its FR23 +0x8c); m = 3fb46543: 3dd28190 / 3dd28188; equal at 0 (1.0), pi/2 (0) and 1.0 (3eba0cfa). */
+    assert(fr_facing_windows(0x3ee75aacu)==0x3f365b91u && fr_facing(0x3ee75aacu)==0x3f365b90u);
+    assert(fr_facing_windows(0x3fb46543u)==0x3dd28190u && fr_facing(0x3fb46543u)==0x3dd28188u);
+    assert(fr_facing_windows(0)==0x3f800000u && fr_facing(0)==0x3f800000u && fr_facing_windows(0x3fc90fdbu)==0 && fr_facing(0x3fc90fdbu)==0);
+    assert(fr_facing_windows(0x3f800000u)==0x3eba0cfau && fr_facing(0x3f800000u)==0x3eba0cfau);
+    unsigned char *page=fr_alloc_page(),*saved=fr_page;DWORD o2,i2;assert(page);
+    assert(VirtualProtect(page,0x1000,PAGE_READWRITE,&o2));fr_page=page;fr_write_code(page);fr_page=saved;
+    /* the reference: native's block at +0xf00 with its operand at +0xf20 (k), then jmp [rip] -> the harness's back */
+    memcpy(page+0xf00,fr_fac_block,sizeof(fr_fac_block));
+    {   const int32_t at=0x20-8;memcpy(page+0xf04,&at,4);const uint32_t k=FR_FAC_K_BITS;memcpy(page+0xf20,&k,4);
+        unsigned char back[14]={0xff,0x25,0,0,0,0};void *to=(void*)test_fr_fac_back;memcpy(back+6,&to,8);memcpy(page+0xf10,back,14);}
+    assert(!memcmp(page+FR_FAC_STUB,page+0xf00,4) && !memcmp(page+FR_FAC_STUB+8,fr_fac_block+8,8)); /* the stub's block, k at +0x18 */
+    {uint32_t k;memcpy(&k,page+FR_FAC_STUB+0x18,4);assert(k==FR_FAC_K_BITS && page[FR_FAC_STUB+0x10]==0xeb);}
+    assert(VirtualProtect(page,0x1000,PAGE_EXECUTE_READ,&i2));FlushInstructionCache(GetCurrentProcess(),page,0x1000);
+    {   unsigned char back[14]={0xff,0x25,0,0,0,0};void *to=(void*)test_fr_fac_back;memcpy(back+6,&to,8);
+        unsigned char *at=image+FR_FAC_BACK;DWORD old;assert(VirtualProtect(at,14,PAGE_EXECUTE_READWRITE,&old));
+        memcpy(at,back,14);FlushInstructionCache(GetCurrentProcess(),at,14);
+    }
+    const int saved_mode=fr_mode;const uint32_t saved_active=stats.active;stats.active=1;
+    const LONG64 n0=fr_n[FR_FAC],d0=fr_diff[FR_FAC],w0=fr_fac_written,h0=fr_hits[FR_HIT_FAC];
+    const unsigned char *stub=page+FR_FAC_STUB,*ref=page+0xf00;
+    fr_mode=FR_OFF;tfc_check(stub,ref,0x3ee75aacu,0x3f365b91u);       /* off: native's */
+    fr_mode=FR_SHADOW;tfc_check(stub,ref,0x3ee75aacu,0x3f365b91u);    /* shadow: compared, native kept */
+    fr_mode=FR_WRITER;tfc_check(stub,ref,0x3fb46543u,0x3dd28190u);    /* writer only: shadowed */
+    fr_mode=FR_REDIRECT;tfc_check(stub,ref,0x3ee75aacu,0x3f365b90u);  /* redirect: ours, Linux's */
+    tfc_check(stub,ref,0x3f800000u,0x3eba0cfau);                        /* equal: nothing written */
+    /* 5 runs, compared 4, differing 3, written 1 */
+    assert(fr_n[FR_FAC]==n0+4 && fr_diff[FR_FAC]==d0+3 && fr_fac_written==w0+1 && fr_hits[FR_HIT_FAC]==h0+5);
+    char out[2048];assert(fr_status(out,sizeof(out))>0 && strstr(out," fac=8:") && strstr(out," fac_hits=") && strstr(out," fac_written="));
+    fr_mode=saved_mode;stats.active=saved_active;
+    memset(image+FR_FAC_BACK,0,14);
+    VirtualFree(page,0,MEM_RELEASE);
+    printf("fp redirect facing factor: strict vectors (0828fc's tick 43), stub off/shadow/writer/redirect against native's block, registers kept PASS\n");
+}
 /* FR22: 8bd90's highway segments 2 and 3 (A, B, C at the segment's +0x10; the FR21 Windows capture at tick 2), whose
  * stored lengths split: n = 100 Linux 478e6bb1 / Windows 478e6bb2 (2), 470fcea2 / 470fcea0 (3); n = 64 equal. */
 static const uint32_t tbl_coef[2][12]={
@@ -487,6 +648,8 @@ static void test_fp_redirect(void) {
     test_fr_h_stubs();
     test_fr_pg_stubs();
     test_fr_aff_stubs();
+    test_fr_vel_stubs();
+    test_fr_fac_stubs();
     test_fr_bl_hook();
     /* A G4 without its tail: the next one restarts. */
     (void)fr_g4_slot_hook(tfr_comp,tfr_ship,frame+0x80,slot);(void)fr_g4_slot_hook(tfr_comp,tfr_ship,frame+0x80,slot);assert(fr_unfinished==1);
@@ -535,6 +698,22 @@ static void test_fp_redirect(void) {
         unsigned char seen[16];assert(fp_patch_overlaps(image+FR_AFF_SITE-3,16) && read_local(image+FR_AFF_SITE-3,seen,16));
         assert(!memcmp(seen+3,fr_aff_original,5) && image[FR_AFF_SITE]==0xe9 && !fr_aff_clear());
     }
+    /* FR23: the velocity site likewise (its block's bytes in place, so clear and the block pin can be seen). */
+    memcpy(image+FR_VEL_SITE,fr_vel_block,sizeof(fr_vel_block));assert(fr_vel_state()==0 && fr_vel_reach() && fr_vel_clear());
+    {   unsigned char jump[5];fr_vel_jump(jump);assert(view_cas_bytes(FR_VEL_SITE,fr_vel_original,jump,5) && fr_vel_state()==1);
+        fr_done|=FR_VEL_DONE;
+        unsigned char seen[16];assert(fp_patch_overlaps(image+FR_VEL_SITE-3,16) && read_local(image+FR_VEL_SITE-3,seen,16));
+        assert(!memcmp(seen+3,fr_vel_original,5) && image[FR_VEL_SITE]==0xe9 && !fr_vel_clear());
+        unsigned char viewed[sizeof(fr_vel_block)];assert(read_local(image+FR_VEL_SITE,viewed,sizeof(viewed)) && !memcmp(viewed,fr_vel_block,sizeof(viewed)));
+    }
+    /* FR24: the facing factor site likewise. */
+    memcpy(image+FR_FAC_SITE,fr_fac_block,sizeof(fr_fac_block));assert(fr_fac_state()==0 && fr_fac_reach() && fr_fac_clear());
+    {   unsigned char jump[5];fr_fac_jump(jump);assert(view_cas_bytes(FR_FAC_SITE,fr_fac_original,jump,5) && fr_fac_state()==1);
+        fr_done|=FR_FAC_DONE;
+        unsigned char seen[16];assert(fp_patch_overlaps(image+FR_FAC_SITE-3,16) && read_local(image+FR_FAC_SITE-3,seen,16));
+        assert(!memcmp(seen+3,fr_fac_original,5) && image[FR_FAC_SITE]==0xe9 && !fr_fac_clear());
+        unsigned char viewed[sizeof(fr_fac_block)];assert(read_local(image+FR_FAC_SITE,viewed,sizeof(viewed)) && !memcmp(viewed,fr_fac_block,sizeof(viewed)));
+    }
     /* FR22: the BezierSpline vtable slot: native in it, swapped to the hook, owned, a foreign value refused. */
     {   void *fn=image+FR_BL_FN;memcpy(image+FR_BL_SLOT,&fn,8);
         assert(fr_bl_state()==0 && !fr_bl_swap((void*)fr_bl_hook,fn) && fr_bl_state()==0);
@@ -542,6 +721,8 @@ static void test_fp_redirect(void) {
     }
     fr_installed=1;fr_failures=0;assert(fr_owned() && fr_check());
     image[FR_AFF_SITE+1]^=1;assert(fr_aff_state()<0 && !fr_owned());image[FR_AFF_SITE+1]^=1;assert(fr_owned());
+    image[FR_VEL_SITE+2]^=1;assert(fr_vel_state()<0 && !fr_owned());image[FR_VEL_SITE+2]^=1;assert(fr_owned());
+    image[FR_FAC_SITE+3]^=1;assert(fr_fac_state()<0 && !fr_owned());image[FR_FAC_SITE+3]^=1;assert(fr_owned());
     {   void *other=(void*)tbl_native;assert(fr_bl_swap((void*)fr_bl_hook,other) && fr_bl_state()<0 && !fr_owned());
         assert(fr_bl_swap(other,(void*)fr_bl_hook) && fr_owned());}
     image[FR_PG_SITE+1]^=1;assert(fr_pg_state()<0 && !fr_owned());image[FR_PG_SITE+1]^=1;assert(fr_owned());
@@ -555,6 +736,8 @@ static void test_fp_redirect(void) {
     for(unsigned i=0;i<FR_LEN_SITES;i++) {assert(fr_len_state(i)==0 && !fp_patch_overlaps(image+fr_len_sites[i].site,5));memset(image+fr_len_sites[i].site,0,5);}
     assert(fr_pg_state()==0 && !fp_patch_overlaps(image+FR_PG_SITE,5));memset(image+FR_PG_SITE,0,5);
     assert(fr_aff_state()==0 && !fp_patch_overlaps(image+FR_AFF_SITE,5));memset(image+FR_AFF_SITE,0,5);
+    assert(fr_vel_state()==0 && !fp_patch_overlaps(image+FR_VEL_SITE,5) && fr_vel_clear());memset(image+FR_VEL_SITE,0,sizeof(fr_vel_block));
+    assert(fr_fac_state()==0 && !fp_patch_overlaps(image+FR_FAC_SITE,5) && fr_fac_clear());memset(image+FR_FAC_SITE,0,sizeof(fr_fac_block));
     assert(fr_bl_state()==0);memset(image+FR_BL_SLOT,0,8);
     memset(image+FR_TAIL,0,20);
     VirtualFree(fr_page,0,MEM_RELEASE);fr_page=saved_page;
@@ -734,6 +917,62 @@ static unsigned tfa_native_runs(unsigned rounds,int through_stub) {
     }
     return split;
 }
+/* FR23: the step's velocity block on its own bytes, entered at 0xeb32e6 (movaps xmm2,xmm12; ...; the flag test) with
+ * rdi a model whose +0x95 is set or clear, rsi a bank, xmm11 = s, xmm12 = 0, up to 0xeb3322 (a back jump planted there).
+ * Pass 0 natively keeps every case's registers and bank; passes through the stub must leave the same registers and +0x50,
+ * and the velocity native's ('shadow') or ours ('redirect') where the flag is set, the plain (0,0,s,0) where it is not. */
+#define TFV_CASES 1500u
+static unsigned char tfv_native_blocks[TFV_CASES][TFV_BLOCK];
+static uint32_t tfv_native_vel[TFV_CASES][8];
+static void tfv_case(unsigned i,uint32_t rows[12],uint32_t *s,unsigned *flag) {
+    for(unsigned k=0;k<12;k++) rows[k]=(k&3)==3?0:fr_bits(tfr_range(-1.0f,1.0f));
+    if(i%9==0) rows[3]=fr_bits(tfr_range(-1.0f,1.0f)); /* a w lane now and then */
+    const unsigned pick=i%5;
+    *s=pick==0?0u:pick==1?0x80000000u:pick==2?fr_bits(tfr_range(0.0f,600.0f)):pick==3?fr_bits(tfr_range(-1e-30f,1e-30f)):0u;
+    *flag=i%7!=3;
+}
+static unsigned tfv_native_runs(int pass) {
+    unsigned split=0;const uint64_t keep=tfr_state;tfr_state=0x51ed270b3c2f4a1dull; /* every pass the same cases */
+    for(unsigned i=0;i<TFV_CASES;i++) {
+        uint32_t rows[12],s,vel[8],ours[4],win[4];unsigned flag;unsigned char block[TFV_BLOCK];
+        tfv_case(i,rows,&s,&flag);tfv_run(image+0xeb32e6u,rows,s,flag,block,vel);
+        fr_velocity(rows,s,ours);fr_velocity_windows(rows,s,win);
+        const uint32_t plain[4]={0,0,s,0};
+        if(pass==0) {
+            memcpy(tfv_native_blocks[i],block,TFV_BLOCK);memcpy(tfv_native_vel[i],vel,32);
+            if(memcmp(vel,flag?win:plain,16)) {printf("fp redirect velocity native %u: %08x %08x %08x %08x\n",i,vel[0],vel[1],vel[2],vel[3]);assert(0);}
+        } else {
+            assert(!memcmp(block,tfv_native_blocks[i],0xb8) && !memcmp(vel+4,tfv_native_vel[i]+4,16));
+            const uint32_t *want=!flag?plain:fr_mode==FR_REDIRECT?ours:win;
+            if(memcmp(vel,want,16)) {printf("fp redirect velocity %u (pass %d): %08x %08x %08x %08x\n",i,pass,vel[0],vel[1],vel[2],vel[3]);assert(0);}
+        }
+        if(flag && memcmp(ours,win,16)) {assert((s&0x7fffffffu)==0);++split;}
+    }
+    tfr_state=keep;return split;
+}
+/* FR24: the step's facing factor block on its own bytes, entered at the site 0xeb3a91 with xmm1 = m, xmm13 = 1.0 and
+ * rdi a model holding m at +0x98, up to 0xeb3aa1 (a back jump planted there). Pass 0 natively: xmm0 = 1 - m*k, xmm1 =
+ * m*k; passes through the stub: every register the same, xmm0's lane 0 native's ('shadow') or ours ('redirect'). */
+#define TFC_CASES 4000u
+static unsigned char tfc_native_blocks[TFC_CASES][TFC_BLOCK];
+static unsigned tfc_native_runs(int pass) {
+    unsigned split=0;const uint64_t keep=tfr_state;tfr_state=0x2f1c4a8b77e01d35ull; /* every pass the same cases */
+    for(unsigned i=0;i<TFC_CASES;i++) {
+        const uint32_t m=i%50==0?0u:i%50==1?0x3fc90fdbu:i%50==2?fr_bits(tfr_range(0.0f,1e-30f)):fr_bits(tfr_range(0.0f,1.57079637f));
+        unsigned char block[TFC_BLOCK];tfc_run(image+FR_FAC_SITE,m,block);
+        const uint32_t win=fr_facing_windows(m),ours=fr_facing(m);uint32_t got,x1;memcpy(&got,block,4);memcpy(&x1,block+0x10,4);
+        if(pass==0) {
+            memcpy(tfc_native_blocks[i],block,TFC_BLOCK);
+            if(got!=win || x1!=fr_bits(fr_f32(m)*0.636619747f)) {printf("fp redirect facing native %u: m %08x got %08x x1 %08x\n",i,m,got,x1);assert(0);}
+        } else {
+            assert(!memcmp(block+4,tfc_native_blocks[i]+4,0xbc));
+            const uint32_t want=fr_mode==FR_REDIRECT?ours:win;
+            if(got!=want) {printf("fp redirect facing %u (pass %d): m %08x got %08x want %08x\n",i,pass,m,got,want);assert(0);}
+        }
+        split+=ours!=win;
+    }
+    tfr_state=keep;return split;
+}
 static void test_fp_redirect_native_image(const char *path) {
     FILE *file=fopen(path,"rb");assert(file);IMAGE_DOS_HEADER dos;IMAGE_NT_HEADERS64 nt;
     assert(fread(&dos,1,sizeof(dos),file)==sizeof(dos) && dos.e_magic==IMAGE_DOS_SIGNATURE && dos.e_lfanew>0 && dos.e_lfanew<4096);
@@ -778,6 +1017,20 @@ static void test_fp_redirect_native_image(const char *path) {
     assert(!memcmp(image+0x65a63b,"\xf3\x0f\x10\x35",4) && 0x65a643u+0x26642d5u==FR_AFF_TWO && FR_AFF_SITE>FR_AFF_PIN && FR_AFF_BACK<FR_AFF_PIN+FR_AFF_PIN_SIZE);
     assert(!memcmp(image+0x14e4f49,"\xf3\x0f\x10\x35",4) && 0x14e4f51u+0x17d9683u==FR_BL_ONE);
     assert(fr_bl_state()==0 && fr_pins());
+    /* FR23: the Linear step (the world trace's pin) and the velocity block; the facts the stub relies on: je 0xeb331a
+     * on [rdi+0x95] clear right before the site, xmm12 zeroed at 0xeb2873, the comiss after the back address. */
+    image[FR_VEL_PIN+0x40]^=1;assert(!fr_pins() && !fr_vel_pins_ok());image[FR_VEL_PIN+0x40]^=1;
+    image[FR_VEL_SITE+0x15]^=1;assert(!fr_pins() && !fr_vel_pins_ok());image[FR_VEL_SITE+0x15]^=1;
+    assert(fr_vel_pins_ok() && !memcmp(image+FR_VEL_SITE,fr_vel_block,sizeof(fr_vel_block)) && !memcmp(image+0xeb32f4,"\x80\xbf\x95\x00\x00\x00\x00\x74\x1d",9));
+    assert(!memcmp(image+0xeb2873,"\x45\x0f\x57\xe4",4) && !memcmp(image+FR_VEL_BACK,"\x0f\x11\x66\x50\x44\x0f\x2f\x05",8) && 0xeb32fdu+0x1du==0xeb331au);
+    /* FR24: the facing factor block and k; the facts the stub relies on: m stored at +0x98 by 0xeb3a6c, the comiss with
+     * pi/2 and the jbe to the site (its only branch in), xmm13 = 1.0 (0xeb286a, 1.0 at 0x2cbe5d4), the store and the
+     * blend's comiss after the back address, k's address. */
+    image[FR_FAC_SITE+9]^=1;assert(!fr_pins() && !fr_fac_pins_ok());image[FR_FAC_SITE+9]^=1;
+    image[FR_FAC_K+2]^=1;assert(!fr_pins() && !fr_fac_pins_ok());image[FR_FAC_K+2]^=1;
+    assert(fr_fac_pins_ok() && !memcmp(image+0xeb3a6c,"\xf3\x0f\x11\x8f\x98\x00\x00\x00",8) && !memcmp(image+0xeb3a83,"\x76\x0c",2));
+    assert(!memcmp(image+0xeb286a,"\xf3\x44\x0f\x10\x2d",5) && 0xeb2873u+0x1e0bd61u==0x2cbe5d4u && 0xeb3a99u+0x1e0a9ebu==FR_FAC_K);
+    assert(!memcmp(image+FR_FAC_BACK,"\xf3\x0f\x11\x87\x9c\x00\x00\x00\x0f\x2f\xc2",11) && FR_FAC_SITE>FR_VEL_PIN && FR_FAC_BACK<FR_VEL_PIN+FR_VEL_PIN_SIZE);
     /* The live boot's order: the exact-reciprocal windows armed first (their view then covers the whole image), then
      * this module through fr_arm itself, in 'redirect': pins (both length blocks hold windows), tails clear, every
      * site installed and owned, restored. FR10/FR11/W5 refused here with stage=pins. */
@@ -789,9 +1042,12 @@ static void test_fp_redirect_native_image(const char *path) {
         for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==0 && fr_h_clear(i));
         assert(fr_pg_state()==0 && fr_pg_clear());
         assert(fr_aff_state()==0 && fr_aff_clear() && fr_bl_state()==0);
+        assert(fr_vel_state()==0 && fr_vel_clear() && fr_fac_state()==0 && fr_fac_clear());
         assert(fr_pins() && fr_arm(FR_REDIRECT,3) && fr_installed && !strcmp(fr_stage,"armed") && fr_check());
         assert(fr_aff_state()==1 && !fr_aff_clear() && (fr_done&FR_AFF_DONE) && fr_bl_state()==1 && (fr_done&FR_BL_DONE));
         assert(*(void**)(image+FR_BL_SLOT)==(void*)fr_bl_hook && fr_aff_pins_ok() && fr_bl_pins_ok());
+        assert(fr_vel_state()==1 && !fr_vel_clear() && (fr_done&FR_VEL_DONE) && fr_vel_pins_ok()); /* the view keeps the step's pin */
+        assert(fr_fac_state()==1 && !fr_fac_clear() && (fr_done&FR_FAC_DONE) && fr_fac_pins_ok());
         for(unsigned i=0;i<FR_LEN_SITES;i++) assert(fr_len_state(i)==1 && !fr_len_tail_clear(i)); /* ours, shown as the original */
         for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==1 && !fr_h_clear(i));
         assert(fr_pg_state()==1 && !fr_pg_clear() && (fr_done&FR_PG_DONE) && fr_owned());
@@ -800,6 +1056,7 @@ static void test_fp_redirect_native_image(const char *path) {
         for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==0);
         assert(fr_pg_state()==0 && fr_pg_clear());
         assert(fr_aff_state()==0 && fr_aff_clear() && fr_bl_state()==0 && *(void**)(image+FR_BL_SLOT)==(void*)(image+FR_BL_FN));
+        assert(fr_vel_state()==0 && fr_vel_clear() && fr_fac_state()==0 && fr_fac_clear());
         for(unsigned i=0;i<FR_SITES;i++) assert(fr_site_state(i)==0);
         VirtualFree(fr_page,0,MEM_RELEASE);fr_page=NULL;fr_restored=0;fr_stage="idle";fr_mode=FR_OFF;
         fr_native_refresh=NULL;fr_native_g4=fr_native_g0=NULL;fr_native_m=NULL;fr_native_params=NULL;fr_native_v=NULL;fr_native_writer=NULL;
@@ -951,9 +1208,52 @@ static void test_fp_redirect_native_image(const char *path) {
         "(%u of 4000 split from dp/(sum*0.5)), shadow the same (%u), redirect ours (%lld weights written) PASS\n",
         bl_native,(long long)fr_max_ulp[FR_BL],bl_shadow,(long long)fr_bl_written,aff_native,aff_shadow,(long long)fr_aff_written);
     fr_n[FR_BL]=fr_diff[FR_BL]=fr_max_ulp[FR_BL]=0;fr_bl_written=0;fr_n[FR_AFF]=fr_diff[FR_AFF]=fr_max_ulp[FR_AFF]=0;fr_aff_written=0;
+    /* FR23: the velocity block on its own bytes: natively, then through the stub in 'shadow' and 'redirect'. */
+    assert(fr_vel_pins_ok() && fr_vel_state()==0 && fr_vel_clear());
+    unsigned char vel_saved[14];memcpy(vel_saved,image+0xeb3322u,14);
+    {   unsigned char *at=image+(0xeb3322u&~0xfffu);assert(VirtualProtect(image+(FR_VEL_SITE&~0xfffu),0x2000,PAGE_EXECUTE_READWRITE,&old));
+        unsigned char back[14]={0xff,0x25,0,0,0,0};void *to=(void*)test_fr_vel_back;memcpy(back+6,&to,8);
+        memcpy(image+0xeb3322u,back,14);FlushInstructionCache(GetCurrentProcess(),at,0x2000);
+    }
+    fr_mode=FR_OFF;const unsigned vel_native=tfv_native_runs(0);
+    {   unsigned char jump[5];fr_vel_jump(jump);assert(fr_vel_reach() && view_cas_bytes(FR_VEL_SITE,fr_vel_original,jump,5));
+        fr_done|=FR_VEL_DONE;assert(fr_vel_state()==1 && !fr_vel_clear());
+        unsigned char seen[5];assert(read_local(image+FR_VEL_SITE,seen,5) && !memcmp(seen,fr_vel_original,5)); /* the view */
+    }
+    const LONG64 vn0=fr_n[FR_VEL],vh0=fr_hits[FR_HIT_VEL];
+    fr_mode=FR_SHADOW;const unsigned vel_shadow=tfv_native_runs(1);
+    assert(fr_n[FR_VEL]>vn0 && fr_diff[FR_VEL]==(LONG64)vel_shadow && fr_hits[FR_HIT_VEL]==vh0+(fr_n[FR_VEL]-vn0) && !fr_vel_written);
+    fr_mode=FR_REDIRECT;const unsigned vel_redirect=tfv_native_runs(2);
+    assert(fr_vel_written==(LONG64)vel_redirect && vel_native>100 && vel_shadow==vel_native && vel_redirect==vel_native);
+    printf("fp redirect native image: the Linear step's velocity block 0xeb32fd on its own bytes: native = (s,s,s,0)*row2 (%u of %u cases split "
+        "from (r0*0 + 0*r1) + s*row2, all at s = +-0); through the stub every register as native, shadow keeps it, redirect stores ours (%lld written) PASS\n",
+        vel_native,TFV_CASES,(long long)fr_vel_written);
+    memcpy(image+0xeb3322u,vel_saved,14);FlushInstructionCache(GetCurrentProcess(),image+0xeb3000u,0x1000);
+    fr_n[FR_VEL]=fr_diff[FR_VEL]=fr_max_ulp[FR_VEL]=0;fr_vel_written=0;
+    /* FR24: the facing factor block on its own bytes: natively, then through the stub in 'shadow' and 'redirect'. */
+    assert(fr_fac_pins_ok() && fr_fac_state()==0 && fr_fac_clear());
+    unsigned char fac_saved[14];memcpy(fac_saved,image+FR_FAC_BACK,14);
+    {   unsigned char back[14]={0xff,0x25,0,0,0,0};void *to=(void*)test_fr_fac_back;memcpy(back+6,&to,8);
+        memcpy(image+FR_FAC_BACK,back,14);FlushInstructionCache(GetCurrentProcess(),image+0xeb3000u,0x1000);
+    }
+    fr_mode=FR_OFF;const unsigned fac_native=tfc_native_runs(0);
+    {   unsigned char jump[5];fr_fac_jump(jump);assert(fr_fac_reach() && view_cas_bytes(FR_FAC_SITE,fr_fac_original,jump,5));
+        fr_done|=FR_FAC_DONE;assert(fr_fac_state()==1 && !fr_fac_clear());
+        unsigned char seen[5];assert(read_local(image+FR_FAC_SITE,seen,5) && !memcmp(seen,fr_fac_original,5)); /* the view */
+    }
+    const LONG64 cn0=fr_n[FR_FAC],ch0=fr_hits[FR_HIT_FAC];
+    fr_mode=FR_SHADOW;const unsigned fac_shadow=tfc_native_runs(1);
+    assert(fr_n[FR_FAC]==cn0+TFC_CASES && fr_diff[FR_FAC]==(LONG64)fac_shadow && fr_hits[FR_HIT_FAC]==ch0+TFC_CASES && !fr_fac_written);
+    fr_mode=FR_REDIRECT;const unsigned fac_redirect=tfc_native_runs(2);
+    assert(fr_fac_written==(LONG64)fac_redirect && fac_native>100 && fac_shadow==fac_native && fac_redirect==fac_native);
+    printf("fp redirect native image: the Linear step's facing factor 0xeb3a91 on its own bytes: native = 1 - m*0.636619747f (%u of %u cases split "
+        "from 1 - m/1.57079637f, max %lld ulp); through the stub every register as native, shadow keeps it, redirect leaves ours (%lld written) PASS\n",
+        fac_native,TFC_CASES,(long long)fr_max_ulp[FR_FAC],(long long)fr_fac_written);
+    memcpy(image+FR_FAC_BACK,fac_saved,14);FlushInstructionCache(GetCurrentProcess(),image+0xeb3000u,0x1000);
+    fr_n[FR_FAC]=fr_diff[FR_FAC]=fr_max_ulp[FR_FAC]=0;fr_fac_written=0;
     fr_installed=1;fr_restore();assert(!fr_installed && !fr_done && fr_len_state(0)==0 && fr_len_state(1)==0);
     for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==0);
-    assert(fr_pg_state()==0 && fr_aff_state()==0 && fr_bl_state()==0);
+    assert(fr_pg_state()==0 && fr_aff_state()==0 && fr_bl_state()==0 && fr_vel_state()==0 && fr_vel_pins_ok() && fr_fac_state()==0 && fr_fac_pins_ok());
     printf("fp redirect native image: PointGuard angle 0xe9c4bc on its own bytes: native = rem*(pi/(m+1)) on %u (m+1 <= %u; %u split from "
         "(rem/2(m+1))*2pi, max %lld ulp); shadow keeps it (%u split), redirect leaves ours (%u written) PASS\n",
         TPG_RUNS,TPG_M1,pg_native,(long long)fr_max_ulp[FR_PG],pg_shadow,pg_redirect);

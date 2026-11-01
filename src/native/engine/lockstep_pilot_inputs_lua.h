@@ -260,6 +260,20 @@ static int lua_pilot_stock_inject(lua_State *L) {
     }
     p_lua_pushnumber(L,ok);return 1;
 }
+/* gate.pilot_stock_local(kind, id, value): scripted local input, a presentation id of this client, queued
+ * for the next pass, which runs it as its own key would (lockstep_pilot_stock.h pstk_local_press); 1 when queued. */
+static int lua_pilot_stock_local(lua_State *L) {
+    size_t length=0;const char *kind=p_lua_tolstring(L,1,&length);double id=p_lua_tonumber(L,2),value=p_lua_tonumber(L,3);
+    unsigned k=kind && !strcmp(kind,"action")?PSTK_ACTION:kind && !strcmp(kind,"state")?PSTK_STATE:kind && !strcmp(kind,"range")?PSTK_RANGE:PSTK_KINDS;
+    uint32_t bits=0;int ok=0;
+    if(k<PSTK_KINDS && isfinite(id) && floor(id)==id && id>=0 && id<512 && isfinite(value) && accept_ui() && stats.active && boot_phase==3) {
+        if(k==PSTK_RANGE) {float f=(float)value;memcpy(&bits,&f,4);}
+        else if(value==0 || value==1) bits=(uint32_t)value;
+        else bits=2;
+        ok=bits<=1 || k==PSTK_RANGE?pstk_local_press(k,(unsigned)id,bits):0;
+    }
+    p_lua_pushnumber(L,ok);return 1;
+}
 /* gate.pilot_stock_frame(): PSTOCK_1:tick:events:record hash:flight:settings for the digest,
  * then |Sk:events:record hash:flight for every stock slot k of 2..N. */
 static int lua_pilot_stock_frame(lua_State *L) {

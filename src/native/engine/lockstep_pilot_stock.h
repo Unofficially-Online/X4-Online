@@ -408,19 +408,52 @@ static int pstk_engages(unsigned kind,uint32_t value) {
     if(kind==PSTK_RANGE) {float f;memcpy(&f,&value,4);return f!=0.0f;}
     return value!=0;
 }
+/* What this client's own input ran locally (presentation ids: camera, menus, map, targets), named in
+ * the status: local_keys= the last PSTK_LOCAL_KEYS action and state dispatches as tick:a|s:id (a
+ * scripted one ends in '*'), local_ranges= the range count, local_pressed= the scripted ones. p4-long2:
+ * one local action on client 4 opened the map and parted the world (lockstep_view_points.h,
+ * native_gate_view_ui); its dispatch counter said that much, not which id. */
+#define PSTK_LOCAL_KEYS 8u
+typedef struct {uint64_t tick;uint16_t id;unsigned char kind,scripted;} pstk_local_key;
+static pstk_local_key pstk_local_keys[PSTK_LOCAL_KEYS];
+static uint64_t pstk_local_key_count;
+static volatile LONG64 pstk_local_ranges,pstk_local_pressed;
+static void pstk_local_note(unsigned kind,int id,int scripted) {
+    if(kind==PSTK_RANGE) {InterlockedIncrement64(&pstk_local_ranges);return;}
+    pstk_local_key *k=&pstk_local_keys[pstk_local_key_count++%PSTK_LOCAL_KEYS];
+    k->tick=stats.issued;k->id=(uint16_t)id;k->kind=(unsigned char)kind;k->scripted=(unsigned char)(scripted!=0);
+}
+/* The local keys oldest first, "-" without any; stops before an entry that does not fit. */
+static void pstk_local_keys_text(char *out,size_t capacity) {
+    size_t k=0;const uint64_t first=pstk_local_key_count>PSTK_LOCAL_KEYS?pstk_local_key_count-PSTK_LOCAL_KEYS:0;
+    if(capacity<2) {if(capacity) out[0]=0;return;}
+    out[0]='-';out[1]=0;
+    for(uint64_t i=first;i<pstk_local_key_count;i++) {
+        const pstk_local_key *e=&pstk_local_keys[i%PSTK_LOCAL_KEYS];char item[48];
+        int n=snprintf(item,sizeof(item),"%s%llu:%c:%x%s",k?",":"",(unsigned long long)e->tick,e->kind==PSTK_ACTION?'a':'s',e->id,e->scripted?"*":"");
+        if(n<=0 || k+(size_t)n+1>capacity) break;
+        memcpy(out+k,item,(size_t)n+1);k+=(size_t)n;
+    }
+}
+/* A presentation id through every handler X4 holds for it, as this client's own (in a presenting
+ * client's scope). */
+static void pstk_local_run(unsigned kind,unsigned char *map,int id,uint32_t value) {
+    int presented=pres_local_enter();
+    InterlockedIncrement(&uirep_dispatch_depth);
+    pstk_walk(map+0x40*kind,kind,id,value);
+    InterlockedDecrement(&uirep_dispatch_depth);
+    pres_local_leave(presented);
+}
 /* A dispatch on this client: presentation ids run (on a presenting client as its own slot's
  * player: the camera, target and menu handlers read the singleton), replay ids are recorded (the
  * capturing client) or dropped, refused ids are logged. map = 1255xx0's argument. */
 static void pstk_dispatch(unsigned kind,unsigned char *map,int id,uint32_t value) {
     unsigned verdict=pnat_is_live()?pstk_verdict_slot(kind,id,pstk_capturing?pstk_capture_slot:1):PSTK_LOCAL;
     if(verdict==PSTK_LOCAL) {
+        pstk_local_note(kind,id,0);
         /* A presenting client whose slot is dead and not in a suit has no player to act as: X4's singleton is slot 1's. */
         if(pres_slot && pilot_slots[pres_slot-1].dead && !pres_has_seat()) {InterlockedIncrement64(&pstk_dropped);return;}
-        int presented=pres_local_enter();
-        InterlockedIncrement(&uirep_dispatch_depth);
-        pstk_walk(map+0x40*kind,kind,id,value);
-        InterlockedDecrement(&uirep_dispatch_depth);
-        pres_local_leave(presented);
+        pstk_local_run(kind,map,id,value);
         return;
     }
     if(verdict==PSTK_REFUSE) {
@@ -564,6 +597,34 @@ static int pstk_inject(unsigned kind,unsigned id,uint32_t value) {
     if(!pstk_record_event(kind,id,value)) return 0;
     InterlockedIncrement64(&pstk_injected);return 1;
 }
+/* Scripted local input for runs without people (gate.pilot_stock_local, native_gate_pilot_local_script):
+ * one presentation id of this client, as if its own key had dispatched it (a key of the replay or
+ * refused sets is not one: 0). The probe queues it in its frame (inside a Lua call, where X4's
+ * handlers must not run); the next pass runs it on the frame thread from path_release, in C as the
+ * stock replay runs its ids, through the local path a real key takes (pstk_local_run). */
+#define PSTK_LOCAL_QUEUE 8u
+static struct {unsigned kind,id;uint32_t value;} pstk_local_queue[PSTK_LOCAL_QUEUE];
+static unsigned pstk_local_queued;
+static int pstk_local_press(unsigned kind,unsigned id,uint32_t value) {
+    if(!pnat_is_live() || GetCurrentThreadId()!=ui_thread || kind>PSTK_RANGE || id>=512 || pstk_local_queued>=PSTK_LOCAL_QUEUE) return 0;
+    if(pstk_verdict_slot(kind,(int)id,pstk_capturing?pstk_capture_slot:1)!=PSTK_LOCAL) return 0;
+    if((kind==PSTK_ACTION && value) || (kind==PSTK_STATE && value>1)) return 0;
+    if(kind==PSTK_RANGE) {float f;memcpy(&f,&value,4);if(!isfinite(f)) return 0;}
+    pstk_local_queue[pstk_local_queued].kind=kind;pstk_local_queue[pstk_local_queued].id=id;pstk_local_queue[pstk_local_queued].value=value;
+    ++pstk_local_queued;return 1;
+}
+/* The pass (pnat_pass, stock mode, live): every queued key once, in order. */
+static void pstk_local_drain(void) {
+    const unsigned n=pstk_local_queued;pstk_local_queued=0;
+    if(!pnat_input) return;
+    for(unsigned i=0;i<n;i++) {
+        /* A presenting client whose slot is dead and not in a suit has no player to act as (as pstk_dispatch). */
+        if(pres_slot && pilot_slots[pres_slot-1].dead && !pres_has_seat()) {InterlockedIncrement64(&pstk_dropped);continue;}
+        pstk_local_note(pstk_local_queue[i].kind,(int)pstk_local_queue[i].id,1);
+        pstk_local_run(pstk_local_queue[i].kind,pnat_input+0x63e0,(int)pstk_local_queue[i].id,pstk_local_queue[i].value);
+        InterlockedIncrement64(&pstk_local_pressed);
+    }
+}
 /* Replay of this tick's record (every client, path_release, before the pass). */
 static int pstk_frame(uint64_t tick,const char **why) {
     pstk_frame_tick=tick;pstk_frame_events=0;pstk_frame_hash=0;
@@ -661,16 +722,17 @@ static int pdeath_status(char *out,size_t capacity);                       /* lo
 static int pslot_armed;static int pslot_status(char *out,size_t capacity); /* lockstep_pilot_slots.h */
 static int pres_armed;static int pres_status(char *out,size_t capacity);   /* lockstep_pilot_present.h */
 static int pstk_status(char *out,size_t capacity) {
+    char keys[PSTK_LOCAL_KEYS*32+2];pstk_local_keys_text(keys,sizeof(keys));
     int n=snprintf(out,capacity," stock=%s slot=%u slots=%x flight=%u/%u capture_start=%llu first_apply=%llu recorded=%lld dropped=%lld "
         "replayed=%lld records=%lld staged=%lld space=%lld/%lld cursor=%lld injected=%lld unfocused=%lld overflows=%lld max_events=%lld settings=%016llx "
-        "aim=%d/%lld/%lld/%lld/%lld/%lld/%lld",
+        "aim=%d/%lld/%lld/%lld/%lld/%lld/%lld local_keys=%s local_ranges=%lld local_pressed=%lld",
         pstk_capturing?"capture":"replay",pstk_capturing?pstk_capture_slot:pstk_slot,pstk_slot_mask,pstk_flight,pstk_flight_known,
         (unsigned long long)pstk_capture_start,
         (unsigned long long)pstk_first_apply,(long long)pstk_recorded,(long long)pstk_dropped,(long long)pstk_replayed,(long long)pstk_records,
         (long long)pstk_staged_count,(long long)pstk_space_local,(long long)pstk_space_replayed,(long long)pstk_cursor_calls,
         (long long)pstk_injected,(long long)pstk_unfocused,(long long)pstk_overflows,(long long)pstk_max_events,(unsigned long long)pstk_settings,
         pstk_aim_installed,(long long)pstk_aim_calls,(long long)pstk_aim_replaced,(long long)pstk_aim_neutral,(long long)pstk_aim_samples,
-        (long long)pstk_aim_sample_failures,(long long)pstk_aim_foreign);
+        (long long)pstk_aim_sample_failures,(long long)pstk_aim_foreign,keys,(long long)pstk_local_ranges,(long long)pstk_local_pressed);
     if(n<=0 || (size_t)n>=capacity) return 0;
     int more=pview_status(out+n,capacity-(size_t)n);
     if(!more) return 0;

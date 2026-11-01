@@ -185,6 +185,25 @@
  * the call adds (0x90 bytes; pc_add2's 0x40), [124..159] the current points' last one after the call, [234..239] their
  * vector header after it. */
 #define ST_PC_TAG 0x46522102u
+/* FR24 (with FR8): who creates the pending point. In FR23 (fr23 vs vps-linux-FR23) 09262b's new point (tick 6), 0a540e's
+ * (38), 084533's (56) and the wingmen's already differ when UpdatePathing adopts them (0xe8ef47; its rewrite 0xe8dfc0
+ * sets only the rows +0x30..+0x5f). Pending points arrive as U::Path::AddTargetPointToPathOrder (Windows vtable
+ * 0x2c513d8, its Execute 0xe98000 -> 0xe89e40; Linux 0x3b650d0, 0x13cc8d0), created by the queue Windows 0xeadf30
+ * (manager, ship runtime id, point, issuer; fourteen callers: the AI move actions' FlightPoint builders 0x6e0450..
+ * 0x6e0e30, 0x5686d0, 0x64ec20, 0xea1870, 0xea1960) and by the formation propagation 0xe99950 (UpdatePathing 0xe8eee2:
+ * each wingman's point = the leader's pending point P composed with the shape's offset O, ((O.x P.r0 + O.y P.r1) +
+ * O.z P.r2) + P.pos), Linux 0x13e1040 (the same queue; four callers, the propagation inlined at 0x1447823 in the
+ * UpdatePathing twin 0x1444c70 with the same operation order). Each creation for a watched ship keeps a path-set
+ * entry (tag ST_OC_TAG): [3] the site (Windows 0 the queue's point copy at 0xeadf86, 1 the propagation's at 0xe99ce9;
+ * Linux 0 0x1429c79, 1 0x1447823 (the propagation), 2 0x1c8d0c6, 3 0x1cf0b86), [7..39] the call stack (Windows; Linux
+ * [7] 1 and [8] the site), [40..41] the point's reference key, [42..43] the issuer's key (the queue's fourth argument;
+ * 0 at Windows' propagation), [44] the layout (0 Windows: reference +0x10; 1 Linux: +0x8), [48..63] the point's mat4
+ * (+0x20), [64..99] its 0x90 bytes, [100..115] O (the propagation; 0xff otherwise), [116..131] P's mat4, [132..133] P's
+ * reference key. */
+#define ST_OC_TAG 0x46522401u
+#ifndef ST_OC_LAYOUT
+#define ST_OC_LAYOUT 0u
+#endif
 typedef void (*st_hier_fn)(void *,void *,void *,uint64_t);
 typedef void (*st_sg_fn)(void *,const void *,void *,void *);
 typedef void (*st_step_fn)(void *,const void *,float,double);
@@ -313,6 +332,7 @@ static struct {
 } st_fm[ST_IDS];
 static volatile LONG64 st_fm_kept,st_pt_kept,st_pt_conversions,st_pt_no_slot,st_sg_calls,st_sg_kept,st_pt_levels_probed,st_ps_kept;
 static volatile LONG64 st_hw_calls,st_hw_kept,st_hw_banking,st_pc_kept; /* FR21 */
+static volatile LONG64 st_oc_kept; /* FR24 */
 static void st_slot_lock(int w) {while(InterlockedCompareExchange64(&st_fm[w].lock,1,0)!=0) {}}
 static void st_slot_unlock(int w) {InterlockedExchange64(&st_fm[w].lock,0);}
 /* The read bank +offset of an agent, n bytes (0xff when unreadable). */
@@ -588,6 +608,34 @@ __attribute__((unused)) static void st_ps_publish(int w,uint32_t *e) {
     if(n<ST_PS_ENTRIES) {e[6]=n;memcpy(st_fm[w].pathset+n*ST_PS_WORDS,e,ST_PS_WORDS*4u);InterlockedIncrement64(&st_ps_kept);}
     st_slot_unlock(w);
 }
+/* FR24: the watched index of a ship given by its runtime id in the window (its key in *key), or -1. */
+static int st_oc_watched(uint64_t ship,uint64_t *key) {
+    const uint64_t tick=stats.issued;unsigned klass=WORLD_KEY_NONE;*key=0;
+    if(!stats.active || boot_phase!=3 || tick<1 || tick>st_ticks || !ship) return -1;
+    const uint64_t saved=world_identity_key(ship,&klass);
+    if(!saved || klass!=WORLD_KEY_SAVED) return -1;
+    for(unsigned i=0;i<st_id_count;i++) if(st_ids[i]==saved) {*key=saved;return (int)i;}
+    return -1;
+}
+/* FR24: a creation's entry (see ST_OC_TAG): stack = the 33 words [7..39] (frames, then return addresses), or NULL
+ * (then [7] 1, [8] caller). */
+static void st_oc_note(int w,uint64_t key,unsigned site,const unsigned char *point,uint64_t issuer,const unsigned char *offset,
+                       const unsigned char *leader,const uint32_t *stack,uint32_t caller) {
+    uint32_t e[ST_PS_WORDS];memset(e,0,sizeof(e));
+    e[0]=ST_OC_TAG;e[1]=(uint32_t)stats.issued;e[2]=GetCurrentThreadId()==ui_thread?0:1;e[3]=site;memcpy(e+4,&key,8);
+    if(stack) memcpy(e+7,stack,33u*4u);
+    else {e[7]=1;e[8]=caller;for(unsigned i=9;i<40;i++) e[i]=0xffffffffu;}
+    uint64_t runtime=0,k=0;
+    if(point && read_local(point+ST_PT_REF,&runtime,8)) k=st_runtime_key(runtime);
+    memcpy(e+40,&k,8);k=st_runtime_key(issuer);memcpy(e+42,&k,8);e[44]=ST_OC_LAYOUT;
+    if(!point || !read_local(point+0x20,e+48,0x40)) memset(e+48,0xff,0x40);
+    if(!point || !read_local(point,e+64,0x90)) memset(e+64,0xff,0x90);
+    if(!offset || !read_local(offset,e+100,0x40)) memset(e+100,0xff,0x40);
+    if(!leader || !read_local(leader+0x20,e+116,0x40)) memset(e+116,0xff,0x40);
+    runtime=0;k=0;if(leader && read_local(leader+ST_PT_REF,&runtime,8)) k=st_runtime_key(runtime);
+    memcpy(e+132,&k,8);
+    st_ps_publish(w,e);InterlockedIncrement64(&st_oc_kept);
+}
 /* FR19: the Linear model's SetTarget slot (platform: ST_SG_SLOT holding image+ST_SG_FN, st_sg_swap). */
 static void *st_sg_native;
 static unsigned st_sg_installed;
@@ -682,7 +730,7 @@ static int st_arm(uint64_t ticks) {
     if(!st_ring && !(st_ring=calloc(ST_RECORDS,sizeof(st_record_t)))) {st_stage="memory";return 0;}
     st_native=entry;st_ticks=ticks;st_records=st_calls=st_watched_calls=st_dropped=0;
     memset(st_ordinal_tick,0,sizeof(st_ordinal_tick));memset((void*)st_fm,0,sizeof(st_fm));st_fm_kept=st_pt_kept=st_pt_conversions=st_pt_no_slot=st_sg_calls=st_sg_kept=0;
-    st_pt_levels_probed=st_ps_kept=st_hw_calls=st_hw_kept=st_hw_banking=st_pc_kept=0;
+    st_pt_levels_probed=st_ps_kept=st_hw_calls=st_hw_kept=st_hw_banking=st_pc_kept=st_oc_kept=0;
     /* FR8's sites first: the entry leads into them only once they are all in place. */
     if(st_chain_wanted && !st_chain_installed && !st_chain_arm()) {st_stage="chain";return 0;}
     /* FR19: SetTarget's slot with the chain, after its sites. */
@@ -715,8 +763,8 @@ static int st_status(char *out,size_t cap) {
         (long long)st_fm_kept,(long long)st_pt_kept,(long long)st_pt_conversions,(long long)st_pt_no_slot,(long long)st_pt_levels_probed,
         st_sg_installed,(long long)st_sg_calls,(long long)st_sg_kept,(long long)st_ps_kept);
     if(m<=0 || (size_t)(n+=m)>=cap) return 0;
-    m=snprintf(out+n,cap-(size_t)n," hw_installed=%u hw_calls=%lld hw_kept=%lld hw_banking=%lld pc_kept=%lld",
-        st_hw_installed,(long long)st_hw_calls,(long long)st_hw_kept,(long long)st_hw_banking,(long long)st_pc_kept);
+    m=snprintf(out+n,cap-(size_t)n," hw_installed=%u hw_calls=%lld hw_kept=%lld hw_banking=%lld pc_kept=%lld oc_kept=%lld",
+        st_hw_installed,(long long)st_hw_calls,(long long)st_hw_kept,(long long)st_hw_banking,(long long)st_pc_kept,(long long)st_oc_kept);
     if(m<=0 || (size_t)(n+=m)>=cap) return 0;
     return n;
 }

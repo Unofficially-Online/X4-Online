@@ -73,7 +73,10 @@
  *                   (lockstep_pilot_present.h), and inside a call this client makes alone
  *                   for its own view (rid_scope: the stock target view of
  *                   native_gate_pilot_camera_follow, 5429 transient IDs on client 2 at
- *                   tick 30 in stock-J2c). How many depends on the client.
+ *                   tick 30 in stock-J2c), and the stock dispatch of a presentation id this
+ *                   client's own input asked for (lockstep_pilot_stock.h pstk_local_run: slot 4
+ *                   is not a site above, and a client that presents no other slot has no scope).
+ *                   How many depends on the client.
  *   block 30, view: U::EffectObject, EffectObjectCreator, FogVolume, LensFlare,
  *                   Stardust; UI::ICom messages, sources and listeners with what the
  *                   message start makes (0xada7a0: U::Action on the speaker). What the
@@ -164,6 +167,9 @@ static created_assign_fn rid_assign_native; /* tests only: the same for AssignNe
 #endif
 static void *(*rid_allocate_native)(size_t); /* tests only: replaces SMem::Allocate */
 static volatile LONG pres_open;   /* lockstep_pilot_present.h: its scope is open, on the UI thread */
+#ifndef RID_OWN_PLATFORM
+static volatile LONG uirep_dispatch_depth; /* lockstep_pilot_inputs.h: the stock dispatch of this client's presentation ids */
+#endif
 static volatile LONG rid_local_on,rid_probe_frame;
 static volatile DWORD rid_scope_thread; /* the thread in a client-only view call, 0 none */
 static int rid_local_built;
@@ -406,6 +412,8 @@ static void rid_scope(int open) {rid_scope_thread=open?GetCurrentThreadId():0;}
 static unsigned rid_route_of(const uint32_t *frames,unsigned count) {
     if(!InterlockedCompareExchange(&rid_local_on,0,0) || !rid_sealed) return RID_ROUTE_SHARED;
     if(InterlockedCompareExchange(&pres_open,0,0) && GetCurrentThreadId()==ui_thread) return RID_ROUTE_UI;
+    /* A presentation id this client dispatched (camera, menus, map): its own, presenting or not. */
+    if(InterlockedCompareExchange(&uirep_dispatch_depth,0,0)>0 && GetCurrentThreadId()==ui_thread) return RID_ROUTE_UI;
     if(rid_scope_thread && rid_scope_thread==GetCurrentThreadId()) return RID_ROUTE_UI;
     const int probe=InterlockedCompareExchange(&rid_probe_frame,0,0)!=0;unsigned route=RID_ROUTE_SHARED;
     for(unsigned i=0;i<count;i++) for(unsigned s=0;s<RID_SITES;s++) {
@@ -436,11 +444,17 @@ static uint64_t rid_local_assign(rid_local_t *list,void *object) {
 static uint64_t rid_assign_ui(void *object) {return rid_local_assign(&rid_local[RID_ROUTE_UI],object);}
 static uint64_t rid_assign_view(void *object) {return rid_local_assign(&rid_local[RID_ROUTE_VIEW],object);}
 #endif
-/* One table entry per (phase, thread class, route, X4 return addresses[, cue]); load phase: the direct caller only. */
-static void rid_caller_add_cue(const uint32_t *frames,unsigned phase,unsigned thread,unsigned route,const char *cue) {
+/* A caller row's key: (phase, thread class, route, X4 return addresses[, cue]); its low 32 bits are the
+ * key= of RUNTIME_IDS_CALLER and of RUNTIME_IDS_ROW. */
+static uint64_t rid_caller_hash(const uint32_t *frames,unsigned phase,unsigned thread,unsigned route,const char *cue) {
     uint64_t hash=lockstep_mix(((uint64_t)phase<<16)|((uint64_t)route<<8)|thread);
     for(unsigned i=0;i<RID_FRAMES;i++) hash=lockstep_mix(hash^frames[i]);
     for(unsigned i=0;cue && cue[i] && i<RID_CUE;i++) hash=lockstep_mix(hash^(uint64_t)(unsigned char)cue[i]^((uint64_t)(i+1)<<40));
+    return hash;
+}
+/* One table entry per (phase, thread class, route, X4 return addresses[, cue]); load phase: the direct caller only. */
+static void rid_caller_add_cue(const uint32_t *frames,unsigned phase,unsigned thread,unsigned route,const char *cue) {
+    const uint64_t hash=rid_caller_hash(frames,phase,thread,route,cue);
     AcquireSRWLockExclusive(&rid_callers_lock);
     unsigned at=(unsigned)hash&(RID_CALLERS-1u);
     for(unsigned probe=0;probe<RID_CALLERS;probe++,at=(at+1u)&(RID_CALLERS-1u)) {
@@ -504,12 +518,79 @@ static unsigned rid_frames_of(void *caller,uint32_t *frames) {
     return n;
 }
 #endif
-static void rid_note_caller_cue(const uint32_t *frames,unsigned count,unsigned route,unsigned thread,const char *cue) {
+/* Shared allocations per tick, DEFAULT OFF (native_gate_runtime_ids_rows, set mode). p4-long3 (4
+ * clients): the relay's digest parted at 12689 alone, from the runtime IDs word: client 3's next ID
+ * at that boundary was not the others', at 12660/12720/12780 it was, and the caller tables every 10
+ * ticks were identical; so one shared allocation landed a tick apart (12689 on one side, 12690 on the
+ * other). The window held docking work (a U::Animation::DockDoorStateListener from
+ * Container::vfunc674, MoveDocking and RequestDocking scripts). The table only counts; these rows
+ * name the tick. Every shared allocation after the seal adds its caller key (rid_caller_hash, low 32
+ * bits) to the open row; the gate boundary (rid_frame) closes it with the tick and the next ID:
+ *   RUNTIME_IDS_ROW index= tick= next= count= first= last= (slots) threads=moveworker/main/other
+ *   seq= (the keys in allocation order) sum= (their set) keys=key:count,... sorted by key, at most
+ *   RID_ROW_KEYS (keys_other= the allocations past them)
+ * A tick without a shared allocation has no row. Two clients' rows part at the tick and name the
+ * key; RUNTIME_IDS_CALLER key= is its stack. Play allocates about 16 a tick: about one row a tick. */
+#define RID_ROW_KEYS 32u
+#define RID_ROW_RING 1024u
+typedef struct {uint64_t tick,next,seq,sum;uint32_t count,first,last,keys,other,threads[3];uint32_t key[RID_ROW_KEYS],key_count[RID_ROW_KEYS];} rid_row_t;
+static int rid_rows_on;
+static rid_row_t rid_row_open,rid_row_ring[RID_ROW_RING];
+static volatile LONG64 rid_rows;
+/* Under rid_callers_lock: one shared allocation into the open row. */
+static void rid_row_add(rid_row_t *r,uint32_t key,unsigned thread,uint32_t slot) {
+    if(!r->count) r->first=slot;
+    r->last=slot;++r->count;++r->threads[thread<3u?thread:2u];
+    r->seq=lockstep_mix(r->seq^key);r->sum+=lockstep_mix(key);
+    for(unsigned i=0;i<r->keys;i++) if(r->key[i]==key) {++r->key_count[i];return;}
+    if(r->keys<RID_ROW_KEYS) {r->key[r->keys]=key;r->key_count[r->keys]=1;++r->keys;}
+    else ++r->other;
+}
+__attribute__((unused)) static void rid_row_note(uint64_t hash,unsigned thread,unsigned route,uint64_t id) {
+    if(!rid_rows_on || !rid_sealed || route!=RID_ROUTE_SHARED) return;
+    AcquireSRWLockExclusive(&rid_callers_lock);
+    rid_row_add(&rid_row_open,(uint32_t)hash,thread,(uint32_t)id&0x1ffffffu);
+    ReleaseSRWLockExclusive(&rid_callers_lock);
+}
+/* At the gate boundary: the open row, if any, goes to the ring with the tick and the next ID. */
+static void rid_row_close(uint64_t tick,uint64_t next) {
+    if(!rid_rows_on) return;
+    AcquireSRWLockExclusive(&rid_callers_lock);
+    rid_row_t r=rid_row_open;memset(&rid_row_open,0,sizeof(rid_row_open));
+    ReleaseSRWLockExclusive(&rid_callers_lock);
+    if(!r.count) return;
+    r.tick=tick;r.next=next;
+    for(unsigned i=1;i<r.keys;i++) for(unsigned j=i;j>0 && r.key[j-1]>r.key[j];j--) { /* by key */
+        uint32_t k=r.key[j];r.key[j]=r.key[j-1];r.key[j-1]=k;k=r.key_count[j];r.key_count[j]=r.key_count[j-1];r.key_count[j-1]=k;
+    }
+    const LONG64 index=InterlockedIncrement64(&rid_rows)-1;rid_row_ring[(uint64_t)index%RID_ROW_RING]=r;
+}
+/* With set mode, before the seal. */
+__attribute__((unused)) static int rid_rows_arm(void) {
+    if(rid_rows_on) return 1;
+    if(rid_mode!=RID_SET || rid_sealed) return 0;
+    memset(&rid_row_open,0,sizeof(rid_row_open));rid_rows=0;rid_rows_on=1;return 1;
+}
+__attribute__((unused)) static int rid_row(uint64_t index,char *out,size_t capacity) {
+    const LONG64 count=InterlockedCompareExchange64(&rid_rows,0,0);int n;
+    if((LONG64)index>=count) return 0;
+    if(count>(LONG64)RID_ROW_RING && index<(uint64_t)(count-(LONG64)RID_ROW_RING))
+        return (n=snprintf(out,capacity,"index=%llu evicted=1",(unsigned long long)index))>0 && (size_t)n<capacity?n:0;
+    const rid_row_t *r=&rid_row_ring[index%RID_ROW_RING];
+    n=snprintf(out,capacity,"index=%llu tick=%llu next=%016llx count=%u first=%x last=%x threads=%u/%u/%u seq=%016llx sum=%016llx keys=",
+        (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->next,r->count,r->first,r->last,r->threads[0],r->threads[1],r->threads[2],
+        (unsigned long long)r->seq,(unsigned long long)r->sum);
+    for(unsigned i=0;n>0 && (size_t)n<capacity && i<r->keys;i++) n+=snprintf(out+n,capacity-(size_t)n,"%s%08x:%u",i?",":"",r->key[i],r->key_count[i]);
+    if(n>0 && (size_t)n<capacity && r->other) n+=snprintf(out+n,capacity-(size_t)n," keys_other=%u",r->other);
+    return n>0 && (size_t)n<capacity?n:0;
+}
+static uint64_t rid_note_caller_cue(const uint32_t *frames,unsigned count,unsigned route,unsigned thread,const char *cue) {
     uint32_t row[RID_FRAMES];memset(row,0,sizeof(row));
     memcpy(row,frames,(count<RID_FRAMES?count:RID_FRAMES)*sizeof(*row));
     rid_caller_add_cue(row,rid_sealed?1u:0u,thread,route,cue);
+    return rid_caller_hash(row,rid_sealed?1u:0u,thread,route,cue);
 }
-__attribute__((unused)) static void rid_note_caller(const uint32_t *frames,unsigned count,unsigned route,unsigned thread) {rid_note_caller_cue(frames,count,route,thread,NULL);}
+__attribute__((unused)) static void rid_note_caller(const uint32_t *frames,unsigned count,unsigned route,unsigned thread) {(void)rid_note_caller_cue(frames,count,route,thread,NULL);}
 /* A stack that creates an MD cue instance (the first two frames). */
 static int rid_is_cue(const uint32_t *frames,unsigned count) {return count>=2 && frames[0]==RID_CUE_HANDLER && frames[1]==RID_CUE_CREATE;}
 #ifndef RID_OWN_PLATFORM
@@ -523,7 +604,8 @@ static uint64_t rid_assign(void *object,void *caller) {
     SetLastError(error);
     const uint64_t result=created_assign_execute(route==RID_ROUTE_UI?rid_assign_ui:route==RID_ROUTE_VIEW?rid_assign_view:rid_assign_original(),object);
     const DWORD after=GetLastError();
-    rid_note_caller_cue(frames,count,route,thread,cue[0]?cue:NULL);
+    const uint64_t key=rid_note_caller_cue(frames,count,route,thread,cue[0]?cue:NULL);
+    rid_row_note(key,thread,route,result);
     SetLastError(after);
     return result;
 }
@@ -574,6 +656,7 @@ static int rid_frame(uint64_t tick) {
     unsigned char *map=rid_map();if(!map) return rid_fail("map");
     CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(map+0x10);EnterCriticalSection(lock);rid_now=rid_counts(map);rid_next_id=rid_next(map);memcpy(rid_local_now,rid_local,sizeof(rid_local_now));LeaveCriticalSection(lock);
     rid_digest=lockstep_mix(lockstep_mix(rid_digest^tick)^rid_next_id);++rid_frames_done;
+    rid_row_close(tick,rid_next_id);
     if(rid_mode==RID_SET && rid_now.head && ((rid_now.head-1u)>>20)>=RID_BLOCK_LIMIT) rid_fail("ids_exhausted");
     return !InterlockedCompareExchange64(&rid_failures,0,0);
 }
@@ -610,5 +693,6 @@ static int rid_caller_row(unsigned index,char *out,size_t capacity) {
     int n=snprintf(out,capacity,"phase=%s thread=%s route=%s count=%llu frames=",phases[found->phase&1u],found->thread<3u?threads[found->thread]:"?",found->route<RID_ROUTES?routes[found->route]:"?",(unsigned long long)found->count);
     for(unsigned i=0;n>0 && (size_t)n<capacity && i<RID_FRAMES;i++) n+=snprintf(out+n,capacity-(size_t)n,"%s%x",i?",":"",found->frames[i]);
     if(n>0 && (size_t)n<capacity && found->cue[0]) n+=snprintf(out+n,capacity-(size_t)n," cue=%s",found->cue);
+    if(n>0 && (size_t)n<capacity && rid_rows_on) n+=snprintf(out+n,capacity-(size_t)n," key=%08x",(uint32_t)found->hash);
     return n>0 && (size_t)n<capacity?n:0;
 }

@@ -84,6 +84,22 @@ static float tsc_approach(float cur,float t,float rate,float dt) {
     if(cur>=t) {const float x=cur-step;return x>t?x:t;}
     const float x=step+cur;return x<t?x:t;
 }
+/* FR24: callers for the creation stubs: test_oc_q_call(stub, dst, src, ship, issuer) puts the ship in rdi and the
+ * issuer in rbp as the queue has them at 0xeadf86; test_oc_fm_call(stub, dst, ship, frame) copies 0x210 bytes of frame
+ * to its rsp and puts the ship in r12 as the propagation has them at 0xe99ce9 (rdx 0). */
+__asm__(
+".text\n"
+"test_oc_q_call:\n push %rbp\n push %rdi\n push %rbx\n mov %rsp,%rbx\n mov 0x40(%rsp),%rbp\n mov %r9,%rdi\n"
+" mov %rcx,%rax\n mov %rdx,%rcx\n mov %r8,%rdx\n and $-16,%rsp\n sub $0x20,%rsp\n call *%rax\n mov %rbx,%rsp\n pop %rbx\n pop %rdi\n pop %rbp\n ret\n"
+"test_oc_fm_call:\n push %rbp\n push %r12\n push %rsi\n push %rdi\n mov %rsp,%rbp\n sub $0x240,%rsp\n and $-16,%rsp\n mov %r8,%r12\n"
+" mov %rcx,%rax\n mov %r9,%rsi\n mov %rsp,%rdi\n mov $0x42,%ecx\n rep movsq\n mov %rdx,%rcx\n xor %edx,%edx\n call *%rax\n"
+" mov %rbp,%rsp\n pop %rdi\n pop %rsi\n pop %r12\n pop %rbp\n ret\n"
+);
+extern void *test_oc_q_call(const void *stub,void *dst,const void *src,uint64_t ship,uint64_t issuer);
+extern void *test_oc_fm_call(const void *stub,void *dst,uint64_t ship,const void *frame);
+/* FR24's stand-in copies: the queue's copies the point (0x90 bytes), the propagation's leaves it. */
+static void *tsc_oc_copy(void *dst,const void *src) {memcpy(dst,src,0x90);return dst;}
+static void *tsc_oc_finish(void *dst,const void *tmpl) {(void)tmpl;return dst;}
 static void test_step_chain_native_image(const char *path) {
     FILE *file=fopen(path,"rb");assert(file);IMAGE_DOS_HEADER dos;IMAGE_NT_HEADERS64 nt;
     assert(fread(&dos,1,sizeof(dos),file)==sizeof(dos) && dos.e_magic==IMAGE_DOS_SIGNATURE && !fseek(file,dos.e_lfanew,SEEK_SET));
@@ -115,6 +131,7 @@ static void test_step_chain_native_image(const char *path) {
     image[STC_PS_CALLER+0x8]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[STC_PS_CALLER+0x8]^=1;
     for(unsigned i=10;i<ST_CHAIN_SITE_COUNT;i++) {image[stc_sites[i].site+1]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_sites[i].site+1]^=1;}
     for(unsigned i=0;i<5u;i++) {image[stc_pc_pins[i].rva+stc_pc_pins[i].size-1]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_pc_pins[i].rva+stc_pc_pins[i].size-1]^=1;}
+    for(unsigned i=0;i<4u;i++) {image[stc_oc_pins[i].rva+stc_oc_pins[i].size-2]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_oc_pins[i].rva+stc_oc_pins[i].size-2]^=1;}
     assert(!stc_page && !st_chain_installed);
     /* The stand-ins (called, never read: not pinned) and the helper executable in this copy. */
     DWORD old;
@@ -129,8 +146,11 @@ static void test_step_chain_native_image(const char *path) {
     assert(read_local(image+STC_BLOCK,seen,STC_BLOCK_SIZE) && !memcmp(seen,block,STC_BLOCK_SIZE));
     assert(hash_ok(image+0xeb27c0,5212,"7920e6e4ff99bf0d0c348eeab202b0a21f5e9d69c4005ba75d302eac7ea0c8a4")); /* the world trace's pin */
     assert(st_chain_owned() && !memcmp(stc_page+stc_stub(8),"\x4c\x89\xf9\xff\x25\0\0\0\0",9) && !memcmp(stc_page+stc_stub(9),"\xff\x25\0\0\0\0",6));
-    assert(stc_stub(7)==0x70 && stc_stub(8)==0x80 && stc_stub(9)==0xa0 && stc_stub(14)==0x140 && stc_stub(25)==0x2a0 && STC_CODE_BYTES==0x2c0);
-    for(unsigned i=15;i<ST_CHAIN_SITE_COUNT;i++) assert(!memcmp(stc_page+stc_stub(i),"\xff\x25\0\0\0\0",6));
+    assert(stc_stub(7)==0x70 && stc_stub(8)==0x80 && stc_stub(9)==0xa0 && stc_stub(14)==0x140 && stc_stub(25)==0x2a0 && stc_stub(27)==0x2e0 && STC_CODE_BYTES==0x300);
+    for(unsigned i=15;i<STC_OC_Q_SITE;i++) assert(!memcmp(stc_page+stc_stub(i),"\xff\x25\0\0\0\0",6));
+    assert(!memcmp(stc_page+stc_stub(26),"\x49\x89\xf8\x49\x89\xe9\xff\x25\0\0\0\0",12) && !memcmp(stc_page+stc_stub(27),"\x4d\x89\xe0\x4c\x8d\x4c\x24\x08\xff\x25\0\0\0\0",14));
+    assert(!memcmp(image+0xeadf4a,"\x49\x8b\xe9\x4d\x8b\xf0\x48\x8b\xfa",9) && !memcmp(image+0xeadf7f,"\x48\x8d\x4b\x10\x49\x8b\xd6",7) && !memcmp(image+0xeadf8b,"\x48\x89\xab\xa0\x00\x00\x00",7));
+    assert(!memcmp(image+0xe99c57,"\x4c\x8b\x60\x08",4) && !memcmp(image+0xe99ce4,"\x48\x8d\x54\x24\x70",5) && !memcmp(image+0xe99957,"\x48\x89\x50\x10",4) && !memcmp(image+0xe99ab7,"\x44\x0f\x29\x4c\x24\x60",6));
     for(unsigned i=10;i<14;i++) assert(!memcmp(stc_page+stc_stub(i),"\x4d\x89\xf9\xff\x25\0\0\0\0",9));
     assert(!memcmp(stc_page+stc_stub(14),"\xff\x25\0\0\0\0",6));
     /* Outside a watched step: the original's result, counted, nothing recorded. */
@@ -383,6 +403,34 @@ static void test_step_chain_native_image(const char *path) {
        memcpy(&k,v+4,8);assert(k==0x7dd7c);memcpy(&k,v+46,8);assert(k==(uint64_t)(uintptr_t)vb);
        memcpy(&k,v+234,8);assert(k==(uint64_t)(uintptr_t)vb);memcpy(&k,v+236,8);assert(k==(uint64_t)(uintptr_t)(vb+0x120));
        memcpy(&k,v+48,8);assert(k==(uint64_t)(uintptr_t)(vb+0x90));}
+      /* FR24: the creations through stubs 26 (the queue: ship in rdi, issuer in rbp) and 27 (the propagation: ship in
+       * r12, O at the caller's rsp+0x30, the leader's pending point at [rsp+0x208]), their targets stand-ins: the watched
+       * ship's kept with the point, stack, keys, O and P; the other ship's not. */
+      {static unsigned char q_code[14],f_code[14];memcpy(q_code,image+0xeaa6f0,14);memcpy(f_code,image+0xeaa980,14);
+       assert(VirtualProtect(image+0xeaa000u,0x1000,PAGE_EXECUTE_READWRITE,&old));
+       tsc_jump(0xeaa6f0u,(void*)tsc_oc_copy);tsc_jump(0xeaa980u,(void*)tsc_oc_finish);FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
+       static __declspec(align(16)) unsigned char osrc[0x90],odst[0x90],oframe[0x210],olead[0x90];
+       for(unsigned i=0;i<0x90;i++) {osrc[i]=(unsigned char)(0x20+i);olead[i]=(unsigned char)(0x60+i);}
+       const uint64_t ref=9101;memcpy(osrc+ST_PT_REF,&ref,8);memcpy(olead+ST_PT_REF,&ref,8);
+       for(unsigned i=0;i<sizeof(oframe);i++) oframe[i]=(unsigned char)(0x90+i);
+       void *lp=olead;memcpy(oframe+0x208,&lp,8);
+       memset((void*)st_fm,0,sizeof(st_fm));st_oc_kept=0;stats.issued=2;
+       const LONG64 h26=st_chain_hits[26],h27=st_chain_hits[27];
+       memset(odst,0,sizeof(odst));assert(test_oc_q_call(stc_page+stc_stub(26),odst,osrc,9102,9101)==odst && !memcmp(odst,osrc,0x90));
+       assert(test_oc_q_call(stc_page+stc_stub(26),odst,osrc,9101,0)==odst);                     /* not watched */
+       memset(odst,0,sizeof(odst));memcpy(odst,osrc,0x90);
+       assert(test_oc_fm_call(stc_page+stc_stub(27),odst,9102,oframe)==odst);
+       assert(test_oc_fm_call(stc_page+stc_stub(27),odst,9101,oframe)==odst);                    /* not watched */
+       assert(st_chain_hits[26]==h26+2 && st_chain_hits[27]==h27+2 && st_oc_kept==2 && st_fm[0].ps_calls==2);
+       static st_record_t orr;st_fm_take(0,&orr);const uint32_t *o=orr.pathset,*o2=orr.pathset+ST_PS_WORDS;
+       assert(o[0]==ST_OC_TAG && o[1]==2 && o[3]==0 && o[6]==0 && o[7]>=2 && o[44]==0 && !memcmp(o+48,osrc+0x20,0x40) && !memcmp(o+64,osrc,0x90));
+       memcpy(&k,o+4,8);assert(k==0x7dd7c);memcpy(&k,o+40,8);assert(k==0x7dcd0);memcpy(&k,o+42,8);assert(k==0x7dcd0);
+       for(unsigned i=100;i<134;i++) assert(o[i]==(i<132?0xffffffffu:0u));
+       assert(o2[0]==ST_OC_TAG && o2[3]==1 && o2[6]==1 && o2[7]>=2 && !memcmp(o2+64,osrc,0x90) && !memcmp(o2+100,oframe+0x30,0x40) && !memcmp(o2+116,olead+0x20,0x40));
+       memcpy(&k,o2+132,8);assert(k==0x7dcd0);memcpy(&k,o2+42,8);assert(k==0);
+       assert(o[ST_PS_WORDS-1]==2 && o2[ST_PS_WORDS-1]==2);
+       memcpy(image+0xeaa6f0,q_code,14);memcpy(image+0xeaa980,f_code,14);FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
+       st_oc_kept=0;}
       memcpy(image+0xe89ed0,vec_code,14);
       memcpy(image+ST_HW_FN,hw_code,14);memcpy(image+STC_HW_BANK,bank_code,14);memcpy(image+0xe89f10,clear_code,14);
       FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
@@ -399,9 +447,9 @@ static void test_step_chain_native_image(const char *path) {
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) st_chain_hits[i]=0;
     st_chain_recorded=0;
     assert(VirtualFree(image,0,MEM_RELEASE));image=prior;
-    printf("step chain native image: pins, twenty-six swaps, view, approach helper 0xeb1db0 = the reading on 20000 (%u at the target), rows, "
+    printf("step chain native image: pins, twenty-eight swaps, view, approach helper 0xeb1db0 = the reading on 20000 (%u at the target), rows, "
            "FR17 formation calls kept (watched wingman, tick window, leader not kept), FR18 path point call kept complete "
            "(agent through r15, conversion inside), FR19 SetTarget slot (pin, real bytes, caller 0xeaf65b) kept, FR20 conversions "
            "(0xe8d502, object path) with level probes and the path set (stack, description, point) kept, FR21 Highway slot (pin, "
-           "capture with banking and spline memory inside the watched entry only) and path clear (stack, points) kept, FR22 current-points append (agent at +0x6a8, added and last point) kept, restoration PASS\n",at_target);
+           "capture with banking and spline memory inside the watched entry only) and path clear (stack, points) kept, FR22 current-points append (agent at +0x6a8, added and last point) kept, FR24 order creations (queue copy 0xeadf86, propagation 0xe99ce9 with O and P) kept, restoration PASS\n",at_target);
 }

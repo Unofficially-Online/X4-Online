@@ -18,7 +18,8 @@
 #define ST_AGENT_POSE LXW_AGENT_SLOTS /* the two pathing state banks (Windows +0xad0) */
 #define ST_BANK_READ LX(LX_BANK_READ_VA)
 #define ST_BANK_WRITE LX(LX_BANK_WRITE_VA)
-#define ST_CHAIN_SITE_COUNT 13u /* FR8's three, FR17's two, FR18's four, FR20's two, FR21's two */
+#define ST_CHAIN_SITE_COUNT 17u /* FR8's three, FR17's two, FR18's four, FR20's two, FR21's two, FR24's four */
+#define ST_OC_LAYOUT 1u /* FR24: a path point's reference at +0x8 */
 #define ST_PT_REF 0x8 /* FR18: a path point's reference object runtime id (+0x10 its sub id, +0x20 the offset mat4; Windows +0x10) */
 #define ST_HIER LX(LX_SC_HIER_VA) /* FR20: the level probes' hierarchy function (the file pin covers it) */
 #define ST_SG_SLOT (LX_SG_SLOT_VA-LX_IMAGE_BASE) /* FR19: SetTarget's slot (RELRO, swapped like the step's) */
@@ -39,8 +40,8 @@ static int st_hw_swap(void *expected,void *value) {
 static int st_sg_swap(void *expected,void *value) {
     return gate_data_swap64(LX(LX_SG_SLOT_VA),(uint64_t)(uintptr_t)expected,(uint64_t)(uintptr_t)value);
 }
-/* thirteen stubs 0x20 apart: asinf target, asinf current, the builder's, FR17's two, FR18's four, FR20's two, FR21's
- * two (to 0xba0) */
+/* seventeen stubs 0x20 apart: asinf target, asinf current, the builder's, FR17's two, FR18's four, FR20's two, FR21's
+ * two, FR24's four (to 0xc20) */
 #define LXC_STUBS 0xa00u
 static const struct {uint32_t site,target;const char *name;} lxc_sites[ST_CHAIN_SITE_COUNT]={
     {LX_SC_ASIN_TARGET_SITE_VA,LX_SC_ASINF_VA,"asin_target"},{LX_SC_ASIN_CUR_SITE_VA,LX_SC_ASINF_VA,"asin_cur"},
@@ -50,6 +51,8 @@ static const struct {uint32_t site,target;const char *name;} lxc_sites[ST_CHAIN_
     {LX_SC_PT_CONVERT_B_SITE_VA,LX_SC_PT_CONVERT_VA,"pt_b"},{LX_SC_PT_MATH_SITE_VA,LX_SC_PT_MATH_VA,"pt_conv"},
     {LX_SC_PT_CONVERT_C_SITE_VA,LX_SC_PT_CONVERT_VA,"pt_c"},{LX_SC_PT_OBJECT_SITE_VA,LX_SC_HIER_VA,"pt_obj"},
     {LX_SC_HW_BANK_SITE_VA,LX_SC_HW_BANK_VA,"hw_bank"},{LX_SC_HW_BANK2_SITE_VA,LX_SC_HW_BANK_VA,"hw_bank2"},
+    {LX_SC_OC1_SITE_VA,LX_SC_OC_VA,"oc_1"},{LX_SC_OC_FM_SITE_VA,LX_SC_OC_VA,"oc_fm"},{LX_SC_OC3_SITE_VA,LX_SC_OC_VA,"oc_3"},
+    {LX_SC_OC4_SITE_VA,LX_SC_OC_VA,"oc_4"},
 };
 static const char *st_chain_site_name(unsigned i) {return i<ST_CHAIN_SITE_COUNT?lxc_sites[i].name:"?";}
 static unsigned lxc_done;
@@ -90,6 +93,20 @@ static uint64_t lxc_pt_conv(void *out,void *velocity,void *ref,void *frame,uint6
 /* FR21: the banking (rdi the highway, xmm0 t; the same signature). */
 static float lxc_hw_bank(void *hw,float t) {return st_hw_banking_call(11,LX(LX_SC_HW_BANK_VA),hw,t);}
 static float lxc_hw_bank2(void *hw,float t) {return st_hw_banking_call(12,LX(LX_SC_HW_BANK_VA),hw,t);}
+/* FR24: the queue at its four calls (the original once, then the entry for a watched ship); the propagation's stub
+ * passes its frame (rbp) and the leader's pending point (r13). */
+typedef uint64_t (*lxc_oc_fn)(void *,uint64_t,void *,uint64_t);
+static uint64_t lxc_oc(unsigned site,unsigned which,void *manager,uint64_t ship,void *point,uint64_t issuer,const unsigned char *frame,const unsigned char *leader) {
+    InterlockedIncrement64(&st_chain_hits[site]);
+    const uint64_t r=((lxc_oc_fn)(void*)LX(LX_SC_OC_VA))(manager,ship,point,issuer);
+    uint64_t key;const int w=st_oc_watched(ship,&key);
+    if(w>=0) st_oc_note(w,key,which,(const unsigned char*)point,issuer,frame?frame-0x140:NULL,leader,NULL,lxc_sites[site].site);
+    return r;
+}
+static uint64_t lxc_oc1(void *m,uint64_t s,void *p,uint64_t i) {return lxc_oc(13,0,m,s,p,i,NULL,NULL);}
+static uint64_t lxc_oc_fm(void *m,uint64_t s,void *p,uint64_t i,const unsigned char *frame,const unsigned char *leader) {return lxc_oc(14,1,m,s,p,i,frame,leader);}
+static uint64_t lxc_oc3(void *m,uint64_t s,void *p,uint64_t i) {return lxc_oc(15,2,m,s,p,i,NULL,NULL);}
+static uint64_t lxc_oc4(void *m,uint64_t s,void *p,uint64_t i) {return lxc_oc(16,3,m,s,p,i,NULL,NULL);}
 static void lxc_thunk_write(unsigned char *page) {
     unsigned char *p=page+LXC_STUBS;
     lxw_jump_write(p,(void*)lxc_asin_target);lxw_jump_write(p+0x20,(void*)lxc_asin_cur);
@@ -102,6 +119,9 @@ static void lxc_thunk_write(unsigned char *page) {
     void *const fr20[2]={(void*)lxc_pt_c,(void*)lxc_pt_obj};
     for(unsigned i=0;i<2;i++) {memcpy(p+0x120+0x20*i,"\x48\x89\xd9",3);lxw_jump_write(p+0x123+0x20*i,fr20[i]);} /* mov rcx,rbx */
     lxw_jump_write(p+0x160,(void*)lxc_hw_bank);lxw_jump_write(p+0x180,(void*)lxc_hw_bank2);
+    lxw_jump_write(p+0x1a0,(void*)lxc_oc1);
+    memcpy(p+0x1c0,"\x49\x89\xe8\x4d\x89\xe9",6);lxw_jump_write(p+0x1c6,(void*)lxc_oc_fm); /* mov r8,rbp; mov r9,r13 */
+    lxw_jump_write(p+0x1e0,(void*)lxc_oc3);lxw_jump_write(p+0x200,(void*)lxc_oc4);
 }
 static unsigned char *lxc_stub(unsigned i) {return thunk+LXC_STUBS+0x20u*i;}
 /* 0 original, 1 ours, -1 anything else. */
