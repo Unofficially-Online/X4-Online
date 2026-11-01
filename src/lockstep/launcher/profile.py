@@ -65,7 +65,7 @@ def collect(profile, logfile, out, root=None):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     if (path / logfile).is_file():
-        shutil.copy2(path / logfile, out / logfile)
+        shutil.copy2(path / logfile, out / 'engine-output.log')  # the name the census tools read
     saves = [p for p in (path / 'save').glob('*') if p.name != SNAPSHOT_SLOT] if (path / 'save').is_dir() else []
     for save in saves:
         shutil.copy2(save, out / save.name)

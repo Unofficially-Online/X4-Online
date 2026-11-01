@@ -184,8 +184,11 @@ def run(o: Options, log=print):
             tail = 'X4LAN_CONFIG.native_gate_relay_timeout_ms = 120000\n'  # slack for different load times
             if arm_at:
                 tail += f'X4LAN_CONFIG.native_gate_arm_at = {arm_at}\n'
-            extension.compose(o.overlay, view / 'extensions', k, port, token, o.clients, profile_id=profile_id,
-                              config_tail=tail)
+            target = extension.compose(o.overlay, view / 'extensions', k, port, token, o.clients, profile_id=profile_id,
+                                       config_tail=tail)
+            installed = run_dir / f'client{k}' / 'installed'  # the census tools read the installed config here
+            installed.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(target / 'ui/config.lua', installed / 'x4_lan_lab-config.lua')
             profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot, fast=o.fast)
             if o.steam_fix:
                 steam.fix(o.state / 'steam-fix.json')  # Steam can reset it once a client connects
@@ -336,7 +339,7 @@ def monitor(o, run_dir, relay, clients, log):
             if verdict in ('pass', 'fail', 'diverged'):
                 data = json.loads(report.read_text())
                 return {'outcome': {'pass': 'passed', 'diverged': 'diverged'}.get(verdict, 'relay-failed'), 'verdict': verdict,
-                        'common_ticks': data.get('common_ticks'), 'digest_mismatch_ticks': data.get('digest_mismatch_ticks'),
+                        'common_ticks': len(data.get('common_ticks') or []), 'digest_mismatch_ticks': data.get('digest_mismatch_ticks'),
                         'first_digest_mismatch': data.get('first_digest_mismatch'), 'seconds': round(time.time() - started)}
         if relay.poll() is not None and len(stopped) == len(clients):
             return {'outcome': 'passed' if relay.returncode == 0 else 'relay-failed', 'relay_exit': relay.returncode,
