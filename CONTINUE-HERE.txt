@@ -54,6 +54,17 @@ lane/lanecore.py, lane/lanewin.py, x4lane_autostart, RELEASE.txt) and the
 .local/census overlays/snapshot (capture 005, overlay-PilotB/-Play41P) exist
 only on the machine where the census ran. They are not in Git. Needed from
 Ferrite, or a reviewed replacement launcher must be written.
+Launch findings on this PC (current Steam client, 1 November): X4.exe started
+directly calls RestartAppIfNecessary and re-launches through steam://run, which
+makes Steam ask the user to confirm the arguments; once accepted, one windowed
+instance with -personalfolderid 45850 runs fine. HKCU\...\Steam\ActiveProcess
+pid stays 0 even after a Steam restart, so any directly started instance fails
+with "Steam client is required" - with SteamAppId alone, with the full
+environment copied from a Steam-started X4, and outside the tool sandbox; same
+(medium) integrity level as Steam. A second direct start also took the Steam
+client down once. Do not repeat these probes; ask Ferrite how lanewin starts
+2-4 Windows clients. Windowed lane config.xml: autosave/uisafemode/fullscreen/
+borderless false, res 1280x720 (as tools/dev/linux_gate_live.py).
 
 CI
 .github/workflows/ci.yml (this branch): Linux suite via tools/dev/check.py,
