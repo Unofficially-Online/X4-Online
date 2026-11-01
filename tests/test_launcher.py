@@ -149,6 +149,7 @@ class Session(unittest.TestCase):
         self.assertTrue(session.FAIL.search('[X4LAN] NATIVE_GATE REFUSED exe'))
         args = session.client_command(Path('v'), 45851, 2)
         self.assertEqual(args[1:3], ['-personalfolderid', '45851'])
+        self.assertIn(f'-seed:{session.SESSION_SEED}', args)
         self.assertTrue(re.fullmatch(r'x4ls-c2\.log', args[-1]))
 
 

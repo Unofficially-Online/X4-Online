@@ -80,9 +80,15 @@ def relay_command(o, port, token, run):
     return cmd + list(o.relay_args)
 
 
-def client_command(view, profile_id, k):
+SESSION_SEED = 276944566
+
+
+def client_command(view, profile_id, k, seed=SESSION_SEED):
+    # -seed: X4's session seed; JobDB seeds every job's generator at import from job ID xor this seed
+    # (lockstep_spawn_rng.h), so without one each client spawns different job ships from tick 0.
+    # -nocputhrottle: background client windows keep full speed.
     return [str(view / 'X4.exe'), '-personalfolderid', str(profile_id), '-skipintro', '-noworkshopsync',
-            '-debug', 'scripts', '-logfile', f'x4ls-c{k}.log']
+            '-nocputhrottle', f'-seed:{seed}', '-debug', 'scripts', '-logfile', f'x4ls-c{k}.log']
 
 
 def kill(pid):
