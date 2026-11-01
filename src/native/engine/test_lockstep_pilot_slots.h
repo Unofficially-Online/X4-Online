@@ -150,6 +150,8 @@ static unsigned test_pres_ui_calls,test_pres_refills,test_pres_renders,test_pres
 static int test_pres_fault,test_pres_write,test_pres_off,test_pres_pick_target;
 static uint64_t test_pres_target_seen;
 static unsigned char test_pres_bank_slot,test_pres_bank_canonical;
+static void (*test_pres_ui_hook)(void);   /* runs in the scope, after the pause and resume (test_lockstep_pilot_eye.h) */
+static void test_pilot_eye_flow(pslot_slot *s2,void (*ui_entry)(void*),uint64_t canonical);
 /* In the scope the canonical player stays the singleton and finds slot 2's room, ship and bank. */
 static void *test_pres_room_now(void) {void *r=NULL;memcpy(&r,test_pnat_player+PRES_PARENT,8);return r;}
 static int test_pres_in_scope(void) {
@@ -169,6 +171,7 @@ static void test_pres_ui(void *self) {
     assert(pres_pause() && !test_pres_in_scope() && !pres_open);     /* and the probe's frame goes on canonical */
     assert(pres_resume()==1);assert(test_pres_in_scope() && pres_open && *PNAT_U8(0x2f4b750)==test_pres_bank_slot);
     assert(pres_resume()==0 && pres_open);                           /* not paused: nothing */
+    if(test_pres_ui_hook) test_pres_ui_hook();
     if(test_pres_write) {*PNAT_U8(0x2f4b750)=0x77;test_pnat_player[0x6e20]=1;}
     test_pres_target_seen=*(uint64_t*)(test_pnat_player+PRES_TARGET);
     if(test_pres_pick_target) *(uint64_t*)(test_pnat_player+PRES_TARGET)=0x66;
@@ -583,6 +586,10 @@ static void test_pilot_slots(void) {
     s2->store[test_pslot_store_offset(0x2f4b750)]=0x5a;
     ui_entry(test_pres_self);
     assert(test_pres_ui_calls==1 && !pres_open && test_pslot_singleton()==p1 && pslot_hash()==canonical_before && !pres_refused && !pres_refused_player);
+    /* The eye at slot 2's seat in the same entry (lockstep_pilot_eye.h); everything back after it. */
+    test_pilot_eye_flow(s2,ui_entry,canonical_before);
+    assert(test_pres_ui_calls==2 && !pres_open && test_pslot_singleton()==p1 && pslot_hash()==canonical_before && !pres_refused && !pres_refused_player);
+    test_pres_ui_calls=1;
     /* A simulation write refuses itself: discarded, counted, named; the store, the player's field and the canonical block as before. */
     test_pres_write=1;ui_entry(test_pres_self);test_pres_write=0;
     assert(pres_refused==1 && pres_refused_player==1 && s2->store[test_pslot_store_offset(0x2f4b750)]==store_750 &&
@@ -1017,12 +1024,19 @@ static void test_pilot_slots_arming_order(const char *path) {
     pres_armed=0;pres_pins_checked=0;render_rng_installed=1;pres_fns saved_pres=pres_fn;
     assert(pres_arm(1) && pres_armed && pres_slot==2 && pres_fn.ui_move==(void(*)(void*))(image+PRES_UI_MOVE));
     assert(*(void**)(image+PRES_UI_ENTRY)==(void*)(image+PRES_UI_MOVE));
+    /* The eye's X4 functions: the seat transform, the player's controller vtable and its pose slot. */
+    assert(peye_seat==(peye_seat_fn)(image+PEYE_SEAT) && peye_fpc_pose==(peye_pose_fn)(image+PEYE_FPC_POSE) &&
+           peye_fpc_stock==(void**)(image+PEYE_FPC_VTABLE) && peye_fpc_stock[PEYE_POSE_SLOT]==(void*)(image+PEYE_FPC_POSE));
     assert(pslot_hook_install() && pres_refill_install() && image[PRES_REFILL_CALL]==0xe8 && memcmp(image+PRES_REFILL_CALL,pres_refill_bytes,5));
     assert(pres_pick_install() && image[PRES_PICK_CALL]==0xe8 && memcmp(image+PRES_PICK_CALL,pres_pick_bytes,5));
     pres_pick_uninstall();assert(!memcmp(image+PRES_PICK_CALL,pres_pick_bytes,5));
     pres_refill_uninstall();assert(!memcmp(image+PRES_REFILL_CALL,pres_refill_bytes,5));assert(pslot_hook_uninstall());
     image[PRES_UI_ANCHORS+3]^=1;pres_armed=0;pres_pins_checked=0;
     assert(!pres_arm(1) && !strcmp(pstk_arm_why,"pins_present:8e8450"));image[PRES_UI_ANCHORS+3]^=1;
+    image[PEYE_SEAT+3]^=1;pres_armed=0;pres_pins_checked=0;
+    assert(!pres_arm(1) && !strcmp(pstk_arm_why,"pins_present:75d110"));image[PEYE_SEAT+3]^=1;
+    image[PEYE_FPC_POSE+3]^=1;pres_armed=0;pres_pins_checked=0;
+    assert(!pres_arm(1) && !strcmp(pstk_arm_why,"pins_present:d81ec0"));image[PEYE_FPC_POSE+3]^=1;
     pres_armed=0;pres_slot=0;pres_pins_checked=0;render_rng_installed=0;pres_fn=saved_pres;
     /* gate.actor on a stock slot's ship, on the real image (its guard hashes X4's lookup). */
     test_pslot_actor();

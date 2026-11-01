@@ -136,10 +136,46 @@ static void test_exact_reciprocal(void) {
     assert(!xrcp_arm() && !strcmp(xrcp_stage,"pins") && !xrcp_installed);
     stats.issued=1;assert(!xrcp_arm() && !strcmp(xrcp_stage,"state"));stats.issued=0;
     boot_phase=2;assert(!xrcp_arm());boot_phase=0;ui_thread=GetCurrentThreadId()+1;assert(!xrcp_arm());
-    char out[320];assert(xrcp_status(out,sizeof(out))>0 && strstr(out,"installed=0 windows=819 rewritten=1262 "));
+    char out[320];assert(xrcp_status(out,sizeof(out))>0 && strstr(out,"installed=0 windows=824 rewritten=1272 "));
     xrcp_stage="idle";
     stats.active=saved_active;stats.issued=saved_issued;ui_thread=saved_ui;boot_mode=saved_boot;boot_phase=saved_phase;
     printf("exact reciprocal original-byte view/hash_ok/arm refusals PASS\n");
+}
+/* FR26: the four leaf extra roots of gen_exact_reciprocal.py (no .pdata entry) run on their own bytes: 0xb34d0 (box from
+ * half and centre), 0x6a1590 (box of a sphere), 0xd47470 (box from three halves) store the radius at +0x20, 0x14e0620
+ * (safesize) returns |centre + sign(centre) half|. Returns the cases whose result is not sqrt(x*x + (y*y + z*z)) of
+ * what each forms; with the windows installed that must be none. */
+#define TXL_CASES 4000u
+static float txl_sqrt(float x) {return _mm_cvtss_f32(_mm_sqrt_ss(_mm_set_ss(x)));}
+static float txl_len(float x,float y,float z) {const float xx=x*x,yy=y*y,zz=z*z;return txl_sqrt(xx+(yy+zz));}
+static uint32_t txl_bits(float f) {uint32_t u;memcpy(&u,&f,4);return u;}
+static unsigned txl_leaf_runs(void) {
+    typedef void (*set_fn)(void *,const float *,const float *);typedef void *(*sphere_fn)(const void *,void *);
+    typedef void (*three_fn)(void *,float,float,float);typedef float (*safe_fn)(const void *);
+    const set_fn set=(set_fn)(void*)(image+0xb34d0u);const sphere_fn sphere=(sphere_fn)(void*)(image+0x6a1590u);
+    const three_fn three=(three_fn)(void*)(image+0xd47470u);const safe_fn safe=(safe_fn)(void*)(image+0x14e0620u);
+    uint32_t seed=0x2601u;unsigned split=0;
+    for(unsigned i=0;i<TXL_CASES;i++) {
+        float v[6];
+        for(unsigned k=0;k<6;k++) {
+            seed=seed*1664525u+1013904223u;const float m=1.0f+(float)(seed>>9)*(1.0f/8388608.0f);
+            seed=seed*1664525u+1013904223u;const int e=(int)(seed>>28)-4;  /* 2^-4 .. 2^11 */
+            v[k]=ldexpf(m,e)*((seed>>8)&1?-1.0f:1.0f);
+        }
+        __declspec(align(16)) float half[4]={fabsf(v[0]),fabsf(v[1]),fabsf(v[2]),0},centre[4]={v[3],v[4],v[5],0};
+        __declspec(align(16)) unsigned char box[0x40],out[0x40];
+        memset(box,0,sizeof(box));set(box,half,centre);
+        split+=txl_bits(*(float*)(box+0x20))!=txl_bits(txl_len(half[0],half[1],half[2]));
+        memset(box,0,sizeof(box));three(box,half[0],half[1],half[2]);
+        split+=txl_bits(*(float*)(box+0x20))!=txl_bits(txl_len(half[0],half[1],half[2]));
+        memset(box,0,sizeof(box));memcpy(box+0x10,centre,16);memcpy(box+0x20,&half[0],4);memset(out,0,sizeof(out));
+        assert(sphere(box,out)==out);
+        split+=txl_bits(*(float*)(out+0x20))!=txl_bits(txl_len(half[0],half[0],half[0]));
+        memset(box,0,sizeof(box));memcpy(box,half,16);memcpy(box+0x10,centre,16);
+        float w[3];for(unsigned k=0;k<3;k++) w[k]=(centre[k]<0?-1.0f:1.0f)*half[k]+centre[k];
+        split+=txl_bits(safe(box))!=txl_bits(txl_len(w[0],w[1],w[2]));
+    }
+    return split;
 }
 static void test_exact_reciprocal_native_image(const char *path) {
     unsigned char *prior=image;image=test_pmath_map(path);
@@ -152,6 +188,7 @@ static void test_exact_reciprocal_native_image(const char *path) {
         else {++copies;rip+=x->rip!=0;}
     }
     assert(rewritten==XRCP_REWRITTEN);
+    const unsigned leaf_native=txl_leaf_runs(); /* FR26: the leaf roots as the CPU's rcpss/rsqrtss leave them */
     /* A gate pin over a window: its SHA-256 of the original bytes, before and while installed. */
     const xrcp_window *w=&xrcp_windows[XRCP_WINDOWS/2];
     unsigned char *range=image+w->rva-64;char before[65];assert(digest_hex(range,256,before) && hash_ok(range,256,before));
@@ -170,6 +207,10 @@ static void test_exact_reciprocal_native_image(const char *path) {
     }
     assert(xrcp_switch(1)==1);xrcp_installed=1;xrcp_failures=0;
     for(unsigned i=0;i<XRCP_WINDOWS;i++) assert(xrcp_state(i)==1 && xrcp_patched[i]);
+    const unsigned leaf_exact=txl_leaf_runs();
+    if(leaf_exact || leaf_native<TXL_CASES) {printf("exact reciprocal leaf roots: %u of %u split installed, %u native\n",leaf_exact,4*TXL_CASES,leaf_native);assert(0);}
+    printf("exact reciprocal FR26 leaf roots 0xb34d0/0x6a1590/0xd47470/0x14e0620 on their own bytes: native %u of %u split from sqrt, installed 0 PASS\n",
+           leaf_native,4*TXL_CASES);
     unsigned char raw[XRCP_MAX_WINDOW];SIZE_T got=0;
     assert(xrcp_owned() && xrcp_check() && ReadProcessMemory(GetCurrentProcess(),image+w->rva,raw,w->length,&got) && raw[0]==0xe9);
     char during[65];assert(digest_hex(range,256,during) && strcmp(before,during) && hash_ok(range,256,before));

@@ -73,6 +73,14 @@ class ExactReciprocalSites(unittest.TestCase):
                 self.assertLessEqual(trampoline, 128, f'{rva:#x}: trampoline may exceed its 128-byte slot')
                 end = rva + length
 
+    def test_windows_extra_roots_are_whole_chains(self):
+        # FR26 (gen_exact_reciprocal.py WINDOWS_EXTRA_ROOTS): the box radius writers 0xb34d0, 0x6a1590, 0xd47470, the
+        # safesize leaf 0x14e0620 and the speed arm of the property evaluator; each rcp(rsqrt) must become one sqrtss.
+        rows = {int(rva, 16): insns for rva, _, _, _, insns in ROW.findall(HEADERS['windows'][0].read_text())}
+        for site in (0xb34fd, 0x6a15c0, 0xcf3897, 0xd4749e, 0x14e0659):
+            with self.subTest(site=hex(site)):
+                self.assertEqual(rows.get(site), '{0,4,3,0},{4,4,4,0}')
+
     def test_linux_windows_avoid_the_agent_pins_and_the_decimal_readers(self):
         pinned = ROOT / 'src/rust/x4mp-agent/src/pinned.rs'
         busy = [(int(va, 16), int(va, 16) + int(n, 16)) for va, n in

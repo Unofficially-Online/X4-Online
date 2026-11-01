@@ -20,7 +20,9 @@
  *     so a write refuses itself: it is discarded at the exit, and a changed SIM byte is
  *     counted and its region named, refused=). LOCAL stays this client's. At the exit every
  *     byte comes back. The camera stays anchored on the canonical player as in stock play,
- *     its cockpit mode then finds slot k's ship through the same walks.
+ *     its cockpit mode then finds slot k's ship through the same walks. The player's own pose
+ *     in the room, live and published, is moved from slot 1's seat to slot k's: another ship
+ *     model seats its pilot elsewhere in its room (lockstep_pilot_eye.h, status eye=).
  *   entry points (nothing else runs in it)
  *     VBI slot 6   UI::CUIController::Move, vtable entry 0x2bc07d8: the UI and its FFI
  *                  queries, except the probe's own frame (gate.pilot_present_pause/resume:
@@ -111,6 +113,8 @@ static const struct {unsigned rva,size;const char *sha;} pres_pin_table[]={
     {PRES_ZONE,105,"e30fedfabb28e3bb89c200b429c417cce27329e4d30db7e5cbf6406dd9bd1e0f"},
     {PRES_ANCESTOR,219,"a77acbafe216c2d105ceb10605dbdcdb13f50fe7862e09ec3944a601fe38a45a"},
     {PRES_PICK,3710,"46342dd30a7245bf93a0634836f03a0d9a106fe1b5ebef736f2002223375262d"},
+    {0x75d110,0x142,"5dda1ded31999c6c7984952e2fef76d8d458d3571186e2e78740e8a3f3180c57"},   /* the seat transform (lockstep_pilot_eye.h) */
+    {0xd81ec0,0x46f,"b1214c17c25e0ce8060da52b5d4a69159dfd89d74975f6bffd3092ec5f77ae8c"},   /* FirstPersonController slot 6 */
     {0x9fe55a,0x32,"e1658b86f806df2d83e4129e52a4d59715d886d7bcc7ed7b686b420a94d709b3"}}; /* the refill loop */
 #define PRES_PIN_COUNT (sizeof(pres_pin_table)/sizeof(*pres_pin_table))
 static const unsigned char pres_refill_bytes[5]={0xe8,0x68,0xb7,0xf7,0xff}; /* call 0x979ce0 from 0x9fe578 */
@@ -138,6 +142,7 @@ static uint64_t *pres_rng_hold(uint64_t *word) {
 static void pres_rng_back(uint64_t *rng,uint64_t word) {
     if(rng && *rng!=word) {InterlockedIncrement64(&pres_rng_moved);*rng=word;}
 }
+#include "lockstep_pilot_eye.h"
 static int pres_pins(void) {
     if(!pres_pins_checked) {
         int ok=!memcmp(image+PRES_REFILL_CALL,pres_refill_bytes,5);
@@ -146,6 +151,7 @@ static int pres_pins(void) {
         for(unsigned i=0;ok && i<PRES_PIN_COUNT;i++)
             if(!(ok=hash_ok(image+pres_pin_table[i].rva,pres_pin_table[i].size,pres_pin_table[i].sha))) pin_failed_rva=pres_pin_table[i].rva;
         if(ok && *(void**)(image+PRES_UI_ENTRY)!=(void*)(image+PRES_UI_MOVE)) {ok=0;pin_failed_rva=PRES_UI_ENTRY;}
+        if(ok && ((void**)(image+PEYE_FPC_VTABLE))[PEYE_POSE_SLOT]!=(void*)(image+PEYE_FPC_POSE)) {ok=0;pin_failed_rva=PEYE_FPC_VTABLE;}
         pres_pins_checked=ok?1:-1;
     }
     return pres_pins_checked==1;
@@ -157,6 +163,7 @@ static void pres_use_image(void) {
     pres_fn.zone=(uint64_t(*)(void))(image+PRES_ZONE);
     pres_fn.ancestor=(void**(*)(void*,void**,int,char))(image+PRES_ANCESTOR);
     pres_fn.pick=(void(*)(void*))(image+PRES_PICK);
+    peye_seat=(peye_seat_fn)(image+PEYE_SEAT);peye_fpc_pose=(peye_pose_fn)(image+PEYE_FPC_POSE);peye_fpc_stock=(void**)(image+PEYE_FPC_VTABLE);
 }
 /* ---- the presentation scope ---- */
 static void pres_stop_presenting(const char *why) {
@@ -204,12 +211,15 @@ static int pres_enter(void) {
         *(volatile int*)(s->room+PRES_ATTENTION)=PRES_ROOM_ATTENTION;
         *(volatile int*)(s->room+PRES_VIEW_ATTENTION+bank*PRES_VIEW_STRIDE)=PRES_ROOM_ATTENTION;
     }
+    /* The eye at slot k's seat (lockstep_pilot_eye.h): the player's own pose, live and published, with D applied. */
+    peye_enter(p1,pres_view_at,bank,s,pres_parent_saved);
     InterlockedExchange(&pres_open,1);InterlockedIncrement64(&pres_scopes);
     return 1;
 }
 static void pres_leave(void) {
     pslot_slot *s=&pslots[pres_slot];unsigned char *p1=pslot_p1;unsigned n=0,p=0;
     if(!pres_open) return;
+    peye_leave();
     if(!s->roomless) {
         size_t bank=(size_t)(pres_view_at-(p1+PRES_VIEW_CACHE));
         *(volatile int*)(s->room+PRES_ATTENTION)=pres_room_attention_saved;
@@ -436,6 +446,7 @@ static int pres_start(uint64_t tick) {
     if(!pres_refill_install()) return pres_fail("refill_site");
     if(!pres_pick_install()) return pres_fail("pick_site");
     pres_diff_build(s);
+    peye_update(s);
     pres_active=1;
     if(!pres_enter()) {pres_active=0;return pres_fail("start_scope");}
     int fault=0;uint64_t word=0,*rng=pres_rng_hold(&word);void *up=NULL;
@@ -469,7 +480,7 @@ static void pres_anchor_home(void) {
 /* Everything back, as the canonical player, on the frame thread. */
 static void pres_stop(void) {
     if(pres_open) pres_leave();
-    pres_active=0;
+    pres_active=0;peye_on=0;
     pres_anchor_home();
     pres_camera=NULL;pres_target_set=0;pres_local_target=0;pview_slot_target=0;
     pres_unhook();
@@ -485,6 +496,7 @@ static int pres_pass(uint64_t tick) {
         if(*(void*volatile*)(pnat_base+PRES_UI_ENTRY)!=(void*)pres_ui_move) return pres_fail("ui_entry_lost");
         if(memcmp(pnat_base+PRES_REFILL_CALL,pres_site_patched,5)) return pres_fail("refill_site_lost");
         if(memcmp(pnat_base+PRES_PICK_CALL,pres_pick_patched,5)) return pres_fail("pick_site_lost");
+        peye_update(&pslots[pres_slot]);
         if(!pres_anchor_check()) return pres_fail(pres_fault_text);
         return 1;
     }
@@ -502,6 +514,7 @@ static int pres_arm_using(int hud) {
     if(pres_slot && !render_rng_installed) return pstk_arm_refuse("present_without_render_split");
     if(pres_slot && (!pres_fn.ui_move || !pres_fn.refill || !pres_fn.anchors || !pres_fn.occupied || !pres_fn.controlled || !pres_fn.zone || !pres_fn.ancestor || !pres_fn.pick))
         return pstk_arm_refuse("present_functions");
+    peye_reset();
     pres_failed=0;pres_active=0;pres_stage=pres_slot?"armed":"own_player";pres_why="-";pres_refused_region="-";pres_fault_detail[0]=0;pres_restored=1;pres_anchor_moved=0;
     pres_armed=1;return 1;
 }
@@ -534,9 +547,14 @@ static int pres_status(char *out,size_t capacity) {
     int mode=-1;unsigned char *universe=NULL,*camera=NULL;
     if(read_local(pnat_base+VPL_UNIVERSE,&universe,8) && universe && read_local(universe+PRES_CAMERA,&camera,8) && camera) read_local(camera+PRES_MODE,&mode,4);
     int n=snprintf(out,capacity," present=%s present_why=%s present_slot=%u scopes=%lld ui=%lld render=%lld local=%lld refills=%lld picks=%lld skipped=%lld "
-        "refused=%lld/%lld/%s targets=%lld/%llx faults=%lld camera_mode=%d asks=%llx/%llx/%llx hud=%d/%lld rng_moved=%lld present_restored=%d%s%s",pres_stage,pres_why,pres_slot,(long long)pres_scopes,(long long)pres_ui,
+        "refused=%lld/%lld/%s targets=%lld/%llx faults=%lld camera_mode=%d asks=%llx/%llx/%llx hud=%d/%lld rng_moved=%lld",pres_stage,pres_why,pres_slot,(long long)pres_scopes,(long long)pres_ui,
         (long long)pres_render,(long long)pres_local,(long long)pres_refills,(long long)pres_picks,(long long)pres_skipped,(long long)pres_refused,(long long)pres_refused_player,
         pres_refused_region,(long long)pres_targets,(unsigned long long)pres_local_target,(long long)pres_faults,mode,(unsigned long long)pres_asked_ship,(unsigned long long)pres_asked_controlled,(unsigned long long)pres_asked_zone,
-        pres_hud,(long long)pres_anchor_moves,(long long)pres_rng_moved,pres_restored,pres_fault_detail[0]?" present_fault=":"",pres_fault_detail);
-    return n>0 && (size_t)n<capacity?n:0;
+        pres_hud,(long long)pres_anchor_moves,(long long)pres_rng_moved);
+    if(n<=0 || (size_t)n>=capacity) return 0;
+    int eye=peye_status(out+n,capacity-(size_t)n);
+    if(!eye) return 0;
+    n+=eye;
+    int more=snprintf(out+n,capacity-(size_t)n," present_restored=%d%s%s",pres_restored,pres_fault_detail[0]?" present_fault=":"",pres_fault_detail);
+    return more>0 && (size_t)(n+more)<capacity?n+more:0;
 }

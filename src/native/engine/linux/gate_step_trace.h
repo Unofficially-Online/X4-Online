@@ -18,7 +18,9 @@
 #define ST_AGENT_POSE LXW_AGENT_SLOTS /* the two pathing state banks (Windows +0xad0) */
 #define ST_BANK_READ LX(LX_BANK_READ_VA)
 #define ST_BANK_WRITE LX(LX_BANK_WRITE_VA)
-#define ST_CHAIN_SITE_COUNT 17u /* FR8's three, FR17's two, FR18's four, FR20's two, FR21's two, FR24's four */
+#define ST_CHAIN_SITE_COUNT 22u /* FR8's three, FR17's two, FR18's four, FR20's two, FR21's two, FR24's four, FR25's five */
+#define ST_SP_AI_VALUE 0xa0 /* FR25: a context Value's payload is the context plus this (Windows 0xa8) */
+#define ST_SP_LAYOUT 1u
 #define ST_OC_LAYOUT 1u /* FR24: a path point's reference at +0x8 */
 #define ST_PT_REF 0x8 /* FR18: a path point's reference object runtime id (+0x10 its sub id, +0x20 the offset mat4; Windows +0x10) */
 #define ST_HIER LX(LX_SC_HIER_VA) /* FR20: the level probes' hierarchy function (the file pin covers it) */
@@ -40,8 +42,8 @@ static int st_hw_swap(void *expected,void *value) {
 static int st_sg_swap(void *expected,void *value) {
     return gate_data_swap64(LX(LX_SG_SLOT_VA),(uint64_t)(uintptr_t)expected,(uint64_t)(uintptr_t)value);
 }
-/* seventeen stubs 0x20 apart: asinf target, asinf current, the builder's, FR17's two, FR18's four, FR20's two, FR21's
- * two, FR24's four (to 0xc20) */
+/* twenty-two stubs 0x20 apart: asinf target, asinf current, the builder's, FR17's two, FR18's four, FR20's two, FR21's
+ * two, FR24's four, FR25's five (to 0xcc0); then FR25's solver entry stub (0xcc0) and its trampoline (0xce0) */
 #define LXC_STUBS 0xa00u
 static const struct {uint32_t site,target;const char *name;} lxc_sites[ST_CHAIN_SITE_COUNT]={
     {LX_SC_ASIN_TARGET_SITE_VA,LX_SC_ASINF_VA,"asin_target"},{LX_SC_ASIN_CUR_SITE_VA,LX_SC_ASINF_VA,"asin_cur"},
@@ -53,7 +55,17 @@ static const struct {uint32_t site,target;const char *name;} lxc_sites[ST_CHAIN_
     {LX_SC_HW_BANK_SITE_VA,LX_SC_HW_BANK_VA,"hw_bank"},{LX_SC_HW_BANK2_SITE_VA,LX_SC_HW_BANK_VA,"hw_bank2"},
     {LX_SC_OC1_SITE_VA,LX_SC_OC_VA,"oc_1"},{LX_SC_OC_FM_SITE_VA,LX_SC_OC_VA,"oc_fm"},{LX_SC_OC3_SITE_VA,LX_SC_OC_VA,"oc_3"},
     {LX_SC_OC4_SITE_VA,LX_SC_OC_VA,"oc_4"},
+    {LX_SC_SP_CV_SITE_VA,LX_SC_SETVAR_VA,"sp_cv"},{LX_SC_SP_GV_SITE_VA,LX_SC_SETVAR_VA,"sp_gv"},{LX_SC_SP_TR_SITE_VA,LX_SC_SP_TR_VA,"sp_tr"},
+    {LX_SC_SP_GZ_SITE_VA,LX_SC_SP_ZONE_VA,"sp_gz"},{LX_SC_SP_GS_SITE_VA,LX_SC_SP_SECTOR_VA,"sp_gs"},
 };
+#define LXC_SP_CV 17u
+#define LXC_SP_TR 19u
+#define LXC_SP_GZ 20u
+#define LXC_SP_ENTRY (LXC_STUBS+0x20u*ST_CHAIN_SITE_COUNT) /* 0xcc0 */
+#define LXC_SP_TRAMP (LXC_SP_ENTRY+0x20u)
+static const unsigned char lxc_sp_entry_original[LX_SC_SP_SOLVER_PROLOGUE]={0x48,0xb8,0xb7,0x6d,0xdb,0xb6,0x6d,0xdb,0xb6,0x6d}; /* movabs rax,0x6db6db6db6db6db7 */
+static unsigned lxc_sp_entry_done;
+static uintptr_t lxc_sp_gs_ret[2];
 static const char *st_chain_site_name(unsigned i) {return i<ST_CHAIN_SITE_COUNT?lxc_sites[i].name:"?";}
 static unsigned lxc_done;
 typedef float (*lxc_asin_fn)(float);
@@ -107,6 +119,32 @@ static uint64_t lxc_oc1(void *m,uint64_t s,void *p,uint64_t i) {return lxc_oc(13
 static uint64_t lxc_oc_fm(void *m,uint64_t s,void *p,uint64_t i,const unsigned char *frame,const unsigned char *leader) {return lxc_oc(14,1,m,s,p,i,frame,leader);}
 static uint64_t lxc_oc3(void *m,uint64_t s,void *p,uint64_t i) {return lxc_oc(15,2,m,s,p,i,NULL,NULL);}
 static uint64_t lxc_oc4(void *m,uint64_t s,void *p,uint64_t i) {return lxc_oc(16,3,m,s,p,i,NULL,NULL);}
+/* FR25: the results as the actions store them (the original once), the transform (its stub passes the context, rbp of
+ * 0xd04a50, in r8), the solver through its entry jump (the original through the trampoline). */
+typedef uint64_t (*lxc_setvar_fn)(void *,void *,void *,void *);
+static uint64_t lxc_sp_set(unsigned site,unsigned which,void *var,void *ctx,void *name,void *value) {
+    InterlockedIncrement64(&st_chain_hits[site]);
+    st_sp_value(which,(const unsigned char*)ctx,(const unsigned char*)value);
+    return ((lxc_setvar_fn)(void*)LX(LX_SC_SETVAR_VA))(var,ctx,name,value);
+}
+static uint64_t lxc_sp_cv(void *a,void *b,void *c,void *d) {return lxc_sp_set(LXC_SP_CV,0,a,b,c,d);}
+static uint64_t lxc_sp_gv(void *a,void *b,void *c,void *d) {return lxc_sp_set(LXC_SP_CV+1,1,a,b,c,d);}
+typedef void (*lxc_tr_fn)(void *,void *,void *,uint32_t,double);
+static void lxc_sp_tr(void *self,void *mat,void *anc,uint32_t flag,const unsigned char *ctx,double time) {
+    InterlockedIncrement64(&st_chain_hits[LXC_SP_TR]);
+    st_sp_tr_ctx c;const int on=st_sp_tr_begin(&c,ctx,self,mat,anc,time,flag&0xff);
+    ((lxc_tr_fn)(void*)LX(LX_SC_SP_TR_VA))(self,mat,anc,flag,time);
+    if(on) st_sp_tr_end(&c,mat,self);
+}
+typedef uint64_t (*lxc_solver_fn)(void *,float *,float *,uint32_t,uint32_t,float *,float,float,float);
+static uint64_t lxc_sp_solver(void *boxes,float *p,float *dir,uint32_t xflag,uint32_t yflag,float *move,float radius,float a5,float a9) {
+    st_sp_cap_ctx c;
+    const int on=st_sp_cap_begin(&c,lxc_sp_gs_ret,2,boxes,p,dir,move,st_bits(radius),st_bits(a5),yflag,xflag,st_bits(a9),0,
+                                 (uintptr_t)__builtin_return_address(0));
+    const uint64_t r=((lxc_solver_fn)(void*)(thunk+LXC_SP_TRAMP))(boxes,p,dir,xflag,yflag,move,radius,a5,a9);
+    if(on) st_sp_cap_end(&c);
+    return r;
+}
 static void lxc_thunk_write(unsigned char *page) {
     unsigned char *p=page+LXC_STUBS;
     lxw_jump_write(p,(void*)lxc_asin_target);lxw_jump_write(p+0x20,(void*)lxc_asin_cur);
@@ -122,6 +160,30 @@ static void lxc_thunk_write(unsigned char *page) {
     lxw_jump_write(p+0x1a0,(void*)lxc_oc1);
     memcpy(p+0x1c0,"\x49\x89\xe8\x4d\x89\xe9",6);lxw_jump_write(p+0x1c6,(void*)lxc_oc_fm); /* mov r8,rbp; mov r9,r13 */
     lxw_jump_write(p+0x1e0,(void*)lxc_oc3);lxw_jump_write(p+0x200,(void*)lxc_oc4);
+    lxw_jump_write(p+0x220,(void*)lxc_sp_cv);lxw_jump_write(p+0x240,(void*)lxc_sp_gv);
+    memcpy(p+0x260,"\x49\x89\xe8",3);lxw_jump_write(p+0x263,(void*)lxc_sp_tr); /* mov r8,rbp */
+    const void *gate=(const void*)&st_sp_gate_gs;void *const to[2]={(void*)LX(LX_SC_SP_ZONE_VA),(void*)LX(LX_SC_SP_SECTOR_VA)};
+    for(unsigned i=0;i<2;i++) {                                   /* mov r11,&gate; mov [r11],r12; mov [r11+8],rsp */
+        unsigned char *s=p+0x280+0x20*i;memcpy(s,"\x49\xbb",2);memcpy(s+2,&gate,8);memcpy(s+10,"\x4d\x89\x23\x49\x89\x63\x08",7);lxw_jump_write(s+17,to[i]);
+    }
+    lxw_jump_write(page+LXC_SP_ENTRY,(void*)lxc_sp_solver);
+    memcpy(page+LXC_SP_TRAMP,lxc_sp_entry_original,LX_SC_SP_SOLVER_PROLOGUE);
+    lxw_jump_write(page+LXC_SP_TRAMP+LX_SC_SP_SOLVER_PROLOGUE,(void*)(LX(LX_SC_SP_SOLVER_VA)+LX_SC_SP_SOLVER_PROLOGUE));
+}
+/* FR25: the solver's entry line: its first five bytes a jump to the entry stub when ours. 0 original, 1 ours, -1 other. */
+static void lxc_sp_entry_lines(unsigned __int128 *original,unsigned __int128 *ours) {
+    unsigned char *at=LX(LX_SC_SP_SOLVER_VA);memcpy(original,at,16);*ours=*original;
+    memcpy(original,lxc_sp_entry_original,LX_SC_SP_SOLVER_PROLOGUE);
+    const int32_t d=(int32_t)((intptr_t)(thunk+LXC_SP_ENTRY)-(intptr_t)(at+5));unsigned char j[5]={0xe9};memcpy(j+1,&d,4);
+    memcpy(ours,original,16);memcpy(ours,j,5);
+}
+static int lxc_sp_entry_state(void) {
+    unsigned __int128 o,w,now;memcpy(&now,LX(LX_SC_SP_SOLVER_VA),16);
+    if(!thunk) return memcmp(&now,lxc_sp_entry_original,LX_SC_SP_SOLVER_PROLOGUE)?-1:0;
+    lxc_sp_entry_lines(&o,&w);
+    if(!memcmp(&now,&o,16)) return 0;
+    if(!memcmp(&now,&w,16)) return 1;
+    return -1;
 }
 static unsigned char *lxc_stub(unsigned i) {return thunk+LXC_STUBS+0x20u*i;}
 /* 0 original, 1 ours, -1 anything else. */
@@ -146,23 +208,33 @@ static int lxc_swap(unsigned i,const void *expected,const void *value) {
     return gate_code_swap128(line,before,after);
 }
 static void st_chain_restore(void) {
+    if(lxc_sp_entry_done && lxc_sp_entry_state()==1) {
+        unsigned __int128 o,w;lxc_sp_entry_lines(&o,&w);
+        if(gate_code_swap128(LX(LX_SC_SP_SOLVER_VA),w,o)) lxc_sp_entry_done=0;
+    }
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++)
         if((lxc_done>>i)&1u && lxc_site_state(i)==1 && lxc_swap(i,lxc_stub(i),LX(lxc_sites[i].target))) lxc_done&=~(1u<<i);
-    if(!lxc_done) {st_chain_installed=0;st_chain_restored=1;st_chain_stage="restored";}
+    if(!lxc_done && !lxc_sp_entry_done) {st_chain_installed=0;st_chain_restored=1;st_chain_stage="restored";st_sp_gate_clear();}
 }
 static int st_chain_arm(void) {
     if(!thunk) {st_chain_stage="page";return 0;}
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) if(lxc_site_state(i)!=0) {st_chain_stage="pins";return 0;}
+    if(lxc_sp_entry_state()!=0 || ((uintptr_t)LX(LX_SC_SP_SOLVER_VA)&15)) {st_chain_stage="pins";return 0;}
+    lxc_sp_gs_ret[0]=(uintptr_t)LX(LX_SC_SP_GZ_SITE_VA+5);lxc_sp_gs_ret[1]=(uintptr_t)LX(LX_SC_SP_GS_SITE_VA+5);st_sp_gate_clear();
     st_chain_installed=1;st_chain_restored=0;lxc_done=0;
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) {
         if(!lxc_swap(i,LX(lxc_sites[i].target),lxc_stub(i))) {st_chain_restore();st_chain_installed=lxc_done!=0;st_chain_stage="cas";return 0;}
         lxc_done|=1u<<i;
     }
+    {unsigned __int128 o,w;lxc_sp_entry_lines(&o,&w);
+     if(!gate_code_swap128(LX(LX_SC_SP_SOLVER_VA),o,w)) {st_chain_restore();st_chain_installed=lxc_done!=0;st_chain_stage="cas";return 0;}
+     lxc_sp_entry_done=1;}
     st_chain_stage="armed";return 1;
 }
 /* The thunk page is r-x for good; the sites must still lead there. */
 static int st_chain_owned(void) {
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) if((lxc_done>>i)&1u && lxc_site_state(i)!=1) return 0;
+    if(lxc_sp_entry_done && lxc_sp_entry_state()!=1) return 0;
     return 1;
 }
 static int lua_step_trace(lua_State *L) {

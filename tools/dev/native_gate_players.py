@@ -498,6 +498,11 @@ def pilot_lines(args, plan):
         # only (the probe's pilot order block, as in the sandbox). The UI replay opens what it captures.
         lines.append('X4LAN_CONFIG.native_gate_pilot_block_orders = true')
     lines += ui_replay_lines(args)
+    if args.guidance_local:
+        # A client's guidance is its own (lockstep_guidance_local.h): what it runs in the simulation takes local IDs.
+        if not args.present:
+            raise ValueError('--guidance-local needs --present (each client presents its own slot, its guidance is its own)')
+        lines.append('X4LAN_CONFIG.native_gate_guidance_local = true')
     return lines
 
 
@@ -561,6 +566,13 @@ def build_overlay(args):
     # The UI replay carries runtime IDs: a base overlay without them gets the default, one with them keeps its own.
     if args.ui_replay is not None and sandbox.parse_config(stripped).get('native_gate_runtime_ids') in (None, 'false', 'nil', "'observe'", '"observe"'):
         lines.append('X4LAN_CONFIG.native_gate_runtime_ids = true')
+    if args.guidance_local:
+        base_values = sandbox.parse_config(stripped)
+        missing = [key for key in ('native_gate_runtime_ids_local', 'native_gate_md_timed_rng') if base_values.get(key) != 'true']
+        if base_values.get('native_gate_script_rng', '').strip('\'"') not in ('key', 'observe'):
+            missing.append('native_gate_script_rng')
+        if missing:
+            raise ValueError('--guidance-local needs a base overlay with ' + ', '.join(missing))
     if sandbox.parse_config(stripped).get('native_gate_player_orders') not in (None, 'false', 'nil'):
         raise ValueError('base overlay already has a player orders block; this builder writes its own (--orders)')
     text = sandbox.merged_config(stripped, lines, lean=args.lean_logs)
@@ -711,6 +723,9 @@ def build_parser():
                         help='stock UI actions as events of the slot: all (no value) or a comma list of travel, target, orders '
                              '(lockstep_ui_replay.h, stop reason 164); needs --source stock --present and runtime IDs')
     common.add_argument('--ui-replay-script', action='store_true', help='--ui-replay without people: a fixed plan through the stock entries')
+    common.add_argument('--guidance-local', action='store_true',
+                        help="--present: what a client's own guidance runs in the simulation (md.Guidance, the guidance route) takes local "
+                             'runtime IDs (lockstep_guidance_local.h); the base needs runtime_ids_local, script_rng and md_timed_rng')
     common.add_argument('--ui-replay-fleet', type=ids, help='saved IDs: ships handed to `player` at the setup tick, to give orders to (--mode coop)')
     common.add_argument('--ui-replay-dock', type=sandbox.saved_id, help='a saved station ID for the scripted dock order')
     common.add_argument('--ui-replay-min-hull', type=int, metavar='PCT',

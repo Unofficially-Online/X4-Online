@@ -1736,3 +1736,25 @@ K. After J: one human on client 2 flying slot 2 with X4's own controls (keyboard
   in; a cutscene that had no camera update gets a ready event too. Pins: 10d7a40 (site as X4 has it), 10f1930, 99a720, d2310, the event
   vtable's GetType. Offline only. Run: s2-victim7's overlay + native_gate_cutscene_ready = true. Pass: no 1678/1882-type split, the
   same CUTSCENE_READY_ROW ticks on both clients.
+16.22 see2: client 2's eye behind the fighter's pilot seat; the presented eye at slot k's own seat
+  see2 (build141): client 2 presents fixture 176ad5 (ship_arg_s_fighter_01_a), slot 1 is the scout 0ae79c: HUD right, the 3D view
+  a dark wall with a lit edge. Scouts as slot 2 (7a8fe, 7a8dc, 7a931) are right. Cause [F: code; save and ship XML for the numbers]:
+  the scope re-points the canonical player's parent (+0x70, published [A]+0) to slot k's room and leaves its pose IN the room as
+  it is, which is slot 1's seat. X4 seats a player through 716670: 3d8420 connects it at the room's player slot (filter object
+  2f60e70, TemplateConnectionFilterByIsPlayerSlot) and its U::FirstPersonController (+0x200, vtable 2c3eec0) holds the eye at the
+  ship's UI-anchor connection of the position's group, in the room: the save's player sits at (0, -0.0383, -0.1493) in 0ae79c's
+  cockpit = con_uianchor - con_cockpit of ship_arg_s_scout_01. 0x75d110(ship, out, room, &position) computes that transform (filter
+  2f60618, TemplateConnectionFilterByIsUIAnchor; then GetTransformRelativeTo); 8e8450 places the HUD's anchor with it. Both ships
+  carry cockpit_gen_virtual_01 at their con_cockpit, but the fighter's UI anchor is at (0.006, -0.0707, 0.2384) in its room: slot
+  1's pose puts the eye 0.39 m back and 3 cm up, behind the seat with its AI pilot. Same scout model: the same pose, hence right.
+  The camera (mode 0, player in its cockpit) is the anchor's origin from GetOffset 97a300 -> 3db8a0, the LIVE chain: each link's
+  slot 648 (Positional::vfunc648 7461c0) asks its movement controller's slot 6 (FirstPersonController d81ec0). The HUD's anchor
+  and the render walks use the published pose ([A]+0x28, a pointer to a PosRot).
+  Built (lockstep_pilot_eye.h, part of --present): per tick outside the scope, D = slot k's seat after the inverse of slot 1's seat,
+  both from 75d110 (RNG word held; refused unless slot 1's player is in its ship's room or the ship, both seats rigid). In the
+  scope only: the player's FirstPersonController gets a copy of its vtable whose slot 6 returns X4's pose with D applied, and the
+  view cache entry of this bank points to the published pose with D applied; both back at the exit (another controller class:
+  neither, named). D = identity (same model) changes no byte. Status: eye=stage/scopes/poses/lost/dx,dy,dz (see2: on,
+  0.006,-0.032,0.388 expected). Pins 75d110, d81ec0, the vtable's slot 6; the image test reads the two filters' classes.
+  Offline only. Run: see2's overlay with this DLL (see3). Pass: client 2's window shows the fighter's cockpit from the pilot's
+  seat, bracket on slot 1 ahead; relay pass, census as see2; eye=on/.../0/0.006,-0.032,0.388.

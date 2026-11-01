@@ -121,6 +121,39 @@ class CommandOrderOptionTests(unittest.TestCase):
         self.assertEqual(len(self.failures(BASE+self.SERIAL+rows)), 1)
 
 
+class PathTransformsOptionTests(unittest.TestCase):
+    SERIAL = 'X4LAN_CONFIG.native_gate_serial_pathing = true\n'
+
+    def failures(self, text):
+        return [f['rule'] for f in module.check(text)[1] if 'path_transforms' in f['rule']]
+
+    def test_sim_or_observe_with_serial_pathing_and_the_snapshot_boot(self):
+        for value in ("'sim'", '"observe"'):
+            with self.subTest(value=value):
+                self.assertEqual(self.failures(BASE+self.SERIAL+'X4LAN_CONFIG.native_gate_path_transforms = %s\n' % value), [])
+        self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_path_transforms = 'sim'\n")), 1)
+        self.assertEqual(len(self.failures(self.SERIAL+"X4LAN_CONFIG.native_gate_path_transforms = 'sim'\n")), 1)
+        for value in ('true', "'view'", '1'):
+            with self.subTest(value=value):
+                self.assertEqual(len(self.failures(BASE+self.SERIAL+'X4LAN_CONFIG.native_gate_path_transforms = %s\n' % value)), 1)
+        self.assertEqual(self.failures(BASE+'X4LAN_CONFIG.native_gate_path_transforms = false\n'), [])
+
+
+class BodyPoseOptionTests(unittest.TestCase):
+    def failures(self, text):
+        return [f['rule'] for f in module.check(text)[1] if 'body_pose' in f['rule']]
+
+    def test_sim_or_observe_with_the_snapshot_boot(self):
+        for value in ("'sim'", '"observe"'):
+            with self.subTest(value=value):
+                self.assertEqual(self.failures(BASE+'X4LAN_CONFIG.native_gate_body_pose = %s\n' % value), [])
+        self.assertEqual(len(self.failures("X4LAN_CONFIG.native_gate_body_pose = 'sim'\n")), 1)
+        for value in ('true', "'view'", '1'):
+            with self.subTest(value=value):
+                self.assertEqual(len(self.failures(BASE+'X4LAN_CONFIG.native_gate_body_pose = %s\n' % value)), 1)
+        self.assertEqual(self.failures(BASE+'X4LAN_CONFIG.native_gate_body_pose = false\n'), [])
+
+
 class ShipSoundRngOptionTests(unittest.TestCase):
     def failures(self, text):
         return [f['rule'] for f in module.check(text)[1] if 'ship_sound_rng' in f['rule']]
@@ -666,6 +699,24 @@ class SimulationCameraOptionTests(unittest.TestCase):
         self.assertEqual(len(self.failures(BASE+ids+"X4LAN_CONFIG.native_gate_runtime_ids = true\n"+local, key)), 1)
         self.assertEqual(len(self.failures(BASE+ids+hook+"X4LAN_CONFIG.native_gate_runtime_ids = true\nX4LAN_CONFIG.native_gate_runtime_ids_local = 1\n", key)), 1)
 
+    def test_guidance_local_needs_the_local_lists_and_the_md_frames(self):
+        key = 'native_gate_guidance_local'
+        local = "X4LAN_CONFIG.native_gate_runtime_ids_local = true\n"
+        script = "X4LAN_CONFIG.native_gate_script_rng = \"key\"\n"
+        mask = "X4LAN_CONFIG.native_gate_script_rng_mask = 7\n"
+        timed = "X4LAN_CONFIG.native_gate_md_timed_rng = true\n"
+        on = "X4LAN_CONFIG.native_gate_guidance_local = true\n"
+        self.assertEqual(self.failures(BASE+local+script+mask+timed+on, key), [])
+        self.assertEqual(self.failures(BASE+local+script+timed+on, key), [])                      # the default mask 3 has the MD bit
+        self.assertEqual(self.failures(BASE+local+"X4LAN_CONFIG.native_gate_script_rng = 'observe'\n"+mask+timed+on, key), [])
+        self.assertEqual(self.failures(BASE+"X4LAN_CONFIG.native_gate_guidance_local = false\n", key), [])
+        self.assertEqual(self.failures(BASE, key), [])
+        self.assertEqual(len(self.failures(BASE+script+mask+timed+on, key)), 1)
+        self.assertEqual(len(self.failures(BASE+local+mask+timed+on, key)), 1)
+        self.assertEqual(len(self.failures(BASE+local+script+"X4LAN_CONFIG.native_gate_script_rng_mask = 5\n"+timed+on, key)), 1)
+        self.assertEqual(len(self.failures(BASE+local+script+mask+on, key)), 1)
+        self.assertEqual(len(self.failures(BASE+local+script+mask+timed+"X4LAN_CONFIG.native_gate_guidance_local = 1\n", key)), 1)
+
     def test_highway_speed_needs_view_points_a_pass_join_and_identities(self):
         key = 'native_gate_highway_speed'
         view = "X4LAN_CONFIG.native_gate_view_points = 'players'\n"
@@ -791,6 +842,22 @@ class SimulationCameraOptionTests(unittest.TestCase):
         self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_physics_trace_saved = true\n", key)), 1)
         self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_physics_trace = 900\nX4LAN_CONFIG.native_gate_physics_trace_saved = 1\n", key)), 1)
         self.assertEqual(self.failures(BASE+"X4LAN_CONFIG.native_gate_physics_trace_saved = false\n", key), [])
+
+    def test_physics_trace_from_needs_rows_up_to_it(self):
+        key = 'native_gate_physics_trace_from'
+        self.assertEqual(self.failures(BASE+"X4LAN_CONFIG.native_gate_physics_trace = 2494\nX4LAN_CONFIG.native_gate_physics_trace_from = 2488\n", key), [])
+        self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_physics_trace = 2000\nX4LAN_CONFIG.native_gate_physics_trace_from = 2488\n", key)), 1)
+        self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_physics_trace_from = 2488\n", key)), 1)
+        for bad in ('0', 'true', "'2488'"):
+            self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_physics_trace = 2494\nX4LAN_CONFIG.native_gate_physics_trace_from = "+bad+"\n", key)), 1, bad)
+        self.assertEqual(self.failures(BASE+"X4LAN_CONFIG.native_gate_physics_trace_from = nil\n", key), [])
+
+    def test_wreck_watch_needs_the_motion_watch(self):
+        key = 'wreck_watch'
+        self.assertEqual(self.failures(BASE+"X4LAN_CONFIG.native_gate_motion_watch = {'0000000000176ad5'}\nX4LAN_CONFIG.native_gate_wreck_watch = true\n", key), [])
+        self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_wreck_watch = true\n", key)), 1)
+        self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_motion_watch = {'0000000000176ad5'}\nX4LAN_CONFIG.native_gate_wreck_watch = 1\n", key)), 1)
+        self.assertEqual(self.failures(BASE+"X4LAN_CONFIG.native_gate_wreck_watch = false\n", key), [])
 
     def test_mining_xs_and_probe_need_view_points_and_a_pass_join(self):
         join = "X4LAN_CONFIG.native_gate_mass_traffic = 'sync'\n"
@@ -1095,3 +1162,22 @@ class CreatedLoadOptionTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SplineJoinAllAndRowsOptionTests(unittest.TestCase):
+    def failures(self, text, name):
+        return [f['rule'] for f in module.check(text)[1] if name in f['rule']]
+
+    def test_join_all_needs_the_spline_join_and_snapshot(self):
+        join = 'X4LAN_CONFIG.native_gate_spline_join = true\n'
+        self.assertEqual(self.failures(BASE+join+'X4LAN_CONFIG.native_gate_spline_join_all = true\n', 'spline_join_all'), [])
+        self.assertEqual(len(self.failures(BASE+'X4LAN_CONFIG.native_gate_spline_join_all = true\n', 'spline_join_all')), 1)
+        self.assertEqual(len(self.failures(BASE+join+"X4LAN_CONFIG.native_gate_spline_join_all = 'key'\n", 'spline_join_all')), 1)
+        self.assertEqual(self.failures(BASE+'X4LAN_CONFIG.native_gate_spline_join_all = false\n', 'spline_join_all'), [])
+
+    def test_spline_rows_need_the_spline_hook(self):
+        for hook in ('native_gate_spline_diag', 'native_gate_spline_refresh', 'native_gate_spline_join'):
+            with self.subTest(hook=hook):
+                self.assertEqual(self.failures(BASE+f'X4LAN_CONFIG.{hook} = true\nX4LAN_CONFIG.native_gate_motion_watch_splines = true\n',
+                                               'motion_watch_splines'), [])
+        self.assertEqual(len(self.failures(BASE+'X4LAN_CONFIG.native_gate_motion_watch_splines = true\n', 'motion_watch_splines')), 1)

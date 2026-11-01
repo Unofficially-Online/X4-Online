@@ -63,8 +63,61 @@
  * false difference from tick 2). Two clients' rows compare field by field and
  * the first differing tick and field name the input that rounds differently.
  * Objects resolve once per run through the saved -> runtime map and the
- * engine's component lookup 0xced70 (pinned by the pilot module). */
-#define MOTION_WATCH_MAX 16u
+ * engine's component lookup 0xced70 (pinned by the pilot module).
+ *
+ * Zone members (native_gate_motion_watch_zones = {zone saved IDs}, DEFAULT OFF,
+ * needs the world captures, native_gate_world_hash_stride). Cause B of the
+ * 4-client long runs: with every RNG, event, script, allocation and view row
+ * equal, a few ships of zone 0x72c (zone001_cluster_14_sector001, the slot
+ * ships' sector) part in motion only, one client alone: p4-L5 miner 8822a by
+ * the 1500 capture, p4-long3 courier a1885 after undocking from 59a2f of
+ * station 3d876 (relay blips 12689 and 13042-13072, census 13200), p4-long4
+ * the created S ships 8040520b9ad7a7f0 and 804052dc93ccf49c after undocking
+ * from that station's pads 59a27/59a26 (census 17400; the first redocks two
+ * ticks earlier on client 3, which parts the runtime IDs at 17493). The odd
+ * client differs (2 in p4-L5, 3 in p4-long3/4), so it is not one client's
+ * camera, and it is intermittent (a1885 undocked alike in p4-long4). The watch list
+ * cannot name such ships ahead (created, or which of a zone's traffic): at
+ * every world capture each ShipSmall/Medium/Large/ExtraLarge whose parent
+ * chain (8 levels: docked ships through their dock and station) reaches a
+ * watched zone joins the watch, keyed by its portable key (saved or created),
+ * until it is gone or a later capture no longer finds it there. Members ride
+ * along with the static list (rows, orders, targets, events, refreshes).
+ * Rows add parent= (the ship's parent as a portable reference: the dock while
+ * docked) and dock= (DockMovementController / UndockMovementController state,
+ * lockstep_dock.h format, while one moves the ship; '-' otherwise).
+ * Digests (native_gate_motion_watch_digest = true): the probe writes one
+ * MOTION_DIGEST row per watched ship and tick at once (the full rows only on
+ * status-stride ticks), FNV-1a 32 per field group (cur, prev, cache, target,
+ * path, model_ext, agent, leader, fp, dock), so census_cadence.py names the
+ * first tick and field group that part, at ~270 bytes a row. Read-only; captures only add a pointer compare per object.
+ *
+ * Spline fields (cause B, p4-causeb: courier a1885's second spline step after a path start, 12813, parts with every
+ * covered input equal; model_ext differed between clients on every spline ship from tick 1, so the comparisons left
+ * it out). U::Path::SplineFlightControlModel (vtable 0x2c4f480, ctor 0xeb4f40, 0x4c0 bytes; Update 0xeb7230 slot 14,
+ * request builder 0xeb55a0 slot 4): model_ext (+0x70..+0xe0) is two native deques of route segments, A +0x70 (the
+ * route in flight: Update appends a published request's segments, 0xebcad0 with its last argument 0) and B +0x98
+ * (the provisional segment the request builder adds before the route arrives, popped by 0xf138f0 when it does),
+ * each {proxy, map, map size, offset, size}: proxy and map are heap pointers, the noise; map size, offset and size
+ * are state. Then +0xc0 a vector, +0xd0 the spline progress and three speed factors (spline_state), +0xe0 a vector.
+ * Each deque entry (0x50 bytes, one per block) holds its segment (U::BezierSpline 0x2b6c6d0, 0x50 bytes: length +8,
+ * coefficients +0x10..+0x50) at +0, end points +0x10..+0x40, an index +0x40 and two flags +0x44/+0x45; +8 and
+ * +0x46.. are never written. The Linear model's +0xac..+0xb0 is padding (its ctor 0xeb1a00 writes +0xa4 as one
+ * qword), stale heap bytes. So model_ext now zeroes those pointers and that padding, and spline ships add (rows and
+ * digests) segments= (both deques' sizes and every entry: points, index, flags, its segment's type, length and
+ * coefficients, vector lanes 0-2 only), spline= (+0xc0..+0xf0, the flag bytes +0x110..+0x112, the step time +0x118,
+ * +0x150, the two embedded BezierSplines +0x158/+0x1a8, +0x218, the transforms +0x220 and +0x450, the request
+ * parameters +0x490..+0x4c0, +0x424), requests= (the pending request deque's size, +0x448) and obstacles= (the
+ * avoidance cache's publication time +0x108, the obstacle count (+0xf8-+0xf0)/0x80). A front request's status is
+ * not in the digest: at slot 6 it is wall-clock (the calculator may still run); the request rows carry it.
+ * Request rows (native_gate_motion_watch_splines = true, needs the watch and the spline hook: native_gate_spline_diag,
+ * _refresh or _join): each spline update of a watched ship (fixtures excepted) with a request pending before or after
+ * it writes a MOTION_SPLINE row at once: the request's ordinal per ship, the deque size before and after, the front's
+ * status and flags as the native update sees them (after any join), its result hash when published (the route's list:
+ * size and each segment's four control points, the request transform +0x30..+0x70, +0x70..+0xa6), whether the update
+ * consumed it, the segments hash and progress the update left, the cheap flag and, apart, waited= (the join had to
+ * wait; wall-clock). census_cadence.py compares the rows as per-ship sequences without waited=. */
+#define MOTION_WATCH_MAX 48u
 #define MOTION_WATCH_RING 8192u
 #define MOTION_WATCH_NAV_VTABLE 0x2c51158u /* U::NavigationController */
 #define MOTION_WATCH_INDEX 0x38f4ee4u      /* g_PathingStateBufferIndex */
@@ -76,7 +129,8 @@ typedef struct {uint64_t key;unsigned klass,depth;uint32_t type;} motion_ref_t;
 #define MOTION_AGENT_EXT 47u
 typedef struct {uint64_t tick,saved;int attention;uint32_t ctrl_vt,model_vt,index,flags,path_count,path_conn,formation;
     unsigned char slot[2][0x60],cache[0x40],target[0x50],path0[0x50],model_ext[0x70],agent_ext[MOTION_AGENT_EXT],leader_ext[MOTION_AGENT_EXT],ship_ext[5];
-    uint32_t wingmen;unsigned char fp[48];motion_ref_t target_ref,path_ref,leader,wingman0;} motion_watch_row_t;
+    uint32_t wingmen;unsigned char fp[48];motion_ref_t target_ref,path_ref,leader,wingman0,parent;char dock[512];
+    uint32_t spline_count[2],spline_segments,spline_core,spline_requests,spline_obstacles;uint64_t spline_obstacle_time;unsigned char spline_progress[16];} motion_watch_row_t;
 #define MOTION_PATHING_INDEX2 0x2f4b6f4u /* g_PathingStateBufferIndex2 */
 /* Flight parameter fields of one 0x1a0 slot: +0x24, +0x190..+0x193, +0x194, +0x198. */
 static int motion_fp_fields(const unsigned char *slot,unsigned char out[16]) {
@@ -96,6 +150,9 @@ static int motion_watch_agent_ext(const unsigned char *agent,unsigned char out[M
 }
 static uint64_t motion_watch_saved[MOTION_WATCH_MAX],motion_watch_runtime[MOTION_WATCH_MAX];
 static void *volatile motion_watch_agent[MOTION_WATCH_MAX]; /* last agent read per watched ship (pointer compare only) */
+/* Request rows (below): per watched slot the front request last seen (pointer compare only) and its ordinal. */
+static void *volatile motion_spline_front[MOTION_WATCH_MAX];
+static uint32_t motion_spline_ordinal[MOTION_WATCH_MAX];
 static unsigned motion_watch_count,motion_watch_armed;
 static uint64_t motion_watch_misses;
 static motion_watch_row_t *motion_watch_ring;
@@ -143,6 +200,147 @@ static int motion_watch_add(uint64_t saved) {
     motion_watch_saved[motion_watch_count]=saved;motion_watch_runtime[motion_watch_count]=0;motion_watch_agent[motion_watch_count]=NULL;
     ++motion_watch_count;motion_watch_armed=1;return 1;
 }
+/* Zone members (see the header): slots after the static list; a freed member slot is reused. */
+#define MOTION_ZONE_MAX 4u
+#define MOTION_ZONE_DEPTH 8u
+static uint64_t motion_zone_saved[MOTION_ZONE_MAX],motion_zone_runtime[MOTION_ZONE_MAX];
+static unsigned motion_zone_count,motion_zone_resolved,motion_zone_unresolved;
+static unsigned char motion_watch_member[MOTION_WATCH_MAX]; /* 1: joined through a zone */
+static uint64_t motion_watch_seen[MOTION_WATCH_MAX];     /* the capture tick that last found the member in a zone */
+static uint64_t motion_zone_capture,motion_zone_joins,motion_zone_leaves,motion_zone_gone,motion_zone_full;
+static const uint32_t motion_zone_ship_types[4]={0x2b7feb8u,0x2b82440u,0x2b9bff8u,0x2b99a88u}; /* Ship Small, Medium, Large, ExtraLarge */
+static void motion_zone_note(uint64_t tick,const world_hash_item *item,unsigned char *object);
+static int motion_watch_zone_add(uint64_t saved) {
+    if(!saved || motion_zone_count>=MOTION_ZONE_MAX || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
+    if(!hash_ok(image+0xced70,184,"3209f7be0616de6d0ecc20ce3cfd82fd16d0524c09635d86995210598b0a5f36")) return 0;
+    for(unsigned i=0;i<motion_zone_count;i++) if(motion_zone_saved[i]==saved) return 1;
+    if(!motion_watch_ring) {
+        motion_watch_ring=VirtualAlloc(NULL,sizeof(motion_watch_row_t)*MOTION_WATCH_RING,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+        if(!motion_watch_ring) return 0;
+    }
+    motion_zone_saved[motion_zone_count++]=saved;motion_watch_armed=1;world_hash_member_note=motion_zone_note;return 1;
+}
+static int motion_zone_ship(uint32_t type) {
+    for(unsigned i=0;i<sizeof(motion_zone_ship_types)/sizeof(*motion_zone_ship_types);i++) if(motion_zone_ship_types[i]==type) return 1;
+    return 0;
+}
+/* A capture's item (MoveWorker, in the probe's capture; items in key order, so members join in the same order on every client). */
+static void motion_zone_note(uint64_t tick,const world_hash_item *item,unsigned char *object) {
+    if(!motion_zone_count || !item || !object || !item->saved || !motion_zone_ship(item->type) || GetCurrentThreadId()!=ui_thread) return;
+    if(!motion_zone_resolved) {
+        motion_zone_resolved=1; /* identities are complete after the load: one reverse scan per zone and run */
+        for(unsigned z=0;z<motion_zone_count;z++) if(!(motion_zone_runtime[z]=pilot_reverse(motion_zone_saved[z]))) ++motion_zone_unresolved;
+    }
+    motion_zone_capture=tick;
+    unsigned char *at=object;int under=0;
+    for(unsigned depth=0;depth<MOTION_ZONE_DEPTH && !under;depth++) {
+        unsigned char *parent=NULL;uint64_t id=0;
+        if(!world_hash_reader(at+0x70,&parent,8) || !parent || !world_hash_reader(parent+8,&id,8) || !id) break;
+        for(unsigned z=0;z<motion_zone_count;z++) if(motion_zone_runtime[z] && motion_zone_runtime[z]==id) under=1;
+        at=parent;
+    }
+    if(!under) return;
+    unsigned slot=MOTION_WATCH_MAX;
+    for(unsigned i=0;i<motion_watch_count;i++) {
+        if(motion_watch_saved[i]==item->saved) {if(motion_watch_member[i]) motion_watch_seen[i]=tick;return;} /* static entries stay as they are */
+        if(slot==MOTION_WATCH_MAX && motion_watch_member[i] && !motion_watch_saved[i]) slot=i;
+    }
+    int append=slot==MOTION_WATCH_MAX;
+    if(append) {if(motion_watch_count>=MOTION_WATCH_MAX) {++motion_zone_full;return;} slot=motion_watch_count;}
+    /* Other threads match rows by these words (orders: key, events/refreshes: runtime ID, targets: agent): the key last. */
+    motion_watch_agent[slot]=NULL;motion_watch_member[slot]=1;motion_watch_seen[slot]=tick;motion_spline_front[slot]=NULL;motion_spline_ordinal[slot]=0;
+    InterlockedExchange64((volatile LONG64*)&motion_watch_runtime[slot],(LONG64)item->runtime);
+    InterlockedExchange64((volatile LONG64*)&motion_watch_saved[slot],(LONG64)item->saved);
+    if(append) {MemoryBarrier();motion_watch_count=slot+1;}
+    ++motion_zone_joins;
+}
+static void motion_zone_leave(unsigned i) {
+    InterlockedExchange64((volatile LONG64*)&motion_watch_saved[i],0);
+    InterlockedExchange64((volatile LONG64*)&motion_watch_runtime[i],0);
+    motion_watch_agent[i]=NULL;motion_spline_front[i]=NULL;motion_spline_ordinal[i]=0;
+}
+/* Before a frame's rows: members the last capture no longer found in a watched zone leave. */
+static void motion_zone_expire(void) {
+    for(unsigned i=0;i<motion_watch_count;i++)
+        if(motion_watch_member[i] && motion_watch_saved[i] && motion_watch_seen[i]<motion_zone_capture) {motion_zone_leave(i);++motion_zone_leaves;}
+}
+static unsigned motion_zone_members(void) {
+    unsigned n=0;for(unsigned i=0;i<motion_watch_count;i++) n+=motion_watch_member[i] && motion_watch_saved[i];
+    return n;
+}
+/* FNV-1a 32 of field groups (native_gate_motion_watch_digest and the spline fields). */
+static uint32_t motion_fnv(uint32_t h,const void *data,size_t n) {
+    const unsigned char *p=(const unsigned char*)data;
+    for(size_t i=0;i<n;i++) {h^=p[i];h*=16777619u;}
+    return h;
+}
+#define MOTION_FNV_BASIS 2166136261u
+/* The spline model's stable fields (see the header). */
+#define MOTION_SPLINE_VTABLE 0x2c4f480u
+#define MOTION_SPLINE_SEGMENT 0x2b6c6d0u /* U::BezierSpline */
+#define MOTION_SPLINE_SEGMENTS_MAX 1024u
+#define MOTION_SPLINE_POINTS_MAX 4096u
+#define MOTION_LINEAR_VTABLE 0x2c4f610u
+/* A BezierSpline's length and coefficients (lanes 0-2); its type alone for another class. */
+static uint32_t motion_spline_bezier(uint32_t h,const unsigned char *segment) {
+    unsigned char b[0x50];void *vt=NULL;uint32_t type=0xffffffffu;
+    if(segment && read_local(segment,b,sizeof(b))) {memcpy(&vt,b,8);type=motion_watch_rva(vt);}
+    h=motion_fnv(h,&type,4);
+    if(type!=MOTION_SPLINE_SEGMENT) return h;
+    h=motion_fnv(h,b+8,4);
+    for(unsigned k=0;k<4;k++) h=motion_fnv(h,b+0x10+16*k,12);
+    return h;
+}
+/* One segment deque (+0x70 or +0x98): size, then each entry in order; 0 when the layout does not read. */
+static int motion_spline_deque(const unsigned char *model,unsigned at,uint32_t *count,uint32_t *h) {
+    uint64_t q[5];
+    if(!read_local(model+at,q,sizeof(q))) return 0;
+    const uint64_t map=q[1],mapsize=q[2],off=q[3],size=q[4];
+    *count=(uint32_t)(size>0xffffffffULL?0xffffffffu:size);*h=motion_fnv(*h,&size,8);
+    if(!size) return 1;
+    if(!map || !mapsize || mapsize>0x100000u || (mapsize&(mapsize-1)) || size>mapsize || size>MOTION_SPLINE_SEGMENTS_MAX) return 0;
+    for(uint64_t i=0;i<size;i++) {
+        unsigned char *entry=NULL,e[0x46],*segment=NULL;
+        if(!read_local((const void*)(uintptr_t)(map+8*((off+i)&(mapsize-1))),&entry,8) || !entry || !read_local(entry,e,sizeof(e))) return 0;
+        memcpy(&segment,e,8);
+        for(unsigned k=0;k<3;k++) *h=motion_fnv(*h,e+0x10+16*k,12);
+        *h=motion_fnv(*h,e+0x40,6);
+        *h=motion_spline_bezier(*h,segment);
+    }
+    return 1;
+}
+/* Both deques: counts and one hash (MOTION_FNV_BASIS chained A then B). */
+static int motion_spline_segments(const unsigned char *model,uint32_t count[2],uint32_t *h) {
+    *h=MOTION_FNV_BASIS;
+    return motion_spline_deque(model,0x70,&count[0],h) && motion_spline_deque(model,0x98,&count[1],h);
+}
+/* The scalar and vector state besides the segments; vectors lanes 0-2. */
+static int motion_spline_core(const unsigned char *model,uint32_t *h) {
+    unsigned char m[0x4c0];
+    if(!read_local(model,m,sizeof(m))) return 0;
+    *h=MOTION_FNV_BASIS;
+    *h=motion_fnv(*h,m+0xc0,12);*h=motion_fnv(*h,m+0xd0,16);*h=motion_fnv(*h,m+0xe0,12);
+    *h=motion_fnv(*h,m+0x110,3);*h=motion_fnv(*h,m+0x118,8);*h=motion_fnv(*h,m+0x150,1);
+    for(unsigned b=0;b<2;b++) {
+        const unsigned char *z=m+0x158+0x50*b;void *vt;uint32_t type;memcpy(&vt,z,8);type=motion_watch_rva(vt);
+        *h=motion_fnv(*h,&type,4);*h=motion_fnv(*h,z+8,4);for(unsigned k=0;k<4;k++) *h=motion_fnv(*h,z+0x10+16*k,12);
+    }
+    *h=motion_fnv(*h,m+0x218,4);
+    for(unsigned k=0;k<4;k++) {*h=motion_fnv(*h,m+0x220+16*k,12);*h=motion_fnv(*h,m+0x450+16*k,12);}
+    *h=motion_fnv(*h,m+0x424,1);*h=motion_fnv(*h,m+0x490,0x30);
+    return 1;
+}
+/* The spline fields of a row (flag 4096 when all read). */
+static void motion_spline_fields(const unsigned char *model,motion_watch_row_t *r) {
+    unsigned char *begin=NULL,*end=NULL;uint64_t requests=0;int ok=1;
+    ok&=motion_spline_segments(model,r->spline_count,&r->spline_segments);
+    ok&=motion_spline_core(model,&r->spline_core);
+    ok&=read_local(model+0xd0,r->spline_progress,16);
+    ok&=read_local(model+0x448,&requests,8) && requests<=0xffffffffULL;r->spline_requests=(uint32_t)requests;
+    ok&=read_local(model+0xf0,&begin,8) && read_local(model+0xf8,&end,8) && end>=begin && !((size_t)(end-begin)%0x80) && read_local(model+0x108,&r->spline_obstacle_time,8);
+    r->spline_obstacles=ok?(uint32_t)((size_t)(end-begin)/0x80):0;
+    if(ok) r->flags|=4096;
+}
 /* The agent's path: count and the first FlightPoint (flags 16 and 32). */
 static void motion_watch_path(const unsigned char *agent,motion_watch_row_t *r) {
     unsigned char *begin=NULL,*end=NULL;
@@ -156,13 +354,20 @@ static void motion_watch_path(const unsigned char *agent,motion_watch_row_t *r) 
 }
 /* One row from a resolved object; 0 when the layout does not match (counted). */
 static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t tick,motion_watch_row_t *r,void **agent_out) {
-    memset(r,0,sizeof(*r));r->tick=tick;r->saved=saved;r->ctrl_vt=r->model_vt=0xffffffffu;r->target_ref=r->path_ref=r->leader=r->wingman0=motion_watch_ref(0);
+    memset(r,0,sizeof(*r));r->tick=tick;r->saved=saved;r->ctrl_vt=r->model_vt=0xffffffffu;
+    r->target_ref=r->path_ref=r->leader=r->wingman0=r->parent=motion_watch_ref(0);
     if(agent_out) *agent_out=NULL;
-    unsigned char *ctrl=NULL,*back=NULL,*slots=NULL,*agent=NULL,*model=NULL;void *vt=NULL;
+    unsigned char *ctrl=NULL,*back=NULL,*slots=NULL,*agent=NULL,*model=NULL,*parent=NULL;void *vt=NULL;uint64_t parent_id=0;
     if(!read_local(object+0x1ec,&r->attention,4)) return 0;
+    if(read_local(object+0x70,&parent,8) && parent && read_local(parent+8,&parent_id,8)) r->parent=motion_watch_ref(parent_id);
     if(read_local(object+0x3b0,r->ship_ext,4) && read_local(object+0x3c8,r->ship_ext+4,1)) r->flags|=512;
     if(!read_local(object+0x200,&ctrl,8) || !ctrl || !read_local(ctrl,&vt,8)) return 1; /* no controller: attention only */
     r->ctrl_vt=motion_watch_rva(vt);
+    /* Docking and undocking replace navigation: their evaluator's inputs (lockstep_dock.h), exact bits. */
+    if(vt==(void*)(image+DOCK_CONTROLLER_VTABLE) || vt==(void*)(image+UNDOCK_CONTROLLER_VTABLE)) {
+        if(dock_controller_state(ctrl,(void*)object,r->dock)) r->flags|=2048;else r->dock[0]=0;
+        return 1;
+    }
     if(vt!=(void*)(image+MOTION_WATCH_NAV_VTABLE) || !read_local(ctrl+0x28,&back,8) || back!=object) return 1;
     r->flags|=1;
     if(read_local(image+MOTION_WATCH_INDEX,&r->index,4) && read_local(ctrl+0x30,&slots,8) && slots &&
@@ -199,6 +404,11 @@ static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t
         const uint32_t own=r->model_vt==0x2c4f7d0u?0u:r->model_vt==0x2c4f6f0u?0x30u:r->model_vt==0x2c4f8d0u?0x50u:0x70u; /* Forced, Highway, MassTraffic */
         if(!own || read_local(model+0x70,r->model_ext,own)) r->flags|=256;
         if(r->model_vt==0x2c4f6f0u) {r->model_ext[0x17]=0;memset(r->model_ext+0x28,0,8);} /* Highway: padding at +0x87 and +0x98..+0x9f, never written */
+        if(r->model_vt==MOTION_LINEAR_VTABLE) memset(r->model_ext+0x3c,0,4); /* Linear: padding at +0xac..+0xaf, never written */
+        if(r->model_vt==MOTION_SPLINE_VTABLE) { /* Spline: the deques' proxy and map pointers (+0x70/+0x78, +0x98/+0xa0) */
+            memset(r->model_ext,0,16);memset(r->model_ext+0x28,0,16);
+            motion_spline_fields(model,r);
+        }
     }
     return 1;
 }
@@ -206,12 +416,17 @@ static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t
 static int motion_watch_frame(uint64_t tick) {
     if(!motion_watch_armed) return 1;
     if(!stats.active || GetCurrentThreadId()!=ui_thread || tick!=stats.issued) return 0;
+    motion_zone_expire();
     void *map=NULL;motion_watch_find_fn find=(motion_watch_find_fn)(void *)(image+0xced70);
     if(!read_local(image+0x6cf1500,&map,8) || !map) {++motion_watch_misses;return 1;}
     for(unsigned i=0;i<motion_watch_count;i++) {
+        if(motion_watch_member[i] && !motion_watch_saved[i]) continue; /* a free member slot */
         if(!motion_watch_runtime[i]) motion_watch_runtime[i]=pilot_reverse(motion_watch_saved[i]);
         uint64_t id=0;unsigned char *object=motion_watch_runtime[i]?find(map,motion_watch_runtime[i],4):NULL;
-        if(!object || !read_local(object+8,&id,8) || id!=motion_watch_runtime[i]) {++motion_watch_misses;continue;}
+        if(!object || !read_local(object+8,&id,8) || id!=motion_watch_runtime[i]) {
+            if(motion_watch_member[i]) {motion_zone_leave(i);++motion_zone_gone;continue;}
+            ++motion_watch_misses;continue;
+        }
         LONG64 index=InterlockedIncrement64(&motion_watch_rows)-1;void *agent=NULL;
         if(!motion_watch_read(object,motion_watch_saved[i],tick,&motion_watch_ring[(uint64_t)index%MOTION_WATCH_RING],&agent)) ++motion_watch_misses;
         motion_watch_agent[i]=agent;
@@ -230,15 +445,49 @@ static int motion_watch_row(uint64_t index,char *out,size_t cap) {
         return (n=snprintf(out,cap,"index=%llu evicted=1",(unsigned long long)index))>0 && (size_t)n<cap?n:0;
     const motion_watch_row_t *r=&motion_watch_ring[index%MOTION_WATCH_RING];
     char cur[0xc1],prev[0xc1],cache[0x81],target[0xa1],path0[0xa1],model_ext[0xe1],agent_ext[2*MOTION_AGENT_EXT+1],leader_ext[2*MOTION_AGENT_EXT+1];
-    char target_ref[48],path_ref[48],leader[48],wingman0[48],ship_ext[11],fp[97];motion_watch_hex(fp,r->fp,48);motion_ref_text(wingman0,r->wingman0);unsigned now=r->index&1u;motion_watch_hex(ship_ext,r->ship_ext,5);
+    char target_ref[48],path_ref[48],leader[48],wingman0[48],parent[48],ship_ext[11],fp[97];motion_watch_hex(fp,r->fp,48);motion_ref_text(wingman0,r->wingman0);unsigned now=r->index&1u;motion_watch_hex(ship_ext,r->ship_ext,5);
+    motion_ref_text(parent,r->parent);
     motion_watch_hex(cur,r->slot[now],0x60);motion_watch_hex(prev,r->slot[now^1u],0x60);motion_watch_hex(cache,r->cache,0x40);motion_watch_hex(target,r->target,0x50);
     motion_watch_hex(path0,r->path0,0x50);motion_watch_hex(model_ext,r->model_ext,0x70);motion_watch_hex(agent_ext,r->agent_ext,MOTION_AGENT_EXT);
     motion_watch_hex(leader_ext,r->leader_ext,MOTION_AGENT_EXT);
     motion_ref_text(target_ref,r->target_ref);motion_ref_text(path_ref,r->path_ref);motion_ref_text(leader,r->leader);
+    char progress[33];motion_watch_hex(progress,r->spline_progress,16);
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx attention=%d ctrl=%08x model=%08x flags=%u cur=%s prev=%s cache=%s target=%s "
-        "target_ref=%s path=%u path0=%s path0_ref=%s/%u model_ext=%s agent_ext=%s formation=%u leader=%s leader_ext=%s ship_ext=%s wingmen=%u wingman0=%s fp=%s",
+        "target_ref=%s path=%u path0=%s path0_ref=%s/%u model_ext=%s agent_ext=%s formation=%u leader=%s leader_ext=%s ship_ext=%s wingmen=%u wingman0=%s fp=%s "
+        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx",
         (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,r->attention,r->ctrl_vt,r->model_vt,r->flags,
-        cur,prev,cache,target,target_ref,r->path_count,path0,path_ref,r->path_conn,model_ext,agent_ext,r->formation,leader,leader_ext,ship_ext,r->wingmen,wingman0,fp);
+        cur,prev,cache,target,target_ref,r->path_count,path0,path_ref,r->path_conn,model_ext,agent_ext,r->formation,leader,leader_ext,ship_ext,r->wingmen,wingman0,fp,
+        parent,r->dock[0]?r->dock:"-",r->spline_count[0],r->spline_count[1],r->spline_segments,r->spline_core,progress,r->spline_requests,r->spline_obstacles,
+        (unsigned long long)r->spline_obstacle_time);
+    return n>0 && (size_t)n<cap?n:0;
+}
+/* FNV-1a 32 of field groups (motion_fnv, above); references by their fields (no struct padding). */
+static uint32_t motion_fnv_ref(uint32_t h,motion_ref_t r) {
+    h=motion_fnv(h,&r.key,8);h=motion_fnv(h,&r.klass,4);h=motion_fnv(h,&r.depth,4);return motion_fnv(h,&r.type,4);
+}
+static int motion_watch_digest(uint64_t index,char *out,size_t cap) {
+    LONG64 count=InterlockedCompareExchange64(&motion_watch_rows,0,0);int n;
+    if(!motion_watch_ring || (LONG64)index>=count) return 0;
+    if(count>(LONG64)MOTION_WATCH_RING && index<(uint64_t)(count-(LONG64)MOTION_WATCH_RING))
+        return (n=snprintf(out,cap,"index=%llu evicted=1",(unsigned long long)index))>0 && (size_t)n<cap?n:0;
+    const motion_watch_row_t *r=&motion_watch_ring[index%MOTION_WATCH_RING];
+    const uint32_t basis=2166136261u;unsigned now=r->index&1u;char parent[48];motion_ref_text(parent,r->parent);
+    uint32_t target=motion_fnv_ref(motion_fnv(basis,r->target,0x50),r->target_ref);
+    uint32_t path=motion_fnv(basis,&r->path_count,4);path=motion_fnv(path,&r->path_conn,4);path=motion_fnv_ref(motion_fnv(path,r->path0,0x50),r->path_ref);
+    uint32_t model=motion_fnv(motion_fnv(basis,&r->model_vt,4),r->model_ext,0x70);
+    uint32_t agent=motion_fnv(motion_fnv(basis,r->agent_ext,MOTION_AGENT_EXT),r->ship_ext,5);
+    uint32_t leader=motion_fnv(basis,&r->formation,4);leader=motion_fnv_ref(motion_fnv(leader,r->leader_ext,MOTION_AGENT_EXT),r->leader);
+    leader=motion_fnv_ref(motion_fnv(leader,&r->wingmen,4),r->wingman0);
+    /* Spline ships (flag 4096): the segments, the rest of the model's state, the request deque's size, the obstacle cache; 0 otherwise. */
+    const int spline=(r->flags&4096u)!=0;
+    uint32_t segments=spline?motion_fnv(motion_fnv(basis,r->spline_count,8),&r->spline_segments,4):0,core=spline?r->spline_core:0;
+    uint32_t requests=spline?motion_fnv(basis,&r->spline_requests,4):0;
+    uint32_t obstacles=spline?motion_fnv(motion_fnv(basis,&r->spline_obstacles,4),&r->spline_obstacle_time,8):0;
+    n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx attention=%d ctrl=%08x model=%08x flags=%u parent=%s cur=%08x prev=%08x cache=%08x "
+        "target=%08x path=%08x model_ext=%08x agent=%08x leader=%08x fp=%08x dock=%08x segments=%08x spline=%08x requests=%08x obstacles=%08x",
+        (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,r->attention,r->ctrl_vt,r->model_vt,r->flags,parent,
+        motion_fnv(basis,r->slot[now],0x60),motion_fnv(basis,r->slot[now^1u],0x60),motion_fnv(basis,r->cache,0x40),target,path,model,agent,leader,
+        motion_fnv(basis,r->fp,48),motion_fnv(basis,r->dock,strlen(r->dock)),segments,core,requests,obstacles);
     return n>0 && (size_t)n<cap?n:0;
 }
 /* Order rows, DEFAULT OFF (native_gate_motion_watch_orders, needs the watch):
@@ -604,12 +853,298 @@ static int motion_order_arm(void) {
     }
     motion_order_installed=1;return 1;
 }
+/* Dock door rows, DEFAULT OFF (native_gate_motion_watch_doors = true, diagnostic, read-only).
+ * p4-long5 parts {1,4} against {2,3} at 12782: one shared allocation more on clients 1/4, a
+ * U::Animation::DockDoorStateListener (ctor 0x116e9d0) made by Container::Move (vfunc674 0x41a430,
+ * call 0x41a7f1); clients 2/3 make it at 12783, then courier a1885 parts in motion (census 13200, the
+ * ship of p4-long3's split). Of 21 door decisions in that run this is the only one a tick apart.
+ * Each container keeps a door map at +0x9d0 (node key +0x20: the door's UniverseID; entry +0x28:
+ * the ships using the door, inline when +0x20 == 4, count +0x28; a hold-open deadline +0x30, double;
+ * the state +0x38: 1 opening, 2 open, 3 closing, 4 closed). Container::Move asks 0x4154f0(entry) for
+ * a door in state 2 or 4 (call 0x41a62e): true keeps it open (a listed ship's crew test, slot 1003 of
+ * a component found under the ship, is still false, or the deadline is ahead of the game time);
+ * state 4 and true posts TriggerAnimationEvent 0x3e and an opening listener, state 2 and false 0x16
+ * and a closing one. The listener's slot 570 (0x116ea70) sets 1 / 3 when the animation starts, slot
+ * 569 (0x116eb10) 2 / 4 when it finishes; an attention change (Container::vfunc701, call 0x3f7c04)
+ * sets 2 / 4 from the same test at once. So a door opens and closes on the ships' state, the deadline
+ * and the animation's start and end, and only the decisions allocate.
+ * Rows: the two test calls go through stubs (the original runs once, unchanged) that write a
+ * MOTION_DOOR row whenever a door's (state, result, ships, deadline) differs from its last row (site,
+ * door and ships as portable references, deadline and game time bits); the listener's slots 569 and
+ * 570 swap (CAS) to forwarders that write a row (door, open/close flag, game time) before the
+ * original. Two clients' rows compare as per-door sequences: the first that differs names whether a
+ * ship left the list, the deadline or an animation end moved. Pins: 0x4154f0, the listener's two
+ * slots, the two calls and the vtable entries; restored with the order rows. */
+#define MOTION_DOOR_CHECK 0x4154f0u
+#define MOTION_DOOR_SITES 2u
+#define MOTION_DOOR_VTABLE 0x2c7ca08u /* U::Animation::DockDoorStateListener */
+#define MOTION_DOOR_FINISHED 0x116eb10u /* slot 569 */
+#define MOTION_DOOR_STARTED 0x116ea70u  /* slot 570 */
+#define MOTION_DOOR_RING 8192u
+#define MOTION_DOOR_TABLE 1024u
+static const unsigned motion_door_sites[MOTION_DOOR_SITES]={0x41a62eu,0x3f7c04u}; /* Container::Move, Container::vfunc701 */
+typedef struct {volatile LONG64 ready;uint64_t tick,now,deadline;motion_ref_t door,ships[4];uint32_t site,state,count,result,kind,flag,ui;} motion_door_row_t;
+typedef struct {uint64_t door;uint32_t site;uint64_t last;} motion_door_slot_t;
+static motion_door_row_t *motion_door_ring;
+static volatile LONG64 motion_door_rows;
+static motion_door_slot_t motion_door_table[MOTION_DOOR_TABLE];
+static SRWLOCK motion_door_lock=SRWLOCK_INIT;
+static unsigned char *motion_door_stubs,motion_door_done[MOTION_DOOR_SITES];
+static unsigned motion_door_swapped,motion_door_armed;
+static uint64_t motion_door_checks,motion_door_full;
+typedef unsigned char (*motion_door_check_fn)(void *,void *);
+typedef void (*motion_door_listener_fn)(void *);
+static uint64_t motion_door_now(void) {
+    uint64_t now=0;void **tls=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
+    if(tls && tls[0]) read_local((unsigned char*)tls[0]+0x300,&now,8);
+    return now;
+}
+static motion_door_row_t *motion_door_begin(LONG64 *index_out) {
+    if(!motion_door_ring) return NULL;
+    LONG64 index=InterlockedIncrement64(&motion_door_rows)-1;motion_door_row_t *r=&motion_door_ring[(uint64_t)index%MOTION_DOOR_RING];
+    InterlockedExchange64(&r->ready,0);memset((unsigned char*)r+sizeof(r->ready),0,sizeof(*r)-sizeof(r->ready));
+    r->tick=stats.issued;r->now=motion_door_now();r->ui=GetCurrentThreadId()==ui_thread;*index_out=index;
+    for(unsigned i=0;i<4;i++) r->ships[i]=motion_watch_ref(0);
+    return r;
+}
+/* A test's entry and result: a row when the door's state, result, ships or deadline changed since its last row. */
+static void motion_door_note(unsigned site,const unsigned char *entry,unsigned char result) {
+    uint64_t door=0,capacity=0,count=0,deadline=0,ships[4]={0};uint32_t state=0;const unsigned char *list=NULL;
+    ++motion_door_checks;
+    if(!entry || !read_local(entry-8,&door,8) || !read_local(entry+0x20,&capacity,8) || !read_local(entry+0x28,&count,8) ||
+       !read_local(entry+0x30,&deadline,8) || !read_local(entry+0x38,&state,4)) return;
+    if(capacity==4) list=entry;else if(!read_local(entry,&list,8)) list=NULL;
+    for(unsigned i=0;list && i<count && i<4;i++) if(!read_local(list+i*8,&ships[i],8)) ships[i]=0;
+    uint64_t h=1469598103934665603ULL;const uint64_t words[8]={state,result,count,deadline,ships[0],ships[1],ships[2],ships[3]};
+    for(unsigned i=0;i<8;i++) {h^=words[i];h*=1099511628211ULL;}
+    h|=1;
+    AcquireSRWLockExclusive(&motion_door_lock);
+    unsigned at=(unsigned)((door*0x9e3779b97f4a7c15ULL)>>54)%MOTION_DOOR_TABLE,probe=0;int changed=0;
+    for(;probe<MOTION_DOOR_TABLE;probe++,at=(at+1)%MOTION_DOOR_TABLE) {
+        motion_door_slot_t *s=&motion_door_table[at];
+        if(s->last && s->door==door && s->site==site) {changed=s->last!=h;s->last=h;break;}
+        if(!s->last) {s->door=door;s->site=site;s->last=h;changed=1;break;}
+    }
+    if(probe==MOTION_DOOR_TABLE) {++motion_door_full;changed=1;}
+    ReleaseSRWLockExclusive(&motion_door_lock);
+    if(!changed) return;
+    LONG64 index;motion_door_row_t *r=motion_door_begin(&index);
+    if(!r) return;
+    r->kind=0;r->site=motion_door_sites[site];r->state=state;r->result=result;r->count=(uint32_t)(count>0xffffffffULL?0xffffffffu:count);r->deadline=deadline;
+    r->door=motion_watch_ref(door);for(unsigned i=0;i<4;i++) r->ships[i]=motion_watch_ref(ships[i]);
+    InterlockedExchange64(&r->ready,index+1);
+}
+static unsigned char motion_door_check0(void *a,void *entry) {
+    unsigned char result=((motion_door_check_fn)(void *)(image+MOTION_DOOR_CHECK))(a,entry);motion_door_note(0,(const unsigned char*)entry,result);return result;
+}
+static unsigned char motion_door_check1(void *a,void *entry) {
+    unsigned char result=((motion_door_check_fn)(void *)(image+MOTION_DOOR_CHECK))(a,entry);motion_door_note(1,(const unsigned char*)entry,result);return result;
+}
+/* The listener's animation callbacks: kind 1 started (slot 570), 2 finished (569; the original deletes the listener). */
+static void motion_door_listener_note(unsigned kind,const unsigned char *listener) {
+    LONG64 index;motion_door_row_t *r=motion_door_begin(&index);uint64_t door=0;unsigned char flag=0;
+    if(!r) return;
+    r->kind=kind;
+    if(listener && read_local(listener+0x18,&door,8)) r->door=motion_watch_ref(door);
+    if(listener && read_local(listener+0x28,&flag,1)) r->flag=flag;
+    InterlockedExchange64(&r->ready,index+1);
+}
+static void motion_door_started(void *listener) {
+    motion_door_listener_note(1,(const unsigned char*)listener);((motion_door_listener_fn)(void *)(image+MOTION_DOOR_STARTED))(listener);
+}
+static void motion_door_finished(void *listener) {
+    motion_door_listener_note(2,(const unsigned char*)listener);((motion_door_listener_fn)(void *)(image+MOTION_DOOR_FINISHED))(listener);
+}
+static void *motion_door_target(unsigned i) {return i?(void*)motion_door_check1:(void*)motion_door_check0;}
+static unsigned char *motion_door_stub(unsigned i) {return motion_door_stubs+0x20u*i;}
+static void *const motion_door_forwarders[2]={(void*)motion_door_finished,(void*)motion_door_started};
+static const unsigned motion_door_slots[2]={569u,570u},motion_door_natives[2]={MOTION_DOOR_FINISHED,MOTION_DOOR_STARTED};
+/* 0 original, 1 ours, -1 anything else. */
+static int motion_door_state(unsigned i) {
+    unsigned char now[5];if(!read_local(image+motion_door_sites[i],now,5) || now[0]!=0xe8) return -1;
+    int32_t d;memcpy(&d,now+1,4);
+    if(d==motion_order_rel(motion_door_sites[i],image+MOTION_DOOR_CHECK)) return 0;
+    if(motion_door_stubs && d==motion_order_rel(motion_door_sites[i],motion_door_stub(i))) return 1;
+    return -1;
+}
+static int motion_door_pins(void) {
+    for(unsigned i=0;i<MOTION_DOOR_SITES;i++) if(motion_door_state(i)<0) return 0;
+    return hash_ok(image+MOTION_DOOR_CHECK,0x16c,"164bf9200e717d74a35c9b46bc6cc6d32ab785fdaf9f6f70d64b7ddef610d08e") &&
+           hash_ok(image+MOTION_DOOR_STARTED,0x14d,"55fa984a390574b236272f9b5bf8baf9ac6c39f79ad5d0256cb2c04a9563dd3d");
+}
+static int motion_door_swap(unsigned i,void *expected,void *value) {
+    unsigned char *p=image+MOTION_DOOR_VTABLE+motion_door_slots[i]*8u;DWORD old,ignored;
+    if(!VirtualProtect(p,8,PAGE_READWRITE,&old)) return 0;
+    void *actual=InterlockedCompareExchangePointer((void*volatile*)p,value,expected);
+    VirtualProtect(p,8,old,&ignored);return actual==expected;
+}
+static int motion_door_owned(void) {
+    for(unsigned i=0;i<MOTION_DOOR_SITES;i++) if(motion_door_done[i] && motion_door_state(i)!=1) return 0;
+    for(unsigned i=0;i<2;i++) if((motion_door_swapped&(1u<<i)) && *(void**)(image+MOTION_DOOR_VTABLE+motion_door_slots[i]*8u)!=motion_door_forwarders[i]) return 0;
+    return 1;
+}
+static void motion_door_restore(void) {
+    for(unsigned i=0;i<MOTION_DOOR_SITES;i++) if(motion_door_done[i] && motion_door_state(i)==1 &&
+        motion_order_cas(motion_door_sites[i],motion_order_rel(motion_door_sites[i],motion_door_stub(i)),
+                         motion_order_rel(motion_door_sites[i],image+MOTION_DOOR_CHECK))) motion_door_done[i]=0;
+    for(unsigned i=0;i<2;i++)
+        if((motion_door_swapped&(1u<<i)) && motion_door_swap(i,motion_door_forwarders[i],image+motion_door_natives[i])) motion_door_swapped&=~(1u<<i);
+}
+/* A stub page within rel32 reach of both calls. */
+static unsigned char *motion_door_page(void) {
+    uintptr_t at=(uintptr_t)(image+motion_door_sites[0])&~(uintptr_t)65535;
+    for(uintptr_t distance=65536;distance<0x70000000;distance+=65536)
+        for(int sign=-1;sign<=1;sign+=2) {
+            uintptr_t candidate=sign<0?at-distance:at+distance;
+            unsigned char *p=VirtualAlloc((void*)candidate,0x1000,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE);
+            if(!p) continue;
+            int fits=1;
+            for(unsigned i=0;fits && i<MOTION_DOOR_SITES;i++) {
+                intptr_t d=(intptr_t)p-(intptr_t)(image+motion_door_sites[i]+5);fits=d>INT32_MIN+0x1000 && d<INT32_MAX-0x1000;
+            }
+            if(fits) return p;
+            VirtualFree(p,0,MEM_RELEASE);
+        }
+    return NULL;
+}
+/* Before the first admitted frame, on the MoveWorker; needs the motion watch (its references). */
+static int motion_door_arm(void) {
+    if(motion_door_armed) return 1;
+    if(!motion_watch_armed || stats.issued || GetCurrentThreadId()!=ui_thread || !motion_door_pins()) return 0;
+    for(unsigned i=0;i<MOTION_DOOR_SITES;i++) if(motion_door_state(i)!=0) return 0;
+    for(unsigned i=0;i<2;i++) if(*(void**)(image+MOTION_DOOR_VTABLE+motion_door_slots[i]*8u)!=(void*)(image+motion_door_natives[i])) return 0;
+    if(!motion_door_ring) motion_door_ring=VirtualAlloc(NULL,sizeof(motion_door_row_t)*MOTION_DOOR_RING,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+    if(!motion_door_stubs) motion_door_stubs=motion_door_page();
+    if(!motion_door_ring || !motion_door_stubs) return 0;
+    DWORD old,ignored;if(!VirtualProtect(motion_door_stubs,0x1000,PAGE_READWRITE,&old)) return 0;
+    for(unsigned i=0;i<MOTION_DOOR_SITES;i++) {
+        static const unsigned char jump[6]={0xff,0x25,0,0,0,0};void *t=motion_door_target(i);
+        memcpy(motion_door_stub(i),jump,6);memcpy(motion_door_stub(i)+6,&t,8);
+    }
+    if(!VirtualProtect(motion_door_stubs,0x1000,PAGE_EXECUTE_READ,&ignored)) return 0;
+    FlushInstructionCache(GetCurrentProcess(),motion_door_stubs,0x1000);
+    for(unsigned i=0;i<2;i++) {
+        if(!motion_door_swap(i,image+motion_door_natives[i],motion_door_forwarders[i])) {motion_door_restore();return 0;}
+        motion_door_swapped|=1u<<i;
+    }
+    for(unsigned i=0;i<MOTION_DOOR_SITES;i++) {
+        if(!motion_order_cas(motion_door_sites[i],motion_order_rel(motion_door_sites[i],image+MOTION_DOOR_CHECK),
+                             motion_order_rel(motion_door_sites[i],motion_door_stub(i)))) {motion_door_restore();return 0;}
+        motion_door_done[i]=1;
+    }
+    motion_door_armed=1;return 1;
+}
+static int motion_door_row(uint64_t index,char *out,size_t cap) {
+    LONG64 count=InterlockedCompareExchange64(&motion_door_rows,0,0);int n;
+    if(!motion_door_ring || (LONG64)index>=count) return 0;
+    if(count>(LONG64)MOTION_DOOR_RING && index<(uint64_t)(count-(LONG64)MOTION_DOOR_RING))
+        return (n=snprintf(out,cap,"index=%llu evicted=1",(unsigned long long)index))>0 && (size_t)n<cap?n:0;
+    const motion_door_row_t *r=&motion_door_ring[index%MOTION_DOOR_RING];
+    if(InterlockedCompareExchange64((volatile LONG64*)&r->ready,0,0)!=(LONG64)index+1) return 0; /* still being written */
+    char door[48],ships[4][48];motion_ref_text(door,r->door);for(unsigned i=0;i<4;i++) motion_ref_text(ships[i],r->ships[i]);
+    static const char *const kinds[3]={"test","started","finished"};
+    if(r->kind)
+        n=snprintf(out,cap,"index=%llu tick=%llu door=%s kind=%s flag=%u now=%016llx ui=%u",(unsigned long long)index,(unsigned long long)r->tick,door,
+            kinds[r->kind<3?r->kind:0],r->flag,(unsigned long long)r->now,r->ui);
+    else
+        n=snprintf(out,cap,"index=%llu tick=%llu door=%s kind=test site=%08x state=%u result=%u count=%u ships=%s,%s,%s,%s deadline=%016llx now=%016llx ui=%u",
+            (unsigned long long)index,(unsigned long long)r->tick,door,r->site,r->state,r->result,r->count,ships[0],ships[1],ships[2],ships[3],
+            (unsigned long long)r->deadline,(unsigned long long)r->now,r->ui);
+    return n>0 && (size_t)n<cap?n:0;
+}
+/* Request rows (native_gate_motion_watch_splines; see the header). Written on the pathing workers that run the
+ * spline updates; a row publishes through its ready word. */
+#define MOTION_SPLINE_RING 8192u
+typedef struct {volatile LONG64 ready;uint64_t tick,saved;uint32_t ordinal,count_in,count_out,status,flags,points,result,segments,consumed,cheap,waited;
+    unsigned char progress[16];} motion_spline_row_t;
+static motion_spline_row_t *motion_spline_ring;
+static volatile LONG64 motion_spline_rows,motion_spline_misses;
+static unsigned motion_spline_armed;
+/* A published request's route: its list size and each segment's four control points (lanes 0-2), the request
+ * transform +0x30..+0x70 (lanes 0-2), +0x70..+0xa6 (index, parameters, flags) and the result flags +0xac..+0xaf;
+ * 0 when it does not read. */
+static uint32_t motion_spline_result(const unsigned char *request,uint32_t *points) {
+    unsigned char q[0xb0],*head=NULL,*at=NULL;uint64_t size=0;uint32_t h=MOTION_FNV_BASIS;
+    *points=0;
+    if(!request || !read_local(request,q,sizeof(q))) return 0;
+    memcpy(&head,q,8);memcpy(&size,q+8,8);
+    if(!head || size>MOTION_SPLINE_POINTS_MAX || !read_local(head,&at,8)) return 0;
+    h=motion_fnv(h,&size,8);
+    for(unsigned k=0;k<4;k++) h=motion_fnv(h,q+0x30+16*k,12);
+    h=motion_fnv(h,q+0x70,0x36);h=motion_fnv(h,q+0xac,4);
+    for(uint64_t k=0;k<size;k++) {
+        unsigned char n[0x50];
+        if(!at || at==head || !read_local(at,n,sizeof(n))) return 0;
+        for(unsigned j=0;j<4;j++) h=motion_fnv(h,n+0x10+16*j,12);
+        memcpy(&at,n,8);
+    }
+    if(at!=head) return 0;
+    *points=(uint32_t)size;return h?h:1;
+}
+static int motion_spline_begin(void *model,unsigned char cheap,spline_watch_t *w) {
+    memset(w,0,sizeof(*w));w->cheap=cheap;
+    if(!motion_spline_armed || !model) return 0;
+    void *agent=NULL;
+    if(!read_local((unsigned char*)model+0x10,&agent,8) || !agent) return 0;
+    for(unsigned i=0;i<motion_watch_count && i<MOTION_WATCH_MAX;i++) if(motion_watch_agent[i]==agent && motion_watch_saved[i]) {w->slot=i;return 1;}
+    return 0;
+}
+/* The front request as the native update is about to see it (after any join). */
+static void motion_spline_seen(void *model,spline_watch_t *w) {
+    spline_front_t f;unsigned i=w->slot;
+    if(!spline_front(model,&f)) {w->count_in=0xffffffffu;InterlockedIncrement64(&motion_spline_misses);return;}
+    w->count_in=(uint32_t)(f.count>0xfffffffeULL?0xfffffffeu:f.count);w->status=f.status;w->flags=f.flags;
+    if(!f.count) motion_spline_front[i]=NULL;
+    else if(f.front!=motion_spline_front[i]) {motion_spline_front[i]=f.front;++motion_spline_ordinal[i];}
+    w->ordinal=motion_spline_ordinal[i];
+    if(f.count && f.status) w->result=motion_spline_result(f.front,&w->points);
+}
+/* After the native update: a row when a request was pending before or after it. */
+static void motion_spline_end(void *model,spline_watch_t *w) {
+    spline_front_t f;unsigned i=w->slot;
+    if(w->count_in==0xffffffffu) return;
+    if(!spline_front(model,&f)) {InterlockedIncrement64(&motion_spline_misses);return;}
+    const uint32_t out=(uint32_t)(f.count>0xfffffffeULL?0xfffffffeu:f.count);
+    const int consumed=w->count_in && (f.count<w->count_in || f.front!=motion_spline_front[i]);
+    if(consumed) motion_spline_front[i]=NULL;
+    if(!w->count_in && !out) return;
+    LONG64 index=InterlockedIncrement64(&motion_spline_rows)-1;motion_spline_row_t *r=&motion_spline_ring[(uint64_t)index%MOTION_SPLINE_RING];
+    InterlockedExchange64(&r->ready,0);memset((unsigned char*)r+sizeof(r->ready),0,sizeof(*r)-sizeof(r->ready));
+    r->tick=stats.issued;r->saved=motion_watch_saved[i];r->ordinal=w->ordinal;r->count_in=w->count_in;r->count_out=out;r->status=w->status;
+    r->flags=w->flags;r->points=w->points;r->result=w->result;r->consumed=(uint32_t)consumed;r->cheap=w->cheap;r->waited=w->waited;
+    uint32_t counts[2]={0,0},h=0;
+    r->segments=motion_spline_segments((const unsigned char*)model,counts,&h)?motion_fnv(motion_fnv(MOTION_FNV_BASIS,counts,8),&h,4):0;
+    if(!read_local((unsigned char*)model+0xd0,r->progress,16)) memset(r->progress,0,16);
+    InterlockedExchange64(&r->ready,index+1);
+}
+/* Before the first admitted frame, on the MoveWorker: needs the watch and the installed spline hook. */
+static int motion_spline_arm(void) {
+    if(motion_spline_armed) return 1;
+    if(!motion_watch_armed || !spline_installed || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
+    if(!motion_spline_ring) motion_spline_ring=VirtualAlloc(NULL,sizeof(motion_spline_row_t)*MOTION_SPLINE_RING,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+    if(!motion_spline_ring) return 0;
+    motion_spline_armed=1;return 1;
+}
+static int motion_spline_row(uint64_t index,char *out,size_t cap) {
+    LONG64 count=InterlockedCompareExchange64(&motion_spline_rows,0,0);int n;
+    if(!motion_spline_ring || (LONG64)index>=count) return 0;
+    if(count>(LONG64)MOTION_SPLINE_RING && index<(uint64_t)(count-(LONG64)MOTION_SPLINE_RING))
+        return (n=snprintf(out,cap,"index=%llu evicted=1",(unsigned long long)index))>0 && (size_t)n<cap?n:0;
+    const motion_spline_row_t *r=&motion_spline_ring[index%MOTION_SPLINE_RING];
+    if(InterlockedCompareExchange64((volatile LONG64*)&r->ready,0,0)!=(LONG64)index+1) return 0; /* still being written */
+    char progress[33];motion_watch_hex(progress,r->progress,16);
+    n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx request=%u in=%u status=%u flags=%08x points=%u result=%08x out=%u consumed=%u "
+        "segments=%08x progress=%s cheap=%u waited=%u",(unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,
+        r->ordinal,r->count_in,r->status,r->flags,r->points,r->result,r->count_out,r->consumed,r->segments,progress,r->cheap,r->waited);
+    return n>0 && (size_t)n<cap?n:0;
+}
 static int motion_order_owned(void) {
     for(unsigned i=0;i<MOTION_ORDER_SITES;i++) if(motion_order_done[i] && motion_order_state(i)!=1) return 0;
     for(unsigned i=0;i<MOTION_REFRESH_SITES;i++) if(motion_refresh_done[i] && motion_refresh_state(i)!=1) return 0;
-    return motion_target_owned() && motion_event_owned();
+    return motion_target_owned() && motion_event_owned() && motion_door_owned();
 }
 static void motion_order_restore(void) {
+    motion_door_restore();
     for(unsigned i=0;i<MOTION_ORDER_SITES;i++) if(motion_order_done[i] && motion_order_state(i)==1 &&
         motion_order_cas(motion_order_sites[i],motion_order_rel(motion_order_sites[i],motion_order_stubs+0x20u*i),
                          motion_order_rel(motion_order_sites[i],image+MOTION_ORDER_QUEUE))) motion_order_done[i]=0;
@@ -653,5 +1188,14 @@ static int motion_watch_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"watched=%u rows=%lld misses=%llu orders=%d order_rows=%lld targets=%x target_rows=%lld events=%x event_rows=%lld refresh_rows=%lld",
         motion_watch_count,(long long)motion_watch_rows,(unsigned long long)motion_watch_misses,motion_order_installed,(long long)motion_order_rows,
         motion_target_swapped,(long long)motion_target_rows,motion_event_swapped,(long long)motion_event_rows,(long long)motion_refresh_rows);
+    if(n>0 && motion_zone_count && (size_t)n<capacity)
+        n+=snprintf(out+n,capacity-(size_t)n," zones=%u unresolved=%u members=%u joins=%llu leaves=%llu gone=%llu full=%llu capture=%llu",
+            motion_zone_count,motion_zone_unresolved,motion_zone_members(),(unsigned long long)motion_zone_joins,(unsigned long long)motion_zone_leaves,
+            (unsigned long long)motion_zone_gone,(unsigned long long)motion_zone_full,(unsigned long long)motion_zone_capture);
+    if(n>0 && motion_door_armed && (size_t)n<capacity)
+        n+=snprintf(out+n,capacity-(size_t)n," doors=%u door_rows=%lld door_checks=%llu door_full=%llu",
+            motion_door_swapped,(long long)motion_door_rows,(unsigned long long)motion_door_checks,(unsigned long long)motion_door_full);
+    if(n>0 && motion_spline_armed && (size_t)n<capacity)
+        n+=snprintf(out+n,capacity-(size_t)n," spline_rows=%lld spline_misses=%lld",(long long)motion_spline_rows,(long long)motion_spline_misses);
     return n>0 && (size_t)n<capacity?n:0;
 }

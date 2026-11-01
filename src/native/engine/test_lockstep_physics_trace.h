@@ -192,6 +192,23 @@ static void test_physics_trace(void) {
         for(LONG64 i=before;i<before+4;i++) {assert(ptrace_row(PTRACE_ROW_BODY,(uint64_t)i,1,brow,sizeof(brow)));saved_seen+=strstr(brow," key=0000000000000031 klass=0 ")!=NULL;}
         assert(saved_seen==1);ptrace_saved_rows=0;
     }
+    /* Saved rows also give contact rows with a keyed side that is not created (0x31 against a local body);
+     * the created contact digests still count only created contacts. The row window A..N (step rows go on). */
+    {
+        LONG64 before=ptrace_contact_rows;test_pt_step(&b,contacts,2,9.0f,rb,sizeof(rb));assert(ptrace_contact_rows==before+1);
+        ptrace_saved_rows=1;before=ptrace_contact_rows;test_pt_step(&b,contacts,2,9.0f,rb,sizeof(rb));
+        assert(ptrace_contact_rows==before+2 && strstr(rb," ckeyed=2 ccreated=1 "));
+        char crow[1024];assert(ptrace_row(PTRACE_ROW_CONTACT,(uint64_t)before+1,1,crow,sizeof(crow)) && strstr(crow," a=0:0000000000000031/0/") &&
+                               strstr(crow," b=2:0000000000000000/0/"));
+        ptrace_row_from=21;LONG64 bodies=ptrace_body_rows,steps=ptrace_step_rows;before=ptrace_contact_rows;
+        test_pt_step(&b,contacts,2,9.0f,rb,sizeof(rb));assert(ptrace_body_rows==bodies && ptrace_contact_rows==before && ptrace_step_rows==steps+1); /* tick 20 < A */
+        ptrace_row_from=20;test_pt_step(&b,contacts,2,9.0f,rb,sizeof(rb));assert(ptrace_body_rows==bodies+4 && ptrace_contact_rows==before+2);
+        char st[512];assert(ptrace_status(st,sizeof(st)) && strstr(st," saved_rows=1 row_from=20"));
+        assert(ptrace_from_arm(20) && !ptrace_from_arm(21)); /* already set: the same value only */
+        ptrace_row_from=1;ptrace_saved_rows=0;
+        stats.issued=0;assert(!ptrace_from_arm(31) && !ptrace_from_arm(0) && ptrace_from_arm(25) && ptrace_row_from==25);
+        stats.issued=3;ptrace_row_from=1;assert(!ptrace_from_arm(25));stats.issued=20; /* after the first admitted frame */
+    }
     /* Rows: completed ticks only (or final), created keys resolved when printed. */
     LONG64 body_rows=ptrace_body_rows,contact_rows=ptrace_contact_rows;assert(body_rows>=6 && contact_rows>=6);
     assert(!ptrace_row(PTRACE_ROW_BODY,0,0,text,sizeof(text)) && ptrace_row(PTRACE_ROW_BODY,0,1,text,sizeof(text)));

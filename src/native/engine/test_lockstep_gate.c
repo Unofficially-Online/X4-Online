@@ -54,10 +54,12 @@
 #include "test_lockstep_path_budget.h"
 #include "test_lockstep_decimal.h"
 #include "test_lockstep_motion_watch.h"
+#include "test_lockstep_wreck_watch.h"
 #include "test_lockstep_pilot_inputs.h"
 #include "test_lockstep_pilot_native.h"
 #include "test_lockstep_pilot_stock.h"
 #include "test_lockstep_pilot_slots.h"
+#include "test_lockstep_pilot_eye.h"
 #include "test_lockstep_ui_replay.h"
 #include "test_lockstep_pilot_device.h"
 #include "test_lockstep_pilot_predict.h"
@@ -89,6 +91,13 @@ static void test_gravidar_original(void *worker,unsigned char reset) {
     EnterCriticalSection((CRITICAL_SECTION*)(w+0x6960));w[0x6988]=0;
     LeaveCriticalSection((CRITICAL_SECTION*)(w+0x6960));
     test_gravidar_thread=CreateThread(NULL,0,test_gravidar_publish,w,0,NULL);assert(test_gravidar_thread);
+}
+/* native_gate_spline_join_all: the status the native update sees when it runs. */
+static unsigned char *test_spline_all_request;static volatile uint32_t test_spline_all_seen;static unsigned test_spline_all_calls;
+static void test_spline_all_original(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
+    (void)self;(void)slot;(void)dt;(void)time;(void)cheap;(void)player;
+    EnterCriticalSection((CRITICAL_SECTION*)(image+0x3d74938));test_spline_all_seen=*(uint32_t*)(test_spline_all_request+0xa8);
+    LeaveCriticalSection((CRITICAL_SECTION*)(image+0x3d74938));++test_spline_all_calls;
 }
 static DWORD WINAPI test_spline_publish(LPVOID request) {
     Sleep(20);
@@ -953,6 +962,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_lookahead.h"
 #include "test_lockstep_world_created.h"
 #include "test_lockstep_runtime_ids.h"
+#include "test_lockstep_guidance_local.h"
 #include "test_lockstep_portable_created.h"
 #include "test_lockstep_created_load.h"
 #include "test_lockstep_spawn_rng.h"
@@ -976,14 +986,19 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_economy_load.h"
 #include "test_lockstep_fp_redirect.h"
 #include "test_lockstep_step_chain.h"
+#include "test_lockstep_path_transforms.h"
+#include "test_lockstep_body_pose.h"
 int main(int argc,char **argv) {
     assert(argc<=2);
-    if(argc==2) {test_solver_native_image(argv[1]);test_registry_md_native_image(argv[1]);test_request_native_image(argv[1]);test_registry_origin_native_image(argv[1]);test_event_order_native_image(argv[1]);test_render_rng_native_image(argv[1]);test_fo_native_image(argv[1]);test_pilot_native_image(argv[1]);test_pilot_native_controls_image(argv[1]);test_pilot_stock_image(argv[1]);test_virtual_players_image(argv[1]);test_mdt_native_image(argv[1]);test_mdr_native_image(argv[1]);test_region_rng_native_image(argv[1]);test_created_native_image(argv[1]);test_bullet_cadence_native_image(argv[1]);test_speak_timer_native_image(argv[1]);test_shield_canonical_native_image(argv[1]);test_nav_cadence_native_image(argv[1]);test_nav_player_native_image(argv[1]);test_command_order_native_image(argv[1]);test_region_camera_native_image(argv[1]);test_weapon_fire_native_image(argv[1]);test_motion_watch_native_image(argv[1]);test_view_points_native_image(argv[1]);test_camera_offset_native_image(argv[1]);test_mass_traffic_native_image(argv[1]);test_predict_native_image(argv[1]);test_spawn_rng_native_image(argv[1]);test_hitn_native_image(argv[1]);test_pfire_native_image(argv[1]);test_gdl_native_image(argv[1]);test_ship_sound_native_image(argv[1]);test_physics_trace_native_image(argv[1]);test_body_order_native_image(argv[1]);test_shape_order_native_image(argv[1]);test_player_timer_native_image(argv[1]);test_engine_rng_native_image(argv[1]);test_nav_octree_native_image(argv[1]);test_warp_rng_native_image(argv[1]);test_transition_rows_native_image(argv[1]);test_tempzone_order_native_image(argv[1]);test_gravidar_posts_native_image(argv[1]);test_event_rng_native_image(argv[1]);test_build_rng_native_image(argv[1]);test_ui_cargo_native_image(argv[1]);test_supply_rows_native_image(argv[1]);test_ui_lazy_native_image(argv[1]);test_gravidar_wide_native_image(argv[1]);test_portable_math_native_image(argv[1]);test_exact_reciprocal_native_image(argv[1]);test_fp_env_native_image(argv[1]);test_tick_native_image(argv[1]);test_path_budget_native_image(argv[1]);test_decimal_native_image(argv[1]);test_supply_wants_native_image(argv[1]);test_loadout_order_native_image(argv[1]);test_order_canon_native_image(argv[1]);test_pick_order_native_image(argv[1]);test_macro_arena_native_image(argv[1]);test_build_rows_native_image(argv[1]);test_economy_load_native_image(argv[1]);test_pilot_slots_image(argv[1]);}
+    if(argc==2) {test_solver_native_image(argv[1]);test_registry_md_native_image(argv[1]);test_request_native_image(argv[1]);test_registry_origin_native_image(argv[1]);test_event_order_native_image(argv[1]);test_render_rng_native_image(argv[1]);test_fo_native_image(argv[1]);test_pilot_native_image(argv[1]);test_pilot_native_controls_image(argv[1]);test_pilot_stock_image(argv[1]);test_virtual_players_image(argv[1]);test_mdt_native_image(argv[1]);test_mdr_native_image(argv[1]);test_region_rng_native_image(argv[1]);test_created_native_image(argv[1]);test_bullet_cadence_native_image(argv[1]);test_speak_timer_native_image(argv[1]);test_shield_canonical_native_image(argv[1]);test_nav_cadence_native_image(argv[1]);test_nav_player_native_image(argv[1]);test_command_order_native_image(argv[1]);test_region_camera_native_image(argv[1]);test_weapon_fire_native_image(argv[1]);test_motion_watch_native_image(argv[1]);test_wreck_watch_native_image(argv[1]);test_view_points_native_image(argv[1]);test_camera_offset_native_image(argv[1]);test_mass_traffic_native_image(argv[1]);test_predict_native_image(argv[1]);test_spawn_rng_native_image(argv[1]);test_hitn_native_image(argv[1]);test_pfire_native_image(argv[1]);test_gdl_native_image(argv[1]);test_ship_sound_native_image(argv[1]);test_physics_trace_native_image(argv[1]);test_body_order_native_image(argv[1]);test_shape_order_native_image(argv[1]);test_player_timer_native_image(argv[1]);test_engine_rng_native_image(argv[1]);test_nav_octree_native_image(argv[1]);test_warp_rng_native_image(argv[1]);test_transition_rows_native_image(argv[1]);test_tempzone_order_native_image(argv[1]);test_gravidar_posts_native_image(argv[1]);test_event_rng_native_image(argv[1]);test_build_rng_native_image(argv[1]);test_ui_cargo_native_image(argv[1]);test_supply_rows_native_image(argv[1]);test_ui_lazy_native_image(argv[1]);test_gravidar_wide_native_image(argv[1]);test_portable_math_native_image(argv[1]);test_exact_reciprocal_native_image(argv[1]);test_fp_env_native_image(argv[1]);test_tick_native_image(argv[1]);test_path_budget_native_image(argv[1]);test_decimal_native_image(argv[1]);test_supply_wants_native_image(argv[1]);test_loadout_order_native_image(argv[1]);test_order_canon_native_image(argv[1]);test_pick_order_native_image(argv[1]);test_macro_arena_native_image(argv[1]);test_build_rows_native_image(argv[1]);test_economy_load_native_image(argv[1]);test_pilot_slots_image(argv[1]);test_pilot_eye_image(argv[1]);}
     if(argc==2)test_wq_image_path=argv[1];
     if(argc==2) test_runtime_ids_native_image(argv[1]);
+    if(argc==2) test_guidance_local_native_image(argv[1]);
     if(argc==2) test_ui_replay_native_image(argv[1]);
     if(argc==2) test_fp_redirect_native_image(argv[1]);
     if(argc==2) test_step_chain_native_image(argv[1]);
+    if(argc==2) test_path_transforms_native_image(argv[1]);
+    if(argc==2) test_body_pose_native_image(argv[1]);
     test_registry_md_options();
     test_player_authority();
     test_actor_registry_roles();
@@ -1017,6 +1032,8 @@ int main(int argc,char **argv) {
     test_path_determinism();
     test_travel_determinism();
     test_travel_snapshot();
+    test_path_transforms();
+    test_body_pose();
     test_path_perf_equivalence();
     test_ai_schedule();
     test_event_order();
@@ -1025,6 +1042,7 @@ int main(int argc,char **argv) {
     test_world_created();
     test_runtime_ids();
     test_runtime_ids_local();
+    test_guidance_local();
     test_runtime_ids_rows();
     test_render_rng();
     test_relay_host();
@@ -1087,6 +1105,10 @@ int main(int argc,char **argv) {
     test_economy_load();
     test_camera_follow();
     test_motion_watch();
+    test_wreck_watch();
+    test_motion_zone();
+    test_motion_doors();
+    test_motion_spline();
     test_physics_trace();
     test_body_order();
     test_shape_order();
@@ -1098,6 +1120,7 @@ int main(int argc,char **argv) {
     test_pilot_native_controls();
     test_pilot_stock();
     test_pilot_slots();
+    test_pilot_eye();
     test_crash_note();
     test_ui_replay();
     test_pilot_device();
@@ -1840,6 +1863,47 @@ int main(int argc,char **argv) {
     assert(!spline_pending(&spline_test,spline_model,0));
     pending_queue[4]=0;memcpy(spline_model+0x428,pending_queue,sizeof(pending_queue));
     assert(spline_pending(&spline_test,spline_model,0) && !spline_test.pending_count[0] && !spline_test.pending_status[0]);
+    {
+        /* native_gate_spline_join_all (cause B): every spline ship's update (spline_other) waits for its published front request. */
+        const uint64_t failures=spline_failures,fixture_joins=spline_joins,fixture_waits=spline_waits,fixture_timeouts=spline_timeouts;const float dt=1.0f/60.0f;
+        test_spline_all_request=path_request;test_spline_all_calls=0;spline_all_joins=spline_all_waits=spline_all_timeouts=spline_all_failures=0;
+        pending_queue[2]=2;pending_queue[4]=1;memcpy(spline_model+0x428,pending_queue,sizeof(pending_queue));
+        fake_calculator[0x58]=1;*(uint32_t*)(path_request+0xa8)=0;
+        /* Off: the update runs at once and finds the route pending (the race: a client whose calculator finished first consumes it now). */
+        spline_join_all=0;spline_other(test_spline_all_original,spline_model,spline_slot,dt,7.0,0,0,1,1000);
+        assert(test_spline_all_calls==1 && !test_spline_all_seen && !spline_all_joins);
+        /* On, in a gated frame: it waits until the calculator publishes; the native update then sees the route. */
+        spline_join_all=1;HANDLE publisher=CreateThread(NULL,0,test_spline_publish,path_request,0,NULL);assert(publisher);
+        spline_other(test_spline_all_original,spline_model,spline_slot,dt,7.0,0,0,1,1000);
+        assert(WaitForSingleObject(publisher,1000)==WAIT_OBJECT_0);CloseHandle(publisher);
+        assert(test_spline_all_calls==2 && test_spline_all_seen==1 && spline_all_joins==1 && spline_all_waits==1 && !spline_all_timeouts && spline_failures==failures);
+        /* Published already: no wait. Outside a gated frame: no join. */
+        spline_other(test_spline_all_original,spline_model,spline_slot,dt,7.0,0,0,1,1000);
+        assert(test_spline_all_calls==3 && spline_all_joins==2 && spline_all_waits==1);
+        *(uint32_t*)(path_request+0xa8)=0;spline_other(test_spline_all_original,spline_model,spline_slot,dt,7.0,0,0,0,1000);
+        assert(test_spline_all_calls==4 && !test_spline_all_seen && spline_all_joins==2);
+        /* A timeout or a stopped calculator: the update still runs once, and the failure stops the gate (reason 58). */
+        spline_other(test_spline_all_original,spline_model,spline_slot,dt,7.0,0,0,1,0);
+        assert(test_spline_all_calls==5 && spline_all_joins==3 && spline_all_waits==2 && spline_all_timeouts==1 && spline_all_failures==1 && spline_failures==failures+1);
+        fake_calculator[0x58]=0;spline_other(test_spline_all_original,spline_model,spline_slot,dt,7.0,0,0,1,1000);
+        assert(test_spline_all_calls==6 && spline_all_joins==4 && spline_all_failures==2 && spline_failures==failures+2);
+        /* An unknown status fails too; nothing pending is nothing to join. */
+        fake_calculator[0x58]=1;*(uint32_t*)(path_request+0xa8)=2;spline_other(test_spline_all_original,spline_model,spline_slot,dt,7.0,0,0,1,1000);
+        assert(spline_all_failures==3 && spline_failures==failures+3);
+        pending_queue[4]=0;memcpy(spline_model+0x428,pending_queue,sizeof(pending_queue));
+        spline_other(test_spline_all_original,spline_model,spline_slot,dt,7.0,0,0,1,1000);
+        assert(test_spline_all_calls==8 && spline_all_joins==5 && spline_all_failures==3);
+        /* The fixture join's counters are its own. */
+        assert(spline_joins==fixture_joins && spline_waits==fixture_waits && spline_timeouts==fixture_timeouts);
+        /* Arming: the installed hook with the join, an active gate, before the first frame, on the MoveWorker. */
+        int kept_installed=spline_installed,kept_join=spline_join;uint64_t kept_issued=stats.issued;DWORD kept_ui=ui_thread;
+        spline_join_all=0;spline_installed=0;spline_join=1;stats.issued=0;ui_thread=GetCurrentThreadId();assert(!spline_join_all_arm());
+        spline_installed=1;spline_join=0;assert(!spline_join_all_arm());
+        spline_join=1;stats.issued=3;assert(!spline_join_all_arm());
+        stats.issued=0;if(stats.active) assert(spline_join_all_arm() && spline_join_all);
+        spline_join_all=0;spline_installed=kept_installed;spline_join=kept_join;stats.issued=kept_issued;ui_thread=kept_ui;
+        spline_failures=failures;spline_all_joins=spline_all_waits=spline_all_timeouts=spline_all_failures=0;
+    }
     DeleteCriticalSection((CRITICAL_SECTION*)(image+0x3d74938));
     spline_refresh=0;test_flight_self=NULL;
     unsigned char init_model[0x3a0]={0},other_model[0x3a0]={0};flight_sample init_sample={0};

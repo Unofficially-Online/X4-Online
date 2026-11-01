@@ -363,6 +363,7 @@ static int world_nav_live_prefixes(void) {
 #include "lockstep_build_rows.h"
 #include "lockstep_economy_load.h"
 #include "lockstep_motion_watch.h"
+#include "lockstep_wreck_watch.h"
 /* The Linear step trace (lockstep_step_trace.h; diagnostic, Option B evidence E2). */
 #define ST_SLOT 0x2c4f680u /* slot 14 of U::Path::LinearFlightControlModel's vtable 0x2c4f610 */
 #define ST_STEP 0xeb27c0u
@@ -371,7 +372,9 @@ static int world_nav_live_prefixes(void) {
 #define ST_AGENT_POSE 0xad0 /* the two pathing state banks ([NavigationController+0x30]; Linux +0xaf0) */
 #define ST_BANK_READ (image+0x38f4ee4u)
 #define ST_BANK_WRITE (image+0x2f4b6f4u)
-#define ST_CHAIN_SITE_COUNT 28u /* FR8 (lockstep_step_chain_win.h), then FR17's two, FR18's two, FR20's five, FR21's eleven, FR24's two */
+#define ST_CHAIN_SITE_COUNT 33u /* FR8 (lockstep_step_chain_win.h), then FR17's two, FR18's two, FR20's five, FR21's eleven, FR24's two, FR25's five */
+/* FR25: a gate's stack pointer lies on this thread's stack. */
+#define ST_SP_STACK_OK(a) ((a)>=(uintptr_t)((NT_TIB*)NtCurrentTeb())->StackLimit && (a)<(uintptr_t)((NT_TIB*)NtCurrentTeb())->StackBase)
 #define ST_PT_REF 0x10 /* FR18: a path point's reference object runtime id (+0x18 its sub id, +0x20 the offset mat4) */
 #define ST_HIER (image+0x3dde10u) /* FR20: rcx from, rdx inout mat4, r8 to, r9 0 (pinned in lockstep_step_chain_win.h) */
 /* FR19: the Linear model's SetTarget slot (vtable 0x2c4f610 +0x18; 0x2c4f628 -> 0xeaf620, pinned), its target, the agent's path point pointer. */
@@ -469,12 +472,14 @@ static int cov_load(void) {
 #include "lockstep_fp_env.h"
 #include "lockstep_decimal.h"
 #include "lockstep_path_budget.h"
+#include "lockstep_path_transforms.h"
+#include "lockstep_body_pose.h"
 static int fp_patch_overlaps(const void *source,size_t bytes) {
-    return xrcp_overlaps(source,bytes) || pmath_overlaps(source,bytes) || pdec_overlaps(source,bytes) || pbud_overlaps(source,bytes) ||
+    return xrcp_overlaps(source,bytes) || pmath_overlaps(source,bytes) || pdec_overlaps(source,bytes) || pbud_overlaps(source,bytes) || ptf_overlaps(source,bytes) || bpose_overlaps(source,bytes) ||
         stc_overlaps(source,bytes) || fr_len_overlaps(source,bytes);
 }
 static void fp_patch_view(const void *source,void *copy,size_t bytes) {
-    xrcp_unpatch_copy(source,copy,bytes);pmath_unpatch_copy(source,copy,bytes);pdec_unpatch_copy(source,copy,bytes);pbud_unpatch_copy(source,copy,bytes);
+    xrcp_unpatch_copy(source,copy,bytes);pmath_unpatch_copy(source,copy,bytes);pdec_unpatch_copy(source,copy,bytes);pbud_unpatch_copy(source,copy,bytes);ptf_unpatch_copy(source,copy,bytes);bpose_unpatch_copy(source,copy,bytes);
     stc_unpatch_copy(source,copy,bytes);fr_len_unpatch_copy(source,copy,bytes);
 }
 static void close_connection(void) {
@@ -484,7 +489,7 @@ static void close_connection(void) {
 static int gate_sites_owned(void) {
     return !(*(uint64_t*)(image+WORD_RVA)!=patched_word || (path_installed && *(unsigned __int128*)(image+0xef4610)!=path_patched) || !travel_owned() || !tsnap_owned() || !pilot_owned() ||
        (ship_installed && *(void**)(image+SHIP_ENTRY)!=(void*)ship_move) ||
-       !weapon_owned() || !bullet_owned() || !bullet_cadence_owned() || !speak_timer_owned() || !cr_owned() || !nav_cadence_owned() || !nav_player_owned() || !ss_owned() || !pt_owned() || !wr_owned() || !trr_owned() || !tz_owned() || !gwide_owned() || !view_owned() || !mt_owned() || !rc_owned() || !wfire_owned() || !motion_order_owned() || !ptrace_owned() || !border_owned() || !sorder_owned() || !erng_owned() || !brng_owned() || !uic_owned() || !spr_owned() || !ul_owned() || !noct_owned() || !pmath_owned() || !xrcp_owned() || !fpenv_owned() || !pdec_owned() || !pbud_owned() || !sw_owned() || !ll_owned() || !oc_owned() || !po_owned() || !ma_owned() || !br_owned() || !eco_owned() ||
+       !weapon_owned() || !bullet_owned() || !bullet_cadence_owned() || !speak_timer_owned() || !cr_owned() || !nav_cadence_owned() || !nav_player_owned() || !ss_owned() || !pt_owned() || !wr_owned() || !trr_owned() || !tz_owned() || !gwide_owned() || !view_owned() || !mt_owned() || !rc_owned() || !wfire_owned() || !motion_order_owned() || !wreck_owned() || !ptrace_owned() || !border_owned() || !sorder_owned() || !erng_owned() || !brng_owned() || !uic_owned() || !spr_owned() || !ul_owned() || !noct_owned() || !pmath_owned() || !xrcp_owned() || !fpenv_owned() || !pdec_owned() || !pbud_owned() || !ptf_owned() || !bpose_owned() || !sw_owned() || !ll_owned() || !oc_owned() || !po_owned() || !ma_owned() || !br_owned() || !eco_owned() ||
        (attention_installed && *(uint64_t*)(image+ATTENTION_ENTRY)!=attention_patched_word) ||
        (mass_installed && *(uint64_t*)(image+MASS_ENTRY)!=mass_patched_word) ||
        (death_installed && *(void**)(image+DEATH_ENTRY)!=(void*)death_listener) ||
@@ -561,6 +566,8 @@ static void finish(unsigned reason) {
     fpenv_restore();
     pdec_restore();
     pbud_restore();
+    ptf_restore();
+    bpose_restore();
     sw_restore();
     ll_restore();
     oc_restore();
@@ -569,6 +576,7 @@ static void finish(unsigned reason) {
     br_restore();
     eco_restore();
     motion_order_restore();
+    wreck_restore();
     st_restore();
     fr_restore();
     ptrace_restore();
@@ -663,6 +671,8 @@ static void finish(unsigned reason) {
     if(gwide_armed && !gwide_restored) stats.restored=0;
     if(view_installed) stats.restored=0;
     if(st_installed || st_chain_installed) stats.restored=0;
+    if(ptf_installed) stats.restored=0;
+    if(bpose_installed) stats.restored=0;
     if(fr_installed) stats.restored=0;
     if(mt_installed) stats.restored=0;
     if(rc_installed) stats.restored=0;
@@ -904,6 +914,8 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(fpenv_installed && !fpenv_tick(stats.issued)) {finish(FPENV_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(pdec_installed && !pdec_check()) {finish(PDEC_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(pbud_installed && !pbud_check()) {finish(PBUD_STOP_REASON);gate_original_once(original,frame,loading);return;}
+    if(ptf_installed && !ptf_check()) {finish(PTF_STOP_REASON);gate_original_once(original,frame,loading);return;}
+    if(bpose_installed && !bpose_check()) {finish(BPOSE_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(sw_installed && !sw_check()) {finish(SW_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(ll_installed && !ll_check()) {finish(LL_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(oc_installed && !oc_check()) {finish(OC_STOP_REASON);gate_original_once(original,frame,loading);return;}
@@ -1365,6 +1377,32 @@ static int lua_motion_watch(lua_State *L) {
     }
     p_lua_pushnumber(L,ok && motion_watch_add(saved));return 1;
 }
+static int lua_motion_watch_zone(lua_State *L) {
+    size_t length=0;const char *text=p_lua_tolstring(L,1,&length);uint64_t saved=0;int ok=text && length==16;
+    for(size_t i=0;ok && i<16;i++) {
+        char ch=text[i];unsigned v=ch>='0'&&ch<='9'?(unsigned)(ch-'0'):ch>='a'&&ch<='f'?(unsigned)(ch-'a'+10):16u;
+        if(v>15) ok=0;else saved=(saved<<4)|v;
+    }
+    p_lua_pushnumber(L,ok && motion_watch_zone_add(saved));return 1;
+}
+static int lua_motion_watch_digest(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[512];int n=0;
+    if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=motion_watch_digest((uint64_t)index,out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_motion_watch_doors(lua_State *L) {p_lua_pushnumber(L,motion_door_arm());return 1;}
+static int lua_motion_watch_splines(lua_State *L) {p_lua_pushnumber(L,motion_spline_arm());return 1;}
+static int lua_motion_watch_spline_row(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[512];int n=0;
+    if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=motion_spline_row((uint64_t)index,out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_spline_join_all(lua_State *L) {p_lua_pushnumber(L,spline_join_all_arm());return 1;}
+static int lua_motion_watch_door_row(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[512];int n=0;
+    if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=motion_door_row((uint64_t)index,out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 static int lua_motion_watch_frame(lua_State *L) {
     double tick=p_lua_tonumber(L,1);
     p_lua_pushnumber(L,isfinite(tick) && tick>=1 && tick<9007199254740992.0 && floor(tick)==tick && motion_watch_frame((uint64_t)tick));return 1;
@@ -1395,8 +1433,28 @@ static int lua_motion_watch_refresh_row(lua_State *L) {
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=motion_refresh_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
+/* wreck_watch(): WRECK and WRECK_WRITE rows for the watched ships (lockstep_wreck_watch.h; after motion_watch). */
+static int lua_wreck_watch(lua_State *L) {p_lua_pushnumber(L,wreck_arm());return 1;}
+static int lua_wreck_watch_frame(lua_State *L) {
+    double tick=p_lua_tonumber(L,1);
+    p_lua_pushnumber(L,isfinite(tick) && tick>=1 && tick<9007199254740992.0 && floor(tick)==tick && wreck_frame((uint64_t)tick));return 1;
+}
+static int lua_wreck_watch_row(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[1024];int n=0;
+    if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=wreck_row((uint64_t)index,out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_wreck_watch_write_row(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[1024];int n=0;
+    if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=wreck_write_row((uint64_t)index,out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_wreck_watch_status(lua_State *L) {
+    char out[256];int n=accept_ui()?wreck_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 static int lua_motion_watch_status(lua_State *L) {
-    char out[256];int n=accept_ui()?motion_watch_status(out,sizeof(out)):0;
+    char out[512];int n=accept_ui()?motion_watch_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_nav_params_init(lua_State *L) {p_lua_pushnumber(L,nav_params_arm());return 1;}
@@ -1528,6 +1586,36 @@ static int lua_path_budget(lua_State *L) {
 }
 static int lua_path_budget_status(lua_State *L) {
     char out[160];int n=accept_ui()?pbud_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.path_transforms('sim'|'observe'): native_gate_path_transforms, lockstep_path_transforms.h. */
+static int lua_path_transforms(lua_State *L) {
+    const char *mode=p_lua_tolstring(L,1,NULL);
+    int m=mode && !strcmp(mode,"sim")?PTF_SIM:mode && !strcmp(mode,"observe")?PTF_OBSERVE:PTF_OFF;
+    p_lua_pushnumber(L,m!=PTF_OFF && ptf_arm(m));return 1;
+}
+static int lua_path_transforms_status(lua_State *L) {
+    char out[512];int n=accept_ui()?ptf_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_path_transforms_row(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[640];
+    int n=accept_ui() && isfinite(index) && index>=0 && floor(index)==index?ptf_row_text((uint64_t)index,out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.body_pose('sim'|'observe'): native_gate_body_pose, lockstep_body_pose.h. */
+static int lua_body_pose(lua_State *L) {
+    const char *mode=p_lua_tolstring(L,1,NULL);
+    int m=mode && !strcmp(mode,"sim")?BPOSE_SIM:mode && !strcmp(mode,"observe")?BPOSE_OBSERVE:BPOSE_OFF;
+    p_lua_pushnumber(L,m!=BPOSE_OFF && bpose_arm(m));return 1;
+}
+static int lua_body_pose_status(lua_State *L) {
+    char out[512];int n=accept_ui()?bpose_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_body_pose_row(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[640];
+    int n=accept_ui() && isfinite(index) && index>=0 && floor(index)==index?bpose_row_text((uint64_t)index,out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* gate.pass_stride(N): native_gate_pass_stride, lockstep_mass_traffic.h. */
@@ -1674,7 +1762,9 @@ static int lua_loadout_order_row(lua_State *L) {
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=ll_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
+#define fr_status fr_status_win /* the status with Windows' own fields (FR26, lockstep_fp_redirect_win.h) */
 #include "lockstep_fp_redirect_lua.h"
+#undef fr_status
 /* step_trace(id): a saved ID (16 hex digits) to trace; step_trace_arm(ticks); status; rows. */
 static int lua_step_trace(lua_State *L) {
     size_t length=0;const char *text=p_lua_tolstring(L,1,&length);uint64_t id=0;int ok=text && length==16;
@@ -1821,6 +1911,11 @@ static int lua_physics_trace_children(lua_State *L) {
     double ticks=p_lua_tonumber(L,1),from=p_lua_tonumber(L,2);if(from==0) from=1; /* absent: 1 */
     p_lua_pushnumber(L,isfinite(ticks) && ticks>=1 && ticks<=PTRACE_CHILD_TICKS_MAX && floor(ticks)==ticks && isfinite(from) && from>=1 &&
                        from<=ticks && floor(from)==from && ptrace_children_arm((unsigned)ticks,(unsigned)from));return 1;
+}
+/* physics_trace_from(from): body and contact rows only from tick `from` on (after physics_trace with rows >= from). */
+static int lua_physics_trace_from(lua_State *L) {
+    double from=p_lua_tonumber(L,1);
+    p_lua_pushnumber(L,isfinite(from) && from>=1 && from<=PTRACE_ROW_TICKS_MAX && floor(from)==from && ptrace_from_arm((unsigned)from));return 1;
 }
 /* physics_trace_saved(): PHYSICS_BODY rows for saved bodies too (after physics_trace with rows >= 1). */
 static int lua_physics_trace_saved(lua_State *L) {p_lua_pushnumber(L,ptrace_saved_arm());return 1;}
@@ -2430,6 +2525,11 @@ static int lua_poll(lua_State *L) {
     p_lua_pushnumber(L,(double)spline_joins);p_lua_setfield(L,-2,"spline_joins");
     p_lua_pushnumber(L,(double)spline_waits);p_lua_setfield(L,-2,"spline_waits");
     p_lua_pushnumber(L,(double)spline_timeouts);p_lua_setfield(L,-2,"spline_timeouts");
+    p_lua_pushnumber(L,spline_join_all);p_lua_setfield(L,-2,"spline_join_all");
+    p_lua_pushnumber(L,(double)spline_all_joins);p_lua_setfield(L,-2,"spline_all_joins");
+    p_lua_pushnumber(L,(double)spline_all_waits);p_lua_setfield(L,-2,"spline_all_waits");
+    p_lua_pushnumber(L,(double)spline_all_timeouts);p_lua_setfield(L,-2,"spline_all_timeouts");
+    p_lua_pushnumber(L,(double)spline_all_failures);p_lua_setfield(L,-2,"spline_all_failures");
     char flight_totals[1024];int flight_n=0;
     for(unsigned i=0;i<ACTOR_CAPACITY;i++) if(actor_is_ship(i+1)) flight_n+=snprintf(flight_totals+flight_n,sizeof(flight_totals)-(size_t)flight_n,
         "%s%u/%llu",flight_n?",":"",i+1,(unsigned long long)flight_samples[i].init_generation);
@@ -3225,6 +3325,13 @@ static int lua_runtime_ids(lua_State *L) {
 }
 /* runtime_ids_local(): right after a set runtime_ids; the view's allocations on their own lists. */
 static int lua_runtime_ids_local(lua_State *L) {p_lua_pushnumber(L,accept_ui() && rid_local_arm());return 1;}
+/* guidance_local(): right after runtime_ids_local; what this client's guidance runs in the simulation takes
+ * local IDs (lockstep_guidance_local.h). guidance_local_status(): its counters. */
+static int lua_guidance_local(lua_State *L) {p_lua_pushnumber(L,accept_ui() && glocal_arm());return 1;}
+static int lua_guidance_local_status(lua_State *L) {
+    char out[256];int n=accept_ui()?glocal_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 /* runtime_ids_probe(1|0): around the probe's own frame, which runs in slot 6 and is not the view. */
 static int lua_runtime_ids_probe(lua_State *L) {
     if(accept_ui()) InterlockedExchange(&rid_probe_frame,p_lua_tonumber(L,1)!=0);
@@ -3678,14 +3785,14 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(start);METHOD(report);METHOD(poll);METHOD(stop);METHOD(actor);METHOD(boot);METHOD(load_requested);METHOD(frame_timing);METHOD(qpc_us);METHOD(timer_resolution);METHOD(timer_resolution_status);METHOD(boot_rng_anchor);METHOD(boot_rng_anchor_status);METHOD(path_determinism);METHOD(path_determinism_status);METHOD(travel_determinism);METHOD(travel_determinism_status);METHOD(ai_schedule);METHOD(ai_schedule_status);METHOD(ai_schedule_fallbacks);METHOD(thread_rng);METHOD(event_order);METHOD(event_order_status);METHOD(event_rows);METHOD(event_order_row);METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(boot_hold);METHOD(boot_hold_status);METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);METHOD(gravidar_key);METHOD(gravidar_time);METHOD(gravidar_key_status);METHOD(gravidar_watch);METHOD(gravidar_watch_row);METHOD(gravidar_watch_set);METHOD(gravidar_watch_status);METHOD(gravidar_posts);METHOD(gravidar_posts_status);METHOD(gravidar_post_row);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(job_rng);METHOD(job_rng_status);METHOD(job_rng_row);METHOD(flight);METHOD(avoidance);METHOD(ai);METHOD(agent);METHOD(ship);METHOD(travel_snapshot);METHOD(travel_snapshot_status);METHOD(event_rng);METHOD(event_rng_status);METHOD(event_rng_row);
     METHOD(render_rng_split);METHOD(render_rng_split_status);METHOD(camera_perturb);METHOD(camera_perturb_status);
     METHOD(bullet_cadence);METHOD(bullet_cadence_status);METHOD(speak_timer);METHOD(speak_timer_status);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(draw_watch_add);METHOD(draw_watch_frame);METHOD(draw_watch_frame_end);METHOD(draw_watch);METHOD(draw_watch_status);METHOD(draw_watch_row);METHOD(nav_params_init);METHOD(nav_player);METHOD(nav_player_status);METHOD(command_order);METHOD(command_order_status);METHOD(command_order_row);METHOD(attention_all);METHOD(attention_all_status);METHOD(command_order_rows);METHOD(ship_sound_rng);METHOD(ship_sound_rng_status);METHOD(draw_watch_stray);METHOD(player_timer);METHOD(player_timer_status);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(transition_rows);METHOD(transition_rows_status);METHOD(transition_row);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);
-    METHOD(view_points);METHOD(view_points_frame);METHOD(view_points_status);METHOD(view_points_rows);METHOD(view_points_row);METHOD(view_points_triggers);METHOD(view_points_ui);METHOD(view_points_source);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_uncovered);METHOD(region_camera_standins);METHOD(region_camera_status);METHOD(region_camera_effect_row);METHOD(region_camera_policy_rows);METHOD(region_camera_policy_row);METHOD(region_camera_highway_rows);METHOD(region_camera_highway_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(motion_watch);METHOD(motion_watch_frame);METHOD(motion_watch_row);METHOD(motion_watch_status);METHOD(motion_watch_orders);METHOD(motion_watch_order_row);METHOD(motion_watch_target_row);METHOD(motion_watch_event_row);METHOD(motion_watch_refresh_row);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(build_rng);METHOD(build_rng_status);METHOD(ui_cargo);METHOD(ui_cargo_status);METHOD(ui_cargo_row);METHOD(supply_rows);METHOD(supply_rows_status);METHOD(supply_row);METHOD(ui_lazy);METHOD(ui_lazy_status);METHOD(ui_lazy_row);METHOD(portable_math);METHOD(portable_math_status);METHOD(exact_reciprocal);METHOD(exact_reciprocal_status);METHOD(fp_env);METHOD(fp_env_status);METHOD(decimal);METHOD(decimal_status);METHOD(supply_wants);METHOD(supply_wants_status);METHOD(supply_wants_row);METHOD(macro_arena);METHOD(macro_arena_status);METHOD(macro_arena_row);METHOD(pick_order);METHOD(pick_order_status);METHOD(pick_order_row);METHOD(order_canon);METHOD(order_canon_status);METHOD(order_canon_row);METHOD(address_order);METHOD(address_order_status);METHOD(address_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(runtime_ids);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_rows);METHOD(runtime_ids_row);
-    METHOD(physics_trace);METHOD(physics_trace_status);METHOD(physics_trace_row);METHOD(body_order);METHOD(body_order_status);METHOD(body_order_row);METHOD(physics_trace_children);METHOD(physics_trace_saved);
+    METHOD(view_points);METHOD(view_points_frame);METHOD(view_points_status);METHOD(view_points_rows);METHOD(view_points_row);METHOD(view_points_triggers);METHOD(view_points_ui);METHOD(view_points_source);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_uncovered);METHOD(region_camera_standins);METHOD(region_camera_status);METHOD(region_camera_effect_row);METHOD(region_camera_policy_rows);METHOD(region_camera_policy_row);METHOD(region_camera_highway_rows);METHOD(region_camera_highway_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(motion_watch);METHOD(motion_watch_zone);METHOD(motion_watch_digest);METHOD(motion_watch_doors);METHOD(motion_watch_door_row);METHOD(motion_watch_splines);METHOD(motion_watch_spline_row);METHOD(spline_join_all);METHOD(motion_watch_frame);METHOD(motion_watch_row);METHOD(motion_watch_status);METHOD(motion_watch_orders);METHOD(motion_watch_order_row);METHOD(motion_watch_target_row);METHOD(motion_watch_event_row);METHOD(motion_watch_refresh_row);METHOD(wreck_watch);METHOD(wreck_watch_frame);METHOD(wreck_watch_row);METHOD(wreck_watch_write_row);METHOD(wreck_watch_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(build_rng);METHOD(build_rng_status);METHOD(ui_cargo);METHOD(ui_cargo_status);METHOD(ui_cargo_row);METHOD(supply_rows);METHOD(supply_rows_status);METHOD(supply_row);METHOD(ui_lazy);METHOD(ui_lazy_status);METHOD(ui_lazy_row);METHOD(portable_math);METHOD(portable_math_status);METHOD(exact_reciprocal);METHOD(exact_reciprocal_status);METHOD(fp_env);METHOD(fp_env_status);METHOD(decimal);METHOD(decimal_status);METHOD(supply_wants);METHOD(supply_wants_status);METHOD(supply_wants_row);METHOD(macro_arena);METHOD(macro_arena_status);METHOD(macro_arena_row);METHOD(pick_order);METHOD(pick_order_status);METHOD(pick_order_row);METHOD(order_canon);METHOD(order_canon_status);METHOD(order_canon_row);METHOD(address_order);METHOD(address_order_status);METHOD(address_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(runtime_ids);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_rows);METHOD(runtime_ids_row);METHOD(guidance_local);METHOD(guidance_local_status);
+    METHOD(physics_trace);METHOD(physics_trace_status);METHOD(physics_trace_row);METHOD(body_order);METHOD(body_order_status);METHOD(body_order_row);METHOD(physics_trace_children);METHOD(physics_trace_saved);METHOD(physics_trace_from);
     METHOD(shape_order);METHOD(shape_order_status);METHOD(shape_order_row);
     METHOD(nav_octree);METHOD(nav_octree_status);METHOD(nav_octree_row);METHOD(nav_octree_report);METHOD(nav_octree_agree);METHOD(nav_octree_lookup_row);METHOD(nav_octree_sites);METHOD(nav_octree_sites_status);METHOD(nav_octree_site_row);
     METHOD(camera_offset);METHOD(camera_offset_status);METHOD(camera_anchor);METHOD(camera_anchor_keys);METHOD(camera_anchor_status);
     METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(gravidar_digest);METHOD(gravidar_digest_frame);METHOD(gravidar_digest_row);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
-    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(pass_stride);
+    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);
     METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(register_weapon);METHOD(weapon);

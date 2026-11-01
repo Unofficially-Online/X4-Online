@@ -388,8 +388,8 @@ end
 -- Ops that run in the presentation scope, as a person's click on this client does (U6c): X4's soft target refuses the
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
--- the canonical frame their live runs (U5, U7) passed with.
-K.SCOPED={target_slot=true,target_none=true}
+-- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
+K.SCOPED={target_slot=true,target_none=true,guidance_slot=true,guidance_end=true}
 -- Named script actions for runs without people; arguments are saved IDs or slots, resolved when they run.
 -- plan: list of {tick, op, ...}, ticks relative to the pilot window start.
 function K.script(plan,start,tools)
@@ -413,6 +413,10 @@ function K.script(plan,start,tools)
   elseif op=='undock' then call=function() return ffi.string(tools.C.UndockPlayerShip(false)) end
   elseif op=='wgroup' then call=function() return tools.C.SetDefensibleActiveWeaponGroup(tools.slot_id(tools.own_slot),e[3]==1,e[4]) end
   elseif op=='wkey' then call=function() return tools.gate.pilot_stock_inject('action',e[3],0) end
+  -- Guidance as the map's and the interact menu's "Set guidance" / "End guidance": the client's own, never captured
+  -- (lockstep_guidance_local.h keeps what it runs in the simulation on local IDs with native_gate_guidance_local).
+  elseif op=='guidance_slot' then call=function() tools.C.SetGuidance(tools.slot_id(e[3]),ffi.new('UIPosRot'));return 'ffi' end
+  elseif op=='guidance_end' then call=function() tools.C.EndGuidance();return 'ffi' end
   -- Missiles: the secondary trigger held (1) or released (0), carried by this client's record.
   elseif op=='missile' then call=function() return tools.gate.ui_replay_missile_hold(e[3]) end
   -- The queue editor as the map's rows call it: a create, its parameter and the enable in one Lua call, a move, a removal.

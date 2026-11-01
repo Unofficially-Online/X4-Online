@@ -71,6 +71,30 @@ __asm__(".text\n"
 "test_lx_oc_fm_call:\n push %rbp\n push %r13\n push %rbx\n mov %rdi,%rax\n mov %rcx,%rbp\n mov %r8,%r13\n xor %edi,%edi\n xor %ecx,%ecx\n"
 " call *%rax\n pop %rbx\n pop %r13\n pop %rbp\n ret\n");
 extern uint64_t test_lx_oc_fm_call(const void *stub,uint64_t ship,void *point,const void *frame,const void *leader);
+/* FR25's stand-ins: the variable store (counts, answers 0x99), the transform (2m + 1, flag 0x5a, time 1.25), the zone's
+ * and the sector's GetSafePos (run the solver through its entry), the solver's rest after its prologue (p.x + 1, 0x77);
+ * callers that put the context in r12 (GetSafePos: rdi boxes, rsi p, rdx dir, rcx 0) or rbp (the transform: rdi self,
+ * rsi mat, rdx anc, ecx 0x5a, xmm0 time) and call a site's wrapper. */
+static unsigned tsc_setvar_calls;
+static uint64_t tsc_setvar(void *var,void *ctx,void *name,void *value) {(void)var;(void)ctx;(void)name;(void)value;++tsc_setvar_calls;return 0x99;}
+static void tsc_gtr(void *self,void *mat,void *anc,uint32_t flag,double time) {
+    (void)self;(void)anc;assert((flag&0xff)==0x5a && time==1.25);float m[16];memcpy(m,mat,0x40);
+    for(unsigned i=0;i<16;i++) m[i]=2.0f*m[i]+1.0f;
+    memcpy(mat,m,0x40);
+}
+static uint64_t tsc_solver_rest(void *boxes,float *p,float *dir,uint32_t xflag,uint32_t yflag,float *move,float radius,float a5,float a9) {
+    (void)boxes;(void)dir;(void)move;assert(xflag==1 && !yflag && radius==50.0f && a5==1.5f && a9==2.5f);p[0]+=1.0f;return 0x77;
+}
+static uint64_t tsc_zone_gsp(void *boxes,float *p,float *dir,float *move) {
+    return ((lxc_solver_fn)(void*)LX(LX_SC_SP_SOLVER_VA))(boxes,p,dir,1,0,move,50.0f,1.5f,2.5f);
+}
+__asm__(".text\n"
+"test_lx_sp_gs_call:\n push %r12\n push %rbx\n mov %rdi,%rax\n mov %rsi,%r12\n mov %rdx,%rdi\n mov %rcx,%rsi\n mov %r8,%rdx\n xor %ecx,%ecx\n"
+" sub $8,%rsp\n call *%rax\n add $8,%rsp\n pop %rbx\n pop %r12\n ret\n"
+"test_lx_sp_tr_call:\n push %rbp\n push %rbx\n mov %rdi,%rax\n mov %r8,%rbp\n mov %rsi,%rdi\n mov %rdx,%rsi\n mov %rcx,%rdx\n mov $0x5a,%ecx\n"
+" sub $8,%rsp\n call *%rax\n add $8,%rsp\n pop %rbx\n pop %rbp\n ret\n");
+extern uint64_t test_lx_sp_gs_call(const void *wrapper,const void *ctx,void *boxes,float *p,float *dir);
+extern void test_lx_sp_tr_call(const void *wrapper,void *self,void *mat,void *anc,const void *ctx,double time);
 static void tsc_stand_ins(void) {
     unsigned char call[14]={0x48,0x83,0xec,0x08,0xe8,0,0,0,0,0x48,0x83,0xc4,0x08,0xc3};
     const uint32_t asin_sites[2]={LX_SC_ASIN_TARGET_SITE_VA,LX_SC_ASIN_CUR_SITE_VA};
@@ -118,6 +142,19 @@ static void tsc_stand_ins(void) {
          tl_write(LX(oc[i])-4,call,sizeof(call));
      }}
     target=(void*)tsc_oc_queue;memcpy(jump+6,&target,8);tl_write(LX(LX_SC_OC_VA),jump,14);
+    /* FR25: the five sites inside sub rsp,8; call; add rsp,8; ret, their targets stand-ins; the solver's prologue in
+     * place, then a jump to the stand-in rest. */
+    {const uint32_t s25[5]={LX_SC_SP_CV_SITE_VA,LX_SC_SP_GV_SITE_VA,LX_SC_SP_TR_SITE_VA,LX_SC_SP_GZ_SITE_VA,LX_SC_SP_GS_SITE_VA},
+                    t25[5]={LX_SC_SETVAR_VA,LX_SC_SETVAR_VA,LX_SC_SP_TR_VA,LX_SC_SP_ZONE_VA,LX_SC_SP_SECTOR_VA};
+     for(unsigned i=0;i<5;i++) {
+         const int32_t r=(int32_t)(int64_t)((uintptr_t)LX(t25[i])-(uintptr_t)(LX(s25[i])+5));memcpy(call+5,&r,4);
+         tl_write(LX(s25[i])-4,call,sizeof(call));
+     }}
+    target=(void*)tsc_setvar;memcpy(jump+6,&target,8);tl_write(LX(LX_SC_SETVAR_VA),jump,14);
+    target=(void*)tsc_gtr;memcpy(jump+6,&target,8);tl_write(LX(LX_SC_SP_TR_VA),jump,14);
+    target=(void*)tsc_zone_gsp;memcpy(jump+6,&target,8);tl_write(LX(LX_SC_SP_ZONE_VA),jump,14);tl_write(LX(LX_SC_SP_SECTOR_VA),jump,14);
+    tl_write(LX(LX_SC_SP_SOLVER_VA),lxc_sp_entry_original,LX_SC_SP_SOLVER_PROLOGUE);
+    target=(void*)tsc_solver_rest;memcpy(jump+6,&target,8);tl_write(LX(LX_SC_SP_SOLVER_VA)+LX_SC_SP_SOLVER_PROLOGUE,jump,14);
     /* FR19 */
     target=(void*)tsc_settarget;memcpy(jump+6,&target,8);tl_write(LX(LX_SG_FN_VA),jump,14);
     {unsigned char sg[15]={0x48,0x83,0xec,0x08,0xff,0x15,0,0,0,0,0x48,0x83,0xc4,0x08,0xc3};
@@ -207,7 +244,7 @@ static void test_step_chain_linux(void) {
     unsigned char *cur=LX(LX_SC_ASIN_CUR_SITE_VA);int32_t rel;memcpy(&rel,cur+1,4);const int32_t off=rel+16;tl_write(cur+1,&off,4);
     assert(!st_arm(3) && !strcmp(st_stage,"chain") && !strcmp(st_chain_stage,"pins") && !st_installed && !st_chain_installed);
     tl_write(cur+1,&rel,4);
-    assert(st_arm(3) && st_installed && st_chain_installed && st_chunks==ST_CHUNKS+1+ST_SPLINE_CHUNKS+ST_FM_CHUNKS+ST_PT_CHUNKS+ST_SG_CHUNKS+ST_PS_CHUNKS+ST_HW_CHUNKS && st_arm(3) && st_sg_installed && st_chain_want());
+    assert(st_arm(3) && st_installed && st_chain_installed && st_chunks==ST_CHUNKS+1+ST_SPLINE_CHUNKS+ST_FM_CHUNKS+ST_PT_CHUNKS+ST_SG_CHUNKS+ST_PS_CHUNKS+ST_HW_CHUNKS+ST_SP_CHUNKS && st_arm(3) && st_sg_installed && st_chain_want());
     /* FR21: the Highway's slot swapped with the chain; its banking sites lead to the stand-in, nothing kept outside an entry. */
     assert(st_hw_installed && *(void**)LX(LX_HW_SLOT_VA)==(void*)st_hw_transform && st_hw_native==hw_fn);
     {const LONG64 b0=st_chain_hits[11],b1=st_chain_hits[12];
@@ -348,7 +385,7 @@ static void test_step_chain_linux(void) {
     assert(w[17]==0x3e800000u && w[18]==0x22222222u && w[19]==0x22222222u && w[20]==0x22222222u);
     assert(!s[0] && !s[7] && !s[14] && s[21]==1 && s[22]==0x40400000u && s[27]==0x3fc00000u && s[28]==1 && s[29]==0x40000000u && s[34]==0x3f800000u);
     char row[1024];
-    assert(st_chunks==ST_CHUNKS+1+ST_SPLINE_CHUNKS+ST_FM_CHUNKS+ST_PT_CHUNKS+ST_SG_CHUNKS+ST_PS_CHUNKS+ST_HW_CHUNKS && st_chunks==108);
+    assert(st_chunks==ST_CHUNKS+1+ST_SPLINE_CHUNKS+ST_FM_CHUNKS+ST_PT_CHUNKS+ST_SG_CHUNKS+ST_PS_CHUNKS+ST_HW_CHUNKS+ST_SP_CHUNKS && st_chunks==212);
     assert(st_row(1*st_chunks+ST_CHUNKS+1+ST_SPLINE_CHUNKS,row,sizeof(row)) && strstr(row,"tick=2 key=000000000007dd7c ordinal=0 thread=ui part=formation offset=0 ") &&
            strstr(row,"bytes=0117524602000000000000000100000002000000"));
     assert(st_row(1*st_chunks+ST_CHUNKS+ST_SPLINE_CHUNKS+ST_FM_CHUNKS,row,sizeof(row)) && strstr(row,"part=formation offset=500 ") && strstr(row,"bytes=")+6+0x100*2==strstr(row," banks="));
@@ -357,10 +394,12 @@ static void test_step_chain_linux(void) {
     assert(st_row(1*st_chunks+ST_CHUNKS+ST_SPLINE_CHUNKS+ST_FM_CHUNKS+ST_PT_CHUNKS,row,sizeof(row)) && strstr(row,"part=path offset=1700 ") && strstr(row,"bytes=")+6+0x100*2==strstr(row," banks="));
     assert(st_row(1*st_chunks+ST_CHUNKS+1+ST_SPLINE_CHUNKS+ST_FM_CHUNKS+ST_PT_CHUNKS,row,sizeof(row)) && strstr(row,"tick=2 key=000000000007dd7c ordinal=0 thread=ui part=settarget offset=0 ") &&
            strstr(row,"bytes=0119524602000000621b0301"));
-    assert(st_row(1*st_chunks+st_chunks-1-ST_HW_CHUNKS-ST_PS_CHUNKS,row,sizeof(row)) && strstr(row,"part=settarget offset=700 ") && strstr(row,"bytes=")+6+0x100*2==strstr(row," banks="));
-    assert(st_row(1*st_chunks+st_chunks-1-ST_HW_CHUNKS,row,sizeof(row)) && strstr(row,"part=pathset offset=700 ") && strstr(row,"bytes=")+6+0x100*2==strstr(row," banks="));
-    assert(st_row(1*st_chunks+st_chunks-ST_HW_CHUNKS,row,sizeof(row)) && strstr(row,"part=hwcap offset=0 ") && strstr(row,"bytes=00000000"));
-    assert(st_row(1*st_chunks+st_chunks-1,row,sizeof(row)) && strstr(row,"part=hwcap offset=1f00 ") && strstr(row,"bytes=")+6+0x100*2==strstr(row," banks="));
+    assert(st_row(1*st_chunks+st_chunks-1-ST_SP_CHUNKS-ST_HW_CHUNKS-ST_PS_CHUNKS,row,sizeof(row)) && strstr(row,"part=settarget offset=700 ") && strstr(row,"bytes=")+6+0x100*2==strstr(row," banks="));
+    assert(st_row(1*st_chunks+st_chunks-1-ST_SP_CHUNKS-ST_HW_CHUNKS,row,sizeof(row)) && strstr(row,"part=pathset offset=2f00 ") && strstr(row,"bytes=")+6+0x100*2==strstr(row," banks="));
+    assert(st_row(1*st_chunks+st_chunks-ST_SP_CHUNKS-ST_HW_CHUNKS,row,sizeof(row)) && strstr(row,"part=hwcap offset=0 ") && strstr(row,"bytes=00000000"));
+    assert(st_row(1*st_chunks+st_chunks-1-ST_SP_CHUNKS,row,sizeof(row)) && strstr(row,"part=hwcap offset=1f00 ") && strstr(row,"bytes=")+6+0x100*2==strstr(row," banks="));
+    assert(st_row(1*st_chunks+st_chunks-ST_SP_CHUNKS,row,sizeof(row)) && strstr(row,"part=spcap offset=0 ") && strstr(row,"bytes=00000000"));
+    assert(st_row(1*st_chunks+st_chunks-1,row,sizeof(row)) && strstr(row,"part=spcap offset=3f00 ") && strstr(row,"bytes=")+6+0x100*2==strstr(row," banks="));
     assert(st_row(1*st_chunks+0,row,sizeof(row)) && strstr(row,"tick=2 key=000000000007dd7c ordinal=0 thread=ui part=args "));
     assert(st_row(1*st_chunks+ST_CHUNKS,row,sizeof(row)) && strstr(row,"tick=2 key=000000000007dd7c ordinal=0 thread=ui part=chain offset=0 ") &&
            strstr(row,"bytes=0138524601000000")); /* the tag, one builder call */
@@ -391,6 +430,65 @@ static void test_step_chain_linux(void) {
      memcpy(&k,o2+132,8);assert(k==0x7dcd0);memcpy(&k,o2+42,8);assert(k==0);
      assert(st_chain_hits[13]==2 && st_chain_hits[14]==1);
      stats.issued=si;boot_phase=sp;st_oc_kept=0;}
+    /* FR25: the stores through their sites (the watched ship's pilot kept with the Value's position, another ship's and
+     * an MD context not), the transform with the context in rbp (kept with the matrices and the object's level), the
+     * zone's GetSafePos with the context in r12 reaching the solver through its entry (the capture: point before/after,
+     * boxes, arguments; the other ship's gated only), the solver outside a gate counted only. */
+    {assert(lxc_sp_entry_state()==1 && lxc_sp_entry_done && *LX(LX_SC_SP_SOLVER_VA)==0xe9);
+     {int32_t d;memcpy(&d,LX(LX_SC_SP_SOLVER_VA)+1,4);assert(LX(LX_SC_SP_SOLVER_VA)+5+d==thunk+LXC_SP_ENTRY && LXC_SP_ENTRY==0xcc0 && LXC_SP_TRAMP==0xce0);}
+     assert(!memcmp(thunk+LXC_SP_TRAMP,lxc_sp_entry_original,10) && !memcmp(thunk+LXC_SP_TRAMP+10,"\xff\x25\0\0\0\0",6));
+     assert(!memcmp(lxc_stub(19),"\x49\x89\xe8\xff\x25",5) && !memcmp(lxc_stub(17),"\xff\x25",2) && !memcmp(lxc_stub(18),"\xff\x25",2));
+     for(unsigned i=20;i<22;i++) {const void *g=(const void*)&st_sp_gate_gs;const unsigned char *s=lxc_stub(i);
+         assert(!memcmp(s,"\x49\xbb",2) && !memcmp(s+2,&g,8) && !memcmp(s+10,"\x4d\x89\x23\x49\x89\x63\x08\xff\x25",9));}
+     assert(lxc_sp_gs_ret[0]==(uintptr_t)LX(LX_SC_SP_GZ_SITE_VA+5) && lxc_sp_gs_ret[1]==(uintptr_t)LX(LX_SC_SP_GS_SITE_VA+5));
+     assert(world_identity_record(9103,0x1234) && world_identity_record(9104,0x5678) && world_identity_record(9201,0x9201));
+     static unsigned char ctxs[2][16] __attribute__((aligned(16))),contexts[2][0x200],pilots[2][0x80] __attribute__((aligned(16))),ctx_md[16];
+     static unsigned char sval[16] __attribute__((aligned(16))),sobj[0x40] __attribute__((aligned(16))),obj[0x80] __attribute__((aligned(16))),anc[0x80] __attribute__((aligned(16)));
+     for(unsigned i=0;i<2;i++) {
+         memset(contexts[i],0,sizeof(contexts[i]));memset(pilots[i],0,sizeof(pilots[i]));
+         const uint32_t tag=0x66;const uint64_t payload=(uint64_t)(uintptr_t)contexts[i]+ST_SP_AI_VALUE,pr=9200+i;
+         memcpy(ctxs[i],&tag,4);memcpy(ctxs[i]+8,&payload,8);void *pe=pilots[i],*sh=ships[i];
+         memcpy(contexts[i]+ST_SP_ENTITY,&pe,8);memcpy(pilots[i]+8,&pr,8);memcpy(pilots[i]+ST_OBJ_PARENT,&sh,8);
+     }
+     {const uint32_t tag=0x5d;memcpy(ctx_md,&tag,4);const uint64_t pl=(uint64_t)(uintptr_t)contexts[1]+ST_SP_AI_VALUE;memcpy(ctx_md+8,&pl,8);}
+     const float spos[4]={-12450.6787f,-3728.83f,-34665.39f,0.0f};memset(sobj,0,sizeof(sobj));memcpy(sobj+0x20,spos,16);
+     {const uint32_t tag=0x63;const uint64_t pl=(uint64_t)(uintptr_t)sobj;memset(sval,0,16);memcpy(sval,&tag,4);memcpy(sval+8,&pl,8);}
+     memset(obj,0,sizeof(obj));memset(anc,0,sizeof(anc));{const uint64_t a=9103,b2=9104;void *par=ships[0];memcpy(obj+8,&a,8);memcpy(anc+8,&b2,8);memcpy(obj+ST_OBJ_PARENT,&par,8);}
+     const uint64_t si=stats.issued;const unsigned sp=boot_phase;stats.issued=2;boot_phase=3;memset((void*)st_fm,0,sizeof(st_fm));
+     st_sp_kept=st_sp_caps=st_sp_solver=st_sp_gated=st_sp_sequence=0;tsc_setvar_calls=0;tsc_hier_calls=0;
+     const LONG64 h17=st_chain_hits[17],h18=st_chain_hits[18],h19=st_chain_hits[19];
+     const lxc_setvar_fn cv=(lxc_setvar_fn)(void*)(LX(LX_SC_SP_CV_SITE_VA)-4),gv=(lxc_setvar_fn)(void*)(LX(LX_SC_SP_GV_SITE_VA)-4);
+     assert(cv(NULL,ctxs[1],NULL,sval)==0x99 && cv(NULL,ctxs[0],NULL,sval)==0x99 && cv(NULL,ctx_md,NULL,sval)==0x99 && gv(NULL,ctxs[1],NULL,sval)==0x99);
+     assert(tsc_setvar_calls==4 && st_chain_hits[17]==h17+3 && st_chain_hits[18]==h18+1 && st_sp_kept==2);
+     float tm[16],t2[16];static unsigned char tmat[0x40] __attribute__((aligned(16)));
+     for(unsigned i=0;i<16;i++) {tm[i]=0.5f*(float)i+0.25f;t2[i]=2.0f*tm[i]+1.0f;}
+     memcpy(tmat,tm,0x40);test_lx_sp_tr_call(LX(LX_SC_SP_TR_SITE_VA)-4,obj,tmat,anc,ctxs[1],1.25);
+     assert(!memcmp(tmat,t2,0x40) && st_chain_hits[19]==h19+1 && st_sp_kept==3 && tsc_hier_calls==1);
+     test_lx_sp_tr_call(LX(LX_SC_SP_TR_SITE_VA)-4,obj,tmat,anc,ctxs[0],1.25);assert(st_sp_kept==3);  /* not watched */
+     static unsigned char boxes[2*0x70] __attribute__((aligned(16))),bvec[0x18];static float spt[4] __attribute__((aligned(16))),sdir[4] __attribute__((aligned(16)));
+     for(unsigned i=0;i<sizeof(boxes);i++) boxes[i]=(unsigned char)(i*5+3);
+     {uint64_t bv[3]={(uint64_t)(uintptr_t)boxes,(uint64_t)(uintptr_t)(boxes+sizeof(boxes)),(uint64_t)(uintptr_t)(boxes+sizeof(boxes))};memcpy(bvec,bv,0x18);}
+     const float p0[4]={12.5f,-3.25f,7.75f,0.0f},p1[4]={13.5f,-3.25f,7.75f,0.0f},d0[4]={0.6f,0.0f,0.8f,0.0f};memcpy(spt,p0,16);memcpy(sdir,d0,16);
+     assert(tsc_zone_gsp(bvec,spt,sdir,NULL)==0x77 && spt[0]==13.5f && st_sp_solver==1 && !st_sp_gated);  /* no gate */
+     memcpy(spt,p0,16);assert(test_lx_sp_gs_call(LX(LX_SC_SP_GZ_SITE_VA)-4,ctxs[0],bvec,spt,sdir)==0x77);    /* not watched */
+     memcpy(spt,p0,16);assert(test_lx_sp_gs_call(LX(LX_SC_SP_GZ_SITE_VA)-4,ctxs[1],bvec,spt,sdir)==0x77 && !memcmp(spt,p1,16));
+     assert(st_sp_solver==3 && st_sp_gated==2 && st_sp_caps==1 && st_fm[0].sp_calls==1);
+     static st_record_t spr;st_fm_take(0,&spr);const uint32_t *v0=spr.pathset,*v1=v0+ST_PS_WORDS,*v2=v0+2*ST_PS_WORDS,*c0=spr.spcap;uint64_t k;
+     assert(v0[0]==ST_SP_TAG && v0[1]==2 && v0[2]==0 && v0[3]==0 && v0[6]==0 && v0[7]==1 && v0[11]==1 && v0[16]==0x63 && !memcmp(v0+20,spos,16) && v0[ST_PS_WORDS-1]==3);
+     memcpy(&k,v0+4,8);assert(k==0x7dd7c);memcpy(&k,v0+8,8);assert(k==0x9201);
+     assert(v1[0]==ST_SP_TAG && v1[3]==1 && v1[6]==1 && v1[10]==v0[10]+1 && !memcmp(v1+20,spos,16));
+     {double tt;memcpy(&tt,v2+20,8);assert(v2[0]==ST_SP_TAG && v2[3]==2 && v2[6]==2 && v2[22]==0x5a && tt==1.25 && !memcmp(v2+24,tm,0x40) && !memcmp(v2+40,t2,0x40));
+      memcpy(&k,v2+16,8);assert(k==0x1234);memcpy(&k,v2+18,8);assert(k==0x5678);memcpy(&k,v2+56,8);assert(k==0x1234 && v2[58]==1);
+      float lv[16]={0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0};for(unsigned i=0;i<16;i++) lv[i]=2.0f*lv[i]+(float)i+0.25f;
+      assert(!memcmp(v2+60,lv,0x40));memcpy(&k,v2+76,8);assert(k==0x7dcd0 && !v2[78]);}
+     for(unsigned i=3*ST_PS_WORDS;i<ST_PS_ENTRIES*ST_PS_WORDS;i++) assert(!v0[i]);
+     {float r50=50.0f,a15=1.5f,a25=2.5f;uint32_t u;
+      assert(c0[0]==ST_SP_CAP_TAG && c0[1]==2 && c0[3]==0 && c0[6]==0 && c0[7]==2 && c0[8]==2 && c0[9]==1 && c0[30]==0 && c0[31]==1 && c0[33]==0);
+      memcpy(&u,&r50,4);assert(c0[28]==u);memcpy(&u,&a15,4);assert(c0[29]==u);memcpy(&u,&a25,4);assert(c0[32]==u);
+      assert(!memcmp(c0+12,p0,16) && !memcmp(c0+16,p1,16) && !memcmp(c0+20,d0,16) && c0[24]==0xffffffffu && !memcmp(c0+ST_SP_BOX_FIRST,boxes,sizeof(boxes)));
+      memcpy(&k,c0+4,8);assert(k==0x7dd7c);memcpy(&k,c0+34,8);assert(k==0x9201 && c0[36]==1 && c0[ST_SP_WORDS-1]==1);
+      for(unsigned i=ST_SP_WORDS;i<ST_SP_CAPS*ST_SP_WORDS;i++) assert(!c0[i]);}
+     stats.issued=si;boot_phase=sp;st_sp_kept=st_sp_caps=st_sp_solver=st_sp_gated=0;}
     /* Ownership: a changed rel32 is seen; then the restoration, byte-exact, the entry first. */
     unsigned char *b=LX(LX_SC_BUILDER_SITE_VA);memcpy(&rel,b+1,4);const int32_t moved=rel+1;tl_write(b+1,&moved,4);assert(!st_chain_owned());tl_write(b+1,&rel,4);
     assert(st_chain_owned());
@@ -398,6 +496,7 @@ static void test_step_chain_linux(void) {
     assert(!st_installed && st_restored && entry==step && !st_chain_installed && st_chain_restored && !strcmp(st_chain_stage,"restored"));
     assert(!st_sg_installed && *(void**)LX(LX_SG_SLOT_VA)==sg_fn && !st_hw_installed && *(void**)LX(LX_HW_SLOT_VA)==hw_fn);
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) assert(lxc_site_state(i)==0 && !memcmp(lines[i],(void*)((uintptr_t)LX(lxc_sites[i].site+1)&~(uintptr_t)15),16));
+    assert(!lxc_sp_entry_done && lxc_sp_entry_state()==0 && !memcmp(LX(LX_SC_SP_SOLVER_VA),lxc_sp_entry_original,10));
     {uintptr_t page=(uintptr_t)LX(LX_ST_SLOT_VA)&~(uintptr_t)(GATE_PAGE-1);assert(!mprotect((void*)page,GATE_PAGE,PROT_READ|PROT_WRITE));
      memcpy(LX(LX_ST_SLOT_VA),&saved_entry,8);memcpy(LX(LX_SG_SLOT_VA),&saved_sg,8);assert(!mprotect((void*)page,GATE_PAGE,PROT_READ|PROT_WRITE));}
     {uintptr_t page=(uintptr_t)LX(LX_HW_SLOT_VA)&~(uintptr_t)(GATE_PAGE-1);assert(!mprotect((void*)page,GATE_PAGE,PROT_READ|PROT_WRITE));
@@ -440,10 +539,19 @@ static void test_step_chain_elf(void) {
      * highway (rbp) in rdi; the map reads the spline at +0x5e8. */
     {uint64_t v;memcpy(&v,LX(LX_HW_SLOT_VA),8);assert(v==LX_HW_FN_VA && !memcmp(LX(0x15cf8e0),"\x48\x8b\xbf\xe8\x05\x00\x00",7));}
     assert(!memcmp(LX(0x15cfa40),"\xf3\x0f\x10\x43\x08\x48\x89\xef",8));
+    /* FR25: the stores take (rdi variable, rsi the context: rbp from rdx, rdx name, rcx the Value); the CreatePosition
+     * evaluation keeps the context in rbp (from rsi) and calls the transform (rdi r15, rsi the matrix, rdx r13, ecx 0,
+     * xmm0 the time); the GetSafePos evaluation keeps it in r12 (from rsi); the solver begins with the movabs the
+     * trampoline carries, its entry line aligned. */
+    assert(!memcmp(LX(0xde10c3),"\x48\x89\xd5",3) && !memcmp(LX(0xde1102),"\x48\x8d\xbb\xf8\x00\x00\x00\x4c\x89\xe1\x48\x89\xee\x48\x8d\x93\x08\x01\x00\x00\xe8",21));
+    assert(!memcmp(LX(0xde5643),"\x48\x89\xd5",3) && !memcmp(LX(0xde56a3),"\x48\x8d\xbb\xb8\x01\x00\x00\x48\x89\xe1\x48\x89\xee\x48\x8d\x93\xc8\x01\x00\x00\xe8",21));
+    assert(!memcmp(LX(0xd04a5c),"\x48\x89\xf5",3) && !memcmp(LX(0xd04bf2),"\x48\x8d\x74\x24\x50\x31\xc9\x4c\x89\xea\x4c\x89\xff",13));
+    assert(!memcmp(LX(0xd05ae8),"\x49\x89\xf4",3) && !memcmp(LX(LX_SC_SP_SOLVER_VA),lxc_sp_entry_original,10) && !((uintptr_t)LX(LX_SC_SP_SOLVER_VA)&15));
     thunk=make_thunk();assert(thunk);st_chain_installed=0;st_chain_restored=0;
     assert(st_chain_arm() && st_chain_installed && st_chain_owned());
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) assert(lxc_site_state(i)==1);
-    st_chain_restore();assert(!st_chain_installed && st_chain_restored);
+    assert(lxc_sp_entry_state()==1 && *LX(LX_SC_SP_SOLVER_VA)==0xe9 && !memcmp(LX(LX_SC_SP_SOLVER_VA)+5,lxc_sp_entry_original+5,5));
+    st_chain_restore();assert(!st_chain_installed && st_chain_restored && !lxc_sp_entry_done && !memcmp(LX(LX_SC_SP_SOLVER_VA),lxc_sp_entry_original,10));
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) assert(lxc_site_state(i)==0 && !memcmp(lines[i],(void*)((uintptr_t)LX(lxc_sites[i].site+1)&~(uintptr_t)15),16));
     st_chain_restored=0;st_chain_stage="off";
     printf("step chain (FR8) on the executable's bytes PASS\n");

@@ -72,6 +72,11 @@ PROBE_OPTIONS = {
     'native_gate_viewpoint_policy': (('sector',), (), None),
     'native_gate_effect_rows': (('true',), (), None),
     'native_gate_motion_watch_orders': (('true',), (), None),
+    'native_gate_motion_watch_digest': (('true',), (), None),
+    'native_gate_rng_rows': (('true',), (), None),
+    'native_gate_motion_watch_doors': (('true',), (), None),
+    'native_gate_wreck_watch': (('true',), (), None),
+    'native_gate_motion_watch_splines': (('true',), ('native_gate_spline_diag', 'native_gate_spline_refresh', 'native_gate_spline_join'), 'spline'),
     'native_gate_gravidar_digest': (('true',), (), None),
     'native_gate_nav_probe_init': (('true',), ('native_gate_nav_rng', 'native_gate_nav_diag', 'native_gate_nav_initial_refresh'), 'nav'),
     'native_gate_ship_sound_rng': (('true', 'split', 'observe'), (), None),
@@ -92,6 +97,8 @@ PROBE_REQUIRES_ALL = {
     'native_gate_warp_rng': (('true', 'split', 'observe'), ('native_gate_world_identities',)),
     'native_gate_transition_rows': (('true',), ('native_gate_world_identities',)),
     'native_gate_tempzone_order': (('true', 'order', 'observe'), ('native_gate_world_identities', 'native_gate_serial_pathing')),
+    'native_gate_path_transforms': (('sim', 'observe'), ('native_gate_serial_pathing',)),
+    'native_gate_body_pose': (('sim', 'observe'), ()),
     'native_gate_gravidar_posts': (('true',), ('native_gate_gravidar_key_all',)),
     'native_gate_gravidar_wide': (('true', 'wide', 'sort'), ()),
     'native_gate_shape_order': (('true', 'wait', 'sync'), ()),
@@ -122,6 +129,7 @@ PROBE_REQUIRES_ALL = {
     'native_gate_body_order': (('sort', 'observe'),
                                ('native_gate_world_identities', 'native_gate_created_identities', 'native_gate_portable_created')),
     'native_gate_virtual_players': (('observe', 'construct'), ('native_gate_serial_pathing',)),
+    'native_gate_spline_join_all': (('true',), ('native_gate_spline_join',)),
 }
 
 
@@ -621,6 +629,19 @@ def probe_rules(config_text, enabled):
             failures.append(dict(rule='native_gate_runtime_ids_local needs native_gate_runtime_ids set to a slot', bits=['native_gate_runtime_ids']))
         if 'native_gate_created_identities' not in enabled:
             failures.append(dict(rule='native_gate_runtime_ids_local needs native_gate_created_identities', bits=['native_gate_created_identities']))
+    # A client's guidance (lockstep_guidance_local.h): the local lists, the script RNG's MD frames (mask bit 2), the MD listener frames.
+    if re.search(r'X4LAN_CONFIG\.native_gate_guidance_local\s*=\s*(?!false\b|nil\b)\S', config_text):
+        if 'native_gate_guidance_local' not in enabled:
+            failures.append(dict(rule='native_gate_guidance_local must be true', bits=['native_gate_guidance_local']))
+        if 'native_gate_runtime_ids_local' not in enabled:
+            failures.append(dict(rule='native_gate_guidance_local needs native_gate_runtime_ids_local', bits=['native_gate_runtime_ids_local']))
+        if not re.search(r'X4LAN_CONFIG\.native_gate_script_rng\s*=\s*[\'"](?:key|observe)[\'"]', config_text):
+            failures.append(dict(rule='native_gate_guidance_local needs native_gate_script_rng', bits=['native_gate_script_rng']))
+        masks = re.findall(r'X4LAN_CONFIG\.native_gate_script_rng_mask\s*=\s*([0-9]+)\b', config_text)
+        if not (int(masks[-1]) if masks else 3) & 2:
+            failures.append(dict(rule='native_gate_guidance_local needs the MD bit (2) of native_gate_script_rng_mask', bits=['native_gate_script_rng_mask']))
+        if 'native_gate_md_timed_rng' not in enabled:
+            failures.append(dict(rule='native_gate_guidance_local needs native_gate_md_timed_rng', bits=['native_gate_md_timed_rng']))
     for value in re.findall(r'X4LAN_CONFIG\.native_gate_highway_rows\s*=\s*([^\s;]+)', config_text):
         if value == 'nil': continue
         if not re.fullmatch(r'[1-9][0-9]{0,3}', value) or int(value) > 3600:
@@ -641,6 +662,18 @@ def probe_rules(config_text, enabled):
             failures.append(dict(rule='native_gate_physics_trace_saved must be true', bits=['native_gate_physics_trace_saved']))
         if not re.search(r'X4LAN_CONFIG\.native_gate_physics_trace\s*=\s*[1-9]', config_text):
             failures.append(dict(rule='native_gate_physics_trace_saved needs native_gate_physics_trace >= 1', bits=['native_gate_physics_trace']))
+    # Diagnostic rows only: body and contact rows of the physics trace from a tick on.
+    for value in re.findall(r'X4LAN_CONFIG\.native_gate_physics_trace_from\s*=\s*([^\s;]+)', config_text):
+        if value == 'nil': continue
+        rows = re.search(r'X4LAN_CONFIG\.native_gate_physics_trace\s*=\s*([0-9]+)\b', config_text)
+        if not re.fullmatch(r'[1-9][0-9]{0,6}', value):
+            failures.append(dict(rule='native_gate_physics_trace_from must be a tick 1..1000000', bits=[value]))
+        elif not rows or int(rows.group(1)) < int(value):
+            failures.append(dict(rule='native_gate_physics_trace_from needs native_gate_physics_trace >= from', bits=['native_gate_physics_trace']))
+    # Diagnostic rows only: the wreck watch reads the motion watch's list.
+    if (re.search(r'X4LAN_CONFIG\.native_gate_wreck_watch\s*=\s*true\b', config_text) and
+            not re.search(r'X4LAN_CONFIG\.native_gate_motion_watch\s*=\s*\{', config_text)):
+        failures.append(dict(rule='native_gate_wreck_watch needs native_gate_motion_watch', bits=['native_gate_motion_watch']))
     # Diagnostic rows only: script RNG rows of a tick window.
     for value in re.findall(r'X4LAN_CONFIG\.native_gate_script_rng_rows_window\s*=\s*([^\n;]+)', config_text):
         value = value.strip()

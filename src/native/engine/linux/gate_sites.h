@@ -222,6 +222,25 @@
 #define LX_SC_OC_FM_SITE_VA 0x1447823u
 #define LX_SC_OC3_SITE_VA 0x1c8d0c6u
 #define LX_SC_OC4_SITE_VA 0x1cf0b86u
+/* FR25 (lockstep_step_trace.h ST_SP_TAG): the create_position result stored by CreatePositionAction::Execute 0xde10c0
+ * through 0xc93c90(rdi variable, rsi the context Value, rdx name, rcx the Value) at 0xde1116, the get_safe_pos result by
+ * 0xde5640 likewise at 0xde56b7 (Windows 0xbe0c86 / 0xbe23aa); the object's transform 0x18a0090(rdi object, rsi matrix,
+ * rdx ancestor, ecx flag, xmm0 time) inside the CreatePosition evaluation 0xd04a50 (rbp the context Value) at 0xd04c09;
+ * the GetSafePos evaluation 0xd05ae0 (r12 the context Value) into Zone::GetSafePos 0x1155360 at 0xd05fe0 and the
+ * sector's 0x1d36d90 at 0xd061c3; the solver 0x1a4b9f0 (rdi boxes, rsi point, rdx direction, ecx/r8d flags, r9 move
+ * direction, xmm0 radius, xmm1, xmm2; Windows 0x14e4320) whose entry movabs rax (10 bytes, no rip operand) moves into a
+ * trampoline. */
+#define LX_SC_SETVAR_VA 0xc93c90u
+#define LX_SC_SP_CV_SITE_VA 0xde1116u
+#define LX_SC_SP_GV_SITE_VA 0xde56b7u
+#define LX_SC_SP_TR_VA 0x18a0090u
+#define LX_SC_SP_TR_SITE_VA 0xd04c09u
+#define LX_SC_SP_ZONE_VA 0x1155360u
+#define LX_SC_SP_GZ_SITE_VA 0xd05fe0u
+#define LX_SC_SP_SECTOR_VA 0x1d36d90u
+#define LX_SC_SP_GS_SITE_VA 0xd061c3u
+#define LX_SC_SP_SOLVER_VA 0x1a4b9f0u
+#define LX_SC_SP_SOLVER_PROLOGUE 10u
 /* The flight parameter refresh (gate_fp_redirect.h, lockstep_fp_redirect.h; Option B slice 1). */
 #define LX_FR_REFRESH_VA 0x14378c0u          /* the refresh (Windows 0xea1e80) */
 #define LX_FR_ENTRY_ORIGINAL 0x5441554156415741ull /* push r15; push r14; push r13; push r12 */

@@ -493,6 +493,56 @@ static void test_fr_bl_hook(void) {
     memset(at,0,14);
     printf("fp redirect arc length: strict vectors (8bd90's highway), hook off/shadow/writer/redirect, foreign vtable PASS\n");
 }
+/* FR26: boxes (half size +0..+8, centre +0x10, radius +0x20) with the strict radius (numpy float32, correctly rounded
+ * sqrt of x*x + (y*y + z*z)) and a cached Windows radius rcp(rsqrt(that sum)) as an AMD Zen 5 CPU returns it (stored
+ * bits here, not computed). Box 0 is 084533's radius (FR25: 3170.0 cached, Linux 3170.4248), box 2 a box with adbc2's
+ * safesize/2 (81.625 / 81.641586). */
+static const struct {uint32_t h[3],radius,cached;} tsz_boxes[]={
+    {{0x454626ccu,0,0},0x454626ccu,0x45462000u},
+    {{0x42220000u,0x42750000u,0x41b80000u},0x4299e4c5u,0x4299e000u},
+    {{0x4243f098u,0x4282a065u,0},0x42a3487eu,0x42a34000u},
+    {{0x449a5225u,0x42b2051fu,0x3b23d70au},0x449ab8b1u,0x449ab800u}};
+static float (*tsz_fn)(const unsigned char *); /* fr_size_hook, or the stub on a page that jumps to it */
+static uint32_t tsz_run(unsigned i,uint32_t cached) {
+    static __declspec(align(16)) unsigned char box[0x30];memset(box,0x5a,sizeof(box));
+    memcpy(box,tsz_boxes[i].h,12);memcpy(box+0x20,&cached,4);
+    const uint32_t r=fr_bits(tsz_fn(box));
+    assert(!memcmp(box,tsz_boxes[i].h,12) && !memcmp(box+0x20,&cached,4) && box[0x0c]==0x5a && box[0x24]==0x5a); /* the box is read only */
+    return r;
+}
+/* Every mode on the four boxes, a box whose cached radius is not |half| (far), a NaN half (far) and an exact cache. */
+static void tsz_modes(float (*fn)(const unsigned char *)) {
+    tsz_fn=fn;
+    const int saved_mode=fr_mode;const uint32_t saved_active=stats.active;stats.active=1;
+    const LONG64 n0=fr_sz_n,d0=fr_sz_diff,h0=fr_sz_hits,w0=fr_sz_written,f0=fr_sz_far;
+    fr_mode=FR_OFF;for(unsigned i=0;i<4;i++) assert(tsz_run(i,tsz_boxes[i].cached)==tsz_boxes[i].cached);    /* native, not compared */
+    fr_mode=FR_SHADOW;for(unsigned i=0;i<4;i++) assert(tsz_run(i,tsz_boxes[i].cached)==tsz_boxes[i].cached); /* compared, native kept */
+    fr_mode=FR_WRITER;assert(tsz_run(0,tsz_boxes[0].cached)==tsz_boxes[0].cached);                           /* writer only: shadowed */
+    fr_mode=FR_REDIRECT;for(unsigned i=0;i<4;i++) assert(tsz_run(i,tsz_boxes[i].cached)==tsz_boxes[i].radius); /* ours */
+    assert(tsz_run(1,tsz_boxes[1].radius)==tsz_boxes[1].radius);                                              /* exact already */
+    assert(tsz_run(0,0x3f800000u)==0x3f800000u);                                                              /* 1.0: far, native */
+    {   static __declspec(align(16)) unsigned char box[0x30];memset(box,0,sizeof(box));
+        const uint32_t nan=0x7fc00000u,cached=0x40000000u;memcpy(box+4,&nan,4);memcpy(box+0x20,&cached,4);
+        tsz_fn=fn;assert(fr_bits(fn(box))==cached);                                                            /* NaN: far, native */
+        memset(box,0,12);const uint32_t zero=0;memcpy(box+0x20,&zero,4);assert(fr_bits(fn(box))==0);           /* 0 = 0 */
+    }
+    /* 4 off (hits only) + 4 shadow + 1 writer + 4 redirect + exact + far + NaN + zero: hits 17, compared 13, differing
+     * 11 (shadow 4, writer 1, redirect 4, far, NaN), far 2, written 4 */
+    assert(fr_sz_hits==h0+17 && fr_sz_n==n0+13 && fr_sz_diff==d0+11 && fr_sz_far==f0+2 && fr_sz_written==w0+4 && fr_sz_max_ulp>=0x4000);
+    char out[2048];assert(fr_status_win(out,sizeof(out))>0 && strstr(out," fac=") && strstr(out," size=") && strstr(out," size_hits=") &&
+        strstr(out," size_written=") && strstr(out," size_far=") && fr_status(out,sizeof(out))>0 && !strstr(out," size="));
+    assert(fr_size_near(0x45462000u,0x454626ccu) && fr_size_near(0x454626ccu,0x45462000u) && !fr_size_near(0x3f800000u,0x454626ccu) &&
+           !fr_size_near(0x7fc00000u,0x3f800000u) && fr_size_near(0,0) && !fr_size_near(0x7f800000u,0x7f800000u));
+    fr_mode=saved_mode;stats.active=saved_active;
+}
+static void test_fr_size_hook(void) {
+    for(unsigned i=0;i<4;i++) {
+        unsigned char box[12];memcpy(box,tsz_boxes[i].h,12);
+        if(fr_box_radius(box)!=tsz_boxes[i].radius) {printf("fp redirect size box %u: %08x want %08x\n",i,fr_box_radius(box),tsz_boxes[i].radius);assert(0);}
+    }
+    tsz_modes(fr_size_hook);
+    printf("fp redirect size radius: strict vectors (084533's and adbc2's radii), hook off/shadow/writer/redirect, far and NaN kept native PASS\n");
+}
 /* The v stub as 0x6dcce6 calls it: rcx, rdx, xmm2, r9, three on the stack, and d in xmm7 (callee-saved). */
 __asm__(
 ".text\n"
@@ -651,6 +701,7 @@ static void test_fp_redirect(void) {
     test_fr_vel_stubs();
     test_fr_fac_stubs();
     test_fr_bl_hook();
+    test_fr_size_hook();
     /* A G4 without its tail: the next one restarts. */
     (void)fr_g4_slot_hook(tfr_comp,tfr_ship,frame+0x80,slot);(void)fr_g4_slot_hook(tfr_comp,tfr_ship,frame+0x80,slot);assert(fr_unfinished==1);
     fr_tail_hook(slot);
@@ -714,6 +765,15 @@ static void test_fp_redirect(void) {
         assert(!memcmp(seen+3,fr_fac_original,5) && image[FR_FAC_SITE]==0xe9 && !fr_fac_clear());
         unsigned char viewed[sizeof(fr_fac_block)];assert(read_local(image+FR_FAC_SITE,viewed,sizeof(viewed)) && !memcmp(viewed,fr_fac_block,sizeof(viewed)));
     }
+    /* FR26: the size radius call likewise (a call: ours is e8 to the stub); the stub runs for real as the call would. */
+    memcpy(image+FR_SZ_SITE,fr_sz_original,5);assert(fr_sz_state()==0 && fr_sz_reach() && fr_sz_clear());
+    {   unsigned char call[5];fr_sz_call(call);assert(view_cas_bytes(FR_SZ_SITE,fr_sz_original,call,5) && fr_sz_state()==1);
+        fr_done|=FR_SZ_DONE;
+        unsigned char seen[16];assert(fp_patch_overlaps(image+FR_SZ_SITE-3,16) && read_local(image+FR_SZ_SITE-3,seen,16));
+        assert(!memcmp(seen+3,fr_sz_original,5) && image[FR_SZ_SITE]==0xe8 && memcmp(image+FR_SZ_SITE,fr_sz_original,5) && !fr_sz_clear());
+        int32_t d;memcpy(&d,image+FR_SZ_SITE+1,4);assert(image+FR_SZ_SITE+5+d==fr_page+FR_SZ_STUB);
+        tsz_modes((float(*)(const unsigned char *))(void*)(fr_page+FR_SZ_STUB));
+    }
     /* FR22: the BezierSpline vtable slot: native in it, swapped to the hook, owned, a foreign value refused. */
     {   void *fn=image+FR_BL_FN;memcpy(image+FR_BL_SLOT,&fn,8);
         assert(fr_bl_state()==0 && !fr_bl_swap((void*)fr_bl_hook,fn) && fr_bl_state()==0);
@@ -723,6 +783,7 @@ static void test_fp_redirect(void) {
     image[FR_AFF_SITE+1]^=1;assert(fr_aff_state()<0 && !fr_owned());image[FR_AFF_SITE+1]^=1;assert(fr_owned());
     image[FR_VEL_SITE+2]^=1;assert(fr_vel_state()<0 && !fr_owned());image[FR_VEL_SITE+2]^=1;assert(fr_owned());
     image[FR_FAC_SITE+3]^=1;assert(fr_fac_state()<0 && !fr_owned());image[FR_FAC_SITE+3]^=1;assert(fr_owned());
+    image[FR_SZ_SITE+2]^=1;assert(fr_sz_state()<0 && !fr_owned());image[FR_SZ_SITE+2]^=1;assert(fr_owned());
     {   void *other=(void*)tbl_native;assert(fr_bl_swap((void*)fr_bl_hook,other) && fr_bl_state()<0 && !fr_owned());
         assert(fr_bl_swap(other,(void*)fr_bl_hook) && fr_owned());}
     image[FR_PG_SITE+1]^=1;assert(fr_pg_state()<0 && !fr_owned());image[FR_PG_SITE+1]^=1;assert(fr_owned());
@@ -738,6 +799,7 @@ static void test_fp_redirect(void) {
     assert(fr_aff_state()==0 && !fp_patch_overlaps(image+FR_AFF_SITE,5));memset(image+FR_AFF_SITE,0,5);
     assert(fr_vel_state()==0 && !fp_patch_overlaps(image+FR_VEL_SITE,5) && fr_vel_clear());memset(image+FR_VEL_SITE,0,sizeof(fr_vel_block));
     assert(fr_fac_state()==0 && !fp_patch_overlaps(image+FR_FAC_SITE,5) && fr_fac_clear());memset(image+FR_FAC_SITE,0,sizeof(fr_fac_block));
+    assert(fr_sz_state()==0 && !fp_patch_overlaps(image+FR_SZ_SITE,5) && fr_sz_clear());memset(image+FR_SZ_SITE,0,5);
     assert(fr_bl_state()==0);memset(image+FR_BL_SLOT,0,8);
     memset(image+FR_TAIL,0,20);
     VirtualFree(fr_page,0,MEM_RELEASE);fr_page=saved_page;
@@ -1031,6 +1093,24 @@ static void test_fp_redirect_native_image(const char *path) {
     assert(fr_fac_pins_ok() && !memcmp(image+0xeb3a6c,"\xf3\x0f\x11\x8f\x98\x00\x00\x00",8) && !memcmp(image+0xeb3a83,"\x76\x0c",2));
     assert(!memcmp(image+0xeb286a,"\xf3\x44\x0f\x10\x2d",5) && 0xeb2873u+0x1e0bd61u==0x2cbe5d4u && 0xeb3a99u+0x1e0a9ebu==FR_FAC_K);
     assert(!memcmp(image+FR_FAC_BACK,"\xf3\x0f\x11\x87\x9c\x00\x00\x00\x0f\x2f\xc2",11) && FR_FAC_SITE>FR_VEL_PIN && FR_FAC_BACK<FR_VEL_PIN+FR_VEL_PIN_SIZE);
+    /* FR26: the size block, the getter and 2.0 pinned; the facts the hook relies on: the call's target is the getter,
+     * the mulss reads 2.0, 'size' (id 0x4b1) is case 0xd08b64 and jumps from 0xd08ba1 to 0xd0042b, 'coresize' falls
+     * through from the call at 0xd00426, 'safesize' joins at 0xd00433 (from 0xd08bc6), and no case of the evaluator's
+     * table (0xd0bdf0, 0x56c entries by id - 3) lands in the call's bytes. */
+    image[FR_SZ_BLOCK+0x10]^=1;assert(!fr_pins() && !fr_sz_pins_ok());image[FR_SZ_BLOCK+0x10]^=1;
+    image[FR_SZ_GETTER+4]^=1;assert(!fr_pins() && !fr_sz_pins_ok());image[FR_SZ_GETTER+4]^=1;
+    assert(fr_sz_pins_ok() && fr_pins() && !memcmp(image+FR_SZ_SITE,fr_sz_original,5) && FR_SZ_SITE==FR_SZ_BLOCK+3);
+    {   int32_t d;memcpy(&d,fr_sz_original+1,4);assert(FR_SZ_SITE+5+d==FR_SZ_GETTER && 0xd0043bu+0x1fbe4ddu==FR_AFF_TWO);
+        uint32_t c;memcpy(&c,image+0xd0bdf0u+4*(0x4b1u-3),4);assert(c==0xd08b64u);
+        assert(image[0xd08ba1]==0xe9);memcpy(&d,image+0xd08ba2,4);assert(0xd08ba6u+d==FR_SZ_BLOCK);
+        assert(image[0xd08bc6]==0xe9);memcpy(&d,image+0xd08bc7,4);assert(0xd08bcbu+d==FR_SZ_SITE+5);
+        assert(image[0xd00426]==0xe8 && 0xd00426u+5==FR_SZ_BLOCK);
+        for(unsigned i=0;i<0x56c;i++) {memcpy(&c,image+0xd0bdf0u+4*i,4);assert(c<=FR_SZ_SITE || c>=FR_SZ_SITE+5);}
+        /* the getter on its own bytes (this copy is mapped read-write: its page made executable) */
+        DWORD old;assert(VirtualProtect(image+FR_SZ_GETTER,6,PAGE_EXECUTE_READWRITE,&old));FlushInstructionCache(GetCurrentProcess(),image+FR_SZ_GETTER,6);
+        static __declspec(align(16)) unsigned char box[0x30];memset(box,0,sizeof(box));memcpy(box,tsz_boxes[2].h,12);memcpy(box+0x20,&tsz_boxes[2].cached,4);
+        assert(fr_bits(((float(*)(const unsigned char *))(void*)(image+FR_SZ_GETTER))(box))==tsz_boxes[2].cached);
+    }
     /* The live boot's order: the exact-reciprocal windows armed first (their view then covers the whole image), then
      * this module through fr_arm itself, in 'redirect': pins (both length blocks hold windows), tails clear, every
      * site installed and owned, restored. FR10/FR11/W5 refused here with stage=pins. */
@@ -1042,8 +1122,15 @@ static void test_fp_redirect_native_image(const char *path) {
         for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==0 && fr_h_clear(i));
         assert(fr_pg_state()==0 && fr_pg_clear());
         assert(fr_aff_state()==0 && fr_aff_clear() && fr_bl_state()==0);
-        assert(fr_vel_state()==0 && fr_vel_clear() && fr_fac_state()==0 && fr_fac_clear());
+        assert(fr_vel_state()==0 && fr_vel_clear() && fr_fac_state()==0 && fr_fac_clear() && fr_sz_state()==0 && fr_sz_clear());
         assert(fr_pins() && fr_arm(FR_REDIRECT,3) && fr_installed && !strcmp(fr_stage,"armed") && fr_check());
+        assert(fr_sz_state()==1 && !fr_sz_clear() && (fr_done&FR_SZ_DONE) && fr_sz_pins_ok()); /* FR26: the view keeps the block's pin */
+        {   /* the redirected call as the evaluator makes it: the stub with a box whose cached radius is approximate */
+            static __declspec(align(16)) unsigned char box[0x30];memset(box,0,sizeof(box));memcpy(box,tsz_boxes[0].h,12);memcpy(box+0x20,&tsz_boxes[0].cached,4);
+            int32_t d;memcpy(&d,image+FR_SZ_SITE+1,4);
+            const LONG64 w=fr_sz_written;
+            assert(fr_bits(((float(*)(const unsigned char *))(void*)(image+FR_SZ_SITE+5+d))(box))==tsz_boxes[0].radius && fr_sz_written==w+1);
+        }
         assert(fr_aff_state()==1 && !fr_aff_clear() && (fr_done&FR_AFF_DONE) && fr_bl_state()==1 && (fr_done&FR_BL_DONE));
         assert(*(void**)(image+FR_BL_SLOT)==(void*)fr_bl_hook && fr_aff_pins_ok() && fr_bl_pins_ok());
         assert(fr_vel_state()==1 && !fr_vel_clear() && (fr_done&FR_VEL_DONE) && fr_vel_pins_ok()); /* the view keeps the step's pin */
@@ -1056,7 +1143,7 @@ static void test_fp_redirect_native_image(const char *path) {
         for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==0);
         assert(fr_pg_state()==0 && fr_pg_clear());
         assert(fr_aff_state()==0 && fr_aff_clear() && fr_bl_state()==0 && *(void**)(image+FR_BL_SLOT)==(void*)(image+FR_BL_FN));
-        assert(fr_vel_state()==0 && fr_vel_clear() && fr_fac_state()==0 && fr_fac_clear());
+        assert(fr_vel_state()==0 && fr_vel_clear() && fr_fac_state()==0 && fr_fac_clear() && fr_sz_state()==0 && fr_sz_clear());
         for(unsigned i=0;i<FR_SITES;i++) assert(fr_site_state(i)==0);
         VirtualFree(fr_page,0,MEM_RELEASE);fr_page=NULL;fr_restored=0;fr_stage="idle";fr_mode=FR_OFF;
         fr_native_refresh=NULL;fr_native_g4=fr_native_g0=NULL;fr_native_m=NULL;fr_native_params=NULL;fr_native_v=NULL;fr_native_writer=NULL;

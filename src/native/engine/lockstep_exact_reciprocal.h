@@ -11,7 +11,7 @@
  *   rsqrtss d, s  ->  d[0] = 1.0f / sqrt(s[0])           (SQRTSS, then DIVSS)
  *   rsqrtss d, s ... rcpss d, d  ->  d[0] = sqrt(s[0])   (SQRTSS; the RCPSS emits nothing)
  * lanes 1-3 of d unchanged, flags untouched. The last line is the approximate
- * length rcp(rsqrt(x)), 475 times in X4.exe, whether the two instructions are
+ * length rcp(rsqrt(x)), 498 times in the table, whether the two instructions are
  * adjacent or apart (no instruction in between touches d, no branch enters):
  * sqrt(x) is what the Linux build computes where X4.exe has such a pair, so this
  * also serves Windows/Linux agreement; the preload does the same on Linux.
@@ -21,8 +21,10 @@
  * LEA RSP and the copied original neighbour instructions.
  *
  * Sites: lockstep_exact_reciprocal_sites.h (tools/dev/gen_exact_reciprocal.py):
- * 1,262 of the 1,264 instructions reachable from .pdata roots, in 819 windows of
- * whole instructions (71 RCPSS and 241 RSQRTSS alone, 475 chains). Each window is pinned by an FNV-1a 64 digest of its bytes;
+ * 1,272 of the 1,274 instructions reachable from the .pdata roots and five extra roots (FR26: four leaf
+ * functions without unwind data and one switch arm, whose results reach the AI position chain), in 824
+ * windows of whole instructions (53 RCPSS and 223 RSQRTSS alone, 498 chains); 63 approximate instructions
+ * outside the descent stay as they are (gen_exact_reciprocal.py --inventory). Each window is pinned by an FNV-1a 64 digest of its bytes;
  * its first five bytes become jmp rel32 to a trampoline (rewritten instructions,
  * copied neighbours with RIP displacements adjusted, jmp back), the rest int3.
  * The trampoline keeps the value in a 16-byte stack slot below RSP (lea rsp; no

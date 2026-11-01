@@ -242,9 +242,16 @@ local native_owned=false -- Successful boot/start owns cleanup before adapters c
 -- events (hit claims, refused flight inputs) are always written at once. Only the log changes:
 -- every tick is sampled, hashed and reported as before, and the drains still empty the native
 -- buffers.
-local ticklog={stride=cfg.native_gate_status_stride,keep=16,ring={}}
+-- A tick inside native_gate_trace_window={first,last} is written like a stride tick: its trace rows
+-- (ACTOR, FLIGHT, ...), every row the frame drains (MOTION_WATCH/ORDER/TARGET/EVENT/REFRESH, ...) and
+-- the module statuses. reg-tour18w (stride 60, window 2460..2480) held them and kept only 2460 and the
+-- last 16 ticks before the stop, so the ticks where actor 9 parted were missing. No window, no change.
+local ticklog={stride=cfg.native_gate_status_stride,keep=16,ring={},window=cfg.native_gate_trace_window}
 assert(ticklog.stride==nil or (type(ticklog.stride)=='number' and ticklog.stride%1==0 and ticklog.stride>=1 and ticklog.stride<=3600),
  'native_gate_status_stride must be a tick count 1..3600')
+assert(ticklog.window==nil or (type(ticklog.window)=='table' and #ticklog.window==2 and type(ticklog.window[1])=='number' and
+ type(ticklog.window[2])=='number' and ticklog.window[1]%1==0 and ticklog.window[2]%1==0 and ticklog.window[1]>=1 and
+ ticklog.window[1]<=ticklog.window[2]),'native_gate_trace_window must be {first,last} ticks, 1 <= first <= last')
 -- Who allocates runtime IDs (RUNTIME_IDS_CALLER), every N ticks instead of 300, so that
 -- census_runtime_callers.py --first names the tick and stack where the shared list parts.
 do
@@ -270,8 +277,9 @@ end
 function ticklog.open(tick)
  ticklog.tick=nil
  if not (ticklog.stride and tick) then return end
- local world=cfg.native_gate_world_hash_stride
- local current={tick=tick,write=tick<=ticklog.stride or tick%ticklog.stride==0 or (world and tick%world==0)}
+ local world,window=cfg.native_gate_world_hash_stride,ticklog.window
+ local current={tick=tick,write=tick<=ticklog.stride or tick%ticklog.stride==0 or (world and tick%world==0) or
+  (window~=nil and window[1]<=tick and tick<=window[2])}
  local ring=ticklog.ring
  if #ring>=ticklog.keep then table.remove(ring,1) end
  ring[#ring+1]=current;ticklog.tick=current
@@ -565,7 +573,7 @@ local probe_last_us -- previous frame() wall time, native_gate_frame_timing only
 local camera_perturb=false -- this client perturbs its camera (native_gate_camera_perturb)
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
 local nav_cadence_cursor=0
-local row_cursors={coverage=0,step_trace=0,fp_redirect=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,nav_octree=0,nav_octree_lookup=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+local row_cursors={coverage=0,step_trace=0,fp_redirect=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,nav_octree=0,nav_octree_lookup=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
 local world_trace_rows,world_queue_rows,world_wait_rows,world_wait_rng_rows=0,0,0,0
 local world_action_rows,world_values_rows,world_values_unknown_rows,world_unknown_identity_rows=0,0,0,0
 local world_values_cursors_loaded=false
@@ -604,7 +612,7 @@ end
 -- target rows (native_gate_motion_watch and native_gate_motion_watch_orders).
 -- final (at stop) also takes body, contact and order rows of the current tick.
 local gravidar_watch_cursor,speech_time_cursor,effect_row_cursor,motion_watch_cursor=0,0,0,0
-local motion_cursors={order=0,target=0,event=0,refresh=0} -- one upvalue for the four order-row kinds
+local motion_cursors={order=0,target=0,event=0,refresh=0,door=0,spline=0,wreck=0,wreck_write=0} -- one upvalue for the order-row kinds, door, spline request and wreck rows
 local physics_row_names={[0]='PHYSICS_STEP ','PHYSICS_BODY ','PHYSICS_CONTACT ','PHYSICS_CHILD '}
 local function drain_gravidar_watch(final)
  local f=final and 1 or 0
@@ -737,18 +745,46 @@ local function drain_gravidar_watch(final)
   end
  end
  if cfg.native_gate_motion_watch then
+  -- With digests (native_gate_motion_watch_digest) every row's MOTION_DIGEST line and the sparse
+  -- order/target/event/refresh rows are written at once; the full rows follow the status stride.
+  local digest=cfg.native_gate_motion_watch_digest
   for _=1,4096 do
    local row=gate.motion_watch_row(motion_watch_cursor)
    if not row then break end
+   if digest then ticklog.write('MOTION_DIGEST '..assert(gate.motion_watch_digest(motion_watch_cursor),'motion watch digest missing')) end
    log('MOTION_WATCH '..row);motion_watch_cursor=motion_watch_cursor+1
   end
   if cfg.native_gate_motion_watch_orders then
+   local write=digest and ticklog.write or log
    for _,kind in ipairs({{'order','MOTION_ORDER ',gate.motion_watch_order_row},{'target','MOTION_TARGET ',gate.motion_watch_target_row},
                          {'event','MOTION_EVENT ',gate.motion_watch_event_row},{'refresh','MOTION_REFRESH ',gate.motion_watch_refresh_row}}) do
     for _=1,4096 do
      local row=kind[3](motion_cursors[kind[1]])
      if not row then break end
-     log(kind[2]..row);motion_cursors[kind[1]]=motion_cursors[kind[1]]+1
+     write(kind[2]..row);motion_cursors[kind[1]]=motion_cursors[kind[1]]+1
+    end
+   end
+  end
+  if cfg.native_gate_motion_watch_doors then -- dock door tests and animation callbacks (rare): written at once
+   for _=1,4096 do
+    local row=gate.motion_watch_door_row(motion_cursors.door)
+    if not row then break end
+    ticklog.write('MOTION_DOOR '..row);motion_cursors.door=motion_cursors.door+1
+   end
+  end
+  if cfg.native_gate_motion_watch_splines then -- spline route requests of watched ships (rare): written at once
+   for _=1,4096 do
+    local row=gate.motion_watch_spline_row(motion_cursors.spline)
+    if not row then break end
+    ticklog.write('MOTION_SPLINE '..row);motion_cursors.spline=motion_cursors.spline+1
+   end
+  end
+  if cfg.native_gate_wreck_watch then -- watched ships' wreck controllers and their writes (rare): written at once
+   for _,kind in ipairs({{'wreck','WRECK ',gate.wreck_watch_row},{'wreck_write','WRECK_WRITE ',gate.wreck_watch_write_row}}) do
+    for _=1,4096 do
+     local row=kind[3](motion_cursors[kind[1]])
+     if not row then break end
+     ticklog.write(kind[2]..row);motion_cursors[kind[1]]=motion_cursors[kind[1]]+1
     end
    end
   end
@@ -1391,7 +1427,7 @@ function pilot_view.arm_ui_replay(slot,window)
    'bool RemoveAllOrders(UniverseID);','bool RemoveAllOrders2(UniverseID,bool,bool);','bool ToggleAutoPilot(bool);','bool QuickDock(void);',
    'bool RequestDockAt(UniverseID,bool);','const char* UndockPlayerShip(bool);','void SetDefensibleActiveWeaponGroup(UniverseID,bool,uint32_t);',
    'uint32_t CreateOrder(UniverseID,const char*,bool);','bool EnableOrder(UniverseID,size_t);','bool AdjustOrder(UniverseID,size_t,size_t,bool,bool,bool);',
-   'bool RemoveOrder(UniverseID,size_t,bool,bool);'}) do pcall(ffi.cdef,line) end
+   'bool RemoveOrder(UniverseID,size_t,bool,bool);','void SetGuidance(UniverseID,UIPosRot);','void EndGuidance(void);'}) do pcall(ffi.cdef,line) end
  local armed,refused=gate.ui_replay(mask)
  assert(armed==1,'ui replay refused: '..tostring(refused))
  local function slot_ships()
@@ -1868,8 +1904,8 @@ local function frame()
     'portable math refused '..tostring(gate.portable_math_status and gate.portable_math_status()))
    log('PORTABLE_MATH_ARMED '..tostring(gate.portable_math_status()))
   end
-  -- RCPSS/RSQRTSS in X4.exe to exactly rounded division and square root (1,262
-  -- instructions, 819 windows): vendor-independent results. Before the load. Default off.
+  -- RCPSS/RSQRTSS in X4.exe to exactly rounded division and square root (1,272
+  -- instructions, 824 windows): vendor-independent results. Before the load. Default off.
   if cfg.native_gate_exact_reciprocal then
    assert(cfg.native_gate_exact_reciprocal==true and gate.exact_reciprocal and gate.exact_reciprocal_status and gate.exact_reciprocal()==1,
     'exact reciprocal refused '..tostring(gate.exact_reciprocal_status and gate.exact_reciprocal_status()))
@@ -1926,6 +1962,28 @@ local function frame()
    assert(snapshot and cfg.native_gate_travel_snapshot==true and not cfg.native_gate_travel_determinism and cfg.native_gate_serial_pathing and
     type(mask)=='number' and (mask==2 or mask==3) and gate.travel_snapshot and gate.travel_snapshot()==1,'travel snapshot refused')
    log('TRAVEL_SNAPSHOT_ARMED')
+  end
+  -- Pathing batch jobs' relative transforms (lockstep_path_transforms.h): off the MoveWorker 0x3dde10 reads the
+  -- published component view caches (the render's copies, client-local), e.g. a Linear ship's target relative to
+  -- an object without an Agent (a wreck). 'sim' composes the simulation's transforms at the pass time instead;
+  -- 'observe' computes both and keeps the native result. Rows: PATH_TRANSFORMS_ROW. Needs the serial pathing
+  -- join. Default off.
+  if cfg.native_gate_path_transforms then
+   local mode=cfg.native_gate_path_transforms
+   assert((mode=='sim' or mode=='observe') and snapshot and cfg.native_gate_serial_pathing and gate.path_transforms and
+    gate.path_transforms_status and gate.path_transforms_row and gate.path_transforms(mode)==1,
+    'path transforms refused '..tostring(gate.path_transforms_status and gate.path_transforms_status()))
+   log('PATH_TRANSFORMS_ARMED mode='..mode)
+  end
+  -- Physics body poses (lockstep_body_pose.h): U::Destructible::CreateBody takes a new body's pose from 0x3dde10, the
+  -- published component view cache (the pose of an object's last publication, client-local: a wreck without a body
+  -- gets its body where each client last saw it). 'sim' composes the simulation's transforms at the MoveWorker's game
+  -- time instead; 'observe' computes both and keeps the native result. Rows: BODY_POSE_ROW. Default off.
+  if cfg.native_gate_body_pose then
+   local mode=cfg.native_gate_body_pose
+   assert((mode=='sim' or mode=='observe') and snapshot and gate.body_pose and gate.body_pose_status and gate.body_pose_row and
+    gate.body_pose(mode)==1,'body pose refused '..tostring(gate.body_pose_status and gate.body_pose_status()))
+   log('BODY_POSE_ARMED mode='..mode)
   end
   -- Virtual players, step 1 (reports/LOCKSTEP-VIRTUAL-PLAYERS-RE-20261029.txt):
   -- 'observe' reads the canonical player's block of X4's own control path (input
@@ -2373,12 +2431,44 @@ local function frame()
   -- Pathing state of watched ships every admitted frame (diagnostic, read-only):
   -- attention, NavigationController slots and cache, flight control model target.
   if cfg.native_gate_motion_watch then
-   assert(type(cfg.native_gate_motion_watch)=='table' and #cfg.native_gate_motion_watch>=1 and gate.motion_watch and
+   local zones=cfg.native_gate_motion_watch_zones
+   assert(type(cfg.native_gate_motion_watch)=='table' and (#cfg.native_gate_motion_watch>=1 or zones) and gate.motion_watch and
     gate.motion_watch_frame and gate.motion_watch_row and gate.motion_watch_status,'motion watch refused')
    for _,id in ipairs(cfg.native_gate_motion_watch) do
     assert(type(id)=='string' and #id==16 and id:match('^[0-9a-f]+$') and gate.motion_watch(id)==1,'motion watch refused '..tostring(id))
    end
    log('MOTION_WATCH_ARMED watched='..#cfg.native_gate_motion_watch)
+   -- Zone members (diagnostic, read-only): at every world capture each S/M/L/XL ship whose parent
+   -- chain reaches one of these zones (saved IDs; docked ships through their dock) joins the watch
+   -- until it is gone or a later capture finds it elsewhere. Needs native_gate_world_hash_stride.
+   if zones then
+    assert(type(zones)=='table' and #zones>=1 and #zones<=4 and cfg.native_gate_world_hash_stride and gate.motion_watch_zone,'motion watch zones refused')
+    for _,id in ipairs(zones) do
+     assert(type(id)=='string' and #id==16 and id:match('^[0-9a-f]+$') and gate.motion_watch_zone(id)==1,'motion watch zones refused '..tostring(id))
+    end
+    log('MOTION_WATCH_ZONES_ARMED zones='..#zones)
+   end
+   -- One MOTION_DIGEST line per watched ship and tick, written at once (field group digests).
+   if cfg.native_gate_motion_watch_digest then
+    assert(cfg.native_gate_motion_watch_digest==true and gate.motion_watch_digest,'motion watch digest refused')
+    log('MOTION_WATCH_DIGEST_ARMED')
+   end
+   -- Dock door rows (diagnostic): the door test of Container::Move and of an attention change, a row per
+   -- change of a door's state, result, ships or deadline, and the door listener's animation start/end.
+   if cfg.native_gate_motion_watch_doors then
+    assert(cfg.native_gate_motion_watch_doors==true and gate.motion_watch_doors and gate.motion_watch_door_row and gate.motion_watch_doors()==1,
+     'motion watch doors refused '..tostring(gate.motion_watch_status and gate.motion_watch_status()))
+    log('MOTION_WATCH_DOORS_ARMED')
+   end
+   -- Spline route request rows (diagnostic): each spline update of a watched ship with a request pending before
+   -- or after it (request ordinal, deque size, the front's status/flags/result as the update sees it, consumed,
+   -- the segments it left). Needs the spline hook (native_gate_spline_diag, _refresh or _join).
+   if cfg.native_gate_motion_watch_splines then
+    assert(cfg.native_gate_motion_watch_splines==true and (cfg.native_gate_spline_diag or cfg.native_gate_spline_refresh or cfg.native_gate_spline_join) and
+     gate.motion_watch_splines and gate.motion_watch_spline_row and gate.motion_watch_splines()==1,
+     'motion watch splines refused '..tostring(gate.motion_watch_status and gate.motion_watch_status()))
+    log('MOTION_WATCH_SPLINES_ARMED')
+   end
    -- The AI move points queued for watched ships and the flight model targets set for them
    -- (diagnostic; patches four calls and four SetTarget vtable entries).
    if cfg.native_gate_motion_watch_orders then
@@ -2387,8 +2477,28 @@ local function frame()
      gate.motion_watch_orders()==1,'motion watch orders refused')
     log('MOTION_ORDERS_ARMED')
    end
+   -- Wreck rows (diagnostic, lockstep_wreck_watch.h): each frame the LinearDecelerationController of a watched
+   -- ship (its start pose and time, velocities, duration) and its physics record, and every write to it
+   -- (velocity, physics write-back, force, rebase, transform, a new controller) with the caller chain.
+   if cfg.native_gate_wreck_watch then
+    assert(cfg.native_gate_wreck_watch==true and gate.wreck_watch and gate.wreck_watch_frame and gate.wreck_watch_row and gate.wreck_watch_write_row and
+     gate.wreck_watch_status and gate.wreck_watch()==1,'wreck watch refused '..tostring(gate.wreck_watch_status and gate.wreck_watch_status()))
+    log('WRECK_WATCH_ARMED')
+   end
   end
   assert(not cfg.native_gate_motion_watch_orders or cfg.native_gate_motion_watch,'motion watch orders need native_gate_motion_watch')
+  assert(not cfg.native_gate_wreck_watch or cfg.native_gate_motion_watch,'wreck watch needs native_gate_motion_watch')
+  assert(cfg.native_gate_rng_rows==nil or cfg.native_gate_rng_rows==true,'native_gate_rng_rows must be true')
+  assert(not (cfg.native_gate_motion_watch_zones or cfg.native_gate_motion_watch_digest or cfg.native_gate_motion_watch_doors or
+   cfg.native_gate_motion_watch_splines) or cfg.native_gate_motion_watch,
+   'motion watch zones, digests, doors and splines need native_gate_motion_watch')
+  -- Spline join for every spline ship (determinism key, cause B): each spline update waits (bounded) until the
+  -- front route request is published, so every client consumes it in the same update. Needs native_gate_spline_join.
+  if cfg.native_gate_spline_join_all~=nil then
+   assert(cfg.native_gate_spline_join_all==true and cfg.native_gate_spline_join and gate.spline_join_all and gate.spline_join_all()==1,
+    'spline join all refused')
+   log('SPLINE_JOIN_ALL_ARMED')
+  end
   -- Function coverage (diagnostic): the functions listed in coverage.txt next to the gate binary that run in ticks
   -- 1..N, one int3 per entry until it first runs (Option B evidence). Run it with few other modules. Default off.
   if cfg.native_gate_coverage then
@@ -2822,6 +2932,15 @@ local function frame()
     gate.physics_trace_saved and gate.physics_trace_saved()==1,
     'physics trace saved rows refused '..tostring(gate.physics_trace_status and gate.physics_trace_status()))
    log('PHYSICS_TRACE_SAVED_ARMED rows='..cfg.native_gate_physics_trace)
+  end
+  -- Row window (diagnostic): PHYSICS_BODY and PHYSICS_CONTACT rows only for ticks
+  -- native_gate_physics_trace_from..native_gate_physics_trace (step rows every tick).
+  if cfg.native_gate_physics_trace_from~=nil then
+   local from=cfg.native_gate_physics_trace_from
+   assert(type(cfg.native_gate_physics_trace)=='number' and type(from)=='number' and from>=1 and from%1==0 and from<=cfg.native_gate_physics_trace and
+    gate.physics_trace_from and gate.physics_trace_from(from)==1,
+    'physics trace from refused '..tostring(gate.physics_trace_status and gate.physics_trace_status()))
+   log('PHYSICS_TRACE_FROM_ARMED from='..from)
   end
   -- Physics bodies of the frame's queued objects (attention/parent changes)
   -- created in portable order: 'sort' runs each object's drop and creation by
@@ -3301,6 +3420,10 @@ local function frame()
   if cfg.native_gate_spline_diag then
    log('SPLINE_STOP calls='..s.spline_calls..' restored='..s.spline_restored..' failures='..s.spline_failures..' refreshes='..s.spline_refreshes)
    if cfg.native_gate_spline_join then log('SPLINE_JOIN requests='..s.spline_joins..' waits='..s.spline_waits..' timeouts='..s.spline_timeouts) end
+   if cfg.native_gate_spline_join_all then
+    log('SPLINE_JOIN_ALL requests='..tostring(s.spline_all_joins)..' waits='..tostring(s.spline_all_waits)..' timeouts='..tostring(s.spline_all_timeouts)..
+     ' failures='..tostring(s.spline_all_failures))
+   end
    for _,i in ipairs(registered_ships(s.registry_manifest)) do log('SPLINE id='..i..' final=1 '..assert(gate.spline(i),'final spline trace missing')) end
   end
   if cfg.native_gate_ai_diag then log('AI_STOP calls='..s.ai_calls..' restored='..s.ai_restored..' failures='..s.ai_failures) end
@@ -3355,6 +3478,8 @@ local function frame()
   end
   if cfg.native_gate_travel_determinism then log('TRAVEL_DETERMINISM_STOP '..tostring(gate.travel_determinism_status())) end
   if cfg.native_gate_travel_snapshot then log('TRAVEL_SNAPSHOT_STOP '..tostring(gate.travel_snapshot_status())) end
+  if cfg.native_gate_path_transforms then log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end
+  if cfg.native_gate_body_pose then log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end
   if cfg.native_gate_path_budget then log('PATH_BUDGET_STOP '..tostring(gate.path_budget_status())) end
   if cfg.native_gate_render_rng_split then log('RENDER_RNG_SPLIT_STOP '..tostring(gate.render_rng_split_status())) end
   if cfg.native_gate_bullet_cadence then log('BULLET_CADENCE_STOP '..tostring(gate.bullet_cadence_status())) end
@@ -3380,6 +3505,7 @@ local function frame()
   if cfg.native_gate_fp_env then log('FP_ENV_STOP '..tostring(gate.fp_env_status())) end
   if cfg.native_gate_decimal then log('DECIMAL_STOP '..tostring(gate.decimal_status())) end
   if cfg.native_gate_motion_watch then log('MOTION_WATCH_STOP '..tostring(gate.motion_watch_status())) end
+  if cfg.native_gate_wreck_watch then log('WRECK_WATCH_STOP '..tostring(gate.wreck_watch_status())) end
   if cfg.native_gate_physics_trace~=nil then log('PHYSICS_TRACE_STOP '..tostring(gate.physics_trace_status())) end
   if cfg.native_gate_body_order then log('BODY_ORDER_STOP '..tostring(gate.body_order_status())) end
   if cfg.native_gate_shape_order then log('SHAPE_ORDER_STOP '..tostring(gate.shape_order_status())) end
@@ -3434,6 +3560,7 @@ local function frame()
   if cfg.native_gate_address_order then log('ADDRESS_ORDER_STOP '..tostring(gate.address_order_status())) end
   if cfg.native_gate_script_rng then drain_script_rng();log('SCRIPT_RNG_STOP '..tostring(gate.script_rng_status())) end
   if cfg.native_gate_md_timed_rng then log('MD_TIMED_RNG_STOP '..tostring(gate.md_timed_rng_status())) end
+  if cfg.native_gate_guidance_local then log('GUIDANCE_LOCAL_STOP '..tostring(gate.guidance_local_status())) end
   if cfg.native_gate_boot_hold then log('BOOT_HOLD_STOP '..tostring(gate.boot_hold_status())) end
   if cfg.native_gate_md_resume_rng then drain_md_resume();log('MD_RESUME_RNG_STOP '..tostring(gate.md_resume_rng_status())) end
   if cfg.native_gate_ai_wait_rng then drain_ai_wait();log('AI_WAIT_RNG_STOP '..tostring(gate.ai_wait_rng_status())) end
@@ -3525,6 +3652,16 @@ local function frame()
     'runtime ids local refused '..tostring(gate.runtime_ids_status and gate.runtime_ids_status()))
    log('RUNTIME_IDS_LOCAL_ARMED '..tostring(gate.runtime_ids_status()))
   end
+  -- A client's guidance stays its own (lockstep_guidance_local.h): what X4 runs in the simulation for this client's
+  -- guidance alone (md.Guidance's cues and what they make, the guidance route) takes IDs from the local list. Needs the
+  -- local lists, the script RNG's MD frames and the MD listener frames. Default off; stop reason 130 (guidance_*).
+  if cfg.native_gate_guidance_local then
+   local mask=cfg.native_gate_script_rng_mask or 3
+   assert(cfg.native_gate_guidance_local==true and cfg.native_gate_runtime_ids_local==true and cfg.native_gate_script_rng and
+    type(mask)=='number' and mask%4>=2 and cfg.native_gate_md_timed_rng==true and gate.guidance_local and gate.guidance_local_status and
+    gate.guidance_local()==1,'guidance local refused '..tostring(gate.guidance_local_status and gate.guidance_local_status()))
+   log('GUIDANCE_LOCAL_ARMED '..tostring(gate.guidance_local_status()))
+  end
   assert(gate.load_requested()==1,'load request refused')
   log('LOAD_REQUEST snapshot='..snapshot);LoadGame('save_009');return
  end
@@ -3563,7 +3700,9 @@ local function frame()
  end
  if wire3 then input_state=apply_inputs(tick,s) end
  if profile then profile.mark('inputs') end
- log('RNG tick='..tick..' state='..tostring(s.rng))
+ -- native_gate_rng_rows=true (diagnostic): the MoveWorker word after the frame's draws on every tick, written at
+ -- once (the status stride keeps only every Nth): the first tick whose natural draws differ between clients.
+ if cfg.native_gate_rng_rows then ticklog.write('RNG tick='..tick..' state='..tostring(s.rng)) else log('RNG tick='..tick..' state='..tostring(s.rng)) end
  if cfg.native_gate_frame_timing then ticklog.write('FRAME_TIMING tick='..tick..' '..tostring(gate.frame_timing())..' probe_us='..string.format('%.0f',probe_last_us or -1)) end
  local pilot_receipt=cfg.native_gate_pilot_inputs and pilot_frame(s,tick)
  if profile then profile.mark('pilot') end
@@ -3600,6 +3739,7 @@ local function frame()
  end
  if cfg.native_gate_runtime_ids~=nil then
   ticklog.status('RUNTIME_IDS',tick,gate.runtime_ids_status,'runtime ids status unavailable')
+  if cfg.native_gate_guidance_local then ticklog.status('GUIDANCE_LOCAL',tick,gate.guidance_local_status,'guidance local status unavailable') end
   if tick==1 then log('RUNTIME_IDS_MAP '..assert(gate.runtime_ids_map_row(),'runtime ids map unavailable')) end
   local every=cfg.native_gate_runtime_ids_caller_stride
   if tick%(every or 300)==0 or (tick==1 and cfg.native_gate_runtime_ids_callers) then
@@ -3622,6 +3762,7 @@ local function frame()
   ticklog.status('WEAPON_FIRE_RNG',tick,gate.weapon_fire_rng_status,'weapon fire rng status unavailable')
  end
  if cfg.native_gate_motion_watch then assert(gate.motion_watch_frame(tick)==1,'motion watch frame failed') end
+ if cfg.native_gate_wreck_watch then assert(gate.wreck_watch_frame(tick)==1,'wreck watch frame failed') end
  if cfg.native_gate_coverage then gate.coverage_frame(tick) end
  if cfg.native_gate_physics_trace~=nil then
   ticklog.status('PHYSICS_TRACE',tick,gate.physics_trace_status,'physics trace status unavailable')
@@ -3734,6 +3875,22 @@ local function frame()
  end
  if cfg.native_gate_travel_determinism then ticklog.status('TRAVEL_DETERMINISM',tick,gate.travel_determinism_status,'travel determinism status unavailable') end
  if cfg.native_gate_travel_snapshot then ticklog.status('TRAVEL_SNAPSHOT',tick,gate.travel_snapshot_status,'travel snapshot status unavailable') end
+ if cfg.native_gate_path_transforms then
+  ticklog.status('PATH_TRANSFORMS',tick,gate.path_transforms_status,'path transforms status unavailable')
+  for _=1,4096 do
+   local row=gate.path_transforms_row(row_cursors.path_transforms)
+   if not row then break end
+   log('PATH_TRANSFORMS_ROW '..row);row_cursors.path_transforms=row_cursors.path_transforms+1
+  end
+ end
+ if cfg.native_gate_body_pose then
+  ticklog.status('BODY_POSE',tick,gate.body_pose_status,'body pose status unavailable')
+  for _=1,4096 do
+   local row=gate.body_pose_row(row_cursors.body_pose)
+   if not row then break end
+   log('BODY_POSE_ROW '..row);row_cursors.body_pose=row_cursors.body_pose+1
+  end
+ end
  if cfg.native_gate_path_budget then ticklog.status('PATH_BUDGET',tick,gate.path_budget_status,'path budget status unavailable') end
  -- Slot 6 runs before slot 10: frame= in the status is the previous admitted frame's render.
  if cfg.native_gate_render_rng_split then ticklog.status('RENDER_RNG_SPLIT',tick,gate.render_rng_split_status,'render RNG split status unavailable') end
@@ -3936,6 +4093,8 @@ SetScript('onUpdate',function()
    if cfg.native_gate_warp_rng then pcall(function() log('WARP_RNG_STOP '..tostring(gate.warp_rng_status())) end) end
    if cfg.native_gate_transition_rows then pcall(function() log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end) end
    if cfg.native_gate_tempzone_order then pcall(function() log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end) end
+   if cfg.native_gate_path_transforms then pcall(function() log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end) end
+   if cfg.native_gate_body_pose then pcall(function() log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end) end
    if cfg.native_gate_gravidar_wide then pcall(function() log('GRAVIDAR_WIDE_STOP '..tostring(gate.gravidar_wide_status())) end) end
    if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then pcall(function() log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end) end
    if cfg.native_gate_attention_all then pcall(function() log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end) end

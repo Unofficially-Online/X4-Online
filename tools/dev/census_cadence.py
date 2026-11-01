@@ -68,7 +68,21 @@ MOTION_EVENT (boost and travel mode event dispatches for it) and MOTION_REFRESH
 (flight parameter refreshes from the ship, 0xea1e80) lines
 (native_gate_motion_watch_orders) compare per ship as ordered event sequences:
 the report gives the first event whose fields differ (or that only one client
-has), its tick on both clients and the differing fields.
+has), its tick on both clients and the differing fields. MOTION_DIGEST lines
+(native_gate_motion_watch_digest) carry the same rows as field group digests on
+every tick, also for the zone members of native_gate_motion_watch_zones; the
+report gives per ship the first tick whose digests differ (or that only one
+client logged) and the differing groups (cur/prev pose and velocity, cache,
+target, path, model_ext, agent, leader, fp, dock, parent).
+MOTION_DOOR lines (native_gate_motion_watch_doors) carry each dock door's test results
+(state, result, ships, hold-open deadline) when they change and its animation starts and
+ends; the report gives per door the first row whose fields differ, its tick on both
+clients and the differing fields.
+MOTION_SPLINE lines (native_gate_motion_watch_splines) carry each spline update of a
+watched ship with a route request pending (request ordinal, deque size before and after,
+the front's status, flags and result hash as the update sees it, consumed, the segments it
+left); the report gives per ship the first row whose fields differ (waited= is wall-clock
+and left out), its tick on both clients and the differing fields.
 EFFECT_ROW lines (native_gate_effect_rows) give per effect element handed to the
 creator its owner key, delay, shot time, game time and whether it was deferred;
 the report lists the first ticks whose rows differ and which fields differ.
@@ -106,6 +120,9 @@ GDL = re.compile(r'NATIVE_GATE GRAVIDAR_DEADLINES tick=(\d+) armed=(-?\d+) .*? f
                    r'native=(\d+) unscoped=(\d+) passes=(\d+) low=(\d+) high=(\d+) .*?cur_tick=(\d+) cur_calls=(\d+) '
                    r'cur_passes=(\d+) cur_keyed=(\d+) cur_dueset=([0-9a-f]{16}) .*?admitted=(-?\d+) units_active=(\d+) units_rebased=(\d+) failures=(-?\d+) stage=(\w+)')
 MOTION_WATCH = re.compile(r'NATIVE_GATE MOTION_WATCH index=\d+ tick=(\d+) saved=([0-9a-f]{16}) (.*)$')
+MOTION_DIGEST = re.compile(r'NATIVE_GATE MOTION_DIGEST index=\d+ tick=(\d+) saved=([0-9a-f]{16}) (.*)$')
+MOTION_DOOR = re.compile(r'NATIVE_GATE MOTION_DOOR index=\d+ tick=(\d+) door=(\S+) (.*)$')
+MOTION_SPLINE = re.compile(r'NATIVE_GATE MOTION_SPLINE index=\d+ tick=(\d+) saved=([0-9a-f]{16}) (.*)$')
 MOTION_EVENT = re.compile(r'NATIVE_GATE MOTION_(ORDER|TARGET|EVENT|REFRESH) index=\d+ tick=(\d+) saved=([0-9a-f]{16}) (.*)$')
 EFFECT_ROW = re.compile(r'NATIVE_GATE EFFECT_ROW index=\d+ tick=(\d+) (key=\S+ klass=\d+ delay=\S+ time=\S+ now=\S+ deferred=\d+ unreadable=\d+)')
 NAV = re.compile(r'NATIVE_GATE NAV_CADENCE tick=(\d+) mode=(\w+) .*?frame=(\d+) fixture=([\d/]+) other=([\d/]+) '
@@ -141,6 +158,9 @@ def parse(stream):
     region_camera = {}
     effect_rows = collections.defaultdict(list)
     motion = collections.defaultdict(dict)
+    motion_digest = collections.defaultdict(dict)
+    motion_doors = collections.defaultdict(list)
+    motion_splines = collections.defaultdict(list)
     motion_events = {k: collections.defaultdict(list) for k in ('ORDER', 'TARGET', 'EVENT', 'REFRESH')}
     for line in stream:
         if 'NAV_CADENCE_ROW ' in line and (m := NAV_ROW.search(line)):
@@ -165,6 +185,13 @@ def parse(stream):
                                     failures=int(m[21]), stage=m[22])
         elif 'MOTION_WATCH ' in line and (m := MOTION_WATCH.search(line)):
             motion[m[2]][int(m[1])] = dict(f.split('=', 1) for f in m[3].split())
+        elif 'MOTION_DIGEST ' in line and (m := MOTION_DIGEST.search(line)):
+            motion_digest[m[2]][int(m[1])] = dict(f.split('=', 1) for f in m[3].split())
+        elif 'MOTION_DOOR ' in line and (m := MOTION_DOOR.search(line)):
+            motion_doors[m[2]].append(dict(tick=m[1], **dict(f.split('=', 1) for f in m[3].split())))
+        elif 'MOTION_SPLINE ' in line and (m := MOTION_SPLINE.search(line)):
+            row = dict(f.split('=', 1) for f in m[3].split());row.pop('waited', None)  # wall-clock: whether the join waited
+            motion_splines[m[2]].append(dict(tick=m[1], **row))
         elif ('MOTION_ORDER ' in line or 'MOTION_TARGET ' in line or 'MOTION_EVENT ' in line or 'MOTION_REFRESH ' in line) and \
                 (m := MOTION_EVENT.search(line)):
             motion_events[m[1]][m[3]].append(dict(tick=m[2], **dict(f.split('=', 1) for f in m[4].split())))
@@ -194,7 +221,7 @@ def parse(stream):
         elif 'STATE_ROW tick=' in line and (m := STATE.search(line)):
             states[int(m[1])].append((int(m[2]), m[3]))
     return dict(ticks=ticks, nav=nav, view=view, bullets=dict(bullets), states=dict(states), nav_rows=dict(nav_rows), mass=mass, region=region, view_rows=dict(view_rows), gdig=gdig,
-                gdig_rows=dict(gdig_rows), gdig_evicted=gdig_evicted, gdl=gdl, attention=attention, region_camera=region_camera, effect_rows=dict(effect_rows), motion=dict(motion),
+                gdig_rows=dict(gdig_rows), gdig_evicted=gdig_evicted, gdl=gdl, attention=attention, region_camera=region_camera, effect_rows=dict(effect_rows), motion=dict(motion), motion_digest=dict(motion_digest), motion_doors=dict(motion_doors), motion_splines=dict(motion_splines),
                 motion_orders=dict(motion_events['ORDER']), motion_targets=dict(motion_events['TARGET']),
                 motion_events=dict(motion_events['EVENT']), motion_refreshes=dict(motion_events['REFRESH']))
 
@@ -367,6 +394,9 @@ def compare(a, b):
                 first_region_camera=first_difference(a['region_camera'], b['region_camera'], 'key'),
                 first_effect_rows=effect_row_differences(a['effect_rows'], b['effect_rows']),
                 first_motion_watch=motion_differences(a['motion'], b['motion']),
+                first_motion_digest=motion_differences(a['motion_digest'], b['motion_digest']),
+                first_motion_doors=motion_event_differences(a['motion_doors'], b['motion_doors']),
+                first_motion_splines=motion_event_differences(a.get('motion_splines', {}), b.get('motion_splines', {})),
                 first_motion_orders=motion_event_differences(a['motion_orders'], b['motion_orders']),
                 first_motion_targets=motion_event_differences(a['motion_targets'], b['motion_targets']),
                 first_motion_events=motion_event_differences(a['motion_events'], b['motion_events']),

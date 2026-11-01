@@ -39,6 +39,9 @@ static unsigned world_hash_schema=1;
 static const char *world_hash_stage="not_started";
 static world_class_cache world_classes[512];
 static unsigned world_class_count;
+/* Optional per-item observer of a capture (read-only; NULL by default): the motion watch's zone
+ * membership (lockstep_motion_watch.h) sees every recorded item with its live object, in key order. */
+static void (*world_hash_member_note)(uint64_t tick,const world_hash_item *item,unsigned char *object);
 static char world_hash_summary[768],world_hash_state[384];
 static BCRYPT_ALG_HANDLE world_sha_algorithm;
 static BCRYPT_HASH_HANDLE world_sha_row,world_sha_roots[WORLD_HASH_DOMAINS];
@@ -294,6 +297,7 @@ static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find
         memcpy(previous,item->hash,sizeof(previous));world_hash_data data[WORLD_HASH_DOMAINS]={0};
         unsigned char *object=find(map,item->runtime,4);
         if(!world_hash_record(item,data,object)) return 0;
+        if(world_hash_member_note) world_hash_member_note(tick,item,object);
         if(data[3].length<16 || data[3].length-16>WORLD_TIMING_BYTES) {world_hash_stage="timing_schema";return 0;}
         item->timing_length=(unsigned char)(data[3].length-16);
         memcpy(item->timing,data[3].data,item->timing_length);

@@ -97,6 +97,35 @@ __asm__(
 );
 extern void *test_oc_q_call(const void *stub,void *dst,const void *src,uint64_t ship,uint64_t issuer);
 extern void *test_oc_fm_call(const void *stub,void *dst,uint64_t ship,const void *frame);
+/* FR25: callers for the gate stubs: test_sp_tr_call(stub, self, mat, anc, ctx, flag, time) puts the context in r12 and
+ * calls the transform's stub with rcx self, rdx mat, xmm2 time, r9 anc, [rsp+0x20] flag (the call returns to
+ * test_sp_tr_ret); test_sp_gs_call(stub, ctx, boxes, p, dir, move) puts the context in r12 and calls a GetSafePos stub
+ * with rcx boxes, rdx p, r8 dir, r9 move (returns to test_sp_gs_ret). */
+__asm__(
+".text\n"
+".globl test_sp_tr_ret\n.globl test_sp_gs_ret\n"
+"test_sp_tr_call:\n push %r12\n push %rbx\n mov %rcx,%rax\n mov %rdx,%rcx\n mov %r8,%rdx\n mov 0x38(%rsp),%r12\n mov 0x40(%rsp),%rbx\n"
+" movsd 0x48(%rsp),%xmm2\n sub $0x28,%rsp\n mov %rbx,0x20(%rsp)\n call *%rax\n"
+"test_sp_tr_ret:\n add $0x28,%rsp\n pop %rbx\n pop %r12\n ret\n"
+"test_sp_gs_call:\n push %r12\n push %rbx\n mov %rcx,%rax\n mov %rdx,%r12\n mov %r8,%rcx\n mov %r9,%rdx\n mov 0x38(%rsp),%r8\n"
+" mov 0x40(%rsp),%r9\n sub $0x28,%rsp\n call *%rax\n"
+"test_sp_gs_ret:\n add $0x28,%rsp\n pop %rbx\n pop %r12\n ret\n"
+);
+extern void test_sp_tr_call(const void *stub,void *self,void *mat,void *anc,const void *ctx,uint64_t flag,double time);
+extern void test_sp_gs_call(const void *stub,const void *ctx,void *boxes,float *p,float *dir,float *move);
+extern char test_sp_tr_ret[],test_sp_gs_ret[];
+/* FR25's stand-ins: the variable store counts and answers 0x99; the transform maps m to 2m + 1 when the flag is 0x5a;
+ * Zone::GetSafePos (reached through stub 31's jump) runs the solver on its own bytes through the entry jump. */
+static unsigned tsc_setvar_calls;
+static uint64_t tsc_setvar(void *var,void *ctx,void *name,void *value) {(void)var;(void)ctx;(void)name;(void)value;++tsc_setvar_calls;return 0x99;}
+static void tsc_gtr(void *self,void *mat,double time,void *anc,uint64_t flag) {
+    (void)self;(void)anc;assert((flag&0xff)==0x5a && time==1.25);float m[16];memcpy(m,mat,0x40);
+    for(unsigned i=0;i<16;i++) m[i]=2.0f*m[i]+1.0f;
+    memcpy(mat,m,0x40);
+}
+static uint64_t tsc_zone_gsp(void *boxes,float *p,float *dir,float *move) {
+    return ((stc_solver_fn)(void*)(image+STC_SP_SOLVER))(boxes,p,50.0f,dir,1.5f,0,1,move,2.5f);
+}
 /* FR24's stand-in copies: the queue's copies the point (0x90 bytes), the propagation's leaves it. */
 static void *tsc_oc_copy(void *dst,const void *src) {memcpy(dst,src,0x90);return dst;}
 static void *tsc_oc_finish(void *dst,const void *tmpl) {(void)tmpl;return dst;}
@@ -132,6 +161,8 @@ static void test_step_chain_native_image(const char *path) {
     for(unsigned i=10;i<ST_CHAIN_SITE_COUNT;i++) {image[stc_sites[i].site+1]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_sites[i].site+1]^=1;}
     for(unsigned i=0;i<5u;i++) {image[stc_pc_pins[i].rva+stc_pc_pins[i].size-1]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_pc_pins[i].rva+stc_pc_pins[i].size-1]^=1;}
     for(unsigned i=0;i<4u;i++) {image[stc_oc_pins[i].rva+stc_oc_pins[i].size-2]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_oc_pins[i].rva+stc_oc_pins[i].size-2]^=1;}
+    for(unsigned i=0;i<6u;i++) {image[stc_sp_pins[i].rva+stc_sp_pins[i].size-2]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_sp_pins[i].rva+stc_sp_pins[i].size-2]^=1;}
+    assert(stc_sp_entry_state()==0);
     assert(!stc_page && !st_chain_installed);
     /* The stand-ins (called, never read: not pinned) and the helper executable in this copy. */
     DWORD old;
@@ -139,14 +170,36 @@ static void test_step_chain_native_image(const char *path) {
     tsc_jump(STC_ASINF,(void*)tsc_asinf);tsc_jump(STC_BUILDER,(void*)tsc_builder);
     assert(VirtualProtect(image+(STC_HELPER&~0xfffu),0x1000,PAGE_EXECUTE_READWRITE,&old));
     FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
-    assert(st_chain_arm() && st_chain_installed && stc_done==(1u<<ST_CHAIN_SITE_COUNT)-1u && !strcmp(st_chain_stage,"armed") && stc_page);
+    assert(st_chain_arm() && st_chain_installed && stc_done==(1ull<<ST_CHAIN_SITE_COUNT)-1ull && stc_sp_entry_done && !strcmp(st_chain_stage,"armed") && stc_page);
+    /* FR25: the solver's entry jumps to its stub (raw), the view shows the file's bytes (the pin passes), the stubs. */
+    assert(stc_sp_entry_state()==1 && image[STC_SP_SOLVER]==0xe9 && hash_ok(image+stc_sp_pins[5].rva,stc_sp_pins[5].size,stc_sp_pins[5].sha));
+    {unsigned char seen5[5];assert(read_local(image+STC_SP_SOLVER,seen5,5) && !memcmp(seen5,stc_sp_entry_original,5));}
+    assert(hash_ok(image+stc_sp_pins[2].rva,stc_sp_pins[2].size,stc_sp_pins[2].sha) && hash_ok(image+stc_sp_pins[4].rva,stc_sp_pins[4].size,stc_sp_pins[4].sha));
+    for(unsigned i=STC_SP_TR_SITE;i<=STC_SP_GC_SITE;i++) {
+        const void *gate=i==STC_SP_TR_SITE?(const void*)&st_sp_gate_tr:(const void*)&st_sp_gate_gs,*to=i==STC_SP_TR_SITE?(const void*)stc_sp_tr:(const void*)(image+stc_sites[i].target);
+        const unsigned char *s=stc_page+stc_stub(i);
+        assert(!memcmp(s,"\x49\xbb",2) && !memcmp(s+2,&gate,8) && !memcmp(s+10,"\x4d\x89\x23\x49\x89\x63\x08\xff\x25\0\0\0\0",13) && !memcmp(s+23,&to,8));
+    }
+    assert(!memcmp(stc_page+stc_stub(STC_SP_CV_SITE),"\xff\x25\0\0\0\0",6) && !memcmp(stc_page+stc_stub(STC_SP_GV_SITE),"\xff\x25\0\0\0\0",6));
+    {void *h=(void*)stc_sp_solver,*resume=image+STC_SP_SOLVER_RESUME;
+     assert(!memcmp(stc_page+STC_SP_ENTRY_STUB,"\xff\x25\0\0\0\0",6) && !memcmp(stc_page+STC_SP_ENTRY_STUB+6,&h,8));
+     assert(!memcmp(stc_page+STC_SP_TRAMP,"\x48\x8b\xc4\x48\x89\x58\x18\xff\x25\0\0\0\0",13) && !memcmp(stc_page+STC_SP_TRAMP+13,&resume,8));
+     int32_t d;memcpy(&d,image+STC_SP_SOLVER+1,4);assert(image+STC_SP_SOLVER+5+d==stc_page+STC_SP_ENTRY_STUB);}
+    /* FR25's facts: the variable stores take (rcx var, rdx the context, r8 name, r9 the Value); the evaluations keep the
+     * context in r12 (0xc6f7ed mov r12,r8; 0xc723b8 likewise, 0xc72b15 reloads it from its home); the solver's eighth
+     * argument is the move direction (r12 = [rbp+0xf8]), its first instructions the two the trampoline carries. */
+    assert(!memcmp(image+0xbe0c77,"\x4c\x8d\x46\x10\x4c\x8d\x4c\x24\x30\x48\x8b\xd5\x48\x8b\xce\xe8",16) && !memcmp(image+0xbe0bb4,"\x49\x8b\xe8",3));
+    assert(!memcmp(image+0xbe239b,"\x4c\x8d\x43\x10\x4c\x8d\x4c\x24\x40\x48\x8b\xd7\x48\x8b\xcb\xe8",16) && !memcmp(image+0xbe232f,"\x49\x8b\xf8",3));
+    assert(!memcmp(image+0xc6f7ed,"\x4d\x8b\xe0",3) && !memcmp(image+0xc723b8,"\x4d\x8b\xe0",3) && !memcmp(image+0xc72b15,"\x4c\x8b\xa5\x40\x01\x00\x00",7));
+    assert(!memcmp(image+0x14e4353,"\x4c\x8b\xa5\xf8\x00\x00\x00",7) && !memcmp(image+STC_SP_SOLVER+5,"\x58\x18\x4c\x89\x48\x20",6));
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) assert(stc_site_state(i)==1);
     assert(memcmp(image+STC_BLOCK,block,STC_BLOCK_SIZE));                                  /* raw: ours */
     assert(hash_ok(image+STC_BLOCK,STC_BLOCK_SIZE,STC_BLOCK_SHA));                          /* the view: the file's */
     assert(read_local(image+STC_BLOCK,seen,STC_BLOCK_SIZE) && !memcmp(seen,block,STC_BLOCK_SIZE));
     assert(hash_ok(image+0xeb27c0,5212,"7920e6e4ff99bf0d0c348eeab202b0a21f5e9d69c4005ba75d302eac7ea0c8a4")); /* the world trace's pin */
     assert(st_chain_owned() && !memcmp(stc_page+stc_stub(8),"\x4c\x89\xf9\xff\x25\0\0\0\0",9) && !memcmp(stc_page+stc_stub(9),"\xff\x25\0\0\0\0",6));
-    assert(stc_stub(7)==0x70 && stc_stub(8)==0x80 && stc_stub(9)==0xa0 && stc_stub(14)==0x140 && stc_stub(25)==0x2a0 && stc_stub(27)==0x2e0 && STC_CODE_BYTES==0x300);
+    assert(stc_stub(7)==0x70 && stc_stub(8)==0x80 && stc_stub(9)==0xa0 && stc_stub(14)==0x140 && stc_stub(25)==0x2a0 && stc_stub(27)==0x2e0 && stc_stub(32)==0x380 &&
+           STC_SP_ENTRY_STUB==0x3a0 && STC_SP_TRAMP==0x3c0 && STC_CODE_BYTES==0x3e0);
     for(unsigned i=15;i<STC_OC_Q_SITE;i++) assert(!memcmp(stc_page+stc_stub(i),"\xff\x25\0\0\0\0",6));
     assert(!memcmp(stc_page+stc_stub(26),"\x49\x89\xf8\x49\x89\xe9\xff\x25\0\0\0\0",12) && !memcmp(stc_page+stc_stub(27),"\x4d\x89\xe0\x4c\x8d\x4c\x24\x08\xff\x25\0\0\0\0",14));
     assert(!memcmp(image+0xeadf4a,"\x49\x8b\xe9\x4d\x8b\xf0\x48\x8b\xfa",9) && !memcmp(image+0xeadf7f,"\x48\x8d\x4b\x10\x49\x8b\xd6",7) && !memcmp(image+0xeadf8b,"\x48\x89\xab\xa0\x00\x00\x00",7));
@@ -431,6 +484,76 @@ static void test_step_chain_native_image(const char *path) {
        assert(o[ST_PS_WORDS-1]==2 && o2[ST_PS_WORDS-1]==2);
        memcpy(image+0xeaa6f0,q_code,14);memcpy(image+0xeaa980,f_code,14);FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
        st_oc_kept=0;}
+      /* FR25: the results through stubs 28/29 (the store a stand-in): the watched ship's pilot (entity under the ship,
+       * depth 1) kept with the Value and its position, another ship's not, a foreign Value tag not; the transform
+       * through stub 30 called as from 0xc6fb48 (context in r12) kept with the matrix before/after and the object's
+       * level, not when called from elsewhere; GetSafePos's stub 31 (gate) into a stand-in that runs the solver on its
+       * own bytes through the entry jump: the capture (point unchanged: no box holds it), boxes, arguments; the solver
+       * outside a gate counted only. */
+      {static unsigned char sv_code[14],tr_code[14],gz_code[14];memcpy(sv_code,image+0xcc6710,14);memcpy(tr_code,image+0x3db8a0,14);memcpy(gz_code,image+0x835b80,14);
+       assert(VirtualProtect(image+0xcc6000u,0x1000,PAGE_EXECUTE_READWRITE,&old) && VirtualProtect(image+0x3db000u,0x1000,PAGE_EXECUTE_READWRITE,&old));
+       assert(VirtualProtect(image+0x835000u,0x1000,PAGE_EXECUTE_READWRITE,&old) && VirtualProtect(image+0x14e4000u,0x1000,PAGE_EXECUTE_READWRITE,&old));
+       tsc_jump(0xcc6710u,(void*)tsc_setvar);tsc_jump(0x3db8a0u,(void*)tsc_gtr);tsc_jump(0x835b80u,(void*)tsc_zone_gsp);
+       FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
+       static __declspec(align(16)) unsigned char ctxs[2][16],contexts[2][0x200],pilots[2][0x80],sval[16],sobj[0x40],ctx_md[16];
+       for(unsigned i=0;i<2;i++) {
+           memset(contexts[i],0,sizeof(contexts[i]));memset(pilots[i],0,sizeof(pilots[i]));
+           const uint32_t tag=0x66;const uint64_t payload=(uint64_t)(uintptr_t)contexts[i]+ST_SP_AI_VALUE,pr=9200+i;
+           memcpy(ctxs[i],&tag,4);memcpy(ctxs[i]+8,&payload,8);void *pe=pilots[i],*sh=ships[i];
+           memcpy(contexts[i]+ST_SP_ENTITY,&pe,8);memcpy(pilots[i]+8,&pr,8);memcpy(pilots[i]+ST_OBJ_PARENT,&sh,8);
+       }
+       {const uint32_t tag=0x5d;memcpy(ctx_md,&tag,4);const uint64_t pl=(uint64_t)(uintptr_t)contexts[1]+ST_SP_AI_VALUE;memcpy(ctx_md+8,&pl,8);}
+       float spos[4]={-12450.6875f,-3728.83f,-34665.38f,0.0f};memset(sobj,0,sizeof(sobj));memcpy(sobj+0x20,spos,16);
+       {const uint32_t tag=0x63;const uint64_t pl=(uint64_t)(uintptr_t)sobj;memset(sval,0,16);memcpy(sval,&tag,4);memcpy(sval+8,&pl,8);}
+       assert(world_identity_record(9200,0x9200) && world_identity_record(9201,0x9201));
+       memset((void*)st_fm,0,sizeof(st_fm));st_sp_kept=st_sp_caps=st_sp_solver=st_sp_gated=st_sp_sequence=0;tsc_setvar_calls=0;stats.issued=2;
+       const LONG64 h28=st_chain_hits[28],h29=st_chain_hits[29],h30=st_chain_hits[30];
+       assert(((stc_setvar_fn)(void*)(stc_page+stc_stub(28)))(NULL,ctxs[1],NULL,sval)==0x99);
+       assert(((stc_setvar_fn)(void*)(stc_page+stc_stub(28)))(NULL,ctxs[0],NULL,sval)==0x99);   /* not watched */
+       assert(((stc_setvar_fn)(void*)(stc_page+stc_stub(28)))(NULL,ctx_md,NULL,sval)==0x99);    /* not an AI context */
+       assert(((stc_setvar_fn)(void*)(stc_page+stc_stub(29)))(NULL,ctxs[1],NULL,sval)==0x99);
+       assert(tsc_setvar_calls==4 && st_chain_hits[28]==h28+3 && st_chain_hits[29]==h29+1 && st_sp_kept==2);
+       /* the transform: self = ref (9103 -> 0x1234, its parent ships[0]), anc = frame (9104 -> 0x5678) */
+       static __declspec(align(16)) unsigned char tmat[0x40];float tm[16];for(unsigned i=0;i<16;i++) tm[i]=0.5f*(float)i+0.25f;memcpy(tmat,tm,0x40);
+       const uintptr_t tr_ret=stc_sp_tr_ret[0],gs_ret0=stc_sp_gs_ret[0];
+       test_sp_tr_call(stc_page+stc_stub(30),ref,tmat,frame,ctxs[1],0x5a,1.25);                    /* from elsewhere: not kept */
+       stc_sp_tr_ret[0]=(uintptr_t)test_sp_tr_ret;tsc_hier_calls=0;
+       memcpy(tmat,tm,0x40);test_sp_tr_call(stc_page+stc_stub(30),ref,tmat,frame,ctxs[1],0x5a,1.25);
+       float t2[16];for(unsigned i=0;i<16;i++) t2[i]=2.0f*tm[i]+1.0f;assert(!memcmp(tmat,t2,0x40) && st_chain_hits[30]==h30+2 && st_sp_kept==3 && tsc_hier_calls==1);
+       test_sp_tr_call(stc_page+stc_stub(30),ref,tmat,frame,ctxs[0],0x5a,1.25);                    /* not watched */
+       assert(st_sp_kept==3);
+       /* the solver: two boxes far from the point */
+       static __declspec(align(16)) unsigned char boxes[2*0x70],bvec[0x18];static __declspec(align(16)) float sp[4],sdir[4];
+       for(unsigned b=0;b<2;b++) {float bx[28];memset(bx,0,sizeof(bx));bx[0]=bx[1]=bx[2]=10.0f;bx[4]=1000.0f*(float)(b+1); /* +0 half size, +0x10 centre */
+           bx[16]=1.0f;bx[21]=1.0f;bx[26]=1.0f;memcpy(boxes+b*0x70,bx,0x70);}
+       {uint64_t bv[3]={(uint64_t)(uintptr_t)boxes,(uint64_t)(uintptr_t)(boxes+sizeof(boxes)),(uint64_t)(uintptr_t)(boxes+sizeof(boxes))};memcpy(bvec,bv,0x18);}
+       const float p0[4]={12.5f,-3.25f,7.75f,0.0f},d0[4]={0.6f,0.0f,0.8f,0.0f};memcpy(sp,p0,16);memcpy(sdir,d0,16);
+       tsc_zone_gsp(bvec,sp,sdir,NULL);tsc_zone_gsp(bvec,sp,sdir,NULL);assert(!memcmp(sp,p0,16));        /* no gate: counted only */
+       assert(st_sp_solver==2 && !st_sp_gated && !st_sp_caps);
+       stc_sp_gs_ret[0]=(uintptr_t)test_sp_gs_ret;
+       test_sp_gs_call(stc_page+stc_stub(31),ctxs[0],bvec,sp,sdir,NULL);                            /* not watched */
+       test_sp_gs_call(stc_page+stc_stub(31),ctxs[1],bvec,sp,sdir,NULL);
+       assert(!memcmp(sp,p0,16) && st_sp_solver==4 && st_sp_gated==2 && st_sp_caps==1 && st_fm[0].sp_calls==1);
+       stc_sp_tr_ret[0]=tr_ret;stc_sp_gs_ret[0]=gs_ret0;
+       static st_record_t spr;st_fm_take(0,&spr);assert(!st_fm[0].sp_calls && !st_fm[0].ps_calls && !st_fm[0].lock);
+       const uint32_t *v0=spr.pathset,*v1=v0+ST_PS_WORDS,*v2=v0+2*ST_PS_WORDS,*c0=spr.spcap;
+       assert(v0[0]==ST_SP_TAG && v0[1]==2 && v0[2]==0 && v0[3]==0 && v0[7]==1 && v0[11]==0 && v0[16]==0x63 && !memcmp(v0+20,spos,16) && v0[ST_PS_WORDS-1]==3);
+       memcpy(&k,v0+4,8);assert(k==0x7dd7c);memcpy(&k,v0+8,8);assert(k==0x9201);memcpy(&k,v0+18,8);assert(k==(uint64_t)(uintptr_t)sobj);
+       assert(v1[0]==ST_SP_TAG && v1[3]==1 && v1[6]==1 && v1[10]==v0[10]+1 && !memcmp(v1+20,spos,16));
+       {double tt;memcpy(&tt,v2+20,8);assert(v2[0]==ST_SP_TAG && v2[3]==2 && v2[6]==2 && v2[22]==0x5a && tt==1.25 && !memcmp(v2+24,tm,0x40) && !memcmp(v2+40,t2,0x40));
+        memcpy(&k,v2+16,8);assert(k==0x1234);memcpy(&k,v2+18,8);assert(k==0x5678);
+        memcpy(&k,v2+56,8);assert(k==0x1234 && v2[58]==1);float lv[16]={0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0};for(unsigned i=0;i<16;i++) lv[i]=2.0f*lv[i]+(float)i+0.25f;
+        assert(!memcmp(v2+60,lv,0x40));memcpy(&k,v2+76,8);assert(k==0x7dcd0 && !v2[78]);}
+       for(unsigned i=3*ST_PS_WORDS;i<ST_PS_ENTRIES*ST_PS_WORDS;i++) assert(!v0[i]);
+       float r50=50.0f,a15=1.5f,a25=2.5f;uint32_t u;
+       assert(c0[0]==ST_SP_CAP_TAG && c0[1]==2 && c0[2]==0 && c0[3]==0 && c0[6]==0 && c0[7]==2 && c0[8]==2 && c0[9]==0 && c0[30]==1 && c0[31]==0xffffffffu && c0[33]==0);
+       memcpy(&u,&r50,4);assert(c0[28]==u);memcpy(&u,&a15,4);assert(c0[29]==u);memcpy(&u,&a25,4);assert(c0[32]==u);
+       assert(!memcmp(c0+12,p0,16) && !memcmp(c0+16,p0,16) && !memcmp(c0+20,d0,16) && c0[24]==0xffffffffu && !memcmp(c0+ST_SP_BOX_FIRST,boxes,sizeof(boxes)));
+       memcpy(&k,c0+4,8);assert(k==0x7dd7c);memcpy(&k,c0+34,8);assert(k==0x9201 && c0[36]==1 && c0[ST_SP_WORDS-1]==1);
+       for(unsigned i=ST_SP_WORDS;i<ST_SP_CAPS*ST_SP_WORDS;i++) assert(!c0[i]);
+       memcpy(image+0xcc6710,sv_code,14);memcpy(image+0x3db8a0,tr_code,14);memcpy(image+0x835b80,gz_code,14);
+       FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
+       st_sp_kept=st_sp_caps=st_sp_solver=st_sp_gated=0;}
       memcpy(image+0xe89ed0,vec_code,14);
       memcpy(image+ST_HW_FN,hw_code,14);memcpy(image+STC_HW_BANK,bank_code,14);memcpy(image+0xe89f10,clear_code,14);
       FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
@@ -441,15 +564,16 @@ static void test_step_chain_native_image(const char *path) {
     /* Ownership, then the exact restoration. */
     image[stc_sites[5].site+1]^=1;assert(!st_chain_owned());image[stc_sites[5].site+1]^=1;assert(st_chain_owned());
     st_chain_restore();
-    assert(!st_chain_installed && st_chain_restored && !stc_done && !memcmp(image+STC_BLOCK,block,STC_BLOCK_SIZE));
+    assert(!st_chain_installed && st_chain_restored && !stc_done && !stc_sp_entry_done && stc_sp_entry_state()==0 && !memcmp(image+STC_BLOCK,block,STC_BLOCK_SIZE));
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) assert(stc_site_state(i)==0);
     assert(VirtualFree(stc_page,0,MEM_RELEASE));stc_page=saved_page;st_chain_restored=0;st_chain_stage="off";
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) st_chain_hits[i]=0;
     st_chain_recorded=0;
     assert(VirtualFree(image,0,MEM_RELEASE));image=prior;
-    printf("step chain native image: pins, twenty-eight swaps, view, approach helper 0xeb1db0 = the reading on 20000 (%u at the target), rows, "
+    printf("step chain native image: pins, thirty-three swaps and the solver's entry, view, approach helper 0xeb1db0 = the reading on 20000 (%u at the target), rows, "
            "FR17 formation calls kept (watched wingman, tick window, leader not kept), FR18 path point call kept complete "
            "(agent through r15, conversion inside), FR19 SetTarget slot (pin, real bytes, caller 0xeaf65b) kept, FR20 conversions "
            "(0xe8d502, object path) with level probes and the path set (stack, description, point) kept, FR21 Highway slot (pin, "
-           "capture with banking and spline memory inside the watched entry only) and path clear (stack, points) kept, FR22 current-points append (agent at +0x6a8, added and last point) kept, FR24 order creations (queue copy 0xeadf86, propagation 0xe99ce9 with O and P) kept, restoration PASS\n",at_target);
+           "capture with banking and spline memory inside the watched entry only) and path clear (stack, points) kept, FR22 current-points append (agent at +0x6a8, added and last point) kept, FR24 order creations (queue copy 0xeadf86, propagation 0xe99ce9 with O and P) kept, FR25 position chain (results 0xbe0c86/0xbe23aa, "
+           "transform 0xc6fb48 with its gate and levels, the solver on its own bytes inside GetSafePos's gate) kept, restoration PASS\n",at_target);
 }

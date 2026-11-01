@@ -61,7 +61,13 @@
  * native_gate_physics_trace = N): PHYSICS_BODY rows for saved bodies too (not
  * only created ones) for ticks 1..N, so a body whose shape, mass or state parts
  * is named even while another body (the player's ship) parts the step
- * digests. Pins: the call block, GetBodies, the body lock
+ * digests. With saved rows, PHYSICS_CONTACT rows also cover contacts with a
+ * keyed side that is not created (a saved body against anything, a local body
+ * included).
+ * Row window (native_gate_physics_trace_from = A, diagnostic): PHYSICS_BODY and
+ * PHYSICS_CONTACT rows only for ticks A..N (step rows stay every tick), so the
+ * saved rows can cover one late tick (reg-tour20: the wreck body made at 2492)
+ * without every body of every earlier tick. Pins: the call block, GetBodies, the body lock
  * read 0xb6950, the two listener wrappers, QueueJob, Barrier::Wait and
  * Scene::Init's settings block. Stop reason 133: a site no longer ours, a pin
  * changed, a read fault or a step list over capacity. */
@@ -122,7 +128,7 @@ static volatile LONG64 ptrace_child_rows;
 static unsigned ptrace_child_ticks,ptrace_child_from=1;
 static int ptrace_saved_rows; /* PHYSICS_BODY rows for saved bodies too */
 static int ptrace_installed,ptrace_restored;
-static unsigned ptrace_row_ticks,ptrace_swapped;
+static unsigned ptrace_row_ticks,ptrace_row_from=1,ptrace_swapped;
 static int ptrace_call_done;
 static unsigned char *ptrace_stub;
 static ptrace_body *ptrace_list;
@@ -288,7 +294,7 @@ static int ptrace_begin(unsigned char *system) {
 /* After Update: outputs, rows, the step row. */
 static void ptrace_end(uint32_t result) {
     ptrace_step_row *r=&ptrace_cur.row;r->result=result;ptrace_cur.in_step=0;
-    int rows=r->tick<=ptrace_row_ticks;
+    int rows=r->tick<=ptrace_row_ticks && r->tick>=ptrace_row_from;
     for(unsigned i=0;i<ptrace_cur.count;i++) {
         ptrace_body *b=&ptrace_list[i];ptrace_body after=*b;
         if(!b->body || !b->id.key) continue;
@@ -354,9 +360,9 @@ static void ptrace_contact(ptrace_listener_fn original,unsigned added,void *self
         (uint64_t)c.base[2]|(uint64_t)c.normal[0]<<32,(uint64_t)c.normal[1]|(uint64_t)c.normal[2]<<32,(uint64_t)c.depth|(uint64_t)c.count<<32,c.points};
     unsigned n=9+(unsigned)ptrace_pack(c.settings,7,w+9);uint64_t h=ptrace_fold(0x5054524143524543ULL,w,n);
     r->cset+=lockstep_mix(h);r->corder=lockstep_mix(r->corder^h);++r->ckeyed;r->flips+=c.flip;r->sensors+=c.sensor!=0;
-    if(c.id[0].klass!=WORLD_KEY_CREATED && c.id[1].klass!=WORLD_KEY_CREATED) return;
-    r->ccset+=lockstep_mix(h);++r->ccreated;
-    if(r->tick>ptrace_row_ticks) return;
+    const int created=c.id[0].klass==WORLD_KEY_CREATED || c.id[1].klass==WORLD_KEY_CREATED;
+    if(created) {r->ccset+=lockstep_mix(h);++r->ccreated;}
+    if((!created && !ptrace_saved_rows) || r->tick>ptrace_row_ticks || r->tick<ptrace_row_from) return;
     LONG64 index=InterlockedIncrement64(&ptrace_contact_rows)-1;ptrace_contact_ring[(uint64_t)index%PTRACE_CONTACT_RING]=c;
 }
 static void ptrace_added(void *self,void *a,void *b,void *manifold,void *settings) {
@@ -468,6 +474,12 @@ static int ptrace_saved_arm(void) {
     if(!ptrace_installed || !stats.active || stats.issued || GetCurrentThreadId()!=ui_thread || !ptrace_row_ticks) return 0;
     ptrace_saved_rows=1;return 1;
 }
+/* After ptrace_arm with rows >= 1, before the first admitted frame: body and contact rows from tick `from` on. */
+static int ptrace_from_arm(unsigned from) {
+    if(ptrace_row_from!=1) return ptrace_installed && ptrace_row_from==from;
+    if(!ptrace_installed || !stats.active || stats.issued || GetCurrentThreadId()!=ui_thread || !from || from>ptrace_row_ticks) return 0;
+    ptrace_row_from=from;return 1;
+}
 static int ptrace_owned(void) {
     if(!ptrace_installed) return 1;
     for(unsigned i=0;i<PTRACE_SLOTS;i++) if((ptrace_swapped&(1u<<i)) && *(void**)(image+ptrace_slots[i])!=ptrace_hook(i)) return 0;
@@ -549,10 +561,10 @@ static int ptrace_row(unsigned kind,uint64_t index,int final,char *out,size_t ca
 }
 static int ptrace_status(char *out,size_t cap) {
     int n=snprintf(out,cap,"installed=%d rows=%u frame=%llu steps=%llu native=%llu foreign_steps=%lld contacts=%llu foreign=%lld stray=%llu "
-        "step_rows=%lld body_rows=%lld contact_rows=%lld restored=%d stage=%s failures=%lld child_ticks=%u child_from=%u child_rows=%lld saved_rows=%d",
+        "step_rows=%lld body_rows=%lld contact_rows=%lld restored=%d stage=%s failures=%lld child_ticks=%u child_from=%u child_rows=%lld saved_rows=%d row_from=%u",
         ptrace_installed,ptrace_row_ticks,(unsigned long long)stats.issued,(unsigned long long)ptrace_steps,(unsigned long long)ptrace_native,
         (long long)ptrace_foreign_steps,(unsigned long long)ptrace_contacts,(long long)ptrace_foreign,(unsigned long long)ptrace_stray,
         (long long)ptrace_step_rows,(long long)ptrace_body_rows,(long long)ptrace_contact_rows,ptrace_restored,ptrace_stage,(long long)ptrace_failures,
-        ptrace_child_ticks,ptrace_child_from,(long long)ptrace_child_rows,ptrace_saved_rows);
+        ptrace_child_ticks,ptrace_child_from,(long long)ptrace_child_rows,ptrace_saved_rows,ptrace_row_from);
     return n>0 && (size_t)n<cap?n:0;
 }

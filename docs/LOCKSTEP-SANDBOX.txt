@@ -397,9 +397,14 @@ the simulation never sees it. Client 1 stays as X4 presents it.
   counted refused=sim/player/lastregion. They are to become recorded events.
 - Excludes --camera-follow and the camera anchor; needs the render split (the sandbox
   sets it).
+- The eye: X4's own player keeps its pose in the room, which is slot 1's seat; in the
+  scope it is moved to slot k's seat as X4 computes a seat (0x75d110, the ship's UI-anchor
+  connection), live and published, so another ship model is seen from its own pilot seat
+  (lockstep_pilot_eye.h; report section 16.22).
 Status in PILOT_INPUTS: present=stage present_why= present_slot= scopes= ui= render= local=
 refills= skipped= refused= faults= camera_mode= asks=ship/controlled/zone (what X4 answered
-in the scope at the start) hud=mode/moves rng_moved= present_restored= and, after a fault,
+in the scope at the start) hud=mode/moves rng_moved= eye=stage/scopes/poses/lost/dx,dy,dz (stage on, same,
+skip:<why> or off:<why>) present_restored= and, after a fault,
 present_fault=addr= write= registers chain=rva>rva>... (image RVAs, @address elsewhere). Stop
 162 names the invariant or the X4 code that faulted (<entry>_fault:<rva>).
 Check by screen capture of client 2 during the window: ship k's own cockpit and HUD.

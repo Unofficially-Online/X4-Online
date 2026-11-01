@@ -53,7 +53,9 @@
 #define FR_VEL_DONE 0x40000u    /* fr_done bit 18 */
 #define FR_FAC_STUB (FR_VEL_STUB+0x20u+FR_LEN_STUB_SIZE) /* FR24: the facing factor stub (0xb30): native's block, k, then a frame at +0x20 */
 #define FR_FAC_DONE 0x80000u    /* fr_done bit 19 */
-#define FR_CODE (FR_FAC_STUB+0x20u+FR_LEN_STUB_SIZE) /* bytes of stub code on the page (0xc60) */
+#define FR_SZ_STUB (FR_FAC_STUB+0x20u+FR_LEN_STUB_SIZE) /* FR26: the size radius stub (0xc60): jmp [rip] -> fr_size_hook */
+#define FR_SZ_DONE 0x100000u    /* fr_done bit 20 */
+#define FR_CODE (FR_SZ_STUB+0x20u) /* bytes of stub code on the page (0xc80) */
 #define FR_P_BLOCK 0x6dcbb0u /* the first call 0x6dc610 from its table load to the +0x0..+0x1c block's end */
 #define FR_P_BLOCK_SIZE 0x1eeu
 #define FR_P_BLOCK_SHA "120b298b57b3001f3ae6971073a4d86d63fb4822e1be030e0631c42d50c4f9b7"
@@ -193,6 +195,76 @@ static const unsigned char fr_vel_block[FR_VEL_BACK-FR_VEL_SITE]={0x41,0x0f,0x28
 #define FR_FAC_K_BITS 0x3f22f983u
 static const unsigned char fr_fac_block[FR_FAC_BACK-FR_FAC_SITE]={0xf3,0x0f,0x59,0x0d,0xeb,0xa9,0xe0,0x01,0x41,0x0f,0x28,0xc5,0xf3,0x0f,0x5c,0xc1};
 #define fr_fac_original fr_fac_block /* the first 5 bytes: the mulss's opcode, modrm and the rel32's first byte */
+/* FR26 (fr_size_seen below): the script properties size and coresize. The component property evaluator 0xcedeb0
+ * (jump table 0xd0bdf0 by property id - 3) reaches them as: case 'size' (0x4b1, 0xd08b64) takes the component's
+ * bounding box (vtable +0x14b0; a ship's is its definition's, [component+0x60]+0x140) and jumps from 0xd08ba1 to
+ * 0xd0042b; case 'coresize' (0xd003e0) falls through to it with a sector's core box; then
+ *   0xd0042b mov rcx,rax; 0xd0042e call 0xb3520 (movss xmm0,[rcx+0x20]; ret: the box's radius);
+ *   0xd00433 mulss xmm0,[0x2cbe918] (2.0); movaps xmm1,xmm0; mov rcx,r15; call 0xd0ffc0 (the float result: rcx and
+ *   xmm1 only); jmp 0xd0bdbf.
+ * The radius is cached when a box is set: radius = |half| = rcp(rsqrt(hx*hx + (hy*hy + hz*hz))) with the half size at
+ * +0..+8 (0xb34d0 and the other writers; Linux's writers 0xa3e9e0, 0xb99fa0, 0x1172520, ... the same order). The
+ * exact-reciprocal table rewrites those writers (FR26 adds the leaf ones), but a ship's box belongs to its definition,
+ * built when its macro first loads: in the lanes that is the NewGame from the start menu, before the gate arms
+ * anything, so the cached radius keeps Windows' approximate bits while Linux's preload is exact from process start
+ * (FR25: 084533's get_safe_pos radius this.ship.size + 200m = 6540.0 / 6540.85; 3170.0 = rcpss(rsqrtss(x)) on this
+ * CPU for every x whose sqrt is Linux's 3170.4248). The call's rel32 is redirected to a stub on the page (jmp [rip] ->
+ * fr_size_hook(box)): native = box+0x20 as the getter reads it; ours = sqrt(hx*hx + (hy*hy + hz*hz)). The getter
+ * clobbers only xmm0 and the hook the volatile registers, of which the evaluator reads xmm0 (and r15) after the call;
+ * no branch, rel32 or jump-table entry lands in 0xd0042f..0xd00432 (safesize jumps from 0xd08bc6 to 0xd00433, after
+ * the call). Pins: the block 0xd0042b..0xd0044b through the view, the getter's six bytes and 2.0 (FR22's). No other
+ * module patches or pins the block. */
+#define FR_SZ_SITE 0xd0042eu
+#define FR_SZ_BLOCK 0xd0042bu
+#define FR_SZ_BLOCK_SIZE 0x20u
+#define FR_SZ_BLOCK_SHA "926312db027a670eb0baad0405a4be601a8c79e8b8c737f0f766708377365317"
+#define FR_SZ_GETTER 0xb3520u
+#define FR_SZ_NEAR_EXP 9 /* 'redirect' takes ours within 2^-9 of native: rcp(rsqrt) is within 3*2^-12 of |half| */
+static const unsigned char fr_sz_original[5]={0xe8,0xed,0x30,0x3b,0xff}; /* call 0xb3520 */
+static const unsigned char fr_sz_getter[6]={0xf3,0x0f,0x10,0x41,0x20,0xc3};
+static volatile LONG64 fr_sz_n,fr_sz_diff,fr_sz_max_ulp,fr_sz_hits,fr_sz_written,fr_sz_far;
+/* The radius every box writer means: |half| with the products' sum in the writers' order, correctly rounded. */
+static uint32_t fr_box_radius(const unsigned char *box) {
+    float h[3];memcpy(h,box,12);
+    const float xx=h[0]*h[0],yy=h[1]*h[1],zz=h[2]*h[2];
+    return fr_bits(sl_sqrt(xx+(yy+zz)));
+}
+/* ours within 2^-FR_SZ_NEAR_EXP (relative) of native: an approximate |half|; NaN, infinity or a radius set otherwise
+ * is not. */
+static int fr_size_near(uint32_t ours,uint32_t native) {
+    const double a=(double)fr_f32(ours),b=(double)fr_f32(native);
+    if(!isfinite(a) || !isfinite(b)) return 0;
+    const double d=a>b?a-b:b-a;
+    return d<=ldexp(a<0?-a:a,-FR_SZ_NEAR_EXP);
+}
+/* The radius the evaluator goes on with. Off or not comparing: native. 'shadow' / 'writer': native, ours compared
+ * (size; size_far counts the differing ones that are not near). 'redirect': ours where near, counted in size_written. */
+static uint32_t fr_size_seen(const unsigned char *box,uint32_t native) {
+    InterlockedIncrement64(&fr_sz_hits);
+    if(!fr_comparing()) return native;
+    const uint32_t ours=fr_box_radius(box);
+    InterlockedIncrement64(&fr_sz_n);
+    if(ours==native) return native;
+    InterlockedIncrement64(&fr_sz_diff);
+    const LONG64 d=(LONG64)fr_ulp(ours,native);LONG64 now=fr_sz_max_ulp;
+    while(d>now) {const LONG64 seen=InterlockedCompareExchange64(&fr_sz_max_ulp,d,now);if(seen==now) break;now=seen;}
+    if(!fr_size_near(ours,native)) {InterlockedIncrement64(&fr_sz_far);return native;}
+    if(fr_mode!=FR_REDIRECT) return native;
+    InterlockedIncrement64(&fr_sz_written);return ours;
+}
+static float fr_size_hook(const unsigned char *box) {
+    uint32_t native;memcpy(&native,box+0x20,4);
+    return fr_f32(fr_size_seen(box,native));
+}
+/* fr_status with Windows' own FR26 fields appended: size=max_ulp:differing:compared size_hits size_written size_far.
+ * The shared header stays as the Linux gate compiles it (its .so unchanged); lockstep_gate.c binds the Lua status here. */
+static int fr_status_win(char *out,size_t cap) {
+    const int n=fr_status(out,cap);
+    if(n<=0) return 0;
+    const int m=snprintf(out+n,cap-(size_t)n," size=%lld:%lld:%lld size_hits=%lld size_written=%lld size_far=%lld",(long long)fr_sz_max_ulp,
+        (long long)fr_sz_diff,(long long)fr_sz_n,(long long)fr_sz_hits,(long long)fr_sz_written,(long long)fr_sz_far);
+    return m>0 && (size_t)m<cap-(size_t)n?n+m:0;
+}
 static unsigned char *fr_page;
 static uint32_t fr_done;
 /* G4 with the slot: the refresh's path with the getters begins here. */
@@ -333,6 +405,7 @@ static void fr_write_code(unsigned char *p) {
     fr_aff_write_stub(p+FR_AFF_STUB);
     fr_vel_write_stub(p+FR_VEL_STUB);
     fr_fac_write_stub(p+FR_FAC_STUB);
+    fr_write_jump(p+FR_SZ_STUB,(void*)fr_size_hook); /* FR26: the redirected call lands here; the hook returns to 0xd00433 */
 }
 static int32_t fr_rel(uint32_t from,const void *target) {return (int32_t)((intptr_t)target-(intptr_t)(image+from+5));}
 static int32_t fr_rel_ours(unsigned i) {return fr_rel(fr_sites[i].site,fr_page+fr_sites[i].stub);}
@@ -384,6 +457,8 @@ static int fr_len_overlaps(const void *source,size_t bytes) {
     if(fr_done&FR_VEL_DONE && v<b && v+5>a) return 1;
     const uintptr_t c=(uintptr_t)(image+FR_FAC_SITE);
     if(fr_done&FR_FAC_DONE && c<b && c+5>a) return 1;
+    const uintptr_t z=(uintptr_t)(image+FR_SZ_SITE);
+    if(fr_done&FR_SZ_DONE && z<b && z+5>a) return 1;
     return 0;
 }
 static void fr_len_unpatch_copy(const void *source,void *copy,size_t bytes) {
@@ -413,6 +488,10 @@ static void fr_len_unpatch_copy(const void *source,void *copy,size_t bytes) {
     if(fr_done&FR_FAC_DONE) {
         const uintptr_t s=(uintptr_t)(image+FR_FAC_SITE);
         for(unsigned k=0;k<5;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=fr_fac_original[k];
+    }
+    if(fr_done&FR_SZ_DONE) {
+        const uintptr_t s=(uintptr_t)(image+FR_SZ_SITE);
+        for(unsigned k=0;k<5;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=fr_sz_original[k];
     }
 }
 /* No other module has patched site i's tail (site..back): its raw bytes are what the original-byte view shows. (Not
@@ -538,6 +617,30 @@ static int fr_fac_pins_ok(void) {
            read_local(image+FR_FAC_SITE,block,sizeof(block)) && !memcmp(block,fr_fac_block,sizeof(block)) &&
            read_local(image+FR_FAC_K,&k,4) && k==FR_FAC_K_BITS;
 }
+/* FR26: the size radius call: 0 the original call 0xb3520, 1 ours (call to the stub), -1 anything else (raw bytes);
+ * clear = the raw bytes are what the view shows; pins: the block through the view, the getter, 2.0. */
+static unsigned char *fr_sz_stub(void) {return fr_page+FR_SZ_STUB;}
+static int fr_sz_reach(void) {
+    const intptr_t d=(intptr_t)fr_sz_stub()-(intptr_t)(image+FR_SZ_SITE+5);
+    return d>INT32_MIN && d<INT32_MAX;
+}
+static void fr_sz_call(unsigned char out[5]) {out[0]=0xe8;const int32_t d=fr_rel(FR_SZ_SITE,fr_sz_stub());memcpy(out+1,&d,4);}
+static int fr_sz_state(void) {
+    unsigned char now[5],ours[5];memcpy(now,(const void*)(image+FR_SZ_SITE),5);
+    if(!memcmp(now,fr_sz_original,5)) return 0;
+    if(fr_page && fr_sz_reach()) {fr_sz_call(ours);if(!memcmp(now,ours,5)) return 1;}
+    return -1;
+}
+static int fr_sz_clear(void) {
+    unsigned char viewed[5];
+    return read_local(image+FR_SZ_SITE,viewed,5) && !memcmp((const void*)(image+FR_SZ_SITE),viewed,5);
+}
+static int fr_sz_pins_ok(void) {
+    unsigned char block[FR_SZ_BLOCK_SIZE],getter[6];uint32_t two=0;
+    return read_local(image+FR_SZ_BLOCK,block,FR_SZ_BLOCK_SIZE) && hash_ok(block,FR_SZ_BLOCK_SIZE,FR_SZ_BLOCK_SHA) &&
+           read_local(image+FR_SZ_GETTER,getter,6) && !memcmp(getter,fr_sz_getter,6) &&
+           read_local(image+FR_AFF_TWO,&two,4) && two==0x40000000u;
+}
 /* FR22: the BezierSpline vtable's ComputeLength slot: native first, then ours on a BezierSpline's segment. */
 typedef void (*fr_bl_fn)(void *,uint32_t);
 static void fr_bl_hook(unsigned char *segment,uint32_t n) {
@@ -590,7 +693,7 @@ static int fr_pins(void) {
     return hash_ok(copy,FR_REFRESH_SIZE,FR_REFRESH_SHA) && hash_ok(block,FR_P_BLOCK_SIZE,FR_P_BLOCK_SHA) &&
         hash_ok(wsite,FR_W_SITE_BLOCK_SIZE,FR_W_SITE_BLOCK_SHA) && hash_ok(wbody,FR_W_BODY_SIZE,FR_W_BODY_SHA) &&
         read_local(image+FR_M_RVA,m,FR_M_SIZE) && hash_ok(m,FR_M_SIZE,FR_M_SHA) && fr_len_pins() && fr_h_pins_ok() && fr_pg_pins_ok() &&
-        fr_aff_pins_ok() && fr_bl_pins_ok() && fr_vel_pins_ok() && fr_fac_pins_ok();
+        fr_aff_pins_ok() && fr_bl_pins_ok() && fr_vel_pins_ok() && fr_fac_pins_ok() && fr_sz_pins_ok();
 }
 static unsigned char *fr_alloc_page(void) {
     uintptr_t at=(uintptr_t)(image+FR_REFRESH)&~(uintptr_t)65535;
@@ -644,6 +747,10 @@ static void fr_restore(void) {
         unsigned char jump[5];fr_fac_jump(jump);
         if(view_cas_bytes(FR_FAC_SITE,jump,fr_fac_original,5)) fr_done&=~FR_FAC_DONE;
     }
+    if(fr_done&FR_SZ_DONE && fr_sz_state()==1) {
+        unsigned char call[5];fr_sz_call(call);
+        if(view_cas_bytes(FR_SZ_SITE,call,fr_sz_original,5)) fr_done&=~FR_SZ_DONE;
+    }
     if(!fr_done) {fr_installed=0;fr_restored=1;fr_mode=FR_OFF;}
 }
 /* Before the snapshot load and the first admitted frame, on the MoveWorker; a rerun with the same mode is accepted. */
@@ -660,12 +767,14 @@ static int fr_arm(int mode,uint64_t ticks) {
     if(fr_aff_state()!=0 || !fr_aff_clear() || fr_bl_state()!=0) {fr_stage="pins";return 0;}
     if(fr_vel_state()!=0 || !fr_vel_clear()) {fr_stage="pins";return 0;}
     if(fr_fac_state()!=0 || !fr_fac_clear()) {fr_stage="pins";return 0;}
+    if(fr_sz_state()!=0 || !fr_sz_clear()) {fr_stage="pins";return 0;}
     if(!fr_pins()) {fr_stage="pins";return 0;}
     if(!fr_page) fr_page=fr_alloc_page();
     if(!fr_page) {fr_stage="page";return 0;}
     for(unsigned i=0;i<FR_LEN_SITES;i++) if(!fr_len_reach(i)) {fr_stage="page";return 0;}
     for(unsigned i=0;i<FR_H_SITES;i++) if(!fr_h_reach(i)) {fr_stage="page";return 0;}
-    if(!fr_pg_reach() || !fr_aff_reach() || !fr_vel_reach() || !fr_fac_reach()) {fr_stage="page";return 0;}
+    if(!fr_pg_reach() || !fr_aff_reach() || !fr_vel_reach() || !fr_fac_reach() || !fr_sz_reach()) {fr_stage="page";return 0;}
+    fr_sz_n=fr_sz_diff=fr_sz_max_ulp=fr_sz_hits=fr_sz_written=fr_sz_far=0;
     DWORD old,ignored;if(!VirtualProtect(fr_page,0x1000,PAGE_READWRITE,&old)) {fr_stage="page";return 0;}
     fr_write_code(fr_page);
     if(!VirtualProtect(fr_page,0x1000,PAGE_EXECUTE_READ,&ignored)) {fr_stage="page";return 0;}
@@ -709,6 +818,11 @@ static int fr_arm(int mode,uint64_t ticks) {
         if(!view_cas_bytes(FR_FAC_SITE,fr_fac_original,jump,5)) {fr_stage="cas";fr_restore();fr_installed=0;fr_mode=FR_OFF;return 0;}
         fr_done|=FR_FAC_DONE;
     }
+    { /* FR26: the size radius call, likewise (its rel32 to the stub) */
+        unsigned char call[5];fr_sz_call(call);
+        if(!view_cas_bytes(FR_SZ_SITE,fr_sz_original,call,5)) {fr_stage="cas";fr_restore();fr_installed=0;fr_mode=FR_OFF;return 0;}
+        fr_done|=FR_SZ_DONE;
+    }
     for(unsigned k=1;k<=FR_SITES;k++) {
         const unsigned i=k%FR_SITES;
         if(i==0) {
@@ -731,6 +845,7 @@ static int fr_owned(void) {
     if(fr_done&FR_BL_DONE && fr_bl_state()!=1) return 0;
     if(fr_done&FR_VEL_DONE && fr_vel_state()!=1) return 0;
     if(fr_done&FR_FAC_DONE && fr_fac_state()!=1) return 0;
+    if(fr_done&FR_SZ_DONE && fr_sz_state()!=1) return 0;
     unsigned char want[FR_CODE];fr_write_code(want);
     return !memcmp(fr_page,want,FR_CODE);
 }

@@ -1137,6 +1137,71 @@ checks 3.9, probe 1.1, relay wait 0.08. perf-Pbare (near-minimal gate) outside
 21.4 ms. 4 clients p50 32 ms on this PC. FP keys cost nothing measurable.
 World captures (diagnostic) are 60 of the 70 frames over 100 ms in play22-long.
 Needed: a tick rate key or agreed per-tick dt (FP agent).
+BOTH PLAYERS SEE EACH OTHER (see3, cockpit eaa6c897 merged 10dd744c): the presented
+player kept slot 1's seat position inside slot k's cockpit room; for another ship model
+(ship_arg_s_fighter_01 vs the scout) that put the eye 0.39 m behind the pilot seat. The
+presentation scope now applies the seat difference from X4's own con_uianchor placement
+(0x75d110) to the FirstPersonController and the published pose (lockstep_pilot_eye.h;
+identity for the same model). Client 2 sees from the fighter's own cockpit with player 1's
+scout dead ahead; client 1 sees player 2's fighter (milestones/client2-sees-player1-ship-
+20261101.png, client1-sees-player2-ship-20261101.png); relay pass.
+WINDOWS VS LINUX, APPROXIMATE SQUARE ROOTS (fp-redirect 90af9516, merged 9cd716b0): the
+GetSafePos radius ('size' and 'safesize/2') and the create_position offset ('speed') were
+rcpss(rsqrtss(x)) on Windows where Linux (portable math) takes the exact sqrt; the
+exact-reciprocal patch generator never decoded MSVC leaf functions (no unwind data) or
+switch arms. Five new patch windows (824 windows, 1272 instructions) and a redirect of the
+cached definition radius. w13 vs vps-linux-L6: 2/2/2/9/35 differing at 30/60/120/300/600
+(w12: 5/30/140/282/510): through tick 120 only the known same-platform timing pair. 63
+more approximate instructions are inventoried (also an Intel-vs-AMD risk for two Windows
+players); the GetSafePos solver itself is the next 1-2 ulp step.
+20 MINUTES, OWN COCKPITS, PEOPLE CONFIG (play41p-long, build143 = smoke f09d12c7,
+overlay-Play41P: 2 clients in different ships, each presenting its own cockpit, stock
+demo scripts flying, UI replay families travel/target/orders/autopilot/dock/weapons/queue
+on, guidance_local, view_ui block, spline_join_all, path_transforms 'sim', body_pose
+'sim'): 36002 ticks, relay pass, 0 mismatches, census 0 at 18000 and 36000. No person
+flew this one (no local keys). The guidance fix itself: play40ps (scripted map, guidance
+on the other slot's ship, autopilot and travel keys on client 2, guidance on client 1;
+3000 ticks) relay pass, census 0, UI_REPLAY_SLOTS identical (autopilot 704-904, travel
+1004-1244), the two guidance cues taken from the local ID list (md=2).
+TOUR IN SYNC (reg-tour22, wreck 7ba214ea merged 29448d5a, 2503 ticks): relay pass, 0
+mismatches, census 0. The last split (2492) was the wreck of client 2's dead slot ship:
+when the battle's attention rose again, U::Destructible::CreateBody 0x51b730 took the new
+physics body's pose at 0x51b975 from the published view cache (0x3dde10), which held the
+wreck's pose from tick 2465 on client 1 and 2467 on client 2; a bullet hit in the same
+step turned that into different spin. native_gate_body_pose 'sim' (default off) composes
+the pose at the frame's game time (GetTransformRelativeTo 0x3db8a0, CreateBody's other
+branch): at 2492 the cached poses differ per client, the sim pose is identical
+(diverted=1408, differs=174, failures=0).
+PLAYERS SEE EACH OTHER (see2, build141, own cockpits, slot 2 = fixture ship_arg_s_fighter_01_a
+placed 200 m in front of slot 1, facing it, 602 ticks, relay pass): client 1's window shows
+player 2's ship as a full model dead ahead with a green bracket (milestones/client1-sees-
+player2-ship-20261101.png). Client 2's bracket is centred on player 1's ship but its view
+is a dark wall: for this fighter model the presented cockpit eye sits inside the hull
+(also seen in u6c; scouts render their cockpit correctly). Presentation bug, open.
+FIRST SESSION FLOWN BY A PERSON ON BOTH CLIENTS (play39p-long, build141, overlay-Play39P:
+2 clients in different ships, each presenting its own cockpit, stock demo scripts, the
+user flying manually on both windows, 36002 ticks): both stopped with reason 1. The user's
+autopilot (0xb3) and travel (0x12f) keys were refused as designed (UI replay families off
+in this overlay), but on client 2 the guidance they touched fired the MD cues EndGuidance
+and BettyNotifications locally between 6141 and 6150, two shared runtime IDs: client 2's
+next ID ran 2 ahead from then on (relay mismatch from 6143 to the end, declared runtime
+ID). The world census nevertheless stayed close: 0 differing at 9000, 4 at 18000 (three
+Xenon fighters of one group and one created object), 3 at 36000 (the same fighters) of
+~549000. Being fixed: guidance/notification MD events from a client's own UI, and a
+people overlay with all UI replay families on.
+FIRST CLEAN 4-CLIENT LONG RUN (p4-causeb2, causeb daf2943d merged as 3a36d0ba): four own
+cockpits, 24603 ticks: relay pass, 0 mismatches, census 0 for all pairs at 24600
+(543040 objects). Cause B was the route request: a spline ship's new path is solved on
+one calculator thread and consumed on the first update that finds it published, i.e.
+on a wall-clock-dependent tick; native_gate_spline_join covered only the battle
+fixtures. native_gate_spline_join_all (default off) makes every spline ship wait for its
+front request (up to 2 s, stop 58 on timeout): requests=279 waits=163 timeouts=0.
+TOUR, FIRST PART FIXED (native_gate_path_transforms 'sim', lintarget e83f0467): batch-job
+pathing conversions read a target's pose from the render view cache (only current where
+a client renders; here a dead slot ship's wreck without an agent); they now compose the
+simulation transform at the pass time. reg-tour20: the 2468 split is gone (target
+transforms identical, 8099 conversions, failures 0); a second split at 2492 is the wreck
+of client 2's own dead slot ship (body angular velocity), being named.
 20 MINUTES ON THE MERGED BUILD (build138 = smoke e9ed0430, overlay-Play38L = Play36L +
 view_ui/view_triggers 'block'): play38-long 36003 ticks, relay pass, 0 mismatches, census
 0 at 18000 and 36000. play38-long2 (run beside it on the same PC) reached 35920 with 0

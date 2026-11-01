@@ -151,11 +151,11 @@
  * [168..199] the agent's first path point before, [200..231] after (0xff when none), [232] 1 when the point's address
  * changed, [233] the ordinal in the tick, [255] calls since the previous record. ST_PS_CHUNKS more rows, part=pathset
  * (zero on Linux). */
-#define ST_PS_ENTRIES 2u
+#define ST_PS_ENTRIES 12u /* FR25: 2 before (FR20..FR24) */
 #define ST_PS_WORDS 256u
 #define ST_PS_FRAMES 32u
 #define ST_PS_TAG 0x46522001u /* "FR20", layout 1 */
-#define ST_PS_CHUNKS (ST_PS_ENTRIES*ST_PS_WORDS*4u/ST_CHUNK) /* 8 */
+#define ST_PS_CHUNKS (ST_PS_ENTRIES*ST_PS_WORDS*4u/ST_CHUNK) /* 48 */
 /* FR21 (with FR8): FR20's 8bd90 conversion at tick 2 has a HIGHWAY as its reference (saved 0xa6, runtime 0x1b76d; the
  * level keys are saved IDs). The conversion (Windows 0xe8a4a0, Linux 0x141f7e0) first calls the reference's vfunc that
  * maps a point given in its own coordinates (Windows vtable +0x1520, Linux +0x1568; an empty stub for zones, sectors
@@ -204,6 +204,52 @@
 #ifndef ST_OC_LAYOUT
 #define ST_OC_LAYOUT 0u
 #endif
+/* FR25 (with FR8): the pending points FR24 caught are created different by the AI move action itself (09262b tick 5, the
+ * queue from AI::MoveToAction's body, Windows 0x109c1a0 -> 0x6e0450 at 0x109e8b0 / Linux 0x10b3c10 -> 0x1429a40; 084533
+ * tick 55 via 0x6e05e0 at 0x109ea4b / Linux 0x1cf0940), and the leaders' (adbc2, adfae) points the wingmen inherit too.
+ * Their position comes from the scripts order.fight.patrol (create_position in the zone with max = size/2, $y random,
+ * get_safe_pos in the zone, allowyaxis false) and move.seekenemies (create_position into the sector with the zone as
+ * object, get_safe_pos in the sector with a space reservation) before move_to. The operations those use, read on both:
+ * the CreatePosition evaluation (Windows 0xc6f7b0 / Linux 0xd04a50: the value, the coordinates, the object's transform
+ * GetTransformRelativeTo 0x3db8a0 / 0x18a0090 at 0xc6fb48 / 0xd04c09, the random point on the sphere with the portable
+ * acosf, sinf, sincos in the same order), the GetSafePos evaluation (0xc72380 / 0xd05ae0) into Zone::GetSafePos (0x835b80
+ * / 0x1155360) or the sector's (0x786d10 / 0x1d36d90), whose random direction is the same on both and whose solver
+ * (Windows 0x14e4320 / Linux 0x1a4b9f0) pushes the point through the zone's boxes with different code (Linux has per-axis
+ * flags and other push-out helpers). So the chain is measured for the watched ships (the script context Value's AI
+ * context -> entity -> its ancestors (+0x70) up to ST_SP_DEPTH, the first with a watched key; UI thread only, where the
+ * scripts run): path-set entries (tag ST_SP_TAG, ST_PS_WORDS words): [3] the site (0 the create_position result as the
+ * action stores it: Windows 0xbe0c86 / Linux 0xde1116; 1 the get_safe_pos result: 0xbe23aa / 0xde56b7; 2 a transform
+ * inside the CreatePosition evaluation), [7] the depth of the match, [8..9] the entity's key, [10] the chain's sequence
+ * number, [11] the layout (0 Windows, 1 Linux); results: [16] the Value's tag, [18..19] its payload, [20..23] the
+ * position (payload +0x20, tag 0x63; 0xff otherwise); transforms: [16..17] the object's key, [18..19] the ancestor's,
+ * [20..21] the time (double), [22] the flag, [24..39] the matrix before, [40..55] after, [56..95] the object's first two
+ * levels as FR20 probes them (key, probed, vtable, its local transform). The solver's calls inside a watched get_safe_pos
+ * (a gate the evaluator's calls into the zone's and the sector's GetSafePos leave: the context and the stack pointer,
+ * valid while that call is open on the UI thread) are kept whole in a part of their own (ST_SP_CAPS a record,
+ * ST_SP_WORDS words, part=spcap): [0] ST_SP_CAP_TAG, [1] tick, [2] thread, [3] the gate (0 zone, 1 sector), [4..5] the
+ * ship's key, [6] the slot index, [7] the boxes, [8] kept, [9] layout, [10] the sequence number, [11] the solver's caller
+ * (return address less the image base), [12..15] the point before, [16..19] after, [20..23] the direction (Windows the
+ * fourth argument, Linux rdx), [24..27] the move direction (Windows the eighth, Linux r9; 0xff when null), [28] the
+ * radius, [29] Windows' fifth / Linux xmm1, [30] Windows' seventh (allow y) / Linux r8d, [31] Linux ecx (0xffffffff on
+ * Windows), [32] Windows' ninth / Linux xmm2, [33] Windows' sixth, [64..] the boxes as passed (0x70 bytes each, at most
+ * ST_SP_BOXES), [ST_SP_WORDS-1] solver captures since the previous record. Read-only: each hook calls the original once
+ * with the same arguments. */
+#define ST_SP_TAG 0x46522501u
+#define ST_SP_CAP_TAG 0x46522502u
+#define ST_SP_CAPS 2u
+#define ST_SP_WORDS 2048u
+#define ST_SP_BOX_FIRST 64u
+#define ST_SP_BOX_WORDS 28u
+#define ST_SP_BOXES 70u
+#define ST_SP_CHUNKS (ST_SP_CAPS*ST_SP_WORDS*4u/ST_CHUNK) /* 64 */
+#define ST_SP_DEPTH 8u
+#define ST_SP_ENTITY 0x120 /* the AI context's entity (both) */
+#ifndef ST_SP_AI_VALUE
+#define ST_SP_AI_VALUE 0xa8 /* a context Value's payload is the context plus this (Linux 0xa0) */
+#endif
+#ifndef ST_SP_LAYOUT
+#define ST_SP_LAYOUT 0u
+#endif
 typedef void (*st_hier_fn)(void *,void *,void *,uint64_t);
 typedef void (*st_sg_fn)(void *,const void *,void *,void *);
 typedef void (*st_step_fn)(void *,const void *,float,double);
@@ -219,6 +265,7 @@ typedef struct {
     uint32_t settarget[ST_SG_ENTRIES*ST_SG_WORDS]; /* FR19 */
     uint32_t pathset[ST_PS_ENTRIES*ST_PS_WORDS]; /* FR20 */
     uint32_t hwcap[ST_HW_WORDS]; /* FR21 */
+    uint32_t spcap[ST_SP_CAPS*ST_SP_WORDS]; /* FR25 */
 } st_record_t;
 /* FR9: the model's spline after the step, read only. */
 static void st_spline_read(const unsigned char *model,unsigned char *out) {
@@ -329,10 +376,12 @@ static struct {
     uint32_t path[ST_PT_ENTRIES*ST_PT_WORDS];
     uint32_t settarget[ST_SG_ENTRIES*ST_SG_WORDS];
     uint32_t pathset[ST_PS_ENTRIES*ST_PS_WORDS];
+    uint32_t sp_calls,spcap[ST_SP_CAPS*ST_SP_WORDS]; /* FR25 */
 } st_fm[ST_IDS];
 static volatile LONG64 st_fm_kept,st_pt_kept,st_pt_conversions,st_pt_no_slot,st_sg_calls,st_sg_kept,st_pt_levels_probed,st_ps_kept;
 static volatile LONG64 st_hw_calls,st_hw_kept,st_hw_banking,st_pc_kept; /* FR21 */
 static volatile LONG64 st_oc_kept; /* FR24 */
+static volatile LONG64 st_sp_kept,st_sp_caps,st_sp_solver,st_sp_gated,st_sp_sequence; /* FR25 */
 static void st_slot_lock(int w) {while(InterlockedCompareExchange64(&st_fm[w].lock,1,0)!=0) {}}
 static void st_slot_unlock(int w) {InterlockedExchange64(&st_fm[w].lock,0);}
 /* The read bank +offset of an agent, n bytes (0xff when unreadable). */
@@ -591,6 +640,11 @@ static void st_fm_take(int watched,st_record_t *r) {
     if(st_fm[watched].hw_calls) {memcpy(r->hwcap,st_fm[watched].hwcap,sizeof(r->hwcap));r->hwcap[ST_HW_WORDS-1]=st_fm[watched].hw_calls;}
     else memset(r->hwcap,0,sizeof(r->hwcap));
     st_fm[watched].hw_calls=0;
+    memset(r->spcap,0,sizeof(r->spcap));
+    const uint32_t sp=st_fm[watched].sp_calls,sp_kept=sp<ST_SP_CAPS?sp:ST_SP_CAPS;
+    memcpy(r->spcap,st_fm[watched].spcap,sp_kept*ST_SP_WORDS*4u);
+    for(uint32_t k=0;k<sp_kept;k++) r->spcap[k*ST_SP_WORDS+ST_SP_WORDS-1]=sp;
+    st_fm[watched].sp_calls=0;
     st_slot_unlock(watched);
 }
 /* FR20: an agent's first path point (0x80 bytes, 0xff when none) and its address (Windows' path set hook only). */
@@ -635,6 +689,128 @@ static void st_oc_note(int w,uint64_t key,unsigned site,const unsigned char *poi
     runtime=0;k=0;if(leader && read_local(leader+ST_PT_REF,&runtime,8)) k=st_runtime_key(runtime);
     memcpy(e+132,&k,8);
     st_ps_publish(w,e);InterlockedIncrement64(&st_oc_kept);
+}
+/* FR25: the gates the stubs leave (lockstep_step_chain_win.h, linux/gate_step_trace.h): the context Value (the register
+ * the GetSafePos or the CreatePosition evaluation keeps it in) and the stack pointer at the call, where its return
+ * address lies. Scripts run on the UI thread only; a gate is used only there and only while that call is open. */
+typedef struct {volatile uint64_t ctx,rsp;} st_sp_gate_t;
+static st_sp_gate_t st_sp_gate_gs __attribute__((aligned(16))),st_sp_gate_tr __attribute__((aligned(16)));
+static void st_sp_gate_clear(void) {st_sp_gate_gs.ctx=st_sp_gate_gs.rsp=0;st_sp_gate_tr.ctx=st_sp_gate_tr.rsp=0;}
+#ifndef ST_SP_STACK_OK
+#define ST_SP_STACK_OK(a) 1
+#endif
+/* A gate's context when it is open for a call made from here: the UI thread, its stack pointer above here (this thread's
+ * stack: ST_SP_STACK_OK), holding one of the n return addresses (*which its index); NULL otherwise. */
+static const unsigned char *st_sp_gate_open(const st_sp_gate_t *g,const uintptr_t *returns,unsigned n,unsigned *which) {
+    volatile unsigned char here=0;const uintptr_t h=(uintptr_t)&here,rsp=(uintptr_t)g->rsp;const uint64_t ctx=g->ctx;uintptr_t ret=0;
+    *which=0;
+    if(GetCurrentThreadId()!=ui_thread || !rsp || !ctx || rsp<=h || rsp-h>0x400000u || !ST_SP_STACK_OK(rsp) || !read_local((const void*)rsp,&ret,8)) return NULL;
+    for(unsigned i=0;i<n;i++) if(ret==returns[i]) {*which=i;return (const unsigned char*)(uintptr_t)ctx;}
+    return NULL;
+}
+/* The watched index of the ship whose AI script runs with the context Value ctx (tag 0x66: the AI context at the payload
+ * less ST_SP_AI_VALUE, its entity at +ST_SP_ENTITY; the entity or an ancestor (+0x70), the first watched), in the
+ * window, on the UI thread; the ship's key, the entity's key and the depth of the match. -1 otherwise. */
+static int st_sp_watched(const unsigned char *ctx,uint64_t *key,uint64_t *entity_key,uint32_t *depth) {
+    const uint64_t tick=stats.issued;uint32_t tag=0;uint64_t payload=0,runtime=0;const unsigned char *object=NULL;
+    *key=0;*entity_key=0;*depth=0;
+    if(!stats.active || boot_phase!=3 || tick<1 || tick>st_ticks || !ctx || GetCurrentThreadId()!=ui_thread) return -1;
+    if(!read_local(ctx,&tag,4) || tag!=0x66 || !read_local(ctx+8,&payload,8) || payload<0x10000u+ST_SP_AI_VALUE) return -1;
+    if(!read_local((const unsigned char*)(uintptr_t)(payload-ST_SP_AI_VALUE)+ST_SP_ENTITY,&object,8) || !object) return -1;
+    if(read_local(object+8,&runtime,8)) *entity_key=st_runtime_key(runtime);
+    for(uint32_t d=0;d<ST_SP_DEPTH && object;d++) {
+        unsigned klass=WORLD_KEY_NONE;const unsigned char *parent=NULL;
+        if(!read_local(object+8,&runtime,8)) return -1;
+        const uint64_t saved=runtime?world_identity_key(runtime,&klass):0;
+        if(saved && klass==WORLD_KEY_SAVED) for(unsigned i=0;i<st_id_count;i++) if(st_ids[i]==saved) {*key=saved;*depth=d;return (int)i;}
+        if(!read_local(object+ST_OBJ_PARENT,&parent,8) || parent==object) return -1;
+        object=parent;
+    }
+    return -1;
+}
+static void st_sp_head(uint32_t *e,unsigned site,uint64_t key,uint64_t entity,uint32_t depth) {
+    memset(e,0,ST_PS_WORDS*4u);
+    e[0]=ST_SP_TAG;e[1]=(uint32_t)stats.issued;e[2]=GetCurrentThreadId()==ui_thread?0:1;e[3]=site;memcpy(e+4,&key,8);
+    e[7]=depth;memcpy(e+8,&entity,8);e[10]=(uint32_t)InterlockedIncrement64(&st_sp_sequence);e[11]=ST_SP_LAYOUT;
+}
+/* Sites 0/1: the result Value the action stores (read before the store, which takes it over). */
+static void st_sp_value(unsigned which,const unsigned char *ctx,const unsigned char *value) {
+    uint64_t key,entity,payload=0;uint32_t depth,tag=0xffffffffu;const int w=st_sp_watched(ctx,&key,&entity,&depth);
+    if(w<0) return;
+    uint32_t e[ST_PS_WORDS];st_sp_head(e,which,key,entity,depth);
+    if(value && read_local(value,&tag,4) && read_local(value+8,&payload,8)) {e[16]=tag;memcpy(e+18,&payload,8);}
+    else {tag=0xffffffffu;e[16]=tag;}
+    if(tag!=0x63 || !payload || !read_local((const void*)(uintptr_t)(payload+0x20),e+20,16)) memset(e+20,0xff,16);
+    st_ps_publish(w,e);InterlockedIncrement64(&st_sp_kept);
+}
+/* An object's first levels as FR20 probes them (st_pt_levels), at most levels of them. */
+static void st_sp_levels(uint32_t *out,const unsigned char *object,unsigned levels) {
+    static const float identity[16]={0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0};
+    for(unsigned level=0;level<levels && object;level++) {
+        uint32_t *l=out+level*ST_PT_LEVEL_WORDS;const unsigned char *parent=NULL;uintptr_t vtable=0;
+        uint64_t k=st_object_key(object);memcpy(l,&k,8);
+        if(read_local(object,&vtable,8)) l[3]=(uint32_t)(vtable-(uintptr_t)image);
+        if(!read_local(object+ST_OBJ_PARENT,&parent,8) || !parent) break;
+        struct {float m[16];} __attribute__((aligned(16))) local;memcpy(local.m,identity,sizeof(identity));
+        ((st_hier_fn)(void*)ST_HIER)((void*)object,local.m,(void*)parent,0);
+        l[2]=1;memcpy(l+4,local.m,0x40);
+        object=parent;
+    }
+}
+/* Site 2: a transform inside the CreatePosition evaluation (the object, the matrix in/out, the ancestor, the time). */
+typedef struct {int w;uint32_t e[ST_PS_WORDS];} st_sp_tr_ctx;
+static int st_sp_tr_begin(st_sp_tr_ctx *c,const unsigned char *ctx,const unsigned char *self,const void *mat,const unsigned char *ancestor,double time,uint32_t flag) {
+    uint64_t key,entity,k;uint32_t depth;
+    if((c->w=st_sp_watched(ctx,&key,&entity,&depth))<0) return 0;
+    uint32_t *e=c->e;st_sp_head(e,2,key,entity,depth);
+    k=st_object_key(self);memcpy(e+16,&k,8);k=st_object_key(ancestor);memcpy(e+18,&k,8);memcpy(e+20,&time,8);e[22]=flag;
+    if(!mat || !read_local(mat,e+24,0x40)) memset(e+24,0xff,0x40);
+    return 1;
+}
+static void st_sp_tr_end(st_sp_tr_ctx *c,const void *mat,const unsigned char *self) {
+    uint32_t *e=c->e;
+    if(!mat || !read_local(mat,e+40,0x40)) memset(e+40,0xff,0x40);
+    st_sp_levels(e+56,self,2);
+    st_ps_publish(c->w,e);InterlockedIncrement64(&st_sp_kept);
+}
+/* The solver (called through its entry hook): every call counted; inside an open GetSafePos gate of a watched ship the
+ * capture (one at a time: the UI thread's) is kept whole in the ship's slot. */
+typedef struct {int w;const float *p;} st_sp_cap_ctx;
+static uint32_t st_sp_cap_buf[ST_SP_WORDS];
+static volatile LONG64 st_sp_cap_open;
+static int st_sp_cap_begin(st_sp_cap_ctx *c,const uintptr_t *returns,unsigned n,const unsigned char *boxes,const float *p,
+                           const float *dir,const float *move,uint32_t radius,uint32_t a5,uint32_t yflag,uint32_t xflag,
+                           uint32_t a9,uint32_t a6,uintptr_t caller) {
+    InterlockedIncrement64(&st_sp_solver);c->w=-1;c->p=p;
+    unsigned gate=0;const unsigned char *ctx=st_sp_gate_open(&st_sp_gate_gs,returns,n,&gate);
+    if(!ctx) return 0;
+    InterlockedIncrement64(&st_sp_gated);
+    uint64_t key,entity;uint32_t depth;
+    if((c->w=st_sp_watched(ctx,&key,&entity,&depth))<0) return 0;
+    if(InterlockedCompareExchange64(&st_sp_cap_open,1,0)!=0) {c->w=-1;return 0;}
+    uint32_t *e=st_sp_cap_buf;memset(e,0,sizeof(st_sp_cap_buf));
+    e[0]=ST_SP_CAP_TAG;e[1]=(uint32_t)stats.issued;e[2]=0;e[3]=gate;memcpy(e+4,&key,8);e[9]=ST_SP_LAYOUT;
+    e[10]=(uint32_t)InterlockedIncrement64(&st_sp_sequence);e[11]=(uint32_t)(caller-(uintptr_t)image);
+    if(!p || !read_local(p,e+12,16)) memset(e+12,0xff,16);
+    if(!dir || !read_local(dir,e+20,16)) memset(e+20,0xff,16);
+    if(!move || !read_local(move,e+24,16)) memset(e+24,0xff,16);
+    e[28]=radius;e[29]=a5;e[30]=yflag;e[31]=xflag;e[32]=a9;e[33]=a6;memcpy(e+34,&entity,8);e[36]=depth;
+    uintptr_t b=0,end=0;
+    if(boxes && read_local(boxes,&b,8) && read_local(boxes+8,&end,8) && end>=b && (end-b)%0x70u==0 && end-b<=0x70u*1000000u) {
+        const uint32_t count=(uint32_t)((end-b)/0x70u),kept=count<ST_SP_BOXES?count:ST_SP_BOXES;e[7]=count;e[8]=kept;
+        if(kept && !read_local((const void*)b,e+ST_SP_BOX_FIRST,kept*0x70u)) memset(e+ST_SP_BOX_FIRST,0xff,kept*0x70u);
+    }
+    else e[7]=e[8]=0xffffffffu;
+    return 1;
+}
+static void st_sp_cap_end(st_sp_cap_ctx *c) {
+    uint32_t *e=st_sp_cap_buf;
+    if(!c->p || !read_local(c->p,e+16,16)) memset(e+16,0xff,16);
+    st_slot_lock(c->w);
+    const uint32_t n=st_fm[c->w].sp_calls++;
+    if(n<ST_SP_CAPS) {e[6]=n;memcpy(st_fm[c->w].spcap+n*ST_SP_WORDS,e,ST_SP_WORDS*4u);InterlockedIncrement64(&st_sp_caps);}
+    st_slot_unlock(c->w);
+    InterlockedExchange64(&st_sp_cap_open,0);
 }
 /* FR19: the Linear model's SetTarget slot (platform: ST_SG_SLOT holding image+ST_SG_FN, st_sg_swap). */
 static void *st_sg_native;
@@ -731,6 +907,7 @@ static int st_arm(uint64_t ticks) {
     st_native=entry;st_ticks=ticks;st_records=st_calls=st_watched_calls=st_dropped=0;
     memset(st_ordinal_tick,0,sizeof(st_ordinal_tick));memset((void*)st_fm,0,sizeof(st_fm));st_fm_kept=st_pt_kept=st_pt_conversions=st_pt_no_slot=st_sg_calls=st_sg_kept=0;
     st_pt_levels_probed=st_ps_kept=st_hw_calls=st_hw_kept=st_hw_banking=st_pc_kept=st_oc_kept=0;
+    st_sp_kept=st_sp_caps=st_sp_solver=st_sp_gated=st_sp_sequence=0;st_sp_gate_clear();
     /* FR8's sites first: the entry leads into them only once they are all in place. */
     if(st_chain_wanted && !st_chain_installed && !st_chain_arm()) {st_stage="chain";return 0;}
     /* FR19: SetTarget's slot with the chain, after its sites. */
@@ -738,7 +915,7 @@ static int st_arm(uint64_t ticks) {
     /* FR21: the Highway's point map with the chain, after SetTarget's slot. */
     if(st_chain_installed && !st_hw_installed && !st_hw_arm()) {st_sg_restore();st_chain_restore();st_stage="highway";return 0;}
     if(!st_slot_swap(entry,(void*)st_step)) {st_hw_restore();st_sg_restore();if(st_chain_installed) st_chain_restore();st_stage="cas";return 0;}
-    st_chunks=st_chain_installed?ST_CHUNKS+1+ST_SPLINE_CHUNKS+ST_FM_CHUNKS+ST_PT_CHUNKS+ST_SG_CHUNKS+ST_PS_CHUNKS+ST_HW_CHUNKS:ST_CHUNKS;
+    st_chunks=st_chain_installed?ST_CHUNKS+1+ST_SPLINE_CHUNKS+ST_FM_CHUNKS+ST_PT_CHUNKS+ST_SG_CHUNKS+ST_PS_CHUNKS+ST_HW_CHUNKS+ST_SP_CHUNKS:ST_CHUNKS;
     st_installed=1;st_restored=0;st_stage="armed";return 1;
 }
 static void st_restore(void) {
@@ -766,6 +943,9 @@ static int st_status(char *out,size_t cap) {
     m=snprintf(out+n,cap-(size_t)n," hw_installed=%u hw_calls=%lld hw_kept=%lld hw_banking=%lld pc_kept=%lld oc_kept=%lld",
         st_hw_installed,(long long)st_hw_calls,(long long)st_hw_kept,(long long)st_hw_banking,(long long)st_pc_kept,(long long)st_oc_kept);
     if(m<=0 || (size_t)(n+=m)>=cap) return 0;
+    m=snprintf(out+n,cap-(size_t)n," sp_kept=%lld sp_caps=%lld sp_solver=%lld sp_gated=%lld sp_seq=%lld",
+        (long long)st_sp_kept,(long long)st_sp_caps,(long long)st_sp_solver,(long long)st_sp_gated,(long long)st_sp_sequence);
+    if(m<=0 || (size_t)(n+=m)>=cap) return 0;
     return n;
 }
 static int st_hex(char *out,size_t cap,const unsigned char *bytes,size_t n) {
@@ -779,16 +959,20 @@ static int st_hex(char *out,size_t cap,const unsigned char *bytes,size_t n) {
  * FR8 armed 53 rows a record, 25 the chain's words, 26-29 the spline after the step (FR9), 30-35 the formation calls
  * (FR17, 0x200 bytes a call), 36-59 the path point conversions (FR18/FR20, 0x800 bytes an entry), 60-67 the SetTarget calls
  * (FR19, 0x200 bytes a call), 68-75 the path sets (FR20, 0x400 bytes an entry; FR21's point calls too), 76-107 the
- * highway capture (FR21, 0x2000 bytes): 108 rows a record. */
+ * highway capture (FR21, 0x2000 bytes): 108 rows a record; FR25: the path sets 12 entries (48 rows), then 64 rows
+ * of the solver captures (0x4000 bytes): 212 rows a record. */
 static int st_row(uint64_t index,char *out,size_t cap) {
     const uint64_t record=index/st_chunks,chunk=index%st_chunks;
     LONG64 count=InterlockedCompareExchange64(&st_records,0,0);
     if(!st_ring || record>=ST_RECORDS || (LONG64)record>=count) return 0;
     const st_record_t *r=&st_ring[record];
     if(InterlockedCompareExchange64((volatile LONG64*)&r->ready,0,0)!=(LONG64)record+1) return 0;
-    static const char *const parts[14]={"args","model_pre","model_post","agent_pre","agent_post","pose_pre","pose_post","chain","spline","formation","path","settarget","pathset","hwcap"};
+    static const char *const parts[15]={"args","model_pre","model_post","agent_pre","agent_post","pose_pre","pose_post","chain","spline","formation","path","settarget","pathset","hwcap","spcap"};
     unsigned part,offset;const unsigned char *bytes;size_t size;
     if(chunk==ST_CHUNKS) {part=7;offset=0;bytes=(const unsigned char*)r->chain;size=sizeof(r->chain);}
+    else if(chunk>ST_CHUNKS+ST_SPLINE_CHUNKS+ST_FM_CHUNKS+ST_PT_CHUNKS+ST_SG_CHUNKS+ST_PS_CHUNKS+ST_HW_CHUNKS) {
+          part=14;offset=(unsigned)(chunk-ST_CHUNKS-1-ST_SPLINE_CHUNKS-ST_FM_CHUNKS-ST_PT_CHUNKS-ST_SG_CHUNKS-ST_PS_CHUNKS-ST_HW_CHUNKS)*ST_CHUNK;
+          bytes=(const unsigned char*)r->spcap+offset;size=ST_CHUNK;}
     else if(chunk>ST_CHUNKS+ST_SPLINE_CHUNKS+ST_FM_CHUNKS+ST_PT_CHUNKS+ST_SG_CHUNKS+ST_PS_CHUNKS) {
           part=13;offset=(unsigned)(chunk-ST_CHUNKS-1-ST_SPLINE_CHUNKS-ST_FM_CHUNKS-ST_PT_CHUNKS-ST_SG_CHUNKS-ST_PS_CHUNKS)*ST_CHUNK;
           bytes=(const unsigned char*)r->hwcap+offset;size=ST_CHUNK;}

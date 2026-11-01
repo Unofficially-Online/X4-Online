@@ -403,3 +403,65 @@ Guard: FFI mutators of a family that is armed but not replayed yet return their 
       with scope=1: something else refuses (send UI_REPLAY_SLOTS, PILOT_SHIPS and the PILOT_INPUTS present= part). If :M0.0/1.1
       shows and no torpedo leaves in 150 ticks: the controller has not locked yet; lengthen client 2's span between hold and
       target_none.
+
+14. GUIDANCE, AND WHAT ELSE A PERSON'S UI RUNS IN MD ON ONE CLIENT (1 November; default off: native_gate_guidance_local)
+  play39p-long (two people in their own cockpits, families off; relay digest apart from tick 6143 on, next shared runtime ID
+  2 ahead on client 2; census at 7200 still equal) [F: logs, binary, md/guidance.xml, md/notifications.xml]:
+    5634 client 2 opens the map (OPEN_MAP 0x71); 6049 the map's "Set guidance" on slot 1's ship ("Fly to: Discoverer Vanguard"):
+      SetGuidance 0x1b8570 -> 0x72cb00 signals player.entity 'set guidance', dispatched at once (PostEvent 0x99a3f0 -> 0x99c5b0 ->
+      ObjectSignalledEvent::Dispatch 0x9cb930): md.Guidance.NewTarget and GuidanceMission's create_mission ran in the presentation
+      scope, route=ui. 6060 WIDGET_BACK 0x10 closes the map. From here md.Guidance.GuidanceMission is active on client 2 alone.
+    6088, 6124, ... TOGGLE_AUTOPILOT 0xb3 refused (PILOT_NATIVE_REFUSED): the dispatcher refuses before any handler, no side effect.
+      The guidance did not come from these keys; TOGGLE_GUIDANCE 0x13f is refused as well.
+    6141 GuidanceMission's NearComponent (checkinterval 1s, MDScheduler_Update) measures from player.entity, which the simulation
+      keeps in slot 1's ship: 0.80 m, true at once; after its 3 s delay signal_cue_instantly instantiates EndGuidance
+      (Cue_RaiseCueEvent 0x111e370) and EndGuidance's signal_objects player.computer 'guidance_ended' (SignalObjectsAction 0xbc39c0)
+      instantiates md.Notifications.BettyNotifications (any player.computer signal does): two shared IDs on client 2 only.
+      The same at 6660 and 7380 (guidance set again at 6570 and 7280), and on client 1 at 9400 (its guidance to slot 2's ship, 8050).
+    8200, 8350, 8500 client 1, while its guidance lasted: the mission manager refreshed the guidance route in the simulation,
+      0x11461c0 -> 0xa32f80 -> galaxy route search 0x5c97e0 -> U::Junction 0x5bfff0, 8 shared IDs each time.
+    Nothing else of the run's shared caller table differs at its end (23220): EndGuidance 1/3, BettyNotifications 1/3, the four
+    junction stacks 6/0. Player_Changed_Target (a soft target click, TARGETMOUSE_SELECT state 0x82) also ran on the shared route on
+    one client at a time (8640, 9400 client 1; 10050, 16520 client 2): equal counts at the end, apart in time; the target family.
+  Choice: guidance stays the client's own (section 10: SetGuidance local, the presentation it is). Replayed, the mission manager's one
+    active mission would carry slot k's guidance onto every client's HUD; "refuse before the change" does not apply (nothing refused
+    set it). What it runs in the simulation takes local IDs instead: lockstep_guidance_local.h, two rules read by rid_route_of for a
+    stack the route table calls shared, both onto the ui list:
+      md     an MD frame of the Guidance script is open on the frame thread (the script RNG's scopes: a cue's actions, its event
+             conditions, MD timed checks, Cue_EnterWaiting, the Cue_RaiseCueEvent listeners; the static cue's "Guidance.*" name).
+             Every instance of NewTarget/UpdateTarget/EndGuidance/EndGuidanceToTarget, whoever signals them, and what their actions
+             make (BettyNotifications above). Where a mission sets guidance on every client, every client takes local IDs alike.
+      route  the stack holds 0xa32fe3, 0xa32f80's call of the route search; 0xa32f80 has five callers, the map's 0xde46ef and the
+             mission manager's 0x11461c0 [F: every E8/E9, no data reference]; the autopilot and AI search on their own.
+    Needs native_gate_runtime_ids_local, native_gate_script_rng with the MD bit, native_gate_md_timed_rng (probe, check_gate_options,
+    builder --guidance-local refuse without). Pinned: 0xa32f80 (0x68 bytes), its call, its five callers. Every gate boundary checks
+    the script RNG's cue slot and the MD sites are still ours, else stop 130 stage=guidance_frames. GUIDANCE_LOCAL_STATUS md= route=
+    unnamed= (an MD frame chain without a name is counted, never guessed). C tests: two stand-in clients, play39p-long's stacks,
+    next ID apart without, equal with; the hook end to end; the pins tampered on the pinned image.
+  Left as it was: the MD state itself (GuidanceMission active on one client, its mission), and arrival measured from slot 1's player
+    in the simulation (slot k's guidance to slot 1's ship ends on its own after 3 s; to anything else it lasts until slot 1 arrives).
+  Stock keys and UI actions of a people session that run shared MD on one client, and what takes them:
+    target    HUD/radar/map clicks (TARGETMOUSE_SELECT 0x82), next/previous target keys: PlayerChangedTargetEvent ->
+              Notifications.Player_Changed_Target (seen in play39p-long).
+    autopilot Shift+A 0xb3, interact menu: player.computer autopilot_engaged/disengaged/failed -> BettyNotifications.
+    travel    J 0x12f, interact menu travel: player.entity 'startactivity' -> Modes.Mode_Travel, Notifications.TravelModeCharging,
+              TravelModeStarted, ModeStarted (scan and long-range scan stay refused for slots 2+, SETA a vote).
+    dock, weapons, orders, queue: DOCK_ACTION 0xaf / UNDOCK 0xd3, the group keys, the map's and interact menu's orders, the queue editor.
+    guidance  map / interact menu / player info "Set guidance", "End guidance": native_gate_guidance_local.
+    missiles  needs native_gate_pilot_fire (not in the play bases).
+    Not covered by anything yet (P3, section 1): conversations (interact menu Talk/Comm, COMM_ACTION 0x81 is refused; mission offers
+      run through them: Conversations.Speak, GenericMissions/Diplomacy/NPC_FactionRepresentative.ConversationNextSection), on-foot NPC
+      interaction ('npc_usecase', 'npc_management' on player.entity: NPC_UseCases.UseCase, NPC_Management.Base), the mission menu
+      (AbortMission, SetActiveMission: event_mission_aborted, the active mission and guidance), AddUITriggeredEvent menus
+      (event_ui_triggered: Diplomacy, RML_BuildStation, tutorials), building and trade menus (event_player_built_*:
+      Notifications.OnPlayerOwnedChanged). In a people run these still part the next shared ID when used.
+  Packages (DLL of this branch; derive.py from overlay-Play39P): overlay-Play40P (people: families travel, target, orders, autopilot,
+    dock, weapons, queue and native_gate_guidance_local) and overlay-Play40PS (the same plus a fixed plan, no people needed):
+      client 2: OPEN_MAP 600, SetGuidance on slot 1's ship 640 (scope), WIDGET_BACK 680, TOGGLE_AUTOPILOT 700 and 900,
+        TOGGLEMOUSESTEERING 705 and 790, J key 1000 and 1240, SetGuidance on slot 1's ship 1300 and EndGuidance 1330 (scope).
+      client 1: SetGuidance on slot 2's ship 700, EndGuidance 1700.
+    Pass: relay pass, 0 mismatches; RUNTIME_IDS_CALLER: EndGuidance and BettyNotifications rows only with route=ui, no junction
+    stack (frames 5c0017,...,a32fe3) with route=shared; GUIDANCE_LOCAL_STATUS md= rising on client 2 from about 732 (client 1
+    when its guidance ends), route= on client 1 while its guidance lasts, unnamed=0; UI_REPLAY_SLOTS identical on both (slot 2
+    ap=1 from 703 if the guidance was still set at 700); MD lines "Guidance set to component" / "Ending Guidance" in each
+    client's own log only.

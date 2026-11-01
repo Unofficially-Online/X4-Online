@@ -1124,6 +1124,78 @@ class SnapshotProbeTests(unittest.TestCase):
             self.assertEqual(self.lua.globals().loads,0)
             self.assertTrue(any('tempzone order refused' in line for line in self.lua.globals().logs.values()),config)
 
+    def test_path_transforms_arm_before_loading_and_log_status_and_rows_every_admitted_tick(self):
+        for mode in ('sim','observe'):
+            self.setUp()
+            self.lua.execute('''
+              X4LAN_CONFIG.native_gate_serial_pathing=true
+              X4LAN_CONFIG.native_gate_path_transforms='%s'
+              local gate=package.loadlib('gate')();modes={}
+              gate.path_transforms=function(mode,...) assert(select('#',...)==0);modes[#modes+1]=mode;return 1 end
+              gate.path_transforms_status=function() return 'mode=%s installed=1 restored=0 stage=armed diverted=4' end
+              rows={'index=0 tick=1 site=walk_end mode=%s a=0000000000176ad5/0/0 b=000000000013e75f/0/0 differs=0'}
+              gate.path_transforms_row=function(i) return rows[i+1] end
+            ''' % (mode,mode,mode))
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(list(self.lua.globals().modes.values()),[mode]);self.assertEqual(self.lua.globals().loads,1)
+            self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false;update();update()')
+            lines=list(self.lua.globals().logs.values())
+            self.assertTrue(any('PATH_TRANSFORMS_ARMED mode='+mode in line for line in lines))
+            self.assertTrue(any('PATH_TRANSFORMS tick=1 mode=%s installed=1' % mode in line for line in lines))
+            self.assertEqual(sum('PATH_TRANSFORMS_ROW index=0 tick=1 site=walk_end' in line for line in lines),1)
+            self.lua.execute('state.active=0;state.reason=180;update()')
+            self.assertTrue(any('PATH_TRANSFORMS_STOP mode='+mode in line for line in self.lua.globals().logs.values()))
+        for config in ("X4LAN_CONFIG.native_gate_path_transforms='sim'",
+                       "X4LAN_CONFIG.native_gate_serial_pathing=true;X4LAN_CONFIG.native_gate_path_transforms=true",
+                       "X4LAN_CONFIG.native_gate_serial_pathing=true;X4LAN_CONFIG.native_gate_path_transforms='view'",
+                       "X4LAN_CONFIG.native_gate_serial_pathing=true;X4LAN_CONFIG.native_gate_path_transforms='sim';native=0"):
+            self.setUp()
+            self.lua.execute(config+'''
+              local gate=package.loadlib('gate')()
+              gate.path_transforms=function() return native or 1 end
+              gate.path_transforms_status=function() return 'stage=pins' end
+              gate.path_transforms_row=function() return nil end
+            ''')
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0)
+            self.assertTrue(any('path transforms refused' in line for line in self.lua.globals().logs.values()),config)
+
+    def test_body_pose_arms_before_loading_and_logs_status_and_rows_every_admitted_tick(self):
+        for mode in ('sim','observe'):
+            self.setUp()
+            self.lua.execute('''
+              X4LAN_CONFIG.native_gate_body_pose='%s'
+              local gate=package.loadlib('gate')();modes={}
+              gate.body_pose=function(mode,...) assert(select('#',...)==0);modes[#modes+1]=mode;return 1 end
+              gate.body_pose_status=function() return 'mode=%s installed=1 restored=0 stage=armed diverted=2' end
+              rows={'index=0 tick=1 kind=%s a=0000000000176ad5/0/0 b=000000000013e75f/0/0 ctrl=02c3f5f0 differs=0',
+                    'index=1 tick=1 kind=%s a=0000000000176ad5/0/0 b=000000000013e75f/0/0 ctrl=02c3f5f0 differs=0'}
+              gate.body_pose_row=function(i) return rows[i+1] end
+            ''' % (mode,mode,mode,mode))
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(list(self.lua.globals().modes.values()),[mode]);self.assertEqual(self.lua.globals().loads,1)
+            self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false;update();update()')
+            lines=list(self.lua.globals().logs.values())
+            self.assertTrue(any('BODY_POSE_ARMED mode='+mode in line for line in lines))
+            self.assertTrue(any('BODY_POSE tick=1 mode=%s installed=1' % mode in line for line in lines))
+            self.assertEqual(sum('BODY_POSE_ROW index=0 tick=1 kind='+mode in line for line in lines),1)
+            self.assertEqual(sum('BODY_POSE_ROW index=1 tick=1 kind='+mode in line for line in lines),1)
+            self.lua.execute('state.active=0;state.reason=181;update()')
+            self.assertTrue(any('BODY_POSE_STOP mode='+mode in line for line in self.lua.globals().logs.values()))
+        for config in ("X4LAN_CONFIG.native_gate_body_pose=true",
+                       "X4LAN_CONFIG.native_gate_body_pose='view'",
+                       "X4LAN_CONFIG.native_gate_body_pose='sim';native=0"):
+            self.setUp()
+            self.lua.execute(config+'''
+              local gate=package.loadlib('gate')()
+              gate.body_pose=function() return native or 1 end
+              gate.body_pose_status=function() return 'stage=pins' end
+              gate.body_pose_row=function() return nil end
+            ''')
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0)
+            self.assertTrue(any('body pose refused' in line for line in self.lua.globals().logs.values()),config)
+
     def test_frame_watch_arms_before_the_load_ends_before_the_frame_and_drains_rows(self):
         self.lua.execute('''
           X4LAN_CONFIG.native_gate_seed_rng=true
@@ -1946,6 +2018,33 @@ class SnapshotProbeTests(unittest.TestCase):
             self.assertIn('runtime ids local refused',lines,config)
             self.assertNotIn('load_requested',lines,config)
 
+    def test_guidance_local_arms_after_the_local_lists_and_before_the_load(self):
+        guidance="gate.guidance_local=function() order[#order+1]='guidance_local';return 1 end;gate.guidance_local_status=function() return 'armed=1' end;"
+        ids=("X4LAN_CONFIG.native_gate_world_identities=true;X4LAN_CONFIG.native_gate_created_identities=true;"
+             "X4LAN_CONFIG.native_gate_runtime_ids=true;X4LAN_CONFIG.native_gate_runtime_ids_local=true;")
+        frames="X4LAN_CONFIG.native_gate_script_rng='key';X4LAN_CONFIG.native_gate_script_rng_mask=7;X4LAN_CONFIG.native_gate_md_timed_rng=true;"
+        lines=self._runtime_ids_probe(guidance+ids+frames+"X4LAN_CONFIG.native_gate_guidance_local=true")
+        self.assertIn('ORDER runtime_ids 65536 runtime_ids_local guidance_local load_requested',lines)
+        self.assertIn('GUIDANCE_LOCAL_ARMED armed=1',lines)
+        # Off: nothing armed, nothing asked of the gate.
+        self.assertIn('ORDER runtime_ids 65536 runtime_ids_local load_requested',self._runtime_ids_probe(ids+frames))
+        self.assertIn('ORDER runtime_ids 65536 runtime_ids_local load_requested',
+                      self._runtime_ids_probe(guidance+ids+frames+"X4LAN_CONFIG.native_gate_guidance_local=false"))
+        for config in (guidance+ids+frames+"X4LAN_CONFIG.native_gate_guidance_local=1",
+                       guidance+ids.replace('X4LAN_CONFIG.native_gate_runtime_ids_local=true;','')+frames+"X4LAN_CONFIG.native_gate_guidance_local=true",
+                       guidance+ids+"X4LAN_CONFIG.native_gate_md_timed_rng=true;X4LAN_CONFIG.native_gate_guidance_local=true",
+                       guidance+ids+frames.replace('mask=7','mask=5')+"X4LAN_CONFIG.native_gate_guidance_local=true",
+                       guidance+ids+frames.replace('X4LAN_CONFIG.native_gate_md_timed_rng=true;','')+"X4LAN_CONFIG.native_gate_guidance_local=true",
+                       ids+frames+"X4LAN_CONFIG.native_gate_guidance_local=true",
+                       guidance.replace('return 1 end;gate.guidance_local_status','return 0 end;gate.guidance_local_status')+ids+frames+
+                       "X4LAN_CONFIG.native_gate_guidance_local=true"):
+            lines=self._runtime_ids_probe(config)
+            self.assertIn('guidance local refused',lines,config)
+            self.assertNotIn('load_requested',lines,config)
+        text=SOURCE.replace(chr(13),'')
+        self.assertIn("  if cfg.native_gate_guidance_local then ticklog.status('GUIDANCE_LOCAL',tick,gate.guidance_local_status,'guidance local status unavailable') end",text)
+        self.assertIn("  if cfg.native_gate_guidance_local then log('GUIDANCE_LOCAL_STOP '..tostring(gate.guidance_local_status())) end",text)
+
     def test_runtime_ids_caller_stride_is_checked_and_written_at_once(self):
         for value in ("0","1.5","'x'","3601"):
             self.setUp();self.lua.execute("X4LAN_CONFIG.native_gate_runtime_ids=65536;X4LAN_CONFIG.native_gate_runtime_ids_caller_stride="+value)
@@ -2629,6 +2728,197 @@ class SnapshotProbeTests(unittest.TestCase):
             self.assertEqual(self.lua.globals().loads,0)
             self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
 
+    def test_motion_watch_zones_and_digests(self):
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_world_hash_stride=600
+          X4LAN_CONFIG.native_gate_status_stride=60
+          X4LAN_CONFIG.native_gate_motion_watch={}
+          X4LAN_CONFIG.native_gate_motion_watch_zones={'000000000000072c'}
+          X4LAN_CONFIG.native_gate_motion_watch_digest=true
+          X4LAN_CONFIG.native_gate_motion_watch_orders=true
+          local gate=package.loadlib('gate')();order={}
+          gate.world_capture=function(tick) return 'tick='..tick..' state=WORLD_IMPORTED_1:'..tick end
+          gate.world_banks=function() return 'test' end
+          gate.world_page=function(n) return 0 end
+          gate.world_detail=function(n) return 0 end
+          gate.motion_watch=function(id) order[#order+1]='watch:'..id;return 1 end
+          gate.motion_watch_zone=function(id,...) assert(select('#',...)==0);order[#order+1]='zone:'..id;return 1 end
+          gate.motion_watch_frame=function(t) return 1 end
+          local rows={'index=0 tick=7 saved=00000000000a1885 attention=6 cur=00'}
+          gate.motion_watch_row=function(i) if state.issued==70 then return rows[i+1] end end
+          gate.motion_watch_digest=function(i) if i==0 then return 'index=0 tick=7 saved=00000000000a1885 attention=6 cur=1a2b3c4d' end end
+          gate.motion_watch_status=function() return 'watched=0 zones=1' end
+          gate.motion_watch_orders=function() order[#order+1]='orders';return 1 end
+          local events={'index=0 tick=7 saved=00000000000a1885 event=start_travel'}
+          gate.motion_watch_order_row=function() return nil end
+          gate.motion_watch_target_row=function() return nil end
+          gate.motion_watch_event_row=function(i) if state.issued==70 then return events[i+1] end end
+          gate.motion_watch_refresh_row=function() return nil end
+        """)
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,1)
+        self.assertEqual(list(self.lua.globals().order.values())[:2],['zone:000000000000072c','orders'])
+        logs=list(self.lua.globals().logs.values())
+        self.assertTrue(any('MOTION_WATCH_ZONES_ARMED zones=1' in line for line in logs))
+        self.assertTrue(any('MOTION_WATCH_DIGEST_ARMED' in line for line in logs))
+        # Tick 70 is held by the status stride (60): the digest and the event row are written at once, the full row is
+        # held (here written by the flush after the stub world's missing baseline stops the frame).
+        self.lua.execute('state.boot_phase=3;state.issued=70;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        logs=list(self.lua.globals().logs.values())
+        at=lambda text:[i for i,line in enumerate(logs) if text in line]
+        self.assertEqual(len(at('MOTION_DIGEST index=0 tick=7 saved=00000000000a1885 attention=6 cur=1a2b3c4d')),1)
+        self.assertEqual(len(at('MOTION_EVENT index=0 tick=7 saved=00000000000a1885 event=start_travel')),1)
+        held=at('STATUS_HELD first=70 last=70');self.assertEqual(len(held),1,logs)
+        self.assertLess(at('MOTION_DIGEST index=0')[0],held[0]);self.assertLess(at('MOTION_EVENT index=0')[0],held[0])
+        self.assertTrue(all(i>held[0] for i in at('MOTION_WATCH index=0 tick=7')),logs)
+        for config,why in (("X4LAN_CONFIG.native_gate_motion_watch_zones={'000000000000072c'}",'motion watch zones, digests, doors and splines need native_gate_motion_watch'),
+                           ("X4LAN_CONFIG.native_gate_motion_watch={};X4LAN_CONFIG.native_gate_motion_watch_zones={'000000000000072c'}",'motion watch zones refused'),
+                           ("X4LAN_CONFIG.native_gate_motion_watch={};X4LAN_CONFIG.native_gate_world_hash_stride=600;"
+                            "X4LAN_CONFIG.native_gate_motion_watch_zones={'72c'}",'motion watch zones refused'),
+                           ("X4LAN_CONFIG.native_gate_motion_watch={}",'motion watch refused'),
+                           ("X4LAN_CONFIG.native_gate_motion_watch={'00000000000a214c'};X4LAN_CONFIG.native_gate_motion_watch_digest='on'",'motion watch digest refused')):
+            self.setUp()
+            self.lua.execute(config+"""
+              local gate=package.loadlib('gate')()
+              gate.world_capture=function(tick) return 'tick='..tick..' state=WORLD_IMPORTED_1:'..tick end
+              gate.motion_watch=function() return 1 end
+              gate.motion_watch_zone=function() return 1 end
+              gate.motion_watch_digest=function() return nil end
+              gate.motion_watch_frame=function() return 1 end
+              gate.motion_watch_row=function() return nil end
+              gate.motion_watch_status=function() return 'watched=0' end
+            """)
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0,config)
+            self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
+
+    def test_rng_rows_write_every_tick_at_once(self):
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_status_stride=60
+          X4LAN_CONFIG.native_gate_rng_rows=true
+          state.boot_phase=3;state.issued=70;state.rng='0123456789abcdef';is_menu=false
+        """)
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        logs=list(self.lua.globals().logs.values())
+        self.assertEqual(sum('RNG tick=70 state=0123456789abcdef' in line for line in logs),1,logs)
+        self.assertFalse(any('STATUS_HELD' in line for line in logs))
+        self.setUp()
+        self.lua.execute("X4LAN_CONFIG.native_gate_rng_rows='on'")
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,0)
+        self.assertTrue(any('native_gate_rng_rows must be true' in line for line in self.lua.globals().logs.values()))
+
+    def test_motion_watch_doors_arm_after_the_watch_and_write_rows_at_once(self):
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_status_stride=60
+          X4LAN_CONFIG.native_gate_motion_watch={'00000000000a1885'}
+          X4LAN_CONFIG.native_gate_motion_watch_doors=true
+          local gate=package.loadlib('gate')();order={}
+          gate.motion_watch=function(id) order[#order+1]='watch';return 1 end
+          gate.motion_watch_frame=function(t) return 1 end
+          gate.motion_watch_row=function() return nil end
+          gate.motion_watch_status=function() return 'watched=1' end
+          gate.motion_watch_doors=function(...) assert(select('#',...)==0);order[#order+1]='doors';return 1 end
+          local rows={'index=0 tick=70 door=0000000000059a2f/0/0/2ad9ca0 kind=test site=0041a62e state=2 result=0'}
+          gate.motion_watch_door_row=function(i) if state.issued==70 then return rows[i+1] end end
+        """)
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,1)
+        self.assertEqual(list(self.lua.globals().order.values())[:2],['watch','doors'])
+        self.assertTrue(any('MOTION_WATCH_DOORS_ARMED' in line for line in self.lua.globals().logs.values()))
+        self.lua.execute('state.boot_phase=3;state.issued=70;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        logs=list(self.lua.globals().logs.values())
+        at=[i for i,line in enumerate(logs) if 'MOTION_DOOR index=0 tick=70 door=0000000000059a2f/0/0/2ad9ca0 kind=test' in line]
+        self.assertEqual(len(at),1,logs)
+        held=[i for i,line in enumerate(logs) if 'STATUS_HELD' in line]
+        self.assertTrue(not held or at[0]<held[0])
+        for config,why in (("X4LAN_CONFIG.native_gate_motion_watch_doors=true",'motion watch zones, digests, doors and splines need native_gate_motion_watch'),
+                           ("X4LAN_CONFIG.native_gate_motion_watch={'00000000000a1885'};X4LAN_CONFIG.native_gate_motion_watch_doors=true;native=0",'motion watch doors refused')):
+            self.setUp()
+            self.lua.execute(config+"""
+              local gate=package.loadlib('gate')()
+              gate.motion_watch=function() return 1 end
+              gate.motion_watch_frame=function() return 1 end
+              gate.motion_watch_row=function() return nil end
+              gate.motion_watch_status=function() return 'watched=1' end
+              gate.motion_watch_doors=function() return native or 1 end
+              gate.motion_watch_door_row=function() return nil end
+            """)
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0)
+            self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
+
+    def test_motion_watch_splines_arm_after_the_watch_and_write_rows_at_once(self):
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_status_stride=60
+          X4LAN_CONFIG.native_gate_spline_diag=true
+          X4LAN_CONFIG.native_gate_motion_watch={'00000000000a1885'}
+          X4LAN_CONFIG.native_gate_motion_watch_splines=true
+          local gate=package.loadlib('gate')();order={}
+          gate.motion_watch=function(id) order[#order+1]='watch';return 1 end
+          gate.motion_watch_frame=function(t) return 1 end
+          gate.motion_watch_row=function() return nil end
+          gate.motion_watch_status=function() return 'watched=1' end
+          gate.motion_watch_splines=function(...) assert(select('#',...)==0);order[#order+1]='splines';return 1 end
+          local rows={'index=0 tick=70 saved=00000000000a1885 request=1 in=1 status=0 flags=00000000 points=0 result=00000000 out=1 consumed=0'}
+          gate.motion_watch_spline_row=function(i) if state.issued==70 then return rows[i+1] end end
+        """)
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,1)
+        self.assertEqual(list(self.lua.globals().order.values())[:2],['watch','splines'])
+        self.assertTrue(any('MOTION_WATCH_SPLINES_ARMED' in line for line in self.lua.globals().logs.values()))
+        self.lua.execute('state.boot_phase=3;state.issued=70;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        logs=list(self.lua.globals().logs.values())
+        at=[i for i,line in enumerate(logs) if 'MOTION_SPLINE index=0 tick=70 saved=00000000000a1885 request=1 in=1 status=0' in line]
+        self.assertEqual(len(at),1,logs)
+        held=[i for i,line in enumerate(logs) if 'STATUS_HELD' in line]
+        self.assertTrue(not held or at[0]<held[0])
+        for config,why in (("X4LAN_CONFIG.native_gate_spline_diag=true;X4LAN_CONFIG.native_gate_motion_watch_splines=true",
+                            'motion watch zones, digests, doors and splines need native_gate_motion_watch'),
+                           ("X4LAN_CONFIG.native_gate_motion_watch={'00000000000a1885'};X4LAN_CONFIG.native_gate_motion_watch_splines=true",
+                            'motion watch splines refused'),
+                           ("X4LAN_CONFIG.native_gate_spline_diag=true;X4LAN_CONFIG.native_gate_motion_watch={'00000000000a1885'};"
+                            "X4LAN_CONFIG.native_gate_motion_watch_splines=true;native=0",'motion watch splines refused')):
+            self.setUp()
+            self.lua.execute(config+"""
+              local gate=package.loadlib('gate')()
+              gate.motion_watch=function() return 1 end
+              gate.motion_watch_frame=function() return 1 end
+              gate.motion_watch_row=function() return nil end
+              gate.motion_watch_status=function() return 'watched=1' end
+              gate.motion_watch_splines=function() return native or 1 end
+              gate.motion_watch_spline_row=function() return nil end
+            """)
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0,config)
+            self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
+
+    def test_spline_join_all_needs_the_spline_join(self):
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_spline_join=true
+          X4LAN_CONFIG.native_gate_spline_join_all=true
+          local gate=package.loadlib('gate')();order={}
+          gate.spline_join_all=function(...) assert(select('#',...)==0);order[#order+1]='join_all';return 1 end
+        """)
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,1)
+        self.assertEqual(list(self.lua.globals().order.values()),['join_all'])
+        self.assertTrue(any('SPLINE_JOIN_ALL_ARMED' in line for line in self.lua.globals().logs.values()))
+        for config in ("X4LAN_CONFIG.native_gate_spline_join_all=true",
+                       "X4LAN_CONFIG.native_gate_spline_join=true;X4LAN_CONFIG.native_gate_spline_join_all='on'",
+                       "X4LAN_CONFIG.native_gate_spline_join=true;X4LAN_CONFIG.native_gate_spline_join_all=true;native=0"):
+            self.setUp()
+            self.lua.execute(config+"""
+              local gate=package.loadlib('gate')()
+              gate.spline_join_all=function() return native or 1 end
+            """)
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0,config)
+            self.assertTrue(any('spline join all refused' in line for line in self.lua.globals().logs.values()),config)
+
     def test_motion_watch_orders_arm_after_the_watch(self):
         self.lua.execute("""
           X4LAN_CONFIG.native_gate_motion_watch={'00000000000a214c'}
@@ -2678,6 +2968,86 @@ class SnapshotProbeTests(unittest.TestCase):
             self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
             self.assertEqual(self.lua.globals().loads,0)
             self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
+
+    def test_wreck_watch_arms_after_the_watch_and_drains_at_once(self):
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_motion_watch={'0000000000176ad5'}
+          X4LAN_CONFIG.native_gate_wreck_watch=true
+          local gate=package.loadlib('gate')();order={};frames={}
+          gate.motion_watch=function(id) order[#order+1]='watch';return 1 end
+          gate.motion_watch_frame=function(t) order[#order+1]='mframe';return 1 end
+          gate.motion_watch_row=function() return nil end
+          gate.motion_watch_status=function() return 'watched=1' end
+          gate.wreck_watch=function(...) assert(select('#',...)==0);order[#order+1]='wreck';return 1 end
+          gate.wreck_watch_frame=function(t) order[#order+1]='wframe';frames[#frames+1]=t;return 1 end
+          gate.wreck_watch_status=function() return 'armed=1' end
+          local rows={'index=0 tick=2466 saved=0000000000176ad5 attention=2 ctrl=02c3f5f0 seq=2 ldc=2021 body=-'}
+          gate.wreck_watch_row=function(i) return rows[i+1] end
+          local writes={'index=0 tick=2492 saved=0000000000176ad5 kind=physics depth=0 ui=1'}
+          gate.wreck_watch_write_row=function(i) return writes[i+1] end
+        """)
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,1)
+        self.assertEqual(list(self.lua.globals().order.values())[:2],['watch','wreck'])
+        self.assertTrue(any('WRECK_WATCH_ARMED' in line for line in self.lua.globals().logs.values()))
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update();state.issued=2;update()')
+        order=list(self.lua.globals().order.values())
+        self.assertIn('wframe',order);self.assertLess(order.index('mframe'),order.index('wframe'))
+        logs=list(self.lua.globals().logs.values())
+        self.assertEqual(sum('WRECK index=0 tick=2466 saved=0000000000176ad5 attention=2 ctrl=02c3f5f0 seq=2' in line for line in logs),1)
+        self.assertEqual(sum('WRECK_WRITE index=0 tick=2492 saved=0000000000176ad5 kind=physics' in line for line in logs),1)
+        for config,why in (("X4LAN_CONFIG.native_gate_wreck_watch=true",'wreck watch needs native_gate_motion_watch'),
+                           ("X4LAN_CONFIG.native_gate_motion_watch={'0000000000176ad5'};X4LAN_CONFIG.native_gate_wreck_watch=true;native=0",'wreck watch refused'),
+                           ("X4LAN_CONFIG.native_gate_motion_watch={'0000000000176ad5'};X4LAN_CONFIG.native_gate_wreck_watch=1",'wreck watch refused')):
+            self.setUp()
+            self.lua.execute(config+"""
+              local gate=package.loadlib('gate')()
+              gate.motion_watch=function() return 1 end
+              gate.motion_watch_frame=function() return 1 end
+              gate.motion_watch_row=function() return nil end
+              gate.motion_watch_status=function() return 'watched=1' end
+              gate.wreck_watch=function() return native or 1 end
+              gate.wreck_watch_frame=function() return 1 end
+              gate.wreck_watch_row=function() return nil end
+              gate.wreck_watch_write_row=function() return nil end
+              gate.wreck_watch_status=function() return 'armed=0' end
+            """)
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0,config)
+            self.assertTrue(any(why in line for line in self.lua.globals().logs.values()),why)
+
+    def test_physics_trace_from_arms_after_the_trace(self):
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_world_identities=true
+          X4LAN_CONFIG.native_gate_physics_trace=2494
+          X4LAN_CONFIG.native_gate_physics_trace_saved=true
+          X4LAN_CONFIG.native_gate_physics_trace_from=2488
+          local gate=package.loadlib('gate')();order={}
+          gate.physics_trace=function(rows) order[#order+1]='trace:'..rows;return 1 end
+          gate.physics_trace_saved=function() order[#order+1]='saved';return 1 end
+          gate.physics_trace_from=function(from) order[#order+1]='from:'..from;return 1 end
+          gate.physics_trace_status=function() return 'installed=1' end
+          gate.physics_trace_row=function() return nil end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,1)
+        self.assertEqual(list(self.lua.globals().order.values()),['trace:2494','saved','from:2488'])
+        self.assertTrue(any('PHYSICS_TRACE_FROM_ARMED from=2488' in line for line in self.lua.globals().logs.values()))
+        for config in ("X4LAN_CONFIG.native_gate_world_identities=true;X4LAN_CONFIG.native_gate_physics_trace=2000;X4LAN_CONFIG.native_gate_physics_trace_from=2488",
+                       "X4LAN_CONFIG.native_gate_world_identities=true;X4LAN_CONFIG.native_gate_physics_trace=2494;X4LAN_CONFIG.native_gate_physics_trace_from=0",
+                       "X4LAN_CONFIG.native_gate_world_identities=true;X4LAN_CONFIG.native_gate_physics_trace=2494;X4LAN_CONFIG.native_gate_physics_trace_from=2488;native=0"):
+            self.setUp()
+            self.lua.execute(config+'''
+              local gate=package.loadlib('gate')()
+              gate.physics_trace=function() return 1 end
+              gate.physics_trace_from=function() return native or 1 end
+              gate.physics_trace_status=function() return 'stage=armed' end
+              gate.physics_trace_row=function() return nil end
+            ''')
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0,config)
+            self.assertTrue(any('physics trace from refused' in line for line in self.lua.globals().logs.values()),config)
 
     def test_view_rows_arm_after_view_points_and_drain_every_tick(self):
         self.lua.execute('''
@@ -4089,7 +4459,7 @@ class SnapshotProbeTests(unittest.TestCase):
         self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
         self.assertEqual(self.lua.globals().loads,1)
         self.assertGreaterEqual(self.lua.globals().calls,1)
-        self.lua.execute('state.boot_phase=3;state.issued=7;is_menu=false')
+        self.lua.execute('state.boot_phase=3;state.issued=70;is_menu=false')
         self.lua.execute('update();update()')
         lines=list(self.lua.globals().logs.values())
         self.assertTrue(any('BUILD_ROWS_ARMED' in line for line in lines))
@@ -5173,6 +5543,51 @@ class StatusStrideTests(unittest.TestCase):
         for value in ('1',"'on'"):
             self.setUp();self.lua.execute('X4LAN_CONFIG.native_gate_probe_profile='+value)
             with self.assertRaises(LuaError):self.lua.execute(SOURCE)
+
+    MOTION = '''
+      X4LAN_CONFIG.native_gate_motion_watch={'0000000000176c95'}
+      X4LAN_CONFIG.native_gate_motion_watch_orders=true
+      local gate=package.loadlib('gate')();local rows,targets={},{}
+      gate.motion_watch=function(id) return 1 end
+      gate.motion_watch_frame=function(t)
+        rows[#rows+1]='index='..#rows..' tick='..t..' saved=0000000000176c95 attention=2 model=02c4f610'
+        if t%2==1 then targets[#targets+1]='index='..#targets..' tick='..t..' saved=0000000000176c95 model=02c4f610' end
+        return 1
+      end
+      gate.motion_watch_row=function(i) return rows[i+1] end
+      gate.motion_watch_status=function() return 'watched=1 rows='..#rows end
+      gate.motion_watch_orders=function() return 1 end
+      gate.motion_watch_order_row=function() return nil end
+      gate.motion_watch_target_row=function(i) return targets[i+1] end
+      gate.motion_watch_event_row=function() return nil end
+      gate.motion_watch_refresh_row=function() return nil end
+    '''
+
+    def test_trace_window_ticks_are_written_with_their_drained_rows(self):
+        lines=self.run_ticks(9,self.MOTION+'X4LAN_CONFIG.native_gate_status_stride=3;X4LAN_CONFIG.native_gate_trace_window={4,5}')
+        self.assertEqual(self.ticks(lines,'RNG'),[1,2,3,4,5,6,9])
+        self.assertEqual(self.ticks(lines,'PATH_DETERMINISM'),[1,2,3,4,5,6,9])  # statuses too
+        self.assertEqual(self.ticks(lines,'MOTION_WATCH index=3'),[4])
+        self.assertEqual([int(line.split(' tick=')[1].split()[0]) for line in lines if 'NATIVE_GATE MOTION_WATCH ' in line],[1,2,3,4,5,6,9])
+        self.assertEqual([int(line.split(' tick=')[1].split()[0]) for line in lines if 'NATIVE_GATE MOTION_TARGET ' in line],[1,3,5,9])
+        self.assertEqual(self.lua.globals().reports,9)
+        self.assertFalse(any('ERROR' in line for line in lines))
+        # Without the window the same run holds 4 and 5 (and drops them at 6), as before.
+        self.setUp()
+        lines=self.run_ticks(9,self.MOTION+'X4LAN_CONFIG.native_gate_status_stride=3')
+        self.assertEqual(self.ticks(lines,'RNG'),[1,2,3,6,9])
+        self.assertEqual([int(line.split(' tick=')[1].split()[0]) for line in lines if 'NATIVE_GATE MOTION_WATCH ' in line],[1,2,3,6,9])
+        # Without a stride every tick is written; the window changes nothing.
+        self.setUp()
+        lines=self.run_ticks(5,self.MOTION+'X4LAN_CONFIG.native_gate_trace_window={4,5}')
+        self.assertEqual(self.ticks(lines,'RNG'),[1,2,3,4,5])
+
+    def test_invalid_trace_window_fails_before_loading_or_booting(self):
+        for value in ('true','4','{4}','{5,4}','{0,4}','{4.5,6}',"{'4','5'}",'{4,5,6}'):
+            with self.subTest(value=value):
+                self.setUp();self.lua.execute('X4LAN_CONFIG.native_gate_trace_window='+value)
+                with self.assertRaises(LuaError):self.lua.execute(SOURCE)
+                self.assertEqual(self.lua.globals().loads,0);self.assertEqual(self.lua.globals().boots,0)
 
     def test_stride_one_writes_every_tick_and_off_is_the_default(self):
         lines=self.run_ticks(4,'X4LAN_CONFIG.native_gate_status_stride=1')

@@ -83,6 +83,8 @@
  *                   simulation's own events ask for, equal in play23-soak on every
  *                   capture: its IDs stay in step between clients as long as the events
  *                   do, and if one does depend on the client only this list moves.
+ * With native_gate_guidance_local the ui list also takes what a client's own guidance runs in the
+ * simulation (md.Guidance's cues and what they make, the guidance route; lockstep_guidance_local.h).
  * ui wins over view: a stack that matches both is the camera's. A stack is the X4
  * return addresses of the allocation, up to 62 frames, matched exactly for a call
  * and by range for a function's body. AssignNewID and Remove only know the map's
@@ -408,6 +410,8 @@ static int rid_local_arm(void) {
 }
 /* Around an engine call this client makes alone for its own view. */
 static void rid_scope(int open) {rid_scope_thread=open?GetCurrentThreadId():0;}
+/* A client's guidance, what X4 runs for it in the simulation (native_gate_guidance_local, default off). */
+#include "lockstep_guidance_local.h"
 /* Which list a stack belongs to: the presentation scope, a view call, then the table, ui over view. */
 static unsigned rid_route_of(const uint32_t *frames,unsigned count) {
     if(!InterlockedCompareExchange(&rid_local_on,0,0) || !rid_sealed) return RID_ROUTE_SHARED;
@@ -422,6 +426,8 @@ static unsigned rid_route_of(const uint32_t *frames,unsigned count) {
         if(site->route==RID_ROUTE_UI) return RID_ROUTE_UI;
         route=site->route;
     }
+    /* What the table calls shared but this client's guidance alone asked for (lockstep_guidance_local.h). */
+    if(route==RID_ROUTE_SHARED && glocal_route_of(frames,count)) return RID_ROUTE_UI;
     return route;
 }
 static created_assign_fn rid_assign_original(void) {return rid_assign_native?rid_assign_native:(created_assign_fn)(void *)(thunk+CREATED_THUNK);}
@@ -657,6 +663,9 @@ static int rid_frame(uint64_t tick) {
     CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(map+0x10);EnterCriticalSection(lock);rid_now=rid_counts(map);rid_next_id=rid_next(map);memcpy(rid_local_now,rid_local,sizeof(rid_local_now));LeaveCriticalSection(lock);
     rid_digest=lockstep_mix(lockstep_mix(rid_digest^tick)^rid_next_id);++rid_frames_done;
     rid_row_close(tick,rid_next_id);
+#ifndef RID_OWN_PLATFORM
+    if(!glocal_frame()) rid_fail(glocal_stage);
+#endif
     if(rid_mode==RID_SET && rid_now.head && ((rid_now.head-1u)>>20)>=RID_BLOCK_LIMIT) rid_fail("ids_exhausted");
     return !InterlockedCompareExchange64(&rid_failures,0,0);
 }

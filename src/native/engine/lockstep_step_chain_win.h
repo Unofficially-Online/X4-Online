@@ -100,6 +100,38 @@ static const struct {uint32_t rva,size;const char *sha;} stc_oc_pins[4]={
     {0xe99950u,0x41du,"6506eb284dadbee28369fd0ac239247762354dd0f2f028391aa9e2738be665b7"},
     {0xeaa980u,0x202u,"852c64f8a3a26286d79d736f680c0d34ea571479e47d59deb60c017eaa7fabc0"},
 };
+/* FR25 (lockstep_step_trace.h ST_SP_TAG): the AI position chain. The create_position result is stored by
+ * CreatePositionAction::Execute 0xbe0ba0 through 0xcc6710(rcx the variable, rdx the context Value, r8 its name, r9 the
+ * Value) at 0xbe0c86, the get_safe_pos result by GetSafePosAction::Execute 0xbe2320 likewise at 0xbe23aa (each a hook
+ * that reads the Value and calls the original). Inside the CreatePosition evaluation 0xc6f7b0 (r12 the context Value
+ * from its r8, once), the object's transform 0x3db8a0(rcx object, rdx matrix, xmm2 time, r9 ancestor, [rsp+0x20] flag) at
+ * 0xc6fb48; the GetSafePos evaluation 0xc72380 (r12 the context Value, reloaded at 0xc72b15) calls Zone::GetSafePos
+ * 0x835b80 at 0xc72e84 and the sector's 0x786d10 at 0xc72f89, both of which reach the solver 0x14e4320(rcx the boxes
+ * vector, rdx the point, xmm2 radius, r9 the direction, then a float, a word, the allow-y byte, the move direction and a
+ * float). Stubs: 30 (the transform) and 31/32 (the GetSafePos calls) leave a gate (mov r11,&gate; mov [r11],r12; mov
+ * [r11+8],rsp) and jump to the hook (30) or the original (31, 32); the solver gets an entry jump (its first five bytes
+ * in one line) to a stub, the hook calls the original through a trampoline with its first two instructions (mov rax,rsp;
+ * mov [rax+0x18],rbx; no rip operand) and a jump to 0x14e4327. The gates are believed only on the UI thread, on its
+ * stack, while the return address of their call (0xc6fb4d; 0xc72e89, 0xc72f8e) still sits there. Pinned: 0xbe0ba0,
+ * 0xbe2320, 0xc6f7b0, 0x3db8a0, 0xc72380, 0x14e4320 to their ends. */
+#define STC_SP_CV_SITE 28u
+#define STC_SP_GV_SITE 29u
+#define STC_SP_TR_SITE 30u
+#define STC_SP_GZ_SITE 31u
+#define STC_SP_GC_SITE 32u
+#define STC_SP_SOLVER 0x14e4320u
+#define STC_SP_SOLVER_RESUME 0x14e4327u
+static const unsigned char stc_sp_entry_original[5]={0x48,0x8b,0xc4,0x48,0x89};
+static const struct {uint32_t rva,size;const char *sha;} stc_sp_pins[6]={
+    {0xbe0ba0u,0x118u,"9d94310ae24fd08d72280562248f875c499ede1630badd8987e399ba237170d3"},
+    {0xbe2320u,0xe2u,"a1633b66afd1a2d3b9eebf5dedb92fb020a5e91f9b772921531f9184ad0f80ff"},
+    {0xc6f7b0u,0x49du,"a0fec7baeee30e27c4cd03b5eff1a8524190868e881bd2264707d7b136bfa782"},
+    {0x3db8a0u,0x465u,"6e28847e1ab6eb2e206ec564645b32dee94a0fdd2eefe0884bdedad46da1ad90"},
+    {0xc72380u,0xde0u,"e5a9077b31bf996cbea45c65aa59f755062fb4062ea7deb301f4dfae0cbf1419"},
+    {0x14e4320u,0x567u,"20b7ad8293e574399b0f9478be79216349b1981a9c1a4faf7a9e4808153dde07"},
+};
+/* The gates' return addresses (absolute; set when armed, tests may point them at their own callers). */
+static uintptr_t stc_sp_tr_ret[1],stc_sp_gs_ret[2];
 static const struct {uint32_t site,target;const char *name;} stc_sites[ST_CHAIN_SITE_COUNT]={
     {0xeb37ff,STC_ASINF,"asin_cur"},{0xeb386f,STC_HELPER,"yaw"},{0xeb3892,STC_ASINF,"asin_target"},
     {0xeb38b5,STC_HELPER,"pitch"},{0xeb38f2,STC_HELPER,"roll"},{0xeb3912,STC_BUILDER,"builder"},
@@ -111,13 +143,18 @@ static const struct {uint32_t site,target;const char *name;} stc_sites[ST_CHAIN_
     {0xe8ddc4,0xe89f10,"pc_clr1"},{0xe8deac,0xe89f10,"pc_clr2"},{0xe8df92,0xe89f10,"pc_clr3"},{0xe8f60d,0xe89f10,"pc_clr4"},
     {0xe90152,0xe89f10,"pc_clr5"},{0xe9acbc,0xe89f10,"pc_clr6"},{0xeb79ae,0xe89f10,"pc_clr7"},
     {0xeadf86,0xeaa6f0,"oc_q"},{0xe99ce9,0xeaa980,"oc_fm"},
+    {0xbe0c86,0xcc6710,"sp_cv"},{0xbe23aa,0xcc6710,"sp_gv"},{0xc6fb48,0x3db8a0,"sp_tr"},{0xc72e84,0x835b80,"sp_gz"},{0xc72f89,0x786d10,"sp_gc"},
 };
-/* Stubs: the first eight 0x10 apart, the others (FR18 on) 0x20 apart from 0x80. */
-#define STC_CODE_BYTES (0x80u+0x20u*(ST_CHAIN_SITE_COUNT-8u))
+/* Stubs: the first eight 0x10 apart, the others (FR18 on) 0x20 apart from 0x80; then FR25's solver entry stub and its
+ * trampoline, 0x20 each. */
+#define STC_SP_ENTRY_STUB (0x80u+0x20u*(ST_CHAIN_SITE_COUNT-8u))
+#define STC_SP_TRAMP (STC_SP_ENTRY_STUB+0x20u)
+#define STC_CODE_BYTES (STC_SP_TRAMP+0x20u)
 static unsigned stc_stub(unsigned i) {return i<8u?0x10u*i:0x80u+0x20u*(i-8u);}
 static const char *st_chain_site_name(unsigned i) {return i<ST_CHAIN_SITE_COUNT?stc_sites[i].name:"?";}
 static unsigned char *stc_page;
-static unsigned stc_done;
+static uint64_t stc_done;
+static unsigned stc_sp_entry_done; /* FR25: the solver's entry jump */
 typedef void (*stc_approach_fn)(float *,float,float,float,float);
 typedef float (*stc_asin_fn)(float);
 typedef void (*stc_builder_fn)(void *,float,float,float);
@@ -236,6 +273,32 @@ static void *stc_oc_fm(void *order_point,const void *tmpl,uint64_t ship,const un
     }
     return r;
 }
+/* FR25: the results as the actions store them (the original once), the transform with its gate, the solver. */
+typedef uint64_t (*stc_setvar_fn)(void *,void *,void *,void *);
+static uint64_t stc_sp_set(unsigned site,unsigned which,void *var,void *ctx,void *name,void *value) {
+    InterlockedIncrement64(&st_chain_hits[site]);
+    st_sp_value(which,(const unsigned char*)ctx,(const unsigned char*)value);
+    return ((stc_setvar_fn)(void*)(image+stc_sites[site].target))(var,ctx,name,value);
+}
+static uint64_t stc_sp_cv(void *a,void *b,void *c,void *d) {return stc_sp_set(STC_SP_CV_SITE,0,a,b,c,d);}
+static uint64_t stc_sp_gv(void *a,void *b,void *c,void *d) {return stc_sp_set(STC_SP_GV_SITE,1,a,b,c,d);}
+typedef void (*stc_tr_fn)(void *,void *,double,void *,uint64_t);
+static void stc_sp_tr(void *self,void *mat,double time,void *anc,uint64_t flag) {
+    InterlockedIncrement64(&st_chain_hits[STC_SP_TR_SITE]);
+    unsigned which;const unsigned char *ctx=st_sp_gate_open(&st_sp_gate_tr,stc_sp_tr_ret,1,&which);
+    st_sp_tr_ctx c;const int on=ctx?st_sp_tr_begin(&c,ctx,self,mat,anc,time,(uint32_t)(flag&0xff)):0;
+    ((stc_tr_fn)(void*)(image+stc_sites[STC_SP_TR_SITE].target))(self,mat,time,anc,flag);
+    if(on) st_sp_tr_end(&c,mat,self);
+}
+typedef uint64_t (*stc_solver_fn)(void *,float *,float,float *,float,uint64_t,uint64_t,float *,float);
+static uint64_t stc_sp_solver(void *boxes,float *p,float radius,float *dir,float a5,uint64_t a6,uint64_t a7,float *move,float a9) {
+    st_sp_cap_ctx c;
+    const int on=st_sp_cap_begin(&c,stc_sp_gs_ret,2,boxes,p,dir,move,st_bits(radius),st_bits(a5),(uint32_t)(a7&0xff),0xffffffffu,
+                                 st_bits(a9),(uint32_t)a6,(uintptr_t)__builtin_return_address(0));
+    const uint64_t r=((stc_solver_fn)(void*)(stc_page+STC_SP_TRAMP))(boxes,p,radius,dir,a5,a6,a7,move,a9);
+    if(on) st_sp_cap_end(&c);
+    return r;
+}
 /* FR20: the path builder; for a watched agent the call stack, the description and the first point around it. */
 typedef uint64_t (*stc_ps_fn)(void *,void *,void *,void *);
 static uint64_t stc_pathset(void *agent,void *desc,void *a3,void *a4) {
@@ -283,7 +346,11 @@ static void *stc_hook(unsigned i) {
     case 24: return (void*)stc_pc24;
     case 25: return (void*)stc_pc25;
     case 26: return (void*)stc_oc_q;
-    default: return (void*)stc_oc_fm;
+    case 27: return (void*)stc_oc_fm;
+    case 28: return (void*)stc_sp_cv;
+    case 29: return (void*)stc_sp_gv;
+    case 30: return (void*)stc_sp_tr;
+    default: return (void*)(image+stc_sites[i].target); /* FR25's gates go on to the original */
     }
 }
 /* Stub i at page+stc_stub(i): jmp [rip] -> its hook (FR18's converter: mov rcx,r15 first; FR20's four conversion
@@ -297,8 +364,27 @@ static void stc_write_code(unsigned char *p) {
         else if(i>=10 && i<=13) {memcpy(s,agent9,3);s+=3;}
         else if(i==STC_OC_Q_SITE) {memcpy(s,"\x49\x89\xf8\x49\x89\xe9",6);s+=6;}            /* mov r8,rdi; mov r9,rbp */
         else if(i==STC_OC_FM_SITE) {memcpy(s,"\x4d\x89\xe0\x4c\x8d\x4c\x24\x08",8);s+=8;} /* mov r8,r12; lea r9,[rsp+8] */
+        else if(i>=STC_SP_TR_SITE && i<=STC_SP_GC_SITE) {                                    /* FR25: the gate */
+            const void *gate=i==STC_SP_TR_SITE?(const void*)&st_sp_gate_tr:(const void*)&st_sp_gate_gs;
+            memcpy(s,"\x49\xbb",2);memcpy(s+2,&gate,8);memcpy(s+10,"\x4d\x89\x23\x49\x89\x63\x08",7);s+=17; /* mov r11,&gate; mov [r11],r12; mov [r11+8],rsp */
+        }
         memcpy(s,jump,6);memcpy(s+6,&hook,8);
     }
+    /* FR25: the solver's entry stub and its trampoline (mov rax,rsp; mov [rax+0x18],rbx; jmp 0x14e4327). */
+    static const unsigned char jump[6]={0xff,0x25,0,0,0,0};
+    void *hook=(void*)stc_sp_solver,*resume=image+STC_SP_SOLVER_RESUME;
+    memcpy(p+STC_SP_ENTRY_STUB,jump,6);memcpy(p+STC_SP_ENTRY_STUB+6,&hook,8);
+    memcpy(p+STC_SP_TRAMP,"\x48\x8b\xc4\x48\x89\x58\x18",7);memcpy(p+STC_SP_TRAMP+7,jump,6);memcpy(p+STC_SP_TRAMP+13,&resume,8);
+}
+/* FR25: the solver's entry: 0 original, 1 the jump to our stub, -1 anything else (raw bytes). */
+static void stc_sp_entry_jump(unsigned char out[5]) {
+    const int32_t d=(int32_t)((intptr_t)(stc_page+STC_SP_ENTRY_STUB)-(intptr_t)(image+STC_SP_SOLVER+5));out[0]=0xe9;memcpy(out+1,&d,4);
+}
+static int stc_sp_entry_state(void) {
+    unsigned char now[5],ours[5];memcpy(now,(const void*)(image+STC_SP_SOLVER),5);
+    if(!memcmp(now,stc_sp_entry_original,5)) return 0;
+    if(stc_page) {stc_sp_entry_jump(ours);if(!memcmp(now,ours,5)) return 1;}
+    return -1;
 }
 static int32_t stc_rel(unsigned i,const void *target) {return (int32_t)((intptr_t)target-(intptr_t)(image+stc_sites[i].site+5));}
 /* 0 original, 1 ours, -1 anything else. Read raw: read_local would show the view. */
@@ -330,8 +416,9 @@ static int stc_site_cas(unsigned i,const void *expected,const void *value) {
 }
 /* The view for other modules' pins: the original rel32 of every site that is ours. */
 static int stc_overlaps(const void *source,size_t bytes) {
-    if(!stc_done) return 0;
+    if(!stc_done && !stc_sp_entry_done) return 0;
     const uintptr_t a=(uintptr_t)source,b=a+bytes;
+    if(stc_sp_entry_done && (uintptr_t)(image+STC_SP_SOLVER)<b && (uintptr_t)(image+STC_SP_SOLVER)+5>a) return 1;
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) {
         const uintptr_t s=(uintptr_t)(image+stc_sites[i].site+1);
         if((stc_done>>i)&1u && s<b && s+4>a) return 1;
@@ -339,8 +426,12 @@ static int stc_overlaps(const void *source,size_t bytes) {
     return 0;
 }
 static void stc_unpatch_copy(const void *source,void *copy,size_t bytes) {
-    if(!stc_done) return;
+    if(!stc_done && !stc_sp_entry_done) return;
     const uintptr_t a=(uintptr_t)source;
+    if(stc_sp_entry_done) {
+        const uintptr_t s=(uintptr_t)(image+STC_SP_SOLVER);
+        for(unsigned k=0;k<5;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=stc_sp_entry_original[k];
+    }
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) {
         if(!((stc_done>>i)&1u)) continue;
         const int32_t d=stc_rel(i,image+stc_sites[i].target);unsigned char rel[4];memcpy(rel,&d,4);
@@ -349,9 +440,13 @@ static void stc_unpatch_copy(const void *source,void *copy,size_t bytes) {
     }
 }
 static void st_chain_restore(void) {
+    if(stc_sp_entry_done && stc_sp_entry_state()==1) {
+        unsigned char ours[5];stc_sp_entry_jump(ours);
+        if(view_cas_bytes(STC_SP_SOLVER,ours,stc_sp_entry_original,5)) stc_sp_entry_done=0;
+    }
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++)
-        if((stc_done>>i)&1u && stc_site_state(i)==1 && stc_site_cas(i,stc_page+stc_stub(i),image+stc_sites[i].target)) stc_done&=~(1u<<i);
-    if(!stc_done) {st_chain_installed=0;st_chain_restored=1;st_chain_stage="restored";}
+        if((stc_done>>i)&1u && stc_site_state(i)==1 && stc_site_cas(i,stc_page+stc_stub(i),image+stc_sites[i].target)) stc_done&=~(1ull<<i);
+    if(!stc_done && !stc_sp_entry_done) {st_chain_installed=0;st_chain_restored=1;st_chain_stage="restored";st_sp_gate_clear();}
 }
 /* With st_arm, before the entry swap: every site original, the pins, the page, then the six swaps. */
 static int st_chain_arm(void) {
@@ -364,6 +459,8 @@ static int st_chain_arm(void) {
        !hash_ok(image+STC_PS,STC_PS_SIZE,STC_PS_SHA) || !hash_ok(image+STC_PS_CALLER,STC_PS_CALLER_SIZE,STC_PS_CALLER_SHA)) {st_chain_stage="pins";return 0;}
     for(unsigned i=0;i<5u;i++) if(!hash_ok(image+stc_pc_pins[i].rva,stc_pc_pins[i].size,stc_pc_pins[i].sha)) {st_chain_stage="pins";return 0;}
     for(unsigned i=0;i<4u;i++) if(!hash_ok(image+stc_oc_pins[i].rva,stc_oc_pins[i].size,stc_oc_pins[i].sha)) {st_chain_stage="pins";return 0;}
+    for(unsigned i=0;i<6u;i++) if(!hash_ok(image+stc_sp_pins[i].rva,stc_sp_pins[i].size,stc_sp_pins[i].sha)) {st_chain_stage="pins";return 0;}
+    if(stc_sp_entry_state()!=0) {st_chain_stage="pins";return 0;}
     if(!stc_page) stc_page=stc_alloc_page();
     if(!stc_page) {st_chain_stage="page";return 0;}
     DWORD old,ignored;if(!VirtualProtect(stc_page,0x1000,PAGE_READWRITE,&old)) {st_chain_stage="page";return 0;}
@@ -371,14 +468,20 @@ static int st_chain_arm(void) {
     if(!VirtualProtect(stc_page,0x1000,PAGE_EXECUTE_READ,&ignored)) {st_chain_stage="page";return 0;}
     FlushInstructionCache(GetCurrentProcess(),stc_page,0x1000);
     st_chain_installed=1;st_chain_restored=0;stc_done=0;
+    stc_sp_tr_ret[0]=(uintptr_t)(image+0xc6fb4du);stc_sp_gs_ret[0]=(uintptr_t)(image+0xc72e89u);stc_sp_gs_ret[1]=(uintptr_t)(image+0xc72f8eu);
+    st_sp_gate_clear();
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) {
         if(!stc_site_cas(i,image+stc_sites[i].target,stc_page+stc_stub(i))) {st_chain_restore();st_chain_installed=stc_done!=0;st_chain_stage="cas";return 0;}
-        stc_done|=1u<<i;
+        stc_done|=1ull<<i;
     }
+    {unsigned char ours[5];stc_sp_entry_jump(ours);
+     if(!view_cas_bytes(STC_SP_SOLVER,stc_sp_entry_original,ours,5)) {st_chain_restore();st_chain_installed=stc_done!=0;st_chain_stage="cas";return 0;}
+     stc_sp_entry_done=1;}
     st_chain_stage="armed";return 1;
 }
 static int st_chain_owned(void) {
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) if((stc_done>>i)&1u && stc_site_state(i)!=1) return 0;
+    if(stc_sp_entry_done && stc_sp_entry_state()!=1) return 0;
     unsigned char want[STC_CODE_BYTES];stc_write_code(want);
     return stc_page && !memcmp(stc_page,want,sizeof(want));
 }

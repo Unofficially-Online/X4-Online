@@ -201,6 +201,41 @@ class MotionWatchCensusTests(unittest.TestCase):
         r = c.compare(a, b)
         self.assertEqual(r['first_motion_watch'], {'00000000000a214c': dict(tick=3, fields=['slot0'])})
 
+    def test_digests_name_the_first_tick_and_group_per_member(self):
+        def digest(tick, saved='8040520b9ad7a7f0', cur='1a2b3c4d', parent='000000000000072c/0/0/2b66080'):
+            return (f'[X4LAN] NATIVE_GATE MOTION_DIGEST index={tick} tick={tick} saved={saved} attention=6 ctrl=02c51158 model=02c4f610 '
+                    f'flags=1999 parent={parent} cur={cur} prev=00000001 cache=00000002 target=00000003 path=00000004 model_ext=00000005 '
+                    f'agent=00000006 leader=00000007 fp=00000008 dock=811c9dc5')
+        a = c.parse([digest(16900), digest(16901), digest(16902, cur='99999999'), digest(16901, saved='00000000000a1885')])
+        b = c.parse([digest(16900), digest(16901), digest(16902), digest(16901, saved='00000000000a1885', parent='0000000000059a2f/0/0/2ad9ca0')])
+        r = c.compare(a, b)
+        self.assertEqual(r['first_motion_digest'], {'8040520b9ad7a7f0': dict(tick=16902, fields=['cur']),
+                                                    '00000000000a1885': dict(tick=16901, fields=['parent'])})
+        self.assertEqual(r['first_motion_watch'], {})
+
+    def test_door_rows_compare_as_sequences_per_door(self):
+        def door(index, tick, kind='test', tail='site=0041a7f1 state=2 result=0 count=0 ships=0/2/0/0 deadline=0 now=0 ui=1'):
+            return f'[X4LAN] NATIVE_GATE MOTION_DOOR index={index} tick={tick} door=0000000000059a2f/0/0/2ad9ca0 kind={kind} {tail}'
+        a = c.parse([door(0, 12487), door(1, 12782)])
+        b = c.parse([door(0, 12487), door(1, 12783)])
+        r = c.compare(a, b)
+        self.assertEqual(r['first_motion_doors'], {'0000000000059a2f/0/0/2ad9ca0': dict(event=1, ticks=[12782, 12783], fields=['tick'])})
+
+    def test_spline_rows_compare_as_sequences_per_ship_without_the_wait(self):
+        # Cause B: one client consumes the courier's route at its second update, the other one update later.
+        def spline(index, tick, status, out, consumed, waited=0, result='00000000', saved='00000000000a1885'):
+            return (f'[X4LAN] NATIVE_GATE MOTION_SPLINE index={index} tick={tick} saved={saved} request=1 in=1 status={status} flags=00000000 '
+                    f'points=0 result={result} out={out} consumed={consumed} segments=11111111 progress=0000803e cheap=0 waited={waited}')
+        a = c.parse([spline(0, 12813, 1, 0, 1, result='5a5a5a5a')])
+        b = c.parse([spline(0, 12813, 0, 1, 0), spline(1, 12814, 1, 0, 1, result='5a5a5a5a')])
+        r = c.compare(a, b)
+        self.assertEqual(r['first_motion_splines'], {'00000000000a1885': dict(event=0, ticks=[12813, 12813],
+                                                                             fields=['consumed', 'out', 'result', 'status'])})
+        # With the join (native_gate_spline_join_all) only waited= may differ: wall-clock, left out.
+        a = c.parse([spline(0, 12813, 1, 0, 1, waited=1, result='5a5a5a5a')])
+        b = c.parse([spline(0, 12813, 1, 0, 1, waited=0, result='5a5a5a5a')])
+        self.assertEqual(c.compare(a, b)['first_motion_splines'], {})
+
     def test_order_and_target_events_compare_as_sequences_per_ship(self):
         def target(index, tick, transform, saved='00000000000a214c'):
             return (f'[X4LAN] NATIVE_GATE MOTION_TARGET index={index} tick={tick} saved={saved} model=02c4f610 flag=1 '

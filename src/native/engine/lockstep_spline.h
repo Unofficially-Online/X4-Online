@@ -11,12 +11,40 @@ typedef struct {
 static spline_sample spline_samples[ACTOR_CAPACITY];
 static int spline_installed,spline_restored,spline_refresh,spline_join;
 static uint64_t spline_calls,spline_failures,spline_refreshes,spline_joins,spline_waits,spline_timeouts;
+/* native_gate_spline_join_all (DEFAULT OFF; needs native_gate_spline_join, so the producer pins and the pathing
+ * join): every spline model's update, not only the fixtures', first waits (bounded, SPLINE_JOIN_ALL_TIMEOUT) until
+ * the front of its pending request deque is published, so the native update consumes each route in the first
+ * update after its request on every client. Cause B (4-client long runs: p4-long3, p4-long5, p4-causeb): courier
+ * a1885 leaves station 3d876's pad and starts a path at 12812 identically on all clients; its next update (12813)
+ * gives another pose on one client with target, path, agent, flight parameters, cache and previous pose equal: the
+ * spline request the path started (slot 4 0xeb55a0 -> calculator queue 0xeb6760) was published before that update
+ * on one client and after it on the other, which then flies its provisional segment one tick longer. The calculator
+ * thread (0x1099650 -> 0xec0cb0) is one FIFO worker; four X4 processes on one PC starve it unevenly. The wait copies
+ * nothing, cancels nothing and runs no job: the native calculator produces the route, the native update consumes
+ * it. A timeout, an unreadable deque, an unknown status or an unavailable calculator stops the gate (reason 58). */
+#define SPLINE_JOIN_ALL_TIMEOUT 2000u
+static int spline_join_all;
+static uint64_t spline_all_joins,spline_all_waits,spline_all_timeouts,spline_all_failures;
+/* The motion watch's request rows for watched ships (native_gate_motion_watch_splines; lockstep_motion_watch.h):
+ * begin matches the model's agent against the watch (pointer compare), seen reads the front request the native
+ * update will see (after any join), end reads what the update left. */
+typedef struct {unsigned slot;uint32_t count_in,status,flags,points,result,ordinal;unsigned char cheap,waited;} spline_watch_t;
+static int motion_spline_begin(void *model,unsigned char cheap,spline_watch_t *w);
+static void motion_spline_seen(void *model,spline_watch_t *w);
+static void motion_spline_end(void *model,spline_watch_t *w);
 
-static int spline_pending(spline_sample *s,void *model,unsigned phase) {
+/* The front of a spline model's pending request deque (+0x428: proxy, map, map size, offset, size; two request
+ * pointers per block, power-of-two block map) and the front request's status (+0xa8: 0 pending, 1 published by the
+ * calculator 0x1099650 or set inline by the request builder, slot 4 0xeb55a0) and flags (+0xac..+0xaf), read under
+ * the native result critical section the calculator publishes under. Update 0xeb7230 consumes the front request
+ * (its route replaces the provisional segments, spline progress restarts) in the first update that finds it
+ * published, so the consumption tick follows wall-clock completion unless an update waits for it. */
+typedef struct {uint64_t count;uint32_t status,flags;unsigned char *front;} spline_front_t;
+static int spline_front(void *model,spline_front_t *f) {
     uint64_t queue[5];void *block,*request;
-    s->pending_count[phase]=0;s->pending_status[phase]=0;s->pending_flags[phase]=0;
+    f->count=0;f->status=0;f->flags=0;f->front=NULL;
     if(!read_local((unsigned char*)model+0x428,queue,sizeof(queue))) return 0;
-    s->pending_count[phase]=queue[4];
+    f->count=queue[4];
     if(!queue[4]) return 1;
     /* Native deque: two request pointers per block, power-of-two block map.
      * The pathing owner controls the deque. The result worker publishes its
@@ -24,37 +52,52 @@ static int spline_pending(spline_sample *s,void *model,unsigned phase) {
     if(!queue[1] || !queue[2] || queue[2]>4096 || (queue[2]&(queue[2]-1)) || queue[4]>queue[2]*2 ||
        !read_local((void*)(uintptr_t)(queue[1]+8*((queue[3]>>1)&(queue[2]-1))),&block,8) || !block ||
        !read_local((unsigned char*)block+8*(queue[3]&1),&request,8) || !request) return 0;
+    f->front=request;
     EnterCriticalSection((CRITICAL_SECTION*)(image+0x3d74938));
-    int ok=read_local((unsigned char*)request+0xa8,&s->pending_status[phase],4) &&
-           read_local((unsigned char*)request+0xac,&s->pending_flags[phase],4);
+    int ok=read_local((unsigned char*)request+0xa8,&f->status,4) &&
+           read_local((unsigned char*)request+0xac,&f->flags,4);
     LeaveCriticalSection((CRITICAL_SECTION*)(image+0x3d74938));
     return ok;
 }
+static int spline_pending(spline_sample *s,void *model,unsigned phase) {
+    spline_front_t f;int ok=spline_front(model,&f);
+    s->pending_count[phase]=f.count;s->pending_status[phase]=f.status;s->pending_flags[phase]=f.flags;
+    return ok;
+}
 
-static int spline_join_pending(spline_sample *s,void *model,unsigned timeout) {
-    s->waited=0;
-    if(!spline_pending(s,model,0)) return 0;
-    if(!s->pending_count[0]) return 1;
-    InterlockedIncrement64((volatile LONG64*)&spline_joins);
-    if(s->pending_status[0]>1) return 0;
-    if(s->pending_status[0]) return 1;
+/* Wait (bounded) until the front request is published: 1 when none is pending or it is published (f holds it),
+ * 0 on an unreadable deque, an unknown status, an unavailable calculator or a timeout. *waited: it had to wait. */
+static int spline_join_core(void *model,unsigned timeout,spline_front_t *f,int *waited,
+                            volatile LONG64 *joins,volatile LONG64 *waits,volatile LONG64 *timeouts) {
+    *waited=0;
+    if(!spline_front(model,f)) return 0;
+    if(!f->count) return 1;
+    InterlockedIncrement64(joins);
+    if(f->status>1) return 0;
+    if(f->status) return 1;
     void *worker,*vtable;unsigned char running;
     if(!read_local(image+0x6cf29c0,&worker,8) || !worker ||
        !read_local(worker,&vtable,8) || vtable!=image+0x2c68f98 ||
        !read_local((unsigned char*)worker+0x58,&running,1) || running!=1) return 0;
-    s->waited=1;InterlockedIncrement64((volatile LONG64*)&spline_waits);
+    *waited=1;InterlockedIncrement64(waits);
     ULONGLONG started=GetTickCount64();
     /* The native calculator owns result production. Release its publication
      * lock between reads and allow it to finish; never run or cancel its job.
-     * The fixture pathing owner cannot consume this request until we return. */
-    while(!s->pending_status[0]) {
+     * The pathing owner cannot consume this request until we return. */
+    while(!f->status) {
         if(GetTickCount64()-started>=timeout) {
-            InterlockedIncrement64((volatile LONG64*)&spline_timeouts);return 0;
+            InterlockedIncrement64(timeouts);return 0;
         }
         Sleep(1);
-        if(!spline_pending(s,model,0) || !s->pending_count[0] || s->pending_status[0]>1) return 0;
+        if(!spline_front(model,f) || !f->count || f->status>1) return 0;
     }
     return 1;
+}
+static int spline_join_pending(spline_sample *s,void *model,unsigned timeout) {
+    spline_front_t f;int waited=0;
+    int ok=spline_join_core(model,timeout,&f,&waited,(volatile LONG64*)&spline_joins,(volatile LONG64*)&spline_waits,(volatile LONG64*)&spline_timeouts);
+    s->waited=(uint64_t)waited;s->pending_count[0]=f.count;s->pending_status[0]=f.status;s->pending_flags[0]=f.flags;
+    return ok;
 }
 
 static int spline_state(void *model,void *agent,uint32_t values[4]) {
@@ -91,12 +134,29 @@ static void spline_observe(flight_fn original,spline_sample *s,void *self,void *
         InterlockedIncrement64((volatile LONG64*)&spline_failures);
     InterlockedIncrement64((volatile LONG64*)&spline_calls);
 }
+/* Every spline update that is not a fixture's: the join for all (gated frames only) and the watch's request rows. */
+static void spline_other(flight_fn original,void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player,int gated,unsigned timeout) {
+    spline_watch_t w;int watched=motion_spline_begin(self,cheap,&w);
+    if(gated && spline_join_all) {
+        spline_front_t f;int waited=0;
+        if(!spline_join_core(self,timeout,&f,&waited,(volatile LONG64*)&spline_all_joins,(volatile LONG64*)&spline_all_waits,
+                             (volatile LONG64*)&spline_all_timeouts)) {
+            InterlockedIncrement64((volatile LONG64*)&spline_all_failures);InterlockedIncrement64((volatile LONG64*)&spline_failures);
+        }
+        w.waited=(unsigned char)waited;
+    }
+    if(watched) motion_spline_seen(self,&w);
+    world_trace_event *event=world_trace_begin(WT_SPLINE,self,slot,dt,time,cheap,player);
+    original(self,slot,dt,time,cheap,player);world_trace_end(event);
+    if(watched) motion_spline_end(self,&w);
+}
 static void spline_update(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
     void *registry_agent;
     if(registry_is_observing() && read_local((unsigned char*)self+0x10,&registry_agent,8)) registry_observe_owner(registry_agent,0xef0,REGISTRY_SPLINE);
     flight_fn original=(flight_fn)(image+SPLINE_UPDATE);
     void *agent=NULL,*model=NULL;
-    if(stats.active && boot_phase==3 && read_local((unsigned char*)self+0x10,&agent,8)) {
+    int gated=stats.active && boot_phase==3;
+    if(gated && read_local((unsigned char*)self+0x10,&agent,8)) {
         for(unsigned i=0;i<ACTOR_CAPACITY;i++) if(agent_samples[i].agent==agent && agent_identity(i,agent)) {
             if(!read_local((unsigned char*)agent+0xf10,&model,8) || model!=self) {
                 InterlockedIncrement64((volatile LONG64*)&spline_failures);break;
@@ -104,8 +164,13 @@ static void spline_update(void *self,void *slot,float dt,double time,unsigned ch
             spline_observe(original,&spline_samples[i],self,agent,slot,dt,time,cheap,player);return;
         }
     }
-    world_trace_event *event=world_trace_begin(WT_SPLINE,self,slot,dt,time,cheap,player);
-    original(self,slot,dt,time,cheap,player);world_trace_end(event);
+    spline_other(original,self,slot,dt,time,cheap,player,gated,SPLINE_JOIN_ALL_TIMEOUT);
+}
+/* Before the first admitted frame, on the MoveWorker: needs the installed spline hook with the join's pins. */
+static int spline_join_all_arm(void) {
+    if(spline_join_all) return 1;
+    if(!spline_installed || !spline_join || !stats.active || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
+    spline_join_all=1;return 1;
 }
 static int spline_swap(void *expected,void *value) {
     DWORD old,ignored;if(!VirtualProtect(image+SPLINE_ENTRY,8,PAGE_READWRITE,&old)) return 0;

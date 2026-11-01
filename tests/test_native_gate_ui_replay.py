@@ -412,7 +412,32 @@ class SessionTests(unittest.TestCase):
                                 'UI_REPLAY_SCRIPT tick=42 op=target_none ok=true result=nil scope=1',
                                 'UI_REPLAY_SCRIPT tick=43 op=target_slot ok=true result=false scope=0',
                                 'UI_REPLAY_SCRIPT tick=50 op=target_slot ok=true result=false scope=0'])
-        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True})
+        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'guidance_slot': True, 'guidance_end': True})
+
+    def test_the_guidance_ops_set_and_end_it_where_the_maps_click_runs(self):
+        """play39p-long: client 2's map set guidance on slot 1's ship (SetGuidance) inside its presentation scope; the ops do
+        the same through the stock entries for runs without people (the guidance is the client's own: nothing is captured)."""
+        lua, g = client()
+        lua.execute('''
+          local ffi=require('ffi')
+          if not pcall(ffi.typeof,'UIPosRot') then ffi.cdef('typedef struct {float x,y,z,yaw,pitch,roll;} UIPosRot;') end
+          OPEN=false
+          present=function(on)
+            stock_calls[#stock_calls+1]=on and 'resume' or 'pause'
+            if on then OPEN=true;return true end
+            OPEN=false;return true end
+          C.SetGuidance=function(id,offset)
+            stock_calls[#stock_calls+1]='SetGuidance:'..tostring(id)..':'..offset.x..','..offset.y..','..offset.z..','..offset.yaw..':'..tostring(OPEN) end
+          C.EndGuidance=function() stock_calls[#stock_calls+1]='EndGuidance:'..tostring(OPEN) end
+          tools={gate=gate,C=C,env=env,own_slot=2,slot_id=function(s) return s+1000ULL end}
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script({{0,'guidance_slot',1},{2,'guidance_end'}},40,tools),present=present})
+          for t=40,43 do S.frame(t) end
+        ''')
+        self.assertEqual(values(g.stock_calls), ['resume', 'SetGuidance:1001ULL:0,0,0,0:true', 'pause', 'resume', 'EndGuidance:true', 'pause'])
+        rows = [line for line in values(g.logs) if 'UI_REPLAY_SCRIPT' in line]
+        self.assertEqual(rows, ['UI_REPLAY_SCRIPT tick=40 op=guidance_slot ok=true result=ffi scope=1',
+                                'UI_REPLAY_SCRIPT tick=42 op=guidance_end ok=true result=ffi scope=1'])
+        self.assertEqual(g.S.captured, 0)
 
     def test_a_failing_scoped_op_still_pauses_the_scope(self):
         lua, g = client()
@@ -573,6 +598,35 @@ class ProbeTests(unittest.TestCase):
         rows = [line for line in clients[1].values('logs') if 'UI_REPLAY_SCRIPT' in line]
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0].endswith(f'UI_REPLAY_SCRIPT tick={self.stock.WINDOW[0]+7} op=target_slot ok=true result=true scope=1'), rows)
+
+    def test_the_people_families_arm_and_client_2_sets_guidance_in_its_scope(self):
+        """overlay-Play40PS: every family but missiles (no pilot fire in the play bases); client 2 sets guidance on slot 1's ship
+        and ends it inside its presentation scope, as play39p-long's map did; client 1 sets it on slot 2's ship."""
+        prelude = PROBE_MOCK + '''
+          gate.pilot_ship=function(s) return 1000+s end
+          local ffi=require('ffi')
+          ffi.new=function(t,...) return {t=t,v=...} end
+          OPEN=true;PAUSED=false
+          gate.pilot_present_pause=function() if not OPEN then return 0 end;OPEN=false;PAUSED=true;return 1 end
+          gate.pilot_present_resume=function() if not PAUSED then return 0 end;PAUSED=false;OPEN=true;return 1 end
+          ffi.C.SetGuidance=function(id,offset) ui_calls[#ui_calls+1]='guidance:'..id.v..':'..offset.t..':'..tostring(OPEN) end
+          ffi.C.EndGuidance=function() ui_calls[#ui_calls+1]='end_guidance:'..tostring(OPEN) end
+        '''
+        cfg = dict(native_gate_pilot_present=True, native_gate_runtime_ids=True,
+                   native_gate_ui_replay=['travel', 'target', 'orders', 'autopilot', 'dock', 'weapons', 'queue'],
+                   native_gate_ui_replay_script=[[[7, 'guidance_slot', 2]], [[7, 'guidance_slot', 1], [8, 'guidance_end']]])
+        clients = [self.stock.StockClient(k, slots_all=True, prelude=prelude, **cfg) for k in (1, 2)]
+        self.stock.run(clients, 13)
+        for c in clients:
+            self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+            self.assertTrue(any('UI_REPLAY_ARMED' in line and 'families=191' in line for line in c.values('logs')))
+        self.assertIn('guidance:1001:UIPosRot:true', clients[1].values('ui_calls'))
+        self.assertIn('end_guidance:true', clients[1].values('ui_calls'))
+        rows = [line[line.index('UI_REPLAY_SCRIPT'):] for line in clients[1].values('logs') if 'UI_REPLAY_SCRIPT' in line]
+        start = self.stock.WINDOW[0]
+        self.assertEqual(rows, [f'UI_REPLAY_SCRIPT tick={start+7} op=guidance_slot ok=true result=ffi scope=1',
+                                f'UI_REPLAY_SCRIPT tick={start+8} op=guidance_end ok=true result=ffi scope=1'])
+        self.assertTrue(any(c.startswith('guidance:1002:UIPosRot:') for c in clients[0].values('ui_calls')))
 
     def test_the_minimum_hull_reaches_md_for_every_slot_ship(self):
         prelude = PROBE_MOCK + '''
@@ -889,6 +943,25 @@ X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@
             self.assertNotIn('ui_replay', (out/'ui/config.lua.append').read_text())
             self.assertNotIn('ui/native_gate_ui_replay_core.lua', (out/'ui.xml.files').read_text())
             self.assertFalse((out/'ui/native_gate_ui_replay_core.lua').exists())
+
+    def test_guidance_local(self):
+        self.assertFalse(any('guidance_local' in line for line in self.lines()))
+        self.assertIn('X4LAN_CONFIG.native_gate_guidance_local = true', self.lines('--ui-replay', '--guidance-local'))
+        with self.assertRaises(ValueError):
+            players.config_block(players.defaults(players.build_parser().parse_args(
+                ['config', '--players', '2', '--mode', 'coop', '--source', 'stock', '--guidance-local'])))
+        frames = ('X4LAN_CONFIG.native_gate_runtime_ids_local = true\nX4LAN_CONFIG.native_gate_script_rng = "key"\n'
+                  'X4LAN_CONFIG.native_gate_md_timed_rng = true\n')
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            out = self.overlay(root, 'g', frames, '--ui-replay', '--guidance-local')
+            self.assertIn('X4LAN_CONFIG.native_gate_guidance_local = true', (out/'ui/config.lua.append').read_text())
+            for base in ('', frames.replace('X4LAN_CONFIG.native_gate_md_timed_rng = true\n', ''),
+                         frames.replace('"key"', 'false')):
+                error = io.StringIO()
+                with self.assertRaises(SystemExit), contextlib.redirect_stderr(error):
+                    self.overlay(root, 'h%d' % len(base), base, '--ui-replay', '--guidance-local')
+                self.assertIn('--guidance-local needs a base overlay with', error.getvalue())
 
     def test_the_block_passes_the_checker(self):
         text = '\n'.join(self.lines('--ui-replay')) + '\nX4LAN_CONFIG.native_gate_runtime_ids = true\nX4LAN_CONFIG.native_gate_world_identities = true\n'
