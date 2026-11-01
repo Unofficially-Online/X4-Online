@@ -200,9 +200,20 @@
 #define LX_SC_PT_CONVERT_B_SITE_VA 0x14326ebu /* rdx r14, then the |pos| check to 0x1431b47 */
 #define LX_SC_PT_MATH_VA 0x141f7e0u          /* rdi out, rsi velocity, rdx &ref, rcx &frame, r8d flag (Windows 0xe8a4a0) */
 #define LX_SC_PT_MATH_SITE_VA 0x141fab0u     /* in 0x141fa50 (Windows 0xe8bdeb) */
+/* FR20: the two other conversions in front of SetTarget 0x1431b5f (via 0x1431b47), rbx the agent at both. */
+#define LX_SC_PT_CONVERT_C_SITE_VA 0x143235bu /* 0x141fa50(rdi rbp, rsi [rbx+0x6d0], rdx r14) (Windows 0xe8d502/0xe8d60f/0xe8d6bc) */
+#define LX_SC_HIER_VA 0x18a2900u             /* rdi from, rsi inout mat4, rdx to, ecx 0 (Windows 0x3dde10) */
+#define LX_SC_PT_OBJECT_SITE_VA 0x1432611u   /* 0x18a2900(rdi r15 the object, rsi &mat, rdx r14, ecx 0) (Windows 0xe8d5ea) */
 /* FR19: the Linear model's SetTarget slot (vtable entry +0x20, Windows 0x2c4f628 -> 0xeaf620; no direct calls). */
 #define LX_SG_SLOT_VA 0x3b62500u
 #define LX_SG_FN_VA 0x141d140u               /* rdi model, rsi mat4 -> model+0x10, rdx -> +0x50, rcx != 0 -> +0x5c */
+/* FR21: the Highway's point map (U::Highway vtable 0x3cd7150 +0x1568, Windows 0x2b091e0 +0x1520 -> 0x5f6480; the only
+ * slot holding it), its spline at +0x5e8, its banking 0x15cf540(rdi the highway, xmm0 t; xmm0 out) at two sites. */
+#define LX_HW_SLOT_VA 0x3cd86b8u
+#define LX_HW_FN_VA 0x15cf8d0u
+#define LX_SC_HW_BANK_VA 0x15cf540u
+#define LX_SC_HW_BANK_SITE_VA 0x15cfa48u     /* the point map's (Windows 0x5f6643) */
+#define LX_SC_HW_BANK2_SITE_VA 0x15d000au    /* the same function's other path */
 /* The flight parameter refresh (gate_fp_redirect.h, lockstep_fp_redirect.h; Option B slice 1). */
 #define LX_FR_REFRESH_VA 0x14378c0u          /* the refresh (Windows 0xea1e80) */
 #define LX_FR_ENTRY_ORIGINAL 0x5441554156415741ull /* push r15; push r14; push r13; push r12 */

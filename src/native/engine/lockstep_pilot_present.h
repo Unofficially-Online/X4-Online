@@ -323,13 +323,15 @@ static void pres_pick_call(void *player) {
     __try {pres_fn.pick(player);pres_leave();}
     __except(pres_fault_filter(GetExceptionInformation(),"pick")) {pres_fault_stop();}
 }
-/* gate.pilot_present_pause / resume: the probe's own frame runs canonical inside slot 6. */
+/* gate.pilot_present_pause / resume: the probe's own frame runs canonical inside slot 6. The resume answers 1 when
+ * it opened the scope again: the UI replay's scripted clicks run in it as a person's would, then pause once more. */
 static int pres_pause(void) {
     if(!pres_open || GetCurrentThreadId()!=ui_thread) return 0;
     pres_leave();pres_paused=1;return 1;
 }
-static void pres_resume(void) {
-    if(pres_paused && !pres_open) {pres_paused=0;pres_enter();}
+static int pres_resume(void) {
+    if(pres_paused && !pres_open) {pres_paused=0;return pres_enter();}
+    return 0;
 }
 /* ---- the HUD's place ---- */
 /* Under the player (camera_anchor_scene in a save, or the player itself when the ship has no room) or in

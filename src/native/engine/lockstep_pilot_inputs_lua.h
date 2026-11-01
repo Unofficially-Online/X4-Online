@@ -198,9 +198,10 @@ static int lua_pilot_present_diff(lua_State *L) {
     const char *text=accept_ui()?pres_diff_take():NULL;
     if(text) p_lua_pushlstring(L,text,strlen(text));else p_lua_pushnil(L);return 1;
 }
-/* gate.pilot_present_pause() / resume(): the probe's own frame runs as the canonical player. */
+/* gate.pilot_present_pause() / resume(): the probe's own frame runs as the canonical player; resume answers 1 when
+ * the scope is open again (a scripted click inside the probe's frame pauses after it). */
 static int lua_pilot_present_pause(lua_State *L) {p_lua_pushnumber(L,accept_ui() && pres_pause());return 1;}
-static int lua_pilot_present_resume(lua_State *L) {(void)L;if(accept_ui()) pres_resume();return 0;}
+static int lua_pilot_present_resume(lua_State *L) {p_lua_pushnumber(L,accept_ui() && pres_resume());return 1;}
 /* gate.pilot_stock_callers(): slot:caller rva:count of a slot controller's stock entries called
  * outside its scope while simulating (nil without slots 2..N). */
 static int lua_pilot_stock_callers(lua_State *L) {

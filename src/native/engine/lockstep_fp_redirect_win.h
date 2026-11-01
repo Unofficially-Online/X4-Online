@@ -46,7 +46,10 @@
 #define FR_H_DONE 0x800u        /* fr_done bits 11..14 */
 #define FR_PG_STUB (FR_H_STUB+FR_H_SITES*FR_LEN_STUB_SIZE) /* FR16: the PointGuard angle stub (0x7e0) */
 #define FR_PG_DONE 0x8000u      /* fr_done bit 15 */
-#define FR_CODE (FR_PG_STUB+FR_LEN_STUB_SIZE) /* bytes of stub code on the page (0x8f0) */
+#define FR_AFF_STUB (FR_PG_STUB+FR_LEN_STUB_SIZE) /* FR22: the affine weight stub (0x8f0) */
+#define FR_AFF_DONE 0x10000u    /* fr_done bit 16 */
+#define FR_BL_DONE 0x20000u     /* fr_done bit 17: the BezierSpline vtable slot */
+#define FR_CODE (FR_AFF_STUB+FR_LEN_STUB_SIZE) /* bytes of stub code on the page (0xa00) */
 #define FR_P_BLOCK 0x6dcbb0u /* the first call 0x6dc610 from its table load to the +0x0..+0x1c block's end */
 #define FR_P_BLOCK_SIZE 0x1eeu
 #define FR_P_BLOCK_SHA "120b298b57b3001f3ae6971073a4d86d63fb4822e1be030e0631c42d50c4f9b7"
@@ -115,6 +118,40 @@ static const unsigned char fr_h_original[5]={0xf3,0x41,0x0f,0x59,0xd0}; /* mulss
 #define FR_PG_PI 0x2cbeab4u
 #define FR_PG_PI_BITS 0x40490fdbu
 static const unsigned char fr_pg_original[5]={0xf3,0x0f,0x10,0x05,0xf0}; /* movss xmm0,[rip+0x1e225f0], first 5 bytes */
+/* FR22 (lockstep_fp_redirect.h fr_bl_seen, fr_aff_seen): the highways' spline data, built in the load by
+ * Highway::SetSpline 0x5f8e80 (after this module is armed): its spline property's init 0x972400 calls the copied
+ * composite's ComputeLength(100) (0x97267a; CompositeSpline 0x30f0d0: each segment's ComputeLength through its vtable,
+ * the sum, the knots 0x31c430), then the AffineSpline over it (0x5f2e10 -> constructor 0x65a580) and the speeds
+ * (+0x5f4/+0x5f8 = affine total / (affine[+0x18] * a global factor), 0x5f53b5).
+ * (1) BezierSpline::ComputeLength 0x14e4f20 (rcx the segment, edx n; len at +8; u = i*(1/n), 1.0 at 0x2cbe5d4) is
+ * reached only through the BezierSpline vtable 0x2a84ef8's +0x28 (0x2a84f20; also the abstract base's 0x2a84fc8, never
+ * an object's): the composites' 0x30f0d0 and the path builder's ComputeLength(10) at 0x896642. That slot is swapped
+ * (like FR19/FR21's): fr_bl_hook runs native, then fr_bl_seen on a BezierSpline (vptr 0x2a84ef8, whose +0x10 0x14e4a20
+ * is the chord D(a,b) the strict code repeats). Pins: 0x14e4f20 and 0x14e4a20 to their rets, the +0x10 slot, 1.0.
+ * (2) The AffineSpline constructor 0x65a580's knot weight: 0x65a66e divss xmm2,xmm1 (xmm2 = 2.0 from xmm6, 0x2cbe918;
+ * xmm1 = sqrt(s_i-1)+sqrt(s_i)); 0x65a672 mulss xmm2,xmm0 (xmm0 = p_i-p_i-1). A jmp on the divss leads to a stub (the
+ * length stub's frame, V = xmm2): fr_aff_seen(0, xmm1[0], xmm0[0]); xmm2[0] = its result, lanes 1-3 as they were (zero,
+ * from the movss load); back to 0x65a676 (movaps xmm0,xmm2; addss ...), xmm0/xmm1 as native left them. Flags are dead
+ * (the cmp at 0x65a697 comes first); no branch of the function and no .text rel32 lands in 0x65a66f..0x65a675; no
+ * exact-reciprocal window, no other module's patch or pin there. Pins: the constructor 0x65a580..0x65a740 through the
+ * view, and 2.0 at 0x2cbe918. */
+#define FR_BL_SLOT 0x2a84f20u
+#define FR_BL_VTABLE 0x2a84ef8u
+#define FR_BL_FN 0x14e4f20u
+#define FR_BL_FN_SIZE 0xb6u
+#define FR_BL_FN_SHA "8eb4375492e3517fce22cacdaa6930abbf28386484209a0abe81ed56da4285c6"
+#define FR_BL_CHORD 0x14e4a20u
+#define FR_BL_CHORD_SIZE 0x60u
+#define FR_BL_CHORD_SHA "f9e05c4148fd736cd2ca9bb900444e7ce6cf24e80ec681977bd2c9bbd545d143"
+#define FR_BL_CHORD_SLOT 0x2a84f08u
+#define FR_BL_ONE 0x2cbe5d4u
+#define FR_AFF_SITE 0x65a66eu
+#define FR_AFF_BACK 0x65a676u
+#define FR_AFF_PIN 0x65a580u
+#define FR_AFF_PIN_SIZE 0x1c0u
+#define FR_AFF_PIN_SHA "31a326aaa1f30ba766f7541aa404efc8ff455dfe92422dc45e3cc0fad5b70a32"
+#define FR_AFF_TWO 0x2cbe918u
+static const unsigned char fr_aff_original[5]={0xf3,0x0f,0x5e,0xd1,0xf3}; /* divss xmm2,xmm1; the mulss's first byte */
 static unsigned char *fr_page;
 static uint32_t fr_done;
 /* G4 with the slot: the refresh's path with the getters begins here. */
@@ -204,6 +241,12 @@ static void fr_pg_write_stub(unsigned char *p) {
     static const unsigned char args[]={0x66,0x0f,0x7e,0xca,0x66,0x41,0x0f,0x7e,0xd0,0xff,0x15};
     fr_stub_write(p,NULL,0,1,0,args,sizeof(args),(void*)fr_pg_seen,(void*)(image+FR_PG_BACK));
 }
+/* FR22: the affine weight stub: the same frame, V = xmm2;
+ *   mov ecx,0; movd edx,xmm1 (sum); movd r8d,xmm0 (dp); call [rip] -> fr_aff_seen; xmm2[0] = its result; back to 0x65a676. */
+static void fr_aff_write_stub(unsigned char *p) {
+    static const unsigned char args[]={0x66,0x0f,0x7e,0xca,0x66,0x41,0x0f,0x7e,0xc0,0xff,0x15};
+    fr_stub_write(p,NULL,0,2,0,args,sizeof(args),(void*)fr_aff_seen,(void*)(image+FR_AFF_BACK));
+}
 /* 0x00 mov r9,r15; jmp [rip] -> fr_g4_slot_hook | 0x20/0x40/0x60 jmp [rip] -> G0, M4, M0 hooks | 0x80 the tail:
  * mov rcx,r15; sub rsp,0x20; call [rip] -> fr_tail_hook; add rsp,0x20; mov r13d,0x300; jmp [rip] -> 0xea29c2 |
  * 0xc0 jmp [rip] -> fr_params_hook | 0xe0 -> fr_mulps_hook | 0x100 the v stub | 0x160 jmp [rip] -> fr_writer_run. */
@@ -227,6 +270,7 @@ static void fr_write_code(unsigned char *p) {
     for(unsigned i=0;i<FR_LEN_SITES;i++) fr_len_write_stub(p+FR_LEN_STUB+FR_LEN_STUB_SIZE*i,i);
     for(unsigned i=0;i<FR_H_SITES;i++) fr_h_write_stub(p+FR_H_STUB+FR_LEN_STUB_SIZE*i,i);
     fr_pg_write_stub(p+FR_PG_STUB);
+    fr_aff_write_stub(p+FR_AFF_STUB);
 }
 static int32_t fr_rel(uint32_t from,const void *target) {return (int32_t)((intptr_t)target-(intptr_t)(image+from+5));}
 static int32_t fr_rel_ours(unsigned i) {return fr_rel(fr_sites[i].site,fr_page+fr_sites[i].stub);}
@@ -272,6 +316,8 @@ static int fr_len_overlaps(const void *source,size_t bytes) {
     }
     const uintptr_t s=(uintptr_t)(image+FR_PG_SITE);
     if(fr_done&FR_PG_DONE && s<b && s+5>a) return 1;
+    const uintptr_t f=(uintptr_t)(image+FR_AFF_SITE);
+    if(fr_done&FR_AFF_DONE && f<b && f+5>a) return 1;
     return 0;
 }
 static void fr_len_unpatch_copy(const void *source,void *copy,size_t bytes) {
@@ -289,6 +335,10 @@ static void fr_len_unpatch_copy(const void *source,void *copy,size_t bytes) {
     if(fr_done&FR_PG_DONE) {
         const uintptr_t s=(uintptr_t)(image+FR_PG_SITE);
         for(unsigned k=0;k<5;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=fr_pg_original[k];
+    }
+    if(fr_done&FR_AFF_DONE) {
+        const uintptr_t s=(uintptr_t)(image+FR_AFF_SITE);
+        for(unsigned k=0;k<5;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=fr_aff_original[k];
     }
 }
 /* No other module has patched site i's tail (site..back): its raw bytes are what the original-byte view shows. (Not
@@ -347,6 +397,55 @@ static int fr_pg_pins_ok(void) {
     return read_local(image+FR_PG_PIN,block,FR_PG_PIN_SIZE) && hash_ok(block,FR_PG_PIN_SIZE,FR_PG_PIN_SHA) &&
            read_local(image+FR_PG_PI,&pi,4) && pi==FR_PG_PI_BITS;
 }
+/* FR22: the affine weight site, as the PointGuard one. */
+static unsigned char *fr_aff_stub(void) {return fr_page+FR_AFF_STUB;}
+static int fr_aff_reach(void) {
+    const intptr_t d=(intptr_t)fr_aff_stub()-(intptr_t)(image+FR_AFF_SITE+5);
+    return d>INT32_MIN && d<INT32_MAX;
+}
+static void fr_aff_jump(unsigned char out[5]) {out[0]=0xe9;const int32_t d=fr_rel(FR_AFF_SITE,fr_aff_stub());memcpy(out+1,&d,4);}
+static int fr_aff_state(void) {
+    unsigned char now[5],ours[5];memcpy(now,(const void*)(image+FR_AFF_SITE),5);
+    if(!memcmp(now,fr_aff_original,5)) return 0;
+    if(fr_page && fr_aff_reach()) {fr_aff_jump(ours);if(!memcmp(now,ours,5)) return 1;}
+    return -1;
+}
+static int fr_aff_clear(void) {
+    unsigned char viewed[FR_AFF_BACK-FR_AFF_SITE];
+    return read_local(image+FR_AFF_SITE,viewed,sizeof(viewed)) && !memcmp((const void*)(image+FR_AFF_SITE),viewed,sizeof(viewed));
+}
+static int fr_aff_pins_ok(void) {
+    static unsigned char block[FR_AFF_PIN_SIZE];uint32_t two=0;
+    return read_local(image+FR_AFF_PIN,block,FR_AFF_PIN_SIZE) && hash_ok(block,FR_AFF_PIN_SIZE,FR_AFF_PIN_SHA) &&
+           read_local(image+FR_AFF_TWO,&two,4) && two==0x40000000u;
+}
+/* FR22: the BezierSpline vtable's ComputeLength slot: native first, then ours on a BezierSpline's segment. */
+typedef void (*fr_bl_fn)(void *,uint32_t);
+static void fr_bl_hook(unsigned char *segment,uint32_t n) {
+    ((fr_bl_fn)(void*)(image+FR_BL_FN))(segment,n);
+    const void *vt=NULL;
+    if(!segment || !read_local(segment,&vt,8) || vt!=(const void*)(image+FR_BL_VTABLE)) {InterlockedIncrement64(&fr_hits[FR_HIT_BL_FOREIGN]);return;}
+    fr_bl_seen(segment,n);
+}
+/* 0 native, 1 ours, -1 anything else. */
+static int fr_bl_state(void) {
+    void *now=NULL;if(!read_local(image+FR_BL_SLOT,&now,8)) return -1;
+    if(now==(void*)(image+FR_BL_FN)) return 0;
+    if(now==(void*)fr_bl_hook) return 1;
+    return -1;
+}
+static int fr_bl_swap(void *expected,void *value) {
+    unsigned char *p=image+FR_BL_SLOT;DWORD old,ignored;
+    if(!VirtualProtect(p,8,PAGE_READWRITE,&old)) return 0;
+    void *actual=InterlockedCompareExchangePointer((void*volatile*)p,value,expected);
+    VirtualProtect(p,8,old,&ignored);return actual==expected;
+}
+static int fr_bl_pins_ok(void) {
+    static unsigned char fn[FR_BL_FN_SIZE],chord[FR_BL_CHORD_SIZE];void *slot=NULL;uint32_t one=0;
+    return read_local(image+FR_BL_FN,fn,FR_BL_FN_SIZE) && hash_ok(fn,FR_BL_FN_SIZE,FR_BL_FN_SHA) &&
+           read_local(image+FR_BL_CHORD,chord,FR_BL_CHORD_SIZE) && hash_ok(chord,FR_BL_CHORD_SIZE,FR_BL_CHORD_SHA) &&
+           read_local(image+FR_BL_CHORD_SLOT,&slot,8) && slot==(void*)(image+FR_BL_CHORD) && read_local(image+FR_BL_ONE,&one,4) && one==0x3f800000u;
+}
 static int fr_len_pins(void) {
     static unsigned char block[0x200];
     for(unsigned i=0;i<FR_LEN_SITES;i++)
@@ -371,7 +470,8 @@ static int fr_pins(void) {
     unsigned char m[FR_M_SIZE];
     return hash_ok(copy,FR_REFRESH_SIZE,FR_REFRESH_SHA) && hash_ok(block,FR_P_BLOCK_SIZE,FR_P_BLOCK_SHA) &&
         hash_ok(wsite,FR_W_SITE_BLOCK_SIZE,FR_W_SITE_BLOCK_SHA) && hash_ok(wbody,FR_W_BODY_SIZE,FR_W_BODY_SHA) &&
-        read_local(image+FR_M_RVA,m,FR_M_SIZE) && hash_ok(m,FR_M_SIZE,FR_M_SHA) && fr_len_pins() && fr_h_pins_ok() && fr_pg_pins_ok();
+        read_local(image+FR_M_RVA,m,FR_M_SIZE) && hash_ok(m,FR_M_SIZE,FR_M_SHA) && fr_len_pins() && fr_h_pins_ok() && fr_pg_pins_ok() &&
+        fr_aff_pins_ok() && fr_bl_pins_ok();
 }
 static unsigned char *fr_alloc_page(void) {
     uintptr_t at=(uintptr_t)(image+FR_REFRESH)&~(uintptr_t)65535;
@@ -412,6 +512,11 @@ static void fr_restore(void) {
         unsigned char jump[5];fr_pg_jump(jump);
         if(view_cas_bytes(FR_PG_SITE,jump,fr_pg_original,5)) fr_done&=~FR_PG_DONE;
     }
+    if(fr_done&FR_AFF_DONE && fr_aff_state()==1) {
+        unsigned char jump[5];fr_aff_jump(jump);
+        if(view_cas_bytes(FR_AFF_SITE,jump,fr_aff_original,5)) fr_done&=~FR_AFF_DONE;
+    }
+    if(fr_done&FR_BL_DONE && fr_bl_state()==1 && fr_bl_swap((void*)fr_bl_hook,(void*)(image+FR_BL_FN))) fr_done&=~FR_BL_DONE;
     if(!fr_done) {fr_installed=0;fr_restored=1;fr_mode=FR_OFF;}
 }
 /* Before the snapshot load and the first admitted frame, on the MoveWorker; a rerun with the same mode is accepted. */
@@ -425,12 +530,13 @@ static int fr_arm(int mode,uint64_t ticks) {
     for(unsigned i=0;i<FR_H_SITES;i++)
         if(fr_h_state(i)!=0 || !fr_h_clear(i)) {fr_stage="pins";return 0;}
     if(fr_pg_state()!=0 || !fr_pg_clear()) {fr_stage="pins";return 0;}
+    if(fr_aff_state()!=0 || !fr_aff_clear() || fr_bl_state()!=0) {fr_stage="pins";return 0;}
     if(!fr_pins()) {fr_stage="pins";return 0;}
     if(!fr_page) fr_page=fr_alloc_page();
     if(!fr_page) {fr_stage="page";return 0;}
     for(unsigned i=0;i<FR_LEN_SITES;i++) if(!fr_len_reach(i)) {fr_stage="page";return 0;}
     for(unsigned i=0;i<FR_H_SITES;i++) if(!fr_h_reach(i)) {fr_stage="page";return 0;}
-    if(!fr_pg_reach()) {fr_stage="page";return 0;}
+    if(!fr_pg_reach() || !fr_aff_reach()) {fr_stage="page";return 0;}
     DWORD old,ignored;if(!VirtualProtect(fr_page,0x1000,PAGE_READWRITE,&old)) {fr_stage="page";return 0;}
     fr_write_code(fr_page);
     if(!VirtualProtect(fr_page,0x1000,PAGE_EXECUTE_READ,&ignored)) {fr_stage="page";return 0;}
@@ -457,6 +563,13 @@ static int fr_arm(int mode,uint64_t ticks) {
         if(!view_cas_bytes(FR_PG_SITE,fr_pg_original,jump,5)) {fr_stage="cas";fr_restore();fr_installed=0;fr_mode=FR_OFF;return 0;}
         fr_done|=FR_PG_DONE;
     }
+    { /* FR22: the affine weight, likewise; then the BezierSpline vtable's ComputeLength slot */
+        unsigned char jump[5];fr_aff_jump(jump);
+        if(!view_cas_bytes(FR_AFF_SITE,fr_aff_original,jump,5)) {fr_stage="cas";fr_restore();fr_installed=0;fr_mode=FR_OFF;return 0;}
+        fr_done|=FR_AFF_DONE;
+        if(!fr_bl_swap((void*)(image+FR_BL_FN),(void*)fr_bl_hook)) {fr_stage="cas";fr_restore();fr_installed=0;fr_mode=FR_OFF;return 0;}
+        fr_done|=FR_BL_DONE;
+    }
     for(unsigned k=1;k<=FR_SITES;k++) {
         const unsigned i=k%FR_SITES;
         if(i==0) {
@@ -475,6 +588,8 @@ static int fr_owned(void) {
     for(unsigned i=0;i<FR_LEN_SITES;i++) if(fr_done&(FR_LEN_DONE<<i) && fr_len_state(i)!=1) return 0;
     for(unsigned i=0;i<FR_H_SITES;i++) if(fr_done&(FR_H_DONE<<i) && fr_h_state(i)!=1) return 0;
     if(fr_done&FR_PG_DONE && fr_pg_state()!=1) return 0;
+    if(fr_done&FR_AFF_DONE && fr_aff_state()!=1) return 0;
+    if(fr_done&FR_BL_DONE && fr_bl_state()!=1) return 0;
     unsigned char want[FR_CODE];fr_write_code(want);
     return !memcmp(fr_page,want,FR_CODE);
 }

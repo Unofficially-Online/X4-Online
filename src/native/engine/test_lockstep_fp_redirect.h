@@ -244,6 +244,94 @@ static void test_fr_pg_stubs(void) {
     VirtualFree(page,0,MEM_RELEASE);
     printf("fp redirect pointguard angle: strict vectors, stub off/shadow/writer/redirect, registers kept PASS\n");
 }
+/* FR22: the affine weight stub runs for real in test_fr_h_run's frame: xmm0 lane 0 = dp (+0x00), xmm1 lane 0 = sum
+ * (+0x10), xmm2 = 2.0 (+0x20); checks xmm2 = want (lanes 1-3 kept) and that nothing else changed. */
+static void tfa_run(const unsigned char *page,uint32_t sum,uint32_t dp,uint32_t want) {
+    unsigned char block[0xc0],in[0xc0];
+    for(unsigned k=0;k<0x60;k++) block[k]=(unsigned char)(0x40+k);
+    const uint32_t two=0x40000000u;memcpy(block,&dp,4);memcpy(block+0x10,&sum,4);memcpy(block+0x20,&two,4);
+    const uint32_t k8[4]={0x3eaaaaabu,0x11223344u,0x55667788u,0x99aabbccu};memcpy(block+0x60,k8,16);
+    memcpy(in,block,sizeof(in));
+    test_fr_h_run(page+FR_AFF_STUB,block);
+    uint32_t got;memcpy(&got,block+0x20,4);
+    if(got!=want) {printf("fp redirect affine stub: sum %08x dp %08x got %08x want %08x\n",sum,dp,got,want);assert(0);}
+    assert(!memcmp(block+0x24,in+0x24,12) && !memcmp(block+0x60,in+0x60,16));
+    for(unsigned k=0;k<0x60;k+=16) if(k!=0x20) assert(!memcmp(block+k,in+k,16));
+    uint64_t r[8];memcpy(r,block+0x80,64);
+    assert(r[0]==0x0123456789abcdefull && r[1]==0x1111111111111111ull && r[2]==0x2222222222222222ull && r[3]==0x8888888888888888ull);
+    assert(r[4]==0x9999999999999999ull && r[5]==0xaaaaaaaaaaaaaaaaull && r[6]==0xbbbbbbbbbbbbbbbbull && r[7]==(uint64_t)(uintptr_t)(page+FR_AFF_STUB));
+}
+static void test_fr_aff_stubs(void) {
+    /* Strict vectors (numpy float32): a ramp pair (speeds 0.2 and 1: sum 3fb93e4c), dp 3ea7a0f9: Windows (2/sum)*dp =
+     * 3ee7a845, Linux dp/(sum*0.5) = 3ee7a844; dp 3e9d82fd: 3ed9ad00 / 3ed9acff; sum 2.0 (speeds 1, 1): equal. */
+    assert(sl_affine_weight_windows(0x3fb93e4cu,0x3ea7a0f9u)==0x3ee7a845u && sl_affine_weight(0x3fb93e4cu,0x3ea7a0f9u)==0x3ee7a844u);
+    assert(sl_affine_weight_windows(0x3fb93e4cu,0x3e9d82fdu)==0x3ed9ad00u && sl_affine_weight(0x3fb93e4cu,0x3e9d82fdu)==0x3ed9acffu);
+    assert(sl_affine_weight_windows(0x40000000u,0x3ea7a0f9u)==0x3ea7a0f9u && sl_affine_weight(0x40000000u,0x3ea7a0f9u)==0x3ea7a0f9u);
+    unsigned char *page=fr_alloc_page(),*saved=fr_page;DWORD o2,i2;assert(page);
+    assert(VirtualProtect(page,0x1000,PAGE_READWRITE,&o2));fr_page=page;fr_write_code(page);fr_page=saved;
+    assert(VirtualProtect(page,0x1000,PAGE_EXECUTE_READ,&i2));FlushInstructionCache(GetCurrentProcess(),page,0x1000);
+    {   unsigned char back[14]={0xff,0x25,0,0,0,0};void *to=(void*)test_fr_h_back;memcpy(back+6,&to,8);
+        unsigned char *at=image+FR_AFF_BACK;DWORD old;assert(VirtualProtect(at,14,PAGE_EXECUTE_READWRITE,&old));
+        memcpy(at,back,14);FlushInstructionCache(GetCurrentProcess(),at,14);
+    }
+    const int saved_mode=fr_mode;const uint32_t saved_active=stats.active;stats.active=1;
+    const LONG64 n0=fr_n[FR_AFF],d0=fr_diff[FR_AFF],w0=fr_aff_written,h0=fr_hits[FR_HIT_AFF];
+    fr_mode=FR_OFF;tfa_run(page,0x3fb93e4cu,0x3ea7a0f9u,0x3ee7a845u);      /* off: native (2/sum)*dp */
+    fr_mode=FR_SHADOW;tfa_run(page,0x3fb93e4cu,0x3ea7a0f9u,0x3ee7a845u);   /* shadow: compared, native kept */
+    fr_mode=FR_WRITER;tfa_run(page,0x3fb93e4cu,0x3e9d82fdu,0x3ed9ad00u);   /* writer only: the weight shadowed */
+    fr_mode=FR_REDIRECT;tfa_run(page,0x3fb93e4cu,0x3ea7a0f9u,0x3ee7a844u); /* redirect: ours, Linux's division */
+    tfa_run(page,0x40000000u,0x3ea7a0f9u,0x3ea7a0f9u);                      /* equal both ways: nothing written */
+    /* 5 runs, compared 4, differing 3, written 1 */
+    assert(fr_n[FR_AFF]==n0+4 && fr_diff[FR_AFF]==d0+3 && fr_aff_written==w0+1 && fr_hits[FR_HIT_AFF]==h0+5);
+    char out[2048];assert(fr_status(out,sizeof(out))>0 && strstr(out," aff=1:") && strstr(out," aff_hits=") && strstr(out," aff_written="));
+    fr_mode=saved_mode;stats.active=saved_active;
+    memset(image+FR_AFF_BACK,0,14);
+    VirtualFree(page,0,MEM_RELEASE);
+    printf("fp redirect affine weight: strict vectors, stub off/shadow/writer/redirect, registers kept PASS\n");
+}
+/* FR22: 8bd90's highway segments 2 and 3 (A, B, C at the segment's +0x10; the FR21 Windows capture at tick 2), whose
+ * stored lengths split: n = 100 Linux 478e6bb1 / Windows 478e6bb2 (2), 470fcea2 / 470fcea0 (3); n = 64 equal. */
+static const uint32_t tbl_coef[2][12]={
+    {0x469a350cu,0,0x463e9a96u,0,0xc69ad8f8u,0,0xc690eab4u,0,0xc7828a7cu,0,0xc6afd36au,0},
+    {0x45f5ac58u,0,0x45c6e2e2u,0,0x45dc2a98u,0,0xc4604600u,0,0xc7389e1bu,0,0xc6b3c0acu,0}};
+/* The hook's native: a stand-in at image+FR_BL_FN storing Windows' length. */
+static void tbl_native(unsigned char *segment,uint32_t n) {const uint32_t v=sl_arc_length_windows(segment+0x10,n);memcpy(segment+8,&v,4);}
+static uint32_t tbl_run(uint32_t which,uint32_t n,int foreign) {
+    static __declspec(align(16)) unsigned char seg[0x40];memset(seg,0x5a,sizeof(seg));
+    const void *vt=foreign?(const void*)(image+0x2a84fa0u):(const void*)(image+FR_BL_VTABLE);memcpy(seg,&vt,8);memcpy(seg+0x10,tbl_coef[which],48);
+    fr_bl_hook(seg,n);
+    uint32_t v;memcpy(&v,seg+8,4);
+    for(unsigned k=0x0c;k<0x10;k++) assert(seg[k]==0x5a);
+    assert(!memcmp(seg+0x10,tbl_coef[which],48));
+    return v;
+}
+static void test_fr_bl_hook(void) {
+    assert(sl_arc_length((const unsigned char*)tbl_coef[0],100)==0x478e6bb1u && sl_arc_length_windows((const unsigned char*)tbl_coef[0],100)==0x478e6bb2u);
+    assert(sl_arc_length((const unsigned char*)tbl_coef[1],100)==0x470fcea2u && sl_arc_length_windows((const unsigned char*)tbl_coef[1],100)==0x470fcea0u);
+    assert(sl_arc_length((const unsigned char*)tbl_coef[1],64)==0x470fce9eu && sl_arc_length_windows((const unsigned char*)tbl_coef[1],64)==0x470fce9eu);
+    assert(sl_arc_length((const unsigned char*)tbl_coef[1],7)==0x470fce51u && sl_arc_length_windows((const unsigned char*)tbl_coef[1],7)==0x470fce52u);
+    assert(sl_arc_length((const unsigned char*)tbl_coef[1],0)==0 && sl_arc_length_windows((const unsigned char*)tbl_coef[1],0)==0);
+    unsigned char code[14]={0xff,0x25,0,0,0,0};void *to=(void*)tbl_native;memcpy(code+6,&to,8);
+    unsigned char *at=image+FR_BL_FN;DWORD old;assert(VirtualProtect(at,14,PAGE_EXECUTE_READWRITE,&old));
+    memcpy(at,code,14);FlushInstructionCache(GetCurrentProcess(),at,14);
+    const int saved_mode=fr_mode;const uint32_t saved_active=stats.active;stats.active=1;
+    const LONG64 n0=fr_n[FR_BL],d0=fr_diff[FR_BL],w0=fr_bl_written,h100=fr_hits[FR_HIT_BL100],h10=fr_hits[FR_HIT_BL10],hn=fr_hits[FR_HIT_BLN],hf=fr_hits[FR_HIT_BL_FOREIGN];
+    fr_mode=FR_OFF;assert(tbl_run(1,100,0)==0x470fcea0u);           /* off: native, not compared */
+    fr_mode=FR_SHADOW;assert(tbl_run(1,100,0)==0x470fcea0u);        /* shadow: compared, native kept */
+    fr_mode=FR_WRITER;assert(tbl_run(0,100,0)==0x478e6bb2u);        /* writer only: the length shadowed */
+    fr_mode=FR_REDIRECT;assert(tbl_run(1,100,0)==0x470fcea2u);      /* redirect: Linux's i/n stored */
+    assert(tbl_run(0,100,0)==0x478e6bb1u);
+    assert(tbl_run(1,64,0)==0x470fce9eu);                           /* equal both ways: nothing written */
+    assert(tbl_run(1,7,0)==0x470fce51u && tbl_run(1,10,0)==0x470fce7au);
+    assert(tbl_run(1,100,1)==0x470fcea0u);                          /* another vtable: native left, counted */
+    /* 9 calls: 8 seen (100 x5, 64 and 7 in other, 10), compared 7, differing 5 (the n = 100 ones and 7), written 3 */
+    assert(fr_hits[FR_HIT_BL100]==h100+5 && fr_hits[FR_HIT_BL10]==h10+1 && fr_hits[FR_HIT_BLN]==hn+2 && fr_hits[FR_HIT_BL_FOREIGN]==hf+1);
+    assert(fr_n[FR_BL]==n0+7 && fr_diff[FR_BL]==d0+5 && fr_bl_written==w0+3 && fr_max_ulp[FR_BL]>=2);
+    char out[2048];assert(fr_status(out,sizeof(out))>0 && strstr(out," bl=2:") && strstr(out," bl_hits=") && strstr(out," bl_written="));
+    fr_mode=saved_mode;stats.active=saved_active;
+    memset(at,0,14);
+    printf("fp redirect arc length: strict vectors (8bd90's highway), hook off/shadow/writer/redirect, foreign vtable PASS\n");
+}
 /* The v stub as 0x6dcce6 calls it: rcx, rdx, xmm2, r9, three on the stack, and d in xmm7 (callee-saved). */
 __asm__(
 ".text\n"
@@ -398,6 +486,8 @@ static void test_fp_redirect(void) {
     test_fr_len_stubs();
     test_fr_h_stubs();
     test_fr_pg_stubs();
+    test_fr_aff_stubs();
+    test_fr_bl_hook();
     /* A G4 without its tail: the next one restarts. */
     (void)fr_g4_slot_hook(tfr_comp,tfr_ship,frame+0x80,slot);(void)fr_g4_slot_hook(tfr_comp,tfr_ship,frame+0x80,slot);assert(fr_unfinished==1);
     fr_tail_hook(slot);
@@ -438,7 +528,22 @@ static void test_fp_redirect(void) {
         unsigned char seen[16];assert(fp_patch_overlaps(image+FR_PG_SITE-3,16) && read_local(image+FR_PG_SITE-3,seen,16));
         assert(!memcmp(seen+3,fr_pg_original,5) && image[FR_PG_SITE]==0xe9 && !fr_pg_clear());
     }
+    /* FR22: the affine weight site likewise. */
+    memcpy(image+FR_AFF_SITE,fr_aff_original,5);assert(fr_aff_state()==0 && fr_aff_reach() && fr_aff_clear());
+    {   unsigned char jump[5];fr_aff_jump(jump);assert(view_cas_bytes(FR_AFF_SITE,fr_aff_original,jump,5) && fr_aff_state()==1);
+        fr_done|=FR_AFF_DONE;
+        unsigned char seen[16];assert(fp_patch_overlaps(image+FR_AFF_SITE-3,16) && read_local(image+FR_AFF_SITE-3,seen,16));
+        assert(!memcmp(seen+3,fr_aff_original,5) && image[FR_AFF_SITE]==0xe9 && !fr_aff_clear());
+    }
+    /* FR22: the BezierSpline vtable slot: native in it, swapped to the hook, owned, a foreign value refused. */
+    {   void *fn=image+FR_BL_FN;memcpy(image+FR_BL_SLOT,&fn,8);
+        assert(fr_bl_state()==0 && !fr_bl_swap((void*)fr_bl_hook,fn) && fr_bl_state()==0);
+        assert(fr_bl_swap(fn,(void*)fr_bl_hook) && fr_bl_state()==1);fr_done|=FR_BL_DONE;
+    }
     fr_installed=1;fr_failures=0;assert(fr_owned() && fr_check());
+    image[FR_AFF_SITE+1]^=1;assert(fr_aff_state()<0 && !fr_owned());image[FR_AFF_SITE+1]^=1;assert(fr_owned());
+    {   void *other=(void*)tbl_native;assert(fr_bl_swap((void*)fr_bl_hook,other) && fr_bl_state()<0 && !fr_owned());
+        assert(fr_bl_swap(other,(void*)fr_bl_hook) && fr_owned());}
     image[FR_PG_SITE+1]^=1;assert(fr_pg_state()<0 && !fr_owned());image[FR_PG_SITE+1]^=1;assert(fr_owned());
     image[fr_len_sites[1].site+2]^=1;assert(fr_len_state(1)<0 && !fr_owned());image[fr_len_sites[1].site+2]^=1;assert(fr_owned());
     image[fr_sites[1].site+2]^=1;assert(fr_site_state(1)<0 && !fr_owned());image[fr_sites[1].site+2]^=1;assert(fr_owned());
@@ -449,6 +554,8 @@ static void test_fp_redirect(void) {
     for(unsigned i=0;i<FR_SITES;i++) {assert(fr_site_state(i)==0);memset(image+fr_sites[i].site,0,5);}
     for(unsigned i=0;i<FR_LEN_SITES;i++) {assert(fr_len_state(i)==0 && !fp_patch_overlaps(image+fr_len_sites[i].site,5));memset(image+fr_len_sites[i].site,0,5);}
     assert(fr_pg_state()==0 && !fp_patch_overlaps(image+FR_PG_SITE,5));memset(image+FR_PG_SITE,0,5);
+    assert(fr_aff_state()==0 && !fp_patch_overlaps(image+FR_AFF_SITE,5));memset(image+FR_AFF_SITE,0,5);
+    assert(fr_bl_state()==0);memset(image+FR_BL_SLOT,0,8);
     memset(image+FR_TAIL,0,20);
     VirtualFree(fr_page,0,MEM_RELEASE);fr_page=saved_page;
     fr_native_refresh=NULL;fr_native_g4=fr_native_g0=NULL;fr_native_m=NULL;fr_native_params=NULL;fr_native_writer=NULL;fr_id_count=0;fr_restored=0;fr_failures=0;fr_stage="idle";
@@ -559,6 +666,74 @@ static unsigned tfl_native_runs(unsigned rounds,unsigned *zeros) {
     }
     return split;
 }
+/* FR22: BezierSpline::ComputeLength 0x14e4f20 with its chord 0x14e4a20 on their own bytes (the segment's vptr the
+ * BezierSpline vtable of this copy, its +0x10 and +0x28 relocated): native = Windows' u = i*(1/n) on every input;
+ * through the slot, 'shadow' keeps it and 'redirect' stores Linux's u = i/n. Returns the splits seen. */
+static unsigned tbl_native_runs(unsigned rounds,int through_slot) {
+    static const uint32_t ns[]={100,10,7,3,1,64,0,50,1000,33};
+    static __declspec(align(16)) unsigned char seg[0x40];
+    const void *vt=image+FR_BL_VTABLE;unsigned split=0;
+    for(unsigned r=0;r<rounds;r++) for(unsigned j=0;j<sizeof(ns)/sizeof(ns[0]);j++) {
+        const uint32_t n=ns[j];if(n==1000 && r%16) continue;
+        float c[12];const float scale=r%3==0?100000.0f:r%3==1?2000.0f:5.0f;
+        for(unsigned k=0;k<12;k++) c[k]=(k&3)==3?tfr_range(-1e30f,1e30f):tfr_range(-scale,scale);
+        if(r%5==0) for(unsigned k=1;k<12;k+=4) c[k]=0.0f; /* flat, as the highways */
+        memset(seg,0x5a,sizeof(seg));memcpy(seg,&vt,8);memcpy(seg+0x10,c,48);
+        const fr_bl_fn fn=through_slot?*(const fr_bl_fn*)(image+FR_BL_SLOT):(fr_bl_fn)(void*)(image+FR_BL_FN);
+        fn(seg,n);
+        uint32_t got;memcpy(&got,seg+8,4);
+        const uint32_t native=sl_arc_length_windows(seg+0x10,n),ours=sl_arc_length(seg+0x10,n);
+        const uint32_t want=through_slot && fr_mode==FR_REDIRECT?ours:native;
+        if(got!=want) {printf("fp redirect arc length %u n %u: got %08x want %08x (native %08x ours %08x)\n",r,n,got,want,native,ours);assert(0);}
+        assert(!memcmp(seg+0x10,c,48) && seg[0xc]==0x5a && seg[0xf]==0x5a);
+        split+=native!=ours;
+    }
+    return split;
+}
+/* FR22: the AffineSpline constructor 0x65a580 on its own bytes over a composite's knot pairs (the knot vector's capacity
+ * enough, so no allocator call): native = Windows' weight (2/sum)*dp, through the stub 'shadow' the same, 'redirect'
+ * Linux's dp/(sum*0.5); total at +0x18, knots normalised, the composite's length copied to +8. */
+static void tfa_expect(const float *pairs,unsigned n,int linux_form,float *knots,float *total) {
+    float t=0.0f;knots[0]=0.0f;
+    for(unsigned i=1;i<n;i++) {
+        const float sum=sl_sqrt(pairs[2*(i-1)+1])+sl_sqrt(pairs[2*i+1]),dp=pairs[2*i]-pairs[2*(i-1)];
+        const float q=fr_f32(linux_form?sl_affine_weight(fr_bits(sum),fr_bits(dp)):sl_affine_weight_windows(fr_bits(sum),fr_bits(dp)));
+        t=q+t;knots[i]=q+knots[i-1];
+    }
+    if(t>0.0f) for(unsigned i=1;i<n;i++) knots[i]=knots[i]/t;
+    *total=t;
+}
+static unsigned tfa_native_runs(unsigned rounds,int through_stub) {
+    static __declspec(align(16)) unsigned char aff[0x40],comp[0x40];static float pairs[16],knots[8];
+    static const float speeds[]={0.2f,1.0f,0.5f,0.8f,0.35f,1.0f,0.2f,0.65f};
+    unsigned split=0;
+    for(unsigned r=0;r<rounds;r++) {
+        const unsigned n=2+r%7;float p=0.0f;
+        for(unsigned i=0;i<n;i++) {
+            if(i) p+=tfr_range(0.001f,0.4f);
+            pairs[2*i]=i+1==n && r%2?1.0f:p;pairs[2*i+1]=r%4==3?tfr_range(0.05f,2.0f):speeds[(i+r)%8];
+        }
+        if(r%11==0) for(unsigned i=0;i<n;i++) pairs[2*i]=0.0f; /* no length: the knots stay unnormalised */
+        const float length=tfr_range(10.0f,300000.0f);
+        memset(comp,0,sizeof(comp));memcpy(comp+8,&length,4);
+        uint64_t v[2]={(uint64_t)(uintptr_t)pairs,(uint64_t)(uintptr_t)(pairs+2*n)};memcpy(comp+0x28,v,16);
+        memset(aff,0x5a,sizeof(aff));void *q=comp;memcpy(aff+0x10,&q,8);
+        uint64_t kv[3]={(uint64_t)(uintptr_t)knots,(uint64_t)(uintptr_t)(knots+5),(uint64_t)(uintptr_t)(knots+8)};memcpy(aff+0x20,kv,24);
+        memset(knots,0x77,sizeof(knots));
+        ((void (*)(void *))(void*)(image+FR_AFF_PIN))(aff);
+        float native[8],ours[8],tn,to;tfa_expect(pairs,n,0,native,&tn);tfa_expect(pairs,n,1,ours,&to);
+        const int linux_form=through_stub && fr_mode==FR_REDIRECT;
+        const float *want=linux_form?ours:native;const float want_total=linux_form?to:tn;
+        uint64_t end;memcpy(&end,aff+0x28,8);float total,len;memcpy(&total,aff+0x18,4);memcpy(&len,aff+8,4);
+        if(end!=(uint64_t)(uintptr_t)(knots+n) || memcmp(knots,want,4*n) || fr_bits(total)!=fr_bits(want_total) || fr_bits(len)!=fr_bits(length)) {
+            printf("fp redirect affine %u (n %u): total %08x want %08x\n",r,n,fr_bits(total),fr_bits(want_total));
+            for(unsigned i=0;i<n;i++) printf("  knot %u %08x want %08x (native %08x ours %08x)\n",i,fr_bits(knots[i]),fr_bits(want[i]),fr_bits(native[i]),fr_bits(ours[i]));
+            assert(0);
+        }
+        split+=memcmp(native,ours,4*n)!=0 || fr_bits(tn)!=fr_bits(to);
+    }
+    return split;
+}
 static void test_fp_redirect_native_image(const char *path) {
     FILE *file=fopen(path,"rb");assert(file);IMAGE_DOS_HEADER dos;IMAGE_NT_HEADERS64 nt;
     assert(fread(&dos,1,sizeof(dos),file)==sizeof(dos) && dos.e_magic==IMAGE_DOS_SIGNATURE && dos.e_lfanew>0 && dos.e_lfanew<4096);
@@ -573,6 +748,11 @@ static void test_fp_redirect_native_image(const char *path) {
         assert(!fseek(file,next,SEEK_SET));
     }
     fclose(file);
+    /* FR22: the BezierSpline vtable's +0x10 and +0x28 hold the file's preferred addresses; this copy's, as the loader's. */
+    {uint64_t q;memcpy(&q,image+FR_BL_CHORD_SLOT,8);assert(q==nt.OptionalHeader.ImageBase+FR_BL_CHORD);
+     memcpy(&q,image+FR_BL_SLOT,8);assert(q==nt.OptionalHeader.ImageBase+FR_BL_FN);
+     memcpy(&q,image+0x2a84fc8u,8);assert(q==nt.OptionalHeader.ImageBase+FR_BL_FN); /* the abstract base's */
+     void *f=image+FR_BL_CHORD;memcpy(image+FR_BL_CHORD_SLOT,&f,8);f=image+FR_BL_FN;memcpy(image+FR_BL_SLOT,&f,8);}
     unsigned char *saved_page=fr_page;fr_page=NULL;
     assert(fr_pins());
     image[FR_REFRESH+0x400]^=1;assert(!fr_pins());image[FR_REFRESH+0x400]^=1;
@@ -586,7 +766,18 @@ static void test_fp_redirect_native_image(const char *path) {
     image[FR_PG_PI]^=1;assert(!fr_pins() && !fr_pg_pins_ok());image[FR_PG_PI]^=1;
     assert(!memcmp(image+FR_PG_SITE,"\xf3\x0f\x10\x05\xf0\x25\xe2\x01\xf3\x0f\x5e\xc2\xf3\x0f\x59\xc8\x0f\x28\xc1\xe8",20) && FR_PG_BACK-FR_PG_SITE==16);
     assert(FR_PG_SITE+8+0x1e225f0u==FR_PG_PI && FR_PG_SITE>FR_PG_PIN && FR_PG_BACK<FR_PG_PIN+FR_PG_PIN_SIZE);
-    assert(fr_pins());
+    /* FR22: ComputeLength, its chord, their vtable slot and 1.0; the affine constructor and its 2.0; the site's two
+     * instructions (divss xmm2,xmm1; mulss xmm2,xmm0) after movaps xmm2,xmm6 and before movaps xmm0,xmm2. */
+    image[FR_BL_FN+0x40]^=1;assert(!fr_pins() && !fr_bl_pins_ok());image[FR_BL_FN+0x40]^=1;
+    image[FR_BL_CHORD+0x20]^=1;assert(!fr_pins() && !fr_bl_pins_ok());image[FR_BL_CHORD+0x20]^=1;
+    image[FR_BL_CHORD_SLOT]^=8;assert(!fr_pins() && !fr_bl_pins_ok());image[FR_BL_CHORD_SLOT]^=8;
+    image[FR_BL_ONE+1]^=1;assert(!fr_pins() && !fr_bl_pins_ok());image[FR_BL_ONE+1]^=1;
+    image[FR_AFF_PIN+0x30]^=1;assert(!fr_pins() && !fr_aff_pins_ok());image[FR_AFF_PIN+0x30]^=1;
+    image[FR_AFF_TWO+3]^=1;assert(!fr_pins() && !fr_aff_pins_ok());image[FR_AFF_TWO+3]^=1;
+    assert(!memcmp(image+FR_AFF_SITE-6,"\xf3\x0f\x5c\x44\xf1\xf8\xf3\x0f\x5e\xd1\xf3\x0f\x59\xd0\x0f\x28\xc2",17) && !memcmp(image+0x65a656,"\x0f\x28\xd6",3) && FR_AFF_BACK-FR_AFF_SITE==8);
+    assert(!memcmp(image+0x65a63b,"\xf3\x0f\x10\x35",4) && 0x65a643u+0x26642d5u==FR_AFF_TWO && FR_AFF_SITE>FR_AFF_PIN && FR_AFF_BACK<FR_AFF_PIN+FR_AFF_PIN_SIZE);
+    assert(!memcmp(image+0x14e4f49,"\xf3\x0f\x10\x35",4) && 0x14e4f51u+0x17d9683u==FR_BL_ONE);
+    assert(fr_bl_state()==0 && fr_pins());
     /* The live boot's order: the exact-reciprocal windows armed first (their view then covers the whole image), then
      * this module through fr_arm itself, in 'redirect': pins (both length blocks hold windows), tails clear, every
      * site installed and owned, restored. FR10/FR11/W5 refused here with stage=pins. */
@@ -597,7 +788,10 @@ static void test_fp_redirect_native_image(const char *path) {
         for(unsigned i=0;i<FR_LEN_SITES;i++) assert(fp_patch_overlaps(image+fr_len_sites[i].site,5) && fr_len_tail_clear(i));
         for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==0 && fr_h_clear(i));
         assert(fr_pg_state()==0 && fr_pg_clear());
+        assert(fr_aff_state()==0 && fr_aff_clear() && fr_bl_state()==0);
         assert(fr_pins() && fr_arm(FR_REDIRECT,3) && fr_installed && !strcmp(fr_stage,"armed") && fr_check());
+        assert(fr_aff_state()==1 && !fr_aff_clear() && (fr_done&FR_AFF_DONE) && fr_bl_state()==1 && (fr_done&FR_BL_DONE));
+        assert(*(void**)(image+FR_BL_SLOT)==(void*)fr_bl_hook && fr_aff_pins_ok() && fr_bl_pins_ok());
         for(unsigned i=0;i<FR_LEN_SITES;i++) assert(fr_len_state(i)==1 && !fr_len_tail_clear(i)); /* ours, shown as the original */
         for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==1 && !fr_h_clear(i));
         assert(fr_pg_state()==1 && !fr_pg_clear() && (fr_done&FR_PG_DONE) && fr_owned());
@@ -605,6 +799,7 @@ static void test_fp_redirect_native_image(const char *path) {
         fr_restore();assert(!fr_installed && fr_restored && !fr_done && fr_len_state(0)==0 && fr_len_state(1)==0 && fr_tail_state()==0);
         for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==0);
         assert(fr_pg_state()==0 && fr_pg_clear());
+        assert(fr_aff_state()==0 && fr_aff_clear() && fr_bl_state()==0 && *(void**)(image+FR_BL_SLOT)==(void*)(image+FR_BL_FN));
         for(unsigned i=0;i<FR_SITES;i++) assert(fr_site_state(i)==0);
         VirtualFree(fr_page,0,MEM_RELEASE);fr_page=NULL;fr_restored=0;fr_stage="idle";fr_mode=FR_OFF;
         fr_native_refresh=NULL;fr_native_g4=fr_native_g0=NULL;fr_native_m=NULL;fr_native_params=NULL;fr_native_v=NULL;fr_native_writer=NULL;
@@ -734,9 +929,31 @@ static void test_fp_redirect_native_image(const char *path) {
     assert(fr_n[FR_PG]==pn0+TPG_RUNS && fr_diff[FR_PG]==(LONG64)pg_shadow && fr_hits[FR_HIT_PG]==ph0+TPG_RUNS);
     fr_mode=FR_REDIRECT;const unsigned pg_redirect=tpg_native_runs(1);
     assert(fr_pg_written==(LONG64)pg_redirect && pg_native>1000 && pg_shadow==pg_native && pg_redirect==pg_native && fr_max_ulp[FR_PG]<=2);
+    /* FR22: ComputeLength on its own bytes, natively and then through the swapped slot; the affine constructor on its
+     * own bytes, natively and then through the stub at 0x65a66e. */
+    assert(fr_bl_pins_ok() && fr_aff_pins_ok() && fr_bl_state()==0 && fr_aff_state()==0 && fr_aff_clear());
+    assert(VirtualProtect(image+(FR_BL_CHORD&~0xfffu),0x2000,PAGE_EXECUTE_READWRITE,&old));
+    assert(VirtualProtect(image+(FR_AFF_PIN&~0xfffu),0x1000,PAGE_EXECUTE_READWRITE,&old));
+    FlushInstructionCache(GetCurrentProcess(),image+(FR_BL_CHORD&~0xfffu),0x2000);FlushInstructionCache(GetCurrentProcess(),image+(FR_AFF_PIN&~0xfffu),0x1000);
+    fr_mode=FR_OFF;const unsigned bl_native=tbl_native_runs(400,0),aff_native=tfa_native_runs(4000,0);
+    assert(fr_bl_swap((void*)(image+FR_BL_FN),(void*)fr_bl_hook) && fr_bl_state()==1);fr_done|=FR_BL_DONE;
+    {   unsigned char jump[5];fr_aff_jump(jump);assert(fr_aff_reach() && view_cas_bytes(FR_AFF_SITE,fr_aff_original,jump,5));
+        fr_done|=FR_AFF_DONE;assert(fr_aff_state()==1 && !fr_aff_clear());
+        unsigned char seen[5];assert(read_local(image+FR_AFF_SITE,seen,5) && !memcmp(seen,fr_aff_original,5)); /* the view */
+    }
+    const LONG64 bn0=fr_n[FR_BL],an0=fr_n[FR_AFF];
+    fr_mode=FR_SHADOW;const unsigned bl_shadow=tbl_native_runs(400,1),aff_shadow=tfa_native_runs(4000,1);
+    assert(fr_n[FR_BL]>bn0 && fr_diff[FR_BL]>0 && fr_n[FR_AFF]>an0 && fr_diff[FR_AFF]>0 && !fr_bl_written && !fr_aff_written);
+    fr_mode=FR_REDIRECT;const unsigned bl_redirect=tbl_native_runs(400,1),aff_redirect=tfa_native_runs(4000,1);
+    assert(fr_bl_written>0 && fr_aff_written>0 && bl_native>100 && bl_shadow>100 && bl_redirect>100 && aff_native>100 && aff_shadow>100 && aff_redirect>100);
+    printf("fp redirect native image: BezierSpline::ComputeLength 0x14e4f20 on its own bytes: native = u*(1/n) (%u split from i/n, max %lld ulp); "
+        "through the slot shadow keeps it (%u split), redirect stores i/n (%lld written); AffineSpline 0x65a580: native = (2/sum)*dp "
+        "(%u of 4000 split from dp/(sum*0.5)), shadow the same (%u), redirect ours (%lld weights written) PASS\n",
+        bl_native,(long long)fr_max_ulp[FR_BL],bl_shadow,(long long)fr_bl_written,aff_native,aff_shadow,(long long)fr_aff_written);
+    fr_n[FR_BL]=fr_diff[FR_BL]=fr_max_ulp[FR_BL]=0;fr_bl_written=0;fr_n[FR_AFF]=fr_diff[FR_AFF]=fr_max_ulp[FR_AFF]=0;fr_aff_written=0;
     fr_installed=1;fr_restore();assert(!fr_installed && !fr_done && fr_len_state(0)==0 && fr_len_state(1)==0);
     for(unsigned i=0;i<FR_H_SITES;i++) assert(fr_h_state(i)==0);
-    assert(fr_pg_state()==0);
+    assert(fr_pg_state()==0 && fr_aff_state()==0 && fr_bl_state()==0);
     printf("fp redirect native image: PointGuard angle 0xe9c4bc on its own bytes: native = rem*(pi/(m+1)) on %u (m+1 <= %u; %u split from "
         "(rem/2(m+1))*2pi, max %lld ulp); shadow keeps it (%u split), redirect leaves ours (%u written) PASS\n",
         TPG_RUNS,TPG_M1,pg_native,(long long)fr_max_ulp[FR_PG],pg_shadow,pg_redirect);

@@ -163,7 +163,10 @@ static void test_pres_ui(void *self) {
     assert(self==test_pres_self && test_pres_in_scope() && pres_open);
     assert(*PNAT_U8(0x2f4b750)==test_pres_bank_slot && *PNAT_U8(PNAT_CONTEXTS)==0x31);   /* slot 2's SIM copy, this client's LOCAL */
     assert(pres_pause() && !test_pres_in_scope() && *PNAT_U8(0x2f4b750)==test_pres_bank_canonical && !pres_open);  /* the probe's frame */
-    pres_resume();assert(test_pres_in_scope() && pres_open && *PNAT_U8(0x2f4b750)==test_pres_bank_slot);
+    assert(pres_resume()==1 && test_pres_in_scope() && pres_open);   /* a scripted click inside it (UI replay): slot 2's identity */
+    assert(pres_pause() && !test_pres_in_scope() && !pres_open);     /* and the probe's frame goes on canonical */
+    assert(pres_resume()==1);assert(test_pres_in_scope() && pres_open && *PNAT_U8(0x2f4b750)==test_pres_bank_slot);
+    assert(pres_resume()==0 && pres_open);                           /* not paused: nothing */
     if(test_pres_write) {*PNAT_U8(0x2f4b750)=0x77;test_pnat_player[0x6e20]=1;}
     test_pres_target_seen=*(uint64_t*)(test_pnat_player+PRES_TARGET);
     if(test_pres_pick_target) *(uint64_t*)(test_pnat_player+PRES_TARGET)=0x66;

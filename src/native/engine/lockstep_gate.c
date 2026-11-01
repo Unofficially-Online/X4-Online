@@ -371,8 +371,9 @@ static int world_nav_live_prefixes(void) {
 #define ST_AGENT_POSE 0xad0 /* the two pathing state banks ([NavigationController+0x30]; Linux +0xaf0) */
 #define ST_BANK_READ (image+0x38f4ee4u)
 #define ST_BANK_WRITE (image+0x2f4b6f4u)
-#define ST_CHAIN_SITE_COUNT 10u /* FR8 (lockstep_step_chain_win.h), then FR17's two, then FR18's two */
+#define ST_CHAIN_SITE_COUNT 26u /* FR8 (lockstep_step_chain_win.h), then FR17's two, FR18's two, FR20's five, FR21's eleven */
 #define ST_PT_REF 0x10 /* FR18: a path point's reference object runtime id (+0x18 its sub id, +0x20 the offset mat4) */
+#define ST_HIER (image+0x3dde10u) /* FR20: rcx from, rdx inout mat4, r8 to, r9 0 (pinned in lockstep_step_chain_win.h) */
 /* FR19: the Linear model's SetTarget slot (vtable 0x2c4f610 +0x18; 0x2c4f628 -> 0xeaf620, pinned), its target, the agent's path point pointer. */
 #define ST_SG_SLOT 0x2c4f628u
 #define ST_SG_FN 0xeaf620u
@@ -381,9 +382,22 @@ static int world_nav_live_prefixes(void) {
 #define ST_MODEL_TARGET 0x20
 #define ST_AGENT_POINT 0x6a8
 #define ST_MODEL_SPLINE 0xe0 /* FR9: Math::CompositeSpline<5> (vtable 0x2b6c6d0), built by 0xeb1e60 at 0xeb2ab2 */
+/* FR21: the Highway's point map, U::Highway's vtable 0x2b091e0 +0x1520 -> 0x5f6480 (the only slot holding it; pinned
+ * to its ret 0x5f6a11), its spline at +0x608 (Linux +0x5e8). */
+#define ST_HW_SLOT 0x2b0a700u
+#define ST_HW_FN 0x5f6480u
+#define ST_HW_SIZE 0x592u
+#define ST_HW_SHA "534a95378e34c68c279998a60d78a4f3ca5574ba8379787de3c22651f65396d6"
+#define ST_HW_SPLINE 0x608
 #include "lockstep_step_trace.h"
 static int st_slot_swap(void *expected,void *value) {
     unsigned char *p=image+ST_SLOT;DWORD old,ignored;
+    if(!VirtualProtect(p,8,PAGE_READWRITE,&old)) return 0;
+    void *actual=InterlockedCompareExchangePointer((void*volatile*)p,value,expected);
+    VirtualProtect(p,8,old,&ignored);return actual==expected;
+}
+static int st_hw_swap(void *expected,void *value) {
+    unsigned char *p=image+ST_HW_SLOT;DWORD old,ignored;
     if(!VirtualProtect(p,8,PAGE_READWRITE,&old)) return 0;
     void *actual=InterlockedCompareExchangePointer((void*volatile*)p,value,expected);
     VirtualProtect(p,8,old,&ignored);return actual==expected;
@@ -1668,7 +1682,7 @@ static int lua_step_trace_arm(lua_State *L) {
     p_lua_pushnumber(L,isfinite(ticks) && ticks>=1 && ticks<=600 && floor(ticks)==ticks && st_arm((uint64_t)ticks));return 1;
 }
 static int lua_step_trace_status(lua_State *L) {
-    char out[768];int n=accept_ui()?st_status(out,sizeof(out)):0;
+    char out[1280];int n=accept_ui()?st_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* step_chain(): FR8's hooks with the step trace (native_gate_step_chain), before step_trace_arm. */

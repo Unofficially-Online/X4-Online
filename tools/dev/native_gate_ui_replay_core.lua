@@ -329,10 +329,26 @@ function K.session(p)
   for _,e in ipairs(script[tick] or {}) do
    -- As a person's click: the UI half runs on this client alone, so what it allocates is not the probe's.
    if p.local_mark then p.local_mark(0) end
+   -- A scoped op runs where a person's click runs: in the presentation scope, X4's player as this client's slot
+   -- (p.present(true) answers whether it opened it; the probe's frame itself is canonical).
+   local scoped=e.scoped and p.present and p.present(true) or false
    local ok,result=pcall(e.call,S)
+   if scoped then p.present(false) end
    if p.local_mark then p.local_mark(1) end
-   log(string.format('UI_REPLAY_SCRIPT tick=%d op=%s ok=%s result=%s',tick,tostring(e.op),tostring(ok),tostring(result)))
+   log(string.format('UI_REPLAY_SCRIPT tick=%d op=%s ok=%s result=%s%s',tick,tostring(e.op),tostring(ok),tostring(result),
+     e.scoped and (scoped and ' scope=1' or ' scope=0') or ''))
   end
+ end
+ -- Test protection (native_gate_ui_replay_min_hull): every slot ship keeps at least this hull percentage, set by MD
+ -- on every client at the same tick (the fleet's tick), so the missile run's hits do not end the player's ship.
+ local protected=false
+ local function protect(tick)
+  if protected or not p.min_hull or tick<(p.fleet_tick or 0) then return end
+  protected=true
+  for slot=1,p.slots or 0 do
+   env.AddUITriggeredEvent('X4LAN_UiReplay','MinHull',{ship=p.slot_lua(slot),hull=p.min_hull})
+  end
+  log('UI_REPLAY_MIN_HULL tick='..tick..' slots='..tostring(p.slots or 0)..' hull='..p.min_hull)
  end
  -- The test fleet: `player` ships, as the stock UI needs them, from the same tick on every client; their queues
  -- join the receipt, so an order that reached one client only shows at once.
@@ -355,6 +371,7 @@ function K.session(p)
  -- The module's part of the probe's frame; the receipt joins the pilot receipt.
  function S.frame(tick)
   S.apply(tick)
+  protect(tick)
   run_script(tick)
   local refusals=gate.ui_replay_refusals()
   if refusals then log('UI_REPLAY_REFUSED_NATIVE tick='..tick..' '..refusals) end
@@ -368,6 +385,11 @@ function K.session(p)
  return S
 end
 
+-- Ops that run in the presentation scope, as a person's click on this client does (U6c): X4's soft target refuses the
+-- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
+-- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
+-- the canonical frame their live runs (U5, U7) passed with.
+K.SCOPED={target_slot=true,target_none=true}
 -- Named script actions for runs without people; arguments are saved IDs or slots, resolved when they run.
 -- plan: list of {tick, op, ...}, ticks relative to the pilot window start.
 function K.script(plan,start,tools)
@@ -409,7 +431,7 @@ function K.script(plan,start,tools)
   elseif op=='move' then call=function() return tools.env.CreateOrder(tools.saved_lua(e[3]),'MoveWait',{destination={tools.saved_lua(e[4]),{e[5],e[6],e[7]}}},false,false,false,nil,nil,nil,true) end
   elseif op=='dock' then call=function() return tools.env.CreateOrder(tools.saved_lua(e[3]),'DockAndWait',{destination=tools.saved_lua(e[4])},false,false,false) end
   else error('unknown ui replay script op '..tostring(op)) end
-  by[at]=by[at] or {};by[at][#by[at]+1]={op=op,call=call}
+  by[at]=by[at] or {};by[at][#by[at]+1]={op=op,call=call,scoped=K.SCOPED[op] or nil}
  end
  return by
 end

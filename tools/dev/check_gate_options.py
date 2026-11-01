@@ -371,9 +371,13 @@ def ui_replay_rules(config_text, enabled):
     components travel as runtime IDs, so those must be the same on every client."""
     value = lua_value(config_text, 'native_gate_ui_replay')
     failures = []
-    for option in ('native_gate_ui_replay_script', 'native_gate_ui_replay_fleet'):
+    for option in ('native_gate_ui_replay_script', 'native_gate_ui_replay_fleet', 'native_gate_ui_replay_min_hull'):
         if lua_value(config_text, option) not in (None, 'nil', 'false') and value in (None, 'false', 'nil'):
             failures.append(dict(rule=f'{option} needs native_gate_ui_replay', bits=['native_gate_ui_replay']))
+    # Test protection of the slot ships (native_gate_ui_replay.xml, MinHull): a whole hull percentage.
+    hull = lua_value(config_text, 'native_gate_ui_replay_min_hull')
+    if hull not in (None, 'nil') and not (hull.isdigit() and 1 <= int(hull) <= 100):
+        failures.append(dict(rule='native_gate_ui_replay_min_hull must be a whole percentage 1..100', bits=[hull]))
     if value is None or value in ('false', 'nil'):
         return failures
     if value != 'true':

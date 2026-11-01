@@ -18,21 +18,29 @@
 #define ST_AGENT_POSE LXW_AGENT_SLOTS /* the two pathing state banks (Windows +0xad0) */
 #define ST_BANK_READ LX(LX_BANK_READ_VA)
 #define ST_BANK_WRITE LX(LX_BANK_WRITE_VA)
-#define ST_CHAIN_SITE_COUNT 9u /* FR8's three, FR17's two, FR18's four */
+#define ST_CHAIN_SITE_COUNT 13u /* FR8's three, FR17's two, FR18's four, FR20's two, FR21's two */
 #define ST_PT_REF 0x8 /* FR18: a path point's reference object runtime id (+0x10 its sub id, +0x20 the offset mat4; Windows +0x10) */
+#define ST_HIER LX(LX_SC_HIER_VA) /* FR20: the level probes' hierarchy function (the file pin covers it) */
 #define ST_SG_SLOT (LX_SG_SLOT_VA-LX_IMAGE_BASE) /* FR19: SetTarget's slot (RELRO, swapped like the step's) */
 #define ST_SG_FN (LX_SG_FN_VA-LX_IMAGE_BASE)
 #define ST_MODEL_TARGET 0x10 /* Windows 0x20 */
 #define ST_AGENT_POINT 0x6d0 /* the path points' begin (Windows [agent+0x6a8]) */
+#define ST_HW_SLOT (LX_HW_SLOT_VA-LX_IMAGE_BASE) /* FR21: the Highway's point map (RELRO, swapped like SetTarget's) */
+#define ST_HW_FN (LX_HW_FN_VA-LX_IMAGE_BASE)
+#define ST_HW_SPLINE 0x5e8 /* Windows 0x608 */
 #define ST_MODEL_SPLINE 0xd0 /* FR9: the path spline (vtable 0x3b30558), built by 0x1151760 at 0x13ed3e3 (Windows +0xe0) */
 #include "lockstep_step_trace.h"
 static int st_slot_swap(void *expected,void *value) {
     return gate_data_swap64(LX(LX_ST_SLOT_VA),(uint64_t)(uintptr_t)expected,(uint64_t)(uintptr_t)value);
 }
+static int st_hw_swap(void *expected,void *value) {
+    return gate_data_swap64(LX(LX_HW_SLOT_VA),(uint64_t)(uintptr_t)expected,(uint64_t)(uintptr_t)value);
+}
 static int st_sg_swap(void *expected,void *value) {
     return gate_data_swap64(LX(LX_SG_SLOT_VA),(uint64_t)(uintptr_t)expected,(uint64_t)(uintptr_t)value);
 }
-/* nine stubs 0x20 apart: asinf target, asinf current, the builder's, FR17's two, FR18's four (to 0xb20) */
+/* thirteen stubs 0x20 apart: asinf target, asinf current, the builder's, FR17's two, FR18's four, FR20's two, FR21's
+ * two (to 0xba0) */
 #define LXC_STUBS 0xa00u
 static const struct {uint32_t site,target;const char *name;} lxc_sites[ST_CHAIN_SITE_COUNT]={
     {LX_SC_ASIN_TARGET_SITE_VA,LX_SC_ASINF_VA,"asin_target"},{LX_SC_ASIN_CUR_SITE_VA,LX_SC_ASINF_VA,"asin_cur"},
@@ -40,6 +48,8 @@ static const struct {uint32_t site,target;const char *name;} lxc_sites[ST_CHAIN_
     {LX_SC_FM_AGENT_SITE_VA,LX_SC_FM_VA,"fm_agent"},{LX_SC_FM_OTHER_SITE_VA,LX_SC_FM_VA,"fm_other"},
     {LX_SC_PT_LOCAL_SITE_VA,LX_SC_PT_LOCAL_VA,"pt"},{LX_SC_PT_CONVERT_A_SITE_VA,LX_SC_PT_CONVERT_VA,"pt_a"},
     {LX_SC_PT_CONVERT_B_SITE_VA,LX_SC_PT_CONVERT_VA,"pt_b"},{LX_SC_PT_MATH_SITE_VA,LX_SC_PT_MATH_VA,"pt_conv"},
+    {LX_SC_PT_CONVERT_C_SITE_VA,LX_SC_PT_CONVERT_VA,"pt_c"},{LX_SC_PT_OBJECT_SITE_VA,LX_SC_HIER_VA,"pt_obj"},
+    {LX_SC_HW_BANK_SITE_VA,LX_SC_HW_BANK_VA,"hw_bank"},{LX_SC_HW_BANK2_SITE_VA,LX_SC_HW_BANK_VA,"hw_bank2"},
 };
 static const char *st_chain_site_name(unsigned i) {return i<ST_CHAIN_SITE_COUNT?lxc_sites[i].name:"?";}
 static unsigned lxc_done;
@@ -68,12 +78,18 @@ static void *lxc_pt(unsigned site,unsigned which,void *out,void *point,void *fra
 static void *lxc_pt_local(void *out,void *point,void *unused,void *agent) {(void)unused;return lxc_pt(5,0,out,point,NULL,agent);}
 static void *lxc_pt_a(void *out,void *point,void *frame,void *agent) {return lxc_pt(6,1,out,point,frame,agent);}
 static void *lxc_pt_b(void *out,void *point,void *frame,void *agent) {return lxc_pt(7,2,out,point,frame,agent);}
+/* FR20: 0x143235b (as pt_a/pt_b) and the object path 0x1432611 (its ecx 0 replaced by the agent; 0 passed on). */
+static void *lxc_pt_c(void *out,void *point,void *frame,void *agent) {return lxc_pt(9,3,out,point,frame,agent);}
+static void lxc_pt_obj(void *object,void *mat,void *frame,void *agent) {st_pt_object_call(10,4,object,mat,frame,agent);}
 static uint64_t lxc_pt_conv(void *out,void *velocity,void *ref,void *frame,uint64_t flag) {
     uint32_t *e;st_pt_conversion_begin(8,out,ref,frame,&e);
     const uint64_t result=((lxc_pt_math_fn)(void*)LX(LX_SC_PT_MATH_VA))(out,velocity,ref,frame,flag);
     st_pt_conversion_end(e,out);
     return result;
 }
+/* FR21: the banking (rdi the highway, xmm0 t; the same signature). */
+static float lxc_hw_bank(void *hw,float t) {return st_hw_banking_call(11,LX(LX_SC_HW_BANK_VA),hw,t);}
+static float lxc_hw_bank2(void *hw,float t) {return st_hw_banking_call(12,LX(LX_SC_HW_BANK_VA),hw,t);}
 static void lxc_thunk_write(unsigned char *page) {
     unsigned char *p=page+LXC_STUBS;
     lxw_jump_write(p,(void*)lxc_asin_target);lxw_jump_write(p+0x20,(void*)lxc_asin_cur);
@@ -83,6 +99,9 @@ static void lxc_thunk_write(unsigned char *page) {
     void *const pt[3]={(void*)lxc_pt_local,(void*)lxc_pt_a,(void*)lxc_pt_b};
     for(unsigned i=0;i<3;i++) {memcpy(p+0xa0+0x20*i,"\x48\x89\xd9",3);lxw_jump_write(p+0xa3+0x20*i,pt[i]);} /* mov rcx,rbx */
     lxw_jump_write(p+0x100,(void*)lxc_pt_conv);
+    void *const fr20[2]={(void*)lxc_pt_c,(void*)lxc_pt_obj};
+    for(unsigned i=0;i<2;i++) {memcpy(p+0x120+0x20*i,"\x48\x89\xd9",3);lxw_jump_write(p+0x123+0x20*i,fr20[i]);} /* mov rcx,rbx */
+    lxw_jump_write(p+0x160,(void*)lxc_hw_bank);lxw_jump_write(p+0x180,(void*)lxc_hw_bank2);
 }
 static unsigned char *lxc_stub(unsigned i) {return thunk+LXC_STUBS+0x20u*i;}
 /* 0 original, 1 ours, -1 anything else. */
@@ -139,7 +158,7 @@ static int lua_step_trace_arm(lua_State *L) {
     p_lua_pushnumber(L,isfinite(ticks) && ticks>=1 && ticks<=600 && floor(ticks)==ticks && st_arm((uint64_t)ticks));return 1;
 }
 static int lua_step_trace_status(lua_State *L) {
-    char out[768];int n=accept_ui()?st_status(out,sizeof(out)):0;
+    char out[1280];int n=accept_ui()?st_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_step_trace_row(lua_State *L) {

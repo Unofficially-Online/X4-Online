@@ -98,7 +98,8 @@ HARNESS = r'''
   function new_session(extra)
     local p={gate=gate,C=C,env=env,log=log,mask=(extra and extra.mask) or 7,slot_ships=function() return SLOT_SHIPS end,script=extra and extra.script,
       fleet=extra and extra.fleet,fleet_tick=extra and extra.fleet_tick,saved_lua=extra and extra.saved_lua,queue_of=extra and extra.queue_of,
-      local_mark=extra and extra.local_mark}
+      local_mark=extra and extra.local_mark,present=extra and extra.present,min_hull=extra and extra.min_hull,slots=extra and extra.slots,
+      slot_lua=extra and extra.slot_lua}
     return X4LAN_UI_REPLAY_CORE.session(p)
   end
 '''
@@ -380,6 +381,65 @@ class SessionTests(unittest.TestCase):
         ''')
         self.assertEqual(values(g.stock_calls), ['missile:1', 'missile:0'])
 
+    def test_the_target_ops_run_in_the_presentation_scope_as_a_click_does(self):
+        """U6b: client 2's SetSofttarget(slot 1's ship) ran in the probe's canonical frame, where that ship is the player's
+        own and X4 refuses it (untargetableconditions is_playercontrolled); the target ops now run in the scope."""
+        lua, g = client()
+        lua.execute('''
+          OPEN=false
+          present=function(on)
+            stock_calls[#stock_calls+1]=on and 'resume' or 'pause'
+            if on then OPEN=CAN_OPEN;return OPEN end
+            OPEN=false;return true end
+          C.SetSofttarget=function(id,c) stock_calls[#stock_calls+1]='SetSofttarget:'..tostring(OPEN);return OPEN end
+          env.RemoveSofttarget=function() stock_calls[#stock_calls+1]='remove_target:'..tostring(OPEN) end
+          gate.ui_replay_missile_hold=function(v) stock_calls[#stock_calls+1]='missile:'..tostring(OPEN);return 1 end
+          plan={{0,'target_slot',1},{1,'missile',1},{2,'target_none'},{3,'target_slot',1}}
+          tools={gate=gate,C=C,env=env,own_slot=2,slot_id=function(s) return s+1000ULL end}
+          CAN_OPEN=true
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script(plan,40,tools),present=present})
+          for t=40,42 do S.frame(t) end
+          CAN_OPEN=false   -- slot 1's client, or no presentation: the call runs where it is
+          S.frame(43)
+          bare=new_session({script=X4LAN_UI_REPLAY_CORE.script({{0,'target_slot',1}},50,tools)})
+          bare.frame(50)
+        ''')
+        self.assertEqual(values(g.stock_calls), ['resume', 'SetSofttarget:true', 'pause', 'missile:false', 'resume', 'remove_target:true', 'pause',
+                                                 'resume', 'SetSofttarget:false', 'SetSofttarget:false'])
+        rows = [line for line in values(g.logs) if 'UI_REPLAY_SCRIPT' in line]
+        self.assertEqual(rows, ['UI_REPLAY_SCRIPT tick=40 op=target_slot ok=true result=true scope=1',
+                                'UI_REPLAY_SCRIPT tick=41 op=missile ok=true result=1',
+                                'UI_REPLAY_SCRIPT tick=42 op=target_none ok=true result=nil scope=1',
+                                'UI_REPLAY_SCRIPT tick=43 op=target_slot ok=true result=false scope=0',
+                                'UI_REPLAY_SCRIPT tick=50 op=target_slot ok=true result=false scope=0'])
+        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True})
+
+    def test_a_failing_scoped_op_still_pauses_the_scope(self):
+        lua, g = client()
+        lua.execute('''
+          present=function(on) stock_calls[#stock_calls+1]=on and 'resume' or 'pause';return true end
+          C.SetSofttarget=function() error('boom') end
+          tools={gate=gate,C=C,env=env,own_slot=2,slot_id=function(s) return s+1000ULL end}
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script({{0,'target_slot',1}},40,tools),present=present})
+          S.frame(40)
+        ''')
+        self.assertEqual(values(g.stock_calls), ['resume', 'pause'])
+        self.assertTrue(any('op=target_slot ok=false' in line and line.endswith('scope=1') for line in values(g.logs)))
+
+    def test_the_slot_ships_get_their_minimum_hull_once_at_the_fleet_tick(self):
+        lua, g = client()
+        lua.execute('''
+          events={}
+          env.AddUITriggeredEvent=function(screen,control,value) events[#events+1]=screen..'/'..control..':'..tostring(ids[value.ship])..'/'..value.hull end
+          S=new_session({min_hull=50,slots=2,fleet_tick=10,slot_lua=function(s) return make_id(tostring(1000+s)) end})
+          S.frame(9);c9=#events;S.frame(10);S.frame(11);S.frame(12)
+          plain=new_session({fleet_tick=10,slots=2,slot_lua=function(s) error('not asked') end})
+          plain.frame(10)
+        ''')
+        self.assertEqual(g.c9, 0)
+        self.assertEqual(values(g.events), ['X4LAN_UiReplay/MinHull:1001/50', 'X4LAN_UiReplay/MinHull:1002/50'])
+        self.assertEqual([line for line in values(g.logs) if 'MIN_HULL' in line], ['UI_REPLAY_MIN_HULL tick=10 slots=2 hull=50'])
+
     def test_the_slot_column_is_logged_as_it_changes(self):
         lua, g = client()
         lua.execute('''
@@ -490,6 +550,44 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn('op=target_slot ok=true', rows[0])
         self.assertIn('soft:UniverseID:1002', clients[0].values('ui_calls'))
+
+    def test_client_2_targets_slot_1_in_its_presentation_scope(self):
+        """U6b: the probe's frame is paused (canonical); the scripted target op opens the scope around the stock call."""
+        prelude = PROBE_MOCK + '''
+          gate.pilot_ship=function(s) return 1000+s end
+          local ffi=require('ffi')
+          ffi.new=function(t,...) return {t=t,v=...} end
+          OPEN=true;PAUSED=false
+          gate.pilot_present_pause=function() if not OPEN then return 0 end;OPEN=false;PAUSED=true;ui_calls[#ui_calls+1]='pause';return 1 end
+          gate.pilot_present_resume=function() if not PAUSED then return 0 end;PAUSED=false;OPEN=true;ui_calls[#ui_calls+1]='resume';return 1 end
+          ffi.C.SetSofttarget=function(id,s) ui_calls[#ui_calls+1]='soft:'..id.v..':'..tostring(OPEN);return OPEN end
+        '''
+        cfg = dict(native_gate_pilot_present=True, native_gate_runtime_ids=True, native_gate_ui_replay=['target'],
+                   native_gate_ui_replay_script=[[], [[7, 'target_slot', 1]]])
+        clients = [self.stock.StockClient(k, slots_all=True, prelude=prelude, **cfg) for k in (1, 2)]
+        self.stock.run(clients, 13)
+        self.assertEqual(clients[1].errors(), [], clients[1].values('logs')[-3:])
+        calls = clients[1].values('ui_calls')
+        at = calls.index('soft:1001:true')
+        self.assertEqual(calls[at-2:at+3], ['pause', 'resume', 'soft:1001:true', 'pause', 'resume'])   # frame, click, frame
+        rows = [line for line in clients[1].values('logs') if 'UI_REPLAY_SCRIPT' in line]
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0].endswith(f'UI_REPLAY_SCRIPT tick={self.stock.WINDOW[0]+7} op=target_slot ok=true result=true scope=1'), rows)
+
+    def test_the_minimum_hull_reaches_md_for_every_slot_ship(self):
+        prelude = PROBE_MOCK + '''
+          gate.pilot_ship=function(s) return 1000+s end
+          AddUITriggeredEvent=function(screen,control,v) ui_calls[#ui_calls+1]=screen..'/'..control..':'..tostring(v.ship)..'/'..v.hull end
+        '''
+        cfg = dict(native_gate_pilot_present=True, native_gate_runtime_ids=True, native_gate_ui_replay=['target'], native_gate_ui_replay_min_hull=50)
+        clients = [self.stock.StockClient(k, slots_all=True, prelude=prelude, **cfg) for k in (1, 2)]
+        self.stock.run(clients, 13)
+        for c in clients:
+            self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+            self.assertEqual([v for v in c.values('ui_calls') if 'MinHull' in v], ['X4LAN_UiReplay/MinHull:1001/50', 'X4LAN_UiReplay/MinHull:1002/50'])
+        bad = [self.stock.StockClient(1, slots_all=True, prelude=prelude, **dict(cfg, native_gate_ui_replay_min_hull=0))]
+        self.stock.run(bad, 13)
+        self.assertTrue(any('native_gate_ui_replay_min_hull' in e for e in bad[0].errors()), bad[0].errors())
 
     def test_its_rows_are_written_on_ticks_the_status_stride_holds(self):
         clients = self.clients(native_gate_status_stride=1000, native_gate_ui_replay_script=[[[7, 'travel_key']], []])
@@ -611,6 +709,9 @@ class OptionTests(unittest.TestCase):
                 ('native_gate_ui_replay needs native_gate_world_identities', dict(native_gate_ui_replay='true', native_gate_world_identities=None)),
                 ('native_gate_ui_replay_script needs native_gate_ui_replay', dict(native_gate_ui_replay_script='{}')),
                 ('native_gate_ui_replay_fleet needs native_gate_ui_replay', dict(native_gate_ui_replay_fleet="{'a'}")),
+                ('native_gate_ui_replay_min_hull needs native_gate_ui_replay', dict(native_gate_ui_replay_min_hull='50')),
+                ('native_gate_ui_replay_min_hull must be a whole percentage 1..100', dict(native_gate_ui_replay='true', native_gate_ui_replay_min_hull='0')),
+                ('native_gate_ui_replay_min_hull must be a whole percentage 1..100', dict(native_gate_ui_replay='true', native_gate_ui_replay_min_hull='50.5')),
                 ('native_gate_ui_replay missiles needs the target family', dict(native_gate_ui_replay="{'missiles'}")),
                 ('native_gate_ui_replay missiles needs native_gate_pilot_fire', dict(native_gate_ui_replay="{'target','missiles'}"))):
             self.assertIn(rule, failures(stock_config(**override)), override)
@@ -684,6 +785,28 @@ class BuilderTests(unittest.TestCase):
                 self.lines(*extra)
         text = chr(10).join(lines).replace('@X4LANE_CLIENTS@', '2') + chr(10) + 'X4LAN_CONFIG.native_gate_runtime_ids = true' + chr(10) + 'X4LAN_CONFIG.native_gate_world_identities = true' + chr(10)
         self.assertFalse([f for f in failures(text) if 'ui_replay' in f['rule']])
+
+    def test_missile_pair_and_minimum_hull(self):
+        """U6c: slot 2 a fixture fighter with a torpedo launcher; MD keeps the slot ships (slot 1's is the player's) alive."""
+        base = ['--ui-replay', 'target,missiles', '--fire', 'record', '--ui-replay-script', '--window', '40', '900']
+        args = players.defaults(players.build_parser().parse_args(['config', *self.ARGS, *base]))
+        players.config_block(args)
+        self.assertTrue(any('known launcher ships' in w for w in args.sector_warnings))   # the scouts of U6b
+        args = players.defaults(players.build_parser().parse_args(
+            ['config', '--players', '2', '--mode', 'factions', '--relations', 'hostile', '--source', 'stock', '--present', *base,
+             '--ships', '00000000000ae79c,0000000000176ad5', '--start', '2=0000000000000729@0,100000,2000/180', '--ui-replay-min-hull', '50']))
+        lines = players.config_block(args)[0]
+        self.assertFalse(any('launcher' in w for w in args.sector_warnings))
+        self.assertIn('X4LAN_CONFIG.native_gate_ui_replay_min_hull = 50', lines)
+        self.assertIn('0000000000176ad5', players.MISSILE_SHIPS)
+        text = chr(10).join(lines).replace('@X4LANE_CLIENTS@', '2') + chr(10) + 'X4LAN_CONFIG.native_gate_runtime_ids = true' + chr(10) + 'X4LAN_CONFIG.native_gate_world_identities = true' + chr(10)
+        self.assertFalse([f for f in failures(text) if 'ui_replay' in f['rule']])
+        for extra in (['--ui-replay-min-hull', '50'], ['--ui-replay', 'target', '--ui-replay-min-hull', '0'], ['--ui-replay', 'target', '--ui-replay-min-hull', '101']):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                self.lines(*extra)
+        md = (DEV/'native_gate_ui_replay.xml').read_text(encoding='utf-8')
+        self.assertIn('<set_object_min_hull object="$ship" exact="event.param3.$hull"/>', md)
+        self.assertIn("control=\"'MinHull'\"", md)
 
     def test_queue_block(self):
         lines = self.lines('--ui-replay', 'orders,queue', '--ui-replay-fleet', '0000000000176a13', '--ui-replay-script', '--window', '40', '900')
@@ -759,6 +882,9 @@ X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@
             self.assertIn('native_gate_runtime_ids = 70000', text)
             self.assertNotIn('native_gate_runtime_ids = true', text)
             self.assertFalse((out/'md/native_gate_ui_replay.xml').exists())
+            out = self.overlay(root, 'd', '', '--ui-replay', 'target', '--ui-replay-min-hull', '50')
+            self.assertTrue((out/'md/native_gate_ui_replay.xml').is_file())   # the MinHull cue
+            self.assertIn('native_gate_ui_replay_min_hull = 50', (out/'ui/config.lua.append').read_text())
             out = self.overlay(root, 'c', '')
             self.assertNotIn('ui_replay', (out/'ui/config.lua.append').read_text())
             self.assertNotIn('ui/native_gate_ui_replay_core.lua', (out/'ui.xml.files').read_text())

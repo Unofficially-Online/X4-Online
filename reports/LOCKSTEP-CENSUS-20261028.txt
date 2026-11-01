@@ -1137,6 +1137,30 @@ checks 3.9, probe 1.1, relay wait 0.08. perf-Pbare (near-minimal gate) outside
 21.4 ms. 4 clients p50 32 ms on this PC. FP keys cost nothing measurable.
 World captures (diagnostic) are 60 of the 70 frames over 100 ms in play22-long.
 Needed: a tick rate key or agreed per-tick dt (FP agent).
+MENU ACTIONS, ROUND 2 (build135 = UI replay 167dcbb4, 2 clients, scripted, 902 ticks
+each, relay pass and no digest mismatch in all three): u5b autopilot/dock/weapons:
+autopilot on slot 2 73-193 and slot 1 103-223, primary group 1 from 224 / 244 and back
+to 0 at 283 / 303, identical on both clients, nothing refused. u7 order queue editor:
+the fleet ship's queue and every applied edit (X4's answers) identical on both clients,
+queue=6/9/0 and 3/9/0, creates=3. X4 answered one step differently from the plan, the
+same everywhere: a Wait moved in front of the running MoveWait ends at once (a Wait ends
+when another order follows), so the queue went 3 -> 2 and slot 2's removal of order 3
+found nothing. u6b missiles exercised nothing: the scout pair carries no launchers
+(missiles=0/0/300/300), and slot 2's soft target on slot 1's ship is refused by X4 on
+client 2 (being named offline).
+WINDOWS VS LINUX, BOMBER 8BD90 (fr21 + vps-linux-FR21, 60 ticks): Windows' highway
+code run on Windows' own captured memory gives Windows' result exactly; with Linux's
+data words swapped in it gives Linux's result on all 16 words. The split is in the
+highway's spline data (one Bezier segment length 2 ulp apart and the totals and knots
+derived from it), not in the code that reads them. The builder is being read.
+4 OWN COCKPITS, LONG (build133, overlay-P4Long2 = P4Long with one capture stride and a
+motion watch, 24603 ticks): p4-long2 parts on client 4 alone at 15000 (p4-long: client 1
+alone at 22800). Census 14400 equal; 15000: 614 objects differ in attention only (two
+stations, traders and the canonical player in tempzone 2e2ce of sector 729). Earliest
+sign: between 14731 and 14740 client 4 alone runs the ObjectChangedAttention cue
+(2 calls) and two more view point evaluations than the others (its running total was
+already 15 higher, so a local-only caller asks for evaluations). p4-long3 repeats it
+with native_gate_view_rows (evaluation rows and their triggers).
 PLAY36 (build133 = smoke with the fp-redirect branch merged, default off; Play35L +
 physics_scenes 'viewpoints', view_scenes, viewpoint_standins 4): play36-long and
 play36-long2, 36003 ticks each: relay pass, 0 mismatches, census 0 at 121 captures,

@@ -1425,9 +1425,18 @@ function pilot_view.arm_ui_replay(slot,window)
   return table.concat(parts,'/')
  end
  -- Its rows are events, written at once: log holds frame rows for the ticks the status stride writes.
+ local min_hull=cfg.native_gate_ui_replay_min_hull
+ assert(min_hull==nil or (type(min_hull)=='number' and min_hull%1==0 and min_hull>=1 and min_hull<=100),
+   'ui replay refused: native_gate_ui_replay_min_hull is a whole percentage 1..100')
+ -- The scripted target ops run in the presentation scope (slot k's identity) as a click would; the frame is paused.
+ local function present(on)
+  if on then return gate.pilot_present_resume and gate.pilot_present_resume()==1 or false end
+  return gate.pilot_present_pause()==1
+ end
  local S=core.session{gate=gate,C=ffi.C,env=_G,mask=mask,log=ticklog.write,slot_ships=slot_ships,script=core.script(plan,window[1],tools),
   fleet=cfg.native_gate_ui_replay_fleet,fleet_tick=window[1]-4,saved_lua=tools.saved_lua,queue_of=queue_of,
-  local_mark=cfg.native_gate_runtime_ids_local and gate.runtime_ids_probe or nil}
+  local_mark=cfg.native_gate_runtime_ids_local and gate.runtime_ids_probe or nil,present=present,
+  min_hull=min_hull,slots=#cfg.native_gate_pilot_slots,slot_lua=tools.slot_lua}
  pilot_view.ui_replay=S
  input_section('ui','ui',S.section())
  log('UI_REPLAY_ARMED slot='..slot..' families='..mask..' script='..tostring(plan and #plan or 0))

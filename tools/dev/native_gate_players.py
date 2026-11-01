@@ -98,6 +98,10 @@ UI_REPLAY_FLIGHT_DEMO = {1: ((60, 'ap_to', 2), (180, 'ap_toggle'), (200, 'wkey',
 # its launchers fly at that target. Client 2 drops its target while holding (the launchers stop), client 1 releases.
 UI_REPLAY_MISSILE_DEMO = {1: ((60, 'target_slot', 2), (120, 'missile', 1), (420, 'missile', 0), (480, 'target_none')),
                           2: ((90, 'target_slot', 1), (150, 'missile', 1), (300, 'target_none'), (450, 'missile', 0))}
+# Ships of snapshot 005 with missile launchers in their secondary group (U6c, read from save_009): fixture actors 3..5, Argon S
+# fighters, one weapon_gen_s_torpedo_02_mk1 in secondary group 1 and 8 light torpedoes (missile_gen_s_torpedo_01_mk1) each.
+# The scouts (slot 1, the stock slots) have two lasers or plasma guns and no launcher connection; slot 1 must stay the player's.
+MISSILE_SHIPS = ('0000000000176ad5', '0000000000176b36', '0000000000176b97')
 UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'target_slot': 'target', 'target_none': 'target',
                        'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
                        'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons'}
@@ -271,8 +275,8 @@ def plan_of(args):
 def ui_replay_lines(args):
     """The UI replay block: families, the script without people, the test fleet (a `player` ship with a pilot)."""
     if args.ui_replay is None:
-        if args.ui_replay_script or args.ui_replay_fleet or args.ui_replay_dock:
-            raise ValueError('--ui-replay-script, --ui-replay-fleet and --ui-replay-dock need --ui-replay')
+        if args.ui_replay_script or args.ui_replay_fleet or args.ui_replay_dock or args.ui_replay_min_hull is not None:
+            raise ValueError('--ui-replay-script, --ui-replay-fleet, --ui-replay-dock and --ui-replay-min-hull need --ui-replay')
         return []
     if args.source != 'stock' or not args.present:
         raise ValueError('--ui-replay needs --source stock --present')
@@ -292,7 +296,16 @@ def ui_replay_lines(args):
         raise ValueError('--ui-replay missiles needs the target family and --fire record or script (pilot fire leases the launchers)')
     if args.ui_replay_dock and not (args.ui_replay_fleet or dock):
         raise ValueError('--ui-replay-dock needs --ui-replay-fleet or the dock family')
+    if args.ui_replay_min_hull is not None and not 1 <= args.ui_replay_min_hull <= 100:
+        raise ValueError('--ui-replay-min-hull is a hull percentage 1..100')
+    if 'missiles' in names and not set(args.ships or identity.DEFAULT_SHIPS[:args.players]) & set(MISSILE_SHIPS):
+        warning = ('WARNING --ui-replay missiles: no slot ship is one of the known launcher ships of snapshot 005 '
+                   f'({", ".join(MISSILE_SHIPS)}); PFIRE missiles= will count empty only (U6b). Give --ships with one of them.')
+        warnings = list(getattr(args, 'sector_warnings', []))
+        args.sector_warnings = warnings + ([warning] if warning not in warnings else [])
     lines = ['X4LAN_CONFIG.native_gate_ui_replay = ' + ('true' if args.ui_replay == 'all' else '{' + ','.join(repr(n) for n in names) + '}')]
+    if args.ui_replay_min_hull is not None:
+        lines.append(f'X4LAN_CONFIG.native_gate_ui_replay_min_hull = {args.ui_replay_min_hull}')
     if args.ui_replay_fleet:
         lines.append(f'X4LAN_CONFIG.native_gate_ui_replay_fleet = {sandbox.lua_list([repr(s) for s in args.ui_replay_fleet])}')
     if args.ui_replay_script:
@@ -563,7 +576,7 @@ def build_overlay(args):
     shutil.copy2(ROOT/'tools/dev/native_gate_player_identity.xml', out/'md/native_gate_player_identity.xml')
     if args.ui_replay is not None:
         added += UI_REPLAY_FILES
-        if args.ui_replay_fleet:
+        if args.ui_replay_fleet or args.ui_replay_min_hull is not None:
             shutil.copy2(ROOT/'tools/dev/native_gate_ui_replay.xml', out/'md/native_gate_ui_replay.xml')
     if orders is not None:
         added += ORDERS_FILES
@@ -700,6 +713,9 @@ def build_parser():
     common.add_argument('--ui-replay-script', action='store_true', help='--ui-replay without people: a fixed plan through the stock entries')
     common.add_argument('--ui-replay-fleet', type=ids, help='saved IDs: ships handed to `player` at the setup tick, to give orders to (--mode coop)')
     common.add_argument('--ui-replay-dock', type=sandbox.saved_id, help='a saved station ID for the scripted dock order')
+    common.add_argument('--ui-replay-min-hull', type=int, metavar='PCT',
+                        help='test protection: MD keeps every slot ship at PCT %% hull or more from the fleet tick (missile runs: '
+                             "slot 1's ship is the player's)")
     sandbox.add_census_options(common)
     common.add_argument('--delay', type=int, default=3)
     common.add_argument('--window', type=int, nargs=2, metavar=('START', 'STOP'))

@@ -27,6 +27,30 @@ static uint64_t tsc_pt_math(void *out,void *velocity,void *ref,void *frame,uint6
     for(unsigned i=0;i<16;i++) m[i]+=100.0f*(float)(flag&0xff);
     memcpy(out,m,0x40);return 0;
 }
+/* FR20's stand-ins: 0xe8bd20 copies the point's mat4 to out and runs the conversion through stub 9 (reference
+ * tsc_pt_ref); the hierarchy function 0x3dde10 maps m to 2m + i + 0.25 lane by lane; the path builder 0xe86bb0 points
+ * the agent at tsc_ps_point and returns 0x77. */
+static void *tsc_convert(void *out,void *point,void *frame) {
+    memcpy(out,(unsigned char*)point+0x20,0x40);void *r=tsc_pt_ref,*f=frame;
+    ((stc_pt_math_fn)(void*)(stc_page+stc_stub(9)))(out,NULL,&r,&f,1);return out;
+}
+static unsigned tsc_hier_calls;
+static void tsc_hier(void *from,void *inout,void *to,uint64_t zero) {
+    (void)from;(void)to;assert(!zero);++tsc_hier_calls;float m[16];memcpy(m,inout,0x40);
+    for(unsigned i=0;i<16;i++) m[i]=2.0f*m[i]+(float)i+0.25f;
+    memcpy(inout,m,0x40);
+}
+static unsigned char *tsc_ps_point;
+static uint64_t tsc_ps(void *agent,void *desc,void *a3,void *a4) {(void)desc;(void)a3;(void)a4;memcpy((unsigned char*)agent+ST_AGENT_POINT,&tsc_ps_point,8);return 0x77;}
+/* 0xe8c380's side of FR20's calls: push r15; mov r15,r9; xor r9d,r9d; sub rsp,0x20; mov rax,stub; call rax; add rsp,0x20;
+ * pop r15; ret (the agent only in r15). */
+typedef void *(*tsc_w_caller_fn)(void *,void *,void *,void *agent);
+static unsigned char *tsc_w_caller(void *stub) {
+    static const unsigned char head[]={0x41,0x57,0x4d,0x89,0xcf,0x45,0x31,0xc9,0x48,0x83,0xec,0x20,0x48,0xb8},tail[]={0xff,0xd0,0x48,0x83,0xc4,0x20,0x41,0x5f,0xc3};
+    unsigned char *p=VirtualAlloc(NULL,0x1000,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);assert(p);
+    memcpy(p,head,sizeof(head));memcpy(p+sizeof(head),&stub,8);memcpy(p+sizeof(head)+8,tail,sizeof(tail));
+    FlushInstructionCache(GetCurrentProcess(),p,0x1000);return p;
+}
 /* 0xe8c380's side of the call: push r15; mov r15,rcx; sub rsp,0x30; the caller's fifth and sixth arguments to
  * [rsp+0x20]/[rsp+0x28]; mov rax,stub; call rax; add rsp,0x30; pop r15; ret. */
 typedef uint64_t (*tsc_pt_caller_fn)(void *agent,void *out,void *point,void *frame,void *a5,void *a6);
@@ -38,6 +62,22 @@ static unsigned char *tsc_pt_caller(void *stub) {
     FlushInstructionCache(GetCurrentProcess(),p,0x1000);return p;
 }
 /* The helper as read: |cur-t| < 1e-4 -> t; cur >= t -> max(cur - rate*dt, t); else min(rate*dt + cur, t). */
+/* FR21's stand-ins: the Highway's map calls the banking through stub 15 and adds its result to the position; the
+ * banking returns 2t + 1; the path clear moves the agent's point to tsc_ps_point. */
+static float tsc_bank(void *hw,float t) {(void)hw;return 2.0f*t+1.0f;}
+static void tsc_hw(void *hw,void *mat) {
+    float m[16];memcpy(m,mat,0x40);
+    m[0]+=((float (*)(void *,float))(void*)(stc_page+stc_stub(STC_HW_SITE)))(hw,0.25f);memcpy(mat,m,0x40);
+}
+static uint64_t tsc_clear(void *agent,void *flag,void *a3,void *a4,void *a5,void *a6) {
+    (void)flag;(void)a3;(void)a4;(void)a5;(void)a6;memcpy((unsigned char*)agent+ST_AGENT_POINT,&tsc_ps_point,8);return 0x66;
+}
+/* FR22: 0xe89ed0's stand-in appends the point to the vector it is handed (the agent's CURRENT points, +0x6a8). */
+static __declspec(align(16)) unsigned char tsc_vec_store[3*0x90];
+static uint64_t tsc_vec(void *vec,void *point,void *a3,void *a4,void *a5,void *a6) {
+    (void)a3;(void)a4;(void)a5;(void)a6;unsigned char *begin,*end;memcpy(&begin,vec,8);memcpy(&end,(unsigned char*)vec+8,8);
+    memcpy(end,point,0x90);end+=0x90;memcpy((unsigned char*)vec+8,&end,8);return 0x55;
+}
 static float tsc_approach(float cur,float t,float rate,float dt) {
     if(!(fabsf(cur-t)>=1e-4f)) return t;
     volatile float step=rate*dt;
@@ -69,6 +109,12 @@ static void test_step_chain_native_image(const char *path) {
     image[STC_PT_CALLER+0x10]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[STC_PT_CALLER+0x10]^=1;
     image[stc_sites[8].site+2]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_sites[8].site+2]^=1;
     image[stc_sites[9].site+4]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_sites[9].site+4]^=1;
+    image[STC_PT_CALLER2+0x40]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[STC_PT_CALLER2+0x40]^=1;
+    image[STC_HIER+0x200]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[STC_HIER+0x200]^=1;
+    image[STC_PS+0x300]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[STC_PS+0x300]^=1;
+    image[STC_PS_CALLER+0x8]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[STC_PS_CALLER+0x8]^=1;
+    for(unsigned i=10;i<ST_CHAIN_SITE_COUNT;i++) {image[stc_sites[i].site+1]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_sites[i].site+1]^=1;}
+    for(unsigned i=0;i<5u;i++) {image[stc_pc_pins[i].rva+stc_pc_pins[i].size-1]^=1;assert(!st_chain_arm() && !strcmp(st_chain_stage,"pins"));image[stc_pc_pins[i].rva+stc_pc_pins[i].size-1]^=1;}
     assert(!stc_page && !st_chain_installed);
     /* The stand-ins (called, never read: not pinned) and the helper executable in this copy. */
     DWORD old;
@@ -83,7 +129,10 @@ static void test_step_chain_native_image(const char *path) {
     assert(read_local(image+STC_BLOCK,seen,STC_BLOCK_SIZE) && !memcmp(seen,block,STC_BLOCK_SIZE));
     assert(hash_ok(image+0xeb27c0,5212,"7920e6e4ff99bf0d0c348eeab202b0a21f5e9d69c4005ba75d302eac7ea0c8a4")); /* the world trace's pin */
     assert(st_chain_owned() && !memcmp(stc_page+stc_stub(8),"\x4c\x89\xf9\xff\x25\0\0\0\0",9) && !memcmp(stc_page+stc_stub(9),"\xff\x25\0\0\0\0",6));
-    assert(stc_stub(7)==0x70 && stc_stub(8)==0x80 && stc_stub(9)==0xa0 && STC_CODE_BYTES==0xc0);
+    assert(stc_stub(7)==0x70 && stc_stub(8)==0x80 && stc_stub(9)==0xa0 && stc_stub(14)==0x140 && stc_stub(25)==0x2a0 && STC_CODE_BYTES==0x2c0);
+    for(unsigned i=15;i<ST_CHAIN_SITE_COUNT;i++) assert(!memcmp(stc_page+stc_stub(i),"\xff\x25\0\0\0\0",6));
+    for(unsigned i=10;i<14;i++) assert(!memcmp(stc_page+stc_stub(i),"\x4d\x89\xf9\xff\x25\0\0\0\0",9));
+    assert(!memcmp(stc_page+stc_stub(14),"\xff\x25\0\0\0\0",6));
     /* Outside a watched step: the original's result, counted, nothing recorded. */
     static st_record_t rec;memset(&rec,0,sizeof(rec));rec.chain[0]=ST_CHAIN_TAG;
     const LONG64 hits_pitch=st_chain_hits[3],recorded=st_chain_recorded;
@@ -124,7 +173,7 @@ static void test_step_chain_native_image(const char *path) {
      const DWORD prior_ui=ui_thread;
      st_id_count=1;st_ids[0]=0x7dd7c;st_ticks=3;stats.active=1;boot_phase=3;stats.issued=2;ui_thread=GetCurrentThreadId();
      memset(st_fm,0,sizeof(st_fm));st_fm_kept=0;
-     static __declspec(align(16)) unsigned char ships[2][0x20],agents[2][0x1000],formation[0x80],shape[0x80],out[0x40];
+     static __declspec(align(16)) unsigned char ships[2][0x80],agents[2][0x1000],formation[0x80],shape[0x80],out[0x40]; /* ships' +0x70 (parent) 0 */
      static void *members[2];
      for(unsigned i=0;i<2;i++) {
          memset(agents[i],0x11*(i+1),sizeof(agents[i]));const uint64_t runtime=9101+i;memcpy(ships[i]+8,&runtime,8);
@@ -158,7 +207,10 @@ static void test_step_chain_native_image(const char *path) {
       * watched wingman's call kept complete with its conversion; the other agent's, a conversion outside any call and a
       * call past the window not. */
      assert(VirtualProtect(image+(STC_PT&~0xfffu),0x2000,PAGE_EXECUTE_READWRITE,&old) && VirtualProtect(image+(STC_PT_MATH&~0xfffu),0x1000,PAGE_EXECUTE_READWRITE,&old));
-     tsc_jump(STC_PT,(void*)tsc_pt);tsc_jump(STC_PT_MATH,(void*)tsc_pt_math);FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
+     assert(VirtualProtect(image+(STC_HIER&~0xfffu),0x1000,PAGE_EXECUTE_READWRITE,&old) && VirtualProtect(image+(STC_PS&~0xfffu),0x1000,PAGE_EXECUTE_READWRITE,&old));
+     tsc_jump(STC_PT,(void*)tsc_pt);tsc_jump(STC_PT_MATH,(void*)tsc_pt_math);tsc_jump(STC_PT_CONVERT,(void*)tsc_convert);
+     tsc_jump(STC_HIER,(void*)tsc_hier);tsc_jump(STC_PS,(void*)tsc_ps);FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
+     tsc_hier_calls=0;
      assert(world_identity_record(9103,0x1234) && world_identity_record(9104,0x5678));
      static __declspec(align(16)) unsigned char point[0x80],ref[0x300],frame[0x300],ref_controller[0x60],frame_controller[0x60],pt_out[0x40];
      const uint64_t ref_runtime=9103,frame_runtime=9104;void *rc=ref_controller,*fc=frame_controller,*parent=ships[0];
@@ -179,7 +231,13 @@ static void test_step_chain_native_image(const char *path) {
      assert(!st_pt_open && !st_pt_live());
      static st_record_t pr;st_fm_take(0,&pr);assert(!st_fm[0].pt_calls && !st_fm[0].lock);
      const uint32_t *p=pr.path;float plus[16];for(unsigned i=0;i<16;i++) plus[i]=m[i]+100.0f;
-     assert(p[0]==ST_PT_TAG && p[1]==2 && p[2]==0 && p[3]==1 && p[4]==0 && p[5]==1 && p[16]==1 && p[17]==0 && p[18]==0 && p[191]==1);
+     assert(p[0]==ST_PT_TAG && p[1]==2 && p[2]==0 && p[3]==1 && p[4]==0 && p[5]==1 && p[16]==1 && p[17]==0 && p[18]==0 && p[ST_PT_WORDS-1]==1);
+     /* FR20: the reference's chain ref -> ships[0] (top), the frame's frame (top); one probe, identity in. */
+     {const uint32_t *l=p+ST_PT_REF_LEVELS;float want[16]={0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0};for(unsigned i=0;i<16;i++) want[i]=2.0f*want[i]+(float)i+0.25f;
+      memcpy(&k,l,8);assert(k==0x1234 && l[2]==1 && !memcmp(l+4,want,0x40) && tsc_hier_calls==1 && st_pt_levels_probed==1);
+      l+=ST_PT_LEVEL_WORDS;memcpy(&k,l,8);assert(k==0x7dcd0 && !l[2]);for(unsigned i=4;i<20;i++) assert(!l[i]);
+      for(unsigned i=ST_PT_REF_LEVELS+2*ST_PT_LEVEL_WORDS;i<ST_PT_FRAME_LEVELS;i++) assert(!p[i]);
+      l=p+ST_PT_FRAME_LEVELS;memcpy(&k,l,8);assert(k==0x5678 && !l[2]);for(unsigned i=ST_PT_FRAME_LEVELS+ST_PT_LEVEL_WORDS;i<ST_PT_WORDS-1;i++) assert(!p[i]);}
      memcpy(&k,p+6,8);assert(k==0x7dd7c);memcpy(&k,p+8,8);assert(k==0x1234);memcpy(&k,p+10,8);assert(k==0x5678);
      memcpy(&k,p+12,8);assert(k==0x7dcd0);memcpy(&k,p+14,8);assert(!k);memcpy(&k,p+19,8);assert(k==0x1234);memcpy(&k,p+21,8);assert(k==0x5678);
      memcpy(&k,p+168,8);assert(k==0x7dcd0);memcpy(&k,p+170,8);assert(!k);
@@ -187,6 +245,38 @@ static void test_step_chain_native_image(const char *path) {
      assert(!memcmp(p+104,ref_controller,0x60) && !memcmp(p+128,frame_controller,0x60) && p[152]==0x22222222u && !p[172] && !p[190]);
      for(unsigned i=ST_PT_WORDS;i<ST_PT_ENTRIES*ST_PT_WORDS;i++) assert(!p[i]);
      assert(VirtualFree(caller,0,MEM_RELEASE));st_pt_kept=st_pt_conversions=0;
+     /* FR20: 0xe8bd20 at 0xe8d502 and the object path at 0xe8d5ea entered with the agent only in r15 (the watched one,
+      * then the other), the path builder at 0xeac498 for the watched agent: both conversions kept with their levels,
+      * the path set with its stack, description and the point before / after. */
+     {unsigned char *wc=tsc_w_caller(stc_page+stc_stub(10)),*oc=tsc_w_caller(stc_page+stc_stub(13));
+      static __declspec(align(16)) unsigned char obj_mat[0x40],desc[0x200],point2[0x80];
+      const LONG64 h10=st_chain_hits[10],h13=st_chain_hits[13],h14=st_chain_hits[14];
+      memset(st_fm,0,sizeof(st_fm));st_pt_kept=st_pt_conversions=st_pt_levels_probed=st_ps_kept=0;tsc_hier_calls=0;stats.issued=2;
+      memset(pt_out,0x5a,sizeof(pt_out));
+      assert(((tsc_w_caller_fn)(void*)wc)(pt_out,point,frame,agents[1])==pt_out && !memcmp(pt_out,plus,0x40));
+      assert(((tsc_w_caller_fn)(void*)wc)(pt_out,point,frame,agents[0])==pt_out);                 /* not watched */
+      float om[16];for(unsigned i=0;i<16;i++) om[i]=(float)i-7.5f;memcpy(obj_mat,om,0x40);
+      ((tsc_w_caller_fn)(void*)oc)(ref,obj_mat,frame,agents[1]);
+      float o2[16];for(unsigned i=0;i<16;i++) o2[i]=2.0f*om[i]+(float)i+0.25f;assert(!memcmp(obj_mat,o2,0x40));
+      for(unsigned i=0;i<sizeof(desc);i++) desc[i]=(unsigned char)(i*7+1);
+      for(unsigned i=0;i<sizeof(point2);i++) point2[i]=(unsigned char)(0xa0+i);
+      tsc_ps_point=point2;void *pp=point;memcpy(agents[1]+ST_AGENT_POINT,&pp,8);
+      assert(((stc_ps_fn)(void*)(stc_page+stc_stub(14)))(agents[1],desc,NULL,NULL)==0x77);
+      assert(((stc_ps_fn)(void*)(stc_page+stc_stub(14)))(agents[0],desc,NULL,NULL)==0x77);       /* not watched */
+      assert(st_chain_hits[10]==h10+2 && st_chain_hits[13]==h13+1 && st_chain_hits[14]==h14+2 && st_pt_kept==2 && st_pt_conversions==2 && st_ps_kept==1);
+      assert(tsc_hier_calls==3 && st_pt_levels_probed==2 && !st_pt_open && !st_pt_live()); /* one probe each, one object-path call */
+      static st_record_t wr;st_fm_take(0,&wr);assert(!st_fm[0].pt_calls && !st_fm[0].ps_calls && !st_fm[0].lock);
+      const uint32_t *a=wr.path,*b=a+ST_PT_WORDS,*s=wr.pathset;
+      assert(a[0]==ST_PT_TAG && a[2]==1 && a[16]==1 && a[17]==0 && !memcmp(a+24,point,0x80) && !memcmp(a+56,plus,0x40) && !memcmp(a+88,plus,0x40) && a[ST_PT_WORDS-1]==2);
+      memcpy(&k,a+19,8);assert(k==0x1234);memcpy(&k,a+21,8);assert(k==0x5678);memcpy(&k,a+ST_PT_REF_LEVELS,8);assert(k==0x1234 && a[ST_PT_REF_LEVELS+2]==1);
+      assert(b[0]==ST_PT_TAG && b[2]==4 && b[16]==1 && b[17]==1 && b[18]==1 && b[24]==0xffffffffu && !memcmp(b+72,om,0x40) && !memcmp(b+88,o2,0x40) && !memcmp(b+56,o2,0x40));
+      memcpy(&k,b+8,8);assert(!k);memcpy(&k,b+19,8);assert(k==0x1234);memcpy(&k,b+21,8);assert(k==0x5678);
+      memcpy(&k,b+ST_PT_REF_LEVELS+ST_PT_LEVEL_WORDS,8);assert(k==0x7dcd0 && !b[ST_PT_REF_LEVELS+ST_PT_LEVEL_WORDS+2] && !b[ST_PT_SCRATCH] && !b[ST_PT_SCRATCH+3]);
+      assert(s[0]==ST_PS_TAG && s[1]==2 && s[2]==0 && s[3]==0x77 && s[6]==0 && s[7]>=2 && s[8]==0xfffffffeu && s[232]==1 && s[233]==0 && s[ST_PS_WORDS-1]==1);
+      memcpy(&k,s+4,8);assert(k==0x7dd7c);
+      assert(!memcmp(s+40,desc,0x200) && !memcmp(s+168,point,0x80) && !memcmp(s+200,point2,0x80));
+      for(unsigned i=ST_PS_WORDS;i<ST_PS_ENTRIES*ST_PS_WORDS;i++) assert(!s[i]);
+      assert(VirtualFree(wc,0,MEM_RELEASE) && VirtualFree(oc,0,MEM_RELEASE));st_pt_kept=st_pt_conversions=st_pt_levels_probed=st_ps_kept=0;}
      /* FR19: SetTarget's slot holds 0xeaf620 in the file; relocated as the game would, a flipped pinned byte refuses,
       * then armed; the real SetTarget runs on its own bytes, called through a caller written into the int3 padding after
       * it (sub rsp,0x28; call [slot]; add rsp,0x28; ret: returns to 0xeaf65b): the watched ship's call kept, the other
@@ -218,6 +308,85 @@ static void test_step_chain_native_image(const char *path) {
       assert(!memcmp(g+16,target,0x40) && !g[32] && !g[47] && !memcmp(g+52,point,0x80) && g[84]==0x22222222u && !memcmp(g+100,target,0x40));
       for(unsigned i=ST_SG_WORDS;i<ST_SG_ENTRIES*ST_SG_WORDS;i++) assert(!g[i]);
       st_sg_restore();assert(!st_sg_installed && *(void**)(image+ST_SG_SLOT)==fn);st_sg_calls=st_sg_kept=0;}
+     /* FR21: the Highway's slot (file value, a flipped pinned byte refuses, armed); its map and the banking replaced by
+      * stand-ins after arming; inside the watched ship's open entry the map's call is kept with the banking's result and
+      * the spline memory (affine, its knots, composite, its pairs, two segments); outside it nothing. Then the path
+      * clear through stub 19: the watched agent's call kept with its stack and points, the other's not. */
+     {uint64_t file_slot;memcpy(&file_slot,image+ST_HW_SLOT,8);assert(file_slot==nt.OptionalHeader.ImageBase+ST_HW_FN);
+      void *fn=image+ST_HW_FN;memcpy(image+ST_HW_SLOT,&fn,8);
+      image[ST_HW_FN+0x100]^=1;assert(!st_hw_arm() && !st_hw_installed);image[ST_HW_FN+0x100]^=1;
+      assert(st_hw_arm() && st_hw_installed && *(void**)(image+ST_HW_SLOT)==(void*)st_hw_transform && st_hw_native==fn);
+      static unsigned char hw_code[14],bank_code[14],clear_code[14];
+      memcpy(hw_code,image+ST_HW_FN,14);memcpy(bank_code,image+STC_HW_BANK,14);memcpy(clear_code,image+0xe89f10,14);
+      assert(VirtualProtect(image+(ST_HW_FN&~0xfffu),0x2000,PAGE_EXECUTE_READWRITE,&old) && VirtualProtect(image+(STC_HW_BANK&~0xfffu),0x1000,PAGE_EXECUTE_READWRITE,&old));
+      assert(VirtualProtect(image+(0xe89f10u&~0xfffu),0x1000,PAGE_EXECUTE_READWRITE,&old));
+      static unsigned char vec_code[14];memcpy(vec_code,image+0xe89ed0,14);
+      tsc_jump(ST_HW_FN,(void*)tsc_hw);tsc_jump(STC_HW_BANK,(void*)tsc_bank);tsc_jump(0xe89f10u,(void*)tsc_clear);tsc_jump(0xe89ed0u,(void*)tsc_vec);
+      FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
+      static __declspec(align(16)) unsigned char hw[0x700],aff[0x40],comp[0x40],knots[12],pairs[24],segs[2*0xa0],hmat[0x40];
+      const uint64_t hw_runtime=9103;memset(hw,0,sizeof(hw));memcpy(hw+8,&hw_runtime,8);for(unsigned i=0x500;i<0x640;i++) hw[i]=(unsigned char)i;
+      void *q=aff;memcpy(hw+ST_HW_SPLINE,&q,8);
+      for(unsigned i=0;i<sizeof(aff);i++) aff[i]=(unsigned char)(0x11*i);
+      for(unsigned i=0;i<sizeof(comp);i++) comp[i]=(unsigned char)(0x13*i);
+      for(unsigned i=0;i<sizeof(knots);i++) knots[i]=(unsigned char)(i+1);
+      for(unsigned i=0;i<sizeof(pairs);i++) pairs[i]=(unsigned char)(i+0x40);
+      for(unsigned i=0;i<sizeof(segs);i++) segs[i]=(unsigned char)(i*3);
+      uint64_t v[2]={(uint64_t)(uintptr_t)knots,(uint64_t)(uintptr_t)(knots+12)};memcpy(aff+0x20,v,16);q=comp;memcpy(aff+0x10,&q,8);
+      v[0]=(uint64_t)(uintptr_t)segs;v[1]=v[0]+sizeof(segs);memcpy(comp+0x10,v,16);
+      v[0]=(uint64_t)(uintptr_t)pairs;v[1]=v[0]+sizeof(pairs);memcpy(comp+0x28,v,16);
+      float hm[16];for(unsigned i=0;i<16;i++) hm[i]=0.125f*(float)i;memcpy(hmat,hm,0x40);
+      const st_hw_fn slot=*(st_hw_fn*)(image+ST_HW_SLOT);
+      memset((void*)st_fm,0,sizeof(st_fm));st_hw_calls=st_hw_kept=st_hw_banking=0;stats.issued=2;
+      slot(hw,hmat);                                                                       /* outside any entry */
+      {st_pt_ctx c;assert(st_pt_begin(&c,10,1,agents[1],point,frame,NULL,NULL));slot(hw,hmat);slot(hw,hmat);st_pt_end(&c,hmat,1);}
+      {st_pt_ctx c;assert(!st_pt_begin(&c,10,1,agents[0],point,frame,NULL,NULL));slot(hw,hmat);} /* not watched */
+      assert(st_hw_calls==4 && st_hw_kept==1 && st_hw_banking==2 && st_fm[0].hw_calls==2 && !st_pt_open && !st_pt_live());
+      static st_record_t hr;st_fm_take(0,&hr);assert(!st_fm[0].hw_calls && !st_fm[0].lock);
+      const uint32_t *h=hr.hwcap;
+      memcpy(&k,h+8,8);assert(k==(uint64_t)(uintptr_t)hw);memcpy(&k,h+10,8);assert(k==0x1234);memcpy(&k,h+6,8);assert(k==(uint64_t)(uintptr_t)image);
+      memcpy(&k,h+4,8);assert(k==0x7dd7c);
+      float t13,t14;const float before0=hm[0]+1.5f;memcpy(&t13,h+13,4);memcpy(&t14,h+14,4); /* one stand-in call before the kept one */
+      assert(h[0]==ST_HW_TAG && h[1]==2 && h[2]==0 && h[3]==1 && h[12]==1 && t13==0.25f && t14==1.5f && h[15]==5 && h[ST_HW_WORDS-1]==2);
+      float hb[16];memcpy(hb,h+16,0x40);assert(hb[0]==before0 && !memcmp(hb+1,hm+1,0x3c));
+      float ha[16];memcpy(ha,h+32,0x40);assert(ha[0]==before0+1.5f && !memcmp(ha+1,hm+1,0x3c));
+      assert(!memcmp(h+48,hw+0x500,0x140));
+      const uint32_t *b=h+ST_HW_BLOCKS;memcpy(&k,b,8);assert(k==(uint64_t)(uintptr_t)aff && b[2]==0x40 && !memcmp(b+4,aff,0x40));b+=4+0x10;
+      memcpy(&k,b,8);assert(k==(uint64_t)(uintptr_t)knots && b[2]==12 && !memcmp(b+4,knots,12));b+=4+4;
+      memcpy(&k,b,8);assert(k==(uint64_t)(uintptr_t)comp && b[2]==0x40 && !memcmp(b+4,comp,0x40));b+=4+0x10;
+      memcpy(&k,b,8);assert(k==(uint64_t)(uintptr_t)pairs && b[2]==24 && !memcmp(b+4,pairs,24));b+=4+8;
+      memcpy(&k,b,8);assert(k==(uint64_t)(uintptr_t)segs && b[2]==0x140 && !memcmp(b+4,segs,0x140));b+=4+0x50;
+      for(const uint32_t *z=b;z<h+ST_HW_WORDS-1;z++) assert(!*z);
+      static __declspec(align(16)) unsigned char point3[0x80];for(unsigned i=0;i<sizeof(point3);i++) point3[i]=(unsigned char)(0xc0+i);
+      tsc_ps_point=point3;void *pp=point;memcpy(agents[1]+ST_AGENT_POINT,&pp,8);st_pc_kept=0;
+      const LONG64 h19=st_chain_hits[19];
+      assert(((stc_any_fn)(void*)(stc_page+stc_stub(19)))(agents[1],(void*)1,NULL,NULL,NULL,NULL)==0x66);
+      assert(((stc_any_fn)(void*)(stc_page+stc_stub(19)))(agents[0],(void*)1,NULL,NULL,NULL,NULL)==0x66);  /* not watched */
+      assert(st_chain_hits[19]==h19+2 && st_pc_kept==1 && st_fm[0].ps_calls==1);
+      static st_record_t cr;st_fm_take(0,&cr);const uint32_t *s=cr.pathset;
+      assert(s[0]==ST_PC_TAG && s[1]==2 && s[3]==4 && s[7]>=2 && s[232]==1 && !memcmp(s+168,point,0x80) && !memcmp(s+200,point3,0x80));
+      memcpy(&k,s+4,8);assert(k==0x7dd7c);memcpy(&k,s+46,8);assert(k==(uint64_t)(uintptr_t)point);
+      /* FR22: the current points' append through stub 18 hands over agent+0x6a8 (FR21 looked at -0x6c0 and kept
+       * nothing): the watched agent's call kept with the added point, the last point and the header after; the
+       * other agent's vector not; a vector address below the offset not. */
+      {static __declspec(align(16)) unsigned char added[0x90];for(unsigned i=0;i<sizeof(added);i++) added[i]=(unsigned char)(0x70+i);
+       for(unsigned i=0;i<0x90;i++) tsc_vec_store[i]=(unsigned char)(0x10+i);
+       unsigned char *vb=tsc_vec_store,*ve=tsc_vec_store+0x90,*vc=tsc_vec_store+sizeof(tsc_vec_store);
+       for(unsigned a=0;a<2;a++) {memcpy(agents[a]+ST_AGENT_POINT,&vb,8);memcpy(agents[a]+ST_AGENT_POINT+8,&ve,8);memcpy(agents[a]+ST_AGENT_POINT+16,&vc,8);}
+       const LONG64 h18=st_chain_hits[18];st_pc_kept=0;
+       assert(((stc_any_fn)(void*)(stc_page+stc_stub(18)))(agents[1]+ST_AGENT_POINT,added,NULL,NULL,NULL,NULL)==0x55);
+       memcpy(agents[0]+ST_AGENT_POINT+8,&ve,8);
+       assert(((stc_any_fn)(void*)(stc_page+stc_stub(18)))(agents[0]+ST_AGENT_POINT,added,NULL,NULL,NULL,NULL)==0x55); /* not watched */
+       assert(st_chain_hits[18]==h18+2 && st_pc_kept==1 && st_fm[0].ps_calls==1);
+       static st_record_t vr;st_fm_take(0,&vr);const uint32_t *v=vr.pathset;
+       assert(v[0]==ST_PC_TAG && v[1]==2 && v[3]==3 && v[7]>=2 && v[232]==0 && !memcmp(v+88,added,0x90) && !memcmp(v+124,added,0x90));
+       assert(!memcmp(v+168,tsc_vec_store,0x80) && !memcmp(v+200,tsc_vec_store,0x80));
+       memcpy(&k,v+4,8);assert(k==0x7dd7c);memcpy(&k,v+46,8);assert(k==(uint64_t)(uintptr_t)vb);
+       memcpy(&k,v+234,8);assert(k==(uint64_t)(uintptr_t)vb);memcpy(&k,v+236,8);assert(k==(uint64_t)(uintptr_t)(vb+0x120));
+       memcpy(&k,v+48,8);assert(k==(uint64_t)(uintptr_t)(vb+0x90));}
+      memcpy(image+0xe89ed0,vec_code,14);
+      memcpy(image+ST_HW_FN,hw_code,14);memcpy(image+STC_HW_BANK,bank_code,14);memcpy(image+0xe89f10,clear_code,14);
+      FlushInstructionCache(GetCurrentProcess(),image,nt.OptionalHeader.SizeOfImage);
+      st_hw_restore();assert(!st_hw_installed && *(void**)(image+ST_HW_SLOT)==fn);st_hw_calls=st_hw_kept=st_hw_banking=st_pc_kept=0;}
      *(uint32_t*)ST_BANK_READ=prior_bank;st_id_count=prior_ids;st_ticks=prior_ticks;stats.issued=prior_issued;stats.active=prior_active;boot_phase=prior_phase;
      ui_thread=prior_ui;st_fm_kept=0;
      VirtualFree(world_identities,0,MEM_RELEASE);world_identities=prior_identities;world_identity_count=prior_count;}
@@ -230,7 +399,9 @@ static void test_step_chain_native_image(const char *path) {
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) st_chain_hits[i]=0;
     st_chain_recorded=0;
     assert(VirtualFree(image,0,MEM_RELEASE));image=prior;
-    printf("step chain native image: pins, ten swaps, view, approach helper 0xeb1db0 = the reading on 20000 (%u at the target), rows, "
+    printf("step chain native image: pins, twenty-six swaps, view, approach helper 0xeb1db0 = the reading on 20000 (%u at the target), rows, "
            "FR17 formation calls kept (watched wingman, tick window, leader not kept), FR18 path point call kept complete "
-           "(agent through r15, conversion inside), FR19 SetTarget slot (pin, real bytes, caller 0xeaf65b) kept, restoration PASS\n",at_target);
+           "(agent through r15, conversion inside), FR19 SetTarget slot (pin, real bytes, caller 0xeaf65b) kept, FR20 conversions "
+           "(0xe8d502, object path) with level probes and the path set (stack, description, point) kept, FR21 Highway slot (pin, "
+           "capture with banking and spline memory inside the watched entry only) and path clear (stack, points) kept, FR22 current-points append (agent at +0x6a8, added and last point) kept, restoration PASS\n",at_target);
 }

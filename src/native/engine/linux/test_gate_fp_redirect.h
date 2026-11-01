@@ -159,6 +159,33 @@ static void test_fp_redirect_elf(void) {
         ++m_equal;if(mo==0x80000000u) ++m_negzero;
     }
     assert(m_negzero>0);
+    /* FR22: BezierSpline::ComputeLength 0x1a37520 (u = i/n) with its chord 0x1a34ba0 on their own bytes, through a vtable
+     * of ours (+0x18 the chord, as 0x3ae5068 holds it): native equals ours (sl_arc_length, the reference the Windows
+     * hook stores) on 8bd90's highway segments and on random segments, every n tried. */
+    {   uint64_t q;memcpy(&q,LX(0x3ae5068u+0x30u),8);assert(q==0x1a37520u);memcpy(&q,LX(0x3ae5068u+0x18u),8);assert(q==0x1a34ba0u);
+        assert(!memcmp(LX(0x1a37585),"\xf3\x0f\x5e\xc3\xf3\x0f\x5e\xcb\xff\x50\x18",11)); /* i/n, (i+1)/n, the chord */
+        for(unsigned k=0;k<2;k++) {uintptr_t page=(uintptr_t)LX(k?0x1a37520u:0x1a34ba0u)&~(uintptr_t)(GATE_PAGE-1);assert(!mprotect((void*)page,GATE_PAGE,PROT_READ|PROT_WRITE|PROT_EXEC));}
+        static void *bvt[8];bvt[3]=(void*)LX(0x1a34ba0u);
+        void (*const bl)(void *,uint32_t)=(void (*)(void *,uint32_t))(void*)LX(0x1a37520u);
+        static unsigned char seg[0x40] __attribute__((aligned(16)));void *vt=bvt;
+        static const uint32_t hw[2][12]={
+            {0x469a350cu,0,0x463e9a96u,0,0xc69ad8f8u,0,0xc690eab4u,0,0xc7828a7cu,0,0xc6afd36au,0},
+            {0x45f5ac58u,0,0x45c6e2e2u,0,0x45dc2a98u,0,0xc4604600u,0,0xc7389e1bu,0,0xc6b3c0acu,0}};
+        static const uint32_t want[2]={0x478e6bb1u,0x470fcea2u};
+        for(unsigned s=0;s<2;s++) {memset(seg,0,sizeof(seg));memcpy(seg,&vt,8);memcpy(seg+0x10,hw[s],48);bl(seg,100);assert(!memcmp(seg+8,&want[s],4));}
+        static const uint32_t ns[]={100,10,7,3,1,64,0,50,1000,33};unsigned bl_equal=0;
+        for(unsigned r=0;r<400;r++) for(unsigned j=0;j<sizeof(ns)/sizeof(ns[0]);j++) {
+            const uint32_t n=ns[j];if(n==1000 && r%16) continue;
+            float c[12];const float scale=r%3==0?100000.0f:r%3==1?2000.0f:5.0f;
+            for(unsigned k=0;k<12;k++) c[k]=(k&3)==3?tfr_range(-1e30f,1e30f):tfr_range(-scale,scale);
+            if(r%5==0) for(unsigned k=1;k<12;k+=4) c[k]=0.0f;
+            memset(seg,0x5a,sizeof(seg));memcpy(seg,&vt,8);memcpy(seg+0x10,c,48);bl(seg,n);
+            uint32_t got;memcpy(&got,seg+8,4);const uint32_t ours=sl_arc_length(seg+0x10,n);
+            if(got!=ours) {printf("fp redirect arc length %u n %u: native %08x ours %08x\n",r,n,got,ours);assert(0);}
+            ++bl_equal;
+        }
+        printf("fp redirect on the executable: ComputeLength 0x1a37520 equals ours on 8bd90's segments and %u random ones PASS\n",bl_equal);
+    }
     /* Its writer 0x14811c0 (with 0x1481050 and the tail 0x1481150) on its own bytes: random inputs through a fake ship
      * (the five getters at vtable +0x2078..+0x2098, p behind +0x398) and the table pointer [0x3db83c8] of this image;
      * native equals ours (Linux's order) always. */

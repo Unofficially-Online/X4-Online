@@ -283,13 +283,17 @@ Guard: FFI mutators of a family that is armed but not replayed yet return their 
   Known: the local secondary fire button state, lock tone and HUD lock are client k's own presentation; the launch itself is the
     controller's. Whether X4 launches at a ship of the same faction (coop: all slots are `player`) is not known; if :M shows 1.n
     and no missile leaves, run factions hostile. Bombs (PlayerShootController bomb launcher) and turret missiles are not in it.
-  U6 (no people): overlay --base .local/census/overlay-Play36L ... --players 2 --mode factions --relations hostile --source stock
-    --present --window 40 900 --battle calm --fire record --ui-replay target,missiles --ui-replay-script
+  U6 (no people; superseded by U6c, section 13: run U6b showed no launcher on the default scouts and client 2's target refused):
+    overlay --base .local/census/overlay-Play36L ... --players 2 --mode factions --relations hostile --source stock --present
+    --window 40 900 --battle calm --fire record --ui-replay target,missiles --ui-replay-script --ships 00000000000ae79c,0000000000176ad5
+    --start 2=0000000000000729@0,100000,2000/180 --ui-replay-min-hull 50   (slot 1 the player's scout: no launcher can be fitted;
+    slot 2 fixture actor 3: one torpedo launcher in secondary group 1; MD keeps both hulls at 50 % or more)
     Absolute ticks (window 40, delay 3). Slot 1 targets slot 2's ship 103, holds 163, releases 463, drops the target 523. Slot 2
     targets slot 1's ship 133, holds 193, drops the target 343 (still holding: its launchers stop), releases 493.
-    Pass: relay pass, 0 mismatches, census 0, no stop 112/155/164; the PFIRE receipt identical on both clients with :M1.n for slot 1
-    from 163 to 463 and for slot 2 from 193 to 343 (n = its launchers, > 0); PFIRE status missiles=2/2/0/~150 on both (the last:
-    slot 2's held ticks without a target); missiles leave the launchers and fly at the other ship (PILOT_SHIPS hull may drop).
+    Pass: relay pass, 0 mismatches, census 0, no stop 112/155/164; the PFIRE receipt identical on both clients with :M0.0/1.1 from
+    193 to 343 (slot 1 has no launcher); PFIRE status missiles=1/1/300/150 on both (slot 2's start and stop; slot 1's 300 held ticks
+    with a target and no launcher; slot 2's 150 held ticks without a target); a torpedo leaves slot 2's launcher and flies at slot 1's
+    ship (PILOT_SHIPS: slot 1's shield and hull fall, the hull not below 50). Details and the other rows: section 13.
     If missiles=../../>0 (no launchers): the slot ship's secondary group is empty; give --ships a pair with missile launchers.
 
 12. THE ORDER QUEUE EDITOR (31 October; default off: native_gate_ui_replay lists 'queue', stop 164)
@@ -326,3 +330,76 @@ Guard: FFI mutators of a family that is armed but not replayed yet return their 
     Pass: relay pass, 0 mismatches, census 0, no stop 164; the fleet queue column and the UI_REPLAY_APPLIED rows (X4's
     answers, e.g. CreateOrder3=1/1) identical on both clients; UI_REPLAY_STATUS queue=6/9/0 (client 1) and 3/9/0 (client 2),
     creates=3 on both, mapped and moved equal on both (non-zero only if the ship had orders before the clear); no UI_REPLAY_REFUSED rows.
+
+13. U6b, CLIENT 2'S SOFT TARGET AND THE MISSILE PAIR (31 October; default off as before, nothing changes without the script)
+  U6b (live, coordinator, factions hostile, --ui-replay target,missiles --fire record --ui-replay-script): relay pass, 0 mismatches,
+    no refusals, both clients identical, but the missile path never ran:
+    client 1  UI_REPLAY_SCRIPT tick=100 op=target_slot result=true: slot 1 targets slot 2's ship from 103 on both (0/22bce).
+    client 2  tick=130 op=target_slot result=false, captured=0: X4 refused SetSofttarget(slot 1's ship) before the capture block.
+    PFIRE missiles=0/0/300/300 on both: slot 1 held 300 ticks with a target and no launcher (its scout has none), slot 2 held
+    300 ticks without a target.
+  Why client 2 was refused [F, static; X4 does not log which return code without its debug output]:
+    SetSofttarget 0xb01790 resolves the component and calls UI::CUIController vfunc 72 (0xb3f7c0, vtable 0x2bc07f0 + 0x240): the
+    element of the component's UIAssociation (0xaef330; 0xad96d0 makes one when there is none), then 0xaeb150 -> 0xaecb60. A return
+    of 6 or more is false. 0xaeb150 returns 7 when the element's targetable byte +0xb3 is 0, 0xaecb60 checks it again (5th argument,
+    1 from 0xaeb150). +0xb3 is "no condition of the configuration's untargetableconditions holds" (0xaddde0 / 0xaddfe0 -> 0xae1830,
+    list +0x68). For ships s, m, l and xl that list is is_playercontrolled (ui/core/messageconfigurationgraph.xml: "prevent the player
+    ship to be targetable"). UI::ICom::IsPlayerControlled 0xae6a00 (vtable 0x2be1ea0 slot 5; slot 6 0x9c980 says changeable, so it is
+    evaluated again whenever the element is) reads the singleton [[0x3d198f8]+0x230]: the first entry of its controlled-object vector
+    +0x308 that is also the class-0x70 ancestor of its parent +0x70 (the walk of 0x9f9250, which GetPlayerControlledShipID uses).
+    The element is evaluated on the call's own path (0xad96d0 -> 0xaed880 -> 0xaedb80 -> 0xaddde0 for a new one; 0xaeb150 -> 0xad6fd0
+    -> 0xaddfe0 when 0xaee810 lists it) and every frame in CUIController::Move (0xb3bad0 -> 0xae9880 -> 0xaebad0, 0xaee8b0).
+    The script runs in the probe's frame, and the probe pauses the presentation for its frame (onUpdate, gate.pilot_present_pause):
+    there the canonical player sits in slot 1's ship 00000000000ae79c, so on client 2 IsPlayerControlled(slot 1's ship) is true:
+    untargetable. Slot 1's call (slot 2's ship) had no such conflict. "X4's own player occupies ae79c" is right, but only in the
+    paused frame: in the presentation scope the canonical player's +0x70 is slot k's room and +0x308 is P_k's vector (U6b, asks= on
+    client 2: GetPlayerControlledShipID answered slot 2's ship in the scope), and the same condition names slot k's own ship.
+  A person on client 2 [I, static]: clicks, menus and the HUD run in VBI slots 6, 10 and 4 inside the scope, where slot 1's ship is
+    targetable and slot 2's own is not, as in stock play. A flag evaluated outside the scope (only the probe's frame does) is set
+    right by the next frame's update. Not seen live yet: U4 (a person on client 2 targets slot 1's ship) is the check.
+  Fix (Lua and one return value; default off: only --ui-replay-script runs it):
+    native_gate_ui_replay_core.lua: K.SCOPED = target_slot, target_none. Such an op opens the presentation scope around its stock
+      call (p.present(true), then p.present(false)), where a person's click runs. Its UI_REPLAY_SCRIPT row ends in scope=1 (opened)
+      or scope=0 (no scope on this client: slot 1's client, or no presentation). The other ops keep the canonical frame that U5b and
+      U7 passed with.
+    lockstep_pilot_present.h pres_resume / gate.pilot_present_resume answer 1 when they opened the scope again (C test in
+      test_lockstep_pilot_slots.h: pause, resume, pause, resume inside the UI entry). The probe's own pause and resume are unchanged.
+    The capture in the scope is the one before (pres_open is a local phase), as slot k's event, applied on every client through
+    0x3e73f0 in slot k's scope: the record and its replay are unchanged, client 2 now produces one.
+  The missile pair [F, save_009 of snapshot capture 005]:
+    slot 1 stays 00000000000ae79c (the stock slot is the ship every client sits in: stock_slot_not_occupied otherwise), an Argon
+      scout (ship_arg_s_scout_01_a): two lasers and no launcher connection, nothing can be fitted. Its hold can only count empty.
+    the stock scouts 000000000007a8fe, ...7a8dc, ...7a931: two plasma guns each, no launcher.
+    fixture actors 3..5 (0000000000176ad5, ...176b36, ...176b97, Argon S fighters ship_arg_s_fighter_01_a): one
+      weapon_gen_s_torpedo_02_mk1 (class missilelauncher, U::MissileLauncher: the vtable pilot fire collects) in secondary group 1
+      (active 0) and 8 light torpedoes each (missile_gen_s_torpedo_01_mk1 in 9.00: guided, range 5000 m, explosion damage 3660).
+      A fixture fighter flew as stock slot 2 in st-C1 (its cockpit is a flat panel; there are no people here).
+    U6c: slot 1 00000000000ae79c, slot 2 0000000000176ad5 at slot 2's stock start (0, 100000, 2000, yaw 180: facing slot 1).
+    native_gate_players.py knows them as MISSILE_SHIPS and warns when --ui-replay missiles has none of them among the slot ships.
+    One light torpedo outweighs a scout's shield and hull, and slot 1's ship is the player's. --ui-replay-min-hull PCT (config
+      native_gate_ui_replay_min_hull) makes MD keep every slot ship at PCT % hull or more (native_gate_ui_replay.xml, cue MinHull,
+      set_object_min_hull), from the test fleet's tick (window start - 4) on every client, by the same UI-triggered event as the
+      fleet's owner change. Checked by check_gate_options (needs native_gate_ui_replay, 1..100) and by the probe.
+  Coop and factions (section 11): still right. Targeting does not depend on the faction (is_playercontrolled is control, not
+    ownership), so it works in coop too. Whether the shoot controller launches at a `player` target is still not known, so U6c
+    stays factions hostile (slot 1 keeps `player`, slot 2 is x4lan_player2).
+  U6c (no people), built with this branch's tools and DLL:
+    python tools/dev/native_gate_players.py overlay --base .local/census/overlay-Play36L --gate-dll .local/build-u6c/x4lan_gate_64.dll
+      --probe tools/dev/native_gate_probe.lua --out .local/census/overlay-U6c --players 2 --mode factions --relations hostile
+      --source stock --present --window 40 900 --battle calm --fire record --ships 00000000000ae79c,0000000000176ad5
+      --start 2=0000000000000729@0,100000,2000/180 --ui-replay target,missiles --ui-replay-script --ui-replay-min-hull 50
+    Expected, absolute ticks (window 40, delay 3), every row identical on both clients unless named:
+      UI_REPLAY_MIN_HULL tick=36 slots=2 hull=50; MD rows UI_REPLAY_MIN_HULL_SET for CHL-961 (slot 1) and UDW-502 (slot 2), the
+        same time on both.
+      client 1: UI_REPLAY_SCRIPT tick=100 op=target_slot ok=true result=true scope=0, tick=520 op=target_none ... scope=0.
+      client 2: tick=130 op=target_slot ok=true result=true scope=1, tick=340 op=target_none ok=true result=nil scope=1.
+      UI_REPLAY_SLOTS: 103 0/<s2>,0/0; 133 0/<s2>,0/<s1>; 343 0/<s2>,0/0; 523 0/0,0/0 (<sk>: slot k's ship's runtime ID).
+      UI_REPLAY_STATUS: captured=2 and taken=2 on each client; from 523 staged=4 native=4 on both; refused=0, target_passed=0.
+      PFIRE receipt :M0.0/1.1 from 193 to 343, :M0.0/0.0 otherwise; PILOT_FIRE_STATUS (600) and PILOT_FIRE_STOP missiles=1/1/300/150.
+      A torpedo leaves slot 2's launcher in 193..343 and flies at slot 1's ship; PILOT_SHIPS: slot 1's shield and hull fall, the
+        hull not below 50.
+    Pass: relay pass, 0 mismatches, census 0, no stop 112/155/162/164, the rows above.
+    If client 2 reads scope=0: the scope did not open again (skipped= rises in the PILOT_INPUTS present= part). If result=false
+      with scope=1: something else refuses (send UI_REPLAY_SLOTS, PILOT_SHIPS and the PILOT_INPUTS present= part). If :M0.0/1.1
+      shows and no torpedo leaves in 150 ticks: the controller has not locked yet; lengthen client 2's span between hold and
+      target_none.

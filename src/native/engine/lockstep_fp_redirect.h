@@ -3,8 +3,9 @@
  * written to the game); 'redirect' is shadow plus two writes: the writer's +0x0..+0xc (fr_writer_run) become ours, and
  * on Windows the spline segment length of the two composite builders that inline BezierSpline::Set (fr_len_seen,
  * FR10/FR11), the Bezier handle length s = d/3 there (fr_handle_seen, FR13) and the PointGuard formation angle
- * (fr_pg_seen, FR16); 'writer' redirects only the writer and shadows the length, the handles and the angle. Fail
- * closed: a hooked site that no longer
+ * (fr_pg_seen, FR16), and (FR22) BezierSpline::ComputeLength's arc length (fr_bl_seen) and the AffineSpline knot
+ * weight (fr_aff_seen) behind the highways' spline data; 'writer' redirects only the writer and shadows the length,
+ * the handles, the angle, the arc length and the weight. Fail closed: a hooked site that no longer
  * leads here stops the session (FR_STOP_REASON).
  *
  * The method ("recompute after native on both platforms", reports/LOCKSTEP-LINUX-PORT-PLAN-20261030.txt, Option B):
@@ -55,7 +56,7 @@
 #define FR_THREADS 128u
 enum {FR_OFF=0,FR_SHADOW=1,FR_REDIRECT=2,FR_WRITER=3}; /* redirect: shadow, the writer's +0x0..+0xc and (Windows) the
                                                      * spline length overwritten with ours; writer: only the writer's */
-enum {FR_F0=0,FR_F4,FR_F24,FR_M,FR_F0_OUT,FR_F4_OUT,FR_P0,FR_P4,FR_P8,FR_PC,FR_W0,FR_W4,FR_W8,FR_WC,FR_LEN,FR_HANDLE,FR_PG,FR_FIELDS};
+enum {FR_F0=0,FR_F4,FR_F24,FR_M,FR_F0_OUT,FR_F4_OUT,FR_P0,FR_P4,FR_P8,FR_PC,FR_W0,FR_W4,FR_W8,FR_WC,FR_LEN,FR_HANDLE,FR_PG,FR_BL,FR_AFF,FR_FIELDS};
 enum {FR_SEEN_G4=1u,FR_SEEN_G0=2u,FR_SEEN_M4=4u,FR_SEEN_M0=8u,FR_SEEN_COMP=16u};
 typedef void (*fr_refresh_fn)(void *,void *,uint64_t);
 typedef float (*fr_getter_fn)(void *,void *,void *);
@@ -65,7 +66,8 @@ static fr_refresh_fn fr_native_refresh;
 static fr_getter_fn fr_native_g4,fr_native_g0;
 static fr_m_fn fr_native_m;
 static fr_params_fn fr_native_params; /* the refresh's first call (Linux 0x148cb50, Windows 0x6dc610), on every path */
-enum {FR_HIT_G4=0,FR_HIT_G0,FR_HIT_M4,FR_HIT_M0,FR_HIT_PARAMS,FR_HIT_PARAMS_FLAG,FR_HIT_V,FR_HIT_MULPS,FR_HIT_WRITER,FR_HIT_LEN0,FR_HIT_LEN1,FR_HIT_HANDLE0,FR_HIT_HANDLE3=FR_HIT_HANDLE0+3,FR_HIT_PG,FR_HITS};
+enum {FR_HIT_G4=0,FR_HIT_G0,FR_HIT_M4,FR_HIT_M0,FR_HIT_PARAMS,FR_HIT_PARAMS_FLAG,FR_HIT_V,FR_HIT_MULPS,FR_HIT_WRITER,FR_HIT_LEN0,FR_HIT_LEN1,FR_HIT_HANDLE0,FR_HIT_HANDLE3=FR_HIT_HANDLE0+3,FR_HIT_PG,
+      FR_HIT_BL100,FR_HIT_BL10,FR_HIT_BLN,FR_HIT_BL_FOREIGN,FR_HIT_AFF,FR_HITS};
 enum {FR_PSEEN_V=1u,FR_PSEEN_MULPS=2u};
 static uint32_t fr_k_read(void); /* the platform's table float K (below) */
 typedef uint64_t (*fr_writer_fn)(void *,void *,void *,void *);
@@ -198,6 +200,7 @@ static uint64_t fr_ticks=3;
 static const char *fr_stage="idle";
 static volatile LONG64 fr_calls,fr_compared,fr_load_compared,fr_skipped,fr_nested,fr_unfinished,fr_no_context,fr_orphans;
 static volatile LONG64 fr_m_branch,fr_v8_branch,fr_comp_changed,fr_records,fr_dropped,fr_failures,fr_w_unread,fr_w_written,fr_len_written,fr_handle_written,fr_pg_written;
+static volatile LONG64 fr_bl_written,fr_aff_written; /* FR22 */
 static volatile LONG64 fr_n[FR_FIELDS],fr_diff[FR_FIELDS],fr_max_ulp[FR_FIELDS];
 /* Every stub's entries, counted before anything else: a hook that never fires shows as 0 here. */
 static volatile LONG64 fr_hits[FR_HITS];
@@ -448,6 +451,32 @@ static inline uint32_t fr_pg_seen(unsigned which,uint32_t rem,uint32_t m1) {
     if(ours!=native) InterlockedIncrement64(&fr_pg_written);
     return ours;
 }
+/* FR22: BezierSpline::ComputeLength(n) has just stored native's arc length at the segment's +8 (lockstep_spline_length.h
+ * sl_arc_length: Windows' u = i*(1/n) against Linux's i/n). The platform calls this after native with the segment
+ * (coefficients at +0x10..+0x3f) and n. Off or not comparing: nothing. 'shadow' / 'writer': ours compared (bl).
+ * 'redirect': ours stored, counted in bl_written where the bits change; the composite then sums and knots ours. */
+static inline void fr_bl_seen(unsigned char *segment,uint32_t n) {
+    InterlockedIncrement64(&fr_hits[n==100u?FR_HIT_BL100:n==10u?FR_HIT_BL10:FR_HIT_BLN]);
+    if(!fr_comparing()) return;
+    uint32_t native;memcpy(&native,segment+8,4);
+    const uint32_t ours=sl_arc_length(segment+0x10,n);
+    fr_field(FR_BL,ours,native);
+    if(fr_mode==FR_REDIRECT && ours!=native) {memcpy(segment+8,&ours,4);InterlockedIncrement64(&fr_bl_written);}
+}
+/* FR22: the AffineSpline constructor's knot weight (lockstep_spline_length.h sl_affine_weight): the platform hooks
+ * Windows' divss/mulss and hands over sum = sqrt(s_i)+sqrt(s_i-1) and dp = p_i-p_i-1 from their registers; this returns
+ * what the weight's register holds afterwards. Off or not comparing: native (2/sum)*dp. 'shadow' / 'writer': native,
+ * ours compared (aff). 'redirect': ours, dp/(sum*0.5), counted in aff_written where the bits change. */
+static inline uint32_t fr_aff_seen(unsigned which,uint32_t sum,uint32_t dp) {
+    (void)which;InterlockedIncrement64(&fr_hits[FR_HIT_AFF]);
+    const uint32_t native=sl_affine_weight_windows(sum,dp);
+    if(!fr_comparing()) return native;
+    const uint32_t ours=sl_affine_weight(sum,dp);
+    fr_field(FR_AFF,ours,native);
+    if(fr_mode!=FR_REDIRECT) return native;
+    if(ours!=native) InterlockedIncrement64(&fr_aff_written);
+    return ours;
+}
 /* ---- Configuration, rows, status ---- */
 /* A saved ID to row; before arming. A loading-UI rerun: an ID already watched is accepted, a new one refused. */
 static int fr_watch(uint64_t id) {
@@ -464,6 +493,7 @@ static int fr_arm_ready(int mode,uint64_t ticks) {
     if(fr_id_count && !world_identity_installed) {fr_stage="needs";return 0;}
     fr_ticks=ticks;fr_calls=fr_compared=fr_load_compared=fr_skipped=fr_nested=fr_unfinished=fr_no_context=fr_orphans=0;
     fr_m_branch=fr_v8_branch=fr_comp_changed=fr_records=fr_dropped=fr_failures=fr_w_unread=fr_w_written=fr_len_written=fr_handle_written=fr_pg_written=0;
+    fr_bl_written=fr_aff_written=0;
     fr_scan=fr_emitted=fr_scanned=fr_keyed=0;memset(fr_ordinal_tick,0xff,sizeof(fr_ordinal_tick));
     for(unsigned f=0;f<FR_FIELDS;f++) fr_n[f]=fr_diff[f]=fr_max_ulp[f]=0;
     for(unsigned h=0;h<FR_HITS;h++) fr_hits[h]=0;
@@ -504,6 +534,14 @@ static int fr_status(char *out,size_t cap) {
     /* FR16 (Windows only; zeros on Linux, which divides first natively): pg=max_ulp:differing:compared. */
     m=snprintf(out+n,cap-(size_t)n," pg=%lld:%lld:%lld pg_hits=%lld pg_written=%lld",(long long)fr_max_ulp[FR_PG],(long long)fr_diff[FR_PG],
         (long long)fr_n[FR_PG],(long long)fr_hits[FR_HIT_PG],(long long)fr_pg_written);
+    if(m<=0 || (size_t)m>=cap-(size_t)n) return 0;
+    n+=m;
+    /* FR22 (Windows only; zeros on Linux, whose own code is the reference): bl=max_ulp:differing:compared, the arc
+     * length's calls by n (100, 10, other, and calls on a foreign vtable), aff likewise for the affine knot weight. */
+    m=snprintf(out+n,cap-(size_t)n," bl=%lld:%lld:%lld bl_hits=%lld,%lld,%lld,%lld bl_written=%lld aff=%lld:%lld:%lld aff_hits=%lld aff_written=%lld",
+        (long long)fr_max_ulp[FR_BL],(long long)fr_diff[FR_BL],(long long)fr_n[FR_BL],(long long)fr_hits[FR_HIT_BL100],(long long)fr_hits[FR_HIT_BL10],
+        (long long)fr_hits[FR_HIT_BLN],(long long)fr_hits[FR_HIT_BL_FOREIGN],(long long)fr_bl_written,(long long)fr_max_ulp[FR_AFF],(long long)fr_diff[FR_AFF],
+        (long long)fr_n[FR_AFF],(long long)fr_hits[FR_HIT_AFF],(long long)fr_aff_written);
     return m>0 && (size_t)m<cap-(size_t)n?n+m:0;
 }
 static void fr_hex(char *out,const unsigned char *bytes,size_t n) {
