@@ -41,6 +41,7 @@ class Options:
     runs: Path = ROOT / '.local/runs'
     state: Path = ROOT / '.local/x4ls'
     keep_views: bool = False
+    fast: bool = False  # render-only settings down, no frame cap, no sound (profile.FAST)
     stagger: int = 45  # seconds per later client that each client idles in the start menu before arming
     steam_fix: bool = False  # re-register Steam's pid before each client (see steam.py); restored at the end
     relay_args: list = field(default_factory=list)
@@ -181,7 +182,7 @@ def run(o: Options, log=print):
             tail = f'X4LAN_CONFIG.native_gate_load_hold = {hold}\n' if hold else ''
             extension.compose(o.overlay, view / 'extensions', k, port, token, o.clients, profile_id=profile_id,
                               config_tail=tail)
-            profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot)
+            profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot, fast=o.fast)
             if o.steam_fix:
                 steam.fix(o.state / 'steam-fix.json')  # Steam can reset it once a client connects
             proc = subprocess.Popen(client_command(view, profile_id, k), cwd=view, env=steam.client_environment())
@@ -280,10 +281,35 @@ def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None
     return outcome
 
 
+def progress(run_dir, tick_hz, since):
+    """'tick N (game Xs, Y.YYx real time)' from the relay log, plus the first desync if any."""
+    try:
+        lines = (run_dir / 'relay.log').read_text(errors='replace').splitlines()
+    except OSError:
+        return None
+    ticks = [l for l in lines if l.startswith('NATIVE_GATE tick=')]
+    if not ticks:
+        return None
+    tick = int(re.match(r'NATIVE_GATE tick=(-?\d+)', ticks[-1]).group(1))
+    game_s, real_s = tick / tick_hz, time.time() - since
+    desync = re.search(r'first_mismatch=(\d+) mismatches=(\d+)', ticks[-1])
+    return (f'tick {tick} (game {game_s / 60:.1f} min, {game_s / max(real_s, 1):.2f}x real time)'
+            + (f', desync since tick {desync.group(1)} ({desync.group(2)} ticks)' if desync else ', in sync'))
+
+
 def monitor(o, run_dir, relay, clients, log):
-    started, tiled, stopped = time.time(), False, set()
+    started, tiled, stopped, reported = time.time(), False, set(), time.time()
+    tick_hz, armed_at = o.tick_hz or overlay_tick_hz(o.overlay), None
     while True:
         time.sleep(2)
+        if armed_at is None and 'NATIVE_GATE tick=0' in ((run_dir / 'relay.log').read_text(errors='replace')
+                                                         if (run_dir / 'relay.log').is_file() else ''):
+            armed_at = time.time()
+        if armed_at and time.time() - reported >= 60:
+            reported = time.time()
+            line = progress(run_dir, tick_hz, armed_at)
+            if line:
+                log(line)
         if not tiled and time.time() - started > 20:
             tiled = tile([proc.pid for _, _, proc in clients], o.width, o.height) == len(clients)
         for k, profile_id, proc in clients:

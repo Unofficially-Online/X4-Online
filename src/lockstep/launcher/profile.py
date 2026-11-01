@@ -26,10 +26,19 @@ def profile_dir(profile, root=None):
     return path
 
 
-def config_xml(width, height):
+# Render-only settings turned down for unattended soaks (--fast): more frames per second means more
+# admitted ticks per second. Detail distances (lodfactor, effectdistance) stay at 1.0 because they can
+# change what the simulation does; every client gets identical settings either way.
+FAST = {'gfxquality': 0, 'shaderquality': 0, 'shadows': 0, 'softshadows': 'false', 'ssao': 0, 'glow': 0, 'uiglow': 0,
+        'distortion': 'false', 'ssr': 'false', 'texturequality': 'low', 'chromaticaberration': 'false', 'volumetric': 0,
+        'pom': 'off', 'envmapprobes': 'low', 'frameratelimit': 'false', 'presentmode': 'immediate', 'nosound': 'true'}
+
+
+def config_xml(width, height, fast=False):
+    extra = ''.join(f'<{k}>{v}</{k}>' for k, v in FAST.items()) if fast else ''
     return ('<?xml version="1.0"?><root><autosave>false</autosave><uisafemode>false</uisafemode>'
             f'<fullscreen>false</fullscreen><borderless>false</borderless><res_width>{width}</res_width>'
-            f'<res_height>{height}</res_height><antialiasing>0</antialiasing><vsync>false</vsync></root>\n')
+            f'<res_height>{height}</res_height><antialiasing>0</antialiasing><vsync>false</vsync>{extra}</root>\n')
 
 
 def content_xml(extension_ids):
@@ -37,13 +46,13 @@ def content_xml(extension_ids):
     return f'<?xml version="1.0"?><content>{rows}</content>\n'
 
 
-def prepare(profile, extension_ids, width=1280, height=720, snapshot=None, root=None):
+def prepare(profile, extension_ids, width=1280, height=720, snapshot=None, root=None, fast=False):
     """Fresh profile: windowed config, autosave and protected UI off, optional snapshot."""
     path = profile_dir(profile, root)
     if path.exists():
         shutil.rmtree(path)
     (path / 'save').mkdir(parents=True)
-    (path / 'config.xml').write_text(config_xml(width, height))
+    (path / 'config.xml').write_text(config_xml(width, height, fast))
     (path / 'content.xml').write_text(content_xml(extension_ids))
     if snapshot:
         shutil.copyfile(snapshot, path / 'save' / SNAPSHOT_SLOT)
