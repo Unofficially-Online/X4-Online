@@ -149,6 +149,8 @@ def clean(state_dir, keep_views=False):
             if Path(view).exists():
                 game.remove_view(view)
     path.unlink()
+    if (Path(state_dir) / 'steam-fix.json').exists():
+        steam.restore(Path(state_dir) / 'steam-fix.json')
     return f"cleaned session {data.get('run')}"
 
 
