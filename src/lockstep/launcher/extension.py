@@ -44,8 +44,12 @@ def ui_xml(files):
             f'    <dependency name="ego_detailmonitor" />\n{rows}  </environment>\n</addon>\n')
 
 
-def compose(overlay, extensions, slot, port, token, clients):
-    """Write <extensions>/x4_lan_lab for client `slot` (1-based)."""
+def compose(overlay, extensions, slot, port, token, clients, extra=None, config_tail=''):
+    """Write <extensions>/x4_lan_lab for client `slot` (1-based).
+
+    extra: {relative ui path: source file} loaded before the overlay's ui files;
+    config_tail: Lua appended to ui/config.lua.
+    """
     overlay = Path(overlay)
     verify_overlay(overlay)
     target = Path(extensions) / EXTENSION_ID
@@ -62,7 +66,9 @@ def compose(overlay, extensions, slot, port, token, clients):
         config = config.replace(placeholder, value)
     if '@X4LANE_' in config:
         raise SystemExit('overlay config has an unknown @X4LANE_ placeholder')
+    for name, source in (extra or {}).items():
+        shutil.copyfile(source, target / name)
     (target / 'content.xml').write_text(CONTENT)
-    (target / 'ui.xml').write_text(ui_xml(files))
-    (target / 'ui/config.lua').write_text('X4LAN_CONFIG = {enabled = false}\n' + config)
+    (target / 'ui.xml').write_text(ui_xml([*(extra or {}), *files]))
+    (target / 'ui/config.lua').write_text('X4LAN_CONFIG = {enabled = false}\n' + config + config_tail)
     return target

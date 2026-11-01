@@ -47,6 +47,22 @@ class Extension(unittest.TestCase):
             for leftover in ('x4lane-manifest.json', 'ui.xml.files', 'ui/config.lua.append'):
                 self.assertFalse((target / leftover).exists())
 
+    def test_capture_overlay_without_fixedtick_gets_autostart_first(self):
+        sys.path.insert(0, str(ROOT / 'tools/dev'))
+        from native_gate_scenarios import build_capture_overlay
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            overlay = build_capture_overlay('custom_creative', None, tmp / 'cap')
+            self.assertFalse((overlay / 'native').exists() and any((overlay / 'native').iterdir()))
+            autostart = ROOT / 'src/lockstep/launcher/autostart.lua'
+            target = extension.compose(overlay, tmp / 'ext', 1, 0, '0' * 32, 1, extra={'ui/x4ls_autostart.lua': autostart},
+                                       config_tail='X4LAN_CONFIG.x4ls_autostart = "custom_creative"\n')
+            config = (target / 'ui/config.lua').read_text()
+            self.assertIn('native_gate_snapshot_fixed = false', config)
+            self.assertIn('x4ls_autostart = "custom_creative"', config)
+            ui = (target / 'ui.xml').read_text()
+            self.assertLess(ui.index('ui/x4ls_autostart.lua'), ui.index('ui/native_gate_snapshot.lua'))
+
     def test_tampered_overlay_and_unknown_placeholder_are_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)

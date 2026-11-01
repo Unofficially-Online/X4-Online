@@ -231,8 +231,8 @@ def capture_battle_md(gamestart):
 def build_capture_overlay(gamestart, fixedtick_dll, out):
     """Overlay for tools/dev/native_gate_lane.py --capture-snapshot with another gamestart."""
     md = capture_battle_md(gamestart)
-    fixedtick_dll = Path(fixedtick_dll)
-    if not fixedtick_dll.is_file():
+    fixedtick_dll = Path(fixedtick_dll) if fixedtick_dll else None
+    if fixedtick_dll and not fixedtick_dll.is_file():
         raise ValueError(f'fixed-tick DLL {fixedtick_dll} missing')
     out = Path(out)
     if out.exists():
@@ -240,13 +240,15 @@ def build_capture_overlay(gamestart, fixedtick_dll, out):
     for directory in ('md', 'native', 'ui'):
         (out / directory).mkdir(parents=True)
     (out / 'md/native_gate_battle.xml').write_text(md, encoding='utf-8')
-    shutil.copy2(fixedtick_dll, out / 'native/x4lan_fixedtick_64.dll')
+    if fixedtick_dll:
+        shutil.copy2(fixedtick_dll, out / 'native/x4lan_fixedtick_64.dll')
     shutil.copy2(DEV / 'native_gate_snapshot.lua', out / 'ui/native_gate_snapshot.lua')
     (out / 'ui.xml.files').write_text('ui/native_gate_snapshot.lua\n')
     (out / 'ui/config.lua.append').write_text(
         'X4LAN_CONFIG.enabled = false\nX4LAN_CONFIG.test_profile = "45841"\n'
         'X4LAN_CONFIG.native_gate_snapshot = "capture"\n'
-        f'X4LAN_CONFIG.native_gate_snapshot_gamestart = "{gamestart}"\n')
+        f'X4LAN_CONFIG.native_gate_snapshot_gamestart = "{gamestart}"\n'
+        + ('' if fixedtick_dll else 'X4LAN_CONFIG.native_gate_snapshot_fixed = false\n'))
     write_manifest(out)
     return out
 
@@ -359,7 +361,7 @@ def build_parser():
     sub.add_parser('starts', help='list supported player starts for snapshot capture')
     cap = sub.add_parser('capture-overlay', help='overlay for native_gate_lane.py --capture-snapshot with another gamestart')
     cap.add_argument('--gamestart', required=True)
-    cap.add_argument('--fixedtick-dll', required=True)
+    cap.add_argument('--fixedtick-dll', help='optional; without it the capture runs at the normal frame rate')
     cap.add_argument('--out', required=True)
     info = sub.add_parser('snapshot-info', help='read-only: header, player ship and census config lines of a save')
     info.add_argument('snapshot')

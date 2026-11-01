@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -184,6 +185,70 @@ def run(o: Options, log=print):
     (run_dir / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
     log(f"{result['outcome']}: {run_dir}")
     return result
+
+
+def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None, timeout=900,
+                     runs=ROOT / '.local/runs', state_dir=ROOT / '.local/x4ls', log=print):
+    """One client starts `gamestart`, spawns the 12-ship gate fixture and saves save_009; copied to `out`."""
+    sys.path.insert(0, str(ROOT / 'tools/dev'))
+    from native_gate_scenarios import build_capture_overlay
+    out = Path(out)
+    if out.exists():
+        raise SystemExit(f'{out} exists')
+    if (Path(state_dir) / 'session.json').exists():
+        raise SystemExit('a previous session is still recorded; run x4ls clean first')
+    if x4_running():
+        raise SystemExit('X4 is running; close it first')
+    ok, message = steam.status()
+    if not ok:
+        raise SystemExit(message)
+    install = Path(game_dir) if game_dir else game.find_install()
+    game.verify_exe(install)
+    lanes = Path(lanes) if lanes else Path(os.path.splitdrive(str(install))[0] + '\\x4ls-lanes')
+    run_dir = Path(runs) / time.strftime('snapshot-%Y%m%d-%H%M%S')
+    overlay = build_capture_overlay(gamestart, None, run_dir / 'overlay')
+    o = Options(clients=1, overlay=overlay, state=Path(state_dir))
+    view, proc, log_name = lanes / 'capture', None, 'x4ls-capture.log'
+    state = {'run': str(run_dir), 'views': [], 'pids': [], 'relay_pid': None}
+    save_state(o, state)
+    try:
+        game.create_view(install, view)
+        state['views'].append(str(view))
+        save_state(o, state)
+        extension.compose(overlay, view / 'extensions', 1, 0, '0' * 32, 1,
+                          extra={'ui/x4ls_autostart.lua': Path(__file__).with_name('autostart.lua')},
+                          config_tail=f'X4LAN_CONFIG.x4ls_autostart = "{gamestart}"\n')
+        profile.prepare(profile.CAPTURE_PROFILE, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height)
+        args = client_command(view, profile.CAPTURE_PROFILE, 1)[:-1] + [log_name]
+        proc = subprocess.Popen(args, cwd=view, env=steam.client_environment())
+        state['pids'].append(proc.pid)
+        save_state(o, state)
+        log(f'capture client pid {proc.pid}: starting {gamestart}, waiting for the fixture save')
+        started, outcome = time.time(), 'timeout'
+        while time.time() - started < timeout:
+            time.sleep(2)
+            path = profile.profile_dir(profile.CAPTURE_PROFILE) / log_name
+            text = path.read_text(errors='replace') if path.is_file() else ''
+            if 'NATIVE_SNAPSHOT SAVED' in text:
+                time.sleep(5)  # let X4 finish writing the file
+                outcome = 'saved'
+                break
+            if 'NATIVE_SNAPSHOT ERROR' in text or proc.poll() is not None:
+                outcome = 'failed'
+                break
+        if outcome == 'saved':
+            out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(profile.profile_dir(profile.CAPTURE_PROFILE) / 'save' / profile.SNAPSHOT_SLOT, out)
+    finally:
+        if proc and proc.poll() is None:
+            kill(proc.pid)
+        time.sleep(2)
+        profile.collect(profile.CAPTURE_PROFILE, log_name, run_dir / 'client1')
+        for v in state['views']:
+            game.remove_view(v)
+        (Path(state_dir) / 'session.json').unlink(missing_ok=True)
+    log(f'{outcome}: {out if outcome == "saved" else run_dir}')
+    return outcome
 
 
 def monitor(o, run_dir, relay, clients, log):

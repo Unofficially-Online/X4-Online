@@ -43,6 +43,13 @@ def main(argv=None):
     s.add_argument('--keep-views', action='store_true')
     s.add_argument('relay_args', nargs='*', help='extra relay arguments after --')
 
+    n = sub.add_parser('snapshot', help='capture a starting snapshot (new game + 12-ship gate fixture)')
+    n.add_argument('--out', type=Path, required=True, help='new .xml.gz file')
+    n.add_argument('--gamestart', default='custom_creative')
+    n.add_argument('--timeout', type=int, default=900)
+    n.add_argument('--game', type=Path)
+    n.add_argument('--lanes', type=Path)
+
     c = sub.add_parser('clean', help='stop processes and remove views left by a crashed session')
     c.add_argument('--keep-views', action='store_true')
 
@@ -53,6 +60,9 @@ def main(argv=None):
     state = session.ROOT / '.local/x4ls'
     if args.command == 'doctor':
         return doctor(args)
+    if args.command == 'snapshot':
+        outcome = session.capture_snapshot(args.out, args.gamestart, args.game, args.lanes, args.timeout)
+        return 0 if outcome == 'saved' else 1
     if args.command == 'clean':
         print(session.clean(state, args.keep_views))
         return 0

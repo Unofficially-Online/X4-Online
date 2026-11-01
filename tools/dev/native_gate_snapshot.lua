@@ -11,7 +11,9 @@ assert(cfg.enabled==false,'snapshot requires disabled multiplayer gameplay')
 -- Optional: other player starts (tools/dev/native_gate_scenarios.py capture-overlay).
 local gamestart=cfg.native_gate_snapshot_gamestart
 assert(gamestart==nil or (type(gamestart)=='string' and gamestart:match('^[A-Za-z0-9_]+$')),'invalid snapshot gamestart')
-local fixed=assert(package.loadlib('./extensions/x4_lan_lab/native/x4lan_fixedtick_64.dll','luaopen_x4lan_fixedtick'))()
+-- native_gate_snapshot_fixed=false captures at the normal frame rate (no fixed-tick DLL): the
+-- snapshot is a save file every client loads byte for byte, so the capture clock does not matter.
+local fixed=cfg.native_gate_snapshot_fixed~=false and assert(package.loadlib('./extensions/x4_lan_lab/native/x4lan_fixedtick_64.dll','luaopen_x4lan_fixedtick'))() or nil
 local owner,spawned,ready,refreshed,saving,done,inspecting,nearby
 local function log(s) DebugError('[X4LAN] NATIVE_SNAPSHOT '..s) end
 RegisterEvent('X4LAN_NativeGate.Ready',function(_,count)
@@ -27,7 +29,7 @@ end)
 RegisterEvent('X4LAN_NativeGate.Attention',function(_,count) nearby=tonumber(count) end)
 local function frame()
  if done then return end
- if not owner then owner=assert(fixed.start('fixed60'));log('FIXED60 armed') end
+ if fixed and not owner then owner=assert(fixed.start('fixed60'));log('FIXED60 armed') end
  if not C.IsPlayerValid() then return end
  -- Story starts may open with a fullscreen intro; spawn and inspect only outside it.
  if C.IsFullscreenCutsceneActive() then return end
