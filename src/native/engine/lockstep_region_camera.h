@@ -832,7 +832,7 @@ static void *volatile *rc_manager2_camera(void) {return (void *volatile *)(rc_pa
 static void *volatile *rc_k_manager_camera(unsigned k) {return (void *volatile *)(rc_page+rc_k_manager[k]+0xb0);}
 /* Stand-ins 2..3 (k): the first view point of each sector neither view point 1 nor 2 is in, slot order, while
  * native_gate_viewpoint_standins allows (rc_standins_max, 2..4); rc_more of them are set. */
-static unsigned rc_standins_max=2u,rc_k_next[VIEW_MAX];
+static unsigned rc_standins_max=2u,rc_standins_armed,rc_k_next[VIEW_MAX];
 static volatile LONG rc_more;
 static void *volatile rc_k_sector[VIEW_MAX],*volatile rc_k_cluster[VIEW_MAX],*volatile rc_k_zone[VIEW_MAX];
 static void *rc_k_cluster_of(unsigned k);
@@ -1847,7 +1847,7 @@ static int rc_arm(int group) {
         rc_hw_rows=0;rc_hw_from=rc_hw_to=0;rc_hw_speed_keyed=rc_hw_speed_unmapped=0;
         rc_uncovered_ticks=0;rc_uncovered_now=0;rc_shape_unkeyed=0;rc_sound_seeds=0;
         rc_fill_view=0;rc_fill_frames=rc_fill_cells=rc_fill_nodes=rc_fill_spawned=0;tq_reset();tp_reset();
-        rc_standins_max=2u;rc_more=0;memset(rc_k_next,0,sizeof(rc_k_next));
+        rc_standins_max=2u;rc_standins_armed=0;rc_more=0;memset(rc_k_next,0,sizeof(rc_k_next));
     }
     if(group==RC_SHAPE_REFRESH) memset((void *)rc_shape_keys,0,sizeof(rc_shape_keys));
     if(group==RC_POLICY) rc_policy=1;
@@ -1856,8 +1856,9 @@ static int rc_arm(int group) {
 }
 /* native_gate_viewpoint_standins: how many view points the policy answers for (2..4), before the first frame. */
 static int rc_standins_arm(unsigned n) {
+    if(rc_standins_armed) return rc_standins_max==n; /* identical re-arm after the post-load UI reload */
     if(n<2u || n>VIEW_MAX || !rc_policy || !rc_installed || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
-    rc_standins_max=n;return 1;
+    rc_standins_max=n;rc_standins_armed=1;return 1;
 }
 /* Slot 6 of every admitted frame, after the view points latch: the stand-in
  * for the next region and traffic passes and the next frame's simulation. */

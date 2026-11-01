@@ -1212,6 +1212,7 @@ static void test_rc_standins(void) {
     /* Arming: only before the first admitted frame, 2..4, with the policy. */
     assert(!rc_standins_arm(3));stats.issued=0;assert(!rc_standins_arm(1) && !rc_standins_arm(5));
     rc_policy=0;assert(!rc_standins_arm(4));rc_policy=1;assert(rc_standins_arm(4) && rc_standins_max==4);
+    stats.issued=1;assert(rc_standins_arm(4) && !rc_standins_arm(3) && rc_standins_max==4);stats.issued=0; /* identical re-arm after a UI reload */
     /* Four: each further sector gets the next stand-in, its camera at its view point. */
     stats.issued=31;assert(rc_frame(31) && rc_more==2 && !rc_uncovered_now);
     void *c2=*rc_k_manager_camera(2),*c3=*rc_k_manager_camera(3),*p2,*s2;
