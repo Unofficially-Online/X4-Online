@@ -44,6 +44,9 @@ class Extension(unittest.TestCase):
             self.assertLess(ui.index('ui/config.lua'), ui.index('ui/native_gate_probe.lua'))
             self.assertIn('id="x4_lan_lab"', (target / 'content.xml').read_text())
             self.assertTrue((target / 'native/x4lan_gate_64.dll').is_file())
+            self.assertTrue((target / 'ui/sha256.lua').is_file())
+            self.assertTrue((target / 'libraries/factions.xml').is_file())
+            self.assertLess(ui.index('ui/sha256.lua'), ui.index('ui/native_gate_probe.lua'))
             for leftover in ('x4lane-manifest.json', 'ui.xml.files', 'ui/config.lua.append'):
                 self.assertFalse((target / leftover).exists())
 
@@ -147,6 +150,17 @@ class Session(unittest.TestCase):
         args = session.client_command(Path('v'), 45851, 2)
         self.assertEqual(args[1:3], ['-personalfolderid', '45851'])
         self.assertTrue(re.fullmatch(r'x4ls-c2\.log', args[-1]))
+
+
+
+class Sha256(unittest.TestCase):
+    def test_lua_digest_matches_hashlib_across_padding_boundaries(self):
+        from lupa.luajit21 import LuaRuntime
+        lua = LuaRuntime(encoding=None)
+        lua.execute((ROOT / 'src/lockstep/base/ui/sha256.lua').read_bytes())
+        digest = lua.eval('X4LAN_SHA256.digest')
+        for data in (b'', b'abc', b'a' * 55, b'a' * 56, b'a' * 64, b'a' * 119, bytes(range(256)) * 5):
+            self.assertEqual(digest(data).decode(), hashlib.sha256(data).hexdigest())
 
 
 if __name__ == '__main__':

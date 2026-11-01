@@ -1,105 +1,66 @@
-# X4 Multiplayer — public development
+# X4 Online: deterministic lockstep multiplayer for X4: Foundations
 
-Free to download, build, use, modify and share for purposes permitted by the
-[PolyForm Noncommercial License 1.0.0](LICENSE.md). See
-[licensing and commercial requests](LICENSING.md) and [required notices](NOTICE.txt).
-This is source-available software with a noncommercial restriction, not an
-OSI-approved open-source project.
+Every player runs the whole X4 universe from the same starting snapshot. Only
+player inputs travel over the network. An opt-in native gate makes the
+simulation deterministic (fixed tick, keyed random streams, fixed engine
+ordering), and a relay compares a SHA-256 digest of every client's state each
+tick, so any divergence is caught on the tick it happens.
 
-Anyone may fork and change their own copy. Only the owner and invited
-collaborators can push to this original repository or merge changes here;
-visitors can propose changes through pull requests.
+Free for noncommercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE.md);
+see [licensing](LICENSING.md) and [notices](NOTICE.txt). This is source-available
+software with a noncommercial restriction, not an OSI open-source project.
 
-Existing contributors: read the [history migration notes](docs/PUBLICATION-NOTES.txt)
-before pushing from an older checkout. The project owner is Lith7ium; Ferrite
-leads technical development.
+## Status
 
-Experimental multiplayer for X4 Foundations 9.00, Steam build 23660954.
+- **Works on one PC:** 2 to 4 clients have held 13 to 20 minutes with zero differing
+  objects across about 543,000 compared objects ([census](reports/LOCKSTEP-CENSUS-20261028.txt)).
+  Both players fly their own ships and see each other.
+- **Not yet done:** a session between two PCs (especially Intel vs AMD, whose
+  approximate `rcpss`/`rsqrtss` results differ), joining a running game, desync
+  recovery, and a packaged release. Windows vs Linux still differs in 35 objects
+  at tick 600, so v1 is Windows-only.
+- **Pinned build:** X4 9.00 Windows (Steam build 23660954). The gate verifies the
+  exact `X4.exe` and refuses anything else. It patches only process memory at
+  runtime, never files on disk ([engine instrumentation](docs/ENGINE-INSTRUMENTATION.txt)).
 
-**Direction: deterministic lockstep.** Every client runs the whole universe from
-the same snapshot and only player inputs travel; an opt-in native gate fixes the
-tick, random streams and engine ordering so all clients stay identical. On one PC,
-two to four clients have held 13-20 minutes with zero differing objects. It is
-not yet packaged, not yet tested between two PCs, and Windows-only for v1. See
-the [current handoff](CONTINUE-HERE.txt) and
-[lockstep sandbox](docs/LOCKSTEP-SANDBOX.txt).
+The earlier "replica" design (host-authoritative NPC copies, packages 7.0 to 7.5)
+was retired in November 2026. It is preserved at the Git tag `legacy/replica-7.5`.
 
-The delivered 7.5.x packages use the earlier replica design: the host prepares a
-native starting save and transfers it to the guest, and selected live gameplay is
-synchronized. That path is frozen (bug fixes only); full universe authority and
-campaign persistence will come from lockstep instead.
+## Quick start (developers, Windows)
 
-New contributors and coding agents: start with the
-[onboarding packet](onboarding/00-START-HERE.txt), including its pinned code baseline,
-[starter prompt](onboarding/01-AGENT-START-PROMPT.txt) and
-[source map](onboarding/03-CODE-AND-STATUS.txt). The integrated `main` baseline contains the 7.5.0 delivery. Dedicated-server
-and additional-client experiments are on separate development branches; agree
-the actual task baseline with Ferrite before contributing.
+```
+python tools/dev/bootstrap.py                    # .venv with the LuaJIT test runtime
+.venv\Scripts\python tools/dev/check.py          # Python/Lua suite (full suite targets Linux/WSL)
+python tools/dev/build_native_gate.py --zig <zig 0.15.2> --test --native-image <X4.exe>
+python tools/x4ls.py doctor                      # installation, pinned exe, Steam
+python tools/x4ls.py snapshot --out .local/snapshots/start.xml.gz
+python tools/x4ls.py session --clients 2 --overlay <built overlay> --snapshot <save>
+```
 
-Read [AGENTS.md](AGENTS.md) and the short [current handoff](CONTINUE-HERE.txt).
-Use [development setup](docs/DEVELOPMENT.txt) and [contribution rules](CONTRIBUTING.txt)
-for your own environment/worktree. [CLAUDE.md](CLAUDE.md) imports the same rules.
-Load only task-relevant evidence rather than the entire historical archive.
-Architecture, requirements, policies and historical test reports are in
-[docs/](docs/README.md).
+`x4ls` starts every client windowed, each from its own game view and its own
+disposable profile, so your normal saves and settings are never touched. See
+the [launcher guide](docs/LAUNCHER.md) for overlays, Steam, and cleanup.
 
-## Delivered packages and current source
+## Layout
 
-The delivered internal candidate is **7.5.0**; see the
-[delivery evidence](reports/INTERNAL-7-5-DELIVERY.txt). Both Windows/Linux packages include
-the server, private Python runtime and English procedures. Follow
-[installation instructions](tools/distribution/INSTALL.html), the
-[package guide](tools/distribution/README.txt) and [human test procedures](tools/distribution/NEXT-TEST.txt).
-The host runs X4 and the relay; UDP45841 and TCP45844 are required. Both players
-use profile45841 with matching game/DLC content and a new private host invitation.
-The sealed7.4.1 pair from235f9ba remains unchanged and does not contain these additions.
+| Path | What |
+|---|---|
+| `src/native/engine/` | The native gate (`lockstep_gate.c` plus headers), its C tests, and the Linux gate port in `linux/` |
+| `src/native/portable_math/` | Bit-exact math shared by the Windows and Linux gates |
+| `src/lockstep/launcher/` | `x4ls`: sessions, snapshots, game views, profiles |
+| `src/lockstep/base/` | What every client extension carries: SHA-256 helper, player-faction data, transport DLL |
+| `src/rust/x4mp-agent/` | Linux fixed-tick agent used by the Linux gate work |
+| `tools/dev/native_gate_*` | In-game probe (Lua), MD fixtures, overlay builders, relay, desync watcher |
+| `tools/dev/census_*`, `compare_native_world*` | Desync analysis of session logs |
+| `tests/` | Python/LuaJIT tests (the in-game Lua runs under LuaJIT with a mocked engine) |
+| `docs/` | Architecture, launcher, wire protocol, sandbox, scenarios |
+| `reports/` | Lockstep evidence: census, piloting, UI replay, cross-platform |
 
-This candidate includes reviewed installer fixes from7c6ec19: Windows process
-output, unavailable Steam drives, explicit game paths, owned same-version session
-recovery and preference reselection. See the
-[community review](reports/COMMUNITY-PATCH-REVIEW-20261025.txt).
+## Architecture in one paragraph
 
-The [NPC combat path](reports/NPC-COMBAT-20261025.txt) and first
-[ordinary faction mission adapter](reports/FACTION-MISSIONS-20261025.txt) are now
-enabled in launcher-generated test configurations. Source and unconfigured
-packages remain inert. NPC scope is free-flying S/M main hull/shields with admitted
-stock guns; mission scope is standalone matching-ship kill contracts without
-inventory rewards. Separate native host/guest runs passed within their documented
-scope. Subsequent human tests confirmed supported NPC destruction and shared
-kill-contract completion, with intermittent NPC synchronization still unresolved.
-See the [human results](reports/PLAYTEST-7.5.0-20261025.txt) and
-[new NPC/mission procedure](tools/distribution/HUMAN-NPC-MISSION-TEST.txt).
-
-## Acceptance and remaining work
-
-Human tests have confirmed ordinary cargo/magnet interaction, Cooperative Trial,
-radar, station/asteroid starting alignment, movement and Alt+Tab within their tested
-scope. The 25 October human test also confirmed PvP damage, the supported shared
-kill mission and observed docking/ship-exchange sequences. These are bounded
-results, not acceptance of all ships, weapons, missions or docking situations.
-
-Open reports include guest inability to select a correctly moving host ship,
-remaining occupied-pad cases, captured-ship ownership and faction-fleet orders.
-NPC targeting/speed/fire remain intermittent, and highway travel can cause
-position jumps. Guest wreck/debris presentation is incomplete. Complete background economy, progressed-world save/resume and absent-client
-catchup remain unfinished. Restarting currently returns to the pristine starting
-world. See [world requirements](docs/WORLD-SYNC-REQUIREMENTS.txt) and the current handoff
-for evidence limits and the relevant native reports.
-
-The7.5.0 candidate has636 passing Linux/Python/LuaJIT tests without skips;
-PowerShell installation/discovery fixtures also passed on Linux. Native Windows
-and human gameplay acceptance remain separate. A new contributor runs the suite
-once to establish their environment, then verifies affected behavior and required
-integration gates. Documentation changes need reference/diff checks, not gameplay.
-
-Preserve normal saves, settings, Steam subscriptions and sealed packages. Preference
-import is read-only at the source. The withdrawn Workshop-selection writer stays
-withdrawn. Never commit credentials, saves, configured packages or installed
-`config.lua`; source configuration stays inert. Source development is public,
-while official playtest packages remain internal unless the owner authorizes a
-public release. The license permits third-party noncommercial builds, but those
-are independent builds and must not be presented as an official project release.
-The 7.5.x packages use no game-memory offsets. The lockstep gate does: it patches
-X4 9.00 in memory at runtime (never on disk), verifies the exact executable
-first and refuses any other build. It uses no copied assets and is opt-in under
-[`docs/ENGINE-INSTRUMENTATION.txt`](docs/ENGINE-INSTRUMENTATION.txt).
+The gate DLL is loaded by the probe Lua inside X4. Before each simulation frame
+it asks the relay for a permit. The relay releases tick *t* only when every
+client has reported tick *t − 1* with the same state digest. Player inputs
+sampled at tick *t* are applied at *t + 3* on every client ("pilot by wire"), and
+menu actions such as autopilot, docking and orders are replayed as inputs ("UI
+replay"). More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

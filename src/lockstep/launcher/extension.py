@@ -4,8 +4,9 @@ An overlay (tools/dev/build_native_gate_overlay.py and friends) holds ui/*.lua,
 native/*.dll, md/*.xml, optional libraries/, a ui.xml.files list, a
 ui/config.lua.append with @X4LANE_PORT@ / @X4LANE_TOKEN@ / @X4LANE_SLOT@ /
 @X4LANE_CLIENTS@ placeholders, and an x4lane-manifest.json of SHA-256 sums. The
-lockstep probe needs only the X4LAN_CONFIG table from a base, so the base here is
-generated: no code from the 7.5.x replica extension is installed.
+lockstep probe needs only X4LAN_CONFIG and X4LAN_SHA256 from a base, so the base
+is src/lockstep/base (sha256.lua, the player-faction libraries and icons, the
+x4lan_net DLL for live inputs) plus generated content.xml/ui.xml/config.lua.
 """
 import hashlib
 import json
@@ -13,6 +14,8 @@ from pathlib import Path
 import shutil
 
 EXTENSION_ID = 'x4_lan_lab'
+BASE = Path(__file__).resolve().parents[1] / 'base'  # sha256.lua, player faction data, x4lan_net DLL
+BASE_UI = ['ui/sha256.lua']
 PLACEHOLDERS = ('@X4LANE_PORT@', '@X4LANE_TOKEN@', '@X4LANE_SLOT@', '@X4LANE_CLIENTS@')
 CONTENT = ('<?xml version="1.0" encoding="utf-8"?>\n'
            '<content id="x4_lan_lab" name="X4 lockstep client" description="Disposable lockstep test client" '
@@ -55,8 +58,9 @@ def compose(overlay, extensions, slot, port, token, clients, extra=None, config_
     target = Path(extensions) / EXTENSION_ID
     if target.exists():
         raise SystemExit(f'{target} already exists')
-    shutil.copytree(overlay, target, ignore=shutil.ignore_patterns('x4lane-manifest.json', 'ui.xml.files',
-                                                                   'config.lua.append'))
+    shutil.copytree(BASE, target)
+    shutil.copytree(overlay, target, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns('x4lane-manifest.json', 'ui.xml.files', 'config.lua.append'))
     files = [line.strip() for line in (overlay / 'ui.xml.files').read_text().splitlines() if line.strip()]
     missing = [name for name in files if not (target / name).is_file()]
     if missing:
@@ -69,6 +73,6 @@ def compose(overlay, extensions, slot, port, token, clients, extra=None, config_
     for name, source in (extra or {}).items():
         shutil.copyfile(source, target / name)
     (target / 'content.xml').write_text(CONTENT)
-    (target / 'ui.xml').write_text(ui_xml([*(extra or {}), *files]))
+    (target / 'ui.xml').write_text(ui_xml([*BASE_UI, *(extra or {}), *files]))
     (target / 'ui/config.lua').write_text('X4LAN_CONFIG = {enabled = false}\n' + config + config_tail)
     return target

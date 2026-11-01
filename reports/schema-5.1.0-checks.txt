@@ -1,4 +1,0 @@
-life True []
-walk True []
-bubble True []
-trade True []
