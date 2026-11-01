@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from . import extension, game, profile, steam
+from . import extension, game, instance, profile, steam
 
 ROOT = Path(__file__).resolve().parents[3]
 RELAY = ROOT / 'tools/dev/native_gate_relay.py'
@@ -30,7 +30,7 @@ class Options:
     overlay: Path
     snapshot: Path | None = None
     ticks: int = 1800
-    tick_hz: int = 30
+    tick_hz: int | None = None  # default: the overlay's native_gate_tick_hz (60 when unset)
     observe: bool = False
     lookahead: int = 0
     timeout: int = 900
@@ -41,6 +41,8 @@ class Options:
     runs: Path = ROOT / '.local/runs'
     state: Path = ROOT / '.local/x4ls'
     keep_views: bool = False
+    stagger: int = 45  # seconds per later client that each client idles in the start menu before arming
+    steam_fix: bool = False  # re-register Steam's pid before each client (see steam.py); restored at the end
     relay_args: list = field(default_factory=list)
 
 
@@ -56,14 +58,20 @@ def x4_running():
     return '"X4.exe"' in out
 
 
+def overlay_tick_hz(overlay):
+    m = re.search(r'native_gate_tick_hz\s*=\s*(\d+)', (Path(overlay) / 'ui/config.lua.append').read_text())
+    return int(m.group(1)) if m else 60
+
+
 def relay_command(o, port, token, run):
     cmd = [sys.executable, str(RELAY), '--port', str(port), '--token', token, '--clients', str(o.clients),
            '--ticks', str(o.ticks), '--report', str(run / 'native-barrier.json'),
            '--input-journal', str(run / 'native-inputs.jsonl')]
     if o.snapshot:
         cmd.append('--relative-real')
-    if o.tick_hz != 60:
-        cmd += ['--tick-hz', str(o.tick_hz)]
+    tick_hz = o.tick_hz or overlay_tick_hz(o.overlay)
+    if tick_hz != 60:
+        cmd += ['--tick-hz', str(tick_hz)]
     if o.observe:
         cmd += ['--observe', '--status-file', str(run / 'desync-status.json')]
     if o.lookahead:
@@ -102,6 +110,17 @@ def tile(pids, width, height, columns=2):
     return len(found)
 
 
+def wait_for_log(path, text, proc, timeout):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if path.is_file() and text in path.read_text(errors='replace'):
+            return
+        if proc.poll() is not None:
+            raise SystemExit(f'X4 exited ({proc.returncode}) before "{text}" in {path.name}')
+        time.sleep(1)
+    raise SystemExit(f'no "{text}" in {path.name} after {timeout} s (a Steam or startup dialog may be open)')
+
+
 def save_state(o, data):
     o.state.mkdir(parents=True, exist_ok=True)
     (o.state / 'session.json').write_text(json.dumps(data, indent=2) + '\n')
@@ -134,7 +153,7 @@ def run(o: Options, log=print):
     if x4_running():
         raise SystemExit('X4 is running; close it first')
     ok, message = steam.status()
-    if not ok:
+    if not ok and not o.steam_fix:
         raise SystemExit(message)
     extension.verify_overlay(o.overlay)
     install = Path(o.game) if o.game else game.find_install()
@@ -157,15 +176,23 @@ def run(o: Options, log=print):
             game.create_view(install, view)
             state['views'].append(str(view))
             save_state(o, state)
-            extension.compose(o.overlay, view / 'extensions', k, port, token, o.clients)
             profile_id = profile.PROFILES[k - 1]
+            hold = (o.clients - k) * o.stagger + 10 if o.snapshot else None
+            tail = f'X4LAN_CONFIG.native_gate_load_hold = {hold}\n' if hold else ''
+            extension.compose(o.overlay, view / 'extensions', k, port, token, o.clients, profile_id=profile_id,
+                              config_tail=tail)
             profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot)
+            if o.steam_fix:
+                steam.fix(o.state / 'steam-fix.json')  # Steam can reset it once a client connects
             proc = subprocess.Popen(client_command(view, profile_id, k), cwd=view, env=steam.client_environment())
             clients.append((k, profile_id, proc))
             state['pids'].append(proc.pid)
             save_state(o, state)
             log(f'client {k}: pid {proc.pid}, profile {profile_id}, view {view}')
-            time.sleep(4)
+            # Start the next client only once this one has reached the start menu.
+            wait_for_log(profile.profile_dir(profile_id) / f'x4ls-c{k}.log', 'Entering startmenu', proc, 180)
+            if k < o.clients:  # X4 refuses to start while another process holds EGOSOFT_X4_INSTANCE
+                log(f'client {k}: released {instance.release_instance_mutex(proc.pid)} instance mutex handle(s)')
         result = monitor(o, run_dir, relay, clients, log)
     finally:
         for _, _, proc in clients:
@@ -182,6 +209,8 @@ def run(o: Options, log=print):
             for view in state['views']:
                 game.remove_view(view)
         (o.state / 'session.json').unlink(missing_ok=True)
+        if o.steam_fix and (o.state / 'steam-fix.json').exists():
+            steam.restore(o.state / 'steam-fix.json')
     (run_dir / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
     log(f"{result['outcome']}: {run_dir}")
     return result
@@ -268,6 +297,15 @@ def monitor(o, run_dir, relay, clients, log):
             if proc.poll() is not None and k not in stopped:
                 return {'outcome': 'failed', 'client': k, 'line': f'X4 exited with {proc.returncode}',
                         'seconds': round(time.time() - started)}
+        if len(stopped) == len(clients):
+            # The relay stays up after done=True; its report carries the verdict.
+            report = run_dir / 'native-barrier.json'
+            verdict = json.loads(report.read_text()).get('verdict') if report.is_file() else None
+            if verdict in ('pass', 'fail', 'diverged'):
+                data = json.loads(report.read_text())
+                return {'outcome': {'pass': 'passed', 'diverged': 'diverged'}.get(verdict, 'relay-failed'), 'verdict': verdict,
+                        'common_ticks': data.get('common_ticks'), 'digest_mismatch_ticks': data.get('digest_mismatch_ticks'),
+                        'first_digest_mismatch': data.get('first_digest_mismatch'), 'seconds': round(time.time() - started)}
         if relay.poll() is not None and len(stopped) == len(clients):
             return {'outcome': 'passed' if relay.returncode == 0 else 'relay-failed', 'relay_exit': relay.returncode,
                     'seconds': round(time.time() - started)}

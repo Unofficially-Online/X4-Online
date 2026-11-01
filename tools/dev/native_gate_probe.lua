@@ -22,7 +22,9 @@ const char* GetObjectIDCode(UniverseID);
 ]]
 local profile=assert(cfg.test_profile,'test profile required')
 local savepath=ffi.string(ffi.C.GetSaveFolderPath()):gsub('\\','/'):gsub('/+$','')
-assert(profile=='45841' and savepath:sub(-#('/'..profile..'/save'))=='/'..profile..'/save','native gate outside test profile')
+-- Disposable profiles only: 45841, or one of the x4ls client profiles (src/lockstep/launcher/profile.py).
+local disposable={['45841']=true,['45850']=true,['45851']=true,['45853']=true,['45854']=true,['45855']=true,['45856']=true,['45857']=true,['45858']=true}
+assert(disposable[profile] and savepath:sub(-#('/'..profile..'/save'))=='/'..profile..'/save','native gate outside test profile')
 -- Protocol 3 (N=2..8 clients, opaque per-client input blobs) is opt-in through
 -- native_gate_clients; without it the gate keeps the two-player protocol 2.
 local clients=cfg.native_gate_clients
@@ -1771,6 +1773,9 @@ local function frame()
  end
  if not armed then
   if not snapshot and ffi.C.GetCurrentGameTime()<(cfg.native_gate_start_time or 20) then return end
+  -- Snapshot sessions: optionally idle in the start menu before arming (x4ls staggers this per client so clients that
+  -- start one after another arm together, and a starting X4 never overlaps another client's snapshot load).
+  if snapshot and cfg.native_gate_load_hold and ffi.C.GetCurrentGameTime()<cfg.native_gate_load_hold then return end
   local data=snapshot and ('SNAPSHOT_BYTES_1|'..snapshot) or sample(0)
   if cfg.native_gate_snapshot_fixture then data=data..'|SNAPSHOT_FIXTURE_1|'..table.concat(cfg.native_gate_snapshot_fixture,',') end
   if cfg.native_gate_player_probe=='agreed-getup' or diagnostic then

@@ -33,7 +33,7 @@ def main(argv=None):
     s.add_argument('--overlay', type=Path, required=True, help='built gate overlay directory')
     s.add_argument('--snapshot', type=Path, help='native .xml.gz save the overlay was built for')
     s.add_argument('--ticks', type=int, default=1800)
-    s.add_argument('--tick-hz', type=int, default=30, choices=(60, 40, 30, 20))
+    s.add_argument('--tick-hz', type=int, choices=(60, 40, 30, 20), help="default: the overlay's native_gate_tick_hz")
     s.add_argument('--observe', action='store_true', help='keep running through desyncs and record them')
     s.add_argument('--lookahead', type=int, default=0)
     s.add_argument('--timeout', type=int, default=900, help='seconds')
@@ -41,6 +41,8 @@ def main(argv=None):
     s.add_argument('--game', type=Path)
     s.add_argument('--lanes', type=Path, help='where client views go (default <game drive>:\\x4ls-lanes)')
     s.add_argument('--keep-views', action='store_true')
+    s.add_argument('--stagger', type=int, default=45, help='seconds of start-menu idle per later client (snapshot sessions)')
+    s.add_argument('--steam-fix', action='store_true', help='register the Steam pid before each client and restore it afterwards')
     s.add_argument('relay_args', nargs='*', help='extra relay arguments after --')
 
     n = sub.add_parser('snapshot', help='capture a starting snapshot (new game + 12-ship gate fixture)')
@@ -77,7 +79,7 @@ def main(argv=None):
     options = session.Options(clients=args.clients, overlay=args.overlay, snapshot=args.snapshot, ticks=args.ticks,
                               tick_hz=args.tick_hz, observe=args.observe, lookahead=args.lookahead,
                               timeout=args.timeout, width=width, height=height, game=args.game, lanes=args.lanes,
-                              keep_views=args.keep_views, relay_args=args.relay_args)
+                              keep_views=args.keep_views, stagger=args.stagger, steam_fix=args.steam_fix, relay_args=args.relay_args)
     result = session.run(options)
     return 0 if result['outcome'] == 'passed' else 1
 
