@@ -45,6 +45,23 @@ still checks ownership as usual. Only `SteamAppId`/`SteamGameId` are added to a
 client's environment. Copying a Steam-launched game's whole environment
 crashed the Steam client once in testing.
 
+Use `session --steam-fix` to register Steam's process id before each client and
+restore the old value when the session ends.
+
+## Several X4 processes
+
+X4 creates the named mutex `EGOSOFT_X4_INSTANCE`. A second process shows "Game is
+already running!" and exits with code 50 when that box is closed. The launcher
+starts clients one after another. Once client k logs `Entering startmenu`, the
+launcher closes client k's handle to that mutex (`DuplicateHandle` with
+`DUPLICATE_CLOSE_SOURCE`, `instance.py`), and then starts client k+1. Only
+processes the launcher started are touched.
+
+Every gate gives up after 60 s without relay permits (stop reason 7). With
+snapshot overlays, x4ls therefore sets `native_gate_load_hold`: client k idles
+in the start menu for (N−k)×45 s + 10 s before arming and loading, so clients
+that start one after another still arm together. `--stagger` changes the 45 s.
+
 ## Overlays
 
 Build one with the existing builders, for example the two-human sandbox:
