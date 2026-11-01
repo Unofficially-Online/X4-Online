@@ -107,3 +107,15 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   cameras are not yet simulation-neutral.
 - **No pacing:** unpaced runs diverged once at a timing-dependent tick (3919, not
   reproduced); paced runs have held. Pacing costs little (0.85-0.92x vs 0.99x).
+- **Open: a wall-clock dependency around minute 2-3.** On the seed-276944566
+  snapshot, paced, shared camera: plain runs diverge at tick 4953 (twice, with
+  native and with device controls); runs with diagnostic rows diverge at 4073;
+  moving the row window off 4073 makes the same run pass it. The diverging
+  allocations are on the MoveWorker in X4's AI script engine
+  (AIDirector::Move -> ExecState_Run -> AI::RunOrderScriptAction /
+  AI::RunScriptAction -> new script instance): one NPC starts an order script
+  three times on one client and once on the other. Script keysets (SCRIPT_RNG)
+  agree until 4260 in that run. Because per-frame cost changes the outcome, an
+  engine worker the gate does not join (asset/collision loading is the census's
+  known case) still decides what the AI sees. Next: find that worker (census_jobs,
+  job_rng 'observe', loader joins) rather than adding more per-tick logging.
