@@ -10,7 +10,7 @@ disposable profile.
 |---|---|
 | `doctor [--overlay DIR]` | Finds X4 through Steam's library folders, verifies the pinned 9.00 `X4.exe`, and checks that directly started clients can reach Steam |
 | `snapshot --out FILE [--gamestart custom_creative]` | One client starts a new game, spawns the 12-ship gate fixture and saves it; FILE is the starting snapshot |
-| `session --clients N --overlay DIR [--snapshot FILE] [--ticks T] [--tick-hz 30] [--observe] [--size 960x540]` | Starts the relay and N clients, tiles their windows, waits for the relay to finish, collects logs into `.local/runs/<time>/` and cleans up |
+| `session --clients N --overlay DIR [--snapshot FILE] [--ticks T] [--observe] [--lookahead 1] [--fast] [--steam-fix]` | Starts the relay and N clients, tiles their windows, waits for the relay to finish, collects logs into `.local/runs/<time>/` and cleans up |
 | `clean` | Stops processes and removes views left behind by a crashed session |
 | `steam-fix [--restore]` | See "Steam" below |
 
@@ -57,10 +57,17 @@ launcher closes client k's handle to that mutex (`DuplicateHandle` with
 `DUPLICATE_CLOSE_SOURCE`, `instance.py`), and then starts client k+1. Only
 processes the launcher started are touched.
 
-Every gate gives up after 60 s without relay permits (stop reason 7). With
-snapshot overlays, x4ls therefore sets `native_gate_load_hold`: client k idles
-in the start menu for (N−k)×45 s + 10 s before arming and loading, so clients
-that start one after another still arm together. `--stagger` changes the 45 s.
+All snapshot clients must arm and load together: after the load X4 runs its UI on a new
+thread, and the gate adopts that thread only once the first tick is issued, which needs
+every client. x4ls therefore writes one absolute time, `native_gate_arm_at` (UTC seconds,
+read in the probe through `GetCurrentUTCDataTime`), into every client: start time +
+`--startup` (70 s) per client + 20 s. It fails fast if a client reaches the start menu
+too late. `native_gate_relay_timeout_ms = 120000` gives the gates slack for different
+load times.
+
+Check an overlay offline before a launch: `python tools/dev/gate_preflight.py <overlay>`
+runs the probe's arming under LuaJIT with a permissive fake gate and reports the first
+refused option.
 
 ## Overlays
 
