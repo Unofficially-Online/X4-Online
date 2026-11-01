@@ -80,7 +80,19 @@ def relay_command(o, port, token, run):
     return cmd + list(o.relay_args)
 
 
-SESSION_SEED = 276944566
+SESSION_SEED = 276944566  # fallback when there is no snapshot (capture runs)
+
+
+def snapshot_seed(path):
+    """The session seed stored in a save's header (<info><game seed=...>): the world's own seed, so every
+    client of every session that loads this save uses the same one."""
+    import gzip
+    with gzip.open(path, 'rb') as f:
+        head = f.read(8192).decode('utf-8', 'replace')
+    m = re.search(r'<game [^>]*\bseed="(\d+)"', head)
+    if not m:
+        raise SystemExit(f'{path}: no seed in the save header')
+    return int(m.group(1))
 
 
 def client_command(view, profile_id, k, seed=SESSION_SEED):
@@ -177,6 +189,8 @@ def run(o: Options, log=print):
     # Every client arms and loads at the same UTC second (native_gate_arm_at in the probe): after the load the
     # gate adopts X4's new UI thread only once the first tick is issued, which needs all clients.
     arm_at = int(time.time()) + o.startup * o.clients + 20 if o.snapshot else None
+    seed = snapshot_seed(o.snapshot) if o.snapshot else SESSION_SEED  # the same world seed for every client
+    log(f'session seed {seed}')
     try:
         relay_log = (run_dir / 'relay.log').open('w')
         relay = subprocess.Popen(relay_command(o, port, token, run_dir), cwd=ROOT, stdout=relay_log,
@@ -200,7 +214,7 @@ def run(o: Options, log=print):
             profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot, fast=o.fast)
             if o.steam_fix:
                 steam.fix(o.state / 'steam-fix.json')  # Steam can reset it once a client connects
-            proc = subprocess.Popen(client_command(view, profile_id, k), cwd=view, env=steam.client_environment())
+            proc = subprocess.Popen(client_command(view, profile_id, k, seed), cwd=view, env=steam.client_environment())
             clients.append((k, profile_id, proc))
             state['pids'].append(proc.pid)
             save_state(o, state)

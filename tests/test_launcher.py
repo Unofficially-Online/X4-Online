@@ -154,6 +154,17 @@ class Session(unittest.TestCase):
 
 
 
+class Seed(unittest.TestCase):
+    def test_session_seed_comes_from_the_save_header(self):
+        import gzip
+        with tempfile.TemporaryDirectory() as tmp:
+            save = Path(tmp) / 's.xml.gz'
+            with gzip.open(save, 'wb') as f:
+                f.write(b'<?xml version="1.0"?><savegame><info><save name="x"/><game id="X4" version="900" '
+                        b'start="custom_creative" seed="276944566" guid="g"/></info><universe/></savegame>')
+            self.assertEqual(session.snapshot_seed(save), 276944566)
+
+
 class Sha256(unittest.TestCase):
     def test_lua_digest_matches_hashlib_across_padding_boundaries(self):
         from lupa.luajit21 import LuaRuntime
