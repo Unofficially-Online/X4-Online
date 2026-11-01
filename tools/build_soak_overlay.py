@@ -60,6 +60,8 @@ def main(argv=None):
     p.add_argument('--long', action='store_true', help='--play-mode and --no-pace (multi-hour soaks)')
     p.add_argument('--play-mode', action='store_true', help='keep the world hash in every digest but skip per-object pages')
     p.add_argument('--no-pace', action='store_true', help='do not hold clients to real time')
+    p.add_argument('--controls', choices=('device', 'native'), default='device',
+                   help="device: X4's own controls parked on every client, ships flown only by the shared inputs")
     p.add_argument('--drop', action='append', default=[], metavar='native_gate_KEY',
                    help='leave a key of profiles/soak.lua out (repeatable)')
     p.add_argument('--set', action='append', default=[], metavar='native_gate_KEY=LUA_VALUE',
@@ -86,10 +88,10 @@ def main(argv=None):
         manifest(keyed)
         run([DEV / 'native_gate_sandbox.py', 'overlay', '--base', keyed, '--gate-dll', args.gate_dll,
              '--probe', DEV / 'native_gate_probe.lua', '--out', args.out, '--slot1', player, '--slot2', fixture[2],
-             '--controls', 'native', '--script-pilots', '--window', '30', str(args.window), '--world-stride', '300',
+             '--controls', args.controls, '--script-pilots', '--window', '30', str(args.window), '--world-stride', '300',
              '--trace-stride', '3600', '--fp', 'default', *[x for kv in args.set for x in ('--set', kv)]])
     print(run([DEV / 'gate_preflight.py', args.out]).strip())
-    print(f'{args.out}: relay ticks for the full window: {args.window + 3}')
+    print(f"{args.out}: relay ticks for the full window: {args.window + (3 if args.controls == 'native' else 2)}")
 
 
 if __name__ == '__main__':
