@@ -32,7 +32,7 @@ package.loadlib=function() return function() return gate end end
 local C=setmetatable({
   GetSaveFolderPath=function() return 'fake/'..X4LAN_CONFIG.test_profile..'/save' end,
   GetCurrentGameTime=function() return 1e9 end, IsStartmenu=function() return is_menu end,
-  IsSaveListLoadingComplete=function() return true end,
+  IsSaveListLoadingComplete=function() return true end, GetCurrentUTCDataTime=function() return 1e12 end,
 }, {__index=function() return function() return 0 end end})
 local ffi={cdef=function() end,typeof=function() return true end,string=function(s) return tostring(s) end,
   new=function() return {} end,cast=function(_,v) return v end,C=C}

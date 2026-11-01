@@ -1773,10 +1773,13 @@ local function frame()
  end
  if not armed then
   if not snapshot and ffi.C.GetCurrentGameTime()<(cfg.native_gate_start_time or 20) then return end
-  -- Snapshot sessions: optionally idle in the start menu before arming (x4ls staggers this per client so clients that
-  -- start one after another arm together, and a starting X4 never overlaps another client's snapshot load).
-  -- Real seconds since this UI started: a background window's start menu may not advance game time.
-  if snapshot and cfg.native_gate_load_hold and getElapsedTime()<cfg.native_gate_load_hold then return end
+  -- Snapshot sessions: idle in the start menu until an absolute UTC second (x4ls sets the same one for every client).
+  -- All clients must load together: after the load X4 runs the UI on a new thread, which the gate adopts only once
+  -- the first tick is issued, and that needs every client; a client that loads alone has its reloaded UI refused.
+  if snapshot and cfg.native_gate_arm_at then
+   pcall(ffi.cdef,'int64_t GetCurrentUTCDataTime(void);')
+   if tonumber(ffi.C.GetCurrentUTCDataTime())<cfg.native_gate_arm_at then return end
+  end
   local data=snapshot and ('SNAPSHOT_BYTES_1|'..snapshot) or sample(0)
   if cfg.native_gate_snapshot_fixture then data=data..'|SNAPSHOT_FIXTURE_1|'..table.concat(cfg.native_gate_snapshot_fixture,',') end
   if cfg.native_gate_player_probe=='agreed-getup' or diagnostic then

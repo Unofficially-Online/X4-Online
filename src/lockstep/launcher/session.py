@@ -42,7 +42,7 @@ class Options:
     state: Path = ROOT / '.local/x4ls'
     keep_views: bool = False
     fast: bool = False  # render-only settings down, no frame cap, no sound (profile.FAST)
-    stagger: int = 45  # seconds per later client that each client idles in the start menu before arming
+    startup: int = 70  # seconds budgeted per client to reach the start menu; snapshot clients then arm together
     steam_fix: bool = False  # re-register Steam's pid before each client (see steam.py); restored at the end
     relay_args: list = field(default_factory=list)
 
@@ -166,6 +166,9 @@ def run(o: Options, log=print):
     state = {'run': str(run_dir), 'views': [], 'pids': [], 'relay_pid': None}
     save_state(o, state)
     clients, relay, relay_log = [], None, None
+    # Every client arms and loads at the same UTC second (native_gate_arm_at in the probe): after the load the
+    # gate adopts X4's new UI thread only once the first tick is issued, which needs all clients.
+    arm_at = int(time.time()) + o.startup * o.clients + 20 if o.snapshot else None
     try:
         relay_log = (run_dir / 'relay.log').open('w')
         relay = subprocess.Popen(relay_command(o, port, token, run_dir), cwd=ROOT, stdout=relay_log,
@@ -178,10 +181,9 @@ def run(o: Options, log=print):
             state['views'].append(str(view))
             save_state(o, state)
             profile_id = profile.PROFILES[k - 1]
-            hold = (o.clients - k) * o.stagger + 10 if o.snapshot else None
-            tail = 'X4LAN_CONFIG.native_gate_relay_timeout_ms = 120000\n'  # early clients wait at the barrier
-            if hold:
-                tail += f'X4LAN_CONFIG.native_gate_load_hold = {hold}\n'
+            tail = 'X4LAN_CONFIG.native_gate_relay_timeout_ms = 120000\n'  # slack for different load times
+            if arm_at:
+                tail += f'X4LAN_CONFIG.native_gate_arm_at = {arm_at}\n'
             extension.compose(o.overlay, view / 'extensions', k, port, token, o.clients, profile_id=profile_id,
                               config_tail=tail)
             profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot, fast=o.fast)
@@ -194,6 +196,8 @@ def run(o: Options, log=print):
             log(f'client {k}: pid {proc.pid}, profile {profile_id}, view {view}')
             # Start the next client only once this one has reached the start menu.
             wait_for_log(profile.profile_dir(profile_id) / f'x4ls-c{k}.log', 'Entering startmenu', proc, 180)
+            if arm_at and time.time() > arm_at - 5:
+                raise SystemExit(f'client {k} reached the start menu after the common arm time; raise --startup')
             if k < o.clients:  # X4 refuses to start while another process holds EGOSOFT_X4_INSTANCE
                 log(f'client {k}: released {instance.release_instance_mutex(proc.pid)} instance mutex handle(s)')
         result = monitor(o, run_dir, relay, clients, log)
