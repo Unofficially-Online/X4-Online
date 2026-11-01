@@ -14,10 +14,20 @@ Existing contributors: read the [history migration notes](docs/PUBLICATION-NOTES
 before pushing from an older checkout. The project owner is Lith7ium; Ferrite
 leads technical development.
 
-Experimental two-player co-op for X4 Foundations 9.00, Steam build 23660954.
-The host prepares a native starting save and transfers it to the guest. Selected
-live gameplay is synchronized; full ongoing universe authority and campaign
-persistence remain unfinished.
+Experimental multiplayer for X4 Foundations 9.00, Steam build 23660954.
+
+**Direction: deterministic lockstep.** Every client runs the whole universe from
+the same snapshot and only player inputs travel; an opt-in native gate fixes the
+tick, random streams and engine ordering so all clients stay identical. On one PC,
+two to four clients have held 13-20 minutes with zero differing objects. It is
+not yet packaged, not yet tested between two PCs, and Windows-only for v1. See
+the [current handoff](CONTINUE-HERE.txt) and
+[lockstep sandbox](docs/LOCKSTEP-SANDBOX.txt).
+
+The delivered 7.5.x packages use the earlier replica design: the host prepares a
+native starting save and transfers it to the guest, and selected live gameplay is
+synchronized. That path is frozen (bug fixes only); full universe authority and
+campaign persistence will come from lockstep instead.
 
 New contributors and coding agents: start with the
 [onboarding packet](onboarding/00-START-HERE.txt), including its pinned code baseline,
@@ -89,5 +99,7 @@ withdrawn. Never commit credentials, saves, configured packages or installed
 while official playtest packages remain internal unless the owner authorizes a
 public release. The license permits third-party noncommercial builds, but those
 are independent builds and must not be presented as an official project release.
-The current code uses no game-memory offsets or copied assets; engine
-instrumentation is opt-in under [`docs/ENGINE-INSTRUMENTATION.txt`](docs/ENGINE-INSTRUMENTATION.txt).
+The 7.5.x packages use no game-memory offsets. The lockstep gate does: it patches
+X4 9.00 in memory at runtime (never on disk), verifies the exact executable
+first and refuses any other build. It uses no copied assets and is opt-in under
+[`docs/ENGINE-INSTRUMENTATION.txt`](docs/ENGINE-INSTRUMENTATION.txt).

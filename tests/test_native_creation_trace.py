@@ -272,6 +272,7 @@ class CreationTraceTests(unittest.TestCase):
                 lua.globals().failure=failure
                 lua.execute('''logs={};stops=0;native_owned=true;armed=true;done=false;stopped=false
                   log=function(s)logs[#logs+1]=s end
+                  ticklog={flush=function()end};pilot_view={}
                   cfg={native_gate_creation_trace_schema=1,native_gate_construction_test=true,native_gate_registry_md_trace=true,native_gate_player_observer=true}
                   gate={poll=function()return {creation_trace_schema=1,active=stopped and 0 or 1,restored=stopped and 1 or 0,issued=5}end,
                     creation_trace_config=function()return 1 end,

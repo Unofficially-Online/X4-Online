@@ -80,6 +80,7 @@ class LoadAcknowledgements(unittest.TestCase):
           cfg={native_gate_registry_creation_schema=1,native_gate_creation_rng_schema=1,native_gate_player_observer=true}
           logs={};stops=0;done=false;armed=false;native_owned=true
           log=function(s)logs[#logs+1]=s end
+          ticklog={flush=function()end};pilot_view={}
           gate={stop=function()stops=stops+1 end,poll=function()return {active=0,restored=1,issued=0}end}
           X4LAN_NATIVE_REGISTRY_CREATION={new=function()return function(final)assert(final);log('REGISTRY_DRAIN')end,
              function()error('actual registry attachment refused')end end}

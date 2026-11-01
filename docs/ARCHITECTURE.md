@@ -1,5 +1,17 @@
 # Internal architecture and protocol reference
 
+> **Direction (November 2026): deterministic lockstep.** New multiplayer work
+> targets the native lockstep gate: every client simulates the whole universe
+> from one snapshot, inputs are applied at tick t+d on every client, and a relay
+> barrier compares per-tick state digests. Start with
+> [the handoff](../CONTINUE-HERE.txt), [ENGINE-INSTRUMENTATION](ENGINE-INSTRUMENTATION.txt),
+> [LOCKSTEP-NSLOT-WIRE](LOCKSTEP-NSLOT-WIRE.txt) (relay protocols 3/4) and
+> [LOCKSTEP-SANDBOX](LOCKSTEP-SANDBOX.txt). Gate source: `src/native/engine/lockstep_gate.c`.
+>
+> The rest of this document describes the replica design behind the 7.5.x
+> packages (W01 scenes, UMOVE, host-executed intents). That path is frozen: keep
+> it working for 7.5.x, but do not extend it.
+
 This document contains protocol history as well as still-used interfaces. For
 current acceptance and the 7.4 combat/starting-world paths, begin with
 [the handoff](../CONTINUE-HERE.txt) and [current source map](../onboarding/03-CODE-AND-STATUS.txt),
