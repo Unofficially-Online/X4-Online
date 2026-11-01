@@ -28,7 +28,7 @@ jobs:
           echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
           tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
           echo "X4LAN_ZIG=$RUNNER_TEMP/zig-x86_64-linux-0.15.2/zig" >> "$GITHUB_ENV"
-      - name: Rust transport (release) and Rust tests
+      - name: Rust Linux agent build and tests
         run: |
           cargo build --release --locked --manifest-path src/rust/Cargo.toml
           cargo test --locked --manifest-path src/rust/Cargo.toml
@@ -39,12 +39,9 @@ jobs:
       - name: Check
         run: >-
           .venv/bin/python tools/dev/check.py
-          --allow-skip 'real owned Windows process handles required'
           --allow-skip 'Linux X4 executable not available'
           --allow-skip 'read-only x4-re md.xsd'
-          --allow-skip 'exact local released runner required'
-          --allow-skip 'not recorded here'
-          --allow-skip 'publisher owns root-only control files'
+          --allow-skip 'need a Linux host with gcc and luajit'
 
   gate:
     name: Lockstep gate build (Windows, Zig 0.15.2)
