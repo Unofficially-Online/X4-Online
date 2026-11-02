@@ -8,6 +8,11 @@
    does not take as flags); --long adds play mode (world hash kept in every digest,
    no per-object pages) and no real-time pacing, for multi-hour soaks.
 3. Scripted pilots on two slots (native_gate_sandbox.py): slot 1 = the snapshot's player
+   ship, slot 2 = the third fixture ship. With --players factions|coop instead: two player
+   identities (native_gate_players.py: own pool faction per slot, or one shared faction),
+   script pilots and scripted orders through the relay (--orders demo), for player-activity
+   soaks.
+   (sandbox:) slot 1 = the snapshot's player
    ship, slot 2 = the third fixture ship.
 4. gate_preflight.py: the probe's option logic accepts the result.
 Relay ticks for a full window: window end + 3.
@@ -62,6 +67,10 @@ def main(argv=None):
     p.add_argument('--no-pace', action='store_true', help='do not hold clients to real time')
     p.add_argument('--controls', choices=('device', 'native'), default='device',
                    help="device: X4's own controls parked on every client, ships flown only by the shared inputs")
+    p.add_argument('--players', choices=('factions', 'coop'),
+                   help='player-activity soak: player identities, script pilots and scripted orders (native_gate_players.py)')
+    p.add_argument('--players-arg', action='append', default=[], metavar='ARG',
+                   help='extra native_gate_players.py overlay argument (repeatable)')
     p.add_argument('--sandbox-arg', action='append', default=[], metavar='ARG',
                    help='extra native_gate_sandbox.py argument (repeatable), e.g. --sandbox-arg=--device1=none')
     p.add_argument('--drop', action='append', default=[], metavar='native_gate_KEY',
@@ -88,10 +97,16 @@ def main(argv=None):
             if args.long or args.no_pace:
                 config.write(NO_PACE)
         manifest(keyed)
-        run([DEV / 'native_gate_sandbox.py', 'overlay', '--base', keyed, '--gate-dll', args.gate_dll,
-             '--probe', DEV / 'native_gate_probe.lua', '--out', args.out, '--slot1', player, '--slot2', fixture[2],
-             '--controls', args.controls, '--script-pilots', '--window', '30', str(args.window), '--world-stride', '300',
-             '--trace-stride', '3600', '--fp', 'default', *[x for kv in args.set for x in ('--set', kv)], *args.sandbox_arg])
+        if args.players:
+            run([DEV / 'native_gate_players.py', 'overlay', '--base', keyed, '--gate-dll', args.gate_dll,
+                 '--probe', DEV / 'native_gate_probe.lua', '--out', args.out, '--players', '2', '--mode', args.players,
+                 '--source', 'script', '--orders', 'demo', '--window', '30', str(args.window), '--world-stride', '300',
+                 '--trace-stride', '3600', '--fp', 'default', *[x for kv in args.set for x in ('--set', kv)], *args.players_arg])
+        else:
+            run([DEV / 'native_gate_sandbox.py', 'overlay', '--base', keyed, '--gate-dll', args.gate_dll,
+                 '--probe', DEV / 'native_gate_probe.lua', '--out', args.out, '--slot1', player, '--slot2', fixture[2],
+                 '--controls', args.controls, '--script-pilots', '--window', '30', str(args.window), '--world-stride', '300',
+                 '--trace-stride', '3600', '--fp', 'default', *[x for kv in args.set for x in ('--set', kv)], *args.sandbox_arg])
     print(run([DEV / 'gate_preflight.py', args.out]).strip())
     # The arguments beside the overlay (not in it: overlays are frozen by their manifest), for x4ls triage.
     given = sys.argv[1:] if argv is None else list(argv)
