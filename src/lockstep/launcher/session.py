@@ -289,8 +289,9 @@ def run(o: Options, log=print):
 
 
 def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None, timeout=900,
-                     runs=ROOT / '.local/runs', state_dir=ROOT / '.local/x4ls', log=print):
-    """One client starts `gamestart`, spawns the 12-ship gate fixture and saves save_009; copied to `out`."""
+                     runs=ROOT / '.local/runs', state_dir=ROOT / '.local/x4ls', log=print, seed=SESSION_SEED, steam_fix=False):
+    """One client starts `gamestart` with session seed `seed`, spawns the 12-ship gate fixture and saves
+    save_009; copied to `out`. The save header carries the seed, so sessions from it use the same one."""
     sys.path.insert(0, str(ROOT / 'tools/dev'))
     from native_gate_scenarios import build_capture_overlay
     out = Path(out)
@@ -301,7 +302,7 @@ def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None
     if x4_running():
         raise SystemExit('X4 is running; close it first')
     ok, message = steam.status()
-    if not ok:
+    if not ok and not steam_fix:
         raise SystemExit(message)
     install = Path(game_dir) if game_dir else game.find_install()
     game.verify_exe(install)
@@ -320,7 +321,9 @@ def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None
                           extra={'ui/x4ls_autostart.lua': Path(__file__).with_name('autostart.lua')},
                           config_tail=f'X4LAN_CONFIG.x4ls_autostart = "{gamestart}"\n')
         profile.prepare(profile.CAPTURE_PROFILE, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height)
-        args = client_command(view, profile.CAPTURE_PROFILE, 1)[:-1] + [log_name]
+        if steam_fix:
+            steam.fix(Path(state_dir) / 'steam-fix.json')
+        args = client_command(view, profile.CAPTURE_PROFILE, 1, seed)[:-1] + [log_name]
         proc = subprocess.Popen(args, cwd=view, env=steam.client_environment())
         state['pids'].append(proc.pid)
         save_state(o, state)
@@ -348,6 +351,8 @@ def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None
         for v in state['views']:
             game.remove_view(v)
         (Path(state_dir) / 'session.json').unlink(missing_ok=True)
+        if steam_fix and (Path(state_dir) / 'steam-fix.json').exists():
+            steam.restore(Path(state_dir) / 'steam-fix.json')
     log(f'{outcome}: {out if outcome == "saved" else run_dir}')
     return outcome
 

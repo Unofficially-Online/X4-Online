@@ -56,6 +56,8 @@ def main(argv=None):
     n.add_argument('--timeout', type=int, default=900)
     n.add_argument('--game', type=Path)
     n.add_argument('--lanes', type=Path)
+    n.add_argument('--seed', type=int, default=session.SESSION_SEED, help='X4 session seed of the new game (saved in its header)')
+    n.add_argument('--steam-fix', action='store_true')
 
     c = sub.add_parser('clean', help='stop processes and remove views left by a crashed session')
     c.add_argument('--keep-views', action='store_true')
@@ -75,7 +77,8 @@ def main(argv=None):
     if args.command == 'doctor':
         return doctor(args)
     if args.command == 'snapshot':
-        outcome = session.capture_snapshot(args.out, args.gamestart, args.game, args.lanes, args.timeout)
+        outcome = session.capture_snapshot(args.out, args.gamestart, args.game, args.lanes, args.timeout,
+                                           seed=args.seed, steam_fix=args.steam_fix)
         return 0 if outcome == 'saved' else 1
     if args.command == 'clean':
         print(session.clean(state, args.keep_views))
