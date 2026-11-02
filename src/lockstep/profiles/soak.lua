@@ -84,3 +84,7 @@ X4LAN_CONFIG.native_gate_shape_refresh = 'view'
 -- 'key': UI queries blocked as in 'block'; simulation cargo/trade/unit updates draw from a word keyed by the station,
 -- not by whichever actor asked first (without it: station event splits at ticks 4658 and 5424 on the seed snapshot).
 X4LAN_CONFIG.native_gate_ui_lazy = 'key'
+-- seed_rng: the MoveWorker's own word is seeded per admitted frame, so engine draws outside every keyed scope
+-- (a new pilot's character macro at a drone launch split the clients at tick 35601) start from the same word.
+-- A draw watch over 3600 ticks (native_gate_draw_watch_frame) found the frame-level draws identical on both clients.
+X4LAN_CONFIG.native_gate_seed_rng = true
