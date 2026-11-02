@@ -156,7 +156,14 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   batches inline on the pathing thread in RunPass order with a job-thread TLS
   context: the next run passed 17,800 ticks with no PATH_TRANSFORMS or ACTOR
   difference. Cost: about 8 ms per pass, 0.78x real time paced (was 0.92x).
-  Making the pass deterministic and parallel again is open speed work.
+  Making the pass deterministic and parallel again is open speed work. At tick 27,360 of a
+  soak the inline pass averages 9.7 ms (22 batches, 10,252 agents) out of about 43 ms per
+  tick. AssignAgentToBatch 0xeaf2b0 deals agents round-robin (cursor +0x1b8 over the
+  batches at +0x180; agents whose flight model reports type 3 go to +0x198 with cursor
+  +0x1c0), so a leader and its wingmen usually sit in different batches: that is the race.
+  Keeping each formation in one batch (moving an agent when it joins or leaves a formation)
+  would let the batches run in parallel again if formation reads are the only cross-batch
+  reads in the pass; the census found no others so far.
 - **Unkeyed engine draws (tick 35,601).** With travel determinism the seed snapshot held
   35,700 ticks. Then a police ship launched three drones and each pilot's character macro
   (an engine draw on the MoveWorker's own, process-local word) differed. `seed_rng` (the
