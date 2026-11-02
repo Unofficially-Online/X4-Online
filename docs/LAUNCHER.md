@@ -11,6 +11,8 @@ disposable profile.
 | `doctor [--overlay DIR]` | Finds X4 through Steam's library folders, verifies the pinned 9.00 `X4.exe`, and checks that directly started clients can reach Steam |
 | `snapshot --out FILE [--gamestart custom_creative]` | One client starts a new game, spawns the 12-ship gate fixture and saves it; FILE is the starting snapshot |
 | `session --clients N --overlay DIR [--snapshot FILE] [--ticks T] [--observe] [--lookahead 1] [--fast] [--steam-fix]` | Starts the relay and N clients, tiles their windows, waits for the relay to finish, collects logs into `.local/runs/<time>/` and cleans up |
+| `session ... --checkpoint-at T` | Every client saves the world right after tick T (`clientK/save_001.xml.gz`); the session ends there (outcome `checkpointed`) |
+| `triage RUN [--steam-fix]` | Reruns a diverged session with diagnostic windows over the 300 ticks before its first mismatch and writes `RUN-triage.txt`; `--report-only RERUN` only reports |
 | `clean` | Stops processes and removes views left behind by a crashed session |
 | `steam-fix [--restore]` | See "Steam" below |
 
@@ -155,6 +157,35 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   context: the next run passed 17,800 ticks with no PATH_TRANSFORMS or ACTOR
   difference. Cost: about 8 ms per pass, 0.78x real time paced (was 0.92x).
   Making the pass deterministic and parallel again is open speed work.
+- **Unkeyed engine draws (tick 35,601).** With travel determinism the seed snapshot held
+  35,700 ticks. Then a police ship launched three drones and each pilot's character macro
+  (an engine draw on the MoveWorker's own, process-local word) differed. `seed_rng` (the
+  soak default now) seeds that word per admitted frame; a draw watch
+  (`native_gate_draw_watch_frame`) over 3,600 ticks found all 7,244 frame-level draws
+  identical on both clients.
+- **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
+  the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
+  wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
+  (reason 3, `UNOWNED *(double*)(image+SPEED_RVA)!=1.0`); continuing through a save needs
+  pause-aware gating. `tools/dev/save_diff.py A B` compares the world part of two saves
+  (everything above `<script>`; the script pools below use process-local allocation ids),
+  listener runs as sets, animation index parts left out. Two clients' saves at tick 1,200
+  were identical except the local player's target listener (client-local UI state). A
+  checkpoint holds more saved objects than a fresh start (525,870 at tick 1,200): the world
+  identity table now has 4M slots.
+- **Open: sessions from a busy checkpoint split within 15-50 ticks.** From the tick-1,200
+  checkpoint the clients part at ticks 14-19 (an extra MD cue raise, weapon fire, AI
+  scripts of the old fixture's survivors receiving StopBoost/ArrivedAtWaypoint one tick
+  earlier on one client) or at 49. Script, event and UI-triggered events agree before it.
+  Lead: the loading frames (boot phase 2) last as long as each client's load, and the
+  pathing read bank differed at tick 1 in one run. A fresh snapshot hides this (its banks
+  hold resting ships). Loading a busy save deterministically is also what join and resync
+  need.
+- **Triage.** `x4ls triage RUN` does the manual loop: rebuild the run's overlay with per-tick
+  status, world pages, row windows (script RNG, event deliveries, formation transforms with
+  return chains, UI lazy calls) and created rows over the 300 ticks before the first
+  mismatch, rerun, and report the first differing tick of each row family. On the 35,700 run
+  it names the drone pilots' character macros directly.
 - **Earliest divergence is far before the digest.** `tools/dev/census_first_status.py`
   compares every module's status line between the clients. On the seed snapshot
   with the full profile (ui_lazy 'block', UI made no queries in the soak), real
