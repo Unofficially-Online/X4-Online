@@ -1156,7 +1156,7 @@ local function physics_field(raw,name,size)
 end
 local function physics_bits(raw)
  assert(type(raw)=='string','native physics state unavailable')
- if raw=='none' then return raw end
+ if raw=='none' or raw=='gone' then return raw end
  local pose,motion=physics_field(raw,'pose',64),physics_field(raw,'motion',256)
  local pre,delta=physics_field(raw,'pre',64),physics_field(raw,'delta',64)
  return table.concat({
@@ -1657,7 +1657,13 @@ local function sample(tick)
   end
   local bodies,row={} -- row: this actor's declared state parts
   local function body(which)
-   if not bodies[which] then bodies[which]=assert(gate.body(i,which),'physics body state unavailable') end
+   if not bodies[which] then
+    local state=gate.body(i,which)
+    -- A dead actor's wreck is cleaned up after about 30 game minutes (soak at tick 54489): its body is
+    -- then gone on every client at the same tick. A live actor without a body still stops the probe.
+    if not state and not ffi.C.IsComponentOperational(object) then state='gone' end
+    bodies[which]=assert(state,'physics body state unavailable')
+   end
    return bodies[which]
   end
   if ffi.C.IsComponentOperational(object) then
