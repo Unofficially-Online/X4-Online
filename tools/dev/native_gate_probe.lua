@@ -249,6 +249,9 @@ local native_owned=false -- Successful boot/start owns cleanup before adapters c
 -- the module statuses. reg-tour18w (stride 60, window 2460..2480) held them and kept only 2460 and the
 -- last 16 ticks before the stop, so the ticks where actor 9 parted were missing. No window, no change.
 local ticklog={stride=cfg.native_gate_status_stride,keep=16,ring={},window=cfg.native_gate_trace_window}
+assert(cfg.native_gate_world_pages_window==nil or (type(cfg.native_gate_world_pages_window)=='table' and
+ type(cfg.native_gate_world_pages_window[1])=='number' and type(cfg.native_gate_world_pages_window[2])=='number' and
+ cfg.native_gate_world_pages_window[1]<=cfg.native_gate_world_pages_window[2]),'native_gate_world_pages_window must be {first,last} ticks')
 assert(ticklog.stride==nil or (type(ticklog.stride)=='number' and ticklog.stride%1==0 and ticklog.stride>=1 and ticklog.stride<=3600),
  'native_gate_status_stride must be a tick count 1..3600')
 assert(ticklog.window==nil or (type(ticklog.window)=='table' and #ticklog.window==2 and type(ticklog.window[1])=='number' and
@@ -4034,7 +4037,9 @@ local function frame()
    assert(summary,'native world hash capture failed '..tostring(why))
    log('WORLD_BANKS '..assert(gate.world_banks(),'native world bank phase unavailable'))
    world_hash_state=assert(summary:match(' state=('..world_hash_schema..':[^ ]+)$'),'invalid world hash summary')
-   if not cfg.native_gate_play_mode then
+   -- play mode logs no pages, except for captures in native_gate_world_pages_window = {first, last tick}
+   local pages_window=cfg.native_gate_world_pages_window
+   if not cfg.native_gate_play_mode or (pages_window and pages_window[1]<=tick and tick<=pages_window[2]) then
     for page=1,assert(gate.world_page(0)) do log_world_page(assert(gate.world_page(page))) end
     for row=1,assert(gate.world_detail(0)) do log('WORLD_DETAIL '..assert(gate.world_detail(row))) end
    end
