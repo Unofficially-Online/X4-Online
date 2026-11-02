@@ -6,7 +6,8 @@
  * engine code calls those functions directly, not through the table). After a savegame
  * load X4 builds a new UI Lua state, whose FFI symbols resolve again. So at arm (before the
  * snapshot load) every export whose name does not read as a query (Get/Is/Has/Can/...,
- * UX_QUERY below; 802 exports remain) gets its table entry redirected to a 16-byte stub
+ * UX_QUERY below; 802 exports remain), and whose RVA lies in an executable section (no data
+ * exports), gets its table entry redirected to a 16-byte stub
  * `mov eax, index; jmp common` on a page within 4 GB above the image (entries are 32-bit
  * RVAs). The common handler saves the argument registers (rcx, rdx, r8, r9, xmm0-3), calls
  * ux_record(index), restores them and tail-jumps to the original function: no stub frame
@@ -121,6 +122,14 @@ static int ux_directory(unsigned char *base,size_t size,uint32_t **functions,uin
     *functions=(uint32_t*)(base+e->AddressOfFunctions);*names=(uint32_t*)(base+e->AddressOfNames);
     *ordinals=(uint16_t*)(base+e->AddressOfNameOrdinals);*count=e->NumberOfNames;*nfunctions=e->NumberOfFunctions;return 1;
 }
+/* 1 if rva lies in an executable section of base: data exports (variables FFI reads) are never redirected. */
+static int ux_code_rva(unsigned char *base,uint32_t rva) {
+    IMAGE_NT_HEADERS64 *nt=(IMAGE_NT_HEADERS64*)(base+((IMAGE_DOS_HEADER*)base)->e_lfanew);
+    IMAGE_SECTION_HEADER *sec=IMAGE_FIRST_SECTION(nt);
+    for(unsigned i=0;i<nt->FileHeader.NumberOfSections;i++)
+        if((sec[i].Characteristics&IMAGE_SCN_MEM_EXECUTE) && rva>=sec[i].VirtualAddress && rva-sec[i].VirtualAddress<sec[i].Misc.VirtualSize) return 1;
+    return 0;
+}
 static int ux_set_entry(uint32_t *entry,uint32_t value) {
     DWORD old,ignored;
     if(!VirtualProtect(entry,4,PAGE_READWRITE,&old)) return 0;
@@ -145,14 +154,15 @@ static int ux_arm_using(unsigned char *base,size_t size) {
     for(uint32_t i=0;i<count;i++) {
         if(names[i]>=size || ordinals[i]>=nfunctions) {ux_stage="names";return 0;}
         const char *name=(const char*)base+names[i];uint32_t rva=functions[ordinals[i]];
-        if(ux_is_query(name) || !rva || rva>=size) continue;
+        if(ux_is_query(name) || !rva || rva>=size || !ux_code_rva(base,rva)) continue;
         if(n>=UX_MAX) {ux_stage="capacity";return 0;}
         ux_slot[n]=ordinals[i];ux_original[n]=rva;ux_name[n]=name;ux_target[n]=base+rva;++n;
     }
     if(!ux_page) ux_page=ux_alloc_page(base,size);
-    if(!ux_page) {ux_stage="page";return 0;}
+    DWORD old;
+    if(!ux_page || !VirtualProtect(ux_page,UX_PAGE_BYTES,PAGE_READWRITE,&old)) {ux_stage="page";return 0;}
     ux_write_code(ux_page,n);
-    DWORD old;if(!VirtualProtect(ux_page,UX_PAGE_BYTES,PAGE_EXECUTE_READ,&old)) {ux_stage="page";return 0;}
+    if(!VirtualProtect(ux_page,UX_PAGE_BYTES,PAGE_EXECUTE_READ,&old)) {ux_stage="page";return 0;}
     FlushInstructionCache(GetCurrentProcess(),ux_page,UX_PAGE_BYTES);
     ux_functions=functions;ux_count=n;
     for(unsigned i=0;i<n;i++) {

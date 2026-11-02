@@ -112,6 +112,38 @@ static uint64_t ul_state_of(unsigned target,const void *container) {
     else {read_local(c+0x680,&total,4);read_local(c+0x684,&pending,1);v=total|((uint64_t)pending<<32);}
     return v;
 }
+/* Simulation calls by caller (always on while armed): (target, the image return address of the call, the
+ * one above it) -> count, so that a run whose clients part on a lazy update names the call site without a
+ * row window (the timing-dependent cases do not reproduce at the same tick). MoveWorker only: no lock. */
+#define UL_CALLERS 1024u
+typedef struct {uint32_t c0,c1,count;uint8_t target,used;} ul_caller_t;
+static ul_caller_t ul_callers[UL_CALLERS];
+static uint64_t ul_callers_full;
+static void ul_caller_count(unsigned target,const uint32_t *chain) {
+    uint32_t h=(chain[0]*0x9e3779b1u)^(chain[1]*0x85ebca6bu)^target;
+    for(unsigned i=0;i<UL_CALLERS;i++) {
+        ul_caller_t *e=&ul_callers[(h+i)&(UL_CALLERS-1)];
+        if(!e->used) {e->used=1;e->target=(uint8_t)target;e->c0=chain[0];e->c1=chain[1];e->count=1;return;}
+        if(e->target==target && e->c0==chain[0] && e->c1==chain[1]) {++e->count;return;}
+    }
+    ++ul_callers_full;
+}
+static int ul_caller_order(const void *a,const void *b) {
+    const ul_caller_t *p=a,*q=b;
+    if(p->target!=q->target) return p->target<q->target?-1:1;
+    if(p->c0!=q->c0) return p->c0<q->c0?-1:1;
+    return p->c1<q->c1?-1:p->c1>q->c1;
+}
+/* UI_LAZY_CALLERS: one token per call site in a fixed order, 'c|t|u:caller/above=count'. */
+static int ul_callers_text(char *out,size_t cap) {
+    static ul_caller_t sorted[UL_CALLERS];unsigned n=0;
+    for(unsigned i=0;i<UL_CALLERS;i++) if(ul_callers[i].used) sorted[n++]=ul_callers[i];
+    qsort(sorted,n,sizeof(sorted[0]),ul_caller_order);
+    int w=snprintf(out,cap,"sites=%u full=%llu",n,(unsigned long long)ul_callers_full);
+    for(unsigned i=0;i<n && w>0 && (size_t)w<cap;i++)
+        w+=snprintf(out+w,cap-(size_t)w," %c:%x/%x=%u","ctu"[sorted[i].target<3?sorted[i].target:0],sorted[i].c0,sorted[i].c1,sorted[i].count);
+    return w>0 && (size_t)w<cap?w:0;
+}
 /* 1: a UI query in an admitted frame that 'block' skips; 0: run natively. */
 static int ul_ui_query(unsigned target,const void *container,uint64_t a1,uint64_t a2) {
     if(!ul_mode || !(stats.active && boot_phase==3)) return 0;
@@ -123,7 +155,7 @@ static int ul_ui_query(unsigned target,const void *container,uint64_t a1,uint64_
     }
     uint32_t chain[UL_CHAIN];int lua=(ul_from_lua_fn?ul_from_lua_fn:ul_stack_from_lua)(chain);
     if(!lua) {
-        ++ul_sim[target];
+        ++ul_sim[target];ul_caller_count(target,chain);
         if(window) ul_record(target,container,chain,0,0,a1,a2,ul_state_of(target,container));
         return 0;
     }
@@ -243,7 +275,7 @@ static int ul_arm(int mode) {
     for(unsigned i=0;i<UL_TARGETS;i++) ul_write_code(ul_page+UL_STUB*i,i,image+ul_targets[i].rva);
     if(!VirtualProtect(ul_page,0x1000,PAGE_EXECUTE_READ,&ignored)) {ul_stage="page";return 0;}
     FlushInstructionCache(GetCurrentProcess(),ul_page,0x1000);
-    memset(ul_lua,0,sizeof(ul_lua));memset(ul_sim,0,sizeof(ul_sim));for(unsigned i=0;i<UL_TARGETS;i++) ul_other[i]=0;ul_blocked=ul_unmapped=ul_unkeyed=0;memset(ul_keyed,0,sizeof(ul_keyed));ul_rows=0;ul_failures=0;ul_restored=0;
+    memset(ul_lua,0,sizeof(ul_lua));memset(ul_sim,0,sizeof(ul_sim));memset(ul_callers,0,sizeof(ul_callers));ul_callers_full=0;for(unsigned i=0;i<UL_TARGETS;i++) ul_other[i]=0;ul_blocked=ul_unmapped=ul_unkeyed=0;memset(ul_keyed,0,sizeof(ul_keyed));ul_rows=0;ul_failures=0;ul_restored=0;
     ul_mode=mode;ul_installed=1;
     for(unsigned i=0;i<UL_TARGETS;i++) {
         unsigned char orig[5],patch[5]={0xe9};int32_t d=ul_rel(i);memcpy(orig,image+ul_targets[i].rva,5);memcpy(patch+1,&d,4);

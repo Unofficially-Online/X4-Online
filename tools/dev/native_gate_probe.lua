@@ -4016,6 +4016,7 @@ local function frame()
  if cfg.native_gate_event_rng then ticklog.status('EVENT_RNG',tick,gate.event_rng_status,'event RNG status unavailable') end
  if cfg.native_gate_ui_cargo then ticklog.status('UI_CARGO',tick,gate.ui_cargo_status,'UI cargo status unavailable') end
  if cfg.native_gate_ui_lazy then ticklog.status('UI_LAZY',tick,gate.ui_lazy_status,'UI lazy status unavailable') end
+ if cfg.native_gate_ui_lazy and gate.ui_lazy_callers then ticklog.status('UI_LAZY_CALLERS',tick,gate.ui_lazy_callers,'UI lazy callers unavailable') end
  if cfg.native_gate_ui_exports then
   ticklog.status('UI_EXPORTS',tick,gate.ui_exports_status,'UI exports status unavailable')
   for _=1,1024 do

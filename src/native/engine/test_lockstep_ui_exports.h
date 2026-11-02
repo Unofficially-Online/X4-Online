@@ -12,6 +12,9 @@ static void test_ui_exports(void) {
     const size_t size=0x10000;unsigned char *base=VirtualAlloc(NULL,size,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);assert(base);
     IMAGE_DOS_HEADER *dos=(IMAGE_DOS_HEADER*)base;dos->e_magic=IMAGE_DOS_SIGNATURE;dos->e_lfanew=0x80;
     IMAGE_NT_HEADERS64 *nt=(IMAGE_NT_HEADERS64*)(base+0x80);
+    nt->FileHeader.NumberOfSections=1;nt->FileHeader.SizeOfOptionalHeader=sizeof(IMAGE_OPTIONAL_HEADER64);
+    IMAGE_SECTION_HEADER *text=IMAGE_FIRST_SECTION(nt);text->VirtualAddress=0x2000;text->Misc.VirtualSize=0x18; /* 0x2020 lies outside */
+    text->Characteristics=IMAGE_SCN_MEM_EXECUTE|IMAGE_SCN_CNT_CODE;
     nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress=0x1000;
     nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].Size=0x200;
     IMAGE_EXPORT_DIRECTORY *e=(IMAGE_EXPORT_DIRECTORY*)(base+0x1000);
@@ -22,6 +25,9 @@ static void test_ui_exports(void) {
     unsigned char *prior=image;uint32_t saved_active=stats.active;int saved_phase=boot_phase;uint64_t saved_issued=stats.issued;
     unsigned char *saved_page=ux_page;ux_page=NULL;
     image=base;
+    /* 0x2020 (IssueOrder) is outside the code section first: a data export, left alone. */
+    assert(ux_arm_using(base,size) && ux_count==1 && functions[2]==0x2020);ux_restore();assert(functions[1]==0x2010);ux_restored=0;
+    text->Misc.VirtualSize=0x1000;
     assert(ux_arm_using(base,size) && ux_installed && ux_count==2 && !strcmp(ux_stage,"armed"));
     assert(functions[0]==0x2000); /* the query stays */
     assert(functions[1]!=0x2010 && functions[2]!=0x2020 && ux_check());

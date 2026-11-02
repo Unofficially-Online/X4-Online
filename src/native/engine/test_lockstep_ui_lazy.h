@@ -20,6 +20,11 @@ static void test_ui_lazy(void) {
     ul_mode=UL_OFF;test_ul_lua=1;assert(!ul_ui_query(UL_TRADE,station,0,0) && !ul_rows);
     /* Simulation calls (no Lua on the stack) run natively and are counted. */
     ul_mode=UL_BLOCK;test_ul_lua=0;assert(!ul_ui_query(UL_TRADE,station,0,0) && ul_sim[UL_TRADE]==1 && !ul_rows);
+    /* Simulation calls are counted per call site (chain[0], chain[1]). */
+    {static char text[4096];memset(ul_callers,0,sizeof(ul_callers));ul_callers_full=0;test_ul_lua=0;
+     assert(!ul_ui_query(UL_TRADE,station,0,0) && !ul_ui_query(UL_CARGO,station,0,0) && !ul_ui_query(UL_TRADE,station,0,0));
+     assert(ul_callers_text(text,sizeof(text))>0 && !strcmp(text,"sites=2 full=0 c:1000/1001=1 t:1000/1001=2"));
+     ul_sim[UL_TRADE]=1;ul_sim[UL_CARGO]=0;}
     /* A UI query: blocked, counted, one row with the portable key. */
     test_ul_lua=1;assert(ul_ui_query(UL_TRADE,station,0,0) && ul_lua[UL_TRADE]==1 && ul_blocked==1 && ul_rows==1);
     char out[512];assert(ul_row(0,out,sizeof(out))>0 && strstr(out,"tick=1077 target=trade class=saved key=000000000001f2df lua=1 blocked=1 ") && strstr(out," chain=00001000,00001001"));
