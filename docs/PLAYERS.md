@@ -41,6 +41,21 @@ are presentation (maps, menus, camera, sound, options); the rest change the game
 | Money | 6 | `AddPlayerMoney`, `TransferPerson` |
 | Other | ~200 | research, boarding, terraforming, sectors |
 
+`tools/dev/ui_export_census.py` reads the installed game read-only (export table, UI Lua
+unpacked to a temporary directory) and maps every non-query export to the UI scripts
+that call it (full map in `.local/ui-export-census.json`). Of 804 such exports the 81 UI
+scripts call 668: about 406 presentation, 62 unclassified, and the relay worklist:
+
+| Family | Called by the UI | Mostly from |
+|---|---|---|
+| Orders | 48 | map, interact menu, helper, player info |
+| Ships, equipment | 46 | map, docked menu, interact menu, ship configuration |
+| Missions, relations, boarding, research | 30 | map, diplomacy, interact menu, player info |
+| Trade, wares | 28 | helper, station overview, player info, map |
+| Player control | 23 | player info, interact menu, docked menu, platform undock |
+| Build | 21 | station and ship configuration, map, station overview |
+| Money | 4 | map, blueprint/licence trader, inventory trader |
+
 The first native run of the census (600 ticks, scripted pilots, no human input) saw the
 idle UI call 10 non-query exports, all presentation: `SetWidgetAssociatedElement`,
 `SetMonitorExtents`, `SetCrosshairMessage`, `MarkIndicatorShown`, `TrackMenu`, ...
