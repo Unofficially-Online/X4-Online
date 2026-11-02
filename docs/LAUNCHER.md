@@ -119,3 +119,11 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   engine worker the gate does not join (asset/collision loading is the census's
   known case) still decides what the AI sees. Next: find that worker (census_jobs,
   job_rng 'observe', loader joins) rather than adding more per-tick logging.
+- **Earliest divergence is far before the digest.** `tools/dev/census_first_status.py`
+  compares every module's status line between the clients. On the seed snapshot
+  with the full profile (ui_lazy 'block', UI made no queries in the soak), real
+  simulation differences start early: ACTOR_RNG_ALL at tick 45 (one ship's keyed
+  Move draws once on one client, twice on the other), EVENT_RNG at 600 (one more
+  due-event delivery with draws), WARP_RNG at 1140; the digest (fixture rows,
+  world hash every 300 ticks, runtime-ID word) only catches the consequences near
+  4900. Counters named moved/reordered and the pathing bank differ by design.
