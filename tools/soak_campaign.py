@@ -73,7 +73,7 @@ def main(argv=None):
                 continue
         timeout = int(args.ticks / 30 / 0.7) + 900
         r = x4ls('session', '--clients', 2, '--overlay', overlay, '--snapshot', snapshot, '--ticks', args.ticks,
-                 '--observe', '--lookahead', 1, '--timeout', timeout, '--fast', '--steam-fix')
+                 '--observe', '--lookahead', 1, '--timeout', timeout, '--fast', '--steam-fix', '--stop-after-desync', 600)
         run = latest_run()
         summary = json.loads((run / 'summary.json').read_text()) if (run / 'summary.json').is_file() else {}
         record(log, seed=seed, step='session', run=run.name, outcome=summary.get('outcome'),

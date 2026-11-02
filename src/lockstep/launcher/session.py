@@ -45,6 +45,7 @@ class Options:
     startup: int = 70  # seconds budgeted per client to reach the start menu; snapshot clients then arm together
     steam_fix: bool = False  # re-register Steam's pid before each client (see steam.py); restored at the end
     checkpoint_at: int | None = None  # every client saves save_001 after this tick; the session ends there
+    stop_after_desync: int | None = None  # observe: end the session this many ticks after the first mismatch
     relay_args: list = field(default_factory=list)
 
 
@@ -413,5 +414,14 @@ def monitor(o, run_dir, relay, clients, log):
                     'seconds': round(time.time() - started)}
         if relay.poll() is not None and relay.returncode != 0:
             return {'outcome': 'relay-failed', 'relay_exit': relay.returncode, 'seconds': round(time.time() - started)}
+        if o.stop_after_desync is not None and o.observe:  # a soak need not run hours past its first mismatch
+            try:
+                status = json.loads((run_dir / 'desync-status.json').read_text())
+            except (OSError, ValueError):
+                status = {}
+            first = status.get('first_mismatch')
+            if first is not None and (status.get('tick') or 0) >= first + o.stop_after_desync:
+                return {'outcome': 'diverged', 'verdict': 'diverged', 'first_digest_mismatch': first, 'stopped_at': status.get('tick'),
+                        'digest_mismatch_ticks': [first], 'seconds': round(time.time() - started)}
         if time.time() - started > o.timeout:
             return {'outcome': 'timeout', 'stopped': sorted(stopped), 'seconds': o.timeout}

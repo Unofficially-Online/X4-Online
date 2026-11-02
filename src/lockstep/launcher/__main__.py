@@ -48,6 +48,7 @@ def main(argv=None):
     s.add_argument('--checkpoint-at', type=int, metavar='TICK',
                    help='every client saves the world after this tick (save_001) and the session ends there; '
                         'a save is a --snapshot for later runs')
+    s.add_argument('--stop-after-desync', type=int, metavar='TICKS', help='with --observe: end the session TICKS ticks after the first mismatch')
     s.add_argument('relay_args', nargs='*', help='extra relay arguments after --')
 
     n = sub.add_parser('snapshot', help='capture a starting snapshot (new game + 12-ship gate fixture)')
@@ -103,7 +104,8 @@ def main(argv=None):
                               tick_hz=args.tick_hz, observe=args.observe, lookahead=args.lookahead,
                               timeout=args.timeout, width=width, height=height, game=args.game, lanes=args.lanes,
                               keep_views=args.keep_views, fast=args.fast, startup=args.startup, steam_fix=args.steam_fix,
-                              checkpoint_at=args.checkpoint_at, relay_args=args.relay_args)
+                              checkpoint_at=args.checkpoint_at,
+                              stop_after_desync=args.stop_after_desync, relay_args=args.relay_args)
     result = session.run(options)
     return 0 if result['outcome'] in ('passed', 'checkpointed') else 1
 
