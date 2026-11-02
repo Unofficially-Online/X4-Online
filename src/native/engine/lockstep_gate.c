@@ -1723,7 +1723,7 @@ static int lua_supply_row(lua_State *L) {
 /* ui_lazy(mode): 'observe' or 'block'. */
 static int lua_ui_lazy(lua_State *L) {
     size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);
-    int m=mode && length==5 && !memcmp(mode,"block",5)?UL_BLOCK:mode && length==7 && !memcmp(mode,"observe",7)?UL_OBSERVE:-1;
+    int m=mode && length==5 && !memcmp(mode,"block",5)?UL_BLOCK:mode && length==3 && !memcmp(mode,"key",3)?UL_KEY:mode && length==7 && !memcmp(mode,"observe",7)?UL_OBSERVE:-1;
     double from=p_lua_tonumber(L,2),to=p_lua_tonumber(L,3);int window=1;
     if(isfinite(from) && isfinite(to) && to>0) window=from>=1 && to>=from && to<9007199254740992.0 && floor(from)==from && floor(to)==to &&
         ul_window((uint64_t)from,(uint64_t)to);

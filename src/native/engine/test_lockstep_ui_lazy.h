@@ -2,6 +2,8 @@
  * trampoline and stub layout, arming refusals, the pinned prologues. */
 static int test_ul_lua;
 static int test_ul_from_lua(uint32_t *chain) {for(unsigned i=0;i<UL_CHAIN;i++) chain[i]=0x1000u+i;return test_ul_lua;}
+static uint64_t *test_ul_word_ptr;
+static uint64_t *test_ul_word(void) {return test_ul_word_ptr;}
 static void test_ui_lazy(void) {
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;int saved_boot=boot_mode,saved_phase=boot_phase;
     int saved_ids=world_identity_installed;
@@ -18,7 +20,7 @@ static void test_ui_lazy(void) {
     ul_mode=UL_BLOCK;test_ul_lua=0;assert(!ul_ui_query(UL_TRADE,station,0,0) && ul_sim[UL_TRADE]==1 && !ul_rows);
     /* A UI query: blocked, counted, one row with the portable key. */
     test_ul_lua=1;assert(ul_ui_query(UL_TRADE,station,0,0) && ul_lua[UL_TRADE]==1 && ul_blocked==1 && ul_rows==1);
-    char out[384];assert(ul_row(0,out,sizeof(out))>0 && strstr(out,"tick=1077 target=trade class=saved key=000000000001f2df lua=1 blocked=1 ") && strstr(out," chain=00001000,00001001"));
+    char out[512];assert(ul_row(0,out,sizeof(out))>0 && strstr(out,"tick=1077 target=trade class=saved key=000000000001f2df lua=1 blocked=1 ") && strstr(out," chain=00001000,00001001"));
     /* observe: counted and recorded, not blocked. */
     ul_mode=UL_OBSERVE;assert(!ul_ui_query(UL_CARGO,station,0,0) && ul_lua[UL_CARGO]==1 && ul_blocked==1 && ul_rows==2);
     assert(ul_row(1,out,sizeof(out))>0 && strstr(out," target=cargo ") && strstr(out," blocked=0 "));
@@ -46,6 +48,19 @@ static void test_ui_lazy(void) {
         stats.issued=1081;ui_thread=GetCurrentThreadId()+1;assert(!ul_ui_query(UL_TRADE,station,1,0) && ul_rows==rows+3 && ul_other[UL_TRADE]==2);ui_thread=GetCurrentThreadId();stats.issued=1077;
         assert(ul_status(out,sizeof(out))>0 && strstr(out," window=1070-1080 "));
         assert(ul_filter_class(NULL)==0);ul_window_from=ul_window_to=0;test_ul_lua=1;
+    }
+    /* 'key': a simulation cargo call gets the word lockstep_seed(domain, time bits, portable key), restored after;
+     * UI queries are blocked as in 'block'; no portable key or another thread: not keyed. */
+    {
+        static uint64_t word;uint64_t bits=0x403907ae147ae148ULL,seed=0;ul_tls_word_fn=test_ul_word;test_ul_word_ptr=&word;
+        ul_mode=UL_KEY;test_ul_lua=1;assert(ul_ui_query(UL_CARGO,station,bits,0));test_ul_lua=0;
+        assert(ul_key_word(station,bits,&seed)==&word && seed==lockstep_seed(UL_KEY_DOMAIN,bits,0x1f2df,0,0,0) && ul_keyed==1);
+        assert(!ul_key_word(ship,bits,&seed) && ul_unkeyed==1);
+        ui_thread=GetCurrentThreadId()+1;assert(!ul_key_word(station,bits,&seed));ui_thread=GetCurrentThreadId();
+        test_ul_word_ptr=NULL;assert(!ul_key_word(station,bits,&seed) && ul_unkeyed==2);
+        ul_mode=UL_BLOCK;test_ul_word_ptr=&word;assert(!ul_key_word(station,bits,&seed) && ul_keyed==1);
+        ul_mode=UL_KEY;assert(ul_status(out,sizeof(out))>0 && strstr(out,"mode=key ") && strstr(out," keyed=1 unkeyed=2"));
+        ul_tls_word_fn=NULL;ul_keyed=ul_unkeyed=0;test_ul_lua=1;
     }
     /* Code layout: stolen bytes, jmp [rip] back; entry stub at +0x20 jmp [rip] to the C entry. */
     unsigned char page[UL_STUB];const unsigned char stolen[7]={0x48,0x8b,0xc4,0x48,0x89,0x58,0x10};ul_write_code(page,UL_TRADE,stolen);

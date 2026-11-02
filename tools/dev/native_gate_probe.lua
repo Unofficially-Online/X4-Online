@@ -739,7 +739,8 @@ local function drain_gravidar_watch(final)
    log('UI_CARGO_ROW '..row);row_cursors.ui_cargo=row_cursors.ui_cargo+1
   end
  end
- if cfg.native_gate_event_rng and not cfg.native_gate_play_mode then -- due-event deliveries whose listeners drew (native_gate_event_rng)
+ -- native_gate_event_rng_play_rows = true writes them in play mode too (long soaks without world pages).
+ if cfg.native_gate_event_rng and (not cfg.native_gate_play_mode or cfg.native_gate_event_rng_play_rows) then -- due-event deliveries whose listeners drew (native_gate_event_rng)
   for _=1,16384 do
    local row=gate.event_rng_row(row_cursors.event_rng)
    if not row then break end
@@ -2597,7 +2598,7 @@ local function frame()
   if cfg.native_gate_ui_lazy then
    local mode,window=cfg.native_gate_ui_lazy,cfg.native_gate_ui_lazy_rows -- window: {first tick, last tick}, every call a row
    assert(window==nil or (type(window)=='table' and type(window[1])=='number' and type(window[2])=='number'),'ui lazy refused (rows)')
-   assert((mode=='block' or mode=='observe') and cfg.native_gate_world_identities and gate.ui_lazy and gate.ui_lazy_status and
+   assert((mode=='block' or mode=='observe' or mode=='key') and cfg.native_gate_world_identities and gate.ui_lazy and gate.ui_lazy_status and
     gate.ui_lazy_row and (window and gate.ui_lazy(mode,window[1],window[2]) or not window and gate.ui_lazy(mode))==1,
     'ui lazy refused '..tostring(gate.ui_lazy_status and gate.ui_lazy_status()))
    log('UI_LAZY_ARMED mode='..mode..(window and ' rows='..window[1]..'-'..window[2] or ''))
