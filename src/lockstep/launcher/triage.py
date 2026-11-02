@@ -50,6 +50,7 @@ KNOWN_LOCAL = {
     'GRAVIDAR_WIDE': {'sectors', 'moved'}, 'SCRIPT_RNG': {'ai_hits', 'ai_misses'}, 'FIND_ORDER': {'reordered'},
     'WARP_RNG': {'attributed'}, 'ACTOR': {'raw'},
     'EVENT_RNG': {'calls', 'keyed', 'local', 'keyset', 'drawset'},  # the local player's UI listeners (no draws)
+    'UI_EXPORTS': {'calls', 'exports_called', 'boot', 'rows', 'dropped'},  # each window's presentation calls (map, HUD); blocked= stays a lead
 }
 STATUS = re.compile(r'^(\d+) ([A-Z_0-9]+) (\[.*\])$')
 
