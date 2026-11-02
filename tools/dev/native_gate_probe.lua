@@ -2168,11 +2168,12 @@ local function frame()
   -- smallest request by (sector key, position) after the join; 'observe' only
   -- logs the native create requests. Rows: TEMPZONE_ROW. Needs the world
   -- identities and serial pathing; 'order' also the travel snapshot (the late
-  -- splices drained before the grant posts). Default off.
+  -- splices drained before the grant posts) or travel determinism (batches inline:
+  -- every splice is done when the pass returns). Default off.
   if cfg.native_gate_tempzone_order then
    local mode=cfg.native_gate_tempzone_order==true and 'order' or cfg.native_gate_tempzone_order
    assert((mode=='order' or mode=='observe') and snapshot and cfg.native_gate_world_identities and cfg.native_gate_serial_pathing and
-    (mode=='observe' or cfg.native_gate_travel_snapshot) and gate.tempzone_order and gate.tempzone_order_status and gate.tempzone_order_row and
+    (mode=='observe' or cfg.native_gate_travel_snapshot or cfg.native_gate_travel_determinism) and gate.tempzone_order and gate.tempzone_order_status and gate.tempzone_order_row and
     gate.tempzone_order(mode)==1,'tempzone order refused')
    log('TEMPZONE_ORDER_ARMED mode='..mode)
   end

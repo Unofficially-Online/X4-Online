@@ -124,7 +124,7 @@ static void test_path_transforms(void) {
     rows=ptf_rows;test_ptf_native_value=7.0f;
     assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_rows==rows+1);
     assert(ptf_row_text((uint64_t)rows,out,sizeof(out))>0 && strstr(out,"site=formation ") && strstr(out," a=000000000013e75f/0/0 ") &&
-           strstr(out," sim=0000e040") && strstr(out," outcome=not_ancestor"));
+           strstr(out," sim=0000e040") && strstr(out," outcome=not_ancestor chain="));
     assert(PTF_CALL(PTF_SITE_FORMATION,wreck,zone,0,PATH_THREAD_MOVEWORKER)==(void*)0x77 && ptf_rows==rows+2);
     assert(ptf_row_text((uint64_t)rows+1,out,sizeof(out))>0 && strstr(out," outcome=outside"));
     assert(PTF_CALL(PTF_SITE_FORMATION,wreck,zone,0,PATH_THREAD_PASS)==m && ptf_rows==rows+4); /* the object row and the window row */

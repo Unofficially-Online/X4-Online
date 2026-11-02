@@ -41,7 +41,7 @@
  * of the object or its nearest keyed ancestor). Formation window (gate.path_transforms(mode, from, to), at
  * most 600 ticks): every call of the formation site (GetTargetPositionForWingMan) in it is a row too, whatever
  * happens to it (outcome=outside|trivial|nav|not_ancestor|spaces|failure|observe|diverted), with the result
- * matrix as sim=.
+ * matrix as sim= and the image return addresses above the hook as chain= (up to eight RVAs).
  * Not covered: the velocity variant 0x3df3f0 (0xe8a214, 0xe8a40c; the target path passes no velocity) and the
  * walk's own choice of stops and common ancestor (0xf231e0, 0x3d8f90), which read the published view's cached
  * parents (the result in b's frame does not depend on it while cached and live parents agree).
@@ -203,7 +203,9 @@ static void *ptf_call_using(unsigned site,void *a,float *out,void *b,uint64_t fl
     void *result=ptf_call_core(site,a,out,b,flag,cls,tls,native,gtr,manager,&outcome);
     if(site==PTF_SITE_FORMATION && ptf_window_to && stats.issued>=ptf_window_from && stats.issued<=ptf_window_to && out) {
         __declspec(align(16)) float m[16];memcpy(m,out,sizeof(m));
-        ptf_row(site,a,b,NULL,cls,ptf_last_time,m,NULL,0,outcome+1u);
+        uint32_t chain[16];memset(chain,0xff,sizeof(chain));void *frames[24];USHORT n=RtlCaptureStackBackTrace(1,24,frames,NULL);unsigned k=0;
+        for(USHORT j=0;j<n && k<8;j++) {const unsigned char *f=frames[j];if(f>=image && f<image+0x6fa9000) chain[k++]=(uint32_t)(f-image);}
+        ptf_row(site,a,b,NULL,cls,ptf_last_time,m,(const float*)chain,0,outcome+1u);
     }
     return result;
 }
@@ -351,8 +353,9 @@ static int ptf_row_text(uint64_t index,char *out,size_t cap) {
     n=snprintf(out,cap,"index=%llu tick=%llu site=%s mode=%s a=%s b=%s object=%s ctrl=%08x time=%016llx differs=%u sim=%s%s%s",
         (unsigned long long)index,(unsigned long long)r->tick,ptf_sites[r->site<PTF_SITES?r->site:0].name,r->mode==PTF_OBSERVE?"observe":"sim",
         a,b,r->object?o:"-",r->ctrl_vt,(unsigned long long)time,r->differs,sim,r->mode==PTF_OBSERVE?" native=":"",r->mode==PTF_OBSERVE?native:"");
-    if(n>0 && (size_t)n<cap && r->win) { /* window rows: ctrl= is the thread class */
-        int m=snprintf(out+n,cap-(size_t)n," outcome=%s",ptf_outcomes[(r->win-1u)&7u]);
+    if(n>0 && (size_t)n<cap && r->win) { /* window rows: ctrl= is the thread class, native[] holds the chain */
+        const uint32_t *c=(const uint32_t*)r->native;
+        int m=snprintf(out+n,cap-(size_t)n," outcome=%s chain=%x,%x,%x,%x,%x,%x,%x,%x",ptf_outcomes[(r->win-1u)&7u],c[0],c[1],c[2],c[3],c[4],c[5],c[6],c[7]);
         n=m>0 && (size_t)m<cap-(size_t)n?n+m:-1;
     }
     return n>0 && (size_t)n<cap?n:0;
