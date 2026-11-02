@@ -1983,9 +1983,10 @@ local function frame()
   -- 'observe' computes both and keeps the native result. Rows: PATH_TRANSFORMS_ROW. Needs the serial pathing
   -- join. Default off.
   if cfg.native_gate_path_transforms then
-   local mode=cfg.native_gate_path_transforms
+   local mode,window=cfg.native_gate_path_transforms,cfg.native_gate_path_transforms_rows -- window: {first, last tick}, every formation call a row
    assert((mode=='sim' or mode=='observe') and snapshot and cfg.native_gate_serial_pathing and gate.path_transforms and
-    gate.path_transforms_status and gate.path_transforms_row and gate.path_transforms(mode)==1,
+    gate.path_transforms_status and gate.path_transforms_row and
+    (window and gate.path_transforms(mode,window[1],window[2]) or not window and gate.path_transforms(mode))==1,
     'path transforms refused '..tostring(gate.path_transforms_status and gate.path_transforms_status()))
    log('PATH_TRANSFORMS_ARMED mode='..mode)
   end

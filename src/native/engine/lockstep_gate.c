@@ -1592,7 +1592,10 @@ static int lua_path_budget_status(lua_State *L) {
 static int lua_path_transforms(lua_State *L) {
     const char *mode=p_lua_tolstring(L,1,NULL);
     int m=mode && !strcmp(mode,"sim")?PTF_SIM:mode && !strcmp(mode,"observe")?PTF_OBSERVE:PTF_OFF;
-    p_lua_pushnumber(L,m!=PTF_OFF && ptf_arm(m));return 1;
+    double from=p_lua_tonumber(L,2),to=p_lua_tonumber(L,3);int window=1; /* (mode, from, to): the formation row window */
+    if(isfinite(from) && isfinite(to) && to>0) window=from>=1 && to>=from && to<9007199254740992.0 && floor(from)==from && floor(to)==to &&
+        ptf_window((uint64_t)from,(uint64_t)to);
+    p_lua_pushnumber(L,m!=PTF_OFF && window && ptf_arm(m));return 1;
 }
 static int lua_path_transforms_status(lua_State *L) {
     char out[512];int n=accept_ui()?ptf_status(out,sizeof(out)):0;
