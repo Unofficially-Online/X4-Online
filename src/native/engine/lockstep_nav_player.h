@@ -77,9 +77,14 @@ static void nav_player_run(nav_player_fn original,void *self,double time,const u
     if(!stats.active || boot_phase!=3 || GetCurrentThreadId()!=ui_thread) {original(self,time);return;}
     if(nav_player_tick!=stats.issued) {nav_player_tick=stats.issued;nav_player_frame_admitted=0;}
     ++nav_player_admitted;++nav_player_frame_admitted;
+    /* Bracket every admitted call. The autopilot flag at entry is not the original's decision: between entry and
+     * its branch (0xd981bb) the original calls 0xd97b50 (0xd981af), after which the flag can be set and the nav
+     * upkeep runs; unbracketed, the player's nav deadlines kept their per-client load-time values (a scripted
+     * pilot's player ship drew its parameter refresh at tick 50 on one client and 54 on the other). Where the
+     * upkeep is not reached the bracket only re-bases deadlines nothing reads. manual= still counts a clear flag. */
     uint64_t autopilot=0;
-    if(!read_local(image+NAV_PLAYER_AUTOPILOT,&autopilot,8) || !autopilot) {++nav_player_manual;original(self,time);return;}
-    if(actor_all_ship_depth) ++nav_player_scoped;else ++nav_player_unscoped;
+    if(!read_local(image+NAV_PLAYER_AUTOPILOT,&autopilot,8) || !autopilot) ++nav_player_manual;
+    else if(actor_all_ship_depth) ++nav_player_scoped;else ++nav_player_unscoped;
     uint64_t before=rng?*rng:0;
     nav_cadence_sample cadence;nav_cadence_enter(self,time,&cadence);
     original(self,time);

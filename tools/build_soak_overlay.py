@@ -62,6 +62,8 @@ def main(argv=None):
     p.add_argument('--no-pace', action='store_true', help='do not hold clients to real time')
     p.add_argument('--controls', choices=('device', 'native'), default='device',
                    help="device: X4's own controls parked on every client, ships flown only by the shared inputs")
+    p.add_argument('--sandbox-arg', action='append', default=[], metavar='ARG',
+                   help='extra native_gate_sandbox.py argument (repeatable), e.g. --sandbox-arg=--device1=none')
     p.add_argument('--drop', action='append', default=[], metavar='native_gate_KEY',
                    help='leave a key of profiles/soak.lua out (repeatable)')
     p.add_argument('--set', action='append', default=[], metavar='native_gate_KEY=LUA_VALUE',
@@ -89,7 +91,7 @@ def main(argv=None):
         run([DEV / 'native_gate_sandbox.py', 'overlay', '--base', keyed, '--gate-dll', args.gate_dll,
              '--probe', DEV / 'native_gate_probe.lua', '--out', args.out, '--slot1', player, '--slot2', fixture[2],
              '--controls', args.controls, '--script-pilots', '--window', '30', str(args.window), '--world-stride', '300',
-             '--trace-stride', '3600', '--fp', 'default', *[x for kv in args.set for x in ('--set', kv)]])
+             '--trace-stride', '3600', '--fp', 'default', *[x for kv in args.set for x in ('--set', kv)], *args.sandbox_arg])
     print(run([DEV / 'gate_preflight.py', args.out]).strip())
     print(f"{args.out}: relay ticks for the full window: {args.window + (3 if args.controls == 'native' else 2)}")
 

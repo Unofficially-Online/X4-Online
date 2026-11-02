@@ -37,11 +37,14 @@ static void test_nav_player(void) {
     stats.active=1;boot_phase=2;nav_player_run(test_np_original,test_nc_controller,5.0,&word);assert(!nav_player_admitted);
     boot_phase=3;ui_thread=GetCurrentThreadId()+1;nav_player_run(test_np_original,test_nc_controller,5.0,&word);assert(!nav_player_admitted);
     ui_thread=GetCurrentThreadId();
-    /* Manual flight (autopilot flag 0): counted, passed through, nothing bracketed. */
+    /* Autopilot flag clear at entry: counted manual= but still bracketed, because the original can set the flag
+     * before its branch and then run the nav upkeep: the loading deadline is re-based before the original runs. */
     nav_cadence_active=1;nav_probe_armed=1;double v0=7.96;memcpy(test_nc_probe+0x3e0,&v0,8);
     nav_player_run(test_np_original,test_nc_controller,5.0,&word);
-    assert(nav_player_admitted==1 && nav_player_manual==1 && !nav_player_unscoped && !nav_player_drawn && !nav_probe_pins &&
-           !nav_cadence_total[1].calls && test_np_seen_due==7.96);
+    assert(nav_player_admitted==1 && nav_player_manual==1 && !nav_player_unscoped && nav_probe_pins==1 &&
+           test_np_seen_due==5.0-1.0/60.0);
+    nav_probe_pins=0;nav_probe_count=0;memset(nav_probe_table,0,sizeof(nav_probe_table));memset(nav_cadence_total,0,sizeof(nav_cadence_total));
+    nav_cadence_rows=0;nav_player_rows=0;nav_player_seen=0;nav_player_drawn=0;nav_player_unscoped=nav_player_scoped=0;
     nav_cadence_active=0;nav_probe_armed=0;nav_player_admitted=nav_player_manual=0;nav_player_tick=UINT64_MAX;--nav_player_calls;--test_np_original_calls;
     uint64_t autopilot=1;memcpy(image+NAV_PLAYER_AUTOPILOT,&autopilot,8);
     /* Admitted with the cadence inactive: counted, but nothing read and no row. */
