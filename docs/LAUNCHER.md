@@ -177,10 +177,17 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   checkpoint the clients part at ticks 14-19 (an extra MD cue raise, weapon fire, AI
   scripts of the old fixture's survivors receiving StopBoost/ArrivedAtWaypoint one tick
   earlier on one client) or at 49. Script, event and UI-triggered events agree before it.
-  Lead: the loading frames (boot phase 2) last as long as each client's load, and the
-  pathing read bank differed at tick 1 in one run. A fresh snapshot hides this (its banks
-  hold resting ships). Loading a busy save deterministically is also what join and resync
-  need.
+  Not the loading frames: both clients release the same number of pathing passes before
+  tick 1 (`PATH ... boot_passes_menu=3 boot_passes_load=0`), and a run whose read banks
+  differed at tick 1 passed. `x4ls triage` on a split run: at tick 2 one client alone posts
+  and delivers a StopBoostEvent (due = tick 2's game time) for 6c448, a survivor of the
+  old fixture (after the respawn no longer a fixture actor, so outside the fixture-only
+  flight modules); at tick 3 the survivors' attack scripts react on that client only. The
+  event comes from Agent_UpdatePathing 0xe8f250's travel/boost decision (inputs: the
+  agent's waypoint flag +0xf7b, the formation leader's flags, the flight model, the +0xf40
+  throttle). The world census finds every object equal at tick 1, so the difference is in
+  agent state the world hash does not cover. Loading a busy save deterministically is also
+  what join and resync need.
 - **Triage.** `x4ls triage RUN` does the manual loop: rebuild the run's overlay with per-tick
   status, world pages, row windows (script RNG, event deliveries, formation transforms with
   return chains, UI lazy calls) and created rows over the 300 ticks before the first
