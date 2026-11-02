@@ -3455,7 +3455,7 @@ local function frame()
   log(string.format('STOP slot=%s completed=%d reason=%d restored=%d wait_game_delta=%.9g max_dt_error=%.9g',
    cfg.slot,tonumber(s.completed),s.reason,s.restored,s.wait_game_delta,s.max_dt_error))
   if s.reason==3 and gate.unowned then log('UNOWNED '..tostring(gate.unowned())) end
-  log('PATH joins='..s.path_joins..' restored='..s.path_restored..' rng_seeds='..s.rng_seeds)
+  log('PATH joins='..s.path_joins..' restored='..s.path_restored..' rng_seeds='..s.rng_seeds..' boot_passes_menu='..tostring(s.path_boot_passes_menu)..' boot_passes_load='..tostring(s.path_boot_passes_load))
   if (cfg.native_gate_lookahead or 0)>0 then log('LOOKAHEAD_STOP '..tostring(gate.lookahead_status())) end
   if cfg.native_gate_player_observer then assert(X4LAN_NATIVE_PLAYER_TRACE,'player observer adapter missing')(gate,true) end
   if cfg.native_gate_player_probe=='agreed-fire' then assert(X4LAN_NATIVE_PLAYER_FIRE_TRACE,'player firing adapter missing')(gate,true) end

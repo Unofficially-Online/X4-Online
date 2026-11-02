@@ -846,8 +846,9 @@ static void gate_original_once(tick_fn original,void *frame,unsigned char loadin
  * original late join still applies queued orders and swaps state buffers. Wait
  * for the pass before universe/AI updates can race its reads; replace exactly
  * the one completion token we consumed for the original join to consume later. */
+static uint64_t path_boot_passes[3]; /* pathing passes released natively in boot phases 0-2 (loading frames) */
 static BOOL WINAPI path_release(HANDLE semaphore,LONG count,LPLONG previous) {
-    if(boot_mode && boot_phase<3) return ReleaseSemaphore(semaphore,count,previous);
+    if(boot_mode && boot_phase<3) {++path_boot_passes[boot_phase>=0 && boot_phase<3?boot_phase:0];return ReleaseSemaphore(semaphore,count,previous);}
     if(boot_mode) accept_ui();
     unsigned char *manager=*(unsigned char**)(image+0x6cf21c8);
     int valid=stats.active && GetCurrentThreadId()==ui_thread && manager &&
@@ -2608,6 +2609,8 @@ static int lua_poll(lua_State *L) {
     p_lua_pushnumber(L,path_restored);p_lua_setfield(L,-2,"path_restored");
     p_lua_pushnumber(L,(double)rng_seeds);p_lua_setfield(L,-2,"rng_seeds");
     p_lua_pushnumber(L,boot_phase);p_lua_setfield(L,-2,"boot_phase");
+    p_lua_pushnumber(L,(double)(path_boot_passes[0]+path_boot_passes[1]));p_lua_setfield(L,-2,"path_boot_passes_menu");
+    p_lua_pushnumber(L,(double)path_boot_passes[2]);p_lua_setfield(L,-2,"path_boot_passes_load");
     p_lua_pushnumber(L,dt_restored);p_lua_setfield(L,-2,"dt_restored");
     p_lua_pushnumber(L,flight_restored);p_lua_setfield(L,-2,"flight_restored");
     p_lua_pushnumber(L,(double)flight_calls);p_lua_setfield(L,-2,"flight_calls");
