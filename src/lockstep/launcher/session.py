@@ -272,6 +272,8 @@ def run(o: Options, log=print):
         (o.state / 'session.json').unlink(missing_ok=True)
         if o.steam_fix and (o.state / 'steam-fix.json').exists():
             steam.restore(o.state / 'steam-fix.json')
+    result.update(overlay=str(o.overlay), snapshot=str(o.snapshot) if o.snapshot else None, ticks=o.ticks,
+                  run_dir=str(run_dir))  # for x4ls triage
     saves = result.get('checkpoints') or {}
     for client, ticks in saves.items():
         for tick, outcome in (ticks or {}).items():

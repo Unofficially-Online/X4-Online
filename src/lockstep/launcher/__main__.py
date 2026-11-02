@@ -1,5 +1,6 @@
-"""x4ls command line: doctor, session, clean, steam-fix."""
+"""x4ls command line: doctor, session, snapshot, triage, clean, steam-fix."""
 import argparse
+import json
 from pathlib import Path
 import sys
 
@@ -59,6 +60,11 @@ def main(argv=None):
     c = sub.add_parser('clean', help='stop processes and remove views left by a crashed session')
     c.add_argument('--keep-views', action='store_true')
 
+    t = sub.add_parser('triage', help='rerun a diverged session with diagnostic windows around its first mismatch')
+    t.add_argument('run', type=Path, help='the diverged run directory (.local/runs/<time>)')
+    t.add_argument('--steam-fix', action='store_true')
+    t.add_argument('--report-only', type=Path, metavar='RERUN', help='only write the report of an existing rerun directory')
+
     f = sub.add_parser('steam-fix', help='register the running Steam pid so direct X4 starts can reach Steam')
     f.add_argument('--restore', action='store_true', help='put back the value recorded by steam-fix')
 
@@ -73,6 +79,14 @@ def main(argv=None):
         return 0 if outcome == 'saved' else 1
     if args.command == 'clean':
         print(session.clean(state, args.keep_views))
+        return 0
+    if args.command == 'triage':
+        from . import triage
+        if args.report_only:
+            first = json.loads((args.run / 'summary.json').read_text())['first_digest_mismatch']
+            print(triage.report(args.report_only, first))
+        else:
+            triage.triage(args.run, steam_fix=args.steam_fix)
         return 0
     if args.command == 'steam-fix':
         if args.restore:

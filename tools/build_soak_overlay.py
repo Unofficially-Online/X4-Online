@@ -93,6 +93,10 @@ def main(argv=None):
              '--controls', args.controls, '--script-pilots', '--window', '30', str(args.window), '--world-stride', '300',
              '--trace-stride', '3600', '--fp', 'default', *[x for kv in args.set for x in ('--set', kv)], *args.sandbox_arg])
     print(run([DEV / 'gate_preflight.py', args.out]).strip())
+    # The arguments beside the overlay (not in it: overlays are frozen by their manifest), for x4ls triage.
+    given = sys.argv[1:] if argv is None else list(argv)
+    rebuild = [a for i, a in enumerate(given) if a != '--out' and (i == 0 or given[i - 1] != '--out') and not a.startswith('--out=')]
+    Path(f'{args.out}.build.json').write_text(json.dumps({'argv': rebuild}, indent=2) + '\n')
     print(f"{args.out}: relay ticks for the full window: {args.window + (3 if args.controls == 'native' else 2)}")
 
 
