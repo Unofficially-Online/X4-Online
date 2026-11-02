@@ -78,3 +78,4 @@ X4LAN_CONFIG.native_gate_fast_reads = true
 X4LAN_CONFIG.native_gate_lookahead = 1
 X4LAN_CONFIG.native_gate_status_stride = 60
 X4LAN_CONFIG.native_gate_shape_refresh = 'view'
+X4LAN_CONFIG.native_gate_ui_lazy = 'block'
