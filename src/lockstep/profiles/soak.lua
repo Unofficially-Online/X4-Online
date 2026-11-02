@@ -48,7 +48,6 @@ X4LAN_CONFIG.native_gate_camera_anchor = 'own'
 X4LAN_CONFIG.native_gate_camera_context = 'view'
 X4LAN_CONFIG.native_gate_event_rng = 'key'
 X4LAN_CONFIG.native_gate_build_rng = true
-X4LAN_CONFIG.native_gate_ui_cargo = 'block'
 X4LAN_CONFIG.native_gate_loadout_order = 'canonical'
 X4LAN_CONFIG.native_gate_order_canon = 'canonical'
 X4LAN_CONFIG.native_gate_highway_speed = 'key'
@@ -78,4 +77,5 @@ X4LAN_CONFIG.native_gate_fast_reads = true
 X4LAN_CONFIG.native_gate_lookahead = 1
 X4LAN_CONFIG.native_gate_status_stride = 60
 X4LAN_CONFIG.native_gate_shape_refresh = 'view'
+-- ui_lazy supersedes ui_cargo (it detours the same 0x41a910 entry ui_cargo pins; both together stop the gate, reason 153).
 X4LAN_CONFIG.native_gate_ui_lazy = 'block'
