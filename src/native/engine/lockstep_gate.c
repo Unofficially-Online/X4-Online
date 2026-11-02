@@ -355,6 +355,7 @@ static int world_nav_live_prefixes(void) {
 #include "lockstep_ui_cargo.h"
 #include "lockstep_supply_rows.h"
 #include "lockstep_ui_lazy.h"
+#include "lockstep_ui_exports.h"
 #include "lockstep_supply_wants.h"
 #include "lockstep_loadout_order.h"
 #include "lockstep_order_canon.h"
@@ -660,6 +661,7 @@ static void finish(unsigned reason) {
     uic_restore();
     spr_restore();
     ul_restore();
+    ux_restore();
     pmath_restore();
     xrcp_restore();
     fpenv_restore();
@@ -1009,6 +1011,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(uic_installed && !uic_check()) {finish(UIC_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(spr_installed && !spr_check()) {finish(SPR_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(ul_installed && !ul_check()) {finish(UL_STOP_REASON);gate_original_once(original,frame,loading);return;}
+    if(ux_installed && !ux_check()) {finish(UX_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(pmath_installed && !pmath_check()) {finish(PMATH_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(xrcp_installed && !xrcp_check()) {finish(XRCP_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(fpenv_installed && !fpenv_tick(stats.issued)) {finish(FPENV_STOP_REASON);gate_original_once(original,frame,loading);return;}
@@ -1977,6 +1980,26 @@ static int lua_address_order_row(lua_State *L) {
     if(accept_ui()) ao_on_tick();
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=ao_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.ui_exports('observe'): native_gate_ui_exports, lockstep_ui_exports.h. Before the snapshot load. */
+static int lua_ui_exports(lua_State *L) {
+    size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);
+    p_lua_pushnumber(L,mode && length==7 && !memcmp(mode,"observe",7) && ux_arm());return 1;
+}
+static int lua_ui_exports_status(lua_State *L) {
+    char out[384];int n=accept_ui()?ux_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_ui_exports_row(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[256];
+    int n=accept_ui() && isfinite(index) && index>=0 && floor(index)==index?ux_row_text((uint64_t)index,out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.ui_exports_relay(1|0): bracket the probe's application of relayed commands (calls inside are not UI writes). */
+static int lua_ui_exports_relay(lua_State *L) {
+    double on=p_lua_tonumber(L,1);
+    if(on==1) InterlockedIncrement(&ux_relay_depth);else if(InterlockedCompareExchange(&ux_relay_depth,0,0)>0) InterlockedDecrement(&ux_relay_depth);
+    p_lua_pushnumber(L,(double)InterlockedCompareExchange(&ux_relay_depth,0,0));return 1;
 }
 static int lua_ui_lazy_status(lua_State *L) {
     char out[384];int n=accept_ui()?ul_status(out,sizeof(out)):0;
@@ -3899,7 +3922,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(camera_offset);METHOD(camera_offset_status);METHOD(camera_anchor);METHOD(camera_anchor_keys);METHOD(camera_anchor_status);
     METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(gravidar_digest);METHOD(gravidar_digest_frame);METHOD(gravidar_digest_row);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
-    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(unowned);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);
+    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(unowned);METHOD(ui_exports);METHOD(ui_exports_status);METHOD(ui_exports_row);METHOD(ui_exports_relay);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);
     METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(register_weapon);METHOD(weapon);

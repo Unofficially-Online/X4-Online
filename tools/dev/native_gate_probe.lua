@@ -441,7 +441,14 @@ local function apply_inputs(tick,s)
  end
  if any then log('INPUTS tick='..tick..(k>0 and ' proposed='..s.inputs_tick or '')..' blobs='..table.concat(s.inputs,',')) end
  local adapter=X4LAN_NATIVE_INPUTS
- if adapter and adapter.apply then return adapter.apply(tick,s.inputs,clients,tonumber(cfg.slot:sub(2))) end
+ if adapter and adapter.apply then
+  -- Relayed inputs are applied on every client: their FFI calls are not local UI writes.
+  if cfg.native_gate_ui_exports then gate.ui_exports_relay(1) end
+  local ok,result=pcall(adapter.apply,tick,s.inputs,clients,tonumber(cfg.slot:sub(2)))
+  if cfg.native_gate_ui_exports then gate.ui_exports_relay(0) end
+  if not ok then error(result,0) end
+  return result
+ end
  assert(not any,'unexpected native inputs')
 end
 local actors,ready={},false
@@ -612,7 +619,7 @@ local probe_last_us -- previous frame() wall time, native_gate_frame_timing only
 local camera_perturb=false -- this client perturbs its camera (native_gate_camera_perturb)
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
 local nav_cadence_cursor=0
-local row_cursors={coverage=0,step_trace=0,fp_redirect=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,nav_octree=0,nav_octree_lookup=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+local row_cursors={ui_exports=0,coverage=0,step_trace=0,fp_redirect=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,nav_octree=0,nav_octree_lookup=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
 local world_trace_rows,world_queue_rows,world_wait_rows,world_wait_rng_rows=0,0,0,0
 local world_action_rows,world_values_rows,world_values_unknown_rows,world_unknown_identity_rows=0,0,0,0
 local world_values_cursors_loaded=false
@@ -2648,6 +2655,13 @@ local function frame()
     'ui lazy refused '..tostring(gate.ui_lazy_status and gate.ui_lazy_status()))
    log('UI_LAZY_ARMED mode='..mode..(window and ' rows='..window[1]..'-'..window[2] or ''))
   end
+  -- UI writes (lockstep_ui_exports.h): every non-query X4.exe export the UI calls through FFI in an
+  -- admitted frame, outside the probe's application of relayed inputs. Diagnostic, default off.
+  if cfg.native_gate_ui_exports then
+   assert(cfg.native_gate_ui_exports=='observe' and gate.ui_exports and gate.ui_exports_status and gate.ui_exports_row and
+    gate.ui_exports_relay and gate.ui_exports('observe')==1,'ui exports refused '..tostring(gate.ui_exports_status and gate.ui_exports_status()))
+   log('UI_EXPORTS_ARMED')
+  end
   -- Rows of who gets built; only watches, and what it cannot watch loses a row.
   if cfg.native_gate_build_rows then
    assert(cfg.native_gate_build_rows==true and gate.build_rows and gate.build_rows_status and gate.build_rows_row and gate.build_rows()==1,
@@ -3609,6 +3623,7 @@ local function frame()
   if cfg.native_gate_ui_cargo then log('UI_CARGO_STOP '..tostring(gate.ui_cargo_status())) end
   if cfg.native_gate_supply_rows then log('SUPPLY_ROWS_STOP '..tostring(gate.supply_rows_status())) end
   if cfg.native_gate_ui_lazy then log('UI_LAZY_STOP '..tostring(gate.ui_lazy_status())) end
+  if cfg.native_gate_ui_exports then log('UI_EXPORTS_STOP '..tostring(gate.ui_exports_status())) end
   if cfg.native_gate_supply_wants~=nil then log('SUPPLY_WANTS_STOP '..tostring(gate.supply_wants_status())) end
   if cfg.native_gate_loadout_order then log('LOADOUT_ORDER_STOP '..tostring(gate.loadout_order_status())) end
   if cfg.native_gate_step_trace then log('STEP_TRACE_STOP '..tostring(gate.step_trace_status())) end
@@ -4001,6 +4016,14 @@ local function frame()
  if cfg.native_gate_event_rng then ticklog.status('EVENT_RNG',tick,gate.event_rng_status,'event RNG status unavailable') end
  if cfg.native_gate_ui_cargo then ticklog.status('UI_CARGO',tick,gate.ui_cargo_status,'UI cargo status unavailable') end
  if cfg.native_gate_ui_lazy then ticklog.status('UI_LAZY',tick,gate.ui_lazy_status,'UI lazy status unavailable') end
+ if cfg.native_gate_ui_exports then
+  ticklog.status('UI_EXPORTS',tick,gate.ui_exports_status,'UI exports status unavailable')
+  for _=1,1024 do
+   local row=gate.ui_exports_row(row_cursors.ui_exports)
+   if not row then break end
+   ticklog.write('UI_EXPORT_ROW '..row);row_cursors.ui_exports=row_cursors.ui_exports+1
+  end
+ end
  if cfg.native_gate_script_rng then ticklog.status('SCRIPT_RNG',tick,gate.script_rng_status,'script RNG status unavailable');drain_script_rng(tick) end
  if cfg.native_gate_md_timed_rng then ticklog.status('MD_TIMED_RNG',tick,gate.md_timed_rng_status,'MD timed RNG status unavailable') end
  if cfg.native_gate_boot_hold then ticklog.status('BOOT_HOLD',tick,gate.boot_hold_status,'boot hold status unavailable') end

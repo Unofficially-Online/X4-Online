@@ -120,6 +120,7 @@ PROBE_REQUIRES_ALL = {
     'native_gate_ui_cargo': (('block', 'observe'), ('native_gate_world_identities',)),
     'native_gate_supply_rows': (('true',), ('native_gate_world_identities',)),
     'native_gate_ui_lazy': (('block', 'observe', 'key'), ('native_gate_world_identities',)),
+    'native_gate_ui_exports': (('observe',), ()),
     'native_gate_loadout_order': (('observe', 'canonical'), ()),
     'native_gate_order_canon': (('observe', 'canonical'), ()),
     'native_gate_pick_order': (('observe', 'canonical'), ()),

@@ -977,6 +977,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_ui_cargo.h"
 #include "test_lockstep_supply_rows.h"
 #include "test_lockstep_ui_lazy.h"
+#include "test_lockstep_ui_exports.h"
 #include "test_lockstep_supply_wants.h"
 #include "test_lockstep_loadout_order.h"
 #include "test_lockstep_order_canon.h"
@@ -1095,6 +1096,7 @@ int main(int argc,char **argv) {
     test_ui_cargo();
     test_supply_rows();
     test_ui_lazy();
+    test_ui_exports();
     test_supply_wants();
     test_loadout_order();
     test_fp_redirect();
