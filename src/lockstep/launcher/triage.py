@@ -43,7 +43,7 @@ TICK = re.compile(r'\btick=(\d+)')
 # listed apart so that the simulation differences stand out. A module whose differing fields are all
 # here is "local"; any other field makes the line a lead.
 KNOWN_LOCAL = {
-    'PATH_DETERMINISM': {'bank'}, 'WORLD_BANKS': {'read_before', 'write_before', 'read_after', 'write_after'},
+    'PATH_DETERMINISM': {'bank', 'reuses', 'rebuilds', 'lookups', 'id_hits'},  # walk cache statistics 'WORLD_BANKS': {'read_before', 'write_before', 'read_after', 'write_after'},
     'SHAPE_ORDER': {'appends', 'mass_forced', 'boot_forced'}, 'REGION_PASS': {'word'},
     'AI_SCHEDULE': {'order_moved', 'priority'}, 'EVENT_ORDER': {'moved'}, 'NAV_OCTREE': {'invalidations'},
     'GRAVIDAR_WIDE': {'sectors', 'moved'}, 'SCRIPT_RNG': {'ai_hits', 'ai_misses'}, 'FIND_ORDER': {'reordered'},
