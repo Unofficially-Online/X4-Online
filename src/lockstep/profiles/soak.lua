@@ -78,4 +78,6 @@ X4LAN_CONFIG.native_gate_lookahead = 1
 X4LAN_CONFIG.native_gate_status_stride = 60
 X4LAN_CONFIG.native_gate_shape_refresh = 'view'
 -- ui_lazy supersedes ui_cargo (it detours the same 0x41a910 entry ui_cargo pins; both together stop the gate, reason 153).
-X4LAN_CONFIG.native_gate_ui_lazy = 'block'
+-- 'key': UI queries blocked as in 'block'; simulation cargo/trade/unit updates draw from a word keyed by the station,
+-- not by whichever actor asked first (without it: station event splits at ticks 4658 and 5424 on the seed snapshot).
+X4LAN_CONFIG.native_gate_ui_lazy = 'key'

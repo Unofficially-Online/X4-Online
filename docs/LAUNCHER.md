@@ -119,6 +119,21 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   engine worker the gate does not join (asset/collision loading is the census's
   known case) still decides what the AI sees. Next: find that worker (census_jobs,
   job_rng 'observe', loader joins) rather than adding more per-tick logging.
+- **Lazy station updates (2 November 2026).** X4 brings a station's cargo/production
+  (`0x41a910`), trade offers (`0x4079e0`) and units (`0x4d8110`) up to date when
+  something asks, and those updates draw from the *calling* thread's RNG word. The
+  first actor to ask decided the station's stream: a TradeCompletedEvent at tick
+  4658 and an UpdateTradeOffersEvent due 9 s apart at tick 5424 split the clients.
+  `native_gate_ui_lazy = 'key'` (the soak default) blocks UI queries as `'block'`
+  does and seeds each simulation call by the station's portable key (cargo: plus
+  the target game time; trade/units: plus tick and the state that decides the
+  work), restoring the caller's word afterwards. With it plus the nav_player fix the
+  seed snapshot held 16,000 ticks (8.9 min) with no digest mismatch and no
+  EVENT_RNG/UI_LAZY status difference; before: digest mismatch at 4906, 6230, 7500.
+  Remaining tick-1 status differences (gravidar sectors, region word, script cache
+  hits, schedule `moved`, pathing bank) are local bookkeeping and also appear in
+  passing runs. A UIElement KillEvent (no draws) can land one frame apart; it only
+  changes the EVENT_RNG keyset.
 - **Earliest divergence is far before the digest.** `tools/dev/census_first_status.py`
   compares every module's status line between the clients. On the seed snapshot
   with the full profile (ui_lazy 'block', UI made no queries in the soak), real
