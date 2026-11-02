@@ -12,7 +12,10 @@ X4LAN_CONFIG.native_gate_gravidar_load_pass = true
 X4LAN_CONFIG.native_gate_gravidar_sector_order = true
 X4LAN_CONFIG.native_gate_gravidar_deadlines = true
 X4LAN_CONFIG.native_gate_gravidar_wide = 'sort'
-X4LAN_CONFIG.native_gate_travel_snapshot = true
+-- travel_determinism, not travel_snapshot: pathing batches inline in RunPass order. The snapshot covers only the
+-- leader's +0xf7b; a wingman's formation branch (0xeb27c0, +0xf20) still raced across batches (split at tick 17441).
+-- Costs speed: about 8 ms per pass single-threaded (0.78x real time paced, against 0.92x).
+X4LAN_CONFIG.native_gate_travel_determinism = true
 X4LAN_CONFIG.native_gate_find_order = 'sort'
 X4LAN_CONFIG.native_gate_created_identities = true
 X4LAN_CONFIG.native_gate_portable_created = true

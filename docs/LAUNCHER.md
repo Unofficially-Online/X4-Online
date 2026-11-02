@@ -141,6 +141,20 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   of the same overlay with the formation row window
   (`native_gate_path_transforms_rows = {from, to}`) passed 17,800 ticks with no
   PATH_TRANSFORMS difference: this split is timing-dependent, not reproducible.
+- **Cause: a race between pathing batch jobs.** Five more runs to 17,800 showed two
+  outcomes at 17,700 (world hash 7504… or 3827…), picked per client roughly 50/50.
+  Per-tick status (`native_gate_trace_window`) and formation rows with return chains
+  put the difference at tick 17,441: a ship just built at a Xenon shipyard
+  (dock 2c023) gets one extra GetTargetPositionForWingMan call from 0xeb27c0's
+  own-target branch (0xeb2f07, taken when the agent's +0xf20 formation link is
+  set) on one client. Script RNG, build, created and event rows all agree; the batch
+  lists agree. The jobs of one pass run in parallel, so which batch writes before
+  another reads depends on thread timing. `travel_snapshot` only covers the leader's
+  +0xf7b. `native_gate_travel_determinism = true` (now the soak default) runs the
+  batches inline on the pathing thread in RunPass order with a job-thread TLS
+  context: the next run passed 17,800 ticks with no PATH_TRANSFORMS or ACTOR
+  difference. Cost: about 8 ms per pass, 0.78x real time paced (was 0.92x).
+  Making the pass deterministic and parallel again is open speed work.
 - **Earliest divergence is far before the digest.** `tools/dev/census_first_status.py`
   compares every module's status line between the clients. On the seed snapshot
   with the full profile (ui_lazy 'block', UI made no queries in the soak), real
