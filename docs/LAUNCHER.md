@@ -134,6 +134,13 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   hits, schedule `moved`, pathing bank) are local bookkeeping and also appear in
   passing runs. A UIElement KillEvent (no draws) can land one frame apart; it only
   changes the EVENT_RNG keyset.
+- **First 2-hour soak with 'key' (2 November 2026):** digest mismatch at 17,700
+  (9.8 min). Every drawing event row agreed to the end; the first simulation
+  difference was one extra formation transform (GetTargetPositionForWingMan, a
+  pathing pass job, `not_ancestor`) on client 2 between 17,400 and 17,460. A rerun
+  of the same overlay with the formation row window
+  (`native_gate_path_transforms_rows = {from, to}`) passed 17,800 ticks with no
+  PATH_TRANSFORMS difference: this split is timing-dependent, not reproducible.
 - **Earliest divergence is far before the digest.** `tools/dev/census_first_status.py`
   compares every module's status line between the clients. On the seed snapshot
   with the full profile (ui_lazy 'block', UI made no queries in the soak), real
