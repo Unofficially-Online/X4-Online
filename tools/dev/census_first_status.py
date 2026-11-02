@@ -1,10 +1,13 @@
 """Earliest tick at which each module's NATIVE_GATE status line differs between two clients (timing fields ignored).
 
-  python tools/dev/census_first_status.py <X4 documents dir>   (reads 45850/x4ls-c1.log and 45851/x4ls-c2.log)
+  python tools/dev/census_first_status.py <x4ls run dir | X4 documents dir>
+  (run dir: client1/engine-output.log and client2/engine-output.log; documents: 45850/x4ls-c1.log and 45851/x4ls-c2.log)
 """
 import re, sys
 from pathlib import Path
-docs = Path(sys.argv[1]); logs = [docs / '45850/x4ls-c1.log', docs / '45851/x4ls-c2.log']
+docs = Path(sys.argv[1]); logs = [docs / 'client1/engine-output.log', docs / 'client2/engine-output.log']
+if not logs[0].exists():
+    logs = [docs / '45850/x4ls-c1.log', docs / '45851/x4ls-c2.log']
 LOCAL = {'VIEW_POINTS', 'REGION_CAMERA', 'MASS_TRAFFIC', 'RNG', 'FRAME_TIMING', 'PROBE_PROFILE', 'RENDER_RNG_SPLIT',
          'PILOT_INPUTS', 'PLAYER_TIMER', 'BULLET_CADENCE', 'CREATED_IDENTITIES', 'RUNTIME_IDS'}
 TIMING = re.compile(r'\b\w*(_us|_ns|ms|wait|busy|time|max_\w+)=\S+')
