@@ -162,7 +162,10 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   (an engine draw on the MoveWorker's own, process-local word) differed. `seed_rng` (the
   soak default now) seeds that word per admitted frame; a draw watch
   (`native_gate_draw_watch_frame`) over 3,600 ticks found all 7,244 frame-level draws
-  identical on both clients.
+  identical on both clients. The next 2-hour soak (seed_rng, ui_lazy 'key', travel
+  determinism) stayed in sync to tick 54,489 (30.3 game minutes), past 35,700, and then
+  stopped on both clients at the same tick: strict physics read the body of a fixture
+  wreck that X4 had just cleaned up (a probe assert, not a desync; fixed).
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
