@@ -526,6 +526,105 @@ static int gate_sites_owned(void) {
        (event_order_installed && *(uint64_t*)(image+EVENT_ORDER_SITE)!=event_order_patched_word) ||
        *(unsigned short*)(image+0xfa3302)!=0x9066||*(double*)(image+0x6adfc60)!=gate_tick_dt() || *(unsigned char*)(image+0x6adfc58));
 }
+/* Which term of gate_sites_owned failed first (stop reason 3 diagnostics); NULL: all owned. */
+static const char *gate_sites_unowned(void) {
+    if(*(uint64_t*)(image+WORD_RVA)!=patched_word) return "*(uint64_t*)(image+WORD_RVA)!=patched_word";
+    if((path_installed && *(unsigned __int128*)(image+0xef4610)!=path_patched)) return "(path_installed && *(unsigned __int128*)(image+0xef4610)!=path_patched)";
+    if(!travel_owned()) return "!travel_owned()";
+    if(!tsnap_owned()) return "!tsnap_owned()";
+    if(!pilot_owned()) return "!pilot_owned()";
+    if((ship_installed && *(void**)(image+SHIP_ENTRY)!=(void*)ship_move)) return "(ship_installed && *(void**)(image+SHIP_ENTRY)!=(void*)ship_move)";
+    if(!weapon_owned()) return "!weapon_owned()";
+    if(!bullet_owned()) return "!bullet_owned()";
+    if(!bullet_cadence_owned()) return "!bullet_cadence_owned()";
+    if(!speak_timer_owned()) return "!speak_timer_owned()";
+    if(!cr_owned()) return "!cr_owned()";
+    if(!nav_cadence_owned()) return "!nav_cadence_owned()";
+    if(!nav_player_owned()) return "!nav_player_owned()";
+    if(!ss_owned()) return "!ss_owned()";
+    if(!pt_owned()) return "!pt_owned()";
+    if(!wr_owned()) return "!wr_owned()";
+    if(!trr_owned()) return "!trr_owned()";
+    if(!tz_owned()) return "!tz_owned()";
+    if(!gwide_owned()) return "!gwide_owned()";
+    if(!view_owned()) return "!view_owned()";
+    if(!mt_owned()) return "!mt_owned()";
+    if(!rc_owned()) return "!rc_owned()";
+    if(!wfire_owned()) return "!wfire_owned()";
+    if(!motion_order_owned()) return "!motion_order_owned()";
+    if(!wreck_owned()) return "!wreck_owned()";
+    if(!ptrace_owned()) return "!ptrace_owned()";
+    if(!border_owned()) return "!border_owned()";
+    if(!sorder_owned()) return "!sorder_owned()";
+    if(!erng_owned()) return "!erng_owned()";
+    if(!brng_owned()) return "!brng_owned()";
+    if(!uic_owned()) return "!uic_owned()";
+    if(!spr_owned()) return "!spr_owned()";
+    if(!ul_owned()) return "!ul_owned()";
+    if(!noct_owned()) return "!noct_owned()";
+    if(!pmath_owned()) return "!pmath_owned()";
+    if(!xrcp_owned()) return "!xrcp_owned()";
+    if(!fpenv_owned()) return "!fpenv_owned()";
+    if(!pdec_owned()) return "!pdec_owned()";
+    if(!pbud_owned()) return "!pbud_owned()";
+    if(!ptf_owned()) return "!ptf_owned()";
+    if(!bpose_owned()) return "!bpose_owned()";
+    if(!sw_owned()) return "!sw_owned()";
+    if(!ll_owned()) return "!ll_owned()";
+    if(!oc_owned()) return "!oc_owned()";
+    if(!po_owned()) return "!po_owned()";
+    if(!ma_owned()) return "!ma_owned()";
+    if(!br_owned()) return "!br_owned()";
+    if(!eco_owned()) return "!eco_owned()";
+    if((attention_installed && *(uint64_t*)(image+ATTENTION_ENTRY)!=attention_patched_word)) return "(attention_installed && *(uint64_t*)(image+ATTENTION_ENTRY)!=attention_patched_word)";
+    if((mass_installed && *(uint64_t*)(image+MASS_ENTRY)!=mass_patched_word)) return "(mass_installed && *(uint64_t*)(image+MASS_ENTRY)!=mass_patched_word)";
+    if((death_installed && *(void**)(image+DEATH_ENTRY)!=(void*)death_listener)) return "(death_installed && *(void**)(image+DEATH_ENTRY)!=(void*)death_listener)";
+    if((params_installed && *(unsigned __int128*)(image+PARAMS_ENTRY)!=params_patched_word)) return "(params_installed && *(unsigned __int128*)(image+PARAMS_ENTRY)!=params_patched_word)";
+    if((nav_installed && *(void**)(image+NAV_ENTRY)!=(void*)nav_move)) return "(nav_installed && *(void**)(image+NAV_ENTRY)!=(void*)nav_move)";
+    if((velocity_installed && *(void**)(image+VELOCITY_ENTRY)!=(void*)velocity_move)) return "(velocity_installed && *(void**)(image+VELOCITY_ENTRY)!=(void*)velocity_move)";
+    if((shape_installed && *(uint64_t*)(image+SHAPE_ENTRY)!=shape_patched_word)) return "(shape_installed && *(uint64_t*)(image+SHAPE_ENTRY)!=shape_patched_word)";
+    if((agent_installed && *(int32_t*)(image+AGENT_REL)!=agent_patched_rel)) return "(agent_installed && *(int32_t*)(image+AGENT_REL)!=agent_patched_rel)";
+    if((ai_installed && *(unsigned __int128*)(image+AI_WORD)!=ai_patched_word)) return "(ai_installed && *(unsigned __int128*)(image+AI_WORD)!=ai_patched_word)";
+    if((radar_installed && *(void**)(image+RADAR_ENTRY)!=(void*)radar_handler)) return "(radar_installed && *(void**)(image+RADAR_ENTRY)!=(void*)radar_handler)";
+    if((interrupt_installed && *(uint64_t*)(image+INTERRUPT_ENTRY)!=interrupt_patched_word)) return "(interrupt_installed && *(uint64_t*)(image+INTERRUPT_ENTRY)!=interrupt_patched_word)";
+    if((job_rng_installed && *(uint64_t*)(image+JOB_QUEUE_ENTRY)!=job_rng_patched_word)) return "(job_rng_installed && *(uint64_t*)(image+JOB_QUEUE_ENTRY)!=job_rng_patched_word)";
+    if(!script_rng_owned()) return "!script_rng_owned()";
+    if(!md_timed_owned()) return "!md_timed_owned()";
+    if(!boot_hold_owned()) return "!boot_hold_owned()";
+    if(!md_resume_owned()) return "!md_resume_owned()";
+    if(!find_order_owned()) return "!find_order_owned()";
+    if(!region_rng_owned()) return "!region_rng_owned()";
+    if(!ai_wait_owned()) return "!ai_wait_owned()";
+    if(!spawn_rng_owned()) return "!spawn_rng_owned()";
+    if(!gdl_owned()) return "!gdl_owned()";
+    if((interrupt_step_installed && *(uint64_t*)(image+INTERRUPT_STEP_ENTRY)!=interrupt_step_patched_word)) return "(interrupt_step_installed && *(uint64_t*)(image+INTERRUPT_STEP_ENTRY)!=interrupt_step_patc";
+    if((nested_action_installed && *(unsigned __int128*)(image+NESTED_ACTION_WORD)!=nested_action_patched)) return "(nested_action_installed && *(unsigned __int128*)(image+NESTED_ACTION_WORD)!=nested_action";
+    if((npc_exec_installed && *(uint64_t*)(image+NPC_EXEC_ENTRY)!=npc_exec_patched_word)) return "(npc_exec_installed && *(uint64_t*)(image+NPC_EXEC_ENTRY)!=npc_exec_patched_word)";
+    if((npc_speak_installed && *(uint64_t*)(image+NPC_SPEAK_ENTRY)!=npc_speak_patched_word)) return "(npc_speak_installed && *(uint64_t*)(image+NPC_SPEAK_ENTRY)!=npc_speak_patched_word)";
+    if((npc_enqueue_installed && *(uint64_t*)(image+NPC_ENQUEUE_ENTRY)!=npc_enqueue_patched_word)) return "(npc_enqueue_installed && *(uint64_t*)(image+NPC_ENQUEUE_ENTRY)!=npc_enqueue_patched_word)";
+    if((npc_finish_installed && *(uint64_t*)(image+NPC_FINISH_ENTRY)!=npc_finish_patched_word)) return "(npc_finish_installed && *(uint64_t*)(image+NPC_FINISH_ENTRY)!=npc_finish_patched_word)";
+    if((npc_ready_installed && *(unsigned __int128*)(image+NPC_READY_WORD)!=npc_ready_patched)) return "(npc_ready_installed && *(unsigned __int128*)(image+NPC_READY_WORD)!=npc_ready_patched)";
+    if((npc_deadline_installed && *(unsigned __int128*)(image+NPC_DEADLINE_WORD)!=npc_deadline_patched)) return "(npc_deadline_installed && *(unsigned __int128*)(image+NPC_DEADLINE_WORD)!=npc_deadline_pa";
+    if((world_identity_installed && *(uint64_t*)(image+WORLD_IDENTITY_ENTRY)!=world_identity_patched_word)) return "(world_identity_installed && *(uint64_t*)(image+WORLD_IDENTITY_ENTRY)!=world_identity_patc";
+    if((created_installed && *(uint64_t*)(image+CREATED_ENTRY)!=created_patched_word)) return "(created_installed && *(uint64_t*)(image+CREATED_ENTRY)!=created_patched_word)";
+    if((rid_installed && *(uint64_t*)(image+RID_REMOVE_ENTRY)!=rid_patched_word)) return "(rid_installed && *(uint64_t*)(image+RID_REMOVE_ENTRY)!=rid_patched_word)";
+    if((interrupt_event_installed && *(void**)(image+INTERRUPT_EVENT_ENTRY)!=(void*)interrupt_event)) return "(interrupt_event_installed && *(void**)(image+INTERRUPT_EVENT_ENTRY)!=(void*)interrupt_eve";
+    if((damage_installed && *(uint64_t*)(image+DAMAGE_ENTRY)!=damage_patched_word)) return "(damage_installed && *(uint64_t*)(image+DAMAGE_ENTRY)!=damage_patched_word)";
+    if((contact_installed && *(uint64_t*)(image+CONTACT_ENTRY)!=contact_patched_word)) return "(contact_installed && *(uint64_t*)(image+CONTACT_ENTRY)!=contact_patched_word)";
+    if((contact_properties_installed && *(uint64_t*)(image+CONTACT_PROPERTIES_ENTRY)!=contact_properties_patched_word)) return "(contact_properties_installed && *(uint64_t*)(image+CONTACT_PROPERTIES_ENTRY)!=contact_pro";
+    if((gravidar_installed && *(uint64_t*)(image+GRAVIDAR_WORD)!=gravidar_patched_word)) return "(gravidar_installed && *(uint64_t*)(image+GRAVIDAR_WORD)!=gravidar_patched_word)";
+    if((gravidar_unit_installed && *(void**)(image+GRAVIDAR_UNIT_ENTRY)!=(void*)gravidar_unit)) return "(gravidar_unit_installed && *(void**)(image+GRAVIDAR_UNIT_ENTRY)!=(void*)gravidar_unit)";
+    if((flight_installed && *(void**)(image+FLIGHT_ENTRY)!=(void*)flight_update)) return "(flight_installed && *(void**)(image+FLIGHT_ENTRY)!=(void*)flight_update)";
+    if(*(double*)(image+SPEED_RVA)!=1.0) return "*(double*)(image+SPEED_RVA)!=1.0";
+    if((flight_ctor_installed && *(uint64_t*)(image+FLIGHT_CTOR)!=flight_ctor_patched_word)) return "(flight_ctor_installed && *(uint64_t*)(image+FLIGHT_CTOR)!=flight_ctor_patched_word)";
+    if((event_order_installed && *(uint64_t*)(image+EVENT_ORDER_SITE)!=event_order_patched_word)) return "(event_order_installed && *(uint64_t*)(image+EVENT_ORDER_SITE)!=event_order_patched_word)";
+    if(*(unsigned short*)(image+0xfa3302)!=0x9066) return "*(unsigned short*)(image+0xfa3302)!=0x9066";
+    if(*(double*)(image+0x6adfc60)!=gate_tick_dt()) return "*(double*)(image+0x6adfc60)!=gate_tick_dt()";
+    if(*(unsigned char*)(image+0x6adfc58)) return "*(unsigned char*)(image+0x6adfc58)";
+    return NULL;
+}
+static const char *gate_unowned_detail; /* recorded at stop reason 3 */
+
 #include "lockstep_getup_diagnostic_transport.h"
 static void finish(unsigned reason) {
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
@@ -963,7 +1062,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     }
     if(thread!=main_thread||loading||!table||*(int*)((unsigned char*)table+0x130)) {finish(2);gate_original_once(original,frame,loading);return;}
     if(!gate_sites_owned()) {
-        finish(3);gate_original_once(original,frame,loading);return;
+        gate_unowned_detail=gate_sites_unowned();finish(3);gate_original_once(original,frame,loading);return;
     }
     if(snapshot_configured && !snapshot_bound &&
        !snapshot_bind((snapshot_find_fn)(image+0xced70),*(void**)(image+0x6cf1500))) {
@@ -3134,6 +3233,8 @@ static int lua_interrupt(lua_State *L) {
 }
 /* gate.play_mode(): native_gate_play_mode, before the boot. */
 static int lua_play_mode(lua_State *L) {gate_play_mode=1;p_lua_pushnumber(L,1);return 1;}
+/* gate.unowned(): the first gate_sites_owned term that failed at a stop with reason 3, else nil. */
+static int lua_unowned(lua_State *L) {if(gate_unowned_detail) p_lua_pushlstring(L,gate_unowned_detail,strlen(gate_unowned_detail));else p_lua_pushnil(L);return 1;}
 /* gate.npc_action_rows(): native_gate_npc_lifecycle, something drains the NPC action rows. */
 static int lua_npc_action_rows(lua_State *L) {npc_action_rows=1;p_lua_pushnumber(L,1);return 1;}
 static int lua_interrupt_faults(lua_State *L) {
@@ -3795,7 +3896,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(camera_offset);METHOD(camera_offset_status);METHOD(camera_anchor);METHOD(camera_anchor_keys);METHOD(camera_anchor_status);
     METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(gravidar_digest);METHOD(gravidar_digest_frame);METHOD(gravidar_digest_row);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
-    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);
+    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(unowned);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);
     METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(register_weapon);METHOD(weapon);

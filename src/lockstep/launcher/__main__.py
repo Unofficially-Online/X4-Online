@@ -44,6 +44,9 @@ def main(argv=None):
     s.add_argument('--fast', action='store_true', help='minimum render settings, no frame cap, no sound (soaks)')
     s.add_argument('--startup', type=int, default=70, help='seconds budgeted per client to reach the start menu (snapshot clients then arm together)')
     s.add_argument('--steam-fix', action='store_true', help='register the Steam pid before each client and restore it afterwards')
+    s.add_argument('--checkpoint-at', type=int, metavar='TICK',
+                   help='every client saves the world after this tick (save_001) and the session ends there; '
+                        'a save is a --snapshot for later runs')
     s.add_argument('relay_args', nargs='*', help='extra relay arguments after --')
 
     n = sub.add_parser('snapshot', help='capture a starting snapshot (new game + 12-ship gate fixture)')
@@ -82,9 +85,10 @@ def main(argv=None):
     options = session.Options(clients=args.clients, overlay=args.overlay, snapshot=args.snapshot, ticks=args.ticks,
                               tick_hz=args.tick_hz, observe=args.observe, lookahead=args.lookahead,
                               timeout=args.timeout, width=width, height=height, game=args.game, lanes=args.lanes,
-                              keep_views=args.keep_views, fast=args.fast, startup=args.startup, steam_fix=args.steam_fix, relay_args=args.relay_args)
+                              keep_views=args.keep_views, fast=args.fast, startup=args.startup, steam_fix=args.steam_fix,
+                              checkpoint_at=args.checkpoint_at, relay_args=args.relay_args)
     result = session.run(options)
-    return 0 if result['outcome'] == 'passed' else 1
+    return 0 if result['outcome'] in ('passed', 'checkpointed') else 1
 
 
 if __name__ == '__main__':

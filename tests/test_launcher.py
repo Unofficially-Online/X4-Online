@@ -154,6 +154,29 @@ class Session(unittest.TestCase):
 
 
 
+class Checkpoint(unittest.TestCase):
+    class Done:  # a client process that has already exited
+        def poll(self):
+            return 0
+
+    class Running:
+        def poll(self):
+            return None
+
+    def test_every_request_is_answered_before_collection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / 'x4ls-c1.log'
+            log.write_text('x' * 3000 + '\n[X4LAN] NATIVE_GATE CHECKPOINT_REQUEST slot=save_001 tick=900\n'
+                           '[X4LAN] NATIVE_GATE CHECKPOINT saved slot=save_001 tick=900\n'
+                           '[X4LAN] NATIVE_GATE CHECKPOINT refused slot=save_002 tick=1500\n')
+            self.assertEqual(session.checkpoint_results(log, self.Running(), timeout=5), {900: 'saved', 1500: 'refused'})
+            self.assertNotIn('xxxx' * 300, session.log_tail(log, size=200))
+            with log.open('a') as f:
+                f.write('[X4LAN] NATIVE_GATE CHECKPOINT_REQUEST slot=save_003 tick=2100\n')
+            self.assertIsNone(session.checkpoint_results(log, self.Done(), timeout=5))  # exited with a save pending
+            self.assertEqual(session.checkpoint_results(Path(tmp) / 'missing.log', self.Done(), timeout=5), {})
+
+
 class Seed(unittest.TestCase):
     def test_session_seed_comes_from_the_save_header(self):
         import gzip

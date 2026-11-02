@@ -44,6 +44,7 @@ class Options:
     fast: bool = False  # render-only settings down, no frame cap, no sound (profile.FAST)
     startup: int = 70  # seconds budgeted per client to reach the start menu; snapshot clients then arm together
     steam_fix: bool = False  # re-register Steam's pid before each client (see steam.py); restored at the end
+    checkpoint_at: int | None = None  # every client saves save_001 after this tick; the session ends there
     relay_args: list = field(default_factory=list)
 
 
@@ -140,6 +141,29 @@ def wait_for_log(path, text, proc, timeout):
     raise SystemExit(f'no "{text}" in {path.name} after {timeout} s (a Steam or startup dialog may be open)')
 
 
+def log_tail(path, size=1 << 20):
+    """The last `size` bytes of a log (the client logs grow to hundreds of MB)."""
+    if not path.is_file():
+        return ''
+    with open(path, 'rb') as f:
+        f.seek(max(0, path.stat().st_size - size))
+        return f.read().decode(errors='replace')
+
+
+def checkpoint_results(path, proc, timeout=300):
+    """Wait until a client has answered every CHECKPOINT_REQUEST; {tick: saved|failed|refused}, None if one never came."""
+    deadline = time.time() + timeout
+    while True:
+        text = log_tail(path, 16 << 20)
+        requested = {int(t) for t in re.findall(r'CHECKPOINT_REQUEST slot=save_\d+ tick=(\d+)', text)}
+        answered = {int(t): r for r, t in re.findall(r'CHECKPOINT (saved|failed|refused) slot=save_\d+ tick=(\d+)', text)}
+        if requested <= answered.keys():
+            return dict(sorted(answered.items()))
+        if proc.poll() is not None or time.time() > deadline:
+            return None
+        time.sleep(2)
+
+
 def save_state(o, data):
     o.state.mkdir(parents=True, exist_ok=True)
     (o.state / 'session.json').write_text(json.dumps(data, indent=2) + '\n')
@@ -206,6 +230,8 @@ def run(o: Options, log=print):
             tail = 'X4LAN_CONFIG.native_gate_relay_timeout_ms = 120000\n'  # slack for different load times
             if arm_at:
                 tail += f'X4LAN_CONFIG.native_gate_arm_at = {arm_at}\n'
+            if o.checkpoint_at:
+                tail += f'X4LAN_CONFIG.native_gate_checkpoint_at = {o.checkpoint_at}\n'
             target = extension.compose(o.overlay, view / 'extensions', k, port, token, o.clients, profile_id=profile_id,
                                        config_tail=tail)
             installed = run_dir / f'client{k}' / 'installed'  # the census tools read the installed config here
@@ -226,6 +252,9 @@ def run(o: Options, log=print):
             if k < o.clients:  # X4 refuses to start while another process holds EGOSOFT_X4_INSTANCE
                 log(f'client {k}: released {instance.release_instance_mutex(proc.pid)} instance mutex handle(s)')
         result = monitor(o, run_dir, relay, clients, log)
+        if o.checkpoint_at:  # a save may still be writing when the relay ends
+            result['checkpoints'] = {f'client{k}': checkpoint_results(profile.profile_dir(profile_id) / f'x4ls-c{k}.log', proc)
+                                     for k, profile_id, proc in clients}
     finally:
         for _, _, proc in clients:
             if proc.poll() is None:
@@ -243,6 +272,15 @@ def run(o: Options, log=print):
         (o.state / 'session.json').unlink(missing_ok=True)
         if o.steam_fix and (o.state / 'steam-fix.json').exists():
             steam.restore(o.state / 'steam-fix.json')
+    saves = result.get('checkpoints') or {}
+    for client, ticks in saves.items():
+        for tick, outcome in (ticks or {}).items():
+            log(f'checkpoint {client} tick {tick}: {outcome}' + (f" ({run_dir / client / 'save_001.xml.gz'})" if outcome == 'saved' else ''))
+    # The save pauses X4 (game speed 0) and the gate stops with reason 3: the expected end of a checkpoint session.
+    if saves and all(t and set(t.values()) == {'saved'} for t in saves.values()) and result['outcome'] == 'failed' and \
+            re.search(r'completed=(\d+) reason=3\b', result.get('line', '')) and \
+            int(re.search(r'completed=(\d+)', result['line']).group(1)) >= o.checkpoint_at - 1:
+        result['outcome'] = 'checkpointed'
     (run_dir / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
     log(f"{result['outcome']}: {run_dir}")
     return result

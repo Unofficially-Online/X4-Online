@@ -390,6 +390,40 @@ local function log_world_page(page)
 end
 local command_error=false
 RegisterEvent('X4LAN_NativeGate.CommandRefused',function() command_error=true end)
+-- Checkpoint (x4ls session --checkpoint-at T): every client saves the world right after tick T's
+-- world capture into save_001 of its disposable profile; x4ls collects the files (starting snapshots
+-- for later runs; tools/dev/save_diff.py compares the clients' world parts). X4 pauses while it
+-- saves (game speed 0), so the gate fails closed (reason 3) and the session ends there. 150 ticks
+-- before the save every client respawns the twelve-ship fixture beside the player (MD Respawn): the
+-- battle may have left wrecks in Spawn.$ships, and a snapshot needs twelve live ships.
+local checkpoint_at=cfg.native_gate_checkpoint_at
+assert(checkpoint_at==nil or (type(checkpoint_at)=='number' and checkpoint_at%1==0 and checkpoint_at>150),
+ 'native_gate_checkpoint_at must be a tick after 150')
+local checkpoint_state
+if checkpoint_at then
+ RegisterEvent('gameSaved',function(_,success)
+  if checkpoint_state~='saving' then return end
+  checkpoint_state=(success==true or success==1) and 'saved' or 'failed'
+  ticklog.write('CHECKPOINT '..checkpoint_state..' slot=save_001 tick='..checkpoint_at)
+ end)
+end
+-- UI-triggered MD events (native_gate_ui_events_log = true, diagnostic): every AddUITriggeredEvent of
+-- any UI script on this client, with the last admitted tick. UI code that feeds MD cues is local input.
+local ui_events={tick=0}
+if cfg.native_gate_ui_events_log then
+ local native_trigger=AddUITriggeredEvent
+ AddUITriggeredEvent=function(screen,control,...)
+  ticklog.write('UI_EVENT tick='..ui_events.tick..' screen='..tostring(screen)..' control='..tostring(control))
+  return native_trigger(screen,control,...)
+ end
+end
+local function checkpoint(tick)
+ if checkpoint_at and tick==checkpoint_at-150 then AddUITriggeredEvent('X4LAN_NativeGate','Respawn',{}) end
+ if tick~=checkpoint_at or checkpoint_state then return end
+ if not IsSavingPossible(false) then checkpoint_state='refused';ticklog.write('CHECKPOINT refused slot=save_001 tick='..tick);return end
+ checkpoint_state='saving';ticklog.write('CHECKPOINT_REQUEST slot=save_001 tick='..tick)
+ SaveGame('save_001','x4ls checkpoint tick '..tick)
+end
 -- Protocol 3: s.inputs[1..clients] are the blobs admitted for this tick, in
 -- slot order and identical on every client. The optional X4LAN_NATIVE_INPUTS
 -- adapter applies them (its result joins the declared state digest) and
@@ -3420,6 +3454,7 @@ local function frame()
   end
   log(string.format('STOP slot=%s completed=%d reason=%d restored=%d wait_game_delta=%.9g max_dt_error=%.9g',
    cfg.slot,tonumber(s.completed),s.reason,s.restored,s.wait_game_delta,s.max_dt_error))
+  if s.reason==3 and gate.unowned then log('UNOWNED '..tostring(gate.unowned())) end
   log('PATH joins='..s.path_joins..' restored='..s.path_restored..' rng_seeds='..s.rng_seeds)
   if (cfg.native_gate_lookahead or 0)>0 then log('LOOKAHEAD_STOP '..tostring(gate.lookahead_status())) end
   if cfg.native_gate_player_observer then assert(X4LAN_NATIVE_PLAYER_TRACE,'player observer adapter missing')(gate,true) end
@@ -3686,6 +3721,7 @@ local function frame()
  end
  if snapshot and (s.boot_phase<3 or s.issued==s.report_tick) then return end
  local tick=tonumber(s.issued)
+ ui_events.tick=tick
  if (tonumber(s.registry_count) or 0)>0 then
   local count=0
   for slot,handle,macro,owner in s.registry_manifest:gmatch('(%d+)/([0-9a-f]+)/([a-z0-9_]+)/([a-z0-9_]+)') do
@@ -3983,7 +4019,7 @@ local function frame()
   for _=1,4096 do
    local row=gate.draw_watch_row(row_cursors.draw_watch)
    if not row then break end
-   log('DRAW_WATCH_ROW '..row);row_cursors.draw_watch=row_cursors.draw_watch+1
+   ticklog.write('DRAW_WATCH_ROW '..row);row_cursors.draw_watch=row_cursors.draw_watch+1 -- every tick, not only written ticks
   end
   -- Sampled stray single steps (classification in the status).
   for _=1,64 do
@@ -4048,6 +4084,7 @@ local function frame()
    if tick==1 and cfg.native_gate_world_trace_ticks then assert(gate.world_trace(cfg.native_gate_world_trace_ticks)==1,'world trace arm refused') end
   end
   drain_world_trace()
+  checkpoint(tick)
   data=data..'|'..assert(world_hash_state,'world hash baseline missing')
  end
  if profile then profile.mark('capture') end
