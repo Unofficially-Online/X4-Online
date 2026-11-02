@@ -60,6 +60,8 @@ def main(argv=None):
     f.add_argument('--restore', action='store_true', help='put back the value recorded by steam-fix')
 
     args = p.parse_args(argv)
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(line_buffering=True)  # progress lines reach a redirected log as they happen
     state = session.ROOT / '.local/x4ls'
     if args.command == 'doctor':
         return doctor(args)
