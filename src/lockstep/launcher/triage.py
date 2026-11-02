@@ -85,7 +85,9 @@ def rebuild_args(overlay, out, first):
     if not recorded.is_file():
         raise SystemExit(f'{recorded} missing: rebuild {overlay} with tools/build_soak_overlay.py first')
     argv = json.loads(recorded.read_text())['argv']
-    extra = [x for s in diagnostic_sets(first) for x in ('--set', s)]
+    given = {argv[i + 1].split('=', 1)[0] for i, a in enumerate(argv[:-1]) if a == '--set'}
+    given |= {a.split('=', 2)[1] for a in argv if a.startswith('--set=')}
+    extra = [x for s in diagnostic_sets(first) if s.split('=', 1)[0] not in given for x in ('--set', s)]
     return [*argv, *extra, '--out', str(out)]
 
 

@@ -20,9 +20,11 @@ class Triage(unittest.TestCase):
     def test_rebuild_keeps_the_recorded_arguments_and_replaces_out(self):
         with tempfile.TemporaryDirectory() as tmp:
             overlay = Path(tmp) / 'soak'
-            Path(f'{overlay}.build.json').write_text(json.dumps({'argv': ['--snapshot', 'S', '--play-mode']}))
+            Path(f'{overlay}.build.json').write_text(json.dumps({'argv': ['--snapshot', 'S', '--play-mode', '--set',
+                                                                          'native_gate_event_rng_play_rows=true']}))
             args = triage.rebuild_args(overlay, Path(tmp) / 'triage-x', 600)
             self.assertEqual(args[:3], ['--snapshot', 'S', '--play-mode'])
+            self.assertEqual(sum(a.startswith('native_gate_event_rng_play_rows') for a in args), 1)  # not set twice
             self.assertEqual(args[-2:], ['--out', str(Path(tmp) / 'triage-x')])
             self.assertIn('native_gate_script_rng_rows_window={301,600}', args)
             with self.assertRaises(SystemExit):
