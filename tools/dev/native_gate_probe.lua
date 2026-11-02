@@ -3895,7 +3895,9 @@ local function frame()
   for _=1,4096 do
    local row=gate.path_transforms_row(row_cursors.path_transforms)
    if not row then break end
-   log('PATH_TRANSFORMS_ROW '..row);row_cursors.path_transforms=row_cursors.path_transforms+1
+   -- formation window rows (outcome=) are written on every tick, not only on written status ticks
+   if row:find(' outcome=',1,true) then ticklog.write('PATH_TRANSFORMS_ROW '..row) else log('PATH_TRANSFORMS_ROW '..row) end
+   row_cursors.path_transforms=row_cursors.path_transforms+1
   end
  end
  if cfg.native_gate_body_pose then
