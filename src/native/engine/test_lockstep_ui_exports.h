@@ -45,7 +45,15 @@ static void test_ui_exports(void) {
     InterlockedIncrement(&ux_relay_depth);assert(call(1,0,1,0,1)==3 && ux_relayed==1 && ux_calls[1]==1);InterlockedDecrement(&ux_relay_depth);
     for(unsigned i=0;i<UX_ROWS_PER_EXPORT+2;i++) call(0,0,0,0,0);
     assert(ux_calls[1]==UX_ROWS_PER_EXPORT+3 && ux_rows==UX_ROWS_PER_EXPORT); /* rows for the first calls only */
-    assert(ux_status(out,sizeof(out))>0 && strstr(out,"installed=1 hooked=2 calls=") && strstr(out," exports_called=1 boot=1 relayed=1 "));
+    assert(ux_status(out,sizeof(out))>0 && strstr(out,"installed=1 mode=off hooked=2 marked=0 calls=") && strstr(out," exports_called=1 blocked=0 boot=1 relayed=1 "));
+    /* 'block': a marked export is refused (returns 0, the target is not called); relayed calls still pass. */
+    assert(ux_mark_block("IssueOrder",10) && !ux_mark_block("GetFoo",6) && !ux_mark_block("Issue",5));
+    ux_mode=UX_OBSERVE;test_ux_seen_a=0;assert(call(5,0,5,0,5)==15 && test_ux_seen_a==5 && !ux_blocked);
+    ux_mode=UX_BLOCK;test_ux_seen_a=0;assert(call(7,0,7,0,7)==0 && test_ux_seen_a==0 && ux_blocked==1);
+    InterlockedIncrement(&ux_relay_depth);assert(call(1,0,1,0,1)==3 && ux_blocked==1);InterlockedDecrement(&ux_relay_depth);
+    boot_phase=2;assert(call(2,0,2,0,2)==6);boot_phase=3;
+    assert(ux_status(out,sizeof(out))>0 && strstr(out," mode=block hooked=2 marked=1 ") && strstr(out," blocked=1 "));
+    ux_mode=UX_OFF;
     /* A changed entry fails the tick check; restore puts the originals back. */
     uint32_t mine=functions[1];functions[1]=0x2010;assert(!ux_check());functions[1]=mine;assert(ux_check());
     ux_restore();assert(!ux_installed && ux_restored && functions[1]==0x2010 && functions[2]==0x2020 && functions[0]==0x2000);

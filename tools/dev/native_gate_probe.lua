@@ -417,6 +417,24 @@ if cfg.native_gate_ui_events_log then
   return native_trigger(screen,control,...)
  end
 end
+-- UI write test (native_gate_ui_exports_test = {tick=T, slot='pK'}): client K alone calls AddPlayerMoney(1)
+-- at tick T from Lua, an unrelayed UI write; every client logs its player money at T-1 and T+5.
+local ui_write_test=cfg.native_gate_ui_exports_test
+if ui_write_test then
+ assert(type(ui_write_test)=='table' and type(ui_write_test.tick)=='number' and ui_write_test.tick>1 and type(ui_write_test.slot)=='string',
+  'native_gate_ui_exports_test must be {tick=T, slot=pK}')
+ pcall(ffi.cdef,'void AddPlayerMoney(int64_t money);')
+ pcall(ffi.cdef,'int64_t GetPlayerMoney(void);')
+end
+local function ui_write_check(tick)
+ if not ui_write_test then return end
+ if tick==ui_write_test.tick-1 or tick==ui_write_test.tick+5 then
+  ticklog.write('UI_WRITE_TEST tick='..tick..' money='..tostring(ffi.C.GetPlayerMoney()))
+ end
+ if tick==ui_write_test.tick and cfg.slot==ui_write_test.slot then
+  ffi.C.AddPlayerMoney(1);ticklog.write('UI_WRITE_TEST tick='..tick..' called=AddPlayerMoney')
+ end
+end
 local function checkpoint(tick)
  if checkpoint_at and tick==checkpoint_at-150 then AddUITriggeredEvent('X4LAN_NativeGate','Respawn',{}) end
  if tick~=checkpoint_at or checkpoint_state then return end
@@ -2657,10 +2675,15 @@ local function frame()
   end
   -- UI writes (lockstep_ui_exports.h): every non-query X4.exe export the UI calls through FFI in an
   -- admitted frame, outside the probe's application of relayed inputs. Diagnostic, default off.
+  -- 'block': the exports named in native_gate_ui_exports_block are refused outside the bracket.
   if cfg.native_gate_ui_exports then
-   assert(cfg.native_gate_ui_exports=='observe' and gate.ui_exports and gate.ui_exports_status and gate.ui_exports_row and
-    gate.ui_exports_relay and gate.ui_exports('observe')==1,'ui exports refused '..tostring(gate.ui_exports_status and gate.ui_exports_status()))
-   log('UI_EXPORTS_ARMED')
+   local mode=cfg.native_gate_ui_exports
+   assert((mode=='observe' or mode=='block') and gate.ui_exports and gate.ui_exports_status and gate.ui_exports_row and
+    gate.ui_exports_relay and gate.ui_exports(mode)==1,'ui exports refused '..tostring(gate.ui_exports_status and gate.ui_exports_status()))
+   for _,name in ipairs(cfg.native_gate_ui_exports_block or {}) do
+    assert(type(name)=='string' and gate.ui_exports_block(name)==1,'ui exports block: no hooked export '..tostring(name))
+   end
+   log('UI_EXPORTS_ARMED mode='..mode..' blocked_names='..#(cfg.native_gate_ui_exports_block or {}))
   end
   -- Rows of who gets built; only watches, and what it cannot watch loses a row.
   if cfg.native_gate_build_rows then
@@ -4115,6 +4138,7 @@ local function frame()
   end
   drain_world_trace()
   checkpoint(tick)
+  ui_write_check(tick)
   data=data..'|'..assert(world_hash_state,'world hash baseline missing')
  end
  if profile then profile.mark('capture') end

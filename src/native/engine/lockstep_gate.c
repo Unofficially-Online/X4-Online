@@ -1981,10 +1981,16 @@ static int lua_address_order_row(lua_State *L) {
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=ao_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
-/* gate.ui_exports('observe'): native_gate_ui_exports, lockstep_ui_exports.h. Before the snapshot load. */
+/* gate.ui_exports('observe'|'block'): native_gate_ui_exports, lockstep_ui_exports.h. Before the snapshot load. */
 static int lua_ui_exports(lua_State *L) {
     size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);
-    p_lua_pushnumber(L,mode && length==7 && !memcmp(mode,"observe",7) && ux_arm());return 1;
+    int m=mode && length==7 && !memcmp(mode,"observe",7)?UX_OBSERVE:mode && length==5 && !memcmp(mode,"block",5)?UX_BLOCK:UX_OFF;
+    p_lua_pushnumber(L,m!=UX_OFF && ux_arm(m));return 1;
+}
+/* gate.ui_exports_block(name): mark a hooked export for 'block'; 1 if hooked. */
+static int lua_ui_exports_block(lua_State *L) {
+    size_t length=0;const char *name=p_lua_tolstring(L,1,&length);
+    p_lua_pushnumber(L,name && ux_installed && ux_mark_block(name,length));return 1;
 }
 static int lua_ui_exports_status(lua_State *L) {
     char out[384];int n=accept_ui()?ux_status(out,sizeof(out)):0;
@@ -3927,7 +3933,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(camera_offset);METHOD(camera_offset_status);METHOD(camera_anchor);METHOD(camera_anchor_keys);METHOD(camera_anchor_status);
     METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(gravidar_digest);METHOD(gravidar_digest_frame);METHOD(gravidar_digest_row);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
-    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(unowned);METHOD(ui_exports);METHOD(ui_lazy_callers);METHOD(ui_exports_status);METHOD(ui_exports_row);METHOD(ui_exports_relay);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);
+    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(unowned);METHOD(ui_exports);METHOD(ui_lazy_callers);METHOD(ui_exports_status);METHOD(ui_exports_row);METHOD(ui_exports_relay);METHOD(ui_exports_block);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);
     METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(register_weapon);METHOD(weapon);
