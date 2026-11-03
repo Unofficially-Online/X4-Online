@@ -247,6 +247,11 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   the last hash joins every tick's digest, so a navigation split stops the relay within 30 ticks. One hash takes
   about 24 ms (a hitch once a second; the soak ran at 0.84x real time). Seed 1111111, 12,003 ticks: 360 hashes,
   equal on both clients.
+- **Base seed with the nav hash: 90,630 ticks (50.4 game minutes),** its best since the speech clock. The nav hash
+  stopped it: equal at 90,600, different at 90,630, while actor rows, octree lookup rows and every status line
+  agreed and the census would have seen it only at 90,900. So a navigation state parts within one 30-tick stride,
+  with no other trace. Next: name the object. Page hashes of the nav index every nav tick, and a short in-memory
+  history of per-object hashes written at the stop, would give the first differing page and then its objects.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
