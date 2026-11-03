@@ -495,13 +495,13 @@ local function ui_write_check(tick)
   ticklog.write('UI_WRITE_TEST tick='..tick..' money='..tostring(GetPlayerMoney()))  -- the Lua API global: the FFI getter is restricted to Egosoft code
  end
  if tick==ui_write_test.tick and cfg.slot==ui_write_test.slot then
-  local ok,why=pcall(function() ffi.C.AddPlayerMoney(1) end)
+  local ok,why=pcall(function() ffi.C.AddPlayerMoney(100000) end) -- in hundredths: 1000 credits
   local via='ffi'
   if not ok then -- restricted to Egosoft code: resolve it as the UI's FFI does, through X4.exe's export table
    via='export_table'
    ok,why=pcall(function()
     local entry=ffi.C.GetProcAddress(ffi.C.GetModuleHandleA(nil),'AddPlayerMoney')
-    ffi.cast('void(*)(int64_t)',entry)(1)
+    ffi.cast('void(*)(int64_t)',entry)(100000)
    end)
   end
   ticklog.write('UI_WRITE_TEST tick='..tick..' called=AddPlayerMoney via='..via..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
