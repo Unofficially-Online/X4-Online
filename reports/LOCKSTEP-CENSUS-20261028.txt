@@ -2059,3 +2059,10 @@ STATUS
 All interventions are default-off and opt-in through config keys; none is a
 claim of whole-world, cross-platform or long-horizon lockstep. Raw evidence
 stays under .local/census (not committed).
+
+2 NOVEMBER, EVENING (coordinator; hot join by another session):
+- Adaptive delay live: a0d/a1d plan k=1/d=3 and k=4/d=6, 29.7 steps/s, census 0; a1g after the horizon fix h=6 (was 10).
+- Own-ship prediction: render-frames join wired (owned=2162 stale=0, p2f); flashes with render frames measured (render report
+  section 17); defaults now skip render frames while prediction presents; d201f (build201) clean: census 0, 0 flashes.
+- Hot join v10/v11 merged (93642254): SOLVER, BULLET (component registry, 55 shots at T), GRAV/GRAVC/GRAVS radar state;
+  J1 T+1 17 -> 7 differ, tick 900 2,491 -> 2,118 (j1-28..j1-36, HOTJOIN report 1.15).

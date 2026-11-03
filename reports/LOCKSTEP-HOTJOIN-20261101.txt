@@ -1303,6 +1303,67 @@ census at T+1 (634): 17 of 523,529 differ (motion 13, health 4, timing 0: STEER 
   five batches' 1,298 objects of about 2,500 at 900 come from deaths in NPC fights in other sectors (1.13), which neither the solver nor the spline
   routes touch: the 13 ships are one tempzone of the fixture. (3) The spline routes: three ships, engine-allocated deques, little effect on anything else.
 
+1.15 SOLVER LIVE, THE BULLETS COUNTED, THE AI APART FROM T+1: THE RADAR, PACKAGE VERSIONS 10 AND 11 (2 November; J1 j1-28 .. j1-33 run
+by the hot join session from this branch, lanes b3, b4, b5, at most 2 X4; census_compare client 1 against joiner client 3)
+User decision (2 November): a hot join must not make the clients already in the session reload. Only the joiner loads; whatever the save
+does not hold is carried to the joiner (or, at most, normalized invisibly on the savers). An "every client loads the join save" join was
+proposed and rejected.
+  run    build / package                         T+1 (634)            900      what it showed
+  j1-28  v10 (SOLVER, BULLET)                    7 (health 4,          2,481    solver=15:15:15:0:0:0 (every solver created by the engine's
+                                                 motion 3)                       0xe95fb0 and overwritten): the ten steering ships equal at T+1
+  j1-29  v10 + BULLET over zone children         7                     2,481    bullet_walk 1,428 zones, 14,044 children (both views): no bullet
+  j1-30  v10 + BULLET over the registry          7                     2,481    55 bullets at T, all in the fixture's temp zone 0x13e75f
+  j1-31  j1-30 + script rows 634..700            7                     2,481    the joiner's AI scripts run apart from T+1 (below)
+  j1-32  j1-30 + Gravidar digest, rows, posts    7                     2,481    the radar: below
+  j1-33  v11 (GRAV, GRAVC, GRAVS)                7                     2,134    grav=14537:14233:0:0:0:292180:0:11525:2638 gravs=2:0:8
+- SOLVER [F: j1-28]: the joiner's ten steering ships equal the session's at T+1; the 7 left are the three spline models (0x7a8dc, 0x7a8fe,
+  0x176a74: their routes, 1.14) and ship 0x73f92 with its three weapons (health). The latter is no bullet: in j633.xml.gz the ship (runtime
+  0x4952c) carries attacker="[0x495cc]" attackmethod="lowattentionattack" attacktime="22.5163": a Xenon corvette's low attention combat,
+  which fight.attack.object.* simulate in the script (a 1..4 s wait, get_attackstrength, the damage), the session applying the next round at
+  T+1, the joiner not.
+- BULLET [F: j1-29, j1-30]: no U::Bullet is among any zone's children (U::Zone::vfunc930 0x83b500 creates through the component factory
+  0x6898e0, and the children vectors +0xf0 hold none). BULLET now walks the component registry (U::ComponentRegistry::Find 0xced70, pinned:
+  32 blocks of 2^20 slots at +0x58, 32-byte buckets of three pointers, generations and live nibbles): 4 blocks, 430,879 live components,
+  55 bullets at T, all in zone 0x13e75f (the fixture: bullet_xen_s_laser_01_mk1 50, bullet_gen_s_plasma_01_mk2 5), none elsewhere. So the
+  1.13 inference (the deaths in other sectors come from shots in flight) does not hold; the census at 900 is spread over many sectors (j1-29:
+  no sector more than 139 of the 2,481).
+- THE AI [F: j1-30 status rows, j1-31 SCRIPT_RNG_ROW 634..700]: at T+1 the session runs 221 script entries, the joiner 119; at 659 225 and
+  132; the keysets never equal again; over 634..720 the joiner runs 40,715 entries against 26,164 (range 5,061/980, event 4,051/1,000).
+  By name: at 634 the session's stack handlers of fight.attack.object.station, .medium, .capital (the periodic has_scanned path,
+  lockstep_gravidar_posts.h) run on the session only; at 635..637 the joiner runs 1,700..1,900 extra rows a tick (range storms of
+  order.fight.attack.object, 140..160 a tick under one key; escort and fighter interrupts 30+ a tick per ship).
+- THE RADAR [F: j633.xml.gz, j1-32, the constructors 0x10ac0c0 and 0x10b2aa0, the sector scan 0x10b34c0]: the save writes each of its
+  11,899 Gravidar units as an empty <gravidar/>. A loaded active unit has no contacts and times -1, so its first scan posts
+  GravidarHasScannedEvent (j1-32's digest rows on the joiner: scan = event = T+1 for every unit); passive units are made only by the sector
+  scans as they reach their objects (the joiner had 262 of the session's 2,638 at T+1, all of them by ~660); the sectors' factor-pass
+  deadlines differ. Package version 11 (lockstep_join.h comment): GRAV (every unit: owner, kind, +0x40..+0x67, times, four contact lists'
+  lengths), GRAVC (the contacts as portable IDs), GRAVS (the worker's active sources and the field sectors' deadlines with
+  native_gate_gravidar_deadlines' seen bit). The joiner (after gdl_admit) makes the passive units it lacks through 0x10b2aa0, writes the
+  bytes and times under the unit's lock, each list in its own runtime IDs sorted, the sources, the deadlines, and enters the seen sectors in
+  gdl's table. Pins: 0x10b2dc0, 0x10b2aa0. Golden v11 a22d26d6... shared by C and Python.
+- j1-33 [F]: every unit applied (0 missing, kind, shape; 2,638 passive made; 0 unmapped contacts), the sector deadlines' digest equal at
+  634, 660 and 720; the joiner holds 7 units more than the session (14,544 / 14,537), so the summed factor and time digests still differ;
+  the census at 900 2,134 (from 2,481); the scripts still apart (634..720: 32,578 / 26,164; range 2,984 / 980, event 1,982 / 1,000; at 659
+  318 entries / 225). j1-34 (script rows, digest rows and posts with v11) names what is left.
+- j1-34 .. j1-36 [F] (v11 with the Gravidar digest, digest rows, posts and script rows; then two fixes):
+  j1-34: the joiner's units post contact changes for other units than the session's from T+1 (634: session 11 change posts, joiner
+  63, none in common; 634..660 213 / ~3,800). Cause one: the Gravidar thread visits the sector list round-robin from a cursor in its
+  stack frame (lockstep_ai_schedule.h); the joiner's ai_schedule admitted it at 0. GRAVS kind 3 now carries the cursor the session's next
+  frame expects; the joiner writes it into its thread's slot with ai_schedule's expectation (3d8f1879).
+  j1-35: the cursor equal on both clients (9 at 634, 93 at 660, 75 at 720, 153 sectors), all 11 session posts of 634 now also on the
+  joiner; 900: 2,118. The joiner still posts ~114 more changes at 634 (overdue units of the same windows: its scan finds other contacts
+  for the same unit at the same tick; e.g. 9 -> 14), spread over many sectors: an input of the scan's contact check (ranges, factors,
+  visibility, entry flags or the zone groups' order) is not carried yet. The session's digest rows thin out after the first ticks, so the
+  per-unit comparison needs a targeted capture of the scan entries of T+1 on both sides (next).
+  Cause two: md_extra=4, cues X4 instantiates on every load (Signal_Leaks.Manager.PlayerChangesSpace with 17 PrepareLeakCleanup draws,
+  two Patch_Userdata cues, Setup_DLC_Timelines.Timelines_Unlock_Message), activated at the joiner's load. The MD heap rebuild drops the
+  joiner's unmatched entries in report mode (md_dropped; f8d63fa1). j1-36: md_dropped=4, 900 unchanged at 2,118 (no census effect by 900).
+  Also open: the joiner's 85 created_extra objects (seven ships with parts and crew made during its own boot, with six AI contexts the
+  session does not have: ctx_extra=6) run their scripts on the joiner alone.
+- Not built: the spline models' routes (1.14; the model's two deques of 0x50-byte entries each owning a heap CompositeSpline<5>, the deque
+  layout {proxy, map, map size, offset, count} with one entry per block, the two embedded CompositeSpline<5> at +0x158/+0x1a8, the request
+  deque +0x428), the bullets in flight (55 at T, in the fixture zone), the solver records' heap-pointer audit (the savers' compare).
+
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9
   (8 before STEER and STEERPT, 7 before PARAM and DOCK, 6 before ROUTE, 5 before AGENT, 4 before FLIGHT and SPLINE, 3 before PATH and REGION, 2 before SHIELD..KEYS, 1 before the world side table:

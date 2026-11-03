@@ -4249,6 +4249,8 @@ local function frame()
   if cfg.native_gate_fork_save then log('FORK_SAVE_STOP '..tostring(gate.fork_save_status())) end
   if join_client then
    log('JOIN_STOP '..tostring(gate.join_status()))
+   -- The steering and spline models after step T+1, on savers and joiner alike (report 1.14).
+   if gate.join_t1_row then for i=1,32 do local row=gate.join_t1_row(i);if not row then break end;log('JOIN_T1 '..row) end end
    -- A joiner stopped before its first tick (J1 j1-8: the admission's frame) has not logged its unpaired samples yet.
    if join_joiner and not join_restored then X4LAN_JOIN_CORE.log_unpaired(gate,log) end
   end

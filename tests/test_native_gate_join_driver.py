@@ -596,13 +596,13 @@ class Overlays(unittest.TestCase):
             (root/'handoff.json').write_text(json.dumps(handoff))
             notes = self.run_main('joiner', '--gate-dll', dll, '--handoff', root/'handoff.json', '--out', root/'joiner', '--join-mode', 'report',
                                   '--set', 'native_gate_world_hash_stride=300', '--join-census', *WINDOW)
-            self.assertIn(' world=v9 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
-                          ' param=0 dock=0 steer=0/0 census_t1=1 ',
+            self.assertIn(' world=v11 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
+                          ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 census_t1=1 ',
                           notes)
             self.assertIn('X4LAN_CONFIG.native_gate_world_hash_join = true', (root/'joiner/ui/config.lua.append').read_text().splitlines())
             self.assertEqual(json.loads((root/'joiner/x4lane-join.json').read_text())['world'],
-                             'v9 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
-                             ' param=0 dock=0 steer=0/0')
+                             'v11 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
+                             ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0')
         old = join.read_package(join.write_package(dict(package['sections']['gate']), {join.SEC_IDS: ids}, version=1))
         self.assertEqual(overlays.check_world_table(old, 'report'), 'v1 health=0 pose=0')
         with self.assertRaisesRegex(ValueError, 'package_v1'):
@@ -674,10 +674,29 @@ class Overlays(unittest.TestCase):
                                                   {join.SEC_IDS: ids, join.SEC_PATH: path, join.SEC_FLIGHT: flight,
                                                    join.SEC_SPLINE: [(0x2003, 1, 0, bytes(160))], join.SEC_AGENT: agents,
                                                    join.SEC_ROUTE: routes, join.SEC_PARAM: params, join.SEC_DOCK: docks,
-                                                   join.SEC_STEER: steers, join.SEC_STEERPT: points}))
-        self.assertEqual(overlays.check_world_table(v9, 'strict'),
+                                                   join.SEC_STEER: steers, join.SEC_STEERPT: points}, version=9))
+        self.assertEqual(overlays.check_world_table(v9, 'report'),
                          'v9 health=0 pose=0 shield=0 nav=0 attn=0 keys=0 path=1/1/1 region=0 flight=1/1 spline=1 agent=2 route=2/0'
                          ' param=2 dock=1 steer=1/1')
+        with self.assertRaisesRegex(ValueError, 'package_v9: the package carries no SOLVER or BULLET sections'):
+            overlays.check_world_table(v9, 'strict')
+        # Version 10: the steering model's Agent's solver (active) and a dormant one under the linear model, one bullet.
+        data = bytes(join.SOLVER_BYTES)
+        solvers = [(0x2003, 0, 0x2c4f610, 0, 0, bytes(4*join.SOLVER_POINTERS), data),
+                   (0x2004, join.SOLVER_ACTIVE, join.STEER_VT, 0, 0, bytes(4*join.SOLVER_POINTERS), data)]
+        bullets = [(0x2003, 0, 0, 0, join.BULLET_NO_SHOOTER | join.BULLET_NO_MACRO | join.BULLET_NO_MOTION, 0, bytes(join.BULLET_MACRO),
+                    bytes(join.BULLET_BYTES), bytes(join.BULLET_MOTION))]
+        v10 = join.read_package(join.write_package(dict(package['sections']['gate']),
+                                                   {join.SEC_IDS: ids, join.SEC_PATH: path, join.SEC_FLIGHT: flight,
+                                                    join.SEC_SPLINE: [(0x2003, 1, 0, bytes(160))], join.SEC_AGENT: agents,
+                                                    join.SEC_ROUTE: routes, join.SEC_PARAM: params, join.SEC_DOCK: docks,
+                                                    join.SEC_STEER: steers, join.SEC_STEERPT: points, join.SEC_SOLVER: solvers,
+                                                    join.SEC_BULLET: bullets}, version=10))
+        self.assertEqual(overlays.check_world_table(v10, 'report'),
+                         'v10 health=0 pose=0 shield=0 nav=0 attn=0 keys=0 path=1/1/1 region=0 flight=1/1 spline=1 agent=2 route=2/0'
+                         ' param=2 dock=1 steer=1/1 solver=1/1 bullet=1')
+        with self.assertRaisesRegex(ValueError, 'package_v10: the package carries no GRAV, GRAVC or GRAVS sections'):
+            overlays.check_world_table(v10, 'strict')
         # The census tools accept the extra capture ticks (T+1 of each SAVE_AT, a joiner's tick base + 1) only with the key.
         log = ('[X4LAN] NATIVE_GATE JOIN_SAVE_AT tick=603 k=3 save_tick=633 mask=3 nonce=00 mine=1\n'
                '[X4LAN] NATIVE_GATE JOIN_ADMITTED base=633 state=idle\n')

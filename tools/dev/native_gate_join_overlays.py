@@ -143,14 +143,15 @@ def check_world_table(package, mode):
     """The package's world side table: 'v<version> health=<n> pose=<n>', from version 3 'shield=<n> nav=<n> attn=<n> keys=<n>',
     from version 4 'path=<batched agents>/<new agents>/<batches> region=<n>', from version 5 'flight=<linear>/<other models>
     spline=<n>', from version 6 'agent=<n>', from version 7 'route=<heads>/<points>', from version 8 'param=<n> dock=<n>', from
-    version 9 'steer=<models>/<path points>'. ValueError package_v1 .. package_v8 for a strict joiner of an older package
+    version 9 'steer=<models>/<path points>', from version 10 'solver=<active>/<dormant> bullet=<n>'. ValueError package_v1 .. package_v9
+    for a strict joiner of an older package
     (lockstep_join.h join_version_refused)."""
     version = package['header']['version']
     if version < join.PACKAGE_VERSION and mode == 'strict':
         what = 'no world side table' if version < 2 else 'no SHIELD, NAV, ATTN or KEYS sections' if version < 3 else \
             'no PATH or REGION sections' if version < 4 else 'no FLIGHT or SPLINE sections' if version < 5 else 'no AGENT section' \
             if version < 6 else 'no ROUTE section' if version < 7 else 'no PARAM or DOCK sections' if version < 8 else \
-            'no STEER or STEERPT sections'
+            'no STEER or STEERPT sections' if version < 9 else 'no SOLVER or BULLET sections' if version < 10 else             'no GRAV, GRAVC or GRAVS sections'
         raise ValueError(f'package_v{version}: the package carries {what} (a saver build before them); a strict joiner refuses it')
     sections = package['sections']
     names = ('health', 'pose')+(('shield', 'nav', 'attn', 'keys') if version >= 3 else ())
@@ -172,6 +173,11 @@ def check_world_table(package, mode):
         text += f' param={len(sections.get("param", []))} dock={len(sections.get("dock", []))}'
     if version >= 9:
         text += f' steer={len(sections.get("steer", []))}/{len(sections.get("steerpt", []))}'
+    if version >= 10:
+        active = sum(1 for r in sections.get('solver', []) if r[1] & join.SOLVER_ACTIVE)
+        text += f' solver={active}/{len(sections.get("solver", []))-active} bullet={len(sections.get("bullet", []))}'
+    if version >= 11:
+        text += f' grav={len(sections.get("grav", []))}/{len(sections.get("gravc", []))}/{len(sections.get("gravs", []))}'
     return text
 
 

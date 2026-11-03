@@ -4076,7 +4076,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(body);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
-    METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_unpaired);
+    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_unpaired);
 #undef METHOD
     return 1;
 }

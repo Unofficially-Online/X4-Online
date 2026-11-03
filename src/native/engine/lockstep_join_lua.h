@@ -54,6 +54,12 @@ static int lua_join_status(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
     return 1;
 }
+/* gate.join_t1_row(i): the steering and spline models after step T+1, both sides (lockstep_join_world.h join_t1x). */
+static int lua_join_t1_row(lua_State *L) {
+    double i=p_lua_tonumber(L,1);const char *row=accept_ui() && isfinite(i) && floor(i)==i && i>=1 && i<=JOIN_T1X?join_t1x_row((unsigned)i):NULL;
+    if(row) p_lua_pushlstring(L,row,strlen(row));else p_lua_pushnil(L);
+    return 1;
+}
 static int lua_join_unpaired(lua_State *L) {
     double i=p_lua_tonumber(L,1);const char *row=accept_ui() && isfinite(i) && floor(i)==i && i>=1 && i<=JOIN_ROWS?join_unpaired_row((unsigned)i):NULL;
     if(row) p_lua_pushlstring(L,row,strlen(row));else p_lua_pushnil(L);

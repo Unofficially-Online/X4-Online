@@ -578,3 +578,9 @@ prediction the step frame itself draws the own ship away from its simulated pose
 BuildCache placed from the simulated pose does not follow. Next: the engine side of the seated character's placement.
 Until fixed, every session with the defaults shows it (both are on by default); render frames off or prediction
 'observe' avoids it (p2n, p2o: 0 flashes).
+
+Decision (2 November, coordinator; the owner of the session asked to keep the instant own ship): until the cause is fixed the
+session defaults skip native_gate_render_fps while own-ship prediction presents (condition @no_present, ERROR DEFAULT_SKIPPED
+with the reason; an explicit native_gate_render_fps or prediction 'observe' still gets render frames). Check d201f (build201 =
+smoke 93642254, defaults, 2 clients, 3000 ticks): no RENDER_FRAMES_ARMED, prediction present (failures 0, snaps 0), 0 flashes
+in 2,354 burst frames, relay pass, census 0 of 528,288 at 1800, 29.72 steps/s.

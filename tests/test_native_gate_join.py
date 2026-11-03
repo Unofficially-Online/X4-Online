@@ -243,6 +243,10 @@ def golden(version=join.PACKAGE_VERSION):
         sections.update(golden_v8())
     if version >= 9:
         sections.update(golden_v9())
+    if version >= 10:
+        sections.update(golden_v10())
+    if version >= 11:
+        sections.update(golden_v11())
     return join.write_package(gate, sections, save_sha=bytes(range(32)), save_bytes=123456, version=version)
 
 
@@ -336,7 +340,38 @@ def golden_v9():
             join.SEC_STEERPT: [(0x2004, join.ROUTE_POINT, join.STEER_LIST)+point[3:]]}
 
 
-GOLDEN_SHA = 'dc43e62589f878b9f7dcbd36907ec4bbdbea4b715287dcde799cd239248e2983'
+def golden_v10():
+    """Version 10's records (j1-27's shapes, test_lockstep_join.h join_golden): the turret's motion solver (bytes i*7+1, a pointer into itself
+    at +0x16a0 and a vtable at +0x6a00), two bullets in the cargo bay's zone: a linear one with its shooter, macro and bytes, and one with
+    nothing readable."""
+    data = bytearray((i*7+1) & 255 for i in range(join.SOLVER_BYTES))
+    data[0x16a0:0x16a8] = struct.pack('<Q', 0x3e8)
+    data[0x6a00:0x6a08] = struct.pack('<Q', 0x2c1f0f8)
+    listed = struct.pack('<2I', (0x16a0//8) << 1, (0x6a00//8) << 1 | 1)+bytes(4*join.SOLVER_POINTERS-8)
+    macro = b'bullet_ter_s_gatling_01_mk1_macro'
+    return {join.SEC_SOLVER: [(0x2004, join.SOLVER_ACTIVE, join.STEER_VT, 2, 0, listed, bytes(data))],
+            join.SEC_BULLET: [(0x2003, 0x2004, 3, 0, 0, 0x2c3f7c0, macro+bytes(join.BULLET_MACRO-len(macro)),
+                               bytes((i*3+5) & 255 for i in range(join.BULLET_BYTES)), bytes((i*9+2) & 255 for i in range(join.BULLET_MOTION))),
+                              (0x2003, 0, 7, 1, join.BULLET_NO_SHOOTER | join.BULLET_NO_MACRO | join.BULLET_NO_MOTION, 0, bytes(join.BULLET_MACRO),
+                               bytes(join.BULLET_BYTES), bytes(join.BULLET_MOTION))]}
+
+
+def golden_v11():
+    """Version 11's records (j1-32's shapes, test_lockstep_join.h join_golden): an active unit owned by the turret with two primary contacts
+    (the ship, one without a portable ID) and one second contact (the cargo bay), a passive unit of the module, the active sources (the
+    cargo bay pending, an unmapped current one) and a field sector seen by the deadlines module."""
+    active = bytes(((i*5+3) & 255) if 0x40 <= i and (i < 0x68 or i >= 0xa8) else 0 for i in range(join.GRAV_BYTES))
+    passive = bytes(((i*11+1) & 255) if 0x40 <= i < 0x68 else 0 for i in range(join.GRAV_BYTES))
+    return {join.SEC_GRAV: [(0x2004, join.GRAV_ACTIVE_VT, join.GRAV_ACTIVE, 2, 1, 0, 0, active),
+                            (0x2005, join.GRAV_PASSIVE_VT, 0, 0, 0, 0, 0, passive)],
+            join.SEC_GRAVC: [(0x2004, 0, 0, 0x2001, 0, 0), (0x2004, 0, 1, 0, join.GRAVC_UNMAPPED, 0), (0x2004, 1, 0, 0x2003, 0, 0)],
+            join.SEC_GRAVS: [(0x2003, 0, join.GRAVS_PENDING, 0, 0, 0), (0, 0, join.GRAVS_CURRENT, 0, join.GRAVS_UNMAPPED, 0),
+                             (0x2006, 0x4029000000000000, join.GRAVS_SECTOR, 7, join.GRAVS_SEEN, 0), (0, 3, join.GRAVS_CURSOR, 40, 0, 0)]}
+
+
+GOLDEN_SHA = 'f0874152607c013ff72febfbf675b20f64b391fb5a9d431795bd302fc0964e7f'
+GOLDEN_SHA_V10 = '1a324e00b49dbc814f757c26ad28741675b7d8e0b9df120c63d52594724e27bd'   # a version 10 package (before GRAV, GRAVC, GRAVS)
+GOLDEN_SHA_V9 = 'dc43e62589f878b9f7dcbd36907ec4bbdbea4b715287dcde799cd239248e2983'   # a version 9 package (before SOLVER, BULLET)
 GOLDEN_SHA_V8 = '57d2e0fd08fd8171111e0156d00c6a80a7603148d8e552fa56c598e58a7f58e8'   # a version 8 package (before STEER, STEERPT)
 GOLDEN_SHA_V7 = '49158c8e6a32c476927667f1ed6820361ee5231862b2d5df058138abb491f76b'   # a version 7 package (before PARAM, DOCK)
 GOLDEN_SHA_V6 = 'abea9110181f0f3412b47c021bb77dae4207ef7d5e56686d927cdf6a95d995e5'   # a version 6 package (before ROUTE)
@@ -355,8 +390,9 @@ class Package(unittest.TestCase):
         self.assertEqual((s['tick'], s['slot'], s['save_bytes'], s['md_seq']), (600, 1, 123456, 4242))
         self.assertEqual(s['counts'], {'ids': 2, 'ctx': 2, 'wake': 1, 'wakevec': 1, 'mdheap': 2, 'modules': 2, 'lua': 1, 'health': 2,
                                        'pose': 1, 'shield': 2, 'nav': 1, 'attn': 2, 'keys': 2, 'path': 9, 'region': 2, 'flight': 2,
-                                       'spline': 2, 'agent': 2, 'route': 3, 'param': 2, 'dock': 1, 'steer': 1, 'steerpt': 1})
-        self.assertEqual(s['version'], 9)
+                                       'spline': 2, 'agent': 2, 'route': 3, 'param': 2, 'dock': 1, 'steer': 1, 'steerpt': 1, 'solver': 1,
+                                       'bullet': 2, 'grav': 2, 'gravc': 3, 'gravs': 4})
+        self.assertEqual(s['version'], 11)
         self.assertEqual(s['save_sha'], bytes(range(32)).hex())
         # The MD heap enters the portable digest in pop order (time, then seq) and without its seq.
         text = join.portable_text(package['sections'])
@@ -397,7 +433,8 @@ class Package(unittest.TestCase):
                        dict(version=5, sections={join.SEC_AGENT: []}), dict(version=6, sections={join.SEC_ROUTE: []}),
                        dict(version=7, sections={join.SEC_PARAM: []}), dict(version=7, sections={join.SEC_DOCK: []}),
                        dict(version=8, sections={join.SEC_STEER: []}), dict(version=8, sections={join.SEC_STEERPT: []}),
-                       dict(version=10, sections={})):
+                       dict(version=9, sections={join.SEC_SOLVER: []}), dict(version=9, sections={join.SEC_BULLET: []}),
+                       dict(version=10, sections={join.SEC_GRAV: []}), dict(version=12, sections={})):
             with self.subTest(kwargs=kwargs), self.assertRaisesRegex(join.JoinError, 'package_version'):
                 join.write_package(gate, kwargs['sections'], version=kwargs['version'])
         # The reader: a world section in a version 1 header (resealed), a version 2 package without them, unsorted records.
@@ -774,13 +811,105 @@ class Package(unittest.TestCase):
         with self.assertRaisesRegex(join.JoinError, 'package_version'):
             join.write_package(gate, {join.SEC_PARAM: expected[join.SEC_PARAM]}, version=7)
 
+    def test_version_10_solver_and_bullet(self):
+        # Version 10 (report 1.14): SOLVER and BULLET after STEERPT; the digest takes one line for SOLVER, over (portable, kind) only, and none
+        # for BULLET; each record round trips, the savers' comparison names the qwords and object offsets apart without refusing the join,
+        # the reader refuses every shape fault and a version 9 header with them.
+        v10 = join.read_package(golden(10))
+        self.assertEqual((v10['sha'], v10['header']['version'], v10['header']['sections']), (GOLDEN_SHA_V10, 10, 26))
+        lines = join.portable_text(v10['sections']).splitlines()
+        self.assertEqual([line.split('|')[0] for line in lines[-3:]], ['STEER', 'STEERPT', 'SOLVER'])
+        self.assertEqual(lines[-1].split('|')[1], '1')
+        self.assertEqual(lines[-1].split('|')[2], hashlib.sha256(struct.pack('<QI', 0x2004, join.STEER_VT)).hexdigest())
+        expected = golden_v10()
+        self.assertEqual(v10['sections']['solver'], expected[join.SEC_SOLVER])
+        self.assertEqual(v10['sections']['bullet'], expected[join.SEC_BULLET])
+        solver, = expected[join.SEC_SOLVER]
+        first, second = expected[join.SEC_BULLET]
+        # The other saver: bytes of the object apart: the same digest, the comparison names them.
+        data = bytearray(solver[6])
+        data[0x18] ^= 1
+        data[0x100] ^= 1
+        other = dict(v10['sections'])
+        other['solver'] = [solver[:6]+(bytes(data),)]
+        moved = bytearray(first[7])
+        moved[0x268] ^= 1
+        other['bullet'] = [first[:7]+(bytes(moved), first[8]), second]
+        self.assertEqual(join.portable_digest(other), join.portable_digest(v10['sections']))
+        world = join.world_differences(v10['sections'], other)
+        self.assertEqual((world['solver']['differ'], world['solver']['samples']), (1, ['0000000000002004']))
+        self.assertEqual(sorted(world['solver']['offsets']), ['q+0x100:1', 'q+0x18:1'])
+        self.assertEqual((world['bullet']['differ'], world['bullet']['samples'], world['bullet']['offsets']),
+                         (1, ['0000000000002003/3'], ['bullet+0x268:1']))
+        # A different model kind changes the digest.
+        other['solver'] = [solver[:2]+(join.STEER_VT+8,)+solver[3:]]
+        self.assertNotEqual(join.portable_digest(other), join.portable_digest(v10['sections']))
+        # Shape faults.
+        listed = struct.pack('<3I', (0x16a0//8) << 1, (0x6a00//8) << 1 | 1, 1)+bytes(4*join.SOLVER_POINTERS-12)
+        swapped = struct.pack('<2I', (0x6a00//8) << 1 | 1, (0x16a0//8) << 1)+bytes(4*join.SOLVER_POINTERS-8)
+        far = bytearray(solver[6])
+        far[0x16a0:0x16a8] = struct.pack('<Q', join.SOLVER_BYTES)
+        for bad in ([solver, solver], [solver[:4]+(1,)+solver[5:]], [solver[:1]+(4,)+solver[2:]], [solver[:1]+(3,)+solver[2:]],
+                    [solver[:5]+(listed,)+solver[6:]], [solver[:5]+(swapped,)+solver[6:]], [solver[:6]+(bytes(far),)]):
+            self.assertFalse(join.solver_shape(bad))
+        self.assertTrue(join.solver_shape([solver[:1]+(3, solver[2], 0, 0, bytes(4*join.SOLVER_POINTERS), solver[6])]))
+        for bad in ([first, first], [second, first], [first, second[:3]+(2,)+second[4:]], [first, second[:1]+(1,)+second[2:]],
+                    [first[:6]+(first[6][:40]+b'\1'+first[6][41:],)+first[7:]], [first, second[:6]+(b'x'+bytes(join.BULLET_MACRO-1),)+second[7:]],
+                    [first[:4]+(8,)+first[5:]], [first, second[:5]+(1,)+second[6:]]):
+            self.assertFalse(join.bullet_shape(bad))
+        self.assertTrue(join.bullet_shape([first, second]))
+        # A version 9 header may not carry them.
+        with self.assertRaisesRegex(join.JoinError, 'package_version'):
+            join.write_package({name: 0 for name in join.GATE_FIELDS}, {join.SEC_SOLVER: []}, version=9)
+
+    def test_version_11_grav(self):
+        # Version 11 (report 1.15): GRAV, GRAVC and GRAVS after BULLET; the digest takes one line, which units, their kind and their
+        # list lengths; the bytes, contacts and GRAVS only in the savers' comparison; the reader refuses every shape fault and a
+        # version 10 header with them.
+        v11 = join.read_package(golden())
+        self.assertEqual((v11['sha'], v11['header']['version'], v11['header']['sections']), (GOLDEN_SHA, 11, 29))
+        lines = join.portable_text(v11['sections']).splitlines()
+        self.assertEqual([line.split('|')[0] for line in lines[-2:]], ['SOLVER', 'GRAV'])
+        expected = golden_v11()
+        self.assertEqual(lines[-1].split('|')[1:4], ['2', '3', '4'])
+        self.assertEqual(lines[-1].split('|')[4], hashlib.sha256(struct.pack('<QI4I', 0x2004, join.GRAV_ACTIVE_VT, 2, 1, 0, 0) +
+                                                                  struct.pack('<QI4I', 0x2005, join.GRAV_PASSIVE_VT, 0, 0, 0, 0)).hexdigest())
+        for kind, name in ((join.SEC_GRAV, 'grav'), (join.SEC_GRAVC, 'gravc'), (join.SEC_GRAVS, 'gravs')):
+            self.assertEqual(v11['sections'][name], expected[kind])
+        active, passive = expected[join.SEC_GRAV]
+        # The other saver: unit bytes and a contact apart: the same digest, the comparison names them.
+        unit = bytearray(active[7])
+        unit[0x50] ^= 1
+        other = dict(v11['sections'])
+        other['grav'] = [active[:7]+(bytes(unit),), passive]
+        other['gravc'] = [expected[join.SEC_GRAVC][0][:3]+(0x2002,)+expected[join.SEC_GRAVC][0][4:]]+expected[join.SEC_GRAVC][1:]
+        self.assertEqual(join.portable_digest(other), join.portable_digest(v11['sections']))
+        world = join.world_differences(v11['sections'], other)
+        self.assertEqual((world['grav']['differ'], world['grav']['offsets']), (1, ['unit+0x50:1']))
+        self.assertEqual((world['gravc']['differ'], world['gravc']['samples']), (1, ['0000000000002004/0/0']))
+        # A list length changes the digest.
+        other['grav'] = [active[:3]+(3,)+active[4:], passive]
+        self.assertNotEqual(join.portable_digest(other), join.portable_digest(v11['sections']))
+        # Shape faults.
+        g, c, z = expected[join.SEC_GRAV], expected[join.SEC_GRAVC], expected[join.SEC_GRAVS]
+        self.assertTrue(join.grav_shape(g, c, z))
+        for bad in ((g, c[:2], z), (g, [c[0], c[1][:4]+(0, 0), c[2]], z), ([g[0], passive[:3]+(1,)+passive[4:]], c, z),
+                    ([g[0], g[0]], c, z), (g, c, [z[0][:4]+(join.GRAVS_SEEN, 0), z[1], z[2]]),
+                    (g, c, [z[0], z[1], z[2][:2]+(join.GRAVS_PENDING, 0)+z[2][4:]]), (g, c, [z[0], z[1][:1]+(5,)+z[1][2:], z[2]]),
+                    ([active[:2]+(0,)+active[3:], passive], c, z), (g, c, z[:3]+[z[3][:1]+(40,)+z[3][2:]]), (g, c, z+[z[3]]),
+                    (g, c, [z[3]]+z[:3])):
+            self.assertFalse(join.grav_shape(*bad))
+        # A version 10 header may not carry them.
+        with self.assertRaisesRegex(join.JoinError, 'package_version'):
+            join.write_package({name: 0 for name in join.GATE_FIELDS}, {join.SEC_GRAV: []}, version=10)
+
     def test_version_9_steer(self):
         # Version 9 (report 1.13): STEER and STEERPT after the fourteen world lines, one STEER record per steering model of FLIGHT
         # in its order, its path points in STEERPT; each record round trips and enters the portable digest, the savers' comparison
         # names the differing model and the object offsets of the bytes apart, the reader refuses every shape fault and a version
         # 8 header with them.
-        v9 = join.read_package(golden())
-        self.assertEqual((v9['sha'], v9['header']['version'], v9['header']['sections']), (GOLDEN_SHA, 9, 24))
+        v9 = join.read_package(golden(9))
+        self.assertEqual((v9['sha'], v9['header']['version'], v9['header']['sections']), (GOLDEN_SHA_V9, 9, 24))
         lines = join.portable_text(v9['sections']).splitlines()
         self.assertEqual([line.split('|')[0] for line in lines[-16:]],
                          ['HEALTH', 'POSE', 'SHIELD', 'NAV', 'ATTN', 'KEYS', 'PATH', 'REGION', 'FLIGHT', 'SPLINE', 'AGENT', 'ROUTE', 'PARAM',
@@ -884,7 +1013,7 @@ class Package(unittest.TestCase):
         package = join.read_package(golden())
         self.assertEqual(package['sections']['gate']['fixture'], '111111121111')
         self.assertEqual(join.summary(package)['fixture'], '111111121111')
-        self.assertEqual(join.portable_text(package['sections']).splitlines()[-17], 'FIXTURE|111111121111')   # then the world lines
+        self.assertEqual(join.portable_text(package['sections']).splitlines()[-19], 'FIXTURE|111111121111')   # then the world lines
         sections = dict(package['sections'])
         sections['gate'] = dict(sections['gate'], fixture='111111111111')
         self.assertNotEqual(join.portable_digest(sections), package['sections']['gate']['portable'])

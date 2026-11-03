@@ -38,6 +38,8 @@ Three parts, each testable without X4 (tests/test_native_gate_join.py):
    Version 9 adds STEER (every steering flight control model: its scalars and the x, y, z lanes of its vectors, the target IDs
    as portable IDs, its two behaviours by class with the fields their constructors write, the lengths of its path and
    avoidance cache, whether a path job was pending) and STEERPT (those models' path points, as ROUTE's points): report 1.13.
+   Version 10 adds SOLVER (every navigation Agent's motion solver, the whole object with its pointers made relative) and BULLET (a
+   census of the projectiles in flight at T, the joiner writes nothing): report 1.14. Only SOLVER's (portable, kind) enter the digest.
 3. The relay: JoinBarrier (native_gate_relay.py --join) keeps the session's N slots, stands in for absent ones
    (the reference slot's clocks and digest, an empty blob or a relay record) and runs one JoinCoordinator at a
    time: NGJOIN from the joiner's launcher, SAVE_AT, the savers' SAVED records, NGJOINSTATE answers, the replay
@@ -153,8 +155,9 @@ def blob_record(blob):
 
 # ---- the join package ----
 MAGIC = b'X4MPJN01'
-PACKAGE_VERSION = 9           # 1: GATE..LUA; 2: and HEALTH, POSE; 3: and SHIELD, NAV, ATTN, KEYS; 4: and PATH, REGION; 5: and FLIGHT,
-PACKAGE_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9)   # SPLINE; 6: and AGENT; 7: and ROUTE; 8: and PARAM, DOCK; 9: and STEER, STEERPT
+PACKAGE_VERSION = 11          # 1: GATE..LUA; 2: and HEALTH, POSE; 3: and SHIELD, NAV, ATTN, KEYS; 4: and PATH, REGION; 5: and FLIGHT,
+PACKAGE_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)   # SPLINE; 6: and AGENT; 7: and ROUTE; 8: and PARAM, DOCK; 9: and STEER, STEERPT;
+#                                                        10: and SOLVER, BULLET; 11: and GRAV, GRAVC, GRAVS
 HEADER = struct.Struct('<8sIIQQQ32sQIIQ')      # 96 bytes
 SECTION = struct.Struct('<IIQ32s')            # 48 bytes before each payload
 SEC_GATE, SEC_IDS, SEC_WAKE, SEC_WAKEVEC, SEC_MDHEAP, SEC_MODULES, SEC_CTX, SEC_LUA, SEC_HEALTH, SEC_POSE = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
@@ -165,11 +168,14 @@ SEC_AGENT = 19
 SEC_ROUTE = 20
 SEC_PARAM, SEC_DOCK = 21, 22
 SEC_STEER, SEC_STEERPT = 23, 24
+SEC_SOLVER, SEC_BULLET = 25, 26
+SEC_GRAV, SEC_GRAVC, SEC_GRAVS = 27, 28, 29
 SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC: 'wakevec', SEC_MDHEAP: 'mdheap',
                  SEC_MODULES: 'modules', SEC_CTX: 'ctx', SEC_LUA: 'lua', SEC_HEALTH: 'health', SEC_POSE: 'pose',
                  SEC_SHIELD: 'shield', SEC_NAV: 'nav', SEC_ATTN: 'attn', SEC_KEYS: 'keys', SEC_PATH: 'path', SEC_REGION: 'region',
                  SEC_FLIGHT: 'flight', SEC_SPLINE: 'spline', SEC_AGENT: 'agent', SEC_ROUTE: 'route', SEC_PARAM: 'param', SEC_DOCK: 'dock',
-                 SEC_STEER: 'steer', SEC_STEERPT: 'steerpt'}
+                 SEC_STEER: 'steer', SEC_STEERPT: 'steerpt', SEC_SOLVER: 'solver', SEC_BULLET: 'bullet',
+                 SEC_GRAV: 'grav', SEC_GRAVC: 'gravc', SEC_GRAVS: 'gravs'}
 WORLD_SECTIONS = (SEC_HEALTH, SEC_POSE)         # version 2 and later, always both
 WORLD3_SECTIONS = (SEC_SHIELD, SEC_NAV, SEC_ATTN, SEC_KEYS)   # version 3, always all four
 WORLD4_SECTIONS = (SEC_PATH, SEC_REGION)                      # version 4, always both
@@ -178,7 +184,10 @@ WORLD6_SECTIONS = (SEC_AGENT,)                                # version 6
 WORLD7_SECTIONS = (SEC_ROUTE,)                                # version 7
 WORLD8_SECTIONS = (SEC_PARAM, SEC_DOCK)                       # version 8, always both
 WORLD9_SECTIONS = (SEC_STEER, SEC_STEERPT)                    # version 9, always both
-LAST_SECTION = {1: SEC_LUA, 2: SEC_POSE, 3: SEC_KEYS, 4: SEC_REGION, 5: SEC_SPLINE, 6: SEC_AGENT, 7: SEC_ROUTE, 8: SEC_DOCK, 9: SEC_STEERPT}
+WORLD10_SECTIONS = (SEC_SOLVER, SEC_BULLET)                   # version 10, always both
+WORLD11_SECTIONS = (SEC_GRAV, SEC_GRAVC, SEC_GRAVS)           # version 11, always all three
+LAST_SECTION = {1: SEC_LUA, 2: SEC_POSE, 3: SEC_KEYS, 4: SEC_REGION, 5: SEC_SPLINE, 6: SEC_AGENT, 7: SEC_ROUTE, 8: SEC_DOCK, 9: SEC_STEERPT,
+                10: SEC_BULLET, 11: SEC_GRAVS}
 TEXT_SECTIONS = (SEC_MODULES, SEC_LUA)          # newline-terminated printable lines; count = lines
 # Fixed record shapes (lockstep_join.h join_*_rec). GATE is one 256-byte record; MODULES and LUA (the probe's own state
 # providers, native_gate_join_core.lua) are text (count = lines).
@@ -278,10 +287,35 @@ def steer_offsets(ranges):
 
 
 assert steer_bytes(STEER_RANGES) == 569 and all(steer_bytes(r) <= STEER_STATE for r in STEER_CLASSES.values())
+# Version 10 (lockstep_join.h join_solver_rec, join_bullet_rec; lockstep_join_world.h). SOLVER: portable, flags, kind (the model's vtable
+# RVA), the number of pointers, 0, the pointer list ((offset/8) << 1 | 1 for the image, in offset order, the rest 0), the object's bytes
+# with those qwords as offsets or RVAs. BULLET: zone, shooter (portable IDs), position in the zone's children, index among its bullets,
+# flags, the movement controller's vtable RVA, the macro's name, the object's and the controller's bytes.
+SOLVER_BYTES, SOLVER_POINTERS, SOLVER_ACTIVE, SOLVER_OVERFLOW = 0x18f60, 256, 1, 2
+SOLVER_IMAGE = 0x6fa9000                       # lockstep_join_world.h JOIN_FLIGHT_IMAGE
+SOLVER = struct.Struct('<QIIII%ds%ds' % (4*SOLVER_POINTERS, SOLVER_BYTES))
+BULLET_BYTES, BULLET_MOTION, BULLET_MACRO = 0x330, 0xb0, 64
+BULLET_NO_SHOOTER, BULLET_NO_MACRO, BULLET_NO_MOTION = 1, 2, 4
+BULLET = struct.Struct('<QQIIII%ds%ds%ds' % (BULLET_MACRO, BULLET_BYTES, BULLET_MOTION))
+assert SOLVER.size == 103288 and BULLET.size == 1088
+# Version 11 (lockstep_join.h join_grav_rec, join_gravc_rec, join_gravs_rec; report 1.15): the radar. GRAV: owner, kind (vtable RVA),
+# flags, the four contact lists' lengths, the unit's 0xc8 bytes (vtable, IDs, lock and list pointers 0). GRAVC: owner, list, index,
+# contact (portable, 0 with UNMAPPED), flags, 0. GRAVS: portable, value, kind (0 pending, 1 current source, 2 sector), index, flags, 0.
+GRAV_BYTES, GRAV_LISTS = 0xc8, 4
+GRAV_ACTIVE_VT, GRAV_PASSIVE_VT = 0x2c67610, 0x2c67660
+GRAV_ACTIVE, GRAV_UNCARRIED = 1, 2
+GRAVC_UNMAPPED = 1
+GRAVS_PENDING, GRAVS_CURRENT, GRAVS_SECTOR, GRAVS_CURSOR = 0, 1, 2, 3
+GRAVS_UNMAPPED, GRAVS_SEEN = 1, 2
+GRAV = struct.Struct('<QII4I%ds' % GRAV_BYTES)
+GRAVC = struct.Struct('<QIIQII')
+GRAVS = struct.Struct('<QQIIII')
+assert GRAV.size == 232 and GRAVC.size == 32 and GRAVS.size == 32
 RECORDS = {SEC_IDS: IDS, SEC_CTX: CTX, SEC_WAKE: WAKE, SEC_WAKEVEC: WAKEVEC, SEC_MDHEAP: MDHEAP, SEC_HEALTH: HEALTH, SEC_POSE: POSE,
            SEC_SHIELD: SHIELD, SEC_NAV: NAV, SEC_ATTN: ATTN, SEC_KEYS: KEYS, SEC_PATH: PATH, SEC_REGION: REGION,
            SEC_FLIGHT: FLIGHT, SEC_SPLINE: SPLINE, SEC_AGENT: AGENT, SEC_ROUTE: ROUTE, SEC_PARAM: PARAM, SEC_DOCK: DOCK,
-           SEC_STEER: STEER, SEC_STEERPT: ROUTE}
+           SEC_STEER: STEER, SEC_STEERPT: ROUTE, SEC_SOLVER: SOLVER, SEC_BULLET: BULLET, SEC_GRAV: GRAV, SEC_GRAVC: GRAVC,
+           SEC_GRAVS: GRAVS}
 GATE_FIELDS = ('tick', 'game', 'real', 'wire_version', 'clients', 'lookahead', 'tick_hz', 'slot', 'md_seq', 'rid_next',
                'created_generation', 'created_live', 'identities', 'ctx_count', 'wake_count', 'vec_index', 'vec0', 'vec1',
                'md_count', 'md_void', 'md_release', 'md_queued', 'unsupported', 'digest', 'portable', 'save_us',
@@ -461,6 +495,102 @@ def steer_differences(left, right):
     return out
 
 
+def solver_shape(records):
+    """lockstep_join_world.h join_solver_shape: by portable ID, each once; known flags, 0 reserved; the pointer list in offset order, each
+    value in range (an offset into the object, an RVA into the image), the rest of the list 0; none on a record flagged OVERFLOW."""
+    last = 0
+    for portable, flags, _, pointers, reserved, listed, data in records:
+        if not portable or portable <= last or flags & ~3 or reserved or pointers > SOLVER_POINTERS or (flags & SOLVER_OVERFLOW and pointers):
+            return False
+        last = portable
+        entries = struct.unpack('<%dI' % SOLVER_POINTERS, listed)
+        if any(entries[pointers:]):
+            return False
+        previous = -1
+        for entry in entries[:pointers]:
+            at = (entry >> 1)*8
+            if at+8 > SOLVER_BYTES or entry >> 1 <= previous:
+                return False
+            previous = entry >> 1
+            if struct.unpack_from('<Q', data, at)[0] >= (SOLVER_IMAGE if entry & 1 else SOLVER_BYTES):
+                return False
+    return True
+
+
+def bullet_shape(records):
+    """lockstep_join_world.h join_bullet_shape: by (zone, position), index counting each zone's bullets, known flags, a shooter only without
+    its bit, a macro name of printable characters with 0 behind it, none with its bit."""
+    previous = None
+    for zone, shooter, position, index, flags, motion_kind, macro, _, _ in records:
+        same = previous is not None and previous[0] == zone
+        if not zone or (previous is not None and (zone, position) <= previous[:2]) or index != (previous[2]+1 if same else 0) or flags & ~7 or \
+                (flags & BULLET_NO_SHOOTER and shooter) or (flags & BULLET_NO_MOTION and motion_kind):
+            return False
+        name = macro.split(b'\0', 1)[0]
+        if len(name) == BULLET_MACRO or any(not 33 <= c <= 126 for c in name) or any(macro[len(name):]) or bool(flags & BULLET_NO_MACRO) == bool(name):
+            return False
+        previous = (zone, position, index)
+    return True
+
+
+def solver_differences(left, right):
+    """The qword offsets where two savers' SOLVER records of one Agent differ ('q+0x..'; 'pointers': the pointer lists). The constructor's
+    unset bytes are expected among them (lockstep_join.h)."""
+    out = ['pointers'] if left[3] != right[3] or left[5] != right[5] else []
+    a, b = left[6], right[6]
+    if a != b:
+        out += [f'q+{at:#x}' for at in range(0, SOLVER_BYTES, 8) if a[at:at+8] != b[at:at+8]]
+    return out
+
+
+def grav_shape(grav, gravc, gravs):
+    """lockstep_join_world.h join_grav_shape: GRAV by owner, each once, an active or passive kind with its flag, no contacts on a passive
+    or uncarried unit; GRAVC exactly each unit's counted contacts in (list, index) order, a contact 0 only with its flag; GRAVS by kind
+    then index (sources counted from 0), SEEN and a value only on a mapped sector, portable 0 only with its flag."""
+    at, last = 0, 0
+    for portable, kind, flags, *rest in grav:
+        counts = rest[:GRAV_LISTS]
+        active = kind == GRAV_ACTIVE_VT
+        if not portable or portable <= last or (not active and kind != GRAV_PASSIVE_VT) or flags & ~3 or bool(flags & GRAV_ACTIVE) != active:
+            return False
+        last = portable
+        for lst, count in enumerate(counts):
+            if (not active or flags & GRAV_UNCARRIED) and count:
+                return False
+            for k in range(count):
+                if at >= len(gravc):
+                    return False
+                owner, li, index, contact, cflags, reserved = gravc[at]
+                if owner != portable or li != lst or index != k or cflags & ~1 or reserved or (not contact) != bool(cflags & GRAVC_UNMAPPED):
+                    return False
+                at += 1
+    if at != len(gravc):
+        return False
+    previous = None
+    for at, (portable, value, kind, index, flags, reserved) in enumerate(gravs):
+        if kind == GRAVS_CURSOR:               # once, last, portable 0, no flags, a cursor inside the list (lockstep_ai_schedule.h)
+            if portable or flags or reserved or not index or value >= index or at+1 != len(gravs):
+                return False
+            continue
+        if kind > GRAVS_SECTOR or flags & ~3 or reserved or (not portable) != bool(flags & GRAVS_UNMAPPED) or \
+                (flags & GRAVS_SEEN and kind != GRAVS_SECTOR) or ((kind != GRAVS_SECTOR or not portable) and value):
+            return False
+        if previous is not None and (kind < previous[0] or (kind == previous[0] and index <= previous[1])):
+            return False
+        if kind != GRAVS_SECTOR and index != (previous[1]+1 if previous is not None and previous[0] == kind else 0):
+            return False
+        previous = (kind, index)
+    return True
+
+
+def bullet_differences(left, right):
+    """The object offsets where two savers' BULLET records of one projectile differ ('fields' for its named ones, 'bullet+0x..', 'motion+0x..')."""
+    out = ['fields'] if left[:7] != right[:7] else []
+    for name, x, y in (('bullet', left[7], right[7]), ('motion', left[8], right[8])):
+        out += [f'{name}+{at:#x}' for at in range(0, len(x), 8) if x[at:at+8] != y[at:at+8]]
+    return out
+
+
 def path_shape(records):
     """lockstep_join_world.h join_path_shape: the two vector records, every batch of each, every member of each batch in
     order, then the new agents; a cursor inside a non-empty batch, 0 in an empty one; portable present exactly without the
@@ -536,7 +666,7 @@ def read_package(data):
     if hashlib.sha256(data[:-32]).digest() != data[-32:]:
         raise JoinError('package_sha')
     magic, version, count, tick, game, real, save_sha, save_bytes, slot, flags, reserved = HEADER.unpack_from(data)
-    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 24:
+    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 29:
         raise JoinError('package_magic')
     header = {'tick': tick, 'game': game, 'real': real, 'save_sha': save_sha.hex(), 'save_bytes': save_bytes, 'slot': slot,
               'flags': flags, 'sections': count, 'version': version}
@@ -561,7 +691,9 @@ def read_package(data):
             (version >= 6 and not all(SECTION_NAMES[k] in sections for k in WORLD6_SECTIONS)) or \
             (version >= 7 and not all(SECTION_NAMES[k] in sections for k in WORLD7_SECTIONS)) or \
             (version >= 8 and not all(SECTION_NAMES[k] in sections for k in WORLD8_SECTIONS)) or \
-            (version >= 9 and not all(SECTION_NAMES[k] in sections for k in WORLD9_SECTIONS)):
+            (version >= 9 and not all(SECTION_NAMES[k] in sections for k in WORLD9_SECTIONS)) or \
+            (version >= 10 and not all(SECTION_NAMES[k] in sections for k in WORLD10_SECTIONS)) or \
+            (version >= 11 and not all(SECTION_NAMES[k] in sections for k in WORLD11_SECTIONS)):
         raise JoinError('package_layout')
     for name in ('health', 'pose', 'shield', 'nav', 'attn', 'flight', 'dock', 'steer'):   # sorted by portable ID, each once (world_order)
         keys = [r[0] for r in sections.get(name, [])]
@@ -593,6 +725,12 @@ def read_package(data):
         raise JoinError('dock_shape')
     if version >= 9 and not steer_shape(sections['flight'], sections['steer'], sections['steerpt']):
         raise JoinError('steer_shape')
+    if version >= 10 and not solver_shape(sections['solver']):
+        raise JoinError('solver_shape')
+    if version >= 10 and not bullet_shape(sections['bullet']):
+        raise JoinError('bullet_shape')
+    if version >= 11 and not grav_shape(sections['grav'], sections['gravc'], sections['gravs']):
+        raise JoinError('grav_shape')
     gate = sections['gate']
     if (gate['tick'], gate['game'], gate['real'], gate['slot']) != (tick, game, real, slot):
         raise JoinError('gate_header')
@@ -628,6 +766,14 @@ def portable_text(sections):
             records = sections.get(name, [])
             digest = hashlib.sha256(b''.join(shape.pack(*r) for r in records)).hexdigest()
             lines.append(f'{name.upper()}|{len(records)}|{digest}')
+    if 'solver' in sections:                   # version 10: which Agents hold a solver and under which model; not its bytes, not BULLET
+        records = sections['solver']
+        digest = hashlib.sha256(b''.join(struct.pack('<QI', r[0], r[2]) for r in records)).hexdigest()
+        lines.append(f'SOLVER|{len(records)}|{digest}')
+    if 'grav' in sections:                     # version 11: which units, of which kind, how many contacts per list; not their bytes
+        records = sections['grav']
+        digest = hashlib.sha256(b''.join(struct.pack('<QI4I', r[0], r[1], *r[3:7]) for r in records)).hexdigest()
+        lines.append(f"GRAV|{len(records)}|{len(sections['gravc'])}|{len(sections['gravs'])}|{digest}")
     return ''.join(line+'\n' for line in lines)
 
 
@@ -641,7 +787,8 @@ def portable_digest(sections):
 
 def write_package(gate, sections, save_sha=b'\0'*32, save_bytes=0, flags=0, version=PACKAGE_VERSION):
     """Build a package: gate is a dict of GATE_FIELDS (digest a 64-char str; portable computed here), sections maps
-    kind -> list of record tuples (MODULES: list of text lines). Mirrors join_package_write. Version 9 adds STEER and STEERPT, version 8
+    kind -> list of record tuples (MODULES: list of text lines). Mirrors join_package_write. Version 10 adds SOLVER and BULLET, version 9
+    STEER and STEERPT, version 8
     PARAM and DOCK, version 7
     ROUTE, version 6 AGENT, version 5
     FLIGHT and SPLINE (empty when not given) to version 4's sections. Version 4 always carries
@@ -653,9 +800,10 @@ def write_package(gate, sections, save_sha=b'\0'*32, save_bytes=0, flags=0, vers
     sections = dict(sections)
     allowed = (WORLD_SECTIONS if version >= 2 else ())+(WORLD3_SECTIONS if version >= 3 else ())+(WORLD4_SECTIONS if version >= 4 else ())+\
         (WORLD5_SECTIONS if version >= 5 else ())+(WORLD6_SECTIONS if version >= 6 else ())+(WORLD7_SECTIONS if version >= 7 else ())+\
-        (WORLD8_SECTIONS if version >= 8 else ())+(WORLD9_SECTIONS if version >= 9 else ())
+        (WORLD8_SECTIONS if version >= 8 else ())+(WORLD9_SECTIONS if version >= 9 else ())+(WORLD10_SECTIONS if version >= 10 else ())+\
+        (WORLD11_SECTIONS if version >= 11 else ())
     if any(kind in sections for kind in WORLD_SECTIONS+WORLD3_SECTIONS+WORLD4_SECTIONS+WORLD5_SECTIONS+WORLD6_SECTIONS+WORLD7_SECTIONS+
-           WORLD8_SECTIONS+WORLD9_SECTIONS if kind not in allowed):
+           WORLD8_SECTIONS+WORLD9_SECTIONS+WORLD10_SECTIONS+WORLD11_SECTIONS if kind not in allowed):
         raise JoinError('package_version')
     if version >= 4:
         sections.setdefault(SEC_PATH, [(0, PATH_MANAGER, 0, 0, 0, 0, 0), (0, PATH_MANAGER, 1, 0, 0, 0, 0)])
@@ -710,7 +858,7 @@ def world_differences(left, right, samples=8):
     """Per world section (version 2): records only on one side and records that differ, by portable ID (samples)."""
     out = {}
     for name in ('health', 'pose', 'shield', 'nav', 'attn', 'keys', 'path', 'region', 'flight', 'spline', 'agent', 'route', 'param',
-                 'dock', 'steer', 'steerpt'):
+                 'dock', 'steer', 'steerpt', 'solver', 'bullet', 'grav', 'gravc', 'gravs'):
         if name not in left and name not in right:
             continue
         key = (lambda r: (r[1] << 64) | r[0]) if name == 'keys' else (lambda r: r[0])   # KEYS by (table, key)
@@ -722,6 +870,12 @@ def world_differences(left, right, samples=8):
             key = lambda r: (r[1] << 96) | (r[2] << 64) | r[0]
         elif name in ('route', 'steerpt'):    # ROUTE and STEERPT by (portable, kind, list, index)
             key = lambda r: (r[1] << 96) | (r[2] << 80) | (r[3] << 64) | r[0]
+        elif name == 'bullet':                 # BULLET by (zone, position)
+            key = lambda r: (r[2] << 64) | r[0]
+        elif name == 'gravc':                  # GRAVC by (owner, list, index)
+            key = lambda r: (r[1] << 96) | (r[2] << 64) | r[0]
+        elif name == 'gravs':                  # GRAVS by (kind, index)
+            key = lambda r: (r[2] << 32) | r[3]
         x = {key(r): r for r in left.get(name, [])}
         y = {key(r): r for r in right.get(name, [])}
         differ = sorted(i for i in x.keys() & y.keys() if x[i] != y[i])
@@ -730,6 +884,15 @@ def world_differences(left, right, samples=8):
         if name == 'steer':                    # the offsets that differ, over every differing model (per process: carry them as 0)
             offsets = collections.Counter(o for i in differ for o in steer_differences(x[i], y[i]))
             out[name]['offsets'] = [f'{o}:{n}' for o, n in offsets.most_common(24)]
+        elif name in ('solver', 'bullet'):     # the same; report 1.14: not in the digest, so a difference here does not refuse the join
+            differences = solver_differences if name == 'solver' else bullet_differences
+            offsets = collections.Counter(o for i in differ for o in differences(x[i], y[i]))
+            out[name]['offsets'] = [f'{o}:{n}' for o, n in offsets.most_common(4096 if name == 'solver' else 96)]
+        elif name == 'grav':                   # report 1.15: the unit bytes apart, by offset (a pointer or a per-process field)
+            offsets = collections.Counter(f'unit+{at:#x}' for i in differ for at in range(0, GRAV_BYTES, 8)
+                                          if x[i][7][at:at+8] != y[i][7][at:at+8])
+            offsets.update('fields' for i in differ if x[i][:7] != y[i][:7])
+            out[name]['offsets'] = [f'{o}:{n}' for o, n in offsets.most_common(64)]
     return out
 
 
@@ -740,6 +903,12 @@ def _sample(name, key):
         return f'{key & (1 << 64)-1:016x}/{key >> 96}/{key >> 64 & 0xffffffff}'
     if name in ('route', 'steerpt'):
         return f'{key & (1 << 64)-1:016x}/{key >> 96}/{key >> 80 & 0xffff}/{key >> 64 & 0xffff}'
+    if name == 'bullet':
+        return f'{key & (1 << 64)-1:016x}/{key >> 64}'
+    if name == 'gravc':
+        return f'{key & (1 << 64)-1:016x}/{key >> 96}/{key >> 64 & 0xffffffff}'
+    if name == 'gravs':
+        return f'{key >> 32}/{key & 0xffffffff}'
     return f'{key:016x}' if key < 1 << 64 else f'{key >> 64}:{key & (1 << 64)-1:016x}'
 
 

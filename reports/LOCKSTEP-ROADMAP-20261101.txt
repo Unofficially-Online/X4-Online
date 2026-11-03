@@ -12,7 +12,7 @@ A. PLAYABILITY (people sessions)
     game time does not advance, camera and mouse look at the monitor's rate, display-only interpolation of ship
     motion. Branch contrib/ferrite-render-frames, report LOCKSTEP-RENDER-FRAMES-20261101.txt. Measured: X4's own
     frame costs ~28 ms per step (2 instances on one PC), so 60 steps/s is out of reach (hz60: 0.50x).
- 2. [live on by default (d184d: no snaps, census 0); OPEN: single-frame flashes with render frames, render report section 17; adaptive horizon fixed (a1g h=6)] Hide the input delay for the own ship: the own ship answers the controls
+ 2. [live on by default (d184d: no snaps, census 0); OPEN: single-frame flashes with render frames, render report section 17 (defaults skip render frames while prediction presents, d201f clean); adaptive horizon fixed (a1g h=6)] Hide the input delay for the own ship: the own ship answers the controls
     at once on the own screen (display only) while the shared simulation catches up underneath; other players'
     ships drawn where they are expected to be and corrected as steps arrive (the Elite Dangerous approach).
     Branch contrib/ferrite-predict2, report LOCKSTEP-OWN-SHIP-PREDICTION-20261101.txt (lockstep_own_predict.h,

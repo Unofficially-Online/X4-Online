@@ -834,18 +834,50 @@ typedef struct {uint64_t runtime;unsigned char target[0x40];} join_t1_item;
 static struct {
     join_t1_item *items;uint32_t n,cap,listed;int armed;uint64_t tick,probed,stepped,newleg,pending,retarget,missing;
 } join_t1;
-static void join_t1_reset(void) {free(join_t1.items);memset(&join_t1,0,sizeof(join_t1));}
+/* The steering and spline models at the same probe, by name (report 1.14): both sides list the Agents whose solver SOLVER carries as
+ * active; after the step of T+1 one row each (gate.join_t1_row; JOIN_T1 lines at JOIN_STOP): what the model asked for (+0x1d0..+0x1ef,
+ * the wanted velocities), its avoidance cache (time, contacts) and the solver's clock. A ship that differs in the census at T+1 with
+ * equal rows differs inside the solver; with another 'want' or other contacts the difference came in before it. */
+#define JOIN_T1X 32u
+static struct {uint64_t runtime[JOIN_T1X],portable[JOIN_T1X];unsigned n,nrows;char rows[JOIN_T1X][300];} join_t1x;
+static void join_t1x_add(uint64_t runtime,uint64_t portable) {
+    if(join_t1x.n<JOIN_T1X) {join_t1x.runtime[join_t1x.n]=runtime;join_t1x.portable[join_t1x.n]=portable;++join_t1x.n;}
+}
+static const char *join_t1x_row(unsigned i) {return i>=1 && i<=join_t1x.nrows?join_t1x.rows[i-1]:NULL;}
+static void join_t1_reset(void) {free(join_t1.items);memset(&join_t1,0,sizeof(join_t1));memset(&join_t1x,0,sizeof(join_t1x));}
 static int join_t1_add(uint64_t runtime,const unsigned char *target) {
     join_t1_item item;item.runtime=runtime;memcpy(item.target,target,sizeof(item.target));
     return JOIN_PUSH(join_t1.items,join_t1.n,join_t1.cap,item);
 }
-static void join_t1_arm(uint64_t tick) {join_t1.tick=tick;join_t1.listed=join_t1.n;join_t1.armed=join_t1.n!=0;}
+static void join_t1_arm(uint64_t tick) {join_t1.tick=tick;join_t1.listed=join_t1.n;join_t1.armed=join_t1.n!=0 || join_t1x.n!=0;}
 /* An object's navigation Agent (the nav controller's +0x40), NULL without one. */
 static unsigned char *join_nav_agent(const unsigned char *object) {
     unsigned char *controller=NULL,*agent=NULL;uintptr_t nav=0;
     if(!join_read(object+JOIN_CONTROLLER,&controller,8) || !controller || !join_read(controller,&nav,8) || nav!=(uintptr_t)image+JOIN_NAV_VTABLE ||
        !join_read(controller+0x40,&agent,8)) return NULL;
     return agent;
+}
+#define JOIN_AGENT_SOLVER 0xf80u             /* the Agent's motion solver (0: it never stepped a steering or spline model) */
+#define JOIN_SPLINE_VTABLE 0x2c4f480u        /* U::Path::SplineFlightControlModel */
+#define JOIN_SPLINE_STATE 0x218u             /* the spline model's state word (8: no route, it brakes) */
+static void join_t1x_probe(void) {
+    for(unsigned i=0;i<join_t1x.n;i++) {
+        unsigned char *object=join_object(join_t1x.runtime[i]),*agent=object?join_nav_agent(object):NULL,*model=NULL,*solver=NULL;
+        uintptr_t vtable=0,v[3];uint64_t rem=0,clock=0,stamp=0,contacts=0,room=0;uint32_t subs=0,state=0;unsigned char want[32];char hex[65]="-";
+        if(agent && (!join_read(agent+JOIN_AGENT_MODEL,&model,8) || !join_read(agent+JOIN_AGENT_SOLVER,&solver,8))) {model=NULL;solver=NULL;}
+        if(model && !join_read(model,&vtable,8)) vtable=0;
+        if(solver && (!join_read(solver+8,&rem,8) || !join_read(solver+0x18,&subs,4) || !join_read(solver+0x40,&clock,8))) solver=NULL;
+        const uint32_t kind=vtable>=(uintptr_t)image?(uint32_t)(vtable-(uintptr_t)image):0u;
+        if(kind==JOIN_STEER_VTABLE) {
+            if(!join_read(model+0x88,&stamp,8)) stamp=0;
+            if(!join_flight_vector(model+JOIN_STEER_CONTACTS,JOIN_STEER_CONTACT,v,&contacts,&room)) contacts=0;
+            if(join_read(model+0x1d0,want,32)) for(unsigned b=0;b<32;b++) snprintf(hex+2*b,3,"%02x",want[b]);
+        } else if(kind==JOIN_SPLINE_VTABLE && !join_read(model+JOIN_SPLINE_STATE,&state,4)) state=0;
+        snprintf(join_t1x.rows[join_t1x.nrows++],sizeof(join_t1x.rows[0]),
+                 "id=%016llx kind=%x solver=%d rem=%016llx subs=%u clock=%016llx stamp=%016llx contacts=%llu state=%u want=%s",
+                 (unsigned long long)join_t1x.portable[i],kind,solver!=NULL,(unsigned long long)rem,subs,(unsigned long long)clock,
+                 (unsigned long long)stamp,(unsigned long long)contacts,state,hex);
+    }
 }
 static void join_t1_probe(uint64_t completed,double now) {
     if(!join_t1.armed || completed<=join_t1.tick) return;
@@ -861,6 +893,7 @@ static void join_t1_probe(uint64_t completed,double now) {
             if(pending) ++join_t1.pending;
             if(memcmp(target,it->target,sizeof(target))) ++join_t1.retarget;
         }
+        join_t1x_probe();
     }
     free(join_t1.items);join_t1.items=NULL;join_t1.n=join_t1.cap=0;join_t1.armed=0;   /* once (a later tick: nothing probed) */
 }
@@ -974,8 +1007,380 @@ static unsigned char join_flight_pairs[JOIN_FLIGHT_PAIRS*8u];
 /* The saver: a navigation Agent's flight control model into FLIGHT (and a linear model's spline into SPLINE). A model the
  * record cannot hold whole is flagged (JOIN_FLIGHT_OTHER, _UNCARRIED, _WORD), never refused; a layout that is not the pinned
  * one is (0 with join_fault). */
+/* ---- version 10: SOLVER and BULLET (J1 j1-27's census at T+1; report 1.14) ----
+ * The ten steering ships of j1-27 had every byte of their models carried and still differed at T+1: a model with +0xa8 = 1 does not
+ * integrate itself, it hands the wanted velocities to the Agent's motion solver +0xf80 (0xe95fb0 allocates and prepares it, 0x1197fe0 and
+ * its core 0x1197970 step it, the spline model's step too). The solver is a flat block of 0x18f60 bytes: JPM controller subobjects with
+ * their velocity, acceleration and profile state and a 0.02 s fixed-step clock (+0 the step, +8 the remainder, 0.02 fresh). The save
+ * does not hold it, the loader does not build it: the joiner's first step would start it from nothing [F: 0xe95fb0, the constructor
+ * 0xd47ac0 and its subobject constructors, run under an emulator to read which bytes they write: 78,114 of 102,240, 41 pointers, all
+ * vtables or into the object itself (+0x16a0, +0x55a8, +0xa0c8, +0xeec8, +0x118a0, +0x16398, +0x18d90); the destructors of its 13
+ * classes free nothing but themselves, so it owns no heap]. So the record is the whole object with its pointers made relative.
+ * The joiner (boot phase 3) gets its Agent's solver through the engine's own 0xe95fb0 when it has none (no RNG, no event; it writes only
+ * into the solver and the model getter it calls returns a constant) and overwrites every byte with the session's; the unset bytes come
+ * along, which is harmless (nothing reads them) and keeps a field the constructor skips and a later step sets.
+ * The census of the bullets: zone +0xf0/+0xf8 the children vector of view 0, 0x80 further the other view's (the children walker
+ * 0x10c9910); a bullet is a U::Bullet there, its shooter +0x2a0 (setup 0xd50f30), its controller at the component's +0x200. */
+#define JOIN_SOLVER_PREPARE 0xe95fb0u
+#define JOIN_ZONE_VTABLE 0x2b66080u          /* U::Zone */
+#define JOIN_BULLET_VTABLE 0x2c42ac8u        /* U::Bullet */
+#define JOIN_BULLET_SHOOTER 0x2a0u
+#define JOIN_BULLET_LINEAR 0x2c3f7c0u        /* its linear movement controller (0xb0 bytes; a static or beam one: the first 0x60 read) */
+#define JOIN_CHILDREN 0xf0u                  /* a component's children vector {begin, end} of view 0 */
+#define JOIN_VIEW_STRIDE 0x80u
+#define JOIN_VIEW_INDEX 0x38f4eb4u           /* g_ComponentViewCacheIndex: the view the main thread reads */
+#define JOIN_CHILDREN_MAX 4000000u
+#define JOIN_MACRO_VTABLE 0x2ba5430u         /* U::Macro: +0x20 its name, an MSVC string (lockstep_ai_schedule.h) */
+#define JOIN_PARENT 0x70u                    /* a component's parent (the census's parent field, lockstep_world_hash.h) */
+static uint32_t join_solver_dormant;
+static join_solver_rec join_solver_scratch;
+static join_bullet_rec join_bullet_scratch;
+/* Every qword of data that points into [self, self+n) as its offset, into the image as its RVA. list: their (offset/8)<<1 | image, in
+ * offset order; returns the count, cap+1 when they do not fit (the data past that point stays raw). Without a list only normalized. */
+static uint32_t join_relative(unsigned char *data,size_t n,uintptr_t self,uint32_t *list,uint32_t cap) {
+    uint32_t count=0;
+    for(size_t at=0;at+8u<=n;at+=8) {
+        uint64_t q;memcpy(&q,data+at,8);uint32_t in_image=0;
+        if(q>=self && q<self+n) q-=self;
+        else if(q>=(uintptr_t)image && q<(uintptr_t)image+JOIN_FLIGHT_IMAGE) {q-=(uintptr_t)image;in_image=1;}
+        else continue;
+        if(list) {
+            if(count==cap) return cap+1u;
+            list[count]=(uint32_t)(at/8u)<<1|in_image;
+        }
+        ++count;memcpy(data+at,&q,8);
+    }
+    return count;
+}
+static int join_solver_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_solver_rec *)a)->portable,y=((const join_solver_rec *)b)->portable;return x<y?-1:x>y;
+}
+static int join_bullet_cmp(const void *a,const void *b) {
+    const join_bullet_rec *x=a,*y=b;
+    if(x->zone!=y->zone) return x->zone<y->zone?-1:1;
+    return x->position<y->position?-1:x->position>y->position;
+}
+/* SOLVER by portable ID; known flags, its pointer list in offset order with each value in range, the rest of the list 0. */
+static int join_solver_shape(const join_solver_rec *s,uint32_t n) {
+    for(uint32_t i=0;i<n;i++) {
+        const join_solver_rec *r=&s[i];
+        if(!r->portable || (i && r->portable<=s[i-1].portable) || (r->flags&~3u) || r->reserved || r->pointers>JOIN_SOLVER_POINTERS ||
+           ((r->flags&JOIN_SOLVER_OVERFLOW) && r->pointers)) return 0;
+        for(uint32_t k=0;k<JOIN_SOLVER_POINTERS;k++) {
+            const uint32_t e=r->pointer[k];
+            if(k>=r->pointers) {if(e) return 0;continue;}
+            const uint32_t at=(e>>1)*8u;uint64_t q;
+            if(at+8u>JOIN_SOLVER_BYTES || (k && (e>>1)<=(r->pointer[k-1]>>1))) return 0;
+            memcpy(&q,r->data+at,8);
+            if(q>=((e&1u)?(uint64_t)JOIN_FLIGHT_IMAGE:(uint64_t)JOIN_SOLVER_BYTES)) return 0;
+        }
+    }
+    return 1;
+}
+/* BULLET by (zone, position), index counting each zone's bullets; known flags; a shooter only without its bit; a macro name of
+ * printable characters, 0 behind it, none with its bit. */
+static int join_bullet_shape(const join_bullet_rec *s,uint32_t n) {
+    for(uint32_t i=0;i<n;i++) {
+        const join_bullet_rec *r=&s[i];const int same=i && r->zone==s[i-1].zone;size_t length=0;
+        if(!r->zone || (i && join_bullet_cmp(&s[i-1],r)>=0) || r->index!=(same?s[i-1].index+1u:0u) || (r->flags&~7u) ||
+           ((r->flags&JOIN_BULLET_NO_SHOOTER) && r->shooter) || ((r->flags&JOIN_BULLET_NO_MOTION) && r->motion_kind)) return 0;
+        while(length<JOIN_BULLET_MACRO && r->macro[length]) {if(r->macro[length]<33 || r->macro[length]>126) return 0;++length;}
+        if(length==JOIN_BULLET_MACRO || !length!=!!(r->flags&JOIN_BULLET_NO_MACRO)) return 0;
+        for(size_t k=length;k<JOIN_BULLET_MACRO;k++) if(r->macro[k]) return 0;
+    }
+    return 1;
+}
+/* The Agent's solver at T into SOLVER (none: nothing). A dormant one (a linear model's) only up to the cap. 0 with join_fault. */
+static int join_capture_solver(join_tables *t,const unsigned char *agent,uint64_t runtime,uint64_t portable,uint32_t kind,uint32_t *cap) {
+    unsigned char *solver=NULL;
+    if(!join_read(agent+JOIN_AGENT_SOLVER,&solver,8)) return join_note("solver,id=%llx,check=agent",(unsigned long long)portable);
+    if(!solver) return 1;
+    const int active=kind==JOIN_STEER_VTABLE || kind==JOIN_SPLINE_VTABLE;
+    if(!active && join_solver_dormant>=JOIN_SOLVER_DORMANT) {++join_cap.solver_over;return 1;}
+    join_solver_rec *r=&join_solver_scratch;memset(r,0,sizeof(*r));
+    r->portable=portable;r->kind=kind;r->flags=active?JOIN_SOLVER_ACTIVE:0u;
+    if(!join_read(solver,r->data,JOIN_SOLVER_BYTES)) return join_note("solver,id=%llx,check=data",(unsigned long long)portable);
+    const uint32_t count=join_relative(r->data,JOIN_SOLVER_BYTES,(uintptr_t)solver,r->pointer,JOIN_SOLVER_POINTERS);
+    if(count>JOIN_SOLVER_POINTERS) {r->flags|=JOIN_SOLVER_OVERFLOW;memset(r->pointer,0,sizeof(r->pointer));join_read(solver,r->data,JOIN_SOLVER_BYTES);}
+    else r->pointers=count;
+    if(!JOIN_PUSH(t->solver,t->nsolver,*cap,*r)) return join_note("memory");
+    if(active) join_t1x_add(runtime,portable);else ++join_solver_dormant;
+    return 1;
+}
+/* A bullet's macro name into out (0 filled); 0: not readable. */
+static int join_bullet_macro(const unsigned char *bullet,char *out) {
+    unsigned char *macro=NULL;uintptr_t vtable=0;uint64_t length=0,capacity=0;const unsigned char *data;
+    if(!join_read(bullet+0x60,&macro,8) || !macro || !join_read(macro,&vtable,8) || vtable!=(uintptr_t)image+JOIN_MACRO_VTABLE ||
+       !join_read(macro+0x30,&length,8) || !length || length>=JOIN_BULLET_MACRO || !join_read(macro+0x38,&capacity,8) || capacity<length) return 0;
+    data=macro+0x20;
+    if(capacity>=16 && (!join_read(data,&data,8) || !data)) return 0;
+    if(!join_read(data,out,(size_t)length)) {memset(out,0,JOIN_BULLET_MACRO);return 0;}
+    for(uint64_t i=0;i<length;i++) if(out[i]<33 || out[i]>126) {memset(out,0,JOIN_BULLET_MACRO);return 0;}
+    return 1;
+}
+/* One bullet into BULLET (the census: what cannot be read is counted in world_cap's last field, it does not fail the save). zone: the
+ * key of its parent (+0x70) as BULLET names it; position: its registry slot (ID order, the same on every client); index set after the sort. */
+static void join_capture_bullet(join_tables *t,unsigned char *child,uint32_t slot,uint32_t *cap) {
+    unsigned char *motion=NULL,*parent=NULL;uintptr_t vtable=0,shooter=0;uint64_t id=0,zone=0;unsigned klass;
+    join_bullet_rec *r=&join_bullet_scratch;memset(r,0,sizeof(*r));
+    if(!join_read(child,r->bullet,JOIN_BULLET_BYTES)) {++join_cap.bullet_fault;return;}
+    memcpy(&parent,r->bullet+JOIN_PARENT,8);
+    if(!parent || !join_read(parent+8,&zone,8) || !zone) {++join_cap.bullet_fault;return;}
+    r->zone=join_key(zone,&klass);
+    if(!r->zone) {r->zone=zone|JOIN_BULLET_ZONE_RUNTIME;++join_cap.bullet_unkeyed;}
+    r->position=slot;
+    memcpy(&shooter,r->bullet+JOIN_BULLET_SHOOTER,8);
+    if(shooter && join_read((void *)(shooter+8u),&id,8)) r->shooter=join_route_portable(id,&r->flags,0);
+    else if(!shooter) r->flags|=JOIN_BULLET_NO_SHOOTER;
+    if(!join_bullet_macro(child,r->macro)) r->flags|=JOIN_BULLET_NO_MACRO;
+    memcpy(&motion,r->bullet+JOIN_CONTROLLER,8);
+    if(!motion || !join_read(motion,&vtable,8) || vtable<(uintptr_t)image || vtable>=(uintptr_t)image+JOIN_FLIGHT_IMAGE) r->flags|=JOIN_BULLET_NO_MOTION;
+    else {
+        const size_t bytes=vtable==(uintptr_t)image+JOIN_BULLET_LINEAR?JOIN_BULLET_MOTION:0x60u;
+        r->motion_kind=(uint32_t)(vtable-(uintptr_t)image);
+        if(join_read(motion,r->motion,bytes)) (void)join_relative(r->motion,bytes,(uintptr_t)motion,NULL,0);
+        else memset(r->motion,0,sizeof(r->motion));
+    }
+    (void)join_relative(r->bullet,JOIN_BULLET_BYTES,(uintptr_t)child,NULL,0);
+    if(!JOIN_PUSH(t->bullet,t->nbullet,*cap,*r)) ++join_cap.bullet_fault;
+}
+/* Every live U::Bullet of the component registry (j1-28/29: bullets are in no zone's children vector, 1,428 zones and 14,044 children
+ * walked, none). The registry U::ComponentRegistry::Find 0xced70 reads: blocks of 2^20 slots at +0x58 (32 of them), 32-byte buckets of
+ * three: the object pointers +0, +8, +0x10, 16-bit generations at +0x18, a flag nibble per slot at bit 16+4k of +0x1c; a slot is live
+ * when its nibble has bit 0 and bit 2 (Find's mode 4). The walk is by slot, so the order is the runtime IDs' (synchronized). */
+#define JOIN_REGISTRY 0x6cf1500u
+#define JOIN_REGISTRY_BLOCKS 0x58u
+static unsigned char *join_bullet_registry;          /* tests: a synthetic registry; NULL: the engine's */
+static uint32_t join_bullet_block_slots=1u<<20;      /* tests shrink it */
+static void join_capture_bullets(join_tables *t,uint32_t *cap) {
+    unsigned char *reg=join_bullet_registry;
+    if(!reg && (!join_read(image+JOIN_REGISTRY,&reg,8) || !reg)) {++join_cap.bullet_fault;return;}
+    for(uint32_t b=0;b<32u;b++) {
+        unsigned char *block=NULL;
+        if(!join_read(reg+JOIN_REGISTRY_BLOCKS+8u*b,&block,8)) {++join_cap.bullet_fault;return;}
+        if(!block) continue;
+        ++join_cap.bullet_blocks;
+        const uint32_t buckets=(join_bullet_block_slots+2u)/3u;
+        for(uint32_t k=0;k<buckets;k++) {
+            unsigned char bucket[32];uint32_t flags;
+            if(!join_read(block+(size_t)k*32u,bucket,32)) {++join_cap.bullet_fault;break;}
+            memcpy(&flags,bucket+0x1c,4);
+            for(uint32_t e=0;e<3u && k*3u+e<join_bullet_block_slots;e++) {
+                const uint32_t nibble=flags>>(16u+4u*e)&15u;unsigned char *object;uintptr_t vtable=0;
+                if((nibble&5u)!=5u) continue;
+                memcpy(&object,bucket+8u*e,8);
+                if(!object) continue;
+                ++join_cap.bullet_live;
+                if(!join_read(object,&vtable,8)) {++join_cap.bullet_fault;continue;}
+                if(vtable==(uintptr_t)image+JOIN_BULLET_VTABLE) join_capture_bullet(t,object,b*(1u<<20)+k*3u+e,cap);
+            }
+        }
+    }
+}
+/* ---- version 11: GRAV, GRAVC, GRAVS (the radar; report 1.15) ----
+ * The Gravidar unit table and the units' layout as lockstep_gravidar_digest.h and lockstep_gravidar_deadlines.h read them (the
+ * lookup 0x10b2dc0 pinned): *0x6cf1650 the AI::Gravidar (vtable 0x2c68860), 256 buckets, lock +0x88+b*0x28, tree +0x2890+b*0x40
+ * (head, root at +8, children +8/+0x10, unit at +0x28); an AI::ActiveGravidarUnit (0x2c67610, 0xc8 bytes; the constructor 0x10ac0c0):
+ * +8 the owner's runtime ID, +0x18 its lock, +0x40..+0x67 the class word, radar factor +0x44 and their neighbours, +0x68 and +0x80
+ * the primary and second contact vectors (runtime IDs, sorted), +0x98 and +0xa0 pointers to two more, +0xa8/+0xb0/+0xb8 the last
+ * scan, the next due and the last has_scanned post, +0xc0, +0xc4 the flags; an AI::GravidarUnit (0x2c67660) is its first 0x68
+ * bytes. Capture under the bucket lock and the unit's lock (the Gravidar thread is idle at the boundary as at the admission, the
+ * locks only make it certain); nothing is written. What cannot be read is counted (grav_cap) and does not fail the save. */
+#define JOIN_GRAV_WORKER 0x6cf1650u
+#define JOIN_GRAV_WORKER_VT 0x2c68860u
+#define JOIN_GRAV_ACTIVE_VT 0x2c67610u
+#define JOIN_GRAV_PASSIVE_VT 0x2c67660u
+#define JOIN_GRAV_PASSIVE_BYTES 0x68u
+#define JOIN_GRAV_BUCKETS 256u
+#define JOIN_GRAV_NODES 400000u
+#define JOIN_GRAV_CONTACTS_MAX 65536u
+#define JOIN_GRAV_SECTOR_VT 0x2b1ea48u
+#define JOIN_GRAV_LOOKUP 0x10b2dc0u
+static unsigned char *join_grav_worker_test;        /* tests: a synthetic worker */
+static void join_grav_lock_native(void *cs,int enter) {if(enter) EnterCriticalSection((CRITICAL_SECTION *)cs);else LeaveCriticalSection((CRITICAL_SECTION *)cs);}
+static void (*join_grav_lock)(void *,int)=join_grav_lock_native;   /* tests: no locks */
+static void *join_grav_lookup_native(void *worker,uint64_t runtime) {return ((void *(*)(void *,uint64_t))(void *)(image+JOIN_GRAV_LOOKUP))(worker,runtime);}
+static void *(*join_grav_lookup)(void *,uint64_t)=join_grav_lookup_native;
+static unsigned char *join_grav_worker(void) {
+    unsigned char *w=join_grav_worker_test;uintptr_t vtable=0;
+    if(!w && !join_read(image+JOIN_GRAV_WORKER,&w,8)) return NULL;
+    return w && join_read(w,&vtable,8) && vtable==(uintptr_t)image+JOIN_GRAV_WORKER_VT?w:NULL;
+}
+static int join_grav_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_grav_rec *)a)->portable,y=((const join_grav_rec *)b)->portable;return x<y?-1:x>y;
+}
+static int join_gravc_cmp(const void *a,const void *b) {
+    const join_gravc_rec *x=a,*y=b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    if(x->list!=y->list) return x->list<y->list?-1:1;
+    return x->index<y->index?-1:x->index>y->index;
+}
+/* A vector {begin, end, capacity} of 8-byte entries at at: 1 with *n and *begin, 0 unreadable or implausible. */
+static int join_grav_vector(const unsigned char *at,uintptr_t *begin,uint64_t *n) {
+    uintptr_t v[3];
+    if(!join_read(at,v,sizeof(v)) || v[1]<v[0] || v[2]<v[1] || ((v[1]-v[0])&7u) || ((v[2]-v[0])&7u) || (!v[0] && (v[1] || v[2])) ||
+       (v[1]-v[0])/8u>JOIN_GRAV_CONTACTS_MAX) return 0;
+    *begin=v[0];*n=(v[1]-v[0])/8u;return 1;
+}
+static uint64_t join_grav_ids[JOIN_GRAV_CONTACTS_MAX];
+static uint32_t join_grav_ccap;
+/* One list of a unit into GRAVC (the session's order) and its count. 0: unreadable (counted, the record keeps what was read). */
+static int join_grav_list(join_tables *t,join_grav_rec *r,unsigned list,const unsigned char *at) {
+    uintptr_t begin=0;uint64_t n=0;
+    if(!at) return 1;
+    if(!join_grav_vector(at,&begin,&n) || (n && !join_read((void *)begin,join_grav_ids,(size_t)n*8u))) return 0;
+    for(uint64_t i=0;i<n;i++) {
+        unsigned klass;join_gravc_rec c;memset(&c,0,sizeof(c));
+        c.portable=r->portable;c.list=list;c.index=(uint32_t)i;c.contact=join_grav_ids[i]?join_key(join_grav_ids[i],&klass):0;
+        if(!c.contact) c.flags=JOIN_GRAVC_UNMAPPED;
+        if(!JOIN_PUSH(t->gravc,t->ngravc,join_grav_ccap,c)) return 0;
+    }
+    r->count[list]=(uint32_t)n;return 1;
+}
+static uint32_t join_grav_cap_units;
+static int join_grav_unit(join_tables *t,unsigned char *unit) {
+    uintptr_t vtable=0;uint64_t runtime=0;unsigned klass;join_grav_rec r;memset(&r,0,sizeof(r));
+    if(!join_read(unit,&vtable,8) || !join_read(unit+8,&runtime,8)) {++join_cap.grav_fault;return 1;}
+    const int active=vtable==(uintptr_t)image+JOIN_GRAV_ACTIVE_VT;
+    if(!active && vtable!=(uintptr_t)image+JOIN_GRAV_PASSIVE_VT) {++join_cap.grav_fault;return 1;}
+    r.portable=runtime?join_key(runtime,&klass):0;
+    if(!r.portable) {++join_cap.grav_unmapped;return 1;}
+    r.kind=(uint32_t)(vtable-(uintptr_t)image);
+    if(!active) {
+        ++join_cap.grav_passive;
+        if(!join_read(unit,r.unit,JOIN_GRAV_PASSIVE_BYTES)) {++join_cap.grav_fault;return 1;}
+        memset(r.unit,0,0x40);
+    } else {
+        unsigned char *second=NULL,*third=NULL;int ok;uint32_t before=t->ngravc;r.flags=JOIN_GRAV_ACTIVE;
+        join_grav_lock(unit+0x18,1);
+        ok=join_read(unit,r.unit,JOIN_GRAV_BYTES) && join_read(unit+0x98,&second,8) && join_read(unit+0xa0,&third,8) &&
+           join_grav_list(t,&r,0,unit+0x68) && join_grav_list(t,&r,1,unit+0x80) && join_grav_list(t,&r,2,second) && join_grav_list(t,&r,3,third);
+        join_grav_lock(unit+0x18,0);
+        if(!ok) {   /* a unit read in part: its contacts dropped, the record flagged (the joiner writes nothing of it) */
+            ++join_cap.grav_fault;r.flags|=JOIN_GRAV_UNCARRIED;t->ngravc=before;memset(r.count,0,sizeof(r.count));
+        }
+        memset(r.unit,0,0x40);memset(r.unit+0x68,0,0x40);
+    }
+    if(!JOIN_PUSH(t->grav,t->ngrav,join_grav_cap_units,r)) {++join_cap.grav_fault;return 0;}
+    return 1;
+}
+/* In-order walk of one bucket's tree (as gdig_tree, through join_read). */
+static int join_grav_tree(join_tables *t,const unsigned char *head) {
+    const unsigned char *stack[64],*node=NULL;unsigned depth=0,count=0;
+    if(!join_read(head+8,&node,8)) return 0;
+    while(node || depth) {
+        while(node) {
+            if(depth==64 || ++count>JOIN_GRAV_NODES) return 0;
+            stack[depth++]=node;if(!join_read(node+8,&node,8)) return 0;
+        }
+        node=stack[--depth];
+        unsigned char *unit=NULL;if(!join_read(node+0x28,&unit,8)) return 0;
+        if(unit && !join_grav_unit(t,unit)) return 0;
+        if(!join_read(node+0x10,&node,8)) return 0;
+    }
+    return 1;
+}
+/* gdl_seen without inserting (lockstep_gravidar_deadlines.h gdl_first_move's table). */
+static int join_gdl_seen(uint64_t runtime) {
+    if(!gdl_armed || !runtime) return 0;
+    unsigned h=(unsigned)(lockstep_mix(runtime)&(GDL_TABLE-1));
+    for(unsigned n=0;n<GDL_TABLE;n++,h=(h+1)&(GDL_TABLE-1)) {if(gdl_seen[h]==runtime) return 1;if(!gdl_seen[h]) return 0;}
+    return 0;
+}
+static void join_capture_grav(join_tables *t) {
+    unsigned char *w=join_grav_worker();uint32_t scap=0;
+    join_grav_cap_units=join_grav_ccap=0;join_cap.grav_unmapped=join_cap.grav_fault=join_cap.grav_passive=0;
+    if(!w) {++join_cap.grav_fault;return;}
+    for(unsigned b=0;b<JOIN_GRAV_BUCKETS;b++) {
+        int ok;join_grav_lock(w+0x88+b*0x28,1);ok=join_grav_tree(t,w+0x2890+b*0x40);join_grav_lock(w+0x88+b*0x28,0);
+        if(!ok) {++join_cap.grav_fault;break;}
+    }
+    for(unsigned kind=0;kind<2;kind++) {   /* the active sources: components */
+        uintptr_t begin=0;uint64_t n=0;
+        if(!join_grav_vector(w+0x48+kind*0x18,&begin,&n)) {++join_cap.grav_fault;continue;}
+        for(uint64_t i=0;i<n;i++) {
+            unsigned char *component=NULL;uint64_t runtime=0;unsigned klass;join_gravs_rec r;memset(&r,0,sizeof(r));
+            r.kind=kind;r.index=(uint32_t)i;
+            if(join_read((void *)(begin+(uintptr_t)i*8u),&component,8) && component && join_read(component+8,&runtime,8) && runtime)
+                r.portable=join_key(runtime,&klass);
+            if(!r.portable) r.flags=JOIN_GRAVS_UNMAPPED;
+            if(!JOIN_PUSH(t->gravs,t->ngravs,scap,r)) {++join_cap.grav_fault;return;}
+        }
+    }
+    {   /* the field sectors' factor-pass deadlines */
+        uintptr_t v[2];uint32_t index=0;
+        if(!join_read(w+0x68b8,v,sizeof(v)) || v[1]<v[0] || ((v[1]-v[0])&31u) || (v[1]-v[0])/32u>65536u) {++join_cap.grav_fault;goto sorted;}
+        for(uintptr_t p=v[0];p<v[1];p+=32,++index) {
+            unsigned char *sector=NULL,field=0;uintptr_t vtable=0;uint64_t runtime=0;unsigned klass;join_gravs_rec r;memset(&r,0,sizeof(r));
+            if(!join_read((void *)p,&sector,8) || !sector || !join_read(sector,&vtable,8) || vtable!=(uintptr_t)image+JOIN_GRAV_SECTOR_VT) continue;
+            if(!join_read(sector+0x442,&field,1) || !field) continue;
+            if(!join_read(sector+0x448,&r.value,8) || !join_read(sector+8,&runtime,8)) {++join_cap.grav_fault;continue;}
+            r.kind=JOIN_GRAVS_SECTOR;r.index=index;r.portable=runtime?join_key(runtime,&klass):0;
+            if(!r.portable) {r.flags|=JOIN_GRAVS_UNMAPPED;r.value=0;}
+            if(join_gdl_seen(runtime)) r.flags|=JOIN_GRAVS_SEEN;
+            if(!JOIN_PUSH(t->gravs,t->ngravs,scap,r)) {++join_cap.grav_fault;goto sorted;}
+        }
+    }
+sorted:
+    if(ai_sched_armed && ai_sched_admitted && ai_sched_count) {   /* the cursor the next frame expects (ai_sched_frame) */
+        join_gravs_rec r;memset(&r,0,sizeof(r));
+        r.kind=JOIN_GRAVS_CURSOR;r.index=(uint32_t)ai_sched_count;
+        r.value=ai_sched_pending?ai_sched_advance(ai_sched_cursor,ai_sched_count):ai_sched_cursor;
+        if(!JOIN_PUSH(t->gravs,t->ngravs,scap,r)) ++join_cap.grav_fault;
+    }
+    if(t->ngrav) qsort(t->grav,t->ngrav,sizeof(*t->grav),join_grav_cmp);
+    if(t->ngravc) qsort(t->gravc,t->ngravc,sizeof(*t->gravc),join_gravc_cmp);
+    {   /* one unit per owner: two units with one owner are both dropped with their contacts (counted) */
+        uint32_t k=0,kc=0,i=0;
+        while(i<t->ngrav) {
+            uint32_t j=i+1;while(j<t->ngrav && t->grav[j].portable==t->grav[i].portable) ++j;
+            if(j-i==1) t->grav[k++]=t->grav[i];else join_cap.grav_fault+=j-i;
+            i=j;
+        }
+        if(k!=t->ngrav) {
+            for(uint32_t c=0;c<t->ngravc;c++) {   /* keep the contacts of kept units (both arrays sorted by portable) */
+                const join_grav_rec key={.portable=t->gravc[c].portable};
+                if(bsearch(&key,t->grav,k,sizeof(*t->grav),join_grav_cmp)) t->gravc[kc++]=t->gravc[c];
+            }
+            t->ngrav=k;t->ngravc=kc;
+        }
+    }
+}
+/* GRAV by portable ID, kinds and flags known, a passive or uncarried unit without contacts; GRAVC exactly each unit's counted
+ * contacts in (list, index) order, a contact 0 only with its flag; GRAVS by kind then index (sources counted from 0), known
+ * flags, SEEN and a value only on sectors, portable 0 only with its flag. */
+static int join_grav_shape(const join_grav_rec *g,uint32_t ng,const join_gravc_rec *c,uint32_t nc,const join_gravs_rec *s,uint32_t ns) {
+    uint32_t at=0;
+    for(uint32_t i=0;i<ng;i++) {
+        const join_grav_rec *r=&g[i];const int active=r->kind==JOIN_GRAV_ACTIVE_VT;
+        if(!r->portable || (i && r->portable<=g[i-1].portable) || (!active && r->kind!=JOIN_GRAV_PASSIVE_VT) || (r->flags&~3u) ||
+           !!(r->flags&JOIN_GRAV_ACTIVE)!=active) return 0;
+        for(unsigned l=0;l<JOIN_GRAV_LISTS;l++) {
+            if((!active || (r->flags&JOIN_GRAV_UNCARRIED)) && r->count[l]) return 0;
+            for(uint32_t k=0;k<r->count[l];k++,at++) {
+                if(at>=nc) return 0;
+                const join_gravc_rec *x=&c[at];
+                if(x->portable!=r->portable || x->list!=l || x->index!=k || (x->flags&~1u) || x->reserved || !x->contact!=!!(x->flags&JOIN_GRAVC_UNMAPPED)) return 0;
+            }
+        }
+    }
+    if(at!=nc) return 0;
+    for(uint32_t i=0;i<ns;i++) {
+        const join_gravs_rec *r=&s[i];
+        if(r->kind==JOIN_GRAVS_CURSOR) {   /* once, last, portable 0, no flags, a cursor inside the list */
+            if(r->portable || r->flags || r->reserved || !r->index || r->value>=r->index || i+1!=ns) return 0;
+            if(i && s[i-1].kind==JOIN_GRAVS_CURSOR) return 0;
+            continue;
+        }
+        if(r->kind>JOIN_GRAVS_SECTOR || (r->flags&~3u) || r->reserved || !r->portable!=!!(r->flags&JOIN_GRAVS_UNMAPPED) ||
+           ((r->flags&JOIN_GRAVS_SEEN) && r->kind!=JOIN_GRAVS_SECTOR) || ((r->kind!=JOIN_GRAVS_SECTOR || !r->portable) && r->value)) return 0;
+        if(i && (r->kind<s[i-1].kind || (r->kind==s[i-1].kind && r->index<=s[i-1].index))) return 0;
+        if(r->kind!=JOIN_GRAVS_SECTOR && r->index!=(i && s[i-1].kind==r->kind?s[i-1].index+1u:0u)) return 0;
+    }
+    return 1;
+}
 static int join_capture_flight(join_tables *t,const unsigned char *controller,uint64_t runtime,uint64_t portable,uint32_t *fcap,uint32_t *scap,
-                               uint32_t *acap,uint32_t *rcap,uint32_t *pcap,uint32_t *stcap,uint32_t *stpcap) {
+                               uint32_t *acap,uint32_t *rcap,uint32_t *pcap,uint32_t *stcap,uint32_t *stpcap,uint32_t *socap) {
     unsigned char *agent=NULL,*model=NULL,*owner=NULL;uintptr_t vtable=0,spline=0,seg[3],pair[3];uint64_t word=0,nseg=0,npair=0,room=0;
     if(!join_read(controller+0x40,&agent,8) || !agent || !join_read(agent+JOIN_AGENT_MODEL,&model,8))
         return join_note("flight,id=%llx,check=agent",(unsigned long long)portable);
@@ -993,6 +1398,7 @@ static int join_capture_flight(join_tables *t,const unsigned char *controller,ui
         if(linear && !join_read(model+JOIN_FLIGHT_WORD_AT,&w,8)) return join_note("flight,id=%llx,check=word",(unsigned long long)portable);
         if(!join_capture_route(t,agent,portable,linear,w,rcap)) return 0;
     }
+    if(!join_capture_solver(t,agent,runtime,portable,(uint32_t)(vtable-(uintptr_t)image),socap)) return 0;   /* version 10 */
     join_flight_rec r;memset(&r,0,sizeof(r));r.portable=portable;r.kind=(uint32_t)(vtable-(uintptr_t)image);
     if(r.kind!=JOIN_FLIGHT_LINEAR) {
         r.flags=JOIN_FLIGHT_OTHER;
@@ -1042,7 +1448,8 @@ static int join_spline_cmp(const void *a,const void *b) {
     return x->index<y->index?-1:x->index>y->index;
 }
 static int join_capture_world(join_tables *t,double now) {
-    uint32_t hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0;join_t1_reset();
+    uint32_t hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
+    join_solver_dormant=0;join_cap.solver_over=0;join_cap.bullet_fault=0;join_cap.bullet_blocks=0;join_cap.bullet_live=0;join_cap.bullet_unkeyed=0;
     for(uint32_t i=0;i<t->nids;i++) {
         const join_id_rec *id=&t->ids[i];unsigned char *object=join_object(id->runtime);uintptr_t vtable=0;
         if(!object) continue;
@@ -1080,7 +1487,7 @@ static int join_capture_world(join_tables *t,double now) {
             if(p.kind==JOIN_NAV_VTABLE) {
                 join_nav_rec r;if(!join_nav_capture(object,controller,id->runtime,id->portable,&r)) return 0;
                 if(!JOIN_PUSH(t->nav,t->nnav,ncap,r)) return join_note("memory");
-                if(!join_capture_flight(t,controller,id->runtime,id->portable,&fcap,&lcap,&agcap,&rcap,&pacap,&stcap,&stpcap)) return 0;   /* versions 5..9 */
+                if(!join_capture_flight(t,controller,id->runtime,id->portable,&fcap,&lcap,&agcap,&rcap,&pacap,&stcap,&stpcap,&socap)) return 0;   /* versions 5..10 */
                 continue;
             }
             if(join_dock_kind(p.kind)) {   /* version 8: a ship docking or undocking */
@@ -1119,6 +1526,11 @@ static int join_capture_world(join_tables *t,double now) {
         return join_note("dock_duplicate,id=%llx",(unsigned long long)t->dock[i].portable);
     if(t->nsteer) qsort(t->steer,t->nsteer,sizeof(*t->steer),join_steer_cmp);          /* pushed with FLIGHT: the same portable IDs */
     if(t->nsteerpt) qsort(t->steerpt,t->nsteerpt,sizeof(*t->steerpt),join_route_cmp);  /* (portable, index): kind and list constant */
+    if(t->nsolver) qsort(t->solver,t->nsolver,sizeof(*t->solver),join_solver_cmp);
+    join_capture_bullets(t,&bcap);   /* version 10 */
+    join_capture_grav(t);            /* version 11 */
+    if(t->nbullet) qsort(t->bullet,t->nbullet,sizeof(*t->bullet),join_bullet_cmp);
+    for(uint32_t i=0;i<t->nbullet;i++) t->bullet[i].index=i && t->bullet[i].zone==t->bullet[i-1].zone?t->bullet[i-1].index+1u:0u;
     return join_capture_keys(t) && join_capture_path(t);
 }
 
@@ -1992,6 +2404,201 @@ static int join_admit_steer(const join_tables *s,const join_tables *mine) {
     }
     return 1;
 }
+/* ---- the joiner, version 10 ---- */
+typedef void *(*join_solver_prepare_fn)(void *agent);
+static void *join_solver_prepare_native(void *agent) {return ((void *(*)(void *,int,int,float))(void *)(image+JOIN_SOLVER_PREPARE))(agent,1,0,0.0f);}
+static join_solver_prepare_fn join_solver_prepare=join_solver_prepare_native;   /* tests replace it */
+static unsigned char join_solver_buffer[JOIN_SOLVER_BYTES];
+/* SOLVER into the joiner's Agents (boot phase 3: no pass runs; a record that does not fit changes nothing): the Agent's solver, through
+ * the engine when it has none yet (solver created), every byte the session's, its pointers made absolute for this object and this image
+ * (solver fixed). Counted: missing (no object), shape (no navigation Agent, no solver after the preparation, a record the saver could not
+ * normalize), kind (another model class than the session's: the bytes are still written, STEER and FLIGHT count the model itself). */
+static int join_admit_solver(const join_tables *s,const join_tables *mine) {
+    unsigned rows=0;
+    for(uint32_t i=0;i<s->nsolver;i++) {
+        const join_solver_rec *r=&s->solver[i];
+        uint64_t runtime=join_runtime_of(mine,r->portable);unsigned char *object=join_object(runtime),*agent=object?join_nav_agent(object):NULL;
+        unsigned char *solver=NULL,*model=NULL;uintptr_t vtable=0;
+        if(!object) {
+            ++join_rx.solver_missing;
+            join_world_row(&rows,"solver side=session id=%016llx why=missing runtime=%llx",(unsigned long long)r->portable,(unsigned long long)runtime);
+            continue;
+        }
+        if(!agent || (r->flags&JOIN_SOLVER_OVERFLOW) || !join_read(agent+JOIN_AGENT_SOLVER,&solver,8)) {
+            ++join_rx.solver_shape;
+            join_world_row(&rows,"solver side=joiner id=%016llx why=shape check=%s",(unsigned long long)r->portable,agent?"record":"agent");
+            continue;
+        }
+        if(!solver) {
+            if(!join_solver_prepare(agent) || !join_read(agent+JOIN_AGENT_SOLVER,&solver,8) || !solver) {
+                ++join_rx.solver_shape;
+                join_world_row(&rows,"solver side=joiner id=%016llx why=shape check=prepare",(unsigned long long)r->portable);
+                continue;
+            }
+            ++join_rx.solver_created;
+        }
+        if(!join_read(agent+JOIN_AGENT_MODEL,&model,8) || !model || !join_read(model,&vtable,8) || vtable!=(uintptr_t)image+r->kind) {
+            ++join_rx.solver_kind;
+            join_world_row(&rows,"solver side=joiner id=%016llx why=kind kind=%x/%llx",(unsigned long long)r->portable,r->kind,
+                           (unsigned long long)(vtable>=(uintptr_t)image?vtable-(uintptr_t)image:0));
+        }
+        memcpy(join_solver_buffer,r->data,JOIN_SOLVER_BYTES);
+        for(uint32_t k=0;k<r->pointers;k++) {
+            const uint32_t e=r->pointer[k],at=(e>>1)*8u;uint64_t q;
+            memcpy(&q,join_solver_buffer+at,8);q+=(e&1u)?(uint64_t)(uintptr_t)image:(uint64_t)(uintptr_t)solver;memcpy(join_solver_buffer+at,&q,8);
+        }
+        if(join_poke((uintptr_t)solver,join_solver_buffer,JOIN_SOLVER_BYTES)) ++join_rx.solver_fixed;
+        ++join_rx.solver_applied;
+        if(r->flags&JOIN_SOLVER_ACTIVE) join_t1x_add(runtime,r->portable);
+    }
+    return 1;
+}
+/* ---- the joiner, version 11 ----
+ * GRAV, GRAVC and GRAVS into the joiner (boot phase 3, after gdl_admit set every active unit's times back to -1; the Gravidar thread
+ * idle: gdl_admit checked it, lockstep_gate.c). The joiner's load built every active unit empty, and passive units only as its scans
+ * reach their objects (the sector scan 0x10b34c0 makes them through 0x10b2aa0: j1-32 had 262 of the session's 2,638 at T+1), so:
+ *   - a passive unit the joiner lacks is made through the engine's own 0x10b2aa0 (it takes the bucket lock and queues the object's
+ *     UpdateGravidarAccessEvent as the session's scan did; created), then written as any other;
+ *   - under the unit's lock: +0x40..+0x4f and +0x60..+0x67, an active unit's times +0xa8..+0xc7, and its four contact lists in this
+ *     process's runtime IDs, sorted (a list that does not fit its buffer gets a new one from the engine's allocator: buffers;
+ *     the old one is left to the heap, a few bytes per unit);
+ *   - the worker's active sources in the session's order; every field sector's deadline, and, for a sector the session's
+ *     native_gate_gravidar_deadlines had seen (SEEN), the joiner's gdl table too, so its first Move keeps the deadline.
+ * Counted: applied, fixed (a byte changed), missing (no object or no unit after the creation), kind (another class), shape (an
+ * uncarried record, a list pointer the joiner lacks), contacts written, contacts without a joiner object (unmapped), buffers. */
+#define JOIN_GRAV_PASSIVE_NEW 0x10b2aa0u
+/* The session's Gravidar round-robin cursor into the joiner's thread slot (lockstep_ai_schedule.h: the worker idle under its ready
+ * lock, the slot's frame checked, the same sector count), and ai_schedule's own expectation with it, so the frame of T+1 checks and
+ * the pass of T+1 starts where the session's does. 1 set, -1 ai_schedule not armed or not admitted, 0 refused. */
+static int join_ai_sched_set(uint64_t cursor,uint64_t count) {
+    unsigned char *w=ai_sched_worker;uint64_t now=0,n=0;int ok=0;
+    if(!ai_sched_armed || !ai_sched_admitted || !w || !ai_sched_slot) return -1;
+    EnterCriticalSection((CRITICAL_SECTION*)(w+AI_SCHED_W_READY_LOCK));
+    if(*(volatile unsigned char*)(w+AI_SCHED_W_READY)==1 && ai_sched_frame_ok() && read_local((const void*)ai_sched_slot,&now,8) &&
+       ai_sched_list(w,&n) && n==count && cursor<count) {*ai_sched_slot=cursor;ok=1;}
+    LeaveCriticalSection((CRITICAL_SECTION*)(w+AI_SCHED_W_READY_LOCK));
+    if(ok) {ai_sched_cursor=cursor;ai_sched_count=count;ai_sched_pending=0;ai_sched_latched=cursor!=0;}
+    return ok;
+}
+static void *join_grav_passive_native(void *worker,void *object) {return ((void *(*)(void *,void *))(void *)(image+JOIN_GRAV_PASSIVE_NEW))(worker,object);}
+static void *(*join_grav_passive_new)(void *,void *)=join_grav_passive_native;   /* tests replace it */
+static uint64_t join_grav_out[JOIN_GRAV_CONTACTS_MAX];
+/* n 8-byte entries into the vector at at: its own buffer when it has the room, else a new one (capacity n). -1: no memory. */
+static int join_grav_put(unsigned char *at,const uint64_t *data,uint32_t n,int *changed) {
+    uintptr_t v[3];uint64_t have=0,room=0;int grew=0;
+    if(!join_flight_vector(at,8u,v,&have,&room)) return 0;
+    if(n>room) {
+        unsigned char *p=join_flight_alloc((size_t)n*8u);if(!p) return -1;
+        v[0]=(uintptr_t)p;v[2]=v[0]+(uintptr_t)n*8u;
+        if(join_poke((uintptr_t)at,&v[0],8)) *changed=1;
+        if(join_poke((uintptr_t)at+16,&v[2],8)) *changed=1;
+        grew=1;
+    }
+    if(n && join_poke(v[0],data,(size_t)n*8u)) *changed=1;
+    uintptr_t end=v[0]+(uintptr_t)n*8u;
+    if(join_poke((uintptr_t)at+8,&end,8)) *changed=1;
+    return grew?2:1;
+}
+static int join_admit_grav(const join_tables *s,const join_tables *mine) {
+    unsigned rows=0;unsigned char *w=join_grav_worker();uint32_t at=0;
+    if(!w) {
+        if(s->ngrav || s->ngravs) {++join_rx.grav_shape;join_world_row(&rows,"grav side=joiner why=worker");}
+        return 1;
+    }
+    for(uint32_t i=0;i<s->ngrav;i++) {
+        const join_grav_rec *r=&s->grav[i];const join_gravc_rec *c=s->gravc+at;uint32_t total=0;
+        for(unsigned l=0;l<JOIN_GRAV_LISTS;l++) total+=r->count[l];
+        at+=total;
+        if(r->flags&JOIN_GRAV_UNCARRIED) {
+            ++join_rx.grav_shape;join_world_row(&rows,"grav side=session id=%016llx why=uncarried",(unsigned long long)r->portable);continue;
+        }
+        uint64_t runtime=join_runtime_of(mine,r->portable);unsigned char *object=join_object(runtime),*unit=NULL;uintptr_t vtable=0;
+        if(!object) {
+            ++join_rx.grav_missing;join_world_row(&rows,"grav side=session id=%016llx why=missing",(unsigned long long)r->portable);continue;
+        }
+        unsigned char *lock=w+0x88+(runtime&255u)*0x28;
+        join_grav_lock(lock,1);unit=join_grav_lookup(w,runtime);join_grav_lock(lock,0);
+        if(!unit && r->kind==JOIN_GRAV_PASSIVE_VT) {
+            unit=join_grav_passive_new(w,object);   /* takes the bucket lock itself */
+            if(unit) ++join_rx.grav_created;
+        }
+        if(!unit) {
+            ++join_rx.grav_missing;join_world_row(&rows,"grav side=joiner id=%016llx why=no_unit",(unsigned long long)r->portable);continue;
+        }
+        if(!join_read(unit,&vtable,8) || vtable!=(uintptr_t)image+r->kind) {
+            ++join_rx.grav_kind;
+            join_world_row(&rows,"grav side=joiner id=%016llx why=kind kind=%x/%llx",(unsigned long long)r->portable,r->kind,
+                           (unsigned long long)(vtable>=(uintptr_t)image?vtable-(uintptr_t)image:0));
+            continue;
+        }
+        int changed=0,bad=0;
+        join_grav_lock(unit+0x18,1);
+        if(join_poke((uintptr_t)unit+0x40,r->unit+0x40,0x10)) changed=1;
+        if(join_poke((uintptr_t)unit+0x60,r->unit+0x60,0x08)) changed=1;
+        if(r->flags&JOIN_GRAV_ACTIVE) {
+            if(join_poke((uintptr_t)unit+0xa8,r->unit+0xa8,0x20)) changed=1;
+            uint32_t k=0;
+            for(unsigned l=0;l<JOIN_GRAV_LISTS && !bad;l++) {
+                unsigned char *list=NULL;uint32_t n=0;
+                if(l<2) list=unit+0x68+l*0x18;
+                else if(!join_read(unit+0x98+(l-2)*8u,&list,8)) list=NULL;
+                for(uint32_t q=0;q<r->count[l];q++,k++) {
+                    uint64_t id=c[k].contact?join_runtime_of(mine,c[k].contact):0;
+                    if(!id || !join_object(id)) {++join_rx.grav_unmapped;continue;}
+                    join_grav_out[n++]=id;
+                }
+                if(!list) {if(n) bad=1;continue;}
+                if(n>1) qsort(join_grav_out,n,8u,join_u64_cmp);
+                int put=join_grav_put(list,join_grav_out,n,&changed);
+                if(put<=0) bad=1;
+                else {join_rx.grav_contacts+=n;if(put==2) ++join_rx.grav_buffers;}
+            }
+        }
+        join_grav_lock(unit+0x18,0);
+        if(bad) {++join_rx.grav_shape;join_world_row(&rows,"grav side=joiner id=%016llx why=list",(unsigned long long)r->portable);continue;}
+        ++join_rx.grav_applied;
+        if(changed) ++join_rx.grav_fixed;
+    }
+    {   /* the active sources, in the session's order (components of this process) */
+        for(unsigned kind=0;kind<2;kind++) {
+            uint32_t n=0;
+            for(uint32_t i=0;i<s->ngravs;i++) {
+                const join_gravs_rec *r=&s->gravs[i];
+                if(r->kind!=kind) continue;
+                unsigned char *object=r->portable?join_object(join_runtime_of(mine,r->portable)):NULL;
+                if(!object) {++join_rx.gravs_missing;continue;}
+                join_grav_out[n++]=(uint64_t)(uintptr_t)object;
+                if(n==JOIN_GRAV_CONTACTS_MAX) break;
+            }
+            int changed=0,put=join_grav_put(w+0x48+kind*0x18,join_grav_out,n,&changed);
+            if(put<=0) {++join_rx.grav_shape;join_world_row(&rows,"gravs side=joiner kind=%u why=list",kind);}
+            else ++join_rx.gravs_lists;
+        }
+    }
+    for(uint32_t i=0;i<s->ngravs;i++) {   /* the field sectors */
+        const join_gravs_rec *r=&s->gravs[i];
+        if(r->kind!=JOIN_GRAVS_SECTOR || !r->portable) continue;
+        uint64_t runtime=join_runtime_of(mine,r->portable);unsigned char *sector=join_object(runtime);uintptr_t vtable=0;
+        if(!sector || !join_read(sector,&vtable,8) || vtable!=(uintptr_t)image+JOIN_GRAV_SECTOR_VT) {
+            ++join_rx.gravs_missing;join_world_row(&rows,"gravs side=joiner sector=%016llx why=missing",(unsigned long long)r->portable);continue;
+        }
+        (void)join_poke((uintptr_t)sector+0x448,&r->value,8);
+        if((r->flags&JOIN_GRAVS_SEEN) && gdl_armed && gdl_first_move(runtime)<0) {
+            ++join_rx.grav_shape;join_world_row(&rows,"gravs side=joiner sector=%016llx why=gdl_full",(unsigned long long)r->portable);continue;
+        }
+        ++join_rx.gravs_sectors;
+    }
+    join_rx.gravs_cursor=2;
+    for(uint32_t i=0;i<s->ngravs;i++) {
+        const join_gravs_rec *r=&s->gravs[i];
+        if(r->kind!=JOIN_GRAVS_CURSOR) continue;
+        int set=join_ai_sched_set(r->value,r->index);
+        join_rx.gravs_cursor=set>0?1u:set<0?2u:3u;
+        if(!set) {++join_rx.grav_shape;join_world_row(&rows,"gravs side=joiner why=cursor value=%llu count=%u joiner_count=%llu",
+                                                        (unsigned long long)r->value,r->index,(unsigned long long)ai_sched_count);}
+    }
+    return 1;
+}
 /* Every world record (HEALTH, POSE; version 3 SHIELD, NAV, ATTN, KEYS; version 4 REGION, PATH; version 5 FLIGHT) into the joiner's objects (boot
  * phase 3, main thread, the MoveWorker and the pathing thread idle). 0: strict refusal. */
 static int join_admit_world(void) {
@@ -2071,6 +2678,8 @@ static int join_admit_world(void) {
     if(s->version>=7) join_admit_route(s,&mine);   /* after AGENT's flags, before PATH primes the pathing thread */
     if(s->version>=8) {join_admit_param(s,&mine);join_admit_dock(s,&mine);}   /* PARAM after AGENT (its words are in the own copy) */
     if(s->version>=9) join_admit_steer(s,&mine);   /* the steering models FLIGHT holds the kind of; before PATH primes the thread */
+    if(s->version>=10) join_admit_solver(s,&mine);  /* the Agents' motion solvers */
+    if(s->version>=11) join_admit_grav(s,&mine);    /* the radar */
     if(s->version>=4) {join_admit_region(s,&mine);join_admit_path(s,strict);}
     if(!join_admit_created(s,&mine)) {join_tables_free(&mine);return 0;}
     join_tables_free(&mine);
@@ -2111,5 +2720,10 @@ static int join_admit_world(void) {
         return join_fail_rx(JOIN_WHY_MISMATCH,join_rx.steer_missing?"world:steer_missing":join_rx.steer_kind?"world:steer_kind":
                             join_rx.steer_shape?"world:steer_shape":join_rx.steer_unmapped?"world:steer_unmapped":
                             join_rx.steer_other?"world:steer_other":"world:steer_job");
+    if(strict && (join_rx.solver_missing || join_rx.solver_shape || join_rx.solver_kind))
+        return join_fail_rx(JOIN_WHY_MISMATCH,join_rx.solver_missing?"world:solver_missing":join_rx.solver_shape?"world:solver_shape":"world:solver_kind");
+    if(strict && (join_rx.grav_missing || join_rx.grav_kind || join_rx.grav_shape || join_rx.gravs_missing))
+        return join_fail_rx(JOIN_WHY_MISMATCH,join_rx.grav_missing?"world:grav_missing":join_rx.grav_kind?"world:grav_kind":
+                            join_rx.grav_shape?"world:grav_shape":"world:gravs_missing");
     return 1;
 }
