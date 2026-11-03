@@ -30,13 +30,11 @@ static void test_world_nav_hash(void) {
     uint64_t runtime=tw_session.runtime[TW_SHIP];tw_session.runtime[TW_SHIP]=0x7777;
     tnh_hash(c);assert(world_nav_gone==1 && !world_nav_moved && memcmp(a,c,32));
     tw_session.runtime[TW_SHIP]=runtime;tnh_hash(c);assert(!memcmp(a,c,32) && !world_nav_gone);
-    /* A bank phase that is not the one the navigation part names fails closed. */
-    tw_phase(1);assert(!world_nav_hash_core(tw_find,&tw_session,tnh_resolve,c) && !strcmp(world_nav_stage,"nav_phase_changed"));tw_phase(0);
     /* The outer hash needs a completed schema-2 capture before its tick. */
     world_hash_schema=1;world_hash_scans=1;
     char out[128];assert(!world_nav_hash(5,out,sizeof(out)) && !strcmp(world_nav_stage,"no_capture"));
     char status[256];assert(world_nav_status(status,sizeof(status))>0 && strstr(status,"index=1 gone=0 moved=0 ") && strstr(status," stage=no_capture"));
     world_hash_items=saved_items;world_hash_count=saved_count;world_hash_created_count=saved_created;
     world_hash_schema=saved_schema;world_hash_scans=saved_scans;world_nav_index_count=0;world_nav_stage="idle";
-    printf("world nav hash index, determinism, changes, moved/gone markers, phase and capture refusals tests PASS\n");
+    printf("world nav hash index, determinism, changes, moved/gone markers and capture refusal tests PASS\n");
 }

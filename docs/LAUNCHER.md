@@ -236,6 +236,17 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   before the split, and only the world hash differed, at a capture tick (a multiple of 300). The navigation part
   is hashed at the captures only, so these splits sit somewhere in the 300 ticks before; a shorter capture
   stride for that part would narrow them. Triage was stopped to free the clients for the merge checks.
+- **Seed 1111111, merged build: 49,038 ticks (27.2 game minutes).** Past its old 3,749 split. One Argon S fighter's
+  agent (a6432) drew at 49,037 on client 1 and at 49,038 on client 2, the same class as the base seed's split.
+  Every octree lookup row agreed except hidden versus miss, by design. The first triage rerun parted earlier, at
+  37,891, and the second rerun, windowed there, passed: timing again. All three runs read the octree of an Antigone
+  container transport (8939b) as hidden on one client and missing on the other at 37,896..37,900, from the creation
+  site 75b0db; the first rerun parted five ticks before that. A lead to follow, not a cause yet.
+- **Nav-only hash (`native_gate_world_nav_stride`, soak profile: 30).** Between the 300-tick census captures the
+  navigation parts the last capture read (about 10,000 on the seed snapshots) are hashed again every 30 ticks and
+  the last hash joins every tick's digest, so a navigation split stops the relay within 30 ticks. One hash takes
+  about 24 ms (a hitch once a second; the soak ran at 0.84x real time). Seed 1111111, 12,003 ticks: 360 hashes,
+  equal on both clients.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
