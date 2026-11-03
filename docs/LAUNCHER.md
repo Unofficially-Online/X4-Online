@@ -258,6 +258,12 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   one recurring event, at different game times: most likely one group of 11 objects (a formation) whose path
   transforms run once more on one client. A per-tick digest of the diverted objects would name the tick, and
   their keys the group.
+- **Memory.** A loaded seed snapshot holds about 9 GB committed per client from the first minutes on (two
+  clients about 18 GB), steady over a session; earlier figures near 3.4 GB were read before the load. On
+  3 November at 19:00 another program's parallel Rust build exhausted the machine's commit limit (128 GB
+  physical + 8 GB page file): its rustc processes crashed, the desktop compositor exited, and the campaign's
+  next process start failed, ending seed 2222222's triage rerun and seed 3333333's overlay build. Run soaks
+  when nothing else large is running, or raise the page file.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
