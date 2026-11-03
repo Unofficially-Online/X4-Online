@@ -318,3 +318,23 @@ refuses it, ui_missions_claim_taken:<name>). The M1 spec's mask is 19455; entrie
     the mission in both clients' mission lists; person 2's in UI_GUARD_REFUSED / UI_REPLAY_REFUSED rows on client 2 only;
     no stop. Send: UI_MISSIONS_*, UI_GUARD_REFUSED, UI_REPLAY_REFUSED/APPLIED rows, the X4 log's Lua errors after a refusal
     (a menu that does not handle the refusal), screenshots of screen 2 during person 1's conversation and briefing.
+
+8. FIRST LIVE RESULT (coordinator, 3 November 2026; m1d: build203, the session defaults (every UI family, the guard) plus the
+  7a script, 2 clients, 900 ticks; relay pass, no digest mismatch, both stopped with reason 1; world captures only at tick 1)
+  [F] Missions as specified, on both clients at the same ticks: the fixture offer (offers 28 -> 29 at 101), StartBriefing at
+  163 and StopBriefing at 193 with the MD BRIEFING started/cancelled rows (time 12.5163 / 13.5163 on both), the accept at 223
+  (SignalObject(1451386, accept); MD ACCEPTED; missions 1, active 1451385), SetActiveMission at 283, the briefing again at
+  313/343/373 with the interact button, SetActiveMission(0) at 643, AbortMission at 703 (MD ABORTED; missions 0). Client 2:
+  SignalObject refused why=slot at 190, the guard refused StartBriefing (290), AbortMission (440), SelectDialogOption (470) and
+  SetActiveMission (670), StartConversationFromMenu refused why=slot (490). UI_MISSIONS_STATUS: captured=1/2/1/2/2 on client 1,
+  0/0/0/0/0 on client 2, applied=8 on both, gone=0, unmapped=0. (Guard: entries=285, installed=219 in the defaults stack.)
+  [F] Conversations do not start: StartConversationFromMenu(X4LAN_Talk) applied at 403 and 523 and SelectDialogOption at
+  463 and 583 on both clients, but no UI_MISSIONS_MD_TALK row and the conversation column stays 1.0: X4 does not take a cue
+  actor (the offer's client) as a conversation partner from the menu call (section 6 marked it [I]). The replay itself is
+  the same on both clients (nothing diverged).
+  m1e (as m1d, script {60,'comm',2},{120,'dialog',1},{180,'comm',2},{240,'dialog_native',2} for slot 1, {90,'comm',1} for
+  slot 2; 600 ticks): StartConversationFromMenu('default', slot 2's ship) applied at 103 and 223 on both clients and returned
+  nil; SelectDialogOption at 163/283 met X4's own '[ConversationManager::SelectOption] Option 1 not found!' (no conversation
+  active); slot 2's own comm refused why=slot on client 2; relay pass. [F] So the call from the replay's frame starts no
+  conversation whatever the partner. [I] The stock menus start one in a state the probe's frame does not have (an open
+  conversation/comm menu, the player's comm target); the people test 7b captures what X4's own menu calls and when.
