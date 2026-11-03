@@ -232,6 +232,10 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   ticks are world capture ticks (multiples of 300): the navigation part is hashed at the
   captures, so the split lies in the 300 ticks before. When a rerun parts before its window,
   triage now reruns once more, windowed at the rerun's split, and appends that report.
+- **Seed 3333333: 86,100 ticks (47.8 game minutes).** Like seed 2222222: no status line or actor row differed
+  before the split, and only the world hash differed, at a capture tick (a multiple of 300). The navigation part
+  is hashed at the captures only, so these splits sit somewhere in the 300 ticks before; a shorter capture
+  stride for that part would narrow them. Triage was stopped to free the clients for the merge checks.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
