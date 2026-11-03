@@ -111,6 +111,13 @@ for them (the probe already wraps `AddUITriggeredEvent` for the census). X4's UI
 no debug library, so the census lists all global functions and the C ones are told apart
 offline (names the UI scripts do not define).
 
+Relaying the Lua-global writes (not only blocking them) needs per-function argument
+kinds too: the UI passes components to them both as LuaID userdata
+(`AddTradeToShipQueue(ConvertStringToLuaID(...))`, recognizable by type) and as plain
+numbers (`TransferPlayerMoneyTo(fee, ConvertStringTo64Bit(...))`), which look like the fee
+beside them. With a kind list per global (component, number, string, boolean, table) the
+'ffi' section can carry them as records with index 0xffff and the global's name.
+
 ## Gaps
 
 1. **Unwrapped FFI writes.** The orders and UI replay capture work on known menu
