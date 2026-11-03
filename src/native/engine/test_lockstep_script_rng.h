@@ -36,8 +36,7 @@ static void test_sr_ai_init(test_sr_ai *a,uint64_t runtime,const char *name,uint
 static void test_sr_md_init(test_sr_md *m) {
     memset(m,0,sizeof(*m));
     *(void**)m->cue=image+SCRIPT_RNG_CUE_VT;*(void**)(m->cue+0x160)=m->cue;*(void**)(m->cue+0x150)=m->module;
-    test_npc_string(m->module+0x18,"Other");test_npc_string(m->node+0x20,"Cue1");
-    *(void**)(m->module+0x80)=m->node;*(void**)m->node=m->module+0x60;*(void**)(m->node+0x40)=m->cue;
+    test_npc_string(m->module+0x18,"Other");test_npc_string(m->cue+0xc8,"Cue1"); /* a root: "Other.Cue1" */
     m->program[0]=(uintptr_t)m->entries;m->program[1]=(uintptr_t)(m->entries+2);
     *(void**)(m->exec+0x10)=m->program;*(uint32_t*)(m->exec+0x38)=0x5d;*(void**)(m->exec+0x40)=m->cue+0xb0;
 }
@@ -224,14 +223,14 @@ static void test_script_rng(void) {
            script_rng_ring[0].key==script_rng_key(SR_EXEC,11,0xa1,stream_a,1,4));
     script_rng_mode=SCRIPT_RNG_KEY;
 
-    /* MD: cue identity is the static module.cue name, cached per definition;
+    /* MD: cue identity is the static cue's path (here a root: "<script>.<cue>"), cached per definition;
      * an event's first object parameter contributes only its saved ID. */
     test_sr_reset();stats.issued=12;word=5;test_sr_draws=1;
     uint64_t md_owner=test_sr_fnv("Other.Cue1"),md_stream=script_rng_stream(SCRIPT_RNG_MD_SCRIPT,SR_EXEC,SCRIPT_RNG_MD,2);
     npc_exec_entry(test_sr_exec,test_sr_cue.exec,&word,0);
     assert(test_sr_seen[0]==script_rng_key(SR_EXEC,12,md_owner,md_stream,1,0) && word==5 && script_rng_name_count==1);
     assert(script_rng_ring[0].kind==SCRIPT_RNG_MD && script_rng_ring[0].instance==0 && !strcmp(script_rng_ring[0].name,"Other.Cue1"));
-    *(void**)(test_sr_cue.node+0x40)=NULL; /* cached: no second tree walk */
+    test_npc_string(test_sr_cue.cue+0xc8,""); /* cached: the path is not read again */
     *(uint32_t*)(test_sr_cue.cue+0x18)=0x633;*(uint32_t*)(test_sr_cue.cue+0x20)=0xa;*(uint64_t*)(test_sr_cue.cue+0x28)=0x7001;
     assert(script_rng_event_run(SR_CUE,test_sr_handler,&word,test_sr_cue.cue,NULL,NULL,NULL)==0x77);
     uint64_t cue_detail=lockstep_mix((0x633ULL<<32)^lockstep_mix(0x77));
@@ -248,12 +247,14 @@ static void test_script_rng(void) {
     script_rng_event_run(SR_STACK,test_sr_handler,&word,test_sr_a.callstack,NULL,NULL,NULL);
     assert(test_sr_seen[6]==script_rng_key(SR_STACK,12,0xa1,script_rng_stream(test_sr_fnv("move.idle"),SR_STACK,SCRIPT_RNG_AI,0),1,
         lockstep_mix((0x506ULL<<32)^lockstep_mix(0))) && word==5);
-    /* A replaced definition (other module at the same address) is re-resolved. */
-    *(void**)(test_sr_cue.cue+0x150)=test_sr_module2;test_npc_string(test_sr_module2+0x18,"Other");
-    *(void**)(test_sr_module2+0x80)=test_sr_module2+0x60;
+    /* A replaced definition (other module at the same address) is re-resolved: here its own name is gone, so its path is
+     * refused (counted) and the cue unnamed, unkeyed. */
+    *(void**)(test_sr_cue.cue+0x150)=test_sr_module2;test_npc_string(test_sr_module2+0x18,"Other");cue_path_refusals=0;
     npc_exec_entry(test_sr_exec,test_sr_cue.exec,&word,0);
-    assert(test_sr_seen[0]==5 && script_rng_why[SR_UNNAMED]==1 && script_rng_unkeyed==1);
-    *(void**)(test_sr_cue.cue+0x150)=test_sr_cue.module;*(void**)(test_sr_cue.node+0x40)=test_sr_cue.cue;
+    assert(test_sr_seen[0]==5 && script_rng_why[SR_UNNAMED]==1 && script_rng_unkeyed==1 && cue_path_refusals==1);
+    {char text[2560];assert(script_rng_status(text,sizeof(text))>0 && strstr(text," cue_refused=1 cue_refusal=check=static_root,static="));}
+    *(void**)(test_sr_cue.cue+0x150)=test_sr_cue.module;test_npc_string(test_sr_cue.cue+0xc8,"Cue1");
+    cue_path_refusals=0;snprintf(cue_path_refusal,sizeof(cue_path_refusal),"-");
     /* Masked kind: transparent, not counted as missing identity. */
     script_rng_mask=SCRIPT_RNG_AI;memset(script_rng_names,0,sizeof(script_rng_names));
     uint64_t unmasked=word;npc_exec_entry(test_sr_exec,test_sr_cue.exec,&word,0);

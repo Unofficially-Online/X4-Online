@@ -348,7 +348,10 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_attention.h"
 #include "test_gate_step_trace.h"
 #include "test_gate_fp_redirect.h"
+#include "test_gate_fp_attack.h"
+#include "test_gate_fp_drones.h"
 #include "test_gate_coverage.h"
+#include "test_gate_fork_save.h"
 /* The real entry bytes: the hook patch and its exact restoration, without running them. */
 static void test_world_install_elf(void) {
     reset_session();wt_reset_identities();
@@ -377,7 +380,10 @@ int main(int argc,char **argv) {
     test_step_trace_linux();
     test_step_chain_linux();
     test_fp_redirect_linux();
+    test_fsp_linux();
+    test_fa_linux();
     test_coverage_linux();
+    test_fork_save_linux();
     test_world_hook(); /* last on the synthetic image: it replaces the insert's bytes */
     if(argc>1) {
         /* The real executable's bytes: file pin, every site, the call, the patches. */
@@ -390,6 +396,8 @@ int main(int argc,char **argv) {
         test_world_install_elf();test_path_install();test_path_budget();test_load_patches();test_world_golden(getenv("GATE_WORLD_GOLDEN"));
         test_loadout_order_elf();
         test_fp_redirect_elf();
+        test_fa_elf();
+        test_fdr_elf();
         test_step_chain_elf();
         printf("ELF image PASS (%s)\n",argv[1]);
     } else printf("ELF image SKIPPED (no executable path)\n");

@@ -262,6 +262,62 @@ class ViewPointsSourceOptionTests(unittest.TestCase):
         self.assertEqual(self.failures(BASE+self.VIEW+'X4LAN_CONFIG.native_gate_view_points_source = false\n'), [])
 
 
+class ViewPointsMaskOptionTests(unittest.TestCase):
+    VIEW = "X4LAN_CONFIG.native_gate_view_points = 'players'\n"
+
+    def failures(self, text):
+        return [f['rule'] for f in module.check(text)[1] if 'view_points_mask' in f['rule']]
+
+    def test_values_players_mode_and_snapshot(self):
+        for value in ('0', '1', '2', '15'):
+            with self.subTest(value=value):
+                self.assertEqual(self.failures(BASE+self.VIEW+'X4LAN_CONFIG.native_gate_view_points_mask = %s\n' % value), [])
+        self.assertEqual(self.failures(BASE+'X4LAN_CONFIG.native_gate_view_points = true\nX4LAN_CONFIG.native_gate_view_points_mask = 1\n'), [])
+        for value in ('16', '-1', '1.5', 'true'):
+            with self.subTest(value=value):
+                self.assertEqual(len(self.failures(BASE+self.VIEW+'X4LAN_CONFIG.native_gate_view_points_mask = %s\n' % value)), 1)
+        self.assertEqual(len(self.failures(BASE+'X4LAN_CONFIG.native_gate_view_points_mask = 1\n')), 1)
+        self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_view_points = 'observe'\nX4LAN_CONFIG.native_gate_view_points_mask = 1\n")), 1)
+        self.assertEqual(len(self.failures(self.VIEW+'X4LAN_CONFIG.native_gate_view_points_mask = 1\n')), 1)
+        self.assertEqual(self.failures(BASE+self.VIEW+'X4LAN_CONFIG.native_gate_view_points_mask = false\n'), [])
+
+
+class HybridOptionTests(unittest.TestCase):
+    NEEDS = ("X4LAN_CONFIG.native_gate_view_points = 'players'\nX4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@\n"
+             "X4LAN_CONFIG.native_gate_pilot_slots = {'00000000000ae79c','000000000007a8fe'}\n")
+
+    def failures(self, text):
+        return [f['rule'] for f in module.check(text)[1] if 'native_gate_hybrid' in f['rule']]
+
+    def test_table_owners_tick_poses_and_prerequisites(self):
+        for value in ('{owners={2},tick=60}', '{owners={1,2},tick=30,poses=5}', '{ owners = {2}, tick = 60, poses = 0 }', 'false', 'nil'):
+            with self.subTest(value=value):
+                self.assertEqual(self.failures(BASE+self.NEEDS+'X4LAN_CONFIG.native_gate_hybrid = %s\n' % value), [])
+        for value in ('true', '2', '{owners={},tick=60}', '{owners={2,2},tick=60}', '{owners={5},tick=60}', '{owners={2},tick=1}',
+                      '{owners={2},tick=60,poses=6}', '{owners={2}}', '{owners={2},tick=60,extra=1}', "{owners={'2'},tick=60}"):
+            with self.subTest(value=value):
+                self.assertEqual(len(self.failures(BASE+self.NEEDS+'X4LAN_CONFIG.native_gate_hybrid = %s\n' % value)), 1)
+        value = 'X4LAN_CONFIG.native_gate_hybrid = {owners={3},tick=60}\n'
+        self.assertEqual(self.failures(BASE+self.NEEDS+value), ['native_gate_hybrid owners must be pilot slots (native_gate_pilot_slots)'])
+        value = 'X4LAN_CONFIG.native_gate_hybrid = {owners={2},tick=60}\n'
+        self.assertEqual(len(self.failures(BASE+value)), 3)  # view points, pilot slots, the input wire
+        self.assertEqual(self.failures(BASE+self.NEEDS.replace("'players'", "'observe'")+value),
+                         ["native_gate_hybrid needs native_gate_view_points = 'players'"])
+
+
+class SampleProfileOptionTests(unittest.TestCase):
+    def failures(self, text):
+        return [f['rule'] for f in module.check(text)[1] if 'sample_profile' in f['rule']]
+
+    def test_period_range(self):
+        for value in ('1', '2', '50', 'false', 'nil'):
+            with self.subTest(value=value):
+                self.assertEqual(self.failures('X4LAN_CONFIG.native_gate_sample_profile = %s\n' % value), [])
+        for value in ('0', '51', '100', '2.5', 'true', "'2'"):
+            with self.subTest(value=value):
+                self.assertEqual(len(self.failures('X4LAN_CONFIG.native_gate_sample_profile = %s\n' % value)), 1)
+
+
 class RegionCameraOptionTests(unittest.TestCase):
     NEEDS = "X4LAN_CONFIG.native_gate_view_points = 'players'\nX4LAN_CONFIG.native_gate_region_pass = 'sync'\n"
 
@@ -312,6 +368,56 @@ class ExactReciprocalOptionTests(unittest.TestCase):
         self.assertEqual(self.failures(BASE+'X4LAN_CONFIG.native_gate_exact_reciprocal = false\n'), [])
         self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_exact_reciprocal = 'sqrt'\n")), 1)
         self.assertEqual(len(self.failures('X4LAN_CONFIG.native_gate_exact_reciprocal = true\n')), 1)
+
+
+class FpRedirectSolverOptionTests(unittest.TestCase):
+    """FR27: native_gate_fp_redirect_solver ('shadow' or 'redirect') needs native_gate_fp_redirect."""
+    def failures(self, text):
+        return [f['rule'] for f in module.check(text)[1] if 'fp_redirect_solver' in f['rule']]
+
+    def test_shadow_or_redirect_with_the_fp_redirect(self):
+        on = BASE + "X4LAN_CONFIG.native_gate_fp_redirect = 'redirect'\n"
+        self.assertEqual(self.failures(on + "X4LAN_CONFIG.native_gate_fp_redirect_solver = 'redirect'\n"), [])
+        self.assertEqual(self.failures(on + "X4LAN_CONFIG.native_gate_fp_redirect_solver = 'shadow'\n"), [])
+        self.assertEqual(len(self.failures(on + "X4LAN_CONFIG.native_gate_fp_redirect_solver = 'writer'\n")), 1)
+        self.assertEqual(len(self.failures(BASE + "X4LAN_CONFIG.native_gate_fp_redirect_solver = 'redirect'\n")), 1)
+
+
+class FpAttackCaptureOptionTests(unittest.TestCase):
+    """FR29b: native_gate_fp_attack_capture = {first,last} needs the fp redirect and world identities; the watch list
+    (up to 32 saved IDs) needs the capture."""
+    def failures(self, text):
+        return [f['rule'] for f in module.check(text)[1] if 'fp_attack' in f['rule']]
+
+    def test_window_watch_and_what_it_needs(self):
+        need = BASE + "X4LAN_CONFIG.native_gate_fp_redirect = 'redirect'\nX4LAN_CONFIG.native_gate_world_identities = true\n"
+        on = "X4LAN_CONFIG.native_gate_fp_attack_capture = {1,600}\n"
+        watch = "X4LAN_CONFIG.native_gate_fp_attack_watch = {'000000000007336a','0000000000096587'}\n"
+        self.assertEqual(self.failures(need + on), [])
+        self.assertEqual(self.failures(need + on + watch), [])
+        self.assertEqual(self.failures(need + "X4LAN_CONFIG.native_gate_fp_attack_capture = {546, 546}\n"), [])
+        self.assertEqual(len(self.failures(BASE + "X4LAN_CONFIG.native_gate_world_identities = true\n" + on)), 1)
+        self.assertEqual(len(self.failures(BASE + "X4LAN_CONFIG.native_gate_fp_redirect = 'redirect'\n" + on)), 1)
+        for bad in ('{0, 600}', '{600, 1}', '{540}', "'540'", 'true'):
+            self.assertEqual(len(self.failures(need + "X4LAN_CONFIG.native_gate_fp_attack_capture = %s\n" % bad)), 1, bad)
+        self.assertEqual(len(self.failures(need + watch)), 1)
+        for bad in ("{'7336a'}", "{'000000000007336A'}", "{'0000000000000000'}", "{'000000000007336a','000000000007336a'}",
+                    '{' + ','.join("'%016x'" % (i + 1) for i in range(33)) + '}'):
+            self.assertEqual(len(self.failures(need + on + "X4LAN_CONFIG.native_gate_fp_attack_watch = %s\n" % bad)), 1, bad)
+        self.assertEqual(self.failures(need + "X4LAN_CONFIG.native_gate_fp_attack_capture = nil\n"), [])
+
+
+class FpRedirectDronesOptionTests(unittest.TestCase):
+    """FR30: native_gate_fp_redirect_drones ('shadow' or 'redirect') needs native_gate_fp_redirect."""
+    def failures(self, text):
+        return [f['rule'] for f in module.check(text)[1] if 'fp_redirect_drones' in f['rule']]
+
+    def test_shadow_or_redirect_with_the_fp_redirect(self):
+        on = BASE + "X4LAN_CONFIG.native_gate_fp_redirect = 'redirect'\n"
+        self.assertEqual(self.failures(on + "X4LAN_CONFIG.native_gate_fp_redirect_drones = 'redirect'\n"), [])
+        self.assertEqual(self.failures(on + "X4LAN_CONFIG.native_gate_fp_redirect_drones = 'shadow'\n"), [])
+        self.assertEqual(len(self.failures(on + "X4LAN_CONFIG.native_gate_fp_redirect_drones = 'writer'\n")), 1)
+        self.assertEqual(len(self.failures(BASE + "X4LAN_CONFIG.native_gate_fp_redirect_drones = 'redirect'\n")), 1)
 
 
 class FpEnvOptionTests(unittest.TestCase):
@@ -765,6 +871,19 @@ class SimulationCameraOptionTests(unittest.TestCase):
         self.assertEqual(len(self.failures(BASE+stride+"X4LAN_CONFIG.native_gate_world_hash_shields = 'raw'\n", key)), 1)
         self.assertEqual(self.failures(BASE+"X4LAN_CONFIG.native_gate_world_hash_shields = false\n", key), [])
 
+    def test_world_health_ticks(self):
+        key = 'world_health_ticks'
+        stride = "X4LAN_CONFIG.native_gate_world_hash_stride = 30\n"
+        watch = "X4LAN_CONFIG.native_gate_world_hash_watch = {'000000000007336a','0000000000073371'}\n"
+        on = "X4LAN_CONFIG.native_gate_world_health_ticks = {1, 600}\n"
+        self.assertEqual(self.failures(BASE+stride+watch+on, key), [])
+        self.assertEqual(self.failures(BASE+stride+watch+"X4LAN_CONFIG.native_gate_world_health_ticks = {540,540}\n", key), [])
+        self.assertEqual(len(self.failures(BASE+watch+on, key)), 1)
+        self.assertEqual(len(self.failures(BASE+stride+on, key)), 1)
+        for bad in ('{0, 600}', '{570, 540}', '{540}', "'540'", 'true'):
+            self.assertEqual(len(self.failures(BASE+stride+watch+"X4LAN_CONFIG.native_gate_world_health_ticks = %s\n" % bad, key)), 1, bad)
+        self.assertEqual(self.failures(BASE+"X4LAN_CONFIG.native_gate_world_health_ticks = nil\n", key), [])
+
     def test_speak_timer_values(self):
         key = 'native_gate_speak_timer'
         self.assertEqual(self.failures(BASE+"X4LAN_CONFIG.native_gate_speak_timer = true\n", key), [])
@@ -1181,3 +1300,34 @@ class SplineJoinAllAndRowsOptionTests(unittest.TestCase):
                 self.assertEqual(self.failures(BASE+f'X4LAN_CONFIG.{hook} = true\nX4LAN_CONFIG.native_gate_motion_watch_splines = true\n',
                                                'motion_watch_splines'), [])
         self.assertEqual(len(self.failures(BASE+'X4LAN_CONFIG.native_gate_motion_watch_splines = true\n', 'motion_watch_splines')), 1)
+
+
+class SessionDefaultsOptionTests(unittest.TestCase):
+    """A session config is checked with its session defaults applied (tools/dev/native_gate_defaults.lua)."""
+    SESSION = ('X4LAN_CONFIG.native_gate_test = true\nX4LAN_CONFIG.slot = "@X4LANE_SLOT@"\nX4LAN_CONFIG.port = @X4LANE_PORT@\n'
+               'X4LAN_CONFIG.token = "@X4LANE_TOKEN@"\nX4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@\n'
+               'X4LAN_CONFIG.native_gate_player_identity_plan = {["mode"]="coop",["slots"]={{["faction"]="player",["ship"]="00000000000ae79c"},'
+               '{["faction"]="player",["ship"]="000000000007a8fe"}},["tick"]=20,["version"]=1}\n')
+
+    def test_an_empty_session_config_is_the_full_stack_and_valid(self):
+        options, failures, report = module.check_report(self.SESSION)
+        self.assertEqual(failures, [])
+        self.assertTrue(report['session'])
+        # Render frames wait while the own-ship prediction presents (render report section 17).
+        self.assertIn('native_gate_own_predict', report['applied'])
+        self.assertNotIn('native_gate_render_fps', report['applied'])
+        self.assertIn('native_gate_ui_guard', report['applied'])
+        self.assertGreater(options, 0)
+
+    def test_fragments_and_the_bare_gate_are_checked_as_written(self):
+        self.assertEqual(module.check(BASE+'X4LAN_CONFIG.native_gate_bullet_cadence = true\n')[1][0]['rule'],
+                         'native_gate_bullet_cadence counts in the bullet Move wrapper')
+        options, failures, report = module.check_report(self.SESSION+'X4LAN_CONFIG.native_gate_defaults = false\n')
+        self.assertTrue(report['bare'])
+        self.assertEqual(options, 0)
+
+    def test_the_rules_hold_on_the_effective_config(self):
+        # The default stack needs the stock slots; a session turning the stock path off loses its dependants, loudly, not with a failure.
+        options, failures, report = module.check_report(self.SESSION+'X4LAN_CONFIG.native_gate_pilot_stock = false\n')
+        self.assertEqual(failures, [])
+        self.assertIn('native_gate_ui_replay', [key for key, _, _ in report['skipped']])

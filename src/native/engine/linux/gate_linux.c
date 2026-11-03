@@ -54,6 +54,7 @@ static char secret[33], digest[65];
 static char proposal[9]="00000000",inputs[2][9]={"00000000","00000000"};
 static unsigned wire_version=2,wire_clients=2;
 static unsigned wire_lookahead;
+static void peer_close(void); /* opt-in peer links (lockstep_peer.h): their socket closes with the relay's */
 static char blob_proposal[GATE_BLOB_HEX_MAX+1],blob_staged[GATE_BLOB_HEX_MAX+1];
 static char blob_inputs[GATE_CLIENTS_MAX][GATE_BLOB_HEX_MAX+1];
 static uint64_t blob_staged_tick;
@@ -199,6 +200,9 @@ static volatile long ai_sched_armed;
 static volatile int64_t ai_sched_failures;
 static unsigned path_det_mask;
 static volatile LONG64 path_det_failures;
+/* Non-blocking save by fork (gate_fork_save.h, included below). */
+static void fork_save_frame(uint64_t completed);
+static void fork_save_stop(void);
 
 /* Production defaults. Only linux/test_gate_linux.c changes them, to run the same
  * code on a fake image: its file, the /proc/self/maps checks, the module pin. */
@@ -382,6 +386,7 @@ static int accept_ui(void) {
     return 0;
 }
 static void close_connection(void) {
+    peer_close();
     SOCKET owned=__atomic_exchange_n(&connection,INVALID_SOCKET,__ATOMIC_SEQ_CST);
     if(owned!=INVALID_SOCKET) closesocket(owned);
 }
@@ -395,6 +400,7 @@ static void finish(unsigned reason) {
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
     stats.reason=reason;
     created_stop(); /* No created identity is recorded once STOP has begun. */
+    fork_save_stop(); /* never kills a running child: its own watchdog ends it */
     InterlockedExchange(&stats.active,0);
     if(installed) {stats.restored=call_swap(call_patched,call_original);if(stats.restored) installed=0;}
     /* From the UI thread, let the main thread leave FrameTick first (best effort). */
@@ -459,6 +465,7 @@ static int closed_window(void) {return 0;} /* no cheap SDL quit check from this 
 /* The per-frame reads of the timing rows: every guarded read, also those not through read_local. */
 #define read_local_calls gate_read_count
 #include "lockstep_gate_timing.h"
+#include "lockstep_wire_crypto_gate.h"
 /* ReadProcessMemory on Windows; module ports call it under this name. */
 static __attribute__((unused)) int read_local(const void *source,void *dest,size_t bytes) {
     return gate_read_local(source,dest,bytes);
@@ -476,9 +483,10 @@ static unsigned gate_wait_permit(const char *packet,int length,char *reply,size_
         if(drift>0) return 5;
         if(closed_window()) return 6;
         if(now-start>timeout_ms) return 7;
-        if(!last||now-last>=100) {send(connection,packet,(size_t)length,0);last=now;++stats.waits;}
-        int count=(int)recv(connection,reply,capacity-1,0);
+        if(!last||now-last>=100) {gate_wire_send(packet,(size_t)length);last=now;++stats.waits;}
+        int count=gate_wire_recv(reply,(int)capacity-1);
         if(count<0) {int error=WSAGetLastError();if(error!=WSAETIMEDOUT&&error!=WSAEWOULDBLOCK) return 8;continue;}
+        if(wcg.stop) return wcg.stop;
         reply[count]=0;
         if((size_t)count!=strlen(reply)) continue;
         char permit[128],stop[128];
@@ -561,6 +569,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     /* The frame just run is complete and its MoveWorker joined: resolve its creations. */
     if(!created_frame(stats.completed)) {finish(96);gate_original_once(frame,loading);return;}
     if(!rid_frame(stats.completed)) {finish(130);gate_original_once(frame,loading);return;}
+    fork_save_frame(stats.completed); /* default off; never stops the session */
     static char packet[GATE_STATE_MAX],reply[GATE_PERMIT_MAX];uint64_t gamebits,realbits;
     memcpy(&gamebits,&stats.game,8);memcpy(&realbits,&stats.real,8);
     int length=wire_lookahead?
@@ -571,6 +580,11 @@ static void gate_tick(void *frame,unsigned char loading) {
                  (unsigned long long)stats.completed,(unsigned long long)gamebits,(unsigned long long)realbits,digest,wire_clients,blob_proposal):
         snprintf(packet,sizeof(packet),"NGSTATE|2|%s|%u|%llu|%016llx|%016llx|%s|%s",secret,stats.slot,
                  (unsigned long long)stats.completed,(unsigned long long)gamebits,(unsigned long long)realbits,digest,proposal);
+    /* gate.wire_crypto: the first frame runs the handshake; every report then carries its signed input record. */
+    if(wcg.armed && length>=0 && (size_t)length<sizeof(packet)) {
+        unsigned crypto_reason=wcg_prepare(packet,&length,sizeof(packet));
+        if(crypto_reason) {finish(crypto_reason);gate_original_once(frame,loading);return;}
+    }
     LARGE_INTEGER ft_begin,ft_permit,ft_end;QueryPerformanceCounter(&ft_begin);
     if(ft_last_end) {LARGE_INTEGER prior;prior.QuadPart=(LONGLONG)ft_last_end;ft_outside=ft_us(prior,ft_begin);ft_sum_outside+=ft_outside;}
     ft_pre=ft_us(ft_entry,ft_begin);ft_sum_pre+=ft_pre;
@@ -641,7 +655,7 @@ static int pin_module(void) {
     return dlopen(info.dli_fname,RTLD_NOW|RTLD_NOLOAD|RTLD_NODELETE)!=NULL;
 }
 static int start_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *initial_digest,int boot) {
-    if(used||slot<1||slot>wire_clients||(wire_lookahead && wire_version!=3)||port<1024||port>65535||timeout<1000||timeout>120000||!valid_hex(token,32)||!valid_hex(initial_digest,64)) return 10;
+    if(used||slot<1||slot>wire_clients||(wire_lookahead && wire_version!=3)||(wcg.armed && wire_version!=3)||!peer_config_ok()||port<1024||port>65535||timeout<1000||timeout>120000||!valid_hex(token,32)||!valid_hex(initial_digest,64)) return 10;
     if(!verify()) return 11;
     if(*(volatile unsigned char*)LX(LX_MOVIE_FLAG_VA)) return boot?27:12;
     /* start: another owner fixed dt (the x4mp-agent fixed60 pattern); boot: the
@@ -706,6 +720,7 @@ static int lua_start(lua_State *L) {
 #include "gate_gravidar_deadlines.h"
 #include "gate_travel_snapshot.h"
 #include "gate_runtime_ids.h"
+#include "gate_fork_save.h"
 static int lua_read_cost(lua_State *L) {
     char out[256];
     int n=accept_ui()?snprintf(out,sizeof(out),"fast=%d installed=%d reads=%llu faults=%llu lost=%llu slow_ns=%llu fast_ns=%llu.%llu gettid_ns=%llu",
@@ -799,9 +814,9 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     p_lua_createtable(L,0,16);
 #define METHOD(name) p_lua_pushcclosure(L,lua_##name,0);p_lua_setfield(L,-2,#name)
     METHOD(sha256);METHOD(start);METHOD(boot);METHOD(load_requested);METHOD(report);METHOD(poll);METHOD(stop);
-    METHOD(frame_timing);METHOD(qpc_us);METHOD(tick_rate);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);
+    METHOD(frame_timing);METHOD(qpc_us);METHOD(tick_rate);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(peer_links);METHOD(peer_status);METHOD(wire_crypto);METHOD(wire_crypto_status);
     METHOD(platform);METHOD(verify_stage);
-    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);
+    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);METHOD(world_health);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);
@@ -814,8 +829,8 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
     METHOD(travel_snapshot);METHOD(travel_snapshot_status);
     METHOD(runtime_ids);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_callers);
-    METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(attention_all);METHOD(attention_all_status);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
-    METHOD(read_cost);
+    METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(attention_all);METHOD(attention_all_status);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
+    METHOD(read_cost);METHOD(fork_save);METHOD(fork_save_status);METHOD(fp_redirect_drones);METHOD(fp_attack);METHOD(fp_attack_watch);METHOD(fp_attack_status);METHOD(fp_attack_row);
 #undef METHOD
     return 1;
 }

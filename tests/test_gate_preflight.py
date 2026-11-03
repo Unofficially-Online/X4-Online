@@ -15,7 +15,8 @@ def overlay(path, extra=''):
     (path / 'ui/config.lua.append').write_text(
         'X4LAN_CONFIG.native_gate_test = true\nX4LAN_CONFIG.native_gate_hash = "clock"\n'
         'X4LAN_CONFIG.test_profile = "45841"\nX4LAN_CONFIG.port = @X4LANE_PORT@\nX4LAN_CONFIG.token = "@X4LANE_TOKEN@"\n'
-        'X4LAN_CONFIG.slot = "@X4LANE_SLOT@"\nX4LAN_CONFIG.native_gate_snapshot_sha = "' + 'a' * 64 + '"\n' + extra)
+        'X4LAN_CONFIG.slot = "@X4LANE_SLOT@"\nX4LAN_CONFIG.native_gate_snapshot_sha = "' + 'a' * 64 + '"\n'
+        'X4LAN_CONFIG.native_gate_defaults = false\n' + extra)   # the bare gate, as soak overlays are (no default stack)
     return path
 
 

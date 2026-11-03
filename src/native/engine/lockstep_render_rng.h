@@ -45,6 +45,11 @@ typedef void (*render_rng_fn)(void *);
  * pose substitution around the original slot 10; inert unless armed. */
 static int predict_present_enter(void);
 static void predict_present_leave(int entered);
+/* Display transforms between two steps (lockstep_render_display.h): the step's sample first, then
+ * after the predictor's entry the frame's offsets; undone before the predictor's exit. */
+static void rdisp_sample(void);
+static int rdisp_enter(void);
+static void rdisp_leave(int entered);
 /* Slot 10 inside the presentation scope (lockstep_pilot_present.h); the original alone when off. */
 static void pres_render_call(render_rng_fn original,void *self);
 static volatile LONG render_rng_active;
@@ -70,7 +75,10 @@ static void render_rng_execute(render_rng_fn original,void *self,volatile uint64
     volatile uint64_t after=start;
     if(stats.issued!=render_rng_frame) {render_rng_frame=stats.issued;render_rng_frame_calls=render_rng_frame_steps=render_rng_frame_ids=0;}
     render_rng_entry=caller;++render_rng_calls;++render_rng_frame_calls;
+    LARGE_INTEGER slot_begin,slot_end;QueryPerformanceCounter(&slot_begin); /* slot 10's time (gate.render_split) */
+    rdisp_sample();
     const int presented=predict_present_enter();
+    const int displayed=rdisp_enter();
     __try {
         if(split) *word=start;
         InterlockedExchange(&render_rng_in_slot,1);
@@ -78,6 +86,7 @@ static void render_rng_execute(render_rng_fn original,void *self,volatile uint64
     } __finally {
         DWORD error=GetLastError();
         InterlockedExchange(&render_rng_in_slot,0);
+        rdisp_leave(displayed);
         predict_present_leave(presented);
         after=*word;
         if(split) {render_rng_state=after;*word=caller;}
@@ -85,6 +94,7 @@ static void render_rng_execute(render_rng_fn original,void *self,volatile uint64
         if(AbnormalTermination()) {InterlockedIncrement64(&render_rng_failures);render_rng_stage="exception";}
         SetLastError(error);
     }
+    QueryPerformanceCounter(&slot_end);rf_slot10_done(slot_end.QuadPart-slot_begin.QuadPart);
     uint64_t steps=render_rng_distance(start,after);
     if(steps==UINT64_MAX) ++render_rng_unknown;
     else {render_rng_steps+=steps;render_rng_frame_steps+=steps;}

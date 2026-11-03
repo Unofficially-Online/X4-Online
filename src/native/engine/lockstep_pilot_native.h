@@ -397,6 +397,9 @@ static pnat_node *pnat_next(pnat_node *n) {
 static int pslot_pass(uint64_t tick);static int pslot_replay(uint64_t tick);static void pslot_restore(void);
 /* A slot ship's death (lockstep_pilot_death.h, included after the presentation). */
 static int pdeath_pass(uint64_t tick,unsigned char *controller);static void pdeath_restore(void);static const char *pdeath_why;
+static int pfbody_armed;static const char *pfbody_why;static int pfbody_pass(uint64_t tick,int phase);static void pfbody_restore(void); /* lockstep_pilot_foot_body.h */
+static int pfbody_guard(uint64_t tick);
+static int pfslot_armed;static const char *pfslot_why;static int pfslot_pass(uint64_t tick);static void pfslot_frame(void);static void pfslot_restore(void); /* lockstep_pilot_foot_slots.h */
 static const char *pslot_why;static int pres_pass(uint64_t tick);static void pres_restore(void);static const char *pres_why;static int vps_pins(void);static int vpl_pins(void);
 static void pnat_dispatch_action(unsigned char *map,int id) {
     InterlockedIncrement64(&pnat_dispatched[PNAT_ACTION]);
@@ -760,6 +763,7 @@ static void pnat_uninstall(void) {
     }
     if(!pstk_aim_uninstall()) ok=0;
     if(!pview_uninstall()) ok=0;
+    pfoot_uninstall();if(!pfoot_restored) ok=0;
     pnat_installed=!ok;pnat_restored=ok;
 }
 /* At start-2 on the MoveWorker, controls parked by our share: everything is
@@ -816,7 +820,16 @@ static int pnat_check(unsigned char *controller,const uint32_t *counter,const un
         /* Flight control is the replayed state: anything else moved it on this client only. A dead slot 1
          * has neither (lockstep_pilot_death.h): X4's player sits in what the eject built. */
         int dead=pilot_slots[0].dead!=0;
-        if(!dead && pnat_flight_seen!=pstk_flight) return pnat_fail("stock_flight_drift");
+        /* Slot 1 on foot (lockstep_pilot_foot.h): walking without a PlayerController, or sat down again in its ship. */
+        if(pfoot_armed && !dead) {
+            int foot=pfoot_check(stats.issued,controller,&pnat_controller,pnat_ship,pnat_flight_seen,pstk_flight);
+            if(foot<0) return pnat_fail(pfoot_why);
+            if(foot>0) {
+                if(!read_local(pnat_base+PNAT_INPUT,&input,8) || input!=pnat_input) return pnat_fail("stock_controller_changed");
+                return 1;
+            }
+        }
+        if(!dead && pnat_flight_seen!=pstk_flight && !pfoot_flight_grace(stats.issued)) return pnat_fail("stock_flight_drift");
         if((!dead && (!controller || controller!=pnat_controller || !read_local(controller+0x28,&ship,8) || ship!=pnat_ship)) ||
            !read_local(pnat_base+PNAT_INPUT,&input,8) || input!=pnat_input) return pnat_fail("stock_controller_changed");
         pnat_stop_in_menu=*PNAT_U8(PNAT_STOP_IN_MENU);
@@ -857,8 +870,13 @@ static int pnat_pass(uint64_t tick,unsigned char *controller,pilot_refresh_fn re
     if(pnat_mode==PNAT_MODE_STOCK && uirep_armed && !uirep_pass(tick)) return pnat_fail(uirep_why);
     /* Presentation of this client's own slot: started at the window start, ended at stop+1 before the release. */
     if(pnat_mode==PNAT_MODE_STOCK && pres_armed && !pres_pass(tick)) return pnat_fail(pres_why);
-    /* Slots 2..N: players built at take-2, seated at take-1, checked, released at stop+1. */
+    /* Slots 2..N: players built at take-2, seated at take-1, checked, released at stop+1. Their bodies in the tree
+     * (lockstep_pilot_foot_body.h): off before the release, on after the seats. */
+    if(pnat_mode==PNAT_MODE_STOCK && pfbody_armed && !pfbody_pass(tick,0)) return pnat_fail(pfbody_why);
+    /* Slots 2..N on foot (lockstep_pilot_foot_slots.h): the walking update's call site from take, back at stop+1 before the release. */
+    if(pnat_mode==PNAT_MODE_STOCK && pfslot_armed && !pfslot_pass(tick)) return pnat_fail(pfslot_why);
     if(pnat_mode==PNAT_MODE_STOCK && (pstk_slot_mask&~1u) && !pslot_pass(tick)) return pnat_fail(pslot_why);
+    if(pnat_mode==PNAT_MODE_STOCK && pfbody_armed && !pfbody_pass(tick,1)) return pnat_fail(pfbody_why);
     /* Stock aim from the first pass of the session (neutral until the first replayed record). */
     if(pnat_mode==PNAT_MODE_STOCK && tick<=pilot_stop) {
         if(pnat_fail_stage) return pnat_fail(pnat_fail_stage);
@@ -876,6 +894,7 @@ static int pnat_pass(uint64_t tick,unsigned char *controller,pilot_refresh_fn re
         if(pnat_mode==PNAT_MODE_STOCK && (!pstk_slot || pstk_slot>pilot_slot_count || !pilot_slots[pstk_slot-1].player))
             return pnat_fail("stock_slot_not_occupied"); /* the stock slot must be the ship every client sits in */
         if(!pnat_install(controller)) return pnat_fail("native_install");
+        if(pnat_mode==PNAT_MODE_STOCK && pfoot_armed && !pfoot_pass()) return pnat_fail(pfoot_why);   /* the FIRST_PERSON swap */
         if(pnat_mode==PNAT_MODE_STOCK) { /* parked: flight control 0 on every client; records from this tick on */
             pstk_flight=0;pstk_flight_known=1;pstk_capture_start=tick;pstk_first_apply=tick+pilot_delay;
         }
@@ -883,11 +902,15 @@ static int pnat_pass(uint64_t tick,unsigned char *controller,pilot_refresh_fn re
         pnat_stage="live";return 1;
     }
     if(tick>take+1 && tick<=pilot_stop) {
+        if(pnat_mode==PNAT_MODE_STOCK && pfoot_armed && !pfoot_pass()) return pnat_fail(pfoot_why);
         if(!pnat_check(controller,counter,contexts)) return 0;
         if(pnat_mode==PNAT_MODE_STOCK) {
             const char *why="stock";
             if(!pstk_frame(tick,&why)) return pnat_fail(why);
-            if((pstk_slot_mask&~1u) && tick>=pstk_first_apply && !pslot_replay(tick)) return pnat_fail(pslot_why);
+            /* Bodies (lockstep_pilot_foot_body.h): off the tree before any get-up of this tick reaches X4 or a slot's scope. */
+            if(pfbody_armed && !pfbody_guard(tick)) return pnat_fail(pfbody_why);
+            if((pstk_slot_mask&~1u) && tick>=pstk_first_apply && !pslot_replay(tick)) return pnat_fail(pfoot_failed?pfoot_why:pslot_why);
+            if(pfslot_armed) pfslot_frame();   /* slots 2..N on foot: this tick's receipt part */
             if(uirep_armed && !uirep_frame(tick,&why)) return pnat_fail(why);
             pstk_local_drain(); /* scripted local keys (native_gate_pilot_local_script), after the replay */
         }
@@ -907,9 +930,11 @@ static void pnat_restore(void) {
     if(!pnat_armed) return;
     uirep_restore(); /* first: its adapter needs the seats */
     pres_restore();  /* the presentation next: its scope needs the seats */
+    pfslot_restore();/* the walking update's call site back */
+    pfbody_restore();/* the slots' bodies off their rooms before the seats go */
     pslot_restore(); /* slots 2..N next: their seats use the authority patch */
     if(pdeath_armed) pdeath_restore();
-    if(pnat_installed || pstk_aim_installed || pview_installed) pnat_uninstall();
+    if(pnat_installed || pstk_aim_installed || pview_installed || pfoot_installed) pnat_uninstall();
     if(pnat_installed) pnat_stage="restore_refused";
 }
 static int pnat_refusals_text(char *out,size_t capacity) {

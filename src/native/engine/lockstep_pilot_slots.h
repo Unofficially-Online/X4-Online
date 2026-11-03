@@ -88,6 +88,7 @@ typedef struct {
     unsigned char assist[2],agent_mode,no_highway; /* slots 49 (argument 0, 1), 50 and 23 at the last scope exit */
     float throttle;                        /* slot 14: the smoothed throttle at the last scope exit */
     int seated,released,roomless;
+    int walking;                           /* on foot (lockstep_pilot_foot_slots.h): seated for the scope, no controller */
     /* After a ship's death (lockstep_pilot_death.h): the first seat's store for the next seat,
      * and the controllers that stayed with their dying ships under this vtable copy. */
     unsigned char first[VPL_BLOCK_MAX];
@@ -116,6 +117,7 @@ static unsigned char pslot_site_original[5],pslot_site_patched[5];
 static uint64_t pslot_update_tick,pslot_scope_hash;
 static unsigned char pslot_g1;              /* the canonical controller's predicate while a scope is open */
 static volatile LONG64 pslot_updates,pslot_hook_calls;
+static volatile LONG64 pslot_canonical_gone; /* scope entries while the latched canonical controller was not X4's live one */
 __attribute__((used)) static volatile LONG pslot_in_scope;
 __attribute__((used)) static volatile LONG64 pslot_route_hits[3],pslot_getter_in[PSLOT_VT_SLOTS],pslot_getter_out[PSLOT_VT_SLOTS],
     pslot_getter_render[PSLOT_VT_SLOTS];
@@ -276,6 +278,9 @@ static int pslot_is_retired(const void *controller) {
     for(unsigned k=2;controller && k<=PILOT_SLOTS;k++) for(unsigned i=0;i<PSLOT_RETIRED;i++) if(pslots[k].retired[i]==controller) return 1;
     return 0;
 }
+/* Slot k's walking bank (lockstep_pilot_foot_slots.h, native_gate_pilot_foot_slots): swapped with the scope too. */
+static int pfslot_armed;static void pfslot_bank_exchange(unsigned k);static uint64_t pfslot_bank_hash_live(void);
+static uint64_t pslot_bank_hash;
 /* Live <-> store over the image regions of the scope classes (table order). */
 static int pslot_exchange(unsigned char *store,unsigned length) {
     unsigned n=0;
@@ -343,12 +348,18 @@ static int pslot_enter(unsigned k) {
         if(s) InterlockedIncrement64(&s->refused);
         return 0;
     }
-    /* Slot 1's controller goes with its ship before the pass can see it (the eject, lockstep_pilot_death.h). */
+    /* The canonical controller is read only while it is X4's live one (9fc550 now). X4 deletes slot 1's PlayerController
+     * before a pass can see it: with its ship (the eject, lockstep_pilot_death.h) and when slot 1 stands up (716e20 ->
+     * 70e0f0; the pass learns it at its next pfoot_check). Live footlook4 (death module off, which alone made this check):
+     * slot 2's replay at 2406, three ticks after slot 1's GET_UP, called through the deleted controller's vtable (NULL). */
     {   unsigned char *canonical=pnat_controller;
-        if(pdeath_armed && canonical && (unsigned char*)pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY)!=canonical) canonical=NULL;
+        if(canonical && (!pnat_fn.controller || (unsigned char*)pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY)!=canonical)) {
+            canonical=NULL;InterlockedIncrement64(&pslot_canonical_gone);
+        }
         pslot_g1=canonical?pslot_global_part(canonical):0;}
     pslot_scope_hash=pslot_hash();
     if(pslot_exchange(s->store,s->length)<0) {InterlockedIncrement64(&s->refused);return 0;}
+    if(pfslot_armed) {pslot_bank_hash=pfslot_bank_hash_live();pfslot_bank_exchange(k);}
     *(unsigned char *volatile*)(universe+VPS_SINGLETON)=s->player;
     pstk_scope_slot=k;InterlockedExchange(&pslot_in_scope,1);
     if(s->controller) pslot_set_routes(s,1);
@@ -364,6 +375,7 @@ static int pslot_leave(unsigned k) {
     if(s->controller) {s->authority=pslot_global_part(s->controller);pslot_take_answers(s);pslot_set_routes(s,0);}
     if(universe) *(unsigned char *volatile*)(universe+VPS_SINGLETON)=pslot_p1;
     if(pslot_exchange(s->store,s->length)<0) ok=0;
+    if(pfslot_armed) {pfslot_bank_exchange(k);if(pfslot_bank_hash_live()!=pslot_bank_hash) ok=0;}   /* the canonical walking bank back */
     pstk_scope_slot=0;InterlockedExchange(&pslot_in_scope,0);
     if(pslot_hash()!=pslot_scope_hash) ok=0; /* the canonical bytes came back unchanged */
     return ok;
@@ -459,16 +471,26 @@ static int pslot_authority(void *controller,unsigned char *answer) {
     *answer=!read_local((unsigned char*)controller+0x28,&ship,8) || !ship || !read_local(ship+0xd1,&flag,1) || !flag;
     return 1;
 }
+/* The seat's ship died earlier in this frame (lockstep_pilot_death.h): gone from the registry or its hull at zero,
+ * simulation state, the same frame on every client. What would run in the seat's frame skips it (its update, slot k's
+ * walk in the seat's room); the next pass ends the seat or the walk. */
+static int pslot_ship_dying(const pslot_slot *s) {
+    double hull=1.0;
+    if(!pdeath_armed || !s->ship) return 0;
+    return !pdeath_find || pdeath_find(pdeath_map,s->runtime,4)!=s->ship ||
+           (read_local(s->ship+PDEATH_HULL,&hull,8) && fabs(hull)<PDEATH_HULL_EPSILON);
+}
+/* pslot_enter's conditions without entering: lockstep_pilot_foot_body.h asks it from inside X4's KillRecursive. */
+static int pslot_can_enter(unsigned k) {
+    pslot_slot *s=k>=2 && k<=PILOT_SLOTS?&pslots[k]:NULL;unsigned char *universe=NULL,*now=NULL;
+    return s && s->player && s->length && !pstk_scope_slot && !pres_open && pslot_frame_thread() && pnat_base && vpl_reentry_clear(pnat_base) &&
+           read_local(pnat_base+VPL_UNIVERSE,&universe,8) && universe && read_local(universe+VPS_SINGLETON,&now,8) && now==pslot_p1;
+}
 static void pslot_update_slots(double now) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         pslot_slot *s=&pslots[k];
-        if(!s->seated) continue;
-        /* Its ship died earlier in this frame: simulation state, the same on every client; the next pass ends the seat. */
-        if(pdeath_armed) {
-            double hull=1.0;
-            if(!pdeath_find || pdeath_find(pdeath_map,s->runtime,4)!=s->ship ||
-               (read_local(s->ship+PDEATH_HULL,&hull,8) && fabs(hull)<PDEATH_HULL_EPSILON)) continue;
-        }
+        if(!s->seated || s->walking) continue;   /* on foot: no PlayerController, its FPC updates at 9fe604 */
+        if(pslot_ship_dying(s)) continue;        /* its ship died earlier in this frame: the next pass ends the seat */
         if(!pslot_enter(k)) {pslot_async("update_scope");return;}
         InterlockedIncrement64(&s->updates);
         int left=0;
@@ -499,13 +521,23 @@ static int pslot_controller_has(unsigned char *ship,int cls,const void *which) {
 static int pslot_is(void *component,int cls) {
     void **vtable=*(void***)component;return ((unsigned char(*)(void*,int))vtable[PSLOT_IS_CLASS])(component,cls)!=0;
 }
-static int pslot_construct_all(void) {
+static int pslot_construct(unsigned k) {
+    unsigned char *p1=NULL,*made=NULL;
+    if(!vps_make(pnat_base,&p1,&made)) return pslot_fail(vps_why);
+    if(pslot_p1 && p1!=pslot_p1) return pslot_fail("p1_changed");
+    pslot_p1=p1;pslots[k].player=made;return 1;
+}
+/* take-2: every slot enrolled by take (an absent one later, pslot_enroll_late). With all of them absent the canonical
+ * player is latched from the singleton, as vps_make would have answered it. */
+static int pslot_construct_all(uint64_t take) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
-        if(!(pslot_mask>>(k-1)&1u)) continue;
-        unsigned char *p1=NULL,*made=NULL;
-        if(!vps_make(pnat_base,&p1,&made)) return pslot_fail(vps_why);
-        if(pslot_p1 && p1!=pslot_p1) return pslot_fail("p1_changed");
-        pslot_p1=p1;pslots[k].player=made;
+        if(!(pslot_mask>>(k-1)&1u) || !pilot_slot_enrolled(k,take)) continue;
+        if(!pslot_construct(k)) return 0;
+    }
+    if(!pslot_p1) {
+        unsigned char *universe=NULL,*p1=NULL;
+        if(!read_local(pnat_base+VPL_UNIVERSE,&universe,8) || !universe || !read_local(universe+VPS_SINGLETON,&p1,8) || !p1) return pslot_fail("p1_unknown");
+        pslot_p1=p1;
     }
     pslot_stage="constructed";return 1;
 }
@@ -622,14 +654,31 @@ static int pslot_hook_intact(void) {
     if(!pslot_hook_installed || !pslot_page || memcmp(pnat_base+PSLOT_CALL_SITE,pslot_site_patched,5)) return 0;
     pview_abs_jump(jump,(void*)pslot_update);return !memcmp(pslot_page,jump,14);
 }
-static int pslot_seat_all(void) {
-    for(unsigned k=2;k<=PILOT_SLOTS;k++) if((pslot_mask>>(k-1)&1u) && !pslot_seat(k)) return 0;
+static int pslot_seat_all(uint64_t take) {
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) if((pslot_mask>>(k-1)&1u) && pilot_slot_enrolled(k,take) && !pslot_seat(k)) return 0;
     if(!pslot_hook_install()) return pslot_fail("hook_install");
     pslot_stage="seated";return 1;
+}
+/* An absent slot (hot join) enrolled at E after take: its player at E-2, its seat at E-1, as take-2 and take-1 do for the
+ * others. Its ship as the identity plan left it must still be there: one lost before (AI-flown, nobody's) stops (161). */
+static int pslot_enroll_late(uint64_t tick,uint64_t take) {
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) {
+        if(!(pslot_mask>>(k-1)&1u) || !pilot_slot_absent(k) || pilot_enroll[k-1]==UINT64_MAX || pilot_enroll[k-1]<=take) continue;
+        const uint64_t e=pilot_enroll[k-1];
+        if(tick+2==e && !pslots[k].player && !pslot_construct(k)) return 0;
+        if(tick+1==e && !pslots[k].seated) {
+            pilot_slot *ps=&pilot_slots[k-1];
+            if(!ps->resolved || !ps->object) return pslot_fail("absent_ship_lost");
+            if(!pslot_seat(k)) return 0;   /* its body follows after the settle ticks (pfbody_guard, as after a respawn) */
+        }
+    }
+    return 1;
 }
 static int pslot_release(unsigned k) {
     pslot_slot *s=&pslots[k];
     if(!s->seated) return 1;
+    /* On foot (lockstep_pilot_foot_slots.h): its controller went at the stand-up; only the seat's pointers go back. */
+    if(s->walking) {pslot_unseat_player(s);s->seated=0;s->released=1;s->walking=0;return 1;}
     void **vtable=NULL,*release=NULL;int fault=0;
     if(!read_local(s->ship,&vtable,8) || !vtable || !read_local(vtable+PSLOT_RELEASE,&release,8) || release!=(void*)pslot_fn.release)
         return pslot_fail("release_vtable");
@@ -696,7 +745,7 @@ static int pslot_check(uint64_t tick) {
         /* X4 skips the call when its player has no PlayerController (9fe2b4): a dead slot 1 can be there, on
          * every client, as it is simulation state. Slots 2..N then update here, the frame after. */
         double now=0;
-        if(!pilot_slots[0].dead) return pslot_fail("update_missing");
+        if(!pilot_slots[0].dead && !pfoot_walking()) return pslot_fail("update_missing");   /* or walking (lockstep_pilot_foot.h) */
         if(!pnat_fn.time(&now)) return pslot_fail("update_time");
         pslot_update_slots(now);
     }
@@ -705,6 +754,7 @@ static int pslot_check(uint64_t tick) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         pslot_slot *s=&pslots[k];void *vtable=NULL;int refs=0;
         if(!s->seated) continue;
+        if(s->walking) continue;   /* on foot: no controller to check (lockstep_pilot_foot_slots.h checks its FPC and parent) */
         /* Seated while dead: in its suit (lockstep_pilot_death.h), which is not the slot's ship. */
         if(!pilot_slots[k-1].dead && (!pilot_slots[k-1].resolved || pilot_slots[k-1].object!=s->ship)) return pslot_fail("ship_lost");
         if(pslot_controller_has(s->ship,0,s->controller)!=1 || !read_local(s->controller,&vtable,8) || vtable!=(void*)&s->vt.slots[0])
@@ -718,9 +768,12 @@ static int pslot_pass(uint64_t tick) {
     if(!pslot_armed) return 1;
     uint64_t take=pilot_start-PILOT_SUPPRESS_LEAD;
     if(pslot_failed) return pslot_fail(pslot_why);
-    if(tick+2==take) return pslot_construct_all();
-    if(tick+1==take) return pslot_seat_all();
-    if(tick>=take && tick<=pilot_stop) {pslot_callers_drain();if(!pslot_check(tick)) return 0;pslot_stage="live";return 1;}
+    if(tick+2==take) return pslot_construct_all(take);
+    if(tick+1==take) return pslot_seat_all(take) && pslot_enroll_late(tick,take);   /* one enrolled at take+1: its player now */
+    if(tick>=take && tick<=pilot_stop) {
+        if(!pslot_enroll_late(tick,take)) return 0;
+        pslot_callers_drain();if(!pslot_check(tick)) return 0;pslot_stage="live";return 1;
+    }
     if(tick==pilot_stop+1) return pslot_release_all();
     return 1;
 }
@@ -732,6 +785,7 @@ static int pslot_replay(uint64_t tick) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         pslot_slot *s=&pslots[k];
         if(!s->seated || pilot_slots[k-1].dead) continue;   /* a dead slot's records are consumed and ignored, in a suit too */
+        if(pilot_slot_silent(k,tick,pilot_delay)) continue; /* enrolled, its records from H+delay: neutral meanwhile (hot join) */
         if(pstk_slot_frames[k-1].tick!=tick) return pslot_fail("replay_missing");
         if(!pslot_enter(k)) return pslot_fail("replay_scope");
         int replayed=0,left=0;
@@ -753,7 +807,7 @@ static int pslot_arm_using(unsigned mask) {
     if(!pslot_fn.update) return pstk_arm_refuse("slots_fns");
     memset(pslots,0,sizeof(pslots));memset(pslot_getter_orig,0,sizeof(pslot_getter_orig));
     pslot_mask=mask&~1u;pslot_failed=0;pslot_stage="armed";pslot_why="-";pslot_p1=NULL;pslot_update_tick=0;pslot_hook_installed=0;
-    pslot_callers=0;pslot_caller_tail=(unsigned)pslot_caller_head;pslot_caller_dropped=0;pslot_stop_waits=0;
+    pslot_callers=0;pslot_caller_tail=(unsigned)pslot_caller_head;pslot_caller_dropped=0;pslot_stop_waits=0;pslot_canonical_gone=0;
     pslot_armed=1;return 1;
 }
 /* An abnormal stop: release on the frame thread outside any scope, else leave the
@@ -784,9 +838,9 @@ __attribute__((unused)) static void *vpl_slot_player(unsigned k) {return k>=2 &&
 __attribute__((unused)) static void *vpl_slot_ship(unsigned k) {return k>=2 && k<=PILOT_SLOTS && pslots[k].seated?pslots[k].ship:NULL;}
 __attribute__((unused)) static void *vpl_slot_controller(unsigned k) {return k>=2 && k<=PILOT_SLOTS && pslots[k].seated?pslots[k].controller:NULL;}
 static int pslot_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity," slots=%s slots_why=%s slots_mask=%x hook=%d updates=%lld/%lld routes=%lld/%lld/%lld",pslot_stage,pslot_why,
-        pslot_mask,pslot_hook_installed,(long long)pslot_updates,(long long)pslot_hook_calls,(long long)pslot_route_hits[0],
-        (long long)pslot_route_hits[1],(long long)pslot_route_hits[2]);
+    int n=snprintf(out,capacity," slots=%s slots_why=%s slots_mask=%x hook=%d updates=%lld/%lld routes=%lld/%lld/%lld canonical_gone=%lld",
+        pslot_stage,pslot_why,pslot_mask,pslot_hook_installed,(long long)pslot_updates,(long long)pslot_hook_calls,(long long)pslot_route_hits[0],
+        (long long)pslot_route_hits[1],(long long)pslot_route_hits[2],(long long)pslot_canonical_gone);
     for(unsigned k=2;n>0 && (size_t)n<capacity && k<=PILOT_SLOTS;k++) {
         pslot_slot *s=&pslots[k];
         if(!(pslot_mask>>(k-1)&1u)) continue;

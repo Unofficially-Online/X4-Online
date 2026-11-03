@@ -1,0 +1,293 @@
+LOCKSTEP ATTENTION STUDY (roadmap C9: asymmetric attention) - 1 NOVEMBER 2026
+
+Branch contrib/ferrite-attention (from smoke e457b4c9). Offline work only: the pinned X4 9.00
+build (SHA-256 19750a65...6891) read with the private RE workspace (Ghidra project copy, capstone
+sweeps over .pdata ranges), the shipped AI/MD scripts read for behaviour, the gate sources and the
+census/tick-rate reports for measured numbers. No X4 was launched, no lane tool was run.
+Tags: [F] read in the binary (address given, RVA) or in the shipped scripts; [M] measured earlier
+and reported elsewhere (source named); [I] inference or estimate. Findings are described in our own
+words; no decompiler output or game data is reproduced.
+
+1. VERDICT
+----------
+Asymmetric attention in the sense of the roadmap item - each PC pays full price only near its own
+player while all universes stay identical - is not feasible with lockstep on this engine. High and
+low attention are two different simulations of the same object, not a cheap and an expensive
+rendering of one simulation: another flight model, physics bodies or none, physical shots or
+scripted damage per second, other AI script branches and other script timing, and the change of
+level itself writes state (a ship is moved to a free spot, a station draws random numbers and builds
+a region, scripts restart at a label, events reach MD). Every client therefore has to compute every
+player's high-attention bubble, which is what the gate does today. Splitting the work (one client
+computes a bubble and ships the result) is a partial return to state replication with an authority
+boundary the engine does not have; bandwidth would be acceptable (about 0.6-4 Mbit/s per remote
+sector [I]), the coupling and handover are not. What can pay off is making the shared work cheaper
+for everyone (section 6c) and, piecemeal, moving genuinely cosmetic high-attention work out of the
+shared step (6a). First, though, the price of one extra bubble has never been measured: the census
+runs mostly had all players in one sector. Section 8 is a measurement plan with two default-off
+diagnostics built for it (native_gate_view_points_mask, native_gate_sample_profile).
+
+2. WHAT ATTENTION IS (mechanics)
+--------------------------------
+[F] Level: an int at component +0x1ec, 1..11. The shipped script schema lists the levels in this
+order: unknown, ingalaxy, incluster, sectorvisible, insector, adjacentzone, visible, inzone, nearby,
+adjacentroom, inroom; the numeric thresholds below match that order (visible = 7, nearby = 9) [F/I].
+[F] Computation, vtable slot 703 (+0x15f8), per class, viewer-dependent (lockstep_view_points.h has
+the list): the player's zone is 8; any other zone whose box distance to the player is below the
+zone's extent plus a 50 km literal is 7, otherwise 6 (Zone 0x843b20); the player's sector is 5
+(Sector 0x78d6a0); an object within its per-macro nearby radius of the player or camera is 9
+(Object 0x6d20b0), the ship carrying the player 9 (Ship 0x7d5110), the interior holding the player 10
+(Positional 0x753350), rooms up to 11 (Room 0x76e520). Components without their own attention take
+the nearest ancestor's (Component 0x3d5600).
+[F] SetAttention 0x3d5660: level 1 means "recompute through slot 703" for components that keep their
+own attention (+0xd1); it writes +0x1ec, sets bit 0x40 in three dirty words (+0x11c, +0x19c, +0x1e4),
+calls slot 701 (+0x15e8) as OnAttentionChanged(old, wasHigh, new, isHigh), stores the new high flag
+through slot 690, posts ChangedAttentionEvent (old, new; what MD sees as
+event_object_changed_attention [I]) and, when crossing 5/6, ChangedAdjacentZoneAttentionEvent. It
+returns early only when neither the level nor the high flag changed.
+[F] "High" is slot 688 (+0x1580): Component 0x3e6a10 answers level >= 7 and the parent high too
+(recursively, also on the published view copy of the parent); Sector 0x6a2390 answers level > 3;
+Ship 0x7d49c0 adds a parent-class condition; Bullet 0xd4eef0 is never high before its start time.
+Slot 689 answers the previous flag: computed like 688 for most classes, stored for Zone (0x5be8c0
+reads +0x541), Ship (0x7c86e0) and Entity (0x4b76f0).
+[F] Propagation and re-evaluation: Component slot 701 0x3d5880 pushes the new level into both child
+lists (children with own attention recompute). The object attention timer 0x6d1ff0 (every
+0.75 s + random 0..0.5 s, lockstep_attention.h) is called by Object::Move 0x6ccf90 only inside its
+high branch; Zone::Move 0x834950 re-evaluates zones above 5; Container::Move 0x41a430 re-evaluates
+its children above 8. Low objects are not re-evaluated by a timer of their own; their level changes
+through their parents and explicit calls (ConnectTo, camera and cutscene events, the gate's refresh).
+[F] 131 functions call slot 688, 236 functions read +0x1ec directly (capstone sweep over every .pdata
+range of the image; the lists stay in the private workspace).
+
+3. WHAT SWITCHES WITH ATTENTION
+-------------------------------
+3a. At 7 ('visible', the main switch)
+- Flight model [F]. The wanted model comes from slot 1052: Ship 0x7d5ba0 / Object 0x6e1e80 answer 3
+  (LinearFlightControlModel) when not high, 2 (highway) inside a highway, 5 (spline) or 6 (steering)
+  otherwise, 4 for mass traffic. Object slot 701 0x6d2520 stores the high flag in the ship's
+  NavigationController (+0xd8) and queues a SetFlightControlModelOrder (0xeac900 -> PathingManager
+  AddOrder); the order builds the model in 0xe87cf0 (linear 0xeb1a10, steering 0xec40c0, spline
+  0xeb4f40). The tour race of the census (battle drops to low attention, ships switch to the linear
+  model at 2467) is this path [M, census].
+- Physics bodies [F]. Destructible slot 701 0x51aa10 asks slot 876 whether the object should have a
+  body (Positional 0x747630: high and timing; Ship 0x7d7f60: also a physics scene for its zone via
+  slot 943 and within 250 km of the scene anchor, squared distance 6.25e10) and creates (slot 904
+  0x51bb90) or destroys (slot 905 0x51bc80) the body. Natively a zone has a scene only in the player
+  object's sector (scene A) or the cutscene camera's (B), so stock X4 runs physics in one sector
+  (lockstep_view_scenes.h); the gate adds scenes for view points 2..4. Every Jolt job runs on the
+  MoveWorker inside XPhys::Scene::Step 0xba600 (lockstep_physics_trace.h): physics is serial on the
+  critical path, scene after scene.
+- Weapons and damage [F]. The shoot_at script action (ShootAction 0xbd1e90) and AI::ShootAtAction
+  0x10a8460 refuse below 'visible' with an error string to that effect; Weapon slot 1042 0x81ccb0
+  answers 0 at level <= 6; the fire path (Weapon slot 998 0x8185b0) passes "level < 9" into a transform
+  computation (0x3e2120) [purpose I]. In the shipped combat scripts (fight.attack.object.*) the
+  low-attention branch computes an attack strength, removes ammunition and applies damage once per
+  second over a randomly long attack run; the high branch flies and shoots with real projectiles.
+- AI scripts [F]. AIDirector::Move copies the controlled object's level into the script instance
+  (store at 0x106e364, +0x128) and selects the action list for it (0x1074850); the loader enforces
+  that labels match across levels ("mismatched labels" message), so a script switches branch at a
+  label. Of 178 base AI scripts 31 have a separate 'visible' branch, 2 a 'nearby' branch (mass
+  traffic), 24 also test .attention in expressions; 33 of 221 MD files use attention (NPC
+  instantiation, signal leaks, missions). High branches wait 100-500 ms between steps where low
+  branches wait seconds (fighter attack: 1 s damage ticks, 1-7 s runs).
+- Transitions that write state [F]. Ship slot 701 0x7d5270, when a ship becomes high (outside a
+  highway, under further conditions not decoded), asks the zone for a free position (0x835b80) and
+  moves the ship there (slot +0x1468).
+  Station slot 701 0x7f8f10 on becoming high calls 0x7f9bc0 (draws Random) and 0x7fa5c0 (the
+  'station_region_macro' region), and tears both down when it drops. Destructible 0x51aa10 switches
+  hull-damage effect states on and off (0x522120/0x522460/0x5227a0, 0x522e30/0x522ec0/0x522f50).
+  Defensible 0x4d4da0 calls slots +0x1db0/+0x1db8 and clears per-object lists when dropping [purpose I].
+- Also consulting "high" [F, call sites only]: docking and internal storage (0x540530, 0x5423c0,
+  0x417a40, 0x4184b0, 0x417ef0), towing (TowingMovementController), recycling (0x5783c0),
+  countermeasures (0x4ecb90), job-ship spawning (JobEngine path 0xf03e40), region fields (Region::Move
+  0x767410, Field slot 10 0xedc540), detectors, production/processing modules, gates, mines,
+  lockboxes, signal leaks, missiles, engines (0x54bcc0 family).
+3b. At 9 ('nearby') and above
+- Interiors [F]: crossing 9 posts GeneratePropsEvent / removes props (Container 0x3f7770),
+  InteriorsDespawningEvent (Controllable 0x464160, Defensible 0x4d4da0) and GenerateMazesEvent
+  (Destructible 0x51aa10); walking bodies and crowds work at 9-10 (BodyClass::Move 0x380dd0,
+  CrowdAgentController 0x5732d0, NPC::Move 0x6bc420 at 10).
+- Physics detail [F]: crossing 9 replaces physics shapes (ReplacePhysicsShapesEvent or slots 878/879,
+  Positional 0x753480); Ship::Move 0x7cc810 runs its body upkeep and detailed part only above 8.
+- Random impulses [F]: Object::Move above 8 draws three Random::FloatState values and applies them
+  through slot +0x1b88 when a configured magnitude is set.
+- A registry add/remove at 9 in Ship slot 701 (0x1410b2820 / 0x1410b2d60) [F; purpose I].
+3c. At 5/6 and 8 (zones and sectors) [F]: Zone::Move re-evaluates above 5 and above 7 runs the mass
+traffic decision (0x83ef20) and temp-zone removal near the camera; Sector::Move 0x784230 tests 5;
+Highway::Move 0x5f4a40 takes its spline parameter from the camera for levels 5..7 (UniverseFrameUpdate
+from the player's controllable at >= 8, lockstep_region_camera.h); the hazard DamageField 0xee16a0
+has a separate low-attention pass below 5 (census finding 15).
+
+4. DO HIGH AND LOW ATTENTION PRODUCE THE SAME STATE?
+----------------------------------------------------
+No, and not only in rounding. For the same ship and the same orders [F for the switch, I for the
+size of the difference]:
+- motion: linear model (kinematic, straight segments) versus steering/spline model with forces
+  through a Jolt body, collision response and avoidance - different positions within seconds;
+- combat: per-projectile hits on physics shapes versus scripted damage per second from attack
+  strength; different hull/shield values, kill times, ammunition and loot;
+- AI: other branches with other waits, so decisions fall on other ticks and draw other random
+  numbers; MD reacts to the change events themselves;
+- transitions: relocation to a free spot, station regions with random draws, body creation (the
+  census wreck at 2492 took its pose from the cache at body creation), interiors, props and their IDs.
+Only the parts that never read attention are the same at both levels: the economy's production and
+trade bookkeeping, the Gravidar scans, most MD logic [I]. A sector that is high on one client and low on
+another diverges at the first tick. This is why the gate makes attention a function of the shared
+view points (lockstep_view_points.h) and keeps every client-local trigger out (view_triggers,
+view_ui, camera_context), and why lockstep cannot give a PC a "cheap copy" of someone else's sector.
+
+5. WHY EVERY PC PAYS FOR EVERY BUBBLE TODAY
+-------------------------------------------
+The gate evaluates attention once per view point (every pilot slot's ship) on every client and takes
+the maximum (native_gate_view_points 'players'), keys the attention timer for every object
+(attention_all), gives view points 2..4 a physics scene (view_scenes), a stand-in camera for region
+content, mass traffic, effects and highway parameters (region_camera group), and blocks per-client
+re-evaluations. Result: with players in n sectors every PC simulates n bubbles at high attention,
+n physics scenes stepped serially on its MoveWorker, n regions of asteroid content, n mass traffic
+areas. Stock X4 never does this (one physics scene, one camera); the cost grows with n.
+Per-step cost today [M, LOCKSTEP-TICK-RATE-20261030]: two instances on one PC, 60 Hz play stack,
+frame 28.9-31.5 ms median; Pbare (near-minimal gate) 23.6 ms; sim_us (the MoveWorker's frame) about
+24 ms; region group 2.65 ms, traffic+region join 2.7-3.3 ms, pathing pass 3.3 ms for ~9,740 agents,
+reads up to 3.8 ms CPU, probe 0.9 ms. The MoveWorker also renders (VBI slot 10: every universe
+camera, lockstep_render_rng.h), so sim_us is simulation plus UI plus render preparation. No run has
+measured the price H of one extra bubble.
+
+6. OPTIONS
+----------
+(a) Compute shared what affects state, make presentation-only high-attention work local.
+    Already per client and outside the shared step: rendering, sounds (ship sounds start/stop on
+    camera events), engine-glow render parameters (EngineGlowValueSource set in Object slot 701),
+    HUD, cockpit, map. These are not where a remote bubble costs: a PC does not render a sector its
+    camera is not in.
+    Cosmetic in effect but implemented as shared simulation objects (component IDs, RNG, events):
+    effect objects (weapon fire, impacts, hull damage states, effect fields), room props and interior
+    mazes (>= 9), walking crowds (>= 9/10), mass traffic, asteroid field fill. Each could be spawned
+    only on the client whose player is near, if it is taken out of the shared ID and RNG streams on
+    every client (the runtime_ids local lists and the render RNG split are the pattern) and if no
+    simulation code reads it - mass traffic and asteroids are hit, mined and scripted, so they are
+    not candidates. Feasible piece by piece; gain bounded by those subsystems' share of H [I: small,
+    likely well under 20% of H; the sampler's spawn_effect mark gives the first number].
+    Physics, flight model, weapons and AI branches are state: not candidates.
+(b) Split the work: each client simulates its own bubble and ships the result to the others.
+    Bandwidth [I]: a moving object needs pose, velocities, hull/shield; quantised about 25-40 bytes,
+    at 30 Hz 0.75-1.2 KB/s per object. A quiet sector with ~100 moving objects about 0.6-1 Mbit/s,
+    a battle with ~400 (ships, drones, missiles) 2.5-4 Mbit/s plus damage/creation/destruction
+    events, per remote sector per receiving client; four players in four sectors: 2-12 Mbit/s down
+    per client, the relay fans out N x (N-1) streams. Acceptable on broadband, not the blocker.
+    Blockers [I, from the code paths above]: (1) no authority boundary - any AI script, MD cue, trade
+    or Gravidar scan anywhere reads objects of any sector synchronously, so the receivers must hold
+    the remote bubble's full state at the same tick the owner computed it, while the owner's bubble
+    reads the shared universe of that same tick: the cycle closes inside one step and a delay breaks
+    identity; (2) the remote copies must not simulate (their Move, AI and timers suppressed for those
+    objects only) yet stay readable, a new engine mode for every object class; (3) handover when a
+    player leaves, joins or two bubbles meet needs the bubble's complete state including AI/MD script
+    state, effectively a partial save/load at a step; (4) attention changes inside the bubble (objects
+    entering and leaving it) are themselves state transitions to replicate. This is the state
+    replication architecture the project left for lockstep, plus lockstep. Not recommended.
+(c) Lower the cost of the shared high-attention work (symmetric on every client, so identity holds).
+    - Physics: scenes are independent physics systems in different sectors, yet stepped one after the
+      other on the MoveWorker. Stepping scenes C/D on worker threads in parallel with A/B, with contact
+      callbacks (RecordContact) buffered per scene and applied in scene order after the join, keeps
+      determinism by construction [I; research item, needs the callbacks' reads audited].
+    - Bubble size: the 'visible' margin is a 50 km literal in Zone slot 703 and the body radius
+      250 km in Ship slot 876. A symmetric knob for a smaller margin (applied for every view point on
+      every client) cuts the objects at high attention [I]; gameplay cost: farther ships fly the linear
+      model and fight by script. Decide with the level histogram (VIEW_POINTS levels=) and play.
+    - The work already built in the tick-rate study: native_gate_tick_hz 30, path_budget, pass_stride,
+      fast_reads [M: 30 Hz + budget 100 + stride 2 + fast reads = 33.3 ms per tick, 1.00x, 5.8-6.8 ms
+      spare]. These shrink U, the universe-wide part, which every PC pays once however many bubbles.
+    - One X4 per PC: every number above is two instances sharing one CPU and GPU; players run one.
+      Expect a sizeable reduction per instance [I]; measure (8.4).
+(d) A dedicated server that takes the heavy sectors.
+    A server that is one more lockstep peer (roadmap D13) keeps the world alive but takes no work off
+    the clients: lockstep needs every peer to compute everything. A server authoritative for heavy
+    sectors that streams them is (b) with one authority - same blockers. A server that simulates
+    everything while clients only present streamed state leaves lockstep altogether (the earlier
+    replica architecture, whose NPC scene sync proved unreliable). None is a cheap win.
+
+7. RECOMMENDATION
+-----------------
+1. Keep symmetric attention: every PC simulates every player's bubble; do not start a hybrid.
+2. Measure H, the price of one extra bubble, and U, the price of the universe without any bubble,
+   with the plan in section 8 (two default-off diagnostics on this branch). The upper bound of what
+   any asymmetric scheme could save per PC with players in n sectors is (n-1) x H.
+3. Decide by the numbers [I, thresholds]:
+   - H below ~15% of the step for a normal sector: close C9; spend the effort on U (C10, 6c).
+   - H large and the profile shows physics_step/jolt_update dominating: parallel scene stepping (6c).
+   - H large and dominated by the Move tree / AI branches: the symmetric bubble-size knob (6c),
+     judged in play.
+   - effects/props/crowds a large share: localise them one by one (6a).
+Expectation before measuring [I, low confidence]: a quiet bubble costs a few ms of the ~24 ms
+MoveWorker frame, a battle bubble 10 ms or more (projectiles, steering, physics, short AI waits);
+U dominates in quiet play, H in battles.
+
+8. MEASUREMENT PLAN (for the coordinator; live runs)
+----------------------------------------------------
+Setup for every run: the current play stack (Play41P-type overlay, own cockpits, stock demo pilots,
+no captures: world_hash stride off or large), native_gate_tick_hz = 30, native_gate_frame_timing,
+native_gate_mass_traffic 'sync' (it closes the sim window, so sim_us and the profile's step= are
+meaningful), physics_scenes 'viewpoints' + view_scenes, 1803 ticks, each run twice (noise ~2 ms).
+Read with census_perf --native (frame), the FRAME_TIMING sim_us median, VIEW_POINTS levels= and the
+PHYSICS trace body counts where on, and census_profile.py for the sampler.
+8.1 Zero-cost first look: census_perf --native on existing logs of scene-n1/n2/n3 (3-4 clients in
+    3-4 sectors) against p4-C / p4-causeb2 (4 clients, one sector) - confounded by fixture and config,
+    only an order of magnitude.
+8.2 The price of a bubble (same world, same placement, only attention differs):
+    M1 two players in two sectors: slot 2's ship moved to a second, busy sector at tick 30 (the cam-C1
+       placement) - n = 2.
+    M2 = M1 + native_gate_view_points_mask = 1 (slot 2 is no view point on any client: its sector at
+       low attention everywhere, no scene B) - n = 1, slot 2 elsewhere.
+    M3 = M1 + mask = 0 (no view point at all) - n = 0: U plus the gate. Scripted pilots only.
+    M0 both players in one sector (baseline of today's census runs).
+    H2 = sim(M1) - sim(M2); H1 = sim(M2) - sim(M3); U ~ sim(M3). All runs must pass the relay with
+    0 mismatches (the mask is identical on every client, so identity must hold; a failure here is a
+    finding in itself). Repeat M1/M2 with slot 2 in a quiet sector and in the war fixture's battle.
+8.3 Where the time goes: M1 and M2 with native_gate_sample_profile = 2 (2 ms period, ~500 samples
+    per second on the MoveWorker; expect pause_mean_us 20-40, i.e. ~1-2% slowdown - compare one
+    M1 with and without the sampler to confirm). census_profile.py M1 --against M2 gives the per-mark
+    difference in ms per step: physics_step/jolt_update, ai_director, md_scheduler, zone_move,
+    ship_move/object_move, weapon_fire, spawn_effect, region_move, agent_pathing, set_attention,
+    render_cameras, ui_move, job_engine. Check walked=samples and faults=0 in SAMPLE_PROFILE_STOP.
+    For names of the inner rows pass the private workspace's symbols CSV with --names (not in git).
+8.4 One instance per PC: M1 with the two clients on two PCs (or one client on the laptop) against M1
+    on one PC: sim_us per instance without CPU contention.
+8.5 Bubble size (only if 8.2 makes it worth it): count objects per level from VIEW_POINTS levels= and
+    a capture; a knob for the 50 km margin would be a new default-off diagnostic, not built.
+
+9. DIAGNOSTICS ADDED (default off, Windows gate only)
+-----------------------------------------------------
+native_gate_view_points_mask = 0..15 (lockstep_view_points.h, gate.view_points_mask): bit k-1 = pilot
+  slot k counts as a view point (default all). Masked slots leave the latched list on every client,
+  so every module that follows the list (scenes, stand-ins, policy) follows the reduced list; at the
+  first latch the live player object's chain is recomputed. Needs native_gate_view_points 'players';
+  before the first admitted frame. Status VIEW_POINTS ... mask= masked=. Measurement only: a masked
+  player's ship flies the low-attention model and cannot fire.
+native_gate_sample_profile = 1..50 ms (lockstep_sample_profile.h, gate.sample_profile/_status/_row):
+  a sampler thread suspends the MoveWorker every period, walks its stack with RtlVirtualUnwind over
+  function tables located at arm (X4, the gate DLL, every loaded module; stack pointers checked
+  against the thread's TEB bounds, under SEH, no loader/heap/gate lock while suspended) and counts 21
+  engine-function marks (inclusive), the innermost X4 function or call site, leaf classes and the
+  pause. It follows ui_thread when snapshot boot adopts the in-game MoveWorker after arming
+  (retargets=). Reads only. Status SAMPLE_PROFILE per tick, rows SAMPLE_PROFILE_ROW at stop.
+tools/dev/census_profile.py: shares, binomial error, ms per step (step share x median sim_us), and
+  --against for the A/B difference; optional --names for private symbol names.
+check_gate_options.py knows both keys. Tests: test_lockstep_view_points.h (test_view_mask),
+test_lockstep_sample_profile.h (tables and lookups against RtlLookupFunctionEntry, chained owners,
+a live suspended worker thread walked top->mid->leaf, bounds, tally, rows, overflow, status widths,
+arm/sample, following a new MoveWorker, restore; repeated 4 times under load, stable),
+tests/test_native_gate_probe.py (arming, refusals, status and stop rows),
+tests/test_native_gate_check_options.py, tests/test_census_profile.py. A one-thread sampler adds a
+known risk: an exception during a walk is dispatched while the MoveWorker is suspended; if that
+thread held the loader's function-table lock exclusively at that moment (a module load) the
+process would hang. Walks validate every stack pointer first; faults= counts any that happen.
+
+10. LIMITS
+----------
+- Static reading: the handlers named in section 3 were read for what they switch, not every callee;
+  "purpose" notes marked [I] are not verified. The 131 slot-688 callers were classified by name and
+  strings, the important ones read.
+- The level names-to-numbers mapping rests on the schema order plus the thresholds (consistent at
+  5, 7, 8, 9, 10, 11), not on a table read from the binary.
+- No live number for H exists; every estimate of H in this report is [I] until 8.2 has run.
+- The sampler is tested on this PC's own threads; on X4 it will see JIT-compiled Lua frames as
+  unknown code (counted, the walk stops there) and frames of modules loaded after arm likewise.
+- Linux gate: neither diagnostic is ported (no view points module there yet).

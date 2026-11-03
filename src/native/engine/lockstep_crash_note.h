@@ -6,12 +6,20 @@
  * unwound chain, the tick, the thread and the gate stages. Then the previous filter runs (X4's
  * crash reporter), so X4 ends exactly as it would. Nothing here runs unless the process is
  * already ending; no heap, the file opened per call and appended to (the lane profile, beside
- * the debug log; x4lan-debug.txt as well when X4 shares it). */
+ * the debug log; x4lan-debug.txt as well when X4 shares it).
+ * First chance: live footlook (bodies + slot 1's get-up) ended both X4s with 0xC0000005 and no note: X4's own handler
+ * took the exception before the last-chance filter. So the armed note also writes up to CRASH_NOTE_FIRST lines
+ * 'NATIVE_GATE CRASH_FIRST_CHANCE' from a vectored handler (called first, before any frame handler) for an access
+ * violation whose address lies in X4's image; it handles nothing (the search goes on). One that X4 or a gate __try
+ * then handles is a line as well: the label says it was first chance, the note's last CRASH line says the end. */
 #define CRASH_NOTE_CHAIN 16u
 static WCHAR crash_note_path[2][MAX_PATH];
 static LPTOP_LEVEL_EXCEPTION_FILTER crash_note_previous;
 static volatile LONG crash_note_armed,crash_note_entered;
-static char crash_note_line[2048];
+static char crash_note_line[2048],crash_note_first_line[2048];
+#define CRASH_NOTE_FIRST 4u
+static volatile LONG crash_note_first_count;
+static PVOID crash_note_vectored;
 static void crash_note_where(uintptr_t at,char *out,size_t capacity) {
     uintptr_t base=(uintptr_t)image;HMODULE module=NULL;WCHAR name[MAX_PATH];
     if(base && at>=base && at-base<VPL_IMAGE_SPAN) {snprintf(out,capacity,"%llx",(unsigned long long)(at-base));return;}
@@ -23,13 +31,13 @@ static void crash_note_where(uintptr_t at,char *out,size_t capacity) {
     snprintf(out,capacity,"@%llx",(unsigned long long)at);
 }
 /* The line, without writing it (tests call this directly). */
-static int crash_note_text(const EXCEPTION_POINTERS *info,char *out,size_t capacity) {
+static int crash_note_text_as(const char *label,const EXCEPTION_POINTERS *info,char *out,size_t capacity) {
     const EXCEPTION_RECORD *e=info->ExceptionRecord;const CONTEXT *c=info->ContextRecord;char where[96];
     DWORD thread=GetCurrentThreadId();
     crash_note_where((uintptr_t)e->ExceptionAddress,where,sizeof(where));
-    int n=snprintf(out,capacity,"[X4LAN] NATIVE_GATE CRASH tick=%llu code=%08lx at=%s access=%llu data=%llx thread=%s "
+    int n=snprintf(out,capacity,"[X4LAN] NATIVE_GATE %s tick=%llu code=%08lx at=%s access=%llu data=%llx thread=%s "
         "rax=%llx rbx=%llx rcx=%llx rdx=%llx rsi=%llx rdi=%llx r8=%llx r9=%llx rsp=%llx pilot=%s chain=",
-        (unsigned long long)stats.issued,(unsigned long)e->ExceptionCode,where,
+        label,(unsigned long long)stats.issued,(unsigned long)e->ExceptionCode,where,
         e->NumberParameters>0?(unsigned long long)e->ExceptionInformation[0]:0ull,e->NumberParameters>1?(unsigned long long)e->ExceptionInformation[1]:0ull,
         thread==ui_thread?"frame":thread==main_thread?"main":"other",
         (unsigned long long)c->Rax,(unsigned long long)c->Rbx,(unsigned long long)c->Rcx,(unsigned long long)c->Rdx,(unsigned long long)c->Rsi,
@@ -47,6 +55,7 @@ static int crash_note_text(const EXCEPTION_POINTERS *info,char *out,size_t capac
     if(n>0 && (size_t)n+2<capacity) {out[n++]='\r';out[n++]='\n';out[n]=0;}
     return n>0 && (size_t)n<capacity?n:0;
 }
+static int crash_note_text(const EXCEPTION_POINTERS *info,char *out,size_t capacity) {return crash_note_text_as("CRASH",info,out,capacity);}
 static void crash_note_write(const char *text,int length) {
     for(unsigned i=0;i<2;i++) {
         if(!crash_note_path[i][0]) continue;
@@ -62,6 +71,16 @@ static LONG WINAPI crash_note_filter(EXCEPTION_POINTERS *info) {
     }
     return crash_note_previous?crash_note_previous(info):EXCEPTION_CONTINUE_SEARCH;
 }
+/* The vectored handler: an access violation in X4's image, the first CRASH_NOTE_FIRST of them; nothing handled. */
+static LONG WINAPI crash_note_first_chance(EXCEPTION_POINTERS *info) {
+    const EXCEPTION_RECORD *e=info?info->ExceptionRecord:NULL;uintptr_t base=(uintptr_t)image,at=e?(uintptr_t)e->ExceptionAddress:0;
+    if(!e || e->ExceptionCode!=EXCEPTION_ACCESS_VIOLATION || !InterlockedCompareExchange(&crash_note_armed,0,0) || !base || at<base ||
+       at-base>=VPL_IMAGE_SPAN) return EXCEPTION_CONTINUE_SEARCH;
+    if((unsigned)InterlockedIncrement(&crash_note_first_count)>CRASH_NOTE_FIRST) return EXCEPTION_CONTINUE_SEARCH;
+    int n=crash_note_text_as("CRASH_FIRST_CHANCE",info,crash_note_first_line,sizeof(crash_note_first_line));
+    if(n) crash_note_write(crash_note_first_line,n);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 /* gate.crash_note(note, log): the note file and (optional) the debug log, as UTF-8 paths. */
 static int crash_note_arm(const char *note,const char *log) {
     if(!note || !*note || !MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,note,-1,crash_note_path[0],MAX_PATH)) return 0;
@@ -70,6 +89,7 @@ static int crash_note_arm(const char *note,const char *log) {
     if(!InterlockedCompareExchange(&crash_note_armed,1,0)) {
         LPTOP_LEVEL_EXCEPTION_FILTER previous=SetUnhandledExceptionFilter(crash_note_filter);
         if(previous!=crash_note_filter) crash_note_previous=previous;   /* a UI reload arms again: keep X4's */
+        if(!crash_note_vectored) crash_note_vectored=AddVectoredExceptionHandler(1,crash_note_first_chance);
     }
     return 1;
 }

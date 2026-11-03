@@ -1,0 +1,324 @@
+LOCKSTEP HYBRID SECTORS (roadmap C9, user request 1 Nov): A SECTOR ONE PLAYER IS ALONE IN, SIMULATED BY THAT PLAYER'S CLIENT
+1 November 2026 | branch contrib/ferrite-hybrid (from smoke fc306302) | offline: no X4 launched, no lane tool run
+
+Tags: [F] established in the pinned X4 9.00 binary (or the shipped scripts) by this repository's earlier studies; the module or
+report that holds the address is named. No new disassembly was done for this report. [S] our own gate source, read for this
+report. [M] measured (the coordinator's attention benchmark attm0..attm3, build163, 1 Nov; quoted, not rerun here). [I] inference
+or estimate. Findings are in our own words; no decompiler output or game data is reproduced.
+
+1. SUMMARY
+----------
+The user's model: a sector S that only player k is in is simulated in full (high attention) only by client k; the other clients
+do not pay for it and receive its results; the rest of the universe stays deterministic lockstep and identical everywhere.
+
+What this design concludes:
+- The part that makes it cheap is easy and is built (slice H1, default off): attention is already a function of an agreed view
+  point set (lockstep_view_points.h [S]); H1 makes that set depend on the object. Client k evaluates S's objects with its own
+  ship as a view point, every client evaluates everything outside S without it, and the other clients drop slot k entirely, so
+  S runs at low attention there (no physics scene, no stand-in camera, linear flight, scripted combat). Ancestors of S and the
+  rest of the cluster get the same levels on every client by construction.
+- The part that keeps the outside identical is the hard part, and H1 does not have it. X4 has no authority boundary: S's
+  simulation on client k writes into engine-wide state that the outside reads in the same step (section 3). H1 closes the
+  channels that are cheap to close (attention of the outside; the slot receipts; the census; the cluster-level mining test),
+  and leaves the others open on purpose so the live test can say which ones actually leak in a quiet sector. The most likely
+  first leak is the runtime ID allocator (one engine-wide FIFO the owner draws from for S's physics shapes and traffic); the
+  next ones are MD reacting to S's attention changes, the per-callback job ordinal and cluster-level regions near the owner.
+- Results flow one way only in H1: the owner publishes a record of S's movers each step (digest + a few quantized poses in
+  the input blob); every client admits the same record (its receipt is part of the declared state); the other clients keep
+  the published poses as proxies and measure how far their low-attention copy drifts from them. Nothing published is
+  written into the engine yet: outside code that reads S still reads each client's own copy (section 6, H3/H4).
+- Handover (a second player enters S, the owner leaves, an NPC crosses) needs the full state of S, AI and MD script state
+  included, at an agreed step on every client: the join/save problem (LOCKSTEP-NONBLOCKING-SAVE-20261101.txt), whose decisive
+  question (save -> load equality) is open. H1 stops the gate (187) when a player crosses; NPC crossings are counted.
+- Cost/benefit, with the coordinator's numbers [M]: per step X4's own frame (sim_us) is ~29 ms, of which ~24 ms is the
+  low-attention universe plus our sync work (U), ~4 ms the player's own bubble and ~1-1.5 ms a second, remote, quiet bubble.
+  The most H1 can save per client in that scenario is ~1-1.5 ms per remote sector (3-5%). The hybrid pays off only where
+  remote bubbles are expensive (a battle in another player's sector, est. 10 ms or more [I], unmeasured) or numerous (N
+  players in N sectors: (N-1) x H per client, e.g. ~10 ms for eight players in quiet sectors [I]). U, the 24 ms every client
+  pays however players are spread, is untouched by any hybrid scheme: C10 and the symmetric cuts of the attention study
+  (section 6c there: parallel physics scenes, bubble size) remain the larger lever for today's two-to-four-player sessions.
+
+2. THE MODEL (target, of which H1 is the first slice)
+-----------------------------------------------------
+Ownership: at an agreed tick T, the sector S_k holding pilot slot k's ship becomes owned by client k when no other player is
+in it. One owner per sector, one sector per owner.
+Every step t, on every client:
+  outside the owned sectors   lockstep exactly as today (identical inputs, identical simulation);
+  inside S_k on client k      high attention, client k's own simulation (the authoritative one);
+  inside S_k elsewhere        a proxy: what client k published, applied identically everywhere.
+Client k publishes, as part of its input record for t, what the rest of the world can observe of S_k at t (state of S's
+objects as others see it, objects created/destroyed, objects leaving S, trades and money, events and signals that cross
+S's boundary). Every client applies the record at t+d (d = 1 + lookahead: a blob of report tick t is admitted at t+1+k;
+2 today) to the outside world and to S's proxies. For the outside to stay identical, every read of S from outside must see
+the published value of t-d on every client, client k included: client k's outside world must not read its own live S.
+That last rule is what the engine cannot do without help (section 3).
+
+3. THE AUTHORITY BOUNDARY: WHAT CROSSES A SECTOR BOUNDARY IN ONE STEP
+--------------------------------------------------------------------
+Class: (A) already partitioned per owner/object by the gate, (B) can be partitioned symmetrically (a per-sector scope, the
+same rule on every client), (C) needs publication (client k's result, applied everywhere), (D) out of reach in the slices
+planned here.
+3a. Attention and its consumers.
+  - Attention of objects outside S: computed from the view points [F, lockstep_view_points.h: slot 703 implementations read
+    the player object and camera list; levels combine by maximum]. H1 evaluates outside objects without the owners' ships
+    on every client [S] -> (A) in H1. S's ancestors (cluster, galaxy) and the other sectors of S's cluster are outside.
+  - Attention change events: SetAttention posts ChangedAttentionEvent (MD sees event_object_changed_attention) and, across
+    5/6, ChangedAdjacentZoneAttentionEvent [F, attention study 2]; 33 of 221 MD files use attention (NPC instantiation,
+    signal leaks, missions) [F, attention study 3a]. At T the other clients drop S to low attention, client k does not: MD
+    cues run on one side only and MD state is global -> (C) or (D). H1 leaves it open (expected leak, invisible to the
+    census until it changes a component; section 8).
+  - Systems that follow the latched view point list [S, lockstep_region_camera.h, lockstep_view_scenes.h]: physics scenes
+    (one per view point sector), stand-in cameras (region fill, mass traffic, effects, highway parameters), shape refresh
+    intervals, XS detail, crystal and mining tests. All but mining filter by the object's sector, so the owner's point only
+    ever matches inside S (A); mining filters by cluster and now skips the owner's point outside S in H1 [S] (A). The
+    stand-in camera in S on client k fills cluster-level regions near it: region content is a child of a cluster-level
+    region, not of S [F, lockstep_region_rng.h: the hazard region is a cluster child] -> objects outside S by their parent
+    chain, created on one client only -> (B) at best (a region-to-sector assignment) [I]; H1 leaves it open.
+3b. Objects moving across the boundary.
+  - Parent changes: every object's parent is a pointer at +0x70 [F, census]; a ship leaves S through a gate or accelerator
+    (moved into the other sector's zone), a highway (Highway::Move [F, attention study 3c]), a jump or an MD/AI teleport.
+    On client k the move is client k's high-attention result, on the others their low-attention copy moves differently or
+    not at all -> (C): a departure is an outcome to publish together with the object's full state (motion, orders, AI script
+    position, cargo), and an arrival into S hands an outside object to client k. This is handover in small (section 7).
+    H1 counts crossings (left=, entered=; the census compares membership) and does not handle them.
+  - Weapons and missiles: shots are physical only at high attention and stay in their zone's physics scene; missiles are
+    objects and move like ships (above) [F for the attention switch, attention study 3a; I for the rest].
+3c. Reads of S from outside, in the same step.
+  - AI orders and searches: scripts anywhere hold references to objects in S (attack targets, trade partners, escort
+    leaders) and search across sectors (find_* candidate lists, sorted by lockstep_find_order.h [S]) -> (C): such a read must
+    see the published state. No hook point covers "any read of an object in S" [I] -> (D) in general.
+  - Trade offers and economy: a station's offers are updated by UpdateTradeOffersEvent (Container::UpdateTradeOffers
+    0x4079e0 -> economy update 0x431f90) [F, lockstep_event_rng.h]; traders anywhere query them; money is per faction,
+    universe-wide. The attention study's finding that production and trade bookkeeping never read attention [I there] means
+    a station in S could stay lockstep-simulated on every client, if nothing high-attention-only touches it: S's ships trade
+    with it (dock, transfer wares) at times that differ between high and low attention -> the station's cargo and money
+    become owner-decided -> (C).
+  - MD conditions and missions that name objects in S (kill targets, escort, deliveries): global cue state -> (C)/(D).
+  - Gravidar: sector entries hold one group per zone; a scan sees only its own sector [F, lockstep_gravidar_wide.h]; the
+    applies set contact sets, live and player view flags (faction knowledge, map) and post event_gravidar_has_scanned into
+    the event queue [F, lockstep_ai_schedule.h] -> the flags and events of S's scans are owner-decided -> (C).
+  - God and job spawns: the job engine spawns into sectors with the job's own generator state (JobSpawnSource 0xf06650,
+    ShipGenerator::Generate 0xc841b0) [F, lockstep_spawn_rng.h]; its quotas count ships, S's included [I] -> (C) for the
+    counts, (B) for the spawn itself if the spawn sector is S.
+  - Mass traffic: decided per zone above 'visible' near a camera (Zone::Move -> 0x83ef20) [F, attention study 3c]: inside S
+    only on client k (A for the decision); the traffic objects take runtime IDs (below).
+3d. Engine-wide resources used inside S (not reads of S, but shared counters and streams).
+  - Runtime IDs: one FIFO allocator for components, event listeners, connections, physics shapes, movement controllers...
+    (AssignNewID 0xcc220, 96 direct callers) [F, lockstep_runtime_ids.h]; the gate keeps the head identical and folds it into
+    the declared state (RUNTIME_IDS barrier). Client k allocates for S's high-attention work (shapes on body creation, mass
+    traffic, effects not on the local lists) what the others do not -> every later ID differs on client k. (B): a third
+    local list for "work done inside an owned sector", chosen by a scope (below). H1 leaves it open: expected first leak.
+  - Created identities: a created object's portable ID is keyed by (parent, type, macro) and a per-key ordinal per tick
+    [S, lockstep_world_created.h] -> S's creations never shift the keys of creations outside S (A). Objects created inside S
+    on one client only are inside S (excluded) as long as their parent is in S.
+  - Keyed RNG streams: AI and MD scripts (per owner, context free), AI waits, MD timed/resume, events (per source, event
+    class, due time), regions (per region), spawns (per generator state), weapon fire, warp, build, ... [S, the *_rng.h
+    modules] -> (A): S's draws on client k do not move any outside stream.
+  - The natural sim-thread word (TLS slot0+0x318), reseeded per frame: consumers that are not keyed draw from it in walk
+    order (Object::Move above 'nearby' draws three values for random impulses [F, attention study 3b]; the region pass drew
+    from it before region_rng) [F, lockstep_region_rng.h] -> S's extra natural draws on client k shift every later natural
+    draw in the frame. (B): an S scope saves the word and runs S's subtree on a word of its own. Open in H1.
+  - JobThreadManager jobs: keyed by (submit tick, callback, category, per-callback submission ordinal, body) [S,
+    lockstep_job_rng.h] -> a job S submits on client k only shifts the ordinal of every later job of the same callback that
+    tick -> (B) with a sector component in the key. Open in H1.
+  - The event queue (one due-event queue, delivery order by lockstep_event_order.h [S]) and the AI director's schedule
+    (lockstep_ai_schedule.h [S]): S's events and wakes are interleaved with the outside's; with keyed delivery the order of
+    outside deliveries does not depend on S's [I] (A, to be confirmed by the census).
+  - The pathing pass: agents in batches, N full updates per batch (native_gate_path_budget) [S, lockstep_path_budget.h];
+    whether low-attention ships keep their agents in the same batches is not known [I]; if not, S changes which outside
+    agents get the full update -> (B) (a budget per sector) or (C). Open; PATH_DETERMINISM walk= per client names it.
+3e. Player actions: the owner's own inputs (stock piloting record, UI replay) are lockstep inputs applied on every client
+  [S]; on the other clients they act on the low-attention copy of the owner's ship (inside S, excluded). (A)
+Count: A for attention outside S, created keys, keyed streams, player inputs; B for runtime IDs, the natural word, jobs,
+regions near the owner, the pathing budget (all "sector scopes"); C for departures/arrivals, outside reads of S, trades,
+Gravidar flags, MD, job quotas; D for "every read of S" in general.
+
+4. WHAT EACH STEP OF THE PLAN ADDS (slices)
+-------------------------------------------
+H1 (this branch, default off): ownership, the attention split, the H1 boundary (players), the owner record and proxy table,
+   the census filter, the private slot receipts. Measures cost, bandwidth and which open channel leaks first.
+H2 sector scopes (B): one scope per owned sector, opened on every client wherever S's work runs: the component walk's call
+   into S's sector subtree, SetAttention of S's objects (body creation), the mass traffic and region passes of S's zones,
+   AI script runs whose context entity is in S, event deliveries to S's listeners, jobs submitted from those. In the scope:
+   runtime IDs from a sector-local list, the natural word on a sector word, job ordinals keyed by sector. Each hook point
+   exists already in a gate module (walk, event_order delivery, script_rng scopes, job_rng, region pass) [S]; the new part is
+   the scope rule. Closes 3d on both sides; the census decides whether it is enough for a quiet sector.
+H3 frozen proxies: on the other clients S's objects stop simulating (no Move, no AI, no MD triggers of their own) and take the
+   published state each step, so they cannot drift, cross or trade by themselves. Needs per-class suppression in the walk,
+   the AI director and the event queue [I: large].
+H4 publication of outcomes (C): departures with the object's state, trades and money, destructions and creations, MD/Gravidar
+   signals of S. Each is an input op like the UI replay's, applied at t+d on every client, with the outside reading S's proxy
+   (the published state) on client k too. The rule "client k's outside never reads its live S" has no engine-wide hook [I]:
+   this is where the model meets X4's lack of an authority boundary, and the reason the attention study recommended against
+   it. A practical cut: only sectors with nothing outside referencing them (no trade partners, targets, missions), checked by
+   the census, which is a scenario restriction, not a general mode.
+H5 handover by state transfer (section 7).
+
+5. RECORD FORMAT AND BANDWIDTH
+------------------------------
+H1 record (input section 'hybrid', kind 0x59 'Y', registry section 5; lockstep_hybrid.h), little endian:
+  0 version 1 | 1 flags 0 | 2..5 the state's tick (u32) | 6..13 the sector's saved ID | 14..15 movers (u16) |
+  16..23 digest of every mover's quantized entry | 24 entries n (0..P) | n x 36-byte entries:
+  portable key (u64) | parent tag (u32, low half of the mixed portable key of its zone) | position in the parent's frame
+  (3 x int32, mm) | rotation (3 x int16, x/y/z of the unit quaternion with w >= 0, Q15) | velocity (3 x int16, 1/4 m/s).
+  A mover is a Positional member whose movement controller the census already decodes (the NavigationController's pathing
+  slot, or the two getter forms) [S, lockstep_world_hash.h]; the record carries exactly the census motion fields, rounded.
+  The round robin takes the next P movers by key each step; the record shrinks to the room the blob has left (squeezed=).
+The wire today: one blob of at most 240 bytes per slot and step [S, lockstep_wire.h], shared with stock piloting, UI replay,
+pilot records, orders, hit claims and octree reports: 7.2 KB/s per slot at 30 steps/s. The H1 record is 25 + 36 n bytes
+(n <= 5: 205 bytes), i.e. at most 49 kbit/s, and refreshes each of M movers every M/n steps (100 movers, n = 4: every 25
+steps, 0.8 s). The full state (every mover every step) is 25 + 36 M bytes per step [S]: M = 50 / 150 / 400 movers ->
+1.8 / 5.4 / 14.4 KB per step -> 0.44 / 1.3 / 3.5 Mbit/s at 30 steps/s per owned sector, before events and before any delta
+coding [I; the attention study's estimate was 0.6-4 Mbit/s]. Sent to each of N-1 clients by the relay (fan-out (N-1) x
+owners). That does not fit the input wire; it needs a second channel: a relay side stream outside the step's permit (records
+tagged with their state tick, applied at t+d; the step waits for them like for inputs), or the peer links of roadmap B6.
+H1 measures the size the full state would have (full_bytes= per step, full_kbps in census_hybrid.py) on the real sector.
+
+6. PROXY MODEL
+--------------
+H1: a proxy table on every client that does not own S: per member, the last published pose and its state tick (proxied=,
+published=). The engine is not touched. Status: proxies= (entries applied), unknown= (keys not among this client's members),
+parent_mismatch= (the local copy is in another zone), unread=, and the distance between the published position and the local
+low-attention copy at apply (err_mean_m=, err_max_m=): the live test's measure of how far low attention drifts from high.
+Later, in this order:
+  display proxies: when a non-owner's camera is in S, draw S's movers at their published (extrapolated) poses through the
+    render layer's override hook (rdisp_override, lockstep_render_display.h [S]): display only, restored every frame, like
+    render frames stage 3. Cheap; makes "look at the other player's sector" show the owner's truth.
+  frozen proxies (H3): S's objects on the other clients stop simulating and are written to the published state each step.
+  Writing a pose into the engine needs the controller's pathing slots and the cached transforms written consistently [I];
+  the gate has no such writer today (everything it writes is time, RNG words, ordering and inputs).
+
+7. HANDOVER
+-----------
+Triggers: a second player's ship enters S; the owner's ship leaves S (gate, highway, jump, death); an owner disconnects; an NPC
+crosses the boundary (in either direction).
+What every client needs to continue in shared lockstep: S's full state at an agreed step T_h, including what was never
+published: AI script instances (label, variables, waits), MD cue instances touching S, orders, cargo, timers, physics bodies,
+attention-dependent transition state (station regions, interiors) [F for the existence of these states, attention study 3/4].
+Options:
+  (a) transfer: client k serializes S at T_h and the others replace their copy. X4's serializer saves the whole game [F,
+      nonblocking save 1.1]; there is no per-sector save, and save -> load equality is the open question of D14 (the loader
+      re-draws blocked AI waits and MD delays, takes attention and nav deadlines from the loading frames). A partial load
+      into a running game does not exist [I]. Feasible only as a whole-game re-sync: pause, client k saves, every other
+      client loads that save at T_h, everyone resumes (the join path of D14 with the owner as the server). Seconds to
+      minutes per handover with today's load times [I].
+  (b) re-seed from the published state: write the published fields into the others' copies at T_h. Covers positions and
+      health only; the copies diverged in everything else (orders, AI position, cargo) -> the worlds part after T_h. Not a
+      handover [I].
+  (c) never hand over: ownership ends only by (a) for everyone. Equivalent to (a).
+  NPC crossings need the same per object (motion + AI script state + cargo), i.e. (a) at object granularity, which X4 has no
+  serializer for [I].
+H1: no handover. A player crossing stops the gate (187: owner_left, other_entered, owner_lost); NPC crossings are counted
+(left= by the owner's mover pass and the census rebuild, entered= by the census rebuild) and their effect shows in the census.
+
+8. FAILURE MODES
+----------------
+- The owner stops, crashes or drops: S has no simulator; the other clients' copies are low-attention and diverged, so the
+  session cannot continue S in lockstep -> stop (H1: the relay's timeout, as for any client) or re-sync (7a).
+- The owner's S desyncs from what it publishes: impossible to tell from outside; S's truth is whatever client k computes.
+  Trust: client k is the authority for S (a cheating owner can publish anything; signed records (B8) authenticate the
+  sender, not the content).
+- The outside parts (a channel of section 3 leaks): the census detects it at the next capture (outside roots differ); the
+  per-tick digest detects a leak that reaches a declared part (RUNTIME_IDS, slot receipts outside S, fixture actors). H1
+  declares the outside roots instead of the full roots from T on, so a strict relay stops exactly on an outside difference
+  or a shared-counter difference, never on S's own state.
+- A record is missing (blob full, a quiet tick in protocol 5, a dropped owner): counted identically on every client
+  (missing= in the receipt); the proxies get stale. A record that is not acceptable (wrong slot, sector, shape or tick)
+  stops every client alike (record_*), because the admitted blobs are the same everywhere.
+- What the census cannot see: MD cue state, AI script state, faction knowledge, money. A leak there shows only when it moves
+  a component. The digest's RUNTIME_IDS word sees allocation differences at once.
+- The local view of the owner's own world: client k sees its own S at high attention and the outside as everyone does; the
+  other clients see S's objects at low attention (wrong positions by err_* meters) until display proxies exist.
+
+9. THE FIRST SLICE H1 (built, default off)
+------------------------------------------
+Key: native_gate_hybrid = {owners={k,...}, tick=T, poses=P} (owners: pilot slots 1..4 once each; T >= 2; P 0..5, default 4).
+Needs native_gate_view_points 'players', native_gate_pilot_slots, native_gate_clients (protocol 3/4 wire); the census filter
+needs native_gate_world_hash_stride. check_gate_options.py checks all of it.
+Gate (src/native/engine/lockstep_hybrid.h, stop reason 187; hooks in lockstep_view_points.h, lockstep_world_hash.h):
+- latch of the first tick >= T: S_k = class 0x58 ancestor of slot k's ship (the same on every client); two owners in one
+  sector, a missing ship or a sector without saved ID refuse (the split never starts; stop 187 at the next gate tick);
+- every latch from T on: another client's owned slot is no view point; this client's owned slot is, and counts only inside
+  its sector (view_evaluate); the latch of T recomputes every former and new view point's chain on every client; then the H1
+  boundary check (owner_left, owner_lost, other_entered, sector_lost);
+- gate.hybrid_frame after the latch: the member scan at the first frame (identity tables + native find, timed: scan_us=),
+  then on the owner the mover pass (digest, round robin, crossings);
+- input section 'hybrid' (C container, Lua and Python mirrors, kind 0x59, packed last; registry section 5);
+- apply: acceptance rules, the receipt HYB_1|tick|records|entries|missing|fold (or refused|why), proxies;
+- census: after each item's hashes (world_hash_after_item), outside roots / inside root; gate.hybrid_census gives
+  HYBRID_OUTSIDE_1:tick:count:r0:r1:r2:r3, the probe declares it in place of the full roots from T on, and the member
+  table is rebuilt from the capture;
+- private slots: PSTOCK flight state (|Sk:..:h), pilot fire fold and missile part (h), PILOT_SHIPS rows (/hybrid) leave the
+  owners' ships out from T on; a battle fixture actor inside an owned sector is declared as /hybrid;
+- region camera: the cluster-level mining test skips the owner's point outside its sector (rc_shape_own).
+Probe (tools/dev/native_gate_probe.lua): validation at load, arming after view points (HYBRID_ARMED), the section, the frame
+call and HYBRID status at every status stride, HYBRID_CENSUS at captures, HYBRID_STOP. Offline tool tools/dev/census_hybrid.py.
+Tests: test_lockstep_hybrid.h (arming; owner and non-owner latch, attention split and chain refresh; members, record bytes,
+squeeze, idempotence; apply on owner and non-owner with identical receipts, proxy error, missing count, every refusal; census
+roots against an independent SHA-256, absent members, rebuild; boundary whys), test_lockstep_region_camera.h (mining with the
+owner's point), tests/test_native_gate_inputs.py (the new kind in C, Lua and Python), tests/test_census_hybrid.py,
+tests/test_native_gate_check_options.py, tests/test_native_gate_probe.py, tests/test_lockstep_registry.py (input kinds).
+Cost of H1 itself [I]: per evaluation one +0x70 walk for the owner's point (fast reads); per step on the owner one pass over
+S's movers (tens to hundreds of reads); at a census capture one walk per item; the scan once (~0.5 M finds, est. 0.1-0.3 s,
+measured as scan_us=).
+
+10. LIVE-TEST SPEC (for the coordinator; nothing here was run)
+-------------------------------------------------------------
+Base: .local/census/overlay-Play42P (read for this spec: two clients, pilot slots ae79c / 7a8fe, stock piloting demo/demo2,
+view points 'players' from the ship, view scenes, stand-ins 4, mass traffic and region pass 'sync', runtime IDs with barrier and
+local lists, created identities, world hash WORLD_IMPORTED_2 with stride 1800, tick_hz 30, lookahead 1, frame timing on), plus
+the placement of the attention benchmark's M1 (attm1: slot 2 alone in cluster_01_sector001_macro at 0,30000,0). Run as a
+census run (the relay observes and does not stop at a mismatch), 1803 ticks, each run twice if time allows.
+Lines on top of that base:
+  HA (one owner):    X4LAN_CONFIG.native_gate_hybrid = {owners={2},tick=60,poses=4}
+                     X4LAN_CONFIG.native_gate_world_hash_stride = 600
+  HB (two owners):   X4LAN_CONFIG.native_gate_hybrid = {owners={1,2},tick=60,poses=4}
+                     X4LAN_CONFIG.native_gate_world_hash_stride = 600
+  HP (where it goes, optional): HA + X4LAN_CONFIG.native_gate_sample_profile = 2   (compare with attm1p / attm2p)
+  HS (strict, optional): HA with the relay stopping at the first mismatch.
+T = 60: after the identity plan's placement (tick 20) and the first latches. Stride 600 gives captures at 600/1200/1800 after T;
+capture ticks are excluded from the sim_us medians. Read with
+  python tools/dev/census_hybrid.py <run>        (verdict, per client status, census pairs, sim_us before/after T)
+  python tools/dev/census_perf.py <run> --native  (frame breakdown)   and   --agree RUNTIME_IDS:next  (the ID head)
+Rows (P = pass needed, I = informative, E = expected to fail in H1, the number is the finding):
+  R1  P  HYBRID_ARMED owners=2 tick=60 poses=4 on both clients; HYBRID ... active=1 started=60 sectors=2:<saved ID of the
+         Grand Exchange sector>, identical on both; owner=1 view_index=1 on client 2, owner=0 view_index=-1 on client 1.
+  R2  P  No stop 187 (why=none, failures=0) through 1803 ticks; no owner_left (slot 2's demo2 flight stays in the sector).
+  R3  P  members= and movers= > 0 on both (movers: Positional members whose controller the census decodes); scan_us= and
+         frame_us_max= reported (I: the one-time scan and the owner's per-step mover pass; expected well under 2 ms per step).
+  R4  P  records=0/R/0/0 on both clients with the same R, R close to 1803-60-3; missing= small; client 2 proposed=, entries_out=.
+  R5  I  bandwidth: bytes_mean=/bytes_max= (<= 207) and full_bytes= / full_kbps (census_hybrid) for Grand Exchange: the size
+         of the real full state.
+  R6  I  client 1 proxies= > 0, unknown= ~0, parent_mismatch=, err_mean_m= / err_max_m=: how far the low-attention copy is
+         from the owner's truth.
+  R7  P  census_hybrid verdict.classification_ok (the gate's outside roots equal the parent-chain recomputation).
+  R8  E? census_hybrid verdict.outside_identical at 600, 1200, 1800. A failure is the main finding: first_outside_difference
+         and the pair's samples (domain, object ID, class RVA) name the channel (section 3; candidates: region content near
+         the owner (cluster-level regions), MD/attention events, ships whose agents share batches with S's).
+  R9  I  membership_identical: false means an NPC crossed differently (membership_samples).
+  R10 E  RUNTIME_IDS next= agree between the clients (census_perf --agree RUNTIME_IDS:next): expected to part soon after T on
+         the owner's allocations inside S (3d); the first differing tick. Not a failure of the outside by itself: R8 decides.
+  R11 P  cost: client 1's sim_us median (ticks 300..1800, captures out) at or below attm2's client 1 (28.4 ms) + noise and
+         below attm1's (29.4 ms); client 2's near attm1's client 2 (27.9 ms). HB: each client near its own M2-like value
+         (only its own bubble), i.e. both save ~1-1.5 ms against M1.
+  R12 I  HP: census_profile.py HP --against attm1p names what the non-owner no longer spends (physics_step, ship_move, ...).
+  R13 I  HS: the first mismatch tick and which declared part (RUNTIME_IDS, INPUTS receipt, PSTOCK, PILOT_SHIPS, world state).
+Stop rules: any 187 before tick 300 makes the run invalid for R11 (report the why); a stop with another reason is a bug of H1.
+
+11. OUT OF SCOPE AT FIRST, LIMITS, UNVERIFIED
+--------------------------------------------
+Out of scope in H1: handover (stop 187), NPC crossings (counted only), H2 scopes (runtime IDs, natural word, jobs, regions,
+path budget), H3 frozen proxies, H4 publication of outcomes, display proxies, a full-state side channel, the Linux gate (not
+ported; a Linux client with native_gate_hybrid would need the module), more than one sector per owner, owner changes.
+Limits:
+- Everything live is unverified: no part of H1 has run in X4. The attention split's effect on S (scene and bodies dropped on
+  the other clients, the owner keeping its stand-in) follows the existing view point machinery [S] but has not been watched.
+- The pose decoding (position, axis rows and velocity at the census' offsets, floats) follows the census and the motion watch
+  [S]; which of the getter forms the stock-piloted player ship uses, and whether its rows are in the parent's frame, is [I].
+- The mover pass reads only movers known at the last scan or capture: movers created between captures are not published
+  until the next capture (counted at the census as entered=).
+- The census filter classifies by the live parent chain; an object absent at a capture is inside when the member table had it.
+  Objects created and destroyed between two captures are seen by neither.
+- The per-step digest keeps every shared counter (RUNTIME_IDS) on purpose: a strict run will most likely stop early (R10).
+- Numbers in sections 1 and 5 marked [I] are estimates; the [M] numbers are the coordinator's single runs (~1-2 ms noise).
+- No new binary reading was done for this report; every [F] is an earlier study's finding, cited.

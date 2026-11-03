@@ -23,16 +23,33 @@
  * 8.66 s) and nav_cadence_leave after (counted as 'other',
  * a row when the ship is watched), plus one NAV_CADENCE_ROW per state change of
  * the player controller itself (id=0, saved = its ship's portable key) when the
- * ship is not watched. Only calls that take the Agent branch are bracketed
- * (the autopilot flag 0x2f4b7d8 set, as 0xd981bb tests it): under manual flight
- * vfunc33 never reaches the nav upkeep, nothing reads the probe deadline
- * (its only reader is 0xea7bef, while +0x3e8 is set) and the call passes
- * through, counted as manual= (big-BS6q: the player sat in manual flight).
- * Every other call passes straight through. The status
+ * ship is not watched. Only calls that take the Agent branch are bracketed:
+ * under manual flight vfunc33 never reaches the nav upkeep, nothing reads the
+ * probe deadline (its only reader is 0xea7bef, while +0x3e8 is set) and the call
+ * passes through, counted as manual= (big-BS6q: the player sat in manual flight).
+ * The Agent branch is the authority test 0xd981bb..0xd98201, the one
+ * PlayerController::GetTransform 0xd8a680 (Agent banks) and d8dd50 make: the
+ * autopilot flag 0x2f4b7d8; or flight control 0x2f4b828 clear, assist (the
+ * controller's vfunc49 0xd9bf70, argument 0, which vfunc33 also calls at its
+ * start) and no highway 0x6b661d0; or the ship's +0xd1 clear. Until 1 Nov only
+ * the autopilot flag was tested here. L1 (fight start, --source script; reports/
+ * LOCKSTEP-STARTS-20261101.txt 9c): the parked controls (flight control 0, the
+ * Steering model flying the occupied ship) take the Agent branch without the
+ * autopilot, so every upkeep call passed through unbracketed (manual=277 of 277),
+ * the parameter refresh deadline kept its loading value and each client rebuilt
+ * the occupied ship's flight parameters on its own ticks (one keyed 'far' draw in
+ * its ship scope: 226/277/312.. on one client, 246/299/332.. on the other); the
+ * ship parted in velocity the tick after a build only one client made (278).
+ * Now each admitted call evaluates that test before the original, in the native
+ * order (the assist call only with flight control clear), and brackets every
+ * Agent-branch call; parked= counts those without the autopilot flag. An
+ * unreadable flag or ship (which the native test would dereference) fails the
+ * module (stop reason 95). Every other call passes straight through. The status
  * says which RNG word the upkeep's 'far' draw used: scoped = inside a ship's
  * actor_all umbrella (keyed per tick and ship), unscoped = the frame's shared
  * word; drawn = calls after which the current word had moved. Pins: the
- * prologue up to movaps xmm7,xmm1, the autopilot branch and the direct call.
+ * prologue up to movaps xmm7,xmm1, the authority test (autopilot branch, flight
+ * control, assist slot, highway, +0xd1) and the direct call.
  * Every gate tick re-checks entry and pins (stop reason 95, the nav cadence
  * reason); stop restores by CAS and leaves a foreign value in place. */
 #define NAV_PLAYER_ENTRY 0x2c39590u  /* PlayerController vtable 0x2c39488 slot 33 */
@@ -42,21 +59,57 @@
 #define NAV_PLAYER_BRANCH 0xd981bbu  /* cmp [0x2f4b7d8],r15; jne 0xd98470 */
 #define NAV_PLAYER_CALL 0xd98470u    /* movaps xmm1,xmm7; mov rcx,rsi; call 0xea77f0 */
 #define NAV_PLAYER_AUTOPILOT 0x2f4b7d8u /* qword, nonzero: vfunc33 takes the Agent branch */
+#define NAV_PLAYER_TESTS 0xd981c8u   /* the rest of the authority test, through 0xd98201 */
+#define NAV_PLAYER_FLIGHT 0x2f4b828u /* byte: flight control (0 while the controls are parked) */
+#define NAV_PLAYER_HIGHWAY 0x6b661d0u /* byte: on a highway */
+#define NAV_PLAYER_ASSIST_SLOT 49u   /* vtable +0x188: PlayerController vfunc49 0xd9bf70 (assist), argument 0 */
+#define NAV_PLAYER_OWN 0xd1u         /* ship byte: clear = the Agent moves it */
+enum {NAV_PLAYER_MANUAL,NAV_PLAYER_PARKED,NAV_PLAYER_AUTOPILOTED};
 typedef void (*nav_player_fn)(void *,double);
+typedef unsigned char (*nav_player_assist_fn)(void *,unsigned char);
 static const unsigned char nav_player_branch[13]={0x4c,0x39,0x3d,0x16,0x36,0x1b,0x02,0x0f,0x85,0xa8,0x02,0x00,0x00};
+/* cmp [0x2f4b828],r15b; jne 0xd981f0; call [rax+0x188] (rcx this, edx 0); test al,al; je 0xd981f0;
+ * cmp [0x6b661d0],r15b; je 0xd98470; mov rax,[rsi+0x28]; cmp [rax+0xd1],r15b; je 0xd98470 */
+static const unsigned char nav_player_tests[57]={0x44,0x38,0x3d,0x59,0x36,0x1b,0x02,0x75,0x1f,0x48,0x8b,0x06,0x33,0xd2,0x48,0x8b,0xce,
+    0xff,0x90,0x88,0x01,0x00,0x00,0x84,0xc0,0x74,0x0d,0x44,0x38,0x3d,0xe6,0xdf,0xdc,0x05,0x0f,0x84,0x80,0x02,0x00,0x00,0x48,0x8b,0x46,0x28,
+    0x44,0x38,0xb8,0xd1,0x00,0x00,0x00,0x0f,0x84,0x6f,0x02,0x00,0x00};
 static const unsigned char nav_player_call[11]={0x0f,0x28,0xcf,0x48,0x8b,0xce,0xe8,0x75,0xf3,0x10,0x00};
 static int nav_player_installed,nav_player_restored,nav_player_seen;
 static volatile LONG64 nav_player_calls,nav_player_failures;
-static uint64_t nav_player_admitted,nav_player_manual,nav_player_scoped,nav_player_unscoped,nav_player_drawn,nav_player_rows,nav_player_unmapped;
+static uint64_t nav_player_admitted,nav_player_manual,nav_player_parked,nav_player_scoped,nav_player_unscoped,nav_player_drawn,nav_player_rows,nav_player_unmapped;
+static nav_player_assist_fn nav_player_assist_override; /* tests only; NULL calls the controller's vfunc49 */
 static uint64_t nav_player_tick=UINT64_MAX,nav_player_frame_admitted;
 static nav_cadence_state nav_player_last;
 static nav_player_fn nav_player_original_override; /* tests only; NULL runs PlayerController::vfunc33 */
 static const char *nav_player_stage="idle";
 static int nav_player_pins(void) {
-    unsigned char branch[sizeof(nav_player_branch)],call[sizeof(nav_player_call)];
+    unsigned char branch[sizeof(nav_player_branch)],tests[sizeof(nav_player_tests)],call[sizeof(nav_player_call)];
     return hash_ok(image+NAV_PLAYER_MOVE,NAV_PLAYER_HEAD,NAV_PLAYER_HEAD_SHA) &&
         read_local(image+NAV_PLAYER_BRANCH,branch,sizeof(branch)) && !memcmp(branch,nav_player_branch,sizeof(branch)) &&
+        read_local(image+NAV_PLAYER_TESTS,tests,sizeof(tests)) && !memcmp(tests,nav_player_tests,sizeof(tests)) &&
         read_local(image+NAV_PLAYER_CALL,call,sizeof(call)) && !memcmp(call,nav_player_call,sizeof(call));
+}
+/* vfunc33's authority test (0xd981bb..0xd98201), re-stated in its order: NAV_PLAYER_AUTOPILOTED, NAV_PLAYER_PARKED
+ * (the Agent branch without the autopilot flag), NAV_PLAYER_MANUAL, or -1 when a flag or the ship is unreadable. */
+static int nav_player_branch_of(void *self) {
+    uint64_t autopilot=0;unsigned char flight=1,highway=1,own=1,*ship=NULL;
+    if(!read_local(image+NAV_PLAYER_AUTOPILOT,&autopilot,8)) return -1;
+    if(autopilot) return NAV_PLAYER_AUTOPILOTED;
+    if(!read_local(image+NAV_PLAYER_FLIGHT,&flight,1)) return -1;
+    if(!flight) {
+        void **vtable=NULL;unsigned char assist;
+        if(nav_player_assist_override) assist=nav_player_assist_override(self,0);
+        else {
+            if(!read_local(self,&vtable,8) || !vtable) return -1;
+            assist=((nav_player_assist_fn)vtable[NAV_PLAYER_ASSIST_SLOT])(self,0);
+        }
+        if(assist) {
+            if(!read_local(image+NAV_PLAYER_HIGHWAY,&highway,1)) return -1;
+            if(!highway) return NAV_PLAYER_PARKED;
+        }
+    }
+    if(!read_local((unsigned char*)self+0x28,&ship,8) || !ship || !read_local(ship+NAV_PLAYER_OWN,&own,1)) return -1;
+    return own?NAV_PLAYER_MANUAL:NAV_PLAYER_PARKED;
 }
 static void nav_player_move(void *self,double time);
 static int nav_player_owned(void) {return !nav_player_installed || *(void*volatile*)(image+NAV_PLAYER_ENTRY)==(void*)nav_player_move;}
@@ -77,14 +130,11 @@ static void nav_player_run(nav_player_fn original,void *self,double time,const u
     if(!stats.active || boot_phase!=3 || GetCurrentThreadId()!=ui_thread) {original(self,time);return;}
     if(nav_player_tick!=stats.issued) {nav_player_tick=stats.issued;nav_player_frame_admitted=0;}
     ++nav_player_admitted;++nav_player_frame_admitted;
-    /* Bracket every admitted call. The autopilot flag at entry is not the original's decision: between entry and
-     * its branch (0xd981bb) the original calls 0xd97b50 (0xd981af), after which the flag can be set and the nav
-     * upkeep runs; unbracketed, the player's nav deadlines kept their per-client load-time values (a scripted
-     * pilot's player ship drew its parameter refresh at tick 50 on one client and 54 on the other). Where the
-     * upkeep is not reached the bracket only re-bases deadlines nothing reads. manual= still counts a clear flag. */
-    uint64_t autopilot=0;
-    if(!read_local(image+NAV_PLAYER_AUTOPILOT,&autopilot,8) || !autopilot) ++nav_player_manual;
-    else if(actor_all_ship_depth) ++nav_player_scoped;else ++nav_player_unscoped;
+    const int branch=nav_player_branch_of(self);
+    if(branch<0) {nav_player_stage="unreadable";InterlockedIncrement64(&nav_player_failures);original(self,time);return;}
+    if(branch==NAV_PLAYER_MANUAL) {++nav_player_manual;original(self,time);return;}
+    if(branch==NAV_PLAYER_PARKED) ++nav_player_parked;
+    if(actor_all_ship_depth) ++nav_player_scoped;else ++nav_player_unscoped;
     uint64_t before=rng?*rng:0;
     nav_cadence_sample cadence;nav_cadence_enter(self,time,&cadence);
     original(self,time);
@@ -103,7 +153,7 @@ static int nav_player_arm(void) {
     if(GetModuleHandleW(L"x4lan_fixedtick_64.dll")) {nav_player_stage="foreign_module";return 0;}
     if(!nav_player_pins()) {nav_player_stage="pins";return 0;}
     if(!script_rng_slot_swap(NAV_PLAYER_ENTRY,image+NAV_PLAYER_MOVE,(void*)nav_player_move)) {nav_player_stage="entry";return 0;}
-    nav_player_calls=nav_player_failures=0;nav_player_admitted=nav_player_manual=nav_player_scoped=nav_player_unscoped=nav_player_drawn=0;
+    nav_player_calls=nav_player_failures=0;nav_player_admitted=nav_player_manual=nav_player_parked=nav_player_scoped=nav_player_unscoped=nav_player_drawn=0;
     nav_player_rows=nav_player_unmapped=nav_player_frame_admitted=0;nav_player_tick=UINT64_MAX;nav_player_seen=0;
     nav_player_installed=1;nav_player_restored=0;nav_player_stage="armed";return 1;
 }
@@ -120,11 +170,12 @@ static void nav_player_restore(void) {
     nav_player_installed=0;nav_player_restored=1;
 }
 static int nav_player_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity,"installed=%d frame=%llu frame_calls=%llu calls=%lld admitted=%llu manual=%llu scoped=%llu unscoped=%llu drawn=%llu "
+    int n=snprintf(out,capacity,"installed=%d frame=%llu frame_calls=%llu calls=%lld admitted=%llu manual=%llu parked=%llu scoped=%llu unscoped=%llu drawn=%llu "
         "rows=%llu unmapped=%llu restored=%d stage=%s failures=%lld",
         nav_player_installed,(unsigned long long)(nav_player_tick==UINT64_MAX?0:nav_player_tick),
         (unsigned long long)(nav_player_tick==stats.issued?nav_player_frame_admitted:0),(long long)nav_player_calls,
-        (unsigned long long)nav_player_admitted,(unsigned long long)nav_player_manual,(unsigned long long)nav_player_scoped,(unsigned long long)nav_player_unscoped,
+        (unsigned long long)nav_player_admitted,(unsigned long long)nav_player_manual,(unsigned long long)nav_player_parked,
+        (unsigned long long)nav_player_scoped,(unsigned long long)nav_player_unscoped,
         (unsigned long long)nav_player_drawn,(unsigned long long)nav_player_rows,(unsigned long long)nav_player_unmapped,
         nav_player_restored,nav_player_stage,(long long)nav_player_failures);
     return n>0 && (size_t)n<capacity?n:0;

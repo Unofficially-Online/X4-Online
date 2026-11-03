@@ -9,12 +9,20 @@ GATE_EXPORT int x4gate_wire(unsigned version,unsigned clients) {
     if(used) return valid && version==wire_version && clients==wire_clients;
     if(!valid) return 0;
     if(version!=3) wire_lookahead=0;
+#ifdef LOCKSTEP_ADAPTIVE
+    if(version!=3) wire_adaptive=0;
+#endif
     wire_version=version;wire_clients=clients;return 1;
 }
 /* Protocol 4 window k (0 keeps protocol 3): after x4gate_wire(3,N), before
  * start/boot; once started, only the identical window returns 1 (UI reloads). */
 GATE_EXPORT int x4gate_lookahead(unsigned k) {
     int valid=wire_version==3 && k<=GATE_LOOKAHEAD_MAX;
+#ifdef LOCKSTEP_ADAPTIVE
+    /* A fixed window replaces protocol 5 before the start; afterwards it never matches it. */
+    if(used && wire_adaptive) return 0;
+    if(valid && !used) wire_adaptive=0;
+#endif
     if(used) return valid && k==wire_lookahead;
     if(!valid) return 0;
     wire_lookahead=k;return 1;

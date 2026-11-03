@@ -2,7 +2,7 @@
  * its refusals, both poses of the canonical player in the scope and every byte back after it; the
  * fighter of see2 against the save's scout. The image test reads the facts the module relies on. */
 static __attribute__((aligned(16))) unsigned char test_peye_p1[0x7000],test_peye_p2[0x7000],test_peye_ship1[0x500],test_peye_room1[0x100],
-    test_peye_ship2[0x500],test_peye_room2[0x100],test_peye_fpc[0x100],test_peye_other_ctl[0x40];
+    test_peye_ship2[0x500],test_peye_room2[0x100],test_peye_fpc[0x100],test_peye_other_ctl[0x40],test_peye_station[0x100];
 static __attribute__((aligned(16))) float test_peye_seat1[16],test_peye_seat2[16],test_peye_local[16],test_peye_published[16],test_peye_engine_block[16];
 static void *test_peye_stock[1+PEYE_FPC_SLOTS],*test_peye_other_vt[2];
 static unsigned test_peye_seats,test_peye_poses,test_peye_slot5;
@@ -132,6 +132,29 @@ static void test_pilot_eye(void) {
     peye_enter(test_peye_p1,view,1,&s,test_peye_room1);assert(!peye_live && !peye_published);peye_leave();
     assert(!memcmp(before,test_peye_p1,sizeof(before)) && !memcmp(fpc_before,test_peye_fpc,sizeof(fpc_before)));
     test_peye_pose_set(test_peye_seat2,0.006f,-0.0707f,0.2384f,0);
+    /* Slot 1 on foot (lockstep_pilot_foot.h): its player stands in a station room. Slot 2 is presented at its own seat, X4's
+     * w lanes, whatever slot 1's walking pose; one seat call (slot 2's), the RNG word put back; foot off: skipped as before. */
+    {   unsigned char *station=test_peye_station,*room1=test_peye_room1;int saved_foot=pfoot_armed;
+        memcpy(test_peye_p1+PRES_PARENT,&station,8);pfoot_armed=1;test_peye_seats=0;test_peye_rng=0x55;
+        assert(peye_update(&s) && !strcmp(peye_stage,"seat") && peye_on && peye_seat_mode && test_peye_seats==1 && test_peye_rng==0x55 &&
+               peye_key[1]==test_peye_station && peye_key[2]==test_peye_ship2 && peye_key[3]==test_peye_room2);
+        {float id[16];peye_identity(id);assert(!memcmp(peye_delta,id,64));}
+        float walking[16],saved_local[16];memcpy(saved_local,test_peye_local,64);
+        test_peye_pose_set(walking,12.0f,1.7f,-30.0f,2.0f);walking[3]=0.25f;memcpy(test_peye_local,walking,64);
+        peye_enter(test_peye_p1,view,1,&s,test_peye_station);InterlockedExchange(&pres_open,1);assert(peye_live && peye_published);
+        {   float out[16],want[16];memcpy(want,test_peye_seat2,64);want[3]=0.25f;
+            test_peye_call6(out,1);assert(test_peye_close(out,want,16,1e-6f));
+            float *block=NULL;memcpy(&block,view+PEYE_VIEW_BLOCK,8);memcpy(want,test_peye_seat2,64);   /* the published pose's w lanes */
+            for(unsigned i=0;i<4;i++) want[4*i+3]=test_peye_published[4*i+3];
+            assert(block==peye_block[1] && test_peye_close(block,want,16,1e-6f));}
+        InterlockedExchange(&pres_open,0);
+        {float out[16];test_peye_call6(out,1);assert(test_peye_close(out,walking,16,0));}   /* outside: X4's own walking pose */
+        InterlockedExchange(&pres_open,1);peye_leave();InterlockedExchange(&pres_open,0);
+        assert(!peye_live && !peye_published && *(void**)test_peye_fpc==(void*)&test_peye_stock[1]);
+        test_peye_seat_found=0;assert(!peye_update(&s) && !strcmp(peye_stage,"skip:no_seat") && !peye_seat_mode);test_peye_seat_found=1;
+        pfoot_armed=0;assert(!peye_update(&s) && !strcmp(peye_stage,"skip:slot1_seat") && !peye_seat_mode);
+        pfoot_armed=saved_foot;memcpy(test_peye_local,saved_local,64);memcpy(test_peye_p1+PRES_PARENT,&room1,8);
+        assert(peye_update(&s) && !strcmp(peye_stage,"on") && !peye_seat_mode);}
     /* Refusals: slot 1's player not in its ship's room, no seat connection, not rigid, a fault in X4's call. */
     {   unsigned char *elsewhere=test_peye_room2;memcpy(test_peye_p1+PRES_PARENT,&elsewhere,8);
         assert(!peye_update(&s) && !strcmp(peye_stage,"skip:slot1_seat"));

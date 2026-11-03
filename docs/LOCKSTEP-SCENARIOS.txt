@@ -151,6 +151,11 @@ ms, and activity=/entityzone= in every sample.
 
 OTHER PLAYER STARTS (one imported snapshot per gamestart)
 
+Superseding the fixed list below for sessions (1 November): tools/dev/native_gate_session_start.py classifies
+every stock start from the game data (native_gate_gamestarts.py), builds the capture overlay for any usable base
+start plus per-player start hulls, registers the save and rebases overlays; native_gate_players.py --session uses
+it. Design, classes, refusals and live tests: reports/LOCKSTEP-STARTS-20261101.txt.
+
 How snapshot 005 was made: tools/dev/native_gate_lane.py --capture-snapshot wraps one
 disposable lane run (x4lane run, -module custom_creative -seed:276944566) with overlay
 snapshot-capture-overlay-v4 = native_gate_battle.xml + x4lan_fixedtick_64.dll +

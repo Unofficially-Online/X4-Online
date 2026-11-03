@@ -1,0 +1,228 @@
+LOCKSTEP PEER LINKS (ROADMAP B6): DIRECT PLAYER-TO-PLAYER INPUT RECORDS - 1 NOVEMBER 2026
+Branch contrib/ferrite-p2p (from the smoke e457b4c9). Offline work only: no X4 was started, no lane run.
+Evidence is unit tests (C on Windows, Python, LuaJIT probe), a discrete-event simulator that drives the
+real relay code, and a Linux engine scenario with the fake engine in WSL. Synthetic peers are not two
+native games; the live-test spec in section 9 is what remains.
+INTEGRATION NOTE (contrib/ferrite-integrate, 1 November 2026): the equivocation stop is 108 now (105 is the Linux gate's
+unported option; docs/LOCKSTEP-REGISTRY.txt). Joined: the NAT traversal core (gate.peer_links(m, P) with the relay's
+--rendezvous-port P; Linux scenario protocol4_peer_links_nat) and the wire crypto for the records (wc_peer_seal/open with
+gate.wire_crypto). Not joined: the relay's sealed hello/address exchange (the relay refuses --peer-window with
+--wire-crypto) and UPnP/PCP port mapping. Protocol 5 (adaptive) refuses peer links (gate, probe, relay).
+
+1. RESULT AND RECOMMENDATION
+Recommendation: GO for a measured live test and for keeping the module (opt-in, default off); NO-GO for
+making it a default or a public-session feature before the NAT and crypto modules are joined and the
+live numbers in section 9 confirm the model.
+- What it saves is input delay, not step rate. With adaptive delay (item 3) the relay-only session also
+  reaches 30 steps/s, by raising k. Peer links reach 30 steps/s at a smaller k, because inputs apply at
+  t+1+k and k now only has to cover the players' own distance; the relay's round trip is covered by m,
+  which costs no input delay.
+- Two players 5 ms apart with the relay 120 ms round trip away (G1): relay only needs k=4 (order delay
+  167 ms, pilot 200 ms); peer links k=1 m=3 (order delay 67 ms, pilot 100 ms). At the same k=1 relay only
+  runs 13.0 steps/s, peer links 30.0. One country, relay abroad (G2): 133/167 ms against 67/100 ms.
+- No gain when the relay is on the way between the players or on a better route (G3, G4): the step then
+  waits for the relay copy anyway; peer links cost nothing there either (same rate, same delay).
+- One player pair that cannot connect (G8) puts every client back on relay speed: lockstep waits for the
+  slowest record. Peer links only pay off when every pair connects (or a later 2-hop forward exists).
+- Under 2 % datagram loss neither variant holds 30 steps/s (resends are 100 ms); at k=1 peer links still
+  double the rate (24.4 against 12.2 steps/s); relay only needs k=4..8 for 26 steps/s.
+- The permit is indeed unnecessary for most steps: in G1/G2/G7/G9 98-99 % of the steps started on peer
+  records before their permit arrived; the permit then only confirms them (and stops the session if a
+  copy differed). It cannot be dropped altogether: it is what bounds a cheat, a forged record, a dead
+  relay or a desync to m ticks, and what ends the session.
+
+2. WHAT LOCKSTEP ACTUALLY WAITS FOR (THE MODEL)
+Protocol 4 (relay only, window k): the permit for tick T needs every client's report of T-1-k and comes
+back through the relay. For client j: start_j(T) >= max_i(E_i(T-1-k) + up_i) + down_j, which includes
+i = j: every client's own report makes the relay round trip r_j, even a client next to the relay whose
+partner is far away (G5). Steady state: P = max(f, (r+f)/(k+1)) (reproduced exactly by the existing
+SimulatedSession and by the new simulator, which matches it tick for tick).
+Peer links (window k, peer window m): a client needs only the other players' records, start_j(T) >=
+max_{i!=j}(E_i(T-1-k) + p_ij), plus T <= F + m, where F follows the relay permits. The cycles now run
+through pairs (one-way latency p) and through the relay with m more ticks of slack:
+  P = max(f, (p+f)/(k+1), (r+f)/(k+m+1))
+The simulator asserts this within 3 % for r = 90..200 ms, p = 10..30 ms, k = 1..2, m = 0..7.
+Consequences: the step still waits for every player's record (that is lockstep); what moves is which
+path the record takes. Peer links help exactly when p is well below r, i.e. when the relay is far from
+the players relative to their distance to each other. They also remove the "own round trip" term, which
+is why even the relay-at-player-1 case (G5) gains (17.7 -> 27.3 steps/s at k=1).
+
+3. SIMULATOR RESULTS (python tools/dev/native_gate_peer_sim.py; f = 33.3 ms paced steps, 200 ticks,
+real Barrier as relay; one-way latencies; order delay = (k+1) steps, pilot delay = (k+2) steps)
+G1 near players, far relay: peers 5 ms apart (RTT 10), relay 60 ms from each (RTT 120)
+  k=1: relay only 13.04 steps/s; peer links m=7 30.00 steps/s, 99 % peer runs, at most 3 ticks past the permits
+  full rate, relay only: k=4     30.00 steps/s, order delay 167 ms, pilot delay 200 ms
+  full rate, peer links: k=1 m=3 30.00 steps/s, order delay  67 ms, pilot delay 100 ms
+  records only (m=0): 13.04 steps/s (as relay only), peer records first on 99 % of ticks, lead 115 ms
+G2 one country, relay abroad: peers 15 ms (RTT 30), relay 45 ms from each (RTT 90)
+  k=1: relay only 16.22 steps/s; peer links m=7 30.00 steps/s, 99 % peer runs, at most 2 ticks past
+  full rate, relay only: k=3 (133/167 ms); peer links: k=1 m=2 (67/100 ms); records-only lead 75 ms
+G3 relay between players: peers 40 ms (RTT 80), relay 20 ms from each (relay path = direct path)
+  k=1: relay only 27.27; peer links 27.27 (52 % peer runs: ties); full rate both k=2 (100/133 ms)
+G4 relay on a better route: peers 50 ms (RTT 100), relay 15 ms from each (relay path 30 ms)
+  k=1: both 30.00 steps/s, 0 % peer runs; full rate both k=1 (67/100 ms)
+G5 relay at player 1: player 1 next to the relay, player 2 40 ms from both
+  k=1: relay only 17.65; peer links 27.27; full rate relay only k=3 (133/167 ms), peer links k=2 m=1
+  (100/133 ms); records-only lead 40 ms
+G6 three players, one far: players 1-2 5 ms apart, player 3 60 ms from them and the relay
+  k=1: relay only 13.04; peer links 21.43; full rate relay only k=4 (167/200 ms), peer links k=2 m=2
+  (100/133 ms)
+G7 G1 with three players: as G1 (relay only k=4 167/200 ms; peer links k=1 m=3 67/100 ms)
+G8 G7, pair 1-2 cannot connect (NAT module says "use the relay"): k=1 13.04 both; full rate k=4 both
+G9 G1 with jitter (relay 60..90 ms, peers 5..15 ms one-way per datagram)
+  k=1: relay only 10.43; peer links 30.00 (98 % peer runs, at most 5 ticks past); full rate relay only
+  k=6 (233/267 ms), peer links k=1 m=5 (67/100 ms); records-only lead 145 ms
+G10 G1 with 2 % loss of every datagram (relay and peer)
+  k=1: relay only 12.19; peer links m=7 24.40 (93 % peer runs); full rate not reached by either:
+  relay only k=4 26.05, k=8 26.58; peer links k=2 m=6 25.86, k=4 m=4 25.99 steps/s. A peer-mode
+  resend of overdue reports while still running (not waiting) raised k=1 m=7 to 26.4-27.3 in a trial
+  (150 ms threshold, must exceed the relay round trip); not built in, a tuning option.
+"Records only" (m=0) never changes the step (same start times as relay only, asserted for G1); its
+"lead" is how much earlier the other players' inputs were known than the permit, which item A2
+(drawing other ships where they are expected) can use without any step risk. (G9's records-only rate
+differs from relay only by 0.03: the jitter draws are shared with the extra peer datagrams.)
+
+4. DESIGN (src/native/engine/lockstep_peer.h; reference tools/dev/native_gate_peer.py)
+- Rides on protocol 4 unchanged: NGSTATE|4 reports and NGGO|4 permits are byte-identical; the relay
+  checks every tick (digests, clocks, timestep) exactly as before. A record sealed with t applies at
+  t+1+k on every client, whether it came by peer or by permit: no new input delay rules.
+- A client runs tick T only if T <= F + m (F = highest tick whose permit and all earlier ones arrived),
+  on the permit or, without it, on all N peer records of T-1-k, never before the relay admitted tick 0
+  for everyone (F >= 1) and never past the relay's last tick (named in NGPADDR). k + m <= 8 keeps every
+  unconfirmed report inside the existing report ring, so resends stay possible.
+- Fail closed: every permit is compared with the peer copies of its records, before or after its tick
+  ran (104); two different peer copies of one record (105); another copy of a final permit (103). The
+  client tells the relay (NGPFAIL), which fails the session and stops everyone at once (the simulator
+  shows the whole equivocation case over in well under a second instead of the 60 s timeout). Every
+  peer-run tick is confirmed by its permit within m ticks; at the session end a lost permit may be
+  overtaken by the relay's NGSTOP, but those ticks' inputs are in the digests the relay compared (the
+  INPUTS_1 receipts). Malformed, unauthenticated or unexpected peer datagrams are dropped, never fatal.
+- Off by default; with gate.peer_links never called, every hook is a no-op and protocol 4 behaves as
+  before (the existing lookahead C tests, the protocol 4 Linux engine scenarios and the relay suites
+  still pass; a peer-off frame sends exactly one datagram and opens no socket, asserted).
+- The relay stays the referee for timeouts and dropouts: a missing client stops everyone exactly as in
+  protocol 4 (no client runs past 19+1+k when one stops reporting after tick 19); a digest mismatch at
+  tick 40 stops everyone within 40+k+m ticks. Dropout handling (item 3/15) must later decide a drop at a
+  tick no client can already have run on peer records, i.e. at least m ticks after the dropped slot's
+  last report reached any client, and must take that slot's records in between from the clients (each
+  holds them); until then a stalled player stops the session as today.
+- Hooks: lockstep_lookahead.h (include, reset, resend start, permit check incl. stale permits, the take
+  rule, wake on either socket while waiting, send after sealing: ~20 lines), both gates (forward
+  declaration, close with the relay socket, start refuses an invalid window with 10, two Lua methods),
+  the probe (native_gate_peer_window), the relay (--peer-window, NGPHELLO/NGPFAIL handling, report
+  window +m). Specification: docs/LOCKSTEP-NSLOT-WIRE.txt, PEER LINKS.
+- Relay extension, versioned: peer extension 1 (message family NGP*, version field 1). NGPHELLO (opt-in,
+  from the peer socket), NGPADDR (all addresses + m + last tick, only once all N opted in), NGPREFUSE
+  (off/mismatch: the client stays relay-only), NGPREC (peer to peer), NGPFAIL. An older relay drops
+  NGPHELLO and the session runs relay-only; an older DLL makes the probe refuse (REFUSED peer_window).
+- Bandwidth: each client sends N-1 extra datagrams per tick, about 160 bytes with a 28-byte pilot record
+  (4 players at 30 Hz: 14 KB/s each way per client), at most about 600 bytes with a full 240-byte blob
+  (8 players: 125 KB/s, 1 Mbit/s).
+
+5. INTERFACES EXPECTED FROM THE PARALLEL MODULES (stubs in lockstep_peer.h and native_gate_peer.py)
+NAT traversal (X4-Multiplayer-nat). One UDP socket per client for all peers (hole punching and UPnP
+both work on one socket). C: point peer_nat at a peer_nat_api; Python: an object with these methods.
+  unsigned local_port(void)
+      port to bind the peer socket to (0: any); called once before bind, after a UPnP mapping.
+  int route(SOCKET sock, unsigned slot, const struct sockaddr_in *advertised, struct sockaddr_in *route)
+      after NGPADDR, every frame until it decides: 1 = send slot's records to *route from sock;
+      0 = unreachable ("use the relay": that slot's records then come only with permits);
+      -1 = still punching. advertised = the address the relay saw for that player's peer socket
+      (its NAT mapping, i.e. the server-reflexive address hole punching needs). May send its own
+      probes from sock.  Python: route(slot, (ip, port)) -> (ip, port) | None | 'pending'.
+  int datagram(SOCKET sock, const struct sockaddr_in *from, const char *data, size_t length)
+      every datagram on the peer socket that is neither the relay's answer nor a record from a routed
+      peer (the module's own probes and punches): 1 = consumed.
+  If the NAT module prefers one connected socket per pair, it can keep this contract by routing each
+  pair to an address it relays locally, or the coordinator extends route() to return a socket.
+Encryption and signing (X4-Multiplayer-crypto). Peer records only; the relay path is unchanged here.
+C: point peer_crypto at a peer_crypto_api; Python: an object with these methods.
+  size_t seal(const char *plain, size_t length, char *out, size_t capacity)
+      AEAD (e.g. ChaCha20-Poly1305) of the whole datagram under the session key the relay hands out;
+      the module owns nonces and framing; 0 = do not send.
+  size_t open(const char *sealed, size_t length, char *out, size_t capacity)
+      plain length, 0 = not sealed with the session key -> dropped, never fatal.
+  int sign(const char *record, size_t length, char *signature, size_t capacity)
+      this player's signature (e.g. Ed25519) over the record text before the signature field, lowercase
+      hex, at most 256 characters, zero-terminated; 0 = do not send.
+  int verify(unsigned slot, const char *record, size_t length, const char *signature, size_t sig_length)
+      1 = genuine signature of slot's key (public half from the relay at session start).
+Stub behaviour: no secrecy and no authenticity (seal/open copy, empty signature). A forged or spoofed
+record can then stop a session (104), but never be applied unnoticed; sender addresses are pinned to
+the routes the relay handed out. With the real modules an outsider cannot inject at all and a player
+cannot send records as another; a player who sends different records to the relay and to its peers is
+still caught by the permit check (signatures then also prove who did it).
+
+6. PRIVACY
+Players learn each other's public IP addresses and peer ports; that is inherent to direct links. So:
+off by default; opt-in per PC (native_gate_peer_window) and per session (relay --peer-window); and
+all-or-nothing: the relay hands out no address unless every client sent NGPHELLO. The relay already
+knows every address; it never writes them to its report, status file or console (asserted). Players
+should be told before enabling it (UI text is the integrator's). With the stub crypto, records travel
+in clear text, as the relay path does today.
+
+7. COMBINING WITH ADAPTIVE DELAY (item 3, X4-Multiplayer-adelay)
+The two compose: measure the relay round trip r and, with peer links, the peer round trip per pair at
+session start; choose k from the peer cycle (k >= p/f, at least 1) and m from the relay (k+m >= r/f,
+k+m <= 8). The pilot/order delay checks are unchanged (pilot >= k+2, orders >= k+1). If any pair is
+unreachable, choose k from the relay as today and m = 0 (records only, or off). A later change of k
+during a session moves both windows at the agreed tick.
+
+8. FILES, TESTS AND RESULTS
+New: src/native/engine/lockstep_peer.h, src/native/engine/test_lockstep_peer.h,
+tools/dev/native_gate_peer.py, tools/dev/native_gate_peer_sim.py, tests/test_native_gate_peer.py,
+tests/test_native_gate_peer_probe.py, this report. Changed: lockstep_lookahead.h (hooks),
+lockstep_gate.c and linux/gate_linux.c (forward declaration, close, start check, METHOD),
+lockstep_gate_lua_wire.h (gate.peer_links/peer_status), linux/test_gate_lua.lua (method list),
+native_gate_relay.py (--peer-window, NGPHELLO, NGPFAIL), native_gate_probe.lua (native_gate_peer_window),
+check_lockstep_gate_linux.py (scenario protocol4_peer_links), docs/LOCKSTEP-NSLOT-WIRE.txt.
+- build_native_gate.py --test --native-image (Windows, zig): PASS, including "peer links: configuration,
+  address exchange, peer runs inside F+m, permit/peer/equivocation checks, NAT and crypto interfaces,
+  wake on either socket, fail notice PASS" (real loopback sockets: hello, NGPADDR, two ticks run on peer
+  records, a changed permit -> 104 and NGPFAIL at the relay socket).
+- pytest: test_native_gate_peer.py (20: wire, rules, relay extension incl. a real UDP relay process,
+  simulator geometries, random mixed sessions with loss and unreachable pairs, equivocation, crash,
+  digest mismatch, opt-out), test_native_gate_peer_probe.py (5), and the existing relay suites
+  (test_native_gate, _lookahead, _lookahead_probe, _nslot, _live, _sandbox, ...): PASS. All 26 test
+  files that load the probe, the lookahead or the Linux check: 606 passed, 4 failed; the same 4 fail
+  with the probe of e457b4c9 (test_native_creation_load ...registry_refusal, test_native_creation_trace
+  ...original_error: pre-existing, unrelated).
+- Linux: tools/dev/check_lockstep_gate_linux.py --cc gcc in WSL Ubuntu 24.04: LINUX GATE CHECK PASS,
+  Lua bridge 110 methods, all engine scenarios; the new protocol4_peer_links scenario (3 fake-engine
+  peers, k=2, m=3, relay 60 ms round trip via --latency-ms, peers on loopback, scripted hit claims):
+  verdict pass, identical inputs on all peers, 86 of 90 ticks ran on peer records on each peer. This scenario
+  found and now guards one bug of the first draft: clients ran up to m ticks past the relay's --ticks
+  end (fixed: NGPADDR names the last tick). zig cross-builds of the Linux module also compile clean.
+Stop reasons 104 and 105 are new (102/103 lookahead); the coordinator should check them against the
+adelay/nat/crypto branches when joining. Merge-sensitive spots: lockstep_lookahead.h (adelay owns the
+lookahead timing) and native_gate_relay.py receive()/permitted().
+
+9. LIVE-TEST SPEC (for the coordinator; X4 closed before, disposable world in profile 45841)
+All runs: protocol 4 config as the existing lookahead people/lane runs (native_gate_clients=2,
+native_gate_lookahead=k, pilot delay >= k+2), relay with --lookahead k and, where named, --peer-window m
+and --latency-ms (test-only added relay round trip). Record from each client log: ARMED line,
+LOOKAHEAD_STOP, PEER_STOP, the frame timing rows; from the relay report: verdict, peer_window,
+peer_links, released_at (step rate).
+L0 records only, two X4 on this PC, relay --latency-ms 120, k=1, native_gate_peer_window=0, 600 ticks.
+   Expect: verdict pass; step rate equal to the same run without peer links (within noise; today's
+   lookahead 1 at 100 ms: 0.38x); PEER_STOP peer=active, peer_first close to all ticks, lead_us/
+   peer_first about 100+ ms; peer_runs=0. Proves the exchange and checks at zero step risk.
+L1 peer runs, same setup, k=1, native_gate_peer_window=3 (relay --peer-window 3), 600 ticks; compare
+   with relay only k=4 (both should reach the paced rate) and relay only k=1. Expect: verdict pass and
+   identical digests (the relay compares every tick); peer_runs close to the tick count; behind_max
+   <= 3; step rate of k=1 m=3 equal to relay-only k=4 and well above relay-only k=1. Note: with two
+   X4 on one PC the frame cost (about 28 ms each) and the shared CPU, not the network, may set the rate;
+   compare against relay only at the same frame cost.
+L2 opt-out: as L1 but one client without native_gate_peer_window. Expect: relay report peer_links
+   "waiting" (no address went out), the other client's PEER_STOP peer=hello, peer_runs=0, verdict pass,
+   rate as relay only k=1. Also a relay without --peer-window: PEER_STOP peer=refused, verdict pass.
+L3 people session (A5/G5 style) with peer links on, k=1 m=3, relay --latency-ms 120: players fly,
+   fight, use menus for 10 minutes. Expect: no desync, no stop 104/105, controls answer with the delay
+   of k=1 (pilot 3 steps) instead of the k=4 one; collect PEER_STOP.
+L4 (after the NAT module) mixed session: this PC + the Linux X4 on the VPS through the VPS relay (the
+   G5 geometry: relay next to player 2). Expect peer=active and received>0 on both if the routers let
+   the stub through (the PC sends to the VPS first, which often opens the way back on home routers);
+   otherwise unreachable=1 and relay speed. Note: on the internet the Windows peer socket binds to any
+   address and Windows may show a firewall prompt for X4.exe; the user decides about it.
+Failure handling: any stop 104/105/103 or a relay failure peer_link_stop_* is a finding (forged or
+mixed-up records, or a bug); keep both client logs and the relay report.

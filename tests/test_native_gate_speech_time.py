@@ -11,7 +11,7 @@ STOP_FIELDS = ('state.completed=state.issued;state.restored=1;state.wait_game_de
                'state.path_restored=1;state.rng_seeds=0;state.dt_restored=1;')
 
 HARNESS = '''
-  X4LAN_CONFIG={native_gate_test=true,test_profile='45841',slot='p1',native_gate_hash='clock',
+  X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',slot='p1',native_gate_hash='clock',
     native_gate_snapshot_sha=string.rep('a',64),port=12345,token=string.rep('c',32),native_gate_speech_game_time=true}
   X4LAN_SHA256={digest=function() return string.rep('b',64) end}
   logs={};loads=0;reports=0;boots=0;is_menu=true;arms=0;rows={}

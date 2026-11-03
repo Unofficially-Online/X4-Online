@@ -156,11 +156,11 @@ static void test_npc_provenance(void *source_exec,void *source_cue,void *node) {
     assert(!npc_provenance_current && !npc_trigger_foreign_depth && !interrupt_failures);
     test_provenance_origin(outer,exec);
     /* A foreign MD module is named without expanding the NPC action scope. */
-    unsigned char other_cue[0x2a0]={0},other_definition[0x180]={0},module[0x100]={0},name_node[0x60]={0},md_exec[0x50];
+    unsigned char other_cue[0x2a0]={0},other_definition[0x180]={0},module[0x100]={0},md_exec[0x50];
     memcpy(md_exec,outer,sizeof(md_exec));*(unsigned*)(md_exec+0x38)=0x5d;*(void**)(md_exec+0x40)=other_cue+0xb0;
     *(uint64_t*)(other_cue+8)=8;*(void**)(other_cue+0x160)=other_definition;*(void**)(other_definition+0x150)=module;
-    test_npc_string(module+0x18,"Ambient");test_npc_string(name_node+0x20,"Ticker");
-    *(void**)(module+0x80)=name_node;*(void**)(name_node+0x40)=other_definition;
+    *(void**)other_definition=image+CUE_PATH_VT;*(void**)(other_definition+0x160)=other_definition;
+    test_npc_string(module+0x18,"Ambient");test_npc_string(other_definition+0xc8,"Ticker");
     provenance_test_child=exec;start=npc_provenance_count;
     npc_exec_entry(provenance_test_original,md_exec,&test_rng,0x111c821);s=&npc_provenance_samples[start];
     assert(npc_provenance_count==start+1 && !s->flags && s->owner_kind==1 && s->owner_status==1 && s->owner.token && !s->owner_saved && !strcmp(s->owner.name,"Ambient.Ticker"));

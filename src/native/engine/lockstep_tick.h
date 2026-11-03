@@ -56,6 +56,15 @@ static int64_t gate_pace_deadline(gate_pace_state *p,int64_t now,int64_t freq,un
     if(now-deadline>freq*GATE_PACE_CATCHUP_MS/1000) {p->origin=now;p->count=0;++p->rebases;return 0;}
     return now<deadline?deadline:0;
 }
+/* The deadline the next gate_pace_deadline call would hold until, without taking it: 0 when
+ * that call holds nothing (no origin yet, or so late that it re-bases). Pure; read by the
+ * render-only frames (lockstep_render_frames.h) to fill the time before the next step. */
+static __attribute__((unused)) int64_t gate_pace_peek(const gate_pace_state *p,int64_t now,int64_t freq,unsigned hz) {
+    if(!p->origin || !hz) return 0;
+    int64_t deadline=p->origin+(int64_t)(p->count+1)*freq/(int64_t)hz;
+    if(now-deadline>freq*GATE_PACE_CATCHUP_MS/1000) return 0;
+    return deadline;
+}
 #ifdef _WIN32
 /* A high-resolution timer when the system has one (Windows 10 1803+), else a short
  * Sleep only when it cannot overshoot much; the last stretch spins. */

@@ -12,10 +12,59 @@ static void test_np_original(void *self,double time) {
     if(probe) {memcpy(&test_np_seen_due,probe+0x3e0,8);double next=time+1.5;memcpy(probe+0x3e0,&next,8);}
     if(test_np_word) *test_np_word=*test_np_word*6364136223846793005ULL+1442695040888963407ULL;
 }
+/* Stands in for the controller's vfunc49 (assist): the answer and its calls. */
+static unsigned char test_np_assist_answer;
+static unsigned test_np_assist_calls;
+static unsigned char test_np_assist(void *self,unsigned char argument) {
+    (void)self;assert(!argument);++test_np_assist_calls;return test_np_assist_answer;
+}
 static void test_np_reset(void) {
     nav_player_installed=nav_player_restored=nav_player_seen=0;nav_player_calls=nav_player_failures=0;
-    nav_player_admitted=nav_player_manual=nav_player_scoped=nav_player_unscoped=nav_player_drawn=nav_player_rows=nav_player_unmapped=0;
+    nav_player_admitted=nav_player_manual=nav_player_parked=nav_player_scoped=nav_player_unscoped=nav_player_drawn=nav_player_rows=nav_player_unmapped=0;
     nav_player_tick=UINT64_MAX;nav_player_frame_admitted=0;nav_player_stage="idle";nav_player_original_override=NULL;
+    nav_player_assist_override=test_np_assist;test_np_assist_answer=0;test_np_assist_calls=0;
+}
+/* The flags the authority test reads (image) and the ship's +0xd1. */
+static void test_np_flags(uint64_t autopilot,unsigned char flight,unsigned char highway,unsigned char *ship,unsigned char own) {
+    memcpy(image+NAV_PLAYER_AUTOPILOT,&autopilot,8);image[NAV_PLAYER_FLIGHT]=flight;image[NAV_PLAYER_HIGHWAY]=highway;
+    if(ship) ship[NAV_PLAYER_OWN]=own;
+}
+/* vfunc33's authority test, re-stated: each way into the Agent branch, the native
+ * order (assist asked only with flight control clear, the highway only after assist),
+ * and an unreadable ship. */
+static void test_nav_player_branch(void) {
+    static unsigned char ship[0x300],controller[0x100];unsigned char *s=ship;
+    memset(ship,0,sizeof(ship));memset(controller,0,sizeof(controller));memcpy(controller+0x28,&s,8);
+    test_np_reset();
+    test_np_flags(1,1,1,ship,1);assert(nav_player_branch_of(controller)==NAV_PLAYER_AUTOPILOTED && !test_np_assist_calls);
+    /* Manual flight: flight control on, the ship's own transform (+0xd1 set); assist is not asked. */
+    test_np_flags(0,1,0,ship,1);assert(nav_player_branch_of(controller)==NAV_PLAYER_MANUAL && !test_np_assist_calls);
+    /* Parked controls (L1): flight control 0, assist, no highway. */
+    test_np_flags(0,0,0,ship,1);test_np_assist_answer=1;
+    assert(nav_player_branch_of(controller)==NAV_PLAYER_PARKED && test_np_assist_calls==1);
+    /* On a highway, or without assist, the +0xd1 test decides. */
+    test_np_flags(0,0,1,ship,1);assert(nav_player_branch_of(controller)==NAV_PLAYER_MANUAL && test_np_assist_calls==2);
+    test_np_flags(0,0,1,ship,0);assert(nav_player_branch_of(controller)==NAV_PLAYER_PARKED && test_np_assist_calls==3);
+    test_np_assist_answer=0;test_np_flags(0,0,0,ship,1);assert(nav_player_branch_of(controller)==NAV_PLAYER_MANUAL && test_np_assist_calls==4);
+    test_np_flags(0,1,0,ship,0);assert(nav_player_branch_of(controller)==NAV_PLAYER_PARKED && test_np_assist_calls==4);
+    /* No ship where the native test would read +0xd1: unreadable (-1); the autopilot needs none. */
+    memset(controller+0x28,0,8);test_np_flags(0,1,0,NULL,0);assert(nav_player_branch_of(controller)==-1);
+    test_np_flags(1,1,0,NULL,0);assert(nav_player_branch_of(controller)==NAV_PLAYER_AUTOPILOTED);
+    /* Without the override the controller's own vtable slot 49 answers. */
+    static void *vtable[64];vtable[NAV_PLAYER_ASSIST_SLOT]=(void*)test_np_assist;void **v=vtable;memcpy(controller,&v,8);
+    memcpy(controller+0x28,&s,8);nav_player_assist_override=NULL;test_np_assist_answer=1;test_np_assist_calls=0;
+    test_np_flags(0,0,0,ship,1);assert(nav_player_branch_of(controller)==NAV_PLAYER_PARKED && test_np_assist_calls==1);
+    memset(controller,0,8);assert(nav_player_branch_of(controller)==-1 && test_np_assist_calls==1); /* no vtable */
+    /* An unreadable flag or ship fails the module (stop reason 95) and the original still runs once. */
+    uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;int saved_boot=boot_mode,saved_phase=boot_phase;
+    test_np_reset();stats.active=1;boot_mode=1;boot_phase=3;stats.issued=7;ui_thread=GetCurrentThreadId();
+    memset(controller+0x28,0,8);test_np_flags(0,1,0,NULL,0);test_np_original_calls=0;test_np_word=NULL;
+    nav_player_run(test_np_original,controller,1.0,NULL);
+    assert(test_np_original_calls==1 && nav_player_failures==1 && !nav_player_manual && !nav_player_parked && !strcmp(nav_player_stage,"unreadable"));
+    assert(!nav_player_check() && !strcmp(nav_player_stage,"unreadable"));
+    test_np_flags(0,0,0,ship,0);test_np_reset();nav_player_assist_override=NULL;
+    stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;boot_mode=saved_boot;boot_phase=saved_phase;
+    printf("nav player authority test (autopilot, parked controls, highway, +0xd1, unreadable) tests PASS\n");
 }
 static void test_nav_player(void) {
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;int saved_boot=boot_mode,saved_phase=boot_phase;
@@ -37,14 +86,11 @@ static void test_nav_player(void) {
     stats.active=1;boot_phase=2;nav_player_run(test_np_original,test_nc_controller,5.0,&word);assert(!nav_player_admitted);
     boot_phase=3;ui_thread=GetCurrentThreadId()+1;nav_player_run(test_np_original,test_nc_controller,5.0,&word);assert(!nav_player_admitted);
     ui_thread=GetCurrentThreadId();
-    /* Autopilot flag clear at entry: counted manual= but still bracketed, because the original can set the flag
-     * before its branch and then run the nav upkeep: the loading deadline is re-based before the original runs. */
-    nav_cadence_active=1;nav_probe_armed=1;double v0=7.96;memcpy(test_nc_probe+0x3e0,&v0,8);
+    /* Manual flight (no autopilot, flight control on, the ship's +0xd1 set): counted, passed through, nothing bracketed. */
+    nav_cadence_active=1;nav_probe_armed=1;double v0=7.96;memcpy(test_nc_probe+0x3e0,&v0,8);test_np_flags(0,1,0,ship,1);
     nav_player_run(test_np_original,test_nc_controller,5.0,&word);
-    assert(nav_player_admitted==1 && nav_player_manual==1 && !nav_player_unscoped && nav_probe_pins==1 &&
-           test_np_seen_due==5.0-1.0/60.0);
-    nav_probe_pins=0;nav_probe_count=0;memset(nav_probe_table,0,sizeof(nav_probe_table));memset(nav_cadence_total,0,sizeof(nav_cadence_total));
-    nav_cadence_rows=0;nav_player_rows=0;nav_player_seen=0;nav_player_drawn=0;nav_player_unscoped=nav_player_scoped=0;
+    assert(nav_player_admitted==1 && nav_player_manual==1 && !nav_player_parked && !nav_player_unscoped && !nav_player_drawn && !nav_probe_pins &&
+           !nav_cadence_total[1].calls && test_np_seen_due==7.96 && !test_np_assist_calls);
     nav_cadence_active=0;nav_probe_armed=0;nav_player_admitted=nav_player_manual=0;nav_player_tick=UINT64_MAX;--nav_player_calls;--test_np_original_calls;
     uint64_t autopilot=1;memcpy(image+NAV_PLAYER_AUTOPILOT,&autopilot,8);
     /* Admitted with the cadence inactive: counted, but nothing read and no row. */
@@ -81,7 +127,13 @@ static void test_nav_player(void) {
     *(uint64_t*)(ship+8)=0x9999;before=nav_cadence_rows;nav_player_run(test_np_original,test_nc_controller,7.5,&word);
     assert(nav_player_unmapped==1 && nav_cadence_rows==before);*(uint64_t*)(ship+8)=0x6161;
     char status[512];int n=nav_player_status(status,sizeof(status));
-    assert(n>0 && strstr(status,"installed=0 frame=41 frame_calls=8 calls=12 admitted=9 manual=0 scoped=1 unscoped=8 drawn=7 rows=3 unmapped=1 restored=0 stage=idle failures=0"));
+    assert(n>0 && strstr(status,"installed=0 frame=41 frame_calls=8 calls=12 admitted=9 manual=0 parked=0 scoped=1 unscoped=8 drawn=7 rows=3 unmapped=1 restored=0 stage=idle failures=0"));
+    /* Parked controls (flight control 0, assist, no highway; L1's script pilot): the Agent branch without the
+     * autopilot, bracketed and counted parked=; the probe deadline was reset at this ID's first call above. */
+    test_np_flags(0,0,0,ship,1);test_np_assist_answer=1;test_np_assist_calls=0;
+    nav_player_run(test_np_original,test_nc_controller,7.6,&word);
+    assert(nav_player_parked==1 && nav_player_manual==0 && nav_player_unscoped==9 && test_np_assist_calls==1 && nav_cadence_total[1].calls==9);
+    test_np_flags(0,0,0,ship,0);test_np_assist_answer=0;
     /* Arming: after the cadence, before the first admitted frame, on the MoveWorker; pins and the entry. */
     test_np_reset();nav_cadence_installed=0;stats.issued=0;boot_phase=0;
     assert(!nav_player_arm());nav_cadence_installed=1;stats.active=0;assert(!nav_player_arm());stats.active=1;
@@ -108,7 +160,7 @@ static void test_nav_player(void) {
     nav_player_admitted=nav_player_manual=nav_player_scoped=nav_player_unscoped=nav_player_drawn=nav_player_rows=nav_player_unmapped=nav_player_frame_admitted=UINT64_MAX;
     nav_player_stage="foreign_module";n=nav_player_status(status,sizeof(status));
     assert(n>0 && n+strlen("[X4LAN] NATIVE_GATE NAV_PLAYER tick=18446744073709551615 \n")<512);
-    memcpy(image+NAV_PLAYER_ENTRY,&saved_entry,8);memset(image+NAV_PLAYER_AUTOPILOT,0,8);test_np_reset();test_nc_reset();nav_probe_armed=0;nav_cadence_rows=0;
+    memcpy(image+NAV_PLAYER_ENTRY,&saved_entry,8);memset(image+NAV_PLAYER_AUTOPILOT,0,8);test_np_reset();nav_player_assist_override=NULL;test_nc_reset();nav_probe_armed=0;nav_cadence_rows=0;
     memset(nav_probe_table,0,sizeof(nav_probe_table));nav_probe_count=0;nav_probe_pins=nav_probe_inits=nav_probe_unmapped=nav_probe_first=0;
     memset(nav_cadence_seen,0,sizeof(nav_cadence_seen));memset(test_nc_controller,0,sizeof(test_nc_controller));memset(test_nc_probe,0,sizeof(test_nc_probe));
     VirtualFree(world_identities,0,MEM_RELEASE);world_identities=prior;world_identity_count=prior_count;world_identity_sealed=prior_sealed;
@@ -147,7 +199,28 @@ static void test_nav_player_native_image(const char *path) {
     assert(!memcmp(image+0xd97f39,"\x45\x33\xff",3)); /* xor r15d,r15d (no later write before 0xd981bb): the flag is compared with 0 */
     memcpy(&rel,image+NAV_PLAYER_BRANCH+9,4);assert(NAV_PLAYER_BRANCH+13+rel==NAV_PLAYER_CALL);
     memcpy(&rel,image+NAV_PLAYER_CALL+7,4);assert(image[NAV_PLAYER_CALL+6]==0xe8 && NAV_PLAYER_CALL+11+rel==NAV_MOVE);
-    const unsigned tampers[]={NAV_PLAYER_MOVE,NAV_PLAYER_MOVE+NAV_PLAYER_HEAD-1,NAV_PLAYER_BRANCH,NAV_PLAYER_BRANCH+12,NAV_PLAYER_CALL,NAV_PLAYER_CALL+10};
+    /* The rest of the authority test follows the autopilot branch: flight control, the assist slot (edx 0), the
+     * highway, the ship's +0xd1; both Agent exits are the direct call's block. */
+    assert(NAV_PLAYER_TESTS==NAV_PLAYER_BRANCH+13);
+    memcpy(&rel,image+NAV_PLAYER_TESTS+3,4);assert(NAV_PLAYER_TESTS+7+rel==NAV_PLAYER_FLIGHT);
+    assert(!memcmp(image+NAV_PLAYER_TESTS+12,"\x33\xd2",2) && !memcmp(image+NAV_PLAYER_TESTS+17,"\xff\x90",2));
+    uint32_t slot;memcpy(&slot,image+NAV_PLAYER_TESTS+19,4);assert(slot==NAV_PLAYER_ASSIST_SLOT*8u);
+    assert(*(uint64_t*)(image+0x2c39488u+NAV_PLAYER_ASSIST_SLOT*8u)==nt.OptionalHeader.ImageBase+0xd9bf70u);
+    memcpy(&rel,image+NAV_PLAYER_TESTS+30,4);assert(NAV_PLAYER_TESTS+34+rel==NAV_PLAYER_HIGHWAY);
+    memcpy(&rel,image+NAV_PLAYER_TESTS+36,4);assert(NAV_PLAYER_TESTS+40+rel==NAV_PLAYER_CALL);
+    assert(!memcmp(image+NAV_PLAYER_TESTS+40,"\x48\x8b\x46\x28\x44\x38\xb8",7));
+    uint32_t own;memcpy(&own,image+NAV_PLAYER_TESTS+47,4);assert(own==NAV_PLAYER_OWN);
+    memcpy(&rel,image+NAV_PLAYER_TESTS+53,4);assert(NAV_PLAYER_TESTS+57+rel==NAV_PLAYER_CALL);
+    /* PlayerController::GetTransform 0xd8a680 makes the same test before it reads the Agent banks (0xd8b3bc ->
+     * 0xea5a90): autopilot 0xd8a69b, flight control 0xd8a6c0, assist 0xd8a6ce, highway 0xd8a6e1, +0xd1 0xd8a6f2. */
+    memcpy(&rel,image+0xd8a69bu+3,4);assert(0xd8a69bu+8+rel==NAV_PLAYER_AUTOPILOT);
+    memcpy(&rel,image+0xd8a6c0u+2,4);assert(0xd8a6c0u+7+rel==NAV_PLAYER_FLIGHT);
+    memcpy(&slot,image+0xd8a6ceu+2,4);assert(image[0xd8a6ceu]==0xff && image[0xd8a6ceu+1]==0x90 && slot==NAV_PLAYER_ASSIST_SLOT*8u);
+    memcpy(&rel,image+0xd8a6e1u+2,4);assert(0xd8a6e1u+7+rel==NAV_PLAYER_HIGHWAY);
+    memcpy(&own,image+0xd8a6f2u+2,4);assert(own==NAV_PLAYER_OWN);
+    memcpy(&rel,image+0xd8b3ceu+1,4);assert(image[0xd8b3ceu]==0xe8 && 0xd8b3ceu+5+rel==0xea5a90u);
+    const unsigned tampers[]={NAV_PLAYER_MOVE,NAV_PLAYER_MOVE+NAV_PLAYER_HEAD-1,NAV_PLAYER_BRANCH,NAV_PLAYER_BRANCH+12,NAV_PLAYER_TESTS,
+        NAV_PLAYER_TESTS+19,NAV_PLAYER_TESTS+56,NAV_PLAYER_CALL,NAV_PLAYER_CALL+10};
     for(unsigned i=0;i<sizeof(tampers)/sizeof(*tampers);i++) {image[tampers[i]]^=1;assert(!nav_player_pins());image[tampers[i]]^=1;}
     assert(nav_player_pins());
     /* Full arm and restore on the copy: only the entry changes; a foreign owner refuses. */
@@ -160,10 +233,10 @@ static void test_nav_player_native_image(const char *path) {
     image[NAV_PLAYER_CALL+7]^=1;assert(!nav_player_check() && !strcmp(nav_player_stage,"block_changed"));image[NAV_PLAYER_CALL+7]^=1;
     nav_player_failures=0;assert(nav_player_check());
     nav_player_restore();assert(nav_player_restored && !nav_player_installed && *(void**)(image+NAV_PLAYER_ENTRY)==image+NAV_PLAYER_MOVE);
-    test_np_reset();nav_cadence_installed=0;
+    test_np_reset();nav_player_assist_override=NULL;nav_cadence_installed=0;
     stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;boot_mode=saved_boot;boot_phase=saved_phase;
     assert(VirtualFree(image,0,MEM_RELEASE));image=prior;
-    puts("nav player native entry, pinned prologue/autopilot branch/direct call, tamper refusals and arm/restore verified");
+    puts("nav player native entry, pinned prologue/authority test (autopilot, flight control, assist slot, highway, +0xd1; as GetTransform)/direct call, tamper refusals and arm/restore verified");
 }
 /* native_gate_nav_params_init: the parameter refresh deadline (ctrl+0xd0),
  * pinned while the block is off and reset once per portable ID when on, for
@@ -226,6 +299,24 @@ static void test_nav_params_init(void) {
         memcpy(&after[client],test_nc_controller+0xd0,8);
     }
     assert(after[0]==after[1] && after[0]==7.1+1.25);memset(image+NAV_PLAYER_AUTOPILOT,0,8);
+    /* L1 (fight start, script pilot): the parked controls take the Agent branch without the autopilot from tick 28.
+     * Before 1 Nov those calls passed through: each client built its parameters at its own loading deadline. Now
+     * both build in the first parked frame and agree on every later deadline; the manual calls before it leave the
+     * loading value alone. */
+    for(unsigned client=0;client<2;client++) {
+        memset(nav_params_table,0,sizeof(nav_params_table));nav_params_count=0;nav_params_inits=0;
+        test_np_reset();nav_cadence_active=1;nav_cadence_rows=0;
+        *(uint64_t*)(ship+8)=0x6161;test_nc_controller[0xd8]=1;v=client?9.0500:8.3167;memcpy(test_nc_controller+0xd0,&v,8);
+        stats.active=1;boot_phase=3;stats.issued=27;test_np_flags(0,1,0,ship,1);
+        nav_player_run(test_np_params_original,test_nc_controller,8.0,NULL);
+        memcpy(&due,test_nc_controller+0xd0,8);assert(due==v && nav_player_manual==1 && !nav_params_inits);
+        test_np_flags(0,0,0,ship,1);test_np_assist_answer=1;stats.issued=28;
+        nav_player_run(test_np_params_original,test_nc_controller,8.0+1.0/30.0,NULL);
+        assert(test_np_seen_params==8.0+1.0/30.0-1.0/60.0 && nav_params_inits==1 && nav_player_parked==1);
+        stats.issued=29;nav_player_run(test_np_params_original,test_nc_controller,8.0+2.0/30.0,NULL);
+        memcpy(&after[client],test_nc_controller+0xd0,8);
+    }
+    assert(after[0]==after[1] && after[0]==8.0+1.0/30.0+1.25);test_np_flags(0,0,0,ship,0);test_np_reset();
     /* A fixture re-based by native_gate_nav_initial_refresh gets the same value. */
     {
         nav_sample sample;memset(&sample,0,sizeof(sample));int saved_initial=nav_initial_refresh,saved_seeded=nav_seeded;
@@ -257,7 +348,7 @@ static void test_nav_params_init(void) {
     nav_cadence_failures=INT64_MAX;nav_cadence_stage="foreign_module";nav_cadence_mode=NAV_CADENCE_OBSERVE;
     n=nav_cadence_status(status,sizeof(status));
     assert(n>0 && n+strlen("[X4LAN] NATIVE_GATE NAV_CADENCE tick=18446744073709551615 \n")<2048);
-    test_nc_reset();test_np_reset();nav_probe_armed=nav_params_armed=0;nav_probe_tick=nav_params_tick=UINT64_MAX;
+    test_nc_reset();test_np_reset();nav_player_assist_override=NULL;nav_probe_armed=nav_params_armed=0;nav_probe_tick=nav_params_tick=UINT64_MAX;
     memset(nav_probe_table,0,sizeof(nav_probe_table));memset(nav_params_table,0,sizeof(nav_params_table));nav_probe_count=nav_params_count=0;
     nav_probe_pins=nav_probe_inits=nav_probe_unmapped=nav_probe_first=nav_probe_frame_pins=nav_probe_frame_inits=0;
     nav_params_pins=nav_params_inits=nav_params_unmapped=nav_params_first=nav_params_frame_pins=nav_params_frame_inits=0;

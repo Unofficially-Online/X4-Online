@@ -137,11 +137,15 @@ static void lxc_sp_tr(void *self,void *mat,void *anc,uint32_t flag,const unsigne
     if(on) st_sp_tr_end(&c,mat,self);
 }
 typedef uint64_t (*lxc_solver_fn)(void *,float *,float *,uint32_t,uint32_t,float *,float,float,float);
+/* FR27 (gate_fp_redirect.h fsp_arm): while the fp redirect's solver is armed and this hook owns the entry, the call goes
+ * there (which runs native through this module's trampoline as it needs); NULL: native. */
+static lxc_solver_fn volatile lxc_sp_route;
 static uint64_t lxc_sp_solver(void *boxes,float *p,float *dir,uint32_t xflag,uint32_t yflag,float *move,float radius,float a5,float a9) {
     st_sp_cap_ctx c;
     const int on=st_sp_cap_begin(&c,lxc_sp_gs_ret,2,boxes,p,dir,move,st_bits(radius),st_bits(a5),yflag,xflag,st_bits(a9),0,
                                  (uintptr_t)__builtin_return_address(0));
-    const uint64_t r=((lxc_solver_fn)(void*)(thunk+LXC_SP_TRAMP))(boxes,p,dir,xflag,yflag,move,radius,a5,a9);
+    const lxc_solver_fn route=lxc_sp_route;
+    const uint64_t r=(route?route:(lxc_solver_fn)(void*)(thunk+LXC_SP_TRAMP))(boxes,p,dir,xflag,yflag,move,radius,a5,a9);
     if(on) st_sp_cap_end(&c);
     return r;
 }

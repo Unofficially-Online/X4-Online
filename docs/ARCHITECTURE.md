@@ -69,7 +69,7 @@ compare world captures object by object to name the class that parted.
 split and reports the first differing row of each family; soaks keep always-on
 attributions (lazy station updates per call site, every drawing actor scope) for
 splits that depend on timing and do not come back in a rerun. Checkpoints
-(`--checkpoint-at`) save every client's world at one tick for `save_diff.py`.
+(`--checkpoint-at`) save every client's world at one tick for `checkpoint_diff.py`.
 Recovery (resync from a mid-game save) and joining a running game are the next
 milestone.
 

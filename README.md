@@ -60,7 +60,7 @@ the [launcher guide](docs/LAUNCHER.md) for overlays, Steam, and cleanup.
 | `tools/dev/native_gate_*` | In-game probe (Lua), MD fixtures, overlay builders, relay, desync watcher |
 | `tools/dev/census_*`, `compare_native_world*` | Desync analysis of session logs |
 | `tools/build_soak_overlay.py`, `tools/soak_campaign.py` | Soak overlays (profile, players, UI guard) and unattended multi-seed soaks |
-| `tools/dev/save_diff.py`, `ui_export_census.py`, `probe_globals_check.py` | Checkpoint save diffs, the UI write census, the probe's static globals check |
+| `tools/dev/checkpoint_diff.py`, `save_diff.py`, `ui_export_census.py`, `probe_globals_check.py` | Checkpoint diffs (world part), element-by-element save diffs (join), the UI write census, the probe's static globals check |
 | `tests/` | Python/LuaJIT tests (the in-game Lua runs under LuaJIT with a mocked engine) |
 | `docs/` | Architecture, launcher, wire protocol, sandbox, scenarios |
 | `reports/` | Lockstep evidence: census, piloting, UI replay, cross-platform |

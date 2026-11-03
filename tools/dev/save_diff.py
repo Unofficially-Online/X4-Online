@@ -1,160 +1,101 @@
-"""Compare two X4 saves of the same tick (x4ls checkpoints) and name the components that differ.
+"""Compare two X4 saves element by element: does a loaded save still equal the world it was written from (D14)?
 
-  python tools/dev/save_diff.py A.xml.gz B.xml.gz [--limit 40]
+  python tools/dev/save_diff.py LEFT.xml.gz RIGHT.xml.gz [--limit 40] [--ignore TAG.ATTR ...] [--out result.json]
 
-X4 writes one element per line, so a line diff (GNU diff on the decompressed files) finds every
-difference; each hunk is reported with the chain of <component> elements that encloses it on side A
-(class, macro, id). The <info> header (save date, play time, guid) differs between any two saves and
-is skipped. By default only the world part is compared (everything above <script>): the script
-values below it are pools keyed by process-local allocation ids (string refs, lists, positions) that
-differ between two clients in sync; --all compares them too. Consecutive <listener/> lines are
-compared as sets (the engine keeps them in pointer order), and <part> blocks holding only animation
-index parameters (thrusters, flames: render state) are left out. Checkpoints of two clients in sync are
-identical in the world part; the first hunks of a pair that is not are where the world state parts.
+Two saves of the same tick from two processes (the server's fork save and a joiner's after loading it, or both after k
+more steps) are compared without runtime IDs: both files are streamed in step (gzip or plain XML), the same element
+sequence is expected, and each element's attributes and text are compared. Counts per (tag, attribute), the first
+--limit differences with their path (tag[id] from the root) and, at the first structural difference (another tag, or
+one file ending first), where the walk stopped. Ignored: the <signature> element (signed per file) and the attributes
+named with --ignore (default: the save header's date and name, which a fork save sets itself). Read only.
 """
 import argparse
+import collections
 import gzip
-import re
-import shutil
-import subprocess
-import tempfile
+import itertools
+import json
 from pathlib import Path
+import xml.etree.ElementTree as ElementTree
 
-COMPONENT = re.compile(r'<component\b([^>]*?)(/?)>')
-ATTR = re.compile(r'(\w+)="([^"]*)"')
-HUNK = re.compile(r'^(\d+)(?:,(\d+))?([acd])(\d+)(?:,(\d+))?$')
-
-
-UNORDERED = re.compile(rb'^\s*<(listener)\b[^>]*/>\s*$')  # kept in pointer order by the engine: compare as sets
-PART_OPEN = re.compile(rb'^\s*<part ref="[^"]*">\s*$')
-ANIMATION = re.compile(rb'^\s*<parameter value="[^"]*" name="index" type="float"/>\s*$')
+DEFAULT_IGNORE = ('save.date', 'save.name')
 
 
-def without_animation(lines):
-    """Drop <part> blocks that hold only animation index parameters (thrusters, flames: what a client rendered)."""
-    lines = iter(lines)
-    for line in lines:
-        if not PART_OPEN.match(line):
-            yield line
-            continue
-        block = [line]
-        for inner in lines:
-            block.append(inner)
-            if not ANIMATION.match(inner):
-                break
-        if block[-1].strip() == b'</part>' and all(ANIMATION.match(x) for x in block[1:-1]):
-            continue
-        yield from block
+def open_save(path):
+    with open(path, 'rb') as probe:
+        gz = probe.read(2) == b'\x1f\x8b'
+    return gzip.open(path, 'rb') if gz else open(path, 'rb')
 
 
-def decompress(src, dst, world_only=True):
-    """Decompress, sorting each run of consecutive UNORDERED lines (same tag) so that their order does not count.
-    world_only stops at <script>: the script values below it are pools keyed by process-local allocation ids."""
-    with gzip.open(src, 'rb') as f, open(dst, 'wb') as out:
-        run, tag = [], None
-        for line in without_animation(f):
-            if world_only and line.strip() == b'<script>':
-                break
-            m = UNORDERED.match(line)
-            if m and (tag is None or m.group(1) == tag):
-                run.append(line)
-                tag = m.group(1)
-                continue
-            if run:
-                out.writelines(sorted(run))
-                run, tag = [], None
-                m = UNORDERED.match(line)
-                if m:
-                    run, tag = [line], m.group(1)
+def events(path):
+    """(event, tag, attributes, text, path) per element start and end, skipping <signature> and everything in it."""
+    stack, skip = [], 0
+    with open_save(path) as stream:
+        for event, element in ElementTree.iterparse(stream, events=('start', 'end')):
+            if event == 'start':
+                if skip or element.tag == 'signature':
+                    skip += 1
                     continue
-            out.write(line)
-        out.writelines(sorted(run))
-
-
-def info_end(path):
-    """The line number after </info> (1-based), so that header differences are ignored."""
-    with open(path, 'rb') as f:
-        for number, line in enumerate(f, 1):
-            if line.strip() == b'</info>':
-                return number + 1
-            if number > 10000:
-                break
-    return 1
-
-
-def hunks(a, b):
-    """(first, last, lines_a, lines_b) per diff hunk, line numbers of side A."""
-    proc = subprocess.Popen(['diff', '--speed-large-files', str(a), str(b)], stdout=subprocess.PIPE, text=True,
-                            errors='replace')
-    current = None
-    for line in proc.stdout:
-        m = HUNK.match(line.rstrip('\n'))
-        if m:
-            if current:
-                yield current
-            first = int(m.group(1))
-            last = int(m.group(2) or first)
-            current = (first, last if m.group(3) != 'a' else first, [], [])
-        elif current and line.startswith('< '):
-            current[2].append(line[2:].rstrip('\n'))
-        elif current and line.startswith('> '):
-            current[3].append(line[2:].rstrip('\n'))
-    if current:
-        yield current
-    proc.wait()
-    if proc.returncode > 1:
-        raise SystemExit(f'diff failed ({proc.returncode})')
-
-
-def describe(attrs):
-    a = dict(ATTR.findall(attrs))
-    return f"{a.get('class', '?')}:{a.get('macro', '')}:{a.get('id', '')}"
-
-
-def contexts(path, lines):
-    """For each wanted line number (ascending), the enclosing component chain on side A."""
-    wanted = iter(lines)
-    target = next(wanted, None)
-    stack = []
-    with open(path, 'r', encoding='utf-8', errors='replace') as f:
-        for number, line in enumerate(f, 1):
-            while target is not None and target == number:
-                yield number, list(stack)
-                target = next(wanted, None)
-            if target is None:
-                return
-            m = COMPONENT.search(line)
-            if m and not m.group(2):
-                stack.append(describe(m.group(1)))
-            elif '</component>' in line and stack:
+                stack.append(element.tag + (f"[{element.attrib['id']}]" if 'id' in element.attrib else ''))
+                yield 'start', element.tag, dict(element.attrib), None, '/'.join(stack)
+            else:
+                if skip:
+                    skip -= 1
+                    element.clear()
+                    continue
+                yield 'end', element.tag, None, (element.text or '').strip(), '/'.join(stack)
                 stack.pop()
+                element.clear()
 
 
-def main(argv=None):
+def compare(left, right, ignore=DEFAULT_IGNORE, limit=40):
+    ignore = set(ignore)
+    counts, samples = collections.Counter(), []
+    elements, structure = 0, None
+    marker = object()
+    for a, b in itertools.zip_longest(events(left), events(right), fillvalue=marker):
+        if a is marker or b is marker:
+            structure = {'at': (a if b is marker else b)[4], 'reason': 'left ends first' if a is marker else 'right ends first'}
+            break
+        if a[0] != b[0] or a[1] != b[1]:
+            structure = {'at': a[4], 'other': b[4], 'reason': f'{a[0]} {a[1]} against {b[0]} {b[1]}'}
+            break
+        if a[0] == 'start':
+            elements += 1
+            for name in sorted(set(a[2]) | set(b[2])):
+                if f'{a[1]}.{name}' in ignore or a[2].get(name) == b[2].get(name):
+                    continue
+                counts[f'{a[1]}.{name}'] += 1
+                if len(samples) < limit:
+                    samples.append({'path': a[4], 'attribute': name, 'left': a[2].get(name), 'right': b[2].get(name)})
+        elif a[3] != b[3]:
+            counts[f'{a[1]}#text'] += 1
+            if len(samples) < limit:
+                samples.append({'path': a[4], 'attribute': '#text', 'left': a[3][:80], 'right': b[3][:80]})
+    return {'left': str(left), 'right': str(right), 'elements': elements, 'differing_values': sum(counts.values()),
+            'by_attribute': dict(counts.most_common()), 'samples': samples, 'structure': structure,
+            'equal': not counts and structure is None}
+
+
+def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('a', type=Path)
-    p.add_argument('b', type=Path)
-    p.add_argument('--limit', type=int, default=40, help='hunks to report')
-    p.add_argument('--all', action='store_true', help='also compare the script section below <script>')
-    args = p.parse_args(argv)
-    with tempfile.TemporaryDirectory() as tmp:
-        a, b = Path(tmp) / 'a.xml', Path(tmp) / 'b.xml'
-        decompress(args.a, a, not args.all)
-        decompress(args.b, b, not args.all)
-        skip = info_end(a)
-        found = [h for h in hunks(a, b) if h[1] >= skip]
-        print(f"{len(found)} differing hunks below the <info> header{'' if args.all else ', above <script>'}")
-        shown = found[:args.limit]
-        where = dict(contexts(a, sorted({h[0] for h in shown})))
-        for first, last, left, right in shown:
-            chain = where.get(first, [])
-            print(f'--- line {first}' + (f'-{last}' if last != first else '') + ': ' + (' > '.join(chain[-3:]) or '(no component)'))
-            for line in left[:4]:
-                print(f'  A {line.strip()[:220]}')
-            for line in right[:4]:
-                print(f'  B {line.strip()[:220]}')
-    return 0 if not found else 1
+    p.add_argument('left', type=Path)
+    p.add_argument('right', type=Path)
+    p.add_argument('--limit', type=int, default=40)
+    p.add_argument('--ignore', nargs='*', default=list(DEFAULT_IGNORE), metavar='TAG.ATTR')
+    p.add_argument('--out', type=Path)
+    args = p.parse_args()
+    result = compare(args.left, args.right, args.ignore, args.limit)
+    print(f"{result['elements']} elements, {result['differing_values']} differing values, equal={result['equal']}")
+    for name, count in list(result['by_attribute'].items())[:20]:
+        print(f'  {count:8} {name}')
+    if result['structure']:
+        print(f"structure: {result['structure']}")
+    for sample in result['samples'][:10]:
+        print(f"  {sample['path']} {sample['attribute']}: {sample['left']} | {sample['right']}")
+    if args.out:
+        args.out.write_text(json.dumps(result, indent=1) + '\n')
+    raise SystemExit(0 if result['equal'] else 1)
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    main()

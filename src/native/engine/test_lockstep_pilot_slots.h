@@ -31,9 +31,10 @@ static void **test_pslot_factory(void *universe,void **out,void *parent,void *co
     memcpy(test_pnat_universe+VPS_SINGLETON,&p2,8);--*(int*)(p1+0x40);test_pslot_rng+=2;
     *out=p2;return out;
 }
+static int test_pslot_p1_stood;   /* slot 1 stood up: X4 deleted its PlayerController, 9fc550 answers none for it */
 static void *test_pslot_controller_of(void *key) {
     assert(key==pnat_base+PNAT_CONTROLLER_KEY);
-    if(test_pslot_singleton()!=test_pslot_p2) return test_pnat_controller;
+    if(test_pslot_singleton()!=test_pslot_p2) return test_pslot_p1_stood?NULL:test_pnat_controller;
     void *c=NULL;memcpy(&c,test_pslot_ship2+0x200,8);return c==(void*)test_pslot_c2?c:NULL;
 }
 static unsigned char test_pslot_room_is(void *self,int cls) {assert(self==test_pslot_room);return cls==PSLOT_ROOM_CLASS;}
@@ -311,6 +312,18 @@ static void test_crash_note(void) {
     assert(crash_note_filter(&info)==EXCEPTION_EXECUTE_HANDLER && test_crash_previous_calls==2);   /* once only */
     {   FILE *f=fopen(note,"rb");char back[4096];size_t got=f?fread(back,1,sizeof(back)-1,f):0;if(f) fclose(f);back[got]=0;
         assert(got && strstr(back,"NATIVE_GATE CRASH tick=1599 code=c0000005") && !strstr(strstr(back,"\n")+1,"CRASH"));}
+    /* First chance (footlook: X4's own handler ended the process before the filter): an access violation in X4's image
+     * writes a CRASH_FIRST_CHANCE line, at most CRASH_NOTE_FIRST of them, and handles nothing; one elsewhere writes none. */
+    {   unsigned char *saved_image=image;static unsigned char fake_image[64];void *saved_address=test_crash_record.ExceptionAddress;
+        image=fake_image;crash_note_first_count=0;test_crash_record.ExceptionAddress=fake_image+8;
+        assert(crash_note_first_chance(&info)==EXCEPTION_CONTINUE_SEARCH && crash_note_first_count==1);
+        test_crash_record.ExceptionAddress=(void*)(uintptr_t)0x10;assert(crash_note_first_chance(&info)==EXCEPTION_CONTINUE_SEARCH && crash_note_first_count==1);
+        test_crash_record.ExceptionAddress=fake_image+8;
+        for(unsigned i=0;i<CRASH_NOTE_FIRST+2;i++) assert(crash_note_first_chance(&info)==EXCEPTION_CONTINUE_SEARCH);
+        FILE *f=fopen(note,"rb");char back[16384];size_t got=f?fread(back,1,sizeof(back)-1,f):0;if(f) fclose(f);back[got]=0;
+        unsigned lines=0;for(const char *c=back;(c=strstr(c,"CRASH_FIRST_CHANCE tick=1599 code=c0000005 at=8 "));c++) ++lines;
+        assert(lines==CRASH_NOTE_FIRST && crash_note_vectored);
+        image=saved_image;test_crash_record.ExceptionAddress=saved_address;crash_note_first_count=0;}
     SetUnhandledExceptionFilter(kept);crash_note_armed=0;crash_note_entered=0;crash_note_previous=NULL;crash_note_path[0][0]=0;
     /* Through Lua, where the probe arms it: right after loading the gate, before gate.start names the UI thread
      * (build120 refused here: accept_ui). */
@@ -332,6 +345,160 @@ static void test_pslot_reset(void) {
     memset((void*)pslot_route_hits,0,sizeof(pslot_route_hits));pslot_updates=pslot_hook_calls=0;
     memset((void*)pslot_getter_render,0,sizeof(pslot_getter_render));pslot_callers=0;pslot_caller_tail=(unsigned)pslot_caller_head;pslot_caller_dropped=0;
     test_pslot_assist_value=1;test_pslot_mode_value=0;render_rng_in_slot=0;
+}
+/* X4's 3d8420 as the body stage uses it (lockstep_pilot_foot_body.h): with a target, ConnectTo at the player slot (the
+ * parent becomes the target; mode 1 lands elsewhere, mode 2 faults); without one, off the parent. With what X4's parent
+ * change does to a Player besides (on-foot report, section 13g-13i):
+ *   - off the parent with no hold (+0xd4 == 0), alive (+0xd3 == 0): 3d7010 kills it 'removed' (+0xd3 = 1, counted);
+ *     the deferred KillEvent reaches the game over in X4's event phase (test_pfbody_x4_events);
+ *   - into a room with no camera (+0x4e8 NULL): 702f40 -> 71a560 makes it one and X4's (Universe+0x3c8 and +0x3d0);
+ *   - mode 3: X4 makes it a camera whatever +0x4e8 holds; mode 4: X4 kills it whatever its hold (another build). */
+static __attribute__((aligned(16))) unsigned char test_pfbody_filter_object[16],test_pfbody_elsewhere[0x100],test_pfbody_x4_camera[0x1000];
+static unsigned test_pfbody_calls,test_pfbody_mode,test_pfbody_removed,test_pfbody_cameras;
+static unsigned char *test_pfbody_singleton;
+static void *test_pfbody_target;
+static int32_t test_pfbody_hold_seen;
+static void test_pfbody_connect(void *component,const void *filter,void *target,void *extra) {
+    ++test_pfbody_calls;test_pfbody_singleton=test_pslot_singleton();test_pfbody_target=target;
+    assert(component==test_pslot_p2 && filter==test_pfbody_filter_object && !extra);
+    if(test_pfbody_mode==2) RaiseException(EXCEPTION_ACCESS_VIOLATION,0,0,NULL);
+    unsigned char *p=test_pslot_p2;void *old=*(void**)(p+0x70),*camera=*(void**)(p+PFBODY_CAMERA);
+    test_pfbody_hold_seen=*(int32_t*)(p+PFBODY_HOLD);
+    if(target) {
+        assert(!old);void *at=test_pfbody_mode==1?(void*)test_pfbody_elsewhere:target;memcpy(p+0x70,&at,8);
+        if(!camera || test_pfbody_mode==3) {   /* 71a560: the Player's own camera, made this client's */
+            void *made=test_pfbody_x4_camera;memcpy(p+PFBODY_CAMERA,&made,8);
+            memcpy(test_pnat_universe+PFBODY_CAMERAS,&made,8);memcpy(test_pnat_universe+PFBODY_CAMERAS+8,&made,8);++test_pfbody_cameras;
+        }
+    } else {
+        memset(p+0x70,0,8);
+        if(old && !p[PFBODY_LIFECYCLE] && (!*(int32_t*)(p+PFBODY_HOLD) || test_pfbody_mode==4)) {p[PFBODY_LIFECYCLE]=1;++test_pfbody_removed;}
+    }
+}
+/* X4's event phase after the pass: a Player killed 'removed' gets its KilledEvent and Player::vfunc9's game over call,
+ * which is the death module's guard while it is installed. */
+static void test_pfbody_x4_events(void) {
+    if(test_pslot_p2[PFBODY_LIFECYCLE]!=1) return;
+    test_pslot_p2[PFBODY_LIFECYCLE]=2;
+    if(pdeath_guard_installed) ((void(*)(void))(pslot_page+PDEATH_STUB))();
+}
+/* This client's cameras (Universe+0x3c8, +0x3d0) as they were before the bodies: noted, compared, put back. */
+static void *test_pfbody_cameras_at[2];
+static void test_pfbody_cameras_note(void) {memcpy(test_pfbody_cameras_at,test_pnat_universe+PFBODY_CAMERAS,16);test_pfbody_cameras=0;}
+static int test_pfbody_cameras_kept(void) {
+    void *c[2];memcpy(c,test_pnat_universe+PFBODY_CAMERAS,16);
+    return c[0]==test_pfbody_cameras_at[0] && c[1]==test_pfbody_cameras_at[1] && !*(void**)(test_pslot_p2+PFBODY_CAMERA) && !test_pfbody_cameras;
+}
+static void test_pfbody_cameras_back(void) {
+    memcpy(test_pnat_universe+PFBODY_CAMERAS,test_pfbody_cameras_at,16);memset(test_pslot_p2+PFBODY_CAMERA,0,8);test_pfbody_cameras=0;
+}
+static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *input,unsigned char *p1,unsigned char *p2);   /* test_lockstep_pilot_foot_slots.h */
+static void test_pilot_death_foot_block(unsigned char *region,unsigned char *input,unsigned char *p1,unsigned char *p2);   /* test_lockstep_pilot_death_foot.h */
+static void test_pilot_death_foot_stop(unsigned char *region,unsigned char *input,unsigned char *p1,unsigned char *p2);
+/* One stock record of capture tick c for slot k, staged as the wire does at c (lockstep_pilot_stock.h pstk_stage). */
+static int test_absent_stage(unsigned k,uint64_t c) {
+    pstk_record r;unsigned char b[PSTK_BYTES_MAX];
+    memset(&r,0,sizeof(r));r.capture16=(uint16_t)c;r.count=1;r.events[0]=(pstk_event){PSTK_STATE,0xd,1};
+    return pstk_stage(k,b,pstk_encode(&r,b),c);
+}
+/* Hot join (lockstep_pilot_inputs.h): a 3-slot stock session on client 1 with slot 3 absent. Slot 3 is neither built at
+ * take-2 nor seated at take-1; through the window its record is neither needed (neutral: S3:0:0, no view, no trigger)
+ * nor accepted; HANDOVER(3, H=12) applied at 8 builds its player at 10 and seats it at 11 (the late enrollment), its
+ * records are required from 15 = H+delay (missing: 155), the slot scope replays them from there. A missing record of slot
+ * 2, which is not absent, stops (155) all along. ABORT ends its records again from the row that carried it. */
+static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,unsigned char *p1) {
+    const char *why="";char text[4096];const uint64_t saved_issued=stats.issued;unsigned char *saved_input=pnat_input;
+    test_pslot_reset();test_pslot3_made=0;test_pslot3_row_count=0;pview_slot_player=NULL;test_pstk_call_count=0;
+    void **cvt=(void**)(region+PSLOT_VTABLE);cvt[49]=(void*)test_pslot3_assist;cvt[50]=(void*)test_pslot3_mode;
+    vps_create=test_pslot3_factory;pnat_fn.controller=test_pslot3_controller_of;
+    pslot_fn.take=test_pslot3_take;pslot_fn.release=test_pslot3_release;pslot_fn.update=test_pslot3_update;
+    for(unsigned i=0;i<2;i++) {
+        void *svt=test_pslot3_ship_vt,*rvt=test_pslot3_room_vt,*room=test_pslot3_room[i];
+        memset(test_pslot3_ship[i],0,0x500);memcpy(test_pslot3_ship[i],&svt,8);memcpy(test_pslot3_ship[i]+PSLOT_ROOM,&room,8);test_pslot3_ship[i][0xd1]=1;
+        memcpy(test_pslot3_room[i],&rvt,8);
+        pilot_slots[i+1].resolved=1;pilot_slots[i+1].object=test_pslot3_ship[i];pilot_slots[i+1].player=0;pilot_slots[i+1].dead=0;
+    }
+    pilot_slots[0].dead=0;pilot_slot_count=3;stats.slot=1;pnat_input=input;
+    pstk_capturing=0;pstk_capture_slot=0;pstk_slot_mask=7;pilot_stock_slots=7;pstk_capture_start=1;pstk_first_apply=1;
+    memset(pstk_ring,0,sizeof(pstk_ring));memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));memset(pstk_locals,0,sizeof(pstk_locals));
+    /* The session config names slot 3: before the first tick, never slot 1, the same mask on a UI reload. */
+    stats.issued=0;pilot_absent=0;
+    assert(!pilot_absent_arm(0) && !pilot_absent_arm(1) && !pilot_absent_arm(5) && !pilot_absent_arm(1u<<PILOT_SLOTS) && !pilot_absent);
+    stats.issued=3;assert(!pilot_absent_arm(4));stats.issued=0;
+    assert(pilot_absent_arm(4) && pilot_absent==4 && pilot_absent_arm(4) && !pilot_absent_arm(6));
+    const uint64_t take=pilot_start-PILOT_SUPPRESS_LEAD;   /* 7 */
+    assert(pslot_arm_using(7) && pslot_mask==6);
+    assert(pslot_construct_all(take) && test_pslot3_made==1 && pslots[2].player==test_pslot3_p[0] && !pslots[3].player && pslot_p1==p1);
+    assert(pslot_seat_all(take) && pslots[2].seated && !pslots[3].seated && test_pslot_singleton()==p1);
+    /* 9: slots 1 and 2 have their records, slot 3 none (its row is the relay's stand-in): neutral, not a stop. */
+    assert(test_absent_stage(1,6) && test_absent_stage(2,6) && !test_absent_stage(3,6));
+    LONG64 skips=pilot_absent_skips;stats.issued=9;
+    assert(pstk_frame(9,&why) && pstk_slot_frames[1].tick==9 && pstk_slot_frames[2].tick!=9 && pilot_absent_skips==skips+1);
+    assert(pstk_frame_text(text,sizeof(text)) && strstr(text,"|S2:1:") && strstr(text,"|S3:0:0000000000000000:0"));
+    assert(!pview_state[2] && !pview_target_replay[2] && pview_target_tick[2]==9);   /* no view, no soft target */
+    assert(!pstk_fire_on[2] && pstk_fire_tick[2]==9 && pslot_replay(9) && pslots[2].replays==1 && !pslots[3].replays);
+    /* A missing record of slot 2 (not absent) still stops: 155's stock_missing_slot. */
+    assert(test_absent_stage(1,7) && !test_absent_stage(3,7));stats.issued=10;
+    assert(!pstk_frame(10,&why) && !strcmp(why,"stock_missing_slot"));
+    /* HANDOVER(3, 12) applied at 8 on every client: at least PILOT_HANDOVER_LEAD ahead, absent slots only, one at a time. */
+    stats.issued=8;
+    assert(!pilot_handover_apply(3,10,8) && !pilot_handover_apply(2,12,8) && !pilot_handover_apply(1,12,8));
+    assert(pilot_handover_apply(3,12,8) && !pilot_handover_apply(3,13,8) && pilot_enroll[2]==12 && pilot_from[2]==12);
+    assert(!pilot_slot_present(3,11) && pilot_slot_present(3,12) && pilot_slot_silent(3,14,3) && !pilot_slot_silent(3,15,3) &&
+           !pilot_slot_enrolled(3,11) && pilot_slot_enrolled(3,12) && pilot_slot_present(2,5) && !pilot_slot_silent(2,5,3));
+    /* The late enrollment: its player at H-2, its seat at H-1, nothing before. */
+    assert(pslot_enroll_late(9,take) && !pslots[3].player && test_pslot3_made==1);
+    assert(pslot_enroll_late(10,take) && pslots[3].player==test_pslot3_p[1] && test_pslot3_made==2 && !pslots[3].seated);
+    assert(pslot_enroll_late(11,take) && pslots[3].seated && pslots[3].controller==test_pslot3_c[1] && test_pslot_singleton()==p1);
+    assert(pslot_enroll_late(12,take) && test_pslot3_made==2);
+    /* 12..14: seated, still silent (its first record is captured at 12): the scope replays slot 2 only. */
+    for(uint64_t t=12;t<=14;t++) {
+        assert(test_absent_stage(1,t-3) && test_absent_stage(2,t-3));
+        if(t-3<12) assert(!test_absent_stage(3,t-3));
+        test_pstk_call_count=0;stats.issued=t;assert(pstk_frame(t,&why) && pslot_replay(t));
+    }
+    assert(pslots[2].replays==4 && !pslots[3].replays);
+    /* Its client's first record (captured at 12) is accepted; at 15 it is required: missing, 155. */
+    assert(test_absent_stage(1,12) && test_absent_stage(2,12));stats.issued=15;
+    assert(!pstk_frame(15,&why) && !strcmp(why,"stock_missing_slot"));
+    assert(test_absent_stage(1,12) && test_absent_stage(2,12) && test_absent_stage(3,12));stats.issued=15;
+    assert(pstk_frame(15,&why) && pstk_slot_frames[2].tick==15 && pslot_replay(15) && pslots[3].replays==1 && pslots[2].replays==5);
+    assert(pstk_frame_text(text,sizeof(text)) && strstr(text,"|S3:1:"));
+    /* ABORT applied at 17 (protocol 3: its row 16): records end from capture 16, the seat stays. */
+    assert(pilot_abort_apply(3,17,0) && pilot_until[2]==16 && pilot_enroll[2]==12 && !pilot_slot_silent(3,18,3) && pilot_slot_silent(3,19,3));
+    assert(test_absent_stage(3,15) && !test_absent_stage(3,16));
+    {char status[512];assert(pilot_absent_text(status,sizeof(status)) && strstr(status," absent=4 ") && strstr(status," h3=12/16/12"));}
+    /* The join package's copy of this state, and a joiner restoring it (the mask must be the session's). */
+    {   char state[160];assert(pilot_absent_state(state,sizeof(state)) && !strcmp(state,"1|4|-1,-1,-1|12,16,12|-1,-1,-1"));
+        pilot_from[2]=pilot_until[2]=pilot_enroll[2]=UINT64_MAX;
+        assert(!pilot_absent_restore("1|2|-1,-1,-1|12,16,12|-1,-1,-1") && !pilot_absent_restore("1|4|5,-1,-1|12,16,12|-1,-1,-1") &&
+               !pilot_absent_restore("1|4|-1,-1,-1|12,16,12") && pilot_from[2]==UINT64_MAX);
+        assert(pilot_absent_restore(state) && pilot_from[2]==12 && pilot_until[2]==16 && pilot_enroll[2]==12);}
+    /* An ABORT before the player is built (applied before H-2) undoes the enrollment; a later join hands over again. */
+    pilot_from[2]=pilot_until[2]=pilot_enroll[2]=UINT64_MAX;
+    assert(pilot_handover_apply(3,30,20) && pilot_abort_apply(3,25,1) && pilot_until[2]==23 && pilot_enroll[2]==UINT64_MAX &&
+           !pilot_slot_present(3,30) && !pilot_slot_enrolled(3,40));
+    assert(pilot_abort_apply(3,26,1) && pilot_until[2]==23);   /* nothing pending: nothing changes */
+    assert(pilot_handover_apply(3,40,30) && pilot_from[2]==40 && pilot_until[2]==UINT64_MAX && pilot_enroll[2]==40 && pilot_slot_present(3,40));
+    assert(pilot_abort_apply(3,38,1) && pilot_enroll[2]==40 && pilot_until[2]==36 && !pilot_slot_present(3,40));   /* 38+2: being built */
+    pilot_from[2]=12;pilot_until[2]=16;pilot_enroll[2]=12;
+    assert(pslot_release_all() && !pslots[2].seated && !pslots[3].seated);
+    /* A handover for take+1 (known by take-3): slot 3's player in the seats' pass at take-1, its seat at take, through the
+     * slots' own schedule. */
+    test_pslot_reset();test_pslot3_made=0;for(unsigned i=0;i<2;i++) memset(test_pslot3_ship[i]+0x200,0,8);
+    pilot_slots[2].resolved=1;pilot_slots[2].object=test_pslot3_ship[1];pilot_slots[2].player=0;pilot_slots[2].dead=0;
+    for(unsigned i=0;i<PILOT_SLOTS;i++) pilot_from[i]=pilot_until[i]=pilot_enroll[i]=UINT64_MAX;
+    assert(pilot_handover_apply(3,take+1,take-3) && pslot_arm_using(7));
+    assert(pslot_pass(take-2) && test_pslot3_made==1 && !pslots[3].player);
+    assert(pslot_pass(take-1) && pslots[2].seated && pslots[3].player==test_pslot3_p[1] && !pslots[3].seated);
+    pslot_update_tick=take-1;assert(pslot_pass(take) && pslots[3].seated && !strcmp(pslot_stage,"live"));
+    assert(pslot_release_all() && !pslots[2].seated && !pslots[3].seated);
+    pilot_absent=0;for(unsigned i=0;i<PILOT_SLOTS;i++) pilot_from[i]=pilot_until[i]=pilot_enroll[i]=0;pilot_absent_skips=0;
+    memset(&pilot_slots[2],0,sizeof(pilot_slots[2]));memset(pstk_ring,0,sizeof(pstk_ring));memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));
+    pstk_capture_start=pstk_first_apply=0;pnat_input=saved_input;stats.issued=saved_issued;
+    vps_create=test_pslot_factory;pnat_fn.controller=test_pslot_controller_of;
+    printf("pilot stock slots: an absent slot (hot join) neutral and unseated until its handover, built at H-2, seated at H-1, "
+           "its records required from H+delay, a missing record of a present slot still 155, the abort and the package state PASS\n");
 }
 static void test_pilot_slots(void) {
     pstk_focus_forced=1;
@@ -718,6 +885,96 @@ static void test_pilot_slots(void) {
         assert(pslot_seat(2) && pslots[2].seated && pslots[2].roomless && pslots[2].room==test_pslot_ship2 && test_pslot_singleton()==p1);
         assert(pslot_release(2) && !pslots[2].seated && *(void**)test_pslot_c2==(void*)(pnat_base+PSLOT_VTABLE));
         test_pslot_parent=test_pslot_room;memcpy(test_pslot_ship2+0x200,&agent,8);memcpy(test_pslot_ship2+PSLOT_ROOM,&room,8);}
+    /* Bodies (lockstep_pilot_foot_body.h): P_2 into its seat's room through X4's connect at the player slot, in its
+     * scope; checked every live pass; off again before the seats' release (the upward pointer back); a connect that
+     * lands elsewhere or faults, a roomless seat, a moved body: stop 185. The kill guard at KillRecursive from take-1 (before
+     * the first body is in a room) to stop+1 (after the last left), its site checked every live pass. */
+    {   void *agent=test_pslot_agent2,*room=test_pslot_room;
+        test_pslot_reset();assert(pslot_arm_using(3));pslots[2].player=p2;pslot_p1=p1;memset(p2+0x70,0,8);
+        memcpy(test_pslot_ship2+0x200,&agent,8);memcpy(test_pslot_ship2+PSLOT_ROOM,&room,8);test_pslot_parent=test_pslot_room;stats.issued=6;
+        assert(pslot_seat(2) && pslots[2].seated && !pslots[2].roomless && *(void**)(p2+0x70)==room);
+        pfbody_connect=test_pfbody_connect;pfbody_filter=test_pfbody_filter_object;
+        pfoot_armed=0;assert(!pfbody_arm_using() && !strcmp(pstk_arm_why,"bodies_without_foot"));pfoot_armed=1;
+        memcpy(region+PFBODY_KILL_SITE,pfbody_kill_bytes,sizeof(pfbody_kill_bytes));
+        assert(pfbody_arm_using() && pfbody_armed && !strcmp(pfbody_stage,"armed") && !pfbody_kill_installed);
+        uint64_t start=pilot_start,stop=pilot_stop;pilot_start=10;pilot_stop=40;   /* take 7: the seats at 6, the bodies after them */
+        test_pfbody_calls=0;test_pfbody_mode=0;test_pfbody_removed=0;test_pfbody_cameras_note();pfbody_held=0;
+        assert(pfbody_pass(6,0) && !test_pfbody_calls && pfbody_pass(6,1) && pfbody_mask==2 && test_pfbody_calls==1 && test_pfbody_singleton==p2 &&
+               test_pfbody_target==room && *(void**)(p2+0x70)==room && test_pslot_singleton()==p1 && !pstk_scope_slot && !strcmp(pfbody_stage,"connected"));
+        /* X4 connected it held and with the stand-in camera: no camera of its own, this client's cameras where they were, the
+         * hold back to none (live d1s/df2: without it every client's camera became P_2's at take-1). */
+        assert(test_pfbody_hold_seen==1 && !*(int32_t*)(p2+PFBODY_HOLD) && test_pfbody_cameras_kept() && !p2[PFBODY_LIFECYCLE] && pfbody_held==1);
+        {   int32_t at;memcpy(&at,region+PFBODY_KILL_SITE+1,4);   /* X4's 6-byte call is a 5-byte call to the near page now */
+            assert(pfbody_kill_installed && region[PFBODY_KILL_SITE]==0xe8 && region+PFBODY_KILL_SITE+5+at==pslot_page+PFBODY_KILL_STUB &&
+                   !memcmp(region+PFBODY_KILL_SITE+5,pfbody_kill_bytes+5,3) && pfbody_kill_intact());}
+        assert(pfbody_pass(7,1) && pfbody_pass(20,1) && pfbody_checks==2 && !strcmp(pfbody_stage,"live"));
+        /* The site no longer ours: stop. */
+        region[PFBODY_KILL_SITE+1]^=1;assert(!pfbody_pass(20,1) && !strcmp(pfbody_why,"body_kill_lost"));region[PFBODY_KILL_SITE+1]^=1;
+        pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";pfbody_checks=2;pfbody_stage="live";
+        {char row[256];assert(pfbody_status(row,sizeof(row)) && strstr(row," bodies=live bodies_why=- bodies_mask=2 connects=1/0 body_checks=2"));}
+        /* stop+1: off before the release, the upward pointer back; the release then finds the seat as it left it. */
+        assert(pfbody_pass(41,0) && !pfbody_mask && test_pfbody_calls==2 && !test_pfbody_target && test_pfbody_singleton==p2 && *(void**)(p2+0x70)==room &&
+               !strcmp(pfbody_stage,"released") && pfbody_disconnects==1);
+        /* Off its room held: X4 did not kill it 'removed' (live d1s: the game over in the teardown, stop 163), the hold back. */
+        assert(test_pfbody_hold_seen==1 && !test_pfbody_removed && !p2[PFBODY_LIFECYCLE] && !*(int32_t*)(p2+PFBODY_HOLD) && test_pfbody_cameras_kept() &&
+               pfbody_held==2);
+        assert(!pfbody_kill_installed && !memcmp(region+PFBODY_KILL_SITE,pfbody_kill_bytes,8));   /* X4's call back */
+        assert(pfbody_kill_install());   /* for the live checks below */
+        assert(pslot_release(2) && !pslots[2].seated && !*(void**)(p2+0x70));
+        /* Moved off the room while live: stop. */
+        memset(p2+0x70,0,8);assert(pslot_seat(2));assert(pfbody_connect_slot(2) && pfbody_mask==2);
+        {void *other=test_pfbody_elsewhere;memcpy(p2+0x70,&other,8);}
+        assert(!pfbody_pass(21,1) && !strcmp(pfbody_why,"body_moved") && pfoot_failed && !strcmp(pfoot_why,"body_moved"));
+        memcpy(p2+0x70,&room,8);pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";
+        assert(pfbody_disconnect_slot(2) && !pfbody_mask && pslot_release(2));memset(p2+0x70,0,8);
+        /* A connect that lands elsewhere: off again, the upward pointer back, stop; a fault: stop, the pointer back. */
+        assert(pslot_seat(2));test_pfbody_mode=1;test_pfbody_calls=0;
+        assert(!pfbody_connect_slot(2) && !strcmp(pfbody_why,"body_connect") && test_pfbody_calls==2 && !test_pfbody_target && *(void**)(p2+0x70)==room &&
+               !pfbody_mask && test_pslot_singleton()==p1 && !pstk_scope_slot);
+        pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";test_pfbody_mode=2;
+        assert(!pfbody_connect_slot(2) && !strcmp(pfbody_why,"body_connect_fault") && *(void**)(p2+0x70)==room && !pfbody_mask && test_pslot_singleton()==p1);
+        pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";test_pfbody_mode=0;
+        assert(pslot_release(2));memset(p2+0x70,0,8);
+        /* X4's own rule, the call as it was before the hold: off its room unheld, the Player is killed 'removed' and X4's
+         * event phase reaches its game over (the death module is off here: only the mark). */
+        assert(pslot_seat(2) && pfbody_connect_slot(2) && pfbody_mask==2);
+        test_pfbody_connect(p2,test_pfbody_filter_object,NULL,NULL);assert(test_pfbody_removed==1 && p2[PFBODY_LIFECYCLE]==1);
+        test_pfbody_removed=0;p2[PFBODY_LIFECYCLE]=0;memcpy(p2+0x70,&room,8);
+        /* Another build kills it however it is held (mode 4): stop 185 body_killed, never the game over unannounced; the
+         * mask cleared, the upward pointer back for the release. */
+        test_pfbody_mode=4;
+        assert(!pfbody_disconnect_slot(2) && !strcmp(pfbody_why,"body_killed") && pfoot_failed && !pfbody_mask && *(void**)(p2+0x70)==room &&
+               !*(int32_t*)(p2+PFBODY_HOLD) && test_pslot_singleton()==p1 && !pstk_scope_slot);
+        test_pfbody_mode=0;test_pfbody_removed=0;p2[PFBODY_LIFECYCLE]=0;pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";
+        /* Already dying: nothing is asked of X4. */
+        assert(pfbody_connect_slot(2) && pfbody_mask==2);p2[PFBODY_LIFECYCLE]=1;test_pfbody_calls=0;
+        assert(!pfbody_disconnect_slot(2) && !strcmp(pfbody_why,"body_killed") && !test_pfbody_calls && pfbody_mask==2);
+        p2[PFBODY_LIFECYCLE]=0;pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";
+        assert(pfbody_disconnect_slot(2) && !pfbody_mask);
+        /* X4 gives it a camera however +0x4e8 reads (mode 3): stop body_camera, off again, the upward pointer back (this
+         * client's cameras are X4's then: put back by hand here). */
+        test_pfbody_mode=3;test_pfbody_calls=0;
+        assert(!pfbody_connect_slot(2) && !strcmp(pfbody_why,"body_camera") && test_pfbody_calls==2 && !test_pfbody_target && *(void**)(p2+0x70)==room &&
+               !pfbody_mask && test_pfbody_cameras==1 && *(void**)(p2+PFBODY_CAMERA)==(void*)test_pfbody_x4_camera);
+        test_pfbody_mode=0;test_pfbody_cameras_back();pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";
+        /* A camera on P_2 from before: refused before X4 is asked. */
+        {void *had=test_pfbody_x4_camera;memcpy(p2+PFBODY_CAMERA,&had,8);}test_pfbody_calls=0;
+        assert(!pfbody_connect_slot(2) && !strcmp(pfbody_why,"body_camera") && !test_pfbody_calls && *(void**)(p2+0x70)==room && !pfbody_mask);
+        test_pfbody_cameras_back();pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";
+        assert(test_pfbody_cameras_kept() && !*(int32_t*)(p2+PFBODY_HOLD));
+        assert(pslot_release(2));memset(p2+0x70,0,8);
+        /* A seat without a cockpit room has no player slot to sit at: refused. */
+        memset(test_pslot_ship2+PSLOT_ROOM,0,8);test_pslot_parent=test_pslot_ship2;
+        assert(pslot_seat(2) && pslots[2].roomless && !pfbody_connect_slot(2) && !strcmp(pfbody_why,"body_seat") && !pfbody_mask);
+        pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";
+        /* At take-1 such a seat gets no body (counted), the session goes on. */
+        assert(pfbody_pass(6,1) && !pfbody_mask && pfbody_roomless==1 && !pfbody_failed);
+        assert(pslot_release(2));test_pslot_parent=test_pslot_room;memcpy(test_pslot_ship2+PSLOT_ROOM,&room,8);memset(p2+0x70,0,8);
+        assert(pfbody_kill_uninstall());
+        pfbody_armed=0;pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";pfbody_stage="off";pfbody_mask=0;pfbody_connects=pfbody_disconnects=pfbody_checks=0;
+        pfbody_connect=NULL;pfbody_filter=NULL;pfoot_armed=0;pilot_start=start;pilot_stop=stop;}
+    /* Slots 2..N on foot (lockstep_pilot_foot_slots.h) and the bodies parked around a get-up. */
+    test_pilot_foot_slots_block(region,input,p1,p2);
     /* A slot ship's death (lockstep_pilot_death.h): the session goes on, the slot's records consumed and ignored; a
      * controller change with another cause still stops; the ship MD built becomes the slot's at a fixed tick. */
     {   void *agent=test_pslot_agent2,*room=test_pslot_room;void *null=NULL;
@@ -903,6 +1160,10 @@ static void test_pilot_slots(void) {
         *(uint64_t*)(test_pslot_ship2+8)=0;*(uint64_t*)(test_pnat_ship+8)=0;
         memcpy(test_pslot_ship2+0x200,&agent,8);memset(test_pslot_c2,0,sizeof(test_pslot_c2));
         pilot_start=10;pilot_stop=40;pstk_flight=0;*flight=0;memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));memset(pstk_ring,0,sizeof(pstk_ring));pnat_controller=controller;pnat_ship=test_pnat_ship;}
+    /* Death and on foot together (test_lockstep_pilot_death_foot.h): each combination the two modules share pslot_* in. */
+    test_pilot_death_foot_block(region,input,p1,p2);
+    /* The same modules at the stop (stop+1 through the whole pass), seated and walking. */
+    test_pilot_death_foot_stop(region,input,p1,p2);
     /* The PlayerController branches are the stock prologue, then an indirect jump to the continuation. */
     {   static void (*const branches[3])(void)={pslot_player6,pslot_player7,pslot_player10};
         for(unsigned i=0;i<3;i++) {
@@ -926,10 +1187,10 @@ static void test_pilot_slots(void) {
         }
         pilot_slot_count=3;stats.slot=3;region[0x2f4b750]=0x11;
         assert(pslot_arm_using(7) && pslot_mask==6);
-        assert(pslot_construct_all() && test_pslot3_made==2 && pslots[2].player==test_pslot3_p[0] && pslots[3].player==test_pslot3_p[1] &&
+        assert(pslot_construct_all(pilot_start-PILOT_SUPPRESS_LEAD) && test_pslot3_made==2 && pslots[2].player==test_pslot3_p[0] && pslots[3].player==test_pslot3_p[1] &&
                pslot_p1==p1 && test_pslot_singleton()==p1);
         uint64_t canonical3=pslot_hash();
-        assert(pslot_seat_all() && pslots[2].seated && pslots[3].seated && pslot_hash()==canonical3 && test_pslot_singleton()==p1);
+        assert(pslot_seat_all(pilot_start-PILOT_SUPPRESS_LEAD) && pslots[2].seated && pslots[3].seated && pslot_hash()==canonical3 && test_pslot_singleton()==p1);
         assert(pslots[2].store[test_pslot_store_offset(0x2f4b750)]==0x60 && pslots[3].store[test_pslot_store_offset(0x2f4b750)]==0x61 && region[0x2f4b750]==0x11);
         assert(pslots[2].vt.slots!=pslots[3].vt.slots && pslot_of(test_pslot3_c[0])==2 && pslot_of(test_pslot3_c[1])==3 &&
                *(void**)test_pslot3_c[0]==(void*)&pslots[2].vt.slots[0] && *(void**)test_pslot3_c[1]==(void*)&pslots[3].vt.slots[0]);
@@ -960,6 +1221,7 @@ static void test_pilot_slots(void) {
         assert(!*(void**)(test_pslot3_p[0]+0x70) && !*(void**)(test_pslot3_p[1]+0x70) && !memcmp(region+PSLOT_CALL_SITE,pslot_call_bytes,5));
         memset(&pilot_slots[2],0,sizeof(pilot_slots[2]));
         vps_create=test_pslot_factory;pnat_fn.controller=test_pslot_controller_of;}
+    test_pilot_slots_absent(region,input,p1);
     printf("pilot stock slots 2..N arming/construct/seat/vtable copy/routes/authority/update hook/capture/staging/replay/release/fail-closed tests PASS\n");
     test_pslot_reset();
     pnat_armed=0;pnat_mode=0;pstk_capturing=0;pstk_slot=0;pilot_stock_slots=0;pstk_slot_mask=0;pstk_capture_slot=0;pnat_stage="off";
@@ -1019,6 +1281,13 @@ static void test_pilot_slots_arming_order(const char *path) {
     assert(pnat_arm_stock(1,3u) && !pnat_arm_stock(0,3u)); /* the reload's identical rerun */
     /* The call site on the real bytes: installed and restored with the boot hold's word next to it. */
     assert(pslot_hook_install() && pslot_hook_intact() && image[PSLOT_CALL_SITE]==0xe8 && memcmp(image+PSLOT_CALL_SITE,pslot_call_bytes,5));
+    /* The bodies' kill guard on the real bytes (lockstep_pilot_foot_body.h): KillRecursive's first call, X4's spare query
+     * ([rax+0x1408] with rax the component's vtable from [rcx]), its answer tested next; re-pointed to the near page and back. */
+    {   assert(!memcmp(image+PFBODY_KILL_SITE,pfbody_kill_bytes,8) && image[PFBODY_KILL_RVA+0xd]==0x48 && image[PFBODY_KILL_RVA+0xe]==0x8b &&
+               image[PFBODY_KILL_RVA+0xf]==0x01 && image[PFBODY_KILL_SITE+8]==0x0f && image[PFBODY_KILL_SITE+9]==0x85);
+        int32_t at;assert(pfbody_kill_install() && pfbody_kill_intact() && image[PFBODY_KILL_SITE]==0xe8);
+        memcpy(&at,image+PFBODY_KILL_SITE+1,4);assert(image+PFBODY_KILL_SITE+5+at==pslot_page+PFBODY_KILL_STUB && image[PFBODY_KILL_SITE+5]==0x00);
+        assert(pfbody_kill_uninstall() && !memcmp(image+PFBODY_KILL_SITE,pfbody_kill_bytes,8));}
     assert(pslot_hook_uninstall() && !memcmp(image+PSLOT_CALL_SITE,pslot_call_bytes,5));
     /* Presentation on the real bytes: its pins with the boot hold installed, the refill call re-pointed and restored. */
     pres_armed=0;pres_pins_checked=0;render_rng_installed=1;pres_fns saved_pres=pres_fn;

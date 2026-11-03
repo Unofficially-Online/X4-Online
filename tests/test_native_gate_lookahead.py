@@ -10,6 +10,7 @@ import socket
 import struct
 import subprocess
 import sys
+import time
 import tempfile
 import unittest
 from unittest import mock
@@ -499,5 +500,42 @@ class RelayProcessLookaheadTests(unittest.TestCase):
                 for peer in peers: peer.close()
                 process.terminate();process.communicate(timeout=5)
 
+
+    def test_real_udp_latency_option_delays_each_direction_by_half(self):
+        # --latency-ms 100: a report is read 50 ms after it arrives and its permits leave 50 ms after that.
+        with tempfile.TemporaryDirectory() as directory, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reservation:
+            reservation.bind(('127.0.0.1', 0))
+            port = reservation.getsockname()[1]
+            reservation.close()
+            report = Path(directory)/'report.json'
+            process = subprocess.Popen([sys.executable, str(ROOT/'tools/dev/native_gate_relay.py'), '--port', str(port), '--token', TOKEN,
+                                        '--hold-tick', '99', '--clients', '2', '--ticks', '4', '--lookahead', '2', '--report', str(report),
+                                        '--latency-ms', '100'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            peers = []
+            try:
+                self.assertEqual(process.stdout.readline().strip(), 'NATIVE_GATE RELAY READY')
+                self.assertEqual(process.stdout.readline().strip(), 'NATIVE_GATE RELAY LATENCY round_trip_ms=100')
+                for _ in range(2):
+                    peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    peer.bind(('127.0.0.1', 0));peer.settimeout(5);peers.append(peer)
+                sent = time.perf_counter()
+                for slot, peer in enumerate(peers, 1):
+                    peer.sendto(state(slot, 0, clients=2, blob='0a' if slot == 1 else ''), ('127.0.0.1', port))
+                for slot, peer in enumerate(peers, 1):
+                    got = [peer.recv(8192).decode() for _ in range(3)]
+                    self.assertEqual(got, [f'NGGO|4|{TOKEN}|{slot}|{t}|2|{"0a" if t == 3 else ""}|' for t in (1, 2, 3)])
+                self.assertGreaterEqual(time.perf_counter()-sent, .095)
+                for tick in (1, 2, 3, 4):
+                    for slot, peer in enumerate(peers, 1):
+                        peer.sendto(state(slot, tick, clients=2), ('127.0.0.1', port))
+                for slot, peer in enumerate(peers, 1):
+                    got = [peer.recv(8192).decode() for _ in range(2)]
+                    self.assertEqual(got, [f'NGGO|4|{TOKEN}|{slot}|4|2||', f'NGSTOP|4|{TOKEN}|{slot}|4'])
+                for line in iter(process.stdout.readline, ''):
+                    if 'done=True' in line: break
+                self.assertEqual(json.loads(report.read_text())['verdict'], 'pass')
+            finally:
+                for peer in peers: peer.close()
+                process.terminate();process.communicate(timeout=5)
 
 if __name__ == '__main__': unittest.main()

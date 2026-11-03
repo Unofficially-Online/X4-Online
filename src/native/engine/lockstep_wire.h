@@ -34,6 +34,10 @@ static inline int gate_blob_span(const char *s,size_t n) {
     return 1;
 }
 static inline int gate_blob_valid(const char *s,size_t n) {return gate_blob_span(s,n) && s[n]==0;}
+/* A hot joiner's permits sealed before its handover carry the relay's stand-in in its own slot, not its
+ * proposal (lockstep_join.h join_own): with this sentinel the own-slot comparison is skipped. Writable, so that
+ * no compiler merges it with an empty string literal (a real empty proposal must still be compared). */
+static char gate_proposal_any[1];
 /* 1: every slot's blob copied; 0: not this permit or malformed (nothing
  * copied); -1: the relay returned a different local proposal (fail closed). */
 static inline int gate_permit_blobs(const char *reply,size_t length,const char *prefix,unsigned slot,unsigned clients,
@@ -49,7 +53,7 @@ static inline int gate_permit_blobs(const char *reply,size_t length,const char *
         if(!gate_blob_span(reply+start[i],size[i])) return 0;
     }
     if(at!=length) return 0;
-    if(size[slot-1]!=strlen(proposal) || memcmp(reply+start[slot-1],proposal,size[slot-1])) return -1;
+    if(proposal!=gate_proposal_any && (size[slot-1]!=strlen(proposal) || memcmp(reply+start[slot-1],proposal,size[slot-1]))) return -1;
     for(unsigned i=0;i<clients;i++) {memcpy(blobs[i],reply+start[i],size[i]);blobs[i][size[i]]=0;}
     return 1;
 }

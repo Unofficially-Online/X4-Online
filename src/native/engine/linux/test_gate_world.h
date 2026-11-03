@@ -167,6 +167,7 @@ static void wt_run(unsigned schema,const wscen_layout *layout) {
     world_hash_scans=world_hash_failures=0;world_hash_watch_count=0;world_hash_schema=1;
     wt_map_slot=wscen_agent;world_component_map=&wt_map_slot;world_find=wt_find;
     assert(world_hash_watch_add("000000000000004d",16) && world_hash_watch_add("000000000000004f",16));
+    wt_argument=1;assert(lua_world_health(NULL)==1 && !strcmp(wt_exported,"nil")); /* no capture yet */
     for(unsigned tick=1;tick<=3;tick++) {
         wscen_step(tick);
         if(!world_hash_capture(tick,schema)) {printf("capture failed tick=%u stage=%s saved=%llx\n",tick,world_hash_stage,(unsigned long long)world_hash_failure_id);assert(0);}
@@ -176,6 +177,14 @@ static void wt_run(unsigned schema,const wscen_layout *layout) {
         for(unsigned page=1;page<=pages;page++) {wt_argument=page;assert(lua_world_page(NULL)==1 && strcmp(wt_exported,"nil"));wt_emit(wt_exported);}
         wt_argument=0;assert(lua_world_detail(NULL)==1);unsigned rows=(unsigned)wt_result;assert(rows==2*WORLD_HASH_DOMAINS);
         for(unsigned row=1;row<=rows;row++) {wt_argument=row;assert(lua_world_detail(NULL)==1 && strcmp(wt_exported,"nil"));wt_emit("WORLD_DETAIL ");wt_emit(wt_exported);wt_emit("\n");}
+        /* FR28: WORLD_HEALTH as the Windows golden prints it (test_lockstep_world_golden.c). */
+        double now=7.25+tick;memcpy(LX(LX_GAME_VA),&now,8);stats.issued=tick;
+        wt_argument=0;assert(lua_world_health(NULL)==1 && wt_result==2);
+        for(unsigned row=1;row<=2;row++) {wt_argument=row;assert(lua_world_health(NULL)==1 && strstr(wt_exported," present=1 "));wt_emit("WORLD_HEALTH ");wt_emit(wt_exported);wt_emit("\n");}
+        wt_argument=3;assert(lua_world_health(NULL)==1 && !strcmp(wt_exported,"nil"));
+        uint64_t kept=world_hash_watches[1].runtime;world_hash_watches[1].runtime=170; /* 84's runtime: never present */
+        wt_argument=2;assert(lua_world_health(NULL)==1 && strstr(wt_exported," present=0 "));wt_emit("WORLD_HEALTH ");wt_emit(wt_exported);wt_emit("\n");
+        world_hash_watches[1].runtime=kept;
     }
 }
 static const wscen_layout *wt_linux_layout(void) {

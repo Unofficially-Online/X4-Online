@@ -28,11 +28,11 @@
  * Pins: SpeakNextLine, vfunc1, OnSpeakFinished and the duration function, without
  * the words the speech modules replace (the two entries, the deadline and ready
  * words of vfunc1). Every gate tick re-checks the site and the pins; a failure stops
- * the gate with reason 130. Stop restores the site by CAS. */
+ * the gate with reason 139. Stop restores the site by CAS. */
 #define SPEAK_TIMER_SITE 0x5617cdu
 #define SPEAK_TIMER_ORIGINAL 0x7275u /* jne rel8 +0x72 (little endian 75 72) */
 #define SPEAK_TIMER_PATCHED 0x9090u
-#define SPEAK_TIMER_STOP 130u
+#define SPEAK_TIMER_STOP 139u /* 130 until 1 November 2026 (the runtime IDs'); docs/LOCKSTEP-REGISTRY.txt */
 #define SPEAK_TIMER_BLOCK 0x561340u
 #define SPEAK_TIMER_BLOCK_SIZE 0x6c6u
 #define SPEAK_TIMER_BLOCK_SHA "8c135b9a88e8627b0735963bead8048abf0b530deff6c98621d04367a2a9d478"

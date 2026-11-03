@@ -661,6 +661,28 @@ static int world_hash_capture(uint64_t tick,unsigned schema) {
     return 1;
 }
 
+/* FR28 (native_gate_world_health_ticks, DEFAULT OFF, read-only): the Windows world_health_row
+ * (lockstep_world_hash.h) in the Linux layout: the stored hull and shield of a watched object at any
+ * tick, looked up again by the runtime ID the last capture found (gone: present=0); time is the global
+ * game time's bits. The same text for the same object (test_gate_world_golden.txt). */
+static int world_health_row(unsigned index,uint64_t tick,char *out,size_t size) {
+    if(index>=world_hash_watch_count || !world_hash_scans || world_hash_failures || !size) return 0;
+    const world_hash_watch *watch=&world_hash_watches[index];
+    lxw_find_fn find=world_find?world_find:(lxw_find_fn)(void*)LX(LX_FIND_VA);
+    uint64_t now,hull,id;char shield[192];void *map=NULL;int n;
+    if(!WREAD(world_component_map?world_component_map:(void**)LX(LX_COMPONENT_MAP_VA),&map,8) || !WREAD(LX(LX_GAME_VA),&now,8)) return 0;
+    unsigned char *object=map && watch->runtime?find(map,watch->runtime,4,0):NULL;
+    if(object && (!WREAD(object+LXW_OBJ_RUNTIME,&id,8) || id!=watch->runtime)) object=NULL;
+    if(!object) n=snprintf(out,size,"tick=%llu id=%016llx present=0 time=%016llx hull=- shield=-",
+        (unsigned long long)tick,(unsigned long long)watch->saved,(unsigned long long)now);
+    else {
+        if(!WREAD(object+LXW_OBJ_HULL,&hull,8) || !lxw_shield_state(object,shield)) return 0;
+        n=snprintf(out,size,"tick=%llu id=%016llx present=1 time=%016llx hull=%016llx shield=%s",(unsigned long long)tick,
+            (unsigned long long)watch->saved,(unsigned long long)now,(unsigned long long)hull,shield);
+    }
+    return n>0 && (size_t)n<size?n:0;
+}
+
 /* ---- Lua (lockstep_gate.c formats) ---- */
 static int lua_world_watch(lua_State *L) {
     size_t size=0;const char *text=p_lua_tolstring(L,1,&size);
@@ -681,6 +703,15 @@ static int lua_world_detail(lua_State *L) {
     if(n<0 || (size_t)n+data->length*2>=sizeof(out)) {p_lua_pushnil(L);return 1;}
     for(unsigned i=0;i<data->length;i++) {out[n++]=digits[data->data[i]>>4];out[n++]=digits[data->data[i]&15];}
     p_lua_pushlstring(L,out,(size_t)n);return 1;
+}
+/* world_health(0) = the watch count; world_health(i) = watch i's WORLD_HEALTH row now. */
+static int lua_world_health(lua_State *L) {
+    double number=p_lua_tonumber(L,1);char out[320];int n=0;
+    if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number) {p_lua_pushnil(L);return 1;}
+    if(number==0) {p_lua_pushnumber(L,world_hash_watch_count);return 1;}
+    if(number<=world_hash_watch_count) n=world_health_row((unsigned)number-1,stats.issued,out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
+    return 1;
 }
 static int lua_world_banks(lua_State *L) {
     if(GetCurrentThreadId()!=ui_thread || !world_hash_scans || world_hash_failures) {p_lua_pushnil(L);return 1;}

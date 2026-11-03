@@ -1,0 +1,32 @@
+Monocypher 4.0.2 (dual-licensed: CC0-1.0 or BSD-2-Clause, at the recipient's choice; LICENCE.md in
+this folder; authors in AUTHORS.md). Copyright (c) 2017-2023 Loup Vaillant, (c) 2017-2019 Michael
+Savage, (c) 2017-2023 Fabio Scotoni. Used for the opt-in lockstep wire crypto
+(src/native/engine/lockstep_wire_crypto.h): ChaCha20-Poly1305, Ed25519 (SHA-512), X25519, BLAKE2b.
+
+Upstream: https://monocypher.org/download/monocypher-4.0.2.tar.gz
+  release tarball SHA-256 38d07179738c0c90677dba3ceb7a7b8496bcfea758ba1a53e803fed30ae0879c
+Cross-check: https://github.com/LoupVaillant/Monocypher/archive/refs/tags/4.0.2.tar.gz
+  (SHA-256 bc1ca30b1b2654e4e7daf2492c0d204200e55137f23fda6b7142fd7d523bd6b4): every source and
+  test file below is identical except the version line the release script fills in
+  ("Monocypher version 4.0.2" instead of "__git__"); LICENCE.md lacks only the note about
+  tests/externals, which the release does not ship.
+
+Vendored unchanged from the release tarball (SHA-256 of the files as committed, LF line ends):
+  75a4d04559754a1016006f2c0e194cc7b459583cf9b1e2ce4ec10c74cb3de578  AUTHORS.md
+  5f8360e4c06ddcc584bdb4b210c6af824c4bb301e6a9a521869b6d90795ca4b3  LICENCE.md
+  afe2b098c8569577a84488e0b98d276d1fba6506adea68bb9241a52111734c59  src/monocypher.c
+  f78bb31255cfb7beba66afd2137f5194c8a025cf40488b6cc1e295234d43f374  src/monocypher.h
+  7c9b16056cbd27521919e8a6f56a228808b9e718afc42e3d33f28c08e5abdee2  src/optional/monocypher-ed25519.c
+  bd546edcd468d64e28caa3dbf4b1d6bfad7435c0ce994723fd81aae26405121b  src/optional/monocypher-ed25519.h
+  9b21c37c3bbf102844e73914ba44bdeb54d5955704905e7511257a1002311473  tests/test.c
+  ebb318921b1d29d49ecd7ade6c5b5e1b694d222bcedd4cface225bfa97ec6bf2  tests/utils.c
+  bcc488bfcedf8743b4d5bfc151e81a1503bcf4fc90a5f720a84f25fbdd2004e5  tests/utils.h
+  5cc8b311b0a23b65b107932bfdfc24ddb861571b35021ad89d6f7c3f487a685c  tests/vectors.h
+
+tests/ is Monocypher's own test suite and vectors; tools/dev/build_native_gate.py --test builds and
+runs it (test_monocypher.exe) with the project's compiler flags before our own known-answer tests.
+The licence permits commercial and noncommercial use; it does not restrict this project's
+PolyForm Noncommercial terms and they do not restrict it. Keep LICENCE.md with the sources and with
+binaries that contain Monocypher code (the gate modules and the x4mp_wire_crypto library).
+Updating: replace the files from a new release, check both download sources, update this file
+and rerun Monocypher's suite and tests/test_native_gate_crypto.py.

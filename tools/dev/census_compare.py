@@ -7,13 +7,16 @@ logs, so class names come from the committed Linux class table (gate_world_class
 
   python tools/dev/census_compare.py LEFT_RUN RIGHT_RUN --tick 1
          [--left-client 1] [--right-client 1] [--samples 6] [--watch-list 32]
-         [--snapshot save_009.xml.gz] [--out result.json]
+         [--snapshot save_009.xml.gz] [--out result.json] [--schema WORLD_IMPORTED_2]
 
 --snapshot adds the saved component's class and macro from the owned snapshot to each sample
 and groups the differing objects by macro. Read only. The timing domain has its preimage in
 the log, so its differing fields are named; motion and health only have a hash there, unless
 the object is a world hash watch in both runs (native_gate_world_hash_watch), when its
 decoded fields are compared too. --watch-list prints a watch list for the next pair of runs.
+--schema names the census schema when the installed config does not (the defaults stack sets WORLD_IMPORTED_2 at run time,
+native_gate_defaults.lua, so a config without the key reads as WORLD_IMPORTED_1 and every enriched navigation row's raw tuple,
+nav_raw: the absolute selectors and cursor, is dropped as an error; j1-12's T+1 comparison lost them that way).
 """
 import argparse
 import collections
@@ -47,13 +50,14 @@ def snapshot_components(path):
     return {int(m[3], 16): (m[1].decode('ascii', 'replace'), m[2].decode('ascii', 'replace')) for m in COMPONENT.finditer(data)}
 
 
-def capture(run, slot, tick):
+def capture(run, slot, tick, schema=None):
     """The object map of one client at the capture of that tick (later captures are not read)."""
     client = run / f'client{slot}'
     config = (client / 'installed/x4_lan_lab-config.lua').read_text()
     errors = []
     seen = []
-    for frame in frames(bounded_lines(client / 'engine-output.log'), errors, slot, configured_watches(config), True, configured_schema(config)):
+    for frame in frames(bounded_lines(client / 'engine-output.log'), errors, slot, configured_watches(config), True,
+                        schema or configured_schema(config)):
         seen.append(frame['tick'])
         if frame['tick'] == tick:
             return {'run': run.name, 'client': slot, 'tick': tick, 'objects': frame['objects'], 'coverage': frame['coverage'],
@@ -172,11 +176,13 @@ def main():
     p.add_argument('--watch-list', type=int, help='print a native_gate_world_hash_watch list of this many differing objects, spread over classes')
     p.add_argument('--snapshot', type=Path)
     p.add_argument('--out', type=Path)
+    p.add_argument('--schema', choices=('WORLD_IMPORTED_1', 'WORLD_IMPORTED_2'),
+                   help='the census schema of both runs (default: the installed config\'s key, else WORLD_IMPORTED_1)')
     args = p.parse_args()
     left_slot = args.left_client or client_slots(args.left)[0]
     right_slot = args.right_client or client_slots(args.right)[0]
     components = snapshot_components(args.snapshot) if args.snapshot else None
-    left, right = capture(args.left, left_slot, args.tick), capture(args.right, right_slot, args.tick)
+    left, right = capture(args.left, left_slot, args.tick, args.schema), capture(args.right, right_slot, args.tick, args.schema)
     result, differing = compare(left, right, class_names(), components, args.samples)
     print(text_report(result))
     if args.watch_list:

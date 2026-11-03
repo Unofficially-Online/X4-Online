@@ -2,8 +2,29 @@
 -- during a wait is owned by the separate gate DLL on X4's main thread.
 local cfg=X4LAN_CONFIG
 if not cfg or not cfg.native_gate_test then return end
--- The nav octree input snapshot runs with any nav octree mode; alone it arms 'observe' (no visibility control).
-if cfg.native_gate_nav_octree_snapshot and not cfg.native_gate_nav_octree then cfg.native_gate_nav_octree='observe' end
+-- Session defaults (ui/native_gate_defaults.lua, loaded first by the overlay; reports/LOCKSTEP-DEFAULTS-20261101.txt): once
+-- a session is configured every feature and sync fix is on unless the config sets its key to false; every default that
+-- cannot apply is an ERROR row and an info line; refused combinations stop here. native_gate_defaults = false: the bare
+-- gate. Without the module the probe refuses (a client without it would run another stack than its peers).
+do
+ local D=X4LAN_NATIVE_GATE_DEFAULTS
+ if D then D.announce(D.apply(cfg))
+ elseif cfg.native_gate_defaults==false then
+  DebugError('[X4LAN] NATIVE_GATE DEFAULTS_OFF native_gate_defaults=false: the bare gate, every feature key as configured (absent = off)')
+ else
+  local why='ui/native_gate_defaults.lua is not loaded: build the overlay with it first in ui.xml.files, or set native_gate_defaults=false (the bare gate)'
+  DebugError('[X4LAN] NATIVE_GATE ERROR DEFAULTS_MISSING '..why)
+  pcall(function() local ffi=require('ffi');pcall(ffi.cdef,'void ShowInfoLine(const char*,uint32_t);');ffi.C.ShowInfoLine('Multiplayer: the session did not start - '..why,4) end)
+  error('native gate defaults missing: '..why,0)
+ end
+end
+-- Every refusal below this line (a config the probe or the gate refuses) is an ERROR row and an info line too.
+local x4lan_probe_loaded,x4lan_probe_why=pcall(function()
+-- The nav octree input snapshot runs with any nav octree mode; alone it arms 'observe' (no visibility control): said loudly.
+if cfg.native_gate_nav_octree_snapshot and not cfg.native_gate_nav_octree then
+ cfg.native_gate_nav_octree='observe'
+ DebugError('[X4LAN] NATIVE_GATE ERROR DEGRADED nav_octree=observe: native_gate_nav_octree_snapshot without native_gate_nav_octree (no visibility control)')
+end
 local ffi=require('ffi')
 if not pcall(ffi.typeof,'UniverseID') then ffi.cdef('typedef uint64_t UniverseID;') end
 if not pcall(ffi.typeof,'UIPosRot') then ffi.cdef('typedef struct {float x,y,z,yaw,pitch,roll;} UIPosRot;') end
@@ -43,18 +64,57 @@ end
 -- proposed with tick t then arrives with the permit for t+1+k, so the input
 -- delays must cover it: pilot records are staged one tick before they apply
 -- (delay >= k+2), player orders apply in the admitting tick (delay >= k+1).
+-- Protocol 5 (opt-in): native_gate_lookahead = 'adaptive' lets the relay (--adaptive) choose k in
+-- 1..native_gate_lookahead_max (default 4) from the round trips it measures at tick 0, and the pilot
+-- delay with it (docs/LOCKSTEP-NSLOT-WIRE.txt, PROTOCOL 5). The plan arrives with the first permits;
+-- the gate adopts its pilot delay before the first gated step. Player orders keep their delay, which
+-- must cover the largest window. Published as X4LAN_NATIVE_ADAPTIVE (frame() reads the global).
+X4LAN_NATIVE_ADAPTIVE=nil
 do
  local k=cfg.native_gate_lookahead
- assert(k==nil or (type(k)=='number' and k%1==0 and k>=0 and k<=8),'native gate lookahead must be 0..8')
- k=k or 0
- assert(k==0 or wire3,'native gate lookahead needs the protocol 3 input wire (native_gate_clients)')
- if cfg.native_gate_pilot_inputs and cfg.native_gate_pilot_source=='wire' then
-  assert((cfg.native_gate_pilot_delay or 3)>=k+2,'pilot delay must be at least native_gate_lookahead+2')
+ if k=='adaptive' then
+  local max=cfg.native_gate_lookahead_max or 4
+  assert(type(max)=='number' and max%1==0 and max>=1 and max<=8,'native gate lookahead maximum must be 1..8')
+  assert(wire3,'native gate lookahead needs the protocol 3 input wire (native_gate_clients)')
+  assert(cfg.native_gate_pilot_delay==nil,'with native_gate_lookahead adaptive the relay chooses the pilot delay: leave native_gate_pilot_delay unset')
+  assert(not cfg.native_gate_pilot_predict,'adaptive lookahead excludes native_gate_pilot_predict (its horizon is the armed pilot delay)')
+  if cfg.native_gate_player_orders then
+   assert((cfg.native_gate_player_orders_delay or 3)>=max+1,'player order delay must be at least native_gate_lookahead_max+1')
+  end
+  X4LAN_NATIVE_ADAPTIVE={kmax=max,epoch=0}
+ else
+  assert(k==nil or (type(k)=='number' and k%1==0 and k>=0 and k<=8),'native gate lookahead must be 0..8 or adaptive')
+  assert(cfg.native_gate_lookahead_max==nil,'native_gate_lookahead_max needs native_gate_lookahead adaptive')
+  k=k or 0
+  assert(k==0 or wire3,'native gate lookahead needs the protocol 3 input wire (native_gate_clients)')
+  if cfg.native_gate_pilot_inputs and cfg.native_gate_pilot_source=='wire' then
+   assert((cfg.native_gate_pilot_delay or 3)>=k+2,'pilot delay must be at least native_gate_lookahead+2')
+  end
+  if cfg.native_gate_player_orders then
+   assert((cfg.native_gate_player_orders_delay or 3)>=k+1,'player order delay must be at least native_gate_lookahead+1')
+  end
  end
- if cfg.native_gate_player_orders then
-  assert((cfg.native_gate_player_orders_delay or 3)>=k+1,'player order delay must be at least native_gate_lookahead+1')
- end
+ -- Opt-in peer links (lockstep_peer.h, docs/LOCKSTEP-NSLOT-WIRE.txt PEER LINKS): every
+ -- player's proposals also go straight to the other players, and a client may run up
+ -- to native_gate_peer_window = m ticks past its newest relay permit on them (0: the
+ -- records are only exchanged and checked). Players learn each other's IP addresses,
+ -- so it stays off unless set here on every PC and on the relay (--peer-window m).
+ -- Inputs still apply at t+1+k: the delays above are unchanged.
+ local m=cfg.native_gate_peer_window
+ assert(m==nil or X4LAN_NATIVE_ADAPTIVE==nil,'native_gate_peer_window needs a fixed native_gate_lookahead (protocol 4); adaptive is protocol 5')
+ assert(m==nil or (type(m)=='number' and m%1==0 and m>=0 and m<=7),'native gate peer window must be 0..7')
+ assert(m==nil or (k>=1 and k+m<=8),'native gate peer window needs native_gate_lookahead k >= 1 and k + window <= 8')
+ -- The routes from the NAT traversal core (lockstep_nat.h: hole punching through the relay's NGNAT rendezvous,
+ -- native_gate_relay.py --rendezvous-port P) instead of the addresses the relay saw.
+ local rp=cfg.native_gate_peer_rendezvous_port
+ assert(rp==nil or (m~=nil and type(rp)=='number' and rp%1==0 and rp>=1024 and rp<=65534),
+  'native_gate_peer_rendezvous_port needs native_gate_peer_window and a port 1024..65534 (the relay\'s --rendezvous-port)')
 end
+-- Opt-in wire crypto (docs/LOCKSTEP-NSLOT-WIRE.txt, WIRE CRYPTO): the credential
+-- "x4c1:<relay key>:<slot psk>" from tools/dev/native_gate_crypto.py credential; the
+-- relay then needs --wire-crypto KEYFILE. Protocols 3 and 4 only. A secret: never log it.
+assert(cfg.native_gate_wire_crypto==nil or (type(cfg.native_gate_wire_crypto)=='string' and wire3),
+ 'native_gate_wire_crypto needs the protocol 3 input wire (native_gate_clients) and a credential string')
 assert(cfg.native_gate_hash=='clock' or cfg.native_gate_hash=='battle','invalid gate hash scope')
 assert(cfg.native_gate_battle_engage==nil or cfg.native_gate_battle_engage==false,'native_gate_battle_engage accepts only false')
 -- Opt-in census scenario fixtures (docs/LOCKSTEP-SCENARIOS.txt): MD events at fixed gated
@@ -197,6 +257,91 @@ end
 -- never applying a hit (Lua test carrier). true/'shooter'/'victim'/'first' are the native claims
 -- (lockstep_hit_native.h): their 'hits' section registers with the pilot section when the pilot
 -- slots arm (arm_pilot_section); every other value is refused before loading (pilot arming).
+-- Hot join (native_gate_join, default off; native_gate_join_core.lua, lockstep_join.h,
+-- reports/LOCKSTEP-HOTJOIN-20261101.txt). true or {save='strict'|'report'}: this client saves at a relay's SAVE_AT
+-- (every present client does, so the save's own effects happen on all of them) and announces SAVED/FAILED;
+-- {joiner={package=, sha=, mode=}}: this client boots from a join save and its package and counts session ticks.
+-- absent={K,...}: the session's absent slots (the relay's --absent, never slot 1), the same list on every client and on the
+-- joiner: every per-slot module (pilot inputs, stock, slots, bodies, death, presentation, fire, UI replay, own prediction,
+-- hit claims) treats slot K as neutral until its HANDOVER, applied at the same tick everywhere (gate.pilot_handover), and
+-- requires its records from H+delay; an ABORT ends its records again (gate.pilot_abort).
+local join_client,join_joiner,join_restored
+if cfg.native_gate_join then
+ local j=cfg.native_gate_join==true and {} or cfg.native_gate_join
+ assert(type(j)=='table' and wire3 and cfg.native_gate_lookahead~='adaptive' and not cfg.native_gate_wire_crypto and not cfg.native_gate_peer_window,
+  'hot join needs the protocol 3 or 4 input wire, without adaptive lookahead, wire crypto or peer links')
+ local save_mode=j.save or 'strict'
+ assert(save_mode=='strict' or save_mode=='report','native_gate_join.save must be strict or report')
+ join_joiner=j.joiner
+ if join_joiner then
+  assert(type(join_joiner.package)=='string' and type(join_joiner.sha)=='string' and #join_joiner.sha==64 and
+   (join_joiner.mode==nil or join_joiner.mode=='strict' or join_joiner.mode=='report'),'native_gate_join.joiner needs package, sha and mode')
+ end
+ -- The probe's state across ticks that enters the declared digest travels as providers (fixture, world_hash, identity,
+ -- pilot_absent, pilot_window) or is derived; these opt-in adapters keep such state without a provider: refused.
+ for _,key in ipairs({'native_gate_hybrid','native_gate_player_orders'}) do
+  assert(not cfg[key],'hot join: '..key..' keeps Lua state across ticks that the join package does not carry')
+ end
+ assert(not (join_joiner and cfg.native_gate_world_trace_ticks),'hot join: the world trace (native_gate_world_trace_ticks) arms at the session tick 1 only')
+ local core=assert(X4LAN_JOIN_CORE,'hot join core missing (ui/native_gate_join_core.lua)')
+ local own=tonumber(cfg.slot:sub(2))
+ assert(gate.join_arm and gate.join_result and gate.join_load and gate.join_handover and gate.join_lua,'gate without hot join')
+ local absent,absent_mask={},0
+ if j.absent~=nil then
+  assert(type(j.absent)=='table' and #j.absent>=1,'native_gate_join.absent must be a list of slots')
+  for _,k in ipairs(j.absent) do
+   assert(type(k)=='number' and k%1==0 and k>=2 and k<=clients and not absent[k],
+    'native_gate_join.absent: slots 2..'..clients..', each once (slot 1 is never absent)')
+   absent[k]=true
+   if k<=4 then absent_mask=absent_mask+2^(k-1) end   -- the pilot modules' slots (at most four)
+  end
+  assert(not absent[own] or join_joiner,'native_gate_join.absent names this client slot '..own..' (only a joiner starts absent)')
+  -- The Windows gate's pilot modules take the mask when they arm (gate.pilot_absent after gate.pilot_inputs: the gate has
+  -- started then); the Linux gate has none of them. In the join package: a joiner takes over the session's handovers so
+  -- far (an earlier join's slot is present at T); '-' when the session flies no pilot modules.
+  if gate.pilot_absent and absent_mask>0 then
+   core.provide('pilot_absent',function() return gate.pilot_absent_state() or '-' end,function(text)
+    if text=='-' then assert(not gate.pilot_absent_state(),'pilot absent: the session armed no pilot modules, this joiner did')
+    else assert(gate.pilot_absent_restore(text)==1,'pilot absent state refused '..tostring(text)) end
+   end)
+  end
+ end
+ join_client=core.client{slot=own,joiner=join_joiner~=nil,log=function(text) DebugError('[X4LAN] NATIVE_GATE '..text) end,
+  arm=function(t,k,mask)
+   -- Only the Windows gate writes the join package; the Linux gate's fork-save has no side table yet.
+   return package.config:sub(1,1)=='\\' and gate.join_arm(t,k,mask,savepath,save_mode=='report' and 1 or 0)==1
+  end,
+  result=function() return gate.join_result() end,
+  handover=function(k,h)
+   if join_joiner and k==own then assert(gate.join_handover(h)==1,'join handover refused '..tostring(gate.join_status())) end
+   -- Every client, the same tick: slot k's ship is enrolled at H, its records required from H+delay (when the pilot
+   -- modules took the absent slots: gate.pilot_absent_state answers).
+   if absent[k] and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then
+    assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
+   end
+  end,
+  abort=function(k)
+   if absent[k] and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then assert(gate.pilot_abort(k)==1,'pilot abort refused k='..k) end
+  end}
+ input_section('join','join',join_client)
+ DebugError('[X4LAN] NATIVE_GATE JOIN_ARMED slot='..own..' save='..save_mode..' joiner='..(join_joiner and 1 or 0)..' absent='..absent_mask)
+ -- native_gate_world_hash_join = true (DEFAULT OFF; reports/LOCKSTEP-HOTJOIN-20261101.txt 1.6): one more world capture at the
+ -- join's T+1, on every client of the session (T of each SAVE_AT it applied, whether it saves or not: the capture enters the
+ -- declared state of all of them alike) and on a joiner (its tick base + 1, its first frame). Both sides have then run the
+ -- one step T+1 from the world at T (the session's after its save, the joiner's after its load and admission), so
+ -- census_compare.py SESSION JOINER --tick T+1 shows what save and load change before any dynamics. The tick is a written
+ -- tick (ticklog), its WORLD_HASH line names it; the stride captures are unchanged.
+ if cfg.native_gate_world_hash_join~=nil and cfg.native_gate_world_hash_join~=false then
+  assert(cfg.native_gate_world_hash_join==true and cfg.native_gate_world_hash_stride,
+   'native_gate_world_hash_join must be true, with native_gate_world_hash_stride')
+  join_client.capture_at=function(tick)
+   if join_joiner then local base=gate.join_base and gate.join_base();return base~=nil and tick==base+1 end
+   return join_client.save_ticks[tick-1]==true
+  end
+  DebugError('[X4LAN] NATIVE_GATE WORLD_HASH_JOIN_ARMED slot='..own..' joiner='..(join_joiner and 1 or 0))
+ end
+end
+assert(not cfg.native_gate_world_hash_join or cfg.native_gate_join,'native_gate_world_hash_join needs native_gate_join')
 if cfg.native_gate_hit_claims=='carry' then
  local core=assert(X4LAN_INPUT_MUX_CORE,'input multiplexer core missing (ui/native_gate_inputs_core.lua)')
  input_section('hits','hits',core.hit_carrier({slot=tonumber(cfg.slot:sub(2)),script=cfg.native_gate_hit_claims_script,
@@ -291,6 +436,29 @@ end
 local world_capture=gate.world_capture
 if world_hash_schema=='WORLD_IMPORTED_2' then world_capture=gate.world_capture_nav_v2 end
 if cfg.native_gate_world_hash_stride then assert(type(world_capture)=='function','configured world hash export unavailable') end
+-- FR28 (DEFAULT OFF, read-only): native_gate_world_health_ticks = {first,last} writes a WORLD_HEALTH row per
+-- world-hash watch on every tick first..last, after that tick's capture point: its stored hull and shield
+-- (value, changed time, maximum, delay, rate, factor, generators, modifiers) and the game time, as bits. The
+-- census sees them only every stride ticks; this names the tick and the field of a health split.
+do
+ local w=cfg.native_gate_world_health_ticks
+ assert(w==nil or (type(w)=='table' and #w==2 and type(w[1])=='number' and type(w[2])=='number' and w[1]%1==0 and w[2]%1==0 and
+  w[1]>=1 and w[1]<=w[2] and cfg.native_gate_world_hash_stride and type(cfg.native_gate_world_hash_watch)=='table' and
+  #cfg.native_gate_world_hash_watch>=1 and type(gate.world_health)=='function'),
+  'native_gate_world_health_ticks must be {first,last} ticks 1 <= first <= last, with a world hash stride, a watch list and gate.world_health')
+end
+-- FR29b (DEFAULT OFF, read-only): native_gate_fp_attack_capture = {first,last} records the out-of-sight attack computation
+-- (get_attackstrength, its weapon loop, per-weapon damage, damage adds, RNG draws, distances, apply_attackstrength's
+-- damage call) call by call in ticks first..last for calls whose attacker or target is in native_gate_fp_attack_watch
+-- (saved IDs, up to 32; every call without it): FP_ATTACK_ROW lines (tools/dev/census_fp_attack.py). Armed after
+-- native_gate_fp_redirect (its page holds the stubs); needs world identities.
+do
+ local w,ids=cfg.native_gate_fp_attack_capture,cfg.native_gate_fp_attack_watch
+ assert(w==nil or (type(w)=='table' and #w==2 and type(w[1])=='number' and type(w[2])=='number' and w[1]%1==0 and w[2]%1==0 and
+  w[1]>=1 and w[1]<=w[2] and cfg.native_gate_fp_redirect and cfg.native_gate_world_identities and type(gate.fp_attack)=='function'),
+  'native_gate_fp_attack_capture must be {first,last} ticks 1 <= first <= last, with native_gate_fp_redirect, world identities and gate.fp_attack')
+ assert(ids==nil or (w~=nil and type(ids)=='table' and #ids<=32),'native_gate_fp_attack_watch must be up to 32 saved IDs, with native_gate_fp_attack_capture')
+end
 local diagnostic=cfg.native_gate_player_probe=='diagnostic-getup'
 if diagnostic then assert(cfg.slot=='p1' and cfg.native_gate_diagnostic_contract=='diagnostic-getup-1','invalid local diagnostic contract') end
 local snapshot=cfg.native_gate_snapshot_sha
@@ -309,6 +477,7 @@ if cfg.native_gate_player_identity then
  identity.bind(gate,wire3 and clients or nil)
 end
 local owner;local armed,done,refreshed=false,false,false
+local wire_crypto_keyed=false -- WIRE_CRYPTO_KEYED logged once
 local native_owned=false -- Successful boot/start owns cleanup before adapters configure.
 -- Status stride (native_gate_status_stride=N, default off: every tick is written). A DebugError
 -- call costs the frame roughly 30 us (FRAME_TIMING across census configs) and the play config
@@ -342,7 +511,71 @@ do
  assert(stride==nil or (type(stride)=='number' and stride%1==0 and stride>=1 and stride<=3600 and cfg.native_gate_runtime_ids~=nil),
   'native_gate_runtime_ids_caller_stride must be a tick count 1..3600, with native_gate_runtime_ids')
 end
-function ticklog.write(text) DebugError('[X4LAN] NATIVE_GATE '..text) end
+function ticklog.write(text)
+ DebugError('[X4LAN] NATIVE_GATE '..text)
+ -- The UI families' status rows (native_gate_ui_replay_core.lua writes them here): their degraded counters are loud.
+ if ticklog.watcher then
+  local status,tick=text:match('^([%u_]+_STATUS) tick=(%d+)')
+  if status then ticklog.watcher.line(status,tonumber(tick),text) end
+ end
+end
+-- Loud failures (reports/LOCKSTEP-DEFAULTS-20261101.txt): an ERROR row with the reason, written at once, and an in-game
+-- info line (X4's ShowInfoLine, the UI guard's path; again once the start menu is gone). notice=false: the row only.
+function ticklog.notice(text)
+ local D=X4LAN_NATIVE_GATE_DEFAULTS
+ if D then D.notice(text)
+ else pcall(function() pcall(ffi.cdef,'void ShowInfoLine(const char*,uint32_t);');ffi.C.ShowInfoLine('Multiplayer: '..text,4) end) end
+end
+function ticklog.loud(kind,text,notice)
+ DebugError('[X4LAN] NATIVE_GATE ERROR '..kind..' '..text)
+ if notice~=false then ticklog.notice(notice or (kind..' '..text)) end
+end
+-- Loud with the info line at most every `every` ticks per kind (player actions refused in play).
+ticklog.noticed={}
+function ticklog.loud_every(kind,text,notice,tick,every)
+ local last=ticklog.noticed[kind]
+ local due=last==nil or (tonumber(tick) or 0)-last>=every
+ if due then ticklog.noticed[kind]=tonumber(tick) or 0 end
+ ticklog.loud(kind,text,due and notice or false)
+end
+-- A refused arm or start: loud, the session does not start (the caller sets done).
+function ticklog.refuse(what,name) ticklog.loud('REFUSED',what,'the session could not start - refused '..what..(name and ' ('..name..')' or '')..' (see the log)') end
+-- Best-effort rows of an abort or stop: a row that cannot be built says why instead of vanishing.
+function ticklog.try(fn,...)
+ local ok,why=pcall(fn,...)
+ if not ok then DebugError('[X4LAN] NATIVE_GATE ERROR STOP_ROW_FAILED '..tostring(why)) end
+ return ok
+end
+-- A stop of the gate: the reason by name and the module's why in an info line (D.stop_notice); reason 1 is the relay's
+-- (its tick limit or a mismatch the relay saw), not an error of this client.
+function ticklog.stopped(reason)
+ local why
+ if gate.pilot_why then pcall(function() why=gate.pilot_why() end) end
+ local D=X4LAN_NATIVE_GATE_DEFAULTS
+ if D then D.stop_notice(reason,why)
+ elseif (tonumber(reason) or 0)>1 then ticklog.loud('SESSION_STOPPED','reason='..tostring(reason)..(why and ' why='..tostring(why) or '')) end
+end
+-- Degraded counters of the module statuses (D.watcher; with the defaults module, also in the bare gate).
+ticklog.watcher=X4LAN_NATIVE_GATE_DEFAULTS and X4LAN_NATIVE_GATE_DEFAULTS.watcher()
+-- Modules whose status the frame does not poll (written at the stop only): read for the watcher every 600 ticks, no row.
+ticklog.watched={{'native_gate_engine_refresh_rng','engine_refresh_rng_status','ENGINE_REFRESH_RNG'},
+ {'native_gate_build_rng','build_rng_status','BUILD_RNG'},{'native_gate_portable_math','portable_math_status','PORTABLE_MATH'},
+ {'native_gate_exact_reciprocal','exact_reciprocal_status','EXACT_RECIPROCAL'},{'native_gate_fp_env','fp_env_status','FP_ENV'},
+ {'native_gate_decimal','decimal_status','DECIMAL'},{'native_gate_macro_arena','macro_arena_status','MACRO_ARENA'},
+ {'native_gate_pick_order','pick_order_status','PICK_ORDER'},{'native_gate_order_canon','order_canon_status','ORDER_CANON'},
+ {'native_gate_loadout_order','loadout_order_status','LOADOUT_ORDER'},{'native_gate_lookahead','lookahead_status','LOOKAHEAD'},
+ {'native_gate_wire_crypto','wire_crypto_status','WIRE_CRYPTO'},{'native_gate_peer_window','peer_status','PEER'},
+ {'native_gate_ui_guard','ui_guard_status','UI_GUARD_STATUS'}}
+function ticklog.watch_statuses(tick)
+ if not ticklog.watcher or tick%600~=0 then return end
+ for _,w in ipairs(ticklog.watched) do
+  if cfg[w[1]] and gate[w[2]] then
+   local ok,status=pcall(gate[w[2]])
+   if ok then ticklog.watcher.line(w[3],tick,tostring(status))
+   else ticklog.loud('STATUS_UNREADABLE','status='..w[3]..' why='..tostring(status),false) end
+  end
+ end
+end
 -- Collected lines in order: strings, or functions returning a list of lines (built only when written).
 function ticklog.emit(entries)
  local chunk,size={},0
@@ -362,7 +595,8 @@ function ticklog.open(tick)
  if not (ticklog.stride and tick) then return end
  local world,window=cfg.native_gate_world_hash_stride,ticklog.window
  local current={tick=tick,write=tick<=ticklog.stride or tick%ticklog.stride==0 or (world and tick%world==0) or
-  (window~=nil and window[1]<=tick and tick<=window[2])}
+  (window~=nil and window[1]<=tick and tick<=window[2]) or (join_client~=nil and join_client.capture_at~=nil and join_client.capture_at(tick)) or
+  (join_joiner~=nil and not join_restored)}   -- a joiner's first frame: JOIN_ADMITTED and its JOIN_UNPAIRED rows (J1 j1-11 lost them)
  local ring=ticklog.ring
  if #ring>=ticklog.keep then table.remove(ring,1) end
  ring[#ring+1]=current;ticklog.tick=current
@@ -397,12 +631,99 @@ function ticklog.status(name,tick,getter,missing)
  if current and not current.write then return end
  local value=getter()
  log(name..' tick='..tick..' '..(missing and assert(value,missing) or tostring(value)))
+ if ticklog.watcher then ticklog.watcher.line(name,tick,tostring(value)) end
 end
 -- Lines built from data the tick keeps anyway (state rows): built when written, also at a flush.
 function ticklog.lines(build)
  local current=ticklog.tick
  if current then current[#current+1]=build;return end
  for _,text in ipairs(build()) do ticklog.write(text) end
+end
+-- Hybrid sectors, slice H1 (lockstep_hybrid.h; reports/LOCKSTEP-HYBRID-SECTORS-20261101.txt), default off:
+-- native_gate_hybrid={owners={k,...},tick=T,poses=P}. From the view points latch of tick T on, the sector holding owner
+-- slot k's ship is simulated at high attention by client k alone; the other clients leave slot k out of their view
+-- points (that sector at low attention there) and everything outside the owned sectors is evaluated without the owners'
+-- ships on every client. Client k publishes its sector's movers (digest + P poses round robin) in the input section
+-- 'hybrid' (kind 0x59); every client applies the admitted records (receipt in the declared state; proxies compared,
+-- status only). The declared state leaves the owned sectors out: census captures declare the outside roots
+-- (HYBRID_CENSUS), the owners' ships leave the slot receipts. A boundary crossing by a player (owner leaves, another
+-- player enters) stops the gate (187): no handover in H1. Needs view points 'players', pilot slots, the protocol 3
+-- input wire. On a global: frame() is at LuaJIT's upvalue limit.
+X4LAN_NATIVE_HYBRID=nil
+if cfg.native_gate_hybrid~=nil and cfg.native_gate_hybrid~=false then
+ local h,H=cfg.native_gate_hybrid,{}
+ local function integer(v,lo,hi) return type(v)=='number' and v==math.floor(v) and v>=lo and v<=hi end
+ local mask,owners=0,{}
+ local ok=type(h)=='table' and type(h.owners)=='table' and #h.owners>=1 and #h.owners<=4 and integer(h.tick,2,8388607) and
+  (h.poses==nil or integer(h.poses,0,5)) and (cfg.native_gate_view_points=='players' or cfg.native_gate_view_points==true) and
+  type(cfg.native_gate_pilot_slots)=='table'
+ for key in pairs(type(h)=='table' and h or {}) do ok=ok and (key=='owners' or key=='tick' or key=='poses') end
+ for _,k in ipairs(ok and h.owners or {}) do
+  ok=ok and integer(k,1,#cfg.native_gate_pilot_slots) and k<=4 and math.floor(mask/2^(k-1))%2==0
+  if ok then mask=mask+2^(k-1);owners[#owners+1]=k end
+ end
+ assert(ok,'hybrid refused: native_gate_hybrid={owners={k,...},tick=T>=2,poses=0..5} needs native_gate_view_points=players and pilot slots')
+ H.mask,H.tick,H.poses=mask,h.tick,h.poses or 4
+ input_section('hybrid','hybrid',{
+  apply=function(tick,inputs,n) return assert(gate.hybrid_apply(tick,n,table.concat(inputs,',')),'hybrid apply refused') end,
+  proposal=function(tick,budget) return gate.hybrid_proposal(tick,budget) end})
+ -- After gate.view_points: before the first admitted frame.
+ function H.arm()
+  assert(gate.hybrid and gate.hybrid_status and gate.hybrid(H.mask,H.tick,H.poses)==1,'hybrid refused '..tostring(gate.hybrid_status and gate.hybrid_status()))
+  log('HYBRID_ARMED owners='..table.concat(owners,',')..' tick='..H.tick..' poses='..H.poses)
+ end
+ -- After the view points latch of every admitted frame.
+ function H.frame(tick)
+  if gate.hybrid_frame(tick)~=1 then error('hybrid frame failed '..tostring(gate.hybrid_status()),0) end
+  ticklog.status('HYBRID',tick,gate.hybrid_status,'hybrid status unavailable')
+ end
+ -- After a census capture: from T on the declared state takes the outside roots.
+ function H.census(tick,state)
+  local outside,summary=gate.hybrid_census(tick)
+  if not outside then return state end
+  log('HYBRID_CENSUS '..summary)
+  return outside
+ end
+ function H.private(slot) return gate.hybrid_private(slot)==1 end
+ function H.inside(object) return gate.hybrid_inside(tonumber(object))==1 end
+ function H.stop() log('HYBRID_STOP '..tostring(gate.hybrid_status and gate.hybrid_status())) end
+ X4LAN_NATIVE_HYBRID=H
+end
+-- Non-blocking save by fork (native_gate_fork_save={tick=N,name='join_N',budget_ms=50,watchdog_s=600[,every=K]}; the
+-- Linux gate, default off; reports/LOCKSTEP-NONBLOCKING-SAVE-20261101.txt): armed on the first admitted tick with this
+-- profile's save folder, then one FORK_SAVE line per change of state (armed, running, done or failed), always written.
+-- tick={N1,N2,...} asks at each of those ticks in turn and names each file name..tick (a tick that passed while the
+-- previous child ran is skipped); every=K repeats K ticks after the last under the same name (the file is replaced), for
+-- repeated-fork runs; slot='pN' lets only that client fork. On ticklog because frame() is at LuaJIT's limit of 60 upvalues.
+do
+ local spec,last,count,queue,index=cfg.native_gate_fork_save,nil,0,{},1
+ if type(spec)=='table' then
+  for i,t in ipairs(type(spec.tick)=='table' and spec.tick or {spec.tick}) do
+   assert(type(t)=='number' and t%1==0 and t>=2 and (i==1 or t>queue[i-1]),'native_gate_fork_save ticks must be increasing integers >= 2')
+   queue[i]=t
+  end
+ end
+ assert(spec==nil or (type(spec)=='table' and #queue>0 and type(spec.name)=='string' and (#queue==1 or not spec.every) and
+  (spec.every==nil or (type(spec.every)=='number' and spec.every%1==0 and spec.every>=2)) and (spec.slot==nil or type(spec.slot)=='string') and
+  gate.platform and gate.platform()=='linux' and gate.fork_save and gate.fork_save_status),
+  'native_gate_fork_save needs the Linux gate and {tick=N>=2,name=...}')
+ local pending=spec and (spec.slot==nil or spec.slot==cfg.slot) and queue[1] or nil
+ function ticklog.fork_save(tick)
+  local status=gate.fork_save_status()
+  local state=status and status:match('^state=(%S+)')
+  if state~=last then last=state;log('FORK_SAVE at='..tick..' '..tostring(status)) end
+  if pending and state~='armed' and state~='running' then
+   if spec.every then while pending<=tick+1 do pending=pending+spec.every end end
+   while pending and pending<=tick+1 do ticklog.loud('FORK_SAVE_SKIPPED','tick='..pending..' at='..tick,'a save (tick '..pending..') was skipped: the previous one was still running');index=index+1;pending=queue[index] end
+   if not pending then return end
+   local name=#queue>1 and spec.name..pending or spec.name
+   local ok=gate.fork_save(pending,name,savepath,spec.budget_ms or 0,spec.watchdog_s or 0)==1
+   count=count+1
+   log('FORK_SAVE_ARMED request='..count..' tick='..pending..' name='..name..' ok='..(ok and 1 or 0)..' at='..tick)
+   if not ok then pending=nil elseif spec.every then pending=pending+spec.every else index=index+1;pending=queue[index] end
+   last=nil
+  end
+ end
 end
 -- Probe profile (native_gate_probe_profile=true, default off): QPC microseconds per section of an
 -- admitted tick's frame(), averaged over 60 ticks, one PROBE_PROFILE line each (always written).
@@ -610,7 +931,8 @@ local function checkpoint(tick)
  checkpoint_state='saving';ticklog.write('CHECKPOINT_REQUEST slot=save_001 tick='..tick)
  SaveGame('save_001','x4ls checkpoint tick '..tick)
 end
--- The per-tick UI guard steps in one function (the frame function is at LuaJIT's 60-upvalue limit).
+-- The per-tick UI guard steps in one function. The frame function is at LuaJIT's 60-upvalue limit, so it reaches
+-- this and the UI event tick through ticklog (an upvalue it has anyway): ticklog.ui_guard(tick), ticklog.ui_events.
 local function ui_guard_tick(tick)
  checkpoint(tick)
  ui_lua_arm()
@@ -618,22 +940,37 @@ local function ui_guard_tick(tick)
  ui_write_check(tick)
  ui_globals_census(tick)
 end
+ticklog.ui_guard=ui_guard_tick
+ticklog.ui_events=ui_events
 -- Protocol 3: s.inputs[1..clients] are the blobs admitted for this tick, in
 -- slot order and identical on every client. The optional X4LAN_NATIVE_INPUTS
 -- adapter applies them (its result joins the declared state digest) and
 -- proposes this client's blob for the next tick; see docs/LOCKSTEP-NSLOT-WIRE.txt.
 local function apply_inputs(tick,s)
  assert(s.wire_version==3 and s.clients==clients and type(s.inputs)=='table' and #s.inputs==clients,'native input wire 3 mismatch')
- -- Protocol 4: s.inputs are the blobs proposed with tick s.inputs_tick = tick-1-k.
- local k=cfg.native_gate_lookahead or 0
- assert((s.lookahead or 0)==k and (k==0 or (tick<=k and s.inputs_tick==nil) or s.inputs_tick==tick-1-k),'native gate lookahead mismatch')
+ local adaptive,k=X4LAN_NATIVE_ADAPTIVE,0
+ if adaptive then
+  -- Protocol 5: s.inputs are the blobs proposed with tick s.inputs_tick, which the gate checked against the agreed
+  -- schedule; a gap permit (s.inputs_tick nil) carries none. Log the plan and every later entry once.
+  assert(type(s.adaptive)=='number' and s.adaptive>=1 and type(s.lookahead)=='number' and
+   (s.inputs_tick==nil or (s.inputs_tick<tick and tick-s.inputs_tick<=adaptive.kmax+1)),'native gate adaptive mismatch')
+  if s.adaptive~=adaptive.epoch then
+   log((adaptive.epoch==0 and 'ADAPTIVE_PLAN' or 'ADAPTIVE_SCHEDULE')..' tick='..tick..' epoch='..s.adaptive..' k='..s.lookahead..
+    ' pilot_delay='..tostring(s.pilot_delay)..' '..tostring(gate.adaptive_status and gate.adaptive_status()))
+   adaptive.epoch=s.adaptive
+  end
+ else
+  -- Protocol 4: s.inputs are the blobs proposed with tick s.inputs_tick = tick-1-k.
+  k=cfg.native_gate_lookahead or 0
+  assert((s.lookahead or 0)==k and (k==0 or (tick<=k and s.inputs_tick==nil) or s.inputs_tick==tick-1-k),'native gate lookahead mismatch')
+ end
  local any=false
  for i=1,clients do
   local blob=s.inputs[i]
   assert(type(blob)=='string' and #blob<=480 and #blob%2==0 and not blob:find('[^0-9a-f]'),'invalid native input blob')
   any=any or blob~=''
  end
- if any then log('INPUTS tick='..tick..(k>0 and ' proposed='..s.inputs_tick or '')..' blobs='..table.concat(s.inputs,',')) end
+ if any then log('INPUTS tick='..tick..((k>0 or adaptive) and ' proposed='..tostring(s.inputs_tick) or '')..' blobs='..table.concat(s.inputs,',')) end
  local adapter=X4LAN_NATIVE_INPUTS
  if adapter and adapter.apply then
   -- Relayed inputs are applied on every client: their FFI calls are not local UI writes.
@@ -648,6 +985,9 @@ local function apply_inputs(tick,s)
  assert(not any,'unexpected native inputs')
 end
 local actors,ready={},false
+-- Per actor, the last sample's classification: true when X4 answered not operational (the row is '<i>/dead'). The
+-- session's at T rides the join package (provider 'fixture'): a wreck's row stays '/dead' on the joiner.
+local fixture_dead={}
 local weapons={}
 local registry_navigation_seen={}
 local creation_trace,creation_rng,registry_creation
@@ -685,6 +1025,78 @@ if cfg.native_gate_hash=='battle' then
   if outside_session() then log('READY_OUTSIDE_SESSION count='..tostring(count));return end
   assert(tonumber(count)==12,'incomplete battle fixture');ready=true
  end)
+ -- Hot join: the session enrolled the twelve from the MD events of RestoreActors (raised at tick 1); a joiner sees none
+ -- (the cue ran before T). Its gate binds the twelve at the admission by their saved IDs (the import keyed every object of
+ -- the join save by the session's portable ID) and enrolls them at T+1 (lockstep_snapshot_fixture.h); this provider hands
+ -- the probe what the session's probe kept for them at T, refused unless the session's fixture is this client's:
+ --   v2|<the twelve saved IDs>|<12 digits: 1 = the actor's row at T was '/dead'>|<per actor the gun slots its sample
+ --   registered with the gate, '.'-joined, '-' none; '/'-joined>
+ -- Each actor value is the session's kind: ConvertIDTo64Bit of the component, as the MD event's object gave it (J1 j1-10:
+ -- an FFI uint64 here made GetComponentData refuse actor 1, 'got cdata, expected component ID'). A wreck at T must be no
+ -- operational component here (its row '/dead' as the session's); the guns the session registered are registered again
+ -- (gate.register_weapon), none other. reports/LOCKSTEP-HOTJOIN-20261101.txt 1.5.
+ if cfg.native_gate_join and cfg.native_gate_snapshot_fixture and X4LAN_JOIN_CORE then
+  X4LAN_JOIN_CORE.provide('fixture',function()
+   assert(ready,'join: the battle fixture is not ready at the save tick')
+   local dead,guns={},{}
+   for i=1,12 do
+    assert(fixture_dead[i]~=nil,'join: fixture actor '..i..' was not sampled before the save tick')
+    dead[i]=fixture_dead[i] and '1' or '0'
+    guns[i]=weapons[i] and #weapons[i]>0 and table.concat(weapons[i],'.') or '-'
+   end
+   return 'v2|'..table.concat(cfg.native_gate_snapshot_fixture,',')..'|'..table.concat(dead)..'|'..table.concat(guns,'/')
+  end,function(text)
+   local own=table.concat(cfg.native_gate_snapshot_fixture,',')
+   local ids,dead,guns=tostring(text):match('^v2|([^|]*)|([01]+)|([%d./%-]+)$')
+   assert(ids==own and #dead==12,'join: the session fixture '..tostring(text)..' is not this client fixture '..own..
+    ' (v2|ids|dead|guns: a saver of this build)')
+   local lists={};for list in (guns..'/'):gmatch('([^/]*)/') do lists[#lists+1]=list end
+   assert(#lists==12,'join: the session fixture guns '..guns..' name '..#lists..' actors, not 12')
+   local C=ffi.C
+   for i=1,12 do
+    local row=assert(gate.snapshot_actor(i),'join: snapshot actor '..i..' not bound')
+    local runtime=assert(row:match(' runtime=(%x+) '),'join: snapshot actor row '..row)
+    local value=tonumber(runtime,16)
+    assert(value and value>0 and value<2^53,'join: snapshot actor '..i..' runtime ID '..runtime..' outside the exact range')
+    local decimal=string.format('%.0f',value)
+    local object=ConvertIDTo64Bit(ConvertStringToLuaID(decimal))
+    assert(object and (tostring(object):gsub('ULL$',''))==decimal,'join: snapshot actor '..i..' runtime '..decimal..' converts to '..tostring(object))
+    actors[i]=object
+    local operational=C.IsComponentOperational(object)
+    fixture_dead[i]=dead:sub(i,i)=='1'
+    assert(not (fixture_dead[i] and operational),'join: fixture actor '..i..' was a wreck in the session at T (its rows /dead) and is an '..
+     'operational component on this joiner ('..row..')')
+    log('SNAPSHOT_JOIN_ACTOR '..row..' session='..(fixture_dead[i] and 'dead' or 'live')..' joiner='..(operational and 'live' or 'dead'))
+   end
+   -- The guns, as the session's sample registered them (its first sample of each live actor); this client's sample then
+   -- registers nothing. A gun the session registered on an actor live at T must be there and register; a wreck's gun
+   -- that is gone or that the gate refuses is logged (the session's registration of it is stale since the death).
+   for i=1,12 do
+    if lists[i]~='-' then
+     assert(cfg.native_gate_weapon_diag and cfg.native_gate_actor_diag,'join: the session registered fixture guns, this client does not (native_gate_weapon_diag)')
+     local registered,absent,refused={},{},{}
+     weapons[i]={}
+     for slot in lists[i]:gmatch('[^.]+') do
+      slot=tonumber(slot)
+      assert(slot and slot>=1 and slot<=32 and slot%1==0,'join: the session fixture gun slot '..lists[i])
+      local id=C.GetUpgradeSlotCurrentComponent(actors[i],'weapon',slot)
+      if id==0 or id==nil then
+       assert(fixture_dead[i],'join: fixture actor '..i..' (live at T) has no gun in slot '..slot..', which the session registered')
+       absent[#absent+1]=slot
+      elseif gate.register_weapon(tonumber(id),i,slot)==1 then registered[#registered+1]=slot
+      else
+       assert(fixture_dead[i],'join: fixture gun registration refused actor='..i..' slot='..slot)
+       refused[#refused+1]=slot
+      end
+      weapons[i][#weapons[i]+1]=slot
+     end
+     local function slots(list) return #list>0 and table.concat(list,'.') or '-' end
+     log('JOIN_FIXTURE_GUNS id='..i..' session='..lists[i]..' registered='..slots(registered)..' absent='..slots(absent)..' refused='..slots(refused))
+    end
+   end
+   ready=true
+  end)
+ end
 end
 local function drain_bullets()
  if not cfg.native_gate_bullet_diag then return end
@@ -809,13 +1221,24 @@ local function drain_traces()
  drain_bullets();drain_deaths();drain_mass();drain_radar();drain_damage();drain_interrupts();drain_contacts();drain_shape_lifetimes();drain_flight_faults();drain_build_rows()
 end
 local radar_objects={}
-local world_actors={}
+local world_actors={} -- WORLD_ACTOR logged (log only): a joiner logs its own at T+1, with the saved-identity check
 local world_hash_state
+-- Hot join: the declared state carries the last world capture's state (tick 1, then every stride tick) on every tick
+-- between captures, so a joiner needs the session's of T until its own first capture; the world watches
+-- (native_gate_world_hash_watch, armed at the session's tick 1) are armed here, before that capture.
+if cfg.native_gate_join and cfg.native_gate_world_hash_stride and X4LAN_JOIN_CORE then
+ X4LAN_JOIN_CORE.provide('world_hash',function() return world_hash_state or '-' end,function(text)
+  assert(tostring(text):match('^'..world_hash_schema..':%d+:%d+:[%x:]+$'),
+   'join: the session world hash state '..tostring(text)..' is no '..world_hash_schema..' state')
+  world_hash_state=text
+  for _,saved in ipairs(cfg.native_gate_world_hash_watch or {}) do assert(gate.world_watch(saved)==1,'world watch refused '..saved) end
+ end)
+end
 local probe_last_us -- previous frame() wall time, native_gate_frame_timing only
 local camera_perturb=false -- this client perturbs its camera (native_gate_camera_perturb)
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
 local nav_cadence_cursor=0
-local row_cursors={ui_exports=0,coverage=0,step_trace=0,fp_redirect=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,nav_octree=0,nav_octree_lookup=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,character_play=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,ui_exports=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
 local world_trace_rows,world_queue_rows,world_wait_rows,world_wait_rng_rows=0,0,0,0
 local world_action_rows,world_values_rows,world_values_unknown_rows,world_unknown_identity_rows=0,0,0,0
 local world_values_cursors_loaded=false
@@ -849,7 +1272,7 @@ end
 -- speech lines routed to the game-clock deadline (native_gate_speech_game_time),
 -- effect deferral rows (native_gate_effect_rows), Jolt step/body/contact rows
 -- (native_gate_physics_trace), physics body order rows (native_gate_body_order),
--- moved compound children (native_gate_shape_order), finished nav octree builds
+-- moved compound children (native_gate_shape_order), body animation starts (native_gate_character_play), finished nav octree builds
 -- (native_gate_nav_octree) and per-ship motion, AI move order and flight model
 -- target rows (native_gate_motion_watch and native_gate_motion_watch_orders).
 -- final (at stop) also takes body, contact and order rows of the current tick.
@@ -881,6 +1304,13 @@ local function drain_gravidar_watch(final)
    log('SHAPE_ORDER_ROW '..row);row_cursors.shape_order=row_cursors.shape_order+1
   end
  end
+ if cfg.native_gate_character_play then -- body animation starts (native_gate_character_play): rare, written at once (not held)
+  for _=1,4096 do
+   local row=gate.character_play_row(row_cursors.character_play)
+   if not row then break end
+   ticklog.write('CHARACTER_PLAY_ROW '..row);row_cursors.character_play=row_cursors.character_play+1
+  end
+ end
  if cfg.native_gate_nav_octree then
   for _=1,8192 do
    local row=gate.nav_octree_row(row_cursors.nav_octree)
@@ -891,6 +1321,13 @@ local function drain_gravidar_watch(final)
    local row=gate.nav_octree_lookup_row and gate.nav_octree_lookup_row(row_cursors.nav_octree_lookup)
    if not row then break end
    ticklog.write('NAV_OCTREE_LOOKUP '..row);row_cursors.nav_octree_lookup=row_cursors.nav_octree_lookup+1 -- every tick: soaks keep them all
+  end
+ end
+ if cfg.native_gate_nav_mesh then -- finished interior nav helper builds (native_gate_nav_mesh): rare, written at once (not held)
+  for _=1,4096 do
+   local row=gate.nav_mesh_row(row_cursors.nav_mesh)
+   if not row then break end
+   ticklog.write('NAV_MESH_ROW '..row);row_cursors.nav_mesh=row_cursors.nav_mesh+1
   end
  end
  if cfg.native_gate_supply_wants~=nil then -- stations' wanted supply orders (native_gate_supply_wants)
@@ -919,6 +1356,13 @@ local function drain_gravidar_watch(final)
    local row=gate.fp_redirect_row(row_cursors.fp_redirect)
    if not row then break end
    log('FP_REDIRECT_ROW '..row);row_cursors.fp_redirect=row_cursors.fp_redirect+1
+  end
+ end
+ if cfg.native_gate_fp_attack_capture then -- FR29b: the attack computation's calls (native_gate_fp_attack_capture)
+  for _=1,8192 do
+   local row=gate.fp_attack_row(row_cursors.fp_attack)
+   if not row then break end
+   ticklog.write('FP_ATTACK_ROW '..row);row_cursors.fp_attack=row_cursors.fp_attack+1
   end
  end
  if cfg.native_gate_macro_arena then -- macros in id hash order (native_gate_macro_arena); the drain also audits them
@@ -1323,7 +1767,7 @@ local function enroll_dynamic_weapons(object,actor,handle)
   log('SHIP_WEAPON_SCOPE handle='..handle..' slot='..actor..' weapon_slots='..count..' registered='..#weapons[actor]..' turret_slots='..turrets..' occupied_turrets='..occupied)
   return 1
  end)
- if not ok then log('SHIP_ENROLL_REFUSED '..tostring(result));gate.stop();return nil,result end
+ if not ok then ticklog.loud('SHIP_ENROLL_REFUSED',tostring(result),'a ship could not join the session - '..tostring(result));gate.stop();return nil,result end
  return result
 end
 local function trace_gravidar(tick,manifest)
@@ -1389,7 +1833,8 @@ local function pilot_ship_rows(tick)
  for slot=1,#cfg.native_gate_pilot_slots do
   local runtime,saved=gate.pilot_ship(slot)
   local row=slot..'/'..tostring(saved or cfg.native_gate_pilot_slots[slot])
-  if not runtime then row=row..'/unresolved'
+  if X4LAN_NATIVE_HYBRID and X4LAN_NATIVE_HYBRID.private(slot) then row=row..'/hybrid' -- its sector's state (native_gate_hybrid)
+  elseif not runtime then row=row..'/unresolved'
   else
    local object=ffi.new('UniverseID',runtime)
    if ffi.C.IsComponentOperational(object) then
@@ -1471,7 +1916,7 @@ local function arm_pilot_section()
      local payload=inputs[slot]
      if payload and payload~='' then
       if gate.hit_claims_admit(slot,payload)==1 then admitted=admitted+1
-      else refused=refused+1;ticklog.write('HIT_CLAIMS_REFUSED tick='..tick..' slot='..slot) end
+      else refused=refused+1;ticklog.loud_every('HIT_CLAIMS_REFUSED','tick='..tick..' slot='..slot,'a hit claim of player '..slot..' was refused on every client (see the log)',tick,90) end
      end
     end
     return 'staged='..admitted..'/refused='..refused
@@ -1670,9 +2115,80 @@ function pilot_view.arm_ui_replay(slot,window)
    'bool RemoveAllOrders(UniverseID);','bool RemoveAllOrders2(UniverseID,bool,bool);','bool ToggleAutoPilot(bool);','bool QuickDock(void);',
    'bool RequestDockAt(UniverseID,bool);','const char* UndockPlayerShip(bool);','void SetDefensibleActiveWeaponGroup(UniverseID,bool,uint32_t);',
    'uint32_t CreateOrder(UniverseID,const char*,bool);','bool EnableOrder(UniverseID,size_t);','bool AdjustOrder(UniverseID,size_t,size_t,bool,bool,bool);',
-   'bool RemoveOrder(UniverseID,size_t,bool,bool);','void SetGuidance(UniverseID,UIPosRot);','void EndGuidance(void);'}) do pcall(ffi.cdef,line) end
+   'bool RemoveOrder(UniverseID,size_t,bool,bool);','void SetGuidance(UniverseID,UIPosRot);','void EndGuidance(void);',
+   'void ShowInfoLine(const char*,uint32_t);','void ToggleFlightAssist(void);','void AddPlayerMoney(int64_t);',
+   'void CycleTurretMode(size_t);','void CycleTurretMissile(size_t);','void ToggleDrones(uint32_t);','void CycleNextDroneMode(uint32_t);',
+   -- missions (lockstep_ui_missions.h): the stock menus declare them with MissionID, the same 64-bit value
+   'void AbortMission(uint64_t);','bool SetActiveMission(uint64_t);','void StartBriefing(uint64_t,const char*,bool);','void StopBriefing(uint64_t,bool);',
+   'void MissionBriefingInteractButtonClicked(uint64_t);','uint64_t GetActiveMissionID(void);','uint32_t GetNumCurrentMissionOffers(bool);',
+   'uint32_t GetCurrentMissionOffers(uint64_t*,uint32_t,bool);'}) do pcall(ffi.cdef,line) end
  local armed,refused=gate.ui_replay(mask)
  assert(armed==1,'ui replay refused: '..tostring(refused))
+ -- The UI guard (lockstep_ui_guard.h, native_gate_ui_guard, default off): every other world-changing stock UI entry
+ -- point is refused in the local phases; the person sees an info line (ShowInfoLine: the stock UI's own text line).
+ local guard
+ if cfg.native_gate_ui_guard~=nil and cfg.native_gate_ui_guard~=false then
+  local groups,why=core.guard_groups(cfg.native_gate_ui_guard)
+  assert(groups,'ui guard refused: '..tostring(why))
+  assert(gate.ui_guard,'ui guard refused: gate without ui_guard')
+  local ok,entries=gate.ui_guard(groups)
+  assert(ok==1,'ui guard refused: '..tostring(entries))
+  guard=groups
+  log('UI_GUARD_ARMED slot='..slot..' groups='..groups..' entries='..tostring(entries))
+ end
+ -- Missions and conversations of slot 1 (lockstep_ui_missions.h): the guard's hook captures them, so the guard with the
+ -- groups missions and conversation comes first; gate.ui_missions checks that and its pins (fail closed otherwise).
+ local missions_on=math.floor(mask/core.FAMILY.missions)%2==1 or math.floor(mask/core.FAMILY.conversation)%2==1
+ if missions_on then
+  assert(gate.ui_missions,'ui missions refused: gate without ui_missions')
+  local ok,why=gate.ui_missions()
+  assert(ok==1,'ui missions refused: '..tostring(why))
+  log('UI_MISSIONS_ARMED slot='..slot..' families='..mask)
+ end
+ -- The faction family (lockstep_ui_faction.h, X4LAN_UI_FACTION; default off): claims on the guard's hooks, so the guard comes
+ -- first; the stock struct layouts it reads are checked here (a difference refuses, a type not declared yet is reported).
+ if math.floor(mask/core.FAMILY.faction)%2==1 then
+  assert(guard,'ui faction refused: needs native_gate_ui_guard')
+  assert(gate.ui_faction,'ui faction refused: gate without ui_faction')
+  local fine,missing=X4LAN_UI_FACTION.check_layouts(ffi)
+  assert(fine,'ui faction refused: stock layout '..tostring(missing))
+  -- What the scripted runs call; the stock menus declare the same (a declaration that exists already is kept).
+  for _,line in ipairs({'void SetPlayerShipsWaitForPlayer(bool);','void SetPlayerTaxiWaitsForPlayer(bool);','void SetPlayerTradeLoopCargoReservationSetting(bool);',
+    'void SetPlayerGlobalLoadoutLevel(float);','void SetPlayerFactionName(const char*);','void SetFactionDefaultWeaponMode(const char*,const char*);',
+    'void SetFactionBuildMethod(const char*,const char*);','void SetPlayerIllegalWare(const char*,bool);','void SetDefensibleLoadoutLevel(UniverseID,float);',
+    'void RemoveBlacklist(int32_t);','void RemoveFightRule(int32_t);','void RemoveTradeRule(int32_t);',
+    'void SetControllableBlacklist(UniverseID,int32_t,const char*,bool);','void SetControllableFightRule(UniverseID,int32_t,const char*,bool);',
+    'void SetPlayerBlacklistDefault(int32_t,const char*,const char*,bool);','void SetPlayerFightRuleDefault(int32_t,const char*,bool);',
+    'void SetPlayerTradeRuleDefault(int32_t,const char*,bool);','bool SetDefaultResponseToSignalForFaction2(const char*,bool,const char*,const char*,const char*);',
+    'bool SetDefaultResponseToSignalForControllable(const char*,bool,const char*,UniverseID);','bool ResetResponseToSignalForControllable(const char*,UniverseID);',
+    'const char* GetDefaultResponseToSignalForFaction2(const char*,const char*,const char*);','uint32_t GetNumAllSignals(void);',
+    'uint32_t GetNumAllResponsesToSignal(const char*);','uint32_t GetAllSignals(SignalInfo*,uint32_t);','uint32_t GetAllResponsesToSignal(ResponseInfo*,uint32_t,const char*);',
+    'int32_t CreateBlacklist2(BlacklistInfo2);','void UpdateBlacklist2(BlacklistInfo2);','int32_t CreateFightRule(FightRuleInfo);',
+    'int32_t CreateTradeRule(TradeRuleInfo);'}) do pcall(ffi.cdef,line) end
+  local ok,claims=gate.ui_faction()
+  assert(ok==1,'ui faction refused: '..tostring(claims))
+  log('UI_FACTION_ARMED slot='..slot..' families='..mask..' claims='..tostring(claims)..' missing='..table.concat(missing,','))
+ end
+ -- Player settings per slot (lockstep_player_settings.h, native_gate_player_settings_per_slot; default off): the faction family
+ -- first; its pins were checked with the family's. The spawn check (native_gate_player_settings_spawn = {tick, macro}).
+ local pss=cfg.native_gate_player_settings_per_slot
+ local pss_spawn=cfg.native_gate_player_settings_spawn
+ assert(pss==nil or pss==false or pss==true,'player settings refused: native_gate_player_settings_per_slot is true or nil')
+ assert(pss_spawn==nil or (pss==true and type(pss_spawn)=='table' and type(pss_spawn[1])=='number' and pss_spawn[1]%1==0 and pss_spawn[1]>=1 and
+   type(pss_spawn[2])=='string' and pss_spawn[2]~=''),'player settings refused: native_gate_player_settings_spawn is {tick, macro} with the key')
+ if pss then
+  assert(math.floor(mask/core.FAMILY.faction)%2==1,'player settings refused: needs native_gate_ui_replay faction')
+  assert(gate.player_settings,'player settings refused: gate without player_settings')
+  -- What the scripted runs and the spawn check call; the stock menus declare the same (a declaration that exists is kept).
+  for _,line in ipairs({'void SetPlayerPaintTheme(const char*);','void SetPlayerClothingTheme(const char*);','void SetPlayerLogo(UILogo);',
+    'uint32_t GetNumAvailablePaintThemes(void);','uint32_t GetAvailablePaintThemes(UIPaintTheme*,uint32_t);','uint32_t GetNumAvailableClothingThemes(void);',
+    'uint32_t GetAvailableClothingThemes(UIClothingTheme*,uint32_t);','uint32_t GetNumPlayerLogos(bool,bool);','uint32_t GetPlayerLogos(UILogo*,uint32_t,bool,bool);',
+    'bool GetInstalledPaintMod(UniverseID,UIPaintMod*);','bool GetPaintThemeMod(const char*,const char*,UIPaintMod*);',
+    'UIPosRot GetObjectPositionInSector(UniverseID);','UniverseID SpawnObjectAtPos2(const char*,UniverseID,UIPosRot,const char*);'}) do pcall(ffi.cdef,line) end
+  local ok,hooks=gate.player_settings()
+  assert(ok==1,'player settings refused: '..tostring(hooks))
+  log('PLAYER_SETTINGS_ARMED slot='..slot..' hooks='..tostring(hooks)..' spawn='..(pss_spawn and (pss_spawn[1]..'/'..pss_spawn[2]) or '-'))
+ end
  local function slot_ships()
   local out={}
   for s=1,#cfg.native_gate_pilot_slots do
@@ -1686,6 +2202,7 @@ function pilot_view.arm_ui_replay(slot,window)
   slot_lua=function(s) return ConvertStringToLuaID(string.format('%.0f',(assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved')))) end,
   saved_id=function(saved) return ConvertStringTo64Bit((assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved'))) end,
   saved_lua=function(saved) return ConvertStringToLuaID((assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved'))) end}
+ tools.missions=core.mission_tools(ffi.C,_G)
  local plan=cfg.native_gate_ui_replay_script   -- one plan per client, {} or false for none
  assert(plan==nil or plan==false or type(plan)=='table','ui replay refused: invalid script')
  plan=plan and plan[slot] or nil
@@ -1712,10 +2229,62 @@ function pilot_view.arm_ui_replay(slot,window)
   if on then return gate.pilot_present_resume and gate.pilot_present_resume()==1 or false end
   return gate.pilot_present_pause()==1
  end
- local S=core.session{gate=gate,C=ffi.C,env=_G,mask=mask,log=ticklog.write,slot_ships=slot_ships,script=core.script(plan,window[1],tools),
+ -- The trade family's test fixture (native_gate_ui_trade_fund): credits for every slot faction that is not `player`, once.
+ local trade_fund=cfg.native_gate_ui_trade_fund
+ assert(trade_fund==nil or (math.floor(mask/core.FAMILY.trade)%2==1 and type(trade_fund)=='number' and trade_fund%1==0 and trade_fund>=1 and trade_fund<=1e9),
+   'ui replay refused: native_gate_ui_trade_fund needs the trade family and whole credits 1..1000000000')
+ local S=core.session{gate=gate,C=ffi.C,env=_G,mask=mask,log=ticklog.write,slot_ships=slot_ships,script=core.script(plan,window[1],tools),trade_fund=trade_fund,
   fleet=cfg.native_gate_ui_replay_fleet,fleet_tick=window[1]-4,saved_lua=tools.saved_lua,queue_of=queue_of,
-  local_mark=cfg.native_gate_runtime_ids_local and gate.runtime_ids_probe or nil,present=present,
-  min_hull=min_hull,slots=#cfg.native_gate_pilot_slots,slot_lua=tools.slot_lua}
+  local_mark=(cfg.native_gate_runtime_ids_local or guard or math.floor(mask/core.FAMILY.events)%2==1 or math.floor(mask/core.FAMILY.trade)%2==1) and gate.runtime_ids_probe or nil,present=present,
+  min_hull=min_hull,slots=#cfg.native_gate_pilot_slots,slot_lua=tools.slot_lua,own_slot=slot,guard=guard,pss=pss,pss_spawn=pss_spawn,
+  notify=function(text) ffi.C.ShowInfoLine(text,4) end,   -- every refusal of the families shows its info line (also without the guard)
+  active_mission=missions_on and function() return (tostring(ffi.C.GetActiveMissionID()):gsub('ULL$','')) end or nil,
+  menus=function() return type(Menus)=='table' and Menus or {} end}
+ -- The build and assets families (native_gate_ui_build_core.lua, lockstep_ui_build.h; default off): claims on the guard's
+ -- hooks, one batch per frame, money inside the stock commit scopes; slots 2+ only in coop (identity plan mode).
+ if math.floor(mask/core.FAMILY.build)%2==1 or math.floor(mask/core.FAMILY.assets)%2==1 then
+  local bcore=assert(X4LAN_UI_BUILD_CORE,'ui build refused: core missing (ui/native_gate_ui_build_core.lua)')
+  assert(guard,'ui build refused: needs native_gate_ui_guard')
+  assert(gate.ui_build,'ui build refused: gate without ui_build')
+  local fine,missing=bcore.check_layouts(ffi)
+  assert(fine,'ui build refused: stock layout '..tostring(missing))
+  local plan_cfg=cfg.native_gate_player_identity_plan
+  local coop=type(plan_cfg)=='table' and plan_cfg.mode=='coop'
+  -- each slot's faction ID (a plot's faction in factions mode: lockstep_ui_build.h uibuild_plot_faction)
+  local faction_ids={}
+  for k=1,#cfg.native_gate_pilot_slots do
+   local entry=type(plan_cfg)=='table' and type(plan_cfg.slots)=='table' and plan_cfg.slots[k]
+   faction_ids[k]=(not coop and type(entry)=='table' and type(entry.faction)=='string') and entry.faction or 'player'
+  end
+  local armed,why=gate.ui_build(coop and 0 or 1,table.concat(faction_ids,','))
+  assert(armed==1,'ui build refused: '..tostring(why))
+  for _,line in ipairs({'BuildTaskID AddBuildTask6(UniverseID,UniverseID,const char*,UILoadout2,int64_t,CrewTransferInfo2,bool,const char*,AddBuildTask6Container*);',
+    'void SetBuildTaskTransferredMoney(BuildTaskID,int64_t);','UniverseID ReserveBuildPlot(UniverseID,const char*,const char*,UIPosRot,float,float,float);',
+    'void DismantleShipMod(UniverseID);','UICrewExchangeResult PerformCrewExchange2(UniverseID,UniverseID,NPCSeed*,uint32_t,NPCSeed*,uint32_t,NPCSeed,NPCSeed,bool,bool);',
+    'void GenerateShipLoadout2(UILoadout2*,UniverseID,UniverseID,const char*,float);','void GenerateShipLoadoutCounts2(UILoadoutCounts2*,UniverseID,UniverseID,const char*,float);',
+    -- station construction's script ops (the stock menus declare the same; BuildTaskInfo is theirs)
+    'bool CancelConstruction(UniverseID,BuildTaskID);','int64_t GetBuilderHiringFee(void);','uint32_t CreateDeployToStationOrder(UniverseID);',
+    'uint32_t GetNumBuildTasks(UniverseID,UniverseID,bool,bool);','uint32_t GetBuildTasks(BuildTaskInfo*,uint32_t,UniverseID,UniverseID,bool,bool);'}) do
+   pcall(ffi.cdef,line)
+  end
+  local fund=cfg.native_gate_ui_build_fund
+  assert(fund==nil or (type(fund)=='number' and fund%1==0 and fund>0 and fund<=1e9),'ui build refused: native_gate_ui_build_fund is whole credits 1..1e9')
+  local bplan=cfg.native_gate_ui_build_script
+  assert(bplan==nil or bplan==false or type(bplan)=='table','ui build refused: invalid native_gate_ui_build_script')
+  bplan=bplan and bplan[slot] or nil
+  local btools={gate=gate,C=ffi.C,env=_G,ffi=ffi,slot_id=tools.slot_id,slot_lua=tools.slot_lua,saved_id=tools.saved_id,saved_lua=tools.saved_lua,own_slot=slot,
+   loadout=function(station,macro)   -- the station's generated loadout for the macro, as the ship configuration's presets
+    local ok,l=pcall(Helper.getLoadoutHelper2,ffi.C.GenerateShipLoadout2,ffi.C.GenerateShipLoadoutCounts2,'UILoadout2',station,0,macro,0.5)
+    if ok and l then return l end
+    ticklog.loud('UI_BUILD_LOADOUT_EMPTY','macro='..tostring(macro)..' why='..tostring(ok and 'no loadout' or l),false)   -- the scripted plan gets an empty loadout
+    return ffi.new('UILoadout2')
+   end}
+  local B=bcore.session{gate=gate,C=ffi.C,env=_G,log=ticklog.write,mask=mask,replay=S,own_slot=slot,factions=not coop,notify=function(text) ffi.C.ShowInfoLine(text,4) end,
+   local_mark=gate.runtime_ids_probe,script=bcore.script(bplan,window[1],btools),fund=fund and {tick=window[1]-4,amount=fund} or nil,
+   menus=function() return type(Menus)=='table' and Menus or {} end}
+  pilot_view.ui_build=B
+  log('UI_BUILD_ARMED slot='..slot..' families='..mask..' coop='..tostring(coop)..' missing='..table.concat(missing,',')..' script='..tostring(bplan and #bplan or 0))
+ end
  pilot_view.ui_replay=S
  input_section('ui','ui',S.section())
  log('UI_REPLAY_ARMED slot='..slot..' families='..mask..' script='..tostring(plan and #plan or 0))
@@ -1753,7 +2322,8 @@ local function pilot_frame(s,tick)
   -- The gate refuses injects near the window's end; only a ship that is still alive there reaches them.
   if pilot_view.stock_aim_from and tick>=pilot_view.stock_aim_from and tick+8<cfg.native_gate_pilot_window[2] then pilot_view.stock_aim() end
   local record,why=gate.pilot_stock_capture()
-  assert(record or why=='not_live','pilot stock capture failed '..tostring(why))
+  -- 'absent': this client's slot is absent until its handover (a joiner in its catch-up): the relay's stand-in is its row.
+  assert(record or why=='not_live' or why=='absent','pilot stock capture failed '..tostring(why))
   pilot_view.stock_proposal=record
   if cfg.native_gate_pilot_capture and record then log('PILOT_STOCK_CAPTURE tick='..tick..' record='..record) end
  end
@@ -1764,7 +2334,7 @@ local function pilot_frame(s,tick)
  if (wire or cfg.native_gate_pilot_capture) and not stock_capture then
   -- Capture never changes local input. Only the wire needs it to succeed.
   local record,why=gate.pilot_capture()
-  assert(record or not wire,'pilot capture failed '..tostring(why))
+  assert(record or not wire or why=='absent','pilot capture failed '..tostring(why))
   if cfg.native_gate_pilot_capture then
    local row='PILOT_CAPTURE tick='..tick..(record and ' record='..record or ' refused='..tostring(why))
    -- Observation: what the native processed channels hold now (zero while parked).
@@ -1781,7 +2351,8 @@ local function pilot_frame(s,tick)
   local refusals=gate.pilot_native_refusals()
   for item in (refusals or ''):gmatch('[^,]+') do
    local at,kind,id,name,value=item:match('^(%d+):(%a+):(0x%x+):([%w_?]+):(%-?%d+)$')
-   ticklog.write('PILOT_NATIVE_REFUSED tick='..tostring(at)..' kind='..tostring(kind)..' id='..tostring(id)..' input='..tostring(name)..' value='..tostring(value))
+   ticklog.loud_every('PILOT_NATIVE_REFUSED','tick='..tostring(at)..' kind='..tostring(kind)..' id='..tostring(id)..' input='..tostring(name)..' value='..tostring(value),
+    'flight input '..tostring(name)..' is not shared yet - nothing happened',tonumber(at),90)
   end
  end
  -- Presentation prediction: after this tick's capture (the pending ring is
@@ -1797,6 +2368,15 @@ local function pilot_frame(s,tick)
    end
   end
   if tick%600==0 then ticklog.status('PILOT_PREDICT_STATUS',tick,gate.pilot_predict_status) end
+ end
+ -- Own-ship display prediction: after this tick's stock capture (the capture ring holds the record that applies
+ -- at tick+delay). This client only; written at once (the error against the authoritative pose, the lead, the
+ -- snaps), never part of the declared state, and a refusal never stops the session.
+ if pilot_view.own_predict then
+  local row,why=gate.own_predict_frame(tick)
+  local rows=pilot_view.own_predict_rows
+  if rows>0 and tick%rows==0 then ticklog.write('OWN_PREDICT '..(row or ('tick='..tick..' refused='..tostring(why)))) end
+  if tick%600==0 then ticklog.status('OWN_PREDICT_STATUS',tick,gate.own_predict_status) end
  end
  ticklog.status('PILOT_INPUTS',tick,gate.pilot_inputs_status,'pilot status unavailable')
  if pilot_view.stock and tick%600==0 and gate.pilot_stock_callers then
@@ -1859,6 +2439,7 @@ local function sample(tick)
    log('WORLD_ACTOR id='..i..' saved='..saved);world_actors[i]=true
   end
   local bodies,row={} -- row: this actor's declared state parts
+  local hidden=X4LAN_NATIVE_HYBRID and X4LAN_NATIVE_HYBRID.inside(object) -- inside an owned sector (native_gate_hybrid)
   local function body(which)
    if not bodies[which] then
     local state=gate.body(i,which)
@@ -1869,7 +2450,9 @@ local function sample(tick)
    end
    return bodies[which]
   end
-  if ffi.C.IsComponentOperational(object) then
+  local operational=ffi.C.IsComponentOperational(object)
+  fixture_dead[i]=not operational
+  if operational then
    local native
    if cfg.native_gate_actor_diag then
     local since=profile and gate.qpc_us()
@@ -1992,7 +2575,7 @@ local function sample(tick)
    row[#row+1]='/dock:';row[#row+1]=dockships[i]
    if i<=2 then row[#row+1]='/anchor:';row[#row+1]=dockanchors[i] end
   end
-  rows[#rows+1]=table.concat(row)
+  rows[#rows+1]=hidden and i..'/hybrid' or table.concat(row)
  end
  local texts={cfg.native_gate_docking_state and 'BATTLE_SUBSET_8' or cfg.native_gate_fleet_state and 'BATTLE_SUBSET_7' or cfg.native_gate_spline_state and 'BATTLE_SUBSET_6' or cfg.native_gate_order_state and 'BATTLE_SUBSET_5' or cfg.native_gate_strict_physics and (cfg.native_gate_steering_schema==2 and 'BATTLE_SUBSET_4' or 'BATTLE_SUBSET_3') or cfg.native_gate_strict_state and 'BATTLE_SUBSET_2' or 'BATTLE_SUBSET_1'};for _,r in ipairs(rows) do texts[#texts+1]=r end
  local data=table.concat(texts,'|')
@@ -2015,7 +2598,7 @@ local function frame()
  assert(not command_error,'native tactical command refused')
  if not snapshot and not owner then
   local ok,result,why=pcall(fixed.start,'fixed60')
-  if not ok or not result then log('REFUSED fixed='..tostring(why or result));done=true;return end
+  if not ok or not result then ticklog.refuse('fixed='..tostring(why or result));done=true;return end
   owner=result;log('FIXED60 armed')
  end
  if not armed then
@@ -2029,6 +2612,12 @@ local function frame()
   end
   local data=snapshot and ('SNAPSHOT_BYTES_1|'..snapshot) or sample(0)
   if cfg.native_gate_snapshot_fixture then data=data..'|SNAPSHOT_FIXTURE_1|'..table.concat(cfg.native_gate_snapshot_fixture,',') end
+  -- The session defaults' effective stack (native_gate_defaults.lua): a client with another stack differs at tick 0, where
+  -- the relay compares the boot digests, instead of splitting later.
+  if type(cfg._native_gate_defaults)=='table' and cfg._native_gate_defaults.stack then
+   data=data..'|DEFAULTS_1|'..X4LAN_SHA256.digest(cfg._native_gate_defaults.stack)
+   log('DEFAULTS_STACK digest='..X4LAN_SHA256.digest(cfg._native_gate_defaults.stack))
+  end
   if cfg.native_gate_player_probe=='agreed-getup' or diagnostic then
    assert(cfg.native_gate_world_hash_stride==1 and cfg.native_gate_player_transition_observer and
     cfg.native_gate_player_origin_token=='1|0000000000011e12|00000000000ae79c|1|120' and
@@ -2091,42 +2680,88 @@ local function frame()
     +(cfg.native_gate_player_request_observer and 4503599627370496 or 0)
   if diagnostic then assert(options==70377334178981 and snapshot and cfg.native_gate_world_trace_early and cfg.native_gate_world_queue_trace,'diagnostic passive observer contract') end
   -- Before start/boot; a reloaded UI repeats the identical configuration.
-  if wire3 and not (gate.wire and gate.wire(3,clients)==1) then log('REFUSED wire=3 clients='..clients);done=true;return end
+  if wire3 and not (gate.wire and gate.wire(3,clients)==1) then ticklog.refuse('wire=3 clients='..clients);done=true;return end
   -- Protocol 4 window; a DLL without gate.lookahead refuses instead of running protocol 3.
   local lookahead=cfg.native_gate_lookahead or 0
-  if lookahead>0 and not (gate.lookahead and gate.lookahead(lookahead)==1) then log('REFUSED lookahead='..lookahead);done=true;return end
+  if X4LAN_NATIVE_ADAPTIVE then
+   -- Protocol 5; a DLL without gate.lookahead_adaptive refuses instead of running another protocol.
+   if not (gate.lookahead_adaptive and gate.lookahead_adaptive(X4LAN_NATIVE_ADAPTIVE.kmax)==1) then
+    ticklog.refuse('lookahead=adaptive max='..X4LAN_NATIVE_ADAPTIVE.kmax);done=true;return
+   end
+  elseif lookahead>0 and not (gate.lookahead and gate.lookahead(lookahead)==1) then ticklog.refuse('lookahead='..lookahead);done=true;return end
+  -- Wire crypto after the wire and window; a DLL without gate.wire_crypto refuses instead of running in the clear.
+  if cfg.native_gate_wire_crypto and not (gate.wire_crypto and gate.wire_crypto(cfg.native_gate_wire_crypto)==1) then
+   ticklog.refuse('wire_crypto');done=true;return
+  end
+  -- Peer links window; a DLL without gate.peer_links refuses instead of running without them.
+  local peer_window=cfg.native_gate_peer_window
+  local rendezvous=cfg.native_gate_peer_rendezvous_port
+  if peer_window and not (gate.peer_links and (rendezvous and gate.peer_links(peer_window,rendezvous) or not rendezvous and gate.peer_links(peer_window))==1) then
+   ticklog.refuse('peer_window='..peer_window..(rendezvous and ' rendezvous='..rendezvous or ''));done=true;return
+  end
   -- Opt-in remote relay (dotted IPv4); default loopback. Same token/HMAC rules.
   if cfg.native_gate_relay_host and not (gate.relay_host and gate.relay_host(cfg.native_gate_relay_host)==1) then
-   log('REFUSED relay_host='..tostring(cfg.native_gate_relay_host));done=true;return
+   ticklog.refuse('relay_host='..tostring(cfg.native_gate_relay_host));done=true;return
   end
   -- native_gate_tick_hz (lockstep_tick.h, default 60): dt = 1/hz on every client, held to real
   -- time unless native_gate_tick_pace = false. The relay needs the same --tick-hz.
   -- native_gate_play_mode (lockstep_gate.c): no observer sample tables, no row drains, no world pages.
   -- The keys, the per-tick digest and the world capture it folds in stay as they are.
   if cfg.native_gate_play_mode then
-   if not (gate.play_mode and gate.play_mode()==1) then log('REFUSED play_mode');done=true;return end
+   if not (gate.play_mode and gate.play_mode()==1) then ticklog.refuse('play_mode');done=true;return end
    log('PLAY_MODE_ARMED')
   end
-  if cfg.native_gate_npc_lifecycle and not (gate.npc_action_rows and gate.npc_action_rows()==1) then log('REFUSED npc_action_rows');done=true;return end
+  if cfg.native_gate_npc_lifecycle and not (gate.npc_action_rows and gate.npc_action_rows()==1) then ticklog.refuse('npc_action_rows');done=true;return end
   -- native_gate_fast_reads (lockstep_gate.c read_local): small reads by a guarded copy.
   if cfg.native_gate_fast_reads then
-   if not (gate.fast_reads and gate.fast_reads()==1) then log('REFUSED fast_reads');done=true;return end
+   if not (gate.fast_reads and gate.fast_reads()==1) then ticklog.refuse('fast_reads');done=true;return end
    log('FAST_READS_ARMED')
   end
   if cfg.native_gate_tick_hz~=nil then
    local pace=cfg.native_gate_tick_pace~=false
    if not (gate.tick_rate and gate.tick_rate(cfg.native_gate_tick_hz,pace and 1 or 0)==1) then
-    log('REFUSED tick_hz='..tostring(cfg.native_gate_tick_hz));done=true;return
+    ticklog.refuse('tick_hz='..tostring(cfg.native_gate_tick_hz));done=true;return
    end
    log('TICK_RATE_ARMED hz='..tostring(cfg.native_gate_tick_hz)..' pace='..tostring(pace))
   end
+  -- native_gate_render_fps (lockstep_render_frames.h, default off): render-only frames between the
+  -- fixed steps, at most N per second and never above X4's own frame-rate target. Game time stands
+  -- still in them and only VBI slot 10 runs, so this frame() stays once per simulation step.
+  if cfg.native_gate_render_fps~=nil and cfg.native_gate_render_fps~=false then
+   local fps=cfg.native_gate_render_fps
+   assert(type(fps)=='number' and fps%1==0 and type(cfg.native_gate_tick_hz)=='number' and fps>cfg.native_gate_tick_hz and fps<=360 and
+    snapshot and (cfg.native_gate_lookahead or 0)>0 and cfg.native_gate_serial_pathing and cfg.native_gate_radar_serial and
+    cfg.native_gate_render_rng_split==true and (cfg.native_gate_mass_traffic==true or cfg.native_gate_mass_traffic=='sync') and
+    (cfg.native_gate_region_pass==true or cfg.native_gate_region_pass=='sync') and (not cfg.native_gate_runtime_ids or cfg.native_gate_runtime_ids_local==true),
+    'native_gate_render_fps needs native_gate_tick_hz below it, a snapshot boot, native_gate_lookahead, serial pathing, radar serial, '..
+    'the render RNG split, mass traffic and region pass sync and, with runtime IDs, their local lists')
+   if not (gate.render_frames and gate.render_frames(fps)==1) then ticklog.refuse('render_fps='..tostring(fps));done=true;return end
+   log('RENDER_FRAMES_ARMED fps='..fps)
+  end
+  -- native_gate_render_camera / native_gate_render_motion (lockstep_render_display.h, default off): display transforms in
+  -- the render-only frames, stage 2 the player camera, stage 3 the moving objects of the camera's zone; 'extrapolate'
+  -- (true) or 'interpolate'. Display only: put in place and undone inside VBI slot 10.
+  for _,stage in ipairs({{'native_gate_render_camera','render_camera','RENDER_CAMERA'},{'native_gate_render_motion','render_motion','RENDER_MOTION'}}) do
+   local value=cfg[stage[1]]
+   if value~=nil and value~=false then
+    local mode=value==true and 'extrapolate' or value
+    assert((mode=='extrapolate' or mode=='interpolate') and cfg.native_gate_render_fps,
+     stage[1]..' must be true, extrapolate or interpolate and needs native_gate_render_fps')
+    if not (gate[stage[2]] and gate[stage[2]](mode)==1) then ticklog.refuse(''..stage[2]..'='..tostring(mode));done=true;return end
+    log(stage[3]..'_ARMED mode='..mode)
+   end
+  end
+  if cfg.native_gate_render_display_rows then
+   assert(cfg.native_gate_render_camera or cfg.native_gate_render_motion,'native_gate_render_display_rows needs native_gate_render_camera or native_gate_render_motion')
+   if not (gate.render_display_rows and gate.render_display_rows()==1) then ticklog.refuse('render_display_rows');done=true;return end
+  end
   local start=snapshot and gate.boot or gate.start
-  -- How long the gate waits for relay permits before stopping (reason 7); the gate accepts 1000..120000 ms.
-  local relay_timeout=cfg.native_gate_relay_timeout_ms or 60000
-  assert(type(relay_timeout)=='number' and relay_timeout%1==0 and relay_timeout>=1000 and relay_timeout<=120000,
-   'native_gate_relay_timeout_ms must be 1000..120000')
-  local code=start(tonumber(cfg.slot:sub(2)),cfg.port,cfg.token,relay_timeout,digest,options)
-  if code~=0 then log('REFUSED code='..code..(gate.verify_stage and ' stage='..tostring(gate.verify_stage()) or ''));done=true;return end
+  -- native_gate_arm_timeout_ms (default 60000, 1000..120000): how long a client waits for a permit, also for its peers
+  -- to finish loading (a mixed Windows/Linux session loads at very different speeds).
+  local wait_ms=cfg.native_gate_arm_timeout_ms or 60000
+  assert(type(wait_ms)=='number' and wait_ms%1==0 and wait_ms>=1000 and wait_ms<=120000,'native_gate_arm_timeout_ms must be 1000..120000')
+  local code=start(tonumber(cfg.slot:sub(2)),cfg.port,cfg.token,wait_ms,digest,options)
+  if code~=0 then ticklog.refuse('code='..code..(gate.verify_stage and ' stage='..tostring(gate.verify_stage()) or ''),X4LAN_NATIVE_GATE_DEFAULTS and X4LAN_NATIVE_GATE_DEFAULTS.STOP_REASONS[code]);done=true;return end
   native_owned=true
   if cfg.native_gate_registry_md_trace then
    local capability=gate.poll();assert(capability.registry_md_installed==1 and capability.registry_md_schema==2,'native MD observer schema2 not installed')
@@ -2155,6 +2790,17 @@ local function frame()
    local ms=cfg.native_gate_timer_resolution
    assert(type(ms)=='number' and ms>=1 and ms<=15 and ms==math.floor(ms) and gate.timer_resolution and gate.timer_resolution(ms)==1,'timer resolution refused')
    log('TIMER_RESOLUTION_ARMED ms='..ms)
+  end
+  -- Where the MoveWorker's frame goes (attention study C9, also C10): a sampler thread
+  -- suspends the MoveWorker every N ms (1..50), walks its stack and counts engine
+  -- functions (inclusive) and the innermost X4 code; reads only, no simulated value
+  -- changes. SAMPLE_PROFILE status per tick, SAMPLE_PROFILE_ROW rows at stop
+  -- (tools/dev/census_profile.py). Default off.
+  if cfg.native_gate_sample_profile then
+   local ms=cfg.native_gate_sample_profile
+   assert(type(ms)=='number' and ms>=1 and ms<=50 and ms==math.floor(ms) and gate.sample_profile and gate.sample_profile_status and
+    gate.sample_profile_row and gate.sample_profile(ms)==1,'sample profile refused '..tostring(gate.sample_profile_status and gate.sample_profile_status()))
+   log('SAMPLE_PROFILE_ARMED ms='..ms)
   end
   -- The 26 transcendental CRT math entries and the 3 compiler sin/cos helpers to
   -- the portable library (src/native/portable_math): the same bits on every CPU,
@@ -2276,6 +2922,38 @@ local function frame()
    local ok,why=gate.ui_replay_pins()
    assert(ok==1,'ui replay refused: '..tostring(why))
    log('UI_REPLAY_PINS ok=1')
+  end
+  -- The UI guard's pins (lockstep_ui_guard.h): every entry of the inventory on the pinned build, or nothing starts.
+  if cfg.native_gate_ui_guard~=nil and cfg.native_gate_ui_guard~=false then
+   assert(cfg.native_gate_ui_replay~=nil and cfg.native_gate_ui_replay~=false,'ui guard refused: needs native_gate_ui_replay (its local phases)')
+   assert(gate.ui_guard_pins,'ui guard refused: gate without ui_guard_pins')
+   local ok,why=gate.ui_guard_pins()
+   assert(ok==1,'ui guard refused: '..tostring(why))
+   log('UI_GUARD_PINS ok=1')
+  end
+  -- The trade family's pins (lockstep_ui_trade.h): its hooked entries, the Lua globals it wraps, the money walk.
+  if type(cfg.native_gate_ui_replay)=='table' and X4LAN_UI_REPLAY_CORE then
+   local mask=X4LAN_UI_REPLAY_CORE.families(cfg.native_gate_ui_replay)
+   if mask and math.floor(mask/X4LAN_UI_REPLAY_CORE.FAMILY.trade)%2==1 then
+    assert(gate.ui_trade_pins,'ui trade refused: gate without ui_trade_pins')
+    local ok,why=gate.ui_trade_pins()
+    assert(ok==1,'ui trade refused: '..tostring(why))
+    log('UI_TRADE_PINS ok=1')
+   end
+   -- The faction family's pins (lockstep_ui_faction.h): the rule managers' code, the player's settings, the trade scope's.
+   if mask and math.floor(mask/X4LAN_UI_REPLAY_CORE.FAMILY.faction)%2==1 then
+    assert(gate.ui_faction_pins,'ui faction refused: gate without ui_faction_pins')
+    local ok,why=gate.ui_faction_pins()
+    assert(ok==1,'ui faction refused: '..tostring(why))
+    log('UI_FACTION_PINS ok=1')
+    -- Player settings per slot (lockstep_player_settings.h): its readers' bodies, setters and getters, before any patch.
+    if cfg.native_gate_player_settings_per_slot then
+     assert(gate.player_settings_pins,'player settings refused: gate without player_settings_pins')
+     local fine,pin=gate.player_settings_pins()
+     assert(fine==1,'player settings refused: '..tostring(pin))
+     log('PLAYER_SETTINGS_PINS ok=1')
+    end
+   end
   end
   -- Render RNG split: VBI slot 10 (GameRender::Move, the camera render) runs on
   -- a private thread-RNG word, so the view no longer reaches the simulation
@@ -2478,7 +3156,21 @@ local function frame()
     assert((src=='player' or src=='ship') and gate.view_points_source and gate.view_points_source(src)==1,'view points source refused')
     log('VIEW_POINTS_SOURCE_ARMED source='..src)
    end
+   -- Measurement knob (attention study C9): which pilot slots count as view
+   -- points, bit k-1 = slot k (0..15; default all). A masked slot's sector runs
+   -- at the attention it would have without that player, on every client alike,
+   -- so an A/B run measures the price of that slot's high-attention bubble. Not a
+   -- play mode: a masked player's ship flies the low-attention model. Default off.
+   if cfg.native_gate_view_points_mask~=nil and cfg.native_gate_view_points_mask~=false then
+    local mask=cfg.native_gate_view_points_mask
+    assert(cfg.native_gate_view_points~='observe' and type(mask)=='number' and mask>=0 and mask<=15 and math.floor(mask)==mask and
+     gate.view_points_mask and gate.view_points_mask(mask)==1,'view points mask refused')
+    log('VIEW_POINTS_MASK_ARMED mask='..mask)
+   end
+   if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.arm() end
   end
+  assert(cfg.native_gate_view_points_mask==nil or cfg.native_gate_view_points_mask==false or cfg.native_gate_view_points,
+   'view points mask needs native_gate_view_points')
   assert(not cfg.native_gate_view_triggers or cfg.native_gate_view_points,'view triggers need native_gate_view_points')
   assert(not cfg.native_gate_view_ui or cfg.native_gate_view_points,'view ui needs native_gate_view_points')
   assert(not cfg.native_gate_view_points_source or cfg.native_gate_view_points,'view points source needs native_gate_view_points')
@@ -2604,7 +3296,7 @@ local function frame()
   -- the camera reads of the highway scene, HighwayBooster and Zone::vfunc921. Need view points and a pass join.
   -- Default off; stop reasons 166, 167, 168.
   -- highway_speed: an AI ship's tube speed jitter (HighwayFlightControlModel +0x80) from its portable key instead of its
-  -- per-process runtime ID; needs the world identities too. Default off; stop reason 130.
+  -- per-process runtime ID; needs the world identities too. Default off; stop reason 165.
   assert(not cfg.native_gate_highway_speed or cfg.native_gate_world_identities,'highway speed needs native_gate_world_identities')
   -- view_scenes: a physics scene for every sector with a view point, anchored like scene A; needs the scenes group. Default off.
   assert(not cfg.native_gate_view_scenes or cfg.native_gate_physics_scenes,'view scenes need native_gate_physics_scenes')
@@ -2621,7 +3313,7 @@ local function frame()
   end
   -- traffic_views: 'block' no view makes a mass traffic ship real; 'observe' the simulation's traffic pass per view point
   -- counts and writes nothing; 'view' the pass queues and places them, the render pass only draws (lockstep_traffic_rows.h).
-  -- The pass needs the traffic rows group, armed with it. Default off; stop reason 130.
+  -- The pass needs the traffic rows group, armed with it. Default off; stop reason 165.
   if cfg.native_gate_traffic_views then
    local mode=cfg.native_gate_traffic_views
    local groups=({block={'traffic_views'},observe={'traffic_rows','traffic_pass_observe'},
@@ -2636,7 +3328,7 @@ local function frame()
    log('TRAFFIC_VIEWS_ARMED mode='..mode)
   end
   -- field_fill: field objects (asteroids) from view point 1 at a fixed point of the frame, not from each client's render
-  -- pass and real camera ('view'); 'block' only closes the render pass's insert. Needs the fields group. Default off; stop reason 130.
+  -- pass and real camera ('view'); 'block' only closes the render pass's insert. Needs the fields group. Default off; stop reason 165.
   if cfg.native_gate_field_fill then
    local mode=cfg.native_gate_field_fill
    assert((mode=='view' or mode=='block') and cfg.native_gate_region_fields and cfg.native_gate_view_points and
@@ -2789,6 +3481,8 @@ local function frame()
   -- The flight parameter refresh recomputed by our strict code next to the native one; per output field the
   -- ulp distance and FP_REDIRECT_ROWs for up to four watched saved IDs in ticks 1..N (Option B slice 1;
   -- 'shadow' writes nothing to the game; a lost hook site stops with 179). Default off.
+  assert(not cfg.native_gate_fp_redirect_solver or cfg.native_gate_fp_redirect,'fp redirect solver needs native_gate_fp_redirect') -- FR27
+  assert(not cfg.native_gate_fp_redirect_drones or cfg.native_gate_fp_redirect,'fp redirect drones needs native_gate_fp_redirect') -- FR30
   if cfg.native_gate_fp_redirect then
    local watch=cfg.native_gate_fp_redirect_watch or {}
    assert((cfg.native_gate_fp_redirect=='shadow' or cfg.native_gate_fp_redirect=='writer' or cfg.native_gate_fp_redirect=='redirect') and type(watch)=='table' and #watch<=4 and (#watch==0 or cfg.native_gate_world_identities) and
@@ -2799,6 +3493,29 @@ local function frame()
    local ticks=cfg.native_gate_fp_redirect_ticks or 3
    assert(gate.fp_redirect(cfg.native_gate_fp_redirect,ticks)==1,'fp redirect refused '..tostring(gate.fp_redirect_status()))
    log('FP_REDIRECT_ARMED mode='..cfg.native_gate_fp_redirect..' watched='..#watch..' ticks='..ticks)
+   -- FR27: the GetSafePos solver on one portable implementation (lockstep_safe_pos.h) on both executables; after the
+   -- step chain (whose FR25 entry hook then routes it). 'redirect' runs ours on the game's memory, 'shadow' native.
+   if cfg.native_gate_fp_redirect_solver then
+    assert((cfg.native_gate_fp_redirect_solver=='shadow' or cfg.native_gate_fp_redirect_solver=='redirect') and gate.fp_redirect_solver and
+     gate.fp_redirect_solver(cfg.native_gate_fp_redirect_solver)==1,'fp redirect solver refused '..tostring(gate.fp_redirect_status()))
+    log('FP_REDIRECT_SOLVER_ARMED mode='..cfg.native_gate_fp_redirect_solver)
+   end
+   -- FR30: the drone factors of get_attackstrength's drone path (lockstep_drone_factors.h) at their native instructions
+   -- on both executables; 'redirect' keeps ours (Windows' order), 'shadow' native; both compared (FP_REDIRECT_STOP dr=).
+   if cfg.native_gate_fp_redirect_drones then
+    assert((cfg.native_gate_fp_redirect_drones=='shadow' or cfg.native_gate_fp_redirect_drones=='redirect') and gate.fp_redirect_drones and
+     gate.fp_redirect_drones(cfg.native_gate_fp_redirect_drones)==1,'fp redirect drones refused '..tostring(gate.fp_redirect_status()))
+    log('FP_REDIRECT_DRONES_ARMED mode='..cfg.native_gate_fp_redirect_drones)
+   end
+   -- FR29b: the attack capture's call sites to stubs on the fp redirect page (read-only, default off).
+   if cfg.native_gate_fp_attack_capture then
+    for _,id in ipairs(cfg.native_gate_fp_attack_watch or {}) do
+     assert(type(id)=='string' and #id==16 and id:match('^[0-9a-f]+$') and gate.fp_attack_watch(id)==1,'fp attack watch refused '..tostring(id))
+    end
+    local w=cfg.native_gate_fp_attack_capture
+    assert(gate.fp_attack(w[1],w[2])==1,'fp attack capture refused '..tostring(gate.fp_attack_status()))
+    log('FP_ATTACK_ARMED '..tostring(gate.fp_attack_status()))
+   end
   end
   if cfg.native_gate_weapon_fire_rng then
    assert(cfg.native_gate_weapon_fire_rng==true and cfg.native_gate_world_identities and gate.weapon_fire_rng and
@@ -3075,14 +3792,14 @@ local function frame()
     gate.cutscene_ready_status and gate.cutscene_ready()==1,'cutscene ready refused '..tostring(gate.cutscene_ready_status and gate.cutscene_ready_status()))
    log('CUTSCENE_READY_ARMED')
   end
-  -- Every speech line ends on its text timer, whatever the local sound does (lockstep_speak_timer.h), stop reason 130.
+  -- Every speech line ends on its text timer, whatever the local sound does (lockstep_speak_timer.h), stop reason 139.
   if cfg.native_gate_speak_timer then
    assert(cfg.native_gate_speak_timer==true and snapshot and gate.speak_timer and gate.speak_timer_status and gate.speak_timer()==1,
     'speak timer refused '..tostring(gate.speak_timer_status and gate.speak_timer_status()))
    log('SPEAK_TIMER_ARMED')
   end
   -- The unpaused clock that times speech lines starts the session at one value on every client
-  -- (lockstep_speech_clock.h), stop reason 183.
+  -- (lockstep_speech_clock.h), stop reason 196.
   if cfg.native_gate_speech_clock then
    assert(cfg.native_gate_speech_clock==true and snapshot and gate.speech_clock and gate.speech_clock_status and gate.speech_clock()==1,
     'speech clock refused '..tostring(gate.speech_clock_status and gate.speech_clock_status()))
@@ -3253,6 +3970,17 @@ local function frame()
     gate.shape_order(mode)==1,'shape order refused '..tostring(gate.shape_order_status and gate.shape_order_status()))
    log('SHAPE_ORDER_ARMED mode='..mode)
   end
+  -- A body starting an animation (BodyClass -> slot 17 of the character manager) draws from the frame's RNG word only
+  -- when the loader thread has finished its character: GetAssetIntern never loads during play, and a missing character
+  -- means no play and no draw (the DF2 wharf patrol's three classes, reports/LOCKSTEP-ON-FOOT-20261101.txt section 15).
+  -- 'sync' loads a missing character or motion through the engine's synchronous load first and runs the play on a
+  -- keyed word; 'observe' only logs CHARACTER_PLAY_ROW per call (lockstep_character_play.h, stop 188). Windows gate.
+  if cfg.native_gate_character_play then
+   local mode=cfg.native_gate_character_play
+   assert(snapshot and (mode=='observe' or mode=='sync') and gate.character_play and gate.character_play_status and gate.character_play_row and
+    gate.character_play(mode)==1,'character play refused '..tostring(gate.character_play_status and gate.character_play_status()))
+   log('CHARACTER_PLAY_ARMED mode='..mode)
+  end
   -- Object navigation octrees are built on their own thread and published
   -- whenever a build ends (docking approach, pathing); 'sync' builds every
   -- octree requested in a frame at the gate's join after it; 'deadline' lets
@@ -3270,6 +3998,18 @@ local function frame()
     gate.nav_octree_agree)) and gate.nav_octree and gate.nav_octree_status and gate.nav_octree_row and gate.nav_octree(mode,delay,snap)==1,
     'nav octree refused '..tostring(gate.nav_octree_status and gate.nav_octree_status()))
    log('NAV_OCTREE_ARMED mode='..mode..(mode=='deadline' and ' delay='..delay or '')..(snap==1 and ' snapshot=1' or ''))
+  end
+  -- Interior nav helpers (AI::NavMeshCache, lockstep_nav_mesh.h): 'sync' lets the cache's thread take and build only
+  -- inside the gate's join, at the join's game time, so a station's interior helper, its NavHelperGeneratedEvent and the
+  -- people md/npc_instantiation.xml places for it arrive in the same tick on every client; its receipt joins the digest.
+  -- What the snapshot load asks for waits for the joins (none is built before the first; X4 keeps a requested ID busy for
+  -- two UniverseFrameUpdates, so the load's helpers are built at join 1). 'observe' only logs NAV_MESH_ROW per finished
+  -- build (the frame it finished in). Windows gate. Default off.
+  if cfg.native_gate_nav_mesh then
+   local mode=cfg.native_gate_nav_mesh
+   assert(snapshot and (mode=='observe' or mode=='sync') and gate.nav_mesh and gate.nav_mesh_status and gate.nav_mesh_row and gate.nav_mesh_frame and
+    gate.nav_mesh(mode)==1,'nav mesh refused '..tostring(gate.nav_mesh_status and gate.nav_mesh_status()))
+   log('NAV_MESH_ARMED mode='..mode)
   end
   -- Read-only: every nav octree invalidation through the module's stubs
   -- counted by (phase menu/load/run, site, return address, object class,
@@ -3418,12 +4158,37 @@ local function frame()
   if cfg.native_gate_pilot_inputs then
    local slots,source,window=cfg.native_gate_pilot_slots,cfg.native_gate_pilot_source,cfg.native_gate_pilot_window or {30,600}
    local delay=source=='wire' and (cfg.native_gate_pilot_delay or 3) or 0
+   -- Protocol 5: the largest delay the plan may need until it arrives; a UI reloaded after it re-arms with the plan's.
+   if source=='wire' and X4LAN_NATIVE_ADAPTIVE then delay=(gate.adaptive_plan and gate.adaptive_plan()) or X4LAN_NATIVE_ADAPTIVE.kmax+2 end
    local suppress=cfg.native_gate_pilot_suppress_local
    assert(snapshot and cfg.native_gate_pilot_inputs==true and cfg.native_gate_serial_pathing and cfg.native_gate_world_identities and
     not cfg.native_gate_player_request_observer and type(slots)=='table' and #slots>=1 and #slots<=4 and
     (source=='script' or (source=='wire' and type(gate.propose)=='function')) and type(window)=='table' and #window==2 and
     (suppress==nil or suppress==true) and (cfg.native_gate_pilot_capture==nil or cfg.native_gate_pilot_capture==true) and
     gate.pilot_inputs and gate.pilot_inputs(table.concat(slots,','),source,delay,window[1],window[2],suppress and 1 or 0)==1,'pilot inputs refused')
+   -- Hot join (native_gate_join.absent, checked with the join section above): the session's absent slots, neutral until
+   -- their HANDOVER (lockstep_pilot_inputs.h). Before the first tick, with the pilot modules.
+   do
+    local listed=type(cfg.native_gate_join)=='table' and cfg.native_gate_join.absent
+    local mask=0
+    for _,k in ipairs(listed or {}) do if k<=4 then mask=mask+2^(k-1) end end
+    if mask>0 then
+     assert(gate.pilot_absent and gate.pilot_absent(mask)==1,'pilot absent slots refused mask='..mask)
+     log('PILOT_ABSENT_ARMED mask='..mask..' '..tostring(gate.pilot_absent_state()))
+    end
+    -- The window's Lua state (the death module's start poses and counters, the stock aim, the UI families' one-shot test
+    -- fixtures at window start - 4: fleet, minimum hull, trade and build funds) is not in the package: a joiner takes the
+    -- session's window and joins before take-2 (start - 5), where all of it is still unset on the session (the gate stops a
+    -- join inside the window, 91 join_inside_window; this refuses one after it as well).
+    if cfg.native_gate_join and X4LAN_JOIN_CORE then
+     X4LAN_JOIN_CORE.provide('pilot_window',function() return 'v1|'..window[1]..','..window[2] end,function(text)
+      assert(text=='v1|'..window[1]..','..window[2],'join: the session pilot window '..tostring(text)..' is not this client window '..window[1]..','..window[2])
+      local base=gate.join_base and gate.join_base()
+      assert(base and base+1<=window[1]-5,'join: the session tick T='..tostring(base)..' is past the pilot window take-2 ('..(window[1]-5)..
+       '): the window Lua state (death poses and counters, stock aim, the UI one-shot fixtures) is not in the join package')
+     end)
+    end
+   end
    if source=='wire' then
     -- Records ride the pilot section: apply keeps every slot's admitted record
     -- for pilot_frame to stage, the proposal is this tick's local capture.
@@ -3508,9 +4273,9 @@ local function frame()
     assert(armed==1,'pilot stock refused: '..tostring(why))
     pilot_view.stock=capture and 'capture' or 'replay';pilot_view.stock_slots=slots
     -- The script: one for every capturing client ('demo', 'demo2'..'demo4', 'aim' or an event list) or one
-    -- per client ({'demo','demo2'}, false for none).
+    -- per client ({'demo','demo2'}, false for none, or an event list each: {{{tick,kind,id,value},...},false}).
     local script=cfg.native_gate_pilot_stock_script
-    if type(script)=='table' and type(script[1])~='table' then script=script[slot] end
+    if type(script)=='table' and (type(script[1])~='table' or type(script[1][1])=='table') then script=script[slot] end
     if capture then pilot_view.stock_script=pilot_view.stock_plan(script,window[1]) end
     pilot_view.arm_stock()
     log('PILOT_STOCK_ARMED slot='..slot..' capture='..(capture and 1 or 0)..' slots='..mask..' script='..tostring(capture and script and
@@ -3546,6 +4311,32 @@ local function frame()
     assert(armed==1,'pilot present refused: '..tostring(why))
     log('PILOT_PRESENT_ARMED slot='..slot..' mode='..tostring(cfg.native_gate_pilot_present))
    end
+   -- Own-ship display prediction (lockstep_own_predict.h, stop reason 184; per client like the device; default
+   -- off): 'observe' (or true) predicts this client's slot ship (and, unless native_gate_own_predict_others =
+   -- false, the other stock slots' ships) from the inputs not yet applied and logs the error against the
+   -- authoritative pose once they apply; 'present' also draws them at the predicted pose in slot 10 (the render
+   -- split; 'swap' the same swap with the simulated pose, a census separation run). Display only: the simulation
+   -- and the census never see it. native_gate_own_predict_tau: correction time constant in ms (150);
+   -- native_gate_own_predict_horizon: cap in ticks (10); native_gate_own_predict_rows: an OWN_PREDICT row every N
+   -- ticks (1; 0 none).
+   local own_predict=own(cfg.native_gate_own_predict)
+   if own_predict~=nil and own_predict~=false then
+    local mode=own_predict==true and 'observe' or own_predict
+    local others,tau,cap,rows=cfg.native_gate_own_predict_others,cfg.native_gate_own_predict_tau or 150,
+     cfg.native_gate_own_predict_horizon or 10,cfg.native_gate_own_predict_rows or 1
+    assert((mode=='observe' or mode=='present' or mode=='swap') and pilot_view.stock=='capture' and (mode=='observe' or cfg.native_gate_render_rng_split==true) and
+     (others==nil or type(others)=='boolean') and type(tau)=='number' and tau%1==0 and tau>=0 and tau<=2000 and
+     type(cap)=='number' and cap%1==0 and cap>=1 and cap<=30 and type(rows)=='number' and rows%1==0 and rows>=0 and rows<=3600 and
+     gate.own_predict,'own predict refused')
+    local armed,why=gate.own_predict(mode,others==false and 0 or 1,tau,cap)
+    assert(armed==1,'own predict refused: '..tostring(why))
+    pilot_view.own_predict,pilot_view.own_predict_rows=mode,rows
+    log('OWN_PREDICT_ARMED slot='..slot..' mode='..mode..' others='..tostring(others~=false)..' tau_ms='..tau..' horizon_cap='..cap..' rows='..rows)
+   else
+    for _,name in ipairs({'native_gate_own_predict_others','native_gate_own_predict_tau','native_gate_own_predict_horizon','native_gate_own_predict_rows'}) do
+     assert(cfg.native_gate_own_predict~=nil or cfg[name]==nil,'own predict refused: '..name..' needs native_gate_own_predict')
+    end
+   end
    -- A slot ship's death (lockstep_pilot_death.h, stop reason 163; every client of a stock session): the slot
    -- is dead on the same tick everywhere, the session goes on. native_gate_pilot_respawn: the delay in ticks
    -- until a new ship of the slot's macro at its start (absent: the slot stays dead).
@@ -3566,6 +4357,45 @@ local function frame()
    else
     assert(cfg.native_gate_pilot_respawn==nil,'pilot respawn refused: needs native_gate_pilot_death')
     assert(cfg.native_gate_pilot_death_suit==nil,'pilot death suit refused: needs native_gate_pilot_death')
+   end
+   -- Slot 1 on foot (lockstep_pilot_foot.h, stop reason 185; every client of a stock session, default off): slot 1 gets
+   -- up (the GET_UP key, or the docked menu's Get Up claimed in the UI guard) and walks through the stock record on
+   -- every client; slots 2..N's walking keys and the pick's interaction click are refused. Needs the UI guard: the
+   -- docked menu's GetUp would otherwise run X4's GetUp on one client.
+   if cfg.native_gate_pilot_foot~=nil then
+    assert(cfg.native_gate_pilot_foot==true,'pilot foot refused: native_gate_pilot_foot must be true')
+    assert(cfg.native_gate_pilot_stock==true,'pilot foot refused: needs native_gate_pilot_stock')
+    assert(cfg.native_gate_ui_replay~=nil and cfg.native_gate_ui_replay~=false and cfg.native_gate_ui_guard~=nil and cfg.native_gate_ui_guard~=false,
+     'pilot foot refused: needs native_gate_ui_replay and native_gate_ui_guard')
+    assert(gate.pilot_foot,'pilot foot refused: gate without pilot_foot')
+    local armed,why=gate.pilot_foot()
+    assert(armed==1,'pilot foot refused: '..tostring(why))
+    log('PILOT_FOOT_ARMED slot='..slot)
+   end
+   -- Slots 2..N in X4's world tree at their seats (lockstep_pilot_foot_body.h, stage 1 of their bodies, stop reason 185,
+   -- default off): every client connects P_k into its seat's room with X4's own seat connect, after the seats; off again
+   -- before their release. With the death module the kill guard takes a body off its room before X4's kill reaches it.
+   if cfg.native_gate_pilot_foot_bodies~=nil then
+    assert(cfg.native_gate_pilot_foot_bodies==true,'pilot foot bodies refused: native_gate_pilot_foot_bodies must be true')
+    assert(cfg.native_gate_pilot_foot==true and cfg.native_gate_pilot_stock_slots~=nil,
+     'pilot foot bodies refused: needs native_gate_pilot_foot and native_gate_pilot_stock_slots')
+    assert(gate.pilot_foot_bodies,'pilot foot bodies refused: gate without pilot_foot_bodies')
+    local armed,why=gate.pilot_foot_bodies()
+    assert(armed==1,'pilot foot bodies refused: '..tostring(why))
+    log('PILOT_FOOT_BODIES_ARMED slot='..slot)
+   end
+   -- Slots 2..N get up and walk (lockstep_pilot_foot_slots.h, stop reason 185, default off): slot k's GET_UP (the key on
+   -- client k, the docked menu's Get Up claimed for slot k) is consumed in slot k's scope on every client; its walking
+   -- keys ride its stock record; its FirstPersonController updates in its scope after X4's own. With the death module a
+   -- slot dies seated as before; a walking slot's ship lost is no death (lost:k in PILOT_DEATH, stranded until a respawn).
+   if cfg.native_gate_pilot_foot_slots~=nil then
+    assert(cfg.native_gate_pilot_foot_slots==true,'pilot foot slots refused: native_gate_pilot_foot_slots must be true')
+    assert(cfg.native_gate_pilot_foot==true and cfg.native_gate_pilot_stock_slots~=nil,
+     'pilot foot slots refused: needs native_gate_pilot_foot and native_gate_pilot_stock_slots')
+    assert(gate.pilot_foot_slots,'pilot foot slots refused: gate without pilot_foot_slots')
+    local armed,why=gate.pilot_foot_slots()
+    assert(armed==1,'pilot foot slots refused: '..tostring(why))
+    log('PILOT_FOOT_SLOTS_ARMED slot='..slot)
    end
    if cfg.native_gate_ui_replay~=nil and cfg.native_gate_ui_replay~=false then pilot_view.arm_ui_replay(slot,window) end
    -- Camera follow: this client watches its own slot ship through the stock
@@ -3652,7 +4482,9 @@ local function frame()
   end
   if cfg.native_gate_npc_pilot then assert(gate.npc_pilot_watch(cfg.native_gate_npc_pilot)==1,'NPC pilot watch refused') end
   armed=true;log('ARMED slot='..cfg.slot..' hash_scope='..cfg.native_gate_hash..(wire3 and ' wire=3 clients='..clients or '')..
-   ((cfg.native_gate_lookahead or 0)>0 and ' lookahead='..cfg.native_gate_lookahead or ''))
+   (X4LAN_NATIVE_ADAPTIVE and ' lookahead=adaptive max='..X4LAN_NATIVE_ADAPTIVE.kmax or
+    (cfg.native_gate_lookahead or 0)>0 and ' lookahead='..cfg.native_gate_lookahead or '')..(cfg.native_gate_wire_crypto and ' wire_crypto=1' or '')..
+   (cfg.native_gate_peer_window and ' peer_window='..cfg.native_gate_peer_window or ''))
   local jit_ok,jit_on=pcall(function() return jit.status() end)
   log('LUA_RUNTIME jit='..(jit_ok and (jit_on and 'on' or 'off') or 'unknown')..' digest='..(gate.sha256 and 'native' or 'lua'))
   if not snapshot then log('RNG tick=0 state='..tostring(assert(gate.poll()).rng));return end
@@ -3661,6 +4493,11 @@ local function frame()
  if not s and snapshot then return end -- Loading UI is not the simulation owner.
  assert(s,'gate poll unavailable')
  if profile then profile.begin() end
+ -- Wire crypto: once keyed, this client's public key and the roster fingerprint, for players to compare out of band.
+ if cfg.native_gate_wire_crypto and not wire_crypto_keyed and (tonumber(s.issued) or 0)>0 then
+  local status=tostring(gate.wire_crypto_status())
+  if status:find(' keyed=1 ',1,true) then wire_crypto_keyed=true;log('WIRE_CRYPTO_KEYED '..(status:match('key=%x+ roster=%x+') or status)) end
+ end
  -- Status stride: this frame's output belongs to tick s.issued; a stop first writes the held ticks.
  if s.active==0 then ticklog.flush() else ticklog.open((not snapshot or (s.boot_phase>=3 and s.issued~=s.report_tick)) and tonumber(s.issued)) end
  if diagnostic and s.active==0 and not assert(X4LAN_NATIVE_DIAGNOSTIC,'diagnostic adapter missing').drain(gate,false) then return end
@@ -3687,9 +4524,23 @@ local function frame()
   end
   log(string.format('STOP slot=%s completed=%d reason=%d restored=%d wait_game_delta=%.9g max_dt_error=%.9g',
    cfg.slot,tonumber(s.completed),s.reason,s.restored,s.wait_game_delta,s.max_dt_error))
+  -- Every piloting module's why at once, before any other stop row can fail (w1foot: stop 185 without its why).
+  if gate.pilot_why then pcall(function() local why=gate.pilot_why();if why then log('PILOT_STOP_WHY '..why) end end) end
+  ticklog.stopped(s.reason)
   if s.reason==3 and gate.unowned then log('UNOWNED '..tostring(gate.unowned())) end
   log('PATH joins='..s.path_joins..' restored='..s.path_restored..' rng_seeds='..s.rng_seeds..' boot_passes_menu='..tostring(s.path_boot_passes_menu)..' boot_passes_load='..tostring(s.path_boot_passes_load))
-  if (cfg.native_gate_lookahead or 0)>0 then log('LOOKAHEAD_STOP '..tostring(gate.lookahead_status())) end
+  if X4LAN_NATIVE_ADAPTIVE then log('ADAPTIVE_STOP '..tostring(gate.adaptive_status()))
+  elseif (cfg.native_gate_lookahead or 0)>0 then log('LOOKAHEAD_STOP '..tostring(gate.lookahead_status())) end
+  if cfg.native_gate_wire_crypto then log('WIRE_CRYPTO_STOP '..tostring(gate.wire_crypto_status())) end
+  if cfg.native_gate_fork_save then log('FORK_SAVE_STOP '..tostring(gate.fork_save_status())) end
+  if join_client then
+   log('JOIN_STOP '..tostring(gate.join_status()))
+   -- The steering and spline models after step T+1, on savers and joiner alike (report 1.14).
+   if gate.join_t1_row then for i=1,32 do local row=gate.join_t1_row(i);if not row then break end;log('JOIN_T1 '..row) end end
+   -- A joiner stopped before its first tick (J1 j1-8: the admission's frame) has not logged its unpaired samples yet.
+   if join_joiner and not join_restored then X4LAN_JOIN_CORE.log_unpaired(gate,log) end
+  end
+  if cfg.native_gate_peer_window then log('PEER_STOP '..tostring(gate.peer_status())) end
   if cfg.native_gate_player_observer then assert(X4LAN_NATIVE_PLAYER_TRACE,'player observer adapter missing')(gate,true) end
   if cfg.native_gate_player_probe=='agreed-fire' then assert(X4LAN_NATIVE_PLAYER_FIRE_TRACE,'player firing adapter missing')(gate,true) end
   if (tonumber(s.registry_count) or 0)>0 then
@@ -3769,6 +4620,8 @@ local function frame()
   if cfg.native_gate_body_pose then log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end
   if cfg.native_gate_path_budget then log('PATH_BUDGET_STOP '..tostring(gate.path_budget_status())) end
   if cfg.native_gate_render_rng_split then log('RENDER_RNG_SPLIT_STOP '..tostring(gate.render_rng_split_status())) end
+  if cfg.native_gate_render_fps then log('RENDER_FRAMES_STOP '..tostring(gate.render_frames_status())) end
+  if cfg.native_gate_render_camera or cfg.native_gate_render_motion then log('RENDER_DISPLAY_STOP '..tostring(gate.render_display_status())) end
   if cfg.native_gate_bullet_cadence then log('BULLET_CADENCE_STOP '..tostring(gate.bullet_cadence_status())) end
   if cfg.native_gate_speak_timer then log('SPEAK_TIMER_STOP '..tostring(gate.speak_timer_status())) end
   if cfg.native_gate_speech_clock then log('SPEECH_CLOCK_STOP '..tostring(gate.speech_clock_status())) end
@@ -3789,6 +4642,11 @@ local function frame()
   if cfg.native_gate_weapon_fire_rng then log('WEAPON_FIRE_RNG_STOP '..tostring(gate.weapon_fire_rng_status())) end
   if cfg.native_gate_engine_refresh_rng then log('ENGINE_REFRESH_RNG_STOP '..tostring(gate.engine_refresh_rng_status())) end
   if cfg.native_gate_portable_math then log('PORTABLE_MATH_STOP '..tostring(gate.portable_math_status())) end
+  if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.stop() end
+  if cfg.native_gate_sample_profile then
+   log('SAMPLE_PROFILE_STOP '..tostring(gate.sample_profile_status()))
+   for i=0,255 do local row=gate.sample_profile_row(i);if not row then break end;log('SAMPLE_PROFILE_ROW '..row) end
+  end
   if cfg.native_gate_exact_reciprocal then log('EXACT_RECIPROCAL_STOP '..tostring(gate.exact_reciprocal_status())) end
   if cfg.native_gate_fp_env then log('FP_ENV_STOP '..tostring(gate.fp_env_status())) end
   if cfg.native_gate_decimal then log('DECIMAL_STOP '..tostring(gate.decimal_status())) end
@@ -3797,7 +4655,9 @@ local function frame()
   if cfg.native_gate_physics_trace~=nil then log('PHYSICS_TRACE_STOP '..tostring(gate.physics_trace_status())) end
   if cfg.native_gate_body_order then log('BODY_ORDER_STOP '..tostring(gate.body_order_status())) end
   if cfg.native_gate_shape_order then log('SHAPE_ORDER_STOP '..tostring(gate.shape_order_status())) end
+  if cfg.native_gate_character_play then log('CHARACTER_PLAY_STOP '..tostring(gate.character_play_status())) end
   if cfg.native_gate_nav_octree then log('NAV_OCTREE_STOP '..tostring(gate.nav_octree_status())) end
+  if cfg.native_gate_nav_mesh then log('NAV_MESH_STOP '..tostring(gate.nav_mesh_status())) end
   if cfg.native_gate_nav_octree_sites then
    log('NAV_OCTREE_SITES_STOP '..tostring(gate.nav_octree_sites_status()))
    for i=0,511 do local row=gate.nav_octree_site_row(i);if not row then break end;if not row:find(' free$') then log('NAV_OCTREE_SITE at=stop '..row) end end
@@ -3814,11 +4674,12 @@ local function frame()
   if cfg.native_gate_pilot_inputs then log('PILOT_INPUTS_STOP '..tostring(gate.pilot_inputs_status())) end
   if pilot_camera_follow then log('PILOT_CAMERA_STOP '..tostring(gate.pilot_camera_status())) end
   if pilot_view.predict then log('PILOT_PREDICT_STOP '..tostring(gate.pilot_predict_status())) end
+  if pilot_view.own_predict then log('OWN_PREDICT_STOP '..tostring(gate.own_predict_status())) end
   if pilot_view.hits then log('HIT_CLAIMS_STOP '..tostring(gate.hit_claims_status())) end
   if pilot_view.fire then log('PILOT_FIRE_STOP '..tostring(gate.pilot_fire_status())) end
   if cfg.native_gate_gravidar_key_all or cfg.native_gate_gravidar_time_sync then log('GRAVIDAR_KEY_STOP '..tostring(gate.gravidar_key_status())) end
   if cfg.native_gate_gravidar_watch or cfg.native_gate_speech_game_time or cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or
-     cfg.native_gate_shape_order or cfg.native_gate_nav_octree or cfg.native_gate_event_rng or cfg.native_gate_ui_cargo or cfg.native_gate_supply_rows or cfg.native_gate_ui_lazy or cfg.native_gate_supply_wants~=nil or cfg.native_gate_loadout_order or cfg.native_gate_order_canon or cfg.native_gate_address_order or cfg.native_gate_pick_order or cfg.native_gate_macro_arena then
+     cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree or cfg.native_gate_nav_mesh or cfg.native_gate_event_rng or cfg.native_gate_ui_cargo or cfg.native_gate_supply_rows or cfg.native_gate_ui_lazy or cfg.native_gate_supply_wants~=nil or cfg.native_gate_loadout_order or cfg.native_gate_order_canon or cfg.native_gate_address_order or cfg.native_gate_pick_order or cfg.native_gate_macro_arena then
    drain_gravidar_watch(true)
   end
   if cfg.native_gate_gravidar_watch then log('GRAVIDAR_WATCH_STOP '..tostring(gate.gravidar_watch_status())) end
@@ -3842,6 +4703,7 @@ local function frame()
   if cfg.native_gate_loadout_order then log('LOADOUT_ORDER_STOP '..tostring(gate.loadout_order_status())) end
   if cfg.native_gate_step_trace then log('STEP_TRACE_STOP '..tostring(gate.step_trace_status())) end
   if cfg.native_gate_fp_redirect then log('FP_REDIRECT_STOP '..tostring(gate.fp_redirect_status())) end
+  if cfg.native_gate_fp_attack_capture then log('FP_ATTACK_STOP '..tostring(gate.fp_attack_status())) end
   if cfg.native_gate_coverage then log('COVERAGE_STOP '..tostring(gate.coverage_status())) end
   if cfg.native_gate_order_canon then log('ORDER_CANON_STOP '..tostring(gate.order_canon_status())) end
   if cfg.native_gate_pick_order then log('PICK_ORDER_STOP '..tostring(gate.pick_order_status())) end
@@ -3850,6 +4712,7 @@ local function frame()
   if cfg.native_gate_script_rng then drain_script_rng();log('SCRIPT_RNG_STOP '..tostring(gate.script_rng_status())) end
   if cfg.native_gate_md_timed_rng then log('MD_TIMED_RNG_STOP '..tostring(gate.md_timed_rng_status())) end
   if cfg.native_gate_guidance_local then log('GUIDANCE_LOCAL_STOP '..tostring(gate.guidance_local_status())) end
+  if cfg.native_gate_ui_guard and gate.ui_guard_status then log('UI_GUARD_STOP '..tostring(gate.ui_guard_status())) end
   if cfg.native_gate_boot_hold then log('BOOT_HOLD_STOP '..tostring(gate.boot_hold_status())) end
   if cfg.native_gate_md_resume_rng then drain_md_resume();log('MD_RESUME_RNG_STOP '..tostring(gate.md_resume_rng_status())) end
   if cfg.native_gate_ai_wait_rng then drain_ai_wait();log('AI_WAIT_RNG_STOP '..tostring(gate.ai_wait_rng_status())) end
@@ -3951,12 +4814,30 @@ local function frame()
     gate.guidance_local()==1,'guidance local refused '..tostring(gate.guidance_local_status and gate.guidance_local_status()))
    log('GUIDANCE_LOCAL_ARMED '..tostring(gate.guidance_local_status()))
   end
+  -- Hot join: the package is verified and the import mapping armed before the join save loads.
+  if join_joiner then
+   assert(gate.join_load(join_joiner.package,join_joiner.sha,join_joiner.mode=='report' and 1 or 0)==1,
+    'join package refused '..tostring(gate.join_status()))
+   -- The save this client boots from must be the one the package names.
+   local named=tostring(gate.join_status()):match(' rx_save_sha=(%x+) ')
+   assert(named==snapshot,'join: the snapshot '..tostring(snapshot)..' is not the package\'s save '..tostring(named))
+   log('JOIN_LOADED '..tostring(gate.join_status()))
+  end
   assert(gate.load_requested()==1,'load request refused')
   log('LOAD_REQUEST snapshot='..snapshot);LoadGame('save_009');return
  end
  if snapshot and (s.boot_phase<3 or s.issued==s.report_tick) then return end
  local tick=tonumber(s.issued)
- ui_events.tick=tick
+ -- A joiner's first tick follows its tick base T: the probe's own session state comes back from the package first.
+ if join_joiner and not join_restored then
+  local base=gate.join_base()
+  assert(base and tick==base+1,'join: first tick '..tick..' after the tick base '..tostring(base))
+  X4LAN_JOIN_CORE.restore_text(gate.join_lua_state())
+  join_restored=true
+  log('JOIN_ADMITTED base='..base..' '..tostring(gate.join_status()))
+  X4LAN_JOIN_CORE.log_unpaired(gate,log)
+ end
+ ticklog.ui_events.tick=tick
  if (tonumber(s.registry_count) or 0)>0 then
   local count=0
   for slot,handle,macro,owner in s.registry_manifest:gmatch('(%d+)/([0-9a-f]+)/([a-z0-9_]+)/([a-z0-9_]+)') do
@@ -3993,15 +4874,23 @@ local function frame()
  -- native_gate_rng_rows=true (diagnostic): the MoveWorker word after the frame's draws on every tick, written at
  -- once (the status stride keeps only every Nth): the first tick whose natural draws differ between clients.
  if cfg.native_gate_rng_rows then ticklog.write('RNG tick='..tick..' state='..tostring(s.rng)) else log('RNG tick='..tick..' state='..tostring(s.rng)) end
- if cfg.native_gate_frame_timing then ticklog.write('FRAME_TIMING tick='..tick..' '..tostring(gate.frame_timing())..' probe_us='..string.format('%.0f',probe_last_us or -1)) end
+ if cfg.native_gate_frame_timing then
+  -- render_split (Windows gate): slot 10 (render preparation) of the last step's MoveWorker frame and the rest of sim_us.
+  local split=gate.render_split and gate.render_split()
+  ticklog.write('FRAME_TIMING tick='..tick..' '..tostring(gate.frame_timing())..' probe_us='..string.format('%.0f',probe_last_us or -1)..(split and ' '..split or ''))
+ end
  local pilot_receipt=cfg.native_gate_pilot_inputs and pilot_frame(s,tick)
  if profile then profile.mark('pilot') end
  if cfg.native_gate_attention_all then
   ticklog.status('ATTENTION_ALL',tick,gate.attention_all_status,'attention all status unavailable')
  end
+ if cfg.native_gate_sample_profile then
+  ticklog.status('SAMPLE_PROFILE',tick,gate.sample_profile_status,'sample profile status unavailable')
+ end
  -- After the pilot slots resolved: latch this frame's viewpoints for the next frames.
  if cfg.native_gate_view_points then
   if gate.view_points_frame(tick)~=1 then error('view points frame failed '..tostring(gate.view_points_status()),0) end
+  if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.frame(tick) end
   ticklog.status('VIEW_POINTS',tick,gate.view_points_status,'view points status unavailable')
   if cfg.native_gate_view_rows then
    for _=1,8192 do
@@ -4063,9 +4952,13 @@ local function frame()
  if cfg.native_gate_shape_order then
   ticklog.status('SHAPE_ORDER',tick,gate.shape_order_status,'shape order status unavailable')
  end
+ if cfg.native_gate_character_play then
+  ticklog.status('CHARACTER_PLAY',tick,gate.character_play_status,'character play status unavailable')
+ end
  if cfg.native_gate_nav_octree then
   ticklog.status('NAV_OCTREE',tick,gate.nav_octree_status,'nav octree status unavailable')
  end
+ if cfg.native_gate_nav_mesh then ticklog.status('NAV_MESH',tick,gate.nav_mesh_status,'nav mesh status unavailable') end
  if cfg.native_gate_nav_octree_sites then
   log('NAV_OCTREE_SITES tick='..tick..' '..assert(gate.nav_octree_sites_status(),'nav octree sites status unavailable'))
   if not row_cursors.nav_octree_sites then -- the load phase is complete at the first admitted tick
@@ -4116,6 +5009,7 @@ local function frame()
  if cfg.native_gate_region_pass then
   ticklog.status('REGION_PASS',tick,gate.region_pass_status,'region pass status unavailable')
  end
+ ticklog.watch_statuses(tick)
  if cfg.native_gate_gravidar_digest then
   log('GRAVIDAR_DIGEST tick='..tick..' '..assert(gate.gravidar_digest_frame(),'Gravidar digest unavailable'))
   if cfg.native_gate_gravidar_digest_rows then drain_gravidar_digest() end
@@ -4186,6 +5080,19 @@ local function frame()
  if cfg.native_gate_path_budget then ticklog.status('PATH_BUDGET',tick,gate.path_budget_status,'path budget status unavailable') end
  -- Slot 6 runs before slot 10: frame= in the status is the previous admitted frame's render.
  if cfg.native_gate_render_rng_split then ticklog.status('RENDER_RNG_SPLIT',tick,gate.render_rng_split_status,'render RNG split status unavailable') end
+ if cfg.native_gate_render_fps then ticklog.status('RENDER_FRAMES',tick,gate.render_frames_status,'render frames status unavailable') end
+ -- Display transforms (default off): the status at the stride; with native_gate_render_display_rows one row per drawn frame
+ -- (the previous tick's gap and this tick's step frame), wall_ms for matching screenshots.
+ if cfg.native_gate_render_camera or cfg.native_gate_render_motion then
+  ticklog.status('RENDER_DISPLAY',tick,gate.render_display_status,'render display status unavailable')
+  if cfg.native_gate_render_display_rows then
+   for _=1,1024 do
+    local row,after=gate.render_display_row(row_cursors.render_display)
+    if not row then break end
+    log('RENDER_DISPLAY_ROW '..row);row_cursors.render_display=after
+   end
+  end
+ end
  -- Slot 6 runs after slot 3's bullet Moves: frame= is this admitted frame.
  if cfg.native_gate_bullet_cadence then ticklog.status('BULLET_CADENCE',tick,gate.bullet_cadence_status,'bullet cadence status unavailable') end
  if cfg.native_gate_cutscene_ready then
@@ -4218,6 +5125,7 @@ local function frame()
   ticklog.status('CAMERA_PERTURB',tick,gate.camera_perturb_status,'camera perturbation status unavailable')
  end
  if cfg.native_gate_gravidar_key_all or cfg.native_gate_gravidar_time_sync then ticklog.status('GRAVIDAR_KEY',tick,gate.gravidar_key_status) end
+ if cfg.native_gate_fork_save then ticklog.fork_save(tick) end
  drain_gravidar_watch()
  if cfg.native_gate_ai_schedule then
   ticklog.status('AI_SCHEDULE',tick,gate.ai_schedule_status,'AI schedule status unavailable')
@@ -4307,13 +5215,14 @@ local function frame()
  if pilot_receipt then data=data..'|'..pilot_receipt end
  if identity_state then data=data..'|'..identity_state end
  if cfg.native_gate_runtime_ids_barrier then data=data..'|RUNTIME_IDS_1|'..assert(gate.runtime_ids_word(),'runtime ids word unavailable') end
+ if cfg.native_gate_nav_mesh=='sync' then data=data..'|'..assert(gate.nav_mesh_frame(),'nav mesh receipt unavailable') end
  if input_state then data=data..'|'..input_state end
  if cfg.native_gate_player_probe then data=data..'|'..assert(X4LAN_NATIVE_PLAYER,'native player probe missing')(tick,gate) end
  if cfg.native_gate_world_hash_stride then
   if tick==1 then
    for _,saved in ipairs(cfg.native_gate_world_hash_watch or {}) do assert(gate.world_watch(saved)==1,'world watch refused '..saved) end
   end
-  if tick==1 or tick%cfg.native_gate_world_hash_stride==0 then
+  if tick==1 or tick%cfg.native_gate_world_hash_stride==0 or (join_client and join_client.capture_at and join_client.capture_at(tick)) then
    local summary,why=world_capture(tick)
    assert(summary,'native world hash capture failed '..tostring(why))
    log('WORLD_BANKS '..assert(gate.world_banks(),'native world bank phase unavailable'))
@@ -4325,11 +5234,18 @@ local function frame()
     for row=1,assert(gate.world_detail(0)) do log('WORLD_DETAIL '..assert(gate.world_detail(row))) end
    end
    log('WORLD_HASH '..summary)
+   if X4LAN_NATIVE_HYBRID then world_hash_state=X4LAN_NATIVE_HYBRID.census(tick,world_hash_state) end
    if cfg.native_gate_world_hash_shields then log('WORLD_HASH_SHIELDS tick='..tick..' '..gate.world_hash_shields_status()) end
    if tick==1 and cfg.native_gate_world_trace_ticks then assert(gate.world_trace(cfg.native_gate_world_trace_ticks)==1,'world trace arm refused') end
   end
   drain_world_trace()
-  ui_guard_tick(tick)
+  ticklog.ui_guard(tick)
+  local health=cfg.native_gate_world_health_ticks
+  if health and health[1]<=tick and tick<=health[2] then
+   for i=1,assert(gate.world_health(0),'world health unavailable') do
+    ticklog.write('WORLD_HEALTH '..assert(gate.world_health(i),'world health row unavailable '..i))
+   end
+  end
   data=data..'|'..assert(world_hash_state,'world hash baseline missing')
  end
  if profile then profile.mark('capture') end
@@ -4337,7 +5253,13 @@ local function frame()
  local command=cfg.native_gate_command_test and X4LAN_NATIVE_COMMANDS.proposal(tick) or '00000000'
  if X4LAN_NATIVE_PLAYER_COMMANDS then command=X4LAN_NATIVE_PLAYER_COMMANDS.proposal(tick) end
  if wire3 then
-  local blob=X4LAN_NATIVE_INPUTS and X4LAN_NATIVE_INPUTS.proposal and X4LAN_NATIVE_INPUTS.proposal(tick)
+  -- Protocol 5: a quiet tick seals the empty proposal; the adapters keep their inputs for a later tick.
+  local blob
+  -- A saver's probe state at its save tick goes into the join package (gate.join_lua, frame T).
+  if join_client and join_client.armed and join_client.armed.tick==tick then
+   assert(gate.join_lua(tick,X4LAN_JOIN_CORE.state_text())==1,'join state refused '..tostring(gate.join_status()))
+  end
+  if not (X4LAN_NATIVE_ADAPTIVE and s.quiet==1) then blob=X4LAN_NATIVE_INPUTS and X4LAN_NATIVE_INPUTS.proposal and X4LAN_NATIVE_INPUTS.proposal(tick) end
   if blob~=nil then assert(type(blob)=='string' and gate.propose(s.issued,blob)==1,'native input proposal refused') end
   command=nil -- the report seals the blob staged through gate.propose, or the empty blob
  end
@@ -4347,6 +5269,9 @@ local function frame()
  if profile then profile.mark('log');profile.finish(tick) end
 end
 SetScript('onUpdate',function()
+ -- Info lines raised at the start menu (refusals before the snapshot load) again once a game is on screen.
+ local defaults=X4LAN_NATIVE_GATE_DEFAULTS
+ if defaults and #defaults.pending>0 then defaults.flush_notices(not ffi.C.IsStartmenu()) end
  if done and diagnostic and native_owned then
   pcall(function() assert(X4LAN_NATIVE_DIAGNOSTIC,'diagnostic adapter missing').drain(gate,true) end)
   return
@@ -4356,6 +5281,8 @@ SetScript('onUpdate',function()
  if cfg.native_gate_draw_watch_frame and gate and gate.draw_watch_frame_end then gate.draw_watch_frame_end() end
  local paused=gate and gate.pilot_present_pause and gate.pilot_present_pause()
  local probe_mark=(cfg.native_gate_runtime_ids_local or cfg.native_gate_view_ui) and gate and gate.runtime_ids_probe
+ -- The UI replay and guard tell the probe's own calls of stock entries from a person's by this mark too.
+ if not probe_mark and cfg.native_gate_ui_replay~=nil and cfg.native_gate_ui_replay~=false and gate then probe_mark=gate.runtime_ids_probe end
  if probe_mark then probe_mark(1) end
  local ok,error=pcall(frame)
  if probe_mark then probe_mark(0) end
@@ -4364,6 +5291,7 @@ SetScript('onUpdate',function()
  if not ok then
   ticklog.flush() -- held ticks, the failing one up to the error, precede the ERROR line
   log('ERROR '..tostring(error))
+  ticklog.notice('the session stopped - '..tostring(error):gsub('^[^:]*:%d+: ',''):sub(1,200)..' (see the log)')
   if native_owned then
    local stopped=gate.stop()
    if registry_creation then
@@ -4380,76 +5308,92 @@ SetScript('onUpdate',function()
    end
    local status=gate.poll() or {}
    log('ABORT stopped='..tostring(stopped)..' active='..tostring(status.active)..' restored='..tostring(status.restored)..' tick='..tostring(status.issued))
+   if gate.pilot_why then pcall(function() local why=gate.pilot_why();if why then log('PILOT_STOP_WHY '..why) end end) end
    if cfg.native_gate_player_transition_observer and X4LAN_NATIVE_TRANSITION then
     local drained,why=pcall(X4LAN_NATIVE_TRANSITION.drain,gate,true)
     if not drained then log('PLAYER_TRANSITION_DRAIN_ERROR '..tostring(why)) end
    end
-   if cfg.native_gate_player_origin_token and X4LAN_NATIVE_ORIGIN then pcall(X4LAN_NATIVE_ORIGIN.drain,gate,true) end
-   if cfg.native_gate_render_rng_split then pcall(function() log('RENDER_RNG_SPLIT_STOP '..tostring(gate.render_rng_split_status())) end) end
-   if cfg.native_gate_created_identities then pcall(function() drain_created_rows();log('CREATED_IDENTITIES_STOP '..tostring(gate.created_identities_status())) end) end
-   if cfg.native_gate_actor_rng_all then pcall(function() log('ACTOR_RNG_ALL_STOP '..tostring(gate.actor_rng_all_status())) end) end
-   if cfg.native_gate_bullet_cadence then pcall(function() log('BULLET_CADENCE_STOP '..tostring(gate.bullet_cadence_status())) end) end
-   if cfg.native_gate_speak_timer then pcall(function() log('SPEAK_TIMER_STOP '..tostring(gate.speak_timer_status())) end) end
-   if cfg.native_gate_nav_cadence then pcall(function() log('NAV_CADENCE_STOP '..tostring(gate.nav_cadence_status())) end) end
-   if cfg.native_gate_nav_player then pcall(function() log('NAV_PLAYER_STOP '..tostring(gate.nav_player_status())) end) end
-   if cfg.native_gate_command_order then pcall(function() log('COMMAND_ORDER_STOP '..tostring(gate.command_order_status())) end) end
-   if cfg.native_gate_ship_sound_rng then pcall(function() log('SHIP_SOUND_RNG_STOP '..tostring(gate.ship_sound_rng_status())) end) end
-   if cfg.native_gate_player_timer then pcall(function() log('PLAYER_TIMER_STOP '..tostring(gate.player_timer_status())) end) end
-   if cfg.native_gate_warp_rng then pcall(function() log('WARP_RNG_STOP '..tostring(gate.warp_rng_status())) end) end
-   if cfg.native_gate_transition_rows then pcall(function() log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end) end
-   if cfg.native_gate_tempzone_order then pcall(function() log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end) end
-   if cfg.native_gate_path_transforms then pcall(function() log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end) end
-   if cfg.native_gate_body_pose then pcall(function() log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end) end
-   if cfg.native_gate_gravidar_wide then pcall(function() log('GRAVIDAR_WIDE_STOP '..tostring(gate.gravidar_wide_status())) end) end
-   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then pcall(function() log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end) end
-   if cfg.native_gate_attention_all then pcall(function() log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end) end
-   if cfg.native_gate_view_points then pcall(function() log('VIEW_POINTS_STOP '..tostring(gate.view_points_status())) end) end
-   if cfg.native_gate_mass_traffic then pcall(function() log('MASS_TRAFFIC_STOP '..tostring(gate.mass_traffic_status())) end) end
-   if cfg.native_gate_region_pass then pcall(function() log('REGION_PASS_STOP '..tostring(gate.region_pass_status())) end) end
-   if cfg.native_gate_weapon_fire_rng then pcall(function() log('WEAPON_FIRE_RNG_STOP '..tostring(gate.weapon_fire_rng_status())) end) end
-   if cfg.native_gate_engine_refresh_rng then pcall(function() log('ENGINE_REFRESH_RNG_STOP '..tostring(gate.engine_refresh_rng_status())) end) end
-   if cfg.native_gate_portable_math then pcall(function() log('PORTABLE_MATH_STOP '..tostring(gate.portable_math_status())) end) end
-   if cfg.native_gate_exact_reciprocal then pcall(function() log('EXACT_RECIPROCAL_STOP '..tostring(gate.exact_reciprocal_status())) end) end
-   if cfg.native_gate_fp_env then pcall(function() log('FP_ENV_STOP '..tostring(gate.fp_env_status())) end) end
-   if cfg.native_gate_decimal then pcall(function() log('DECIMAL_STOP '..tostring(gate.decimal_status())) end) end
-   if cfg.native_gate_event_rng then pcall(function() log('EVENT_RNG_STOP '..tostring(gate.event_rng_status())) end) end
-   if cfg.native_gate_build_rng then pcall(function() log('BUILD_RNG_STOP '..tostring(gate.build_rng_status())) end) end
-   if cfg.native_gate_ui_cargo then pcall(function() log('UI_CARGO_STOP '..tostring(gate.ui_cargo_status())) end) end
-   if cfg.native_gate_supply_rows then pcall(function() log('SUPPLY_ROWS_STOP '..tostring(gate.supply_rows_status())) end) end
-   if cfg.native_gate_ui_lazy then pcall(function() log('UI_LAZY_STOP '..tostring(gate.ui_lazy_status())) end) end
-   if cfg.native_gate_supply_wants~=nil then pcall(function() log('SUPPLY_WANTS_STOP '..tostring(gate.supply_wants_status())) end) end
-   if cfg.native_gate_loadout_order then pcall(function() log('LOADOUT_ORDER_STOP '..tostring(gate.loadout_order_status())) end) end
-   if cfg.native_gate_step_trace then pcall(function() log('STEP_TRACE_STOP '..tostring(gate.step_trace_status())) end) end
-   if cfg.native_gate_fp_redirect then pcall(function() log('FP_REDIRECT_STOP '..tostring(gate.fp_redirect_status())) end) end
-   if cfg.native_gate_coverage then pcall(function() log('COVERAGE_STOP '..tostring(gate.coverage_status())) end) end
-   if cfg.native_gate_order_canon then pcall(function() log('ORDER_CANON_STOP '..tostring(gate.order_canon_status())) end) end
-   if cfg.native_gate_pick_order then pcall(function() log('PICK_ORDER_STOP '..tostring(gate.pick_order_status())) end) end
-   if cfg.native_gate_macro_arena then pcall(function() log('MACRO_ARENA_STOP '..tostring(gate.macro_arena_status())) end) end
-   if cfg.native_gate_address_order then pcall(function() log('ADDRESS_ORDER_STOP '..tostring(gate.address_order_status())) end) end
-   if cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or cfg.native_gate_shape_order or cfg.native_gate_nav_octree then pcall(drain_gravidar_watch,true) end
-   if cfg.native_gate_physics_trace~=nil then pcall(function() log('PHYSICS_TRACE_STOP '..tostring(gate.physics_trace_status())) end) end
-   if cfg.native_gate_body_order then pcall(function() log('BODY_ORDER_STOP '..tostring(gate.body_order_status())) end) end
-   if cfg.native_gate_shape_order then pcall(function() log('SHAPE_ORDER_STOP '..tostring(gate.shape_order_status())) end) end
-   if cfg.native_gate_nav_octree then pcall(function() log('NAV_OCTREE_STOP '..tostring(gate.nav_octree_status())) end) end
-   if cfg.native_gate_nav_octree_sites then pcall(function()
+   if cfg.native_gate_player_origin_token and X4LAN_NATIVE_ORIGIN then ticklog.try(X4LAN_NATIVE_ORIGIN.drain,gate,true) end
+   if cfg.native_gate_render_rng_split then ticklog.try(function() log('RENDER_RNG_SPLIT_STOP '..tostring(gate.render_rng_split_status())) end) end
+   if cfg.native_gate_ui_guard then ticklog.try(function() log('UI_GUARD_STOP '..tostring(gate.ui_guard_status())) end) end
+   if cfg.native_gate_created_identities then ticklog.try(function() drain_created_rows();log('CREATED_IDENTITIES_STOP '..tostring(gate.created_identities_status())) end) end
+   if cfg.native_gate_actor_rng_all then ticklog.try(function() log('ACTOR_RNG_ALL_STOP '..tostring(gate.actor_rng_all_status())) end) end
+   if cfg.native_gate_bullet_cadence then ticklog.try(function() log('BULLET_CADENCE_STOP '..tostring(gate.bullet_cadence_status())) end) end
+   if cfg.native_gate_speak_timer then ticklog.try(function() log('SPEAK_TIMER_STOP '..tostring(gate.speak_timer_status())) end) end
+   if cfg.native_gate_nav_cadence then ticklog.try(function() log('NAV_CADENCE_STOP '..tostring(gate.nav_cadence_status())) end) end
+   if cfg.native_gate_nav_player then ticklog.try(function() log('NAV_PLAYER_STOP '..tostring(gate.nav_player_status())) end) end
+   if cfg.native_gate_command_order then ticklog.try(function() log('COMMAND_ORDER_STOP '..tostring(gate.command_order_status())) end) end
+   if cfg.native_gate_ship_sound_rng then ticklog.try(function() log('SHIP_SOUND_RNG_STOP '..tostring(gate.ship_sound_rng_status())) end) end
+   if cfg.native_gate_player_timer then ticklog.try(function() log('PLAYER_TIMER_STOP '..tostring(gate.player_timer_status())) end) end
+   if cfg.native_gate_warp_rng then ticklog.try(function() log('WARP_RNG_STOP '..tostring(gate.warp_rng_status())) end) end
+   if cfg.native_gate_transition_rows then ticklog.try(function() log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end) end
+   if cfg.native_gate_tempzone_order then ticklog.try(function() log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end) end
+   if cfg.native_gate_path_transforms then ticklog.try(function() log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end) end
+   if cfg.native_gate_body_pose then ticklog.try(function() log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end) end
+   if cfg.native_gate_gravidar_wide then ticklog.try(function() log('GRAVIDAR_WIDE_STOP '..tostring(gate.gravidar_wide_status())) end) end
+   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then ticklog.try(function() log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end) end
+   if cfg.native_gate_attention_all then ticklog.try(function() log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end) end
+   if cfg.native_gate_view_points then ticklog.try(function() log('VIEW_POINTS_STOP '..tostring(gate.view_points_status())) end) end
+   if cfg.native_gate_mass_traffic then ticklog.try(function() log('MASS_TRAFFIC_STOP '..tostring(gate.mass_traffic_status())) end) end
+   if cfg.native_gate_region_pass then ticklog.try(function() log('REGION_PASS_STOP '..tostring(gate.region_pass_status())) end) end
+   if cfg.native_gate_weapon_fire_rng then ticklog.try(function() log('WEAPON_FIRE_RNG_STOP '..tostring(gate.weapon_fire_rng_status())) end) end
+   if cfg.native_gate_engine_refresh_rng then ticklog.try(function() log('ENGINE_REFRESH_RNG_STOP '..tostring(gate.engine_refresh_rng_status())) end) end
+   if cfg.native_gate_portable_math then ticklog.try(function() log('PORTABLE_MATH_STOP '..tostring(gate.portable_math_status())) end) end
+   if X4LAN_NATIVE_HYBRID then ticklog.try(X4LAN_NATIVE_HYBRID.stop) end
+   if cfg.native_gate_sample_profile then ticklog.try(function()
+    log('SAMPLE_PROFILE_STOP '..tostring(gate.sample_profile_status()))
+    for i=0,255 do local row=gate.sample_profile_row(i);if not row then break end;log('SAMPLE_PROFILE_ROW '..row) end
+   end) end
+   if cfg.native_gate_exact_reciprocal then ticklog.try(function() log('EXACT_RECIPROCAL_STOP '..tostring(gate.exact_reciprocal_status())) end) end
+   if cfg.native_gate_fp_env then ticklog.try(function() log('FP_ENV_STOP '..tostring(gate.fp_env_status())) end) end
+   if cfg.native_gate_decimal then ticklog.try(function() log('DECIMAL_STOP '..tostring(gate.decimal_status())) end) end
+   if cfg.native_gate_event_rng then ticklog.try(function() log('EVENT_RNG_STOP '..tostring(gate.event_rng_status())) end) end
+   if cfg.native_gate_build_rng then ticklog.try(function() log('BUILD_RNG_STOP '..tostring(gate.build_rng_status())) end) end
+   if cfg.native_gate_ui_cargo then ticklog.try(function() log('UI_CARGO_STOP '..tostring(gate.ui_cargo_status())) end) end
+   if cfg.native_gate_supply_rows then ticklog.try(function() log('SUPPLY_ROWS_STOP '..tostring(gate.supply_rows_status())) end) end
+   if cfg.native_gate_ui_lazy then ticklog.try(function() log('UI_LAZY_STOP '..tostring(gate.ui_lazy_status())) end) end
+   if cfg.native_gate_supply_wants~=nil then ticklog.try(function() log('SUPPLY_WANTS_STOP '..tostring(gate.supply_wants_status())) end) end
+   if cfg.native_gate_loadout_order then ticklog.try(function() log('LOADOUT_ORDER_STOP '..tostring(gate.loadout_order_status())) end) end
+   if cfg.native_gate_step_trace then ticklog.try(function() log('STEP_TRACE_STOP '..tostring(gate.step_trace_status())) end) end
+   if cfg.native_gate_fp_redirect then ticklog.try(function() log('FP_REDIRECT_STOP '..tostring(gate.fp_redirect_status())) end) end
+   if cfg.native_gate_fp_attack_capture then ticklog.try(function() log('FP_ATTACK_STOP '..tostring(gate.fp_attack_status())) end) end
+   if cfg.native_gate_coverage then ticklog.try(function() log('COVERAGE_STOP '..tostring(gate.coverage_status())) end) end
+   if cfg.native_gate_order_canon then ticklog.try(function() log('ORDER_CANON_STOP '..tostring(gate.order_canon_status())) end) end
+   if cfg.native_gate_pick_order then ticklog.try(function() log('PICK_ORDER_STOP '..tostring(gate.pick_order_status())) end) end
+   if cfg.native_gate_macro_arena then ticklog.try(function() log('MACRO_ARENA_STOP '..tostring(gate.macro_arena_status())) end) end
+   if cfg.native_gate_address_order then ticklog.try(function() log('ADDRESS_ORDER_STOP '..tostring(gate.address_order_status())) end) end
+   if cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree then ticklog.try(drain_gravidar_watch,true) end
+   if cfg.native_gate_physics_trace~=nil then ticklog.try(function() log('PHYSICS_TRACE_STOP '..tostring(gate.physics_trace_status())) end) end
+   if cfg.native_gate_body_order then ticklog.try(function() log('BODY_ORDER_STOP '..tostring(gate.body_order_status())) end) end
+   if cfg.native_gate_shape_order then ticklog.try(function() log('SHAPE_ORDER_STOP '..tostring(gate.shape_order_status())) end) end
+   if cfg.native_gate_character_play then ticklog.try(function() log('CHARACTER_PLAY_STOP '..tostring(gate.character_play_status())) end) end
+   if cfg.native_gate_nav_octree then ticklog.try(function() log('NAV_OCTREE_STOP '..tostring(gate.nav_octree_status())) end) end
+   if cfg.native_gate_nav_mesh then ticklog.try(function() log('NAV_MESH_STOP '..tostring(gate.nav_mesh_status())) end) end
+   if cfg.native_gate_nav_octree_sites then ticklog.try(function()
     log('NAV_OCTREE_SITES_STOP '..tostring(gate.nav_octree_sites_status()))
     for i=0,511 do local row=gate.nav_octree_site_row(i);if not row then break end;if not row:find(' free$') then log('NAV_OCTREE_SITE at=stop '..row) end end
    end) end
    if cfg.native_gate_region_camera or cfg.native_gate_region_fields or cfg.native_gate_mass_traffic_camera or cfg.native_gate_effect_camera or cfg.native_gate_effect_rows or cfg.native_gate_highway_camera or cfg.native_gate_physics_scenes or cfg.native_gate_camera_context or cfg.native_gate_shape_refresh or cfg.native_gate_mining_camera or
    cfg.native_gate_xs_camera or cfg.native_gate_camera_probe or cfg.native_gate_highway_rows or cfg.native_gate_highway_speed or cfg.native_gate_sound_rng or cfg.native_gate_traffic_views or cfg.native_gate_traffic_rows then
-    pcall(function() log('REGION_CAMERA_STOP '..tostring(gate.region_camera_status())) end)
+    ticklog.try(function() log('REGION_CAMERA_STOP '..tostring(gate.region_camera_status())) end)
    end
-   if camera_perturb then pcall(function() log('CAMERA_PERTURB_STOP '..tostring(gate.camera_perturb_status())) end) end
-   if cfg.native_gate_pilot_inputs then pcall(function() log('PILOT_INPUTS_STOP '..tostring(gate.pilot_inputs_status())) end) end
-   if (cfg.native_gate_lookahead or 0)>0 then pcall(function() log('LOOKAHEAD_STOP '..tostring(gate.lookahead_status())) end) end
-   if pilot_camera_follow then pcall(function() log('PILOT_CAMERA_STOP '..tostring(gate.pilot_camera_status())) end) end
-   if pilot_view.predict then pcall(function() log('PILOT_PREDICT_STOP '..tostring(gate.pilot_predict_status())) end) end
-   if pilot_view.hits then pcall(function() log('HIT_CLAIMS_STOP '..tostring(gate.hit_claims_status())) end) end
-   if pilot_view.fire then pcall(function() log('PILOT_FIRE_STOP '..tostring(gate.pilot_fire_status())) end) end
-   if cfg.native_gate_player_observer and X4LAN_NATIVE_PLAYER_TRACE then pcall(X4LAN_NATIVE_PLAYER_TRACE,gate,true) end
-   if cfg.native_gate_player_probe=='agreed-fire' and X4LAN_NATIVE_PLAYER_FIRE_TRACE then pcall(X4LAN_NATIVE_PLAYER_FIRE_TRACE,gate,true) end
+   if camera_perturb then ticklog.try(function() log('CAMERA_PERTURB_STOP '..tostring(gate.camera_perturb_status())) end) end
+   if cfg.native_gate_pilot_inputs then ticklog.try(function() log('PILOT_INPUTS_STOP '..tostring(gate.pilot_inputs_status())) end) end
+   if X4LAN_NATIVE_ADAPTIVE then ticklog.try(function() log('ADAPTIVE_STOP '..tostring(gate.adaptive_status())) end)
+   elseif (cfg.native_gate_lookahead or 0)>0 then ticklog.try(function() log('LOOKAHEAD_STOP '..tostring(gate.lookahead_status())) end) end
+   if cfg.native_gate_render_fps then ticklog.try(function() log('RENDER_FRAMES_STOP '..tostring(gate.render_frames_status())) end) end
+   if cfg.native_gate_wire_crypto then ticklog.try(function() log('WIRE_CRYPTO_STOP '..tostring(gate.wire_crypto_status())) end) end
+   if cfg.native_gate_render_camera or cfg.native_gate_render_motion then ticklog.try(function() log('RENDER_DISPLAY_STOP '..tostring(gate.render_display_status())) end) end
+   if cfg.native_gate_peer_window then ticklog.try(function() log('PEER_STOP '..tostring(gate.peer_status())) end) end
+   if pilot_camera_follow then ticklog.try(function() log('PILOT_CAMERA_STOP '..tostring(gate.pilot_camera_status())) end) end
+   if pilot_view.predict then ticklog.try(function() log('PILOT_PREDICT_STOP '..tostring(gate.pilot_predict_status())) end) end
+   if pilot_view.own_predict then ticklog.try(function() log('OWN_PREDICT_STOP '..tostring(gate.own_predict_status())) end) end
+   if pilot_view.hits then ticklog.try(function() log('HIT_CLAIMS_STOP '..tostring(gate.hit_claims_status())) end) end
+   if pilot_view.fire then ticklog.try(function() log('PILOT_FIRE_STOP '..tostring(gate.pilot_fire_status())) end) end
+   if cfg.native_gate_player_observer and X4LAN_NATIVE_PLAYER_TRACE then ticklog.try(X4LAN_NATIVE_PLAYER_TRACE,gate,true) end
+   if cfg.native_gate_player_probe=='agreed-fire' and X4LAN_NATIVE_PLAYER_FIRE_TRACE then ticklog.try(X4LAN_NATIVE_PLAYER_FIRE_TRACE,gate,true) end
    if cfg.native_gate_world_trace_ticks then
-    pcall(function()
+    ticklog.try(function()
      drain_world_trace();log('WORLD_TRACE_STOP '..assert(gate.world_trace_status()))
      if cfg.native_gate_world_queue_trace then log('WORLD_QUEUE_STOP '..assert(gate.world_queue_trace_status())) end
      if cfg.native_gate_world_wait_manifest then log('WORLD_WAIT_STOP '..assert(gate.world_wait_trace_status())) end
@@ -4466,3 +5410,11 @@ SetScript('onUpdate',function()
   done=true
  end
 end)
+end)
+if not x4lan_probe_loaded then
+ local why=tostring(x4lan_probe_why)
+ DebugError('[X4LAN] NATIVE_GATE ERROR CONFIG_REFUSED '..why)
+ local D=X4LAN_NATIVE_GATE_DEFAULTS
+ if D then D.notice('the session did not start - '..why:gsub('^[^:]*:%d+: ',''):sub(1,200)..' (see the log: CONFIG_REFUSED)') end
+ error(x4lan_probe_why,0)
+end

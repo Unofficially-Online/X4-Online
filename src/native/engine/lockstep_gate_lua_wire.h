@@ -1,4 +1,4 @@
-/* Shared Lua wire API (gate.lookahead/lookahead_status/wire/propose/report). */
+/* Shared Lua wire API (gate.lookahead/lookahead_status/peer_links/peer_status/wire/propose/report). */
 /* Protocol 3: the proposal blob is sealed by the tick's report exactly like
  * the protocol 2 command. nil uses the blob gate.propose staged for this tick
  * (or the empty blob); an explicit blob must agree with a staged one. */
@@ -19,6 +19,21 @@ static int lua_lookahead(lua_State *L) {
 }
 static int lua_lookahead_status(lua_State *L) {
     char out[192];int n=lookahead_status(out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
+    return 1;
+}
+/* gate.peer_links(m[, P]): opt-in peer links (lockstep_peer.h), window m = 0..8-k after
+ * gate.lookahead(k >= 1), -1 off; P = the relay's NGNAT rendezvous port (1024..65534, the
+ * NAT traversal core finds the routes) or nil/0 (the addresses the relay saw); before
+ * start/boot, then only the identical m and P. */
+static int lua_peer_links(lua_State *L) {
+    double m=p_lua_tonumber(L,1),port=p_lua_tonumber(L,2);
+    p_lua_pushnumber(L,isfinite(m) && floor(m)==m && m>=-1 && m<=GATE_LOOKAHEAD_MAX && isfinite(port) && floor(port)==port && port>=0 &&
+                     port<=65534 && (m>=0 || !port) && peer_links_configure((int)m,used) && peer_nat_configure((unsigned)port,used));
+    return 1;
+}
+static int lua_peer_status(lua_State *L) {
+    char out[512];int n=peer_status(out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
     return 1;
 }
@@ -51,4 +66,17 @@ static int lua_report(lua_State *L) {
     int ok=x4gate_report(tick,p_lua_tolstring(L,2,NULL));
     if(ok) memcpy(proposal,command,9);
     p_lua_pushnumber(L,ok);return 1;
+}
+/* gate.wire_crypto(credential) -> 1 or 0: opt-in wire crypto on the relay
+ * path (lockstep_wire_crypto_gate.h); credential "x4c1:<relay key>:<slot psk>".
+ * After gate.wire(3,N) (and gate.lookahead), before gate.start/gate.boot; once
+ * started, only the identical credential returns 1 (UI reloads). */
+static int lua_wire_crypto(lua_State *L) {
+    size_t length=0;const char *credential=p_lua_tolstring(L,1,&length);
+    p_lua_pushnumber(L,credential && wcg_configure(credential,length));return 1;
+}
+static int lua_wire_crypto_status(lua_State *L) {
+    char out[512];int n=wcg_status(out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
+    return 1;
 }

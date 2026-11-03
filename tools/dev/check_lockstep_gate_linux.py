@@ -32,13 +32,16 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE = ROOT / 'src/native/engine'
 LINUX = ENGINE / 'linux'
+# Monocypher 4.0.2: the opt-in wire crypto's primitives (lockstep_wire_crypto.h).
+MONOCYPHER = ROOT / 'third_party/monocypher-4.0.2/src'
+MONOCYPHER_SOURCES = [MONOCYPHER / 'monocypher.c', MONOCYPHER / 'optional/monocypher-ed25519.c']
 RELAY = ROOT / 'tools/dev/native_gate_relay.py'
 PROBE = ROOT / 'tools/dev/native_gate_probe.lua'
 INPUTS_CORE = ROOT / 'tools/dev/native_gate_inputs_core.lua'
 PREFIX = '[X4LAN] NATIVE_GATE '
 EXPORTS = {'luaopen_x4lan_gate', 'x4gate_start', 'x4gate_wire', 'x4gate_lookahead', 'x4gate_report', 'x4gate_poll', 'x4gate_stop'}
 FLAGS = ['-std=gnu11', '-Wall', '-Wextra', '-Werror', '-Wno-misleading-indentation', '-mcx16', '-ffp-contract=off',
-         '-fasynchronous-unwind-tables', '-I', str(ENGINE), '-I', str(LINUX)]
+         '-fasynchronous-unwind-tables', '-I', str(ENGINE), '-I', str(LINUX), '-I', str(MONOCYPHER), '-I', str(MONOCYPHER / 'optional')]
 
 
 def compiler(args):
@@ -62,6 +65,20 @@ def free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
+
+
+def free_port_pair(avoid):
+    """P with P and P+1 free on loopback and apart from avoid (the relay's --rendezvous-port P)."""
+    for _ in range(64):
+        port = free_port()
+        if port < 65534 and avoid not in (port, port+1):
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as a, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as b:
+                try:
+                    a.bind(('127.0.0.1', port));b.bind(('127.0.0.1', port+1))
+                except OSError:
+                    continue
+            return port
+    raise RuntimeError('no free UDP port pair')
 
 
 def module_checks(so):
@@ -103,6 +120,14 @@ SCENARIOS = [
     ('protocol2_seed_relay_host', 2, None, 0, 120, {'native_gate_seed_rng': True, 'native_gate_relay_host': '127.0.0.1'}, None, 'pass'),
     ('protocol3_three_peers_hits', 3, 3, 0, 90, {'native_gate_hit_claims': 'carry', 'native_gate_hit_claims_script': HITS}, None, 'pass'),
     ('protocol4_lookahead2_hits', 3, 3, 2, 90, {'native_gate_hit_claims': 'carry', 'native_gate_hit_claims_script': HITS}, None, 'pass'),
+    # Peer links (lockstep_peer.h): the relay 60 ms round trip away (--latency-ms), the peers on
+    # loopback, so most ticks run on peer records before their permit; inputs still identical.
+    ('protocol4_peer_links', 3, 3, 2, 90, {'native_gate_hit_claims': 'carry', 'native_gate_hit_claims_script': HITS,
+                                           'native_gate_peer_window': 3, 'relay_latency_ms': 60}, None, 'pass'),
+    # The same with the routes from the NAT traversal core (lockstep_nat.h) through the relay's NGNAT rendezvous
+    # (--rendezvous-port): the pairs punch on loopback before they run on peer records.
+    ('protocol4_peer_links_nat', 3, 3, 2, 300, {'native_gate_hit_claims': 'carry', 'native_gate_hit_claims_script': HITS,
+                                                'native_gate_peer_window': 3, 'relay_latency_ms': 60, 'relay_rendezvous': True}, None, 'pass'),
     ('clock_mismatch_stops_all', 2, None, 0, 60, {}, {2: 1000.5}, 'native_clock_mismatch_tick_0'),
     # 30 Hz: dt from the gate's own page, the relay's --tick-hz 30, held to real time.
     ('tick_rate_30_paced', 2, None, 0, 45, {'native_gate_tick_hz': 30}, None, 'pass'),
@@ -111,6 +136,11 @@ SCENARIOS = [
     # World identities through the hooked map insert during the load, WORLD_IMPORTED_2 every 30 ticks.
     ('protocol2_world_hash', 2, None, 0, 90, {'native_gate_world_identities': True, 'native_gate_seed_rng': True, 'native_gate_world_hash_stride': 30,
                                                'native_gate_world_hash_schema': 'WORLD_IMPORTED_2'}, None, 'pass'),
+    # FR28: WORLD_HEALTH rows of two watches on ticks 29..31 (the engine's imports have no object: present=0).
+    ('protocol2_world_health', 2, None, 0, 90, {'native_gate_world_identities': True, 'native_gate_seed_rng': True, 'native_gate_world_hash_stride': 30,
+                                                'native_gate_world_hash_schema': 'WORLD_IMPORTED_2',
+                                                'native_gate_world_hash_watch': ['0000000000000101', '0000000000000102'],
+                                                'native_gate_world_health_ticks': [29, 31]}, None, 'pass'),
     # The pass joined and the nav refresh stamped per frame; the peers' batches run in opposite order.
     ('protocol2_serial_pathing', 2, None, 0, 90, {'native_gate_world_identities': True, 'native_gate_seed_rng': True, 'native_gate_serial_pathing': True,
                                                   'native_gate_path_determinism': 3, 'native_gate_world_hash_stride': 30,
@@ -202,13 +232,25 @@ def engine_scenario(build, name, peers, clients, lookahead, ticks, extras, game0
     if lookahead:
         relay_cmd += ['--lookahead', lookahead]
     extras = dict(extras)
+    if extras.get('native_gate_peer_window') is not None:
+        relay_cmd += ['--peer-window', extras['native_gate_peer_window']]
+    relay_latency = extras.pop('relay_latency_ms', None)
+    if relay_latency:
+        relay_cmd += ['--latency-ms', relay_latency]
+    if extras.pop('relay_rendezvous', None):
+        rendezvous = free_port_pair(port)
+        relay_cmd += ['--rendezvous-port', rendezvous]
+        extras['native_gate_peer_rendezvous_port'] = rendezvous
     relay_hz = extras.pop('relay_tick_hz', extras.get('native_gate_tick_hz'))
     if relay_hz:
         relay_cmd += ['--tick-hz', relay_hz]
     started = time.monotonic()
     relay = subprocess.Popen([str(c) for c in relay_cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
-        if relay.stdout.readline().strip() != 'NATIVE_GATE RELAY READY':
+        line = relay.stdout.readline().strip()
+        if line.startswith('NATIVE_GATE RENDEZVOUS '):   # --rendezvous-port: its ports come first
+            line = relay.stdout.readline().strip()
+        if line != 'NATIVE_GATE RELAY READY':
             raise AssertionError('relay did not start')
         procs = []
         for slot in range(1, peers + 1):
@@ -329,6 +371,15 @@ def engine_scenario(build, name, peers, clients, lookahead, ticks, extras, game0
     if any(lines != inputs[0] for lines in inputs):
         raise AssertionError(f'{name}: peers applied different inputs')
     result['input_lines'] = len(inputs[0])
+    if extras.get('native_gate_peer_window') is not None:
+        runs = [re.search(r'PEER_STOP peer=active window=\d+ sent=\d+ received=\d+ peer_runs=(\d+) ', text) for text in outputs]
+        if summary.get('peer_links') != 'exchanged' or not all(runs) or not all(int(run[1]) for run in runs):
+            raise AssertionError(f'{name}: no peer runs: {summary.get("peer_links")} {[run and run[0] for run in runs]}')
+        result['peer_runs'] = [int(run[1]) for run in runs]
+        # With the rendezvous every route is the NAT traversal core's DIRECT path (no pair left on the relay).
+        if extras.get('native_gate_peer_rendezvous_port') and not all(re.search(r'PEER_STOP .* unreachable=0 crypto=\w+ nat=traversal ', text)
+                                                                      for text in outputs):
+            raise AssertionError(f'{name}: the routes did not come from the NAT traversal core')
     if extras.get('native_gate_hit_claims') and sum(line.startswith('HIT_CLAIM ') for line in inputs[0]) != 4:
         raise AssertionError(f'{name}: the four scripted hit claims did not all arrive')
     if extras.get('native_gate_seed_rng'):
@@ -580,6 +631,15 @@ def engine_scenario(build, name, peers, clients, lookahead, ticks, extras, game0
         if any(row[0] != str(WORLD_IMPORTS) or row[4] != '0' or row[5] != '0' or row[6] != '0' for row in stamps[0].values()):
             raise AssertionError(f'{name}: path determinism status wrong: {next(iter(stamps[0].values()))}')
         result['path_rows'] = len(common)
+    if extras.get('native_gate_world_health_ticks'):
+        first, last = extras['native_gate_world_health_ticks']
+        health = [[line for line in text.splitlines() if line.startswith(PREFIX + 'WORLD_HEALTH ')] for text in outputs]
+        expected = [f'{PREFIX}WORLD_HEALTH tick={t} id={w} present=0 ' for t in range(first, last + 1)
+                    for w in extras['native_gate_world_hash_watch']]
+        if any(rows != health[0] for rows in health) or len(health[0]) != len(expected) or \
+           any(not row.startswith(want) or not row.endswith(' hull=- shield=-') for row, want in zip(health[0], expected)):
+            raise AssertionError(f'{name}: WORLD_HEALTH rows wrong or different between peers: {health[0][:3]}')
+        result['world_health_rows'] = len(health[0])
     if extras.get('native_gate_world_identities'):
         # Ticks 1, 30, 60 and 90; every imported identity hashed (absent rows) and equal on every peer.
         hashes = [line for line in world[0] if line.startswith('WORLD_HASH ')]
@@ -608,12 +668,12 @@ def main():
     report = {'scope': 'Linux gate core, offline: synthetic peers and the executable read from disk; no native X4 run',
               'compiler': version, 'x4': str(args.x4) if args.x4 else None}
     so = build / 'x4lan_gate.so'
-    run(cc + FLAGS + ['-O2', '-fPIC', '-shared', '-fvisibility=hidden', LINUX / 'gate_linux.c', '-ldl', '-lpthread', '-o', so])
+    run(cc + FLAGS + ['-O2', '-fPIC', '-shared', '-fvisibility=hidden', LINUX / 'gate_linux.c', *MONOCYPHER_SOURCES, '-ldl', '-lpthread', '-o', so])
     report['module'] = module_checks(so)
     if args.zig and report['module']['max_glibc'] not in (None,) and tuple(map(int, report['module']['max_glibc'].split('.'))) > (2, 17):
         raise AssertionError('module needs glibc newer than 2.17')
     unit = build / 'test_gate_linux'
-    run(cc + FLAGS + ['-O1', '-g', LINUX / 'test_gate_linux.c', '-ldl', '-lpthread', '-lm', '-o', unit])
+    run(cc + FLAGS + ['-O1', '-g', LINUX / 'test_gate_linux.c', *MONOCYPHER_SOURCES, '-ldl', '-lpthread', '-lm', '-o', unit])
     env = dict(os.environ, GATE_WORLD_GOLDEN=str(LINUX / 'test_gate_world_golden.txt'))
     out = subprocess.run([str(unit)] + ([str(args.x4)] if args.x4 else []), check=True, capture_output=True, text=True, timeout=300,
                          env=env).stdout
@@ -627,7 +687,7 @@ def main():
     else:
         report['lua_bridge'] = 'skipped: luajit missing'
     if not args.skip_scenarios:
-        run(cc + FLAGS + ['-O2', '-fPIC', '-shared', '-fvisibility=hidden', '-DGATE_LINUX_TEST', LINUX / 'gate_linux.c',
+        run(cc + FLAGS + ['-O2', '-fPIC', '-shared', '-fvisibility=hidden', '-DGATE_LINUX_TEST', LINUX / 'gate_linux.c', *MONOCYPHER_SOURCES,
                           '-ldl', '-lpthread', '-o', build / 'x4lan_gate_test.so'])
         run(cc + FLAGS + ['-O1', '-g', '-rdynamic', LINUX / 'test_gate_engine.c', '-ldl', '-lpthread', '-o', build / 'test_gate_engine'])
         report['scenarios'] = []

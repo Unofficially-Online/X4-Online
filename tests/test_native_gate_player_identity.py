@@ -489,7 +489,8 @@ class MdScriptTests(unittest.TestCase):
             self.assertIn(f"$a.$step == '{step}'", text)
         # Start placements: a fixed point (no safe-position search), read back by sector.
         self.assertEqual([w.get('object') for w in root.iter('warp')], ['$ship'])
-        self.assertEqual([f.get('macro') for f in root.iter('find_sector')], ['macro.{$a.$sectormacro}'])
+        # (the kit 'known' step reads its sectors' knowledge before and after the map uncover)
+        self.assertEqual([f.get('macro') for f in root.iter('find_sector')], ['macro.{$a.$sectormacro}'] + ['State.$known.{$i}'] * 2)
         self.assertIsNone(root.find('.//find_closest_safe_pos'))
         self.assertNotIn('refused_start_readback', text)  # the move applies after the block: Lua checks it
         self.assertEqual(text.count('<debug_text '), 1)
@@ -517,7 +518,7 @@ class ProbeHookTests(unittest.TestCase):
     def setUp(self):
         self.lua = LuaRuntime(unpack_returned_tuples=True)
         self.lua.execute('''
-          X4LAN_CONFIG={native_gate_test=true,test_profile='45841',slot='p2',native_gate_hash='battle',
+          X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',slot='p2',native_gate_hash='battle',
             native_gate_snapshot_sha=string.rep('a',64),port=12345,token=string.rep('c',32),native_gate_player_identity=true,
             native_gate_clients=3}
           X4LAN_SHA256={digest=function(data) hashed=data;return string.rep('b',64) end}
@@ -1051,7 +1052,7 @@ class PlayersBuilderTests(unittest.TestCase):
                 with self.subTest(mode=mode, slot=slot):
                     lua = LuaRuntime(unpack_returned_tuples=True)
                     lua.execute('''
-                      X4LAN_CONFIG={native_gate_test=true,test_profile='45841',slot='p%d',native_gate_hash='battle',
+                      X4LAN_CONFIG={native_gate_defaults=false,native_gate_test=true,test_profile='45841',slot='p%d',native_gate_hash='battle',
                         native_gate_snapshot_sha=string.rep('a',64),port=12345,token=string.rep('c',32),
                         native_gate_serial_pathing=true,native_gate_world_identities=true,native_gate_bullet_rng=true,native_gate_nav_rng=true,
                         native_gate_agent_rng=true,native_gate_ship_rng=true}

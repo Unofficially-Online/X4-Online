@@ -228,13 +228,25 @@ def decode_detail(domains,schema=SCHEMAS[0]):
     return result
 
 
-def evidence(log,slot,stride,last_tick,errors,expected_watches=None,require_timing_fields=False,expected_schema=SCHEMAS[0]):
+JOIN_SAVE_AT=re.compile(r'NATIVE_GATE JOIN_SAVE_AT tick=\d+ k=\d+ save_tick=(\d+) ')
+JOIN_ADMITTED=re.compile(r'NATIVE_GATE JOIN_ADMITTED base=(\d+) ')
+
+
+def join_capture_ticks(log,config):
+    """The extra capture ticks of native_gate_world_hash_join (reports/LOCKSTEP-HOTJOIN-20261101.txt 1.6): T+1 of every
+    SAVE_AT this client applied, a joiner's tick base + 1; empty without the key."""
+    if not re.search(r'native_gate_world_hash_join\s*=\s*true',config):return set()
+    return {int(t)+1 for t in JOIN_SAVE_AT.findall(log)}|{int(t)+1 for t in JOIN_ADMITTED.findall(log)}
+
+
+def evidence(log,slot,stride,last_tick,errors,expected_watches=None,require_timing_fields=False,expected_schema=SCHEMAS[0],extra=()):
+    """extra: capture ticks beyond 1 and the stride ticks (join_capture_ticks), accepted where they are up to last_tick."""
     if not isinstance(stride,int) or not 1<=stride<=18000:
         errors.append(f'player {slot} invalid world census stride');return {},[]
     result={};coverage=[]
     for frame in frames(io.StringIO(log),errors,slot,expected_watches,require_timing_fields,expected_schema):
         result[frame['tick']]=frame['state'];coverage.append(frame['coverage'])
-    expected={1}|set(range(stride,last_tick+1,stride)) if last_tick else set()
+    expected=({1}|set(range(stride,last_tick+1,stride))|{t for t in extra if 1<=t<=last_tick}) if last_tick else set()
     if set(result)!=expected:errors.append(f'player {slot} world snapshot cadence incomplete')
     stop=re.findall(r'NATIVE_GATE WORLD_HASH_STOP scans=(\d+) failures=(\d+)',log)
     if len(stop)!=1 or stop[0]!=(str(len(result)),'0'):errors.append(f'player {slot} world capture stop/count invalid')

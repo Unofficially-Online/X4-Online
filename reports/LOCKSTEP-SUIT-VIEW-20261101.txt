@@ -1,0 +1,123 @@
+LOCKSTEP SUIT VIEW: WHY CENSUS MISSILE1 PARTED AT TICK 1733, AND THE FIX
+1 November 2026 | offline work on branch contrib/ferrite-suitview (base: smoke 633a1bc7). Evidence: the coordinator's run
+census/missile1 (build149 = smoke 621defba, overlay-Missile1: the combat people config, factions hostile, slot 1 = the player's
+scout ae79c, slot 2 = Argon Elite a5374 with missiles, aim + scripted fire + scripted missiles, victim-decided hits, death + suit
+for slots 2+ + respawn 300), read with bounded greps of exact tags and tick ranges in the two engine-output.log files. Static
+analysis of the pinned Windows X4.exe 9.00 (RVAs, base 0x140000000) in x4-re; nothing of it is copied here. No X4 was launched.
+[F] = read in the logs or the binary; [I] = inference.
+
+0. QUESTION AND ANSWER
+  Asked: once slot 2 sits in its spacesuit, client 2 (which presents slot 2) evaluates one view point more than client 1 (VIEW_POINTS
+  at 1740: calls/evaluations 20 against 21, level 9 0 against 1); why, and make every client derive the same view points.
+  Answer: the view points are not where it starts, and they are already the same on both clients. The first difference is slot 1's
+  soft target, at the death tick itself (1733), written on client 1 alone by X4's UI target manager when its target element died
+  with slot 2's ship. MD's Player_Changed_Target then took one more shared runtime ID on client 1, and every later ID, tempzone and
+  count parted from there; the extra evaluation at 1740 is one of those consequences, not the cause.
+  Fix (lockstep_ui_replay.h, inside the existing default-off target family of native_gate_ui_replay): outside the local phases a
+  soft target write is the simulation's only when MD's set_player_target / clear_player_target is on the stack; anything else is
+  the UI's own and becomes this client's slot event, replayed on every client at the same tick, as a click is.
+
+1. EVIDENCE [F]
+  Relay: first_mismatch=1733. The declared digest carries the pilot receipt, and the receipt carries every slot's activity and soft
+  target (PUIREP_1 ...|<activity>/<target>,...). From 1720 to 1739 every NATIVE_GATE row of the two clients is equal (leaving out
+  FRAME_TIMING and the route=ui rows of RUNTIME_IDS_CALLER, local IDs by design) except:
+    UI_REPLAY_SLOTS tick=1733   client 1: 0/6c6f5/0/0.0,0/6c725/0/-2.-2   client 2: 0/1522e/0/0.0,0/6c725/0/-2.-2
+    UI_REPLAY_SLOTS tick=1738   client 1: 0/6c6f5/...                      client 2: 0/1522e/...
+    UI_REPLAY_SLOTS tick=1741   (client 2 only)                            client 2: 0/6c6f5/...
+  1522e is slot 2's ship (VIEW_POINTS ids=1658d6,1522e before the death), 6c6f5 is battle fixture actor 7 (saved 176c59). Slot 1's
+  script had targeted slot 2's ship since 103 (equal on both). At 1733 slot 2 died (PILOT_DEATH die:2,suit:2 on both) and slot 1's
+  soft target became 6c6f5 on client 1 at once; on client 2 it stayed 1522e until 1741.
+  UI_REPLAY_STATUS: target_passed 0 -> 2 between 1680 and 1800 on client 1, 0 on client 2. target_passed counts the soft target
+  writer's blocks reached outside the local phases (UI slot 6, render slot 10, the slot-4 dispatch, a presentation scope), which
+  ran stock at once: the clear of 1522e and the set of 6c6f5 on client 1 only. captured/staged/stale equal on both clients.
+  RUNTIME_IDS_CALLER (cumulative table, stride 10), route=shared cue=Player_Changed_Target (frames ...99c5b0 event dispatch):
+    tick 1730: 1 / 1    tick 1740: 2 / 1    tick 1750 onwards: 3 / 2      (client 1 / client 2)
+  RUNTIME_IDS: equal at 1680 (next=167fb4 allocs=1408948 on both); at 1740 next 1683c8/1683c7, allocs +1 on client 1, still +1 at
+  1800. TEMPZONE_ROW index=269 tick=1740: the same grant, zone 1683c8 / 1683c7. WARP_RNG attributed, EVENT_ORDER, CREATED_IDENTITIES,
+  SCRIPT_RNG and VIEW_POINTS differ from the 1740 sample on: downstream of the shifted IDs.
+  VIEW_POINTS on both clients, 1620/1680: viewpoints=2 ids=1658d6,1522e; 1740/1800/1860: viewpoints=1 ids=1658d6. The latch reads
+  the resolved slot ships only (lockstep_view_points.h view_frame_locked); a dead slot has object NULL (pdeath_die), so the suit is
+  no viewpoint on either client and presentation is never read. The per-frame difference at 1740 (one more SetAttention call on
+  client 2, level 9) has no row to name it (native_gate_view_rows was off); it comes 7 ticks after the IDs parted.
+  PILOT_INPUTS skipped=20 on client 2 is the presentation's own counter (pres_skipped: the seat's ship gone until the suit), local
+  by design.
+
+2. HOW X4 GOT THERE [F binary, I order]
+  The soft target writer 0xaecb60 (UI code with the simulation half inlined in two blocks, both patched by the target family) is
+  reached from: UI::CUIController vfunc 72 0xb3f7c0 -> 0xaeb150 (FFI SetSofttarget, the HUD's target system, MD's
+  set_player_target), the per-frame update in CUIController::Move (slot 6), the target system reset 0xae8d80 (CUIController event
+  slots 13/66/97), MD's clear_player_target (0xae8080 -> 0xaebef0 -> 0xae8460), and the UI target element's disconnect 0xaeb970,
+  which its destructor 0xaeb4e0 calls (UI::ICom::GenericPOSSink::vfunc4 0xad7050 -> 0xad7440 -> tail jump 0xaeb4e0). An element
+  dies with its component; slot 2's ship died in the simulation, outside every local phase. Client 1's target manager held 1522e as
+  the soft target (its UI is slot 1's), so the disconnect cleared it and the manager chose the next one: both blocks, stock, on
+  slot 1's player. Client 2's UI presents slot 2 and targets for slot 2, so its element of 1522e was nobody's target: nothing ran.
+  The replay's design note (LOCKSTEP-UI-REPLAY-20261030 section 3 and its "not live" list) assumed that MD is the only caller
+  outside the local phases (target_passed expected 0); missile1 is the first run where a slot's target died, and it is not.
+  The 1741 change on client 2 fits client 1's targetsystem.lua following up in slot 6 (captured, delay 3) [I]: on client 1 that
+  replay set the same target again (Player_Changed_Target 2 -> 3), on client 2 it was the first change (1 -> 2).
+  MD's routes, the only simulation callers [F]: MD::SetPlayerTargetAction::vfunc3 0x1135bc0 (vtable 0x2c74740 slot 3) calls
+  CUIController vfunc 72 at 0x1135ea0 (return 0x1135ea6); MD::ClearPlayerTargetAction::vfunc3 0x1135f20 (vtable 0x2c747b8 slot 3)
+  calls 0xae8080 at 0x1135f36 (return 0x1135f3b). In the base game scripts only scenario_tutorials.xml uses set_player_target and
+  nothing uses clear_player_target.
+
+3. THE FIX (lockstep_ui_replay.h; part of the target family, so default off with native_gate_ui_replay)
+  uirep_target_route decides each block call:
+    a local phase (as before)            capture as this client's slot event;
+    the replay applying, or past the window (as before)   stock at once;
+    MD on the stack                      stock at once (the simulation's own, every client at the same tick; target_md=);
+    anything else, frame thread          capture as this client's slot event (target_ui=, the route in target_route=);
+    anything else, another thread        refused: nothing runs anywhere (target_ui=../<refused>).
+  "MD on the stack" = 0x1135ea6 or 0x1135f3b among the image return addresses above 0xaecb60. The walk unwinds by the tables: its
+  own frames and the stub up to the stride (on the replay's page, no table), which runs in 0xaecb60's own frame and moves no stack
+  before its call, then 0xaecb60 from the block's resume (0xaed0b3 / 0xaed219: inside its .pdata range, not an epilogue) and its
+  callers by X4's .pdata, at most 12 image frames, under SEH. Anything it cannot unwind is "not MD": the write is captured or
+  refused, never applied on one client. Pins added: both MD functions (SHA-256, the call bytes inside them) and their vtable slots.
+  What the capture means: the client's own UI reacting to its own presentation (its target died, the next is chosen) becomes the
+  presented slot's event, applied on every client at capture + delay through 0x3e7560 / 0x3e73f0, exactly as a click. A target
+  already gone at the apply is stale on every client alike. Slot k's UI reacting outside the scope now writes slot k's player (via
+  the replay) instead of slot 1's on that client alone.
+  Status (UI_REPLAY_STATUS, with the target family): target_ui=<captured>/<refused> target_md=<n> target_route=<up to 6 image
+  return RVAs of the last UI route, "-" before one> route_faults=<walks ended by a fault>. target_passed= keeps counting the stock
+  calls (MD, the replay, past the window). Cost: one table walk per write outside the local phases (two in all of missile1).
+
+4. TESTS (offline; build_native_gate.py --test --native-image passes; pytest test_native_gate_ui_replay/ui_guard/inputs: 89 passed,
+   1 skipped as before)
+  test_lockstep_ui_replay.h: MD's clear and set routes go stock (target_md, target_passed); addresses next to MD's are not MD; the
+  UI's route is captured as exactly the section bytes a local-phase click makes, nothing runs at once, the route shows in the status;
+  another thread is refused with nothing run or queued; the replay and the time past the window stay stock; an empty walk is not MD.
+  The strides executed for real on MD's route still pass rbx/r13 and call the stock functions; with the real walk (no override) both
+  strides walk this test's own frames and the stub by their tables up to the stride on the page, then stop at the fake image (no
+  table): captured, no fault. A direct C call never reaches the page and is still not MD.
+  Pinned image (--native-image): the MD pins (a flipped byte in the set action and a wrong vtable slot refuse), vtable slot 3 of both
+  actions, slot 72 of UI::CUIController, the two calls' bytes, and the walk's second half on X4's own .pdata (RtlAddFunctionTable for
+  the private mapping) over synthetic stacks, from both blocks' resume points: aecb60 <- aeb150 <- b3f7c0 <- 0x1135ea6 (MD set),
+  aecb60 <- ae8460 <- aebef0 <- ae8080 <- 0x1135f3b (MD clear), aecb60 <- aeb970 <- aeb4e0 <- ad7050 (the element destructor, not
+  MD): the walk lists exactly those return addresses.
+  test_lockstep_view_points.h: a dead slot (in its suit or not) is no viewpoint, and the latched set is the same whichever slot the
+  client is and presents.
+
+5. LIVE-TEST SPEC (coordinator; derive the overlay from overlay-Missile1 unchanged, build with this branch)
+  Rerun missile1's config, same seed, 2 clients, same window and script. Expected:
+  - PILOT_DEATH die:2,suit:2 at the death tick and insuit:2 five ticks later on both clients, as before.
+  - UI_REPLAY_SLOTS: slot 1's target stays 1522e on both clients at the death tick and changes on both at the same tick
+    (death + 3 when the element's clear/set are taken in the same frame), equal rows on both clients throughout.
+  - UI_REPLAY_STATUS on client 1 from the death on: target_ui=2/0 (or more), target_md=0, target_passed=0, route_faults=0,
+    target_route= through the element's disconnect and destructor (expected aeba54 or ae849a,aebf87,aeb9b5, then aeb510,ad7064);
+    client 2: target_passed=0, target_md=0. Whatever route it names is captured; report it if it is not the destructor's.
+  - RUNTIME_IDS_CALLER cue=Player_Changed_Target counts equal on both clients in every table; RUNTIME_IDS next/allocs equal.
+  - VIEW_POINTS rows (calls, evaluations, levels) equal on both clients after the death, viewpoints=1 ids=<slot 1's ship> on both.
+  - Relay: 0 mismatches; census 0 at every capture.
+  Optional if anything still parts after the death: native_gate_view_rows = true on both clients (diagnostic; names the object
+  and the trigger of a per-client evaluation).
+
+6. LIMITS
+  - Not live: the walk on the real stack and the recorded route are inference until the rerun (the image test covers X4's tables
+    with synthetic stacks, not a live frame).
+  - Semantics, deterministic but new: a UI reaction outside a local phase is the presented slot's event. A reset of the target
+    system on client k triggered by another slot's world change (if X4 does that outside slot 6) clears slot k's target on every
+    client, where before it wrote slot 1's on client k only.
+  - An MD action other than the two above that reaches 0xaecb60 would be captured as the presenting client's event; none is known.
+  - The 9fcd70 / 9fccd0 lazy clear of a dead target ID stays local (the receipt already shows a dead target as 0); all readers
+    resolve the ID, so 0 and a dead ID read the same.
+  - The suit is still no viewpoint (deterministic: the same on every client). Simulation around a slot in its suit runs at the
+    attention slot 1's ship gives it; a viewpoint for a seated suit would be a separate, default-off change.

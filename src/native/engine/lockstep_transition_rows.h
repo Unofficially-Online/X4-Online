@@ -28,13 +28,13 @@
  * the WarpEvent's time too) they name the link where the two clients part:
  * the transition's post time (the stamping's synced time or a lazy query's),
  * its delivery tick and order at the gate, or the warp. Nothing is changed.
- * Pins: the dispatch. Stop reason 144 (entry or pins changed). */
+ * Pins: the dispatch. Stop reason 145 (entry or pins changed). */
 #define TRR_ENTRY 0x2ba9fa0u    /* U::TransitionEvent vtable 0x2ba9f90 slot 2 */
 #define TRR_DISPATCH 0x9abe30u  /* U::TransitionEvent::Dispatch */
 #define TRR_DISPATCH_SIZE 0xa7u
 #define TRR_DISPATCH_SHA "9de5c8c6b5a65123dd159dc08921e2b9ffa6bc6324b86921d67a4164a06906d3"
 #define TRR_RING 8192u
-#define TRR_STOP_REASON 144u
+#define TRR_STOP_REASON 145u /* 144 (the tempzone order's) until 1 November 2026; docs/LOCKSTEP-REGISTRY.txt */
 typedef void (*trr_fn)(void *,void *,void *,double);
 typedef struct {uint64_t tick,gate,object,time,now;uint32_t ordinal,gate_class;uint8_t gate_klass,object_klass,flag,ui;} trr_row_t;
 static int trr_installed,trr_restored;
@@ -86,7 +86,7 @@ static int trr_arm(void) {
     if(!script_rng_slot_swap(TRR_ENTRY,image+TRR_DISPATCH,(void*)trr_dispatch)) {InterlockedExchange(&trr_active,0);trr_stage="entry";return 0;}
     trr_installed=1;trr_restored=0;trr_stage="armed";return 1;
 }
-/* Main-thread tick check; any failure stops the gate with reason 144. */
+/* Main-thread tick check; any failure stops the gate with reason 145. */
 static int trr_check(void) {
     if(InterlockedCompareExchange64(&trr_failures,0,0)) return 0;
     const char *why=!trr_owned()?"entry_changed":!trr_pins()?"block_changed":NULL;

@@ -129,6 +129,9 @@ static char pres_fault_text[48],pres_fault_detail[640];
 static unsigned char pres_saved[VPL_BLOCK_MAX],pres_player_saved[0x40],*pres_camera;
 static unsigned char *pres_parent_saved,*pres_view_parent_saved,*pres_view_at,*pres_vector_saved[3];
 static int pres_position_saved,pres_target_set;
+/* Player settings per slot (lockstep_player_settings.h, native_gate_player_settings_per_slot): while armed, the scope also
+ * holds slot k's settings in X4's player's fields (1 at the end of the enter, 0 at the start of the leave). */
+static void (*pres_settings_hook)(int enter);
 static uint64_t pres_local_target;
 static volatile LONG64 pres_targets;
 static unsigned char pres_site_patched[5],pres_pick_patched[5];
@@ -214,11 +217,13 @@ static int pres_enter(void) {
     /* The eye at slot k's seat (lockstep_pilot_eye.h): the player's own pose, live and published, with D applied. */
     peye_enter(p1,pres_view_at,bank,s,pres_parent_saved);
     InterlockedExchange(&pres_open,1);InterlockedIncrement64(&pres_scopes);
+    if(pres_settings_hook) pres_settings_hook(1);
     return 1;
 }
 static void pres_leave(void) {
     pslot_slot *s=&pslots[pres_slot];unsigned char *p1=pslot_p1;unsigned n=0,p=0;
     if(!pres_open) return;
+    if(pres_settings_hook) pres_settings_hook(0);
     peye_leave();
     if(!s->roomless) {
         size_t bank=(size_t)(pres_view_at-(p1+PRES_VIEW_CACHE));
@@ -487,11 +492,20 @@ static void pres_stop(void) {
     if(strcmp(pres_stage,"failed")) pres_stage="stopped";
 }
 /* The presentation's part of a pass (pnat_pass, every tick, before the slots' part). */
+/* The tick presenting starts: the window's start, or for an absent slot (hot join: this client is the joiner) its seat's
+ * take+3 as for the others (seated at H-1, presented from H+3); never before its handover. */
+static uint64_t pres_begin(void) {
+    if(!pilot_slot_absent(pres_slot)) return pilot_start;
+    const uint64_t e=pilot_enroll[pres_slot-1];
+    if(e==UINT64_MAX) return UINT64_MAX;
+    return e+PILOT_SUPPRESS_LEAD>pilot_start?e+PILOT_SUPPRESS_LEAD:pilot_start;
+}
 static int pres_pass(uint64_t tick) {
     if(!pres_armed || !pres_slot) return 1;
     if(pres_failed) return pres_fail(pres_why);
-    if(tick==pilot_start) return pres_start(tick);
-    if(tick>pilot_start && tick<=pilot_stop) {
+    const uint64_t begin=pres_begin();
+    if(begin<=pilot_stop && tick==begin) return pres_start(tick);
+    if(tick>begin && tick<=pilot_stop) {
         if(pres_open) return pres_fail("scope_left_open");
         if(*(void*volatile*)(pnat_base+PRES_UI_ENTRY)!=(void*)pres_ui_move) return pres_fail("ui_entry_lost");
         if(memcmp(pnat_base+PRES_REFILL_CALL,pres_site_patched,5)) return pres_fail("refill_site_lost");

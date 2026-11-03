@@ -63,6 +63,7 @@ class NativeRegistryWeaponHelperTests(unittest.TestCase):
         self.lua.execute('''
           weapons={};logs={};stopped=0;registered=0;weapon_count=0;turret_count=8;occupied=false
           log=function(s) logs[#logs+1]=s end
+          ticklog={loud=function(kind,text) logs[#logs+1]='ERROR '..kind..' '..text end}
           ffi={C={GetNumUpgradeSlots=function(object,group,kind) return kind=='weapon' and weapon_count or turret_count end,
             GetUpgradeSlotCurrentComponent=function(object,kind,slot)
               if kind=='turret' then return occupied and slot==1 and 123 or 0 end
@@ -84,6 +85,8 @@ class NativeRegistryWeaponHelperTests(unittest.TestCase):
         self.lua.execute('occupied=true;weapon_count=1')
         result=self.lua.globals().helper(999,15,'0000000500000003')
         self.assertIsNone(result[0]);self.assertEqual(self.lua.globals().stopped,1);self.assertEqual(self.lua.globals().registered,0)
+        # Loud (reports/LOCKSTEP-DEFAULTS-20261101.txt): an ERROR row with the reason.
+        self.assertTrue(any(line.startswith('ERROR SHIP_ENROLL_REFUSED ') for line in self.lua.globals().logs.values()))
 
     def test_exact_weapon_native_id_is_preserved(self):
         self.lua.execute('weapon_count=1')

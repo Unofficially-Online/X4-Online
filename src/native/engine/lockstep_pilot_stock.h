@@ -144,6 +144,9 @@ static volatile LONG pstk_aim_on;
 static volatile LONG64 pstk_aim_calls,pstk_aim_replaced,pstk_aim_neutral,pstk_aim_samples,pstk_aim_sample_failures,pstk_aim_foreign,
     pstk_aim_scoped;
 #include "lockstep_pilot_stock_view.h"
+#include "lockstep_pilot_foot.h"   /* slot 1 on foot: its ids and the FIRST_PERSON edge (native_gate_pilot_foot) */
+/* Slots 2..N on foot (lockstep_pilot_foot_slots.h, native_gate_pilot_foot_slots). */
+static int pfslot_get_up(unsigned k,double now);static int pfslot_frame_text(char *out,size_t capacity);static int pfslot_status(char *out,size_t capacity);
 static const uint16_t pstk_replay_actions[]={0x7b,0x12f,0x131,0xe1,0xdd,0x105,0x148};
 static const uint16_t pstk_replay_states[]={2,3,4,5,6,7,8,9,0xd,0xe,0xf,0x10,0x11,0x12,0x13,0x5a,0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x50,0x85};
 static const uint16_t pstk_replay_ranges[]={1,2,3,4,5,6,0xa};
@@ -158,6 +161,13 @@ static int pstk_listed(const uint16_t *list,unsigned count,int id) {
 }
 #define PSTK_COUNT(a) (sizeof(a)/sizeof(*(a)))
 static unsigned pstk_verdict(unsigned kind,int id) {
+    /* Slot 1 on foot (lockstep_pilot_foot.h): the walking ids and GET_UP ride the record; mouselook too, split at the
+     * local dispatch (pstk_dispatch_split); the pick's interaction click is refused everywhere. */
+    if(pfoot_armed) {
+        unsigned f=pfoot_id(kind,id);
+        if(f==PFOOT_WALK_ID || f==PFOOT_SPLIT_ID) return PSTK_REPLAY;
+        if(f==PFOOT_REFUSE_ID) return PSTK_REFUSE;
+    }
     /* Match speed follows the soft target: with the target replayed it can be replayed too. */
     if(kind==PSTK_STATE && id==0x5b && (uirep_families&UIREP_FAMILY_TARGET)) return PSTK_REPLAY;
     /* The UI replay's families (lockstep_ui_replay.h): dock and weapon keys ride the record into their stock handlers in
@@ -180,14 +190,18 @@ static unsigned pstk_verdict(unsigned kind,int id) {
 static const uint16_t pstk_slot_refused_actions[]={0x12f,0x131,0xe1};
 static unsigned pstk_verdict_slot(unsigned kind,int id,unsigned slot) {
     unsigned v=pstk_verdict(kind,id);
+    /* Slots 2..N walk only with native_gate_pilot_foot_slots (lockstep_pilot_foot_slots.h: GET_UP is consumed there). */
+    if(slot>=2 && v==PSTK_REPLAY && pfoot_armed && pfoot_id(kind,id) && !pfslot_armed) return PSTK_REFUSE;
     if(slot>=2 && v==PSTK_REPLAY && kind==PSTK_ACTION && pstk_listed(pstk_slot_refused_actions,PSTK_COUNT(pstk_slot_refused_actions),id) &&
        !(id==0x12f && (uirep_families&UIREP_FAMILY_TRAVEL))) /* travel: the UI replay's adapter acts on the slot's player */
         return PSTK_REFUSE;
     return v;
 }
 static int pstk_slot_record_ok(const pstk_record *r,unsigned slot) {
-    for(unsigned i=0;i<r->count;i++)
+    for(unsigned i=0;i<r->count;i++) {
+        if(r->events[i].kind==PSTK_SPACE && slot>=2 && r->events[i].id!=8) return 0;   /* FIRST_PERSON: slot 1's only */
         if(r->events[i].kind!=PSTK_SPACE && pstk_verdict_slot(r->events[i].kind,r->events[i].id,slot)!=PSTK_REPLAY) return 0;
+    }
     return slot<2 || !(r->flags&PSTK_FLAG_AIM);
 }
 /* The stock handlers a replayed id may reach (anything else registered under a
@@ -247,7 +261,7 @@ static int pstk_decode(const unsigned char *in,unsigned length,pstk_record *r) {
         if(x->id>=512) return 0;
         if(x->kind==PSTK_ACTION && v) return 0;
         if((x->kind==PSTK_STATE || x->kind==PSTK_SPACE) && v>1) return 0;
-        if(x->kind==PSTK_SPACE && x->id!=8) return 0;
+        if(x->kind==PSTK_SPACE && x->id!=8 && !(pfoot_armed && x->id==PFOOT_CONTEXT)) return 0;
         if(x->kind==PSTK_RANGE) {float f;memcpy(&f,&v,4);if(!isfinite(f)) return 0;}
         if(x->kind!=PSTK_SPACE && pstk_verdict(x->kind,x->id)!=PSTK_REPLAY) return 0;
     }
@@ -308,7 +322,16 @@ static int pstk_capture(uint64_t tick,unsigned char out[PSTK_BYTES_MAX],unsigned
     pstk_local *l=&pstk_locals[tick%PSTK_RING];
     if(!pstk_capturing || !tick) {*why="not_capturing";return 0;}
     if(l->used && l->capture==tick) {memcpy(out,l->bytes,l->length);*length=l->length;return 1;}
+    /* An absent slot's client (the joiner before its handover): its row is the relay's stand-in, so nothing is proposed;
+     * what its dispatch recorded meanwhile is dropped, not carried into its first record. */
+    if(!pilot_slot_present(pstk_capture_slot,tick)) {
+        InterlockedExchangeAdd64(&pstk_dropped,(LONG64)pstk_build.count);memset(&pstk_build,0,sizeof(pstk_build));pstk_cursor_live_set=0;
+        *why="absent";return 0;
+    }
     if(!pstk_capture_start || tick<pstk_capture_start) {*why="not_live";return 0;}
+    /* Past the window no pass applies a record, so none is built (play42f2: window 40-4200 in a 4500-tick run
+     * filled the local ring 62 ticks after the end and stopped the session). */
+    if(pilot_stop && tick+pilot_delay>pilot_stop) {*why="not_live";return 0;}
     pstk_build.capture16=(uint16_t)tick;pstk_build.flags=pstk_local_active==1?PSTK_FLAG_ACTIVE:0;
     if(pstk_cursor_live_set) {pstk_build.flags|=PSTK_FLAG_CURSOR;memcpy(pstk_build.cursor,pstk_cursor_live,sizeof(pstk_cursor_live));}
     else memset(pstk_build.cursor,0,sizeof(pstk_build.cursor));
@@ -337,6 +360,7 @@ static int pstk_stage(unsigned slot,const unsigned char *bytes,unsigned length,u
     if(back>now) return 0;
     uint64_t capture=now-back,apply=capture+pilot_delay;
     if(!capture || capture<pstk_capture_start || apply<=now || apply>=now+PSTK_RING) return 0;
+    if(!pilot_slot_present(slot,capture)) return 0;   /* an absent slot's row is a stand-in: never a record (hot join) */
     if(pstk_capturing && slot==pstk_capture_slot) for(unsigned i=0;i<PSTK_RING;i++) {
         pstk_local *l=&pstk_locals[i];
         if(l->used && l->capture==capture && (l->length!=length || memcmp(l->bytes,bytes,length))) return 0; /* echo mismatch */
@@ -385,6 +409,26 @@ static void pstk_walk(unsigned char *header,unsigned kind,int id,uint32_t value)
     pnat_node *upper=NULL,*n=pnat_first((pnat_node*)header,id,&upper);
     if(!n) return;
     while(n!=upper) {pnat_node *next=pnat_next(n);pstk_call(n->handler,kind,id,value);n=next;}
+}
+/* A replayed id: every handler, except the camera's under a mouselook range of slot 1 walking; X4's walking state handler
+ * with the session's clock as its real time (the run's double-tap, lockstep_pilot_foot.h). */
+static void pstk_replay_walk(unsigned char *header,unsigned kind,int id,uint32_t value) {
+    pnat_node *upper=NULL,*n=pnat_first((pnat_node*)header,id,&upper);
+    if(!n) return;
+    while(n!=upper) {
+        pnat_node *next=pnat_next(n);
+        if(pfoot_replay_skips(kind,id,n->handler)) {}
+        else if(pfoot_replay_clock(kind,n->handler)) pfoot_replay_state(n->handler,id,(unsigned char)value);
+        else pstk_call(n->handler,kind,id,value);
+        n=next;
+    }
+}
+/* Every handler a replayed id reaches must be a stock one (or the camera's, skipped above). */
+static int pstk_replay_handlers_ok(unsigned char *map,const pstk_event *x) {
+    pnat_node *upper=NULL,*n=pnat_first((pnat_node*)(map+0x40*x->kind),x->id,&upper);
+    for(;n && n!=upper;n=pnat_next(n))
+        if(!pstk_handler_ok(n->handler) && !pfoot_handler_ok(x->kind,x->id,n->handler) && !pfoot_replay_skips(x->kind,x->id,n->handler)) return 0;
+    return 1;
 }
 static int pres_local_enter(void);static void pres_local_leave(int entered); /* lockstep_pilot_present.h */
 static void pdeath_note(const pstk_event *x);                                /* lockstep_pilot_death.h */
@@ -444,10 +488,31 @@ static void pstk_local_run(unsigned kind,unsigned char *map,int id,uint32_t valu
     InterlockedDecrement(&uirep_dispatch_depth);
     pres_local_leave(presented);
 }
+/* Mouselook with slot 1 walking (lockstep_pilot_foot.h): the camera's handlers here, the walking one in the replay. */
+static void pstk_dispatch_split(unsigned char *map,int id,uint32_t value) {
+    if(!pfoot_split_now()) {   /* seated, nobody walking: a presentation id as before */
+        pstk_local_note(PSTK_RANGE,id,0);
+        if(pres_slot && pilot_slots[pres_slot-1].dead && !pres_has_seat()) {InterlockedIncrement64(&pstk_dropped);return;}
+        pstk_local_run(PSTK_RANGE,map,id,value);
+        return;
+    }
+    {   int presented=pres_local_enter();
+        pnat_node *upper=NULL,*n=pnat_first((pnat_node*)(map+0x40*PSTK_RANGE),id,&upper);
+        InterlockedIncrement(&uirep_dispatch_depth);
+        while(n && n!=upper) {pnat_node *next=pnat_next(n);if(n->handler!=pfoot_handler_ptrs[1]) pstk_call(n->handler,PSTK_RANGE,id,value);n=next;}
+        InterlockedDecrement(&uirep_dispatch_depth);
+        pres_local_leave(presented);}
+    InterlockedIncrement64(&pfoot_split_local);
+    if(pstk_capturing && (pstk_capture_slot==1 || pfoot_own_walking())) {   /* slot 1's, or this client's own walking slot's */
+        if(pstk_engages(PSTK_RANGE,value) && !pstk_focused()) {InterlockedIncrement64(&pstk_unfocused);return;}
+        if(pstk_record_event(PSTK_RANGE,(unsigned)id,value)) InterlockedIncrement64(&pfoot_split_recorded);
+    }
+}
 /* A dispatch on this client: presentation ids run (on a presenting client as its own slot's
  * player: the camera, target and menu handlers read the singleton), replay ids are recorded (the
  * capturing client) or dropped, refused ids are logged. map = 1255xx0's argument. */
 static void pstk_dispatch(unsigned kind,unsigned char *map,int id,uint32_t value) {
+    if(pfoot_armed && pnat_is_live() && pfoot_id(kind,id)==PFOOT_SPLIT_ID) {pstk_dispatch_split(map,id,value);return;}
     unsigned verdict=pnat_is_live()?pstk_verdict_slot(kind,id,pstk_capturing?pstk_capture_slot:1):PSTK_LOCAL;
     if(verdict==PSTK_LOCAL) {
         pstk_local_note(kind,id,0);
@@ -461,6 +526,7 @@ static void pstk_dispatch(unsigned kind,unsigned char *map,int id,uint32_t value
         if(kind==PSTK_RANGE) {float f;memcpy(&f,&value,4);shown=fabsf(f)>=0.1f?(f>0?1:-1):0;}
         /* Fire never runs in X4's own path here: with pilot fire its held state rides the record. */
         pnat_fire_input(kind,id,shown!=0);
+        if(pfoot_armed && pfoot_id(kind,id)==PFOOT_REFUSE_ID) InterlockedIncrement64(&pfoot_refused_pick);
         if(pfire_armed && pstk_is_fire(kind,id)) return;
         pnat_refuse(kind,id,shown);return;
     }
@@ -499,8 +565,9 @@ static void pstk_space(unsigned char active) {
         input[0x9064]=0;input[0x9062]=0;
     }
     pstk_local_active=active?1:0;InterlockedIncrement64(&pstk_space_local);
-    if(pstk_capturing) pstk_record_event(PSTK_SPACE,8,active?1u:0u);
-    pnat_fn.refresh((char)(pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY)!=NULL));
+    /* K1 (lockstep_pilot_foot.h): on a client of slot 2..N an edge of the canonical player's seat is not its slot's. */
+    if(pstk_capturing && !pfoot_space_foreign(active)) pstk_record_event(PSTK_SPACE,8,active?1u:0u);
+    pnat_fn.refresh(pfoot_refresh_answer((char)(pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY)!=NULL)));
 }
 /* The simulation half of d88710 on every client, in its order; the input object's
  * 9062/9064 written by d9c590/d9c250 are put back (they follow this client's UI). */
@@ -572,6 +639,8 @@ static unsigned char pstk_aim(void *controller,float *first,float *second,void *
         /* A dying or dead slot 1: X4's player may be between ships. */
         int dying=pilot_slots[0].dead;double hull=1.0;
         if(!dying && pdeath_armed && pilot_slots[0].found) dying=read_local(pilot_slots[0].found+PDEATH_HULL,&hull,8) && fabs(hull)<PDEATH_HULL_EPSILON;
+        /* Slot 1 off its seat (lockstep_pilot_foot.h): no ship of the player's to aim from; X4's own answer, counted. */
+        if(!dying && pfoot_walking()) {InterlockedIncrement64(&pfoot_aim_off_seat);return pstk_fn.aim(controller,first,second,space,weapon,transform,a7,a8,a9,a10,a11,a12,a13);}
         if(!dying) pstk_async_fail("stock_aim_resolve");
         return pstk_fn.aim(controller,first,second,space,weapon,transform,a7,a8,a9,a10,a11,a12,a13);
     }
@@ -642,13 +711,13 @@ static int pstk_frame(uint64_t tick,const char **why) {
         for(unsigned i=0;i<r.count;i++) { /* every handler is a stock one before any runs */
             pstk_event *x=&r.events[i];
             if(x->kind==PSTK_SPACE) continue;
-            pnat_node *upper=NULL,*n=pnat_first((pnat_node*)(map+0x40*x->kind),x->id,&upper);
-            for(;n && n!=upper;n=pnat_next(n)) if(!pstk_handler_ok(n->handler)) {*why="stock_foreign_handler";return 0;}
+            if(!pstk_replay_handlers_ok(map,x)) {*why="stock_foreign_handler";return 0;}
         }
         for(unsigned i=0;i<r.count;i++) {
             pstk_event *x=&r.events[i];
-            if(x->kind==PSTK_SPACE) pstk_space_replay((unsigned char)x->value,now);
-            else {pstk_walk(map+0x40*x->kind,x->kind,x->id,x->value);if(pdeath_armed) pdeath_note(x);}
+            if(x->kind==PSTK_SPACE && x->id==PFOOT_CONTEXT) pfoot_context_replay((unsigned char)x->value,tick);
+            else if(x->kind==PSTK_SPACE) pstk_space_replay((unsigned char)x->value,now);
+            else {pstk_replay_walk(map+0x40*x->kind,x->kind,x->id,x->value);if(pdeath_armed) pdeath_note(x);pfoot_note_replay(x->kind,x->id,tick);}
         }
         InterlockedExchangeAdd64(&pstk_replayed,(LONG64)r.count);
         if(r.flags&PSTK_FLAG_CURSOR) memcpy(pstk_cursor_replay,r.cursor,sizeof(pstk_cursor_replay));
@@ -659,12 +728,20 @@ static int pstk_frame(uint64_t tick,const char **why) {
         pstk_fire_tick[0]=tick;pstk_fire_on[0]=(r.flags&PSTK_FLAG_FIRE)!=0;pstk_fire2_on[0]=(r.flags&PSTK_FLAG_FIRE2)!=0;
         pstk_cursor_tick=tick;pstk_frame_events=r.count;
     }
+    if(pfoot_armed) pfoot_frame();
     pstk_frame_hash=pstk_fnv(e->bytes,e->length,PSTK_DOMAIN);
     e->present=0;InterlockedIncrement64(&pstk_records);
     /* Slots 2..N: staged here, replayed in their scopes after the canonical update (lockstep_pilot_slots.h). */
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         if(!(pstk_slot_mask>>(k-1)&1u)) continue;
         pstk_staged *s=&pstk_ring[k-1][tick%PSTK_RING];pstk_slot_frame *f=&pstk_slot_frames[k-1];pstk_record q;
+        /* Absent (hot join, lockstep_pilot_inputs.h): no record before H+delay. Neutral: no events, no view, no trigger; its
+         * frame keeps its last tick, so the receipt says S<k>:0:0 and the slot scope replays nothing. */
+        if(pilot_slot_silent(k,tick,pilot_delay)) {
+            if(s->present && s->tick==tick) {*why="stock_absent_record";return 0;}
+            pview_replay(k,tick,0,0,0.0f,0);pstk_fire_tick[k-1]=tick;pstk_fire_on[k-1]=0;pstk_fire2_on[k-1]=0;
+            InterlockedIncrement64(&pilot_absent_skips);continue;
+        }
         if(!s->present || s->tick!=tick) {*why="stock_missing_slot";return 0;}
         if(!pstk_decode(s->bytes,s->length,&q) || q.capture16!=(uint16_t)(tick-pilot_delay) || !pstk_slot_record_ok(&q,k)) {
             *why="stock_delay_mismatch";return 0;
@@ -672,8 +749,7 @@ static int pstk_frame(uint64_t tick,const char **why) {
         for(unsigned i=0;i<q.count;i++) {
             pstk_event *x=&q.events[i];
             if(x->kind==PSTK_SPACE) continue;
-            pnat_node *upper=NULL,*n=pnat_first((pnat_node*)(map+0x40*x->kind),x->id,&upper);
-            for(;n && n!=upper;n=pnat_next(n)) if(!pstk_handler_ok(n->handler)) {*why="stock_foreign_handler";return 0;}
+            if(!pstk_replay_handlers_ok(map,x)) {*why="stock_foreign_handler";return 0;}
         }
         f->tick=tick;f->r=q;f->hash=pstk_fnv(s->bytes,s->length,PSTK_DOMAIN+k);s->present=0;
         /* A dead slot's record is consumed the same way: pslot_replay skips it (not seated). */
@@ -694,12 +770,15 @@ static int pstk_slot_replay(unsigned k,double now) {
     for(unsigned i=0;i<f->r.count;i++) {
         pstk_event *x=&f->r.events[i];
         if(x->kind==PSTK_SPACE) pstk_space_replay_slot(k,(unsigned char)x->value,now);
-        else pstk_walk(map+0x40*x->kind,x->kind,x->id,x->value);
+        else if(pfslot_armed && x->kind==PSTK_ACTION && x->id==PFOOT_GET_UP) {if(!pfslot_get_up(k,now)) return 0;}   /* never 71bac0 for P_k */
+        else pstk_replay_walk(map+0x40*x->kind,x->kind,x->id,x->value);
     }
     InterlockedExchangeAdd64(&pstk_replayed,(LONG64)f->r.count);
     return 1;
 }
-/* The declared-state receipt of this tick: applied record, flight state, settings. */
+static int hyb_slot_private(unsigned slot); /* lockstep_hybrid.h: an owner's ship belongs to its sector's state */
+/* The declared-state receipt of this tick: applied record, flight state, settings. With hybrid sectors
+ * (native_gate_hybrid) an owning slot's flight state is its sector's, not shared: 'h' instead. */
 static int pstk_frame_text(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"PSTOCK_1:%llu:%u:%016llx:%u:%016llx",(unsigned long long)pstk_frame_tick,pstk_frame_events,
         (unsigned long long)pstk_frame_hash,pstk_flight,(unsigned long long)pstk_settings);
@@ -707,8 +786,19 @@ static int pstk_frame_text(char *out,size_t capacity) {
         const pstk_slot_frame *f=&pstk_slot_frames[k-1];
         if(!(pstk_slot_mask>>(k-1)&1u)) continue;
         int fresh=f->tick==pstk_frame_tick;
-        int more=snprintf(out+n,capacity-(size_t)n,"|S%u:%u:%016llx:%u",k,fresh?f->r.count:0u,(unsigned long long)(fresh?f->hash:0),f->flight);
+        int more=hyb_slot_private(k)?snprintf(out+n,capacity-(size_t)n,"|S%u:%u:%016llx:h",k,fresh?f->r.count:0u,(unsigned long long)(fresh?f->hash:0)):
+                 snprintf(out+n,capacity-(size_t)n,"|S%u:%u:%016llx:%u",k,fresh?f->r.count:0u,(unsigned long long)(fresh?f->hash:0),f->flight);
         if(more<0) return 0;
+        n+=more;
+    }
+    if(n>0 && (size_t)n<capacity && pfoot_armed) { /* slot 1 on foot: its state and walking bank */
+        int more=pfoot_frame_text(out+n,capacity-(size_t)n);
+        if(!more) return 0;
+        n+=more;
+    }
+    if(n>0 && (size_t)n<capacity && pfslot_armed) { /* slots 2..N on foot: each one's state, walking bank and FPC pose */
+        int more=pfslot_frame_text(out+n,capacity-(size_t)n);
+        if(!more) return 0;
         n+=more;
     }
     if(n>0 && (size_t)n<capacity && pdeath_armed) { /* who has no ship: the same tick on every client */
@@ -721,6 +811,7 @@ static int pstk_frame_text(char *out,size_t capacity) {
 static int pdeath_status(char *out,size_t capacity);                       /* lockstep_pilot_death.h */
 static int pslot_armed;static int pslot_status(char *out,size_t capacity); /* lockstep_pilot_slots.h */
 static int pres_armed;static int pres_status(char *out,size_t capacity);   /* lockstep_pilot_present.h */
+static int pfbody_armed;static int pfbody_status(char *out,size_t capacity); /* lockstep_pilot_foot_body.h */
 static int pstk_status(char *out,size_t capacity) {
     char keys[PSTK_LOCAL_KEYS*32+2];pstk_local_keys_text(keys,sizeof(keys));
     int n=snprintf(out,capacity," stock=%s slot=%u slots=%x flight=%u/%u capture_start=%llu first_apply=%llu recorded=%lld dropped=%lld "
@@ -740,5 +831,8 @@ static int pstk_status(char *out,size_t capacity) {
     if(pslot_armed) {more=pslot_status(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
     if(pres_armed) {more=pres_status(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
     if(pdeath_armed) {more=pdeath_status(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
+    if(pfoot_armed) {more=pfoot_status(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
+    if(pfbody_armed) {more=pfbody_status(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
+    if(pfslot_armed) {more=pfslot_status(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
     return n;
 }

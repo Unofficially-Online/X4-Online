@@ -163,6 +163,8 @@ Guard: FFI mutators of a family that is armed but not replayed yet return their 
     not followed);
   - stock Lua CreateOrder's effect on a `player` ship from the probe's frame (the AI order script starting on every client);
   - that no sim-phase call of aecb60 exists apart from MD (target_passed= counts them, expected 0 in these runs);
+    refuted 1 November (census missile1: the UI's target element dying with its ship); MD is now named by its return address
+    and the UI's own writes are captured, reports/LOCKSTEP-SUIT-VIEW-20261101.txt;
   - the UI half of 0xaecb60 without its simulation half: the HUD selects at once, GetPlayerTarget follows after the delay.
   Known risk to test: travel start reaches 6d9db0 -> 0x6da210 (cockpit effects), which reads the LOCAL camera's mode for "the
   player's ship", in a scope ship k on every client. Clients in different views when a slot starts travel may differ in

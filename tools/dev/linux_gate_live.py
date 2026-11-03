@@ -183,6 +183,10 @@ def bundle(args):
         command += ['--step-trace', *args.step_trace, '--step-trace-ticks', str(args.step_trace_ticks)]
     if args.fp_redirect:
         command += ['--fp-redirect', args.fp_redirect, '--fp-redirect-ticks', str(args.fp_redirect_ticks)]
+        if args.fp_redirect_solver:
+            command += ['--fp-redirect-solver', args.fp_redirect_solver]
+        if args.fp_redirect_drones:
+            command += ['--fp-redirect-drones', args.fp_redirect_drones]
         if args.fp_redirect_watch:
             command += ['--fp-redirect-watch', *args.fp_redirect_watch]
     if args.coverage:
@@ -209,8 +213,20 @@ def bundle(args):
         command += ['--spawn-rng', args.spawn_rng]
     if args.serial_pathing or (args.path_determinism or 0) & 1:
         command.append('--serial-pathing')
+    if args.fork_save:
+        command += ['--fork-save', args.fork_save, '--fork-save-budget-ms', str(args.fork_save_budget_ms), '--fork-save-watchdog', str(args.fork_save_watchdog)]
+        if args.fork_save_every:
+            command += ['--fork-save-every', str(args.fork_save_every)]
+        if args.fork_save_slot:
+            command += ['--fork-save-slot', str(args.fork_save_slot)]
     for saved in args.world_hash_watch or []:
         command += ['--world-hash-watch', saved]
+    if args.world_health_ticks:
+        command += ['--world-health-ticks', *(str(x) for x in args.world_health_ticks)]
+    if args.fp_attack_capture:
+        command += ['--fp-attack-capture', *(str(x) for x in args.fp_attack_capture)]
+    for saved in args.fp_attack_watch or []:
+        command += ['--fp-attack-watch', saved]
     subprocess.run(command, check=True)
     extension = out / 'extension/x4_lan_lab'
     shutil.copytree(args.extension_base or repo / 'src/extension/x4_lan_lab', extension)
@@ -238,8 +254,10 @@ def bundle(args):
     manifest = {'commit': commit, 'ticks': args.ticks, 'stride': args.stride, 'snapshot_sha256': snapshot_sha,
                 'gate_so_sha256': files['extension/x4_lan_lab/native/x4lan_gate.so'], 'files': files,
                 'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'), 'seed_rng': bool(args.seed_rng),
-                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
-                'world_hash_watch': args.world_hash_watch or []}
+                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
+                'world_hash_watch': args.world_hash_watch or [],
+                'fork_save': args.fork_save and {'request': args.fork_save, 'every': args.fork_save_every, 'slot': args.fork_save_slot,
+                                                 'budget_ms': args.fork_save_budget_ms, 'watchdog_s': args.fork_save_watchdog}, 'fp_redirect_drones': args.fp_redirect_drones, 'world_health_ticks': args.world_health_ticks, 'fp_attack_capture': args.fp_attack_capture, 'fp_attack_watch': args.fp_attack_watch}
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     print(f'bundle {out}: {len(files)} files, gate {manifest["gate_so_sha256"][:16]}, snapshot {snapshot_sha[:16]}, commit {commit[:8]}')
 
@@ -480,7 +498,15 @@ def run(args):
         problems.append('Mesa lavapipe ICD missing (/usr/share/vulkan/icd.d/lvp_icd.json)')
     memory = memory_available_gib()
     clients = manifest.get('clients', 2)
-    needed = args.min_memory_gib if args.min_memory_gib is not None else 6.5 * clients
+    external = args.relay_port is not None
+    if external != bool(args.relay_token) or external != bool(args.local_slots):
+        raise SystemExit('--relay-port, --relay-token and --local-slots go together')
+    if external and (not 1024 <= args.relay_port <= 65535 or not re.fullmatch(r'[0-9a-f]{32}', args.relay_token)):
+        raise SystemExit('--relay-port must be 1024..65535 and --relay-token 32 lowercase hex')
+    local = sorted({int(part) for part in args.local_slots.split(',')}) if external else list(range(1, clients + 1))
+    if not local or any(not 1 <= slot <= clients for slot in local):
+        raise SystemExit(f'--local-slots must name slots of 1..{clients}')
+    needed = args.min_memory_gib if args.min_memory_gib is not None else 6.5 * len(local)
     if memory < needed:
         problems.append(f'MemAvailable {memory:.1f} GiB < {needed} GiB for {clients} instances')
     try:
@@ -501,18 +527,23 @@ def run(args):
     name = args.name or time.strftime('live-%Y%m%d-%H%M%S')
     run_dir = root / 'runs' / name
     run_dir.mkdir(parents=True, exist_ok=False)
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reserve:
-        reserve.bind(('127.0.0.1', 0))
-        port = reserve.getsockname()[1]
-    token = secrets.token_hex(16)
-    order = launch_order(args.launch_order, clients)
-    cases = [stage_case(root, run_dir, slot, game, userhome, port, token, clients) for slot in range(1, clients + 1)]
+    if external:
+        port, token = args.relay_port, args.relay_token
+    else:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reserve:
+            reserve.bind(('127.0.0.1', 0))
+            port = reserve.getsockname()[1]
+        token = secrets.token_hex(16)
+    order = [slot for slot in launch_order(args.launch_order, clients) if slot in local]
+    by_slot = {slot: stage_case(root, run_dir, slot, game, userhome, port, token, clients) for slot in local}
+    cases = [by_slot[slot] for slot in local]
     for path in [run_dir, *run_dir.rglob('*')]:
         if not path.is_symlink():
             os.chown(path, user.pw_uid, user.pw_gid)
     result = {'name': name, 'ticks': ticks, 'port': port, 'memory_available_gib': round(memory, 1), 'discard_layer': discard,
               'manifest_commit': manifest['commit'], 'gate_so_sha256': manifest['gate_so_sha256'], 'steam_before': steam,
-              'portable_math_sha256': manifest.get('portable_math_sha256'), 'seed_rng': manifest.get('seed_rng'), 'launch_order': order}
+              'portable_math_sha256': manifest.get('portable_math_sha256'), 'seed_rng': manifest.get('seed_rng'), 'launch_order': order,
+              'external_relay': external, 'local_slots': local}
     procs, starts, logs = [], {}, []
     cancelled = []
     # bwrap binds each private lock over this path, and cannot create it in the read-only view.
@@ -539,17 +570,19 @@ def run(args):
         procs.append(proc)
         return proc
     try:
-        relay = launch('relay', [sys.executable, str(root / 'native_gate_relay.py'), '--port', str(port), '--token', token,
-                                 '--ticks', str(ticks), '--report', str(run_dir / 'relay.json'), '--relative-real', '--observe', '--clients', str(clients)],
-                       as_user=True)
-        deadline = time.monotonic() + 10
-        while 'NATIVE_GATE RELAY READY' not in bounded_tail(run_dir / 'relay.log'):
-            if relay.poll() is not None or time.monotonic() > deadline:
-                raise RuntimeError('relay did not start')
-            time.sleep(0.1)
-        games = [None] * clients
+        relay = None
+        if not external:
+            relay = launch('relay', [sys.executable, str(root / 'native_gate_relay.py'), '--port', str(port), '--token', token,
+                                     '--ticks', str(ticks), '--report', str(run_dir / 'relay.json'), '--relative-real', '--observe',
+                                     '--clients', str(clients)], as_user=True)
+            deadline = time.monotonic() + 10
+            while 'NATIVE_GATE RELAY READY' not in bounded_tail(run_dir / 'relay.log'):
+                if relay.poll() is not None or time.monotonic() > deadline:
+                    raise RuntimeError('relay did not start')
+                time.sleep(0.1)
+        games_by_slot = {}
         for slot in order:
-            case, profile, dlc_binds, lock, ids = cases[slot - 1]
+            case, profile, dlc_binds, lock, ids = by_slot[slot]
             display = next(n for n in range(101, 140) if not Path(f'/tmp/.X{n}-lock').exists() and not Path(f'/tmp/.X11-unix/X{n}').exists())
             auth = case / 'xauthority'
             auth.touch(mode=0o600)
@@ -576,7 +609,8 @@ def run(args):
                 env.update(portable_math_env(case))
             program = [str(case / 'game/X4'), '-personalfolderid', '45841', '-skipintro', '-debug', 'scripts',
                        '-logfile', 'engine-output.log', '-nocputhrottle', '-noworkshopsync', '-seed:276944566']
-            games[slot - 1] = (launch(f'game{slot}', namespace_command(case, game, dlc_binds, lock, env, program, args.user)), profile)
+            games_by_slot[slot] = (launch(f'game{slot}', namespace_command(case, game, dlc_binds, lock, env, program, args.user)), profile)
+        games = [games_by_slot[slot] for slot in local]
         result['started'] = time.time()
         deadline = time.monotonic() + args.timeout
         watches = [LogWatch(profile / 'engine-output.log') for _, profile in games]
@@ -588,16 +622,19 @@ def run(args):
                 raise RuntimeError('timeout (loading or relay); see the client logs')
             if steam_identity(userhome, user.pw_uid) != steam:
                 raise RuntimeError('Steam client identity changed')
-            for slot, (watch, (proc, _)) in enumerate(zip(watches, games), 1):
+            for slot, watch, (proc, _) in zip(local, watches, games):
                 watch.poll()
                 if proc.poll() is not None and not watch.stopped and not watch.failure:
                     raise RuntimeError(f'client {slot}: X4 exited before its STOP line')
                 if watch.stopped or watch.failure:
                     stopped_at.setdefault(slot, time.monotonic())
-            error = stop_error({slot: watches[slot - 1].failure or watches[slot - 1].stop_reason for slot in stopped_at},
-                               stopped_at, time.monotonic(), clients)
+            index = {slot: i for i, slot in enumerate(local)}
+            error = stop_error({slot: watches[index[slot]].failure or watches[index[slot]].stop_reason for slot in stopped_at},
+                               stopped_at, time.monotonic(), len(local))
             if error:
                 raise RuntimeError(error)
+            if all(w.stopped for w in watches) and external:
+                break  # the relay belongs to the session's host side; its report stays there
             if all(w.stopped for w in watches):
                 try:
                     verdict = json.loads((run_dir / 'relay.json').read_text()).get('verdict')
@@ -651,7 +688,7 @@ def run(args):
         result['x4_left'] = [pid for pid, _ in x4_executables()]
     # Census layout and the quick verdict.
     stops, hashes, identities, problems = [], [], [], []
-    for slot, (case, profile, *_rest) in enumerate(cases, 1):
+    for slot, (case, profile, *_rest) in zip(local, cases):
         client = run_dir / f'client{slot}'
         (client / 'installed').mkdir(parents=True, exist_ok=True)
         log = profile / 'engine-output.log'
@@ -694,7 +731,8 @@ def run(args):
     result['world_hash_ticks'] = len(common)
     result['world_hash_first_difference'] = next((int(t) for t in common if any(other[t] != hashes[0][t] for other in hashes[1:])), None)
     ok = (not result.get('error') and not result.get('cleanup_errors') and result['steam_unchanged'] and not result['x4_left'] and
-          all(s and s['reason'] == 1 and s['restored'] == 1 for s in stops) and result['relay'] and result['relay'].get('verdict') == 'pass'
+          all(s and s['reason'] == 1 and s['restored'] == 1 for s in stops)
+          and (external or (result['relay'] and result['relay'].get('verdict') == 'pass'))
           and result['world_hash_ticks'] > 0 and result['world_hash_first_difference'] is None
           and all(result.get('portable_math_active', [True])))
     result['pass'] = ok
@@ -732,6 +770,8 @@ def main():
     b.add_argument('--fp-redirect', choices=('shadow', 'writer', 'redirect'), help='the flight parameter refresh recomputed by strict code next to the native one (Option B slice 1; writer and redirect write the writer\'s +0x0..+0xc; the spline length hook is Windows-only)')
     b.add_argument('--fp-redirect-watch', nargs='+', metavar='SAVED_ID', help='FP_REDIRECT_ROWs for up to four saved IDs')
     b.add_argument('--fp-redirect-ticks', type=int, default=3, help='ticks 1..N of the FP_REDIRECT_ROWs (default 3)')
+    b.add_argument('--fp-redirect-solver', choices=('shadow', 'redirect'), help='FR27: the GetSafePos solver on one portable implementation (needs --fp-redirect)')
+    b.add_argument('--fp-redirect-drones', choices=('shadow', 'redirect'), help='FR30: the drone factors of get_attackstrength in Windows\' order (needs --fp-redirect)')
     b.add_argument('--coverage', type=int, metavar='TICKS', help='which listed functions run in ticks 1..TICKS (diagnostic)')
     b.add_argument('--coverage-list', type=Path, help='the Linux function list for --coverage (fp_inventory.py --coverage-lists)')
     b.add_argument('--attention-all', action='store_true', help="every portable object's attention timer keyed by (tick, ID), its first due at the first admitted call")
@@ -755,6 +795,15 @@ def main():
     b.add_argument('--region-rng', choices=('key', 'observe'), help='hazard region updates on per-region streams')
     b.add_argument('--path-determinism', type=int, choices=(1, 2, 3), help='nav refresh stamped per frame (bit 1, implies --serial-pathing) and no 1 ms pathing budget (bit 2)')
     b.add_argument('--world-hash-watch', nargs='*', metavar='SAVED_ID', help='log the hashed bytes of these saved IDs (16 hex digits, up to 64)')
+    b.add_argument('--fork-save', metavar='TICK[:NAME]', help='non-blocking save by fork (D14): at TICK the client forks and its child writes '
+                   'save/mpjoin/NAME.xml.gz in its profile while the session goes on (reports/LOCKSTEP-NONBLOCKING-SAVE-20261101.txt)')
+    b.add_argument('--fork-save-every', type=int, help='repeat every N ticks under the same name (repeated-fork runs)')
+    b.add_argument('--fork-save-slot', type=int, help='only this slot forks (default every client)')
+    b.add_argument('--fork-save-budget-ms', type=int, default=50, help='how long the fork tick may wait for the quiet point')
+    b.add_argument('--fork-save-watchdog', type=int, default=600, help="seconds before the child's own alarm ends it")
+    b.add_argument('--fp-attack-capture', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='FR29b: FP_ATTACK_ROWs of the attack computation in ticks FIRST..LAST (needs --fp-redirect)')
+    b.add_argument('--fp-attack-watch', nargs='*', metavar='SAVED_ID', help='FR29b: only calls on these saved IDs (16 hex digits, up to 32)')
+    b.add_argument('--world-health-ticks', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='FR28: WORLD_HEALTH rows (stored hull and shield) of the watches on every tick FIRST..LAST (needs --world-hash-watch)')
     b.add_argument('--clients', type=int, default=2, choices=range(2, 9), metavar='2..8', help='instances on the host; above 2 they use the protocol 3 wire')
     b.add_argument('--ticks', type=int, default=600)
     b.add_argument('--stride', type=int, default=60, help='world hash capture every N ticks (and tick 1)')
@@ -767,6 +816,10 @@ def main():
     r.add_argument('--min-memory-gib', type=float, help='default 6.5 per instance')
     r.add_argument('--no-discard', action='store_true', help='render with lavapipe instead of the discard layer')
     r.add_argument('--preflight', action='store_true', help='only check the host requirements and the bundle; start nothing')
+    r.add_argument('--relay-port', type=int, help='mixed session: use the relay already listening on 127.0.0.1:PORT of this host '
+                   '(e.g. one serving Windows clients too) instead of starting one; needs --relay-token and --local-slots')
+    r.add_argument('--relay-token', help='the token of that relay (32 hex)')
+    r.add_argument('--local-slots', metavar='2', help='mixed session: the slots this host runs (the others join from elsewhere)')
     r.add_argument('--launch-order', metavar='2,1', help='the order the clients start in; a difference that follows it is startup timing, one that follows the number is keyed on the slot')
     args = p.parse_args()
     bundle(args) if args.command == 'bundle' else run(args)

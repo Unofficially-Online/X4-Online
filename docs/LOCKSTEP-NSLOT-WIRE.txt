@@ -10,6 +10,9 @@ packet, digest and report is the same as before. Evidence at this revision is
 offline (C and Python unit tests); no native N-client game has been run.
 Protocol 4 (PROTOCOL 4: LOOKAHEAD WINDOW below) carries the same input wire
 with a bounded permit window, for relays one internet round trip away.
+Protocol 5 (PROTOCOL 5: ADAPTIVE WINDOW below) lets the relay choose that
+window from measured round trips and change it during a session.
+WIRE CRYPTO below seals and signs protocols 3 and 4 (opt-in, 1 November 2026).
 
 PROTOCOL 3 MESSAGES
 ASCII, fields separated by '|', UDP on 127.0.0.1.
@@ -204,6 +207,329 @@ in tests/test_native_gate_lookahead.py, which asserts these values):
 A digest mismatch is reported at most k ticks late, and a stopped session
 ends with clients up to k ticks past the failing tick.
 
+PROTOCOL 5: ADAPTIVE WINDOW (1 NOVEMBER 2026, OPT-IN)
+Why: protocol 4 fixes k and the input delays per session config, so a session
+far from its relay is slow (k too small) and one next to it pays input delay it
+does not need (k too large). Protocol 5 lets the relay measure every client's
+round trip at tick 0 and choose k, the pilot delay with it, and (opt-in) change
+k during the session. Relay: native_gate_relay.py --adaptive --lookahead KMAX
+(tools/dev/native_gate_adaptive.py); client: native_gate_lookahead =
+'adaptive', native_gate_lookahead_max = KMAX (default 4); native:
+lockstep_adaptive.h. Report: reports/LOCKSTEP-ADAPTIVE-DELAY-20261101.txt.
+
+Schedule. Entries (start, lag, pilot): a proposal sealed with tick c applies at
+c + lag(c), where lag(c) is the lag of the last entry with start <= c; k = lag-1.
+Entry 1, the plan, has start 0. pilot is the plan's pilot delay in every entry
+(lag <= pilot-1). A larger lag from start c on leaves the permits between
+c-1+lag(c-1) and c+lag(c) without inputs (gap permits). A smaller lag by d makes
+the ticks c-d..c-1 quiet: every client seals the empty proposal there (the
+probe does not ask its adapters; their inputs wait) and no permit carries them.
+So the apply tick rises by exactly one per non-quiet tick except at gaps:
+nothing is lost, applied twice or before it was sealed. An entry's start must
+lie after the previous entry's start plus its quiet ticks; at most 32 entries.
+The relay announces an entry only when every tick it changes (its start, or its
+first quiet tick) is above the highest permit issued, so no client has sealed
+one, and only after every client acknowledged the previous entry.
+
+Release. Report t (not quiet) releases every permit up to c'+lag(c')-1, where
+c' is the next non-quiet tick after t; quiet reports release none. Tick 0
+releases permits 1..lag (1..lag-1 are gaps). The relay holds tick 0 until it has
+--adaptive-samples round trips per client (default 8; pings every 20 ms), or
+--adaptive-measure-seconds (5) passed and a client has fewer than 2: stop
+adaptive_unmeasured_slot_S. Choice: r = slowest client's p90 round trip, f =
+1000/tick_hz ms, target period 1000/--adaptive-target-hz (default tick_hz):
+k = clamp(ceil((r + margin + f)/target - 1), --adaptive-min, --lookahead),
+margin --adaptive-margin-ms (10); pilot delay k+2+--adaptive-headroom (0).
+Session changes (--adaptive-changes; lowering also --adaptive-decrease): every
+--adaptive-interval s (2), from the pings of the last interval (every 200 ms):
+raise to the k the low end of the round-trip ranges needs, lower to the one
+their high end allows after 3 intervals in a row; never above pilot-2.
+
+Messages (ASCII, '|', UDP; fields as in protocol 4):
+  NGSTATE|5|<token>|<slot>|<tick>|<game>|<real>|<digest>|<clients>|<epoch>|<blob>
+    epoch: schedule entries the client held when it sealed tick (0 at tick 0).
+  NGGO|5|<token>|<slot>|<T>|<source>|<epoch>|<start>:<lag>:<pilot>|<mask>|<blob 1>|...|<blob N>
+    source: the proposal tick whose blobs follow, or '-' for a gap permit (all
+    empty); epoch: entries in force at issue, the newest one follows; mask: two
+    lowercase hex digits, bit s-1 = slot s dropped (its blobs empty). Identical
+    on every resend. At most about 4,000 bytes.
+  NGPING|5|<token>|<slot>|<nonce>  (relay to client)
+  NGPONG|5|<token>|<slot>|<nonce>|<held_us>  (client, when it reads the ping)
+    held_us: time since the client last found its socket empty, 0 when the
+    ping arrived during a blocking receive (while it waits for a permit). The
+    round trip lies in [measured-held, measured].
+  NGSTOP|5|<token>|<slot>|<tick>  for any tick the client reported.
+  NGDROP|5|<token>|<slot>|<tick>  to a dropped client that reports again.
+
+Agreement (fail closed). Relay: an authenticated, well-formed protocol 1-4
+report stops the session (lookahead_mismatch_slot_S); a report claiming more
+entries than exist (adaptive_epoch_slot_S_tick_T), sealing a tick an entry it
+does not hold changes (adaptive_unannounced_slot_S_tick_T), or carrying input
+at a quiet tick (adaptive_quiet_input_slot_S_tick_T) stops it. Client stop
+reasons: 190 a plan or entry it cannot follow (above native_gate_lookahead_max,
+late, out of order, a different copy, no plan), 191 a permit whose source is
+not the one the schedule names (or a mask that shrinks), 192 it sealed input at
+a quiet tick, 193 the relay dropped it, 194 the plan's pilot delay cannot be
+adopted (pilot prediction armed, outside 2..30 or not below the window start)
+or a lowering while wire pilot records are armed; 102, 103 and 56 as protocol 4.
+The plan's pilot delay replaces the armed one before tick 1 (the probe arms
+with kmax+2 at the menu and with gate.adaptive_plan() after a UI reload). Wire
+pilot records keep that delay all session, so with them a session change may
+only raise k up to pilot-2 (headroom) and never lower it (194); player orders
+keep their configured delay, which the probe requires to be >= kmax+1.
+
+Stalls. --stall-report-ms (1000): NATIVE_GATE STALL slot=S tick=T when the
+others have waited that long for S's report of the next tick (also in the
+report's adaptive.stalls). --stall-drop-ms (0 = never): past it the relay drops
+S from that tick: its later blobs are empty, the mask names it, digests are
+compared among the others, it gets NGDROP; the others go on. Slot-bound inputs
+(pilot records of S's ship) then miss and stop the session (91) until drop and
+rejoin (roadmap D15) give a dropped slot's ship a defined state.
+
+Lua surface. gate.lookahead_adaptive(kmax) after gate.wire(3, N), before
+start/boot (1..8; once started only the same value); gate.adaptive_status();
+gate.adaptive_plan() -> pilot delay, lag, entries (nil before the plan).
+gate.poll(): s.adaptive (entries held), s.lookahead (window of the inputs
+taken), s.inputs_tick (their proposal tick; absent for a gap permit), s.quiet,
+s.lag (lag of the proposal of s.issued; absent when quiet), s.pilot_delay,
+s.dropped. The probe logs ADAPTIVE_PLAN / ADAPTIVE_SCHEDULE once per entry and
+ADAPTIVE_STOP <gate.adaptive_status()> at the end. The Linux gate does not
+include lockstep_adaptive.h yet and has no gate.lookahead_adaptive: its probe
+refuses (REFUSED lookahead=adaptive max=K).
+
+Test links (relay only): --latency-jitter-ms J adds a uniform 0..J/2 per
+datagram and direction (datagrams may overtake each other), --latency-spike
+PERIOD_S,DURATION_MS,EXTRA_MS a periodic extra round trip, --latency-seed the
+draws. With any of them (or --latency-ms) the relay polls its socket and sleeps
+in steps of at most 1 ms: Windows rounds socket timeouts to its 15.6 ms timer,
+which had made --latency-ms 100 a 125 ms round trip.
+WIRE CRYPTO (1 NOVEMBER 2026, OPT-IN)
+Why: protocols 1-4 are plain UDP authenticated by one session token. Anyone on
+the path reads every input and the token; anyone holding the token (every
+player) can send reports as any slot. Design, threat model, costs and the
+live-test spec: reports/LOCKSTEP-WIRE-CRYPTO-20261101.txt.
+Default off. Protocols 3 and 4 only. Both ends must be switched on:
+  relay  native_gate_relay.py --wire-crypto KEYFILE [--wire-crypto-lib PATH]
+  probe  X4LAN_CONFIG.native_gate_wire_crypto = "x4c1:<relay key>:<slot psk>"
+         (64 lowercase hex each; a secret, never logged)
+Keys (tools/dev/native_gate_crypto.py; keep key files under .local/):
+  keygen --out FILE        relay key file: Ed25519 seed of the relay and a psk
+                           master (32 random bytes each); never overwritten
+  credential --key FILE --token T --slot K
+                           slot K's string: the relay's public key and
+                           psk_K = BLAKE2b-256(master; "X4MP slot psk v1" |
+                           sid | K). A player learns only its own psk.
+  sid = the 16 bytes of the session token (no longer sent in the clear).
+Primitives: Monocypher 4.0.2 (third_party/monocypher-4.0.2): ChaCha20-Poly1305
+(RFC 8439), Ed25519 with SHA-512 (RFC 8032), X25519 (RFC 7748), BLAKE2b (RFC
+7693). One C implementation (src/native/engine/lockstep_wire_crypto.h) serves
+both gates and, through x4mp_wire_crypto (lockstep_wire_crypto_lib.c, ctypes),
+the relay. Every name below is a 16-byte zero-padded domain string.
+
+Handshake (first gated frame, before the report of tick 0):
+  HELLO   (88, unsealed, resent every 100 ms until WELCOME)
+    "X4H1" 01 slot N k | X25519 ephemeral public (32) | the player's Ed25519
+    public key (32, fresh per session) | BLAKE2b-128(psk; "X4MP hello v1" |
+    sid | HELLO[0..72))
+  WELCOME (104, unsealed)
+    "X4H1" 02 slot N k | relay X25519 ephemeral public (32) | Ed25519 signature
+    of the relay over "X4MP welcome v1" | sid | HELLO | WELCOME[0..40)
+  keys = BLAKE2b-512(psk; "X4MP keys v1" | sid | HELLO | WELCOME | X25519
+    shared secret): base keys player->relay (first 32) and relay->player.
+  NGKEYREQ|1|<token>|<slot>  (sealed, resent every 100 ms until NGKEYS)
+  NGKEYS|1|<token>|<slot>|<generation> NUL group key (32) | the N players'
+    public keys in slot order. Sent once every slot finished its handshake.
+  Both steps must finish within the gate timeout, else stop 107. The relay
+  refuses (silently) a HELLO with a wrong MAC (another slot's psk, another
+  session), another N or k, a taken slot or address, a public key already in
+  the roster; an identical HELLO from the same address gets the same WELCOME.
+  The player ignores a WELCOME not signed by its pinned relay key and stops
+  (106) on an NGKEYS without its own key at its slot or with a repeated or
+  zero key.
+
+Sealed datagram (every datagram after the WELCOME, both directions):
+  "X4C1" channel sender receiver generation | counter (8, LE) | ChaCha20-
+  Poly1305 ciphertext | tag (16). 32 bytes overhead. Channel 1 player->relay,
+  2 relay->player, 3 peer link; sender/receiver 0 = relay, 1..8 = slot.
+  Nonce = header bytes 4..15; additional data = sid | header. Subkey per epoch
+  of 65,536 counters: BLAKE2b-256(base; "X4MP subkey v1" | header[4..8) |
+  epoch). The receiver drops a counter it saw or one 1,024 below the highest;
+  only an authentic datagram moves that window. A sender never reuses a
+  counter (each resend is sealed anew).
+  Plaintext = the protocol 3/4 ASCII datagram unchanged; reports and permits
+  add a NUL and a binary trailer:
+  NGSTATE|3/4 ... NUL sig (64): the player's Ed25519 signature of its input
+    record "X4MP input v1" | sid | slot | N | k | 0 | tick (8, LE) | blob
+    length (2, LE) | blob bytes. Empty blobs are signed too.
+  NGGO|3/4 ... NUL sig_1 .. sig_N (the records of tick T-1-k; 64 zero bytes
+    each for T <= k) | the relay's signature over "X4MP permit v1" | sid |
+    T (8) | N | k | 0 0 | T-1-k (8; all ones for none) | BLAKE2b-256(
+    "X4MP records v1" | per slot: blob length (2) | blob | sig).
+  Sizes: a report grows by 65+32 bytes (largest 746 sealed), a permit by
+  64*(N+1)+1+32 (largest, N=8, 4,521 sealed): inside GATE_STATE_MAX and
+  GATE_PERMIT_MAX.
+
+Checks and failures (fail closed):
+  Relay: drops unsealed datagrams, unknown senders or addresses, forged and
+  replayed datagrams and reports naming another slot (counted in the report);
+  a report whose record signature fails (or is missing) stops the session:
+  wire_crypto_signature_slot_S_tick_T, NGSTOP to every client.
+  Gate: drops what is not authentic or is a replay (counted); verifies every
+  other slot's record and the relay's signature in every permit (an identical
+  copy of a verified permit is not verified twice). An authentic datagram with
+  invalid content (a bad signature, a permit without its trailer, an
+  unexpected format, a changed roster) stops with 106. Start/boot return 10
+  when wire crypto is armed without protocol 3. The portable and GetUp
+  transports are refused (106) while armed.
+  New stop reasons: 106 invalid authentic content, 107 handshake or keys not
+  completed within the gate timeout.
+
+Lua and logs:
+  gate.wire_crypto(credential) -> 1 or 0: after gate.wire(3,N) (and
+    gate.lookahead), before start/boot; once started only the identical
+    credential returns 1 (UI reloads). Runs the RFC known answers first.
+  gate.wire_crypto_status() -> "armed= established= keyed= establish_ms=
+    hellos= keyreqs= reports= sign_us= permits= cached= records= verify_us=
+    opened= forged= replayed= dropped= sealed= stop= key= roster=" (sums in
+    microseconds; key = this client's Ed25519 public key, roster = BLAKE2b-128
+    of the N keys, the relay report's roster_fingerprint).
+  The probe adds " wire_crypto=1" to ARMED, logs WIRE_CRYPTO_KEYED key=...
+  roster=... once keyed (players compare these out of band: a relay that
+  substituted a key shows a different roster on some client) and
+  WIRE_CRYPTO_STOP <status>.
+  Relay: prints NATIVE_GATE RELAY WIRE_CRYPTO relay_key=<hex> before READY;
+  the report adds "wire_crypto" (relay key, players' keys, roster fingerprint,
+  counts, seconds, failure); with --input-journal each line adds "sigs"
+  {slot: signature}, so every released record stays verifiable afterwards.
+  --wire-crypto refuses --live-inputs (protocol 2 commands).
+
+Peer links (B6; lockstep_wire_crypto.h, x4c_peer_* in the library):
+  wc_peer_key(group, sid, generation, sender): sender s seals under its own
+    subkey of the group key, receiver 255 (one datagram for every peer).
+  wc_peer_seal(tx, sid, own Ed25519 secret, N, k, tick, blob): plaintext
+    slot N k 0 | tick (8) | length (2) | blob | the record signature.
+  wc_peer_open(keys[N], roster[N], sid, N, k, datagram): 1 an authentic
+    record (slot, tick, blob, signature); 0 not authentic (outsider); -2
+    authentic under the group key but the record or signature is wrong (a
+    player holding the group key forged it: keep as evidence, never apply).
+  Replays are the caller's: a record is idempotent per (slot, tick); accept
+  only ticks not yet run and inside the permit window; two different validly
+  signed records of one (slot, tick) prove that player equivocated. The same
+  record signature is what the relay forwards in NGGO, so a peer copy and the
+  relay's bundle can be compared byte for byte.
+  wc_seal/wc_open, wc_record_sign/verify and wc_permit_sign/verify are the
+  single-record primitives behind all of the above.
+
+PEER LINKS: EXTENSION 1 OVER PROTOCOL 4 (1 NOVEMBER 2026, OPT-IN)
+Why: with the relay alone, every client's own report makes the relay round
+trip before the permit that carries it comes back, so the round trip r to the
+relay is paid even by a player sitting next to it, and the slowest client sets
+P = max(f, (r+f)/(k+1)) for everyone. With peer links each client also sends
+its sealed proposal straight to the other players; the step cycles then run
+through the pairs (one-way latency p between two players) and the relay may
+lag up to m more ticks: P = max(f, (p+f)/(k+1), (r+f)/(k+m+1)). Inputs still
+apply at t+1+k, so the input delay is set by the peers, not by the relay.
+Measurements and the go/no-go: reports/LOCKSTEP-PEER-LINKS-20261101.txt.
+Off unless every PC sets native_gate_peer_window = m and the relay runs with
+--peer-window m; nothing below exists otherwise (every packet unchanged).
+
+Rules (k = protocol 4 window >= 1, m = peer window, k + m <= 8):
+- A record sealed with tick t (the NGSTATE blob) is sent once to every peer
+  the NAT module reaches and applies at T = t+1+k, exactly like the permit.
+- F is the highest tick whose relay permit, and every earlier one, arrived.
+  Any tick T runs only when T <= F + m: on its relay permit as before, or
+  without it on all N records of T-1-k (and only once F >= 1, i.e. the relay
+  admitted tick 0 for every client, and never past the relay's last tick).
+  m = 0 exchanges and checks records but runs only on permits (measurement).
+- Every relay permit is compared with the peer copies of its records, before
+  or after its tick ran. A peer copy that differs stops the client (104), two
+  different peer copies of one record stop it (108), another copy of a final
+  permit stops it (103); the client first tells the relay (NGPFAIL), which
+  fails the session and sends NGSTOP to everyone. Malformed, unauthenticated
+  or unexpected peer datagrams are dropped, never fatal. The relay stays the
+  referee: digests, clocks, timeouts, the session end; a stopped session ends
+  with clients up to k+m ticks past the failing tick (protocol 4: k).
+- A client whose peer records are missing (lost, pair unreachable) simply
+  waits for the permit, as in protocol 4. While waiting it resends its
+  reports from F-k (the report that releases the missing permit F+1).
+
+Messages (ASCII, '|'; the relay port; peer sockets are a second UDP socket
+per client, bound to loopback for a loopback relay, else to any address on
+the NAT module's port):
+  NGPHELLO|1|<token>|<slot>|<clients>|<k>|<m>      peer socket -> relay
+    the client's opt-in, every 100 ms until answered. The relay keeps the
+    first address it sees per slot, only from the host the slot's reports
+    come from, and answers nothing until every slot said hello.
+  NGPADDR|1|<token>|<slot>|<m>|<last>|<ip:port 1>|...|<ip:port N>
+    relay -> each peer socket, once all N opted in (and to every later
+    hello): the peer socket address the relay saw for every slot (NAT
+    mappings; own entry included) and the last tick (--ticks).
+  NGPREFUSE|1|<token>|<slot>|off|mismatch           relay -> peer socket
+    no --peer-window, or another N/k/m: the client stays relay-only.
+  NGPREC|1|<token>|<slot>|<tick>|<clients>|<k>|<blob>|<signature>
+    peer socket -> peer socket, the whole datagram sealed by the crypto
+    module; signature over everything before it (empty with the stub).
+    Accepted only from the address routed for that slot.
+  NGPFAIL|1|<token>|<slot>|<tick>|<103|104|108>     relay connection -> relay
+    the session fails (peer_link_stop_<reason>_slot_<S>_tick_<T>) and every
+    client gets NGSTOP for the newest tick it reported.
+The relay with --peer-window m accepts reports up to m ticks past its newest
+permit (a client runs at most that far ahead of it). Its report and status
+add "peer_window" and "peer_links" (waiting/exchanged), never an address.
+An older relay drops NGPHELLO: the session then runs relay-only.
+
+Privacy. Players learn each other's IP addresses (and the ports of the peer
+sockets). Hence: off by default, opt-in per PC (native_gate_peer_window) and
+per session (relay --peer-window), and all-or-nothing: the relay hands out no
+address unless every client opted in. Records travel in clear text with the
+stub crypto module, like the relay path without wire crypto.
+
+Native surface (lockstep_peer.h, shared by both gates; status for the probe):
+gate.peer_links(m[, P]) -> 1/0  m = 0..8-k after gate.lookahead(k >= 1), -1
+                                 off; P the relay's NGNAT rendezvous port
+                                 (1024..65534) or nil/0; before start/boot,
+                                 then only the same m and P
+gate.peer_status() -> "peer=<off|hello|active|refused|failed> window= sent=
+  received= peer_runs= peer_first= relay_first= lead_us= behind_max= final=
+  last= dropped= duplicates= stale= unreachable= crypto=<stub|wire>
+  nat=<stub|traversal> forged="
+  (peer_runs: ticks run on peer records without the permit; peer_first /
+  relay_first: ticks whose N peer records were complete before / after the
+  permit; lead_us: summed head start of the peer records over the permit;
+  behind_max: farthest a tick ran past F)
+Probe: X4LAN_CONFIG.native_gate_peer_window = m (needs native_gate_lookahead
+k >= 1, k + m <= 8); the ARMED line adds " peer_window=m", the end logs
+"NATIVE_GATE PEER_STOP <gate.peer_status()>"; a DLL without gate.peer_links
+refuses (REFUSED peer_window=m). Stop reasons 104 and 108 are new (108 was
+105 on the branch; 105 is the Linux gate's; docs/LOCKSTEP-REGISTRY.txt).
+Interfaces of the NAT and crypto modules: peer_nat_api {local_port, route
+(slot, advertised address -> route, unreachable or pending), datagram (their
+own probes)} and peer_crypto_api {seal, open, sign, verify}; the stubs stay in
+lockstep_peer.h and tools/dev/native_gate_peer.py for sessions without the
+real modules. Joined at the integration (1 November 2026):
+- NAT traversal: gate.peer_links(m, P) / native_gate_peer_rendezvous_port = P
+  with the relay's --rendezvous-port P runs the NAT core (lockstep_nat.h) on
+  the peer socket itself (NGNAT| datagrams are the core's, from anyone, a
+  routed peer too). A slot's route is the core's DIRECT path (authenticated
+  nonce round trip); RELAY (no rendezvous, timeout, symmetric pair) is
+  "unreachable": that slot's records come only with the permits. NGPADDR's
+  addresses are then not used as routes; NGPHELLO/NGPADDR stay the opt-in and
+  carry the last tick. Without P the stub routes to the NGPADDR addresses.
+  Not joined: UPnP/PCP port mapping (lockstep_nat_portmap.h, blocking, a
+  worker thread's job) and the core's CLOSE/BYE at the session end (the
+  rendezvous times the entries out).
+- Wire crypto: with gate.wire_crypto armed every record is wc_peer_seal (the
+  NGKEYS group key, the sender's subkey, the record signed with the player's
+  session Ed25519 key: the signature the relay checks on its report) and only
+  wc_peer_open's authentic record of the routed sender is taken (forged=
+  counts a group key holder's forgery). Nothing is sent before NGKEYS and
+  nothing in the clear; NGPFAIL goes sealed. Not built: the relay's sealed
+  NGPHELLO/NGPADDR, so the relay refuses --peer-window with --wire-crypto
+  and a crypto client stays relay-only (peer=hello) against any relay.
+- Protocol 5 (adaptive) has no peer links: gate.lookahead_adaptive refuses
+  after gate.peer_links and the gate's start refuses both (10); the probe and
+  the relay refuse the combination too.
+
 INPUT MULTIPLEXER (tools/dev/native_gate_inputs_core.lua, 29 October 2026)
 The probe's own inputs share one blob per slot and tick: pilot records (wire
 source), player orders and hit claims register as sections of the
@@ -268,6 +594,10 @@ native_gate_relay.py --lookahead k (default 0): protocol 4. The report and
   the --status-file add "lookahead" (the status also "permitted", the highest
   permit released); "released_at" then names the tick whose reports released
   the permit for tick+1+k. Refused together with --live-inputs.
+native_gate_relay.py --peer-window M (default off): peer links extension 1
+  (PEER LINKS above); needs --lookahead K >= 1 and K+M <= 8.
+native_gate_peer.py: Python reference of the peer rules and wire;
+  native_gate_peer_sim.py prints the geometry table of the peer report.
 native_gate_relay.py --input-journal FILE (default off): before each release
   the relay keeps the released proposals durable. Without it, a release whose
   permit carries a non-empty blob rewrites the whole --report (every tick's

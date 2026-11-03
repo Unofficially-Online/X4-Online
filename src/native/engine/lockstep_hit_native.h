@@ -137,10 +137,12 @@ static int hitn_write(void *destination,const void *source,size_t bytes) {
 static int hitn_vtable_is(const unsigned char *object,unsigned rva) {
     uintptr_t vtable=0;return object && read_local(object,&vtable,8) && pslot_canonical_vtable(vtable)==(uintptr_t)(image+rva);
 }
-/* Slot (1..N) of the resolved pilot slot ship that contains component, else 0. */
+/* Slot (1..N) of the resolved pilot slot ship that contains component, else 0. An absent slot's ship (hot join) is
+ * nobody's before its handover: its hits stay native, as any ship's, and it claims none. */
 static unsigned hitn_slot_of(unsigned char *component) {
     for(unsigned depth=0;component && depth<HITN_DEPTH;depth++) {
-        for(unsigned i=0;i<pilot_slot_count;i++) if(pilot_slots[i].resolved && pilot_slots[i].object==component) return i+1;
+        for(unsigned i=0;i<pilot_slot_count;i++)
+            if(pilot_slots[i].resolved && pilot_slots[i].object==component) return pilot_slot_present(i+1,stats.issued)?i+1:0;
         unsigned char *parent=NULL;
         if(!read_local(component+0x70,&parent,8) || parent==component) return 0;
         component=parent;
@@ -276,7 +278,9 @@ static void hitn_candidate_add(unsigned kind,unsigned char *bullet,uint64_t key,
     memcpy(c->claim.point,point,sizeof(c->claim.point));c->bullet=bullet;c->observe=tick;
     if(kind==HIT_INCOMING) ++hitn_claims_in;else ++hitn_claims_out;
 }
-static uint64_t hitn_slot_saved(unsigned slot) {return slot>=1 && slot<=pilot_slot_count && pilot_slots[slot-1].resolved?pilot_slots[slot-1].saved:0;}
+static uint64_t hitn_slot_saved(unsigned slot) {
+    return slot>=1 && slot<=pilot_slot_count && pilot_slots[slot-1].resolved && pilot_slot_present(slot,stats.issued)?pilot_slots[slot-1].saved:0;
+}
 
 /* Once per tick: the local slot ship's body pose (its read bank before this
  * tick's join) and the pose the player saw for it (previous tick's display). */
@@ -284,7 +288,7 @@ static const hitn_owner_view *hitn_owner_now(uint64_t tick) {
     if(hitn_owner.tick==tick) return hitn_owner.valid?&hitn_owner:NULL;
     memset(&hitn_owner,0,sizeof(hitn_owner));hitn_owner.tick=tick;
     unsigned local=stats.slot;
-    if(local<1 || local>pilot_slot_count || !pilot_slots[local-1].resolved) return NULL;
+    if(local<1 || local>pilot_slot_count || !pilot_slots[local-1].resolved || !pilot_slot_present(local,tick)) return NULL;
     hitn_owner.own=pilot_slots[local-1].object;
     if(!hitn_bank(hitn_owner.own,hitn_owner.body)) return NULL;
     if(predict_armed && local<=PILOT_SLOTS && predict_slots[local-1].enabled && predict_slots[local-1].display_tick+1==tick) {

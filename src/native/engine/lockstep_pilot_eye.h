@@ -33,6 +33,12 @@
  *     replaced meanwhile stays the engine's, counted lost).
  * The player's pose relative to its seat is X4's in both: the controller's own offsets, any head
  * movement, the w lanes. Nothing outside the scope sees it, and the simulation never runs in it.
+ * Slot 1 on foot (native_gate_pilot_foot, lockstep_pilot_foot.h): the canonical player stands in a station room, its
+ * pose there means nothing in slot k's room. Then the presented pose is slot k's seat itself (stage 'seat', from
+ * 0x75d110 for slot k's ship only), the w lanes X4's: client k's eye stays at its own seat while slot 1 walks.
+ * Slot k on foot (native_gate_pilot_foot_slots, lockstep_pilot_foot_slots.h, K2-9): the presented pose is P_k's own
+ * FirstPersonController pose (its room is the scope's parent: P_k never leaves it), live and published (stage 'walk'):
+ * d81ec0 on P_k's FPC reads only that FPC's fields once its first update ran, so nothing simulated is touched here.
  * Status (PILOT_INPUTS present row): eye=stage/scopes/poses/lost/dx,dy,dz (stage: on, same, skip:...,
  * off:...; dx..dz: D's translation in slot k's room, metres). */
 #define PEYE_SEAT 0x75d110u           /* (component, out PosRot, relative to, &control position) -> found */
@@ -57,6 +63,10 @@ static void **peye_fpc_stock;                     /* the stock vtable */
 static void *peye_vt[1+PEYE_FPC_SLOTS];           /* the column object, then the slots */
 static __attribute__((aligned(16))) float peye_delta[16],peye_block[2][16];
 static int peye_on,peye_vt_ready,peye_live,peye_published;
+static int peye_seat_mode;                        /* slot 1 on foot: the presented pose is slot k's seat itself */
+static unsigned char *peye_walk_fpc;              /* slot k on foot: its FPC, whose pose is presented */
+static unsigned char *pfslot_walking_fpc(unsigned k);   /* lockstep_pilot_foot_slots.h */
+static __attribute__((aligned(16))) float peye_seat_pose[16];
 static unsigned peye_bank;
 static const char *peye_stage="off";
 static unsigned char *peye_key[4];                /* ship 1, room 1, ship k, room k of D */
@@ -77,7 +87,9 @@ static void peye_compose(const float child[16],const float parent[16],float out[
 static void peye_identity(float m[16]) {memset(m,0,16*sizeof(float));m[4]=m[9]=m[14]=1.0f;}
 /* A pose with D applied; the w lanes stay the pose's own. */
 static void peye_apply(const float pose[16],float out[16]) {
-    float r[16];peye_compose(pose,peye_delta,r);
+    float r[16];
+    if(peye_seat_mode) memcpy(r,peye_seat_pose,sizeof(r));
+    else peye_compose(pose,peye_delta,r);
     for(unsigned i=0;i<4;i++) r[4*i+3]=pose[4*i+3];
     memcpy(out,r,sizeof(r));
 }
@@ -106,7 +118,24 @@ static int peye_delta_from(const float s1[16],const float sk[16],float d[16]) {
     if(!moves) peye_identity(d);
     return moves;
 }
-static int peye_set(const char *stage,int on) {peye_stage=stage;peye_on=on;if(!on) peye_identity(peye_delta);return on;}
+static int peye_set(const char *stage,int on) {peye_stage=stage;peye_on=on;if(!on) {peye_identity(peye_delta);peye_seat_mode=0;peye_walk_fpc=NULL;}return on;}
+/* Slot 1 on foot: slot k's seat alone (canonical state, simulation RNG word held, as below). */
+static int peye_update_seat(const pslot_slot *s,unsigned char *room1) {
+    int posk=0;__attribute__((aligned(16))) float b[16];unsigned char found=0;int fault=0;
+    if(!read_local(s->player+PEYE_POSITION,&posk,4)) return peye_set("skip:position",0);
+    memset(peye_key,0,sizeof(peye_key));
+    uint64_t word=0,*rng=pres_rng_hold(&word);
+    peye_identity(b);
+    __try {found=peye_seat(s->ship,b,s->room,&posk);}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    pres_rng_back(rng,word);
+    if(fault) return peye_set("skip:fault",0);
+    if(!found) return peye_set("skip:no_seat",0);
+    if(!peye_rigid(b)) return peye_set("skip:not_rigid",0);
+    memcpy(peye_seat_pose,b,sizeof(b));peye_seat_mode=1;peye_identity(peye_delta);
+    peye_key[0]=pilot_slots[0].object;peye_key[1]=room1;peye_key[2]=s->ship;peye_key[3]=s->room;
+    return peye_set("seat",1);
+}
 /* The vtable copy: built once from the stock vtable (read only, the same for the whole process). */
 static void peye_prepare(void) {
     if(peye_vt_ready || !peye_fpc_stock) return;
@@ -121,12 +150,21 @@ static int peye_update(const pslot_slot *s) {
     unsigned char *p1=pslot_p1,*ship1=pilot_slots[0].object,*room1=NULL,*cockpit=NULL;int pos1=0,posk=0;
     __attribute__((aligned(16))) float a[16],b[16];
     InterlockedIncrement64(&peye_updates);
+    peye_seat_mode=0;peye_walk_fpc=NULL;
     if(!peye_seat || !peye_fpc_stock || !peye_fpc_pose) return peye_set("off:functions",0);
     peye_prepare();
+    {   unsigned char *walker=pfslot_walking_fpc(pres_slot);   /* slot k on foot: its own FPC's pose (K2-9) */
+        if(walker) {
+            if(!s->seated || !s->ship || !s->room || !p1 || !read_local(p1+PRES_PARENT,&room1,8) || !room1) return peye_set("skip:parent",0);
+            peye_identity(peye_delta);memset(peye_key,0,sizeof(peye_key));
+            peye_key[0]=ship1;peye_key[1]=room1;peye_key[2]=s->ship;peye_key[3]=s->room;peye_walk_fpc=walker;
+            return peye_set("walk",1);
+        }
+    }
     if(!s->seated || !s->ship || !s->room || !s->player || !p1 || !ship1 || !read_local(p1+PRES_PARENT,&room1,8) || !room1)
         return peye_set("skip:parent",0);
     if(!read_local(ship1+PSLOT_ROOM,&cockpit,8)) cockpit=NULL;
-    if(room1!=ship1 && room1!=cockpit) return peye_set("skip:slot1_seat",0);
+    if(room1!=ship1 && room1!=cockpit) return pfoot_armed?peye_update_seat(s,room1):peye_set("skip:slot1_seat",0);
     if(!read_local(p1+PEYE_POSITION,&pos1,4) || !read_local(s->player+PEYE_POSITION,&posk,4)) return peye_set("skip:position",0);
     memset(peye_key,0,sizeof(peye_key));
     uint64_t word=0,*rng=pres_rng_hold(&word);unsigned char found1=0,foundk=0;int fault=0;
@@ -146,8 +184,8 @@ static int peye_update(const pslot_slot *s) {
 static void peye_pose(void *self,float *out,double time,unsigned char overwrite) {
     if(!(time>=0.0) || self!=(void*)peye_ctl || !peye_live || !InterlockedCompareExchange(&pres_open,0,0)) {peye_fpc_pose(self,out,time,overwrite);return;}
     __attribute__((aligned(16))) float local[16];
-    peye_fpc_pose(self,local,time,1);
-    peye_apply(local,local);
+    if(peye_walk_fpc) peye_fpc_pose(peye_walk_fpc,local,time,1);   /* slot k on foot: its own pose in its room */
+    else {peye_fpc_pose(self,local,time,1);peye_apply(local,local);}
     if(overwrite) memcpy(out,local,sizeof(local));
     else {float r[16];peye_compose(out,local,r);memcpy(out,r,sizeof(r));}
     InterlockedIncrement64(&peye_poses);
@@ -169,7 +207,9 @@ static void peye_enter(unsigned char *p1,unsigned char *view,unsigned bank,const
     unsigned char *published=*at;__attribute__((aligned(16))) float pose[16];
     if(published) memcpy(pose,published,sizeof(pose));
     else peye_identity(pose);
-    peye_apply(pose,peye_block[bank]);
+    double now=0;
+    if(peye_walk_fpc && pnat_fn.time(&now)) peye_fpc_pose(peye_walk_fpc,peye_block[bank],now,1);
+    else peye_apply(pose,peye_block[bank]);
     peye_block_at=at;peye_block_saved=published;peye_bank=bank;
     *at=(unsigned char*)peye_block[bank];peye_published=1;
     InterlockedIncrement64(&peye_scopes);
@@ -187,7 +227,7 @@ static void peye_leave(void) {
     }
 }
 static void peye_reset(void) {
-    peye_on=0;peye_live=peye_published=0;peye_stage="off";memset(peye_key,0,sizeof(peye_key));peye_ctl=NULL;
+    peye_on=0;peye_seat_mode=0;peye_walk_fpc=NULL;peye_live=peye_published=0;peye_stage="off";memset(peye_key,0,sizeof(peye_key));peye_ctl=NULL;
     peye_updates=peye_scopes=peye_poses=peye_lost=peye_other=0;peye_other_vtable=0;peye_identity(peye_delta);
 }
 static int peye_status(char *out,size_t capacity) {

@@ -1,0 +1,299 @@
+NATIVE LOCKSTEP GATE: SHARED NUMBER REGISTRY - 1 NOVEMBER 2026
+
+SCOPE
+One place for the numbers that parallel branches allocate in the same space and
+that must stay unique: the UI replay family bits and wire ops, the UI guard's
+claims, and the gate's stop reasons. A branch that takes a new number adds its
+line here in the same commit; tests/test_lockstep_registry.py checks the stop
+reasons and the family bits against the sources. Integrated on the branch
+contrib/ferrite-integrate (smoke 299a8332 plus missions, trade, peer links).
+
+1. UI REPLAY FAMILIES (native_gate_ui_replay; lockstep_pilot_inputs.h UIREP_FAMILY_*)
+Off in the bare gate; a lockstep session lists every family by default (session
+defaults, tools/dev/native_gate_defaults.lua; reports/LOCKSTEP-DEFAULTS-20261101.txt).
+'true' arms the first runs' families (mask 63); every other family is armed only
+when named in the list. Mirrors: native_gate_ui_replay_core.lua
+K.FAMILY, check_gate_options.py / native_gate_players.py UI_REPLAY_FAMILIES,
+ui_guard_inventory.py (covered bits), native_gate_ui_build_core.lua K.FAMILY.
+
+  bit    family        owner (source)                 capture                                   slots
+  1      travel        lockstep_ui_replay.h           own hooks (covered entries)               every
+  2      target        lockstep_ui_replay.h           own hooks / soft target sites             every
+  4      orders        lockstep_ui_replay.h           own hooks + Lua CreateOrder               every
+  8      autopilot     lockstep_ui_replay.h           own hooks                                 every
+  16     dock          lockstep_ui_replay.h           own hooks                                 every
+  32     weapons       lockstep_ui_replay.h           own hooks                                 every
+  64     missiles      lockstep_ui_replay.h           own hooks (needs target, pilot fire)      every
+  128    queue         lockstep_ui_replay.h           own hooks + Lua order params              every
+  256    events        lockstep_ui_replay.h           Lua AddUITriggeredEvent / SignalObject    slot 1
+  512    flight        lockstep_ui_replay.h           own hooks                                 every
+  1024   trade         lockstep_ui_trade.h            own hooks (17 FFI) + 10 Lua globals       every (own faction pays)
+  2048   missions      lockstep_ui_missions.h         guard claims (5 FFI exports)              slot 1
+  4096   build         lockstep_ui_build.h            guard claims + commit scopes (Lua)        every (factions: slot 1; station
+                       + lockstep_ui_construct.h      (the station plan commit)                 construction every slot, trade scope)
+  8192   assets        lockstep_ui_build.h            guard claims + SetComponentName (Lua)     every (factions: slot 1)
+  16384  conversation  lockstep_ui_missions.h         Lua wrappers (8 globals) + guard claims   slot 1
+  32768  faction       lockstep_ui_faction.h          guard claims (33 FFI exports)             every (own faction's rules;
+                                                                                                  player entity: player's slot)
+  free: none in 16 bits. 32768 is the last bit the guard table's 'covered' field (unsigned short) holds: a
+  family that needs a 'covered' bit must widen that field (gen_ui_guard_table.py, uiguard_entry); a family
+  that only claims guard entries can take 65536 and up once uirep_families' users accept it.
+History: build/assets took 4096/8192 first (smoke 299a8332); missions had
+4096/8192 and trade 4096 on their branches and were renumbered at the merge.
+
+2. UI REPLAY WIRE OPS (the input section 'ui', kind 0x55; lockstep_ui_replay.h)
+Ops below 0x40 are applied natively in path_release; 0x40 and above are
+Lua-run (the probe's frame of capture tick + delay, slot order, call order).
+
+  op          family / owner                       meaning
+  0x01 0x02   travel                               StartPlayerActivity / StopPlayerActivity
+  0x03 0x04   target                               soft target set / clear
+  0x05        autopilot dock weapons flight        a hooked call (hook number + arguments)
+              missiles (lockstep_ui_replay.h)
+  0x41 0x42   orders                               RemoveAllOrders / RemoveAllOrders2
+  0x43        orders                               Lua CreateOrder
+  0x44-0x46   queue                                queue editor call (0x44), order param (0x45), list param (0x46)
+  0x47        events                               Lua global (AddUITriggeredEvent, SignalObject)
+  0x48        missions (lockstep_ui_missions.h)    mission export with a cue reference
+  0x49        conversation                         conversation global (number + codec); number 16 = the hire scope's fee
+                                                   (TransferPlayerMoneyTo, UIMIS_C_HIRE_MONEY / K.HIRE_MONEY)
+  0x50        build, assets (lockstep_ui_build.h)  one part of a frame's batch (a station plan travels whole in one
+                                                   batch: lockstep_ui_construct.h, no op of its own)
+  0x58        trade (lockstep_ui_trade.h)          trade Lua global (number + codec)
+  0x59        trade                                hooked trade FFI setter (hook + arguments)
+  0x5a        faction (lockstep_ui_faction.h)      one part of a claimed call's record (seq, index, count, bytes)
+  free: 0x06-0x3f, 0x4a-0x4f, 0x51-0x57, 0x5b-0xff.
+
+3. UI GUARD CLAIMS (lockstep_ui_guard.h uiguard_claim / uiguard_unclaim)
+Two ways a replay family takes a guard entry over:
+  covered  the family has its own hook at or below the entry; the generated
+           table names it in 'covered' (ui_guard_inventory.py) and the guard
+           does not install that entry while the family is armed. Trade covers
+           27 entries (10 Lua globals, 17 FFI setters), the first families theirs.
+  claimed  the family captures in the guard's own hook. Dispatch by entry: each
+           entry holds at most one family's handler (uiguard_claim_by[index]);
+           in a local phase the handler answers first, otherwise (or when it
+           declines) the guard's own rule applies. A claimed entry is installed
+           whatever the guard's groups say. Claims are made at the family's
+           arming, before the install, and refused (the arming fails) when the
+           entry is another family's claim (claim_taken) or covered by an armed
+           family (claim_covered: two patches at one entry).
+  claimers   build/assets  31 FFI entries (uibuild_claims; SetConstructionSequenceFromConstructionMap and
+                           CancelConstruction since contrib/ferrite-construct; CancelPlayerInvolvedTradeDeal is a
+                           guard entry of group build, refused)
+             missions      AbortMission SetActiveMission MissionBriefingInteractButtonClicked StartBriefing StopBriefing
+             conversation  CancelConversation UnsuspendConversation SelectDialogOption SelectBackOption (Lua C functions)
+             faction       33 FFI entries (uifac_claims): the whole faction group; CreateTradeRule UpdateTradeRule
+                           RemoveTradeRule SetPlayerTradeRuleDefault UpdateSupplyOverrides PauseProcessingModule
+                           PauseProductionModule SetPlayerTradeLoopCargoReservationSetting (trade group);
+                           SetControllableBlacklist SetControllableFightRule SetDefaultResponseToSignalForControllable
+                           ResetResponseToSignalForControllable SetDefensibleLoadoutLevel (fleet group)
+             foot          GetUp (native_gate_pilot_foot, lockstep_pilot_foot_guard.h; not a family: the GET_UP key in the
+                           stock record of slot 1; with native_gate_pilot_foot_slots also of slot k on client k, consumed
+                           in slot k's scope by lockstep_pilot_foot_slots.h)
+  Not a claim, no bit, no op: native_gate_player_settings_per_slot (lockstep_player_settings.h, default off) changes how the
+  faction family runs its eight entity claims in factions mode (slot k's own values; section 5 has its patched entries).
+
+5. PATCHED X4 ENTRIES OUTSIDE THE GUARD TABLE (one patch per entry; a module that patches one of these, or the same
+function's entry, must agree with its owner first)
+  rva        what X4 does there                                   owner (key)                      patch
+  0x6d83b0   paint theme of (object, faction)                     lockstep_player_settings.h       E9 -> stub, replaced in C
+  0x6bf530   clothing theme of (NPC, faction)                     (native_gate_player_settings_    E9 -> stub, continues at
+                                                                  per_slot)                        0x6bf535/0x6bf59d/0x6bf5ad
+  0x8fa710   is ware illegal to (ware, faction, licence holder)   "                                E9 -> stub, replaced in C
+  0x18c7e0   GetDefaultResponseToSignalForFaction2                "                                E9 -> stub, faction ID rewritten,
+  0x1b0b50   HasDefaultResponseToSignalForFaction                 "                                first instructions copied
+  0x186cd0   GetAskToSignalForFaction                             "
+  0x18e9d0   GetFactionDefaultWeaponMode                          "
+  Function-pointer hook: pres_settings_hook in lockstep_pilot_present.h (pres_enter / pres_leave), set by the same module.
+
+4. STOP REASONS (gate finish(reason); stats.reason, the probe's STOP line)
+Codes 1..99 belong to the gate core (lockstep_gate.c, linux/gate_linux.c);
+100 and up to opt-in modules. One code, one owner. A module that stops for
+several causes names them in its why/status text, not with another code.
+
+Core (lockstep_gate.c; the Linux gate uses the same numbers where ported):
+  1 relay stop            2 not the main thread / loading at start
+  3 load/state mismatch   4 dt or report tick error
+  5 clock drift           6 window closed
+  7 relay timeout         8 socket error
+  10 start refused (arguments, protocol, peer window)   11 image verify
+  12 movie flag / dt      13 table busy
+  14 hooks DLL loaded     15 module pin
+  16 WSAStartup           17 socket
+  18 connect              19 thunk
+  20 patch swap           21 path experiment
+  22-25 serial path pass (result, semaphore wait, release, slots)
+  26 boot timeout         27 boot movie flag / boot dt install
+  28 flight install       29 AI install
+  30/31 AI RNG            32/33 agent RNG
+  34/35 ship RNG / ship pin              36 parameter initialization
+  37/38 weapon RNG        39/40 parameter trace
+  41/42 nav               43/44 velocity
+  45/46 shape             47/48 bullet
+  49/50 death             51/52 mass
+  53/54 attention         55 flight
+  56 local proposal differs / packet too long / nonzero permit
+  57/58 spline            59/60 radar
+  61/62 gravidar          64 gravidar registration
+  65/66 damage            67/68 interrupt
+  69/70 contact           71/72 world identity
+  74 snapshot / world trace / origin / get-up      75 registry MD / origin / creation
+  76 portable transport   77 receive timeout option
+  78 portable wire / get-up diagnostic transport    79 path determinism
+  80 event order          81 job RNG
+  82 script RNG           83 gravidar keys / time
+  84 AI schedule          85 travel
+  86 MD timed / boot hold 87 MD resume
+  88 AI wait RNG          89 time snapshot
+  90 render RNG           92 find order
+  93 region RNG           94 bullet cadence
+  95 nav cadence / nav player                       96 world created (CREATED_STOP_REASON)
+  97 view                 98 camera offset         99 test harness close only
+
+Modules (define, owner):
+  100 MT_STOP_REASON            lockstep_mass_traffic.h
+  101 PREDICT_STOP_REASON       lockstep_pilot_predict.h
+  102 LOOKAHEAD_STOP_AHEAD      lockstep_lookahead.h (protocol 4)
+  103 LOOKAHEAD_STOP_CONFLICT   lockstep_lookahead.h (also a peer copy of a final permit)
+  104 PEER_STOP_MISMATCH        lockstep_peer.h (peer links)
+  105 LX_STOP_UNPORTED_OPTION   linux/gate_linux.c
+  106 WCG_STOP_INVALID          lockstep_wire_crypto_gate.h
+  107 WCG_STOP_HANDSHAKE        lockstep_wire_crypto_gate.h
+  108 PEER_STOP_EQUIVOCATION    lockstep_peer.h (was 105 on contrib/ferrite-p2p: the Linux gate's)
+  110 SPAWN_RNG_STOP_REASON     lockstep_spawn_rng.h
+  111 HITN_STOP_REASON          lockstep_hit_native.h
+  112 PFIRE_STOP_REASON         lockstep_pilot_fire.h
+  113 PNAT_STOP_REASON          lockstep_pilot_native.h
+  120 SPEECH_TIME_STOP_REASON   lockstep_npc_deadline.h
+  121 GDL_STOP_REASON           lockstep_gravidar_deadlines.h
+  130 RID_STOP_REASON           lockstep_runtime_ids.h (and lockstep_guidance_local.h, stages guidance_*)
+  131 CO_STOP_REASON            lockstep_command_order.h
+  132 WFIRE_STOP_REASON         lockstep_weapon_fire.h
+  133 PTRACE_STOP_REASON        lockstep_physics_trace.h
+  134 BORDER_STOP_REASON        lockstep_body_order.h
+  135 SORDER_STOP_REASON        lockstep_shape_order.h
+  136 ERNG_STOP_REASON          lockstep_engine_rng.h
+  137 NOCT_STOP_REASON          lockstep_nav_octree.h
+  138 CAMFOL_STOP_REASON        lockstep_camera_anchor.h
+  139 SPEAK_TIMER_STOP          lockstep_speak_timer.h (was 130)
+  140 SS_STOP_REASON            lockstep_ship_sound.h
+  141 DW_STOP_REASON            lockstep_draw_watch.h
+  142 PT_STOP_REASON            lockstep_player_timer.h
+  143 WR_STOP_REASON            lockstep_warp_rng.h
+  144 TZ_STOP_REASON            lockstep_tempzone_order.h
+  145 TRR_STOP_REASON           lockstep_transition_rows.h (was 144, shared with the tempzone order)
+  150 GWIDE_STOP_REASON         lockstep_gravidar_wide.h
+  151 EVENT_RNG_STOP_REASON     lockstep_event_rng.h
+  152 BRNG_STOP_REASON          lockstep_build_rng.h
+  153 UIC_STOP_REASON           lockstep_ui_cargo.h
+  154 SPR_STOP_REASON           lockstep_supply_rows.h
+  155 PSTK_STOP_REASON          lockstep_pilot_stock.h
+  156 PMATH_STOP_REASON         lockstep_portable_math.h
+  157 XRCP_STOP_REASON          lockstep_exact_reciprocal.h
+  158 FPENV_STOP_REASON         lockstep_fp_env.h
+  159 PDEC_STOP_REASON          lockstep_decimal.h
+  160 VPS_STOP_REASON           lockstep_virtual_players.h
+  161 PSLOT_STOP_REASON         lockstep_pilot_slots.h
+  162 PRES_STOP_REASON          lockstep_pilot_present.h
+  163 PDEATH_STOP_REASON        lockstep_pilot_death.h (with the foot modules: a ship lost while its slot is off the
+                                seat is no death, event lost:k; X4 killing its player on foot: player_killed)
+  164 UIREP_STOP_REASON         lockstep_ui_replay.h: the replay and every UI family (guard, trade,
+                                build, assets, missions, conversation, faction; the why names the module);
+                                lockstep_player_settings.h (whys player_settings_install, _hook_lost,
+                                _restore, _scope, _scope_open, _present)
+  165 RC_STOP_REASON            lockstep_region_camera.h (was 130)
+  166 RC_MINING_STOP            lockstep_region_camera.h (group mining)
+  167 RC_XS_STOP                lockstep_region_camera.h (group xs)
+  168 RC_PROBE_STOP             lockstep_region_camera.h (group camera_probe)
+  169 RC_HIGHWAY_ROWS_STOP      lockstep_region_camera.h (group highway_rows)
+  170 UL_STOP_REASON            lockstep_ui_lazy.h
+  171 SW_STOP_REASON            lockstep_supply_wants.h
+  172 LL_STOP_REASON            lockstep_loadout_order.h
+  173 OC_STOP_REASON            lockstep_order_canon.h
+  174 PO_STOP_REASON            lockstep_pick_order.h
+  175 MA_STOP_REASON            lockstep_macro_arena.h
+  176 PBUD_STOP_REASON          lockstep_path_budget.h
+  177 ECO_STOP_REASON           lockstep_economy_load.h
+  178 CR_STOP_REASON            lockstep_cutscene_ready.h
+  179 FR_STOP_REASON            lockstep_fp_redirect.h
+  180 PTF_STOP_REASON           lockstep_path_transforms.h
+  181 BPOSE_STOP_REASON         lockstep_body_pose.h
+  182 RF_STOP_REASON            lockstep_render_frames.h
+  183 RDISP_STOP_REASON         lockstep_render_display.h (render stages 2/3: camera, motion)
+  184 OPRED_STOP_REASON         lockstep_own_predict.h (own-ship prediction)
+  185 PFOOT_STOP_REASON         lockstep_pilot_foot.h (slot 1 on foot; also a stage of a pnat pass: the why names it;
+                                foot_clock: no session clock for a replayed walking state, the run's double-tap),
+                                lockstep_pilot_foot_body.h (native_gate_pilot_foot_bodies: slots 2..N's players in
+                                their seats' rooms; whys body_*, with the kill guard at KillRecursive 3e525b
+                                body_kill_install, body_kill_lost, body_kill_restore; parked off the tree while anyone
+                                is off its seat; every X4 connect/take-off held (+0xd4) and with a stand-in camera
+                                (+0x4e8): body_killed, body_camera, body_hold, body_universe when X4 did it anyway),
+                                lockstep_pilot_foot_slots.h (native_gate_pilot_foot_slots: slots 2..N get up and walk;
+                                whys slot_*: slot_scope, slot_may_stand_fault, slot_release_vtable,
+                                slot_controller_vtable, slot_release_fault, slot_stand_fault, slot_fpc,
+                                slot_fpc_first_update, slot_take_vtable, slot_pilot_position, slot_take_fault,
+                                slot_take_controller, slot_update_scope, slot_update_fault, slot_update_leave,
+                                slot_update_outside_frame, slot_unseated, slot_fpc_lost, slot_moved, slot_player_lost,
+                                slot_hook_install, slot_hook_lost, slot_hook_restore)
+  186 NMESH_STOP_REASON         lockstep_nav_mesh.h (native_gate_nav_mesh: interior nav helper builds at the gate's join)
+  187 HYB_STOP_REASON          lockstep_hybrid.h (native_gate_hybrid, hybrid sectors slice H1; whys: no_slots, owner_slot,
+                                owner_lost, owner_sector, shared_sector, sector_key, sector_lost, owner_left, other_entered,
+                                members_full, frame_guard, record_shape, record_slot, record_sector, record_tick, census_count)
+  188 CPLAY_STOP_REASON         lockstep_character_play.h (native_gate_character_play: a body animation start loads its character and
+                                motion first and draws on a keyed word; whys slot_changed, object_changed, block_changed,
+                                sync_timeout, sync_queue, loader, asset_entry, word, exception)
+  190 ADAPT_STOP_PLAN           lockstep_adaptive.h (protocol 5)
+  191 ADAPT_STOP_SOURCE         lockstep_adaptive.h
+  192 ADAPT_STOP_QUIET          lockstep_adaptive.h
+  193 ADAPT_STOP_DROPPED        lockstep_adaptive.h
+  194 ADAPT_STOP_PILOT          lockstep_adaptive.h
+  195 UX_STOP_REASON            lockstep_ui_exports.h (native_gate_ui_exports: a hooked export table entry no longer
+                                holds its stub at a gate tick)
+  196 SCLOCK_STOP               lockstep_speech_clock.h (native_gate_speech_clock: a pinned clock instruction changed,
+                                or the clock was already past its session value at the set)
+  200 JOIN_STOP_REASON          lockstep_join.h (hot join: a strict joiner's admission refused; the status line's
+                                rx_detail names why: contexts_differ, wakes_unplaced, md_heap_differs, clock,
+                                ids_foreign, created_entries, rid_*, pins, engine)
+  free: 109, 114-119, 122-129, 146-149, 189, 197-199, 201-255.
+Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
+PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
+Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak
+timer 130 -> 139, transition rows 144 -> 145, peer equivocation 105 -> 108.
+Earlier logs and reports keep the old numbers.
+
+5. INPUT SECTIONS (protocol 3/4 input blob container; lockstep_hit_claims.h INPUT_KIND_*)
+One kind byte per section, strictly ascending on the wire, each at most once per blob (240 bytes per slot and
+tick). Mirrors: tools/dev/native_gate_inputs_core.lua K.KIND, tools/dev/native_gate_inputs.py KIND.
+
+  kind  section   owner (source)                                   payload
+  0x01  pilot     lockstep_pilot_inputs.h                          pilot record v1 (28 bytes; alone: legacy form)
+  0x48  hits      lockstep_hit_claims.h / lockstep_hit_native.h    hit claims v1
+  0x4a  join      lockstep_join.h / native_gate_join.py           hot join record v1 (version byte 1, op byte): SAVE_AT and
+                  (native_gate_join_core.lua)                      HANDOVER/ABORT in an absent slot's relay stand-in blob,
+                                                                   SAVED/FAILED in a saving client's own blob
+  0x4f  octree    lockstep_nav_octree.h ('agreed')                 build report (20 bytes)
+  0x50  orders    native_gate_player_orders                        player orders v1 (alone: legacy form)
+  0x53  stock     lockstep_pilot_stock.h                           stock piloting record (version byte 3)
+  0x55  ui        lockstep_ui_replay.h                             UI replay events (version byte 1)
+  0x58  ffi       lockstep_ui_exports.h                            relayed UI calls v1 (version byte 1): records of
+                  (native_gate_ffi_relay_core.lua)                 an export index and its arguments; index 0xffff a
+                                                                   Lua global by name, tagged arguments
+  0x59  hybrid    lockstep_hybrid.h (native_gate_hybrid)           hybrid sector record (version byte 1): state tick,
+                                                                   sector key, movers, digest, round-robin poses
+  free: every other value; a new kind needs the C container, both mirrors and their tests in the same commit.
+
+6. MD UI EVENT SCREENS, IDENTITY STEP KINDS AND SESSION-SAVE CUES (names, not numbers; one owner each)
+Screens a Lua side raises with AddUITriggeredEvent and the MD script that owns them. A new screen or step kind is
+added here with its owner. Starts: reports/LOCKSTEP-STARTS-20261101.txt (contrib/ferrite-starts).
+
+  screen / control                  owner (MD, Lua)                                         when
+  X4LAN_PlayerIdentity / Step       native_gate_player_identity.xml, *_identity.lua         setup tick, every client
+  X4LAN_SessionHulls / Create       x4lan_session_hulls.xml (generated per session by       capture run only (one lane):
+                                    native_gate_session_start.py), native_gate_snapshot.lua  hulls of per-player starts
+  Identity step kinds (X4LAN_PlayerIdentity, in plan order): begin, faction, ship, start, relation, then per kit (slot
+  order) kit, wallet, reputation, blueprint, research, known_sector, known; end. Lua events back: X4LAN_PlayerIdentity.Result,
+  X4LAN_PlayerIdentity.Ship<k>; X4LAN_SessionHulls.Ready (capture).
+  Saved cue lists read from a session save: X4LAN_NativeGate.Spawn.$ships (fixture, build_native_gate_overlay.py),
+  X4LAN_SessionHulls.Create.$ships (hulls in slot order, native_gate_session_start.py register).
+  No stop reason, family bit, wire op, guard claim or input kind is taken by the starts work.

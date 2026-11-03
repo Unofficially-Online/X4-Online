@@ -40,6 +40,11 @@ the sandbox's base-overlay checks and adds the player identity plan
                    seen here, so pass this for those. A ship without a --start that the builder does not know gets a
                    warning; in a run, VIEW_POINTS_UNCOVERED lines and REGION_CAMERA uncovered= show what happened.
 
+  --session S.json a session from any usable stock start (tools/dev/native_gate_session_start.py register): the
+                   session save's player ship, fixture actors and sectors replace the snapshot-005 defaults below,
+                   slots with a per-player start fly their hull from the save, and their kits (money, reputation,
+                   blueprints, research, map knowledge) are applied at the setup tick (reports/LOCKSTEP-STARTS-20261101.txt)
+
 Defaults (snapshot capture 005, one zone of Argon Prime): slot 1 = 00000000000ae79c (the player's scout,
 occupied on every client), slots 2..4 = fixture actors 3..5 (0000000000176ad5, 0000000000176b36,
 0000000000176b97: Argon S fighters at zone offset -395/0/+700..900 m from slot 1). --battle engage
@@ -69,6 +74,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import native_gate_sandbox as sandbox          # noqa: E402  (shared base checks and helpers; not modified here)
 import native_gate_player_identity as identity  # noqa: E402
 import native_gate_player_orders as player_orders  # noqa: E402
+import native_gate_defaults as session_defaults   # noqa: E402  (the session defaults: tools/dev/native_gate_defaults.lua)
+import check_gate_options as gate_options          # noqa: E402
+import native_gate_session_start as session_start  # noqa: E402  (a session from a stock start, per-player starts)
 
 ROOT = Path(__file__).resolve().parents[2]
 HEADER = '-- Lockstep players (tools/dev/native_gate_players.py); reports/LOCKSTEP-PLAYER-IDENTITY-20261029.txt'
@@ -77,10 +85,17 @@ STOCK_DEMOS = ('demo', 'demo2', 'demo3', 'demo4')   # --stock-script demo: one p
 ORDERS_DELAY, ORDERS_TICK = 3, 40
 IDENTITY_FILES = ('ui/native_gate_player_identity_core.lua', 'ui/native_gate_player_identity.lua')
 RESPAWN_MD = 'md/native_gate_pilot_respawn.xml'   # native_gate_pilot_respawn: X4's own create_ship and teleport_player
+# The pool factions' library (tools/dev/build_player_factions.py): x4lan_player1..16 with their own accounts. A factions
+# plan with kits sets slot k's money on x4lan_player<k>'s own account (the identity wallet step, which refuses a faction
+# without one); the overlay ships the source library so a base frozen before the accounts (frozen-v3) gets them.
+POOL_LIBRARY = session_start.POOL_LIBRARY
 ORDERS_FILES = ('ui/native_gate_player_orders_core.lua', 'ui/native_gate_player_orders.lua')
 MUX_FILES = ('ui/native_gate_inputs_core.lua',)   # protocol 3 input multiplexer (pilot, orders, hit claims)
-UI_REPLAY_FILES = ('ui/native_gate_ui_replay_core.lua',)
-UI_REPLAY_FAMILIES = ('travel', 'target', 'orders', 'autopilot', 'dock', 'weapons', 'missiles', 'queue')
+UI_REPLAY_FILES = ('ui/native_gate_ui_replay_core.lua', 'ui/native_gate_ui_build_core.lua')
+UI_REPLAY_FAMILIES = ('travel', 'target', 'orders', 'autopilot', 'dock', 'weapons', 'missiles', 'queue', 'events', 'flight', 'trade', 'missions', 'build',
+                      'assets', 'conversation', 'faction')
+UI_GUARD_GROUPS = ('flight', 'orders', 'fleet', 'trade', 'faction', 'assets', 'build', 'conflict', 'missions', 'events', 'conversation',
+                   'session', 'cheat', 'editor')   # lockstep_ui_guard.h
 UI_REPLAY_FLIGHT = ('autopilot', 'dock', 'weapons')
 # The scripted run without people, per client, ticks relative to the window start: the J key's record and the FFI
 # entry for travel, target and match speed; slot 1 as well, it takes the same path through its own functions.
@@ -102,9 +117,23 @@ UI_REPLAY_MISSILE_DEMO = {1: ((60, 'target_slot', 2), (120, 'missile', 1), (420,
 # fighters, one weapon_gen_s_torpedo_02_mk1 in secondary group 1 and 8 light torpedoes (missile_gen_s_torpedo_01_mk1) each.
 # The scouts (slot 1, the stock slots) have two lasers or plasma guns and no launcher connection; slot 1 must stay the player's.
 MISSILE_SHIPS = ('0000000000176ad5', '0000000000176b36', '0000000000176b97')
+# Missions and conversations (--ui-replay events,missions,conversation --ui-guard all): the test offer (MD fixture, both clients at
+# the same tick), slot 1 briefs, accepts, activates, talks twice (the wrapped dialog and the C function), then clears the active
+# mission and aborts; slot 2 tries the same entries and is refused (why=slot or the guard's row), nothing reaches MD for it.
+UI_REPLAY_MISSIONS_DEMO = {1: ((60, 'mis_fixture', 1), (120, 'briefing', 'offer'), (150, 'briefing_stop', 'offer'), (180, 'offer_accept'),
+                               (240, 'mis_active'), (270, 'briefing', 'mission'), (300, 'briefing_button', 'mission'), (330, 'briefing_stop', 'mission'),
+                               (360, 'conv_start', 'fixture'), (420, 'dialog', 1), (480, 'conv_start', 'fixture'), (540, 'dialog_native', 2),
+                               (600, 'mis_none'), (660, 'mis_abort')),
+                           2: ((60, 'mis_fixture', 1), (150, 'offer_accept'), (250, 'briefing', 'mission'), (400, 'mis_abort'),
+                               (430, 'dialog_native', 1), (450, 'conv_start', 'fixture'), (630, 'mis_active'))}
 UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'target_slot': 'target', 'target_none': 'target',
                        'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
-                       'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons'}
+                       'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons',
+                       'flight_assist': 'flight', 'turret_mode': 'flight', 'turret_missile': 'flight', 'drones': 'flight', 'drone_mode': 'flight',
+                       'mis_fixture': 'missions', 'briefing': 'missions', 'briefing_stop': 'missions', 'briefing_button': 'missions',
+                       'offer_accept': 'events', 'mis_active': 'missions', 'mis_none': 'missions', 'mis_abort': 'missions',
+                       'conv_start': 'conversation', 'dialog': 'conversation', 'dialog_native': 'conversation',
+                       'hire_talk': 'conversation', 'hire_confirm': 'conversation'}
 UI_REPLAY_FLEET_ORDERS = 500        # window-relative tick of the scripted orders, client 1's
 # The queue editor (--ui-replay orders,queue --ui-replay-fleet <ship>): both clients edit the fleet ship's queue by
 # index as the map's rows do. Client 1 clears it, adds MoveWait (create + parameter + enable) and Wait in the next two
@@ -118,6 +147,11 @@ OWN_KEYS = re.compile(r'native_gate_player_identity[a-z_]*|native_gate_player_or
 CREATE = re.compile(r'(\d+)=([a-z][a-z0-9_]*_macro)@(-?\d+),(-?\d+),(-?\d+)(?:/(-?\d+))?(?:#(\d+))?')
 START = re.compile(r'(\d{1,2}|[0-9a-f]{16})=([0-9a-f]{16}|[a-z][a-z0-9_]*_macro)@(-?\d+),(-?\d+),(-?\d+)(?:/(-?\d+))?')
 COUNTERPART_OFFSET = 1500   # metres along z between a moved fixture actor and its moved counterpart
+
+
+def wallet_library(plan):
+    """True when the plan's wallet steps set pool faction accounts (factions mode with kits)."""
+    return plan.get('mode') == 'factions' and bool(plan.get('kits'))
 
 
 def ids(text):
@@ -185,7 +219,8 @@ def slot_sectors(args, ships, starts, creates):
     def of(ship):
         if ship in moved:
             return moved[ship]
-        return sector_name(identity.SHIP_SECTORS[ship]) if ship in identity.SHIP_SECTORS else None
+        known = ship_sectors(args)
+        return sector_name(known[ship]) if ship in known else None
     return {k + 1: of(args.occupied_ship) if k + 1 in creates else of(ship) for k, ship in enumerate(ships)}
 
 
@@ -224,13 +259,58 @@ def starts_of(args, ships):
             target = ships[target - 1]
         row = {'object': target, 'sector': spec['sector'], 'x': spec['x'], 'y': spec['y'], 'z': spec['z'], 'yaw': spec['yaw']}
         out.append(row)
-        if args.start_counterparts and target in sandbox.FIXTURES[:6]:
-            out.append(dict(row, object=counterpart(target), z=row['z'] + COUNTERPART_OFFSET))
+        if args.start_counterparts and target in fixtures(args)[:6]:
+            out.append(dict(row, object=counterpart(target, fixtures(args)), z=row['z'] + COUNTERPART_OFFSET))
     return out
+
+
+def fixtures(args):
+    """The 12 battle fixture actors of the save the session loads (Argon 1..6, Xenon 7..12)."""
+    world = getattr(args, 'session_data', None)
+    return tuple(world['fixture']) if world else sandbox.FIXTURES
+
+
+def ship_sectors(args):
+    """Saved ship -> sector (macro or saved ID) where the builder knows it before the setup tick."""
+    world = getattr(args, 'session_data', None)
+    if not world:
+        return identity.SHIP_SECTORS
+    out = {ship: world['player_sector'] for ship in [world['player_ship']] + list(world['fixture'])}
+    out.update({world['hulls'][k]: world['slots'][k]['sector'] for k in world['hulls']})
+    return out
+
+
+def apply_session(args):
+    """--session (native_gate_session_start.py register): the session save's player ship, fixture and per-player start
+    hulls replace the snapshot-005 defaults; the per-player starts (kits) go into the plan by default."""
+    world = session_start.session_of(args.session)
+    args.session_data = world
+    if args.players != world['players'] or args.mode != world['mode']:
+        raise ValueError(f"--session {args.session}: {world['players']} players in {world['mode']} mode, not {args.players} in {args.mode} "
+                         '(the per-player starts were resolved for that mode)')
+    if args.occupied_ship not in (identity.PLAYER_SHIP, world['player_ship']):
+        raise ValueError(f"--session: the occupied ship is the session save's player ship {world['player_ship']}")
+    args.occupied_ship = world['player_ship']
+    if world['hulls'] and args.source in ('script', 'wire'):
+        raise ValueError('--session with per-player start hulls needs --source stock or none: a hull waits in its Wait order without the '
+                         'Steering solver that wire/script piloting drives')
+    hulls = {int(k): v for k, v in world['hulls'].items()}
+    if args.create and {slot for slot, _ in args.create} & set(hulls):
+        raise ValueError('--create: a slot with a per-player start flies its session hull')
+    if args.ships:
+        wrong = [k for k, ship in hulls.items() if k > len(args.ships) or args.ships[k - 1] != ship]
+        if wrong:
+            raise ValueError(f'--ships: slots {wrong} have per-player starts; their ships are the session hulls {[hulls[k] for k in wrong]}')
+    else:
+        # Slot 1: the save's player ship; slot k: its hull, else fixture actor k+1 (as the snapshot-005 defaults).
+        args.ships = [world['player_ship']] + [hulls.get(k) or world['fixture'][k] for k in range(2, args.players + 1)]
+    return args
 
 
 def defaults(args):
     """Fill source-dependent defaults in place (window, world stride, orders, capture log, devices)."""
+    if getattr(args, 'session', None):
+        apply_session(args)
     people = args.source == 'stock' and not args.stock_script
     if args.source == 'stock' and not args.ships and not args.create:
         # The stock ships sit far apart in the save: every slot without its own --start comes to slot 1's sector, or a partial
@@ -268,15 +348,17 @@ def plan_of(args):
         raise ValueError('--start-counterparts needs --start')
     starts = starts_of(args, [None if k + 1 in creates else s for k, s in enumerate(ships)])
     args.sector_warnings = sector_warnings(args, ships, starts, creates)
+    world = getattr(args, 'session_data', None)
+    kits = [world['slots'][k]['kit'] for k in sorted(world['slots'], key=int)] if world else None
     return identity.build_plan(args.players, args.mode, ships, args.relations, dict(args.relation or []), args.occupied_ship,
-                               args.occupied, args.reputation, args.setup_tick, creates, starts)
+                               args.occupied, args.reputation, args.setup_tick, creates, starts, kits)
 
 
 def ui_replay_lines(args):
     """The UI replay block: families, the script without people, the test fleet (a `player` ship with a pilot)."""
     if args.ui_replay is None:
-        if args.ui_replay_script or args.ui_replay_fleet or args.ui_replay_dock or args.ui_replay_min_hull is not None:
-            raise ValueError('--ui-replay-script, --ui-replay-fleet, --ui-replay-dock and --ui-replay-min-hull need --ui-replay')
+        if args.ui_replay_script or args.ui_replay_fleet or args.ui_replay_dock or args.ui_replay_min_hull is not None or args.ui_guard:
+            raise ValueError('--ui-replay-script, --ui-replay-fleet, --ui-replay-dock, --ui-replay-min-hull and --ui-guard need --ui-replay')
         return []
     if args.source != 'stock' or not args.present:
         raise ValueError('--ui-replay needs --source stock --present')
@@ -296,6 +378,10 @@ def ui_replay_lines(args):
         raise ValueError('--ui-replay missiles needs the target family and --fire record or script (pilot fire leases the launchers)')
     if args.ui_replay_dock and not (args.ui_replay_fleet or dock):
         raise ValueError('--ui-replay-dock needs --ui-replay-fleet or the dock family')
+    if ('build' in names or 'assets' in names) and not args.ui_guard:
+        raise ValueError('--ui-replay build/assets need --ui-guard (they claim its hooks)')
+    if 'faction' in names and not args.ui_guard:
+        raise ValueError('--ui-replay faction needs --ui-guard (it claims its hooks)')
     if args.ui_replay_min_hull is not None and not 1 <= args.ui_replay_min_hull <= 100:
         raise ValueError('--ui-replay-min-hull is a hull percentage 1..100')
     if 'missiles' in names and not set(args.ships or identity.DEFAULT_SHIPS[:args.players]) & set(MISSILE_SHIPS):
@@ -304,6 +390,16 @@ def ui_replay_lines(args):
         warnings = list(getattr(args, 'sector_warnings', []))
         args.sector_warnings = warnings + ([warning] if warning not in warnings else [])
     lines = ['X4LAN_CONFIG.native_gate_ui_replay = ' + ('true' if args.ui_replay == 'all' else '{' + ','.join(repr(n) for n in names) + '}')]
+    if args.ui_guard:
+        # The UI guard (lockstep_ui_guard.h): what no armed family replays is refused in the local phases.
+        groups = [g for g in args.ui_guard.split(',') if g]
+        if args.ui_guard != 'all' and (not groups or any(g not in UI_GUARD_GROUPS for g in groups) or len(set(groups)) != len(groups)):
+            raise ValueError(f"--ui-guard is all or a comma list of {', '.join(UI_GUARD_GROUPS)}")
+        lines.append("X4LAN_CONFIG.native_gate_ui_guard = " + ("'all'" if args.ui_guard == 'all' else '{' + ','.join(repr(g) for g in groups) + '}'))
+    # Missions and conversations (lockstep_ui_missions.h): captured in the guard's hook, so the guard holds their groups.
+    for family in ('missions', 'conversation'):
+        if family in names and not (args.ui_guard == 'all' or family in (args.ui_guard or '').split(',')):
+            raise ValueError(f'--ui-replay {family} needs --ui-guard all or with the {family} group')
     if args.ui_replay_min_hull is not None:
         lines.append(f'X4LAN_CONFIG.native_gate_ui_replay_min_hull = {args.ui_replay_min_hull}')
     if args.ui_replay_fleet:
@@ -319,7 +415,10 @@ def ui_replay_lines(args):
             raise ValueError('--ui-replay-script: the flight families (autopilot, dock, weapons) run without travel, target and missiles')
         if missiles and 'travel' in families:
             raise ValueError('--ui-replay-script: missiles run without travel (its own plan: target and missiles)')
-        demo = UI_REPLAY_FLIGHT_DEMO if flight else UI_REPLAY_MISSILE_DEMO if missiles else UI_REPLAY_DEMO
+        talk = explicit and ('missions' in families or 'conversation' in families)
+        if talk and (flight or missiles or 'travel' in families or 'target' in families):
+            raise ValueError('--ui-replay-script: missions and conversation run on their own plan (with events)')
+        demo = UI_REPLAY_FLIGHT_DEMO if flight else UI_REPLAY_MISSILE_DEMO if missiles else UI_REPLAY_MISSIONS_DEMO if talk else UI_REPLAY_DEMO
         plans = []
         for client in range(1, args.players + 1):
             plan = [row for row in demo[1 if client == 1 else 2] if UI_REPLAY_OP_FAMILY[row[1]] in families]
@@ -332,7 +431,7 @@ def ui_replay_lines(args):
             # Client 1 commands the fleet: attack the next fixture, then move, then dock if a station was given.
             elif client == 1 and args.ui_replay_fleet:
                 ship = args.ui_replay_fleet[0]
-                plan += [(UI_REPLAY_FLEET_ORDERS, 'attack', ship, sandbox.FIXTURES[-1]),
+                plan += [(UI_REPLAY_FLEET_ORDERS, 'attack', ship, fixtures(args)[-1]),
                          (UI_REPLAY_FLEET_ORDERS + 60, 'clear', ship),
                          (UI_REPLAY_FLEET_ORDERS + 61, 'move', ship, identity.STOCK_SECTOR, 3000, 100000, 3000)]
                 if args.ui_replay_dock:
@@ -344,12 +443,13 @@ def ui_replay_lines(args):
     return lines
 
 
-def counterpart(ship):
+def counterpart(ship, fixture=None):
     """The Xenon fixture actor an Argon fixture actor attacks in the scripted battle (actor i -> i+6)."""
-    argon = sandbox.FIXTURES[:6]
+    fixture = tuple(fixture or sandbox.FIXTURES)
+    argon = fixture[:6]
     if ship not in argon:
         raise ValueError(f'the orders demo needs Argon fixture actors in slots 2..3 (got {ship}); use --orders none')
-    return sandbox.FIXTURES[argon.index(ship) + 6]
+    return fixture[argon.index(ship) + 6]
 
 
 def demo_rows(args, plan):
@@ -363,13 +463,14 @@ def demo_rows(args, plan):
         raise ValueError('the orders demo needs saved slot ships')
     ship = [s['ship'] for s in slots]
     other = ship[2] if args.players >= 3 else ship[1]
-    rows = [(1, other, counterpart(other), 'refused_not_owner'), (2, ship[1], counterpart(ship[1]), 'applied')]
+    fixture = fixtures(args)
+    rows = [(1, other, counterpart(other, fixture), 'refused_not_owner'), (2, ship[1], counterpart(ship[1], fixture), 'applied')]
     if args.players >= 3:
-        rows.append((3, ship[1], counterpart(ship[1]), 'refused_not_owner'))
+        rows.append((3, ship[1], counterpart(ship[1], fixture), 'refused_not_owner'))
     moved = {s['object'] for s in plan.get('starts', [])}
     for k in range(3, args.players + 1):
-        if ship[k - 1] in moved and ship[k - 1] in sandbox.FIXTURES[:6]:
-            rows.append((k, ship[k - 1], counterpart(ship[k - 1]), 'applied'))
+        if ship[k - 1] in moved and ship[k - 1] in fixture[:6]:
+            rows.append((k, ship[k - 1], counterpart(ship[k - 1], fixture), 'applied'))
     return rows
 
 
@@ -424,6 +525,12 @@ def pilot_lines(args, plan):
         raise ValueError(f'--respawn is a delay of 1..{sandbox.PILOT_TICK_MAX} ticks')
     if args.death_suit and not (args.death and args.present):
         raise ValueError('--death-suit needs --death and --present')
+    if args.foot and not (stock and args.ui_replay is not None and args.ui_guard):
+        raise ValueError("--foot needs --source stock, --ui-replay and --ui-guard (the docked menu's Get Up is claimed in the guard)")
+    if args.foot_bodies and not args.foot:
+        raise ValueError('--foot-bodies needs --foot')
+    if args.foot_slots and not args.foot:
+        raise ValueError('--foot-slots needs --foot')
     if args.fire_slots is not None:
         if args.fire != 'script':
             raise ValueError('--fire-slots needs --fire script')
@@ -475,6 +582,12 @@ def pilot_lines(args, plan):
             lines.append(f'X4LAN_CONFIG.native_gate_pilot_respawn = {args.respawn}')
         if args.death_suit:
             lines.append('X4LAN_CONFIG.native_gate_pilot_death_suit = true')
+        if args.foot:
+            lines.append('X4LAN_CONFIG.native_gate_pilot_foot = true')
+        if args.foot_bodies:
+            lines.append('X4LAN_CONFIG.native_gate_pilot_foot_bodies = true')
+        if args.foot_slots:
+            lines.append('X4LAN_CONFIG.native_gate_pilot_foot_slots = true')
     elif args.invert or args.camera_follow:
         raise ValueError('--invert and --camera-follow need human pilots (--source wire or stock)')
     if args.crash_note:
@@ -506,11 +619,32 @@ def pilot_lines(args, plan):
     return lines
 
 
+# Keys of the default stack this builder decides (piloting, identity, UI): in a session overlay one of them that the
+# run leaves off but the session defaults would turn on is written as an explicit false (the overlay runs what was built).
+BUILDER_KEYS = tuple(k for k in session_defaults.ON_KEYS if k.startswith('native_gate_pilot_')) + (
+    'native_gate_hit_claims', 'native_gate_crash_note', 'native_gate_ui_replay', 'native_gate_ui_guard', 'native_gate_guidance_local',
+    'native_gate_player_identity', 'native_gate_own_predict', 'native_gate_own_predict_rows', 'native_gate_player_settings_per_slot')
+DEFAULTS_ONLY_FLAGS = ('present', 'death', 'respawn', 'death_suit', 'foot', 'foot_bodies', 'foot_slots', 'hit_claims', 'ui_replay', 'ui_guard',
+                       'guidance_local', 'stock_script', 'crash_note', 'ui_replay_script', 'ui_replay_fleet', 'ui_replay_dock',
+                       'ui_replay_min_hull', 'fire_slots')
+
+
 def config_block(args):
     """(lines, plan, orders plan or None) for the session; validates everything."""
     if args.world_stride < 1 or args.world_stride > 18000 or not 1 <= args.trace_stride <= 18000:
         raise ValueError('world capture and trace strides must be 1..18000')
     plan = plan_of(args)
+    if getattr(args, 'defaults_only', False):
+        # The people session of the session defaults: the clients and the identity plan; the default stack does the rest.
+        given = [name for name in DEFAULTS_ONLY_FLAGS if getattr(args, name, None) not in (None, False, 'off')]
+        if getattr(args, 'fire', 'off') != 'off':
+            given.append('fire')
+        if args.source != 'stock' or args.orders != 'none' or given:
+            raise ValueError('--defaults-only is the people session of the session defaults: --source stock, no --orders and none of '
+                             + ', '.join('--' + g.replace('_', '-') for g in (given or DEFAULTS_ONLY_FLAGS[:4])) +
+                             ' (the defaults set them; --set native_gate_KEY=false turns one off)')
+        lines = [HEADER, 'X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@'] + identity.config_lines(plan) + sandbox.census_lines(args)
+        return lines, plan, None
     # Orders and pilot records share each slot's blob (input multiplexer, priority pilot > orders > hits).
     orders = orders_plan(args, plan) if args.orders == 'demo' else None
     lines = [HEADER, 'X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@']
@@ -553,6 +687,45 @@ def strip_own(base_text):
     return '\n'.join(kept) + '\n'
 
 
+def merge_block(base_text, block, lean=True):
+    """merged_config's merge without its base checks (they ran on the effective base): the base without the keys this
+    builder owns or the block sets, then the block."""
+    keys = {m[1] for m in map(sandbox.LINE.match, block) if m}
+    kept = []
+    for line in base_text.splitlines():
+        m = sandbox.LINE.match(line)
+        if m and (sandbox.OWNED.fullmatch(m[1]) or m[1] in keys or (lean and m[1] in sandbox.LOG_ONLY)):
+            continue
+        if line.startswith(('-- Lockstep sandbox', '-- camera follow:', '-- native controls:', '-- stock piloting:')):
+            continue
+        kept.append(line)
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return '\n'.join(kept + list(block)) + '\n'
+
+
+def session_block(lines, base_text, defaults_only=False):
+    """(block, dropped, off) for a session base: the lines that differ from the session defaults, plus an explicit false
+    for every BUILDER_KEYS default the run leaves off (not with --defaults-only: there the defaults are the run)."""
+    kept = session_defaults.overrides(lines, base_text)
+    dropped = [line for line in lines if line not in kept]
+    if defaults_only:
+        return kept, dropped, []
+    own = set(session_defaults.parse('\n'.join(lines)))
+    context = session_defaults.parse(base_text)
+    context.update(session_defaults.parse('\n'.join(kept)))
+    off = []
+    while True:
+        _, report = session_defaults.apply(context)
+        extra = [k for k in report['applied'] if k in BUILDER_KEYS and k not in own and k not in off]
+        if not extra:
+            break
+        context[extra[0]] = 'false'
+        off.append(extra[0])
+    kept = kept + [f'X4LAN_CONFIG.{key} = false  -- not in this run (native_gate_players.py flags)' for key in off]
+    return kept, dropped, off
+
+
 def build_overlay(args):
     base, out = Path(args.base), Path(args.out)
     if out.exists():
@@ -563,11 +736,18 @@ def build_overlay(args):
         raise ValueError('base is not a native gate overlay (probe, config or gate DLL missing)')
     lines, plan, orders = config_block(args)
     stripped = strip_own(config.read_text())
+    # A session base (native_gate_test, slot, port, token) runs the session defaults (native_gate_defaults.lua): its checks
+    # read the effective base, and the overlay writes only the lines that differ from the defaults.
+    effective_base, report = session_defaults.effective(stripped)
+    session = bool(report and report.get('session'))
+    if args.defaults_only and not session:
+        raise ValueError('--defaults-only needs a session base (native_gate_test, slot, port and token, not native_gate_defaults = false)')
+    checked = effective_base if session else stripped
     # The UI replay carries runtime IDs: a base overlay without them gets the default, one with them keeps its own.
-    if args.ui_replay is not None and sandbox.parse_config(stripped).get('native_gate_runtime_ids') in (None, 'false', 'nil', "'observe'", '"observe"'):
+    if args.ui_replay is not None and sandbox.parse_config(checked).get('native_gate_runtime_ids') in (None, 'false', 'nil', "'observe'", '"observe"'):
         lines.append('X4LAN_CONFIG.native_gate_runtime_ids = true')
     if args.guidance_local:
-        base_values = sandbox.parse_config(stripped)
+        base_values = sandbox.parse_config(checked)
         missing = [key for key in ('native_gate_runtime_ids_local', 'native_gate_md_timed_rng') if base_values.get(key) != 'true']
         if base_values.get('native_gate_script_rng', '').strip('\'"') not in ('key', 'observe'):
             missing.append('native_gate_script_rng')
@@ -575,7 +755,25 @@ def build_overlay(args):
             raise ValueError('--guidance-local needs a base overlay with ' + ', '.join(missing))
     if sandbox.parse_config(stripped).get('native_gate_player_orders') not in (None, 'false', 'nil'):
         raise ValueError('base overlay already has a player orders block; this builder writes its own (--orders)')
-    text = sandbox.merged_config(stripped, lines, lean=args.lean_logs)
+    world = getattr(args, 'session_data', None)
+    base_sha = sandbox.parse_config(stripped).get('native_gate_snapshot_sha', '').strip('"' + "'")
+    if world and base_sha != world['snapshot']['sha256']:
+        raise ValueError(f"--session: the base overlay boots snapshot {base_sha or 'none'}, the session save is {world['snapshot']['sha256']} "
+                         '(rebase it: native_gate_session_start.py rebase)')
+    if session:
+        if not args.defaults_only:
+            sandbox.merged_config(effective_base, lines, lean=args.lean_logs)   # the sandbox's base checks, on the effective base
+        block, dropped, off = session_block(lines, stripped, args.defaults_only)
+        text = merge_block(stripped, block, lean=args.lean_logs)
+        _, failures, final = gate_options.check_report(text)
+        if failures:
+            raise ValueError('the overlay config fails the option rules: ' +
+                             '; '.join(f['rule'] + ' -> ' + ', '.join(map(str, f['bits'])) for f in failures))
+        args.defaults_notes = [f'SESSION DEFAULTS: {len(block)} lines written, {len(dropped)} equal to the defaults left out'
+                               + (', off in this run: ' + ', '.join(k[len('native_gate_'):] for k in off) if off else '')]
+        args.defaults_notes += [f'DEFAULT_SKIPPED {key}: {why}' for key, why, _ in final['skipped']]
+    else:
+        text = sandbox.merged_config(stripped, lines, lean=args.lean_logs)
     probe = Path(args.probe) if args.probe else base/'ui/native_gate_probe.lua'
     if 'X4LAN_NATIVE_PLAYER_IDENTITY' not in probe.read_text(encoding='utf-8'):
         raise ValueError(f'{probe} has no player identity hook; pass --probe tools/dev/native_gate_probe.lua')
@@ -588,20 +786,30 @@ def build_overlay(args):
     shutil.copy2(ROOT/'tools/dev/native_gate_player_identity.xml', out/'md/native_gate_player_identity.xml')
     if args.ui_replay is not None:
         added += UI_REPLAY_FILES
-        if args.ui_replay_fleet or args.ui_replay_min_hull is not None:
-            shutil.copy2(ROOT/'tools/dev/native_gate_ui_replay.xml', out/'md/native_gate_ui_replay.xml')
+        if args.ui_replay_fleet or args.ui_replay_min_hull is not None or args.ui_guard or \
+                {'events', 'missions', 'conversation'} & set(args.ui_replay.split(',')):
+            shutil.copy2(ROOT/'tools/dev/native_gate_ui_replay.xml', out/'md/native_gate_ui_replay.xml')   # fleet, MinHull, the guard's and missions' MD rows
     if orders is not None:
         added += ORDERS_FILES
         shutil.copy2(ROOT/'tools/dev/native_gate_player_orders.xml', out/'md/native_gate_player_orders.xml')
     if args.respawn is not None or args.death_suit:
         shutil.copy2(ROOT/'tools/dev/native_gate_pilot_respawn.xml', out/RESPAWN_MD)
+    if wallet_library(plan):
+        (out/POOL_LIBRARY).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(session_start.EXTENSION/POOL_LIBRARY, out/POOL_LIBRARY)
     for name in added:
         shutil.copy2(ROOT/'tools/dev'/Path(name).name, out/name)
-    # Adapters load before the probe, which binds them while arming.
+    # Adapters load before the probe, which binds them while arming; a session overlay ships the default stack's files with
+    # the defaults module first (the adapters read X4LAN_CONFIG while loading).
     entries = [e for e in files if e not in MUX_FILES + IDENTITY_FILES + ORDERS_FILES + UI_REPLAY_FILES]
-    (out/'ui.xml.files').write_text('\n'.join(added + entries) + '\n')
+    order = added + entries
+    if session:
+        order = session_defaults.ship_files(out, order)
+    (out/'ui.xml.files').write_text('\n'.join(order) + '\n')
     (out/'ui/config.lua.append').write_text(text)
     (out/'player-identity-plan.json').write_text(json.dumps(plan, indent=1, sort_keys=True) + '\n')
+    if world:
+        (out/'session.json').write_text(json.dumps(world, indent=1, sort_keys=True) + '\n')
     manifest = {str(f.relative_to(out)).replace('\\', '/'): hashlib.sha256(f.read_bytes()).hexdigest()
                 for f in sorted(out.rglob('*')) if f.is_file()}
     (out/'x4lane-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
@@ -622,13 +830,22 @@ def session_notes(args, plan, overlay='<overlay>'):
              f'check: python tools/dev/native_gate_players.py compare <client logs> {" ".join(echo_args(args))}']
     if args.source == 'wire':
         notes.append('desync watcher: python tools/dev/native_gate_desync_watch.py --status <collect>/desync-status.json --beep --toast')
+    world = getattr(args, 'session_data', None)
+    if world:
+        notes.append(f"session: base start {world['base_start']}, save {world['snapshot']['path']} (runner --snapshot-in), per-player starts " +
+                     (', '.join(f"slot {k} {v['gamestart']}" for k, v in sorted(world['slots'].items(), key=lambda kv: int(kv[0]))) or 'none'))
+    if wallet_library(plan):
+        notes.append(f'wallet: {POOL_LIBRARY} (pool factions with their own accounts) is in the overlay; the wallet step refuses '
+                     'refused_wallet_account (account=none) where X4 still gives a pool faction no account of its own')
     return notes
 
 
 def echo_args(args):
     """The plan-relevant options, to repeat for `compare`."""
     out = ['--players', str(args.players), '--mode', args.mode, '--source', args.source]
-    if args.ships:
+    if getattr(args, 'session', None):
+        out += ['--session', str(args.session)]
+    if args.ships and not getattr(args, 'session', None):
         out += ['--ships', ','.join(args.ships)]
     for flag, value, default in (('--relations', args.relations, 'neutral'), ('--occupied', args.occupied, 'player'),
                                  ('--reputation', args.reputation, 'mirror'), ('--setup-tick', str(args.setup_tick), '20'),
@@ -680,6 +897,8 @@ def build_parser():
     common.add_argument('--source', choices=SOURCES, default='wire')
     common.add_argument('--ships', type=ids, help='comma list of saved slot ship IDs (default: player scout, fixtures 3..5)')
     common.add_argument('--fixture', type=ids, help="the snapshot's twelve fixture actor IDs in order (default: snapshot 005's)")
+    common.add_argument('--session', help='session.json of native_gate_session_start.py register: the session save (any usable stock start) '
+                                           'replaces snapshot 005; its per-player starts apply at the setup tick')
     common.add_argument('--create', type=create_spec, action='append', help='SLOT=MACRO@X,Y,Z[/YAW][#SEED], sector-local metres (fixture area y=100000); needs --source none')
     common.add_argument('--start', type=start_spec, action='append',
                         help='K=SECTOR@X,Y,Z[/YAW] (or SHIP=...): different starts, moved at the setup tick')
@@ -713,6 +932,17 @@ def build_parser():
     common.add_argument('--death-suit', action='store_true',
                         help="--death --present: a dead slot 2..N waits in a spacesuit of its own (MD's create_ship, the slot's seat), its client "
                              "presents that instead of slot 1's view")
+    common.add_argument('--foot', action='store_true',
+                        help="--source stock --ui-replay --ui-guard: slot 1 gets up (GET_UP key, the docked menu's Get Up) and walks through the "
+                             "stock record on every client (lockstep_pilot_foot.h, stop reason 185); slots 2..N's walking keys are refused")
+    common.add_argument('--foot-bodies', action='store_true',
+                        help="--foot: slots 2..N's players sit in their seats' rooms as X4 seats a pilot, on every client "
+                             "(lockstep_pilot_foot_body.h, stage 1 of their bodies, stop reason 185); with --death a kill guard takes a body "
+                             "off its room before X4's kill reaches it")
+    common.add_argument('--foot-slots', action='store_true',
+                        help="--foot: slots 2..N get up (GET_UP key, the docked menu's Get Up on their client) and walk through their stock "
+                             "records in their scopes on every client (lockstep_pilot_foot_slots.h, stop reason 185); with --death a walking "
+                             "slot's ship lost is no death (stranded until --respawn seats it)")
     common.add_argument('--crash-note', action='store_true',
                         help='an unhandled exception writes one CRASH line (address, registers, chain, tick) to x4lan-crash.txt in the lane profile')
     common.add_argument('--fire-slots', type=lambda t: [int(v) for v in t.split(',') if v],
@@ -721,9 +951,12 @@ def build_parser():
                         help="--source stock: client k's stock camera, HUD and UI present slot k's ship as the player "
                              "(camera: the HUD's anchor stays on slot 1's cockpit)")
     common.add_argument('--ui-replay', nargs='?', const='all', default=None, metavar='FAMILIES',
-                        help='stock UI actions as events of the slot: all (no value) or a comma list of travel, target, orders '
+                        help='stock UI actions as events of the slot: all (no value) or a comma list of ' + ', '.join(UI_REPLAY_FAMILIES) + ' '
                              '(lockstep_ui_replay.h, stop reason 164); needs --source stock --present and runtime IDs')
     common.add_argument('--ui-replay-script', action='store_true', help='--ui-replay without people: a fixed plan through the stock entries')
+    common.add_argument('--ui-guard', nargs='?', const='all', default=None, metavar='GROUPS',
+                        help='with --ui-replay: refuse every other world-changing stock UI entry point in the local phases (lockstep_ui_guard.h): '
+                             'all (no value) or a comma list of ' + ', '.join(UI_GUARD_GROUPS))
     common.add_argument('--guidance-local', action='store_true',
                         help="--present: what a client's own guidance runs in the simulation (md.Guidance, the guidance route) takes local "
                              'runtime IDs (lockstep_guidance_local.h); the base needs runtime_ids_local, script_rng and md_timed_rng')
@@ -733,6 +966,9 @@ def build_parser():
                         help='test protection: MD keeps every slot ship at PCT %% hull or more from the fleet tick (missile runs: '
                              "slot 1's ship is the player's)")
     sandbox.add_census_options(common)
+    common.add_argument('--defaults-only', action='store_true',
+                        help='--source stock on a session base: write only the clients and the identity plan; the session defaults '
+                             '(tools/dev/native_gate_defaults.lua) supply the whole people stack (--set native_gate_KEY=false turns one off)')
     common.add_argument('--delay', type=int, default=3)
     common.add_argument('--window', type=int, nargs=2, metavar=('START', 'STOP'))
     common.add_argument('--devices', type=lambda t: t.split(','), help='wire: one of kbm|xinput|both|none per client')
@@ -765,8 +1001,9 @@ def main(argv=None):
         if len(parsed.fixture) != 12:
             p.error('--fixture needs twelve IDs')
         sandbox.FIXTURES = tuple(parsed.fixture)
-    args = defaults(parsed)
+    args = parsed
     try:
+        args = defaults(args)
         if args.command == 'config':
             lines, plan, _ = config_block(args)
             print('\n'.join(lines))
@@ -775,7 +1012,7 @@ def main(argv=None):
         elif args.command == 'overlay':
             out, plan = build_overlay(args)
             print(f'overlay {out}')
-            for note in getattr(args, 'sector_warnings', []) + session_notes(args, plan, str(out)):
+            for note in getattr(args, 'sector_warnings', []) + getattr(args, 'defaults_notes', []) + session_notes(args, plan, str(out)):
                 print(note)
         elif args.command == 'plan':
             _, plan, orders = config_block(args)

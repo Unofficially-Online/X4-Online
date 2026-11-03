@@ -64,7 +64,7 @@ class StockClient:
             extra = {'native_gate_pilot_stock_slots': 'all', 'native_gate_pilot_capture_source': ['stock', 'stock'],
                      'native_gate_pilot_device': [False, False], **extra}
         lua = self.lua = LuaRuntime(unpack_returned_tuples=True)
-        cfg = {'native_gate_test': True, 'test_profile': '45841', 'slot': f'p{slot}', 'native_gate_hash': 'clock',
+        cfg = {'native_gate_defaults': False, 'native_gate_test': True, 'test_profile': '45841', 'slot': f'p{slot}', 'native_gate_hash': 'clock',
                'native_gate_snapshot_sha': 'a'*64, 'port': 12345, 'token': 'c'*32, 'native_gate_clients': 2,
                'native_gate_serial_pathing': True, 'native_gate_world_identities': True, 'native_gate_pilot_inputs': True,
                'native_gate_pilot_slots': [S1, S2], 'native_gate_pilot_source': 'wire', 'native_gate_pilot_delay': 3,

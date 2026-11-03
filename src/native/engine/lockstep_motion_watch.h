@@ -116,7 +116,14 @@
  * status and flags as the native update sees them (after any join), its result hash when published (the route's list:
  * size and each segment's four control points, the request transform +0x30..+0x70, +0x70..+0xa6), whether the update
  * consumed it, the segments hash and progress the update left, the cheap flag and, apart, waited= (the join had to
- * wait; wall-clock). census_cadence.py compares the rows as per-ship sequences without waited=. */
+ * wait; wall-clock). census_cadence.py compares the rows as per-ship sequences without waited=.
+ *
+ * The occupied ship (reports/LOCKSTEP-STARTS-20261101.txt, L1): its controller is the PlayerController, whose motion
+ * neither the census (unknown controller) nor this watch covered; a piloted occupied ship parted in position alone.
+ * The PlayerController (and a stock slot's copy) is now read like a NavigationController (flags 1|8192): the Agent's
+ * pathing state, agent and model fields. For the Steering model class (MOTION_FLIGHT_VTABLE) the model's pointers
+ * are zeroed in model_ext and flight= gives its avoidance cache (contact count, time) and constructor draws
+ * (azimuth/polar bits), also as a digest group. */
 #define MOTION_WATCH_MAX 48u
 #define MOTION_WATCH_RING 8192u
 #define MOTION_WATCH_NAV_VTABLE 0x2c51158u /* U::NavigationController */
@@ -130,7 +137,8 @@ typedef struct {uint64_t key;unsigned klass,depth;uint32_t type;} motion_ref_t;
 typedef struct {uint64_t tick,saved;int attention;uint32_t ctrl_vt,model_vt,index,flags,path_count,path_conn,formation;
     unsigned char slot[2][0x60],cache[0x40],target[0x50],path0[0x50],model_ext[0x70],agent_ext[MOTION_AGENT_EXT],leader_ext[MOTION_AGENT_EXT],ship_ext[5];
     uint32_t wingmen;unsigned char fp[48];motion_ref_t target_ref,path_ref,leader,wingman0,parent;char dock[512];
-    uint32_t spline_count[2],spline_segments,spline_core,spline_requests,spline_obstacles;uint64_t spline_obstacle_time;unsigned char spline_progress[16];} motion_watch_row_t;
+    uint32_t spline_count[2],spline_segments,spline_core,spline_requests,spline_obstacles;uint64_t spline_obstacle_time;unsigned char spline_progress[16];
+    uint32_t flight_obstacles;uint64_t flight_avoid_time;unsigned char flight_angles[8];} motion_watch_row_t;
 #define MOTION_PATHING_INDEX2 0x2f4b6f4u /* g_PathingStateBufferIndex2 */
 /* Flight parameter fields of one 0x1a0 slot: +0x24, +0x190..+0x193, +0x194, +0x198. */
 static int motion_fp_fields(const unsigned char *slot,unsigned char out[16]) {
@@ -281,6 +289,20 @@ static uint32_t motion_fnv(uint32_t h,const void *data,size_t n) {
 #define MOTION_SPLINE_SEGMENTS_MAX 1024u
 #define MOTION_SPLINE_POINTS_MAX 4096u
 #define MOTION_LINEAR_VTABLE 0x2c4f610u
+/* The Steering model lockstep_flight.h hooks (FLIGHT_ENTRY-0x70): a fixture's, a driven pilot slot ship's (the
+ * occupied ship flown by the Agent while controls are parked) and the class the motion watch tests use. */
+#define MOTION_FLIGHT_VTABLE 0x2c4e9c8u
+/* Its avoidance cache (time +0x88, vector of 0x80-byte contacts +0x90/+0x98) and the two constructor draws
+ * (+0x33c azimuth, +0x340 polar; lockstep_flight.h keys them for fixtures only). Obstacles 0xffffffff: unreadable. */
+static void motion_flight_fields(const unsigned char *model,motion_watch_row_t *r) {
+    unsigned char *begin=NULL,*end=NULL;
+    r->flight_obstacles=0xffffffffu;r->flight_avoid_time=0;memset(r->flight_angles,0,8);
+    if(!read_local(model+0x88,&r->flight_avoid_time,8) || !read_local(model+0x90,&begin,8) || !read_local(model+0x98,&end,8) ||
+       end<begin || (size_t)(end-begin)%0x80 || (size_t)(end-begin)/0x80>65536 || !read_local(model+0x33c,r->flight_angles,8)) {
+        r->flight_avoid_time=0;memset(r->flight_angles,0,8);return;
+    }
+    r->flight_obstacles=(uint32_t)((size_t)(end-begin)/0x80);
+}
 /* A BezierSpline's length and coefficients (lanes 0-2); its type alone for another class. */
 static uint32_t motion_spline_bezier(uint32_t h,const unsigned char *segment) {
     unsigned char b[0x50];void *vt=NULL;uint32_t type=0xffffffffu;
@@ -368,8 +390,13 @@ static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t
         if(dock_controller_state(ctrl,(void*)object,r->dock)) r->flags|=2048;else r->dock[0]=0;
         return 1;
     }
-    if(vt!=(void*)(image+MOTION_WATCH_NAV_VTABLE) || !read_local(ctrl+0x28,&back,8) || back!=object) return 1;
-    r->flags|=1;
+    /* The occupied ship's PlayerController (or a stock slot's copy) has the NavigationController's layout here: +0x28
+     * the ship, +0x30 the Agent's pathing state slots (agent+0xad0), +0x40 the Agent (lockstep_pilot_inputs.h and the
+     * stock slot actors read it so); flag 8192 says which. L1 (fight start, script piloting): the occupied ship parted
+     * in position alone while the census has no motion for it (world_hash_motion: unknown controller). */
+    const int player=pslot_canonical_vtable((uintptr_t)vt)==(uintptr_t)(image+PSLOT_VTABLE);
+    if((vt!=(void*)(image+MOTION_WATCH_NAV_VTABLE) && !player) || !read_local(ctrl+0x28,&back,8) || back!=object) return 1;
+    r->flags|=player?(1|8192):1;
     if(read_local(image+MOTION_WATCH_INDEX,&r->index,4) && read_local(ctrl+0x30,&slots,8) && slots &&
        read_local(slots,r->slot[0],0x60) && read_local(slots+0x1a0,r->slot[1],0x60)) r->flags|=2;
     if(read_local(ctrl+0x60,r->cache,0x40)) r->flags|=4;
@@ -405,6 +432,10 @@ static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t
         if(!own || read_local(model+0x70,r->model_ext,own)) r->flags|=256;
         if(r->model_vt==0x2c4f6f0u) {r->model_ext[0x17]=0;memset(r->model_ext+0x28,0,8);} /* Highway: padding at +0x87 and +0x98..+0x9f, never written */
         if(r->model_vt==MOTION_LINEAR_VTABLE) memset(r->model_ext+0x3c,0,4); /* Linear: padding at +0xac..+0xaf, never written */
+        if(r->model_vt==MOTION_FLIGHT_VTABLE) { /* Steering: behaviour pointers +0x70/+0x78, avoidance vector +0x90..+0xa7 */
+            memset(r->model_ext,0,0x10);memset(r->model_ext+0x20,0,0x18);
+            motion_flight_fields(model,r);
+        }
         if(r->model_vt==MOTION_SPLINE_VTABLE) { /* Spline: the deques' proxy and map pointers (+0x70/+0x78, +0x98/+0xa0) */
             memset(r->model_ext,0,16);memset(r->model_ext+0x28,0,16);
             motion_spline_fields(model,r);
@@ -451,14 +482,14 @@ static int motion_watch_row(uint64_t index,char *out,size_t cap) {
     motion_watch_hex(path0,r->path0,0x50);motion_watch_hex(model_ext,r->model_ext,0x70);motion_watch_hex(agent_ext,r->agent_ext,MOTION_AGENT_EXT);
     motion_watch_hex(leader_ext,r->leader_ext,MOTION_AGENT_EXT);
     motion_ref_text(target_ref,r->target_ref);motion_ref_text(path_ref,r->path_ref);motion_ref_text(leader,r->leader);
-    char progress[33];motion_watch_hex(progress,r->spline_progress,16);
+    char progress[33],angles[17];motion_watch_hex(progress,r->spline_progress,16);motion_watch_hex(angles,r->flight_angles,8);
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx attention=%d ctrl=%08x model=%08x flags=%u cur=%s prev=%s cache=%s target=%s "
         "target_ref=%s path=%u path0=%s path0_ref=%s/%u model_ext=%s agent_ext=%s formation=%u leader=%s leader_ext=%s ship_ext=%s wingmen=%u wingman0=%s fp=%s "
-        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx",
+        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx flight=%u/%016llx/%s",
         (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,r->attention,r->ctrl_vt,r->model_vt,r->flags,
         cur,prev,cache,target,target_ref,r->path_count,path0,path_ref,r->path_conn,model_ext,agent_ext,r->formation,leader,leader_ext,ship_ext,r->wingmen,wingman0,fp,
         parent,r->dock[0]?r->dock:"-",r->spline_count[0],r->spline_count[1],r->spline_segments,r->spline_core,progress,r->spline_requests,r->spline_obstacles,
-        (unsigned long long)r->spline_obstacle_time);
+        (unsigned long long)r->spline_obstacle_time,r->flight_obstacles,(unsigned long long)r->flight_avoid_time,angles);
     return n>0 && (size_t)n<cap?n:0;
 }
 /* FNV-1a 32 of field groups (motion_fnv, above); references by their fields (no struct padding). */
@@ -483,11 +514,14 @@ static int motion_watch_digest(uint64_t index,char *out,size_t cap) {
     uint32_t segments=spline?motion_fnv(motion_fnv(basis,r->spline_count,8),&r->spline_segments,4):0,core=spline?r->spline_core:0;
     uint32_t requests=spline?motion_fnv(basis,&r->spline_requests,4):0;
     uint32_t obstacles=spline?motion_fnv(motion_fnv(basis,&r->spline_obstacles,4),&r->spline_obstacle_time,8):0;
+    /* The Steering model's avoidance cache and constructor draws; 0 for another model class. */
+    uint32_t flight=r->model_vt==MOTION_FLIGHT_VTABLE?
+        motion_fnv(motion_fnv(motion_fnv(basis,&r->flight_obstacles,4),&r->flight_avoid_time,8),r->flight_angles,8):0;
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx attention=%d ctrl=%08x model=%08x flags=%u parent=%s cur=%08x prev=%08x cache=%08x "
-        "target=%08x path=%08x model_ext=%08x agent=%08x leader=%08x fp=%08x dock=%08x segments=%08x spline=%08x requests=%08x obstacles=%08x",
+        "target=%08x path=%08x model_ext=%08x agent=%08x leader=%08x fp=%08x dock=%08x segments=%08x spline=%08x requests=%08x obstacles=%08x flight=%08x",
         (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,r->attention,r->ctrl_vt,r->model_vt,r->flags,parent,
         motion_fnv(basis,r->slot[now],0x60),motion_fnv(basis,r->slot[now^1u],0x60),motion_fnv(basis,r->cache,0x40),target,path,model,agent,leader,
-        motion_fnv(basis,r->fp,48),motion_fnv(basis,r->dock,strlen(r->dock)),segments,core,requests,obstacles);
+        motion_fnv(basis,r->fp,48),motion_fnv(basis,r->dock,strlen(r->dock)),segments,core,requests,obstacles,flight);
     return n>0 && (size_t)n<cap?n:0;
 }
 /* Order rows, DEFAULT OFF (native_gate_motion_watch_orders, needs the watch):

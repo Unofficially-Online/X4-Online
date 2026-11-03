@@ -1,0 +1,1332 @@
+LOCKSTEP ON FOOT: GETTING UP, WALKING, SEEING EACH OTHER, HIRING CREW BY TALKING TO A PERSON
+1 November 2026 | offline work on branch contrib/ferrite-onfoot (base: smoke 08f4690f). Static analysis of the pinned Windows
+X4.exe 9.00 (RVAs, base 0x140000000; SHA-256 19750A65...6891) and of the extracted stock UI and MD scripts, read locally in
+x4-re; nothing of them is copied here (names of API functions, script files, cues and RVAs only). No X4 was launched.
+[F] = read in the binary or the scripts; [I] = inference; "live" = what only a native run can show.
+Builds on reports/LOCKSTEP-UI-GUARD-20261101.txt (the guard), LOCKSTEP-UI-MISSIONS-20261101.txt (the conversation family),
+LOCKSTEP-UI-TRADE-20261101.txt (money), LOCKSTEP-VIRTUAL-PLAYERS-RE-20261029.txt (stock slots, P_k, the presentation scope).
+The Codex-era NATIVE-GETUP-* reports studied a one-shot GetUp() diagnostic on the snapshot; none of it is used here.
+
+0. RESULT
+  Today (smoke 08f4690f) nobody can walk in a lockstep session: the GET_UP key is refused everywhere, and the docked menu's
+  Get Up button was not guarded at all: it ran X4's GetUp on the clicking client only (a split, then stop 155). Walking keys
+  were "presentation" and would have moved the canonical player on whichever client pressed them.
+  Built (default off, native_gate_pilot_foot, stop reason 185): slot 1 gets up and walks with X4's own first-person path on
+  every client from slot 1's recorded input, like it flies; the docked menu's GetUp is guarded (every session with the guard)
+  and with foot claimed into slot 1's record; slot 1's walking state is in the receipt; client k keeps its own eye at its own
+  seat while slot 1 walks. Hiring: the conversation family now treats the map's Hire button as one scope: slot 1's fee and
+  its conversation answer are replayed together on every client; slots 2+ are refused as a whole (no fee without the hire).
+  Not yet: slots 2..N on foot, seeing another player's body, sitting down again / talking to a person / consoles through the
+  camera pick, transporters. Sections 1-3 name every gap, 5 the live specs (no people), 6 the people checklist.
+
+1. WALKING ON FOOT
+1a Input [F]. 9ed1f0 registers U::FirstPersonController's handlers in the input object's multimaps (input 0x6cf1560 +0x63e0,
+  registrars actions 1255610, states 12556f0, ranges 12557e0, the same multimap the stock record walks):
+    states  FP_MOVE_FORWARD 0x1a, FP_MOVE_BACKWARD 0x1b, FP_TURN_LEFT/RIGHT 0x1c/0x1d, FP_LOOK_UP/DOWN 0x1e/0x1f,
+            FP_STRAFE_LEFT/RIGHT 0x20/0x21, FP_CROUCH 0x22, FP_WALK 0x23, FP_JUMP 0x24, FP_RUN_FORWARD 0x57  -> d7d3b0
+    ranges  FP_YAW 0xd, FP_PITCH 0xe, FP_WALK 0xf, FP_STRAFE 0x10, MOUSELOOK_YAW/PITCH 7/8                -> d7d5c0
+            (7/8 have a second handler, the camera's 122d970, registered by 1223ce0)
+    action  FP_RUN 0xdc -> d7d690
+  These are exactly the options menu's 'firstperson' controls (gameoptions.lua config.input.controlsorder). The names and ids
+  come from the engine's input name table (string_id_table at 0x22b8ee0). Each handler writes one byte or float of a process
+  global "walking bank" 0x38f4e40..0x38f4e93 (after a lock byte of MD's input locks 0x38f4db7/dc8/dcb/dcc), exactly as the
+  PlayerController's handlers write the flight bank 0x2f4b7xx. Byte map: 0x1a->e8b (and the double-tap run timer e70/e79),
+  0x1b->e8c, 0x1c..0x1f->e84..e87, 0x20/0x21->e88/e89, 0x22->e78, 0x23->e7a, 0x24->e7b, 0x57->e8a (+e79 run), ranges
+  0xd->e44, 0xe->e50 (negated), 0xf->e68 (negated), 0x10->e5c, 7->e48, 8->e54 (negated), FP_RUN toggles e79.
+1b Context [F]. 9ed1f0 also pushes d7d6c0 into the input object's context callback vector (+0x10, next to SPACE's d88710).
+  For INPUT_CONTEXT_FIRST_PERSON (0xd) it resets the bank (0x38f4e70 = -1.0, 0x38f4e7d = active, the rest zero), sets the
+  singleton player's +0x6a0d with its event (70ecf0 on / 70ed50 off; skipped while +0x6a0c) and copies e7d to the input
+  object's +0x9063 (this client's own). Requester: INPUT_CONTEXT_REQUESTER_FIRSTPERSONCONTROLLER (5).
+1c The update [F]. U::UniverseFrameUpdate (9fdef0) at 9fe5f7: 9fc670 walks the singleton player's movement controller
+  (+0x200, nested by vfunc +0xa0) to the one of class 0x16, U::FirstPersonController (vtable 0x2c3eec0), and d7f8d0 runs it
+  on the bank: once per frame, frame thread, the singleton only, after the camera pick 717ed0 (9fe5d0) and after d95180
+  (9fe2d7, which 9fe2b4 skips while the player has no PlayerController). d7f8d0 (0x1a6f bytes) and its callees d7f0c0/d7ed80
+  read the bank, the response curve 14e0180, IsExternalViewActive (9fc0e0), 0x6cf1670 and 0x38f0748 [F]; whether the last
+  three are presentation-dependent was not followed [I: a risk the receipt and the census expose]. The double-tap run of
+  FP_MOVE_FORWARD compares a clock (0xe9f90: a double at 0x6b60e40 under a critical section) [F]; game or real time was not
+  settled [I: real time would make the run flag differ; the receipt's bank hash then stops the session at that tick].
+  The FirstPersonController is the canonical player's movement controller in the cockpit too: it holds the eye at the seat
+  (lockstep_pilot_eye.h) [F].
+1d Getting up [F]. The GetUp export 1aba30 (menu_docked.lua buttonGetUp; CanPlayerStandUp gates the button) and the GET_UP key
+  (0x115 -> 71bac0, case 71bd80) do the same: 716d80 (may stand up), no GetUpEvent pending (99a210, type 0xcf), a new
+  U::GetUpEvent (vtable 0x2a85278) posted to the singleton at the thread's game time + 0.01 s (99a3f0). The key also wants the
+  conversation manager idle (0x38ee230 +0x1a0 == 1). MD hears it only indirectly: event_player_stopped_control (md/setup.xml
+  PlayerStoppedControl restores the ship's commander and order), event_object_changed_room of player.entity (md/modes.xml
+  PlayerLeftCockpit, md/notifications.xml StationAnnouncements: sounds and speech) [F scripts].
+1e What else walks with the player [F scripts, I where marked]. NPC instantiation (md/npc_instantiation.xml) and the dynamic
+  interiors (bar, manager's office, ...) follow the player's SECTOR and object attention ('nearby'), not the player's room;
+  interiors refuse to despawn while player.entity is inside. Doors and lifts have no FFI or MD of their own (target monitor
+  labels only) [I: the engine animates them by proximity of the walking body]. Transporter rooms: menu_transporter.lua
+  calls TransportPlayerToTarget (guarded, group flight: refused); TeleportPlayerTo (map, interact menu, platform undock:
+  guarded, refused). Interactions on foot (sit down, consoles, crates, a person) go through FP_INTERACTION_MENU_MOUSECLICK
+  0x78 -> 71c640 -> 8c2830, which reads the camera pick (+0x6c08..+0x6cd0 of the player: DEVICE, written every frame by
+  717ed0 from this client's camera) [F]; FP_INTERACTION_MENU 0x17 -> af3e70 opens the UI's interact menu (or, during a
+  conversation, calls the conversation manager 1179b10) [F].
+1f Simulation and presentation.
+  simulation  the walking bank (process globals d7f8d0 reads), the player's pose in its room (the FirstPersonController's),
+              its room/zone parent changes and their events, +0x6a0d and its events, the GetUpEvent, the seat's release (the
+              ship's PlayerController and SPACE: flight control 0x2f4b828), what MD does on room changes, doors/lifts [I].
+  presentation the camera at the eye and its head offset (Camera::GetOffset 97a300; 9fc670/d7d2e0 skip it in the cockpit)
+              [F], head bob [I: in the FPC pose's own offsets], the crosshair and interaction prompts (firstperson_crosshair.lua),
+              the camera pick (DEVICE).
+1g Slot 1 before this work [F code + I]: GET_UP refused (pstk_refuse_actions); the docked menu's GetUp ran X4's GetUp on
+  client 1 only [F: the guard inventory had no GetUp]: on client 1 the player left the seat 0.01 s later, 9fc550 then
+  answered no PlayerController, and the next gate pass stopped (pnat_check: stock_controller_changed or stock_flight_drift,
+  stop 155) [I], the other clients still seated. FP ids were presentation (local): pressed on client k they wrote client k's
+  bank and moved the canonical player on client k only [I: only effective once the FIRST_PERSON context is active].
+1h Slots 2..N [F own code + I]. P_k is built by X4's factory and never connected to the component tree; it is seated through
+  upward pointers only (lockstep_pilot_slots.h). X4 has no FirstPersonController update for it (9fe5f7 runs the singleton
+  only), no body, no room membership, MD has no player.entity for it. Client k's GET_UP was refused; its docked-menu GetUp
+  ran X4's GetUp on the canonical player inside the presentation scope (slot 1 standing up on client k only) [I].
+1i Gaps, every one (W = walking, K = slots 2..N):
+  W1 GetUp unguarded and GET_UP refused (fixed: 2a).
+  W2 walking ids local (fixed for slot 1: 2a).
+  W3 FIRST_PERSON edge local on each client (fixed: replayed from slot 1's client).
+  W4 the gate's pass assumed slot 1 always has its PlayerController (fixed: walking pass, adoption).
+  W5 slots 2..N stopped with update_missing when X4 skipped d95180 (no PlayerController) (fixed: as with a dead slot 1).
+  W6 the stock aim stopped with stock_aim_resolve when the player has no ship (fixed: X4's own answer off the seat, counted).
+  W7 interactions through the camera pick (sit down again, consoles, talk on foot, crates): local; refused now (0x78).
+     Slot 1 cannot return to its seat in a session yet (the pick, TeleportPlayerTo guarded): open.
+  W8 transporters (TransportPlayerToTarget), teleports (TeleportPlayerTo): guarded, refused: open (a replay op per call).
+  W9 the run's double-tap clock, d7f8d0's other inputs (IsExternalViewActive, 0x6cf1670, 0x38f0748): unproven, live.
+  W10 the player's body physics on foot (the character controller; JPH::CharacterVirtual is in the image [F RTTI], its use by
+      the FPC was not followed): determinism unproven, the world hash/census and the receipt's bank show a split, live.
+  K1 input contexts are per process and follow X4's single player [F: pstk_space refreshes with "a PlayerController exists"]:
+     when slot 1 gets up, the SPACE context leaves on EVERY client; on client k that local edge is recorded as slot k's SPACE
+     edge and replayed: slot k's flight control turns off while slot 1 walks [I, live check S1d]. Needs per-slot contexts
+     (the context refresh inside client k's presentation scope) or a rule for that edge: open, the most important next step.
+  K2 slot k on foot: P_k in the tree (Player::Move into the room), its own seat release (GetUp inside scope k), a per-slot
+     walking bank swapped in scope k (a new region class next to SIM/DEVICE/LOCAL), d7f8d0 for P_k's FirstPersonController
+     in scope k after the singleton's (a second call at 9fe604 as 9fe2d7 got), the FIRST_PERSON edge per slot, MD's
+     player.entity for slot k (reports/LOCKSTEP-UI-MISSIONS-20261101.txt model (c)): open, a spike like the stock slots'.
+
+2. BUILT (all default off; Windows only, as the stock slots)
+2a native_gate_pilot_foot (src/native/engine/lockstep_pilot_foot.h, lockstep_pilot_foot_guard.h; stop reason 185):
+  verdicts   with the module slot 1's walking ids (1a), FP_RUN and GET_UP are replay ids of the stock record (recorded on
+             its client, run on every client at capture + delay through the stock handlers d7d3b0/d7d5c0/d7d690/71bac0, any
+             other handler under such an id fails closed); slots 2..N: refused (PILOT_NATIVE_REFUSED), their records refused.
+  mouselook  ranges 7/8 while this client's FIRST_PERSON context is on or slot 1 walks: the camera's handler runs here, the
+             walking handler only in the replay of slot 1's recorded value. Otherwise unchanged (local).
+  pick click 0x78 refused for every slot (counted pick_refused).
+  context    the vector entry d7d6c0 is swapped for our callback (one 8-byte CAS, found again by value each pass, put back
+             at stop+1 and on any stop): a local edge runs the input side only (+0x9063) and slot 1's client records it
+             (kind SPACE, id 0xd); the replay calls d7d6c0 itself and puts this client's +0x9063 back.
+  Get Up     GetUp is a guard entry now (tools/dev/ui_guard_inventory.py group flight; lockstep_ui_guard_table.h regenerated,
+             283 entries): every guarded session refuses it. With foot the module claims it: slot 1's client, in a local
+             phase, while seated: the GET_UP key in this tick's record, the menu gets true; otherwise refused (the guard's
+             row and info line when its flight group is armed, else by the claim itself).
+  pass       states seated / leaving (a GET_UP was replayed) / walking (no PlayerController: 9fc550 none). Walking passes need
+             flight control equal to the replayed SPACE state after a grace of 24 ticks (the edge's capture + delay); a
+             PlayerController again on slot 1's own ship is adopted (sat down), on another ship stops (foot_controller); a
+             GET_UP X4 did not take ends after 90 ticks (kept). The swap and the guard's claim are checked every pass
+             (foot_hook_lost, foot_needs_guard). Slots 2..N update the frame after when X4 skipped d95180; the stock aim
+             answers X4's own while slot 1 is off its seat (aim_off_seat).
+  receipt    '|W<state>.<on>:<hash>' joins PSTOCK_1: the walking bank (without 0x38f4e80, a counter seating 70dc50, the
+             conversation code 117bea0 and others move [F]) and the player's +0x6a0d, hashed while slot 1 is off
+             its seat or its replayed context is on: a walk that took on one client only differs at that tick.
+  status     PILOT_INPUTS rows: foot= foot_why= foot_state= foot_on= foot_local= edges=local/recorded/replayed
+             mouselook=local/recorded/replayed getup=claimed/replayed walk= adopted= kept= pick_refused= aim_off_seat=.
+  pins       the three handlers, d7d6c0, the registrations 9ed1f0, GetUp, the UniverseFrameUpdate sites 9fe5f7 and 9fe29d,
+             9fc670 (SHA-256 at gate.pilot_foot; pins_foot:<rva> refuses). 71bac0 was pinned by stock piloting already.
+  arming     gate.pilot_foot() after gate.pilot_stock, before the first tick; the probe (native_gate_pilot_foot = true)
+             needs native_gate_pilot_stock, native_gate_ui_replay and native_gate_ui_guard. Builder: --foot (with --source
+             stock --ui-replay --ui-guard). Option checker: pilot_foot_rules.
+2b Client k's eye while slot 1 walks (lockstep_pilot_eye.h, with foot): the scope keeps the canonical player's local pose,
+  which is a station-room pose then; the presented pose is slot k's seat itself (stage 'seat', 0x75d110 for slot k only,
+  X4's w lanes), live and published. Before: eye=skip:slot1_seat and the eye at slot 1's room coordinates in k's room.
+2c Hiring (tools/dev/native_gate_ui_replay_core.lua, with the conversation family): MapMenu.buttonHire is a hire scope (the
+  menu's function wrapped once the menu exists; UI_MISSIONS_HIRE_SCOPE row): slot 1's TransferPlayerMoneyTo inside it is a
+  conversation event (op 0x49, number 16 = UIMIS_C_HIRE_MONEY, lockstep_ui_missions.h accepts it for slot 1 only) in call
+  order with the ProceedFromMenu('g_hire', {target, role, ispost}); both run on every client at the apply through the stock
+  functions; slots 2+: the whole click refused (UI_REPLAY_REFUSED what=MapMenu.buttonHire why=slot, info line). The fee is
+  the player faction's money: the shared wallet in coop, slot 1's own ('player') in factions mode. Before: the conversation
+  answer replayed and the fee refused (trade: not_owner; guard: trade group) - hired for free on every client.
+2d Script ops (native_gate_ui_replay_script): where SAVED (a saved object's sector position and yaw, read only),
+  hire_talk STATION (StartConversationFromMenu('default', the first person of the station with a $HiringFee)),
+  hire_confirm SLOT|SAVED ROLE [true for a post] (the map's hire menu: its context data, then its Hire button). The stock
+  script (native_gate_pilot_stock_script) now takes one event list per client: {{{tick,kind,id,value},...},false}.
+2e Files: new lockstep_pilot_foot.h, lockstep_pilot_foot_guard.h, test_lockstep_pilot_foot.h, tests/test_native_gate_pilot_foot.py,
+  this report. Edits: lockstep_pilot_stock.h (verdicts, split dispatch, replay walk, edge replay, receipt, status, aim),
+  lockstep_pilot_native.h (pass, install/uninstall), lockstep_pilot_inputs.h (stop reason), lockstep_pilot_slots.h
+  (update_missing), lockstep_pilot_eye.h (seat mode), lockstep_pilot_inputs_lua.h + lockstep_gate.c (gate.pilot_foot),
+  lockstep_ui_replay.h (include), lockstep_ui_missions.h (number 16), lockstep_ui_guard_table.h + ui_guard_inventory.py
+  (GetUp), native_gate_probe.lua (arming, per-client stock scripts, menus to the replay core), native_gate_ui_replay_core.lua
+  (hire scope, ops), check_gate_options.py, native_gate_players.py, docs/LOCKSTEP-REGISTRY.txt (185, number 16, the claim),
+  test_lockstep_gate.c, test_lockstep_pilot_eye.h, test_lockstep_ui_missions.h, tests/test_native_gate_ui_guard.py (GetUp is
+  an action, not a query).
+
+3. SEEING EACH OTHER ON FOOT
+  [F own code] X4 has one player, the Universe singleton (+0x230); P_k is not in the tree. So no client can draw slot k's body:
+  K2 first. Slot 1's body is the canonical player on every client, which X4 treats as its own local player [I: in first
+  person X4 draws no body of its own player; whether the player character's model is drawn for anyone else is unknown].
+  Expected now: client k does not see slot 1 standing in the room (live check S1c decides). What it needs [I]: a body for
+  every remote player, either a simulation actor (an NPC of the player's character macro created on every client at the
+  same tick by our MD, moved each tick to the player's simulated pose, hidden on the owner's client) or a render-only proxy
+  per client (no shared IDs; the engine's render API for a character was not studied). The presentation scope itself no
+  longer breaks with slot 1 on foot (2b); K1 (input contexts) is the scope's real problem.
+
+4. CREW HIRING BY WALKING UP TO A PERSON
+4a The flow [F scripts]. On a station a person who can be hired is an instanced NPC (md/npc_instantiation.xml creates them
+  with the station's attention and sets $HiringFee: CalculateNPCHiringFee, HiringFeeFromCombinedSkill). No stock Lua starts
+  a walk-up talk: the engine starts conversation 'default' with the person [I: through the pick's interaction or the interact
+  menu; the interact menu's Comm talks to control entities only, menu_interactmenu.lua buttonComm]. md/conversations.xml
+  DefaultComm: for a person who is not a control entity, whose role is hirable, whose role object is a station and who has a
+  $HiringFee, the choice 'Hire (fee)' at top_left (section g_hireworksomewhere). SectionHandler opens the map
+  (open_conversation_menu MapMenu, mode 'hire'): the player picks a target (own ship or station) and a role or post
+  (GetSuitableControlPosts, AssignHiredActor with checkonly as a query). buttonHire: GetPlayerMoney check, then
+  TransferPlayerMoneyTo(fee, the person's container) (Lua global 0x2881f0: the only payment), then
+  ProceedFromMenu('g_hire', {target, role, ispost}); SectionHandler g_hire: assign_hired_actor (post or role) ->
+  event_player_assigned_hired_actor -> NPCAssigned (after the conversation ends) -> NPCAssigned_Transfer (set_owner player,
+  intransit, assign_control_entity or set_entity_role + create_npc_template, info_updatePeople). The fee is $HiringFee times
+  the container's hiring discounts. No room or distance check gates any of it (the greeting's line checks isinspeakrange).
+  The crew list path ("work somewhere else" for own crew) calls AssignHiredActor directly (the assets family); CreateNPCFromPerson
+  is the pilot promotion only (menu_playerinfo.lua). Dialog buttons: dialogmenu.lua positions 315/270/225/45/90/135 degrees
+  for buttons 1..6 [F]; top_left = button 1 [I].
+4b Slot 1 now: the conversation start (StartConversationFromMenu: hire_talk, the map's or the interact menu's Comm) and the
+  dialog choice (SelectDialogOption) are the conversation family's; MD then runs on every client and opens the hire map on
+  every client [I: the conversation manager is per process and lockstep]; the Hire click on client 1 is the hire scope (2c);
+  MD assigns the person on every client. The walk-up start through the pick (W7) is not replayed: talk via the map or a
+  script until it is.
+4c Slots 2+: refused (MD has no player for them, model (c)); the hire map MD opens on client k too is slot 1's: its Hire
+  button is refused as a whole there (2c). Money per slot in factions mode follows with model (c) (the slot's faction scope
+  of the trade family is the template).
+
+5. LIVE TEST SPECS (coordinator; no people). DLL, probe, ui/native_gate_ui_replay_core.lua of this branch; base: the people
+  config overlay-Play42P. Station: the Argon wharf AVK-777 000000000001b5af in Argon Prime (sector 0000000000000729, the
+  sector the people config starts slot 2 in; reports/LOCKSTEP-UI-BUILD-20261101.txt 8) [I: an S/M dock with a walkable dock
+  area and hireable persons; if not, the shipyard NLN-075 000000000001451a].
+5a W0 where (once): append X4LAN_CONFIG.native_gate_ui_guard = 'all' and
+    X4LAN_CONFIG.native_gate_ui_replay_script = {{{5,'where','000000000001b5af'},{6,'where','00000000000ae79c'}},false}
+  window 40..400. Read UI_REPLAY_SCRIPT tick=45 op=where result=x,y,z/yaw (the wharf) and tick=46 (slot 1's start).
+5b W1 slot 1 docks, gets up and walks (Play42P plus):
+    X4LAN_CONFIG.native_gate_ui_guard = 'all'
+    X4LAN_CONFIG.native_gate_ui_replay = {'travel','target','orders','autopilot','dock','weapons','queue','missiles','events','conversation','build','assets'}
+    X4LAN_CONFIG.native_gate_ui_build_fund = 2000000
+    X4LAN_CONFIG.native_gate_pilot_foot = true
+    X4LAN_CONFIG.native_gate_pilot_stock_script = {{{100,'action',0xaf,0},{2400,'action',0x115,0},{2520,'state',0x1a,1},{2610,'state',0x1a,0},{2620,'state',0x1c,1},{2650,'state',0x1c,0},{2660,'state',0x57,1},{2720,'state',0x57,0},{2730,'range',7,0.3},{2731,'range',7,0},{2740,'state',0x24,1},{2742,'state',0x24,0},{2760,'state',0x1b,1},{2820,'state',0x1b,0}},false}
+    identity plan starts: both ships 3 km from the wharf (W0's x,y,z; e.g. z-3000 and z-3300, yaw toward it), slot 2 included
+    (replace Play42P's slot 2 start at y=100000).
+  Window 40..4200 (ticks are absolute: dock key 100, get up 2400, forward 2520..2610, turn left 2620..2650, run forward
+  2660..2720, a mouselook flick 2730, jump 2740, back 2760..2820).
+  Pass: relay pass, 0 digest mismatches, census 0, no stop 155/161/162/164/185; on both clients PILOT_FOOT_ARMED, and in the
+    PILOT_INPUTS rows (status stride) foot=live -> walking, foot_state 0 -> 1 at 2403 -> 2 a few ticks later, foot_on=1 after
+    the replayed edge, edges=x/1../1.. on client 1 and x/0/1.. on client 2 (replayed equal), getup=0/1, walk= rising equally,
+    mouselook=../../2 on both (the scripted flick is injected, not dispatched: local/recorded count a person's mouse only),
+    kept=0, aim_off_seat counted (not a stop); the PSTOCK receipt's
+    |W2.1:<hash> identical on both at every tick from the edge on. Screenshots client 1 at 2500 (standing on the pad, first
+    person), 2700 (moved, turned), 2830; client 2 at the same ticks: its own cockpit, the eye where it was (eye=seat in its
+    PILOT_INPUTS present row, not skip:slot1_seat).
+  If: kept=1 at 2490 (X4 did not let the player stand: not docked by 2400; move the get up later or the start closer);
+    stop 185 foot_flight_drift (the SPACE edge's replay later than 24 ticks: send PILOT_INPUTS rows around 2400-2440);
+    foot_controller (9fc550 answered another controller: send the rows); stock_aim_resolve (aim off the seat path not taken);
+    a |W mismatch (send both clients' PSTOCK rows at that tick: the bank differs - W9/W10); a census difference in the
+    player (W10). Each is information for the next step, not an expected pass.
+5c S1 two players at the wharf (W1 plus slot 2's script {{120,'action',0xaf,0}} in place of false, and from 2500 on slot 2's
+  throttle: {2900,'state',0xd,1},{2960,'state',0xd,0} after its undock {2850,'action',0xd3,0}):
+  a) both docked (PILOT_SHIPS: both near the wharf, speed 0) before 2400;
+  b) client 1 at 2700: slot 2's ship on its pad seen from the walkway (screenshot);
+  c) client 2 at 2700, looking at slot 1's pad from its cockpit: is a character standing there? Expected NO (section 3);
+     record either way;
+  d) K1: after 2400, client 2's PILOT_INPUTS rows: slot 2's flight (S2:..:<flight>) - expected 0 after slot 1 got up [I];
+     whether slot 2 undocks at 2850 and accelerates at 2900 (PILOT_SHIPS speed). A 0 here confirms K1.
+5d H1 hire at the wharf (W1's config; client 1's ui replay script, ticks relative to the window start 40):
+    X4LAN_CONFIG.native_gate_ui_replay_script = {{{2500,'hire_talk','000000000001b5af'},{2620,'dialog',1},{2740,'hire_confirm',1,'aipilot',true}},false}
+  (absolute 2540 talk, 2660 the Hire choice, 2780 the map's Hire for a pilot of slot 1's own ship; slot 1 has left the seat).
+  Pass: UI_REPLAY_SCRIPT tick=2540 op=hire_talk ok=true result=<id> fee=<n>; UI_MISSIONS_CAPTURED what=StartConversationFromMenu,
+    SelectDialogOption, then at 2780 what=TransferPlayerMoneyTo via=hire and what=ProceedFromMenu via=lua on client 1 only;
+    UI_REPLAY_APPLIED rows op=73 at +3 for each, identical on both clients; the receipt's money (:M after the fund) drops by
+    the fee on both at the same tick; the UIMIS_1 conversation state equal; 0 mismatches. In each client's X4 log the MD
+    conversation and, after it ends, the person owned by the player (map > slot 1's ship > crew: the new pilot on both).
+  If hire_talk fails 'nobody to hire': no instanced person with a fee on that station (try 000000000001451a, or after the
+    walk). If dialog 1 does not open the hire map on client 1 (UI_REPLAY_SCRIPT hire_confirm ok=false "no hire menu open"),
+    try 2..6 (4a's button order is [I]). If X4 refuses the post: 'service' with false.
+5e What must stay as before (regression): the Play42P people config without native_gate_pilot_foot: GET_UP still refused,
+  walking keys local as before; with the guard the docked menu's Get Up is now refused with the info line (new, intended).
+
+6. PEOPLE CHECKLIST (two persons; Play42P + the first four lines of 5b, no stock script, no ui replay script)
+  [ ] each flies to the wharf AVK-777 in Argon Prime and docks (Shift+D / the dock key): both clients see both ships dock.
+  [ ] slot 1: Get up from the docked menu (or the Get up key): client 1 stands on the pad; client 2 nothing changes in its
+      cockpit (and its view stays at its seat); 0 mismatches.
+  [ ] slot 1 walks around the pad and the dock area (WASD, mouse look, run, crouch, jump), takes a lift if one is there;
+      say when the view stutters or snaps back (the record's 3-tick delay is felt here: walking has no prediction yet).
+  [ ] slot 2 tries to get up: refused with the info line; its walking keys do nothing.
+  [ ] slot 2 tries to fly while slot 1 walks (undock, throttle): report whether its ship responds (K1).
+  [ ] slot 2 looks at slot 1's pad: does it see a person? (expected no, section 3).
+  [ ] slot 1 opens the map, selects a person on the wharf (the station's crew list / a person in the dock area), Comm or talk,
+      'Hire' (top left), picks its own ship and the pilot post or service crew, Hire: money drops on both, the person
+      appears in the ship's crew on both. Slot 2 sees the hire map open too: its Hire button does nothing (info line).
+  [ ] slot 1 tries to sit down again in its ship (walk to the seat, F / click): refused (the pick, W7) - it stays on foot;
+      end the session there (or let the slot die and respawn with native_gate_pilot_death).
+  [ ] slot 1 tries a transporter room: refused (W8).
+  Send: PILOT_INPUTS rows (foot=..), UI_GUARD_REFUSED, UI_MISSIONS_* and UI_REPLAY_APPLIED rows, both clients' X4 logs,
+  screenshots at each step, the tick of any stop and its why.
+
+7. VERIFIED AND NOT
+  Statically [F]: the input ids from the engine's own name table; the registrations (9ed1f0, 71b6c0, af12b0, 1223ce0) by a
+  capstone scan of every registrar call; the handlers' bank bytes; d7d6c0; the update call site and its getter; GetUp and the
+  GET_UP case posting the same event; the guard entry generated against the image. Every pin hashed on the pinned image.
+  In C on a fake image region (test_lockstep_pilot_foot.h): verdicts and the record codec with and without the module; arming
+  and every refusal (no stock, no functions, the GetUp entry taken or absent); install, the swap, intact, uninstall, the
+  callback after the window; capture on slot 1's client (edge, walking ids, mouselook split, the pick refused, the menu's
+  GetUp into the record); the replay through X4's callback with +0x9063 kept, the walking handlers, mouselook to the walking
+  handler only, GET_UP; leaving -> walking without a PlayerController, the grace and the drift stop, adoption and the foreign
+  controller stop, the kept-seated timeout; the stock aim off the seat; slot 2's keys and GetUp refused (guard's refusal or
+  the claim's); the receipt's bank hash; status; stop reason 185. The eye's seat mode in test_lockstep_pilot_eye.h. Image
+  checks (test_pilot_foot_image): pins, the vector push, a registration of each kind, the bank bytes, the callback's offsets,
+  the frame's call sites, GetUp = the GET_UP case.
+  Python/LuaJIT (tests/test_native_gate_pilot_foot.py): the probe's arming and refusals on two synthetic clients, per-client
+  stock scripts, the option rules, the builder; the hire scope (call order, same stock calls on both clients, slots 2+
+  refused whole, outside the local phase untouched, wrapped once, a fee that does not encode), the script ops; the mirrors.
+  Runs: the native build with --test --native-image (all tests pass), and pytest of the registry, guard, replay, missions,
+  trade, build, stock, option, sandbox and foot suites.
+  Not live: nothing ran in X4. In particular inference until a run: that X4 takes the player out of the seat within the
+  grace and 9fc550 answers none while walking, that the walk is deterministic (W9, W10), K1, what client k sees (section 3),
+  the dialog's button for 'Hire', the persons on AVK-777.
+
+8. SECOND PASS: SLOTS 2..N ON FOOT, SEEING EACH OTHER, HIRING FOR EVERY PLAYER (branch contrib/ferrite-onfoot2, base smoke
+   f4c638ec; static analysis of the same pinned image, nothing launched; [F] binary/scripts, [I] inference)
+8a Result
+  Fixed: the live w1foot stop (8b) and K1 (8c: slot k keeps its flight while slot 1 walks). Built, default off: slots 2..N
+  in X4's world tree at their seats on every client (8d, native_gate_pilot_foot_bodies, stage 1 of their bodies). Not
+  built, designed from the facts below: slot k getting up and walking (8e), seeing another player on foot (8f), slot k
+  talking to a person and hiring (8g). The reason is the same for all three: X4 has exactly one player on those paths
+  (the stand-up, the walking update, the conversation manager, the pick), and each needs a per-slot piece whose effect
+  only a live run shows. The next steps are ordered in 8i, with a live spec each in section 9.
+8b Live w1foot (smoke 76bbbb97): stop 185 at tick 37, before the window, why lost [F, fixed]
+  Cause: X4 pushes the FIRST_PERSON callback d7d6c0 into the input object's context callback vector (+0x10) once at
+  X4::GameClient::Init (9ed1f0, at 9ed389) AND once more in every FirstPersonController constructor (d7c530, at d7c7ed;
+  the clone d67970 builds one at a world load, 70eee0 at a seat, teleport or stand-up); the destructor d7cc30 removes
+  none. A client with a loaded world holds two or more entries, a per-process number. pfoot_install wanted exactly one:
+  foot_install at take+1 (tick 38, completed=37). Fix: every entry is swapped, an entry pushed later is swapped at the
+  next pass (status foot_entries=<n>/<late>), pfoot_context acts once per edge (X4 calls every entry), the replay calls
+  X4's callback once on every client (as before), and the hook is lost only when none of ours is left. A stop now always
+  says why: gate.pilot_why() (the stop reason, every piloting module's stage and why, the arming why) is logged as
+  PILOT_STOP_WHY right after STOP and after ABORT, before any other stop row; the pilot status buffer is 16 KiB (stock,
+  slots, presentation, death and foot rows together can pass 4 KiB, which returned nil). Test: armed, before the window,
+  controls parked at take, two X4 entries, a late third, the why text (test_lockstep_pilot_foot.h). Commit 7caf3351.
+  Residual [I]: an FPC built during the session pushes its entry in the frame it is built; an edge in that same frame
+  would reach X4's d7d6c0 on that client once before the pass swaps it (a local bank reset a few ticks early; the |W hash
+  shows it). late > 0 in a run names it.
+8c K1: slot k's flight was lost while slot 1 walks [F, fixed for the clients of slots 2..N]
+  Input contexts are one request set per process (g_InputSystem+0x4c50 holds {context, requester}; request 1289c30/
+  126d810/14b9a30, withdraw 1252850(input+0x10, context, requester)) [F]. Names from the engine's table (0x22b9090 ff.):
+  MENUS 5, PLAYER 6, SPACE 8, CAMERA 9, CAMERA_COCKPIT 0xa, FIRST_PERSON 0xd, FIRST_PERSON_INTERACTION 0xe, SHIP 0xf,
+  FLIGHT 0x10, COMM_ACTION 0x41, INFO_ACTION 0x42, UNDOCK_ACTION 0x46, GET_UP_ACTION 0x47; requesters
+  FIRSTPERSONCONTROLLER 5, PLAYERCONTROLLER 6, UI 8, MENUHANDLER 0xa, CUTSCENE 0xe [F].
+    d9cc30(present)  PlayerController set: present, controls enabled (0x2f4b7e0) and no share (0x2f4b7e4): request SPACE,
+                     SHIP, FLIGHT for requester 6 (d8d9d0, flag 0x2f4b829); otherwise withdraw them [F].
+    d81d20(present)  its twin for the FPC: present and no FP share (0x38f4e80): request FIRST_PERSON and
+                     FIRST_PERSON_INTERACTION for requester 5 (flag 0x38f4e7c); otherwise d81ce0 withdraws them [F].
+    70ecf0 / 70ed50  flight started or FIRST_PERSON on: withdraw COMM_ACTION/INFO_ACTION; flight stopped or FIRST_PERSON
+                     off: request them (requester 6) [F].
+  X4 asks "present" about the canonical player: 70e0f0 (stop control, from the stand-up 716e20) calls d9cc30 with
+  9fc550 != 0 and d81d20 with its FPC [F]; d9ccc0 (a menu's share released) calls d9cc30(9fc550 != 0) [F]; pstk_space
+  refreshed the same way. So when slot 1 gets up (or dies, or walks while a menu closes) EVERY client loses SPACE/SHIP/
+  FLIGHT and gains FIRST_PERSON: client k's SPACE off edge went into slot k's record (its flight control off on every
+  client) and client k's keys became walking ids [F code path; the live S1d check was still pending]. Fix
+  (native_gate_pilot_foot, on a client whose own slot is 2..N; client 1 unchanged):
+    - pstk_space refreshes with "this client's slot holds its controls" (seated with its PlayerController; dead as before);
+    - a SPACE off edge while that slot holds its controls, the controls are enabled and no menu share is held is the
+      canonical player's: not recorded, nor the on edge that answers it (status k1=<ignored>/<fixed>);
+    - every live pass: d9cc30(own seated) and d81d20(own walking: never yet), X4's own request and withdraw, so the
+      menus' d9ccc0 and the stand-up's 70e0f0 are undone by the next pass;
+    - 0x38f4e7c (FP contexts requested) is this client's own: not in the |W bank hash (as 0x38f4e80 already was not).
+  Pins: d81ce0..d81ebe (the FPC's withdraw and refresh). Image test: d81d20 requests 0xd for requester 5 and sets e7c,
+  d81ce0 clears it, d9cc30 withdraws 8 for requester 6, d7c530 pushes d7d6c0.
+  Not fixed (K1b) [F]: slot k's replayed SPACE edges run pstk_fn.started/stopped (70eb10/70ec00) in scope k, which call
+  70ecf0/70ed50 on every client: COMM_ACTION/INFO_ACTION are requested on every client while any slot's flight is off.
+  Pre-existing; its live effect (those two contexts' keys on a flying client) is unknown [I]; a reconcile as for d9cc30
+  needs a flag X4 does not keep for them.
+8d A body for slot k, stage 1: P_k in the world tree at its seat [F facts, built, live B1]
+  Facts [F]: P_k (lockstep_pilot_slots.h) is X4's U::Player from the factory, seated through upward pointers only (+0x70 =
+  the cockpit room, +0x308 its vector): no child list holds it. X4 seats its own player with 716670: 3d8420(player,
+  &filter 0x2f60e70 = TemplateConnectionFilterByIsPlayerSlot (vtable 0x2b9ec18), room, 0), the control position, then
+  70eee0. 3d8420(component, filter, target, x) finds the filter's connection on the component and the target's, then
+  U::Component::ConnectTo (3d6e50); with no target it is 3d8240(component, 0x15), which skips the kill every other reason
+  takes (vtable +0x1548) and only disconnects. 70eee0: if 9fc670 (the singleton's FPC) is none, the transform 3dde10, a
+  0x3c0 allocation, the FPC constructor d7c230 and the player's vtable +0x19e8 (set movement controller, flag 1) [F].
+  Built (lockstep_pilot_foot_body.h, native_gate_pilot_foot_bodies = true, default off; needs native_gate_pilot_foot and
+  the stock slots; refused with native_gate_pilot_death: a dying ship's KillRecursive would take a connected P_k, and a
+  Player killed is X4's game over): on every client at take-1, after the seats, in scope k: the upward pointer cleared,
+  3d8420(P_k, filter, room, 0); P_k's parent must then be the room (else off again, the upward pointer back, stop
+  body_connect; a fault body_connect_fault; a roomless seat body_seat). Every live pass: still the room's child
+  (body_moved), still seated (body_unseated). Stop+1, before the seats' release: 3d8420(P_k, filter, NULL, 0) in scope k
+  and the upward pointer back (what the release expects); an abnormal stop does the same from pnat_restore before the
+  seats go. No FPC, no control position change, no walking: P_k sits where X4 seats a pilot. Status: bodies=<stage>
+  bodies_why= bodies_mask= connects=<on>/<off> body_checks=; PILOT_STOP_WHY carries it. Pins: 3d8420 (0x89 bytes), 716670's
+  lea/call pair (the same filter to the same function), the running filter object's vtable at the arming
+  (bodies_filter).
+  What B1 answers: whether a second U::Player in a room's child list is drawn on the other clients, whether the census
+  and every receipt stay equal, what X4 does with it (events, attention, the AI pilot at the post). [I] where the answer
+  may stay open: S ships have cockpit_gen_virtual cockpits (nothing to see from outside); a visual answer needs a slot
+  ship with a walkable bridge, otherwise the census row alone answers membership.
+8e Walking for slot k: what X4's update needs [F], the design [I]
+  [F] d7f8d0(FPC) is the whole update: its owner is FPC+0x70; the player half (the owner's +0x1fd0/+0x1fc8/+0x2080
+  calls, jump and run feedback) runs only when the owner is class 0x4c (U::Player), so P_k qualifies and an NPC body would
+  not; the singleton is read only in d7f0c0/d7ed80 (mouselook) and d7cdb0 (the FPC's first update), so inside scope k
+  (singleton = P_k) every such read is slot k's; the game time comes from the thread's TLS (+0x300), the last update is
+  FPC+0x88; IsExternalViewActive (9fc0e0, this client's camera) is read twice (W9 holds per slot as well); collision goes
+  through g_PhysicsSceneA (0x38f0748)+0x40 and the owner's class 0x6d ancestor; 0x6cf1670 with 69a490 at the end [F
+  calls; I: feedback or sound]. The bank 0x38f4e40..0x38f4e93 is walking state except e7c (FP contexts requested) and e80
+  (the FP share count), this client's own. 716d80 (may stand up) reads only the player: a control position, its macro's
+  flag, +0x6abc, a class 0x54 ancestor whose macro allows it (docked) [F].
+  X4's stand-up 716e20 cannot run for P_k as it is [F side effects]: the local camera (Universe+0x3d0, 9f9fe0),
+  StopControl events to the player and the ship, 70e0f0 (this process's contexts, the controller), the UI event raise
+  (LuaEventSink_Raise), GET_UP_ACTION withdrawn, and the placement 7176f0 / 717c30 (a TriggerAnimationEvent, the dock's
+  connection): every client would get client k's camera, UI and contexts.
+  Design K2, in order (each a pass piece with its own stop why, all in scope k on every client at slot k's GET_UP apply):
+    K2-1 slot k's GET_UP and the docked menu's GetUp for slot k recorded on client k (the claim's slot test widened),
+         consumed by the module at the apply, never through 71bac0 (its GetUpEvent would reach P_k outside any scope);
+    K2-2 716d80(P_k) in scope k: refused = kept seated (as slot 1's 'kept');
+    K2-3 the seat's controller released (pslot_release's take-down; P_k stays connected, control position none);
+    K2-4 70eee0(P_k) in scope k: P_k's FPC (its d7d6c0 entry is swapped by the pass, 8b);
+    K2-5 placement: the dock's stand-up connection as 7176f0 computes it, with our own move (3d8420 to that connection,
+         or the FPC pose) instead of the animation event; the one step that needs a live look first;
+    K2-6 slot k's bank: 0x38f4e40..0x38f4e93 without e7c/e80, swapped in pslot_enter/pslot_leave; slot k's walking ids,
+         FP_RUN and mouselook become slot k's replay ids (pstk_verdict_slot), replayed in scope k into its bank; its
+         FIRST_PERSON start is our own bank start in slot k's store (d7d6c0's bank half: zero, e70 = -1.0, e7d = 1)
+         without d7d6c0's context half (70ecf0/70ed50, K1b);
+    K2-7 the update: the call at 9fe604 re-pointed as 9fe2d7 is for d95180: d7f8d0(the singleton's FPC), then
+         d7f8d0(FPC_k) in scope k for every walking slot; a frame without the call (no singleton FPC) runs them in the
+         next pass;
+    K2-8 pslot_leave's seat checks (parent = the room, the vector) answer a walking slot by its live parent; pslot_replay
+         replays a walking slot; pfoot_own_walking() then answers K1's FP contexts on client k;
+    K2-9 client k's eye: the presentation scope takes P_k's room and FPC pose (lockstep_pilot_eye.h's seat mode extended);
+    K2-10 the receipt: '|W<k>.<state>:<bank hash>' per walking slot.
+8f Seeing each other: what X4 draws [F where marked, else I]
+  - Slot k (k >= 2): only a P_k in a child list can be reached by the render walks [F: nothing else reaches it]; stage 1
+    puts it there (8d). Whether X4 draws a U::Player that is not the singleton is B1's question. X4 does draw its own
+    player's character in its external view (d7f8d0 adapts to IsExternalViewActive [F]), so a model exists [I].
+  - Slot 1 on client k: the canonical player is presented as slot k inside client k's presentation scope
+    (lockstep_pilot_present.h: parent and pose are slot k's while UI and render run) [F own code], so slot 1's body is
+    never at slot 1's place on client k. Seeing slot 1 needs a proxy B_1: one more factory player per session (as P_k,
+    built at take-2), connected like a body, posed every tick from the canonical player's room and FPC pose (simulation,
+    the same on every client), never presented [I design].
+  - Its own body on client k: P_k sits at the eye client k presents; a render-only hide of P_k on client k (and of B_1
+    on client 1) is presentation and per client; the render API for that was not studied [I].
+8g Talking to a person and hiring, for slot k [F facts, design; nothing built]
+  [F] The walk-up talk is the pick: FP_INTERACTION_MENU_MOUSECLICK 0x78 -> 71c640 -> 8c2830 reads the player's camera
+  pick (+0x6c00..+0x6d34, the DEVICE region the slot scope already swaps per slot [F lockstep_virtual_players.h]); the
+  conversation manager (0x38ee230) and MD's conversation cues are per process and follow player.entity (slot 1);
+  md/conversations.xml DefaultComm offers 'Hire' for a person with a $HiringFee; the fee is TransferPlayerMoneyTo (the
+  player faction's money) in MapMenu.buttonHire, then ProceedFromMenu('g_hire', ...) answers the conversation (2c, 4a).
+  Design for slot k: (1) the pick: client k records the picked person's runtime ID with 0x78 into slot k's record; the
+  replay writes it into slot k's DEVICE pick fields in scope k and runs 71c640 there (X4's own interaction with the
+  picked person, as slot k); (2) the conversation in slot k's scope: reports/LOCKSTEP-UI-MISSIONS-20261101.txt section 4,
+  model (c): C1 (MD frames of slot k's cue trees in scope k), C2 (a conversation manager per slot, swapped with the slot
+  scope and client k's presentation scope), C5 (slot k's conversation ops applied in its scope); (3) the fee: coop, the
+  shared wallet (the player faction, as slot 1's hire scope pays today); factions mode, slot k's faction money inside
+  slot k's frames (C3, the trade family's faction scope as the template); (4) the hire scope (2c) then accepts slot k as
+  it accepts slot 1. Nothing is built: (1) needs slot k on foot (8e), (2) is model (c)'s C1/C2, an engine piece of its own.
+8h Files of this pass
+  New: lockstep_pilot_foot_body.h. Edited: lockstep_pilot_foot.h (every entry swapped, K1, pins, status),
+  lockstep_pilot_stock.h (pstk_space: K1; status), lockstep_pilot_native.h (the bodies' pass phases, restore),
+  lockstep_pilot_inputs_lua.h (gate.pilot_why, gate.pilot_foot_bodies, 16 KiB status), lockstep_gate.c (include,
+  methods), test_lockstep_pilot_foot.h (two X4 entries and a late one, parked pre-window passes, the why line, K1 edges,
+  reconcile, dead slot and client 1, image checks of K1 and of the bodies' pins), test_lockstep_pilot_slots.h (bodies:
+  connect in scope, live checks, off before the release, landing elsewhere, fault, roomless, moved, arming refusals),
+  native_gate_probe.lua (PILOT_STOP_WHY, the bodies' arming), check_gate_options.py (pilot_foot_bodies_rules),
+  native_gate_players.py (--foot-bodies), docs/LOCKSTEP-REGISTRY.txt (185: the bodies' whys),
+  tests/test_native_gate_pilot_foot.py.
+  Verified: the native build with --test --native-image (every test passes; every pin hashed on the pinned image), pytest
+  of the foot, registry, guard, replay, stock, probe and option suites. Not live: everything of 8b-8d beyond its code.
+8i What remains, in order
+  1. Live W1b and S1-K1 (9a, 9b): the fixed foot step and K1. 2. Live B1 (9c). 3. K2-1..K2-4 and K2-6..K2-8 (slot k up and
+  walking without a placement, P_k in its seat's room: the first run shows what X4's FPC does with it), then K2-5 from
+  that run. 4. K2-9 (client k's own eye), K2-10. 5. B_1 and the per-client hide (8f). 6. Slot k's pick (8g 1), then model
+  (c)'s C1/C2/C5 for its conversation and fee (8g 2-4). 7. K1b.
+
+9. LIVE SPECS OF THE SECOND PASS (coordinator; no people). DLL, probe, ui/native_gate_ui_replay_core.lua of this branch.
+9a W1b: the coordinator's w1foot again (overlay-W1foot: Play42P, guard 'all', families incl. conversation/build/assets,
+  native_gate_ui_build_fund, native_gate_pilot_foot = true, 5b's stock script, both ships 3 km from AVK-777, window
+  {40,4200}). Pass: no stop before 40; PILOT_INPUTS rows on both clients from tick 38 on: foot=live foot_entries=<n>/0 with
+  n >= 2 (GameClient::Init's entry and the loaded player's FPC; a different n per client is allowed), then 5b's criteria.
+  Any stop: its PILOT_STOP_WHY line (send it). late > 0 in foot_entries: an FPC was built during the session (send the
+  tick).
+9b S1-K1: two players at the wharf, slot 2 keeps flying while slot 1 walks (5c's config and scripts: slot 2 docks at 120,
+  undocks at 2850, throttle 2900..2960). Pass, client 2's PILOT_INPUTS rows: k1=<a>/<b> with a >= 2 after 2400 (the
+  canonical player's off edge and its answer not recorded) and b >= 1 (the pass put SPACE back and FIRST_PERSON away);
+  the PSTOCK receipt's |S2:..:<flight> stays 1 from 2400 until slot 2's own undock edges (equal on both clients); after
+  2900 PILOT_SHIPS shows slot 2's speed rising; |W2.1 hashes equal on both clients; 0 mismatches. 5c's c) (client 2 sees
+  no figure on slot 1's pad) is still expected NO (8f: slot 1 is presented as slot 2 on client 2). If a = 0 and slot 2
+  does not fly: X4 changed the contexts some other way (send client 2's rows 2390-2450 with foot_local and edges).
+9c B1: bodies at the seats. Play42P + W1's first four lines + X4LAN_CONFIG.native_gate_pilot_foot_bodies = true (no
+  native_gate_pilot_death; builder --foot --foot-bodies), no scripts, window {40,1200}; slot 2's ship 40 m ahead of slot
+  1's, nose to nose, both stopped (identity plan starts; if the save has a slot ship with a walkable bridge, use it for
+  slot 2). Pass: PILOT_FOOT_BODIES_ARMED on both; PILOT_INPUTS rows bodies=connected at 36, live from 37, bodies_mask=2
+  connects=1/0; at the stop connects=1/1 bodies=released; relay pass, 0 mismatches, census 0 (or its first difference:
+  send it, a P_2 child row names the membership). Screenshots at 200 and 800: client 1 looking at slot 2's cockpit (its
+  external view near slot 2 when the canopy hides the seat): a seated figure in slot 2's cockpit, YES or NO; client 2 its
+  own cockpit: does a head or body cover the view (P_2 sits at the presented eye), YES or NO. Each answer decides 8f.
+  Arming refusals: bodies_filter (the filter object's vtable), pins_bodies:<rva>; stops: body_connect (ConnectTo put P_2
+  elsewhere), body_connect_fault (send the crash note), body_moved (X4 moved P_2: the tick).
+9d Slot 2 walking and hiring (S2/H2): not runnable until 8i 3 and 6. What must hold today: 5d's H1 run as client 2
+  (client 2's ui replay script with hire_talk/dialog/hire_confirm): its Hire button refused whole (UI_REPLAY_REFUSED
+  what=MapMenu.buttonHire why=slot), no money moved on either client. Separately, as the LAST step of a 9b run (it ends
+  the run): client 2's stock script {3000,'action',0x115,0} must fail in the probe with 'pilot stock script event refused
+  tick=3000' (slot 2's GET_UP is refused natively, nothing recorded). With people only: the docked menu's Get Up on client
+  2 is refused with the info line, and client 2's walking keys produce no first-person ids while slot 2 sits (K1: its
+  contexts are the flight ones; the refusal ring shows no FP ids).
+10. W1B / S1K1: THREE SPLITS, NAMED SEPARATELY (offline; branch contrib/ferrite-footsync, base smoke d0d50e95; the
+    coordinator's runs w1bfoot and s1k1 of build161 read in selected rows only; static analysis of the pinned image)
+10a Result
+  (a) 65-72, a transient: the station's interior nav helper is built on AI::NavMeshCache's own thread and its
+      NavHelperGeneratedEvent posted at wall-clock time; it makes md/npc_instantiation.xml place the station's people at
+      tick 65 on one client and 67 on the other. Fixed, default off: native_gate_nav_mesh = 'sync' (stop reason 186).
+  (b) 1800, one Argon patrol group: not proven. The only simulation counter that parts before the capture is one engine
+      parameter refresh (600-660); the group flies in the sector the people of (a) appeared in. Expected to go with (a)'s
+      fix [I]; the rerun decides, with a per-tick motion digest of the four ships if it does not.
+  (c) the walk: the relay's mismatches from 1800 on are the world hash (stride 1800, sticky until the next capture), not
+      the get-up; the walk's own first difference is the receipt's |W2.1 at 2580 (equal at 2460 and 2520 while slot 1
+      stood). The coordinator's two signals are per client by design. Not fixed: the field is in no log; built a
+      diagnostic that names it in the rerun (foot_bank/foot_fpc/foot_parent/foot_locals), with the fix for each answer.
+10b (a) the transient at 65-72 [F]
+  Relay: DESYNC 65, RESYNC 67, DESYNC 68, RESYNC 72 (w1bfoot); 66, RESYNC 68 (s1k1). Every row is held on those ticks
+  (status stride 60), and every written row (60, 120: PILOT_RECEIPT, STATE_ROW, statuses) agrees, so the part is one the
+  logs do not print. census_runtime_callers.py --first: the shared runtime-ID list parts at tick 70, client 1 two and
+  client 2 three allocations of the stack caab18 <- 1111aaa <- 111c477 <- 9d0127 <- c9d5c8 <- 99c5b0 <- 99a4ed <-
+  6b86a1, cue OnNPCSlotsValidated; RUNTIME_IDS digest= differs from 120 on (that digest keeps a difference by design).
+  The digest carries the next runtime ID (runtime_ids_barrier): the same NPCs made two ticks apart.
+  Chain: GeneratePropsEvent (0xce, attention) -> Positional slot 521 0x753de0 -> 0x75b3d0 -> 0x1087df0 puts the object
+  into one of four priority sets of AI::NavMeshCache (*0x6cf21f8; sizes cache+0x248+0x40*i, lock +0x1f0, event +0x58).
+  The cache's thread (secondary vtable slot 1, 0x1087810) builds each ID: 0x108bb90 at 0x108793c (rebuilds 0x108adb0 at
+  0x1087a76, list +0x320/+0x328); the build stores the thread's TLS game time in the record (+0x18) and 0x108c800
+  publishes it in the map +0xd0 (lookups 0x75b300) and posts U::NavHelperGeneratedEvent through PostEventDeferred 0x99a720
+  at the thread's TLS time. Dispatch: listener slot 454 -> NavContext 0x6b8550 posts NPCSlotsValidatedEvent to the
+  interior and its station -> OnNPCSlotsValidated -> InstantiateNPCs. A build whose ID is in the frame's busy sets
+  (0x108ca70; cleared by the cache's frame update 0x1087d90) sleeps in 10 ms steps. Nothing of this was handled.
+  Fix (lockstep_nav_mesh.h, native_gate_nav_mesh = 'sync', default off, stop reason 186): the two build calls of the loop
+  go through stubs; inside admitted frames a build waits; the gate's main-thread join (after the nav octree join, before
+  the runtime IDs are read) opens the builds and waits until the thread holds nothing it can build (no build running; the
+  five sizes zero, or the held ID busy: it waits for a later join), then closes them. The builder's TLS game time is the
+  join's during the build (put back after), so the record's time and the event's time agree on every client. Every helper
+  asked for in frame N is published, and its event posted, between N and N+1, from the joined world state. Receipt
+  NMESH_1:<builds>:<hash> joins the declared state: per join with builds the tick, the count and an order-free sum over
+  (portable key, class, kind). 'observe' installs the stubs without waiting and writes NAV_MESH_ROW per build (tick read
+  on the builder thread, key, kind, time bits, us) at once. Pins: the loop (sites as X4 has them), the build, the publish,
+  the rebuild, the busy test, the frame update; a site or stub no longer ours, a pin change, a join timeout (30 s; left
+  open), a full join list (1024) stop with 186; stop opens the builds before the sites go back. Windows gate only.
+  Residual [I]: the thread takes an ID at wall-clock time while the builds are closed and holds it; if that ID is busy at
+  the join, the IDs behind it wait on that client only. Needs two requests in one frame, one busy; the receipt names it.
+  The request is simulation (attention); a view-made request would show as another set in the receipt.
+10c (b) the patrol at 1800 [F unless marked]
+  census_compare 1800 (both runs, lanes b1/b2 and b3/b4): the same four ShipSmall, motion; nav.parameters_due of 0xa7984
+  (67.48 s against 67.55 s, two ticks). They are one formation: job argon_fighter_patrol_s_zone, leader 0xa7949 with
+  0xa795e, 0xa796f, 0xa7984, zone 0x732 of sector 0x729 (the wharf's sector, AVK-777 in zone 0x72b).
+  Not the cause: the navigation banks' read/write links are opposite between the two processes for all 10029 navigation
+  objects since tick 1 (a per-process parity, normalised by role in the world hash); the dock family (slot 1 never docked:
+  PILOT_SHIPS keeps its ship at 75500/0/40800 through 4200; slot 2 had no script in w1bfoot); hit claims (no claim, HITS_1
+  receipt 0 on both; eval_in counts this client's own owner evaluations); PILOT_STOCK_CALLERS (getters, per client).
+  Status fields at 600 and 660 against the 20-minute play42p-long pass (fields that differ there too are per client by
+  design: ACTOR_RNG_ALL drawn, EVENT_ORDER order, EVENT_RNG keyset, GRAVIDAR_WIDE sectors/moved, VIEW_POINTS, ...): one
+  field parts in w1bfoot only, NAV_CADENCE total_other 29551/716 against 29551/715 at 660 (equal at 600): one engine
+  parameter refresh more on client 1, the same number of upkeep calls.
+  [I] With native_gate_actor_rng_all each ship's draws are keyed, so the extra people of (a) cannot move these ships'
+  draws; the coupling would be a schedule: everything InstantiateNPCs started runs two ticks apart for good. Not shown.
+  By 3600 the census holds 146 objects in many sectors (Xenon, Terran, Boron, pirates; 2 re-parented): spread, not a
+  second cause in itself. No separate fix; the rerun shows whether (a)'s fix removes it.
+10d (c) the walk [F unless marked]
+  PILOT_RECEIPT (every 60): |W2.1:755d9ba806241505 on both at 2460 and 2520 (standing), apart from 2580 (forward 2520-2610);
+  at rest from 2880 to 4200 each client keeps its own bank (98f67354bd74d957 / 56aa3ed7e31fd55f; the back walk at 2820
+  differs again and returns). Everything else in the receipt (PSTOCK, S2, PUIREP, UIMIS, UIBUILD, PILOT_SHIPS, HITS,
+  PFIRE) and the fixture's STATE rows agree through 4200. Slot 1 never docked and X4 still let it stand (kept=0).
+  The two signals: PILOT_STOCK_CALLERS 16/29 already at 600 (play42p-long 31/43): client 2's presentation getters;
+  HIT_CLAIMS eval_in 286/0 from 600 (play42p-long 5731/6816): owner evaluations of casts near this client's own ship,
+  no claim made. Neither is simulation. The foot rows differ as designed (client 1 foot_local=1 edges=1/1/1, client 2
+  foot_local=0 edges=2/0/1 k1=0/1 eye=skip:no_seat).
+  Narrowed statically: the walking bank 0x38f4e40..0x38f4e93 is written only by the FPC update d7f8d0 and its callees
+  (d7cdb0 first update, d7f0c0 look step, d7ed80), the input handlers d7d3b0/d7d5c0/d7d690, the FIRST_PERSON callback
+  d7d6c0, the FP context refresh d81ce0/d81d20 and MD's InputLockAction 0x1132900: no render or UI code. d7f8d0 runs on
+  the frame thread at 9fe604, outside every presentation entry point (the pick 9fe5d0 is one; its scope closes before).
+  Its client-local inputs: ext, the camera's external view (9fc0e0: Universe+0x3d0 +0x868; skips the head and look step);
+  cut, the cutscene manager's camera ([0x3d19900]+0xb0; skips the whole update); dev, d7f0c0's device branch
+  (input+0x9053, the device input+0x64a0 slot 10, *0x6cf1578, [*0x6cf1568+8]+0x197): only when it holds does the replayed
+  mouselook (ranges 7/8 -> d7d5c0 -> e48/e54, cleared after each update at d802b3) reach FPC+0xd8/+0xdc; sens, d7ed80's
+  FP_YAW/FP_PITCH sensitivities (input+0x6380, the options' map). ext and cut were sampled equal on both clients at every
+  stride (BULLET_CADENCE camera=0:6c72a:0:..: mode 0, no cutscene camera). dev and sens were never logged. Forward walking
+  alone (2520-2580) uses none of them [F], which leaves the integration itself (the player's transforms and collision in
+  physics scene A at its room) or the placement of the stand-up (7176f0/717c30, an animation event) [I].
+  Built (read only, lockstep_pilot_foot.h pfoot_diag, in the PILOT_INPUTS row while slot 1 is off its seat or its context
+  is on): foot_bank= (the bank as hashed), foot_fpc= (the FPC's +0x20..+0x60, +0x80..+0xe0 with the last update time
+  +0x88, +0x100..+0x1a0, +0x2e0; '-' for another controller class), foot_parent= (the room's portable key), foot_locals=
+  ext:/cut:/dev:a,b,c,d/sens:yaw,pitch/view:.
+  The fix for each answer (designed, not built):
+    dev differs     record slot 1's device condition in the stock record on change (as the FIRST_PERSON edge is) and let
+                    d7f0c0 read the replayed value: the device block d7f2ed..d7f33f has one entry and one exit (d7f340),
+                    a jump to a stub at d7f2ed (2 bytes) suffices. A real hole whatever (c) is: slot 1's mouselook turns
+                    its body only on clients whose own mouse device is active.
+    sens differs    record slot 1's sensitivities with the record (they scale e44/e50 in d7ed80 at the update).
+    ext differs     answer 0 inside d7f8d0 (the calls d7fed8 and d80325: xor eax,eax and a 3-byte nop).
+    cut on one      the update is skipped there (FPC+0x88 lags in foot_fpc): the canonical player's update must not read
+                    the cutscene camera (d7f9d1).
+    all equal       foot_fpc's transforms part first: the collision near the player (scene A's bodies at its room) or,
+                    with another foot_parent, the stand-up's placement. Next: the physics trace on the player's room.
+10e Files, verified
+  New: lockstep_nav_mesh.h, test_lockstep_nav_mesh.h, tests/test_native_gate_nav_mesh.py. Edited: lockstep_gate.c (include,
+  owned, check, join, restore, Lua nav_mesh/_status/_frame/_row), lockstep_pilot_foot.h (pfoot_diag), test_lockstep_gate.c,
+  test_lockstep_pilot_foot.h (test_pilot_foot_diag), native_gate_probe.lua (arming, NAV_MESH status/rows/stop, receipt in
+  the digest after RUNTIME_IDS_1), check_gate_options.py, docs/LOCKSTEP-REGISTRY.txt (186).
+  Verified: build_native_gate.py --test --native-image (the C tests, the nav mesh image facts and pins on the pinned image);
+  pytest of the nav mesh, registry, foot, guard, replay, option and octree-sites suites. Not live: everything here.
+10f Rerun specs (coordinator; DLL and probe of this branch)
+  R1 w1bfoot-nm: overlay-W1bfoot plus
+    X4LAN_CONFIG.native_gate_nav_mesh = 'sync'
+    X4LAN_CONFIG.native_gate_trace_window = {2515,2600}
+    X4LAN_CONFIG.native_gate_motion_watch = {'00000000000a7949','00000000000a795e','00000000000a796f','00000000000a7984'}
+    X4LAN_CONFIG.native_gate_motion_watch_digest = true
+    and the same four IDs appended to native_gate_world_hash_watch (decoded at the captures; NAV_CADENCE_ROW at stride ticks).
+  Pass (a): NAV_MESH_ARMED mode=sync on both; no DESYNC before 1800; NAV_MESH_ROW lines (written at once) with the same
+    tick, kind, key and time on both clients, joined=1; NAV_MESH status: free_builds=0, failures=0, receipt=<n>/<hash>
+    equal at every stride, max_join_us noted (the hitch of a join that builds); RUNTIME_IDS digest= equal at every stride.
+  Pass (b): census 1800 with 0 differences. Else: the first MOTION_DIGEST tick and group where a fighter parts, and
+    census_compare --tick 1800 watched_details for the four.
+  (c): |W2.1 is expected to part again [I]. Send both clients' PILOT_INPUTS rows 2515..2600 (every tick in the window):
+    the first tick foot_bank, foot_fpc or foot_parent differ, and foot_locals on both; 10d names the fix for each answer.
+  If: stop 186 with why join_timeout (send the NAV_MESH status: a build over 30 s), site_changed/block_changed (another
+    module in the loop), cache/time/counts (send the line); 'nav mesh refused ... stage=pins|site|cache' at arming.
+  R2 s1k1-nm: overlay-S1K1 plus the same lines; the same criteria (slot 2's own flight is unchanged by this branch).
+  R3 (control, optional): R1 with 'observe' instead of 'sync': NAV_MESH_ROW for the same keys at different ticks on the
+    two clients around 60-75, and the transient as before: the mechanism seen natively.
+10g What remains, in order
+  1. R1/R2. 2. (c) from R1's foot rows: the fix of 10d for the input it names (dev: record and replay the device
+  condition). 3. (b) from R1's census and motion digests if it stays. 4. An 'agreed' variant of the nav mesh join (built on
+  every client, agreed through the wire) if the sync join's hitch is too long, as the octrees have.
+
+
+10b-bis. THIRD PASS: SLOT k GETS UP AND WALKS (K2-1..K2-10), THE BODIES CRASH (branch contrib/ferrite-onfoot3, base smoke 0bb57289;
+    static analysis of the same pinned image with a capstone disassembler, nothing launched; [F] binary, [I] inference)
+10a Result
+  Built, default off (native_gate_pilot_foot_slots = true, lockstep_pilot_foot_slots.h, stop reason 185, whys slot_*): slot
+  k (2..N) gets up from its seat on every client at the same tick (its GET_UP key on client k or the docked menu's Get Up
+  claimed for slot k), walks from its own replayed stock walking inputs in slot k's scope on every client, and client k
+  presents slot k's first-person view (eye = P_k's FPC pose) while every other client keeps its own; slot k's GET_UP while
+  walking sits it back down. Needs native_gate_pilot_foot and the stock slots; refuses native_gate_pilot_death; bodies are
+  optional (10e). The footlook crash (bodies + slot 1 standing up) is avoided by parking every body off the tree around any
+  get-up (10f); its faulting instruction is still unknown, the crash note now captures it first chance (10g).
+10b What X4 does when its own player stands [F]
+  GetUpEvent handler Player::vfunc537 706cc0: 716d80 (control position, macro flag, +0x6abc, a docked class 0x54 ancestor
+  whose macro allows it) and the conversation manager idle (0x38ee230 +0x1a0 == 1), then 716e20(player, 1, 0). 716e20: the
+  local camera, StopControl events (player, dock, camera's dock), 70e0f0 (stop control; its tail 730df0 logs the
+  UNDOCK_ACTION 'already a ContextRequest' line seen in every live stand-up), 70e940 (assist, 8e8450 the UI anchors), 70eee0
+  (an FPC unless 9fc670 finds one: 3dde10, d7c230, Positional::vfunc829 745e00 with replace 1, the old controller deleted),
+  the UI event, the placement (8d3f60(control position) -> connection type, 0xa none; 455f90 on the ship, else 771430 on the
+  class 0x54 ancestor or the cockpit room; a class 0x4d target (vtable +0x11e0) -> 7176f0 animated or 717c30 direct, flag 1),
+  control position = [0x6d113d0], GET_UP_ACTION (0x47) withdrawn. The FPC's pose d81ec0 runs d7cdb0 once (+0x80 clear): the
+  walking bank reset, d81d20(1) (requests FIRST_PERSON and FIRST_PERSON_INTERACTION unless 0x38f4e7c is set with 0x38f4e80
+  clear: then it returns at once), +0x88 = game time, +0x2e0 = d7d2e0 ('in its seat': 70eaa0 (the local camera on the player)
+  or a control position other than none). After that d81ec0 reads only its own FPC (no global data reference). d7f8d0 never
+  reparents the player (no ConnectTo/3d8420/3d8240/Player::Move in its call graph to depth 4). 9fc550 answers none once the
+  ship's chain has no class 0x2f controller.
+10c K2 as built (every step in slot k's scope on every client at slot k's GET_UP apply tick)
+  K2-1 pstk_verdict_slot: with the module, slot k's walking ids, FP_RUN, mouselook and GET_UP are slot k's replay ids; the
+       guard's GetUp claim records GET_UP for slot k on client k while slot k sits in its ship (pfslot_claim_ok); the replay
+       of slot k's GET_UP never reaches 71bac0: pstk_slot_replay hands it to pfslot_get_up.
+  K2-2 the conversation manager idle, then 716d80(P_k); refused = kept seated (fs<k> kept=).
+  K2-3 the seat's controller: the stock vtable back (CAS), the ship's vtable 1075 (as pslot_release at stop+1); P_k keeps
+       its parent (the cockpit room) and its controlled-object vector; 9fc550 in scope k answers none.
+  K2-4 70eee0(P_k): its FPC, then one pose query (its first update d7cdb0 at the seat, as X4's own FPC had it before it
+       stands). This client's 0x38f4e7c = 1 and 0x38f4e80 = 0 around the stand-up, so the first update's
+       d81d20(1) requests nothing on any client (the contexts are this process's: K1 handles client k's own).
+  K2-5 X4's target (8d3f60, 455f90, 771430, class 0x4d), the direct 717c30(P_k, target, 1) on the initialised FPC: no animation;
+       no target: it stands at its seat (unplaced=). Then the control position none, +0x2e0 = 0
+       (d7d2e0's answer for a player without one; the camera is never on P_k), P_k's +0x6a0d = 1 without 70ecf0's contexts.
+  K2-6 slot k's walking bank: 0x38f4e40..0x38f4e93 except 0x38f4e7c and 0x38f4e80..83 (this client's own), swapped by
+       pslot_enter/pslot_leave (canonical bytes hashed: a write to slot 1's bank inside the scope fails the leave);
+       started as d7d6c0's bank half (zero, e70 = -1.0, e7d = 1). Slot k's walking keys reach d7d3b0/d7d5c0/d7d690 in its
+       scope, so they write its bank only.
+  K2-7 the call at 9fe604 re-pointed (slots' near page, stub 0xa0): d7f8d0(the singleton's FPC) as X4, then
+       d7f8d0(FPC_k) in scope k for every walking slot (an access violation there: stop 185 slot_update_fault, not a
+       crash); a frame without X4's call runs them from the next pass (foot_slots_hook=installed/calls/late).
+  K2-8 a walking slot stays 'seated' for lockstep_pilot_slots.h (scope, parent, vector) without a controller: no d95180,
+       no controller checks; checked each pass: its FPC still P_k's movement controller (slot_fpc_lost), its parent the
+       room (slot_moved), its references. K1: pfoot_own_walking answers client k's own slot, so client k's pass requests
+       its FIRST_PERSON contexts (d81d20(1)) and withdraws its flight contexts (d9cc30(0)); client k's SPACE off edge is
+       slot k's (recorded, flight 0 in scope k); its mouselook splits and is recorded for slot k.
+  K2-9 lockstep_pilot_eye.h stage 'walk': the presented pose, live (the canonical FPC's slot 6 in the scope) and published
+       (the view cache block), is P_k's FPC pose in its room (the scope's parent).
+  K2-10 PSTOCK_1 gains '|W<k>:<walking>:<hash>' per stock slot k: slot k's bank and its FPC's pose at the pass (after the
+       replay, game time), zero while seated. Slot 1's '|W<state>.<on>:<hash>' is unchanged.
+  Sit down: slot k's GET_UP while walking: X4's take (ship vtable 1074) in scope k, the PlayerController under its vtable
+  copy again, the control position back, +0x2e0 = 1, e7d = 0, +0x6a0d = 0 (no walk back to the seat: the pick, W7).
+  stop+1: the call site back first; a walking seat is released with its pointers only (its controller went at the stand-up).
+  Status: PILOT_INPUTS foot_slots=<stage> foot_slots_why= foot_slots_hook=<1>/<calls>/<late> claimed=<n> and
+  fs<k>=walking/getups/kept/stood/sat/ignored/updates/placed/unplaced; pilot_why adds foot_slots and fs<k>.
+10d Not done, open
+  MD knows nothing of slot k on foot (player.entity is slot 1: no room events, no NPC interiors for slot k); the stand-up
+  animation (7176f0); slot k's interactions through the pick (W7) and transporters (W8); W9/W10 hold per slot (the walking
+  update reads this client's IsExternalViewActive 9fc0e0 and the physics character: a split shows in |W<k>); seeing slot k
+  (bodies parked while anyone walks, 10f). For people: X4 withdraws GET_UP_ACTION on every client when slot 1 stands
+  (716e20), so client k's Get Up KEY works only while slot 1 sits [I]; the docked menu's Get Up (claimed) and scripts do not
+  need the context. The sit-down key is GET_UP while walking, dispatched only if that context is on [I].
+10e Bodies optional
+  The report's design (8e) had P_k in the tree for walking; the call graph says the walking update never reparents (10b),
+  so P_k walks in its seat room's frame by its upward pointers, collisions through its zone (d7f8d0's class 0x6d ancestor).
+  With bodies armed they are off the tree while it walks anyway (10f).
+10f The footlook crash (live: overlay-W1bfoot + play mode + bodies, smoke d0d50e95): both X4s 0xC0000005 in the frame of
+  slot 1's stand-up (GET_UP at 2400, applied 2403), the last line on both 70e0f0's UNDOCK_ACTION warning (w1bfoot without
+  bodies logs the same line at 87.18 and walks); no crash note line (X4's own handler ended the process before the
+  last-chance filter), no WER record, no dump. Not found offline which instruction faults. Checked and excluded [F]: play
+  mode (its NULL returns are handled and tested), d7f8d0 (no reparenting, reads only the singleton), the FPC's pose. Candidates
+  [I]: a tree walk that reaches P_2 once the player is on foot (attention/activation of entities near the player: SetAttention
+  3d5660 -> Entity vfunc701/688; P_2 is a factory player); P_2's helmet child (Player::vfunc578 6fb230 gives it a
+  HelmetMovementController whose pose d9f190 reads the SINGLETON's PlayerController or FPC, which 716e20 takes down).
+  Fix by avoidance (lockstep_pilot_foot_body.h pfbody_guard, from pnat_pass right after slot 1's replay and the staging of
+  slots 2..N, before their replay and X4's event phase): when slot 1 leaves or walks, or a seated slot k's GET_UP is in this
+  tick's records, or a slot k walks, every body is disconnected (X4's 3d8420 to none, the upward pointer back: the w1bfoot
+  state); PFBODY_SETTLE = 24 ticks after everyone sits again they are connected again (the B1 state). The tree only ever
+  holds P_k in a state a live run had. Status bodies=parked, parks=<parked>/<back>. Test (test_lockstep_pilot_foot_slots.h):
+  P_2 connected, slot 1 leaving in the pass -> P_2 off the room before the pass returns, parked; slot 1 sat down -> back at
+  +24; slot 2's GET_UP staged -> parked.
+10g Crash note, first chance: armed, it also registers a vectored handler that writes up to 4 lines 'NATIVE_GATE
+  CRASH_FIRST_CHANCE ...' (address as X4 RVA, registers, unwound chain, tick, pilot stage) for an access violation in X4's
+  image, before any frame handler; it handles nothing. A footlook rerun with the crash note and bodies kept would name the
+  instruction; with this build the bodies are parked, so the line names any other fault.
+10h Files
+  New: lockstep_pilot_foot_slots.h, test_lockstep_pilot_foot_slots.h. Edited: lockstep_pilot_slots.h (walking slots, the
+  bank in the scope), lockstep_pilot_stock.h (verdicts, slot k's GET_UP, split mouselook for slot k, receipt, status),
+  lockstep_pilot_foot.h (pfoot_own_walking), lockstep_pilot_foot_guard.h (claim for slot k), lockstep_pilot_foot_body.h
+  (park), lockstep_pilot_eye.h (walk), lockstep_pilot_native.h (pass order, restore), lockstep_pilot_inputs_lua.h and
+  lockstep_gate.c (gate.pilot_foot_slots, why), lockstep_crash_note.h (first chance), native_gate_probe.lua (arming),
+  check_gate_options.py (pilot_foot_slots_rules), native_gate_players.py (--foot-slots), docs/LOCKSTEP-REGISTRY.txt (185:
+  slot_* whys, the claim), test_lockstep_pilot_foot.h (slot 2's key and claim, image facts), test_lockstep_pilot_slots.h
+  (first chance), tests/test_native_gate_pilot_foot.py.
+  Verified offline: the native build with --test --native-image (every test passes; every new pin hashed on the pinned
+  image: 716d80, 70eee0, d7f8d0, d81ec0, 717c30, 8d3f60, 455f90, 771430, 716e20's placement block, d7d2e0, 706cc0's bytes, the
+  9fe604 call; image facts: 706cc0's checks and 716e20(1, 0) call, the placement calls and class, control position none,
+  70eee0's order, the first update and d81d20's early return, the seat flag); C on the slot fixtures: every K2 step above,
+  the bank swap and its leave check, the update order and scope, the walking checks, the receipt, the eye, the sit-down,
+  stop+1, the bodies' park; pytest: foot, registry, guard, replay suites. Not live: everything.
+  Overlap with the parallel footsync worktree (lockstep_pilot_foot*.h): lockstep_pilot_foot.h only pfoot_own_walking (one
+  line) and two comments; lockstep_pilot_foot_guard.h one added claim branch for slot k; lockstep_pilot_foot_body.h the park
+  (pfbody_guard, its state, status parks=) as an added block. Slot 1's walking, its pass and its receipt are untouched;
+  everything else is in new files or other headers (slots, stock, eye, native, crash note).
+
+11. LIVE SPECS OF THE THIRD PASS (coordinator; no people). DLL, probe, ui/native_gate_ui_replay_core.lua of this branch.
+11a F2: both docked at AVK-777, slot 1 up at 2400, slot 2 up at 2460, both walk. Base: overlay-W1bfoot (Play42P, guard 'all',
+  replay families incl. dock/conversation, native_gate_ui_build_fund, native_gate_pilot_foot = true, both ships 3 km from
+  the wharf, slot 1's dock key at 100, slot 2's at 120), window {40,4200}, NO bodies, no play mode change needed. Add:
+    X4LAN_CONFIG.native_gate_pilot_foot_slots = true
+    X4LAN_CONFIG.native_gate_crash_note = true      (if the overlay does not have it)
+    X4LAN_CONFIG.native_gate_pilot_stock_script = {
+      {{100,'action',0xaf,0},{2400,'action',0x115,0},{2520,'state',0x1a,1},{2580,'state',0x1a,0},{2590,'state',0x1c,1},
+       {2620,'state',0x1c,0},{2630,'state',0x57,1},{2690,'state',0x57,0}},
+      {{120,'action',0xaf,0},{2460,'action',0x115,0},{2560,'state',0x1a,1},{2620,'state',0x1a,0},{2630,'state',0x1c,1},
+       {2660,'state',0x1c,0},{2670,'state',0x57,1},{2730,'state',0x57,0},{2740,'range',7,0.3},{2741,'range',7,0},
+       {2800,'state',0x1b,1},{2840,'state',0x1b,0}}}
+  (slot 1: forward 2520..2580, turn left 2590..2620, run 2630..2690; slot 2: forward 2560..2620, turn left 2630..2660, run
+  2670..2730, a mouselook flick 2740, back 2800..2840.)
+  Pass: relay pass, 0 digest mismatches, census 0, no stop. Both clients: PILOT_FOOT_SLOTS_ARMED; PILOT_INPUTS rows
+  foot_slots=live from take, foot_slots_hook=1/<n>/0 with n rising by one per frame and late 0; slot 1 as W1b (foot_state 0
+  -> 1 at 2403 -> 2); fs2=0/.. until 2463, then fs2=1/1/0/1/0/0/<updates>/<placed>/<unplaced> with placed+unplaced = 1 and
+  updates rising equally on both clients; foot_slots=walking. PSTOCK receipts: '|W2.1:<hash>' (slot 1) and '|W2:1:<hash>'
+  (slot 2) identical on both clients at every tick (|W2:0:0000000000000000 before 2463); the hash changes during
+  2560..2730 (slot 2 moves). Client 2 only: k1=<a>/<b> with b >= 1 after 2463 (its contexts flipped to walking),
+  foot_local=1, edges=<local>/0/.. (client 2 records no FIRST_PERSON edge), mouselook=../<recorded>/.. counting the scripted
+  flick on the replay side, its present row eye=walk/...; |S2:..:<flight> 0 after slot 2's own SPACE off edge.
+  Screenshots: client 1 at 2500 (standing on its pad), 2700 (moved); client 2 at 2440 (its cockpit), 2500 (first person at
+  its pad's stand-up position, no animation), 2700 (moved and turned), 2850 (backed off). Expected: client 1 sees no figure
+  for slot 2 (no body while anyone walks; seeing each other is not built), client 2 sees slot 2's view only.
+  If: fs2 kept=1 at 2463 (716d80 refused: slot 2 not docked by 2460, or the conversation manager busy: send its PILOT_SHIPS
+  and dock rows); unplaced=1 (no stand-up connection found: it stands at the seat; walking may then be blocked by the
+  cockpit: send screenshots); slot_* why (PILOT_STOP_WHY); a |W2 mismatch at tick t: send both clients' PSTOCK rows from
+  t-5 (W9/W10 for slot k); a CRASH_FIRST_CHANCE line: send it with the tick.
+11b F2b: F2 plus X4LAN_CONFIG.native_gate_pilot_foot_bodies = true (the footlook fix): PILOT_INPUTS bodies=connected at take-1,
+  live, then bodies=parked parks=1/0 from 2403 (connects=1/1), no crash at 2403; with both walking they stay parked to the
+  end; connects=n/n at the stop. A crash here: the CRASH_FIRST_CHANCE line names the instruction.
+11c F2c, sit-down: F2 plus on client 2's list {2900,'action',0x115,0}: fs2 sat=1, walking=0 at 2903, client 2's view back in
+  its cockpit (eye=seat or on), |W2:0:0000000000000000 from then on, slot 2 can fly again ({2950,'state',0xd,1} throttle: its
+  PILOT_SHIPS speed rises after an undock {2920,'action',0xd3,0}).
+11d People (the user's check right after): the W1bfoot people config plus native_gate_pilot_foot_slots = true. Both dock at
+  AVK-777. Client 2: Get Up from the docked menu (or the Get Up key while slot 1 still sits); client 2 stands on its pad
+  in first person and walks with WASD, mouse look, run; client 1 keeps its own view. Then client 1 gets up and walks; both
+  walk at the same time. Client 2 sits back down with the Get Up key (only if X4 shows that key's context, [I]).
+  Send: PILOT_INPUTS rows (foot_slots, fs2, eye), PSTOCK receipts around each get-up, both X4 logs, screenshots per step.
+
+12. THE FOOTLOOK CRASHES, READ FROM X4'S OWN MINIDUMPS (offline; branch contrib/ferrite-footcrash, base smoke fc306302 =
+    build163; nothing launched). X4's crash reporter (support/drdump) writes X4_900_<date>.dmp into the lane's game folder
+    (correction to 10f: there are dumps). Read: exception stream, module list, the faulting thread's context and stack,
+    unwound through the .pdata of the pinned X4.exe and of our DLL; our DLL symbolised from a rebuild of fc306302 whose
+    .text/.rdata/.data/.pdata are byte-identical to build163's (only .buildid differs). The dumps hold stacks only.
+12a footlook4 (build163: foot_slots, crash note, death off), client 1 [F]
+  0xC0000005, read of 0x188, at x4lan_gate_64.dll+0x13bb53 'call [rax+0x188]' with rax = 0: the called object's vtable
+  pointer is NULL (rcx = rdi = the object). Chain: pslot_global_part+0x33 <- pslot_enter+0x17d <- pslot_replay+0x12c
+  (r12 = tick 2406, slot 2) <- pilot_before_release_using (pnat_pass) <- path_release <- X4+0xef461a (the main loop's
+  release hook). pslot_enter took the canonical predicate from pnat_controller, slot 1's PlayerController latched at
+  take+1, and compared it with X4's live one (9fc550) only when the death module was armed. Slot 1's GET_UP applied at
+  2403; X4's stand-up (716e20 -> 70e0f0) deletes that controller; the pass learns it at its next pfoot_check and kept the
+  pointer (compared only). Every later scope entry of slot 2 (its replay each tick, its update, X4's calls into C_2)
+  called vfunc 49 of the deleted object: harmless while its memory still held a vtable (NavigationController's slot 49
+  is 'mov al,1'), the crash once the memory was reused and zeroed (2406). The armed crash note watches faults in X4's
+  image only (10g), so this one in our DLL wrote no line.
+12b Why the death module avoids it: it hooks nothing the get-up uses (its pass, game-over guard and seats act only on a
+  dying ship). The live-controller check in pslot_enter was written for the eject (lockstep_pilot_death.h) and was
+  conditioned on pdeath_armed. foot_slots and bodies refuse the death module, so every run with them had the unchecked
+  read; w1bfoot, s1k1 and footlook2 (death on) had the check. Slot k's own get-up releases C_k through our code and
+  clears s->controller (no stale pointer), but it runs inside the same pslot_enter: slot 2 getting up after slot 1
+  stood (11a's script) hit the same read.
+12c footlook (build161 = smoke d0d50e95: bodies + play mode, death off), client 1 [F unless marked]
+  0xC0000005, read of 0x200, in X4 only (no frame of ours): X4+0xea75e1, NavigationController vfunc 68 (ea75d0, used by
+  no other vtable): [this+0x30] = NULL indexed by the frame buffer (+0x1a0 each, +0x60) <- 0x988af0, U::CockpitHeadCamera
+  MovementController vfunc 49 (tail-jumped from its vfunc 6 0x986a10), this+0x90 = the object <- Camera offset 0x97a300
+  <- 0x9799f0 <- 0x979ce0 <- UniverseFrameUpdate's camera loop at 0x9fe573 (Universe+0x2c0, count +0x3c0) <- X4+0xef46b6.
+  Client 1's cockpit head camera was still bound to an object with NavigationController's vtable and no pose buffer:
+  [I] slot 1's PlayerController after its destructor (the base class's vtable is what ~PlayerController leaves). X4 binds
+  the head camera in d895a0 to the PlayerController it is given (9fc550's answer, or a PlayerController constructor's
+  'this'), and drops it in ~PlayerController (d84730 -> d89840: the class-7 controller of whatever camera is
+  Universe+0x3d0 then). Which path left it bound in that run is not in the dump. That run had P_2 connected (build161 had
+  no park) and the same unchecked read as 12a (harmless there: the memory still held a vtable). footlook4 (no bodies)
+  ran three frames past the stand-up without this camera fault. Build163 parks every body around a get-up (10f); in a
+  bodies run (11b) a recurrence is in X4's image, so the crash note's first-chance line names it.
+  Control dump (10:31, the old render-camera arm crash): a fault in bcryptPrimitives.dll, unrelated to both.
+12d Fix (lockstep_pilot_slots.h, lockstep_pilot_foot.h; no new option, default-off paths unchanged)
+  - pslot_enter reads the canonical controller only while it is X4's live one (9fc550 == the latched pointer), with or
+    without the death module; otherwise the canonical predicate is 0 and the slots status counts canonical_gone=<n>
+    (PILOT_INPUTS rows).
+  - pfoot_check forgets the latched pointer when it sees slot 1 walking (X4 deleted it); a PlayerController on slot 1's
+    ship again is adopted as before, anything else still stops (foot_controller, stock_controller_changed).
+  Tests: test_lockstep_pilot_foot_slots.h, death off: slot 1 stood (9fc550 none, the latched controller's memory zeroed,
+  vtable NULL): slot 2's replay and its update enter the scope without reading it, predicate 0, counted; the walking
+  pass clears the pointer; X4's live controller is read as before; slot 2 gets up in the same state. Without the fix
+  this test faults as footlook4 did (call [NULL+0x188] in pslot_global_part). test_lockstep_pilot_foot.h: the walking
+  pass leaves no pointer. Verified: build_native_gate.py --test --native-image, pytest foot and registry suites.
+12e Rerun (coordinator): overlay-FootLook4 unchanged (W1bfoot + native_gate_pilot_foot_slots = true + native_gate_crash_note
+  = true, death/suit/respawn dropped, 11a's two stock scripts), DLL from this branch's
+  .local/native-lockstep/build/x4lan_gate_64.dll (worktree X4-Multiplayer-footcrash); probe and ui files as fc306302.
+  Pass: no crash on either client through 2466 and on to the end; PILOT_INPUTS rows from 2403: canonical_gone=<n> (scope
+  entries between X4's stand-up and the next pass; expected >= 1 and then constant; 0 only if no scope opened in that
+  window), foot_state 0 -> 1 -> 2, fs2 up at 2463; then 11a's criteria (relay pass, 0 mismatches, |W hashes equal).
+  A crash: the new X4_900_*.dmp name in the lane's game folder and any CRASH_FIRST_CHANCE line.
+
+11. NAV MESH 'SYNC' STOPPED AT BOOT (build162 = smoke with 404f3152; runs footr1, footr2; offline fix on
+    contrib/ferrite-footsync after merging smoke 5544ec83)
+11a Live failure [F, coordinator's lines]
+  Both runs: NATIVE_GATE STOP completed=0 reason=186 on one client (footr1 client 1, footr2 client 2), before tick 0;
+  NAV_MESH_ARMED mode=sync on both. NAV_MESH_STOP: installed=0 generated=0 regenerated=0 join_builds=0 free_builds=0
+  waited=0 deferrals=0 held=1 closed=0 joins=0 last_pending=13 max_pending=13 restored=1 stage=join_timeout failures=1.
+  last_pending is written by the join's first pass, so the first join (stats.completed=0) ran, found 13 pending and the
+  thread holding one ID with a build running, and waited 30 s.
+11b Cause [F, static analysis of the pinned image; the order of events in the run inferred from 11a]
+  Every request is debounced: the request 0x1087df0 (when it adds the ID, 0x1087fbb) and the rebuild request 0x75b440
+  (0x75b538) put the ID into the busy set +0x170 (lock +0x148). The cache's frame update 0x1087d90 (primary vtable
+  0x2c69010 slot 1) clears +0x1b0 and swaps it with +0x170; it is called only by 0xef41e0 on the Movement worker
+  (TLS+0x314, set by the worker's thread 0xef4400), from UniverseFrameUpdate at 0x9fe5a4; on the main thread 0xef41e0
+  only swaps its two globals under the world lock. Both builds Sleep(10) under the build lock +0x30 while their ID is in
+  either set. So an ID is buildable after the second UniverseFrameUpdate following its request, and the boot runs one
+  (lockstep_boot_hold.h). In 404f3152 the builds were open from arming until the first join, and the stub tested busy
+  only inside joins: the thread took a load ID at once, entered X4's build and slept on the busy sets; the first join
+  waited for that build while it held back the UniverseFrameUpdate that would clear them. generated=0, held=1, closed=0,
+  joins=0 follow. The same debounce means a request in frame N is never buildable at join N: the old header's "every
+  helper asked for in frame N is published between N and N+1" was wrong; it is N+1 or N+2.
+11c Fix (lockstep_nav_mesh.h, still default off, stop reason 186)
+  Take gate: a third site, the thread loop's wait on its semaphore (0x10878d9, ff 15 to WaitForSingleObject's import
+  0x1bc14b0): only its displacement changes, to our pointer cell, so the instruction keeps 6 bytes and its return
+  address. After the wait returns the thread waits while the builds are closed, so it takes IDs only inside joins, in
+  X4's own loop order (which ID it holds no longer depends on wall-clock time; this removes the old residual of 10b).
+  Closed from the start: the first arrival of the thread at its wait after arming closes the gate; arming releases the
+  semaphore once so an idle thread (sitting in X4's own wait from before the patch) comes round in the menu. A take or
+  build before that arrival runs natively only while the menu lasts (boot phase 0, no tick: pre_gate=); the load's
+  request (boot phase 1) closes the gate otherwise (gate=forced). Nothing is built between arming and the first join.
+  Joins: a busy ID is deferred (never enters X4's build inside a join); a deferral counts only in its own join (join
+  sequence; found when two joins ran back to back: the earlier code let a deferral of join J pass join J+1 if the thread
+  had not yet seen J close). A running build whose ID is busy at a join stops at once (build_busy, left open) instead
+  of the 30 s timeout. The cache's shutdown (run flag cache+0x60, cleared by 0x1226ddd, which then waits for the
+  thread) lets a waiting take or build go (released=, stage=shutdown), so X4's exit cannot hang on the gate.
+  Boot sequence now (the load's requests made before the boot's UniverseFrameUpdate): join 0 takes the first ID in
+  loop order, finds it busy and defers it (no wait); tick 1's update lets them go; join 1 builds all of them at tick 1's
+  game time; a request made in tick N is built at join N+1 or N+2. Identical on every client because requests and
+  UniverseFrameUpdates are simulation.
+  Status adds gate=wait|arrived|forced gated= pre_gate= released=; stage build_busy and shutdown are new.
+  Residual [I]: a thread that has not come round before the load is requested (it was in a native build of the menu's
+  world) holds the first ID it takes after that from wall-clock time (gate=forced, pre_gate>0); an ID from the menu's
+  world held across the load is built (a no-op) at the first join it is not busy at and counted in that client's
+  receipt (unkeyed=). Builds inside one join follow X4's loop order; events posted at the same game time keep it.
+11d Verified [offline only]
+  build_native_gate.py --test --native-image: C tests (new: the boot with 13 load requests under the debounce, no build
+  and no take before the first join, join 0 defers at once, join 1 builds all 13 at its time, a tick-1 request two
+  joins later, back-to-back joins; another take order gives the same receipt; the first join drains what is no longer
+  busy; the forced gate with a native menu build; build_busy within 2 s; shutdown release at the gate and in the stub;
+  the import-call site's state and refusals) and the image facts (the wait site and its import, the run flag and the
+  shutdown, both requests' semaphore release and busy mark, the frame update's clear and swap, its slot, its caller
+  on the Movement worker). pytest: nav mesh, registry, pilot foot. Not live.
+11e Rerun (coordinator): the same FootR1/FootR2 overlays (10f R1/R2, unchanged) with this branch's DLL from
+  .local/native-lockstep/build and its probe. Expect at arming NAV_MESH_ARMED mode=sync and in the status gate=arrived
+  (gate=forced with pre_gate>0 names 11c's residual). No stop at boot. At the first strides: joins>=1, deferrals>=1,
+  free_builds=0, failures=0; NAV_MESH_ROW lines for the load's helpers with tick=1 joined=1 and the same keys and time on
+  both clients; receipt=<n>/<hash> equal at every stride. Then 10f's pass criteria for (a), (b), (c). If 186: send the
+  NAV_MESH_STOP line (stage build_busy: a build entered X4's build outside a join; join_timeout: a build ran over 30 s;
+  shutdown: the cache stopped while the gate ran).
+
+13. DEATH, SUIT AND RESPAWN WITH EVERYONE ON FOOT (offline; branch contrib/ferrite-deathfoot, base smoke e1f24256; static
+    analysis of the pinned image with capstone, nothing launched; [F] binary, [I] inference)
+13a Result
+  native_gate_pilot_foot_slots and native_gate_pilot_foot_bodies no longer refuse native_gate_pilot_death (C arming, probe,
+  option checker, builder): every foot module arms with death, suit and respawn. Who is aboard decides what a ship's death
+  is, from simulation state on every client (lockstep_pilot_death.h header):
+    seated       a death as before: slot 1 X4's eject, slot k retired or released, its suit at +5, the respawn. Slot 1
+                 leaving (a GET_UP replayed, X4's stand-up still pending) with the player aboard: the eject's suit holds a
+                 PlayerController, so a death; the GET_UP is void (pfoot_void_leave, counted kept).
+    off seat     slot 1 with no PlayerController after a GET_UP, slot k walking: not aboard, so no eject, no suit, no death
+                 (deaths unchanged): the loss of an asset (PILOT_DEATH lost:k, PILOT_DEATH_STATUS d<k>=../lost losses=).
+                 Slot 1 keeps walking as X4 has it; it gets no ship (it cannot sit down in a session yet, W7). Slot k walked
+                 in its seat room's frame (upward pointers, 10e), which goes with the ship: its walk ends (pfslot_lose: the
+                 FPC's seat flag 1, first person off, its bank cleared), the seat's pointers go back before the room is
+                 freed, and it waits stranded, as a dead slot without a suit (records consumed and ignored, slot 1's view
+                 on client k, |D bit set), until the respawn, if armed, seats it in a new ship at its start. Keeping slot k
+                 walking would need P_k re-anchored from the dying room to the dock with its FPC pose converted (717c30 poses
+                 relative to the parent [F]; the FPC's pose write is not known): not done, fail safe instead.
+    killed       X4 killing its player on foot (a player standing in what is killed) reaches the game over: the death
+                 module's guard stops with player_killed (163), no game over, no menu. Station interiors take no damage [I].
+  The bodies with the death module: the kill guard (13b). Dead, suited, stranded, walking and roomless slots have no body;
+  a respawned seat gets its body back PFBODY_SETTLE ticks later while nobody is up (bodies returns=). A roomless seat
+  gets no body at take-1 (counted roomless=) instead of stopping with body_seat: with everything on by default a slot
+  ship without a cockpit room no longer ends the session.
+13b A ship's death reaches a body before any pass [F]
+  518210 (the hull at zero) kills the ship at once. U::Component::KillRecursive 3e5240 asks every component it reaches
+  'spare it?' first (3e525b: call [rax+0x1408], rax = [rcx]; a Player's slot 641 is b38c0 'xor al,al'; 1 jumps to the
+  epilogue 3e5474), then sets +0xd3 = 1, calls vfunc680 (NotifyKiller 3e5490), posts a KilledEvent through 99a3f0 with r9b
+  = 1 (dispatched at once: a Player's vfunc9 7046e0 with itself is X4's game over), walks the children (+0xa8) with
+  reason 3 and sets +0xd3 = 2. Kill 3e51b0 posts the deferred KillEvent that frees the objects later. A P_k connected
+  in the cockpit room was therefore killed inside the frame, long before the death pass could take it off: the refusal's
+  reason. The kill guard (lockstep_pilot_foot_body.h, with bodies, take-1 to stop+1): the 6-byte call at 3e525b becomes
+  a 5-byte call to the slots' near page +0xc0 (one 16-byte block; the stub steps the return address over the sixth byte).
+  Asked about a slot's seat ship or cockpit room (its 'spare?' comes before the room's child walk), the body leaves the
+  room in the slot's scope first, as X4 ejects its own player before Kill; then X4's own answer. Where no scope can open
+  (another thread, a scope open, inside d95180) the body stays and is spared when the walk reaches it (1), and the death
+  pass takes it off before it ends the seat (counted late). Status: bodies row kill=<installed>/<off>/<spared>/<late>
+  returns=<n>; whys body_kill_install, body_kill_lost, body_kill_restore (185). Pins: KillRecursive (0x241 bytes) and the
+  site's 8 bytes. Residual [I]: a late body sits in a dying room until the next pass; if X4 freed that room within the
+  frame (the deferred KillEvent ran first), the disconnect touches a freed parent; late=0 in the runs says it did not
+  happen.
+13c Shared pslot_* bookkeeping
+  pslot_ship_dying (registry or hull, the death module's own test) is the one answer for 'the seat's frame is dying': the
+  seat's d95180 update (as before) and slot k's walking update at 9fe604 (new: skipped, dying_skips=) both skip it in the
+  frame of the kill. pslot_release's walking branch gives a stranded walker's pointers back; pslot_seat (the respawn) seats
+  it as at the start (P_k's FPC from an earlier stand-up stays its movement controller: 70eee0 keeps it, the next stand-up
+  needs no first update). The live-controller check in pslot_enter (12d) also covers slot 1 standing up while slot k waits
+  in its suit (slot k updated from the pass, as with a dead slot 1). The bodies' guard: any connected body whose seat is
+  none any more goes off; the death module takes a body off before it ends a seat (pfbody_release_slot), if the kill
+  guard has not.
+13d Files
+  lockstep_pilot_death.h (off seat / lost, the void GET_UP, body off before a seat ends, status), lockstep_pilot_foot_body.h
+  (no refusal, the kill guard, seat test, per-slot return, status), lockstep_pilot_foot_slots.h (no refusal, pfslot_lose,
+  dying skip, status fs<k> ../lost, dying_skips=), lockstep_pilot_slots.h (pslot_ship_dying, pslot_can_enter),
+  lockstep_pilot_foot.h (pfoot_void_leave), native_gate_probe.lua, check_gate_options.py, native_gate_players.py,
+  docs/LOCKSTEP-REGISTRY.txt; tests: new test_lockstep_pilot_death_foot.h (in test_lockstep_gate.c), test_lockstep_pilot_slots.h
+  (the guard at take-1/stop+1, its site lost, on the real image), test_lockstep_pilot_foot_slots.h, tests/test_native_gate_pilot_foot.py.
+13e Verified offline (C on the slot fixtures, LuaJIT probe, Python)
+  Both foot modules arm with death, suit and respawn. The guard through X4's own call shape (a thunk with rax from [rcx],
+  rsp 8 mod 16 at the stub, an int3 where the sixth byte was): another component gets X4's answer; slot 2's ship asked
+  with no scope possible: the body stays, then is spared; with a scope: the body off in slot 2's scope, X4's answer.
+  Die seated (body already off) -> suit, no body however long everyone sits, GET_UP ignored and the claim refused ->
+  slot 1 gets up meanwhile (slot 2 in its suit updated from the pass, slot 1's deleted controller never read) -> slot 2
+  respawns while slot 1 walks (suit killed with reason 13) -> slot 1 sits -> slot 2's body back at +24 -> slot 2 gets up
+  (body parked first). Its empty docked ship dies while it walks: the frame's walking update skips it, lost:2 (no suit,
+  deaths 1, losses 1), the walk ended, pointers back, stranded (GET_UP ignored), respawn at +20, up again from the FPC it
+  kept. Slot 1 walking loses its ship: lost:1, no death, keeps walking (no second event). Killed on foot: 163
+  player_killed. Leaving and ejected: die:1, GET_UP void. Image: the KillRecursive pin and the site's bytes, the guard
+  installed and restored on the real bytes. Runs: build_native_gate.py --test --native-image (all pass); pytest of the
+  foot, registry, stock (death) suites. Not live: everything here.
+13f Live specs (coordinator; DLL, probe and ui files of this branch; base config .local/census/overlay-Play42F2)
+  Note: Play42F2 holds X4LAN_CONFIG.native_gate_ui_replay_min_hull = 50, the test protection that keeps every slot ship
+  above 50 % hull (native_gate_ui_replay_core.lua): with it nobody dies. Both specs drop that line.
+  DF1 combat with everything on (deaths with connected bodies). Play42F2 unchanged otherwise ('aim' on both clients,
+  script fire, hit claims victim, death, suit, respawn 300, the missile ui scripts, window {40,6000}), minus min_hull, plus:
+    X4LAN_CONFIG.native_gate_ui_guard = 'all'
+    X4LAN_CONFIG.native_gate_ui_replay = {'travel','target','orders','autopilot','dock','weapons','queue','missiles','events','conversation'}
+    X4LAN_CONFIG.native_gate_pilot_foot = true
+    X4LAN_CONFIG.native_gate_pilot_foot_bodies = true
+    X4LAN_CONFIG.native_gate_pilot_foot_slots = true
+  Pass: on both clients PILOT_DEATH_ARMED, PILOT_FOOT_ARMED, PILOT_FOOT_BODIES_ARMED, PILOT_FOOT_SLOTS_ARMED; relay pass, 0
+    digest mismatches, census 0, no stop (no 161, 163, 185), no CRASH or CRASH_FIRST_CHANCE line; PILOT_DEATH rows (die,
+    suit, insuit, create, live) at the same ticks on both; PILOT_INPUTS rows: bodies=live bodies_mask=2 connects=1/0 kill=1/0/0/0
+    from 37; after each slot 2 death kill=1/<n>/0/0 (n = slot 2's deaths so far: taken off at the kill), bodies_mask=0 from
+    die:2 to live:2+24, then returns=<respawns of slot 2> and bodies_mask=2; PILOT_DEATH_STATUS game_overs=0 losses=0.
+    Slot 1's deaths are X4's eject (die:1, no suit event), its body none (slot 1 has no P_k).
+  If: kill=1/0/1/0 or 1/0/0/1 (spared or late: no scope could open at the kill; send the PILOT_INPUTS rows around that tick
+    and the frame's thread if logged); 163 player_killed at a slot 2 death (the body reached the kill: send PILOT_STOP_WHY
+    with its kill= field); 185 body_kill_install at take-1 (the site was not X4's bytes: another module or build); no death
+    at all by 3000 (the hits did not kill: send PILOT_SHIPS hull rows).
+  DF2 death, suit, slot 1 up while slot 2 waits, respawn, dock, get up. Play42F2 minus min_hull plus DF1's five lines, and:
+    X4LAN_CONFIG.native_gate_pilot_window = {40,8400}
+    X4LAN_CONFIG.native_gate_pilot_respawn = 4500              (slot 2 waits in its suit while slot 1 docks and gets up)
+    X4LAN_CONFIG.native_gate_pilot_fire = 'record'             (no script bursts: only the missiles below fire)
+    X4LAN_CONFIG.native_gate_pilot_stock_script = {
+      {{100,'action',0x7b,0},{3800,'action',0x115,0},{3900,'state',0x1a,1},{3960,'state',0x1a,0},{3970,'state',0x1c,1},{4000,'state',0x1c,0}},
+      {{100,'action',0x7b,0},{7800,'action',0x115,0},{7900,'state',0x1a,1},{7960,'state',0x1a,0},{7970,'state',0x1c,1},{8000,'state',0x1c,0}}}
+    X4LAN_CONFIG.native_gate_ui_replay_script = {
+      {{60,'target_slot',2},{120,'missile',1},{1200,'missile',0},{1210,'target_none'},{1300,'dock_at','000000000001b5af'}},
+      {{5200,'dock_at','000000000001b5af'},{5500,'dock_at','000000000001b5af'}}}
+    identity plan starts (W0's 'where' of the wharf AVK-777 000000000001b5af gives X,Y,Z): slot 1 at (X,Y,Z-3000) yaw 180,
+    slot 2 at (X,Y,Z-3600) yaw 0 (600 m apart, slot 1's line of fire away from the wharf; both stopped at 100).
+  Expected timeline [I]: slot 2 dies to the missiles at T (120..1200), suit T+5, slot 1 docks after 1300, gets up 3800 and
+    walks while slot 2 waits in its suit (T3 live), slot 2 respawns T+4515 (slot 1 walking: bodies parked), docks after
+    5200, gets up 7800 and walks.
+  Pass: DF1's armed lines, relay pass, 0 mismatches, census 0, no stop; PILOT_DEATH die:2,suit:2 at T, insuit:2 at T+5,
+    create:2 at T+4500, live:2 at T+4515, the same ticks on both, no die:1; kill=1/1/0/0 from T (the body off at the kill);
+    PILOT_INPUTS from 3803: foot_state 1 -> 2, the slots row s2=1/.. updates rising while slot 1 walks (X4 skips d95180;
+    slot 2 in its suit updates from the pass), no update_missing; PSTOCK receipts |D2 from T to T+4515 on both; after
+    7803: fs2=1/1/0/1/0/0/<updates>/<placed>/<unplaced>/0 with placed+unplaced = 1, '|W2:1:<hash>' equal on both, client
+    2's present row eye=walk; PILOT_DEATH_STATUS d2=0/1/1/<T> losses=0. Screenshots client 2 at T+100 (its suit), 7850
+    (first person on its pad); client 1 at 3850 (on its pad).
+  If: no die:2 by 1500 (send PILOT_SHIPS hull rows and the PILOT_FIRE missile counters: lengthen the missile hold); foot
+    kept=1 at 3803 or fs2 kept=1 at 7803 (not docked by then: send PILOT_SHIPS rows from the dock_at on and the
+    UI_REPLAY rows of dock_at; for slot 2 whether the dock family applied it); slot 1 hit and killed (die:1: a missile
+    turned back, ignore for this spec); 163/185/161 with PILOT_STOP_WHY.
+  Not live (unit only): a walking slot's empty docked ship dying (lost:k) needs a station-side kill of a docked ship; slot
+    1 losing its ship while walking likewise. Regression: W1bfoot/F2/F2b without death as before; with bodies the
+    PILOT_INPUTS bodies row adds returns=0 kill=1/0/0/0 roomless=0, and arming can refuse pins_bodies:3e5240 or
+    pins_bodies:3e525b on another build.
+13g Live d1s (build171 = smoke 68d48955, the session defaults: death, respawn 300, suit, foot, bodies, foot slots; 2
+    clients, coop, scripted stock piloting, nobody got up, nobody died): both clients identical to 3600, then both
+    PILOT_STOP_WHY reason=163 fail=player_killed in the teardown (native=returning, bodies/foot_slots/slots released,
+    game_overs 0 at 3600). Read from the logs [F]: "Game Over - Player has died (killmethod=removed)" at 127.12 on both
+    (the stop+1 frame), then "Attached camera component Val Selton [0x1617f0] has no valid context" and "Camera anchor
+    camera_anchor_scene is an orphaned component". 0x1617f0 is P_2 (RUNTIME_IDS next=0x1617f0 at tick 35 = take-2), and
+    BULLET_CADENCE camera=0:1617f0 on both clients from tick 36 (take-1) to the end (0:6c72a, X4's own player, before).
+  Cause [F, pinned image]: the game over is Player::vfunc9 7046e0 (the format string's only xref) for a Player killed
+  with killmethod 13. Our stop+1 take-off of the body, 3d8420(P_2, filter, NULL, 0), is 3d8240(P_2, 0x15): no Kill there,
+  but it calls the Player's vfunc 0x1380 = 702f40 -> 553660 -> 748790 -> U::Component's parent change 3d7010, which for a
+  component left with no parent (3d724c, 3d7253 -> 3d7830) that had one, is alive (+0xd3, 3d7847) and has no hold (+0xd4,
+  3d7851) calls Kill (vtable +0x1548, 3e51b0) with 13 'removed' (3d787f..3d78b7): a deferred KillEvent, in X4's event
+  phase KillRecursive (the kill guard was off by then and spares only connected bodies anyway), the KilledEvent, vfunc9
+  with itself, the guard's pdeath_game_over -> 163 at stop+2. +0xd4 is X4's hold count: MD's cue actors take one
+  (112ecd0), 3e5680 drops one and kills the same way at 0 (3e56a2..3e5713). The 8d/10 statement "3d8420 with no target is
+  off the parent without a kill" was wrong for a Player: every take-off of a body killed it (stop+1, each park, the kill
+  guard, the death module's take-off). Play42F2 (death + stock slots, no bodies) never took a P_k out of a child list
+  (pslot_unseat_player writes the upward pointer), hence always reason 1. Not the foot slots' stop+1 step (call site and
+  walking flags only) and not the seats' release (+0x70 is the room again by then, so 3e5680 could not kill either).
+13h Live df2 (build171; death, foot, bodies, foot slots, ui_guard all, factions with slots 1 and 2 hostile, presentation;
+    slot 1 undocked in open space at its GET_UP 3800, slot 2 seated): read from both clients' logs [F]: at 133.85 (tick
+    3803, the apply) "Game Over - Player has died (killmethod=removed)" on BOTH clients (the park of slot 2's body before
+    X4 stands slot 1 up: 13g's kill, guarded), the same two camera lines for P_2 (0x165925; camera=0:165925 on both from
+    tick 36), then CRASH_FIRST_CHANCE at ea75e1 on BOTH clients (client 1 data=0x60 r8=0, client 2 data=0x200 r8=0x1a0:
+    the frame buffer index, otherwise the same chain ea75e1 < 988bac < 97a4e8 < 979a82 < 979d21 < 9fe578). Client 1's log
+    has no row after it either. So not a client-2/presentation effect, and not the divergence of 4 NPC ships from tick 67.
+  Cause [F unless marked]: the same chain as 12c (footlook, body connected): the camera loop's refill (9fe573 -> 979ce0 ->
+  9799f0 -> Camera::GetOffset 97a300 -> the camera's first movement controller, CockpitHeadCamera 988bac) reaching a
+  PlayerController after its destructor (NavigationController's vfunc 68 with +0x30 NULL). Why there is a stale one: the
+  body's connect at take-1 ran 702f40 for a Player without a camera (+0x4e8 NULL, 703051): 71a560 made P_2 its own camera,
+  set Universe+0x3d0 to it (71a744) and +0x3c8 (97df60), moved camera_anchor_scene under P_2, and d895a0 gave it a head
+  controller bound to 9fc550's controller (in scope 2: C_2). From then on every client had two cameras with head
+  controllers, X4's camera being P_2's (the BULLET_CADENCE rows). ~PlayerController (d84730 -> d89840) drops a head
+  controller only from the camera at Universe+0x3d0, so a PlayerController deleted by X4 left the other camera's
+  controller bound to freed memory [I: slot 1's, deleted by the stand-up 716e20 -> 70e0f0 of its GET_UP, as 12c inferred;
+  or one taken down with P_2's 'removed' kill]. Without bodies (W1bfoot, footlook4) the same stand-up ran without it.
+  Answers: slot 2's body was parked before X4's stand-up as designed; the park itself killed P_2 (13g), and P_2's camera
+  was every client's camera since take-1; the open space plays no part (716d80 allows a stand-up wherever the ship's
+  macro allows walking, +0x3e2 of its class 0x54 ancestor's macro, docked or not [F]; slot 1 stood up [I]).
+13i Fix (lockstep_pilot_foot_body.h pfbody_call; every 3d8420 of the module goes through it: connect, its off-again, take-off
+  at stop+1, park, kill guard, the death module's take-off, an abnormal stop's restore). For the length of X4's call:
+    hold    P_k+0xd4 one higher (X4's own hold, as for a cue actor): 3d7010 moves it out of the tree like any held
+            component, no 'removed' kill; afterwards the count is written back (never through 3e5680, which kills at 0).
+    camera  P_k+0x4e8 = a zeroed stand-in owned by nobody: 702f40 skips 71a560 (no camera of its own, X4's cameras stay
+            this client's, no head controller for C_k); afterwards +0x4e8 is NULL again.
+  Fails loudly, stop 185 (not a game over, not a crash later): body_killed (P_k dying after the call, or before it: nothing
+  asked of X4), body_camera (Universe+0x3c8/+0x3d0 moved, the stand-in replaced or written, or a P_k with a camera put into
+  a room), body_hold (the count moved during the call), body_universe. A real kill of a slot's player still reaches the
+  death module's guard: stop 163 player_killed (the hold is only ours, only for our call). Status: the bodies row adds
+  held=<X4 calls made held> (connects+disconnects). Pins (pins_bodies:<rva>): 3d8240, 3d7010, 702f40, 71a560 hashed with
+  3d8420 and KillRecursive. Every module that read Universe+0x3d0 as this client's camera (presentation, eye, region
+  camera, bullet cadence) gets X4's own camera again with bodies on.
+13j Verified offline (C on the slot fixtures; the image facts on the pinned X4.exe)
+  The X4 stand-in for 3d8420 now does what 3d7010 and 702f40 do: an unheld Player taken off its parent is marked dying
+  'removed' and X4's event phase reaches the game over (the death guard); a Player without a camera put into a room gets
+  one and becomes this client's camera. Bodies unit test: the connect and the stop+1 take-off seen held (hold 1 inside
+  X4's call, 0 after), no camera, cameras kept; X4's rule unheld kills (the mark); another build killing anyway: 185
+  body_killed with the mask cleared and the pointer back; already dying: nothing asked; X4 making a camera anyway: 185
+  body_camera, off again; a P_k with a camera: refused before X4 is asked. New test_pilot_death_foot_stop (everything
+  armed as the defaults): A) all seated, stop+1 through the whole pnat_pass (body off held, walking call site back, seat
+  released), X4's event phase and stop+2: no 'removed' kill, no game over, no failure; the same take-off unheld gives d1s's
+  163 player_killed. B) slot 1's GET_UP with slot 2's body in its room (df2's order: parked held, no kill, cameras kept),
+  slot 1 walking, slot 2 up and walking; stop+1 and stop+2 clean. Image: the chain 3d8420 -> 3d8240(0x15) -> vfunc 0x1380
+  = 702f40 -> 553660 -> 748790 -> 3d7010, the kill's tests and arguments, 702f40's camera test and 71a560/97df60's writes,
+  d84730 -> d89840 reading +0x3d0. Runs: build_native_gate.py --test --native-image; pytest registry, defaults and the
+  pilot/foot/death suites. Not live.
+13k Live (coordinator; DLL and probe of this branch; no config change)
+  d1s again (defaults): reason=1 on both clients; no "Game Over" line; no "Attached camera component ... has no valid
+  context" line; BULLET_CADENCE camera=0:6c72a (X4's own player) on both from tick 36 to the end, not P_2's ID; PILOT_INPUTS
+  bodies row connects=1/0 ... held=1 while live, PILOT_STOP_WHY bodies=released bodies_why=- death=live game_overs=0.
+  df2 again: at 3803 no "Game Over" line, no CRASH_FIRST_CHANCE; parks=1/0 held=2 at 3803, foot_state 1 -> 2 if X4 stood
+  slot 1 up (else kept after 90 ticks), the run goes on to its stop. A stop with 185 body_killed / body_camera / body_hold:
+  X4 did what 13i keeps out after all (send PILOT_STOP_WHY with the bodies row); 163 player_killed with bodies_why=-: a kill
+  that is X4's, not ours (send the rows around it).
+
+14. DF2B: THE WALK PARTS ON X4'S DOUBLE-TAP CLOCK, NOT ON THE VIEW (offline; branch contrib/ferrite-deathfoot after merging smoke
+    6374f3eb; run df2b of build173 read in selected rows; static analysis of the pinned image with capstone; nothing launched)
+14a Result
+  'view' in foot_locals is 0x38f4ee0, the MoveWorker's view-cache read bank (object+0xe0+view*0x80): a double-buffer parity of
+  each process (client 1 0, client 2 1 at every row of df2b), not the slot a client presents and no input of the walk: no
+  instruction of the FirstPersonController's code d7c000..d83000 (d7f8d0, its callees there, the three handlers) references it
+  [F]. Slot 1's walk itself was identical on both clients (14b). What parted is one double of the walking bank, 0x38f4e70, the
+  run's double-tap clock: X4's forward handler stores TimerBase's REAL time there, and real time is each process's own (the
+  boot's real time at tick 0 plus the fixed dt per tick) [F]. This is W9 (1c, 1i) proven, and also w1bfoot's split of 10d
+  (forward at 2520, |W2.1 apart from 2580). Fixed: the replay runs X4's walking state handler with the session's clock as its
+  real time (14d). Presentation, slot 2's body and death play no part.
+14b Evidence, df2b [F]
+  PILOT_INPUTS rows 3840..8700 (stride 60) of both clients: foot_bank equal at 3840 and 3900; from 3960 to the end it differs
+  in 0x38f4e70..e75 only: 135.77926896666153 (client 1), 135.60774446666156 (client 2). The relay journal's rows of tick 3903
+  (the apply of the press at 3900, delay 3): real=135.77926896666153 and 135.60774446666156, game=137.1829999999948 on both:
+  the bank holds each client's real time of the apply tick, bit for bit. Tick 0: real 5.679268966666667 / 5.507744466666668,
+  game 7.083; adding 1/30 per tick as FrameTick does reproduces both 3903 values exactly. The relay's digest parts at 3903,
+  the receipt's |W2.1 at 3960 (b71b5b757903e833 / e7549a01b49130b9), 94a7f9b5a33f2671 / c8ba5a10c96f84fb from 4020 on.
+  foot_fpc equal at every row in the head (+0x20..+0x60), the update time +0x88 (135.083 at 3840, +2.0 per row), the look and
+  move fields (+0x90..+0xdc, e.g. +0x94/+0x98 at 3960), the transforms (+0x100..+0x1a0) and +0x2e0; per client: +0x83..+0x85
+  (padding after the flags +0x80/+0x81) and a pointer at +0xa8 on client 1 only (constant from 3840; no read of +0xa8 found in
+  d7f8d0 or its local callees). foot_parent 00000000000ae79f/0 on both. foot_locals ext:0/cut:0/
+  dev:1,1,1,0/sens:0.5,0.5 on both, view 0 / 1. bodies=parked bodies_mask=0 on both from 3803: slot 2's body was off the tree
+  for the whole walk (10f), so it was not present. footlook5 stayed in sync because its scripts hold GET_UP only, no forward
+  key (overlay-FootLook5): the clock was never read.
+14c What X4 does [F, pinned image]
+  d7d3b0's case 0x1a (jump table d7d540/d7d574 -> d7d48f): MD's input lock 0x38f4dc8, e8b = the state; on a press e9f90
+  (EnterCriticalSection 0x6b60e10, movsd 0x6b60e40, LeaveCriticalSection), then e70 = that time and e79 (run) = 1 when the
+  old e70 + 0.4 (0x2cbe7c0) is above it. e70's writers: d7d4cb (this), d7cded (the FPC's first update, -1.0), d7d6dc
+  (the FIRST_PERSON callback, -1.0), 1132c08 and 1132cad (MD's InputLockAction, 0.0); its only reader is d7d4af. e79 is read
+  by d7f8d0 (d804a2 .. d81330: the run speed). The image's 60 references of 0x6b60e40 all sit between EnterCriticalSection
+  and LeaveCriticalSection of 0x6b60e10 (FrameTick's writes at fa3368/fa3374 too). No other walking handler reads a clock
+  (d7d5c0: ranges into the bank; d7d690: FP_RUN toggles e79).
+  Beyond the receipt [F by the same per-tick accumulation from df2b's tick-0 values]: two forward presses exactly 12 ticks
+  (0.4 s) apart at 7498..7502 set the run flag on client 2 only: a real walk split, slot 1 running on one client.
+14d Fix (lockstep_pilot_foot.h pfoot_replay_state, lockstep_pilot_stock.h pstk_replay_walk; part of native_gate_pilot_foot,
+    no new option)
+  Every replayed call of X4's walking state handler (slot 1's; slot k's in its scope with its own bank) runs with TimerBase's
+  lock held and the real time set to the session's clock, the replay thread's game time (pnat_fn.time, the clock the
+  replay's other events use; under the gate it advances by the same fixed dt as real time, and the relay checks its bits
+  equal on every client); a __finally puts the real time back before the lock is left, also when the handler faults. Every
+  reader of real time takes that lock, so no other thread sees the session clock; the CRITICAL_SECTION is recursive (e9f90
+  enters it again). The double-tap window stays X4's 0.4 s, 12 ticks at 30 Hz, decided from game time on every client. No
+  game time: nothing runs, stop 185 foot_clock. Pin: e9f90 (0x39 bytes) beside d7d3b0's. Status: PILOT_INPUTS foot_clock=
+  <replayed walking state calls>. The receipt is unchanged (|W hashes e70 as before; equal now); local dispatch outside the
+  module and other handlers keep X4's real time. foot_locals' view stays in the diagnostic (now documented as per process).
+14e Verified offline
+  build_native_gate.py --test --native-image: new test_pilot_foot_clock (X4's case 0x1a as a stand-in reading the real time
+  under the lock; two clients as df2b's tick-0 real times plus 1/30 per tick): before the fix 0x38f4e70 = 135.77926896666153
+  / 135.60774446666156 and the bank hashes part (df2b), presses at 7498 and 7510 set the run flag on client 2 only; with it
+  both banks equal, e70 the session clock, no run at 0.4 s, a run on both at 0.3 s, the lock held (recursion 2), the real
+  time back after every call and after a faulting handler, no clock -> 185 foot_clock; image facts: the jump table, the call,
+  e9f90's lock/read/unlock, 0.4, the -1.0 resets; the pins. pytest foot, pilot, defaults, registry suites. Not live.
+14f Rerun (coordinator; DLL and probe of this branch; overlay-DF2b unchanged)
+  Pass: relay without DESYNC from 3903 (DF2b's 4798 mismatching ticks gone); PILOT_RECEIPT |W2.1 equal on both at 3960 and
+  every later row; PILOT_INPUTS foot_bank equal at every row (0x38f4e70 the game time of tick 3903 on both, 137.1x), foot_fpc
+  as before (equal but +0x83..+0x85, +0xa8), foot_clock=0 before 3903, 4 after 4003 (0x1a on/off, 0x1c on/off) on both. The
+  census again 0.
+  DF2c (the run, optional): DF2b with slot 1's script {100,'action',0x7b,0},{3800,'action',0x115,0},{3900,'state',0x1a,1},
+  {3903,'state',0x1a,0},{3909,'state',0x1a,1},{3960,'state',0x1a,0}: a double tap 0.3 s apart. Pass: foot_bank byte 0x38f4e79
+  = 01 on both at the 3960 row (forward still held: slot 1 runs on every client), foot_clock=4 after 3963, |W2.1 and the
+  census equal.
+  If |W2.1 still parts: both clients' PILOT_INPUTS foot_bank/foot_fpc rows from the first differing receipt; a difference
+  outside 0x38f4e70 names another input (10d's table).
+
+15. DF2: THE WHARF PATROL, 10c FOLLOW-UP (offline; branch contrib/ferrite-patrol, base smoke 00064dbb; runs df2b2 and df2c
+    (split), df2b and df2c2 (clean) of build173/175 read in selected rows, df2 not read; static analysis of the pinned image
+    with capstone; nothing launched)
+15a Result
+  Not the parameter deadline of the lead (e6bf862d's mechanism) [F]: the four ships' navigation timing preimage at the tick-1
+  capture (attention 6, refresh time, parameters_due 7.1163 = the time of frame 1, banks) is identical on all 8 clients of
+  the four runs; their controllers are NavigationControllers through the wrapped entry, not the PlayerController path; their
+  upkeep starts in frame 22 [I: 35 controllers make their first call there, the frame after the slot ships reach the wharf],
+  where nav_params_init/nav_probe_init re-base every deadline and the 'far' draws run in keyed ship and nav scopes, equal on
+  all 8 clients. What differs is a per-process class, one of three, fixed in frame 22: the number of NATURAL draws on the
+  MoveWorker's frame word in that frame (15b). The class predicts the patrol's whole later course on 8 of 8 clients; a run
+  splits when its two clients land in different classes (here A 3, B 4, C 1 of 8 clients, on either build: about half the
+  runs). The drawer is in no row of these logs, so nothing is patched; 15d names it in one rerun.
+  Update: the watched rerun (15e, all 8 clients class A, the watch changing only the MoveWorker's speed, 15f) names it: a
+  body's animation start that draws only when the asset loader has finished its character (15g); fixed in 15h.
+15b Evidence [F]
+  The frame word after frame 22 (RNG row of tick 22; RNG rows every tick to 60): A 8ab0488464a8f536, B 4a34ba4f7f6e275a,
+  C fa50e6a91a534cd4; PCG steps C->B 1, B->A 1: A draws two more than C, B one. Frame 23: C one more than A and B
+  (8c773891d6884c23 -> fe0501db80db6293, one step). Every other tick 1..60 is equal on all 8; of the 60-tick strides to 1860
+  only df2b2's 1680 (B/C) differs. Clients: df2c c1 A, c2 B (split); df2b2 c1 B, c2 C (split); df2c2 B, B; df2b A, A.
+  The patrol by class, bit-identical across runs within a class:
+    travel_started (EVENT_RNG_ROW etype 2b48e40, due = the delivery tick): a7949 440 and a795e 621 in every class;
+    a796f A 602, B 609, C 604; a7984 A 638, B 640, C 642.
+    census 1800 nav.parameters_due: a796f A = B 68.0654, C 68.9273; a7984 A 67.4837, B 67.5494, C 67.3963.
+  EVENT_ORDER's order hash (class, portable ID, first due and length of every delivered run) is equal within each run
+  through 420 and parts at 480 in the split runs only (never in the clean ones to 1860): no event is posted or delivered
+  differently before the followers' travel decisions that follow the leader's travel at 440.
+  Equal between the classes in frames 20..23 (client role aside): the ACTOR_RNG_ALL frame folds (frame 22: ship scopes +25,
+  24 drawn; nav fallback scopes +12, 12 drawn; key and draw sets), EVENT_RNG, SCRIPT_RNG (but its per-process cache
+  counters), AI_WAIT_RNG, NAV_CADENCE (frame 22: 36 calls, 35 first-call parameter inits and 35 slow refreshes, 36 probe
+  pins; frame 23: 19 slow probe refreshes), NAV_MESH rows, NAV_OCTREE agreed, PILOT_SHIPS (both slot ships, every tick to 60
+  and every 60 to 8700, all 8 clients). Downstream only: NAV_CADENCE total_other at 660 (one refresh), the 1800 census.
+  Not the class (independent of it): the double-buffer parity (BULLET_CADENCE camera=), client role, run, build.
+15c The natural draws left in the NPC navigation family (pinned image) [F]
+  NavigationController attach 0xea8cf0 (from SetOwner vfunc35 0xea8c90, PlayerController vfunc35 0xd9cdb0 and the load
+  vfunc54): when the ship has no UpdateEngineParametersEvent pending (0x99a210, type 0x20f) it posts one at now + 8 +
+  FloatRange(thread word, 2) (call 0xea90dc, ship in r12); native_gate_engine_refresh_rng keys only the reschedule 0xea1e3b.
+  The pathing Agent constructor 0xe85360 (PathingManager registration 0xeac530, from attach and load) draws the obstacle
+  probe deadline at 0xe8552c (ship in r12). Both draw on the calling thread's word, and both sit in bodies the creation
+  trace contract and the registry origin identity pin whole (0xea8cf0 1332 bytes, 0xe85360 1368 bytes): a site patch must
+  teach those pins its displacement. Not this split: an attach post with a class-dependent due in frames 22..120 would part
+  the event order before 420, and a constructor overwrite after the frame-22 pin would delay frame 23's 19 probe refreshes.
+  Left unpatched until 15d names the drawer.
+15d Rerun (coordinator; this branch's DLL and probe; overlay-DF2c otherwise unchanged; a diagnostic run)
+  --set native_gate_draw_watch_frame=true --set native_gate_rng_rows=true
+  --set "native_gate_motion_watch={'00000000000a7949','00000000000a795e','00000000000a796f','00000000000a7984'}"
+  --set native_gate_motion_watch_digest=true --set native_gate_motion_watch_orders=true
+  --set "native_gate_nav_cadence_watch={'00000000000a7949','00000000000a795e','00000000000a796f','00000000000a7984'}"
+  --set native_gate_actor_rng_rows=true --set "native_gate_event_rng_rows={400,700}" --set "native_gate_trace_window={15,60}"
+  Read: each client's class from its RNG row of tick 22 (the values may move with the build; the three-way split stays).
+  Two clients of different classes (from any two runs: the class fixes the frame) differ in the DRAW_WATCH_ROWs of tick 22
+  (and 23 for C): the extra rows' rip and chain name the drawer; the first later row of frame 22 with the same rip on both
+  but another word is the consumer the shift reaches, and its chain shows whether a patrol ship is in it. census_cadence.py
+  over MOTION_DIGEST gives the first tick and group where a796f/a7984 part, NAV_CADENCE_ROW their deadlines from the first
+  upkeep, MOTION_EVENT/MOTION_REFRESH and EVENT_RNG_ROW the charge and travel decisions of 421..480.
+  Then: a navigation drawer (0xea90dc, 0xe8552c, the PathingManager) -> keyed from (tick, ship key) as the engine refresh
+  is, the two whole-body pins reading the site as original; a view drawer (XSfx 0x14e94f0, SpawnEffect 0xd73e00, a stock
+  slot copy's d95180 at 9fe2d7) -> its split or a keyed scope; the shifted consumer -> a keyed scope of its ship.
+  The frame watch changes timing (lockstep_draw_watch.h); a split may take two or three runs, but two classes from separate
+  runs suffice.
+15e Rerun df2w1..df2w4 (coordinator: overlay-DF2w = DF2c plus 15d's options, four 2-client runs; read offline here) [F]
+  Every watched client is class A: RNG tick=21 f846b5c7a7da1aca, 22 8ab0488464a8f536, 23 8c773891d6884c23, 24
+  f3b1f83a33b507db on all 8 (as df2c c1 and df2b c1/c2). Their DRAW_WATCH_ROWs of ticks 20..24 are byte-identical (194 rows
+  each), census 0 at 1800 in all four runs. Frame 22's row 149 holds fa50e6a91a534cd4 (C's tick-22 word), 150
+  4a34ba4f7f6e275a (B's), 151 8ab0488464a8f536 (A's): B and C are A with one and two frame-level draws fewer.
+  Frame 22's 151 draws (all id 0) by drawer, from the chains: 1-2 Highway::Move 0x5f4a40 (every frame); 3-5 a body
+  starting an animation (FloatState <- SCharacterInstance play 0x12a4ab0 <- slot 17 0x129fc80 of the character manager
+  <- 0x37b6b0 <- BodyClass::Move 0x380dd0 <- NPC::Move 0x6bc420); 6-29 six times SignalLeak::Move 0x651310 (1) and
+  SpawnEffect 0xd73e00 from UpdateAnimationTimelines 0x1165660 (3); 30-101 attention changes (Component::SetAttention
+  0x3d5660 -> Ship slot 701 -> 0x835b80, 2 each; Positional slot 701/621 -> SpawnEffect, 2 each); 102-139 nineteen
+  steering flight models (constructor 0xec40c0, two draws: the angles at model+0x33c/+0x340) built by
+  SetFlightControlModel 0xe87cf0 from PathingManager::ApplyQueuedOrders 0xeace40 (the gate's constructor hook in the
+  chain re-keys only the 12 fixtures); 140-151 four collision effects (CollisionEvent 0x9d4910 -> Ship slot 539 ->
+  0x7dc1e0 -> SpawnEffect, 3 each). Frame 23: Highway 2, weapon mode 0x4ef380 22 (Container::Move), BodyClass's weighted
+  pick 0x374f50 1 (inline PCG, store 0x374fcc), SignalLeak 6.
+  The consumer: the followers a795e, a796f and a7984 change their flight model from 0x2c4f610 to the steering model
+  0x2c4e9c8 in frame 22 (NAV_CADENCE_ROW behaviour= at 22 and 23, MOTION_WATCH model= at 22), so their constructors are
+  among draws 102-139, after the body's three: one or two plays fewer move their angles one or two steps along the frame's
+  stream, the classes' three courses [I: which constructor is which ship is not in the rows].
+15f What the watch changes besides logging [F, lockstep_draw_watch.h, lockstep_gate.c]
+  Only timing. The frame mode opens after path_release has written the frame's seed (the seed is the same with or without
+  it) and closes where the probe's update starts (slot 6). Its handler records the store and reloads debug register 0 in
+  the context it continues; it never writes the word, keys, reorders, skips or moves a draw to another thread, and the
+  breakpoint lives in the MoveWorker's context alone (each thread has its own TLS word). The cost falls on the MoveWorker
+  only: one single-step exception per store to the word, keyed scopes' seeds, draws and restores included (stores=
+  4068848..4098578 over 1802 frames: about 2260 per frame), plus a raised exception at each frame's open and close. sim_us
+  of frames 21/22: 121-136/41-48 ms watched (df2w1, df2w2) against 92-117/29-36 ms in df2c, df2c2 and df2b. A race
+  against another thread resolves the slow way on every watched client: 15g.
+15g The drawer: an animation start that waits for no loader [F, pinned image]
+  Slot 17 (0x129fc80; vtable SCharacterBaseClass 0x2c90ac8, entry 0x2c90b50; the manager is the static object 0x31bf8d0,
+  vtable set by 0x8f090) asks slot 15 (0xe68970) for the character instance: GetAssetIntern(*0x391bd78, character, 0, 1).
+  With r8b=0 and the manager's loading flag clear that call queues a file the loader thread has not finished (0x14bb1d0,
+  |0x40) and returns NULL (lockstep_shape_order.h): slot 17 returns 0 and the play never runs. The play (0x12a4ab0) asks the
+  same for the motion: resident, it draws the start offset (FloatState on TLS+0x318 at 0x12a4caf, the watched draw) when
+  the body's random-start flag (+0xc0 -> +0x213) is set; missing, the request is queued (0x12a4d20) with a draw of its own
+  (0x12a4e76). On success BodyClass stores the body's animation state and posts an event at once (0x37be06; immediate,
+  not in EVENT_ORDER's due queue). So the frame's draw count is how many of the three bodies' characters the loader had
+  finished: 3 A, 2 B, 1 C [I: three different characters, per process; fits A = C+2, B = C+1 and the watch's slow MoveWorker
+  giving A on 8 of 8; C's extra draw in frame 23 (a retried start or BodyClass's pick for a body whose start failed) is not
+  resolved]. None of the other drawers of frames 22 and 23 calls GetAssetIntern or slot 15 directly (every caller of both in
+  the image checked against the 27 functions of the chains). BodyClass calls slot 17 at 0x37bcd5 and 0x37bf60 (0x37b6b0)
+  and from StartSequenceAuto (0x37e92b, 0x37ef28), all through the one entry.
+15h Fix (lockstep_character_play.h; native_gate_character_play = 'sync' | 'observe', stop reason 188; a lockstep session's
+    default is 'sync', the bare gate off)
+  Slot 17's vtable entry points at a wrapper (data only). On the MoveWorker in admitted frames: a character or motion that
+  is not resident is loaded first through the engine's synchronous load, as shape_order 'sync' does (queue 0x14bb1d0 with
+  0x21 under the lock 0x6b60ec0, the loader's semaphore *0x6b60ee8 waited for, CPLAY_WAIT_MS 5000), so the start happens
+  the same way on every client; then the original runs with TLS+0x318 keyed from (tick, character, motion, the pair's
+  ordinal in the tick) and the caller's word put back afterwards, also when an exception unwinds, so its draws never reach
+  the frame word. Other threads, boot frames and loading pass through. 'observe': the wrapper without loads or key, rows
+  only (draws= then counts the start's steps on the caller's word). CHARACTER_PLAY status per tick, CHARACTER_PLAY_ROW per
+  wrapped call (written at once): keys, residency before (r/a/i), loads (l/u), result, caller word, seed, exit, draws.
+  Pins: slot 17, slot 15, the play and its queue, GetAssetIntern, the load queue, the loader's loop; the entry, the object's
+  vtable and the pins checked every tick. Stop 188 whys: slot_changed, object_changed, block_changed, sync_timeout,
+  sync_queue, loader, asset_entry, word, exception. Registry, defaults (STOP_REASONS 188), option checker, join audit
+  ('stateless') updated.
+  Verified offline: build_native_gate.py --test --native-image: test_character_play (a mock slot 17 that starts and draws
+  only with its character resident: 'observe' parts two clients' frame words by one draw on residency alone; 'sync' loads
+  the missing character through the synchronous load (0x21 under the lock, the semaphore) and keys both starts: equal
+  words, equal rows but before=/loaded=; a missing motion loaded; pair ordinals and their keys; arguments 4..12 passed bit
+  for bit; other threads, boot frames and an uninstalled module native; a load that never ends, an exception, an
+  unreadable entry and no word fail closed; a load ending without the asset and rejected keys counted; the entry swap,
+  ownership, check and restore; status bounds) and test_character_play_native_image (the pins and tamper, both vtable
+  entries, the initializer, slot 17's arguments to slot 15 and the play, both GetAssetIntern calls and their manager, both
+  draws on TLS+0x318, BodyClass's four call sites). pytest: test_native_gate_character_play (probe arming, rows, status,
+  stop, refusals, option checker, registry, default) among the 43 suites that read the probe, defaults, option checker,
+  registry or join header (939 passed, 10 skipped). Not live.
+  Limits: that an instance is fully usable once its asset is resident (the play's own checks: inst+0x110 -> +0x210, the
+  motion set lookup 0x129cc80) is not proven; a load that needed the MoveWorker would stop the gate (188 sync_timeout)
+  rather than hang. The steering constructors of non-fixture ships still draw from the frame word: another count change
+  before them in a frame would reach a patrol again (keying 0xec40c0's two draws per ship would close that consumer; not
+  done here).
+15i Rerun (coordinator; this branch's DLL and probe)
+  overlay-DF2c (no watch) plus X4LAN_CONFIG.native_gate_character_play = 'sync' (DF2c sets native_gate_defaults=false);
+  several runs, since about half split before. Pass: RNG tick=22 and 23 equal on both clients of every run, three
+  CHARACTER_PLAY_ROWs at tick 22 equal but before=/loaded=/load_us= (result=1), CHARACTER_PLAY failures=0, census 0 at 1800.
+  To see the mechanism before the fix: 'observe' instead; a split run's lower-class client shows before=a. result=0 rows at
+  tick 22 where the other shows before=r. result=1 draws=1.
+15j D1S3: THE SESSION-DEFAULTS SPLIT IS AN ADDRESS-ORDERED FIND, NOT A LOADER RACE OR A NEW DEFAULT (offline; branch
+    contrib/ferrite-patrol at smoke 3df97667; run d1s3 (split, 3602 ticks) and d1s4, d1s5, d1s6 (clean, 1802) of build182,
+    overlay-D1s3, read in selected rows; static analysis of the pinned image; nothing launched)
+  Result [F]: the earliest difference of d1s3 is at tick 1, in MD. GM_BoardShip.GenerateGenericMission_Variant_* (tick 1,
+  FIND_ORDER scope 2390510d2f30550b) and GM_SupplyFactory (tick 7, scope 2281d51239e1df2b) choose their target from
+  find_cluster_in_range object=player.entity maxdistance=2, shuffle_list, then a find per cluster until one finds something
+  (gm_board_ship.xml Setup_FindEnemyShip; gm_supplyfactory.xml). Script keys and draw counts are equal on both clients
+  (SCRIPT_RNG tick 1: cur_keyset a9ad6a0faf37cf7d, cur_drawset 276e350c7b8a744d), but client 1 tries other clusters first.
+  find_cluster_in_range returns the clusters in ADDRESS order of the cluster objects (15j-b). That order belongs to each
+  process, and keyed draws cannot repair it: equal draws shuffle a differently ordered list into a different first cluster.
+  Fixed in 15j-c.
+  Evidence [F]:
+    FIND_ORDER tick 1: c1 calls=242 empty=74 candidates=915; c2 241/73/913, as all 6 clean clients. Rows: BoardShip c1
+    ord1 raw=0, ord2 raw=5 (ships of cluster 0x8e7); c2 ord1 raw=3 (cluster 0x3e5). Tick 7 SupplyFactory: c1 tries four empty
+    clusters, then finds 17 stations in cluster 0x728 (sector 0x729, where slot 1's ship 0xae79c is, i.e. player.entity's
+    own cluster); c2 tries one empty cluster, then finds 15 stations in cluster 0x99 (sector 0x9b). The 6 clean clients match
+    c2 row for row at both ticks.
+    Downstream: EVENT_ORDER's order hash parts at tick 8 (d1s3 only; between the clean runs' clients only moved= differs),
+    the digest at 1266. Census 1800: 0xa16fe in zone 0x732 of sector 0x729 and 0xa1797 in zone 0xa2 of sector 0x9b, the
+    sectors of the two clients' supply offers [I: how an offer reaches a ship's motion is not traced]. 3600: 37 objects.
+    Not a loader or one of the new defaults: CHARACTER_PLAY differs only in load_us (as in the clean runs), NAV_PLAYER is equal
+    throughout, the SCRIPT_RNG, MD_RESUME_RNG and AI_WAIT_RNG key and draw sets are equal at tick 1 (the cues are keyed by the
+    same names), ACTOR_RNG_ALL differs only in its *_ns timings. Every other status difference of d1s3 before 1266 (timings,
+    the thread words, slot and role fields, AI_SCHEDULE order_moved, GRAVIDAR_WIDE sectors) also occurs between the clients
+    of the clean runs.
+15j-b The mechanism [F, pinned image]
+  FindSpaceInRangeAction (vtable 0x2c0f660; action 0x750 find_cluster_in_range, and find_sector_in_range) Execute 0xb8a890
+  collects the spaces within the jump range with 0x3bb200 (clusters; BFS over the gates) or 0x78cc30 (sectors) into a
+  red-black tree on its stack (rbp-0x79). The tree is keyed by the Component* VALUE: map[] 0x3135a0, insert position 0x345700
+  `cmp r8,[rbx+0x20]; jae`. Execute then erases the spaces its match conditions refuse, and at 0xb8af09 calls 0xc602e0
+  (declaration, tree, exec). 0xc602e0's only store, 0xd2ada0 (only caller 0xc604d8), walks the tree in order: it appends every
+  space (multiple) or takes the Random::U64(count)-th one (single). 0xc602e0 has one caller, so this is the whole range-find
+  family. Layout: tree +0x20 first node, +0x28 count, the walk ends at the tree object; node +0 parent, +8 left, +0x10
+  right, +0x20 Component*, +0x28 int jumps. FIND_ORDER (lockstep_find_order.h) covered only FindComponentAction's vector
+  (0xb87ae3), so these lists were never sorted and no row showed them.
+  [I] The clusters' relative addresses come from the load's allocations. If another thread's allocations interleave
+  differently, one cluster object can land at another address and reorder the list. That would make the split rare: only
+  d1s3's client 1 of the 8 clients read here shows another order. The two GM generations of the run (ticks 1 and 7) are
+  its earliest range finds whose result reaches the world.
+15j-c Fix (lockstep_find_order.h; no new option: native_gate_find_order 'sort' | 'observe' covers both sites, stop reason 92)
+  Second site: the E8 rel32 at 0xb8af09 (CAS, one cache line) goes through THUNK_JUMP 48 (40..127 was unowned) to
+  find_order_space_assign. That walks the tree as 0xd2ada0 will and maps each space to its portable key, using the same
+  canonical order as the vector (saved, created, then native order). In 'sort' it rewrites the nodes' (Component*, jumps)
+  pairs along the walk into that order, then tail-jumps to 0xc602e0. Every client's store therefore appends, or picks the
+  k-th space from, the same saved-ID sequence. The tree's key order is broken on purpose: after this call nothing searches the
+  tree, and Execute only frees its node blocks. Fail closed (92) on a foreign return address, an unreadable or misaligned tree
+  or node, a walk that does not end at the tree after exactly count nodes or that climbs more than 128 links, count > 4096, a
+  repeated Component*, or two spaces with one key. Pins (checked at arming, both sites or neither installed): Execute 0x6f3,
+  0xc602e0 0x21b and 0xd2ada0 0x315 bytes whole. owned= checks both rel32s, and stop restores both. Rows: FIND_ORDER_ROW gets
+  a trailing site=component|space. Status: + space_installed, space_calls, space_candidates, space_reordered (status buffers
+  768 -> 1024). The shared core (find_order_measure/finish/admit) is the old vector path, split up and unchanged.
+  Verified offline: build_native_gate.py --test --native-image (log build-15j-*). test_find_order is unchanged and passes on
+  the refactored core. test_find_order_space covers the following. d1s3's shape: the same five spaces at other relative
+  addresses in two processes walk in one saved-ID order, each keeping its jump count, with one set and different native
+  hashes. Already-canonical trees are not written. 'observe' leaves the tree untouched. Empty, single and 90-node (qsort)
+  trees work. A component and a space share the ordinal and ring, and each row names its site. The failure cases are: count
+  beyond or short of the walk, oversize, null or misaligned tree, unreadable component or node, a key collision, a repeated
+  key, a broken parent link, a foreign return, and a 200-deep chain (100 pass). Pass-through cases: inactive, stopped, other
+  thread. Also tested: both sites' CAS, owned, restore (partial then complete) and prepare refusals; arming refused on the
+  placeholder before any write; the bounded status. test_fo_native_image checks the three pins, the site's
+  E8 -> 0xc602e0 and the lea r15+0x68 / mov r8,r12 / lea rbp-0x79 before it, vtable 0x2c0f660 slot 3, the tree's
+  initialisation, 0xd2ada0's count/first reads and successor walk, its only caller, 0x3135a0's key/jumps stores, 0x345700's
+  unsigned pointer compare, and tamper refusals. The thunk page holds 60 recipes. pytest: test_native_gate_defaults,
+  test_lockstep_registry, test_native_gate_census_scripts, the probe's find_order tests, test_lockstep_linux_map,
+  test_native_gate_thunk_page, test_native_portable_hold. Not live.
+  Limits: the Linux gate has no second site (space_installed=0, behaviour unchanged): the porter needs the Linux
+  FindSpaceInRangeAction Execute, its store call and the same tree layout. Other address-ordered containers that MD or AI can
+  see are not audited (0x715080 also calls 0x3bb200 and is not reached through 0xc602e0). Whether 0x99 lies within two jumps of 0x728
+  (the same set in another order, rather than another player position) is inferred from the equal draw counts (shuffle_list
+  draws N-1) and from player.entity being slot 1 on every client, not read.
+15j-d Rerun (coordinator; this branch's DLL; overlay-D1s3 unchanged, its defaults already set native_gate_find_order='sort')
+  Several runs (1 of 4 split before). Pass: FIND_ORDER status space_installed=1, space_calls>0 and failures=0 on both
+  clients. FIND_ORDER_ROW site=space rows have equal set= and ids= on both clients (native= may differ: that is the address
+  order, now removed). The GM_BoardShip / GM_SupplyFactory rows at ticks 1 and 7 are equal, and the census is 0 at 1800.
+  To watch the race itself instead: native_gate_find_order='observe' (also leaves the vector site unsorted; a diagnostic
+  run). A run whose clients differ in a site=space row's native= with equal set= is the d1s3 mechanism.

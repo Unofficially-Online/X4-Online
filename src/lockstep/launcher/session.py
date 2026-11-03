@@ -228,7 +228,7 @@ def run(o: Options, log=print):
             state['views'].append(str(view))
             save_state(o, state)
             profile_id = profile.PROFILES[k - 1]
-            tail = 'X4LAN_CONFIG.native_gate_relay_timeout_ms = 120000\n'  # slack for different load times
+            tail = 'X4LAN_CONFIG.native_gate_arm_timeout_ms = 120000\n'  # slack for different load times
             if arm_at:
                 tail += f'X4LAN_CONFIG.native_gate_arm_at = {arm_at}\n'
             if o.checkpoint_at:

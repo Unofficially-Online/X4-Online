@@ -94,6 +94,12 @@ def main():
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument('--capture-snapshot', action='store_true')
     mode.add_argument('--snapshot-in', type=Path)
+    mode.add_argument('--join-session', type=Path, metavar='HANDOFF',
+                      help='hot join (reports/LOCKSTEP-HOTJOIN-20261101.txt): a lane run for the joiner of a running session (or of '
+                           "native_gate_join_driver.py replay). The handoff (native_gate_join_driver.py) names the join save, staged "
+                           'as the snapshot, and the relay: its port, token and the joining slot replace @X4LANE_PORT@, '
+                           "@X4LANE_TOKEN@, @X4LANE_SLOT@, @X4LANE_CLIENT(S)@ and the run's config is checked loopback-only "
+                           '(as a session client) instead of offline. Only with run')
     p.add_argument('--ssh-host')
     p.add_argument('--ssh-remote-script')
     p.add_argument('--getup-diagnostic-config',type=Path,help='explicit closed one-native NGD manifest; never a paired fallback')
@@ -105,6 +111,16 @@ def main():
         p.error('only run/session are supported')
     if args.capture_snapshot and lane_args[0] != 'run':
         p.error('capture uses exactly one disposable lane')
+    handoff = None
+    if args.join_session:
+        if lane_args[0] != 'run' or args.ssh_host or args.ssh_remote_script or args.getup_diagnostic_config:
+            p.error('--join-session is a local lane run (one joiner): run, without SSH or diagnostics')
+        from native_gate_join_driver import load_handoff, joiner_tokens, HandoffError
+        try:
+            handoff = load_handoff(args.join_session, verify=True)
+        except HandoffError as error:
+            p.error(str(error))
+        args.snapshot_in = Path(handoff['save'])
     if '--no-repin' in lane_args:
         p.error('snapshot tests require lane profile repinning')
     if lane_args[0] == 'run' and '--repin-profile' not in lane_args:
@@ -133,6 +149,14 @@ def main():
     prepare, collect, restore = lane.Run.prepare, lane.Run.collect, lane.Run.restore
 
     def prepare_with_snapshot(run):
+        if handoff is not None:
+            # The joiner talks to the session relay (or the journal replay) on 127.0.0.1 like a session client: the
+            # released runner then checks its config loopback-only, and the session's tokens fill the overlay.
+            run.network = 'loopback'
+            run.extra_tokens = dict(run.extra_tokens, **joiner_tokens(handoff))
+            run.result['native_join'] = {'slot': handoff['slot'], 'port': handoff['port'], 'source': handoff.get('source'),
+                                         'save_tick': handoff['save_tick'], 'saver': handoff['saver'],
+                                         'package_sha': handoff['package_sha'], 'save_sha': handoff['save_sha']}
         prepare(run)
         run.native_snapshot = SnapshotSlot(run.lane.profile, run.lane.profile_dir, lane.core)
         run.result['native_snapshot'] = {'slot': SLOT, 'mode': 'load' if args.snapshot_in else 'capture'}

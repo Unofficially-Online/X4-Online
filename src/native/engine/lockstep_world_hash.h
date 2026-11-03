@@ -42,6 +42,9 @@ static unsigned world_class_count;
 /* Optional per-item observer of a capture (read-only; NULL by default): the motion watch's zone
  * membership (lockstep_motion_watch.h) sees every recorded item with its live object, in key order. */
 static void (*world_hash_member_note)(uint64_t tick,const world_hash_item *item,unsigned char *object);
+/* Optional per-item observer after the item's domain hashes are final (read-only; NULL by default): the
+ * hybrid sectors' census split (lockstep_hybrid.h) sorts each item into the outside or the inside roots. */
+static void (*world_hash_after_item)(uint64_t tick,const world_hash_item *item,unsigned char *object);
 static char world_hash_summary[768],world_hash_state[384];
 static BCRYPT_ALG_HANDLE world_sha_algorithm;
 static BCRYPT_HASH_HANDLE world_sha_row,world_sha_roots[WORLD_HASH_DOMAINS];
@@ -311,6 +314,7 @@ static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find
             if(BCryptHashData(world_sha_row,data[d].data,data[d].length,0)<0 || BCryptFinishHash(world_sha_row,item->hash[d],32,0)<0) return 0;
             memcpy(aggregate[d]+used,&item->saved,8);memcpy(aggregate[d]+used+8,item->hash[d],32);
         }
+        if(world_hash_after_item) world_hash_after_item(tick,item,object);
         used+=40;
         if(!world_hash_scans || memcmp(previous,item->hash,sizeof(previous)) || previous_raw_length!=item->nav_raw_length ||
            memcmp(previous_raw,item->nav_raw,item->nav_raw_length)) world_hash_changed[world_hash_changes++]=i;
@@ -335,4 +339,29 @@ static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find
 }
 static int world_hash_capture(uint64_t tick,unsigned schema) {
     return world_hash_capture_with(tick,schema,(world_hash_find_fn)(image+0xced70));
+}
+/* FR28, DEFAULT OFF, read-only (native_gate_world_health_ticks = {first,last}): the stored hull and
+ * shield of every watched object at any tick, not only at a capture. The census hashes them every
+ * stride ticks (W14 vs L7: 0x7336a's health differs at 570, not at 540, the 30 ticks between unseen).
+ * The runtime ID is the one the last capture found for the watch; the object is looked up again (gone:
+ * present=0) and read as the capture reads it: hull +0x280 and the shield group's stored fields as
+ * shield_state prints them (never the canonical form; nothing native is called but the find, nothing
+ * is written). time is the global game time's bits. linux/gate_world.h prints the same row. */
+static world_hash_find_fn world_health_find; /* tests; NULL: the capture's own find */
+static int world_health_row(unsigned index,uint64_t tick,char *out,size_t size) {
+    if(index>=world_hash_watch_count || !world_hash_scans || world_hash_failures || !size) return 0;
+    const world_hash_watch *watch=&world_hash_watches[index];
+    world_hash_find_fn find=world_health_find?world_health_find:(world_hash_find_fn)(image+0xced70);
+    uint64_t now,hull,id;char shield[192];void *map=NULL;int n;
+    if(!world_hash_reader(image+0x6cf1500,&map,8) || !world_hash_reader(image+GAME_RVA,&now,8)) return 0;
+    unsigned char *object=map && watch->runtime?find(map,watch->runtime,4):NULL;
+    if(object && (!world_hash_reader(object+8,&id,8) || id!=watch->runtime)) object=NULL;
+    if(!object) n=snprintf(out,size,"tick=%llu id=%016llx present=0 time=%016llx hull=- shield=-",
+        (unsigned long long)tick,(unsigned long long)watch->saved,(unsigned long long)now);
+    else {
+        if(!world_hash_reader(object+0x280,&hull,8) || !shield_state(object,shield)) return 0;
+        n=snprintf(out,size,"tick=%llu id=%016llx present=1 time=%016llx hull=%016llx shield=%s",(unsigned long long)tick,
+            (unsigned long long)watch->saved,(unsigned long long)now,(unsigned long long)hull,shield);
+    }
+    return n>0 && (size_t)n<size?n:0;
 }

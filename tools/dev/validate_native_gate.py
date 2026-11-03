@@ -9,7 +9,7 @@ import struct
 from collections import Counter
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-from native_world_evidence import evidence as world_hash_evidence,configured_watches,configured_schema
+from native_world_evidence import evidence as world_hash_evidence,configured_watches,configured_schema,join_capture_ticks
 from native_world_trace import evidence as world_trace_evidence
 from native_world_queue import evidence as world_queue_evidence
 from native_world_wait import evidence as world_wait_evidence,configured_waits,paired_diagnostics as world_wait_diagnostics
@@ -1458,7 +1458,7 @@ def validate(run, scope):
         except ValueError as error:errors.append(f'player {slot} world hash configuration: {error}');world_schema='WORLD_IMPORTED_1'
         if world_stride:
             world_states,coverage=world_hash_evidence(log,slot,int(world_stride[1]),ticks[-1],errors,configured_watches(config),
-                bool(re.search(r'native_gate_world_timing_fields\s*=\s*true',config)),world_schema)
+                bool(re.search(r'native_gate_world_timing_fields\s*=\s*true',config)),world_schema,join_capture_ticks(log,config))
             world_hash_traces.append(world_states);world_hash_coverage.append(coverage)
         values_enabled=False
         action_errors=[];action_events=[];value_errors=[];value_events=[]

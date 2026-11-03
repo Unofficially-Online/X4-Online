@@ -3,7 +3,8 @@
 -- (native_gate_player_identity_plan) as UI events; MD X4LAN_PlayerIdentity applies them in the next
 -- gated frame on every client: per-slot pool factions (factions mode), slot ship ownership (saved
 -- ships, or ships created from a fixed macro/seed/position), start placements (saved ships warped to a
--- fixed point of a saved sector), relations between the slot factions.
+-- fixed point of a saved sector), relations between the slot factions, per-player starts (kits: money,
+-- reputation, blueprints, research, map knowledge of slot k's own stock start; LOCKSTEP-STARTS-20261101).
 -- Pure plan logic: native_gate_player_identity_core.lua. Report: LOCKSTEP-PLAYER-IDENTITY-20261029.
 local cfg=X4LAN_CONFIG
 if not cfg or cfg.native_gate_player_identity~=true then return end
@@ -93,7 +94,11 @@ local function md_args(step,found)
  local a={ordinal=step.ordinal,ordname=tostring(step.ordinal),step=step.step,head=step.head,mode=P.mode,faction=step.faction or '',
   name=step.name or '',short=step.short or '',mirror=step.mirror or 0,source=step.source or '',
   occupiedpool=step.occupiedpool or 0,fa=step.fa or '',fb=step.fb or '',value=step.value or 0,
-  slotname=tostring(step.slot),macro='',seed=0,x=0,y=0,z=0,yaw=0,hassector=0,sectormacro=''}
+  slotname=tostring(step.slot),macro='',seed=0,x=0,y=0,z=0,yaw=0,hassector=0,sectormacro='',
+  -- per-player start steps (kit, wallet, reputation, blueprint, research, known_sector, known)
+  gamestart=step.gamestart or '',op=step.op or '',mega=step.mega or 0,units=step.units or 0,other=step.other or '',ware=step.ware or '',
+  knownsector=step.knownsector or '',count=step.count or 0,kfaction=step.kfaction or '',hasfaction=step.hasfaction or 0,
+  shipyards=step.shipyards or 0}
  if step.source=='saved' then a.object=ConvertStringToLuaID(found[step.ship]) end
  if step.source=='create' then
   local c=step.create
@@ -176,6 +181,40 @@ X4LAN_NATIVE_PLAYER_IDENTITY={
   assert(#P.slots==(clients or 2),'player identity plan has '..#P.slots..' slots for '..tostring(clients or 2)..' clients')
   gate=native
   log(string.format('PLAYER_IDENTITY BOUND slot=%s mode=%s slots=%d tick=%d',tostring(cfg.slot),P.mode,#P.slots,P.tick))
+  -- Hot join (native_gate_join_core.lua): a joiner's world already holds every slot's setup (the plan sets up all N
+  -- slots at its setup tick, absent ones included: their ship and faction exist, their inputs are the relay's empty
+  -- stand-ins until the handover). What this adapter keeps across ticks travels in the join package: the setup and
+  -- fold flags, the plan digest, the MD result digest and each slot ship's portable ID; the runtime IDs are resolved
+  -- again on the joiner (saved ships by the saved-ID scan, created ones through the created table).
+  if X4LAN_JOIN_CORE then
+   X4LAN_JOIN_CORE.provide('identity',function()
+    local portables={};for k=1,#P.slots do portables[k]=ships[k] and portable(k) or '-' end
+    return string.format('v1|%d|%d|%d|%s|%s|%s',last_tick,setup_done and 1 or 0,ready and 1 or 0,digest or '-',md_text or '-',
+     table.concat(portables,','))
+   end,function(text)
+    local last,setup,folded,plan_digest,md,list=text:match('^v1|(%d+)|([01])|([01])|([%x%-]+)|([%x%-]+)|(.*)$')
+    assert(last and setup=='1' and folded=='1','player identity: a join needs a session past its fold tick, got '..tostring(text))
+    assert(X4LAN_SHA256 and X4LAN_SHA256.digest(canonical)==plan_digest,'player identity: the joiner has another plan than the session')
+    digest,steps,md_text,setup_done,ready,last_tick=plan_digest,K.steps(P,plan_digest),md,true,true,tonumber(last)
+    local i=0
+    local found=resolve_saved(last_tick)
+    for id in list:gmatch('[^,]+') do
+     i=i+1
+     local row=P.slots[i]
+     assert(row,'player identity: more slot ships in the package than slots')
+     if id~='-' then
+      if row.ship then ships[i]=found[row.ship]
+      else
+       local runtime=gate.created_runtime and gate.created_runtime(id)
+       assert(runtime,'player identity: created slot ship '..i..' ('..id..') unknown on the joiner')
+       ships[i]=runtime
+      end
+     end
+    end
+    assert(i==#P.slots,'player identity: slot ships missing from the package')
+    log('PLAYER_IDENTITY JOIN_RESTORED last='..last_tick..' md='..md_text)
+   end)
+  end
  end,
  -- Once per admitted tick, after the fixture events of that tick. Returns the declared state part.
  frame=function(tick)

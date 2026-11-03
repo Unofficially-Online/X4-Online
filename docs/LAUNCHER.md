@@ -231,7 +231,7 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
   (reason 3, `UNOWNED *(double*)(image+SPEED_RVA)!=1.0`); continuing through a save needs
-  pause-aware gating. `tools/dev/save_diff.py A B` compares the world part of two saves
+  pause-aware gating. `tools/dev/checkpoint_diff.py A B` compares the world part of two saves
   (everything above `<script>`; the script pools below use process-local allocation ids),
   listener runs as sets, animation index parts left out. Two clients' saves at tick 1,200
   were identical except the local player's target listener (client-local UI state). A

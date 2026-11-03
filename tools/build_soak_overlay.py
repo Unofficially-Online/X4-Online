@@ -128,6 +128,9 @@ def main(argv=None):
     p.add_argument('--ui-relay', type=Path, nargs='?', const=ROOT / '.local/ui-export-census.json', metavar='CENSUS',
                    help='like --ui-guard, but the game writes with scalar, ID or string arguments go through the generic '
                         'FFI relay (native_gate_ui_relay, every client runs them at one tick); the rest stay blocked')
+    p.add_argument('--defaults', action='store_true',
+                   help='the session default stack (tools/dev/native_gate_defaults.lua) on top of the soak profile; without it the '
+                        'soak overlay is bare: only the profile and these flags')
     p.add_argument('--players', choices=('factions', 'coop'),
                    help='player-activity soak: player identities, script pilots and scripted orders (native_gate_players.py)')
     p.add_argument('--players-arg', action='append', default=[], metavar='ARG',
@@ -147,8 +150,10 @@ def main(argv=None):
     fixture = snapshot_fixture(args.snapshot)
     with tempfile.TemporaryDirectory(dir=args.out.parent) as tmp:
         base, keyed = Path(tmp) / 'base', Path(tmp) / 'keyed'
+        # The soak profile is the whole validated key set: the session default stack (tools/dev/native_gate_defaults.lua)
+        # stays off (--bare) unless --defaults asks for it on top, so a soak runs exactly the profile.
         run([DEV / 'build_native_gate_overlay.py', '--gate-dll', args.gate_dll, '--snapshot', args.snapshot, *BASE_FLAGS,
-             '--world-hash-schema', args.world_schema, '--out', base])
+             '--world-hash-schema', args.world_schema, '--out', base, *([] if args.defaults else ['--bare'])])
         shutil.copytree(base, keyed)
         with (keyed / 'ui/config.lua.append').open('a') as config:
             profile = (ROOT / 'src/lockstep/profiles/soak.lua').read_text().splitlines(keepends=True)

@@ -13,6 +13,9 @@ static void push_inputs(lua_State *L) {
         p_lua_pushlstring(L,value,strlen(value));p_lua_rawseti(L,-2,(int)i+1);
     }
     p_lua_setfield(L,-2,"inputs");
+#ifdef LOCKSTEP_ADAPTIVE
+    if(wire_adaptive) {adapt_push(L);return;}  /* protocol 5: lockstep_adaptive_lua.h */
+#endif
     /* Protocol 4: s.inputs are the proposals sealed with tick issued-1-k
      * (s.inputs_tick; absent, and every blob empty, for issued <= k). */
     if(!wire_lookahead) return;

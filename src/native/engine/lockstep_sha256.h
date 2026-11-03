@@ -1,6 +1,8 @@
 /* Portable SHA-256 (FIPS 180-4) for gate builds without BCrypt: the Linux gate's
  * build pins, its file pin and gate.sha256 (the probe's per-tick digest). Same
  * results as BCrypt SHA-256; vectors in linux/test_gate_linux.c. Original code. */
+#ifndef LOCKSTEP_SHA256_H
+#define LOCKSTEP_SHA256_H
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -56,3 +58,4 @@ static void lockstep_sha256_final(lockstep_sha256_ctx *c,unsigned char out[32]) 
 static void lockstep_sha256(const void *data,size_t length,unsigned char out[32]) {
     lockstep_sha256_ctx c;lockstep_sha256_init(&c);lockstep_sha256_update(&c,data,length);lockstep_sha256_final(&c,out);
 }
+#endif

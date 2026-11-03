@@ -109,7 +109,9 @@ class PhysicsProbeTests(unittest.TestCase):
                 self.assertEqual(sum('NATIVE_GATE NAV_OCTREE_ROW index=' in line for line in lines), 2)  # drained once, cursor kept
                 self.assertTrue(any('NAV_OCTREE_ROW index=1 tick=1 key=80000f09105ebb8a klass=1 flag=1 joined=1' in line for line in lines))
                 self.assertTrue(any('NAV_OCTREE_STOP mode=sync' in line for line in lines))
-                self.assertFalse(any('ERROR' in line for line in lines))
+                # The snapshot alone arms 'observe': said loudly (reports/LOCKSTEP-DEFAULTS-20261101.txt), nothing else is an error.
+                self.assertEqual(any('ERROR DEGRADED nav_octree=observe' in line for line in lines), 'snapshot' in config and config.startswith('nil'))
+                self.assertFalse(any('ERROR' in line and 'DEGRADED nav_octree=observe' not in line for line in lines))
 
     def test_shape_order_wait_mode_is_passed_through(self):
         self.configure("X4LAN_CONFIG.native_gate_shape_order='wait'")

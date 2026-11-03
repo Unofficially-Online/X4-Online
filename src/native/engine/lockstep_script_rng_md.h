@@ -16,7 +16,7 @@
  * one 16-byte CAS over the call's aligned 16-byte block (instruction
  * boundaries and every other byte unchanged). The return address names the
  * call site and therefore the source. The scope is the SR_CUE one of
- * lockstep_script_rng.h: owner = FNV-1a of the static "module.cue" name,
+ * lockstep_script_rng.h: owner = FNV-1a of the static cue's path name,
  * detail = the cue's own event record (+0x18 keyword, saved ID of a component
  * parameter; the raising cue's runtime ID, value type 0x12, never enters),
  * per-tick ordinal per (owner, stream, detail). Nesting follows the same

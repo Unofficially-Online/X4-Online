@@ -56,6 +56,10 @@ FRAME = re.compile(r'FRAME_TIMING tick=(\d+) frames=\d+ wait_us=(\d+) frame_us=(
 # Gate builds from census-perf 2026-10-29 on: the gate's own work before the permit wait (pre:
 # checks, created identities, joins) and the ReadProcessMemory calls of the frame interval.
 GATE_PRE = re.compile(r'pre_us=(\d+) created_us=(\d+) join_us=(\d+) sum_pre_us=\d+ reads=(\d+)')
+# Gate builds with gate.render_split (lockstep_render_frames.h): the last step's MoveWorker frame (sim_us) split
+# into slot 10 (render preparation) and the rest, and the render-only frames before the current step.
+SIM = re.compile(r'\bsim_us=(\d+)')
+SPLIT = re.compile(r'slot10_us=(\d+) sim_rest_us=(-?\d+) rframes=(\d+) rframe_us=(\d+)')
 # Completed-tick script RNG self-time (scope entry/exit only, TSC via QPC).
 SCRIPT = re.compile(r'SCRIPT_RNG tick=\d+ .* last_tick=(\d+) last_entries=(\d+) .* last_self_us=(\d+)')
 
@@ -66,7 +70,7 @@ def native(run):
     every = stride(run)
     result = {}
     for client in (f'client{k}' for k in client_slots(run, strict=False)):
-        rows, scripts, pre = [], {}, []
+        rows, scripts, pre, split = [], {}, [], []
         log = run/client/'engine-output.log'
         if not log.is_file(): continue
         skip = lambda tick: tick <= 2 or tick == 11 or (every and tick % every == 0)  # captures, hold, start
@@ -84,6 +88,8 @@ def native(run):
                 rows.append([int(m[i]) if m[i] is not None else -1 for i in range(2, 6)])
                 g = GATE_PRE.search(line)
                 if g: pre.append([int(v) for v in g.groups()]+[rows[-1][2]-rows[-1][3]-int(g[1])])
+                p, q = SPLIT.search(line), SIM.search(line)
+                if p and q: split.append([int(q[1])]+[int(v) for v in p.groups()])
         if not rows: continue
         med = lambda i: round(statistics.median(r[i] for r in rows)/1000, 2)
         result[client] = dict(frames=len(rows), wait_ms=med(0), frametick_ms=med(1), outside_ms=med(2),
@@ -93,6 +99,13 @@ def native(run):
             mid = lambda i: statistics.median(r[i] for r in pre)
             result[client].update(pre_ms=round(mid(0)/1000, 2), created_ms=round(mid(1)/1000, 3), join_ms=round(mid(2)/1000, 2),
                                   reads=mid(3), rest_ms=round(mid(4)/1000, 2))
+        if split:
+            # sim = slot10 + sim_rest per step; rframes_per_step is a mean (the frames between two steps).
+            mid = lambda i: statistics.median(r[i] for r in split)
+            shown = [r[4] for r in split if r[3]]
+            result[client].update(sim_ms=round(mid(0)/1000, 2), slot10_ms=round(mid(1)/1000, 2), sim_rest_ms=round(mid(2)/1000, 2),
+                                  rframes_per_step=round(statistics.mean(r[3] for r in split), 2),
+                                  rframe_ms=round(statistics.median(shown)/1000, 2) if shown else None)
         if scripts:
             result[client].update(script_rng_ms=round(statistics.median(v[1] for v in scripts.values())/1000, 3),
                                   script_rng_entries=statistics.median(v[0] for v in scripts.values()))

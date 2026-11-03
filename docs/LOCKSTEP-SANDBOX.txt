@@ -373,7 +373,8 @@ Refused before tick 1: NATIVE_GATE ERROR ... pilot stock refused: <reason>, a st
 a pin table with the RVA (report section 16.2). Stops: 155 for a stock record problem
 (stock_missing_slot when slot 2's record did not arrive), 161 for a slots invariant (PILOT_INPUTS ... slots=failed slots_why=...).
 Status: PILOT_INPUTS rows add slots=stage slots_why= slots_mask= hook= updates=
-routes= s2=seated/predicate/room/scopes/updates/upkeep/environment/owner/replays/
+routes= canonical_gone= (scope entries while slot 1's latched controller was not X4's live one: after its
+stand-up, before the pass saw it; never read then) s2=seated/predicate/room/scopes/updates/upkeep/environment/owner/replays/
 refused getters_out= (slot:calls of the controller's stock entries outside its scope and
 outside render slot 10: this holds the simulation and also the audio, effect and camera
 code that runs outside slot 10) getters_render= (the same in slot 10); every 600 ticks

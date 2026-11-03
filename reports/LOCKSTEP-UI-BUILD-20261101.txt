@@ -1,0 +1,254 @@
+LOCKSTEP UI REPLAY: BUILDING AND ASSETS (FAMILIES 'build' AND 'assets')
+1 November 2026 | offline work on branch contrib/ferrite-build (base: smoke a2e43713). Static reading of the pinned Windows X4.exe 9.00
+(RVAs, base 0x140000000) and of the extracted stock UI scripts and ffi.cdef prototypes in x4-re; nothing of them is copied here (API
+names, menu function names and RVAs only). No X4 was launched. [F] = read in the binary or the scripts; [I] = inference; "live" = what
+only a native run can show. Builds on reports/LOCKSTEP-UI-REPLAY-20261030.txt (the replay) and LOCKSTEP-UI-GUARD-20261101.txt (the guard).
+
+0. RESULT
+  Two new replay families, default off: native_gate_ui_replay lists 'build' (bit 4096) and/or 'assets' (bit 8192); 'true' does not
+  include them; both need native_gate_ui_guard. Bits 1024 and 2048 are left free for the trade and mission families.
+  - build: ship purchase, upgrade and repair at shipyards, wharfs and equipment docks (the ship configuration's confirm: money, build
+    task, transferred money, repair signal, as one batch), queueing (immediate or queued is AddBuildTask6's flag), plots (reserve,
+    extend, pay, remove), the build storage, the construction budget (money to the build storage), the modules' loadout level.
+  - assets: crew exchange, hiring/assigning actors and pilots, reassigning and firing crew, releasing from transfer, renaming
+    (SetComponentName: ships, stations, the player's own name), claiming ships, selling ships, ship storage (put, take, request),
+    equipment and paint mods (install, dismantle).
+  Slots: every slot in coop mode; slot 1 only in factions mode; inventory mods slot 1 only (section 2). What a delayed apply cannot
+  answer stays refused by the guard: the station plan editor's commit, a pilot made from a crew member (section 3).
+  Worst case with the families on: an action happens a few ticks late, or (refused) not at all, on every client alike.
+
+1. MECHANISM (src/native/engine/lockstep_ui_build.h, lockstep_ui_build_lua.h, tools/dev/native_gate_ui_build_core.lua)
+1a Claims on the guard's hooks [own code]. The guard already hooks all 280 inventoried entries with a generic stub and shared routine
+  (argument registers, xmm0..3 and the stack saved, then a decision, then X4's trampoline or a refusal value). The families claim 29
+  of its FFI entries by name at their arming (gate.ui_build, after gate.ui_replay and gate.ui_guard, before the first tick):
+  lockstep_ui_guard.h got two registration points: a claimed entry is installed whatever the guard's groups say, and in a local phase
+  the claim answers first (after the guard's own pass rules: not the UI thread / not a local phase / the probe's own frame / an apply /
+  past the window: X4's function runs; a check-only call is a query and runs). A claimed entry whose family is not armed falls back to
+  the guard's rule. So no new code patch, no new pins for the entries (the guard's 280 pins hold), and one decision point for the
+  guard and every family that wants to capture at its hooks (the trade and mission families can claim the same way).
+1b The batch. Every claimed call one client's UI makes between two probe frames is one batch: a click handler runs inside one frame,
+  so a menu's commit (several calls in one frame) is one batch. Lua C globals join the batch as Lua records through gate.ui_build_add
+  (the Lua core encodes them with the replay's codec): SetComponentName always (assets); TransferPlayerMoneyTo, TransferMoneyToPlayer
+  and SignalObject(.., 'repairs_initiate', ..) only inside a commit scope (1d). An event of any other family closes the open batch
+  first (one line in uirep_push), so every event of a slot keeps the call order across families (e.g. the ship configuration's Repair
+  order through the queue family, then the build task's batch). The batch leaves at the probe frame, at a scope's end, or when full.
+1c Wire. A batch is version | record count | records; a record is kind ('N' a claimed call, 'L' a Lua record) | id | flags | length |
+  payload. Arguments by a per-claim spec (h hidden struct pointer, I/i component, B plot binding, t build task token, u 64-bit, b byte,
+  s/z string, f float in a register, F float on the stack, P UIPosRot*, C Coord3D*, L UILoadout2*, T CrewTransferInfo2*,
+  X AddBuildTask6Container*, G GenericActor*, N NPCSeed* + count, R CrewTransferContainer* + count, k check-only). Structs are read
+  through their stock layouts (mirrored in C with static asserts; the Lua core compares the menus' cdefs with ffi.sizeof/offsetof at
+  the arming and refuses on a difference). Strings are kept once per batch (a ship's loadout repeats its macros). Components are runtime
+  ID + 32-bit portable check (the replay's reference), or zero, or "the answer of record j of this batch".
+  The batch travels as parts, op 0x50 (a Lua-run op: the replay's native section check accepts it with the families armed), up to 197
+  bytes each, at most 48 parts (9456 bytes), all or none: a batch that does not fit the replay's queue is dropped before anything is
+  queued (nothing ran anywhere; a row and the info line). One part per tick fits next to the stock record (section 236 bytes).
+1d Commit scopes (Lua). The stock menu functions that pay and build in one click are wrapped once each menu exists (the handlers look
+  them up when the menu is displayed): ShipConfigurationMenu.buttonConfirm and .buttonInstallMod, StationConfigurationMenu
+  .buttonConfirmMoney, .buttonSetMoneyToEstimate and .buttonBuyPlot, MapMenu.buttonBuyPlot and .buttonSellShips. Inside one (a person's
+  click: a local phase) the money globals and the repair signal are replaced by capturers for the call and restored after (also on
+  an error), and the batch leaves at the end. Outside the scopes the money calls go to whatever else takes them (the trade family, else
+  the guard refuses them). Every other SignalObject inside a scope goes on to the events family / the guard as before.
+1e Apply (every client, the capturing one included and not earlier). Parts are staged and applied like every Lua-run event (capture
+  tick + delay, slot order, call order); the replay core hands op 0x50 to the build core (registration: S.ops), which reassembles
+  natively per slot (gate.ui_build_part) and, when the last part applies, steps the batch record by record in the probe's frame,
+  canonical (no slot scope), with the replay's bypass on: a claimed call through the entry (the guard passes it, the trampoline runs
+  X4's function), a Lua record through the stock Lua function. A whole batch is checked before its first record runs (version,
+  records, every argument walked): a malformed batch stops (164, ui_build_batch/_record/_claim/_lua). A torn batch (a part missing or
+  out of order: the same parts on every client) is dropped everywhere. A reference that resolves to nothing skips that record
+  (skipped=gone, the same everywhere); a portable check that differs stops (164, ui_ref_mismatch); a fault in a replayed call stops
+  (164, ui_fault).
+1f Receipt. UIBUILD_1:<tick>:<batches completed this tick>:<hash over every batch's bytes and every record's answer> plus :M<player
+  money> joins the replay's receipt (registration: S.extras), so a batch or an answer that differs, or a wallet that parts, is a digest
+  mismatch at that tick. Rows: UI_BUILD_ARMED, UI_BUILD_SCOPES, UI_BUILD_APPLIED (each record, X4's answer), UI_BUILD_DROPPED,
+  UI_BUILD_REFUSED (capture refusals of this client; the info line "Multiplayer: <name> is not shared for your slot yet - nothing
+  happened." at most every 90 ticks), UI_BUILD_STATUS (every 120 ticks), UI_BUILD_SCRIPT, UI_BUILD_FUND.
+
+2. WHAT IS REPLAYED, WHAT THE MENU READS IN THE SAME FRAME, AND HOW THE DELAYED APPLY ANSWERS IT
+  Entry (menu, [F] call site)                      | the menu reads at once                   | answer now / at the apply              | slots
+  AddBuildTask6 (ship configuration buttonConfirm   | the BuildTaskID, only to pass it to      | a token (0x5842554C44 | seq | record);   | all (coop)
+   -> repairandupgrade; via Helper.callLoadout...)  | SetBuildTaskTransferredMoney             | the real ID replaces it in the batch   |
+  SetBuildTaskTransferredMoney (same click)         | -                                        | token -> X4's ID; skipped if X4 gave 0 | all
+  TransferPlayerMoneyTo (inside the scope, first)   | - (GetPlayerMoney checked before)        | runs first in the batch                | all
+  SignalObject 'repairs_initiate' (scope)           | -                                        | in the batch (md build.shiptrader)     | all
+  ReserveBuildPlot (map onRenderTargetSelect)       | the new plot station, to select it and   | 0: the map selects nothing, the plot    | all
+                                                    | to PayBuildPlotSize it in owned sectors  | appears at the apply; PayBuildPlotSize(0)|
+                                                    |                                          | in the batch takes the new plot        |
+  ExtendBuildPlot (updatePlotSize, resetPlotSize)   | bool: then GetBuildPlotSize/Center and   | true; the PayBuildPlotSize right behind | all
+                                                    | PayBuildPlotSize                         | runs only if X4 answered true, with the|
+                                                    |                                          | size and centre read at the apply      |
+  PayBuildPlotSize (buttonBuyPlot, after the above) | -                                        | void                                   | all
+  RemoveBuildPlot2, RemoveBuildStorage              | bool: the list marks the plot removed    | true (the list may show it removed a   | all
+                                                    |                                          | few ticks early; refused: shown again) |
+  SetStationModuleLoadoutLevel (station config)     | -                                        | void (float in xmm1 captured)          | all
+  PerformCrewExchange2 (map crew transfer)          | UICrewExchangeResult.reason              | X4's own answer to the same call as a  | all
+                                                    |                                          | query (checkonly), the call at apply  |
+  AssignHiredActor (hire, replace pilot, manager)   | const char* reason (ignored by real calls)| the query's answer                     | all
+  TakeShipFromInternalStorage                       | bool                                     | the query's answer                     | all
+  ReassignPeople, RemovePerson, ReleasePerson...,   | -                                        | void                                   | all
+  SellPlayerShip (+ TransferMoneyToPlayer in the    |                                          |                                        |
+  buttonSellShips scope), PutShipIntoStorage        |                                          |                                        |
+  ClaimShip, RequestShipFromInternalStorage2        | bool (platform undock closes on true)    | true                                   | all
+  SetComponentName (Lua; map, station config,       | -                                        | a Lua record                           | all
+   player info)                                     |                                          |                                        |
+  Install{Weapon,Engine,Shield,GroupedWeapon,Ship}  | bool / -                                 | true / void                            | slot 1 [I: the mod
+   Mod, Dismantle*Mod (ship configuration)          |                                          |                                        | is the player's
+                                                    |                                          |                                        | inventory ware]
+  InstallPaintMod                                   | bool                                     | true                                   | all with
+                                                    |                                          |                                        | useinventory=0, else 1
+  Costs (known): the capturing menu sees its own change after the delay (one part per tick: a ship purchase with its loadout is 2..4
+  parts, so 5..7 ticks at 30 Hz); a read-back in the same frame (the shipyard's build queue, the plot list, the crew list, GetPlayerMoney)
+  shows the state before. The menu checked money before the click; at the apply another slot may have spent the shared wallet: the
+  purchase still runs (the same everywhere), the balance may go below what the person expected [I: whether X4 refuses a payment below
+  zero is not read; whatever it does, it does on every client].
+
+3. WHAT STAYS REFUSED (the guard, as before) AND WHY
+  - SetConstructionSequenceFromConstructionMap (station configuration buttonConfirm, the plan commit) [F 0x1dc030]: it resolves the
+    container (0xced70), resolves the holomap ID through 0x1beb30 (a UI object of this client), takes the construction map's plan
+    (holomap +0x2c0 -> +0x300), finds the container's builder context (0x3f76f0, then the +0x70 parents to class 0x6f) and builds the
+    change through 0x3aa1d0 (0x390 bytes). The plan the person edited exists only in that client's holomap; there is no stock function
+    that sets a sequence from data (the FFI has Save/Export/Import of library plans and ShowConstructionMap, all through a holomap).
+    Design for the next step (not built): the commit is one record carrying the plan: GetBuildMapConstructionPlan2 (macro, offset,
+    connection, predecessor, fixed, bookmark per module) and each module's loadout (GetConstructionMapItemLoadout2) - several kB, so
+    parts as today - and every client rebuilds it either natively (an own ConstructionPlan builder for 0x3aa1d0, needs the plan's
+    layout: RE) or through a library plan: ExportMapConstructionPlan writes the plan's XML on the capturing client, the bytes travel,
+    every client's gate writes the same file under one name and ImportMapConstructionPlan + an MD cue with create_construction_sequence
+    / apply_construction_sequence on the station applies it. Both need a live look first. Until then the editor's local editing stays
+    local and the commit is refused with the info line (nothing happens anywhere).
+  - CreateNPCFromPerson (player info "replace pilot" without an old pilot): the menu uses the new NPC entity at once (SetEntityToPost,
+    SignalObject npc_state_reinit). A token like AddBuildTask6's would need SetEntityToPost (fleet group) and that SignalObject in the
+    same batch: possible with this mechanism, not claimed yet. The map's pilot replacement through AssignHiredActor is replayed.
+  - SetContainerBuildMethod (trade group): left to the trade family. Hiring a construction vessel (MapMenu.selectCV,
+    InteractMenu.buttonDeployToStation: fee + deploy order) is not a scope: with native_gate_pilot_block_orders the deploy order is
+    blocked, a fee without it would buy nothing; and without a committed plan there is nothing to build.
+  - In factions mode slots 2+ (all of these): slot k's ships are x4lan_player<k>'s, the stock menus treat only `player` as the
+    player's [I], money would leave the `player` account and a build would be `player`'s. Refused at capture (why=factions), skipped at
+    the apply if a client sends one anyway (the same everywhere).
+  - Inventory mods for slots 2+ (why=inventory): the apply is canonical, so X4 would take the mod from slot 1's player's inventory.
+    Needs the apply in slot k's scope (the generic call path of the flight families does that natively in path_release) together with
+    the Lua records in the probe's frame; the order between them is the open question.
+
+4. MONEY, AND THE TRADE FAMILY (coordination)
+  Rule (coordinator default): coop players share the player faction's wallet; in factions mode each player pays from its own faction's
+  account. Here: in coop every slot's purchase moves money from the shared `player` account at the apply tick; in factions mode slots
+  2+ are refused until a per-faction money op exists. Interface for the trade family (please keep or tell): (1) the build core captures
+  TransferPlayerMoneyTo / TransferMoneyToPlayer only inside its commit scopes (1d) and only for the call (the globals are swapped and
+  restored), so a trade wrapper installed before or after is never bypassed outside those scopes and never double-captures inside;
+  (2) the records are Lua records 1 and 2 of a batch (K.LUA), applied through the stock function (or whatever X4LAN_UI_REPLAY_STOCK
+  holds); (3) when the trade family has a money op that pays from slot k's faction account, the build core's records 1/2 for slot k
+  should go through it and factions mode can open slots 2+; (4) SetBuildTaskTransferredMoney (a trade-group entry) is claimed here
+  because it only follows AddBuildTask6 in the same click; (5) bits 1024/2048 and ops below 0x50 are not used here; the guard's claim
+  hook (uiguard_claimed / uiguard_claim_fn) is a single function today: a second claiming family needs a dispatch by entry (trivial).
+  The receipt's :M<money> catches a wallet that parts, whoever moved it.
+
+5. NEXT: RESEARCH, DIPLOMACY, BOARDING (design only; refused by the guard today)
+  - Research [F prototypes, menu_research.lua]: StartResearch(ware, researchmodule) (void) and station-account money in the same menu.
+    A claim "zI"-like (s ware, I module) with a commit scope around the research start: the same mechanism, no read-back. Slots: the
+    player faction's research is shared in coop (any slot); factions mode needs research per faction (not in stock). LearnBlueprint is a
+    trader purchase (menu_trader_blueprintsorlicences: TransferPlayerMoneyTo + LearnBlueprint): scope + claim.
+  - Boarding [F]: the map's boarding menu calls CreateBoardingOperation(target, "player", thresholds) and stops on false, then
+    Add/UpdateAttackerToBoardingOperation (marine tier arrays: two new spec letters, uint32_t*/int32_t* with a count) and
+    StartBoardingOperation, all keyed by target + faction (no returned ID). One click is one batch; "runs only if the record before
+    answered true" generalised to a chain. The operation runs in MD/AI on every client. Faction "player": coop only.
+  - Diplomacy [F]: StartDiplomacyActionOperation (Lua) returns an operation ID the menu keeps (menu.laststartedactionoperation) and
+    diplomacy.xml runs the agents, MD listening on the player: like the events family, slot 1 first (a token for the ID), slots 2+
+    need MD per slot (guard report 4d). AbortActiveDiplomacyActionOperation, SetAgentDiplomacyShip (checkonly: the query's answer),
+    SetDiplomacyEventOperationAgent/Option, SetRelationBoostToFaction (floats on the stack and a double) are plain claims.
+  - Terraforming (StartTerraformingProject) the same as research.
+
+6. RISKS
+  - [I] Objects made by a replayed call in the probe's frame (ReserveBuildPlot's station; later the built ship) take runtime IDs on the
+    route the probe frame's creations take; the queue family's orders (U7) passed live the same way, a plot station was not tried.
+  - [I] AddBuildTask6 / ReserveBuildPlot / crew calls might read the player entity (the canonical one in the probe's frame) for
+    something beyond the faction: then slot k's purchase would be slot 1's in that respect. In coop the faction is the same.
+  - Stock struct layouts: checked against the menus' cdefs at the arming (sizes and every offset used); a menu not loaded yet is only
+    reported (missing=), its first call then uses the mirrored layout.
+  - Scope wrappers are installed when a menu table exists; a menu that is created later than the probe looks would have its first
+    click before the wrapper: then its money call is the guard's refusal while its build call is captured (a purchase without payment).
+    The stock menus exist at UI load [F: table.insert(Menus, menu) at file load]; the row UI_BUILD_SCOPES shows each wrap.
+  - A batch dropped (queue full, too long) after the menu got its answers: the menu believes it happened; nothing happened anywhere.
+  - A person changing the slot ship (claim, sell, storage of the occupied ship) is not guarded beyond what X4 checks.
+  - The live paths are inference until run: AddBuildTask6 with a token-free answer on the capturing client's menu, the build queue on
+    both clients, crew exchange answers equal on both.
+
+7. VERIFIED AND NOT
+  C (test_lockstep_ui_build.h, in build_native_gate.py --test): on a private executable region a stand-in for each of the 29 claims
+  behind the guard's real hook and shared routine, called the way LuaJIT calls them (structs by pointer, a float in xmm1, floats on the
+  stack, a struct returned through the hidden pointer): outside a local phase X4's function runs; in a local phase nothing runs and the
+  predicted answers come back (token, 0, true, the query's answer through the trampoline); a ship purchase with a 24-weapon loadout,
+  crew transfer and build info, a money record and the transferred money: 2+ parts, the order with another family's event, the wire
+  check; two clients apply the same parts: every stand-in sees exactly the menu's contents, the token becomes X4's ID, the receipt is
+  equal; X4 answering 0 skips the dependent record; ReserveBuildPlot + bound PayBuildPlotSize; ExtendBuildPlot true/false and the plot
+  size read at the apply; crew exchange, assign, reassign, take-from-storage; slot rules at capture and at the apply (inventory,
+  paint with and without inventory, factions); unmapped, too long, queue full; torn and malformed batches; gone and mismatched
+  references; past the window. Pinned image: every claim is the FFI entry of its name in the generated guard table, its check-only
+  index and struct return agree, no other family covers it; the two pins (GetBuildPlotSize 0x1c9450, GetBuildPlotCenterOffset
+  0x1c9090) and a tampered byte refusing.
+  Python (tests/test_native_gate_ui_build.py): mirrors (bits, op, Lua records, builder and checker lists); claims vs the inventory;
+  with x4-re: every spec letter vs the stock prototype (types, checkonly, hidden pointer, return kind) and the layouts under LuaJIT's
+  ffi with the stock typedefs; the Lua core (rename, scopes and their records in call order, globals restored on errors, a whole batch
+  through the real replay core's apply, receipt, refusal rows and the info line, script ops, fund); the real probe arming after the
+  guard on the mocked gate, coop/factions, refusals; option checker; builder and overlay.
+  Not live: nothing ran in X4.
+
+8. LIVE TEST SPEC (coordinator; DLL, probe, ui/native_gate_ui_replay_core.lua and the NEW ui/native_gate_ui_build_core.lua of this
+  branch; overlay derived from overlay-Play42P: copy tools/dev/native_gate_ui_build_core.lua to ui/ and list ui/native_gate_ui_build_core.lua
+  in ui.xml.files before ui/native_gate_probe.lua - native_gate_players.py overlay does both; md/native_gate_ui_replay.xml as for G1)
+  What the snapshot gives a script [F, save_009 of snapshot capture 005]: the player owns the scout 00000000000ae79c (CHL-961, slot 1)
+  and its computer, 10,000 Cr; in coop the identity plan makes slot 2's scout 000000000007a8fe `player`'s. Argon Prime (sector
+  0000000000000729) holds the Argon wharf AVK-777 000000000001b5af (S/M build module) and the shipyard NLN-075 000000000001451a (L/XL);
+  no equipment dock module was found in that sector. Money for purchases: the test fund (below).
+  B1 scripted, no people. Append to the Play42P config:
+    X4LAN_CONFIG.native_gate_ui_guard = 'all'
+    X4LAN_CONFIG.native_gate_ui_replay = {'travel','target','orders','autopilot','dock','weapons','queue','missiles','events','flight','build','assets'}
+    X4LAN_CONFIG.native_gate_ui_build_fund = 2000000
+    X4LAN_CONFIG.native_gate_ui_build_script = {{{60,'rename',1,'X4LAN Build One'},{120,'buy','000000000001b5af','ship_arg_s_scout_01_a_macro',90000,'X4LAN Scout A'},{200,'dismantle',1},{260,'plot','0000000000000729',20000,0,-60000,2}},{{75,'rename',2,'X4LAN Build Two'},{135,'buy','000000000001b5af','ship_arg_s_scout_01_a_macro',90000,'X4LAN Scout B'},{215,'dismantle',2},{275,'exchange',2,1}}}
+    (window start 40, delay 3: client 1 at 100, 160, 240, 300; client 2 at 115, 175, 255, 315.) 600 ticks are enough.
+    Pass: relay pass, 0 digest mismatches, census 0, no stop 164; on both clients UI_BUILD_ARMED slot=<k> families=13311 coop=true
+      (missing= ideally empty), UI_BUILD_SCOPES for ShipConfigurationMenu (2), StationConfigurationMenu (3), MapMenu (2);
+      UI_BUILD_FUND tick=36 amount=2000000 money=10000 on both, the receipt's :M12010000 from 36;
+      rename: UI_BUILD_APPLIED tick=103 slot=1 what=SetComponentName(...,X4LAN Build One) and tick=118 slot=2 (X4LAN Build Two) on both;
+      buy: client 1 UI_BUILD_SCRIPT tick=160 op=buy ok=true result=6359739409847288065ULL (the token: 0x5842554C44 | batch 1 << 8 | record 1); on both, when its last part applies
+        (163..167), UI_BUILD_APPLIED rows TransferPlayerMoneyTo(90000,...), AddBuildTask6=<id>, SetBuildTaskTransferredMoney (or
+        "skipped=depends" if X4 answered 0: then on both), the same <id> on both, :M11920000 from that tick on both; client 2's the same
+        from 178.., :M11830000;
+      dismantle: client 1's DismantleShipMod applied on both at 243 (no mod: X4's no-op); client 2: UI_BUILD_REFUSED tick=255
+        op=DismantleShipMod why=inventory on client 2 only, its info line, nothing on client 1;
+      plot: client 1 UI_BUILD_SCRIPT tick=300 op=plot result=0; on both UI_BUILD_APPLIED tick=303 slot=1 what=ReserveBuildPlot=<runtime
+        ID> with the same ID (0 if X4 refused the place: then 0 on both);
+      exchange: client 2 UI_BUILD_SCRIPT tick=315 op=exchange result=reason=<X4's answer to the query>; on both at 318
+        PerformCrewExchange2=<the same answer or ok>;
+      UI_BUILD_STATUS on both: in=<batches>/<parts> equal, torn=0, ran/skipped equal; out= and captured= per client.
+    Fail / send: any UIBUILD_1 mismatch (both clients' UI_BUILD_APPLIED rows and UI_BUILD_STATUS), stop 164 with why=ui_build_* /
+      ui_ref_mismatch / ui_fault (the why), UI_BUILD_DROPPED rows, a refused arming (its message: a stock layout, a claim, the pins).
+    If the buy's AddBuildTask6 answers 0 on both: the wharf did not take the order (relations, blueprint, loadout); the mechanism passed,
+      the purchase did not: try 'ship_arg_s_fighter_01_a_macro' or the shipyard for an L ship.
+  B2 people (two persons, Play42P + the first three lines of B1, no script). Checklist, each person, both clients watched:
+    [ ] rename your own ship and the other slot's ship in the map (right click, rename): the name changes on both screens ~0.1 s later;
+    [ ] player info: rename yourself;
+    [ ] fly to the wharf AVK-777 (Argon Prime), dock, open the ship configuration, buy an S ship with a crew: money drops on both at the
+        same moment, the wharf's build queue (map, the wharf, build queue) shows the order on both; leave the menu, wait for the build
+        (minutes): the ship appears on both, `player`'s;
+    [ ] docked at the wharf, upgrade or repair your scout (configuration, upgrade/repair): same checks; a repair of a damaged ship
+        sends the shipyard's repair signal in the same batch;
+    [ ] once the new ship exists: crew transfer between it and a scout docked at the same station (map, crew transfer); hire a pilot
+        or service crew from a station's NPC (map, hire); fire one crew member; the crew lists match on both;
+    [ ] sell the new ship at the wharf (map, sell ships): money rises on both, the ship leaves on both;
+    [ ] map, build: place a plot in Argon Prime (it appears ~0.1 s later in the plot list; select it), change its size (+/-), buy it
+        (money to the sector owner on both), then open the station configuration and try to confirm a plan: refused with the info line
+        "SetConstructionSequenceFromConstructionMap is not shared ..." on that screen only, nothing happens anywhere (expected);
+    [ ] slot 2 person: try a mod install or dismantle (ship configuration, modification): refused with the info line (inventory); slot 1:
+        the same (if a mod is in the inventory) is applied on both;
+    [ ] put a ship into storage / request it back (interact menu, if a carrier is at hand; optional).
+    Pass: relay pass, 0 mismatches, no stop 164; every action above has UI_BUILD_APPLIED rows equal on both clients at the same tick and
+    no UI_GUARD_REFUSED row for its entry (except the plan commit and the slot 2 mod); UI_BUILD_REFUSED rows only where the list says.
+    Send: all UI_BUILD_* rows, UI_GUARD_REFUSED rows (an entry of these menus the families do not take yet: a candidate), Lua errors in
+    the X4 log after a click (a menu that does not like a predicted answer), screenshots of the build queue and the money on both.
+
+9. FILES
+  New: src/native/engine/lockstep_ui_build.h, lockstep_ui_build_lua.h, test_lockstep_ui_build.h, tools/dev/native_gate_ui_build_core.lua,
+    tests/test_native_gate_ui_build.py, this report.
+  Registration edits in shared files: lockstep_pilot_inputs.h (two family bits), lockstep_ui_replay.h (the op's define and section
+  check, the push hook, the include), lockstep_ui_guard.h (claims: install and decide), lockstep_gate.c (include, Lua methods),
+  test_lockstep_gate.c (the tests), native_gate_ui_replay_core.lua (family names, S.ops, S.extras, tick to ops), native_gate_probe.lua
+  (arming block after the guard), check_gate_options.py and native_gate_players.py (family names, rules, the core file),
+  tests/test_native_gate_ui_replay.py (the family list in three expected messages).

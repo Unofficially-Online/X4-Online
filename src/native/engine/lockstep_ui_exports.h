@@ -34,8 +34,8 @@
  * relay and every client, this one too, calls the export at the apply tick inside the relay
  * bracket (tools/dev/native_gate_ffi_relay.lua): the UI's write happens everywhere at one tick.
  * Fail closed: the export directory must lie inside the image and every patched entry
- * must still hold our stub's RVA at each gate tick (stop reason 182); restored at stop. */
-#define UX_STOP_REASON 182u /* 181 the last module before */
+ * must still hold our stub's RVA at each gate tick (stop reason 195); restored at stop. */
+#define UX_STOP_REASON 195u /* docs/LOCKSTEP-REGISTRY.txt */
 #define UX_MAX 4096u
 #define UX_STUB 16u
 #define UX_RING 8192u

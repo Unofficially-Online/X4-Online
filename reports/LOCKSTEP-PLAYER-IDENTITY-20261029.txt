@@ -46,6 +46,9 @@ relation_missing). Canonical text
   PIDENT_PLAN_1|mode=..|tick=..|occupied=..|reputation=..|slots=k:ship:<id>:<faction>
   or k:create:<macro>/<seed>/<sector>/<x>,<y>,<z>/<yaw>:<faction>,...|relations=a-b:<name>,...
 and its SHA-256 (the plan digest) are identical in Lua and Python.
+Added 1 November: optional "kits" (per-player starts: money, reputation, blueprints, research, map knowledge
+of slot k's own stock start; steps kit/wallet/reputation/blueprint/research/known_sector/known after the
+relations), reports/LOCKSTEP-STARTS-20261101.txt section 5. Plans without kits keep their text and digest.
 
 Occupied ship (factions mode). The singleton `player` entity sits in slot 1's
 ship (00000000000ae79c) on every client. Default: that slot keeps the vanilla

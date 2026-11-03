@@ -1,0 +1,205 @@
+LOCKSTEP ADAPTIVE INPUT DELAY (ROADMAP A3): MEASURED ROUND TRIPS, A PLAN AT TICK 0, AGREED CHANGES, A STALL BOUND
+1 November 2026 | offline work on branch contrib/ferrite-adelay (base: smoke e457b4c9). No X4 was launched and no lane tool was
+run. Evidence: C unit tests (test_gate.exe), Python/LuaJIT unit tests, a discrete-event model of the native client against the
+real relay code, and the real relay process over loopback UDP. "live" marks what only a native run can show.
+
+0. PROBLEM AND RESULT
+  Lookahead k (relay --lookahead, native_gate_lookahead) and the pilot delay (>= k+2) are fixed per session config today. A
+  session far from its relay is slow with k too small; one next to it pays input delay it does not need with k too large. Live
+  1 Nov (relay --latency-ms 100, 2 clients, 30 steps/s): k=1 11.3 steps/s (0.38x), k=3 + delay 5 22.8 (0.76x), 27.3 without
+  latency.
+  Built (all default off; a new protocol 5 on the existing wire, protocols 1-4 byte-identical):
+  1. Measurement: the relay pings every client (NGPING/NGPONG) and logs each one's round trip (min/p50/p90, in the report).
+  2. Plan at tick 0: the relay holds tick 0 until it has 8 round trips per client, picks k from the slowest client's p90 round
+     trip and the target step rate, and announces k and the pilot delay in every permit from permit 1 on. Clients check it
+     against their maximum, adopt the pilot delay before the first gated step and fail closed on any disagreement.
+  3. Changes during a session (--adaptive-changes): an agreed schedule 'from proposal tick c the input lag is L', announced
+     before any client sealed a tick it changes; raising leaves gap permits, lowering makes quiet ticks. Proven exact in the
+     model under jitter, spikes, 2% loss and mixed clients: every input exactly once, in order, never late.
+  4. Stalls: a client the others waited for 1 s is reported (NATIVE_GATE STALL); opt-in, past a second bound it is dropped and
+     the others go on with identical inputs. Slot-bound inputs (its ship's pilot records) still stop the session until drop and
+     rejoin (roadmap D15) exist; section 4 says what that needs.
+  Side finding: the relay's --latency-ms emulation added about 25 ms on Windows (socket timeouts round to the 15.6 ms timer):
+  --latency-ms 100 measured 107..141 ms, p50 125. The 1 Nov live numbers therefore ran at about 125 ms (the model gives 12.4 and
+  24.8 steps/s for k=1 and k=3 at 125 ms with a 36.6 ms frame, against 11.3 and 22.8 measured). Fixed here: with an emulated link
+  the relay polls and sleeps in high-resolution steps; --latency-ms 100 now measures 100.8..111, p50 102.
+
+1. MEASUREMENT
+  NGPING|5|<token>|<slot>|<nonce> from the relay; the client answers NGPONG|5|<token>|<slot>|<nonce>|<held_us> when it reads it.
+  The gate reads its socket only inside gate_tick: at once while it waits for a permit (blocking receive), otherwise in the drain
+  after the frame. held_us is the time since the client last found its socket empty, 0 for a ping that arrived during a blocking
+  receive; the round trip is in [measured-held, measured]. Pings every 20 ms while the relay holds tick 0 (every client is then
+  blocked waiting: exact samples), every 200 ms during the session (one datagram each way per client, 46+60 bytes).
+  The relay keeps both ends per sample: the plan and the report use the middle; session raises use the low end (a ping that
+  waited for a frame does not raise k), lowering uses the high end, which leaves about a frame of hysteresis. Without the held
+  field a 40 ms link read 55..72 ms p90 in the model (frames of 33 ms) and k flapped 2->3->2.
+
+2. THE PLAN AT TICK 0
+  Relay native_gate_relay.py --adaptive --lookahead KMAX [--adaptive-min, --adaptive-target-hz, --adaptive-margin-ms,
+  --adaptive-samples, --adaptive-measure-seconds, --adaptive-headroom]; client native_gate_lookahead = 'adaptive',
+  native_gate_lookahead_max = KMAX (default 4).
+  Choice (tools/dev/native_gate_adaptive.py wanted_k): r = slowest client's p90, f = 1000/tick_hz, target = 1000/target_hz:
+    k = clamp(ceil((r + margin + f)/target - 1), kmin, kmax); target = f gives k = ceil((r + margin)/f).
+  This follows the model period = max(f, (r+f)/(k+1)): k frames must cover the round trip. Margin 10 ms by default. Pilot delay
+  k+2+headroom, lag L = k+1. Tick 0 is held until 8 samples per client (--adaptive-samples) or 5 s after the last tick 0 report;
+  a client with fewer than 2 samples stops the session (adaptive_unmeasured_slot_S). The hold costs about 0.2 s (8 pings 20 ms
+  apart plus a round trip; 155..185 ms in the model); 40 samples took 0.9 s through the real relay on this PC.
+  Announcement: entry 1 (start 0, lag, pilot) rides every permit (NGGO|5 ... |<epoch>|<start>:<lag>:<pilot>|...); tick 0
+  releases permits 1..L, of which 1..L-1 carry no inputs. The client refuses a plan above native_gate_lookahead_max (190).
+  Adoption (lockstep_adaptive.h adapt_pilot_adopt): the plan arrives with tick 0's permits, while stats.issued is 0. With wire
+  pilot records armed the plan's delay replaces the armed one if pilot_config_valid and pilot_delay_covers accept it and no pilot
+  prediction is armed (whose horizon is the armed delay); else 194. Every later reader of pilot_delay (staging, apply, stock
+  first apply at capture start >= 3, UI replay, native hit claims) reads it at run time, so all of them follow from tick 1. The
+  probe arms the pilot records with kmax+2 at the menu and, after a UI reload, with gate.adaptive_plan(). Player orders keep
+  their configured delay, which the probe requires to be >= kmax+1 (their delay is a Lua local of native_gate_player_orders.lua,
+  read once; making it follow the plan is a two-line change there, not made: not my file).
+  Agreement: every client gets the identical permit text, and each permit names its source tick; the client checks it against
+  the schedule it holds (191), the relay checks every report's epoch (adaptive_epoch / adaptive_unannounced) and that quiet
+  ticks carry nothing. The digest comparison stays as it was.
+
+3. CHANGES DURING A SESSION
+  The schedule (Schedule in native_gate_adaptive.py, adapt_* in lockstep_adaptive.h, same rules and the same test numbers):
+  entries (start, lag, pilot); a proposal sealed with tick c applies at c + lag(c).
+  - Raise from start c (lag a -> b): permits c-1+a+1 .. c+b-1 carry no inputs (gaps). The window grows at once: report c-1
+    releases them together with c-1+a.
+  - Lower from start c (a -> b, d = a-b): ticks c-d..c-1 are quiet. Every client seals the empty proposal there (the probe does
+    not call its adapters, so orders, hit claims and octree reports simply go one tick later); no permit carries them; report
+    c-d-1 releases up to c+b-1 = c-d-1+a, so the window shrinks by d.
+  - Over the other ticks the apply tick rises by exactly 1: nothing lost, duplicated or applied before it was sealed.
+  - "Ahead by at least the old K+delay": an entry is announced only when its first changed tick (start, or its first quiet
+    tick) is above the highest permit issued, so no client has sealed it (a client runs at most to the highest permit), and
+    every later permit carries it. One entry in flight: the next only after every client's reports show the previous one.
+  - Release rule in general: report t (not quiet) releases every permit up to c'+L(c')-1, c' the next non-quiet tick after t.
+  - Policy (opt-in, every 2 s on the last interval's pings): raise to the k the low ends need; lower (--adaptive-decrease) to
+    what the high ends allow after 3 intervals in a row. Never above pilot-2.
+  Pilot records today: lockstep_pilot_inputs.h, lockstep_pilot_stock.h, lockstep_pilot_native.h (first apply),
+  lockstep_ui_replay.h and lockstep_hit_native.h use one pilot_delay for the whole session. So with wire pilot records a session
+  change may only raise k up to pilot-2 (the plan's --adaptive-headroom) and never lower it: a quiet tick would leave a record
+  missing at capture+delay. The client refuses that (194) when the entry arrives, instead of stopping later with 91.
+  What the pilot modules need for full changes (follow-up, not mine): delay_at(capture) = lag(capture)+1 from the schedule;
+  staging uses it; at an apply tick without a record after a raise, hold the previous record (stock: no events, which holds the
+  keys), not missing_record; at a quiet tick no capture, and the stock path carries the queued events into the next capture
+  (pstk_build already queues); prediction horizon per tick. The model checks exactly this variant ('schedule' pilot records,
+  apply = capture+lag+1): never late, never two for one tick.
+
+4. STALLS AND DROPOUTS
+  --stall-report-ms (default 1000): when the others have waited that long for a client's report of the next tick, the relay logs
+  NATIVE_GATE STALL slot=S tick=T waited_ms=..., once per client and tick, and lists it in the report (adaptive.stalls). Waiting
+  starts when the first report of that tick arrived (or the tick before was released, if later).
+  --stall-drop-ms (default 0 = never): past it the relay drops S from that tick T: S's blob is empty in every later permit and the
+  permit's mask names S (identical for everyone, monotone; the clients check both), its digest is no longer compared, it is
+  answered NGDROP and sent nothing else (a client that sees itself dropped stops with 193). The others go on: in the model a
+  client dying at tick 150 of 400 is reported after 0.5 s, dropped after 2 s, and the two others finish all 400 ticks with
+  identical inputs. Without the drop bound everyone waits and the clients stop at their wait timeout (7), as today.
+  What the drop does not solve (needs roadmap D15 drop/rejoin): the dropped slot's ship is still in every simulation. Its pilot
+  records stop, so pilot_frame_records stops the session with 91 at the first missing record (fail closed, earlier and named,
+  instead of a 60 s timeout). A dropped slot needs an agreed state for its ship (parked, autopilot, or removed through MD at an
+  agreed tick), its player entity and owned assets, and rejoin needs the save/fork path of roadmap D14. Sessions without
+  slot-bound inputs (orders, octree reports, census) already go on.
+
+5. WIRE EXTENSION (for the peer-link, NAT and encryption work)
+  Protocol 5 is a separate version number in every message; protocols 1-4 are unchanged and an adaptive relay refuses them
+  (lookahead_mismatch_slot_S), an older relay drops protocol 5 (the client then times out with 7), an older DLL has no
+  gate.lookahead_adaptive and the probe refuses. Full text: docs/LOCKSTEP-NSLOT-WIRE.txt, PROTOCOL 5.
+    NGSTATE|5|<token>|<slot>|<tick>|<game>|<real>|<digest>|<clients>|<epoch>|<blob>       client -> relay
+    NGGO|5|<token>|<slot>|<T>|<source or ->|<epoch>|<start>:<lag>:<pilot>|<mask>|<blobs>  relay -> client
+    NGPING|5|<token>|<slot>|<nonce>  /  NGPONG|5|<token>|<slot>|<nonce>|<held_us>
+    NGSTOP|5|<token>|<slot>|<tick>  /  NGDROP|5|<token>|<slot>|<tick>
+  Notes for joining: (a) a permit is a function of (T, source, epoch, mask) and the sealed blobs; peer links that deliver blobs
+  directly can keep the relay's permit as the referee if they carry source and epoch too. (b) The schedule must stay one per
+  session, issued by one party (the relay), because quiet ticks constrain what every client seals. (c) Round trips are measured
+  client-relay; with peer links the relevant quantity becomes the slowest path a blob takes, and the plan's r should be that.
+  (d) Pings are cheap, unauthenticated beyond the shared token like everything else; an AEAD over the relay path covers them.
+  (e) Stop reasons 190-194 are taken (free at this base, whose highest was 181).
+
+6. FILES
+  tools/dev/native_gate_adaptive.py (new): Schedule, RoundTrips, AdaptiveBarrier (protocol 5 relay, subclass of Barrier).
+  tools/dev/native_gate_relay.py: --adaptive options, the periodic poll, LinkDelay (--latency-jitter-ms, --latency-spike,
+    --latency-seed; heap-ordered so datagrams may overtake), high-resolution waits with an emulated link, permit_carries_inputs
+    for protocol 5 (the report is checkpointed before a permit with inputs leaves).
+  src/native/engine/lockstep_adaptive.h (new), lockstep_adaptive_lua.h (new); lockstep_gate.c (packet, frame branch, reset,
+    Lua methods), lockstep_gate_exports.h and lockstep_gate_lua_inputs.h (guarded by LOCKSTEP_ADAPTIVE: the Linux gate, which
+    shares them, compiles unchanged and refuses adaptive; adding it there is the include plus the frame branch).
+  tools/dev/native_gate_probe.lua: config checks, arming, plan logging, quiet ticks, the pilot delay at arming, stop lines.
+  docs/LOCKSTEP-NSLOT-WIRE.txt: PROTOCOL 5.
+  Tests: tests/test_native_gate_adaptive.py (relay rules, schedule, AdaptiveSession model, real relay process),
+  tests/test_native_gate_adaptive_probe.py (LuaJIT probe), src/native/engine/test_lockstep_adaptive.h (in test_gate.exe).
+
+7. SIMULATED SESSIONS (python tests/test_native_gate_adaptive.py --table; 2 clients, 30 steps/s, frame 33.3 ms paced)
+  Fixed windows are protocol 4 (SimulatedSession of test_native_gate_lookahead.py); adaptive is protocol 5 with --lookahead 8.
+    round trip ms | fixed k=1 d=3 | fixed k=3 d=5 | adaptive: k, pilot delay, steps/s
+                0 |          30.0 |          30.0 | k=1 d=3 30.0
+               20 |          30.0 |          30.0 | k=1 d=3 30.0
+               50 |          24.0 |          30.0 | k=2 d=4 30.0
+              100 |          15.0 |          30.0 | k=4 d=6 30.0
+              150 |          10.9 |          21.8 | k=5 d=7 30.0
+              200 |           8.6 |          17.1 | k=7 d=9 30.0
+              300 |           6.0 |          12.0 | k=8 d=10 27.0
+  The plan keeps 30 steps/s up to about 250 ms round trip (k=8 covers 266 ms less the margin) and spends input delay only where
+  the round trip needs it (felt input delay = pilot delay: 100 ms at 20 ms round trip, 200 ms at 100 ms).
+  Jitter, one-way 40..70 ms uniform (round trip 80..140): fixed k=1 13.3, k=3 25.4, k=4 29.9, k=5 30.0; adaptive picks k=5
+  (p90 + margin), 30.0 steps/s.
+  Spike, 40 ms round trip, 240 ms from 6 s to 12 s, 900 ticks: without changes 33.78 s (k=2 throughout); with changes 31.01 s,
+  schedule k=2, k=8 from tick 190, k=2 again from 404 (6 quiet ticks). 30 s is the floor.
+  Live comparison (model, frame 36.6 ms = the 27.3 steps/s measured without latency): 100 ms: k=1 14.6, k=3 27.3; 125 ms: k=1
+  12.4, k=3 24.8, k=4 27.3. The measured 11.3 / 22.8 fit 125 ms, the round trip the old emulation really produced (section 0).
+  Exactness, asserted by the tests on every run: identical permits and sources on every client; every queued input applied
+  exactly once, in order, after it was made; orders (apply tick = proposal + lag) never late; pilot records ('schedule' and
+  'fixed' variants) never late, never two for one tick; sources rise by one except over quiet ticks; quiet ticks never carried.
+  Cases: plan at 0/40/100/150/200 ms; jitter; the spike with raise and lowering; 4 seeds of 4 clients with per-client one-way
+  base latency 2..60 ms, up to 20 ms jitter each way, +200 ms round trip one second in seven, 2% datagram loss, slow frames every
+  13 ticks, policy every 0.7 s;
+  fixed pilot delay with headroom 2 (raises capped at pilot-1); a client crash with and without the drop bound.
+
+8. TESTS RUN (all pass)
+  python tools/dev/build_native_gate.py --zig ... --test --native-image .../X4.exe: every C suite, including
+    "protocol 5 adaptive window: schedule gaps/quiet ticks, permit refusals, exact walk through raises and a lowering, pilot
+    delay adoption, pings with hold, stop/drop/quiet and Lua surface PASS" and the unchanged protocol 4 suite.
+  pytest: test_native_gate_lookahead.py, test_native_gate_nslot.py, test_native_gate.py, test_native_gate_adaptive.py (19),
+    test_native_gate_adaptive_probe.py (6), test_native_gate_lookahead_probe.py, test_native_gate_probe.py,
+    test_native_gate_live.py, test_native_gate_nslot_probe.py, test_native_gate_getup.py, test_native_gate_ssh.py.
+
+9. LIVE TEST SPEC (for the coordinator; 2 clients, people config, 30 steps/s, X4 closed first, profile 45841 as always)
+  Build and install the DLL from this branch as usual. Client config, both clients:
+    X4LAN_CONFIG.native_gate_clients = 2
+    X4LAN_CONFIG.native_gate_lookahead = 'adaptive'
+    X4LAN_CONFIG.native_gate_lookahead_max = 8
+    remove the line X4LAN_CONFIG.native_gate_pilot_delay = ... (native_gate_players.py writes it for wire/stock sources; the
+    probe refuses a configured delay with adaptive); no native_gate_pilot_predict; if player orders are on,
+    native_gate_player_orders_delay >= 9 (kmax+1).
+  Relay: native_gate_relay.py ... --clients 2 --tick-hz 30 --lookahead 8 --adaptive [--latency-ms L] [--status-file ...]
+  Runs (each about 3000 ticks; compare steps/s from released_at with census_perf.py, and the report's adaptive section):
+    A0  L=0                      expect PLAN k=1 pilot_delay=3, speed as the people baseline (27.3 steps/s)
+    A1  L=100                    expect PLAN k=4 (p90 about 101 ms), pilot_delay 6, speed close to A0 (model 27.3)
+    A1b L=100, protocol 4 k=3 d=5 again with this relay: the fixed emulation should now give about 27 steps/s, not 22.8
+    A2  L=100 --latency-jitter-ms 40          expect k=5, speed close to A0
+    A3  L=50 --latency-spike 20,3000,250 --adaptive-changes --adaptive-headroom 6
+                                              expect PLAN k=2 pilot_delay=10 (higher if tick 0 falls into a spike; the
+                                              spike clock starts with the relay), NATIVE_GATE SCHEDULE raises to k=8 in the
+                                              first spike, no lowering (pilot records), both clients in sync
+    A4  L=0 --stall-report-ms 1000, stall one client for 3 s (e.g. hold its window's title bar)
+                                              expect NATIVE_GATE STALL slot=S, the session goes on afterwards
+  Accept: verdict pass (no digest mismatch), ADAPTIVE_PLAN in both clients' logs with the same k and pilot_delay, ADAPTIVE_STOP
+  why=none; for A3 the same ADAPTIVE_SCHEDULE ticks on both clients. Not for live yet: --adaptive-decrease and --stall-drop-ms
+  with the people config (pilot records refuse lowering with 194, and a drop stops at the dropped slot's first missing record).
+
+10. LIMITS AND OPEN
+  - Native evidence is offline only (C tests against a loopback socket, no X4). The first live plan run is A0/A1 above.
+  - Pilot records, the stock path, UI replay and hit claims keep one pilot delay per session (section 3): full session changes
+    with them need those modules to read delay_at(capture). Orders keep their configured delay.
+  - The Linux gate does not have protocol 5 yet (shared headers are guarded; it refuses). A mixed Windows/Linux session needs the
+    include and the frame branch in gate_linux.c and a Linux build.
+  - The choice uses the slowest client's p90 over 8 samples taken while everyone waits at tick 0; a client whose round trip is
+    worse later is only covered with --adaptive-changes (and, with pilot records, the headroom).
+  - Drop/rejoin of a player's ship and assets (D15) is not designed here beyond what section 4 lists.
+
+11. FIRST LIVE RESULTS (coordinator, 2 November 2026; build199, session defaults, 2 clients, 3000 ticks, stock demo pilots)
+  run  relay                        plan              steps/s  digests        census at 1800
+  a0d  --adaptive                   k=1 pilot_delay=3  29.75   no mismatch    0 of 528,288
+  a1d  --adaptive --latency-ms 100  k=4 pilot_delay=6  29.74   no mismatch    0 of 528,288
+  p2d  fixed k=3 d=5, --latency-ms 100  (no plan)      29.09   no mismatch    0 of 528,288
+  A0 and A1 as the spec expected: the same plan on both clients, ADAPTIVE_STOP why=none. At 100 ms the plan holds the zero-latency speed.
+  p2d is A1b with a different stack from a1d (render frames on, see below), so 29.09 against 29.74 is not a clean comparison.
+  Limits found: adaptive excludes render frames (defaults key @fixed): a0d and a1d show no RENDER_FRAMES lines, so an adaptive session draws one
+  frame per step. Own-ship prediction under adaptive kept the horizon armed at the menu (kmax+2 = 10, h_eff=10 at delays 3 and 6): fixed by
+  opred_delay_adopted, not yet retested live. A2, A3 and A4 not run yet.

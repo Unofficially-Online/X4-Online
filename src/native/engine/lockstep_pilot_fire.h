@@ -188,6 +188,7 @@ static unsigned pfire_collect_in(unsigned char *ship,pfire_gun out[PFIRE_GUNS],u
     return n;
 }
 static unsigned char pfire_wanted(const pilot_slot *s,unsigned slot,uint64_t tick) {
+    if(pilot_slot_silent(slot,tick,pilot_delay)) return 0;   /* absent (hot join): no trigger before its first record */
     if(pfire_mode==PFIRE_SCRIPT) return (!pfire_script_mask || (pfire_script_mask>>(slot-1)&1u)) && tick>=pilot_start && (tick-pilot_start+slot*7)%120<30;
     if(pnat_mode==PNAT_MODE_STOCK && (pstk_slot_mask>>(slot-1)&1u)) return pstk_fire_tick[slot-1]==tick && pstk_fire_on[slot-1];
     return s->driving && (s->record.buttons&1) && !(s->record.mode&PILOT_MODE_TRAVEL);
@@ -327,7 +328,7 @@ static int pfire_before_release(void) {
     if(pilot_frame_tick!=tick) {pfire_stage="frame";return 0;}
     for(unsigned i=0;i<pilot_slot_count;i++) {
         pilot_slot *s=&pilot_slots[i];pfire_slot *f=&pfire_slots[i];
-        if(tick<pilot_start || !s->resolved) continue;
+        if(tick<pilot_start || !s->resolved || !pilot_slot_enrolled(i+1,tick)) continue;   /* absent: its guns stay its AI's */
         if(uirep_families&UIREP_FAMILY_MISSILES) pfire_missiles_tick(s,i+1,tick,tick>pilot_stop);
         if(tick>pilot_stop) {if(!pfire_end(s,f,i+1)) return 0;continue;}
         if(!f->leased && !pfire_lease(f,s->object)) {pfire_stage="lease";return 0;}
@@ -348,6 +349,9 @@ static int pfire_before_release(void) {
     pfire_tick=tick;++pfire_frames;pfire_stage="live";return 1;
 }
 /* Slot 6: the guns' native firing state after this tick's walk. */
+static int hyb_slot_private(unsigned slot); /* lockstep_hybrid.h */
+/* With hybrid sectors (native_gate_hybrid) an owning slot's guns are reloaded as before but stay out of the
+ * fold and the firing count: they are its sector's state. */
 static int pfire_frame_text(char *out,size_t capacity) {
     uint64_t fold=0;unsigned firing=0;double now=0;int timed=pfire_now(&now);
     if(!timed) ++pfire_reload_skips;
@@ -359,19 +363,21 @@ static int pfire_frame_text(char *out,size_t capacity) {
             if(timed) ((pfire_reload_fn)(image+PFIRE_RELOAD))(f->guns[g].object,now);
             if(!read_local(f->guns[g].object+PFIRE_FIRING,&active,1) || !read_local(f->guns[g].object+PFIRE_LAST_SHOT,&last,8) ||
                !read_local(f->guns[g].object+PFIRE_MAGAZINE,&magazine,4)) {pfire_stage="receipt";InterlockedIncrement64(&pfire_failures);return 0;}
+            if(hyb_slot_private(i+1)) continue;
             memcpy(&bits,&last,8);firing+=active!=0;
             fold+=lockstep_seed(PFIRE_DOMAIN,stats.issued,pilot_slots[i].saved,g,bits,((uint64_t)active<<32)|magazine);
         }
     }
     for(unsigned i=0;(uirep_families&UIREP_FAMILY_MISSILES) && i<pilot_slot_count;i++)
-        fold+=lockstep_seed(PFIRE_DOMAIN^0x4dULL,stats.issued,pilot_slots[i].saved,pfire_missiles[i].shooting,
+        if(!hyb_slot_private(i+1)) fold+=lockstep_seed(PFIRE_DOMAIN^0x4dULL,stats.issued,pilot_slots[i].saved,pfire_missiles[i].shooting,
             pfire_missiles[i].shooting?pfire_missiles[i].target:0,pfire_missiles[i].count);
     pfire_receipt_tick=stats.issued;pfire_receipt=fold;pfire_frame_firing=firing;
     int n=snprintf(out,capacity,"PFIRE_1:%llu:%u:%016llx",(unsigned long long)stats.issued,firing,(unsigned long long)fold);
     /* Missiles: per slot shooting.launchers after the fold, the target in the fold (runtime IDs agree on every client). */
     for(unsigned i=0;n>0 && (size_t)n<capacity && (uirep_families&UIREP_FAMILY_MISSILES) && i<pilot_slot_count;i++) {
         const pfire_missile_slot *m=&pfire_missiles[i];
-        int more=snprintf(out+n,capacity-(size_t)n,"%s%u.%u",i?"/":":M",m->shooting,m->count);
+        int more=hyb_slot_private(i+1)?snprintf(out+n,capacity-(size_t)n,"%sh",i?"/":":M"):
+                 snprintf(out+n,capacity-(size_t)n,"%s%u.%u",i?"/":":M",m->shooting,m->count);
         if(more<0) return 0;
         n+=more;
     }

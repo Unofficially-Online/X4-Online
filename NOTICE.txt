@@ -8,12 +8,19 @@ Ownership of individual contributions remains with their respective rights holde
 X4: Foundations, its executable, game content and trademarks belong to their
 respective rights holders. This project grants no rights to those materials.
 Separately licensed dependencies retain their own licenses and notices; see
-LICENSING.md and tools/distribution/THIRD-PARTY.txt. Preserve the license and required
+LICENSING.md and the notices below. Preserve the license and required
 notices when sharing this project's source or binaries, including modified copies.
 
 Jolt Physics 5.5.0, Copyright 2021 Jorrit Rouwe, MIT License: built from the official
 source tag for the portable physics module and its offline tests. License and pin:
 third_party/JoltPhysics-5.5.0/LICENSE and PIN.txt.
+
+Monocypher 4.0.2, Copyright (c) 2017-2023 Loup Vaillant, (c) 2017-2019 Michael Savage,
+(c) 2017-2023 Fabio Scotoni, dual-licensed CC0-1.0 or BSD-2-Clause (used here under either):
+vendored unchanged in third_party/monocypher-4.0.2/ for the opt-in lockstep wire crypto
+(ChaCha20-Poly1305, Ed25519, X25519, BLAKE2b) and compiled into the gate modules and the
+x4mp_wire_crypto relay library. Licence, authors and pin: third_party/monocypher-4.0.2/
+LICENCE.md, AUTHORS.md and PIN.txt; keep LICENCE.md with copies and with those binaries.
 
 Third-party source included in this repository: src/native/portable_math/musl/
 is derived from the math library of musl libc (MIT license; parts Copyright (C)
