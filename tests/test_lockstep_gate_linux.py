@@ -195,6 +195,18 @@ class LiveRunner(unittest.TestCase):
             watch.poll()
             self.assertTrue(watch.stopped)
             self.assertEqual(watch.stop_reason, 72)
+            # The session defaults' loud rows are recorded, not fatal (as in the Windows lane runs; w3b2 stopped at tick 1 on
+            # one); any other ERROR or REFUSED is.
+            loud = Path(tmp) / 'loud.log'
+            loud.write_text('[=ERROR=] 9.0 [X4LAN] NATIVE_GATE ERROR DEGRADED status=SCRIPT_RNG unmapped=362 (+362) tick=1\n'
+                            '[=ERROR=] 9.0 [X4LAN] NATIVE_GATE ERROR DEFAULT_SKIPPED key=native_gate_render_fps why=x\n')
+            watch = live.LogWatch(loud)
+            watch.poll()
+            self.assertIsNone(watch.failure)
+            with loud.open('a') as stream:
+                stream.write('[=ERROR=] 9.1 [X4LAN] NATIVE_GATE ERROR capture failed stage=x\n')
+            watch.poll()
+            self.assertTrue(watch.failure.startswith('NATIVE_GATE ERROR capture failed'))
         error = live.stop_error
         # One failed: the peer gets a moment to report its own, never long.
         self.assertIsNone(error({1: 72}, {1: 100.0}, 100.0 + live.FAILED_STOP_PEER - 1))

@@ -370,7 +370,9 @@ class LogWatch:
                 self.stopped = True
                 reason = re.search(r'NATIVE_GATE STOP .*?reason=(\d+)', text)
                 self.stop_reason = int(reason.group(1)) if reason else -1
-            if self.failure is None and re.search(r'NATIVE_GATE (?:REFUSED|ERROR)', text):
+            # As the Windows lane runs: the session defaults' loud rows (a degraded counter grew, a default skipped) are
+            # recorded, not fatal; every other ERROR and any REFUSED is.
+            if self.failure is None and re.search(r'NATIVE_GATE (?:REFUSED|ERROR (?!DEGRADED|DEFAULT_SKIPPED))', text):
                 self.failure = text[text.index('NATIVE_GATE'):][:300]
 
 
