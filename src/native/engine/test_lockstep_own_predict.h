@@ -354,13 +354,18 @@ static void test_opred_present(void) {
     int saved_mode=render_rng_mode,saved_installed=render_rng_installed;DWORD saved_ui=ui_thread;
     unsigned char saved_bank[0xe0];memcpy(saved_bank,image+0x2f4b750,sizeof(saved_bank));unsigned char *saved_pnat=pnat_base;
     /* Refusals first: no split, observe split, pins; then armed. */
-    render_rng_installed=0;predict_pins_checked=1;
+    int saved_rdisp_pins=rdisp_pins_checked;
+    render_rng_installed=0;predict_pins_checked=1;rdisp_pins_checked=1;
     {   const char *why;stats.active=1;stats.issued=0;stats.slot=1;pilot_slot_count=2;pilot_source=PILOT_SOURCE_WIRE;pilot_delay=3;pilot_armed=1;
         pnat_armed=1;pnat_mode=PNAT_MODE_STOCK;pstk_capturing=1;pstk_capture_slot=1;pstk_slot_mask=3;
         assert(!opred_arm(OPRED_PRESENT,1,150,10,&why) && !strcmp(why,"present_without_render_split"));
         render_rng_installed=1;render_rng_mode=RENDER_RNG_OBSERVE;assert(!opred_arm(OPRED_PRESENT,1,150,10,&why));
         render_rng_mode=RENDER_RNG_SPLIT;predict_pins_checked=0;assert(!opred_arm(OPRED_PRESENT,1,150,10,&why) && !strcmp(why,"present_pins"));
-        predict_pins_checked=1;
+        /* The camera bank's pins too (the bank follows the presented ship): bytes not X4.exe 9.00's refuse present and swap. */
+        predict_pins_checked=1;rdisp_pins_checked=-1;
+        assert(!opred_arm(OPRED_PRESENT,1,150,10,&why) && !strcmp(why,"present_pins") && !opred_arm(OPRED_SWAP,1,150,10,&why));
+        assert(opred_arm(OPRED_OBSERVE,1,150,10,&why));opred_armed=0;opred_mode=OPRED_OFF;
+        rdisp_pins_checked=1;
     }
     render_rng_state=1;render_rng_frame=UINT64_MAX;ui_thread=GetCurrentThreadId();
     topr_setup(OPRED_PRESENT,1);
@@ -431,7 +436,7 @@ static void test_opred_present(void) {
     stats.reason=saved_reason;
     topr_teardown();
     render_rng_mode=saved_mode;render_rng_installed=saved_installed;render_rng_calls=render_rng_steps=render_rng_unknown=render_rng_ids=0;
-    render_rng_frame=UINT64_MAX;render_rng_stage="idle";predict_pins_checked=0;ui_thread=saved_ui;
+    render_rng_frame=UINT64_MAX;render_rng_stage="idle";predict_pins_checked=0;rdisp_pins_checked=saved_rdisp_pins;ui_thread=saved_ui;
     pnat_base=saved_pnat;memcpy(image+0x2f4b750,saved_bank,sizeof(saved_bank));*(unsigned*)(image+PREDICT_VIEW_INDEX)=saved_view;
     stats.slot=saved_slot;stats.issued=saved_issued;stats.active=saved_active;
 }

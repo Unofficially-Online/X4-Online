@@ -186,12 +186,11 @@ D.ON={
  {'native_gate_pilot_foot_slots',true,'native_gate_pilot_foot native_gate_pilot_stock_slots','slots 2..N get up and walk'},
  {'native_gate_player_settings_per_slot',true,'native_gate_ui_replay~faction','each slot its own faction settings'},
  {'native_gate_guidance_local',true,'native_gate_pilot_present native_gate_runtime_ids_local native_gate_script_rng native_gate_md_timed_rng','a client own guidance takes local runtime IDs'},
- -- Prediction first: render frames are skipped while it presents (they flash together, render report section 17).
- {'native_gate_own_predict','present','native_gate_pilot_stock native_gate_render_rng_split','the own ship answers the controls at once (display only)'},
- {'native_gate_own_predict_rows',0,'native_gate_own_predict','no per-step OWN_PREDICT row (diagnostic); OWN_PREDICT_STATUS every 600 ticks stays'},
- {'native_gate_render_fps',60,'@fixed @no_present native_gate_lookahead native_gate_tick_hz native_gate_snapshot_sha native_gate_serial_pathing native_gate_radar_serial native_gate_render_rng_split native_gate_mass_traffic=sync native_gate_region_pass=sync native_gate_runtime_ids_local','render-only frames between the steps, up to 60 per second'},
+ {'native_gate_render_fps',60,'@fixed native_gate_lookahead native_gate_tick_hz native_gate_snapshot_sha native_gate_serial_pathing native_gate_radar_serial native_gate_render_rng_split native_gate_mass_traffic=sync native_gate_region_pass=sync native_gate_runtime_ids_local','render-only frames between the steps, up to 60 per second'},
  {'native_gate_render_camera','extrapolate','native_gate_render_fps','the camera moves in the render-only frames'},
  {'native_gate_render_motion','extrapolate','native_gate_render_fps','moving objects drawn smoothed in the render-only frames'},
+ {'native_gate_own_predict','present','native_gate_pilot_stock native_gate_render_rng_split','the own ship answers the controls at once (display only)'},
+ {'native_gate_own_predict_rows',0,'native_gate_own_predict','no per-step OWN_PREDICT row (diagnostic); OWN_PREDICT_STATUS every 600 ticks stays'},
 }
 -- Why a '!' conflict won (added to the skip reason).
 D.CONFLICTS={
@@ -492,8 +491,6 @@ local CONDITIONS={
  ['@wire3']={function(cfg) return type(cfg.native_gate_clients)=='number' end,'needs the protocol 3 input wire (native_gate_clients)'},
  ['@plan']={function(cfg) return type(cfg.native_gate_player_identity_plan)=='table' end,'needs native_gate_player_identity_plan'},
  ['@fixed']={function(cfg) return cfg.native_gate_lookahead~='adaptive' end,'protocol 5 (native_gate_lookahead=adaptive) excludes it'},
- ['@no_present']={function(cfg) local m=cfg.native_gate_own_predict;if type(m)=='table' then m=m[1] end;return m~='present' and m~='swap' end,
-  'own-ship prediction presents: with render-only frames single frames flash (render report section 17); set native_gate_render_fps for both'},
 }
 -- nil when every token of needs holds, else the first reason.
 function D.unmet(cfg,needs)

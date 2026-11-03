@@ -311,10 +311,12 @@ class TableTests(unittest.TestCase):
         self.assertEqual(set(defaults.modes(play['native_gate_ui_replay'])) - set(defaults.modes(values['native_gate_ui_replay'])), set())
         # What the defaults add to Play42P: the newer features.
         added = sorted(set(rep['applied']) - set(play))
-        self.assertEqual(added, sorted(['native_gate_ui_guard', 'native_gate_pilot_foot', 'native_gate_player_settings_per_slot', 'native_gate_own_predict',
+        self.assertEqual(added, sorted(['native_gate_ui_guard', 'native_gate_pilot_foot', 'native_gate_player_settings_per_slot', 'native_gate_render_fps',
+                                        'native_gate_render_camera', 'native_gate_render_motion', 'native_gate_own_predict',
                                         'native_gate_own_predict_rows', 'native_gate_player_identity', 'native_gate_pilot_foot_bodies',
                                         'native_gate_pilot_foot_slots', 'native_gate_nav_mesh', 'native_gate_character_play']) if 'native_gate_player_identity' not in play else
-                         sorted(['native_gate_ui_guard', 'native_gate_pilot_foot', 'native_gate_player_settings_per_slot', 'native_gate_own_predict', 'native_gate_own_predict_rows',
+                         sorted(['native_gate_ui_guard', 'native_gate_pilot_foot', 'native_gate_player_settings_per_slot', 'native_gate_render_fps',
+                                 'native_gate_render_camera', 'native_gate_render_motion', 'native_gate_own_predict', 'native_gate_own_predict_rows',
                                  'native_gate_pilot_foot_bodies', 'native_gate_pilot_foot_slots', 'native_gate_nav_mesh', 'native_gate_character_play']))
 
 
@@ -349,9 +351,8 @@ class ApplyTests(unittest.TestCase):
     def test_a_session_gets_the_whole_stack_once(self):
         lua = lua_session()
         R = report(lua)
-        self.assertEqual(len(R.applied), len(defaults.ON_KEYS) - 7)
+        self.assertEqual(len(R.applied), len(defaults.ON_KEYS) - 4)
         self.assertEqual(sorted(s[1] for s in items(R.skipped)), sorted(['native_gate_lookahead_max', 'native_gate_wire_crypto', 'native_gate_peer_window',
-                                                                          'native_gate_render_fps', 'native_gate_render_camera', 'native_gate_render_motion',
                                                                           'native_gate_peer_rendezvous_port']))
         cfg = lua.globals().X4LAN_CONFIG
         self.assertEqual(items(cfg.native_gate_pilot_slots), ['00000000000ae79c', '000000000007a8fe'])
@@ -360,7 +361,7 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(items(cfg.native_gate_pilot_window), [40, 72000])
         self.assertEqual(items(cfg.native_gate_ui_replay), defaults.TABLE['families'])
         self.assertEqual((cfg.native_gate_lookahead, cfg.native_gate_pilot_delay, cfg.native_gate_render_fps, cfg.native_gate_own_predict),
-                         (1, 3, None, 'present'))
+                         (1, 3, 60, 'present'))
         # Death and on foot arm together (deathfoot merged): death, bodies and slots are all on.
         self.assertTrue(cfg.native_gate_pilot_death)
         self.assertTrue(cfg.native_gate_pilot_foot_bodies)
@@ -369,9 +370,9 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(lua.eval('X4LAN_NATIVE_GATE_DEFAULTS.apply(X4LAN_CONFIG)==X4LAN_CONFIG._native_gate_defaults'), True)
         lua.execute('X4LAN_NATIVE_GATE_DEFAULTS.announce(X4LAN_CONFIG._native_gate_defaults)')
         logs = items(lua.globals().logs)
-        self.assertEqual(sum('ERROR DEFAULT_SKIPPED' in line for line in logs), 7)
+        self.assertEqual(sum('ERROR DEFAULT_SKIPPED' in line for line in logs), 4)
         self.assertEqual(len(items(lua.globals().info)), 1)
-        self.assertIn('7 default features are off', items(lua.globals().info)[0])
+        self.assertIn('4 default features are off', items(lua.globals().info)[0])
 
     def test_explicit_values_win(self):
         lua = lua_session(",native_gate_render_fps=false,native_gate_pilot_death='off',native_gate_status_stride=1,native_gate_ui_guard=false")
@@ -390,22 +391,6 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(skipped['native_gate_ui_replay:build'], 'needs native_gate_ui_guard (off)')
         self.assertEqual(skipped['native_gate_pilot_foot'], 'needs native_gate_ui_guard (off)')
         self.assertEqual(skipped['native_gate_player_settings_per_slot'], 'needs native_gate_ui_replay with faction')
-
-    def test_render_frames_wait_while_the_prediction_presents(self):
-        # Render-only frames with a presenting own-ship prediction flash single frames (render report section 17).
-        R = report(lua_session(''))
-        skipped = {s[1]: s[2] for s in items(R.skipped)}
-        self.assertIn('own-ship prediction presents', skipped['native_gate_render_fps'])
-        self.assertEqual(skipped['native_gate_render_camera'], 'needs native_gate_render_fps (off)')
-        # Prediction measuring only: render frames on again; both explicitly: the session gets both.
-        cfg = lua_session(",native_gate_own_predict='observe'").globals().X4LAN_CONFIG
-        self.assertEqual((cfg.native_gate_render_fps, cfg.native_gate_render_camera, cfg.native_gate_own_predict), (60, 'extrapolate', 'observe'))
-        cfg = lua_session(',native_gate_render_fps=60').globals().X4LAN_CONFIG
-        self.assertEqual((cfg.native_gate_render_fps, cfg.native_gate_render_camera, cfg.native_gate_own_predict), (60, 'extrapolate', 'present'))
-        # The Python mirror agrees.
-        self.assertIsNotNone(defaults.unmet({'native_gate_own_predict': "'present'"}, ('@no_present',)))
-        self.assertIsNotNone(defaults.unmet({'native_gate_own_predict': "{'swap','observe'}"}, ('@no_present',)))
-        self.assertIsNone(defaults.unmet({'native_gate_own_predict': "'observe'"}, ('@no_present',)))
 
     def test_death_and_foot_arm_together(self):
         lua = lua_session(',native_gate_pilot_foot_bodies=true')
@@ -548,11 +533,8 @@ class ProbeTests(unittest.TestCase):
         lua.execute('update()')
         logs = items(lua.globals().logs)
         self.assertFalse(any('CONFIG_REFUSED' in l for l in logs), logs[-3:])
-        self.assertTrue(any(l.endswith('DEFAULTS version=1 applied=167 explicit=0 off=0 skipped=7') for l in logs))
-        # Render frames wait while the prediction presents (render report section 17): skipped loudly, not armed.
-        self.assertFalse(any('RENDER_FRAMES_ARMED' in l for l in logs))
-        self.assertTrue(any('DEFAULT_SKIPPED key=native_gate_render_fps' in l for l in logs))
-        for row in ('TICK_RATE_ARMED hz=30', 'PLAYER_IDENTITY BOUND slot=p1 mode=coop slots=2'):
+        self.assertTrue(any(l.endswith('DEFAULTS version=1 applied=170 explicit=0 off=0 skipped=4') for l in logs))
+        for row in ('RENDER_FRAMES_ARMED fps=60', 'RENDER_CAMERA_ARMED mode=extrapolate', 'TICK_RATE_ARMED hz=30', 'PLAYER_IDENTITY BOUND slot=p1 mode=coop slots=2'):
             self.assertTrue(any(row in l for l in logs), row)
         # The stack joins the boot digest; the refused boot is loud: an ERROR row and an info line with the reason.
         boot = [h for h in items(lua.globals().hashed) if h.startswith('SNAPSHOT_BYTES_1|')]
@@ -605,7 +587,7 @@ class CheckerTests(unittest.TestCase):
     def test_an_empty_session_config_validates_to_the_full_stack(self):
         options_bits, failures, rep = options.check_report(SESSION)
         self.assertEqual(failures, [])
-        self.assertEqual(len(rep['applied']), len(defaults.ON_KEYS) - 7)
+        self.assertEqual(len(rep['applied']), len(defaults.ON_KEYS) - 4)
         text, _ = defaults.effective(SESSION)
         for key in rep['applied']:
             self.assertRegex(text, r'X4LAN_CONFIG\.' + key + r' = ')

@@ -71,8 +71,10 @@
  * pose is advanced by that much at its last rates and the correction decays by it. opred_owns(object)
  * is 1 while slot 10 draws that object at a predicted pose (an interpolator leaves it alone);
  * opred_display_pose(slot, offset, out) gives a slot's displayed pose at any offset.
- * Not covered (report): HUD brackets and lead marks (simulated, slot 6), frustum culling and LOD (the
- * camera table), world-space effects; projectiles stay simulated. */
+ * The camera's view bank follows the own ship's displayed pose in every slot 10 call (lockstep_render_display.h,
+ * rdisp_follow_enter): without it the characters in the own cockpit, the eye, culling and LOD stayed at the simulated
+ * camera (client 2's own pilot drawn from inside its head; report section 13).
+ * Not covered (report): HUD brackets and lead marks (simulated, slot 6), world-space effects; projectiles stay simulated. */
 #define OPRED_STOP_REASON 184u
 #define OPRED_HORIZON_MAX 30u
 #define OPRED_HORIZON_CAP 10u
@@ -172,6 +174,13 @@ static unsigned char *opred_open_saved[PILOT_SLOTS],*opred_open_object[PILOT_SLO
 static int opred_open;
 static uint64_t opred_present_calls,opred_present_applied,opred_present_restored,opred_present_lost,opred_present_refused,
     opred_present_stale,opred_present_previous,opred_present_thread;
+/* The camera's view bank follows the presented own ship (lockstep_render_display.h, rdisp_follow_enter): bank written and
+ * put back, eye put back (render-only frames), skipped because stage 2/3 wrote the bank, swapped ship not in the camera's
+ * chain, parent differs, no table, view blocks cached before slot 10. */
+static uint64_t opred_follow_written,opred_follow_restored,opred_follow_eye,opred_follow_rdisp,opred_follow_outside,
+    opred_follow_parent,opred_follow_table,opred_follow_cached;
+/* The camera bank's layout pins (lockstep_render_display.h): present and swap follow with the bank. */
+static int rdisp_pins(void);
 
 /* ---- features: the held controls of a slot, folded from its stock records ---- */
 static int opred_index(const uint16_t *list,unsigned count,unsigned id) {
@@ -642,7 +651,7 @@ static int opred_arm(int mode,int others,unsigned tau_ms,unsigned cap,const char
        !(pstk_slot_mask>>(stats.slot-1)&1u)) {*why="own_slot_not_stock";return 0;}
     if(predict_armed) {*why="pilot_predict_armed";return 0;}
     if(mode!=OPRED_OBSERVE && (!render_rng_installed || render_rng_mode!=RENDER_RNG_SPLIT)) {*why="present_without_render_split";return 0;}
-    if(mode!=OPRED_OBSERVE && !predict_pins()) {*why="present_pins";return 0;}
+    if(mode!=OPRED_OBSERVE && (!predict_pins() || !rdisp_pins())) {*why="present_pins";return 0;}
     memset(opred_slots,0,sizeof(opred_slots));
     for(unsigned i=0;i<pilot_slot_count && i<PILOT_SLOTS;i++) {
         opred_slot *p=&opred_slots[i];
@@ -657,6 +666,8 @@ static int opred_arm(int mode,int others,unsigned tau_ms,unsigned cap,const char
     opred_frames=opred_last_tick=0;opred_failures=0;opred_open=0;memset(opred_open_at,0,sizeof(opred_open_at));
     opred_present_calls=opred_present_applied=opred_present_restored=opred_present_lost=opred_present_refused=0;
     opred_present_stale=opred_present_previous=opred_present_thread=0;
+    opred_follow_written=opred_follow_restored=opred_follow_eye=opred_follow_rdisp=opred_follow_outside=0;
+    opred_follow_parent=opred_follow_table=opred_follow_cached=0;
     opred_armed=1;opred_stage="armed";return 1;
 }
 /* An adaptive plan replaced the delay armed at the menu (kmax+2): the horizon follows, or the ship would be
@@ -713,12 +724,15 @@ static int opred_status(char *out,size_t capacity) {
     static const char *kinds[PREDICT_KINDS]={"model","dead","none","display"};
     int n=snprintf(out,capacity,"mode=%s armed=%d horizon=%u cap=%u delay=%u tau_ms=%u others=%d frames=%llu tick=%llu stage=%s failures=%lld "
         "present_calls=%llu present_applied=%llu present_restored=%llu present_lost=%llu present_refused=%llu present_stale=%llu "
-        "present_previous=%llu present_thread=%llu",
+        "present_previous=%llu present_thread=%llu follow=%llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu",
         opred_mode==OPRED_OBSERVE?"observe":opred_mode==OPRED_PRESENT?"present":opred_mode==OPRED_SWAP?"swap":"off",opred_armed,opred_horizon,opred_cap,pilot_delay,opred_tau_ms,
         opred_others,(unsigned long long)opred_frames,(unsigned long long)opred_last_tick,opred_stage,(long long)opred_failures,
         (unsigned long long)opred_present_calls,(unsigned long long)opred_present_applied,(unsigned long long)opred_present_restored,
         (unsigned long long)opred_present_lost,(unsigned long long)opred_present_refused,(unsigned long long)opred_present_stale,
-        (unsigned long long)opred_present_previous,(unsigned long long)opred_present_thread);
+        (unsigned long long)opred_present_previous,(unsigned long long)opred_present_thread,
+        (unsigned long long)opred_follow_written,(unsigned long long)opred_follow_restored,(unsigned long long)opred_follow_eye,
+        (unsigned long long)opred_follow_rdisp,(unsigned long long)opred_follow_outside,(unsigned long long)opred_follow_parent,
+        (unsigned long long)opred_follow_table,(unsigned long long)opred_follow_cached);
     for(unsigned i=0;n>0 && (size_t)n<capacity && i<pilot_slot_count && i<PILOT_SLOTS;i++) {
         const opred_slot *p=&opred_slots[i];int more;
         if(!p->enabled) continue;

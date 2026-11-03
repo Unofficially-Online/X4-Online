@@ -1313,9 +1313,7 @@ class SessionDefaultsOptionTests(unittest.TestCase):
         options, failures, report = module.check_report(self.SESSION)
         self.assertEqual(failures, [])
         self.assertTrue(report['session'])
-        # Render frames wait while the own-ship prediction presents (render report section 17).
-        self.assertIn('native_gate_own_predict', report['applied'])
-        self.assertNotIn('native_gate_render_fps', report['applied'])
+        self.assertIn('native_gate_render_fps', report['applied'])
         self.assertIn('native_gate_ui_guard', report['applied'])
         self.assertGreater(options, 0)
 

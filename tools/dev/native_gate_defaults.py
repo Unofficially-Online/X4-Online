@@ -225,19 +225,7 @@ def _conditions(values):
                        'needs the protocol 3 input wire (native_gate_clients)'),
             '@plan': ((values.get('native_gate_player_identity_plan') or '').startswith('{'), 'needs native_gate_player_identity_plan'),
             '@fixed': (bare(values.get('native_gate_lookahead') or '') != 'adaptive',
-                       'protocol 5 (native_gate_lookahead=adaptive) excludes it'),
-            '@no_present': (_predict_mode(values) not in ('present', 'swap'),
-                            'own-ship prediction presents: with render-only frames single frames flash (render report section 17); '
-                            'set native_gate_render_fps for both')}
-
-
-def _predict_mode(values):
-    """native_gate_own_predict's mode: the value, or a table's first element (as the Lua condition)."""
-    v = (values.get('native_gate_own_predict') or '').strip()
-    if v.startswith('{'):
-        m = re.match(r'\{\s*([^,}]*)', v)
-        v = m[1].strip() if m else ''
-    return bare(v)
+                       'protocol 5 (native_gate_lookahead=adaptive) excludes it')}
 
 
 def unmet(values, needs):
