@@ -20,6 +20,7 @@ Relay ticks for a full window: window end + 3.
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -64,6 +65,17 @@ def guard_config(census, relay=False):
     if relayed:
         pairs = ','.join(f"{n}='{k}'" for n, k in sorted(relayed.items()))
         text += f"X4LAN_CONFIG.native_gate_ui_relay = {{{pairs}}}\n"
+    # The Lua layer: C functions registered as Lua globals (the UI globals census, .local/ui-lua-globals.json),
+    # non-query names of a game family, are blocked too (native_gate_ui_lua).
+    lua_list = Path(census).with_name('ui-lua-globals.json')
+    if lua_list.is_file():
+        sys.path.insert(0, str(DEV))
+        from ui_export_census import QUERY, family
+        ui_only = re.compile(r'^Notify|^Create(?!Order)|Descriptor|DropDown|Bar$|^Interrupt')  # listeners, widgets
+        lua = sorted(n for n in json.loads(lua_list.read_text())
+                     if not QUERY.match(n) and family(n) not in ('presentation', 'other') and not ui_only.search(n))
+        if lua:
+            text += "X4LAN_CONFIG.native_gate_ui_lua = 'block'\nX4LAN_CONFIG.native_gate_ui_lua_names = {%s}\n" % ','.join(f"'{n}'" for n in lua)
     return text
 
 

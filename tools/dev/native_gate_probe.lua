@@ -489,6 +489,40 @@ local function ui_globals_census(tick)
  ticklog.write('UI_GLOBALS count='..#names..' all='..(classify and 0 or 1))
  for i=1,#names,40 do ticklog.write('UI_GLOBALS names='..table.concat(names,',',i,math.min(i+39,#names))) end
 end
+-- The Lua layer of the UI write guard (native_gate_ui_lua = 'observe'|'block', names in native_gate_ui_lua_names):
+-- C functions registered as Lua globals (AddMoney, AddCargo, CreateOrder, ...) bypass X4.exe's export table, so
+-- each listed global is wrapped: after the boot and outside the probe's application of relayed inputs, a call is
+-- counted with a UI_LUA_ROW for its first calls ('observe') or refused, returning nil ('block'). A UI script that
+-- copied the global into a local before the wrap keeps the original (the census shows the name never called).
+local ui_lua={calls={},blocked=0,armed=false}
+UI_LUA_RELAYING=false -- set by apply_inputs (defined earlier in this file) around the relayed inputs
+local function ui_lua_arm()
+ local mode=cfg.native_gate_ui_lua
+ if not mode or ui_lua.armed then return end
+ assert(mode=='observe' or mode=='block','native_gate_ui_lua must be observe or block')
+ local wrapped=0
+ for _,name in ipairs(cfg.native_gate_ui_lua_names or {}) do
+  local native=rawget(_G,name)
+  if type(native)=='function' then
+   _G[name]=function(...)
+    if ui_events.tick>0 and not UI_LUA_RELAYING then
+     local n=(ui_lua.calls[name] or 0)+1;ui_lua.calls[name]=n
+     if n<=4 then ticklog.write('UI_LUA_ROW tick='..ui_events.tick..' name='..name..' blocked='..(mode=='block' and 1 or 0)) end
+     if mode=='block' then ui_lua.blocked=ui_lua.blocked+1;return nil end
+    end
+    return native(...)
+   end
+   wrapped=wrapped+1
+  end
+ end
+ ui_lua.armed=true
+ log('UI_LUA_ARMED mode='..mode..' wrapped='..wrapped..' listed='..#(cfg.native_gate_ui_lua_names or {}))
+end
+local function ui_lua_status()
+ local total,distinct=0,0
+ for _,n in pairs(ui_lua.calls) do total=total+n;distinct=distinct+1 end
+ return 'calls='..total..' globals_called='..distinct..' blocked='..ui_lua.blocked
+end
 local function ui_write_check(tick)
  if not ui_write_test then return end
  if tick==ui_write_test.tick-1 or tick==ui_write_test.tick+5 then
@@ -534,7 +568,9 @@ local function apply_inputs(tick,s)
  if adapter and adapter.apply then
   -- Relayed inputs are applied on every client: their FFI calls are not local UI writes.
   if cfg.native_gate_ui_exports then gate.ui_exports_relay(1) end
+  UI_LUA_RELAYING=true
   local ok,result=pcall(adapter.apply,tick,s.inputs,clients,tonumber(cfg.slot:sub(2)))
+  UI_LUA_RELAYING=false
   if cfg.native_gate_ui_exports then gate.ui_exports_relay(0) end
   if not ok then error(result,0) end
   return result
@@ -4215,6 +4251,8 @@ local function frame()
   end
   drain_world_trace()
   checkpoint(tick)
+  ui_lua_arm()
+  if cfg.native_gate_ui_lua and tick%(cfg.native_gate_status_stride or 60)==0 then ticklog.write('UI_LUA tick='..tick..' '..ui_lua_status()) end
   ui_write_check(tick)
   ui_globals_census(tick)
   data=data..'|'..assert(world_hash_state,'world hash baseline missing')
