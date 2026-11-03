@@ -38,6 +38,9 @@ FAMILIES = [
     ('UI_LAZY_ROW', ('index', 'chain')),
     ('DRAW_WATCH_ROW', ('index',)),
     ('ACTOR_RNG_ROW', ('index',)),
+    # 'agreed' octrees: a lookup reads 'hidden' on the client whose builder finished first and 'miss' on
+    # the other (both read absent); a differing key or a 'visible' result is the lead.
+    ('NAV_OCTREE_LOOKUP', ('index',)),
 ]
 TICK = re.compile(r'\btick=(\d+)')
 # Status fields that differ between clients in sync (process-local bookkeeping, see docs/LAUNCHER.md):

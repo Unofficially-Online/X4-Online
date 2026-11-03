@@ -890,7 +890,7 @@ local function drain_gravidar_watch(final)
   for _=1,16384 do -- 'deadline'/'agreed': per-frame lookups of pending or hidden octrees, invalidations of records
    local row=gate.nav_octree_lookup_row and gate.nav_octree_lookup_row(row_cursors.nav_octree_lookup)
    if not row then break end
-   log('NAV_OCTREE_LOOKUP '..row);row_cursors.nav_octree_lookup=row_cursors.nav_octree_lookup+1
+   ticklog.write('NAV_OCTREE_LOOKUP '..row);row_cursors.nav_octree_lookup=row_cursors.nav_octree_lookup+1 -- every tick: soaks keep them all
   end
  end
  if cfg.native_gate_supply_wants~=nil then -- stations' wanted supply orders (native_gate_supply_wants)
