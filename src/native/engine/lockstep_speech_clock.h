@@ -19,7 +19,11 @@
  * it, on the same tick everywhere. Pins: the four instructions that read or write the clock (their
  * rip displacements name it). Every gate tick re-checks them; a failure stops the gate with reason
  * 183. Nothing is restored at stop: the clock only runs on. The status shows the clock's bits, so
- * clients can be compared tick by tick. */
+ * clients can be compared tick by tick.
+ * Joining a running session (hotjoin, checkpoint loads): the clients in the session hold
+ * SCLOCK_VALUE plus every frame's addition since tick 0. A joiner at tick T needs that exact
+ * double: the same T additions of the fixed step, in order, from SCLOCK_VALUE (not
+ * SCLOCK_VALUE + T * step, which rounds differently). This module only sets the start. */
 #define SCLOCK_CLOCK 0x6b60e48u
 #define SCLOCK_LOCK 0x6b60e10u
 #define SCLOCK_VALUE 65536.0

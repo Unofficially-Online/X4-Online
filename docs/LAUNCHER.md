@@ -203,6 +203,8 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   clocks: 0x6b60e38 (scaled) and 0x6b60e40 (running while paused too). Each has more than 20
   readers and still starts at each client's boot time. A later split with a timer lead
   should check those first.
+  A client that joins a running session needs the session's clock value, not 65536.0: the
+  same per-frame double additions of the fixed step, replayed from tick 0 (see the header).
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
