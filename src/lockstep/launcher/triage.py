@@ -5,7 +5,7 @@ world parted somewhere in (F - 300, F]. Triage rebuilds the run's overlay (tools
 with the arguments it recorded beside the overlay) with, for those ticks:
 
   - native_gate_trace_window: every module's status line on every tick, not every 60th;
-  - native_gate_world_pages_window: per-object world pages at F - 300 and F (census_world.py);
+  - native_gate_world_pages_window: per-object world pages at the captures around F (census_world.py);
   - row windows (at most 600 ticks each): script RNG scopes, every due-event delivery, formation
     transforms with return chains, UI lazy calls; created-identity rows; event draw rows;
 
@@ -65,15 +65,26 @@ def classify(status_line):
     return 'local' if fields and fields <= KNOWN_LOCAL.get(m.group(2), set()) else 'lead'
 
 
+AFTER = 60  # instrumented ticks after the first mismatch: a rerun parts a few ticks either side of it
+
+
 def window(first, stride=STRIDE):
-    """The ticks to instrument: after the last equal capture up to the first differing one."""
-    return max(1, first - stride + 1), first
+    """The ticks to instrument: up to 600 (the row windows' limit), ending AFTER ticks past the first mismatch.
+    The digest also folds per-tick fixture rows, so a mismatch off the 300-tick world captures says the
+    split is close; reruns of 39,060 parted at 39,066."""
+    return max(1, first - stride + AFTER + 1), first + AFTER
+
+
+def pages(first, stride=STRIDE):
+    """World captures on both sides of the mismatch (the stride's multiples below and above it)."""
+    below = max(1, ((first - 1) // stride) * stride)
+    return below, below + stride
 
 
 def diagnostic_sets(first, stride=STRIDE):
     lo, hi = window(first, stride)
     sets = [f'native_gate_trace_window={{{lo},{hi}}}',
-            f'native_gate_world_pages_window={{{max(1, first - stride)},{first}}}',
+            'native_gate_world_pages_window={%d,%d}' % pages(first, stride),
             'native_gate_script_rng_rows=true', f'native_gate_script_rng_rows_window={{{lo},{hi}}}',
             f'native_gate_event_rng_rows={{{lo},{hi}}}', 'native_gate_event_rng_play_rows=true',
             f'native_gate_path_transforms_rows={{{lo},{hi}}}', f'native_gate_ui_lazy_rows={{{lo},{hi}}}',
@@ -187,7 +198,7 @@ def triage(run_dir, steam_fix=False, log=print):
         if built.returncode:
             raise SystemExit((built.stderr or built.stdout).strip().splitlines()[-1])
     snapshot = Path(summary['snapshot']) if summary.get('snapshot') else None
-    result = session.run(session.Options(clients=2, overlay=out, snapshot=snapshot, ticks=first + 60, observe=True,
+    result = session.run(session.Options(clients=2, overlay=out, snapshot=snapshot, ticks=pages(first)[1] + 60, observe=True,
                                          lookahead=1, timeout=max(900, first // 10), fast=True, steam_fix=steam_fix), log=log)
     rerun = Path(result["run_dir"])
     text = report(rerun, first)

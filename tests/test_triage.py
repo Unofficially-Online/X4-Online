@@ -11,10 +11,12 @@ from lockstep.launcher import triage  # noqa: E402
 
 class Triage(unittest.TestCase):
     def test_window_covers_the_ticks_after_the_last_equal_capture(self):
-        self.assertEqual(triage.window(35700), (35401, 35700))
-        self.assertEqual(triage.window(150), (1, 150))
+        self.assertEqual(triage.window(35700), (35461, 35760))
+        self.assertEqual(triage.window(150), (1, 210))
+        self.assertEqual(triage.pages(35700), (35400, 35700))  # a mismatch on a capture: the one before it
+        self.assertEqual(triage.pages(39060), (39000, 39300))
         sets = triage.diagnostic_sets(35700)
-        self.assertIn('native_gate_trace_window={35401,35700}', sets)
+        self.assertIn('native_gate_trace_window={35461,35760}', sets)
         self.assertIn('native_gate_world_pages_window={35400,35700}', sets)
 
     def test_rebuild_keeps_the_recorded_arguments_and_replaces_out(self):
@@ -26,7 +28,7 @@ class Triage(unittest.TestCase):
             self.assertEqual(args[:3], ['--snapshot', 'S', '--play-mode'])
             self.assertEqual(sum(a.startswith('native_gate_event_rng_play_rows') for a in args), 1)  # not set twice
             self.assertEqual(args[-2:], ['--out', str(Path(tmp) / 'triage-x')])
-            self.assertIn('native_gate_script_rng_rows_window={301,600}', args)
+            self.assertIn('native_gate_script_rng_rows_window={361,660}', args)
             with self.assertRaises(SystemExit):
                 triage.rebuild_args(Path(tmp) / 'unrecorded', Path(tmp) / 'o', 600)
 
