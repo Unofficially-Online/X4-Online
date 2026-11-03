@@ -475,6 +475,8 @@ end
 -- With the UI write census on, tick 2 logs them once (UI_GLOBALS, chunked).
 local function ui_globals_census(tick)
  if tick~=2 or not cfg.native_gate_ui_exports then return end
+ -- X4's UI Lua has no debug library: no way to tell C functions from Lua ones there.
+ if type(debug)~='table' or type(debug.getinfo)~='function' then ticklog.write('UI_GLOBALS unavailable=no_debug_library');return end
  local names={}
  for name,value in pairs(_G) do
   if type(value)=='function' and type(name)=='string' then
