@@ -2077,4 +2077,8 @@ vps-linux-L8-6000 (the L8 bundle unchanged on the VPS, 2 Linux clients), client 
   Linux; the world trace refuses past tick 12, so watch only): w18 = fr31-L2 = L8-6000 at 1170 (timing pair only), while
   w16 differs from w18 (same DLL and config) in exactly those 2 ships. So w16 itself was a Windows run-to-run outlier in this
   1 Nov measurement config (an intermittent same-platform class), and Windows and Linux agree through 1200 in w18/fr31-L2.
-  Next: w19 (overlay-W18, 6000 ticks) against L8-6000 for the real length of the agreement.
+  w19 (overlay-W18, 6000 ticks): against L8-6000 1 at 1200, 12 at 1800, 4,728 at 6000; but w16 vs w19 (both Windows) 14 at
+  1800 and 4,811 at 6000, and w19's OWN two clients differ by 4,360 at 6000. [F] The 1 Nov measurement config (W15/L8, before
+  the long-run fixes of the current defaults) is not self-consistent past about 1200-1800 ticks even on one platform, so it
+  cannot measure Windows vs Linux beyond that. What it shows: Windows and Linux agree through 1200 (w18 = fr31-L2 = L8-6000).
+  A longer comparison needs the current long-run stack on the Linux build (roadmap 12/13).

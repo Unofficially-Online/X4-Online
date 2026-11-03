@@ -207,4 +207,7 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   a3d  --adaptive --latency-ms 50 --latency-spike 20,3000,250 --adaptive-changes --adaptive-headroom 6:
        PLAN k=2 pilot_delay=10, the first spike raised it to k=8 at tick 81 (epoch 2) on both clients, no lowering;
        29.36 steps/s, no mismatch, census 0 of 528,288 at 1800 (build203).
-  A2 and A3 as the spec expected. A4 (a stalled client) not run yet.
+  A2 and A3 as the spec expected.
+  a4d  --adaptive --stall-report-ms 1000, lane b2's X4 frozen 3 s (NtSuspendProcess/NtResumeProcess) about tick 1450:
+       NATIVE_GATE STALL slot=2 tick=1454 waited_ms=1012 in the relay log and report (stalls), the session went on to 3000,
+       no mismatch, census 0 of 528,288 at 1800, both stopped with reason 1, ADAPTIVE_STOP why=none. A0-A4 all pass live.

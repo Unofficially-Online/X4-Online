@@ -18,7 +18,7 @@ A. PLAYABILITY (people sessions)
     Branch contrib/ferrite-predict2, report LOCKSTEP-OWN-SHIP-PREDICTION-20261101.txt (lockstep_own_predict.h,
     native_gate_own_predict, default off; works on one frame per step, join interface for item 1 in its
     section 5; live-test spec O1/O2/P1/P2/G in section 11).
- 3. [A0-A3 live: 100 ms holds 29.7 steps/s, jitter k=5, spikes raise k at an agreed tick, census 0; A4 stall and render frames under adaptive open] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
+ 3. [A0-A4 live: 100 ms holds 29.7 steps/s, jitter k=5, spikes raise k at an agreed tick, a 3 s stall is reported and the session goes on, census 0; render frames under adaptive and dropping a stalled client open] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
     pilot delay from it (today fixed: lookahead 1, delay 3 = 100 ms); later adjust it during a session at an
     agreed step. Cope with spikes and dropouts better than a pause for everyone (a client stalled past a bound
     is dropped; needs item 16). Data, relay --latency-ms 100 (1 Nov): lookahead 1 0.38x speed, lookahead 3 +
@@ -105,7 +105,7 @@ C. PERFORMANCE
     the software-rendered Linux VPS is the likely limit, unmeasured: add frame timing on both sides next time). Census:
     W vs L 5/68/280 at 600/1800/3000, W vs W 1/12/161: the comparison config lacks the play stack, so long runs drift
     even between the two Windows clients. Next: port the people-config keys to the Linux gate (needed for 12 anyway).
-12. [3 Nov: agree through 1200 (w18/fr31-L2/L8-6000); the w16 split at 1170 was a Windows run-to-run outlier; w19 6000 ticks next] Option B, Windows and Linux bit-identical: FR29 (damage 1 float ulp at tick 546 on ship 07336a),
+12. [3 Nov: agree through 1200 (w18/fr31-L2/L8-6000); the W15/L8 config is not self-consistent past ~1200-1800 even on Windows (w19 c1 vs c2 4,360 at 6000): longer comparisons need the current long-run stack on Linux] Option B, Windows and Linux bit-identical: FR29 (damage 1 float ulp at tick 546 on ship 07336a),
     then W15/L8, then 6000-tick comparisons, then player inputs on a Linux peer, then a live mixed session.
 13. [later] Dedicated Linux server that also simulates, so the universe keeps going when players leave.
 14. [J1 2 Nov (j1-27, package v9: T+1 still 17 differ, 2,491 at T+267; before it j1-25, package v8): save at T while the session runs (2.8 s); the joiner loads, restores the side table
