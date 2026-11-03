@@ -22,7 +22,7 @@ DEFAULT_FILES = ['tools/dev/native_gate_probe.lua', 'tools/dev/native_gate_input
 BASE = {'string', 'table', 'math', 'bit', 'coroutine', 'jit', '_G', '_VERSION', 'pairs', 'ipairs', 'next', 'type', 'tostring',
         'tonumber', 'pcall', 'xpcall', 'error', 'assert', 'select', 'unpack', 'rawget', 'rawset', 'rawequal', 'setmetatable',
         'getmetatable', 'require', 'print', 'collectgarbage', 'loadstring', 'load', 'setfenv', 'getfenv', 'package',
-        'Menus'}  # the UI's menu table (not a function, so not in the census)
+        'Menus', 'Helper'}  # the UI's menu and helper tables (not functions, so not in the census)
 # Names X4's UI Lua lacks that the probe may only read behind a type check.
 OPTIONAL = {'debug'}
 
