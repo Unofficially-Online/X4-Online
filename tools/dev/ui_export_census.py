@@ -87,7 +87,7 @@ def ui_lua(game, into):
 
 # FFI argument types -> relay kind letters (lockstep_ui_exports.h); anything else (structs, pointers) has none.
 KIND = {'UniverseID': 'U', 'MissionID': 'q', 'BuildTaskID': 'q', 'TradeID': 'q', 'FleetUnitID': 'q', 'NPCSeed': 'q',
-        'uint64_t': 'q', 'int64_t': 'q', 'int': 'i', 'int32_t': 'i', 'uint32_t': 'i', 'bool': 'b', 'float': 'f',
+        'uint64_t': 'q', 'int64_t': 'q', 'size_t': 'q', 'int': 'i', 'int32_t': 'i', 'uint32_t': 'i', 'bool': 'b', 'float': 'f',
         'double': 'd', 'const char*': 's'}
 
 
