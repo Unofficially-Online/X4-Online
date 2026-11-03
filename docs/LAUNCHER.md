@@ -226,7 +226,7 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   timing as well. Its row windows came after that split and show only the aftermath. Both
   ticks are world capture ticks (multiples of 300): the navigation part is hashed at the
   captures, so the split lies in the 300 ticks before. When a rerun parts before its window,
-  triage needs a second rerun, windowed at the new split.
+  triage now reruns once more, windowed at the rerun's split, and appends that report.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
