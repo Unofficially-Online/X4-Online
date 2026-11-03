@@ -15,9 +15,10 @@ software with a noncommercial restriction, not an OSI open-source project.
 - **Works on one PC:** 2 to 4 clients have held 13 to 20 minutes with zero differing
   objects across about 543,000 compared objects ([census](reports/LOCKSTEP-CENSUS-20261028.txt)).
   Both players fly their own ships and see each other. The 2-hour soak profile
-  (`src/lockstep/profiles/soak.lua`) has held up to 52.7 game minutes (94,800 ticks);
-  the remaining splits are timing-dependent ([findings](docs/LAUNCHER.md)). Two player
-  identities with their own factions and relayed orders held 20 minutes.
+  (`src/lockstep/profiles/soak.lua`) has held up to 55.7 game minutes (100,200 ticks, seed
+  2222222). On three seeds the remaining splits come from the agents' pathing
+  ([findings](docs/LAUNCHER.md)). Two player identities with their own factions and
+  relayed orders held 20 minutes.
 - **Player actions:** a guard counts, blocks or relays every game write the UI makes,
   so one client's click happens on every client at the same tick
   ([players](docs/PLAYERS.md)).

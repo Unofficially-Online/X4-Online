@@ -215,6 +215,13 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   hidden lookup behaves as a miss by design, and an extra aggregated row (miss and hidden in
   one frame) fits that count. Lookup rows had only been written on stride ticks; soaks now
   write every one, and triage compares them.
+- **Seed 2222222: 100,200 ticks (55.7 game minutes),** the longest soak so far (speech clock
+  on). Actor rows were equal to the end. In the stride 100,080..100,140, client 1 made two more
+  script draws (SCRIPT_RNG `draws`) and client 2 more pathing work (PATH_TRANSFORMS `spaces`
+  +9, `walk_end` +20, `objects` +11). At the 100,200 capture only the fourth world hash part
+  differed: the agents' navigation state (`lockstep_world_nav.h`), with positions equal. Soak
+  F's split also showed PATH_TRANSFORMS `spaces` differing. The pathing budget is a count
+  (`native_gate_path_budget`), not the clock, so the extra work comes from somewhere else.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
