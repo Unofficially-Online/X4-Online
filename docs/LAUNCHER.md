@@ -252,6 +252,12 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   agreed and the census would have seen it only at 90,900. So a navigation state parts within one 30-tick stride,
   with no other trace. Next: name the object. Page hashes of the nav index every nav tick, and a short in-memory
   history of per-object hashes written at the stop, would give the first differing page and then its objects.
+- **Seed 2222222 with the nav hash: 109,050 ticks (60.6 game minutes),** the first soak past an hour. The nav hash
+  stopped it (a 30-tick multiple). Actor rows were equal; in the next stride PATH_TRANSFORMS on client 2 composed
+  `spaces` +9 and `diverted`/`objects` +11, the same counts as this seed's split at 100,200 in the earlier soak. So
+  one recurring event, at different game times: most likely one group of 11 objects (a formation) whose path
+  transforms run once more on one client. A per-tick digest of the diverted objects would name the tick, and
+  their keys the group.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
