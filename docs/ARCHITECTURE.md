@@ -53,12 +53,23 @@ of `src/lockstep/base`.
   client's own Steering model at *t + 3*. X4's own controls are parked.
 - **UI replay:** menu actions (autopilot, docking, weapons, missiles, the order
   queue) are re-executed on every client from replayed events.
+- **Player orders:** move, attack, dock, buy, sell and more travel as the `P`
+  section and run as MD orders, checked against the owner of each ship.
+- **Generic FFI relay:** the UI write guard (`lockstep_ui_exports.h`) redirects
+  X4.exe's export table; a game write the UI makes outside the relay is counted,
+  refused or captured and sent in the `X` section, and every client runs it at the
+  apply tick ([PLAYERS.md](PLAYERS.md)). Lua-global writes are wrapped by the probe.
 
 ## Desync handling today
 
 The relay stops on the first mismatching digest, or in observe mode keeps
 running and records every mismatch. The census tools (`tools/dev/census_*.py`)
 compare world captures object by object to name the class that parted.
+`x4ls triage RUN` reruns a diverged session with diagnostic windows around the
+split and reports the first differing row of each family; soaks keep always-on
+attributions (lazy station updates per call site, every drawing actor scope) for
+splits that depend on timing and do not come back in a rerun. Checkpoints
+(`--checkpoint-at`) save every client's world at one tick for `save_diff.py`.
 Recovery (resync from a mid-game save) and joining a running game are the next
 milestone.
 

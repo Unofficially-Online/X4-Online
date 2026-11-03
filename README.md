@@ -14,7 +14,13 @@ software with a noncommercial restriction, not an OSI open-source project.
 
 - **Works on one PC:** 2 to 4 clients have held 13 to 20 minutes with zero differing
   objects across about 543,000 compared objects ([census](reports/LOCKSTEP-CENSUS-20261028.txt)).
-  Both players fly their own ships and see each other.
+  Both players fly their own ships and see each other. The 2-hour soak profile
+  (`src/lockstep/profiles/soak.lua`) has held up to 52.7 game minutes (94,800 ticks);
+  the remaining splits are timing-dependent ([findings](docs/LAUNCHER.md)). Two player
+  identities with their own factions and relayed orders held 20 minutes.
+- **Player actions:** a guard counts, blocks or relays every game write the UI makes,
+  so one client's click happens on every client at the same tick
+  ([players](docs/PLAYERS.md)).
 - **Not yet done:** a session between two PCs (especially Intel vs AMD, whose
   approximate `rcpss`/`rsqrtss` results differ), joining a running game, desync
   recovery, and a packaged release. Windows vs Linux still differs in 35 objects
@@ -52,6 +58,8 @@ the [launcher guide](docs/LAUNCHER.md) for overlays, Steam, and cleanup.
 | `src/rust/x4mp-agent/` | Linux fixed-tick agent used by the Linux gate work |
 | `tools/dev/native_gate_*` | In-game probe (Lua), MD fixtures, overlay builders, relay, desync watcher |
 | `tools/dev/census_*`, `compare_native_world*` | Desync analysis of session logs |
+| `tools/build_soak_overlay.py`, `tools/soak_campaign.py` | Soak overlays (profile, players, UI guard) and unattended multi-seed soaks |
+| `tools/dev/save_diff.py`, `ui_export_census.py`, `probe_globals_check.py` | Checkpoint save diffs, the UI write census, the probe's static globals check |
 | `tests/` | Python/LuaJIT tests (the in-game Lua runs under LuaJIT with a mocked engine) |
 | `docs/` | Architecture, launcher, wire protocol, sandbox, scenarios |
 | `reports/` | Lockstep evidence: census, piloting, UI replay, cross-platform |
