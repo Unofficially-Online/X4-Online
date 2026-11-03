@@ -426,13 +426,28 @@ if ui_write_test then
  pcall(ffi.cdef,'void AddPlayerMoney(int64_t money);')
  pcall(ffi.cdef,'int64_t GetPlayerMoney(void);')
 end
+-- The UI's second API: C functions registered as Lua globals (not FFI, so not in the export table).
+-- With the UI write census on, tick 2 logs them once (UI_GLOBALS, chunked).
+local function ui_globals_census(tick)
+ if tick~=2 or not cfg.native_gate_ui_exports then return end
+ local names={}
+ for name,value in pairs(_G) do
+  if type(value)=='function' and type(name)=='string' then
+   local ok,info=pcall(debug.getinfo,value,'S')
+   if ok and info and info.what=='C' then names[#names+1]=name end
+  end
+ end
+ table.sort(names)
+ ticklog.write('UI_GLOBALS count='..#names)
+ for i=1,#names,40 do ticklog.write('UI_GLOBALS names='..table.concat(names,',',i,math.min(i+39,#names))) end
+end
 local function ui_write_check(tick)
  if not ui_write_test then return end
  if tick==ui_write_test.tick-1 or tick==ui_write_test.tick+5 then
-  ticklog.write('UI_WRITE_TEST tick='..tick..' money='..tostring(ffi.C.GetPlayerMoney()))
+  ticklog.write('UI_WRITE_TEST tick='..tick..' money='..tostring(GetPlayerMoney()))  -- the Lua API global: the FFI getter is restricted to Egosoft code
  end
  if tick==ui_write_test.tick and cfg.slot==ui_write_test.slot then
-  ffi.C.AddPlayerMoney(1);ticklog.write('UI_WRITE_TEST tick='..tick..' called=AddPlayerMoney')
+  local ok,why=pcall(function() ffi.C.AddPlayerMoney(1) end);ticklog.write('UI_WRITE_TEST tick='..tick..' called=AddPlayerMoney ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
  end
 end
 local function checkpoint(tick)
@@ -4139,6 +4154,7 @@ local function frame()
   drain_world_trace()
   checkpoint(tick)
   ui_write_check(tick)
+  ui_globals_census(tick)
   data=data..'|'..assert(world_hash_state,'world hash baseline missing')
  end
  if profile then profile.mark('capture') end
