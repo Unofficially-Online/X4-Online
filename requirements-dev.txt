@@ -1,2 +1,4 @@
 # LuaJIT-backed adapter tests; relay runtime uses Python's standard library only.
 lupa==2.8
+# Test only: the independent reference of the wire crypto tests (tests/test_native_gate_crypto.py).
+cryptography==44.0.0
