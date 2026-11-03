@@ -293,3 +293,25 @@ W4 people session (G5 style), 10 minutes, crypto on: no stop 106/107; desync ind
   Differences from the spec, all from the test harness: the lane runner tears the session down at the first client's
   107 (its fail pattern), so the other client logs stop 6 (window closed) instead of its own 107/7, and the relay is
   stopped before its final report, so hello_refused/dropped_plain are not written. W3 (VPS) and W4 (people) open.
+
+10. W3: THE RELAY ON THE VPS, OVER THE INTERNET (coordinator, 3 November 2026; w3a, build205 = smoke 509ba14c)
+  Setup: the relay of this tree on the VPS (Linux, Python 3.13) in its own run directory, --wire-crypto with a copy of the
+  relay key (mode 600, removed after the run) and libx4mp_wire_crypto.so from build_native_gate_linux.py (zig, glibc 2.17
+  target; native_gate_crypto.py selftest PASS on the VPS), --bind on the VPS address, --allow-from this PC's address,
+  --lookahead 1 --tick-hz 30; two Windows lane clients on this PC through tools/dev/udp_forward.py (the lane tool keeps
+  session configs loopback-only), the session defaults (lookahead 1, render frames, prediction), a fresh token, each slot's
+  credential from it. Round trip PC to VPS 11 ms. tcpdump -i any on the VPS, udp port of the relay, the whole session.
+  Not covered here: a Linux X4 client with crypto (the Linux gate has it; its bundle does not provision a credential yet).
+  Result, all as W1's checks:
+    both ARMED ... wire_crypto=1; WIRE_CRYPTO_KEYED roster 42b1ab5d... on both = the relay report's roster_fingerprint, each
+      key = its slot in wire_crypto.players; WIRE_CRYPTO_STOP established=1 keyed=1 forged=0 replayed=0 dropped=0 on both
+      (establish_ms 234 and 31, one HELLO each);
+    relay verdict pass, first_digest_mismatch null, wire_crypto.failure null, handshakes 2, keys_sent 2, permits_signed 3001,
+      sealed 6034, replayed 0, no bad_signature, no dropped_*;
+    every journal signature verifies: 6,002 of 6,002, ticks 0..3000;
+    both clients STOP reason=1 restored=1 at 3001; census 0 of 528,288 at 1800; render-only frames 1,401 and 808;
+    the capture: 12,177 UDP datagrams on the relay port (6,139 to the relay, 6,038 from it, payload 77..486 bytes, mean 400):
+      none holds a plaintext protocol word (NGSTATE, NGGO, NGSTOP, NGCMD, NGNEXT, NGPOLL, NGQUEUED, NGCAPTURED, NGPHELLO,
+      NGPADDR, NGPFAIL, NGPREFUSE, NGHELLO, NGWELCOME) or the session token (ASCII hex either case, raw 16 bytes), from the
+      first datagram on (the handshake included).
+  W3 passes for Windows clients. W4 (people) and a Linux client with crypto (W3b) are open.
