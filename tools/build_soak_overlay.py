@@ -121,7 +121,7 @@ def main(argv=None):
         if args.players:
             run([DEV / 'native_gate_players.py', 'overlay', '--base', keyed, '--gate-dll', args.gate_dll,
                  '--probe', DEV / 'native_gate_probe.lua', '--out', args.out, '--players', '2', '--mode', args.players,
-                 '--source', 'script', '--orders', 'demo', '--ships', f'{player},{fixture[2]}',
+                 '--source', 'script', '--orders', 'demo', '--ships', f'{player},{fixture[2]}', '--fixture', ','.join(fixture),
                  '--window', '30', str(args.window), '--world-stride', '300',
                  '--trace-stride', '3600', '--fp', 'default', *[x for kv in args.set for x in ('--set', kv)], *args.players_arg])
         else:
