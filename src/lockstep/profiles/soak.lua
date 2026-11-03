@@ -88,3 +88,7 @@ X4LAN_CONFIG.native_gate_ui_lazy = 'key'
 -- (a new pilot's character macro at a drone launch split the clients at tick 35601) start from the same word.
 -- A draw watch over 3600 ticks (native_gate_draw_watch_frame) found the frame-level draws identical on both clients.
 X4LAN_CONFIG.native_gate_seed_rng = true
+-- actor_rng_rows: every drawing keyed actor scope (agent, flight, nav, weapon, ...) as a row, about 3.5 per tick.
+-- Timing-dependent splits (39,060 on the seed snapshot: one more agent draw on one client, not reproduced in every
+-- rerun) cannot be caught by a rerun's row window; the soak's own rows name the actor.
+X4LAN_CONFIG.native_gate_actor_rng_rows = true

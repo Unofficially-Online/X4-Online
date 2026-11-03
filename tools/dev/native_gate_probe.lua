@@ -4186,7 +4186,7 @@ local function frame()
   for _=1,4096 do
    local row=gate.actor_rng_row(row_cursors.actor_rng)
    if not row then break end
-   log('ACTOR_RNG_ROW '..row);row_cursors.actor_rng=row_cursors.actor_rng+1
+   ticklog.write('ACTOR_RNG_ROW '..row);row_cursors.actor_rng=row_cursors.actor_rng+1 -- every tick: soaks keep them all
   end
  end
  if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then
