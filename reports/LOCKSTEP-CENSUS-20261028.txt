@@ -2093,3 +2093,11 @@ SUIT VIEW FIX LIVE (recorded 3 November from the 1 November run missile2, 10:22,
 v12 present but off, pool faction accounts, render frames skipped while prediction presents; the session defaults, 2 clients,
 stock demo pilots with the pilot window to 36000, 30 steps/s): relay pass, 0 digest mismatches through 36,000 ticks,
 28.96 steps/s, both stopped with reason 1; census 0 at 9000, 18000, 27000 and 36000 (550,467 objects at 36000).
+
+20-MINUTE DEFAULT SESSION WITH RENDER FRAMES AND THE CAMERA FOLLOW (3 November, l205-soak: build205 = smoke 509ba14c, the
+session defaults with render frames back (own-ship prediction presenting, the camera bank following the drawn ship), 2 clients,
+stock demo pilots, pilot window to 36000, 30 steps/s): relay pass, no digest mismatch through 36,000 ticks, both stopped with
+reason 1 restored=1; census 0 at 1800, 9000, 18000, 27000 and 36000 (550,467 objects at 36000, as l204-soak). OWN_PREDICT
+failures=0, present_applied = present_restored (95,798 and 81,186), follow written = restored = 35,962 on each client
+(rdisp 11,937 and 4,631: stage 2 followed the swap itself in those render-only frames); render-only frames 12,135 and 4,810,
+RENDER_DISPLAY failures=0 foreign=0 restored=1.
