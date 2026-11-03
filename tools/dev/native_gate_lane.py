@@ -8,8 +8,10 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
+import types
 
 if any(arg=='--getup-diagnostic-config' or arg.startswith('--getup-diagnostic-config=') for arg in sys.argv[1:]):
     _policy_path=Path(__file__).with_name('native_getup_source_only.py')
@@ -103,6 +105,9 @@ def main():
     p.add_argument('--ssh-host')
     p.add_argument('--ssh-remote-script')
     p.add_argument('--getup-diagnostic-config',type=Path,help='explicit closed one-native NGD manifest; never a paired fallback')
+    p.add_argument('--session-token-file', type=Path, metavar='FILE',
+                   help='test only (wire crypto W1/W2): the session uses this token (32 hex digits) instead of a fresh one, '
+                        'so the credential of each slot (native_gate_crypto.py credential) can be made before the run. Only with session')
     p.add_argument('lane_args', nargs=argparse.REMAINDER)
     args = p.parse_args()
     if args.getup_diagnostic_config and 'x4lan_getup_source_only' not in sys.modules:p.error('diagnostic requires the explicit --getup-diagnostic-config option')
@@ -146,6 +151,24 @@ def main():
         if not args.snapshot_in or lane_args[0]!='session':p.error('SSH transport allowance requires a snapshot session')
         from native_gate_ssh_policy import install
         install(lane,args.ssh_host,args.ssh_remote_script)
+    if args.session_token_file:
+        if lane_args[0] != 'session':
+            p.error('--session-token-file is for session runs')
+        fixed = args.session_token_file.read_text(encoding='ascii').strip()
+        if not re.fullmatch(r'[0-9a-f]{32}', fixed):
+            p.error('--session-token-file must hold 32 lowercase hex digits')
+        session_prepare = lane.SessionRun.prepare
+
+        def prepare_with_token(run):
+            # The lane tool draws the session token once, in SessionRun.prepare (secrets.token_hex(16)): only that draw
+            # is answered with the fixed token, through the lane module's own name for secrets.
+            real = lane.secrets
+            lane.secrets = types.SimpleNamespace(token_hex=lambda nbytes=None: fixed)
+            try:
+                session_prepare(run)
+            finally:
+                lane.secrets = real
+        lane.SessionRun.prepare = prepare_with_token
     prepare, collect, restore = lane.Run.prepare, lane.Run.collect, lane.Run.restore
 
     def prepare_with_snapshot(run):

@@ -261,6 +261,7 @@ D.DIAGNOSTIC={
  {'native_gate_actor_rng_rows','actor RNG rows'},
  {'native_gate_command_order_rows','command order rows'},
  {'native_gate_created_rows','created identity rows'},
+ {'native_gate_created_load_stacks','load-created object stacks'},
  {'native_gate_event_rows','event rows'},
  {'native_gate_event_rng_rows','event RNG rows'},
  {'native_gate_script_rng_rows','script RNG rows'},

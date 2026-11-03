@@ -155,9 +155,9 @@ def blob_record(blob):
 
 # ---- the join package ----
 MAGIC = b'X4MPJN01'
-PACKAGE_VERSION = 11          # 1: GATE..LUA; 2: and HEALTH, POSE; 3: and SHIELD, NAV, ATTN, KEYS; 4: and PATH, REGION; 5: and FLIGHT,
-PACKAGE_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)   # SPLINE; 6: and AGENT; 7: and ROUTE; 8: and PARAM, DOCK; 9: and STEER, STEERPT;
-#                                                        10: and SOLVER, BULLET; 11: and GRAV, GRAVC, GRAVS
+PACKAGE_VERSION = 12          # 1: GATE..LUA; 2: and HEALTH, POSE; 3: and SHIELD, NAV, ATTN, KEYS; 4: and PATH, REGION; 5: and FLIGHT,
+PACKAGE_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)   # SPLINE; 6: and AGENT; 7: and ROUTE; 8: and PARAM, DOCK; 9: and STEER,
+#                                                        STEERPT; 10: and SOLVER, BULLET; 11: and GRAV, GRAVC, GRAVS; 12: and SPLM, SPLME, SPLMSEG, GRAVN, GRAVP, GRAVQ
 HEADER = struct.Struct('<8sIIQQQ32sQIIQ')      # 96 bytes
 SECTION = struct.Struct('<IIQ32s')            # 48 bytes before each payload
 SEC_GATE, SEC_IDS, SEC_WAKE, SEC_WAKEVEC, SEC_MDHEAP, SEC_MODULES, SEC_CTX, SEC_LUA, SEC_HEALTH, SEC_POSE = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
@@ -170,12 +170,15 @@ SEC_PARAM, SEC_DOCK = 21, 22
 SEC_STEER, SEC_STEERPT = 23, 24
 SEC_SOLVER, SEC_BULLET = 25, 26
 SEC_GRAV, SEC_GRAVC, SEC_GRAVS = 27, 28, 29
+SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ = 30, 31, 32, 33, 34, 35
 SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC: 'wakevec', SEC_MDHEAP: 'mdheap',
                  SEC_MODULES: 'modules', SEC_CTX: 'ctx', SEC_LUA: 'lua', SEC_HEALTH: 'health', SEC_POSE: 'pose',
                  SEC_SHIELD: 'shield', SEC_NAV: 'nav', SEC_ATTN: 'attn', SEC_KEYS: 'keys', SEC_PATH: 'path', SEC_REGION: 'region',
                  SEC_FLIGHT: 'flight', SEC_SPLINE: 'spline', SEC_AGENT: 'agent', SEC_ROUTE: 'route', SEC_PARAM: 'param', SEC_DOCK: 'dock',
                  SEC_STEER: 'steer', SEC_STEERPT: 'steerpt', SEC_SOLVER: 'solver', SEC_BULLET: 'bullet',
-                 SEC_GRAV: 'grav', SEC_GRAVC: 'gravc', SEC_GRAVS: 'gravs'}
+                 SEC_GRAV: 'grav', SEC_GRAVC: 'gravc', SEC_GRAVS: 'gravs', SEC_SPLM: 'splm', SEC_SPLME: 'splme',
+                 SEC_SPLMSEG: 'splmseg', SEC_GRAVN: 'gravn', SEC_GRAVP: 'gravp',
+                 SEC_GRAVQ: 'gravq'}
 WORLD_SECTIONS = (SEC_HEALTH, SEC_POSE)         # version 2 and later, always both
 WORLD3_SECTIONS = (SEC_SHIELD, SEC_NAV, SEC_ATTN, SEC_KEYS)   # version 3, always all four
 WORLD4_SECTIONS = (SEC_PATH, SEC_REGION)                      # version 4, always both
@@ -186,8 +189,9 @@ WORLD8_SECTIONS = (SEC_PARAM, SEC_DOCK)                       # version 8, alway
 WORLD9_SECTIONS = (SEC_STEER, SEC_STEERPT)                    # version 9, always both
 WORLD10_SECTIONS = (SEC_SOLVER, SEC_BULLET)                   # version 10, always both
 WORLD11_SECTIONS = (SEC_GRAV, SEC_GRAVC, SEC_GRAVS)           # version 11, always all three
+WORLD12_SECTIONS = (SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ)   # version 12, always all six
 LAST_SECTION = {1: SEC_LUA, 2: SEC_POSE, 3: SEC_KEYS, 4: SEC_REGION, 5: SEC_SPLINE, 6: SEC_AGENT, 7: SEC_ROUTE, 8: SEC_DOCK, 9: SEC_STEERPT,
-                10: SEC_BULLET, 11: SEC_GRAVS}
+                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ}
 TEXT_SECTIONS = (SEC_MODULES, SEC_LUA)          # newline-terminated printable lines; count = lines
 # Fixed record shapes (lockstep_join.h join_*_rec). GATE is one 256-byte record; MODULES and LUA (the probe's own state
 # providers, native_gate_join_core.lua) are text (count = lines).
@@ -293,6 +297,7 @@ assert steer_bytes(STEER_RANGES) == 569 and all(steer_bytes(r) <= STEER_STATE fo
 # flags, the movement controller's vtable RVA, the macro's name, the object's and the controller's bytes.
 SOLVER_BYTES, SOLVER_POINTERS, SOLVER_ACTIVE, SOLVER_OVERFLOW = 0x18f60, 256, 1, 2
 SOLVER_IMAGE = 0x6fa9000                       # lockstep_join_world.h JOIN_FLIGHT_IMAGE
+SOLVER_HEAP = 0x8000000000000007              # version 12: a qword that was an address of the saver's memory (the joiner keeps its own)
 SOLVER = struct.Struct('<QIIII%ds%ds' % (4*SOLVER_POINTERS, SOLVER_BYTES))
 BULLET_BYTES, BULLET_MOTION, BULLET_MACRO = 0x330, 0xb0, 64
 BULLET_NO_SHOOTER, BULLET_NO_MACRO, BULLET_NO_MOTION = 1, 2, 4
@@ -311,11 +316,30 @@ GRAV = struct.Struct('<QII4I%ds' % GRAV_BYTES)
 GRAVC = struct.Struct('<QIIQII')
 GRAVS = struct.Struct('<QQIIII')
 assert GRAV.size == 232 and GRAVC.size == 32 and GRAVS.size == 32
+# Version 12 (lockstep_join.h join_splm_rec, join_splme_rec, join_gravn_rec; report 1.16): the spline models and the Gravidar zone groups'
+# neighbours. SPLM: portable, flags, entries[2], requests, segments[2], pairs[2], reserved[2], the model's 0x4c0 bytes. SPLME: portable,
+# list, index, flags, segments, pairs, 0, the entry's 0x50 bytes, its spline's 0x50 bytes. SPLMSEG: SPLINE's records (part list*2+kind,
+# index element << 16 | k). GRAVN: sector, zone, neighbour, flags, 0. GRAVP: a radar owner's (or its ancestor's) published view pose
+# (object, rel view 0 current / 1 the other, flags PRESENT, the 0x40-byte transform; zero without PRESENT). GRAVQ: the radar worker's
+# pending command list at T in order (source portable ID, index, kind, flags UNMAPPED/OTHER, event vtable RVA, time bits, event qwords).
+SPLM_BYTES, SPLM_ENTRIES = 0x4c0, 64
+SPLM_REQUESTS, SPLM_UNCARRIED = 1, 2
+SPLME_SPLINE = 1
+GRAVN_NONE = 4
+GRAVP_PRESENT = 1
+GRAVQ_UNMAPPED, GRAVQ_OTHER, GRAVQ_EVENT_VT = 1, 2, 0x2baf7d8
+SPLM = struct.Struct('<QI2II2I2I2I%ds' % SPLM_BYTES)
+SPLME = struct.Struct('<QIIIIII80s80s')
+GRAVN = struct.Struct('<QQQII')
+GRAVP = struct.Struct('<QII64s')
+GRAVQ = struct.Struct('<QIIIIQQQ')
+assert SPLM.size == 1264 and SPLME.size == 192 and GRAVN.size == 32 and GRAVP.size == 80 and GRAVQ.size == 48
 RECORDS = {SEC_IDS: IDS, SEC_CTX: CTX, SEC_WAKE: WAKE, SEC_WAKEVEC: WAKEVEC, SEC_MDHEAP: MDHEAP, SEC_HEALTH: HEALTH, SEC_POSE: POSE,
            SEC_SHIELD: SHIELD, SEC_NAV: NAV, SEC_ATTN: ATTN, SEC_KEYS: KEYS, SEC_PATH: PATH, SEC_REGION: REGION,
            SEC_FLIGHT: FLIGHT, SEC_SPLINE: SPLINE, SEC_AGENT: AGENT, SEC_ROUTE: ROUTE, SEC_PARAM: PARAM, SEC_DOCK: DOCK,
            SEC_STEER: STEER, SEC_STEERPT: ROUTE, SEC_SOLVER: SOLVER, SEC_BULLET: BULLET, SEC_GRAV: GRAV, SEC_GRAVC: GRAVC,
-           SEC_GRAVS: GRAVS}
+           SEC_GRAVS: GRAVS, SEC_SPLM: SPLM, SEC_SPLME: SPLME, SEC_SPLMSEG: SPLINE, SEC_GRAVN: GRAVN,
+           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ}
 GATE_FIELDS = ('tick', 'game', 'real', 'wire_version', 'clients', 'lookahead', 'tick_hz', 'slot', 'md_seq', 'rid_next',
                'created_generation', 'created_live', 'identities', 'ctx_count', 'wake_count', 'vec_index', 'vec0', 'vec1',
                'md_count', 'md_void', 'md_release', 'md_queued', 'unsupported', 'digest', 'portable', 'save_us',
@@ -583,6 +607,85 @@ def grav_shape(grav, gravc, gravs):
     return True
 
 
+def splm_shape(splm, splme, splmseg):
+    """lockstep_join_world.h join_splm_shape: SPLM by portable ID, known flags, requests with their flag, nothing under an uncarried
+    record; SPLME exactly entries[0] then entries[1] entries per model (entry pointer 0, no counts without a spline); SPLMSEG exactly each
+    spline's segments (part list*2, BezierSpline vtable 0) and ceil(pairs/20) pair records (part list*2+1, unused tail 0) in (part, index)
+    order."""
+    ei = gi = 0
+    last = 0
+    for r in splm:
+        portable, flags, e0, e1, requests, s0, s1, p0, p1, r0, r1, _ = r
+        if not portable or portable <= last or flags & ~3 or r0 or r1 or (not flags & SPLM_REQUESTS) != (not requests) or \
+                e0 > SPLM_ENTRIES or e1 > SPLM_ENTRIES:
+            return False
+        if flags & SPLM_UNCARRIED and (e0 or e1 or s0 or s1 or p0 or p1):
+            return False
+        last = portable
+        seg = {0: [s0], 1: [s1], 2: [], 3: []}
+        pair = {0: [p0], 1: [p1], 2: [], 3: []}
+        for lst, count in ((0, e0), (1, e1)):
+            for k in range(count):
+                if ei >= len(splme):
+                    return False
+                x = splme[ei]
+                if x[0] != portable or x[1] != lst or x[2] != k or x[3] & ~1 or x[6] or (not x[3] & SPLME_SPLINE and (x[4] or x[5])) or \
+                        x[4] > FLIGHT_SEGMENTS or x[5] > FLIGHT_PAIRS or any(x[7][:8]):
+                    return False
+                seg[2+lst].append(x[4])
+                pair[2+lst].append(x[5])
+                ei += 1
+        for lst in range(4):
+            for kind in (0, 1):
+                for element, (ns, np_) in enumerate(zip(seg[lst], pair[lst])):
+                    want = (np_+FLIGHT_PAIRS_PER-1)//FLIGHT_PAIRS_PER if kind else ns
+                    for k in range(want):
+                        if gi >= len(splmseg):
+                            return False
+                        owner, part, index, data = splmseg[gi]
+                        if owner != portable or part != lst*2+kind or index != (element << 16 | k):
+                            return False
+                        if not kind and any(data[FLIGHT_BEZIER_AT:FLIGHT_BEZIER_AT+8]):
+                            return False
+                        if kind:
+                            used = min(np_-k*FLIGHT_PAIRS_PER, FLIGHT_PAIRS_PER)
+                            if any(data[used*8:]):
+                                return False
+                        gi += 1
+    return ei == len(splme) and gi == len(splmseg)
+
+
+def gravn_shape(gravn):
+    """lockstep_join_world.h join_gravn_shape: strictly by (sector, zone, neighbour), a sector and a zone, NONE alone for its zone with
+    neighbour 0, else a neighbour."""
+    for i, (sector, zone, neighbour, flags, reserved) in enumerate(gravn):
+        if not sector or not zone or reserved or flags & ~GRAVN_NONE or (not neighbour) != bool(flags & GRAVN_NONE):
+            return False
+        if i and gravn[i-1][:3] >= (sector, zone, neighbour):
+            return False
+        if flags & GRAVN_NONE and ((i and gravn[i-1][:2] == (sector, zone)) or (i+1 < len(gravn) and gravn[i+1][:2] == (sector, zone))):
+            return False
+    return True
+
+
+def gravp_shape(gravp):
+    """lockstep_join_world.h join_gravp_shape: strictly by (object, view), a portable ID, view 0 or 1, only PRESENT, no pose without it."""
+    for i, (portable, rel, flags, pose) in enumerate(gravp):
+        if not portable or rel > 1 or flags & ~GRAVP_PRESENT or (i and gravp[i-1][:2] >= (portable, rel)):
+            return False
+        if not flags & GRAVP_PRESENT and any(pose):
+            return False
+    return True
+
+
+def gravq_shape(gravq):
+    """lockstep_join_world.h join_gravq_shape: by index from 0, flags UNMAPPED/OTHER only, no portable ID exactly with UNMAPPED."""
+    for i, (portable, index, kind, flags, event, time, q0, q1) in enumerate(gravq):
+        if index != i or flags & ~3 or (not portable) != bool(flags & GRAVQ_UNMAPPED):
+            return False
+    return True
+
+
 def bullet_differences(left, right):
     """The object offsets where two savers' BULLET records of one projectile differ ('fields' for its named ones, 'bullet+0x..', 'motion+0x..')."""
     out = ['fields'] if left[:7] != right[:7] else []
@@ -666,7 +769,7 @@ def read_package(data):
     if hashlib.sha256(data[:-32]).digest() != data[-32:]:
         raise JoinError('package_sha')
     magic, version, count, tick, game, real, save_sha, save_bytes, slot, flags, reserved = HEADER.unpack_from(data)
-    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 29:
+    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 35:
         raise JoinError('package_magic')
     header = {'tick': tick, 'game': game, 'real': real, 'save_sha': save_sha.hex(), 'save_bytes': save_bytes, 'slot': slot,
               'flags': flags, 'sections': count, 'version': version}
@@ -693,7 +796,8 @@ def read_package(data):
             (version >= 8 and not all(SECTION_NAMES[k] in sections for k in WORLD8_SECTIONS)) or \
             (version >= 9 and not all(SECTION_NAMES[k] in sections for k in WORLD9_SECTIONS)) or \
             (version >= 10 and not all(SECTION_NAMES[k] in sections for k in WORLD10_SECTIONS)) or \
-            (version >= 11 and not all(SECTION_NAMES[k] in sections for k in WORLD11_SECTIONS)):
+            (version >= 11 and not all(SECTION_NAMES[k] in sections for k in WORLD11_SECTIONS)) or \
+            (version >= 12 and not all(SECTION_NAMES[k] in sections for k in WORLD12_SECTIONS)):
         raise JoinError('package_layout')
     for name in ('health', 'pose', 'shield', 'nav', 'attn', 'flight', 'dock', 'steer'):   # sorted by portable ID, each once (world_order)
         keys = [r[0] for r in sections.get(name, [])]
@@ -731,6 +835,14 @@ def read_package(data):
         raise JoinError('bullet_shape')
     if version >= 11 and not grav_shape(sections['grav'], sections['gravc'], sections['gravs']):
         raise JoinError('grav_shape')
+    if version >= 12 and not splm_shape(sections['splm'], sections['splme'], sections['splmseg']):
+        raise JoinError('splm_shape')
+    if version >= 12 and not gravn_shape(sections['gravn']):
+        raise JoinError('gravn_shape')
+    if version >= 12 and not gravp_shape(sections['gravp']):
+        raise JoinError('gravp_shape')
+    if version >= 12 and not gravq_shape(sections['gravq']):
+        raise JoinError('gravq_shape')
     gate = sections['gate']
     if (gate['tick'], gate['game'], gate['real'], gate['slot']) != (tick, game, real, slot):
         raise JoinError('gate_header')
@@ -774,6 +886,16 @@ def portable_text(sections):
         records = sections['grav']
         digest = hashlib.sha256(b''.join(struct.pack('<QI4I', r[0], r[1], *r[3:7]) for r in records)).hexdigest()
         lines.append(f"GRAV|{len(records)}|{len(sections['gravc'])}|{len(sections['gravs'])}|{digest}")
+    if 'splm' in sections:                     # version 12: which spline models with how many entries, requests, segments, pairs;
+        records = sections['splm']             # and every GRAVN record (keys only)
+        digest = hashlib.sha256(b''.join(struct.pack('<Q2II2I2I', r[0], r[2], r[3], r[4], r[5], r[6], r[7], r[8]) for r in records)).hexdigest()
+        lines.append(f"SPLM|{len(records)}|{len(sections['splme'])}|{len(sections['splmseg'])}|{digest}")
+        gravn = sections['gravn']
+        lines.append(f"GRAVN|{len(gravn)}|{hashlib.sha256(b''.join(GRAVN.pack(*r) for r in gravn)).hexdigest()}")
+        gravp = sections['gravp']              # which objects and views hold a pose; not its bytes
+        lines.append(f"GRAVP|{len(gravp)}|{hashlib.sha256(b''.join(struct.pack('<QII', *r[:3]) for r in gravp)).hexdigest()}")
+        gravq = sections['gravq']              # which sources, kinds, flags and events in which order; not the times
+        lines.append(f"GRAVQ|{len(gravq)}|{hashlib.sha256(b''.join(struct.pack('<QIIII', *r[:5]) for r in gravq)).hexdigest()}")
     return ''.join(line+'\n' for line in lines)
 
 
@@ -801,9 +923,9 @@ def write_package(gate, sections, save_sha=b'\0'*32, save_bytes=0, flags=0, vers
     allowed = (WORLD_SECTIONS if version >= 2 else ())+(WORLD3_SECTIONS if version >= 3 else ())+(WORLD4_SECTIONS if version >= 4 else ())+\
         (WORLD5_SECTIONS if version >= 5 else ())+(WORLD6_SECTIONS if version >= 6 else ())+(WORLD7_SECTIONS if version >= 7 else ())+\
         (WORLD8_SECTIONS if version >= 8 else ())+(WORLD9_SECTIONS if version >= 9 else ())+(WORLD10_SECTIONS if version >= 10 else ())+\
-        (WORLD11_SECTIONS if version >= 11 else ())
+        (WORLD11_SECTIONS if version >= 11 else ())+(WORLD12_SECTIONS if version >= 12 else ())
     if any(kind in sections for kind in WORLD_SECTIONS+WORLD3_SECTIONS+WORLD4_SECTIONS+WORLD5_SECTIONS+WORLD6_SECTIONS+WORLD7_SECTIONS+
-           WORLD8_SECTIONS+WORLD9_SECTIONS+WORLD10_SECTIONS+WORLD11_SECTIONS if kind not in allowed):
+           WORLD8_SECTIONS+WORLD9_SECTIONS+WORLD10_SECTIONS+WORLD11_SECTIONS+WORLD12_SECTIONS if kind not in allowed):
         raise JoinError('package_version')
     if version >= 4:
         sections.setdefault(SEC_PATH, [(0, PATH_MANAGER, 0, 0, 0, 0, 0), (0, PATH_MANAGER, 1, 0, 0, 0, 0)])
@@ -858,7 +980,8 @@ def world_differences(left, right, samples=8):
     """Per world section (version 2): records only on one side and records that differ, by portable ID (samples)."""
     out = {}
     for name in ('health', 'pose', 'shield', 'nav', 'attn', 'keys', 'path', 'region', 'flight', 'spline', 'agent', 'route', 'param',
-                 'dock', 'steer', 'steerpt', 'solver', 'bullet', 'grav', 'gravc', 'gravs'):
+                 'dock', 'steer', 'steerpt', 'solver', 'bullet', 'grav', 'gravc', 'gravs', 'splm', 'splme', 'splmseg', 'gravn',
+                 'gravp', 'gravq'):
         if name not in left and name not in right:
             continue
         key = (lambda r: (r[1] << 64) | r[0]) if name == 'keys' else (lambda r: r[0])   # KEYS by (table, key)
@@ -876,6 +999,16 @@ def world_differences(left, right, samples=8):
             key = lambda r: (r[1] << 96) | (r[2] << 64) | r[0]
         elif name == 'gravs':                  # GRAVS by (kind, index)
             key = lambda r: (r[2] << 32) | r[3]
+        elif name == 'splme':                  # SPLME by (portable, list, index)
+            key = lambda r: (r[1] << 96) | (r[2] << 64) | r[0]
+        elif name == 'splmseg':                # SPLMSEG by (portable, part, index)
+            key = lambda r: (r[1] << 96) | (r[2] << 64) | r[0]
+        elif name == 'gravn':                  # GRAVN by (sector, zone, neighbour)
+            key = lambda r: (r[0] << 128) | (r[1] << 64) | r[2]
+        elif name == 'gravp':                  # GRAVP by (object, view)
+            key = lambda r: (r[1] << 64) | r[0]
+        elif name == 'gravq':                  # GRAVQ by its place in the list
+            key = lambda r: r[1]
         x = {key(r): r for r in left.get(name, [])}
         y = {key(r): r for r in right.get(name, [])}
         differ = sorted(i for i in x.keys() & y.keys() if x[i] != y[i])

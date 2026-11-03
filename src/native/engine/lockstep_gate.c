@@ -3686,7 +3686,12 @@ static int lua_created_identities(lua_State *L) {
  * ordering/keying modules then use created IDs (native_gate_portable_created). */
 static int lua_portable_created(lua_State *L) {p_lua_pushnumber(L,portable_created_arm());return 1;}
 /* gate.created_load(): after created_identities, before loading. */
-static int lua_created_load(lua_State *L) {p_lua_pushnumber(L,created_load_arm());return 1;}
+static int lua_created_load(lua_State *L) {
+    const double min=p_lua_tonumber(L,1);   /* native_gate_created_load_stacks (diagnostic): the lowest runtime ID that records its stack */
+    int ok=created_load_arm();
+    if(ok && min>=1.0 && min<9007199254740992.0) {created_stack_sink=crash_note_write;if(!created_load_stacks_arm((uint64_t)min)) ok=0;}
+    p_lua_pushnumber(L,ok);return 1;
+}
 /* gate.actor_rng_all(): before loading, after the boot installed the seeded
  * agent and ship modules (native_gate_actor_rng_all, lockstep_actor_all.h). */
 static int actor_all_arm(void) {

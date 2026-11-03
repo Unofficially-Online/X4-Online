@@ -1364,6 +1364,79 @@ proposed and rejected.
   layout {proxy, map, map size, offset, count} with one entry per block, the two embedded CompositeSpline<5> at +0x158/+0x1a8, the request
   deque +0x428), the bullets in flight (55 at T, in the fixture zone), the solver records' heap-pointer audit (the savers' compare).
 
+1.16 PACKAGE VERSION 12: THE SPLINE ROUTES, THE ZONE NEIGHBOURS, THE PUBLISHED POSES, THE RADAR'S PENDING EVENTS; THE SOLVER'S
+  ADDRESSES (3 November; J1 j1-37 .. j1-44 run with the coordinator's agreement on lanes b3/b4/b5; offline analysis of their logs and
+  packages, not committed)
+  run    build / package                         T+1 (634)            900      what it showed
+  j1-37  f8d63fa1 (v11) + radar posts, watch     7 (health 4,          2,118    the joiner's scan finds other contacts for the same units at
+                                                 motion 3)                       the same tick; the joiner crashed at 1281 (see j1-39)
+  j1-38  76aa5491 v12 (SPLM .. GRAVN)            -                     -        the joiner crashed in the spline cache refresh (0xeaf920 in
+                                                                                 0xeaf660): the model's avoidance cache +0xf0..+0x107 held
+                                                                                 the session's heap addresses
+  j1-39  adb7c046 (the cache left to the joiner) 4 (health 4)          2,115    the spline routes and every motion equal at T+1; the joiner
+                                                                                 crashed at 1281 in JPM::OmegaSwitched
+  j1-40  ad48cc59 (SOLVER keeps the joiner's     6 (health 4,          2,119    no crash; solver_heap=17,473
+         own value for heap-like qwords)         motion 2)
+  j1-41  0fd39e65 + d546f603 (GRAVP)             6                     1,777    gravp=18126:12862:0:0:0; units posting radar changes on the
+                                                                                 joiner only (634..660): 230 -> 9; on the session only: 2
+  j1-42  5c583f7c (the session marks its         4 (health 4)          1,773    solver_mapped=10,741 (the old test kept 17,473); no
+         addresses in SOLVER), script rows                                       crash; at 634 the session runs 217 script rows, the
+                                                                                 joiner 83 (137 on the session only)
+  j1-43  j1-42 + created identity rows           4                     1,773    the same census (deterministic); the joiner's load
+                                                                                 made 91 objects: 6 the session's, 85 its own (below)
+  j1-44  3d5a878c (GRAVQ)                        4                     1,773    gravq=195 posted, 0 other; session-only rows at 634
+                                                                                 137 -> 24; the census unchanged
+- SPLM, SPLME, SPLMSEG [F: j1-27, 1.14; j1-39]: the spline flight models (SplineFlightControlModel 0x2c4f480, 0x4c0 bytes) with their
+  routes: the two deques at +0x70/+0x98 ({proxy, map, map size, offset, count}, one 0x50-byte entry per block, each owning a heap
+  CompositeSpline<5> (vtable 0x2b6c6d0; segments +0x10, pairs +0x28)), the embedded splines at +0x158/+0x1a8 and the request count. SPLM
+  holds the model's bytes without its pointers and per-process fields (join_splm_skip), SPLME each route entry with its spline, SPLMSEG the
+  segments and pairs (SPLINE's record). The joiner rebuilds each empty deque as the engine's push does (a map of a power of two entries
+  above the count, blocks and splines from the engine's allocator 0x974c0 with this process's vtables). j1-38's crash: the avoidance cache
+  (+0xf0 vector, +0x108 time) holds pointers into the session's world; it is left to the joiner (adb7c046). The FLIGHT admission no longer
+  writes spline records from version 12 (SPLM owns them).
+- GRAVN [F: j1-37, j1-39]: the zone groups' neighbour lists of the Gravidar worker's sector list (+0x68b8: 32-byte sector entries, groups
+  of 0x58 bytes: zone, near +0x08, wide +0x20, neighbours +0x38). j1-39: 1,483 groups compared, 105 rebuilt in the joiner's indices; the
+  posts did not change, so the neighbours were not the cause.
+- GRAVP [F: j1-37, j1-41; 0x10b34c0, 0x10caef0, 0x3dde10]: the radar's scan gathers each zone's view children and the entry builder takes
+  each object's position from the component view cache (object+0xe0+view*0x80, the pose pointer +0x28 to a 0x40-byte transform;
+  g_ComponentViewCacheIndex 0x38f4eb4). 0x3dde10 composes from the published cache of the MoveWorker; on the session, objects outside the
+  attended sectors keep older published poses, while the joiner's load publishes fresh ones. So at T+1 the joiner's scan saw other
+  positions and other contacts. GRAVP carries, for every radar owner and its ancestors below the sector, both views' poses relative to the
+  current view; the joiner writes them into its own poses. The portable digest takes which objects and views hold a pose, not the bytes.
+  j1-41: 18,126 poses written, 12,862 already equal, none missing; the units posting changes on the joiner only fell from 230 to 9.
+- SOLVER addresses [F: j1-37, j1-39, j1-40, j1-41 packages]: ship 0x176bf8's solver held a vector {begin, end, capacity} at +0x81c8 with
+  the session's heap addresses; the joiner pushed into it at 1281 and crashed (j1-37 and j1-39). ad48cc59 kept the joiner's own value for
+  every qword that looked like a user address (8-aligned, 4 GiB .. 2^47). That test also caught int pairs such as (0, 0x7a) and lost the
+  session's data: 17,473 qwords over 15 solvers in j1-40, and the two motion differences at T+1 came back (ships 0x176b36 and 0x176ad5,
+  drifts of about 1e-5 in bank 0). Most of the address-like qwords are stale heap values in the solver's scratch space (two solvers share
+  a 2,000-qword pattern; no vector triple repeats across solvers). From version 12 the session checks each such qword against its own
+  committed memory (VirtualQuery, one cached region) and carries a mapped one as JOIN_SOLVER_HEAP (0x8000000000000007); the joiner keeps
+  its own value only there (5c583f7c; older packages keep the old test).
+- GRAVQ [F: j1-42 script rows, 0x10acd70, 0x998430, 0x10b12c0, 0x99ab20, 0x99abe0]: the 137 rows of 634 on the session only were
+  fight.attack.object.* stack handlers (src 4) of the 'Station Attacked' handler on event_gravidar_has_scanned. Slot 7 posts that event
+  through FUN_140998430 (a std::list push_back: 0x40-byte nodes, next, prev, then kind 3, the source's runtime ID, the event, the time)
+  into the worker's private list +0x69b0; the publish 0x10b12c0 at the top of the next MoveWorker frame splices it into
+  U::g_EventCommandQueue 0x39943a8 (0x99ab20), and U::EventSystem_FlushCommandQueue 0x99abe0 delivers it. So the pass of T leaves its
+  posts in that list at the boundary. GRAVQ carries the list in order (the worker idle under its ready lock); the joiner appends each
+  has_scanned post to its own list. j1-44: 195 posts, the joiner's list already holding 2,638 entries of its own (the passive units its
+  GRAV admission created), the session-only rows of 634 down to 24 (other handlers: order.fight.patrol, fight.attack.object.fighter,
+  order.fight.attack.object, order.mining.routine, move.generic); the census at 900 unchanged.
+- The joiner's own objects [F: j1-43 CREATED_ROW, j633.xml.gz]: of the 91 objects the joiner's load made, 6 match the session's (the
+  black2 cluster, its sector, two zones, a cutscene UI object: every load makes them), 85 are its own: two Xenon corvettes
+  (ship_xen_m_corvette_02_a) and three Argon scouts (ship_arg_s_scout_01_a) without a parent (waiting job ships, as the session's job
+  spawns at ticks 3, 26 and 34 are), two Kha'ak fighters placed in zones 0x4d3 and 0x8d7, with parts and crew. The save keeps the
+  session's waiting ships under their jobs (<job><waiting>); the joiner's load adds these. The session has no such ships by 900. A
+  diagnostic (native_gate_created_load_stacks, cb1325ed) records the call stacks of the load's new objects for the next run.
+- The four health records at T+1 [F: j1-28 .. j1-41]: ship 0x73f92 and its three weapons, the stored shield 961.128 on the session and
+  961.129 on the joiner at 634 (the recharge time 28.2163 equal). The ship (runtime 0x4952c) is under a low attention attack of 0x495cc
+  (fight.attack.object.*, 1.15); the script applies its round at T+1 on the session only.
+- Open: the joiner's 85 load-made objects (the creating path, then not creating or removing them); the 24 handler rows of 634 that
+  the session alone runs; the joiner's load-reaction MD cues at 635 (Tutorial_global.Start hints, the mod's X4LAN_NativeGate and
+  X4LAN_PilotRespawn cues); the shield record of 0x73f92 at T+1; the census between 634 and 900 at a finer stride (j1-45).
+- Tests: build_native_gate.py --test --native-image exit 0 (the package golden of version 12 67459b50... shared by C and Python; GRAVP
+  and GRAVQ shape, capture and admission in the synthetic radar worker; the spline models' capture, rebuild and refusals; the solver's
+  address marks and the version 11 fallback); pytest of the join suites, defaults, registry, probe and check options: 413 passed.
+
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9
   (8 before STEER and STEERPT, 7 before PARAM and DOCK, 6 before ROUTE, 5 before AGENT, 4 before FLIGHT and SPLINE, 3 before PATH and REGION, 2 before SHIELD..KEYS, 1 before the world side table:

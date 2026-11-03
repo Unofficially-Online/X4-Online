@@ -202,4 +202,12 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   p2d is A1b with a different stack from a1d (render frames on, see below), so 29.09 against 29.74 is not a clean comparison.
   Limits found: adaptive excludes render frames (defaults key @fixed): a0d and a1d show no RENDER_FRAMES lines, so an adaptive session draws one
   frame per step. Own-ship prediction under adaptive kept the horizon armed at the menu (kmax+2 = 10, h_eff=10 at delays 3 and 6): fixed by
-  opred_delay_adopted, not yet retested live. A2, A3 and A4 not run yet.
+  opred_delay_adopted; a1g (build200): h=6 at delay 6, census 0, 29.66 steps/s.
+  a2d  --adaptive --latency-ms 100 --latency-jitter-ms 40  k=5 pilot_delay=7 (rtt p90 139 ms)  29.64  no mismatch  0 of 528,288
+  a3d  --adaptive --latency-ms 50 --latency-spike 20,3000,250 --adaptive-changes --adaptive-headroom 6:
+       PLAN k=2 pilot_delay=10, the first spike raised it to k=8 at tick 81 (epoch 2) on both clients, no lowering;
+       29.36 steps/s, no mismatch, census 0 of 528,288 at 1800 (build203).
+  A2 and A3 as the spec expected.
+  a4d  --adaptive --stall-report-ms 1000, lane b2's X4 frozen 3 s (NtSuspendProcess/NtResumeProcess) about tick 1450:
+       NATIVE_GATE STALL slot=2 tick=1454 waited_ms=1012 in the relay log and report (stalls), the session went on to 3000,
+       no mismatch, census 0 of 528,288 at 1800, both stopped with reason 1, ADAPTIVE_STOP why=none. A0-A4 all pass live.

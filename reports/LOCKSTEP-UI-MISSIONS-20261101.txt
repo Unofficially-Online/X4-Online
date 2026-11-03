@@ -338,3 +338,9 @@ refuses it, ui_missions_claim_taken:<name>). The M1 spec's mask is 19455; entrie
   active); slot 2's own comm refused why=slot on client 2; relay pass. [F] So the call from the replay's frame starts no
   conversation whatever the partner. [I] The stock menus start one in a state the probe's frame does not have (an open
   conversation/comm menu, the player's comm target); the people test 7b captures what X4's own menu calls and when.
+  [F, stock UI read locally] X4 never calls it bare: Helper.closeMenuForNewConversation passes
+  function() StartConversationFromMenu(conversation, actor, convparam) end as the callback of the engine's closeMenu(menu,
+  resultfunc) (inside a conversation menu it uses ProceedFromMenu instead); the actor is a character component, not a ship.
+  [I] The conversation manager starts a menu conversation as the closing menu's result, so a bare call from the probe's
+  frame is ignored. Options: replay it as a closeMenu result on every client (a menu each client opens and closes in the
+  apply), or start the conversation from our MD (the same action on every client at the apply tick). Decide before 7b.

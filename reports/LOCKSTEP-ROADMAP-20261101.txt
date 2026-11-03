@@ -18,7 +18,7 @@ A. PLAYABILITY (people sessions)
     Branch contrib/ferrite-predict2, report LOCKSTEP-OWN-SHIP-PREDICTION-20261101.txt (lockstep_own_predict.h,
     native_gate_own_predict, default off; works on one frame per step, join interface for item 1 in its
     section 5; live-test spec O1/O2/P1/P2/G in section 11).
- 3. [A0, A1 live 2 Nov: 100 ms holds 29.74 steps/s, census 0; A2-A4 and render frames under adaptive open] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
+ 3. [A0-A4 live: 100 ms holds 29.7 steps/s, jitter k=5, spikes raise k at an agreed tick, a 3 s stall is reported and the session goes on, census 0; render frames under adaptive and dropping a stalled client open] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
     pilot delay from it (today fixed: lookahead 1, delay 3 = 100 ms); later adjust it during a session at an
     agreed step. Cope with spikes and dropouts better than a pause for everyone (a client stalled past a bound
     is dropped; needs item 16). Data, relay --latency-ms 100 (1 Nov): lookahead 1 0.38x speed, lookahead 3 +
@@ -33,10 +33,10 @@ A. PLAYABILITY (people sessions)
     offers, missions, rewards and reputation (agent X4-Multiplayer-missions: slot 1 first, then one generic mission type
     end to end for slot 2, then all generic missions). Story/plot missions are per player too, as a SEPARATE work item
     with its own testing, handling and rewriting (player-specific state, cutscenes, plot flags); not started.
- 4d. [running 1 Nov] Player faction settings (user): blacklists (banned sectors/factions), fight rules, trade rules
+ 4d. [live 1 Nov: f1fac/f2fac every op on both clients, same rule IDs] Player faction settings (user): blacklists (banned sectors/factions), fight rules, trade rules
     create/edit, default responses, station settings left refused by trade (supply overrides, module pause), every player,
     coop and factions mode (agent X4-Multiplayer-faction, family bit 32768).
- 4e. [running 1 Nov] Station construction (user): plan commit (modules), upgrades/removals, construction budget and
+ 4e. [live 1 Nov: c1con/c2con plot + plan commit on both clients; budget/cancel test-script issues] Station construction (user): plan commit (modules), upgrades/removals, construction budget and
     supply, hiring a construction ship, every player, both modes (agent X4-Multiplayer-construct, extends the build family).
  5. [G4 passed 1 Nov] Live tests G4 (flight family, scripted) and G5 (people) from the guard report section 7e; missiles
     with ships that carry launchers (the test scouts have none).
@@ -48,7 +48,7 @@ A. PLAYABILITY (people sessions)
     automatic screenshots). Slots 2..N walking, seeing each other and hiring: designed, not built.
     players walking around stations, seeing each other on foot, and hiring crew by
     walking up to NPCs (approach, talk, hire choice, payment, assignment), slot 1 then slots 2..N (agent X4-Multiplayer-onfoot).
- 5b. [running] Missiles live (missile1, build149: slot 2 = Argon Elite a5374 with 9 smart missiles): missile fire replayed, slot
+ 5b. [suit view fixed, live missile2 1 Nov: slot 2 death + suit at 1733 in sync to 3002] Missiles live (missile1, build149: slot 2 = Argon Elite a5374 with 9 smart missiles): missile fire replayed, slot
     1 killed 3 times and respawned, in sync to 1732. Slot 2 destroyed at 1733 -> spacesuit: from ~1740 the client that presents
     slot 2 evaluates one more view point and the worlds split (agent X4-Multiplayer-suitview).
  5c. [done 1 Nov: w15 vs L8 = only the timing pair through 600] Windows/Linux damage (FR29b capture live: the 546 split is in the drone damage path of
@@ -66,7 +66,7 @@ B. NETWORKING (rundown section "Latency")
     pending), PCP -> NAT-PMP -> UPnP with lease and release, relay --rendezvous-port (NGNAT/1, own thread), NAT simulation.
     Simulated: all punchable pairs direct in <1.5 s; symmetric vs symmetric or port-restricted -> relay unless a port is mapped.
     Next: live plan section 9 (this PC <-> VPS), then wiring into B6.
- 8. [offline done, live test next] Encrypt and authenticate the direct links: one symmetric session key handed out
+ 8. [W1 live 3 Nov: keyed, every record signed and verified, relay pass; W2: wrong/missing credentials fail closed; W3 VPS, W4 people open] Encrypt and authenticate the direct links: one symmetric session key handed out
     by the relay (an AEAD such as ChaCha20-Poly1305) against outsiders; every player signs its own records with a
     personal key (e.g. Ed25519) whose public half the relay gives everyone at the start, so no player can send inputs
     as another. Consider the same for the relay path, which today is a shared token over plain UDP.
@@ -105,10 +105,10 @@ C. PERFORMANCE
     the software-rendered Linux VPS is the likely limit, unmeasured: add frame timing on both sides next time). Census:
     W vs L 5/68/280 at 600/1800/3000, W vs W 1/12/161: the comparison config lacks the play stack, so long runs drift
     even between the two Windows clients. Next: port the people-config keys to the Linux gate (needed for 12 anyway).
-12. [running] Option B, Windows and Linux bit-identical: FR29 (damage 1 float ulp at tick 546 on ship 07336a),
+12. [3 Nov: agree through 1200 (w18/fr31-L2/L8-6000); the W15/L8 config is not self-consistent past ~1200-1800 even on Windows (w19 c1 vs c2 4,360 at 6000): longer comparisons need the current long-run stack on Linux] Option B, Windows and Linux bit-identical: FR29 (damage 1 float ulp at tick 546 on ship 07336a),
     then W15/L8, then 6000-tick comparisons, then player inputs on a Linux peer, then a live mixed session.
 13. [later] Dedicated Linux server that also simulates, so the universe keeps going when players leave.
-14. [J1 2 Nov (j1-27, package v9: T+1 still 17 differ, 2,491 at T+267; before it j1-25, package v8): save at T while the session runs (2.8 s); the joiner loads, restores the side table
+14. [J1 3 Nov (another session, j1-28..j1-49, packages v10-v12 merged): T+1 4 of 523,529 differ (one ship's shields), 1,773 at tick 900, no crash; earlier j1-27 (v9) 17 / 2,491: save at T while the session runs (2.8 s); the joiner loads, restores the side table
     and replays at ~24 steps/s; at T+1 99.997% of 523,529 objects equal (17 left: 13 non-linear flight models, 4 hit by
     projectiles in flight, 3 timing), 2,509 apart by T+267: agent on v9] Joining a running session
     (hot join). Stages: J1 save at step T + load in a third lane equals the running world (census 0): needs the join

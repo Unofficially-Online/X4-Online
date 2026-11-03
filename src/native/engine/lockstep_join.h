@@ -167,7 +167,7 @@
 enum {JOIN_SEC_GATE=1,JOIN_SEC_IDS,JOIN_SEC_WAKE,JOIN_SEC_WAKEVEC,JOIN_SEC_MDHEAP,JOIN_SEC_MODULES,JOIN_SEC_CTX,JOIN_SEC_LUA,
       JOIN_SEC_HEALTH,JOIN_SEC_POSE,JOIN_SEC_SHIELD,JOIN_SEC_NAV,JOIN_SEC_ATTN,JOIN_SEC_KEYS,JOIN_SEC_PATH,JOIN_SEC_REGION,JOIN_SEC_FLIGHT,JOIN_SEC_SPLINE,
       JOIN_SEC_AGENT,JOIN_SEC_ROUTE,JOIN_SEC_PARAM,JOIN_SEC_DOCK,JOIN_SEC_STEER,JOIN_SEC_STEERPT,JOIN_SEC_SOLVER,JOIN_SEC_BULLET,
-      JOIN_SEC_GRAV,JOIN_SEC_GRAVC,JOIN_SEC_GRAVS};
+      JOIN_SEC_GRAV,JOIN_SEC_GRAVC,JOIN_SEC_GRAVS,JOIN_SEC_SPLM,JOIN_SEC_SPLME,JOIN_SEC_SPLMSEG,JOIN_SEC_GRAVN,JOIN_SEC_GRAVP,JOIN_SEC_GRAVQ};
 /* Package versions: 1 (sections GATE..LUA), 2 (and the world side table HEALTH, POSE: lockstep_join_world.h), 3 (and SHIELD,
  * NAV, ATTN, KEYS: the shield groups' other census fields, flying ships' navigation state, every object's attention level and
  * due, the gate's first-call key tables; J1 j1-12, report 1.7), 4 (and PATH, REGION: the pathing manager's agent batches and
@@ -179,10 +179,12 @@ enum {JOIN_SEC_GATE=1,JOIN_SEC_IDS,JOIN_SEC_WAKE,JOIN_SEC_WAKEVEC,JOIN_SEC_MDHEA
  * report 1.12), 9 (and STEER, STEERPT: the steering flight control models' state, their behaviours and path points; J1 j1-25,
  * report 1.13), 10 (and SOLVER, BULLET: the Agents' motion solvers, and a census of the projectiles in flight at T; J1 j1-27, report 1.14),
  * 11 (and GRAV, GRAVC, GRAVS: the radar, every Gravidar unit's state and contacts, the worker's active sources and the sectors'
- * factor-pass deadlines, which the save writes as an empty <gravidar/>; J1 j1-31, report 1.15).
- * A version 10, 9, 8, 7, 6, 5, 4, 3, 2 or 1 package is still read; a strict joiner refuses it (package_v10 ... package_v1). */
-#define JOIN_PACKAGE_VERSION 11u
-#define JOIN_SECTIONS(version) ((version)>=11?29u:(version)>=10?26u:(version)>=9?24u:(version)>=8?22u:(version)>=7?20u:(version)>=6?19u:(version)>=5?18u:(version)>=4?16u:(version)>=3?14u:\
+ * factor-pass deadlines, which the save writes as an empty <gravidar/>; J1 j1-31, report 1.15), 12 (and SPLM, SPLME, SPLMSEG: the spline
+ * flight control models, which the save writes as an empty <flightcontrolmodel type="spline"/>; J1 j1-27, report 1.14, 1.16; and GRAVN:
+ * the Gravidar zone groups' neighbour lists, which X4 builds when a zone is added: j1-37).
+ * A version 11, 10, 9, 8, 7, 6, 5, 4, 3, 2 or 1 package is still read; a strict joiner refuses it (package_v11 ... package_v1). */
+#define JOIN_PACKAGE_VERSION 12u
+#define JOIN_SECTIONS(version) ((version)>=12?35u:(version)>=11?29u:(version)>=10?26u:(version)>=9?24u:(version)>=8?22u:(version)>=7?20u:(version)>=6?19u:(version)>=5?18u:(version)>=4?16u:(version)>=3?14u:\
                                 (version)>=2?10u:8u)
 /* FAILED/ABORT reasons, shared with native_gate_join.py REASONS and native_gate_join_core.lua. */
 enum {JOIN_WHY_NONE,JOIN_WHY_NOT_ARMED,JOIN_WHY_NOT_POSSIBLE,JOIN_WHY_SAVE_FAILED,JOIN_WHY_FILE_MISSING,JOIN_WHY_CAPTURE,
@@ -407,6 +409,56 @@ typedef struct {uint64_t portable;uint32_t kind,flags;uint32_t count[JOIN_GRAV_L
 typedef struct {uint64_t portable;uint32_t list,index;uint64_t contact;uint32_t flags,reserved;} join_gravc_rec;
 typedef struct {uint64_t portable,value;uint32_t kind,index,flags,reserved;} join_gravs_rec;
 _Static_assert(sizeof(join_grav_rec)==232 && sizeof(join_gravc_rec)==32 && sizeof(join_gravs_rec)==32,"join v11 record layout (native_gate_join.py)");
+/* Version 12 (lockstep_join_world.h; report 1.16). A U::Path::SplineFlightControlModel (0x2c4f480, 0x4c0 bytes; constructor 0xeb4f40, step
+ * vfunc14 0xeb7230) flies a route: two std::deques of 0x50-byte entries (+0x70 the route in flight, +0x98 the provisional one; {proxy, map,
+ * map size, offset, count}, one entry per block of the engine's allocator), each entry owning a heap Math::CompositeSpline<5> (0x50 bytes:
+ * vtable, scale +8, Bezier segments +0x10 and parameter pairs +0x28 as vectors, length/min/max +0x40), two embedded CompositeSpline<5>
+ * (+0x158, +0x1a8) and a request deque +0x428 the pathing calculator answers. The save keeps none of it: the joiner's model has no route
+ * and brakes (state +0x218 = 8; j1-27: two scouts lose 1.4% of their speed at T+1, fixture actor 2 stops).
+ * SPLM     one record per spline model (FLIGHT names its kind), sorted by portable ID: entries[] the two deques' counts, requests the
+ *          request deque's (JOIN_SPLM_REQUESTS: not carried), segments[] and pairs[] the embedded splines', model the object's bytes with
+ *          the vtable, +8, the owner +0x10, +0x18, both deques, both splines' vtables and vectors, +0x210, +0x268, +0x418 and the request
+ *          deque as 0 (join_splm_skip); JOIN_SPLM_UNCARRIED: a route the record cannot hold (no SPLME, SPLMSEG).
+ * SPLME    one record per deque entry, (portable, list 0/1, index): entry the entry's bytes with its spline pointer 0, spline the owned
+ *          CompositeSpline<5>'s bytes with vtable and vectors 0 (JOIN_SPLME_SPLINE: the entry owns one), its segment and pair counts.
+ * SPLMSEG  the splines' segments and pairs as SPLINE's records (join_spline_rec): part = list*2 + kind (list 0, 1 the embedded splines,
+ *          2, 3 the deques' entries; kind 0 a 0xa0-byte segment with its BezierSpline vtable 0, 1 twenty parameter pairs), index =
+ *          element << 16 | k, in that order per model. */
+#define JOIN_SPLM_BYTES 0x4c0u
+#define JOIN_SPLM_ENTRIES 64u
+enum {JOIN_SPLM_REQUESTS=1u,JOIN_SPLM_UNCARRIED=2u};
+enum {JOIN_SPLME_SPLINE=1u};
+typedef struct {
+    uint64_t portable;uint32_t flags,entries[2],requests,segments[2],pairs[2],reserved[2];unsigned char model[JOIN_SPLM_BYTES];
+} join_splm_rec;
+typedef struct {uint64_t portable;uint32_t list,index,flags,segments,pairs,reserved;unsigned char entry[0x50],spline[0x50];} join_splme_rec;
+/* GRAVN    the Gravidar zone groups' neighbour lists (lockstep_gravidar_wide.h: each sector entry of the worker's list +0x68b8 holds
+ *          one 0x58-byte group per zone, its +0x38 a vector of neighbour group indices that Update 0x10b1810 fills when a zone is
+ *          added, from the zone's spatial query; a scan pairs a group's units only with its neighbours'). J1 j1-37: the same unit at
+ *          the same tick found other contacts on the joiner (40 km radar, contacts at 26..39 km in zones the session's scan never
+ *          gathered): the session's lists grew zone by zone, the joiner's were built at its load. One record per (sector, zone,
+ *          neighbour), sorted; flags 1: the zone without a portable key (0), 2: the neighbour without one (0); a group without
+ *          neighbours has one record with neighbour 0 and flag 4. */
+enum {JOIN_GRAVN_ZONE_UNMAPPED=1u,JOIN_GRAVN_NEIGHBOUR_UNMAPPED=2u,JOIN_GRAVN_NONE=4u};
+typedef struct {uint64_t sector,zone,neighbour;uint32_t flags,reserved;} join_gravn_rec;
+/* GRAVP    the published component view cache poses the radar reads (J1 j1-37..40: the same unit at the same tick found other contacts
+ *          on the joiner; ship 8cecc's scan entry 6.6 km apart). Off the MoveWorker, 0x3dde10 composes each link from the view cache
+ *          (object+0xe0+view*0x80; +0x28 a pointer to the published 0x40-byte transform, position then three rows; NULL: the link's
+ *          own transform at the thread's time), which an out-of-sector object republishes rarely: the session's are the poses of
+ *          their last publication, the joiner's those of its load. For every Gravidar unit's owner and its ancestors below the
+ *          sector, both views relative to the current one (g_ComponentViewCacheIndex 0x38f4eb4): rel 0 the current view, 1 the other;
+ *          flags 1: a pose was published (pose its bytes). Sorted by (portable, rel). */
+enum {JOIN_GRAVP_PRESENT=1u};
+typedef struct {uint64_t portable;uint32_t rel,flags;unsigned char pose[0x40];} join_gravp_rec;
+/* GRAVQ (report 1.16): the Gravidar worker's private command list at T (+0x69b0, a std::list: the pass of T posted its
+ * GravidarHasScannedEvents there and the publish of T+1 splices them into U::g_EventCommandQueue). In list order (index): the source
+ * as a portable ID (0 with UNMAPPED), the node's kind (3: post an event), the event's vtable RVA, the post time (bits), the event's two
+ * qwords. OTHER: not a has_scanned post the joiner can rebuild (another kind or event, a payload beyond them). */
+enum {JOIN_GRAVQ_UNMAPPED=1u,JOIN_GRAVQ_OTHER=2u};
+typedef struct {uint64_t portable;uint32_t index,kind,flags,event;uint64_t time,q[2];} join_gravq_rec;
+_Static_assert(sizeof(join_splm_rec)==1264 && sizeof(join_splme_rec)==192 && sizeof(join_gravn_rec)==32 && sizeof(join_gravp_rec)==80 &&
+               sizeof(join_gravq_rec)==48,
+               "join v12 record layout (native_gate_join.py)");
 typedef struct {
     uint64_t tick,game,real;uint32_t wire_version,clients,lookahead,tick_hz,slot,md_seq;uint64_t rid_next,created_generation;
     uint32_t created_live,identities,ctx_count,wake_count,vec_index,vec0,vec1,md_count,md_void,md_release,md_queued,unsupported;
@@ -434,6 +486,8 @@ typedef struct {
     join_steer_rec *steer;uint32_t nsteer;join_route_rec *steerpt;uint32_t nsteerpt;   /* version 9 */
     join_solver_rec *solver;uint32_t nsolver;join_bullet_rec *bullet;uint32_t nbullet; /* version 10 */
     join_grav_rec *grav;uint32_t ngrav;join_gravc_rec *gravc;uint32_t ngravc;join_gravs_rec *gravs;uint32_t ngravs;   /* version 11 */
+    join_splm_rec *splm;uint32_t nsplm;join_splme_rec *splme;uint32_t nsplme;join_spline_rec *splmseg;uint32_t nsplmseg;   /* version 12 */
+    join_gravn_rec *gravn;uint32_t ngravn;join_gravp_rec *gravp;uint32_t ngravp;join_gravq_rec *gravq;uint32_t ngravq;
     unsigned char save_sha[32];uint64_t save_bytes;uint32_t flags,version;
 } join_tables;
 /* The engine as the module sees it; tests build a synthetic one. */
@@ -460,8 +514,10 @@ static struct {
     int state,mode;unsigned why,slot_k,mask;uint64_t tick;char name[24];WCHAR folder[MAX_PATH];uintptr_t mw_tls;
     unsigned char package_sha[32],portable[16],save_sha[32];uint64_t save_bytes,package_bytes,save_us,capture_us;
     unsigned modified_cleared,possible;char detail[320];char *lua;size_t lua_len;uint32_t nlua;unsigned char fixture[12];
-    uint32_t health,pose,shield,nav,attn,keys,path,region,flight,spline,agent,route,param,dock,steer,steerpt,solver,bullet,grav,gravc,gravs;   /* the world side table at the last capture */
+    uint32_t health,pose,shield,nav,attn,keys,path,region,flight,spline,agent,route,param,dock,steer,steerpt,solver,bullet,grav,gravc,gravs,splm,splme,splmseg,gravn,gravp,gravq;   /* the world side table at the last capture */
     uint32_t solver_over,bullet_fault;                                         /* dormant solvers past the cap, bullets not readable */
+    uint32_t solver_mapped;                                                    /* version 12: solver qwords that were addresses of this process */
+    uint32_t gravq_global,gravq_busy;                                          /* GRAVQ: entries in the event queue at T (not carried), worker not idle */
     uint32_t grav_unmapped,grav_fault,grav_passive;                          /* GRAV capture: units without a portable owner, faults, passive units */
     uint32_t bullet_blocks;uint64_t bullet_live,bullet_unkeyed;               /* BULLET's registry walk: blocks, live components, bullets keyed by runtime ID */
 } join_cap;
@@ -499,11 +555,21 @@ static struct {
     /* version 9 (join_admit_steer): rebuilt: records whose path vector was refilled; job: the session had an async path job */
     uint64_t steer_applied,steer_fixed,steer_missing,steer_kind,steer_shape,steer_unmapped,steer_other,steer_job,steer_rebuilt;
     /* version 10 (join_admit_solver): created: the Agent had no solver yet; kind: the model is another class than the session's */
-    uint64_t solver_applied,solver_fixed,solver_created,solver_missing,solver_shape,solver_kind;
+    uint64_t solver_applied,solver_fixed,solver_created,solver_missing,solver_shape,solver_kind,solver_heap;
     /* version 11 (join_admit_grav): units applied, written (fixed), not found, another kind, shape (a list that does not fit, no worker),
      * contacts written, contacts without a joiner object, lists rebuilt in a new buffer; sources (lists written, entries missing), sectors */
     uint64_t grav_applied,grav_fixed,grav_missing,grav_kind,grav_shape,grav_contacts,grav_unmapped,grav_buffers,gravs_lists,gravs_missing,gravs_sectors,
-             grav_created,gravs_cursor;   /* gravs_cursor: 1 set, 2 no record or no ai_schedule, 3 refused */
+             grav_created,gravs_cursor,
+             /* version 12 (join_admit_splm): applied, fixed, missing, kind, shape (a joiner route not empty, a list that does not fit),
+              * other (a record the saver could not carry or requests pending at T), allocations failed, entries rebuilt */
+             splm_applied,splm_fixed,splm_missing,splm_kind,splm_shape,splm_other,splm_alloc,splm_entries,
+             /* GRAVN: groups whose neighbour list was rewritten, groups the session named that the joiner lacks, neighbours not found */
+             gravn_groups,gravn_fixed,gravn_missing,gravn_unfound,
+             /* GRAVP: poses written, already equal, objects not found, the session published one the joiner has not, the reverse */
+             gravp_fixed,gravp_equal,gravp_missing,gravp_absent,gravp_extra,
+             /* GRAVQ: posts rebuilt, records without a portable source or a joiner object, other records, worker not idle, allocations
+              * failed, entries the joiner's list already held */
+             gravq_posted,gravq_unmapped,gravq_other,gravq_busy,gravq_alloc,gravq_had;   /* gravs_cursor: 1 set, 2 no record or no ai_schedule, 3 refused */
     volatile LONG64 unmapped_ids[JOIN_UNMAPPED_SET];volatile LONG64 unmapped_set_full;
     char rows[JOIN_ROWS][400];unsigned nrows;
 } join_rx;
@@ -532,7 +598,7 @@ static int join_grow(void **items,uint32_t *count,uint32_t *cap,size_t size) {
 static void join_tables_free(join_tables *t) {
     free(t->ctx);free(t->wake);free(t->vec);free(t->md);free(t->ids);free(t->modules);free(t->lua);free(t->health);free(t->pose);
     free(t->shield);free(t->nav);free(t->attn);free(t->keys);free(t->path);free(t->region);free(t->flight);free(t->spline);free(t->agent);
-    free(t->route);free(t->param);free(t->dock);free(t->steer);free(t->steerpt);free(t->solver);free(t->bullet);free(t->grav);free(t->gravc);free(t->gravs);memset(t,0,sizeof(*t));
+    free(t->route);free(t->param);free(t->dock);free(t->steer);free(t->steerpt);free(t->solver);free(t->bullet);free(t->grav);free(t->gravc);free(t->gravs);free(t->splm);free(t->splme);free(t->splmseg);free(t->gravn);free(t->gravp);free(t->gravq);memset(t,0,sizeof(*t));
 }
 static uint64_t join_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static double join_double(uint64_t b) {double v;memcpy(&v,&b,8);return v;}
@@ -993,6 +1059,31 @@ static int join_portable(join_tables *t,unsigned char out[16]) {
         lockstep_sha256_final(&ids,sha);hex32(sha,hex);
         int n=snprintf(line,sizeof(line),"GRAV|%u|%u|%u|%s\n",t->ngrav,t->ngravc,t->ngravs,hex);lockstep_sha256_update(&c,line,(size_t)n);
     }
+    /* Version 12: which spline models, how many entries, requests, segments and pairs (their bytes: compare first, as GRAV). */
+    if(t->version>=12) {
+        unsigned char sha[32];char hex[65];lockstep_sha256_ctx ids;lockstep_sha256_init(&ids);
+        for(uint32_t i=0;i<t->nsplm;i++) {
+            const join_splm_rec *r=&t->splm[i];
+            lockstep_sha256_update(&ids,&r->portable,8);lockstep_sha256_update(&ids,r->entries,8);lockstep_sha256_update(&ids,&r->requests,4);
+            lockstep_sha256_update(&ids,r->segments,8);lockstep_sha256_update(&ids,r->pairs,8);
+        }
+        lockstep_sha256_final(&ids,sha);hex32(sha,hex);
+        int n=snprintf(line,sizeof(line),"SPLM|%u|%u|%u|%s\n",t->nsplm,t->nsplme,t->nsplmseg,hex);lockstep_sha256_update(&c,line,(size_t)n);
+        lockstep_sha256(t->gravn?(const void *)t->gravn:"",(size_t)t->ngravn*sizeof(*t->gravn),sha);hex32(sha,hex);   /* deterministic: keys only */
+        n=snprintf(line,sizeof(line),"GRAVN|%u|%s\n",t->ngravn,hex);lockstep_sha256_update(&c,line,(size_t)n);
+        {   /* GRAVP: which objects and views hold a pose (its bytes: compare first) */
+            lockstep_sha256_ctx pc;lockstep_sha256_init(&pc);
+            for(uint32_t i=0;i<t->ngravp;i++) {lockstep_sha256_update(&pc,&t->gravp[i].portable,8);lockstep_sha256_update(&pc,&t->gravp[i].rel,8);}
+            lockstep_sha256_final(&pc,sha);hex32(sha,hex);
+        }
+        n=snprintf(line,sizeof(line),"GRAVP|%u|%s\n",t->ngravp,hex);lockstep_sha256_update(&c,line,(size_t)n);
+        {   /* GRAVQ: which sources, kinds, flags and events in which order (the times and the event's qwords: compare first) */
+            lockstep_sha256_ctx qc;lockstep_sha256_init(&qc);
+            for(uint32_t i=0;i<t->ngravq;i++) lockstep_sha256_update(&qc,&t->gravq[i],24);
+            lockstep_sha256_final(&qc,sha);hex32(sha,hex);
+        }
+        n=snprintf(line,sizeof(line),"GRAVQ|%u|%s\n",t->ngravq,hex);lockstep_sha256_update(&c,line,(size_t)n);
+    }
     unsigned char full[32];lockstep_sha256_final(&c,full);memcpy(out,full,16);return 1;
 }
 /* MODULES: one line per armed module, name=status (serialized, superseded, unsupported, unaudited). */
@@ -1052,6 +1143,12 @@ static int join_package_build(join_tables *t,join_buf *b) {
     join_section(b,JOIN_SEC_GRAV,t->ngrav,t->grav,(uint64_t)t->ngrav*sizeof(*t->grav));
     join_section(b,JOIN_SEC_GRAVC,t->ngravc,t->gravc,(uint64_t)t->ngravc*sizeof(*t->gravc));
     join_section(b,JOIN_SEC_GRAVS,t->ngravs,t->gravs,(uint64_t)t->ngravs*sizeof(*t->gravs));
+    join_section(b,JOIN_SEC_SPLM,t->nsplm,t->splm,(uint64_t)t->nsplm*sizeof(*t->splm));
+    join_section(b,JOIN_SEC_SPLME,t->nsplme,t->splme,(uint64_t)t->nsplme*sizeof(*t->splme));
+    join_section(b,JOIN_SEC_SPLMSEG,t->nsplmseg,t->splmseg,(uint64_t)t->nsplmseg*sizeof(*t->splmseg));
+    join_section(b,JOIN_SEC_GRAVN,t->ngravn,t->gravn,(uint64_t)t->ngravn*sizeof(*t->gravn));
+    join_section(b,JOIN_SEC_GRAVP,t->ngravp,t->gravp,(uint64_t)t->ngravp*sizeof(*t->gravp));
+    join_section(b,JOIN_SEC_GRAVQ,t->ngravq,t->gravq,(uint64_t)t->ngravq*sizeof(*t->gravq));
     unsigned char sha[32];if(!b->failed) {lockstep_sha256(b->data,b->size,sha);join_put(b,sha,32);}
     return !b->failed;
 }
@@ -1067,17 +1164,17 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     uint32_t version,count,slot,flags;uint64_t tick,game,real,reserved;*why="package_magic";
     memcpy(&version,data+8,4);memcpy(&count,data+12,4);memcpy(&tick,data+16,8);memcpy(&game,data+24,8);memcpy(&real,data+32,8);
     memcpy(&slot,data+80,4);memcpy(&flags,data+84,4);memcpy(&reserved,data+88,8);
-    if(memcmp(data,"X4MPJN01",8) || version<1 || version>JOIN_PACKAGE_VERSION || reserved || count>29) return 0;
+    if(memcmp(data,"X4MPJN01",8) || version<1 || version>JOIN_PACKAGE_VERSION || reserved || count>35) return 0;
     memcpy(t->save_sha,data+40,32);memcpy(&t->save_bytes,data+72,8);t->flags=flags;t->version=version;
-    const uint32_t last=version>=11?JOIN_SEC_GRAVS:version>=10?JOIN_SEC_BULLET:version>=9?JOIN_SEC_STEERPT:version>=8?JOIN_SEC_DOCK:version>=7?JOIN_SEC_ROUTE:version>=6?JOIN_SEC_AGENT:version>=5?JOIN_SEC_SPLINE:version>=4?JOIN_SEC_REGION:version>=3?JOIN_SEC_KEYS:
+    const uint32_t last=version>=12?JOIN_SEC_GRAVQ:version>=11?JOIN_SEC_GRAVS:version>=10?JOIN_SEC_BULLET:version>=9?JOIN_SEC_STEERPT:version>=8?JOIN_SEC_DOCK:version>=7?JOIN_SEC_ROUTE:version>=6?JOIN_SEC_AGENT:version>=5?JOIN_SEC_SPLINE:version>=4?JOIN_SEC_REGION:version>=3?JOIN_SEC_KEYS:
                         version>=2?JOIN_SEC_POSE:JOIN_SEC_LUA;
-    size_t at=96,end=size-32;unsigned seen=0;
+    size_t at=96,end=size-32;uint64_t seen=0;   /* 64 bits: section kinds reach 33 (version 12) */
     for(uint32_t s=0;s<count;s++) {
         uint32_t kind,n;uint64_t bytes;*why="section_head";
         if(end-at<48) return 0;
         memcpy(&kind,data+at,4);memcpy(&n,data+at+4,4);memcpy(&bytes,data+at+8,8);
         if(kind<JOIN_SEC_GATE || kind>last || (seen>>kind&1u) || bytes>end-at-48 || n>JOIN_MAX_RECORDS) return 0;
-        seen|=1u<<kind;const unsigned char *payload=data+at+48;lockstep_sha256(payload,(size_t)bytes,sha);
+        seen|=1ull<<kind;const unsigned char *payload=data+at+48;lockstep_sha256(payload,(size_t)bytes,sha);
         if(memcmp(sha,data+at+16,32)) {*why="section_sha";return 0;}
         static const size_t sizes[]={0,sizeof(join_gate_rec),sizeof(join_id_rec),sizeof(join_wake_rec),sizeof(join_vec_rec),sizeof(join_md_rec),0,
                                      sizeof(join_ctx_rec),0,sizeof(join_health_rec),sizeof(join_pose_rec),sizeof(join_shield_rec),
@@ -1085,7 +1182,9 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
                                      sizeof(join_region_rec),sizeof(join_flight_rec),sizeof(join_spline_rec),sizeof(join_agent_rec),
                                      sizeof(join_route_rec),sizeof(join_param_rec),sizeof(join_dock_rec),sizeof(join_steer_rec),
                                      sizeof(join_route_rec),sizeof(join_solver_rec),sizeof(join_bullet_rec),
-                                     sizeof(join_grav_rec),sizeof(join_gravc_rec),sizeof(join_gravs_rec)};
+                                     sizeof(join_grav_rec),sizeof(join_gravc_rec),sizeof(join_gravs_rec),
+                                     sizeof(join_splm_rec),sizeof(join_splme_rec),sizeof(join_spline_rec),sizeof(join_gravn_rec),
+                                     sizeof(join_gravp_rec),sizeof(join_gravq_rec)};
         *why="section_shape";
         if(kind==JOIN_SEC_MODULES || kind==JOIN_SEC_LUA) {
             uint32_t lines=0;for(uint64_t i=0;i<bytes;i++) {if(payload[i]=='\n') ++lines;else if(payload[i]<32 || payload[i]>126) return 0;}
@@ -1125,6 +1224,12 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
             else if(kind==JOIN_SEC_GRAV) {t->grav=copy;t->ngrav=n;}
             else if(kind==JOIN_SEC_GRAVC) {t->gravc=copy;t->ngravc=n;}
             else if(kind==JOIN_SEC_GRAVS) {t->gravs=copy;t->ngravs=n;}
+            else if(kind==JOIN_SEC_SPLM) {t->splm=copy;t->nsplm=n;}
+            else if(kind==JOIN_SEC_SPLME) {t->splme=copy;t->nsplme=n;}
+            else if(kind==JOIN_SEC_SPLMSEG) {t->splmseg=copy;t->nsplmseg=n;}
+            else if(kind==JOIN_SEC_GRAVN) {t->gravn=copy;t->ngravn=n;}
+            else if(kind==JOIN_SEC_GRAVP) {t->gravp=copy;t->ngravp=n;}
+            else if(kind==JOIN_SEC_GRAVQ) {t->gravq=copy;t->ngravq=n;}
             else {t->ctx=copy;t->nctx=n;}
         }
         at+=48+(size_t)bytes;
@@ -1140,6 +1245,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     if(version>=9 && ((seen>>JOIN_SEC_STEER&3u)!=3u)) return 0;                                 /* v9: STEER, STEERPT */
     if(version>=10 && ((seen>>JOIN_SEC_SOLVER&3u)!=3u)) return 0;                               /* v10: SOLVER, BULLET */
     if(version>=11 && ((seen>>JOIN_SEC_GRAV&7u)!=7u)) return 0;                                 /* v11: GRAV, GRAVC, GRAVS */
+    if(version>=12 && ((seen>>JOIN_SEC_SPLM&63u)!=63u)) return 0;                               /* v12: SPLM, SPLME, SPLMSEG, GRAVN, GRAVP, GRAVQ */
     *why="world_order";   /* the world records sorted by portable ID, each once (the admission's identity lookups rely on it) */
     for(uint32_t i=1;i<t->nhealth;i++) if(t->health[i].portable<=t->health[i-1].portable) return 0;
     for(uint32_t i=1;i<t->npose;i++) if(t->pose[i].portable<=t->pose[i-1].portable) return 0;
@@ -1181,6 +1287,11 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     if(version>=10 && !join_bullet_shape(t->bullet,t->nbullet)) {*why="bullet_shape";return 0;}
     /* Version 11: GRAV by portable ID, GRAVC exactly the contacts each names, GRAVS by (kind, index). */
     if(version>=11 && !join_grav_shape(t->grav,t->ngrav,t->gravc,t->ngravc,t->gravs,t->ngravs)) {*why="grav_shape";return 0;}
+    /* Version 12: SPLM by portable ID, SPLME and SPLMSEG exactly the entries and segments each names. */
+    if(version>=12 && !join_splm_shape(t->splm,t->nsplm,t->splme,t->nsplme,t->splmseg,t->nsplmseg)) {*why="splm_shape";return 0;}
+    if(version>=12 && !join_gravn_shape(t->gravn,t->ngravn)) {*why="gravn_shape";return 0;}
+    if(version>=12 && !join_gravp_shape(t->gravp,t->ngravp)) {*why="gravp_shape";return 0;}
+    if(version>=12 && !join_gravq_shape(t->gravq,t->ngravq)) {*why="gravq_shape";return 0;}
     *why="gate_header";if(t->gate.tick!=tick || t->gate.game!=game || t->gate.real!=real || t->gate.slot!=slot) return 0;
     unsigned char portable[16];*why="portable_digest";
     if(!join_portable(t,portable) || memcmp(portable,t->gate.portable,16)) return 0;
@@ -1686,6 +1797,7 @@ static void join_boundary(uint64_t completed) {
     join_cap.path=t.npath;join_cap.region=t.nregion;join_cap.flight=t.nflight;join_cap.spline=t.nspline;join_cap.agent=t.nagent;
     join_cap.route=t.nroute;join_cap.param=t.nparam;join_cap.dock=t.ndock;join_cap.steer=t.nsteer;join_cap.steerpt=t.nsteerpt;
     join_cap.solver=t.nsolver;join_cap.bullet=t.nbullet;join_cap.grav=t.ngrav;join_cap.gravc=t.ngravc;join_cap.gravs=t.ngravs;
+    join_cap.splm=t.nsplm;join_cap.splme=t.nsplme;join_cap.splmseg=t.nsplmseg;join_cap.gravn=t.ngravn;join_cap.gravp=t.ngravp;join_cap.gravq=t.ngravq;
     QueryPerformanceCounter(&t2);t.gate.save_us=join_cap.save_us;t.gate.capture_us=(uint64_t)((t2.QuadPart-t1.QuadPart)*1000000/f.QuadPart);
     join_buf b={0};
     if(!join_package_build(&t,&b)) {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"build");return;}
@@ -1789,7 +1901,7 @@ static const char *join_unpaired_row(unsigned i) {return i>=1 && i<=join_rx.nrow
 static int join_version_refused(const join_tables *t,int mode) {return t->version<JOIN_PACKAGE_VERSION && mode==JOIN_STRICT;}
 static const char *join_version_name(uint32_t version) {
     return version<2?"package_v1":version<3?"package_v2":version<4?"package_v3":version<5?"package_v4":version<6?"package_v5":version<7?"package_v6":
-           version<8?"package_v7":version<9?"package_v8":version<10?"package_v9":"package_v10";
+           version<8?"package_v7":version<9?"package_v8":version<10?"package_v9":version<11?"package_v10":"package_v11";
 }
 /* gate.join_load(package, sha, mode): verify and keep the package; before the load request. */
 static int join_load(const char *path,const char *sha_hex,int mode) {
@@ -2139,14 +2251,14 @@ static int join_status(char *out,size_t cap) {
         " wake_applied=%llu wake_missing=%llu vec_applied=%llu vec_missing=%llu md_applied=%llu md_missing=%llu md_extra=%llu"
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
-        " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
+        " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
         " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
         " steer=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu t1=%u:%llu:%llu:%llu:%llu:%llu:%llu"
         " solver=%llu:%llu:%llu:%llu:%llu:%llu bullet_walk=%u:%llu:%llu grav=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravs=%llu:%llu:%llu:%llu md_dropped=%llu"
-        " grav_cap=%u:%u:%u",
+        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u",
         states[join_cap.state],(unsigned long long)join_cap.tick,join_cap.slot_k,join_cap.mask,join_cap.why,join_cap.detail[0]?join_cap.detail:"-",
         (unsigned long long)join_cap.save_bytes,(unsigned long long)join_cap.package_bytes,(unsigned long long)join_cap.save_us,
         (unsigned long long)join_cap.capture_us,pkg,port,join_cap.modified_cleared,join_cap.possible,join_rx.loaded,join_rx.mode,join_rx.based,
@@ -2163,7 +2275,7 @@ static int join_status(char *out,size_t cap) {
         join_rx.detail[0]?join_rx.detail:"-",(long long)join_failures,join_pins_state>0?"ok":join_pins_state<0?join_pins_why:"unchecked",join_patched,
         join_patched_text,join_armed_kept,join_views_text(join_cap.fixture,fixture),join_views_text(join_rx.t.gate.fixture,rx_fixture),join_cap.health,join_cap.pose,
         join_cap.shield,join_cap.nav,join_cap.attn,join_cap.keys,join_cap.path,join_cap.region,join_cap.flight,join_cap.spline,join_cap.agent,join_cap.route,
-        join_cap.param,join_cap.dock,join_cap.steer,join_cap.steerpt,join_cap.solver,join_cap.bullet,join_cap.solver_over,join_cap.bullet_fault,join_cap.grav,join_cap.gravc,join_cap.gravs,
+        join_cap.param,join_cap.dock,join_cap.steer,join_cap.steerpt,join_cap.solver,join_cap.bullet,join_cap.solver_over,join_cap.bullet_fault,join_cap.grav,join_cap.gravc,join_cap.gravs,join_cap.splm,join_cap.splme,join_cap.splmseg,join_cap.gravn,join_cap.gravp,
         join_rx.t.version,(unsigned long long)join_rx.health_applied,(unsigned long long)join_rx.health_hull_fixed,
         (unsigned long long)join_rx.health_shield_fixed,(unsigned long long)join_rx.health_missing,(unsigned long long)join_rx.health_shape,
         (unsigned long long)join_rx.health_conflict,(unsigned long long)join_rx.pose_applied,(unsigned long long)join_rx.pose_fixed,
@@ -2208,6 +2320,15 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_rx.grav_kind,(unsigned long long)join_rx.grav_shape,(unsigned long long)join_rx.grav_contacts,
         (unsigned long long)join_rx.grav_unmapped,(unsigned long long)join_rx.grav_buffers,(unsigned long long)join_rx.grav_created,
         (unsigned long long)join_rx.gravs_lists,
-        (unsigned long long)join_rx.gravs_missing,(unsigned long long)join_rx.gravs_sectors,(unsigned long long)join_rx.gravs_cursor,(unsigned long long)join_rx.md_dropped,join_cap.grav_unmapped,join_cap.grav_fault,join_cap.grav_passive);
+        (unsigned long long)join_rx.gravs_missing,(unsigned long long)join_rx.gravs_sectors,(unsigned long long)join_rx.gravs_cursor,(unsigned long long)join_rx.md_dropped,join_cap.grav_unmapped,join_cap.grav_fault,join_cap.grav_passive,
+        (unsigned long long)join_rx.splm_applied,(unsigned long long)join_rx.splm_fixed,(unsigned long long)join_rx.splm_missing,
+        (unsigned long long)join_rx.splm_kind,(unsigned long long)join_rx.splm_shape,(unsigned long long)join_rx.splm_other,
+        (unsigned long long)join_rx.splm_alloc,(unsigned long long)join_rx.splm_entries,(unsigned long long)join_rx.gravn_groups,
+        (unsigned long long)join_rx.gravn_fixed,(unsigned long long)join_rx.gravn_missing,(unsigned long long)join_rx.gravn_unfound,
+        (unsigned long long)join_rx.solver_heap,(unsigned long long)join_rx.gravp_fixed,(unsigned long long)join_rx.gravp_equal,
+        (unsigned long long)join_rx.gravp_missing,(unsigned long long)join_rx.gravp_absent,(unsigned long long)join_rx.gravp_extra,
+        join_cap.solver_mapped,(unsigned long long)join_rx.gravq_posted,(unsigned long long)join_rx.gravq_unmapped,
+        (unsigned long long)join_rx.gravq_other,(unsigned long long)join_rx.gravq_busy,(unsigned long long)join_rx.gravq_alloc,
+        (unsigned long long)join_rx.gravq_had,join_cap.gravq,join_cap.gravq_global,join_cap.gravq_busy);
     return n>0 && (size_t)n<cap?n:0;
 }

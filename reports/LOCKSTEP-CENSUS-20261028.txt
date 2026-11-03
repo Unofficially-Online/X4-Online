@@ -2066,3 +2066,30 @@ stays under .local/census (not committed).
   section 17); defaults now skip render frames while prediction presents; d201f (build201) clean: census 0, 0 flashes.
 - Hot join v10/v11 merged (93642254): SOLVER, BULLET (component registry, 55 shots at T), GRAV/GRAVC/GRAVS radar state;
   J1 T+1 17 -> 7 differ, tick 900 2,491 -> 2,118 (j1-28..j1-36, HOTJOIN report 1.15).
+
+WINDOWS VS LINUX, 6000 TICKS (3 November, coordinator): w16 (overlay-W15 unchanged: its DLL, 2 Windows clients, b1,b2) against
+vps-linux-L8-6000 (the L8 bundle unchanged on the VPS, 2 Linux clients), client 1 each, census every 30 ticks:
+  through 1140 only the same-platform timing pair (176bf8/176cef nav.parameters_due), as w15/L8 through 600;
+  1170: first motion split, 2 objects (ShipSmall 09ab7d, ShipMedium 08bcf8, no saved parent); 1800 11; 2400 37; 3000 84;
+  3600 130; 4200 253; 4800 1,979; 5400 3,494; 6000 4,555 of 521,929 (motion 4,462, health 224, topology 102, timing 255).
+  Each platform agrees with itself within a run (w16 client 1 vs 2 at 600: the timing pair only).
+  CORRECTION (same night): the 1170 split is NOT Windows vs Linux. Reruns with the two ships watched (w18 Windows, fr31-L2
+  Linux; the world trace refuses past tick 12, so watch only): w18 = fr31-L2 = L8-6000 at 1170 (timing pair only), while
+  w16 differs from w18 (same DLL and config) in exactly those 2 ships. So w16 itself was a Windows run-to-run outlier in this
+  1 Nov measurement config (an intermittent same-platform class), and Windows and Linux agree through 1200 in w18/fr31-L2.
+  w19 (overlay-W18, 6000 ticks): against L8-6000 1 at 1200, 12 at 1800, 4,728 at 6000; but w16 vs w19 (both Windows) 14 at
+  1800 and 4,811 at 6000, and w19's OWN two clients differ by 4,360 at 6000. [F] The 1 Nov measurement config (W15/L8, before
+  the long-run fixes of the current defaults) is not self-consistent past about 1200-1800 ticks even on one platform, so it
+  cannot measure Windows vs Linux beyond that. What it shows: Windows and Linux agree through 1200 (w18 = fr31-L2 = L8-6000).
+  A longer comparison needs the current long-run stack on the Linux build (roadmap 12/13).
+
+SUIT VIEW FIX LIVE (recorded 3 November from the 1 November run missile2, 10:22, after the suitview merge b8001d0d at 09:59):
+  missile1's config unchanged; slot 2 dies at 1733 (die:2,suit:2) and is in its suit at 1738 as in missile1, but the relay
+  passes with 0 mismatches through 3002 ticks (missile1: diverged from 1733, 1,270 mismatched ticks); census 0 at 1800;
+  client 1 UI_REPLAY_STATUS target_ui=2/0 target_md=0 target_passed=0 route_faults=0 target_route=aeb2d2,b3fa06,8c58b8,
+  8c37b5,7074f6,9a2c7f (the route the spec asked to report: not the destructor's it guessed); client 2 target_passed=0.
+
+20-MINUTE DEFAULT SESSION ON THE MERGED BUILD (3 November, l204-soak: build204 = smoke cea427c6 + probe fix 4f01b0bb: hot join
+v12 present but off, pool faction accounts, render frames skipped while prediction presents; the session defaults, 2 clients,
+stock demo pilots with the pilot window to 36000, 30 steps/s): relay pass, 0 digest mismatches through 36,000 ticks,
+28.96 steps/s, both stopped with reason 1; census 0 at 9000, 18000, 27000 and 36000 (550,467 objects at 36000).
