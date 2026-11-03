@@ -94,9 +94,12 @@ the money then differs); `'block'` refuses it (`blocked=1`); with the relay
 relay, and both clients run it at tick 602 (`FFI_RELAY tick=602 slot=1 ... ok=true` on
 each): 10,000 -> 11,000 credits on both at tick 605, session in sync.
 
-185 of the 234 uncovered writes take only scalars, IDs and strings, so the relay can
-carry them once their kinds are listed; 48 take structs (`UILoadout2`, `UIPosRot`,
-`CrewTransferInfo`, ...) and need struct marshalling (the cdefs describe the layouts).
+`tools/dev/ui_export_census.py` derives the kinds from the UI's cdefs: 199 of the UI's
+game writes take only scalars (`size_t` included), IDs and strings, and
+`tools/build_soak_overlay.py --ui-relay` relays them (the 28 the relay code already carries
+excepted) and blocks the rest. The rest take structs; only 14 of those are plain data
+(`UIPosRot`, `Coord3D`: map editor spawns, build plots), the others carry pointers
+(`UILoadout2`, `CrewTransferInfo2`, `TradeRuleInfo`, ...) and need per-type marshalling.
 The return value of a relayed call is 0 on the calling client at the time of the click (the
 action happens a few ticks later on every client); menus that use the return value (a
 new build task's ID, say) need a follow-up read.
