@@ -475,17 +475,18 @@ end
 -- With the UI write census on, tick 2 logs them once (UI_GLOBALS, chunked).
 local function ui_globals_census(tick)
  if tick~=2 or not cfg.native_gate_ui_exports then return end
- -- X4's UI Lua has no debug library: no way to tell C functions from Lua ones there.
- if type(debug)~='table' or type(debug.getinfo)~='function' then ticklog.write('UI_GLOBALS unavailable=no_debug_library');return end
+ -- X4's UI Lua has no debug library: then every global function is listed (all=1), and the C ones are
+ -- those the UI scripts do not define (tools/dev/ui_export_census.py compares offline).
+ local classify=type(debug)=='table' and type(debug.getinfo)=='function'
  local names={}
  for name,value in pairs(_G) do
   if type(value)=='function' and type(name)=='string' then
-   local ok,info=pcall(debug.getinfo,value,'S')
-   if ok and info and info.what=='C' then names[#names+1]=name end
+   if not classify then names[#names+1]=name
+   else local ok,info=pcall(debug.getinfo,value,'S');if ok and info and info.what=='C' then names[#names+1]=name end end
   end
  end
  table.sort(names)
- ticklog.write('UI_GLOBALS count='..#names)
+ ticklog.write('UI_GLOBALS count='..#names..' all='..(classify and 0 or 1))
  for i=1,#names,40 do ticklog.write('UI_GLOBALS names='..table.concat(names,',',i,math.min(i+39,#names))) end
 end
 local function ui_write_check(tick)
