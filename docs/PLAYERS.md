@@ -67,6 +67,40 @@ The first native run of the census (600 ticks, scripted pilots, no human input) 
 idle UI call 10 non-query exports, all presentation: `SetWidgetAssociatedElement`,
 `SetMonitorExtents`, `SetCrosshairMessage`, `MarkIndicatorShown`, `TrackMenu`, ...
 
+## The guard and the generic relay
+
+`native_gate_ui_exports` (`lockstep_ui_exports.h`) redirects the export table entries of
+every non-query code export (802 on 9.00) to 16-byte stubs; the common handler records
+the call and tail-jumps to the original, so engine functions run with no stub frame.
+
+- `'observe'`: every UI call outside the relay bracket in an admitted frame is counted,
+  first calls as `UI_EXPORT_ROW` (name, tick, thread).
+- `'block'`: exports named in `native_gate_ui_exports_block` are refused (the handler
+  returns 0 without calling them). `tools/build_soak_overlay.py --ui-guard` blocks every
+  game write the static census finds that the relay does not carry (234 on 9.00).
+- relay (`native_gate_ui_relay = {Name='kinds'}`, with `'block'`): the call is refused and
+  captured. Kinds come from the export's FFI declaration (U UniverseID, q 64-bit, i 32-bit,
+  b bool, f float, d double, s string); UniverseIDs become portable keys (saved, or created).
+  The probe sends the records in input section `0x58 'X'` (Lua, Python, C mirrors); at the
+  apply tick every client, the caller too, maps keys back to its runtime IDs
+  (`gate.runtime_of`) and calls the export through its original entry with a pointer typed
+  from the kinds. X4 refuses some FFI symbols to extension code ("Access to FFI function ...
+  is restricted!"); the pointer avoids symbol resolution.
+
+185 of the 234 uncovered writes take only scalars, IDs and strings, so the relay can
+carry them once their kinds are listed; 48 take structs (`UILoadout2`, `UIPosRot`,
+`CrewTransferInfo`, ...) and need struct marshalling (the cdefs describe the layouts).
+The return value of a relayed call is 0 on the calling client at the time of the click (the
+action happens a few ticks later on every client); menus that use the return value (a
+new build task's ID, say) need a follow-up read.
+
+The UI also calls C functions registered as Lua globals (`GetPlayerMoney`,
+`TransferPlayerMoneyTo`, `AddUITriggeredEvent`, ...). They do not pass the export table;
+the UI looks them up by name on every call, so a Lua wrapper on the global is the guard
+for them (the probe already wraps `AddUITriggeredEvent` for the census). X4's UI Lua has
+no debug library, so the census lists all global functions and the C ones are told apart
+offline (names the UI scripts do not define).
+
 ## Gaps
 
 1. **Unwrapped FFI writes.** The orders and UI replay capture work on known menu
