@@ -150,7 +150,7 @@ def report(run_dir, first):
     run_dir = Path(run_dir)
     logs = [run_dir / 'client1/engine-output.log', run_dir / 'client2/engine-output.log']
     lo, hi = window(first)
-    lines = [f'triage of {run_dir.name}: first digest mismatch of the original run at {first}; window {lo}..{hi}']
+    lines = [f'triage of {run_dir.name}: windows around the split at {first}; window {lo}..{hi}']
     summary = json.loads((run_dir / 'summary.json').read_text())
     lines.append(f"rerun: {summary.get('outcome')}, first digest mismatch {summary.get('first_digest_mismatch')}")
     lines.append('')
@@ -184,7 +184,28 @@ def report(run_dir, first):
     return '\n'.join(lines) + '\n'
 
 
+def rerun(overlay, snapshot, out, first, steam_fix, log):
+    """Build the diagnostic overlay for a split at first (once) and run it; the rerun's run directory."""
+    if not out.exists():
+        log(f'building {out.name}')
+        built = subprocess.run([sys.executable, str(ROOT / 'tools/build_soak_overlay.py'), *rebuild_args(overlay, out, first)],
+                               capture_output=True, text=True)
+        if built.returncode:
+            raise SystemExit((built.stderr or built.stdout).strip().splitlines()[-1])
+    result = session.run(session.Options(clients=2, overlay=out, snapshot=snapshot, ticks=pages(first)[1] + 60, observe=True,
+                                         lookahead=1, timeout=max(900, first // 10), fast=True, steam_fix=steam_fix), log=log)
+    return Path(result['run_dir'])
+
+
+def rerun_first(run):
+    summary = run / 'summary.json'
+    return json.loads(summary.read_text()).get('first_digest_mismatch') if summary.is_file() else None
+
+
 def triage(run_dir, steam_fix=False, log=print):
+    """Rerun with diagnostic windows around the first mismatch and report. A split that depends on timing can
+    come earlier in the rerun, before its windows (seed 2222222: 100,200, the rerun 92,400); then one more
+    rerun is windowed at the rerun's own split and reported too."""
     run_dir = Path(run_dir)
     summary = json.loads((run_dir / 'summary.json').read_text())
     first = summary.get('first_digest_mismatch')
@@ -193,18 +214,14 @@ def triage(run_dir, steam_fix=False, log=print):
     if not summary.get('overlay'):
         raise SystemExit(f'{run_dir}: the summary does not name its overlay (a run from before triage)')
     overlay = Path(summary['overlay'])
-    out = ROOT / '.local/overlays' / f'triage-{run_dir.name}'
-    if not out.exists():
-        log(f'building {out.name}')
-        built = subprocess.run([sys.executable, str(ROOT / 'tools/build_soak_overlay.py'), *rebuild_args(overlay, out, first)],
-                               capture_output=True, text=True)
-        if built.returncode:
-            raise SystemExit((built.stderr or built.stdout).strip().splitlines()[-1])
     snapshot = Path(summary['snapshot']) if summary.get('snapshot') else None
-    result = session.run(session.Options(clients=2, overlay=out, snapshot=snapshot, ticks=pages(first)[1] + 60, observe=True,
-                                         lookahead=1, timeout=max(900, first // 10), fast=True, steam_fix=steam_fix), log=log)
-    rerun = Path(result["run_dir"])
-    text = report(rerun, first)
+    run = rerun(overlay, snapshot, ROOT / '.local/overlays' / f'triage-{run_dir.name}', first, steam_fix, log)
+    text = report(run, first)
+    earlier = rerun_first(run)
+    if earlier and earlier < window(first)[0]:
+        log(f'the rerun parted at {earlier}, before its window: a second rerun windowed there')
+        second = rerun(overlay, snapshot, ROOT / '.local/overlays' / f'triage-{run_dir.name}-2', earlier, steam_fix, log)
+        text += '\n' + report(second, earlier)
     (run_dir.parent / f'{run_dir.name}-triage.txt').write_text(text)
     log(text)
     return text

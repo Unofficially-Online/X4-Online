@@ -55,5 +55,44 @@ class Triage(unittest.TestCase):
         self.assertEqual(triage.classify("900 SPEECH_CLOCK [('clock=40f0000000000000', 'clock=40f0000000000001')]"), 'lead')
 
 
+    def test_a_rerun_that_parts_before_its_window_gets_a_second_rerun_there(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            original = d / 'runs/orig'
+            original.mkdir(parents=True)
+            (original / 'summary.json').write_text(json.dumps({'first_digest_mismatch': 100200, 'overlay': str(d / 'ov'),
+                                                               'snapshot': str(d / 'snap.xml.gz')}))
+            firsts = {'r1': 92400, 'r2': 92400}
+
+            def fake_rerun(overlay, snapshot, out, first, steam_fix, log):
+                run = d / f'r{len(calls) + 1}'
+                run.mkdir()
+                (run / 'summary.json').write_text(json.dumps({'first_digest_mismatch': firsts[run.name]}))
+                calls.append((out.name, first))
+                return run
+
+            saved = triage.rerun, triage.report
+            triage.rerun, triage.report = fake_rerun, lambda run, first: f'report {Path(run).name} {first}'
+            try:
+                text = triage.triage(original, log=lambda *_: None)
+            finally:
+                triage.rerun, triage.report = saved
+            self.assertEqual(calls, [('triage-orig', 100200), ('triage-orig-2', 92400)])
+            self.assertEqual(text, 'report r1 100200\nreport r2 92400')
+            self.assertEqual((d / 'runs/orig-triage.txt').read_text(), text)
+            # A rerun that parts inside its window (or passes) is reported alone.
+            calls.clear()
+            firsts['r1'] = 100190
+            for r in ('r1', 'r2'):
+                (d / r / 'summary.json').unlink()
+                (d / r).rmdir()
+            triage.rerun, triage.report = fake_rerun, lambda run, first: f'report {Path(run).name} {first}'
+            try:
+                text = triage.triage(original, log=lambda *_: None)
+            finally:
+                triage.rerun, triage.report = saved
+            self.assertEqual(calls, [('triage-orig', 100200)])
+
 if __name__ == '__main__':
     unittest.main()
