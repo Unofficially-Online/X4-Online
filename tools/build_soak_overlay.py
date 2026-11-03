@@ -51,12 +51,20 @@ RELAYED = {'AdjustOrder', 'CreateOrder', 'CreateOrder3', 'EnableOrder', 'EnableP
            'StopPlayerActivity', 'ToggleAutoPilot', 'ToggleFlightAssist', 'UndockPlayerShip'}
 
 
-def guard_config(census):
-    """The ui_exports block configuration: game writes the UI calls, minus presentation and RELAYED."""
+def guard_config(census, relay=False):
+    """The ui_exports block configuration: game writes the UI calls, minus presentation and RELAYED. With relay,
+    the writes whose arguments have relay kinds (scalars, IDs, strings) go through the generic FFI relay instead
+    of being refused; the rest (struct arguments) stay blocked."""
     table = json.loads(Path(census).read_text())
     names = sorted(n for n, v in table.items() if v['scripts'] and v['family'] != 'presentation' and n not in RELAYED)
-    listed = ','.join(f"'{n}'" for n in names)
-    return f"X4LAN_CONFIG.native_gate_ui_exports = 'block'\nX4LAN_CONFIG.native_gate_ui_exports_block = {{{listed}}}\n"
+    relayed = {n: table[n]['kinds'] for n in names  # the gate takes at most 12 arguments (UX_KINDS)
+               if relay and table[n].get('kinds') is not None and len(table[n]['kinds']) <= 12}
+    listed = ','.join(f"'{n}'" for n in names if n not in relayed)
+    text = f"X4LAN_CONFIG.native_gate_ui_exports = 'block'\nX4LAN_CONFIG.native_gate_ui_exports_block = {{{listed}}}\n"
+    if relayed:
+        pairs = ','.join(f"{n}='{k}'" for n, k in sorted(relayed.items()))
+        text += f"X4LAN_CONFIG.native_gate_ui_relay = {{{pairs}}}\n"
+    return text
 
 
 def manifest(path):
@@ -86,6 +94,9 @@ def main(argv=None):
     p.add_argument('--ui-guard', type=Path, nargs='?', const=ROOT / '.local/ui-export-census.json', metavar='CENSUS',
                    help="native_gate_ui_exports = 'block' for every game write the UI calls that the relay does not "
                         "cover (from tools/dev/ui_export_census.py's map; RELAYED lists the covered exports)")
+    p.add_argument('--ui-relay', type=Path, nargs='?', const=ROOT / '.local/ui-export-census.json', metavar='CENSUS',
+                   help='like --ui-guard, but the game writes with scalar, ID or string arguments go through the generic '
+                        'FFI relay (native_gate_ui_relay, every client runs them at one tick); the rest stay blocked')
     p.add_argument('--players', choices=('factions', 'coop'),
                    help='player-activity soak: player identities, script pilots and scripted orders (native_gate_players.py)')
     p.add_argument('--players-arg', action='append', default=[], metavar='ARG',
@@ -115,8 +126,8 @@ def main(argv=None):
                 config.write(PLAY_MODE)
             if args.long or args.no_pace:
                 config.write(NO_PACE)
-            if args.ui_guard:
-                config.write(guard_config(args.ui_guard))
+            if args.ui_guard or args.ui_relay:
+                config.write(guard_config(args.ui_relay or args.ui_guard, relay=bool(args.ui_relay)))
         manifest(keyed)
         if args.players:
             run([DEV / 'native_gate_players.py', 'overlay', '--base', keyed, '--gate-dll', args.gate_dll,

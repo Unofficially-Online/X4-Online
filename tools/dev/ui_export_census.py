@@ -85,6 +85,38 @@ def ui_lua(game, into):
     return count
 
 
+# FFI argument types -> relay kind letters (lockstep_ui_exports.h); anything else (structs, pointers) has none.
+KIND = {'UniverseID': 'U', 'MissionID': 'q', 'BuildTaskID': 'q', 'TradeID': 'q', 'FleetUnitID': 'q', 'NPCSeed': 'q',
+        'uint64_t': 'q', 'int64_t': 'q', 'int': 'i', 'int32_t': 'i', 'uint32_t': 'i', 'bool': 'b', 'float': 'f',
+        'double': 'd', 'const char*': 's'}
+
+
+def declarations(lua_texts):
+    """{function: argument list text} from the UI scripts' ffi.cdef blocks."""
+    out = {}
+    for text in lua_texts:
+        for block in re.finditer(r'ffi\.cdef\s*\[(=*)\[(.*?)\]\1\]', text, re.S):
+            for m in re.finditer(r'[A-Za-z_][\w \*]*?\b([A-Z]\w*)\s*\(([^;{}]*?)\)\s*;', block.group(2)):
+                out.setdefault(m.group(1), m.group(2).strip())
+    return out
+
+
+def kinds(arguments):
+    """The relay kind string of an argument list, or None when an argument has no kind."""
+    if arguments in ('', 'void'):
+        return ''
+    letters = []
+    for arg in arguments.split(','):
+        arg = re.sub(r'\s+', ' ', arg.strip())
+        arg = re.sub(r'\s*\*\s*', '* ', arg).strip()
+        name = arg.rsplit(' ', 1)[0].strip() if ' ' in arg else arg
+        letter = KIND.get(name.replace('* ', '*'))
+        if letter is None:
+            return None
+        letters.append(letter)
+    return ''.join(letters)
+
+
 def family(name):
     for fam, pattern in FAMILIES:
         if re.search(pattern, name):
@@ -103,14 +135,18 @@ def main(argv=None):
     writes = [n for n in exports(args.game / 'X4.exe') if not QUERY.match(n)]
     hooked = set(writes)
     callers = collections.defaultdict(set)
+    texts = []
     with tempfile.TemporaryDirectory() as tmp:
         files = ui_lua(args.game, Path(tmp))
         for lua in Path(tmp).rglob('*.lua'):
             text = lua.read_text(encoding='utf-8', errors='replace')
+            texts.append(text)
             for m in re.finditer(r'\bC\.([A-Za-z_]\w*)\s*\(', text):
                 if m.group(1) in hooked:
                     callers[m.group(1)].add(lua.name)
-    table = {n: {'family': family(n), 'scripts': sorted(callers.get(n, ()))} for n in sorted(hooked)}
+    decl = declarations(texts)
+    table = {n: {'family': family(n), 'scripts': sorted(callers.get(n, ())), 'kinds': kinds(decl[n]) if n in decl else None}
+             for n in sorted(hooked)}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(table, indent=1) + '\n')
     print(f'{len(writes)} non-query exports, {sum(1 for v in table.values() if v["scripts"])} called by the UI ({files} UI scripts)')
@@ -121,6 +157,8 @@ def main(argv=None):
     for fam, names in sorted(fams.items(), key=lambda kv: -len(kv[1])):
         scripts = collections.Counter(s for n in names for s in table[n]['scripts'])
         print(f'{fam:13} {len(names):4}  mostly from {", ".join(s for s, _ in scripts.most_common(4))}')
+    relayable = [n for n, v in table.items() if v['scripts'] and v['family'] != 'presentation' and v['kinds'] is not None]
+    print(f'{len(relayable)} game writes with scalar, ID or string arguments (relay kinds known)')
     print(f'full map: {args.out}')
 
 
