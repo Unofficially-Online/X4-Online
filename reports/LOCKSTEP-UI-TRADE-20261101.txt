@@ -322,3 +322,29 @@ UI_GUARD_STATUS installed=216 for 214 (the guard table has 282 entries: missions
   [F] The player faction's own transfers to its own ship (slot 1) move nothing in either mode, while slot 2's do. [I] A ship
   without its own account falls back to its owner's account when the owner has one, so player -> own ship is a no-op; the
   money check of slot 1 needs a station or the docked trade. Open: whether saves keep a made account (hot join), T3.
+
+14. T3, THE DOCKED TRADE (coordinator, 3 November 2026; build205 = smoke 509ba14c, the session defaults (render frames back),
+  coop plan, no stock script, client 1's script only, 7,200 ticks)
+  The station: the test save has two stations in the slot ships' zone (72b), both Argon: 1b5af (a wharf with S docks and
+  habitation; df2's dock target) and 434b1 (four plasma conductor production modules, S high-tech docks), 49 km from slot 1.
+  t3a {60,'dock_at',434b1}, {5400,'trade_buy',434b1,'plasmaconductors',2,nil,1}: the request at 100 answered false (49 km
+    away: RequestDockAt docks only within docking range), the buy no_offer.
+  t3b new script op ap_obj (StartAutoPilot on a saved object, the map's autopilot on a station; autopilot family), then
+    dock_at every 600 ticks from 1800 and the buy at 5400: every request answered true, and the buy ran: UI_REPLAY_APPLIED
+    tick=5443 slot=1 op=88 what=AddTradeToShipQueue and what=SignalObject on both clients at the same tick. Census 0 at 1800,
+    3600, 5400 and 7200 (528,400 .. 534,063 objects), relay pass. [F] But the ship never docked (its parent the zone 72b at every
+    capture) and the money never moved (UI_TRADE_MONEY only its tick-1 row): RequestDockAt grants permission, a person then
+    flies into the bay; nobody did. The replay of the docked trade's two calls is exact; the trade itself did not happen.
+  t3c new script op q_dock (CreateOrder DockAndWait, the station as destination, EnableOrder, as the map's "Dock at"), then
+    ap_toggle so the autopilot follows the queue; buys at 5400 and 6600. [F] Refused by design: UI_REPLAY_REFUSED_NATIVE
+    CreateOrder3:slot_ship (the queue family edits fleet ships, never a ship a player flies); the ship stayed, both buys
+    no_offer (offers are known near the station, as in t3b). Census 0 at 5400, relay pass. q_dock stays for fleet ships.
+  t3d ap_obj, ap_stop at 1860, then quickdock (the docking computer's auto-dock, Shift+D; as U5) every 600 ticks from 1900;
+    buys at 5400 and 6600. PASS: every quickdock answered true; both buys ran (UI_REPLAY_APPLIED AddTradeToShipQueue and
+    SignalObject at 5443 and 6643 on both clients) and executed at once: UI_TRADE_MONEY on both clients 1,000,000 -> 819,500
+    at 5443 -> 630,900 at 6643, the same at the same ticks. Census 0 of 532,783 at 5400 and of 534,121 at 7200; relay pass;
+    both STOP reason=1 restored=1. [F] The census parent of the docked ship stays its zone (72b): the census does not show
+    docking. Open: the price looks high for 2 units each (180,500 and 188,600); the bought amount is not in these rows.
+  So T3 passes for slot 1 in coop: a person's docked trade (fly there, dock with the docking computer, the trade menu's
+  immediate buy) is replayed and executed identically on every client. Slot 2 and factions mode are the same calls in
+  their slot scope (T1/T2); not run docked.

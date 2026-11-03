@@ -127,7 +127,7 @@ UI_REPLAY_MISSIONS_DEMO = {1: ((60, 'mis_fixture', 1), (120, 'briefing', 'offer'
                            2: ((60, 'mis_fixture', 1), (150, 'offer_accept'), (250, 'briefing', 'mission'), (400, 'mis_abort'),
                                (430, 'dialog_native', 1), (450, 'conv_start', 'fixture'), (630, 'mis_active'))}
 UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'target_slot': 'target', 'target_none': 'target',
-                       'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
+                       'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_obj': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
                        'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons',
                        'flight_assist': 'flight', 'turret_mode': 'flight', 'turret_missile': 'flight', 'drones': 'flight', 'drone_mode': 'flight',
                        'mis_fixture': 'missions', 'briefing': 'missions', 'briefing_stop': 'missions', 'briefing_button': 'missions',

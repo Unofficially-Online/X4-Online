@@ -1335,8 +1335,8 @@ The Codex-era NATIVE-GETUP-* reports studied a one-shot GetUp() diagnostic on th
     slot 1 gets up and walks, character_play sync, find_order sort) with build205 = smoke 509ba14c, pilot window to 6000, 6000 ticks)
   Both clients STOP reason=1 restored=1 at 6001, relay pass, no digest mismatch. Census client 1 vs client 2: 0 of 528,517 at
   1800, 0 of 531,648 at 3600, 0 of 532,733 at 5400. Slot 1 got up and walked on both (PILOT_INPUTS foot=walking getup=0/1,
-  walk=2197 on each). No ship docked: slot 1's dock order was accepted at 1340 (result=true) and slot 2's at 5240 and 5540
-  were not (result=false), alike on both clients, and both slot ships stay in their zone (census parent 72b at 1800, 3600 and
-  5400): slot 1 gets up in open space, as in df2 (13h). The scenario that split on 1 November (transient digest at 65-72, 146
-  objects after the get-up) now stays in sync through the fight, the get-up and 2,200 ticks of walking; a get-up at a station
-  is not covered by this run.
+  walk=2197 on each). Slot 1's dock request was granted at 1340 (result=true), slot 2's at 5240 and 5540 were not
+  (result=false), alike on both clients. Whether slot 1's ship then docked is not shown here: RequestDockAt only grants
+  permission (t3b), and the census parent of a ship stays its zone even when docked (t3d, trade report section 14); an
+  earlier version of this note read the parent as "not docked". The scenario that split on 1 November (transient digest at
+  65-72, 146 objects after the get-up) now stays in sync through the fight, the get-up and 2,200 ticks of walking.

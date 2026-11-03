@@ -712,6 +712,8 @@ function K.script(plan,start,tools)
   elseif op=='input' then call=function() return tools.gate.pilot_stock_inject(e[3],e[4],e[5]) end
   -- The flight families: autopilot by Lua (no guidance needed) and by the FFI toggle, dock, undock, weapon groups.
   elseif op=='ap_to' then call=function() return tools.env.StartAutoPilot(tools.slot_lua(e[3])) end
+  -- The autopilot to any saved object, as the map's "Autopilot" on a station (e.g. to get within docking range first).
+  elseif op=='ap_obj' then call=function() return tools.env.StartAutoPilot(tools.saved_lua(e[3])) end
   elseif op=='ap_stop' then call=function() return tools.env.StopAutoPilot() end
   elseif op=='ap_toggle' then call=function() return tools.C.ToggleAutoPilot(false) end
   elseif op=='quickdock' then call=function() return tools.C.QuickDock() end
@@ -729,6 +731,12 @@ function K.script(plan,start,tools)
   elseif op=='q_move' then call=function()
     local id=tools.saved_id(e[3]);local idx=tools.C.CreateOrder(id,'MoveWait',false)
     if idx>0 then tools.env.SetOrderParam(tools.saved_lua(e[3]),idx,1,nil,{tools.saved_lua(e[4]),{e[5],e[6],e[7]}});tools.C.EnableOrder(id,idx) end
+    return idx end
+  -- {tick,'q_dock',ship,station}: DockAndWait at the station, as the map's "Dock at" (create + destination + enable); the
+  -- ship's own pilot docks it (a player-flown ship once its autopilot follows the queue: ap_toggle).
+  elseif op=='q_dock' then call=function()
+    local id=tools.saved_id(e[3]);local idx=tools.C.CreateOrder(id,'DockAndWait',false)
+    if idx>0 then tools.env.SetOrderParam(tools.saved_lua(e[3]),idx,1,nil,tools.saved_lua(e[4]));tools.C.EnableOrder(id,idx) end
     return idx end
   elseif op=='q_wait' then call=function()
     local id=tools.saved_id(e[3]);local idx=tools.C.CreateOrder(id,'Wait',false)
