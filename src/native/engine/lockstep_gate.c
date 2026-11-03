@@ -1096,10 +1096,11 @@ static void gate_tick(void *frame,unsigned char loading) {
     {uint64_t reads=read_local_calls;ft_reads=reads-ft_reads_last;ft_reads_last=reads;}
     if(length<0 || (size_t)length>=sizeof(packet)) finish(56);
     else if(wire_lookahead || wire_adaptive) {
-        /* Protocols 4 and 5: the permit for the next tick is often held already. With native_gate_render_fps
-         * (protocol 4 only) the time until the step is due fills with render-only frames (lockstep_render_frames.h). */
-        unsigned reason=wire_adaptive?adapt_frame(packet,(size_t)length,reply,sizeof(reply)):
-            rf_fps?rf_boundary(original,frame,loading,packet,(size_t)length,reply,sizeof(reply),ft_begin):
+        /* Protocols 4 and 5: the permit for the next tick is often held already. With native_gate_render_fps the
+         * time until the step is due fills with render-only frames (lockstep_render_frames.h; under protocol 5 over the
+         * adaptive permits). */
+        unsigned reason=rf_fps?rf_boundary(original,frame,loading,packet,(size_t)length,reply,sizeof(reply),ft_begin):
+            wire_adaptive?adapt_frame(packet,(size_t)length,reply,sizeof(reply)):
             lookahead_frame(packet,(size_t)length,reply,sizeof(reply));
         if(reason==RF_STARTED) return;
         if(!reason && portable_native_configured) {

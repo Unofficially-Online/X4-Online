@@ -18,7 +18,7 @@ A. PLAYABILITY (people sessions)
     Branch contrib/ferrite-predict2, report LOCKSTEP-OWN-SHIP-PREDICTION-20261101.txt (lockstep_own_predict.h,
     native_gate_own_predict, default off; works on one frame per step, join interface for item 1 in its
     section 5; live-test spec O1/O2/P1/P2/G in section 11).
- 3. [A0-A4 live: 100 ms holds 29.7 steps/s, jitter k=5, spikes raise k at an agreed tick, a 3 s stall is reported and the session goes on, census 0; render frames under adaptive and dropping a stalled client open; 3 Nov: render frames under adaptive need a render-frame boundary over adapt_frame's admission (lockstep_gate.c sends protocol 5 frames to adapt_frame, rf_boundary is the protocol 4 path; the probe, the checker and the defaults' @fixed refuse the combination consistently, so it is never silently inert)] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
+ 3. [A0-A4 live: 100 ms holds 29.7 steps/s, jitter k=5, spikes raise k at an agreed tick, a 3 s stall is reported and the session goes on, census 0; dropping a stalled client open; 3 Nov: render frames under adaptive live (a206r/a207r: the gap over the adaptive permits, census 0, 0 flashes; on by default; adaptive report 12)] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
     pilot delay from it (today fixed: lookahead 1, delay 3 = 100 ms); later adjust it during a session at an
     agreed step. Cope with spikes and dropouts better than a pause for everyone (a client stalled past a bound
     is dropped; needs item 16). Data, relay --latency-ms 100 (1 Nov): lookahead 1 0.38x speed, lookahead 3 +

@@ -403,9 +403,12 @@ class ApplyTests(unittest.TestCase):
     def test_adaptive_and_its_exclusions(self):
         lua = lua_session(",native_gate_lookahead='adaptive'")
         cfg, R = lua.globals().X4LAN_CONFIG, report(lua)
-        self.assertEqual((cfg.native_gate_lookahead_max, cfg.native_gate_pilot_delay, cfg.native_gate_render_fps), (4, None, None))
+        # Render frames run under protocol 5 as well (their gap over the adaptive permits): on, with camera and motion.
+        self.assertEqual((cfg.native_gate_lookahead_max, cfg.native_gate_pilot_delay, cfg.native_gate_render_fps, cfg.native_gate_render_camera),
+                         (4, None, 60, 'extrapolate'))
         skipped = {s[1]: s[2] for s in items(R.skipped)}
-        for key in ('native_gate_pilot_delay', 'native_gate_render_fps', 'native_gate_wire_crypto', 'native_gate_peer_window'):
+        self.assertNotIn('native_gate_render_fps', skipped)
+        for key in ('native_gate_pilot_delay', 'native_gate_wire_crypto', 'native_gate_peer_window'):
             self.assertIn('protocol 5', skipped[key], key)
         self.assertEqual(items(R.errors), [])
 

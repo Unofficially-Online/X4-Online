@@ -229,11 +229,59 @@ static void test_rf_admit(void) {
     wire_version=2;wire_clients=2;wire_lookahead=0;stats.issued=stats.completed=0;stats.active=0;stats.slot=0;stats.game=0;
     ui_thread=saved_ui;boot_mode=saved_boot;boot_phase=saved_phase;dt_installed=saved_dt;fixed_dt_bits=saved_fixed;
 }
+/* Protocol 5: the same gap over the adaptive permits (lockstep_adaptive.h): a gap permit of the plan's lag held, a render-only
+ * frame while there is room, then the step takes it through adapt_take; a permit the schedule does not allow stops with the
+ * schedule's own reason; k = 0 (wire_lookahead 0) still counts as the lookahead wire. */
+static void test_rf_admit_adaptive(void) {
+    WSADATA w;assert(!WSAStartup(MAKEWORD(2,2),&w));
+    HANDLE semaphore=CreateSemaphoreW(NULL,0,8,NULL);assert(semaphore);
+    SOCKET saved_connection=connection;unsigned saved_timeout=timeout_ms,saved_hz=gate_tick_hz;int saved_pace=gate_tick_pace;
+    DWORD saved_ui=ui_thread;int saved_boot=boot_mode,saved_phase=boot_phase,saved_dt=dt_installed;uint64_t saved_fixed=fixed_dt_bits;
+    la_relay=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);assert(la_relay!=INVALID_SOCKET);
+    struct sockaddr_in relay;memset(&relay,0,sizeof(relay));relay.sin_family=AF_INET;relay.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+    int size=sizeof(relay);
+    assert(!bind(la_relay,(struct sockaddr*)&relay,sizeof(relay)) && !getsockname(la_relay,(struct sockaddr*)&relay,&size));
+    DWORD client_ms=25;
+    connection=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);assert(connection!=INVALID_SOCKET);
+    assert(!setsockopt(connection,SOL_SOCKET,SO_RCVTIMEO,(const char*)&client_ms,sizeof(client_ms)));
+    assert(!connect(connection,(struct sockaddr*)&relay,sizeof(relay)));
+    strcpy(secret,LA_TOKEN);stats.slot=2;wire_version=3;wire_clients=2;lookahead_reset();
+    adapt_reset();wire_adaptive=1;adapt_kmax=8;wire_lookahead=0;
+    adapt_entries[0]=(adapt_entry){0,10,12};adapt_epoch=1;adapt_cursor=0;adapt_mask=0;
+    ui_thread=GetCurrentThreadId();boot_mode=1;boot_phase=3;dt_installed=1;stats.active=1;timeout_ms=2000;
+    test_rf_reset();test_rf_engine(semaphore);rf_fps=60;gate_tick_hz=30;gate_tick_pace=1;
+    stats.issued=stats.completed=4;
+    rf_ready();assert(strcmp(rf_missing,"lookahead"));          /* k = 0 under protocol 5: the wire is there */
+    const int64_t f=rf_freq();rf_interval=f/60;rf_estimate=f/200;
+    adapt_permit *p=&adapt_permits[5%LOOKAHEAD_RING];memset(p,0,sizeof(*p));
+    p->tick=5;p->used=1;p->gap=1;p->epoch=1;p->entry=adapt_entries[0];
+    /* The gap permit 5 held, the step due in 50 ms: a render-only frame now. */
+    int64_t now=rf_qpc();memset(&gate_pace,0,sizeof(gate_pace));gate_pace.origin=now+f/20-f/30;
+    rf_last_start=now-f/60;rf_gap_started=GetTickCount64();test_rf_calls=0;
+    assert(rf_admit(test_rf_frametick,NULL,0,rf_reply,sizeof(rf_reply))==RF_STARTED && test_rf_calls==1 && rf_gap && !rf_late);
+    assert(rf_after_frame() && adapt_held(5));
+    /* No room left: the step takes the gap permit through adapt_take (no inputs: a gap). */
+    gate_pace.origin=rf_qpc()+f/500-f/30;
+    assert(!rf_admit(test_rf_frametick,NULL,0,rf_reply,sizeof(rf_reply)) && test_rf_calls==1 && !adapt_held(5) && adapt_gaps==1);
+    assert(rf_close_gap() && test_rf_table_original());rf_step_counted();assert(rf_last_gap==1);
+    /* A source permit where the schedule has a gap (lag 10: proposal 0 applies at 10): the schedule's stop, 191. */
+    stats.issued=stats.completed=5;p=&adapt_permits[6%LOOKAHEAD_RING];memset(p,0,sizeof(*p));
+    p->tick=6;p->used=1;p->gap=0;p->source=0;p->epoch=1;p->entry=adapt_entries[0];
+    gate_pace.origin=rf_qpc()-f;rf_gap_started=GetTickCount64();
+    assert(rf_admit(test_rf_frametick,NULL,0,rf_reply,sizeof(rf_reply))==ADAPT_STOP_SOURCE && !strcmp(adapt_why,"source"));
+    closesocket(connection);closesocket(la_relay);la_relay=INVALID_SOCKET;connection=saved_connection;WSACleanup();
+    test_rf_reset();test_rf_engine_done();CloseHandle(semaphore);rf_fps=0;rf_stage="off";lookahead_reset();adapt_reset();
+    wire_adaptive=0;adapt_kmax=0;blob_proposal[0]=0;
+    for(unsigned i=0;i<GATE_CLIENTS_MAX;i++) blob_inputs[i][0]=0;
+    memset(&gate_pace,0,sizeof(gate_pace));gate_tick_hz=saved_hz;gate_tick_pace=saved_pace;timeout_ms=saved_timeout;
+    wire_version=2;wire_clients=2;wire_lookahead=0;stats.issued=stats.completed=0;stats.active=0;stats.slot=0;stats.game=0;
+    ui_thread=saved_ui;boot_mode=saved_boot;boot_phase=saved_phase;dt_installed=saved_dt;fixed_dt_bits=saved_fixed;
+}
 static void test_render_frames(void) {
     gate_stats saved=stats;char saved_secret[sizeof(secret)];memcpy(saved_secret,secret,sizeof(secret));
-    test_rf_plan();test_rf_config();test_rf_frame();test_rf_admit();
+    test_rf_plan();test_rf_config();test_rf_frame();test_rf_admit();test_rf_admit_adaptive();
     stats=saved;memcpy(secret,saved_secret,sizeof(secret));
-    puts("render-only frames: plan and pace peek, configuration and X4's frame limit, one frame on fake engine memory "
+    puts("render-only frames: plan and pace peek, configuration and X4's frame limit, one frame on fake engine memory (protocols 4 and 5) "
          "(dt 0, slots masked, passes held, no pathing kick), checks and restore, admission against a loopback relay PASS");
 }
 static void test_render_frames_native_image(const char *path) {

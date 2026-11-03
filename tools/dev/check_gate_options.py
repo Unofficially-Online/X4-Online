@@ -611,7 +611,8 @@ def render_fps_rules(config_text, enabled):
         if (lua_value(config_text, name) or '').strip('\'"') not in ('true', 'sync'):
             missing.append(name + " = 'sync'")
     lookahead = lua_value(config_text, 'native_gate_lookahead')
-    if not lookahead or not re.fullmatch(r'[1-8]', lookahead):
+    # Protocol 4 (a fixed window) or protocol 5 ('adaptive'): the render-only frames' gap runs over either permit ring.
+    if not lookahead or not (re.fullmatch(r'[1-8]', lookahead) or lookahead.strip('\'"') == 'adaptive'):
         missing.append('native_gate_lookahead')
     if 'native_gate_runtime_ids' in enabled and 'native_gate_runtime_ids_local' not in enabled:
         missing.append('native_gate_runtime_ids_local')

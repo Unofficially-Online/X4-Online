@@ -1,5 +1,5 @@
 /* Render-only frames, DEFAULT OFF (native_gate_render_fps = N, stop reason 182; Windows gate,
- * protocol 4 only). The simulation keeps its fixed step (native_gate_tick_hz: dt = 1/hz, one
+ * protocols 4 and 5). The simulation keeps its fixed step (native_gate_tick_hz: dt = 1/hz, one
  * step per admitted frame, paced to real time); between two steps X4 draws extra frames in which
  * game time does not move and no simulation code runs. reports/LOCKSTEP-RENDER-FRAMES-20261101.txt.
  *
@@ -34,7 +34,7 @@
  * presentation scope works per call (lockstep_pilot_present.h). The main thread draws and
  * presents as in any frame; X4's own frame limit (frameratelimit/frameratetarget) still holds.
  * Required (else no render-only frame, ready=0 missing=<what>): boot mode with the gate's dt word,
- * protocol 4, serial pathing (the pathing kick hook), the Gravidar move (radar serial), the
+ * protocol 4 or 5, serial pathing (the pathing kick hook), the Gravidar move (radar serial), the
  * render RNG split, mass traffic and region pass 'sync', no portable or diagnostic transport.
  *
  * When: after the step's report is sealed and sent, the gate plans with the held permit and the
@@ -124,11 +124,13 @@ static int64_t rf_frame_interval(void) {
     if(!fps) fps=1;
     rf_eff_fps=fps;return rf_freq()/(int64_t)fps;
 }
+/* Protocol 5 is on (lockstep_adaptive.h, included after this file). */
+static int wire_adaptive;
 /* Everything a render-only frame relies on; rf_missing names the first gap. */
 static int rf_ready(void) {
     const char *missing=
         !rf_fps?"off":!stats.active?"inactive":!boot_mode || boot_phase!=3?"boot":!dt_installed?"dt_word":
-        !wire_lookahead?"lookahead":portable_wire_enabled || gd_enabled || portable_native_configured?"transport":
+        !wire_lookahead && !wire_adaptive?"lookahead":portable_wire_enabled || gd_enabled || portable_native_configured?"transport":
         !path_installed || !(path_options&1)?"serial_pathing":!gravidar_installed?"radar_serial":
         !render_rng_installed || render_rng_mode!=RENDER_RNG_SPLIT || !InterlockedCompareExchange(&render_rng_active,0,0)?"render_rng_split":
         !mt_installed || !InterlockedCompareExchange(&mt_active,0,0) || mt_traffic.mode!=MT_SYNC || mt_region.mode!=MT_SYNC?"pass_sync":
@@ -276,6 +278,28 @@ static void rf_poll(int64_t at) {
 static int lookahead_held(uint64_t tick) {
     const lookahead_permit *e=&lookahead_permits[tick%LOOKAHEAD_RING];return e->used && e->tick==tick;
 }
+/* Protocol 5 (lockstep_adaptive.h, included after this file): the gap runs the same way over the adaptive permits (their
+ * schedule, gap permits, epochs and pings stay that module's; a ping answered between two render-only frames reports how
+ * long it waited unread, as between two steps). */
+static uint64_t adapt_ready;
+static unsigned adapt_drain(char *reply,size_t capacity);
+static void adapt_resend(uint64_t completed,ULONGLONG now);
+static int adapt_held(uint64_t tick);
+static unsigned adapt_take(uint64_t tick);
+static unsigned adapt_quiet_check(void);
+static unsigned adapt_frame(const char *packet,size_t length,char *reply,size_t capacity);
+static unsigned rf_wire_drain(char *reply,size_t capacity) {return wire_adaptive?adapt_drain(reply,capacity):lookahead_drain(reply,capacity);}
+static void rf_wire_resend(ULONGLONG now) {if(wire_adaptive) adapt_resend(stats.completed,now);else lookahead_resend(stats.completed,now);}
+static int rf_wire_held(uint64_t tick) {return wire_adaptive?adapt_held(tick):lookahead_held(tick);}
+/* The step's permit taken: 0, else the stop reason. */
+static unsigned rf_wire_take(uint64_t tick) {
+    if(wire_adaptive) {
+        unsigned taken=adapt_take(tick);
+        if(taken==1) {if(!rf_gap_frames) ++adapt_ready;return 0;}
+        if(taken) return taken-1;                          /* the schedule's own stop (190/191) */
+    } else if(lookahead_take(tick)) {if(!rf_gap_frames) ++lookahead_ready;return 0;}
+    rf_fail("permit");return RF_STOP_REASON;
+}
 /* The step's due time: its pace deadline, or now when nothing would hold it. */
 static int64_t rf_due(int64_t now) {
     if(!gate_tick_pace) return now;
@@ -290,29 +314,28 @@ static unsigned rf_admit(tick_fn original,void *frame,unsigned char loading,char
         ULONGLONG ms=GetTickCount64();
         if(closed_window()) return 6;
         if(ms-rf_gap_started>timeout_ms) return 7;
-        unsigned reason=lookahead_drain(reply,capacity);
+        unsigned reason=rf_wire_drain(reply,capacity);
         if(reason) return reason;
-        lookahead_resend(stats.completed,ms);
+        /* As the waits (lookahead_wait, adapt_wait): only while the step's permit is missing. With it held, the window's
+         * later reports are in flight, not lost (a206r resent every one of them: 6,264 resends, 6,130 stale permits; a1d 337). */
+        if(!rf_wire_held(want)) rf_wire_resend(ms);
         double drift=fabs(*(double*)(image+GAME_RVA)-stats.game);
         if(drift>stats.wait_game_delta) stats.wait_game_delta=drift;
         if(drift>0) return 5;
         int64_t now=rf_qpc(),at=0;int late=0;
-        rf_plan_in in={lookahead_held(want),now,rf_due(now),rf_last_start,rf_interval,rf_estimate+(int64_t)RF_MARGIN_US*rf_freq()/1000000};
+        rf_plan_in in={rf_wire_held(want),now,rf_due(now),rf_last_start,rf_interval,rf_estimate+(int64_t)RF_MARGIN_US*rf_freq()/1000000};
         int plan=rf_plan(&in,&at,&late);
-        if(plan==RF_PLAN_STEP) {
-            if(!lookahead_take(want)) {rf_fail("permit");return RF_STOP_REASON;}
-            if(!rf_gap_frames) ++lookahead_ready;
-            return 0;
-        }
+        if(plan==RF_PLAN_STEP) return rf_wire_take(want);
         if(at>now) {rf_poll(at);continue;}
         return rf_render(original,frame,loading,late,at+in.estimate-in.due);
     }
 }
 /* At the step boundary (report built): seal and send it, then plan. Without the preconditions
- * this is lookahead_frame exactly. */
+ * this is lookahead_frame (protocol 5: adapt_frame) exactly. */
 static unsigned rf_boundary(tick_fn original,void *frame,unsigned char loading,const char *packet,size_t length,
                             char *reply,size_t capacity,LARGE_INTEGER ft_begin) {
-    if(!rf_ready()) {++rf_not_ready;return lookahead_frame(packet,length,reply,capacity);}
+    if(!rf_ready()) {++rf_not_ready;return wire_adaptive?adapt_frame(packet,length,reply,capacity):lookahead_frame(packet,length,reply,capacity);}
+    if(wire_adaptive) {unsigned quiet=adapt_quiet_check();if(quiet) return quiet;}
     if(!lookahead_seal(stats.completed,packet,length,blob_proposal)) return 56;
     lookahead_send(&lookahead_reports[stats.completed%LOOKAHEAD_RING],GetTickCount64());
     rf_interval=rf_frame_interval();

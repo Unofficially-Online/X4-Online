@@ -211,3 +211,29 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   a4d  --adaptive --stall-report-ms 1000, lane b2's X4 frozen 3 s (NtSuspendProcess/NtResumeProcess) about tick 1450:
        NATIVE_GATE STALL slot=2 tick=1454 waited_ms=1012 in the relay log and report (stalls), the session went on to 3000,
        no mismatch, census 0 of 528,288 at 1800, both stopped with reason 1, ADAPTIVE_STOP why=none. A0-A4 all pass live.
+
+12. RENDER FRAMES UNDER PROTOCOL 5 (coordinator, 3 November 2026)
+  Until now an adaptive session drew one frame per step (section 11: the defaults' @fixed, and the gate sent protocol 5 frames
+  to adapt_frame, past rf_boundary). Change (smoke 5dbbe59d, build206): rf_admit's wire calls go through the protocol in use
+  (adapt_drain, adapt_resend, adapt_held, adapt_take under protocol 5: gap permits, epochs, pings and the schedule's stops stay
+  this module's; a ping answered between two render-only frames reports the time it waited unread, as between two steps);
+  rf_boundary runs adapt_frame's quiet-input check first and falls back to adapt_frame when not ready; rf_ready accepts protocol
+  5 at k = 0; the gate dispatch runs render frames under either protocol; the probe, check_gate_options.py and the defaults
+  (render_fps without @fixed) accept native_gate_lookahead = 'adaptive', so an adaptive session gets render frames, camera and
+  motion by default. Native test test_rf_admit_adaptive: with a held gap permit a render-only frame, then the step through
+  adapt_take (a gap), a source permit where the schedule has a gap stops with 191, k = 0 is not "lookahead missing".
+  Live a206r (build206; a1d's setup: --adaptive, --latency-ms 100, the session defaults, 2 clients, 3000 ticks, burst capture):
+    RENDER_FRAMES_ARMED fps=60 on both; render-only frames 905 and 976, failures 0, missing=-;
+    ADAPTIVE_PLAN k=4 pilot_delay=6 on both (as a1d), ADAPTIVE_STOP why=none, gaps 4, pings ~600;
+    both STOP reason=1 restored=1, relay pass, census 0 of 528,288 at 1800; OWN_PREDICT failures 0, follow written = restored;
+    the bursts: 0 one-frame flashes on both clients, client 2's head scan at its baseline (23).
+  Found on the way: the gap resent every report of the window on each pass (resends 6,264 and stale permits 6,130 on client 1,
+    a1d 337 and 208); the protocol 4 gap does the same (p2d/p2f at 100 ms: about 2,250). The waits resend only while the
+    step's permit is missing; the gap now does too (the window's later reports are in flight, not lost). Rerun: a206r2 below.
+  a207r (build207 = the change above plus the resend rule; otherwise a206r): resends 248 and 254, stale permits 113 and 113 (a206r
+    6,264 and 6,130; a1d without render frames 337 and 208); ready 2,997 on client 1; ADAPTIVE_STOP why=none, plan k=4 pilot 6;
+    both STOP reason=1 restored=1, relay pass, census 0 of 528,288 at 1800; 0 flashes, head scan at baseline (19).
+    Render-only frames 1,473 on client 2 (a206r 976); client 1 drew 163, all late: its window ran slow in this run (mean frame
+    period 12.4 ms against 2.7 ms in a206r, slot 10 itself 1.6 ms as before), the machine-side slowdown of one lane window seen in
+    d205r and the hot join runs, not the change.
+  Render frames under adaptive delay pass live; the defaults now draw them in adaptive sessions too.

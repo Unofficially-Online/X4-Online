@@ -2471,7 +2471,7 @@ local function frame()
   if cfg.native_gate_render_fps~=nil and cfg.native_gate_render_fps~=false then
    local fps=cfg.native_gate_render_fps
    assert(type(fps)=='number' and fps%1==0 and type(cfg.native_gate_tick_hz)=='number' and fps>cfg.native_gate_tick_hz and fps<=360 and
-    snapshot and (cfg.native_gate_lookahead or 0)>0 and cfg.native_gate_serial_pathing and cfg.native_gate_radar_serial and
+    snapshot and (cfg.native_gate_lookahead=='adaptive' or (tonumber(cfg.native_gate_lookahead) or 0)>0) and cfg.native_gate_serial_pathing and cfg.native_gate_radar_serial and
     cfg.native_gate_render_rng_split==true and (cfg.native_gate_mass_traffic==true or cfg.native_gate_mass_traffic=='sync') and
     (cfg.native_gate_region_pass==true or cfg.native_gate_region_pass=='sync') and (not cfg.native_gate_runtime_ids or cfg.native_gate_runtime_ids_local==true),
     'native_gate_render_fps needs native_gate_tick_hz below it, a snapshot boot, native_gate_lookahead, serial pathing, radar serial, '..
