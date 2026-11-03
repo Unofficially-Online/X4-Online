@@ -180,7 +180,13 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   thread's 50 ms waits: timing, local) and the first simulation lead inside 39,001-39,060:
   one more agent draw (ACTOR_RNG_ALL `agent_drawn`). UI_LAZY_CALLERS (simulation lazy
   updates per call site, always on) agreed to the end in F, so the earlier extra
-  UpdateTradeOffers call of E's rerun (26,820) did not recur.
+  UpdateTradeOffers call of E's rerun (26,820) did not recur. Two triage reruns of F: the
+  first parted at 39,066 (just past its row window, which then ended at the mismatch; all
+  rows equal inside it, PATH_TRANSFORMS `spaces`/walk and agent draws differ by 39,120), the
+  second, with the window running 60 ticks past the mismatch, passed 39,360 ticks. So 39,060
+  is timing-dependent too, and the soak profile now keeps every drawing actor scope as a row
+  (`native_gate_actor_rng_rows`, about 3.5 per tick, written every tick) so that a soak's own
+  logs name the actor.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
