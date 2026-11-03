@@ -881,6 +881,16 @@ def probe_rules(config_text, enabled):
             failures.append(dict(rule='native_gate_world_hash_join needs native_gate_world_hash_stride', bits=['native_gate_world_hash_stride']))
         if not re.search(r'X4LAN_CONFIG\.native_gate_join\s*=\s*(?!false|nil)\S', config_text):
             failures.append(dict(rule='native_gate_world_hash_join needs native_gate_join', bits=['native_gate_join']))
+    # The nav-only hash between census captures (lockstep_world_hash.h world_nav_hash).
+    for value in re.findall(r'X4LAN_CONFIG\.native_gate_world_nav_stride\s*=\s*([^\s;]+)', config_text):
+        if value in ('nil', 'false'): continue
+        census = re.search(r'X4LAN_CONFIG\.native_gate_world_hash_stride\s*=\s*([0-9]+)', config_text)
+        if not value.isdigit() or int(value) < 1:
+            failures.append(dict(rule='native_gate_world_nav_stride must be a tick count', bits=[value]))
+        elif not census or int(value) >= int(census[1]):
+            failures.append(dict(rule='native_gate_world_nav_stride needs native_gate_world_hash_stride above it', bits=['native_gate_world_hash_stride']))
+        if not re.search(r"X4LAN_CONFIG\.native_gate_world_hash_schema\s*=\s*['\"]WORLD_IMPORTED_2['\"]", config_text):
+            failures.append(dict(rule='native_gate_world_nav_stride needs native_gate_world_hash_schema WORLD_IMPORTED_2', bits=['native_gate_world_hash_schema']))
     # FR28: per-tick WORLD_HEALTH rows of the world-hash watches, ticks first..last (read-only).
     for value in re.findall(r'X4LAN_CONFIG\.native_gate_world_health_ticks\s*=\s*([^\n;]+)', config_text):
         value = value.strip()

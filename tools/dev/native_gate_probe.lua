@@ -219,6 +219,12 @@ if world_hash_schema=='WORLD_IMPORTED_2' then
  local stride=cfg.native_gate_world_hash_stride
  assert(type(stride)=='number' and stride==math.floor(stride) and stride>=1 and stride<=18000,'enriched world hash requires census stride1..18000')
 end
+-- The nav-only hash (lockstep_world_hash.h world_nav_hash, DEFAULT OFF): every native_gate_world_nav_stride ticks between
+-- census captures the navigation parts the last capture read are hashed again; the last one joins every tick's declared
+-- state, so a navigation split stops at the relay within that stride instead of at the next capture.
+local nav_stride=cfg.native_gate_world_nav_stride
+assert(nav_stride==nil or (type(nav_stride)=='number' and nav_stride%1==0 and nav_stride>=1 and world_hash_schema=='WORLD_IMPORTED_2' and
+ nav_stride<cfg.native_gate_world_hash_stride),'native_gate_world_nav_stride needs the enriched census (WORLD_IMPORTED_2) and must be below its stride')
 -- Windows X4.exe loads x4lan_gate_64.dll; the native Linux executable loads x4lan_gate.so (the
 -- core subset, src/native/engine/linux/gate_linux.c: configurations needing an unported module refuse).
 local gate=assert(package.loadlib('./extensions/x4_lan_lab/native/'..(package.config:sub(1,1)=='\\' and 'x4lan_gate_64.dll' or 'x4lan_gate.so'),
@@ -4628,6 +4634,7 @@ local function frame()
   if cfg.native_gate_bullet_cadence then log('BULLET_CADENCE_STOP '..tostring(gate.bullet_cadence_status())) end
   if cfg.native_gate_speak_timer then log('SPEAK_TIMER_STOP '..tostring(gate.speak_timer_status())) end
   if cfg.native_gate_speech_clock then log('SPEECH_CLOCK_STOP '..tostring(gate.speech_clock_status())) end
+  if cfg.native_gate_world_nav_stride then log('WORLD_NAV_STOP '..tostring(gate.world_nav_status())) end
   if cfg.native_gate_cutscene_ready then log('CUTSCENE_READY_STOP '..tostring(gate.cutscene_ready_status())) end
   if cfg.native_gate_nav_cadence then log('NAV_CADENCE_STOP '..tostring(gate.nav_cadence_status())) end
   if cfg.native_gate_nav_player then log('NAV_PLAYER_STOP '..tostring(gate.nav_player_status())) end
@@ -5105,6 +5112,7 @@ local function frame()
  end
  if cfg.native_gate_speak_timer then ticklog.status('SPEAK_TIMER',tick,gate.speak_timer_status,'speak timer status unavailable') end
  if cfg.native_gate_speech_clock then ticklog.status('SPEECH_CLOCK',tick,gate.speech_clock_status,'speech clock status unavailable') end
+ if cfg.native_gate_world_nav_stride then ticklog.status('WORLD_NAV',tick,gate.world_nav_status,'world nav hash status unavailable') end
  if cfg.native_gate_nav_cadence then
   ticklog.status('NAV_CADENCE',tick,gate.nav_cadence_status,'nav cadence status unavailable')
   -- Fixture controller state changes (enables, deadlines, attention, body, zone scene).
@@ -5250,6 +5258,14 @@ local function frame()
    end
   end
   data=data..'|'..assert(world_hash_state,'world hash baseline missing')
+  local nav=cfg.native_gate_world_nav_stride
+  if nav then
+   if tick>1 and tick%nav==0 and tick%cfg.native_gate_world_hash_stride~=0 then
+    local state,why=gate.world_nav_hash(tick)
+    ticklog.nav_state=assert(state,'native nav hash failed '..tostring(why))
+   end
+   data=data..'|'..(ticklog.nav_state or 'NAV_1:-')
+  end
  end
  if profile then profile.mark('capture') end
  local hash=(gate.sha256 or X4LAN_SHA256.digest)(data)

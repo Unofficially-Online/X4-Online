@@ -63,6 +63,41 @@ class SnapshotProbeTests(unittest.TestCase):
             with self.assertRaises(LuaError):self.lua.execute(SOURCE)
             self.assertEqual(self.lua.globals().loads,0);self.assertEqual(self.lua.globals().boots,0)
 
+    def test_nav_stride_needs_the_enriched_census_below_its_stride(self):
+        for config in ("X4LAN_CONFIG.native_gate_world_hash_stride=300;X4LAN_CONFIG.native_gate_world_nav_stride=30",
+                       "X4LAN_CONFIG.native_gate_world_hash_schema='WORLD_IMPORTED_2';X4LAN_CONFIG.native_gate_world_hash_stride=300;"
+                       "X4LAN_CONFIG.native_gate_world_nav_stride=300",
+                       "X4LAN_CONFIG.native_gate_world_hash_schema='WORLD_IMPORTED_2';X4LAN_CONFIG.native_gate_world_hash_stride=300;"
+                       "X4LAN_CONFIG.native_gate_world_nav_stride=1.5"):
+            self.setUp();self.lua.execute(config)
+            with self.assertRaisesRegex(LuaError,'native_gate_world_nav_stride'):self.lua.execute(SOURCE)
+            self.assertEqual(self.lua.globals().loads,0);self.assertEqual(self.lua.globals().boots,0)
+
+    def test_nav_hash_joins_every_digest_between_captures(self):
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_world_hash_stride=10
+          X4LAN_CONFIG.native_gate_world_hash_schema='WORLD_IMPORTED_2'
+          X4LAN_CONFIG.native_gate_world_nav_stride=5
+          local gate=package.loadlib('gate')();nav_calls={};digests={}
+          gate.world_capture_nav_v2=function(tick) return 'tick='..tick..' state=WORLD_IMPORTED_2:'..tick end
+          gate.world_nav_hash=function(tick) nav_calls[#nav_calls+1]=tick;return 'NAV_1:'..tick..':3:'..string.rep('c',64) end
+          gate.world_nav_status=function() return 'hashes=1 index=3' end
+          gate.world_banks=function() return 'test' end
+          gate.world_page=function(n) assert(n==0);return 0 end
+          gate.world_detail=function(n) assert(n==0);return 0 end
+          X4LAN_SHA256.digest=function(data) digests[#digests+1]=data;return string.rep('b',64) end
+          state.boot_phase=3;state.issued=1;is_menu=false
+        ''')
+        self.lua.execute(SOURCE)
+        for tick in range(1, 13):
+            self.lua.execute(f'state.issued={tick};update()')
+        g = self.lua.globals()
+        self.assertEqual(list(g.nav_calls.values()), [5])          # 10 is a census tick: no nav hash there
+        digests = [d for d in g.digests.values() if d.startswith('CLOCK_ONLY_1|')]   # the tick digests (the first is the snapshot's)
+        self.assertEqual(len(digests), 12)
+        self.assertTrue(all(d.endswith('|NAV_1:-') for d in digests[:4]), digests[:4])
+        self.assertTrue(all(d.endswith('|NAV_1:5:3:' + 'c' * 64) for d in digests[4:]), digests[4:])
+
     def test_enriched_capture_never_falls_back_or_reports_legacy_summary(self):
         for mode in ('missing','failed','legacy'):
             self.setUp()

@@ -3638,6 +3638,20 @@ static int lua_world_hash_shields_status(lua_State *L) {
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
 static int lua_world_capture_nav_v2(lua_State *L) {return lua_world_capture_schema(L,2);}
+/* gate.world_nav_hash(tick): NAV_1:tick:count:sha256 of the indexed navigation parts (after a schema-2 capture), or
+ * nil and the stage. */
+static int lua_world_nav_hash(lua_State *L) {
+    double number=p_lua_tonumber(L,1);char out[128];
+    if(!accept_ui() || !stats.active || !boot_mode || boot_phase!=3 || !world_identity_installed ||
+       !isfinite(number) || number<1 || number!=(double)stats.issued || !world_nav_hash((uint64_t)number,out,sizeof(out))) {
+        p_lua_pushnil(L);p_lua_pushlstring(L,world_nav_stage,strlen(world_nav_stage));return 2;
+    }
+    p_lua_pushlstring(L,out,strlen(out));return 1;
+}
+static int lua_world_nav_status(lua_State *L) {
+    char out[256];int n=accept_ui()?world_nav_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 static int lua_world_page(lua_State *L) {
     double number=p_lua_tonumber(L,1);
     if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures) {p_lua_pushnil(L);return 1;}
@@ -4224,7 +4238,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(created_identities);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);
     METHOD(portable_created);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);
     METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);
-    METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_watch);METHOD(world_detail);METHOD(world_health);METHOD(world_banks);
+    METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_nav_hash);METHOD(world_nav_status);METHOD(world_page);METHOD(world_watch);METHOD(world_detail);METHOD(world_health);METHOD(world_banks);
     METHOD(world_trace);METHOD(world_trace_status);METHOD(world_trace_row);METHOD(world_trace_config);
     METHOD(world_queue_trace_config);METHOD(world_queue_trace_status);METHOD(world_queue_trace_row);
     METHOD(world_wait_trace_config);METHOD(world_wait_trace_status);METHOD(world_wait_trace_row);

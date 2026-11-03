@@ -70,6 +70,9 @@ X4LAN_CONFIG.native_gate_speak_timer = true
 -- speech_clock: the unpaused clock that times those lines starts the session at one value on every client
 -- (lockstep_speech_clock.h; without it seed 1111111 parted at tick 3749: a mentor line ended two ticks apart).
 X4LAN_CONFIG.native_gate_speech_clock = true
+-- world_nav_stride: the navigation parts hashed every 30 ticks between the 300-tick census captures (lockstep_world_hash.h);
+-- seeds 2222222 and 3333333 parted with only the navigation part differing, seen at the next capture.
+X4LAN_CONFIG.native_gate_world_nav_stride = 30
 X4LAN_CONFIG.native_gate_world_hash_shields = 'canonical'
 X4LAN_CONFIG.native_gate_view_ui = 'block'
 X4LAN_CONFIG.native_gate_view_triggers = 'block'
