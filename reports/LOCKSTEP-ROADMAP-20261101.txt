@@ -41,7 +41,8 @@ A. PLAYABILITY (people sessions)
  5. [G4 passed 1 Nov] Live tests G4 (flight family, scripted) and G5 (people) from the guard report section 7e; missiles
     with ships that carry launchers (the test scouts have none).
 
- 4c. [running] On foot (user). Live 1 Nov: slot 1 gets up and walks on both clients (w1bfoot/s1k1, build161) but the
+ 4c. [3 Nov df2q (build205, 6000 ticks): the wharf scenario stays in sync through dock, get-up and 2,200 ticks of walking
+    (census 0 at 1800/3600/5400; on-foot report 15k); slots 2..N walk with foot slots in the defaults; hiring on foot open] On foot (user). Live 1 Nov: slot 1 gets up and walks on both clients (w1bfoot/s1k1, build161) but the
     wharf scenario splits (transient digest at 65-72, 4 ships' motion by 1800 during the approach/dock, 146 objects after
     the get-up; agent X4-Multiplayer-footsync); bodies at the seats for slots 2..N (native_gate_pilot_foot_bodies) stay in sync
     (b1body/b1body2: 1200 ticks, 0 mismatches; whether a seated figure is visible needs a close camera, not answered by the

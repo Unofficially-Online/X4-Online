@@ -1330,3 +1330,11 @@ The Codex-era NATIVE-GETUP-* reports studied a one-shot GetUp() diagnostic on th
   order, now removed). The GM_BoardShip / GM_SupplyFactory rows at ticks 1 and 7 are equal, and the census is 0 at 1800.
   To watch the race itself instead: native_gate_find_order='observe' (also leaves the vector site unsorted; a diagnostic
   run). A run whose clients differ in a site=space row's native= with equal set= is the d1s3 mechanism.
+
+15k Long wharf run on the current build (coordinator, 3 November 2026; df2q: overlay DF2p (missile fight, dock at 1340, slot 1
+    gets up and walks, character_play sync, find_order sort) with build205 = smoke 509ba14c, pilot window to 6000, 6000 ticks)
+  Both clients STOP reason=1 restored=1 at 6001, relay pass, no digest mismatch. Census client 1 vs client 2: 0 of 528,517 at
+  1800, 0 of 531,648 at 3600, 0 of 532,733 at 5400. Slot 1 got up and walked on both (PILOT_INPUTS foot=walking getup=0/1,
+  walk=2197 on each). The scripted dock orders of slot 2 at 5240 and 5540 returned false on both clients alike.
+  The wharf scenario that split on 1 November (transient digest at 65-72, 146 objects after the get-up) now stays in sync
+  through the dock, the get-up and 2,200 ticks of walking.
