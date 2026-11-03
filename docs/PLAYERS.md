@@ -184,3 +184,29 @@ the UI write census saw only presentation calls.
 
 Stage A needs a person at each client; B and the test soak can be built and run
 unattended.
+
+### Stage D: per-slot wallets (plan)
+
+X4 has faction accounts already. A faction's `money` property reads its account, and
+`transfer_money from= to=` moves money between factions and objects. Only `player`
+declares one (`<account amount="0" />` in factions.xml). A faction without one
+(`hasownaccount` false) uses a dummy account with a large random sum. The pool factions
+`x4lan_player1..16` declare none, so today slot 2's ships trade against that dummy account.
+
+1. Give every pool faction `<account amount="0" />` in `src/lockstep/base/libraries/factions.xml`.
+   Snapshots captured before the change keep the old faction data, so recapture them. Do not
+   change the base while a campaign runs: the launcher builds each session's extension from
+   it.
+2. At the identity setup tick, MD funds each slot's account with the start money
+   (`transfer_money`, the same amount on every client). Slot 1 keeps the `player` wallet.
+3. Ships owned by slot K trade on faction K's account natively: a buy fails when the
+   account runs short, the same way on every client.
+4. Relayed money writes from slot K (`TransferPlayerMoneyTo`, `TransferMoneyToPlayer`, the
+   inventory transfers) run as an MD cue on faction K's account instead of the native
+   global, which always uses `player`.
+5. Display: the UI has no faction-money query (`GetFactionData` is never asked for money). On
+   slot K's client the probe wraps `GetPlayerMoney` to return faction K's money. MD
+   publishes it each tick, for example on a blackboard the UI reads. This changes the view
+   only.
+
+Missions, rewards and notoriety stay `player`-centric (Stage E).
