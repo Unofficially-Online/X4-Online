@@ -37,6 +37,7 @@ FAMILIES = [
     ('PATH_TRANSFORMS_ROW', ('index', 'time')),
     ('UI_LAZY_ROW', ('index', 'chain')),
     ('DRAW_WATCH_ROW', ('index',)),
+    ('ACTOR_RNG_ROW', ('index',)),
 ]
 TICK = re.compile(r'\btick=(\d+)')
 # Status fields that differ between clients in sync (process-local bookkeeping, see docs/LAUNCHER.md):
@@ -76,7 +77,7 @@ def diagnostic_sets(first, stride=STRIDE):
             'native_gate_script_rng_rows=true', f'native_gate_script_rng_rows_window={{{lo},{hi}}}',
             f'native_gate_event_rng_rows={{{lo},{hi}}}', 'native_gate_event_rng_play_rows=true',
             f'native_gate_path_transforms_rows={{{lo},{hi}}}', f'native_gate_ui_lazy_rows={{{lo},{hi}}}',
-            'native_gate_created_rows=true']
+            'native_gate_created_rows=true', 'native_gate_actor_rng_rows=true']
     return sets
 
 
