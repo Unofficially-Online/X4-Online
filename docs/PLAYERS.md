@@ -118,6 +118,21 @@ numbers (`TransferPlayerMoneyTo(fee, ConvertStringTo64Bit(...))`), which look li
 beside them. With a kind list per global (component, number, string, boolean, table) the
 'ffi' section can carry them as records with index 0xffff and the global's name.
 
+## Stage A: a human census session
+
+Both clients run on one PC (two windows); one person can play each window in turn.
+Shared faction (`coop`), ships flown by wire, both guard layers observing:
+
+```
+python tools/build_soak_overlay.py --snapshot .local/snapshots/seed276944566.xml.gz --gate-dll .local/native-lockstep/build/x4lan_gate_64.dll --out .local/overlays/human-census --play-mode --drop native_gate_camera_anchor --set "native_gate_ui_exports='observe'" --set "native_gate_ui_lua='observe'" --players coop --players-arg=--source --players-arg=wire --players-arg=--orders --players-arg=none --window 216000
+python tools/x4ls.py session --clients 2 --overlay .local/overlays/human-census --snapshot .local/snapshots/seed276944566.xml.gz --ticks 216002 --observe --lookahead 1 --timeout 12000 --steam-fix
+```
+
+Then, in each window: fly, dock, open the trade menu and buy, accept a mission, give a
+ship an order, open the map. The logs (`clientK/engine-output.log`) list every UI write as
+`UI_EXPORT_ROW` / `UI_LUA_ROW` with its tick; what is not presentation goes on the relay
+list (or stays blocked).
+
 ## Player-activity soak
 
 `tools/build_soak_overlay.py --players factions` (identities, script pilots, scripted orders
