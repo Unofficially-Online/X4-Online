@@ -222,6 +222,11 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   differed: the agents' navigation state (`lockstep_world_nav.h`), with positions equal. Soak
   F's split also showed PATH_TRANSFORMS `spaces` differing. The pathing budget is a count
   (`native_gate_path_budget`), not the clock, so the extra work comes from somewhere else.
+  The triage rerun parted earlier, at 92,400 (world hash only), so this split depends on
+  timing as well. Its row windows came after that split and show only the aftermath. Both
+  ticks are world capture ticks (multiples of 300): the navigation part is hashed at the
+  captures, so the split lies in the 300 ticks before. When a rerun parts before its window,
+  triage needs a second rerun, windowed at the new split.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
