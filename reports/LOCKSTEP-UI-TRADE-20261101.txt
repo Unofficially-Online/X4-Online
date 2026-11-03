@@ -344,7 +344,8 @@ UI_GUARD_STATUS installed=216 for 214 (the guard table has 282 entries: missions
     SignalObject at 5443 and 6643 on both clients) and executed at once: UI_TRADE_MONEY on both clients 1,000,000 -> 819,500
     at 5443 -> 630,900 at 6643, the same at the same ticks. Census 0 of 532,783 at 5400 and of 534,121 at 7200; relay pass;
     both STOP reason=1 restored=1. [F] The census parent of the docked ship stays its zone (72b): the census does not show
-    docking. Open: the price looks high for 2 units each (180,500 and 188,600); the bought amount is not in these rows.
+    docking. The amounts are 2 units each: UI_TRADE_MONEY is in hundredths of a credit (as the save's trade prices), so
+    -180,500 and -188,600 are 1,805 and 1,886 Cr, 902.5 and 943 Cr a unit (the save's plasma conductor offers: 769-1,097 Cr).
   So T3 passes for slot 1 in coop: a person's docked trade (fly there, dock with the docking computer, the trade menu's
   immediate buy) is replayed and executed identically on every client. Slot 2 and factions mode are the same calls in
   their slot scope (T1/T2); not run docked.
