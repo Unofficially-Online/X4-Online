@@ -199,7 +199,10 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   (`lockstep_speech_clock.h`, now in the soak profile) sets the clock to 65536.0 on every
   client at the first gated frame. Its status shows the clock bit-identical on both clients
   from tick 0. The rerun passed 3,749 in sync. Only the speech code reads the clock (6 call
-  sites of its getter, 5 in EntitySpeakData).
+  sites of its getter, 5 in EntitySpeakData). The same frame update advances two more
+  clocks: 0x6b60e38 (scaled) and 0x6b60e40 (running while paused too). Each has more than 20
+  readers and still starts at each client's boot time. A later split with a timer lead
+  should check those first.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops

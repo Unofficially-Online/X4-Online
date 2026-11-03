@@ -127,7 +127,12 @@ refused and counted (`relay_refused=`). One gap remains: a component passed as a
 number in a place not marked `c`, such as one of SetOrderParam's values, would arrive as that
 client's runtime number. The Lua write test (`native_gate_ui_exports_test={tick=T,
 slot='pK', via='lua'}`) calls `TransferPlayerMoneyTo(500, ship)` with the ship as a plain
-number.
+number. Native check (3 November 2026, two clients, seed snapshot, `--ui-relay`): client 2's
+call was queued (`relayed=1`) and both clients ran it at tick 602 (`FFI_RELAY ...
+lua=TransferPlayerMoneyTo ok=true`); the session passed. Money and the ship's account both
+read 10,000 before and after on both clients: the player's own ship has no account of its
+own, so a transfer to it moves nothing. A visible check needs a container with its own
+account (a player station or a managed ship).
 
 ## Stage A: a human census session
 
