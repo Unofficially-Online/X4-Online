@@ -79,6 +79,7 @@
 #include "test_lockstep_hit_native.h"
 #include "test_lockstep_pilot_fire.h"
 #include "test_lockstep_virtual_players.h"
+#include "test_lockstep_join.h"
 static uint64_t test_rng;
 static unsigned test_calls,test_cheap,test_action_throw,test_action_stop;
 static void test_action_native_maybe_throw(void) {
@@ -178,16 +179,13 @@ static void test_npc_exec_recursive(void *exec) {
 #include "test_lockstep_npc_pilot.h"
 #include "test_lockstep_npc_early.h"
 #include "test_lockstep_interrupt_origin.h"
+/* An NPC_UseCases cue's name: its static cue's path from the cue's own fields (lockstep_cue_name.h). */
 static void test_npc_names(void) {
-    unsigned char exec[0x50]={0},cue[0x180]={0},definition[0x180]={0},module[0x100]={0};
-    unsigned char nodes[3][0x60]={{0}};char name[256];
+    unsigned char exec[0x50]={0},cue[0x180]={0},definition[0x180]={0},module[0x100]={0},manager[0x180]={0};char name[256];
     *(uint32_t*)(exec+0x38)=0x5d;*(void**)(exec+0x40)=cue+0xb0;
-    *(void**)(cue+0x160)=definition;*(void**)(definition+0x150)=module;
-    test_npc_string(module+0x18,"NPC_UseCases");test_npc_string(nodes[1]+0x20,"UseCase");
-    *(void**)(module+0x80)=nodes[0];*(void**)(module+0x68)=nodes[1];
-    *(void**)nodes[0]=nodes[1];*(void**)nodes[1]=module+0x60;
-    *(void**)(nodes[1]+8)=nodes[0];*(void**)(nodes[1]+0x10)=nodes[2];*(void**)nodes[2]=nodes[1];
-    *(void**)(nodes[1]+0x40)=definition;
+    *(void**)(cue+0x160)=definition;*(void**)definition=image+CUE_PATH_VT;*(void**)(definition+0x160)=definition;
+    *(void**)(definition+0x150)=module;test_npc_string(module+0x18,"NPC_UseCases");test_npc_string(definition+0xc8,"UseCase");
+    cue_path_refusals=0;
     assert(npc_cue_name(exec,name)==1 && !strcmp(name,"NPC_UseCases.UseCase"));
     unsigned char action[40]={0};uintptr_t entries[]={(uintptr_t)action};uintptr_t program[]={(uintptr_t)entries,(uintptr_t)(entries+1)};
     *(void**)action=image+0x1000;*(void**)(exec+0x10)=program;
@@ -209,13 +207,18 @@ static void test_npc_names(void) {
     test_npc_trigger_legacy_only(exec);
     test_npc_trigger_identity(exec,action);
     test_npc_provenance(exec,cue,action);
-    memset(npc_names,0,sizeof(npc_names));*(void**)(nodes[1]+0x40)=NULL;*(void**)(nodes[2]+0x40)=definition;
-    test_npc_string(nodes[2]+0x20,"child name");
-    assert(npc_cue_name(exec,name)==1 && !strcmp(name,"NPC_UseCases.child%20name"));
-    memset(npc_names,0,sizeof(npc_names));*(void**)(nodes[2]+0x40)=NULL;
-    assert(npc_cue_name(exec,name)==0); /* A missing tree entry is not a known different module. */
-    *(void**)(nodes[0]+0x10)=nodes[0];*(void**)(nodes[0]+8)=nodes[0];
-    assert(npc_cue_name(exec,name)==0); /* Cyclic tree terminates within the read budget. */
+    /* Below a root: the path, each name encoded. */
+    memset(npc_names,0,sizeof(npc_names));test_npc_string(definition+0xc8,"child name");
+    *(void**)manager=image+CUE_PATH_VT;*(void**)(manager+0x160)=manager;*(void**)(manager+0x150)=module;
+    test_npc_string(manager+0xc8,"UseCaseManager");*(void**)(definition+0x158)=manager;
+    assert(npc_cue_name(exec,name)==1 && !strcmp(name,"NPC_UseCases.UseCaseManager.child%20name") && !cue_path_refusals);
+    /* A nameless root is refused, counted and unnamed: not a known different module. */
+    memset(npc_names,0,sizeof(npc_names));test_npc_string(manager+0xc8,"");strcpy(name,"unreadable");
+    assert(npc_cue_name(exec,name)==0 && !strcmp(name,"unreadable") && cue_path_refusals==1 &&
+           !strncmp(cue_path_refusal,"check=static_root,",18));
+    *(void**)(manager+0x158)=definition;
+    assert(npc_cue_name(exec,name)==0 && cue_path_refusals==2); /* A parent cycle ends at the level limit. */
+    cue_path_refusals=0;snprintf(cue_path_refusal,sizeof(cue_path_refusal),"-");
     test_npc_string(module+0x18,"Other");assert(npc_cue_name(exec,name)==2);
     *(uint64_t*)(module+0x28)=96;assert(npc_cue_name(exec,name)==0);
     *(uint32_t*)(exec+0x38)=0x66;assert(npc_cue_name(exec,name)==2);
@@ -566,7 +569,29 @@ static void test_snapshot_fixture(void) {
     *(void**)objects[5]=image+0x2b7feb8;
     *(const char**)(macros[5]+0x20)="ship_xen_s_fighter_01_a_macro";assert(!snapshot_bind(test_snapshot_find,objects));assert(!actor_components[0]);
     *(const char**)(macros[5]+0x20)="ship_arg_s_fighter_01_a_macro";
-    assert(snapshot_bind(test_snapshot_find,objects) && snapshot_bound==12 && snapshot_bound_tick==0);
+    assert(snapshot_bind(test_snapshot_find,objects) && snapshot_bound==12 && snapshot_bound_tick==0 && snapshot_bound_views[6]==SNAPSHOT_VIEW_NAV);
+    /* The session's views at its join capture (lockstep_join.h): what its gate binds now. J1 j1-9: actor 8 died at tick 508 and
+     * kept its LinearDecelerationController (drift); also no controller (bare), another class (other), the object gone (lost). */
+    {
+        unsigned char views[12],ldc[0xc0]={0},foreign[0xc0]={0};*(void**)ldc=image+SNAPSHOT_DRIFT_VTABLE;*(void**)foreign=image+0x2c3f788;
+        join_tables jt;memset(&jt,0,sizeof(jt));memset(&join_cap,0,sizeof(join_cap));
+        join_capture_fixture(&jt,test_snapshot_find,objects);
+        for(unsigned i=0;i<12;i++) assert(jt.gate.fixture[i]==SNAPSHOT_VIEW_NAV && join_cap.fixture[i]==SNAPSHOT_VIEW_NAV);
+        *(void**)(objects[7]+0x200)=ldc;*(void**)(objects[8]+0x200)=NULL;*(void**)(objects[9]+0x200)=foreign;test_snapshot_objects[10]=NULL;
+        assert(snapshot_session_views(views,test_snapshot_find,objects) && views[0]==SNAPSHOT_VIEW_NAV && views[7]==SNAPSHOT_VIEW_DRIFT &&
+               views[8]==SNAPSHOT_VIEW_BARE && views[9]==SNAPSHOT_VIEW_OTHER && views[10]==SNAPSHOT_VIEW_LOST);
+        unsigned char *slots;
+        assert(snapshot_actor_view(10,test_snapshot_find,objects,&slots)==SNAPSHOT_VIEW_LOST && strstr(snapshot_check,"check=object:find ctrl=null "));
+        assert(snapshot_actor_view(9,test_snapshot_find,objects,&slots)==SNAPSHOT_VIEW_OTHER && !slots &&
+               strstr(snapshot_check,"check=vtable ctrl=set ctrl_vt=2c3f788 "));
+        *(void**)(controllers[6]+0x28)=objects[5];
+        assert(snapshot_actor_view(6,test_snapshot_find,objects,&slots)==SNAPSHOT_VIEW_OTHER && strstr(snapshot_check,"check=owner ") &&
+               strstr(snapshot_check," owner=other "));
+        *(void**)(controllers[6]+0x28)=objects[6];
+        for(unsigned i=7;i<10;i++) *(void**)(objects[i]+0x200)=controllers[i];test_snapshot_objects[10]=objects[10];
+        snapshot_bound=0;assert(!snapshot_session_views(views,test_snapshot_find,objects) && !views[0]);snapshot_bound=12;
+        memset(&join_cap,0,sizeof(join_cap));
+    }
     unsigned char model[0x3a0]={0};flight_installed=1;
     assert(snapshot_flight_register(1,agents[0]+0xad0) && !strcmp(snapshot_flight_kinds[0],"none"));
     *(void**)(agents[0]+0xf10)=model;*(void**)model=image+SPLINE_ENTRY-0x70;*(void**)(model+0x10)=agents[0];
@@ -584,6 +609,61 @@ static void test_snapshot_fixture(void) {
     nav_sample s={.tick=1,.calls=1,.initialized=1,.deadline_after=123};snapshot_nav_observe(6,&s);
     s.tick=2;s.deadline_after=456;snapshot_nav_observe(6,&s);assert(snapshot_actors[5].first_nav.tick==1 && snapshot_actors[5].first_nav.deadline_after==123);
     snapshot_import_capture(objects[0],100,1000);assert(snapshot_failures==1);
+    /* A hot joiner (J1 j1-8: SNAPSHOT_BIND_STOP bound=0 failures=1, stop 74): its admission sets the tick base T, so the bind
+     * runs at T, not at 0; the import passed the session's portable keys (the snapshot's saved IDs) for the join save's IDs.
+     * It binds each actor as the session's gate saw it at T (the package's views): actor 7 died before T. j1-9: its wreck keeps
+     * a drift controller (refused then by 'a wreck has no controller'); a wreck without a controller binds too. */
+    memset(snapshot_actors,0,sizeof(snapshot_actors));snapshot_bound=snapshot_prepared=snapshot_enrolled=0;snapshot_failures=0;
+    memset(actor_components,0,sizeof(actor_components));memset(actor_ids,0,sizeof(actor_ids));snapshot_configured=0;
+    stats.issued=0;boot_phase=0;assert(snapshot_manifest(manifest,203));
+    for(unsigned i=0;i<12;i++) snapshot_import_capture(objects[i],100+i,1000+i);
+    *(void**)(objects[6]+0x200)=NULL;boot_phase=3;
+    assert(!snapshot_bind(test_snapshot_find,objects) && snapshot_attempt_actor==7 && !strcmp(snapshot_prepare_stage,"bind_actor"));
+    assert(strstr(snapshot_check,"check=controller_null ctrl=null "));
+    memset(&join_rx,0,sizeof(join_rx));join_rx.based=1;join_rx.loaded=1;join_rx.t.gate.tick=633;
+    assert(!snapshot_bind(test_snapshot_find,objects) && !strcmp(snapshot_prepare_stage,"bind_guard"));   /* tick 0 is not T */
+    stats.issued=633;
+    for(unsigned i=0;i<12;i++) join_rx.t.gate.fixture[i]=SNAPSHOT_VIEW_NAV;
+    unsigned char wreck[0xc0]={0};*(void**)wreck=image+SNAPSHOT_DRIFT_VTABLE;
+    *(void**)(objects[6]+0x200)=wreck;   /* j1-9's case before the views: the session's actor is not a wreck */
+    assert(!snapshot_bind(test_snapshot_find,objects) && snapshot_attempt_actor==7 && !strcmp(snapshot_prepare_stage,"bind_joiner_view") &&
+           !strncmp(snapshot_check,"session=nav joiner=drift check=vtable ctrl=set ctrl_vt=2c3f5f0 owner=- ",71) && !actor_components[0]);
+    join_rx.t.gate.fixture[6]=SNAPSHOT_VIEW_DRIFT;*(void**)(objects[6]+0x200)=controllers[6];   /* a live ship where the session had a wreck */
+    assert(!snapshot_bind(test_snapshot_find,objects) && snapshot_attempt_actor==7 && strstr(snapshot_check,"session=drift joiner=nav check=ok "));
+    *(void**)(objects[6]+0x200)=NULL;
+    assert(!snapshot_bind(test_snapshot_find,objects) && strstr(snapshot_check,"session=drift joiner=bare check=controller_null "));
+    *(void**)(objects[6]+0x200)=controllers[5];join_rx.t.gate.fixture[6]=SNAPSHOT_VIEW_NAV;   /* another ship's controller */
+    assert(!snapshot_bind(test_snapshot_find,objects) && strstr(snapshot_check,"session=nav joiner=other check=owner "));
+    join_rx.t.gate.fixture[6]=SNAPSHOT_VIEW_OTHER;   /* equal, but nothing the joiner can bind */
+    assert(!snapshot_bind(test_snapshot_find,objects) && strstr(snapshot_check,"session=other joiner=other "));
+    join_rx.t.gate.fixture[6]=SNAPSHOT_VIEW_BARE;*(void**)(objects[6]+0x200)=NULL;   /* a wreck without a controller */
+    assert(snapshot_bind(test_snapshot_find,objects) && snapshot_joiner_dead==1 && snapshot_bound_views[6]==SNAPSHOT_VIEW_BARE && !strcmp(snapshot_check,"-"));
+    memset(actor_components,0,sizeof(actor_components));memset(actor_ids,0,sizeof(actor_ids));snapshot_bound=0;
+    join_rx.t.gate.fixture[6]=SNAPSHOT_VIEW_DRIFT;*(void**)(objects[6]+0x200)=wreck;   /* j1-9: the wreck with its drift */
+    assert(snapshot_bind(test_snapshot_find,objects) && snapshot_bound==12 && snapshot_bound_tick==633 && snapshot_joiner_dead==1 &&
+           snapshot_dead[6] && !snapshot_dead[5] && actor_components[6]==objects[6] && actor_ids[6]==106 &&
+           snapshot_bound_views[6]==SNAPSHOT_VIEW_DRIFT && snapshot_bound_views[5]==SNAPSHOT_VIEW_NAV);
+    /* Prepared at T+1 on the UI thread only; the modules registered without the session-start writes, all twelve enrolled. */
+    stats.issued=634;++ui_thread;assert(!snapshot_prepare());--ui_thread;
+    int radar_initial=gravidar_initial;gravidar_initial=0;params_enabled=1;flight_installed=1;flight_initial=1;
+    unsigned char steering[0x3a0]={0};*(void**)(agents[0]+0xf10)=steering;*(void**)steering=image+FLIGHT_ENTRY-0x70;*(void**)(steering+0x10)=agents[0];
+    *(void**)(agents[1]+0xf10)=model;*(void**)model=image+SPLINE_ENTRY-0x70;*(void**)(model+0x10)=agents[1];
+    unsigned char foreign[0x3a0]={0};*(void**)foreign=image+1;*(void**)(foreign+0x10)=agents[2];*(void**)(agents[2]+0xf10)=foreign;
+    uint64_t inits=flight_inits;unsigned calls=params_calls;
+    assert(!snapshot_joiner_prepare(test_snapshot_find,objects) && snapshot_attempt_actor==3 && !strcmp(snapshot_prepare_stage,"joiner_steering"));
+    snapshot_flight_kinds[0]=snapshot_flight_kinds[1]=NULL;
+    memset(params_done,0,sizeof(params_done));params_kept=0;flight_registration_kept=0;memset(flight_samples,0,sizeof(flight_samples));
+    {unsigned char spline[12][0x3a0];memset(spline,0,sizeof(spline));
+     for(unsigned i=1;i<12;i++) {*(void**)(agents[i]+0xf10)=spline[i];*(void**)spline[i]=image+SPLINE_ENTRY-0x70;*(void**)(spline[i]+0x10)=agents[i];}
+     assert(snapshot_joiner_prepare(test_snapshot_find,objects) && snapshot_prepared==12 && snapshot_prepared_tick==634 && snapshot_enrolled==12 &&
+            !strcmp(snapshot_prepare_stage,"joiner_complete"));}
+    assert(params_kept==11 && params_calls==calls && !params_done[6] && params_done[0] && flight_inits==inits && flight_registration_kept==1 &&
+           flight_samples[0].initialized_model==steering && flight_samples[0].model==steering && !flight_samples[0].init_generation &&
+           !strcmp(snapshot_flight_kinds[0],"steering") && !strcmp(snapshot_flight_kinds[1],"spline") && !flight_samples[6].agent);
+    for(unsigned i=0;i<12;i++) assert(snapshot_actors[i].enrolled);
+    gravidar_initial=radar_initial;params_enabled=0;flight_installed=0;flight_initial=0;memset(flight_samples,0,sizeof(flight_samples));memset(params_done,0,sizeof(params_done));
+    params_kept=0;flight_registration_kept=0;snapshot_joiner_dead=0;memset(snapshot_dead,0,sizeof(snapshot_dead));memset(&join_rx,0,sizeof(join_rx));
+    memset(snapshot_bound_views,0,sizeof(snapshot_bound_views));snprintf(snapshot_check,sizeof(snapshot_check),"-");
     VirtualFree(world_identities,0,MEM_RELEASE);world_identities=NULL;world_identity_count=0;
     memset(snapshot_actors,0,sizeof(snapshot_actors));snapshot_configured=snapshot_bound=snapshot_prepared=snapshot_enrolled=0;
     snapshot_bound_tick=snapshot_prepared_tick=0;snapshot_failures=0;
@@ -959,6 +1039,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_script_rng_md.h"
 #include "test_lockstep_script_rng_perf.h"
 #include "test_lockstep_md_resume_rng.h"
+#include "test_lockstep_cue_name.h"
 #include "test_lockstep_find_order.h"
 #include "test_lockstep_region_rng.h"
 #include "test_lockstep_gravidar_deadlines.h"
@@ -990,6 +1071,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_shape_order.h"
 #include "test_lockstep_nav_octree.h"
 #include "test_lockstep_nav_mesh.h"
+#include "test_lockstep_character_play.h"
 #include "test_lockstep_event_rng.h"
 #include "test_lockstep_build_rng.h"
 #include "test_lockstep_ui_cargo.h"
@@ -1009,7 +1091,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_player_settings.h"
 int main(int argc,char **argv) {
     assert(argc<=2);
-    if(argc==2) {test_solver_native_image(argv[1]);test_registry_md_native_image(argv[1]);test_request_native_image(argv[1]);test_registry_origin_native_image(argv[1]);test_event_order_native_image(argv[1]);test_render_rng_native_image(argv[1]);test_fo_native_image(argv[1]);test_pilot_native_image(argv[1]);test_pilot_native_controls_image(argv[1]);test_pilot_stock_image(argv[1]);test_virtual_players_image(argv[1]);test_mdt_native_image(argv[1]);test_mdr_native_image(argv[1]);test_region_rng_native_image(argv[1]);test_created_native_image(argv[1]);test_bullet_cadence_native_image(argv[1]);test_speak_timer_native_image(argv[1]);test_shield_canonical_native_image(argv[1]);test_nav_cadence_native_image(argv[1]);test_nav_player_native_image(argv[1]);test_command_order_native_image(argv[1]);test_region_camera_native_image(argv[1]);test_weapon_fire_native_image(argv[1]);test_motion_watch_native_image(argv[1]);test_wreck_watch_native_image(argv[1]);test_view_points_native_image(argv[1]);test_camera_offset_native_image(argv[1]);test_mass_traffic_native_image(argv[1]);test_predict_native_image(argv[1]);test_spawn_rng_native_image(argv[1]);test_hitn_native_image(argv[1]);test_pfire_native_image(argv[1]);test_gdl_native_image(argv[1]);test_ship_sound_native_image(argv[1]);test_physics_trace_native_image(argv[1]);test_body_order_native_image(argv[1]);test_shape_order_native_image(argv[1]);test_player_timer_native_image(argv[1]);test_engine_rng_native_image(argv[1]);test_nav_octree_native_image(argv[1]);test_nav_mesh_native_image(argv[1]);test_warp_rng_native_image(argv[1]);test_transition_rows_native_image(argv[1]);test_tempzone_order_native_image(argv[1]);test_gravidar_posts_native_image(argv[1]);test_event_rng_native_image(argv[1]);test_build_rng_native_image(argv[1]);test_ui_cargo_native_image(argv[1]);test_supply_rows_native_image(argv[1]);test_ui_lazy_native_image(argv[1]);test_gravidar_wide_native_image(argv[1]);test_portable_math_native_image(argv[1]);test_exact_reciprocal_native_image(argv[1]);test_fp_env_native_image(argv[1]);test_tick_native_image(argv[1]);test_path_budget_native_image(argv[1]);test_decimal_native_image(argv[1]);test_supply_wants_native_image(argv[1]);test_loadout_order_native_image(argv[1]);test_order_canon_native_image(argv[1]);test_pick_order_native_image(argv[1]);test_macro_arena_native_image(argv[1]);test_build_rows_native_image(argv[1]);test_economy_load_native_image(argv[1]);test_pilot_slots_image(argv[1]);test_pilot_eye_image(argv[1]);test_pilot_foot_image(argv[1]);}
+    if(argc==2) {test_solver_native_image(argv[1]);test_registry_md_native_image(argv[1]);test_request_native_image(argv[1]);test_registry_origin_native_image(argv[1]);test_event_order_native_image(argv[1]);test_render_rng_native_image(argv[1]);test_fo_native_image(argv[1]);test_pilot_native_image(argv[1]);test_pilot_native_controls_image(argv[1]);test_pilot_stock_image(argv[1]);test_virtual_players_image(argv[1]);test_mdt_native_image(argv[1]);test_mdr_native_image(argv[1]);test_region_rng_native_image(argv[1]);test_created_native_image(argv[1]);test_bullet_cadence_native_image(argv[1]);test_speak_timer_native_image(argv[1]);test_shield_canonical_native_image(argv[1]);test_nav_cadence_native_image(argv[1]);test_nav_player_native_image(argv[1]);test_command_order_native_image(argv[1]);test_region_camera_native_image(argv[1]);test_weapon_fire_native_image(argv[1]);test_motion_watch_native_image(argv[1]);test_wreck_watch_native_image(argv[1]);test_view_points_native_image(argv[1]);test_camera_offset_native_image(argv[1]);test_mass_traffic_native_image(argv[1]);test_predict_native_image(argv[1]);test_spawn_rng_native_image(argv[1]);test_hitn_native_image(argv[1]);test_pfire_native_image(argv[1]);test_gdl_native_image(argv[1]);test_ship_sound_native_image(argv[1]);test_physics_trace_native_image(argv[1]);test_body_order_native_image(argv[1]);test_shape_order_native_image(argv[1]);test_character_play_native_image(argv[1]);test_player_timer_native_image(argv[1]);test_engine_rng_native_image(argv[1]);test_nav_octree_native_image(argv[1]);test_nav_mesh_native_image(argv[1]);test_warp_rng_native_image(argv[1]);test_transition_rows_native_image(argv[1]);test_tempzone_order_native_image(argv[1]);test_gravidar_posts_native_image(argv[1]);test_event_rng_native_image(argv[1]);test_build_rng_native_image(argv[1]);test_ui_cargo_native_image(argv[1]);test_supply_rows_native_image(argv[1]);test_ui_lazy_native_image(argv[1]);test_gravidar_wide_native_image(argv[1]);test_portable_math_native_image(argv[1]);test_exact_reciprocal_native_image(argv[1]);test_fp_env_native_image(argv[1]);test_tick_native_image(argv[1]);test_path_budget_native_image(argv[1]);test_decimal_native_image(argv[1]);test_supply_wants_native_image(argv[1]);test_loadout_order_native_image(argv[1]);test_order_canon_native_image(argv[1]);test_pick_order_native_image(argv[1]);test_macro_arena_native_image(argv[1]);test_build_rows_native_image(argv[1]);test_economy_load_native_image(argv[1]);test_pilot_slots_image(argv[1]);test_pilot_eye_image(argv[1]);test_pilot_foot_image(argv[1]);}
     if(argc==2)test_wq_image_path=argv[1];
     if(argc==2) test_runtime_ids_native_image(argv[1]);
     if(argc==2) test_guidance_local_native_image(argv[1]);
@@ -1025,6 +1107,8 @@ int main(int argc,char **argv) {
     if(argc==2) test_step_chain_native_image(argv[1]);
     if(argc==2) test_path_transforms_native_image(argv[1]);
     if(argc==2) test_body_pose_native_image(argv[1]);
+    if(argc==2) test_join_native_image(argv[1]);
+    if(argc==2) test_cue_path_native_image(argv[1]);
     if(argc==2) {test_render_frames_native_image(argv[1]);test_render_display_native_image(argv[1]);}
     test_registry_md_options();
     test_player_authority();
@@ -1067,6 +1151,7 @@ int main(int argc,char **argv) {
     test_gravidar_watch();
     test_speech_time();
     test_world_created();
+    test_join();
     test_runtime_ids();
     test_runtime_ids_local();
     test_guidance_local();
@@ -1081,6 +1166,7 @@ int main(int argc,char **argv) {
     test_nav_cadence();
     test_nav_probe_init();
     test_nav_player();
+    test_nav_player_branch();
     test_nav_params_init();
     test_ship_sound();
     test_draw_watch();
@@ -1146,6 +1232,7 @@ int main(int argc,char **argv) {
     test_nav_octree_deadline();
     test_nav_octree_agreed();
     test_nav_mesh();
+    test_character_play();
     test_nav_octree_snapshot();
     test_pilot_inputs();
     test_pilot_native_controls();
@@ -1154,6 +1241,7 @@ int main(int argc,char **argv) {
     test_pilot_eye();
     test_pilot_foot();
     test_pilot_foot_diag();
+    test_pilot_foot_clock();
     test_crash_note();
     test_ui_replay();
     test_ui_guard();
@@ -1515,6 +1603,11 @@ int main(int argc,char **argv) {
         radar_observed.contacts[6].present && !radar_observed.contacts[6].count && radar_observed.contacts[7].present);
     assert(!memcmp(radar_unit+0x68,radar_vector,24) && !memcmp(radar_result+0x10,radar_vector,24) && radar_ids[1]==999);
     radar_ids[1]=0;assert(!gravidar_read_contacts(radar_vector,&radar_copy));radar_ids[1]=999;
+    /* A hot joiner's fixture actor: registered, its times as loaded (the session wrote its start times at tick 1). */
+    gravidar_initialized[11]=NULL;*(double*)(radar_unit+0xa8)=4;*(double*)(radar_unit+0xb0)=5;*(double*)(radar_unit+0xb8)=3;
+    assert(gravidar_initialize_unit_with(12,radar_unit,9.0,1) && gravidar_initialized[11]==radar_unit && gravidar_kept==1 && gravidar_inits==1);
+    assert(*(double*)(radar_unit+0xa8)==4 && *(double*)(radar_unit+0xb0)==5 && *(double*)(radar_unit+0xb8)==3);
+    assert(gravidar_initialize_unit_with(12,radar_unit,9.0,1) && gravidar_kept==1);gravidar_kept=0;
     *(uint64_t*)(radar_unit+8)=322;assert(!gravidar_initialize_unit(12,radar_unit,7.0));
     DeleteCriticalSection((CRITICAL_SECTION*)(radar_unit+0x18));gravidar_inits=0;gravidar_initialized[11]=NULL;actor_ids[11]=0;
     gravidar_sample grs={0};grs.calls=1;gravidar_seeded=1;test_calls=0;test_rng=111;
@@ -2031,7 +2124,9 @@ int main(int argc,char **argv) {
     test_script_rng_perf();
     test_boot_hold();
     test_md_resume();
+    test_cue_path();
     test_find_order();
+    test_find_order_space();
     test_region_rng();
     test_gravidar_deadlines();
     test_portable_created();

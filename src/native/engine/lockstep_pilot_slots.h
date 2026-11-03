@@ -521,13 +521,23 @@ static int pslot_controller_has(unsigned char *ship,int cls,const void *which) {
 static int pslot_is(void *component,int cls) {
     void **vtable=*(void***)component;return ((unsigned char(*)(void*,int))vtable[PSLOT_IS_CLASS])(component,cls)!=0;
 }
-static int pslot_construct_all(void) {
+static int pslot_construct(unsigned k) {
+    unsigned char *p1=NULL,*made=NULL;
+    if(!vps_make(pnat_base,&p1,&made)) return pslot_fail(vps_why);
+    if(pslot_p1 && p1!=pslot_p1) return pslot_fail("p1_changed");
+    pslot_p1=p1;pslots[k].player=made;return 1;
+}
+/* take-2: every slot enrolled by take (an absent one later, pslot_enroll_late). With all of them absent the canonical
+ * player is latched from the singleton, as vps_make would have answered it. */
+static int pslot_construct_all(uint64_t take) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
-        if(!(pslot_mask>>(k-1)&1u)) continue;
-        unsigned char *p1=NULL,*made=NULL;
-        if(!vps_make(pnat_base,&p1,&made)) return pslot_fail(vps_why);
-        if(pslot_p1 && p1!=pslot_p1) return pslot_fail("p1_changed");
-        pslot_p1=p1;pslots[k].player=made;
+        if(!(pslot_mask>>(k-1)&1u) || !pilot_slot_enrolled(k,take)) continue;
+        if(!pslot_construct(k)) return 0;
+    }
+    if(!pslot_p1) {
+        unsigned char *universe=NULL,*p1=NULL;
+        if(!read_local(pnat_base+VPL_UNIVERSE,&universe,8) || !universe || !read_local(universe+VPS_SINGLETON,&p1,8) || !p1) return pslot_fail("p1_unknown");
+        pslot_p1=p1;
     }
     pslot_stage="constructed";return 1;
 }
@@ -644,10 +654,25 @@ static int pslot_hook_intact(void) {
     if(!pslot_hook_installed || !pslot_page || memcmp(pnat_base+PSLOT_CALL_SITE,pslot_site_patched,5)) return 0;
     pview_abs_jump(jump,(void*)pslot_update);return !memcmp(pslot_page,jump,14);
 }
-static int pslot_seat_all(void) {
-    for(unsigned k=2;k<=PILOT_SLOTS;k++) if((pslot_mask>>(k-1)&1u) && !pslot_seat(k)) return 0;
+static int pslot_seat_all(uint64_t take) {
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) if((pslot_mask>>(k-1)&1u) && pilot_slot_enrolled(k,take) && !pslot_seat(k)) return 0;
     if(!pslot_hook_install()) return pslot_fail("hook_install");
     pslot_stage="seated";return 1;
+}
+/* An absent slot (hot join) enrolled at E after take: its player at E-2, its seat at E-1, as take-2 and take-1 do for the
+ * others. Its ship as the identity plan left it must still be there: one lost before (AI-flown, nobody's) stops (161). */
+static int pslot_enroll_late(uint64_t tick,uint64_t take) {
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) {
+        if(!(pslot_mask>>(k-1)&1u) || !pilot_slot_absent(k) || pilot_enroll[k-1]==UINT64_MAX || pilot_enroll[k-1]<=take) continue;
+        const uint64_t e=pilot_enroll[k-1];
+        if(tick+2==e && !pslots[k].player && !pslot_construct(k)) return 0;
+        if(tick+1==e && !pslots[k].seated) {
+            pilot_slot *ps=&pilot_slots[k-1];
+            if(!ps->resolved || !ps->object) return pslot_fail("absent_ship_lost");
+            if(!pslot_seat(k)) return 0;   /* its body follows after the settle ticks (pfbody_guard, as after a respawn) */
+        }
+    }
+    return 1;
 }
 static int pslot_release(unsigned k) {
     pslot_slot *s=&pslots[k];
@@ -743,9 +768,12 @@ static int pslot_pass(uint64_t tick) {
     if(!pslot_armed) return 1;
     uint64_t take=pilot_start-PILOT_SUPPRESS_LEAD;
     if(pslot_failed) return pslot_fail(pslot_why);
-    if(tick+2==take) return pslot_construct_all();
-    if(tick+1==take) return pslot_seat_all();
-    if(tick>=take && tick<=pilot_stop) {pslot_callers_drain();if(!pslot_check(tick)) return 0;pslot_stage="live";return 1;}
+    if(tick+2==take) return pslot_construct_all(take);
+    if(tick+1==take) return pslot_seat_all(take) && pslot_enroll_late(tick,take);   /* one enrolled at take+1: its player now */
+    if(tick>=take && tick<=pilot_stop) {
+        if(!pslot_enroll_late(tick,take)) return 0;
+        pslot_callers_drain();if(!pslot_check(tick)) return 0;pslot_stage="live";return 1;
+    }
     if(tick==pilot_stop+1) return pslot_release_all();
     return 1;
 }
@@ -757,6 +785,7 @@ static int pslot_replay(uint64_t tick) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         pslot_slot *s=&pslots[k];
         if(!s->seated || pilot_slots[k-1].dead) continue;   /* a dead slot's records are consumed and ignored, in a suit too */
+        if(pilot_slot_silent(k,tick,pilot_delay)) continue; /* enrolled, its records from H+delay: neutral meanwhile (hot join) */
         if(pstk_slot_frames[k-1].tick!=tick) return pslot_fail("replay_missing");
         if(!pslot_enter(k)) return pslot_fail("replay_scope");
         int replayed=0,left=0;

@@ -1,6 +1,6 @@
 /* native_gate_motion_watch: layout reads, partial layouts, references, path, row format, ring,
  * order and target rows. */
-static __declspec(align(16)) unsigned char test_mw_object[0x400],test_mw_ctrl[0x200],test_mw_agent[0x1000],test_mw_model[0x100],test_mw_slots[0x400];
+static __declspec(align(16)) unsigned char test_mw_object[0x400],test_mw_ctrl[0x200],test_mw_agent[0x1000],test_mw_model[0x400],test_mw_slots[0x400];
 static __declspec(align(16)) unsigned char test_mw_turret[0x100],test_mw_module[0x100],test_mw_station[0x100],test_mw_path[0x200];
 static uint64_t test_mw_ids[3];static unsigned char *test_mw_objects[3];
 static void *test_mw_lookup(uint64_t runtime) {
@@ -55,6 +55,19 @@ static void test_motion_watch(void) {
     assert(motion_watch_read(test_mw_object,0xa214c,8,&r,&agent) && r.flags==(31|64|256|512|1024) && r.ctrl_vt==MOTION_WATCH_NAV_VTABLE && r.model_vt==0x2c4e9c8 && r.index==1);
     assert(!r.formation && !r.leader.key && !r.leader_ext[0]);
     assert(agent==test_mw_agent && !r.path_count && !r.path_ref.key);
+    /* The Steering model: an empty avoidance cache (count 0, time 0) and the constructor draws at +0x33c/+0x340. */
+    assert(!r.flight_obstacles && !r.flight_avoid_time && !r.flight_angles[0]);
+    {
+        static __declspec(align(16)) unsigned char contacts[3*0x80];unsigned char *cb=contacts,*ce=contacts+3*0x80;double due=17.25;
+        memcpy(test_mw_model+0x88,&due,8);memcpy(test_mw_model+0x90,&cb,8);memcpy(test_mw_model+0x98,&ce,8);memcpy(test_mw_model+0xa0,&ce,8);
+        uint32_t draws[2]={0x4063a508u,0x4044805cu};memcpy(test_mw_model+0x33c,draws,8);
+        assert(motion_watch_read(test_mw_object,0xa214c,8,&r,NULL) && r.flight_obstacles==3 && !memcmp(&r.flight_avoid_time,&due,8) && !memcmp(r.flight_angles,draws,8));
+        for(unsigned b=0x20;b<0x38;b++) assert(!r.model_ext[b]); /* the vector's pointers are zeroed */
+        assert(!memcmp(r.model_ext+0x18,&due,8));
+        ce=contacts+0x80+8;memcpy(test_mw_model+0x98,&ce,8); /* not a whole contact: unreadable */
+        assert(motion_watch_read(test_mw_object,0xa214c,8,&r,NULL) && r.flight_obstacles==0xffffffffu && !r.flight_avoid_time && !r.flight_angles[0]);
+        memset(test_mw_model+0x88,0,0x20);memset(test_mw_model+0x33c,0,8);
+    }
     assert(r.slot[0][5]==5 && r.slot[1][5]==0x45 && r.cache[3]==0x83 && r.target[0x3f]==0xff);
     /* The target's reference ID is masked and mapped. */
     for(unsigned i=0x40;i<0x48;i++) assert(!r.target[i]);
@@ -72,6 +85,11 @@ static void test_motion_watch(void) {
     end=test_mw_path+MOTION_PATH_STRIDE+8;memcpy(test_mw_agent+0x6b0,&end,8);
     assert(motion_watch_read(test_mw_object,0xa214c,8,&r,NULL) && r.flags==(15|64|256|512|1024) && !r.path_count);
     end=test_mw_path+2*MOTION_PATH_STRIDE;memcpy(test_mw_agent+0x6b0,&end,8);
+    /* The occupied ship's PlayerController: the same layout, flag 8192. */
+    vt=image+PSLOT_VTABLE;memcpy(test_mw_ctrl,&vt,8);
+    assert(motion_watch_read(test_mw_object,0xa214c,8,&r,&agent) && r.flags==(63|64|256|512|1024|8192) && r.ctrl_vt==PSLOT_VTABLE && agent==test_mw_agent);
+    assert(r.slot[0][5]==5 && r.model_vt==0x2c4e9c8 && r.path_count==2);
+    vt=image+MOTION_WATCH_NAV_VTABLE;memcpy(test_mw_ctrl,&vt,8);
     /* Another controller type or a foreign back pointer: no pathing fields. */
     vt=image+0x2abd888;memcpy(test_mw_ctrl,&vt,8);assert(motion_watch_read(test_mw_object,0xa214c,9,&r,&agent) && r.ctrl_vt==0x2abd888 && r.flags==512 && !agent);
     vt=image+MOTION_WATCH_NAV_VTABLE;memcpy(test_mw_ctrl,&vt,8);p=test_mw_agent;memcpy(test_mw_ctrl+0x28,&p,8);
@@ -92,7 +110,9 @@ static void test_motion_watch(void) {
         assert(motion_watch_read(test_mw_object,0xa214c,8,&r,NULL) && r.flags==(63|64|128|256|512|1024) && r.formation==1);
         assert(!memcmp(r.agent_ext,&speed,4) && r.agent_ext[4]==1 && r.agent_ext[5]==2 && r.agent_ext[28]==7 && r.agent_ext[MOTION_AGENT_EXT-1]==3);
         assert(!memcmp(r.leader_ext,&leader_speed,4) && r.leader.key==0x123456 && r.leader.depth==2 && r.leader.type==0x2b6e910u);
-        assert(r.model_ext[0]==0x10 && r.model_ext[0x6f]==0x7f);
+        /* The Steering class: behaviour pointers (+0x70/+0x78) and the avoidance vector (+0x90..+0xa7) zeroed; this vector is malformed. */
+        for(unsigned b=0;b<0x70;b++) assert(r.model_ext[b]==((b<0x10 || (b>=0x20 && b<0x38))?0:(unsigned char)(0x10+b)));
+        assert(r.flight_obstacles==0xffffffffu);
         /* Models smaller than the window: only their own bytes; the zeroed rest cannot differ between clients. */
         {
             void *model_vt;memcpy(&model_vt,test_mw_model,8);
@@ -136,13 +156,20 @@ static void test_motion_watch(void) {
     char out[3072];assert(motion_watch_row(0,out,sizeof(out))>0);
     assert(strstr(out,"index=0 tick=12 saved=00000000000a214c attention=5 ctrl=02c51158 model=02c4e9c8 flags=2047 cur=404142"));
     assert(strstr(out," prev=000102") && strstr(out," cache=808182") && strstr(out," target=c0c1c2") && !strstr(out,"buffer="));
-    assert(strstr(out," model_ext=101112") && strstr(out," agent_ext=0000f74201020000") && strstr(out,"070000000000000000000000000000f0bf0003 formation=1 leader=0000000000123456/0/2/2b6e910 leader_ext=00004843"));
+    assert(strstr(out," model_ext=00000000000000000000000000000000202122") && strstr(out," flight=4294967295/0000000000000000/0000000000000000") && strstr(out," agent_ext=0000f74201020000") && strstr(out,"070000000000000000000000000000f0bf0003 formation=1 leader=0000000000123456/0/2/2b6e910 leader_ext=00004843"));
     ring[0].index=0;assert(motion_watch_row(0,out,sizeof(out))>0 && strstr(out," cur=000102") && strstr(out," prev=404142"));
     assert(motion_watch_read(test_mw_object,0xa214c,12,&ring[0],NULL));
     assert(strstr(out,"fcfdfeff000000000000000008090a"));
     assert(strstr(out," target_ref=0000000000123456/0/2/2b6e910 path=2 path0=0000000000000000000000000000000040414243"));
     assert(strstr(out," path0_ref=00000000000a214c/0/0/ffffffff/1") && strstr(out," ship_ext=0000c04201 wingmen=0 wingman0=0000000000000000/2/0/0") && strlen(out)<2400);
     assert(!motion_watch_row(1,out,sizeof(out)));
+    { /* The Steering group: a constructor draw alone parts flight=. */
+        char a[512],b[512];ring[1]=ring[0];ring[1].flight_angles[0]^=1;motion_watch_rows=2;
+        assert(motion_watch_digest(0,a,sizeof(a))>0 && motion_watch_digest(1,b,sizeof(b))>0 && strlen(a)<400 && !strstr(a," flight=00000000"));
+        const char *fa=strstr(a," flight="),*fb=strstr(b," flight="),*ca=strstr(a," cur="),*cb=strstr(b," cur=");
+        assert(fa && fb && ca && cb && strcmp(fa,fb) && fa-ca==fb-cb && !strncmp(ca,cb,(size_t)(fa-ca)));
+        motion_watch_rows=1;
+    }
     motion_watch_rows=MOTION_WATCH_RING+3;assert(motion_watch_row(1,out,sizeof(out))>0 && !strcmp(out,"index=1 evicted=1"));
     motion_watch_ring=saved_ring;motion_watch_rows=saved_rows;memset(image+MOTION_WATCH_INDEX,0,4);
     /* Adding refuses after the first admitted frame, off the MoveWorker, or when the lookup is not the pinned one (zero image). */
@@ -300,7 +327,7 @@ static void test_motion_zone(void) {
     char d1[512],d2[512];assert(motion_watch_digest(0,d1,sizeof(d1))>0);
     assert(strstr(d1,"index=0 tick=17494 saved=00000000000a1885 attention=6 ctrl=02c3fdc0 model=ffffffff flags=2560 parent=0000000000059a26/0/0/ffffffff cur="));
     assert(strstr(d1," fp=") && strstr(d1," dock=") && !strstr(d1," dock=811c9dc5") && strlen(d1)<380);
-    assert(strstr(d1," segments=00000000 spline=00000000 requests=00000000 obstacles=00000000")); /* no spline model: the groups are 0 */
+    assert(strstr(d1," segments=00000000 spline=00000000 requests=00000000 obstacles=00000000 flight=00000000")); /* no spline or Steering model: the groups are 0 */
     ring[1]=ring[0];ring[1].slot[0][7]^=1;motion_watch_rows=2;assert(motion_watch_digest(1,d2,sizeof(d2))>0);
     char *c1=strstr(d1," cur="),*c2=strstr(d2," cur=");assert(c1 && c2 && strncmp(c1,c2,13) && !strcmp(strstr(d1," prev="),strstr(d2," prev=")));
     /* Without a dock controller: dock= is the empty digest and the row prints '-'. */

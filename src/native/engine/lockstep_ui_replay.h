@@ -714,6 +714,7 @@ static int uirep_section_ok(unsigned slot,const unsigned char *b,unsigned n,uint
 static unsigned uirep_take(uint64_t tick,unsigned budget,unsigned char *out) {
     if(budget>UIREP_SECTION_MAX) budget=UIREP_SECTION_MAX;
     if(!uirep_queue_count) return 0;
+    if(!pilot_slot_present(stats.slot,tick)) {InterlockedIncrement64(&uirep_waits);return 0;}   /* absent (hot join): queued until H */
     unsigned at=UIREP_HEAD,count=0;
     while(count<uirep_queue_count && count<UIREP_EVENTS_MAX) {
         const uirep_event *e=&uirep_queue[(uirep_queue_head+count)%UIREP_QUEUE];
@@ -735,6 +736,7 @@ static int uirep_stage(unsigned slot,const unsigned char *bytes,unsigned length,
     if(back>now) {*why="ui_tick";return 0;}
     uint64_t capture=now-back,apply=capture+pilot_delay;
     if(!capture || capture<pstk_capture_start || apply<=now || apply>=now+UIREP_RING) {*why="ui_late";return 0;}
+    if(!pilot_slot_present(slot,capture)) {*why="ui_absent";return 0;}   /* a stand-in row carries none (hot join) */
     uirep_staged *e=&uirep_ring[slot-1][apply%UIREP_RING];
     if(e->present && e->tick==apply) {
         if(e->length==length && !memcmp(e->bytes,bytes,length)) return 1;

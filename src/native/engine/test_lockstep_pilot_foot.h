@@ -331,6 +331,99 @@ static void test_pilot_foot_diag(void) {
     pfoot_armed=saved_armed;pfoot_state=saved_state;pfoot_on=saved_on;pnat_base=saved_base;VirtualFree(region,0,MEM_RELEASE);
     printf("pilot foot diagnostic: bank as hashed, FPC blocks, parent, client-local values, sensitivity map, gating tests PASS\n");
 }
+/* The run's double-tap clock (pfoot_replay_state; report 14). d7d3b0's case 0x1a as X4 has it (d7d48f..d7d4e4): MD's input
+ * lock, the forward byte, and on a press e9f90's real time (read under the time lock) into 0x38f4e70, the run flag 0x38f4e79
+ * set when the press before is less than 0.4 s older. Two clients are one region run twice with their own real time: the
+ * boot's at tick 0 (df2b's relay rows: 5.679268966666667 and 5.507744466666668, game 7.083) plus the fixed dt per tick,
+ * accumulated as FrameTick does (tick 3903 gives df2b's 135.77926896666153 and 135.60774446666156 exactly). */
+static CRITICAL_SECTION test_pfoot_time_cs;
+static double test_pfoot_session;
+static int test_pfoot_session_ok=1,test_pfoot_lock_depth,test_pfoot_forward_calls,test_pfoot_forward_throw;
+static double test_pfoot_seen;
+static int test_pfoot_time(double *now) {*now=test_pfoot_session;return test_pfoot_session_ok;}
+static void test_pfoot_forward(int id,unsigned char active) {
+    assert(id==0x1a);++test_pfoot_forward_calls;
+    if(pnat_base[0x38f4dc8u]) return;                          /* MD's input lock */
+    pnat_base[0x38f4e8bu]=active;
+    if(!active) return;
+    double now,last;
+    EnterCriticalSection(&test_pfoot_time_cs);                 /* e9f90 */
+    memcpy(&now,pnat_base+PFOOT_REAL_TIME,8);test_pfoot_lock_depth=(int)test_pfoot_time_cs.RecursionCount;
+    LeaveCriticalSection(&test_pfoot_time_cs);
+    test_pfoot_seen=now;
+    memcpy(&last,pnat_base+PFOOT_TAP_TIME,8);memcpy(pnat_base+PFOOT_TAP_TIME,&now,8);
+    if(last+0.4>now) pnat_base[0x38f4e79u]=1;
+    if(test_pfoot_forward_throw) RaiseException(0xe0464f54,0,0,NULL);
+}
+/* One client: the bank reset (d7d6c0's half), presses of slot 1's forward key replayed at ticks a and b (released between);
+ * the walking bank hash, e70 and the run flag after. */
+typedef struct {uint64_t hash;double tap;unsigned char run;} test_pfoot_walk;
+static test_pfoot_walk test_pfoot_client(unsigned char *states,double real0,uint64_t a,uint64_t b) {
+    const double dt=1.0/30.0;double real=real0,game=7.083;
+    memset(pnat_base+PFOOT_BANK,0,PFOOT_BANK_SIZE);{double minus=-1.0;memcpy(pnat_base+PFOOT_TAP_TIME,&minus,8);}pnat_base[PFOOT_ACTIVE]=1;
+    for(uint64_t t=1;t<=b;t++) {
+        real+=dt;game+=dt;
+        if(t!=a && t!=b && t!=a+1) continue;
+        memcpy(pnat_base+PFOOT_REAL_TIME,&real,8);test_pfoot_session=game;
+        pstk_replay_walk(states,PSTK_STATE,0x1a,t==a+1?0u:1u);
+        double back;memcpy(&back,pnat_base+PFOOT_REAL_TIME,8);assert(back==real);   /* this process's real time is back */
+    }
+    test_pfoot_walk w;w.hash=pfoot_bank_hash();memcpy(&w.tap,pnat_base+PFOOT_TAP_TIME,8);w.run=pnat_base[0x38f4e79u];
+    return w;
+}
+static void test_pilot_foot_clock(void) {
+    unsigned char *saved_base=pnat_base;pnat_fns saved_fns=pnat_fn;int saved_armed=pfoot_armed;
+    const void *saved_ptrs[3];memcpy(saved_ptrs,pfoot_handler_ptrs,sizeof(saved_ptrs));
+    CRITICAL_SECTION *saved_lock=pfoot_time_lock;unsigned saved_nodes=test_pnat_node_count;
+    LONG64 saved_failures=pilot_failures,saved_async=pnat_async_failures;
+    unsigned char *region=VirtualAlloc(NULL,TEST_PNAT_REGION,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE);assert(region);pnat_base=region;
+    pnat_fn.time=test_pfoot_time;InitializeCriticalSection(&test_pfoot_time_cs);
+    static __attribute__((aligned(16))) unsigned char states[0x40];
+    {pnat_node *h=(pnat_node*)states;memset(h,0,0x40);h->parent=h;}
+    test_pnat_insert(states,0x1a,(void*)test_pfoot_forward);   /* a fresh node; the count is put back at the end */
+    pfoot_handler_ptrs[0]=(void*)test_pfoot_forward;
+    const double c1=5.679268966666667,c2=5.507744466666668;
+    /* Before (the module's replay without the session clock: X4's real time): df2b. One press at 3903: 0x38f4e70 is each
+     * client's real time, the bank hash parts (|W2.1 from 3903). Presses at 7498 and 7510 (0.4 s apart): the run flag on
+     * client 2 only. */
+    pfoot_armed=0;pfoot_time_lock=NULL;
+    {   test_pfoot_walk a=test_pfoot_client(states,c1,3903,3903),b=test_pfoot_client(states,c2,3903,3903);
+        assert(a.tap==135.77926896666153 && b.tap==135.60774446666156 && a.hash!=b.hash && !a.run && !b.run);
+        a=test_pfoot_client(states,c1,7498,7510);b=test_pfoot_client(states,c2,7498,7510);
+        assert(!a.run && b.run && a.hash!=b.hash);}
+    /* With the session clock: the same bank on both, e70 the game time of the press; the run flag from the session's 0.4 s. */
+    pfoot_armed=1;pfoot_time_lock=&test_pfoot_time_cs;
+    {   LONG64 calls=pfoot_clock_calls;
+        test_pfoot_walk a=test_pfoot_client(states,c1,3903,3903),b=test_pfoot_client(states,c2,3903,3903);
+        assert(a.tap==b.tap && a.tap==test_pfoot_session && a.hash==b.hash && !a.run && !b.run);
+        assert(pfoot_clock_calls==calls+2 && test_pfoot_lock_depth==2);   /* the lock held around the call; e9f90 enters again */
+        a=test_pfoot_client(states,c1,7498,7510);b=test_pfoot_client(states,c2,7498,7510);
+        assert(a.hash==b.hash && a.run==b.run && !a.run);
+        a=test_pfoot_client(states,c1,7498,7507);b=test_pfoot_client(states,c2,7498,7507);   /* 0.3 s: a run on both */
+        assert(a.hash==b.hash && a.run && b.run);}
+    /* Only X4's walking state handler: another handler of the same id gets X4's real time; another kind is not taken. */
+    {   assert(pfoot_replay_clock(PSTK_STATE,(void*)test_pfoot_forward) && !pfoot_replay_clock(PSTK_RANGE,(void*)test_pfoot_forward) &&
+               !pfoot_replay_clock(PSTK_STATE,(void*)test_pfoot_state) && !pfoot_replay_clock(PSTK_STATE,NULL));
+        pfoot_armed=0;assert(!pfoot_replay_clock(PSTK_STATE,(void*)test_pfoot_forward));pfoot_armed=1;}
+    /* A handler that faults: the real time is back and the lock free before the exception leaves the call. */
+    {   double real=42.5;memcpy(region+PFOOT_REAL_TIME,&real,8);test_pfoot_session=99.0;test_pfoot_forward_throw=1;int caught=0;
+        __try {pstk_replay_walk(states,PSTK_STATE,0x1a,1u);}
+        __except(GetExceptionCode()==0xe0464f54?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {caught=1;}
+        test_pfoot_forward_throw=0;double back;memcpy(&back,region+PFOOT_REAL_TIME,8);
+        assert(caught && back==42.5 && test_pfoot_seen==99.0 && !test_pfoot_time_cs.OwningThread && test_pfoot_time_cs.RecursionCount==0);}
+    /* No session clock: nothing runs, the module stops (185, foot_clock). */
+    {   int calls=test_pfoot_forward_calls;test_pfoot_session_ok=0;pnat_fail_stage=NULL;pnat_failed=0;pfoot_failed=0;
+        pstk_replay_walk(states,PSTK_STATE,0x1a,1u);
+        assert(test_pfoot_forward_calls==calls && pfoot_failed && !strcmp(pfoot_why,"foot_clock") && pnat_failed && !strcmp(pnat_fail_stage,"foot_clock"));
+        test_pfoot_session_ok=1;pfoot_failed=0;pfoot_why="-";pfoot_stage="off";pnat_failed=0;pnat_fail_stage=NULL;}
+    /* The status names the calls. */
+    {char out[4096];assert(pfoot_status(out,sizeof(out))>0 && strstr(out," foot_clock="));}
+    pilot_failures=saved_failures;pnat_async_failures=saved_async;
+    DeleteCriticalSection(&test_pfoot_time_cs);
+    test_pnat_node_count=saved_nodes;pfoot_time_lock=saved_lock;memcpy(pfoot_handler_ptrs,saved_ptrs,sizeof(saved_ptrs));
+    pfoot_armed=saved_armed;pnat_fn=saved_fns;pnat_base=saved_base;VirtualFree(region,0,MEM_RELEASE);
+    printf("pilot foot clock: the double-tap's real time is the session's in the replay (df2b's split and a one-sided run before), lock held, fault, no clock tests PASS\n");
+}
 /* The facts on the pinned image: the registrations and the vector push of 9ed1f0, the walking bank the handlers write,
  * the context callback, the GetUp export and 71bac0's GET_UP case posting the same event, the frame's FPC update. */
 static void test_pilot_foot_image(const char *path) {
@@ -357,6 +450,15 @@ static void test_pilot_foot_image(const char *path) {
     assert(TPF_RIP(0xd7d6e4,6)==PFOOT_ACTIVE);                                                   /* mov [0x38f4e7d],dl */
     assert(TPF_RIP(0xd7d3ed,6)==0x38f4e84u && TPF_RIP(0xd7d49c,6)==0x38f4e8bu);                  /* the bank */
     assert(TPF_RIP(0xd7d4cb,8)==0x38f4e70u);
+    /* The double-tap clock (report 14): case 0x1a (jump table d7d540/d7d574) is d7d48f; a press calls e9f90 (d7d4aa), which
+     * reads the real time 0x6b60e40 between EnterCriticalSection and LeaveCriticalSection of 0x6b60e10; the old press time
+     * plus 0.4 (0x2cbe7c0) against the new one sets 0x38f4e79. */
+    assert(*(uint32_t*)(mapped+0xd7d540+4*mapped[0xd7d574])==0xd7d48fu && mapped[0xd7d4aa]==0xe8 &&
+           (unsigned)(0xd7d4af+*(int32_t*)(mapped+0xd7d4ab))==0xe9f90u);
+    assert(TPF_RIP(0xd7d4af,8)==PFOOT_TAP_TIME && TPF_RIP(0xd7d4c3,8)==0x2cbe7c0u && *(double*)(mapped+0x2cbe7c0)==0.4 && TPF_RIP(0xd7d4da,6)==0x38f4e79u);
+    assert(TPF_RIP(0xe9f99,7)==PFOOT_TIME_LOCK && TPF_RIP(0xe9fa6,8)==PFOOT_REAL_TIME && TPF_RIP(0xe9fae,7)==PFOOT_TIME_LOCK &&
+           TPF_RIP(0xe9fa0,6)==0x1bc1408u && TPF_RIP(0xe9fb5,6)==0x1bc1410u);
+    assert(*(double*)(mapped+0x2cbf098)==-1.0 && TPF_RIP(0xd7cded,8)==PFOOT_TAP_TIME && TPF_RIP(0xd7d6dc,8)==PFOOT_TAP_TIME);   /* resets: -1.0 */
     assert(*(uint32_t*)(mapped+0xd7d784+2)==PFOOT_PLAYER_FLAG && *(uint32_t*)(mapped+0xd7d7d0+2)==PFOOT_INPUT_FLAG);   /* +0x6a0d, +0x9063 */
     assert(mapped[0x9fe5f7]==0xe8 && (unsigned)(0x9fe5fc+*(int32_t*)(mapped+0x9fe5f8))==0x9fc670u);
     assert(mapped[0x9fe604]==0xe8 && (unsigned)(0x9fe609+*(int32_t*)(mapped+0x9fe605))==0xd7f8d0u);
@@ -374,6 +476,27 @@ static void test_pilot_foot_image(const char *path) {
     /* Bodies (lockstep_pilot_foot_body.h): 3d8420 pinned, 716670's lea/call pair, the filter object's vtable. */
     pfbody_pins_checked=0;assert(pfbody_pins());pfbody_pins_checked=0;
     assert(*(uint64_t*)(mapped+PFBODY_FILTER)==0x140000000ull+PFBODY_FILTER_VTABLE);
+    /* What X4's parent change does to a Player besides the tree (the bodies' header; on-foot report 13g-13i). 3d8420 without a
+     * target: 3d8240(component, 0x15), which skips its own Kill and calls the component's vfunc 0x1380, for a Player 702f40
+     * -> 553660 -> 748790 -> 3d7010. There, no new parent (3d724c/3d7253 -> 3d7830), an old one (rbx), alive (+0xd3, 3d7847)
+     * and unheld (+0xd4, 3d7851): Kill (vtable +0x1548) with 13, 'removed' (3d787f, 3d78af, 3d78b7). 702f40 makes the
+     * Player a camera only when +0x4e8 is NULL (703051/703058 -> 71a560 at 70308e), which sets Universe+0x3d0 (71a744) and,
+     * through 97df60, +0x3c8 (97df82). ~PlayerController (d84730) drops a head controller only from the camera at +0x3d0
+     * (d849e3 -> d89840, d89855): with P_k's camera there, slot 1's own camera kept one bound to its freed controller (df2). */
+    #define TPB_CALL(at) (mapped[at]==0xe8?(unsigned)((at)+5u+*(int32_t*)(mapped+(at)+1)):0u)
+    #define TPB_IS(at,...) (!memcmp(mapped+(at),(const unsigned char[]){__VA_ARGS__},sizeof((const unsigned char[]){__VA_ARGS__})))
+    assert(TPB_IS(0x3d8489,0xba,0x15,0,0,0) && TPB_CALL(0x3d848e)==0x3d8240u && TPB_IS(0x3d8252,0x83,0xfa,0x15) &&
+           TPB_IS(0x3d8324,0xff,0x90,0x80,0x13,0,0) && *(uint64_t*)(mapped+VPS_PLAYER_VTABLE+0x1380)==0x140000000ull+0x702f40u);
+    assert(TPB_CALL(0x70312a)==0x553660u && TPB_CALL(0x553785)==0x748790u && TPB_CALL(0x74896b)==0x3d7010u);
+    assert(TPB_IS(0x3d724c,0x4d,0x8b,0x4e,0x70) && TPB_IS(0x3d7253,0x0f,0x84) && (unsigned)(0x3d7259u+*(int32_t*)(mapped+0x3d7255))==0x3d7830u);
+    assert(TPB_IS(0x3d7842,0x48,0x85,0xdb) && TPB_IS(0x3d7847,0x41,0x80,0xbe,PFBODY_LIFECYCLE,0,0,0,0) &&
+           TPB_IS(0x3d7851,0x41,0x83,0xbe,PFBODY_HOLD,0,0,0,0) && TPB_IS(0x3d787f,0x48,0x8b,0xb0,0x48,0x15,0,0) &&
+           TPB_IS(0x3d78af,0xba,0x0d,0,0,0) && TPB_IS(0x3d78b7,0xff,0xd6));
+    assert(TPB_IS(0x703051,0x48,0x39,0xbb,PFBODY_CAMERA&0xff,PFBODY_CAMERA>>8,0,0) && TPB_IS(0x703058,0x75,0x39) && TPB_CALL(0x70308e)==0x71a560u);
+    assert(TPB_IS(0x71a744,0x48,0x89,0xbe,0xd0,0x03,0,0) && TPB_CALL(0x71a736)==0x97df60u && TPB_IS(0x97df82,0x48,0x89,0x8f,PFBODY_CAMERAS&0xff,PFBODY_CAMERAS>>8,0,0));
+    assert(TPB_CALL(0xd849e3)==0xd89840u && TPB_IS(0xd89855,0x48,0x8b,0xb8,0xd0,0x03,0,0));
+    #undef TPB_IS
+    #undef TPB_CALL
     /* Slots 2..N on foot (lockstep_pilot_foot_slots.h): its pins; the GetUpEvent's handler (706cc0: 716d80, the conversation
      * manager idle, 716e20(player, 1, 0)); 716e20's placement (8d3f60, 455f90, 771430, class 0x4d, 7176f0 or 717c30) and
      * the control position none; 70eee0 (9fc670 first, d7c230, vfunc829 with replace 1); the first update at +0x80 and

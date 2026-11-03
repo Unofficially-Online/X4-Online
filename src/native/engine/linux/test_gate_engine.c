@@ -164,10 +164,10 @@ static void aw_import(void) {
     slot(aw_action[0],aw_exec[0],aw_exec[0]+0x38);
 }
 /* MD cue delays (ENGINE_MD_RESUME=1): the load's call through the pinned site, for a named cue,
- * an instance of it with the same saved time, and a cue outside the module's tree. */
+ * an instance of it with the same saved time, and a static cue without a name (its path refused: unnamed). */
 static int md_resume_on;
 static unsigned md_word_lost;
-static __attribute__((aligned(16))) unsigned char md_cue[3][0x240],md_module[0x100],md_node[0x60];
+static __attribute__((aligned(16))) unsigned char md_cue[3][0x240],md_module[0x100];
 static const char md_module_name[]="FactionLogic",md_cue_name[]="Manager_Delay";
 static double md_delay_standin(void *cue,uint64_t slot) {
     (void)cue;
@@ -186,11 +186,8 @@ static void md_standin(void) {
     if(mprotect((void*)page,8192,PROT_READ|PROT_EXEC)) {perror("mprotect");exit(2);}
     uintptr_t data;uint64_t size;
     data=(uintptr_t)md_module_name;size=strlen(md_module_name);memcpy(md_module+0x18,&data,8);memcpy(md_module+0x20,&size,8);
-    data=(uintptr_t)md_cue_name;size=strlen(md_cue_name);memcpy(md_node+0x20,&data,8);memcpy(md_node+0x28,&size,8);
-    uintptr_t sentinel=(uintptr_t)md_module+0x60,first=(uintptr_t)md_node;
-    memcpy(md_module+0x80,&first,8);memcpy(md_module+0x68,&first,8);memcpy(md_node,&sentinel,8);
+    data=(uintptr_t)md_cue_name;size=strlen(md_cue_name);memcpy(md_cue[0]+0xc8,&data,8);memcpy(md_cue[0]+0xd0,&size,8);
     void *definition=md_cue[0],*module=md_module,*outside=md_cue[2];const void *vtable=AT(LX_CUE_VTABLE);
-    memcpy(md_node+0x40,&definition,8);
     double saved[3]={5.5,5.5,6.25};
     for(unsigned i=0;i<3;i++) {
         memcpy(md_cue[i],&vtable,8);memcpy(md_cue[i]+0x160,i==2?&outside:&definition,8);memcpy(md_cue[i]+0x150,&module,8);

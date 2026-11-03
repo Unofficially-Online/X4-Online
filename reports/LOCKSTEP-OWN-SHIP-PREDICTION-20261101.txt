@@ -343,3 +343,11 @@ G people (two persons, Play42P + native_gate_own_predict = 'present', LATENCY_MS
   clients, the OWN_PREDICT rows around any reported jerk (the snaps column and h_eff say whether it was a
   snap, a reset or the travel ramp).
   Tune afterwards from the rows: native_gate_own_predict_tau (100..200), the band and snap constants.
+
+12. FIRST LIVE NUMBERS (2 November 2026; run d184d, the session defaults: present on both clients, no added latency, 1800 ticks)
+  Own slot, client 1 (STOP line): failures=0, snaps=0, present_lost=0, present_refused=0, present_applied = present_restored (4344).
+  Position error of the 3-tick-ahead prediction against the later simulated pose, mean metres:
+    model 0.337, dead reckoning 0.342, no prediction 14.96, drawn position 0.363, lead 6.9.
+  Slot 2 seen from client 1: model 0.602, dead reckoning 0.488, no prediction 33.33, drawn 0.630, lead 23.06.
+  Reading: the prediction runs live with the simulation unaffected in this run. At the demo scripts' gentle inputs the response model is not
+  measurably better than dead reckoning (for slot 2, seen from client 1, it is worse). Whether it pays needs sharper manoeuvres or people. P2 (100 ms) and G (people) are still open.

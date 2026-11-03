@@ -314,6 +314,21 @@ def check_linux(path, constants, sites, tls):
        elf.read(0xf68b12, 4) == bytes.fromhex('498d7860') and elf.read(0xf68b20, 4) == bytes.fromhex('483b7240') and elf.read(0xf68cd8, 4) == bytes.fromhex('4c8b6a20') and
        elf.read(0xf48cc2, 4) == bytes.fromhex('488d7518') and inside('cue_name_walk', 0xf68af4, 14) and inside('cue_name_walk', 0xf68b20, 4) and
        inside('cue_name_walk_up', 0xf68cd8, 4) and inside('cue_module_name', 0xf48cc2, 4))
+    # The static cue path (lockstep_cue_name.h): the name +0xc8 (libstdc++ string, buffer +0xd8), script +0x150, parent +0x158,
+    # static cue +0x160 and sub-cue slots +0x190 as the XML constructor, a library user's sub-cue copy and the MD import write them.
+    path_fields = (('cue_path_xml', 0xf3f9c2, '488d83d8000000'), ('cue_path_xml', 0xf3f9d1, '488983c8000000'),
+                   ('cue_path_xml', 0xf3fbd2, '48898358010000'), ('cue_path_xml', 0xf3fc34, '4c89a350010000'),
+                   ('cue_path_xml', 0xf3fcaa, '0f298390010000'), ('cue_path_xml', 0xf3fd58, '48899b60010000'),
+                   ('cue_path_copy', 0xf58573, '488d83d8000000'), ('cue_path_copy', 0xf58592, '488983c8000000'),
+                   ('cue_path_copy', 0xf58599, '498bb424c8000000'), ('cue_path_copy', 0xf58610, '4d8b8650010000'),
+                   ('cue_path_copy', 0xf5861b, '4c89a300010000'), ('cue_path_copy', 0xf58647, '4c898350010000'),
+                   ('cue_path_copy', 0xf5865e, '4c89b358010000'), ('cue_path_copy', 0xf58860, '48899b60010000'),
+                   ('cue_path_import', 0xf58d75, '488d93d8000000'), ('cue_path_import', 0xf58d7f, '488993c8000000'),
+                   ('cue_path_import', 0xf58dbc, '48898350010000'), ('cue_path_import', 0xf58e2b, '4c89ab58010000'))
+    ok('cue_path_fields', all(elf.read(va, len(code) // 2) == bytes.fromhex(code) and inside(site, va, len(code) // 2) for site, va, code in path_fields))
+    # Those three are MD::Cue's: each stores its vtable (lea rax,[rip+vtable]) into the new cue.
+    ok('cue_path_constructors', all(rip_target(elf, va, 7, 3, b'\x48\x8d\x05') == c['LX_CUE_VTABLE'] and elf.read(va + 7, 3) == bytes.fromhex('488903')
+                                    for va in (0xf3f8cc, 0xf5855c, 0xf58ce3)))
     typeinfo = struct.unpack('<Q', elf.read(c['LX_CUE_VTABLE'] - 8, 8))[0]
     name = struct.unpack('<Q', elf.read(typeinfo + 8, 8))[0]
     ok('cue_vtable_typeinfo', elf.read(name, 10) == b'N2MD3CueE\0' and struct.unpack('<q', elf.read(c['LX_CUE_VTABLE'] - 16, 8))[0] == 0)

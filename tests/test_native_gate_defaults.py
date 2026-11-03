@@ -279,7 +279,7 @@ class TableTests(unittest.TestCase):
 
     def test_every_probe_key_is_classified(self):
         files = ('native_gate_crypto', 'native_gate_inputs_core', 'native_gate_relay', 'native_gate_tour', 'native_gate_ui_build_core',
-                 'native_gate_ui_replay_core')   # file names the probe mentions, not keys
+                 'native_gate_ui_replay_core', 'native_gate_join_core')   # file names the probe mentions, not keys
         keys = set(re.findall(r'native_gate_[a-z0-9_]+', PROBE)) - set(files)
         known = set(defaults.ON_KEYS) | set(defaults.DIAGNOSTIC_KEYS) | set(defaults.EXCLUDED_KEYS) | set(defaults.TUNING_KEYS) | set(defaults.TABLE['session'])
         self.assertEqual(sorted(keys - known), [])
@@ -314,10 +314,10 @@ class TableTests(unittest.TestCase):
         self.assertEqual(added, sorted(['native_gate_ui_guard', 'native_gate_pilot_foot', 'native_gate_player_settings_per_slot', 'native_gate_render_fps',
                                         'native_gate_render_camera', 'native_gate_render_motion', 'native_gate_own_predict',
                                         'native_gate_own_predict_rows', 'native_gate_player_identity', 'native_gate_pilot_foot_bodies',
-                                        'native_gate_pilot_foot_slots']) if 'native_gate_player_identity' not in play else
+                                        'native_gate_pilot_foot_slots', 'native_gate_nav_mesh', 'native_gate_character_play']) if 'native_gate_player_identity' not in play else
                          sorted(['native_gate_ui_guard', 'native_gate_pilot_foot', 'native_gate_player_settings_per_slot', 'native_gate_render_fps',
                                  'native_gate_render_camera', 'native_gate_render_motion', 'native_gate_own_predict', 'native_gate_own_predict_rows',
-                                 'native_gate_pilot_foot_bodies', 'native_gate_pilot_foot_slots']))
+                                 'native_gate_pilot_foot_bodies', 'native_gate_pilot_foot_slots', 'native_gate_nav_mesh', 'native_gate_character_play']))
 
 
 class ApplyTests(unittest.TestCase):
@@ -533,7 +533,7 @@ class ProbeTests(unittest.TestCase):
         lua.execute('update()')
         logs = items(lua.globals().logs)
         self.assertFalse(any('CONFIG_REFUSED' in l for l in logs), logs[-3:])
-        self.assertTrue(any(l.endswith('DEFAULTS version=1 applied=168 explicit=0 off=0 skipped=4') for l in logs))
+        self.assertTrue(any(l.endswith('DEFAULTS version=1 applied=170 explicit=0 off=0 skipped=4') for l in logs))
         for row in ('RENDER_FRAMES_ARMED fps=60', 'RENDER_CAMERA_ARMED mode=extrapolate', 'TICK_RATE_ARMED hz=30', 'PLAYER_IDENTITY BOUND slot=p1 mode=coop slots=2'):
             self.assertTrue(any(row in l for l in logs), row)
         # The stack joins the boot digest; the refused boot is loud: an ERROR row and an info line with the reason.

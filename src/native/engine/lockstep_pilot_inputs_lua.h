@@ -8,6 +8,35 @@ static int lua_pilot_inputs(lua_State *L) {
         (suppress==0 || suppress==1) && pilot_arm(manifest,kind,(unsigned)delay,(uint64_t)start,(uint64_t)stop,(unsigned)suppress);
     p_lua_pushnumber(L,ok);return 1;
 }
+/* Absent slots (hot join; lockstep_pilot_inputs.h): gate.pilot_absent(mask) before the first tick (bit s-1, never slot 1);
+ * gate.pilot_handover(k, H) and gate.pilot_abort(k) from the join section's HANDOVER and ABORT records, on every client at
+ * the tick they are applied. 1 accepted, 0 refused (the probe stops: a client that disagrees would part from the others). */
+static int lua_pilot_absent(lua_State *L) {
+    double mask=p_lua_tonumber(L,1);
+    p_lua_pushnumber(L,accept_ui() && isfinite(mask) && floor(mask)==mask && mask>0 && mask<(double)(1u<<PILOT_SLOTS) && pilot_absent_arm((unsigned)mask));
+    return 1;
+}
+static int lua_pilot_handover(lua_State *L) {
+    double slot=p_lua_tonumber(L,1),tick=p_lua_tonumber(L,2);
+    p_lua_pushnumber(L,accept_ui() && stats.active && isfinite(slot) && floor(slot)==slot && slot>=2 && slot<=PILOT_SLOTS &&
+        isfinite(tick) && floor(tick)==tick && tick>0 && pilot_handover_apply((unsigned)slot,(uint64_t)tick,stats.issued));
+    return 1;
+}
+static int lua_pilot_abort(lua_State *L) {
+    double slot=p_lua_tonumber(L,1);
+    p_lua_pushnumber(L,accept_ui() && stats.active && isfinite(slot) && floor(slot)==slot && slot>=2 && slot<=PILOT_SLOTS &&
+        pilot_abort_apply((unsigned)slot,stats.issued,wire_lookahead));
+    return 1;
+}
+/* gate.pilot_absent_state() / gate.pilot_absent_restore(text): the join package's copy of the above (a joiner, before T+1). */
+static int lua_pilot_absent_state(lua_State *L) {
+    char out[160];int n=accept_ui() && pilot_absent?pilot_absent_state(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_pilot_absent_restore(lua_State *L) {
+    const char *text=p_lua_tolstring(L,1,NULL);
+    p_lua_pushnumber(L,accept_ui() && pilot_absent_restore(text));return 1;
+}
 static int lua_pilot_inputs_status(lua_State *L) {
     static char out[16384];   /* stock, slots, presentation, death and foot rows together can pass 4 KiB (nil then) */
     int n=accept_ui()?pilot_status(out,sizeof(out)):0;
@@ -31,6 +60,7 @@ static int pilot_why_text(char *out,size_t capacity) {
     if(n>0 && (size_t)n<capacity && pdeath_armed) n+=snprintf(out+n,capacity-(size_t)n," death=%s death_why=%s",pdeath_stage,pdeath_why);
     if(n>0 && (size_t)n<capacity && pres_armed) n+=snprintf(out+n,capacity-(size_t)n," present=%s present_why=%s",pres_stage,pres_why);
     if(n>0 && (size_t)n<capacity && uirep_armed) n+=snprintf(out+n,capacity-(size_t)n," replay=%s replay_why=%s",uirep_stage_name,uirep_why);
+    if(n>0 && (size_t)n<capacity && pilot_absent) {int more=pilot_absent_text(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
     return n>0 && (size_t)n<capacity?n:0;
 }
 /* gate.pilot_why(): pilot_why_text, or nil. */

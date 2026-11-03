@@ -85,6 +85,10 @@ STOCK_DEMOS = ('demo', 'demo2', 'demo3', 'demo4')   # --stock-script demo: one p
 ORDERS_DELAY, ORDERS_TICK = 3, 40
 IDENTITY_FILES = ('ui/native_gate_player_identity_core.lua', 'ui/native_gate_player_identity.lua')
 RESPAWN_MD = 'md/native_gate_pilot_respawn.xml'   # native_gate_pilot_respawn: X4's own create_ship and teleport_player
+# The pool factions' library (tools/dev/build_player_factions.py): x4lan_player1..16 with their own accounts. A factions
+# plan with kits sets slot k's money on x4lan_player<k>'s own account (the identity wallet step, which refuses a faction
+# without one); the overlay ships the source library so a base frozen before the accounts (frozen-v3) gets them.
+POOL_LIBRARY = session_start.POOL_LIBRARY
 ORDERS_FILES = ('ui/native_gate_player_orders_core.lua', 'ui/native_gate_player_orders.lua')
 MUX_FILES = ('ui/native_gate_inputs_core.lua',)   # protocol 3 input multiplexer (pilot, orders, hit claims)
 UI_REPLAY_FILES = ('ui/native_gate_ui_replay_core.lua', 'ui/native_gate_ui_build_core.lua')
@@ -143,6 +147,11 @@ OWN_KEYS = re.compile(r'native_gate_player_identity[a-z_]*|native_gate_player_or
 CREATE = re.compile(r'(\d+)=([a-z][a-z0-9_]*_macro)@(-?\d+),(-?\d+),(-?\d+)(?:/(-?\d+))?(?:#(\d+))?')
 START = re.compile(r'(\d{1,2}|[0-9a-f]{16})=([0-9a-f]{16}|[a-z][a-z0-9_]*_macro)@(-?\d+),(-?\d+),(-?\d+)(?:/(-?\d+))?')
 COUNTERPART_OFFSET = 1500   # metres along z between a moved fixture actor and its moved counterpart
+
+
+def wallet_library(plan):
+    """True when the plan's wallet steps set pool faction accounts (factions mode with kits)."""
+    return plan.get('mode') == 'factions' and bool(plan.get('kits'))
 
 
 def ids(text):
@@ -785,6 +794,9 @@ def build_overlay(args):
         shutil.copy2(ROOT/'tools/dev/native_gate_player_orders.xml', out/'md/native_gate_player_orders.xml')
     if args.respawn is not None or args.death_suit:
         shutil.copy2(ROOT/'tools/dev/native_gate_pilot_respawn.xml', out/RESPAWN_MD)
+    if wallet_library(plan):
+        (out/POOL_LIBRARY).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(session_start.EXTENSION/POOL_LIBRARY, out/POOL_LIBRARY)
     for name in added:
         shutil.copy2(ROOT/'tools/dev'/Path(name).name, out/name)
     # Adapters load before the probe, which binds them while arming; a session overlay ships the default stack's files with
@@ -822,6 +834,9 @@ def session_notes(args, plan, overlay='<overlay>'):
     if world:
         notes.append(f"session: base start {world['base_start']}, save {world['snapshot']['path']} (runner --snapshot-in), per-player starts " +
                      (', '.join(f"slot {k} {v['gamestart']}" for k, v in sorted(world['slots'].items(), key=lambda kv: int(kv[0]))) or 'none'))
+    if wallet_library(plan):
+        notes.append(f'wallet: {POOL_LIBRARY} (pool factions with their own accounts) is in the overlay; the wallet step refuses '
+                     'refused_wallet_account (account=none) where X4 still gives a pool faction no account of its own')
     return notes
 
 

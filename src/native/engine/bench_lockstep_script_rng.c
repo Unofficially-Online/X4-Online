@@ -62,8 +62,7 @@ int main(void){
         *(uint32_t*)(a->context+0x18)=0x506;*(uint32_t*)(a->context+0x20)=0xa;*(uint64_t*)(a->context+0x28)=0x800000+(i*13)%CTX;}
     for(unsigned i=0;i<CUES;i++){bmd *m=&mds[i];char n[64];
         *(void**)m->cue=image+SCRIPT_RNG_CUE_VT;*(void**)(m->cue+0x160)=m->cue;*(void**)(m->cue+0x150)=m->module;
-        snprintf(n,sizeof n,"FactionLogic%u",i%7);bstr(m->module+0x18,n,heaps[SCRIPTS+2*i]);snprintf(n,sizeof n,"Cue_%u",i);bstr(m->node+0x20,n,heaps[SCRIPTS+2*i+1]);
-        *(void**)(m->module+0x80)=m->node;*(void**)m->node=m->module+0x60;*(void**)(m->node+0x40)=m->cue;
+        snprintf(n,sizeof n,"FactionLogic%u",i%7);bstr(m->module+0x18,n,heaps[SCRIPTS+2*i]);snprintf(n,sizeof n,"Cue_%u",i);bstr(m->cue+0xc8,n,heaps[SCRIPTS+2*i+1]); /* a root: its path "<script>.<cue>" */
         m->program[0]=(uintptr_t)m->entries;m->program[1]=(uintptr_t)(m->entries+8);
         *(void**)(m->exec+0x10)=m->program;*(uint32_t*)(m->exec+0x38)=0x5d;*(void**)(m->exec+0x40)=m->cue+0xb0;}
     stats.active=1;boot_mode=1;boot_phase=3;stats.issued=100;ui_thread=GetCurrentThreadId();

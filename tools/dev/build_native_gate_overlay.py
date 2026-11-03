@@ -138,6 +138,21 @@ def main():
     p.add_argument('--fork-save-watchdog', type=int, default=600, help="seconds before the child's own alarm ends it (2..3600, default 600)")
     p.add_argument('--fork-save-every', type=int, help='repeat the request every N ticks under the same name, the file replaced (repeated-fork runs)')
     p.add_argument('--fork-save-slot', type=int, help='only this client slot forks (default every client of the overlay)')
+    p.add_argument('--join', nargs='?', const='strict', choices=('strict', 'report'),
+                   help='hot join, saver side (native_gate_join; the Windows gate, protocol 3/4): at a relay SAVE_AT record this '
+                        'client saves after the agreed tick into save/mpjoin/j<T>.xml.gz and writes j<T>.x4join (the side table '
+                        'and gate state). strict refuses to save while an unaudited module is armed; report saves anyway and '
+                        'marks the package diagnostic (reports/LOCKSTEP-HOTJOIN-20261101.txt)')
+    p.add_argument('--join-package', type=Path, help='hot join, joiner side: the saver\'s j<T>.x4join (copied into the overlay); '
+                   'the join save itself is the --snapshot')
+    p.add_argument('--join-package-sha', help='the package SHA-256 the saver announced (its SAVED record, NGJOINSTATE)')
+    p.add_argument('--join-absent', metavar='K[,K...]',
+                   help="hot join, both sides: the session's absent slots (the relay's --absent; never slot 1). Every per-slot "
+                        'module then treats them as neutral until their HANDOVER and requires their records from H+delay '
+                        '(native_gate_join.absent)')
+    p.add_argument('--join-mode', choices=('strict', 'report'), default='strict',
+                   help='joiner: strict stops on any difference between the loaded world and the side table; report applies '
+                        'what matches and reports the rest (J1 diagnostics)')
     p.add_argument('--attention-all', action='store_true', help="the Linux gate: every portable object's attention timer re-evaluates at its first admitted call and draws from (tick, ID) (native_gate_attention_all with the hook of native_gate_attention_initial_refresh; needs --world-identities)")
     p.add_argument('--step-trace', nargs='+', metavar='SAVED_ID', help="the Linux gate: the Linear flight model's step, entry and exit, for up to four saved IDs (diagnostic; needs --world-identities)")
     p.add_argument('--step-trace-ticks', type=int, default=3, help='ticks 1..N of the step trace (default 3, at most 600)')
@@ -516,6 +531,10 @@ def main():
             shutil.copy2(root/'tools/dev'/name,args.out/'ui'/name)
         shutil.copy2(root/'tools/dev/native_gate_player_orders.xml',args.out/'md/native_gate_player_orders.xml')
         ui_files = 'ui/native_gate_player_orders_core.lua\nui/native_gate_player_orders.lua\n'+ui_files
+    if args.join or args.join_package:
+        # Hot join: the JOIN input section and the probe state providers (native_gate_join_core.lua).
+        shutil.copy2(root/'tools/dev/native_gate_join_core.lua', args.out/'ui/native_gate_join_core.lua')
+        ui_files = 'ui/native_gate_join_core.lua\n'+ui_files
     if args.session_clients:
         # Protocol 3 input multiplexer (pilot, orders and hit claim sections share one blob).
         shutil.copy2(root/'tools/dev/native_gate_inputs_core.lua',args.out/'ui/native_gate_inputs_core.lua')
@@ -682,6 +701,36 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
                          f"watchdog_s = {args.fork_save_watchdog}{every}}}\n")
     elif args.fork_save_budget_ms != 50 or args.fork_save_watchdog != 600 or args.fork_save_every is not None or args.fork_save_slot is not None:
         p.error('--fork-save-budget-ms, --fork-save-watchdog, --fork-save-every and --fork-save-slot need --fork-save')
+    if args.join or args.join_package:
+        if args.gate_so or not args.gate_dll or not args.snapshot or not args.session_clients or not args.world_identities:
+            p.error('--join and --join-package need the Windows gate (--gate-dll), the snapshot boot, --session-clients and '
+                    '--world-identities')
+        joiner = ''
+        if args.join_package:
+            sha = (args.join_package_sha or '').lower()
+            if len(sha) != 64 or any(c not in '0123456789abcdef' for c in sha) or not args.join_package.is_file():
+                p.error('--join-package needs the package file and --join-package-sha (64 hex)')
+            if hashlib.sha256(args.join_package.read_bytes()).hexdigest() != sha:
+                p.error('--join-package does not match --join-package-sha')
+            (args.out/'native').mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(args.join_package, args.out/'native'/'join.x4join')
+            joiner = (f", joiner = {{package = './extensions/x4_lan_lab/native/join.x4join', sha = '{sha}', "
+                      f"mode = '{args.join_mode}'}}")
+        elif args.join_package_sha or args.join_mode != 'strict':
+            p.error('--join-package-sha and --join-mode need --join-package')
+        absent = ''
+        if args.join_absent:
+            try:
+                slots = sorted({int(v) for v in args.join_absent.split(',') if v.strip()})
+            except ValueError:
+                slots = []
+            if not slots or slots[0] < 2 or slots[-1] > 8:
+                p.error('--join-absent needs slots 2..8 (slot 1 is never absent)')
+            absent = f", absent = {{{', '.join(map(str, slots))}}}"
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write(f"X4LAN_CONFIG.native_gate_join = {{save = '{args.join or 'strict'}'{joiner}{absent}}}\n")
+    elif args.join_package_sha or args.join_mode != 'strict' or args.join_absent:
+        p.error('--join-package-sha, --join-mode and --join-absent need --join or --join-package')
     if args.attention_all:
         if not args.gate_so or not args.snapshot or not args.world_identities:
             p.error('--attention-all needs --gate-so, the snapshot boot and --world-identities')

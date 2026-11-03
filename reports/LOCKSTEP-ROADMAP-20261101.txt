@@ -18,7 +18,7 @@ A. PLAYABILITY (people sessions)
     Branch contrib/ferrite-predict2, report LOCKSTEP-OWN-SHIP-PREDICTION-20261101.txt (lockstep_own_predict.h,
     native_gate_own_predict, default off; works on one frame per step, join interface for item 1 in its
     section 5; live-test spec O1/O2/P1/P2/G in section 11).
- 3. [next] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
+ 3. [A0, A1 live 2 Nov: 100 ms holds 29.74 steps/s, census 0; A2-A4 and render frames under adaptive open] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
     pilot delay from it (today fixed: lookahead 1, delay 3 = 100 ms); later adjust it during a session at an
     agreed step. Cope with spikes and dropouts better than a pause for everyone (a client stalled past a bound
     is dropped; needs item 16). Data, relay --latency-ms 100 (1 Nov): lookahead 1 0.38x speed, lookahead 3 +
@@ -107,7 +107,9 @@ C. PERFORMANCE
 12. [running] Option B, Windows and Linux bit-identical: FR29 (damage 1 float ulp at tick 546 on ship 07336a),
     then W15/L8, then 6000-tick comparisons, then player inputs on a Linux peer, then a live mixed session.
 13. [later] Dedicated Linux server that also simulates, so the universe keeps going when players leave.
-14. [running 1 Nov, user request; agent in X4-Multiplayer-hotjoin] Joining a running session
+14. [J1 2 Nov (j1-27, package v9: T+1 still 17 differ, 2,491 at T+267; before it j1-25, package v8): save at T while the session runs (2.8 s); the joiner loads, restores the side table
+    and replays at ~24 steps/s; at T+1 99.997% of 523,529 objects equal (17 left: 13 non-linear flight models, 4 hit by
+    projectiles in flight, 3 timing), 2,509 apart by T+267: agent on v9] Joining a running session
     (hot join). Stages: J1 save at step T + load in a third lane equals the running world (census 0): needs the join
     side table (the loader re-rolls AI-wait deadlines and MD cue delays, LOCKSTEP-NONBLOCKING-SAVE-20261101.txt) and
     the gate's own state carried with the save; J2 the relay admits a new slot, the joiner replays the input journal
@@ -120,7 +122,8 @@ C. PERFORMANCE
     wait on other threads), copy-on-write memory, Steam and file handles in the child, and that save + load
     round-trips to the same world (the snapshot load used by every test suggests yes).
 15. [later] Player drop and rejoin (with 3 and 14).
-15b. [running 1 Nov, user; agent in X4-Multiplayer-starts] Multiple starts: (1) a session from any stock X4 game
+15b. [live 1 Nov: L1 fight start, L2 two starts in two sectors (factions, own wallets), L3 coop discover start all
+    clean; L4 refusals as specified] Multiple starts: (1) a session from any stock X4 game
     start, not only the creative test save (one client creates the new game and saves it, every client loads that
     save, or every client runs the same new game if that proves reproducible); (2) each player picks their own
     start (ship + loadout, sector/position, money, inventory, blueprints, reputation) in one shared universe,

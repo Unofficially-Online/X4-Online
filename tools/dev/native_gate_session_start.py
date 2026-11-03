@@ -53,6 +53,8 @@ PATH = re.compile(r'(?:\.\./)?[A-Za-z0-9_]+')
 LANE_TOOL = '../lanes/release-5d5a680ec6ef/dev/x4lane.py'
 LANE_BASE = '.local/lockstep-live/frozen-v3/src/extension/x4_lan_lab'
 CAPTURE_SEED = 276944566    # capture 005's seed
+EXTENSION = Path(__file__).resolve().parents[2] / 'src/extension/x4_lan_lab'
+POOL_LIBRARY = 'libraries/factions.xml'   # the pool factions with their own accounts (tools/dev/build_player_factions.py)
 
 
 class SessionError(ValueError):
@@ -214,8 +216,15 @@ def build_capture(spec, fixedtick_dll, out):
     hulls = len(spec['slots'])
     extra_md = {HULLS_MD: hulls_md(spec)} if hulls else {}
     extra = [f'X4LAN_CONFIG.native_gate_snapshot_hulls = {hulls}'] if hulls else []
-    return scenarios.build_capture_overlay(spec['base_start'], fixedtick_dll, out, allowed={spec['base_start']},
-                                           extra_md=extra_md, extra_config=extra)
+    out = scenarios.build_capture_overlay(spec['base_start'], fixedtick_dll, out, allowed={spec['base_start']},
+                                          extra_md=extra_md, extra_config=extra)
+    if spec['mode'] == 'factions' and hulls:
+        # The kits' wallet steps set x4lan_player<k>'s own account: the new game is made with the pool library that
+        # gives the pool factions their accounts (a frozen base predates them), in case X4 creates them only then.
+        (out / POOL_LIBRARY).parent.mkdir(parents=True, exist_ok=True)
+        (out / POOL_LIBRARY).write_bytes((EXTENSION / POOL_LIBRARY).read_bytes())
+        scenarios.write_manifest(out)
+    return out
 
 
 def capture_command(spec, overlay, collect, lane_tool=LANE_TOOL, base=LANE_BASE, label='native-session'):

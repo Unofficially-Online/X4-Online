@@ -7,14 +7,17 @@
  * (the render walks, the census, the room's own walks) reaches it, and no client can draw slot k. X4 seats its own
  * player with 716670 [F]: 3d8420(player, &filter 2f60e70 = TemplateConnectionFilterByIsPlayerSlot, room, 0), i.e.
  * U::Component::ConnectTo (3d6e50) at the room's player slot connection, then the control position and 70eee0 (its
- * FirstPersonController). 3d8420 with no target is 3d8240(component, 0x15): off its parent without a kill [F].
+ * FirstPersonController). 3d8420 with no target is 3d8240(component, 0x15): off its parent with no kill of its own
+ * [F]; the parent change behind it kills an unheld Player left without a parent, and a Player's first connect gives it
+ * a camera of its own: both kept out by pfbody_call (below, after the kill guard's paragraph).
  *
  * This stage connects P_k the same way, on every client, at the same step:
  *   take-1   after pslot_seat_all (the seat's upward pointers set): in scope k (singleton = P_k), the upward
- *            pointer cleared, 3d8420(P_k, filter, room, 0); P_k's parent must then be the room (else off again,
+ *            pointer cleared, 3d8420(P_k, filter, room, 0) held and with the stand-in camera (pfbody_call); P_k's
+ *            parent must then be the room (else off again,
  *            the upward pointer back, stop body_connect). A roomless seat (no cockpit room) gets no body (roomless=).
  *   live     every pass: each body still has the room as its parent (body_moved), its seat still holds.
- *   stop+1   before the seats' release: in scope k, 3d8420(P_k, filter, NULL, 0), the upward pointer back (the seat's
+ *   stop+1   before the seats' release: in scope k, 3d8420(P_k, filter, NULL, 0) held, the upward pointer back (the seat's
  *            state its release expects); an abnormal stop does the same on the frame thread outside any scope.
  * Nothing else: no FirstPersonController for P_k yet (70eee0), no control position change, no walking. P_k sits where
  * X4 seats a pilot. What this answers live (report section 9, B1): whether a U::Player that is not the singleton is
@@ -41,8 +44,38 @@
  * singleton's PlayerController or FPC (d9f190 -> 9fc550 / 9fc670), and slot 1's controllers change during 716e20].
  * Until then every body leaves the tree in the pass that replays a get-up (slot 1's GET_UP: pfoot_state leaving; slot
  * k's: lockstep_pilot_foot_slots.h), before X4's event phase stands anyone up, and comes back PFBODY_SETTLE ticks after
- * everyone sits again: the tree only ever holds P_k in the state B1 ran (both seated). Status bodies=parked parks=. */
+ * everyone sits again: the tree only ever holds P_k in the state B1 ran (both seated). Status bodies=parked parks=.
+ *
+ * What X4's connect and disconnect do to a Player besides the tree [F, pinned 9.00; reports/LOCKSTEP-ON-FOOT-20261101.txt
+ * section 13g-13i], and why every call of 3d8420 here goes through pfbody_call:
+ *   removed  3d8420 without a target is 3d8240(P_k, 0x15): no kill there, but Player::vfunc 0x1380 (702f40) -> 553660 ->
+ *            748790 -> U::Component's parent change 3d7010, which kills a component left with no parent (3d7253 -> 3d7830)
+ *            that was in the tree, is alive (+0xd3) and has no hold (+0xd4 == 0, 3d7851): Kill(component, 13 'removed')
+ *            at 3d78b7, a deferred KillEvent, KillRecursive, the KilledEvent, Player::vfunc9 with itself: "Game Over -
+ *            Player has died (killmethod=removed)". So every body that left its room was killed: at stop+1 (live d1s:
+ *            stop 163 player_killed in the teardown, no death), at each park (live df2 at slot 1's GET_UP), at the kill
+ *            guard and the death module's take-off. +0xd4 is X4's own hold count (MD's cue actors take one, 3e5680 drops
+ *            one and kills the same way at 0): P_k holds one for the length of the call, so X4 takes it out of the tree
+ *            as it moves a held component, and nothing else changes (the count is back to what it was afterwards).
+ *   camera   the first connect of a Player without a camera (+0x4e8 NULL; 703051) runs 71a560: a new camera for it,
+ *            Universe+0x3c8 and +0x3d0 (X4's camera on this client) set to it (97df60, 71a744), camera_anchor_scene moved
+ *            under it, and a cockpit head controller made by d895a0 for 9fc550's PlayerController: in scope k that is C_k.
+ *            Live d1s/df2: from take-1 every client's camera was P_2's (BULLET_CADENCE camera=0:<P_2>). X4 drops a head
+ *            controller only from the camera at +0x3d0 when a PlayerController dies (d84730 -> d89840), so when X4 stood
+ *            slot 1 up (its PlayerController deleted) the head controller of slot 1's own camera stayed bound to the freed
+ *            controller, and the camera loop's next refill (9fe573 -> 979ce0 -> 9799f0 -> 97a300 -> 988bac) read it:
+ *            0xC0000005 at ea75e1 on both clients (df2, tick 3803; footlook in section 12c). P_k holds a zeroed stand-in
+ *            camera for the length of the call, so 702f40 skips 71a560; +0x4e8 is NULL again afterwards.
+ * pfbody_call fails loudly (stop 185) when X4 did any of it anyway: P_k dying (body_killed), the Universe's cameras or the
+ * stand-in changed (body_camera), the hold count moved (body_hold). */
 #define PFBODY_CONNECT 0x3d8420u            /* 3d8420(component, filter, target, 0) */
+#define PFBODY_HOLD 0xd4u                   /* Component: X4's hold count (3d7851 reads it before the 'removed' kill) */
+#define PFBODY_LIFECYCLE 0xd3u              /* Component: 1 dying, 2 dead */
+#define PFBODY_CAMERA 0x4e8u                /* Player: its camera (702f40 makes one at 71a560 when NULL) */
+#define PFBODY_CAMERAS 0x3c8u               /* Universe: +0x3c8 and +0x3d0, the cameras 71a560/97df60 set to the new one */
+#define PFBODY_CAMERA_SIZE 0x920u           /* a camera's allocation in 71a560 */
+static __attribute__((aligned(16))) unsigned char pfbody_no_camera[PFBODY_CAMERA_SIZE];   /* the stand-in: zero, owned by nobody */
+static volatile LONG64 pfbody_held;         /* X4 calls made with P_k held and its stand-in camera */
 #define PFBODY_FILTER 0x2f60e70u            /* the filter object 716670 passes (lea rdx at 71673b) */
 #define PFBODY_FILTER_VTABLE 0x2b9ec18u     /* U::TemplateConnectionFilterByIsPlayerSlot */
 typedef void (*pfbody_connect_fn)(void *,const void *,void *,void *);
@@ -68,12 +101,44 @@ static int pfbody_kill_installed;
 static volatile LONG64 pfbody_kill_off,pfbody_kill_spared,pfbody_kill_late;
 static const struct {unsigned rva,size;const char *sha;} pfbody_pin_table[]={
     {0x3d8420u,0x89,"46a8f865b44c4e326737a70cfdf828bd65324779303b13ecaf81990f6290f7af"},    /* ConnectTo by filter; no target: off */
-    {PFBODY_KILL_RVA,0x241,"ff09d24ee15551fb542937e99b6a8fe9fc502daa0fd98dfa0ed186279435b0fc"}};   /* KillRecursive (the kill guard) */
+    {PFBODY_KILL_RVA,0x241,"ff09d24ee15551fb542937e99b6a8fe9fc502daa0fd98dfa0ed186279435b0fc"},   /* KillRecursive (the kill guard) */
+    {0x3d8240u,0x144,"f087638cc9205c49f677a4ecc81c01a6cd2921be07abe28a06933ebea8752e65"},   /* off the parent (0x15: no kill of its own) */
+    {0x3d7010u,0x9d2,"bab31fa2e3f80a0c1d887471c08552b31f8d2c71fdd54c9166a987fe04d520b2"},   /* parent change: unheld and parentless -> 'removed' */
+    {0x702f40u,0xaf2,"640162bec27d8b862203290b22a1738885db92be92bf6366752a3535f8a47045"},   /* Player::vfunc 0x1380: no camera -> 71a560 */
+    {0x71a560u,0x668,"d3c3b97836592d28fd8172139f60804933003eabc690025ca0b3447845674e41"}};  /* the Player's camera, made X4's */
 static int pfbody_fail(const char *why) {
     pfbody_stage="failed";if(!strcmp(pfbody_why,"-")) pfbody_why=why;
     pfbody_failed=1;pfoot_failed=1;pfoot_why=pfbody_why;return 0;   /* stop reason 185 */
 }
 static unsigned char *pfbody_parent(const pslot_slot *s) {unsigned char *parent=NULL;return read_local(s->player+0x70,&parent,8)?parent:(unsigned char*)1;}
+/* X4's 3d8420 for P_k (its scope open): with a target into it, without one off its parent. For the call P_k holds one
+ * more hold (+0xd4) and, without a camera, the stand-in camera (+0x4e8), so X4 neither kills it as 'removed' nor gives it
+ * a camera of its own (header); both fields are back afterwards. NULL, or the why X4 did it anyway (checked after a fault
+ * as well). A P_k that has a camera (X4 gave it one: a failure before) is not put into a room again; taking it off needs
+ * no stand-in (702f40 makes a camera only for a target). */
+static const char *pfbody_call(pslot_slot *s,void *target,int *fault) {
+    unsigned char *p=s->player,*universe=NULL,*cameras[2]={NULL,NULL},*now[2]={NULL,NULL},*camera=(unsigned char*)1,*after=NULL;
+    int32_t hold=-1,held=-1;unsigned char life=1;const char *why=NULL;
+    if(!read_local(pnat_base+VPL_UNIVERSE,&universe,8) || !universe || !read_local(universe+PFBODY_CAMERAS,cameras,sizeof(cameras)))
+        return "body_universe";
+    if(!read_local(p+PFBODY_CAMERA,&camera,8) || (camera && target)) return "body_camera";
+    if(!read_local(p+PFBODY_HOLD,&hold,4) || hold<0 || hold==INT32_MAX) return "body_hold";
+    if(!read_local(p+PFBODY_LIFECYCLE,&life,1) || life) return "body_killed";        /* already dying: nothing to move */
+    *(volatile int32_t*)(p+PFBODY_HOLD)=hold+1;
+    if(!camera) *(unsigned char *volatile*)(p+PFBODY_CAMERA)=pfbody_no_camera;
+    __try {pfbody_connect(p,pfbody_filter,target,NULL);}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {*fault=1;}
+    InterlockedIncrement64(&pfbody_held);
+    /* Our hold off again by a write (3e5680 would kill an unheld parentless component), the stand-in out. */
+    if(!read_local(p+PFBODY_HOLD,&held,4) || held!=hold+1) why="body_hold";
+    *(volatile int32_t*)(p+PFBODY_HOLD)=held>0?held-1:0;
+    if(!read_local(p+PFBODY_CAMERA,&after,8) || after!=(camera?camera:pfbody_no_camera)) why="body_camera";   /* X4's camera stays */
+    else if(!camera) *(unsigned char *volatile*)(p+PFBODY_CAMERA)=NULL;
+    for(unsigned i=0;i<PFBODY_CAMERA_SIZE;i++) if(pfbody_no_camera[i]) {why="body_camera";memset(pfbody_no_camera,0,sizeof(pfbody_no_camera));break;}
+    if(!read_local(universe+PFBODY_CAMERAS,now,sizeof(now)) || now[0]!=cameras[0] || now[1]!=cameras[1]) why="body_camera";
+    if(!read_local(p+PFBODY_LIFECYCLE,&life,1) || life) why="body_killed";          /* X4 kills it: the game over follows */
+    return why;
+}
 /* P_k into its seat's room, in its scope. */
 static int pfbody_connect_slot(unsigned k) {
     pslot_slot *s=&pslots[k];int fault=0;
@@ -81,18 +146,15 @@ static int pfbody_connect_slot(unsigned k) {
     if(pfbody_parent(s)!=s->room) return pfbody_fail("body_parent");
     if(!pslot_enter(k)) return pfbody_fail("body_scope");
     *(unsigned char *volatile*)(s->player+0x70)=NULL;   /* the seat's upward pointer: ConnectTo takes it out of no list */
-    __try {pfbody_connect(s->player,pfbody_filter,s->room,NULL);}
-    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    const char *why=pfbody_call(s,s->room,&fault);
     unsigned char *parent=pfbody_parent(s);
-    if(parent!=s->room) {   /* not at the seat: off again, the upward pointer back, then stop */
-        if(!fault && parent) {
-            __try {pfbody_connect(s->player,pfbody_filter,NULL,NULL);}
-            __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
-        }
+    if(fault || why || parent!=s->room) {   /* not at the seat as asked: off again, the upward pointer back, then stop */
+        if(!fault && parent) {const char *off=pfbody_call(s,NULL,&fault);if(!why) why=off;}
         *(unsigned char *volatile*)(s->player+0x70)=s->room;
     }
     int left=pslot_leave(k);
     if(fault) return pfbody_fail("body_connect_fault");
+    if(why) return pfbody_fail(why);
     if(parent!=s->room) return pfbody_fail("body_connect");
     if(!left) return pfbody_fail("body_leave");
     pfbody_mask|=1u<<(k-1);InterlockedIncrement64(&pfbody_connects);
@@ -103,12 +165,12 @@ static int pfbody_disconnect_slot(unsigned k) {
     pslot_slot *s=&pslots[k];int fault=0;
     if(!(pfbody_mask>>(k-1)&1u)) return 1;
     if(!pslot_enter(k)) return pfbody_fail("body_scope");
-    __try {pfbody_connect(s->player,pfbody_filter,NULL,NULL);}
-    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    const char *why=pfbody_call(s,NULL,&fault);
     unsigned char *parent=pfbody_parent(s);
     if(!fault && !parent) {*(unsigned char *volatile*)(s->player+0x70)=s->room;pfbody_mask&=~(1u<<(k-1));InterlockedIncrement64(&pfbody_disconnects);}
     int left=pslot_leave(k);
     if(fault) return pfbody_fail("body_disconnect_fault");
+    if(why) return pfbody_fail(why);
     if(parent) return pfbody_fail("body_disconnect");
     return left?1:pfbody_fail("body_leave");
 }
@@ -199,7 +261,7 @@ static int pfbody_pass(uint64_t tick,int phase) {
         if(!pfbody_kill_install()) return pfbody_fail("body_kill_install");    /* before the first body is in a room */
         /* A seat without a cockpit room has no player slot to sit at: no body for it (counted), not a stop. */
         for(unsigned k=2;k<=PILOT_SLOTS;k++) {
-            if(!(pslot_mask>>(k-1)&1u)) continue;
+            if(!(pslot_mask>>(k-1)&1u) || !pilot_slot_enrolled(k,take)) continue;   /* absent (hot join): its body after its seat */
             if(!pfbody_seat_ok(k)) {InterlockedIncrement64(&pfbody_roomless);continue;}
             if(!pfbody_connect_slot(k)) return 0;
         }
@@ -288,7 +350,7 @@ static int pfbody_arm_using(void) {
     if(!pslot_armed || !(pslot_mask&~1u)) return pstk_arm_refuse("bodies_without_slots");
     if(!pfbody_connect || !pfbody_filter) return pstk_arm_refuse("bodies_functions");
     pfbody_failed=0;pfbody_mask=0;pfbody_parked=0;pfbody_seated_since=0;memset(pfbody_back,0,sizeof(pfbody_back));pfbody_returns=pfbody_roomless=0;
-    pfbody_kill_installed=0;pfbody_kill_off=pfbody_kill_spared=pfbody_kill_late=0;
+    pfbody_kill_installed=0;pfbody_kill_off=pfbody_kill_spared=pfbody_kill_late=0;pfbody_held=0;memset(pfbody_no_camera,0,sizeof(pfbody_no_camera));
     pfbody_stage="armed";pfbody_why="-";pfbody_armed=1;return 1;
 }
 static int pfbody_arm(void) {
@@ -305,8 +367,9 @@ static int pfbody_arm(void) {
     return pfbody_arm_using();
 }
 static int pfbody_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld",
+    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld",
         pfbody_stage,pfbody_why,pfbody_mask,(long long)pfbody_connects,(long long)pfbody_disconnects,(long long)pfbody_checks,(long long)pfbody_parks,
-        (long long)pfbody_unparks,(long long)pfbody_returns,pfbody_kill_installed,(long long)pfbody_kill_off,(long long)pfbody_kill_spared,(long long)pfbody_kill_late,(long long)pfbody_roomless);
+        (long long)pfbody_unparks,(long long)pfbody_returns,pfbody_kill_installed,(long long)pfbody_kill_off,(long long)pfbody_kill_spared,(long long)pfbody_kill_late,(long long)pfbody_roomless,
+        (long long)pfbody_held);
     return n>0 && (size_t)n<capacity?n:0;
 }

@@ -61,7 +61,10 @@
  *              pointers go back, and it waits stranded, as a dead slot without a suit (records consumed and ignored,
  *              slot 1's view on client k), until the respawn, if armed, seats it in a new ship at its start.
  *   killed     X4 killing its player on foot (a Player killed with what it stands in) reaches the game over: the guard
- *              stops the session with player_killed (163), no game over, no menu, nothing saved. */
+ *              stops the session with player_killed (163), no game over, no menu, nothing saved. Our own take-off of a
+ *              body (stop+1, a park, the kill guard, a seat that ends) never reaches it: X4's parent change kills an
+ *              unheld Player left without a parent ('removed'), so P_k is held for that call (lockstep_pilot_foot_body.h,
+ *              pfbody_call; live d1s stopped 163 in the teardown before that). */
 #define PDEATH_STOP_REASON 163u
 #define PDEATH_LIFECYCLE 0xd3u                /* Component+0xd3: 1 dying, 2 dead (KillRecursive) */
 #define PDEATH_SEAT_LAG 15u                   /* past the identity's FOLD_LAG (10): the MD answer is back by then */
@@ -273,6 +276,9 @@ static int pdeath_pass(uint64_t tick,unsigned char *controller) {
     if(tick<=take+1 || tick>pilot_stop) return 1;
     for(unsigned k=1;k<=pilot_slot_count;k++) {
         if(!(pstk_slot_mask>>(k-1)&1u)) continue;
+        /* Absent (hot join): its ship is nobody's until it is seated (enrolled at H, seated at H-1); a loss before stops at
+         * the seat (161 absent_ship_lost). */
+        if(!pilot_slot_enrolled(k,tick) || (pilot_slot_absent(k) && !pslots[k].seated && !pilot_slots[k-1].dead)) continue;
         pilot_slot *s=&pilot_slots[k-1];pdeath_slot *d=&pdeath_slots[k-1];
         if(!s->dead && !d->lost && pdeath_dying(s)) {   /* who is aboard decides (header) */
             if(pdeath_off_seat(k,controller)?!pdeath_lose(k,tick):!pdeath_die(k,tick)) return 0;

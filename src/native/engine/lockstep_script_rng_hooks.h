@@ -49,7 +49,7 @@ static int script_rng_owned(void) {
              (script_rng_stack_installed && *(void**)(image+SCRIPT_RNG_STACK_SLOT)!=(void*)script_rng_stack_event));
 }
 #ifndef SCRIPT_RNG_OWN_PLATFORM
-/* Layout pins: cue name tree, Cue_CreateInstance (MD::Cue vtable, +0x160),
+/* Layout pins: the cue-name layout (npc_layout_pinned: the static cue path), Cue_CreateInstance (MD::Cue vtable, +0x160),
  * AIScriptContext ctor (vtable, +0xd8 script, +0x120 entity), the call-stack
  * context setup 0x1066ba0 (vtable, +0xc8 owner) and both swapped handlers. */
 static int script_rng_pinned(unsigned mask) {
@@ -117,7 +117,7 @@ static int script_rng_status(char *out,size_t cap) {
         " cur_tick=%llu cur_entries=%u cur_outer=%u cur_child=%u cur_unkeyed=%u cur_draws=%llu cur_unknown=%u cur_keyset=%016llx cur_drawset=%016llx"
         " last_tick=%llu last_entries=%u last_outer=%u last_child=%u last_unkeyed=%u last_draws=%llu last_unknown=%u last_keyset=%016llx last_drawset=%016llx"
         " rows=%d self_us=%llu cur_self_us=%llu last_self_us=%llu ai_hits=%lld ai_misses=%lld identity_sealed=%ld created=%lld"
-        " options=%u unmapped_keyed=%lld unkeyed_rows=%lld",
+        " options=%u unmapped_keyed=%lld unkeyed_rows=%lld cue_refused=%lld cue_refusal=%s",
         script_rng_armed,script_rng_active,script_rng_mode,script_rng_mask,script_rng_restored,npc_exec_installed,script_rng_exec_owned,
         script_rng_cue_installed,script_rng_stack_installed,
         (long long)(script_rng_sources[SR_EXEC]+script_rng_sources[SR_RANGE]+script_rng_sources[SR_EVENT]+script_rng_sources[SR_STACK]+
@@ -136,6 +136,7 @@ static int script_rng_status(char *out,size_t cap) {
         (unsigned long long)l->keyset,(unsigned long long)l->drawset,
         script_rng_rows,(unsigned long long)script_rng_us(script_rng_self),(unsigned long long)script_rng_us(t->self),
         (unsigned long long)script_rng_us(l->self),(long long)script_rng_ai_hits,(long long)script_rng_ai_misses,world_identity_sealed,
-        (long long)script_rng_created,script_rng_options,(long long)script_rng_unmapped_keyed,(long long)script_rng_unkeyed_rows);
+        (long long)script_rng_created,script_rng_options,(long long)script_rng_unmapped_keyed,(long long)script_rng_unkeyed_rows,
+        (long long)InterlockedCompareExchange64(&cue_path_refusals,0,0),cue_path_refusal);
     return n>0 && (size_t)n<cap?n:0;
 }

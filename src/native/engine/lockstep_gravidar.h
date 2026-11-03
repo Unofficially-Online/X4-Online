@@ -56,11 +56,15 @@ static int gravidar_snapshot_contacts(gravidar_sample *s,void *unit,void *result
         gravidar_read_contacts(r+0x28,&s->contacts[3]);
     return ok;
 }
-static int gravidar_initialize_unit(unsigned actor,void *unit,double time) {
+/* keep=1 (a hot joiner's fixture actor, lockstep_snapshot_fixture.h): the unit is registered, its times stay as loaded (the
+ * session wrote its start times at tick 1, not at the joiner's T+1). */
+static unsigned gravidar_kept;
+static int gravidar_initialize_unit_with(unsigned actor,void *unit,double time,int keep) {
     void *vtable;uint64_t id;
     if(!actor_is_ship(actor) || !isfinite(time) || !read_local(unit,&vtable,8) || vtable!=image+0x2c67610 ||
        !read_local((unsigned char*)unit+8,&id,8) || !id || id!=actor_ids[actor-1]) return 0;
     if(gravidar_initialized[actor-1]) return gravidar_initialized[actor-1]==unit;
+    if(keep) {gravidar_initialized[actor-1]=unit;++gravidar_kept;return 1;}
     EnterCriticalSection((CRITICAL_SECTION*)((unsigned char*)unit+0x18));
     memcpy(gravidar_initial_before[actor-1],(unsigned char*)unit+0xa8,24);
     double times[3]={time-gate_tick_dt(),time-gate_tick_dt(),time};
@@ -68,7 +72,8 @@ static int gravidar_initialize_unit(unsigned actor,void *unit,double time) {
     LeaveCriticalSection((CRITICAL_SECTION*)((unsigned char*)unit+0x18));
     gravidar_initialized[actor-1]=unit;++gravidar_inits;return 1;
 }
-static int gravidar_register(unsigned actor) {
+__attribute__((unused)) static int gravidar_initialize_unit(unsigned actor,void *unit,double time) {return gravidar_initialize_unit_with(actor,unit,time,0);}  /* tests */
+static int gravidar_register_with(unsigned actor,int keep) {
     if(!gravidar_initial || gravidar_initialized[actor-1]) return 1;
     void *worker=*(void**)(image+0x6cf1650);void **tls=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
     double time;if(!worker || !tls || !tls[0] || GetCurrentThreadId()!=ui_thread ||
@@ -82,9 +87,10 @@ static int gravidar_register(unsigned actor) {
     EnterCriticalSection(bucket);
     typedef void *(*lookup_fn)(void *,uint64_t);
     void *unit=((lookup_fn)(image+0x10b2dc0))(worker,id);
-    int ok=unit && gravidar_initialize_unit(actor,unit,time);
+    int ok=unit && gravidar_initialize_unit_with(actor,unit,time,keep);
     LeaveCriticalSection(bucket);return ok;
 }
+static int gravidar_register(unsigned actor) {return gravidar_register_with(actor,0);}
 static int gravidar_wait(void *worker,unsigned timeout) {
     unsigned char *w=worker;void *vtable;uint32_t running,enabled;ULONGLONG started=GetTickCount64();int waited=0;
     for(;;) {

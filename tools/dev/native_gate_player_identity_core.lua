@@ -29,6 +29,7 @@ local KIT_KNOWN_KEYS={sectors=true,faction=true,shipyards=true}
 K.KIT_PARTS={blueprints=true,inventory=true,known=true,reputation=true,research=true}
 K.KIT_ITEMS=64
 K.MONEY_MAX=1000000000000   -- credits
+K.MONEY_PART=1000000        -- the wallet step's MD parts: mega=floor(money/1e6) <= 1e6, units=money%1e6 (both < 2^24)
 K.VALUE_SCALE=1000000       -- reputation values travel as integer millionths
 local SLOT_KEYS={ship=true,create=true,faction=true}
 local CREATE_KEYS={macro=true,seed=true,sector=true,x=true,y=true,z=true,yaw=true}
@@ -300,8 +301,11 @@ function K.steps(P,digest)
   local faction=P.slots[k.slot].faction
   local s=add({step='kit',slot=k.slot,gamestart=k.gamestart,faction=faction})
   head(s,string.format('gamestart=%s faction=%s omitted=%s',k.gamestart,faction,joined(k.omitted)))
-  -- Money in cents for MD (exact below 2^53): factions sets slot k's own account, coop adds to the shared wallet.
-  s=add({step='wallet',slot=k.slot,faction=faction,op=factions and 'set' or 'add',cents=k.money*100})
+  -- Factions sets slot k's own account, coop adds to the shared wallet. MD gets the whole credits in two parts below
+  -- 2^24 (mega = millions, units = the rest), exact however MD stores a Lua number, and rebuilds the money value
+  -- from them (never one float of up to 1e14 cents).
+  s=add({step='wallet',slot=k.slot,faction=faction,op=factions and 'set' or 'add',mega=math.floor(k.money/K.MONEY_PART),
+   units=k.money%K.MONEY_PART})
   head(s,string.format('wallet=%s op=%s money=%d',faction,s.op,k.money))
   for _,r in ipairs(k.reputation) do
    s=add({step='reputation',slot=k.slot,faction=faction,other=r.faction,value=r.value/K.VALUE_SCALE})

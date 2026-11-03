@@ -33,17 +33,19 @@ static void test_boot_hold_decisions(void) {
     stats.active=0;boot_mode=0;boot_phase=0;stats.issued=0;ui_thread=0;memset(LX(LX_BOOT_HOLD_DIRECTOR_VA),0,8);
     printf("boot hold decisions PASS\n");
 }
+/* A static cue's path (lockstep_cue_name.h) from the libstdc++ names at +0xc8 and the script's +0x18: a root, a cue below
+ * it, an instance (the name cache), a nameless root (refused, counted) and another vtable. */
+static void test_cue_string(unsigned char *at,const char *text) {
+    uintptr_t data=(uintptr_t)text;uint64_t size=strlen(text);memcpy(at,&data,8);memcpy(at+8,&size,8);
+}
 static void test_cue_identity(void) {
-    static __attribute__((aligned(16))) unsigned char cue[0x240],instance[0x240],lost[0x240],module[0x100],node[0x60];
-    static const char module_name[]="FactionLogic",cue_name[]="Manager Delay"; /* the space is encoded */
-    const void *vtable=LX(LX_CUE_VTABLE);uintptr_t data;uint64_t size;
-    data=(uintptr_t)module_name;size=strlen(module_name);memcpy(module+0x18,&data,8);memcpy(module+0x20,&size,8);
-    data=(uintptr_t)cue_name;size=strlen(cue_name);memcpy(node+0x20,&data,8);memcpy(node+0x28,&size,8);
-    uintptr_t sentinel=(uintptr_t)module+0x60,first=(uintptr_t)node;
-    memcpy(module+0x80,&first,8);memcpy(module+0x68,&first,8);memcpy(node,&sentinel,8);
-    void *definition=cue,*own=lost,*owner=module;
-    memcpy(node+0x40,&definition,8);
+    static __attribute__((aligned(16))) unsigned char cue[0x240],child[0x240],instance[0x240],lost[0x240],module[0x100];
+    const void *vtable=LX(LX_CUE_VTABLE);
+    test_cue_string(module+0x18,"FactionLogic");test_cue_string(cue+0xc8,"Manager Delay"); /* the space is encoded */
+    test_cue_string(child+0xc8,"Setup");test_cue_string(lost+0xc8,"");
+    void *definition=cue,*below=child,*own=lost,*owner=module;cue_path_refusals=0;
     memcpy(cue,&vtable,8);memcpy(cue+0x160,&definition,8);memcpy(cue+0x150,&owner,8);
+    memcpy(child,&vtable,8);memcpy(child+0x160,&below,8);memcpy(child+0x150,&owner,8);memcpy(child+0x158,&definition,8);
     memcpy(instance,&vtable,8);memcpy(instance+0x160,&definition,8);
     memcpy(lost,&vtable,8);memcpy(lost+0x160,&own,8);memcpy(lost+0x150,&owner,8);
     script_rng_identity id;memset(&id,0,sizeof(id));id.local=(uintptr_t)cue;
@@ -51,14 +53,17 @@ static void test_cue_identity(void) {
     uint64_t hash=14695981039346656037ULL;
     for(const char *p="FactionLogic.Manager%20Delay";*p;p++) hash=(hash^(unsigned char)*p)*1099511628211ULL;
     assert(id.owner==hash);
+    memset(&id,0,sizeof(id));id.local=(uintptr_t)child;
+    assert(script_rng_md(&id)==SR_OK && !strcmp(id.name,"FactionLogic.Manager%20Delay.Setup") && id.owner!=hash);
     memset(&id,0,sizeof(id));id.local=(uintptr_t)instance;
     assert(script_rng_md(&id)==SR_OK && id.owner==hash && id.instance==1); /* from the name cache */
     memset(&id,0,sizeof(id));id.local=(uintptr_t)lost;
-    assert(script_rng_md(&id)==SR_UNNAMED); /* not in the module's tree */
+    assert(script_rng_md(&id)==SR_UNNAMED && cue_path_refusals==1 && !strncmp(cue_path_refusal,"check=static_root,",18)); /* refused, counted */
     const void *other=LX(LX_CUE_VTABLE+8u);memcpy(lost,&other,8);
     memset(&id,0,sizeof(id));id.local=(uintptr_t)lost;
     assert(script_rng_md(&id)==SR_FOREIGN);
     memset(script_rng_names,0,sizeof(script_rng_names));script_rng_name_count=0;memset(npc_names,0,sizeof(npc_names));
+    cue_path_refusals=0;snprintf(cue_path_refusal,sizeof(cue_path_refusal),"-");
     printf("cue identity PASS\n");
 }
 /* The sort itself is the shared code's (test_lockstep_gate.c); here the Linux pieces: the word, the

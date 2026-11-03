@@ -44,7 +44,7 @@ static void test_thunk_native_image(void) {
     invalid=*thunk_recipe_at(800);invalid.dispatch=7;assert(!thunk_emit_slot(bounded,&invalid));
     invalid=*thunk_recipe_at(800);invalid.kind=999;assert(!thunk_emit_slot(bounded,&invalid));
     assert(!memcmp(bounded,untouched,sizeof(bounded)));
-    assert(sizeof(thunk_recipes)/sizeof(*thunk_recipes)==59);
+    assert(sizeof(thunk_recipes)/sizeof(*thunk_recipes)==60);
     for(unsigned i=0;i<sizeof(thunk_recipes)/sizeof(*thunk_recipes);i++) {
         const thunk_recipe *r=&thunk_recipes[i];assert(r->offset>=end && r->offset+r->size<=4096 && thunk_slot_ready(r->offset));
         end=r->offset+r->size;

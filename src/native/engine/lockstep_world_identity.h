@@ -122,6 +122,10 @@ static unsigned char world_identity_observe(world_identity_fn original,void *obj
     uint64_t saved=0,runtime=0;int parsed=world_identity_parse(source,&saved);
     unsigned char result=original(object,source); /* exactly once, same arguments/result */
     InterlockedIncrement64(&world_identity_calls);
+    /* A hot joiner (lockstep_join.h) records the session's portable key for the save's ID: a saved ID of the
+     * session's boot snapshot as here, a created ID in the created table, nothing for an unportable object. */
+    int joined=result && parsed && join_import_active() && read_local((unsigned char*)object+8,&runtime,8)?join_import(saved,runtime,&saved):0;
+    if(joined) return result;
     if(!result || !parsed || !read_local((unsigned char*)object+8,&runtime,8) ||
        !world_identity_record(runtime,saved)) InterlockedIncrement64(&world_identity_failures);
     else {snapshot_import_capture(object,runtime,saved);world_trace_import_capture(object,runtime,saved);portable_import_capture(object,runtime,saved);transition_import_capture(object,runtime,saved);origin_import_capture(object,runtime,saved);}

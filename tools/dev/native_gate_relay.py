@@ -533,6 +533,26 @@ def main():
                    help='opt-in wire crypto (protocols 3 and 4): handshake, sealed datagrams, signed input records and permits '
                         '(tools/dev/native_gate_crypto.py keygen/credential); every unsealed datagram is then dropped')
     p.add_argument('--wire-crypto-lib', type=Path, metavar='PATH', help='the x4mp_wire_crypto library (default: the build output)')
+    join = p.add_argument_group('hot join (tools/dev/native_gate_join.py, reports/LOCKSTEP-HOTJOIN-20261101.txt)')
+    join.add_argument('--join', action='store_true',
+                      help='a player may join the running session into an absent slot (protocols 3 and 4): the relay stands in '
+                           'for absent slots, asks every saver to save at an agreed tick, replays the session to the joiner and '
+                           'hands the slot over at an announced tick')
+    join.add_argument('--absent', default='', metavar='K[,K...]', help='with --join: slots nobody plays at the start')
+    join.add_argument('--join-savers', default='', metavar='S[,S...]', help='slots that save (default: every present slot)')
+    join.add_argument('--join-lead', type=int, default=30, metavar='TICKS',
+                      help='ticks between the save request reaching the clients and the save tick (default 30)')
+    join.add_argument('--join-handover-gap', type=int, default=60, metavar='TICKS',
+                      help='announce the handover once the joiner is this close to the live tick (default 60)')
+    join.add_argument('--join-handover-lead', type=int, default=8, metavar='TICKS',
+                      help='ticks between the handover record reaching the clients and the handover tick (default 8)')
+    join.add_argument('--join-max-pause', type=float, default=60, metavar='S',
+                      help='longest expected wait of the session at the handover tick before the join is refused (default 60)')
+    join.add_argument('--join-catchup-limit', type=float, default=300, metavar='S',
+                      help='after this many seconds of catch-up the handover is announced even with a larger gap, if the '
+                           'expected pause stays within --join-max-pause (default 300)')
+    join.add_argument('--join-joiner-timeout', type=float, default=900, metavar='S',
+                      help='a joiner that stays silent this long is given up (default 900: load time included)')
     args = p.parse_args()
     allowed = set(filter(None, (part.strip() for part in args.allow_from.split(','))))
     if args.bind != '127.0.0.1':
@@ -558,6 +578,12 @@ def main():
     if args.peer_window is not None and args.adaptive: p.error('--peer-window extends protocol 4; --adaptive is protocol 5')
     # The crypto relay drops every unsealed datagram, NGPHELLO too; a sealed address exchange is not built yet.
     if args.peer_window is not None and args.wire_crypto: p.error('--peer-window with --wire-crypto: the sealed peer address exchange is not built')
+    if args.join and (args.adaptive or args.wire_crypto or args.live_inputs or args.peer_window is not None):
+        p.error('--join covers protocols 3 and 4 without --adaptive, --wire-crypto, --live-inputs or --peer-window')
+    if (args.absent or args.join_savers) and not args.join: p.error('--absent and --join-savers need --join')
+    # Every client builds the absent slot's player at H-2 (lockstep_pilot_inputs.h PILOT_HANDOVER_LEAD): the record must be
+    # applied at least 3 ticks before H, and it is applied handover-lead ticks before it.
+    if args.join and args.join_handover_lead < 3: p.error('--join-handover-lead must be at least 3 (the slot is built at H-2)')
     wire = None
     if args.wire_crypto:
         # Imported only when asked for: without --wire-crypto the relay is unchanged and needs no library.
@@ -582,6 +608,21 @@ def main():
                                       interval_seconds=args.adaptive_interval, stall_report_ms=args.stall_report_ms,
                                       stall_drop_ms=args.stall_drop_ms)
         except ValueError as error: p.error(f'--adaptive: {error}')
+    elif args.join:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from native_gate_join import JoinBarrier
+        try:
+            absent = [int(v) for v in args.absent.split(',') if v.strip()]
+            savers = [int(v) for v in args.join_savers.split(',') if v.strip()]
+            barrier = JoinBarrier(args.token, absent=absent, ticks=args.ticks, hold_tick=args.hold_tick, hold_seconds=args.hold_seconds,
+                                  relative_real=args.relative_real, observe=args.observe, clients=args.clients, remote=bool(allowed),
+                                  lookahead=args.lookahead, tick_hz=args.tick_hz,
+                                  join_options={'lead': args.join_lead, 'handover_gap': args.join_handover_gap,
+                                                'handover_lead': args.join_handover_lead, 'max_pause': args.join_max_pause,
+                                                'catchup_limit': args.join_catchup_limit, 'joiner_timeout': args.join_joiner_timeout,
+                                                'savers': savers or None})
+        except ValueError as error: p.error(f'--join: {error}')
+        print(f'NATIVE_GATE RELAY JOIN absent={",".join(map(str, sorted(barrier.absent))) or "none"}', flush=True)
     else:
         barrier = Barrier(args.token, args.ticks, args.hold_tick, args.hold_seconds, relative_real=args.relative_real, live_inputs=args.live_inputs,
                           observe=args.observe, clients=args.clients, remote=bool(allowed), lookahead=args.lookahead, tick_hz=args.tick_hz,

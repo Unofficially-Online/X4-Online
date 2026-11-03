@@ -4,7 +4,10 @@ x4lan_player1 .. x4lan_player16, one per human slot (p1 -> 1, p2 -> 2, ...). Eac
 shows its own human as the real `player` faction and every other human as that human's pool
 faction (ui/player_factions_core.lua). Pool factions are inactive and unknown until the mod
 assigns them; they carry no `economic` tag and no faction-logic manager. Like `player` they
-carry `claimspace police` (sector claiming; police faction = itself).
+carry `claimspace police` (sector claiming; police faction = itself) and their own account at 0
+(`<account amount="0" />`, as `player`): without one X4 answers a faction's money from its dummy
+account, a large random sum (scriptproperties faction.hasownaccount; native probe 26 Oct and live
+run l2a, 1 Nov), so a lockstep slot's money (trade family, per-player start wallet) needs it.
 Run: python tools/dev/build_player_factions.py
 """
 from pathlib import Path
@@ -72,6 +75,7 @@ def build():
             f'shortname="LP{i}" prefixname="LAN Player {i}" behaviourset="default" tags="claimspace police" '
             f'policefaction="{fid}" active="0" known="0">',
             f'      <color r="{r}" g="{g}" b="{b}" />',
+            '      <account amount="0" />',
             f'      <icon active="{icon_id(i)}" inactive="{icon_id(i)}" />',
             '      <licences>',
             '        <licence type="generaluseship" name="{1001,61}" tags="basic hidden" />',

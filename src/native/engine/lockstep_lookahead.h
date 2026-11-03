@@ -43,6 +43,11 @@ static size_t lookahead_decimal(const char *s,size_t n,uint64_t *out) {
     return i;
 }
 #include "lockstep_peer.h"
+/* Hot join (lockstep_join.h, Windows): a joiner never sealed the reports before its admission tick, and until its
+ * handover its slot's blob is the relay's stand-in. Other gates: never. */
+#ifndef JOIN_UNSEALED_OK
+#define JOIN_UNSEALED_OK(source) 0
+#endif
 static void lookahead_reset(void) {
     memset(lookahead_reports,0,sizeof(lookahead_reports));memset(lookahead_permits,0,sizeof(lookahead_permits));
     lookahead_ready=lookahead_ahead_max=lookahead_idle=lookahead_resends=lookahead_stale=lookahead_duplicates=0;
@@ -87,8 +92,11 @@ static int lookahead_permit_receive(const char *reply,size_t length,uint64_t com
     const char *own="";
     if(tick>k) {
         uint64_t source=tick-1-k;const lookahead_report *r=&lookahead_reports[source%LOOKAHEAD_RING];
-        if(!r->used || r->tick!=source) {if(stale) {++lookahead_stale;return 0;} return -2;}
-        own=r->blob;
+        if(JOIN_UNSEALED_OK(source)) own=gate_proposal_any;
+        else {
+            if(!r->used || r->tick!=source) {if(stale) {++lookahead_stale;return 0;} return -2;}
+            own=r->blob;
+        }
     }
     int ok=gate_permit_blobs(reply,length,prefix,stats.slot,wire_clients,own,lookahead_scratch);
     if(ok<=0) return ok;

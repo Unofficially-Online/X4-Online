@@ -105,6 +105,7 @@ D.ON={
  {'native_gate_pick_order','canonical','','weighted library picks in file order'},
  {'native_gate_macro_arena',true,'','macros in id hash order'},
  {'native_gate_shape_order','sync','','collision files loaded before the part is built'},
+ {'native_gate_character_play','sync','','a body animation start loads its character and motion first and draws on a keyed word (stop 188): the DF2 wharf patrol split without it'},
  {'native_gate_portable_math',true,'','CRT math entries on the portable library'},
  {'native_gate_exact_reciprocal',true,'','RCPSS/RSQRTSS exactly rounded'},
  {'native_gate_decimal',true,'','saved values read by the portable decimal reader'},
@@ -180,6 +181,7 @@ D.ON={
  {'native_gate_ui_replay','@families','native_gate_pilot_stock_slots=all native_gate_pilot_present native_gate_runtime_ids native_gate_world_identities','stock UI actions as events of the slot: every family'},
  {'native_gate_ui_guard','all','native_gate_ui_replay','every other world-changing stock UI entry refused, with an info line'},
  {'native_gate_pilot_foot',true,'native_gate_pilot_stock native_gate_ui_replay native_gate_ui_guard','slot 1 gets up and walks on every client'},
+ {'native_gate_nav_mesh','sync','native_gate_pilot_foot native_gate_world_identities','interior nav helpers built at an agreed join (stop 186): with on foot, the wharf patrol split without it (footlook5 in sync with it)'},
  {'native_gate_pilot_foot_bodies',true,'native_gate_pilot_foot native_gate_pilot_stock_slots','slots 2..N in their seats rooms'},
  {'native_gate_pilot_foot_slots',true,'native_gate_pilot_foot native_gate_pilot_stock_slots','slots 2..N get up and walk'},
  {'native_gate_player_settings_per_slot',true,'native_gate_ui_replay~faction','each slot its own faction settings'},
@@ -206,6 +208,7 @@ D.DIAGNOSTIC={
  {'native_gate_sample_profile','MoveWorker stack sampler (measurement)'},
  {'native_gate_world_hash_watch','WORLD rows of watched objects'},
  {'native_gate_world_health_ticks','WORLD_HEALTH rows'},
+ {'native_gate_world_hash_join','hot join census: one more world capture at the join T+1'},
  {'native_gate_world_trace_ticks','world trace'},
  {'native_gate_world_trace_early','world trace manifest'},
  {'native_gate_world_queue_trace','world queue trace'},
@@ -355,12 +358,12 @@ D.EXCLUDED={
  {'native_gate_virtual_players','virtual players spikes (observe/construct)'},
  {'native_gate_player_orders','scripted player orders (wire runs; the UI replay orders family carries orders)'},
  {'native_gate_fork_save','non-blocking save (Linux gate only)'},
+ {'native_gate_join','hot join (lockstep_join.h): not live-tested yet (J1-J3, reports/LOCKSTEP-HOTJOIN-20261101.txt); set by the join tooling'},
  {'native_gate_play_mode','perf mode without observer rows and world pages: the census rows the live comparison reads go too'},
  {'native_gate_ui_cargo','fix not in the people stack (Play42P); not validated with it'},
  {'native_gate_ui_lazy','tick-187 census key (observe), not in the people stack'},
  {'native_gate_body_order','physics body order: did not remove its class, not in the people stack'},
  {'native_gate_command_order','command order census key, not in the people stack'},
- {'native_gate_nav_mesh','interior nav helpers (footsync agent): not in the people stack yet'},
  {'native_gate_fp_redirect','Option B (mixed Windows/Linux): moves Windows to Linux order; the people stack does not run on the Linux gate yet'},
  {'native_gate_fp_redirect_solver','Option B (mixed Windows/Linux), needs native_gate_fp_redirect'},
  {'native_gate_fp_redirect_drones','Option B (mixed Windows/Linux), needs native_gate_fp_redirect'},
@@ -421,7 +424,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot'}
+ [187]='hybrid sectors',[188]='character play',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

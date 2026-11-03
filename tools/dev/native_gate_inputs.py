@@ -18,12 +18,15 @@ MAX_BYTES = 240
 PILOT_BYTES, PILOT_VERSION = 28, 1
 HIT_BYTES, HIT_VERSION, HITS_MAX, HIT_WINDOW = 26, 1, 8, 8
 INCOMING, OUTGOING = 1, 2
-KIND = {'pilot': 0x01, 'hits': 0x48, 'octree': 0x4f, 'orders': 0x50, 'stock': 0x53, 'ui': 0x55, 'hybrid': 0x59}
-SECTIONS = ('pilot', 'hits', 'octree', 'orders', 'stock', 'ui', 'hybrid')     # wire order
-PRIORITY = ('stock', 'ui', 'pilot', 'orders', 'hits', 'octree', 'hybrid')     # default local packing order (stock first; octree and hybrid wait)
+KIND = {'pilot': 0x01, 'hits': 0x48, 'join': 0x4a, 'octree': 0x4f, 'orders': 0x50, 'stock': 0x53, 'ui': 0x55, 'hybrid': 0x59}
+SECTIONS = ('pilot', 'hits', 'join', 'octree', 'orders', 'stock', 'ui', 'hybrid')     # wire order
+# Default local packing order: hot join records first (rare, small, and a join waits for them), then stock; octree and
+# hybrid wait.
+PRIORITY = ('join', 'stock', 'ui', 'pilot', 'orders', 'hits', 'octree', 'hybrid')
 STOCK_VERSION = 3                                             # lockstep_pilot_stock.h record version byte
 UI_VERSION = 1                                                # lockstep_ui_replay.h section version byte
 HYBRID_VERSION = 1                                            # lockstep_hybrid.h record version byte
+JOIN_VERSION = 1                                              # hot join record version byte (native_gate_join.py)
 OCTREE_BYTES = 20                                     # lockstep_nav_octree.h 'agreed' report
 HEX = re.compile(r'(?:[0-9a-f]{2})*')
 ZERO = '0' * 16
@@ -74,6 +77,10 @@ def decode(text):
             out['pilot'] = payload.hex()
         elif kind == KIND['hits']:
             out['hits'] = payload.hex()
+        elif kind == KIND['join']:
+            if payload[0] != JOIN_VERSION:
+                raise Refused('join_version')
+            out['join'] = payload.hex()
         elif kind == KIND['octree']:
             if length != OCTREE_BYTES:
                 raise Refused('octree_length')
@@ -98,7 +105,7 @@ def decode(text):
             raise Refused('kind')
         last = kind
         at += length
-    if not out or (len(out) == 1 and not set(out) & {'hits', 'octree', 'stock', 'ui', 'hybrid'}):
+    if not out or (len(out) == 1 and not set(out) & {'hits', 'octree', 'stock', 'ui', 'hybrid', 'join'}):
         raise Refused('noncanonical')
     return out
 
@@ -121,6 +128,8 @@ def check_section(name, text):
         raise Refused('ui_version')
     if name == 'hybrid' and b[0] != HYBRID_VERSION:
         raise Refused('hybrid_version')
+    if name == 'join' and b[0] != JOIN_VERSION:
+        raise Refused('join_version')
     if name not in KIND:
         raise Refused('kind')
 
@@ -133,7 +142,7 @@ def encode(sections):
         check_section(name, text)
     if not sections:
         return ''
-    if len(sections) == 1 and not set(sections) & {'hits', 'octree', 'stock', 'ui', 'hybrid'}:
+    if len(sections) == 1 and not set(sections) & {'hits', 'octree', 'stock', 'ui', 'hybrid', 'join'}:
         text = sections.get('pilot') or sections['orders']
         if len(text) > 2 * MAX_BYTES:
             raise Refused('too_long')

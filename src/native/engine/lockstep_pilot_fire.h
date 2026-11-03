@@ -188,6 +188,7 @@ static unsigned pfire_collect_in(unsigned char *ship,pfire_gun out[PFIRE_GUNS],u
     return n;
 }
 static unsigned char pfire_wanted(const pilot_slot *s,unsigned slot,uint64_t tick) {
+    if(pilot_slot_silent(slot,tick,pilot_delay)) return 0;   /* absent (hot join): no trigger before its first record */
     if(pfire_mode==PFIRE_SCRIPT) return (!pfire_script_mask || (pfire_script_mask>>(slot-1)&1u)) && tick>=pilot_start && (tick-pilot_start+slot*7)%120<30;
     if(pnat_mode==PNAT_MODE_STOCK && (pstk_slot_mask>>(slot-1)&1u)) return pstk_fire_tick[slot-1]==tick && pstk_fire_on[slot-1];
     return s->driving && (s->record.buttons&1) && !(s->record.mode&PILOT_MODE_TRAVEL);
@@ -327,7 +328,7 @@ static int pfire_before_release(void) {
     if(pilot_frame_tick!=tick) {pfire_stage="frame";return 0;}
     for(unsigned i=0;i<pilot_slot_count;i++) {
         pilot_slot *s=&pilot_slots[i];pfire_slot *f=&pfire_slots[i];
-        if(tick<pilot_start || !s->resolved) continue;
+        if(tick<pilot_start || !s->resolved || !pilot_slot_enrolled(i+1,tick)) continue;   /* absent: its guns stay its AI's */
         if(uirep_families&UIREP_FAMILY_MISSILES) pfire_missiles_tick(s,i+1,tick,tick>pilot_stop);
         if(tick>pilot_stop) {if(!pfire_end(s,f,i+1)) return 0;continue;}
         if(!f->leased && !pfire_lease(f,s->object)) {pfire_stage="lease";return 0;}

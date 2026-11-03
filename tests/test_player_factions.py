@@ -80,6 +80,9 @@ class FactionPoolDiff(unittest.TestCase):
             c = f.find('color')
             colours.add((c.get('r'), c.get('g'), c.get('b')))
             self.assertIsNone(c.get('ref'))
+            # Its own account at 0, as `player`: without one X4 answers the faction's money from its dummy account
+            # (a large random sum), which the lockstep slot money (trade, start wallet) must never use.
+            self.assertEqual([(a.get('amount'), list(f).index(a)) for a in f.findall('account')], [('0', 1)])
             rel = {r.get('faction'): float(r.get('relation')) for r in f.find('relations')}
             self.assertEqual(rel.pop('player'), .75)
             # Relation-locked NPC factions cannot be changed at runtime: the player's values, static.

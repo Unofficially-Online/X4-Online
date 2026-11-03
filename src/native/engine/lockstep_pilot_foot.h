@@ -124,6 +124,38 @@ static int pfoot_replay_skips(unsigned kind,int id,const void *handler) {
 }
 static void pfoot_fail_async(const char *why);
 static int pfoot_fail(const char *why) {pfoot_why=why;pfoot_stage="failed";pfoot_failed=1;return 0;}
+/* ---- the run's double-tap clock (W9; reports/LOCKSTEP-ON-FOOT-20261101.txt 14) ----
+ * FP_MOVE_FORWARD pressed (d7d3b0's case 0x1a, d7d48f): e9f90 reads TimerBase's real time (0x6b60e40 under the time lock
+ * 0x6b60e10), the bank keeps it in 0x38f4e70 and sets the run flag 0x38f4e79 when the press before is less than 0.4 s
+ * (0x2cbe7c0) older [F]. Real time is the process's own: under the gate it advances by the session's fixed dt, but its value
+ * is the boot's real time at tick 0 plus that (df2b: 5.679 s on client 1, 5.508 s on client 2). So slot 1's first replayed
+ * forward press parted 0x38f4e70 and with it |W2.1 at its apply tick (df2b 3903, w1bfoot 2523), and two presses close to
+ * 0.4 s apart could set the run flag on one client only. Every replayed call of the walking state handler now runs with the
+ * time lock held and the real time set to the session's clock, the replay thread's game time (pnat_fn.time, the clock the
+ * replay's other events read): the same on every client, advancing as real time does under the gate. The real time is put
+ * back before the lock is left; X4 reads it only under that lock [F: every reference of 0x6b60e40 in the image sits between
+ * EnterCriticalSection and LeaveCriticalSection of 0x6b60e10, FrameTick's writes included], so no other thread sees the
+ * session clock. A CRITICAL_SECTION is recursive: e9f90 enters it again on this thread. Slots 2..N (their banks swapped in
+ * their scopes) take the same path. */
+#define PFOOT_TIME_LOCK 0x6b60e10u        /* TimerBase's lock (e9f90: EnterCriticalSection, LeaveCriticalSection) */
+#define PFOOT_REAL_TIME 0x6b60e40u        /* TimerBase's real time (REAL_RVA) */
+#define PFOOT_TAP_TIME 0x38f4e70u         /* the bank's last forward press (d7d4cb), -1.0 after a reset */
+static CRITICAL_SECTION *pfoot_time_lock;  /* the image's (pfoot_use_image) or a test's; NULL in fixtures without one */
+static volatile LONG64 pfoot_clock_calls;
+/* A replayed call that takes the session clock: X4's walking state handler while the module is armed. */
+static int pfoot_replay_clock(unsigned kind,const void *handler) {
+    return pfoot_armed && kind==PSTK_STATE && handler && handler==pfoot_handler_ptrs[0];   /* d7d3b0 */
+}
+static void pfoot_replay_state(void *handler,int id,unsigned char active) {
+    double now=0,real=0;
+    if(!pnat_fn.time || !pnat_fn.time(&now)) {pfoot_fail_async("foot_clock");return;}
+    CRITICAL_SECTION *lock=pfoot_time_lock;
+    if(lock) EnterCriticalSection(lock);
+    memcpy(&real,pnat_base+PFOOT_REAL_TIME,8);memcpy(pnat_base+PFOOT_REAL_TIME,&now,8);
+    __try {((void(*)(int,unsigned char))handler)(id,active);}
+    __finally {memcpy(pnat_base+PFOOT_REAL_TIME,&real,8);if(lock) LeaveCriticalSection(lock);}
+    InterlockedIncrement64(&pfoot_clock_calls);
+}
 /* Slot 1 off its seat (a replayed GET_UP X4 may have taken, or walking): X4 then skips d95180 (9fe2b4) and slot 1's ship has
  * no player aim; lockstep_pilot_slots.h updates slots 2..N the frame after, pstk_aim answers X4's own. */
 static int pfoot_walking(void) {return pfoot_armed && pfoot_state!=PFOOT_SEATED;}
@@ -339,6 +371,7 @@ static const struct {unsigned rva,size;const char *sha;} pfoot_pin_table[]={
     {0x9fe29du,0x3a,"fc26060e914758cedd0dd5b6c530350a8c19e32929aed8cd1dcf403a51408f9c"},    /* ... d95180 skipped without a PlayerController */
     {0x9fc670u,0x71,"543cf545335045bfeaae3d2ff0613e2c38eba05eb8dcd6ab978177ab409c952e"},    /* the singleton's FirstPersonController (class 0x16) */
     {0xd81ce0u,0x1de,"af55f30ec7fe532266d7dbfaf7d8730a27803cbace6610a79846dca3360d1266"},   /* FPC contexts: withdraw d81ce0, refresh d81d20 (K1) */
+    {0xe9f90u,0x39,"ae6892af6cb95a48d9756135fc891531d4f3aefceb69dc7b9f6d88a965f1cf19"},     /* the double-tap clock: real time under the time lock */
 };
 #define PFOOT_PIN_COUNT (sizeof(pfoot_pin_table)/sizeof(*pfoot_pin_table))
 static int pfoot_pins(void) {
@@ -354,6 +387,7 @@ static void pfoot_use_image(void) {
     pfoot_context_original=(pfoot_context_fn)(image+PFOOT_CONTEXT_RVA);
     pfoot_handler_ptrs[0]=image+PFOOT_STATE_HANDLER;pfoot_handler_ptrs[1]=image+PFOOT_RANGE_HANDLER;pfoot_handler_ptrs[2]=image+PFOOT_ACTION_HANDLER;
     pfoot_fp_refresh=(void(*)(char))(image+PFOOT_FP_REFRESH_RVA);
+    pfoot_time_lock=(CRITICAL_SECTION*)(image+PFOOT_TIME_LOCK);
 }
 /* Slots 2..N walk with native_gate_pilot_foot_slots (lockstep_pilot_foot_slots.h): client k then wants the walking
  * contexts while its own slot is on foot, and the flight contexts never (pfoot_own_seated: no controller). */
@@ -405,8 +439,13 @@ static void pfoot_fail_async(const char *why) {pfoot_fail(why);pnat_async_fail(w
  *                skips the head and look step), cut (the cutscene manager's camera +0xb0: d7f8d0 skips the update),
  *                dev (d7f0c0's device branch: input+0x9053, input+0x64a0 set, *0x6cf1578, [*0x6cf1568+8]+0x197),
  *                sens (d7ed80: input+0x6380 sensitivities of FP_YAW 0xd and FP_PITCH 0xe, '-' when unset), view (0x38f4ee0,
- *                the frame thread's view bank; its parity differs per process by design).
- * Two clients must print the same bank and FPC blocks; a local value that differs names an input of the walk. */
+ *                the MoveWorker's view-cache read bank, object+0xe0+view*0x80: a double-buffer parity per process by design,
+ *                not the slot a client presents; no instruction of the FPC's code d7c000..d83000, d7f8d0 and the handlers
+ *                included, references it [F]).
+ * Two clients must print the same bank and FPC blocks; a local value that differs names an input of the walk. Per client by
+ * design in the FPC blocks (df2b): +0x83..+0x87 (padding after the two flags) and the pointer at +0xa8 (set on client 1
+ * only; no read of it found in d7f8d0 or its local callees). df2b's only difference in the bank was 0x38f4e70, the double-tap clock
+ * (pfoot_replay_state above). */
 #define PFOOT_FPC_VTABLE 0x2c3eec0u
 static int pfoot_hex(char *out,size_t cap,const unsigned char *p,unsigned n) {
     static const char digits[]="0123456789abcdef";
@@ -470,8 +509,8 @@ static int pfoot_status(char *out,size_t capacity) {
         (long long)pfoot_split_local,(long long)pfoot_split_recorded,(long long)pfoot_split_replayed,(long long)pfoot_getups_claimed,(long long)pfoot_getups_replayed,
         (long long)pfoot_walk_passes,(long long)pfoot_adopted,(long long)pfoot_kept_seated,(long long)pfoot_refused_pick,(long long)pfoot_aim_off_seat,pfoot_restored);
     if(n>0 && (size_t)n<capacity)
-        n+=snprintf(out+n,capacity-(size_t)n," foot_entries=%u/%lld k1=%lld/%lld",pfoot_entries,(long long)pfoot_entries_late,
-            (long long)pfoot_k1_ignored,(long long)pfoot_k1_fixed);
+        n+=snprintf(out+n,capacity-(size_t)n," foot_entries=%u/%lld k1=%lld/%lld foot_clock=%lld",pfoot_entries,(long long)pfoot_entries_late,
+            (long long)pfoot_k1_ignored,(long long)pfoot_k1_fixed,(long long)pfoot_clock_calls);
     if(n>0 && (size_t)n<capacity && pfoot_armed && (pfoot_state!=PFOOT_SEATED || pfoot_on)) {
         int d=pfoot_diag(out+n,capacity-(size_t)n);if(d>0) n+=d;
     }

@@ -31,6 +31,7 @@ static void test_fo_reset(void) {
     find_order_calls=find_order_applied=find_order_observed=find_order_passed=find_order_threads=find_order_empty=0;
     find_order_candidates=find_order_duplicates=find_order_unmapped=find_order_reordered=find_order_collisions=0;
     find_order_oversize=find_order_unreadable=find_order_foreign=find_order_cursor=find_order_failures=0;test_fo_refuse=0;
+    find_order_space_calls=find_order_space_candidates=find_order_space_reordered=0;
 }
 static void test_find_order(void) {
     stats.active=1;boot_mode=1;boot_phase=3;stats.issued=63;ui_thread=GetCurrentThreadId();
@@ -140,7 +141,7 @@ static void test_find_order(void) {
     memset(site-16,0,48);thunk=saved_thunk;
 
     /* Bounded status and rows. */
-    char status[768];assert(find_order_status(status,sizeof(status))>0 && strstr(status,"armed=0 installed=0 active=0 mode=0 restored=0 "));
+    char status[1024];assert(find_order_status(status,sizeof(status))>0 && strstr(status,"armed=0 installed=0 active=0 mode=0 restored=0 "));
     printf("NATIVE_GATE FIND_ORDER tick=63 %s\n",status);
     find_order_armed=find_order_installed=find_order_restored=find_order_mode=INT32_MIN;InterlockedExchange(&find_order_active,(LONG)(-2147483647-1));
     find_order_calls=find_order_applied=find_order_observed=find_order_passed=find_order_threads=find_order_empty=INT64_MIN;
@@ -161,6 +162,187 @@ static void test_find_order(void) {
     find_order_armed=find_order_installed=find_order_restored=find_order_mode=0;InterlockedExchange(&find_order_active,0);test_fo_reset();
     script_rng_current=saved_current;stats.active=0;boot_mode=0;boot_phase=0;stats.issued=0;
     puts("native find order saved-ID sort/dedup/observe/scope/failure/CAS tests PASS");
+}
+/* The range finds' tree (find_cluster_in_range / find_sector_in_range): a
+ * synthetic tree object and nodes in the X4 9.00 layout (tree +0x20 first,
+ * +0x28 count, the walk ends at the tree; node +0 parent, +8 left, +0x10
+ * right, +0x20 Component*, +0x28 int jumps), built balanced in POINTER order
+ * as the engine's insert keeps it. */
+#define TEST_FOS_NODES 320u
+static uintptr_t test_fos_tree[6];
+static uintptr_t test_fos_node[TEST_FOS_NODES][6];
+static uintptr_t test_fos_build_range(void *const *items,const int32_t *jumps,unsigned lo,unsigned hi,uintptr_t parent,unsigned *used) {
+    if(lo>=hi) return 0;
+    unsigned mid=lo+(hi-lo)/2,k=(*used)++;uintptr_t *n=test_fos_node[k];memset(n,0,sizeof(test_fos_node[k]));
+    n[0]=parent;n[3]=1;n[4]=(uintptr_t)items[mid];int32_t j=jumps?jumps[mid]:(int32_t)mid;memcpy(&n[5],&j,4);
+    n[1]=test_fos_build_range(items,jumps,lo,mid,(uintptr_t)n,used);n[2]=test_fos_build_range(items,jumps,mid+1,hi,(uintptr_t)n,used);
+    return (uintptr_t)n;
+}
+static int test_fos_pointer_less(const void *x,const void *y) {
+    uintptr_t a=*(const uintptr_t*)x,b=*(const uintptr_t*)y;return a<b?-1:a>b?1:0;
+}
+/* items in any order; the tree holds them in pointer order with jumps[i] for items[i]. */
+static void test_fos_set(void *const *items,const int32_t *jumps,unsigned n) {
+    void *sorted[TEST_FOS_NODES];int32_t sj[TEST_FOS_NODES];
+    for(unsigned i=0;i<n;i++) sorted[i]=items[i];
+    qsort(sorted,n,sizeof(*sorted),test_fos_pointer_less);
+    for(unsigned i=0;i<n;i++) for(unsigned k=0;k<n;k++) if(items[k]==sorted[i]) sj[i]=jumps?jumps[k]:(int32_t)k;
+    memset(test_fos_tree,0,sizeof(test_fos_tree));unsigned used=0;
+    test_fos_tree[1]=test_fos_build_range(sorted,sj,0,n,(uintptr_t)test_fos_tree,&used);
+    uintptr_t first=test_fos_tree[1];while(first && ((uintptr_t*)first)[1]) first=((uintptr_t*)first)[1];
+    test_fos_tree[4]=first?first:(uintptr_t)test_fos_tree;test_fos_tree[5]=n;
+}
+static void test_fos_run(void) {
+    find_order_space_process((uintptr_t)(image+FIND_ORDER_SPACE_SITE+5),test_fos_tree,test_fo_reader,test_fo_lookup);
+}
+/* The store's walk: the keys and jumps it would see, in order. */
+static unsigned test_fos_walk(uintptr_t *keys,int32_t *jumps,unsigned cap) {
+    uintptr_t node=test_fos_tree[4];unsigned n=0;
+    while(node && node!=(uintptr_t)test_fos_tree && n<cap) {
+        keys[n]=((uintptr_t*)node)[4];memcpy(&jumps[n],&((uintptr_t*)node)[5],4);++n;node=find_order_space_next(node,read_local);
+    }
+    return node==(uintptr_t)test_fos_tree?n:UINT32_MAX;
+}
+/* A right-only chain of n nodes (n <= TEST_FOS_NODES), keys ascending in address and saved ID (1..n; n=100 is unmapped). */
+static void test_fos_chain(unsigned n) {
+    memset(test_fos_tree,0,sizeof(test_fos_tree));
+    for(unsigned i=0;i<n;i++) {
+        uintptr_t *node=test_fos_node[i];memset(node,0,sizeof(test_fos_node[i]));
+        node[0]=i?(uintptr_t)test_fos_node[i-1]:(uintptr_t)test_fos_tree;node[4]=(uintptr_t)test_fo_component(40+i%100,(uint64_t)(i%100)+1);
+        if(i) test_fos_node[i-1][2]=(uintptr_t)node;
+    }
+    test_fos_tree[1]=test_fos_tree[4]=(uintptr_t)test_fos_node[0];test_fos_tree[5]=n;
+}
+static void test_find_order_space(void) {
+    stats.active=1;boot_mode=1;boot_phase=3;stats.issued=1;ui_thread=GetCurrentThreadId();
+    find_order_armed=1;find_order_mode=FIND_ORDER_SORT;InterlockedExchange(&find_order_active,1);test_fo_reset();
+    script_rng_frame *saved_current=script_rng_current;script_rng_current=NULL;
+    /* d1s3's shape: the same five spaces at other relative addresses in two
+     * processes. Process A's addresses ascend 30,10,20,101,5; B's 10,30,5,20,101. */
+    void *a30=test_fo_component(20,30),*a10=test_fo_component(21,10),*a20=test_fo_component(22,20),*a101=test_fo_component(23,101),
+         *a5=test_fo_component(24,5);
+    void *b10=test_fo_component(30,10),*b30=test_fo_component(31,30),*b5=test_fo_component(32,5),*b20=test_fo_component(33,20),
+         *b101=test_fo_component(34,101);
+    void *pa[]={a30,a10,a20,a101,a5};const int32_t ja[]={2,1,0,2,1};
+    test_fos_set(pa,ja,5);
+    uintptr_t keys[TEST_FOS_NODES];int32_t jumps[TEST_FOS_NODES];
+    assert(test_fos_walk(keys,jumps,5)==5 && keys[0]==(uintptr_t)a30 && keys[4]==(uintptr_t)a5); /* native: address order */
+    test_fos_run();
+    assert(test_fos_walk(keys,jumps,8)==5 && keys[0]==(uintptr_t)a5 && keys[1]==(uintptr_t)a10 && keys[2]==(uintptr_t)a20 &&
+           keys[3]==(uintptr_t)a30 && keys[4]==(uintptr_t)a101);
+    assert(jumps[0]==1 && jumps[1]==1 && jumps[2]==0 && jumps[3]==2 && jumps[4]==2); /* each space keeps its jump count */
+    find_order_row_t *r=&find_order_ring[0];
+    assert(find_order_applied==1 && find_order_space_calls==1 && find_order_space_candidates==5 && find_order_space_reordered==1 &&
+           find_order_reordered==1 && find_order_unmapped==1 && !find_order_failures && find_order_cursor==1);
+    assert(r->site==FIND_ORDER_SITE_SPACE && r->tick==1 && r->raw==5 && !r->duplicates && r->unmapped==1 && r->count==5 && r->moved==3 &&
+           r->ids[0]==0x1005 && r->ids[1]==0x100a && r->ids[2]==0x1014 && r->ids[3]==0x101e && !r->ids[4]);
+    uint64_t set=r->set,native=r->native;
+    char row[1024];assert(find_order_row(0,row,sizeof(row))>0 && strstr(row," raw=5 dups=0 unmapped=1 n=5 moved=3 ") &&
+                          strstr(row," ids=1005,100a,1014,101e,0 site=space"));
+    printf("NATIVE_GATE FIND_ORDER_ROW %s\n",row);
+    /* Process B: other addresses, the same walk by saved ID, the same set and
+     * a shuffle on equal draws picks the same space. */
+    void *pb[]={b10,b30,b5,b20,b101};const int32_t jb[]={1,2,1,0,2};
+    test_fos_set(pb,jb,5);test_fos_run();
+    assert(test_fos_walk(keys,jumps,8)==5 && keys[0]==(uintptr_t)b5 && keys[1]==(uintptr_t)b10 && keys[2]==(uintptr_t)b20 &&
+           keys[3]==(uintptr_t)b30 && keys[4]==(uintptr_t)b101 && jumps[0]==1 && jumps[2]==0 && jumps[4]==2);
+    assert(find_order_ring[1].set==set && find_order_ring[1].native!=native && find_order_ring[1].ordinal==2 && find_order_ring[1].moved);
+    /* Already canonical: nothing written, not counted as reordered. */
+    test_fos_run();assert(find_order_ring[2].moved==0 && find_order_space_reordered==2 && find_order_ring[2].set==set);
+    /* Observe: measured, the tree untouched. */
+    find_order_mode=FIND_ORDER_OBSERVE;test_fos_set(pa,ja,5);test_fos_run();
+    assert(test_fos_walk(keys,jumps,8)==5 && keys[0]==(uintptr_t)a30 && keys[4]==(uintptr_t)a5 && find_order_observed==1 &&
+           find_order_ring[3].set==set && find_order_ring[3].native==native && find_order_ring[3].ids[0]==0x1005);
+    find_order_mode=FIND_ORDER_SORT;
+    /* Empty (first is the tree itself) and single trees. */
+    test_fos_set(NULL,NULL,0);test_fos_run();assert(find_order_empty==1 && find_order_ring[4].raw==0 && !find_order_failures);
+    test_fos_set(pa,ja,1);test_fos_run();assert(find_order_ring[5].raw==1 && !find_order_ring[5].moved && !find_order_failures);
+    /* A component and a space share the per-(tick, scope) ordinal and the ring; each row names its site. */
+    test_fo_set(pa,5);test_fo_run();assert(find_order_ring[6].site==FIND_ORDER_SITE_COMPONENT && find_order_ring[6].ordinal==7);
+    assert(find_order_row(6,row,sizeof(row))>0 && strstr(row," site=component"));
+    /* Large trees take the qsort path; every space is visited once. */
+    test_fo_reset();void *many[TEST_FOS_NODES];int32_t mj[TEST_FOS_NODES];
+    for(unsigned i=0;i<90;i++) {many[i]=test_fo_component(40+i,(uint64_t)(1+(i*37)%90));mj[i]=(int32_t)(i%3);}
+    test_fos_set(many,mj,90);test_fos_run();
+    assert(test_fos_walk(keys,jumps,TEST_FOS_NODES)==90 && !find_order_failures && find_order_ring[0].count==90);
+    for(unsigned i=0;i<90;i++) {
+        uint64_t x;memcpy(&x,(unsigned char*)keys[i]+8,8);assert(x==i+1);
+        unsigned k=0;while(many[k]!=(void*)keys[i]) ++k;assert(jumps[i]==mj[k]);
+    }
+
+    /* Failure paths leave the tree untouched. */
+    test_fo_reset();test_fos_set(pa,ja,5);
+    test_fos_tree[5]=6;test_fos_run(); /* count beyond the walk */
+    assert(find_order_unreadable==1 && find_order_failures==1 && !find_order_cursor);
+    test_fos_tree[5]=4;test_fos_run(); /* the walk goes on past count */
+    assert(find_order_unreadable==2 && test_fos_walk(keys,jumps,8)==5 && keys[0]==(uintptr_t)a30);test_fos_tree[5]=5;
+    test_fos_tree[5]=FIND_ORDER_SPACE_MAX+1;test_fos_run();assert(find_order_oversize==1 && find_order_failures==3);test_fos_tree[5]=5;
+    find_order_space_process((uintptr_t)(image+FIND_ORDER_SPACE_SITE+5),NULL,test_fo_reader,test_fo_lookup);assert(find_order_unreadable==3);
+    find_order_space_process((uintptr_t)(image+FIND_ORDER_SPACE_SITE+5),(unsigned char*)test_fos_tree+4,test_fo_reader,test_fo_lookup);
+    assert(find_order_unreadable==4);
+    test_fo_refuse=(uintptr_t)a10+8;test_fos_run();assert(find_order_unreadable==5 && keys[0]==(uintptr_t)a30);test_fo_refuse=0;
+    test_fo_refuse=test_fos_tree[4]+0x20;test_fos_run();assert(find_order_unreadable==6);test_fo_refuse=0;
+    a20=test_fo_component(22,10);test_fos_run(); /* two spaces with one saved ID */
+    assert(find_order_collisions==1 && find_order_failures==8);a20=test_fo_component(22,20);
+    uintptr_t *top=(uintptr_t*)test_fos_tree[1];uintptr_t keep=top[4];top[4]=((uintptr_t*)top[1])[4];test_fos_run(); /* a repeated key */
+    assert(find_order_unreadable==7 && find_order_failures==9);top[4]=keep;
+    keep=top[0];top[0]=(uintptr_t)test_fos_node[TEST_FOS_NODES-1];memset(test_fos_node[TEST_FOS_NODES-1],0,sizeof(test_fos_node[0]));
+    test_fos_run();assert(find_order_unreadable==8 && find_order_failures==10);top[0]=keep; /* a broken parent link */
+    find_order_space_process((uintptr_t)(image+FIND_ORDER_SPACE_SITE+6),test_fos_tree,test_fo_reader,test_fo_lookup);
+    assert(find_order_foreign==1 && find_order_failures==11 && !find_order_cursor);
+    assert(test_fos_walk(keys,jumps,8)==5 && keys[0]==(uintptr_t)a30 && jumps[0]==2);
+    /* Right-only chains: climbing back from the last node takes as many steps
+     * as the chain is long; 100 pass, 200 exceed FIND_ORDER_SPACE_DEPTH. */
+    test_fos_chain(100);test_fos_run();
+    assert(find_order_failures==11 && find_order_cursor==1 && find_order_ring[0].count==100 && !find_order_ring[0].moved);
+    test_fos_chain(200);test_fos_run();assert(find_order_unreadable==9 && find_order_failures==12 && find_order_cursor==1);
+    /* Pass-through: inactive, stopped gate, other thread. */
+    test_fos_set(pa,ja,5);
+    InterlockedExchange(&find_order_active,0);test_fos_run();assert(find_order_passed==1);InterlockedExchange(&find_order_active,1);
+    stats.active=0;test_fos_run();assert(find_order_passed==2);stats.active=1;
+    ui_thread=GetCurrentThreadId()+1;test_fos_run();assert(find_order_threads==1);ui_thread=GetCurrentThreadId();
+    assert(test_fos_walk(keys,jumps,8)==5 && keys[0]==(uintptr_t)a30 && find_order_space_calls==16 && find_order_cursor==1);
+
+    /* Both call sites: E8 rel32 CAS each; owned needs both; restore puts both back. */
+    unsigned char *saved_thunk=thunk;thunk=image+0x6000000;
+    unsigned char *site=image+FIND_ORDER_SITE,*space=image+FIND_ORDER_SPACE_SITE;
+    memset(site-16,0x90,48);site[0]=0xe8;memset(space-16,0x90,48);space[0]=0xe8;
+    int32_t rel=(int32_t)((intptr_t)(image+FIND_ORDER_ASSIGN)-(intptr_t)(site+5));memcpy(site+1,&rel,4);
+    int32_t srel=(int32_t)((intptr_t)(image+FIND_ORDER_SPACE_ASSIGN)-(intptr_t)(space+5));memcpy(space+1,&srel,4);
+    unsigned char before[48],space_before[48];memcpy(before,site-16,48);memcpy(space_before,space-16,48);
+    assert(find_order_prepare() && find_order_space_prepare() && find_order_space_original_rel==srel);
+    assert(find_order_space_patched_rel==(int32_t)((intptr_t)(thunk+FIND_ORDER_SPACE_THUNK)-(intptr_t)(space+5)));
+    assert(find_order_swap(find_order_original_rel,find_order_patched_rel));find_order_installed=1;
+    assert(find_order_space_swap(find_order_space_original_rel,find_order_space_patched_rel));find_order_space_installed=1;
+    memcpy(&rel,space+1,4);assert(space[0]==0xe8 && space+5+rel==thunk+FIND_ORDER_SPACE_THUNK);
+    for(unsigned j=0;j<48;j++) if(j<17 || j>20) assert((space-16)[j]==space_before[j]);
+    assert(find_order_owned() && !find_order_space_swap(find_order_space_original_rel,find_order_space_patched_rel) && !find_order_space_prepare());
+    space[2]^=1;assert(!find_order_owned());
+    find_order_restore();assert(!find_order_restored && !find_order_installed && find_order_space_installed && !find_order_active);
+    space[2]^=1;find_order_restore();
+    assert(find_order_restored && !find_order_space_installed && !memcmp(space-16,space_before,48) && !memcmp(site-16,before,48) && find_order_owned());
+    space[0]=0xe9;assert(!find_order_space_prepare());space[0]=0xe8;
+    memcpy(&rel,space+1,4);rel+=1;memcpy(space+1,&rel,4);assert(!find_order_space_prepare());
+    /* Arming: the placeholder fails the first pins before any write. */
+    find_order_armed=find_order_restored=0;find_order_mode=FIND_ORDER_OFF;boot_phase=0;stats.issued=0;
+    int saved_identity=world_identity_installed;world_identity_installed=1;memcpy(space+1,&srel,4);
+    assert(!find_order_arm(FIND_ORDER_SORT) && !find_order_installed && !find_order_space_installed && !memcmp(space-16,space_before,48));
+    world_identity_installed=saved_identity;memset(site-16,0,48);memset(space-16,0,48);thunk=saved_thunk;
+
+    /* Bounded status with the space counters. */
+    char status[1024];assert(find_order_status(status,sizeof(status))>0 && strstr(status," space_installed=0 space_calls=16 space_candidates=100 space_reordered=0"));
+    printf("NATIVE_GATE FIND_ORDER tick=1 %s\n",status);
+    find_order_space_installed=INT32_MIN;find_order_space_calls=find_order_space_candidates=find_order_space_reordered=INT64_MIN;
+    find_order_armed=find_order_installed=find_order_restored=find_order_mode=INT32_MIN;InterlockedExchange(&find_order_active,(LONG)(-2147483647-1));
+    find_order_calls=find_order_applied=find_order_observed=find_order_passed=find_order_threads=find_order_empty=INT64_MIN;
+    find_order_candidates=find_order_duplicates=find_order_unmapped=find_order_reordered=find_order_collisions=INT64_MIN;
+    find_order_oversize=find_order_unreadable=find_order_foreign=find_order_failures=find_order_created=INT64_MIN;find_order_cursor=INT64_MAX;
+    int n=find_order_status(status,sizeof(status));
+    assert(n>0 && (unsigned)n+strlen("[X4LAN] NATIVE_GATE FIND_ORDER_STOP tick=18446744073709551615 \n")<sizeof(status));
+    find_order_space_installed=0;find_order_armed=find_order_installed=find_order_restored=find_order_mode=0;
+    InterlockedExchange(&find_order_active,0);test_fo_reset();find_order_created=0;
+    script_rng_current=saved_current;stats.active=0;boot_mode=0;boot_phase=0;stats.issued=0;
+    puts("native find order range-tree saved-ID walk/jumps/observe/failure/two-site CAS tests PASS");
 }
 /* With the X4 9.00 executable: the Execute pin, lea rdx,[rsp+0x40] (the
  * candidate vector) and lea rcx,[rbp+0xf0] before the E8 to the store, and
@@ -191,6 +373,29 @@ static void test_fo_native_image(const char *path) {
     const unsigned tampers[]={FIND_ORDER_EXECUTE,FIND_ORDER_SITE,FIND_ORDER_SITE+4,0xb87a66,0xb87b42};
     for(unsigned i=0;i<sizeof(tampers)/sizeof(*tampers);i++) {image[tampers[i]]^=1;assert(!find_order_pinned());image[tampers[i]]^=1;}
     assert(find_order_pinned());find_order_original_rel=find_order_patched_rel=0;
+    /* The range finds: FindSpaceInRangeAction's vtable slot 3, the store call
+     * (lea rcx,[r15+0x68]; mov r8,r12; lea rdx,[rbp-0x79] = the tree; E8), the
+     * tree's initialisation (first at +0x20 = rbp-0x59), the store's walk, its
+     * only call of the in-order store, the insert's key/value stores and its
+     * unsigned pointer compare (the address order this sort removes). */
+    assert(find_order_space_pinned() && find_order_space_prepare());
+    memcpy(&rel,image+FIND_ORDER_SPACE_SITE+1,4);
+    assert(image[FIND_ORDER_SPACE_SITE]==0xe8 && FIND_ORDER_SPACE_SITE+5+rel==FIND_ORDER_SPACE_ASSIGN && rel==find_order_space_original_rel);
+    assert(!memcmp(image+FIND_ORDER_SPACE_SITE-11,"\x49\x8d\x4f\x68\x4d\x8b\xc4\x48\x8d\x55\x87",11));
+    assert(((FIND_ORDER_SPACE_SITE+1)&63)<=60);
+    memcpy(&vtable_slot,image+0x2c0f660+0x18,8);assert((uintptr_t)vtable_slot==0x140000000ULL+FIND_ORDER_SPACE_EXECUTE);
+    assert(!memcmp(image+0xb8a8c1,"\x48\x8d\x45\x87\x48\x89\x45\x87\x4c\x89\x6d\x8f\x4c\x89\x6d\xbf\x4c\x89\x6d\x97"
+                                  "\x48\x8d\x45\x87\x48\x89\x45\xa7",28));
+    assert(!memcmp(image+0xd2ae3c,"\x49\x8b\x5f\x28",4) && !memcmp(image+0xd2ae6d,"\x49\x8b\x5f\x20",4));
+    assert(!memcmp(image+0xd2aeff,"\x48\x8b\x43\x10\x48\x85\xc0\x74\x1a\x48\x8b\xd8\x48\x8b\x40\x08",16));
+    memcpy(&rel,image+0xc604d9,4);assert(image[0xc604d8]==0xe8 && 0xc604d8+5+rel==FIND_ORDER_SPACE_STORE);
+    assert(!memcmp(image+0x3135e1,"\x48\x89\x43\x20\x89\x53\x28",7) && !memcmp(image+0x345720,"\x4c\x3b\x43\x20\x73",5));
+    const unsigned space_tampers[]={FIND_ORDER_SPACE_EXECUTE,0xb8aaba,FIND_ORDER_SPACE_SITE,FIND_ORDER_SPACE_SITE+4,0xb8af82,
+                                    FIND_ORDER_SPACE_ASSIGN,0xc604d9,0xc604fa,FIND_ORDER_SPACE_STORE,0xd2aeff,0xd2b0b4};
+    for(unsigned i=0;i<sizeof(space_tampers)/sizeof(*space_tampers);i++) {
+        image[space_tampers[i]]^=1;assert(!find_order_space_pinned());image[space_tampers[i]]^=1;
+    }
+    assert(find_order_space_pinned());find_order_space_original_rel=find_order_space_patched_rel=0;
     assert(VirtualFree(image,0,MEM_RELEASE));image=prior;thunk=prior_thunk;
-    puts("find order call site native pin, call target and tamper refusals PASS");
+    puts("find order call sites (component, range tree) native pins, call targets, layout and tamper refusals PASS");
 }

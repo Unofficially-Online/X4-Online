@@ -214,6 +214,12 @@ static void transition_import_capture(void *,uint64_t,uint64_t);
 static void origin_import_capture(void *,uint64_t,uint64_t);
 static void origin_transition_edge(uint64_t);
 static void portable_import_capture(void *,uint64_t,uint64_t);
+/* Hot join (lockstep_join.h): the joiner's import maps the save's IDs to the session's portable keys. */
+static int join_import_active(void);
+static uint64_t join_tick_base(void); /* a joiner's session tick T after its admission, else 0 (the snapshot fixture binds there) */
+static int join_import(uint64_t saved,uint64_t runtime,uint64_t *portable);
+static int join_unsealed_ok(uint64_t source);
+#define JOIN_UNSEALED_OK(source) join_unsealed_ok(source)
 static void snapshot_nav_observe(unsigned,const void *);
 static int read_local(const void *,void *,size_t);
 static int sample_read(const void *,void *,size_t);
@@ -480,6 +486,7 @@ static int cov_load(void) {
 #include "lockstep_nav_octree_sites.h"
 #include "lockstep_nav_octree.h"
 #include "lockstep_nav_mesh.h"
+#include "lockstep_character_play.h"
 #include "lockstep_gravidar_digest.h"
 #include "lockstep_gravidar_deadlines.h"
 #include "lockstep_portable_math.h"
@@ -505,7 +512,7 @@ static void close_connection(void) {
 static int gate_sites_owned(void) {
     return !(*(uint64_t*)(image+WORD_RVA)!=patched_word || (path_installed && *(unsigned __int128*)(image+0xef4610)!=path_patched) || !travel_owned() || !tsnap_owned() || !pilot_owned() ||
        (ship_installed && *(void**)(image+SHIP_ENTRY)!=(void*)ship_move) ||
-       !weapon_owned() || !bullet_owned() || !bullet_cadence_owned() || !speak_timer_owned() || !cr_owned() || !nav_cadence_owned() || !nav_player_owned() || !ss_owned() || !pt_owned() || !wr_owned() || !trr_owned() || !tz_owned() || !gwide_owned() || !view_owned() || !mt_owned() || !rc_owned() || !wfire_owned() || !motion_order_owned() || !wreck_owned() || !ptrace_owned() || !border_owned() || !sorder_owned() || !erng_owned() || !brng_owned() || !uic_owned() || !spr_owned() || !ul_owned() || !noct_owned() || !nmesh_owned() || !pmath_owned() || !xrcp_owned() || !fpenv_owned() || !pdec_owned() || !pbud_owned() || !ptf_owned() || !bpose_owned() || !sw_owned() || !ll_owned() || !oc_owned() || !po_owned() || !ma_owned() || !br_owned() || !eco_owned() ||
+       !weapon_owned() || !bullet_owned() || !bullet_cadence_owned() || !speak_timer_owned() || !cr_owned() || !nav_cadence_owned() || !nav_player_owned() || !ss_owned() || !pt_owned() || !wr_owned() || !trr_owned() || !tz_owned() || !gwide_owned() || !view_owned() || !mt_owned() || !rc_owned() || !wfire_owned() || !motion_order_owned() || !wreck_owned() || !ptrace_owned() || !border_owned() || !sorder_owned() || !cplay_owned() || !erng_owned() || !brng_owned() || !uic_owned() || !spr_owned() || !ul_owned() || !noct_owned() || !nmesh_owned() || !pmath_owned() || !xrcp_owned() || !fpenv_owned() || !pdec_owned() || !pbud_owned() || !ptf_owned() || !bpose_owned() || !sw_owned() || !ll_owned() || !oc_owned() || !po_owned() || !ma_owned() || !br_owned() || !eco_owned() ||
        (attention_installed && *(uint64_t*)(image+ATTENTION_ENTRY)!=attention_patched_word) ||
        (mass_installed && *(uint64_t*)(image+MASS_ENTRY)!=mass_patched_word) ||
        (death_installed && *(void**)(image+DEATH_ENTRY)!=(void*)death_listener) ||
@@ -601,6 +608,7 @@ static void finish(unsigned reason) {
     ptrace_restore();
     border_restore();
     sorder_restore();
+    cplay_restore();
     noct_restore();
     nmesh_restore(); /* opens the builds first: a build waiting in a stub runs as natively */
     nos_restore();
@@ -714,7 +722,7 @@ static void finish(unsigned reason) {
     if(br_installed) stats.restored=0;
     if(eco_installed) stats.restored=0;
     if(motion_order_installed) stats.restored=0;
-    if(ptrace_installed || border_installed || sorder_installed || noct_installed || nmesh_installed) stats.restored=0;
+    if(ptrace_installed || border_installed || sorder_installed || noct_installed || nmesh_installed || cplay_installed) stats.restored=0;
     if(registry_md_owned && !registry_md_restored) stats.restored=0;
     if(pilot_armed && !pilot_restored) stats.restored=0;
     if(pres_armed && !pres_restored) stats.restored=0;
@@ -884,6 +892,7 @@ static void gate_step(tick_fn original,void *frame,unsigned char loading,LARGE_I
 /* Protocol 5 (opt-in): the relay chooses the window; the plan's pilot delay is adopted before tick 1. */
 #define ADAPT_WITH_PILOT 1
 #include "lockstep_adaptive.h"
+#include "lockstep_join.h"   /* hot join: join save, side table and gate state (native_gate_join, default off) */
 static void gate_tick(void *frame,unsigned char loading) {
     tick_fn original=(tick_fn)(image+TICK_RVA);
     if(!stats.active) {gate_original_once(original,frame,loading);return;}
@@ -972,6 +981,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(ptrace_installed && !ptrace_check()) {finish(PTRACE_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(border_installed && !border_check()) {finish(BORDER_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(sorder_installed && !sorder_check()) {finish(SORDER_STOP_REASON);gate_original_once(original,frame,loading);return;}
+    if(cplay_installed && !cplay_check()) {finish(CPLAY_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(noct_installed && !noct_check()) {finish(NOCT_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(nmesh_installed && !nmesh_check()) {finish(NMESH_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(!predict_check_live()) {finish(PREDICT_STOP_REASON);gate_original_once(original,frame,loading);return;}
@@ -985,7 +995,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(world_identity_installed && world_identity_failures) {finish(72);gate_original_once(original,frame,loading);return;}
     if(created_armed && created_failures) {finish(CREATED_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(origin_failed() || getup_failed()) {finish(74);gate_original_once(original,frame,loading);return;}
-    if(snapshot_configured && (snapshot_failures || (stats.issued>=4 && snapshot_enrolled!=12))) {finish(74);gate_original_once(original,frame,loading);return;}
+    if(snapshot_configured && (snapshot_failures || (stats.issued>=join_tick_base()+4 && snapshot_enrolled!=12))) {finish(74);gate_original_once(original,frame,loading);return;}
     if(boot_mode && boot_phase<3) {
         unsigned boot_timeout=portable_wire_enabled?portable_wire_startup_ms:120000;
         if(thread!=main_thread || GetTickCount64()-boot_started>boot_timeout) {finish(26);gate_original_once(original,frame,loading);return;}
@@ -1006,6 +1016,8 @@ static void gate_tick(void *frame,unsigned char loading) {
         if(boot_hold_armed && !boot_hold_admit()) {InterlockedIncrement64(&boot_hold_failures);finish(86);gate_original_once(original,frame,loading);return;}
         /* Gravidar idle after the boot drain: active units back to their constructor times. */
         if(gdl_armed && !gdl_admit()) {InterlockedIncrement64(&gdl_failures);finish(GDL_STOP_REASON);gate_original_once(original,frame,loading);return;}
+        /* Hot join: a joiner's loaded world gets the session's side table and gate state, and counts session ticks. */
+        if(!join_admit()) {finish(JOIN_STOP_REASON);gate_original_once(original,frame,loading);return;}
     }
     if(thread!=main_thread||loading||!table||*(int*)((unsigned char*)table+0x130)) {finish(2);gate_original_once(original,frame,loading);return;}
     if(!gate_sites_owned()) {
@@ -1030,7 +1042,7 @@ static void gate_tick(void *frame,unsigned char loading) {
         gate_step(original,frame,loading,rf_ft_begin);return;
     }
     stats.game=*(double*)(image+GAME_RVA);stats.real=*(double*)(image+REAL_RVA);
-    if(stats.issued) {
+    if(stats.issued && !join_skip_dt_once()) {
         double error=fabs((stats.game-previous_game)-gate_tick_dt());
         if(error>stats.max_dt_error) stats.max_dt_error=error;
         if(error>1e-8||(!portable_wire_enabled && stats.report_tick!=stats.issued)) {finish(4);gate_original_once(original,frame,loading);return;}
@@ -1051,6 +1063,8 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(!rid_frame(stats.completed)) {finish(RID_STOP_REASON);gate_original_once(original,frame,loading);return;}
     /* The simulation camera's sites, at the first join after its stand-in is set (default off). */
     if(rc_installed && !rc_join_point(stats.completed)) {finish(rc_stop_reason());gate_original_once(original,frame,loading);return;}
+    /* Hot join (default off): the join save, side table and package after step T, before its report. Never stops. */
+    join_boundary(stats.completed);
     {LARGE_INTEGER now;QueryPerformanceCounter(&now);ft_join=ft_us(ft_mark,now);}
     if(!rotation_native_frame_ready() || !portable_native_capture(stats.completed,frame,loading)) {finish(74);gate_original_once(original,frame,loading);return;}
     /* Wire crypto covers the protocol 3/4 relay path only; the portable and GetUp transports are refused. */
@@ -1111,7 +1125,7 @@ static void gate_tick(void *frame,unsigned char loading) {
         snprintf(permit,sizeof(permit),"NGGO|%u|%s|%u|%llu",wire_version,secret,stats.slot,(unsigned long long)(stats.completed+1));
         snprintf(stop,sizeof(stop),"NGSTOP|%u|%s|%u|%llu",wire_version,secret,stats.slot,(unsigned long long)stats.completed);
         if(!strcmp(reply,stop)) {finish(1);break;}
-        int accepted=wire_version==3?gate_permit_blobs(reply,(size_t)count,permit,stats.slot,wire_clients,blob_proposal,blob_inputs):
+        int accepted=wire_version==3?gate_permit_blobs(reply,(size_t)count,permit,stats.slot,wire_clients,join_own(stats.completed,blob_proposal),blob_inputs):
             gate_permit_inputs(reply,permit,stats.slot,proposal,inputs[0],inputs[1]);
         if(accepted<0) {finish(56);break;}
         if(!accepted) continue;
@@ -2085,6 +2099,21 @@ static int lua_shape_order_row(lua_State *L) {
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=sorder_row_text((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
+/* character_play(mode): 'observe' or 'sync' (lockstep_character_play.h). */
+static int lua_character_play(lua_State *L) {
+    size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);
+    int m=mode && length==7 && !memcmp(mode,"observe",7)?CPLAY_OBSERVE:mode && length==4 && !memcmp(mode,"sync",4)?CPLAY_SYNC:CPLAY_OFF;
+    p_lua_pushnumber(L,m!=CPLAY_OFF && cplay_arm(m));return 1;
+}
+static int lua_character_play_status(lua_State *L) {
+    char out[1024];int n=accept_ui()?cplay_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_character_play_row(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[384];int n=0;
+    if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=cplay_row_text((uint64_t)index,out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 /* nav_octree(mode, delay, snapshot): 'observe', 'sync', 'deadline' (delay: ticks from request to visibility, 1..3600) or 'agreed'. */
 static int lua_nav_octree(lua_State *L) {
     size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);double delay=p_lua_tonumber(L,2);
@@ -2361,7 +2390,7 @@ static int lua_find_order(lua_State *L) {
     p_lua_pushnumber(L,isfinite(mode) && (mode==FIND_ORDER_OBSERVE || mode==FIND_ORDER_SORT)?find_order_arm((int)mode):0);return 1;
 }
 static int lua_find_order_status(lua_State *L) {
-    char out[768];int n=accept_ui()?find_order_status(out,sizeof(out)):0;
+    char out[1024];int n=accept_ui()?find_order_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_find_order_row(lua_State *L) {
@@ -2644,10 +2673,15 @@ static int lua_poll(lua_State *L) {
     p_lua_pushnumber(L,snapshot_prepared);p_lua_setfield(L,-2,"snapshot_prepared");
     p_lua_pushnumber(L,snapshot_enrolled);p_lua_setfield(L,-2,"snapshot_enrolled");
     p_lua_pushnumber(L,(double)snapshot_failures);p_lua_setfield(L,-2,"snapshot_failures");
-    char boundary[384];int boundary_size=snprintf(boundary,sizeof(boundary),"stage=%s actor=%u tick=%llu ui=%u main=%u view=%u time=%016llx model=%x bind_banks=%u/%u prepare_banks=%u/%u",
+    /* views: the session's view of each actor (a joiner's package; '-' elsewhere) / the bound views; check: the actor check
+     * that refused last, with both views on a joiner's bind_joiner_view (lockstep_snapshot_fixture.h). */
+    char views[2][13];
+    char boundary[768];int boundary_size=snprintf(boundary,sizeof(boundary),"stage=%s actor=%u tick=%llu ui=%u main=%u view=%u time=%016llx model=%x bind_banks=%u/%u prepare_banks=%u/%u views=%s/%s %s",
         snapshot_prepare_stage,snapshot_attempt_actor,(unsigned long long)snapshot_attempt_tick,snapshot_attempt_ui,snapshot_attempt_main,
         snapshot_attempt_view,(unsigned long long)snapshot_attempt_time,snapshot_attempt_model,
-        snapshot_bound_banks.read,snapshot_bound_banks.write,snapshot_prepared_banks.read,snapshot_prepared_banks.write);
+        snapshot_bound_banks.read,snapshot_bound_banks.write,snapshot_prepared_banks.read,snapshot_prepared_banks.write,
+        join_views_text(join_rx.t.gate.fixture,views[0]),join_views_text(snapshot_bound_views,views[1]),snapshot_check);
+    if(boundary_size<0 || (size_t)boundary_size>=sizeof(boundary)) boundary_size=(int)strlen(boundary);
     p_lua_pushlstring(L,boundary,(size_t)boundary_size);p_lua_setfield(L,-2,"snapshot_boundary");
     FIELD(wait_game_delta);FIELD(max_dt_error);FIELD(active);FIELD(reason);FIELD(restored);FIELD(slot);
 #undef FIELD
@@ -3357,6 +3391,7 @@ static int lua_world_watch(lua_State *L) {
 #include "lockstep_own_predict_lua.h"
 #include "lockstep_virtual_players_lua.h"
 #include "lockstep_hit_native_lua.h"
+#include "lockstep_join_lua.h"       /* hot join (lockstep_join.h) */
 static int lua_world_detail(lua_State *L) {
     double number=p_lua_tonumber(L,1);
     if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures) {p_lua_pushnil(L);return 1;}
@@ -3956,6 +3991,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(view_points);METHOD(view_points_frame);METHOD(view_points_status);METHOD(view_points_rows);METHOD(view_points_row);METHOD(view_points_triggers);METHOD(view_points_ui);METHOD(view_points_source);METHOD(view_points_mask);METHOD(hybrid);METHOD(hybrid_frame);METHOD(hybrid_proposal);METHOD(hybrid_apply);METHOD(hybrid_census);METHOD(hybrid_private);METHOD(hybrid_inside);METHOD(hybrid_status);METHOD(sample_profile);METHOD(sample_profile_status);METHOD(sample_profile_row);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_uncovered);METHOD(region_camera_standins);METHOD(region_camera_status);METHOD(region_camera_effect_row);METHOD(region_camera_policy_rows);METHOD(region_camera_policy_row);METHOD(region_camera_highway_rows);METHOD(region_camera_highway_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(motion_watch);METHOD(motion_watch_zone);METHOD(motion_watch_digest);METHOD(motion_watch_doors);METHOD(motion_watch_door_row);METHOD(motion_watch_splines);METHOD(motion_watch_spline_row);METHOD(spline_join_all);METHOD(motion_watch_frame);METHOD(motion_watch_row);METHOD(motion_watch_status);METHOD(motion_watch_orders);METHOD(motion_watch_order_row);METHOD(motion_watch_target_row);METHOD(motion_watch_event_row);METHOD(motion_watch_refresh_row);METHOD(wreck_watch);METHOD(wreck_watch_frame);METHOD(wreck_watch_row);METHOD(wreck_watch_write_row);METHOD(wreck_watch_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(build_rng);METHOD(build_rng_status);METHOD(ui_cargo);METHOD(ui_cargo_status);METHOD(ui_cargo_row);METHOD(supply_rows);METHOD(supply_rows_status);METHOD(supply_row);METHOD(ui_lazy);METHOD(ui_lazy_status);METHOD(ui_lazy_row);METHOD(portable_math);METHOD(portable_math_status);METHOD(exact_reciprocal);METHOD(exact_reciprocal_status);METHOD(fp_env);METHOD(fp_env_status);METHOD(decimal);METHOD(decimal_status);METHOD(supply_wants);METHOD(supply_wants_status);METHOD(supply_wants_row);METHOD(macro_arena);METHOD(macro_arena_status);METHOD(macro_arena_row);METHOD(pick_order);METHOD(pick_order_status);METHOD(pick_order_row);METHOD(order_canon);METHOD(order_canon_status);METHOD(order_canon_row);METHOD(address_order);METHOD(address_order_status);METHOD(address_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(runtime_ids);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_rows);METHOD(runtime_ids_row);METHOD(guidance_local);METHOD(guidance_local_status);METHOD(fp_redirect_drones);METHOD(fp_attack);METHOD(fp_attack_watch);METHOD(fp_attack_status);METHOD(fp_attack_row);
     METHOD(physics_trace);METHOD(physics_trace_status);METHOD(physics_trace_row);METHOD(body_order);METHOD(body_order_status);METHOD(body_order_row);METHOD(physics_trace_children);METHOD(physics_trace_saved);METHOD(physics_trace_from);
     METHOD(shape_order);METHOD(shape_order_status);METHOD(shape_order_row);
+    METHOD(character_play);METHOD(character_play_status);METHOD(character_play_row);
     METHOD(nav_octree);METHOD(nav_octree_status);METHOD(nav_octree_row);METHOD(nav_octree_report);METHOD(nav_octree_agree);METHOD(nav_octree_lookup_row);METHOD(nav_octree_sites);METHOD(nav_octree_sites_status);METHOD(nav_octree_site_row);METHOD(nav_mesh);METHOD(nav_mesh_status);METHOD(nav_mesh_frame);METHOD(nav_mesh_row);
     METHOD(camera_offset);METHOD(camera_offset_status);METHOD(camera_anchor);METHOD(camera_anchor_keys);METHOD(camera_anchor_status);
     METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(gravidar_digest);METHOD(gravidar_digest_frame);METHOD(gravidar_digest_row);
@@ -4016,7 +4052,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(player_request_enable);METHOD(player_request_event);METHOD(player_request_scope);
     METHOD(player_fire_enable);METHOD(player_trigger);METHOD(player_target);METHOD(player_fire_state);METHOD(player_fire_event);METHOD(player_trigger_cleanup);
     METHOD(player_launch_enable);METHOD(player_launch_event);
-    METHOD(pilot_inputs);METHOD(pilot_inputs_status);METHOD(pilot_why);METHOD(pilot_inputs_frame);METHOD(pilot_capture);METHOD(pilot_apply);METHOD(pilot_pending);
+    METHOD(pilot_inputs);METHOD(pilot_inputs_status);METHOD(pilot_why);METHOD(pilot_absent);METHOD(pilot_handover);METHOD(pilot_abort);METHOD(pilot_absent_state);METHOD(pilot_absent_restore);METHOD(pilot_inputs_frame);METHOD(pilot_capture);METHOD(pilot_apply);METHOD(pilot_pending);
     METHOD(pilot_device);METHOD(pilot_camera_follow);METHOD(pilot_camera);METHOD(pilot_camera_status);METHOD(pilot_ship);METHOD(pilot_native_capture);
     METHOD(pilot_native);METHOD(pilot_native_refusals);METHOD(pilot_stock);METHOD(pilot_stock_pins);METHOD(pilot_stock_callers);METHOD(pilot_present);METHOD(pilot_present_pause);METHOD(pilot_present_resume);METHOD(pilot_present_diff);METHOD(pilot_death);METHOD(pilot_foot);METHOD(pilot_foot_bodies);METHOD(pilot_foot_slots);METHOD(pilot_death_frame);METHOD(pilot_death_ship);METHOD(pilot_death_suit);METHOD(crash_note);METHOD(cutscene_ready);METHOD(cutscene_ready_status);METHOD(cutscene_ready_row);METHOD(pilot_death_status);METHOD(pilot_stock_capture);METHOD(pilot_stock_apply);METHOD(pilot_stock_inject);METHOD(pilot_stock_local);METHOD(pilot_stock_frame);
     METHOD(virtual_players);METHOD(virtual_players_status);METHOD(virtual_players_regions);METHOD(virtual_players_undeclared);METHOD(virtual_players_map);METHOD(virtual_players_hashes);METHOD(virtual_players_raw);METHOD(virtual_players_neighbours);
@@ -4040,6 +4076,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(body);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
+    METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_unpaired);
 #undef METHOD
     return 1;
 }

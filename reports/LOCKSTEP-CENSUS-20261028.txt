@@ -1137,6 +1137,120 @@ checks 3.9, probe 1.1, relay wait 0.08. perf-Pbare (near-minimal gate) outside
 21.4 ms. 4 clients p50 32 ms on this PC. FP keys cost nothing measurable.
 World captures (diagnostic) are 60 of the 70 frames over 100 ms in play22-long.
 Needed: a tick rate key or agreed per-tick dt (FP agent).
+
+EVERYTHING ON BY DEFAULT, LIVE (1 Nov, build171 = smoke 68d48955: defaults + deathfoot + starts merged)
+D1 (d1s): a session config of slot, port, token, clients and the identity plan only; the defaults stack did the rest
+(DEFAULTS applied=165 explicit=3 skipped=4: adaptive max, wire crypto, peer window, rendezvous port; ~130 modules armed:
+render frames 60, own-ship prediction, every UI replay family, guard, foot, bodies, foot slots, death, hit claims). Two
+clients, stock piloting demo/demo2, 3600 ticks: relay 0 digest mismatches, census at 3600 0 of 531097 differing. Open:
+both clients stopped with 163 player_killed in the stop+1 teardown (nobody died; death + bodies/foot slots armed
+together is new): fix agent on it. ERROR DEGRADED rows (no split): BUILD_RNG fallback 6, FIND_ORDER unmapped 30,
+CREATED_IDENTITIES macro_unknown 1: to classify (degraded path or counter to exempt).
+DF1 (Play42F2 combat + foot, bodies, foot slots, guard 'all'; bare config): 6000 ticks, 0 mismatches, census at 5400 0
+of 532105; slot 1 died 6 times (X4's eject) and respawned 5 with slot 2's body connected (bodies_mask=2, kill=1/0/0/0);
+slot 2 never died, so the kill guard's take-off is not exercised yet. The same 163 at the end.
+DF2 (slot 2 to die and wait in its suit while slot 1 walks): did not play as designed: slot 1's dock_at was accepted but
+its ship stayed at its start (as in w1bfoot), the missiles did no damage (both hulls 100 at 3780). Client 2 crashed at
+3803 (c0000005 at ea75e1, frame thread) right after slot 1's Get Up in open space: fix agent on it. Digests apart from
+67: the wharf patrol (0xa7949 group, zone 0x732) differs at 1800; DF2 ran without nav_mesh 'sync', which footlook5 had:
+nav_mesh 'sync' is now a default with on foot (77d997ea).
+STARTS: L4 refusals (offline) as specified: a class b start per player names its world parts (the trade start's
+player factory from god.xml, gs_trade and setup_gamestarts MD); the trade start as the base refuses (on foot); fight in
+factions without --omit names blueprints, inventory, known, research. L1 (a session from the fight start, captured on
+lane b5 in 80 s, session save sha 4bbe8aaa.., 2 clients, coop, defaults, orders demo): both clients loaded the fight
+world and stopped with reason 1 at 602, but slot 2's declared digest parts from 236 (l1) / 278 (l1w); census at 600:
+one fixture ship's motion (l1) / 0 differing (l1w). Agent on the first differing part.
+FIXES LIVE (build173 = deathfoot 4d62e81b: P_k gets a hold and a stand-in camera while it is connected or taken off):
+d1s2 (D1 again): reason=1 on both at 3601, relay pass, 0 mismatches; no Game Over, no CRASH. df2b (DF2 + nav_mesh 'sync'):
+no crash through 8699, reason=1 on both; the 67 split is gone (nav mesh); census 0 of ~533,000 at 5400 and 7200, but the
+declared digest parts from 3903: slot 1's walking bank (PILOT_RECEIPT |W2.1 at 3960, all other parts equal), the
+known walk item (on-foot 10d); foot_locals view:0 on client 1, view:1 on client 2: agent on it. Scenario: slot 1's
+dock_at never moves the ship and the missiles never hurt slot 2, so DF2 still lacks a slot 2 death.
+L1 (fight start) is intermittent: l1m, l1s (stock piloting) clean; l1m2, l1m3 (parallel) split at 278: the player ship
+aea07's x/z (flown by its own Steering under --source script); agent on the motion watch rows.
+STARTS AND ON FOOT FIXED LIVE (build175-177):
+- L1 (fight start): the player ship's navigation upkeep ran unprotected while its controls were parked (nav_player now
+  covers every call where the Agent flies the ship, e6bf862d): l1f1, l1f2 clean (0 mismatches).
+- Walk: X4's double-tap clock (the last forward press) took the process's real time (c4685101: game time under X4's
+  time lock): df2c2 8700 ticks, slot 1 up and walking from 3800, 0 mismatches, census 0 at 1800/3600/5400/7200.
+- Wharf patrol: intermittent on every build (df2b2 split, df2c split, df2b and df2c2 clean): three client classes
+  from unkeyed draws on the per-frame RNG word in frame 22 (on-foot section 15); with native_gate_draw_watch_frame on,
+  8 of 8 clients identical and 4 runs clean: agent on the race.
+- L2 (custom_creative base, slot 2 the fight start in cluster_47, factions): the pool factions had no account (X4's
+  dummy account: garbage readback), then transfer_money's negative result: both fixed (cc2b5852, 79e4d9ac); l2c:
+  wallet applied (own account 5000 Cr, player's wallet unchanged), reputation steps applied, 642 ticks 0 mismatches,
+  the region camera keeps both sectors. L3 (coop, slot 2 the discover start): 36 identity steps applied (wallet +5000
+  to the shared wallet, research, blueprints, 8 known sectors), 642 ticks 0 mismatches.
+HOT JOIN LIVE (J1): the join adapter registered (a6d8f14c), absent slots neutral in every pilot layer and pins
+against the file image (hotjoin 28ca65a2, b8afb831): the session runs, SAVE_AT arrives, both savers pass the pins
+and X4's own save writes j633; the side-table capture then refuses at the MD heap's first cue key (tables:md:22,
+ctx 0, wake 17904, vec 0): agent re-deriving the director/scheduler layouts against the live structures.
+WHARF PATROL FIXED (build179, patrol bf5f3d23): the class-making draws of frame 22 were bodies starting an animation
+(character manager slot 17): the start draws only when the asset loader thread has the character resident, a race.
+native_gate_character_play='sync' (session default) loads a missing asset synchronously and runs the start on its own
+keyed word (stop 188). df2p1-4 (DF2 scenario to 1800, each 18-24 characters loaded synchronously): 4 of 4 clean,
+census 0 at 1800 (before: about half the runs split). J1 on build178 (context list and nested cue keys, 0005baca):
+capture reaches ctx 38806, wake 17904, md 173 entries, then refuses at an unnamed static cue (md#179 static_unnamed,
+parent 0, depth 4): agent on a script/tree-path key for those.
+D1 RESIDUAL (build182: d1s3 split at 1266, d1s4-6 clean): mission scripts GM_BoardShip (tick 1) and GM_SupplyFactory
+(tick 7) pick clusters with find_cluster_in_range, whose result tree is sorted by object address (per process): equal
+draws, another first cluster (0x729 vs 0x9b, the sectors of the two differing ships). A second find_order hook sorts that
+tree by saved ID (patrol 6f0c5655, stop 92). build184: d184a-d (D1 to 1800) 4 of 4 clean, space_installed=1, 56 calls,
+2 reordered, FIND_ORDER rows equal. MD cue names: the bounded name-map walk (8,192 steps) left late cues of the large
+story scripts unnamed/unkeyed; every module now names cues from their own field (cuenames dcc1346d): SCRIPT_RNG
+unnamed=0 unkeyed=0 live. HOT JOIN J1: MD pairing fixed (activation rounded by the save: 12255 applied, 0 missing), the
+wreck view carried in the package (actor 8 died at 508); j1-10: admission passes, the joiner reports tick 633, then the
+probe's Lua sample of the wreck differs after loading (health sample missing): agent on the probe state at the join.
+J1 END TO END (j1-11, build184 + probe state 066d5a64: actors as ConvertIDTo64Bit values, fixture v2, world hash and
+pilot window providers): savers save at 633 (2.8 s pause, equal packages); the joiner loads, is admitted and replays the
+journal 633..1799 at 24.05 steps/s (catch-up measured); its declared digest differs from 634. Census joiner vs saver at
+900: 328,494 equal, 195,725 differ (CargoBay 55,608 health, Turret 54,368 and ShieldGenerator 41,243 motion, Weapon
+16,440 health, ships 6,267+3,090, stations 1,376 ...): the values save+load rounds or drops. Agent on a capture at T+1
+and the side-table entries for the large classes.
+J1 WITH HEALTH AND POSE RESTORED (j1-12, build185 = hotjoin b32ecfa5: shield groups (loader clock, six-digit rounding)
+and local rotations (rounded Euler degrees) carried exactly, package v2; census at T+1 on both sides): at 634 507,188 of
+523,529 equal (16,341 differ), at 900 16,748 (stable). Left: ships' navigation and motion state (nav.refresh_relation
+9817, attention 6244, bank pending 3157, parameters_due 58: nearly every flying ship) and equipment attention levels.
+Catch-up 23.3 steps/s. Agent on attention and ship navigation state (package v3).
+J1 PACKAGE V3 (j1-13 refused saver_disagree: NAV probe_due of 9,916 off probes is per process, not carried since
+593e08fa; j1-14 build187): savers agree, the joiner applies NAV to 10,010 controllers: at T+1 513,900 of 523,529 equal
+(9,629 differ, from 16,341), equipment equal but the Xenon fight's weapons; flying ships still apart (nav refresh
+time/relation at 634 on 8,906, motion 4,125 at 634 -> 10,051 at 900): agent on the in-flight state.
+J1 PACKAGE V4 (j1-15, build188: PATH = the session's pathing batches, cursors, round-robin and new-agent list (the
+joiner's manager skipped its first pass after the load); REGION = the damage fields' pass times (the loader reset them,
+the hazard region fired on the joiner's first step)): at T+1 521,433 of 523,529 equal (99.6%; health 4 = a real hit at
+T+1), PATH_DETERMINISM at 634 equal (count 10010, same walk); 2,092 ships' motion apart already at T+1 (486 with a
+pending transition) spread by 900 (10,054). Agent on the in-flight ship state (package v5).
+J1 V5/V6 (j1-16..j1-21): the pin check now keeps bytes our modules changed before the arming (exact_reciprocal and
+travel_snapshot rewrite instructions inside pinned ranges; the joiner takes its baseline at admission) and the flight model's
+padding is carried as 0 (+0xac, +0x133 differ per process). v5 FLIGHT restores the linear flight model (a watched ship
+30.4 m -> 4 mm off at T+1), v6 AGENT 17 Agent values; T+1 still 2,087 differing because the joiner's stepped ships start a
+new leg and re-target at T+1 (probe t1: savers newleg 37 / retarget 55, joiner 2026 / 2012): agent on the trigger
+(waypoints differ on 9,948 Agents, pending entries on 4,850).
+J1 V7 (j1-22, build195, hotjoin a4eed3e6 ROUTE: the save writes an Agent's waypoints as <targetpoints> (none for the
+5,111 formation wingmen) and the loader turns them into pending waypoints with the re-target flag set; ROUTE carries both
+waypoint lists by portable ID and rebuilds them with the engine's own clear/append): the T+1 probe is equal on all three
+clients (t1=9997:9997:2040:37:145:55:0); census at T+1 523,170 of 523,529 equal (359 differ: 355 ships' motion, 4 the
+real hit, 3 timing; 99.93%); at 900 5,207 differ (v6: 10,465). Agent on the last 355.
+J1 V8 (j1-25, build198: PARAM = the Agents' three flight parameter slots (the step turns by +0x378..+0x380 x dt: 279 of
+289 ships turning at T differed), DOCK = the dock/undock controllers' census fields; their padding and a per-process
+cache (+0xf0..+0xff) carried as 0 after two saver_disagree runs j1-23/j1-24): at T+1 523,512 of 523,529 equal (17 differ:
+the 13 Steering/Spline flight models not carried yet, 4 hit by a projectile in flight at T (saves hold none), 3 timing;
+99.997%), the T+1 step equal on all three clients; at 900 2,509 differ (v7 5,207, v6 10,465). Agent on the 17 (v9).
+J1 V9 (j1-27, build199 = smoke c34efc6a, hotjoin c34c2e7b STEER, STEERPT: the steering models and their path points): savers
+agree, package 106 MB, steer=10:10 applied, the T+1 step equal on all three clients; census at T+1 still 17 of 523,529 (13 motion, 4
+health; the 3 timing objects are gone), at 900 2,491 (v8 2,509). The steering state alone does not bring the 10 ships to equal.
+STATIC CUE NAMES FROM THE CUE'S OWN FIELDS (offline, contrib/ferrite-cuenames after a6c41bd2; not run live): the
+script RNG's MD identity, md_resume_rng, md_timed_rng, guidance_local and the NPC traces named a static cue by walking its
+script's name map with an 8,192-step budget (~2,700 keys); the six large Story_* scripts hold 2,900-4,400, so their
+Start/Setup/... cues read as unnamed and drew native (hot join report 1.2). lockstep_cue_name.h now gives every module
+the hot join's path "<script>.<root>.<...>.<cue>" from each level's own name (+0xc8) and the script's (+0x150 -> +0x18),
+one implementation (the join's key unchanged); pinned (Windows: the join's constructor/import ranges, now also checked
+by the modules; Linux: gate_sites.h cue_path_*). A root's name is the map's; a cue below a root now carries its
+ancestors, so those keys change (names only, the same on every client; library copies no longer share a name). A
+refused path is counted: SCRIPT_RNG and MD_RESUME_RNG status cue_refused= with cue_refusal= (the first's check and
+fields). Expected live: the MD share of SCRIPT_RNG unnamed=/unkeyed= (14/14 in recent logs) and MD_RESUME_RNG
+unnamed= fall to 0 with cue_refused=0; those story cues' draws become keyed (they differ from earlier builds).
 PER-PLAYER FACTION SETTINGS LIVE (playersettings 0bdb33bc + 8c72acf5, build169 = smoke after 8ea0c9e2; f3set2, factions
 mode, scripted, 602 ticks): relay pass, 0 mismatches; paint theme, logo, loadout level, illegal ware and ships-wait set per
 slot and applied on both clients at the same tick (slot 2's 'scope settings'); a fighter spawned for each faction at 420

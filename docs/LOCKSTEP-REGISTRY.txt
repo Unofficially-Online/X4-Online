@@ -222,11 +222,13 @@ Modules (define, owner):
   182 RF_STOP_REASON            lockstep_render_frames.h
   183 RDISP_STOP_REASON         lockstep_render_display.h (render stages 2/3: camera, motion)
   184 OPRED_STOP_REASON         lockstep_own_predict.h (own-ship prediction)
-  185 PFOOT_STOP_REASON         lockstep_pilot_foot.h (slot 1 on foot; also a stage of a pnat pass: the why names it),
+  185 PFOOT_STOP_REASON         lockstep_pilot_foot.h (slot 1 on foot; also a stage of a pnat pass: the why names it;
+                                foot_clock: no session clock for a replayed walking state, the run's double-tap),
                                 lockstep_pilot_foot_body.h (native_gate_pilot_foot_bodies: slots 2..N's players in
                                 their seats' rooms; whys body_*, with the kill guard at KillRecursive 3e525b
                                 body_kill_install, body_kill_lost, body_kill_restore; parked off the tree while anyone
-                                is off its seat),
+                                is off its seat; every X4 connect/take-off held (+0xd4) and with a stand-in camera
+                                (+0x4e8): body_killed, body_camera, body_hold, body_universe when X4 did it anyway),
                                 lockstep_pilot_foot_slots.h (native_gate_pilot_foot_slots: slots 2..N get up and walk;
                                 whys slot_*: slot_scope, slot_may_stand_fault, slot_release_vtable,
                                 slot_controller_vtable, slot_release_fault, slot_stand_fault, slot_fpc,
@@ -238,12 +240,18 @@ Modules (define, owner):
   187 HYB_STOP_REASON          lockstep_hybrid.h (native_gate_hybrid, hybrid sectors slice H1; whys: no_slots, owner_slot,
                                 owner_lost, owner_sector, shared_sector, sector_key, sector_lost, owner_left, other_entered,
                                 members_full, frame_guard, record_shape, record_slot, record_sector, record_tick, census_count)
+  188 CPLAY_STOP_REASON         lockstep_character_play.h (native_gate_character_play: a body animation start loads its character and
+                                motion first and draws on a keyed word; whys slot_changed, object_changed, block_changed,
+                                sync_timeout, sync_queue, loader, asset_entry, word, exception)
   190 ADAPT_STOP_PLAN           lockstep_adaptive.h (protocol 5)
   191 ADAPT_STOP_SOURCE         lockstep_adaptive.h
   192 ADAPT_STOP_QUIET          lockstep_adaptive.h
   193 ADAPT_STOP_DROPPED        lockstep_adaptive.h
   194 ADAPT_STOP_PILOT          lockstep_adaptive.h
-  free: 109, 114-119, 122-129, 146-149, 188-189, 195-255.
+  200 JOIN_STOP_REASON          lockstep_join.h (hot join: a strict joiner's admission refused; the status line's
+                                rx_detail names why: contexts_differ, wakes_unplaced, md_heap_differs, clock,
+                                ids_foreign, created_entries, rid_*, pins, engine)
+  free: 109, 114-119, 122-129, 146-149, 189, 195-199, 201-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak
@@ -257,6 +265,9 @@ tick). Mirrors: tools/dev/native_gate_inputs_core.lua K.KIND, tools/dev/native_g
   kind  section   owner (source)                                   payload
   0x01  pilot     lockstep_pilot_inputs.h                          pilot record v1 (28 bytes; alone: legacy form)
   0x48  hits      lockstep_hit_claims.h / lockstep_hit_native.h    hit claims v1
+  0x4a  join      lockstep_join.h / native_gate_join.py           hot join record v1 (version byte 1, op byte): SAVE_AT and
+                  (native_gate_join_core.lua)                      HANDOVER/ABORT in an absent slot's relay stand-in blob,
+                                                                   SAVED/FAILED in a saving client's own blob
   0x4f  octree    lockstep_nav_octree.h ('agreed')                 build report (20 bytes)
   0x50  orders    native_gate_player_orders                        player orders v1 (alone: legacy form)
   0x53  stock     lockstep_pilot_stock.h                           stock piloting record (version byte 3)

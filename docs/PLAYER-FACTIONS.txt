@@ -180,6 +180,12 @@ Runs 2026-10-26 pfprobe-001..003 (logs in .local/lane/runs/, not committed):
 - set_owner sector -> x4lan_player2 stays for 8 s (no engine recompute in that window), restorable.
 - Pool factions have NO own account (hasownaccount 0; .money reads garbage): per-player money
   cannot use the pool faction's account; it needs a ledger (open).
+  Update 1 Nov (lockstep): live run l2a confirmed it (the per-player start wallet read a random sum).
+  The pool library now gives every pool faction <account amount="0" /> as `player` has; the lockstep
+  trade family charges x4lan_player<k>'s own account (its receipt prints n without one) and the start
+  wallet sets it, refusing a faction without one.
+  Whether X4 creates the account from the library is pending a native run
+  (reports/LOCKSTEP-STARTS-20261101.txt section 9d).
 That single-game probe did not cover the Lua/MD session path or two-client owner switching.
 The later two-client run below covers those narrower paths.
 

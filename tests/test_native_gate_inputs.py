@@ -40,6 +40,7 @@ OCTREE = '05000000' + '0d' + '00' * 15                                 # nav oct
 STOCK = '03' + '01' + '0201' + '00' * 24 + '00' + '00' * 13 + '01' + '1140' + '01000000'
 UI = '01' + '6400' + '01' + '0102' + '0100'   # UI replay section v1 (lockstep_ui_replay.h): capture 100, one travel start
 HYBRID = '01' + '00' + '3c000000' + '2907000000000000' + '0000' + '00' * 8 + '00'   # hybrid record v1 header, no entries
+JOIN = '01' + '04' + '03' + '58020000'   # hot join record v1 (native_gate_join.py): HANDOVER of slot 3 at tick 600
 
 
 def lua_core():
@@ -56,7 +57,7 @@ def lua_result(value):
 
 
 def lua_sections(table):
-    return {k: table[k] for k in ('pilot', 'hits', 'octree', 'orders', 'stock', 'ui', 'hybrid') if table[k] is not None}
+    return {k: table[k] for k in ('pilot', 'hits', 'join', 'octree', 'orders', 'stock', 'ui', 'hybrid') if table[k] is not None}
 
 
 def blob(*parts):
@@ -95,6 +96,10 @@ VALID = {
     # The hybrid sector record (kind 0x59, lockstep_hybrid.h) has no legacy form: alone a container, last in wire order.
     'hybrid': (container((0x59, HYBRID)), {'hybrid': HYBRID}),
     'stock+ui+hybrid': (container((0x53, STOCK), (0x55, UI), (0x59, HYBRID)), {'stock': STOCK, 'ui': UI, 'hybrid': HYBRID}),
+    # Hot join records (kind 0x4a, between hits and octree) have no legacy form: alone a container.
+    'join': (container((0x4a, JOIN)), {'join': JOIN}),
+    'pilot+hits+join+orders': (container((0x01, PILOT), (0x48, HITS), (0x4a, JOIN), (0x50, ORDERS)),
+                               {'pilot': PILOT, 'hits': HITS, 'join': JOIN, 'orders': ORDERS}),
 }
 INVALID = [
     ('ABCD', 'encoding'), ('abc', 'encoding'), (PILOT[:-2], 'pilot_length'), ('33', 'channel'), ('4d', 'version'),
@@ -112,6 +117,8 @@ INVALID = [
     (container((0x53, STOCK), (0x53, STOCK)), 'order'),
     (container((0x55, '02' + UI[2:])), 'ui_version'), (container((0x55, UI), (0x53, STOCK)), 'order'),
     (container((0x59, '02' + HYBRID[2:])), 'hybrid_version'), (container((0x59, HYBRID), (0x55, UI)), 'order'),
+    (container((0x4a, '02' + JOIN[2:])), 'join_version'), (container((0x4f, OCTREE), (0x4a, JOIN)), 'order'),
+    (container((0x4a, JOIN), (0x48, HITS)), 'order'),
 ]
 
 
@@ -213,7 +220,7 @@ class CodecTests(unittest.TestCase):
             with self.subTest(blob=text[:24]):
                 try:
                     sections = ref.decode(text)
-                    self.assertEqual(line, 'OK ' + ' '.join(sections.get(k, '-') for k in ('pilot', 'hits', 'octree', 'orders', 'stock', 'ui', 'hybrid')) + ' ' +
+                    self.assertEqual(line, 'OK ' + ' '.join(sections.get(k, '-') for k in ('pilot', 'hits', 'join', 'octree', 'orders', 'stock', 'ui', 'hybrid')) + ' ' +
                                      (ref.encode(sections) or '-'))
                 except ref.Refused as error:
                     self.assertEqual(line, 'NO ' + str(error))
@@ -252,7 +259,7 @@ int main(void){char line[2048];
   input_sections s;const char *why;
   if(!input_mux_decode(b,m,&s,&why)){printf("NO %s\n",why);continue;}
   unsigned char again[512];size_t r=input_mux_encode(&s,again,sizeof again);
-  fputs("OK ",stdout);hex(s.pilot,s.pilot_len);putchar(' ');hex(s.hits,s.hits_len);putchar(' ');hex(s.octree,s.octree_len);putchar(' ');
+  fputs("OK ",stdout);hex(s.pilot,s.pilot_len);putchar(' ');hex(s.hits,s.hits_len);putchar(' ');hex(s.join,s.join_len);putchar(' ');hex(s.octree,s.octree_len);putchar(' ');
   hex(s.orders,s.orders_len);putchar(' ');hex(s.stock,s.stock_len);putchar(' ');hex(s.ui,s.ui_len);putchar(' ');hex(s.hybrid,s.hybrid_len);putchar(' ');hex(again,r);putchar('\n');
  }
  return 0;}
@@ -363,13 +370,16 @@ class MuxTests(unittest.TestCase):
         # A priority list from before the section keeps working (the report goes last); one naming it is taken as is.
         self.lua.execute("M.set_priority({'hits','pilot','orders'});a=table.concat(M.priority,',')")
         self.lua.execute("M.set_priority({'octree','hits','pilot','orders'});b=table.concat(M.priority,',')")
-        self.assertEqual((g.a, g.b), ('stock,ui,hits,pilot,orders,octree,hybrid', 'stock,ui,octree,hits,pilot,orders,hybrid'))
+        self.assertEqual((g.a, g.b), ('join,stock,ui,hits,pilot,orders,octree,hybrid', 'join,stock,ui,octree,hits,pilot,orders,hybrid'))
         # Stock may be listed too; unlisted it is offered first (it flies a slot).
         self.lua.execute("M.set_priority({'pilot','stock','orders','hits'});c=table.concat(M.priority,',')")
-        self.assertEqual(g.c, 'pilot,stock,ui,orders,hits,octree,hybrid')
+        self.assertEqual(g.c, 'join,pilot,stock,ui,orders,hits,octree,hybrid')
         # The hybrid record may be listed too; unlisted it comes after everything else.
         self.lua.execute("M.set_priority({'hybrid','hits','pilot','orders'});d=table.concat(M.priority,',')")
-        self.assertEqual(g.d, 'stock,ui,hybrid,hits,pilot,orders,octree')
+        self.assertEqual(g.d, 'join,stock,ui,hybrid,hits,pilot,orders,octree')
+        # Hot join records may be listed too; unlisted they are offered first.
+        self.lua.execute("M.set_priority({'hits','pilot','orders','join'});e=table.concat(M.priority,',')")
+        self.assertEqual(g.e, 'stock,ui,hits,pilot,orders,join,octree,hybrid')
 
     def test_registration_owner_tags_and_malformed_proposals_fail_closed(self):
         self.lua.execute("M.register('orders','orders',section('orders',{}))")

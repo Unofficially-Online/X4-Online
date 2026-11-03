@@ -457,7 +457,16 @@ static void test_opred_arming(void) {
     assert(!opred_arm(OPRED_OBSERVE,1,150,0,&why) && !opred_arm(OPRED_OBSERVE,1,150,31,&why) && !opred_arm(OPRED_OBSERVE,2,150,10,&why));
     /* The cap shortens the horizon below the delay; others off predicts the own slot only. */
     pilot_delay=12;assert(opred_arm(OPRED_OBSERVE,0,0,10,&why) && opred_horizon==10 && opred_slots[0].enabled && !opred_slots[1].enabled);
+    /* The arm the Lua surface uses joins the render frames: display offset and ownership both set. */
+    assert(opred_display_offset==NULL && rdisp_owns==NULL);
+    assert(opred_arm_joined(OPRED_OBSERVE,0,0,10,&why) && opred_display_offset==rdisp_display_offset && rdisp_owns==opred_owns);
+    opred_display_offset=NULL;rdisp_owns=NULL;
+    /* An adaptive plan's delay replaces the armed one: the horizon follows it, under the same cap. */
+    pilot_delay=6;opred_delay_adopted();assert(opred_horizon==6);
+    pilot_delay=12;opred_delay_adopted();assert(opred_horizon==10);
     topr_teardown();
+    pilot_delay=6;opred_delay_adopted();assert(opred_horizon==0); /* not armed: nothing to follow */
+    pilot_delay=0;
     stats.slot=saved_slot;stats.issued=saved_issued;stats.active=saved_active;
 }
 /* Worst-width status and row: four slots, every counter and statistic extreme. */

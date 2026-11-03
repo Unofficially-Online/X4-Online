@@ -28,7 +28,7 @@ static void test_mdt_record(test_sr_md *m,uint32_t keyword,uint32_t tag,uint64_t
 static void test_mdt_timed(void) {
     world_identities=VirtualAlloc(NULL,sizeof(*world_identities)*WORLD_IDENTITY_CAPACITY,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
     assert(world_identities && world_identity_record(0x7001,0x77));
-    test_sr_md_init(&test_sr_cue);test_sr_md_init(&test_mdt_cue2);test_npc_string(test_mdt_cue2.node+0x20,"Cue2");
+    test_sr_md_init(&test_sr_cue);test_sr_md_init(&test_mdt_cue2);test_npc_string(test_mdt_cue2.cue+0xc8,"Cue2");
     stats.active=1;boot_mode=1;boot_phase=3;stats.issued=21;ui_thread=GetCurrentThreadId();
     script_rng_mask=SCRIPT_RNG_AI|SCRIPT_RNG_MD;script_rng_mode=SCRIPT_RNG_KEY;InterlockedExchange(&script_rng_active,1);test_sr_reset();
     memset(script_rng_slots,0,sizeof(script_rng_slots));

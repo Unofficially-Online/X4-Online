@@ -192,3 +192,14 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   - The choice uses the slowest client's p90 over 8 samples taken while everyone waits at tick 0; a client whose round trip is
     worse later is only covered with --adaptive-changes (and, with pilot records, the headroom).
   - Drop/rejoin of a player's ship and assets (D15) is not designed here beyond what section 4 lists.
+
+11. FIRST LIVE RESULTS (coordinator, 2 November 2026; build199, session defaults, 2 clients, 3000 ticks, stock demo pilots)
+  run  relay                        plan              steps/s  digests        census at 1800
+  a0d  --adaptive                   k=1 pilot_delay=3  29.75   no mismatch    0 of 528,288
+  a1d  --adaptive --latency-ms 100  k=4 pilot_delay=6  29.74   no mismatch    0 of 528,288
+  p2d  fixed k=3 d=5, --latency-ms 100  (no plan)      29.09   no mismatch    0 of 528,288
+  A0 and A1 as the spec expected: the same plan on both clients, ADAPTIVE_STOP why=none. At 100 ms the plan holds the zero-latency speed.
+  p2d is A1b with a different stack from a1d (render frames on, see below), so 29.09 against 29.74 is not a clean comparison.
+  Limits found: adaptive excludes render frames (defaults key @fixed): a0d and a1d show no RENDER_FRAMES lines, so an adaptive session draws one
+  frame per step. Own-ship prediction under adaptive kept the horizon armed at the menu (kmax+2 = 10, h_eff=10 at delays 3 and 6): fixed by
+  opred_delay_adopted, not yet retested live. A2, A3 and A4 not run yet.

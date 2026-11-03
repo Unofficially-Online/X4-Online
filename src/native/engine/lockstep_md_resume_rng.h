@@ -30,8 +30,8 @@
  * the call straddles a 16-byte boundary) through THUNK_JUMP 4032 to
  * md_resume_delay, which evaluates the delay under
  *   lockstep_seed(MD_RESUME_DOMAIN, tick, owner, slot, ordinal, activation)
- *   owner      FNV-1a of the static "module.cue" name (script RNG name cache);
- *              0 when the cue has no name (counted unnamed, still portable)
+ *   owner      FNV-1a of the static cue's path "<script>.<root>.<...>.<cue>" (lockstep_cue_name.h, script RNG
+ *              name cache); 0 when its path is refused (counted unnamed and cue_refused=, still portable)
  *   slot       the delay slot argument (cue+0x200), saved state
  *   activation the saved activation time bits cue+0x1f8
  *   ordinal    count of (owner, slot, activation) in this tick; the cue walk
@@ -172,12 +172,13 @@ static int md_resume_status(char *out,size_t cap) {
     LONG64 dropped=cursor>(LONG64)MD_RESUME_RING?cursor-(LONG64)MD_RESUME_RING:0;
     int n=snprintf(out,cap,"armed=%d installed=%d active=%ld restored=%d calls=%lld keyed=%lld passed=%lld unnamed=%lld threads=%lld"
         " foreign=%lld table_full=%lld draws=%llu draws_unknown=%lld keyset=%016llx drawset=%016llx delayset=%016llx"
-        " records=%lld dropped=%lld ring=%u failures=%lld",
+        " records=%lld dropped=%lld ring=%u failures=%lld cue_refused=%lld cue_refusal=%s",
         md_resume_armed,md_resume_installed,md_resume_active,md_resume_restored,(long long)md_resume_calls,(long long)md_resume_keyed,
         (long long)md_resume_passed,(long long)md_resume_unnamed,(long long)md_resume_threads,(long long)md_resume_foreign,
         (long long)md_resume_table_full,(unsigned long long)md_resume_draws,(long long)md_resume_draws_unknown,
         (unsigned long long)md_resume_keyset,(unsigned long long)md_resume_drawset,(unsigned long long)md_resume_delayset,
-        (long long)cursor,(long long)dropped,MD_RESUME_RING,(long long)md_resume_failures);
+        (long long)cursor,(long long)dropped,MD_RESUME_RING,(long long)md_resume_failures,
+        (long long)InterlockedCompareExchange64(&cue_path_refusals,0,0),cue_path_refusal);
     return n>0 && (size_t)n<cap?n:0;
 }
 /* One census row per call; evicted rows report evicted=1 so the probe keeps going. */

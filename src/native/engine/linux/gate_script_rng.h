@@ -49,6 +49,7 @@
 #define LXS_RANGE_HOOK 0x540u        /* jmp [rip] -> lxs_range */
 #define NPC_NAME_LIMIT 512u
 #define NPC_STRING_LIBSTDCXX
+#define CUE_PATH_VT SCRIPT_RNG_CUE_VT /* a static cue's path: the same fields as Windows' (gate_sites.h cue_path_*) */
 typedef struct {uintptr_t definition;char cue[256];} npc_name_entry;
 static npc_name_entry npc_names[NPC_NAME_LIMIT];
 #include "lockstep_cue_name.h"

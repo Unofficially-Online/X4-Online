@@ -322,6 +322,12 @@ static int pstk_capture(uint64_t tick,unsigned char out[PSTK_BYTES_MAX],unsigned
     pstk_local *l=&pstk_locals[tick%PSTK_RING];
     if(!pstk_capturing || !tick) {*why="not_capturing";return 0;}
     if(l->used && l->capture==tick) {memcpy(out,l->bytes,l->length);*length=l->length;return 1;}
+    /* An absent slot's client (the joiner before its handover): its row is the relay's stand-in, so nothing is proposed;
+     * what its dispatch recorded meanwhile is dropped, not carried into its first record. */
+    if(!pilot_slot_present(pstk_capture_slot,tick)) {
+        InterlockedExchangeAdd64(&pstk_dropped,(LONG64)pstk_build.count);memset(&pstk_build,0,sizeof(pstk_build));pstk_cursor_live_set=0;
+        *why="absent";return 0;
+    }
     if(!pstk_capture_start || tick<pstk_capture_start) {*why="not_live";return 0;}
     /* Past the window no pass applies a record, so none is built (play42f2: window 40-4200 in a 4500-tick run
      * filled the local ring 62 ticks after the end and stopped the session). */
@@ -354,6 +360,7 @@ static int pstk_stage(unsigned slot,const unsigned char *bytes,unsigned length,u
     if(back>now) return 0;
     uint64_t capture=now-back,apply=capture+pilot_delay;
     if(!capture || capture<pstk_capture_start || apply<=now || apply>=now+PSTK_RING) return 0;
+    if(!pilot_slot_present(slot,capture)) return 0;   /* an absent slot's row is a stand-in: never a record (hot join) */
     if(pstk_capturing && slot==pstk_capture_slot) for(unsigned i=0;i<PSTK_RING;i++) {
         pstk_local *l=&pstk_locals[i];
         if(l->used && l->capture==capture && (l->length!=length || memcmp(l->bytes,bytes,length))) return 0; /* echo mismatch */
@@ -403,11 +410,18 @@ static void pstk_walk(unsigned char *header,unsigned kind,int id,uint32_t value)
     if(!n) return;
     while(n!=upper) {pnat_node *next=pnat_next(n);pstk_call(n->handler,kind,id,value);n=next;}
 }
-/* A replayed id: every handler, except the camera's under a mouselook range of slot 1 walking (lockstep_pilot_foot.h). */
+/* A replayed id: every handler, except the camera's under a mouselook range of slot 1 walking; X4's walking state handler
+ * with the session's clock as its real time (the run's double-tap, lockstep_pilot_foot.h). */
 static void pstk_replay_walk(unsigned char *header,unsigned kind,int id,uint32_t value) {
     pnat_node *upper=NULL,*n=pnat_first((pnat_node*)header,id,&upper);
     if(!n) return;
-    while(n!=upper) {pnat_node *next=pnat_next(n);if(!pfoot_replay_skips(kind,id,n->handler)) pstk_call(n->handler,kind,id,value);n=next;}
+    while(n!=upper) {
+        pnat_node *next=pnat_next(n);
+        if(pfoot_replay_skips(kind,id,n->handler)) {}
+        else if(pfoot_replay_clock(kind,n->handler)) pfoot_replay_state(n->handler,id,(unsigned char)value);
+        else pstk_call(n->handler,kind,id,value);
+        n=next;
+    }
 }
 /* Every handler a replayed id reaches must be a stock one (or the camera's, skipped above). */
 static int pstk_replay_handlers_ok(unsigned char *map,const pstk_event *x) {
@@ -721,6 +735,13 @@ static int pstk_frame(uint64_t tick,const char **why) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         if(!(pstk_slot_mask>>(k-1)&1u)) continue;
         pstk_staged *s=&pstk_ring[k-1][tick%PSTK_RING];pstk_slot_frame *f=&pstk_slot_frames[k-1];pstk_record q;
+        /* Absent (hot join, lockstep_pilot_inputs.h): no record before H+delay. Neutral: no events, no view, no trigger; its
+         * frame keeps its last tick, so the receipt says S<k>:0:0 and the slot scope replays nothing. */
+        if(pilot_slot_silent(k,tick,pilot_delay)) {
+            if(s->present && s->tick==tick) {*why="stock_absent_record";return 0;}
+            pview_replay(k,tick,0,0,0.0f,0);pstk_fire_tick[k-1]=tick;pstk_fire_on[k-1]=0;pstk_fire2_on[k-1]=0;
+            InterlockedIncrement64(&pilot_absent_skips);continue;
+        }
         if(!s->present || s->tick!=tick) {*why="stock_missing_slot";return 0;}
         if(!pstk_decode(s->bytes,s->length,&q) || q.capture16!=(uint16_t)(tick-pilot_delay) || !pstk_slot_record_ok(&q,k)) {
             *why="stock_delay_mismatch";return 0;

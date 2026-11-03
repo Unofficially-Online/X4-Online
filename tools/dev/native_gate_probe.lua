@@ -255,6 +255,91 @@ end
 -- never applying a hit (Lua test carrier). true/'shooter'/'victim'/'first' are the native claims
 -- (lockstep_hit_native.h): their 'hits' section registers with the pilot section when the pilot
 -- slots arm (arm_pilot_section); every other value is refused before loading (pilot arming).
+-- Hot join (native_gate_join, default off; native_gate_join_core.lua, lockstep_join.h,
+-- reports/LOCKSTEP-HOTJOIN-20261101.txt). true or {save='strict'|'report'}: this client saves at a relay's SAVE_AT
+-- (every present client does, so the save's own effects happen on all of them) and announces SAVED/FAILED;
+-- {joiner={package=, sha=, mode=}}: this client boots from a join save and its package and counts session ticks.
+-- absent={K,...}: the session's absent slots (the relay's --absent, never slot 1), the same list on every client and on the
+-- joiner: every per-slot module (pilot inputs, stock, slots, bodies, death, presentation, fire, UI replay, own prediction,
+-- hit claims) treats slot K as neutral until its HANDOVER, applied at the same tick everywhere (gate.pilot_handover), and
+-- requires its records from H+delay; an ABORT ends its records again (gate.pilot_abort).
+local join_client,join_joiner,join_restored
+if cfg.native_gate_join then
+ local j=cfg.native_gate_join==true and {} or cfg.native_gate_join
+ assert(type(j)=='table' and wire3 and cfg.native_gate_lookahead~='adaptive' and not cfg.native_gate_wire_crypto and not cfg.native_gate_peer_window,
+  'hot join needs the protocol 3 or 4 input wire, without adaptive lookahead, wire crypto or peer links')
+ local save_mode=j.save or 'strict'
+ assert(save_mode=='strict' or save_mode=='report','native_gate_join.save must be strict or report')
+ join_joiner=j.joiner
+ if join_joiner then
+  assert(type(join_joiner.package)=='string' and type(join_joiner.sha)=='string' and #join_joiner.sha==64 and
+   (join_joiner.mode==nil or join_joiner.mode=='strict' or join_joiner.mode=='report'),'native_gate_join.joiner needs package, sha and mode')
+ end
+ -- The probe's state across ticks that enters the declared digest travels as providers (fixture, world_hash, identity,
+ -- pilot_absent, pilot_window) or is derived; these opt-in adapters keep such state without a provider: refused.
+ for _,key in ipairs({'native_gate_hybrid','native_gate_player_orders'}) do
+  assert(not cfg[key],'hot join: '..key..' keeps Lua state across ticks that the join package does not carry')
+ end
+ assert(not (join_joiner and cfg.native_gate_world_trace_ticks),'hot join: the world trace (native_gate_world_trace_ticks) arms at the session tick 1 only')
+ local core=assert(X4LAN_JOIN_CORE,'hot join core missing (ui/native_gate_join_core.lua)')
+ local own=tonumber(cfg.slot:sub(2))
+ assert(gate.join_arm and gate.join_result and gate.join_load and gate.join_handover and gate.join_lua,'gate without hot join')
+ local absent,absent_mask={},0
+ if j.absent~=nil then
+  assert(type(j.absent)=='table' and #j.absent>=1,'native_gate_join.absent must be a list of slots')
+  for _,k in ipairs(j.absent) do
+   assert(type(k)=='number' and k%1==0 and k>=2 and k<=clients and not absent[k],
+    'native_gate_join.absent: slots 2..'..clients..', each once (slot 1 is never absent)')
+   absent[k]=true
+   if k<=4 then absent_mask=absent_mask+2^(k-1) end   -- the pilot modules' slots (at most four)
+  end
+  assert(not absent[own] or join_joiner,'native_gate_join.absent names this client slot '..own..' (only a joiner starts absent)')
+  -- The Windows gate's pilot modules take the mask when they arm (gate.pilot_absent after gate.pilot_inputs: the gate has
+  -- started then); the Linux gate has none of them. In the join package: a joiner takes over the session's handovers so
+  -- far (an earlier join's slot is present at T); '-' when the session flies no pilot modules.
+  if gate.pilot_absent and absent_mask>0 then
+   core.provide('pilot_absent',function() return gate.pilot_absent_state() or '-' end,function(text)
+    if text=='-' then assert(not gate.pilot_absent_state(),'pilot absent: the session armed no pilot modules, this joiner did')
+    else assert(gate.pilot_absent_restore(text)==1,'pilot absent state refused '..tostring(text)) end
+   end)
+  end
+ end
+ join_client=core.client{slot=own,joiner=join_joiner~=nil,log=function(text) DebugError('[X4LAN] NATIVE_GATE '..text) end,
+  arm=function(t,k,mask)
+   -- Only the Windows gate writes the join package; the Linux gate's fork-save has no side table yet.
+   return package.config:sub(1,1)=='\\' and gate.join_arm(t,k,mask,savepath,save_mode=='report' and 1 or 0)==1
+  end,
+  result=function() return gate.join_result() end,
+  handover=function(k,h)
+   if join_joiner and k==own then assert(gate.join_handover(h)==1,'join handover refused '..tostring(gate.join_status())) end
+   -- Every client, the same tick: slot k's ship is enrolled at H, its records required from H+delay (when the pilot
+   -- modules took the absent slots: gate.pilot_absent_state answers).
+   if absent[k] and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then
+    assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
+   end
+  end,
+  abort=function(k)
+   if absent[k] and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then assert(gate.pilot_abort(k)==1,'pilot abort refused k='..k) end
+  end}
+ input_section('join','join',join_client)
+ DebugError('[X4LAN] NATIVE_GATE JOIN_ARMED slot='..own..' save='..save_mode..' joiner='..(join_joiner and 1 or 0)..' absent='..absent_mask)
+ -- native_gate_world_hash_join = true (DEFAULT OFF; reports/LOCKSTEP-HOTJOIN-20261101.txt 1.6): one more world capture at the
+ -- join's T+1, on every client of the session (T of each SAVE_AT it applied, whether it saves or not: the capture enters the
+ -- declared state of all of them alike) and on a joiner (its tick base + 1, its first frame). Both sides have then run the
+ -- one step T+1 from the world at T (the session's after its save, the joiner's after its load and admission), so
+ -- census_compare.py SESSION JOINER --tick T+1 shows what save and load change before any dynamics. The tick is a written
+ -- tick (ticklog), its WORLD_HASH line names it; the stride captures are unchanged.
+ if cfg.native_gate_world_hash_join~=nil and cfg.native_gate_world_hash_join~=false then
+  assert(cfg.native_gate_world_hash_join==true and cfg.native_gate_world_hash_stride,
+   'native_gate_world_hash_join must be true, with native_gate_world_hash_stride')
+  join_client.capture_at=function(tick)
+   if join_joiner then local base=gate.join_base and gate.join_base();return base~=nil and tick==base+1 end
+   return join_client.save_ticks[tick-1]==true
+  end
+  DebugError('[X4LAN] NATIVE_GATE WORLD_HASH_JOIN_ARMED slot='..own..' joiner='..(join_joiner and 1 or 0))
+ end
+end
+assert(not cfg.native_gate_world_hash_join or cfg.native_gate_join,'native_gate_world_hash_join needs native_gate_join')
 if cfg.native_gate_hit_claims=='carry' then
  local core=assert(X4LAN_INPUT_MUX_CORE,'input multiplexer core missing (ui/native_gate_inputs_core.lua)')
  input_section('hits','hits',core.hit_carrier({slot=tonumber(cfg.slot:sub(2)),script=cfg.native_gate_hit_claims_script,
@@ -427,7 +512,8 @@ function ticklog.open(tick)
  if not (ticklog.stride and tick) then return end
  local world,window=cfg.native_gate_world_hash_stride,ticklog.window
  local current={tick=tick,write=tick<=ticklog.stride or tick%ticklog.stride==0 or (world and tick%world==0) or
-  (window~=nil and window[1]<=tick and tick<=window[2])}
+  (window~=nil and window[1]<=tick and tick<=window[2]) or (join_client~=nil and join_client.capture_at~=nil and join_client.capture_at(tick)) or
+  (join_joiner~=nil and not join_restored)}   -- a joiner's first frame: JOIN_ADMITTED and its JOIN_UNPAIRED rows (J1 j1-11 lost them)
  local ring=ticklog.ring
  if #ring>=ticklog.keep then table.remove(ring,1) end
  ring[#ring+1]=current;ticklog.tick=current
@@ -654,6 +740,9 @@ local function apply_inputs(tick,s)
  assert(not any,'unexpected native inputs')
 end
 local actors,ready={},false
+-- Per actor, the last sample's classification: true when X4 answered not operational (the row is '<i>/dead'). The
+-- session's at T rides the join package (provider 'fixture'): a wreck's row stays '/dead' on the joiner.
+local fixture_dead={}
 local weapons={}
 local registry_navigation_seen={}
 local creation_trace,creation_rng,registry_creation
@@ -691,6 +780,78 @@ if cfg.native_gate_hash=='battle' then
   if outside_session() then log('READY_OUTSIDE_SESSION count='..tostring(count));return end
   assert(tonumber(count)==12,'incomplete battle fixture');ready=true
  end)
+ -- Hot join: the session enrolled the twelve from the MD events of RestoreActors (raised at tick 1); a joiner sees none
+ -- (the cue ran before T). Its gate binds the twelve at the admission by their saved IDs (the import keyed every object of
+ -- the join save by the session's portable ID) and enrolls them at T+1 (lockstep_snapshot_fixture.h); this provider hands
+ -- the probe what the session's probe kept for them at T, refused unless the session's fixture is this client's:
+ --   v2|<the twelve saved IDs>|<12 digits: 1 = the actor's row at T was '/dead'>|<per actor the gun slots its sample
+ --   registered with the gate, '.'-joined, '-' none; '/'-joined>
+ -- Each actor value is the session's kind: ConvertIDTo64Bit of the component, as the MD event's object gave it (J1 j1-10:
+ -- an FFI uint64 here made GetComponentData refuse actor 1, 'got cdata, expected component ID'). A wreck at T must be no
+ -- operational component here (its row '/dead' as the session's); the guns the session registered are registered again
+ -- (gate.register_weapon), none other. reports/LOCKSTEP-HOTJOIN-20261101.txt 1.5.
+ if cfg.native_gate_join and cfg.native_gate_snapshot_fixture and X4LAN_JOIN_CORE then
+  X4LAN_JOIN_CORE.provide('fixture',function()
+   assert(ready,'join: the battle fixture is not ready at the save tick')
+   local dead,guns={},{}
+   for i=1,12 do
+    assert(fixture_dead[i]~=nil,'join: fixture actor '..i..' was not sampled before the save tick')
+    dead[i]=fixture_dead[i] and '1' or '0'
+    guns[i]=weapons[i] and #weapons[i]>0 and table.concat(weapons[i],'.') or '-'
+   end
+   return 'v2|'..table.concat(cfg.native_gate_snapshot_fixture,',')..'|'..table.concat(dead)..'|'..table.concat(guns,'/')
+  end,function(text)
+   local own=table.concat(cfg.native_gate_snapshot_fixture,',')
+   local ids,dead,guns=tostring(text):match('^v2|([^|]*)|([01]+)|([%d./%-]+)$')
+   assert(ids==own and #dead==12,'join: the session fixture '..tostring(text)..' is not this client fixture '..own..
+    ' (v2|ids|dead|guns: a saver of this build)')
+   local lists={};for list in (guns..'/'):gmatch('([^/]*)/') do lists[#lists+1]=list end
+   assert(#lists==12,'join: the session fixture guns '..guns..' name '..#lists..' actors, not 12')
+   local C=ffi.C
+   for i=1,12 do
+    local row=assert(gate.snapshot_actor(i),'join: snapshot actor '..i..' not bound')
+    local runtime=assert(row:match(' runtime=(%x+) '),'join: snapshot actor row '..row)
+    local value=tonumber(runtime,16)
+    assert(value and value>0 and value<2^53,'join: snapshot actor '..i..' runtime ID '..runtime..' outside the exact range')
+    local decimal=string.format('%.0f',value)
+    local object=ConvertIDTo64Bit(ConvertStringToLuaID(decimal))
+    assert(object and (tostring(object):gsub('ULL$',''))==decimal,'join: snapshot actor '..i..' runtime '..decimal..' converts to '..tostring(object))
+    actors[i]=object
+    local operational=C.IsComponentOperational(object)
+    fixture_dead[i]=dead:sub(i,i)=='1'
+    assert(not (fixture_dead[i] and operational),'join: fixture actor '..i..' was a wreck in the session at T (its rows /dead) and is an '..
+     'operational component on this joiner ('..row..')')
+    log('SNAPSHOT_JOIN_ACTOR '..row..' session='..(fixture_dead[i] and 'dead' or 'live')..' joiner='..(operational and 'live' or 'dead'))
+   end
+   -- The guns, as the session's sample registered them (its first sample of each live actor); this client's sample then
+   -- registers nothing. A gun the session registered on an actor live at T must be there and register; a wreck's gun
+   -- that is gone or that the gate refuses is logged (the session's registration of it is stale since the death).
+   for i=1,12 do
+    if lists[i]~='-' then
+     assert(cfg.native_gate_weapon_diag and cfg.native_gate_actor_diag,'join: the session registered fixture guns, this client does not (native_gate_weapon_diag)')
+     local registered,absent,refused={},{},{}
+     weapons[i]={}
+     for slot in lists[i]:gmatch('[^.]+') do
+      slot=tonumber(slot)
+      assert(slot and slot>=1 and slot<=32 and slot%1==0,'join: the session fixture gun slot '..lists[i])
+      local id=C.GetUpgradeSlotCurrentComponent(actors[i],'weapon',slot)
+      if id==0 or id==nil then
+       assert(fixture_dead[i],'join: fixture actor '..i..' (live at T) has no gun in slot '..slot..', which the session registered')
+       absent[#absent+1]=slot
+      elseif gate.register_weapon(tonumber(id),i,slot)==1 then registered[#registered+1]=slot
+      else
+       assert(fixture_dead[i],'join: fixture gun registration refused actor='..i..' slot='..slot)
+       refused[#refused+1]=slot
+      end
+      weapons[i][#weapons[i]+1]=slot
+     end
+     local function slots(list) return #list>0 and table.concat(list,'.') or '-' end
+     log('JOIN_FIXTURE_GUNS id='..i..' session='..lists[i]..' registered='..slots(registered)..' absent='..slots(absent)..' refused='..slots(refused))
+    end
+   end
+   ready=true
+  end)
+ end
 end
 local function drain_bullets()
  if not cfg.native_gate_bullet_diag then return end
@@ -815,13 +976,24 @@ local function drain_traces()
  drain_bullets();drain_deaths();drain_mass();drain_radar();drain_damage();drain_interrupts();drain_contacts();drain_shape_lifetimes();drain_flight_faults();drain_build_rows()
 end
 local radar_objects={}
-local world_actors={}
+local world_actors={} -- WORLD_ACTOR logged (log only): a joiner logs its own at T+1, with the saved-identity check
 local world_hash_state
+-- Hot join: the declared state carries the last world capture's state (tick 1, then every stride tick) on every tick
+-- between captures, so a joiner needs the session's of T until its own first capture; the world watches
+-- (native_gate_world_hash_watch, armed at the session's tick 1) are armed here, before that capture.
+if cfg.native_gate_join and cfg.native_gate_world_hash_stride and X4LAN_JOIN_CORE then
+ X4LAN_JOIN_CORE.provide('world_hash',function() return world_hash_state or '-' end,function(text)
+  assert(tostring(text):match('^'..world_hash_schema..':%d+:%d+:[%x:]+$'),
+   'join: the session world hash state '..tostring(text)..' is no '..world_hash_schema..' state')
+  world_hash_state=text
+  for _,saved in ipairs(cfg.native_gate_world_hash_watch or {}) do assert(gate.world_watch(saved)==1,'world watch refused '..saved) end
+ end)
+end
 local probe_last_us -- previous frame() wall time, native_gate_frame_timing only
 local camera_perturb=false -- this client perturbs its camera (native_gate_camera_perturb)
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
 local nav_cadence_cursor=0
-local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,character_play=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
 local world_trace_rows,world_queue_rows,world_wait_rows,world_wait_rng_rows=0,0,0,0
 local world_action_rows,world_values_rows,world_values_unknown_rows,world_unknown_identity_rows=0,0,0,0
 local world_values_cursors_loaded=false
@@ -855,7 +1027,7 @@ end
 -- speech lines routed to the game-clock deadline (native_gate_speech_game_time),
 -- effect deferral rows (native_gate_effect_rows), Jolt step/body/contact rows
 -- (native_gate_physics_trace), physics body order rows (native_gate_body_order),
--- moved compound children (native_gate_shape_order), finished nav octree builds
+-- moved compound children (native_gate_shape_order), body animation starts (native_gate_character_play), finished nav octree builds
 -- (native_gate_nav_octree) and per-ship motion, AI move order and flight model
 -- target rows (native_gate_motion_watch and native_gate_motion_watch_orders).
 -- final (at stop) also takes body, contact and order rows of the current tick.
@@ -885,6 +1057,13 @@ local function drain_gravidar_watch(final)
    local row=gate.shape_order_row(row_cursors.shape_order)
    if not row then break end
    log('SHAPE_ORDER_ROW '..row);row_cursors.shape_order=row_cursors.shape_order+1
+  end
+ end
+ if cfg.native_gate_character_play then -- body animation starts (native_gate_character_play): rare, written at once (not held)
+  for _=1,4096 do
+   local row=gate.character_play_row(row_cursors.character_play)
+   if not row then break end
+   ticklog.write('CHARACTER_PLAY_ROW '..row);row_cursors.character_play=row_cursors.character_play+1
   end
  end
  if cfg.native_gate_nav_octree then
@@ -1897,7 +2076,8 @@ local function pilot_frame(s,tick)
   -- The gate refuses injects near the window's end; only a ship that is still alive there reaches them.
   if pilot_view.stock_aim_from and tick>=pilot_view.stock_aim_from and tick+8<cfg.native_gate_pilot_window[2] then pilot_view.stock_aim() end
   local record,why=gate.pilot_stock_capture()
-  assert(record or why=='not_live','pilot stock capture failed '..tostring(why))
+  -- 'absent': this client's slot is absent until its handover (a joiner in its catch-up): the relay's stand-in is its row.
+  assert(record or why=='not_live' or why=='absent','pilot stock capture failed '..tostring(why))
   pilot_view.stock_proposal=record
   if cfg.native_gate_pilot_capture and record then log('PILOT_STOCK_CAPTURE tick='..tick..' record='..record) end
  end
@@ -1908,7 +2088,7 @@ local function pilot_frame(s,tick)
  if (wire or cfg.native_gate_pilot_capture) and not stock_capture then
   -- Capture never changes local input. Only the wire needs it to succeed.
   local record,why=gate.pilot_capture()
-  assert(record or not wire,'pilot capture failed '..tostring(why))
+  assert(record or not wire or why=='absent','pilot capture failed '..tostring(why))
   if cfg.native_gate_pilot_capture then
    local row='PILOT_CAPTURE tick='..tick..(record and ' record='..record or ' refused='..tostring(why))
    -- Observation: what the native processed channels hold now (zero while parked).
@@ -2018,7 +2198,9 @@ local function sample(tick)
    if not bodies[which] then bodies[which]=assert(gate.body(i,which),'physics body state unavailable') end
    return bodies[which]
   end
-  if ffi.C.IsComponentOperational(object) then
+  local operational=ffi.C.IsComponentOperational(object)
+  fixture_dead[i]=not operational
+  if operational then
    local native
    if cfg.native_gate_actor_diag then
     local since=profile and gate.qpc_us()
@@ -3503,6 +3685,17 @@ local function frame()
     gate.shape_order(mode)==1,'shape order refused '..tostring(gate.shape_order_status and gate.shape_order_status()))
    log('SHAPE_ORDER_ARMED mode='..mode)
   end
+  -- A body starting an animation (BodyClass -> slot 17 of the character manager) draws from the frame's RNG word only
+  -- when the loader thread has finished its character: GetAssetIntern never loads during play, and a missing character
+  -- means no play and no draw (the DF2 wharf patrol's three classes, reports/LOCKSTEP-ON-FOOT-20261101.txt section 15).
+  -- 'sync' loads a missing character or motion through the engine's synchronous load first and runs the play on a
+  -- keyed word; 'observe' only logs CHARACTER_PLAY_ROW per call (lockstep_character_play.h, stop 188). Windows gate.
+  if cfg.native_gate_character_play then
+   local mode=cfg.native_gate_character_play
+   assert(snapshot and (mode=='observe' or mode=='sync') and gate.character_play and gate.character_play_status and gate.character_play_row and
+    gate.character_play(mode)==1,'character play refused '..tostring(gate.character_play_status and gate.character_play_status()))
+   log('CHARACTER_PLAY_ARMED mode='..mode)
+  end
   -- Object navigation octrees are built on their own thread and published
   -- whenever a build ends (docking approach, pathing); 'sync' builds every
   -- octree requested in a frame at the gate's join after it; 'deadline' lets
@@ -3688,6 +3881,29 @@ local function frame()
     (source=='script' or (source=='wire' and type(gate.propose)=='function')) and type(window)=='table' and #window==2 and
     (suppress==nil or suppress==true) and (cfg.native_gate_pilot_capture==nil or cfg.native_gate_pilot_capture==true) and
     gate.pilot_inputs and gate.pilot_inputs(table.concat(slots,','),source,delay,window[1],window[2],suppress and 1 or 0)==1,'pilot inputs refused')
+   -- Hot join (native_gate_join.absent, checked with the join section above): the session's absent slots, neutral until
+   -- their HANDOVER (lockstep_pilot_inputs.h). Before the first tick, with the pilot modules.
+   do
+    local listed=type(cfg.native_gate_join)=='table' and cfg.native_gate_join.absent
+    local mask=0
+    for _,k in ipairs(listed or {}) do if k<=4 then mask=mask+2^(k-1) end end
+    if mask>0 then
+     assert(gate.pilot_absent and gate.pilot_absent(mask)==1,'pilot absent slots refused mask='..mask)
+     log('PILOT_ABSENT_ARMED mask='..mask..' '..tostring(gate.pilot_absent_state()))
+    end
+    -- The window's Lua state (the death module's start poses and counters, the stock aim, the UI families' one-shot test
+    -- fixtures at window start - 4: fleet, minimum hull, trade and build funds) is not in the package: a joiner takes the
+    -- session's window and joins before take-2 (start - 5), where all of it is still unset on the session (the gate stops a
+    -- join inside the window, 91 join_inside_window; this refuses one after it as well).
+    if cfg.native_gate_join and X4LAN_JOIN_CORE then
+     X4LAN_JOIN_CORE.provide('pilot_window',function() return 'v1|'..window[1]..','..window[2] end,function(text)
+      assert(text=='v1|'..window[1]..','..window[2],'join: the session pilot window '..tostring(text)..' is not this client window '..window[1]..','..window[2])
+      local base=gate.join_base and gate.join_base()
+      assert(base and base+1<=window[1]-5,'join: the session tick T='..tostring(base)..' is past the pilot window take-2 ('..(window[1]-5)..
+       '): the window Lua state (death poses and counters, stock aim, the UI one-shot fixtures) is not in the join package')
+     end)
+    end
+   end
    if source=='wire' then
     -- Records ride the pilot section: apply keeps every slot's admitted record
     -- for pilot_frame to stage, the proposal is this tick's local capture.
@@ -4031,6 +4247,11 @@ local function frame()
   elseif (cfg.native_gate_lookahead or 0)>0 then log('LOOKAHEAD_STOP '..tostring(gate.lookahead_status())) end
   if cfg.native_gate_wire_crypto then log('WIRE_CRYPTO_STOP '..tostring(gate.wire_crypto_status())) end
   if cfg.native_gate_fork_save then log('FORK_SAVE_STOP '..tostring(gate.fork_save_status())) end
+  if join_client then
+   log('JOIN_STOP '..tostring(gate.join_status()))
+   -- A joiner stopped before its first tick (J1 j1-8: the admission's frame) has not logged its unpaired samples yet.
+   if join_joiner and not join_restored then X4LAN_JOIN_CORE.log_unpaired(gate,log) end
+  end
   if cfg.native_gate_peer_window then log('PEER_STOP '..tostring(gate.peer_status())) end
   if cfg.native_gate_player_observer then assert(X4LAN_NATIVE_PLAYER_TRACE,'player observer adapter missing')(gate,true) end
   if cfg.native_gate_player_probe=='agreed-fire' then assert(X4LAN_NATIVE_PLAYER_FIRE_TRACE,'player firing adapter missing')(gate,true) end
@@ -4145,6 +4366,7 @@ local function frame()
   if cfg.native_gate_physics_trace~=nil then log('PHYSICS_TRACE_STOP '..tostring(gate.physics_trace_status())) end
   if cfg.native_gate_body_order then log('BODY_ORDER_STOP '..tostring(gate.body_order_status())) end
   if cfg.native_gate_shape_order then log('SHAPE_ORDER_STOP '..tostring(gate.shape_order_status())) end
+  if cfg.native_gate_character_play then log('CHARACTER_PLAY_STOP '..tostring(gate.character_play_status())) end
   if cfg.native_gate_nav_octree then log('NAV_OCTREE_STOP '..tostring(gate.nav_octree_status())) end
   if cfg.native_gate_nav_mesh then log('NAV_MESH_STOP '..tostring(gate.nav_mesh_status())) end
   if cfg.native_gate_nav_octree_sites then
@@ -4168,7 +4390,7 @@ local function frame()
   if pilot_view.fire then log('PILOT_FIRE_STOP '..tostring(gate.pilot_fire_status())) end
   if cfg.native_gate_gravidar_key_all or cfg.native_gate_gravidar_time_sync then log('GRAVIDAR_KEY_STOP '..tostring(gate.gravidar_key_status())) end
   if cfg.native_gate_gravidar_watch or cfg.native_gate_speech_game_time or cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or
-     cfg.native_gate_shape_order or cfg.native_gate_nav_octree or cfg.native_gate_nav_mesh or cfg.native_gate_event_rng or cfg.native_gate_ui_cargo or cfg.native_gate_supply_rows or cfg.native_gate_ui_lazy or cfg.native_gate_supply_wants~=nil or cfg.native_gate_loadout_order or cfg.native_gate_order_canon or cfg.native_gate_address_order or cfg.native_gate_pick_order or cfg.native_gate_macro_arena then
+     cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree or cfg.native_gate_nav_mesh or cfg.native_gate_event_rng or cfg.native_gate_ui_cargo or cfg.native_gate_supply_rows or cfg.native_gate_ui_lazy or cfg.native_gate_supply_wants~=nil or cfg.native_gate_loadout_order or cfg.native_gate_order_canon or cfg.native_gate_address_order or cfg.native_gate_pick_order or cfg.native_gate_macro_arena then
    drain_gravidar_watch(true)
   end
   if cfg.native_gate_gravidar_watch then log('GRAVIDAR_WATCH_STOP '..tostring(gate.gravidar_watch_status())) end
@@ -4302,11 +4524,29 @@ local function frame()
     gate.guidance_local()==1,'guidance local refused '..tostring(gate.guidance_local_status and gate.guidance_local_status()))
    log('GUIDANCE_LOCAL_ARMED '..tostring(gate.guidance_local_status()))
   end
+  -- Hot join: the package is verified and the import mapping armed before the join save loads.
+  if join_joiner then
+   assert(gate.join_load(join_joiner.package,join_joiner.sha,join_joiner.mode=='report' and 1 or 0)==1,
+    'join package refused '..tostring(gate.join_status()))
+   -- The save this client boots from must be the one the package names.
+   local named=tostring(gate.join_status()):match(' rx_save_sha=(%x+) ')
+   assert(named==snapshot,'join: the snapshot '..tostring(snapshot)..' is not the package\'s save '..tostring(named))
+   log('JOIN_LOADED '..tostring(gate.join_status()))
+  end
   assert(gate.load_requested()==1,'load request refused')
   log('LOAD_REQUEST snapshot='..snapshot);LoadGame('save_009');return
  end
  if snapshot and (s.boot_phase<3 or s.issued==s.report_tick) then return end
  local tick=tonumber(s.issued)
+ -- A joiner's first tick follows its tick base T: the probe's own session state comes back from the package first.
+ if join_joiner and not join_restored then
+  local base=gate.join_base()
+  assert(base and tick==base+1,'join: first tick '..tick..' after the tick base '..tostring(base))
+  X4LAN_JOIN_CORE.restore_text(gate.join_lua_state())
+  join_restored=true
+  log('JOIN_ADMITTED base='..base..' '..tostring(gate.join_status()))
+  X4LAN_JOIN_CORE.log_unpaired(gate,log)
+ end
  if (tonumber(s.registry_count) or 0)>0 then
   local count=0
   for slot,handle,macro,owner in s.registry_manifest:gmatch('(%d+)/([0-9a-f]+)/([a-z0-9_]+)/([a-z0-9_]+)') do
@@ -4420,6 +4660,9 @@ local function frame()
  end
  if cfg.native_gate_shape_order then
   ticklog.status('SHAPE_ORDER',tick,gate.shape_order_status,'shape order status unavailable')
+ end
+ if cfg.native_gate_character_play then
+  ticklog.status('CHARACTER_PLAY',tick,gate.character_play_status,'character play status unavailable')
  end
  if cfg.native_gate_nav_octree then
   ticklog.status('NAV_OCTREE',tick,gate.nav_octree_status,'nav octree status unavailable')
@@ -4676,7 +4919,7 @@ local function frame()
   if tick==1 then
    for _,saved in ipairs(cfg.native_gate_world_hash_watch or {}) do assert(gate.world_watch(saved)==1,'world watch refused '..saved) end
   end
-  if tick==1 or tick%cfg.native_gate_world_hash_stride==0 then
+  if tick==1 or tick%cfg.native_gate_world_hash_stride==0 or (join_client and join_client.capture_at and join_client.capture_at(tick)) then
    local summary,why=world_capture(tick)
    assert(summary,'native world hash capture failed '..tostring(why))
    log('WORLD_BANKS '..assert(gate.world_banks(),'native world bank phase unavailable'))
@@ -4706,6 +4949,10 @@ local function frame()
  if wire3 then
   -- Protocol 5: a quiet tick seals the empty proposal; the adapters keep their inputs for a later tick.
   local blob
+  -- A saver's probe state at its save tick goes into the join package (gate.join_lua, frame T).
+  if join_client and join_client.armed and join_client.armed.tick==tick then
+   assert(gate.join_lua(tick,X4LAN_JOIN_CORE.state_text())==1,'join state refused '..tostring(gate.join_status()))
+  end
   if not (X4LAN_NATIVE_ADAPTIVE and s.quiet==1) then blob=X4LAN_NATIVE_INPUTS and X4LAN_NATIVE_INPUTS.proposal and X4LAN_NATIVE_INPUTS.proposal(tick) end
   if blob~=nil then assert(type(blob)=='string' and gate.propose(s.issued,blob)==1,'native input proposal refused') end
   command=nil -- the report seals the blob staged through gate.propose, or the empty blob
@@ -4809,10 +5056,11 @@ SetScript('onUpdate',function()
    if cfg.native_gate_pick_order then ticklog.try(function() log('PICK_ORDER_STOP '..tostring(gate.pick_order_status())) end) end
    if cfg.native_gate_macro_arena then ticklog.try(function() log('MACRO_ARENA_STOP '..tostring(gate.macro_arena_status())) end) end
    if cfg.native_gate_address_order then ticklog.try(function() log('ADDRESS_ORDER_STOP '..tostring(gate.address_order_status())) end) end
-   if cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or cfg.native_gate_shape_order or cfg.native_gate_nav_octree then ticklog.try(drain_gravidar_watch,true) end
+   if cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree then ticklog.try(drain_gravidar_watch,true) end
    if cfg.native_gate_physics_trace~=nil then ticklog.try(function() log('PHYSICS_TRACE_STOP '..tostring(gate.physics_trace_status())) end) end
    if cfg.native_gate_body_order then ticklog.try(function() log('BODY_ORDER_STOP '..tostring(gate.body_order_status())) end) end
    if cfg.native_gate_shape_order then ticklog.try(function() log('SHAPE_ORDER_STOP '..tostring(gate.shape_order_status())) end) end
+   if cfg.native_gate_character_play then ticklog.try(function() log('CHARACTER_PLAY_STOP '..tostring(gate.character_play_status())) end) end
    if cfg.native_gate_nav_octree then ticklog.try(function() log('NAV_OCTREE_STOP '..tostring(gate.nav_octree_status())) end) end
    if cfg.native_gate_nav_mesh then ticklog.try(function() log('NAV_MESH_STOP '..tostring(gate.nav_mesh_status())) end) end
    if cfg.native_gate_nav_octree_sites then ticklog.try(function()

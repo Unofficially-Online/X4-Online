@@ -103,6 +103,92 @@ enum {UIREP_FAMILY_TRAVEL=1,UIREP_FAMILY_TARGET=2,UIREP_FAMILY_ORDERS=4,UIREP_FA
     UIREP_FAMILY_CONVERSATION=16384,                    /* lockstep_ui_missions.h */
     UIREP_FAMILY_FACTION=32768,                         /* lockstep_ui_faction.h (the last bit the guard's 16-bit 'covered' holds) */
     UIREP_FAMILIES=1023|1024|2048|4096|8192|16384|32768};  /* the implemented ones (bits and ops: docs/LOCKSTEP-REGISTRY.txt) */
+/* Absent slots (hot join: lockstep_join.h, reports/LOCKSTEP-HOTJOIN-20261101.txt section 8). A slot the session config
+ * names absent (native_gate_join.absent, the relay's --absent; never slot 1) has nobody at it: its rows are the relay's
+ * stand-ins, which carry no record. Until its handover it is neutral on every client: no record is required or accepted,
+ * no control, action or claim is its own, its ship stays as the identity plan set it up (not seated, no body, no
+ * presentation, no prediction, not watched for death, its guns not leased, its hits native). HANDOVER(k, H) of the join
+ * section, applied at the same tick on every client and on the joiner in its catch-up, makes it a normal slot: its ship
+ * is enrolled at H (its player built at H-2 and seated at H-1, as at take-2/take-1), its own client proposes from H on
+ * and its records are required from H+delay (captured at H). ABORT(k) after that: its rows are stand-ins again from the
+ * row that carried the ABORT, its records stop from there (the seat stays, neutral); before its build the enrollment is
+ * undone. A missing record of any slot that is not absent at that tick still stops (91, 155, 161). */
+#define PILOT_HANDOVER_LEAD 3u   /* H at least this far after the record's tick: every client builds the player at H-2 */
+static unsigned pilot_absent;                       /* bit s-1: slot s is absent until its handover */
+static uint64_t pilot_from[PILOT_SLOTS],pilot_until[PILOT_SLOTS],pilot_enroll[PILOT_SLOTS]; /* first own row, first stand-in again, enrolled */
+static volatile LONG64 pilot_absent_skips;          /* slot-ticks of a window without a record because the slot is absent */
+static int pilot_slot_absent(unsigned slot) {return slot>=1 && slot<=PILOT_SLOTS && (pilot_absent>>(slot-1)&1u);}
+/* Slot's rows are its own client's at tick t (its proposals of t reach the session): every slot that is not absent. */
+static int pilot_slot_present(unsigned slot,uint64_t tick) {
+    if(!pilot_slot_absent(slot)) return 1;
+    const unsigned i=slot-1;
+    return pilot_from[i]!=UINT64_MAX && tick>=pilot_from[i] && (pilot_until[i]==UINT64_MAX || tick<pilot_until[i]);
+}
+/* Slot has no record to apply at tick t: absent at its capture tick t-delay. */
+static int pilot_slot_silent(unsigned slot,uint64_t tick,unsigned delay) {
+    return pilot_slot_absent(slot) && !(tick>=delay && pilot_slot_present(slot,tick-delay));
+}
+/* Slot's ship takes part from tick t (seat, body, death, guns): always, or for an absent slot from its enrollment. */
+static int pilot_slot_enrolled(unsigned slot,uint64_t tick) {return !pilot_slot_absent(slot) || tick>=pilot_enroll[slot-1];}
+/* gate.pilot_absent(mask): before the first tick (an identical rerun after a UI reload answers 1 at any tick). */
+static int pilot_absent_arm(unsigned mask) {
+    if(pilot_absent) return mask==pilot_absent;
+    if(!mask || (mask&1u) || mask>=(1u<<PILOT_SLOTS) || stats.issued) return 0;
+    for(unsigned i=0;i<PILOT_SLOTS;i++) pilot_from[i]=pilot_until[i]=pilot_enroll[i]=UINT64_MAX;
+    pilot_absent_skips=0;pilot_absent=mask;return 1;
+}
+/* HANDOVER(k, H) applied at tick now (every client the same tick). One at a time: a second needs an ABORT first. */
+static int pilot_handover_apply(unsigned slot,uint64_t h,uint64_t now) {
+    if(!pilot_slot_absent(slot) || h<now+PILOT_HANDOVER_LEAD || h>PILOT_TICK_MAX) return 0;
+    const unsigned i=slot-1;
+    if(pilot_from[i]!=UINT64_MAX && pilot_until[i]==UINT64_MAX) return 0;
+    pilot_from[i]=h;pilot_until[i]=UINT64_MAX;
+    if(pilot_enroll[i]==UINT64_MAX) pilot_enroll[i]=h;
+    return 1;
+}
+/* ABORT(k) applied at tick now: the relay placed it in the row now-1-lookahead, slot k's rows are stand-ins from there. */
+static int pilot_abort_apply(unsigned slot,uint64_t now,unsigned lookahead) {
+    if(!pilot_slot_absent(slot)) return 0;
+    const unsigned i=slot-1;
+    if(pilot_from[i]==UINT64_MAX || pilot_until[i]!=UINT64_MAX) return 1;   /* no handover pending, or stopped already */
+    pilot_until[i]=now>=1u+lookahead?now-1u-lookahead:0;
+    if(pilot_enroll[i]==pilot_from[i] && now+2<pilot_enroll[i]) pilot_enroll[i]=UINT64_MAX;   /* its player is built at H-2: not yet */
+    return 1;
+}
+/* The probe's join state provider (native_gate_join_core.lua 'pilot_absent'): "1|mask|from,until,enroll|..." for slots
+ * 2..PILOT_SLOTS, -1 for none. A joiner restores the session's at T (an earlier join's handover is in it). */
+static int pilot_absent_state(char *out,size_t capacity) {
+    int n=snprintf(out,capacity,"1|%x",pilot_absent);
+    for(unsigned i=1;n>0 && (size_t)n<capacity && i<PILOT_SLOTS;i++)
+        n+=snprintf(out+n,capacity-(size_t)n,"|%lld,%lld,%lld",pilot_from[i]==UINT64_MAX?-1LL:(long long)pilot_from[i],
+            pilot_until[i]==UINT64_MAX?-1LL:(long long)pilot_until[i],pilot_enroll[i]==UINT64_MAX?-1LL:(long long)pilot_enroll[i]);
+    return n>0 && (size_t)n<capacity?n:0;
+}
+static int pilot_absent_restore(const char *text) {
+    unsigned mask=0;int used=0;uint64_t v[PILOT_SLOTS][3];
+    if(!text || sscanf(text,"1|%x%n",&mask,&used)!=1 || mask!=pilot_absent || !pilot_absent) return 0;
+    text+=used;
+    for(unsigned i=1;i<PILOT_SLOTS;i++) {
+        long long a=0,b=0,c=0;
+        if(sscanf(text,"|%lld,%lld,%lld%n",&a,&b,&c,&used)!=3 || a<-1 || b<-1 || c<-1) return 0;
+        text+=used;
+        v[i][0]=a<0?UINT64_MAX:(uint64_t)a;v[i][1]=b<0?UINT64_MAX:(uint64_t)b;v[i][2]=c<0?UINT64_MAX:(uint64_t)c;
+        if(!(pilot_absent>>i&1u) && (a>=0 || b>=0 || c>=0)) return 0;
+    }
+    if(*text) return 0;
+    for(unsigned i=1;i<PILOT_SLOTS;i++) {pilot_from[i]=v[i][0];pilot_until[i]=v[i][1];pilot_enroll[i]=v[i][2];}
+    return 1;
+}
+static int pilot_absent_text(char *out,size_t capacity) {
+    int n=snprintf(out,capacity," absent=%x absent_skips=%lld",pilot_absent,(long long)pilot_absent_skips);
+    for(unsigned k=2;n>0 && (size_t)n<capacity && k<=PILOT_SLOTS;k++) {
+        if(!pilot_slot_absent(k)) continue;
+        const unsigned i=k-1;
+        n+=snprintf(out+n,capacity-(size_t)n," h%u=%lld/%lld/%lld",k,pilot_from[i]==UINT64_MAX?-1LL:(long long)pilot_from[i],
+            pilot_until[i]==UINT64_MAX?-1LL:(long long)pilot_until[i],pilot_enroll[i]==UINT64_MAX?-1LL:(long long)pilot_enroll[i]);
+    }
+    return n>0 && (size_t)n<capacity?n:0;
+}
 static int uirep_armed,uirep_failed;
 static unsigned uirep_families;
 static volatile LONG uirep_ui_depth,uirep_dispatch_depth;  /* inside slot 6 / the slot 4 dispatch of presentation ids */
@@ -273,6 +359,7 @@ static int pilot_stage_record(unsigned slot,const unsigned char bytes[PILOT_RECO
     if(back>now) return 0;
     uint64_t capture=now-back,apply=capture+pilot_delay;
     if(!capture || apply<=now || apply>=now+PILOT_RING) {InterlockedIncrement64(&pilot_late);pilot_stage="late_record";return 0;}
+    if(!pilot_slot_present(slot,capture)) {pilot_stage="absent_record";return 0;}   /* a stand-in row carries none */
     if(slot==stats.slot) for(unsigned i=0;i<PILOT_LOCAL_RING;i++) {
         pilot_local *l=&pilot_locals[i];
         if(l->used && l->capture==capture && memcmp(l->bytes,bytes,PILOT_RECORD_BYTES)) {pilot_stage="echo_mismatch";return 0;}
@@ -291,6 +378,8 @@ static int pilot_frame_records(uint64_t tick) {
     for(unsigned i=0;i<pilot_slot_count;i++) {
         pilot_slot *s=&pilot_slots[i];pilot_record r;s->driving=0;
         if(!window || (pilot_stock_slots>>i&1u)) continue;
+        /* Absent (hot join): no record before its handover, its ship as the identity plan left it (not driven). */
+        if(pilot_slot_silent(i+1,tick,pilot_delay)) {InterlockedIncrement64(&pilot_absent_skips);continue;}
         if(pilot_source==PILOT_SOURCE_SCRIPT) pilot_script(i+1,tick,pilot_start,&r);
         else {
             if(e->tick!=tick || !(e->present&(1u<<i))) {InterlockedIncrement64(&pilot_missing);pilot_stage="missing_record";return 0;}
@@ -374,6 +463,7 @@ static unsigned pilot_locals_pending(uint64_t tick) {
 static unsigned char *pilot_player_controller(void);
 #include "lockstep_pilot_native.h"
 static int pilot_install(void);
+static uint64_t join_tick_base(void);   /* lockstep_join.h: a joiner's save tick T (it counts session ticks from T+1), else 0 */
 /* Main pass boundary, before the pathing pass is released: resolve every slot,
  * choose this tick's records and publish an immutable table for the workers. */
 static int pilot_before_release_using(pilot_find_fn find,void *map,const void *player_object,void *controller,
@@ -382,6 +472,11 @@ static int pilot_before_release_using(pilot_find_fn find,void *map,const void *p
     if(!pilot_armed) return 1;
     uint64_t tick=stats.issued;
     InterlockedExchange(&pilot_live,0);
+    /* A joiner whose first tick is past take-2 would enter a running window: the records in flight at T, the parked
+     * controls, the slots' players and seats are not in the join package. A join whose save tick T lies before the
+     * window (take-3 at the latest) runs the window's start with everyone (reports/LOCKSTEP-HOTJOIN-20261101.txt 9.1). */
+    {   const uint64_t base=join_tick_base();
+        if(base && base+1+5>pilot_start && base+1<=pilot_stop+2) {pilot_stage="join_inside_window";return 0;}}
     if(!pilot_installed && !pilot_install()) {pilot_stage="install";return 0;}
     InterlockedExchange64(&pilot_frame_applied,0);InterlockedExchange64(&pilot_frame_receipt,0);
     pdeath_find=find;pdeath_map=map;pdeath_player=player_object;
@@ -574,6 +669,7 @@ static unsigned pilot_stop_reason(void) {
 static int pilot_capture(uint64_t tick,unsigned char out[PILOT_RECORD_BYTES],const char **why) {
     pilot_local *l=&pilot_locals[tick%PILOT_LOCAL_RING];pilot_record r;
     if(!pilot_armed || !tick) {*why="not_armed";return 0;}
+    if(!pilot_slot_present(stats.slot,tick)) {*why="absent";return 0;}   /* the relay's stand-in is this slot's row (hot join) */
     if(l->used && l->capture==tick) {memcpy(out,l->bytes,PILOT_RECORD_BYTES);return 1;}
     if(pnat_armed && pnat_mode==PNAT_MODE_NATIVE) {if(!pilot_capture_native_controls(tick,&r,why)) return 0;}
     else if(pnat_armed && stats.slot>=1 && (pilot_stock_slots>>(stats.slot-1)&1u)) {*why="stock_slot";return 0;} /* its record is the stock section */
@@ -621,6 +717,11 @@ static int pilot_status(char *out,size_t capacity) {
         pilot_slot *s=&pilot_slots[i];
         n+=snprintf(out+n,capacity-(size_t)n," s%u=%016llx/%u/%u/%u/%lld/%lld",i+1,(unsigned long long)s->saved,
             s->resolved,s->driving,s->player,(long long)s->applied[0],(long long)s->applied[1]);
+    }
+    if(n>0 && (size_t)n<capacity && pilot_absent) {
+        int more=pilot_absent_text(out+n,capacity-(size_t)n);
+        if(!more) return 0;
+        n+=more;
     }
     if(n>0 && (size_t)n<capacity && pilot_device_armed) {
         int more=pilot_device_status(out+n,capacity-(size_t)n);

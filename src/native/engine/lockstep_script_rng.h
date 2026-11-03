@@ -15,7 +15,8 @@
  *                with native_gate_portable_created the created ID of an entity
  *                created after the load (lockstep_world_identity.h), from the
  *                frame after its creation on
- *   MD  owner  = FNV-1a of the static cue's encoded "module.cue" name
+ *   MD  owner  = FNV-1a of the static cue's encoded path "<script>.<root>.<...>.<cue>"
+ *                (lockstep_cue_name.h; a root's is "<script>.<cue>")
  *   stream     = script name hash (AI) or MD tag, entry source, program length
  *   detail     = entry PC (ExecState_Run), run range (begin,end,mode), or the
  *                event keyword plus the saved ID of its first object parameter

@@ -14,7 +14,7 @@ static int lua_own_predict(lua_State *L) {
     if(!kind) why="mode";
     else if(!(isfinite(others) && (others==0 || others==1) && isfinite(tau) && floor(tau)==tau && tau>=0 && tau<=OPRED_TAU_MAX_MS &&
               isfinite(cap) && floor(cap)==cap && cap>=1 && cap<=OPRED_HORIZON_MAX)) why="range";
-    else if(accept_ui()) ok=opred_arm(kind,(int)others,(unsigned)tau,(unsigned)cap,&why);
+    else if(accept_ui()) ok=opred_arm_joined(kind,(int)others,(unsigned)tau,(unsigned)cap,&why);
     p_lua_pushnumber(L,ok);
     if(ok) return 1;
     p_lua_pushlstring(L,why,strlen(why));return 2;

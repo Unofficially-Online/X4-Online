@@ -194,6 +194,37 @@ static void test_pilot_inputs(void) {
     assert(pilot_pending(text,sizeof(text)) && strstr(text,"frame_tick=13 14:17:0101"));
     assert(pilot_status(text,sizeof(text)) && strstr(text,"source=wire delay=3 window=10-20 slots=2") &&
            strstr(text," s1=0000000000176a13/1/1/1/") && strstr(text,"suppress=1 controls_owned=1 park=0/1/0/0/1 retakes=1 refreshes=1"));
+    /* Hot join (lockstep_pilot_inputs.h): slot 2 absent. Through the window it needs no record and is not driven (its
+     * ship as the identity plan left it); its record is refused before its handover and its own client captures none.
+     * HANDOVER(2, H=18) applied at 15: its records are required from 21 = H+delay (missing: 91), driven from there. A
+     * missing record of slot 1, which is not absent, stops (91) all along. */
+    {   const uint64_t si=stats.issued;stats.issued=0;pilot_absent=0;assert(pilot_absent_arm(2));stats.issued=si;
+        memset(pilot_locals,0,sizeof(pilot_locals));pilot_stop=30;
+        const LONG64 skips=pilot_absent_skips;const char *w="";
+        test_pilot_bytes(1,12,0,b);assert(pilot_stage_record(1,b,14));
+        test_pilot_bytes(2,12,0,c);assert(!pilot_stage_record(2,c,14) && !strcmp(pilot_stage,"absent_record"));
+        assert(test_pilot_frame(15) && pilot_slots[0].driving && !pilot_slots[1].driving && pilot_absent_skips==skips+1);
+        stats.slot=2;assert(!pilot_capture(15,c,&w) && !strcmp(w,"absent"));stats.slot=1;
+        stats.issued=15;assert(!pilot_handover_apply(2,17,15) && !pilot_handover_apply(1,18,15) && pilot_handover_apply(2,18,15));
+        for(uint64_t t=16;t<=20;t++) {
+            if(t==17) {assert(!test_pilot_frame(17) && !strcmp(pilot_stage,"missing_record"));}   /* slot 1's, not absent */
+            test_pilot_bytes(1,t-3,0,b);assert(pilot_stage_record(1,b,t-3));
+            assert(test_pilot_frame(t) && pilot_slots[0].driving && !pilot_slots[1].driving);
+        }
+        assert(pilot_absent_skips==skips+6);
+        test_pilot_bytes(2,17,0,c);assert(!pilot_stage_record(2,c,17));          /* still a stand-in row */
+        test_pilot_bytes(1,18,0,b);assert(pilot_stage_record(1,b,18));
+        assert(!test_pilot_frame(21) && !strcmp(pilot_stage,"missing_record"));   /* H+delay: its first record is required */
+        test_pilot_bytes(2,18,-32767,c);assert(pilot_stage_record(2,c,18));
+        assert(test_pilot_frame(21) && pilot_slots[0].driving && pilot_slots[1].driving && pilot_absent_skips==skips+6);
+        assert(pilot_status(text,sizeof(text)) && strstr(text," absent=2 absent_skips=") && strstr(text," h2=18/-1/18"));
+        /* A joiner whose save tick T leaves no room for take-2 (start-5) would enter the running window: a loud stop. */
+        join_rx.based=1;join_rx.t.gate.tick=14;
+        assert(join_tick_base()==14 && !test_pilot_frame(22) && !strcmp(pilot_stage,"join_inside_window"));
+        join_rx.t.gate.tick=4;assert(join_tick_base()==4);   /* 4+1 = take-2: its own window from the start */
+        join_rx.based=0;join_rx.t.gate.tick=0;assert(!join_tick_base());
+        pilot_absent=0;for(unsigned i=0;i<PILOT_SLOTS;i++) pilot_from[i]=pilot_until[i]=pilot_enroll[i]=0;pilot_absent_skips=0;
+        pilot_stop=20;}
     /* Ownership and restoration of the shared request entry and the controls flag. */
     uint64_t original=0x0824245c8948ULL,patched=0x0824245c89e9ULL,foreign=0x1111ULL;
     memcpy(image+REQUEST_RVA,&patched,8);pilot_original_word=original;pilot_patched_word=patched;pilot_installed=1;

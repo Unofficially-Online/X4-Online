@@ -346,6 +346,13 @@ static const lx_site lx_sites[]={
     {"cue_name_walk",0xf68af4,0x70,"0879d082533fffd424e7eee5f7174549e252ef6c4e70b8ce863662a89307fb83"},
     {"cue_name_walk_up",0xf68c68,0x78,"87def51e5e415f6247901815477730d21e4d08629a820fdc7c0b0f1380d74539"},
     {"cue_module_name",0xf48cba,0x20,"1c1ace52dcad1f611617d3db74b214839debc38115af00400db99e69cc32ff7f"},
+    /* A static cue's path (lockstep_cue_name.h): its name +0xc8 (a libstdc++ string, its buffer +0xd8), script +0x150,
+     * parent +0x158, static cue +0x160 and sub-cue slots +0x190, as the XML constructor (from 0xf3f840), a library
+     * user's sub-cue copy (from 0xf584d0: its library cue's name, its parent's script, +0x100 the library cue) and the
+     * MD cue import (from 0xf58c30) write them. */
+    {"cue_path_xml",0xf3f9c0,0x3a0,"f2fb055604e3de3b3b5c66023ac7f4ea4c1a86b7880cf38db085b559534a0a21"},
+    {"cue_path_copy",0xf58570,0x2f8,"e419b74aec2acbbd8e0fd389c11b3a13a303d5600ea86226e16f3bc30d0ba4a4"},
+    {"cue_path_import",0xf58d70,0xd0,"7b595d1fc6fe4348c9eff0a2e1e2508efdca7ef3e7b90fb280724e221db9e27c"},
     {"boot_hold_call",0xfeb2a9,0x18,"a17c348e0eab113d7de29118cd8139aaaf564b90e38930d74152ad906764d3f5"},
     {"boot_hold_move_head",0x10e27a0,0x60,"ce934f2a5acdc39a4036bf8b98da31641a58eb5f5fca00d88a0b4e618cc8da0c"},
     {"event_delivery_loop",0x16c6b1b,0x6e,"3e5628a4ca1480546cb7b716889fb3d6f9e39fffe67b1e2956d951c078cd4fc9"},

@@ -492,11 +492,20 @@ static void pres_stop(void) {
     if(strcmp(pres_stage,"failed")) pres_stage="stopped";
 }
 /* The presentation's part of a pass (pnat_pass, every tick, before the slots' part). */
+/* The tick presenting starts: the window's start, or for an absent slot (hot join: this client is the joiner) its seat's
+ * take+3 as for the others (seated at H-1, presented from H+3); never before its handover. */
+static uint64_t pres_begin(void) {
+    if(!pilot_slot_absent(pres_slot)) return pilot_start;
+    const uint64_t e=pilot_enroll[pres_slot-1];
+    if(e==UINT64_MAX) return UINT64_MAX;
+    return e+PILOT_SUPPRESS_LEAD>pilot_start?e+PILOT_SUPPRESS_LEAD:pilot_start;
+}
 static int pres_pass(uint64_t tick) {
     if(!pres_armed || !pres_slot) return 1;
     if(pres_failed) return pres_fail(pres_why);
-    if(tick==pilot_start) return pres_start(tick);
-    if(tick>pilot_start && tick<=pilot_stop) {
+    const uint64_t begin=pres_begin();
+    if(begin<=pilot_stop && tick==begin) return pres_start(tick);
+    if(tick>begin && tick<=pilot_stop) {
         if(pres_open) return pres_fail("scope_left_open");
         if(*(void*volatile*)(pnat_base+PRES_UI_ENTRY)!=(void*)pres_ui_move) return pres_fail("ui_entry_lost");
         if(memcmp(pnat_base+PRES_REFILL_CALL,pres_site_patched,5)) return pres_fail("refill_site_lost");

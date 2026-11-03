@@ -649,3 +649,12 @@ static int rdisp_row_text(uint64_t seq,char *out,size_t capacity,uint64_t *next)
     *next=seq+1;
     return n>0 && (size_t)n<capacity?n:0;
 }
+
+/* The join with the own-ship prediction, at its arm. Without it each draws the own ship on its own: the prediction at
+ * offset 0 while the camera and the world are drawn at s (one step is 8 m at 240 m/s), stage 3 counting its swap as stale=
+ * (live p2e: owned=0 stale=2068; with the join p2f: owned=2162 stale=0, census 0). */
+static int opred_arm_joined(int mode,int others,unsigned tau_ms,unsigned cap,const char **why) {
+    if(!opred_arm(mode,others,tau_ms,cap,why)) return 0;
+    opred_display_offset=rdisp_display_offset;rdisp_owns=opred_owns;
+    return 1;
+}

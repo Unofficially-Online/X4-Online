@@ -11,6 +11,8 @@ typedef struct {
 static const thunk_recipe thunk_recipes[]={
     {0,32,THUNK_JUMP,0,0,0,(void*)gate_tick,{0}},
     {32,8,THUNK_POINTER,0,0,0,(void*)path_release,{0}},
+    /* 40..127 was unowned (between path_release and ai_run); the range finds' result store (48..63). */
+    {48,16,THUNK_JUMP,0,0,0,(void*)find_order_space_assign,{0}},
     {128,64,THUNK_JUMP,0,0,0,(void*)ai_run,{0}},
     {RID_REMOVE_THUNK,64,THUNK_PAIR,RID_REMOVE_ENTRY,5,32,(void*)rid_remove,{0x48,0x89,0x5c,0x24,0x08}},
     {256,64,THUNK_JUMP,0,0,0,(void*)agent_update,{0}},

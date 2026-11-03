@@ -22,6 +22,14 @@ static int params_once(params_fn original,unsigned actor,void *controller,void *
     if(params_done[actor-1]) return 1;
     original(controller,destination,0);params_done[actor-1]=1;++params_calls;return 1;
 }
+/* A hot joiner's fixture actor (lockstep_snapshot_fixture.h): marked done without the initialization the session made at
+ * its tick 1 (the joiner's parameters stay as loaded). */
+static unsigned params_kept;
+static int params_keep(unsigned actor) {
+    if(!actor_is_ship(actor)) return 0;
+    if(!params_done[actor-1]) {params_done[actor-1]=1;++params_kept;}
+    return 1;
+}
 
 static int agent_identity(unsigned index,void *self) {
     unsigned char *object=actor_components[index],*controller,*slots;uint64_t id;void *vtable;

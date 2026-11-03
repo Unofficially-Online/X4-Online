@@ -205,22 +205,37 @@
      <set_value name="$result" exact="'applied'"/>
     </do_elseif>
     <do_elseif value="$a.$step == 'wallet'">
-     <!-- factions: slot k's own pool account is set to the start's money (the player's wallet is moved through and
-          left as it was); coop: the start's money adds to the one shared wallet. -->
+     <!-- Slot k's money is its faction's OWN account, the one the trade family charges for slot k (LOCKSTEP-UI-TRADE
+          section 1): factions sets x4lan_player<k>'s to the start's money; coop adds the start's money to the player's
+          (the one shared wallet). A faction without its own account answers .money from X4's dummy account, a large
+          random sum (scriptproperties faction.hasownaccount; live l2a read it as -1638158336): the kind is checked
+          before that account is read or anything moves, and refused loudly. Amounts stay money values: the start's
+          whole credits arrive in two parts below 2^24 (exact as any float), readbacks compare money with money, and the
+          detail prints credits as largeint (L, never the 32-bit (..)i). The account and the start's money are both
+          bounded (0..1e12 Cr), so no larger amount ever moves through the player's wallet, which ends as it was. -->
      <set_value name="$f" exact="if $a.$faction == 'player' then faction.player else @State.$byId.{'$' + $a.$faction}"/>
-     <set_value name="$before" exact="player.money"/>
-     <do_if value="typeof $f != datatype.faction or ($a.$op == 'set' and not @State.$isPool.{'$' + $a.$faction}) or ($a.$op == 'add' and $f != faction.player) or $a.$cents lt 0">
+     <set_value name="$cap" exact="1000000Cr * 1000000"/>
+     <set_value name="$want" exact="0Cr"/>
+     <do_if value="$a.$mega ge 0 and $a.$mega le 1000000 and $a.$units ge 0 and $a.$units lt 1000000">
+      <set_value name="$want" exact="($a.$mega)i * 1000000Cr + ($a.$units)i * 1Cr"/>
+     </do_if>
+     <do_if value="typeof $f != datatype.faction or ($a.$op != 'set' and $a.$op != 'add') or ($a.$op == 'set' and not @State.$isPool.{'$' + $a.$faction}) or ($a.$op == 'add' and $f != faction.player) or $a.$mega lt 0 or $a.$mega gt 1000000 or $a.$units lt 0 or $a.$units ge 1000000 or $want gt $cap">
       <set_value name="$result" exact="'refused_wallet_invalid'"/>
      </do_if>
+     <do_elseif value="not $f.hasownaccount">
+      <set_value name="$detail" exact="'account=none'"/>
+      <set_value name="$result" exact="'refused_wallet_account'"/>
+     </do_elseif>
      <do_elseif value="$a.$op == 'add'">
-      <do_if value="$a.$cents gt 0">
-       <reward_player money="$a.$cents * 1ct"/>
+      <set_value name="$before" exact="$f.money"/>
+      <do_if value="$want gt 0Cr">
+       <reward_player money="$want"/>
       </do_if>
-      <set_value name="$detail" exact="'money=%s before=%s'.[(player.money / 1ct)i, ($before / 1ct)i]"/>
-      <do_if value="player.money != $before + $a.$cents * 1ct">
+      <set_value name="$detail" exact="'account=own money=%s before=%s'.[($f.money / 1Cr)L, ($before / 1Cr)L]"/>
+      <do_if value="$f.money != $before + $want">
        <set_value name="$result" exact="'refused_wallet_readback'"/>
       </do_if>
-      <do_elseif value="$a.$cents == 0">
+      <do_elseif value="$want == 0Cr">
        <set_value name="$result" exact="'unchanged'"/>
       </do_elseif>
       <do_else>
@@ -228,24 +243,41 @@
       </do_else>
      </do_elseif>
      <do_else>
-      <set_value name="$delta" exact="$a.$cents * 1ct - $f.money"/>
-      <do_if value="$delta gt 0ct">
-       <reward_player money="$delta"/>
-       <transfer_money from="faction.player" to="$f" amount="$delta"/>
+      <set_value name="$was" exact="$f.money"/>
+      <set_value name="$before" exact="player.money"/>
+      <do_if value="$was lt 0Cr or $was gt $cap">
+       <set_value name="$detail" exact="'account=own was=%s player=%s'.[($was / 1Cr)L, ($before / 1Cr)L]"/>
+       <set_value name="$result" exact="'refused_wallet_range'"/>
       </do_if>
-      <do_elseif value="$delta lt 0ct">
-       <transfer_money from="$f" to="faction.player" amount="-$delta"/>
-       <reward_player money="$delta"/>
-      </do_elseif>
-      <set_value name="$detail" exact="'money=%s player=%s'.[($f.money / 1ct)i, (player.money / 1ct)i]"/>
-      <do_if value="($f.money / 1ct)i != $a.$cents or player.money != $before">
-       <set_value name="$result" exact="'refused_wallet_readback'"/>
-      </do_if>
-      <do_elseif value="$delta == 0ct">
-       <set_value name="$result" exact="'unchanged'"/>
-      </do_elseif>
       <do_else>
-       <set_value name="$result" exact="'applied'"/>
+       <!-- |delta| <= 1e12 Cr. In: reward the player, transfer to the slot account. Out: transfer to the player, take
+            back exactly what arrived. transfer_money's result is what moved. -->
+       <set_value name="$delta" exact="$want - $was"/>
+       <set_value name="$moved" exact="0Cr"/>
+       <do_if value="$delta gt 0Cr">
+        <reward_player money="$delta"/>
+        <transfer_money from="faction.player" to="$f" amount="$delta" result="$moved"/>
+        <!-- l2b live: the result is what moved as the payer sees it (-5000 for 5000 in): compare its size. -->
+        <set_value name="$moved" exact="if $moved lt 0Cr then -$moved else $moved"/>
+       </do_if>
+       <do_elseif value="$delta lt 0Cr">
+        <transfer_money from="$f" to="faction.player" amount="-$delta" result="$moved"/>
+        <!-- l2b live: the result is what moved as the payer sees it (-5000 for 5000 in): compare its size. -->
+        <set_value name="$moved" exact="if $moved lt 0Cr then -$moved else $moved"/>
+        <do_if value="$moved gt 0Cr">
+         <reward_player money="-$moved"/>
+        </do_if>
+       </do_elseif>
+       <set_value name="$detail" exact="'account=own money=%s was=%s moved=%s player=%s'.[($f.money / 1Cr)L, ($was / 1Cr)L, ($moved / 1Cr)L, (player.money / 1Cr)L]"/>
+       <do_if value="$f.money != $want or player.money != $before or $moved != (if $delta lt 0Cr then -$delta else $delta)">
+        <set_value name="$result" exact="'refused_wallet_readback'"/>
+       </do_if>
+       <do_elseif value="$delta == 0Cr">
+        <set_value name="$result" exact="'unchanged'"/>
+       </do_elseif>
+       <do_else>
+        <set_value name="$result" exact="'applied'"/>
+       </do_else>
       </do_else>
      </do_else>
     </do_elseif>

@@ -53,19 +53,19 @@ static void test_md_resume(void) {
     assert(test_mdr_seen==lockstep_seed(MD_RESUME_DOMAIN,0,owner,0,2,a1) && d2!=d1 && md_resume_ring[1].ordinal==2);
     test_mdr_call(&word,test_sr_cue.cue,1);
     assert(test_mdr_seen==lockstep_seed(MD_RESUME_DOMAIN,0,owner,1,1,a1) && test_mdr_slot==1);
-    test_npc_string(test_mdr_cue2.node+0x20,"Cue2");test_mdr_call(&word,test_mdr_cue2.cue,0);
+    test_npc_string(test_mdr_cue2.cue+0xc8,"Cue2");test_mdr_call(&word,test_mdr_cue2.cue,0);
     assert(test_mdr_seen==lockstep_seed(MD_RESUME_DOMAIN,0,test_sr_fnv("Other.Cue2"),0,1,a2) && word==0x1111);
     /* A new tick starts new ranks. */
     stats.issued=5;test_mdr_call(&word,test_sr_cue.cue,0);
     assert(test_mdr_seen==lockstep_seed(MD_RESUME_DOMAIN,5,owner,0,1,a1) && md_resume_ring[4].tick==5);stats.issued=0;
 
-    /* No name: owner 0, still keyed and counted. */
-    test_mdr_reset();*(void**)(test_mdr_cue2.cue+0x150)=test_mdr_module;test_npc_string(test_mdr_module+0x18,"Other");
-    *(void**)(test_mdr_module+0x80)=test_mdr_module+0x60;
+    /* No name (a static cue whose path is refused: here its script has no name): owner 0, still keyed and counted. */
+    test_mdr_reset();*(void**)(test_mdr_cue2.cue+0x150)=test_mdr_module;test_npc_string(test_mdr_module+0x18,"");cue_path_refusals=0;
     word=0x22;test_mdr_call(&word,test_mdr_cue2.cue,0);
     assert(test_mdr_seen==lockstep_seed(MD_RESUME_DOMAIN,0,0,0,1,a2) && md_resume_unnamed==1 && !md_resume_failures &&
-           md_resume_ring[0].unnamed==1 && !md_resume_ring[0].name[0] && word==0x22);
-    *(void**)(test_mdr_cue2.cue+0x150)=test_mdr_cue2.module;
+           md_resume_ring[0].unnamed==1 && !md_resume_ring[0].name[0] && word==0x22 && cue_path_refusals==1);
+    {char text[768];assert(md_resume_status(text,sizeof(text))>0 && strstr(text," cue_refused=1 cue_refusal=check=static_script,static="));}
+    *(void**)(test_mdr_cue2.cue+0x150)=test_mdr_cue2.module;cue_path_refusals=0;snprintf(cue_path_refusal,sizeof(cue_path_refusal),"-");
     /* Another thread is keyed the same way and counted. */
     ui_thread=GetCurrentThreadId()+1;test_mdr_call(&word,test_sr_cue.cue,0);
     assert(test_mdr_seen==lockstep_seed(MD_RESUME_DOMAIN,0,owner,0,1,a1) && md_resume_threads==1 && md_resume_ring[1].thread==1);

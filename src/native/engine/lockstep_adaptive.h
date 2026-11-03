@@ -93,7 +93,7 @@ static int adapt_pilot_adopt(const adapt_entry *plan) {
     if(predict_armed || stats.issued) return 0;   /* the prediction horizon is the armed delay */
     if(!pilot_config_valid(pilot_slot_count,pilot_source,plan->pilot,pilot_start,pilot_stop,pilot_suppress) ||
        !pilot_delay_covers(PILOT_SOURCE_WIRE,plan->pilot,plan->lag-1)) return 0;
-    pilot_delay=plan->pilot;return 1;
+    pilot_delay=plan->pilot;opred_delay_adopted();return 1;
 }
 #else
 static int adapt_pilot_armed(void) {return 0;}

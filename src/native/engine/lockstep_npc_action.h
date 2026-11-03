@@ -1,5 +1,5 @@
 /* Read-only NPC_UseCases lifecycle trace, including execution outside fixture
- * interrupts. Names are decoded from the pinned native cue-name tree; no engine
+ * interrupts. Names are the static cues' paths from their pinned fields (lockstep_cue_name.h); no engine
  * formatter, expression evaluator or variable getter is invoked. */
 #define NPC_ACTION_LIMIT 16384u
 #define NPC_NAME_LIMIT 512u
@@ -18,8 +18,16 @@ static int npc_action_wanted(void) {return !gate_play_mode && (npc_action_rows |
 #include "lockstep_cue_name.h"
 static int npc_cue_name_ex(void *exec,char out[256],int npc_only) {return npc_cue_name_with(read_local,exec,out,npc_only);}
 static int npc_cue_name(void *exec,char out[256]) {return npc_cue_name_ex(exec,out,1);}
+/* The code that writes a static cue's path fields (lockstep_cue_name.h CUE_PATH_PINS, the hot join's file pins too). */
+static int cue_path_pinned(void) {
+    static const struct {unsigned rva,size;const char *sha;} pins[]={CUE_PATH_PINS};
+    for(unsigned i=0;i<sizeof(pins)/sizeof(*pins);i++) if(!hash_ok(image+pins[i].rva,pins[i].size,pins[i].sha)) return 0;
+    return 1;
+}
+/* The cue-name layout: the static cue's path fields, and the ranges pinned before (the engine's own name getter
+ * 0x1118b30, which reads +0x160, +0x150 and +0xc8 and calls the name map walk 0x1110bf0; 0x110ef50; 0xccc890). */
 static int npc_layout_pinned(void) {
-    return hash_ok(image+0x1118b30,575,"848956991261f520dc498d466994425ccaee4e413188a70a1244db31b5b7c5bf") &&
+    return cue_path_pinned() && hash_ok(image+0x1118b30,575,"848956991261f520dc498d466994425ccaee4e413188a70a1244db31b5b7c5bf") &&
         hash_ok(image+0x1110bf0,113,"8c2d5d728f4c7d2d68f2d95b0aa54b2c1f1089f10452cedfa80154256f2f84c1") &&
         hash_ok(image+0x110ef50,472,"67e8b01827bdcb48266391cab6c13218fd49477c2df46e8c1f0b8eae1dba0046") &&
         hash_ok(image+0xccc890,523,"96aefc74eb0a44e1e87407d86e80dab0648cf94197f8b06c7e88dd3cf56185d6");

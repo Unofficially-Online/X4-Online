@@ -659,6 +659,13 @@ static int opred_arm(int mode,int others,unsigned tau_ms,unsigned cap,const char
     opred_present_stale=opred_present_previous=opred_present_thread=0;
     opred_armed=1;opred_stage="armed";return 1;
 }
+/* An adaptive plan replaced the delay armed at the menu (kmax+2): the horizon follows, or the ship would be
+ * drawn up to the cap ahead whatever the real delay is. Arrives with tick 0's permits, before any prediction. */
+static void opred_delay_adopted(void) {
+    if(!opred_armed) return;
+    unsigned h=pilot_delay<opred_cap?pilot_delay:opred_cap;
+    opred_horizon=h>OPRED_HORIZON_MAX?OPRED_HORIZON_MAX:h;
+}
 /* Once per admitted tick on the MoveWorker (slot 6), after this tick's stock capture. */
 static int opred_frame(uint64_t tick,const char **why) {
     *why="-";
@@ -669,6 +676,11 @@ static int opred_frame(uint64_t tick,const char **why) {
         opred_slot *p=&opred_slots[i];
         /* The previous tick's shown block, for a render-only frame on the other bank. */
         if(p->ready) {memcpy(p->prev_floats,p->sim_floats,sizeof(p->prev_floats));p->prev_valid=1;} else p->prev_valid=0;
+        /* Absent (hot join): nobody steers it before its handover, so nothing to predict or present; it starts afresh at H. */
+        if(p->enabled && !pilot_slot_present(i+1,tick)) {
+            if(p->object) opred_reset(p,OPRED_RESETS);   /* not counted: no cause of the prediction's own */
+            p->ready=0;p->object=NULL;p->parent=NULL;continue;
+        }
         if(p->enabled) opred_slot_frame(i,tick);
     }
     opred_last_tick=tick;++opred_frames;opred_stage="live";return 1;

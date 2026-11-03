@@ -137,6 +137,7 @@ PROBE_REQUIRES_ALL = {
     'native_gate_nav_octree': (('observe', 'sync', 'deadline', 'agreed'), ('native_gate_world_identities',)),
     'native_gate_nav_octree_snapshot': (('true',), ('native_gate_world_identities',)),
     'native_gate_nav_mesh': (('observe', 'sync'), ('native_gate_world_identities',)),   # lockstep_nav_mesh.h, stop reason 186
+    'native_gate_character_play': (('observe', 'sync'), ()),   # lockstep_character_play.h, stop reason 188
     'native_gate_body_order': (('sort', 'observe'),
                                ('native_gate_world_identities', 'native_gate_created_identities', 'native_gate_portable_created')),
     'native_gate_virtual_players': (('observe', 'construct'), ('native_gate_serial_pathing',)),
@@ -868,6 +869,16 @@ def probe_rules(config_text, enabled):
             failures.append(dict(rule="native_gate_world_hash_shields must be 'canonical'", bits=[value]))
         if not re.search(r'X4LAN_CONFIG\.native_gate_world_hash_stride\s*=\s*[0-9]', config_text):
             failures.append(dict(rule='native_gate_world_hash_shields needs native_gate_world_hash_stride', bits=['native_gate_world_hash_stride']))
+    # Hot join census (reports/LOCKSTEP-HOTJOIN-20261101.txt 1.6): one more world capture at the join's T+1 on the session and
+    # the joiner (native_gate_probe.lua join_client.capture_at).
+    for value in re.findall(r'X4LAN_CONFIG\.native_gate_world_hash_join\s*=\s*([^\s;]+)', config_text):
+        if value in ('nil', 'false'): continue
+        if value != 'true':
+            failures.append(dict(rule='native_gate_world_hash_join must be true', bits=[value]))
+        if not re.search(r'X4LAN_CONFIG\.native_gate_world_hash_stride\s*=\s*[0-9]', config_text):
+            failures.append(dict(rule='native_gate_world_hash_join needs native_gate_world_hash_stride', bits=['native_gate_world_hash_stride']))
+        if not re.search(r'X4LAN_CONFIG\.native_gate_join\s*=\s*(?!false|nil)\S', config_text):
+            failures.append(dict(rule='native_gate_world_hash_join needs native_gate_join', bits=['native_gate_join']))
     # FR28: per-tick WORLD_HEALTH rows of the world-hash watches, ticks first..last (read-only).
     for value in re.findall(r'X4LAN_CONFIG\.native_gate_world_health_ticks\s*=\s*([^\n;]+)', config_text):
         value = value.strip()

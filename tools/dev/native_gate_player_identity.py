@@ -37,6 +37,7 @@ KIT_KNOWN_KEYS = {'sectors', 'faction', 'shipyards'}
 KIT_PARTS = ('blueprints', 'inventory', 'known', 'reputation', 'research')   # what a kit may leave out, by name
 KIT_ITEMS = 64            # wares, reputation rows or known sectors per kit
 MONEY_MAX = 10 ** 12      # credits
+MONEY_PART = 10 ** 6      # wallet step MD parts: mega = money // 1e6 (<= 1e6), units = money % 1e6 (both < 2^24)
 VALUE_SCALE = 1_000_000   # reputation values travel as integer millionths
 IDENT = re.compile(r'[a-z][a-z0-9_]*')
 POOL = re.compile(r'x4lan_player[0-9]+')
@@ -342,6 +343,7 @@ def steps(P, plan_digest=None):
         slot, faction = k['slot'], P['slots'][k['slot'] - 1]['faction']
         add('kit', slot, f"gamestart={k['gamestart']} faction={faction} omitted={'+'.join(k['omitted']) or '-'}")
         add('wallet', slot, f"wallet={faction} op={'set' if factions else 'add'} money={k['money']}")
+        out[-1].update(mega=k['money'] // MONEY_PART, units=k['money'] % MONEY_PART)   # MD values, as the Lua core's
         for r in k['reputation']:
             add('reputation', slot, f"faction={faction} other={r['faction']} value={r['value']}")
         for w in k['blueprints']:

@@ -49,7 +49,7 @@ static int lua_find_order(lua_State *L) {
     return 1;
 }
 static int lua_find_order_status(lua_State *L) {
-    char out[768];int n=accept_ui()?find_order_status(out,sizeof(out)):0;
+    char out[1024];int n=accept_ui()?find_order_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
     return 1;
 }

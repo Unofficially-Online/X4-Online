@@ -424,6 +424,23 @@ class MirrorTests(unittest.TestCase):
         self.assertIn('pfoot_state!=PFOOT_SEATED', BODY_H)
         self.assertIn('pfslot_getup_due(tick)', BODY_H)
 
+    def test_the_double_tap_clock_is_the_sessions_in_the_replay(self):
+        # Live df2b: slot 1's first forward press parted the walking bank's 0x38f4e70 (each process's real time) and |W2.1 from
+        # its apply tick. The replay runs X4's walking state handler with the time lock held and the session's clock as real time.
+        stock = (ENGINE/'lockstep_pilot_stock.h').read_text(encoding='utf-8')
+        walk = re.search(r'static void pstk_replay_walk\(.*?\n\}', stock, re.S).group(0)
+        self.assertIn('pfoot_replay_clock(kind,n->handler)) pfoot_replay_state(n->handler,id,(unsigned char)value)', walk)
+        body = re.search(r'static void pfoot_replay_state\(.*?\n\}', FOOT_H, re.S).group(0)
+        self.assertLess(body.index('pnat_fn.time(&now)'), body.index('EnterCriticalSection(lock)'))
+        self.assertLess(body.index('EnterCriticalSection(lock)'), body.index('__try'))
+        self.assertIn('__finally {memcpy(pnat_base+PFOOT_REAL_TIME,&real,8);if(lock) LeaveCriticalSection(lock);}', body)
+        self.assertIn('pfoot_fail_async("foot_clock")', body)
+        self.assertIn('#define PFOOT_TIME_LOCK 0x6b60e10u', FOOT_H)
+        self.assertIn('#define PFOOT_REAL_TIME 0x6b60e40u', FOOT_H)
+        self.assertIn('pfoot_time_lock=(CRITICAL_SECTION*)(image+PFOOT_TIME_LOCK);', FOOT_H)
+        self.assertIn('{0xe9f90u,0x39,', FOOT_H)   # the clock d7d3b0 calls is pinned
+        self.assertIn('foot_clock', REGISTRY)
+
     def test_the_walking_ids_are_the_options_menus_first_person_controls(self):
         # gameoptions.lua's 'firstperson' controls (ranges 15 16 13 14, states 26 27 32 33 87 30 31 28 29 34 35 36, action 220):
         # every one of them is a walking id of the module (lockstep_pilot_foot.h pfoot_id).

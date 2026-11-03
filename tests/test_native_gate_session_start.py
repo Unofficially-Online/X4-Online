@@ -325,11 +325,19 @@ class SpecTests(unittest.TestCase):
             self.assertIn('--gamestart war_start', command)
             self.assertIn('--expect "NATIVE_SNAPSHOT HULLS_READY count=2"', command)
             self.assertIn('SESSION_HULL_FAILED', command)
+            # Factions kits set pool accounts: the new game is made with the pool library (own accounts) of this tree.
+            out = Path(d) / 'cap'
+            self.assertEqual((out / 'libraries/factions.xml').read_bytes(), (session_start.EXTENSION / 'libraries/factions.xml').read_bytes())
+            self.assertEqual(json.loads((out / 'x4lane-manifest.json').read_text())['libraries/factions.xml'],
+                             hashlib.sha256((out / 'libraries/factions.xml').read_bytes()).hexdigest())
             # Without per-player starts the capture is the plain one for that start.
             plain = session_start.build_spec(c, 'beta_start', 2, 'coop', {})
             out = session_start.build_capture(plain, dll, Path(d) / 'cap2')
             self.assertFalse((out / 'md/x4lan_session_hulls.xml').exists())
+            self.assertFalse((out / 'libraries').exists())
             self.assertNotIn('hulls', (out / 'ui/config.lua.append').read_text())
+            coop = session_start.build_spec(c, 'war_start', 2, 'coop', {2: 'alpha_start'}, {2: 'inventory,reputation'})
+            self.assertFalse((session_start.build_capture(coop, dll, Path(d) / 'cap3') / 'libraries').exists())
 
     @unittest.skipUnless(os.environ.get('X4LAN_MD_SCHEMA') == '1' and etree is not None and MD_XSD.is_file(),
                          'set X4LAN_MD_SCHEMA=1 with lxml and the read-only x4-re md.xsd')
@@ -498,6 +506,7 @@ class RegisterTests(unittest.TestCase):
         self.assertEqual(plan['kits'], [session['slots']['2']['kit']])
         self.assertEqual(json.loads((out / 'session.json').read_text())['snapshot']['sha256'], sha)
         self.assertIn('kits=2:alpha_start:money=7000', identity.canonical(identity.validate(plan)))
+        self.assertFalse((out / 'libraries').exists())   # coop: the money is the player's own account
         # The unrebased base boots another save: refused.
         args = players.defaults(players.build_parser().parse_args(['overlay', '--session', str(path), '--base', str(base),
                                                                   '--out', str(self.root / 'o2'), '--probe', str(DEV / 'native_gate_probe.lua'),
@@ -508,6 +517,29 @@ class RegisterTests(unittest.TestCase):
         changed = dict(session, snapshot=dict(session['snapshot'], sha256='0' * 64))
         with self.assertRaises(session_start.SessionError):
             session_start.rebase(changed, base, self.root / 'r2')
+
+    def test_factions_kits_ship_the_pool_library_with_own_accounts(self):
+        # The wallet step sets x4lan_player<k>'s OWN account; a frozen base predates the pool accounts, so the overlay
+        # carries this tree's library (16 pool factions, each <account amount="0" />).
+        self.spec = session_start.build_spec(self.catalog, 'war_start', 2, 'factions', {2: 'alpha_start'},
+                                             {2: 'blueprints,inventory,known,research'})
+        path, session = self.write_session()
+        rebased = session_start.rebase(session_start.session_of(path), make_base(self.root / 'b', 'a' * 64), self.root / 'rebased')
+        args = players.defaults(players.build_parser().parse_args(['overlay', '--session', str(path), '--base', str(rebased),
+                                                                  '--out', str(self.root / 'o'), '--probe', str(DEV / 'native_gate_probe.lua'),
+                                                                  '--players', '2', '--mode', 'factions', '--source', 'none']))
+        out, plan = players.build_overlay(args)
+        library = out / 'libraries/factions.xml'
+        self.assertEqual(library.read_bytes(), (session_start.EXTENSION / 'libraries/factions.xml').read_bytes())
+        pool = [f for f in ET.fromstring(library.read_text(encoding='utf-8')).iter('faction') if f.get('id', '').startswith('x4lan_player')]
+        self.assertEqual([[a.get('amount') for a in f.findall('account')] for f in pool], [['0']] * 16)
+        self.assertIn('libraries/factions.xml', json.loads((out / 'x4lane-manifest.json').read_text()))
+        steps = identity.steps(identity.validate(plan))
+        self.assertIn('step=wallet slot=2 wallet=x4lan_player2 op=set money=7000', ' '.join(s['head'] for s in steps))
+        self.assertTrue(any(n.startswith('wallet: libraries/factions.xml') for n in players.session_notes(args, plan)))
+        self.assertTrue(players.wallet_library(plan))
+        self.assertFalse(players.wallet_library(dict(plan, kits=[])))
+        self.assertFalse(players.wallet_library(dict(plan, mode='coop')))
 
     def test_builder_session_defaults_and_refusals(self):
         path, session = self.write_session()
@@ -634,6 +666,27 @@ class KitPlanTests(unittest.TestCase):
                 self.assertEqual(str(caught.exception), reason)
                 self.assertEqual(lua_validate(lua, K, plan)[1], reason)
 
+    def test_wallet_money_reaches_md_in_two_exact_parts(self):
+        # Live l2a: the old step read a pool account back through (money / 1ct)i, a 32-bit integer. The start's whole
+        # credits now travel as mega (millions) and units (the rest), each below 2^24 (exact even as a 32-bit float);
+        # MD rebuilds the money value as (mega)i * 1000000Cr + (units)i * 1Cr. Lua and Python split alike.
+        lua, K = lua_core()
+        for money in (0, 1, 7000, 999_999, 1_000_000, 16_777_216, 123_456_789_012, identity.MONEY_MAX - 1, identity.MONEY_MAX):
+            for mode, kit in (('factions', KIT_F), ('coop', KIT_C)):
+                with self.subTest(money=money, mode=mode):
+                    plan = identity.build_plan(2, mode, kits=[dict(kit, money=money)])
+                    P = identity.validate(plan)
+                    py = [s for s in identity.steps(P) if s['step'] == 'wallet'][0]
+                    LP, why = lua_validate(lua, K, plan)
+                    self.assertIsNone(why)
+                    steps = K.steps(LP, identity.digest(P))
+                    lw = [steps[i] for i in range(1, len(steps) + 1) if steps[i].step == 'wallet'][0]
+                    self.assertEqual((lw.mega, lw.units), (py['mega'], py['units']))
+                    self.assertEqual(py['mega'] * 1_000_000 + py['units'], money)
+                    self.assertTrue(0 <= py['mega'] <= 1_000_000 and 0 <= py['units'] < 1_000_000 < 2 ** 24)
+                    self.assertIsNone(getattr(lw, 'cents', None))
+                    self.assertTrue(py['head'].endswith(f'money={money}'))   # the head (and the plan text) keep whole credits
+
 
 class KitGlueTests(unittest.TestCase):
     def test_clients_raise_identical_kit_steps_with_md_values_and_compare(self):
@@ -648,7 +701,8 @@ class KitGlueTests(unittest.TestCase):
                     events = list(client.lua.globals().events.values())
                     self.assertEqual([e.head for e in events], heads)
                     wallet = [e for e in events if e.step == 'wallet'][0]
-                    self.assertEqual((wallet.faction, wallet.op, wallet.cents), ('x4lan_player2', 'set', 700000) if mode == 'factions' else ('player', 'add', 700000))
+                    self.assertEqual((wallet.faction, wallet.op, wallet.mega, wallet.units),
+                                     ('x4lan_player2', 'set', 0, 7000) if mode == 'factions' else ('player', 'add', 0, 7000))
                     if mode == 'factions':
                         self.assertEqual([(e.faction, e.other, e.value) for e in events if e.step == 'reputation'],
                                          [('x4lan_player2', 'argon', 0.0032), ('x4lan_player2', 'split', -0.032)])
@@ -670,6 +724,15 @@ class KitGlueTests(unittest.TestCase):
         with self.assertRaises(LuaError) as caught:
             identity_tests.run([client], 31, refuse=refused)
         self.assertIn(f'refused:{refused}', str(caught.exception))
+        # A pool faction without its own account (live l2a) refuses the wallet step loudly: the session stops at the fold.
+        lua, K = lua_core()
+        plan = identity.build_plan(2, 'factions', kits=[KIT_F])
+        LP, _ = lua_validate(lua, K, plan)
+        steps = K.steps(LP, identity.digest(identity.validate(plan)))
+        rows = [f'{i}|applied|-' for i in range(1, len(steps) + 1)]
+        wallet = [i for i in range(1, len(steps) + 1) if steps[i].step == 'wallet'][0]
+        rows[wallet - 1] = f'{wallet}|refused_wallet_account|account=none'
+        self.assertEqual(K.results(steps, lua.table_from(rows))[1], f'refused:{wallet}:refused_wallet_account')
 
 
 class KitMdTests(unittest.TestCase):
@@ -678,13 +741,48 @@ class KitMdTests(unittest.TestCase):
         root = ET.fromstring(text)
         for step in ('kit', 'wallet', 'reputation', 'blueprint', 'research', 'known_sector', 'known'):
             self.assertIn(f"$a.$step == '{step}'", text)
-        for result in ('refused_wallet_invalid', 'refused_wallet_readback', 'refused_relation_readback', 'refused_blueprint_readback',
+        for result in ('refused_wallet_invalid', 'refused_wallet_account', 'refused_wallet_range', 'refused_wallet_readback',
+                       'refused_relation_readback', 'refused_blueprint_readback',
                        'refused_research_readback', 'refused_known_invalid', 'refused_known_readback', 'refused_ware_invalid'):
             self.assertIn(f"'{result}'", text)
         self.assertEqual([r.get('ref') for r in root.iter('run_actions')], ['md.LIB_Generic.UncoverMap_SectorsAndGates'])
-        # Factions: money moves through the player's wallet into slot k's account and back out; nothing else pays.
-        self.assertEqual([(t.get('from'), t.get('to')) for t in root.iter('transfer_money')], [('faction.player', '$f'), ('$f', 'faction.player')])
-        self.assertEqual(len(list(root.iter('reward_player'))), 3)
+        # Factions: money moves through the player's wallet into slot k's account and back out; nothing else pays. Each
+        # transfer reads back what moved (its result).
+        self.assertEqual([(t.get('from'), t.get('to'), t.get('result')) for t in root.iter('transfer_money')],
+                         [('faction.player', '$f', '$moved'), ('$f', 'faction.player', '$moved')])
+        self.assertEqual([r.get('money') for r in root.iter('reward_player')], ['$want', '$delta', '-$moved'])
+
+    def test_md_wallet_uses_only_an_own_account_bounded_and_in_money_units(self):
+        # Live l2a: x4lan_player2 had no own account, so .money answered X4's dummy account (a large random sum) and the
+        # (money / 1ct)i readback printed -1638158336. The step now checks the account kind first and never converts
+        # money through the 32-bit (..)i.
+        text = IDENTITY_MD.read_text(encoding='utf-8')
+        root = ET.fromstring(text)
+        step = [e for e in root.iter('do_elseif') if e.get('value') == "$a.$step == 'wallet'"]
+        self.assertEqual(len(step), 1)
+        block = ET.tostring(step[0], encoding='unicode')
+        self.assertNotRegex(text, r'1(ct|Cr)\)i')
+        self.assertNotIn('$a.$cents', text)
+        self.assertIn('($a.$mega)i * 1000000Cr + ($a.$units)i * 1Cr', block)
+        # Order of the branches: invalid, then the account kind (before any read of the slot account), then add / set.
+        branches = [e for e in step[0] if e.tag in ('do_if', 'do_elseif', 'do_else')]
+        self.assertEqual([(b.tag, b.get('value')) for b in branches[-4:]],
+                         [('do_if', branches[-4].get('value')), ('do_elseif', 'not $f.hasownaccount'), ('do_elseif', "$a.$op == 'add'"), ('do_else', None)])
+        self.assertIn('$want gt $cap', branches[-4].get('value'))
+        self.assertNotIn('$f.money', ET.tostring(branches[-4], encoding='unicode') + branches[-4].get('value'))
+        self.assertEqual([s.get('exact') for s in branches[-3].iter('set_value') if s.get('name') == '$result'], ["'refused_wallet_account'"])
+        before = block[:block.index('not $f.hasownaccount')]
+        self.assertNotIn('$f.money', before)
+        self.assertIn('<set_value name="$cap" exact="1000000Cr * 1000000" />', block)   # 1e12 Cr, no literal past 32 bits
+        # set: the slot account must be in 0..cap before anything moves; readbacks compare money values.
+        set_branch = ET.tostring(branches[-1], encoding='unicode')
+        self.assertLess(set_branch.index('$was gt $cap'), set_branch.index('<reward_player'))
+        self.assertLess(set_branch.index('$was gt $cap'), set_branch.index('<transfer_money'))
+        self.assertIn('$f.money != $want or player.money != $before or $moved != (if $delta lt 0Cr then -$delta else $delta)', set_branch)
+        self.assertIn('$f.money != $before + $want', ET.tostring(branches[-2], encoding='unicode'))
+        for detail in [s.get('exact') for s in step[0].iter('set_value') if s.get('name') == '$detail']:
+            self.assertTrue(detail == "'account=none'" or detail.startswith("'account=own "), detail)
+            self.assertNotRegex(detail, r'\)i\b')
         self.assertEqual([a.get('wares') for a in root.iter('add_blueprints')], ['$w'])
         self.assertEqual([a.get('ware') for a in root.iter('add_research')], ['$w'])
         self.assertEqual(text.count('<debug_text '), 1)   # still one APPLIED line per step

@@ -272,7 +272,10 @@ static void flight_restore(void) {
     flight_restored=flight_swap((void*)flight_update,image+FLIGHT_UPDATE);
     if(flight_restored) flight_installed=0;
 }
-static int flight_register(unsigned actor,unsigned char *slots) {
+/* init=0 (a hot joiner's fixture actor, lockstep_snapshot_fixture.h): the model is registered as initialized without the
+ * constructor draw the session made when it built it (the joiner's model keeps what its load gave it). */
+static unsigned flight_registration_kept;
+static int flight_register_with(unsigned actor,unsigned char *slots,int init) {
     if(!flight_installed || !actor_is_ship(actor) || !slots) return 0;
     unsigned char *agent=slots-0xad0,*model;void *vtable,*owner;
     if(!read_local(agent+0xf10,&model,8) || !read_local(model,&vtable,8) ||
@@ -280,10 +283,13 @@ static int flight_register(unsigned actor,unsigned char *slots) {
     flight_samples[actor-1].agent=agent;
     if(vtable!=image+FLIGHT_ENTRY-0x70) {flight_samples[actor-1].model=NULL;return 0;}
     flight_samples[actor-1].model=model;
-    if(flight_initial) {
+    if(flight_initial && !init) {
+        if(flight_samples[actor-1].initialized_model!=model) {flight_samples[actor-1].initialized_model=model;++flight_registration_kept;}
+    } else if(flight_initial) {
         uint64_t before=flight_samples[actor-1].init_generation;
         flight_init_model((flight_random_fn)(image+0x14ddc90),&flight_samples[actor-1],actor,model);
         if(flight_samples[actor-1].init_generation!=before) ++flight_registration_inits;
     }
     return 1;
 }
+static int flight_register(unsigned actor,unsigned char *slots) {return flight_register_with(actor,slots,1);}
