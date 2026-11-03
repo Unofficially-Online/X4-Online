@@ -43,6 +43,22 @@ PLAY_MODE = 'X4LAN_CONFIG.native_gate_play_mode = true\n'  # world hash kept in 
 NO_PACE = 'X4LAN_CONFIG.native_gate_tick_pace = false\n'  # clients run as fast as they can
 
 
+# Exports the relay code already carries (UI replay, player orders): never blocked by --ui-guard.
+RELAYED = {'AdjustOrder', 'CreateOrder', 'CreateOrder3', 'EnableOrder', 'EnablePlannedDefaultOrder', 'EndGuidance', 'QuickDock',
+           'RemoveAllOrders', 'RemoveAllOrders2', 'RemoveOrder', 'RemoveOrder2', 'RemovePlannedDefaultOrder', 'RequestDockAt',
+           'RequestDockAtReason', 'ResetOrder', 'ResetOrderLoop', 'SetCurrentLoopOrder', 'SetDefensibleActiveWeaponGroup',
+           'SetGuidance', 'SetOrderLoop', 'SetSofttarget', 'SetWeaponGroup', 'SetWeaponMode', 'StartPlayerActivity',
+           'StopPlayerActivity', 'ToggleAutoPilot', 'ToggleFlightAssist', 'UndockPlayerShip'}
+
+
+def guard_config(census):
+    """The ui_exports block configuration: game writes the UI calls, minus presentation and RELAYED."""
+    table = json.loads(Path(census).read_text())
+    names = sorted(n for n, v in table.items() if v['scripts'] and v['family'] != 'presentation' and n not in RELAYED)
+    listed = ','.join(f"'{n}'" for n in names)
+    return f"X4LAN_CONFIG.native_gate_ui_exports = 'block'\nX4LAN_CONFIG.native_gate_ui_exports_block = {{{listed}}}\n"
+
+
 def manifest(path):
     files = {p.relative_to(path).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
              for p in path.rglob('*') if p.is_file() and p.name != 'x4lane-manifest.json'}
@@ -67,6 +83,9 @@ def main(argv=None):
     p.add_argument('--no-pace', action='store_true', help='do not hold clients to real time')
     p.add_argument('--controls', choices=('device', 'native'), default='device',
                    help="device: X4's own controls parked on every client, ships flown only by the shared inputs")
+    p.add_argument('--ui-guard', type=Path, nargs='?', const=ROOT / '.local/ui-export-census.json', metavar='CENSUS',
+                   help="native_gate_ui_exports = 'block' for every game write the UI calls that the relay does not "
+                        "cover (from tools/dev/ui_export_census.py's map; RELAYED lists the covered exports)")
     p.add_argument('--players', choices=('factions', 'coop'),
                    help='player-activity soak: player identities, script pilots and scripted orders (native_gate_players.py)')
     p.add_argument('--players-arg', action='append', default=[], metavar='ARG',
@@ -96,6 +115,8 @@ def main(argv=None):
                 config.write(PLAY_MODE)
             if args.long or args.no_pace:
                 config.write(NO_PACE)
+            if args.ui_guard:
+                config.write(guard_config(args.ui_guard))
         manifest(keyed)
         if args.players:
             run([DEV / 'native_gate_players.py', 'overlay', '--base', keyed, '--gate-dll', args.gate_dll,
