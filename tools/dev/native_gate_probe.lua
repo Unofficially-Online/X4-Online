@@ -247,7 +247,7 @@ if cfg.native_gate_ui_relay then
       local args={}
       for i=1,#kinds do args[i]=value(kinds:sub(i,i),r.args[i]) end
       local ok,why=pcall(ffi.cast(core.signature(kinds),gate.ui_exports_address(r.index)),unpack(args,1,#kinds))
-      ticklog.write('FFI_RELAY tick='..tick..' slot='..k..' name='..name..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
+      DebugError('[X4LAN] NATIVE_GATE FFI_RELAY tick='..tick..' slot='..k..' name='..name..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
       calls[#calls+1]=k..':'..name
      end
     end
