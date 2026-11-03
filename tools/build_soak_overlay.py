@@ -154,6 +154,12 @@ def main(argv=None):
                  '--controls', args.controls, '--script-pilots', '--window', '30', str(args.window), '--world-stride', '300',
                  '--trace-stride', '3600', '--fp', 'default', *[x for kv in args.set for x in ('--set', kv)], *args.sandbox_arg])
     print(run([DEV / 'gate_preflight.py', args.out]).strip())
+    # Globals the probe reads that X4's UI Lua does not have (preflight stops at the load request, so a
+    # function reading a name before its local declaration only fails in a native run).
+    if (ROOT / '.local/ui-lua-globals-all.json').is_file():
+        ui = args.out / 'ui'
+        print(run([DEV / 'probe_globals_check.py', *[ui / n for n in ('native_gate_probe.lua', 'native_gate_inputs_core.lua',
+                                                                      'native_gate_ffi_relay_core.lua') if (ui / n).is_file()]]).strip())
     # The arguments beside the overlay (not in it: overlays are frozen by their manifest), for x4ls triage.
     given = sys.argv[1:] if argv is None else list(argv)
     rebuild = [a for i, a in enumerate(given) if a != '--out' and (i == 0 or given[i - 1] != '--out') and not a.startswith('--out=')]
