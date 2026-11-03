@@ -1437,6 +1437,22 @@ proposed and rejected.
   and GRAVQ shape, capture and admission in the synthetic radar worker; the spline models' capture, rebuild and refusals; the solver's
   address marks and the version 11 fallback); pytest of the join suites, defaults, registry, probe and check options: 413 passed.
 
+1.18 THE STALE WAKE MASKS (3 November; published ahead of package version 13, whose sections 1.17/1.18 follow with it; J1 j1-83
+  and j1-84 run on lanes b3/b4/b5 by the hot join session, reported to the coordinator)
+  [F: JOIN_AIWATCH rows of the watched owners' AI contexts (wake mask +0x188, reason +0x18c, due +0x190, both vector places);
+  AIDirector::Move 0x106d250, 0x10666e0] Two escort pilots (0x6ea57, 0xacc46) ran their order.fight.escort handler on both sides
+  at tick 634 and afterwards only on the session, never again on the joiner. At T the session's contexts are idle (mask 0, in no
+  wake vector); after the joiner's admission their move.generic contexts held mask 2 (blocking action done) in no vector: queued in
+  the joiner's boot, the admission emptied the wake vectors and reset the places but not the masks, and a context with its mask set
+  never asks for a vector place again, so it never ran after the join.
+  Fix (lockstep_join.h join_admit_ai, every package version): the admission clears every context's wake mask before the session's
+  queued contexts get theirs back; JOIN status mask_cleared=<n>.
+  run    build                       what it showed
+  j1-83  before the fix              the two escorts above; T+1 4 objects differ, 1,775 at 900
+  j1-84  the fix                     mask_cleared=16; tick 634 equal (217 of 217 script rows, none one-sided; 4 session-only before);
+                                     1,769 at 900
+  Tests: the native build and its tests, tests/test_native_gate_join*.py.
+
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9
   (8 before STEER and STEERPT, 7 before PARAM and DOCK, 6 before ROUTE, 5 before AGENT, 4 before FLIGHT and SPLINE, 3 before PATH and REGION, 2 before SHIELD..KEYS, 1 before the world side table:

@@ -529,7 +529,7 @@ static struct {
     int loaded,admitted,based,mode,skip_dt;join_tables t;uint64_t handover;
     join_id_rec *idmap;uint32_t idmap_mask;
     volatile LONG64 imported,mapped_saved,mapped_created,unmapped,created_failures,record_failures;
-    uint64_t ctx_missing,ctx_extra,ctx_ambiguous,wake_applied,wake_missing,wake_erased,vec_applied,vec_missing,md_applied,md_missing,md_extra,md_dropped,
+    uint64_t ctx_missing,ctx_extra,ctx_ambiguous,wake_applied,wake_missing,wake_erased,vec_applied,vec_missing,mask_cleared,md_applied,md_missing,md_extra,md_dropped,
         md_ambiguous,md_activation_fixed,md_activation_far,md_diff[4],clock_fixed,rid_skipped;double clock_delta;unsigned why;char detail[320];
     uint64_t health_applied,health_hull_fixed,health_shield_fixed,health_missing,health_shape,health_conflict,pose_applied,pose_fixed,pose_missing,
         pose_shape;
@@ -2015,6 +2015,14 @@ static int join_admit_ai(const join_engine *e) {
         ++join_rx.wake_applied;
     }
     for(uint32_t k=0;k<n;k++) slots[k].count=0;
+    /* Wake masks: none outside the wake vectors, as on the session (a context leaves its mask set until Move runs it, and asks for
+     * no second place in a vector while it is set). j1-83: two pilots' move.generic contexts queued in the joiner's boot (blocking
+     * action done, mask 2) lost their place when the vectors below were emptied but kept the mask, so the escort handler's wake of
+     * T+1 never queued them again and they never ran. The session's queued contexts get their masks back below. */
+    for(uint32_t k=0;k<n;k++) {
+        uint32_t mask=0,zero=0;
+        if(join_read((void *)(slots[k].ctx+JOIN_CTX_MASK),&mask,4) && mask) {memcpy((void *)(slots[k].ctx+JOIN_CTX_MASK),&zero,4);++join_rx.mask_cleared;}
+    }
     /* Wake vectors: the captured contexts in the captured order, in place. */
     for(uint32_t v=0;v<2;v++) {
         unsigned char *vec=e->director+JOIN_DIR_VEC+v*0x18u;uintptr_t vb=0,ve=0;
@@ -2248,7 +2256,7 @@ static int join_status(char *out,size_t cap) {
     int n=snprintf(out,cap,"state=%s tick=%llu k=%u mask=%u why=%u detail=%s save_bytes=%llu package_bytes=%llu save_us=%llu capture_us=%llu"
         " package=%s portable=%s modified_cleared=%u possible=%u joiner=%d mode=%d based=%d handover=%lld imported=%lld saved=%lld"
         " created=%lld unmapped=%lld created_failures=%lld ctx_missing=%llu ctx_extra=%llu ctx_ambiguous=%llu wake_erased=%llu"
-        " wake_applied=%llu wake_missing=%llu vec_applied=%llu vec_missing=%llu md_applied=%llu md_missing=%llu md_extra=%llu"
+        " wake_applied=%llu wake_missing=%llu vec_applied=%llu vec_missing=%llu mask_cleared=%llu md_applied=%llu md_missing=%llu md_extra=%llu"
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
@@ -2266,7 +2274,8 @@ static int join_status(char *out,size_t cap) {
         (long long)join_rx.mapped_created,(long long)join_rx.unmapped,(long long)join_rx.created_failures,
         (unsigned long long)join_rx.ctx_missing,(unsigned long long)join_rx.ctx_extra,(unsigned long long)join_rx.ctx_ambiguous,
         (unsigned long long)join_rx.wake_erased,(unsigned long long)join_rx.wake_applied,(unsigned long long)join_rx.wake_missing,
-        (unsigned long long)join_rx.vec_applied,(unsigned long long)join_rx.vec_missing,(unsigned long long)join_rx.md_applied,
+        (unsigned long long)join_rx.vec_applied,(unsigned long long)join_rx.vec_missing,(unsigned long long)join_rx.mask_cleared,
+        (unsigned long long)join_rx.md_applied,
         (unsigned long long)join_rx.md_missing,(unsigned long long)join_rx.md_extra,(unsigned long long)join_rx.md_ambiguous,
         (unsigned long long)join_rx.md_activation_fixed,(unsigned long long)join_rx.md_activation_far,(unsigned long long)join_rx.md_diff[0],
         (unsigned long long)join_rx.md_diff[1],(unsigned long long)join_rx.md_diff[2],(unsigned long long)join_rx.md_diff[3],join_rx.nrows,
