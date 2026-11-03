@@ -23,7 +23,8 @@ A. PLAYABILITY (people sessions)
     agreed step. Cope with spikes and dropouts better than a pause for everyone (a client stalled past a bound
     is dropped; needs item 16). Data, relay --latency-ms 100 (1 Nov): lookahead 1 0.38x speed, lookahead 3 +
     delay 5 0.76x, both in sync; model: step = max(frame, (round trip + frame) / (lookahead + 1)).
- 4. [running 1 Nov ~09:20: agents trade (X4-Multiplayer-trade), missions+conversations (X4-Multiplayer-missions),
+ 4. [trade live 3 Nov: t1d/t2f replay exact on both clients, pool factions now get a real account (t2f money as specified);
+    open: docked trade T3, people P1/P2; missions+conversations not yet live] [was: agents trade (X4-Multiplayer-trade), missions+conversations (X4-Multiplayer-missions),
     construction+crew+assets (X4-Multiplayer-build); money default: coop shares the player wallet, factions mode pays from
     each player's own faction account] Menus the guard still refuses: trading (slot 1 first; a trade offer needs a portable reference; whose
     money pays for slot k is a decision), mission offers and conversations for slots 2+ (their MD scope),

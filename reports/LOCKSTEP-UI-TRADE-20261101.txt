@@ -291,3 +291,34 @@ UI_GUARD_STATUS installed=216 for 214 (the guard table has 282 entries: missions
         controls), or the change is refused not_owner on both clients; nothing changes.
     [ ] report whether the trade context on client 2 shows wrong limits, empty rows or Lua errors (the trade view only adds the
         ship and the money; the rest of the menu still reads the `player` faction).
+
+13. FIRST LIVE RESULTS (coordinator, 2/3 November 2026; build201 = smoke 93642254, the session defaults (every UI family) plus the
+  section 11 script; 2 clients, 900 ticks; t1d coop, t2d factions with the Play42F2 plan and native_gate_ui_trade_fund = 50000)
+  Both: relay pass, no digest mismatch, both stopped with reason 1; UI_TRADE_PINS ok=1, families=65535 (every family),
+  UI_GUARD_STATUS installed=219. (World captures only at tick 1 in these runs: no census at 900.)
+  [F] The replay is exactly as specified, on both clients at the same ticks: 103 slot 1 TransferPlayerMoneyTo, 118 slot 2 the
+  same, 163/193 SetShipTradeLoopCargoReservationOverride, 178 slot 2 refused slot_ship, 223/238 TransferMoneyToPlayer,
+  283/298 RemoveShipTradeLoopCargoReservationOverride; in t2d slot 2's five calls carry " scope", slot 1's none; the trade
+  loop flags in the receipt follow (slot 1 1 from 163 to 283, slot 2 from 193 to 298). UI_TRADE_STATUS (840): runs=4,
+  scopes=0/8/0 (t1d) and 5/4/0 (t2d), lua=2/8/1/0 and 3/8/1/0 as specified. UI_TRADE_FUND tick=36 slot=2 scope=1 (t2d).
+  [F] Money: the player faction's balance stays 1,000,000 cents (10,000 Cr, the snapshot's <account id="[0x3]"
+  amount="10000"/>) through every transfer in both runs. [I] The transfers go to the slot ships, which have no account of
+  their own; X4's transfer clamps through the target account (section 1), and the dummy takes nothing, so these calls move no
+  money in X4 itself. The money check needs a target with an account: the docked trade (T3) or a station.
+  [F] Factions mode: x4lan_player2's column changed every tick to a different large number, the same on both clients: its
+  account resolves to X4's dummy account, whose balance getter draws from the thread's RNG. In the save only the player
+  faction has an account (NPC factions none); the pool factions are created at load from our libraries without one. So in
+  factions mode a pool slot spends money made from nothing and its income vanishes (the fund at 36 went nowhere).
+  Fixes (this update): the receipt and gate.ui_trade_money recognise the dummy (the global at 0x38f4bd8, or the getter
+  0x96e0a0) and answer n without calling it; gate.ui_trade_account(slot) gives a pool faction its own account the way X4
+  gives a container one (0x3f8720: SMem::Allocate(0x28; alignment 16 as the FIFTH argument, rdx/r8/r9 unused: a two-argument
+  call panicked X4 in t2e, 'SMem::Allocate() failed allocating 128 bytes - Invalid argument'), AccountClass constructor 0x34c780(account, 0, 0, 0), the
+  handle at account+8; here written to the faction's +0x280 -> +0x2e0), once per pool slot at the fleet tick on every
+  client, before the fund (UI_TRADE_ACCOUNT rows; accounts= in UI_TRADE_STATUS). Pinned: the constructor, the container
+  pattern, the allocator, the dummy getter.
+  t2f (build203, as t2d): UI_TRADE_ACCOUNT tick=36 slot=2 faction=x4lan_player2 made=1 on both clients; x4lan_player2's column
+  n -> 5,000,000 at 36 (the fund) -> 4,900,000 at 118 -> 4,925,000 at 238, exactly section 11's T2 values, the same at the same
+  ticks on both clients; accounts=1 in UI_TRADE_STATUS; relay pass, no digest mismatch, both stopped with reason 1.
+  [F] The player faction's own transfers to its own ship (slot 1) move nothing in either mode, while slot 2's do. [I] A ship
+  without its own account falls back to its owner's account when the owner has one, so player -> own ship is a no-op; the
+  money check of slot 1 needs a station or the docked trade. Open: whether saves keep a made account (hot join), T3.

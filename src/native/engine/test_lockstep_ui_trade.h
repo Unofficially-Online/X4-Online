@@ -35,7 +35,10 @@ typedef struct {void **vtable;int64_t cents;} tut_account;
 static int64_t test_uitrade_cents(void *account) {return ((tut_account*)account)->cents;}
 static void *test_uitrade_vt[4]={NULL,NULL,(void*)test_uitrade_cents,NULL};
 static tut_account test_uitrade_acc[3]={{test_uitrade_vt,0},{test_uitrade_vt,0},{test_uitrade_vt,0}};
-static int test_uitrade_no_account;
+static int test_uitrade_no_account,test_uitrade_dummy;
+#define TEST_UITRADE_NEW_HANDLE 0x40055ull
+static unsigned char test_uitrade_new_acc[UITRADE_ACCOUNT_SIZE];
+static void *test_uitrade_new_account(void) {uint64_t h=TEST_UITRADE_NEW_HANDLE;memcpy(test_uitrade_new_acc+8,&h,8);return test_uitrade_new_acc;}
 static uint64_t test_uitrade_salt;
 static unsigned char *test_uitrade_object(uint64_t id) {return id>=0x7001 && id<=0x7005?test_uitrade_obj[id-0x7001]:NULL;}
 static void *test_uitrade_find(void *map,uint64_t id,unsigned flags) {(void)map;assert(flags==4);return test_uitrade_object(id);}
@@ -43,6 +46,9 @@ static uint64_t test_uitrade_portable(uint64_t id) {return test_uitrade_object(i
 static void *test_uitrade_owner(void *object) {void *f=NULL;memcpy(&f,(unsigned char*)object+0x348,8);return f;}
 static void test_uitrade_own(uint64_t id,unsigned faction) {void *f=test_uitrade_fac[faction];memcpy(test_uitrade_object(id)+0x348,&f,8);}
 static void *test_uitrade_account(void *handle) {
+    if(test_uitrade_dummy && handle==test_uitrade_data[1]+UITRADE_FACTION_ACCOUNT) {
+        uint64_t h=0;memcpy(&h,handle,8);return h==TEST_UITRADE_NEW_HANDLE?&test_uitrade_acc[1]:&test_uitrade_acc[2];
+    }
     for(unsigned i=0;i<2;i++) if(handle==test_uitrade_data[i]+UITRADE_FACTION_ACCOUNT) return test_uitrade_no_account && i==1?NULL:&test_uitrade_acc[i];
     return NULL;
 }
@@ -190,6 +196,29 @@ static void test_ui_trade(void) {
      pilot_slots[1].runtime=0x7999;assert(uitrade_frame_text(text,sizeof(text)) && !strcmp(text,"UITRADE_1:500000,x"));pilot_slots[1].runtime=0x7002;
      test_uitrade_no_account=1;assert(uitrade_balance(test_uitrade_fac[1],&cents)==-1 && uitrade_frame_text(text,sizeof(text)) && !strcmp(text,"UITRADE_1:500000,n"));
      test_uitrade_no_account=0;   /* no account: n, never the dummy's (777) */
+     /* The faction resolves to X4's dummy account: n, the dummy's getter (it draws) never called. By the global's pointer, */
+     test_uitrade_acc[2].cents=777;test_uitrade_dummy=1;
+     {void *dummy=&test_uitrade_acc[2];memcpy(test_uitrade_region+UITRADE_NULL_ACCOUNT,&dummy,8);}
+     assert(uitrade_balance(test_uitrade_fac[1],&cents)==-1 && uitrade_frame_text(text,sizeof(text)) && !strcmp(text,"UITRADE_1:500000,n"));
+     memset(test_uitrade_region+UITRADE_NULL_ACCOUNT,0,8);
+     /* and by its balance getter (another DummyAccount object). */
+     {static void *dummy_vt[4];dummy_vt[2]=test_uitrade_region+UITRADE_DUMMY_BALANCE;test_uitrade_acc[2].vtable=dummy_vt;}
+     assert(uitrade_balance(test_uitrade_fac[1],&cents)==-1 && uitrade_frame_text(text,sizeof(text)) && !strcmp(text,"UITRADE_1:500000,n"));
+     test_uitrade_acc[2].vtable=test_uitrade_vt;
+     /* That faction gets its own account once (the handle written into its data), then reads it; one with an account and
+      * the player faction are left alone; a scope open refuses. */
+     {uint64_t saved=0,h=0;int64_t made=uitrade_accounts_made;memcpy(&saved,test_uitrade_data[1]+UITRADE_FACTION_ACCOUNT,8);
+      void *dummy=&test_uitrade_acc[2];memcpy(test_uitrade_region+UITRADE_NULL_ACCOUNT,&dummy,8);uitrade_new_account_fn=test_uitrade_new_account;
+      uitrade_scope_open=1;assert(uitrade_account_ensure(2)==-1);uitrade_scope_open=0;
+      assert(uitrade_account_ensure(2)==1 && uitrade_accounts_made==made+1);
+      memcpy(&h,test_uitrade_data[1]+UITRADE_FACTION_ACCOUNT,8);assert(h==TEST_UITRADE_NEW_HANDLE);
+      assert(uitrade_balance(test_uitrade_fac[1],&cents)==1 && cents==12345);
+      assert(uitrade_account_ensure(2)==0 && uitrade_account_ensure(1)==0 && uitrade_accounts_made==made+1);
+      pilot_slots[1].runtime=0x7999;assert(uitrade_account_ensure(2)==-1);pilot_slots[1].runtime=0x7002;
+      assert(uitrade_status(text,sizeof(text)) && strstr(text," accounts="));
+      memcpy(test_uitrade_data[1]+UITRADE_FACTION_ACCOUNT,&saved,8);memset(test_uitrade_region+UITRADE_NULL_ACCOUNT,0,8);uitrade_new_account_fn=NULL;}
+     test_uitrade_dummy=0;
+     assert(uitrade_balance(test_uitrade_fac[1],&cents)==1 && cents==12345);
      assert(uitrade_status(text,sizeof(text)) && strstr(text,"ui_trade=live") && strstr(text,"hooks=17"));}
     /* The pass: a scope left open stops (and closes it), a lost patch stops, the window end takes every patch back. */
     InterlockedExchange(&uirep_replaying,1);assert(uitrade_scope_enter(2)==1);InterlockedExchange(&uirep_replaying,0);

@@ -1037,6 +1037,21 @@ function T.attach(S,p,refuse)
  -- Test fixture (native_gate_ui_trade_fund, credits): every slot faction that is not `player` gets this much once, at the
  -- fleet tick, on every client (the stock AddPlayerMoney in that slot's faction scope), so factions mode has money to spend.
  local funded=false
+ -- Every slot faction that is not `player` (the plan's pool factions, factions mode) gets its own account once, before any of
+ -- its money moves: X4 gives only the player faction one, the others resolve to its dummy account (money made from nothing,
+ -- money vanishing; live t2d). The same tick on every client (the fleet tick), outside any scope.
+ local accounted=false
+ local function accounts(tick)
+  if accounted or tick<(p.fleet_tick or 0) or not gate.ui_trade_account then return end
+  accounted=true
+  for slot=1,p.slots or 0 do
+   local faction=faction_of(slot_ship(slot))
+   if faction and faction~='player' then
+    local r,why=gate.ui_trade_account(slot)
+    log(string.format('UI_TRADE_ACCOUNT tick=%d slot=%d faction=%s made=%s',tick,slot,tostring(faction),tostring(r or why)))
+   end
+  end
+ end
  local function fund(tick)
   if funded or not p.trade_fund or tick<(p.fleet_tick or 0) then return end
   funded=true
@@ -1056,6 +1071,7 @@ function T.attach(S,p,refuse)
  -- RNG (0x96e0a0), and the receipt must not draw.
  local last
  function R.frame(tick)
+  accounts(tick)
   fund(tick)
   local rows={tostring(gate.ui_trade_frame() or 'UITRADE_1:-')}
   for slot=1,p.slots or 0 do

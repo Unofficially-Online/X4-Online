@@ -53,6 +53,14 @@ static int lua_ui_trade_money(lua_State *L) {
     if(!faction || uitrade_balance(faction,&cents)<=0) {p_lua_pushnil(L);return 1;}
     p_lua_pushnumber(L,(double)cents);return 1;
 }
+/* gate.ui_trade_account(slot): give slot k's faction its own account when it has none (pool factions): 1 made, 0 it had one,
+ * nil and a reason when refused. Called once per pool slot by the Lua core, before any of its money moves. */
+static int lua_ui_trade_account(lua_State *L) {
+    double slot=p_lua_tonumber(L,1);
+    int r=accept_ui() && uitrade_wanted() && isfinite(slot) && floor(slot)==slot && slot>=1 && slot<=PILOT_SLOTS?uitrade_account_ensure((unsigned)slot):-1;
+    if(r<0) {p_lua_pushnil(L);p_lua_pushlstring(L,"refused",7);return 2;}
+    p_lua_pushnumber(L,r);return 1;
+}
 static int lua_ui_trade_frame(lua_State *L) {
     char out[512];int n=accept_ui() && uitrade_wanted()?uitrade_frame_text(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;

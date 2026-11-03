@@ -4060,7 +4060,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(ui_guard);METHOD(ui_guard_pins);METHOD(ui_guard_status);METHOD(ui_guard_refusals);
     METHOD(ui_build);METHOD(ui_build_add);METHOD(ui_build_flush);METHOD(ui_build_part);METHOD(ui_build_step);METHOD(ui_build_lua_done);METHOD(ui_build_frame);METHOD(ui_build_status);METHOD(ui_build_refusals);METHOD(ui_build_plan);
     METHOD(ui_missions);METHOD(ui_missions_push);METHOD(ui_missions_run);METHOD(ui_missions_cue_ref);METHOD(ui_missions_cue_resolve);METHOD(ui_missions_frame);METHOD(ui_missions_state);METHOD(ui_missions_status);METHOD(ui_missions_rows);
-    METHOD(ui_trade_pins);METHOD(ui_trade_run);METHOD(ui_trade_subject);METHOD(ui_trade_scope);METHOD(ui_trade_scope_end);METHOD(ui_trade_money);METHOD(ui_trade_frame);METHOD(ui_trade_status);
+    METHOD(ui_trade_pins);METHOD(ui_trade_run);METHOD(ui_trade_subject);METHOD(ui_trade_scope);METHOD(ui_trade_scope_end);METHOD(ui_trade_money);METHOD(ui_trade_account);METHOD(ui_trade_frame);METHOD(ui_trade_status);
     METHOD(ui_faction_pins);METHOD(ui_faction);METHOD(ui_faction_part);METHOD(ui_faction_run);METHOD(ui_faction_frame);METHOD(ui_faction_state);METHOD(ui_faction_status);METHOD(ui_faction_refusals);METHOD(ui_faction_view);
     METHOD(player_settings_pins);METHOD(player_settings);METHOD(player_settings_faction);METHOD(player_settings_state);METHOD(player_settings_status);METHOD(player_settings_themes);
     METHOD(pilot_predict);METHOD(pilot_predict_frame);METHOD(pilot_predict_status);METHOD(pilot_predict_raw);

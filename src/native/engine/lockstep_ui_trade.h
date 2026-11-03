@@ -25,13 +25,22 @@
  *             a trade that took on one client only is a digest mismatch at that tick. */
 #define UITRADE_LUA_GLOBALS 11u          /* X4LAN_UI_TRADE.GLOBALS in the Lua core */
 #define UITRADE_PLAYER_FACTION 0x38f4bd0u
-#define UITRADE_NULL_ACCOUNT 0x38f4bd8u   /* the dummy account (never read here: its balance getter draws) */
+#define UITRADE_NULL_ACCOUNT 0x38f4bd8u   /* the dummy account: its pointer is compared, its balance getter never called (it draws) */
+#define UITRADE_DUMMY_BALANCE 0x96e0a0u   /* U::DummyAccount's balance getter (draws from the thread's RNG): compared, never called */
 #define UITRADE_OWNER_SLOT 708u           /* U::Object::GetTrueOwner (+0x1620): the owner faction, 0x352b10 */
 #define UITRADE_GET_TRUE_OWNER_PIN 0x352b10u
 #define UITRADE_FACTION_DATA 0x280u
 #define UITRADE_FACTION_ACCOUNT 0x2e0u
 #define UITRADE_ACCOUNT_OF 0x3178a0u      /* a handle's object */
 #define UITRADE_BALANCE_SLOT 2u           /* AccountClass vfunc +0x10: the balance in cents */
+/* A faction's own account, made as X4 makes a container's (0x3f8720: SMem::Allocate(0x28, 16), the AccountClass constructor
+ * 0x34c780(account, 0, 0, 0) takes a slot of the account registry, +8 = its handle; the container keeps the handle at +0x700).
+ * Only the player faction has one in a save; the identity plan's pool factions (x4lan_playerk) resolve to X4's dummy account,
+ * from which money is created and into which it vanishes (live t2d). */
+#define UITRADE_ALLOCATE 0x14b7140u
+#define UITRADE_ACCOUNT_NEW 0x34c780u
+#define UITRADE_CONTAINER_ACCOUNT 0x3f8720u
+#define UITRADE_ACCOUNT_SIZE 0x28u
 #define UITRADE_STUB 0x20u
 #define UITRADE_ARGS 5u
 enum {UITRADE_H_TRADE_RULE=0,UITRADE_H_BUYABLE,UITRADE_H_SELLABLE,UITRADE_H_BUY_LIMIT,UITRADE_H_SELL_LIMIT,UITRADE_H_CLEAR_BUY_LIMIT,
@@ -61,6 +70,10 @@ static const uitrade_pin uitrade_pin_table[]={
     {0x9dc550u,0x9a,"d3ea64a723c5c5da1769beec18bb628842dfc3c8fc822fa62a794bf305454b14"},   /* FactionClass::AddMoney */
     {0x1762d0u,0x2d,"111ec3e7e466d9d89336185fe1728fc75a2334c208e60098117590858e911586"},   /* AddPlayerMoney */
     {UITRADE_GET_TRUE_OWNER_PIN,0x8,"7900022f876803a52ef0ebfca5f0f9ae79603c127b6ad4a32bc834758e27be53"},    /* GetTrueOwner: +0x348 */
+    {UITRADE_ACCOUNT_NEW,0x71,"d2c1da7531926ab1645fe1c8021ecfac8038aee5784a4b852939b4cf5c948c53"},   /* AccountClass constructor */
+    {UITRADE_CONTAINER_ACCOUNT,0x5d,"5fccfe8ff04baf3388701740e57c8f05ca02ff0b8ccc4c7cb9bab2ec6bda29e1"},  /* the pattern: a container's account */
+    {UITRADE_ALLOCATE,0x20,"2a99fd70a96b13fd197eb6fa60330ed30fb76e9d2567c07403d762064bb8f162"},   /* SMem::Allocate */
+    {UITRADE_DUMMY_BALANCE,0x10,"9f015d5b98167c4c2ab4a76da141af2a68998fc089bc2f40e6f4a6cad700639a"},   /* DummyAccount's getter */
 };
 #define UITRADE_PIN_COUNT (sizeof(uitrade_pin_table)/sizeof(*uitrade_pin_table))
 #define UITRADE_SHIP_VTABLE 0x2b84a98u    /* U::Ship: its slot 708 is GetTrueOwner (Station, Container, Object alike) */
@@ -75,6 +88,8 @@ static unsigned char uitrade_patched[UITRADE_HOOKS][5];
 static void *uitrade_tramp[UITRADE_HOOKS];       /* the trampolines (tests: stand-ins) */
 static void *(*uitrade_owner_fn)(void *object);  /* tests: the owner */
 static void *(*uitrade_account_fn)(void *handle);/* tests: the resolver */
+static void *(*uitrade_new_account_fn)(void);    /* tests: a constructed account (+8 = its handle) */
+static int64_t uitrade_accounts_made;
 static volatile LONG64 uitrade_captured,uitrade_passed,uitrade_refused,uitrade_runs,uitrade_skipped,uitrade_scopes,uitrade_scope_same,uitrade_scope_refused;
 static int uitrade_scope_open;
 static void *uitrade_scope_saved,*uitrade_scope_faction;
@@ -134,7 +149,39 @@ static int uitrade_balance(void *faction,int64_t *cents) {
     void *handle=data+UITRADE_FACTION_ACCOUNT;
     void *account=uitrade_account_fn?uitrade_account_fn(handle):((void*(*)(void*))(void*)(pnat_base+UITRADE_ACCOUNT_OF))(handle);
     if(!account) return -1;
-    *cents=((int64_t(*)(void*))(*(void***)account)[UITRADE_BALANCE_SLOT])(account);
+    /* A faction without its own account resolves to X4's dummy (live t2d: the pool faction x4lan_player2): no own account. */
+    void *dummy=NULL,**vtable=NULL,*getter=NULL;
+    if(read_local(pnat_base+UITRADE_NULL_ACCOUNT,&dummy,8) && account==dummy) return -1;
+    if(!read_local(account,&vtable,8) || !vtable || !read_local(vtable+UITRADE_BALANCE_SLOT,&getter,8) || !getter) return 0;
+    if(getter==(void*)(pnat_base+UITRADE_DUMMY_BALANCE)) return -1;
+    *cents=((int64_t(*)(void*))getter)(account);
+    return 1;
+}
+
+/* Slot k's faction gets its own account when it has none (the dummy or no handle): 1 made, 0 it has one, -1 refused (no
+ * faction or its data, outside the UI thread, a scope open). Every client calls it at the same tick of the probe's frame, so
+ * the registry gives the same slot everywhere (the lockstep holds the registry's free list alike). */
+static int uitrade_account_ensure(unsigned slot) {
+    if(GetCurrentThreadId()!=ui_thread || uitrade_scope_open) return -1;
+    void *faction=uitrade_slot_faction(slot);int64_t cents=0;
+    if(!faction) return -1;
+    int b=uitrade_balance(faction,&cents);
+    if(b>0) return 0;
+    unsigned char *data=NULL;
+    if(!read_local((unsigned char*)faction+UITRADE_FACTION_DATA,&data,8) || !data) return -1;
+    unsigned char *account=NULL;
+    if(uitrade_new_account_fn) account=uitrade_new_account_fn();
+    else {
+        /* SMem::Allocate takes the size in rcx and the alignment as the FIFTH argument ([rsp+0x28] at entry; rdx, r8, r9 unused),
+         * as 0x3f8720 calls it: a two-argument call left a stack word as the alignment and X4 panicked (live t2e). */
+        account=((unsigned char*(*)(size_t,void*,void*,void*,uint32_t))(void*)(pnat_base+UITRADE_ALLOCATE))(UITRADE_ACCOUNT_SIZE,NULL,NULL,NULL,16u);
+        if(account) ((void*(*)(void*,int64_t,int64_t,int64_t))(void*)(pnat_base+UITRADE_ACCOUNT_NEW))(account,0,0,0);
+    }
+    if(!account) return -1;
+    uint64_t handle=0;memcpy(&handle,account+8,8);
+    if(!handle) return -1;
+    memcpy(data+UITRADE_FACTION_ACCOUNT,&handle,8);
+    ++uitrade_accounts_made;
     return 1;
 }
 
@@ -376,8 +423,8 @@ static int uitrade_frame_text(char *out,size_t capacity) {
 }
 static int uitrade_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"ui_trade=%s why=%s hooks=%u installed=%d restored=%d captured=%lld refused=%lld passed=%lld runs=%lld skipped=%lld "
-        "scopes=%lld/%lld/%lld",uitrade_stage,uitrade_why_text,(unsigned)UITRADE_HOOKS,uitrade_installed,uitrade_restored,(long long)uitrade_captured,
+        "scopes=%lld/%lld/%lld accounts=%lld",uitrade_stage,uitrade_why_text,(unsigned)UITRADE_HOOKS,uitrade_installed,uitrade_restored,(long long)uitrade_captured,
         (long long)uitrade_refused,(long long)uitrade_passed,(long long)uitrade_runs,(long long)uitrade_skipped,(long long)uitrade_scopes,
-        (long long)uitrade_scope_same,(long long)uitrade_scope_refused);
+        (long long)uitrade_scope_same,(long long)uitrade_scope_refused,(long long)uitrade_accounts_made);
     return n>0 && (size_t)n<capacity?n:0;
 }
