@@ -87,6 +87,13 @@ the call and tail-jumps to the original, so engine functions run with no stub fr
   from the kinds. X4 refuses some FFI symbols to extension code ("Access to FFI function ...
   is restricted!"); the pointer avoids symbol resolution.
 
+Native check (3 November 2026, two clients, `native_gate_ui_exports_test`): client 1's UI
+calls `AddPlayerMoney(100000)` at tick 600. `'observe'` counts it on client 1 only (and
+the money then differs); `'block'` refuses it (`blocked=1`); with the relay
+(`native_gate_ui_relay = {AddPlayerMoney='q'}`) it is captured on client 1, crosses the
+relay, and both clients run it at tick 602 (`FFI_RELAY tick=602 slot=1 ... ok=true` on
+each): 10,000 -> 11,000 credits on both at tick 605, session in sync.
+
 185 of the 234 uncovered writes take only scalars, IDs and strings, so the relay can
 carry them once their kinds are listed; 48 take structs (`UILoadout2`, `UIPosRot`,
 `CrewTransferInfo`, ...) and need struct marshalling (the cdefs describe the layouts).
