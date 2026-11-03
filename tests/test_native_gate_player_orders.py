@@ -618,8 +618,8 @@ class BuilderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             out = self.build(directory, self.PLAN)
             files = (out / 'ui.xml.files').read_text().splitlines()
-            self.assertEqual(files[:3], ['ui/native_gate_inputs_core.lua', 'ui/native_gate_player_orders_core.lua',
-                                         'ui/native_gate_player_orders.lua'])
+            self.assertEqual(files[:4], ['ui/native_gate_inputs_core.lua', 'ui/native_gate_ffi_relay_core.lua',
+                                         'ui/native_gate_player_orders_core.lua', 'ui/native_gate_player_orders.lua'])
             self.assertEqual(files[-1], 'ui/native_gate_probe.lua')
             self.assertTrue((out / 'md/native_gate_player_orders.xml').is_file())
             config = (out / 'ui/config.lua.append').read_text()

@@ -4680,7 +4680,7 @@ class SnapshotProbeTests(unittest.TestCase):
         self.assertTrue(any('UI_LAZY tick=1 installed=1 mode=observe' in line for line in lines))
         self.assertTrue(any('NATIVE_GATE UI_LAZY_ROW index=0 tick=1 target=units' in line for line in lines))
         self.assertFalse(any('ERROR' in line for line in lines))
-        for mode,identities,native in (("'key'",'true',1),("'block'",'false',1),('true','true',1),("'block'",'true',0)):
+        for mode,identities,native in (("'nope'",'true',1),("'block'",'false',1),('true','true',1),("'block'",'true',0)):
             self.setUp()
             self.lua.execute('''
               X4LAN_CONFIG.native_gate_world_identities=%s
