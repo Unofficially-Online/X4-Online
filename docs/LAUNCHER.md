@@ -187,6 +187,19 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   is timing-dependent too, and the soak profile now keeps every drawing actor scope as a row
   (`native_gate_actor_rng_rows`, about 3.5 per tick, written every tick) so that a soak's own
   logs name the actor.
+- **Seed 1111111: speech clock.** The campaign's first new seed parted at tick 3,749 (relay
+  mismatches at 3,749 and 3,750, equal again afterwards), and its triage rerun parted at the
+  same tick. The lead was MD_TIMED_RNG `raise_calls` at 3,748. The script rows named the scopes:
+  `NPC_UseCases.OnSpeakFinished` and its listeners (`Setup.LastSpeak_Update`, the mentor's
+  `Mentor_Speak_Helper`) ran at 3,748 on client 1 and at 3,750 on client 2. Both clients had
+  started the line at 3,636. The speak timer already ends every line at start + duration on
+  the unpaused clock (0x6b60e48, a double advanced by the fixed step each frame). That clock's
+  value at the first gated frame is each client's boot time, though: 134 s and 108 s here. A
+  deadline on a frame boundary then compares differently. `native_gate_speech_clock`
+  (`lockstep_speech_clock.h`, now in the soak profile) sets the clock to 65536.0 on every
+  client at the first gated frame. Its status shows the clock bit-identical on both clients
+  from tick 0. The rerun passed 3,749 in sync. Only the speech code reads the clock (6 call
+  sites of its getter, 5 in EntitySpeakData).
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops

@@ -68,6 +68,7 @@ PROBE_OPTIONS = {
     'native_gate_traffic_views': (('block', 'observe', 'view'), (), None),
     'native_gate_traffic_rows': (('true',), (), None),
     'native_gate_speak_timer': (('true',), (), None),
+    'native_gate_speech_clock': (('true',), (), None),
     'native_gate_cutscene_ready': (('true',), (), None),
     'native_gate_viewpoint_policy': (('sector',), (), None),
     'native_gate_effect_rows': (('true',), (), None),

@@ -51,6 +51,8 @@ class Triage(unittest.TestCase):
         self.assertEqual(triage.classify("1 PATH_DETERMINISM [('bank=1', 'bank=0')]"), 'local')
         self.assertEqual(triage.classify("17 WEAPON_FIRE_RNG [('keyed=0', 'keyed=2')]"), 'lead')
         self.assertEqual(triage.classify("1 SCRIPT_RNG [('ai_hits=1', 'ai_hits=2'), ('drawn=3', 'drawn=4')]"), 'lead')
+        self.assertEqual(triage.classify("1 SPEECH_CLOCK [('before=4060c4', 'before=4061a8')]"), 'local')
+        self.assertEqual(triage.classify("900 SPEECH_CLOCK [('clock=40f0000000000000', 'clock=40f0000000000001')]"), 'lead')
 
 
 if __name__ == '__main__':

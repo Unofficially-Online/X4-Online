@@ -213,11 +213,17 @@ end
 -- Relayed UI FFI calls (lockstep_ui_exports.h, section 'ffi'): with native_gate_ui_exports = 'block', a UI call
 -- to an export in native_gate_ui_relay = {Name='kinds'} is refused and captured; this client sends it, and every
 -- client calls the export at the apply tick through its original entry, objects translated to its own runtime IDs.
-if cfg.native_gate_ui_relay then
- assert(wire3 and cfg.native_gate_ui_exports=='block','native_gate_ui_relay needs the protocol 3 wire and native_gate_ui_exports = block')
+-- Lua globals in native_gate_ui_lua_relay = {Name='kinds'} (the Lua guard below; 'c' marks a number that is a
+-- component) are queued by their wrapper in ui_lua_queue and ride the same section as index 0xffff records;
+-- every client calls the global at the apply tick, components as its own IDs in the form the UI passed.
+local ui_lua_queue={}
+if cfg.native_gate_ui_relay or cfg.native_gate_ui_lua_relay then
+ assert(wire3,'the UI relay needs the protocol 3 wire (native_gate_clients)')
+ assert(not cfg.native_gate_ui_relay or cfg.native_gate_ui_exports=='block','native_gate_ui_relay needs native_gate_ui_exports = block')
+ assert(not cfg.native_gate_ui_lua_relay or cfg.native_gate_ui_lua,'native_gate_ui_lua_relay needs native_gate_ui_lua')
  local core=assert(X4LAN_FFI_RELAY_CORE,'relay codec missing (ui/native_gate_ffi_relay_core.lua)')
  local pending,zero16={},string.rep('0',16)
- local function kinds_of(index) local name=gate.ui_exports_name(index);return name and cfg.native_gate_ui_relay[name] end
+ local function kinds_of(index) local name=gate.ui_exports_name(index);return name and cfg.native_gate_ui_relay and cfg.native_gate_ui_relay[name] end
  local function u64(hex) return ffi.cast('uint64_t',tonumber(hex:sub(1,8),16))*4294967296ULL+tonumber(hex:sub(9),16) end
  local bits=ffi.new('union {uint64_t u; double d; uint32_t w; float f;}')
  local function value(k,v)
@@ -230,9 +236,33 @@ if cfg.native_gate_ui_relay then
   elseif k=='s' then return v or nil end
   return v
  end
+ -- A Lua-global record: the global must be relayed here too; components become this client's IDs.
+ local function ui_lua_replay(tick,slot,r)
+  local name=r.name
+  if not (cfg.native_gate_ui_lua_relay and cfg.native_gate_ui_lua_relay[name]) then
+   DebugError('[X4LAN] NATIVE_GATE FFI_RELAY tick='..tick..' slot='..slot..' lua='..name..' ok=false why=not_relayed');return name
+  end
+  local args,missing={},nil
+  for i=1,r.n do
+   local v=r.args[i]
+   if type(v)=='table' then
+    local runtime=v.key==zero16 and zero16 or gate.runtime_of(v.key)
+    if not runtime then missing=v.key;break end
+    local id=tonumber(runtime,16)
+    if v.form=='number' then args[i]=id
+    elseif v.form=='cdata' then args[i]=ffi.cast('uint64_t',id)
+    else args[i]=ConvertStringToLuaID(tostring(ffi.cast('uint64_t',id))) end
+   else args[i]=v end
+  end
+  local ok,why=false,'no object for key '..tostring(missing)
+  if not missing then ok,why=pcall(_G[name],unpack(args,1,r.n)) end
+  DebugError('[X4LAN] NATIVE_GATE FFI_RELAY tick='..tick..' slot='..slot..' lua='..name..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
+  return name
+ end
  input_section('ffi','ffi',{
   proposal=function(tick,budget)
-   while #pending<64 do local r=gate.ui_exports_take();if not r then break end;pending[#pending+1]=r end
+   while cfg.native_gate_ui_relay and #pending<64 do local r=gate.ui_exports_take();if not r then break end;pending[#pending+1]=r end
+   while #ui_lua_queue>0 and #pending<64 do pending[#pending+1]=table.remove(ui_lua_queue,1) end
    if #pending==0 then return nil end
    local payload,taken=core.pack(pending,budget)
    for _=1,taken do table.remove(pending,1) end
@@ -243,12 +273,15 @@ if cfg.native_gate_ui_relay then
    for k=1,#inputs do
     if inputs[k]~='' then
      for _,r in ipairs(assert(core.decode(inputs[k],kinds_of))) do
-      local name=gate.ui_exports_name(r.index);local kinds=cfg.native_gate_ui_relay[name]
-      local args={}
-      for i=1,#kinds do args[i]=value(kinds:sub(i,i),r.args[i]) end
-      local ok,why=pcall(ffi.cast(core.signature(kinds),gate.ui_exports_address(r.index)),unpack(args,1,#kinds))
-      DebugError('[X4LAN] NATIVE_GATE FFI_RELAY tick='..tick..' slot='..k..' name='..name..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
-      calls[#calls+1]=k..':'..name
+      if r.index==core.LUA_INDEX then calls[#calls+1]=k..':'..ui_lua_replay(tick,k,r)
+      else
+       local name=gate.ui_exports_name(r.index);local kinds=cfg.native_gate_ui_relay[name]
+       local args={}
+       for i=1,#kinds do args[i]=value(kinds:sub(i,i),r.args[i]) end
+       local ok,why=pcall(ffi.cast(core.signature(kinds),gate.ui_exports_address(r.index)),unpack(args,1,#kinds))
+       DebugError('[X4LAN] NATIVE_GATE FFI_RELAY tick='..tick..' slot='..k..' name='..name..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
+       calls[#calls+1]=k..':'..name
+      end
      end
     end
    end
@@ -463,7 +496,9 @@ if cfg.native_gate_ui_events_log then
  end
 end
 -- UI write test (native_gate_ui_exports_test = {tick=T, slot='pK'}): client K alone calls AddPlayerMoney(1)
--- at tick T from Lua, an unrelayed UI write; every client logs its player money at T-1 and T+5.
+-- at tick T from Lua, an unrelayed UI write; every client logs its player money at T-1 and T+5. With
+-- via='lua', client K calls the Lua global TransferPlayerMoneyTo(500, ship) instead, the ship (the player's
+-- container) as a plain number as the UI's station account menu passes it; the ship's account is logged too.
 local ui_write_test=cfg.native_gate_ui_exports_test
 if ui_write_test then
  assert(type(ui_write_test)=='table' and type(ui_write_test.tick)=='number' and ui_write_test.tick>1 and type(ui_write_test.slot)=='string',
@@ -494,19 +529,41 @@ end
 -- each listed global is wrapped: after the boot and outside the probe's application of relayed inputs, a call is
 -- counted with a UI_LUA_ROW for its first calls ('observe') or refused, returning nil ('block'). A UI script that
 -- copied the global into a local before the wrap keeps the original (the census shows the name never called).
-local ui_lua={calls={},blocked=0,armed=false}
+-- A global in native_gate_ui_lua_relay = {Name='kinds'} is relayed instead: the call is encoded (the codec's
+-- lua_record: components by portable key, 'c' marking numbers that are components), queued for the 'ffi'
+-- section and returns nil here; every client makes it at the apply tick. A call that cannot be encoded (a
+-- table argument, an object without a portable key) is refused (relay_refused).
+local ui_lua={calls={},blocked=0,relayed=0,relay_refused=0,armed=false}
 UI_LUA_RELAYING=false -- set by apply_inputs (defined earlier in this file) around the relayed inputs
+local function ui_lua_component(v,form)
+ local id=form=='luaid' and ConvertIDTo64Bit(v) or v
+ if type(id)=='cdata' then id=tonumber(id) end
+ if type(id)~='number' or id<=0 then return nil end
+ return gate.key_of(string.format('%016x',id))
+end
 local function ui_lua_arm()
  local mode=cfg.native_gate_ui_lua
  if not mode or ui_lua.armed then return end
  assert(mode=='observe' or mode=='block','native_gate_ui_lua must be observe or block')
+ local relay,core=cfg.native_gate_ui_lua_relay or {},X4LAN_FFI_RELAY_CORE
+ local names,seen={},{}
+ for _,name in ipairs(cfg.native_gate_ui_lua_names or {}) do if not seen[name] then seen[name]=true;names[#names+1]=name end end
+ for name in pairs(relay) do if not seen[name] then seen[name]=true;names[#names+1]=name end end
+ table.sort(names)
  local wrapped=0
- for _,name in ipairs(cfg.native_gate_ui_lua_names or {}) do
-  local native=rawget(_G,name)
+ for _,name in ipairs(names) do
+  local native,kinds=rawget(_G,name),relay[name]
   if type(native)=='function' then
    _G[name]=function(...)
     if ui_events.tick>0 and not UI_LUA_RELAYING then
      local n=(ui_lua.calls[name] or 0)+1;ui_lua.calls[name]=n
+     if kinds then
+      local record,why=core.lua_record(name,{...},select('#',...),kinds,ui_lua_component)
+      if record and #ui_lua_queue<64 then ui_lua_queue[#ui_lua_queue+1]=record;ui_lua.relayed=ui_lua.relayed+1
+      else ui_lua.relay_refused=ui_lua.relay_refused+1;why=why or 'queue_full';record=nil end
+      if n<=4 then ticklog.write('UI_LUA_ROW tick='..ui_events.tick..' name='..name..' relayed='..(record and 1 or 0)..(why and ' why='..why or '')) end
+      return nil
+     end
      if n<=4 then ticklog.write('UI_LUA_ROW tick='..ui_events.tick..' name='..name..' blocked='..(mode=='block' and 1 or 0)) end
      if mode=='block' then ui_lua.blocked=ui_lua.blocked+1;return nil end
     end
@@ -516,19 +573,24 @@ local function ui_lua_arm()
   end
  end
  ui_lua.armed=true
- log('UI_LUA_ARMED mode='..mode..' wrapped='..wrapped..' listed='..#(cfg.native_gate_ui_lua_names or {}))
+ log('UI_LUA_ARMED mode='..mode..' wrapped='..wrapped..' listed='..#names)
 end
 local function ui_lua_status()
  local total,distinct=0,0
  for _,n in pairs(ui_lua.calls) do total=total+n;distinct=distinct+1 end
- return 'calls='..total..' globals_called='..distinct..' blocked='..ui_lua.blocked
+ return 'calls='..total..' globals_called='..distinct..' blocked='..ui_lua.blocked..' relayed='..ui_lua.relayed..' relay_refused='..ui_lua.relay_refused
 end
 local function ui_write_check(tick)
  if not ui_write_test then return end
  if tick==ui_write_test.tick-1 or tick==ui_write_test.tick+5 then
-  ticklog.write('UI_WRITE_TEST tick='..tick..' money='..tostring(GetPlayerMoney()))  -- the Lua API global: the FFI getter is restricted to Egosoft code
+  local account=''
+  if ui_write_test.via=='lua' then account=' account='..tostring(GetAccountData(GetPlayerContextByClass('container'),'money')) end
+  ticklog.write('UI_WRITE_TEST tick='..tick..' money='..tostring(GetPlayerMoney())..account)  -- the Lua API global: the FFI getter is restricted to Egosoft code
  end
- if tick==ui_write_test.tick and cfg.slot==ui_write_test.slot then
+ if tick==ui_write_test.tick and cfg.slot==ui_write_test.slot and ui_write_test.via=='lua' then
+  local ok,why=pcall(function() TransferPlayerMoneyTo(500,ConvertIDTo64Bit(GetPlayerContextByClass('container'))) end)
+  ticklog.write('UI_WRITE_TEST tick='..tick..' called=TransferPlayerMoneyTo via=lua ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
+ elseif tick==ui_write_test.tick and cfg.slot==ui_write_test.slot then
   local ok,why=pcall(function() ffi.C.AddPlayerMoney(100000) end) -- in hundredths: 1000 credits
   local via='ffi'
   if not ok then -- restricted to Egosoft code: resolve it as the UI's FFI does, through X4.exe's export table
@@ -3019,6 +3081,13 @@ local function frame()
     'speak timer refused '..tostring(gate.speak_timer_status and gate.speak_timer_status()))
    log('SPEAK_TIMER_ARMED')
   end
+  -- The unpaused clock that times speech lines starts the session at one value on every client
+  -- (lockstep_speech_clock.h), stop reason 183.
+  if cfg.native_gate_speech_clock then
+   assert(cfg.native_gate_speech_clock==true and snapshot and gate.speech_clock and gate.speech_clock_status and gate.speech_clock()==1,
+    'speech clock refused '..tostring(gate.speech_clock_status and gate.speech_clock_status()))
+   log('SPEECH_CLOCK_ARMED')
+  end
   -- Shields as the lazy getter leaves them (lockstep_state.h): a client's UI that reads a full shield
   -- rewrites it; the world hash hashes value=max, time=0 for a full shield. Default off.
   if cfg.native_gate_world_hash_shields then
@@ -3702,6 +3771,7 @@ local function frame()
   if cfg.native_gate_render_rng_split then log('RENDER_RNG_SPLIT_STOP '..tostring(gate.render_rng_split_status())) end
   if cfg.native_gate_bullet_cadence then log('BULLET_CADENCE_STOP '..tostring(gate.bullet_cadence_status())) end
   if cfg.native_gate_speak_timer then log('SPEAK_TIMER_STOP '..tostring(gate.speak_timer_status())) end
+  if cfg.native_gate_speech_clock then log('SPEECH_CLOCK_STOP '..tostring(gate.speech_clock_status())) end
   if cfg.native_gate_cutscene_ready then log('CUTSCENE_READY_STOP '..tostring(gate.cutscene_ready_status())) end
   if cfg.native_gate_nav_cadence then log('NAV_CADENCE_STOP '..tostring(gate.nav_cadence_status())) end
   if cfg.native_gate_nav_player then log('NAV_PLAYER_STOP '..tostring(gate.nav_player_status())) end
@@ -4124,6 +4194,7 @@ local function frame()
   if tick%600==0 then ticklog.status('CUTSCENE_READY',tick,gate.cutscene_ready_status,'cutscene ready status unavailable') end
  end
  if cfg.native_gate_speak_timer then ticklog.status('SPEAK_TIMER',tick,gate.speak_timer_status,'speak timer status unavailable') end
+ if cfg.native_gate_speech_clock then ticklog.status('SPEECH_CLOCK',tick,gate.speech_clock_status,'speech clock status unavailable') end
  if cfg.native_gate_nav_cadence then
   ticklog.status('NAV_CADENCE',tick,gate.nav_cadence_status,'nav cadence status unavailable')
   -- Fixture controller state changes (enables, deadlines, attention, body, zone scene).

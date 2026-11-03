@@ -52,10 +52,24 @@ RELAYED = {'AdjustOrder', 'CreateOrder', 'CreateOrder3', 'EnableOrder', 'EnableP
            'StopPlayerActivity', 'ToggleAutoPilot', 'ToggleFlightAssist', 'UndockPlayerShip'}
 
 
+# Lua globals the UI calls with plain arguments, relayed with --ui-relay: 'c' marks a place where the UI passes
+# a component as a plain number (TransferPlayerMoneyTo(amount, container)); a LuaID or a uint64 cdata is a
+# component wherever it appears, strings, booleans and nil carry themselves. From the call sites in the 9.00 UI
+# scripts. Left blocked: AddTradeToShipQueue and RaisePlayerInteractionEvent (trade offer and interaction IDs
+# are not components), StartDiplomacyActionOperation (a table argument).
+LUA_RELAY_KINDS = {'AddAmmo': 'c', 'AddCargo': 'c', 'AddInventory': 'c', 'ClearContainerWarePriceOverride': 'c',
+                   'CopyDefaultOrderParamsForPlanning': 'c', 'RemoveAmmo': 'c', 'RemoveCargo': 'c',
+                   'RemoveInventory': 'c', 'RemoveOrderListParam': 'c', 'SetContainerWarePriceOverride': 'c',
+                   'SetMaxBudget': 'c', 'SetMinBudget': 'c', 'SetNPCBlackboard': 'c', 'SetOrderParam': 'c',
+                   'SetVirtualCargoMode': 'c', 'TransferInventoryToPlayer': '--c', 'TransferMoneyToPlayer': '-c',
+                   'TransferPlayerInventoryTo': '--c', 'TransferPlayerMoneyTo': '-c'}
+
+
 def guard_config(census, relay=False):
     """The ui_exports block configuration: game writes the UI calls, minus presentation and RELAYED. With relay,
     the writes whose arguments have relay kinds (scalars, IDs, strings) go through the generic FFI relay instead
-    of being refused; the rest (struct arguments) stay blocked."""
+    of being refused; the rest (struct arguments) stay blocked. The Lua globals of the UI globals census are
+    blocked likewise, and with relay the ones in LUA_RELAY_KINDS are relayed (native_gate_ui_lua_relay)."""
     table = json.loads(Path(census).read_text())
     names = sorted(n for n, v in table.items() if v['scripts'] and v['family'] != 'presentation' and n not in RELAYED)
     relayed = {n: table[n]['kinds'] for n in names  # the gate takes at most 12 arguments (UX_KINDS)
@@ -75,8 +89,12 @@ def guard_config(census, relay=False):
                              r'PlayCredits|SwitchInteractive')  # listeners, widgets, pure helpers
         lua = sorted(n for n in json.loads(lua_list.read_text())
                      if not QUERY.match(n) and family(n) not in ('presentation', 'other') and not ui_only.search(n))
+        lua_relayed = {n: LUA_RELAY_KINDS[n] for n in lua if relay and n in LUA_RELAY_KINDS}
+        blocked = [n for n in lua if n not in lua_relayed]
         if lua:
-            text += "X4LAN_CONFIG.native_gate_ui_lua = 'block'\nX4LAN_CONFIG.native_gate_ui_lua_names = {%s}\n" % ','.join(f"'{n}'" for n in lua)
+            text += "X4LAN_CONFIG.native_gate_ui_lua = 'block'\nX4LAN_CONFIG.native_gate_ui_lua_names = {%s}\n" % ','.join(f"'{n}'" for n in blocked)
+        if lua_relayed:
+            text += "X4LAN_CONFIG.native_gate_ui_lua_relay = {%s}\n" % ','.join(f"{n}='{k}'" for n, k in sorted(lua_relayed.items()))
     return text
 
 

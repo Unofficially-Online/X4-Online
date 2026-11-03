@@ -67,6 +67,9 @@ X4LAN_CONFIG.native_gate_xs_camera = 'view'
 X4LAN_CONFIG.native_gate_traffic_views = 'view'
 X4LAN_CONFIG.native_gate_cutscene_ready = true
 X4LAN_CONFIG.native_gate_speak_timer = true
+-- speech_clock: the unpaused clock that times those lines starts the session at one value on every client
+-- (lockstep_speech_clock.h; without it seed 1111111 parted at tick 3749: a mentor line ended two ticks apart).
+X4LAN_CONFIG.native_gate_speech_clock = true
 X4LAN_CONFIG.native_gate_world_hash_shields = 'canonical'
 X4LAN_CONFIG.native_gate_view_ui = 'block'
 X4LAN_CONFIG.native_gate_view_triggers = 'block'

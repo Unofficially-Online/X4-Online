@@ -49,7 +49,7 @@ KNOWN_LOCAL = {
     'SHAPE_ORDER': {'appends', 'mass_forced', 'boot_forced'}, 'REGION_PASS': {'word'},
     'AI_SCHEDULE': {'order_moved', 'priority'}, 'EVENT_ORDER': {'moved'}, 'NAV_OCTREE': {'invalidations', 'snap_waits'},
     'GRAVIDAR_WIDE': {'sectors', 'moved'}, 'SCRIPT_RNG': {'ai_hits', 'ai_misses'}, 'FIND_ORDER': {'reordered'},
-    'WARP_RNG': {'attributed'}, 'ACTOR': {'raw'},
+    'WARP_RNG': {'attributed'}, 'ACTOR': {'raw'}, 'SPEECH_CLOCK': {'before'},  # each boot's clock before the session's set
     'EVENT_RNG': {'calls', 'keyed', 'local', 'keyset', 'drawset'},  # the local player's UI listeners (no draws)
     'UI_EXPORTS': {'calls', 'exports_called', 'boot', 'rows', 'dropped'},  # each window's presentation calls (map, HUD); blocked= stays a lead
 }

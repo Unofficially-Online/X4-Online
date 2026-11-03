@@ -111,12 +111,23 @@ for them (the probe already wraps `AddUITriggeredEvent` for the census). X4's UI
 no debug library, so the census lists all global functions and the C ones are told apart
 offline (names the UI scripts do not define).
 
-Relaying the Lua-global writes (not only blocking them) needs per-function argument
-kinds too: the UI passes components to them both as LuaID userdata
-(`AddTradeToShipQueue(ConvertStringToLuaID(...))`, recognizable by type) and as plain
-numbers (`TransferPlayerMoneyTo(fee, ConvertStringTo64Bit(...))`), which look like the fee
-beside them. With a kind list per global (component, number, string, boolean, table) the
-'ffi' section can carry them as records with index 0xffff and the global's name.
+With `--ui-relay` the Lua-global writes are relayed too (`native_gate_ui_lua_relay`). The
+wrapper encodes the call and returns nil. Every client then makes the call at the apply tick,
+carried in the 'ffi' section as a record with index 0xffff and the global's name
+(`tools/dev/native_gate_ffi_relay_core.lua`). Each argument carries a tag. A LuaID userdata
+or a uint64 cdata is a component wherever it appears and travels as its portable key
+(`gate.key_of`). The receiving client rebuilds it in the same form from its own ID
+(`gate.runtime_of`). A plain number is a component only where the global's kind string has
+`c`: in `TransferPlayerMoneyTo(fee, container)` both are numbers, and the kind string is
+`-c`. `LUA_RELAY_KINDS` in `tools/build_soak_overlay.py` lists 19 globals with kinds taken
+from the 9.00 call sites. `AddTradeToShipQueue` and `RaisePlayerInteractionEvent` stay
+blocked: their trade offer and interaction IDs are not components. So does
+`StartDiplomacyActionOperation`, which takes a table. A call that cannot be encoded is
+refused and counted (`relay_refused=`). One gap remains: a component passed as a plain
+number in a place not marked `c`, such as one of SetOrderParam's values, would arrive as that
+client's runtime number. The Lua write test (`native_gate_ui_exports_test={tick=T,
+slot='pK', via='lua'}`) calls `TransferPlayerMoneyTo(500, ship)` with the ship as a plain
+number.
 
 ## Stage A: a human census session
 
@@ -144,10 +155,10 @@ the UI write census saw only presentation calls.
 
 ## Gaps
 
-1. **Unwrapped FFI writes.** The orders and UI replay capture work on known menu
-   functions; a direct FFI call elsewhere is not intercepted. The export census closes
-   the observation gap; a `block` mode (refuse a write outside the relay bracket unless
-   the export is on a presentation allowlist) is the next step once the allowlist exists.
+1. **Struct-argument writes.** The guard blocks or relays every game write the UI makes
+   through the export table or a Lua global. The writes that take structs with pointers
+   (`UILoadout2`, `CrewTransferInfo2`, `TradeRuleInfo`, ...) stay blocked until they have
+   per-type marshalling.
 2. **Missions, conversations, trade menus, research, diplomacy:** not captured.
 3. **Money.** One `player` wallet, slot 1's. Pool factions' accounts are unused, so buy
    and sell for slots 2..N fail (deterministically).
