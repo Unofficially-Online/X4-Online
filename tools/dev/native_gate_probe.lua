@@ -210,6 +210,51 @@ if cfg.native_gate_nav_octree=='agreed' then
   apply=function(tick,inputs,n) return assert(gate.nav_octree_agree(tick,n,table.concat(inputs,',')),'nav octree agreement refused') end,
   proposal=function() return gate.nav_octree_report() end})
 end
+-- Relayed UI FFI calls (lockstep_ui_exports.h, section 'ffi'): with native_gate_ui_exports = 'block', a UI call
+-- to an export in native_gate_ui_relay = {Name='kinds'} is refused and captured; this client sends it, and every
+-- client calls the export at the apply tick through its original entry, objects translated to its own runtime IDs.
+if cfg.native_gate_ui_relay then
+ assert(wire3 and cfg.native_gate_ui_exports=='block','native_gate_ui_relay needs the protocol 3 wire and native_gate_ui_exports = block')
+ local core=assert(X4LAN_FFI_RELAY_CORE,'relay codec missing (ui/native_gate_ffi_relay_core.lua)')
+ local pending,zero16={},string.rep('0',16)
+ local function kinds_of(index) local name=gate.ui_exports_name(index);return name and cfg.native_gate_ui_relay[name] end
+ local function u64(hex) return ffi.cast('uint64_t',tonumber(hex:sub(1,8),16))*4294967296ULL+tonumber(hex:sub(9),16) end
+ local bits=ffi.new('union {uint64_t u; double d; uint32_t w; float f;}')
+ local function value(k,v)
+  if k=='U' then
+   if v==zero16 then return ffi.cast('uint64_t',0) end
+   return u64(assert(gate.runtime_of(v),'ui relay: no object for key '..v))
+  elseif k=='q' then return ffi.cast('int64_t',u64(v))
+  elseif k=='d' then bits.u=u64(v);return bits.d
+  elseif k=='f' then bits.w=tonumber(v,16);return bits.f
+  elseif k=='s' then return v or nil end
+  return v
+ end
+ input_section('ffi','ffi',{
+  proposal=function(tick,budget)
+   while #pending<64 do local r=gate.ui_exports_take();if not r then break end;pending[#pending+1]=r end
+   if #pending==0 then return nil end
+   local payload,taken=core.pack(pending,budget)
+   for _=1,taken do table.remove(pending,1) end
+   return payload
+  end,
+  apply=function(tick,inputs)
+   local calls={}
+   for k=1,#inputs do
+    if inputs[k]~='' then
+     for _,r in ipairs(assert(core.decode(inputs[k],kinds_of))) do
+      local name=gate.ui_exports_name(r.index);local kinds=cfg.native_gate_ui_relay[name]
+      local args={}
+      for i=1,#kinds do args[i]=value(kinds:sub(i,i),r.args[i]) end
+      local ok,why=pcall(ffi.cast(core.signature(kinds),gate.ui_exports_address(r.index)),unpack(args,1,#kinds))
+      ticklog.write('FFI_RELAY tick='..tick..' slot='..k..' name='..name..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
+      calls[#calls+1]=k..':'..name
+     end
+    end
+   end
+   return #calls>0 and table.concat(calls,',') or nil
+  end})
+end
 local world_capture=gate.world_capture
 if world_hash_schema=='WORLD_IMPORTED_2' then world_capture=gate.world_capture_nav_v2 end
 if cfg.native_gate_world_hash_stride then assert(type(world_capture)=='function','configured world hash export unavailable') end
@@ -424,7 +469,7 @@ if ui_write_test then
  assert(type(ui_write_test)=='table' and type(ui_write_test.tick)=='number' and ui_write_test.tick>1 and type(ui_write_test.slot)=='string',
   'native_gate_ui_exports_test must be {tick=T, slot=pK}')
  pcall(ffi.cdef,'void AddPlayerMoney(int64_t money);')
- pcall(ffi.cdef,'int64_t GetPlayerMoney(void);')
+ pcall(ffi.cdef,'void* GetModuleHandleA(const char*); void* GetProcAddress(void*, const char*);')
 end
 -- The UI's second API: C functions registered as Lua globals (not FFI, so not in the export table).
 -- With the UI write census on, tick 2 logs them once (UI_GLOBALS, chunked).
@@ -447,7 +492,16 @@ local function ui_write_check(tick)
   ticklog.write('UI_WRITE_TEST tick='..tick..' money='..tostring(GetPlayerMoney()))  -- the Lua API global: the FFI getter is restricted to Egosoft code
  end
  if tick==ui_write_test.tick and cfg.slot==ui_write_test.slot then
-  local ok,why=pcall(function() ffi.C.AddPlayerMoney(1) end);ticklog.write('UI_WRITE_TEST tick='..tick..' called=AddPlayerMoney ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
+  local ok,why=pcall(function() ffi.C.AddPlayerMoney(1) end)
+  local via='ffi'
+  if not ok then -- restricted to Egosoft code: resolve it as the UI's FFI does, through X4.exe's export table
+   via='export_table'
+   ok,why=pcall(function()
+    local entry=ffi.C.GetProcAddress(ffi.C.GetModuleHandleA(nil),'AddPlayerMoney')
+    ffi.cast('void(*)(int64_t)',entry)(1)
+   end)
+  end
+  ticklog.write('UI_WRITE_TEST tick='..tick..' called=AddPlayerMoney via='..via..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
  end
 end
 local function checkpoint(tick)
@@ -2698,7 +2752,12 @@ local function frame()
    for _,name in ipairs(cfg.native_gate_ui_exports_block or {}) do
     assert(type(name)=='string' and gate.ui_exports_block(name)==1,'ui exports block: no hooked export '..tostring(name))
    end
-   log('UI_EXPORTS_ARMED mode='..mode..' blocked_names='..#(cfg.native_gate_ui_exports_block or {}))
+   local relayed=0
+   for name,kinds in pairs(cfg.native_gate_ui_relay or {}) do
+    assert(gate.ui_exports_relay_kinds and gate.ui_exports_relay_kinds(name,kinds)==1,'ui relay: cannot relay '..tostring(name)..' as '..tostring(kinds))
+    relayed=relayed+1
+   end
+   log('UI_EXPORTS_ARMED mode='..mode..' blocked_names='..#(cfg.native_gate_ui_exports_block or {})..' relayed='..relayed)
   end
   -- Rows of who gets built; only watches, and what it cannot watch loses a row.
   if cfg.native_gate_build_rows then

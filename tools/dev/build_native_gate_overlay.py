@@ -496,7 +496,9 @@ def main():
     if args.session_clients:
         # Protocol 3 input multiplexer (pilot, orders and hit claim sections share one blob).
         shutil.copy2(root/'tools/dev/native_gate_inputs_core.lua',args.out/'ui/native_gate_inputs_core.lua')
-        ui_files = 'ui/native_gate_inputs_core.lua\n'+ui_files
+        # Relayed UI FFI calls' section codec (native_gate_ui_relay, lockstep_ui_exports.h).
+        shutil.copy2(root/'tools/dev/native_gate_ffi_relay_core.lua',args.out/'ui/native_gate_ffi_relay_core.lua')
+        ui_files = 'ui/native_gate_inputs_core.lua\nui/native_gate_ffi_relay_core.lua\n'+ui_files
     (args.out/'ui.xml.files').write_text(ui_files)
     (args.out/'ui/config.lua.append').write_text('''X4LAN_CONFIG.enabled = false
 X4LAN_CONFIG.native_gate_test = true
