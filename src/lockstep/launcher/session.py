@@ -20,7 +20,9 @@ from . import extension, game, instance, profile, steam
 ROOT = Path(__file__).resolve().parents[3]
 RELAY = ROOT / 'tools/dev/native_gate_relay.py'
 STOP_OK = re.compile(r'NATIVE_GATE STOP .*reason=1 restored=1')
-FAIL = re.compile(r'NATIVE_GATE (?:ERROR|REFUSED)|NATIVE_GATE STOP .*reason=(?!1 )[0-9]+|'
+# ERROR rows fail the session, except the defaults' loud warnings: DEGRADED (a watched status counter grew) and
+# DEFAULT_SKIPPED (a default that cannot apply), which the probe writes while the session runs on.
+FAIL = re.compile(r'NATIVE_GATE (?:ERROR (?!DEGRADED |DEFAULT_SKIPPED )|REFUSED)|NATIVE_GATE STOP .*reason=(?!1 )[0-9]+|'
                   r'Error while executing.*native_(?:gate|construction|management)_[a-z_]+')
 
 

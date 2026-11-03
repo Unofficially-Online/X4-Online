@@ -147,6 +147,11 @@ class Session(unittest.TestCase):
         self.assertIsNone(session.FAIL.search('[X4LAN] NATIVE_GATE STOP tick=600 reason=1 restored=1'))
         self.assertTrue(session.FAIL.search('[X4LAN] NATIVE_GATE STOP tick=20 reason=91 restored=1'))
         self.assertTrue(session.FAIL.search('[X4LAN] NATIVE_GATE REFUSED exe'))
+        # The defaults' loud warnings do not end a session; every other ERROR row does.
+        self.assertIsNone(session.FAIL.search('[X4LAN] NATIVE_GATE ERROR DEGRADED status=FIND_ORDER unmapped=12 (+12) tick=1'))
+        self.assertIsNone(session.FAIL.search('[X4LAN] NATIVE_GATE ERROR DEFAULT_SKIPPED key=native_gate_render_fps'))
+        self.assertTrue(session.FAIL.search('[X4LAN] NATIVE_GATE ERROR CONFIG_REFUSED native_gate_x'))
+        self.assertTrue(session.FAIL.search('[X4LAN] NATIVE_GATE ERROR frame: attempt to index nil'))
         args = session.client_command(Path('v'), 45851, 2)
         self.assertEqual(args[1:3], ['-personalfolderid', '45851'])
         self.assertIn(f'-seed:{session.SESSION_SEED}', args)
