@@ -205,6 +205,16 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   should check those first.
   A client that joins a running session needs the session's clock value, not 65536.0: the
   same per-frame double additions of the fixed step, replayed from tick 0 (see the header).
+- **Base seed with the speech clock: 43,052 ticks (23.9 game minutes).** The soak passed 39,060
+  and parted at 43,052. The always-on actor rows name the split: three Argon fighters
+  (73e9c, 73ead, 73ee3, queued to dock at carrier 73dce) drew their agent updates at 43,051 on
+  client 2, one tick before client 1 (equal before that). Event rows were equal. The triage
+  rerun passed its window with every row family equal, so this split depends on timing too.
+  The only earlier status difference was NAV_OCTREE `hides`/`rerequests` at 35,640, from
+  lookups of a station under construction (33e98) whose octree is rebuilt as it grows. A
+  hidden lookup behaves as a miss by design, and an extra aggregated row (miss and hidden in
+  one frame) fits that count. Lookup rows had only been written on stride ticks; soaks now
+  write every one, and triage compares them.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
