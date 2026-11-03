@@ -56,6 +56,13 @@ scripts call 668: about 406 presentation, 62 unclassified, and the relay worklis
 | Build | 21 | station and ship configuration, map, station overview |
 | Money | 4 | map, blueprint/licence trader, inventory trader |
 
+Of those 262, the existing relay code (UI replay, player orders) names 28: the order
+queue (`CreateOrder*`, `AdjustOrder`, `EnableOrder`, `RemoveOrder*`, loops, planned
+default orders), docking (`QuickDock`, `RequestDockAt*`, `UndockPlayerShip`), guidance,
+weapon groups and modes, soft target, autopilot, flight assist, player activities. The
+other 234 are uncovered; some of them are pure functions with query-like effects
+(`Filter*`, `Generate*Text`) that the name rule misses and the runtime census will drop.
+
 The first native run of the census (600 ticks, scripted pilots, no human input) saw the
 idle UI call 10 non-query exports, all presentation: `SetWidgetAssociatedElement`,
 `SetMonitorExtents`, `SetCrosshairMessage`, `MarkIndicatorShown`, `TrackMenu`, ...
