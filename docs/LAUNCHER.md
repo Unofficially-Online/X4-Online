@@ -92,6 +92,11 @@ relay-failed, or timeout).
 
 ## Soak profile and determinism findings (1 November 2026)
 
+Soak overlays (`tools/build_soak_overlay.py`) are bare: `native_gate_defaults = false`, so a soak runs
+exactly `src/lockstep/profiles/soak.lua` and the builder's flags. `--defaults` puts the session default
+stack (`tools/dev/native_gate_defaults.lua`: piloting, prediction, on foot, wire crypto, Silver's UI
+guard) on top, for a soak of the full session.
+
 `python tools/build_soak_overlay.py --snapshot SAVE --gate-dll DLL --out DIR` builds the
 validated soak overlay (`src/lockstep/profiles/soak.lua` plus base flags and scripted
 pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-schema`,
