@@ -284,4 +284,12 @@ W4 people session (G5 style), 10 minutes, crypto on: no stop 106/107; desync ind
   on both; every journal signature verifies (1,202 of 1,202, ticks 0..600); both stopped with reason 1.
   Digest sequence against the same config without crypto (d204f): 1,194 of 1,200 slot-ticks equal, the differences following
   early input records (ticks 5-18) that also differ between two runs without crypto (d201f vs d204f: 1,158 equal): crypto adds
-  no difference beyond the runs' own input timing. Frame timing (wait_us) not compared. W2-W4 not run yet.
+  no difference beyond the runs' own input timing. Frame timing (wait_us) not compared.
+  W2 (same night, 600-tick sessions that stop at the handshake): every case fails closed, no session starts:
+    w2a client 2 with client 1's credential: client 2 established=0 after 493 hellos; client 1 established, keyed=0
+        (the roster never completes), stop 107.
+    w2b3 relay without --wire-crypto, clients with it: both established=0 (496/493 hellos); client 1 stop 107.
+    w2c3 relay with it, client 2 without: client 1 established, keyed=0, stop 107; client 2 runs plain.
+  Differences from the spec, all from the test harness: the lane runner tears the session down at the first client's
+  107 (its fail pattern), so the other client logs stop 6 (window closed) instead of its own 107/7, and the relay is
+  stopped before its final report, so hello_refused/dropped_plain are not written. W3 (VPS) and W4 (people) open.
