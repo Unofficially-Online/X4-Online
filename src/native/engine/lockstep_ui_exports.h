@@ -23,6 +23,16 @@
  * gate.ui_exports_block(name) that would be counted is refused instead: the common handler
  * returns 0 (rax; the failure value of the bool/int/pointer setters) without calling it,
  * counted as blocked=. Unmarked exports are only counted, as in 'observe'.
+ * Relay (with 'block'): an export given a kind string (gate.ui_exports_relay_kinds(name, kinds),
+ * one letter per argument from its FFI declaration: U UniverseID, q 64-bit integer or other ID,
+ * i 32-bit integer, b bool, f float, d double, s const char*) is refused the same way and its
+ * call is captured instead: the arguments are read from the stub's frame (rcx/rdx/r8/r9 or
+ * xmm0-3 by position, then the stack), a UniverseID becomes its portable key (saved, or created
+ * with native_gate_portable_created; a call naming an object without one is refused, unportable=),
+ * a string is copied (at most UX_STRING bytes), and the record (u16 export index, the encoded
+ * arguments) is queued for the probe (gate.ui_exports_take). The probe sends it through the input
+ * relay and every client, this one too, calls the export at the apply tick inside the relay
+ * bracket (tools/dev/native_gate_ffi_relay.lua): the UI's write happens everywhere at one tick.
  * Fail closed: the export directory must lie inside the image and every patched entry
  * must still hold our stub's RVA at each gate tick (stop reason 182); restored at stop. */
 #define UX_STOP_REASON 182u /* 181 the last module before */
@@ -32,11 +42,20 @@
 #define UX_ROWS_PER_EXPORT 4u
 #define UX_ROWS_PER_TICK 64u
 #define UX_PAGE_BYTES (UX_MAX*UX_STUB+0x1000u)
+#define UX_KINDS 12u      /* arguments per relayed export */
+#define UX_STRING 64u
+#define UX_RECORD 200u    /* encoded bytes per captured call */
+#define UX_QUEUE 64u
 typedef struct {volatile LONG64 ready;uint64_t tick;uint32_t index;uint8_t thread,blocked;} ux_row_t;
 enum {UX_OFF=0,UX_OBSERVE=1,UX_BLOCK=2};
 static int ux_installed,ux_restored,ux_mode;
 static uint8_t ux_block[UX_MAX];
-static volatile LONG64 ux_blocked;
+static volatile LONG64 ux_blocked,ux_captured,ux_unportable,ux_too_long,ux_queue_full;
+static char ux_kinds[UX_MAX][UX_KINDS+1];   /* relay kind string, "" = not relayed */
+typedef struct {uint16_t length;unsigned char bytes[UX_RECORD];} ux_capture_t;
+static ux_capture_t ux_queue[UX_QUEUE];
+static unsigned ux_queue_head,ux_queue_tail;  /* UI thread only: capture and take both run there */
+static uint64_t (*ux_portable_fn)(uint64_t runtime); /* tests substitute */
 static const char *ux_stage="idle";
 static unsigned ux_count; /* hooked exports */
 static uint32_t ux_slot[UX_MAX],ux_original[UX_MAX]; /* index into AddressOfFunctions, the original RVA */
@@ -56,14 +75,58 @@ static int ux_is_query(const char *name) {
     }
     return 0;
 }
+/* The common handler's frame (rsp after its sub): xmm0-3 at 0x20/0x30/0x40/0x50, r9 0x68, r8 0x70,
+ * rdx 0x78, rcx 0x80, the return address 0x88, the caller's home area 0x90, stack arguments from 0xb0. */
+static uint64_t ux_arg_int(const unsigned char *frame,unsigned i) {
+    static const unsigned reg[4]={0x80,0x78,0x70,0x68};uint64_t v;
+    memcpy(&v,frame+(i<4?reg[i]:0xb0u+8u*(i-4u)),8);return v;
+}
+static uint64_t ux_arg_float(const unsigned char *frame,unsigned i) {
+    uint64_t v;memcpy(&v,frame+(i<4?0x20u+16u*i:0xb0u+8u*(i-4u)),8);return v;
+}
+static uint64_t ux_portable_default(uint64_t runtime) {unsigned klass;return world_identity_key(runtime,&klass);}
+/* Encode one captured call; 0 when it cannot be carried (unportable object, long string). */
+static unsigned ux_encode(uint32_t index,const unsigned char *frame,unsigned char *out) {
+    const char *k=ux_kinds[index];unsigned n=0;
+    out[n++]=(unsigned char)(index&0xff);out[n++]=(unsigned char)(index>>8);
+    for(unsigned i=0;k[i];i++) {
+        uint64_t v=(k[i]=='f' || k[i]=='d')?ux_arg_float(frame,i):ux_arg_int(frame,i);
+        if(k[i]=='U') {
+            uint64_t key=v?(ux_portable_fn?ux_portable_fn:ux_portable_default)(v):0;
+            if(v && !key) {InterlockedIncrement64(&ux_unportable);return 0;}
+            v=key;
+        }
+        if(k[i]=='s') {
+            const char *text=(const char*)(uintptr_t)v;size_t length=0;
+            if(text) {while(length<=UX_STRING && text[length]) ++length;}
+            if(length>UX_STRING || n+1+length>UX_RECORD) {InterlockedIncrement64(&ux_too_long);return 0;}
+            out[n++]=text?(unsigned char)length:0xffu;
+            if(text) {memcpy(out+n,text,length);n+=(unsigned)length;}
+            continue;
+        }
+        unsigned bytes=k[i]=='b'?1u:(k[i]=='i' || k[i]=='f')?4u:8u;
+        if(n+bytes>UX_RECORD) {InterlockedIncrement64(&ux_too_long);return 0;}
+        memcpy(out+n,&v,bytes);n+=bytes;
+    }
+    return n;
+}
+static void ux_capture(uint32_t index,const unsigned char *frame) {
+    unsigned char bytes[UX_RECORD];unsigned n=ux_encode(index,frame,bytes);
+    if(!n) return;
+    if(ux_queue_tail-ux_queue_head>=UX_QUEUE) {InterlockedIncrement64(&ux_queue_full);return;}
+    ux_capture_t *c=&ux_queue[ux_queue_tail%UX_QUEUE];c->length=(uint16_t)n;memcpy(c->bytes,bytes,n);++ux_queue_tail;
+    InterlockedIncrement64(&ux_captured);
+}
 /* 1: call the export; 0: refuse it (the common handler returns 0). */
-static uint32_t ux_record(uint32_t index) {
+static uint32_t ux_record(uint32_t index,const unsigned char *frame) {
     if(index>=ux_count) return 1;
     if(!(stats.active && boot_phase==3)) {InterlockedIncrement64(&ux_boot_calls);return 1;}
     if(InterlockedCompareExchange(&ux_relay_depth,0,0)) {InterlockedIncrement64(&ux_relayed);return 1;}
     LONG64 n=InterlockedIncrement64(&ux_calls[index]);
-    int refuse=ux_mode==UX_BLOCK && ux_block[index];
+    int relay=ux_mode==UX_BLOCK && ux_kinds[index][0] && GetCurrentThreadId()==ui_thread;
+    int refuse=ux_mode==UX_BLOCK && (ux_block[index] || relay);
     if(refuse) InterlockedIncrement64(&ux_blocked);
+    if(relay) ux_capture(index,frame);
     if(n>(LONG64)UX_ROWS_PER_EXPORT) return !refuse;
     uint64_t tick=stats.issued;
     if(tick!=ux_tick_seen) {ux_tick_seen=tick;InterlockedExchange64(&ux_tick_rows,0);}
@@ -75,7 +138,7 @@ static uint32_t ux_record(uint32_t index) {
     InterlockedExchange64(&r->ready,at);
     return !refuse;
 }
-static uint32_t (*const ux_record_ptr)(uint32_t)=ux_record;
+static uint32_t (*const ux_record_ptr)(uint32_t,const unsigned char *)=ux_record;
 /* The common handler: entry rsp = 8 mod 16 (return address), eax = the export's index. */
 static const unsigned char ux_common_code[]={
     0x51,0x52,0x41,0x50,0x41,0x51,                         /* push rcx; push rdx; push r8; push r9 */
@@ -86,7 +149,8 @@ static const unsigned char ux_common_code[]={
     0xf3,0x0f,0x7f,0x5c,0x24,0x50,                         /* movdqu [rsp+0x50],xmm3 */
     0x48,0x89,0x44,0x24,0x60,                              /* mov [rsp+0x60],rax */
     0x89,0xc1,                                             /* mov ecx,eax */
-    0x48,0xb8,0,0,0,0,0,0,0,0,                             /* mov rax,imm64 (ux_record) at +0x2b */
+    0x48,0x89,0xe2,                                        /* mov rdx,rsp: the frame */
+    0x48,0xb8,0,0,0,0,0,0,0,0,                             /* mov rax,imm64 (ux_record) at +0x2e */
     0xff,0xd0,                                             /* call rax */
     0x41,0x89,0xc2,                                        /* mov r10d,eax: the decision */
     0x48,0x8b,0x44,0x24,0x60,                              /* mov rax,[rsp+0x60] */
@@ -98,13 +162,13 @@ static const unsigned char ux_common_code[]={
     0x41,0x59,0x41,0x58,0x5a,0x59,                         /* pop r9; pop r8; pop rdx; pop rcx */
     0x45,0x85,0xd2,                                        /* test r10d,r10d */
     0x74,0x10,                                             /* jz refuse */
-    0x49,0xbb,0,0,0,0,0,0,0,0,                             /* mov r11,imm64 (ux_target) at +0x66 */
+    0x49,0xbb,0,0,0,0,0,0,0,0,                             /* mov r11,imm64 (ux_target) at +0x69 */
     0x89,0xc0,                                             /* mov eax,eax (zero-extend the index) */
     0x41,0xff,0x24,0xc3,                                   /* jmp [r11+rax*8] */
     0x31,0xc0,0xc3,                                        /* refuse: xor eax,eax; ret */
 };
-#define UX_COMMON_RECORD 0x2bu
-#define UX_COMMON_TARGET 0x66u
+#define UX_COMMON_RECORD 0x2eu
+#define UX_COMMON_TARGET 0x69u
 /* Page layout: common handler at 0, stubs from 0x1000 (16 bytes each). */
 static void ux_write_code(unsigned char *page,unsigned count) {
     memset(page,0xcc,UX_PAGE_BYTES);memcpy(page,ux_common_code,sizeof(ux_common_code));
@@ -161,14 +225,33 @@ static void ux_restore(void) {
     if(!left) {ux_installed=0;ux_restored=1;ux_stage="restored";} else ux_stage="restore_failed";
 }
 /* Mark an export for 'block' by name; 1 if it is hooked. */
+static int ux_find(const char *name,size_t length) {
+    for(unsigned i=0;i<ux_count;i++) if(strlen(ux_name[i])==length && !memcmp(ux_name[i],name,length)) return (int)i;
+    return -1;
+}
 static int ux_mark_block(const char *name,size_t length) {
-    for(unsigned i=0;i<ux_count;i++) if(strlen(ux_name[i])==length && !memcmp(ux_name[i],name,length)) {ux_block[i]=1;return 1;}
-    return 0;
+    int i=ux_find(name,length);if(i<0) return 0;
+    ux_block[i]=1;return 1;
+}
+/* Give a hooked export its relay kind string; 1 on success. */
+static int ux_mark_relay(const char *name,size_t length,const char *kinds,size_t count) {
+    int i=ux_find(name,length);
+    if(i<0 || count>UX_KINDS || strspn(kinds,"Uqibfds")<count) return 0;
+    memcpy(ux_kinds[i],kinds,count);ux_kinds[i][count]=0;return 1;
+}
+/* The oldest captured call as lowercase hex (index then arguments); 0 when none. UI thread. */
+static int ux_take(char *out,size_t cap) {
+    if(ux_queue_head==ux_queue_tail) return 0;
+    const ux_capture_t *c=&ux_queue[ux_queue_head%UX_QUEUE];
+    if((size_t)c->length*2+1>cap) return 0;
+    for(unsigned i=0;i<c->length;i++) snprintf(out+2*i,3,"%02x",c->bytes[i]);
+    ++ux_queue_head;return (int)c->length*2;
 }
 /* gate.ui_exports('observe'|'block'): UI thread, before the snapshot load. */
 static int ux_arm_using(unsigned char *base,size_t size) {
     if(ux_installed) return 1;
-    memset(ux_block,0,sizeof(ux_block));ux_blocked=0;
+    memset(ux_block,0,sizeof(ux_block));memset(ux_kinds,0,sizeof(ux_kinds));
+    ux_blocked=ux_captured=ux_unportable=ux_too_long=ux_queue_full=0;ux_queue_head=ux_queue_tail=0;
     uint32_t *functions,*names,count,nfunctions;uint16_t *ordinals;
     if(!ux_directory(base,size,&functions,&names,&ordinals,&count,&nfunctions)) {ux_stage="directory";return 0;}
     unsigned n=0;
@@ -219,9 +302,10 @@ static int ux_row_text(uint64_t index,char *out,size_t cap) {
 static int ux_status(char *out,size_t cap) {
     uint64_t total=0,distinct=0;
     for(unsigned i=0;i<ux_count;i++) {uint64_t c=(uint64_t)ux_calls[i];total+=c;distinct+=c!=0;}
-    unsigned marked=0;for(unsigned i=0;i<ux_count;i++) marked+=ux_block[i];
-    int n=snprintf(out,cap,"installed=%d mode=%s hooked=%u marked=%u calls=%llu exports_called=%llu blocked=%lld boot=%lld relayed=%lld rows=%lld dropped=%lld restored=%d stage=%s",
-        ux_installed,ux_mode==UX_BLOCK?"block":ux_mode==UX_OBSERVE?"observe":"off",ux_count,marked,(unsigned long long)total,(unsigned long long)distinct,(long long)ux_blocked,(long long)ux_boot_calls,(long long)ux_relayed,
+    unsigned marked=0,relay=0;for(unsigned i=0;i<ux_count;i++) {marked+=ux_block[i];relay+=ux_kinds[i][0]!=0;}
+    int n=snprintf(out,cap,"installed=%d mode=%s hooked=%u marked=%u relay=%u captured=%lld unportable=%lld too_long=%lld queue_full=%lld calls=%llu exports_called=%llu blocked=%lld boot=%lld relayed=%lld rows=%lld dropped=%lld restored=%d stage=%s",
+        ux_installed,ux_mode==UX_BLOCK?"block":ux_mode==UX_OBSERVE?"observe":"off",ux_count,marked,relay,(long long)ux_captured,
+        (long long)ux_unportable,(long long)ux_too_long,(long long)ux_queue_full,(unsigned long long)total,(unsigned long long)distinct,(long long)ux_blocked,(long long)ux_boot_calls,(long long)ux_relayed,
         (long long)ux_rows,(long long)ux_dropped,ux_restored,ux_stage);
     return n>0 && (size_t)n<cap?n:0;
 }
