@@ -2082,3 +2082,9 @@ vps-linux-L8-6000 (the L8 bundle unchanged on the VPS, 2 Linux clients), client 
   the long-run fixes of the current defaults) is not self-consistent past about 1200-1800 ticks even on one platform, so it
   cannot measure Windows vs Linux beyond that. What it shows: Windows and Linux agree through 1200 (w18 = fr31-L2 = L8-6000).
   A longer comparison needs the current long-run stack on the Linux build (roadmap 12/13).
+
+SUIT VIEW FIX LIVE (recorded 3 November from the 1 November run missile2, 10:22, after the suitview merge b8001d0d at 09:59):
+  missile1's config unchanged; slot 2 dies at 1733 (die:2,suit:2) and is in its suit at 1738 as in missile1, but the relay
+  passes with 0 mismatches through 3002 ticks (missile1: diverged from 1733, 1,270 mismatched ticks); census 0 at 1800;
+  client 1 UI_REPLAY_STATUS target_ui=2/0 target_md=0 target_passed=0 route_faults=0 target_route=aeb2d2,b3fa06,8c58b8,
+  8c37b5,7074f6,9a2c7f (the route the spec asked to report: not the destructor's it guessed); client 2 target_passed=0.
