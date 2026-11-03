@@ -570,6 +570,11 @@ in the step frame. [F] The teeth are almost all on client 2 (b2 14-22 per run, b
 [I] Client 2's camera sits in a slot ship whose pilot seat holds an ordinary character (client 1 is X4's own player,
 whose body is not drawn), so the camera is inside that head; a head drawn a few centimetres off shows the inward-facing
 teeth. Render-only frames skip slot 8 (animation), which places characters [F header comment, I that it is the cause].
-Next runs: the lead dependence (p2i with horizon cap 1), then where the seated character's transform comes from.
+Lead dependence (horizon cap 1, lead mean 1.4 m instead of about 7): p2k (as p2i) 3 flashes (b2 1, was 6); p2l (as p2f,
+both display stages) 29 (b2 26): with the display stages the lead size does not matter. [F] Prediction and stage 3 swap
+the same pointer (view index 0x38f4ee0, vc+0xe0+bank*0x80, +0x28); the chain follows the own ship in about every written
+frame with and without prediction (p2o client 2: chain=1723 of 1737 frames, 0 flashes). [I] The difference is that with
+prediction the step frame itself draws the own ship away from its simulated pose, which whatever slot 8 (animation) or
+BuildCache placed from the simulated pose does not follow. Next: the engine side of the seated character's placement.
 Until fixed, every session with the defaults shows it (both are on by default); render frames off or prediction
 'observe' avoids it (p2n, p2o: 0 flashes).
