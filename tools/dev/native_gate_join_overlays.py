@@ -151,7 +151,7 @@ def check_world_table(package, mode):
         what = 'no world side table' if version < 2 else 'no SHIELD, NAV, ATTN or KEYS sections' if version < 3 else \
             'no PATH or REGION sections' if version < 4 else 'no FLIGHT or SPLINE sections' if version < 5 else 'no AGENT section' \
             if version < 6 else 'no ROUTE section' if version < 7 else 'no PARAM or DOCK sections' if version < 8 else \
-            'no STEER or STEERPT sections' if version < 9 else 'no SOLVER or BULLET sections' if version < 10 else             'no GRAV, GRAVC or GRAVS sections'
+            'no STEER or STEERPT sections' if version < 9 else 'no SOLVER or BULLET sections' if version < 10 else             'no GRAV, GRAVC or GRAVS sections' if version < 11 else 'no SPLM, SPLME, SPLMSEG, GRAVN, GRAVP or GRAVQ sections'
         raise ValueError(f'package_v{version}: the package carries {what} (a saver build before them); a strict joiner refuses it')
     sections = package['sections']
     names = ('health', 'pose')+(('shield', 'nav', 'attn', 'keys') if version >= 3 else ())
@@ -178,6 +178,10 @@ def check_world_table(package, mode):
         text += f' solver={active}/{len(sections.get("solver", []))-active} bullet={len(sections.get("bullet", []))}'
     if version >= 11:
         text += f' grav={len(sections.get("grav", []))}/{len(sections.get("gravc", []))}/{len(sections.get("gravs", []))}'
+    if version >= 12:
+        text += f' splm={len(sections.get("splm", []))}/{len(sections.get("splme", []))}/{len(sections.get("splmseg", []))}'
+        text += f' gravn={len(sections.get("gravn", []))} gravp={len(sections.get("gravp", []))}'
+        text += f' gravq={len(sections.get("gravq", []))}'
     return text
 
 

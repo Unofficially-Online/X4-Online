@@ -3610,7 +3610,10 @@ local function frame()
    -- Objects the load creates after the snapshot import (no saved ID) get
    -- created IDs with tick 0 at the seal, from the load's creation order.
    if cfg.native_gate_created_load then
-    assert(cfg.native_gate_created_load==true and gate.created_load and gate.created_load()==1,'created load identities refused')
+    -- The stacks threshold only when configured: without it the call stays argument-free (older gates, the tests' stand-ins).
+    local stacks=cfg.native_gate_created_load_stacks
+    local loaded=cfg.native_gate_created_load==true and gate.created_load and (stacks==nil and gate.created_load() or stacks~=nil and gate.created_load(stacks))
+    assert(loaded==1,'created load identities refused')
     log('CREATED_LOAD_ARMED')
    end
   else

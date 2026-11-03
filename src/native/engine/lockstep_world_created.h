@@ -259,6 +259,49 @@ static void created_note_with(void *object,unsigned thread) {
     } else InterlockedIncrement64(&created_pending_overflow);
     ReleaseSRWLockExclusive(&created_pending_lock);
 }
+/* Diagnostic, DEFAULT OFF (hot join report 1.16: a joiner's load makes 85 objects the session never had, seven job ships with
+ * parts and crew): native_gate_created_load_stacks = <runtime ID>. Each load note at or above it (a save's IDs are all below its
+ * next ID) records its call stack; the seal writes them as CREATED_LOAD_STACK rows (frames as X4.exe RVAs, @ before an address
+ * outside it) to the crash note and the debug log. Nothing is called or written in the game. */
+#define CREATED_LOAD_STACKS 512u
+#define CREATED_LOAD_FRAMES 28u
+typedef struct {uint64_t runtime;uint32_t n,thread;uint64_t frame[CREATED_LOAD_FRAMES];} created_load_stack_t;
+static created_load_stack_t *created_load_stack;static uint64_t created_load_stack_min;static volatile LONG created_load_stack_n;
+static void (*created_stack_sink)(const char *,int);
+static void *created_alloc(size_t bytes);
+static int created_load_stacks_arm(uint64_t min) {
+    if(!min) return 0;
+    if(!created_load_stack && !(created_load_stack=created_alloc(sizeof(*created_load_stack)*CREATED_LOAD_STACKS))) return 0;
+    created_load_stack_min=min;return 1;
+}
+static void created_load_stack_note(uint64_t runtime) {
+#ifndef CREATED_OWN_PLATFORM
+    LONG i=InterlockedIncrement(&created_load_stack_n)-1;
+    if(i<0 || i>=(LONG)CREATED_LOAD_STACKS) return;
+    void *f[CREATED_LOAD_FRAMES];USHORT n=RtlCaptureStackBackTrace(2,CREATED_LOAD_FRAMES,f,NULL);
+    created_load_stack_t *s=&created_load_stack[i];s->thread=(uint32_t)GetCurrentThreadId();s->n=n;
+    for(USHORT k=0;k<n;k++) s->frame[k]=(uint64_t)(uintptr_t)f[k];
+    MemoryBarrier();s->runtime=runtime;
+#else
+    (void)runtime;   /* the Windows diagnostic only */
+#endif
+}
+static void created_load_stacks_flush(void) {
+    if(!created_load_stack || !created_stack_sink) return;
+    LONG count=InterlockedCompareExchange(&created_load_stack_n,0,0);if(count>(LONG)CREATED_LOAD_STACKS) count=CREATED_LOAD_STACKS;
+    const uintptr_t base=(uintptr_t)image;
+    for(LONG i=0;i<count;i++) {
+        const created_load_stack_t *s=&created_load_stack[i];char line[1024];
+        int at=snprintf(line,sizeof(line),"[X4LAN] NATIVE_GATE CREATED_LOAD_STACK index=%ld of=%ld runtime=%llx thread=%u frames=",
+                        (long)i,(long)created_load_stack_n,(unsigned long long)s->runtime,s->thread);
+        for(uint32_t k=0;k<s->n && at>0 && at<(int)sizeof(line)-40;k++) {
+            const uint64_t a=s->frame[k];
+            at+=snprintf(line+at,sizeof(line)-(size_t)at,base && a>=base && a-base<0x8000000u?"%s%llx":"%s@%llx",k?",":"",
+                         (unsigned long long)(base && a>=base && a-base<0x8000000u?a-base:a));
+        }
+        if(at>0 && at<(int)sizeof(line)-2) {line[at++]='\r';line[at++]='\n';created_stack_sink(line,at);}
+    }
+}
 /* Load notes: lock-free append; a slot whose writer has not finished reads
  * runtime 0 at the seal and is skipped. */
 static void created_load_note(void *object) {
@@ -268,6 +311,7 @@ static void created_load_note(void *object) {
     if(!created_load || index>=(LONG64)CREATED_LOAD_NOTES) {InterlockedIncrement64(&created_load_overflow);return;}
     created_load[index].thread=(uint32_t)GetCurrentThreadId();created_load[index].reserved=0;
     MemoryBarrier();created_load[index].runtime=runtime;
+    if(created_load_stack_min && runtime>=created_load_stack_min && created_load_stack) created_load_stack_note(runtime);
 }
 static uint64_t created_assign_execute(created_assign_fn original,void *object) {
     uint64_t result=original(object); /* exactly once, same argument and result */
@@ -568,7 +612,7 @@ static int created_load_arm(void) {
  * objects get their IDs first; 0 stops the gate (shared assignment failed). */
 static int created_begin_with(world_hash_find_fn find,void *map) {
     int ok=1;
-    if(created_armed && created_installed && created_load_armed) ok=created_load_resolve_with(find,map);
+    if(created_armed && created_installed && created_load_armed) {ok=created_load_resolve_with(find,map);created_load_stacks_flush();}
     if(created_armed && created_installed) {InterlockedExchange(&created_recording,1);if(ok) created_stage="recording";}
     return ok;
 }
