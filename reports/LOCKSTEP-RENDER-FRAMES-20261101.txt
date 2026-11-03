@@ -543,3 +543,33 @@ Rerun: R3 and R4 (section 15) with this build's x4lan_gate_64.dll. Expect RENDER
 mode=... (and RENDER_MOTION_ARMED) right after RENDER_FRAMES_ARMED, then the boot as in r1b; the
 first RENDER_DISPLAY status line stage=armed (stage=failed why=pins would mean the in-memory bytes
 differ: report it), then the checks of section 15.
+
+17. OPEN DEFECT: SINGLE-FRAME FLASHES WITH RENDER FRAMES AND OWN-SHIP PREDICTION (2 November 2026, coordinator)
+-------------------------------------------------------------------------------------------------------------
+Seen by a person watching a session; reproduced with burst screenshots (PrintWindow, both windows, about 13 per second
+for 90 s) and counted with a scan for frames far from both neighbours while the neighbours agree (score > 4).
+All runs: session defaults, 2 clients, lookahead 3, pilot delay 5, relay --latency-ms 100, 3000 ticks, stock demo pilots;
+every run: relay pass, no digest mismatch, census 0 of 528,288 at 1800 (display only, as designed).
+  run  render frames                prediction           flashes (b1 + b2)   notes
+  p2n  off                          present              0
+  p2o  60, camera + motion          off                  0
+  p2e  60, camera + motion          present (no join)    19 (5 + 14)         owned=0 stale=2068
+  p2f  60, camera + motion          present + join       25 (5 + 20)         owned=2162 stale=0 (join wired, build200)
+  p2g  60, camera only              present + join       23 (3 + 20)
+  p2h  60, motion only              present + join       25 (3 + 22)
+  p2i  60, neither stage            present + join       8 (2 + 6)
+What flashes (contact sheets of the strongest frames):
+  - [F] a character's mouth and teeth in the cockpit view for single frames, at 240 m/s and at travel speed (1,965 m/s);
+    the person watching describes it as models in the pilot seat clipping. The cockpit itself is drawn in place.
+  - [F] the cockpit struts lit orange or dark in alternate frames while the travel drive charges.
+[F] It takes render-only frames and own-ship prediction presenting together; neither alone flashes, and neither display
+stage (camera, motion) is needed. [I] What X4 updates only in a step (the seated character's placement, the travel
+charge light) stays where the step put it while the own ship is drawn elsewhere in a render-only frame. p2j (as p2i with own_predict 'swap': the same pointer swaps, 9392, at the simulated pose): 0 flashes, census 0.
+[F] So the swap itself is harmless; the flashes come from drawing the own ship elsewhere in a render-only frame than
+in the step frame. [F] The teeth are almost all on client 2 (b2 14-22 per run, b1 2-5, mostly the light flip there).
+[I] Client 2's camera sits in a slot ship whose pilot seat holds an ordinary character (client 1 is X4's own player,
+whose body is not drawn), so the camera is inside that head; a head drawn a few centimetres off shows the inward-facing
+teeth. Render-only frames skip slot 8 (animation), which places characters [F header comment, I that it is the cause].
+Next runs: the lead dependence (p2i with horizon cap 1), then where the seated character's transform comes from.
+Until fixed, every session with the defaults shows it (both are on by default); render frames off or prediction
+'observe' avoids it (p2n, p2o: 0 flashes).
