@@ -2088,3 +2088,8 @@ SUIT VIEW FIX LIVE (recorded 3 November from the 1 November run missile2, 10:22,
   passes with 0 mismatches through 3002 ticks (missile1: diverged from 1733, 1,270 mismatched ticks); census 0 at 1800;
   client 1 UI_REPLAY_STATUS target_ui=2/0 target_md=0 target_passed=0 route_faults=0 target_route=aeb2d2,b3fa06,8c58b8,
   8c37b5,7074f6,9a2c7f (the route the spec asked to report: not the destructor's it guessed); client 2 target_passed=0.
+
+20-MINUTE DEFAULT SESSION ON THE MERGED BUILD (3 November, l204-soak: build204 = smoke cea427c6 + probe fix 4f01b0bb: hot join
+v12 present but off, pool faction accounts, render frames skipped while prediction presents; the session defaults, 2 clients,
+stock demo pilots with the pilot window to 36000, 30 steps/s): relay pass, 0 digest mismatches through 36,000 ticks,
+28.96 steps/s, both stopped with reason 1; census 0 at 9000, 18000, 27000 and 36000 (550,467 objects at 36000).
