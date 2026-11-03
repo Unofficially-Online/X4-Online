@@ -71,7 +71,8 @@ def guard_config(census, relay=False):
     if lua_list.is_file():
         sys.path.insert(0, str(DEV))
         from ui_export_census import QUERY, family
-        ui_only = re.compile(r'^Notify|^Create(?!Order)|Descriptor|DropDown|Bar$|^Interrupt')  # listeners, widgets
+        ui_only = re.compile(r'^Notify|^Create(?!Order)|Descriptor|DropDown|Bar$|^Interrupt|^Select|SetSelected|^Round|'
+                             r'PlayCredits|SwitchInteractive')  # listeners, widgets, pure helpers
         lua = sorted(n for n in json.loads(lua_list.read_text())
                      if not QUERY.match(n) and family(n) not in ('presentation', 'other') and not ui_only.search(n))
         if lua:

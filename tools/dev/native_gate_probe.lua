@@ -548,6 +548,14 @@ local function checkpoint(tick)
  checkpoint_state='saving';ticklog.write('CHECKPOINT_REQUEST slot=save_001 tick='..tick)
  SaveGame('save_001','x4ls checkpoint tick '..tick)
 end
+-- The per-tick UI guard steps in one function (the frame function is at LuaJIT's 60-upvalue limit).
+local function ui_guard_tick(tick)
+ checkpoint(tick)
+ ui_lua_arm()
+ if cfg.native_gate_ui_lua and tick%(cfg.native_gate_status_stride or 60)==0 then ticklog.write('UI_LUA tick='..tick..' '..ui_lua_status()) end
+ ui_write_check(tick)
+ ui_globals_census(tick)
+end
 -- Protocol 3: s.inputs[1..clients] are the blobs admitted for this tick, in
 -- slot order and identical on every client. The optional X4LAN_NATIVE_INPUTS
 -- adapter applies them (its result joins the declared state digest) and
@@ -4250,11 +4258,7 @@ local function frame()
    if tick==1 and cfg.native_gate_world_trace_ticks then assert(gate.world_trace(cfg.native_gate_world_trace_ticks)==1,'world trace arm refused') end
   end
   drain_world_trace()
-  checkpoint(tick)
-  ui_lua_arm()
-  if cfg.native_gate_ui_lua and tick%(cfg.native_gate_status_stride or 60)==0 then ticklog.write('UI_LUA tick='..tick..' '..ui_lua_status()) end
-  ui_write_check(tick)
-  ui_globals_census(tick)
+  ui_guard_tick(tick)
   data=data..'|'..assert(world_hash_state,'world hash baseline missing')
  end
  if profile then profile.mark('capture') end
