@@ -655,23 +655,21 @@ function D.announce(R)
  end
 end
 
--- Degraded paths in module statuses: a counter of WATCH that grows is an ERROR row (every growth) and an info line (at most
--- once per D.WATCH_TICKS per status and counter; not for counters whose module already shows its own info line).
+-- Degraded paths in module statuses: a counter of WATCH that grows is an ERROR row (every growth), in the log only. The in-game
+-- info line it also showed is gone (user, 3 Nov): the counters seen in every session (build rng fallback, find order unmapped,
+-- created identities macro_unknown) are deterministic paths the census confirms equal, and a player cannot act on them.
 D.WATCH={failures=true,unmapped=true,fallback=true,unknown=true,unsupported=true,refused=true,swap_refused=true,lost=true,torn=true}
 D.WATCH_SUFFIX={'_failures','_unmapped','_refused','_unknown'}
 -- 'lua=a/b/c/d' composites of the UI families (native_gate_ui_replay_core.lua): the names of their parts.
 D.WATCH_LUA={UI_TRADE_STATUS={'captured','applied','skipped','refused'},UI_FACTION_STATUS={'applied','skipped','parts','dropped','refused'}}
 D.WATCH_LUA_ON={skipped=true,dropped=true,refused=true}
--- Statuses whose module shows its own info line for these counters (UI guard, missions, faction): the ERROR row only.
-D.WATCH_NOTIFIED={['UI_GUARD_STATUS refused']=true,['UI_MISSIONS_STATUS refused']=true,['UI_FACTION_STATUS lua_refused']=true}
-D.WATCH_TICKS=1800
 local function watched(name)
  if D.WATCH[name] then return true end
  for _,suffix in ipairs(D.WATCH_SUFFIX) do if name:sub(-#suffix)==suffix then return true end end
  return false
 end
 function D.watcher()
- local W={last={},shown={}}
+ local W={last={}}
  -- status: the row's name (e.g. 'RUNTIME_IDS'), tick, text (key=value pairs); returns the loud events.
  function W.line(status,tick,text)
   local events={}
@@ -683,11 +681,6 @@ function D.watcher()
     local row='status='..status..' '..name..'='..value..' (+'..(value-(before or 0))..') tick='..tostring(tick)
     D.loud('DEGRADED',row,false)
     events[#events+1]=row
-    local due=W.shown[id]
-    if not D.WATCH_NOTIFIED[id] and (due==nil or (tonumber(tick) or 0)>=due) then
-     W.shown[id]=(tonumber(tick) or 0)+D.WATCH_TICKS
-     D.notice((status:lower():gsub('_status$',''):gsub('_',' '))..': '..name..' '..value..' - see the log (DEGRADED)')
-    end
    end
   end
   for name,value in tostring(text):gmatch('([%a_][%w_]*)=(%d+)') do

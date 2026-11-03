@@ -444,7 +444,7 @@ class ApplyTests(unittest.TestCase):
 
 
 class LoudTests(unittest.TestCase):
-    def test_a_growing_degraded_counter_is_an_error_row_and_an_info_line_at_most_every_1800_ticks(self):
+    def test_a_growing_degraded_counter_is_an_error_row_in_the_log_only(self):
         lua = lua_runtime('nil')
         lua.execute('W=X4LAN_NATIVE_GATE_DEFAULTS.watcher()')
         line = lua.globals().W.line
@@ -455,8 +455,7 @@ class LoudTests(unittest.TestCase):
         logs = items(lua.globals().logs)
         self.assertTrue(any('ERROR DEGRADED status=ENGINE_RNG unmapped=2 (+2) tick=120' in l for l in logs))
         self.assertTrue(any('rid_failures=1' in l for l in logs))
-        info = items(lua.globals().info)
-        self.assertEqual(len([i for i in info if 'unmapped' in i]), 1)   # the second growth within 1800 ticks: the row only
+        self.assertEqual(items(lua.globals().info), [])   # no in-game line (user, 3 Nov): the rows are in the log
         # The UI families' composite and the guard (which shows its own info line).
         line('UI_TRADE_STATUS', 120, 'ui_trade=armed refused=0 lua=4/3/1/0 view=x')
         line('UI_GUARD_STATUS', 120, 'ui_guard=armed refused=2 lost=0')
