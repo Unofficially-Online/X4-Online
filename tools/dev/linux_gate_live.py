@@ -244,6 +244,10 @@ def bundle(args):
             raise SystemExit(f'composed config lacks {token}')
     if snapshot_sha not in config:
         raise SystemExit('composed config does not pin the snapshot')
+    if args.wire_crypto:
+        # The slot's credential depends on the session token: filled in at run time (run --wire-crypto-credentials).
+        with (extension / 'ui/config.lua').open('a', newline='\n') as handle:
+            handle.write(f'X4LAN_CONFIG.native_gate_wire_crypto = "{WIRE_CRYPTO_TOKEN}"\n')
     (out / 'snapshot').mkdir()
     shutil.copy2(args.snapshot, out / 'snapshot' / SLOT_SAVE)
     shutil.copy2(repo / 'tools/dev/native_gate_relay.py', out / 'native_gate_relay.py')
@@ -251,7 +255,7 @@ def bundle(args):
     shutil.rmtree(work)
     commit = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
     files = {p.relative_to(out).as_posix(): sha(p) for p in sorted(out.rglob('*')) if p.is_file()}
-    manifest = {'commit': commit, 'ticks': args.ticks, 'stride': args.stride, 'snapshot_sha256': snapshot_sha,
+    manifest = {'commit': commit, 'ticks': args.ticks, 'stride': args.stride, 'snapshot_sha256': snapshot_sha, 'wire_crypto': bool(args.wire_crypto),
                 'gate_so_sha256': files['extension/x4_lan_lab/native/x4lan_gate.so'], 'files': files,
                 'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'), 'seed_rng': bool(args.seed_rng),
                 'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
@@ -414,7 +418,37 @@ def portable_math_state(case):
     return active, [line[:300] for line in lines[:16]]
 
 
-def stage_case(root, run, slot, game, userhome, port, token, clients=2):
+WIRE_CRYPTO_TOKEN = '@X4LANE_WIRE_CRYPTO@'
+CREDENTIAL = re.compile(r'x4c1:[0-9a-f]{64}:[0-9a-f]{64}')
+
+
+def case_config(text, port, token, slot, clients, credential=None):
+    """A client's config.lua: the session's port, token, slot and size; with wire crypto (bundle --wire-crypto) the slot's
+    credential (native_gate_crypto.py credential for this token and slot; a secret, never logged)."""
+    wants = WIRE_CRYPTO_TOKEN in text
+    if wants and not credential:
+        raise RuntimeError(f'the bundle has wire crypto: slot {slot} needs a credential (run --wire-crypto-credentials)')
+    if credential and not wants:
+        raise RuntimeError('a wire crypto credential, but the bundle has no wire crypto line (bundle --wire-crypto)')
+    if credential and not CREDENTIAL.fullmatch(credential):
+        raise RuntimeError(f'slot {slot}: not a wire crypto credential (x4c1:<64 hex>:<64 hex>)')
+    text = (text.replace('@X4LANE_PORT@', str(port)).replace('@X4LANE_TOKEN@', token)
+            .replace('@X4LANE_SLOT@', f'p{slot}').replace('@X4LANE_CLIENTS@', str(clients)))
+    return text.replace(WIRE_CRYPTO_TOKEN, credential or '')
+
+
+def load_credentials(path):
+    """--wire-crypto-credentials FILE: JSON {"<slot>": "x4c1:...", ...}, readable by its owner only (it is a secret)."""
+    if os.name == 'posix' and path.stat().st_mode & 0o077:
+        raise SystemExit(f'{path}: a credential file must not be readable by others (chmod 600)')
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict) or not data or any(not str(k).isdigit() or not isinstance(v, str) or not CREDENTIAL.fullmatch(v)
+                                                     for k, v in data.items()):
+        raise SystemExit(f'{path}: expected {{"<slot>": "x4c1:<64 hex>:<64 hex>", ...}}')
+    return {int(k): v for k, v in data.items()}
+
+
+def stage_case(root, run, slot, game, userhome, port, token, clients=2, credential=None):
     """One private instance: HOME, profile 45841 (autosave off), snapshot, extensions."""
     case = run / f'case{slot}'
     profile = case / 'home/.config/EgoSoft/X4/45841'
@@ -441,9 +475,9 @@ def stage_case(root, run, slot, game, userhome, port, token, clients=2):
     lab = case / 'extensions/x4_lan_lab'
     shutil.copytree(root / 'extension/x4_lan_lab', lab)
     config = lab / 'ui/config.lua'
-    text = (config.read_text().replace('@X4LANE_PORT@', str(port)).replace('@X4LANE_TOKEN@', token)
-            .replace('@X4LANE_SLOT@', f'p{slot}').replace('@X4LANE_CLIENTS@', str(clients)))
-    config.write_text(text)
+    config.write_text(case_config(config.read_text(), port, token, slot, clients, credential))
+    if credential:
+        config.chmod(0o600)
     ids = sorted(p.name for p in (case / 'extensions').iterdir())
     if any(not (n.startswith('ego_dlc_') or n == 'x4_lan_lab') for n in ids):
         raise RuntimeError('unexpected extension in the private view')
@@ -535,7 +569,14 @@ def run(args):
             port = reserve.getsockname()[1]
         token = secrets.token_hex(16)
     order = [slot for slot in launch_order(args.launch_order, clients) if slot in local]
-    by_slot = {slot: stage_case(root, run_dir, slot, game, userhome, port, token, clients) for slot in local}
+    credentials = {}
+    if args.wire_crypto_credentials:
+        if not external:
+            raise SystemExit('--wire-crypto-credentials needs an external relay with --wire-crypto (--relay-port)')
+        credentials = load_credentials(args.wire_crypto_credentials)
+        if any(slot not in credentials for slot in local):
+            raise SystemExit(f'--wire-crypto-credentials lacks a credential for slots {[s for s in local if s not in credentials]}')
+    by_slot = {slot: stage_case(root, run_dir, slot, game, userhome, port, token, clients, credentials.get(slot)) for slot in local}
     cases = [by_slot[slot] for slot in local]
     for path in [run_dir, *run_dir.rglob('*')]:
         if not path.is_symlink():
@@ -753,6 +794,9 @@ def main():
     b.add_argument('--extension-base', type=Path, help='extension to compose on (default src/extension/x4_lan_lab); use the lane base for the same Lua as Windows')
     b.add_argument('--portable-math', action='store_true', help='preload libx4mp_portable_math.so with its decimal and exact_reciprocal patches')
     b.add_argument('--seed-rng', action='store_true', help='key the MoveWorker RNG word each frame (boot option 2)')
+    b.add_argument('--wire-crypto', action='store_true',
+                   help='wire crypto (reports/LOCKSTEP-WIRE-CRYPTO-20261101.txt): the config carries native_gate_wire_crypto, each '
+                        "slot's credential filled in at run time (run --wire-crypto-credentials; needs a relay with --wire-crypto)")
     b.add_argument('--serial-pathing', action='store_true', help='join the pathing pass before the frame goes on (boot option 1)')
     b.add_argument('--md-resume-rng', action='store_true', help='load-time MD cue delays on per-cue streams')
     b.add_argument('--runtime-ids', action='store_true', help='the same runtime IDs on every client (set mode)')
@@ -820,6 +864,9 @@ def main():
                    '(e.g. one serving Windows clients too) instead of starting one; needs --relay-token and --local-slots')
     r.add_argument('--relay-token', help='the token of that relay (32 hex)')
     r.add_argument('--local-slots', metavar='2', help='mixed session: the slots this host runs (the others join from elsewhere)')
+    r.add_argument('--wire-crypto-credentials', type=Path, metavar='FILE',
+                   help='a bundle built with --wire-crypto: JSON {"<slot>": "x4c1:...", ...} (native_gate_crypto.py credential for '
+                        'this --relay-token), mode 600; with an external relay only (--relay-port)')
     r.add_argument('--launch-order', metavar='2,1', help='the order the clients start in; a difference that follows it is startup timing, one that follows the number is keyed on the slot')
     args = p.parse_args()
     bundle(args) if args.command == 'bundle' else run(args)

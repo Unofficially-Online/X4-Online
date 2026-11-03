@@ -261,6 +261,32 @@ class LiveRunner(unittest.TestCase):
             finally:
                 process.communicate('')
 
+    def test_case_config_fills_the_session_and_the_wire_crypto_credential(self):
+        live = load_tool('linux_gate_live')
+        plain = 'port=@X4LANE_PORT@ token="@X4LANE_TOKEN@" slot="@X4LANE_SLOT@" clients=@X4LANE_CLIENTS@\n'
+        self.assertEqual(live.case_config(plain, 45999, 'ab' * 16, 3, 3), f'port=45999 token="{"ab" * 16}" slot="p3" clients=3\n')
+        keyed = plain + f'X4LAN_CONFIG.native_gate_wire_crypto = "{live.WIRE_CRYPTO_TOKEN}"\n'
+        credential = 'x4c1:' + '1' * 64 + ':' + '2' * 64
+        self.assertTrue(live.case_config(keyed, 1, 'ab' * 16, 3, 3, credential).endswith(f'native_gate_wire_crypto = "{credential}"\n'))
+        with self.assertRaisesRegex(RuntimeError, 'needs a credential'):
+            live.case_config(keyed, 1, 'ab' * 16, 3, 3)                       # a crypto bundle without its credential
+        with self.assertRaisesRegex(RuntimeError, 'no wire crypto line'):
+            live.case_config(plain, 1, 'ab' * 16, 3, 3, credential)           # a credential for a plain bundle
+        with self.assertRaisesRegex(RuntimeError, 'not a wire crypto credential'):
+            live.case_config(keyed, 1, 'ab' * 16, 3, 3, 'x4c1:short')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'credentials.json'
+            path.write_text(json.dumps({'3': credential}))
+            if platform.system() == 'Linux':
+                path.chmod(0o644)
+                with self.assertRaises(SystemExit):
+                    live.load_credentials(path)                                # readable by others: refused
+                path.chmod(0o600)
+            self.assertEqual(live.load_credentials(path), {3: credential})
+            path.write_text(json.dumps({'3': 'nope'}))
+            with self.assertRaises(SystemExit):
+                live.load_credentials(path)
+
     @unittest.skipUnless(platform.system() == 'Linux', 'symbolic links of the private view need Linux')
     def test_private_instance_staging(self):
         live = load_tool('linux_gate_live')
