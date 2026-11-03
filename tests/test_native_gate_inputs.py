@@ -39,6 +39,7 @@ OCTREE = '05000000' + '0d' + '00' * 15                                 # nav oct
 # Stock piloting record v3 (lockstep_pilot_stock.h): flags active, capture 0x0102, no cursor, aim or view, one state event BOOST=1.
 STOCK = '03' + '01' + '0201' + '00' * 24 + '00' + '00' * 13 + '01' + '1140' + '01000000'
 UI = '01' + '6400' + '01' + '0102' + '0100'   # UI replay section v1 (lockstep_ui_replay.h): capture 100, one travel start
+FFI = '01' + '03' + '0700' + '01'              # relayed UI FFI calls v1 (lockstep_ui_exports.h): one record, export 7, one bool
 
 
 def lua_core():
@@ -55,7 +56,7 @@ def lua_result(value):
 
 
 def lua_sections(table):
-    return {k: table[k] for k in ('pilot', 'hits', 'octree', 'orders', 'stock', 'ui') if table[k] is not None}
+    return {k: table[k] for k in ('pilot', 'hits', 'octree', 'orders', 'stock', 'ui', 'ffi') if table[k] is not None}
 
 
 def blob(*parts):
@@ -91,6 +92,9 @@ VALID = {
     # The UI replay's section (kind 0x55) has no legacy form either: it follows stock.
     'ui': (container((0x55, UI)), {'ui': UI}),
     'stock+ui': (container((0x53, STOCK), (0x55, UI)), {'stock': STOCK, 'ui': UI}),
+    # Relayed UI FFI calls (kind 0x58): no legacy form, last in wire order.
+    'ffi': (container((0x58, FFI)), {'ffi': FFI}),
+    'ui+ffi': (container((0x55, UI), (0x58, FFI)), {'ui': UI, 'ffi': FFI}),
 }
 INVALID = [
     ('ABCD', 'encoding'), ('abc', 'encoding'), (PILOT[:-2], 'pilot_length'), ('33', 'channel'), ('4d', 'version'),
@@ -107,6 +111,7 @@ INVALID = [
     (container((0x53, '02' + STOCK[2:])), 'stock_version'), (container((0x53, STOCK), (0x50, ORDERS)), 'order'),
     (container((0x53, STOCK), (0x53, STOCK)), 'order'),
     (container((0x55, '02' + UI[2:])), 'ui_version'), (container((0x55, UI), (0x53, STOCK)), 'order'),
+    (container((0x58, '02' + FFI[2:])), 'ffi_version'), (container((0x58, FFI), (0x55, UI)), 'order'),
 ]
 
 
@@ -208,7 +213,7 @@ class CodecTests(unittest.TestCase):
             with self.subTest(blob=text[:24]):
                 try:
                     sections = ref.decode(text)
-                    self.assertEqual(line, 'OK ' + ' '.join(sections.get(k, '-') for k in ('pilot', 'hits', 'octree', 'orders', 'stock', 'ui')) + ' ' +
+                    self.assertEqual(line, 'OK ' + ' '.join(sections.get(k, '-') for k in ('pilot', 'hits', 'octree', 'orders', 'stock', 'ui', 'ffi')) + ' ' +
                                      (ref.encode(sections) or '-'))
                 except ref.Refused as error:
                     self.assertEqual(line, 'NO ' + str(error))
@@ -248,7 +253,7 @@ int main(void){char line[2048];
   if(!input_mux_decode(b,m,&s,&why)){printf("NO %s\n",why);continue;}
   unsigned char again[512];size_t r=input_mux_encode(&s,again,sizeof again);
   fputs("OK ",stdout);hex(s.pilot,s.pilot_len);putchar(' ');hex(s.hits,s.hits_len);putchar(' ');hex(s.octree,s.octree_len);putchar(' ');
-  hex(s.orders,s.orders_len);putchar(' ');hex(s.stock,s.stock_len);putchar(' ');hex(s.ui,s.ui_len);putchar(' ');hex(again,r);putchar('\n');
+  hex(s.orders,s.orders_len);putchar(' ');hex(s.stock,s.stock_len);putchar(' ');hex(s.ui,s.ui_len);putchar(' ');hex(s.ffi,s.ffi_len);putchar(' ');hex(again,r);putchar('\n');
  }
  return 0;}
 ''')
@@ -358,10 +363,10 @@ class MuxTests(unittest.TestCase):
         # A priority list from before the section keeps working (the report goes last); one naming it is taken as is.
         self.lua.execute("M.set_priority({'hits','pilot','orders'});a=table.concat(M.priority,',')")
         self.lua.execute("M.set_priority({'octree','hits','pilot','orders'});b=table.concat(M.priority,',')")
-        self.assertEqual((g.a, g.b), ('stock,ui,hits,pilot,orders,octree', 'stock,ui,octree,hits,pilot,orders'))
+        self.assertEqual((g.a, g.b), ('stock,ui,ffi,hits,pilot,orders,octree', 'stock,ui,ffi,octree,hits,pilot,orders'))
         # Stock may be listed too; unlisted it is offered first (it flies a slot).
         self.lua.execute("M.set_priority({'pilot','stock','orders','hits'});c=table.concat(M.priority,',')")
-        self.assertEqual(g.c, 'pilot,stock,ui,orders,hits,octree')
+        self.assertEqual(g.c, 'pilot,stock,ui,ffi,orders,hits,octree')
 
     def test_registration_owner_tags_and_malformed_proposals_fail_closed(self):
         self.lua.execute("M.register('orders','orders',section('orders',{}))")

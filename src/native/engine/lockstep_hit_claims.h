@@ -62,6 +62,8 @@
 #define INPUT_STOCK_VERSION 3u
 #define INPUT_KIND_UI 0x55u
 #define INPUT_UI_VERSION 1u
+#define INPUT_KIND_FFI 0x58u   /* relayed UI FFI calls (lockstep_ui_exports.h) */
+#define INPUT_FFI_VERSION 1u
 #define HIT_CLAIM_BYTES 26u
 #define HIT_CLAIM_VERSION 1u
 #define HIT_CLAIMS_MAX 8u
@@ -82,7 +84,7 @@ enum {HIT_ACCEPTED,HIT_REFUSED_LATE,HIT_REFUSED_FAR,HIT_REFUSED_PROJECTILE,HIT_R
       HIT_REFUSED_OWNER,HIT_REFUSED_SELF,HIT_REFUSED_POINT,HIT_REFUSED_DISTANCE,HIT_REFUSED_PVP,HIT_REFUSED_APPLY,HIT_RESULTS};
 static const char *const hit_result_names[HIT_RESULTS]={"applied","late","far","projectile","consumed","target","owner","self",
     "point","distance","pvp_policy","apply"};
-typedef struct {const unsigned char *pilot,*hits,*orders,*octree,*stock,*ui;unsigned pilot_len,hits_len,orders_len,octree_len,stock_len,ui_len;} input_sections;
+typedef struct {const unsigned char *pilot,*hits,*orders,*octree,*stock,*ui,*ffi;unsigned pilot_len,hits_len,orders_len,octree_len,stock_len,ui_len,ffi_len;} input_sections;
 typedef struct {unsigned kind,flags;uint16_t observe16;uint64_t projectile,target;int16_t point[3];} hit_claim;
 typedef struct {hit_claim claim;uint64_t observe,apply;unsigned slot,index;} hit_staged;
 /* The simulated state a claim is validated against (native adapter later). */
@@ -127,31 +129,33 @@ static int input_mux_decode(const unsigned char *b,size_t n,input_sections *out,
         else if(kind==INPUT_KIND_ORDERS) {if(b[at]!=INPUT_KIND_ORDERS) {*why="orders_channel";return 0;}out->orders=b+at;out->orders_len=length;}
         else if(kind==INPUT_KIND_STOCK) {if(b[at]!=INPUT_STOCK_VERSION) {*why="stock_version";return 0;}out->stock=b+at;out->stock_len=length;}
         else if(kind==INPUT_KIND_UI) {if(b[at]!=INPUT_UI_VERSION) {*why="ui_version";return 0;}out->ui=b+at;out->ui_len=length;}
+        else if(kind==INPUT_KIND_FFI) {if(b[at]!=INPUT_FFI_VERSION) {*why="ffi_version";return 0;}out->ffi=b+at;out->ffi_len=length;}
         else {*why="kind";return 0;}
         last=kind;++sections;at+=length;
     }
-    if(!sections || (sections==1 && !out->hits && !out->octree && !out->stock && !out->ui)) {*why="noncanonical";memset(out,0,sizeof(*out));return 0;}
+    if(!sections || (sections==1 && !out->hits && !out->octree && !out->stock && !out->ui && !out->ffi)) {*why="noncanonical";memset(out,0,sizeof(*out));return 0;}
     return 1;
 }
 static size_t input_mux_encode(const input_sections *in,unsigned char *out,size_t capacity) {
-    unsigned sections=!!in->pilot_len+!!in->hits_len+!!in->orders_len+!!in->octree_len+!!in->stock_len+!!in->ui_len;
+    unsigned sections=!!in->pilot_len+!!in->hits_len+!!in->orders_len+!!in->octree_len+!!in->stock_len+!!in->ui_len+!!in->ffi_len;
     if(in->pilot_len && in->pilot_len!=PILOT_RECORD_BYTES) return 0;
     if(in->octree_len && in->octree_len!=INPUT_OCTREE_BYTES) return 0;
     if(in->stock_len && in->stock[0]!=INPUT_STOCK_VERSION) return 0;
     if(in->ui_len && in->ui[0]!=INPUT_UI_VERSION) return 0;
+    if(in->ffi_len && in->ffi[0]!=INPUT_FFI_VERSION) return 0;
     if(!sections) return 0;
-    if(sections==1 && !in->hits_len && !in->octree_len && !in->stock_len && !in->ui_len) {
+    if(sections==1 && !in->hits_len && !in->octree_len && !in->stock_len && !in->ui_len && !in->ffi_len) {
         const unsigned char *p=in->pilot_len?in->pilot:in->orders;unsigned length=in->pilot_len?in->pilot_len:in->orders_len;
         if(length>capacity || length>INPUT_MUX_MAX) return 0;
         memcpy(out,p,length);return length;
     }
     size_t at=2;
-    const unsigned char *parts[6]={in->pilot,in->hits,in->octree,in->orders,in->stock,in->ui};
-    const unsigned lengths[6]={in->pilot_len,in->hits_len,in->octree_len,in->orders_len,in->stock_len,in->ui_len},
-                   kinds[6]={INPUT_KIND_PILOT,INPUT_KIND_HITS,INPUT_KIND_OCTREE,INPUT_KIND_ORDERS,INPUT_KIND_STOCK,INPUT_KIND_UI};
+    const unsigned char *parts[7]={in->pilot,in->hits,in->octree,in->orders,in->stock,in->ui,in->ffi};
+    const unsigned lengths[7]={in->pilot_len,in->hits_len,in->octree_len,in->orders_len,in->stock_len,in->ui_len,in->ffi_len},
+                   kinds[7]={INPUT_KIND_PILOT,INPUT_KIND_HITS,INPUT_KIND_OCTREE,INPUT_KIND_ORDERS,INPUT_KIND_STOCK,INPUT_KIND_UI,INPUT_KIND_FFI};
     if(capacity<2) return 0;
     out[0]=INPUT_MUX_TAG;out[1]=INPUT_MUX_VERSION;
-    for(unsigned i=0;i<6;i++) {
+    for(unsigned i=0;i<7;i++) {
         if(!lengths[i]) continue;
         if(lengths[i]>255 || at+2+lengths[i]>capacity || at+2+lengths[i]>INPUT_MUX_MAX) return 0;
         out[at]=(unsigned char)kinds[i];out[at+1]=(unsigned char)lengths[i];memcpy(out+at+2,parts[i],lengths[i]);at+=2+lengths[i];

@@ -18,9 +18,10 @@ MAX_BYTES = 240
 PILOT_BYTES, PILOT_VERSION = 28, 1
 HIT_BYTES, HIT_VERSION, HITS_MAX, HIT_WINDOW = 26, 1, 8, 8
 INCOMING, OUTGOING = 1, 2
-KIND = {'pilot': 0x01, 'hits': 0x48, 'octree': 0x4f, 'orders': 0x50, 'stock': 0x53, 'ui': 0x55}
-SECTIONS = ('pilot', 'hits', 'octree', 'orders', 'stock', 'ui')     # wire order
-PRIORITY = ('stock', 'ui', 'pilot', 'orders', 'hits', 'octree')     # default local packing order (stock first; the octree report waits)
+KIND = {'pilot': 0x01, 'hits': 0x48, 'octree': 0x4f, 'orders': 0x50, 'stock': 0x53, 'ui': 0x55, 'ffi': 0x58}
+SECTIONS = ('pilot', 'hits', 'octree', 'orders', 'stock', 'ui', 'ffi')     # wire order
+PRIORITY = ('stock', 'ui', 'ffi', 'pilot', 'orders', 'hits', 'octree')     # default local packing order (stock first; the octree report waits)
+FFI_VERSION = 1                                               # lockstep_ui_exports.h relayed FFI calls
 STOCK_VERSION = 3                                             # lockstep_pilot_stock.h record version byte
 UI_VERSION = 1                                                # lockstep_ui_replay.h section version byte
 OCTREE_BYTES = 20                                     # lockstep_nav_octree.h 'agreed' report
@@ -89,11 +90,16 @@ def decode(text):
             if payload[0] != UI_VERSION:
                 raise Refused('ui_version')
             out['ui'] = payload.hex()
+        elif kind == KIND['ffi']:
+            if payload[0] != FFI_VERSION:
+                raise Refused('ffi_version')
+            out['ffi'] = payload.hex()
         else:
             raise Refused('kind')
         last = kind
         at += length
-    if not out or (len(out) == 1 and 'hits' not in out and 'octree' not in out and 'stock' not in out and 'ui' not in out):
+    if not out or (len(out) == 1 and 'hits' not in out and 'octree' not in out and 'stock' not in out and 'ui' not in out
+                   and 'ffi' not in out):
         raise Refused('noncanonical')
     return out
 
@@ -114,6 +120,8 @@ def check_section(name, text):
         raise Refused('stock_version')
     if name == 'ui' and b[0] != UI_VERSION:
         raise Refused('ui_version')
+    if name == 'ffi' and b[0] != FFI_VERSION:
+        raise Refused('ffi_version')
     if name not in KIND:
         raise Refused('kind')
 
@@ -126,7 +134,7 @@ def encode(sections):
         check_section(name, text)
     if not sections:
         return ''
-    if len(sections) == 1 and 'hits' not in sections and 'octree' not in sections and 'stock' not in sections and 'ui' not in sections:
+    if len(sections) == 1 and not {'hits', 'octree', 'stock', 'ui', 'ffi'} & sections.keys():
         text = sections.get('pilot') or sections['orders']
         if len(text) > 2 * MAX_BYTES:
             raise Refused('too_long')
