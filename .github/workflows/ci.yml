@@ -34,14 +34,25 @@ jobs:
           cargo test --locked --manifest-path src/rust/Cargo.toml
       - name: Bootstrap
         run: python3 tools/dev/bootstrap.py
+      # The Linux gate and the relay's wire crypto library (libx4mp_wire_crypto.so): the crypto
+      # tests load the library instead of skipping.
+      - name: Linux gate and wire crypto build
+        run: python3 tools/dev/build_native_gate_linux.py --zig "$X4LAN_ZIG"
       # Every skip fails the run unless its reason names something a hosted runner
-      # cannot have. Each skip is printed with its reason.
+      # cannot have (Egosoft files and data derived from them are never in the repository).
+      # Each skip is printed with its reason.
       - name: Check
         run: >-
           .venv/bin/python tools/dev/check.py
           --allow-skip 'Linux X4 executable not available'
           --allow-skip 'read-only x4-re md.xsd'
           --allow-skip 'need a Linux host with gcc and luajit'
+          --allow-skip 'x4-re'
+          --allow-skip 'the pinned X4.exe is not at hand'
+          --allow-skip 'the stock md.xsd'
+          --allow-skip 'resolved stock data'
+          --allow-skip 'no released lane tool on this machine'
+          --allow-skip 'cross-check from Windows with Zig'
 
   gate:
     name: Lockstep gate build (Windows, Zig 0.15.2)
