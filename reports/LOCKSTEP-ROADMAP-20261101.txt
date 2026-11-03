@@ -66,7 +66,7 @@ B. NETWORKING (rundown section "Latency")
     pending), PCP -> NAT-PMP -> UPnP with lease and release, relay --rendezvous-port (NGNAT/1, own thread), NAT simulation.
     Simulated: all punchable pairs direct in <1.5 s; symmetric vs symmetric or port-restricted -> relay unless a port is mapped.
     Next: live plan section 9 (this PC <-> VPS), then wiring into B6.
- 8. [offline done, live test next] Encrypt and authenticate the direct links: one symmetric session key handed out
+ 8. [W1 live 3 Nov: keyed, every record signed and verified, relay pass; W2-W4 open] Encrypt and authenticate the direct links: one symmetric session key handed out
     by the relay (an AEAD such as ChaCha20-Poly1305) against outsiders; every player signs its own records with a
     personal key (e.g. Ed25519) whose public half the relay gives everyone at the start, so no player can send inputs
     as another. Consider the same for the relay path, which today is a shared token over plain UDP.

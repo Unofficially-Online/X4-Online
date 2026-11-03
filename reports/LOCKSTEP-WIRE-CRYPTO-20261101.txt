@@ -272,3 +272,16 @@ W3 VPS relay (mixed Windows/Linux, as in run mix1): relay with --bind/--allow-fr
 W4 people session (G5 style), 10 minutes, crypto on: no stop 106/107; desync indicator as
   in the same session without crypto; players read their WIRE_CRYPTO_KEYED roster values
   to each other before playing.
+
+9. FIRST LIVE RESULT (coordinator, 3 November 2026; w1c: build204, the session defaults (lookahead 1, pilot records),
+  2 clients on loopback, relay --wire-crypto KEYFILE --input-journal, 600 ticks)
+  Tooling: the lane tool draws the session token itself, so tools/dev/native_gate_lane.py --session-token-file (test only) gives
+  the session a fixed token; credential --slot 1/2 from it; one overlay picks its slot's credential with
+  X4LAN_CONFIG.native_gate_wire_crypto = ({['p1']=..., ['p2']=...})['@X4LANE_SLOT@']. Key, token and credentials stay in .local.
+  W1 pass: ARMED ... wire_crypto=1 on both; WIRE_CRYPTO_KEYED roster b41e262c... on both = the relay report's roster_fingerprint,
+  each key = its slot in wire_crypto.players; relay verdict pass, wire_crypto.failure null, counts handshakes 2, keys_sent 2,
+  permits_signed 601, sealed 1205, replayed 0, no bad_signature, no dropped_*; WIRE_CRYPTO_STOP forged=0 replayed=0 dropped=0
+  on both; every journal signature verifies (1,202 of 1,202, ticks 0..600); both stopped with reason 1.
+  Digest sequence against the same config without crypto (d204f): 1,194 of 1,200 slot-ticks equal, the differences following
+  early input records (ticks 5-18) that also differ between two runs without crypto (d201f vs d204f: 1,158 equal): crypto adds
+  no difference beyond the runs' own input timing. Frame timing (wait_us) not compared. W2-W4 not run yet.
