@@ -173,6 +173,14 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   determinism) stayed in sync to tick 54,489 (30.3 game minutes), past 35,700, and then
   stopped on both clients at the same tick: strict physics read the body of a fixture
   wreck that X4 had just cleaned up (a probe assert, not a desync; fixed).
+- **Soak E (seed_rng, wreck fix): 94,800 ticks (52.7 game minutes)** before the world hash
+  parted, with no status or event-row difference before it. Its triage rerun parted
+  earlier, at 39,060, and so did the next soak (F) at the same tick: reproducible with the
+  later overlays. Both show NAV_OCTREE `snap_waits` differing at 35,520 (the octree builder
+  thread's 50 ms waits: timing, local) and the first simulation lead inside 39,001-39,060:
+  one more agent draw (ACTOR_RNG_ALL `agent_drawn`). UI_LAZY_CALLERS (simulation lazy
+  updates per call site, always on) agreed to the end in F, so the earlier extra
+  UpdateTradeOffers call of E's rerun (26,820) did not recur.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops
