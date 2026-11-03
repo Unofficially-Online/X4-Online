@@ -118,6 +118,15 @@ numbers (`TransferPlayerMoneyTo(fee, ConvertStringTo64Bit(...))`), which look li
 beside them. With a kind list per global (component, number, string, boolean, table) the
 'ffi' section can carry them as records with index 0xffff and the global's name.
 
+## Player-activity soak
+
+`tools/build_soak_overlay.py --players factions` (identities, script pilots, scripted orders
+through the relay, the soak profile's determinism keys) on the seed snapshot: slot 1 keeps
+`player` (the occupied ship), slot 2 owns its ship as `x4lan_player2`. 3 November 2026:
+36,003 ticks (20 game minutes) in sync on two native clients; slot 1's attack order for slot
+2's ship was refused on both (`refused_not_owner`), slot 2's own applied on both at tick 43;
+the UI write census saw only presentation calls.
+
 ## Gaps
 
 1. **Unwrapped FFI writes.** The orders and UI replay capture work on known menu
