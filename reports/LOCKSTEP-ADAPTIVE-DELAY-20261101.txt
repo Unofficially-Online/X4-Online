@@ -280,6 +280,16 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   at relay tick 1200): STALL slot=2 tick=1219 after 1011 ms, DROP slot=2 tick=1219 after 5009 ms, remaining=1,3; clients 1
   and 3 STOP reason=1 at 3001 (LOOKAHEAD_STOP dropped=02, drop_skips=1779, drop2=1219), relay pass, no digest mismatch,
   census client 1 vs client 3 0 of 522,294 ... 531,000 at all six captures to 3000.
-  Open: wire crypto with a drop (the stand-in record has no client signature: the relay refuses the combination), peer
-  links, rejoining a dropped slot (a handover into it, the hot join path), carrying a drop in the join package, and an
-  agreed parking order for the dropped ship instead of its last command.
+  Wire crypto (smoke after 6423dd2e): a stand-in record has no client signature, so the relay's trailer carries a zero
+  signature for every slot the permit's mask names (native_gate_crypto.py reads the mask from the permit it seals), the
+  native check (wcg_permit) and the Python client accept exactly that for a masked slot (empty blob, zero signature) and
+  verify every other record and the relay's signature as before; stripping the mask makes the permit invalid (106). The
+  relay accepts --stall-drop-ms with --wire-crypto. Tests: test_native_gate_crypto.py (a dropped slot is a zero-signed
+  stand-in, the mask stripped is refused), test_lockstep_wire_crypto_gate.h (accepted with the mask; refused without it,
+  with a non-empty stand-in, with mask 00).
+  Live d3drop4c (build213; d3drop4 with relay --wire-crypto and 3-slot credentials, client 3 frozen at 1200): DROP slot=3
+  tick=1225 after 5006 ms; clients 1 and 2 STOP reason=1 at 3001, each verified 3001 permits and 4,225 record signatures
+  (forged 0), LOOKAHEAD_STOP dropped=04; relay pass, wire crypto failure none, 3001 permits signed; census client 1 vs
+  client 2 0 at all six captures to 3000.
+  Open: peer links, rejoining a dropped slot (a handover into it, the hot join path), carrying a drop in the join package,
+  and an agreed parking order for the dropped ship instead of its last command.

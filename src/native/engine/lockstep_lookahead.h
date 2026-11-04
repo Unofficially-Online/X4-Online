@@ -25,7 +25,8 @@
  * mask with its proposal tick (pilot_drop_note: the slot's records stop there
  * and it goes neutral, the same tick on every client). The mask never shrinks
  * (103); a permit naming this client, or NGDROP|4, stops with 193; a mask with
- * peer links or wire crypto is refused (102). Without a drop nothing changes. */
+ * peer links is refused (102); with wire crypto the stand-in records carry a
+ * zero signature (wcg_permit). Without a drop nothing changes. */
 #define LOOKAHEAD_RING (GATE_LOOKAHEAD_MAX+1u)
 #define LOOKAHEAD_STOP_AHEAD 102u    /* a permit beyond the window, or for a tick without proposals */
 #define LOOKAHEAD_STOP_CONFLICT 103u /* two different permits for one tick */
@@ -102,7 +103,7 @@ static int lookahead_permit_receive(const char *reply,size_t length,uint64_t com
         const int h=hi>='0'&&hi<='9'?hi-'0':hi>='a'&&hi<='f'?hi-'a'+10:-1,l=lo>='0'&&lo<='9'?lo-'0':lo>='a'&&lo<='f'?lo-'a'+10:-1;
         if(h<0 || l<0 || (size_t)p+3>=sizeof(prefix)) return 0;
         mask=(unsigned)(h*16+l);
-        if(!mask || (mask>>wire_clients) || peer_on() || wcg.armed) return -2;
+        if(!mask || (mask>>wire_clients) || peer_on()) return -2;
         if(mask>>(stats.slot-1)&1u) return -5;
         memcpy(prefix+p,reply+p,3);p+=3;prefix[p]=0;
     }

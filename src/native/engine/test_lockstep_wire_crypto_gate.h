@@ -205,6 +205,31 @@ static void test_wire_crypto_gate(void) {
         assert(wcg_accept(copy,(size_t)t+1+4*WC_SIG)==0 && wcg.stop==WCG_STOP_INVALID);
         wire_lookahead=2;
     }
+    /* A protocol 4 drop (k/<mask>, the relay's DropBarrier): slot 3's stand-in record is empty with a zero signature; the
+     * relay's signature covers it. Without the mask, or with a dropped slot's blob that is not empty, it is refused. */
+    {
+        char text[GATE_PERMIT_MAX],bare[GATE_PERMIT_MAX];uint8_t sigs[4][WC_SIG],blob2[2]={1,7},trailer[4*WC_SIG];
+        memset(sigs,0,sizeof(sigs));
+        int t=snprintf(text,sizeof(text),"NGGO|4|%s|2|10|2/04|0107|0207|",WCT_TOKEN);
+        int b=snprintf(bare,sizeof(bare),"NGGO|4|%s|2|10|2|0107|0207|",WCT_TOKEN);
+        crypto_blake2b_ctx h;wc_records_begin(&h);
+        for(unsigned s=1;s<=3;s++) {
+            blob2[0]=(uint8_t)s;
+            if(s<3) assert(wc_record_sign(sigs[s],wct_sk[s],wct_sid,s,3,2,7,blob2,2));
+            wc_records_slot(&h,blob2,s<3?2:0,sigs[s]);
+        }
+        uint8_t records[32];wc_records_end(&h,records);
+        memcpy(trailer,sigs[1],WC_SIG);memcpy(trailer+WC_SIG,sigs[2],WC_SIG);memcpy(trailer+2*WC_SIG,sigs[3],WC_SIG);
+        assert(wc_permit_sign(trailer+3*WC_SIG,wct_relay_sk,wct_sid,10,3,2,records));
+        memcpy(text+t+1,trailer,sizeof(trailer));memcpy(bare+b+1,trailer,sizeof(trailer));
+        wcg.stop=0;assert(wcg_accept(text,(size_t)t+1+4*WC_SIG)==t && !wcg.stop && !strcmp(text,"NGGO|4|" WCT_TOKEN "|2|10|2/04|0107|0207|"));
+        wcg.stop=0;assert(wcg_accept(bare,(size_t)b+1+4*WC_SIG)==0 && wcg.stop==WCG_STOP_INVALID);   /* slot 3's record unsigned */
+        t=snprintf(text,sizeof(text),"NGGO|4|%s|2|10|2/04|0107|0207|ff",WCT_TOKEN);memcpy(text+t+1,trailer,sizeof(trailer));
+        wcg.stop=0;assert(wcg_accept(text,(size_t)t+1+4*WC_SIG)==0 && wcg.stop==WCG_STOP_INVALID);   /* a stand-in carries nothing */
+        t=snprintf(text,sizeof(text),"NGGO|4|%s|2|10|2/00|0107|0207|",WCT_TOKEN);memcpy(text+t+1,trailer,sizeof(trailer));
+        wcg.stop=0;assert(wcg_accept(text,(size_t)t+1+4*WC_SIG)==0 && wcg.stop==WCG_STOP_INVALID);
+        wcg.stop=0;
+    }
     char status[512];assert(wcg_status(status,sizeof(status)) && strstr(status,"armed=1 established=1 keyed=1 "));
     /* The own key and the roster fingerprint (BLAKE2b-128 of the N keys), for comparison out of band. */
     {

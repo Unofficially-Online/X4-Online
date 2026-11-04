@@ -422,7 +422,8 @@ class DropBarrier(Barrier):
     empty blob), sends it NGDROP|4 instead of permits and ignores its later reports. Every permit whose proposal tick is at or
     after a slot's first stand-in names that slot in its window field, k/<mask> (two hex digits, bit s-1), so every client
     sees the drop with the same permit and its records stop with the same proposal tick (lockstep_lookahead.h). Without a
-    drop the wire is the protocol 4 wire byte for byte. Not with --join, --live-inputs, --peer-window or --wire-crypto."""
+    drop the wire is the protocol 4 wire byte for byte. With --wire-crypto a stand-in record carries a zero signature
+    (native_gate_crypto.py). Not with --join, --live-inputs or --peer-window."""
     def __init__(self, *args, stall_report_ms=1000.0, stall_drop_ms=0.0, **kw):
         super().__init__(*args, **kw)
         if not self.lookahead or self.peer_window is not None or self.live_inputs:
@@ -638,8 +639,8 @@ def main():
                           help='report a client the others have waited for this long (default 1000)')
     adaptive.add_argument('--stall-drop-ms', type=float, default=0, metavar='MS',
                           help='drop a client the others have waited for this long: its later proposals are empty for everyone and '
-                               'it is stopped (0, the default: never); protocol 5, and protocol 4 (--lookahead K) without --wire-crypto, '
-                               '--join or --peer-window (DropBarrier); its ship goes neutral (roadmap D15)')
+                               'it is stopped (0, the default: never); protocol 5, and protocol 4 (--lookahead K) without --join or '
+                               '--peer-window (DropBarrier); its ship goes neutral (roadmap D15)')
     p.add_argument('--status-file', type=Path, help='observe mode: small live JSON status (desync flag, first/last mismatch), '
                    'rewritten atomically on every notice and at most once a second otherwise')
     p.add_argument('--rendezvous-port', type=int, default=0, metavar='P',
@@ -698,10 +699,10 @@ def main():
     if args.join and (args.adaptive or args.wire_crypto or args.live_inputs or args.peer_window is not None):
         p.error('--join covers protocols 3 and 4 without --adaptive, --wire-crypto, --live-inputs or --peer-window')
     if (args.absent or args.join_savers) and not args.join: p.error('--absent and --join-savers need --join')
-    # Protocol 4 drops (DropBarrier): the stand-in record has no client signature yet, and the join path has its own stand-ins.
-    if args.stall_drop_ms and not args.adaptive and (args.wire_crypto or args.join or args.live_inputs or args.peer_window is not None
-                                                      or not args.lookahead):
-        p.error('--stall-drop-ms without --adaptive needs --lookahead K and no --wire-crypto, --join, --live-inputs or --peer-window')
+    # Protocol 4 drops (DropBarrier; with --wire-crypto the stand-in record carries a zero signature); the join path has its own
+    # stand-ins.
+    if args.stall_drop_ms and not args.adaptive and (args.join or args.live_inputs or args.peer_window is not None or not args.lookahead):
+        p.error('--stall-drop-ms without --adaptive needs --lookahead K and no --join, --live-inputs or --peer-window')
     # Every client builds the absent slot's player at H-2 (lockstep_pilot_inputs.h PILOT_HANDOVER_LEAD): the record must be
     # applied at least 3 ticks before H, and it is applied handover-lead ticks before it.
     if args.join and args.join_handover_lead < 3: p.error('--join-handover-lead must be at least 3 (the slot is built at H-2)')

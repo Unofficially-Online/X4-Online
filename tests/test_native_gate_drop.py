@@ -119,7 +119,7 @@ class DropBarrierTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             make(peer_window=2)
 
-    def test_cli_refuses_protocol_4_drops_with_crypto_join_or_without_a_window(self):
+    def test_cli_refuses_protocol_4_drops_with_join_or_without_a_window(self):
         base = [sys.executable, str(ROOT/'tools/dev/native_gate_relay.py'), '--port', '0', '--token', TOKEN, '--ticks', '10',
                 '--clients', '3', '--stall-drop-ms', '3000', '--report', str(ROOT/'.local'/'drop-cli-unused.json')]
         for extra in ([], ['--lookahead', '1', '--join']):

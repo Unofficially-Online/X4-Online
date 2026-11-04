@@ -326,6 +326,44 @@ class RelayCryptoTests(unittest.TestCase):
         self.assertEqual(first.roster, [first.public, second.public])
         self.assertEqual(first.group, session.wire.group)
 
+    def test_a_dropped_slot_is_a_zero_signed_stand_in(self):
+        """Protocol 4 drop (DropBarrier) under wire crypto: the stand-in record of the dropped slot is empty with a zero
+        signature; the others' records and the relay's signature verify; without the mask the permit is refused."""
+        session = Session(3, 1, ticks=12)
+        session.barrier = relay.DropBarrier(TOKEN, ticks=12, hold_tick=-1, clients=3, lookahead=1, stall_report_ms=1000,
+                                            stall_drop_ms=3000)
+        session.handshake()
+        for tick in range(5):
+            for slot in (1, 2, 3):
+                session.report(slot, tick, f'{slot:02x}{tick:02x}')
+        session.report(1, 5, '0105');session.report(2, 5, '0205')
+        for address in session.addresses:
+            session.inboxes[address].clear()
+        for dest, packet in session.barrier.poll(10.0):
+            sealed = session.wire.outbound(dest, packet)
+            if sealed is not None:
+                session.inboxes[dest].append(sealed)
+        checked = 0
+        for slot in (1, 2):
+            client, address = session.clients[slot-1], session.addresses[slot-1]
+            for data in session.inboxes[address]:
+                ascii_part, trailer = client.open(data)
+                if ascii_part.startswith(b'NGGO'):
+                    f = ascii_part.split(b'|')
+                    self.assertEqual((f[4], f[5], f[8]), (b'7', b'1/04', b''))
+                    self.assertEqual(trailer[128:192], bytes(64))                                # slot 3: zero signature
+                    self.assertTrue(client.verify_permit(ascii_part, trailer))
+                    self.assertFalse(client.verify_permit(ascii_part.replace(b'|1/04|', b'|1|'), trailer))   # mask stripped
+                    checked += 1
+        self.assertEqual(checked, 2)
+        third = session.clients[2]
+        notices = [third.open(data)[0] for data in session.inboxes[session.addresses[2]]]
+        self.assertEqual(notices, [f'NGDROP|4|{TOKEN}|3|5'.encode()])
+        for tick in range(6, 13):
+            for slot in (1, 2):
+                session.report(slot, tick, f'{slot:02x}{tick:02x}')
+        self.assertTrue(session.barrier.done and not session.barrier.failed and not session.wire.failure)
+
     def test_client_detects_a_changed_permit(self):
         session = Session(2, 0)
         session.handshake()
