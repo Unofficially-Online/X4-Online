@@ -17,7 +17,10 @@ static const thunk_recipe thunk_recipes[]={
     {80,16,THUNK_JUMP,0,0,0,(void*)join_boot_events,{0}},   /* JOIN_BOOTEV_THUNK (80..95): a version 13 joiner's boot event passes */
     {96,16,THUNK_JUMP,0,0,0,(void*)join_pcf_hook,{0}},   /* JOIN_PCF_THUNK (96..111): JOIN_WATCHPCF, PropagateCacheFlags on watched objects */
     {112,16,THUNK_JUMP,0,0,0,(void*)join_fmt_hook,{0}},   /* JOIN_FMT_THUNK (112..127): the full-precision join save's conversion calls */
-    {128,64,THUNK_JUMP,0,0,0,(void*)ai_run,{0}},
+    {128,16,THUNK_JUMP,0,0,0,(void*)ai_run,{0}},   /* lockstep_ai.h's stub (128..143); 144..191 was its unused rest */
+    {JOIN_IDS_NODE_THUNK,16,THUNK_JUMP,0,0,0,(void*)join_ids_node_hook,{0}},   /* 144..159: lockstep_join_ids.h, the import's component node */
+    {JOIN_IDS_CONN_THUNK,16,THUNK_JUMP,0,0,0,(void*)join_ids_conn_hook,{0}},   /* 160..175: its connection node */
+    {JOIN_IDS_MADE_THUNK,16,THUNK_JUMP,0,0,0,(void*)join_ids_made_hook,{0}},   /* 176..191: its connection's get-or-make */
     {RID_REMOVE_THUNK,64,THUNK_PAIR,RID_REMOVE_ENTRY,5,32,(void*)rid_remove,{0x48,0x89,0x5c,0x24,0x08}},
     {256,64,THUNK_JUMP,0,0,0,(void*)agent_update,{0}},
     {320,64,THUNK_UNWIND_TRAMPOLINE,PARAMS_ENTRY,15,0,NULL,{0x48,0x8b,0xc4,0x55,0x53,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57}},

@@ -260,6 +260,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_hold_boot_events','hot join boot event passes held'},
  {'native_gate_join_precise','hot join save at full precision'},
  {'native_gate_join_in_window','hot join save inside the pilot window, measured (diagnostic)'},
+ {'native_gate_join_ids','hot joiner saved objects at the session runtime IDs'},
  {'native_gate_event_rows','event rows'},
  {'native_gate_event_rng_rows','event RNG rows'},
  {'native_gate_script_rng_rows','script RNG rows'},

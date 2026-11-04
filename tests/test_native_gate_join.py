@@ -414,10 +414,11 @@ def golden_v13():
             join.SEC_LIVEF: [(0x2001, 0, 0x20)],
             join.SEC_SPEC: [(0x2001, 3, 0x4f, 2, 0, 0x3fc5555555555555, 0x403c26508dfea31b), (0x2001, 7, 0x7f, 0, 0, 0, 0x403c2ed916872b02)],
             join.SEC_NAVC: [(0x2001, bytes(range(96)))],
-            join.SEC_JOBS: [(0xcbf29ce484222325, 3, 524, 0)]}
+            join.SEC_JOBS: [(0xcbf29ce484222325, 3, 524, 0)],
+            join.SEC_GONE: [(0x6a0ad,), (0x8000000000001234,)]}
 
 
-GOLDEN_SHA = '4f8670ee903a8fd1c2a90b124f83f9a9fc74833a89f8d7fee7890efa845ff667'
+GOLDEN_SHA = '22e8c725e3e9e32bafe75e29f886e39a6bf12bb8154aa3e2e69e4eead1ca7bc1'
 GOLDEN_SHA_V12 = '67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef'   # a version 12 package (before JOBE)
 GOLDEN_SHA_V11 = 'f0874152607c013ff72febfbf675b20f64b391fb5a9d431795bd302fc0964e7f'   # a version 11 package (before SPLM..GRAVP)
 GOLDEN_SHA_V10 = '1a324e00b49dbc814f757c26ad28741675b7d8e0b9df120c63d52594724e27bd'   # a version 10 package (before GRAV, GRAVC, GRAVS)
@@ -443,7 +444,7 @@ class Package(unittest.TestCase):
                                        'spline': 2, 'agent': 2, 'route': 3, 'param': 2, 'dock': 1, 'steer': 1, 'steerpt': 1, 'solver': 1,
                                        'bullet': 2, 'grav': 2, 'gravc': 3, 'gravs': 4, 'splm': 1, 'splme': 1,
                                        'splmseg': 4, 'gravn': 3, 'gravp': 3, 'gravq': 3, 'jobe': 1, 'evqt': 3, 'gravd': 2,
-                                       'viewk': 2, 'viewkc': 2, 'viewf': 2, 'viewp': 1, 'shoot': 1, 'attk': 1, 'livef': 1, 'spec': 2, 'navc': 1, 'jobs': 1})
+                                       'viewk': 2, 'viewkc': 2, 'viewf': 2, 'viewp': 1, 'shoot': 1, 'attk': 1, 'livef': 1, 'spec': 2, 'navc': 1, 'jobs': 1, 'gone': 2})
         self.assertEqual(s['version'], 13)
         self.assertEqual(s['save_sha'], bytes(range(32)).hex())
         # The MD heap enters the portable digest in pop order (time, then seq) and without its seq.
@@ -1012,7 +1013,7 @@ class Package(unittest.TestCase):
         # Version 13 (report 1.17): JOBE after GRAVQ, in the digest whole; the reader refuses its shape faults and a version 12 header
         # with it.
         v13 = join.read_package(golden())
-        self.assertEqual((v13['sha'], v13['header']['version'], v13['header']['sections']), (GOLDEN_SHA, 13, 48))
+        self.assertEqual((v13['sha'], v13['header']['version'], v13['header']['sections']), (GOLDEN_SHA, 13, 49))
         self.assertEqual(join.portable_text(v13['sections']).splitlines()[-1].split('|')[:2], ['JOBE', '1'])   # EVQT: not in the digest
         other = dict(v13['sections']);other['evqt'] = []
         self.assertEqual(join.portable_digest(other), join.portable_digest(v13['sections']))
@@ -1146,6 +1147,19 @@ class Package(unittest.TestCase):
         for mutate, reason in cases:
             with self.subTest(reason=reason), self.assertRaisesRegex(join.JoinError, reason):
                 join.read_package(resealed(mutate))
+
+    def test_flight_generations(self):
+        # Each fixture actor's flight sample init generation at T rides the GATE record's former padding (j1-120: steering=1 on
+        # the session's live fixture actors, 0 on the joiner); a package without them reads as zeros, as before.
+        package = join.read_package(golden())
+        self.assertEqual(package['sections']['gate']['flight'], [0]*12)
+        gate = dict(package['sections']['gate'], flight=[1]*7+[0]+[1]*4)
+        sections = {k: v for k, v in package['sections'].items() if k != 'gate'}
+        raw = {next(kind for kind, name in join.SECTION_NAMES.items() if name == k): v for k, v in sections.items()}
+        again = join.read_package(join.write_package(gate, raw, save_sha=bytes(range(32)), save_bytes=123456))
+        self.assertEqual(again['sections']['gate']['flight'], [1]*7+[0]+[1]*4)
+        with self.assertRaises(join.JoinError):
+            join.write_package(dict(gate, flight=[256]+[0]*11), raw, save_sha=bytes(range(32)), save_bytes=123456)
 
     def test_fixture_views(self):
         # The session's view of each snapshot fixture actor at T rides the GATE record (j1-9: actor 8 a wreck with its

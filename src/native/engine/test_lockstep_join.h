@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "4f8670ee903a8fd1c2a90b124f83f9a9fc74833a89f8d7fee7890efa845ff667"   /* version 13 (JOBE .. JOBS; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "22e8c725e3e9e32bafe75e29f886e39a6bf12bb8154aa3e2e69e4eead1ca7bc1"   /* version 13 (JOBE .. GONE; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -385,6 +385,7 @@ static void test_join_golden(void) {
     spec[1]=(join_spec_rec){0x2001,7u,0x7fu,0u,0u,0u,0x403c2ed916872b02ull};
     static join_navc_rec navc[1];navc[0].portable=0x2001;for(unsigned k=0;k<96u;k++) navc[0].cache[k]=(unsigned char)k;
     static join_jobs_rec jobs[1];jobs[0]=(join_jobs_rec){0xcbf29ce484222325ull,3u,524u,0u};
+    static join_gone_rec gone[2]={{0x6a0adull},{0x8000000000001234ull}};
     {join_evqt_rec bad[3]={evqt[1],evqt[0],evqt[2]};assert(!join_evqt_shape(bad,3));
      memcpy(bad,evqt,sizeof(bad));bad[0].flags=0;assert(!join_evqt_shape(bad,3));memcpy(bad,evqt,sizeof(bad));bad[1].flags=2;assert(!join_evqt_shape(bad,3));}
     {join_jobe_rec bad=jobe[0];bad.cursor[5]=' ';assert(!join_jobe_shape(&bad,1));bad=jobe[0];bad.len=12;assert(!join_jobe_shape(&bad,1));
@@ -407,11 +408,16 @@ static void test_join_golden(void) {
     splme[0].entry[0]=1;assert(!join_splm_shape(splm,1,splme,1,splmseg,4));splme[0].entry[0]=0;         /* a pointer left in the entry */
     gravn[2].flags=0;assert(!join_gravn_shape(gravn,3));gravn[2].flags=JOIN_GRAVN_NONE;
     {join_gravn_rec swap[3]={gravn[1],gravn[0],gravn[2]};assert(!join_gravn_shape(swap,3));}
-    t.splm=splm;t.nsplm=1;t.splme=splme;t.nsplme=1;t.splmseg=splmseg;t.nsplmseg=4;t.gravn=gravn;t.ngravn=3;t.gravp=gravp;t.ngravp=3;t.gravq=gravq;t.ngravq=3;t.jobe=jobe;t.njobe=1;t.evqt=evqt;t.nevqt=3;t.gravd=gravd;t.ngravd=2;t.viewk=viewk;t.nviewk=2;t.viewkc=viewkc;t.nviewkc=2;t.viewf=viewf;t.nviewf=2;t.viewp=viewp;t.nviewp=1;t.shoot=shoot;t.nshoot=1;t.attk=attk;t.nattk=1;t.livef=livef;t.nlivef=1;t.spec=spec;t.nspec=2;t.navc=navc;t.nnavc=1;t.jobs=jobs;t.njobs=1;
+    t.splm=splm;t.nsplm=1;t.splme=splme;t.nsplme=1;t.splmseg=splmseg;t.nsplmseg=4;t.gravn=gravn;t.ngravn=3;t.gravp=gravp;t.ngravp=3;t.gravq=gravq;t.ngravq=3;t.jobe=jobe;t.njobe=1;t.evqt=evqt;t.nevqt=3;t.gravd=gravd;t.ngravd=2;t.viewk=viewk;t.nviewk=2;t.viewkc=viewkc;t.nviewkc=2;t.viewf=viewf;t.nviewf=2;t.viewp=viewp;t.nviewp=1;t.shoot=shoot;t.nshoot=1;t.attk=attk;t.nattk=1;t.livef=livef;t.nlivef=1;t.spec=spec;t.nspec=2;t.navc=navc;t.nnavc=1;t.jobs=jobs;t.njobs=1;t.gone=gone;t.ngone=2;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
     if(strcmp(hex,TJ_GOLDEN)) {printf("join golden %s\n",hex);assert(0);}
+    {   /* the fixture actors' flight sample generations ride the GATE record's former padding */
+        join_tables f=t;f.gate.flight[3]=2;f.gate.flight[11]=1;join_buf fb={0};assert(join_package_build(&f,&fb));
+        join_tables fr;const char *fw;assert(join_package_parse(fb.data,fb.size,&fr,&fw) && fr.gate.flight[3]==2 && fr.gate.flight[11]==1 && !fr.gate.flight[0]);
+        join_tables_free(&fr);free(fb.data);
+    }
     join_tables r;const char *why;assert(join_package_parse(b.data,b.size,&r,&why) && !strcmp(why,"ok"));
     assert(r.nflight==2 && r.nspline==2 && !memcmp(r.flight,flight,sizeof(flight)) && !memcmp(r.spline,spline,sizeof(spline)));
     assert(r.nagent==2 && !memcmp(r.agent,agent,sizeof(agent)) && r.nroute==3 && !memcmp(r.route,route,sizeof(route)));
@@ -432,7 +438,8 @@ static void test_join_golden(void) {
            r.nlivef==1 && !memcmp(r.livef,livef,sizeof(livef)) &&
            r.nspec==2 && !memcmp(r.spec,spec,sizeof(spec)) &&
            r.nnavc==1 && !memcmp(r.navc,navc,sizeof(navc)) &&
-           r.njobs==1 && !memcmp(r.jobs,jobs,sizeof(jobs)));
+           r.njobs==1 && !memcmp(r.jobs,jobs,sizeof(jobs)) &&
+           r.ngone==2 && !memcmp(r.gone,gone,sizeof(gone)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -466,7 +473,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;

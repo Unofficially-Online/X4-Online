@@ -218,6 +218,7 @@ static void portable_import_capture(void *,uint64_t,uint64_t);
 static int join_import_active(void);
 static uint64_t join_tick_base(void); /* a joiner's session tick T after its admission, else 0 (the snapshot fixture binds there) */
 static int join_import(uint64_t saved,uint64_t runtime,uint64_t *portable);
+static void join_ids_imported(void *object,uint64_t saved); /* lockstep_join_ids.h: a saved object's ID against the save's */
 static int join_unsealed_ok(uint64_t source);
 #define JOIN_UNSEALED_OK(source) join_unsealed_ok(source)
 static void snapshot_nav_observe(unsigned,const void *);
@@ -556,6 +557,7 @@ static void join_bootev_restore(void);    /* lockstep_join.h: a version 13 joine
 static void join_pcf_restore(void);       /* lockstep_join.h: JOIN_WATCHPCF's call sites (diagnostic) */
 static void join_fmt_restore(void);       /* lockstep_join_precise.h: the full-precision join save */
 static void join_parse_restore(void);
+static void join_ids_restore(void);        /* lockstep_join_ids.h */
 static void finish(unsigned reason) {
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
     timer_resolution_restore();
@@ -656,7 +658,7 @@ static void finish(unsigned reason) {
     gpost_restore();
     gwide_restore();
     join_jobinit_restore();
-    join_bootev_restore();join_pcf_restore();join_fmt_restore();join_parse_restore();
+    join_bootev_restore();join_pcf_restore();join_fmt_restore();join_parse_restore();join_ids_restore();
     attention_restore();
     mass_restore();
     death_restore();
@@ -4092,7 +4094,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(body);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
-    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_unpaired);
+    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_unpaired);
 #undef METHOD
     return 1;
 }

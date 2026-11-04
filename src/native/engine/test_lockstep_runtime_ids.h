@@ -542,6 +542,19 @@ static void test_runtime_ids_native_image(const char *path) {
         *first^=1;assert(!rid_local_pins());*first^=1;*last^=1;assert(!rid_local_pins());*last^=1;
     }
     assert(rid_local_pins());
+    /* lockstep_join_ids.h: the import's three sites and the ID import, the constructors' returns; one byte off refuses. */
+    assert(join_ids_pins());
+    {
+        const unsigned tamper[]={0x8e3210,0x8e3205,0x8e573c,0x8e5765,0x8e5672,0x8e576a,0x3d242d,0x3d1dcd,0x9972ef,0x7a9b50,0xccff0};
+        for(unsigned i=0;i<sizeof(tamper)/sizeof(*tamper);i++) {image[tamper[i]]^=1;assert(!join_ids_pins());image[tamper[i]]^=1;}
+        /* The fallback the import passes, and the call each site makes. */
+        assert(0x8e5671u+*(int32_t*)(image+0x8e566d)==JOIN_IDS_EMPTY && 0x8e5778u+*(int32_t*)(image+0x8e5774)==JOIN_IDS_EMPTY);
+        assert(join_ids_call_is(JOIN_IDS_NODE_SITE,JOIN_IDS_NODE_ENTRY) && join_ids_call_is(JOIN_IDS_CONN_SITE,JOIN_IDS_ATTRIBUTE) &&
+               join_ids_call_is(JOIN_IDS_MADE_SITE,JOIN_IDS_MADE_ENTRY) && join_ids_call_is(0x8e5685u,0x79f720u) && join_ids_call_is(0x8e578bu,0x79f720u));
+        /* AssignNewID hands InsertAtSlot {bucket, entry} at rsp+0x20 (r9), the slot in r8d, and writes the result to +8. */
+        assert(!memcmp(image+0xcc2c2,"\x4c\x8d\x4c\x24\x20\x48\x8b\xd6\x48\x8b\xcf\xe8",12) && 0xcc2d2u+*(int32_t*)(image+0xcc2ce)==JOIN_IDS_INSERT &&
+               !memcmp(image+0xcc2df,"\x48\x89\x7e\x08",4));
+    }
     /* The block EnsureFreeSlots allocates, exactly as rid_allocate does; the play23 stack through the table. */
     assert(!memcmp(image+0xcc6ea,"\xc7\x44\x24\x20\x10\x00\x00\x00\xb9\xc0\xaa\xaa\x00\xe8",14) && 0xcc6fcu+*(int32_t*)(image+0xcc6f8)==RID_ALLOCATE && *(uint32_t*)(image+0xcc6f3)==RID_BLOCK_BYTES);
     assert(image[0xaf0fc0-5]==0xe8 && 0xaf0fc0u+*(int32_t*)(image+0xaf0fc0-4)==0x868e00u);

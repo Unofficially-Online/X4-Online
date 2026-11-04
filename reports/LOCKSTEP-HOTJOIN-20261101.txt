@@ -1845,6 +1845,21 @@ proposed and rejected.
   660 35 (from 81), 720 97 (163), 780 95 (164), 840 380 (449), 900 420 (485).
   j1-114 build-hj15h               the job ships placed in the same step 648, the other ship each (above)
   j1-115 77e4176a (build-hj15i)   the full-precision join save: T+1 0, 900 420
+- The joiner's saved objects at the session's runtime IDs (35117ec6, native_gate_join_ids, joiner only, default off;
+  lockstep_join_ids.h). UniverseClass::Import makes a component first (U::Component's constructor takes the map's head) and
+  reads its id attribute after (0x79f720); j1-116's joiner load allocated 1.37 million IDs, of them 430,856 components (all
+  through the constructor returning to 0x3d1dd1), 90,362 connections (the maker returning to 0x9972f3) and 754,758 MD cue
+  handlers (0xcaab18, no saved ID); the join save has id="[0x..]" on its 430,856 components and 90,360 connections. From
+  join_load to the admission: the call before the class switch (0x8e320f, the component's node) and a connection node's name
+  read (0x8e573b) put the node's id attribute (0xccff0, key 0x1fe) into a pending ID of their thread (thunk slots 144, 160;
+  176 drops it after the connection's get-or-make 0x3d87e0, as the ID import does); the next AssignNewID of that kind takes
+  the slot through InsertAtSlot 0xcc500 if it is unused, of the ID's generation, below the session's next slot and on the
+  shared list, otherwise the load list (refused). Every other allocation takes the load list, block 29 of the map (past the
+  shared limit; its frees go back on it). Before the load the shared list gets its blocks up to the session's next slot
+  (EnsureFreeSlots); at the admission the head skips to that slot over the run the load left, holes and all. The ID import
+  counts each saved object's ID against the save's. JOIN_STATUS ids=stage,nodes/connections/no_id,placed/refused,equal/
+  other,load allocations/free,appended,skipped. Pins: the import's three regions, the attribute lookups, the constructors'
+  calls (the image test tampers each).
 - Open: the joiner's runtime IDs (above; 22 of the 35 at 660 are the two job ships, most of the 420 at 900 job ships' parts);
   attention timing (30 at 660, 278 at 840); the UI listeners' 20-tick phase (635, 659, 679 on the joiner, 700 on the session).
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.

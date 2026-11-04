@@ -288,6 +288,10 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_precise then   -- savers write the join save at full precision, a version 13 joiner reads it exactly
   assert(gate.join_precise and gate.join_precise(1)==1,'join precise save refused')
  end
+ if cfg.native_gate_join_ids then   -- a joiner's saved objects take the session's runtime IDs in its load (needs runtime IDs set mode)
+  assert(cfg.native_gate_runtime_ids~=nil and cfg.native_gate_runtime_ids~='observe' and cfg.native_gate_created_identities and
+   gate.join_ids and gate.join_ids(1)==1,'join ids refused')
+ end
  if cfg.native_gate_join_hold_boot_events then   -- a version 13 joiner holds its boot event passes until its admission
   assert(gate.join_hold_boot_events and gate.join_hold_boot_events(1)==1,'join boot event hold refused')
  end

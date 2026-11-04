@@ -1060,6 +1060,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_peer.h"
 #include "test_lockstep_world_created.h"
 #include "test_lockstep_runtime_ids.h"
+#include "test_lockstep_join_ids.h"
 #include "test_lockstep_guidance_local.h"
 #include "test_lockstep_portable_created.h"
 #include "test_lockstep_created_load.h"
@@ -1154,6 +1155,7 @@ int main(int argc,char **argv) {
     test_join();
     test_runtime_ids();
     test_runtime_ids_local();
+    test_join_ids();
     test_guidance_local();
     test_runtime_ids_rows();
     test_render_rng();

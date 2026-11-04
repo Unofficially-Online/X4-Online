@@ -177,6 +177,17 @@ static volatile DWORD rid_scope_thread; /* the thread in a client-only view call
 static int rid_local_built;
 static rid_local_t rid_local[RID_ROUTES],rid_local_now[RID_ROUTES];
 #ifndef RID_OWN_PLATFORM
+/* lockstep_join_ids.h (native_gate_join_ids): a hot joiner's load list, block 29, and the route of its load's shared allocations. */
+#define RID_JOIN_BLOCK 29u
+static int join_ids_built;
+static rid_local_t join_ids_list;
+static volatile LONG join_ids_active;
+static created_assign_fn join_ids_route(created_assign_fn shared,uint32_t caller);
+#define RID_JOIN_ALLOCS ((unsigned long long)join_ids_list.allocs)
+#else
+#define RID_JOIN_ALLOCS 0ULL
+#endif
+#ifndef RID_OWN_PLATFORM
 #define RID_CALL(ret,target,route) {ret,ret,target,route,0}
 #define RID_BODY(start,end,route,ui_move) {start,(end)-1u,0,route,ui_move}
 static const rid_site_t rid_sites[]={
@@ -292,8 +303,12 @@ static void rid_local_out(unsigned char *map,rid_local_t *list,const rid_fields_
     *(volatile uint32_t *)(map+RID_F_HEAD)=shared->head;*(volatile uint32_t *)(map+RID_F_TAIL)=shared->tail;*(volatile uint32_t *)(map+RID_F_FREE)=shared->free;
 }
 static rid_local_t *rid_local_of(uint32_t slot) {
-    if(!rid_local_built || !slot) return NULL;
+    if(!slot) return NULL;
     const uint32_t block=(slot-1u)>>20;
+#ifndef RID_OWN_PLATFORM
+    if(join_ids_built && block==RID_JOIN_BLOCK) return &join_ids_list;
+#endif
+    if(!rid_local_built) return NULL;
     return block==RID_LOCAL_UI_BLOCK?&rid_local[RID_ROUTE_UI]:block==RID_LOCAL_VIEW_BLOCK?&rid_local[RID_ROUTE_VIEW]:NULL;
 }
 /* Remove's entry. A local slot goes back on its list; a shared one comes off the tail again, nothing recycles. Recursive critical section. */
@@ -612,7 +627,9 @@ static uint64_t rid_assign(void *object,void *caller) {
     char cue[RID_CUE];cue[0]=0;
     if(rid_sealed && rid_is_cue(frames,count)) rid_cue_name(cue);
     SetLastError(error);
-    const uint64_t result=created_assign_execute(route==RID_ROUTE_UI?rid_assign_ui:route==RID_ROUTE_VIEW?rid_assign_view:rid_assign_original(),object);
+    created_assign_fn assign=route==RID_ROUTE_UI?rid_assign_ui:route==RID_ROUTE_VIEW?rid_assign_view:rid_assign_original();
+    if(route==RID_ROUTE_SHARED) assign=join_ids_route(assign,count?frames[0]:0u);   /* a hot joiner's load (lockstep_join_ids.h) */
+    const uint64_t result=created_assign_execute(assign,object);
     const DWORD after=GetLastError();
     const uint64_t key=rid_note_caller_cue(frames,count,route,thread,cue[0]?cue:NULL);
     rid_row_note(key,thread,route,result);
@@ -682,7 +699,7 @@ static int rid_status(char *out,size_t capacity) {
         "next=%016llx allocs=%llu head=%u tail=%u free=%u live=%u inserts=%llu generation=%u dropped=%lld digest=%016llx map=%u,%016llx,%llx,%llx,gen:%u load=%u,%016llx below_base=%u callers=%u caller_overflow=%lld "
         "local=%d,ui:%llu/%llu/%u,view:%llu/%llu/%u",
         rid_mode==RID_SET?"set":rid_mode==RID_OBSERVE?"observe":"off",rid_base,rid_installed,rid_restored,rid_stage,(long long)rid_failures,(unsigned long long)rid_frames_done,
-        rid_head_before,rid_cut,rid_skipped,(unsigned long long)rid_next_id,(unsigned long long)(rid_mode?rid_now.inserts-rid_before.inserts-rid_local_now[RID_ROUTE_UI].allocs-rid_local_now[RID_ROUTE_VIEW].allocs:0),rid_now.head,rid_now.tail,rid_now.free,rid_now.live,(unsigned long long)rid_now.inserts,rid_now.generation,(long long)rid_dropped,
+        rid_head_before,rid_cut,rid_skipped,(unsigned long long)rid_next_id,(unsigned long long)(rid_mode?rid_now.inserts-rid_before.inserts-rid_local_now[RID_ROUTE_UI].allocs-rid_local_now[RID_ROUTE_VIEW].allocs-RID_JOIN_ALLOCS:0),rid_now.head,rid_now.tail,rid_now.free,rid_now.live,(unsigned long long)rid_now.inserts,rid_now.generation,(long long)rid_dropped,
         (unsigned long long)rid_digest,rid_map_count,(unsigned long long)rid_map_sum,(unsigned long long)(rid_map_count?rid_map_min:0),(unsigned long long)rid_map_max,rid_map_generations,
         rid_load_count,(unsigned long long)rid_load_sum,rid_below_base,rid_caller_count,(long long)rid_caller_overflow,(int)rid_local_on,
         (unsigned long long)rid_local_now[RID_ROUTE_UI].allocs,(unsigned long long)rid_local_now[RID_ROUTE_UI].frees,rid_local_now[RID_ROUTE_UI].free,
