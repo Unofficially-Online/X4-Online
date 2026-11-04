@@ -1401,4 +1401,8 @@ The Codex-era NATIVE-GETUP-* reports studied a one-shot GetUp() diagnostic on th
   clients (14,245 allocations / 14,167 freed at 4200 in h1f1). No regression. h1f4-h1f6 (the same): clean, census 0 at all
   eight captures each. So far on build215 6 of 6 long wharf runs clean, against 3 of 7 with a mismatch before (h1h one tick,
   h1h3 the sweep ID, h1r1 the cockpit figures, which this change does not touch).
+  build216 (the merged tree: drops, the sweep site, hot join v13 inert), h1g1-h1g4 (the long wharf scenario with created
+  identity rows and every tick written, to catch the cockpit figures again) and d216 (the 2-client session defaults, 3000
+  ticks): all five clean, census 0 at every capture; the cockpit figures' split did not come back in these four. Since the
+  sweep fix: 10 of 10 long wharf runs clean.
 
