@@ -4405,6 +4405,8 @@ local function frame()
   if cfg.native_gate_path_transforms then log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end
   if cfg.native_gate_body_pose then log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end
   if cfg.native_gate_path_budget then log('PATH_BUDGET_STOP '..tostring(gate.path_budget_status())) end
+  -- The Linux gate's spline join keeps its own counters (linux/gate_spline_join.h); Windows reports them in SPLINE_JOIN_ALL.
+  if cfg.native_gate_spline_join_all and gate.spline_join_all_status then log('SPLINE_JOIN_ALL_STOP '..tostring(gate.spline_join_all_status())) end
   if cfg.native_gate_render_rng_split then log('RENDER_RNG_SPLIT_STOP '..tostring(gate.render_rng_split_status())) end
   if cfg.native_gate_render_fps then log('RENDER_FRAMES_STOP '..tostring(gate.render_frames_status())) end
   if cfg.native_gate_render_camera or cfg.native_gate_render_motion then log('RENDER_DISPLAY_STOP '..tostring(gate.render_display_status())) end
@@ -5083,6 +5085,7 @@ SetScript('onUpdate',function()
    end
    if cfg.native_gate_player_origin_token and X4LAN_NATIVE_ORIGIN then ticklog.try(X4LAN_NATIVE_ORIGIN.drain,gate,true) end
    if cfg.native_gate_render_rng_split then ticklog.try(function() log('RENDER_RNG_SPLIT_STOP '..tostring(gate.render_rng_split_status())) end) end
+   if cfg.native_gate_spline_join_all and gate.spline_join_all_status then ticklog.try(function() log('SPLINE_JOIN_ALL_STOP '..tostring(gate.spline_join_all_status())) end) end
    if cfg.native_gate_ui_guard then ticklog.try(function() log('UI_GUARD_STOP '..tostring(gate.ui_guard_status())) end) end
    if cfg.native_gate_created_identities then ticklog.try(function() drain_created_rows();log('CREATED_IDENTITIES_STOP '..tostring(gate.created_identities_status())) end) end
    if cfg.native_gate_actor_rng_all then ticklog.try(function() log('ACTOR_RNG_ALL_STOP '..tostring(gate.actor_rng_all_status())) end) end

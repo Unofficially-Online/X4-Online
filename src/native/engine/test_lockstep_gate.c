@@ -71,6 +71,7 @@
 #include "test_lockstep_ui_construct.h"
 #include "test_lockstep_pilot_foot.h"
 #include "test_lockstep_pilot_foot_slots.h"
+#include "test_lockstep_pilot_join.h"
 #include "test_lockstep_pilot_death_foot.h"
 #include "test_lockstep_pilot_device.h"
 #include "test_lockstep_pilot_predict.h"
@@ -1241,6 +1242,7 @@ int main(int argc,char **argv) {
     test_pilot_native_controls();
     test_pilot_stock();
     test_pilot_slots();
+    test_pilot_join_players();
     test_pilot_eye();
     test_pilot_foot();
     test_pilot_foot_diag();

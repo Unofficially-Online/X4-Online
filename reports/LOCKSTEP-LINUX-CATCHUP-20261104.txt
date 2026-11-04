@@ -34,6 +34,13 @@ LINUX VS LINUX, 6000 TICKS, 2 CLIENTS (census every 30 ticks; differing objects 
         (out-of-sight combat is attack strength, not shots). It matters for the battle scope.
   lx4   lx3 + engine_refresh_rng (32df7f50)                       1920 (motion)     0     6    13    15    18
         ENGINE_REFRESH_RNG_STOP keyed=111773 native=0 unmapped=0 fallback=0
+  lx5   lx4 + spline_join_all (27cfaf6e)                         2910 (motion)     0     5    14    17    25
+        SPLINE_JOIN_ALL_STOP calls=71988 requests=0 waits=0: in this clock-mode world no spline update ever
+        found a route request outstanding (the Windows battle-mode sessions count 86 requests, 63 waits), so the
+        join is armed and inert here; it is kept for the battle scope. The residue is not cause B:
+          intermittent: lx4 19 objects from 1920 (ter_m_corvette x2, xen_s_fighter), lx5 27 from 2910
+            (spl_m_miner, arg_s_fighter); neither recurs in the other run;
+          systematic: root 09df69 at 4710 in both runs, 15 objects at 4710 in both.
   lx2 and lx3 differ by run-to-run noise only (the same first split, 19 = 19 at 2400).
   Reading it: lx2's slow growth from 1800 matches the spline-route cause B of the Windows long runs (a route
   consumed on a wall-clock tick; spline_join_all), and its cascade from 4140 (dozens of independent roots in many
@@ -51,9 +58,15 @@ Linux draw seeds exactly as on Windows; the Windows preprocessed lockstep_gate.c
   Tests: linux/test_gate_weapon_fire.h, linux/test_gate_engine_rng.h (the stub's machine code is run against a
   landing pad); check_lockstep_gate_linux.py --x4 PASS on the Linux host; site check 423 PASS.
 
+  spline_join_all (linux/gate_spline_join.h): the update 0x1363de0 in slot +0x78 of the model 0x3b5d6b8; its
+    pending requests are a libstdc++ deque at +0x468 (start.cur +0x478, finish.cur +0x498), the request's status
+    +0xb8 read under the XLib::Mutex 0x3e76960; the calculator worker in 0x3e5b850 (running byte +0xb8). Boot
+    option 2^35 installs the slot; gate.spline_join_all() arms the bounded wait (stop reason 58 on a failure).
+    On Windows the same key needs the agent module (agent_full), so a Windows run cannot carry it alone yet.
+
 NEXT
-  1. The split from 1920 (6 ships by 2400): spline_join / spline_join_all (the Linux spline model's pending deque is
-     libstdc++'s, not MSVC's, so the layout is new work).
+  1. The residue: the systematic 4710 root (09df69) first (a launch-order rerun tells startup timing from a slot
+     key), then the intermittent splits.
   2. The rest of the defaults' determinism stack, in the order the Linux census asks for.
   3. Windows against Linux past 1200 ticks with matching key sets.
   4. Then the battle scope and the people stack on Linux (pilot replay first: a Linux server simulates the players).

@@ -89,6 +89,18 @@
 #define LX_ERNG_ADDSD_VA 0x1438370u          /* addsd xmm1, fs:CurTime (replayed by the stub) */
 #define LX_ERNG_ADDSD_LENGTH 10u
 #define LX_ERNG_RESUME_VA 0x143838au         /* mov eax,eax: the draw goes on with the stepped word in rax */
+/* Spline routes joined (gate_spline_join.h; lockstep_spline.h's spline_join_all). */
+#define LX_SPLINE_VTABLE 0x3b5d6b8u          /* the spline model (Windows 0x2c4f480) */
+#define LX_SPLINE_SLOT_VA 0x3b5d730u         /* its update slot +0x78 (Windows 0x2c4f4f0, +0x70) */
+#define LX_SPLINE_UPDATE_VA 0x1363de0u       /* the update (Windows 0xeb7230) */
+#define LX_SPLINE_DEQUE_CUR 0x478u           /* model: the request deque's start.cur (libstdc++ deque at +0x468) */
+#define LX_SPLINE_DEQUE_FINISH 0x498u        /* model: its finish.cur */
+#define LX_SPLINE_REQUEST_STATUS 0xb8u       /* request: 0 pending, 1 published (Windows +0xa8) */
+#define LX_SPLINE_RESULT_MUTEX_VA 0x3e76960u /* XLib::Mutex the calculator publishes under (Windows 0x3d74938); LX_MUTEX_LOCK_VA/UNLOCK_VA */
+#define LX_SPLINE_WORKER_VA 0x3e5b850u       /* the calculator worker* (Windows 0x6cf29c0), stored by 0x2001180 */
+#define LX_SPLINE_WORKER_VTABLE 0x3b28b38u   /* its vtable (Windows 0x2c68f98); slot 2 is Run */
+#define LX_SPLINE_WORKER_RUN_VA 0x10b0b30u   /* Run (Windows 0x1099650) */
+#define LX_SPLINE_WORKER_RUNNING 0xb8u       /* worker: running byte, Run sets it to 1 (Windows +0x58) */
 /* AI Wait restores (gate_ai_wait.h, lockstep_ai_wait_rng.h). */
 #define LX_AI_WAIT_SLOT_VA 0x3b2a680u       /* U::AI::WaitAction vtable 0x3b2a650, restore slot +0x30 (Windows +0x28) */
 #define LX_AI_WAIT_RESTORE_VA 0x10c12b0u    /* WaitAction::Reattach (Windows 0x10a50d0) */
@@ -483,5 +495,8 @@ static const lx_site lx_sites[]={
     {"wfire_fire_loop_call",0x1d69a10,0x80,"2d2595c5e3c41e67cbe91b7310c26c96a3fa18c872dd3d4bc0fada7c691e7528"},
     {"erng_listener_head",0x14382f0,0x58,"93b8240094f88e774f4ded9f45ec8cb805ddcdd9588218575a3e4a8a422de45c"},
     {"erng_listener_tail",0x1438350,0xc2,"2a0cbb338bb82c0a492b6b013e484597c6fd63233614e1f429c0d12edcc7ef18"},
+    {"spline_update_head",0x1363de0,0x110,"53ce49e351fba194737e429eb0ebf71daa1d84a01a357241cd243b9382208ef7"},
+    {"spline_worker_run",0x10b0b30,0x140,"c955dfb74cada4c8b9c88f2f6bba275f92a13600064ad440f1193368773ac0a1"},
+    {"spline_worker_make",0x2001180,0x88,"ff6e4eb1570b0d3ec5d61eb773e2319cb2871ecc1cd493d3585b010352bb2616"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */

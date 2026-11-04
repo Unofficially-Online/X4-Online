@@ -110,3 +110,40 @@ seat with join_ids_replay of the carried IDs and created_live_add of their creat
 guard's state from the package (parked, seated_since), and each per-slot module started live with its carried tables
 (rings in flight, stores, held keys, frames, the stock and UI queues).
 
+7. W3 MEASURE: X4'S CONTROL STATE AT T AND ON THE JOINER (w1r, build224; the merged hot join with BODY and Linux batch 1)
+The window's start runs over take-2..take+1 (pnat_pass): construct, seat, the controls take (a share of X4's view
+counter, the input contexts' requests off), one frame later the check (flight control 0), the native install, the
+FIRST_PERSON swap, the stock capture start, and the controls' release. A joiner at T+1 cannot run take and check in one
+pass. Measured (join_controls in the status rows; pjoin_note_controls):
+  session, T=633's pass:  count=0 requested=1 flight=1 authority=0 owned=0 controller=1 (both clients)
+  joiner, its first pass: count=0 requested=1 flight=1 authority=0 owned=0 controller=1
+Inside the running window the session has released the controls (owned 0) and X4's own control state is the normal one,
+and the joiner's loaded state is the same. So the joiner's resume does not take the controls: at its first pass it needs
+the native install (local hooks), the FIRST_PERSON swap, the slots' players and seats (vps_make and take() with
+join_ids_replay of the carried IDs and created_live_add), the body guard's state (parked, the kill guard installed), the
+stock path's capture start and first apply (the window's take+1 and take+1+delay), and the tables still in flight at T
+(the records captured before T and applied after it, pilot_ring and pstk_ring; the slots' stores and held keys; pstk's
+flight state). Then the live branch runs from T+1 as on the session.
+
+8. THE JOINER'S RESUME, WORK LIST (W2/W3; each step built, tested offline, then live; a live stop names the next one)
+The joiner's native pass at T+1 runs before the probe's restore of the package (w1q/w1r: 91 at completed 633 with no T+1
+restore row), so the resume reads its data from the package natively: join_package_line(name) in lockstep_gate.c (after
+lockstep_join.h; join_rx.t.lua holds the LUA section's lines), never changing lockstep_join.h.
+  R1 the slots' players and seats: per pilot_players, vps_make and take() around one join_ids_replay of the construct and
+     seat IDs, created_live_add of their created identities, the slots' hook (pslot_hook_install), pslot_update_tick=T so
+     the first check does not take X4's skipped update for a missing one; the stores, authority, assist, agent mode, no
+     highway and throttle of each seat from the package (pslot_slot fields, 'pilot_state').
+  R2 the body guard: the kill guard installed, parked=1, mask 0, seated_since and back[] from the package (the session
+     parked at T and counts from T+1).
+  R3 the native layer and the stock path: pnat_install(controller), the FIRST_PERSON swap (pfoot), pstk capture start =
+     take+1 and first apply = take+1+delay of the session's window, pstk_flight and pstk_flight_known, the cursor and aim
+     replay state, pview_state and the soft target replays, the fire state (pstk_fire_on/fire2_on/fire_tick), the held keys.
+  R4 the records in flight at T: pilot_ring and pstk_ring entries with an apply tick after T (captured before T, rows the
+     joiner's catch-up permits do not carry), pstk_slot_frames (each slot's last frame).
+  R5 the per-slot modules' own state: death (pdeath_slots), fire (pfire_slots and missiles: guns leased), foot (pfoot,
+     pfslots walking state), presentation of this client's own slot (only from its handover: an absent or dropped slot
+     needs none at T), the UI replay queues (lockstep_ui_*.h, operations scheduled after T), hit claims.
+  R6 the probe's window Lua state (the death module's start poses and counters, the stock aim, the UI one-shot fixtures at
+     window start - 4): a provider of its own, restored at T+1 (today it refuses a T past take-2: lua_state:pilot_window).
+Each R-step keeps 91 for what it does not cover yet (a joiner stops loudly, never runs partly restored).
+

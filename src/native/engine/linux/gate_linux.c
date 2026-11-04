@@ -101,6 +101,10 @@ static int wfire_installed,wfire_restored;
 static void erng_restore(void);
 static int erng_check(void);
 static int erng_installed,erng_restored;
+/* Spline routes joined (gate_spline_join.h, included below). */
+static void lsj_restore(void);
+static int lsj_check(void);
+static int lsj_installed,lsj_restored;
 /* AI Wait restores (gate_ai_wait.h, included below). */
 static void ai_wait_restore(void);
 static int ai_wait_owned(void);
@@ -429,6 +433,8 @@ static void finish(unsigned reason) {
     if(wfire_installed) stats.restored=0;
     erng_restore();
     if(erng_installed) stats.restored=0;
+    lsj_restore();
+    if(lsj_installed) stats.restored=0;
     ai_wait_restore();
     if(ai_wait_armed && !ai_wait_restored) stats.restored=0;
     md_resume_restore();
@@ -532,6 +538,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(region_rng_armed && region_rng_failures) {finish(93);gate_original_once(frame,loading);return;}
     if(wfire_installed && !wfire_check()) {finish(132);gate_original_once(frame,loading);return;} /* WFIRE_STOP_REASON */
     if(erng_installed && !erng_check()) {finish(136);gate_original_once(frame,loading);return;} /* ERNG_STOP_REASON */
+    if(lsj_installed && !lsj_check()) {finish(58);gate_original_once(frame,loading);return;} /* LSJ_STOP_REASON */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
     if(boot_hold_armed && boot_hold_failures) {finish(86);gate_original_once(frame,loading);return;}
     if(md_resume_armed && md_resume_failures) {finish(87);gate_original_once(frame,loading);return;}
@@ -737,6 +744,7 @@ static int lua_start(lua_State *L) {
 #include "gate_fork_save.h"
 #include "gate_weapon_fire.h"
 #include "gate_engine_rng.h"
+#include "gate_spline_join.h"
 static int lua_read_cost(lua_State *L) {
     char out[256];
     int n=accept_ui()?snprintf(out,sizeof(out),"fast=%d installed=%d reads=%llu faults=%llu lost=%llu slow_ns=%llu fast_ns=%llu.%llu gettid_ns=%llu",
@@ -748,12 +756,14 @@ static int lua_read_cost(lua_State *L) {
 }
 /* Ported boot options; every other bit names a module the Linux gate lacks.
  * 1: serial pathing; 2: per-frame MoveWorker seed; 2^37: the gated Gravidar pass (native_gate_radar_serial,
- * needs 1); 2^46: world identities (native_gate_world_identities). */
+ * needs 1); 2^35: the spline update hook for the route join (native_gate_spline_join, needs 1; gate_spline_join.h);
+ * 2^46: world identities (native_gate_world_identities). */
+#define LX_BOOT_SPLINE_JOIN 34359738368ull
 #define LX_BOOT_GRAVIDAR 137438953472ull
 #define LX_BOOT_WORLD_IDENTITIES 70368744177664ull
 /* The attention hook (gate_attention.h): attention_rng or its initial refresh. Only 'all' is ported, which needs either. */
 #define LX_BOOT_ATTENTION (536870912ull|1073741824ull)
-#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_WORLD_IDENTITIES)
+#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_WORLD_IDENTITIES)
 static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *hash,double options) {
     if(!isfinite(options) || options<0 || options>9007199254740991.0 || floor(options)!=options) return 10;
     if((uint64_t)options & ~LX_BOOT_OPTIONS) return LX_STOP_UNPORTED_OPTION;
@@ -771,6 +781,7 @@ static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned time
         if(!result && (boot_options&1) && !path_install((unsigned)(boot_options&3))) {finish(21);result=21;}
         if(!result && (boot_options&LX_BOOT_GRAVIDAR) && !gravidar_install()) {finish(61);result=61;}
         if(!result && (boot_options&LX_BOOT_ATTENTION) && !attention_install()) {finish(53);result=53;}
+        if(!result && (boot_options&LX_BOOT_SPLINE_JOIN) && !lsj_install()) {finish(58);result=58;}
     }
     return result;
 }
@@ -835,7 +846,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);METHOD(world_health);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
-    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);
+    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);

@@ -904,6 +904,23 @@ static void gate_step(tick_fn original,void *frame,unsigned char loading,LARGE_I
 #define ADAPT_WITH_PILOT 1
 #include "lockstep_adaptive.h"
 #include "lockstep_join.h"   /* hot join: join save, side table and gate state (native_gate_join, default off) */
+/* lockstep_pilot_join.h: on a joiner, the value of a line "name=value" of its package's LUA section (the probe's providers),
+ * NUL-terminated into out; 0 when there is none or it does not fit. */
+__attribute__((unused)) static int join_package_line(const char *name,char *out,size_t capacity) {
+    const size_t len=strlen(name);
+    if(!join_rx.based || !join_rx.t.lua || !len || !capacity) return 0;
+    const char *p=join_rx.t.lua,*end=join_rx.t.lua+join_rx.t.lua_len;
+    while(p<end) {
+        const char *eol=memchr(p,'\n',(size_t)(end-p));if(!eol) eol=end;
+        if((size_t)(eol-p)>len && !memcmp(p,name,len) && p[len]=='=') {
+            const size_t n=(size_t)(eol-p)-len-1;
+            if(n+1>capacity) return 0;
+            memcpy(out,p+len+1,n);out[n]=0;return 1;
+        }
+        p=eol+1;
+    }
+    return 0;
+}
 static void gate_tick(void *frame,unsigned char loading) {
     tick_fn original=(tick_fn)(image+TICK_RVA);
     if(!stats.active) {gate_original_once(original,frame,loading);return;}
