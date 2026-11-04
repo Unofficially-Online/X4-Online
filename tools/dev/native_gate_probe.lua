@@ -3964,6 +3964,11 @@ local function frame()
        return text
       end,function(text) log('PILOT_PLAYERS joiner '..tostring(text)) end)
      end
+     -- The pilot tables at T (lockstep_pilot_join.h 'pilot_state': rings in flight, frames, held keys, stores); a joiner's
+     -- gate reads them from the package natively at its first pass (before this restore runs).
+     if gate.pilot_join_state then
+      X4LAN_JOIN_CORE.provide('pilot_state',function() return gate.pilot_join_state() or '-' end,function(text) end)
+     end
      X4LAN_JOIN_CORE.provide('pilot_window',function()
       if in_window then players('saver') end
       return 'v1|'..window[1]..','..window[2]

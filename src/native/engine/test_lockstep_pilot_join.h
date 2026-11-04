@@ -23,3 +23,42 @@ static void test_pilot_join_players(void) {
     pjoin_parse_players("v1/m0");memset(pjoin_rx,0,sizeof(pjoin_rx));pjoin_rx_mask=0;pjoin_rx_slots=0;pjoin_resume_why="-";
     printf("pilot join: the package's slot players parsed (w1q's slot 2: 3 IDs, 2 created), every malformed text refused by name PASS\n");
 }
+/* 'pilot_state': the tables a joiner needs at T+1 round-trip through the text; ring entries only after T; refusals named. */
+static void test_pilot_join_tables(void) {
+    static char text[1u<<17];
+    const unsigned saved_mask=pslot_mask;unsigned char *saved_player=pslots[2].player;unsigned saved_length=pslots[2].length;
+    memset(pstk_ring,0,sizeof(pstk_ring));memset(pilot_ring,0,sizeof(pilot_ring));
+    pstk_ring[1][41%PSTK_RING]=(pstk_staged){41,5,1,{1,2,3,4,5}};      /* applied after T=40: travels */
+    pstk_ring[1][40%PSTK_RING]=(pstk_staged){40,3,1,{9,9,9}};          /* applied at T: does not */
+    pilot_ring[42%PILOT_RING].tick=42;pilot_ring[42%PILOT_RING].present=1;pilot_ring[42%PILOT_RING].bytes[1][0]=7;
+    pstk_slot_frames[1].tick=40;pstk_slot_frames[1].hash=0x1234;pstk_slot_frames[1].r.count=1;pstk_slot_frames[1].r.events[0]=(pstk_event){1,0xd,1};
+    pstk_held_states[1][0]=1;pstk_fire_on[1]=1;pstk_fire_tick[1]=39;pview_target_replay[1]=0x77;pstk_flight=1;pstk_flight_known=1;pstk_frame_tick=40;
+    pslot_mask=2;static unsigned char fake_player[8];pslots[2].player=fake_player;pslots[2].length=4;memcpy(pslots[2].store,"\x01\x02\x03\x04",4);
+    pslots[2].throttle=0.5f;pslots[2].assist[0]=1;pslots[2].authority=1;
+    const int n=pjoin_tables_state(text,sizeof(text),40);
+    assert(n>0 && !strncmp(text,"v1/t28|stock=",13) && strstr(text,"|store2=01020304"));
+    /* Clear what the text carries, read it back, unpack. */
+    memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));memset(pstk_held_states,0,sizeof(pstk_held_states));memset(pstk_fire_on,0,sizeof(pstk_fire_on));
+    memset(pstk_fire_tick,0,sizeof(pstk_fire_tick));memset(pview_target_replay,0,sizeof(pview_target_replay));pstk_flight=0;pstk_flight_known=0;pstk_frame_tick=0;
+    pslots[2].throttle=0;pslots[2].assist[0]=0;pslots[2].authority=0;
+    assert(pjoin_tables_parse(text) && pjoin_tables_t==40);
+    pjoin_stock_unpack();pjoin_seat_unpack(2);
+    assert(pstk_slot_frames[1].tick==40 && pstk_slot_frames[1].hash==0x1234 && pstk_slot_frames[1].r.events[0].id==0xd && pstk_held_states[1][0]==1);
+    assert(pstk_fire_on[1]==1 && pstk_fire_tick[1]==39 && pview_target_replay[1]==0x77 && pstk_flight==1 && pstk_flight_known==1 && pstk_frame_tick==40);
+    assert(pslots[2].throttle==0.5f && pslots[2].assist[0]==1 && pslots[2].authority==1 && pslots[2].length==4);
+    assert(pjoin_store_rx_len[2]==4 && !memcmp(pjoin_store_rx[2],"\x01\x02\x03\x04",4));
+    assert(pjoin_pstk_ring[1][41%PSTK_RING].tick==41 && pjoin_pstk_ring[1][41%PSTK_RING].bytes[4]==5 && !pjoin_pstk_ring[1][40%PSTK_RING].present);
+    assert(pjoin_pilot_ring[42%PILOT_RING].tick==42 && pjoin_pilot_ring[42%PILOT_RING].bytes[1][0]==7);
+    /* Refusals: a wrong head, a blob of the wrong size, one missing, a stray name. */
+    pjoin_resume_why="-";assert(!pjoin_tables_parse("v2|stock=0") && !strcmp(pjoin_resume_why,"state_head"));
+    assert(!pjoin_tables_parse("v1/t1|stock=00") && !strcmp(pjoin_resume_why,"state_blob"));
+    assert(!pjoin_tables_parse("v1/t1|stock=0") && !strcmp(pjoin_resume_why,"state_missing"));
+    assert(!pjoin_tables_parse("v1/t1|nonsense=0") && !strcmp(pjoin_resume_why,"state_store"));
+    memset(pstk_ring,0,sizeof(pstk_ring));memset(pilot_ring,0,sizeof(pilot_ring));memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));
+    memset(pstk_held_states,0,sizeof(pstk_held_states));memset(pstk_fire_on,0,sizeof(pstk_fire_on));memset(pstk_fire_tick,0,sizeof(pstk_fire_tick));
+    memset(pview_target_replay,0,sizeof(pview_target_replay));pstk_flight=0;pstk_flight_known=0;pstk_frame_tick=0;
+    pslots[2].player=saved_player;pslots[2].length=saved_length;pslots[2].throttle=0;pslots[2].assist[0]=0;pslots[2].authority=0;pslot_mask=saved_mask;
+    pjoin_resume_why="-";
+    printf("pilot join: the pilot tables at T round-trip through 'pilot_state' (rings after T only, frames, held keys, fire, view, seats, stores), refusals named PASS\n");
+}
+
