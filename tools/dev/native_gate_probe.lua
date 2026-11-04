@@ -3932,9 +3932,24 @@ local function frame()
     -- session's window and joins before take-2 (start - 5), where all of it is still unset on the session (the gate stops a
     -- join inside the window, 91 join_inside_window; this refuses one after it as well).
     if cfg.native_gate_join and X4LAN_JOIN_CORE then
-     X4LAN_JOIN_CORE.provide('pilot_window',function() return 'v1|'..window[1]..','..window[2] end,function(text)
+     -- native_gate_join_in_window = true (DIAGNOSTIC, default off; reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt W1): a join
+     -- save inside the window is measured instead of refused here: the saver logs the real player and its ship at T, the
+     -- joiner the same after its load; the gate still stops the joiner at its first pilot frame (91 join_inside_window).
+     local in_window=cfg.native_gate_join_in_window==true
+     local function players(what)
+      local ok,player=pcall(function() return C.GetPlayerID() end)
+      local ok2,ship=pcall(function() return C.GetPlayerOccupiedShipID() end)
+      log('JOIN_IN_WINDOW '..what..' tick='..tostring(gate.join_base and gate.join_base())..' window='..window[1]..' player='..
+       (ok and tostring(ConvertStringTo64Bit(tostring(player))) or 'error')..' occupied='..(ok2 and tostring(ConvertStringTo64Bit(tostring(ship))) or 'error')..
+       ' diagnostic=join_in_window')
+     end
+     X4LAN_JOIN_CORE.provide('pilot_window',function()
+      if in_window then players('saver') end
+      return 'v1|'..window[1]..','..window[2]
+     end,function(text)
       assert(text=='v1|'..window[1]..','..window[2],'join: the session pilot window '..tostring(text)..' is not this client window '..window[1]..','..window[2])
       local base=gate.join_base and gate.join_base()
+      if in_window and base and base+1>window[1]-5 then players('joiner') return end
       assert(base and base+1<=window[1]-5,'join: the session tick T='..tostring(base)..' is past the pilot window take-2 ('..(window[1]-5)..
        '): the window Lua state (death poses and counters, stock aim, the UI one-shot fixtures) is not in the join package')
      end)

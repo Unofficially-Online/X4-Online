@@ -138,7 +138,7 @@ def check_lua_state(config_text, package):
         if lines.get('pilot_window') != f'v1|{start},{stop}':
             raise ValueError(f"lua_state:pilot_window:{lines.get('pilot_window', 'missing')}: the session pilot window is not "
                              f'this config window {start},{stop}')
-        if tick+1 > start-5:
+        if tick+1 > start-5 and not session_defaults.on(values.get('native_gate_join_in_window')):
             raise ValueError(f'lua_state:pilot_window:late: T={tick} is past the window take-2 ({start-5}); the window Lua '
                              'state is not in the package')
     return ','.join(sorted(lines))

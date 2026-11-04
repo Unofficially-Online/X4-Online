@@ -49,3 +49,41 @@ Each stage keeps the 91 refusal for every case it does not cover yet (fail loudl
 3. FIRST LIVE DATA (rejoin before the window, for reference)
 rj1 (adaptive report 14): drop at 412, T=633, window 1500..72000; the rejoiner restored h2=0/412/0 and was admitted with exact
 clocks, then stopped at the hot join's open T+1 digest (634, as every J1 replay).
+
+4. W1 LIVE: WHAT X4'S SAVE HOLDS INSIDE THE WINDOW (w1a, build218, 4 November)
+Session b1,b2 of 3 slots (slot 3 absent) at 20 Hz, pilot window from 300, NGJOIN at 600: both savers saved at T=633 inside
+the window with the same portable digest (the save path itself is fine inside a window). The save (w1_inspect.py, the
+package's IDS section mapping the plan's ships to the save's IDs):
+  - two <component class="player">: the real player in slot 1's ship's room (name, lastcontrolled, controlgroup
+    pilotcontrol) and P_2 in slot 2's ship's room (connection room, controlgroup pilotcontrol, no name, a ship listener
+    'controlstarted', a full player body: traits, spacesuit weapon groups, autopilot, scanner, discovered sectors), with
+    its own computer (entity_betty_macro, connection player); slot 2's NPC pilot stays on its post;
+  - slot 3 (absent, never seated): its NPC pilot only, as every slot ship before the window (rj1's save: one player).
+  - X4's player creation path stores every new player into Universe+0x230 (the player singleton) unconditionally
+    (6fad4f/6fad56, releasing the previous one; vps_make puts it back after it builds P_k), and P_2 comes after the real
+    player in the file: a joiner's load is expected to leave P_2 as its singleton. W1b measures it (JOIN_IN_WINDOW rows).
+  (A first reading of the design, kept P_k in the save; W1b below rules it out.)
+
+5. W1B LIVE: X4 DOES NOT LOAD A SAVE WITH TWO PLAYERS (w1b, build218, 4 November)
+J1 with T=633 inside the window (from 300) and native_gate_join_in_window on both sides; the joiner replays on b1 after the
+session. The joiner's second load pass: "UniverseClass::Import(): Invalid number of players. GameClass::Load(): Invalid
+savegame. Failed to load the universe from save_009"; X4 goes back to the start menu, the probe boots again and the gate
+refuses (code 10: a second session in the process). Static [F, 9.00]: Import collects every loaded player into the vector
+Universe+0x200 (40-byte entries) and requires exactly one (8dca31: cmp 1, jne 8de119 'Invalid number of players'), then
+makes entry 0 the singleton (8dca72: Universe+0x230 = entry 0). In the save, P_2 and its computer are referenced only by
+their own elements. P_2 is in the save because the default stack connects every P_k into its cockpit room
+(native_gate_pilot_foot_bodies, lockstep_pilot_foot_body.h): a saved component of the room's child list.
+Consequences:
+  - Any save taken while the bodies are connected is unloadable, a player's own save during a session included (not
+    only the join save). The join save, and later X4's own save path, must not see P_k.
+  - Patching Import to take more than one player would load P_k through X4's player path (input context requests, the
+    singleton, a camera, control start: the log's 'already a ContextRequest ... PLAYERCONTROLLER' at the first pass),
+    unlike the session's vps_make, which puts every side effect back. Not taken.
+W3, revised: (1) every saver takes every body off its room around GameClass::Save of the join save (pfbody_call: X4's own
+3d8420 with no target, held, with the stand-in camera; the same on every client of the SAVE_AT mask, which is every
+present client) and connects it again right after, so the save holds the real player only; (2) the package carries the
+pilot state (W2) and each P_k's runtime IDs; (3) the joiner rebuilds each P_k at its admission through the session's own
+path (vps_make, the seat, the body's connect) with the session's runtime IDs (the hot join's join_ids allocator places
+them), restores the stores and tables, and starts the per-slot modules live at T+1. X4's own saves during a session need
+the same park around their save (later).
+
