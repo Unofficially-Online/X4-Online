@@ -2101,3 +2101,12 @@ reason 1 restored=1; census 0 at 1800, 9000, 18000, 27000 and 36000 (550,467 obj
 failures=0, present_applied = present_restored (95,798 and 81,186), follow written = restored = 35,962 on each client
 (rdisp 11,937 and 4,631: stage 2 followed the swap itself in those render-only frames); render-only frames 12,135 and 4,810,
 RENDER_DISPLAY failures=0 foreign=0 restored=1.
+
+FOUR CLIENTS ON THE CURRENT DEFAULTS (4 November, d4s208b: build208 = smoke dd9df5bc, the session defaults (render frames,
+own-ship prediction with the camera follow, on foot, every UI family), a 4-slot coop plan (ships 0ae79c, 07a8fe, 07a8dc, 07a931,
+starts for slots 2-4 as p4-people), stock demo scripts 1-4, lanes b1..b4 through .local/census/x4lane4.py (the release lane
+tool with its client limit raised to 4; the release refuses --clients 4), 3000 ticks): relay pass (4 clients), no digest
+mismatch; all four STOP reason=1 restored=1; census at 1800: clients 2, 3 and 4 each equal to client 1, 528,306 objects;
+OWN_PREDICT failures=0 and follow written = restored = 2,963 on every client; render-only frames 1,248 / 938 / 461 / 1,528;
+bursts of all four windows: 0 one-frame flashes, no pilot head (scans at baseline, sheets of clients 3 and 4 checked), no
+DEGRADED line on screen. The earlier 4-client runs (p4-people, scene-n2) predate this stack.
