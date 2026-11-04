@@ -1827,7 +1827,14 @@ proposed and rejected.
   method 11, its times equal through ATTK) and change it at 28.216333, to 961.1328 on the session and 961.1367 on the joiner. The
   shield's parameters (SHIELD) and the attack times (ATTK) are equal; what is left is the low-attention attack's own computation
   (get_attackstrength / apply_attackstrength), whose inputs include the AI script's variables: a time there that the save keeps to
-  four decimals (0.000033 at about 117 per second is the 0.004) would do it. Not yet examined.
+  four decimals (0.000033 at about 117 per second is the 0.004) would do it. fight.attack.object.medium's low-attention loop draws
+  $waittime (1 .. 4 s, profile increasing), waits it and applies dps x $waittime; that wait spans T, and the save keeps script
+  variables of type time to six significant digits (j633: <value name="$waittime" type="time" value="4.86122"/>; 45,175 values of
+  type time in the save, besides the attributes it keeps to four decimals: lastshottime, attacktime, bullet times).
+- A general remedy, not yet built: the join save is written by the session for the joiner only, so writing its numbers at full
+  precision during that save (the save writer's number conversion, hooked for the join save alone) would load every one of these
+  exactly, where SHOOT, ATTK and the like correct them one kind at a time. The conversion routine is not yet found: the attribute
+  names are interned (no code references to their strings), and the one "%.4f" in the image is the display options'.
 - Open: the joiner's runtime IDs (above); the T+1 shield record (above); at 660 health 52, attention 30, topology 24, motion 7; the trade search of 639, nav.refresh_relation of 74 ships in the
   high-attention sectors 0x13a and 0x948 from 660 (the pathing swap), attention (30 at 660, 269 at 840), the UI listeners' 20-tick
   phase (635, 659, 679 on the joiner, 700 on the session), the shield record of 0x73f92 at T+1; other times the save rounds to four
