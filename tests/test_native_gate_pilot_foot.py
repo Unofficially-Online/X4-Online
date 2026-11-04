@@ -362,12 +362,19 @@ class ScriptTests(unittest.TestCase):
           S.frame(40)
           LOCAL=1
           talk=plan[41][1].call()
+          -- The hire context's discounts (createHireContext, h1h): read from the person's container as the stock does.
+          MapMenu.modeparam={'g_hire',make_id('200'),1}
+          env.ConvertIDTo64Bit=function(v) return ids[v] end
+          env.GetContextByClass=function(id,class,self) assert(id=='200' and class=='container' and self==true);return 'c300' end
+          env.GetComponentData=function(id,key) assert(id=='c300' and key=='hiringdiscounts');return {{amount=10},{amount=5}} end
           confirm=plan[42][1].call()
+          factor=MapMenu.hiringdiscounts.totalfactor
           target=MapMenu.contextMenuData.hireObject;role=MapMenu.contextMenuData.hireRole;post=MapMenu.contextMenuData.hireIsPost
           MapMenu.mode='map';ok,missing=pcall(plan[42][1].call)
           env.GetNPCBlackboard=function() return nil end;ok2,nobody=pcall(plan[41][1].call)''')
         self.assertTrue(g.talk.endswith(' fee=1234'), g.talk)
         self.assertEqual((g.confirm, g.target, g.role, g.post), ('hire service', 1001, 'service', False))
+        self.assertAlmostEqual(g.factor, 0.85)
         pushed = uirep.values(g.pushed)
         self.assertEqual([p[2][:2] for p in pushed], ['01', '10', '03'])   # StartConversationFromMenu, the fee, ProceedFromMenu
         self.assertFalse(g.ok)

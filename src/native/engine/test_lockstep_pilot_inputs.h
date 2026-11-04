@@ -225,6 +225,38 @@ static void test_pilot_inputs(void) {
         join_rx.based=0;join_rx.t.gate.tick=0;assert(!join_tick_base());
         pilot_absent=0;for(unsigned i=0;i<PILOT_SLOTS;i++) pilot_from[i]=pilot_until[i]=pilot_enroll[i]=0;pilot_absent_skips=0;
         pilot_stop=20;}
+    /* Dropped (protocol 5, roadmap D15): the permit carrying proposal 26 names slot 2 in its mask (adapt_take ->
+     * pilot_drop_note). Its records captured up to 25 still apply (through 28); from 29 = 26+delay slot 2 is silent and
+     * not driven; a record of slot 2 captured at 26 or later is refused (no own row). Slot 1's records stay required; a
+     * drop of slot 1 stops at its first missing record with stage slot1_dropped. */
+    {   pilot_stop=40;memset(pilot_locals,0,sizeof(pilot_locals));
+        const LONG64 drops=pilot_drop_skips,absents=pilot_absent_skips;
+        pilot_drop_note(2u,26);
+        assert(pilot_dropped==2u && pilot_drop_from[1]==26 && !pilot_slot_dropped(2,25) && pilot_slot_dropped(2,26) && !pilot_slot_dropped(1,26));
+        pilot_drop_note(2u,30);assert(pilot_drop_from[1]==26);   /* the first permit's tick stays */
+        assert(!pilot_slot_silent(2,28,3) && pilot_slot_silent(2,29,3) && pilot_slot_present(2,25) && !pilot_slot_present(2,26));
+        for(uint64_t t=27;t<=28;t++) {
+            test_pilot_bytes(1,t-3,0,b);assert(pilot_stage_record(1,b,t-1));
+            test_pilot_bytes(2,t-3,0,c);assert(pilot_stage_record(2,c,t-1));
+            assert(test_pilot_frame(t) && pilot_slots[0].driving && pilot_slots[1].driving);
+        }
+        test_pilot_bytes(2,26,0,c);assert(!pilot_stage_record(2,c,28) && !strcmp(pilot_stage,"absent_record"));
+        for(uint64_t t=29;t<=30;t++) {
+            test_pilot_bytes(1,t-3,0,b);assert(pilot_stage_record(1,b,t-1));
+            assert(test_pilot_frame(t) && pilot_slots[0].driving && !pilot_slots[1].driving);
+        }
+        assert(pilot_drop_skips==drops+2 && pilot_absent_skips==absents);
+        assert(pilot_status(text,sizeof(text)) && strstr(text," dropped=2 drop_skips=") && strstr(text," drop2=26"));
+        assert(!test_pilot_frame(31) && !strcmp(pilot_stage,"missing_record"));   /* slot 1 is not dropped: required */
+        pilot_drop_note(3u,28);   /* slot 1 dropped from proposal 28: its record for 31 is missing */
+        assert(pilot_drop_from[0]==28 && pilot_drop_from[1]==26 && !pilot_slot_dropped(1,40) && !pilot_slot_silent(1,31,3));
+        assert(!test_pilot_frame(31) && !strcmp(pilot_stage,"slot1_dropped"));
+        pilot_dropped=0;memset(pilot_drop_from,0,sizeof(pilot_drop_from));pilot_drop_skips=0;
+        /* Both slots driving again for the dispatch checks below. */
+        test_pilot_bytes(1,28,0,b);assert(pilot_stage_record(1,b,30));
+        test_pilot_bytes(2,28,0,c);assert(pilot_stage_record(2,c,30));
+        assert(test_pilot_frame(31) && pilot_slots[0].driving && pilot_slots[1].driving);
+        pilot_stop=20;}
     /* Ownership and restoration of the shared request entry and the controls flag. */
     uint64_t original=0x0824245c8948ULL,patched=0x0824245c89e9ULL,foreign=0x1111ULL;
     memcpy(image+REQUEST_RVA,&patched,8);pilot_original_word=original;pilot_patched_word=patched;pilot_installed=1;

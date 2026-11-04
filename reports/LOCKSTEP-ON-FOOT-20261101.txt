@@ -1340,3 +1340,26 @@ The Codex-era NATIVE-GETUP-* reports studied a one-shot GetUp() diagnostic on th
   permission (t3b), and the census parent of a ship stays its zone even when docked (t3d, trade report section 14); an
   earlier version of this note read the parent as "not docked". The scenario that split on 1 November (transient digest at
   65-72, 146 objects after the get-up) now stays in sync through the fight, the get-up and 2,200 ticks of walking.
+
+15l Hiring on foot, slot 1, live end to end (coordinator, 4 November 2026; spec 5d H1 on the wharf scenario of 15k)
+  Overlay DF2p (missile fight, dock at 1340, slot 1 gets up about 3850 and walks) plus, for slot 1: hire_talk on the wharf
+  000000000001b5af at 4200 (the first person there with a hiring fee), option 1 at 4320, hire_confirm for slot 1's own ship,
+  the pilot post, at 4440; 2 clients, 4800 ticks.
+  h1h (build208): hire_talk found person 1455604 (0x1635f4) with fee 4590; StartConversationFromMenu('default', person)
+    started through MD on both clients (UI-missions report section 9) at game time 147.216; option 1 'Hire' at 4323 on both;
+    the stock section g_hireworksomewhere opened the map in hire mode on both (its UI events applied from 4327). The scripted
+    Hire failed on client 1: menu.hiringdiscounts is nil, because the map's hire context (createHireContext) sets it before
+    its button exists and the script pressed the button without the context. Relay: one digest mismatch at 4208, equal again
+    from 4209 to 4800; census 0 at 1, 1800 and 3600 (none after 4208 in that run).
+  hire_confirm now reads the container's discounts as createHireContext does (read only, client 1). h1h2 (build209, census
+    every 600):
+    [F] client 1 captured TransferPlayerMoneyTo (via=hire), UnsuspendConversation and ProceedFromMenu at 4440; on both
+      clients at the same ticks: TransferPlayerMoneyTo(4590) at 4443, the map closed, UnsuspendConversation and
+      ProceedFromMenu(g_hire) at 4444; MD's conversation with 0x1635f4 finished with outcome g_hire at game time 160.416 on
+      both; the stock NPCAssigned, NPCAssigned_Transfer and NPCAssigned_ConversationFinished cues ran at 4450 and 4460 on both
+      (the hired person handed to the player's ship). Relay pass, no digest mismatch (the 4208 blip of h1h did not recur);
+      census 0 of 522,294 ... 532,518 at all nine captures 1 to 4800, after the fee and the hire.
+  So slot 1 hires a person on a station by talking to them, choosing Hire, picking the post and paying, the same on every
+  client. Open: slots 2..N hiring (section 8's second pass; their conversations need their own MD scope), which crew list the
+  person ends up in on screen (not checked in pictures), and the h1h one-tick digest blip (seen once).
+

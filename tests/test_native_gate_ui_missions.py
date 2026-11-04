@@ -46,7 +46,13 @@ MOCK = r'''
   mission_runs={};notices={}
   env.SignalObject=function(object,param,value) stock_calls[#stock_calls+1]='SignalObject:'..tostring(ids[object])..'/'..tostring(param)..'/'..
     (value~=nil and (type(value)=='userdata' and 'id:'..tostring(ids[value]) or tostring(value)) or 'nil') end
-  env.AddUITriggeredEvent=function(screen,control,value) stock_calls[#stock_calls+1]='AddUITriggeredEvent:'..screen..'/'..tostring(control) end
+  env.AddUITriggeredEvent=function(screen,control,value)
+    local extra=''   -- the replayed conversation start (ConversationStart): its name, actor and parameter
+    if type(value)=='table' and value.conversation then
+      extra='/'..tostring(value.conversation)..','..(type(value.actor)=='userdata' and 'id:'..tostring(ids[value.actor]) or tostring(value.actor))..
+        ','..(type(value.convparam)=='table' and '{'..table.concat(value.convparam,'/')..'}' or tostring(value.convparam))
+    end
+    stock_calls[#stock_calls+1]='AddUITriggeredEvent:'..screen..'/'..tostring(control)..extra end
   local function conv(name) return function(...)
     local out={};for i=1,select('#',...) do local v=select(i,...)
       out[i]=type(v)=='userdata' and 'id:'..tostring(ids[v]) or type(v)=='table' and '{'..table.concat(v,'/')..'}' or tostring(v) end
@@ -177,7 +183,9 @@ class ConversationTests(unittest.TestCase):
             self.assertTrue(any('UI_MISSIONS_CAPTURED' in l and 'what=SelectDialogOption via=lua' in l for l in logs))
             self.assertTrue(any('UI_REPLAY_APPLIED tick=50 slot=1 op=73 result=applied what=SelectDialogOption(2)' in l for l in logs))
         self.assertEqual(calls[0], calls[1])
-        self.assertEqual(calls[0], ['StartConversationFromMenu:X4LAN_Talk,id:100,{1/2}', 'SelectDialogOption:2', 'CancelConversation:'])
+        # The start through MD on every client (X4 ignores a bare StartConversationFromMenu outside a closing menu: m1d, m1e).
+        self.assertEqual(calls[0], ['AddUITriggeredEvent:X4LAN_UiConversation/Start/X4LAN_Talk,id:100,{1/2}', 'SelectDialogOption:2',
+                                    'CancelConversation:'])
 
     def test_the_native_capture_decodes_as_the_lua_one(self):
         # lockstep_ui_missions.h uimis_guard: index 7, count 1, tag number, the double's bytes; index 5/6/8 with count 0.
@@ -422,7 +430,7 @@ class FixtureTests(unittest.TestCase):
         doc = ET.parse(ROOT/'tools/dev/native_gate_ui_replay.xml')
         names = [c.get('name') for c in doc.iter('cue')]
         for name in ('MissionFixture', 'FixtureAccept', 'FixtureDecline', 'FixtureAborted', 'FixtureBriefingStarted', 'FixtureBriefingCancelled',
-                     'FixtureBriefingButton', 'Talk', 'TalkSection', 'TalkFinished', 'Own', 'GuardEvent', 'MinHull'):
+                     'FixtureBriefingButton', 'Talk', 'TalkSection', 'TalkFinished', 'Own', 'GuardEvent', 'MinHull', 'ConversationStart'):
             self.assertIn(name, names)
 
     @unittest.skipUnless(os.environ.get('X4LAN_MD_XSD') == '1', 'the stock md.xsd takes about two minutes to compile: X4LAN_MD_XSD=1')

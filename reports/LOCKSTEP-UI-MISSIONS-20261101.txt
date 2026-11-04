@@ -344,3 +344,28 @@ refuses it, ui_missions_claim_taken:<name>). The M1 spec's mask is 19455; entrie
   [I] The conversation manager starts a menu conversation as the closing menu's result, so a bare call from the probe's
   frame is ignored. Options: replay it as a closeMenu result on every client (a menu each client opens and closes in the
   apply), or start the conversation from our MD (the same action on every client at the apply tick). Decide before 7b.
+
+9. CONVERSATIONS FROM THE REPLAY START THROUGH MD (coordinator, 4 November 2026; the option section 8 left open)
+  Change (tools/dev/native_gate_ui_replay_core.lua, tools/dev/native_gate_ui_replay.xml): the apply of a replayed
+  StartConversationFromMenu no longer calls it from the probe's frame. Every client raises the UI event
+  X4LAN_UiConversation/Start {conversation, actor, convparam} at the apply tick (the actor as a Lua ID: MD takes a component
+  from a Lua ID only), and our MD cue ConversationStart runs start_conversation with that actor, name and parameter. MD names
+  a conversation statically, so the cue knows the names the stock menus start (default: talking to a person;
+  gTrade_offerselect and gMain_propertyResult: the player computer) and our X4LAN_Talk; any other name is refused
+  (UI_CONVERSATION_MD_REFUSED why=name), as is an actor that is not an entity (why=actor), the same on every client. The
+  dialog choices themselves (SelectDialogOption) were already replayed from the frame and reach the conversation that MD
+  started. Tests: the missions suite (the apply raises the event; the cue in the MD schema, X4LAN_MD_XSD=1).
+  Live (session defaults, 2 clients, 900 ticks; m1d's fixture offer, then slot 1: X4LAN_Talk with the offer's client at 240,
+  option 1 at 360, X4LAN_Talk again at 480, option 4 at 600):
+    m1f (build208): the event reached the cue on both clients at the same game time, refused why=actor: the actor travelled
+      as a 64-bit number. m1g (build209, the actor as a Lua ID): it arrived as the offer's client 0x16257b and was refused
+      again: a cue actor is outside the universe, so its .exists is false. m1h (the check is now 'an entity'):
+    [F] on both clients at the same game times: UI_CONVERSATION_MD_START X4LAN_Talk actor=0x16257b at 15.2163, the talk
+      started, section x4lan_talk_a (option 1 = top left) at 19.183, finished with outcome x4lan_talk_a at 19.7163; again at
+      23.2163, section x4lan_talk_b (option 4 = top right) at 27.183, finished at 27.7163. Relay pass, no digest mismatch.
+  The people path uses the same route: the hire on foot (on-foot report section 15l) starts the stock 'default' conversation
+  with a station's person through this cue on both clients and goes on through the stock sections.
+  Still open: conversations for slots 2+ (their MD scope, model (c)); conversations the stock menus start under names this
+  cue does not list (refused, named in the log); every client shows slot 1's conversation on its screen (MD's player is slot
+  1's on every client), slot 2's clicks in it are refused with the info line.
+

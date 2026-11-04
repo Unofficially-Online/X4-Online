@@ -735,12 +735,13 @@ static int pstk_frame(uint64_t tick,const char **why) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         if(!(pstk_slot_mask>>(k-1)&1u)) continue;
         pstk_staged *s=&pstk_ring[k-1][tick%PSTK_RING];pstk_slot_frame *f=&pstk_slot_frames[k-1];pstk_record q;
-        /* Absent (hot join, lockstep_pilot_inputs.h): no record before H+delay. Neutral: no events, no view, no trigger; its
-         * frame keeps its last tick, so the receipt says S<k>:0:0 and the slot scope replays nothing. */
+        /* Absent (hot join, lockstep_pilot_inputs.h): no record before H+delay; dropped (protocol 5): none from c+delay.
+         * Neutral: no events, no view, no trigger; its frame keeps its last tick, so the receipt says S<k>:0:0 and the slot
+         * scope replays nothing. */
         if(pilot_slot_silent(k,tick,pilot_delay)) {
             if(s->present && s->tick==tick) {*why="stock_absent_record";return 0;}
             pview_replay(k,tick,0,0,0.0f,0);pstk_fire_tick[k-1]=tick;pstk_fire_on[k-1]=0;pstk_fire2_on[k-1]=0;
-            InterlockedIncrement64(&pilot_absent_skips);continue;
+            InterlockedIncrement64(tick>=pilot_delay && pilot_slot_dropped(k,tick-pilot_delay)?&pilot_drop_skips:&pilot_absent_skips);continue;
         }
         if(!s->present || s->tick!=tick) {*why="stock_missing_slot";return 0;}
         if(!pstk_decode(s->bytes,s->length,&q) || q.capture16!=(uint16_t)(tick-pilot_delay) || !pstk_slot_record_ok(&q,k)) {

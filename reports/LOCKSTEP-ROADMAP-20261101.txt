@@ -18,13 +18,13 @@ A. PLAYABILITY (people sessions)
     Branch contrib/ferrite-predict2, report LOCKSTEP-OWN-SHIP-PREDICTION-20261101.txt (lockstep_own_predict.h,
     native_gate_own_predict, default off; works on one frame per step, join interface for item 1 in its
     section 5; live-test spec O1/O2/P1/P2/G in section 11).
- 3. [A0-A4 live: 100 ms holds 29.7 steps/s, jitter k=5, spikes raise k at an agreed tick, a 3 s stall is reported and the session goes on, census 0; dropping a stalled client open; 3 Nov: render frames under adaptive live (a206r/a207r: the gap over the adaptive permits, census 0, 0 flashes; on by default; adaptive report 12)] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
+ 3. [A0-A4 live: 100 ms holds 29.7 steps/s, jitter k=5, spikes raise k at an agreed tick, a 3 s stall is reported and the session goes on, census 0; dropping a stalled client live 4 Nov (d3drop, item 15); 3 Nov: render frames under adaptive live (a206r/a207r: the gap over the adaptive permits, census 0, 0 flashes; on by default; adaptive report 12)] Adaptive input delay: measure each client's round trip at session start and choose the lookahead and
     pilot delay from it (today fixed: lookahead 1, delay 3 = 100 ms); later adjust it during a session at an
     agreed step. Cope with spikes and dropouts better than a pause for everyone (a client stalled past a bound
     is dropped; needs item 16). Data, relay --latency-ms 100 (1 Nov): lookahead 1 0.38x speed, lookahead 3 +
     delay 5 0.76x, both in sync; model: step = max(frame, (round trip + frame) / (lookahead + 1)).
  4. [trade live 3 Nov: t1d/t2f replay exact on both clients, pool factions now get a real account (t2f money as specified);
-    T3 docked trade live 3 Nov (t3d: fly there, docking computer, immediate buy; money identical on both clients, census 0; trade report 14); open: people P1/P2; missions live 3 Nov (m1d as specified); conversations do not start from the replay (m1d, m1e): people test next] [was: agents trade (X4-Multiplayer-trade), missions+conversations (X4-Multiplayer-missions),
+    T3 docked trade live 3 Nov (t3d: fly there, docking computer, immediate buy; money identical on both clients, census 0; trade report 14); open: people P1/P2; missions live 3 Nov (m1d as specified); 4 Nov conversations from the replay start through our MD cue (m1h: X4LAN_Talk, both choices, same game times on both clients; UI-missions report 9)] [was: agents trade (X4-Multiplayer-trade), missions+conversations (X4-Multiplayer-missions),
     construction+crew+assets (X4-Multiplayer-build); money default: coop shares the player wallet, factions mode pays from
     each player's own faction account] Menus the guard still refuses: trading (slot 1 first; a trade offer needs a portable reference; whose
     money pays for slot k is a decision), mission offers and conversations for slots 2+ (their MD scope),
@@ -42,7 +42,7 @@ A. PLAYABILITY (people sessions)
     with ships that carry launchers (the test scouts have none).
 
  4c. [3 Nov df2q (build205, 6000 ticks): the wharf scenario stays in sync through the fight, the get-up and 2,200 ticks
-    of walking (census 0 at 1800/3600/5400; on-foot report 15k); a get-up at a station (docked) and hiring on foot open] On foot (user). Live 1 Nov: slot 1 gets up and walks on both clients (w1bfoot/s1k1, build161) but the
+    of walking (census 0 at 1800/3600/5400; on-foot report 15k); 4 Nov h1h2: slot 1 hires a wharf person on foot end to end (talk, Hire, pilot post, fee 4590, the stock NPCAssigned cues on both clients, census 0 at 4800; on-foot report 15l); a get-up at a station (docked) and hiring for slots 2..N open] On foot (user). Live 1 Nov: slot 1 gets up and walks on both clients (w1bfoot/s1k1, build161) but the
     wharf scenario splits (transient digest at 65-72, 4 ships' motion by 1800 during the approach/dock, 146 objects after
     the get-up; agent X4-Multiplayer-footsync); bodies at the seats for slots 2..N (native_gate_pilot_foot_bodies) stay in sync
     (b1body/b1body2: 1200 ticks, 0 mismatches; whether a seated figure is visible needs a close camera, not answered by the
@@ -123,7 +123,7 @@ C. PERFORMANCE
     until it has caught up. To check first: a forked child keeps only the forking thread (X4's save path must not
     wait on other threads), copy-on-write memory, Steam and file handles in the child, and that save + load
     round-trips to the same world (the snapshot load used by every test suggests yes).
-15. [later] Player drop and rejoin (with 3 and 14).
+15. [4 Nov drop live under protocol 5: d3drop, client 3 frozen, dropped at 1226, its ship neutral, clients 1+2 in sync to 3000 (census 0 after the drop; adaptive report 13); rejoin, slot 1 and protocol 4 open] Player drop and rejoin (with 3 and 14).
 15b. [live 1 Nov: L1 fight start, L2 two starts in two sectors (factions, own wallets), L3 coop discover start all
     clean; L4 refusals as specified] Multiple starts: (1) a session from any stock X4 game
     start, not only the creative test save (one client creates the new game and saves it, every client loads that

@@ -118,14 +118,34 @@ static unsigned pilot_absent;                       /* bit s-1: slot s is absent
 static uint64_t pilot_from[PILOT_SLOTS],pilot_until[PILOT_SLOTS],pilot_enroll[PILOT_SLOTS]; /* first own row, first stand-in again, enrolled */
 static volatile LONG64 pilot_absent_skips;          /* slot-ticks of a window without a record because the slot is absent */
 static int pilot_slot_absent(unsigned slot) {return slot>=1 && slot<=PILOT_SLOTS && (pilot_absent>>(slot-1)&1u);}
+/* Dropped slots (protocol 5, lockstep_adaptive.h; roadmap D15): the relay drops a client stalled past --stall-drop-ms, and
+ * from the first permit whose mask names slot k its blobs are empty. adapt_take notes the proposal tick c that permit
+ * carries (pilot_drop_note), at the same tick on every client (the permits are identical): from c on slot k's rows are no
+ * longer its own, so from c+delay it has no record and is silent, as an absent slot after its ABORT: the seat stays,
+ * neutral (no record, no events, no view, no trigger; its ship keeps its last command), it is still watched for death,
+ * its hits are native. Slot 1 is MD's player: a drop of slot 1 still stops the others at its first missing record
+ * (stage slot1_dropped). Rejoining a dropped slot (a handover into it) is not built. */
+static unsigned pilot_dropped;                      /* bit s-1: slot s was dropped (protocol 5 permit mask) */
+static uint64_t pilot_drop_from[PILOT_SLOTS];       /* its first proposal tick without its own row */
+static volatile LONG64 pilot_drop_skips;            /* slot-ticks of a window without a record because the slot was dropped */
+static int pilot_slot_dropped(unsigned slot,uint64_t tick) {
+    return slot>=2 && slot<=PILOT_SLOTS && (pilot_dropped>>(slot-1)&1u) && tick>=pilot_drop_from[slot-1];
+}
+/* A permit carrying proposal tick c with the relay's drop mask (adapt_take, every client the same tick). */
+static void pilot_drop_note(unsigned mask,uint64_t c) {
+    for(unsigned i=0;i<PILOT_SLOTS;i++)
+        if((mask>>i&1u) && !(pilot_dropped>>i&1u)) {pilot_drop_from[i]=c;pilot_dropped|=1u<<i;}
+}
 /* Slot's rows are its own client's at tick t (its proposals of t reach the session): every slot that is not absent. */
 static int pilot_slot_present(unsigned slot,uint64_t tick) {
+    if(pilot_slot_dropped(slot,tick)) return 0;
     if(!pilot_slot_absent(slot)) return 1;
     const unsigned i=slot-1;
     return pilot_from[i]!=UINT64_MAX && tick>=pilot_from[i] && (pilot_until[i]==UINT64_MAX || tick<pilot_until[i]);
 }
-/* Slot has no record to apply at tick t: absent at its capture tick t-delay. */
+/* Slot has no record to apply at tick t: absent or dropped at its capture tick t-delay. */
 static int pilot_slot_silent(unsigned slot,uint64_t tick,unsigned delay) {
+    if(tick>=delay && pilot_slot_dropped(slot,tick-delay)) return 1;
     return pilot_slot_absent(slot) && !(tick>=delay && pilot_slot_present(slot,tick-delay));
 }
 /* Slot's ship takes part from tick t (seat, body, death, guns): always, or for an absent slot from its enrollment. */
@@ -316,6 +336,7 @@ static int pilot_arm(const char *manifest,unsigned source,unsigned delay,uint64_
        !path_installed || !(path_options&1) || !world_identity_installed || (boot_options&REQUEST_OPTION) || request_installed ||
        InterlockedCompareExchange(&pilot_entry_owner,0,0)) return 0;
     memset(pilot_slots,0,sizeof(pilot_slots));memset(pilot_ring,0,sizeof(pilot_ring));memset(pilot_locals,0,sizeof(pilot_locals));
+    pilot_dropped=0;memset(pilot_drop_from,0,sizeof(pilot_drop_from));pilot_drop_skips=0;
     for(unsigned i=0;i<count;i++) pilot_slots[i].saved=saved[i];
     pilot_slot_count=count;pilot_source=source;pilot_delay=delay;pilot_start=start;pilot_stop=stop;pilot_suppress=suppress;
     pilot_armed=1;pilot_stage="armed";return 1;
@@ -379,10 +400,16 @@ static int pilot_frame_records(uint64_t tick) {
         pilot_slot *s=&pilot_slots[i];pilot_record r;s->driving=0;
         if(!window || (pilot_stock_slots>>i&1u)) continue;
         /* Absent (hot join): no record before its handover, its ship as the identity plan left it (not driven). */
-        if(pilot_slot_silent(i+1,tick,pilot_delay)) {InterlockedIncrement64(&pilot_absent_skips);continue;}
+        if(pilot_slot_silent(i+1,tick,pilot_delay)) {
+            InterlockedIncrement64(tick>=pilot_delay && pilot_slot_dropped(i+1,tick-pilot_delay)?&pilot_drop_skips:&pilot_absent_skips);continue;
+        }
         if(pilot_source==PILOT_SOURCE_SCRIPT) pilot_script(i+1,tick,pilot_start,&r);
         else {
-            if(e->tick!=tick || !(e->present&(1u<<i))) {InterlockedIncrement64(&pilot_missing);pilot_stage="missing_record";return 0;}
+            if(e->tick!=tick || !(e->present&(1u<<i))) {
+                InterlockedIncrement64(&pilot_missing);
+                pilot_stage=i==0 && (pilot_dropped&1u) && tick>=pilot_delay && tick-pilot_delay>=pilot_drop_from[0]?"slot1_dropped":"missing_record";
+                return 0;
+            }
             if(!pilot_decode(e->bytes[i],&r) || r.capture16!=(uint16_t)(tick-pilot_delay)) {pilot_stage="delay_mismatch";return 0;}
         }
         s->record=r;
@@ -722,6 +749,11 @@ static int pilot_status(char *out,size_t capacity) {
         int more=pilot_absent_text(out+n,capacity-(size_t)n);
         if(!more) return 0;
         n+=more;
+    }
+    if(n>0 && (size_t)n<capacity && pilot_dropped) {
+        n+=snprintf(out+n,capacity-(size_t)n," dropped=%x drop_skips=%lld",pilot_dropped,(long long)pilot_drop_skips);
+        for(unsigned i=0;n>0 && (size_t)n<capacity && i<PILOT_SLOTS;i++)
+            if(pilot_dropped>>i&1u) n+=snprintf(out+n,capacity-(size_t)n," drop%u=%llu",i+1,(unsigned long long)pilot_drop_from[i]);
     }
     if(n>0 && (size_t)n<capacity && pilot_device_armed) {
         int more=pilot_device_status(out+n,capacity-(size_t)n);

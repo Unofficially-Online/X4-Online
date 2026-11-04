@@ -194,6 +194,9 @@ static unsigned adapt_take(uint64_t tick) {
     for(unsigned i=0;i<wire_clients;i++) memcpy(blob_inputs[i],p->blobs[i],strlen(p->blobs[i])+1);
     if(p->gap) {adapt_source_set=0;++adapt_gaps;}
     else {
+#ifdef ADAPT_WITH_PILOT
+        if(adapt_mask) pilot_drop_note(adapt_mask,adapt_cursor); /* a dropped slot's rows stop with this proposal tick */
+#endif
         adapt_source=adapt_cursor;adapt_source_set=1;
         wire_lookahead=adapt_lag(adapt_cursor)-1; /* hit claims reconstruct the source as T-1-k */
         adapt_cursor=adapt_next_source(adapt_cursor);

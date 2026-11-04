@@ -127,6 +127,15 @@ static void test_adaptive_permits(void) {
     /* A mask may only grow. */
     adapt_reset();stats.completed=0;adapt_entries[0]=plan;adapt_epoch=1;adapt_mask=1;
     ad_permit_text(text,sizeof(text),2,1,1,0,1,&plan,0,none);assert(!ad_receive(text) && adapt_take(1)==ADAPT_STOP_SOURCE+1);
+    /* A drop mask on a permit that carries proposals notes that proposal tick for the pilot records (pilot_drop_note,
+     * lockstep_pilot_inputs.h): slot 3 dropped with an empty blob from tick 0's proposals; the gap permits carry none. */
+    adapt_reset();stats.completed=0;adapt_entries[0]=plan;adapt_epoch=1;
+    pilot_dropped=0;memset(pilot_drop_from,0,sizeof(pilot_drop_from));
+    ad_permit_text(text,sizeof(text),2,1,1,0,1,&plan,4,none);assert(!ad_receive(text) && adapt_take(1)==1 && adapt_mask==4 && !pilot_dropped);
+    stats.completed=1;ad_permit_text(text,sizeof(text),2,2,1,0,1,&plan,4,none);assert(!ad_receive(text) && adapt_take(2)==1 && !pilot_dropped);
+    stats.completed=2;ad_permit_text(text,sizeof(text),2,3,0,0,1,&plan,4,tick0);assert(!ad_receive(text) && adapt_take(3)==1);
+    assert(pilot_dropped==4 && pilot_drop_from[2]==0 && pilot_slot_dropped(3,0) && !pilot_slot_dropped(2,0));
+    pilot_dropped=0;memset(pilot_drop_from,0,sizeof(pilot_drop_from));
     /* The largest report and permit stay inside the native buffers. */
     char big[GATE_BLOB_HEX_MAX+1];memset(big,'e',GATE_BLOB_HEX_MAX);big[GATE_BLOB_HEX_MAX]=0;
     int n=snprintf(packet,sizeof(packet),"NGSTATE|5|%s|8|18446744073709551615|%016llx|%016llx|%s|8|%u|%s",AD_TOKEN,0ULL,0ULL,
