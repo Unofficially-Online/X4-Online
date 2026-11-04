@@ -1242,6 +1242,7 @@ class JoinCoordinator:
         self.saved = {}            # saver slot -> SAVED record
         self.saver = None          # the slot whose files the joiner loads
         self.joiner_tick, self.first_real, self.started, self.progress = None, None, None, []
+        self.catchup_started = None   # the first report's time (progress keeps only the last 64 reports)
         self.address, self.last_seen, self.notices = None, None, []
 
     def notice(self, text):
@@ -1347,7 +1348,7 @@ class JoinCoordinator:
             return [(address, f'NGSTOP|{version}|{self.b.token}|{slot}|{tick}'.encode('ascii'))]
         first = self.joiner_tick is None
         if first:
-            self.address, self.state = address, 'catching_up'
+            self.address, self.state, self.catchup_started = address, 'catching_up', now
             self.notice(f'catching_up first_report={tick}')
         if self.joiner_tick is None or tick > self.joiner_tick:
             self.joiner_tick = tick
@@ -1378,7 +1379,9 @@ class JoinCoordinator:
         gap = self.b.released-self.joiner_tick
         lead = self.b.lookahead+1+self.handover_lead
         rate = self.rate()
-        waited = now-(self.progress[0][0] if self.progress else now)
+        # Since the catch-up began (not progress[0]: that list keeps the last 64 reports, about 2-3 s, so a joiner no faster
+        # than the session never reached --join-catchup-limit and was never handed over; rj2, rj3).
+        waited = now-(self.catchup_started if self.catchup_started is not None else now)
         if gap > self.handover_gap and waited < self.catchup_limit:
             return
         pause = handover_pause(max(gap, 0), lead, self.b.tick_hz, rate) if rate else math.inf
@@ -1398,7 +1401,8 @@ class JoinCoordinator:
         observed = (f' diagnostic=join_observe digest_mismatches={self.digest_mismatches} '
                     f'first_digest_mismatch={self.first_digest_mismatch if self.first_digest_mismatch is not None else "-"}'
                     if self.observe else '')
-        self.notice((f'joined tick={self.handover} catch_up_s={now-self.progress[0][0]:.1f}' if self.progress else 'joined')+observed)
+        self.notice((f'joined tick={self.handover} catch_up_s={now-self.catchup_started:.1f}' if self.catchup_started is not None
+                     else 'joined')+observed)
 
 
 def _barrier_base():

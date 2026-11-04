@@ -335,4 +335,13 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   from the package, and its first report (T=633) was accepted (game and real time exact: the real base reset holds). It
   then stopped at mismatch:digest_tick_634, the same first mismatch as every J1 replay (j1-115, j1-116: 634 on, though their
   T+1 census is 0): rejoin now waits on the hot join's declared-state equality at T+1, which the hot join session is on.
-  Next: rj2 with --join-observe to run the handover into the dropped slot live while that equality is open.
+  rj2 (rj1 with --join-observe, 9000 ticks): drop at 413, T=633 (pause 5.8 s); the rejoiner booted in about 80 s and caught
+  up at 20.2 steps/s with every tick's digest different from 634 on (6,756 counted, not fatal), but the session runs at the
+  same 20 Hz, so the gap of about 1,600 ticks from its boot never closed: it reached 7,389 when the session ended at 9000.
+  rj3 (--join-catchup-limit 20 --join-max-pause 110, 12000 ticks): no handover either, which showed a coordinator bug: the
+  catch-up time was measured from progress[0], a list of the last 64 reports (about 3 s), so a joiner no faster than the
+  session never reached the limit (default 600 s) and was never handed over. Fixed (b0d00520: from the first report), with a
+  test that fails on the old code. The T+1 digest split (634) is now explained by the hot join session: the census keeps
+  rows for the session's dead objects, the join save does not (2,360 absent rows at 634); their GONE section carries them.
+  Next: a rejoin with that fix and the catch-up fix, without --join-observe; a joiner here runs at about real time with
+  2-3 X4 up, so J2 and rejoin hand over with a pause of about the joiner's boot time until the joiner is faster.

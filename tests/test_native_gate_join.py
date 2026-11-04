@@ -1328,6 +1328,31 @@ class Relay(unittest.TestCase):
         self.assertTrue(j.failure.startswith('pause_too_long'), j.failure)
         self.assertIsNone(net.relay.failed)
 
+    def test_a_joiner_no_faster_than_the_session_is_handed_over_after_the_catchup_limit(self):
+        # The limit counts from the catch-up's first report: 5 s is longer than the coordinator's 64-report progress window
+        # (about 2 s at 30 Hz), which it was once measured from, so such a joiner was never handed over (rj2, rj3).
+        net = Network(ticks=3000, catchup_limit=5.0, max_pause=60.0, handover_gap=5)
+        for _ in range(40):
+            net.round()
+        net.request()
+        while net.relay.join.state == 'queued':
+            net.round()
+        for _ in range(100):
+            net.round()                                     # the joiner loads while the session runs on
+        net.boot_joiner()
+        for _ in range(140):
+            net.round(joiner_steps=1)                       # 4.7 s at the session's own rate: not yet
+        j = net.relay.join
+        self.assertEqual(j.state, 'catching_up')
+        gap = net.relay.released-net.joiner.tick
+        for _ in range(600):
+            net.round(joiner_steps=1)                       # still no faster: only the limit can hand it over
+            if j.state in ('joined', 'failed') and net.relay.released > j.handover+20:
+                break
+        self.assertGreater(gap, 50)
+        self.assertEqual(j.state, 'joined', (j.failure, net.notices[-3:]))
+        self.assertIn('joined tick=', ' '.join(net.notices))
+
     def test_launcher_answers_and_refusals(self):
         net = Network()
         for _ in range(20):

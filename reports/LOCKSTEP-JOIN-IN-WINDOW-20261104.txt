@@ -1,0 +1,51 @@
+LOCKSTEP: JOINING INSIDE A RUNNING PILOT WINDOW (plan, coordinator, 4 November 2026)
+
+Why. A hot join (reports/LOCKSTEP-HOTJOIN-20261101.txt) and a rejoin after a drop (roadmap 15, adaptive report 14) work
+only when the join's save tick T lies before the pilot window's take-2: a joiner whose T+1 is past it stops at once with
+91 join_inside_window (lockstep_pilot_inputs.h), and the probe refuses it as well (lua_state:pilot_window:late). In a real
+session the players fly from the first minute, so every useful join, and every rejoin after a drop, is inside the window.
+The join package does not carry the pilot modules' state (hot join report 8, item 5a). This plan inventories that state,
+sorts it by where it lives, and stages the work so each stage is measured live before the next.
+
+1. INVENTORY (build218; the pilot modules lockstep_pilot_*.h, the UI replay lockstep_ui_*.h)
+A. Objects the gate makes in X4's world during the window (are they in X4's save, and with which IDs?):
+   - P_k, slots 2..N: a U::Player from X4's factory (lockstep_virtual_players.h vps_make, take-2), every side effect on the
+     canonical player put back; one reference, ours.
+   - C_k: the PlayerController the ship's take() (ship vtable 1074) creates when P_k is seated (take-1); its vtable is
+     swapped for the slot's own copy (counting thunks, routes 6/7/10, scoped entries 14/23/33-36/49/50).
+   - P_k's seat links: parent +0x70 = the ship's control room, controlled-object vector +0x308 (ours), control position,
+     assist copied from P_1.
+   - After a death (lockstep_pilot_death.h): the respawned ship (renewed), the seat moved to it, the retired controllers.
+   - On foot (lockstep_pilot_foot_body.h, _foot_slots.h): P_k as a child of its seat's room, its body.
+B. Gate tables that feed the simulation from tick to tick (must reach the joiner byte for byte):
+   - pilot_ring (records captured before T, applied after it: delay = 1+lookahead ticks), pilot_slots[] (resolved ship,
+     last record, driving), pilot_locals (this client's own, not needed on a joiner of another slot).
+   - pstk_ring[slot][tick] (stock records in flight), pstk_slot_frames[] (each slot's last frame: tick, hash, record,
+     flight), pstk_held_states/ranges (held keys, roadmap D15), pstk_fire_on/fire2_on/fire_tick, pstk_aim_*, the cursor
+     replay, pstk_settings, pstk_flight.
+   - pslots[k]: store (the slot's PlayerController block, swapped in for its scope), length, first, authority, assist[2],
+     agent_mode, no_highway, throttle, seated/released/roomless/walking, post, retired controllers.
+   - pview_state/target_replay/target_tick (the replayed soft target and view), pdeath_slots (dying, lost, respawn dues),
+     pfslots (walking state), pfbody mask/parked/back, pfire_slots/missiles (guns leased, missile locks), the UI replay
+     queues (lockstep_ui_*.h: operations scheduled for later ticks).
+C. Local only, rebuilt by arming on the joiner (never carried): hooks and call-site patches, the slots' vtable copies and
+   thunks, presentation (camera, HUD, eye), own prediction, local input rings, counters and status text.
+
+2. STAGES (each one live before the next; the hot join session owns the package and the joiner's load)
+W1 Measure (diagnostic, default off): a joiner may load a T inside the window (native_gate_join_in_window = true lifts 91
+   and the probe's late refusal, never otherwise); the saver writes a PILOT_JOIN row at T (per slot: seated, P_k and C_k
+   runtime IDs and created identities, store hash, held keys, ring ticks in flight) and the joiner writes the same row from
+   what its load gave it at admission (does the save hold P_k and C_k, under which IDs, with which parents and vtables).
+   J1-style run with T inside the window; census at T+1 and the declared digest parts named.
+W2 Carry B: a provider 'pilot_state' in the package's LUA section (gate.pilot_join_state / gate.pilot_join_restore: text,
+   versioned, every table above with tick-relative fields), restored before T+1; the joiner's arming takes the restored
+   rings instead of empty ones.
+W3 Rebuild A on the joiner at admission, from what W1 shows: adopt the loaded P_k/C_k where the save holds them (rekeyed to
+   the session's IDs), else build them as at take-2/take-1 with the carried stores, seats and vtable copies; then the
+   joiner's per-slot modules start in their 'live' stage at T+1 instead of at take.
+W4 Live: J1 census at T+1 equal inside the window; then a J2 and a rejoin (rj) with T inside the window, the slots flying.
+Each stage keeps the 91 refusal for every case it does not cover yet (fail loudly, never partly applied).
+
+3. FIRST LIVE DATA (rejoin before the window, for reference)
+rj1 (adaptive report 14): drop at 412, T=633, window 1500..72000; the rejoiner restored h2=0/412/0 and was admitted with exact
+clocks, then stopped at the hot join's open T+1 digest (634, as every J1 replay).
