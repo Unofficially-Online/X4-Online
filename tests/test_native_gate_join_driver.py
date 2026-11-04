@@ -583,6 +583,10 @@ class Overlays(unittest.TestCase):
                                   'native_gate_world_hash_stride=300', '--join-census', *WINDOW)
             self.assertIn(' census_t1=1 ', notes)
             self.assertIn('X4LAN_CONFIG.native_gate_world_hash_join = true', (root/'savers/ui/config.lua.append').read_text().splitlines())
+            # the join save at full precision: on by default for savers and joiners, a --set keeps its own value
+            self.assertIn('X4LAN_CONFIG.native_gate_join_precise = true', (root/'savers/ui/config.lua.append').read_text().splitlines())
+            self.assertEqual(overlays.precise_sets(['a=1']), ['a=1', 'native_gate_join_precise=true'])
+            self.assertEqual(overlays.precise_sets(['native_gate_join_precise = false']), ['native_gate_join_precise = false'])
             text = (root/'savers/ui/config.lua.append').read_text()
             named = overlays.saved_id_keys(text)
             ids = [(0x6c000+k, int(i, 16), 0, 0) for k, i in enumerate(sorted({i for v in named.values() for i in v}))]

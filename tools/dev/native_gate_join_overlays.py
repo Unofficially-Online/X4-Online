@@ -201,6 +201,14 @@ def census_sets(args):
     return sets+['native_gate_world_hash_join=true']
 
 
+def precise_sets(sets):
+    """native_gate_join_precise = true on savers and joiners (the join save at full precision, lockstep_join_precise.h; j1-115: the
+    census at T+1 equal) unless a --set names it."""
+    if any(text.replace(' ', '').startswith('native_gate_join_precise=') for text in sets):
+        return sets
+    return sets+['native_gate_join_precise=true']
+
+
 def check_absent(clients, absent):
     """The absent slots must be the last ones: the lane tool's clients are p1..pL in --lanes order."""
     if not 2 <= clients <= 4:
@@ -246,7 +254,7 @@ def build(args, role, snapshot, base_extra, record):
             raise ValueError(f'{path} exists; refusing to overwrite (a new directory keeps earlier inputs frozen)')
     run_tool([DEV/'build_native_gate_overlay.py', '--gate-dll', args.gate_dll, '--snapshot', snapshot, '--mode', 'battle',
               '--session-clients', '--world-identities', *base_extra, '--out', base], 'build_native_gate_overlay.py')
-    sets = [f'native_gate_arm_timeout_ms={args.arm_timeout_ms}'] + census_sets(args)
+    sets = [f'native_gate_arm_timeout_ms={args.arm_timeout_ms}'] + precise_sets(census_sets(args))
     notes = run_tool([DEV/'native_gate_players.py', 'overlay', '--base', base, '--out', out, '--gate-dll', args.gate_dll,
                       '--probe', args.probe, '--players', str(record['clients']), '--mode', 'coop', '--source', 'stock',
                       '--defaults-only', *[a for s in sets for a in ('--set', s)]], 'native_gate_players.py overlay')
