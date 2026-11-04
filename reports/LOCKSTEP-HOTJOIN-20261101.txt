@@ -1811,7 +1811,24 @@ proposed and rejected.
   0x178f1b, 0x178faa, 0x80001a7e27806bf0, 0x8000942ecb0bb143, 0x124129, 0x12426f, 0x1245a3, ..) with about 11 components each in
   topology+timing (187) and attention (269 timing fields). Which waiting ship a job places, and where, is the largest remaining
   difference; the shipyard's own build processors (start 0, ends 300/84/60 in the save) build other ships, not these.
-- Open: the job ships' placement (above); at 660 health 52, attention 30, topology 24, motion 7; the trade search of 639, nav.refresh_relation of 74 ships in the
+  j1-113 2e901612 (build-hj15h)   head verification: T+1 4, 900 485 (as j1-107 and j1-112); published as a329e99c
+- The job ships' placement [F: j1-114 JOIN_WATCH of 0x124633 and 0x1248cf after each step to T+27 (660)]: both sides place a waiting
+  ship into bay 0x1dd94 in the same step, 648, the session 0x1248cf and the joiner 0x124633. The one script row of that step that
+  differs is the Split faction logic's MD cue (FactionLogic.FactionLogicManagers.SplitFactionLogic, src 6): 77 draws on the
+  session, 81 on the joiner. The job's state and requests are equal but for their runtime IDs: the session's ship of the request
+  is 0x107e7 (its save ID), the joiner's 0x10cad. lockstep_runtime_ids.h: saved objects sit at a per-process ID offset, and
+  "anything seeded, hashed or ordered by +8 therefore parts on saved objects"; its set mode makes the session's clients agree
+  because they load the same snapshot, while the joiner loads j633 in its own order. The likely cause of this pick (and of others
+  like it) is that the joiner's saved objects carry other runtime IDs than the session's. Giving them the session's IDs would
+  mean rekeying each loaded object in g_UniverseIDMap (0x6cf1500) at the import (its saved ID is the session's runtime ID), with
+  the slots the joiner's boot already took in the way: an allocator change to design and review, not yet attempted.
+- The shield record of T+1 [F: j1-113's T+1 census, its watched details]: 0x73f92's group (the ship and its three weapons) holds
+  1172.54 at T (changed 22.516333, maximum 1440); at T+1 both sides take about 211 from the low-attention attack of 0xad530 (attack
+  method 11, its times equal through ATTK) and change it at 28.216333, to 961.1328 on the session and 961.1367 on the joiner. The
+  shield's parameters (SHIELD) and the attack times (ATTK) are equal; what is left is the low-attention attack's own computation
+  (get_attackstrength / apply_attackstrength), whose inputs include the AI script's variables: a time there that the save keeps to
+  four decimals (0.000033 at about 117 per second is the 0.004) would do it. Not yet examined.
+- Open: the joiner's runtime IDs (above); the T+1 shield record (above); at 660 health 52, attention 30, topology 24, motion 7; the trade search of 639, nav.refresh_relation of 74 ships in the
   high-attention sectors 0x13a and 0x948 from 660 (the pathing swap), attention (30 at 660, 269 at 840), the UI listeners' 20-tick
   phase (635, 659, 679 on the joiner, 700 on the session), the shield record of 0x73f92 at T+1; other times the save rounds to four
   decimals.
