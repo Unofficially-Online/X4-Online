@@ -1,0 +1,59 @@
+LINUX CATCH-UP: THE LINUX GATE AGAINST THE CURRENT SESSION DEFAULTS
+4 November 2026 | branch contrib/ferrite-linux-catchup | roadmap 12 (Windows/Linux) and 13 (a Linux server)
+
+WHY
+The Linux gate last changed on 1 November; the Windows session defaults (tools/dev/native_gate_defaults.lua,
+174 ON entries) have grown since. The Windows-vs-Linux comparison stopped at 1200 ticks because the 1 November
+measurement config is not self-consistent past ~1200-1800 even on one platform (census report, 3 November).
+Goal of this branch: the Linux gate runs the Windows defaults' determinism stack, then the people stack.
+
+THE GAP (smoke 15aa54ca)
+  Lua methods: Windows gate 663, Linux gate 121.
+  Pinned Windows engine sites (tools/dev/lockstep_linux_map.py --disasm, rebuilt today): 1282, of which 433 have a
+  high or verified Linux candidate. Families without a Linux port: the battle scope's fixture state (strict_state,
+  shield_refresh, strict_physics, order/fleet state), actor-keyed RNG (flight, steering, radar, agent/spline, ship,
+  weapon, nav, death, bullet, shape), the view-point family (~25 keys), and the people stack (pilot inputs, UI replay,
+  on foot, prediction, render frames).
+
+A DESKTOP LINUX HOST (2e162ed9)
+tools/dev/linux_gate_live.py run assumed the VPS layout. --game, --steam-home and --shm name a desktop host's Steam
+library, the running client's .steam and its shared memory; with snap Steam the client keeps that in
+/dev/shm/snap.steam, so it is bound over /dev/shm in each X4's namespace (X4 runs outside the snap and reaches the
+client). --discard-layer names a locally built X4MP discard layer (src/native/vk-discard). On a desktop host with
+24 cores, 600 ticks with load take ~85 s and 6000 ticks ~6 min (the VPS took many times that).
+
+LINUX VS LINUX, 6000 TICKS, 2 CLIENTS (census every 30 ticks; differing objects of 521,929 saved)
+  run   key set                                                   first split   1800  3000  4200  4800  6000
+  lx1   the L8 set of 1 November, current code                    1 (timing)       8   159   514  2299  4958
+        (lx1a, 600 ticks: the 176bf8/176cef nav.parameters_due pair only, as on the VPS)
+  lx2   + every key the Linux gate already had and the defaults  1800 (motion)     2    26    55  1684  4577
+        turn on: script_rng_unmapped, nav_cadence far + params/probe init + nav_key, created identities/load/
+        portable_created, attention_all, spawn_rng key, loadout_order canonical, gravidar_wide sort
+  lx3   lx2 + weapon_fire_rng (240fda02)                          1800 (motion)     2    32    62  1675  4668
+        the hook was armed and never called: no shot was fired near a camera in this clock-mode world
+        (out-of-sight combat is attack strength, not shots). It matters for the battle scope.
+  lx4   lx3 + engine_refresh_rng (32df7f50)                       1920 (motion)     0     6    13    15    18
+        ENGINE_REFRESH_RNG_STOP keyed=111773 native=0 unmapped=0 fallback=0
+  lx2 and lx3 differ by run-to-run noise only (the same first split, 19 = 19 at 2400).
+  Reading it: lx2's slow growth from 1800 matches the spline-route cause B of the Windows long runs (a route
+  consumed on a wall-clock tick; spline_join_all), and its cascade from 4140 (dozens of independent roots in many
+  sectors at once) was the engine-parameter refresh drawing from the thread's word: lx4 removes it entirely.
+
+THE PORTS (each: the shared header keeps its domain, seeds, counters and status under a *_OWN_PLATFORM guard, so a
+Linux draw seeds exactly as on Windows; the Windows preprocessed lockstep_gate.c is byte-identical, zig cc -E -P)
+  weapon_fire_rng (linux/gate_weapon_fire.h): the shot 0x1138c70 in slot +0x1fc0 of U::Weapon 0x3c6a440 and
+    U::Turret 0x3d38dd8 (Windows +0x1f30), the fire loop 0x1d698b0 its only caller; System V signature with the base
+    time in xmm0, a float in xmm1 and four stack qwords.
+  engine_refresh_rng (linux/gate_engine_rng.h): the listener 0x14382f0; GCC inlined FloatRange, so the aligned word
+    at 0x1438348 jumps to a stub that steps either the Windows keyed state ((tick, key), or (tick, the class's
+    Windows vtable RVA) for a ship without a key) or the thread's word natively. The step, the 2^-32 scale and 8.0
+    are Windows' own; Linux's "+ itself" equals Windows' "* 2.0".
+  Tests: linux/test_gate_weapon_fire.h, linux/test_gate_engine_rng.h (the stub's machine code is run against a
+  landing pad); check_lockstep_gate_linux.py --x4 PASS on the Linux host; site check 423 PASS.
+
+NEXT
+  1. The split from 1920 (6 ships by 2400): spline_join / spline_join_all (the Linux spline model's pending deque is
+     libstdc++'s, not MSVC's, so the layout is new work).
+  2. The rest of the defaults' determinism stack, in the order the Linux census asks for.
+  3. Windows against Linux past 1200 ticks with matching key sets.
+  4. Then the battle scope and the people stack on Linux (pilot replay first: a Linux server simulates the players).

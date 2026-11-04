@@ -93,6 +93,14 @@ static void region_rng_restore(void);
 static int region_rng_owned(void);
 static int region_rng_armed,region_rng_restored;
 static volatile int64_t region_rng_failures;
+/* Weapon shots on keyed streams (gate_weapon_fire.h, included below). */
+static void wfire_restore(void);
+static int wfire_check(void);
+static int wfire_installed,wfire_restored;
+/* Engine-parameter refreshes on keyed streams (gate_engine_rng.h, included below). */
+static void erng_restore(void);
+static int erng_check(void);
+static int erng_installed,erng_restored;
 /* AI Wait restores (gate_ai_wait.h, included below). */
 static void ai_wait_restore(void);
 static int ai_wait_owned(void);
@@ -417,6 +425,10 @@ static void finish(unsigned reason) {
     if(path_det_budget_applied) stats.restored=0;
     region_rng_restore();
     if(region_rng_armed && !region_rng_restored) stats.restored=0;
+    wfire_restore();
+    if(wfire_installed) stats.restored=0;
+    erng_restore();
+    if(erng_installed) stats.restored=0;
     ai_wait_restore();
     if(ai_wait_armed && !ai_wait_restored) stats.restored=0;
     md_resume_restore();
@@ -518,6 +530,8 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(world_identity_installed && world_identity_failures) {finish(72);gate_original_once(frame,loading);return;}
     if(path_det_mask && path_det_failures) {finish(79);gate_original_once(frame,loading);return;}
     if(region_rng_armed && region_rng_failures) {finish(93);gate_original_once(frame,loading);return;}
+    if(wfire_installed && !wfire_check()) {finish(132);gate_original_once(frame,loading);return;} /* WFIRE_STOP_REASON */
+    if(erng_installed && !erng_check()) {finish(136);gate_original_once(frame,loading);return;} /* ERNG_STOP_REASON */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
     if(boot_hold_armed && boot_hold_failures) {finish(86);gate_original_once(frame,loading);return;}
     if(md_resume_armed && md_resume_failures) {finish(87);gate_original_once(frame,loading);return;}
@@ -721,6 +735,8 @@ static int lua_start(lua_State *L) {
 #include "gate_travel_snapshot.h"
 #include "gate_runtime_ids.h"
 #include "gate_fork_save.h"
+#include "gate_weapon_fire.h"
+#include "gate_engine_rng.h"
 static int lua_read_cost(lua_State *L) {
     char out[256];
     int n=accept_ui()?snprintf(out,sizeof(out),"fast=%d installed=%d reads=%llu faults=%llu lost=%llu slow_ns=%llu fast_ns=%llu.%llu gettid_ns=%llu",
@@ -819,7 +835,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);METHOD(world_health);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
-    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);
+    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);

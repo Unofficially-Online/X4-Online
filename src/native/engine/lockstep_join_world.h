@@ -2625,8 +2625,9 @@ static int join_spline_cmp(const void *a,const void *b) {
     if(x->part!=y->part) return x->part<y->part?-1:1;
     return x->index<y->index?-1:x->index>y->index;
 }
+#include "lockstep_join_body.h"   /* BODY (v13): the destructible objects' physics bodies */
 static int join_capture_world(join_tables *t,double now) {
-    uint32_t hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
+    uint32_t bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
     join_solver_dormant=0;join_cap.solver_over=0;join_cap.solver_mapped=0;join_cap.bullet_fault=0;join_cap.bullet_blocks=0;join_cap.bullet_live=0;join_cap.bullet_unkeyed=0;
     for(uint32_t i=0;i<t->nids;i++) {
@@ -2650,6 +2651,7 @@ static int join_capture_world(join_tables *t,double now) {
                 return join_note("shield,id=%llx",(unsigned long long)id->portable);
             h.flags=(group?JOIN_HEALTH_SHIELD:0u)|(full?JOIN_HEALTH_FULL:0u);
             if(!JOIN_PUSH(t->health,t->nhealth,hcap,h)) return join_note("memory");
+            if(!join_capture_body(t,object,id->portable,&bodycap)) return 0;
             if(group) {
                 join_shield_rec r;memset(&r,0,sizeof(r));r.portable=id->portable;
                 if(!join_shield_params(group,&r)) return join_note("shield_params,id=%llx",(unsigned long long)id->portable);
@@ -2682,6 +2684,7 @@ static int join_capture_world(join_tables *t,double now) {
         }
     }
     if(t->nhealth) qsort(t->health,t->nhealth,sizeof(*t->health),join_health_cmp);
+    if(!join_body_sort(t)) return 0;
     if(t->npose) qsort(t->pose,t->npose,sizeof(*t->pose),join_pose_cmp);
     if(t->nshield) qsort(t->shield,t->nshield,sizeof(*t->shield),join_shield_cmp);
     if(t->nnav) qsort(t->nav,t->nnav,sizeof(*t->nav),join_nav_cmp);
@@ -4354,6 +4357,7 @@ static int join_admit_world(void) {
     }
     if(s->version>=4) {join_admit_region(s,&mine);join_admit_path(s,strict);}
     if(!join_admit_created(s,&mine)) {join_tables_free(&mine);return 0;}
+    if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
     join_tables_free(&mine);
     if(strict && (join_rx.health_missing || join_rx.health_shape || join_rx.health_conflict))
         return join_fail_rx(JOIN_WHY_MISMATCH,join_rx.health_missing?"world:health_missing":join_rx.health_shape?"world:health_shape":"world:health_conflict");

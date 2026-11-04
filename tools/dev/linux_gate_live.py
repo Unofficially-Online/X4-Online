@@ -211,6 +211,10 @@ def bundle(args):
         command.append('--portable-created')
     if args.spawn_rng:
         command += ['--spawn-rng', args.spawn_rng]
+    if args.weapon_fire_rng:
+        command.append('--weapon-fire-rng')
+    if args.engine_refresh_rng:
+        command.append('--engine-refresh-rng')
     if args.serial_pathing or (args.path_determinism or 0) & 1:
         command.append('--serial-pathing')
     if args.fork_save:
@@ -258,7 +262,7 @@ def bundle(args):
     manifest = {'commit': commit, 'ticks': args.ticks, 'stride': args.stride, 'snapshot_sha256': snapshot_sha, 'wire_crypto': bool(args.wire_crypto),
                 'gate_so_sha256': files['extension/x4_lan_lab/native/x4lan_gate.so'], 'files': files,
                 'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'), 'seed_rng': bool(args.seed_rng),
-                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
+                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'weapon_fire_rng': args.weapon_fire_rng, 'engine_refresh_rng': args.engine_refresh_rng, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
                 'world_hash_watch': args.world_hash_watch or [],
                 'fork_save': args.fork_save and {'request': args.fork_save, 'every': args.fork_save_every, 'slot': args.fork_save_slot,
                                                  'budget_ms': args.fork_save_budget_ms, 'watchdog_s': args.fork_save_watchdog}, 'fp_redirect_drones': args.fp_redirect_drones, 'world_health_ticks': args.world_health_ticks, 'fp_attack_capture': args.fp_attack_capture, 'fp_attack_watch': args.fp_attack_watch}
@@ -330,6 +334,15 @@ def steam_identity(userhome, uid):
     return {'pid': pid, 'start': row['start'], 'uid': uid}
 
 
+def steam_shared_memory(shm, uid):
+    """Whether shm holds the Steam client's shared memory for uid (u<uid>-Shm_* owned by uid). The directory itself is
+    usually root's with mode 1777, as /dev/shm is (snap: /dev/shm/snap.steam)."""
+    try:
+        return any(p.name.startswith(f'u{uid}-Shm_') and p.stat().st_uid == uid for p in shm.iterdir())
+    except OSError:
+        return False
+
+
 def bounded_tail(path, limit=1 << 20):
     try:
         with open(path, 'rb') as stream:
@@ -384,12 +397,16 @@ def gate_lines(path):
                 yield raw.decode(errors='replace').rstrip('\r\n')
 
 
-def namespace_command(case, game, dlc_binds, lock, env, program, user):
+def namespace_command(case, game, dlc_binds, lock, env, program, user, shm=None):
     """bwrap view as tools/dev/linux_native_admission_run.py: read-only host, private case,
-    game read-only at case/game, extension directory replaced by this case's allowlist."""
+    game read-only at case/game, extension directory replaced by this case's allowlist.
+    shm (run --shm): a directory bound over /dev/shm, where a confined Steam client keeps its
+    shared memory (the snap's /dev/shm/snap.steam), so X4 outside the snap reaches it."""
     game = game.resolve(strict=True)
-    command = ['runuser', '-u', user, '--', 'bwrap', '--ro-bind', '/', '/', '--proc', '/proc', '--dev-bind', '/dev', '/dev',
-               '--bind', str(case), str(case), '--ro-bind', str(game), str(case / 'game')]
+    command = ['runuser', '-u', user, '--', 'bwrap', '--ro-bind', '/', '/', '--proc', '/proc', '--dev-bind', '/dev', '/dev']
+    if shm:
+        command += ['--bind', str(shm), '/dev/shm']
+    command += ['--bind', str(case), str(case), '--ro-bind', str(game), str(case / 'game')]
     for source, view in dlc_binds:
         command += ['--ro-bind', str(source), str(view)]
     command += ['--ro-bind', str(case / 'extensions'), str(case / 'game/extensions'),
@@ -518,10 +535,15 @@ def run(args):
     for rel, digest in manifest['files'].items():
         if sha(root / rel) != digest:
             raise SystemExit(f'bundle file changed: {rel}')
+    # A desktop host (e.g. snap Steam) keeps the game, the Steam client's .steam and its shared memory elsewhere:
+    # --game, --steam-home and --shm name them; the defaults are the VPS dedicated-server layout.
+    game_path = args.game or userhome / 'x4/game'
     try:
-        game = (userhome / 'x4/game').resolve(strict=True)
+        game = game_path.resolve(strict=True)
     except OSError:
-        raise SystemExit(f'REFUSED: no X4 installation at {userhome}/x4/game') from None
+        raise SystemExit(f'REFUSED: no X4 installation at {game_path}') from None
+    steam_home = args.steam_home or userhome
+    shm = args.shm.resolve(strict=True) if args.shm else None
     problems = []
     if sha(game / 'X4') != EXE_SHA:
         problems.append('X4 is not the pinned Linux 9.00 executable')
@@ -546,16 +568,22 @@ def run(args):
     if memory < needed:
         problems.append(f'MemAvailable {memory:.1f} GiB < {needed} GiB for {clients} instances')
     try:
-        steam = steam_identity(userhome, user.pw_uid)
+        steam = steam_identity(steam_home, user.pw_uid)
     except (OSError, ValueError, RuntimeError) as error:
         problems.append(str(error))
         steam = None
+    if shm and not steam_shared_memory(shm, user.pw_uid):
+        problems.append(f'--shm {shm} holds no shared memory of the Steam client of {args.user} (u{user.pw_uid}-Shm_*)')
     if problems:
         raise SystemExit('REFUSED: ' + '; '.join(problems))
-    discard = Path('/opt/x4mp/vklayer').is_dir() and not args.no_discard
+    layer = args.discard_layer or Path('/opt/x4mp/vklayer')
+    discard = layer.is_dir() and not args.no_discard
+    if args.discard_layer and not discard and not args.no_discard:
+        raise SystemExit(f'REFUSED: --discard-layer {layer} is not a directory')
     if args.preflight:
         print('PREFLIGHT OK ' + json.dumps({'game': str(game), 'memory_available_gib': round(memory, 1), 'steam': steam,
-                                            'discard_layer': discard, 'bundle_commit': manifest['commit'],
+                                            'steam_home': str(steam_home), 'shm': shm and str(shm), 'discard_layer': discard and str(layer),
+                                            'bundle_commit': manifest['commit'],
                                             'portable_math': bool(manifest.get('portable_math_sha256')), 'seed_rng': manifest.get('seed_rng'),
                                             'gate_so_sha256': manifest['gate_so_sha256']}))
         return
@@ -578,7 +606,7 @@ def run(args):
         credentials = load_credentials(args.wire_crypto_credentials)
         if any(slot not in credentials for slot in local):
             raise SystemExit(f'--wire-crypto-credentials lacks a credential for slots {[s for s in local if s not in credentials]}')
-    by_slot = {slot: stage_case(root, run_dir, slot, game, userhome, port, token, clients, credentials.get(slot)) for slot in local}
+    by_slot = {slot: stage_case(root, run_dir, slot, game, steam_home, port, token, clients, credentials.get(slot)) for slot in local}
     cases = [by_slot[slot] for slot in local]
     for path in [run_dir, *run_dir.rglob('*')]:
         if not path.is_symlink():
@@ -647,12 +675,12 @@ def run(args):
                    'VK_ICD_FILENAMES': '/usr/share/vulkan/icd.d/lvp_icd.json', 'VK_DRIVER_FILES': '/usr/share/vulkan/icd.d/lvp_icd.json',
                    'SDL_AUDIODRIVER': 'dummy', 'ALSOFT_DRIVERS': 'null'}
             if discard:
-                env.update(VK_LAYER_PATH='/opt/x4mp/vklayer', VK_INSTANCE_LAYERS='VK_LAYER_X4MP_discard', X4MP_VK_DISCARD='1')
+                env.update(VK_LAYER_PATH=str(layer), VK_INSTANCE_LAYERS='VK_LAYER_X4MP_discard', X4MP_VK_DISCARD='1')
             if manifest.get('portable_math_sha256'):
                 env.update(portable_math_env(case))
             program = [str(case / 'game/X4'), '-personalfolderid', '45841', '-skipintro', '-debug', 'scripts',
                        '-logfile', 'engine-output.log', '-nocputhrottle', '-noworkshopsync', '-seed:276944566']
-            games_by_slot[slot] = (launch(f'game{slot}', namespace_command(case, game, dlc_binds, lock, env, program, args.user)), profile)
+            games_by_slot[slot] = (launch(f'game{slot}', namespace_command(case, game, dlc_binds, lock, env, program, args.user, shm)), profile)
         games = [games_by_slot[slot] for slot in local]
         result['started'] = time.time()
         deadline = time.monotonic() + args.timeout
@@ -663,7 +691,7 @@ def run(args):
                 raise RuntimeError('cancelled')
             if time.monotonic() > deadline:
                 raise RuntimeError('timeout (loading or relay); see the client logs')
-            if steam_identity(userhome, user.pw_uid) != steam:
+            if steam_identity(steam_home, user.pw_uid) != steam:
                 raise RuntimeError('Steam client identity changed')
             for slot, watch, (proc, _) in zip(local, watches, games):
                 watch.poll()
@@ -710,7 +738,7 @@ def run(args):
             lock_target.unlink(missing_ok=True)
         result['steam_after'] = None
         try:
-            result['steam_after'] = steam_identity(userhome, user.pw_uid)
+            result['steam_after'] = steam_identity(steam_home, user.pw_uid)
         except (OSError, ValueError, RuntimeError) as error:
             result['steam_after'] = {'error': str(error)}
         result['steam_unchanged'] = result['steam_after'] == steam
@@ -831,6 +859,8 @@ def main():
     b.add_argument('--portable-created', action='store_true', help='ordering and keying modules use created IDs')
     b.add_argument('--gravidar-wide', choices=('sort',), help='the Gravidar\'s zone groups in portable order for the pass (needs --gravidar)')
     b.add_argument('--spawn-rng', choices=('observe', 'key'), help='ship loadouts on the generator\'s explicit state')
+    b.add_argument('--weapon-fire-rng', action='store_true', help='every weapon shot on its own keyed stream (native_gate_weapon_fire_rng)')
+    b.add_argument('--engine-refresh-rng', action='store_true', help="a ship's next engine-parameter refresh from a keyed stream (native_gate_engine_refresh_rng)")
     b.add_argument('--travel-snapshot', action='store_true', help='the wingman travel decision reads a per-pass snapshot of the leader flag')
     b.add_argument('--gravidar-deadlines', action='store_true', help='factor-pass deadlines rebased at the first gated Move, low-attention passes keyed')
     b.add_argument('--gravidar', action='store_true', help='the gated Gravidar pass, keyed units, time sync, sector order (implies serial pathing)')
@@ -861,6 +891,10 @@ def main():
     r.add_argument('--timeout', type=int, default=3600, help='seconds for load and the whole run')
     r.add_argument('--min-memory-gib', type=float, help='default 6.5 per instance')
     r.add_argument('--no-discard', action='store_true', help='render with lavapipe instead of the discard layer')
+    r.add_argument('--discard-layer', type=Path, help='the X4MP discard layer directory (default /opt/x4mp/vklayer)')
+    r.add_argument('--game', type=Path, help='the X4 installation (default ~USER/x4/game, the VPS layout), e.g. a Steam library\'s common/X4 Foundations')
+    r.add_argument('--steam-home', type=Path, help='the directory whose .steam belongs to the running Steam client (default ~USER; snap Steam: ~USER/snap/steam/common)')
+    r.add_argument('--shm', type=Path, help="bind this directory over /dev/shm for X4 (a confined Steam client's shared memory, e.g. /dev/shm/snap.steam)")
     r.add_argument('--preflight', action='store_true', help='only check the host requirements and the bundle; start nothing')
     r.add_argument('--relay-port', type=int, help='mixed session: use the relay already listening on 127.0.0.1:PORT of this host '
                    '(e.g. one serving Windows clients too) instead of starting one; needs --relay-token and --local-slots')

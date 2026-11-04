@@ -325,6 +325,32 @@ class LiveRunner(unittest.TestCase):
             command = live.namespace_command(case, game, binds, lock, {'HOME': str(case / 'home')}, ['X4'], 'x4server')
             self.assertEqual(command[:5], ['runuser', '-u', 'x4server', '--', 'bwrap'])
             self.assertIn('/tmp/EGOSOFT_X4.lock', command)
+            self.assertNotIn('/dev/shm', command)
+
+    def test_confined_steam_shared_memory_is_bound_over_dev_shm(self):
+        """run --shm (snap Steam): the directory replaces /dev/shm after the /dev bind, before the case binds."""
+        live = load_tool('linux_gate_live')
+        with tempfile.TemporaryDirectory() as folder:
+            case, game, shm = Path(folder) / 'case', Path(folder) / 'game', Path(folder) / 'snap.steam'
+            for path in (case, game, shm):
+                path.mkdir()
+            command = live.namespace_command(case, game, [], case / 'x4.lock', {}, ['X4'], 'topsnek', shm)
+            dev = command.index('--dev-bind')
+            self.assertEqual(command[dev:dev + 6], ['--dev-bind', '/dev', '/dev', '--bind', str(shm), '/dev/shm'])
+            self.assertLess(command.index('/dev/shm'), command.index(str(case / 'game')))
+
+    @unittest.skipUnless(hasattr(os, 'getuid'), 'file owners need POSIX')
+    def test_steam_shared_memory_is_the_users_own(self):
+        live = load_tool('linux_gate_live')
+        with tempfile.TemporaryDirectory() as folder:
+            shm, uid = Path(folder), os.getuid()
+            self.assertFalse(live.steam_shared_memory(shm, uid))
+            (shm / 'other-file').write_text('')
+            self.assertFalse(live.steam_shared_memory(shm, uid))
+            (shm / f'u{uid}-Shm_125376fc').write_text('')
+            self.assertTrue(live.steam_shared_memory(shm, uid))
+            self.assertFalse(live.steam_shared_memory(shm, uid + 1))
+            self.assertFalse(live.steam_shared_memory(shm / 'missing', uid))
 
 
 class ProbeLibrary(unittest.TestCase):

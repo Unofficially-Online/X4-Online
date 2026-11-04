@@ -80,11 +80,12 @@ static int pilot_why_text(char *out,size_t capacity) {
     if(n>0 && (size_t)n<capacity && pres_armed) n+=snprintf(out+n,capacity-(size_t)n," present=%s present_why=%s",pres_stage,pres_why);
     if(n>0 && (size_t)n<capacity && uirep_armed) n+=snprintf(out+n,capacity-(size_t)n," replay=%s replay_why=%s",uirep_stage_name,uirep_why);
     if(n>0 && (size_t)n<capacity && pilot_absent) {int more=pilot_absent_text(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
+    if(n>0 && (size_t)n<capacity && pjoin_controls[0]) n+=snprintf(out+n,capacity-(size_t)n," join_controls=%s",pjoin_controls);
     return n>0 && (size_t)n<capacity?n:0;
 }
 /* gate.pilot_why(): pilot_why_text, or nil. */
 static int lua_pilot_why(lua_State *L) {
-    char out[768];int n=accept_ui()?pilot_why_text(out,sizeof(out)):0;
+    char out[1024];int n=accept_ui()?pilot_why_text(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_pilot_inputs_frame(lua_State *L) {

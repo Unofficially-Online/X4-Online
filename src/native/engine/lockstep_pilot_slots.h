@@ -141,8 +141,6 @@ static const unsigned pslot_routed[3]={6,7,10};
  * pass, lockstep_pilot_foot_body.h). */
 enum {PJOIN_CONSTRUCT,PJOIN_SEAT,PJOIN_CONNECT,PJOIN_STEPS};
 static uint32_t pjoin_range[PILOT_SLOTS+1][PJOIN_STEPS][2];
-static uint64_t pjoin_park_tick,pjoin_last_park;
-static volatile LONG64 pjoin_parks;
 static uint32_t pjoin_head(void) {
     unsigned char *map=rid_mode==RID_SET?rid_map():NULL;
     if(!map) return 0;

@@ -29,16 +29,23 @@
  * read as the original, and Random::FloatRange 0x14ddc90. Written by CAS at
  * arm (before the first admitted frame), re-checked every gate tick (stop
  * reason 136), restored at stop. */
+/* ERNG_OWN_PLATFORM (linux/gate_engine_rng.h): the domain, the counters and the status are shared; the draw site,
+ * the keyed draw's form, the pins, the page and the patch are the platform's own. */
 #define ERNG_DOMAIN 0x454e47524546524eULL /* "ENGREFRN" */
+#ifndef ERNG_OWN_PLATFORM
 #define ERNG_SITE 0xea1e3bu  /* call Random::FloatRange in OnUpdateEngineParameters */
 #define ERNG_DRAW 0x14ddc90u /* Random::FloatRange(uint64_t *word, float range) */
+#endif
 #define ERNG_STOP_REASON 136u /* 135 is the shape order module's */
+#ifndef ERNG_OWN_PLATFORM
 typedef float (*erng_draw_fn)(uint64_t *,float);
+#endif
 static int erng_installed,erng_restored,erng_done;
 static unsigned char *erng_page;
 static uint64_t erng_keyed,erng_native,erng_unmapped,erng_fallback;
 static volatile LONG64 erng_failures;
 static const char *erng_stage="idle";
+#ifndef ERNG_OWN_PLATFORM
 static int32_t erng_rel(const void *target) {return (int32_t)((intptr_t)target-(intptr_t)(image+ERNG_SITE+5));}
 /* The keyed draw (testable with any draw function). */
 static float erng_run(erng_draw_fn draw,uint64_t *word,float range,const void *ship) {
@@ -128,6 +135,7 @@ static void erng_restore(void) {
     if(erng_done && erng_state()==1 && erng_cas(erng_rel(erng_page),erng_rel(image+ERNG_DRAW))) erng_done=0;
     if(!erng_done) {erng_installed=0;erng_restored=1;}
 }
+#endif
 static int erng_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"installed=%d frame=%llu keyed=%llu native=%llu unmapped=%llu fallback=%llu restored=%d stage=%s failures=%lld",
         erng_installed,(unsigned long long)stats.issued,(unsigned long long)erng_keyed,(unsigned long long)erng_native,

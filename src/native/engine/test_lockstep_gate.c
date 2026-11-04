@@ -1153,6 +1153,7 @@ int main(int argc,char **argv) {
     test_speech_time();
     test_world_created();
     test_join();
+    test_join_body();
     test_runtime_ids();
     test_runtime_ids_local();
     test_join_ids();

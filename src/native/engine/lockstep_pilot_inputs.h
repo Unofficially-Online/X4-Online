@@ -219,6 +219,21 @@ static int pilot_absent_text(char *out,size_t capacity) {
     }
     return n>0 && (size_t)n<capacity?n:0;
 }
+/* Joining inside the window (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt W3; lockstep_pilot_join.h): the join save's tick T
+ * (the body guard takes the bodies off in T's pass, lockstep_pilot_foot_body.h), and X4's control state at T's pass on the
+ * session and at a joiner's first pass, for the status rows (W3 measure): the view counter, the contexts' request byte, the
+ * flight control byte, the pathing authority's answer (1: the Agent moves the ship), this client's own take. */
+static uint64_t pjoin_park_tick,pjoin_last_park;
+static volatile LONG64 pjoin_parks;
+static char pjoin_controls[192];
+static void pjoin_note_controls(const char *side,uint64_t tick,uint32_t *counter,const unsigned char *contexts,
+                                const unsigned char *flight,unsigned char (*authority)(void *),void *controller) {
+    uint32_t count=0xffffffffu;unsigned char requested=0xff,control=0xff;int auth=-1;
+    (void)read_local(counter,&count,4);(void)read_local(contexts,&requested,1);(void)read_local(flight,&control,1);
+    if(authority && controller) auth=authority(controller)!=0;
+    snprintf(pjoin_controls,sizeof(pjoin_controls),"%s:%llu:count=%u:requested=%u:flight=%u:authority=%d:owned=%d:controller=%d",
+             side,(unsigned long long)tick,count,requested,control,auth,pilot_controls_owned,controller!=NULL);
+}
 static int uirep_armed,uirep_failed;
 static unsigned uirep_families;
 static volatile LONG uirep_ui_depth,uirep_dispatch_depth;  /* inside slot 6 / the slot 4 dispatch of presentation ids */
@@ -509,7 +524,11 @@ static int pilot_before_release_using(pilot_find_fn find,void *map,const void *p
      * controls, the slots' players and seats are not in the join package. A join whose save tick T lies before the
      * window (take-3 at the latest) runs the window's start with everyone (reports/LOCKSTEP-HOTJOIN-20261101.txt 9.1). */
     {   const uint64_t base=join_tick_base();
-        if(base && base+1+5>pilot_start && base+1<=pilot_stop+2) {pilot_stage="join_inside_window";return 0;}}
+        if(base && base+1+5>pilot_start && base+1<=pilot_stop+2) {
+            pjoin_note_controls("joiner",tick,counter,contexts,flight,authority,controller);   /* W3 measure */
+            pilot_stage="join_inside_window";return 0;
+        }
+        if(pjoin_park_tick && tick==pjoin_park_tick) pjoin_note_controls("session",tick,counter,contexts,flight,authority,controller);}
     if(!pilot_installed && !pilot_install()) {pilot_stage="install";return 0;}
     InterlockedExchange64(&pilot_frame_applied,0);InterlockedExchange64(&pilot_frame_receipt,0);
     pdeath_find=find;pdeath_map=map;pdeath_player=player_object;
@@ -756,6 +775,7 @@ static int pilot_status(char *out,size_t capacity) {
         if(!more) return 0;
         n+=more;
     }
+    if(n>0 && (size_t)n<capacity && pjoin_controls[0]) n+=snprintf(out+n,capacity-(size_t)n," join_controls=%s",pjoin_controls);
     if(n>0 && (size_t)n<capacity && pilot_dropped) {
         n+=snprintf(out+n,capacity-(size_t)n," dropped=%x drop_skips=%lld",pilot_dropped,(long long)pilot_drop_skips);
         for(unsigned i=0;n>0 && (size_t)n<capacity && i<PILOT_SLOTS;i++)

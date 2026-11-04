@@ -76,6 +76,19 @@
 #define LX_REGION_MOVE_VA 0x12c7f80u        /* U::Region::Move (Windows 0x767410) */
 #define LX_DAMAGE_FIELD_VTABLE 0x3b57b88u   /* U::Regions::DamageField (Windows 0x2c4b2f0) */
 #define LX_DAMAGE_FIELD_UPDATE_VA 0x12d7a80u /* its per-frame update, slot +0x48 (Windows 0xee16a0, +0x40) */
+/* Weapon shots on keyed streams (gate_weapon_fire.h, lockstep_weapon_fire.h). */
+#define LX_WEAPON_VTABLE 0x3c6a440u          /* U::Weapon (Windows 0x2b68278) */
+#define LX_TURRET_VTABLE 0x3d38dd8u          /* U::Turret (Windows 0x2b6e910) */
+#define LX_WFIRE_SLOT 0x1fc0u                /* the shot's slot in both (Windows +0x1f30, slot 998) */
+#define LX_WFIRE_SHOT_VA 0x1138c70u          /* the shot, U::Weapon::vfunc998 (Windows 0x8185b0) */
+#define LX_WFIRE_LOOP_VA 0x1d698b0u          /* the fire loop, its only caller (Windows 0x817d20) */
+/* Engine-parameter refreshes on keyed streams (gate_engine_rng.h, lockstep_engine_rng.h). */
+#define LX_ERNG_LISTENER_VA 0x14382f0u       /* the UpdateEngineParametersEvent listener (Windows 0xea1d70) */
+#define LX_ERNG_SITE_VA 0x1438348u           /* the inlined FloatRange: the aligned word starting movabs rax, the multiplier */
+#define LX_ERNG_SITE_ORIGINAL 0xf42d4c957f2db848ull /* its 8 bytes */
+#define LX_ERNG_ADDSD_VA 0x1438370u          /* addsd xmm1, fs:CurTime (replayed by the stub) */
+#define LX_ERNG_ADDSD_LENGTH 10u
+#define LX_ERNG_RESUME_VA 0x143838au         /* mov eax,eax: the draw goes on with the stepped word in rax */
 /* AI Wait restores (gate_ai_wait.h, lockstep_ai_wait_rng.h). */
 #define LX_AI_WAIT_SLOT_VA 0x3b2a680u       /* U::AI::WaitAction vtable 0x3b2a650, restore slot +0x30 (Windows +0x28) */
 #define LX_AI_WAIT_RESTORE_VA 0x10c12b0u    /* WaitAction::Reattach (Windows 0x10a50d0) */
@@ -466,5 +479,9 @@ static const lx_site lx_sites[]={
     {"fs_sound_play_head",0x1a62520,0x60,"224dae565497fc9f6fd890b0f9b79fee64de293038204f9323263da729fbf5ea"},
     {"fs_sound_manager_use",0xa69e6a,0x10,"032cfe9051445ae0fc464dc76e7ad7a776e67415c2fdff02bb5e185b18714393"},
     {"fs_save_dir_init",0x8a0d60,0x1d,"9636ee83c514904556579b8ea6712c5c29074ee53204809a25883ad0f17728d0"},
+    {"wfire_shot_head",0x1138c70,0x110,"8cfb97d19dc638180e4124820a7d99da3c4c9eb1d66c587727d2db784ad41182"},
+    {"wfire_fire_loop_call",0x1d69a10,0x80,"2d2595c5e3c41e67cbe91b7310c26c96a3fa18c872dd3d4bc0fada7c691e7528"},
+    {"erng_listener_head",0x14382f0,0x58,"93b8240094f88e774f4ded9f45ec8cb805ddcdd9588218575a3e4a8a422de45c"},
+    {"erng_listener_tail",0x1438350,0xc2,"2a0cbb338bb82c0a492b6b013e484597c6fd63233614e1f429c0d12edcc7ef18"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */

@@ -1860,8 +1860,42 @@ proposed and rejected.
   counts each saved object's ID against the save's. JOIN_STATUS ids=stage,nodes/connections/no_id,placed/refused,equal/
   other,load allocations/free,appended,skipped. Pins: the import's three regions, the attribute lookups, the constructors'
   calls (the image test tampers each).
-- Open: the joiner's runtime IDs (above; 22 of the 35 at 660 are the two job ships, most of the 420 at 900 job ships' parts);
-  attention timing (30 at 660, 278 at 840); the UI listeners' 20-tick phase (635, 659, 679 on the joiner, 700 on the session).
+  j1-117 (35117ec6, build-hj16a): ids=armed,430856/90360/0,521132/84,521132/3330,853314/197651,1,876410: every component and
+  connection node gave its ID, 521,132 placed and equal to the save's, 84 refused, 3,330 other (3,246 of them resource areas,
+  the import's third caller 0x77eff4, not hooked); the load list took 853,314 IDs (81% of block 29); at T+1 the joiner's next
+  ID, head, tail and free count are the session's. The census did not move (T+1 0, 900 420, the same breakdown) and the Split
+  faction logic still draws 77 / 81 at 648: the saved objects' runtime IDs do not decide the job ships' pick.
+- The replay's first mismatch at 634 [F: j1-117's world capture at 634]: the session's census rows 525,889, the joiner's
+  523,529; the 2,360 rows only on the session all absent (type 0, parent 0): the census keeps a row for every snapshot object
+  and every created object a capture saw, alive or not, and a joiner's rows come from the join save, the living ones. Offline,
+  the joiner's rows and the session's absent ones give the session's four roots at 634 exactly. GONE (ebf1b329, 7afdb565;
+  section 49): the saver writes every census row without an object at T (95,166 in j1-118, most of them connections, which the
+  census reads as absent on both sides and a joiner imports), the joiner's first census adds those it has no row of.
+  j1-118 ebf1b329 (build-hj16b)   the joiner's census refused its own rows twice (stage gone_rows), stopped at 634
+  j1-119 7afdb565 (build-hj16c)   gone=0:95166:2360:92806; WORLD_IMPORTED_2 at 634 equal (525,889, the same roots); replay 634
+- What else parts the declared state at 634 [F: j1-120, native_gate_trace_window={633,636}, every STATE_ROW of T+1]: the
+  steering field of the eleven live fixture actors, 1 on the session, 0 on the joiner: the gate's flight sample init
+  generation (lockstep_flight.h), which the session's registration raised when it seeded the model; the joiner registers the
+  loaded, already seeded model and keeps 0, and a later re-seed draws from actor_seed(.., generation + 1). b60b52e3: the GATE
+  record's former padding carries the twelve generations, the joiner sets them at its admission (j1-121: steering equal).
+  Then physics bodies only, which the census does not read: actor 4's first body with the session's inverse mass but another
+  inverse inertia diagonal and inertia rotation (about 1%: the mass properties made once from the compound shape where its
+  parts were when the body was made), and the wreck actor 8's pose, velocities and record transform. BODY (cc7a168f, section
+  50): every destructible object's XPhys records: the Jolt body's position and rotation, the motion properties' first 92
+  bytes, the record's previous and delta transforms, written at the admission. j1-122: 38 bodies at T, 28 written, 10 equal,
+  none missing; actor 4 equal at 634. The wreck still parts by a few ulp at 634, 635, 636: its record at T is bit-equal to
+  the session's 633 body, and after step 634 the joiner's body is the one it had without the write, so X4 sets that body every
+  step from something outside it (likely the component's published view-cache pose, the stale-publication issue
+  native_gate_body_pose 'sim' handles at a body's creation).
+  j1-120 eaa3a8cf (build-hj16d)   the trace window: steering and two bodies
+  j1-121 b60b52e3 (build-hj16e)   steering equal; actor 4's inertia, the wreck
+  j1-122 cc7a168f (build-hj16f)   actor 4 equal; the wreck; census T+1 0, 900 420; replay 634
+- join_ids_replay(ids, n) / join_ids_replay_end() (b60b52e3) for the lockstep session's rebuild of the slots' virtual players
+  on a joiner inside the pilot window (their objects left out of the join save): the calling thread's next n shared
+  allocations take the session's slots, holes below the head, in order.
+- Open: the Split faction logic's 81 draws at 648 against the session's 77 (same seed and key; FactionLogic Manager library:
+  its weighted goal pick, delays, shuffle_group of prefab candidates; the job ships' pick and most of the 420 at 900 follow);
+  the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
