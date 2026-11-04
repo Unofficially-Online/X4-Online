@@ -109,7 +109,7 @@ C. PERFORMANCE
 12. [3 Nov: agree through 1200 (w18/fr31-L2/L8-6000); the W15/L8 config is not self-consistent past ~1200-1800 even on Windows (w19 c1 vs c2 4,360 at 6000): longer comparisons need the current long-run stack on Linux] Option B, Windows and Linux bit-identical: FR29 (damage 1 float ulp at tick 546 on ship 07336a),
     then W15/L8, then 6000-tick comparisons, then player inputs on a Linux peer, then a live mixed session.
 13. [later] Dedicated Linux server that also simulates, so the universe keeps going when players leave.
-14. [J1 3 Nov (another session, j1-28..j1-49, packages v10-v12 merged): T+1 4 of 523,529 differ (one ship's shields), 1,773 at tick 900, no crash; earlier j1-27 (v9) 17 / 2,491: save at T while the session runs (2.8 s); the joiner loads, restores the side table
+14. [4 Nov v13 merged and published (a329e99c; j1-113: census vs the session T+1 4, 660 81, 900 485; most of the 485 is where job ships are placed: the joiner's load gives saved objects other runtime IDs, so a Split faction cue draws differently; next design item: allocate or rekey the loaded objects' IDs in the joiner's load); J1 3 Nov (another session, j1-28..j1-49, packages v10-v12 merged): T+1 4 of 523,529 differ (one ship's shields), 1,773 at tick 900, no crash; earlier j1-27 (v9) 17 / 2,491: save at T while the session runs (2.8 s); the joiner loads, restores the side table
     and replays at ~24 steps/s; at T+1 99.997% of 523,529 objects equal (17 left: 13 non-linear flight models, 4 hit by
     projectiles in flight, 3 timing), 2,509 apart by T+267: agent on v9] Joining a running session
     (hot join). Stages: J1 save at step T + load in a third lane equals the running world (census 0): needs the join
