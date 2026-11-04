@@ -474,18 +474,24 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
         assert(!pilot_absent_restore("1|2|-1,-1,-1|12,16,12|-1,-1,-1") && !pilot_absent_restore("1|4|5,-1,-1|12,16,12|-1,-1,-1") &&
                !pilot_absent_restore("1|4|-1,-1,-1|12,16,12") && pilot_from[2]==UINT64_MAX);
         assert(pilot_absent_restore(state) && pilot_from[2]==12 && pilot_until[2]==16 && pilot_enroll[2]==12);}
-    /* Dropped (protocol 5, roadmap D15): the permit with proposal 14 names slot 2 in its mask. At 16 every record is
-     * there (captured at 13); at 17 slot 2 has none (captured at 14: refused, no own row) and is neutral like an absent
-     * slot, counted as a drop; slot 3 (its rows until 16) still replays. */
+    /* Dropped (protocols 4 and 5, roadmap D15): the permit with proposal 14 names slot 2 in its mask. At 16 every record
+     * is there (captured at 13); at 17 slot 2 has none (captured at 14: refused, no own row): its frame of 17 is the release
+     * (its held accelerate back to 0, then the stop action 0x7b), replayed once in its scope; from 18 it is neutral like an
+     * absent slot. Slot 3 (its rows until 16) still replays. */
     {   const LONG64 drops=pilot_drop_skips,absents=pilot_absent_skips;
         for(unsigned k=1;k<=3;k++) assert(test_absent_stage(k,13));
         stats.issued=16;assert(pstk_frame(16,&why) && pstk_slot_frames[1].tick==16 && pslot_replay(16));
         const LONG64 replays2=pslots[2].replays,replays3=pslots[3].replays;
         pilot_drop_note(2u,14);
         assert(test_absent_stage(1,14) && !test_absent_stage(2,14) && test_absent_stage(3,14));
-        stats.issued=17;assert(pstk_frame(17,&why) && pstk_slot_frames[1].tick==16 && pstk_slot_frames[2].tick==17);
+        const LONG64 releases=pstk_releases;
+        stats.issued=17;assert(pstk_frame(17,&why) && pstk_slot_frames[1].tick==17 && pstk_slot_frames[2].tick==17);
+        const pstk_record *rel=&pstk_slot_frames[1].r;
+        assert(rel->count==2 && rel->events[0].kind==PSTK_STATE && rel->events[0].id==0xd && !rel->events[0].value &&
+               rel->events[1].kind==PSTK_ACTION && rel->events[1].id==PSTK_ACTION_STOP && pstk_releases==releases+1);
         assert(pilot_drop_skips==drops+1 && pilot_absent_skips==absents && pslot_replay(17));
-        assert(pslots[2].replays==replays2 && pslots[3].replays==replays3+1 && !pstk_fire_on[1] && pstk_fire_tick[1]==17);
+        assert(pslots[2].replays==replays2+1 && pslots[3].replays==replays3+1 && !pstk_fire_on[1] && pstk_fire_tick[1]==17);
+        {unsigned i=0;while(pstk_replay_states[i]!=0xd) ++i;assert(!pstk_held_states[1][i]);}   /* released, once */
         /* Slot 1 dropped from proposal 15: at 18 the canonical update replays nothing (hash 0, no trigger), a record of
          * its refused; slot 3 (captured at 15, inside its rows) still replays. */
         pilot_drop_note(1u,15);
@@ -493,7 +499,8 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
         const LONG64 records=pstk_records;
         stats.issued=18;assert(pstk_frame(18,&why));
         assert(!pstk_frame_hash && pstk_records==records+1 && !pstk_fire_on[0] && pstk_fire_tick[0]==18);   /* slot 3's record only */
-        assert(pilot_drop_skips==drops+3 && pstk_slot_frames[2].tick==18 && pslot_replay(18) && pslots[3].replays==replays3+2);
+        assert(pilot_drop_skips==drops+3 && pstk_slot_frames[2].tick==18 && pstk_slot_frames[1].tick==17 && pstk_releases==releases+2);
+        assert(pslot_replay(18) && pslots[3].replays==replays3+2 && pslots[2].replays==replays2+1);   /* slot 2 neutral now */
         pilot_dropped=0;memset(pilot_drop_from,0,sizeof(pilot_drop_from));pilot_drop_skips=0;}
     /* An ABORT before the player is built (applied before H-2) undoes the enrollment; a later join hands over again. */
     pilot_from[2]=pilot_until[2]=pilot_enroll[2]=UINT64_MAX;

@@ -291,5 +291,13 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   tick=1225 after 5006 ms; clients 1 and 2 STOP reason=1 at 3001, each verified 3001 permits and 4,225 record signatures
   (forged 0), LOOKAHEAD_STOP dropped=04; relay pass, wire crypto failure none, 3001 permits signed; census client 1 vs
   client 2 0 at all six captures to 3000.
-  Open: peer links, rejoining a dropped slot (a handover into it, the hot join path), carrying a drop in the join package,
-  and an agreed parking order for the dropped ship instead of its last command.
+  Parking (smoke after 42f8b2da): the stock path keeps every slot's last replayed value of each replayable state and range
+  (from the replay itself, so the same on every client); at a dropped slot's first silent tick (c+delay) it replays them
+  released and then X4's own stop action 0x7b (d86c80: the occupied ship's engine target to 0), once, in the slot's scope
+  (slot 1: the canonical update). The mouse steering is neutral by itself (no frame, pstk_cursor). Status: PILOT_STOCK
+  releases=<n>/<events>. Native test: the release frame (held accelerate back to 0, then stop), replayed once, neutral after.
+  Live d3drop4r (build214; d3drop4 with client 3 frozen): DROP slot=3 tick=1216; releases=1/1 on clients 1 and 2 (nothing
+  held: the stop action alone); slot 3's ship (000000000007a8dc, PILOT_SHIPS) decelerated from about 220 m/s and stands
+  still from about 1380 to 3000, where in d3drop (no release) it flew on 13 km by 3000; both STOP reason=1 at 3001, relay
+  pass, census 0 at all six captures.
+  Open: peer links, rejoining a dropped slot (a handover into it, the hot join path), carrying a drop in the join package.

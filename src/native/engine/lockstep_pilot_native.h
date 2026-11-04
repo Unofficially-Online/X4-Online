@@ -666,6 +666,7 @@ static int pnat_arm_stock_using(int capture,unsigned slots) {
     pnat_tables();pnat_mode=PNAT_MODE_STOCK;pnat_capture_requests=0;pstk_capturing=capture!=0;pstk_slot=1;pilot_stock_slots=slots;
     pstk_slot_mask=slots;pstk_capture_slot=capture?stats.slot:0;pstk_scope_slot=0;
     memset(&pstk_build,0,sizeof(pstk_build));memset(pstk_ring,0,sizeof(pstk_ring));memset(pstk_locals,0,sizeof(pstk_locals));
+    memset(pstk_held_states,0,sizeof(pstk_held_states));memset(pstk_held_ranges,0,sizeof(pstk_held_ranges));pstk_releases=pstk_released_events=0;
     memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));
     pstk_capture_start=pstk_first_apply=pstk_cursor_tick=0;pstk_flight=0;pstk_flight_known=0;pstk_local_active=-1;pstk_cursor_live_set=0;
     pnat_armed=1;pnat_stage="armed";pnat_restored=1;return 1;

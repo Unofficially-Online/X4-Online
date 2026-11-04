@@ -785,7 +785,8 @@ static int pslot_replay(uint64_t tick) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         pslot_slot *s=&pslots[k];
         if(!s->seated || pilot_slots[k-1].dead) continue;   /* a dead slot's records are consumed and ignored, in a suit too */
-        if(pilot_slot_silent(k,tick,pilot_delay)) continue; /* enrolled, its records from H+delay: neutral meanwhile (hot join) */
+        /* Enrolled, its records from H+delay: neutral meanwhile (hot join); dropped: neutral after its release frame. */
+        if(pilot_slot_silent(k,tick,pilot_delay) && pstk_slot_frames[k-1].tick!=tick) continue;
         if(pstk_slot_frames[k-1].tick!=tick) return pslot_fail("replay_missing");
         if(!pslot_enter(k)) return pslot_fail("replay_scope");
         int replayed=0,left=0;

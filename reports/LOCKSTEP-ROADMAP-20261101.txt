@@ -123,7 +123,7 @@ C. PERFORMANCE
     until it has caught up. To check first: a forked child keeps only the forking thread (X4's save path must not
     wait on other threads), copy-on-write memory, Steam and file handles in the child, and that save + load
     round-trips to the same world (the snapshot load used by every test suggests yes).
-15. [4 Nov drop live: protocol 5 (d3drop slot 3, d3drop1 slot 1) and protocol 4, the defaults' wire (d3drop4: relay DropBarrier, slot 2 dropped at 1219); the dropped ship goes neutral, the others stay in sync to 3000 (census 0 after every drop; adaptive report 13); d3drop4c: under wire crypto too; rejoin open] Player drop and rejoin (with 3 and 14).
+15. [4 Nov drop live: protocol 5 (d3drop slot 3, d3drop1 slot 1) and protocol 4, the defaults' wire (d3drop4: relay DropBarrier, slot 2 dropped at 1219); the dropped ship's keys are released and it stops (d3drop4r), the others stay in sync to 3000 (census 0 after every drop; adaptive report 13); d3drop4c: under wire crypto too; rejoin open] Player drop and rejoin (with 3 and 14).
 15b. [live 1 Nov: L1 fight start, L2 two starts in two sectors (factions, own wallets), L3 coop discover start all
     clean; L4 refusals as specified] Multiple starts: (1) a session from any stock X4 game
     start, not only the creative test save (one client creates the new game and saves it, every client loads that
