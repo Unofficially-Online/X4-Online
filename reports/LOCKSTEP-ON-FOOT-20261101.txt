@@ -1368,14 +1368,33 @@ The Codex-era NATIVE-GETUP-* reports studied a one-shot GetUp() diagnostic on th
   census 0 at 1 ... 4200, 6 objects at 4800 (timing 6, motion 1). h1h4, the same build and inputs without screenshots, was
   clean to 4800, as was h1h2 (build209); h1h (build208) had one differing tick at 4208. So it is intermittent and not the
   drop work of this night (with no drop those paths are byte-equivalent).
-  [F] Between 3900 and 3960 client 2 made one more view point call than client 1 (VIEW_POINTS total_calls 235,095 against
-  235,094, total_evaluations 380,092 against 380,090; equal at 3900) and allocated one more runtime ID (RUNTIME_IDS next
-  17e6c7 against 17e6c6, allocs +1, digest differs; equal at 3900); agent RNG draws, octree builds and shape appends
-  followed. The view point module blocks evaluations from six client-local scopes (present, view, dispatch, render, ui,
-  camera); this one came through none of them on client 2, the client where slot 1 is a remote body that starts to walk
-  [I: a seventh client-local path, likely the remote body's presentation]. The same class as 5b (the client that presents a
-  slot evaluates one more view point). wk1-wk3 (the walk start moved to 2100 (get up 2000), every row of 2095-2140 written,
+  [F] Between 3900 and 3960 client 2 allocated one more shared runtime ID (RUNTIME_IDS next 17e6c7 against 17e6c6, allocs
+  +1, digest differs; equal at 3900; this config has native_gate_runtime_ids_barrier, so the next ID joins the digest and
+  3903/3904, 3909/3910 ... read as one allocation landing a tick apart, then for good). The caller tables at 3960 differ in
+  one stack only: thread=other route=shared, 58 against 59, frames c0039 (IDBase ctor 0xc0010 -> AssignNewID) / b839a
+  (0xb82d0: a JPH::SphereShape in a 0xe0-byte IDBase wrapper) / ecc728 (0xecc6f0, a sweep test: 0x841500/0x841620, then the
+  wrapper deleted through vfunc 0 before it returns) / 1099856 (AI::NavSplineCalculator vfunc1, a pathing job on a worker
+  thread). So the query sphere of a nav spline job took a shared ID on a worker thread, racing the frame thread's
+  allocations, and client 2's job swept once more. (An earlier version of this note blamed one extra VIEW_POINTS call on
+  client 2: clean runs show the same +1 (h1r2, h1r3, h1h4 at 600 and 3960), it changes no level; not the cause.)
+  Fix candidate (build215): the sweep test's call into the sphere factory (return 0xecc728 -> 0xb82d0) is a
+  view-list site of the runtime ID module (lockstep_runtime_ids.h rid_sites): the transient shape takes a local ID, the
+  shared head no longer sees it. The second nav spline path (0xec0cb0 -> factory 0xb83b0, 181 allocations, equal) hands its
+  object on and stays shared. wk1-wk3 (the walk start moved to 2100 (get up 2000), every row of 2095-2140 written,
   2600 ticks, build214): slot 1 got up and walked on both clients in each (walk=397 by 2400), no digest mismatch in any.
-  So far 1 split in 7 runs with this walk. Next: the same with native_gate_view_rows (every evaluation's trigger and caller
-  chain), repeated until a split names the extra call.
+  So far 1 split in 7 runs with this walk.
+  h1r1-h1r3 (the long scenario, build214, native_gate_runtime_ids_rows: every tick's shared allocations by thread and key):
+  h1r2 and h1r3 clean to 4300; h1r1 mismatched from the first capture (600) on: 6 created U::NPC (created at 499, two in
+  each of three U::Cockpit) differ in existence (census 'inventory'), nothing else to 4200; the shared allocation rows equal
+  on both clients at every tick (only the order seq differs at boot ticks 2 and 22), the view and ui lists' counts equal at
+  540 (ui one UIElement apart, local), the created identities digest equal at 480 and different at 540. [F] Each client has
+  exactly one NPC in each of those cockpits, with a different created ID (cockpit 8001f394c9cb207e: 8001f3229feb1d26 on
+  client 1, 8001f36f618bfeea on client 2); the cockpits themselves (created at 499 too) match. A created ID hashes (parent,
+  class, macro, ordinal), so the pilot figure was made with a different macro [I: its character picked by a draw that is
+  not keyed, as the 15g drawer was; nothing else parted through 4200; open]. Two intermittent classes in this scenario, then: the worker-thread nav sweep ID (fix candidate above) and the
+  cockpit figures' identities.
+  build215 live (h1f1-h1f3: the long wharf scenario with runtime ID rows; d215: the 2-client session defaults, 3000 ticks):
+  all four relay pass, no digest mismatch, census 0 at every capture (8, 8, 8 and 2); the view list counts equal on both
+  clients (14,245 allocations / 14,167 freed at 4200 in h1f1). No regression; whether the split is gone needs more runs
+  (it came in 1 of 4 long runs before).
 

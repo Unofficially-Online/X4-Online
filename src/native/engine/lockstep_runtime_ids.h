@@ -201,7 +201,11 @@ static const rid_site_t rid_sites[]={
     /* EffectObject, FogVolume, LensFlare, Stardust: the two constructors' Positional calls; EffectObjectCreator. */
     RID_CALL(0x8e1b44u,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0x8e48a6u,0x7426d0u,RID_ROUTE_VIEW),RID_CALL(0xd9d312u,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0x8e4bbeu,0x7426d0u,RID_ROUTE_VIEW),
     RID_CALL(0xe233feu,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0xe233aeu,0x7426d0u,RID_ROUTE_VIEW),RID_CALL(0xe417aeu,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0xe4175eu,0x7426d0u,RID_ROUTE_VIEW),
-    RID_CALL(0xd7313cu,0xcc220u,RID_ROUTE_VIEW),RID_CALL(0xd70c1bu,0xcc220u,RID_ROUTE_VIEW)};
+    RID_CALL(0xd7313cu,0xcc220u,RID_ROUTE_VIEW),RID_CALL(0xd70c1bu,0xcc220u,RID_ROUTE_VIEW),
+    /* AI::NavSplineCalculator's sweep test 0xecc6f0 (from its vfunc1, a pathing job on a worker thread): the query sphere
+     * from 0xb82d0 (a JPH::SphereShape in an IDBase wrapper), swept with 0x841500/0x841620 and deleted (vfunc 0) before it
+     * returns. Its shared ID raced the frame thread's allocations: h1h3, client 2 one more at 3903 (on-foot report 15m). */
+    RID_CALL(0xecc728u,0xb82d0u,RID_ROUTE_VIEW)};
 #define RID_SITES (sizeof(rid_sites)/sizeof(*rid_sites))
 static const struct {unsigned rva,size;const char *sha;} rid_local_bodies[]={
     {0xaf0ec0u,0x1e0u,"ae79899a9a827afd1c6fe4f3e073e52cb9afb281834e1f6fdebbfb8b79d33678"},
