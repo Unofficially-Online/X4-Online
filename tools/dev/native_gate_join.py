@@ -155,9 +155,9 @@ def blob_record(blob):
 
 # ---- the join package ----
 MAGIC = b'X4MPJN01'
-PACKAGE_VERSION = 12          # 1: GATE..LUA; 2: and HEALTH, POSE; 3: and SHIELD, NAV, ATTN, KEYS; 4: and PATH, REGION; 5: and FLIGHT,
-PACKAGE_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)   # SPLINE; 6: and AGENT; 7: and ROUTE; 8: and PARAM, DOCK; 9: and STEER,
-#                                                        STEERPT; 10: and SOLVER, BULLET; 11: and GRAV, GRAVC, GRAVS; 12: and SPLM, SPLME, SPLMSEG, GRAVN, GRAVP, GRAVQ
+PACKAGE_VERSION = 13          # 1: GATE..LUA; 2: and HEALTH, POSE; 3: and SHIELD, NAV, ATTN, KEYS; 4: and PATH, REGION; 5: and FLIGHT,
+PACKAGE_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)   # SPLINE; 6: and AGENT; 7: and ROUTE; 8: and PARAM, DOCK; 9: and STEER,
+#                                                        STEERPT; 10: and SOLVER, BULLET; 11: and GRAV, GRAVC, GRAVS; 12: and SPLM, SPLME, SPLMSEG, GRAVN, GRAVP, GRAVQ; 13: and JOBE, EVQT, GRAVD, VIEWK, VIEWKC, VIEWF, VIEWP, SHOOT, ATTK, LIVEF, SPEC, NAVC, JOBS
 HEADER = struct.Struct('<8sIIQQQ32sQIIQ')      # 96 bytes
 SECTION = struct.Struct('<IIQ32s')            # 48 bytes before each payload
 SEC_GATE, SEC_IDS, SEC_WAKE, SEC_WAKEVEC, SEC_MDHEAP, SEC_MODULES, SEC_CTX, SEC_LUA, SEC_HEALTH, SEC_POSE = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
@@ -170,7 +170,8 @@ SEC_PARAM, SEC_DOCK = 21, 22
 SEC_STEER, SEC_STEERPT = 23, 24
 SEC_SOLVER, SEC_BULLET = 25, 26
 SEC_GRAV, SEC_GRAVC, SEC_GRAVS = 27, 28, 29
-SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ = 30, 31, 32, 33, 34, 35
+SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ, SEC_JOBE, SEC_EVQT, SEC_GRAVD = 30, 31, 32, 33, 34, 35, 36, 37, 38
+SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK, SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS = 39, 40, 41, 42, 43, 44, 45, 46, 47, 48
 SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC: 'wakevec', SEC_MDHEAP: 'mdheap',
                  SEC_MODULES: 'modules', SEC_CTX: 'ctx', SEC_LUA: 'lua', SEC_HEALTH: 'health', SEC_POSE: 'pose',
                  SEC_SHIELD: 'shield', SEC_NAV: 'nav', SEC_ATTN: 'attn', SEC_KEYS: 'keys', SEC_PATH: 'path', SEC_REGION: 'region',
@@ -178,7 +179,8 @@ SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC
                  SEC_STEER: 'steer', SEC_STEERPT: 'steerpt', SEC_SOLVER: 'solver', SEC_BULLET: 'bullet',
                  SEC_GRAV: 'grav', SEC_GRAVC: 'gravc', SEC_GRAVS: 'gravs', SEC_SPLM: 'splm', SEC_SPLME: 'splme',
                  SEC_SPLMSEG: 'splmseg', SEC_GRAVN: 'gravn', SEC_GRAVP: 'gravp',
-                 SEC_GRAVQ: 'gravq'}
+                 SEC_GRAVQ: 'gravq', SEC_JOBE: 'jobe',
+                 SEC_EVQT: 'evqt', SEC_GRAVD: 'gravd', SEC_VIEWK: 'viewk', SEC_VIEWKC: 'viewkc', SEC_VIEWF: 'viewf', SEC_VIEWP: 'viewp', SEC_SHOOT: 'shoot', SEC_ATTK: 'attk', SEC_LIVEF: 'livef', SEC_SPEC: 'spec', SEC_NAVC: 'navc', SEC_JOBS: 'jobs'}
 WORLD_SECTIONS = (SEC_HEALTH, SEC_POSE)         # version 2 and later, always both
 WORLD3_SECTIONS = (SEC_SHIELD, SEC_NAV, SEC_ATTN, SEC_KEYS)   # version 3, always all four
 WORLD4_SECTIONS = (SEC_PATH, SEC_REGION)                      # version 4, always both
@@ -190,8 +192,10 @@ WORLD9_SECTIONS = (SEC_STEER, SEC_STEERPT)                    # version 9, alway
 WORLD10_SECTIONS = (SEC_SOLVER, SEC_BULLET)                   # version 10, always both
 WORLD11_SECTIONS = (SEC_GRAV, SEC_GRAVC, SEC_GRAVS)           # version 11, always all three
 WORLD12_SECTIONS = (SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ)   # version 12, always all six
+WORLD13_SECTIONS = (SEC_JOBE, SEC_EVQT, SEC_GRAVD, SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK,
+                    SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS)   # version 13, all thirteen
 LAST_SECTION = {1: SEC_LUA, 2: SEC_POSE, 3: SEC_KEYS, 4: SEC_REGION, 5: SEC_SPLINE, 6: SEC_AGENT, 7: SEC_ROUTE, 8: SEC_DOCK, 9: SEC_STEERPT,
-                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ}
+                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ, 13: SEC_JOBS}
 TEXT_SECTIONS = (SEC_MODULES, SEC_LUA)          # newline-terminated printable lines; count = lines
 # Fixed record shapes (lockstep_join.h join_*_rec). GATE is one 256-byte record; MODULES and LUA (the probe's own state
 # providers, native_gate_join_core.lua) are text (count = lines).
@@ -328,18 +332,37 @@ SPLME_SPLINE = 1
 GRAVN_NONE = 4
 GRAVP_PRESENT = 1
 GRAVQ_UNMAPPED, GRAVQ_OTHER, GRAVQ_EVENT_VT = 1, 2, 0x2baf7d8
+JOBE_ENABLED, JOBE_RUNNING, JOBE_GATE, JOBE_CURSOR = 1, 2, 4, 112   # JOBE: the job engine's last run (bits), flags, the cursor job ID
 SPLM = struct.Struct('<QI2II2I2I2I%ds' % SPLM_BYTES)
 SPLME = struct.Struct('<QIIIIII80s80s')
 GRAVN = struct.Struct('<QQQII')
 GRAVP = struct.Struct('<QII64s')
 GRAVQ = struct.Struct('<QIIIIQQQ')
-assert SPLM.size == 1264 and SPLME.size == 192 and GRAVN.size == 32 and GRAVP.size == 80 and GRAVQ.size == 48
+JOBE = struct.Struct('<QII%ds' % JOBE_CURSOR)
+EVQT = struct.Struct('<QIIIIQ')   # EVQT: source portable, class RVA, type ID, place, flags, time bits
+EVQT_UNMAPPED = 1
+GRAVD = struct.Struct('<QQII')   # GRAVD: ship, cached parent (portable IDs), view (relative), flags NONE/UNMAPPED
+GRAVD_NONE, GRAVD_UNMAPPED = 1, 2
+VIEWK = struct.Struct('<QIIII')   # VIEWK: component, view (relative), flags UNMAPPED/UNREAD, the view flags, the children count
+VIEWKC = struct.Struct('<QQII')   # VIEWKC: component, child (portable IDs), view, place
+VIEWK_UNMAPPED, VIEWK_UNREAD, VIEWK_CHILDREN = 1, 2, 65536
+VIEWF = struct.Struct('<QIIII')   # VIEWF: component, its view flags and published attention (current view, the other)
+VIEWP = struct.Struct('<Q64s')   # VIEWP: a zone-held component, its settled published pose
+# SHOOT: a weapon, its last shot time, its controller's +0x28 +0x40 +0x48 +0x50 +0x58 (double bits), aim, controller vtable RVA,
+# the weapon's +0x30c..+0x30e, the controller's +0x84 +0x85, has a controller, padding
+SHOOT = struct.Struct('<QQ5Q32sI3s2sB6s')
+ATTK = struct.Struct('<QQ3QII')   # ATTK: a destructible, its attacker (portable), attack times (bits), method, padding
+LIVEF = struct.Struct('<QII')   # LIVEF: a component, the live flag bits to set and to clear (0x20 only)
+SPEC = struct.Struct('<QIIIIQQ')   # SPEC: a component, a view cache specification entry: kind, flags, class, truncated, interval, last
+NAVC = struct.Struct('<Q96s')   # NAVC: a ship, its navigation controller's cached transform and velocity (+0x60..+0xbf)
+JOBS = struct.Struct('<QQII')   # JOBS: a job's ID hash (FNV-1a), its state's +0x48, its place in the job DB, padding
+assert SPLM.size == 1264 and SPLME.size == 192 and GRAVN.size == 32 and GRAVP.size == 80 and GRAVQ.size == 48 and JOBE.size == 128 and EVQT.size == 32 and GRAVD.size == 24 and VIEWK.size == 24 and VIEWKC.size == 24 and VIEWF.size == 24 and VIEWP.size == 72 and SHOOT.size == 104 and ATTK.size == 48 and LIVEF.size == 16 and SPEC.size == 40 and NAVC.size == 104 and JOBS.size == 24
 RECORDS = {SEC_IDS: IDS, SEC_CTX: CTX, SEC_WAKE: WAKE, SEC_WAKEVEC: WAKEVEC, SEC_MDHEAP: MDHEAP, SEC_HEALTH: HEALTH, SEC_POSE: POSE,
            SEC_SHIELD: SHIELD, SEC_NAV: NAV, SEC_ATTN: ATTN, SEC_KEYS: KEYS, SEC_PATH: PATH, SEC_REGION: REGION,
            SEC_FLIGHT: FLIGHT, SEC_SPLINE: SPLINE, SEC_AGENT: AGENT, SEC_ROUTE: ROUTE, SEC_PARAM: PARAM, SEC_DOCK: DOCK,
            SEC_STEER: STEER, SEC_STEERPT: ROUTE, SEC_SOLVER: SOLVER, SEC_BULLET: BULLET, SEC_GRAV: GRAV, SEC_GRAVC: GRAVC,
            SEC_GRAVS: GRAVS, SEC_SPLM: SPLM, SEC_SPLME: SPLME, SEC_SPLMSEG: SPLINE, SEC_GRAVN: GRAVN,
-           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ}
+           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ, SEC_JOBE: JOBE, SEC_EVQT: EVQT, SEC_GRAVD: GRAVD, SEC_VIEWK: VIEWK, SEC_VIEWKC: VIEWKC, SEC_VIEWF: VIEWF, SEC_VIEWP: VIEWP, SEC_SHOOT: SHOOT, SEC_ATTK: ATTK, SEC_LIVEF: LIVEF, SEC_SPEC: SPEC, SEC_NAVC: NAVC, SEC_JOBS: JOBS}
 GATE_FIELDS = ('tick', 'game', 'real', 'wire_version', 'clients', 'lookahead', 'tick_hz', 'slot', 'md_seq', 'rid_next',
                'created_generation', 'created_live', 'identities', 'ctx_count', 'wake_count', 'vec_index', 'vec0', 'vec1',
                'md_count', 'md_void', 'md_release', 'md_queued', 'unsupported', 'digest', 'portable', 'save_us',
@@ -686,6 +709,55 @@ def gravq_shape(gravq):
     return True
 
 
+def jobe_shape(jobe):
+    """lockstep_join_world.h join_jobe_shape: at most one, flags ENABLED/RUNNING/GATE only, a printable cursor shorter than the field."""
+    if len(jobe) > 1:
+        return False
+    for last, flags, length, cursor in jobe:
+        if flags & ~7 or length >= JOBE_CURSOR or any(cursor[length:]) or any(not 33 <= c <= 126 for c in cursor[:length]):
+            return False
+    return True
+
+
+def _evqt_key(r):
+    return (r[0], r[1], struct.unpack('<d', struct.pack('<Q', r[5]))[0], r[3])
+
+
+def evqt_shape(evqt):
+    """lockstep_join_world.h join_evqt_shape: sorted by (portable, class, time, place), flags UNMAPPED only, exactly without a source."""
+    for i, r in enumerate(evqt):
+        if r[4] & ~EVQT_UNMAPPED or (not r[0]) != bool(r[4] & EVQT_UNMAPPED) or (i and _evqt_key(evqt[i-1]) > _evqt_key(r)):
+            return False
+    return True
+
+
+def gravd_shape(gravd):
+    """lockstep_join_world.h join_gravd_shape: by (ship, view) each once, view 0/1, flags NONE or UNMAPPED, a parent exactly without."""
+    for i, (portable, parent, rel, flags) in enumerate(gravd):
+        if not portable or rel > 1 or flags & ~3 or flags == 3 or (not parent) != bool(flags) or (i and gravd[i-1][0:3:2] >= (portable, rel)):
+            return False
+    return True
+
+
+def viewk_shape(viewk, viewkc):
+    """lockstep_join_world.h join_viewk_shape: by (component, view) each once, view 0/1, flags UNMAPPED/UNREAD, UNREAD without children;
+    VIEWKC exactly each record's children in order, a child 0 exactly under UNMAPPED."""
+    j = 0
+    for i, (portable, rel, flags, vflags, count) in enumerate(viewk):
+        if not portable or rel > 1 or flags & ~3 or count > VIEWK_CHILDREN or (flags & VIEWK_UNREAD and count) or \
+                (i and viewk[i-1][0:2] >= (portable, rel)):
+            return False
+        zero = False
+        for x in range(count):
+            if j >= len(viewkc) or (viewkc[j][0], viewkc[j][2], viewkc[j][3]) != (portable, rel, x):
+                return False
+            zero = zero or not viewkc[j][1]
+            j += 1
+        if zero != bool(flags & VIEWK_UNMAPPED):
+            return False
+    return j == len(viewkc)
+
+
 def bullet_differences(left, right):
     """The object offsets where two savers' BULLET records of one projectile differ ('fields' for its named ones, 'bullet+0x..', 'motion+0x..')."""
     out = ['fields'] if left[:7] != right[:7] else []
@@ -769,7 +841,7 @@ def read_package(data):
     if hashlib.sha256(data[:-32]).digest() != data[-32:]:
         raise JoinError('package_sha')
     magic, version, count, tick, game, real, save_sha, save_bytes, slot, flags, reserved = HEADER.unpack_from(data)
-    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 35:
+    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 48:
         raise JoinError('package_magic')
     header = {'tick': tick, 'game': game, 'real': real, 'save_sha': save_sha.hex(), 'save_bytes': save_bytes, 'slot': slot,
               'flags': flags, 'sections': count, 'version': version}
@@ -797,7 +869,8 @@ def read_package(data):
             (version >= 9 and not all(SECTION_NAMES[k] in sections for k in WORLD9_SECTIONS)) or \
             (version >= 10 and not all(SECTION_NAMES[k] in sections for k in WORLD10_SECTIONS)) or \
             (version >= 11 and not all(SECTION_NAMES[k] in sections for k in WORLD11_SECTIONS)) or \
-            (version >= 12 and not all(SECTION_NAMES[k] in sections for k in WORLD12_SECTIONS)):
+            (version >= 12 and not all(SECTION_NAMES[k] in sections for k in WORLD12_SECTIONS)) or \
+            (version >= 13 and not all(SECTION_NAMES[k] in sections for k in WORLD13_SECTIONS)):
         raise JoinError('package_layout')
     for name in ('health', 'pose', 'shield', 'nav', 'attn', 'flight', 'dock', 'steer'):   # sorted by portable ID, each once (world_order)
         keys = [r[0] for r in sections.get(name, [])]
@@ -843,6 +916,33 @@ def read_package(data):
         raise JoinError('gravp_shape')
     if version >= 12 and not gravq_shape(sections['gravq']):
         raise JoinError('gravq_shape')
+    if version >= 13 and not jobe_shape(sections['jobe']):
+        raise JoinError('jobe_shape')
+    if version >= 13 and not evqt_shape(sections['evqt']):
+        raise JoinError('evqt_shape')
+    if version >= 13 and not gravd_shape(sections['gravd']):
+        raise JoinError('gravd_shape')
+    if version >= 13 and not viewk_shape(sections['viewk'], sections['viewkc']):
+        raise JoinError('viewk_shape')
+    if version >= 13 and any(not r[0] or (i and sections['viewf'][i-1][0] >= r[0]) for i, r in enumerate(sections['viewf'])):
+        raise JoinError('viewf_shape')
+    if version >= 13 and any(not r[0] or (i and sections['viewp'][i-1][0] >= r[0]) for i, r in enumerate(sections['viewp'])):
+        raise JoinError('viewp_shape')
+    if version >= 13 and any(not r[0] or (i and sections['shoot'][i-1][0] >= r[0]) or r[11] > 1 or (not r[8]) != (not r[11])
+                             or max(r[9]) > 1 or max(r[10]) > 1 or any(r[12]) for i, r in enumerate(sections['shoot'])):
+        raise JoinError('shoot_shape')
+    if version >= 13 and any(not r[0] or (i and sections['attk'][i-1][0] >= r[0]) or r[6] or not (r[2] | r[3] | r[4])
+                             for i, r in enumerate(sections['attk'])):
+        raise JoinError('attk_shape')
+    if version >= 13 and any(not r[0] or (i and sections['livef'][i-1][0] >= r[0]) or r[1] & r[2] or (r[1] | r[2]) & ~0x20 or not (r[1] | r[2])
+                             for i, r in enumerate(sections['livef'])):
+        raise JoinError('livef_shape')
+    if version >= 13 and any(not r[0] or (i and sections['spec'][i-1][:2] >= r[:2]) for i, r in enumerate(sections['spec'])):
+        raise JoinError('spec_shape')
+    if version >= 13 and any(not r[0] or (i and sections['navc'][i-1][0] >= r[0]) for i, r in enumerate(sections['navc'])):
+        raise JoinError('navc_shape')
+    if version >= 13 and any(r[3] or not r[0] or (i and sections['jobs'][i-1][2] >= r[2]) for i, r in enumerate(sections['jobs'])):
+        raise JoinError('jobs_shape')
     gate = sections['gate']
     if (gate['tick'], gate['game'], gate['real'], gate['slot']) != (tick, game, real, slot):
         raise JoinError('gate_header')
@@ -896,6 +996,9 @@ def portable_text(sections):
         lines.append(f"GRAVP|{len(gravp)}|{hashlib.sha256(b''.join(struct.pack('<QII', *r[:3]) for r in gravp)).hexdigest()}")
         gravq = sections['gravq']              # which sources, kinds, flags and events in which order; not the times
         lines.append(f"GRAVQ|{len(gravq)}|{hashlib.sha256(b''.join(struct.pack('<QIIII', *r[:5]) for r in gravq)).hexdigest()}")
+    if 'jobe' in sections:                     # version 13: the job engine's schedule, whole
+        jobe = sections['jobe']
+        lines.append(f"JOBE|{len(jobe)}|{hashlib.sha256(b''.join(JOBE.pack(*r) for r in jobe)).hexdigest()}")
     return ''.join(line+'\n' for line in lines)
 
 
@@ -923,9 +1026,9 @@ def write_package(gate, sections, save_sha=b'\0'*32, save_bytes=0, flags=0, vers
     allowed = (WORLD_SECTIONS if version >= 2 else ())+(WORLD3_SECTIONS if version >= 3 else ())+(WORLD4_SECTIONS if version >= 4 else ())+\
         (WORLD5_SECTIONS if version >= 5 else ())+(WORLD6_SECTIONS if version >= 6 else ())+(WORLD7_SECTIONS if version >= 7 else ())+\
         (WORLD8_SECTIONS if version >= 8 else ())+(WORLD9_SECTIONS if version >= 9 else ())+(WORLD10_SECTIONS if version >= 10 else ())+\
-        (WORLD11_SECTIONS if version >= 11 else ())+(WORLD12_SECTIONS if version >= 12 else ())
+        (WORLD11_SECTIONS if version >= 11 else ())+(WORLD12_SECTIONS if version >= 12 else ())+(WORLD13_SECTIONS if version >= 13 else ())
     if any(kind in sections for kind in WORLD_SECTIONS+WORLD3_SECTIONS+WORLD4_SECTIONS+WORLD5_SECTIONS+WORLD6_SECTIONS+WORLD7_SECTIONS+
-           WORLD8_SECTIONS+WORLD9_SECTIONS+WORLD10_SECTIONS+WORLD11_SECTIONS+WORLD12_SECTIONS if kind not in allowed):
+           WORLD8_SECTIONS+WORLD9_SECTIONS+WORLD10_SECTIONS+WORLD11_SECTIONS+WORLD12_SECTIONS+WORLD13_SECTIONS if kind not in allowed):
         raise JoinError('package_version')
     if version >= 4:
         sections.setdefault(SEC_PATH, [(0, PATH_MANAGER, 0, 0, 0, 0, 0), (0, PATH_MANAGER, 1, 0, 0, 0, 0)])
@@ -981,7 +1084,7 @@ def world_differences(left, right, samples=8):
     out = {}
     for name in ('health', 'pose', 'shield', 'nav', 'attn', 'keys', 'path', 'region', 'flight', 'spline', 'agent', 'route', 'param',
                  'dock', 'steer', 'steerpt', 'solver', 'bullet', 'grav', 'gravc', 'gravs', 'splm', 'splme', 'splmseg', 'gravn',
-                 'gravp', 'gravq'):
+                 'gravp', 'gravq', 'jobe', 'evqt', 'gravd', 'viewk', 'viewkc', 'viewf', 'viewp', 'shoot', 'attk', 'livef', 'spec', 'navc', 'jobs'):
         if name not in left and name not in right:
             continue
         key = (lambda r: (r[1] << 64) | r[0]) if name == 'keys' else (lambda r: r[0])   # KEYS by (table, key)
@@ -1009,6 +1112,16 @@ def world_differences(left, right, samples=8):
             key = lambda r: (r[1] << 64) | r[0]
         elif name == 'gravq':                  # GRAVQ by its place in the list
             key = lambda r: r[1]
+        elif name == 'jobe':                   # JOBE: the one record
+            key = lambda r: 0
+        elif name == 'evqt':                   # EVQT by (source, class, place)
+            key = lambda r: (r[0] << 64) | (r[1] << 32) | r[3]
+        elif name == 'gravd':                  # GRAVD by (ship, view)
+            key = lambda r: (r[2] << 64) | r[0]
+        elif name == 'viewk':                  # VIEWK by (component, view)
+            key = lambda r: (r[1] << 64) | r[0]
+        elif name == 'viewkc':                 # VIEWKC by (component, view, place)
+            key = lambda r: (r[2] << 96) | (r[3] << 64) | r[0]
         x = {key(r): r for r in left.get(name, [])}
         y = {key(r): r for r in right.get(name, [])}
         differ = sorted(i for i in x.keys() & y.keys() if x[i] != y[i])

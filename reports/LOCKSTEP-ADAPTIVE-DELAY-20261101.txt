@@ -300,4 +300,8 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   held: the stop action alone); slot 3's ship (000000000007a8dc, PILOT_SHIPS) decelerated from about 220 m/s and stands
   still from about 1380 to 3000, where in d3drop (no release) it flew on 13 km by 3000; both STOP reason=1 at 3001, relay
   pass, census 0 at all six captures.
+  Four clients (d4drop, build215; the 4-slot defaults stack on protocol 4, lookahead 1, relay --stall-drop-ms 5000, client 4
+  frozen at 1200): DROP slot=4 tick=1227, remaining=1,2,3; clients 1-3 STOP reason=1 at 3001, releases=1/1 on each, relay
+  pass, census clients 2 and 3 each equal to client 1 at all six captures to 3000; slot 4's ship (07a931) stands still from
+  about 1500.
   Open: peer links, rejoining a dropped slot (a handover into it, the hot join path), carrying a drop in the join package.

@@ -13,6 +13,9 @@ static const thunk_recipe thunk_recipes[]={
     {32,8,THUNK_POINTER,0,0,0,(void*)path_release,{0}},
     /* 40..127 was unowned (between path_release and ai_run); the range finds' result store (48..63). */
     {48,16,THUNK_JUMP,0,0,0,(void*)find_order_space_assign,{0}},
+    {64,16,THUNK_JUMP,0,0,0,(void*)join_job_init,{0}},   /* JOIN_JOBINIT_THUNK (64..79 of the unowned 64..127): a version 13 joiner's JobEngine::Init */
+    {80,16,THUNK_JUMP,0,0,0,(void*)join_boot_events,{0}},   /* JOIN_BOOTEV_THUNK (80..95): a version 13 joiner's boot event passes */
+    {96,16,THUNK_JUMP,0,0,0,(void*)join_pcf_hook,{0}},   /* JOIN_PCF_THUNK (96..111): JOIN_WATCHPCF, PropagateCacheFlags on watched objects */
     {128,64,THUNK_JUMP,0,0,0,(void*)ai_run,{0}},
     {RID_REMOVE_THUNK,64,THUNK_PAIR,RID_REMOVE_ENTRY,5,32,(void*)rid_remove,{0x48,0x89,0x5c,0x24,0x08}},
     {256,64,THUNK_JUMP,0,0,0,(void*)agent_update,{0}},

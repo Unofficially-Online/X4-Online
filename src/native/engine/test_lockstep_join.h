@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef"   /* version 12 (SPLM, SPLME, SPLMSEG, GRAVN, GRAVP, GRAVQ) */
+#define TJ_GOLDEN "4f8670ee903a8fd1c2a90b124f83f9a9fc74833a89f8d7fee7890efa845ff667"   /* version 13 (JOBE .. JOBS; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -333,6 +333,42 @@ static void test_join_golden(void) {
     {join_gravq_rec bad[3];memcpy(bad,gravq,sizeof(bad));bad[1].index=2;assert(!join_gravq_shape(bad,3));
      memcpy(bad,gravq,sizeof(bad));bad[1].portable=0x2004;assert(!join_gravq_shape(bad,3));
      memcpy(bad,gravq,sizeof(bad));bad[2].flags=4;assert(!join_gravq_shape(bad,3));}
+    static join_jobe_rec jobe[1];memset(jobe,0,sizeof(jobe));   /* the job engine's schedule: last run 23.25, cursor xenon_miner_1 */
+    jobe[0].last=0x4037400000000000ull;jobe[0].flags=JOIN_JOBE_ENABLED|JOIN_JOBE_RUNNING;jobe[0].len=13;memcpy(jobe[0].cursor,"xenon_miner_1",13);
+    assert(join_jobe_shape(jobe,1) && join_jobe_shape(jobe,0));
+    static join_evqt_rec evqt[3];memset(evqt,0,sizeof(evqt));   /* three pending events: two of one source, one of a source without a key */
+    {double t=40.0;evqt[0]=(join_evqt_rec){0,0x2ac1710u,0x20du,0,JOIN_EVQT_UNMAPPED,0};memcpy(&evqt[0].time,&t,8);
+     t=31.5;evqt[1]=(join_evqt_rec){0x2001,0x2ac17b8u,0x215u,1,0,0};memcpy(&evqt[1].time,&t,8);
+     t=30.25;evqt[2]=(join_evqt_rec){0x2001,0x2baf650u,0x20fu,0,0,0};memcpy(&evqt[2].time,&t,8);}
+    assert(join_evqt_shape(evqt,3) && join_evqt_shape(evqt,0));
+    static join_gravd_rec gravd[2];gravd[0]=(join_gravd_rec){0x2001,0x2003,0,0};gravd[1]=(join_gravd_rec){0x2001,0,1,JOIN_GRAVD_NONE};
+    assert(join_gravd_shape(gravd,2));
+    {join_gravd_rec bad[2]={gravd[1],gravd[0]};assert(!join_gravd_shape(bad,2));bad[0]=gravd[0];bad[1]=gravd[1];bad[1].flags=0;assert(!join_gravd_shape(bad,2));}
+    static join_viewk_rec viewk[2];static join_viewkc_rec viewkc[2];
+    viewk[0]=(join_viewk_rec){0x2002,0,0,0x10042u,1};viewk[1]=(join_viewk_rec){0x2002,1,JOIN_VIEWK_UNMAPPED,0x10042u,1};
+    viewkc[0]=(join_viewkc_rec){0x2002,0x2003,0,0};viewkc[1]=(join_viewkc_rec){0x2002,0,1,0};
+    assert(join_viewk_shape(viewk,2,viewkc,2) && join_viewk_shape(viewk,0,viewkc,0) && !join_viewk_shape(viewk,2,viewkc,1));
+    {join_viewk_rec bad[2]={viewk[1],viewk[0]};assert(!join_viewk_shape(bad,2,viewkc,2));
+     bad[0]=viewk[0];bad[1]=viewk[1];bad[1].flags=0;assert(!join_viewk_shape(bad,2,viewkc,2));
+     bad[1]=viewk[1];bad[0].flags=JOIN_VIEWK_UNREAD;assert(!join_viewk_shape(bad,2,viewkc,2));}
+    {join_viewkc_rec bad[2]={viewkc[1],viewkc[0]};assert(!join_viewk_shape(viewk,2,bad,2));}
+    static join_viewf_rec viewf[2];viewf[0]=(join_viewf_rec){0x2001,{0x10058u,0x10058u},{1u,1u}};viewf[1]=(join_viewf_rec){0x2002,{0x10042u,0x10042u},{6u,6u}};
+    static join_viewp_rec viewp[1];viewp[0].portable=0x2001;for(unsigned k=0;k<64u;k++) viewp[0].pose[k]=(unsigned char)k;
+    static join_shoot_rec shoot[1];memset(shoot,0,sizeof(shoot));shoot[0].portable=0x2001;shoot[0].lastshot=0x4039d983c465091eull;
+    shoot[0].ctl[0]=0x403c2ed916872ba4ull;shoot[0].ctl[1]=0x403c26508dfea31bull;shoot[0].ctl[2]=0x3f9eb851e0000000ull;
+    shoot[0].ctl[3]=0x403c2ed916872ba4ull;shoot[0].ctl[4]=0x403bf31d5acb6fe5ull;for(unsigned k=0;k<32u;k++) shoot[0].aim[k]=(unsigned char)k;
+    shoot[0].ctl_vt=0x2b7fcc0u;shoot[0].wflags[0]=shoot[0].wflags[1]=shoot[0].wflags[2]=1;shoot[0].cflags[0]=1;shoot[0].has_ctl=1;
+    static join_attk_rec attk[1];memset(attk,0,sizeof(attk));attk[0].portable=0x2001;attk[0].attacker=0x2002;
+    attk[0].times[0]=attk[0].times[1]=0x403b5987f5df8f7bull;attk[0].method=7u;
+    static join_livef_rec livef[1];livef[0]=(join_livef_rec){0x2001,0u,0x20u};
+    static join_spec_rec spec[2];spec[0]=(join_spec_rec){0x2001,3u,0x4fu,2u,0u,0x3fc5555555555555ull,0x403c26508dfea31bull};
+    spec[1]=(join_spec_rec){0x2001,7u,0x7fu,0u,0u,0u,0x403c2ed916872b02ull};
+    static join_navc_rec navc[1];navc[0].portable=0x2001;for(unsigned k=0;k<96u;k++) navc[0].cache[k]=(unsigned char)k;
+    static join_jobs_rec jobs[1];jobs[0]=(join_jobs_rec){0xcbf29ce484222325ull,3u,524u,0u};
+    {join_evqt_rec bad[3]={evqt[1],evqt[0],evqt[2]};assert(!join_evqt_shape(bad,3));
+     memcpy(bad,evqt,sizeof(bad));bad[0].flags=0;assert(!join_evqt_shape(bad,3));memcpy(bad,evqt,sizeof(bad));bad[1].flags=2;assert(!join_evqt_shape(bad,3));}
+    {join_jobe_rec bad=jobe[0];bad.cursor[5]=' ';assert(!join_jobe_shape(&bad,1));bad=jobe[0];bad.len=12;assert(!join_jobe_shape(&bad,1));
+     bad=jobe[0];bad.flags=8;assert(!join_jobe_shape(&bad,1));join_jobe_rec two[2]={jobe[0],jobe[0]};assert(!join_jobe_shape(two,2));}
     memset(splm,0,sizeof(splm));memset(splme,0,sizeof(splme));memset(splmseg,0,sizeof(splmseg));
     splm[0].portable=0x2004;splm[0].entries[0]=1;splm[0].segments[0]=1;splm[0].pairs[0]=2;
     for(unsigned i=0;i<JOIN_SPLM_BYTES;i++) splm[0].model[i]=(unsigned char)(i*13+7);
@@ -351,7 +387,7 @@ static void test_join_golden(void) {
     splme[0].entry[0]=1;assert(!join_splm_shape(splm,1,splme,1,splmseg,4));splme[0].entry[0]=0;         /* a pointer left in the entry */
     gravn[2].flags=0;assert(!join_gravn_shape(gravn,3));gravn[2].flags=JOIN_GRAVN_NONE;
     {join_gravn_rec swap[3]={gravn[1],gravn[0],gravn[2]};assert(!join_gravn_shape(swap,3));}
-    t.splm=splm;t.nsplm=1;t.splme=splme;t.nsplme=1;t.splmseg=splmseg;t.nsplmseg=4;t.gravn=gravn;t.ngravn=3;t.gravp=gravp;t.ngravp=3;t.gravq=gravq;t.ngravq=3;
+    t.splm=splm;t.nsplm=1;t.splme=splme;t.nsplme=1;t.splmseg=splmseg;t.nsplmseg=4;t.gravn=gravn;t.ngravn=3;t.gravp=gravp;t.ngravp=3;t.gravq=gravq;t.ngravq=3;t.jobe=jobe;t.njobe=1;t.evqt=evqt;t.nevqt=3;t.gravd=gravd;t.ngravd=2;t.viewk=viewk;t.nviewk=2;t.viewkc=viewkc;t.nviewkc=2;t.viewf=viewf;t.nviewf=2;t.viewp=viewp;t.nviewp=1;t.shoot=shoot;t.nshoot=1;t.attk=attk;t.nattk=1;t.livef=livef;t.nlivef=1;t.spec=spec;t.nspec=2;t.navc=navc;t.nnavc=1;t.jobs=jobs;t.njobs=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -366,8 +402,18 @@ static void test_join_golden(void) {
            r.ngravs==4 && !memcmp(r.gravs,gravs,sizeof(gravs)));
     assert(r.nsplm==1 && !memcmp(r.splm,splm,sizeof(splm)) && r.nsplme==1 && !memcmp(r.splme,splme,sizeof(splme)) &&
            r.nsplmseg==4 && !memcmp(r.splmseg,splmseg,sizeof(splmseg)) && r.ngravn==3 && !memcmp(r.gravn,gravn,sizeof(gravn)) &&
-           r.ngravp==3 && !memcmp(r.gravp,gravp,sizeof(gravp)) && r.ngravq==3 && !memcmp(r.gravq,gravq,sizeof(gravq)));
-    assert(r.version==12 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
+           r.ngravp==3 && !memcmp(r.gravp,gravp,sizeof(gravp)) && r.ngravq==3 && !memcmp(r.gravq,gravq,sizeof(gravq)) &&
+           r.njobe==1 && !memcmp(r.jobe,jobe,sizeof(jobe)) && r.nevqt==3 && !memcmp(r.evqt,evqt,sizeof(evqt)) &&
+           r.ngravd==2 && !memcmp(r.gravd,gravd,sizeof(gravd)) && r.nviewk==2 && !memcmp(r.viewk,viewk,sizeof(viewk)) &&
+           r.nviewkc==2 && !memcmp(r.viewkc,viewkc,sizeof(viewkc)) && r.nviewf==2 && !memcmp(r.viewf,viewf,sizeof(viewf)) &&
+           r.nviewp==1 && !memcmp(r.viewp,viewp,sizeof(viewp)) &&
+           r.nshoot==1 && !memcmp(r.shoot,shoot,sizeof(shoot)) &&
+           r.nattk==1 && !memcmp(r.attk,attk,sizeof(attk)) &&
+           r.nlivef==1 && !memcmp(r.livef,livef,sizeof(livef)) &&
+           r.nspec==2 && !memcmp(r.spec,spec,sizeof(spec)) &&
+           r.nnavc==1 && !memcmp(r.navc,navc,sizeof(navc)) &&
+           r.njobs==1 && !memcmp(r.jobs,jobs,sizeof(jobs)));
+    assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
            !memcmp(r.attn,attn,sizeof(attn)) && !memcmp(r.keys,keys,sizeof(keys)));
@@ -400,7 +446,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec)),
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -430,7 +476,9 @@ static void test_join_golden(void) {
     assert(!join_package_parse(copy,b.size,&r,&why) && !strcmp(why,"section_head"));join_tables_free(&r);
     memcpy(copy,b.data,b.size);copy[8]=10;lockstep_sha256(copy,b.size-32,copy+b.size-32);  /* a version 10 header with GRAV, GRAVC, GRAVS */
     assert(!join_package_parse(copy,b.size,&r,&why) && !strcmp(why,"section_head"));join_tables_free(&r);
-    memcpy(copy,b.data,b.size);copy[8]=11;lockstep_sha256(copy,b.size-32,copy+b.size-32);  /* a version 11 header with SPLM..GRAVP */
+    memcpy(copy,b.data,b.size);copy[8]=12;lockstep_sha256(copy,b.size-32,copy+b.size-32);  /* a version 12 header with JOBE */
+    assert(!join_package_parse(copy,b.size,&r,&why) && !strcmp(why,"section_head"));join_tables_free(&r);
+    memcpy(copy,b.data,b.size);copy[8]=11;lockstep_sha256(copy,b.size-32,copy+b.size-32);  /* a version 11 header with SPLM..GRAVQ */
     assert(!join_package_parse(copy,b.size,&r,&why) && !strcmp(why,"section_head"));join_tables_free(&r);
     /* Version 3: a changed NAV record changes the portable digest; KEYS out of (table, key) order and an actor key without its
      * actor refuse (section hash and trailer resealed). */
@@ -567,7 +615,8 @@ static void test_join_golden(void) {
      v1.version=9;assert(join_version_refused(&v1,JOIN_STRICT) && !strcmp(join_version_name(9),"package_v9"));
      v1.version=10;assert(join_version_refused(&v1,JOIN_STRICT) && !strcmp(join_version_name(10),"package_v10"));
      v1.version=11;assert(join_version_refused(&v1,JOIN_STRICT) && !strcmp(join_version_name(11),"package_v11"));
-     v1.version=12;assert(!join_version_refused(&v1,JOIN_STRICT));}
+     v1.version=12;assert(join_version_refused(&v1,JOIN_STRICT) && !strcmp(join_version_name(12),"package_v12"));
+     v1.version=13;assert(!join_version_refused(&v1,JOIN_STRICT));}
     {   /* Version 10: SOLVER's bytes and BULLET stay out of the portable digest, SOLVER's model kind is in it; a pointer outside the object
          * refuses (solver_shape), a macro with a byte behind its end (bullet_shape). Hashes resealed. */
         size_t bullet_payload=b.size-32-v11_tail-2*sizeof(join_bullet_rec),solver_payload=bullet_payload-48-sizeof(join_solver_rec);
@@ -1139,6 +1188,18 @@ static unsigned char *tj_solver_fresh;   /* the engine's preparation of a solver
 static uintptr_t tj_solver_cell;   /* the one address the synthetic process maps (join_mapped) */
 static int tj_solver_mapped(uint64_t q) {return q==tj_solver_cell;}
 static void tj_gravq_cs(void *cs,int enter) {(void)cs;(void)enter;}   /* the synthetic worker's ready lock */
+static void *tj_jobinit_filter;static unsigned tj_jobinit_n;   /* JobEngine::Init, recorded */
+static unsigned tj_bootev_n;static void tj_bootev(void) {++tj_bootev_n;}   /* the event pass, counted */
+static unsigned char *tj_jobinit_flag_seen,tj_jobinit_flag;   /* a job's +0x469 as Init saw it */
+static uint64_t tj_jobinit(void *engine,void *filter) {(void)engine;tj_jobinit_filter=filter;++tj_jobinit_n;if(tj_jobinit_flag_seen) tj_jobinit_flag|=*tj_jobinit_flag_seen;return 1;}
+/* EVQT: the class's type (slot 1), the engine's removal and post, recorded */
+static uint32_t tj_evqt_type(uint32_t cls) {return cls==0x2baf650u?0x20fu:cls==0x2ac17b8u?0x215u:cls==0x2ac1710u?0x20du:0u;}
+static void *tj_evqt_rm_src[8];static int tj_evqt_rm_type[8];static unsigned tj_evqt_rms;
+static void tj_evqt_remove(void *src,int type,double before) {(void)before;if(tj_evqt_rms<8) {tj_evqt_rm_src[tj_evqt_rms]=src;tj_evqt_rm_type[tj_evqt_rms]=type;}++tj_evqt_rms;}
+static void *tj_evqt_post_src[8];static uint64_t *tj_evqt_post_ev[8];static double tj_evqt_post_t[8];static unsigned tj_evqt_posts;
+static void tj_evqt_post(void *src,void *ev,double t,char imm) {(void)imm;if(tj_evqt_posts<8) {tj_evqt_post_src[tj_evqt_posts]=src;tj_evqt_post_ev[tj_evqt_posts]=ev;tj_evqt_post_t[tj_evqt_posts]=t;}++tj_evqt_posts;}
+static char tj_jobe_text[JOIN_JOBE_CURSOR];static size_t tj_jobe_n;static void *tj_jobe_at;   /* the engine's string assign, recorded */
+static void *tj_jobe_assign(void *s,const char *text,size_t n) {memcpy(tj_jobe_text,text,n);tj_jobe_n=n;tj_jobe_at=s;return s;}
 static void *tj_solver_prepare(void *agent) {
     if(tj_solver_fresh) *(unsigned char **)((unsigned char *)agent+JOIN_AGENT_SOLVER)=tj_solver_fresh;
     return tj_solver_fresh;
@@ -2394,6 +2455,114 @@ static void test_join_world(void) {
                     }
                     join_gravq_cs=qcs;memset(gw,0,sizeof(gw));
                     join_grav_worker_test=NULL;join_grav_lock=lock;join_grav_lookup=lookup;join_grav_passive_new=passive;join_flight_alloc=grav_alloc;
+                }
+                /* Version 13, the joiner's JobEngine::Init (j1-56/57/59): from its package load to its admission the call gets an empty job
+                 * filter (no initial spawns) in place of none or the load's own; every call outside that window passes through. */
+                {
+                    uint64_t (*fn)(void *,void *)=join_jobinit_fn;join_jobinit_fn=tj_jobinit;int ints[2];struct {int *b,*e;} own={ints,ints+2};
+                    /* a DB of two jobs (the header, a root with a right child; the second has +0x469 set) */
+                    static __attribute__((aligned(16))) unsigned char db[0x40],node[2][0x500];memset(db,0,sizeof(db));memset(node,0,sizeof(node));
+                    *(unsigned char **)(node[0]+0)=db+0x10;*(unsigned char **)(node[0]+0x10)=node[1];*(unsigned char **)(node[1]+0)=node[0];
+                    node[1][0x4b1]=1;*(unsigned char **)(db+0x30)=node[0];{uint64_t c=2;memcpy(db+0x38,&c,8);}
+                    join_jobdb_test=db;tj_jobinit_flag_seen=&node[1][0x4b1];
+                    join_t1_reset();memset(&join_rx,0,sizeof(join_rx));join_rx.t.version=13;join_rx.loaded=1;
+                    assert(join_job_init(NULL,NULL)==1 && tj_jobinit_filter==&join_jobinit_none && !join_jobinit_none.begin && !join_jobinit_none.end);
+                    assert(join_job_init(NULL,&own)==1 && tj_jobinit_filter==&join_jobinit_none);   /* the load's own filter too (j1-59) */
+                    assert(join_jobinit_jobs==2 && join_jobinit_cleared==2 && !tj_jobinit_flag && node[1][0x4b1]==1);   /* off in Init, back after */
+                    tj_jobinit_flag_seen=NULL;
+                    join_rx.admitted=1;assert(join_job_init(NULL,&own)==1 && tj_jobinit_filter==&own);
+                    join_rx.admitted=0;join_rx.t.version=12;assert(join_job_init(NULL,NULL)==1 && !tj_jobinit_filter);
+                    assert(tj_jobinit_n==4 && join_jobinit_empty==2 && join_jobinit_calls==4);
+                    assert(join_jobinit_cleared==2);   /* nothing cleared outside the window */
+                    join_jobdb_test=NULL;join_jobinit_cleared=0;
+                    join_jobinit_fn=fn;join_jobinit_calls=join_jobinit_empty=0;memset(&join_rx,0,sizeof(join_rx));join_t1_reset();
+                }
+                /* The boot event passes held by class (report 1.18): from a version 13 joiner's package load to its admission the
+                 * pass's due events of the classes the session had due at T are swapped for stand-ins and kept; the pass always runs. */
+                {
+                    void (*fn)(void)=join_bootev_fn;join_bootev_fn=tj_bootev;tj_bootev_n=0;
+                    join_t1_reset();memset(&join_rx,0,sizeof(join_rx));join_rx.t.version=13;join_rx.loaded=1;
+                    static join_evqt_rec ev[3];double t=10.0;memcpy(&join_rx.t.gate.game,&t,8);
+                    ev[0]=(join_evqt_rec){0x2001,0x2ba7280u,0x1u,0,0,0};memcpy(&ev[0].time,&t,8);           /* due at T: held */
+                    ev[1]=(join_evqt_rec){0x2001,0x2ac1710u,0x20du,1,0,0};memcpy(&ev[1].time,&t,8);          /* rebuilt: not held */
+                    t=10.5;ev[2]=(join_evqt_rec){0x2002,0x2ae9af0u,0x2u,0,0,0};memcpy(&ev[2].time,&t,8);     /* later: not held */
+                    join_rx.t.evqt=ev;join_rx.t.nevqt=3;join_bootev_classes();
+                    assert(join_bootev_nclasses==1 && join_bootev_class[0]==0x2ba7280u);
+                    {void **s=calloc(1,0x40);s[0]=(void *)join_bootev_standin_vt;
+                     assert(((int (*)(void *))join_bootev_standin_vt[1])(s)==JOIN_BOOTEV_STANDIN_TYPE);((void (*)(void *,int))join_bootev_standin_vt[0])(s,1);}
+                    static unsigned char hdr[0x40];memset(hdr,0,sizeof(hdr));join_evq_head_test=hdr;   /* an empty schedule */
+                    join_boot_events();assert(tj_bootev_n==1 && join_bootev_held==1 && join_bootev_n==0);   /* nothing due: nothing kept */
+                    join_rx.admitted=1;join_boot_events();assert(tj_bootev_n==2 && join_bootev_held==1);
+                    join_rx.admitted=0;join_rx.t.version=12;join_boot_events();assert(tj_bootev_n==3 && join_bootev_held==1);
+                    join_rx.t.evqt=NULL;join_rx.t.nevqt=0;join_bootev_nclasses=0;join_evq_head_test=NULL;
+                    join_bootev_fn=fn;join_bootev_calls=join_bootev_held=0;memset(&join_rx,0,sizeof(join_rx));join_t1_reset();
+                }
+                /* Version 13, EVQT (j1-50: the joiner's own UpdateEngineParametersEvents up to 8 s from the session's): the session's ship
+                 * waits for an UpdateEngineParametersEvent at 30.25 and an UpdateTradeOffersEvent at 31.5 (its tree: the first the root, the
+                 * second its right child; the schedule: one node); the joiner's ship for its own UpdateEngineParametersEvent at 33. The
+                 * capture keys both; the admission removes the joiner's of that type and posts the session's two at their times. */
+                {
+                    static uint64_t g[2][8],q[2][8],node[2][6],e[3][6],ev[3][3];
+                    unsigned char *ship[2]={tw_session.object[TW_SHIP],tw_joiner.object[TW_SHIP]};uint64_t keep[2];
+                    memset(g,0,sizeof(g));memset(q,0,sizeof(q));memset(node,0,sizeof(node));memset(e,0,sizeof(e));memset(ev,0,sizeof(ev));
+                    for(unsigned side=0;side<2;side++) {memcpy(&keep[side],ship[side]+0x20,8);uint64_t qa=(uintptr_t)q[side];memcpy(ship[side]+0x20,&qa,8);}
+                    ev[0][0]=(uintptr_t)image+0x2baf650u;ev[1][0]=(uintptr_t)image+0x2ac17b8u;ev[2][0]=(uintptr_t)image+0x2baf650u;
+                    double t;
+                    /* the session: q[0] root e[0] (30.25) with right child e[1] (31.5) */
+                    e[0][0]=(uintptr_t)q[0];e[0][2]=(uintptr_t)e[1];t=30.25;memcpy(&e[0][4],&t,8);e[0][5]=(uintptr_t)ev[0];
+                    e[1][0]=(uintptr_t)e[0];t=31.5;memcpy(&e[1][4],&t,8);e[1][5]=(uintptr_t)ev[1];
+                    q[0][1]=(uintptr_t)e[0];q[0][4]=(uintptr_t)e[0];q[0][5]=2;
+                    /* the joiner: q[1] root e[2] (33) */
+                    e[2][0]=(uintptr_t)q[1];t=33.0;memcpy(&e[2][4],&t,8);e[2][5]=(uintptr_t)ev[2];q[1][1]=(uintptr_t)e[2];q[1][4]=(uintptr_t)e[2];q[1][5]=1;
+                    for(unsigned side=0;side<2;side++) {
+                        node[side][0]=(uintptr_t)g[side];t=side?33.0:30.25;memcpy(&node[side][4],&t,8);node[side][5]=(uintptr_t)ship[side];
+                        g[side][0]=(uintptr_t)node[side];g[side][3]=(uintptr_t)node[side];g[side][4]=1;
+                    }
+                    uint32_t (*type)(uint32_t)=join_evqt_type;join_evqt_type=tj_evqt_type;
+                    join_tables f;join_evq_head_test=(unsigned char *)g[0];TJ_FLIGHT_CAPTURE(f);
+                    assert(f.nevqt==2 && join_evqt_shape(f.evqt,2) && f.evqt[0].portable==0x2001 && f.evqt[0].cls==0x2ac17b8u && f.evqt[0].type==0x215u &&
+                           f.evqt[0].index==1 && f.evqt[1].cls==0x2baf650u && f.evqt[1].type==0x20fu && !f.evqt[1].index && !f.evqt[1].flags);
+                    {double a,b2;memcpy(&a,&f.evqt[0].time,8);memcpy(&b2,&f.evqt[1].time,8);assert(a==31.5 && b2==30.25);}
+                    void (*rm)(void *,int,double)=join_evqt_remove;void (*post)(void *,void *,double,char)=join_evqt_post;
+                    join_evqt_remove=tj_evqt_remove;join_evqt_post=tj_evqt_post;tj_evqt_rms=tj_evqt_posts=0;
+                    void *(*alloc)(size_t)=join_flight_alloc;join_flight_alloc=tj_big_alloc;tj_big_allocs=0;
+                    join_evq_head_test=(unsigned char *)g[1];join_t1_reset();tw_admit(&tw_joiner,&f,JOIN_REPORT);assert(join_admit_world());
+                    assert(tj_evqt_rms==1 && tj_evqt_rm_src[0]==ship[1] && tj_evqt_rm_type[0]==0x20f && join_rx.evqt_removed==1);
+                    assert(tj_evqt_posts==2 && join_rx.evqt_posted==2 && !join_rx.evqt_missing && !join_rx.evqt_other && !join_rx.evqt_alloc);
+                    assert(tj_evqt_post_src[0]==ship[1] && tj_evqt_post_ev[0][0]==(uintptr_t)image+0x2ac17b8u && tj_evqt_post_t[0]==31.5 &&
+                           !tj_evqt_post_ev[0][1] && !tj_evqt_post_ev[0][2] && tj_evqt_post_ev[1][0]==(uintptr_t)image+0x2baf650u && tj_evqt_post_t[1]==30.25);
+                    {char status[4096];assert(join_status(status,sizeof(status)) && strstr(status," evqt=1:2:0:0:0 "));}
+                    join_flight_alloc=alloc;join_evqt_remove=rm;join_evqt_post=post;join_evqt_type=type;join_evq_head_test=NULL;
+                    for(unsigned side=0;side<2;side++) memcpy(ship[side]+0x20,&keep[side],8);
+                    join_tables_free(&f);join_t1_reset();
+                }
+                /* Version 12, JOBE (j1-45: the joiner's load ran a full job pass, the session's ran at 634 from its cursor): the session's
+                 * engine (last run 23.25, a heap cursor of 20 bytes), the joiner's (never run, an empty cursor); the admission writes the
+                 * time and assigns the cursor through the engine's std::string assign (a stub here). */
+                {
+                    static __attribute__((aligned(16))) unsigned char eng[2][0x68];static char heap[32];
+                    memset(eng,0,sizeof(eng));
+                    for(unsigned side=0;side<2;side++) *(void **)eng[side]=image+JOIN_JOBE_VT;
+                    eng[0][8]=1;eng[0][9]=1;{double t=23.25;memcpy(eng[0]+0x10,&t,8);}
+                    memcpy(heap,"argon_scout_patrol_s",20);*(char **)(eng[0]+0x18)=heap;{uint64_t v[2]={20,31};memcpy(eng[0]+0x28,v,16);}
+                    eng[1][8]=1;{double t=-1.0;memcpy(eng[1]+0x10,&t,8);uint64_t v[2]={0,15};memcpy(eng[1]+0x28,v,16);}
+                    static unsigned char sw;sw=1;join_jobe_switch_test=&sw;
+                    join_tables f;join_jobe_engine_test=eng[0];TJ_FLIGHT_CAPTURE(f);
+                    assert(f.njobe==1 && join_jobe_shape(f.jobe,1) && f.jobe[0].flags==(JOIN_JOBE_ENABLED|JOIN_JOBE_RUNNING|JOIN_JOBE_GATE) && f.jobe[0].len==20 &&
+                           !memcmp(f.jobe[0].cursor,"argon_scout_patrol_s",20) && f.jobe[0].last==0x4037400000000000ull);
+                    void *(*assign)(void *,const char *,size_t)=join_jobe_assign;join_jobe_assign=tj_jobe_assign;
+                    /* the joiner's load: every import turns the switch off (Init passes nothing), the admission turns it back on */
+                    /* (the joiner's engine still running from the main menu's game: the hold stops it too) */
+                    eng[1][9]=1;join_jobe_engine_test=eng[1];
+                    join_t1_reset();tw_admit(&tw_joiner,&f,JOIN_REPORT);join_jobe_hold();join_jobe_hold();
+                    assert(!sw && !eng[1][9] && join_rx.jobe_held==0x101);
+                    assert(join_admit_world() && sw==1 && eng[1][8]==1 && eng[1][9]==1);
+                    double t;memcpy(&t,eng[1]+0x10,8);
+                    assert(t==23.25 && join_rx.jobe_applied==1 && !join_rx.jobe_missing && join_rx.jobe_prev_last==0xbff0000000000000ull && !join_rx.jobe_prev_len &&
+                           tj_jobe_n==20 && !memcmp(tj_jobe_text,"argon_scout_patrol_s",20) && tj_jobe_at==eng[1]+0x18);
+                    {char status[4096];assert(join_status(status,sizeof(status)) && strstr(status," jobe=1:0:bff0000000000000:0:257 "));}
+                    join_jobe_engine_test=NULL;join_t1_reset();tw_admit(&tw_joiner,&f,JOIN_REPORT);assert(join_admit_world() && join_rx.jobe_missing==1);
+                    join_jobe_assign=assign;join_jobe_switch_test=NULL;join_tables_free(&f);join_t1_reset();
                 }
                 /* Version 12, the spline models (j1-27: the joiner's route empty, the ship brakes): the session's model with a route of
                  * two entries (the first owning a CompositeSpline of one segment and three pairs, the second none; the deque's offset 6

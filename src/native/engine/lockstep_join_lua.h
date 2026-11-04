@@ -49,6 +49,25 @@ static int lua_join_lua_state(lua_State *L) {
     if(accept_ui() && join_rx.loaded) p_lua_pushlstring(L,join_rx.t.lua?join_rx.t.lua:"",join_rx.t.lua_len);else p_lua_pushnil(L);
     return 1;
 }
+/* gate.join_evq_dump(on): every pending event at the capture and at the admission into the crash note and log (diagnostic). */
+static int lua_join_evq_dump(lua_State *L) {join_evq_dump_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_hold_boot_events(on): a version 13 joiner holds its boot event passes until its admission (before join_load). */
+static int lua_join_hold_boot_events(lua_State *L) {join_bootev_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_watch_span(n): the JOIN_WATCH rows after each step T+1 .. T+n (2 .. 64; default 2); n, 0 refused. */
+static int lua_join_watch_span(lua_State *L) {
+    const double n=p_lua_tonumber(L,1);const int ok=isfinite(n) && floor(n)==n && n>=2.0 && n<=(double)JOIN_WATCH_SPAN_MAX;
+    if(ok) join_watch_span=(uint32_t)n;
+    p_lua_pushnumber(L,ok?n:0.0);return 1;
+}
+/* gate.join_watch(id): one more watched object (16 hex digits, a portable ID) for the JOIN_WATCH rows; its place, 0 refused. */
+static int lua_join_watch(lua_State *L) {
+    size_t length=0;const char *text=p_lua_tolstring(L,1,&length);uint64_t id=0;int ok=text && length==16;
+    for(size_t i=0;ok && i<16;i++) {
+        const char c=text[i];unsigned v=c>='0' && c<='9'?(unsigned)(c-'0'):c>='a' && c<='f'?(unsigned)(c-'a'+10):16u;
+        if(v>15u) ok=0;else id=id<<4|v;
+    }
+    p_lua_pushnumber(L,ok?(double)join_watch_add(id):0.0);return 1;
+}
 static int lua_join_status(lua_State *L) {
     char out[3584];int n=accept_ui()?join_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);

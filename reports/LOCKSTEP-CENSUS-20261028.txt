@@ -2119,6 +2119,8 @@ frozen with NtSuspendProcess when the relay passed tick 1200 and never resumed; 
   d3drop4   protocol 4, lookahead 1        2       1219        0 (clients 1 vs 3)               relay DropBarrier
   d3drop4c  protocol 4 + wire crypto       3       1225        0, 3001 permits verified each    zero-signed stand-in
   d3drop4r  protocol 4                     3       1216        0                                dropped ship released + stopped
+  d4drop    protocol 4, 4 clients          4       1227        0 (clients 2 and 3 vs 1)         build215 (+ the nav sweep fix):
+                                                                                                   slot 4's ship stops by ~1500
   Every survivor STOP reason=1 restored=1 at 3001, relay pass, no digest mismatch. Census counts 522,294 at 1 to 531,000
   at 3000 (the same in every run: the drop changes no imported object's state apart from the dropped ship's own path,
   which is the same on every survivor).

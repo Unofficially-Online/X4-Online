@@ -281,6 +281,19 @@ if cfg.native_gate_join then
   assert(not cfg[key],'hot join: '..key..' keeps Lua state across ticks that the join package does not carry')
  end
  assert(not (join_joiner and cfg.native_gate_world_trace_ticks),'hot join: the world trace (native_gate_world_trace_ticks) arms at the session tick 1 only')
+ if cfg.native_gate_join_evq_dump then assert(gate.join_evq_dump and gate.join_evq_dump(1)==1,'join evq dump refused') end
+ if cfg.native_gate_join_hold_boot_events then   -- a version 13 joiner holds its boot event passes until its admission
+  assert(gate.join_hold_boot_events and gate.join_hold_boot_events(1)==1,'join boot event hold refused')
+ end
+ if cfg.native_gate_join_watch_span~=nil then   -- JOIN_WATCH rows after each step T+1 .. T+n (2 .. 64)
+  local n=cfg.native_gate_join_watch_span
+  assert(type(n)=='number' and gate.join_watch_span and gate.join_watch_span(n)==n,'native_gate_join_watch_span needs 2 .. 64')
+ end
+ if cfg.native_gate_join_watch~=nil then   -- JOIN_WATCH rows (diagnostic): up to 8 portable IDs, 16 hex digits each
+  local watch=cfg.native_gate_join_watch
+  assert(type(watch)=='table' and #watch>=1 and #watch<=8 and gate.join_watch,'native_gate_join_watch needs 1..8 portable IDs')
+  for i=1,#watch do assert(type(watch[i])=='string' and gate.join_watch(watch[i])==i,'invalid join watch ID') end
+ end
  local core=assert(X4LAN_JOIN_CORE,'hot join core missing (ui/native_gate_join_core.lua)')
  local own=tonumber(cfg.slot:sub(2))
  assert(gate.join_arm and gate.join_result and gate.join_load and gate.join_handover and gate.join_lua,'gate without hot join')

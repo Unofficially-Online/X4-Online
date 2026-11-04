@@ -249,6 +249,8 @@ def golden(version=join.PACKAGE_VERSION):
         sections.update(golden_v11())
     if version >= 12:
         sections.update(golden_v12())
+    if version >= 13:
+        sections.update(golden_v13())
     return join.write_package(gate, sections, save_sha=bytes(range(32)), save_bytes=123456, version=version)
 
 
@@ -394,7 +396,28 @@ def golden_v12():
                              (0x2006, 2, 1, join.GRAVQ_OTHER, 0, 0, 0x55, 0)]}
 
 
-GOLDEN_SHA = '67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef'
+def golden_v13():
+    """Version 13's records (test_lockstep_join.h join_golden): the job engine's schedule (its last run 23.25, its cursor); three
+    pending events (two of one source, one of a source without a portable ID)."""
+    return {join.SEC_JOBE: [(0x4037400000000000, join.JOBE_ENABLED | join.JOBE_RUNNING, 13, b'xenon_miner_1'+bytes(join.JOBE_CURSOR-13))],
+            join.SEC_EVQT: [(0, 0x2ac1710, 0x20d, 0, join.EVQT_UNMAPPED, bits(40.0)), (0x2001, 0x2ac17b8, 0x215, 1, 0, bits(31.5)),
+                            (0x2001, 0x2baf650, 0x20f, 0, 0, bits(30.25))],
+            join.SEC_GRAVD: [(0x2001, 0x2003, 0, 0), (0x2001, 0, 1, join.GRAVD_NONE)],
+            join.SEC_VIEWK: [(0x2002, 0, 0, 0x10042, 1), (0x2002, 1, join.VIEWK_UNMAPPED, 0x10042, 1)],
+            join.SEC_VIEWKC: [(0x2002, 0x2003, 0, 0), (0x2002, 0, 1, 0)],
+            join.SEC_VIEWF: [(0x2001, 0x10058, 0x10058, 1, 1), (0x2002, 0x10042, 0x10042, 6, 6)],
+            join.SEC_VIEWP: [(0x2001, bytes(range(64)))],
+            join.SEC_SHOOT: [(0x2001, 0x4039d983c465091e, 0x403c2ed916872ba4, 0x403c26508dfea31b, 0x3f9eb851e0000000, 0x403c2ed916872ba4,
+                              0x403bf31d5acb6fe5, bytes(range(32)), 0x2b7fcc0, b'\x01\x01\x01', b'\x01\x00', 1, bytes(6))],
+            join.SEC_ATTK: [(0x2001, 0x2002, 0x403b5987f5df8f7b, 0x403b5987f5df8f7b, 0, 7, 0)],
+            join.SEC_LIVEF: [(0x2001, 0, 0x20)],
+            join.SEC_SPEC: [(0x2001, 3, 0x4f, 2, 0, 0x3fc5555555555555, 0x403c26508dfea31b), (0x2001, 7, 0x7f, 0, 0, 0, 0x403c2ed916872b02)],
+            join.SEC_NAVC: [(0x2001, bytes(range(96)))],
+            join.SEC_JOBS: [(0xcbf29ce484222325, 3, 524, 0)]}
+
+
+GOLDEN_SHA = '4f8670ee903a8fd1c2a90b124f83f9a9fc74833a89f8d7fee7890efa845ff667'
+GOLDEN_SHA_V12 = '67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef'   # a version 12 package (before JOBE)
 GOLDEN_SHA_V11 = 'f0874152607c013ff72febfbf675b20f64b391fb5a9d431795bd302fc0964e7f'   # a version 11 package (before SPLM..GRAVP)
 GOLDEN_SHA_V10 = '1a324e00b49dbc814f757c26ad28741675b7d8e0b9df120c63d52594724e27bd'   # a version 10 package (before GRAV, GRAVC, GRAVS)
 GOLDEN_SHA_V9 = 'dc43e62589f878b9f7dcbd36907ec4bbdbea4b715287dcde799cd239248e2983'   # a version 9 package (before SOLVER, BULLET)
@@ -418,8 +441,9 @@ class Package(unittest.TestCase):
                                        'pose': 1, 'shield': 2, 'nav': 1, 'attn': 2, 'keys': 2, 'path': 9, 'region': 2, 'flight': 2,
                                        'spline': 2, 'agent': 2, 'route': 3, 'param': 2, 'dock': 1, 'steer': 1, 'steerpt': 1, 'solver': 1,
                                        'bullet': 2, 'grav': 2, 'gravc': 3, 'gravs': 4, 'splm': 1, 'splme': 1,
-                                       'splmseg': 4, 'gravn': 3, 'gravp': 3, 'gravq': 3})
-        self.assertEqual(s['version'], 12)
+                                       'splmseg': 4, 'gravn': 3, 'gravp': 3, 'gravq': 3, 'jobe': 1, 'evqt': 3, 'gravd': 2,
+                                       'viewk': 2, 'viewkc': 2, 'viewf': 2, 'viewp': 1, 'shoot': 1, 'attk': 1, 'livef': 1, 'spec': 2, 'navc': 1, 'jobs': 1})
+        self.assertEqual(s['version'], 13)
         self.assertEqual(s['save_sha'], bytes(range(32)).hex())
         # The MD heap enters the portable digest in pop order (time, then seq) and without its seq.
         text = join.portable_text(package['sections'])
@@ -462,7 +486,8 @@ class Package(unittest.TestCase):
                        dict(version=8, sections={join.SEC_STEER: []}), dict(version=8, sections={join.SEC_STEERPT: []}),
                        dict(version=9, sections={join.SEC_SOLVER: []}), dict(version=9, sections={join.SEC_BULLET: []}),
                        dict(version=10, sections={join.SEC_GRAV: []}), dict(version=11, sections={join.SEC_SPLM: []}),
-                       dict(version=11, sections={join.SEC_GRAVN: []}), dict(version=13, sections={})):
+                       dict(version=11, sections={join.SEC_GRAVN: []}), dict(version=12, sections={join.SEC_JOBE: []}),
+                       dict(version=14, sections={})):
             with self.subTest(kwargs=kwargs), self.assertRaisesRegex(join.JoinError, 'package_version'):
                 join.write_package(gate, kwargs['sections'], version=kwargs['version'])
         # The reader: a world section in a version 1 header (resealed), a version 2 package without them, unsorted records.
@@ -934,11 +959,12 @@ class Package(unittest.TestCase):
     def test_version_12_splm_and_gravn(self):
         # Version 12 (report 1.16): SPLM, SPLME, SPLMSEG, GRAVN and GRAVP after GRAVS; the digest takes SPLM's counts, GRAVN whole and
         # GRAVP's keys; the reader refuses every shape fault and a version 11 header with them.
-        v12 = join.read_package(golden())
-        self.assertEqual((v12['sha'], v12['header']['version'], v12['header']['sections']), (GOLDEN_SHA, 12, 35))
+        v12 = join.read_package(golden(12))
+        self.assertEqual((v12['sha'], v12['header']['version'], v12['header']['sections']), (GOLDEN_SHA_V12, 12, 35))
         lines = join.portable_text(v12['sections']).splitlines()
         self.assertEqual([line.split('|')[0] for line in lines[-5:]], ['GRAV', 'SPLM', 'GRAVN', 'GRAVP', 'GRAVQ'])
         self.assertEqual(lines[-4].split('|')[1:4], ['1', '1', '4'])
+        self.assertNotIn('jobe', v12['sections'])
         expected = golden_v12()
         for kind, name in ((join.SEC_SPLM, 'splm'), (join.SEC_SPLME, 'splme'), (join.SEC_SPLMSEG, 'splmseg'), (join.SEC_GRAVN, 'gravn'),
                            (join.SEC_GRAVP, 'gravp')):
@@ -980,6 +1006,41 @@ class Package(unittest.TestCase):
             self.assertFalse(join.gravn_shape(bad))
         with self.assertRaisesRegex(join.JoinError, 'package_version'):
             join.write_package({name: 0 for name in join.GATE_FIELDS}, {join.SEC_SPLM: []}, version=11)
+
+    def test_version_13_jobe(self):
+        # Version 13 (report 1.17): JOBE after GRAVQ, in the digest whole; the reader refuses its shape faults and a version 12 header
+        # with it.
+        v13 = join.read_package(golden())
+        self.assertEqual((v13['sha'], v13['header']['version'], v13['header']['sections']), (GOLDEN_SHA, 13, 48))
+        self.assertEqual(join.portable_text(v13['sections']).splitlines()[-1].split('|')[:2], ['JOBE', '1'])   # EVQT: not in the digest
+        other = dict(v13['sections']);other['evqt'] = []
+        self.assertEqual(join.portable_digest(other), join.portable_digest(v13['sections']))
+        ev = golden_v13()[join.SEC_EVQT]
+        self.assertEqual(v13['sections']['evqt'], ev)
+        self.assertTrue(join.evqt_shape(ev) and join.evqt_shape([]))
+        for bad in ([ev[1], ev[0], ev[2]], [ev[0], ev[2], ev[1]], [ev[0][:4]+(0,)+ev[0][5:]]+ev[1:], [ev[0], ev[1][:4]+(2,)+ev[1][5:], ev[2]]):
+            self.assertFalse(join.evqt_shape(bad))
+        d = golden_v13()[join.SEC_GRAVD]
+        self.assertEqual(v13['sections']['gravd'], d)
+        self.assertTrue(join.gravd_shape(d) and join.gravd_shape([]))
+        for bad in ([d[1], d[0]], [d[0], d[0]], [d[0][:3]+(1,)], [d[0], d[1][:3]+(0,)], [d[0], (0x2001, 0x2003, 2, 0)]):
+            self.assertFalse(join.gravd_shape(bad))
+        k, kc = golden_v13()[join.SEC_VIEWK], golden_v13()[join.SEC_VIEWKC]
+        self.assertEqual((v13['sections']['viewk'], v13['sections']['viewkc']), (k, kc))
+        self.assertTrue(join.viewk_shape(k, kc) and join.viewk_shape([], []))
+        for bad_k, bad_kc in (([k[1], k[0]], kc), (k, kc[:1]), (k, [kc[1], kc[0]]), ([k[0], k[1][:2]+(0,)+k[1][3:]], kc),
+                              ([k[0][:2]+(join.VIEWK_UNREAD,)+k[0][3:], k[1]], kc), ([k[0], (0x2002, 2)+k[1][2:]], kc)):
+            self.assertFalse(join.viewk_shape(bad_k, bad_kc))
+        j = golden_v13()[join.SEC_JOBE]
+        self.assertEqual(v13['sections']['jobe'], j)
+        self.assertTrue(join.jobe_shape(j) and join.jobe_shape([]))
+        for bad in (j+j, [j[0][:1]+(8,)+j[0][2:]], [j[0][:2]+(12,)+j[0][3:]], [j[0][:3]+(b'xenon miner_1'+bytes(join.JOBE_CURSOR-13),)]):
+            self.assertFalse(join.jobe_shape(bad))
+        other = dict(v13['sections'])          # the schedule is in the digest whole
+        other['jobe'] = [(0x4037800000000000,)+j[0][1:]]
+        self.assertNotEqual(join.portable_digest(other), join.portable_digest(v13['sections']))
+        with self.assertRaisesRegex(join.JoinError, 'package_version'):
+            join.write_package({name: 0 for name in join.GATE_FIELDS}, {join.SEC_JOBE: []}, version=12)
 
     def test_version_9_steer(self):
         # Version 9 (report 1.13): STEER and STEERPT after the fourteen world lines, one STEER record per steering model of FLIGHT
@@ -1091,7 +1152,7 @@ class Package(unittest.TestCase):
         package = join.read_package(golden())
         self.assertEqual(package['sections']['gate']['fixture'], '111111121111')
         self.assertEqual(join.summary(package)['fixture'], '111111121111')
-        self.assertEqual(join.portable_text(package['sections']).splitlines()[-23], 'FIXTURE|111111121111')   # then the world lines
+        self.assertEqual(join.portable_text(package['sections']).splitlines()[-24], 'FIXTURE|111111121111')   # then the world lines
         sections = dict(package['sections'])
         sections['gate'] = dict(sections['gate'], fixture='111111111111')
         self.assertNotEqual(join.portable_digest(sections), package['sections']['gate']['portable'])

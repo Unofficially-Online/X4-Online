@@ -550,6 +550,9 @@ static int gate_sites_owned(void) {
        *(unsigned short*)(image+0xfa3302)!=0x9066||*(double*)(image+0x6adfc60)!=gate_tick_dt() || *(unsigned char*)(image+0x6adfc58));
 }
 #include "lockstep_getup_diagnostic_transport.h"
+static void join_jobinit_restore(void);   /* lockstep_join.h: a version 13 joiner's JobEngine::Init call */
+static void join_bootev_restore(void);    /* lockstep_join.h: a version 13 joiner's boot event passes */
+static void join_pcf_restore(void);       /* lockstep_join.h: JOIN_WATCHPCF's call sites (diagnostic) */
 static void finish(unsigned reason) {
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
     timer_resolution_restore();
@@ -649,6 +652,8 @@ static void finish(unsigned reason) {
     gravidar_restore();
     gpost_restore();
     gwide_restore();
+    join_jobinit_restore();
+    join_bootev_restore();join_pcf_restore();
     attention_restore();
     mass_restore();
     death_restore();
@@ -998,6 +1003,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(origin_failed() || getup_failed()) {finish(74);gate_original_once(original,frame,loading);return;}
     if(snapshot_configured && (snapshot_failures || (stats.issued>=join_tick_base()+4 && snapshot_enrolled!=12))) {finish(74);gate_original_once(original,frame,loading);return;}
     if(boot_mode && boot_phase<3) {
+        join_boot_frame();   /* hot join: the joiner's job engine stays off until its admission (lockstep_join.h) */
         unsigned boot_timeout=portable_wire_enabled?portable_wire_startup_ms:120000;
         if(thread!=main_thread || GetTickCount64()-boot_started>boot_timeout) {finish(26);gate_original_once(original,frame,loading);return;}
         boot_phase=boot_next(boot_phase,loading || (table && *(int*)((unsigned char*)table+0x130)));
@@ -4083,7 +4089,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(body);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
-    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_unpaired);
+    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_hold_boot_events);METHOD(join_unpaired);
 #undef METHOD
     return 1;
 }
