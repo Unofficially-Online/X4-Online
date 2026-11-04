@@ -258,6 +258,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_watch','hot join watched object rows'},
  {'native_gate_join_watch_span','hot join watched object rows after T+1 .. T+n'},
  {'native_gate_join_hold_boot_events','hot join boot event passes held'},
+ {'native_gate_join_precise','hot join save at full precision'},
  {'native_gate_event_rows','event rows'},
  {'native_gate_event_rng_rows','event RNG rows'},
  {'native_gate_script_rng_rows','script RNG rows'},

@@ -53,6 +53,8 @@ static int lua_join_lua_state(lua_State *L) {
 static int lua_join_evq_dump(lua_State *L) {join_evq_dump_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_hold_boot_events(on): a version 13 joiner holds its boot event passes until its admission (before join_load). */
 static int lua_join_hold_boot_events(lua_State *L) {join_bootev_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_precise(on): a saver writes its join save at full precision, a version 13 joiner reads it exactly (lockstep_join_precise.h). */
+static int lua_join_precise(lua_State *L) {join_precise_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_watch_span(n): the JOIN_WATCH rows after each step T+1 .. T+n (2 .. 64; default 2); n, 0 refused. */
 static int lua_join_watch_span(lua_State *L) {
     const double n=p_lua_tonumber(L,1);const int ok=isfinite(n) && floor(n)==n && n>=2.0 && n<=(double)JOIN_WATCH_SPAN_MAX;

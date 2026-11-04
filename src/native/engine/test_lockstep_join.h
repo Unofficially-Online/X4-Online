@@ -142,6 +142,26 @@ static void tj_tree_order(int *out,unsigned *count,const tj_world *w,double *due
         memcpy(&dues[*count],(void *)(n+JOIN_NODE_KEY),8);++*count;n=join_tree_next(n,h);
     }
 }
+static double tj_precise_native(const char *s) {(void)s;return 1.5;}
+static void test_join_precise(void) {
+    char d[32];unsigned n=0;int e=0;
+    assert(join_precise_digits("25.849666666666664",d,&n,&e) && n==17 && e==2 && !memcmp(d,"25849666666666664",17));
+    assert(join_precise_digits("1.2345678901234567e-05",d,&n,&e) && n==17 && e==-4);
+    assert(join_precise_digits("-0.00012300000000000001",d,&n,&e) && n==17 && e==-3);
+    assert(join_precise_digits("25.8497",d,&n,&e) && n==6 && e==2);
+    assert(!join_precise_digits("0",d,&n,&e) && !join_precise_digits("abc",d,&n,&e) && !join_precise_digits("1.2.3",d,&n,&e));
+    const double v=25.849666666666664;char b[64];
+    snprintf(b,sizeof(b),"%.17g",v);assert(join_precise_digits(b,d,&n,&e) && join_precise_names(v,d,n,e));
+    assert(!join_precise_names(nextafter(v,0.0),d,n,e));
+    assert(join_fmt_precision(0.5)==16u && join_fmt_precision(25.8)==15u && join_fmt_precision(1234.5)==13u && join_fmt_precision(1e20)==0u);
+    /* the parse: a long string back to the very double, a short one left to the native parser */
+    double (*saved)(const char *)=join_parse_next;
+    join_parse_next=tj_precise_native;join_parse_on=1;
+    assert(join_parse_hook(b)==v && join_parse_hook("25.8497")==1.5);
+    join_parse_on=0;assert(join_parse_hook(b)==1.5);
+    join_parse_next=saved;
+    printf("hot join precise save: 17-digit names, exponents, the parse of long strings only, the precision argument PASS\n");
+}
 static void test_join_golden(void) {
     join_tables t;memset(&t,0,sizeof(t));
     t.gate.tick=600;t.gate.game=tj_bits(27.0);t.gate.real=tj_bits(120.0);t.gate.wire_version=3;t.gate.clients=3;t.gate.lookahead=2;t.gate.tick_hz=30;
@@ -2709,6 +2729,6 @@ static void test_join_world(void) {
          "kind/shape) and version 1/2 refusals PASS");
 }
 static void test_join(void) {
-    test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
+    test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
     test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();
 }

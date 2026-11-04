@@ -1831,14 +1831,23 @@ proposed and rejected.
   $waittime (1 .. 4 s, profile increasing), waits it and applies dps x $waittime; that wait spans T, and the save keeps script
   variables of type time to six significant digits (j633: <value name="$waittime" type="time" value="4.86122"/>; 45,175 values of
   type time in the save, besides the attributes it keeps to four decimals: lastshottime, attacktime, bullet times).
-- A general remedy, not yet built: the join save is written by the session for the joiner only, so writing its numbers at full
-  precision during that save (the save writer's number conversion, hooked for the join save alone) would load every one of these
-  exactly, where SHOOT, ATTK and the like correct them one kind at a time. The conversion routine is not yet found: the attribute
-  names are interned (no code references to their strings), and the one "%.4f" in the image is the display options'.
-- Open: the joiner's runtime IDs (above); the T+1 shield record (above); at 660 health 52, attention 30, topology 24, motion 7; the trade search of 639, nav.refresh_relation of 74 ships in the
-  high-attention sectors 0x13a and 0x948 from 660 (the pathing swap), attention (30 at 660, 269 at 840), the UI listeners' 20-tick
-  phase (635, 659, 679 on the joiner, 700 on the session), the shield record of 0x73f92 at T+1; other times the save rounds to four
-  decimals.
+- The join save at full precision (77e4176a, native_gate_join_precise, default off; lockstep_join_precise.h). The save's doubles
+  go through one conversion, 0x13eb20 (from the attribute writer 0x138380, the script values' 0xcc1a40 and 32 other calls;
+  precision -1: six significant digits, from 1000 up the integer digits and three; p < 100: p + 1 significant digits below 1, the
+  integer digits and p above), and the load reads them through the XML reader 0x12fd30's parser 0x14c3090 (scale *= 0.1, not
+  correctly rounded; 89 calls). The join save is read by the joiner only: while the saver's join save runs on its thread, the
+  conversion's 34 calls go through thunk slot 112 and write 17 significant digits (a rel32 CAS each; 0x3b5d3c and the script
+  values' 0xcc1dbc, whose rel32 crosses a 64-byte line, by a plain store inside the gate's boundary); from join_load to the
+  admission the parser's 89 calls go through slot 1008 (the two crossing ones native) and a string of 16 or more significant
+  digits is read exactly (strtod's candidate and its neighbours, the one whose 17 digits are the string's), shorter ones by the
+  native parser. j1-115: precise=348848:152925 on the saver (calls, raised), 404615:100720:100720:0 on the joiner (calls, long,
+  exact, far); the census at T+1 equal for the first time (523,529 objects, 0 differing: the shield record of 0x73f92 is gone),
+  660 35 (from 81), 720 97 (163), 780 95 (164), 840 380 (449), 900 420 (485).
+  j1-114 build-hj15h               the job ships placed in the same step 648, the other ship each (above)
+  j1-115 77e4176a (build-hj15i)   the full-precision join save: T+1 0, 900 420
+- Open: the joiner's runtime IDs (above; 22 of the 35 at 660 are the two job ships, most of the 420 at 900 job ships' parts);
+  attention timing (30 at 660, 278 at 840); the UI listeners' 20-tick phase (635, 659, 679 on the joiner, 700 on the session).
+  nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

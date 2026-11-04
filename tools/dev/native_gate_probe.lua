@@ -282,6 +282,9 @@ if cfg.native_gate_join then
  end
  assert(not (join_joiner and cfg.native_gate_world_trace_ticks),'hot join: the world trace (native_gate_world_trace_ticks) arms at the session tick 1 only')
  if cfg.native_gate_join_evq_dump then assert(gate.join_evq_dump and gate.join_evq_dump(1)==1,'join evq dump refused') end
+ if cfg.native_gate_join_precise then   -- savers write the join save at full precision, a version 13 joiner reads it exactly
+  assert(gate.join_precise and gate.join_precise(1)==1,'join precise save refused')
+ end
  if cfg.native_gate_join_hold_boot_events then   -- a version 13 joiner holds its boot event passes until its admission
   assert(gate.join_hold_boot_events and gate.join_hold_boot_events(1)==1,'join boot event hold refused')
  end

@@ -1884,6 +1884,7 @@ static void join_ai_watch_dump(char side,uint64_t tick) {
 static unsigned char *join_tls_block(void) {
     void **slots=*(void ***)((unsigned char *)NtCurrentTeb()+0x58);return slots?(unsigned char *)slots[0]:NULL;
 }
+#include "lockstep_join_precise.h"   /* the join save at full precision (native_gate_join_precise) */
 /* The engine save with the MoveWorker's clock, view and RNG word on this thread; 1 saved. */
 static int join_save_with_worker_tls(const char *file,const char *name) {
     unsigned char *mine=join_tls_block(),*worker=(unsigned char *)join_cap.mw_tls,saved_time[8],saved_view[4],saved_rng[8];
@@ -1893,8 +1894,13 @@ static int join_save_with_worker_tls(const char *file,const char *name) {
         memcpy(mine+0x300,worker+0x300,8);memcpy(mine+0x314,worker+0x314,4);memcpy(mine+0x318,worker+0x318,8);
     }
     unsigned char ok=0;
+    const int precise=join_precise_on && join_save_call==join_save_native && join_fmt_install();
+    if(precise) join_fmt_thread=GetCurrentThreadId();
     __try {ok=join_save_call(file,name);}
-    __finally {if(swap) {memcpy(mine+0x300,saved_time,8);memcpy(mine+0x314,saved_view,4);memcpy(mine+0x318,saved_rng,8);}}
+    __finally {
+        if(swap) {memcpy(mine+0x300,saved_time,8);memcpy(mine+0x314,saved_view,4);memcpy(mine+0x318,saved_rng,8);}
+        if(precise) {join_fmt_thread=0;join_fmt_restore();}
+    }
     return ok!=0;
 }
 
@@ -2595,6 +2601,10 @@ static int join_load(const char *path,const char *sha_hex,int mode) {
     if(join_rx.t.version>=13 && join_bootev_on) join_bootev_classes();
     if(join_rx.t.version>=13 && join_bootev_on && join_bootev_nclasses && !join_bootev_install())
         {join_jobinit_restore();join_tables_free(&join_rx.t);return join_fail_rx(JOIN_WHY_CAPTURE,"bootev_site");}
+    if(join_rx.t.version>=13 && join_precise_on) {   /* the join save's full-precision numbers, read exactly by the load */
+        if(!join_parse_install()) {join_bootev_restore();join_jobinit_restore();join_tables_free(&join_rx.t);return join_fail_rx(JOIN_WHY_CAPTURE,"parse_site");}
+        InterlockedExchange(&join_parse_on,1);
+    }
     join_rx.loaded=1;return 1;
 }
 /* gate.join_lua(T, text) in frame T on an armed saver: the probe's providers' state, written with the package. */
@@ -2890,6 +2900,7 @@ static int join_admit_rid(void) {
 static int join_admit(void) {
     if(!join_rx.loaded || join_rx.admitted) return 1;
     join_rx.admitted=1;join_jobinit_restore();join_bootev_restore();   /* Init and the boot event passes ran in the load (version 13) */
+    InterlockedExchange(&join_parse_on,0);join_parse_restore();   /* the load is over: the parser native again */
     if(join_rx.created_failures || InterlockedCompareExchange64(&join_rx.mapped_saved,0,0)+InterlockedCompareExchange64(&join_rx.mapped_created,0,0)<
        InterlockedCompareExchange64(&join_rx.imported,0,0)/2) {
         if(join_rx.mode==JOIN_STRICT) return join_fail_rx(JOIN_WHY_MISMATCH,join_rx.created_failures?"created_entries":"ids_foreign");
@@ -2939,7 +2950,7 @@ static int join_status(char *out,size_t cap) {
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
         " steer=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu t1=%u:%llu:%llu:%llu:%llu:%llu:%llu"
         " solver=%llu:%llu:%llu:%llu:%llu:%llu bullet_walk=%u:%llu:%llu grav=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravs=%llu:%llu:%llu:%llu md_dropped=%llu"
-        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu jobs_cap=%u viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
+        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
         states[join_cap.state],(unsigned long long)join_cap.tick,join_cap.slot_k,join_cap.mask,join_cap.why,join_cap.detail[0]?join_cap.detail:"-",
         (unsigned long long)join_cap.save_bytes,(unsigned long long)join_cap.package_bytes,(unsigned long long)join_cap.save_us,
         (unsigned long long)join_cap.capture_us,pkg,port,join_cap.modified_cleared,join_cap.possible,join_rx.loaded,join_rx.mode,join_rx.based,
@@ -3033,6 +3044,8 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_rx.spec_missing,(unsigned long long)join_rx.spec_extra,(unsigned long long)join_rx.spec_added,join_cap.spec,
         (unsigned long long)join_rx.navc_written,(unsigned long long)join_rx.navc_equal,(unsigned long long)join_rx.navc_missing,join_cap.navc,
         (unsigned long long)join_rx.jobs_written,(unsigned long long)join_rx.jobs_equal,(unsigned long long)join_rx.jobs_missing,join_cap.jobs,
+        (long long)join_fmt_calls,(long long)join_fmt_raised,(long long)join_parse_calls,(long long)join_parse_long,(long long)join_parse_exact,
+        (long long)join_parse_far,
         (unsigned long long)join_rx.viewk_children,(unsigned long long)join_rx.viewk_flags,(unsigned long long)join_rx.viewk_equal,
         (unsigned long long)join_rx.viewk_missing,(unsigned long long)join_rx.viewk_unmapped,(unsigned long long)join_rx.viewk_superset,
         join_cap.viewk,join_cap.viewkc,(unsigned long long)join_rx.viewf_written,(unsigned long long)join_rx.viewf_equal,

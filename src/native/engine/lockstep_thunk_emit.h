@@ -16,6 +16,7 @@ static const thunk_recipe thunk_recipes[]={
     {64,16,THUNK_JUMP,0,0,0,(void*)join_job_init,{0}},   /* JOIN_JOBINIT_THUNK (64..79 of the unowned 64..127): a version 13 joiner's JobEngine::Init */
     {80,16,THUNK_JUMP,0,0,0,(void*)join_boot_events,{0}},   /* JOIN_BOOTEV_THUNK (80..95): a version 13 joiner's boot event passes */
     {96,16,THUNK_JUMP,0,0,0,(void*)join_pcf_hook,{0}},   /* JOIN_PCF_THUNK (96..111): JOIN_WATCHPCF, PropagateCacheFlags on watched objects */
+    {112,16,THUNK_JUMP,0,0,0,(void*)join_fmt_hook,{0}},   /* JOIN_FMT_THUNK (112..127): the full-precision join save's conversion calls */
     {128,64,THUNK_JUMP,0,0,0,(void*)ai_run,{0}},
     {RID_REMOVE_THUNK,64,THUNK_PAIR,RID_REMOVE_ENTRY,5,32,(void*)rid_remove,{0x48,0x89,0x5c,0x24,0x08}},
     {256,64,THUNK_JUMP,0,0,0,(void*)agent_update,{0}},
@@ -34,6 +35,7 @@ static const thunk_recipe thunk_recipes[]={
     {944,48,THUNK_PAIR,WORLD_IDENTITY_ENTRY,5,32,(void*)world_identity_import,{0x48,0x89,0x5c,0x24,0x08}},
     /* 992..1023 was unowned (between world identity and nested); census-zone Gravidar wide applies (992..1007). */
     {992,16,THUNK_JUMP,0,0,0,(void*)gwide_apply,{0}},
+    {1008,16,THUNK_JUMP,0,0,0,(void*)join_parse_hook,{0}},   /* JOIN_PARSE_THUNK (1008..1023): the joiner's decimal parser calls */
     {1024,64,THUNK_NESTED,0,0,0,(void*)nested_action_run,{0}},
     {1088,64,THUNK_PAIR,NPC_EXEC_ENTRY,5,32,(void*)npc_exec_run,{0x48,0x89,0x5c,0x24,0x08}},
     {1152,64,THUNK_PAIR,NPC_SPEAK_ENTRY,7,32,(void*)npc_speak_run,{0x48,0x8b,0xc4,0x48,0x89,0x58,0x10}},
