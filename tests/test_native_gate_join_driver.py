@@ -74,10 +74,28 @@ class Options(unittest.TestCase):
         for argv, why in ((['--token', TOKEN, '--join', '--absent', '3'], '--port'),
                           (['--port', '1', '--token', 'x', '--join', '--absent', '3'], '--token'),
                           (['--port', '1', '--token', TOKEN, '--join-lead', '5', '--absent', '3'], '--join'),
-                          (['--port', '1', '--token', TOKEN, '--join', '--clients', '3'], '--absent'),
+                          (['--port', '1', '--token', TOKEN, '--join', '--clients', '3'], '--absent or --rejoin'),
                           (['--port', '1', '--token', TOKEN, '--join', '--absent', '3', '--bind', '10.0.0.2'], 'loopback')):
             with self.subTest(why=why), self.assertRaisesRegex(ValueError, why):
                 driver.relay_options(argv)
+
+    def test_rejoin_options(self):
+        # Roadmap 15: no absent slot, slot 3 rejoinable; the savers default to the other present slots.
+        info = driver.relay_options(['--port', '1', '--token', TOKEN, '--clients', '3', '--join', '--rejoin', '3', '--stall-drop-ms', '3000'])
+        self.assertEqual((info['absent'], info['rejoin'], info['present'], info['savers']), ([], [3], [1, 2, 3], [1, 2]))
+        d = driver.Driver(info, 3, [400], {1: 'b1', 2: 'b2'}, 'x')
+        self.assertIn('JOIN_DRIVER READY slot=3 join_at=400', d.ready_line())
+        with self.assertRaisesRegex(ValueError, 'nor a rejoinable one'):
+            driver.Driver(info, 2, [400], {1: 'b1', 2: 'b2'}, 'x')
+        with self.assertRaisesRegex(ValueError, 'one of the savers'):
+            driver.Driver(dict(info, rejoin=[2, 3]), 2, [400], {1: 'b1', 2: 'b2'}, 'x')
+        # --join-observe (diagnostic): its PASS line says so.
+        seen = driver.relay_options(['--port', '1', '--token', TOKEN, '--clients', '3', '--join', '--rejoin', '3', '--join-observe'])
+        self.assertTrue(seen['observe'] and not info['observe'])
+        d = driver.Driver(seen, 3, [400], {1: 'b1', 2: 'b2'}, 'x', expect='joined')
+        j = d.joins[0]
+        j.state, j.save_tick, j.files = 'joined', 433, {'verified': 1}
+        self.assertTrue(d.check_pass(j)[0].endswith('expect=joined diagnostic=join_observe'))
 
     def test_saver_lanes(self):
         self.assertEqual(driver.saver_lanes('b3,b4', [1, 2]), {1: 'b3', 2: 'b4'})
@@ -477,6 +495,14 @@ class Overlays(unittest.TestCase):
                                   *WINDOW)
             self.assertIn('relay: --clients 3 --join --absent 3 --join-savers 1,2', notes)
             self.assertIn('lane session: --clients 2 ', notes)
+            # A rejoin session (roadmap 15): every slot on a lane, slot 3 rejoinable, the savers the others.
+            again = self.run_main('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'rejoin', '--absent', '', '--rejoin', '3', *WINDOW)
+            self.assertIn('relay: --clients 3 --join --rejoin 3 --stall-drop-ms MS --join-savers 1,2', again)
+            self.assertIn('lane session: --clients 3 ', again)
+            self.assertIn("X4LAN_CONFIG.native_gate_join = {save = 'report', rejoin = {3}}",
+                          (root/'rejoin/ui/config.lua.append').read_text().splitlines())
+            self.assertIn('--rejoin needs slots', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'rejoin2',
+                                                              '--rejoin', '3'))
             text = (root/'savers/ui/config.lua.append').read_text()
             self.assertNotIn('@X4LANE_CLIENTS@', text)
             for line in ('X4LAN_CONFIG.native_gate_clients = 3', "X4LAN_CONFIG.native_gate_join = {save = 'report', absent = {3}}",
@@ -535,6 +561,14 @@ class Overlays(unittest.TestCase):
             (root/'handoff3.json').write_text(json.dumps(dict(handoff, absent=[2])))
             self.assertIn('absent slots', self.refused('joiner', '--gate-dll', dll, '--handoff', root/'handoff3.json', '--out', root/'joiner3',
                                                        '--join-mode', 'report'))
+            # A rejoin (roadmap 15): no absent slot, the joining slot is a rejoinable one; both lists reach the joiner's config.
+            (root/'handoff5.json').write_text(json.dumps(dict(handoff, absent=[], rejoin=[3])))
+            self.run_main('joiner', '--gate-dll', dll, '--handoff', root/'handoff5.json', '--out', root/'joiner5', '--join-mode', 'report', *WINDOW)
+            self.assertIn("mode = 'report'}, rejoin = {3}}", (root/'joiner5/ui/config.lua.append').read_text())
+            self.assertEqual(json.loads((root/'joiner5/x4lane-join.json').read_text())['rejoin'], [3])
+            (root/'handoff6.json').write_text(json.dumps(dict(handoff, absent=[3], rejoin=[3])))
+            self.assertIn('absent or rejoin slots', self.refused('joiner', '--gate-dll', dll, '--handoff', root/'handoff6.json',
+                                                                 '--out', root/'joiner6', '--join-mode', 'report'))
             # A saved ID of the config the package has no saved identity for (the session had no such object at T, or only a
             # created one): refused naming key and ID, the overlay renamed .refused.
             fixture = named['native_gate_snapshot_fixture'][0]

@@ -47,6 +47,7 @@ class Client:
         self.inputs = {}                      # tick -> own blob to propose (tests put pilot-like records here)
         self.fail_save, self.failed = None, None   # a FAILED reason code instead of the save
         self.portable_salt = b''               # a saver whose package content differs from the others'
+        self.clock = 0.0                       # this process's own real clock base (--relative-real compares elapsed time)
 
     def digest(self):
         if self.joined_from is not None and self.tick == self.joined_from:
@@ -70,7 +71,7 @@ class Client:
             version = 4 if self.k else 3
             extra = f'|{self.k}' if self.k else ''
             self.reports[self.tick] = (f'NGSTATE|{version}|{TOKEN}|{self.slot}|{self.tick}|{struct.pack(">d", game(self.tick)).hex()}|'
-                                       f'{struct.pack(">d", real(self.tick)).hex()}|{self.digest()}|{self.clients}{extra}|'
+                                       f'{struct.pack(">d", real(self.tick)+self.clock).hex()}|{self.digest()}|{self.clients}{extra}|'
                                        f'{self.proposal()}').encode()
         return self.reports[self.tick]
 
@@ -118,10 +119,10 @@ class Client:
 
 class Network:
     """The relay (a JoinBarrier) and its clients, stepped in lock: every client reports, the relay answers."""
-    def __init__(self, clients=3, absent=(3,), k=0, ticks=400, **options):
+    def __init__(self, clients=3, absent=(3,), k=0, ticks=400, barrier=None, **options):
         self.k, self.now, self.clients = k, 0.0, clients
         self.relay = join.JoinBarrier(TOKEN, absent=absent, ticks=ticks, hold_seconds=0, relative_real=True, clients=clients,
-                                      lookahead=k, tick_hz=HZ, join_options=options)
+                                      lookahead=k, tick_hz=HZ, join_options=options, **(barrier or {}))
         self.packages, self.notices = {}, []
         self.live = {s: Client(s, clients, k, ('127.0.0.1', 10000+s), saver_packages=self.packages)
                      for s in range(1, clients+1) if s not in absent}
@@ -1271,6 +1272,45 @@ class Relay(unittest.TestCase):
         aborts = [t for t, blobs in net.live[1].applied if blobs[2] and join.blob_record(blobs[2])['op'] == 'abort']
         self.assertEqual(len(aborts), 1)
 
+    def test_join_observe_counts_a_diverged_joiner_and_hands_over(self):
+        # --join-observe (diagnostic): the digest is not held before H, the clocks are; the lines say so.
+        net = Network(barrier={'observe': True}, observe=True)
+        for _ in range(40):
+            net.round()
+        net.request()
+        while net.relay.join.state == 'queued':
+            net.round()
+        net.boot_joiner()
+        net.joiner.state = b'not the saved world'
+        for _ in range(380):
+            net.round(joiner_steps=3)
+            if net.relay.join.state in ('joined', 'failed') and net.relay.released > net.relay.join.handover+20:
+                break
+        j = net.relay.join
+        self.assertEqual(j.state, 'joined', (j.failure, net.notices[-4:]))
+        self.assertEqual(j.first_digest_mismatch, j.save_tick+1)
+        self.assertEqual(j.digest_mismatches, j.handover-j.save_tick-1)
+        notices = ' '.join(net.notices)
+        self.assertIn(f'digest_mismatch first={j.save_tick+1} diagnostic=join_observe', notices)
+        self.assertIn(f'joined tick={j.handover} ', notices)
+        self.assertIn('diagnostic=join_observe digest_mismatches=', notices)
+        self.assertEqual(net.relay.summary()['join'][0]['diagnostic'], 'join_observe')
+        self.assertIsNone(net.relay.failed)
+        self.assertGreater(len(net.relay.mismatches), 0)     # after H the session's --observe records the divergence
+        # Without it the same joiner is stopped at T+1 (test above); a clock mismatch stays fatal with it.
+        net2 = Network(barrier={'observe': True}, observe=True)
+        for _ in range(40):
+            net2.round()
+        net2.request()
+        while net2.relay.join.state == 'queued':
+            net2.round()
+        net2.boot_joiner()
+        net2.joiner.clock = 0.5
+        for _ in range(20):
+            net2.round(joiner_steps=2)
+        self.assertEqual(net2.relay.join.state, 'failed')
+        self.assertTrue(net2.relay.join.failure.startswith('mismatch:real_tick_'), net2.relay.join.failure)
+
     def test_a_slow_joiner_is_refused_when_the_pause_would_be_too_long(self):
         net = Network(catchup_limit=0.5, max_pause=1.0, handover_gap=5)
         for _ in range(40):
@@ -1374,6 +1414,133 @@ class Relay(unittest.TestCase):
         self.assertEqual(join.catch_up_seconds(100, 30, 30), float('inf'))
         self.assertAlmostEqual(join.handover_pause(60, 10, 30, 40), 70/40-10/30)
         self.assertEqual(join.handover_pause(0, 10, 30, 60), 0.0)
+
+
+class Rejoin(unittest.TestCase):
+    """Drop and rejoin (roadmap 15): slot 3 plays from the start (--rejoin 3), stalls, is dropped with ABORT(3, dropped) in
+    the first row it did not report, and a later join takes the slot again; the session never stops."""
+    DROP = {'rejoin': (3,), 'stall_report_ms': 500, 'stall_drop_ms': 1000}
+
+    def stall(self, net, slot=3, at=30):
+        for _ in range(at):
+            net.round()
+        stalled = net.live.pop(slot)
+        first = stalled.tick                                # it stepped to this tick and never reported it
+        for _ in range(75):                                 # 2.5 s at 30 Hz: reported at 0.5 s, dropped at 1 s
+            net.round()
+        return stalled, first
+
+    def rejoin(self, k=1, clock=0.25):
+        net = Network(absent=(), k=k, ticks=600, barrier=self.DROP)
+        net.live[3].clock = clock
+        stalled, first = self.stall(net)
+        r = net.relay
+        notices = ' '.join(net.notices)
+        self.assertIn(f'NATIVE_GATE STALL slot=3 tick={first} ', notices)
+        self.assertIn(f'NATIVE_GATE DROP slot=3 tick={first} ', notices)
+        self.assertIsNone(r.failed)
+        self.assertEqual((r.dropped, sorted(r.absent)), ({3: first}, [3]))
+        self.assertGreater(r.released, first+20)            # the session went on without slot 3
+        # Its first missing row carries ABORT(3, dropped) for every client; the rows after it are empty stand-ins.
+        row = r.states[first][3]
+        record = join.blob_record(row['blob'])
+        self.assertTrue(row['standin'])
+        self.assertEqual((record['op'], record['slot'], record['tick'], record['reason']), ('abort', 3, first, 'dropped'))
+        self.assertEqual([r.states[t][3]['blob'] for t in range(first+1, first+6)], ['']*5)
+        self.assertEqual(r.states[first-1][3].get('standin'), None)
+        held = net.live[1].permits[first+1+k]
+        self.assertEqual(held[2], row['blob'])
+        self.assertEqual(r.summary()['drop']['drops'][0]['slot'], 3)
+        # The dropped process's later reports are answered NGDROP (protocol 4), never counted.
+        answer = r.receive(stalled.report(), stalled.address, net.now)   # the frozen process wakes up and reports
+        self.assertEqual(answer, [(stalled.address, f'NGDROP|4|{TOKEN}|3|{first}'.encode())] if k else [])
+        # A later join takes the slot like any absent one (here from the same address the dropped client had).
+        for _ in range(20):
+            net.round()
+        self.assertEqual(net.request()[5], 'queued')
+        while r.join.state == 'queued':
+            net.round()
+        self.assertEqual(r.join.state, 'saved', net.notices[-4:])
+        self.assertEqual(sorted(r.join.saved), [1, 2])
+        for _ in range(10):
+            net.round()
+        save_tick = r.join.save_tick
+        net.boot_joiner()
+        for _ in range(400):
+            net.round(joiner_steps=3)
+            if r.join.state in ('joined', 'failed') and r.released > r.join.handover+40:
+                break
+        j = r.join
+        self.assertEqual(j.state, 'joined', (j.failure, net.notices[-5:]))
+        self.assertIsNone(r.failed)
+        self.assertNotIn(3, r.absent)
+        self.assertEqual((r.dropped, r.dropped_peers), ({}, {}))
+        theirs = {t: b for t, b in net.live[1].applied if t > save_tick}
+        mine = dict(net.joiner.applied)
+        common = sorted(set(theirs) & set(mine))
+        self.assertGreater(len(common), 30)
+        self.assertEqual([mine[t] for t in common], [theirs[t] for t in common])
+        self.assertTrue(r.states[j.handover-1][3].get('standin'))
+        self.assertFalse(r.states[j.handover][3].get('standin', False))
+        return net
+
+    def test_protocol_4_drop_then_rejoin(self):
+        net = self.rejoin(k=1)
+        # Its own real clock base (0.25 s off) became the reference slot's at the drop: stand-ins and the rejoiner agree.
+        self.assertEqual(net.relay.summary()['drop']['drops'][0]['real_base_was'], real(0)+0.25)
+
+    def test_protocol_3_drop_then_rejoin(self):
+        self.rejoin(k=0, clock=0.0)
+
+    def test_the_rejoined_slot_can_be_dropped_again(self):
+        net = self.rejoin(k=1)
+        net.live[3] = net.joiner
+        net.joiner = None
+        stalled, first = self.stall(net, at=10)
+        self.assertEqual(net.relay.dropped, {3: first})
+        self.assertEqual(len(net.relay.drops), 2)
+        self.assertIsNone(net.relay.failed)
+
+    def test_a_slot_that_may_not_be_dropped_is_waited_for(self):
+        net = Network(absent=(), k=1, ticks=600, barrier=self.DROP)
+        stalled, first = self.stall(net, slot=2)
+        self.assertIn(f'NATIVE_GATE STALL slot=2 tick={first} ', ' '.join(net.notices))
+        self.assertIn('droppable=0', ' '.join(net.notices))
+        self.assertNotIn('NATIVE_GATE DROP', ' '.join(net.notices))
+        self.assertEqual(net.relay.released, first-1)
+        self.assertEqual(net.relay.dropped, {})
+
+    def test_a_saver_dropped_before_its_save_refuses_the_join(self):
+        net = Network(absent=(), k=1, ticks=600, barrier={'rejoin': (2, 3), 'stall_report_ms': 500, 'stall_drop_ms': 1000})
+        stalled, first = self.stall(net, slot=3)
+        net.request(slot=3)
+        stalled2 = net.live.pop(2)                          # slot 2 stalls before its save tick
+        for _ in range(60):
+            net.round()
+        self.assertEqual(net.relay.join.state, 'failed')
+        self.assertEqual(net.relay.join.failure, 'refused_by_relay:saver_dropped')
+        self.assertEqual(sorted(net.relay.absent), [2, 3])
+        self.assertIsNone(net.relay.failed)
+        self.assertGreater(net.relay.released, first+40)
+
+    def test_refusals(self):
+        for options in ({'rejoin': (1,), 'stall_drop_ms': 1000}, {'rejoin': (4,), 'stall_drop_ms': 1000},
+                        {'rejoin': (3,)}, {'rejoin': (2,), 'stall_drop_ms': 500, 'stall_report_ms': 1000}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                join.JoinBarrier(TOKEN, absent=(), clients=3, lookahead=1, **options)
+        with self.assertRaises(ValueError):
+            join.JoinBarrier(TOKEN, absent=(3,), rejoin=(3,), stall_drop_ms=1000, clients=3, lookahead=1)
+
+    def test_relay_cli(self):
+        import subprocess
+        base = [sys.executable, str(ROOT/'tools/dev/native_gate_relay.py'), '--port', '40998', '--token', TOKEN, '--clients', '3',
+                '--report', 'unused.json']
+        for extra, text in ((['--rejoin', '3'], '--rejoin and --join-observe need --join'), (['--join', '--rejoin', '3'], '--rejoin needs --stall-drop-ms'),
+                            (['--join', '--rejoin', '1', '--stall-drop-ms', '3000'], 'rejoin slots must be 2..N')):
+            with self.subTest(extra=extra):
+                proc = subprocess.run(base+extra, capture_output=True, text=True, timeout=60)
+                self.assertEqual(proc.returncode, 2, proc.stderr)
+                self.assertIn(text, proc.stderr)
 
 
 if __name__ == '__main__':

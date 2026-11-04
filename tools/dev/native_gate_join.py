@@ -14,7 +14,8 @@ Three parts, each testable without X4 (tests/test_native_gate_join.py):
      3 FAILED    + reason u8                     a saving client whose save or capture failed (REASONS)
      4 HANDOVER  (tick = H)                      relay, in slot k's stand-in blob: from tick H on slot k is a full
                                                  client; every client applies slot k's identity steps at H
-     5 ABORT     + reason u8                     relay: the join of slot k ended without a handover
+     5 ABORT     + reason u8                     relay: the join of slot k ended without a handover; reason 16 dropped:
+                                                 the relay dropped slot k from this row (--stall-drop-ms, roadmap 15)
 2. The join package (<save folder>/mpjoin/j<T>.x4join, written by lockstep_join.h right after the join save
    j<T>.xml.gz): read_package verifies every hash and the record shapes; write_package builds one (tests,
    golden vectors shared with the C test); portable_digest recomputes the digest the SAVED record carries.
@@ -47,6 +48,11 @@ Three parts, each testable without X4 (tests/test_native_gate_join.py):
    the per-tick check of the joiner against the session (game and real time exact, digest from T+1 on),
    HANDOVER at a tick H, then slot k is a normal client. Every refusal is reported (NGJOINSTATE ... failed
    <reason>, a JOIN line) and never desyncs the session: until H slot k stays a stand-in.
+   Drop and rejoin (roadmap 15; --stall-drop-ms, --rejoin): a client the others waited for that long is dropped if its
+   slot may be (a --rejoin slot, present from the start, or an absent slot after its handover): from its first missing
+   row the relay stands in for it, that row carries ABORT(k, dropped), so every client makes the slot neutral from the same
+   row (gate.pilot_abort), the slot is absent again and a later NGJOIN takes it like any absent slot. Its old address is
+   answered NGDROP; its real clock base becomes the reference slot's (a rejoiner restores the saver's clocks).
 
 Launcher messages (UDP to the relay port, authenticated by the session token like NGSTATE):
   joiner -> relay  NGJOIN|1|token|slot|nonce                    ask to join as absent slot k; resend to poll
@@ -78,7 +84,7 @@ _BODY = {OP_SAVE_AT: struct.Struct('<BQ'), OP_SAVED: struct.Struct('<Q32s16s'), 
 # FAILED/ABORT reasons (lockstep_join.h JOIN_WHY_*; the same numbers in native_gate_join_core.lua).
 REASONS = {1: 'not_armed', 2: 'not_possible', 3: 'save_failed', 4: 'file_missing', 5: 'capture', 6: 'unsupported_module',
            7: 'package_write', 8: 'busy', 9: 'timeout', 10: 'mismatch', 11: 'saver_disagree', 12: 'joiner_lost',
-           13: 'pause_too_long', 14: 'refused_by_relay', 15: 'platform'}
+           13: 'pause_too_long', 14: 'refused_by_relay', 15: 'platform', 16: 'dropped'}
 REASON_CODES = {name: code for code, name in REASONS.items()}
 
 
@@ -1220,8 +1226,12 @@ class JoinCoordinator:
     placed, waiting for the save tick and the savers' SAVED records), saved (package known, the joiner boots),
     catching_up (the joiner replays), handover (H announced), joined, failed."""
     def __init__(self, barrier, slot, nonce, lead=30, handover_gap=60, handover_lead=8, max_pause=60.0, catchup_limit=300.0,
-                 joiner_timeout=900.0, savers=None):
+                 joiner_timeout=900.0, savers=None, observe=False):
         self.b, self.slot, self.nonce = barrier, slot, nonce
+        # --join-observe (diagnostic, default off): a joiner's declared digest that differs from the session's before H is
+        # counted and noticed, not fatal, so the handover and what follows it can run while the join is not yet equal.
+        # Game and real time stay exact. Every line of such a join says diagnostic=join_observe: it is never an acceptance.
+        self.observe, self.digest_mismatches, self.first_digest_mismatch = observe, 0, None
         self.lead, self.handover_gap, self.handover_lead = lead, handover_gap, handover_lead
         self.max_pause, self.catchup_limit, self.joiner_timeout = max_pause, catchup_limit, joiner_timeout
         present = [s for s in barrier.slots if s not in barrier.absent]
@@ -1324,7 +1334,14 @@ class JoinCoordinator:
             reason = f'mismatch:real_tick_{tick}'
         elif tick != self.save_tick and digest != ref['digest']:
             # Tick T carries the loaded world's boot report; from T+1 on the declared state must equal the session's.
-            reason = f'mismatch:digest_tick_{tick}'
+            if self.observe:
+                if self.joiner_tick is None or tick > self.joiner_tick:      # each tick once (resent reports repeat it)
+                    self.digest_mismatches += 1
+                    if self.first_digest_mismatch is None:
+                        self.first_digest_mismatch = tick
+                        self.notice(f'digest_mismatch first={tick} diagnostic=join_observe (counted, not fatal)')
+            else:
+                reason = f'mismatch:digest_tick_{tick}'
         if reason:
             self.fail(reason, now)
             return [(address, f'NGSTOP|{version}|{self.b.token}|{slot}|{tick}'.encode('ascii'))]
@@ -1378,7 +1395,10 @@ class JoinCoordinator:
 
     def joined(self, now):
         self.state = 'joined'
-        self.notice(f'joined tick={self.handover} catch_up_s={now-self.progress[0][0]:.1f}' if self.progress else 'joined')
+        observed = (f' diagnostic=join_observe digest_mismatches={self.digest_mismatches} '
+                    f'first_digest_mismatch={self.first_digest_mismatch if self.first_digest_mismatch is not None else "-"}'
+                    if self.observe else '')
+        self.notice((f'joined tick={self.handover} catch_up_s={now-self.progress[0][0]:.1f}' if self.progress else 'joined')+observed)
 
 
 def _barrier_base():
@@ -1389,14 +1409,27 @@ def _barrier_base():
 class JoinBarrier(_barrier_base()):
     """The relay's Barrier with absent slots (native_gate_relay.py --join). Absent slots are stand-ins: once every
     present slot reported tick t, each absent slot gets the reference slot's game, real and digest and the blob the
-    relay scheduled for it (a JOIN record) or ''. Protocols 3 and 4 only; no live inputs, peer links or crypto."""
-    def __init__(self, token, absent=(), join_options=None, **kw):
+    relay scheduled for it (a JOIN record) or ''. Protocols 3 and 4 only; no live inputs, peer links or crypto.
+    stall_drop_ms > 0: drops (module docstring, part 3); rejoin: the slots present from the start that may be dropped."""
+    def __init__(self, token, absent=(), join_options=None, rejoin=(), stall_report_ms=1000.0, stall_drop_ms=0.0, **kw):
         super().__init__(token, **kw)
         if kw.get('live_inputs') or kw.get('peer_window') is not None:
             raise ValueError('--join covers protocols 3 and 4 without live inputs or peer links')
         self.absent = set(absent)
         if not self.absent <= set(self.slots) or len(self.absent) >= self.clients:
             raise ValueError('absent slots must leave at least one present slot')
+        self.rejoin, self.absent_at_start = set(rejoin), frozenset(self.absent)
+        if not self.rejoin <= set(self.slots)-{1} or self.rejoin & self.absent:
+            raise ValueError('rejoin slots must be 2..N and not absent')
+        if self.rejoin and not stall_drop_ms:
+            raise ValueError('rejoin slots need a stall drop bound')
+        if stall_drop_ms and (not stall_drop_ms > 0 or stall_drop_ms < stall_report_ms):
+            raise ValueError('the stall drop bound must be positive and not below the stall report bound')
+        self.stall_report, self.stall_drop = stall_report_ms/1000.0, stall_drop_ms/1000.0
+        self.dropped = {}          # slot -> the first stand-in row of its current drop
+        self.dropped_peers = {}    # slot -> the dropped client's address (answered NGDROP)
+        self.stall_seen = set()
+        self.stalls, self.drops = [], []
         self.controls = {}         # (tick, slot) -> blob for an absent slot's stand-in row
         self.handovers = {}        # slot -> H
         self.join, self.joins, self.join_options = None, [], dict(join_options or {})
@@ -1428,10 +1461,14 @@ class JoinBarrier(_barrier_base()):
             return None
         return rows[min(present)]
 
+    def standing(self, tick):
+        """The slots whose row at tick is a stand-in: before its handover tick H a slot is one, from H on a client;
+        without a handover an absent slot is one."""
+        return [s for s in self.slots if (tick < self.handovers[s] if s in self.handovers else s in self.absent)]
+
     def fill(self, tick):
         rows = self.states.get(tick, {})
-        # A slot with a handover tick H is a stand-in before H and a client from H on; otherwise absent = stand-in.
-        stand = [s for s in self.slots if (tick < self.handovers[s] if s in self.handovers else s in self.absent)]
+        stand = self.standing(tick)
         present = [s for s in self.slots if s not in stand]
         if not all(s in rows for s in present) or not present:
             return False
@@ -1454,6 +1491,8 @@ class JoinBarrier(_barrier_base()):
                 slot, tick = fields[0], fields[1]
                 h = self.handovers.get(slot)
                 joining = self.join and self.join.slot == slot and self.join.state in ('saved', 'catching_up', 'handover')
+                if slot in self.dropped and address == self.dropped_peers.get(slot) and not joining:
+                    return [(address, self.drop_packet(slot))] if self.version == 4 else []
                 if h is None or tick < h:
                     # Before H: the catch-up replay (also a joined slot's resent older reports, never a session row).
                     return self.join.joiner_report(*fields, address, now) if joining else []
@@ -1461,6 +1500,8 @@ class JoinBarrier(_barrier_base()):
                     if not (joining and self.join.state == 'handover'):
                         return []
                     self.absent.discard(slot)           # from H on slot k is a client like any other
+                    self.dropped.pop(slot, None)        # a rejoin: its old address is no longer answered
+                    self.dropped_peers.pop(slot, None)
                     self.join.joined(now)
         out = super().receive(data, address, now)
         self.after_release(now)
@@ -1518,7 +1559,76 @@ class JoinBarrier(_barrier_base()):
             self.join.poll(now)
             self.notices += self.join.notices
             self.join.notices = []
-        return []
+        return self.poll_stall(now) if self.stall_drop else []
+
+    # -- drops (roadmap 15) --
+    def droppable(self, slot):
+        """Every client has the slot in its pilot absent mask, so an ABORT makes it neutral: a --rejoin slot, or a slot
+        absent at the start (after its handover)."""
+        return slot != 1 and (slot in self.rejoin or slot in self.absent_at_start)
+
+    def drop_packet(self, slot):
+        return f'NGDROP|4|{self.token}|{slot}|{self.dropped[slot]}'.encode('ascii')
+
+    def poll_stall(self, now):
+        """The present clients the others wait for at the first unreleased tick are reported, then dropped."""
+        if self.failed or self.done or self.released < 0:
+            return []
+        tick = self.released+1
+        if tick > self.limit:
+            return []
+        rows = self.states.get(tick, {})
+        stand = self.standing(tick)
+        present = [s for s in self.slots if s not in stand]
+        missing = [s for s in present if s not in rows]
+        if not missing or len(missing) == len(present):
+            return []
+        since = max(self.arrivals.get(tick, now), self.released_at.get(self.released, now))
+        waited = now-since
+        for s in missing:
+            if waited >= self.stall_report and (s, tick) not in self.stall_seen:
+                self.stall_seen.add((s, tick))
+                self.stalls.append({'slot': s, 'tick': tick, 'reported_ms': round(1000*waited, 1)})
+                self.notices.append(f'NATIVE_GATE STALL slot={s} tick={tick} waited_ms={1000*waited:.0f}'
+                                    f'{"" if self.droppable(s) else " droppable=0"}')
+        if waited < self.stall_drop:
+            return []
+        out, dropped = [], False
+        for s in missing:
+            if self.droppable(s):
+                out += self.drop(s, tick, now, waited)
+                dropped = True
+        return out+self.advance(now) if dropped else []
+
+    def drop(self, slot, tick, now, waited):
+        """Slot's rows are stand-ins from tick, the first it did not report; that row carries ABORT(slot, dropped)."""
+        ref = min(s for s in self.slots if s not in self.standing(tick) and s != slot)
+        self.dropped[slot] = tick
+        record = {'slot': slot, 'tick': tick, 'waited_ms': round(1000*waited, 1)}
+        base = self.states.get(0, {})
+        if slot in base and ref in base and base[slot]['real'] != base[ref]['real']:
+            # --relative-real compares each slot's real time since its tick 0: the stand-ins and a rejoiner carry the
+            # reference slot's clock from here on.
+            record['real_base_was'] = base[slot]['real']
+            base[slot] = dict(base[slot], real=base[ref]['real'])
+        address = self.peers.pop(slot, None)
+        if address is not None:
+            self.dropped_peers[slot] = address
+        if self.join and self.join.state in ('queued', 'saved', 'catching_up', 'handover'):
+            if self.join.slot == slot:
+                self.join.fail('joiner_lost:dropped', now)      # its ABORT goes in the first row it did not report
+            elif slot in self.join.savers and slot not in self.join.saved:
+                self.join.fail('refused_by_relay:saver_dropped', now)
+            self.notices += self.join.notices
+            self.join.notices = []
+        self.absent.add(slot)
+        self.handovers.pop(slot, None)
+        if (tick, slot) not in self.controls:               # (a failed join's ABORT may be there already)
+            self.schedule(slot, encode_record(OP_ABORT, slot, tick, reason=REASON_CODES['dropped']), tick)
+        self.drops.append(record)
+        self.notices.append(f'NATIVE_GATE DROP slot={slot} tick={tick} waited_ms={1000*waited:.0f} '
+                            f'remaining={",".join(str(s) for s in self.slots if s not in self.absent)}')
+        return [(address, self.drop_packet(slot))] if address is not None and self.version == 4 else []
 
     def take_notices(self):
         notices = super().take_notices()
@@ -1548,9 +1658,14 @@ class JoinBarrier(_barrier_base()):
     def summary(self):
         out = super().summary()
         out['join'] = [{'slot': j.slot, 'state': j.state, 'failure': j.failure, 'save_tick': j.save_tick, 'saver': j.saver,
-                        'saved': j.saved, 'handover': j.handover, 'joiner_tick': j.joiner_tick, 'joiner_rate': round(j.rate(), 2)}
+                        'saved': j.saved, 'handover': j.handover, 'joiner_tick': j.joiner_tick, 'joiner_rate': round(j.rate(), 2),
+                        **({'diagnostic': 'join_observe', 'digest_mismatches': j.digest_mismatches,
+                            'first_digest_mismatch': j.first_digest_mismatch} if j.observe else {})}
                        for j in self.joins]
         out['absent'] = sorted(self.absent)
+        if self.stall_drop:
+            out['drop'] = {'stall_report_ms': 1000*self.stall_report, 'stall_drop_ms': 1000*self.stall_drop,
+                           'rejoin': sorted(self.rejoin), 'stalls': self.stalls, 'drops': self.drops}
         return out
 
 

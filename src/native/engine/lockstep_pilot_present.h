@@ -493,10 +493,14 @@ static void pres_stop(void) {
 }
 /* The presentation's part of a pass (pnat_pass, every tick, before the slots' part). */
 /* The tick presenting starts: the window's start, or for an absent slot (hot join: this client is the joiner) its seat's
- * take+3 as for the others (seated at H-1, presented from H+3); never before its handover. */
+ * take+3 as for the others (seated at H-1, presented from H+3); never before its handover. A rejoinable slot (roadmap 15)
+ * presents from the window's start until it is dropped; dropped (this client is its rejoiner, in its catch-up) not before
+ * its new handover H, then from H+3. */
 static uint64_t pres_begin(void) {
     if(!pilot_slot_absent(pres_slot)) return pilot_start;
-    const uint64_t e=pilot_enroll[pres_slot-1];
+    const unsigned i=pres_slot-1;
+    if((pilot_rejoin>>i&1u) && pilot_until[i]!=UINT64_MAX) return UINT64_MAX;
+    const uint64_t e=(pilot_rejoin>>i&1u)?pilot_from[i]:pilot_enroll[i];
     if(e==UINT64_MAX) return UINT64_MAX;
     return e+PILOT_SUPPRESS_LEAD>pilot_start?e+PILOT_SUPPRESS_LEAD:pilot_start;
 }

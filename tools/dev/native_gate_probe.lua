@@ -263,6 +263,9 @@ end
 -- joiner: every per-slot module (pilot inputs, stock, slots, bodies, death, presentation, fire, UI replay, own prediction,
 -- hit claims) treats slot K as neutral until its HANDOVER, applied at the same tick everywhere (gate.pilot_handover), and
 -- requires its records from H+delay; an ABORT ends its records again (gate.pilot_abort).
+-- rejoin={K,...}: slots present from the start that the relay may drop (--rejoin, --stall-drop-ms; roadmap 15): its drop is
+-- an ABORT (reason dropped) in the slot's first missing row, after which it is neutral like an absent slot, and a later join
+-- hands it over again. The same list on every client and on a joiner; never slot 1, never an absent slot.
 local join_client,join_joiner,join_restored
 if cfg.native_gate_join then
  local j=cfg.native_gate_join==true and {} or cfg.native_gate_join
@@ -310,10 +313,22 @@ if cfg.native_gate_join then
    if k<=4 then absent_mask=absent_mask+2^(k-1) end   -- the pilot modules' slots (at most four)
   end
   assert(not absent[own] or join_joiner,'native_gate_join.absent names this client slot '..own..' (only a joiner starts absent)')
+ end
+ local rejoin,rejoin_mask={},0
+ if j.rejoin~=nil then
+  assert(type(j.rejoin)=='table' and #j.rejoin>=1,'native_gate_join.rejoin must be a list of slots')
+  for _,k in ipairs(j.rejoin) do
+   assert(type(k)=='number' and k%1==0 and k>=2 and k<=clients and not absent[k] and not rejoin[k],
+    'native_gate_join.rejoin: slots 2..'..clients..', each once, none of them absent (slot 1 is never dropped and rejoined)')
+   rejoin[k]=true
+   if k<=4 then rejoin_mask=rejoin_mask+2^(k-1) end
+  end
+ end
+ if j.absent~=nil or j.rejoin~=nil then
   -- The Windows gate's pilot modules take the mask when they arm (gate.pilot_absent after gate.pilot_inputs: the gate has
   -- started then); the Linux gate has none of them. In the join package: a joiner takes over the session's handovers so
   -- far (an earlier join's slot is present at T); '-' when the session flies no pilot modules.
-  if gate.pilot_absent and absent_mask>0 then
+  if gate.pilot_absent and absent_mask+rejoin_mask>0 then
    core.provide('pilot_absent',function() return gate.pilot_absent_state() or '-' end,function(text)
     if text=='-' then assert(not gate.pilot_absent_state(),'pilot absent: the session armed no pilot modules, this joiner did')
     else assert(gate.pilot_absent_restore(text)==1,'pilot absent state refused '..tostring(text)) end
@@ -330,15 +345,15 @@ if cfg.native_gate_join then
    if join_joiner and k==own then assert(gate.join_handover(h)==1,'join handover refused '..tostring(gate.join_status())) end
    -- Every client, the same tick: slot k's ship is enrolled at H, its records required from H+delay (when the pilot
    -- modules took the absent slots: gate.pilot_absent_state answers).
-   if absent[k] and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then
+   if (absent[k] or rejoin[k]) and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then
     assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
    end
   end,
   abort=function(k)
-   if absent[k] and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then assert(gate.pilot_abort(k)==1,'pilot abort refused k='..k) end
+   if (absent[k] or rejoin[k]) and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then assert(gate.pilot_abort(k)==1,'pilot abort refused k='..k) end
   end}
  input_section('join','join',join_client)
- DebugError('[X4LAN] NATIVE_GATE JOIN_ARMED slot='..own..' save='..save_mode..' joiner='..(join_joiner and 1 or 0)..' absent='..absent_mask)
+ DebugError('[X4LAN] NATIVE_GATE JOIN_ARMED slot='..own..' save='..save_mode..' joiner='..(join_joiner and 1 or 0)..' absent='..absent_mask..' rejoin='..rejoin_mask)
  -- native_gate_world_hash_join = true (DEFAULT OFF; reports/LOCKSTEP-HOTJOIN-20261101.txt 1.6): one more world capture at the
  -- join's T+1, on every client of the session (T of each SAVE_AT it applied, whether it saves or not: the capture enters the
  -- declared state of all of them alike) and on a joiner (its tick base + 1, its first frame). Both sides have then run the
@@ -3904,10 +3919,12 @@ local function frame()
    -- their HANDOVER (lockstep_pilot_inputs.h). Before the first tick, with the pilot modules.
    do
     local listed=type(cfg.native_gate_join)=='table' and cfg.native_gate_join.absent
-    local mask=0
+    local relisted=type(cfg.native_gate_join)=='table' and cfg.native_gate_join.rejoin
+    local mask,rmask=0,0
     for _,k in ipairs(listed or {}) do if k<=4 then mask=mask+2^(k-1) end end
-    if mask>0 then
-     assert(gate.pilot_absent and gate.pilot_absent(mask)==1,'pilot absent slots refused mask='..mask)
+    for _,k in ipairs(relisted or {}) do if k<=4 then rmask=rmask+2^(k-1) end end
+    if mask+rmask>0 then
+     assert(gate.pilot_absent and gate.pilot_absent(mask+rmask,rmask)==1,'pilot absent slots refused mask='..mask..' rejoin='..rmask)
      log('PILOT_ABSENT_ARMED mask='..mask..' '..tostring(gate.pilot_absent_state()))
     end
     -- The window's Lua state (the death module's start poses and counters, the stock aim, the UI families' one-shot test

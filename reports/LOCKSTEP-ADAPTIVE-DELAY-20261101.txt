@@ -305,3 +305,34 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   pass, census clients 2 and 3 each equal to client 1 at all six captures to 3000; slot 4's ship (07a931) stands still from
   about 1500.
   Open: peer links, rejoining a dropped slot (a handover into it, the hot join path), carrying a drop in the join package.
+
+14. DROP AND REJOIN IN JOIN SESSIONS (coordinator, 4 November 2026; roadmap 15, second part)
+  Design: in a hot join session (relay --join; protocols 3 and 4) a drop rides the JOIN records instead of the permit mask.
+  A rejoinable slot (relay --rejoin K, clients native_gate_join.rejoin={K}; never slot 1, never an absent slot) plays from
+  the start; the pilot modules hold it in the absent mask with its rows its own from tick 0 (gate.pilot_absent(mask, rejoin):
+  from 0, enrolled 0, seated at take-1 like every slot). The JoinBarrier's stall timer (--stall-report-ms, --stall-drop-ms)
+  reports a present slot the others wait for and, past the drop bound, drops it if it may be (a --rejoin slot, or a slot
+  absent at the start after its handover): from its first missing row c the relay stands in for it, and row c carries
+  ABORT(K, reason 16 'dropped'), so every client applies gate.pilot_abort at the same tick and the slot is neutral from row c
+  (the seat stays). The slot is then absent again: a later NGJOIN takes it through the normal hot join (SAVE_AT, the
+  savers' package, catch-up, HANDOVER(K, H)); pilot_handover_apply already accepts a handover after an ABORT. The relay
+  forgets the dropped client's address (its later reports are answered NGDROP|4, never counted), resets the slot's real
+  clock base to the reference slot's (a rejoiner restores the saver's clocks; --relative-real compares elapsed time), and
+  fails a join whose unsaved saver or whose joiner is dropped. The stock path's held-key release fires at the first silent
+  row after an ABORT as after a mask drop; a rejoiner presents its ship from its new H+3, not during its catch-up. The
+  driver and overlays accept --rejoin (the handoff names absent and rejoin slots); --join-observe (diagnostic, default off)
+  counts a joiner's digest mismatches before H instead of stopping it, every line of such a run says diagnostic=join_observe.
+  Tests: test_native_gate_join.py Rejoin (protocol 3 and 4 drop then rejoin, a slot with its own clock base, a second drop
+  of the rejoined slot, a slot that may not be dropped is waited for, a saver dropped before its save refuses the join,
+  refusals, the CLI), the join-observe test, test_native_gate_join_driver.py (options, overlays); native
+  test_lockstep_pilot_slots.h (a rejoinable slot dropped with its keys released once, rejoined, presented from H+3, dropped
+  again). 1558 Python tests OK; build218 native tests pass.
+  Live rj1 (build218, 2 slots at 20 Hz on b1/b2, slot 2 rejoinable, pilot window 1500..72000, relay --stall-drop-ms 5000,
+  lane b2 frozen at relay tick 400; the rejoiner on b3): STALL slot=2 tick=412 after 1006 ms, DROP slot=2 tick=412 after
+  5009 ms, remaining=1; client 1 JOIN_ABORT tick=414 k=2 reason=dropped (row 412 + 1 + lookahead), PILOT_INPUTS h2=0/412/0,
+  and through the window's start slot 2 stayed neutral (absent_skips=600 by 2100, no stop). NGJOIN at 600: SAVE_AT, slot 1
+  saved at T=633 (pause 6.2 s), files verified, handoff written; the rejoiner booted in about 80 s, restored h2=0/412/0
+  from the package, and its first report (T=633) was accepted (game and real time exact: the real base reset holds). It
+  then stopped at mismatch:digest_tick_634, the same first mismatch as every J1 replay (j1-115, j1-116: 634 on, though their
+  T+1 census is 0): rejoin now waits on the hot join's declared-state equality at T+1, which the hot join session is on.
+  Next: rj2 with --join-observe to run the handover into the dropped slot live while that equality is open.

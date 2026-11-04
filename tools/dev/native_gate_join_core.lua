@@ -4,7 +4,8 @@
 --   SAVE_AT  (relay, in absent slot k's stand-in blob)  every client in the mask arms its gate to save after step T
 --   SAVED / FAILED (a saver, in its own blob after T)   the package it wrote, or why it could not
 --   HANDOVER (relay, in slot k's blob)                  slot k is a full client from tick H on: its setup runs at H
---   ABORT    (relay, in slot k's blob)                  the join of slot k is over
+--   ABORT    (relay, in slot k's blob)                  the join of slot k is over; reason 'dropped': the relay dropped
+--                                                       rejoinable slot k from this row (roadmap 15), a later join may take it
 -- A control record counts only in the blob of the slot it names (the relay's stand-in for that absent slot); a
 -- saver's record only in another slot's blob. Anything else is refused and logged, never applied.
 X4LAN_JOIN_CORE={}
@@ -13,7 +14,7 @@ K.VERSION=1
 K.OP={save_at=1,saved=2,failed=3,handover=4,abort=5}
 K.OPNAME={'save_at','saved','failed','handover','abort'}
 K.REASONS={'not_armed','not_possible','save_failed','file_missing','capture','unsupported_module','package_write','busy','timeout',
- 'mismatch','saver_disagree','joiner_lost','pause_too_long','refused_by_relay','platform'}
+ 'mismatch','saver_disagree','joiner_lost','pause_too_long','refused_by_relay','platform','dropped'}
 K.SIZE={16,63,8,7,8}
 local function hex_ok(h) return type(h)=='string' and #h%2==0 and not h:find('[^0-9a-f]') end
 local function byte(h,i) return tonumber(h:sub(2*i-1,2*i),16) end

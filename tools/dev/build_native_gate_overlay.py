@@ -150,6 +150,9 @@ def main():
                    help="hot join, both sides: the session's absent slots (the relay's --absent; never slot 1). Every per-slot "
                         'module then treats them as neutral until their HANDOVER and requires their records from H+delay '
                         '(native_gate_join.absent)')
+    p.add_argument('--join-rejoin', metavar='K[,K...]',
+                   help="hot join, both sides: the session's rejoinable slots (the relay's --rejoin, roadmap 15): played from the "
+                        'start, neutral after the relay drops them, a later join takes them again (native_gate_join.rejoin)')
     p.add_argument('--join-mode', choices=('strict', 'report'), default='strict',
                    help='joiner: strict stops on any difference between the loaded world and the side table; report applies '
                         'what matches and reports the rest (J1 diagnostics)')
@@ -727,10 +730,20 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             if not slots or slots[0] < 2 or slots[-1] > 8:
                 p.error('--join-absent needs slots 2..8 (slot 1 is never absent)')
             absent = f", absent = {{{', '.join(map(str, slots))}}}"
+        rejoin = ''
+        if args.join_rejoin:
+            try:
+                again = sorted({int(v) for v in args.join_rejoin.split(',') if v.strip()})
+            except ValueError:
+                again = []
+            listed = {int(v) for v in (args.join_absent or '').split(',') if v.strip().isdigit()}
+            if not again or again[0] < 2 or again[-1] > 8 or set(again) & listed:
+                p.error('--join-rejoin needs slots 2..8, none of them absent (slot 1 is never dropped and rejoined)')
+            rejoin = f", rejoin = {{{', '.join(map(str, again))}}}"
         with (args.out/'ui/config.lua.append').open('a') as config:
-            config.write(f"X4LAN_CONFIG.native_gate_join = {{save = '{args.join or 'strict'}'{joiner}{absent}}}\n")
-    elif args.join_package_sha or args.join_mode != 'strict' or args.join_absent:
-        p.error('--join-package-sha, --join-mode and --join-absent need --join or --join-package')
+            config.write(f"X4LAN_CONFIG.native_gate_join = {{save = '{args.join or 'strict'}'{joiner}{absent}{rejoin}}}\n")
+    elif args.join_package_sha or args.join_mode != 'strict' or args.join_absent or args.join_rejoin:
+        p.error('--join-package-sha, --join-mode, --join-absent and --join-rejoin need --join or --join-package')
     if args.attention_all:
         if not args.gate_so or not args.snapshot or not args.world_identities:
             p.error('--attention-all needs --gate-so, the snapshot boot and --world-identities')

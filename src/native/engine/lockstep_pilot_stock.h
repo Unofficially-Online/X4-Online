@@ -185,9 +185,13 @@ static unsigned pstk_release_record(unsigned slot,pstk_record *r) {
     InterlockedIncrement64(&pstk_releases);InterlockedExchangeAdd64(&pstk_released_events,(LONG64)r->count);
     return r->count;
 }
-/* Slot's first silent tick after its drop (protocols 4 and 5): its record of tick-delay is the first one it lacks. */
+/* Slot's first silent tick after its drop (protocols 4 and 5), or after an ABORT of an absent or rejoinable slot (a hot
+ * join's drop, lockstep_pilot_inputs.h): its record of tick-delay is the first one it lacks. */
 static int pstk_release_due(unsigned slot,uint64_t tick) {
-    return tick>=pilot_delay && pilot_slot_dropped(slot,tick-pilot_delay) && tick-pilot_delay==pilot_drop_from[slot-1];
+    if(tick<pilot_delay || slot<1 || slot>PILOT_SLOTS) return 0;
+    const uint64_t c=tick-pilot_delay;
+    if(pilot_slot_dropped(slot,c)) return c==pilot_drop_from[slot-1];
+    return pilot_slot_absent(slot) && pilot_until[slot-1]!=UINT64_MAX && c==pilot_until[slot-1] && pilot_from[slot-1]<c;
 }
 static unsigned pstk_verdict(unsigned kind,int id) {
     /* Slot 1 on foot (lockstep_pilot_foot.h): the walking ids and GET_UP ride the record; mouselook too, split at the

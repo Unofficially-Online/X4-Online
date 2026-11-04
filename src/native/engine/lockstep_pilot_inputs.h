@@ -112,9 +112,14 @@ enum {UIREP_FAMILY_TRAVEL=1,UIREP_FAMILY_TARGET=2,UIREP_FAMILY_ORDERS=4,UIREP_FA
  * is enrolled at H (its player built at H-2 and seated at H-1, as at take-2/take-1), its own client proposes from H on
  * and its records are required from H+delay (captured at H). ABORT(k) after that: its rows are stand-ins again from the
  * row that carried the ABORT, its records stop from there (the seat stays, neutral); before its build the enrollment is
- * undone. A missing record of any slot that is not absent at that tick still stops (91, 155, 161). */
+ * undone. A missing record of any slot that is not absent at that tick still stops (91, 155, 161).
+ * Rejoinable slots (roadmap 15; native_gate_join.rejoin, the relay's --rejoin): slots present from the start that the relay
+ * may drop and a later join may take again. They are in the absent mask with their rows their own from tick 0 (from 0,
+ * enrolled 0, seated at take-1 like every slot); the relay's drop is an ABORT (reason dropped) in the first row the slot
+ * did not report, so from there it is neutral as above, and a later HANDOVER makes it a client again. */
 #define PILOT_HANDOVER_LEAD 3u   /* H at least this far after the record's tick: every client builds the player at H-2 */
 static unsigned pilot_absent;                       /* bit s-1: slot s is absent until its handover */
+static unsigned pilot_rejoin;                       /* bit s-1: of those, present from the start (rejoinable) */
 static uint64_t pilot_from[PILOT_SLOTS],pilot_until[PILOT_SLOTS],pilot_enroll[PILOT_SLOTS]; /* first own row, first stand-in again, enrolled */
 static volatile LONG64 pilot_absent_skips;          /* slot-ticks of a window without a record because the slot is absent */
 static int pilot_slot_absent(unsigned slot) {return slot>=1 && slot<=PILOT_SLOTS && (pilot_absent>>(slot-1)&1u);}
@@ -150,13 +155,18 @@ static int pilot_slot_silent(unsigned slot,uint64_t tick,unsigned delay) {
 }
 /* Slot's ship takes part from tick t (seat, body, death, guns): always, or for an absent slot from its enrollment. */
 static int pilot_slot_enrolled(unsigned slot,uint64_t tick) {return !pilot_slot_absent(slot) || tick>=pilot_enroll[slot-1];}
-/* gate.pilot_absent(mask): before the first tick (an identical rerun after a UI reload answers 1 at any tick). */
-static int pilot_absent_arm(unsigned mask) {
-    if(pilot_absent) return mask==pilot_absent;
-    if(!mask || (mask&1u) || mask>=(1u<<PILOT_SLOTS) || stats.issued) return 0;
-    for(unsigned i=0;i<PILOT_SLOTS;i++) pilot_from[i]=pilot_until[i]=pilot_enroll[i]=UINT64_MAX;
-    pilot_absent_skips=0;pilot_absent=mask;return 1;
+/* gate.pilot_absent(mask, rejoin): before the first tick (an identical rerun after a UI reload answers 1 at any tick).
+ * rejoin, a subset of mask: the slots present from the start (rows their own from 0, enrolled at 0). */
+static int pilot_absent_arm2(unsigned mask,unsigned rejoin) {
+    if(pilot_absent) return mask==pilot_absent && rejoin==pilot_rejoin;
+    if(!mask || (mask&1u) || mask>=(1u<<PILOT_SLOTS) || (rejoin&~mask) || stats.issued) return 0;
+    for(unsigned i=0;i<PILOT_SLOTS;i++) {
+        pilot_until[i]=UINT64_MAX;
+        pilot_from[i]=pilot_enroll[i]=(rejoin>>i&1u)?0:UINT64_MAX;
+    }
+    pilot_absent_skips=0;pilot_absent=mask;pilot_rejoin=rejoin;return 1;
 }
+#define pilot_absent_arm(mask) pilot_absent_arm2((mask),0u)   /* no rejoinable slot (the tests' form) */
 /* HANDOVER(k, H) applied at tick now (every client the same tick). One at a time: a second needs an ABORT first. */
 static int pilot_handover_apply(unsigned slot,uint64_t h,uint64_t now) {
     if(!pilot_slot_absent(slot) || h<now+PILOT_HANDOVER_LEAD || h>PILOT_TICK_MAX) return 0;

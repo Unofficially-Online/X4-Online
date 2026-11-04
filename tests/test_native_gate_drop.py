@@ -119,13 +119,14 @@ class DropBarrierTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             make(peer_window=2)
 
-    def test_cli_refuses_protocol_4_drops_with_join_or_without_a_window(self):
+    def test_cli_refuses_protocol_4_drops_without_a_window(self):
+        # With --join the drop is the join path's (tests/test_native_gate_join.py Rejoin).
         base = [sys.executable, str(ROOT/'tools/dev/native_gate_relay.py'), '--port', '0', '--token', TOKEN, '--ticks', '10',
                 '--clients', '3', '--stall-drop-ms', '3000', '--report', str(ROOT/'.local'/'drop-cli-unused.json')]
-        for extra in ([], ['--lookahead', '1', '--join']):
+        for extra in ([], ['--lookahead', '1', '--peer-window', '1']):
             r = subprocess.run(base+extra, capture_output=True, text=True, timeout=60)
             self.assertEqual(r.returncode, 2, r.stderr)
-            self.assertIn('--stall-drop-ms without --adaptive needs --lookahead K', r.stderr)
+            self.assertIn('--stall-drop-ms without --adaptive or --join needs --lookahead K', r.stderr)
 
 
 if __name__ == '__main__':

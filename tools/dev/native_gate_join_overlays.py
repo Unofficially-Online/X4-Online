@@ -13,6 +13,9 @@ joiner  The overlay of the joining slot: the same recipe with the join save as t
         absent slots (--join-absent: the handoff's, else --absent).
 Both name the absent slots in native_gate_join.absent: every per-slot module (pilot inputs, stock, slots, bodies, death,
 presentation, fire, UI replay, own prediction, hit claims) treats them as neutral until their HANDOVER.
+Rejoin (roadmap 15): savers --rejoin K (and --absent '' for none) names slots played from the start that the relay may
+drop (its --rejoin, --stall-drop-ms): native_gate_join.rejoin on both sides; the session then runs all N slots on lanes and
+the joiner takes slot K again after its drop (the handoff names absent and rejoin slots).
         From the session driver's handoff (native_gate_join_driver.py; --wait for it while the session runs) or from
         explicit --save/--package/--package-sha. The package is verified first (every hash, the save it names).
         Every saved ID of the joiner's effective config (the session defaults applied: the snapshot fixture, the identity
@@ -209,13 +212,16 @@ def precise_sets(sets):
     return sets+['native_gate_join_precise=true']
 
 
-def check_absent(clients, absent):
-    """The absent slots must be the last ones: the lane tool's clients are p1..pL in --lanes order."""
+def check_absent(clients, absent, rejoin=()):
+    """The absent slots must be the last ones: the lane tool's clients are p1..pL in --lanes order. Without absent slots
+    the session has rejoinable ones (2..N, not absent)."""
     if not 2 <= clients <= 4:
         raise ValueError('--clients 2..4 (the identity plan drives at most four slot ships)')
-    absent = sorted(set(absent))
+    absent, rejoin = sorted(set(absent)), sorted(set(rejoin))
+    if rejoin and (rejoin[0] < 2 or rejoin[-1] > clients or set(rejoin) & set(absent)):
+        raise ValueError(f'--rejoin needs slots 2..{clients}, none of them absent')
     lanes = clients-len(absent)
-    if not absent or lanes < 1 or absent != list(range(lanes+1, clients+1)):
+    if (not absent and not rejoin) or lanes < 1 or (absent and absent != list(range(lanes+1, clients+1))):
         raise ValueError(f'--absent must be the last slots ({lanes+1}..{clients} for {lanes} lane(s)): the lane tool gives its '
                          f'clients p1..p{max(lanes, 1)} in --lanes order')
     if lanes > 3:
@@ -268,14 +274,18 @@ def build(args, role, snapshot, base_extra, record):
 
 
 def savers(args):
-    absent, lanes = check_absent(args.clients, args.absent)
-    out, record = build(args, 'savers', args.snapshot, ['--join', args.join, '--join-absent', ','.join(map(str, absent))],
-                        {'clients': args.clients, 'absent': absent, 'lanes': lanes, 'join': args.join})
-    slots = ','.join(map(str, range(1, lanes+1)))
-    print(f'JOIN_OVERLAY role=savers out={out} clients={args.clients} absent={",".join(map(str, absent))} join={args.join} '
+    absent, lanes = check_absent(args.clients, args.absent, args.rejoin)
+    extra = (['--join-absent', ','.join(map(str, absent))] if absent else [])+(['--join-rejoin', ','.join(map(str, args.rejoin))] if args.rejoin else [])
+    out, record = build(args, 'savers', args.snapshot, ['--join', args.join, *extra],
+                        {'clients': args.clients, 'absent': absent, 'rejoin': sorted(args.rejoin), 'lanes': lanes, 'join': args.join})
+    slots = ','.join(str(s) for s in range(1, lanes+1) if s not in args.rejoin)
+    print(f'JOIN_OVERLAY role=savers out={out} clients={args.clients} absent={",".join(map(str, absent)) or "-"} '
+          f'rejoin={",".join(map(str, sorted(args.rejoin))) or "-"} join={args.join} '
           f'census_t1={int(bool(args.join_census))} snapshot_sha={record["snapshot_sha"]} plan={record["plan"]}')
     print(f'lane session: --clients {lanes} --lanes <{lanes} lanes, slot order> --overlay {out} (native_gate_lane.py --snapshot-in {args.snapshot})')
-    print(f'relay: --clients {args.clients} --join --absent {",".join(map(str, absent))} --join-savers {slots} (not --clients {{clients}}: '
+    relay = (f'--absent {",".join(map(str, absent))} ' if absent else '')+(
+        f'--rejoin {",".join(map(str, sorted(args.rejoin)))} --stall-drop-ms MS ' if args.rejoin else '')
+    print(f'relay: --clients {args.clients} --join {relay}--join-savers {slots} (not --clients {{clients}}: '
           f'that is the lane count {lanes})')
     return 0
 
@@ -299,14 +309,17 @@ def joiner(args):
             wait_for(args.handoff, args.wait)
         h = driver.load_handoff(args.handoff, verify=True)
         save, package, sha, clients, slot = Path(h['save']), Path(h['package']), h['package_sha'], h['clients'], h['slot']
-        absent = h.get('absent') or [slot]
+        rejoin = h.get('rejoin') or []
+        absent = h.get('absent') or ([] if rejoin else [slot])
     else:
         if not (args.save and args.package and args.package_sha):
             raise ValueError('joiner needs --handoff, or --save, --package and --package-sha')
         save, package, sha, clients, slot = Path(args.save), Path(args.package), args.package_sha.lower(), args.clients, None
         absent = [int(v) for v in args.absent.split(',') if v.strip()]
-    if not absent or min(absent) < 2 or max(absent) > clients or (slot is not None and slot not in absent):
-        raise ValueError(f'absent slots {absent}: 2..{clients}, the joining slot among them')
+        rejoin = [int(v) for v in args.rejoin.split(',') if v.strip()]
+    either = absent+rejoin
+    if not either or min(either) < 2 or max(either) > clients or set(absent) & set(rejoin) or (slot is not None and slot not in either):
+        raise ValueError(f'absent slots {absent}, rejoin slots {rejoin}: 2..{clients}, apart, the joining slot among them')
     if not str(save).endswith('.xml.gz'):
         raise ValueError('the join save must be a .xml.gz (the lane snapshot slot takes no other)')
     data = package.read_bytes()
@@ -325,9 +338,12 @@ def joiner(args):
         raise ValueError('a diagnostic package (saved in report mode or with unaudited modules) refuses a strict joiner: '
                          '--join-mode report')
     world = check_world_table(loaded, args.join_mode)
+    extra = (['--join-absent', ','.join(map(str, sorted(set(absent))))] if absent else [])+(
+        ['--join-rejoin', ','.join(map(str, sorted(set(rejoin))))] if rejoin else [])
     out, record = build(args, 'joiner', save, ['--join-package', package, '--join-package-sha', sha, '--join-mode', args.join_mode,
-                                               '--join-absent', ','.join(map(str, sorted(set(absent))))],
-                        {'clients': clients, 'slot': slot, 'absent': sorted(set(absent)), 'save_tick': gate['tick'],
+                                               *extra],
+                        {'clients': clients, 'slot': slot, 'absent': sorted(set(absent)), 'rejoin': sorted(set(rejoin)),
+                         'save_tick': gate['tick'],
                          'saver': loaded['header']['slot'],
                          'package': str(package.resolve()), 'package_sha': sha, 'join_mode': args.join_mode,
                          'diagnostic': loaded['header']['flags'] & join.FLAG_DIAGNOSTIC, 'world': world})
@@ -369,7 +385,8 @@ def main(argv=None):
     s = sub.add_parser('savers', parents=[common], help='the session overlay of the present clients')
     s.add_argument('--snapshot', required=True, type=Path, help='the owned battle snapshot (save_009.xml.gz)')
     s.add_argument('--clients', type=int, default=3, help='session slots N (default 3)')
-    s.add_argument('--absent', default='3', help='absent slots, the last ones (default 3)')
+    s.add_argument('--absent', default='3', help="absent slots, the last ones (default 3; '' for none with --rejoin)")
+    s.add_argument('--rejoin', default='', help='rejoinable slots: played from the start, dropped and joined again (roadmap 15)')
     s.add_argument('--join', choices=('report', 'strict'), default='report',
                    help='report (J1): save with unaudited modules armed, the package marked diagnostic; strict: refuse that save')
     j = sub.add_parser('joiner', parents=[common], help='the overlay of the joining slot')
@@ -381,6 +398,7 @@ def main(argv=None):
     j.add_argument('--clients', type=int, default=3, help='with --save/--package: session slots N (default 3)')
     j.add_argument('--absent', default='3', help="with --save/--package: the session's absent slots, the joining one among them "
                                                  '(default 3; a handoff names them itself)')
+    j.add_argument('--rejoin', default='', help="with --save/--package: the session's rejoinable slots (a handoff names them itself)")
     j.add_argument('--join-mode', choices=('strict', 'report'), default='strict')
     args = p.parse_args(argv)
     if not 1000 <= args.arm_timeout_ms <= 120000:
@@ -389,6 +407,7 @@ def main(argv=None):
     try:
         if args.command == 'savers':
             args.absent = [int(v) for v in args.absent.split(',') if v.strip()]
+            args.rejoin = [int(v) for v in args.rejoin.split(',') if v.strip()]
             return savers(args)
         return joiner(args)
     except (ValueError, OSError, driver.HandoffError) as error:

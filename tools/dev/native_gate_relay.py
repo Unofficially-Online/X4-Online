@@ -639,8 +639,9 @@ def main():
                           help='report a client the others have waited for this long (default 1000)')
     adaptive.add_argument('--stall-drop-ms', type=float, default=0, metavar='MS',
                           help='drop a client the others have waited for this long: its later proposals are empty for everyone and '
-                               'it is stopped (0, the default: never); protocol 5, and protocol 4 (--lookahead K) without --join or '
-                               '--peer-window (DropBarrier); its ship goes neutral (roadmap D15)')
+                               'it is stopped (0, the default: never); protocol 5, and protocol 4 (--lookahead K) without '
+                               '--peer-window (DropBarrier); its ship goes neutral (roadmap D15). With --join: --rejoin slots and '
+                               'joined slots, a later join takes the slot again (roadmap 15)')
     p.add_argument('--status-file', type=Path, help='observe mode: small live JSON status (desync flag, first/last mismatch), '
                    'rewritten atomically on every notice and at most once a second otherwise')
     p.add_argument('--rendezvous-port', type=int, default=0, metavar='P',
@@ -657,6 +658,9 @@ def main():
                            'for absent slots, asks every saver to save at an agreed tick, replays the session to the joiner and '
                            'hands the slot over at an announced tick')
     join.add_argument('--absent', default='', metavar='K[,K...]', help='with --join: slots nobody plays at the start')
+    join.add_argument('--rejoin', default='', metavar='K[,K...]',
+                      help='with --join and --stall-drop-ms: slots played from the start that may be dropped and joined again '
+                           '(the clients\' native_gate_join.rejoin; never slot 1; roadmap 15)')
     join.add_argument('--join-savers', default='', metavar='S[,S...]', help='slots that save (default: every present slot)')
     join.add_argument('--join-lead', type=int, default=30, metavar='TICKS',
                       help='ticks between the save request reaching the clients and the save tick (default 30)')
@@ -669,6 +673,10 @@ def main():
     join.add_argument('--join-catchup-limit', type=float, default=300, metavar='S',
                       help='after this many seconds of catch-up the handover is announced even with a larger gap, if the '
                            'expected pause stays within --join-max-pause (default 300)')
+    join.add_argument('--join-observe', action='store_true',
+                      help='DIAGNOSTIC (default off): a joiner whose declared digest differs before its handover is counted and '
+                           'noticed instead of stopped (game and real time stay exact), so the handover runs while the join is not '
+                           'yet equal; its lines say diagnostic=join_observe and such a run is never a J2 acceptance')
     join.add_argument('--join-joiner-timeout', type=float, default=900, metavar='S',
                       help='a joiner that stays silent this long is given up (default 900: load time included)')
     args = p.parse_args()
@@ -698,11 +706,13 @@ def main():
     if args.peer_window is not None and args.wire_crypto: p.error('--peer-window with --wire-crypto: the sealed peer address exchange is not built')
     if args.join and (args.adaptive or args.wire_crypto or args.live_inputs or args.peer_window is not None):
         p.error('--join covers protocols 3 and 4 without --adaptive, --wire-crypto, --live-inputs or --peer-window')
-    if (args.absent or args.join_savers) and not args.join: p.error('--absent and --join-savers need --join')
+    if (args.absent or args.join_savers or args.rejoin or args.join_observe) and not args.join:
+        p.error('--absent, --join-savers, --rejoin and --join-observe need --join')
+    if args.rejoin and not args.stall_drop_ms: p.error('--rejoin needs --stall-drop-ms')
     # Protocol 4 drops (DropBarrier; with --wire-crypto the stand-in record carries a zero signature); the join path has its own
-    # stand-ins.
-    if args.stall_drop_ms and not args.adaptive and (args.join or args.live_inputs or args.peer_window is not None or not args.lookahead):
-        p.error('--stall-drop-ms without --adaptive needs --lookahead K and no --join, --live-inputs or --peer-window')
+    # stand-ins: a drop there is an ABORT record in the slot's stand-in row (JoinBarrier, protocols 3 and 4).
+    if args.stall_drop_ms and not args.adaptive and not args.join and (args.live_inputs or args.peer_window is not None or not args.lookahead):
+        p.error('--stall-drop-ms without --adaptive or --join needs --lookahead K and no --live-inputs or --peer-window')
     # Every client builds the absent slot's player at H-2 (lockstep_pilot_inputs.h PILOT_HANDOVER_LEAD): the record must be
     # applied at least 3 ticks before H, and it is applied handover-lead ticks before it.
     if args.join and args.join_handover_lead < 3: p.error('--join-handover-lead must be at least 3 (the slot is built at H-2)')
@@ -736,15 +746,19 @@ def main():
         try:
             absent = [int(v) for v in args.absent.split(',') if v.strip()]
             savers = [int(v) for v in args.join_savers.split(',') if v.strip()]
-            barrier = JoinBarrier(args.token, absent=absent, ticks=args.ticks, hold_tick=args.hold_tick, hold_seconds=args.hold_seconds,
+            rejoin = [int(v) for v in args.rejoin.split(',') if v.strip()]
+            barrier = JoinBarrier(args.token, absent=absent, rejoin=rejoin, stall_report_ms=args.stall_report_ms,
+                                  stall_drop_ms=args.stall_drop_ms, ticks=args.ticks, hold_tick=args.hold_tick, hold_seconds=args.hold_seconds,
                                   relative_real=args.relative_real, observe=args.observe, clients=args.clients, remote=bool(allowed),
                                   lookahead=args.lookahead, tick_hz=args.tick_hz,
                                   join_options={'lead': args.join_lead, 'handover_gap': args.join_handover_gap,
                                                 'handover_lead': args.join_handover_lead, 'max_pause': args.join_max_pause,
                                                 'catchup_limit': args.join_catchup_limit, 'joiner_timeout': args.join_joiner_timeout,
-                                                'savers': savers or None})
+                                                'savers': savers or None, 'observe': args.join_observe})
         except ValueError as error: p.error(f'--join: {error}')
-        print(f'NATIVE_GATE RELAY JOIN absent={",".join(map(str, sorted(barrier.absent))) or "none"}', flush=True)
+        print(f'NATIVE_GATE RELAY JOIN absent={",".join(map(str, sorted(barrier.absent))) or "none"}'
+              + (f' rejoin={",".join(map(str, sorted(barrier.rejoin))) or "none"} stall_drop_ms={args.stall_drop_ms:g}'
+                 if args.stall_drop_ms else '')+(' join_observe=1 diagnostic=join_observe' if args.join_observe else ''), flush=True)
     elif args.stall_drop_ms:
         try:
             barrier = DropBarrier(args.token, args.ticks, args.hold_tick, args.hold_seconds, relative_real=args.relative_real,

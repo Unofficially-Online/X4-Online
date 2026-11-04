@@ -8,12 +8,15 @@ static int lua_pilot_inputs(lua_State *L) {
         (suppress==0 || suppress==1) && pilot_arm(manifest,kind,(unsigned)delay,(uint64_t)start,(uint64_t)stop,(unsigned)suppress);
     p_lua_pushnumber(L,ok);return 1;
 }
-/* Absent slots (hot join; lockstep_pilot_inputs.h): gate.pilot_absent(mask) before the first tick (bit s-1, never slot 1);
+/* Absent slots (hot join; lockstep_pilot_inputs.h): gate.pilot_absent(mask[, rejoin]) before the first tick (bit s-1, never
+ * slot 1; rejoin: the subset present from the start, roadmap 15);
  * gate.pilot_handover(k, H) and gate.pilot_abort(k) from the join section's HANDOVER and ABORT records, on every client at
  * the tick they are applied. 1 accepted, 0 refused (the probe stops: a client that disagrees would part from the others). */
 static int lua_pilot_absent(lua_State *L) {
-    double mask=p_lua_tonumber(L,1);
-    p_lua_pushnumber(L,accept_ui() && isfinite(mask) && floor(mask)==mask && mask>0 && mask<(double)(1u<<PILOT_SLOTS) && pilot_absent_arm((unsigned)mask));
+    double mask=p_lua_tonumber(L,1),rejoin=p_lua_tonumber(L,2);   /* none: 0 */
+    p_lua_pushnumber(L,accept_ui() && isfinite(mask) && floor(mask)==mask && mask>0 && mask<(double)(1u<<PILOT_SLOTS) &&
+        isfinite(rejoin) && floor(rejoin)==rejoin && rejoin>=0 && rejoin<(double)(1u<<PILOT_SLOTS) &&
+        pilot_absent_arm2((unsigned)mask,(unsigned)rejoin));
     return 1;
 }
 static int lua_pilot_handover(lua_State *L) {
