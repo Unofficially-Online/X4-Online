@@ -141,6 +141,10 @@ static const unsigned pslot_routed[3]={6,7,10};
  * pass, lockstep_pilot_foot_body.h). */
 enum {PJOIN_CONSTRUCT,PJOIN_SEAT,PJOIN_CONNECT,PJOIN_STEPS};
 static uint32_t pjoin_range[PILOT_SLOTS+1][PJOIN_STEPS][2];
+/* A joiner inside the window (lockstep_pilot_join.h, w1s): its loaded ship already has the PlayerController X4's loader
+ * made from the saved <movement class="player">; the seat adopts it instead of take() making one. */
+static int pslot_adopt;
+static unsigned pjoin_adopted;   /* bit k-1: slot k's seat adopted the loaded controller */
 static uint32_t pjoin_head(void) {
     unsigned char *map=rid_mode==RID_SET?rid_map():NULL;
     if(!map) return 0;
@@ -580,7 +584,8 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
     int64_t index=0;int position=0;
     if(!read_local(ship,&vtable,8) || !vtable || !read_local(vtable+PSLOT_TAKE,&take,8) || take!=(void*)pslot_fn.take ||
        !read_local(vtable+PSLOT_RELEASE,&release,8) || release!=(void*)pslot_fn.release) return pslot_fail("ship_vtable");
-    if(pslot_controller_has(ship,PSLOT_CONTROLLER_CLASS,NULL)!=0) return pslot_fail("ship_controlled");
+    int adopt=0;
+    if(pslot_controller_has(ship,PSLOT_CONTROLLER_CLASS,NULL)!=0) {if(!pslot_adopt) return pslot_fail("ship_controlled");adopt=1;}
     s->roomless=!read_local(ship+PSLOT_ROOM,&room,8) || !room || !pslot_is(room,PSLOT_ROOM_CLASS);
     if(s->roomless) room=ship;
     if(!read_local(s->player+0x70,&parent,8) || parent) return pslot_fail("player_parented");
@@ -603,12 +608,13 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
     pslot_seat_player(s);
     if(!pslot_enter(k)) {pslot_unseat_player(s);return pslot_fail("seat_scope");}
     void *controller=NULL;int fault=0;
-    __try {((void(*)(void*))take)(ship);controller=pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY);}
+    __try {if(!adopt) ((void(*)(void*))take)(ship);controller=pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY);}
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
     void *back=NULL,*cvt=NULL;
     int ok=!fault && controller && read_local(controller,&cvt,8) && cvt==(void*)(pnat_base+PSLOT_VTABLE) &&
         read_local((unsigned char*)controller+0x28,&back,8) && back==ship && pslot_controller_has(ship,0,controller)==1;
     if(ok) s->controller=controller;
+    if(ok && adopt) pjoin_adopted|=1u<<(k-1);
     if(ok && k==stats.slot) pview_slot_player=s->player;
     int left=pslot_leave(k);
     if(!ok) pslot_unseat_player(s);

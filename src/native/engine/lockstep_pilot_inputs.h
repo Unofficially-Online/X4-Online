@@ -226,6 +226,10 @@ static int pilot_absent_text(char *out,size_t capacity) {
 static uint64_t pjoin_park_tick,pjoin_last_park;
 static volatile LONG64 pjoin_parks;
 static char pjoin_controls[192];
+/* The joiner's resume (lockstep_pilot_join.h, W3): armed by gate.pilot_join_in_window(1) (the probe's diagnostic
+ * native_gate_join_in_window); pending from the first pass inside the window until it ran once after the slots' resolve. */
+static int pjoin_in_window_diag,pjoin_resume_pending,pjoin_resume_done;
+static int pjoin_resume(uint64_t tick,unsigned char *controller);
 static void pjoin_note_controls(const char *side,uint64_t tick,uint32_t *counter,const unsigned char *contexts,
                                 const unsigned char *flight,unsigned char (*authority)(void *),void *controller) {
     uint32_t count=0xffffffffu;unsigned char requested=0xff,control=0xff;int auth=-1;
@@ -524,15 +528,22 @@ static int pilot_before_release_using(pilot_find_fn find,void *map,const void *p
      * controls, the slots' players and seats are not in the join package. A join whose save tick T lies before the
      * window (take-3 at the latest) runs the window's start with everyone (reports/LOCKSTEP-HOTJOIN-20261101.txt 9.1). */
     {   const uint64_t base=join_tick_base();
-        if(base && base+1+5>pilot_start && base+1<=pilot_stop+2) {
+        if(base && base+1+5>pilot_start && base+1<=pilot_stop+2 && !pjoin_resume_done) {
             pjoin_note_controls("joiner",tick,counter,contexts,flight,authority,controller);   /* W3 measure */
-            pilot_stage="join_inside_window";return 0;
+            /* W3 (diagnostic): the resume rebuilds the window's state below, after the slots' resolve; otherwise 91. */
+            if(!pjoin_in_window_diag || tick!=base+1) {pilot_stage="join_inside_window";return 0;}
+            pjoin_resume_pending=1;
         }
         if(pjoin_park_tick && tick==pjoin_park_tick) pjoin_note_controls("session",tick,counter,contexts,flight,authority,controller);}
     if(!pilot_installed && !pilot_install()) {pilot_stage="install";return 0;}
     InterlockedExchange64(&pilot_frame_applied,0);InterlockedExchange64(&pilot_frame_receipt,0);
     pdeath_find=find;pdeath_map=map;pdeath_player=player_object;
     for(unsigned i=0;i<pilot_slot_count;i++) pilot_resolve(&pilot_slots[i],find,map,player_object);
+    if(pjoin_resume_pending) {
+        pjoin_resume_pending=0;
+        if(!pjoin_resume(tick,(unsigned char*)controller)) {pilot_stage="join_resume";return 0;}
+        pjoin_resume_done=1;
+    }
     if(pilot_suppress && pnat_armed) {
         if(!pnat_pass(tick,controller,refresh,counter,contexts,flight,authority)) return 0;
     } else if(pilot_suppress) {
@@ -776,6 +787,7 @@ static int pilot_status(char *out,size_t capacity) {
         n+=more;
     }
     if(n>0 && (size_t)n<capacity && pjoin_controls[0]) n+=snprintf(out+n,capacity-(size_t)n," join_controls=%s",pjoin_controls);
+    if(n>0 && (size_t)n<capacity && pjoin_in_window_diag) n+=snprintf(out+n,capacity-(size_t)n," join_resume=%d",pjoin_resume_done);
     if(n>0 && (size_t)n<capacity && pilot_dropped) {
         n+=snprintf(out+n,capacity-(size_t)n," dropped=%x drop_skips=%lld",pilot_dropped,(long long)pilot_drop_skips);
         for(unsigned i=0;n>0 && (size_t)n<capacity && i<PILOT_SLOTS;i++)

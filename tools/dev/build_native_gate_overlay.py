@@ -133,6 +133,12 @@ def main():
     p.add_argument('--spawn-rng', choices=('observe', 'key'), help='the Linux gate: ship loadouts on the generator\'s explicit state')
     p.add_argument('--weapon-fire-rng', action='store_true', help="the Linux gate: every weapon shot draws from its own keyed stream "
                    "(native_gate_weapon_fire_rng, on by default on Windows; needs --world-identities)")
+    p.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the Linux gate: the mass traffic pass joined at the gate tick '
+                   "(native_gate_mass_traffic, 'sync' by default on Windows)")
+    p.add_argument('--region-pass', choices=('sync', 'observe'), help='the Linux gate: the region manager pass joined at the gate tick '
+                   "(native_gate_region_pass, 'sync' by default on Windows)")
+    p.add_argument('--pass-stride', type=int, help='the Linux gate: the synced passes only at the end of every Nth frame (native_gate_pass_stride, '
+                   '2 by default on Windows; needs a synced pass)')
     p.add_argument('--spline-join-all', action='store_true', help='the Linux gate: every spline update waits (bounded) until its front '
                    'route request is published (native_gate_spline_join + native_gate_spline_join_all, on by default on Windows; '
                    'needs --serial-pathing)')
@@ -473,7 +479,7 @@ def main():
         # world identities and the world hash are ported (src/native/engine/linux/gate_world.h).
         if not args.snapshot or args.mode != 'clock':
             p.error('--gate-so supports the snapshot boot with --mode clock only')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
@@ -694,6 +700,18 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--engine-refresh-rng needs --gate-so, the snapshot boot and --world-identities')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_engine_refresh_rng = true\n')
+    if args.mass_traffic or args.region_pass or args.pass_stride is not None:
+        if not args.gate_so or not args.snapshot:
+            p.error('--mass-traffic, --region-pass and --pass-stride need --gate-so and the snapshot boot')
+        if args.pass_stride is not None and (not 1 <= args.pass_stride <= 16 or 'sync' not in (args.mass_traffic, args.region_pass)):
+            p.error('--pass-stride needs 1..16 and a synced pass')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            if args.mass_traffic:
+                config.write(f"X4LAN_CONFIG.native_gate_mass_traffic = '{args.mass_traffic}'\n")
+            if args.region_pass:
+                config.write(f"X4LAN_CONFIG.native_gate_region_pass = '{args.region_pass}'\n")
+            if args.pass_stride is not None:
+                config.write(f'X4LAN_CONFIG.native_gate_pass_stride = {args.pass_stride}\n')
     if args.spline_join_all:
         if not args.gate_so or not args.snapshot or not args.serial_pathing:
             p.error('--spline-join-all needs --gate-so, the snapshot boot and --serial-pathing')

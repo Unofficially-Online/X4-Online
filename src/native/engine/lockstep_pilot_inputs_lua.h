@@ -48,6 +48,12 @@ static int lua_pilot_join_state(lua_State *L) {
     static char out[1u<<17];int n=accept_ui() && pilot_armed?pjoin_tables_state(out,sizeof(out),stats.issued):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
+/* gate.pilot_join_in_window(1): the joiner's resume inside the window (diagnostic, before the first tick). */
+static int lua_pilot_join_in_window(lua_State *L) {
+    double on=p_lua_tonumber(L,1);
+    if(accept_ui() && on==1 && !stats.issued) pjoin_in_window_diag=1;
+    p_lua_pushnumber(L,pjoin_in_window_diag);return 1;
+}
 static int lua_pilot_join_status(lua_State *L) {
     char out[160];int n=accept_ui()?pjoin_status_text(out,sizeof(out)):0;
     if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
@@ -86,6 +92,7 @@ static int pilot_why_text(char *out,size_t capacity) {
     if(n>0 && (size_t)n<capacity && uirep_armed) n+=snprintf(out+n,capacity-(size_t)n," replay=%s replay_why=%s",uirep_stage_name,uirep_why);
     if(n>0 && (size_t)n<capacity && pilot_absent) {int more=pilot_absent_text(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
     if(n>0 && (size_t)n<capacity && pjoin_controls[0]) n+=snprintf(out+n,capacity-(size_t)n," join_controls=%s",pjoin_controls);
+    if(n>0 && (size_t)n<capacity && pjoin_in_window_diag) n+=snprintf(out+n,capacity-(size_t)n," join_resume=%s",pjoin_resume_why);
     return n>0 && (size_t)n<capacity?n:0;
 }
 /* gate.pilot_why(): pilot_why_text, or nil. */

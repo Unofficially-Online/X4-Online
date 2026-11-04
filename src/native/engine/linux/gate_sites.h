@@ -101,6 +101,20 @@
 #define LX_SPLINE_WORKER_VTABLE 0x3b28b38u   /* its vtable (Windows 0x2c68f98); slot 2 is Run */
 #define LX_SPLINE_WORKER_RUN_VA 0x10b0b30u   /* Run (Windows 0x1099650) */
 #define LX_SPLINE_WORKER_RUNNING 0xb8u       /* worker: running byte, Run sets it to 1 (Windows +0x58) */
+/* Mass traffic and region passes joined (gate_mass_traffic.h; lockstep_mass_traffic.h). Tasks: LX_FS_MASS_VA, LX_FS_REGION_VA. */
+#define LX_SEM_WAIT_VA 0x1a23cc0u              /* XLib::Semaphore wait (semaphore) */
+#define LX_CONDVAR_WAIT_VA 0x1a23f70u          /* XLib condition wait (condition, XLib::Mutex) */
+#define LX_PTHREAD_COND_WAIT_PLT_VA 0x6589a0u  /* pthread_cond_wait's PLT entry */
+#define LX_MT_WORKER_WAIT_CALL_VA 0x12125b5u   /* MoveWorker::Run frame start: E8 to the g_semSimStart wait (Windows 0xef45ea) */
+#define LX_MT_WORKER_WAIT_BLOCK_VA 0x12125b0u  /* the aligned 16 bytes holding its rel32 */
+#define LX_MT_TRAFFIC_WAIT_CALL_VA 0x11f9735u  /* traffic Run: E8 to the parked wait on +0xd8 */
+#define LX_MT_TRAFFIC_WAIT_BLOCK_VA 0x11f9730u
+#define LX_MT_REGION_WAIT_CALL_VA 0x12ef3bfu   /* region Run: E8 to pthread_cond_wait(+0x1a0, +0x140) */
+#define LX_MT_REGION_WAIT_BLOCK_VA 0x12ef3c0u
+#define LX_MT_TRAFFIC_LOCK 0x70u               /* traffic task: XLib::Mutex (Windows +0x60) */
+#define LX_MT_TRAFFIC_PARKED 0xa0u             /* traffic task: parked byte, set when its pass is done (Windows ready +0x88) */
+#define LX_MT_REGION_LOCK 0x138u               /* region task: XLib::Mutex (Windows +0x118) */
+#define LX_MT_REGION_PARKED 0x168u             /* region task: parked byte (Windows ready +0x140) */
 /* AI Wait restores (gate_ai_wait.h, lockstep_ai_wait_rng.h). */
 #define LX_AI_WAIT_SLOT_VA 0x3b2a680u       /* U::AI::WaitAction vtable 0x3b2a650, restore slot +0x30 (Windows +0x28) */
 #define LX_AI_WAIT_RESTORE_VA 0x10c12b0u    /* WaitAction::Reattach (Windows 0x10a50d0) */
@@ -498,5 +512,6 @@ static const lx_site lx_sites[]={
     {"spline_update_head",0x1363de0,0x110,"53ce49e351fba194737e429eb0ebf71daa1d84a01a357241cd243b9382208ef7"},
     {"spline_worker_run",0x10b0b30,0x140,"c955dfb74cada4c8b9c88f2f6bba275f92a13600064ad440f1193368773ac0a1"},
     {"spline_worker_make",0x2001180,0x88,"ff6e4eb1570b0d3ec5d61eb773e2319cb2871ecc1cd493d3585b010352bb2616"},
+    {"mt_region_kick",0x12d1680,0xb6,"fff0564cb5e327552abb9dc2a477d8360d7a36ab6acfde1d2f4e44319d4e9eca"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */

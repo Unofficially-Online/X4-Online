@@ -41,7 +41,33 @@ LINUX VS LINUX, 6000 TICKS, 2 CLIENTS (census every 30 ticks; differing objects 
           intermittent: lx4 19 objects from 1920 (ter_m_corvette x2, xen_s_fighter), lx5 27 from 2910
             (spl_m_miner, arg_s_fighter); neither recurs in the other run;
           systematic: root 09df69 at 4710 in both runs, 15 objects at 4710 in both.
+  lx6   lx5 + mass_traffic and region_pass 'sync', stride 2 (bff889ef)  1920       3    11    16    20    27
+        MASS_TRAFFIC_STOP joins=6001 busy=2996 (the traffic pass still ran at half the gate ticks; ~2.5 ms joins)
+        seeds=6001 applied=3000; REGION_PASS_STOP joins=6001 busy=56 applied=3001; worker=6003/6003; failures=0.
+        The roots are lx4's (1920, 4710) and lx5's (5490): the passes were not their cause. The same small set of
+        splits at fixed ticks appears in some runs and not in others (1920: lx4, lx6; 2910: lx5a, lx5b; 4710: lx4,
+        lx5a, lx6, not with launch order 2,1; 5490: lx5a, lx5b, lx6), i.e. races at particular events. Linux's script
+        RNG keys every scope (unkeyed=0, nested_unkeyed=0), but the clients' outer scope counts end one apart.
   lx2 and lx3 differ by run-to-run noise only (the same first split, 19 = 19 at 2400).
+
+WINDOWS AGAINST LINUX PAST 1200 (w20b client 1 against lx4a client 1, census_compare at the capture ticks)
+w20b (coordinator, build226): Windows clock mode, 6000 ticks, 2 clients, overlay-W20b = the Windows form of lx4's key
+set (W18 without its diagnostics + nav_rng/nav_cadence far/params/probe init, created identities/load/portable,
+attention_rng + attention_all, spawn_rng, loadout_order canonical, gravidar_wide sort, weapon_fire_rng,
+engine_refresh_rng). Its two clients agree at every capture through 6000. The one known asymmetry: Linux keys the nav
+refresh draws (nav_key); Windows keys them only with actor_rng_all, which this set has not.
+  tick        1     30    600   1200   1800   2400   3000   3600   4200   4800   5400   6000
+  differing  12     12     12     12     18     19     21     30     40     44     42     49   (of ~530,000)
+  of these   12 timing (nav.parameters_due, the asymmetry) at every tick; motion 0 through 1200, then 6 .. 37.
+Windows and Linux now agree outside the known nav asymmetry through tick 1200 and stay within 49 objects at 6000
+(3 November: the 1 November measurement config parted from 1170, ~4,700 by 6000 on either platform).
+  Against lx4a client 2 the same picture (1800: 6 motion + 12 timing; 6000: 43 + 12). The 12 timing objects are the
+  snapshot's 12 fixture actors (176a13..176cef): Windows keys their nav draws through its fixture registry (nav_rng),
+  Linux through nav_key. The 6 motion objects at 1800 are the same on both Linux clients, which still agree with each
+  other there: two groups of three consecutive saved IDs (6dbd2/6dbde/6dbea, 7eb5f/7eb70/7eb7c), most likely the same
+  asymmetry (this Windows set leaves the other ships' nav draws on the natural word, Linux keys them). The next step for
+  Windows/Linux equality is one nav key on both executables (Windows' actor_rng_all ship scope on Linux, or nav_key on
+  Windows).
   Reading it: lx2's slow growth from 1800 matches the spline-route cause B of the Windows long runs (a route
   consumed on a wall-clock tick; spline_join_all), and its cascade from 4140 (dozens of independent roots in many
   sectors at once) was the engine-parameter refresh drawing from the thread's word: lx4 removes it entirely.
@@ -65,8 +91,9 @@ Linux draw seeds exactly as on Windows; the Windows preprocessed lockstep_gate.c
     On Windows the same key needs the agent module (agent_full), so a Windows run cannot carry it alone yet.
 
 NEXT
-  1. The residue: the systematic 4710 root (09df69) first (a launch-order rerun tells startup timing from a slot
-     key), then the intermittent splits.
+  1. One nav key on both executables (the Windows/Linux asymmetry above).
+  2. The Linux-only races at fixed ticks (1920, 2910, 4710, 5490; the outer script scope counts end one apart): find
+     the event behind each (watched rows on the roots' ships at those ticks).
   2. The rest of the defaults' determinism stack, in the order the Linux census asks for.
   3. Windows against Linux past 1200 ticks with matching key sets.
   4. Then the battle scope and the people stack on Linux (pilot replay first: a Linux server simulates the players).

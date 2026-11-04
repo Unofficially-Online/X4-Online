@@ -3948,6 +3948,8 @@ local function frame()
      -- save inside the window is measured instead of refused here: the saver logs the real player and its ship at T, the
      -- joiner the same after its load; the gate still stops the joiner at its first pilot frame (91 join_inside_window).
      local in_window=cfg.native_gate_join_in_window==true
+     -- A joiner inside the window resumes its pilot state at its first pass (lockstep_pilot_join.h; diagnostic).
+     if in_window and join_joiner and gate.pilot_join_in_window then assert(gate.pilot_join_in_window(1)==1,'join in window refused') end
      local function players(what)
       local ok,player=pcall(function() return C.GetPlayerID() end)
       local ok2,ship=pcall(function() return C.GetPlayerOccupiedShipID() end)

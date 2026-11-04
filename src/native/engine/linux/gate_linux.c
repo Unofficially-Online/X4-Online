@@ -105,6 +105,11 @@ static int erng_installed,erng_restored;
 static void lsj_restore(void);
 static int lsj_check(void);
 static int lsj_installed,lsj_restored;
+/* Mass traffic and region passes joined (gate_mass_traffic.h, included below). */
+static void lmt_restore(void);
+static int lmt_check(void);
+static int lmt_join(uint64_t tick);
+static int lmt_installed,lmt_restored;
 /* AI Wait restores (gate_ai_wait.h, included below). */
 static void ai_wait_restore(void);
 static int ai_wait_owned(void);
@@ -435,6 +440,8 @@ static void finish(unsigned reason) {
     if(erng_installed) stats.restored=0;
     lsj_restore();
     if(lsj_installed) stats.restored=0;
+    lmt_restore();
+    if(lmt_installed) stats.restored=0;
     ai_wait_restore();
     if(ai_wait_armed && !ai_wait_restored) stats.restored=0;
     md_resume_restore();
@@ -539,6 +546,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(wfire_installed && !wfire_check()) {finish(132);gate_original_once(frame,loading);return;} /* WFIRE_STOP_REASON */
     if(erng_installed && !erng_check()) {finish(136);gate_original_once(frame,loading);return;} /* ERNG_STOP_REASON */
     if(lsj_installed && !lsj_check()) {finish(58);gate_original_once(frame,loading);return;} /* LSJ_STOP_REASON */
+    if(lmt_installed && !lmt_check()) {finish(100);gate_original_once(frame,loading);return;} /* LMT_STOP_REASON */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
     if(boot_hold_armed && boot_hold_failures) {finish(86);gate_original_once(frame,loading);return;}
     if(md_resume_armed && md_resume_failures) {finish(87);gate_original_once(frame,loading);return;}
@@ -590,6 +598,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     /* The frame just run is complete and its MoveWorker joined: resolve its creations. */
     if(!created_frame(stats.completed)) {finish(96);gate_original_once(frame,loading);return;}
     if(!rid_frame(stats.completed)) {finish(130);gate_original_once(frame,loading);return;}
+    if(lmt_installed && !lmt_join(stats.completed)) {finish(100);gate_original_once(frame,loading);return;} /* the passes kicked at its end */
     fork_save_frame(stats.completed); /* default off; never stops the session */
     static char packet[GATE_STATE_MAX],reply[GATE_PERMIT_MAX];uint64_t gamebits,realbits;
     memcpy(&gamebits,&stats.game,8);memcpy(&realbits,&stats.real,8);
@@ -745,6 +754,7 @@ static int lua_start(lua_State *L) {
 #include "gate_weapon_fire.h"
 #include "gate_engine_rng.h"
 #include "gate_spline_join.h"
+#include "gate_mass_traffic.h"
 static int lua_read_cost(lua_State *L) {
     char out[256];
     int n=accept_ui()?snprintf(out,sizeof(out),"fast=%d installed=%d reads=%llu faults=%llu lost=%llu slow_ns=%llu fast_ns=%llu.%llu gettid_ns=%llu",
@@ -846,7 +856,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);METHOD(world_health);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
-    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);
+    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);

@@ -217,6 +217,12 @@ def bundle(args):
         command.append('--engine-refresh-rng')
     if args.spline_join_all:
         command.append('--spline-join-all')
+    if args.mass_traffic:
+        command += ['--mass-traffic', args.mass_traffic]
+    if args.region_pass:
+        command += ['--region-pass', args.region_pass]
+    if args.pass_stride is not None:
+        command += ['--pass-stride', str(args.pass_stride)]
     if args.serial_pathing or (args.path_determinism or 0) & 1:
         command.append('--serial-pathing')
     if args.fork_save:
@@ -264,7 +270,7 @@ def bundle(args):
     manifest = {'commit': commit, 'ticks': args.ticks, 'stride': args.stride, 'snapshot_sha256': snapshot_sha, 'wire_crypto': bool(args.wire_crypto),
                 'gate_so_sha256': files['extension/x4_lan_lab/native/x4lan_gate.so'], 'files': files,
                 'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'), 'seed_rng': bool(args.seed_rng),
-                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'weapon_fire_rng': args.weapon_fire_rng, 'engine_refresh_rng': args.engine_refresh_rng, 'spline_join_all': args.spline_join_all, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
+                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'weapon_fire_rng': args.weapon_fire_rng, 'engine_refresh_rng': args.engine_refresh_rng, 'spline_join_all': args.spline_join_all, 'mass_traffic': args.mass_traffic, 'region_pass': args.region_pass, 'pass_stride': args.pass_stride, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
                 'world_hash_watch': args.world_hash_watch or [],
                 'fork_save': args.fork_save and {'request': args.fork_save, 'every': args.fork_save_every, 'slot': args.fork_save_slot,
                                                  'budget_ms': args.fork_save_budget_ms, 'watchdog_s': args.fork_save_watchdog}, 'fp_redirect_drones': args.fp_redirect_drones, 'world_health_ticks': args.world_health_ticks, 'fp_attack_capture': args.fp_attack_capture, 'fp_attack_watch': args.fp_attack_watch}
@@ -863,6 +869,9 @@ def main():
     b.add_argument('--spawn-rng', choices=('observe', 'key'), help='ship loadouts on the generator\'s explicit state')
     b.add_argument('--weapon-fire-rng', action='store_true', help='every weapon shot on its own keyed stream (native_gate_weapon_fire_rng)')
     b.add_argument('--engine-refresh-rng', action='store_true', help="a ship's next engine-parameter refresh from a keyed stream (native_gate_engine_refresh_rng)")
+    b.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the mass traffic pass joined at the gate tick (native_gate_mass_traffic)')
+    b.add_argument('--region-pass', choices=('sync', 'observe'), help='the region manager pass joined at the gate tick (native_gate_region_pass)')
+    b.add_argument('--pass-stride', type=int, help='the synced passes only every Nth frame (native_gate_pass_stride)')
     b.add_argument('--spline-join-all', action='store_true', help='every spline update waits until its route request is published (native_gate_spline_join_all; needs serial pathing)')
     b.add_argument('--travel-snapshot', action='store_true', help='the wingman travel decision reads a per-pass snapshot of the leader flag')
     b.add_argument('--gravidar-deadlines', action='store_true', help='factor-pass deadlines rebased at the first gated Move, low-attention passes keyed')

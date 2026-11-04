@@ -147,3 +147,15 @@ lockstep_join.h; join_rx.t.lua holds the LUA section's lines), never changing lo
      window start - 4): a provider of its own, restored at T+1 (today it refuses a T past take-2: lua_state:pilot_window).
 Each R-step keeps 91 for what it does not cover yet (a joiner stops loudly, never runs partly restored).
 
+9. FIRST LIVE RESUME (w1s, build228, 4 November): THE LOADED SHIP COMES WITH ITS PLAYERCONTROLLER
+R1-R4 wired in behind native_gate_join_in_window (52ca8472): the joiner's first pass at T+1 read pilot_players and
+pilot_state from its package and started the rebuild; slot 2's seat refused with ship_controlled (pslot_seat_ship: the ship
+already has a controller of the PlayerController class), stop 91 with pilot=join_resume. Cause, in the join save: slot 2's
+ship's movement is saved as <movement forceposition="0" player="1" class="player"> (slot 3, never seated, is
+class="navigation"), with a shootcontroller and no flightcontrolmodel; X4's loader recreates the PlayerController from it.
+The controller is not a component with a saved id (the seat's take() allocation on the session, 0x16469c, is no created
+identity). Next: either adopt the loaded controller (its vtable to the slot's copy, its player binding to P_k if it holds
+one, the seat's store from the package) and replay only the construct IDs, or release it and take() anew with the release's
+allocations kept off the shared head (the hot join's load list before the admission skip). To find out first: what the
+loaded controller is bound to (the player singleton at load time, or none) and what X4's release allocates.
+

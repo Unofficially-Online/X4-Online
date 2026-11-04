@@ -54,12 +54,14 @@ static int pjoin_state(char *out,size_t capacity) {
     return n>0 && (size_t)n<capacity?n:0;
 }
 static int pjoin_status_text(char *out,size_t capacity) {
-    return snprintf(out,capacity," join_park=%llu/%llu parks=%lld bodies=%x parked=%d",(unsigned long long)pjoin_park_tick,
-                    (unsigned long long)pjoin_last_park,(long long)pjoin_parks,pfbody_mask,pfbody_parked);
+    return snprintf(out,capacity," join_park=%llu/%llu parks=%lld bodies=%x parked=%d adopted=%x",(unsigned long long)pjoin_park_tick,
+                    (unsigned long long)pjoin_last_park,(long long)pjoin_parks,pfbody_mask,pfbody_parked,pjoin_adopted);
 }
 
 /* ---- the joiner's side (W3 R1, R2; reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 8) ---- */
 static int join_ids_replay(const uint64_t *ids,unsigned n);   /* lockstep_join_ids.h (the hot join's allocator) */
+static unsigned join_ids_replay_n,join_ids_replay_done,join_ids_replay_other,join_ids_replay_wrong;   /* its counters (tentative) */
+static char pjoin_why_text[96];
 static int join_ids_replay_end(void);
 static int join_package_line(const char *name,char *out,size_t capacity);   /* lockstep_gate.c: a line of the package's LUA section */
 #define PJOIN_IDS_MAX 32u
@@ -70,7 +72,7 @@ static int pjoin_resumed;
 static const char *pjoin_resume_why="-";
 /* pilot_players (pjoin_state's text): 1 parsed into pjoin_rx; 0 refused (pjoin_resume_why). The IDs listed must be the
  * construct and seat ranges' slots, in allocation order. */
-__attribute__((unused)) static int pjoin_parse_players(const char *text) {
+static int pjoin_parse_players(const char *text) {
     unsigned mask=0;int used=0;
     memset(pjoin_rx,0,sizeof(pjoin_rx));pjoin_rx_mask=0;pjoin_rx_slots=0;
     if(!text || sscanf(text,"v1/m%x%n",&mask,&used)!=1 || (mask&1u) || mask>=(1u<<PILOT_SLOTS)) {pjoin_resume_why="players_head";return 0;}
@@ -109,11 +111,11 @@ __attribute__((unused)) static int pjoin_parse_players(const char *text) {
 }
 /* The session's created identities of slot k's rebuilt objects, before the boundary resolves this frame's creations
  * (lockstep_world_created.h: a runtime already in the table is skipped there, counted duplicate, and takes no ordinal). */
-__attribute__((unused)) static int pjoin_created_keys(unsigned k) {
+__attribute__((unused)) static int pjoin_created_keys(unsigned k,unsigned n) {
     const pjoin_slot_rx *r=&pjoin_rx[k];
     if(!created_enabled()) return 1;
     int ok=1;AcquireSRWLockExclusive(&created_lock);
-    for(unsigned i=0;ok && i<r->n;i++) {
+    for(unsigned i=0;ok && i<n && i<r->n;i++) {
         if(!r->created[i]) continue;
         if(created_find_runtime(r->ids[i]) || created_find_id(r->created[i])) ok=0;
         else ok=created_live_add(r->ids[i],r->created[i],r->tick[i]);
@@ -124,15 +126,28 @@ __attribute__((unused)) static int pjoin_created_keys(unsigned k) {
 }
 /* R1: slot k's player and seat as the session built them at take-2 and take-1, with the session's runtime IDs (one replay
  * around both) and created identities. */
-__attribute__((unused)) static int pjoin_rebuild_slot(unsigned k) {
+static int pjoin_rebuild_slot(unsigned k) {
     const pjoin_slot_rx *r=&pjoin_rx[k];
     if(pslots[k].player) {pjoin_resume_why="rebuild_player_exists";return 0;}
-    if(!join_ids_replay(r->ids,r->n)) {pjoin_resume_why="rebuild_ids_arm";return 0;}
+    /* The loaded ship has its PlayerController already (w1s): the seat adopts it, so only the construct's IDs are replayed;
+     * the session's take() allocation stays an unused slot here (set mode never hands a slot out twice). */
+    unsigned char *ship=pilot_slots[k-1].resolved?pilot_slots[k-1].object:NULL;
+    const int adopt=ship && pslot_controller_has(ship,PSLOT_CONTROLLER_CLASS,NULL)==1;
+    const unsigned n=adopt?r->range[PJOIN_CONSTRUCT][1]-r->range[PJOIN_CONSTRUCT][0]:r->n;
+    if(!n || n>r->n) {pjoin_resume_why="rebuild_count";return 0;}
+    if(!join_ids_replay(r->ids,n)) {pjoin_resume_why="rebuild_ids_arm";return 0;}
+    pslot_adopt=adopt;
     const int built=pslot_construct(k) && pslot_seat(k);
+    pslot_adopt=0;
     const int placed=join_ids_replay_end();
     if(!built) {pjoin_resume_why=pslot_why;return 0;}
-    if(!placed) {pjoin_resume_why="rebuild_ids";return 0;}
-    if(!pjoin_created_keys(k)) {pjoin_resume_why="rebuild_created";return 0;}
+    if(!placed) {
+        snprintf(pjoin_why_text,sizeof(pjoin_why_text),"rebuild_ids:slot%u:adopt%d:n%u:done%u:other%u:wrong%u",k,adopt,join_ids_replay_n,
+                 join_ids_replay_done,join_ids_replay_other,join_ids_replay_wrong);
+        pjoin_resume_why=pjoin_why_text;return 0;
+    }
+    if(adopt && !(pjoin_adopted>>(k-1)&1u)) {pjoin_resume_why="rebuild_adopt";return 0;}
+    if(!pjoin_created_keys(k,n)) {pjoin_resume_why="rebuild_created";return 0;}
     return 1;
 }
 
@@ -148,7 +163,7 @@ static void pjoin_seat_pack(unsigned k) {
     f[0]=s->authority;f[1]=s->assist[0];f[2]=s->assist[1];f[3]=s->agent_mode;f[4]=s->no_highway;
     memcpy(f+5,&s->throttle,4);memcpy(f+9,&s->length,4);
 }
-__attribute__((unused)) static void pjoin_seat_unpack(unsigned k) {
+static void pjoin_seat_unpack(unsigned k) {
     const unsigned char *f=pjoin_seat_flags[k];pslot_slot *s=&pslots[k];
     s->authority=f[0];s->assist[0]=f[1];s->assist[1]=f[2];s->agent_mode=f[3];s->no_highway=f[4];
     memcpy(&s->throttle,f+5,4);memcpy(&s->length,f+9,4);
@@ -159,7 +174,7 @@ static void pjoin_stock_pack(void) {
     v[0]=pstk_flight;v[1]=pstk_flight_known;v[2]=pstk_cursor_tick;v[3]=pstk_frame_tick;v[4]=pstk_frame_hash;v[5]=pstk_aim_tick;
     v[6]=(uint64_t)pstk_aim_steer_replay|((uint64_t)(pstk_aim_valid_replay!=0)<<8);v[7]=pstk_capture_start;v[8]=pstk_first_apply;
 }
-__attribute__((unused)) static void pjoin_stock_unpack(void) {
+static void pjoin_stock_unpack(void) {
     const uint64_t *v=pjoin_stock_scalars;
     pstk_flight=(unsigned)v[0];pstk_flight_known=(unsigned)v[1];pstk_cursor_tick=v[2];pstk_frame_tick=v[3];pstk_frame_hash=v[4];
     pstk_aim_tick=v[5];pstk_aim_steer_replay=(unsigned char)v[6];pstk_aim_valid_replay=(int)((v[6]>>8)&1u);
@@ -235,7 +250,7 @@ __attribute__((unused)) static int pjoin_hex_get(const char *hex,size_t chars,un
 static uint64_t pjoin_tables_t;
 static unsigned char pjoin_store_rx[PILOT_SLOTS+1][VPL_BLOCK_MAX];
 static unsigned pjoin_store_rx_len[PILOT_SLOTS+1];
-__attribute__((unused)) static int pjoin_tables_parse(const char *text) {
+static int pjoin_tables_parse(const char *text) {
     unsigned long long t=0;int used=0;unsigned seen=0;
     memset(pjoin_store_rx_len,0,sizeof(pjoin_store_rx_len));memset(pjoin_pstk_ring,0,sizeof(pjoin_pstk_ring));memset(pjoin_pilot_ring,0,sizeof(pjoin_pilot_ring));
     if(!text || sscanf(text,"v1/t%llx%n",&t,&used)!=1) {pjoin_resume_why="state_head";return 0;}
@@ -269,5 +284,54 @@ __attribute__((unused)) static int pjoin_tables_parse(const char *text) {
     }
     if(*text || seen!=(1u<<PJOIN_BLOBS)-1u) {pjoin_resume_why="state_missing";return 0;}
     pjoin_tables_t=t;return 1;
+}
+
+/* ---- the resume (W3 R1-R4; diagnostic: native_gate_join_in_window) ----
+ * A joiner's first pass at T+1 inside a running window, after the slots' resolve and before the per-slot passes: the
+ * package's pilot_players and pilot_state, the slots' players and seats rebuilt with the session's IDs (R1) and their
+ * stores and flags, the slots' hook (its update of frame T is in the save: the check's last tick is T), the body guard
+ * parked as the session's after its park at T (R2), the native layer installed and the stock path's state (R3), the ring
+ * entries in flight (R4). Not covered yet (R5, R6): death, fire, foot and foot slots, the UI replay queues, the window's
+ * Lua state; a joiner runs on with them as its own arming left them, which is why this is a diagnostic. */
+static char pjoin_state_text[1u<<17];
+static int pjoin_resume(uint64_t tick,unsigned char *controller) {
+    char players[4096];const uint64_t base=join_tick_base();
+    if(!join_package_line("pilot_players",players,sizeof(players)) || !pjoin_parse_players(players)) {
+        if(!strcmp(pjoin_resume_why,"-")) pjoin_resume_why="no_players";return 0;
+    }
+    if(!join_package_line("pilot_state",pjoin_state_text,sizeof(pjoin_state_text)) || !pjoin_tables_parse(pjoin_state_text)) {
+        if(!strcmp(pjoin_resume_why,"-")) pjoin_resume_why="no_state";return 0;
+    }
+    if(pjoin_tables_t!=base || tick!=base+1) {pjoin_resume_why="state_tick";return 0;}
+    if(pjoin_rx_slots!=pslot_mask) {pjoin_resume_why="slot_mask";return 0;}
+    /* R1 */
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) {
+        if(!(pjoin_rx_mask>>(k-1)&1u)) continue;
+        if(!pjoin_rebuild_slot(k)) return 0;
+        if(pjoin_store_rx_len[k]) {
+            if(pjoin_store_rx_len[k]>VPL_BLOCK_MAX) {pjoin_resume_why="store_size";return 0;}
+            memcpy(pslots[k].store,pjoin_store_rx[k],pjoin_store_rx_len[k]);
+        }
+        pjoin_seat_unpack(k);
+        if(pslots[k].length!=pjoin_store_rx_len[k]) {pjoin_resume_why="store_length";return 0;}
+    }
+    if(pjoin_rx_mask && !pslot_hook_install()) {pjoin_resume_why="slots_hook";return 0;}
+    pslot_update_tick=base;pslot_stage="live";
+    /* R2 */
+    if(pfbody_armed) {
+        if(!pfbody_kill_install()) {pjoin_resume_why="body_kill_install";return 0;}
+        pfbody_mask=0;pfbody_parked=1;pfbody_seated_since=0;memset(pfbody_back,0,sizeof(pfbody_back));pfbody_stage="parked";
+    }
+    /* R3 */
+    if(pnat_armed && !pnat_install(controller)) {pjoin_resume_why="native_install";return 0;}
+    pjoin_stock_unpack();
+    pnat_stage="live";
+    /* R4: the carried ring entries where the joiner's own catch-up has not staged the same tick yet */
+    for(unsigned k=0;k<PILOT_SLOTS;k++) for(unsigned i=0;i<PSTK_RING;i++)
+        if(pjoin_pstk_ring[k][i].present && !(pstk_ring[k][i].present && pstk_ring[k][i].tick==pjoin_pstk_ring[k][i].tick)) pstk_ring[k][i]=pjoin_pstk_ring[k][i];
+    for(unsigned i=0;i<PILOT_RING;i++)
+        if(pjoin_pilot_ring[i].present && !(pilot_ring[i].present && pilot_ring[i].tick==pjoin_pilot_ring[i].tick)) pilot_ring[i]=pjoin_pilot_ring[i];
+    pjoin_resume_why="resumed";
+    return 1;
 }
 
