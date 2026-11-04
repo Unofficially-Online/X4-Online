@@ -140,6 +140,10 @@ E. CORRECTNESS TAILS
 17. [open] GetSafePos move-direction path stays native (sp_move); Linux's x flag ignored.
 18. [open] Control restore with an open map at session end (p4-short1); the Xenon fighter group in play39p
     (3 objects); U6 torpedo launch counter; 0a540e model +0x120 1-ulp writer.
+18b. [4 Nov] Intermittent splits in the wharf scenario (on-foot report 15m): (1) a nav spline job's query sphere took a
+    shared runtime ID on a worker thread (h1h3, from 3903): fix candidate build215 (a view-list site), 4 runs clean so far;
+    (2) cockpit pilot figures made with a different macro (h1r1, at 499; created identities only, nothing else parts):
+    open, lead in 15m.
 
 F. HOUSEKEEPING
 19. [later, user] 31 merged worktrees of mine are safe to remove (list in .local/census/CLEANUP-20261101.txt);

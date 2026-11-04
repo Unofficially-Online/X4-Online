@@ -1391,7 +1391,10 @@ The Codex-era NATIVE-GETUP-* reports studied a one-shot GetUp() diagnostic on th
   exactly one NPC in each of those cockpits, with a different created ID (cockpit 8001f394c9cb207e: 8001f3229feb1d26 on
   client 1, 8001f36f618bfeea on client 2); the cockpits themselves (created at 499 too) match. A created ID hashes (parent,
   class, macro, ordinal), so the pilot figure was made with a different macro [I: its character picked by a draw that is
-  not keyed, as the 15g drawer was; nothing else parted through 4200; open]. Two intermittent classes in this scenario, then: the worker-thread nav sweep ID (fix candidate above) and the
+  not keyed, as the 15g drawer was; nothing else parted through 4200; open]. Lead: CHARACTER_PLAY rows (the 15h wrapper)
+  show the two clients starting characters 4be007add/4b4007aba at different ticks from tick 50 on, in clean runs too
+  (presentation-driven; keyed, so the frame word is untouched); in h1r1 client 1 had such a start at 499, the tick the
+  cockpit figures were made, which client 2 had at 556. Two intermittent classes in this scenario, then: the worker-thread nav sweep ID (fix candidate above) and the
   cockpit figures' identities.
   build215 live (h1f1-h1f3: the long wharf scenario with runtime ID rows; d215: the 2-client session defaults, 3000 ticks):
   all four relay pass, no digest mismatch, census 0 at every capture (8, 8, 8 and 2); the view list counts equal on both
