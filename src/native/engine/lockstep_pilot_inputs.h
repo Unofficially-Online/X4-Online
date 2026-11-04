@@ -123,13 +123,13 @@ static int pilot_slot_absent(unsigned slot) {return slot>=1 && slot<=PILOT_SLOTS
  * carries (pilot_drop_note), at the same tick on every client (the permits are identical): from c on slot k's rows are no
  * longer its own, so from c+delay it has no record and is silent, as an absent slot after its ABORT: the seat stays,
  * neutral (no record, no events, no view, no trigger; its ship keeps its last command), it is still watched for death,
- * its hits are native. Slot 1 is MD's player: a drop of slot 1 still stops the others at its first missing record
- * (stage slot1_dropped). Rejoining a dropped slot (a handover into it) is not built. */
+ * its hits are native. Slot 1 too: MD's player stays in every world, idle, and the stock path's canonical update replays
+ * nothing for it (lockstep_pilot_stock.h). Rejoining a dropped slot (a handover into it) is not built. */
 static unsigned pilot_dropped;                      /* bit s-1: slot s was dropped (protocol 5 permit mask) */
 static uint64_t pilot_drop_from[PILOT_SLOTS];       /* its first proposal tick without its own row */
 static volatile LONG64 pilot_drop_skips;            /* slot-ticks of a window without a record because the slot was dropped */
 static int pilot_slot_dropped(unsigned slot,uint64_t tick) {
-    return slot>=2 && slot<=PILOT_SLOTS && (pilot_dropped>>(slot-1)&1u) && tick>=pilot_drop_from[slot-1];
+    return slot>=1 && slot<=PILOT_SLOTS && (pilot_dropped>>(slot-1)&1u) && tick>=pilot_drop_from[slot-1];
 }
 /* A permit carrying proposal tick c with the relay's drop mask (adapt_take, every client the same tick). */
 static void pilot_drop_note(unsigned mask,uint64_t c) {
@@ -405,11 +405,7 @@ static int pilot_frame_records(uint64_t tick) {
         }
         if(pilot_source==PILOT_SOURCE_SCRIPT) pilot_script(i+1,tick,pilot_start,&r);
         else {
-            if(e->tick!=tick || !(e->present&(1u<<i))) {
-                InterlockedIncrement64(&pilot_missing);
-                pilot_stage=i==0 && (pilot_dropped&1u) && tick>=pilot_delay && tick-pilot_delay>=pilot_drop_from[0]?"slot1_dropped":"missing_record";
-                return 0;
-            }
+            if(e->tick!=tick || !(e->present&(1u<<i))) {InterlockedIncrement64(&pilot_missing);pilot_stage="missing_record";return 0;}
             if(!pilot_decode(e->bytes[i],&r) || r.capture16!=(uint16_t)(tick-pilot_delay)) {pilot_stage="delay_mismatch";return 0;}
         }
         s->record=r;

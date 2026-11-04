@@ -94,6 +94,30 @@ static void test_lookahead_parse(void) {
     const char *stops[]={"NGSTOP|4|" LA_TOKEN "|2|3","NGSTOP|4|" LA_TOKEN "|2|02","NGSTOP|3|" LA_TOKEN "|2|0","NGSTOP|4|" LA_TOKEN "|2|0x",
         "NGSTOP|4|" LA_TOKEN "|1|0","NGSTOP|4|" LA_TOKEN "|2|","NGSTOP|4|" LA_TOKEN "|2|0|"};
     for(unsigned i=0;i<sizeof(stops)/sizeof(*stops);i++) assert(!lookahead_stop(stops[i],strlen(stops[i]),2));
+    /* Drops (the relay's DropBarrier, roadmap D15): k/<mask> names the slots the relay stands in for. Their blobs are
+     * empty, the mask never shrinks, a permit naming this client (-5) or NGDROP|4 stops with 193, and taking a permit
+     * notes the mask with its proposal tick for the pilot records (pilot_drop_note). */
+    {   la_state(packet,sizeof(packet),1,"0b");assert(lookahead_seal(1,packet,strlen(packet),"0b"));
+        la_state(packet,sizeof(packet),2,"0c");assert(lookahead_seal(2,packet,strlen(packet),"0c"));
+        pilot_dropped=0;memset(pilot_drop_from,0,sizeof(pilot_drop_from));
+        assert(la_permit("NGGO|4|" LA_TOKEN "|2|4|2/04|01|0b|ff")==-2);          /* a stand-in carries nothing */
+        assert(la_permit("NGGO|4|" LA_TOKEN "|2|4|2/02|01|0b|")==-5);            /* this client was dropped */
+        assert(la_permit("NGGO|4|" LA_TOKEN "|2|4|2/00|01|0b|")==-2 && la_permit("NGGO|4|" LA_TOKEN "|2|4|2/08|01|0b|")==-2);
+        assert(la_permit("NGGO|4|" LA_TOKEN "|2|4|2/0G|01|0b|")==0 && la_permit("NGGO|4|" LA_TOKEN "|2|4|2/4|01|0b|")==0);
+        assert(la_permit("NGGO|4|" LA_TOKEN "|2|4|2/04|01|0b|")==1);
+        assert(la_permit("NGGO|4|" LA_TOKEN "|2|4|2|01|0b|")==-3);                /* the same permit without its mask */
+        assert(la_permit("NGGO|4|" LA_TOKEN "|2|5|2/04|01|0c|")==1);
+        assert(lookahead_take(4) && lookahead_dropped==4 && pilot_dropped==4 && pilot_drop_from[2]==1 && !blob_inputs[2][0] &&
+               !strcmp(blob_inputs[1],"0b"));
+        stats.completed=3;la_state(packet,sizeof(packet),3,"0d");assert(lookahead_seal(3,packet,strlen(packet),"0d"));
+        assert(la_permit("NGGO|4|" LA_TOKEN "|2|6|2|01|0d|")==-3);                /* a drop is never undone */
+        assert(lookahead_take(5) && lookahead_dropped==4 && pilot_drop_from[2]==1);
+        char drop[]="NGDROP|4|" LA_TOKEN "|2|5",other[]="NGDROP|4|" LA_TOKEN "|1|5",mine[]="NGGO|4|" LA_TOKEN "|2|6|2/06|01|0d|";
+        assert(lookahead_datagram(drop,(int)strlen(drop))==LOOKAHEAD_STOP_DROPPED && !lookahead_datagram(other,(int)strlen(other)));
+        assert(lookahead_datagram(mine,(int)strlen(mine))==LOOKAHEAD_STOP_DROPPED);
+        char status[256];assert(lookahead_status(status,sizeof(status)) && strstr(status," dropped=04"));
+        pilot_dropped=0;memset(pilot_drop_from,0,sizeof(pilot_drop_from));lookahead_reset();stats.completed=0;
+        assert(lookahead_status(status,sizeof(status)) && !strstr(status,"dropped"));}
     /* Every window size over 64 ticks: permits for completed+1..completed+1+k
      * arrive in any order and repeated; the taken inputs are exactly the
      * proposals of tick T-1-k, and the ring never confuses two ticks. */

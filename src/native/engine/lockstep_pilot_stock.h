@@ -700,37 +700,50 @@ static int pstk_frame(uint64_t tick,const char **why) {
     if(!(pstk_settings=pstk_settings_using(pnat_base))) {*why="stock_settings";return 0;}
     if(tick<pstk_first_apply || tick>pilot_stop) return 1;
     pstk_staged *e=&pstk_ring[0][tick%PSTK_RING];pstk_record r;double now=0;
-    if(!e->present || e->tick!=tick) {*why="stock_missing";return 0;}
-    if(!pstk_decode(e->bytes,e->length,&r) || r.capture16!=(uint16_t)(tick-pilot_delay)) {*why="stock_delay_mismatch";return 0;}
-    if(!pnat_input || !pnat_fn.time(&now)) {*why="stock_time";return 0;}
-    unsigned char *map=pnat_input+0x63e0;
-    if(pilot_slots[0].dead) { /* consumed and ignored: its hash stays in the declared state, cursor and aim stay neutral */
-        pview_replay(1,tick,0,0,0.0f,0);
-        pstk_fire_tick[0]=tick;pstk_fire_on[0]=0;pstk_fire2_on[0]=0;
-    } else {
-        for(unsigned i=0;i<r.count;i++) { /* every handler is a stock one before any runs */
-            pstk_event *x=&r.events[i];
-            if(x->kind==PSTK_SPACE) continue;
-            if(!pstk_replay_handlers_ok(map,x)) {*why="stock_foreign_handler";return 0;}
-        }
-        for(unsigned i=0;i<r.count;i++) {
-            pstk_event *x=&r.events[i];
-            if(x->kind==PSTK_SPACE && x->id==PFOOT_CONTEXT) pfoot_context_replay((unsigned char)x->value,tick);
-            else if(x->kind==PSTK_SPACE) pstk_space_replay((unsigned char)x->value,now);
-            else {pstk_replay_walk(map+0x40*x->kind,x->kind,x->id,x->value);if(pdeath_armed) pdeath_note(x);pfoot_note_replay(x->kind,x->id,tick);}
-        }
-        InterlockedExchangeAdd64(&pstk_replayed,(LONG64)r.count);
-        if(r.flags&PSTK_FLAG_CURSOR) memcpy(pstk_cursor_replay,r.cursor,sizeof(pstk_cursor_replay));
-        else memset(pstk_cursor_replay,0,sizeof(pstk_cursor_replay));
-        pstk_aim_valid_replay=(r.flags&PSTK_FLAG_AIM)!=0;memcpy(pstk_aim_replay,r.aim,sizeof(pstk_aim_replay));pstk_aim_steer_replay=r.steer;
-        pstk_aim_tick=tick;
-        pview_replay(1,tick,(r.flags&PSTK_FLAG_VIEW)!=0,r.view,r.fov,r.target);
-        pstk_fire_tick[0]=tick;pstk_fire_on[0]=(r.flags&PSTK_FLAG_FIRE)!=0;pstk_fire2_on[0]=(r.flags&PSTK_FLAG_FIRE2)!=0;
-        pstk_cursor_tick=tick;pstk_frame_events=r.count;
+    /* Slot 1 dropped (protocol 5, lockstep_pilot_inputs.h): no record from c+delay; the canonical update replays nothing
+     * (as for a dead slot: no view, no trigger), its hash is 0, the slots 2..N below go on. */
+    const int silent1=(pstk_slot_mask&1u) && tick>=pilot_delay && pilot_slot_dropped(1,tick-pilot_delay);
+    unsigned char *map=pnat_input?pnat_input+0x63e0:NULL;
+    if(silent1) {
+        if(e->present && e->tick==tick) {*why="stock_absent_record";return 0;}
+        if(!map) {*why="stock_time";return 0;}
+        pview_replay(1,tick,0,0,0.0f,0);pstk_fire_tick[0]=tick;pstk_fire_on[0]=0;pstk_fire2_on[0]=0;
+        InterlockedIncrement64(&pilot_drop_skips);
+        if(pfoot_armed) pfoot_frame();
+        pstk_frame_hash=0;
     }
-    if(pfoot_armed) pfoot_frame();
-    pstk_frame_hash=pstk_fnv(e->bytes,e->length,PSTK_DOMAIN);
-    e->present=0;InterlockedIncrement64(&pstk_records);
+    else if(!e->present || e->tick!=tick) {*why="stock_missing";return 0;}
+    if(!silent1) {
+        if(!pstk_decode(e->bytes,e->length,&r) || r.capture16!=(uint16_t)(tick-pilot_delay)) {*why="stock_delay_mismatch";return 0;}
+        if(!pnat_input || !pnat_fn.time(&now)) {*why="stock_time";return 0;}
+        if(pilot_slots[0].dead) { /* consumed and ignored: its hash stays in the declared state, cursor and aim stay neutral */
+            pview_replay(1,tick,0,0,0.0f,0);
+            pstk_fire_tick[0]=tick;pstk_fire_on[0]=0;pstk_fire2_on[0]=0;
+        } else {
+            for(unsigned i=0;i<r.count;i++) { /* every handler is a stock one before any runs */
+                pstk_event *x=&r.events[i];
+                if(x->kind==PSTK_SPACE) continue;
+                if(!pstk_replay_handlers_ok(map,x)) {*why="stock_foreign_handler";return 0;}
+            }
+            for(unsigned i=0;i<r.count;i++) {
+                pstk_event *x=&r.events[i];
+                if(x->kind==PSTK_SPACE && x->id==PFOOT_CONTEXT) pfoot_context_replay((unsigned char)x->value,tick);
+                else if(x->kind==PSTK_SPACE) pstk_space_replay((unsigned char)x->value,now);
+                else {pstk_replay_walk(map+0x40*x->kind,x->kind,x->id,x->value);if(pdeath_armed) pdeath_note(x);pfoot_note_replay(x->kind,x->id,tick);}
+            }
+            InterlockedExchangeAdd64(&pstk_replayed,(LONG64)r.count);
+            if(r.flags&PSTK_FLAG_CURSOR) memcpy(pstk_cursor_replay,r.cursor,sizeof(pstk_cursor_replay));
+            else memset(pstk_cursor_replay,0,sizeof(pstk_cursor_replay));
+            pstk_aim_valid_replay=(r.flags&PSTK_FLAG_AIM)!=0;memcpy(pstk_aim_replay,r.aim,sizeof(pstk_aim_replay));pstk_aim_steer_replay=r.steer;
+            pstk_aim_tick=tick;
+            pview_replay(1,tick,(r.flags&PSTK_FLAG_VIEW)!=0,r.view,r.fov,r.target);
+            pstk_fire_tick[0]=tick;pstk_fire_on[0]=(r.flags&PSTK_FLAG_FIRE)!=0;pstk_fire2_on[0]=(r.flags&PSTK_FLAG_FIRE2)!=0;
+            pstk_cursor_tick=tick;pstk_frame_events=r.count;
+        }
+        if(pfoot_armed) pfoot_frame();
+        pstk_frame_hash=pstk_fnv(e->bytes,e->length,PSTK_DOMAIN);
+        e->present=0;InterlockedIncrement64(&pstk_records);
+    }
     /* Slots 2..N: staged here, replayed in their scopes after the canonical update (lockstep_pilot_slots.h). */
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         if(!(pstk_slot_mask>>(k-1)&1u)) continue;

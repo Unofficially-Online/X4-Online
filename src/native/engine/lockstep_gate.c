@@ -873,6 +873,7 @@ static int closed_window(void) {
 }
 #include "lockstep_gate_timing.h"
 #include "lockstep_wire_crypto_gate.h"
+#define LOOKAHEAD_WITH_PILOT 1   /* protocol 4 drops reach the pilot modules (pilot_drop_note) */
 #include "lockstep_lookahead.h"
 #include "lockstep_render_frames.h"
 #include "lockstep_render_display.h"

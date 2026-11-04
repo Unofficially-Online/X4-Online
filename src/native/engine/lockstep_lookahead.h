@@ -17,20 +17,30 @@
  * gate_wire_recv; stop 106 there ends the wait like any other stop reason.
  * Opt-in peer links (lockstep_peer.h, default off) hook in through peer_*:
  * with them off every call below is a no-op and this window behaves exactly as
- * before. Protocol 5 (lockstep_adaptive.h) has its own frame and no peer links. */
+ * before. Protocol 5 (lockstep_adaptive.h) has its own frame and no peer links.
+ * Drops (relay --stall-drop-ms, native_gate_relay.py DropBarrier; roadmap D15):
+ * once the relay stood in for a stalled client, every permit whose proposals
+ * include its stand-ins carries the window as k/<mask> (two lowercase hex
+ * digits, bit s-1) and that slot's blob empty. Taking such a permit notes the
+ * mask with its proposal tick (pilot_drop_note: the slot's records stop there
+ * and it goes neutral, the same tick on every client). The mask never shrinks
+ * (103); a permit naming this client, or NGDROP|4, stops with 193; a mask with
+ * peer links or wire crypto is refused (102). Without a drop nothing changes. */
 #define LOOKAHEAD_RING (GATE_LOOKAHEAD_MAX+1u)
 #define LOOKAHEAD_STOP_AHEAD 102u    /* a permit beyond the window, or for a tick without proposals */
 #define LOOKAHEAD_STOP_CONFLICT 103u /* two different permits for one tick */
 #define LOOKAHEAD_RESEND_MS 100u
+#define LOOKAHEAD_STOP_DROPPED 193u  /* this client was dropped (the protocol 5 number, ADAPT_STOP_DROPPED) */
 typedef struct {
     uint64_t tick;ULONGLONG sent;size_t length;int used;
     char packet[GATE_STATE_MAX];char blob[GATE_BLOB_HEX_MAX+1];
 } lookahead_report;
-typedef struct {uint64_t tick;int used;char blobs[GATE_CLIENTS_MAX][GATE_BLOB_HEX_MAX+1];} lookahead_permit;
+typedef struct {uint64_t tick;int used;unsigned mask;char blobs[GATE_CLIENTS_MAX][GATE_BLOB_HEX_MAX+1];} lookahead_permit;
 static lookahead_report lookahead_reports[LOOKAHEAD_RING];
 static lookahead_permit lookahead_permits[LOOKAHEAD_RING];
 static char lookahead_scratch[GATE_CLIENTS_MAX][GATE_BLOB_HEX_MAX+1];
 static uint64_t lookahead_ready,lookahead_ahead_max,lookahead_idle,lookahead_resends,lookahead_stale,lookahead_duplicates;
+static unsigned lookahead_dropped;  /* the drop mask of the permits taken so far */
 /* Canonical decimal (no sign, no leading zero) at s[0..n): digits used, or 0. */
 static size_t lookahead_decimal(const char *s,size_t n,uint64_t *out) {
     size_t i=0;uint64_t value=0;
@@ -51,7 +61,7 @@ static size_t lookahead_decimal(const char *s,size_t n,uint64_t *out) {
 static void lookahead_reset(void) {
     memset(lookahead_reports,0,sizeof(lookahead_reports));memset(lookahead_permits,0,sizeof(lookahead_permits));
     lookahead_ready=lookahead_ahead_max=lookahead_idle=lookahead_resends=lookahead_stale=lookahead_duplicates=0;
-    peer_reset();
+    lookahead_dropped=0;peer_reset();
 }
 /* Keep the report of tick: its datagram and the sealed local proposal. The
  * ring holds k+1 consecutive ticks, so their slots never collide. */
@@ -86,6 +96,16 @@ static int lookahead_permit_receive(const char *reply,size_t length,uint64_t com
        !lookahead_decimal(reply+n,length-(size_t)n,&tick)) return 0;
     int p=snprintf(prefix,sizeof(prefix),"%s%llu|%u",head,(unsigned long long)tick,wire_lookahead);
     if(p<=0 || (size_t)p>=sizeof(prefix) || length<(size_t)p || memcmp(reply,prefix,(size_t)p)) return 0;
+    unsigned mask=0;
+    if(length>(size_t)p+3 && reply[p]=='/') { /* k/<mask>: the relay dropped these slots (DropBarrier) */
+        const char hi=reply[p+1],lo=reply[p+2];
+        const int h=hi>='0'&&hi<='9'?hi-'0':hi>='a'&&hi<='f'?hi-'a'+10:-1,l=lo>='0'&&lo<='9'?lo-'0':lo>='a'&&lo<='f'?lo-'a'+10:-1;
+        if(h<0 || l<0 || (size_t)p+3>=sizeof(prefix)) return 0;
+        mask=(unsigned)(h*16+l);
+        if(!mask || (mask>>wire_clients) || peer_on() || wcg.armed) return -2;
+        if(mask>>(stats.slot-1)&1u) return -5;
+        memcpy(prefix+p,reply+p,3);p+=3;prefix[p]=0;
+    }
     int stale=tick<=completed;
     if(stale && !peer_on()) {++lookahead_stale;return 0;}
     if(!stale && tick-completed>1+k) return -2;
@@ -101,13 +121,17 @@ static int lookahead_permit_receive(const char *reply,size_t length,uint64_t com
     int ok=gate_permit_blobs(reply,length,prefix,stats.slot,wire_clients,own,lookahead_scratch);
     if(ok<=0) return ok;
     if(tick<=k) for(unsigned i=0;i<wire_clients;i++) if(lookahead_scratch[i][0]) return -2;
+    if(mask && tick<=k) return -2;
+    for(unsigned i=0;i<wire_clients;i++) if((mask>>i&1u) && lookahead_scratch[i][0]) return -2;   /* a stand-in carries nothing */
+    if(!stale && (mask&lookahead_dropped)!=lookahead_dropped) return -3;                       /* a drop is never undone */
     if(stale) {++lookahead_stale;ok=peer_permit(tick,lookahead_scratch);return ok<0?ok:0;} /* peer links: a tick already run is checked */
     lookahead_permit *e=&lookahead_permits[tick%LOOKAHEAD_RING];
     if(e->used && e->tick==tick) {
+        if(e->mask!=mask) return -3;
         for(unsigned i=0;i<wire_clients;i++) if(strcmp(e->blobs[i],lookahead_scratch[i])) return -3;
         ++lookahead_duplicates;return peer_permit(tick,lookahead_scratch);
     }
-    e->tick=tick;e->used=1;
+    e->tick=tick;e->used=1;e->mask=mask;
     for(unsigned i=0;i<wire_clients;i++) memcpy(e->blobs[i],lookahead_scratch[i],strlen(lookahead_scratch[i])+1);
     if(tick-completed>lookahead_ahead_max) lookahead_ahead_max=tick-completed;
     return peer_permit(tick,lookahead_scratch);
@@ -119,6 +143,10 @@ static int lookahead_take(uint64_t tick) {
     lookahead_permit *e=&lookahead_permits[tick%LOOKAHEAD_RING];
     if(!e->used || e->tick!=tick) return peer_take(tick);
     for(unsigned i=0;i<wire_clients;i++) memcpy(blob_inputs[i],e->blobs[i],strlen(e->blobs[i])+1);
+    lookahead_dropped|=e->mask;
+#ifdef LOOKAHEAD_WITH_PILOT
+    if(e->mask && tick>wire_lookahead) pilot_drop_note(e->mask,tick-1-wire_lookahead); /* the proposals this permit carries */
+#endif
     e->used=0;return 1;
 }
 /* NGSTOP|4|<token>|<slot>|<tick> for any tick this client reported: the relay
@@ -130,13 +158,23 @@ static int lookahead_stop(const char *reply,size_t length,uint64_t completed) {
     digits=lookahead_decimal(reply+n,length-(size_t)n,&tick);
     return digits && (size_t)n+digits==length && tick<=completed;
 }
+/* NGDROP|4|<token>|<slot>|<tick>: the relay dropped this client (DropBarrier). */
+static int lookahead_dropped_notice(const char *reply,size_t length) {
+    char head[64];uint64_t tick=0;size_t digits;
+    int n=snprintf(head,sizeof(head),"NGDROP|4|%s|%u|",secret,stats.slot);
+    if(!reply || n<=0 || (size_t)n>=sizeof(head) || length<=(size_t)n || memcmp(reply,head,(size_t)n)) return 0;
+    digits=lookahead_decimal(reply+n,length-(size_t)n,&tick);
+    return digits && (size_t)n+digits==length;
+}
 /* One received datagram: 0 to go on, otherwise the stop reason. */
 static unsigned lookahead_datagram(char *reply,int count) {
     reply[count]=0;
     if((size_t)count!=strlen(reply)) return 0;
     if(lookahead_stop(reply,(size_t)count,stats.completed)) return 1;
+    if(lookahead_dropped_notice(reply,(size_t)count)) return LOOKAHEAD_STOP_DROPPED;
     int accepted=lookahead_permit_receive(reply,(size_t)count,stats.completed);
-    return accepted==-1?56u:accepted==-2?LOOKAHEAD_STOP_AHEAD:accepted==-3?LOOKAHEAD_STOP_CONFLICT:accepted==-4?PEER_STOP_MISMATCH:0u;
+    return accepted==-1?56u:accepted==-2?LOOKAHEAD_STOP_AHEAD:accepted==-3?LOOKAHEAD_STOP_CONFLICT:accepted==-4?PEER_STOP_MISMATCH:
+        accepted==-5?LOOKAHEAD_STOP_DROPPED:0u;
 }
 /* Every datagram already queued, without blocking (bounded per call): held
  * permits are counted when they arrive and a relay stop is seen next frame. */
@@ -199,5 +237,6 @@ static int lookahead_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"lookahead=%u ready=%llu ahead_max=%llu idle=%llu resends=%llu stale=%llu duplicates=%llu",wire_lookahead,
         (unsigned long long)lookahead_ready,(unsigned long long)lookahead_ahead_max,(unsigned long long)lookahead_idle,(unsigned long long)lookahead_resends,
         (unsigned long long)lookahead_stale,(unsigned long long)lookahead_duplicates);
+    if(n>0 && (size_t)n<capacity && lookahead_dropped) n+=snprintf(out+n,capacity-(size_t)n," dropped=%02x",lookahead_dropped);
     return n>0 && (size_t)n<capacity?n:0;
 }

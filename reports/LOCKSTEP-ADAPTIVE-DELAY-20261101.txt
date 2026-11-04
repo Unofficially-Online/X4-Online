@@ -191,7 +191,8 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
     include and the frame branch in gate_linux.c and a Linux build.
   - The choice uses the slowest client's p90 over 8 samples taken while everyone waits at tick 0; a client whose round trip is
     worse later is only covered with --adaptive-changes (and, with pilot records, the headroom).
-  - Drop/rejoin of a player's ship and assets (D15): a dropped slot's ship goes neutral (section 13); rejoining it is open.
+  - Drop/rejoin of a player's ship and assets (D15): a dropped slot's ship goes neutral under protocols 4 and 5 (section 13);
+    rejoining it is open.
 
 11. FIRST LIVE RESULTS (coordinator, 2 November 2026; build199, session defaults, 2 clients, 3000 ticks, stock demo pilots)
   run  relay                        plan              steps/s  digests        census at 1800
@@ -246,8 +247,7 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   client notes the same c at the same tick). From c on slot k's rows are no longer its own (pilot_slot_present 0), so from
   c+delay it has no record and is silent (pilot_slot_silent), exactly like an absent hot-join slot after its ABORT: the seat
   stays, no record is needed or accepted, no events, no view, no trigger; its ship keeps its last command and is still
-  watched for death; its hits are native. Slot 1 (MD's player) is not covered: its drop still stops the others at its first
-  missing record, now with stage slot1_dropped. Status: PILOT_INPUTS ... dropped=<mask> drop_skips=<n> drop<k>=<c>.
+  watched for death; its hits are native. Status: PILOT_INPUTS ... dropped=<mask> drop_skips=<n> drop<k>=<c>.
   Native tests: pilot records (records through c+delay-1 apply, then silent; a later record of the slot refused; slot 1
   still required; slot 1 dropped -> slot1_dropped), the stock path (neutral at c+delay, counted as a drop, the other slots
   replay), adapt_take (gap permits note nothing, the first proposal permit with the mask does).
@@ -261,6 +261,25 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
     census client 1 vs client 2: 0 of 522,294 / 525,874 / 527,250 at 1 / 600 / 1200 and 0 of 528,290 / 529,745 / 531,000
     at 1800 / 2400 / 3000, after the drop.
   So a client that hangs or crashes no longer ends the session for the others under protocol 5; they wait the drop bound
-  (5 s here) and play on in sync. Open: rejoining a dropped slot (a handover into it, the hot join path, which is protocol
-  3/4), carrying a drop in the join package, an agreed parking order for the dropped ship instead of its last command,
-  slot 1, and protocol 4 (no drop there; the defaults still use it).
+  (5 s here) and play on in sync.
+  Slot 1 (MD's player) too (e480ebea): its record goes silent the same way and the stock path's canonical update replays
+  nothing for it (no view, no trigger, hash 0) while slots 2..N go on. Live d3drop1 (build211; d3drop with client 1 frozen):
+  DROP slot=1 tick=1221, clients 2 and 3 STOP reason=1 at 3001 with drop_skips=1777, relay pass, census client 2 vs client 3
+  0 at all six captures to 3000.
+  Protocol 4 (the defaults' wire): the relay's DropBarrier (native_gate_relay.py --stall-drop-ms without --adaptive; not with
+  --wire-crypto, --join, --live-inputs or --peer-window) reports a client the others wait for at the first unreleased tick
+  after --stall-report-ms, and past --stall-drop-ms stands in for it from that tick: the lowest live slot's digest and game
+  time, the dropped slot's own real clock offset (the relative real check compares elapsed time from tick 0), an empty blob.
+  It answers the dropped client NGDROP|4 instead of permits, ignores its later reports, and every permit whose proposal tick
+  is at or after the stand-in names the slot in its window field, k/<mask>. Without a drop the wire is the protocol 4 wire
+  byte for byte (test: the same outputs as Barrier). The client (lockstep_lookahead.h): a stand-in's blob must be empty, the
+  mask never shrinks (103), a permit naming this client or NGDROP|4 stops with 193, a mask with peer links or wire crypto is
+  refused (102); taking a permit notes its mask with its proposal tick T-1-k (pilot_drop_note), then the pilot modules do
+  as above. Tests: tests/test_native_gate_drop.py (7), test_lockstep_lookahead.h (the mask rules, NGDROP, the take).
+  Live d3drop4 (build212; the 3-slot defaults stack on protocol 4, lookahead 1, relay --stall-drop-ms 5000, client 2 frozen
+  at relay tick 1200): STALL slot=2 tick=1219 after 1011 ms, DROP slot=2 tick=1219 after 5009 ms, remaining=1,3; clients 1
+  and 3 STOP reason=1 at 3001 (LOOKAHEAD_STOP dropped=02, drop_skips=1779, drop2=1219), relay pass, no digest mismatch,
+  census client 1 vs client 3 0 of 522,294 ... 531,000 at all six captures to 3000.
+  Open: wire crypto with a drop (the stand-in record has no client signature: the relay refuses the combination), peer
+  links, rejoining a dropped slot (a handover into it, the hot join path), carrying a drop in the join package, and an
+  agreed parking order for the dropped ship instead of its last command.

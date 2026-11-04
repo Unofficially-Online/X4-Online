@@ -227,8 +227,8 @@ static void test_pilot_inputs(void) {
         pilot_stop=20;}
     /* Dropped (protocol 5, roadmap D15): the permit carrying proposal 26 names slot 2 in its mask (adapt_take ->
      * pilot_drop_note). Its records captured up to 25 still apply (through 28); from 29 = 26+delay slot 2 is silent and
-     * not driven; a record of slot 2 captured at 26 or later is refused (no own row). Slot 1's records stay required; a
-     * drop of slot 1 stops at its first missing record with stage slot1_dropped. */
+     * not driven; a record of slot 2 captured at 26 or later is refused (no own row). Slot 1's records stay required
+     * until slot 1 is dropped too (from proposal 28: silent from 31, neither slot driven). */
     {   pilot_stop=40;memset(pilot_locals,0,sizeof(pilot_locals));
         const LONG64 drops=pilot_drop_skips,absents=pilot_absent_skips;
         pilot_drop_note(2u,26);
@@ -248,9 +248,11 @@ static void test_pilot_inputs(void) {
         assert(pilot_drop_skips==drops+2 && pilot_absent_skips==absents);
         assert(pilot_status(text,sizeof(text)) && strstr(text," dropped=2 drop_skips=") && strstr(text," drop2=26"));
         assert(!test_pilot_frame(31) && !strcmp(pilot_stage,"missing_record"));   /* slot 1 is not dropped: required */
-        pilot_drop_note(3u,28);   /* slot 1 dropped from proposal 28: its record for 31 is missing */
-        assert(pilot_drop_from[0]==28 && pilot_drop_from[1]==26 && !pilot_slot_dropped(1,40) && !pilot_slot_silent(1,31,3));
-        assert(!test_pilot_frame(31) && !strcmp(pilot_stage,"slot1_dropped"));
+        pilot_drop_note(3u,28);   /* slot 1 dropped from proposal 28: its record for 31 is not needed */
+        assert(pilot_drop_from[0]==28 && pilot_drop_from[1]==26 && pilot_slot_dropped(1,28) && !pilot_slot_silent(1,30,3) &&
+               pilot_slot_silent(1,31,3));
+        test_pilot_bytes(1,28,0,b);assert(!pilot_stage_record(1,b,30) && !strcmp(pilot_stage,"absent_record"));
+        assert(test_pilot_frame(31) && !pilot_slots[0].driving && !pilot_slots[1].driving && pilot_drop_skips==drops+4);
         pilot_dropped=0;memset(pilot_drop_from,0,sizeof(pilot_drop_from));pilot_drop_skips=0;
         /* Both slots driving again for the dispatch checks below. */
         test_pilot_bytes(1,28,0,b);assert(pilot_stage_record(1,b,30));

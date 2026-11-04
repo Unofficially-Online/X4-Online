@@ -486,6 +486,14 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
         stats.issued=17;assert(pstk_frame(17,&why) && pstk_slot_frames[1].tick==16 && pstk_slot_frames[2].tick==17);
         assert(pilot_drop_skips==drops+1 && pilot_absent_skips==absents && pslot_replay(17));
         assert(pslots[2].replays==replays2 && pslots[3].replays==replays3+1 && !pstk_fire_on[1] && pstk_fire_tick[1]==17);
+        /* Slot 1 dropped from proposal 15: at 18 the canonical update replays nothing (hash 0, no trigger), a record of
+         * its refused; slot 3 (captured at 15, inside its rows) still replays. */
+        pilot_drop_note(1u,15);
+        assert(!test_absent_stage(1,15) && !test_absent_stage(2,15) && test_absent_stage(3,15));
+        const LONG64 records=pstk_records;
+        stats.issued=18;assert(pstk_frame(18,&why));
+        assert(!pstk_frame_hash && pstk_records==records+1 && !pstk_fire_on[0] && pstk_fire_tick[0]==18);   /* slot 3's record only */
+        assert(pilot_drop_skips==drops+3 && pstk_slot_frames[2].tick==18 && pslot_replay(18) && pslots[3].replays==replays3+2);
         pilot_dropped=0;memset(pilot_drop_from,0,sizeof(pilot_drop_from));pilot_drop_skips=0;}
     /* An ABORT before the player is built (applied before H-2) undoes the enrollment; a later join hands over again. */
     pilot_from[2]=pilot_until[2]=pilot_enroll[2]=UINT64_MAX;
