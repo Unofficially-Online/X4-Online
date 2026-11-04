@@ -2110,3 +2110,16 @@ mismatch; all four STOP reason=1 restored=1; census at 1800: clients 2, 3 and 4 
 OWN_PREDICT failures=0 and follow written = restored = 2,963 on every client; render-only frames 1,248 / 938 / 461 / 1,528;
 bursts of all four windows: 0 one-frame flashes, no pilot head (scans at baseline, sheets of clients 3 and 4 checked), no
 DEGRADED line on screen. The earlier 4-client runs (p4-people, scene-n2) predate this stack.
+
+DROPPED CLIENTS (4 November; 3 clients, the 3-slot defaults stack with demo pilots 1-3, census every 600, one lane's X4
+frozen with NtSuspendProcess when the relay passed tick 1200 and never resumed; adaptive delay report section 13):
+  run       wire                           frozen  dropped at  survivors' census to 3000        notes
+  d3drop    protocol 5 (--adaptive)        3       1226        0 at 1800 / 2400 / 3000          build209
+  d3drop1   protocol 5                     1       1221        0 (clients 2 vs 3)               slot 1 (MD's player)
+  d3drop4   protocol 4, lookahead 1        2       1219        0 (clients 1 vs 3)               relay DropBarrier
+  d3drop4c  protocol 4 + wire crypto       3       1225        0, 3001 permits verified each    zero-signed stand-in
+  d3drop4r  protocol 4                     3       1216        0                                dropped ship released + stopped
+  Every survivor STOP reason=1 restored=1 at 3001, relay pass, no digest mismatch. Census counts 522,294 at 1 to 531,000
+  at 3000 (the same in every run: the drop changes no imported object's state apart from the dropped ship's own path,
+  which is the same on every survivor).
+

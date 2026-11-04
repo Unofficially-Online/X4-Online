@@ -1362,4 +1362,20 @@ The Codex-era NATIVE-GETUP-* reports studied a one-shot GetUp() diagnostic on th
   So slot 1 hires a person on a station by talking to them, choosing Hire, picking the post and paying, the same on every
   client. Open: slots 2..N hiring (section 8's second pass; their conversations need their own MD scope), which crew list the
   person ends up in on screen (not checked in pictures), and the h1h one-tick digest blip (seen once).
+15m An intermittent split at slot 1's walk start (coordinator, 4 November 2026; the wharf hire scenario of 15l, build214)
+  h1h3 (with screenshots from 4190) diverged from 3903, the first tick of slot 1's scripted walk (state 0x1a pressed at
+  3900, delay 3): digests differ at 3903, 3909, 3911, 3913, 3915 and from 3917 almost continuously to 4567, then on and off;
+  census 0 at 1 ... 4200, 6 objects at 4800 (timing 6, motion 1). h1h4, the same build and inputs without screenshots, was
+  clean to 4800, as was h1h2 (build209); h1h (build208) had one differing tick at 4208. So it is intermittent and not the
+  drop work of this night (with no drop those paths are byte-equivalent).
+  [F] Between 3900 and 3960 client 2 made one more view point call than client 1 (VIEW_POINTS total_calls 235,095 against
+  235,094, total_evaluations 380,092 against 380,090; equal at 3900) and allocated one more runtime ID (RUNTIME_IDS next
+  17e6c7 against 17e6c6, allocs +1, digest differs; equal at 3900); agent RNG draws, octree builds and shape appends
+  followed. The view point module blocks evaluations from six client-local scopes (present, view, dispatch, render, ui,
+  camera); this one came through none of them on client 2, the client where slot 1 is a remote body that starts to walk
+  [I: a seventh client-local path, likely the remote body's presentation]. The same class as 5b (the client that presents a
+  slot evaluates one more view point). wk1-wk3 (the walk start moved to 2100 (get up 2000), every row of 2095-2140 written,
+  2600 ticks, build214): slot 1 got up and walked on both clients in each (walk=397 by 2400), no digest mismatch in any.
+  So far 1 split in 7 runs with this walk. Next: the same with native_gate_view_rows (every evaluation's trigger and caller
+  chain), repeated until a split names the extra call.
 
