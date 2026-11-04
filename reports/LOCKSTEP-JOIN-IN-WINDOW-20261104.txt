@@ -87,3 +87,26 @@ path (vps_make, the seat, the body's connect) with the session's runtime IDs (th
 them), restores the stores and tables, and starts the per-slot modules live at T+1. X4's own saves during a session need
 the same park around their save (later).
 
+6. W3 PART 1 LIVE: THE BODIES OFF FOR THE SAVE, ONE PLAYER, THE JOINER LOADS (w1p, w1q; builds 219, 221)
+The park needs a slot's scope, which opens only on the UI thread (pslot_can_enter: the frame thread): w1p (build219, the
+park at the frame thread's join boundary) stopped both clients at T=633 with 155 park_scope, before anything moved. So the
+park moved into the body guard (lockstep_pilot_foot_body.h, the pass on the UI thread): the join core's save_at callback
+arms T on every client of the session (savers or not; native_gate_join_core.lua, the probe), and T's pass takes every body
+off as for a get-up; the guard brings them back PFBODY_SETTLE (24) ticks of everyone seated later, as after any get-up, on
+every client the same way. lockstep_join.h needs no change. Native test: test_lockstep_pilot_foot_slots.h (armed only ahead
+of the tick, once; T's pass parks, T+1+24 brings it back; the state names slot 2).
+w1q (build221; session b1,b2 of 3 slots, window from 300, NGJOIN at 600, T=633; the joiner on b1 afterwards):
+  - the session: both clients to 1200 with STOP reason 1, relay pass, no digest mismatch; bodies parked at 633 and back;
+  - the save: one player component (the real player); P_2 is not in it;
+  - the joiner: X4 loaded the save (no 'Invalid number of players'), the gate's first pilot frame stopped it with 91
+    join_inside_window as designed (completed 633), before the probe's T+1 restore;
+  - the package's LUA section carries pilot_players for slot 2 (slot 3 absent: none): construct (vps_make, 295) took 2
+    shared IDs, 0x16467c (P_2, created 8001273562e1e15e) and 0x16467d (its computer, created 800127c8e4f05e6e); the seat
+    (take(), 296) took 1, 0x16469c (no created component: a listener or the controller); the body's first connect took 17
+    (0x16469d..0x1646ad), which the park undoes and the guard's reconnect at T+1+24 redoes on every client and a joiner
+    alike, so only construct and seat need join_ids_replay on a joiner.
+Next (W2/W3 joiner side): replace the joiner's 91 by a rebuild in its first pilot pass (T+1): P_k through vps_make and the
+seat with join_ids_replay of the carried IDs and created_live_add of their created identities, the bodies parked with the
+guard's state from the package (parked, seated_since), and each per-slot module started live with its carried tables
+(rings in flight, stores, held keys, frames, the stock and UI queues).
+

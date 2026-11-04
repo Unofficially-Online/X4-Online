@@ -263,7 +263,10 @@ static int pfbody_pass(uint64_t tick,int phase) {
         for(unsigned k=2;k<=PILOT_SLOTS;k++) {
             if(!(pslot_mask>>(k-1)&1u) || !pilot_slot_enrolled(k,take)) continue;   /* absent (hot join): its body after its seat */
             if(!pfbody_seat_ok(k)) {InterlockedIncrement64(&pfbody_roomless);continue;}
-            if(!pfbody_connect_slot(k)) return 0;
+            pjoin_mark(k,PJOIN_CONNECT,0);
+            const int ok=pfbody_connect_slot(k);
+            pjoin_mark(k,PJOIN_CONNECT,1);
+            if(!ok) return 0;
         }
         pfbody_stage="connected";return 1;
     }
@@ -289,7 +292,12 @@ static int pfbody_guard(uint64_t tick) {
     if(!pfbody_armed) return 1;
     if(pfbody_failed) return 0;
     if(tick<take || tick>pilot_stop) return 1;
-    if(pfbody_someone_up(tick)) {
+    /* A join save after this step (lockstep_pilot_join.h, armed on every client of the session): X4 loads a save with one
+     * player only (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt W1b), so every body leaves the tree in this pass as for a
+     * get-up, and comes back PFBODY_SETTLE ticks later the same way. */
+    const int join_save=pjoin_park_tick && tick==pjoin_park_tick;
+    if(join_save) {pjoin_park_tick=0;pjoin_last_park=tick;InterlockedIncrement64(&pjoin_parks);}
+    if(pfbody_someone_up(tick) || join_save) {
         pfbody_seated_since=0;memset(pfbody_back,0,sizeof(pfbody_back));
         if(!pfbody_mask) return 1;
         for(unsigned k=2;k<=PILOT_SLOTS;k++) if(!pfbody_disconnect_slot(k)) return 0;

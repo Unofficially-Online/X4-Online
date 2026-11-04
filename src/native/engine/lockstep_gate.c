@@ -359,6 +359,7 @@ static int world_nav_live_prefixes(void) {
 #include "lockstep_pilot_death.h"
 #include "lockstep_pilot_foot_body.h"   /* slots 2..N in the world tree at their seats (native_gate_pilot_foot_bodies) */
 #include "lockstep_pilot_foot_slots.h"  /* slots 2..N get up and walk (native_gate_pilot_foot_slots) */
+#include "lockstep_pilot_join.h"        /* a join save inside the window: the bodies off around it, P_k's IDs (W3) */
 #include "lockstep_own_predict.h"
 #include "lockstep_crash_note.h"
 #include "lockstep_cutscene_ready.h"
@@ -4067,7 +4068,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(player_request_enable);METHOD(player_request_event);METHOD(player_request_scope);
     METHOD(player_fire_enable);METHOD(player_trigger);METHOD(player_target);METHOD(player_fire_state);METHOD(player_fire_event);METHOD(player_trigger_cleanup);
     METHOD(player_launch_enable);METHOD(player_launch_event);
-    METHOD(pilot_inputs);METHOD(pilot_inputs_status);METHOD(pilot_why);METHOD(pilot_absent);METHOD(pilot_handover);METHOD(pilot_abort);METHOD(pilot_absent_state);METHOD(pilot_absent_restore);METHOD(pilot_inputs_frame);METHOD(pilot_capture);METHOD(pilot_apply);METHOD(pilot_pending);
+    METHOD(pilot_inputs);METHOD(pilot_inputs_status);METHOD(pilot_why);METHOD(pilot_absent);METHOD(pilot_handover);METHOD(pilot_abort);METHOD(pilot_absent_state);METHOD(pilot_absent_restore);METHOD(pilot_join_park_at);METHOD(pilot_players_state);METHOD(pilot_join_status);METHOD(pilot_inputs_frame);METHOD(pilot_capture);METHOD(pilot_apply);METHOD(pilot_pending);
     METHOD(pilot_device);METHOD(pilot_camera_follow);METHOD(pilot_camera);METHOD(pilot_camera_status);METHOD(pilot_ship);METHOD(pilot_native_capture);
     METHOD(pilot_native);METHOD(pilot_native_refusals);METHOD(pilot_stock);METHOD(pilot_stock_pins);METHOD(pilot_stock_callers);METHOD(pilot_present);METHOD(pilot_present_pause);METHOD(pilot_present_resume);METHOD(pilot_present_diff);METHOD(pilot_death);METHOD(pilot_foot);METHOD(pilot_foot_bodies);METHOD(pilot_foot_slots);METHOD(pilot_death_frame);METHOD(pilot_death_ship);METHOD(pilot_death_suit);METHOD(crash_note);METHOD(cutscene_ready);METHOD(cutscene_ready_status);METHOD(cutscene_ready_row);METHOD(pilot_death_status);METHOD(pilot_stock_capture);METHOD(pilot_stock_apply);METHOD(pilot_stock_inject);METHOD(pilot_stock_local);METHOD(pilot_stock_frame);
     METHOD(virtual_players);METHOD(virtual_players_status);METHOD(virtual_players_regions);METHOD(virtual_players_undeclared);METHOD(virtual_players_map);METHOD(virtual_players_hashes);METHOD(virtual_players_raw);METHOD(virtual_players_neighbours);

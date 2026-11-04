@@ -133,6 +133,26 @@ static uint64_t pslot_caller_dropped;
 __attribute__((used)) static void *pslot_getter_orig[PSLOT_VT_SLOTS];
 __attribute__((used)) static void *pslot_player_resume[3];
 static const unsigned pslot_routed[3]={6,7,10};
+/* Joining inside the window (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt W3): the shared runtime ID head around each step
+ * that builds P_k. With native_gate_runtime_ids in set mode the head is a plain counter on the thread that allocates, so
+ * [before, after) are the slots that step allocated, identical on every client; a joiner replays them (join_ids_replay).
+ * Steps: 0 construct (vps_make, take-2), 1 seat (take(), take-1), 2 body connect (take-1). 0 when runtime IDs are not in set
+ * mode. pjoin_park_tick: a join save after this step T (lockstep_pilot_join.h; the body guard takes the bodies off in T's
+ * pass, lockstep_pilot_foot_body.h). */
+enum {PJOIN_CONSTRUCT,PJOIN_SEAT,PJOIN_CONNECT,PJOIN_STEPS};
+static uint32_t pjoin_range[PILOT_SLOTS+1][PJOIN_STEPS][2];
+static uint64_t pjoin_park_tick,pjoin_last_park;
+static volatile LONG64 pjoin_parks;
+static uint32_t pjoin_head(void) {
+    unsigned char *map=rid_mode==RID_SET?rid_map():NULL;
+    if(!map) return 0;
+    CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(map+0x10);EnterCriticalSection(lock);
+    const uint32_t head=*(volatile uint32_t *)(map+RID_F_HEAD);LeaveCriticalSection(lock);
+    return head;
+}
+static void pjoin_mark(unsigned k,unsigned step,int after) {
+    if(k>=2 && k<=PILOT_SLOTS && step<PJOIN_STEPS) pjoin_range[k][step][after?1:0]=pjoin_head();
+}
 
 /* ---- vtable copy pieces ---- */
 /* vfunc 6/7/10: the route of the controller's own copy (vptr-0x28/-0x20/-0x18). */
@@ -523,7 +543,10 @@ static int pslot_is(void *component,int cls) {
 }
 static int pslot_construct(unsigned k) {
     unsigned char *p1=NULL,*made=NULL;
-    if(!vps_make(pnat_base,&p1,&made)) return pslot_fail(vps_why);
+    pjoin_mark(k,PJOIN_CONSTRUCT,0);
+    const int ok=vps_make(pnat_base,&p1,&made);
+    pjoin_mark(k,PJOIN_CONSTRUCT,1);
+    if(!ok) return pslot_fail(vps_why);
     if(pslot_p1 && p1!=pslot_p1) return pslot_fail("p1_changed");
     pslot_p1=p1;pslots[k].player=made;return 1;
 }
@@ -614,7 +637,10 @@ static int pslot_seat(unsigned k) {
     pslot_slot *s=&pslots[k];pilot_slot *ps=&pilot_slots[k-1];
     if(!s->player) return pslot_fail("no_player");
     if(!ps->resolved || !ps->object || ps->player) return pslot_fail("ship_unresolved");
-    return pslot_seat_ship(k,ps->object);
+    pjoin_mark(k,PJOIN_SEAT,0);
+    const int ok=pslot_seat_ship(k,ps->object);
+    pjoin_mark(k,PJOIN_SEAT,1);
+    return ok;
 }
 static unsigned char *pslot_alloc_page(void) {
     uintptr_t at=(uintptr_t)(pnat_base+PSLOT_CALL_SITE)&~(uintptr_t)65535;

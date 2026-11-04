@@ -66,8 +66,9 @@ end
 
 -- The section adapter of one client. o: slot (own), log(text), arm(T,k,mask) -> true|false,
 -- result() -> 'state|T|k|bytes|package|portable|why|detail' (gate.join_result), handover(k,H), optional abort(k) (the
--- absent slot's records end: gate.pilot_abort), joiner (true for a client that loaded a join package; it applies no
--- SAVE_AT).
+-- absent slot's records end: gate.pilot_abort), optional save_at(k,T,mask) (every client but a joiner, saver or not: the
+-- pilot layer takes the cockpit bodies off around the save at T on all of them), joiner (true for a client that loaded a
+-- join package; it applies no SAVE_AT).
 function K.client(o)
  assert(integer(o.slot,1,8) and type(o.log)=='function' and type(o.arm)=='function' and type(o.result)=='function' and
   type(o.handover)=='function','join client needs slot, log, arm, result and handover')
@@ -89,6 +90,7 @@ function K.client(o)
       local mine=math.floor(r.mask/2^(o.slot-1))%2==1
       o.log(string.format('JOIN_SAVE_AT tick=%d k=%d save_tick=%d mask=%d nonce=%s mine=%d',tick,r.slot,r.tick,r.mask,r.nonce,mine and 1 or 0))
       C.save_ticks[r.tick]=true
+      if o.save_at and not o.joiner then o.save_at(r.slot,r.tick,r.mask) end
       if mine and not o.joiner then
        if C.armed then
         C.outbox={op='failed',slot=r.slot,tick=r.tick,reason='busy'}

@@ -351,6 +351,14 @@ if cfg.native_gate_join then
   end,
   abort=function(k)
    if (absent[k] or rejoin[k]) and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then assert(gate.pilot_abort(k)==1,'pilot abort refused k='..k) end
+  end,
+  -- Every client of the session, at the same record (lockstep_pilot_join.h): the cockpit bodies leave their rooms around
+  -- the save at T, so X4's save holds one player (W1b). Without armed pilot modules there is nothing to take off.
+  save_at=function(k,t,mask)
+   if gate.pilot_join_park_at and gate.pilot_players_state and gate.pilot_players_state() then
+    assert(gate.pilot_join_park_at(t)==1,'pilot join park refused T='..t..' '..tostring(gate.pilot_join_status and gate.pilot_join_status()))
+    DebugError('[X4LAN] NATIVE_GATE PILOT_JOIN_PARK armed T='..t..' k='..k..tostring(gate.pilot_join_status()))
+   end
   end}
  input_section('join','join',join_client)
  DebugError('[X4LAN] NATIVE_GATE JOIN_ARMED slot='..own..' save='..save_mode..' joiner='..(join_joiner and 1 or 0)..' absent='..absent_mask..' rejoin='..rejoin_mask)
@@ -3942,6 +3950,15 @@ local function frame()
       log('JOIN_IN_WINDOW '..what..' tick='..tostring(gate.join_base and gate.join_base())..' window='..window[1]..' player='..
        (ok and tostring(ConvertStringTo64Bit(tostring(player))) or 'error')..' occupied='..(ok2 and tostring(ConvertStringTo64Bit(tostring(ship))) or 'error')..
        ' diagnostic=join_in_window')
+     end
+     -- P_k's runtime IDs and created identities per step (lockstep_pilot_join.h), for a joiner inside the window (W3; the
+     -- rebuild is not built yet: the joiner logs what it got).
+     if gate.pilot_players_state then
+      X4LAN_JOIN_CORE.provide('pilot_players',function()
+       local text=gate.pilot_players_state() or '-'
+       log('PILOT_PLAYERS saver '..text)
+       return text
+      end,function(text) log('PILOT_PLAYERS joiner '..tostring(text)) end)
      end
      X4LAN_JOIN_CORE.provide('pilot_window',function()
       if in_window then players('saver') end

@@ -31,6 +31,22 @@ static int lua_pilot_abort(lua_State *L) {
         pilot_abort_apply((unsigned)slot,stats.issued,wire_lookahead));
     return 1;
 }
+/* Joining inside the window (lockstep_pilot_join.h): gate.pilot_join_park_at(T) from the join core's save_at on every client
+ * (1 armed), gate.pilot_players_state() for the join provider 'pilot_players' (nil when it does not fit),
+ * gate.pilot_join_status() for the probe's rows. */
+static int lua_pilot_join_park_at(lua_State *L) {
+    double tick=p_lua_tonumber(L,1);
+    p_lua_pushnumber(L,accept_ui() && stats.active && isfinite(tick) && floor(tick)==tick && tick>0 && pjoin_park_arm((uint64_t)tick));
+    return 1;
+}
+static int lua_pilot_players_state(lua_State *L) {
+    static char out[8192];int n=accept_ui() && pilot_armed?pjoin_state(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_pilot_join_status(lua_State *L) {
+    char out[160];int n=accept_ui()?pjoin_status_text(out,sizeof(out)):0;
+    if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 /* gate.pilot_absent_state() / gate.pilot_absent_restore(text): the join package's copy of the above (a joiner, before T+1). */
 static int lua_pilot_absent_state(lua_State *L) {
     char out[160];int n=accept_ui() && pilot_absent?pilot_absent_state(out,sizeof(out)):0;
