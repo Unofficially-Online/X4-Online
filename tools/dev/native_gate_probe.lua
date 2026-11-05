@@ -291,6 +291,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_viewf_write then   -- diagnostic: the joiner writes the session's VIEWF words (off: a joiner's window flips after its STOP)
   assert(gate.join_viewf_write and gate.join_viewf_write(1)==1,'join viewf write refused')
  end
+ if cfg.native_gate_join_viewl then   -- a joiner runs the view handlers where its live/player view flags differ (VIEWL)
+  assert(gate.join_viewl and gate.join_viewl(1)==1,'join viewl refused')
+ end
  if cfg.native_gate_join_pend then   -- a joiner takes the session's pending view cache flags (PEND)
   assert(gate.join_pend and gate.join_pend(1)==1,'join pend refused')
  end

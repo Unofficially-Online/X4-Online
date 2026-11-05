@@ -1957,6 +1957,76 @@ static void join_admit_gravb(const join_tables *s,const join_tables *mine) {
         if(join_poke((uintptr_t)v,r->v,12)) ++join_gravb_written; else ++join_gravb_equal;
     }
 }
+/* ---- version 13: VIEWL (section 61) ----
+ * j1-161 (actor 5's raw object, session against joiner at 646..650): +0x3c8 and +0x3c9 0x0101 on the session, 0 on the joiner (the
+ * lockstep session's slot ships alike). They are the object's live view and player view flags: its listener slots 0xbb8 (ObjectEntered-
+ * LiveView, 0x6d1020: registers the object with the live view manager through 0x73f360, vfunc 0x17b0, +0x3c8 = 1), 0xbc0 (left: the
+ * flag cleared and unregistered), 0xbd0 (EnteredPlayerView, 0x6d1130: 0x7075d0, +0x3c9 = 1) and 0xbd8 (left, 0x6d11b0). The radar
+ * posts those events on a change of its units' view states (GRAV +0x54/+0x58), which GRAV now carries, so a joiner never gets them for
+ * an object already in view at T: neither the flags nor the registration. VIEWL carries the flags of every object of the handler family
+ * (slot 0xbb8 the base 0x6d1020) with either set; with native_gate_join_viewl (default off) the admission runs the object's own enter or
+ * leave handler where the joiner's flag differs (at T's game time). Status viewl=on:entered:left:equal:other:missing. */
+#define JOIN_VIEWL_FLAGS 0x3c8u
+#define JOIN_VIEWL_SLOT 0xbb8u            /* entered live view; +8 left, +0x18 entered player view, +0x20 left */
+#define JOIN_VIEWL_BASE 0x6d1020u
+static int join_viewl_on;
+static uint64_t join_viewl_entered,join_viewl_left,join_viewl_equal,join_viewl_other,join_viewl_missing;
+/* The object's vtable when it is of the handler family (its slot JOIN_VIEWL_SLOT the base handler), else NULL. */
+static uintptr_t *join_viewl_vtable(unsigned char *object) {
+    uintptr_t *vt=NULL,fn=0;
+    if(!object || !join_read(object,&vt,8) || !vt || (uintptr_t)vt<(uintptr_t)image || (uintptr_t)vt-(uintptr_t)image>=JOIN_FLIGHT_IMAGE ||
+       !join_read((unsigned char *)vt+JOIN_VIEWL_SLOT,&fn,8) || fn!=(uintptr_t)image+JOIN_VIEWL_BASE) return NULL;
+    return vt;
+}
+static int join_viewl_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_viewl_rec *)a)->portable,y=((const join_viewl_rec *)b)->portable;return x<y?-1:x>y;
+}
+static void join_capture_viewl(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *object=t->ids[i].portable?join_object(t->ids[i].runtime):NULL,f[2]={0,0};
+        if(!join_viewl_vtable(object) || !join_read(object+JOIN_VIEWL_FLAGS,f,2) || !(f[0]|f[1]) || f[0]>1u || f[1]>1u) continue;
+        join_viewl_rec r;memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;r.live=f[0];r.player=f[1];
+        if(!JOIN_PUSH(t->viewl,t->nviewl,cap,r)) return;
+    }
+    if(t->nviewl>1) qsort(t->viewl,t->nviewl,sizeof(*t->viewl),join_viewl_cmp);
+}
+static void join_viewl_call(uintptr_t *vt,unsigned slot,unsigned char *object,double time) {
+    uintptr_t fn=0;
+    if(join_read((unsigned char *)vt+slot,&fn,8) && fn>=(uintptr_t)image && fn-(uintptr_t)image<JOIN_FLIGHT_IMAGE)
+        ((void (*)(void *,void *,double))(void *)fn)(object,object,time);
+}
+/* One object to the session's flags (want), entering before leaving each view. */
+static void join_viewl_apply(unsigned char *object,uintptr_t *vt,const unsigned char want[2],double time) {
+    unsigned char have[2]={0,0};
+    if(!join_read(object+JOIN_VIEWL_FLAGS,have,2)) {++join_viewl_missing;return;}
+    if(have[0]>1u || have[1]>1u) {++join_viewl_other;return;}
+    if(have[0]==want[0] && have[1]==want[1]) {++join_viewl_equal;return;}
+    if(want[0]!=have[0]) {join_viewl_call(vt,JOIN_VIEWL_SLOT+(want[0]?0u:8u),object,time);if(want[0]) ++join_viewl_entered; else ++join_viewl_left;}
+    if(want[1]!=have[1]) {join_viewl_call(vt,JOIN_VIEWL_SLOT+(want[1]?0x18u:0x20u),object,time);if(want[1]) ++join_viewl_entered; else ++join_viewl_left;}
+}
+/* The session's objects in portable ID order (the registrations the handlers make follow it), then the joiner's own flags that the
+ * session does not have, left in its ID table's order. */
+static void join_admit_viewl(const join_tables *s,const join_tables *mine) {
+    double time=0;memcpy(&time,&s->gate.game,8);
+    join_viewl_entered=join_viewl_left=join_viewl_equal=join_viewl_other=join_viewl_missing=0;
+    if(!join_viewl_on) return;
+    for(uint32_t i=0;i<s->nviewl;i++) {
+        unsigned char *object=join_object(join_runtime_of(mine,s->viewl[i].portable));uintptr_t *vt=join_viewl_vtable(object);
+        const unsigned char want[2]={s->viewl[i].live,s->viewl[i].player};
+        if(!vt) {++join_viewl_missing;continue;}
+        join_viewl_apply(object,vt,want,time);
+    }
+    for(uint32_t i=0;i<mine->nids;i++) {
+        unsigned char *object=mine->ids[i].portable?join_object(mine->ids[i].runtime):NULL,have[2]={0,0};uintptr_t *vt=join_viewl_vtable(object);
+        if(!vt || !join_read(object+JOIN_VIEWL_FLAGS,have,2) || !(have[0]|have[1])) continue;
+        uint32_t lo=0,hi=s->nviewl;
+        while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(s->viewl[mid].portable<mine->ids[i].portable) lo=mid+1u;else hi=mid;}
+        if(lo<s->nviewl && s->viewl[lo].portable==mine->ids[i].portable) continue;   /* the first pass */
+        const unsigned char none[2]={0,0};
+        join_viewl_apply(object,vt,none,time);
+    }
+}
 /* By (ship, view) each once, view 0 or 1, known flags, a parent exactly without NONE or UNMAPPED. */
 static int join_gravd_shape(const join_gravd_rec *g,uint32_t n) {
     for(uint32_t i=0;i<n;i++) {
@@ -2123,6 +2193,45 @@ static void join_watch_dump(char side,uint64_t tick) {
                 } else at+=(size_t)snprintf(out+at,cap-at," unit=-");
             }
             at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+            if(!lvl && at+16384u<cap) {
+                /* JOIN_WATCHSPEC: where the subtree's view cache specification entries sit. +0x1e8 counts them over the subtree
+                 * (AddCacheSpecification 0x3d5180 keeps it up the parent chain; BuildCache skips a subtree at 0); the list +0xd8
+                 * (+0x80 capacity, inline at 4, +0x88 count; 0x20-byte entries kind, flags, class, truncation, interval, last).
+                 * j1-161: actor 5's +0x1e8 is 295 on the session, 2 on the joiner, and SPEC carries none of them. Depth-first over
+                 * the current view's published children (+0x10/+0x18) into those with a count, up to 400 nodes; per node with
+                 * entries of its own: key, vtable RVA, +0x1e8, +0x1e0, the list's count and up to 4 entries. */
+                unsigned char *stack[96];unsigned sp=0,nodes=0,shown=0;uint32_t total=0;
+                at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHSPEC side=%c tick=%llu id=%llx",side,
+                                     (unsigned long long)tick,(unsigned long long)join_watch.portable[i]);
+                stack[sp++]=level;
+                while(sp && nodes<400u && at+512u<cap) {
+                    unsigned char *o=stack[--sp],*list=NULL,*ents=NULL;uint32_t c1e8=0,c1e0=0;uint64_t lcap=0,lcount=0;uintptr_t ovt=0;
+                    ++nodes;(void)join_read(o,&ovt,8);(void)join_read(o+0x1e8,&c1e8,4);(void)join_read(o+0x1e0,&c1e0,4);
+                    if(join_read(o+0xd8u,&list,8) && list && join_read(list+0x80,&lcap,8) && join_read(list+0x88,&lcount,8) && lcount<=lcap) {
+                        ents=list;
+                        if(lcap!=4u && !join_read(list,&ents,8)) ents=NULL;
+                    } else lcount=0;
+                    total+=(uint32_t)lcount;
+                    if(lcount && shown<64u) {
+                        ++shown;
+                        at+=(size_t)snprintf(out+at,cap-at," %llx/%x:%u:%x:%llu",(unsigned long long)join_watch_key(o),
+                                             ovt>=(uintptr_t)image?(uint32_t)(ovt-(uintptr_t)image):0u,c1e8,c1e0,(unsigned long long)lcount);
+                        for(uint64_t k=0;k<lcount && k<4u && ents;k++) {
+                            uint32_t e4[4]={0,0,0,0};uint64_t iv=0;
+                            if(!join_read(ents+k*0x20u,e4,16) || !join_read(ents+k*0x20u+16u,&iv,8)) break;
+                            at+=(size_t)snprintf(out+at,cap-at,"%s%u.%x.%u.%u.%llx",k?",":"[",e4[0],e4[1],e4[2],e4[3],(unsigned long long)iv);
+                            if(k+1u==lcount || k==3u) at+=(size_t)snprintf(out+at,cap-at,"]");
+                        }
+                    }
+                    uintptr_t ch[2]={0,0};
+                    if(c1e8 && join_read(o+JOIN_VIEW_SLOTS+(size_t)cur*0x80u+0x10u,ch,16) && ch[1]>=ch[0] && (ch[1]-ch[0])/8u<=4096u)
+                        for(uintptr_t q=ch[0];q<ch[1] && sp<96u;q+=8u) {
+                            unsigned char *c=NULL;uint32_t cc=0;
+                            if(join_read((void *)q,&c,8) && c && join_read(c+0x1e8,&cc,4) && cc) stack[sp++]=c;
+                        }
+                }
+                at+=(size_t)snprintf(out+at,cap-at," nodes=%u own=%u\r\n",nodes,total);
+            }
             if(!lvl && at+2u*(JOIN_WATCH_RAW+JOIN_WATCH_RAW_REQ+JOIN_WATCH_RAW_MOV+JOIN_WATCH_RAW_AGENT+JOIN_WATCH_RAW_CMD)+400u<cap) {
                 /* JOIN_WATCHRAW: the object's first bytes and those of what +0x318 points at (a weapon's fire request, which
                  * Weapon::Move 0x819a90 asks through its slot +0x80 before the fire procedure 0x817d20), pointers raw. */
@@ -3182,6 +3291,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_evqt(t);            /* version 13 */
     join_capture_gravd(t);           /* version 13 */
     join_capture_gravb(t);           /* version 13 */
+    join_capture_viewl(t);           /* version 13 */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
     join_capture_pend(t);            /* version 13 */
@@ -4792,6 +4902,7 @@ static int join_admit_world(void) {
     if(s->version>=10) join_admit_solver(s,&mine);  /* the Agents' motion solvers */
     if(s->version>=11) join_admit_grav(s,&mine);    /* the radar */
     if(s->version>=13) join_admit_gravb(s,&mine);   /* the radar's mapped bounds */
+    if(s->version>=13) join_admit_viewl(s,&mine);   /* the live and player view flags (opt-in) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */
     if(s->version>=13 && s->ngravd && !(join_view_skip&8u)) {   /* version 13: every ship's cached parent in both views as the session's (the radar's docked filter) */

@@ -119,6 +119,8 @@ def main():
     p.add_argument('--script-rng', choices=('observe', 'key'), help='the Linux gate: native_gate_script_rng, AI scripts and MD cues on per-script streams (needs --world-identities)')
     p.add_argument('--script-rng-mask', type=int, choices=range(1, 8), metavar='1..7', help='with --script-rng: 1 AI scripts, 2 MD cues, 4 also boot phase 2 (default 3)')
     p.add_argument('--script-rng-rows', type=int, metavar='TICKS', help='with --script-rng: SCRIPT_RNG_ROW lines for the first TICKS ticks')
+    p.add_argument('--script-rng-rows-window', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='with --script-rng: SCRIPT_RNG_ROW '
+                   'lines of ticks FIRST..LAST only (at most 600 apart; native_gate_script_rng_rows_window)')
     p.add_argument('--script-rng-natural', action='store_true', help='with --script-rng-rows: rows of outermost unkeyed scopes too')
     p.add_argument('--script-rng-unmapped', action='store_true', help='with --script-rng: AI owners without a portable ID are keyed by their rank')
     p.add_argument('--md-timed-rng', action='store_true', help='the Linux gate: direct MD cue checks on the per-cue streams (needs --script-rng with the MD bit)')
@@ -494,7 +496,7 @@ def main():
         # world identities and the world hash are ported (src/native/engine/linux/gate_world.h).
         if not args.snapshot or args.mode != 'clock':
             p.error('--gate-so supports the snapshot boot with --mode clock only')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
@@ -663,13 +665,20 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             if args.script_rng_rows:
                 config.write('X4LAN_CONFIG.native_gate_script_rng_rows = true\n')
                 config.write(f'X4LAN_CONFIG.native_gate_script_rng_rows_ticks = {args.script_rng_rows}\n')
+            if args.script_rng_rows_window:
+                first, last = args.script_rng_rows_window
+                if not 1 <= first <= last or last - first > 600:
+                    p.error('--script-rng-rows-window needs 1 <= FIRST <= LAST, at most 600 apart')
+                if not args.script_rng_rows:
+                    config.write('X4LAN_CONFIG.native_gate_script_rng_rows = true\n')
+                config.write(f'X4LAN_CONFIG.native_gate_script_rng_rows_window = {{{first}, {last}}}\n')
             if args.script_rng_natural:
                 config.write('X4LAN_CONFIG.native_gate_script_rng_natural = true\n')
             if args.script_rng_unmapped:
                 config.write("X4LAN_CONFIG.native_gate_script_rng_unmapped = 'key'\n")
             if args.md_timed_rng:
                 config.write('X4LAN_CONFIG.native_gate_md_timed_rng = true\n')
-    elif args.script_rng_mask is not None or args.script_rng_rows or args.script_rng_natural or args.script_rng_unmapped or args.md_timed_rng:
+    elif args.script_rng_mask is not None or args.script_rng_rows or args.script_rng_rows_window or args.script_rng_natural or args.script_rng_unmapped or args.md_timed_rng:
         p.error('these options need --script-rng')
     if args.nav_cadence:
         if not args.gate_so or not args.snapshot or not args.world_identities:

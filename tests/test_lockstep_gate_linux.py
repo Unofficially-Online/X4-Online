@@ -482,6 +482,18 @@ class Overlay(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.build(*self.snapshot, '--mode', 'clock', '--script-rng', 'key')
 
+    def test_linux_overlay_takes_a_script_rng_row_window(self):
+        base = (*self.snapshot, '--mode', 'clock', '--world-identities', '--script-rng', 'key')
+        config = (self.build(*base, '--script-rng-rows-window', '2600', '3000') / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_script_rng_rows = true', config)
+        self.assertIn('native_gate_script_rng_rows_window = {2600, 3000}', config)
+        self.assertNotIn('native_gate_script_rng_rows_ticks', config)
+        for wrong in (('--script-rng-rows-window', '3000', '2600'), ('--script-rng-rows-window', '1', '700'), ('--script-rng-rows-window', '0', '10')):
+            with self.assertRaises(SystemExit):
+                self.build(*base, *wrong)
+        with self.assertRaises(SystemExit):
+            self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--script-rng-rows-window', '1', '10')
+
     def test_linux_overlay_takes_runtime_ids(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--runtime-ids')
         self.assertIn('native_gate_runtime_ids = true', (out / 'ui/config.lua.append').read_text())
