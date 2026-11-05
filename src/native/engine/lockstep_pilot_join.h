@@ -165,6 +165,18 @@ static void pjoin_seat_pack(unsigned k) {
     f[0]=s->authority;f[1]=s->assist[0];f[2]=s->assist[1];f[3]=s->agent_mode;f[4]=s->no_highway;
     memcpy(f+5,&s->throttle,4);memcpy(f+9,&s->length,4);
 }
+/* P_k's own fields that the resume's rebuild (vps_make) starts at their defaults (w1z8's dump at T+1): +0x6a08 (a flag at
+ * +0x6a0c), +0x6e48 and +0x6e50 (two times; -1.0 on a new player). Values only, written into the rebuilt P_k after its seat. */
+static const unsigned pjoin_pk_offsets[3]={0x6a08u,0x6e48u,0x6e50u};
+static uint64_t pjoin_pk_fields[PILOT_SLOTS+1][3];
+static void pjoin_pk_pack(void) {
+    memset(pjoin_pk_fields,0,sizeof(pjoin_pk_fields));
+    for(unsigned k=2;k<=PILOT_SLOTS;k++)
+        for(unsigned i=0;pslots[k].player && i<3;i++) if(!read_local(pslots[k].player+pjoin_pk_offsets[i],&pjoin_pk_fields[k][i],8)) pjoin_pk_fields[k][i]=0;
+}
+static void pjoin_pk_unpack(unsigned k) {
+    for(unsigned i=0;pslots[k].player && i<3;i++) memcpy(pslots[k].player+pjoin_pk_offsets[i],&pjoin_pk_fields[k][i],8);
+}
 static void pjoin_seat_unpack(unsigned k) {
     const unsigned char *f=pjoin_seat_flags[k];pslot_slot *s=&pslots[k];
     s->authority=f[0];s->assist[0]=f[1];s->assist[1]=f[2];s->agent_mode=f[3];s->no_highway=f[4];
@@ -193,7 +205,7 @@ static pjoin_blob pjoin_blobs[]={
     {"aim",pstk_aim_replay,sizeof(pstk_aim_replay)},{"cursor",pstk_cursor_replay,sizeof(pstk_cursor_replay)},
     {"view_state",(void*)pview_state,sizeof(pview_state)},{"view_target",pview_target_replay,sizeof(pview_target_replay)},
     {"view_tick",pview_target_tick,sizeof(pview_target_tick)},
-    {"seat_flags",pjoin_seat_flags,sizeof(pjoin_seat_flags)}};
+    {"seat_flags",pjoin_seat_flags,sizeof(pjoin_seat_flags)},{"pk_fields",pjoin_pk_fields,sizeof(pjoin_pk_fields)}};
 #define PJOIN_BLOBS (sizeof(pjoin_blobs)/sizeof(*pjoin_blobs))
 static void pjoin_rings_pack(uint64_t t) {
     memset(pjoin_pstk_ring,0,sizeof(pjoin_pstk_ring));memset(pjoin_pilot_ring,0,sizeof(pjoin_pilot_ring));
@@ -254,6 +266,7 @@ static int pjoin_store_pointers(unsigned char *store,unsigned length,int to_port
 static int pjoin_tables_state(char *out,size_t capacity,uint64_t t) {
     pjoin_stock_pack();pjoin_rings_pack(t);
     for(unsigned k=2;k<=PILOT_SLOTS;k++) pjoin_seat_pack(k);
+    pjoin_pk_pack();
     int n=snprintf(out,capacity,"v1/t%llx",(unsigned long long)t);
     for(unsigned b=0;n>0 && (size_t)n<capacity && b<PJOIN_BLOBS;b++) {
         n+=snprintf(out+n,capacity-(size_t)n,"|%s=",pjoin_blobs[b].name);
@@ -365,7 +378,7 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
             memcpy(pslots[k].store,pjoin_store_rx[k],pjoin_store_rx_len[k]);
             if(!pjoin_store_pointers(pslots[k].store,pjoin_store_rx_len[k],0)) {pjoin_resume_why="store_pointer";return 0;}
         }
-        pjoin_seat_unpack(k);
+        pjoin_seat_unpack(k);pjoin_pk_unpack(k);
         if(pslots[k].length!=pjoin_store_rx_len[k]) {pjoin_resume_why="store_length";return 0;}
     }
     if(pjoin_rx_mask && !pslot_hook_install()) {pjoin_resume_why="slots_hook";return 0;}

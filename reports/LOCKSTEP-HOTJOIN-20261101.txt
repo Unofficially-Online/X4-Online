@@ -1997,7 +1997,22 @@ proposed and rejected.
   the session's two clients share by their identical allocation history (both loaded the same snapshot) and a joiner does
   not (pointer-ordered containers: contact sets, zone children, neighbour lists).
   The pilot slot ships' Agents (in-window): join_nav_agent takes a PlayerController's Agent (a9a02f7a) and a model-less one
-  is carried with a FLIGHT record of kind JOIN_FLIGHT_NOMODEL (5537cc5d).
+  is carried with a FLIGHT record of kind JOIN_FLIGHT_NOMODEL (5537cc5d); AGCB (0e475973, section 57) their command and probe
+  block (+0x6e0, 0x400 bytes raw).
+- The due events [F: EVENT_ORDER counters per tick (the session's two clients alike, the joiner apart from T+3 in entries,
+  runs, ties with local and local_ties alike); native_gate_event_rows_from (7fe05d6c) for the joiner's window; j1-153]: at T+1
+  the joiner delivers 2,997 events (2,683 due at its load time) against 316; then one-sided over 635..652: the Player's
+  MappedBoundsChangedEvent (joiner, ~9 a tick), Start/StopTravelModeEvent for several ships (both sides, other ships), radar
+  scans, and on the joiner ObjectEnteredLiveView (15) and ObjectEnteredPlayerView (14) at 635. Actor 5 gets nothing on the
+  session; on the joiner the two view events and NavHelperGenerated at 635, at 651 WeaponFireRangeRequested and TurretRange-
+  Requested (its new decision), at 652 ArrivedAtWaypoint. The radar's apply 0x10abc70 keeps a unit's live view (+0x54) and
+  player view (+0x58) states and posts the events on a change; GRAV carried +0x50..+0x5f and did not write them (the session's
+  15 units with +0x54 set, 14 with +0x58: the joiner's surplus exactly). 987243b6 writes them (j1-155: the view events gone;
+  actor 5 still apart at 651). The travel mode events come from the Agents' travel decisions (e91934, e919e0: the formation's
+  +0x4d2/+0x4d3, posted to +0xef0), the decisions the travel snapshot governs (the lockstep session's passes_admit).
+  j1-153 7fe05d6c (build-hj16w)   event rows 633..653: the one-sided events above
+  j1-154 0e475973 (build-hj16x)   GRAV +0x10 (the radar group's object): no change
+  j1-155 987243b6 (build-hj16y)   GRAV +0x50..+0x5f: the view events gone; 651 stays
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

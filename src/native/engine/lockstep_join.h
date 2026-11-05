@@ -388,8 +388,9 @@ _Static_assert(sizeof(join_solver_rec)==103288 && sizeof(join_bullet_rec)==1088,
  *        0x10b2dc0) whose owner (the unit's +8) has a portable ID, sorted by it: kind the vtable RVA (AI::ActiveGravidarUnit 0x2c67610,
  *        0xc8 bytes; AI::GravidarUnit 0x2c67660, 0x68 bytes), count[] the four contact lists' lengths (+0x68 and +0x80 vectors, the
  *        vectors *+0x98 and *+0xa0; active units only), unit the unit's bytes with the vtable, the owner's ID, +0x10, the lock
- *        +0x18..+0x3f and the lists +0x68..+0xa7 as 0. The joiner writes +0x40..+0x4f, +0x60..+0x67 and (active) the times
- *        +0xa8..+0xc7 (last scan, next due, last has_scanned post, +0xc0, the flags +0xc4); +0x50..+0x5f are carried, not written.
+ *        +0x18..+0x3f and the lists +0x68..+0xa7 as 0 (+0x10, the radar group's object, as its portable ID). The joiner writes
+ *        +0x10, +0x40..+0x5f (+0x54 and +0x58 the live and player view states), +0x60..+0x67 and (active) the times
+ *        +0xa8..+0xc7 (last scan, next due, last has_scanned post, +0xc0, the flags +0xc4).
  * GRAVC  the contacts, (owner, list, index) in the session's order (its runtime IDs): the contact's portable ID, 0 with
  *        JOIN_GRAVC_UNMAPPED. The joiner writes each list in its own runtime IDs, sorted as the engine keeps them.
  * GRAVS  the worker's active sources (kind 0: +0x48 pending, 1: +0x60 current; components, in order; portable 0 with

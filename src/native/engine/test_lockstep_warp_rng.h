@@ -45,8 +45,12 @@ static void test_wr_ctor_abi(void) {
     assert(thunk_emit_slot_at(code+256,&recipe,code));
     void *dispatch;memcpy(&dispatch,code+256+32+6,8);assert(dispatch==(void*)wr_construct);
     code[0]=0xe9;int32_t rel=(int32_t)((code+256+32)-(code+5));memcpy(code+1,&rel,4);
-    const unsigned char stub[]={0x48,0x83,0xec,0x38,0xc6,0x44,0x24,0x20,0x01,0xc6,0x44,0x24,0x28,0x00,0xe8,0,0,0,0,0x48,0x83,0xc4,0x38,0xc3};
-    memcpy(code+512,stub,sizeof(stub));rel=(int32_t)(code-(code+531));memcpy(code+512+15,&rel,4);
+    /* push rdi; push r12; mov rdi,A; mov r12,B (the poster's ship and gate); the call; pop both: wr_construct keeps them. */
+    const unsigned char stub[]={0x57,0x41,0x54,0x48,0xbf,0,0,0,0,0,0,0,0,0x49,0xbc,0,0,0,0,0,0,0,0,
+        0x48,0x83,0xec,0x38,0xc6,0x44,0x24,0x20,0x01,0xc6,0x44,0x24,0x28,0x00,0xe8,0,0,0,0,0x48,0x83,0xc4,0x38,0x41,0x5c,0x5f,0xc3};
+    memcpy(code+512,stub,sizeof(stub));rel=(int32_t)(code-(code+554));memcpy(code+512+38,&rel,4);
+    const uint64_t ship_value=0x5a5a000011112222ULL,gate_value=0x6b6b000033334444ULL;memcpy(code+512+5,&ship_value,8);memcpy(code+512+15,&gate_value,8);
+    wr_regs[0]=wr_regs[1]=NULL;
     FlushInstructionCache(GetCurrentProcess(),code,4096);
     unsigned char *prior=image;image=code;wr_ctor_override=(wr_ctor_fn)(code+256);wr_active=1;
     static unsigned char event[0x40],space[0x40];*(uint64_t*)(space+8)=0x7a0100;memset(event,0,sizeof(event));
@@ -55,7 +59,8 @@ static void test_wr_ctor_abi(void) {
     assert(test_wr_ctor_calls==before+1 && test_wr_ctor_seen[0]==event && test_wr_ctor_seen[1]==space && !test_wr_ctor_seen[2] &&
            test_wr_ctor_seen[3]==space && test_wr_ctor_flags[0]==1 && test_wr_ctor_flags[1]==0 && *(uint64_t*)(event+0x18)==0x7a0100);
     image=prior;wr_ctor_override=NULL;wr_active=0;
-    wr_poster_t p=wr_take_poster(event);assert(p.event==(uintptr_t)event && p.site==531 && p.thread==PATH_THREAD_MOVEWORKER);
+    wr_poster_t p=wr_take_poster(event);assert(p.event==(uintptr_t)event && p.site==554 && p.thread==PATH_THREAD_MOVEWORKER);
+    assert(wr_regs[0]==(void*)(uintptr_t)ship_value && wr_regs[1]==(void*)(uintptr_t)gate_value);wr_regs[0]=wr_regs[1]=NULL;
     VirtualFree(code,0,MEM_RELEASE);
 }
 static unsigned test_wr_gtrt_calls,test_wr_gtrt_misaligned;static void *test_wr_gtrt_a[2],*test_wr_gtrt_b[2];static double test_wr_gtrt_time;
@@ -75,11 +80,11 @@ static void test_wr_watch(unsigned char *event,unsigned char *record,unsigned ch
     void *tp=transform,*pp=pointed;memcpy(event+0x20,&tp,8);memcpy(record+0x30,&pp,8);record[4]=0x11;
     uint64_t word=0x1234;int thrown;stats.issued=1791;LONG64 before=wr_rows,watches=wr_watches;
     test_wr_guarded(&word,event,ship,&thrown);assert(!thrown && wr_rows==before+2 && wr_watches==watches+1);
-    char hex_t[0x81],hex_r[0x81],hex_p[0x21],hex_f[2*WR_FRAME_BYTES+1],expect[1536],row[1536];
+    char hex_t[0x81],hex_r[0x81],hex_p[0x21],hex_f[2*WR_FRAME_BYTES+1],expect[2048],row[2048];
     wr_hex(hex_t,transform,0x40);wr_hex(hex_r,record,0x40);wr_hex(hex_p,pointed,16);
     snprintf(expect,sizeof(expect),"index=%lld tick=1791 kind=watch key=s:00000000000add39 ordinal=1 space=000000000013e75f zone=00000000007a0100 "
-        "transform=%s record=%s pointed=%s frame=- own=- up=- parent=0000000000000000 grand=0000000000000000",(long long)before,hex_t,hex_r,hex_p);
-    assert(wr_row((uint64_t)before,row,sizeof(row))>0 && !strcmp(row,expect) && strlen(row)<1536);
+        "transform=%s record=%s pointed=%s frame=- own=- up=- parent=0000000000000000 grand=0000000000000000 rel=- mask=0 ids=0000000000000000,0000000000000000,0000000000000000,0000000000000000,0000000000000000,0000000000000000",(long long)before,hex_t,hex_r,hex_p);
+    assert(wr_row((uint64_t)before,row,sizeof(row))>0 && !strcmp(row,expect) && strlen(row)<2048);
     assert(wr_row((uint64_t)before+1,row,sizeof(row))>0 && strstr(row," tick=1791 key=s:00000000000add39 ordinal=1 ") && !strstr(row,"kind="));
     /* The gate poster's frame: noted at construction (the WR_FRAME_BYTES below its transform), taken by the watched dispatch once. */
     {unsigned char stack[WR_FRAME_BYTES+0x40];for(unsigned i=0;i<sizeof(stack);i++) stack[i]=(unsigned char)(0x10+i);
@@ -88,9 +93,24 @@ static void test_wr_watch(unsigned char *event,unsigned char *record,unsigned ch
      wr_frame_ok=1;wr_frame_note(event,stack+WR_FRAME_BYTES);assert(wr_framed==framed+1);
      before=wr_rows;stats.issued=1792;test_wr_guarded(&word,event,ship,&thrown);wr_hex(hex_f,stack,WR_FRAME_BYTES);
      char want[0x1a0];snprintf(want,sizeof(want)," frame=%s",hex_f);
-     assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row,want) && strlen(row)<1536);
+     assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row,want) && strlen(row)<2048);
      before=wr_rows;test_wr_guarded(&word,event,ship,&thrown);assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row," frame=-"));
      st_id_count=0;wr_frame_note(event,stack+WR_FRAME_BYTES);assert(wr_framed==framed+1);st_id_count=1; /* nothing watched: no note */
+     /* rel: with the registers kept and GetTransformRelativeTo pinned, five positions at the construction; only under
+      * 'observe' and for the listed ship. */
+     {static unsigned char ship_o[0x80],gate_o[0x80],sp[0x80],gp[0x80],sg[0x80],gg[0x80];
+      unsigned char *objs[6]={ship_o,gate_o,sp,gp,sg,gg};for(unsigned i=0;i<6;i++) {uint64_t id=i?0x7b0000+i:0x7a0001;memcpy(objs[i]+8,&id,8);}
+      void *q=sp;memcpy(ship_o+0x70,&q,8);q=gp;memcpy(gate_o+0x70,&q,8);q=sg;memcpy(sp+0x70,&q,8);q=gg;memcpy(gp+0x70,&q,8);
+      int prior_mode=wr_mode;wr_mode=WR_SPLIT;
+      wr_regs[0]=ship_o;wr_regs[1]=gate_o;wr_gtrt_ok=1;wr_gtrt_override=test_wr_gtrt;test_wr_gtrt_calls=0;test_wr_gtrt_misaligned=0;
+      wr_frame_note(event,stack+WR_FRAME_BYTES);assert(!test_wr_gtrt_calls); /* split: none */
+      wr_mode=WR_OBSERVE;uint64_t id=0x7a0002;memcpy(ship_o+8,&id,8);wr_frame_note(event,stack+WR_FRAME_BYTES);assert(!test_wr_gtrt_calls); /* not listed */
+      id=0x7a0001;memcpy(ship_o+8,&id,8);wr_gtrt_ok=0;wr_frame_note(event,stack+WR_FRAME_BYTES);assert(!test_wr_gtrt_calls);wr_gtrt_ok=1; /* unpinned */
+      wr_frame_note(event,stack+WR_FRAME_BYTES);assert(test_wr_gtrt_calls==5 && !test_wr_gtrt_misaligned && test_wr_gtrt_a[0]==ship_o && test_wr_gtrt_b[0]==gate_o);
+      before=wr_rows;stats.issued=1793;test_wr_guarded(&word,event,ship,&thrown);
+      assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row," mask=1f ids=00000000007a0001,00000000007b0001,00000000007b0002,00000000007b0003,00000000007b0004,00000000007b0005") &&
+             strstr(row," rel=01010101") && strlen(row)<2048);
+      wr_regs[0]=wr_regs[1]=NULL;wr_gtrt_ok=0;wr_gtrt_override=NULL;wr_mode=prior_mode;}
      wr_frame_ok=prior_ok;}
     before=wr_rows;test_wr_guarded(&word,event,other,&thrown);assert(wr_rows==before+1);
     memset(event+0x20,0,8);memset(record+0x30,0,8);memset(event+0x28,0,8);before=wr_rows;test_wr_guarded(&word,event,ship,&thrown);
@@ -107,7 +127,7 @@ static void test_wr_watch(unsigned char *event,unsigned char *record,unsigned ch
             test_wr_gtrt_time==2.5 && !test_wr_gtrt_flag && !test_wr_gtrt_misaligned);
      unsigned char o1[0x40],o2[0x40];memset(o1,0x01,0x40);memset(o2,0x02,0x40);char h1[0x81],h2[0x81],want[0x140];wr_hex(h1,o1,0x40);wr_hex(h2,o2,0x40);
      snprintf(want,sizeof(want)," own=%s up=%s parent=00000000007a0300 grand=00000000007a0400",h1,h2);
-     assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row,want) && strlen(row)<1536);
+     assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row,want) && strlen(row)<2048);
      memset(ship+0x70,0,8);memset(parent_obj+0x70,0,8);wr_mode=prior_mode;wr_gtrt_ok=prior_ok;wr_gtrt_override=NULL;}
     void *rp=record;memcpy(event+0x28,&rp,8);record[4]=0;st_ids[0]=prior_id0;st_id_count=prior_ids;
     printf("warp watch rows (transform, record, pointed, frame, own/up; listed only) PASS\n");

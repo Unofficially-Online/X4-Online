@@ -329,3 +329,15 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   rows over the joiner's window (native_gate_event_rows_from, x4mods-28). Separately, event_order orders sources without a
   saved identity by runtime ID, and a joiner's controllers take theirs from its load list: portable only once those IDs are
   the session's.
+
+18. THE SLOT AGENTS CARRIED, PART TWO (w1z8, build249 = 2ce1028d, 5 November)
+- With the hot join's AGCB (the PlayerController agents' 0x400-byte command block) and the radar units' view states written
+  (GRAV +0x50..+0x5f; the joiner had re-entered every unit into live and player view at T+1, x4mods-28 j1-153..155): T+1 3
+  differ (6dae5 and 176c95 motion, 800259fc's nav timing), 900 727. Slot 1's agent differs only in the role mapping of two
+  times (+0x178/+0x318, the parameter slots' read/write roles) and float rounding rows (+0xc80..); its solver is equal.
+  Slot 2's limits (+0x348..0x380) are equal now.
+- Still different: slot 2's agent pose banks (+0xad0..0xb18 and +0xc70..0xcb8 hold the same two poses swapped between session
+  and joiner: a bank role; the banks' tails +0xb38..0xb50 / +0xcd8..0xcf8 set on the session, 0 on the joiner) and two flags
+  (+0xed8, +0xee8): NAV/NAVT carry those for navigation agents only (asked of the hot join); the rebuilt P_k's own fields
+  +0x6a08 (a flag), +0x6e48 and +0x6e50 (two times, -1.0 on the joiner): carried by the resume from build250 on (pk_fields
+  in pilot_state).

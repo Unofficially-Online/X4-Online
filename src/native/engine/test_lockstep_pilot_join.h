@@ -42,7 +42,10 @@ static void test_pilot_join_tables(void) {
         layout+=g->size;
     }
     assert(layout && layout<=VPL_BLOCK_MAX && zone+8<=layout);
-    pslot_mask=2;static unsigned char fake_player[8];pslots[2].player=fake_player;pslots[2].length=layout;
+    pslot_mask=2;static unsigned char fake_player[0x6f00];pslots[2].player=fake_player;pslots[2].length=layout;
+    memset(fake_player,0,sizeof(fake_player));
+    {const double t1=38.68,t2=36.49;const uint64_t flag=0x100000000ull;   /* P_k's fields the rebuild lacks (w1z8) */
+     memcpy(fake_player+0x6a08,&flag,8);memcpy(fake_player+0x6e48,&t1,8);memcpy(fake_player+0x6e50,&t2,8);}
     for(unsigned i=0;i<layout;i++) pslots[2].store[i]=(unsigned char)(i*7+1);
     memset(pslots[2].store+zone,0,8);
     pslots[2].throttle=0.5f;pslots[2].assist[0]=1;pslots[2].authority=1;
@@ -53,7 +56,10 @@ static void test_pilot_join_tables(void) {
     memset(pstk_fire_tick,0,sizeof(pstk_fire_tick));memset(pview_target_replay,0,sizeof(pview_target_replay));pstk_flight=0;pstk_flight_known=0;pstk_frame_tick=0;
     pslots[2].throttle=0;pslots[2].assist[0]=0;pslots[2].authority=0;
     assert(pjoin_tables_parse(text) && pjoin_tables_t==40);
-    pjoin_stock_unpack();pjoin_seat_unpack(2);
+    memset(fake_player+0x6a00,0,0x500);
+    pjoin_stock_unpack();pjoin_seat_unpack(2);pjoin_pk_unpack(2);
+    {double t1=0,t2=0;uint64_t flag=0;memcpy(&flag,fake_player+0x6a08,8);memcpy(&t1,fake_player+0x6e48,8);memcpy(&t2,fake_player+0x6e50,8);
+     assert(flag==0x100000000ull && t1==38.68 && t2==36.49);}
     assert(pstk_slot_frames[1].tick==40 && pstk_slot_frames[1].hash==0x1234 && pstk_slot_frames[1].r.events[0].id==0xd && pstk_held_states[1][0]==1);
     assert(pstk_fire_on[1]==1 && pstk_fire_tick[1]==39 && pview_target_replay[1]==0x77 && pstk_flight==1 && pstk_flight_known==1 && pstk_frame_tick==40);
     assert(pslots[2].throttle==0.5f && pslots[2].assist[0]==1 && pslots[2].authority==1 && pslots[2].length==layout);

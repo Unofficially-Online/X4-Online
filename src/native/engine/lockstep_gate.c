@@ -1617,7 +1617,7 @@ static int lua_tempzone_order_row(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_warp_rng_row(lua_State *L) {
-    double index=p_lua_tonumber(L,1);char out[1536];int n=0; /* a watch row with its frame and own/up: about 1150 characters */
+    double index=p_lua_tonumber(L,1);char out[2048];int n=0; /* a watch row with its frame, own/up and rel: about 1450 characters */
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=wr_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }

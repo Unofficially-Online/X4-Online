@@ -16,6 +16,7 @@
  * Arming, the per-tick check (stop reason 143) and the restore are this file's. */
 #define WR_OWN_PLATFORM
 #define WR_GTRT_ADDR LX(LX_WR_GTRT_VA) /* GetTransformRelativeTo 0x18a0090 (Windows 0x3db8a0), pin warp_gtrt */
+#define WR_NOW(p) do {double *wr_now_=gate_tls_time(gate_tls_self());if(wr_now_) memcpy((p),wr_now_,8);} while(0)
 #define WR_TLS_NOW(tls,out) do {double *wr_time_=(tls)?gate_tls_time((unsigned char*)(tls)):NULL;if(wr_time_) memcpy((out),wr_time_,8);} while(0)
 #define __try if(1)
 #define __finally
@@ -48,9 +49,17 @@ static int lxwr_swap(void *expected,void *value) {
 #define LXWR_FRAME_BLOCK (LX_WR_FRAME_CALL_VA&~15u)
 typedef void *(*lxwr_ctor_fn)(void *,void *,const void *,void *,unsigned,unsigned);
 static lxwr_ctor_fn lxwr_ctor_override; /* tests only; NULL calls 0x16bbe40 */
-static unsigned char *lxwr_page;
+static unsigned char *lxwr_page,*lxwr_data; /* the stub (RX) and the two registers it keeps (RW), both near the image */
 static int lxwr_frame_installed;
+#define LXWR_STUB_BYTES 28u
+/* mov [rip+d1],rbx; mov [rip+d2],r13 (the poster's ship and gate, callee-saved); jmp [rip]; abs64 lxwr_frame_ctor. */
+static void lxwr_stub_bytes(unsigned char out[LXWR_STUB_BYTES],const unsigned char *page,const unsigned char *data,const void *target) {
+    int32_t d1=(int32_t)((intptr_t)data-(intptr_t)(page+7)),d2=(int32_t)((intptr_t)(data+8)-(intptr_t)(page+14));
+    out[0]=0x48;out[1]=0x89;out[2]=0x1d;memcpy(out+3,&d1,4);out[7]=0x4c;out[8]=0x89;out[9]=0x2d;memcpy(out+10,&d2,4);
+    out[14]=0xff;out[15]=0x25;memset(out+16,0,4);memcpy(out+20,&target,8);
+}
 static void *lxwr_frame_ctor(void *event,void *space,const void *transform,void *record,unsigned a,unsigned b) {
+    if(lxwr_data) {void *r[2];memcpy(r,lxwr_data,sizeof(r));wr_regs[0]=r[0];wr_regs[1]=r[1];}
     wr_frame_note(event,(const unsigned char*)transform);
     return (lxwr_ctor_override?lxwr_ctor_override:(lxwr_ctor_fn)(void*)LX(LX_WR_CTOR_VA))(event,space,transform,record,a,b);
 }
@@ -82,17 +91,22 @@ static int lxwr_frame_install(void) {
     if(!lxwr_frame_pins() || lxwr_frame_state()!=0) return 0;
     if(!lxwr_page) lxwr_page=gate_near_page(LX(LX_WR_FRAME_CALL_VA));
     if(!lxwr_page) return 0;
+    if(!lxwr_data) lxwr_data=gate_near_page(lxwr_page);
+    if(!lxwr_data) return 0;
     intptr_t d=(intptr_t)lxwr_page-(intptr_t)(LX(LX_WR_FRAME_CALL_VA)+5);if(d<INT32_MIN || d>INT32_MAX) return 0;
+    intptr_t e=(intptr_t)lxwr_data-(intptr_t)(lxwr_page+14);if(e<INT32_MIN+16 || e>INT32_MAX-16) return 0;
+    if(mprotect(lxwr_data,GATE_PAGE,PROT_READ|PROT_WRITE)) return 0;
+    memset(lxwr_data,0,GATE_PAGE);
     if(mprotect(lxwr_page,GATE_PAGE,PROT_READ|PROT_WRITE)) return 0;
-    memset(lxwr_page,0xcc,GATE_PAGE);void *t=(void*)lxwr_frame_ctor;lxwr_page[0]=0xff;lxwr_page[1]=0x25;memset(lxwr_page+2,0,4);memcpy(lxwr_page+6,&t,8);
+    memset(lxwr_page,0xcc,GATE_PAGE);lxwr_stub_bytes(lxwr_page,lxwr_page,lxwr_data,(void*)lxwr_frame_ctor);
     if(mprotect(lxwr_page,GATE_PAGE,PROT_READ|PROT_EXEC)) return 0;
     if(!lxwr_frame_swap(LX(LX_WR_CTOR_VA),lxwr_page)) return 0;
     lxwr_frame_installed=1;return 1;
 }
 static int lxwr_frame_owned(void) {
     if(!lxwr_frame_installed) return 1;
-    void *t;memcpy(&t,lxwr_page+6,8);
-    return lxwr_frame_state()==1 && lxwr_page[0]==0xff && lxwr_page[1]==0x25 && t==(void*)lxwr_frame_ctor && lxwr_frame_pins();
+    unsigned char want[LXWR_STUB_BYTES];lxwr_stub_bytes(want,lxwr_page,lxwr_data,(void*)lxwr_frame_ctor);
+    return lxwr_frame_state()==1 && !memcmp(lxwr_page,want,LXWR_STUB_BYTES) && lxwr_frame_pins();
 }
 static void lxwr_frame_restore(void) {
     if(!lxwr_frame_installed) return;
@@ -140,7 +154,7 @@ static int lua_warp_rng_status(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_warp_rng_row(lua_State *L) {
-    double index=p_lua_tonumber(L,1);char out[1536];int n=0; /* a watch row with its frame and own/up: about 1150 characters */
+    double index=p_lua_tonumber(L,1);char out[2048];int n=0; /* a watch row with its frame, own/up and rel: about 1450 characters */
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=wr_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }

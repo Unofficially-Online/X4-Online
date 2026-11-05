@@ -3998,6 +3998,11 @@ static int join_admit_grav(const join_tables *s,const join_tables *mine) {
         int changed=0,bad=0;
         join_grav_lock(unit+0x18,1);
         if(join_poke((uintptr_t)unit+0x40,r->unit+0x40,0x10)) changed=1;
+        /* +0x50..+0x5f: the live view (+0x54) and player view (+0x58) states the radar's apply 0x10abc70 compares with the
+         * viewer's flags (+0xb8, +0xb9) and on a change posts ObjectEntered/LeftLiveView and ...PlayerView. j1-153/154: written
+         * nowhere before, a joiner's first apply posted ObjectEnteredLiveView for the 15 units the session had in live view
+         * and ObjectEnteredPlayerView for the 14 of them in player view (actor 5 among them, its new decision 16 ticks on). */
+        if(join_poke((uintptr_t)unit+0x50,r->unit+0x50,0x10)) changed=1;
         if(join_poke((uintptr_t)unit+0x60,r->unit+0x60,0x08)) changed=1;
         {   /* +0x10: the player view's viewer, by portable ID (0: none, or unmapped on the saver) */
             uint64_t key=0,viewer=0;memcpy(&key,r->unit+0x10,8);
