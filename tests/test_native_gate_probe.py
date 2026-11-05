@@ -4049,7 +4049,11 @@ class SnapshotProbeTests(unittest.TestCase):
                ('X4LAN_CONFIG.native_gate_script_rng_natural=true','X4LAN_CONFIG.native_gate_script_rng_rows=nil',None,False),
                ('X4LAN_CONFIG.native_gate_script_rng_natural=1','',None,False),
                ('X4LAN_CONFIG.native_gate_script_rng_unmapped=true','',None,False),
-               ("X4LAN_CONFIG.native_gate_script_rng_unmapped='key'",'X4LAN_CONFIG.native_gate_script_rng_mask=2',None,False))
+               ("X4LAN_CONFIG.native_gate_script_rng_unmapped='key'",'X4LAN_CONFIG.native_gate_script_rng_mask=2',None,False),
+               ('X4LAN_CONFIG.native_gate_script_rng_trace=true','',4,True),
+               ("X4LAN_CONFIG.native_gate_script_rng_trace=true;X4LAN_CONFIG.native_gate_script_rng_unmapped='key'",'',6,True),
+               ('X4LAN_CONFIG.native_gate_script_rng_trace=true','X4LAN_CONFIG.native_gate_script_rng_rows=nil',None,False),
+               ('X4LAN_CONFIG.native_gate_script_rng_trace=1','',None,False))
         for option,extra,expected,accepted in cases:
             self.setUp()
             self.lua.execute(self.SCRIPT_RNG_PREREQUISITES+'''

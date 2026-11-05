@@ -3905,13 +3905,16 @@ local function frame()
   -- creation frame) by a marker plus per-tick rank (needs the AI bit).
   if cfg.native_gate_script_rng then
    local mode,mask=cfg.native_gate_script_rng,cfg.native_gate_script_rng_mask or 3
-   local natural,unmapped=cfg.native_gate_script_rng_natural,cfg.native_gate_script_rng_unmapped
-   local options=(natural and 1 or 0)+(unmapped and 2 or 0)
+   -- native_gate_script_rng_trace=true (needs rows) also rows each nested scope of the same script and adds the
+   -- Exec's PC at entry and leave and a range's bounds to the rows (diagnostic; keys and words unchanged).
+   local natural,unmapped,trace=cfg.native_gate_script_rng_natural,cfg.native_gate_script_rng_unmapped,cfg.native_gate_script_rng_trace
+   local options=(natural and 1 or 0)+(unmapped and 2 or 0)+(trace and 4 or 0)
    -- The Linux gate's scopes have their own entries (gate.script_rng_own_entries), so they need neither trace.
    assert(snapshot and (mode=='observe' or mode=='key') and (gate.script_rng_own_entries or (cfg.native_gate_interrupt_diag and cfg.native_gate_nested_actions)) and
     cfg.native_gate_world_identities and type(mask)=='number' and mask>=1 and mask<=7 and mask==math.floor(mask) and mask%4~=0 and
     (cfg.native_gate_script_rng_rows==nil or cfg.native_gate_script_rng_rows==true) and
     (natural==nil or (natural==true and cfg.native_gate_script_rng_rows==true)) and
+    (trace==nil or (trace==true and cfg.native_gate_script_rng_rows==true)) and
     (unmapped==nil or (unmapped=='key' and mask%2==1)) and
     not (mask>=4 and cfg.native_gate_boot_rng_anchor) and
     not (mode=='key' and (cfg.native_gate_ai_rng or cfg.native_gate_interrupt_rng or cfg.native_gate_npc_rng)) and

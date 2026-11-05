@@ -279,6 +279,7 @@ D.DIAGNOSTIC={
  {'native_gate_script_rng_rows_ticks','script RNG rows window'},
  {'native_gate_script_rng_rows_window','script RNG rows window'},
  {'native_gate_script_rng_natural','natural script RNG rows'},
+ {'native_gate_script_rng_trace','script RNG trace rows (nested scopes, PCs, range bounds)'},
  {'native_gate_runtime_ids_rows','runtime ID rows'},
  {'native_gate_runtime_ids_callers','runtime ID caller rows'},
  {'native_gate_runtime_ids_caller_stride','RUNTIME_IDS_CALLER rows every N ticks'},

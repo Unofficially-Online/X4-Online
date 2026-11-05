@@ -493,6 +493,10 @@ class Overlay(unittest.TestCase):
                 self.build(*base, *wrong)
         with self.assertRaises(SystemExit):
             self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--script-rng-rows-window', '1', '10')
+        config = (self.build(*base, '--script-rng-rows-window', '2650', '2975', '--script-rng-trace') / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_script_rng_trace = true', config)
+        with self.assertRaises(SystemExit):
+            self.build(*base, '--script-rng-trace')
 
     def test_linux_overlay_takes_runtime_ids(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--runtime-ids')

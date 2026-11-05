@@ -356,3 +356,12 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   join's GRAVP restore wrote the session's T poses back for ten steps after T+1, over the joiner's own republication at a
   zone change or an undock (0x92789 at 636/637, the XS ship at 641); fix in the hot join: drop a restore entry once its
   cached parent differs.
+
+20. w1z10 (build255: the hot join's GRAVB and VIEWL; 5 November, morning)
+- GRAVB (the Gravidar's mapped-bounds maps: a joiner refilled 15 sectors per step after its load, posting the player's
+  MappedBoundsChanged until 644) and VIEWL (the objects' live and player view entries: their flags +0x3c8/+0x3c9 and the
+  registration their enter handlers make, which the IsInLiveView predicate and its MD, trade and AI callers read), both by
+  x4mods-28, on the joiner with native_gate_join_viewl: T+1 3 differ (6dae5, 176c95, 800259fc's nav timing), 900 141
+  (w1z9 711; motion 113, health 30, topology 17, timing 6; 44 objects on one side only), below an ordinary J1 on the same
+  fixes (165 at 900, where actor 5's weapon fires once more at 650: a line-of-fire ray that the joiner finds clear one tick
+  earlier). The in-window extra over an ordinary J1 is gone at 900; the T+1 three remain.

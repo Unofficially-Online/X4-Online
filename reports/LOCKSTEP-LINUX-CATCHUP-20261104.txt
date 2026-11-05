@@ -213,8 +213,24 @@ THE PLATFORM RESIDUE: A GATE JUMP'S EXIT POSITION, 1 ULP (W24/W25 against lx14/l
   through a register harness on 2900.5 + 80.125 + 1.7 + |-0.0123| (GCC 453a6565, MSVC 453a6566); on the real
   executable's own bytes through the patched entry, the same two results before and after arming; arming, the check
   (a changed stub or block), the restore. Linux host ALL PASS, site check 454 PASS, Python 43 + 1562 OK.
-  Next: lx20 = lx19's flags + --warp-exit, 6000 ticks, against W29 at 1863 (A.z, the transform) and a Windows
-  6000-tick reference.
+  W30 (W29's overlay, 6000 ticks) against lx20 (lx19's flags + --warp-exit, ae3c4873): the jump's A.z is 726a3a45 and
+  the WarpEvent transform's x 39e1f146 on both Linux clients, the Windows bits; the patched sum ran 406 times per client.
+  Linux vs Linux (census_world.py) 0 at every tick through 6000.
+    tick                    1    600   1200   1440   1800   1890   2400   3000   3600   4200   4800   5400   6000
+    W30 c1 vs lx20 c1       0      0      0      0      0      0      0      1      1      2      2      2      2
+    W30 c1 vs lx20 c2       0      0      0      0      0      0      0      1      1      2      2      2      2
+  (W23 against lx13 before the fix: 1 at 2400, 13 at 6000.)
+
+THE NEXT RESIDUE: A RECYCLABLE 300 TICKS APART (W30 against lx20)
+  The first differing capture is 2670 (2640 equal): no census object differs, but Windows has one more created object,
+  a Recyclable in saved zone 0x327 (created key 0x800a6877d000bad3, made at 2664/2665); Linux makes its own only at
+  ~2964 (in the 2970 capture, key 0x800b93b1e1277c90; its key differs because the tick is part of it). The script RNG
+  says a script ran apart: the draw offset W-L is constant from tick 2 to 2663 (the per-tick draw sets equal), then
+  Windows draws 7 more at 2664 and more at 2665..2667 (exec, entries), and Linux catches up at 2963..2966. Region RNG
+  rows are identical through 6000. Recyclables are a region resource that salvage orders tow and crush
+  (order.salvage.*), so a script's check went true 10 s (300 ticks) earlier on Windows. From 3000 a created ShipMedium
+  (0x80012cc70973c8bf) differs in motion; 2 objects at 6000. Next: the script RNG rows of 2600..3000 on both platforms
+  (lx21, W31; --script-rng-rows-window, 9011af29) name the script and its owner.
 
 WINDOWS AGAINST LINUX, w22 client 1 (build235, W21 + player_timer) against lx9
   tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
@@ -225,8 +241,9 @@ NEXT
   1. (done: actor_rng_all, player_timer, tempzone_order, warp_rng on Linux; Linux vs Linux 0 through 6000, lx13.)
   2. (done: W23 against lx13, identical through 1800.) The platform residue: the 1-ulp z of the ship's position relative
      to an orb accelerator in GetTransformRelativeTo at the jump (0a5d7a, tick 1862): find the operation that rounds
-     differently: found (the exit sum's association, MSVC against GCC); the Linux fix native_gate_warp_exit is in test
-     (lx20 against a 6000-tick Windows reference). Then a Linux default.
+     differently: found (the exit sum's association, MSVC against GCC) and fixed on Linux (native_gate_warp_exit:
+     W30 = lx20 through 2400). Next residue: the Recyclable at 2664 (a script 300 ticks apart; lx21/W31 rows). Then a
+     Linux default for warp_exit.
   3. The rest of the defaults' determinism stack the clock-mode census does not exercise (the battle scope's fixture
      state, shape order, view points), then the people stack on Linux (pilot replay first: a Linux server simulates the
      players).
