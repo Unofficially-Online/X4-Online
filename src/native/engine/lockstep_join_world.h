@@ -2828,20 +2828,30 @@ static uint64_t join_ikv_written,join_ikv_equal,join_ikv_missing,join_ikv_shape;
 /* The joints of an object's skeleton: calls visit(group, joint index, joint) for each; 0 none, 1 walked, -1 refused (a shape the walk
  * does not know: more than JOIN_IKV_GROUPS groups or JOIN_IKV_JOINTS joints in one, a size not a multiple, a joint with another vbtable). */
 typedef void (*join_ikv_visit)(void *ctx,uint16_t group,uint16_t joint,unsigned char *at);
+/* The last refusal: why (1 the group vector unreadable, 2 its size, 3 a group's joint array (seen: its byte size), 4 a joint's vbtable
+ * (seen: its RVA, or its value outside the image)); the admission lists the first few in the status (ikv_refused=). */
+static unsigned join_ikv_why;static uintptr_t join_ikv_seen;
+static char join_ikv_refused[320]="-";
 static int join_ikv_walk(unsigned char *object,join_ikv_visit visit,void *ctx) {
     unsigned char *container=NULL,*skeleton=NULL;uintptr_t gv[2]={0,0};
     if(!object || !join_read(object+JOIN_IKV_CONTAINER,&container,8) || !container || !join_read(container+JOIN_IKV_SKELETON,&skeleton,8) ||
        !skeleton) return 0;
-    if(!join_read(skeleton+JOIN_IKV_GROUP_VEC,gv,16)) return -1;
+    if(!join_read(skeleton+JOIN_IKV_GROUP_VEC,gv,16)) {join_ikv_why=1;join_ikv_seen=0;return -1;}
     if(gv[0]==gv[1]) return 0;
-    if(gv[1]<gv[0] || (gv[1]-gv[0])%0x18u || (gv[1]-gv[0])/0x18u>JOIN_IKV_GROUPS) return -1;
+    if(gv[1]<gv[0] || (gv[1]-gv[0])%0x18u || (gv[1]-gv[0])/0x18u>JOIN_IKV_GROUPS) {join_ikv_why=2;join_ikv_seen=gv[1]-gv[0];return -1;}
     for(int pass=0;pass<2;pass++)   /* the first pass checks the whole skeleton, the second visits */
         for(uintptr_t g=gv[0];g<gv[1];g+=0x18u) {
             uintptr_t jb[2]={0,0};
-            if(!join_read((void *)g,jb,16) || jb[1]<jb[0] || (jb[1]-jb[0])%JOIN_IKV_JOINT || (jb[1]-jb[0])/JOIN_IKV_JOINT>JOIN_IKV_JOINTS) return -1;
+            if(!join_read((void *)g,jb,16) || jb[1]<jb[0] || (jb[1]-jb[0])%JOIN_IKV_JOINT || (jb[1]-jb[0])/JOIN_IKV_JOINT>JOIN_IKV_JOINTS)
+                {join_ikv_why=3;join_ikv_seen=jb[1]-jb[0];return -1;}
             for(uintptr_t j=jb[0];j<jb[1];j+=JOIN_IKV_JOINT) {
                 uintptr_t vbt=0;
-                if(!pass) {if(!join_read((void *)j,&vbt,8) || vbt!=(uintptr_t)image+JOIN_IKV_VBT) return -1;continue;}
+                if(!pass) {
+                    if(!join_read((void *)j,&vbt,8) || vbt!=(uintptr_t)image+JOIN_IKV_VBT) {
+                        join_ikv_why=4;join_ikv_seen=vbt>=(uintptr_t)image && vbt-(uintptr_t)image<JOIN_FLIGHT_IMAGE?vbt-(uintptr_t)image:vbt;return -1;
+                    }
+                    continue;
+                }
                 visit(ctx,(uint16_t)((g-gv[0])/0x18u),(uint16_t)((j-jb[0])/JOIN_IKV_JOINT),(unsigned char *)j);
             }
         }
@@ -2882,11 +2892,19 @@ static void join_ikv_admit_one(void *ctx,uint16_t group,uint16_t joint,unsigned 
 }
 static void join_admit_ikv(const join_tables *s,const join_tables *mine) {
     join_ikv_admit_ctx c={s,0};
-    join_ikv_written=join_ikv_equal=join_ikv_missing=join_ikv_shape=0;
+    size_t at=0;
+    join_ikv_written=join_ikv_equal=join_ikv_missing=join_ikv_shape=0;join_ikv_refused[0]='-';join_ikv_refused[1]=0;
     for(uint32_t i=0;i<mine->nids;i++) {
         if(!mine->ids[i].portable) continue;
         c.portable=mine->ids[i].portable;
-        if(join_ikv_walk(join_object(mine->ids[i].runtime),join_ikv_admit_one,&c)<0) ++join_ikv_shape;
+        unsigned char *o=join_object(mine->ids[i].runtime);
+        if(join_ikv_walk(o,join_ikv_admit_one,&c)>=0) continue;
+        if(++join_ikv_shape<=8u && at+64u<sizeof(join_ikv_refused)) {   /* portable/type RVA/why/seen */
+            uintptr_t vt=0;
+            if(!join_read(o,&vt,8) || vt<(uintptr_t)image || vt-(uintptr_t)image>=JOIN_FLIGHT_IMAGE) vt=(uintptr_t)image;
+            at+=(size_t)snprintf(join_ikv_refused+at,sizeof(join_ikv_refused)-at,"%s%llx/%x/%u/%llx",at?",":"",(unsigned long long)c.portable,
+                                 (unsigned)(vt-(uintptr_t)image),join_ikv_why,(unsigned long long)join_ikv_seen);
+        }
     }
 }
 static int join_viewp_cmp(const void *a,const void *b) {

@@ -447,3 +447,23 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   removes is not worth a second view model.
 - IKV does not move the two fighters at T+1 (176c95, 176cef as before). Next: w1z18, build263 with PEND and without specdrop, the
   window's baseline with IKV.
+
+26. THE WINDOW WITH IKV (w1z18, build263 with PEND, without specdrop; 5 November)
+- ikv=98:16:0:5. T+1 2 differ (176c95 motion, 800259fc nav timing, as w1z14/w1z15); 900 55 (motion 37, health 21, topology 9,
+  timing 4; 44 objects on one side only), from 72 (w1z14) and 74 (w1z15): the skeletons' joints are part of the window's residue
+  as of the J1 (j1-176: 900 55 -> 51).
+- The two fighters at T+1 with IKV (w1z17's watch): the weapons of the watched ship aim alike on both sides (JOIN_WATCHAIM rows
+  of 634 equal), yet 176c95's state after step T+1 differs most in its turn rate (bank 0 vector 5: (-0.428, 0.770, -0.031) on the
+  session, (-0.350, 0.871, -0.051) on the joiner; orientation rows by about 2e-3, position by 6e-5): its steering command in that
+  step differs. 176cef (velocity by up to 5.5 m/s, position by 0.16 m) differs in w1z12, w1z14 and w1z17, not in w1z13 and
+  w1z15: run to run on the joiner, so an input of its first step that depends on timing (an update order or a read across the
+  step's threads), not a value the package lacks.
+- 176c95's steering model after step T+1 (the hot join's JOIN_T1 rows, +0x1d0): (70.91, 70.91, 219.75), (0.309, 0.764, -1.005)
+  on the session, (-70.91, 70.91, 219.75), (-0.764, -0.764, 1.005) on the joiner; every other listed model alike. Not a draw:
+  ACTOR_RNG_ALL's agent and ship keys and key sets of step 634 are equal on both sides and no keyed scope drew in that step.
+- The slot ships after step T+1 (w1z18 PILOT_DUMP 634; 6c725 slot 1, 22bce slot 2, the session's attention view points): their
+  view slots' +0x40..+0x7f (object +0x120..+0x15f, +0x1a0..+0x1df: three rows and a position, 22bce's at (1024.5, -32.9,
+  709.4)) hold the session's transform in both views and zeros on the joiner; view 0's attention 9 against 8, 6c725's view
+  flags with 0x500000 more. 176c95 fights those ships; if its steering reads their view transform, the joiner reads zeros.
+  Slot 1's controller still returns +0x3f0/+0x5c8 to the load's 1.325/1.365 in step T+1 (the session 2.995/2.996). Next:
+  w1z19, the hot join's watch on 6c725, 22bce and 176c95 (their views at s, k, j and t).
