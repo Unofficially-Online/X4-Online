@@ -62,9 +62,9 @@ def sha256(path):
 
 
 ID_TOKEN = re.compile(r'(?<![0-9a-f])[0-9a-f]{16}(?![0-9a-f])')
-# keys whose 16-hex-digit values are no saved IDs: native_gate_join_watch names portable IDs (saved or created), the same on every
-# side; the gate resolves them through its own ID table (lockstep_join_world.h join_watch)
-NOT_SAVED_IDS = frozenset({'native_gate_join_watch'})
+# keys whose 16-hex-digit values are no saved IDs: native_gate_join_watch and native_gate_join_refwatch name portable IDs (saved or
+# created), the same on every side; the gate resolves them through its own ID table (lockstep_join_world.h join_watch)
+NOT_SAVED_IDS = frozenset({'native_gate_join_watch', 'native_gate_join_refwatch'})
 
 
 def saved_id_keys(config_text):

@@ -723,7 +723,11 @@ static const join_steer_class join_steer_classes[]={
     {0x2c4dc30u,3,{{0x10,2,0},{0x20,0x40,1},{0x60,0x18,0}}},                         /* DogfightBehaviour1 (0x80, 0xed1560) */
     {0x2c4e840u,5,{{0x10,2,0},{0x20,0x40,1},{0x60,0x18,0},{0x80,0xc,0},{0x90,8,0}}}, /* ChaseBehaviour (0xa0: Dogfight1's, +0x80..) */
     {0x2c4dab0u,3,{{0x10,2,0},{0x18,5,0},{0x20,8,0}}},                               /* GainDistanceBehaviour (0x28, 0xed22e0) */
-    {0x2c4d288u,3,{{0x10,2,0},{0x20,0x40,1},{0x60,10,0}}}};                          /* EvasiveSimpleSteeringBehaviour (0x70) */
+    {0x2c4d288u,3,{{0x10,2,0},{0x20,0x40,1},{0x60,10,0}}},                           /* EvasiveSimpleSteeringBehaviour (0x70) */
+    /* SpiralBehaviour (0x30, the factory 0xec6249): +0x20 its creation time (the weave's phase in its update 0xed5d10:
+     * sincos((now - +0x20) * k)), +0x28 a thread draw (draw % 100 > 50: the spiral's direction). Not carried, a loaded one has
+     * the load's time and its own draw: w1z25, 176c95's want +0x1e0 (0.3086 on the session, -0.7635 on the joiner). */
+    {0x2c4e3c0u,4,{{0x10,2,0},{0x18,4,0},{0x20,8,0},{0x28,1,0}}}};
 #define JOIN_STEER_NCLASSES ((unsigned)(sizeof(join_steer_classes)/sizeof(*join_steer_classes)))
 static unsigned join_steer_bytes(const join_steer_range *r,unsigned n) {
     unsigned b=0;for(unsigned i=0;i<n;i++) b+=r[i].vectors?r[i].len/16u*12u:r[i].len;return b;
@@ -2190,8 +2194,240 @@ static size_t join_watch_hex(char *out,size_t cap,const unsigned char *at,size_t
 static int join_watch_key_cmp(const void *a,const void *b) {uint64_t x=*(const uint64_t *)a,y=*(const uint64_t *)b;return x<y?-1:x>y;}
 static int join_pcf_install(void);   /* lockstep_join.h: JOIN_WATCHPCF's call sites */
 static unsigned join_pcf_mask;
+/* JOIN_WATCHREFS (diagnostic, the first dump after T+1 only): who points at a watched object. j1-179: an escape pod destroyed at 683
+ * on both sides (event 0x2baad90) is deleted on the session in the next step, on the joiner not before 720; its count at +0x40 (the
+ * intrusive reference count, lock xadd at +0x40 throughout) is 2 higher on the joiner from the load on (10/12 at 633, 1/3 after the
+ * destroy), its docking bay's too, the ship's other bay's 2 lower. This scans the process's committed private read-write memory for
+ * the object's address and lists each hit: the holder (the nearest pointer into the image within 0x400 bytes before the hit, taken as
+ * its vtable: RVA, the hit's offset from it, its key when it is a component) and the 16 bytes after the hit. At most 64 hits. */
+#define JOIN_REFS_HITS 64u
+#define JOIN_REFS_BACK 0x400u
+static size_t join_watch_refs(char *out,size_t cap,char side,uint64_t tick,uint64_t portable,const unsigned char *object) {
+#ifdef JOIN_OWN_PLATFORM
+    (void)out;(void)cap;(void)side;(void)tick;(void)portable;(void)object;return 0;   /* the Linux gate: no VirtualQuery walk (not yet) */
+#else
+    static uintptr_t chunk[8192];size_t at=0;unsigned hits=0;uint64_t scanned=0;
+    MEMORY_BASIC_INFORMATION mbi;const unsigned char *p=NULL;
+    const uintptr_t want=(uintptr_t)object,lo=(uintptr_t)image,hi=(uintptr_t)image+JOIN_FLIGHT_IMAGE;
+    while(hits<JOIN_REFS_HITS && VirtualQuery(p,&mbi,sizeof(mbi))==sizeof(mbi)) {
+        const unsigned char *base=(const unsigned char *)mbi.BaseAddress,*end=base+mbi.RegionSize;
+        if(mbi.State==MEM_COMMIT && mbi.Type==MEM_PRIVATE && !(mbi.Protect&(PAGE_GUARD|PAGE_NOACCESS)) &&
+           (mbi.Protect&(PAGE_READWRITE|PAGE_EXECUTE_READWRITE|PAGE_WRITECOPY)) && base!=(const unsigned char *)chunk)
+            for(const unsigned char *c=base;c<end && hits<JOIN_REFS_HITS;c+=sizeof(chunk)) {
+                const size_t n=(size_t)(end-c)<sizeof(chunk)?(size_t)(end-c):sizeof(chunk);
+                if((const unsigned char *)chunk>=c && (const unsigned char *)chunk<c+n) continue;   /* our own buffer */
+                if(!join_read(c,chunk,n)) continue;
+                scanned+=n;
+                for(size_t k=0;k<n/8u && hits<JOIN_REFS_HITS;k++) {
+                    if(chunk[k]!=want) continue;
+                    const unsigned char *hit=c+8u*k;uintptr_t holder=0,vt=0,after[2]={0,0};
+                    for(uintptr_t b=8u;b<=JOIN_REFS_BACK;b+=8u) {
+                        uintptr_t w=0;
+                        if((uintptr_t)hit<b || !join_read(hit-b,&w,8)) break;
+                        if(w>=lo && w<hi) {holder=(uintptr_t)(hit-b);vt=w;break;}
+                    }
+                    (void)join_read(hit+8,after,16);
+                    ++hits;
+                    if(at+200u<cap) at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHREFS side=%c tick=%llu id=%llx hit=%u holder=%x+%x key=%llx after=%llx,%llx ctx=",
+                                                         side,(unsigned long long)tick,(unsigned long long)portable,hits,vt?(unsigned)(vt-lo):0u,
+                                                         holder?(unsigned)((uintptr_t)hit-holder):0u,
+                                                         (unsigned long long)(holder?join_watch_key((unsigned char *)holder):0u),
+                                                         (unsigned long long)after[0],(unsigned long long)after[1]);
+                    for(int q=-8;q<8 && at+24u<cap;q++) {   /* ctx: 0x40 bytes before the hit and 0x40 from it, as qwords (image pointers i+RVA) */
+                        uintptr_t w=0;(void)join_read(hit+8*q,&w,8);
+                        if(w>=lo && w<hi) at+=(size_t)snprintf(out+at,cap-at,"%si+%x",q==-8?"":",",(unsigned)(w-lo));
+                        else at+=(size_t)snprintf(out+at,cap-at,"%s%llx",q==-8?"":",",(unsigned long long)w);
+                    }
+                    if(at+3u<cap) at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+                }
+            }
+        if(end<=p) break;
+        p=end;
+    }
+    uint32_t count=0;(void)join_read(object+0x40,&count,4);
+    if(at+160u<cap) at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHREFS side=%c tick=%llu id=%llx hits=%u count=%u scanned=%llu\r\n",side,
+                                         (unsigned long long)tick,(unsigned long long)portable,hits,count,(unsigned long long)scanned);
+    return at;
+#endif
+}
+/* JOIN_REFCOUNTS (diagnostic, with the watch, after T+1): the reference count +0x40 of every ship and docking bay of the census, by
+ * portable ID (JOIN_REFCOUNT rows): j1-182 found the joiner's escape pods holding two more
+ * references from the load on (their deletion after the destroy comes later, their radar contacts linger, ships near them move
+ * apart at 780); this measures how many objects the load leaves with another count than the session's. */
+static void join_refcounts_dump(uint64_t tick) {
+    static const uint32_t types[]={0x2b7d738u,0x2b7feb8u,0x2b82440u,0x2b9bff8u,0x2b99a88u,0x2ad9ca0u};   /* ShipXS/S/M/L/XL, DockingBay */
+    const size_t cap=1u<<16;char *out=malloc(cap);size_t at=0;
+    if(!out) return;
+    const unsigned total=world_hash_count+world_hash_created_count;unsigned shown=0;
+    for(unsigned i=0;i<total;i++) {
+        const world_hash_item *item=world_hash_item_at(i);
+        unsigned char *o=item->runtime?join_object(item->runtime):NULL;uintptr_t vt=0;uint32_t count=0;
+        if(!o || !join_read(o,&vt,8) || vt<(uintptr_t)image || !join_read(o+0x40,&count,4)) continue;
+        const uint32_t rva=(uint32_t)(vt-(uintptr_t)image);int want=0;
+        for(unsigned k=0;k<sizeof(types)/sizeof(types[0]);k++) want|=rva==types[k];
+        if(!want) continue;
+        if(at+96u>=cap) {crash_note_write(out,(int)at);at=0;}
+        at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_REFCOUNT tick=%llu id=%llx type=%x count=%u\r\n",(unsigned long long)tick,
+                             (unsigned long long)item->saved,rva,count);
+        ++shown;
+    }
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_REFCOUNT tick=%llu shown=%u total=%u\r\n",(unsigned long long)tick,shown,total);
+    crash_note_write(out,(int)at);free(out);
+}
+/* JOIN_REFWATCH (diagnostic, with the watch, both sides): who changes the reference counts of the first four watched objects. j1-185:
+ * created ships docked at T hold two more references on the joiner than on the session, held by objects the memory scan cannot name.
+ * From the dump after T+1 to the end of the watch span each count (+0x40, 4 bytes) has a hardware write breakpoint (Dr0..Dr3) on every
+ * thread (the current one through a raised exception the handler answers with the debug registers, the others suspended and set,
+ * the threads started since at each later dump). Every write raises a single step after the storing instruction; the vectored handler
+ * records the tick, the slot, the count written, the instruction and six callers (RtlVirtualUnwind on a copy of the context, image RVAs,
+ * 'x' + the low 32 bits outside the image) and continues. Rows JOIN_REFWATCH at each dump. Diagnostic: the exception round trips cost
+ * time on the writing threads (see lockstep_draw_watch.h for that caveat). */
+#ifndef JOIN_OWN_PLATFORM
+#include <tlhelp32.h>
+#endif
+#define JOIN_RW_SET 0xE04A5257u
+#define JOIN_RW_ROWS 1024u
+#define JOIN_RW_CHAIN 6u
+typedef struct {uint64_t tick;uint32_t slot,count;uint64_t rip;uint64_t chain[JOIN_RW_CHAIN];uint64_t value;} join_rw_row;
+/* native_gate_join_refwatch = {'<portable>:<deref>/<deref>:<offset>:<len>', ...} (hex; up to four; the derefs may be empty, len 1, 2, 4
+ * or 8): watch that field instead (object -> *(object+deref) ... -> +offset). Without it: the first four watched objects' counts +0x40.
+ * The portable ID must also be in native_gate_join_watch (the watch resolves it). */
+typedef struct {uint64_t portable;uint32_t nderef,deref[3],offset,len;} join_rw_spec_t;
+static join_rw_spec_t join_rw_spec[4];static uint32_t join_rw_nspec;
+static uint32_t join_rw_len[4];
+static int join_rw_add(const char *text,size_t length) {   /* 1 added, 0 refused */
+    join_rw_spec_t s;memset(&s,0,sizeof(s));size_t i=0;unsigned field=0;uint64_t v=0;int digits=0;
+    for(;i<=length;i++) {
+        const char c=i<length?text[i]:':';
+        const unsigned d=c>='0' && c<='9'?(unsigned)(c-'0'):c>='a' && c<='f'?(unsigned)(c-'a'+10):c>='A' && c<='F'?(unsigned)(c-'A'+10):16u;
+        if(d<16u) {v=v<<4|d;++digits;if(digits>16) return 0;continue;}
+        if(c=='/' && field==1u) {if(!digits || s.nderef>=3u) return 0;s.deref[s.nderef++]=(uint32_t)v;v=0;digits=0;continue;}
+        if(c!=':') return 0;
+        if(field==0u) {if(digits!=16) return 0;s.portable=v;}
+        else if(field==1u) {if(digits) {if(s.nderef>=3u) return 0;s.deref[s.nderef++]=(uint32_t)v;}}
+        else if(field==2u) {if(!digits) return 0;s.offset=(uint32_t)v;}
+        else if(field==3u) {if(v!=1u && v!=2u && v!=4u && v!=8u) return 0;s.len=(uint32_t)v;}
+        else return 0;
+        ++field;v=0;digits=0;
+    }
+    if(field!=4u || !s.portable || !s.len || (s.offset&(s.len-1u))) return 0;   /* the end closes field 3 */
+    for(uint32_t k=0;k<join_rw_nspec;k++) if(!memcmp(&join_rw_spec[k],&s,sizeof(s))) return 1;   /* the probe's config again (a UI reload) */
+    if(join_rw_nspec>=4u) return 0;
+    join_rw_spec[join_rw_nspec++]=s;return 1;
+}
+static join_rw_row join_rw_rows[JOIN_RW_ROWS];
+static volatile LONG join_rw_n,join_rw_shown;static volatile LONG64 join_rw_dropped,join_rw_strays,join_rw_threads,join_rw_failed;
+static volatile uintptr_t join_rw_addr[4];
+static void *join_rw_veh_handle;
+#ifndef JOIN_OWN_PLATFORM
+static DWORD64 join_rw_dr7(void) {
+    DWORD64 dr7=0;
+    for(unsigned i=0;i<4u;i++) if(join_rw_addr[i]) {   /* local enable, write; LEN 00 1 byte, 01 2, 11 4, 10 8 */
+        const unsigned len=join_rw_len[i]==1u?0u:join_rw_len[i]==2u?1u:join_rw_len[i]==8u?2u:3u;
+        dr7|=(1ull<<(2u*i))|(1ull<<(16u+4u*i))|((DWORD64)len<<(18u+4u*i));
+    }
+    return dr7;
+}
+static void join_rw_load(CONTEXT *c) {
+    c->Dr0=join_rw_addr[0];c->Dr1=join_rw_addr[1];c->Dr2=join_rw_addr[2];c->Dr3=join_rw_addr[3];c->Dr6=0;c->Dr7=join_rw_dr7();
+}
+static LONG CALLBACK join_rw_veh(EXCEPTION_POINTERS *e) {
+    CONTEXT *c=e->ContextRecord;const DWORD code=e->ExceptionRecord->ExceptionCode;
+    if(code==JOIN_RW_SET) {join_rw_load(c);return EXCEPTION_CONTINUE_EXECUTION;}
+    if(code!=EXCEPTION_SINGLE_STEP) return EXCEPTION_CONTINUE_SEARCH;
+    const DWORD64 hit=c->Dr6&0xfu;unsigned slot=4u;
+    for(unsigned i=0;i<4u;i++) if((hit>>i)&1u && join_rw_addr[i]) {slot=i;break;}
+    if(slot>=4u) {
+        if(c->Dr7==join_rw_dr7() && c->Dr7) {InterlockedIncrement64(&join_rw_strays);c->Dr6=0;return EXCEPTION_CONTINUE_EXECUTION;}
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    const LONG k=InterlockedIncrement(&join_rw_n)-1;
+    if(k<(LONG)JOIN_RW_ROWS) {
+        join_rw_row *r=&join_rw_rows[k];uint64_t v=0;const uint32_t len=join_rw_len[slot]?join_rw_len[slot]:4u;
+        r->tick=stats.issued;r->slot=slot;r->rip=c->Rip;
+        if(join_read((void *)join_rw_addr[slot],&v,len)) {r->value=v;r->count=(uint32_t)v;} else {r->value=~0ull;r->count=0xffffffffu;}
+        CONTEXT u=*c;
+        for(unsigned f=0;f<JOIN_RW_CHAIN;f++) {
+            DWORD64 base=0;PVOID data=NULL;DWORD64 frame=0;
+            PRUNTIME_FUNCTION fn=RtlLookupFunctionEntry(u.Rip,&base,NULL);
+            if(fn) RtlVirtualUnwind(UNW_FLAG_NHANDLER,base,u.Rip,fn,&u,&data,&frame,NULL);
+            else {DWORD64 ret=0;if(!join_read((void *)u.Rsp,&ret,8)) break;u.Rip=ret;u.Rsp+=8;}
+            r->chain[f]=u.Rip;
+            if(!u.Rip) break;
+        }
+    } else InterlockedIncrement64(&join_rw_dropped);
+    c->Dr6=0;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+static void join_rw_apply(void) {   /* the debug registers of every thread of the process to join_rw_addr */
+    const DWORD self=GetCurrentThreadId(),pid=GetCurrentProcessId();
+    HANDLE snap=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
+    if(snap!=INVALID_HANDLE_VALUE) {
+        THREADENTRY32 te;te.dwSize=sizeof(te);
+        for(BOOL more=Thread32First(snap,&te);more;more=Thread32Next(snap,&te)) {
+            if(te.th32OwnerProcessID!=pid || te.th32ThreadID==self) continue;
+            HANDLE h=OpenThread(THREAD_GET_CONTEXT|THREAD_SET_CONTEXT|THREAD_SUSPEND_RESUME,FALSE,te.th32ThreadID);
+            if(!h) {InterlockedIncrement64(&join_rw_failed);continue;}
+            if(SuspendThread(h)!=(DWORD)-1) {
+                CONTEXT c;memset(&c,0,sizeof(c));c.ContextFlags=CONTEXT_DEBUG_REGISTERS;
+                if(GetThreadContext(h,&c)) {join_rw_load(&c);if(SetThreadContext(h,&c)) InterlockedIncrement64(&join_rw_threads); else InterlockedIncrement64(&join_rw_failed);}
+                else InterlockedIncrement64(&join_rw_failed);
+                ResumeThread(h);
+            } else InterlockedIncrement64(&join_rw_failed);
+            CloseHandle(h);
+        }
+        CloseHandle(snap);
+    }
+    RaiseException(JOIN_RW_SET,0,0,NULL);   /* this thread: the handler loads the registers into the context it continues */
+}
+#endif
+static void join_rw_arm(int on) {
+#ifndef JOIN_OWN_PLATFORM
+    if(on && !join_rw_veh_handle) join_rw_veh_handle=AddVectoredExceptionHandler(1,join_rw_veh);
+    if(!join_rw_veh_handle) return;
+    for(unsigned i=0;i<4u;i++) {
+        uintptr_t a=0;uint32_t len=4u;
+        if(on && join_rw_nspec) {
+            if(i<join_rw_nspec) {
+                const join_rw_spec_t *s=&join_rw_spec[i];unsigned char *o=NULL;
+                for(unsigned w=0;w<join_watch.n;w++) if(join_watch.portable[w]==s->portable) {o=join_watch.object[w];break;}
+                for(uint32_t d=0;o && d<s->nderef;d++) {unsigned char *p=NULL;o=join_read(o+s->deref[d],&p,8)?p:NULL;}
+                if(o) a=(uintptr_t)(o+s->offset);
+                len=s->len;
+            }
+        } else if(on && i<join_watch.n && join_watch.object[i]) a=(uintptr_t)(join_watch.object[i]+0x40);
+        join_rw_addr[i]=a;join_rw_len[i]=len;
+    }
+    join_rw_apply();
+#else
+    (void)on;
+#endif
+}
+static size_t join_rw_rows_text(char *out,size_t cap,char side,uint64_t tick) {
+    size_t at=0;LONG n=join_rw_n;if(n>(LONG)JOIN_RW_ROWS) n=(LONG)JOIN_RW_ROWS;
+    const uintptr_t lo=(uintptr_t)image,hi=(uintptr_t)image+JOIN_FLIGHT_IMAGE;
+    for(LONG k=join_rw_shown;k<n && at+400u<cap;k++) {
+        const join_rw_row *r=&join_rw_rows[k];
+        const uint64_t who=join_rw_nspec?(r->slot<join_rw_nspec?join_rw_spec[r->slot].portable:0u):join_watch.portable[r->slot];
+        at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_REFWATCH side=%c tick=%llu at=%llu id=%llx slot=%u count=%u value=%llx rip=",side,
+                             (unsigned long long)tick,(unsigned long long)r->tick,(unsigned long long)who,r->slot,r->count,(unsigned long long)r->value);
+        for(unsigned f=0;f<=JOIN_RW_CHAIN;f++) {
+            const uint64_t a=f?r->chain[f-1]:r->rip;
+            if(f && !a) break;
+            if(a>=lo && a<hi) at+=(size_t)snprintf(out+at,cap-at,"%s%x",f?",":"",(unsigned)(a-lo));
+            else at+=(size_t)snprintf(out+at,cap-at,"%sx%x",f?",":"",(unsigned)a);
+        }
+        at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+        join_rw_shown=k+1;
+    }
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_REFWATCH side=%c tick=%llu rows=%ld dropped=%lld strays=%lld threads=%lld failed=%lld\r\n",side,
+                         (unsigned long long)tick,(long)join_rw_n,(long long)join_rw_dropped,(long long)join_rw_strays,(long long)join_rw_threads,
+                         (long long)join_rw_failed);
+    return at;
+}
 static void join_watch_dump(char side,uint64_t tick) {
     if(!join_watch.n) return;
+    if(side=='t') join_refcounts_dump(tick);
     {static int tried;if(!tried && thunk) {tried=1;(void)join_pcf_install();}}   /* the thunk page exists from the gate's start */
     const uint32_t cur=join_view_index();size_t cap=1u<<18,at=0;char *out=malloc(cap);
     if(!out) return;
@@ -2200,6 +2436,10 @@ static void join_watch_dump(char side,uint64_t tick) {
         join_watch.object[i]=level;
         if(!level) {at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCH side=%c tick=%llu id=%llx missing\r\n",side,
                                          (unsigned long long)tick,(unsigned long long)join_watch.portable[i]);continue;}
+        {   /* JOIN_WATCHREFS after T+1, T+50 and T+57 (j1-181: the escape pod destroyed at 683 = T+50, the joiner's still alive at 690; j1-185: docked ships at T+1) */
+            const uint64_t rel=tick-join_watch.tick;
+            if((rel==1u || rel==50u || rel==57u) && at+65536u<cap) at+=join_watch_refs(out+at,cap-at,side,tick,join_watch.portable[i],level);
+        }
         for(unsigned lvl=0;lvl<JOIN_WATCH_LEVELS && level && at+2600<cap;lvl++) {
             uintptr_t vt=0;unsigned char *parent=NULL;uint32_t flags=0;
             (void)join_read(level,&vt,8);(void)join_read(level+JOIN_WATCH_PARENT,&parent,8);(void)join_read(level+JOIN_WATCH_FLAGS,&flags,4);
@@ -2488,6 +2728,12 @@ static void join_watch_dump(char side,uint64_t tick) {
             at+=(size_t)snprintf(out+at,cap-at,"\r\n");
         }
     }
+    if(side=='s' || side=='k' || side=='t' || side=='u' || side=='v') {
+        /* JOIN_REFWATCH: armed at the session's capture of T (s), at the joiner's admission before VIEWK (k) and after T+1 (t), the
+         * threads started since every 10 steps */
+        if(side=='s' || side=='k' || side=='t' || !((tick-join_watch.tick)%10u)) join_rw_arm(1);
+        if(at+65536u<cap) at+=join_rw_rows_text(out+at,cap-at,side,tick);
+    }
     if(at) crash_note_write(out,(int)at);
     free(out);
 }
@@ -2501,7 +2747,7 @@ static void join_watch_session(const join_tables *t,uint64_t tick) {
     join_watch_dump('s',tick);
 }
 /* Both sides, at the boundaries after T+1 (t), T+2 (u) and, up to native_gate_join_watch_span, after each later step (v). */
-#define JOIN_WATCH_SPAN_MAX 64u
+#define JOIN_WATCH_SPAN_MAX 200u
 static uint32_t join_watch_span=2u;
 /* native_gate_join_buildp (diagnostic, both sides, with the watch): every build processor's busy fields after T+1 and T+14.
  * j1-122 at 648: Job_Helper's Process_Ships drew 81 times on the joiner, 77 on the session; its loop runs one ship a draw
@@ -2543,7 +2789,7 @@ static void join_watch_probe(uint64_t completed) {
     const uint64_t k=completed-join_watch.tick;
     if(k==1u || k==14u) join_buildp_dump(k==1u?'t':'v',completed);
     if(k<=join_watch_span) join_watch_dump(k==1u?'t':k==2u?'u':'v',completed);
-    if(k>=join_watch_span) join_watch.armed=0;
+    if(k>=join_watch_span) {join_watch.armed=0;join_rw_arm(0);}
 }
 /* ---- version 13: VIEWK, VIEWKC (report 1.18) ---- */
 #define JOIN_VIEW_FLAGS 0x3cu

@@ -2109,6 +2109,34 @@ proposed and rejected.
   skeleton has the same group and index. Status ikv=written:equal:missing:shape.
   j1-174 local (build-hj17p)   every side has the weapons' skeleton (one group each)
   j1-175 local (build-hj17q)   the joints: the joiner's at rest (value 0, rate 0, the load time), only +0x08..+0x1f differ
+  j1-176 db5fb120 (build-hj17r)  IKV: ikv=99:15:0:9; the shot at 650 equal; first mismatch 720 (651 before); 900 differing 51 (55)
+- The first mismatch at 720 [F: WORLD_OBJECT rows at the strides, j1-177 (cda504c4: ikv_refused=, script rows to 760, the trace to
+  730), j1-178 (event rows 680..740)]: two escape pods (U::ShipExtraSmall and its U::Computer: 0x8002306b2d933056 at 720,
+  0x8002774c3851ae63 at 780) run the same scripts on both sides (move.undock, move.escapepod, move.generic) and are destroyed at the
+  same step (683: the component's slot 0x1548 = 0x3e51b0 posts the destroy event 0x2baad90 through 0x99a720; equal slot and due on
+  both sides; every event row of 681..740 equal). The session's are gone at the next stride; the joiner's still live there, detached
+  (flags f: no parent +0x70, no controller +0x200), and its radars post their removal at 694, 704 and 715, which the session's never
+  post (their additions 643..674 and the removals at 684 equal): the session's deletion takes them off the contact lists, the joiner's
+  comes later. The attention viewpoints are equal on all three clients (VIEW_POINTS mode=players). The nine skeletons IKV refuses
+  are U::BuildProcessor objects (+0x208 is no animation container there).
+  j1-177 cda504c4 (build-hj17s)  ikv_refused: eight U::BuildProcessor; the pods' scripts equal to 760
+  j1-178 cda504c4 (build-hj17s)  event rows 680..740: the destroy at 683 equal, no event differs
+- Why the joiner keeps the pods [F: j1-179 (join watch on the pod over T+1..T+64), JOIN_WATCHREFS (a scan of committed private
+  memory for pointers to a watched object: the holder by the nearest image pointer before the hit, with 0x40 bytes of context)]:
+  obj+0x40 is the intrusive reference count (lock xadd at +0x40 at some 1,500 sites). The pod's count is 2 higher on the joiner from
+  the load on (633: 10 against 12; after the destroy at 683: 1 against 3); the session deletes it in step 684, the joiner holds it
+  detached (no parent, no controller) until after 720. Its docking bay 0x8d8b5 is +2 too, the carrier's (0x8d8b1, ShipSmall) other
+  bay 0x8d8b2 -2. The save has the pod (ship_gen_xs_distressbeacon, spawned at 25.75) in bay 0x8d8b5 with dockstate="undocking" and
+  a pending setstoreshipallowed at 35.75: a beacon in mid-launch at T. Its controller is a U::DockMovementController (0x2c3fdc0)
+  to 640 and a U::NavigationController (0x2c51158) from 641 on both sides, but after the destroy the joiner's lasting extra holder
+  is a U::CrossConnectionMovementController (secondary vtable 0x2c3fd88): the dock controller the load rebuilt outlives the switch.
+  The second pod (0x8002774c3851ae63) was docked at T and launched at 713, so loaded docked ships in general seem to leave a
+  reference behind when they undock. It matters: the ShipSmall 0x7356a and 0x73576 (zone 0x8fb) take that pod as a radar contact at
+  724 and move apart at 780 (no script row differs up to 760). Closed as harmless: the destroyer 0x9b006's extra interrupt in
+  move.attack.object.capital.steering at 665 (its order draws equal, the ship equal at 720).
+  j1-179 local (build-hj17s)    the pod's watch: deleted in 684 on the session, detached and alive on the joiner; count +2
+  j1-180/181/182 local          JOIN_WATCHREFS: the extra holder a CrossConnectionMovementController
+  j1-183 local (build-hj17s)    the destroyer at 665: harmless
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

@@ -315,14 +315,19 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_hold_boot_events then   -- a version 13 joiner holds its boot event passes until its admission
   assert(gate.join_hold_boot_events and gate.join_hold_boot_events(1)==1,'join boot event hold refused')
  end
- if cfg.native_gate_join_watch_span~=nil then   -- JOIN_WATCH rows after each step T+1 .. T+n (2 .. 64)
+ if cfg.native_gate_join_watch_span~=nil then   -- JOIN_WATCH rows after each step T+1 .. T+n (2 .. 200)
   local n=cfg.native_gate_join_watch_span
-  assert(type(n)=='number' and gate.join_watch_span and gate.join_watch_span(n)==n,'native_gate_join_watch_span needs 2 .. 64')
+  assert(type(n)=='number' and gate.join_watch_span and gate.join_watch_span(n)==n,'native_gate_join_watch_span needs 2 .. 200')
  end
  if cfg.native_gate_join_watch~=nil then   -- JOIN_WATCH rows (diagnostic): up to 8 portable IDs, 16 hex digits each
   local watch=cfg.native_gate_join_watch
   assert(type(watch)=='table' and #watch>=1 and #watch<=8 and gate.join_watch,'native_gate_join_watch needs 1..8 portable IDs')
   for i=1,#watch do assert(type(watch[i])=='string' and gate.join_watch(watch[i])==i,'invalid join watch ID') end
+ end
+ if cfg.native_gate_join_refwatch~=nil then   -- JOIN_REFWATCH (diagnostic): up to 4 fields '<portable>:<deref>/..:<offset>:<len>' (hex)
+  local rw=cfg.native_gate_join_refwatch
+  assert(type(rw)=='table' and #rw>=1 and #rw<=4 and gate.join_refwatch,'native_gate_join_refwatch needs 1..4 fields')
+  for i=1,#rw do assert(type(rw[i])=='string' and gate.join_refwatch(rw[i])==1,'invalid join refwatch field') end
  end
  local core=assert(X4LAN_JOIN_CORE,'hot join core missing (ui/native_gate_join_core.lua)')
  local own=tonumber(cfg.slot:sub(2))

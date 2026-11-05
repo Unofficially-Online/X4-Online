@@ -284,7 +284,8 @@ STEER_CLASSES = {0x2c4edc0: ((0x10, 2, 0), (0x18, 1, 0)),                       
                  0x2c4dc30: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 0x18, 0)),                      # DogfightBehaviour1
                  0x2c4e840: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 0x18, 0), (0x80, 0xc, 0), (0x90, 8, 0)),   # ChaseBehaviour
                  0x2c4dab0: ((0x10, 2, 0), (0x18, 5, 0), (0x20, 8, 0)),                            # GainDistanceBehaviour
-                 0x2c4d288: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 10, 0))}                        # EvasiveSimpleSteeringBehaviour
+                 0x2c4d288: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 10, 0)),                        # EvasiveSimpleSteeringBehaviour
+                 0x2c4e3c0: ((0x10, 2, 0), (0x18, 4, 0), (0x20, 8, 0), (0x28, 1, 0))}              # SpiralBehaviour
 
 
 def steer_bytes(ranges):

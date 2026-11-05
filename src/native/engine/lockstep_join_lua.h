@@ -75,7 +75,7 @@ static int lua_join_view_skip(lua_State *L) {
     const double m=p_lua_tonumber(L,1);const int ok=isfinite(m) && m>=0 && m<=15 && floor(m)==m;
     if(ok) join_view_skip=(unsigned)m;p_lua_pushnumber(L,ok?1:0);return 1;
 }
-/* gate.join_watch_span(n): the JOIN_WATCH rows after each step T+1 .. T+n (2 .. 64; default 2); n, 0 refused. */
+/* gate.join_watch_span(n): the JOIN_WATCH rows after each step T+1 .. T+n (2 .. 200; default 2); n, 0 refused. */
 static int lua_join_watch_span(lua_State *L) {
     const double n=p_lua_tonumber(L,1);const int ok=isfinite(n) && floor(n)==n && n>=2.0 && n<=(double)JOIN_WATCH_SPAN_MAX;
     if(ok) join_watch_span=(uint32_t)n;
@@ -89,6 +89,11 @@ static int lua_join_watch(lua_State *L) {
         if(v>15u) ok=0;else id=id<<4|v;
     }
     p_lua_pushnumber(L,ok?(double)join_watch_add(id):0.0);return 1;
+}
+/* gate.join_refwatch(spec): one JOIN_REFWATCH field, '<portable>:<deref>/<deref>:<offset>:<len>' (hex; lockstep_join_world.h); 1, 0 refused. */
+static int lua_join_refwatch(lua_State *L) {
+    size_t length=0;const char *text=p_lua_tolstring(L,1,&length);
+    p_lua_pushnumber(L,text && length<96u && join_rw_add(text,length)?1.0:0.0);return 1;
 }
 static int lua_join_status(lua_State *L) {
     char out[8192];int n=accept_ui()?join_status(out,sizeof(out)):0;   /* 3584 until IKV's refusals (the line passed 3200) */
