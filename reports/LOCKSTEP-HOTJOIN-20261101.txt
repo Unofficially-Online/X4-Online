@@ -2186,6 +2186,26 @@ proposed and rejected.
                                  +0x170, +0x180..+0x1f0, +0x210); the load restores <npcanimation> to two timer words. Open:
                                  the sequence (0x6bf900 starts a default one through 0x37de70 after 0x6bd160; the session's is
                                  sit_pilot). The NPC's TLS draws stay inside its ship's Move, whose RNG the gate scopes per ship.
+- The first mismatch at 819 [F: j1-211 (native_gate_trace_window 780..830: the 12 fixture STATE_ROWs equal to 830; CREATED_IDENTITIES:
+  113 objects created at 818 on the session, 115 on the joiner), j1-212 (native_gate_build_rows: the shipyards' finds, adds and starts
+  equal to 819 but for the task ID counter), j1-213 (native_gate_created_rows: at 818 a job spawns nine Teladi fighters in a tempzone
+  under 0x982, their roots mostly the same created IDs, two ship macros (fighter_01_b against 02_a) and the loadouts other; SPAWN_RNG_ROW:
+  the same nine Generate callers in the same order, the joiner's states four steps behind the session's)]: the job spawn 0xf06650 hands
+  *(job+0x528) to ShipGenerator::Generate 0xc841b0 as its explicit state; the macro choice draws from and advances its first word and
+  the loadout key is that word (lockstep_spawn_rng.h). JobDB seeds it at import, the save does not hold it: a joiner's jobs restart
+  from their seeds. JOBG (section 68, v13; opt-in native_gate_join_jobg): every job's word by its ID's FNV-1a hash (JOBS's walk),
+  written at the admission where it differs.
+  j1-209/210 local (build-hj18n)  disk full (C:, 0 bytes) / the failed collect's save_009 left in lane b4: no result
+  j1-211 local (build-hj18n)      trace window 780..830: 113 against 115 created at 818; STATE_ROWs equal
+  j1-212 local (build-hj18n)      build rows: equal to 819 (task IDs apart); the starts of 819 equal
+  j1-213 local (build-hj18n)      created rows: the 818 job spawn's macros and loadouts; SPAWN_RNG states four steps apart
+  j1-214 f13f383c (build-hj18o)   JOBG on: jobg=1:71:1140:0; first mismatch 903 (819), census 900 differing 0 (42)
+  j1-215 f13f383c (build-hj18o)   windows 880..930: first mismatch 872; 900 differing 2 (176b36, 176cb3 motion, zone 0x13e75f); at
+                                  903 64 created against 39: the job spawns of 902 (session 5 Generate calls, joiner 3, two
+                                  of them in the other order); fixture STATE_ROW 4 drifts from before 880
+  j1-216 a0ad54f8 (build-hj19b)   SPAWN_RNG_ROW site=: every Generate after T is the job spawn 0xf0673a; as j1-215 (872, 2)
+  j1-217 local (build-hj19c)      native_gate_join_jobw (the session's job state +0x48, which JOBS only compares; 705 of 1,211
+                                  differ): jobw=1:521, first mismatch 903, 900 differing 0; the 902 spawns unchanged: not it
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

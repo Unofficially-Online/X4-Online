@@ -2488,6 +2488,7 @@ static void join_jobinit_restore(void) {}
 #define JOIN_JOBS_STATE 0x528u
 #define JOIN_JOBS_FIELD 0x48u
 typedef void (*join_jobs_visit)(void *ctx,uint32_t index,uint64_t hash,unsigned char *state);
+static unsigned char *join_jobs_node;   /* the DB node of the job being visited (the job at +0x48) */
 static void join_jobs_walk(join_jobs_visit visit,void *ctx) {
     unsigned char *db=join_jobdb_test;uint64_t count=0;
     if(!db) read_local(image+JOIN_JOBDB,&db,8);
@@ -2500,7 +2501,7 @@ static void join_jobs_walk(join_jobs_visit visit,void *ctx) {
             if(text && join_read(text,key,(size_t)size)) {
                 uint64_t h=1469598103934665603ull;
                 for(uint64_t k=0;k<size;k++) {h^=(unsigned char)key[k];h*=1099511628211ull;}
-                if(join_read(node+0x48+JOIN_JOBS_STATE,&state,8) && state) visit(ctx,(uint32_t)i,h,state);
+                if(join_read(node+0x48+JOIN_JOBS_STATE,&state,8) && state) {join_jobs_node=node;visit(ctx,(uint32_t)i,h,state);join_jobs_node=NULL;}
             }
         }
         unsigned char *r=*(unsigned char **)(node+0x10);
@@ -2568,8 +2569,42 @@ static void join_admit_jobg(const join_tables *s) {
     }
     free(x.v);
 }
+/* native_gate_join_jobw (experiment, default off): the admission writes the session's state +0x48 where it differs (j1-215 after
+ * JOBG: 705 of 1,211 jobs differ, a small count on the session; at 902 the joiner's jobs spawn three ships where the session's spawn
+ * five). The first 16 differences show as rows jobs side=joiner ... own= session=. */
+static int join_jobw_on;static uint64_t join_jobw_written;
+/* JOIN_JOBDUMP (diagnostic, native_gate_join_jobdump: up to 8 job ID hashes; with the watch at s, k and t): the job's first 0x600
+ * bytes and its state's first 0x1c0 (j1-217: at 902 the session's jobs 0xd0b01187c580022e and 0x6a7d2c0fa238cad0 spawn in this
+ * order and two ships more, the joiner's in the other order). */
+static uint64_t join_jobdump_hash[8];static unsigned join_jobdump_n;
+static int join_jobdump_add(uint64_t hash) {
+    for(unsigned i=0;i<join_jobdump_n;i++) if(join_jobdump_hash[i]==hash) return 1;
+    if(!hash || join_jobdump_n>=8u) return 0;
+    join_jobdump_hash[join_jobdump_n++]=hash;return 1;
+}
+typedef struct {char side;uint64_t tick;} join_jobdump_ctx;
+static void join_jobdump_one(void *c,uint32_t index,uint64_t hash,unsigned char *state) {
+    const join_jobdump_ctx *x=c;unsigned k=0;
+    for(;k<join_jobdump_n;k++) if(join_jobdump_hash[k]==hash) break;
+    if(k>=join_jobdump_n || !join_jobs_node) return;
+    static unsigned char job[0x600],st[0x1c0];static const char digits[]="0123456789abcdef";
+    memset(job,0,sizeof(job));memset(st,0,sizeof(st));(void)join_read(join_jobs_node+0x48,job,sizeof(job));(void)join_read(state,st,sizeof(st));
+    const size_t cap=2u*(sizeof(job)+sizeof(st))+256u;char *out=malloc(cap);size_t at=0;
+    if(!out) return;
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_JOBDUMP side=%c tick=%llu hash=%016llx index=%u job=",x->side,(unsigned long long)x->tick,
+                         (unsigned long long)hash,index);
+    for(unsigned b=0;b<sizeof(job);b++) {out[at++]=digits[job[b]>>4];out[at++]=digits[job[b]&15u];}
+    at+=(size_t)snprintf(out+at,cap-at," state=");
+    for(unsigned b=0;b<sizeof(st);b++) {out[at++]=digits[st[b]>>4];out[at++]=digits[st[b]&15u];}
+    at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+    crash_note_write(out,(int)at);free(out);
+}
+static void join_jobdump(char side,uint64_t tick) {
+    if(!join_jobdump_n) return;
+    join_jobdump_ctx x={side,tick};join_jobs_walk(join_jobdump_one,&x);
+}
 static void join_admit_jobs(const join_tables *s) {
-    join_jobs_admit_ctx x={NULL,0,0};unsigned rows=0;join_jobs_walk(join_jobs_admit_one,&x);
+    join_jobs_admit_ctx x={NULL,0,0};unsigned rows=0,shown=0;join_jobs_walk(join_jobs_admit_one,&x);join_jobw_written=0;
     for(uint32_t i=0;i<s->njobs;i++) {
         unsigned char *state=NULL;
         for(uint32_t k=0;k<x.n;k++) if(x.v[k].hash==s->jobs[i].hash) {state=x.v[k].state;break;}
@@ -2577,7 +2612,13 @@ static void join_admit_jobs(const join_tables *s) {
         /* compared only [F: j1-112: written in 411 of 1,211 jobs, the census of every tick unchanged and the job ships still built
          * in the other order]: its meaning is not known and it does not decide the pick */
         uint64_t own=0;
-        if(join_read(state+JOIN_JOBS_FIELD,&own,8) && own==s->jobs[i].value) ++join_rx.jobs_equal; else ++join_rx.jobs_written;
+        if(join_read(state+JOIN_JOBS_FIELD,&own,8) && own==s->jobs[i].value) ++join_rx.jobs_equal;
+        else {
+            ++join_rx.jobs_written;
+            if(shown<16u) {++shown;join_world_row(&rows,"jobs side=joiner hash=%016llx index=%u own=%llx session=%llx",(unsigned long long)s->jobs[i].hash,
+                                                  s->jobs[i].index,(unsigned long long)own,(unsigned long long)s->jobs[i].value);}
+            if(join_jobw_on && join_poke((uintptr_t)(state+JOIN_JOBS_FIELD),&s->jobs[i].value,8)) ++join_jobw_written;
+        }
         const uint32_t active=join_jobs_ships(state,JOIN_JOBS_ACTIVE),waiting=join_jobs_ships(state,JOIN_JOBS_WAITING);
         if(active!=s->jobs[i].active) ++join_rx.jobs_active_differ;
         if(waiting!=s->jobs[i].waiting) ++join_rx.jobs_waiting_differ;
@@ -3345,7 +3386,7 @@ static int join_status(char *out,size_t cap) {
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
         " steer=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu t1=%u:%llu:%llu:%llu:%llu:%llu:%llu"
         " solver=%llu:%llu:%llu:%llu:%llu:%llu bullet_walk=%u:%llu:%llu grav=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravs=%llu:%llu:%llu:%llu md_dropped=%llu"
-        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u gravp_moved=%llu viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u bupd=%llu:%llu:%llu:%llu bupd_cap=%u ldc=%llu:%llu:%llu:%llu ldc_cap=%u navt=%llu:%llu:%llu navt_cap=%u cid=%llx:%llx nmesh=%d:%llu nmesh_cap=%u noct=%d:%llu:%llu:%llu:%llu:%llu noct_cap=%u agtt=%llu:%llu:%llu agtt_cap=%u agcb=%llu:%llu:%llu agcb_cap=%u pbnk=%llu:%llu:%llu:%llu pbnk_cap=%u pend=%d:%llu:%llu:%llu:%llu pend_cap=%u gravb=%llu:%llu:%llu:%llu gravb_cap=%u viewl=%d:%llu:%llu:%llu:%llu:%llu viewl_cap=%u ikv=%llu:%llu:%llu:%llu ikv_cap=%u ikv_refused=%s rcnt=%d:%llu:%llu:%llu:%llu rcnt_cap=%u ecos=%d:%llu:%llu:%llu ecos_cap=%u shpw=%d:%llu:%llu:%llu shpw_cap=%u trdn=%d:%llu:%llu:%llu trdn_cap=%u npca=%d:%llu:%llu:%llu:%llu:%llu:%llu npca_cap=%u jobg=%d:%llu:%llu:%llu jobg_cap=%u viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
+        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u gravp_moved=%llu viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u bupd=%llu:%llu:%llu:%llu bupd_cap=%u ldc=%llu:%llu:%llu:%llu ldc_cap=%u navt=%llu:%llu:%llu navt_cap=%u cid=%llx:%llx nmesh=%d:%llu nmesh_cap=%u noct=%d:%llu:%llu:%llu:%llu:%llu noct_cap=%u agtt=%llu:%llu:%llu agtt_cap=%u agcb=%llu:%llu:%llu agcb_cap=%u pbnk=%llu:%llu:%llu:%llu pbnk_cap=%u pend=%d:%llu:%llu:%llu:%llu pend_cap=%u gravb=%llu:%llu:%llu:%llu gravb_cap=%u viewl=%d:%llu:%llu:%llu:%llu:%llu viewl_cap=%u ikv=%llu:%llu:%llu:%llu ikv_cap=%u ikv_refused=%s rcnt=%d:%llu:%llu:%llu:%llu rcnt_cap=%u ecos=%d:%llu:%llu:%llu ecos_cap=%u shpw=%d:%llu:%llu:%llu shpw_cap=%u trdn=%d:%llu:%llu:%llu trdn_cap=%u npca=%d:%llu:%llu:%llu:%llu:%llu:%llu npca_cap=%u jobg=%d:%llu:%llu:%llu jobg_cap=%u jobw=%d:%llu viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
         states[join_cap.state],(unsigned long long)join_cap.tick,join_cap.slot_k,join_cap.mask,join_cap.why,join_cap.detail[0]?join_cap.detail:"-",
         (unsigned long long)join_cap.save_bytes,(unsigned long long)join_cap.package_bytes,(unsigned long long)join_cap.save_us,
         (unsigned long long)join_cap.capture_us,pkg,port,join_cap.modified_cleared,join_cap.possible,join_rx.loaded,join_rx.mode,join_rx.based,
@@ -3464,6 +3505,7 @@ static int join_status(char *out,size_t cap) {
         join_npca_on,(unsigned long long)join_npca_started,(unsigned long long)join_npca_written,(unsigned long long)join_npca_equal,
         (unsigned long long)join_npca_missing,(unsigned long long)join_npca_failed,(unsigned long long)join_npca_index_differs,join_cap.npca,
         join_jobg_on,(unsigned long long)join_jobg_written,(unsigned long long)join_jobg_equal,(unsigned long long)join_jobg_missing,join_cap.jobg,
+        join_jobw_on,(unsigned long long)join_jobw_written,
         (unsigned long long)join_rx.viewk_children,(unsigned long long)join_rx.viewk_flags,(unsigned long long)join_rx.viewk_equal,
         (unsigned long long)join_rx.viewk_missing,(unsigned long long)join_rx.viewk_unmapped,(unsigned long long)join_rx.viewk_superset,
         join_cap.viewk,join_cap.viewkc,(unsigned long long)join_rx.viewf_written,(unsigned long long)join_rx.viewf_equal,

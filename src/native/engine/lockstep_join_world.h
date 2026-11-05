@@ -2510,6 +2510,7 @@ static void join_objsample_dump(uint64_t tick) {
 /* JOIN_NPCSLOT (diagnostic, with the watch, after T+1): every NPC's +0x5a0 (j1-203: the slot ship pilot 7a903 holds a pointer
  * there on the session, none on the joiner; NPC Move 0x6bc420 skips its whole behaviour block, the +0x5b0 stamp included, at
  * 0x6bc611 when it is null). Rows id:set:vt:[+0x1f0] (vt the pointee's vtable RVA, 0 outside the image), 48 per line. */
+static void join_jobdump(char side,uint64_t tick);   /* lockstep_join.h: JOIN_JOBDUMP */
 #define JOIN_NPC_VT 0x2b38a48u
 #define JOIN_NPC_SLOT 0x5a0u
 static void join_npcslot_dump(char side,uint64_t tick) {
@@ -2549,6 +2550,7 @@ static void join_npcslot_dump(char side,uint64_t tick) {
 static void join_watch_dump(char side,uint64_t tick) {
     if(!join_watch.n) return;
     if(side=='t' || side=='k' || side=='s') join_npcslot_dump(side,tick);
+    if(side=='t' || side=='k' || side=='s') join_jobdump(side,tick);
     if(side=='t') join_objsample_dump(tick);
     if(side=='t') join_refcounts_dump(tick);
     {static int tried;if(!tried && thunk) {tried=1;(void)join_pcf_install();}}   /* the thunk page exists from the gate's start */

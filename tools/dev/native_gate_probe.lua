@@ -306,6 +306,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_jobg then   -- a joiner takes the session's job generator words (JOBG)
   assert(gate.join_jobg and gate.join_jobg(1)==1,'join jobg refused')
  end
+ if cfg.native_gate_join_jobw then   -- experiment: a joiner writes the session's job state +0x48 (JOBS)
+  assert(gate.join_jobw and gate.join_jobw(1)==1,'join jobw refused')
+ end
  if cfg.native_gate_join_ecos then   -- a joiner takes the session's economy schedules (ECOS)
   assert(gate.join_ecos and gate.join_ecos(1)==1,'join ecos refused')
  end
@@ -346,6 +349,11 @@ if cfg.native_gate_join then
   local rw=cfg.native_gate_join_refwatch
   assert(type(rw)=='table' and #rw>=1 and #rw<=4 and gate.join_refwatch,'native_gate_join_refwatch needs 1..4 fields')
   for i=1,#rw do assert(type(rw[i])=='string' and gate.join_refwatch(rw[i])==1,'invalid join refwatch field') end
+ end
+ if cfg.native_gate_join_jobdump~=nil then   -- JOIN_JOBDUMP (diagnostic): up to 8 jobs by the FNV-1a hash of their ID (16 hex digits)
+  local jd=cfg.native_gate_join_jobdump
+  assert(type(jd)=='table' and #jd>=1 and #jd<=8 and gate.join_jobdump,'native_gate_join_jobdump needs 1..8 job hashes')
+  for i=1,#jd do assert(type(jd[i])=='string' and gate.join_jobdump(jd[i])==1,'invalid join jobdump hash') end
  end
  if cfg.native_gate_join_refwatch_from~=nil then   -- a saver arms those fields from this step on (snapshot objects; diagnostic)
   local n=cfg.native_gate_join_refwatch_from
