@@ -409,7 +409,7 @@ def golden_v13():
             join.SEC_VIEWF: [(0x2001, 0x10058, 0x10058, 1, 1), (0x2002, 0x10042, 0x10042, 6, 6)],
             join.SEC_VIEWP: [(0x2001, bytes(range(64)))],
             join.SEC_SHOOT: [(0x2001, 0x4039d983c465091e, 0x403c2ed916872ba4, 0x403c26508dfea31b, 0x3f9eb851e0000000, 0x403c2ed916872ba4,
-                              0x403bf31d5acb6fe5, bytes(range(32)), 0x2b7fcc0, b'\x01\x01\x01', b'\x01\x00', 1, bytes(6))],
+                              0x403bf31d5acb6fe5, bytes(range(32)), 0x2b7fcc0, b'\x01\x01\x01', b'\x01\x00', 1, bytes(2), 0x3db2b8c2)],
             join.SEC_ATTK: [(0x2001, 0x2002, 0x403b5987f5df8f7b, 0x403b5987f5df8f7b, 0, 7, 0)],
             join.SEC_LIVEF: [(0x2001, 0, 0x20)],
             join.SEC_SPEC: [(0x2001, 3, 0x4f, 2, 0, 0x3fc5555555555555, 0x403c26508dfea31b), (0x2001, 7, 0x7f, 0, 0, 0, 0x403c2ed916872b02)],
@@ -432,7 +432,7 @@ def golden_v13():
             join.SEC_VIEWL: [(0x2001, 1, 1, bytes(6)), (0x2004, 1, 0, bytes(6))]}
 
 
-GOLDEN_SHA = '92a0f2c34ff59b790f61946308c1d2244fb4d947b09b1f0661cf5b5e94348ecc'
+GOLDEN_SHA = '5bdd614f42beb58131f797fd5d5c3fe562933757380af1599d5f5458707c3693'
 GOLDEN_SHA_V12 = '67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef'   # a version 12 package (before JOBE)
 GOLDEN_SHA_V11 = 'f0874152607c013ff72febfbf675b20f64b391fb5a9d431795bd302fc0964e7f'   # a version 11 package (before SPLM..GRAVP)
 GOLDEN_SHA_V10 = '1a324e00b49dbc814f757c26ad28741675b7d8e0b9df120c63d52594724e27bd'   # a version 10 package (before GRAV, GRAVC, GRAVS)

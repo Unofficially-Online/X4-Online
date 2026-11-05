@@ -2066,6 +2066,40 @@ static struct {uint64_t portable[JOIN_WATCH_MAX],runtime[JOIN_WATCH_MAX];unsigne
 typedef struct {uint64_t tick;uint32_t site,flags,view,watched;} join_pcf_row;
 static join_pcf_row join_pcf_rows[JOIN_PCF_ROWS];
 static volatile LONG join_pcf_n;
+/* JOIN_WATCHRULE (diagnostic, with the watch): every line-of-fire ruling of the basic shoot controllers (vtable 0x2b7fcc0 slot
+ * 0xe8, 0x7e6cb0(controller, hit, target, shooter, flag): 1 clear, 2 blocked, 0 a second ray), which the weapon's request check
+ * 0x816d20 asks after its physics ray 0xbc4d0, logged from the first watch dump on through the vtable slot (an 8-byte CAS, put
+ * back at the gate's stop) and written with the next dump: the hit, the target and the shooter as keys, the flag and the result.
+ * j1-164: actor 5's weapon 0x176ba3 rules clear at 650 on the joiner only (its controller +0x84), one shot more. */
+#define JOIN_RULE_SLOT 0x2b7fda8u      /* 0x2b7fcc0 + 0xe8 */
+#define JOIN_RULE_FN 0x7e6cb0u
+#define JOIN_RULE_ROWS 1024u
+typedef struct {uint64_t tick;void *hit,*target,*shooter;uint32_t flag,result;} join_rule_row;
+static join_rule_row join_rule_rows[JOIN_RULE_ROWS];
+static volatile LONG join_rule_n;static volatile LONG64 join_rule_calls,join_rule_dropped;static int join_rule_installed;
+static int join_rule_hook(void *ctl,void *hit,void *target,void *shooter,unsigned char flag) {
+    const int r=((int (*)(void *,void *,void *,void *,unsigned char))(void *)(image+JOIN_RULE_FN))(ctl,hit,target,shooter,flag);
+    InterlockedIncrement64(&join_rule_calls);
+    const LONG k=InterlockedIncrement(&join_rule_n)-1;
+    if(k<(LONG)JOIN_RULE_ROWS) {
+        join_rule_row *w=&join_rule_rows[k];
+        w->tick=stats.issued;w->hit=hit;w->target=target;w->shooter=shooter;w->flag=flag;w->result=(uint32_t)r;
+    } else InterlockedIncrement64(&join_rule_dropped);
+    return r;
+}
+static int join_rule_swap(uint64_t expected,uint64_t value) {
+    DWORD old,ignored;
+    if(!VirtualProtect(image+JOIN_RULE_SLOT,8,PAGE_READWRITE,&old)) return 0;
+    const uint64_t actual=(uint64_t)InterlockedCompareExchange64((volatile LONG64 *)(image+JOIN_RULE_SLOT),(LONG64)value,(LONG64)expected);
+    VirtualProtect(image+JOIN_RULE_SLOT,8,old,&ignored);
+    return actual==expected;
+}
+static void join_rule_install(void) {
+    if(!join_rule_installed && join_rule_swap((uint64_t)(uintptr_t)(image+JOIN_RULE_FN),(uint64_t)(uintptr_t)join_rule_hook)) join_rule_installed=1;
+}
+static void join_rule_restore(void) {
+    if(join_rule_installed && join_rule_swap((uint64_t)(uintptr_t)join_rule_hook,(uint64_t)(uintptr_t)(image+JOIN_RULE_FN))) join_rule_installed=0;
+}
 static volatile LONG64 join_pcf_calls,join_pcf_dropped;
 static void join_pcf_native(void *object,uint32_t view,const uint32_t *flags) {
     ((void (*)(void *,uint32_t,const uint32_t *))(void *)(image+JOIN_PCF_FN))(object,view,flags);
@@ -2242,6 +2276,18 @@ static void join_watch_dump(char side,uint64_t tick) {
                 at+=(size_t)snprintf(out+at,cap-at," req=");
                 if(join_read(level+JOIN_WATCH_REQ,&req,8) && req) for(uint32_t o=0;o<JOIN_WATCH_RAW_REQ;o+=64u) at+=join_watch_hex(out+at,cap-at,req+o,64);
                 else at+=(size_t)snprintf(out+at,cap-at,"-");
+                /* j1-164: the session's shoot controllers of actor 5's two weapons hold the same two heap pointers at +0x90 and +0x98,
+                 * the joiner's none, and the joiner's line-of-fire check comes out clear at 650 (one shot more). What they point at:
+                 * per pointer its key (as a component: +8 a runtime ID with a portable key, else '-'), vtable RVA and first 0x80 bytes. */
+                if(req) for(unsigned k=0;k<2u;k++) {
+                    unsigned char *pp=NULL;uintptr_t pvt=0;
+                    at+=(size_t)snprintf(out+at,cap-at," r%x=",0x90u+8u*k);
+                    if(!join_read(req+0x90u+8u*k,&pp,8) || !pp) {at+=(size_t)snprintf(out+at,cap-at,"-");continue;}
+                    (void)join_read(pp,&pvt,8);
+                    at+=(size_t)snprintf(out+at,cap-at,"%llx/%x:",(unsigned long long)join_watch_key(pp),
+                                         pvt>=(uintptr_t)image && pvt-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint32_t)(pvt-(uintptr_t)image):0u);
+                    at+=join_watch_hex(out+at,cap-at,pp,64);at+=join_watch_hex(out+at,cap-at,pp+64,64);
+                }
                 /* JOIN_WATCHATT (after this row): the components in its attachment container (+0xa0: a bucketed container,
                  * +0x08/+0x10 buckets of 0x20 {begin, end, ..}, +0x20 count; BuildCache refreshes each with 0x7f) and what +0x238 holds */
                 char line[1600];size_t ln=0;
@@ -2300,6 +2346,19 @@ static void join_watch_dump(char side,uint64_t tick) {
         at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHPCF side=%c tick=%llu rows=%ld calls=%lld dropped=%lld sites=%x\r\n",side,(unsigned long long)tick,
                              (long)n,(long long)join_pcf_calls,(long long)join_pcf_dropped,join_pcf_mask);
         InterlockedExchange(&join_pcf_n,0);
+    }
+    {   /* JOIN_WATCHRULE: the line-of-fire rulings since the last dump (installed at the first dump) */
+        join_rule_install();
+        LONG n=join_rule_n;if(n>(LONG)JOIN_RULE_ROWS) n=(LONG)JOIN_RULE_ROWS;
+        for(LONG k=0;k<n && at+256<cap;k++) {
+            const join_rule_row *r=&join_rule_rows[k];
+            at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHRULE side=%c tick=%llu at=%llu hit=%llx target=%llx shooter=%llx flag=%u result=%u\r\n",
+                                 side,(unsigned long long)tick,(unsigned long long)r->tick,(unsigned long long)join_watch_key(r->hit),
+                                 (unsigned long long)join_watch_key(r->target),(unsigned long long)join_watch_key(r->shooter),r->flag,r->result);
+        }
+        at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHRULE side=%c tick=%llu rows=%ld calls=%lld dropped=%lld installed=%d\r\n",side,
+                             (unsigned long long)tick,(long)n,(long long)join_rule_calls,(long long)join_rule_dropped,join_rule_installed);
+        InterlockedExchange(&join_rule_n,0);
     }
     {   /* JOIN_GRAVB (with the watch): the radar worker's mapped bounds maps. The Player's Gravidar update 0x10b34c0 copies the base
          * (+0x6e90) entry of an ID into the write buffer's (+0x6e10 + 0x40 x the selector 0x2f4b99c), extends it by its contacts and posts
@@ -2433,6 +2492,7 @@ static const uint32_t join_shoot_ctl_vt[]={0x2b7fcc0u,0x2b7d088u,0x2b7cf68u,0x2b
 #define JOIN_SHOOT_CTL 0x318u
 static const uint32_t join_shoot_ctl_off[5]={0x28u,0x40u,0x48u,0x50u,0x58u};
 #define JOIN_SHOOT_AIM 0x60u
+#define JOIN_SHOOT_TOL 0x80u           /* the controller's aim cone (float) */
 #define JOIN_SHOOT_CFLAGS 0x84u
 static uint32_t join_shoot_rva(const unsigned char *p,const uint32_t *set,unsigned n) {
     uintptr_t vt=0;
@@ -2449,7 +2509,7 @@ static int join_shoot_read(unsigned char *weapon,join_shoot_rec *r,unsigned char
     c=*r;
     if(!join_read(weapon+JOIN_SHOOT_CTL,&ctl,8) || !ctl || !(c.ctl_vt=join_shoot_rva(ctl,join_shoot_ctl_vt,5u)) ||
        !join_read(weapon+JOIN_SHOOT_WFLAGS,c.wflags,3) || !join_read(ctl+JOIN_SHOOT_AIM,c.aim,sizeof(c.aim)) ||
-       !join_read(ctl+JOIN_SHOOT_CFLAGS,c.cflags,2)) return 1;
+       !join_read(ctl+JOIN_SHOOT_CFLAGS,c.cflags,2) || !join_read(ctl+JOIN_SHOOT_TOL,&c.tol,4)) return 1;
     for(unsigned k=0;k<5u;k++) if(!join_read(ctl+join_shoot_ctl_off[k],&c.ctl[k],8)) return 1;
     for(unsigned k=0;k<3u;k++) c.wflags[k]=c.wflags[k]!=0;
     for(unsigned k=0;k<2u;k++) c.cflags[k]=c.cflags[k]!=0;
@@ -4490,6 +4550,7 @@ static int join_admit_grav(const join_tables *s,const join_tables *mine) {
         int changed=join_poke((uintptr_t)(weapon+JOIN_SHOOT_WFLAGS),r->wflags,3);   /* each field on its own: join_poke is 0 when equal */
         changed|=join_poke((uintptr_t)(ctl+JOIN_SHOOT_AIM),r->aim,sizeof(r->aim));
         changed|=join_poke((uintptr_t)(ctl+JOIN_SHOOT_CFLAGS),r->cflags,2);
+        changed|=join_poke((uintptr_t)(ctl+JOIN_SHOOT_TOL),&r->tol,4);
         for(unsigned k=0;k<5u;k++) changed|=join_poke((uintptr_t)(ctl+join_shoot_ctl_off[k]),&r->ctl[k],8);
         if(changed) ++join_rx.shoot_written; else ++join_rx.shoot_equal;
     }

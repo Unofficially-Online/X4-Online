@@ -555,7 +555,7 @@ static int gate_sites_owned(void) {
 #include "lockstep_getup_diagnostic_transport.h"
 static void join_jobinit_restore(void);   /* lockstep_join.h: a version 13 joiner's JobEngine::Init call */
 static void join_bootev_restore(void);    /* lockstep_join.h: a version 13 joiner's boot event passes */
-static void join_pcf_restore(void);       /* lockstep_join.h: JOIN_WATCHPCF's call sites (diagnostic) */
+static void join_rule_restore(void);static void join_pcf_restore(void);       /* lockstep_join.h: JOIN_WATCHPCF's call sites (diagnostic) */
 static void join_fmt_restore(void);       /* lockstep_join_precise.h: the full-precision join save */
 static void join_parse_restore(void);
 static void join_ids_restore(void);        /* lockstep_join_ids.h */
@@ -659,7 +659,7 @@ static void finish(unsigned reason) {
     gpost_restore();
     gwide_restore();
     join_jobinit_restore();
-    join_bootev_restore();join_pcf_restore();join_fmt_restore();join_parse_restore();join_ids_restore();
+    join_bootev_restore();join_pcf_restore();join_rule_restore();join_fmt_restore();join_parse_restore();join_ids_restore();
     attention_restore();
     mass_restore();
     death_restore();

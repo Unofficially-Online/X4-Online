@@ -17,6 +17,19 @@
  * writes them, by the native parser. A float goes through as its double and back to the same float. Pins: both bodies, every
  * site's call to its entry. Counters in JOIN_STATUS precise=. */
 #define JOIN_FMT_ENTRY 0x13eb20u
+/* Floats (j1-165): the float attribute writer 0x135fa0 and the other float callers convert through 0x137db0 (out std::string, float,
+ * precision: the same contract as 0x13eb20 on the float widened), which the double sites above do not reach: the join save wrote
+ * every shoot controller's aim cone (+0x80, angle=) as 0.0872665 and the joiner read 0x3db2b8c7 back for the session's 0x3db2b8c2 (five
+ * units in the last place: actor 5's weapon checked its line of fire and fired at 650 on the joiner only). Its 35 sites go through the
+ * same thunk slot; the hook tells them by its return address (the site + 5) and writes the float's double in 17 significant digits,
+ * which the parse side reads back exactly (a 16-digit string, or the native parser's double, rounds to the same float). */
+#define JOIN_FMTF_ENTRY 0x137db0u
+static const uint32_t join_fmtf_sites[]={
+    0x12f60du,0x135fbau,0x33fe13u,0x3b59e3u,0x3b5a49u,0x3bf991u,0x3bf9f0u,0x3bfafcu,0x48a44du,0x491ebdu,0x492318u,0x5a27dcu,
+    0x5a2c5cu,0x5a323cu,0x5a36bcu,0x64bb55u,0x683d05u,0x6ac672u,0x6aca58u,0x8d1d6au,0x96450cu,0xa67d6eu,0xa67dd1u,0xa67e35u,
+    0xcc1bcdu,0xcc1c30u,0xcc1c93u,0xcc340fu,0xcc34a5u,0xcc3544u,0xe7d6a2u,0xf4554eu,0xf455afu,0x11395f1u,0x1235885u
+};
+#define JOIN_FMTF_SITES (sizeof(join_fmtf_sites)/sizeof(join_fmtf_sites[0]))
 #define JOIN_FMT_THUNK 112u
 #define JOIN_PARSE_ENTRY 0x14c3090u
 #define JOIN_PARSE_THUNK 1008u
@@ -47,6 +60,8 @@ static int32_t join_fmt_original[JOIN_FMT_SITES],join_parse_original[JOIN_PARSE_
                join_parse_patched[JOIN_PARSE_SITES];
 static unsigned char join_fmt_taken[JOIN_FMT_SITES],join_parse_taken[JOIN_PARSE_SITES];
 static unsigned join_fmt_sites_on,join_parse_sites_on;
+static int32_t join_fmtf_original[JOIN_FMTF_SITES],join_fmtf_patched[JOIN_FMTF_SITES];static unsigned char join_fmtf_taken[JOIN_FMTF_SITES];
+static unsigned join_fmtf_sites_on;static volatile LONG64 join_fmtf_raised;
 
 /* The precision argument that makes the conversion write 17 significant digits of v (finite, not 0). */
 static unsigned join_fmt_precision(double v) {
@@ -58,8 +73,23 @@ static unsigned join_fmt_precision(double v) {
 typedef void *(*join_fmt_fn)(void *,double,unsigned);
 static void *join_fmt_native(void *out,double v,unsigned precision) {return ((join_fmt_fn)(void *)(image+JOIN_FMT_ENTRY))(out,v,precision);}
 static void *(*join_fmt_next)(void *,double,unsigned)=join_fmt_native;   /* tests replace it */
+typedef void *(*join_fmtf_fn)(void *,float,unsigned);
+static void *join_fmtf_native(void *out,float v,unsigned precision) {return ((join_fmtf_fn)(void *)(image+JOIN_FMTF_ENTRY))(out,v,precision);}
+static void *(*join_fmtf_next)(void *,float,unsigned)=join_fmtf_native;   /* tests replace it */
+/* A float site's call (its return address the site + 5, the site taken). */
+static int join_fmtf_caller(uintptr_t ret) {
+    for(unsigned i=0;i<JOIN_FMTF_SITES;i++) if(join_fmtf_taken[i] && ret==(uintptr_t)image+join_fmtf_sites[i]+5u) return 1;
+    return 0;
+}
 static __attribute__((noinline)) void *join_fmt_hook(void *out,double v,unsigned precision) {
     InterlockedIncrement64(&join_fmt_calls);
+    if(join_fmtf_caller((uintptr_t)__builtin_return_address(0))) {   /* 0x137db0's caller: the float in the low lane */
+        float f;memcpy(&f,&v,sizeof(f));
+        if(join_fmt_thread && join_fmt_thread==GetCurrentThreadId() && isfinite(f) && f!=0.0f) {
+            precision=join_fmt_precision((double)f);InterlockedIncrement64(&join_fmtf_raised);
+        }
+        return join_fmtf_next(out,f,precision);
+    }
     if(join_fmt_thread && join_fmt_thread==GetCurrentThreadId() && isfinite(v) && v!=0.0) {
         precision=join_fmt_precision(v);InterlockedIncrement64(&join_fmt_raised);
     }
@@ -154,9 +184,15 @@ static int join_fmt_install(void) {
        !hash_ok(image+JOIN_FMT_ENTRY,268,"ae75a2da67f1e1c8b1b4a1ec1dc64f999ce39c4e33ac0e71e1332ff22adf3fb6")) return 0;
     join_fmt_sites_on=join_precise_take(join_fmt_sites,(unsigned)JOIN_FMT_SITES,JOIN_FMT_ENTRY,JOIN_FMT_THUNK,join_fmt_original,
                                         join_fmt_patched,join_fmt_taken,1);
+    if(hash_ok(image+JOIN_FMTF_ENTRY,0x117,"88e270ed7246cfec1ef1a07df200a20751d2d3f8b353de03b4366fce728c5689"))
+        join_fmtf_sites_on=join_precise_take(join_fmtf_sites,(unsigned)JOIN_FMTF_SITES,JOIN_FMTF_ENTRY,JOIN_FMT_THUNK,join_fmtf_original,
+                                             join_fmtf_patched,join_fmtf_taken,1);
     return join_fmt_sites_on!=0;
 }
-static void join_fmt_restore(void) {join_precise_give(join_fmt_sites,(unsigned)JOIN_FMT_SITES,join_fmt_original,join_fmt_patched,join_fmt_taken);}
+static void join_fmt_restore(void) {
+    join_precise_give(join_fmt_sites,(unsigned)JOIN_FMT_SITES,join_fmt_original,join_fmt_patched,join_fmt_taken);
+    join_precise_give(join_fmtf_sites,(unsigned)JOIN_FMTF_SITES,join_fmtf_original,join_fmtf_patched,join_fmtf_taken);
+}
 static int join_parse_install(void) {
     if(!thunk || !thunk_slot_ready(JOIN_PARSE_THUNK) ||
        !hash_ok(image+JOIN_PARSE_ENTRY,1053,"5b57e095e34143eb960c1d9050a3f1f7afaaca335d1340dec1fb730ead7636be")) return 0;

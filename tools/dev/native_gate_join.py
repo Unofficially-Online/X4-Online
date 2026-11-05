@@ -356,7 +356,7 @@ VIEWF = struct.Struct('<QIIII')   # VIEWF: component, its view flags and publish
 VIEWP = struct.Struct('<Q64s')   # VIEWP: a zone-held component, its settled published pose
 # SHOOT: a weapon, its last shot time, its controller's +0x28 +0x40 +0x48 +0x50 +0x58 (double bits), aim, controller vtable RVA,
 # the weapon's +0x30c..+0x30e, the controller's +0x84 +0x85, has a controller, padding
-SHOOT = struct.Struct('<QQ5Q32sI3s2sB6s')
+SHOOT = struct.Struct('<QQ5Q32sI3s2sB2sI')   # ... has controller, padding, the controller's aim cone (+0x80, float bits)
 ATTK = struct.Struct('<QQ3QII')   # ATTK: a destructible, its attacker (portable), attack times (bits), method, padding
 LIVEF = struct.Struct('<QII')   # LIVEF: a component, the live flag bits to set and to clear (0x20 only)
 SPEC = struct.Struct('<QIIIIQQ')   # SPEC: a component, a view cache specification entry: kind, flags, class, truncated, interval, last
@@ -949,7 +949,7 @@ def read_package(data):
     if version >= 13 and any(not r[0] or (i and sections['viewp'][i-1][0] >= r[0]) for i, r in enumerate(sections['viewp'])):
         raise JoinError('viewp_shape')
     if version >= 13 and any(not r[0] or (i and sections['shoot'][i-1][0] >= r[0]) or r[11] > 1 or (not r[8]) != (not r[11])
-                             or max(r[9]) > 1 or max(r[10]) > 1 or any(r[12]) for i, r in enumerate(sections['shoot'])):
+                             or max(r[9]) > 1 or max(r[10]) > 1 or any(r[12]) or (not r[11] and r[13]) for i, r in enumerate(sections['shoot'])):
         raise JoinError('shoot_shape')
     if version >= 13 and any(not r[0] or (i and sections['attk'][i-1][0] >= r[0]) or r[6] or not (r[2] | r[3] | r[4])
                              for i, r in enumerate(sections['attk'])):

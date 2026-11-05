@@ -365,3 +365,13 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   (w1z9 711; motion 113, health 30, topology 17, timing 6; 44 objects on one side only), below an ordinary J1 on the same
   fixes (165 at 900, where actor 5's weapon fires once more at 650: a line-of-fire ray that the joiner finds clear one tick
   earlier). The in-window extra over an ordinary J1 is gone at 900; the T+1 three remain.
+
+21. THE TWO FIGHTERS AT T+1 (w1z11, build255 with the hot join's watch; 5 November)
+- The join watch (JOIN_WATCH* rows in the crash note, <profile>/x4lan-crash.txt; x4mods-28's watchraw.py and its role-aware
+  bank pairing) on 176c95 and 6dae5: both have every agent record in the package (AGENT, FLIGHT, PARAM, AGTT, NAV, NAVT;
+  176c95 SOLVER too) and their pathing banks are equal at T.
+- 6dae5 (not in the slot ships' zone): from T+1 exactly one word per bank differs, the y position, by 2..4 float ULPs, the
+  rest equal. Likely a float the save writes with 6 or 7 significant digits and the joiner reads back (the class of the shoot
+  controllers' aim cone, j1-165); the hot join's float-precision writer for the join save is the test.
+- 176c95 (in the slot ships' zone 0x13e75f): whole orientation rows differ from T+1 (about 1e-3), a turn computed
+  differently in step T+1, not ULPs. Open; it reads the slot ships (its target) or its own steering input in the window.

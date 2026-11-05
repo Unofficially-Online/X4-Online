@@ -2033,6 +2033,35 @@ proposed and rejected.
   j1-156 (build249, the merged tree)  first mismatch 651; 900: 170 + 85/87
   j1-157 08070780 (build-hj16z)   AGTT +0xf40: 651; 900: 166 + 85/87; the radar splits above
   j1-158 90d284ea (build-hj17a)   PBNK (pbnk=1 written): 651; 900: 168 + 85/87; the watch rows above
+  j1-159 f607ad26 (build-hj17b)   gravp_moved=24: the radar rows (GRAVIDAR_POST_ROW) equal 634..720; event rows 645..650
+                                  equal but for bullets by runtime ID; 651 stays; 900: 165 + 85/87
+  j1-160 20330d41 (build-hj17c)   PEND on (pend=112546 written, 312632 unposed): no flip (flash_scan b5: 1,169 frames, 0
+                                  blips), the events, 651 and 900 as j1-159: the T+1 publication does not part actor 5
+- The Gravidar's mapped bounds [F: j1-161 JOIN_GRAVB rows (937b6ce6)]: the joiner's MappedBoundsChangedEvents to the Player
+  (15 a step over 636..644) are the Gravidar's mapped bounds maps refilling after the load: the Player's Gravidar update
+  0x10b34c0 (AI::Gravidar slot 1) copies an ID's base entry (+0x6e90) into the write buffer (+0x6e10 + 0x40 x the selector
+  0x2f4b99c), extends it by its contacts and posts the event when it differs from the read buffer's (selector 0x38f5260);
+  each update starts by copying the read buffer into the write one (0x10aed3c). At T the session's three maps hold its 153
+  sectors, the joiner's none; it refills fifteen a step (16, 31, .. 153 at 644), equal once full. GRAVB (80a31cd7, section
+  60) carries them by role and inserts them through the map's operator[] 0x10beb90. j1-162: gravb=459, the maps equal from
+  634, the event rows equal 636..650.
+- The live and player view flags [F: j1-161 JOIN_WATCHRAW of actor 5 (the dump past +0xe00 is the next heap object, actor 6),
+  the lockstep session's slot ships]: inside the object four words differ at 646..650: +0x1e8 (the subtree's specification
+  entry count: 295 on the session, 2..5 on the joiner; SPEC carries none of them), +0x3c8/+0x3c9 (0x0101 against 0),
+  +0xa18 (a load time; 0x41a910's once-per-time stamp, compared only) and one padding word. +0x3c8/+0x3c9 are the live view
+  and player view flags: listener slots 0xbb8 (ObjectEnteredLiveView, base 0x6d1020: 0x73f360 registers the object, vfunc
+  0x17b0, +0x3c8 = 1), 0xbc0, 0xbd0 (EnteredPlayerView 0x6d1130) and 0xbd8; IsInLiveView 0x6d5900 reads them (the find
+  filter StaticObjectCheckerByIsInLiveView, trade subscriptions, Destructible slot 929, Object slots 9 and 799). With GRAV's
+  view states (987243b6) a joiner gets no view event for an object already in view at T. VIEWL (5888e114, section 61,
+  opt-in native_gate_join_viewl): the flags, the admission runs the object's own enter and leave handlers. JOIN_WATCHSPEC
+  (43f1b097): where a watched subtree's specification entries sit.
+  j1-161 937b6ce6 (build-hj17d)   JOIN_GRAVB rows: the maps above; 651; 900: 165 + 85/87
+  j1-162 80a31cd7 (build-hj17e)   GRAVB: the maps equal from 634; events equal 636..650; 651; 900: 165 + 85/87
+  j1-163 5888e114 (build-hj17g)   VIEWL on: viewl=29 entered, actor 5's flags equal; no flip (flash_scan 1,150 frames,
+                                  0 blips); 651; 900: 165 + 85/87. The first split is at 650: actor 5's weapon 0x176ba3
+                                  fires once more on the joiner (WEAPON_FIRE_RNG keyed 2 against 1), and its pilot 0x176b9c's
+                                  fight.attack.object.fighter wakes on event_weapon_fired (keyword 1319, the weapon; SCRIPT_RNG
+                                  detail decoded) where the session runs nothing for that owner over 633..652
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

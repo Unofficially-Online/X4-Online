@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "92a0f2c34ff59b790f61946308c1d2244fb4d947b09b1f0661cf5b5e94348ecc"   /* version 13 (JOBE .. VIEWL; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "5bdd614f42beb58131f797fd5d5c3fe562933757380af1599d5f5458707c3693"   /* version 13 (JOBE .. VIEWL; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -377,7 +377,7 @@ static void test_join_golden(void) {
     static join_shoot_rec shoot[1];memset(shoot,0,sizeof(shoot));shoot[0].portable=0x2001;shoot[0].lastshot=0x4039d983c465091eull;
     shoot[0].ctl[0]=0x403c2ed916872ba4ull;shoot[0].ctl[1]=0x403c26508dfea31bull;shoot[0].ctl[2]=0x3f9eb851e0000000ull;
     shoot[0].ctl[3]=0x403c2ed916872ba4ull;shoot[0].ctl[4]=0x403bf31d5acb6fe5ull;for(unsigned k=0;k<32u;k++) shoot[0].aim[k]=(unsigned char)k;
-    shoot[0].ctl_vt=0x2b7fcc0u;shoot[0].wflags[0]=shoot[0].wflags[1]=shoot[0].wflags[2]=1;shoot[0].cflags[0]=1;shoot[0].has_ctl=1;
+    shoot[0].ctl_vt=0x2b7fcc0u;shoot[0].tol=0x3db2b8c2u;shoot[0].wflags[0]=shoot[0].wflags[1]=shoot[0].wflags[2]=1;shoot[0].cflags[0]=1;shoot[0].has_ctl=1;
     static join_attk_rec attk[1];memset(attk,0,sizeof(attk));attk[0].portable=0x2001;attk[0].attacker=0x2002;
     attk[0].times[0]=attk[0].times[1]=0x403b5987f5df8f7bull;attk[0].method=7u;
     static join_livef_rec livef[1];livef[0]=(join_livef_rec){0x2001,0u,0x20u};

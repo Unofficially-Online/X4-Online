@@ -528,7 +528,11 @@ typedef struct {uint64_t portable;unsigned char pose[0x40];} join_viewp_rec;
  * and the controller's +0x84, +0x85; has_ctl 0 (a weapon without a controller: its last shot time only, the rest 0). Every weapon of
  * the family with a controller, and those whose last shot time the save's four decimals change; the last shot time is written where
  * the joiner's is the save's four decimals of it. Sorted by portable ID; not in the portable digest. */
-typedef struct {uint64_t portable,lastshot,ctl[5];unsigned char aim[0x20];uint32_t ctl_vt;uint8_t wflags[3],cflags[2],has_ctl,pad[6];} join_shoot_rec;
+/* tol (j1-165): the controller's +0x80, its aim cone (float bits; 0 without a controller). The weapon's request check 0x816d20
+ * goes on to its line of fire when the angle to the target (acos of the aim direction's z, 0x8176dd) is within it; the session's
+ * controllers made at its boot hold 0x3db2b8c2 (5 degrees), the joiner's made at its load 0x3db2b8c7, five units in the last place
+ * more: actor 5's weapon 0x176ba3 checked and fired at 650 on the joiner only. */
+typedef struct {uint64_t portable,lastshot,ctl[5];unsigned char aim[0x20];uint32_t ctl_vt;uint8_t wflags[3],cflags[2],has_ctl,pad[2];uint32_t tol;} join_shoot_rec;
 /* ATTK (version 13, report 1.18): a destructible's attack throttle at full precision. The poster 0x51ff10 posts an attacked event
  * only through 0x51fd80: another attacker (+0x298 its runtime ID), another method (+0x2a8) or a second after the last (+0x2b0
  * attacktime; +0x2b8 shipattacktime, an attacking ship's; +0x2c0 intentionalattacktime); the save keeps them to four decimals
@@ -1586,8 +1590,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     if(version>=13) for(uint32_t i=0;i<t->nshoot;i++) {
         const join_shoot_rec *r=&t->shoot[i];
         if(!r->portable || (i && t->shoot[i-1].portable>=r->portable) || r->has_ctl>1u || !r->ctl_vt!=!r->has_ctl || r->wflags[0]>1u ||
-           r->wflags[1]>1u || r->wflags[2]>1u || r->cflags[0]>1u || r->cflags[1]>1u || r->pad[0] || r->pad[1] || r->pad[2] || r->pad[3] ||
-           r->pad[4] || r->pad[5])
+           r->wflags[1]>1u || r->wflags[2]>1u || r->cflags[0]>1u || r->cflags[1]>1u || r->pad[0] || r->pad[1] || (!r->has_ctl && r->tol))
             {*why="shoot_shape";return 0;}
     }
     if(version>=13) for(uint32_t i=0;i<t->nattk;i++) {
@@ -3332,7 +3335,7 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_rx.navc_written,(unsigned long long)join_rx.navc_equal,(unsigned long long)join_rx.navc_missing,join_cap.navc,
         (unsigned long long)join_rx.jobs_written,(unsigned long long)join_rx.jobs_equal,(unsigned long long)join_rx.jobs_missing,
         (unsigned long long)join_rx.jobs_active_differ,(unsigned long long)join_rx.jobs_waiting_differ,join_cap.jobs,
-        (long long)join_fmt_calls,(long long)join_fmt_raised,(long long)join_parse_calls,(long long)join_parse_long,(long long)join_parse_exact,
+        (long long)join_fmt_calls,(long long)(join_fmt_raised+join_fmtf_raised),(long long)join_parse_calls,(long long)join_parse_long,(long long)join_parse_exact,
         (long long)join_parse_far,ids,join_cap.gone,join_rx.t.ngone,world_hash_gone_added,world_hash_gone_dupes,
         (unsigned long long)join_body_written,(unsigned long long)join_body_equal,(unsigned long long)join_body_pose,(unsigned long long)join_body_motion,
         (unsigned long long)join_body_record,(unsigned long long)join_body_missing,(unsigned long long)join_body_shape,join_cap.body,
