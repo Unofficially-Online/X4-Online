@@ -410,7 +410,7 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
 - 800259fc (a created ShipSmall in zone 0xa8, attention 2): its movement controller is the StaticMovementController 0x2a34b38 at
   T on the session and on the joiner after its load and admission (watch rows s, k, j), and a NavigationController 0x2c51158 with
   an Agent on both at T+1: the swap happens in step T+1 on every side. After that step the joiner's controller holds the refresh
-  time 38.783 (T+1's game time + 1.6) and the read selector as its cursor, the session's -1 and cursor 2 (none); the session
+  time 38.783 (the last refresh's game time: T+1's) and the read selector as its cursor, the session's -1 and cursor 2 (none); the session
   refreshes it at T+2 (38.833), and from there the two agree (660: only the absolute selectors differ, as for every ship).
 - Not the gate's stamp: at 634 both stamp the same 10,000 batched Agents with equal order and stamp hashes (PATH_DETERMINISM);
   at 635 both batch the new Agent (10,001), the joiner finds one more current (190 newly current against 189) and only the
@@ -423,3 +423,11 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
 - The same republication may matter for 176c95: its steering and its weapons' lead routine read the slot ships' (their
   targets') transforms from the view cache, which the joiner refreshes in T+1 where the session keeps them as published. Next:
   w1z15, build261 with PEND (native_gate_join_pend, the session's pending words; j1-160: no flicker).
+- w1z15 (PEND on: pend=1:112659:6698:312643:0): T+1 2 differ (176c95 motion, 800259fc timing), 900 74. The joiner's
+  PropagateCacheFlags calls in step T+1 are 425,464 as without PEND, and 800259fc's call is still there: the load also leaves
+  each object a pending cache-specification list (+0xd8, a small vector AddCacheSpecification 0x3d5180 allocates; the count
+  +0x1e8; x4mods-28), which the first BuildCache 0x3d4a80 applies to the subtree, setting +0x1e0 again, and then frees. PEND's
+  words are overwritten in the same frame (likely why j1-160's PEND left the J1 as it was). At T the session's 176c95 holds no
+  list and +0x1e0 0, the joiner's (rows k, j) a list and 0x19; both equal the session's after step T+1.
+- Next candidate (opt-in, with the hot join): the joiner drops the lists the session does not hold at T, or applies them at
+  its admission, so that its first frame publishes what the session's does.
