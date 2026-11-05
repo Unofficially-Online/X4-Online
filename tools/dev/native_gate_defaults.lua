@@ -268,6 +268,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_view_skip','hot join view-bank writes a joiner leaves out (diagnostic)'},
  {'native_gate_join_viewl','hot join: a joiner runs the live and player view handlers where its flags differ (VIEWL)'},
  {'native_gate_join_shpw','hot join: a joiner takes the session ship words a load leaves at defaults (SHPW)'},
+ {'native_gate_join_trdn','hot join: a joiner takes the session next trade offer updates the load leaves at -1 (TRDN)'},
  {'native_gate_join_ecos','hot join: a joiner takes the session economy schedules of stations and ships (ECOS)'},
  {'native_gate_join_rcnt','hot join experiment: a joiner lowers created ships and bays reference counts to the session (RCNT)'},
  {'native_gate_join_pend','hot join: a joiner takes the session pending view cache flags (PEND)'},

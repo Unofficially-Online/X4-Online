@@ -2152,6 +2152,18 @@ proposed and rejected.
                                  still live on the joiner; 900 47 (j1-194, off: 51)
   j1-195 local (build-hj18e)     RCNT on every created object: first mismatch 819 (720); 660, 720, 780 equal; 900 43;
                                  rcnt=1:643:3303:5:0; next: job-ship builds and the job ships (count -2 on the joiner) at 840
+- The trade offers [F: j1-198, UI_LAZY_ROW (native_gate_ui_lazy='observe', rows 636..642: every lazy container update with its
+  container, state and callers)]: trade.find.free of 0x9561d (the Terran liquid miner 0x95618) at 639 asks station 0x39fdf through
+  UpdateTradeOffers 0x4079e0; the station's next trade offer update +0x928 is 88.42 s on the session (the query returns) and -1 on
+  the joiner (the save does not hold it): the joiner rebuilds the station's offers there (its cargo updates 0x41a910 follow) and the
+  script finds others (4 draws against 6). TRDN (section 66, v13; opt-in native_gate_join_trdn): +0x928 of every Station,
+  BuildStorage and ship (ECOS's classes), written at the admission where it differs. j1-199: trdn=1:285:12948:0, 639 equal.
+  ECOS (213df913, x4mods: +0xa38/+0xa40) left 639 as it was (j1-197).
+  j1-196 local (build-hj18f)     rcnt + pctl (x4mods): unchanged (819; slot 2's move.idle at 660 stays: its Patrol order)
+  j1-197 30a9d760 (build-hj18g)  rcnt + pctl + ecos: unchanged (819, 900 45)
+  j1-198 local (build-hj18g)     UI_LAZY_ROW 636..642: station 0x39fdf's +0x928, 88.42 s against -1
+  j1-199 local (build-hj18h)     TRDN: 639 equal; 819, 900 43; next: the shipyard bays 0x1bc2b..d take a new build first on the
+                                 joiner at 840; the slot ships' Patrol orders end early on the joiner (660, 674)
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

@@ -68,6 +68,8 @@ static int lua_join_viewl(lua_State *L) {join_viewl_on=p_lua_tonumber(L,1)!=0.0;
 static int lua_join_ecos(lua_State *L) {join_ecos_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shpw(on): a joiner takes the session's ship words (SHPW, default off). */
 static int lua_join_shpw(lua_State *L) {join_shpw_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_trdn(on): a joiner takes the session's next trade offer updates (TRDN, default off). */
+static int lua_join_trdn(lua_State *L) {join_trdn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 static int lua_join_rcnt(lua_State *L) {join_rcnt_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_pend(on): a joiner takes the session's pending view cache flags (PEND; lockstep_join_world.h; default off). */
 static int lua_join_pend(lua_State *L) {join_pend_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}

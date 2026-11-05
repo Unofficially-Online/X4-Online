@@ -3277,6 +3277,41 @@ static void join_admit_ecos(const join_tables *s,const join_tables *mine) {
         if(changed) ++join_ecos_written; else ++join_ecos_equal;
     }
 }
+/* TRDN (v13, section 66; the admission opt-in, native_gate_join_trdn): the containers' next trade offer update. A container's trade
+ * offers are brought up lazily: UpdateTradeOffers 0x4079e0 rebuilds them only when its next update time +0x928 is due (UI_LAZY_ROW
+ * state=, lockstep_ui_lazy.h). The save does not hold that time and the load leaves it at -1, so the first trade query on the joiner
+ * rebuilds a station's offers the session would not touch until its own time [F: j1-198, UI_LAZY_ROW 636..642: trade.find.free of
+ * 0x9561d at 639 asks station 0x39fdf; its +0x928 is 88.42 s on the session (the query returns) and -1 on the joiner (the query
+ * rebuilds the offers, the cargo updates follow), and the script finds other offers: 4 draws against 6]. The capture writes +0x928
+ * of every Station, BuildStorage and ship (ECOS's classes); with the opt-in the admission writes the session's where it differs.
+ * Status trdn=on:written:equal:missing. */
+static int join_trdn_on;
+static uint64_t join_trdn_written,join_trdn_equal,join_trdn_missing;
+static int join_trdn_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_trdn_rec *)a)->portable,y=((const join_trdn_rec *)b)->portable;return x<y?-1:x>y;
+}
+static void join_capture_trdn(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        if(!t->ids[i].portable) continue;
+        unsigned char *o=join_object(t->ids[i].runtime);join_trdn_rec r;
+        if(!join_ecos_type(o)) continue;
+        memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;
+        if(!join_read(o+0x928,&r.next,8)) continue;
+        if(!JOIN_PUSH(t->trdn,t->ntrdn,cap,r)) return;
+    }
+    if(t->ntrdn>1) qsort(t->trdn,t->ntrdn,sizeof(*t->trdn),join_trdn_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->ntrdn;i++) {if(k && t->trdn[k-1].portable==t->trdn[i].portable) continue;t->trdn[k++]=t->trdn[i];}t->ntrdn=k;}
+}
+static void join_admit_trdn(const join_tables *s,const join_tables *mine) {
+    join_trdn_written=join_trdn_equal=join_trdn_missing=0;
+    if(!join_trdn_on) return;
+    for(uint32_t i=0;i<s->ntrdn;i++) {
+        const join_trdn_rec *r=&s->trdn[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable));
+        if(!join_ecos_type(o)) {++join_trdn_missing;continue;}
+        if(join_poke((uintptr_t)(o+0x928),&r->next,8)) ++join_trdn_written; else ++join_trdn_equal;
+    }
+}
 /* SHPW (v13, section 65; the admission opt-in, native_gate_join_shpw): ship object words a load leaves at defaults [F: w1z28, the
  * hot join's watch on four traders and miners (TradeRoutine, linear flight): the ship objects differ from the load on in +0x3b0..
  * +0x3bf (four floats: the session's 540/40.64/50.80, the joiner's 540 and an equal pair 63.50/63.50), +0xa10/+0xa14 (an int 1 and a
@@ -3988,6 +4023,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_rcnt(t);            /* version 13 */
     join_capture_ecos(t);            /* version 13 */
     join_capture_shpw(t);            /* version 13 */
+    join_capture_trdn(t);            /* version 13 */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
     join_capture_pend(t);            /* version 13 */
@@ -5603,6 +5639,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_ikv(s,&mine);     /* the skeletons' IK joints (the weapons' gimbals) */
     if(s->version>=13) join_admit_ecos(s,&mine);    /* the economy schedules (opt-in) */
     if(s->version>=13) join_admit_shpw(s,&mine);    /* the ships' words a load leaves at defaults (opt-in) */
+    if(s->version>=13) join_admit_trdn(s,&mine);    /* the containers' next trade offer update (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */

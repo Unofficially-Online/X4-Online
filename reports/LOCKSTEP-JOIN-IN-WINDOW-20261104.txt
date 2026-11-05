@@ -550,3 +550,14 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   it dies on one side). Negative: the save writes a container's state as of T without restamping it, so the load's stamp T is
   the consistent one and the session's older stamp makes the joiner integrate again. SHPW stays off. Next suspect (the hot
   join): the trade offers themselves (the save's trade entries' IDs, order and reservations).
+
+32. TRDN IN THE WINDOW: 660 EQUAL (w1z34, build276; 5 November)
+- The hot join's TRDN (section 66, 19a28e47; native_gate_join_trdn): a container's next trade offer update +0x928, which the save
+  does not keep (-1 after a load: the first query rebuilds the station's offers; j1-198 with UI_LAZY_ROW: the hot join's
+  trade.find.free at 639). w1z34 (TRDN, ECOS, RCNT): trdn=1:427:12885:0; T+1 1 (800259fc's one-step nav refresh), 660 0 (the
+  trader 83e03 no longer a step late), 720 24, 780 24, 840 28, 900 30 (43 before; no timing or topology left).
+- What is left at 720: five ships created near 700 without a parent (8002c66a.., 8002c6b7.. ShipMedium; 8002c686.., 8002c6ad..,
+  8002c6fd.. ShipSmall), their health, and their shield generators', weapons' and turrets' motion: ships under construction
+  (the hot join: the shipyard's build module counter +0x350 five higher on the joiner, j1-200).
+- The lanes' crash notes stopped reaching the runs at 200 MB (the lane tool copies a changed profile file only below that,
+  lanes/<release>/dev/x4lane.py): rotate x4lan-crash.txt in the lane profiles when it grows.
