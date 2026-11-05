@@ -1123,6 +1123,8 @@ static unsigned char join_flight_pairs[JOIN_FLIGHT_PAIRS*8u];
 #define JOIN_BULLET_LINEAR 0x2c3f7c0u        /* its linear movement controller (0xb0 bytes; a static or beam one: the first 0x60 read) */
 #define JOIN_CHILDREN 0xf0u                  /* a component's children vector {begin, end} of view 0 */
 #define JOIN_VIEW_STRIDE 0x80u
+#define JOIN_GRAVB_READ 0x38f5260u            /* the radar worker's mapped bounds buffer the update compares with (JOIN_GRAVB) */
+#define JOIN_GRAVB_WRITE 0x2f4b99cu           /* and the one it writes */
 #define JOIN_VIEW_INDEX 0x38f4eb4u           /* g_ComponentViewCacheIndex: the view the main thread reads */
 #define JOIN_CHILDREN_MAX 4000000u
 #define JOIN_MACRO_VTABLE 0x2ba5430u         /* U::Macro: +0x20 its name, an MSVC string (lockstep_ai_schedule.h) */
@@ -1882,6 +1884,79 @@ static void join_capture_gravd(join_tables *t) {
     }
     if(t->ngravd>1) qsort(t->gravd,t->ngravd,sizeof(*t->gravd),join_gravd_cmp);
 }
+/* ---- version 13: GRAVB (section 60) ----
+ * The Gravidar's mapped bounds maps (JOIN_GRAVB rows): j1-161, after the load the joiner's three maps are empty where the session's
+ * hold its 153 sectors; its Gravidar refills them fifteen sectors a step (16, 31, .. 153 at 644) and posts MappedBoundsChangedEvent
+ * to the Player for each new one (636..644, the session none), equal to the session's once full. GRAVB carries the three maps by
+ * role (the read buffer, the write buffer by their selectors, the base); the admission inserts each entry into the joiner's map of
+ * that role through the map's own operator[] 0x10beb90 (the Gravidar thread idle at the boundary, as for GRAV) and writes x, y, r.
+ * Tree map: header +8 root, +0x20 leftmost, +0x28 size; node +0 parent, +8 left, +0x10 right, +0x20 the ID, +0x28 x, y, r. */
+#define JOIN_GRAVB_MAPS 0x6e10u      /* the two buffers, 0x40 bytes each */
+#define JOIN_GRAVB_BASE 0x6e90u
+#define JOIN_GRAVB_INSERT 0x10beb90u
+#define JOIN_GRAVB_MAX 4096u
+static uint64_t join_gravb_written,join_gravb_equal,join_gravb_missing,join_gravb_unmapped;
+static void *join_gravb_insert_native(void *map,uint64_t *key) {return ((void *(*)(void *,uint64_t *))(void *)(image+JOIN_GRAVB_INSERT))(map,key);}
+static void *(*join_gravb_insert)(void *,uint64_t *)=join_gravb_insert_native;
+/* The in-order successor of a node (NULL on a fault; the header at the end). */
+static unsigned char *join_gravb_next(unsigned char *head,unsigned char *node) {
+    unsigned char *next=NULL;
+    if(join_read(node+0x10,&next,8) && next) {   /* the right subtree's leftmost */
+        node=next;
+        for(unsigned d=0;d<64u && join_read(node+8,&next,8) && next;d++) node=next;
+        return node;
+    }
+    for(unsigned d=0;d<64u;d++) {                 /* up while coming from the right */
+        unsigned char *parent=NULL,*right=NULL;
+        if(!join_read(node,&parent,8) || !parent) return NULL;
+        if(parent==head || !join_read(parent+0x10,&right,8) || right!=node) return parent;
+        node=parent;
+    }
+    return NULL;
+}
+/* The three maps by role, or 0 when the worker or a selector cannot be read. */
+static int join_gravb_maps(unsigned char *maps[JOIN_GRAVB_ROLES]) {
+    unsigned char *w=join_grav_worker();uint32_t rsel=0,wsel=0;
+    if(!w || !join_read(image+JOIN_GRAVB_READ,&rsel,4) || !join_read(image+JOIN_GRAVB_WRITE,&wsel,4) || rsel>1u || wsel>1u) return 0;
+    maps[0]=w+JOIN_GRAVB_MAPS+0x40u*rsel;maps[1]=w+JOIN_GRAVB_MAPS+0x40u*wsel;maps[2]=w+JOIN_GRAVB_BASE;
+    return 1;
+}
+static int join_gravb_cmp(const void *a,const void *b) {
+    const join_gravb_rec *x=a,*y=b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    return x->role<y->role?-1:x->role>y->role;
+}
+static void join_capture_gravb(join_tables *t) {
+    unsigned char *maps[JOIN_GRAVB_ROLES];uint32_t cap=0;
+    join_gravb_unmapped=0;
+    if(!join_gravb_maps(maps)) return;
+    for(uint32_t role=0;role<JOIN_GRAVB_ROLES;role++) {
+        unsigned char *head=maps[role],*node=NULL;uint64_t size=0;
+        if(!join_read(head+0x28,&size,8) || !join_read(head+0x20,&node,8) || size>JOIN_GRAVB_MAX) continue;
+        for(uint64_t k=0;k<size && node && node!=head;k++,node=join_gravb_next(head,node)) {
+            join_gravb_rec r;uint64_t key=0;unsigned klass;memset(&r,0,sizeof(r));
+            if(!join_read(node+0x20,&key,8) || !join_read(node+0x28,r.v,12)) break;
+            r.role=role;r.portable=key?join_key(key,&klass):0;
+            if(!r.portable) {++join_gravb_unmapped;continue;}
+            if(!JOIN_PUSH(t->gravb,t->ngravb,cap,r)) return;
+        }
+    }
+    if(t->ngravb>1) qsort(t->gravb,t->ngravb,sizeof(*t->gravb),join_gravb_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->ngravb;i++) {if(k && !join_gravb_cmp(&t->gravb[k-1],&t->gravb[i])) continue;t->gravb[k++]=t->gravb[i];}t->ngravb=k;}
+}
+static void join_admit_gravb(const join_tables *s,const join_tables *mine) {
+    unsigned char *maps[JOIN_GRAVB_ROLES];
+    join_gravb_written=join_gravb_equal=join_gravb_missing=0;
+    if(!s->ngravb) return;
+    if(!join_gravb_maps(maps)) {join_gravb_missing+=s->ngravb;return;}
+    for(uint32_t i=0;i<s->ngravb;i++) {
+        const join_gravb_rec *r=&s->gravb[i];uint64_t runtime=join_runtime_of(mine,r->portable);uint32_t own[3];
+        unsigned char *v=runtime?join_gravb_insert(maps[r->role],&runtime):NULL;
+        if(!v) {++join_gravb_missing;continue;}
+        if(join_read(v,own,12) && !memcmp(own,r->v,12)) {++join_gravb_equal;continue;}
+        if(join_poke((uintptr_t)v,r->v,12)) ++join_gravb_written; else ++join_gravb_equal;
+    }
+}
 /* By (ship, view) each once, view 0 or 1, known flags, a parent exactly without NONE or UNMAPPED. */
 static int join_gravd_shape(const join_gravd_rec *g,uint32_t n) {
     for(uint32_t i=0;i<n;i++) {
@@ -2116,6 +2191,29 @@ static void join_watch_dump(char side,uint64_t tick) {
         at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHPCF side=%c tick=%llu rows=%ld calls=%lld dropped=%lld sites=%x\r\n",side,(unsigned long long)tick,
                              (long)n,(long long)join_pcf_calls,(long long)join_pcf_dropped,join_pcf_mask);
         InterlockedExchange(&join_pcf_n,0);
+    }
+    {   /* JOIN_GRAVB (with the watch): the radar worker's mapped bounds maps. The Player's Gravidar update 0x10b34c0 copies the base
+         * (+0x6e90) entry of an ID into the write buffer's (+0x6e10 + 0x40 x the selector 0x2f4b99c), extends it by its contacts and posts
+         * MappedBoundsChangedEvent (0x10b405e, to the Player) when it differs from the read buffer's (selector 0x38f5260); each update
+         * starts by copying the read buffer into the write one (0x10aed3c). A tree map: header +8 root, +0x20 leftmost, +0x28 size;
+         * node +0 parent, +8 left, +0x10 right, +0x20 the ID, +0x28 x, y, r (floats). Per map its size and up to 32 entries. */
+        unsigned char *w=join_grav_worker();uint32_t rsel=0,wsel=0;
+        static const uint32_t maps[3]={0x6e10u,0x6e50u,0x6e90u};
+        (void)join_read(image+JOIN_GRAVB_READ,&rsel,4);(void)join_read(image+JOIN_GRAVB_WRITE,&wsel,4);
+        for(unsigned m=0;w && m<3u && at+4096<cap;m++) {
+            unsigned char *head=w+maps[m],*node=NULL;uint64_t size=0;
+            (void)join_read(head+0x28,&size,8);(void)join_read(head+0x20,&node,8);
+            at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_GRAVB side=%c tick=%llu sel=%u:%u map=%x n=%llu e=",side,
+                                 (unsigned long long)tick,rsel,wsel,maps[m],(unsigned long long)size);
+            for(uint64_t k=0;k<size && k<32u && node && node!=head && at+96<cap;k++) {
+                uint64_t key=0,pk=0;uint32_t v[3]={0,0,0};unsigned klass;
+                (void)join_read(node+0x20,&key,8);(void)join_read(node+0x28,v,12);
+                pk=key?join_key(key,&klass):0;
+                at+=(size_t)snprintf(out+at,cap-at,"%s%llx:%08x,%08x,%08x",k?";":"",(unsigned long long)(pk?pk:(key|(1ull<<62))),v[0],v[1],v[2]);
+                node=join_gravb_next(head,node);
+            }
+            at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+        }
     }
     if(at) crash_note_write(out,(int)at);
     free(out);
@@ -3083,6 +3181,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_evq_census(now);    /* census only */
     join_capture_evqt(t);            /* version 13 */
     join_capture_gravd(t);           /* version 13 */
+    join_capture_gravb(t);           /* version 13 */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
     join_capture_pend(t);            /* version 13 */
@@ -4692,6 +4791,7 @@ static int join_admit_world(void) {
     if(s->version>=9) join_admit_steer(s,&mine);   /* the steering models FLIGHT holds the kind of; before PATH primes the thread */
     if(s->version>=10) join_admit_solver(s,&mine);  /* the Agents' motion solvers */
     if(s->version>=11) join_admit_grav(s,&mine);    /* the radar */
+    if(s->version>=13) join_admit_gravb(s,&mine);   /* the radar's mapped bounds */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */
     if(s->version>=13 && s->ngravd && !(join_view_skip&8u)) {   /* version 13: every ship's cached parent in both views as the session's (the radar's docked filter) */
