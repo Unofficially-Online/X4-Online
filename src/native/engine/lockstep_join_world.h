@@ -156,10 +156,23 @@ static int join_shield_params(const unsigned char *group,join_shield_rec *r) {
     return 1;
 }
 static uint64_t join_nav_key(uint64_t runtime) {unsigned klass;return runtime?join_key(runtime,&klass):0;}
+/* NAVT (v13, section 53): the banks' vectors +0x60..+0xaf, x, y, z lanes by role (lockstep_join.h join_navt_rec). j1-139:
+ * every live fixture actor's banks differed there at T+1 though NAV wrote the rest; both of the session's clients alike. The
+ * lasting word is +0x88 (the +0x80 vector's z lane): the joiner's load leaves a default (0.025, 0.05, 0) where the session
+ * had a value it moves each step (actor 5: 0.490 at 634, 0.495 at 650; the joiner 0.025 -> 0.187), and at 651 actor 5's
+ * velocity parted by 2 m/s in one step, actor 11's at 652 (the census does not hash the banks' tail, so T+1 read 0).
+ * The w lanes are left out as NAV's. Status navt=written:equal:missing navt_cap=. */
+#define JOIN_NAVT_FROM 0x60u
+static uint64_t join_navt_written,join_navt_equal,join_navt_missing;
+static int join_navt_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_navt_rec *)a)->portable,y=((const join_navt_rec *)b)->portable;return x<y?-1:x>y;
+}
 /* A navigation controller as NAV holds it (lockstep_join.h join_nav_rec): the census's fields by role, references as portable
- * IDs. 0 with join_fault naming the object. */
-static int join_nav_capture(unsigned char *object,unsigned char *controller,uint64_t runtime,uint64_t portable,join_nav_rec *r) {
+ * IDs; with tail, its NAVT record. 0 with join_fault naming the object. */
+static int join_nav_capture(unsigned char *object,unsigned char *controller,uint64_t runtime,uint64_t portable,join_nav_rec *r,
+                            join_navt_rec *tail) {
     world_nav_snapshot n;const char *why="nav";uint32_t cursor=0;memset(r,0,sizeof(*r));r->portable=portable;
+    if(tail) {memset(tail,0,sizeof(*tail));tail->portable=portable;}
     if(!world_nav_take(join_read,(uintptr_t)image,(uintptr_t)object,(uintptr_t)controller,runtime,&n,&why))
         return join_note("nav,id=%llx,why=%s",(unsigned long long)portable,why);
     world_nav_resolve(&n,join_nav_key);
@@ -175,6 +188,7 @@ static int join_nav_capture(unsigned char *object,unsigned char *controller,uint
     if(!r->probe_on) r->probe_due=0;
     for(unsigned role=0;role<2;role++) {
         const unsigned p=role?n.links.write:n.links.read;const unsigned char *bank=n.banks[p];join_nav_bank *b=&r->bank[role];
+        if(tail) for(unsigned v=0;v<JOIN_NAVT_VECTORS;v++) memcpy(tail->xyz[role]+3*v,bank+JOIN_NAVT_FROM+16*v,12);
         uint64_t refs[2];memcpy(refs,bank+0xb0,16);
         for(unsigned v=0;v<6;v++) memcpy(b->xyz+3*v,bank+16*v,12);
         for(unsigned j=0;j<2;j++) {b->ref[j]=n.bank_saved[p][j];if(refs[j] && !b->ref[j]) r->flags|=(uint8_t)(1u<<(3*role+j));}
@@ -2737,7 +2751,7 @@ static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
     }
 }
 static int join_capture_world(join_tables *t,double now) {
-    uint32_t bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
+    uint32_t ntcap=0,bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
     join_solver_dormant=0;join_cap.solver_over=0;join_cap.solver_mapped=0;join_cap.bullet_fault=0;join_cap.bullet_blocks=0;join_cap.bullet_live=0;join_cap.bullet_unkeyed=0;
     for(uint32_t i=0;i<t->nids;i++) {
@@ -2781,8 +2795,8 @@ static int join_capture_world(join_tables *t,double now) {
             int form=join_pose_form(controller,&p.kind);
             if(form<0) return join_note("controller_vtable,id=%llx",(unsigned long long)id->portable);
             if(p.kind==JOIN_NAV_VTABLE) {
-                join_nav_rec r;if(!join_nav_capture(object,controller,id->runtime,id->portable,&r)) return 0;
-                if(!JOIN_PUSH(t->nav,t->nnav,ncap,r)) return join_note("memory");
+                join_nav_rec r;join_navt_rec tr;if(!join_nav_capture(object,controller,id->runtime,id->portable,&r,&tr)) return 0;
+                if(!JOIN_PUSH(t->nav,t->nnav,ncap,r) || !JOIN_PUSH(t->navt,t->nnavt,ntcap,tr)) return join_note("memory");
                 if(!join_capture_flight(t,controller,id->runtime,id->portable,&fcap,&lcap,&agcap,&rcap,&pacap,&stcap,&stpcap,&socap)) return 0;   /* versions 5..10 */
                 continue;
             }
@@ -2801,6 +2815,8 @@ static int join_capture_world(join_tables *t,double now) {
     if(t->nhealth) qsort(t->health,t->nhealth,sizeof(*t->health),join_health_cmp);
     if(!join_body_sort(t)) return 0;
     if(t->nbupd) qsort(t->bupd,t->nbupd,sizeof(*t->bupd),join_bupd_cmp);
+    if(t->nnavt>1) qsort(t->navt,t->nnavt,sizeof(*t->navt),join_navt_cmp);
+    for(uint32_t i=1;i<t->nnavt;i++) if(t->navt[i].portable==t->navt[i-1].portable) return join_note("navt_duplicate,id=%llx",(unsigned long long)t->navt[i].portable);
     for(uint32_t i=1;i<t->nbupd;i++) if(t->bupd[i].portable==t->bupd[i-1].portable) return join_note("bupd_duplicate,id=%llx",(unsigned long long)t->bupd[i].portable);
     if(t->npose) qsort(t->pose,t->npose,sizeof(*t->pose),join_pose_cmp);
     if(t->nshield) qsort(t->shield,t->nshield,sizeof(*t->shield),join_shield_cmp);
@@ -2891,7 +2907,8 @@ static uint64_t join_nav_runtime(const join_tables *mine,uint64_t portable,int *
 }
 /* One NAV record into the joiner's controller, relative to the joiner's own selectors. Returns the field groups written;
  * *problem 1 missing, 2 shape (the census's links or the probe block), 3 a reference without an object (written without it). */
-static unsigned join_nav_admit(const join_nav_rec *r,const join_tables *mine,int *problem,char *why_out,size_t why_cap) {
+static unsigned join_nav_admit(const join_nav_rec *r,const join_navt_rec *tail,const join_tables *mine,int *problem,char *why_out,
+                               size_t why_cap) {
     uint64_t runtime=join_runtime_of(mine,r->portable);unsigned char *object=join_object(runtime),*controller=NULL;
     world_nav_snapshot n;const char *why="controller";unsigned fixed=0;*problem=0;snprintf(why_out,why_cap,"-");
     if(!object) {*problem=1;return 0;}
@@ -2916,6 +2933,10 @@ static unsigned join_nav_admit(const join_nav_rec *r,const join_tables *mine,int
         const unsigned p=role?n.links.write:n.links.read;const join_nav_bank *b=&r->bank[role];
         const uintptr_t bank=n.links.slots+(uintptr_t)p*WORLD_NAV_BANK_BYTES,pending=n.links.pending+16u*p;
         for(unsigned v=0;v<6;v++) if(join_poke(bank+16u*v,b->xyz+3*v,12)) fixed|=1u<<JOIN_NAVF_VECTORS;
+        if(tail) {   /* NAVT: the vectors after NAV's six */
+            int changed=0;for(unsigned v=0;v<JOIN_NAVT_VECTORS;v++) changed|=join_poke(bank+JOIN_NAVT_FROM+16u*v,tail->xyz[role]+3*v,12);
+            if(changed) ++join_navt_written; else ++join_navt_equal;
+        }
         for(unsigned j=0;j<2;j++) {
             int ok=!(r->flags>>(3*role+j)&1u);uint64_t want=ok?join_nav_runtime(mine,b->ref[j],&ok):0;
             if(!ok) {*problem=3;continue;}
@@ -2936,7 +2957,13 @@ static int join_admit_nav(const join_tables *s,const join_tables *mine) {
     unsigned rows=0,samples=0;
     for(uint32_t i=0;i<s->nnav;i++) {
         const join_nav_rec *r=&s->nav[i];int problem=0;char why[48];
-        unsigned fixed=join_nav_admit(r,mine,&problem,why,sizeof(why));
+        const join_navt_rec *tail=NULL;
+        if(s->version>=13) {   /* NAVT by portable ID (one per NAV record on the saver) */
+            join_navt_rec key;key.portable=r->portable;
+            tail=s->nnavt?bsearch(&key,s->navt,s->nnavt,sizeof(*s->navt),join_navt_cmp):NULL;
+            if(!tail) ++join_navt_missing;
+        }
+        unsigned fixed=join_nav_admit(r,tail,mine,&problem,why,sizeof(why));
         if(problem==1) {
             ++join_rx.nav_missing;
             join_world_row(&rows,"nav side=session id=%016llx why=missing runtime=%llx",(unsigned long long)r->portable,

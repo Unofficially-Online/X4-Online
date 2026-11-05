@@ -5049,13 +5049,23 @@ local function frame()
  -- After this tick's fixture events, so their MD order is fixed relative to the identity steps.
  local identity_state=identity and identity.frame(tick)
  local data=sample(tick)
+ -- Inside native_gate_trace_window: one DIGEST_PARTS row, the first 16 hex of the SHA-256 of each part the report hashes
+ -- (by the data's length after each), so that a digest mismatch (a hot join's replay) names its part (j1-140: every state
+ -- row equal, the replay apart from 634 on).
+ local parts=ticklog.window and tick>=ticklog.window[1] and tick<=ticklog.window[2] and {{'sample',#data}} or nil
  if profile then profile.mark('sample') end
  if pilot_receipt then data=data..'|'..pilot_receipt end
+ if parts then parts[#parts+1]={'pilot',#data} end
  if identity_state then data=data..'|'..identity_state end
+ if parts then parts[#parts+1]={'identity',#data} end
  if cfg.native_gate_runtime_ids_barrier then data=data..'|RUNTIME_IDS_1|'..assert(gate.runtime_ids_word(),'runtime ids word unavailable') end
+ if parts then parts[#parts+1]={'rid',#data} end
  if cfg.native_gate_nav_mesh=='sync' then data=data..'|'..assert(gate.nav_mesh_frame(),'nav mesh receipt unavailable') end
+ if parts then parts[#parts+1]={'navmesh',#data} end
  if input_state then data=data..'|'..input_state end
+ if parts then parts[#parts+1]={'input',#data} end
  if cfg.native_gate_player_probe then data=data..'|'..assert(X4LAN_NATIVE_PLAYER,'native player probe missing')(tick,gate) end
+ if parts then parts[#parts+1]={'player',#data} end
  if cfg.native_gate_world_hash_stride then
   if tick==1 then
    for _,saved in ipairs(cfg.native_gate_world_hash_watch or {}) do assert(gate.world_watch(saved)==1,'world watch refused '..saved) end
@@ -5085,6 +5095,15 @@ local function frame()
  end
  if profile then profile.mark('capture') end
  local hash=(gate.sha256 or X4LAN_SHA256.digest)(data)
+ if parts then
+  parts[#parts+1]={'world',#data}
+  local out,from={},0
+  for _,p in ipairs(parts) do
+   if p[2]>from then out[#out+1]=p[1]..'='..string.sub((gate.sha256 or X4LAN_SHA256.digest)(data:sub(from+1,p[2])),1,16) end
+   from=p[2]
+  end
+  log('DIGEST_PARTS tick='..tick..' '..table.concat(out,' ')..' hash='..string.sub(hash,1,16))
+ end
  local command=cfg.native_gate_command_test and X4LAN_NATIVE_COMMANDS.proposal(tick) or '00000000'
  if X4LAN_NATIVE_PLAYER_COMMANDS then command=X4LAN_NATIVE_PLAYER_COMMANDS.proposal(tick) end
  if wire3 then
