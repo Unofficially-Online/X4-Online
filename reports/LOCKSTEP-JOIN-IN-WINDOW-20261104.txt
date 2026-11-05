@@ -522,3 +522,14 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   ParallelPathSteeringBehaviour, FrontalCapitalCombatSteeringBehaviour, MiningBehaviour.
 - w1z27 (build272: all six carried): T+1 1 differs (800259fc's one-step nav refresh, section 24), every object's motion equal;
   steer=10:10:0:0:0:0:0:0:0 (no unknown class); 900 44.
+
+30. AFTER T+1: THE MINERS (w1z27 captures, w1z28 watch span 30, build272; 5 November)
+- w1z27's captures: 660 2 differ (a Split miner 83e03, motion; 800231311ef0aee9 on the joiner only, the session's deleted: the
+  hot join's leaked references, RCNT), 720 29 (four miners, created ships' health around a fight), 780 30, 840 39, 900 44.
+- w1z28 (the hot join's watch with a 30-step span on the miners 83e03, 746ae, 84068, 8c581, all ShipMedium miner_solid with a
+  linear flight model, no STEER record): the controllers equal through T+30; the ship objects apart from the load on in the
+  words +0x3b4/+0x3bc (two floats: the session's 40.64/50.80, the joiner's an equal pair 63.50/63.50), +0xa10 (a float: 19.30
+  against -1), +0xa18 (a time: 7.083 against T), +0xc38 (a double: 0 against 1500), and +0xa78 (8c581) and +0x11a8 (84068).
+  83e03 at 657: the session sets +0xa18 to its time (39.933) and the Agent's +0xf34, the joiner keeps +0xa18 from 649 and sets
+  +0xf78; from 658 the Agent's path points (+0xad0..) part, so its motion differs by 660. A miner's object state the package
+  does not carry; with the hot join (its object sections).
