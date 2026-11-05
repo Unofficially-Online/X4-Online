@@ -242,13 +242,30 @@ THE NEXT RESIDUE: A RECYCLABLE 300 TICKS APART (W30 against lx20)
   region: Windows 0x7884a0). Every compared piece is the same on both platforms: the association, the integer yield,
   the time test, and the radius test (its rsqrt/rcp pairs rewritten to the same exact sqrtss on both, Windows
   0x768405, Linux 0x1a4a28f / 0xe11487).
-  What differs is outside them: the nodes' ware and yield those searches read are set by the region field refresh
-  0xee6a80, which natively runs from the render pass (0xeeb98a), and its 0x78a690 (Linux 0x12a2f50) draws the thread
-  word when several resource areas fit (lockstep_region_camera.h). Windows' default native_gate_field_fill = 'view'
-  (with region_fields and view_points) moves that fill to the MoveWorker on a word keyed by the node's position; the
-  census runs on both platforms run without the view-point stack, so each fills on its own render-thread word and
-  timing: equal within a platform, not across. Next: W33 (W30 + view_points, region_fields, field_fill) against W30
-  to confirm, then port view_points, region_fields and field_fill to Linux (the rest of the view-point stack after).
+  W32 (W31 + the trace; inert against W31 at all 101 captures): Windows' 2664 slice is PC c2..11c with 12 draws, the
+  same as Linux's 2963 slice, and every later PC matches across the platforms (PCs are portable).
+  First guess, wrong: the region field fill (the render pass's 0xee6a80 sets the nodes' ware and yield; Windows'
+  default field_fill = 'view'). W33 (W30 + view_points, region_fields, field_fill) = W30 at all 101 captures.
+  The cause: the search's spawn-from-region step (Windows 0x7884a0, Linux 0x1f47b20) returns nothing when the region's
+  cluster is the player object's and the camera (the cutscene camera, else the player camera, its view-bank transform)
+  is within 50 km of the requested position: lockstep_region_camera.h's mining group, which Windows fixes by default
+  (native_gate_mining_camera = 'view'). Sector 0x327 is in cluster 0x323, the player's: Windows' camera answered
+  "far" (spawn), Linux's "near" (nothing; retry 10 s later). W34 (W33 + mining_camera) = W30 at all 101 captures with
+  mining=2/0/0 (two calls, both far): Windows answers far with and without the stand-in, so Linux's camera is the lever.
+  THE FIX (cd24d90d): the distance core moved into lockstep_mining_near.h (rc_mining_dist2, rc_mining_is_near; one
+  copy for both gates, Windows -E -P differs only by the move); linux/gate_mining_camera.h: the camera block 0x1f47f40
+  (16-aligned, entered only from 0x1f47b9e) becomes a jmp to a thunk that asks lxmc_near(cluster [rbp-0x178],
+  position [rbp-0x168], frame r12) and continues at the native near (0x1f47fc5) or far (0x1f48130) path with rdi =
+  r15+0x38; the latch is rc_shape_latch's without view points (the player object's ship). Pin mining_search; stop
+  reason 166. The probe arms the mining group without view points on the Linux gate only.
+  lx23 (lx20 + --mining-camera, 6000 ticks): the patch was installed all run and restored, latched every tick, but
+  mining=0/0/0: Linux's search never reached its camera block (Windows' twice in 3000 ticks), and lx23 still splits
+  from W30 at 2670 (112 of 201 digests). So on Linux the 2664 search ends before the camera test: either the
+  search 0x1f47b20 is not called (the field queries inlined in 0xe10a60 found an object the script then rejects), or
+  it returns nothing earlier (0x127c340 null, or the player's view-cache cluster 0xc7e2b0 differs from the region's).
+  The mining port stays (it is the Windows default's Linux side) but is not this residue's fix. Next: uprobes
+  (tracefs, file offsets = VA - 0x400000) on 0xe10a60, 0x1f47b20 (entry and return), its cluster compare 0x1f47b9b
+  and the camera block 0x1f47f40 in an untouched run (lx24, lx20's flags) to see which.
 
 WINDOWS AGAINST LINUX, w22 client 1 (build235, W21 + player_timer) against lx9
   tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
@@ -260,8 +277,8 @@ NEXT
   2. (done: W23 against lx13, identical through 1800.) The platform residue: the 1-ulp z of the ship's position relative
      to an orb accelerator in GetTransformRelativeTo at the jump (0a5d7a, tick 1862): find the operation that rounds
      differently: found (the exit sum's association, MSVC against GCC) and fixed on Linux (native_gate_warp_exit:
-     W30 = lx20 through 2400). Next residue: the Recyclable at 2664, a salvage search that the native render-pass
-     field fill decides (W33 to confirm). Then a Linux default for warp_exit.
+     W30 = lx20 through 2400). Next residue: the Recyclable at 2664, the region object search's native camera test
+     (the mining group, ported to Linux: cd24d90d; lx23 against W30). Then Linux defaults for warp_exit and mining.
   3. The rest of the defaults' determinism stack the clock-mode census does not exercise (the battle scope's fixture
      state, shape order, view points), then the people stack on Linux (pilot replay first: a Linux server simulates the
      players).
