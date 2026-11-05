@@ -2062,6 +2062,21 @@ proposed and rejected.
                                   fires once more on the joiner (WEAPON_FIRE_RNG keyed 2 against 1), and its pilot 0x176b9c's
                                   fight.attack.object.fighter wakes on event_weapon_fired (keyword 1319, the weapon; SCRIPT_RNG
                                   detail decoded) where the session runs nothing for that owner over 633..652
+- The shot of 650 [F: j1-164 JOIN_WATCHRAW of actor 5's weapons (the dump past an object's size is its heap neighbour: a ship's
+  0xe00, a weapon's 0x380), j1-165 JOIN_WATCHRULE (bab073ad: every line-of-fire ruling through the shoot controller vtable 0x2b7fcc0
+  slot 0xe8, 0x7e6cb0), JOIN_WATCHACOS (the aim angles)]: the weapon's request check 0x816d20 (Weapon slot 988) goes on to its
+  line of fire when the angle to the target (acos of the aim direction's z, 0x8176dd) is within the controller's cone (+0x80), casts
+  a physics ray (0xbc4d0) and lets the ruling decide (1 clear, 2 blocked, 0 a second ray to the target) into +0x84/+0x85. The
+  rulings are equal on both sides but one: at 650 the joiner's weapon 0x176ba3 checks toward actor 11 (no hit, clear) and fires; the
+  session's does not check at all. Ruled out on the way: the cone (+0x80 0x3db2b8c2 against 0x3db2b8c7, exactly float("0.0872665"):
+  the save's shootcontroller angle= in six digits; SHOOT carries it since b88a4a6b, and f32eb8ee writes every float of the join
+  save (0x137db0's 35 sites, through JOIN_FMT_THUNK, told by return address) in 17 digits: j1-167 read 100,720 long strings
+  exactly), the controller's +0x90/+0x98 (stale heap pointers), the weapon's live flag 0x80000 (U::Animation::SequenceControl-
+  Unit's mark; the fire procedure plays the recoil sequences after a shot only) and its subtree count (+0x1e8 10 against 0).
+  j1-164 5888e114 (build-hj17g)   the weapons' raw state: the controllers' cone, +0x84 clear at 650 on the joiner
+  j1-165 bab073ad (build-hj17h)   JOIN_WATCHRULE: one ruling more on the joiner at 650 (target actor 11)
+  j1-166 b88a4a6b (build-hj17i)   SHOOT's cone: shoot=71, the cone equal; 650 and 651 stay; 900: 165 + 85/87
+  j1-167 f32eb8ee (build-hj17j)   floats at full precision in the join save: the same
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

@@ -45,12 +45,29 @@ static __m128 pmath_sincosf_two(float a,float b) {
 }
 /* 0x1b42f20 [sin x, cos x] */
 static __m128d pmath_sincos_one(double x) {double s,c;x4pm_sincos(x,&s,&c);return _mm_setr_pd(s,c);}
+/* JOIN_WATCHACOS (diagnostic, written with the hot join watch's dumps, lockstep_join_world.h): acosf's calls from the weapon
+ * request check's aim angle (0x8176dd; its return 0x8176e2): the step, the argument and the result. j1-165..167: actor 5's weapon
+ * 0x176ba3 checks its line of fire at 650 on the joiner only, after this angle came within the controller's cone (+0x80). */
+#define PMATH_ACOS_RET 0x8176e2u
+#define PMATH_ACOS_ROWS 2048u
+typedef struct {uint64_t tick;uint32_t x,r;} pmath_acos_row;
+static pmath_acos_row pmath_acos_rows[PMATH_ACOS_ROWS];
+static volatile LONG pmath_acos_n;static volatile LONG64 pmath_acos_dropped;
+static __attribute__((noinline)) float pmath_acosf_watch(float x) {
+    const float r=x4pm_acosf(x);
+    if((uintptr_t)__builtin_return_address(0)==(uintptr_t)image+PMATH_ACOS_RET) {
+        const LONG k=InterlockedIncrement(&pmath_acos_n)-1;
+        if(k<(LONG)PMATH_ACOS_ROWS) {pmath_acos_rows[k].tick=stats.issued;memcpy(&pmath_acos_rows[k].x,&x,4);memcpy(&pmath_acos_rows[k].r,&r,4);}
+        else InterlockedIncrement64(&pmath_acos_dropped);
+    }
+    return r;
+}
 static const pmath_site pmath_sites[]={
     {"sincosf_one",0x1750210u,0x43u,PMATH_P1,"755042c5b869f5435b67606a5382c172cb2d0c3502766c6f8b14be3215b1580e",(void*)pmath_sincosf_one},
     {"sincosf_two",0x1750253u,0xdu,PMATH_P2,"f86f5fecbc91380930213754abf57383eb68bd497bc382a26fd22783994d2897",(void*)pmath_sincosf_two},
     {"log2f",0x1a10928u,0x8u,PMATH_F1,"8222d40caa8f1c2d6680765176fe6487fe38dd383929356a59cc63bd0c3aaf6a",(void*)x4pm_log2f},
     {"exp2f",0x1a11848u,0xeeu,PMATH_F1,"cbce71d42d5158da1f843c0ef27242b4e8f94867d627efa021cfeb8a0b9f2255",(void*)x4pm_exp2f},
-    {"acosf",0x1a19250u,0x22cu,PMATH_F1,"69ed9abac17653ec3b63050e5f968c54a39be0da57ad07b292010ccfa38444d5",(void*)x4pm_acosf},
+    {"acosf",0x1a19250u,0x22cu,PMATH_F1,"69ed9abac17653ec3b63050e5f968c54a39be0da57ad07b292010ccfa38444d5",(void*)pmath_acosf_watch},
     {"sinf",0x1a19480u,0x6f6u,PMATH_F1,"8f322391ace606c3ef0aad82c9e857f684356d0629fb45018c4c38d7de073581",(void*)x4pm_sinf},
     {"cosf",0x1a19b80u,0x4ffu,PMATH_F1,"0528c1f622973552df394bd4eb09f0a4f86c332de49b88b34bdec5f2c9235560",(void*)x4pm_cosf},
     {"atan2f",0x1a1a398u,0x3f7u,PMATH_F2,"989455d5894a8434f90113b2f999fe2e687270d09fb39aab575412b5753af766",(void*)x4pm_atan2f},

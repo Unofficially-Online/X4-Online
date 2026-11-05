@@ -2094,10 +2094,44 @@ static int join_rule_swap(uint64_t expected,uint64_t value) {
     VirtualProtect(image+JOIN_RULE_SLOT,8,old,&ignored);
     return actual==expected;
 }
+/* JOIN_WATCHAIM (diagnostic, with the watch, as JOIN_WATCHRULE): every aim point of the basic shoot controllers (vtable 0x2b7fcc0
+ * slot 0xa8, 0x7e72b0(controller, aim out, second out, target, weapon, origin, two weapon floats, five flags), which the request
+ * check 0x816d20 asks before its angle; it reads the target through the view cache, 0x3dee20): the target and the weapon as keys,
+ * the origin and the aim point (float bits), the result. j1-168: the angles differ from T+1 on the joiner, PEND or not (j1-169). */
+#define JOIN_AIM_SLOT 0x2b7fd68u       /* 0x2b7fcc0 + 0xa8 */
+#define JOIN_AIM_FN 0x7e72b0u
+#define JOIN_AIM_ROWS 1024u
+typedef struct {uint64_t tick;void *target,*weapon;uint32_t origin[3],aim[3],result,rot[12];} join_aim_row;   /* rot: the weapon frame's rows (origin+0x10..+0x3f) */
+static join_aim_row join_aim_rows[JOIN_AIM_ROWS];
+static volatile LONG join_aim_n;static volatile LONG64 join_aim_dropped;static int join_aim_installed;
+typedef unsigned char (*join_aim_fn)(void *,float *,float *,void *,void *,const float *,float,float,unsigned char,unsigned char,
+                                     unsigned char,unsigned char,unsigned char);
+static unsigned char join_aim_hook(void *ctl,float *aim,float *second,void *target,void *weapon,const float *origin,float a,float b,
+                                   unsigned char c,unsigned char d,unsigned char e,unsigned char f,unsigned char g) {
+    const unsigned char r=((join_aim_fn)(void *)(image+JOIN_AIM_FN))(ctl,aim,second,target,weapon,origin,a,b,c,d,e,f,g);
+    const LONG k=InterlockedIncrement(&join_aim_n)-1;
+    if(k<(LONG)JOIN_AIM_ROWS) {
+        join_aim_row *w=&join_aim_rows[k];
+        w->tick=stats.issued;w->target=target;w->weapon=weapon;w->result=r;
+        if(!origin || !join_read(origin,w->origin,12)) memset(w->origin,0,12);
+        if(!origin || !join_read((const unsigned char *)origin+0x10,w->rot,sizeof(w->rot))) memset(w->rot,0,sizeof(w->rot));
+        if(!aim || !join_read(aim,w->aim,12)) memset(w->aim,0,12);
+    } else InterlockedIncrement64(&join_aim_dropped);
+    return r;
+}
+static int join_aim_swap(uint64_t expected,uint64_t value) {
+    DWORD old,ignored;
+    if(!VirtualProtect(image+JOIN_AIM_SLOT,8,PAGE_READWRITE,&old)) return 0;
+    const uint64_t actual=(uint64_t)InterlockedCompareExchange64((volatile LONG64 *)(image+JOIN_AIM_SLOT),(LONG64)value,(LONG64)expected);
+    VirtualProtect(image+JOIN_AIM_SLOT,8,old,&ignored);
+    return actual==expected;
+}
 static void join_rule_install(void) {
+    if(!join_aim_installed && join_aim_swap((uint64_t)(uintptr_t)(image+JOIN_AIM_FN),(uint64_t)(uintptr_t)join_aim_hook)) join_aim_installed=1;
     if(!join_rule_installed && join_rule_swap((uint64_t)(uintptr_t)(image+JOIN_RULE_FN),(uint64_t)(uintptr_t)join_rule_hook)) join_rule_installed=1;
 }
 static void join_rule_restore(void) {
+    if(join_aim_installed && join_aim_swap((uint64_t)(uintptr_t)join_aim_hook,(uint64_t)(uintptr_t)(image+JOIN_AIM_FN))) join_aim_installed=0;
     if(join_rule_installed && join_rule_swap((uint64_t)(uintptr_t)join_rule_hook,(uint64_t)(uintptr_t)(image+JOIN_RULE_FN))) join_rule_installed=0;
 }
 static volatile LONG64 join_pcf_calls,join_pcf_dropped;
@@ -2346,6 +2380,30 @@ static void join_watch_dump(char side,uint64_t tick) {
         at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHPCF side=%c tick=%llu rows=%ld calls=%lld dropped=%lld sites=%x\r\n",side,(unsigned long long)tick,
                              (long)n,(long long)join_pcf_calls,(long long)join_pcf_dropped,join_pcf_mask);
         InterlockedExchange(&join_pcf_n,0);
+    }
+    {   /* JOIN_WATCHACOS: the weapon request checks' aim angles since the last dump (lockstep_portable_math.h) */
+        LONG n=pmath_acos_n;if(n>(LONG)PMATH_ACOS_ROWS) n=(LONG)PMATH_ACOS_ROWS;
+        for(LONG k=0;k<n && at+160<cap;k++) if(pmath_acos_rows[k].tick+1u>=tick)   /* the steps since the last dump */
+            at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHACOS side=%c tick=%llu at=%llu x=%08x r=%08x\r\n",side,
+                                 (unsigned long long)tick,(unsigned long long)pmath_acos_rows[k].tick,pmath_acos_rows[k].x,pmath_acos_rows[k].r);
+        at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHACOS side=%c tick=%llu rows=%ld dropped=%lld\r\n",side,
+                             (unsigned long long)tick,(long)n,(long long)pmath_acos_dropped);
+        InterlockedExchange(&pmath_acos_n,0);
+    }
+    {   /* JOIN_WATCHAIM: the aim points since the last dump (installed with JOIN_WATCHRULE) */
+        LONG n=join_aim_n;if(n>(LONG)JOIN_AIM_ROWS) n=(LONG)JOIN_AIM_ROWS;
+        for(LONG k=0;k<n && at+400<cap;k++) {
+            const join_aim_row *r=&join_aim_rows[k];
+            at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHAIM side=%c tick=%llu at=%llu target=%llx weapon=%llx "
+                                 "origin=%08x,%08x,%08x aim=%08x,%08x,%08x result=%u rot=",side,(unsigned long long)tick,
+                                 (unsigned long long)r->tick,(unsigned long long)join_watch_key(r->target),(unsigned long long)join_watch_key(r->weapon),
+                                 r->origin[0],r->origin[1],r->origin[2],r->aim[0],r->aim[1],r->aim[2],r->result);
+            for(unsigned q=0;q<12u;q++) at+=(size_t)snprintf(out+at,cap-at,"%s%08x",q?",":"",r->rot[q]);
+            at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+        }
+        at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHAIM side=%c tick=%llu rows=%ld dropped=%lld installed=%d\r\n",side,
+                             (unsigned long long)tick,(long)n,(long long)join_aim_dropped,join_aim_installed);
+        InterlockedExchange(&join_aim_n,0);
     }
     {   /* JOIN_WATCHRULE: the line-of-fire rulings since the last dump (installed at the first dump) */
         join_rule_install();
