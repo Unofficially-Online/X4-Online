@@ -397,3 +397,29 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   weapons aim through the controller's lead routine (slot 0xa8) at the target's relative transform from the view cache, and
   the joiner's aim angles differ from T+1 in an ordinary J1 as well; the same routine, aimed at the slot ships, is the
   likely cause here.
+
+24. SMOV DROPPED; 800259FC'S NAV TIMING AT T+1 (w1z14, build261 = 14f507fd; 5 November)
+- SMOV (the hot join's section 62, 1e7c6b32: the weapons' StaticMovementController +0x90..+0xcf as the session's) crashed the
+  joiner in its admission (j1-172b: gate -> 0x99a870, EVQT's removal of a source's pending events -> the allocator,
+  c0000005): on some weapons the range holds pointers (a shared object, then small integers), and the session's were written.
+  The pre-SMOV build joined clean (j1-172q, T+1 all equal). A float-only SMOV (j1-173) no longer crashed but moved the J1's first
+  mismatch from 651 to 634 and left the weapon frames as before (0.246 rad at 634): the block is not the gimbal state. Reverted on
+  both branches (smoke 14f507fd, hot join 82a08d5c); JOIN_WATCHAIM stays (X4-Online e0353fc4).
+- w1z14 (build261, the hot join's watch on 800259fc and 176c95): T+1 3 differ (176c95 and 176cef motion, 800259fc timing), 900
+  72, as w1z12/13.
+- 800259fc (a created ShipSmall in zone 0xa8, attention 2): its movement controller is the StaticMovementController 0x2a34b38 at
+  T on the session and on the joiner after its load and admission (watch rows s, k, j), and a NavigationController 0x2c51158 with
+  an Agent on both at T+1: the swap happens in step T+1 on every side. After that step the joiner's controller holds the refresh
+  time 38.783 (T+1's game time + 1.6) and the read selector as its cursor, the session's -1 and cursor 2 (none); the session
+  refreshes it at T+2 (38.833), and from there the two agree (660: only the absolute selectors differ, as for every ship).
+- Not the gate's stamp: at 634 both stamp the same 10,000 batched Agents with equal order and stamp hashes (PATH_DETERMINISM);
+  at 635 both batch the new Agent (10,001), the joiner finds one more current (190 newly current against 189) and only the
+  stamp hash of 635 differs. The joiner's refresh at T+1 comes from a transform query: its only PropagateCacheFlags call on
+  800259fc in step T+1 (JOIN_WATCHPCF site 0x3d4d0f, flags 0x19, view 0), which the session does not make. The joiner calls
+  PropagateCacheFlags 425,464 times in step T+1, the session 6,163: the load leaves every component's live flags pending
+  (+0x1e0 0x19, hot join report: PEND), so the joiner's first BuildCache republishes every pose its view words allow, and a pose
+  republished after the swap refreshes the new controller (RefreshFromPathingState 0xea2a20, on the first transform query after
+  a bank flip).
+- The same republication may matter for 176c95: its steering and its weapons' lead routine read the slot ships' (their
+  targets') transforms from the view cache, which the joiner refreshes in T+1 where the session keeps them as published. Next:
+  w1z15, build261 with PEND (native_gate_join_pend, the session's pending words; j1-160: no flicker).
