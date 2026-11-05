@@ -136,6 +136,12 @@ def main():
     p.add_argument('--actor-rng-all', action='store_true', help="the Linux gate: every portable ship's Move and pathing Agent update "
                    'on keyed streams (native_gate_agent_rng + native_gate_ship_rng + native_gate_actor_rng_all, on by default on Windows; '
                    'needs --world-identities)')
+    p.add_argument('--player-timer', action='store_true', help="the Linux gate: the player's fleet rebuild timer starts at the first "
+                   'admitted frame on every client (native_gate_player_timer, on by default on Windows)')
+    p.add_argument('--tempzone-order', action='store_true', help="the Linux gate: the pathing pass's tempzone requests granted "
+                   "in a portable order (native_gate_tempzone_order = 'order', on by default on Windows; needs --travel-snapshot)")
+    p.add_argument('--actor-rng-rows', action='store_true', help='the Linux gate: one ACTOR_RNG_ROW per keyed scope that drew '
+                   '(native_gate_actor_rng_rows, diagnostic; needs --actor-rng-all)')
     p.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the Linux gate: the mass traffic pass joined at the gate tick '
                    "(native_gate_mass_traffic, 'sync' by default on Windows)")
     p.add_argument('--region-pass', choices=('sync', 'observe'), help='the Linux gate: the region manager pass joined at the gate tick '
@@ -174,7 +180,8 @@ def main():
                         'what matches and reports the rest (J1 diagnostics)')
     p.add_argument('--attention-all', action='store_true', help="the Linux gate: every portable object's attention timer re-evaluates at its first admitted call and draws from (tick, ID) (native_gate_attention_all with the hook of native_gate_attention_initial_refresh; needs --world-identities)")
     p.add_argument('--step-trace', nargs='+', metavar='SAVED_ID', help="the Linux gate: the Linear flight model's step, entry and exit, for up to four saved IDs (diagnostic; needs --world-identities)")
-    p.add_argument('--step-trace-ticks', type=int, default=3, help='ticks 1..N of the step trace (default 3, at most 600)')
+    p.add_argument('--step-trace-ticks', type=int, default=3, help='ticks 1..N of the step trace (default 3); N above 600: the 60 ticks ending at N')
+    p.add_argument('--step-chain', action='store_true', help="FR8's step chain rows with the step trace (native_gate_step_chain; needs --step-trace)")
     p.add_argument('--fp-redirect', choices=('shadow', 'writer', 'redirect'), help='both gates: the flight parameter refresh recomputed by strict code next to the native one, ulp per field (Option B slice 1; shadow writes nothing, writer writes the writer\'s +0x0..+0xc, redirect also the spline segment length where Windows inlines BezierSpline::Set)')
     p.add_argument('--fp-redirect-watch', nargs='+', metavar='SAVED_ID', help='FP_REDIRECT_ROWs (inputs and results) for up to four saved IDs (needs --fp-redirect and --world-identities)')
     p.add_argument('--fp-redirect-ticks', type=int, default=3, help='ticks 1..N of the FP_REDIRECT_ROWs (default 3, at most 600)')
@@ -482,7 +489,7 @@ def main():
         # world identities and the world hash are ported (src/native/engine/linux/gate_world.h).
         if not args.snapshot or args.mode != 'clock':
             p.error('--gate-so supports the snapshot boot with --mode clock only')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
@@ -712,6 +719,22 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             config.write('X4LAN_CONFIG.native_gate_agent_rng = true\n')
             config.write('X4LAN_CONFIG.native_gate_ship_rng = true\n')
             config.write('X4LAN_CONFIG.native_gate_actor_rng_all = true\n')
+            if args.actor_rng_rows:
+                config.write('X4LAN_CONFIG.native_gate_actor_rng_rows = true\n')
+    elif args.actor_rng_rows:
+        p.error('--actor-rng-rows needs --actor-rng-all')
+    if args.player_timer:
+        if not args.gate_so or not args.snapshot:
+            p.error('--player-timer needs --gate-so and the snapshot boot')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_player_timer = true\n')
+    if args.tempzone_order:
+        if not args.gate_so or not args.snapshot:
+            p.error('--tempzone-order needs --gate-so and the snapshot boot')
+        if not args.travel_snapshot:
+            p.error('--tempzone-order needs --travel-snapshot (the late-splice join)')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write("X4LAN_CONFIG.native_gate_tempzone_order = 'order'\n")
     if args.mass_traffic or args.region_pass or args.pass_stride is not None:
         if not args.gate_so or not args.snapshot:
             p.error('--mass-traffic, --region-pass and --pass-stride need --gate-so and the snapshot boot')
@@ -807,11 +830,15 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
         ids = [i.lower() for i in args.step_trace]
         if not args.gate_so or not args.snapshot or not args.world_identities or len(ids) > 4 or any(len(i) != 16 or any(c not in '0123456789abcdef' for c in i) for i in ids):
             p.error('--step-trace needs --gate-so, the snapshot boot, --world-identities and one to four 16-digit saved IDs')
-        if not 1 <= args.step_trace_ticks <= 600:
-            p.error('--step-trace-ticks: 1..600')
+        if not 1 <= args.step_trace_ticks <= 1000000:
+            p.error('--step-trace-ticks: 1..600 (ticks 1..N), or N up to 1000000 for the 60 ticks ending at N')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_step_trace = {' + ', '.join(f"'{i}'" for i in ids) + '}\n')
             config.write(f'X4LAN_CONFIG.native_gate_step_trace_ticks = {args.step_trace_ticks}\n')
+            if args.step_chain:
+                config.write('X4LAN_CONFIG.native_gate_step_chain = true\n')
+    elif args.step_chain:
+        p.error('--step-chain needs --step-trace')
     if args.fp_redirect_watch and not args.fp_redirect:
         p.error('--fp-redirect-watch needs --fp-redirect')
     if args.fp_redirect_solver and not args.fp_redirect:

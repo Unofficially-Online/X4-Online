@@ -72,6 +72,7 @@
 #include "test_lockstep_pilot_foot.h"
 #include "test_lockstep_pilot_foot_slots.h"
 #include "test_lockstep_pilot_join.h"
+#include "test_lockstep_join_passes.h"
 #include "test_lockstep_pilot_death_foot.h"
 #include "test_lockstep_pilot_device.h"
 #include "test_lockstep_pilot_predict.h"
@@ -1245,6 +1246,7 @@ int main(int argc,char **argv) {
     test_pilot_join_players();
     test_pilot_join_tables();
     test_pilot_join_modules();
+    test_join_passes();
     test_pilot_eye();
     test_pilot_foot();
     test_pilot_foot_diag();

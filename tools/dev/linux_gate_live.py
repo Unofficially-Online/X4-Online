@@ -181,6 +181,8 @@ def bundle(args):
         command.append('--attention-all')
     if args.step_trace:
         command += ['--step-trace', *args.step_trace, '--step-trace-ticks', str(args.step_trace_ticks)]
+        if args.step_chain:
+            command.append('--step-chain')
     if args.fp_redirect:
         command += ['--fp-redirect', args.fp_redirect, '--fp-redirect-ticks', str(args.fp_redirect_ticks)]
         if args.fp_redirect_solver:
@@ -219,6 +221,12 @@ def bundle(args):
         command.append('--spline-join-all')
     if args.actor_rng_all:
         command.append('--actor-rng-all')
+    if args.actor_rng_rows:
+        command.append('--actor-rng-rows')
+    if args.player_timer:
+        command.append('--player-timer')
+    if args.tempzone_order:
+        command.append('--tempzone-order')
     if args.mass_traffic:
         command += ['--mass-traffic', args.mass_traffic]
     if args.region_pass:
@@ -272,7 +280,7 @@ def bundle(args):
     manifest = {'commit': commit, 'ticks': args.ticks, 'stride': args.stride, 'snapshot_sha256': snapshot_sha, 'wire_crypto': bool(args.wire_crypto),
                 'gate_so_sha256': files['extension/x4_lan_lab/native/x4lan_gate.so'], 'files': files,
                 'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'), 'seed_rng': bool(args.seed_rng),
-                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'weapon_fire_rng': args.weapon_fire_rng, 'engine_refresh_rng': args.engine_refresh_rng, 'spline_join_all': args.spline_join_all, 'actor_rng_all': args.actor_rng_all, 'mass_traffic': args.mass_traffic, 'region_pass': args.region_pass, 'pass_stride': args.pass_stride, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
+                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'step_chain': args.step_chain, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'weapon_fire_rng': args.weapon_fire_rng, 'engine_refresh_rng': args.engine_refresh_rng, 'spline_join_all': args.spline_join_all, 'actor_rng_all': args.actor_rng_all, 'actor_rng_rows': args.actor_rng_rows, 'player_timer': args.player_timer, 'tempzone_order': args.tempzone_order, 'mass_traffic': args.mass_traffic, 'region_pass': args.region_pass, 'pass_stride': args.pass_stride, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
                 'world_hash_watch': args.world_hash_watch or [],
                 'fork_save': args.fork_save and {'request': args.fork_save, 'every': args.fork_save_every, 'slot': args.fork_save_slot,
                                                  'budget_ms': args.fork_save_budget_ms, 'watchdog_s': args.fork_save_watchdog}, 'fp_redirect_drones': args.fp_redirect_drones, 'world_health_ticks': args.world_health_ticks, 'fp_attack_capture': args.fp_attack_capture, 'fp_attack_watch': args.fp_attack_watch}
@@ -850,7 +858,8 @@ def main():
     b.add_argument('--find-order', choices=('observe', 'sort'), help='find_* candidate lists on saved IDs')
     b.add_argument('--loadout-order', choices=('observe', 'canonical'), help="what a station wants to restock does not depend on the macros' heap addresses")
     b.add_argument('--step-trace', nargs='+', metavar='SAVED_ID', help="the Linear flight model's step, entry and exit, for up to four saved IDs (diagnostic)")
-    b.add_argument('--step-trace-ticks', type=int, default=3, help='ticks 1..N of the step trace (default 3)')
+    b.add_argument('--step-trace-ticks', type=int, default=3, help='ticks 1..N of the step trace (default 3); N above 600: the 60 ticks ending at N')
+    b.add_argument('--step-chain', action='store_true', help="FR8's step chain rows with the step trace (native_gate_step_chain)")
     b.add_argument('--fp-redirect', choices=('shadow', 'writer', 'redirect'), help='the flight parameter refresh recomputed by strict code next to the native one (Option B slice 1; writer and redirect write the writer\'s +0x0..+0xc; the spline length hook is Windows-only)')
     b.add_argument('--fp-redirect-watch', nargs='+', metavar='SAVED_ID', help='FP_REDIRECT_ROWs for up to four saved IDs')
     b.add_argument('--fp-redirect-ticks', type=int, default=3, help='ticks 1..N of the FP_REDIRECT_ROWs (default 3)')
@@ -872,6 +881,9 @@ def main():
     b.add_argument('--weapon-fire-rng', action='store_true', help='every weapon shot on its own keyed stream (native_gate_weapon_fire_rng)')
     b.add_argument('--engine-refresh-rng', action='store_true', help="a ship's next engine-parameter refresh from a keyed stream (native_gate_engine_refresh_rng)")
     b.add_argument('--actor-rng-all', action='store_true', help="every portable ship's Move and Agent update on keyed streams (native_gate_actor_rng_all)")
+    b.add_argument('--player-timer', action='store_true', help="the player's fleet rebuild timer from the first admitted frame (native_gate_player_timer)")
+    b.add_argument('--tempzone-order', action='store_true', help="the pathing pass's tempzone requests in a portable order (native_gate_tempzone_order; needs --travel-snapshot)")
+    b.add_argument('--actor-rng-rows', action='store_true', help='one ACTOR_RNG_ROW per keyed scope that drew (diagnostic)')
     b.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the mass traffic pass joined at the gate tick (native_gate_mass_traffic)')
     b.add_argument('--region-pass', choices=('sync', 'observe'), help='the region manager pass joined at the gate tick (native_gate_region_pass)')
     b.add_argument('--pass-stride', type=int, help='the synced passes only every Nth frame (native_gate_pass_stride)')

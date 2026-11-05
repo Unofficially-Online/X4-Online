@@ -372,6 +372,10 @@ if cfg.native_gate_join then
    end
   end}
  input_section('join','join',join_client)
+ -- Diagnostic native_gate_join_passes_admit (a joiner): the pass of T at its admission (lockstep_join_passes.h).
+ if join_joiner and cfg.native_gate_join_passes_admit then
+  assert(gate.join_passes_admit and gate.join_passes_admit(1)==1,'join passes admit refused')
+ end
  DebugError('[X4LAN] NATIVE_GATE JOIN_ARMED slot='..own..' save='..save_mode..' joiner='..(join_joiner and 1 or 0)..' absent='..absent_mask..' rejoin='..rejoin_mask)
  -- native_gate_world_hash_join = true (DEFAULT OFF; reports/LOCKSTEP-HOTJOIN-20261101.txt 1.6): one more world capture at the
  -- join's T+1, on every client of the session (T of each SAVE_AT it applied, whether it saves or not: the capture enters the
@@ -2132,6 +2136,19 @@ end
 local function pilot_frame(s,tick)
  if cfg.native_gate_pilot_block_orders then block_orders() end
  if pilot_view.death then pilot_view.death_frame(tick) end
+ -- Diagnostic native_gate_pilot_dump_tick: every slot's ship, controller, agent and solver bytes at that tick, read only, so
+ -- that the session's and a joiner's can be compared offline (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 15).
+ if cfg.native_gate_pilot_dump_tick==tick and gate.pilot_dump then
+  local sizes={0x800,0x800,0x1000,0x400}
+  for slot=1,#cfg.native_gate_pilot_slots do
+   for which=0,3 do
+    for off=0,sizes[which+1]-256,256 do
+     local hex=gate.pilot_dump(slot,which,off)
+     if hex then ticklog.write('PILOT_DUMP tick='..tick..' slot='..slot..' which='..which..' off='..off..' hex='..hex) end
+    end
+   end
+  end
+ end
  local wire=cfg.native_gate_pilot_source=='wire'
  if wire and pilot_records then
   for slot=1,#cfg.native_gate_pilot_slots do
@@ -4672,7 +4689,7 @@ local function frame()
   assert(base and tick==base+1,'join: first tick '..tick..' after the tick base '..tostring(base))
   X4LAN_JOIN_CORE.restore_text(gate.join_lua_state())
   join_restored=true
-  log('JOIN_ADMITTED base='..base..' '..tostring(gate.join_status()))
+  log('JOIN_ADMITTED base='..base..' '..tostring(gate.join_status())..(gate.join_passes_status and tostring(gate.join_passes_status()) or ''))
   X4LAN_JOIN_CORE.log_unpaired(gate,log)
  end
  if (tonumber(s.registry_count) or 0)>0 then

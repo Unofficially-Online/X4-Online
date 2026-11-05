@@ -190,7 +190,7 @@ def check_world_table(package, mode):
     if version >= 13:
         text += f' jobe={len(sections.get("jobe", []))} evqt={len(sections.get("evqt", []))} gravd={len(sections.get("gravd", []))}'
         text += f' viewk={len(sections.get("viewk", []))}/{len(sections.get("viewkc", []))} viewf={len(sections.get("viewf", []))}'
-        text += f' viewp={len(sections.get("viewp", []))} shoot={len(sections.get("shoot", []))} attk={len(sections.get("attk", []))} livef={len(sections.get("livef", []))} spec={len(sections.get("spec", []))} navc={len(sections.get("navc", []))} jobs={len(sections.get("jobs", []))} gone={len(sections.get("gone", []))} body={len(sections.get("body", []))} bupd={len(sections.get("bupd", []))} ldc={len(sections.get("ldc", []))} navt={len(sections.get("navt", []))}'
+        text += f' viewp={len(sections.get("viewp", []))} shoot={len(sections.get("shoot", []))} attk={len(sections.get("attk", []))} livef={len(sections.get("livef", []))} spec={len(sections.get("spec", []))} navc={len(sections.get("navc", []))} jobs={len(sections.get("jobs", []))} gone={len(sections.get("gone", []))} body={len(sections.get("body", []))} bupd={len(sections.get("bupd", []))} ldc={len(sections.get("ldc", []))} navt={len(sections.get("navt", []))} nmesh={len(sections.get("nmesh", []))} noct={len(sections.get("noct", []))}'
     return text
 
 

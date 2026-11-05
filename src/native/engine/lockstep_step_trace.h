@@ -286,7 +286,12 @@ static void st_banks(uint32_t out[2]) {
 static st_record_t *st_ring; /* ST_RECORDS records, calloc at the first arming, kept */
 static uint64_t st_ids[ST_IDS],st_ordinals[ST_IDS],st_ordinal_tick[ST_IDS];
 static unsigned st_id_count,st_installed,st_restored;
-static uint64_t st_ticks=3;
+/* Ticks 1..st_ticks; step_trace_arm(N) beyond ST_TICKS_DIRECT traces the ST_WINDOW_TICKS ending at N (st_from = N - 59),
+ * which one ship's records keep within ST_RECORDS (diagnostic, e.g. a cross-platform split at tick 1890). */
+#define ST_TICKS_DIRECT 600u
+#define ST_WINDOW_TICKS 60u
+#define ST_TICKS_MAX 1000000u
+static uint64_t st_ticks=3,st_from=1;
 static volatile LONG64 st_records,st_calls,st_watched_calls,st_dropped;
 static void *st_native; /* the step the entry held */
 static const char *st_stage="idle";
@@ -393,7 +398,7 @@ static uint64_t st_fm_call(unsigned site,unsigned which,void *native,void *forma
     InterlockedIncrement64(&st_chain_hits[site]);
     const uint64_t tick=stats.issued;const unsigned char *f=formation,*agent=NULL,*leader=NULL;
     uint64_t begin=0,end=0,key=0;int w=-1;
-    if(stats.active && boot_phase==3 && tick>=1 && tick<=st_ticks && f && read_local(f+ST_FM_MEMBERS,&begin,8) &&
+    if(stats.active && boot_phase==3 && tick>=st_from && tick<=st_ticks && f && read_local(f+ST_FM_MEMBERS,&begin,8) &&
        read_local(f+ST_FM_MEMBERS+8,&end,8) && end>begin && end-begin<=0x10000 && index<(end-begin)/8 &&
        read_local((const void*)(uintptr_t)(begin+index*8),&agent,8))
         w=st_agent_watched(agent,&key);
@@ -461,7 +466,7 @@ static int st_pt_begin(st_pt_ctx *c,unsigned site,unsigned which,const unsigned 
     InterlockedIncrement64(&st_chain_hits[site]);
     const uint64_t tick=stats.issued;uint64_t key=0,k=0,runtime=0;
     c->watched=-1;c->live=-1;c->prior=NULL;
-    if(!stats.active || boot_phase!=3 || tick<1 || tick>st_ticks || (c->watched=st_agent_watched(agent,&key))<0) return 0;
+    if(!stats.active || boot_phase!=3 || tick<st_from || tick>st_ticks || (c->watched=st_agent_watched(agent,&key))<0) return 0;
     uint32_t *e=c->e;memset(c->e,0,sizeof(c->e));
     e[0]=ST_PT_TAG;e[1]=(uint32_t)tick;e[2]=which;e[4]=GetCurrentThreadId()==ui_thread?0:1;
     uint32_t bank=0xffffffffu;if(!read_local(ST_BANK_READ,&bank,4)) bank=0xffffffffu;
@@ -665,7 +670,7 @@ __attribute__((unused)) static void st_ps_publish(int w,uint32_t *e) {
 /* FR24: the watched index of a ship given by its runtime id in the window (its key in *key), or -1. */
 static int st_oc_watched(uint64_t ship,uint64_t *key) {
     const uint64_t tick=stats.issued;unsigned klass=WORLD_KEY_NONE;*key=0;
-    if(!stats.active || boot_phase!=3 || tick<1 || tick>st_ticks || !ship) return -1;
+    if(!stats.active || boot_phase!=3 || tick<st_from || tick>st_ticks || !ship) return -1;
     const uint64_t saved=world_identity_key(ship,&klass);
     if(!saved || klass!=WORLD_KEY_SAVED) return -1;
     for(unsigned i=0;i<st_id_count;i++) if(st_ids[i]==saved) {*key=saved;return (int)i;}
@@ -714,7 +719,7 @@ static const unsigned char *st_sp_gate_open(const st_sp_gate_t *g,const uintptr_
 static int st_sp_watched(const unsigned char *ctx,uint64_t *key,uint64_t *entity_key,uint32_t *depth) {
     const uint64_t tick=stats.issued;uint32_t tag=0;uint64_t payload=0,runtime=0;const unsigned char *object=NULL;
     *key=0;*entity_key=0;*depth=0;
-    if(!stats.active || boot_phase!=3 || tick<1 || tick>st_ticks || !ctx || GetCurrentThreadId()!=ui_thread) return -1;
+    if(!stats.active || boot_phase!=3 || tick<st_from || tick>st_ticks || !ctx || GetCurrentThreadId()!=ui_thread) return -1;
     if(!read_local(ctx,&tag,4) || tag!=0x66 || !read_local(ctx+8,&payload,8) || payload<0x10000u+ST_SP_AI_VALUE) return -1;
     if(!read_local((const unsigned char*)(uintptr_t)(payload-ST_SP_AI_VALUE)+ST_SP_ENTITY,&object,8) || !object) return -1;
     if(read_local(object+8,&runtime,8)) *entity_key=st_runtime_key(runtime);
@@ -822,7 +827,7 @@ static void st_settarget(void *model,const void *mat,void *a3,void *a4) {
     InterlockedIncrement64(&st_sg_calls);
     const st_sg_fn native=(st_sg_fn)st_sg_native;
     const uint64_t tick=stats.issued;const unsigned char *agent=NULL,*point=NULL;uint64_t key=0;int w=-1;
-    if(!stats.active || boot_phase!=3 || tick<1 || tick>st_ticks || (w=st_watched((const unsigned char*)model,&agent,&key))<0) {
+    if(!stats.active || boot_phase!=3 || tick<st_from || tick>st_ticks || (w=st_watched((const unsigned char*)model,&agent,&key))<0) {
         native(model,mat,a3,a4);return;
     }
     uint32_t e[ST_SG_WORDS];memset(e,0,sizeof(e));
@@ -862,7 +867,7 @@ static void st_step(void *model,const void *vector,float dt,double time) {
     const st_step_fn native=(st_step_fn)st_native;
     InterlockedIncrement64(&st_calls);
     const uint64_t tick=stats.issued;const unsigned char *agent;uint64_t key;int watched;
-    if(!stats.active || boot_phase!=3 || tick<1 || tick>st_ticks || (watched=st_watched((const unsigned char*)model,&agent,&key))<0) {
+    if(!stats.active || boot_phase!=3 || tick<st_from || tick>st_ticks || (watched=st_watched((const unsigned char*)model,&agent,&key))<0) {
         native(model,vector,dt,time);return;
     }
     InterlockedIncrement64(&st_watched_calls);
@@ -899,12 +904,12 @@ static int st_watch(uint64_t id) {
 /* Before the first admitted frame, on the MoveWorker; a rerun with the same ticks is accepted. */
 static int st_arm(uint64_t ticks) {
     if(st_installed) return stats.active && ticks==st_ticks;
-    if(!ticks || ticks>600 || !st_id_count || !stats.active || (boot_mode && boot_phase) || stats.issued ||
+    if(!ticks || ticks>ST_TICKS_MAX || !st_id_count || !stats.active || (boot_mode && boot_phase) || stats.issued ||
        GetCurrentThreadId()!=ui_thread || !world_identity_installed) {st_stage="refused";return 0;}
     void *entry=*(void *volatile*)(image+ST_SLOT);
     if(entry!=(void*)(image+ST_STEP)) {st_stage="entry";return 0;}
     if(!st_ring && !(st_ring=calloc(ST_RECORDS,sizeof(st_record_t)))) {st_stage="memory";return 0;}
-    st_native=entry;st_ticks=ticks;st_records=st_calls=st_watched_calls=st_dropped=0;
+    st_native=entry;st_ticks=ticks;st_from=ticks>ST_TICKS_DIRECT?ticks-ST_WINDOW_TICKS+1:1;st_records=st_calls=st_watched_calls=st_dropped=0;
     memset(st_ordinal_tick,0,sizeof(st_ordinal_tick));memset((void*)st_fm,0,sizeof(st_fm));st_fm_kept=st_pt_kept=st_pt_conversions=st_pt_no_slot=st_sg_calls=st_sg_kept=0;
     st_pt_levels_probed=st_ps_kept=st_hw_calls=st_hw_kept=st_hw_banking=st_pc_kept=st_oc_kept=0;
     st_sp_kept=st_sp_caps=st_sp_solver=st_sp_gated=st_sp_sequence=0;st_sp_gate_clear();

@@ -266,3 +266,33 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   props (GeneratePropsEvent, lockstep_nav_mesh.h), so the set a joiner's load asks for is its own; the helpers are world
   state (a station's people come with them). x4mods-28 carries the receipt (NMESH); building the session's helper set at
   T+1 from the package is the open part.
+
+15. THE JOINER'S PASS OF T AND THE SLOT SHIPS' FLIGHT STATE (4 November, late)
+- Where a frame's code runs: ui_thread is the MoveWorker (path_release, the probe's Lua frame, rc_frame and view_frame all run
+  inside its frame); the gate tick (mt_join, rc_join_point, join_admit) runs on the main thread while the MoveWorker is parked
+  at its frame start. So w1z4's wait in rc_frame could never see the MoveWorker parked.
+- What a joiner's T+1 starts from (with x4mods-28, j1-141..144): the session's frame T+1 starts from the synced passes kicked
+  at the end of T (mass traffic and the region manager, with the stand-in cameras of T, seeded with key(T-1), joined at the
+  gate tick after T) and its pathing pass reads the travel snapshot's copy. A joiner's starts from its last loading frame's
+  passes (local camera, unseeded, not joined, running into T+1), its view points latch for the first time at T+1 (with the
+  first latch's attention refresh, SetAttention on each view point's ancestors, which the session made long before), its
+  sites go in after T+2 and its first pathing pass reads the live +0xf7b. With LDC, NAVT, NMESH and NOCT carried, an ordinary
+  J1's digest is equal 634..650 (j1-144); the world parts at 651 (actor 5, an avoidance command), and REGION_PASS,
+  MASS_TRAFFIC and TRAVEL_SNAPSHOT differed only at 634.
+- lockstep_join_passes.h (diagnostic native_gate_join_passes_admit; the hot join's join_admit_passes hook, main thread,
+  after T is published): the loading frame's passes waited out and seeded for the pass of T with key(T-1); the slot ships
+  resolved, the view points latched without the refresh (view_frame_latch(T,0)) and the stand-ins written (rc_frame_body(T,0):
+  a stand-in camera is attached to its view point object, so the same objects give the same cameras; no scenes, fill or
+  shape latch from the main thread); the region camera's sites installed; the travel snapshot taken and its read moved;
+  traffic and region kicked as MoveWorker::Run kicks them (its conditions, lock, ready byte, SetEvent on a parked thread;
+  the stride's ticks) and joined as mt_join(T). Offline: test_join_passes (the kicks, the arming). Live: next.
+- The slot ships' flight state at T+1 (w1z5, native_gate_pilot_dump_tick=634: every slot's ship, controller, agent and
+  solver, 256-byte rows, compared offline by .local/census/dump_diff.py): on the joiner slot 1's agent has no steering
+  solver (agent+0xf80 0; the session's has one since the stock path flies the ship), zero limits at agent+0x6e0..0x720 (the
+  session's 100/150/225/139), other direction tables at +0x980..+0xa88, and the PlayerController's and agent's timestamps
+  are the load's game time; slot 2's flight limits (agent+0x348..0x378, the block the steering clamp reads) are 1.4 to 2
+  times the session's; slot 3's controller differs in 139 value words. The ship transforms agree to float rounding. The load
+  recreates a controller from <movement class="player">, not the flight state the stock path built since the window start.
+  In an ordinary J1 these ships have not flown through the stock path before T, so this is the window's own part (the three
+  fighters in the slot ships' zone at T+1 read these ships). Next: what builds the solver and the limits (X4's take-control
+  path) and replaying it at the resume, or carrying the value blocks.

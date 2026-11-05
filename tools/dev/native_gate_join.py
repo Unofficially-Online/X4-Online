@@ -163,7 +163,7 @@ def blob_record(blob):
 MAGIC = b'X4MPJN01'
 PACKAGE_VERSION = 13          # 1: GATE..LUA; 2: and HEALTH, POSE; 3: and SHIELD, NAV, ATTN, KEYS; 4: and PATH, REGION; 5: and FLIGHT,
 PACKAGE_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)   # SPLINE; 6: and AGENT; 7: and ROUTE; 8: and PARAM, DOCK; 9: and STEER,
-#                                                        STEERPT; 10: and SOLVER, BULLET; 11: and GRAV, GRAVC, GRAVS; 12: and SPLM, SPLME, SPLMSEG, GRAVN, GRAVP, GRAVQ; 13: and JOBE, EVQT, GRAVD, VIEWK, VIEWKC, VIEWF, VIEWP, SHOOT, ATTK, LIVEF, SPEC, NAVC, JOBS, GONE, BODY, BUPD, LDC, NAVT
+#                                                        STEERPT; 10: and SOLVER, BULLET; 11: and GRAV, GRAVC, GRAVS; 12: and SPLM, SPLME, SPLMSEG, GRAVN, GRAVP, GRAVQ; 13: and JOBE, EVQT, GRAVD, VIEWK, VIEWKC, VIEWF, VIEWP, SHOOT, ATTK, LIVEF, SPEC, NAVC, JOBS, GONE, BODY, BUPD, LDC, NAVT, NMESH, NOCT
 HEADER = struct.Struct('<8sIIQQQ32sQIIQ')      # 96 bytes
 SECTION = struct.Struct('<IIQ32s')            # 48 bytes before each payload
 SEC_GATE, SEC_IDS, SEC_WAKE, SEC_WAKEVEC, SEC_MDHEAP, SEC_MODULES, SEC_CTX, SEC_LUA, SEC_HEALTH, SEC_POSE = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
@@ -177,7 +177,7 @@ SEC_STEER, SEC_STEERPT = 23, 24
 SEC_SOLVER, SEC_BULLET = 25, 26
 SEC_GRAV, SEC_GRAVC, SEC_GRAVS = 27, 28, 29
 SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ, SEC_JOBE, SEC_EVQT, SEC_GRAVD = 30, 31, 32, 33, 34, 35, 36, 37, 38
-SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK, SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT = 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53
+SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK, SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT = 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55
 SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC: 'wakevec', SEC_MDHEAP: 'mdheap',
                  SEC_MODULES: 'modules', SEC_CTX: 'ctx', SEC_LUA: 'lua', SEC_HEALTH: 'health', SEC_POSE: 'pose',
                  SEC_SHIELD: 'shield', SEC_NAV: 'nav', SEC_ATTN: 'attn', SEC_KEYS: 'keys', SEC_PATH: 'path', SEC_REGION: 'region',
@@ -186,7 +186,7 @@ SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC
                  SEC_GRAV: 'grav', SEC_GRAVC: 'gravc', SEC_GRAVS: 'gravs', SEC_SPLM: 'splm', SEC_SPLME: 'splme',
                  SEC_SPLMSEG: 'splmseg', SEC_GRAVN: 'gravn', SEC_GRAVP: 'gravp',
                  SEC_GRAVQ: 'gravq', SEC_JOBE: 'jobe',
-                 SEC_EVQT: 'evqt', SEC_GRAVD: 'gravd', SEC_VIEWK: 'viewk', SEC_VIEWKC: 'viewkc', SEC_VIEWF: 'viewf', SEC_VIEWP: 'viewp', SEC_SHOOT: 'shoot', SEC_ATTK: 'attk', SEC_LIVEF: 'livef', SEC_SPEC: 'spec', SEC_NAVC: 'navc', SEC_JOBS: 'jobs', SEC_GONE: 'gone', SEC_BODY: 'body', SEC_BUPD: 'bupd', SEC_LDC: 'ldc', SEC_NAVT: 'navt'}
+                 SEC_EVQT: 'evqt', SEC_GRAVD: 'gravd', SEC_VIEWK: 'viewk', SEC_VIEWKC: 'viewkc', SEC_VIEWF: 'viewf', SEC_VIEWP: 'viewp', SEC_SHOOT: 'shoot', SEC_ATTK: 'attk', SEC_LIVEF: 'livef', SEC_SPEC: 'spec', SEC_NAVC: 'navc', SEC_JOBS: 'jobs', SEC_GONE: 'gone', SEC_BODY: 'body', SEC_BUPD: 'bupd', SEC_LDC: 'ldc', SEC_NAVT: 'navt', SEC_NMESH: 'nmesh', SEC_NOCT: 'noct'}
 WORLD_SECTIONS = (SEC_HEALTH, SEC_POSE)         # version 2 and later, always both
 WORLD3_SECTIONS = (SEC_SHIELD, SEC_NAV, SEC_ATTN, SEC_KEYS)   # version 3, always all four
 WORLD4_SECTIONS = (SEC_PATH, SEC_REGION)                      # version 4, always both
@@ -199,9 +199,9 @@ WORLD10_SECTIONS = (SEC_SOLVER, SEC_BULLET)                   # version 10, alwa
 WORLD11_SECTIONS = (SEC_GRAV, SEC_GRAVC, SEC_GRAVS)           # version 11, always all three
 WORLD12_SECTIONS = (SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ)   # version 12, always all six
 WORLD13_SECTIONS = (SEC_JOBE, SEC_EVQT, SEC_GRAVD, SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK,
-                    SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT)   # version 13, all eighteen
+                    SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT)   # version 13, all twenty
 LAST_SECTION = {1: SEC_LUA, 2: SEC_POSE, 3: SEC_KEYS, 4: SEC_REGION, 5: SEC_SPLINE, 6: SEC_AGENT, 7: SEC_ROUTE, 8: SEC_DOCK, 9: SEC_STEERPT,
-                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ, 13: SEC_NAVT}
+                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ, 13: SEC_NOCT}
 TEXT_SECTIONS = (SEC_MODULES, SEC_LUA)          # newline-terminated printable lines; count = lines
 # Fixed record shapes (lockstep_join.h join_*_rec). GATE is one 256-byte record; MODULES and LUA (the probe's own state
 # providers, native_gate_join_core.lua) are text (count = lines).
@@ -367,13 +367,15 @@ BODY = struct.Struct('<QII8I23II8I8I')   # BODY: portable, which, record flags, 
 BUPD = struct.Struct('<QQ')     # BUPD: a class-0x6f object's last build update (+0xa58, the double's bits)
 LDC = struct.Struct('<Q113s7x')   # LDC: a LinearDecelerationController's fields (transform, start, velocities, duration, flag)
 NAVT = struct.Struct('<Q30I')     # NAVT: a navigation controller's bank vectors +0x60..+0xaf, x, y, z lanes, two banks by role
-assert SPLM.size == 1264 and SPLME.size == 192 and GRAVN.size == 32 and GRAVP.size == 80 and GRAVQ.size == 48 and JOBE.size == 128 and EVQT.size == 32 and GRAVD.size == 24 and VIEWK.size == 24 and VIEWKC.size == 24 and VIEWF.size == 24 and VIEWP.size == 72 and SHOOT.size == 104 and ATTK.size == 48 and LIVEF.size == 16 and SPEC.size == 40 and NAVC.size == 104 and JOBS.size == 24 and GONE.size == 8 and BODY.size == 208 and BUPD.size == 16 and LDC.size == 128 and NAVT.size == 128
+NMESH = struct.Struct('<Q')       # NMESH: the nav mesh receipt, its build count, then the folded terms (sorted, each once)
+NOCT = struct.Struct('<QQQQIBBBB')   # NOCT: the octree index table: a, b, c, d, class, flag, kind (0 head, 1 entry, 2 hidden), agreed, shown
+assert SPLM.size == 1264 and SPLME.size == 192 and GRAVN.size == 32 and GRAVP.size == 80 and GRAVQ.size == 48 and JOBE.size == 128 and EVQT.size == 32 and GRAVD.size == 24 and VIEWK.size == 24 and VIEWKC.size == 24 and VIEWF.size == 24 and VIEWP.size == 72 and SHOOT.size == 104 and ATTK.size == 48 and LIVEF.size == 16 and SPEC.size == 40 and NAVC.size == 104 and JOBS.size == 24 and GONE.size == 8 and BODY.size == 208 and BUPD.size == 16 and LDC.size == 128 and NAVT.size == 128 and NMESH.size == 8 and NOCT.size == 40
 RECORDS = {SEC_IDS: IDS, SEC_CTX: CTX, SEC_WAKE: WAKE, SEC_WAKEVEC: WAKEVEC, SEC_MDHEAP: MDHEAP, SEC_HEALTH: HEALTH, SEC_POSE: POSE,
            SEC_SHIELD: SHIELD, SEC_NAV: NAV, SEC_ATTN: ATTN, SEC_KEYS: KEYS, SEC_PATH: PATH, SEC_REGION: REGION,
            SEC_FLIGHT: FLIGHT, SEC_SPLINE: SPLINE, SEC_AGENT: AGENT, SEC_ROUTE: ROUTE, SEC_PARAM: PARAM, SEC_DOCK: DOCK,
            SEC_STEER: STEER, SEC_STEERPT: ROUTE, SEC_SOLVER: SOLVER, SEC_BULLET: BULLET, SEC_GRAV: GRAV, SEC_GRAVC: GRAVC,
            SEC_GRAVS: GRAVS, SEC_SPLM: SPLM, SEC_SPLME: SPLME, SEC_SPLMSEG: SPLINE, SEC_GRAVN: GRAVN,
-           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ, SEC_JOBE: JOBE, SEC_EVQT: EVQT, SEC_GRAVD: GRAVD, SEC_VIEWK: VIEWK, SEC_VIEWKC: VIEWKC, SEC_VIEWF: VIEWF, SEC_VIEWP: VIEWP, SEC_SHOOT: SHOOT, SEC_ATTK: ATTK, SEC_LIVEF: LIVEF, SEC_SPEC: SPEC, SEC_NAVC: NAVC, SEC_JOBS: JOBS, SEC_GONE: GONE, SEC_BODY: BODY, SEC_BUPD: BUPD, SEC_LDC: LDC, SEC_NAVT: NAVT}
+           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ, SEC_JOBE: JOBE, SEC_EVQT: EVQT, SEC_GRAVD: GRAVD, SEC_VIEWK: VIEWK, SEC_VIEWKC: VIEWKC, SEC_VIEWF: VIEWF, SEC_VIEWP: VIEWP, SEC_SHOOT: SHOOT, SEC_ATTK: ATTK, SEC_LIVEF: LIVEF, SEC_SPEC: SPEC, SEC_NAVC: NAVC, SEC_JOBS: JOBS, SEC_GONE: GONE, SEC_BODY: BODY, SEC_BUPD: BUPD, SEC_LDC: LDC, SEC_NAVT: NAVT, SEC_NMESH: NMESH, SEC_NOCT: NOCT}
 GATE_FIELDS = ('tick', 'game', 'real', 'wire_version', 'clients', 'lookahead', 'tick_hz', 'slot', 'md_seq', 'rid_next',
                'created_generation', 'created_live', 'identities', 'ctx_count', 'wake_count', 'vec_index', 'vec0', 'vec1',
                'md_count', 'md_void', 'md_release', 'md_queued', 'unsupported', 'digest', 'portable', 'save_us',
@@ -853,7 +855,7 @@ def read_package(data):
     if hashlib.sha256(data[:-32]).digest() != data[-32:]:
         raise JoinError('package_sha')
     magic, version, count, tick, game, real, save_sha, save_bytes, slot, flags, reserved = HEADER.unpack_from(data)
-    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 53:
+    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 55:
         raise JoinError('package_magic')
     header = {'tick': tick, 'game': game, 'real': real, 'save_sha': save_sha.hex(), 'save_bytes': save_bytes, 'slot': slot,
               'flags': flags, 'sections': count, 'version': version}
@@ -966,6 +968,11 @@ def read_package(data):
         raise JoinError('ldc_shape')
     if version >= 13 and any(not r[0] or (i and sections['navt'][i-1][0] >= r[0]) for i, r in enumerate(sections['navt'])):
         raise JoinError('navt_shape')
+    nmesh = sections.get('nmesh', [])
+    if version >= 13 and (len(nmesh) == 1 or any(nmesh[i-1][0] >= nmesh[i][0] for i in range(3, len(nmesh)))):
+        raise JoinError('nmesh_shape')
+    if version >= 13 and not noct_shape(sections.get('noct', [])):
+        raise JoinError('noct_shape')
     gate = sections['gate']
     if (gate['tick'], gate['game'], gate['real'], gate['slot']) != (tick, game, real, slot):
         raise JoinError('gate_header')
@@ -1031,6 +1038,24 @@ def _double(bits):
 
 def portable_digest(sections):
     return hashlib.sha256(portable_text(sections).encode('ascii')).digest()[:16].hex()
+
+
+def noct_shape(records):
+    """NOCT (lockstep_join.h join_noct_shape): none, or the head (next >= shown), one entry per index shown..next-1 in order
+    (flag and live 0/1), then hidden keys (flag 0/1)."""
+    if not records:
+        return True
+    head = records[0]
+    if head[6] != 0 or head[1] > head[0]:
+        return False
+    i, want = 1, head[1]
+    while i < len(records) and records[i][6] == 1:
+        if records[i][0] != want or records[i][5] > 1 or records[i][3] > 1:
+            return False
+        want, i = want+1, i+1
+    if want != head[0]:
+        return False
+    return all(r[6] == 2 and r[5] <= 1 for r in records[i:])
 
 
 def write_package(gate, sections, save_sha=b'\0'*32, save_bytes=0, flags=0, version=PACKAGE_VERSION):
@@ -1112,7 +1137,7 @@ def world_differences(left, right, samples=8):
     out = {}
     for name in ('health', 'pose', 'shield', 'nav', 'attn', 'keys', 'path', 'region', 'flight', 'spline', 'agent', 'route', 'param',
                  'dock', 'steer', 'steerpt', 'solver', 'bullet', 'grav', 'gravc', 'gravs', 'splm', 'splme', 'splmseg', 'gravn',
-                 'gravp', 'gravq', 'jobe', 'evqt', 'gravd', 'viewk', 'viewkc', 'viewf', 'viewp', 'shoot', 'attk', 'livef', 'spec', 'navc', 'jobs', 'gone', 'body', 'bupd', 'ldc', 'navt'):
+                 'gravp', 'gravq', 'jobe', 'evqt', 'gravd', 'viewk', 'viewkc', 'viewf', 'viewp', 'shoot', 'attk', 'livef', 'spec', 'navc', 'jobs', 'gone', 'body', 'bupd', 'ldc', 'navt', 'nmesh', 'noct'):
         if name not in left and name not in right:
             continue
         key = (lambda r: (r[1] << 64) | r[0]) if name == 'keys' else (lambda r: r[0])   # KEYS by (table, key)

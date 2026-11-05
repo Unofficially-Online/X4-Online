@@ -718,13 +718,17 @@ static int view_mask_arm(double mask) {
 }
 /* Slot 6 of every admitted frame: latch the viewpoints for the next frames. */
 static int view_frame_locked(uint64_t tick);
+static int view_frame_latch(uint64_t tick,int refresh);
 static int view_frame(uint64_t tick) {
     if(!view_installed || !view_lock_ready || !stats.active || GetCurrentThreadId()!=ui_thread || tick!=stats.issued) {view_stage="frame_guard";InterlockedIncrement64(&view_failures);return 0;}
     int ok=0;EnterCriticalSection(&view_lock);
     __try {ok=view_frame_locked(tick);} __finally {LeaveCriticalSection(&view_lock);}
     return ok;
 }
-static int view_frame_locked(uint64_t tick) {
+/* refresh 0 (lockstep_join_passes.h: a joiner's latch at its admission, the main thread with the MoveWorker parked): the latch
+ * without the attention refresh a change brings, which the session made long before; the latch at T+1 then finds the same
+ * view points, as the session's does. */
+static int view_frame_latch(uint64_t tick,int refresh) {
     void *points[VIEW_MAX];uint64_t ids[VIEW_MAX];unsigned n=0,source=0;const int first=!view_latched;
     /* Hybrid sectors: the split starts at this latch (every client alike); another client's owned slot is
      * no view point here, this client's own owned slot is, and evaluates only inside its sector. */
@@ -760,7 +764,7 @@ static int view_frame_locked(uint64_t tick) {
     memcpy(view_points,points,sizeof(points));memcpy(view_ids,ids,sizeof(ids));view_count=n;view_source=source;
     memcpy(view_previous_zone,zones,sizeof(zones));view_latched=1;++view_latches;
     hyb_view_index_set(own_index); /* before the refreshes: they evaluate with the split */
-    if(changed && view_mode==VIEW_PLAYERS) {
+    if(refresh && changed && view_mode==VIEW_PLAYERS) {
         if(first && view_slot_mask!=VIEW_MASK_ALL) { /* the live player object answered before this latch */
             unsigned char *universe=*(unsigned char*volatile*)(image+VIEW_UNIVERSE);void *p=NULL;
             if(universe && read_local(universe+0x230,&p,8) && p) view_refresh_chain(p);
@@ -773,6 +777,7 @@ static int view_frame_locked(uint64_t tick) {
     hyb_latch_check(); /* the H1 boundary: owners inside their sectors, nobody else in them */
     return 1;
 }
+static int view_frame_locked(uint64_t tick) {return view_frame_latch(tick,1);}
 static int view_status(char *out,size_t capacity) {
     int fresh=view_tick==stats.issued;char ids[VIEW_MAX*18+2]="-";int k=0;
     char callers[640];view_callers_text(callers,sizeof(callers));

@@ -213,9 +213,20 @@ static void test_step_trace_linux(void) {
     assert(!st_row(3*ST_CHUNKS,row,sizeof(row))); /* tick 4 is past the window */
     char status[384];assert(st_status(status,sizeof(status)) && strstr(status,"installed=1 restored=0 ids=1 ticks=3 calls=8 watched_calls=3 records=3 dropped=0"));
     st_restore();memcpy(&entry,LX(LX_ST_SLOT_VA),8);assert(!st_installed && st_restored && entry==step);
+    /* N beyond 600: the 60 ticks ending at N (st_from = N - 59), one ship's records within ST_RECORDS; 600 still 1..600. */
+    boot_phase=0;stats.issued=0;
+    assert(st_arm(1890) && st_installed && st_ticks==1890 && st_from==1831 && st_arm(1890) && !st_arm(600));
+    memcpy(&entry,LX(LX_ST_SLOT_VA),8);assert(entry==(void*)st_step);call=(st_step_fn)entry;boot_phase=3;ts_calls=0;
+    for(uint64_t tick=1828;tick<=1893;tick++) {stats.issued=tick;for(unsigned i=0;i<2;i++) call(models[i],vector,0.25f,10.0+tick);}
+    assert(ts_calls==132 && st_calls==132 && st_watched_calls==60 && st_records==60 && !st_dropped && ST_WINDOW_TICKS<=ST_RECORDS);
+    assert(st_row(0,row,sizeof(row)) && strstr(row,"tick=1831 key=000000000007dcd0 "));
+    assert(st_row(59*ST_CHUNKS,row,sizeof(row)) && strstr(row,"tick=1890 key=000000000007dcd0 ") && !st_row(60*ST_CHUNKS,row,sizeof(row)));
+    st_restore();memcpy(&entry,LX(LX_ST_SLOT_VA),8);assert(!st_installed && st_restored && entry==step);
+    boot_phase=0;stats.issued=0;assert(st_arm(600) && st_from==1 && st_ticks==600);st_restore();assert(!st_installed);
+    assert(!st_arm(ST_TICKS_MAX+1) && !strcmp(st_stage,"refused") && st_arm(ST_TICKS_MAX) && st_from==ST_TICKS_MAX-59);st_restore();
     {uintptr_t page=(uintptr_t)LX(LX_ST_SLOT_VA)&~(uintptr_t)(GATE_PAGE-1);assert(!mprotect((void*)page,GATE_PAGE,PROT_READ|PROT_WRITE));
      memcpy(LX(LX_ST_SLOT_VA),&saved_entry,8);assert(!mprotect((void*)page,GATE_PAGE,PROT_READ|PROT_WRITE));}
-    st_id_count=0;world_identity_installed=0;world_identity_count=0;
+    st_id_count=0;world_identity_installed=0;world_identity_count=0;st_from=1;
     printf("step trace PASS\n");
 }
 /* FR8 with the step trace: refused on a foreign site, then armed (sites before the entry), the stand-in step calling

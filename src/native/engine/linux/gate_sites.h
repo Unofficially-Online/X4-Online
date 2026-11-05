@@ -122,6 +122,22 @@
 #define LX_AGENT_UPDATE_VA 0x1444c70u         /* the pathing Agent update (Windows 0xe8f250) */
 #define LX_AGENT_CALL_VA 0x13e33a2u           /* its only call, in the batch job 0x13e32f0 (Windows 0xeaed6f in 0xeaecc0) */
 #define LX_AGENT_CALL_BLOCK_VA 0x13e33a0u     /* the aligned 16 bytes holding its rel32 */
+/* The player's fleet rebuild timer on game time (gate_player_timer.h; lockstep_player_timer.h). */
+#define LX_PLAYER_MOVE_VA 0x138e6a0u          /* U::Player::vfunc674 (Windows 0x7113e0) */
+#define LX_PLAYER_MOVE_SLOT_VA 0x3b60cf8u     /* its slot +0x1558 of U::Player 0x3b5f7a0 (Windows PT_ENTRY 0x2b33eb8) */
+/* The pathing pass's tempzone requests (gate_tempzone_order.h; lockstep_tempzone_order.h). */
+#define LX_TZ_FIND_VA 0x12981b0u              /* zone at a position, create=1 makes one (Windows 0x785db0; lookup 0x785b90 inlined) */
+#define LX_TZ_ACTIVE_VA 0x1cb3f40u            /* zone active in the thread's view (Windows 0x69ed50) */
+#define LX_TZ_RESET_VA 0x1dc8de0u             /* release the reference held in *ref, *ref = 0 (Windows 0x96940) */
+#define LX_TZ_FLAG_VA 0x3eb9730u              /* one new tempzone pending (Windows 0x3d72b88) */
+#define LX_TZ_ZONE_VA 0x3eb96f0u              /* that zone (Windows 0x3d72c40) */
+#define LX_TZ_LOCK_VA 0x3eb9700u              /* their XLib::Mutex, LX_MUTEX_LOCK_VA/UNLOCK_VA (Windows 0x3d72c48) */
+#define LX_TZ_VIEW_VA 0x3e7742cu              /* g_ComponentViewCacheIndex, the published view the jobs read (Windows 0x38f4eb4) */
+#define LX_TZ_PATH_CREATE_RET_VA 0x14490c3u   /* return addresses of the request calls: Agent_UpdatePathing create=1 (Windows 0xe910a6) */
+#define LX_TZ_PATH_FIND_CALL_VA 0x1449609u    /* create=0 (Windows 0xe9123c) */
+#define LX_TZ_SWITCH_CREATE_RET_VA 0x142fa33u /* the zone switch 0x142efa0: create=1 (Windows 0xe890a6) */
+#define LX_TZ_SWITCH_FIND_CALL_VA 0x142fb34u  /* create=0 (Windows 0xe89131) */
+#define LX_TZ_OTHER_CALL_VA 0x12ec389u        /* 0x12eb620, from the region manager's Run 0x12ef310 (Windows 0xee7c7a) */
 /* AI Wait restores (gate_ai_wait.h, lockstep_ai_wait_rng.h). */
 #define LX_AI_WAIT_SLOT_VA 0x3b2a680u       /* U::AI::WaitAction vtable 0x3b2a650, restore slot +0x30 (Windows +0x28) */
 #define LX_AI_WAIT_RESTORE_VA 0x10c12b0u    /* WaitAction::Reattach (Windows 0x10a50d0) */
@@ -521,6 +537,23 @@ static const lx_site lx_sites[]={
     {"spline_worker_make",0x2001180,0x88,"ff6e4eb1570b0d3ec5d61eb773e2319cb2871ecc1cd493d3585b010352bb2616"},
     {"ship_move_head",0x12b81d0,0x80,"caef5e06d738d33e8e9fa58899f08d841f86c59dac77d949b6b9c1bac96ed3c1"},
     {"agent_update_head",0x1444c70,0x80,"d4d0dea0ff9f3a22a764f0db3bb2458fce330121a696f61a8f46a6b469e73d54"},
+    {"player_timer_head",0x138e6a0,0x40,"1108f59e815cb16932eafd2abb90b3712f8b317593d8bcba99253e15182f3ca4"},
+    {"player_timer_check",0x1390297,0xb0,"e7369926888691a76f43bb38861795dff5e9bf833ba7bccc7ced28aa9ca9f8b6"},
+    {"player_timer_init",0x1daf7d9,0x3f,"b65ee778863f9825537abd0c5961d1263a7a1ae545b829d3143e02bb5ba5185f"},
     {"mt_region_kick",0x12d1680,0xb6,"fff0564cb5e327552abb9dc2a477d8360d7a36ab6acfde1d2f4e44319d4e9eca"},
+    {"tempzone_find",0x12981b0,0x370,"d5f9f35b15c60ebb3d4030a0869335719f2672cb60f1097379604efaf9be5d3d"},
+    {"tempzone_active",0x1cb3f40,0x63,"34908166d8fc2caa0857e17c563ebf6247642b20af7fbcc6e96e465f084e82a6"},
+    {"tempzone_view",0x12021e0,0x1f,"2ef64c84b2b3fc6c1f518dae50e6506e023c192bfdb605616e811d45f3bbf513"},
+    {"tempzone_reset",0x1dc8de0,0x44,"33edf50b7952aed29d92d6da68b8010080f86d69cff1a478f527f60b4ae6ad60"},
+    {"tempzone_addref",0x1fa4030,0x1d,"e5af245e2067a61a22515f18edf95055890c87ca5adde31064b8bd358ec62658"},
+    {"tempzone_path_create",0x144907d,0x14c,"481557ea5ea44e65b747f4e2e19e465bc9a019099a4459af5ee96c65fe12b827"},
+    {"tempzone_path_store",0x1449577,0x40,"4b142b9c6e782c808ed3f137baf42c5f296a9d88b2c1ab8a47b32cf0622dbc9e"},
+    {"tempzone_path_find",0x14495eb,0x2d,"df6aff5d24d3bde72af5eaf9ad8d1483b06dd70e39f8473c4abc73d9e805f632"},
+    {"tempzone_switch_create",0x142f9e7,0x9f,"f4d4403453e5e9d129973c440d222b295ca6014cf30c98e9ae8fb7ea074810a9"},
+    {"tempzone_switch_find",0x142fb14,0x32,"aba5058e48115c99e73f950ceee3521a4127ae5f1e03967e94ac04db7041989a"},
+    {"tempzone_switch_store",0x142fc3b,0x34,"8760f6eb462b271cc5147c0788de2ad43fc11d52762c2a16287e16a2ed04356d"},
+    {"tempzone_runpass_test",0x13e3d78,0xe,"93056c02490f3ab131659156e374f92165751f290dff0dedb773628a30f5f562"},
+    {"tempzone_runpass_clear",0x13e4143,0x6b,"cadcdc7bca5a195e675118b40207062acee8c6532c9c53762594f9cf0e3c6f74"},
+    {"tempzone_region_call",0x12ec381,0xd,"1fb1ad65f6b477df43785690f73bb6bda83dbdd35aed0bfcda2a42fbed8a1b51"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */

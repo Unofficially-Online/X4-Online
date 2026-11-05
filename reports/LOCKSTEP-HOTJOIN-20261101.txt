@@ -1959,6 +1959,29 @@ proposed and rejected.
   j1-139 caee7dda (build-hj16m)   LDC: actor 8 equal; 900 174
   j1-140 6f8eafba (build-hj16n)   NAVT: banks equal; actors 5, 11 part at 651/652; 900 172
   j1-141 70107082 (build-hj16n)   DIGEST_PARTS: pilot, navmesh, input receipts apart from 634
+- The three receipts made portable [F: DIGEST_PARTS, DIGEST_INPUT (the input mux's INPUTS_1), the lockstep session's
+  PILOT_RECEIPT rows]:
+  pilot: UIBUILD_1's construction ID counter (0x38f4dd0, under its lock 0x3d6b940): the joiner's load drew five more
+  (0x5e87 against the session's 0x5e82); the GATE record's pad carries it at T, the admission sets it (18855167).
+  navmesh: NMESH (e3bc6ef4, section 54): the receipt, its count and every term it folded; the joiner adopts them and leaves
+  its catch-up builds of those helpers out of its fold once each up to T+10 (j1-141: the session built sixteen at ticks 1..3
+  and 366, the joiner twelve of them at 634; later builds fold on both: 176b36 at 1144).
+  input: only its octree section (OCT_1: the session 28 indices assigned and waiting, slot 3 never reported; the joiner 0
+  and no records, its loaded octrees native). NOCT (5cc3df23, section 55): the 'agreed' index table (next, shown, agreed,
+  keys hash, every index not shown with its object, flag, assigned tick, agreement and live record) and the hidden keys; the
+  joiner adopts the indices and receipt, makes and requests the live records, hides its octrees of the hidden keys and skips
+  the first-join enumeration.
+  j1-142 18855167 (build-hj16o)   cid=5e82:5e87, pilot equal; input apart in its octree section only
+  j1-143 e3bc6ef4 (build-hj16p)   nmesh=1:12, the receipt the session's (16/a5ec412f) at 634, 635, 900
+  j1-144 5cc3df23 (build-hj16q)   noct=1:4:4:0:11:0; every DIGEST_PARTS part equal 634..650: the replay's first mismatch
+                                  651 (it was 634 since j1-117); 900 172
+- What parts at 651 [F: j1-139..j1-144, the census at 660]: the 660 census has five objects apart (motion), in four zones:
+  actors 5 and 11 (13e75f), 8b6c6 (51b), a592f (55b), 800000d53b84d760 (400); none only on one side. Actor 5's pathing step
+  writes another command at 651 (its bank's +0x60 vector (0, 0, 65.4), +0x84 0.2, where the session keeps its own) with every
+  ACTOR field and row trace equal through 650. The per-frame words apart before it are REGION_PASS, MASS_TRAFFIC and
+  TRAVEL_SNAPSHOT at 634 only: the joiner's T+1 starts from its last loading frame's passes (unpatched, the local camera,
+  not joined), the session's from the joined, patched passes of T. The lockstep session's passes_admit (join_admit_passes,
+  the hook at the admission once the tick base is T) runs the joiner's pass of T as the session's.
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

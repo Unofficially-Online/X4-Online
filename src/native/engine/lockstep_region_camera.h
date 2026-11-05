@@ -1869,8 +1869,15 @@ static int rc_standins_arm(unsigned n) {
 /* Slot 6 of every admitted frame, after the view points latch: the stand-in
  * for the next region and traffic passes and the next frame's simulation. */
 static int rc_join_install(uint64_t tick);
+static int rc_frame_body(uint64_t tick,int full);
 static int rc_frame(uint64_t tick) {
     if(!rc_installed || !stats.active || GetCurrentThreadId()!=ui_thread || tick!=stats.issued) return rc_fail("frame_guard");
+    return rc_frame_body(tick,1);
+}
+/* The stand-ins of this tick from the latched view points. full 0 (lockstep_join_passes.h: a joiner's admission, the main
+ * thread with the MoveWorker parked): the cameras, their sectors and the uncovered count only, without the view scenes, the
+ * shape latch and the field fill, which belong to a frame. */
+static int rc_frame_body(uint64_t tick,int full) {
     void *viewpoint=NULL;uint64_t id=0;
     if(view_latched && view_count) {
         viewpoint=view_points[0];
@@ -1889,7 +1896,7 @@ static int rc_frame(uint64_t tick) {
         InterlockedExchangePointer(rc_shadow_player(),viewpoint);InterlockedExchangePointer(rc_shadow_camera(),camera);
         InterlockedExchangePointer(rc_manager_camera(),camera);rc_next^=1;
     }
-    if(vsc_armed && viewpoint && !vsc_frame(tick)) return rc_fail("view_scenes");
+    if(full && vsc_armed && viewpoint && !vsc_frame(tick)) return rc_fail("view_scenes");
     /* Viewpoint 2 for the scene choice: the first view point in slot order in another sector, else the second. */
     void *viewpoint2=NULL;uint64_t id2=0;
     if(viewpoint && view_count>=2) {
@@ -1950,12 +1957,10 @@ static int rc_frame(uint64_t tick) {
         if(!covered) ++rc_uncovered_now;
     }
     if(rc_uncovered_now) ++rc_uncovered_ticks;
-    rc_shape_latch();
-    if(rc_fill_view && viewpoint && (rc_installed_groups&(1u<<RC_FIELD_FILL)) && !rc_fill_frame(viewpoint,tick)) return rc_fail("field_fill_entries");
+    if(full) rc_shape_latch();
+    if(full && rc_fill_view && viewpoint && (rc_installed_groups&(1u<<RC_FIELD_FILL)) && !rc_fill_frame(viewpoint,tick)) return rc_fail("field_fill_entries");
     unsigned klass;rc_viewpoint_key=id?world_identity_key(id,&klass):0;
     rc_viewpoint_id=id;rc_tick=tick;++rc_updates;
-    /* A hot joiner's first admitted frame: the sites before its step (rc_join_install). */
-    if(join_tick_base() && tick==join_tick_base()+1 && !rc_join_install(tick)) return 0;
     return 1;
 }
 /* Gate tick, main thread, right after mt_join: the sites of every armed group,
@@ -1975,11 +1980,10 @@ static int rc_join_point(uint64_t tick) {
  * joined before it; the join point after step T+1 finds them busy and installs after T+2, so the joiner's steps T+1 and
  * T+2 run with the local camera where the session's ran with the stand-in (j1-141: REGION_PASS, MASS_TRAFFIC and
  * TRAVEL_SNAPSHOT apart at 634, the joiner's 634 snapshot the session's 635; the session installs after its step 1, which
- * both its clients run alike from the same snapshot load). Tried here in rc_frame of T+1, once the stand-in is set: if the
- * MoveWorker is parked and no armed group's pass runs, every pending group goes in and step T+1 runs patched. Never waits:
- * w1z4 waited up to 5 s here (the probe's frame, main thread) and neither came true (join_install=0/1), so the loading
- * frame's pass or the parked MoveWorker needs the frame to go on. Which one stood in the way is counted (not parked / busy)
- * for the next place to try. */
+ * both its clients run alike from the same snapshot load). w1z4 tried it in rc_frame of T+1 and waited in vain: rc_frame runs
+ * on ui_thread, which is the MoveWorker, so the MoveWorker is never parked there. Now lockstep_join_passes.h calls it at the
+ * admission on the main thread (the MoveWorker parked, the loading frame's passes waited out), after the stand-ins of T.
+ * Never waits; which condition stood in the way is counted (not parked / busy). */
 static uint64_t rc_join_installs,rc_join_not_parked,rc_join_busy;
 static int rc_join_install(uint64_t tick) {
     const unsigned pending=rc_armed_groups&~rc_installed_groups;

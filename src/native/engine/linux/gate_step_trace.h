@@ -251,7 +251,7 @@ static int lua_step_trace(lua_State *L) {
 }
 static int lua_step_trace_arm(lua_State *L) {
     double ticks=p_lua_tonumber(L,1);
-    p_lua_pushnumber(L,isfinite(ticks) && ticks>=1 && ticks<=600 && floor(ticks)==ticks && st_arm((uint64_t)ticks));return 1;
+    p_lua_pushnumber(L,isfinite(ticks) && ticks>=1 && ticks<=ST_TICKS_MAX && floor(ticks)==ticks && st_arm((uint64_t)ticks));return 1;
 }
 static int lua_step_trace_status(lua_State *L) {
     char out[1280];int n=accept_ui()?st_status(out,sizeof(out)):0;

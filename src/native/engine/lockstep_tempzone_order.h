@@ -76,6 +76,9 @@
  * reason 144 (the transition rows, the other census-zone diagnostic of this
  * class, have their own 145 since 1 November 2026). Stop puts a parked slot back
  * and restores the entry by CAS. */
+/* The Linux gate (linux/gate_tempzone_order.h) defines the sites, the slot and the view for its executable, and its own
+ * hooks, arming, pins, check, restore, thread context and native calls. */
+#ifndef TZ_OWN_PLATFORM
 #define TZ_FIND 0x785db0u             /* zone at a position; create=1 makes one at it */
 #define TZ_FIND_SIZE 0xa8u
 #define TZ_FIND_SHA "b9d725f375b615af29bd9141092116e1347b36a943f8d627800eecccf5638c2d"
@@ -110,6 +113,7 @@
 #define TZ_SWITCH_CREATE 0xe890a6u
 #define TZ_SWITCH_FIND 0xe89136u
 #define TZ_THUNK 3024u
+#endif
 #define TZ_CANDIDATES 256u
 #define TZ_RING 4096u
 #define TZ_DOMAIN 0x58344c545a4f4e45ULL /* "X4LTZONE" */
@@ -122,7 +126,11 @@ typedef struct {void *sector;uint64_t runtime;uint32_t position[4],site;} tz_can
 typedef struct {uint64_t tick,sector,zone,set;uint32_t position[3],site,n,draws;uint8_t kind,thread,klass,active;} tz_row_t;
 static int tz_mode,tz_installed,tz_restored,tz_blocked,tz_open;
 static volatile LONG tz_active;
+#ifndef TZ_OWN_PLATFORM
 static uint64_t tz_original_word,tz_patched_word,tz_saved_zone;
+#else
+static uint64_t tz_saved_zone;
+#endif
 static LONG tz_saved_flag;
 static volatile LONG64 tz_noted,tz_rows,tz_failures,tz_finds,tz_misses,tz_creates,tz_unblocked,tz_other_creates,tz_other_made,tz_other_in_pass,tz_outside;
 static uint64_t tz_passes,tz_blocks,tz_opens,tz_cleared,tz_granted,tz_stored,tz_found,tz_waits,tz_overflow,tz_requests,tz_max,tz_drew,tz_unmapped,tz_gone;
@@ -132,6 +140,7 @@ static uintptr_t tz_last_ret; /* the latest active call's return address (ABI te
 static tz_find_fn tz_original_override; /* tests only; NULL runs FUN_140785db0 through the thunk */
 static tz_release_fn tz_release_override; /* tests only; NULL runs 0x96940 */
 static const char *tz_stage="idle";
+#ifndef TZ_OWN_PLATFORM
 static int tz_pins(int whole) {
     return (whole?hash_ok(image+TZ_FIND,TZ_FIND_SIZE,TZ_FIND_SHA):hash_ok(image+TZ_FIND+5,TZ_FIND_SIZE-5,TZ_FIND_TAIL_SHA)) &&
         hash_ok(image+TZ_LOOKUP,TZ_LOOKUP_SIZE,TZ_LOOKUP_SHA) && hash_ok(image+TZ_CREATE,TZ_CREATE_SIZE,TZ_CREATE_SHA) &&
@@ -144,6 +153,10 @@ static tz_find_fn tz_original(void) {return tz_original_override?tz_original_ove
 static void tz_release_ref(int64_t *ref) {
     if(tz_release_override) tz_release_override(ref);else ((tz_release_fn)(image+TZ_RELEASE))(ref);
 }
+#else
+static tz_find_fn tz_original(void);
+static void tz_release_ref(int64_t *ref);
+#endif
 /* 0x69ed50 with the published view (as the jobs and RunPass read it), whatever thread asks. */
 static int tz_active_view(const unsigned char *zone) {
     uint32_t flags=0,view=0,index=0;
@@ -155,9 +168,13 @@ static int tz_active_view(const unsigned char *zone) {
 static void tz_addref(unsigned char *zone) {
     InterlockedCompareExchange((volatile LONG*)(zone+0x44),2,1);InterlockedIncrement((volatile LONG*)(zone+0x40));
 }
+#ifndef TZ_OWN_PLATFORM
 static uint32_t tz_site(uintptr_t ret) {
     return ret>=(uintptr_t)image && ret-(uintptr_t)image<0x6fa9000u?(uint32_t)(ret-(uintptr_t)image):0xffffffffu;
 }
+#else
+static uint32_t tz_site(uintptr_t ret);
+#endif
 static void tz_append(const tz_row_t *r) {LONG64 index=InterlockedIncrement64(&tz_rows)-1;tz_ring[(uint64_t)index%TZ_RING]=*r;}
 /* Job side: one request of the pass found no zone (lock-free append; the join orders them). */
 static void tz_note(void *sector,const void *position,uint32_t site) {
@@ -203,6 +220,7 @@ static int64_t *tz_find_run(tz_find_fn original,uintptr_t ret,void *sector,int64
     }
     SetLastError(error);return result;
 }
+#ifndef TZ_OWN_PLATFORM
 /* noinline: the return address read is the native caller's (entered by jmp from the thunk). */
 static __attribute__((noinline)) int64_t *tz_find(void *sector,int64_t *out,const void *position,unsigned char create) {
     return tz_find_run(tz_original(),(uintptr_t)__builtin_return_address(0),sector,out,position,create);
@@ -230,6 +248,7 @@ static int tz_arm(int mode,unsigned options) {
     if(!tz_swap(tz_original_word,tz_patched_word)) {InterlockedExchange(&tz_active,0);tz_stage="entry";return 0;}
     tz_installed=1;tz_restored=0;tz_stage="armed";return 1;
 }
+#endif
 /* MoveWorker, the pathing thread idle, right before the pass is released. */
 static int tz_before_release(void) {
     if(!tz_installed || !InterlockedCompareExchange(&tz_active,0,0)) return 1;
@@ -271,6 +290,7 @@ static int tz_before(uint64_t ka,const tz_candidate_t *a,uint64_t kb,const tz_ca
     return a->site<b->site;
 }
 typedef struct {unsigned char *tls;uint64_t time,word,seed,exit;} tz_context_t;
+#ifndef TZ_OWN_PLATFORM
 /* The job context for the call: TLS game time 0, the keyed word; leave restores both. */
 static void tz_context_enter(tz_context_t *s,unsigned char *tls,uint64_t seed) {
     const uint64_t zero=0;s->tls=tls;s->seed=s->exit=seed;s->time=s->word=0;
@@ -279,6 +299,10 @@ static void tz_context_enter(tz_context_t *s,unsigned char *tls,uint64_t seed) {
 static void tz_context_leave(tz_context_t *s) {
     if(s->tls) {memcpy(&s->exit,s->tls+0x318,8);memcpy(s->tls+0x300,&s->time,8);memcpy(s->tls+0x318,&s->word,8);}
 }
+#else
+static void tz_context_enter(tz_context_t *s,unsigned char *tls,uint64_t seed);
+static void tz_context_leave(tz_context_t *s);
+#endif
 /* The winning job's create=1 request, on the MoveWorker under the slot lock (0xe9108a..0xe911d7);
  * tls is the MoveWorker's TLS block (game time +0x300, word +0x318). */
 static void tz_grant(unsigned char *tls,const tz_candidate_t *c,uint64_t key,unsigned klass,tz_row_t *r) {
@@ -329,6 +353,7 @@ static int tz_after_join_with(unsigned char *tls) {
     __finally {LeaveCriticalSection(lock);if(!done) {tz_stage="grant_exception";InterlockedIncrement64(&tz_failures);}}
     tz_append(&r);return 1;
 }
+#ifndef TZ_OWN_PLATFORM
 static int tz_after_join(void) {
     void **slots=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
     return tz_after_join_with(slots?(unsigned char*)slots[0]:NULL);
@@ -347,6 +372,7 @@ static void tz_restore(void) {
     if(!tz_swap(tz_patched_word,tz_original_word)) return; /* a foreign value stays */
     tz_installed=0;tz_restored=1;
 }
+#endif
 static const char *tz_kind_name(uint8_t kind) {
     return kind==TZ_ROW_GRANT?"grant":kind==TZ_ROW_WAIT?"wait":kind==TZ_ROW_CREATE?"create":kind==TZ_ROW_OTHER?"other":"?";
 }

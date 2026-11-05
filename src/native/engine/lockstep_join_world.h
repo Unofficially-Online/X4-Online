@@ -2739,6 +2739,9 @@ static void join_capture_ldc(join_tables *t) {
     }
     if(t->nldc>1) qsort(t->ldc,t->nldc,sizeof(*t->ldc),join_ldc_cmp);
 }
+static void join_capture_nmesh(join_tables *t);   /* NMESH (lockstep_join.h, at join_admit_rid) */
+static void join_capture_noct(join_tables *t);    /* NOCT (lockstep_join.h, at join_admit_rid) */
+static void join_admit_noct(const join_tables *s,const join_tables *mine);
 static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
     if(!s->nldc) return;
     if(!hash_ok(image+JOIN_LDC_LAYOUT,JOIN_LDC_LAYOUT_SIZE,JOIN_LDC_LAYOUT_SHA)) {join_ldc_shape+=s->nldc;return;}
@@ -2857,6 +2860,8 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_spec(t);            /* version 13 */
     join_capture_navc(t);            /* version 13 */
     join_capture_ldc(t);             /* version 13 */
+    join_capture_nmesh(t);           /* version 13 */
+    join_capture_noct(t);            /* version 13 */
     join_capture_jobs(t);            /* version 13 */
     join_watch_session(t,t->gate.tick);   /* diagnostic (native_gate_join_watch) */
     if(t->nsplm) qsort(t->splm,t->nsplm,sizeof(*t->splm),join_splm_cmp);            /* version 12 */
@@ -4502,6 +4507,7 @@ static int join_admit_world(void) {
     }
     if(s->version>=4) {join_admit_region(s,&mine);join_admit_path(s,strict);}
     if(!join_admit_created(s,&mine)) {join_tables_free(&mine);return 0;}
+    if(s->version>=13) join_admit_noct(s,&mine);   /* the nav octree's index table and hidden keys */
     if(s->version>=13) join_admit_ldc(s,&mine);    /* the drift controllers, before the bodies they set */
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
     if(s->version>=13) for(uint32_t i=0;i<s->nbupd;i++) {   /* BUPD: the session's last build updates */
