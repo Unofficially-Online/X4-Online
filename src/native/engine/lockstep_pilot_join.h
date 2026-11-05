@@ -177,6 +177,31 @@ static void pjoin_pk_pack(void) {
 static void pjoin_pk_unpack(unsigned k) {
     for(unsigned i=0;pslots[k].player && i<3;i++) memcpy(pslots[k].player+pjoin_pk_offsets[i],&pjoin_pk_fields[k][i],8);
 }
+/* The slots' PlayerControllers' own values that a load recreates from <movement class="player"> without (w1z12's dump at T+1,
+ * equal on the session's two clients): the times +0xc0/+0xd0/+0xe8 and their flags +0xc8/+0xd8/+0xe0 (the load's game time on
+ * a joiner), +0x58, +0x2b8, +0x2f8, +0x3a8, the three doubles +0x3b8/+0x3f0/+0x5c8 (1.035/1.325/1.365 on a joiner), the cached
+ * transform rows +0x220..+0x278 and the double positions +0x448..+0x4a0, +0x550..+0x578, +0x5f0..+0x618 (text precision on a
+ * joiner). Not the listener ID +0x18 (the runtime ID registry owns it) nor the counters and indices (+0x670, +0x718, +0x788).
+ * Values only, slot 1's (X4's own controller) and each seated slot k's, written at the resume once the controllers exist. */
+static const unsigned short pjoin_pctl_offsets[]={0x58,0xc0,0xc8,0xd0,0xd8,0xe0,0xe8,0x220,0x228,0x230,0x238,0x240,0x248,0x250,0x258,0x260,
+    0x268,0x270,0x278,0x2b8,0x2f8,0x3a8,0x3b8,0x3f0,0x448,0x450,0x458,0x460,0x468,0x470,0x478,0x480,0x488,0x490,0x498,0x4a0,
+    0x550,0x558,0x560,0x568,0x570,0x578,0x5c8,0x5f0,0x5f8,0x600,0x608,0x610,0x618};
+#define PJOIN_PCTL_WORDS (sizeof(pjoin_pctl_offsets)/sizeof(*pjoin_pctl_offsets))
+static uint64_t pjoin_pctl[PILOT_SLOTS+1][PJOIN_PCTL_WORDS+1];   /* [k][0]: 1 when carried */
+static unsigned char *pjoin_pctl_of(unsigned k) {return k==1?pnat_controller:(k<=PILOT_SLOTS?pslots[k].controller:NULL);}
+static void pjoin_pctl_pack(void) {
+    memset(pjoin_pctl,0,sizeof(pjoin_pctl));
+    for(unsigned k=1;k<=PILOT_SLOTS;k++) {
+        unsigned char *c=pjoin_pctl_of(k);int ok=c!=NULL;
+        for(unsigned i=0;ok && i<PJOIN_PCTL_WORDS;i++) ok=read_local(c+pjoin_pctl_offsets[i],&pjoin_pctl[k][i+1],8);
+        if(ok) pjoin_pctl[k][0]=1;else memset(pjoin_pctl[k],0,sizeof(pjoin_pctl[k]));
+    }
+}
+static void pjoin_pctl_unpack(unsigned k) {
+    unsigned char *c=pjoin_pctl_of(k);
+    if(!c || !pjoin_pctl[k][0]) return;
+    for(unsigned i=0;i<PJOIN_PCTL_WORDS;i++) memcpy(c+pjoin_pctl_offsets[i],&pjoin_pctl[k][i+1],8);
+}
 static void pjoin_seat_unpack(unsigned k) {
     const unsigned char *f=pjoin_seat_flags[k];pslot_slot *s=&pslots[k];
     s->authority=f[0];s->assist[0]=f[1];s->assist[1]=f[2];s->agent_mode=f[3];s->no_highway=f[4];
@@ -205,7 +230,8 @@ static pjoin_blob pjoin_blobs[]={
     {"aim",pstk_aim_replay,sizeof(pstk_aim_replay)},{"cursor",pstk_cursor_replay,sizeof(pstk_cursor_replay)},
     {"view_state",(void*)pview_state,sizeof(pview_state)},{"view_target",pview_target_replay,sizeof(pview_target_replay)},
     {"view_tick",pview_target_tick,sizeof(pview_target_tick)},
-    {"seat_flags",pjoin_seat_flags,sizeof(pjoin_seat_flags)},{"pk_fields",pjoin_pk_fields,sizeof(pjoin_pk_fields)}};
+    {"seat_flags",pjoin_seat_flags,sizeof(pjoin_seat_flags)},{"pk_fields",pjoin_pk_fields,sizeof(pjoin_pk_fields)},
+    {"pctl",pjoin_pctl,sizeof(pjoin_pctl)}};
 #define PJOIN_BLOBS (sizeof(pjoin_blobs)/sizeof(*pjoin_blobs))
 static void pjoin_rings_pack(uint64_t t) {
     memset(pjoin_pstk_ring,0,sizeof(pjoin_pstk_ring));memset(pjoin_pilot_ring,0,sizeof(pjoin_pilot_ring));
@@ -266,7 +292,7 @@ static int pjoin_store_pointers(unsigned char *store,unsigned length,int to_port
 static int pjoin_tables_state(char *out,size_t capacity,uint64_t t) {
     pjoin_stock_pack();pjoin_rings_pack(t);
     for(unsigned k=2;k<=PILOT_SLOTS;k++) pjoin_seat_pack(k);
-    pjoin_pk_pack();
+    pjoin_pk_pack();pjoin_pctl_pack();
     int n=snprintf(out,capacity,"v1/t%llx",(unsigned long long)t);
     for(unsigned b=0;n>0 && (size_t)n<capacity && b<PJOIN_BLOBS;b++) {
         n+=snprintf(out+n,capacity-(size_t)n,"|%s=",pjoin_blobs[b].name);
@@ -378,7 +404,7 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
             memcpy(pslots[k].store,pjoin_store_rx[k],pjoin_store_rx_len[k]);
             if(!pjoin_store_pointers(pslots[k].store,pjoin_store_rx_len[k],0)) {pjoin_resume_why="store_pointer";return 0;}
         }
-        pjoin_seat_unpack(k);pjoin_pk_unpack(k);
+        pjoin_seat_unpack(k);pjoin_pk_unpack(k);pjoin_pctl_unpack(k);
         if(pslots[k].length!=pjoin_store_rx_len[k]) {pjoin_resume_why="store_length";return 0;}
     }
     if(pjoin_rx_mask && !pslot_hook_install()) {pjoin_resume_why="slots_hook";return 0;}
@@ -391,6 +417,7 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
     /* R3 */
     if(pnat_armed && !pnat_install(controller)) {pjoin_resume_why="native_install";return 0;}
     pjoin_stock_unpack();
+    pjoin_pctl_unpack(1);   /* X4's own controller, now pnat_controller */
     pnat_stage="live";
     /* R4: the carried ring entries where the joiner's own catch-up has not staged the same tick yet */
     for(unsigned k=0;k<PILOT_SLOTS;k++) for(unsigned i=0;i<PSTK_RING;i++)

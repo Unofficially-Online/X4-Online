@@ -1239,6 +1239,7 @@ static int rc_is_below(unsigned char *frame,const void *ancestor) {
     return 0;
 }
 /* mining: 0x7884a0's camera test from the latched view points. */
+#include "lockstep_mining_near.h"
 static volatile LONG64 rc_mining_calls,rc_mining_near_count,rc_mining_foreign;
 static int rc_mining_near(void *cluster,const float *pos,void *frame) {
     InterlockedIncrement64(&rc_mining_calls);
@@ -1254,14 +1255,12 @@ static int rc_mining_near(void *cluster,const float *pos,void *frame) {
                 if(i==own && !hyb_inside(frame)) continue; /* hybrid: the owner's ship counts inside its sector only */
                 if(!have_frame) {rc_gtr(frame,f,now,cluster);have_frame=1;}
                 __declspec(align(16)) float v[16];rc_gtr(point,v,now,cluster);
-                const float dx=v[0]-f[0],dy=v[1]-f[1],dz=v[2]-f[2];
-                const float lx=dx*f[4]+dy*f[5]+dz*f[6]-pos[0],ly=dx*f[8]+dy*f[9]+dz*f[10]-pos[1],lz=dx*f[12]+dy*f[13]+dz*f[14]-pos[2];
-                const float d=lx*lx+ly*ly+lz*lz;++candidates;
+                const float d=rc_mining_dist2(f,v,pos);++candidates;
                 if(best<0 || d<best) best=d;
             }
         }
     }
-    const int is_near=best>=0 && best<2.5e9f;
+    const int is_near=rc_mining_is_near(best);
     if(is_near) InterlockedIncrement64(&rc_mining_near_count);
     if(rc_pick_rows_ticks && cluster) {const float row[3]={best,(float)candidates,(float)is_near};rc_pick_note_pos(0x109u,cluster,RC_OBJ_R12,is_near,row);}
     return is_near;

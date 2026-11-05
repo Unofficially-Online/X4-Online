@@ -229,8 +229,26 @@ THE NEXT RESIDUE: A RECYCLABLE 300 TICKS APART (W30 against lx20)
   Windows draws 7 more at 2664 and more at 2665..2667 (exec, entries), and Linux catches up at 2963..2966. Region RNG
   rows are identical through 6000. Recyclables are a region resource that salvage orders tow and crush
   (order.salvage.*), so a script's check went true 10 s (300 ticks) earlier on Windows. From 3000 a created ShipMedium
-  (0x80012cc70973c8bf) differs in motion; 2 objects at 6000. Next: the script RNG rows of 2600..3000 on both platforms
-  (lx21, W31; --script-rng-rows-window, 9011af29) name the script and its owner.
+  (0x80012cc70973c8bf) differs in motion; 2 objects at 6000.
+  W31 against lx21 (script RNG rows 2600..3000, 9011af29; both 33,847 rows): the only differing rows belong to the salvage
+  ship 80012c85986bd321. At 2664 its order.salvage.routine slice starts at PC 0xc2 with the same key and seed on both;
+  Windows draws 12, spawns the Recyclable and starts order.salvage.collect at 2665; Linux draws 5 and suspends. lx22
+  (script RNG option 4, the trace, ad8f66c7; inert: lx22 = lx21 at all 101 digests on both clients): Linux's 2664
+  slice runs PC c2..c2 and its 2963 slice c2..11c (12 draws, then collect at 2964): 11c is the bare <wait/> after
+  create_order SalvageCollect, so at 2963 Linux does what Windows did at 2664. The routine's find path per space:
+  find_object (towable), else find_closest_resource (an area of the sector's list, sector+0x3f8 / Linux +0x3e8,
+  available when area+0x90 <= now, integer yield = amount - reservations, nearest by x^2+(y^2+z^2)) and
+  find_recyclable_with_yield_in_sector (objects of the sector's region fields within 3000 m, else spawned from the
+  region: Windows 0x7884a0). Every compared piece is the same on both platforms: the association, the integer yield,
+  the time test, and the radius test (its rsqrt/rcp pairs rewritten to the same exact sqrtss on both, Windows
+  0x768405, Linux 0x1a4a28f / 0xe11487).
+  What differs is outside them: the nodes' ware and yield those searches read are set by the region field refresh
+  0xee6a80, which natively runs from the render pass (0xeeb98a), and its 0x78a690 (Linux 0x12a2f50) draws the thread
+  word when several resource areas fit (lockstep_region_camera.h). Windows' default native_gate_field_fill = 'view'
+  (with region_fields and view_points) moves that fill to the MoveWorker on a word keyed by the node's position; the
+  census runs on both platforms run without the view-point stack, so each fills on its own render-thread word and
+  timing: equal within a platform, not across. Next: W33 (W30 + view_points, region_fields, field_fill) against W30
+  to confirm, then port view_points, region_fields and field_fill to Linux (the rest of the view-point stack after).
 
 WINDOWS AGAINST LINUX, w22 client 1 (build235, W21 + player_timer) against lx9
   tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
@@ -242,8 +260,8 @@ NEXT
   2. (done: W23 against lx13, identical through 1800.) The platform residue: the 1-ulp z of the ship's position relative
      to an orb accelerator in GetTransformRelativeTo at the jump (0a5d7a, tick 1862): find the operation that rounds
      differently: found (the exit sum's association, MSVC against GCC) and fixed on Linux (native_gate_warp_exit:
-     W30 = lx20 through 2400). Next residue: the Recyclable at 2664 (a script 300 ticks apart; lx21/W31 rows). Then a
-     Linux default for warp_exit.
+     W30 = lx20 through 2400). Next residue: the Recyclable at 2664, a salvage search that the native render-pass
+     field fill decides (W33 to confirm). Then a Linux default for warp_exit.
   3. The rest of the defaults' determinism stack the clock-mode census does not exercise (the battle scope's fixture
      state, shape order, view points), then the people stack on Linux (pilot replay first: a Linux server simulates the
      players).

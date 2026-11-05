@@ -361,6 +361,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_tempzone_order.h"
 #include "test_gate_warp_rng.h"
 #include "test_gate_warp_exit.h"
+#include "test_gate_mining_camera.h"
 /* The real entry bytes: the hook patch and its exact restoration, without running them. */
 static void test_world_install_elf(void) {
     reset_session();wt_reset_identities();
@@ -402,6 +403,7 @@ int main(int argc,char **argv) {
     test_tempzone_order_linux();
     test_warp_rng_linux();
     test_warp_exit_linux();
+    test_mining_camera_linux();
     test_world_hook(); /* last on the synthetic image: it replaces the insert's bytes */
     if(argc>1) {
         /* The real executable's bytes: file pin, every site, the call, the patches. */
@@ -426,6 +428,7 @@ int main(int argc,char **argv) {
         test_tempzone_order_elf();
         test_warp_rng_elf();
         test_warp_exit_elf();
+        test_mining_camera_elf();
         printf("ELF image PASS (%s)\n",argv[1]);
     } else printf("ELF image SKIPPED (no executable path)\n");
     printf("ALL PASS\n");

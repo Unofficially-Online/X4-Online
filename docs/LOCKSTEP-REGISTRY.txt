@@ -205,7 +205,8 @@ Modules (define, owner):
                                 lockstep_player_settings.h (whys player_settings_install, _hook_lost,
                                 _restore, _scope, _scope_open, _present)
   165 RC_STOP_REASON            lockstep_region_camera.h (was 130)
-  166 RC_MINING_STOP            lockstep_region_camera.h (group mining)
+  166 RC_MINING_STOP            lockstep_region_camera.h (group mining); on the Linux gate LXMC_STOP_REASON,
+                                linux/gate_mining_camera.h (whys entry_changed, block_changed)
   167 RC_XS_STOP                lockstep_region_camera.h (group xs)
   168 RC_PROBE_STOP             lockstep_region_camera.h (group camera_probe)
   169 RC_HIGHWAY_ROWS_STOP      lockstep_region_camera.h (group highway_rows)

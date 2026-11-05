@@ -1977,6 +1977,42 @@ class SnapshotProbeTests(unittest.TestCase):
                 self.assertEqual(self.lua.globals().loads,0,config)
                 self.assertTrue(any(' refused' in line for line in self.lua.globals().logs.values()),config)
 
+    def test_linux_gate_arms_the_mining_group_without_view_points(self):
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_region_pass='sync'
+          X4LAN_CONFIG.native_gate_mining_camera='view'
+          local gate=package.loadlib('gate')();order={}
+          gate.platform=function() return 'linux' end
+          gate.region_pass=function(mode) return 1 end
+          gate.region_pass_status=function() return 'mode=sync' end
+          gate.region_camera=function(m,...) assert(select('#',...)==0);order[#order+1]='group:'..m;return 1 end
+          gate.region_camera_frame=function(t) order[#order+1]='frame:'..t;return 1 end
+          gate.region_camera_status=function() return 'installed=1 groups=mining' end
+        """)
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,1)
+        self.assertIn('group:mining',list(self.lua.globals().order.values()))
+        self.assertTrue(any('MINING_CAMERA_ARMED mode=view' in line for line in self.lua.globals().logs.values()))
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update();state.issued=2;update()')
+        self.assertTrue(any(o.startswith('frame:') for o in self.lua.globals().order.values()))
+        # Only the mining group: another group still needs view points on the Linux gate.
+        self.setUp()
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_region_pass='sync'
+          X4LAN_CONFIG.native_gate_xs_camera='view'
+          local gate=package.loadlib('gate')()
+          gate.platform=function() return 'linux' end
+          gate.region_pass=function() return 1 end
+          gate.region_pass_status=function() return 'mode=sync' end
+          gate.region_camera=function() return 1 end
+          gate.region_camera_frame=function() return 1 end
+          gate.region_camera_status=function() return 'stage=idle' end
+        """)
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,0)
+        self.assertTrue(any('xs camera refused' in line for line in self.lua.globals().logs.values()))
+
     def test_shape_refresh_arms_its_group_and_drives_the_frame(self):
         self.lua.execute("""
           X4LAN_CONFIG.native_gate_view_points='players'

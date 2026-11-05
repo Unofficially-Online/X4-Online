@@ -3161,7 +3161,10 @@ local function frame()
                      {'native_gate_sound_rng','sound_rng','SOUND_RNG','split'},{'native_gate_view_scenes','view_scenes','VIEW_SCENES',true},
                      {'native_gate_traffic_rows','traffic_rows','TRAFFIC_ROWS',true}}) do
    if cfg[g[1]] then
-    assert(cfg[g[1]]==g[4] and cfg.native_gate_view_points and (cfg.native_gate_mass_traffic or cfg.native_gate_region_pass) and gate.region_camera and
+    -- The Linux gate has the mining group without view points yet (linux/gate_mining_camera.h): it latches the
+    -- player object's ship, as rc_shape_latch does when no view point is latched.
+    local linux_mining=g[2]=='mining' and gate.platform and gate.platform()=='linux'
+    assert(cfg[g[1]]==g[4] and (cfg.native_gate_view_points or linux_mining) and (cfg.native_gate_mass_traffic or cfg.native_gate_region_pass) and gate.region_camera and
      gate.region_camera_frame and gate.region_camera_status and gate.region_camera(g[2])==1,
      g[3]:lower():gsub('_',' ')..' refused '..tostring(gate.region_camera_status and gate.region_camera_status()))
     log(g[3]..'_ARMED mode='..tostring(g[4]))

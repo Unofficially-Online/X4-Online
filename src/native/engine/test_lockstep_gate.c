@@ -47,6 +47,7 @@
 #include "test_lockstep_attention_all.h"
 #include "test_lockstep_view_scenes.h"
 #include "test_lockstep_region_camera.h"
+#include "test_lockstep_mining_near.h"
 #include "test_lockstep_weapon_fire.h"
 #include "test_lockstep_engine_rng.h"
 #include "test_lockstep_portable_math.h"
@@ -1197,6 +1198,7 @@ int main(int argc,char **argv) {
     test_gravidar_digest();
     test_attention_all();
     test_region_camera();
+    test_mining_near_core();
     test_rc_field_fill();
     test_rc_traffic_rows();
     test_rc_traffic_pass();
