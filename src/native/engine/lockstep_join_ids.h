@@ -87,7 +87,7 @@ static uint64_t join_ids_assign_pinned(void *object) {
         CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(map+0x10);EnterCriticalSection(lock);
         const uint64_t id=join_ids_place(map,object,saved);
         LeaveCriticalSection(lock);
-        if(id) {InterlockedIncrement64(&join_ids_placed);return id;}
+        if(id) {InterlockedIncrement64(&join_ids_placed);join_rw_load_hit(object,id);return id;}   /* JOIN_REFWATCH in the load */
     }
     InterlockedIncrement64(&join_ids_refused);return join_ids_assign_load(object);
 }

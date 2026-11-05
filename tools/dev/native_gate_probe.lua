@@ -294,6 +294,15 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_viewl then   -- a joiner runs the view handlers where its live/player view flags differ (VIEWL)
   assert(gate.join_viewl and gate.join_viewl(1)==1,'join viewl refused')
  end
+ if cfg.native_gate_join_shpw then   -- a joiner takes the session's ship words (SHPW)
+  assert(gate.join_shpw and gate.join_shpw(1)==1,'join shpw refused')
+ end
+ if cfg.native_gate_join_ecos then   -- a joiner takes the session's economy schedules (ECOS)
+  assert(gate.join_ecos and gate.join_ecos(1)==1,'join ecos refused')
+ end
+ if cfg.native_gate_join_rcnt then   -- experiment: a joiner lowers created ships' and bays' reference counts to the session's (RCNT)
+  assert(gate.join_rcnt and gate.join_rcnt(1)==1,'join rcnt refused')
+ end
  if cfg.native_gate_join_pend then   -- a joiner takes the session's pending view cache flags (PEND)
   assert(gate.join_pend and gate.join_pend(1)==1,'join pend refused')
  end
@@ -315,9 +324,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_hold_boot_events then   -- a version 13 joiner holds its boot event passes until its admission
   assert(gate.join_hold_boot_events and gate.join_hold_boot_events(1)==1,'join boot event hold refused')
  end
- if cfg.native_gate_join_watch_span~=nil then   -- JOIN_WATCH rows after each step T+1 .. T+n (2 .. 200)
+ if cfg.native_gate_join_watch_span~=nil then   -- JOIN_WATCH rows after each step T+1 .. T+n (2 .. 300)
   local n=cfg.native_gate_join_watch_span
-  assert(type(n)=='number' and gate.join_watch_span and gate.join_watch_span(n)==n,'native_gate_join_watch_span needs 2 .. 200')
+  assert(type(n)=='number' and gate.join_watch_span and gate.join_watch_span(n)==n,'native_gate_join_watch_span needs 2 .. 300')
  end
  if cfg.native_gate_join_watch~=nil then   -- JOIN_WATCH rows (diagnostic): up to 8 portable IDs, 16 hex digits each
   local watch=cfg.native_gate_join_watch

@@ -63,6 +63,12 @@ static int lua_join_buildp(lua_State *L) {join_buildp_on=p_lua_tonumber(L,1)!=0.
 static int lua_join_viewf_write(lua_State *L) {join_viewf_write=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_viewl(on): a joiner runs the view handlers where its live/player view flags differ (VIEWL; default off). */
 static int lua_join_viewl(lua_State *L) {join_viewl_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_rcnt(on): a joiner lowers the created ships' and bays' reference counts to the session's (RCNT; experiment, default off). */
+/* gate.join_ecos(on): a joiner takes the session's economy schedules (ECOS, default off). */
+static int lua_join_ecos(lua_State *L) {join_ecos_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_shpw(on): a joiner takes the session's ship words (SHPW, default off). */
+static int lua_join_shpw(lua_State *L) {join_shpw_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+static int lua_join_rcnt(lua_State *L) {join_rcnt_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_pend(on): a joiner takes the session's pending view cache flags (PEND; lockstep_join_world.h; default off). */
 static int lua_join_pend(lua_State *L) {join_pend_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_viewf_bits(mask): the bits of the session's VIEWF flag words a joiner takes (lockstep_join_world.h; 0 off); 1 or 0 refused. */
@@ -75,7 +81,7 @@ static int lua_join_view_skip(lua_State *L) {
     const double m=p_lua_tonumber(L,1);const int ok=isfinite(m) && m>=0 && m<=15 && floor(m)==m;
     if(ok) join_view_skip=(unsigned)m;p_lua_pushnumber(L,ok?1:0);return 1;
 }
-/* gate.join_watch_span(n): the JOIN_WATCH rows after each step T+1 .. T+n (2 .. 200; default 2); n, 0 refused. */
+/* gate.join_watch_span(n): the JOIN_WATCH rows after each step T+1 .. T+n (2 .. 300; default 2); n, 0 refused. */
 static int lua_join_watch_span(lua_State *L) {
     const double n=p_lua_tonumber(L,1);const int ok=isfinite(n) && floor(n)==n && n>=2.0 && n<=(double)JOIN_WATCH_SPAN_MAX;
     if(ok) join_watch_span=(uint32_t)n;

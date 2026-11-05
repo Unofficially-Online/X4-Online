@@ -533,3 +533,20 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   83e03 at 657: the session sets +0xa18 to its time (39.933) and the Agent's +0xf34, the joiner keeps +0xa18 from 649 and sets
   +0xf78; from 658 the Agent's path points (+0xad0..) part, so its motion differs by 660. A miner's object state the package
   does not carry; with the hot join (its object sections).
+
+31. ECOS, SHPW AND RCNT IN THE WINDOW (w1z29..w1z31, builds 272..275; 5 November)
+- w1z29 (the hot join's JOIN_REFWATCH on the trader 83e03's object, span 30): of its words only +0xa18 is written in the span,
+  by 0x41a910 (callers 0x3fac6e <- 0xd0557c <- 0xcf98ad/0xcf6ad6 <- 0xcec1e9, and 0x3fe5fb <- 0x40d78b <- 0x89261c, the slot +0x18
+  of U::TradeFilterByCanTradeWith): the session at 649, 657, 658, the joiner at 649, 658, 659. 83e03 runs a TradeRoutine order.
+  0x41a910 is the lazy update of a container's cargo and production (lockstep_ui_lazy.h): +0xa18 its "brought up to date" time.
+- ECOS (section 64, 213df913; native_gate_join_ecos, default off): every Station's, BuildStorage's and ship's economy schedule
+  (+0xa38 next run, +0xa40 last; a load draws the next from the last, lockstep_economy_load.h). w1z30 (ECOS and the hot join's
+  RCNT on): ecos=1:15:13297:0 (only 15 containers apart), rcnt=1:855:4380:5:2; T+1 1, 660 1 (83e03 only; 800231311ef0aee9 gone
+  with RCNT), 720 29, 900 43 (44 without), no topology left. 83e03 still a step late from 657. (The 64th section overflowed the
+  reader's 64-bit seen mask: 30a9d760 widens it to 128 bits.)
+- SHPW (section 65, 0afed698; native_gate_join_shpw, default off): six words of every ship's object a load leaves at defaults
+  (+0x3b0, +0x3b8, +0xa10, +0xa18, +0xa78, +0xc38). w1z31 (SHPW, ECOS, RCNT): shpw=1:9622:988:0; 83e03's words equal from T, its
+  order still a step late at 657, so not its own state; 660/720 as w1z30, but 840 50 and 900 58 with 8 topology (176c95's parts:
+  it dies on one side). Negative: the save writes a container's state as of T without restamping it, so the load's stamp T is
+  the consistent one and the session's older stamp makes the joiner integrate again. SHPW stays off. Next suspect (the hot
+  join): the trade offers themselves (the save's trade entries' IDs, order and reservations).
