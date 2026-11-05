@@ -881,13 +881,24 @@ static unsigned char *join_nav_agent(const unsigned char *object) {
  * +0xf38 the session's 12.316, the joiner's -1 (actor 11); at 651 actor 5's pathing step writes another command into its banks
  * (+0xad0 ..) with every other word equal. The lockstep session's in-window dump (slot agents): +0x658 alike and +0xac0 (22.43
  * against the joiner's 39.66). Status agtt=written:equal:missing agtt_cap=. */
-static const unsigned join_agtt_at[JOIN_AGTT_FIELDS]={0x658u,0u,0xf38u};   /* 0: unused (+0xac0 is the probe's due, NAV's) */
+/* +0xf40: the time of the Agent's last travel mode decision (0xe9187e: no decision while now <= +0xf40 + its interval; +0xf38 the
+ * time it posted the last one, 0xe91868). j1-156: the joiner's loaded Agents decided at once (Start/StopTravelModeEvent for 168 ships
+ * at 635..636 the session had none of; 6da74 stopped at 636 where the session's stopped at 646). */
+static const unsigned join_agtt_at[JOIN_AGTT_FIELDS]={0x658u,0xf40u,0xf38u};
 static uint64_t join_agtt_written,join_agtt_equal,join_agtt_missing;static uint32_t join_agtt_capn;
 /* AGCB (v13, section 57): a pilot slot ship's Agent's command and probe block (+0x6e0, 0x400 bytes). The lockstep session's w1z7
  * (in-window, slot 1's Agent at 634): +0x6e0..+0x720 the session's 100/150/.../139.1, the joiner's 0; the direction tables
  * +0x980..+0xa88 other; the probe's due +0xac0 the joiner's load time. NAV writes only the probe's due and enable, for nav
  * ships, whose blocks come out equal (j1-152: byte-equal, no per-process word in them). Raw, written at the admission. */
 static uint64_t join_agcb_written,join_agcb_equal,join_agcb_missing;static uint32_t join_agcb_capn;
+/* PBNK (v13, section 58): a pilot slot ship's Agent's pathing state banks (Agent +0xad0 + 0x1a0 x bank, pending +0xed0 + 16 x bank),
+ * which NAV and NAVT carry for a NavigationController's Agent only. The lockstep session's w1z8 (slot 2's Agent at 634): the two
+ * poses in the other banks (a role), the tails (+0xb38 260.22, +0xb40/+0xb48, +0xb50, +0xcf8) 0 on the joiner, the pending
+ * counts +0xed8/+0xee8 1 against 0. By role as NAV, relative to the joiner's selectors at the admission. */
+static uint64_t join_pbnk_written,join_pbnk_equal,join_pbnk_missing,join_pbnk_unmapped;static uint32_t join_pbnk_capn;
+static int join_pbnk_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_pbnk_rec *)a)->portable,y=((const join_pbnk_rec *)b)->portable;return x<y?-1:x>y;
+}
 static int join_agcb_cmp(const void *a,const void *b) {
     uint64_t x=((const join_agcb_rec *)a)->portable,y=((const join_agcb_rec *)b)->portable;return x<y?-1:x>y;
 }
@@ -2809,6 +2820,37 @@ static void join_capture_ldc(join_tables *t) {
     if(t->nldc>1) qsort(t->ldc,t->nldc,sizeof(*t->ldc),join_ldc_cmp);
 }
 static void join_capture_nmesh(join_tables *t);   /* NMESH (lockstep_join.h, at join_admit_rid) */
+static uint64_t join_nav_runtime(const join_tables *mine,uint64_t portable,int *ok);   /* NAV's (below) */
+static void join_admit_pbnk(const join_tables *s,const join_tables *mine) {
+    unsigned read=0,write=0;
+    if(!s->npbnk) return;
+    if(!join_param_selectors(&read,&write)) {join_pbnk_missing+=s->npbnk;return;}
+    for(uint32_t i=0;i<s->npbnk;i++) {
+        const join_pbnk_rec *r=&s->pbnk[i];
+        unsigned char *object=join_object(join_runtime_of(mine,r->portable)),*agent=object?join_nav_agent(object):NULL;
+        if(!agent) {++join_pbnk_missing;continue;}
+        int changed=0;
+        for(unsigned role=0;role<2;role++) {
+            const unsigned bp=role?write:read;const join_nav_bank *b=&r->bank[role];
+            const uintptr_t bank=(uintptr_t)agent+0xad0u+(uintptr_t)bp*WORLD_NAV_BANK_BYTES,pend=(uintptr_t)agent+0xed0u+16u*bp;
+            for(unsigned v=0;v<6;v++) changed|=join_poke(bank+16u*v,b->xyz+3*v,12);
+            for(unsigned k=0;k<2;k++) {
+                int ok=!(r->flags>>(3*role+k)&1u);uint64_t want=ok?join_nav_runtime(mine,b->ref[k],&ok):0;
+                if(!ok) {++join_pbnk_unmapped;continue;}
+                changed|=join_poke(bank+0xb0+8u*k,&want,8);
+            }
+            changed|=join_poke(bank+0xcc,&b->mode,4);changed|=join_poke(bank+0x150,&b->eta,8);
+            changed|=join_poke(bank+0x159,&b->arrived,1);changed|=join_poke(bank+0x15a,&b->notified,1);changed|=join_poke(bank+0x15b,&b->layer,1);
+            {
+                int ok=!(r->flags>>(3*role+2)&1u);uint64_t want=ok && b->pending_state==WORLD_NAV_SAVED?join_nav_runtime(mine,b->pending_ref,&ok):0;
+                if(!ok) ++join_pbnk_unmapped;
+                else {changed|=join_poke(pend,&want,8);changed|=join_poke(pend+8,&b->pending_count,8);}
+            }
+            for(unsigned v=0;v<JOIN_NAVT_VECTORS;v++) changed|=join_poke(bank+JOIN_NAVT_FROM+16u*v,r->tail[role]+3*v,12);
+        }
+        if(changed) ++join_pbnk_written; else ++join_pbnk_equal;
+    }
+}
 static void join_admit_agcb(const join_tables *s,const join_tables *mine) {
     for(uint32_t i=0;i<s->nagcb;i++) {
         unsigned char *object=join_object(join_runtime_of(mine,s->agcb[i].portable)),*agent=object?join_nav_agent(object):NULL;
@@ -2839,7 +2881,7 @@ static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
     }
 }
 static int join_capture_world(join_tables *t,double now) {
-    join_agtt_capn=0;join_agcb_capn=0;
+    join_agtt_capn=0;join_agcb_capn=0;join_pbnk_capn=0;
     uint32_t ntcap=0,bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
     join_solver_dormant=0;join_cap.solver_over=0;join_cap.solver_mapped=0;join_cap.bullet_fault=0;join_cap.bullet_blocks=0;join_cap.bullet_live=0;join_cap.bullet_unkeyed=0;
@@ -2893,6 +2935,27 @@ static int join_capture_world(join_tables *t,double now) {
              * ROUTE, SOLVER, STEER), then its pose as before. */
             if(p.kind==PSLOT_VTABLE && !join_capture_flight(t,controller,id->runtime,id->portable,&fcap,&lcap,&agcap,&rcap,&pacap,&stcap,&stpcap,&socap))
                 return 0;
+            if(p.kind==PSLOT_VTABLE) {   /* PBNK: its Agent's pathing state banks by role */
+                unsigned char *agent=NULL;unsigned read=0,write=0;
+                if(join_read(controller+0x40,&agent,8) && agent && join_param_selectors(&read,&write)) {
+                    join_pbnk_rec *r=calloc(1,sizeof(*r));int ok=r!=NULL;
+                    if(r) r->portable=id->portable;
+                    for(unsigned role=0;ok && role<2;role++) {
+                        const unsigned bp=role?write:read;unsigned char bank[WORLD_NAV_BANK_BYTES];uint64_t pend[2];
+                        if(!join_read(agent+0xad0+(size_t)bp*WORLD_NAV_BANK_BYTES,bank,sizeof(bank)) || !join_read(agent+0xed0+16u*bp,pend,16)) {ok=0;break;}
+                        join_nav_bank *b=&r->bank[role];uint64_t refs[2];memcpy(refs,bank+0xb0,16);
+                        for(unsigned v=0;v<6;v++) memcpy(b->xyz+3*v,bank+16*v,12);
+                        for(unsigned k=0;k<2;k++) {b->ref[k]=refs[k]?join_nav_key(refs[k]):0;if(refs[k] && !b->ref[k]) r->flags|=1u<<(3*role+k);}
+                        memcpy(&b->eta,bank+0x150,8);memcpy(&b->mode,bank+0xcc,4);b->arrived=bank[0x159];b->notified=bank[0x15a];b->layer=bank[0x15b];
+                        b->pending_ref=pend[0]?join_nav_key(pend[0]):0;b->pending_count=pend[1];
+                        b->pending_state=(uint8_t)(!pend[0]?WORLD_NAV_NULL:b->pending_ref?WORLD_NAV_SAVED:WORLD_NAV_UNKNOWN);
+                        if(b->pending_state==WORLD_NAV_UNKNOWN) r->flags|=1u<<(3*role+2);
+                        for(unsigned v=0;v<JOIN_NAVT_VECTORS;v++) memcpy(r->tail[role]+3*v,bank+JOIN_NAVT_FROM+16*v,12);
+                    }
+                    if(ok && !JOIN_PUSH(t->pbnk,t->npbnk,join_pbnk_capn,*r)) {free(r);return join_note("memory");}
+                    free(r);
+                }
+            }
             if(p.kind==PSLOT_VTABLE) {   /* AGCB: its Agent's command and probe block */
                 unsigned char *agent=NULL;join_agcb_rec *c=calloc(1,sizeof(*c));
                 if(!c) return join_note("memory");
@@ -2936,6 +2999,7 @@ static int join_capture_world(join_tables *t,double now) {
         return join_note("flight_duplicate,id=%llx",(unsigned long long)t->flight[i].portable);
     if(t->nagent) qsort(t->agent,t->nagent,sizeof(*t->agent),join_agent_cmp);   /* pushed with FLIGHT: the same portable IDs */
     if(t->nagcb>1) qsort(t->agcb,t->nagcb,sizeof(*t->agcb),join_agcb_cmp);
+    if(t->npbnk>1) qsort(t->pbnk,t->npbnk,sizeof(*t->pbnk),join_pbnk_cmp);
     if(t->nagtt) qsort(t->agtt,t->nagtt,sizeof(*t->agtt),join_agtt_cmp);        /* pushed with AGENT: the same portable IDs (j1-150/151:
                                                                                  * unsorted, the driver's reader refused the package) */
     if(t->nroute) qsort(t->route,t->nroute,sizeof(*t->route),join_route_cmp);   /* each Agent's head and points, keys unique */
@@ -4621,6 +4685,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_noct(s,&mine);   /* the nav octree's index table and hidden keys */
     if(s->version>=13) join_admit_agtt(s,&mine);   /* the Agents' times the load resets */
     if(s->version>=13) join_admit_agcb(s,&mine);   /* the pilot slot ships' command and probe blocks */
+    if(s->version>=13) join_admit_pbnk(s,&mine);   /* the pilot slot ships' pathing state banks */
     if(s->version>=13) join_admit_ldc(s,&mine);    /* the drift controllers, before the bodies they set */
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
     if(s->version>=13) for(uint32_t i=0;i<s->nbupd;i++) {   /* BUPD: the session's last build updates */
