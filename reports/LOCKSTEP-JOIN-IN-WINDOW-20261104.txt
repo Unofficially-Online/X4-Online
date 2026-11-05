@@ -467,3 +467,21 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   flags with 0x500000 more. 176c95 fights those ships; if its steering reads their view transform, the joiner reads zeros.
   Slot 1's controller still returns +0x3f0/+0x5c8 to the load's 1.325/1.365 in step T+1 (the session 2.995/2.996). Next:
   w1z19, the hot join's watch on 6c725, 22bce and 176c95 (their views at s, k, j and t).
+
+27. THE SLOT SHIPS AT T+1 (w1z19, w1z20, build264; 5 November)
+- The slot ships are ae79c, 7a8fe and 7a8dc (PILOT_SHIPS; 6c725, 22bce and 8c66e are their runtime IDs on the session and the
+  view points' IDs). w1z19 watched the runtime IDs as portable ones (a part and a missing object); w1z20 the right ones.
+  w1z19: T+1 3, 900 59; w1z20: T+1 3, 900 61 (176cef again, run to run).
+- Their published view poses (behind the views' pose pointers, JOIN_WATCH p=) are the session's at T+1 on the joiner, but for
+  single float ULPs of 7a8fe (y at 634, x at 635). The views' +0x40..+0x7f (section 26) is not the pose here (the pose pointers
+  point elsewhere): stale on the session (constant over 633..635), zero on the joiner, likely unread; no VIEWS section.
+- The slot ships' PlayerControllers after step T+1 (PILOT_DUMP 634): +0x3f0 and +0x5c8 are doubles, elapsed times: 31.70/31.72
+  (slot 1: T+1's time minus the session's start 7.083) and 16.95/16.96 (slot 2: since 21.833, its take) on the session,
+  0.05/0.06 on the joiner (since its load at T). The resume's pctl writes the session's at T; step T+1 sets them from a start the
+  package does not hold (no direct double store to either offset in the image: a block copy from elsewhere). Slot 2's
+  double-precision state +0x448..+0x4a0 and +0x550..+0x578 then differs in its low bits, its position by one ULP.
+- Slot 1's cached basis rows (+0x250..+0x268, the Agent's +0xc80..+0xc98): 2^-24 residues on the session (5.96e-08, 0.000345267
+  with its last bit) where the joiner's are exact (0, last bit apart). Slot 1's ship points almost exactly along an axis, so a
+  side test on those components is at its boundary; 176c95 (580 m from it) chooses the other side (section 26).
+- Slot 2's Player (P_2, which=4): 28 value words of +0x6a18..+0x6c40 hold the session's values (141.4, 184.8, 200, 7482.2,
+  8249.4, 6656, rotations) and zeros on the joiner (the P_k block, not carried).
