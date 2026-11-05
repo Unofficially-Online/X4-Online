@@ -1906,7 +1906,30 @@ proposed and rejected.
   (U::BuildFilterByIsBusy 0x388580; its third test, 0x38c100, is the build's progress at the frame's time). So the joiner
   places more ships at 648 because a shipyard offers more free capacity: the shipyard set, its buildable wares (resources),
   its queued builds after the filter, or a build in progress.
-- Open: that capacity input at 648; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
+- The capacity input [F: native_gate_join_shipyards (f96da9bb), its reads by flags (dff647d1; j1-126..j1-130 read nothing per
+  shipyard: MD has no modulo for a mask), JOIN_BUILDP station rows (72418026)]: j1-125 (every read at 646 and 647 on both sides)
+  gave rows equal on both sides and 648 alike (73 draws each) with the 900 census 162; j1-129 (the waiting finds alone) did not,
+  j1-131 (find_station and the free-processor test alone) did, exactly as j1-125. The test (U::BuildFilterByIsBusy 0x388580; for
+  a processor 0x38c100 with its flag) calls 0x38dd40(processor, frame time), which walks up to the class-0x6f ancestor and runs
+  0x4280e0(object, time): the object's builds advanced over the interval since its last update (+0xa58; skipped when that is the
+  time already). X4 advances them lazily, when such a test asks; the cue's own draws in that update were 12 on the session and 18
+  on the joiner. The save keeps no such time, and a joiner's load sets every object's +0xa58 to the load time (j1-132: 8,971 of
+  10,252 other; the session's mostly 7.083, the joiner's 28.183). BUPD (d6ff99a2, section 51) carries +0xa58 per class-0x6f
+  object and the admission sets it (j1-133: 11,551 written, all equal after T+1 and T+14), but 648 still parted: more of the lazy
+  build state differs after a load than that time. native_gate_join_refresh_builds (1abfbee2; the join overlays' default from
+  0d49e74a): at the join's T+1 every client (the session's T of each SAVE_AT it applied, a joiner's base + 1) raises
+  JoinRefreshBuilds, the free-processor test over every station's build modules in MD's keyed stream (1,376 stations, 153
+  modules, 381 free processors on both sides). j1-134: 648 alike (73 draws each; the refresh drew 14 on the session, 46 on the
+  joiner), T+1 0, the 900 census 420 -> 172 (motion 143, health 32, timing 29, topology 27).
+  j1-125 f96da9bb (build-hj16h)   every read at 646/647: 648 alike, 900 162
+  j1-131 dff647d1 (build-hj16h)   find_station + the free-processor test alone: the same
+  j1-132 72418026 (build-hj16i)   +0xa58 on 8,971 of 10,252 other
+  j1-133 d6ff99a2 (build-hj16j)   BUPD: +0xa58 equal, 648 still parted, 900 420
+  j1-134 1abfbee2 (build-hj16j)   the refresh at T+1: 648 alike, 900 172
+- The joiner's window after STOP: X4 alternates two camera views for the ~3 s before it closes (the lockstep session's burst
+  capture of j1-132 and of its own joiners; ordinary clients do not): what the user saw recurring with every J1. The J1 joiner
+  closes at STOP now (--settle 0); the cause is open (j1-135: the same with the join watch, and so JOIN_WATCHPCF, off).
+- Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)

@@ -159,3 +159,28 @@ one, the seat's store from the package) and replay only the construct IDs, or re
 allocations kept off the shared head (the hot join's load list before the admission skip). To find out first: what the
 loaded controller is bound to (the player singleton at load time, or none) and what X4's release allocates.
 
+10. THE RESUME RUNS TO THE END (w1t-w1x, builds 229-234, 4 November)
+- w1t (build229): the seat adopts the loaded PlayerController (3731b842: its vtable to the slot's copy, its player binding
+  to P_k, the store from the package; only the construct IDs replayed). Stop 91 with join_resume=rebuild_ids: the replayed
+  IDs were not the ones the session created.
+- w1u (build230): the failure row names the replay (rebuild_ids:slot2:adopt1:n2:done2:other0:wrong2): both construct IDs
+  handed out, both different from the session's. Cause: the hot join's ID replay did not follow AssignNewID's contract
+  (set mode: the head is a plain counter, the ID stored at [object+8]); fixed on the hot join branch (join_ids_replay).
+- w1v (build232): the IDs matched; the joiner crashed (0xC0000005) in its first pass after the resume. The seat's store
+  holds X4's control banks, one of them a pointer (environment_zone, vpl_regions pointer=1); the package carried the
+  session's raw address. Fixed c2f6e11f: a store's pointer region travels as a portable ID (the zone's runtime ID, resolved
+  on the joiner), a pointer without a readable ID refuses the state (offline test: test_pilot_join_tables).
+- w1w (build233): join_resume=resumed at T+1=634; the joiner ran the window to the session's end (stop reason 1 at 1199,
+  the session at 1200). Census at T+1: 527,168 of 527,172 objects equal; 900: 728 differ (motion 698, health 44,
+  topology 29, timing 20; 47 objects on one side only). For comparison, an ordinary J1 joiner (outside a window) at 900
+  before the hot join's build refresh: 420; with it: 172 (hot join report).
+- w1x (build234, b0bb0d4c): the same with a catching-up joiner drawing plain steps (no render-only frames, no own-ship
+  presenting; the w1w capture flashed during the catch-up). Census: T+1 3 differ (two Xenon fighters' motion, one created
+  object's nav.refresh_time/refresh_relation), 900: 728 as w1w. Flash capture: 0 blips during the catch-up; the joiner's
+  window flips between two camera views for a few seconds after the session's end (report 18c in the roadmap; joiners only).
+Open:
+- R5/R6: death, fire, foot and foot slots, the UI replay queues, the window's Lua state are not carried; the joiner runs
+  with them as its own arming left them. The window in these runs has no deaths, fire or foot passes, so the census does
+  not see them yet.
+- The 3 objects at T+1 and the 728 at 900: run again on the merged build refresh (f2763e9b) before reading them; the
+  difference to an ordinary J1 joiner names what the window adds.

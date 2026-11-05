@@ -263,6 +263,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_ids','hot joiner saved objects at the session runtime IDs'},
  {'native_gate_join_buildp','hot join build processor busy rows (diagnostic)'},
  {'native_gate_join_shipyards','hot join shipyard capacity rows at these ticks (diagnostic)'},
+ {'native_gate_join_refresh_builds','hot join: every station build state refreshed at T+1 on every client'},
  {'native_gate_join_shipyards_mask','hot join shipyard rows: which reads run (diagnostic)'},
  {'native_gate_event_rows','event rows'},
  {'native_gate_event_rng_rows','event RNG rows'},

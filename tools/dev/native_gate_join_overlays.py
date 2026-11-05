@@ -190,7 +190,7 @@ def check_world_table(package, mode):
     if version >= 13:
         text += f' jobe={len(sections.get("jobe", []))} evqt={len(sections.get("evqt", []))} gravd={len(sections.get("gravd", []))}'
         text += f' viewk={len(sections.get("viewk", []))}/{len(sections.get("viewkc", []))} viewf={len(sections.get("viewf", []))}'
-        text += f' viewp={len(sections.get("viewp", []))} shoot={len(sections.get("shoot", []))} attk={len(sections.get("attk", []))} livef={len(sections.get("livef", []))} spec={len(sections.get("spec", []))} navc={len(sections.get("navc", []))} jobs={len(sections.get("jobs", []))} gone={len(sections.get("gone", []))} body={len(sections.get("body", []))}'
+        text += f' viewp={len(sections.get("viewp", []))} shoot={len(sections.get("shoot", []))} attk={len(sections.get("attk", []))} livef={len(sections.get("livef", []))} spec={len(sections.get("spec", []))} navc={len(sections.get("navc", []))} jobs={len(sections.get("jobs", []))} gone={len(sections.get("gone", []))} body={len(sections.get("body", []))} bupd={len(sections.get("bupd", []))}'
     return text
 
 
@@ -210,6 +210,15 @@ def precise_sets(sets):
     if any(text.replace(' ', '').startswith('native_gate_join_precise=') for text in sets):
         return sets
     return sets+['native_gate_join_precise=true']
+
+
+def refresh_sets(sets):
+    """native_gate_join_refresh_builds = true on savers and joiners (every station's builds brought to one frame time at the join's
+    T+1 on every client, native_gate_join_shipyards.xml; j1-134: the job ships' pick at 648 alike, the 900 census 420 -> 172) unless a
+    --set names it."""
+    if any(text.replace(' ', '').startswith('native_gate_join_refresh_builds=') for text in sets):
+        return sets
+    return sets+['native_gate_join_refresh_builds=true']
 
 
 def check_absent(clients, absent, rejoin=()):
@@ -260,7 +269,7 @@ def build(args, role, snapshot, base_extra, record):
             raise ValueError(f'{path} exists; refusing to overwrite (a new directory keeps earlier inputs frozen)')
     run_tool([DEV/'build_native_gate_overlay.py', '--gate-dll', args.gate_dll, '--snapshot', snapshot, '--mode', 'battle',
               '--session-clients', '--world-identities', *base_extra, '--out', base], 'build_native_gate_overlay.py')
-    sets = [f'native_gate_arm_timeout_ms={args.arm_timeout_ms}'] + precise_sets(census_sets(args))
+    sets = [f'native_gate_arm_timeout_ms={args.arm_timeout_ms}'] + refresh_sets(precise_sets(census_sets(args)))
     notes = run_tool([DEV/'native_gate_players.py', 'overlay', '--base', base, '--out', out, '--gate-dll', args.gate_dll,
                       '--probe', args.probe, '--players', str(record['clients']), '--mode', 'coop', '--source', 'stock',
                       '--defaults-only', *[a for s in sets for a in ('--set', s)]], 'native_gate_players.py overlay')

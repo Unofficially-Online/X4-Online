@@ -4968,10 +4968,18 @@ local function frame()
   assert(anchor:match(' applied=1 ') and anchor:match(' failures=0 ') and anchor:match(' late=0$'),'boot RNG anchor not applied before load completed')
  end
  if profile then profile.mark('modules') end
+ -- Hot join (native_gate_join_shipyards.xml JoinRefreshBuilds): every station's builds brought to one frame time at the join's
+ -- T+1 on every client (the session's T of each SAVE_AT it applied, a joiner's base + 1), in MD's keyed stream.
+ if cfg.native_gate_join_refresh_builds and join_client then
+  local at_t1=join_joiner and (gate.join_base and gate.join_base() and tick==gate.join_base()+1) or (not join_joiner and join_client.save_ticks and join_client.save_ticks[tick-1]==true)
+  if at_t1 then AddUITriggeredEvent('X4LAN_NativeGate','JoinRefreshBuilds',{}) end
+ end
  -- Hot join diagnostic (native_gate_join_shipyards.xml): what Process_Ships reads, logged by every client at these ticks.
  if cfg.native_gate_join_shipyards then
   local mask=cfg.native_gate_join_shipyards_mask or 31   -- which reads run (native_gate_join_shipyards.xml)
-  for _,at in ipairs(cfg.native_gate_join_shipyards) do if tick==at then AddUITriggeredEvent('X4LAN_NativeGate','JoinShipyards',{mask=mask}) end end
+  local bit=function(b) return math.floor(mask/b)%2 end   -- MD gets 0/1 flags (it has no modulo for the mask)
+  local flags={mask=mask,yards=bit(1),wares=bit(2),busy=bit(4),queued=bit(8),waiting=bit(16)}
+  for _,at in ipairs(cfg.native_gate_join_shipyards) do if tick==at then AddUITriggeredEvent('X4LAN_NativeGate','JoinShipyards',flags) end end
  end
  if cfg.native_gate_hash=='battle' then
   if tick==1 then AddUITriggeredEvent('X4LAN_NativeGate',snapshot and 'RestoreActors' or 'Spawn',{}) end

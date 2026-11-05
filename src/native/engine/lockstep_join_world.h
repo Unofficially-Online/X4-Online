@@ -1982,6 +1982,11 @@ static uint32_t join_watch_span=2u;
  * at the frame's time). Rows JOIN_BUILDP side= tick= id=<portable> at=<+0x260 bits> flag=<+0x504> busy=, then a sum. */
 static int join_buildp_on;
 #define JOIN_BUILDP_CLASS 10u
+/* j1-131: the busy test's third part (0x38c100 with its flag) calls 0x38dd40(processor, time), which walks up to the class-0x6f
+ * ancestor and runs 0x4280e0(station, time): the station's builds advanced to the frame's time, its last update at +0xa58
+ * (skipped when that is already the time). A row per class-0x6f object with that time. */
+#define JOIN_BUILDP_STATION 0x6fu
+#define JOIN_BUILDP_LAST 0xa58u
 static void join_buildp_dump(char side,uint64_t tick) {
     if(!join_buildp_on || !world_identities) return;
     size_t cap=1u<<20,at=0;char *out=malloc(cap);if(!out) return;
@@ -1989,7 +1994,14 @@ static void join_buildp_dump(char side,uint64_t tick) {
     for(unsigned i=0;i<WORLD_IDENTITY_CAPACITY && at+256<cap;i++) {
         const uint64_t runtime=world_identities[i].runtime;if(!runtime) continue;
         unsigned char *o=join_object(runtime);uintptr_t vt=0;uint32_t words[8];
-        if(!o || !join_read(o,&vt,8) || !world_class_words(vt,words) || !world_class_has(words,JOIN_BUILDP_CLASS)) continue;
+        if(!o || !join_read(o,&vt,8) || !world_class_words(vt,words)) continue;
+        if(world_class_has(words,JOIN_BUILDP_STATION)) {   /* j1-131: the busy test updates the processor's class-0x6f ancestor */
+            uint64_t last=0;(void)join_read(o+JOIN_BUILDP_LAST,&last,8);++rows;
+            at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_BUILDP side=%c tick=%llu id=%llx station_last=%016llx\r\n",side,
+                                 (unsigned long long)tick,(unsigned long long)world_identities[i].saved,(unsigned long long)last);
+            continue;
+        }
+        if(!world_class_has(words,JOIN_BUILDP_CLASS)) continue;
         uint64_t bits=0;unsigned char flag=0;(void)join_read(o+0x260,&bits,8);(void)join_read(o+0x504,&flag,1);
         double d;memcpy(&d,&bits,8);const int b=d>=-0.9999999 || flag;busy+=(unsigned)b;++rows;
         at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_BUILDP side=%c tick=%llu id=%llx at=%016llx flag=%u busy=%d\r\n",side,
@@ -2650,8 +2662,23 @@ static int join_spline_cmp(const void *a,const void *b) {
     return x->index<y->index?-1:x->index>y->index;
 }
 #include "lockstep_join_body.h"   /* BODY (v13): the destructible objects' physics bodies */
+/* BUPD (v13, section 51): every class-0x6f object's last build update. j1-124..j1-132: at 648 the Split faction's Process_Ships
+ * found more free build capacity on a joiner (81 draws against 77, the job ships placed the other way, 418 of the 900 census
+ * objects after it). Its free-processor test (U::BuildFilterByIsBusy, 0x38c100 with its flag) brings the processor's class-0x6f
+ * ancestor to the frame's time: 0x38dd40 -> 0x4280e0(object, time), its last update at +0xa58, the builds advanced over the
+ * interval since. The save keeps no such time; a joiner's load sets it to the load time on every object (j1-132: 8,971 of
+ * 10,252 other, the session's mostly 7.083, the joiner's 28.183), so the first update after T advances over another interval.
+ * j1-131: the same update run at one tick on both sides gives 648 alike and 162 at 900. The saver writes each object's
+ * +0xa58, the joiner's admission sets it. Status bupd=written:equal:missing:shape bupd_cap=. */
+#define JOIN_BUPD_CLASS 0x6fu
+#define JOIN_BUPD_FIELD 0xa58u
+static uint64_t join_bupd_written,join_bupd_equal,join_bupd_missing,join_bupd_shape;
+static int join_bupd_cmp(const void *a,const void *b) {
+    const uint64_t x=((const join_bupd_rec*)a)->portable,y=((const join_bupd_rec*)b)->portable;return x<y?-1:x>y;
+}
+static int join_bupd_class(uintptr_t vtable) {uint32_t words[8];return world_class_words(vtable,words) && world_class_has(words,JOIN_BUPD_CLASS);}
 static int join_capture_world(join_tables *t,double now) {
-    uint32_t bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
+    uint32_t bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
     join_solver_dormant=0;join_cap.solver_over=0;join_cap.solver_mapped=0;join_cap.bullet_fault=0;join_cap.bullet_blocks=0;join_cap.bullet_live=0;join_cap.bullet_unkeyed=0;
     for(uint32_t i=0;i<t->nids;i++) {
@@ -2661,6 +2688,11 @@ static int join_capture_world(join_tables *t,double now) {
         if(vtable==(uintptr_t)(image+JOIN_REGION_VTABLE) && !join_capture_region(t,object,id->portable,&gcap)) return 0;
         unsigned classes=world_class_flags(vtable);
         if(classes&0x80000000u) continue;
+        if(join_bupd_class(vtable)) {   /* BUPD: its last build update */
+            join_bupd_rec u={id->portable,0};
+            if(!join_read(object+JOIN_BUPD_FIELD,&u.last,8)) return join_note("bupd,id=%llx",(unsigned long long)id->portable);
+            if(!JOIN_PUSH(t->bupd,t->nbupd,bupdcap,u)) return join_note("memory");
+        }
         {   /* ATTN: every present object of a known class (the census timing domain reads +0x1ec of every one) */
             join_attn_rec a;memset(&a,0,sizeof(a));a.portable=id->portable;
             if(!join_read(object+JOIN_ATTENTION,&a.level,4) || ((classes&4u) && !join_read(object+JOIN_ATTENTION_DUE,&a.due,8)))
@@ -2709,6 +2741,8 @@ static int join_capture_world(join_tables *t,double now) {
     }
     if(t->nhealth) qsort(t->health,t->nhealth,sizeof(*t->health),join_health_cmp);
     if(!join_body_sort(t)) return 0;
+    if(t->nbupd) qsort(t->bupd,t->nbupd,sizeof(*t->bupd),join_bupd_cmp);
+    for(uint32_t i=1;i<t->nbupd;i++) if(t->bupd[i].portable==t->bupd[i-1].portable) return join_note("bupd_duplicate,id=%llx",(unsigned long long)t->bupd[i].portable);
     if(t->npose) qsort(t->pose,t->npose,sizeof(*t->pose),join_pose_cmp);
     if(t->nshield) qsort(t->shield,t->nshield,sizeof(*t->shield),join_shield_cmp);
     if(t->nnav) qsort(t->nav,t->nnav,sizeof(*t->nav),join_nav_cmp);
@@ -4382,6 +4416,13 @@ static int join_admit_world(void) {
     if(s->version>=4) {join_admit_region(s,&mine);join_admit_path(s,strict);}
     if(!join_admit_created(s,&mine)) {join_tables_free(&mine);return 0;}
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
+    if(s->version>=13) for(uint32_t i=0;i<s->nbupd;i++) {   /* BUPD: the session's last build updates */
+        unsigned char *object=join_object(join_runtime_of(&mine,s->bupd[i].portable));uintptr_t vtable=0;uint64_t own=0;
+        if(!object) {++join_bupd_missing;continue;}
+        if(!join_read(object,&vtable,8) || !join_bupd_class(vtable) || !join_read(object+JOIN_BUPD_FIELD,&own,8)) {++join_bupd_shape;continue;}
+        if(own==s->bupd[i].last) {++join_bupd_equal;continue;}
+        memcpy(object+JOIN_BUPD_FIELD,&s->bupd[i].last,8);++join_bupd_written;
+    }
     join_tables_free(&mine);
     if(strict && (join_rx.health_missing || join_rx.health_shape || join_rx.health_conflict))
         return join_fail_rx(JOIN_WHY_MISMATCH,join_rx.health_missing?"world:health_missing":join_rx.health_shape?"world:health_shape":"world:health_conflict");
