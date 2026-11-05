@@ -60,13 +60,18 @@ static int lua_pilot_join_in_window(lua_State *L) {
 static int lua_pilot_dump(lua_State *L) {
     const double slot=p_lua_tonumber(L,1),which=p_lua_tonumber(L,2),offset=p_lua_tonumber(L,3);
     unsigned char bytes[256],*base=NULL;char hex[2*sizeof(bytes)];
-    if(!accept_ui() || !(slot>=1 && slot<=PILOT_SLOTS) || floor(slot)!=slot || !(which>=0 && which<=4) || floor(which)!=which ||
+    if(!accept_ui() || !(slot>=1 && slot<=PILOT_SLOTS) || floor(slot)!=slot || !(which>=0 && which<=6) || floor(which)!=which ||
        !(offset>=0 && offset<=0x8000) || floor(offset)!=offset) {p_lua_pushnil(L);return 1;}
+    if(which>=5) {   /* the resume's snapshots of the slot's controller (lockstep_pilot_join.h pjoin_snap) */
+        const unsigned w=(unsigned)which-5u,k=(unsigned)slot;
+        if(!pjoin_snap_ok[w][k] || offset+sizeof(bytes)>PJOIN_SNAP) {p_lua_pushnil(L);return 1;}
+        memcpy(bytes,pjoin_snap[w][k]+(unsigned)offset,sizeof(bytes));base=bytes;
+    }
     const pilot_slot *s=&pilot_slots[(unsigned)slot-1u];
-    if(which==0) base=s->object;else if(which==2) base=s->agent;else if(which==3) base=s->solver;
+    if(base) ;else if(which==0) base=s->object;else if(which==2) base=s->agent;else if(which==3) base=s->solver;
     else if(which==4) base=slot==1?pslot_p1:pslots[(unsigned)slot].player;
     else if(!s->object || !read_local(s->object+0x200,&base,8)) base=NULL;
-    if(!base || !read_local(base+(unsigned)offset,bytes,sizeof(bytes))) {p_lua_pushnil(L);return 1;}
+    if(!base || (base!=bytes && !read_local(base+(unsigned)offset,bytes,sizeof(bytes)))) {p_lua_pushnil(L);return 1;}
     static const char digits[]="0123456789abcdef";
     for(unsigned i=0;i<sizeof(bytes);i++) {hex[2*i]=digits[bytes[i]>>4];hex[2*i+1]=digits[bytes[i]&15];}
     p_lua_pushlstring(L,hex,sizeof(hex));return 1;

@@ -2147,10 +2147,12 @@ local function pilot_frame(s,tick)
  if pilot_view.death then pilot_view.death_frame(tick) end
  -- Diagnostic native_gate_pilot_dump_tick: every slot's ship, controller, agent and solver bytes at that tick, read only, so
  -- that the session's and a joiner's can be compared offline (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 15).
- if cfg.native_gate_pilot_dump_tick==tick and gate.pilot_dump then
-  local sizes={0x800,0x800,0x1000,0x400,0x6f00}
+ local dump_at=cfg.native_gate_pilot_dump_tick
+ if dump_at and gate.pilot_dump and (dump_at==tick or (type(dump_at)=='table' and (dump_at[1]==tick or dump_at[2]==tick))) then
+  -- which 5 and 6: a joiner's slot controllers just before and after the resume wrote their carried values (once, at T+1).
+  local sizes={0x800,0x800,0x1000,0x400,0x6f00,0x800,0x800}
   for slot=1,#cfg.native_gate_pilot_slots do
-   for which=0,4 do
+   for which=0,6 do
     -- The players: only their seat and flight fields (+0x6a00..+0x6f00).
     for off=(which==4 and 0x6a00 or 0),sizes[which+1]-256,256 do
      local hex=gate.pilot_dump(slot,which,off)

@@ -182,10 +182,19 @@ static void pjoin_pk_unpack(unsigned k) {
  * a joiner), +0x58, +0x2b8, +0x2f8, +0x3a8, the three doubles +0x3b8/+0x3f0/+0x5c8 (1.035/1.325/1.365 on a joiner), the cached
  * transform rows +0x220..+0x278 and the double positions +0x448..+0x4a0, +0x550..+0x578, +0x5f0..+0x618 (text precision on a
  * joiner). Not the listener ID +0x18 (the runtime ID registry owns it) nor the counters and indices (+0x670, +0x718, +0x788).
- * Values only, slot 1's (X4's own controller) and each seated slot k's, written at the resume once the controllers exist. */
-static const unsigned short pjoin_pctl_offsets[]={0x58,0xc0,0xc8,0xd0,0xd8,0xe0,0xe8,0x220,0x228,0x230,0x238,0x240,0x248,0x250,0x258,0x260,
-    0x268,0x270,0x278,0x2b8,0x2f8,0x3a8,0x3b8,0x3f0,0x448,0x450,0x458,0x460,0x468,0x470,0x478,0x480,0x488,0x490,0x498,0x4a0,
-    0x550,0x558,0x560,0x568,0x570,0x578,0x5c8,0x5f0,0x5f8,0x600,0x608,0x610,0x618};
+ * Values only, slot 1's (X4's own controller) and each seated slot k's, written at the resume once the controllers exist.
+ * w1z20 (the hot join's watch on the slot ships' controllers, the session at T against the joiner before the resume) adds the
+ * current transform (+0x60 the position, +0x70/+0x80/+0x90 the rows) and its copy +0x100..+0x13f: the joiner holds the load's
+ * (exact rows where the session's carry 2^-24 residues, slot 2's position a step behind), and step T+1 moves them into the
+ * previous rows +0x220.. that this blob writes, so at T+1 those were the load's again (w1z18: +0x250..+0x268 apart; 176c95, 580 m
+ * from slot 1's axis-aligned ship, steered to the other side). Also the last update's time +0xf0 (slot 2: T on the session, -1
+ * on the joiner), +0x1c0/+0x1c8, and +0x3e8 beside the elapsed times +0x3f0/+0x5c8, which step T+1 set back to one step's
+ * dt on the joiner (w1z18: 0.05 against 31.70 and 16.95). */
+static const unsigned short pjoin_pctl_offsets[]={0x58,0x60,0x68,0x70,0x78,0x80,0x88,0x90,0x98,0xc0,0xc8,0xd0,0xd8,0xe0,0xe8,0xf0,
+    0x100,0x108,0x110,0x118,0x120,0x128,0x130,0x138,0x1c0,0x1c8,0x220,0x228,0x230,0x238,0x240,0x248,0x250,0x258,0x260,
+    0x268,0x270,0x278,0x2b8,0x2f8,0x3a8,0x3b8,0x3e8,0x3f0,0x438,0x448,0x450,0x458,0x460,0x468,0x470,0x478,0x480,0x488,0x490,0x498,
+    0x4a0,0x540,0x550,0x558,0x560,0x568,0x570,0x578,0x5c8,0x5e0,0x5f0,0x5f8,0x600,0x608,0x610,0x618};
+/* +0x438, +0x540, +0x5e0: -0.0 on the session, +0.0 after a load (w1z21). */
 #define PJOIN_PCTL_WORDS (sizeof(pjoin_pctl_offsets)/sizeof(*pjoin_pctl_offsets))
 static uint64_t pjoin_pctl[PILOT_SLOTS+1][PJOIN_PCTL_WORDS+1];   /* [k][0]: 1 when carried */
 static unsigned char *pjoin_pctl_of(unsigned k) {return k==1?pnat_controller:(k<=PILOT_SLOTS?pslots[k].controller:NULL);}
@@ -197,10 +206,17 @@ static void pjoin_pctl_pack(void) {
         if(ok) pjoin_pctl[k][0]=1;else memset(pjoin_pctl[k],0,sizeof(pjoin_pctl[k]));
     }
 }
+/* Diagnostic (gate.pilot_dump which 5 and 6, native_gate_pilot_dump_tick): each slot controller's first PJOIN_SNAP bytes just
+ * before and just after the resume writes this blob, to set against the session's controller at T. */
+#define PJOIN_SNAP 0x800u
+static unsigned char pjoin_snap[2][PILOT_SLOTS+1][PJOIN_SNAP];
+static int pjoin_snap_ok[2][PILOT_SLOTS+1];
 static void pjoin_pctl_unpack(unsigned k) {
     unsigned char *c=pjoin_pctl_of(k);
     if(!c || !pjoin_pctl[k][0]) return;
+    if(k<=PILOT_SLOTS) pjoin_snap_ok[0][k]=read_local(c,pjoin_snap[0][k],PJOIN_SNAP);
     for(unsigned i=0;i<PJOIN_PCTL_WORDS;i++) memcpy(c+pjoin_pctl_offsets[i],&pjoin_pctl[k][i+1],8);
+    if(k<=PILOT_SLOTS) pjoin_snap_ok[1][k]=read_local(c,pjoin_snap[1][k],PJOIN_SNAP);
 }
 static void pjoin_seat_unpack(unsigned k) {
     const unsigned char *f=pjoin_seat_flags[k];pslot_slot *s=&pslots[k];
