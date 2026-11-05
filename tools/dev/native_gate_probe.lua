@@ -300,6 +300,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_trdn then   -- a joiner takes the session's next trade offer updates (TRDN)
   assert(gate.join_trdn and gate.join_trdn(1)==1,'join trdn refused')
  end
+ if cfg.native_gate_join_npca then   -- a joiner takes the session's NPC activations (NPCA)
+  assert(gate.join_npca and gate.join_npca(1)==1,'join npca refused')
+ end
  if cfg.native_gate_join_ecos then   -- a joiner takes the session's economy schedules (ECOS)
   assert(gate.join_ecos and gate.join_ecos(1)==1,'join ecos refused')
  end
@@ -340,6 +343,10 @@ if cfg.native_gate_join then
   local rw=cfg.native_gate_join_refwatch
   assert(type(rw)=='table' and #rw>=1 and #rw<=4 and gate.join_refwatch,'native_gate_join_refwatch needs 1..4 fields')
   for i=1,#rw do assert(type(rw[i])=='string' and gate.join_refwatch(rw[i])==1,'invalid join refwatch field') end
+ end
+ if cfg.native_gate_join_refwatch_from~=nil then   -- a saver arms those fields from this step on (snapshot objects; diagnostic)
+  local n=cfg.native_gate_join_refwatch_from
+  assert(type(n)=='number' and gate.join_refwatch_from and gate.join_refwatch_from(n)==n,'native_gate_join_refwatch_from needs 1 .. 100000')
  end
  local core=assert(X4LAN_JOIN_CORE,'hot join core missing (ui/native_gate_join_core.lua)')
  local own=tonumber(cfg.slot:sub(2))

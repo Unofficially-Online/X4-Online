@@ -2416,12 +2416,21 @@ static void join_rw_arm(int on) {
 /* During the joiner's load (with native_gate_join_ids): the watched objects' counts from the moment join_ids gives each its
  * session ID (join_ids_assign_pinned), on the loading thread, so the load's own references show (j1-184: a ship created on the
  * session and docked at T holds two more on the joiner from the load on). join_rw_load_prepare at join_load maps the first four
- * watched portable IDs to the session's runtime IDs from the package. */
+ * watched portable IDs to the session's runtime IDs from the package. With JOIN_REFWATCH fields (no dereference): each field's
+ * object by its portable or session runtime ID, the field itself watched from that moment (j1-206: who sets NPC +0x5a0, the
+ * animation state, in the load; the session's 7 NPCs with one hold <npcanimation> in the join save, the joiner restores 5). */
+static uint64_t join_rw_from;static uint32_t join_rw_early_found;   /* native_gate_join_refwatch_from (join_rw_early_probe) */
 static uint64_t join_rw_load_runtime[4];static volatile LONG64 join_rw_load_calls,join_rw_load_hits;static uint32_t join_rw_load_prepared;
 static void join_rw_load_prepare(const join_tables *t) {
     for(unsigned i=0;i<4u;i++) {
         join_rw_load_runtime[i]=0;
-        if(i>=join_watch.n || join_rw_nspec) continue;   /* default mode only: the watched objects' counts */
+        if(join_rw_nspec) {   /* the fields' objects (no dereference in the load) */
+            if(i>=join_rw_nspec || join_rw_spec[i].nderef) continue;
+            const uint64_t want=join_rw_spec[i].portable;
+            for(uint32_t k=0;k<t->nids;k++) if(t->ids[k].portable==want || t->ids[k].runtime==want) {join_rw_load_runtime[i]=t->ids[k].runtime;++join_rw_load_prepared;break;}
+            continue;
+        }
+        if(i>=join_watch.n) continue;   /* default mode: the watched objects' counts */
         for(uint32_t k=0;k<t->nids;k++) if(t->ids[k].portable==join_watch.portable[i]) {join_rw_load_runtime[i]=t->ids[k].runtime;++join_rw_load_prepared;break;}
     }
 }
@@ -2433,7 +2442,8 @@ static void join_rw_load_hit(void *object,uint64_t id) {
         InterlockedIncrement64(&join_rw_load_hits);
         if(!join_rw_veh_handle) join_rw_veh_handle=AddVectoredExceptionHandler(1,join_rw_veh);
         if(!join_rw_veh_handle) return;
-        join_rw_addr[i]=(uintptr_t)object+0x40u;join_rw_len[i]=4u;
+        if(join_rw_nspec) {join_rw_addr[i]=(uintptr_t)object+join_rw_spec[i].offset;join_rw_len[i]=join_rw_spec[i].len;}
+        else {join_rw_addr[i]=(uintptr_t)object+0x40u;join_rw_len[i]=4u;}
         RaiseException(JOIN_RW_SET,0,0,NULL);   /* the loading thread; the others from the admission on (side k) */
     }
 #else
@@ -2457,13 +2467,77 @@ static size_t join_rw_rows_text(char *out,size_t cap,char side,uint64_t tick) {
         at+=(size_t)snprintf(out+at,cap-at,"\r\n");
         join_rw_shown=k+1;
     }
-    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_REFWATCH side=%c tick=%llu rows=%ld dropped=%lld strays=%lld threads=%lld failed=%lld load=%u:%lld:%lld\r\n",side,
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_REFWATCH side=%c tick=%llu rows=%ld dropped=%lld strays=%lld threads=%lld failed=%lld load=%u:%lld:%lld early=%llu:%x\r\n",side,
                          (unsigned long long)tick,(long)join_rw_n,(long long)join_rw_dropped,(long long)join_rw_strays,(long long)join_rw_threads,
-                         (long long)join_rw_failed,join_rw_load_prepared,(long long)join_rw_load_calls,(long long)join_rw_load_hits);
+                         (long long)join_rw_failed,join_rw_load_prepared,(long long)join_rw_load_calls,(long long)join_rw_load_hits,
+                         (unsigned long long)join_rw_from,join_rw_early_found);
     return at;
+}
+/* JOIN_OBJSAMPLE (diagnostic, with the watch, after T+1): the first JOIN_SAMPLE_PER objects of each of the classes below (in the
+ * census's order, the same on both sides), their first JOIN_SAMPLE_BYTES raw, by portable ID. j1-199/201: the load leaves times at
+ * the load time or at -1 where the session keeps older ones (the IK joints' time, +0x928, a ship's +0xb00, a pilot's +0x5b0..+0x5c0);
+ * offline, the offsets where the joiner holds T or -1 and the session another value name the rest per class. */
+#define JOIN_SAMPLE_PER 12u
+#define JOIN_SAMPLE_BYTES 0x1000u
+static void join_objsample_dump(uint64_t tick) {
+    static const uint32_t types[]={0x2b7d738u,0x2b7feb8u,0x2b82440u,0x2b9bff8u,0x2b99a88u,0x2b764d8u,0x2b38a48u,0x2b462c8u,0x2ad9ca0u,
+                                   0x2aaca18u,0x2aaa9d8u,0x2b68278u,0x2b6e910u};   /* ShipXS..XL, Station, NPC, Computer, DockingBay,
+                                                                                      BuildStorage, BuildProcessor, Weapon, Turret */
+    unsigned shown[sizeof(types)/sizeof(types[0])];memset(shown,0,sizeof(shown));
+    const size_t cap=1u<<16;char *out=malloc(cap);size_t at=0;
+    if(!out) return;
+    const unsigned total=world_hash_count+world_hash_created_count;
+    static unsigned char raw[JOIN_SAMPLE_BYTES];
+    for(unsigned i=0;i<total;i++) {
+        const world_hash_item *item=world_hash_item_at(i);
+        unsigned char *o=item->runtime?join_object(item->runtime):NULL;uintptr_t vt=0;
+        if(!o || !join_read(o,&vt,8) || vt<(uintptr_t)image) continue;
+        unsigned k=0;
+        for(;k<sizeof(types)/sizeof(types[0]);k++) if(vt-(uintptr_t)image==types[k]) break;
+        if(k>=sizeof(types)/sizeof(types[0]) || shown[k]>=JOIN_SAMPLE_PER) continue;
+        if(!join_read(o,raw,JOIN_SAMPLE_BYTES)) continue;
+        ++shown[k];
+        if(at+2u*JOIN_SAMPLE_BYTES+160u>=cap) {crash_note_write(out,(int)at);at=0;}
+        at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_OBJSAMPLE tick=%llu id=%llx type=%x raw=",(unsigned long long)tick,
+                             (unsigned long long)item->saved,types[k]);
+        static const char digits[]="0123456789abcdef";
+        for(unsigned b=0;b<JOIN_SAMPLE_BYTES && at+3u<cap;b++) {out[at++]=digits[raw[b]>>4];out[at++]=digits[raw[b]&15u];}
+        at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+    }
+    if(at) crash_note_write(out,(int)at);
+    free(out);
+}
+/* JOIN_NPCSLOT (diagnostic, with the watch, after T+1): every NPC's +0x5a0 (j1-203: the slot ship pilot 7a903 holds a pointer
+ * there on the session, none on the joiner; NPC Move 0x6bc420 skips its whole behaviour block, the +0x5b0 stamp included, at
+ * 0x6bc611 when it is null). Rows id:set:vt:[+0x1f0] (vt the pointee's vtable RVA, 0 outside the image), 48 per line. */
+#define JOIN_NPC_VT 0x2b38a48u
+#define JOIN_NPC_SLOT 0x5a0u
+static void join_npcslot_dump(char side,uint64_t tick) {
+    const size_t cap=1u<<16;char *out=malloc(cap);size_t at=0;unsigned n=0,set=0,line=0;
+    if(!out) return;
+    const unsigned total=world_hash_count+world_hash_created_count;
+    for(unsigned i=0;i<total;i++) {
+        const world_hash_item *item=world_hash_item_at(i);
+        unsigned char *o=item->runtime?join_object(item->runtime):NULL;uintptr_t vt=0;
+        if(!o || !join_read(o,&vt,8) || vt!=(uintptr_t)image+JOIN_NPC_VT) continue;
+        unsigned char *p=NULL;uintptr_t pvt=0;uint64_t index=0;
+        (void)join_read(o+JOIN_NPC_SLOT,&p,8);
+        if(p) {(void)join_read(p,&pvt,8);(void)join_read(p+0x1f0,&index,8);++set;}
+        ++n;
+        const uint32_t rva=pvt>=(uintptr_t)image && pvt-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint32_t)(pvt-(uintptr_t)image):0u;
+        if(!line) at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_NPCSLOT side=%c tick=%llu rows=",side,(unsigned long long)tick);
+        at+=(size_t)snprintf(out+at,cap-at,"%s%llx:%d:%x:%llx",line?";":"",(unsigned long long)item->saved,p?1:0,rva,(unsigned long long)index);
+        if(++line>=48u) {at+=(size_t)snprintf(out+at,cap-at,"\r\n");line=0;}
+        if(at+512u>=cap) {crash_note_write(out,(int)at);at=0;}
+    }
+    if(line) at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_NPCSLOT_SUM side=%c tick=%llu npcs=%u set=%u\r\n",side,(unsigned long long)tick,n,set);
+    crash_note_write(out,(int)at);free(out);
 }
 static void join_watch_dump(char side,uint64_t tick) {
     if(!join_watch.n) return;
+    if(side=='t' || side=='k' || side=='s') join_npcslot_dump(side,tick);
+    if(side=='t') join_objsample_dump(tick);
     if(side=='t') join_refcounts_dump(tick);
     {static int tried;if(!tried && thunk) {tried=1;(void)join_pcf_install();}}   /* the thunk page exists from the gate's start */
     const uint32_t cur=join_view_index();size_t cap=1u<<18,at=0;char *out=malloc(cap);
@@ -2832,7 +2906,35 @@ static void join_buildp_dump(char side,uint64_t tick) {
     at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_BUILDP_SUM side=%c tick=%llu rows=%u busy=%u\r\n",side,(unsigned long long)tick,rows,busy);
     crash_note_write(out,(int)at);free(out);
 }
+/* native_gate_join_refwatch_from (diagnostic, a saver): the JOIN_REFWATCH fields armed from step N on, their objects found by
+ * portable ID in the world identity table (snapshot objects only), applied again every 10 steps for new threads until the
+ * capture of T arms them through the watch; the rows show at side s. j1-204: the slot pilots' +0x5a0 is set at runtime (7 of
+ * 11,734 NPCs on the session: both slot pilots and 5 created ones; none on the joiner). */
+static void join_rw_early_probe(uint64_t completed) {
+#ifndef JOIN_OWN_PLATFORM
+    if(!join_rw_from || !join_rw_nspec || !world_identities || join_watch.armed || completed<join_rw_from || (completed-join_rw_from)%10u) return;
+    if(!join_rw_veh_handle) join_rw_veh_handle=AddVectoredExceptionHandler(1,join_rw_veh);
+    if(!join_rw_veh_handle) return;
+    uint32_t found=0;
+    for(unsigned i=0;i<4u;i++) {
+        uintptr_t a=0;uint32_t len=4u;
+        if(i<join_rw_nspec) {
+            const join_rw_spec_t *s=&join_rw_spec[i];unsigned char *o=NULL;len=s->len;
+            for(unsigned k=0;k<WORLD_IDENTITY_CAPACITY && !o;k++)
+                if(world_identities[k].runtime && world_identities[k].saved==s->portable) o=join_object(world_identities[k].runtime);
+            for(uint32_t d=0;o && d<s->nderef;d++) {unsigned char *p=NULL;o=join_read(o+s->deref[d],&p,8)?p:NULL;}
+            if(o) {a=(uintptr_t)(o+s->offset);found|=1u<<i;}
+        }
+        join_rw_addr[i]=a;join_rw_len[i]=len;
+    }
+    join_rw_early_found=found;
+    join_rw_apply();
+#else
+    (void)completed;
+#endif
+}
 static void join_watch_probe(uint64_t completed) {
+    join_rw_early_probe(completed);
     if(!join_watch.armed || completed<=join_watch.tick) return;
     const uint64_t k=completed-join_watch.tick;
     if(k==1u || k==14u) join_buildp_dump(k==1u?'t':'v',completed);
@@ -3310,6 +3412,67 @@ static void join_admit_trdn(const join_tables *s,const join_tables *mine) {
         const join_trdn_rec *r=&s->trdn[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable));
         if(!join_ecos_type(o)) {++join_trdn_missing;continue;}
         if(join_poke((uintptr_t)(o+0x928),&r->next,8)) ++join_trdn_written; else ++join_trdn_equal;
+    }
+}
+/* NPCA (v13, section 67; the admission opt-in, native_gate_join_npca): the NPCs' activation. An NPC's active flag +0x370 (NPC
+ * vt+0x1588 0x4b76f0 reads it, vt+0x1590 0x4b7700 writes it) is evaluated only when its attention changes (0x3d5660 -> vt+0x15e8
+ * 0x6bf900). On the rising edge 0x6bf900 creates its animation state +0x5a0 (0x6bd160 -> 0x3793b0) and 0x6bd830 stamps +0x5b0,
+ * +0x5b8 and +0x5c0 with the time and +0x5d8 with the time and a TLS draw. NPC Move 0x6bc420 runs its behaviour block (the +0x5b0
+ * stamp, the idle timing against +0x5b8 and +0x5d8, TLS draws) only with an animation state (0x6bc611) [F: j1-203..206: the session
+ * activated the slot pilots 0x7a903 and 0x7a8e1 at its snapshot load (stamps 7.083) and keeps the flag; the joiner's load evaluates
+ * them at attention 9, where NPC vt+0x1580 0x5559c0 needs attention 11 or the ship's +0x310, so they stay inactive without an
+ * animation state (JOIN_NPCSLOT: 7 of 11,734 NPCs hold one on the session, 5 on the joiner; JOIN_REFWATCH in the load: 0x379419 sets
+ * the created pilots' from the load's attention pass, never the slot pilots'); the 5 created pilots are active on both sides with
+ * the joiner's load time 28.183 as their stamps]. The capture writes every NPC whose flag or animation state is set; with the opt-in
+ * the admission creates a missing animation state with X4's own 0x6bd160 (no TLS draw), then writes the flag and +0x5b0 .. +0x5e0.
+ * Status npca=on:started:written:equal:missing:failed:index_differs (index: the animation's +0x1f0 after the admission). */
+#define JOIN_NPCA_ACTIVE 0x370u
+#define JOIN_NPCA_STAMPS 0x5b0u
+#define JOIN_NPCA_INDEX 0x1f0u
+#define JOIN_NPCA_START 0x6bd160u   /* NPC: its animation state from its character (0x3793b0 into +0x4e0, +0x5a0 = +0x4e0+0xc0) */
+typedef void (*join_npca_start_fn)(void *npc);
+static void join_npca_start_native(void *npc) {((void (*)(void *))(void *)(image+JOIN_NPCA_START))(npc);}
+static join_npca_start_fn join_npca_start=join_npca_start_native;   /* tests replace it */
+static int join_npca_on;
+static uint64_t join_npca_started,join_npca_written,join_npca_equal,join_npca_missing,join_npca_failed,join_npca_index_differs;
+static int join_npca_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_npca_rec *)a)->portable,y=((const join_npca_rec *)b)->portable;return x<y?-1:x>y;
+}
+static unsigned char *join_npca_object(uint64_t runtime) {   /* an NPC (the exact class), else NULL */
+    unsigned char *o=join_object(runtime);uintptr_t vt=0;
+    return o && join_read(o,&vt,8) && vt==(uintptr_t)image+JOIN_NPC_VT?o:NULL;
+}
+static void join_capture_npca(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        if(!t->ids[i].portable) continue;
+        unsigned char *o=join_npca_object(t->ids[i].runtime),*anim=NULL,active=0;join_npca_rec r;uint64_t index=0;
+        if(!o || !join_read(o+JOIN_NPCA_ACTIVE,&active,1) || !join_read(o+JOIN_NPC_SLOT,&anim,8) || (!active && !anim)) continue;
+        memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;r.flags=(active?1u:0u)|(anim?2u:0u);
+        if(anim && join_read(anim+JOIN_NPCA_INDEX,&index,8)) r.index=(uint32_t)index;
+        if(!join_read(o+JOIN_NPCA_STAMPS,r.stamps,JOIN_NPCA_BYTES)) continue;
+        if(!JOIN_PUSH(t->npca,t->nnpca,cap,r)) return;
+    }
+    if(t->nnpca>1) qsort(t->npca,t->nnpca,sizeof(*t->npca),join_npca_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->nnpca;i++) {if(k && t->npca[k-1].portable==t->npca[i].portable) continue;t->npca[k++]=t->npca[i];}t->nnpca=k;}
+}
+static void join_admit_npca(const join_tables *s,const join_tables *mine) {
+    join_npca_started=join_npca_written=join_npca_equal=join_npca_missing=join_npca_failed=join_npca_index_differs=0;
+    if(!join_npca_on) return;
+    for(uint32_t i=0;i<s->nnpca;i++) {
+        const join_npca_rec *r=&s->npca[i];unsigned char *o=join_npca_object(join_runtime_of(mine,r->portable)),*anim=NULL;
+        if(!o) {++join_npca_missing;continue;}
+        (void)join_read(o+JOIN_NPC_SLOT,&anim,8);
+        if((r->flags&2u) && !anim) {
+            join_npca_start(o);++join_npca_started;
+            if(!join_read(o+JOIN_NPC_SLOT,&anim,8) || !anim) {++join_npca_failed;continue;}
+        }
+        const unsigned char active=(r->flags&1u)?1u:0u;
+        int changed=join_poke((uintptr_t)(o+JOIN_NPCA_ACTIVE),&active,1);
+        changed|=join_poke((uintptr_t)(o+JOIN_NPCA_STAMPS),r->stamps,JOIN_NPCA_BYTES);
+        if(changed) ++join_npca_written; else ++join_npca_equal;
+        uint64_t index=0;
+        if(anim && join_read(anim+JOIN_NPCA_INDEX,&index,8) && (uint32_t)index!=r->index) ++join_npca_index_differs;
     }
 }
 /* SHPW (v13, section 65; the admission opt-in, native_gate_join_shpw): ship object words a load leaves at defaults [F: w1z28, the
@@ -4024,6 +4187,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_ecos(t);            /* version 13 */
     join_capture_shpw(t);            /* version 13 */
     join_capture_trdn(t);            /* version 13 */
+    join_capture_npca(t);            /* version 13 */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
     join_capture_pend(t);            /* version 13 */
@@ -5640,6 +5804,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_ecos(s,&mine);    /* the economy schedules (opt-in) */
     if(s->version>=13) join_admit_shpw(s,&mine);    /* the ships' words a load leaves at defaults (opt-in) */
     if(s->version>=13) join_admit_trdn(s,&mine);    /* the containers' next trade offer update (opt-in) */
+    if(s->version>=13) join_admit_npca(s,&mine);    /* the NPCs' activation (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */

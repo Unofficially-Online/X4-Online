@@ -70,6 +70,8 @@ static int lua_join_ecos(lua_State *L) {join_ecos_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_shpw(lua_State *L) {join_shpw_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_trdn(on): a joiner takes the session's next trade offer updates (TRDN, default off). */
 static int lua_join_trdn(lua_State *L) {join_trdn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_npca(on): a joiner takes the session's NPC activations (NPCA, default off). */
+static int lua_join_npca(lua_State *L) {join_npca_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 static int lua_join_rcnt(lua_State *L) {join_rcnt_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_pend(on): a joiner takes the session's pending view cache flags (PEND; lockstep_join_world.h; default off). */
 static int lua_join_pend(lua_State *L) {join_pend_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
@@ -102,6 +104,12 @@ static int lua_join_watch(lua_State *L) {
 static int lua_join_refwatch(lua_State *L) {
     size_t length=0;const char *text=p_lua_tolstring(L,1,&length);
     p_lua_pushnumber(L,text && length<96u && join_rw_add(text,length)?1.0:0.0);return 1;
+}
+/* gate.join_refwatch_from(n): a saver arms the JOIN_REFWATCH fields from step n on (snapshot objects by portable ID; 1 .. 100000); n, 0 refused. */
+static int lua_join_refwatch_from(lua_State *L) {
+    const double n=p_lua_tonumber(L,1);const int ok=isfinite(n) && floor(n)==n && n>=1.0 && n<=100000.0;
+    if(ok) join_rw_from=(uint64_t)n;
+    p_lua_pushnumber(L,ok?n:0.0);return 1;
 }
 static int lua_join_status(lua_State *L) {
     char out[8192];int n=accept_ui()?join_status(out,sizeof(out)):0;   /* 3584 until IKV's refusals (the line passed 3200) */
