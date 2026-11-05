@@ -1939,6 +1939,26 @@ proposed and rejected.
   j1-138 6baff0c4 (build-hj16k)   mask 1 (VIEWF only): no flip (36 frames alike); T+1 0, 900 172 (equal to j1-135 with VIEWF)
   So the joiner no longer writes VIEWF (native_gate_join_viewf_write, default off; the section stays, the restore selects by its
   attention): the census is the same, as j1-82 had found (equal to no VIEWF).
+- The wreck's per-step body source [F: 1.4, lockstep_wreck_watch.h, j1-139]: Scene::Step's pre-sync sets a drifting body every
+  step from its U::LinearDecelerationController, a closed form of the start transform +0x20, start time +0x60, velocities
+  +0x80/+0x90, duration +0xa0 and flag +0xa8, which the save keeps rounded. LDC (caee7dda, section 52): every LDC's 0x71
+  bytes, written into the joiner's loaded controllers before BODY, pinned by GetVelocity's layout. j1-139: ldc=548:0:0:0 (all
+  written), actor 8 equal in every STATE_ROW from 634; the 900 census 174.
+- Actors 5 and 11 [F: j1-139 trace window 633..660, the ACTOR rows' nav_tail]: their velocities part by ~2 m/s in one step at
+  651 and 652. At T+1 every live fixture actor's pathing state banks differed in +0x60..+0xaf (NAV carries +0x00..+0x5f), the
+  session's two clients alike: the joiner's load leaves +0x88 (the +0x80 vector's z lane) at a default (0.025, 0.05, 0) where
+  the session has a value it moves each step (actor 5: 0.490). NAVT (6f8eafba, section 53): those five vectors' x, y, z lanes,
+  both banks by role, written with NAV. j1-140: navt=19970:50:0, every bank equal through 650, yet at 651 the pathing step
+  writes another bank for actor 5 (the joiner's +0x60 vector (0, 0, 65.4), +0x84 0.2 where the session has 0.505): a pathing
+  input apart, not the banks; every row trace (script draws, find order, weapons, nav cadence) equal through 652. 900: 172.
+- The replay's mismatch from T+1 [F: DIGEST_PARTS (70107082, the probe: per trace-window tick the SHA-256 prefix of each part
+  the report hashes), j1-141]: sample (every STATE row), identity, runtime IDs and the census equal at 634..636; three parts
+  differ on every tick: the pilot frame receipt, the nav mesh receipt (NMESH_1, cumulative since the process start: the
+  session's constant, the joiner's from the FNV basis, folding the helpers it builds after its load that the session built at
+  boot) and the input mux receipt. The J1 replay's first mismatch at 634 is this bookkeeping, not the world.
+  j1-139 caee7dda (build-hj16m)   LDC: actor 8 equal; 900 174
+  j1-140 6f8eafba (build-hj16n)   NAVT: banks equal; actors 5, 11 part at 651/652; 900 172
+  j1-141 70107082 (build-hj16n)   DIGEST_PARTS: pilot, navmesh, input receipts apart from 634
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

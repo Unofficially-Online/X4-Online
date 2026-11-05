@@ -350,7 +350,7 @@ static void test_region_camera(void) {
     assert(!rc_frame(10) && rc_failures==1 && !strcmp(rc_stage,"frame_guard") && !rc_check());
     char text[3072];assert(rc_status(text,sizeof(text))>0);
     assert(strstr(text,"mode=view installed=1 frame=11 viewpoint=5ca73 key=0000000000176a99 updates=5 native_frames=2 restored=0 stage=frame_guard failures=1 "
-                       "groups=fields,traffic patched=fields,traffic stub_calls=1/2/2/0/2/1 install_tick=7 install_waits=0 effects=0/0 effect_rows=0"));
+                       "groups=fields,traffic patched=fields,traffic stub_calls=1/2/2/0/2/1 install_tick=7 install_waits=0 join_install=0/0/0 effects=0/0 effect_rows=0"));
     /* Viewpoint 2 (the second latched view point): the second manager's stand-in camera, its zone (0x6d) and
      * class-0x58 ancestor for the scene choice's active-camera calls; gone when its ID no longer matches. */
     {
@@ -874,6 +874,19 @@ static void test_region_camera(void) {
     for(unsigned i=1;i<RC_INSTALL_WAITS;i++) assert(rc_join_point(15));
     assert(!rc_join_point(15) && !strcmp(rc_stage,"busy") && rc_failures==1 && !rc_installed_groups && !rc_check());
     for(unsigned i=0;i<RC_SITES;i++) assert(rc_site_state(i)==0);
+    /* A hot joiner's first admitted frame (rc_join_install, from rc_frame of T+1): parked and idle, every pending group
+     * goes in before the step; the join point after it has nothing left. Busy or not parked: counted, left to the join point. */
+    test_rc_reset();test_rc_pages();rc_installed=1;rc_mode=RC_VIEW;rc_armed_groups=1u<<RC_TRAFFIC;task[MT_READY]=1;mt_worker_waits=mt_worker_wakes+1;
+    {   const uint64_t joins=rc_join_installs;stats.issued=16;assert(rc_frame(16) && !rc_installed_groups);
+        assert(rc_join_install(16) && rc_installed_groups==1u<<RC_TRAFFIC && rc_install_tick==16 && rc_join_installs==joins+1 && !rc_install_waits);
+        for(unsigned i=0;i<RC_SITES;i++) assert(rc_site_state(i)==(rc_sites[i].group==RC_TRAFFIC?1:0));
+        assert(rc_join_point(16) && !rc_install_waits && rc_installed_groups==1u<<RC_TRAFFIC);
+        assert(rc_remove_patches());rc_patched=0;}
+    test_rc_reset();test_rc_pages();rc_installed=1;rc_mode=RC_VIEW;rc_armed_groups=1u<<RC_TRAFFIC;task[MT_READY]=0;
+    {   const uint64_t busy=rc_join_busy,parked=rc_join_not_parked;stats.issued=17;assert(rc_frame(17));
+        assert(rc_join_install(17) && !rc_installed_groups && rc_join_busy==busy+1);
+        mt_worker_waits=mt_worker_wakes;assert(rc_join_install(17) && !rc_installed_groups && rc_join_not_parked==parked+1);
+        mt_worker_waits=mt_worker_wakes+1;}
     *(void**)(image+MT_TASK)=saved_task;DeleteCriticalSection((CRITICAL_SECTION*)(task+MT_TASK_LOCK));
     VirtualFree(world_identities,0,MEM_RELEASE);world_identities=prior_identities;world_identity_count=prior_identity_count;world_identity_sealed=prior_sealed;
     *(void**)(image+RC_UNIVERSE)=saved_universe;

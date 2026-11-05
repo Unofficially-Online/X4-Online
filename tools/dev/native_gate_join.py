@@ -205,7 +205,7 @@ LAST_SECTION = {1: SEC_LUA, 2: SEC_POSE, 3: SEC_KEYS, 4: SEC_REGION, 5: SEC_SPLI
 TEXT_SECTIONS = (SEC_MODULES, SEC_LUA)          # newline-terminated printable lines; count = lines
 # Fixed record shapes (lockstep_join.h join_*_rec). GATE is one 256-byte record; MODULES and LUA (the probe's own state
 # providers, native_gate_join_core.lua) are text (count = lines).
-GATE = struct.Struct('<QQQIIIIIIQQIIIIIIIIIIII64s16sQQII12s12s16x')
+GATE = struct.Struct('<QQQIIIIIIQQIIIIIIIIIIII64s16sQQII12s12sQ8x')
 IDS = struct.Struct('<QQII')                  # runtime (the save's ID), portable ID, class (0 saved, 1 created), 0
 CTX = struct.Struct('<QQII')                  # owner ID, script name hash, owner class, script version
 WAKE = struct.Struct('<QQQIIII')              # owner, script, due bits, class, version, reason, flags
@@ -377,7 +377,7 @@ RECORDS = {SEC_IDS: IDS, SEC_CTX: CTX, SEC_WAKE: WAKE, SEC_WAKEVEC: WAKEVEC, SEC
 GATE_FIELDS = ('tick', 'game', 'real', 'wire_version', 'clients', 'lookahead', 'tick_hz', 'slot', 'md_seq', 'rid_next',
                'created_generation', 'created_live', 'identities', 'ctx_count', 'wake_count', 'vec_index', 'vec0', 'vec1',
                'md_count', 'md_void', 'md_release', 'md_queued', 'unsupported', 'digest', 'portable', 'save_us',
-               'capture_us', 'ambiguous', 'flags', 'fixture', 'flight')
+               'capture_us', 'ambiguous', 'flags', 'fixture', 'flight', 'cid')
 FLAG_DIAGNOSTIC, FLAG_NO_SAVE = 1, 2
 ACTOR_CAPACITY = 30                           # the gate's fixture actor slots (lockstep_registry.h ACTOR_CAPACITY: 15 + 16 - 1)
 # The session's view of each snapshot fixture actor at T (GATE fixture, one byte per actor; lockstep_snapshot_fixture.h
@@ -1065,6 +1065,7 @@ def write_package(gate, sections, save_sha=b'\0'*32, save_bytes=0, flags=0, vers
     named['gate'] = gate
     gate['portable'] = portable_digest(named)
     gate['flight'] = list(gate.get('flight') or [0]*12)   # a 0 or a missing field: every fixture actor's generation 0
+    gate['cid'] = int(gate.get('cid') or 0)   # X4's construction ID counter at T (0: not carried)
     if len(gate['flight']) != 12 or any(not 0 <= g <= 255 for g in gate['flight']):
         raise JoinError('gate_flight')
     values = [gate[name] for name in GATE_FIELDS]

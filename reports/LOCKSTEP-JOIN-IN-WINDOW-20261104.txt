@@ -246,3 +246,23 @@ with a watch run (they are in the J1 watch list too); R6.
   joiner's load recreates from <movement class="player"> (its flight state is not in the save) and the pathing banks
   beyond NAV's vectors (+0x60..+0xaf; x4mods-28's NAVT section, j1-139: every live actor differs there at T+1).
 Next: the in-window watch run again with NAVT; then the slot ships' controllers at T and T+1 side by side.
+
+14. THE WINDOW'S T+1 DIFFERENCES: NAVT, THE REGION CAMERA, THE NAV HELPERS (w1z3, w1z4, 4 November)
+- w1z3 (build240, the hot join's NAVT and LDC merged): T+1 the same 4, 900 727. The pathing banks beyond NAV's vectors
+  are not what the window adds.
+- The region camera (x4mods-28, j1-141): the session installs its sites after step 1 (install_tick=1), a joiner after
+  step T+2 (install_tick=635, install_waits=1: the pass kicked by its last loading frame still runs at the join point after
+  T+1), so the joiner's steps T+1 and T+2 use the local camera where the session's use the stand-in (REGION_PASS,
+  MASS_TRAFFIC and TRAVEL_SNAPSHOT apart at 634). In-window joiners show the same (w1z3: 635/1). c1efa5cb tried the
+  install in rc_frame of T+1, waiting up to 5 s for a parked MoveWorker and idle passes: w1z4 join_install=0/1, nothing
+  changed (T+1 4, 900 727), and a 5 s stall at T+1. The probe's frame is the wrong place to wait (whatever the loading
+  frame's pass or the MoveWorker needs, it does not get while that frame is held); the attempt no longer waits and counts
+  which condition fails (join_install=installs/not parked/busy). Next place: the admission in the gate tick (after
+  join_admit, before the first admitted frame), with the stand-in set there too.
+- The interior nav helpers (NAV_MESH_ROW): the session builds 15 at ticks 1 and 3 (the three slot ships among them, and
+  176c95 and 176cef, two of the three fighters at T+1); a joiner's catch-up at 634 builds 10 of them, without 7a8fe and
+  7a8dc (slot ships 2 and 3), 176bf8, 176c59 (built at 736 on both) and 176cef; later builds differ too (176b97 at 969 on
+  the session, 1073 on the joiner; 176c95 again at 978 on the session only). A helper's request comes with an object's
+  props (GeneratePropsEvent, lockstep_nav_mesh.h), so the set a joiner's load asks for is its own; the helpers are world
+  state (a station's people come with them). x4mods-28 carries the receipt (NMESH); building the session's helper set at
+  T+1 from the package is the open part.

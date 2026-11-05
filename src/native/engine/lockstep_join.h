@@ -597,7 +597,8 @@ typedef struct {
     char digest[64];unsigned char portable[16];uint64_t save_us,capture_us;uint32_t ambiguous,flags;
     unsigned char fixture[12];   /* the session's view of each snapshot fixture actor at T (SNAPSHOT_VIEW_*; all 0: none bound) */
     unsigned char flight[12];    /* each fixture actor's flight sample init generation at T (lockstep_flight.h; 255 at most; 0 before) */
-    unsigned char pad[16];
+    uint64_t cid;                /* X4's construction ID counter at T (0x38f4dd0; 0: not carried) */
+    unsigned char pad[8];
 } join_gate_rec;
 _Static_assert(sizeof(join_ctx_rec)==24 && sizeof(join_wake_rec)==40 && sizeof(join_vec_rec)==40 && sizeof(join_md_rec)==48 &&
                sizeof(join_id_rec)==24 && sizeof(join_gate_rec)==256 && sizeof(join_health_rec)==48 && sizeof(join_pose_rec)==64,
@@ -2076,10 +2077,12 @@ static void join_admit_flight_generations(void) {
     if(join_rx.t.version<13) return;
     for(unsigned i=0;i<12;i++) flight_samples[i].init_generation=join_rx.t.gate.flight[i];
 }
+static uint64_t join_cid_get(void);   /* X4's construction ID counter (below, at join_admit_rid) */
 static void join_gate_fields(join_tables *t,uint64_t tick) {
     t->gate.tick=tick;t->gate.game=join_bits(stats.game);t->gate.real=join_bits(stats.real);t->gate.wire_version=wire_version;
     t->gate.clients=wire_clients;t->gate.lookahead=wire_lookahead;t->gate.tick_hz=gate_tick_hz;t->gate.slot=stats.slot;
     t->gate.rid_next=rid_mode?rid_next_id:0;memcpy(t->gate.digest,digest,64);
+    t->gate.cid=join_cid_get();
 }
 #define JOIN_GRAVP_RESTORE_TICKS 10u   /* the boundaries after T+1 .. T+10 */
 static void join_boundary(uint64_t completed) {
@@ -2982,6 +2985,27 @@ static int join_admit_md(const join_engine *e) {
     free(live);free(want);free(order);return 1;
 }
 /* rid set mode: the joiner's next ID skips forward to the session's (the run up to it stays unused). */
+/* X4's construction ID counter (UICONS_CID_COUNTER 0x38f4dd0 under UICONS_CID_LOCK 0x3d6b940, lockstep_ui_construct.h): the
+ * next ID a build item draws. j1-141 (the lockstep session's PILOT_RECEIPT at 660): the joiner's UIBUILD_1 C field 0x5e87 where the
+ * session's was 0x5e82, everything else in the receipt equal: the joiner's load drew five more. The session's at T rides the GATE
+ * record and the joiner's admission sets it (status cid=session:joiner_before). */
+#define JOIN_CID_COUNTER 0x38f4dd0u
+#define JOIN_CID_LOCK 0x3d6b940u
+static uint64_t join_cid_before;
+/* X4 initializes the lock at its start; a zeroed one (never initialized: a mapped image in the native tests) is left alone. */
+static int join_cid_ready(const CRITICAL_SECTION *l) {return l->LockCount!=0 || l->DebugInfo || l->SpinCount;}
+static uint64_t join_cid_get(void) {
+    CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(void*)(image+JOIN_CID_LOCK);uint64_t v;
+    if(!join_cid_ready(lock)) return 0;
+    EnterCriticalSection(lock);v=*(volatile uint64_t*)(image+JOIN_CID_COUNTER);LeaveCriticalSection(lock);return v;
+}
+static void join_admit_cid(void) {
+    if(join_rx.t.version<13 || !join_rx.t.gate.cid) return;
+    CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(void*)(image+JOIN_CID_LOCK);
+    if(!join_cid_ready(lock)) return;
+    EnterCriticalSection(lock);join_cid_before=*(volatile uint64_t*)(image+JOIN_CID_COUNTER);
+    *(volatile uint64_t*)(image+JOIN_CID_COUNTER)=join_rx.t.gate.cid;LeaveCriticalSection(lock);
+}
 static int join_admit_rid(void) {
     if(rid_mode!=RID_SET || !join_rx.t.gate.rid_next) {join_ids_restore();return 1;}
     unsigned char *map=rid_map();if(!map) {join_ids_restore();return join_fail_rx(JOIN_WHY_CAPTURE,"rid_map");}
@@ -3037,6 +3061,7 @@ static int join_admit(void) {
     if(!join_admit_ai(&e) || !join_admit_md(&e)) return 0;
     if(join_admit_before_skip && !join_admit_before_skip()) return join_fail_rx(JOIN_WHY_CAPTURE,"before_skip");
     if(!join_admit_rid() || !join_admit_world()) return 0;
+    join_admit_cid();
     join_admit_flight_generations();
     join_bootev_repost();   /* the events of T the boot passes kept (native_gate_join_hold_boot_events) */
     join_ai_watch_dump('j',join_rx.t.gate.tick);join_job_watch_dump('j');   /* diagnostic (native_gate_join_watch) */
@@ -3071,7 +3096,7 @@ static int join_status(char *out,size_t cap) {
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
         " steer=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu t1=%u:%llu:%llu:%llu:%llu:%llu:%llu"
         " solver=%llu:%llu:%llu:%llu:%llu:%llu bullet_walk=%u:%llu:%llu grav=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravs=%llu:%llu:%llu:%llu md_dropped=%llu"
-        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u bupd=%llu:%llu:%llu:%llu bupd_cap=%u ldc=%llu:%llu:%llu:%llu ldc_cap=%u navt=%llu:%llu:%llu navt_cap=%u viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
+        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u bupd=%llu:%llu:%llu:%llu bupd_cap=%u ldc=%llu:%llu:%llu:%llu ldc_cap=%u navt=%llu:%llu:%llu navt_cap=%u cid=%llx:%llx viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
         states[join_cap.state],(unsigned long long)join_cap.tick,join_cap.slot_k,join_cap.mask,join_cap.why,join_cap.detail[0]?join_cap.detail:"-",
         (unsigned long long)join_cap.save_bytes,(unsigned long long)join_cap.package_bytes,(unsigned long long)join_cap.save_us,
         (unsigned long long)join_cap.capture_us,pkg,port,join_cap.modified_cleared,join_cap.possible,join_rx.loaded,join_rx.mode,join_rx.based,
@@ -3173,6 +3198,7 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_bupd_written,(unsigned long long)join_bupd_equal,(unsigned long long)join_bupd_missing,(unsigned long long)join_bupd_shape,join_cap.bupd,
         (unsigned long long)join_ldc_written,(unsigned long long)join_ldc_equal,(unsigned long long)join_ldc_missing,(unsigned long long)join_ldc_shape,join_cap.ldc,
         (unsigned long long)join_navt_written,(unsigned long long)join_navt_equal,(unsigned long long)join_navt_missing,join_cap.navt,
+        (unsigned long long)join_rx.t.gate.cid,(unsigned long long)join_cid_before,
         (unsigned long long)join_rx.viewk_children,(unsigned long long)join_rx.viewk_flags,(unsigned long long)join_rx.viewk_equal,
         (unsigned long long)join_rx.viewk_missing,(unsigned long long)join_rx.viewk_unmapped,(unsigned long long)join_rx.viewk_superset,
         join_cap.viewk,join_cap.viewkc,(unsigned long long)join_rx.viewf_written,(unsigned long long)join_rx.viewf_equal,

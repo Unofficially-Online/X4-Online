@@ -5103,6 +5103,8 @@ local function frame()
    from=p[2]
   end
   log('DIGEST_PARTS tick='..tick..' '..table.concat(out,' ')..' hash='..string.sub(hash,1,16))
+  -- The input mux's receipt itself (INPUTS_1, small): which section a joiner's differs in.
+  if input_state then log('DIGEST_INPUT tick='..tick..' '..input_state) end
  end
  local command=cfg.native_gate_command_test and X4LAN_NATIVE_COMMANDS.proposal(tick) or '00000000'
  if X4LAN_NATIVE_PLAYER_COMMANDS then command=X4LAN_NATIVE_PLAYER_COMMANDS.proposal(tick) end

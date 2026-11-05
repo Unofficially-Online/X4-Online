@@ -1868,6 +1868,7 @@ static int rc_standins_arm(unsigned n) {
 }
 /* Slot 6 of every admitted frame, after the view points latch: the stand-in
  * for the next region and traffic passes and the next frame's simulation. */
+static int rc_join_install(uint64_t tick);
 static int rc_frame(uint64_t tick) {
     if(!rc_installed || !stats.active || GetCurrentThreadId()!=ui_thread || tick!=stats.issued) return rc_fail("frame_guard");
     void *viewpoint=NULL;uint64_t id=0;
@@ -1952,7 +1953,10 @@ static int rc_frame(uint64_t tick) {
     rc_shape_latch();
     if(rc_fill_view && viewpoint && (rc_installed_groups&(1u<<RC_FIELD_FILL)) && !rc_fill_frame(viewpoint,tick)) return rc_fail("field_fill_entries");
     unsigned klass;rc_viewpoint_key=id?world_identity_key(id,&klass):0;
-    rc_viewpoint_id=id;rc_tick=tick;++rc_updates;return 1;
+    rc_viewpoint_id=id;rc_tick=tick;++rc_updates;
+    /* A hot joiner's first admitted frame: the sites before its step (rc_join_install). */
+    if(join_tick_base() && tick==join_tick_base()+1 && !rc_join_install(tick)) return 0;
+    return 1;
 }
 /* Gate tick, main thread, right after mt_join: the sites of every armed group,
  * once an admitted frame has set the stand-in, while the MoveWorker is parked
@@ -1966,6 +1970,24 @@ static int rc_join_point(uint64_t tick) {
     }
     for(unsigned g=0;g<RC_GROUPS;g++) if((pending&(1u<<g)) && !rc_install_group(g)) {rc_remove_patches();return rc_fail("cas");}
     rc_install_tick=tick;rc_stage="installed";return 1;
+}
+/* A hot joiner (lockstep_join.h) admits its first frame T+1 straight after its load, whose last frame's passes are not
+ * joined before it; the join point after step T+1 finds them busy and installs after T+2, so the joiner's steps T+1 and
+ * T+2 run with the local camera where the session's ran with the stand-in (j1-141: REGION_PASS, MASS_TRAFFIC and
+ * TRAVEL_SNAPSHOT apart at 634, the joiner's 634 snapshot the session's 635; the session installs after its step 1, which
+ * both its clients run alike from the same snapshot load). Tried here in rc_frame of T+1, once the stand-in is set: if the
+ * MoveWorker is parked and no armed group's pass runs, every pending group goes in and step T+1 runs patched. Never waits:
+ * w1z4 waited up to 5 s here (the probe's frame, main thread) and neither came true (join_install=0/1), so the loading
+ * frame's pass or the parked MoveWorker needs the frame to go on. Which one stood in the way is counted (not parked / busy)
+ * for the next place to try. */
+static uint64_t rc_join_installs,rc_join_not_parked,rc_join_busy;
+static int rc_join_install(uint64_t tick) {
+    const unsigned pending=rc_armed_groups&~rc_installed_groups;
+    if(!pending) return 1;
+    if(!mt_worker_parked()) {++rc_join_not_parked;return 1;}
+    if(!rc_passes_idle()) {++rc_join_busy;return 1;}
+    for(unsigned g=0;g<RC_GROUPS;g++) if((pending&(1u<<g)) && !rc_install_group(g)) {rc_remove_patches();return rc_fail("cas");}
+    rc_install_tick=tick;rc_stage="installed";++rc_join_installs;return 1;
 }
 static int rc_owned(void) {
     if(!rc_patched) return 1;
@@ -2048,7 +2070,7 @@ static int rc_status(char *out,size_t capacity) {
         if(rc_installed_groups&(1u<<g)) b+=snprintf(installed+b,sizeof(installed)-(size_t)b,"%s%s",b?",":"",rc_group_names[g]);
     }
     int n=snprintf(out,capacity,"mode=%s installed=%d frame=%llu viewpoint=%llx key=%016llx updates=%llu native_frames=%llu restored=%d stage=%s "
-        "failures=%lld groups=%s patched=%s stub_calls=%llu/%llu/%llu/%llu/%llu/%llu install_tick=%llu install_waits=%llu effects=%u/%u effect_rows=%llu key2=%016llx scene_calls=%llu "
+        "failures=%lld groups=%s patched=%s stub_calls=%llu/%llu/%llu/%llu/%llu/%llu install_tick=%llu install_waits=%llu join_install=%llu/%llu/%llu effects=%u/%u effect_rows=%llu key2=%016llx scene_calls=%llu "
         "context_calls=%llu context_skipped=%llu policy=%s picks=%llu/%llu alternations=%llu pick_rows=%lld site_picks=%s "
         "shape_refresh=%llu/%llu aligned=%llu unmapped=%llu near=%llu far=%llu shape_native=%llu "
         "mining=%llu/%llu/%llu crystal=%llu/%llu/%llu,far:%llu xs=%llu/%llu/%llu/%llu xs_target=%llu/%llu probe=walk:%llu/%llu/%llu,booster:%llu/%llu/%llu,"
@@ -2058,7 +2080,7 @@ static int rc_status(char *out,size_t capacity) {
         (long long)rc_failures,groups,installed,(unsigned long long)rc_stub_calls[0],(unsigned long long)rc_stub_calls[1],
         (unsigned long long)rc_stub_calls[2],(unsigned long long)rc_stub_calls[3],(unsigned long long)rc_stub_calls[4],
         (unsigned long long)rc_stub_calls[5],(unsigned long long)rc_install_tick,
-        (unsigned long long)rc_install_waits,attempts,culls,(unsigned long long)rc_effect_rows,(unsigned long long)rc_vp2_key,
+        (unsigned long long)rc_install_waits,(unsigned long long)rc_join_installs,(unsigned long long)rc_join_not_parked,(unsigned long long)rc_join_busy,attempts,culls,(unsigned long long)rc_effect_rows,(unsigned long long)rc_vp2_key,
         (unsigned long long)(rc_stub_calls[6]+rc_stub_calls[7]+rc_stub_calls[8]+rc_stub_calls[9]+rc_stub_calls[10]),
         (unsigned long long)rc_stub_calls[RC_CONTEXT_CALL],(unsigned long long)rc_context_skipped,rc_policy?"sector":"off",
         (unsigned long long)rc_picks,(unsigned long long)rc_picks_two,(unsigned long long)rc_alternations,(long long)rc_pick_rows,site_picks,
