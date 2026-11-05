@@ -1881,6 +1881,42 @@ local function death_frame(tick)
  if tick%600==0 then ticklog.status('PILOT_DEATH_STATUS',tick,gate.pilot_death_status) end
 end
 pilot_view.death_arm,pilot_view.death_frame=death_arm,death_frame
+-- R6 (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 8): the death module's window state for a joiner whose T is inside
+-- the window: the start poses (noted at the window start, where a respawn builds), the respawn and suit counters (their MD
+-- seeds), the last poses (where a suit is built). The saver's at T; the joiner's restore replaces its own (empty: it never
+-- saw the window start). Exact numbers: %.17g.
+local function death_pose_text(p) return string.format('%.17g,%.17g,%.17g,%.17g,%.17g,%.17g',p.x,p.y,p.z,p.yaw,p.pitch,p.roll) end
+local function death_pose_parse(text)
+ if text=='-' then return nil end
+ local v={}
+ for n in text:gmatch('[^,]+') do v[#v+1]=assert(tonumber(n),'join: pilot_death pose '..text) end
+ assert(#v==6,'join: pilot_death pose '..text)
+ return {x=v[1],y=v[2],z=v[3],yaw=v[4],pitch=v[5],roll=v[6]}
+end
+function pilot_view.death_state()
+ local parts={'v1'}
+ for slot=1,#cfg.native_gate_pilot_slots do
+  local p,l=death.poses[slot],pilot_view.death_last and pilot_view.death_last[slot]
+  parts[#parts+1]=slot..':'..(death.built[slot] or 0)..':'..(death.suits[slot] or 0)..':'..(p and death_pose_text(p) or '-')..':'..
+   (l and death_pose_text(l) or '-')
+ end
+ return table.concat(parts,'|')
+end
+function pilot_view.death_restore(text)
+ local head,seen=nil,0
+ for part in text:gmatch('[^|]+') do
+  if not head then head=part;assert(part=='v1','join: pilot_death '..tostring(part))
+  else
+   local slot,built,suits,p,l=part:match('^(%d+):(%d+):(%d+):([^:]+):([^:]+)$')
+   slot=tonumber(slot)
+   assert(slot and slot>=1 and slot<=#cfg.native_gate_pilot_slots,'join: pilot_death '..part)
+   death.built[slot]=tonumber(built);death.suits[slot]=tonumber(suits);death.poses[slot]=death_pose_parse(p)
+   if pilot_view.death_last then pilot_view.death_last[slot]=death_pose_parse(l) end
+   seen=seen+1
+  end
+ end
+ assert(head=='v1' and seen==#cfg.native_gate_pilot_slots,'join: pilot_death '..text..' is not this client slots')
+end
 -- Scripted fire of some slots only (a test's shooter): the list as a bit mask.
 function X4LAN_PILOT_FIRE_MASK(list,fire,count)
  if list==nil then return 0 end
@@ -3978,6 +4014,8 @@ local function frame()
      if gate.pilot_join_state then
       X4LAN_JOIN_CORE.provide('pilot_state',function() return gate.pilot_join_state() or '-' end,function(text) end)
      end
+     -- R6: the death module's window state (pilot_view.death_state above).
+     X4LAN_JOIN_CORE.provide('pilot_death',pilot_view.death_state,pilot_view.death_restore)
      X4LAN_JOIN_CORE.provide('pilot_window',function()
       if in_window then players('saver') end
       return 'v1|'..window[1]..','..window[2]

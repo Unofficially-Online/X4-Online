@@ -229,3 +229,20 @@ entries named). Live: next in-window run.
   (w1x flipped there). The flip was the hot join's VIEWF writes (roadmap 18c).
 Next: native_gate_join_ids for every in-window joiner (the join overlays, as the build refresh); the three fighters at T+1
 with a watch run (they are in the J1 watch list too); R6.
+
+13. R6 (PART) AND THE WINDOW'S EXTRA DIFFERENCES (w1z2, build238 with the probe at 3fb66c0f, 4 November)
+- R6, the death module's window Lua state: join provider pilot_death (native_gate_probe.lua) carries the start poses
+  (noted at the window start, where a respawn builds), the respawn and suit counters (their MD seeds) and the last poses
+  (where a suit is built), exact (%.17g); a joiner's restore replaces its own, which never saw the window start. LuaJIT
+  round trip and refusals checked; live in w1z2: the provider pair accepted, the joiner resumed and ran to 1199. The rest of
+  the window's Lua state is test fixtures only (the scripted aim plan, the UI replay's test fleet and fund at the window
+  start - 4); the pilot_window provider still refuses T past take-2 without native_gate_join_in_window.
+- w1z2 = w1z with a watch list (the three fighters, the slot ships, 24 objects differing at 900) and census stride 60:
+  T+1 4 differ as in w1z, 900 726. The three fighters sit in the slot ships' zone (tempzone 0x13e75f, all three slot ships
+  and 176c95, 176cef; 6dae5 elsewhere), and at T+1 it is their own steering that differs: 176c95's orientation by about
+  0.003 per axis, 176cef's velocity by about 4 m/s (position 0.1 m), 6dae5 by one float ulp. The slot ships themselves are
+  equal at T+1. So the fighters read something of the players' ships that the joiner's load does not have; in an ordinary
+  J1 (the window after T) the same ships are AI-flown and nothing differs at T+1. Candidates: the PlayerController the
+  joiner's load recreates from <movement class="player"> (its flight state is not in the save) and the pathing banks
+  beyond NAV's vectors (+0x60..+0xaf; x4mods-28's NAVT section, j1-139: every live actor differs there at T+1).
+Next: the in-window watch run again with NAVT; then the slot ships' controllers at T and T+1 side by side.

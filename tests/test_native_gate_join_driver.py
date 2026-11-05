@@ -623,6 +623,8 @@ class Overlays(unittest.TestCase):
             self.assertEqual(overlays.precise_sets(['native_gate_join_precise = false']), ['native_gate_join_precise = false'])
             self.assertEqual(overlays.refresh_sets(['a=1']), ['a=1', 'native_gate_join_refresh_builds=true'])
             self.assertEqual(overlays.refresh_sets(['native_gate_join_refresh_builds = false']), ['native_gate_join_refresh_builds = false'])
+            self.assertEqual(overlays.ids_sets(['a=1']), ['a=1', 'native_gate_join_ids=true'])
+            self.assertEqual(overlays.ids_sets(['native_gate_join_ids = false']), ['native_gate_join_ids = false'])
             text = (root/'savers/ui/config.lua.append').read_text()
             named = overlays.saved_id_keys(text)
             ids = [(0x6c000+k, int(i, 16), 0, 0) for k, i in enumerate(sorted({i for v in named.values() for i in v}))]
@@ -637,12 +639,12 @@ class Overlays(unittest.TestCase):
             notes = self.run_main('joiner', '--gate-dll', dll, '--handoff', root/'handoff.json', '--out', root/'joiner', '--join-mode', 'report',
                                   '--set', 'native_gate_world_hash_stride=300', '--join-census', *WINDOW)
             self.assertIn(' world=v13 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
-                          ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 jobe=0 evqt=0 gravd=0 viewk=0/0 viewf=0 viewp=0 shoot=0 attk=0 livef=0 spec=0 navc=0 jobs=0 gone=0 body=0 bupd=0 census_t1=1 ',
+                          ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 jobe=0 evqt=0 gravd=0 viewk=0/0 viewf=0 viewp=0 shoot=0 attk=0 livef=0 spec=0 navc=0 jobs=0 gone=0 body=0 bupd=0 ldc=0 census_t1=1 ',
                           notes)
             self.assertIn('X4LAN_CONFIG.native_gate_world_hash_join = true', (root/'joiner/ui/config.lua.append').read_text().splitlines())
             self.assertEqual(json.loads((root/'joiner/x4lane-join.json').read_text())['world'],
                              'v13 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
-                             ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 jobe=0 evqt=0 gravd=0 viewk=0/0 viewf=0 viewp=0 shoot=0 attk=0 livef=0 spec=0 navc=0 jobs=0 gone=0 body=0 bupd=0')
+                             ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 jobe=0 evqt=0 gravd=0 viewk=0/0 viewf=0 viewp=0 shoot=0 attk=0 livef=0 spec=0 navc=0 jobs=0 gone=0 body=0 bupd=0 ldc=0')
         old = join.read_package(join.write_package(dict(package['sections']['gate']), {join.SEC_IDS: ids}, version=1))
         self.assertEqual(overlays.check_world_table(old, 'report'), 'v1 health=0 pose=0')
         with self.assertRaisesRegex(ValueError, 'package_v1'):

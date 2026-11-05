@@ -2689,6 +2689,53 @@ static int join_bupd_cmp(const void *a,const void *b) {
     const uint64_t x=((const join_bupd_rec*)a)->portable,y=((const join_bupd_rec*)b)->portable;return x<y?-1:x>y;
 }
 static int join_bupd_class(uintptr_t vtable) {uint32_t words[8];return world_class_words(vtable,words) && world_class_has(words,JOIN_BUPD_CLASS);}
+/* LDC (v13, section 52): every drifting object's U::LinearDecelerationController (+0x200, vtable 0x2c3f5f0; layout in
+ * lockstep_wreck_watch.h). Its pose is a closed form of the time it is asked for and so are its velocities (GetVelocity
+ * 0xe288e0: v * (1 - tau / D)), from the start transform +0x20, start time +0x60, velocities +0x80/+0x90, duration +0xa0 and
+ * flag +0xa8; Scene::Step's pre-sync sets the body from them every step. The save keeps them rounded (start time and pose
+ * at three decimals, velocities at six digits; 1.4), so a joiner's wreck drifts on another path: j1-122..j1-138 the fixture
+ * wreck (actor 8) parted by a few ulp at 634 with BODY written at T (its body set again from the loaded controller). The
+ * saver writes each LDC's fields, the joiner's admission writes them into its loaded LDC (before BODY). Pinned by the
+ * GetVelocity layout; on a mismatch nothing is written. Status ldc=written:equal:missing:shape ldc_cap=. */
+#define JOIN_LDC_VTABLE 0x2c3f5f0u
+#define JOIN_LDC_LAYOUT 0xe288e0u
+#define JOIN_LDC_LAYOUT_SIZE 0x11eu
+#define JOIN_LDC_LAYOUT_SHA "7c12a422d468ce634fde3a13a78827794a39608d4cea6b0b7daf48174f4af4e5"
+static const struct {unsigned at,len;} join_ldc_fields[5]={{0x20u,0x40u},{0x60u,8u},{0x80u,0x20u},{0xa0u,8u},{0xa8u,1u}};
+static uint64_t join_ldc_written,join_ldc_equal,join_ldc_missing,join_ldc_shape;
+static unsigned char *join_ldc_controller(unsigned char *object) {
+    unsigned char *c=NULL;uintptr_t vt=0;
+    return object && join_read(object+JOIN_CONTROLLER,&c,8) && c && join_read(c,&vt,8) && vt==(uintptr_t)image+JOIN_LDC_VTABLE?c:NULL;
+}
+static int join_ldc_read(const unsigned char *c,unsigned char out[JOIN_LDC_STATE]) {
+    unsigned o=0;
+    for(unsigned k=0;k<5u;k++) {if(!join_read(c+join_ldc_fields[k].at,out+o,join_ldc_fields[k].len)) return 0;o+=join_ldc_fields[k].len;}
+    return o==JOIN_LDC_STATE;
+}
+static int join_ldc_cmp(const void *a,const void *b) {
+    const uint64_t x=((const join_ldc_rec*)a)->portable,y=((const join_ldc_rec*)b)->portable;return x<y?-1:x>y;
+}
+static void join_capture_ldc(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *c=t->ids[i].portable?join_ldc_controller(join_object(t->ids[i].runtime)):NULL;join_ldc_rec r;memset(&r,0,sizeof(r));
+        if(!c || !join_ldc_read(c,r.state)) continue;
+        r.portable=t->ids[i].portable;
+        if(!JOIN_PUSH(t->ldc,t->nldc,cap,r)) return;
+    }
+    if(t->nldc>1) qsort(t->ldc,t->nldc,sizeof(*t->ldc),join_ldc_cmp);
+}
+static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
+    if(!s->nldc) return;
+    if(!hash_ok(image+JOIN_LDC_LAYOUT,JOIN_LDC_LAYOUT_SIZE,JOIN_LDC_LAYOUT_SHA)) {join_ldc_shape+=s->nldc;return;}
+    for(uint32_t i=0;i<s->nldc;i++) {
+        unsigned char *c=join_ldc_controller(join_object(join_runtime_of(mine,s->ldc[i].portable)));
+        if(!c) {++join_ldc_missing;continue;}
+        int changed=0;unsigned o=0;
+        for(unsigned k=0;k<5u;k++) {changed|=join_poke((uintptr_t)(c+join_ldc_fields[k].at),s->ldc[i].state+o,join_ldc_fields[k].len);o+=join_ldc_fields[k].len;}
+        if(changed) ++join_ldc_written; else ++join_ldc_equal;
+    }
+}
 static int join_capture_world(join_tables *t,double now) {
     uint32_t bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
@@ -2793,6 +2840,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_livef(t);           /* version 13 */
     join_capture_spec(t);            /* version 13 */
     join_capture_navc(t);            /* version 13 */
+    join_capture_ldc(t);             /* version 13 */
     join_capture_jobs(t);            /* version 13 */
     join_watch_session(t,t->gate.tick);   /* diagnostic (native_gate_join_watch) */
     if(t->nsplm) qsort(t->splm,t->nsplm,sizeof(*t->splm),join_splm_cmp);            /* version 12 */
@@ -4427,6 +4475,7 @@ static int join_admit_world(void) {
     }
     if(s->version>=4) {join_admit_region(s,&mine);join_admit_path(s,strict);}
     if(!join_admit_created(s,&mine)) {join_tables_free(&mine);return 0;}
+    if(s->version>=13) join_admit_ldc(s,&mine);    /* the drift controllers, before the bodies they set */
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
     if(s->version>=13) for(uint32_t i=0;i<s->nbupd;i++) {   /* BUPD: the session's last build updates */
         unsigned char *object=join_object(join_runtime_of(&mine,s->bupd[i].portable));uintptr_t vtable=0;uint64_t own=0;
