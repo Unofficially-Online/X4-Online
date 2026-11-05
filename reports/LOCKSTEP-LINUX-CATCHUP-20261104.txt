@@ -90,8 +90,23 @@ Linux draw seeds exactly as on Windows; the Windows preprocessed lockstep_gate.c
     option 2^35 installs the slot; gate.spline_join_all() arms the bounded wait (stop reason 58 on a failure).
     On Windows the same key needs the agent module (agent_full), so a Windows run cannot carry it alone yet.
 
+ONE NAV KEY ON BOTH: actor_rng_all ON LINUX (ff5be020), lx7 AGAINST w21
+lx7 = lx6 + actor_rng_all (agent_rng + ship_rng), without nav_key. w21 (coordinator, build232) = W20b + agent_rng,
+ship_rng, actor_rng_all, spline_diag/agent_full/spline_join/spline_join_all, mass_traffic and region_pass 'sync',
+pass_stride 2 (nav_rng kept). Both clients of w21 agree at every capture through 6000.
+  ACTOR_RNG_ALL_STOP, Windows client 1 / Linux client 1: ship_keyed 78000 / 78000, ship_draws 1291 / 1291,
+  ship_drawn 1191 / 1190, agent_keyed 59,823,194 / 59,823,194, agent_created 253,144 / 253,144, unmapped 0 / 0;
+  Windows' navigation fallback nav_nested=72000 nav_keyed=0 (every navigation upkeep ran inside a ship scope, so the
+  fallbacks Linux has not ported are not needed here).
+  tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
+  w21 c1 vs lx7 c1        0      0      0      0      0      1      3      9     13     16     15     18
+  w21 c1 vs lx7 c2        0      0      0      3      6      9     16     20     31     41     39     46
+  lx7 c1 vs lx7 c2: first split 1440 (06dbd2, 07eb70, 07eb7c: three ShipSmall), 33 objects by 6000.
+WINDOWS AND LINUX ARE IDENTICAL ON EVERY OBJECT, TIMING INCLUDED, THROUGH TICK 1800 (~526,500 objects, lx7 client 1).
+What remains is first the Linux-only race (client 2 from 1440), then 1 object at 2400 against client 1.
+
 NEXT
-  1. One nav key on both executables (the Windows/Linux asymmetry above).
+  1. (done: actor_rng_all on Linux, lx7/w21 above.)
   2. The Linux-only races at fixed ticks (1920, 2910, 4710, 5490; the outer script scope counts end one apart): find
      the event behind each (watched rows on the roots' ships at those ticks).
   2. The rest of the defaults' determinism stack, in the order the Linux census asks for.

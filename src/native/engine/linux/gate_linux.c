@@ -110,6 +110,11 @@ static void lmt_restore(void);
 static int lmt_check(void);
 static int lmt_join(uint64_t tick);
 static int lmt_installed,lmt_restored;
+/* Per-ship RNG keys for every portable ship (gate_actor_all.h, included below). */
+static void laa_restore(void);
+static int laa_check(void);
+static void actor_all_frame(uint64_t tick);
+static int laa_ship_installed,laa_agent_installed;
 /* AI Wait restores (gate_ai_wait.h, included below). */
 static void ai_wait_restore(void);
 static int ai_wait_owned(void);
@@ -442,6 +447,8 @@ static void finish(unsigned reason) {
     if(lsj_installed) stats.restored=0;
     lmt_restore();
     if(lmt_installed) stats.restored=0;
+    laa_restore();
+    if(laa_ship_installed || laa_agent_installed) stats.restored=0;
     ai_wait_restore();
     if(ai_wait_armed && !ai_wait_restored) stats.restored=0;
     md_resume_restore();
@@ -547,6 +554,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(erng_installed && !erng_check()) {finish(136);gate_original_once(frame,loading);return;} /* ERNG_STOP_REASON */
     if(lsj_installed && !lsj_check()) {finish(58);gate_original_once(frame,loading);return;} /* LSJ_STOP_REASON */
     if(lmt_installed && !lmt_check()) {finish(100);gate_original_once(frame,loading);return;} /* LMT_STOP_REASON */
+    if((laa_ship_installed || laa_agent_installed) && !laa_check()) {finish(161);gate_original_once(frame,loading);return;}
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
     if(boot_hold_armed && boot_hold_failures) {finish(86);gate_original_once(frame,loading);return;}
     if(md_resume_armed && md_resume_failures) {finish(87);gate_original_once(frame,loading);return;}
@@ -599,6 +607,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(!created_frame(stats.completed)) {finish(96);gate_original_once(frame,loading);return;}
     if(!rid_frame(stats.completed)) {finish(130);gate_original_once(frame,loading);return;}
     if(lmt_installed && !lmt_join(stats.completed)) {finish(100);gate_original_once(frame,loading);return;} /* the passes kicked at its end */
+    actor_all_frame(stats.completed); /* fold the frame's all-ship actor RNG tallies (default off) */
     fork_save_frame(stats.completed); /* default off; never stops the session */
     static char packet[GATE_STATE_MAX],reply[GATE_PERMIT_MAX];uint64_t gamebits,realbits;
     memcpy(&gamebits,&stats.game,8);memcpy(&realbits,&stats.real,8);
@@ -755,6 +764,7 @@ static int lua_start(lua_State *L) {
 #include "gate_engine_rng.h"
 #include "gate_spline_join.h"
 #include "gate_mass_traffic.h"
+#include "gate_actor_all.h"
 static int lua_read_cost(lua_State *L) {
     char out[256];
     int n=accept_ui()?snprintf(out,sizeof(out),"fast=%d installed=%d reads=%llu faults=%llu lost=%llu slow_ns=%llu fast_ns=%llu.%llu gettid_ns=%llu",
@@ -767,13 +777,16 @@ static int lua_read_cost(lua_State *L) {
 /* Ported boot options; every other bit names a module the Linux gate lacks.
  * 1: serial pathing; 2: per-frame MoveWorker seed; 2^37: the gated Gravidar pass (native_gate_radar_serial,
  * needs 1); 2^35: the spline update hook for the route join (native_gate_spline_join, needs 1; gate_spline_join.h);
- * 2^46: world identities (native_gate_world_identities). */
+ * 256: the agent update hook (native_gate_agent_rng) and 2048: the ship Move hook (native_gate_ship_rng), both for
+ * actor_rng_all (gate_actor_all.h); 2^46: world identities (native_gate_world_identities). */
+#define LX_BOOT_AGENT_RNG 256ull
+#define LX_BOOT_SHIP_RNG 2048ull
 #define LX_BOOT_SPLINE_JOIN 34359738368ull
 #define LX_BOOT_GRAVIDAR 137438953472ull
 #define LX_BOOT_WORLD_IDENTITIES 70368744177664ull
 /* The attention hook (gate_attention.h): attention_rng or its initial refresh. Only 'all' is ported, which needs either. */
 #define LX_BOOT_ATTENTION (536870912ull|1073741824ull)
-#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_WORLD_IDENTITIES)
+#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_AGENT_RNG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_WORLD_IDENTITIES)
 static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *hash,double options) {
     if(!isfinite(options) || options<0 || options>9007199254740991.0 || floor(options)!=options) return 10;
     if((uint64_t)options & ~LX_BOOT_OPTIONS) return LX_STOP_UNPORTED_OPTION;
@@ -792,6 +805,8 @@ static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned time
         if(!result && (boot_options&LX_BOOT_GRAVIDAR) && !gravidar_install()) {finish(61);result=61;}
         if(!result && (boot_options&LX_BOOT_ATTENTION) && !attention_install()) {finish(53);result=53;}
         if(!result && (boot_options&LX_BOOT_SPLINE_JOIN) && !lsj_install()) {finish(58);result=58;}
+        if(!result && (boot_options&LX_BOOT_SHIP_RNG) && !laa_ship_install()) {finish(161);result=161;}
+        if(!result && (boot_options&LX_BOOT_AGENT_RNG) && !laa_agent_install()) {finish(161);result=161;}
     }
     return result;
 }
@@ -856,7 +871,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);METHOD(world_health);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
-    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);
+    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);

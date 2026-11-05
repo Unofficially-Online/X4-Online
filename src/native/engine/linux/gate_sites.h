@@ -115,6 +115,13 @@
 #define LX_MT_TRAFFIC_PARKED 0xa0u             /* traffic task: parked byte, set when its pass is done (Windows ready +0x88) */
 #define LX_MT_REGION_LOCK 0x138u               /* region task: XLib::Mutex (Windows +0x118) */
 #define LX_MT_REGION_PARKED 0x168u             /* region task: parked byte (Windows ready +0x140) */
+/* Per-ship RNG keys for every portable ship (gate_actor_all.h; lockstep_actor_all.h). */
+#define LX_SHIP_MOVE_VA 0x12b81d0u            /* Ship Move (Windows 0x7cc810), slot +0x1558 of every ship vtable (Windows +0x1510) */
+#define LX_SHIP_SMALL_MOVE_SLOT_VA 0x3d22ca0u /* U::ShipSmall 0x3d21748 (Windows SHIP_ENTRY 0x2b813c8) */
+#define LX_SHIP_XL_MOVE_SLOT_VA 0x3d403e8u    /* U::ShipExtraLarge 0x3d3ee90 (Windows SHIP_XL_ENTRY 0x2b9af98) */
+#define LX_AGENT_UPDATE_VA 0x1444c70u         /* the pathing Agent update (Windows 0xe8f250) */
+#define LX_AGENT_CALL_VA 0x13e33a2u           /* its only call, in the batch job 0x13e32f0 (Windows 0xeaed6f in 0xeaecc0) */
+#define LX_AGENT_CALL_BLOCK_VA 0x13e33a0u     /* the aligned 16 bytes holding its rel32 */
 /* AI Wait restores (gate_ai_wait.h, lockstep_ai_wait_rng.h). */
 #define LX_AI_WAIT_SLOT_VA 0x3b2a680u       /* U::AI::WaitAction vtable 0x3b2a650, restore slot +0x30 (Windows +0x28) */
 #define LX_AI_WAIT_RESTORE_VA 0x10c12b0u    /* WaitAction::Reattach (Windows 0x10a50d0) */
@@ -512,6 +519,8 @@ static const lx_site lx_sites[]={
     {"spline_update_head",0x1363de0,0x110,"53ce49e351fba194737e429eb0ebf71daa1d84a01a357241cd243b9382208ef7"},
     {"spline_worker_run",0x10b0b30,0x140,"c955dfb74cada4c8b9c88f2f6bba275f92a13600064ad440f1193368773ac0a1"},
     {"spline_worker_make",0x2001180,0x88,"ff6e4eb1570b0d3ec5d61eb773e2319cb2871ecc1cd493d3585b010352bb2616"},
+    {"ship_move_head",0x12b81d0,0x80,"caef5e06d738d33e8e9fa58899f08d841f86c59dac77d949b6b9c1bac96ed3c1"},
+    {"agent_update_head",0x1444c70,0x80,"d4d0dea0ff9f3a22a764f0db3bb2458fce330121a696f61a8f46a6b469e73d54"},
     {"mt_region_kick",0x12d1680,0xb6,"fff0564cb5e327552abb9dc2a477d8360d7a36ab6acfde1d2f4e44319d4e9eca"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */

@@ -356,6 +356,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_engine_rng.h"
 #include "test_gate_spline_join.h"
 #include "test_gate_mass_traffic.h"
+#include "test_gate_actor_all.h"
 /* The real entry bytes: the hook patch and its exact restoration, without running them. */
 static void test_world_install_elf(void) {
     reset_session();wt_reset_identities();
@@ -392,6 +393,7 @@ int main(int argc,char **argv) {
     test_engine_rng_linux();
     test_spline_join_linux();
     test_mass_traffic_linux();
+    test_actor_all_linux();
     test_world_hook(); /* last on the synthetic image: it replaces the insert's bytes */
     if(argc>1) {
         /* The real executable's bytes: file pin, every site, the call, the patches. */
@@ -411,6 +413,7 @@ int main(int argc,char **argv) {
         test_engine_rng_elf();
         test_spline_join_elf();
         test_mass_traffic_elf();
+        test_actor_all_elf();
         printf("ELF image PASS (%s)\n",argv[1]);
     } else printf("ELF image SKIPPED (no executable path)\n");
     printf("ALL PASS\n");
