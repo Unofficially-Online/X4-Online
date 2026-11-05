@@ -883,6 +883,14 @@ static unsigned char *join_nav_agent(const unsigned char *object) {
  * against the joiner's 39.66). Status agtt=written:equal:missing agtt_cap=. */
 static const unsigned join_agtt_at[JOIN_AGTT_FIELDS]={0x658u,0u,0xf38u};   /* 0: unused (+0xac0 is the probe's due, NAV's) */
 static uint64_t join_agtt_written,join_agtt_equal,join_agtt_missing;static uint32_t join_agtt_capn;
+/* AGCB (v13, section 57): a pilot slot ship's Agent's command and probe block (+0x6e0, 0x400 bytes). The lockstep session's w1z7
+ * (in-window, slot 1's Agent at 634): +0x6e0..+0x720 the session's 100/150/.../139.1, the joiner's 0; the direction tables
+ * +0x980..+0xa88 other; the probe's due +0xac0 the joiner's load time. NAV writes only the probe's due and enable, for nav
+ * ships, whose blocks come out equal (j1-152: byte-equal, no per-process word in them). Raw, written at the admission. */
+static uint64_t join_agcb_written,join_agcb_equal,join_agcb_missing;static uint32_t join_agcb_capn;
+static int join_agcb_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_agcb_rec *)a)->portable,y=((const join_agcb_rec *)b)->portable;return x<y?-1:x>y;
+}
 /* One AGTT record for the AGENT record just pushed, from that Agent (j1-149: a lookup by portable ID during the world capture,
  * before the ID list is sorted, read other Agents). */
 static int join_agtt_cmp(const void *a,const void *b) {
@@ -1422,6 +1430,10 @@ static int join_grav_unit(join_tables *t,unsigned char *unit) {
         ++join_cap.grav_passive;
         if(!join_read(unit,r.unit,JOIN_GRAV_PASSIVE_BYTES)) {++join_cap.grav_fault;return 1;}
         memset(r.unit,0,0x40);
+        {   /* +0x10: the player view's viewer, as for an active unit (below) */
+            uint64_t viewer=0;unsigned vk;
+            if(join_read(unit+0x10,&viewer,8) && viewer) {uint64_t key=join_key(viewer,&vk);memcpy(r.unit+0x10,&key,8);}
+        }
     } else {
         unsigned char *second=NULL,*third=NULL;int ok;uint32_t before=t->ngravc;r.flags=JOIN_GRAV_ACTIVE;
         join_grav_lock(unit+0x18,1);
@@ -1432,6 +1444,12 @@ static int join_grav_unit(join_tables *t,unsigned char *unit) {
             ++join_cap.grav_fault;r.flags|=JOIN_GRAV_UNCARRIED;t->ngravc=before;memset(r.count,0,sizeof(r.count));
         }
         memset(r.unit,0,0x40);memset(r.unit+0x68,0,0x40);
+        {   /* +0x10: the viewer whose player view last took the unit (0x10abc70 compares it with the viewer's ID and posts
+             * ObjectEnteredPlayerViewEvent on a change; j1-153: a joiner's first radar apply posted it for every unit the
+             * session's had taken at its start), carried as the viewer's portable ID */
+            uint64_t viewer=0;unsigned vk;
+            if(join_read(unit+0x10,&viewer,8) && viewer) {uint64_t key=join_key(viewer,&vk);memcpy(r.unit+0x10,&key,8);}
+        }
     }
     if(!JOIN_PUSH(t->grav,t->ngrav,join_grav_cap_units,r)) {++join_cap.grav_fault;return 0;}
     return 1;
@@ -2791,6 +2809,13 @@ static void join_capture_ldc(join_tables *t) {
     if(t->nldc>1) qsort(t->ldc,t->nldc,sizeof(*t->ldc),join_ldc_cmp);
 }
 static void join_capture_nmesh(join_tables *t);   /* NMESH (lockstep_join.h, at join_admit_rid) */
+static void join_admit_agcb(const join_tables *s,const join_tables *mine) {
+    for(uint32_t i=0;i<s->nagcb;i++) {
+        unsigned char *object=join_object(join_runtime_of(mine,s->agcb[i].portable)),*agent=object?join_nav_agent(object):NULL;
+        if(!agent) {++join_agcb_missing;continue;}
+        if(join_poke((uintptr_t)(agent+JOIN_AGCB_AT),s->agcb[i].block,JOIN_AGCB_BYTES)) ++join_agcb_written; else ++join_agcb_equal;
+    }
+}
 static void join_admit_agtt(const join_tables *s,const join_tables *mine) {
     for(uint32_t i=0;i<s->nagtt;i++) {
         unsigned char *object=join_object(join_runtime_of(mine,s->agtt[i].portable)),*agent=object?join_nav_agent(object):NULL;
@@ -2814,7 +2839,7 @@ static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
     }
 }
 static int join_capture_world(join_tables *t,double now) {
-    join_agtt_capn=0;
+    join_agtt_capn=0;join_agcb_capn=0;
     uint32_t ntcap=0,bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
     join_solver_dormant=0;join_cap.solver_over=0;join_cap.solver_mapped=0;join_cap.bullet_fault=0;join_cap.bullet_blocks=0;join_cap.bullet_live=0;join_cap.bullet_unkeyed=0;
@@ -2868,6 +2893,14 @@ static int join_capture_world(join_tables *t,double now) {
              * ROUTE, SOLVER, STEER), then its pose as before. */
             if(p.kind==PSLOT_VTABLE && !join_capture_flight(t,controller,id->runtime,id->portable,&fcap,&lcap,&agcap,&rcap,&pacap,&stcap,&stpcap,&socap))
                 return 0;
+            if(p.kind==PSLOT_VTABLE) {   /* AGCB: its Agent's command and probe block */
+                unsigned char *agent=NULL;join_agcb_rec *c=calloc(1,sizeof(*c));
+                if(!c) return join_note("memory");
+                c->portable=id->portable;
+                int ok=join_read(controller+0x40,&agent,8) && agent && join_read(agent+JOIN_AGCB_AT,c->block,JOIN_AGCB_BYTES);
+                if(ok && !JOIN_PUSH(t->agcb,t->nagcb,join_agcb_capn,*c)) {free(c);return join_note("memory");}
+                free(c);
+            }
             if(join_dock_kind(p.kind)) {   /* version 8: a ship docking or undocking */
                 join_dock_rec d;memset(&d,0,sizeof(d));d.portable=id->portable;
                 if(!join_dock_read(controller,object,p.kind,&d)) return join_note("dock,id=%llx",(unsigned long long)id->portable);
@@ -2902,6 +2935,7 @@ static int join_capture_world(join_tables *t,double now) {
     for(uint32_t i=1;i<t->nflight;i++) if(t->flight[i].portable==t->flight[i-1].portable)
         return join_note("flight_duplicate,id=%llx",(unsigned long long)t->flight[i].portable);
     if(t->nagent) qsort(t->agent,t->nagent,sizeof(*t->agent),join_agent_cmp);   /* pushed with FLIGHT: the same portable IDs */
+    if(t->nagcb>1) qsort(t->agcb,t->nagcb,sizeof(*t->agcb),join_agcb_cmp);
     if(t->nagtt) qsort(t->agtt,t->nagtt,sizeof(*t->agtt),join_agtt_cmp);        /* pushed with AGENT: the same portable IDs (j1-150/151:
                                                                                  * unsorted, the driver's reader refused the package) */
     if(t->nroute) qsort(t->route,t->nroute,sizeof(*t->route),join_route_cmp);   /* each Agent's head and points, keys unique */
@@ -3965,6 +3999,10 @@ static int join_admit_grav(const join_tables *s,const join_tables *mine) {
         join_grav_lock(unit+0x18,1);
         if(join_poke((uintptr_t)unit+0x40,r->unit+0x40,0x10)) changed=1;
         if(join_poke((uintptr_t)unit+0x60,r->unit+0x60,0x08)) changed=1;
+        {   /* +0x10: the player view's viewer, by portable ID (0: none, or unmapped on the saver) */
+            uint64_t key=0,viewer=0;memcpy(&key,r->unit+0x10,8);
+            if(key && (viewer=join_runtime_of(mine,key))!=0 && join_poke((uintptr_t)unit+0x10,&viewer,8)) changed=1;
+        }
         if(r->flags&JOIN_GRAV_ACTIVE) {
             if(join_poke((uintptr_t)unit+0xa8,r->unit+0xa8,0x20)) changed=1;
             uint32_t k=0;
@@ -4577,6 +4615,7 @@ static int join_admit_world(void) {
     if(!join_admit_created(s,&mine)) {join_tables_free(&mine);return 0;}
     if(s->version>=13) join_admit_noct(s,&mine);   /* the nav octree's index table and hidden keys */
     if(s->version>=13) join_admit_agtt(s,&mine);   /* the Agents' times the load resets */
+    if(s->version>=13) join_admit_agcb(s,&mine);   /* the pilot slot ships' command and probe blocks */
     if(s->version>=13) join_admit_ldc(s,&mine);    /* the drift controllers, before the bodies they set */
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
     if(s->version>=13) for(uint32_t i=0;i<s->nbupd;i++) {   /* BUPD: the session's last build updates */

@@ -15,6 +15,7 @@
  * Not ported: the constructor's poster attribution (Windows thunk 2976; rows here carry site 0, thread none, posted 0).
  * Arming, the per-tick check (stop reason 143) and the restore are this file's. */
 #define WR_OWN_PLATFORM
+#define WR_GTRT_ADDR LX(LX_WR_GTRT_VA) /* GetTransformRelativeTo 0x18a0090 (Windows 0x3db8a0), pin warp_gtrt */
 #define WR_TLS_NOW(tls,out) do {double *wr_time_=(tls)?gate_tls_time((unsigned char*)(tls)):NULL;if(wr_time_) memcpy((out),wr_time_,8);} while(0)
 #define __try if(1)
 #define __finally
@@ -109,7 +110,7 @@ static int wr_arm(int mode) {
     wr_calls=wr_failures=wr_rows=wr_constructed=wr_watches=0;wr_admitted=wr_keyed=wr_unmapped=wr_foreign=wr_outside=wr_full=wr_drew=wr_draws=wr_unknown=0;
     wr_attributed=0;wr_tick=UINT64_MAX;memset(wr_slots,0,sizeof(wr_slots));memset(wr_posters,0,sizeof(wr_posters));
     wr_ctor_installed=0;wr_ctor_override=NULL;wr_ctor_original_word=wr_ctor_patched_word=0; /* no constructor hook here */
-    wr_framed=0;memset(wr_frames,0,sizeof(wr_frames));
+    wr_framed=0;memset(wr_frames,0,sizeof(wr_frames));wr_gtrt_ok=site_ok(lxwr_site("warp_gtrt"));
     wr_mode=mode;InterlockedExchange(&wr_active,1);
     if(!lxwr_swap(LX(LX_WR_DISPATCH_VA),(void*)wr_dispatch)) {InterlockedExchange(&wr_active,0);wr_stage="entry";return 0;}
     wr_frame_ok=lxwr_frame_install(); /* the frame capture is diagnostic: its absence does not refuse the warp keying */
@@ -124,7 +125,7 @@ static int wr_check(void) {
 }
 static void wr_restore(void) {
     InterlockedExchange(&wr_active,0);
-    lxwr_frame_restore();wr_frame_ok=0;
+    lxwr_frame_restore();wr_frame_ok=0;wr_gtrt_ok=0;
     if(!wr_installed) return;
     if(!lxwr_swap((void*)wr_dispatch,LX(LX_WR_DISPATCH_VA))) return; /* a foreign value stays */
     wr_installed=0;wr_restored=1;
@@ -139,7 +140,7 @@ static int lua_warp_rng_status(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_warp_rng_row(lua_State *L) {
-    double index=p_lua_tonumber(L,1);char out[1280];int n=0; /* a watch row with its frame: about 840 characters */
+    double index=p_lua_tonumber(L,1);char out[1536];int n=0; /* a watch row with its frame and own/up: about 1150 characters */
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=wr_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }

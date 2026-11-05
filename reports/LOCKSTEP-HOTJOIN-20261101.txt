@@ -1982,6 +1982,22 @@ proposed and rejected.
   TRAVEL_SNAPSHOT at 634 only: the joiner's T+1 starts from its last loading frame's passes (unpatched, the local camera,
   not joined), the session's from the joined, patched passes of T. The lockstep session's passes_admit (join_admit_passes,
   the hook at the admission once the tick base is T) runs the joiner's pass of T as the session's.
+- The pass of T [F: the lockstep session's passes_admit, j1-147]: the joiner's travel snapshot is taken at the admission
+  (TRAVEL_SNAPSHOT equal at 634); with the pass stride 2 neither side has a pass of 633, the passes draw nothing; 651 stays.
+- The Agents [F: JOIN_WATCHRAW with each watched ship's Agent (0xf90 bytes) and command block (+0x6e0 in the Agent, 0x400
+  bytes), ef3ce688; j1-148..j1-152]: actor 5's Agent differed from T in +0x658 only (the session's 7.083, its load at the
+  start; the joiner's 28.183, its load), actor 11's also in +0xf38 (12.316 against -1). AGTT (63ac04bb, 2f6fc230, 5f78b121;
+  section 56) carries +0x658 and +0xf38 per AGENT record (j1-149: looked up by portable ID before the ID list is sorted, it
+  read other Agents; j1-150/151: unsorted against AGENT, the driver's reader refused the package and retried silently, which
+  the session-over reason now names). j1-152: both Agents and command blocks byte-equal 634..650; the joiner's ship draw set
+  (ACTOR_RNG_ALL) equal per frame; the probe not due (+0xac0 29.02 > 651's 28.78). Still actor 5's pathing step writes
+  another command at 651. Left in its own state: the nav controller's own runtime ID (+0x18, its listener base's AssignNewID
+  0xcc220 in 0x998520: the session's from its boot, 0x15489e; the joiner's from its load list, 0x1dc7ea0; actors 5 and 11 in
+  the same relative order on both). With every input of the ship equal and no draw, the open candidate is an iteration order
+  the session's two clients share by their identical allocation history (both loaded the same snapshot) and a joiner does
+  not (pointer-ordered containers: contact sets, zone children, neighbour lists).
+  The pilot slot ships' Agents (in-window): join_nav_agent takes a PlayerController's Agent (a9a02f7a) and a model-less one
+  is carried with a FLIGHT record of kind JOIN_FLIGHT_NOMODEL (5537cc5d).
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

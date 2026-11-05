@@ -313,3 +313,19 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   ship. So slot 1's agent still has no solver and zero limits at +0x6e0, and slot 2's limits at +0x348 still differ.
   Either the capture stops at 10000 before it sorts, or its selector misses the PlayerController ships on the saver
   (with x4mods-28).
+
+17. THE SLOT AGENTS CARRIED, PART ONE (w1z7, build247 = d8ca33f8, 5 November)
+- x4mods-28's 5537cc5d carries a PlayerController ship's Agent without a flight model (its capture stopped at the missing
+  model before AGENT, PARAM, ROUTE and SOLVER), and AGTT (5f78b121) carries agent+0x658 and +0xf38, the load-time stamps that
+  parted an ordinary J1's actor 5 at 651 (now: every Agent byte of actors 5 and 11 equal 634..650, j1-152).
+- w1z7: resumed, run to 1199; T+1 4 differ (6dae5, 176c95, 176cef, 800259fc's nav timing), 900 725. Slot 1's agent has its
+  solver now (one word differs in the dumped 0x400). Still different on it: the command and probe block inside the Agent
+  (agent+0x6e0..: the table at +0x6e0..0x720, the direction tables at +0x980..0xa88, the probe's due at +0xac0), which NAV
+  carries for navigation ships only; four copies of one word (+0xe8, +0x288, +0x428, +0x5c8) and of another (+0x138...);
+  two swapped times (+0x178, +0x318). Slot 2's limits (+0x348..0x380) still differ by the same factors. Asked of the hot join:
+  NAV's command block for the PlayerController agents too.
+- The ordinary J1's remaining split (with x4mods-28): the joiner delivers a different number of due events per pass from T+3
+  (EVENT_ORDER counters; local and local_ties equal), with the census equal: a schedule difference, to be named by event
+  rows over the joiner's window (native_gate_event_rows_from, x4mods-28). Separately, event_order orders sources without a
+  saved identity by runtime ID, and a joiner's controllers take theirs from its load list: portable only once those IDs are
+  the session's.

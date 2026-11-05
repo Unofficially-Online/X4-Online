@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "20bff3b5d5c3b1301ee43febe85272292f93462c7612cc7cf47a2bb743eafab2"   /* version 13 (JOBE .. AGTT; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "e99ff140c7696710b961243ef1907f8cfac3680b1c634264d4e39c73a64adad5"   /* version 13 (JOBE .. AGCB; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -419,6 +419,7 @@ static void test_join_golden(void) {
     {join_gravn_rec swap[3]={gravn[1],gravn[0],gravn[2]};assert(!join_gravn_shape(swap,3));}
     t.splm=splm;t.nsplm=1;t.splme=splme;t.nsplme=1;t.splmseg=splmseg;t.nsplmseg=4;t.gravn=gravn;t.ngravn=3;t.gravp=gravp;t.ngravp=3;t.gravq=gravq;t.ngravq=3;t.jobe=jobe;t.njobe=1;t.evqt=evqt;t.nevqt=3;t.gravd=gravd;t.ngravd=2;t.viewk=viewk;t.nviewk=2;t.viewkc=viewkc;t.nviewkc=2;t.viewf=viewf;t.nviewf=2;t.viewp=viewp;t.nviewp=1;t.shoot=shoot;t.nshoot=1;t.attk=attk;t.nattk=1;t.livef=livef;t.nlivef=1;t.spec=spec;t.nspec=2;t.navc=navc;t.nnavc=1;t.jobs=jobs;t.njobs=1;t.gone=gone;t.ngone=2;t.body=body;t.nbody=1;t.bupd=bupd;t.nbupd=2;t.ldc=ldc;t.nldc=1;t.navt=navt;t.nnavt=1;t.nmesh=nmesh;t.nnmesh=4;t.noct=noct;t.nnoct=4;
     static join_agtt_rec agtt[2]={{0x2001,{0x401c54fdf3b645a2ull,0,0x4028a1f671529a3eull}},{0x2004,{0xbff0000000000000ull,0,0}}};t.agtt=agtt;t.nagtt=2;
+    static join_agcb_rec agcb[1];agcb[0].portable=0x2001;for(unsigned i=0;i<JOIN_AGCB_BYTES;i++) agcb[0].block[i]=(unsigned char)i;t.agcb=agcb;t.nagcb=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -456,7 +457,8 @@ static void test_join_golden(void) {
            r.nnavt==1 && !memcmp(r.navt,navt,sizeof(navt)) &&
            r.nnmesh==4 && !memcmp(r.nmesh,nmesh,sizeof(nmesh)) &&
            r.nnoct==4 && !memcmp(r.noct,noct,sizeof(noct)) &&
-           r.nagtt==2 && !memcmp(r.agtt,agtt,sizeof(agtt)));
+           r.nagtt==2 && !memcmp(r.agtt,agtt,sizeof(agtt)) &&
+           r.nagcb==1 && !memcmp(r.agcb,agcb,sizeof(agcb)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -490,7 +492,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;

@@ -142,6 +142,7 @@
 #define LX_WR_DISPATCH_VA 0x16b3e30u          /* U::WarpEvent::Dispatch (Windows 0x9aa290) */
 #define LX_WR_ENTRY_VA 0x3b83458u             /* its slot 3 of U::WarpEvent 0x3b83440 (Windows WR_ENTRY 0x2baa8d0, slot 2) */
 #define LX_WR_CTOR_VA 0x16bbe40u              /* U::WarpEvent's constructor (Windows 0x9a9d00) */
+#define LX_WR_GTRT_VA 0x18a0090u              /* U::Component::GetTransformRelativeTo (Windows 0x3db8a0) */
 #define LX_WR_FRAME_CALL_VA 0x1615867u        /* the gate poster 0x1614ff0's call of it (Windows 0x5ce690's at 0x5cf1c6) */
 /* AI Wait restores (gate_ai_wait.h, lockstep_ai_wait_rng.h). */
 #define LX_AI_WAIT_SLOT_VA 0x3b2a680u       /* U::AI::WaitAction vtable 0x3b2a650, restore slot +0x30 (Windows +0x28) */
@@ -566,5 +567,6 @@ static const lx_site lx_sites[]={
     {"warp_draws",0x11557f8,0x16,"3b4181770200ccb0e889f194966dc74e06d0c8c2084265b3809a04f4371ecdd8"},
     {"warp_frame_product",0x16159fc,0xdc,"19304b1b7f1635dbfe80dde7fafb98b4973558057950193979d2454a2c7028a4"},
     {"warp_frame_call",0x1615817,0x55,"6e5b13caa6d9d2bd929c9152e64dbf1b4e89125bd790404135eec06fa88c685a"},
+    {"warp_gtrt",0x18a0090,0x3e0,"8489683612cc942bd00c117405c4b2ba6e02307198a653f05b574d2e62b08ccd"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */

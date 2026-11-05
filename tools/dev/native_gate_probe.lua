@@ -2135,10 +2135,11 @@ local function pilot_frame(s,tick)
  -- Diagnostic native_gate_pilot_dump_tick: every slot's ship, controller, agent and solver bytes at that tick, read only, so
  -- that the session's and a joiner's can be compared offline (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 15).
  if cfg.native_gate_pilot_dump_tick==tick and gate.pilot_dump then
-  local sizes={0x800,0x800,0x1000,0x400}
+  local sizes={0x800,0x800,0x1000,0x400,0x6f00}
   for slot=1,#cfg.native_gate_pilot_slots do
-   for which=0,3 do
-    for off=0,sizes[which+1]-256,256 do
+   for which=0,4 do
+    -- The players: only their seat and flight fields (+0x6a00..+0x6f00).
+    for off=(which==4 and 0x6a00 or 0),sizes[which+1]-256,256 do
      local hex=gate.pilot_dump(slot,which,off)
      if hex then ticklog.write('PILOT_DUMP tick='..tick..' slot='..slot..' which='..which..' off='..off..' hex='..hex) end
     end
@@ -3684,9 +3685,12 @@ local function frame()
   -- Census rows for boot passes and the first N gated ticks (true means 3).
   if cfg.native_gate_event_rows~=nil then
    local ticks=cfg.native_gate_event_rows==true and 3 or cfg.native_gate_event_rows
+   -- native_gate_event_rows_from (a hot joiner's window): rows for from <= tick <= from+ticks instead of 1..ticks.
+   local from=cfg.native_gate_event_rows_from or 0
+   assert(type(from)=='number' and from>=0 and from==math.floor(from),'native_gate_event_rows_from must be a tick')
    assert(cfg.native_gate_event_order and type(ticks)=='number' and ticks>=0 and ticks<=(gate.platform and gate.platform()=='linux' and 20000 or 600) and ticks==math.floor(ticks) and
-    gate.event_rows and gate.event_rows(ticks)==1,'event rows refused')
-   log('EVENT_ROWS_ARMED ticks='..ticks)
+    gate.event_rows and gate.event_rows(ticks,from)==1,'event rows refused')
+   log('EVENT_ROWS_ARMED ticks='..ticks..(from>0 and ' from='..from or ''))
   end
   -- Portable IDs for components created after the snapshot load: creation
   -- tick, parent's saved/created ID, class, macro and ordinal, high bit set.

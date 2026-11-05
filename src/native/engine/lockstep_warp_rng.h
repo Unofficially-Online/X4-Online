@@ -67,6 +67,10 @@
 #define WR_FRAME_BLOCK 0x5cf091u /* its product A*B (A [rbp-0x70], B [rbp-0x30]), the copy to [rbp+0x50] and the call */
 #define WR_FRAME_BLOCK_SIZE 0x13au
 #define WR_FRAME_BLOCK_SHA "f48bdaeb1ecd3538bde17180fa91a1fab463ac2deac9eaac8bd09a8490897eca"
+#define WR_GTRT 0x3db8a0u        /* U::Component::GetTransformRelativeTo (lockstep_path_transforms.h's PTF_GTR) */
+#define WR_GTRT_SIZE 0x465u
+#define WR_GTRT_SHA "6e28847e1ab6eb2e206ec564645b32dee94a0fdd2eefe0884bdedad46da1ad90"
+#define WR_GTRT_ADDR (image+WR_GTRT)
 #endif
 #define WR_POSTERS 4096u
 #define WR_DOMAIN 0x58344c5741525052ULL /* "X4LWARPR" */
@@ -80,7 +84,14 @@ enum {WR_OFF,WR_SPLIT,WR_OBSERVE};
 enum {WR_ROW_WARP,WR_ROW_WATCH};
 typedef void (*wr_fn)(void *,void *,void *,double);
 typedef struct {uint64_t tick,key,space,natural,word;uint32_t ordinal,draws;uint8_t klass,flag,direction,keyed;uint64_t time,now,zone,posted;uint32_t site;uint8_t thread;uint8_t kind;uint32_t watch;} wr_row_t;
-typedef struct {unsigned char transform[0x40],record[0x40],pointed[16],frame[WR_FRAME_BYTES];uint8_t has_transform,has_record,has_pointed,has_frame;} wr_watch_t;
+typedef struct {unsigned char transform[0x40],record[0x40],pointed[16],frame[WR_FRAME_BYTES],own[0x40],up[0x40];
+    uint8_t has_transform,has_record,has_pointed,has_frame,has_own,has_up;uint64_t parent,grand;} wr_watch_t;
+/* GetTransformRelativeTo(a, out, time, b, flag): the C prototype maps on both ABIs (MSVC rcx rdx xmm2 r9 [rsp+0x20],
+ * System V rdi rsi xmm0 rdx ecx). */
+typedef void *(*wr_gtrt_fn)(void *,void *,double,void *,unsigned char);
+#define WR_PARENT 0x70u /* the live parent (both executables) */
+static wr_gtrt_fn wr_gtrt_override; /* tests only */
+static int wr_gtrt_ok; /* GetTransformRelativeTo pinned at arming: the watched dispatch's own/up only then */
 typedef struct {uintptr_t event;uint64_t tick;unsigned char bytes[WR_FRAME_BYTES];} wr_frame_t;
 static wr_watch_t wr_watch_ring[WR_WATCH_RING];
 static wr_frame_t wr_frames[WR_FRAMES];
@@ -176,7 +187,23 @@ static int wr_take_frame(const void *event,unsigned char out[WR_FRAME_BYTES]) {
     return found;
 }
 /* A watched listener's warp, before the dispatch: the event's transform, the record and what its +0x30 points at. */
-static void wr_watch_note(const void *event,const unsigned char *record,uint64_t key,uint64_t space,uint64_t target,uint32_t ordinal,unsigned klass) {
+/* 'observe' only, GetTransformRelativeTo pinned: the listener's transform relative to its parent (its own transform)
+ * and to its grandparent, at the event's time, before the dispatch moves it. That time is the poster's, so the
+ * controller is not refreshed again (it reads); the gate poster's A = GetTransformRelativeTo(ship, gate) at that time
+ * is built from these. */
+static void wr_watch_own(wr_watch_t *m,void *listener,double time) {
+    if(wr_mode!=WR_OBSERVE || !wr_gtrt_ok || !listener) return;
+    wr_gtrt_fn g=wr_gtrt_override?wr_gtrt_override:(wr_gtrt_fn)(void*)(WR_GTRT_ADDR);
+    unsigned char *parent=NULL,*grand=NULL,out[0x40] __attribute__((aligned(16)));
+    if(!read_local((unsigned char*)listener+WR_PARENT,&parent,8) || !parent) return;
+    read_local(parent+8,&m->parent,8);
+    memset(out,0,sizeof(out));g(listener,out,time,parent,0);memcpy(m->own,out,0x40);m->has_own=1;
+    if(!read_local(parent+WR_PARENT,&grand,8) || !grand) return;
+    read_local(grand+8,&m->grand,8);
+    memset(out,0,sizeof(out));g(listener,out,time,grand,0);memcpy(m->up,out,0x40);m->has_up=1;
+}
+static void wr_watch_note(const void *event,const unsigned char *record,uint64_t key,uint64_t space,uint64_t target,uint32_t ordinal,unsigned klass,
+                          void *listener,double time) {
     LONG64 w=InterlockedIncrement64(&wr_watches)-1;wr_watch_t *m=&wr_watch_ring[(uint64_t)w%WR_WATCH_RING];memset(m,0,sizeof(*m));
     const unsigned char *transform=NULL,*pointed=NULL;
     if(event && read_local((const unsigned char*)event+0x20,&transform,8) && transform) m->has_transform=(uint8_t)(read_local(transform,m->transform,0x40)!=0);
@@ -185,6 +212,7 @@ static void wr_watch_note(const void *event,const unsigned char *record,uint64_t
         if(read_local(record+0x30,&pointed,8) && pointed) m->has_pointed=(uint8_t)(read_local(pointed,m->pointed,16)!=0);
     }
     m->has_frame=(uint8_t)wr_take_frame(event,m->frame);
+    wr_watch_own(m,listener,time);
     wr_row_t r;memset(&r,0,sizeof(r));
     r.tick=stats.issued;r.key=key;r.space=space;r.zone=target;r.ordinal=ordinal;r.klass=(uint8_t)klass;r.kind=WR_ROW_WATCH;r.watch=(uint32_t)((uint64_t)w%WR_WATCH_RING);
     LONG64 index=InterlockedIncrement64(&wr_rows)-1;wr_ring[(uint64_t)index%WR_RING]=r;
@@ -208,7 +236,7 @@ static void wr_run(wr_fn original,uint64_t *rng,const unsigned char *tls,void *e
     int split=wr_mode==WR_SPLIT && key && ordinal;
     uint64_t natural=*rng,seed=natural;
     if(split) {seed=lockstep_seed(WR_DOMAIN,stats.issued,key,ordinal,0,klass);*rng=seed;++wr_keyed;}
-    if(key && klass==WORLD_KEY_SAVED && st_key_watched(key)) wr_watch_note(event,record,key,space,target,ordinal,klass);
+    if(key && klass==WORLD_KEY_SAVED && st_key_watched(key)) wr_watch_note(event,record,key,space,target,ordinal,klass,listener,time);
     __try {original(event,listener,arg,time);}
     __finally {
         uint64_t exit=*rng;if(split) *rng=natural;
@@ -258,6 +286,7 @@ static int wr_arm(int mode) {
     wr_calls=wr_failures=wr_rows=wr_constructed=0;wr_admitted=wr_keyed=wr_unmapped=wr_foreign=wr_outside=wr_full=wr_drew=wr_draws=wr_unknown=0;
     wr_attributed=0;wr_tick=UINT64_MAX;memset(wr_slots,0,sizeof(wr_slots));memset(wr_posters,0,sizeof(wr_posters));
     wr_framed=0;memset(wr_frames,0,sizeof(wr_frames));wr_frame_ok=hash_ok(image+WR_FRAME_BLOCK,WR_FRAME_BLOCK_SIZE,WR_FRAME_BLOCK_SHA);
+    wr_gtrt_ok=hash_ok(image+WR_GTRT,WR_GTRT_SIZE,WR_GTRT_SHA);
     if(!wr_ctor_install()) {wr_stage="ctor";return 0;}
     wr_mode=mode;InterlockedExchange(&wr_active,1);
     if(!script_rng_slot_swap(WR_ENTRY,image+WR_DISPATCH,(void*)wr_dispatch)) {
@@ -297,9 +326,14 @@ static int wr_row(uint64_t index,char *out,size_t cap) {
         if(m->has_record) wr_hex(rec,m->record,0x40);else strcpy(rec,"-");
         if(m->has_pointed) wr_hex(pt,m->pointed,16);else strcpy(pt,"-");
         if(m->has_frame) wr_hex(fr,m->frame,WR_FRAME_BYTES);else strcpy(fr,"-");
-        n=snprintf(out,cap,"index=%llu tick=%llu kind=watch key=%c:%016llx ordinal=%u space=%016llx zone=%016llx transform=%s record=%s pointed=%s frame=%s",
+        char own[0x81],up[0x81];
+        if(m->has_own) wr_hex(own,m->own,0x40);else strcpy(own,"-");
+        if(m->has_up) wr_hex(up,m->up,0x40);else strcpy(up,"-");
+        n=snprintf(out,cap,"index=%llu tick=%llu kind=watch key=%c:%016llx ordinal=%u space=%016llx zone=%016llx transform=%s record=%s pointed=%s frame=%s "
+            "own=%s up=%s parent=%016llx grand=%016llx",
             (unsigned long long)index,(unsigned long long)r->tick,r->klass==WORLD_KEY_CREATED?'c':r->klass==WORLD_KEY_SAVED?'s':'-',
-            (unsigned long long)r->key,r->ordinal,(unsigned long long)r->space,(unsigned long long)r->zone,t,rec,pt,fr);
+            (unsigned long long)r->key,r->ordinal,(unsigned long long)r->space,(unsigned long long)r->zone,t,rec,pt,fr,own,up,
+            (unsigned long long)m->parent,(unsigned long long)m->grand);
         return n>0 && (size_t)n<cap?n:0;
     }
     n=snprintf(out,cap,"index=%llu tick=%llu key=%c:%016llx ordinal=%u space=%016llx flag=%u direction=%u keyed=%u natural=%016llx word=%016llx draws=%u "

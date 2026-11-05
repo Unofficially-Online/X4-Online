@@ -176,6 +176,18 @@ static void test_event_order(void) {
     boot_phase=0;stats.issued=0;ui_thread=GetCurrentThreadId();assert(!event_order_rows_arm(3));
     event_order_installed=1;assert(!event_order_rows_arm(601) && event_order_rows_arm(3) && event_order_rows_arm(3) && !event_order_rows_arm(4));
     event_order_installed=0;event_order_rows_armed=0;event_order_rows_ticks=0;
+    /* From (a hot joiner's window, native_gate_event_rows_from): rows for from <= issued <= from+ticks only; a reload must
+     * repeat the same start. */
+    test_eo_reset_counters();event_order_row_cursor=0;event_order_rows_armed=1;event_order_rows_ticks=1;event_order_rows_from=633;
+    boot_mode=1;boot_phase=3;
+    stats.issued=632;test_eo_fill(1);test_eo_loop(0);assert(event_order_row_cursor==0);
+    stats.issued=633;test_eo_fill(1);test_eo_loop(0);assert(event_order_row_cursor==7 && event_order_row(0,row,sizeof(row)) && strstr(row," tick=633 "));
+    stats.issued=634;test_eo_fill(1);test_eo_loop(0);assert(event_order_row_cursor==14);
+    stats.issued=635;test_eo_fill(1);test_eo_loop(0);assert(event_order_row_cursor==14);
+    event_order_row_cursor=0;event_order_rows_armed=0;event_order_rows_ticks=0;event_order_rows_from=0;
+    boot_phase=0;stats.issued=0;event_order_installed=1;
+    assert(event_order_rows_arm_from(3,633) && event_order_rows_arm_from(3,633) && !event_order_rows_arm_from(3,634) && !event_order_rows_arm(3));
+    event_order_installed=0;event_order_rows_armed=0;event_order_rows_ticks=0;event_order_rows_from=0;
     boot_phase=saved_phase;stats.issued=saved_issued;ui_thread=saved_ui;
     test_eo_reset_counters();event_order_armed=0;stats.active=saved_active;boot_mode=saved_boot;
     /* Call-site word: owner-checked swap and restore, never over a foreign word. */

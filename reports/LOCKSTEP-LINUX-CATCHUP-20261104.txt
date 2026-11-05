@@ -183,6 +183,12 @@ THE PLATFORM RESIDUE: A GATE JUMP'S EXIT POSITION, 1 ULP (W24/W25 against lx14/l
   NavigationController's getter use the same association on both compilers (the source's explicit SIMD order), so the
   ulp comes from an input further down (the pose extrapolation, or a double/float step). Next: capture A and B at the
   construction on both platforms.
+  W27 against lx17 (the poster's frame, bf8d8485): B (the destination side, GetTransformRelativeTo(exit, zone 0x124):
+  (33026.6875, 500, -27539.627), rows +-sqrt(2)/2) is byte-identical; A, the ship relative to the source gate after the
+  clamp, differs only in its position z, 1 ulp (W 2982.65283 = 453a6a72, L 2982.65259 = 453a6a71; its rows are the preset
+  identity). So the ulp is born in GetTransformRelativeTo(ship, gate, time) itself (Windows call 0x5ceacc, Linux
+  0x161529e), from equal banks, time and gate: the ship's own transform at that time (ShipSmall slot +0x1440/+0x1488,
+  the NavigationController's getter) or the composition. Next: the inputs and output of that one call on both platforms.
 
 WINDOWS AGAINST LINUX, w22 client 1 (build235, W21 + player_timer) against lx9
   tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
@@ -190,9 +196,10 @@ WINDOWS AGAINST LINUX, w22 client 1 (build235, W21 + player_timer) against lx9
   w22 c1 vs lx9 c2        0      0      0      3      6     16     27     31     43     51     49     55
 
 NEXT
-  1. (done: actor_rng_all, player_timer, tempzone_order on Linux; Linux vs Linux 0 through 6000, lx13.)
-  2. (done: W23 against lx13, identical through 1800.) The platform residue: 1 object at 2400, 13 at 6000 (both Linux
-     clients alike): find the first differing field and the code path behind it.
+  1. (done: actor_rng_all, player_timer, tempzone_order, warp_rng on Linux; Linux vs Linux 0 through 6000, lx13.)
+  2. (done: W23 against lx13, identical through 1800.) The platform residue: the 1-ulp z of the ship's position relative
+     to an orb accelerator in GetTransformRelativeTo at the jump (0a5d7a, tick 1862): find the operation that rounds
+     differently, then make it portable (one shared implementation on both platforms).
   3. The rest of the defaults' determinism stack the clock-mode census does not exercise (the battle scope's fixture
      state, shape order, view points), then the people stack on Linux (pilot replay first: a Linux server simulates the
      players).

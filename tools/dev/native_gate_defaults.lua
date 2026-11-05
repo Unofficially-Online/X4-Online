@@ -270,6 +270,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_refresh_builds','hot join: every station build state refreshed at T+1 on every client'},
  {'native_gate_join_shipyards_mask','hot join shipyard rows: which reads run (diagnostic)'},
  {'native_gate_event_rows','event rows'},
+ {'native_gate_event_rows_from','event rows from this tick (the window of a hot joiner)'},
  {'native_gate_event_rng_rows','event RNG rows'},
  {'native_gate_script_rng_rows','script RNG rows'},
  {'native_gate_script_rng_rows_ticks','script RNG rows window'},

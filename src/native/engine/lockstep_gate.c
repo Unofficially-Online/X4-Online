@@ -1617,7 +1617,7 @@ static int lua_tempzone_order_row(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_warp_rng_row(lua_State *L) {
-    double index=p_lua_tonumber(L,1);char out[1280];int n=0; /* a watch row with its frame: about 840 characters */
+    double index=p_lua_tonumber(L,1);char out[1536];int n=0; /* a watch row with its frame and own/up: about 1150 characters */
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=wr_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
@@ -2371,9 +2371,11 @@ static int lua_event_order_status(lua_State *L) {
     char out[768];int n=accept_ui()?event_order_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
+/* gate.event_rows(ticks[, from]): rows for from <= issued <= from+ticks (from 0: 1..ticks). */
 static int lua_event_rows(lua_State *L) {
-    double ticks=p_lua_tonumber(L,1);
-    p_lua_pushnumber(L,isfinite(ticks) && ticks>=0 && ticks<=600 && floor(ticks)==ticks && event_order_rows_arm((unsigned)ticks));return 1;
+    double ticks=p_lua_tonumber(L,1),from=p_lua_tonumber(L,2);
+    p_lua_pushnumber(L,isfinite(ticks) && ticks>=0 && ticks<=600 && floor(ticks)==ticks && isfinite(from) && from>=0 && from<=4294967295.0 &&
+                       floor(from)==from && event_order_rows_arm_from((unsigned)ticks,(uint64_t)from));return 1;
 }
 static int lua_event_order_row(lua_State *L) {
     double index=p_lua_tonumber(L,1);char out[384];int n=0;

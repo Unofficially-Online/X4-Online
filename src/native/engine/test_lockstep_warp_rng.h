@@ -58,6 +58,13 @@ static void test_wr_ctor_abi(void) {
     wr_poster_t p=wr_take_poster(event);assert(p.event==(uintptr_t)event && p.site==531 && p.thread==PATH_THREAD_MOVEWORKER);
     VirtualFree(code,0,MEM_RELEASE);
 }
+static unsigned test_wr_gtrt_calls,test_wr_gtrt_misaligned;static void *test_wr_gtrt_a[2],*test_wr_gtrt_b[2];static double test_wr_gtrt_time;
+static unsigned char test_wr_gtrt_flag;
+static void *test_wr_gtrt(void *a,void *out,double time,void *b,unsigned char flag) {
+    unsigned k=test_wr_gtrt_calls<2?test_wr_gtrt_calls:1;test_wr_gtrt_a[k]=a;test_wr_gtrt_b[k]=b;test_wr_gtrt_time=time;test_wr_gtrt_flag=flag;
+    if((uintptr_t)out&15u) ++test_wr_gtrt_misaligned;
+    memset(out,(int)(++test_wr_gtrt_calls),0x40);return out;
+}
 /* Watch: a listener in the step trace's list first logs a kind=watch row with its event's transform, the record and
  * the 16 bytes its +0x30 points at, then the warp row; a listener not in it only the warp row; missing parts print '-'. */
 static void test_wr_watch(unsigned char *event,unsigned char *record,unsigned char *ship,unsigned char *other) {
@@ -68,11 +75,11 @@ static void test_wr_watch(unsigned char *event,unsigned char *record,unsigned ch
     void *tp=transform,*pp=pointed;memcpy(event+0x20,&tp,8);memcpy(record+0x30,&pp,8);record[4]=0x11;
     uint64_t word=0x1234;int thrown;stats.issued=1791;LONG64 before=wr_rows,watches=wr_watches;
     test_wr_guarded(&word,event,ship,&thrown);assert(!thrown && wr_rows==before+2 && wr_watches==watches+1);
-    char hex_t[0x81],hex_r[0x81],hex_p[0x21],hex_f[2*WR_FRAME_BYTES+1],expect[1152],row[1280];
+    char hex_t[0x81],hex_r[0x81],hex_p[0x21],hex_f[2*WR_FRAME_BYTES+1],expect[1536],row[1536];
     wr_hex(hex_t,transform,0x40);wr_hex(hex_r,record,0x40);wr_hex(hex_p,pointed,16);
     snprintf(expect,sizeof(expect),"index=%lld tick=1791 kind=watch key=s:00000000000add39 ordinal=1 space=000000000013e75f zone=00000000007a0100 "
-        "transform=%s record=%s pointed=%s frame=-",(long long)before,hex_t,hex_r,hex_p);
-    assert(wr_row((uint64_t)before,row,sizeof(row))>0 && !strcmp(row,expect) && strlen(row)<1280);
+        "transform=%s record=%s pointed=%s frame=- own=- up=- parent=0000000000000000 grand=0000000000000000",(long long)before,hex_t,hex_r,hex_p);
+    assert(wr_row((uint64_t)before,row,sizeof(row))>0 && !strcmp(row,expect) && strlen(row)<1536);
     assert(wr_row((uint64_t)before+1,row,sizeof(row))>0 && strstr(row," tick=1791 key=s:00000000000add39 ordinal=1 ") && !strstr(row,"kind="));
     /* The gate poster's frame: noted at construction (the WR_FRAME_BYTES below its transform), taken by the watched dispatch once. */
     {unsigned char stack[WR_FRAME_BYTES+0x40];for(unsigned i=0;i<sizeof(stack);i++) stack[i]=(unsigned char)(0x10+i);
@@ -81,15 +88,29 @@ static void test_wr_watch(unsigned char *event,unsigned char *record,unsigned ch
      wr_frame_ok=1;wr_frame_note(event,stack+WR_FRAME_BYTES);assert(wr_framed==framed+1);
      before=wr_rows;stats.issued=1792;test_wr_guarded(&word,event,ship,&thrown);wr_hex(hex_f,stack,WR_FRAME_BYTES);
      char want[0x1a0];snprintf(want,sizeof(want)," frame=%s",hex_f);
-     assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row,want) && strlen(row)<1280);
+     assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row,want) && strlen(row)<1536);
      before=wr_rows;test_wr_guarded(&word,event,ship,&thrown);assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row," frame=-"));
      st_id_count=0;wr_frame_note(event,stack+WR_FRAME_BYTES);assert(wr_framed==framed+1);st_id_count=1; /* nothing watched: no note */
      wr_frame_ok=prior_ok;}
     before=wr_rows;test_wr_guarded(&word,event,other,&thrown);assert(wr_rows==before+1);
     memset(event+0x20,0,8);memset(record+0x30,0,8);memset(event+0x28,0,8);before=wr_rows;test_wr_guarded(&word,event,ship,&thrown);
     assert(wr_rows==before+2 && wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row," transform=- record=- pointed=-"));
+    /* 'observe' with GetTransformRelativeTo pinned: the listener against its parent (own) and grandparent (up) at the
+     * event's time, into aligned memory; 'split' or unpinned: not called. */
+    {static unsigned char parent_obj[0x80],grand_obj[0x80];uint64_t pid=0x7a0300,gid=0x7a0400;memcpy(parent_obj+8,&pid,8);memcpy(grand_obj+8,&gid,8);
+     void *pp=parent_obj,*gp=grand_obj;memcpy(ship+0x70,&pp,8);memcpy(parent_obj+0x70,&gp,8);
+     int prior_mode=wr_mode,prior_ok=wr_gtrt_ok;wr_gtrt_override=test_wr_gtrt;test_wr_gtrt_calls=0;test_wr_gtrt_misaligned=0;
+     wr_mode=WR_SPLIT;wr_gtrt_ok=1;test_wr_guarded(&word,event,ship,&thrown);assert(!test_wr_gtrt_calls);
+     wr_mode=WR_OBSERVE;wr_gtrt_ok=0;test_wr_guarded(&word,event,ship,&thrown);assert(!test_wr_gtrt_calls);
+     wr_gtrt_ok=1;before=wr_rows;test_wr_guarded(&word,event,ship,&thrown);
+     assert(test_wr_gtrt_calls==2 && test_wr_gtrt_a[0]==ship && test_wr_gtrt_a[1]==ship && test_wr_gtrt_b[0]==parent_obj && test_wr_gtrt_b[1]==grand_obj &&
+            test_wr_gtrt_time==2.5 && !test_wr_gtrt_flag && !test_wr_gtrt_misaligned);
+     unsigned char o1[0x40],o2[0x40];memset(o1,0x01,0x40);memset(o2,0x02,0x40);char h1[0x81],h2[0x81],want[0x140];wr_hex(h1,o1,0x40);wr_hex(h2,o2,0x40);
+     snprintf(want,sizeof(want)," own=%s up=%s parent=00000000007a0300 grand=00000000007a0400",h1,h2);
+     assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row,want) && strlen(row)<1536);
+     memset(ship+0x70,0,8);memset(parent_obj+0x70,0,8);wr_mode=prior_mode;wr_gtrt_ok=prior_ok;wr_gtrt_override=NULL;}
     void *rp=record;memcpy(event+0x28,&rp,8);record[4]=0;st_ids[0]=prior_id0;st_id_count=prior_ids;
-    printf("warp watch rows (transform, record, pointed; listed only) PASS\n");
+    printf("warp watch rows (transform, record, pointed, frame, own/up; listed only) PASS\n");
 }
 static void test_warp_rng(void) {
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;int saved_boot=boot_mode,saved_phase=boot_phase;
@@ -99,7 +120,7 @@ static void test_warp_rng(void) {
     assert(world_identities);world_identity_count=0;world_identity_sealed=0;
     assert(world_identity_record(0x7a0001,0xadd39) && world_identity_record(0x7a0002,0xadd62) && world_identity_record(0x7a0100,0x13e75f));
     test_wr_reset();
-    static unsigned char ship[0x40],other[0x40],stray[0x40],event[0x40],record[0x40];
+    static unsigned char ship[0x80],other[0x80],stray[0x80],event[0x40],record[0x40];
     *(uint64_t*)(ship+8)=0x7a0001;*(uint64_t*)(other+8)=0x7a0002;*(uint64_t*)(stray+8)=0x7a0999;
     *(uint64_t*)(event+0x18)=0x7a0100;*(unsigned char**)(event+0x28)=record;record[0]=1;
     uint64_t word=0x1234;int thrown;test_wr_draws=2;

@@ -54,16 +54,17 @@ static int lua_pilot_join_in_window(lua_State *L) {
     if(accept_ui() && on==1 && !stats.issued) pjoin_in_window_diag=1;
     p_lua_pushnumber(L,pjoin_in_window_diag);return 1;
 }
-/* gate.pilot_dump(slot, which, offset): 256 bytes of slot k's ship (0), its controller (1, ship+0x200), agent (2) or solver
- * (3) from offset, as hex; nil when unreadable. Diagnostic native_gate_pilot_dump_tick: the session's bytes and a joiner's
+/* gate.pilot_dump(slot, which, offset): 256 bytes of slot k's ship (0), its controller (1, ship+0x200), agent (2), solver (3)
+ * or player (4: slot 1 X4's own player, slot k its P_k) from offset, as hex; nil when unreadable. Diagnostic native_gate_pilot_dump_tick: the session's bytes and a joiner's
  * side by side (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 15). Reads only. */
 static int lua_pilot_dump(lua_State *L) {
     const double slot=p_lua_tonumber(L,1),which=p_lua_tonumber(L,2),offset=p_lua_tonumber(L,3);
     unsigned char bytes[256],*base=NULL;char hex[2*sizeof(bytes)];
-    if(!accept_ui() || !(slot>=1 && slot<=PILOT_SLOTS) || floor(slot)!=slot || !(which>=0 && which<=3) || floor(which)!=which ||
-       !(offset>=0 && offset<=0x4000) || floor(offset)!=offset) {p_lua_pushnil(L);return 1;}
+    if(!accept_ui() || !(slot>=1 && slot<=PILOT_SLOTS) || floor(slot)!=slot || !(which>=0 && which<=4) || floor(which)!=which ||
+       !(offset>=0 && offset<=0x8000) || floor(offset)!=offset) {p_lua_pushnil(L);return 1;}
     const pilot_slot *s=&pilot_slots[(unsigned)slot-1u];
     if(which==0) base=s->object;else if(which==2) base=s->agent;else if(which==3) base=s->solver;
+    else if(which==4) base=slot==1?pslot_p1:pslots[(unsigned)slot].player;
     else if(!s->object || !read_local(s->object+0x200,&base,8)) base=NULL;
     if(!base || !read_local(base+(unsigned)offset,bytes,sizeof(bytes))) {p_lua_pushnil(L);return 1;}
     static const char digits[]="0123456789abcdef";
