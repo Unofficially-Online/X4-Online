@@ -625,6 +625,9 @@ class Overlays(unittest.TestCase):
             self.assertEqual(overlays.refresh_sets(['native_gate_join_refresh_builds = false']), ['native_gate_join_refresh_builds = false'])
             self.assertEqual(overlays.ids_sets(['a=1']), ['a=1', 'native_gate_join_ids=true'])
             self.assertEqual(overlays.ids_sets(['native_gate_join_ids = false']), ['native_gate_join_ids = false'])
+            self.assertEqual(overlays.default_sets(['a=1']), ['a=1']+[f'{k}=true' for k in overlays.JOIN_DEFAULT_ON])
+            self.assertEqual(overlays.default_sets(['native_gate_join_rcnt = false']),
+                             ['native_gate_join_rcnt = false']+[f'{k}=true' for k in overlays.JOIN_DEFAULT_ON[1:]])
             text = (root/'savers/ui/config.lua.append').read_text()
             named = overlays.saved_id_keys(text)
             ids = [(0x6c000+k, int(i, 16), 0, 0) for k, i in enumerate(sorted({i for v in named.values() for i in v}))]

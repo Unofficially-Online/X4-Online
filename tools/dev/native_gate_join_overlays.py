@@ -230,6 +230,25 @@ def ids_sets(sets):
     return sets+['native_gate_join_ids=true']
 
 
+# The admission's opt-ins that earned their place (5 November), on savers and joiners unless a --set names them:
+#   native_gate_join_rcnt          the session's reference counts of its created objects (J1 j1-193/195: first mismatch 720 -> 819,
+#                                  no crash through 1799). EXPERIMENT: lowering a count by the surplus would free an object early if
+#                                  a load holder ever released its reference; none seen, and the refwatch can check.
+#   native_gate_join_trdn          a container's next trade offer update (j1-199: 639 equal; w1z34: the window equal at 660)
+#   native_gate_join_passes_admit  the joiner's pass of T at its admission (lockstep_join_passes.h; every in-window run since w1z6)
+#   native_gate_join_pctl          X4's own PlayerController's values at T (lockstep_join_pctl.h; j1-196 neutral, the window's slot 1)
+#   native_gate_join_ecos          the containers' economy schedules, a due time (w1z34 with it against w1z35 without: 900 30 / 36)
+# Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
+JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
+                   'native_gate_join_ecos')
+
+
+def default_sets(sets):
+    """JOIN_DEFAULT_ON = true on savers and joiners unless a --set names the key."""
+    named = {text.replace(' ', '').split('=', 1)[0] for text in sets}
+    return sets+[f'{key}=true' for key in JOIN_DEFAULT_ON if key not in named]
+
+
 def check_absent(clients, absent, rejoin=()):
     """The absent slots must be the last ones: the lane tool's clients are p1..pL in --lanes order. Without absent slots
     the session has rejoinable ones (2..N, not absent)."""
@@ -278,7 +297,7 @@ def build(args, role, snapshot, base_extra, record):
             raise ValueError(f'{path} exists; refusing to overwrite (a new directory keeps earlier inputs frozen)')
     run_tool([DEV/'build_native_gate_overlay.py', '--gate-dll', args.gate_dll, '--snapshot', snapshot, '--mode', 'battle',
               '--session-clients', '--world-identities', *base_extra, '--out', base], 'build_native_gate_overlay.py')
-    sets = [f'native_gate_arm_timeout_ms={args.arm_timeout_ms}'] + ids_sets(refresh_sets(precise_sets(census_sets(args))))
+    sets = [f'native_gate_arm_timeout_ms={args.arm_timeout_ms}'] + default_sets(ids_sets(refresh_sets(precise_sets(census_sets(args)))))
     notes = run_tool([DEV/'native_gate_players.py', 'overlay', '--base', base, '--out', out, '--gate-dll', args.gate_dll,
                       '--probe', args.probe, '--players', str(record['clients']), '--mode', 'coop', '--source', 'stock',
                       '--defaults-only', *[a for s in sets for a in ('--set', s)]], 'native_gate_players.py overlay')
