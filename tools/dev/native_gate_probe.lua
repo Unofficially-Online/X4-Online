@@ -1052,6 +1052,12 @@ if cfg.native_gate_join and cfg.native_gate_world_hash_stride and X4LAN_JOIN_COR
   for _,saved in ipairs(cfg.native_gate_world_hash_watch or {}) do assert(gate.world_watch(saved)==1,'world watch refused '..saved) end
  end)
 end
+-- native_gate_join_pctl (diagnostic): X4's own PlayerController's values at T, written at a joiner's admission
+-- (lockstep_join_pctl.h); armed on every client before the first tick, the line provided by the saver.
+if cfg.native_gate_join and cfg.native_gate_join_pctl and X4LAN_JOIN_CORE then
+ assert(gate.join_pctl and gate.join_pctl(1)==1,'join pctl refused')
+ X4LAN_JOIN_CORE.provide('join_pctl',function() return gate.join_pctl_state() or '-' end,function(text) end)
+end
 local probe_last_us -- previous frame() wall time, native_gate_frame_timing only
 local camera_perturb=false -- this client perturbs its camera (native_gate_camera_perturb)
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
@@ -4723,7 +4729,7 @@ local function frame()
   assert(base and tick==base+1,'join: first tick '..tick..' after the tick base '..tostring(base))
   X4LAN_JOIN_CORE.restore_text(gate.join_lua_state())
   join_restored=true
-  log('JOIN_ADMITTED base='..base..' '..tostring(gate.join_status())..(gate.join_passes_status and tostring(gate.join_passes_status()) or '')..(gate.join_specdrop_status and tostring(gate.join_specdrop_status()) or ''))
+  log('JOIN_ADMITTED base='..base..' '..tostring(gate.join_status())..(gate.join_passes_status and tostring(gate.join_passes_status()) or '')..(gate.join_specdrop_status and tostring(gate.join_specdrop_status()) or '')..(gate.join_pctl_status and tostring(gate.join_pctl_status()) or ''))
   X4LAN_JOIN_CORE.log_unpaired(gate,log)
  end
  if (tonumber(s.registry_count) or 0)>0 then

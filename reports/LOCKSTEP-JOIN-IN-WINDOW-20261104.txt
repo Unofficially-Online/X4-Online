@@ -485,3 +485,24 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   side test on those components is at its boundary; 176c95 (580 m from it) chooses the other side (section 26).
 - Slot 2's Player (P_2, which=4): 28 value words of +0x6a18..+0x6c40 hold the session's values (141.4, 184.8, 200, 7482.2,
   8249.4, 6656, rotations) and zeros on the joiner (the P_k block, not carried).
+
+28. THE SLOT CONTROLLERS' STATE CARRIED (w1z21..w1z24, builds 265..269; 5 November)
+- The watch on the slot ships' controllers (the session at T against the joiner before the resume) and the resume's own
+  snapshots (gate.pilot_dump which 5/6, the slot controllers just before and after pctl is written; dump ticks {633,634}) name
+  what pctl missed: the current transform +0x60..+0x9f and its copies +0x100..+0x13f and +0x320..+0x35f, three double
+  quaternions (+0x428..+0x440, +0x530..+0x548, +0x5d0..+0x5e8: the session's with their history's residues, (0,0,0,1) after a
+  load, the source of the cached rows' 2^-24), the last update's time +0xf0, the step's dt +0x3c0, +0x3e8..+0x420, +0x4d8/+0x4e0,
+  three -0.0 doubles a load leaves +0.0, and four factors +0x6f8..+0x710 (0.8, 0.8, 0.2, 0.8 against -1).
+- Why it matters [F: the hot join's JOIN_REFWATCH (hardware write watch), j1-187c]: in step T+1 the controller's transform check
+  0x1191740 compares the incoming transform with the stored previous one (+0x220..+0x258); on a mismatch the history reset
+  0x11914a0 sets the elapsed times +0x3f0/+0x5c8 to one step (the 0.05 of section 27) and rebuilds the cached rows.
+- w1z21 (build265: the current transform, +0xf0, +0x1c0/+0x1c8, +0x3e8): slot 1's cached rows and its Agent equal at T+1.
+  w1z23 (build267: every word above): slot 1's controller equal to the session's after T+1 but for its listener ID (no
+  reset, 31.70); T+1 2 (176c95, 800259fc), 900 55. But slot k's controller (made by the resume's rebuild with empty containers
+  +0x2b0..+0x318) runs a first update in step T+1 that builds them, and with w1z22's words its transforms came out 4 km off
+  (w1z21 without them: ULPs). w1z24 (build269: those words for slot 1 only): slot 1 as in w1z23, slot 2 at ULPs again; T+1 2,
+  900 59 (the window's 900 is 55..61 run to run).
+- 176c95's steering model after T+1: the first of its two +0x1d0 vectors is the session's since build265, the second still
+  apart, so its remaining input is not slot 1's controller.
+- native_gate_join_pctl (lockstep_join_pctl.h, f9718021; default off): the same words for X4's own PlayerController in any hot
+  join: the saver's package line join_pctl, written at the joiner's admission when its controller controls the same ship.

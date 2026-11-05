@@ -117,10 +117,16 @@ static int jpass_admit(uint64_t t) {
     jpass_wait_us=frequency.QuadPart?(uint64_t)((t1.QuadPart-t0.QuadPart)*1000000/frequency.QuadPart):0;
     jpass_done=1;jpass_why="done";return 1;
 }
+/* join_admit_passes as the joiner armed it: the extra admission writes (lockstep_join_pctl.h), then the pass of T. */
+static void (*jadmit_extra)(void);
+static int jadmit_dispatch(uint64_t t) {
+    if(jadmit_extra) jadmit_extra();
+    return !jpass_armed || jpass_admit(t);
+}
 /* gate.join_passes_admit(1): a joiner, before its admission (the probe, with native_gate_join_passes_admit). */
 static int jpass_arm(void) {
     if(stats.issued || jpass_done) return 0;
-    jpass_armed=1;join_admit_passes=jpass_admit;return 1;
+    jpass_armed=1;join_admit_passes=jadmit_dispatch;return 1;
 }
 static int jpass_status(char *out,size_t capacity) {
     return snprintf(out,capacity," passes_admit=%d/%d why=%s steps=%llu kicks=%llu us=%llu",jpass_armed,jpass_done,jpass_why,

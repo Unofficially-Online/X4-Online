@@ -38,7 +38,7 @@ static void test_join_passes(void) {
     jpass_armed=0;join_admit_passes=NULL;jpass_why="-";
     assert(!jpass_admit(7) && !strcmp(jpass_why,"not_armed"));
     stats.issued=5;assert(!jpass_arm() && !jpass_armed && !join_admit_passes);
-    stats.issued=0;assert(jpass_arm() && jpass_armed && join_admit_passes==jpass_admit);
+    stats.issued=0;assert(jpass_arm() && jpass_armed && join_admit_passes==jadmit_dispatch);
     jpass_armed=0;join_admit_passes=NULL;stats.issued=issued;jpass_why="-";
     printf("join passes: MoveWorker's traffic and region kicks (conditions, ready byte, wake of a parked thread), arming before the first tick PASS\n");
 }
