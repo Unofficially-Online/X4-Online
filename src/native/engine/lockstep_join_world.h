@@ -896,6 +896,47 @@ static uint64_t join_agcb_written,join_agcb_equal,join_agcb_missing;static uint3
  * poses in the other banks (a role), the tails (+0xb38 260.22, +0xb40/+0xb48, +0xb50, +0xcf8) 0 on the joiner, the pending
  * counts +0xed8/+0xee8 1 against 0. By role as NAV, relative to the joiner's selectors at the admission. */
 static uint64_t join_pbnk_written,join_pbnk_equal,join_pbnk_missing,join_pbnk_unmapped;static uint32_t join_pbnk_capn;
+/* PEND (v13, section 59): the pending view cache flags. BuildCache 0x3d4a80's child loop calls PropagateCacheFlags 0x3d46b0 with
+ * (the ancestors' due specification flags | child +0x1e0) and so republishes the parts the child's view words allow. j1-158 raw
+ * dumps: after the load the joiner's components hold 0x19 (parent, pose, 0x10) where the session's hold 0 (the carrier 0x8d8b1,
+ * its part 0x8d8b2, 0x92789; the docked XS ship c:8002306b2d933056 holds 0x19 on both sides): the joiner's publication at T+1
+ * of every object (the live poses into the views, which the GRAVP restore undoes for the settled low-attention ones). With
+ * native_gate_join_pend (default off) the joiner takes the session's word on every one of its components (0 where the package has
+ * none), never on one whose views lack a pose (a load-created view the engine has yet to publish once): status pend=on:written:
+ * equal:unposed:missing. */
+#define JOIN_PEND_VIEW_POSE 0x108u   /* view 0's pose pointer: JOIN_VIEW_SLOTS + JOIN_VIEW_POSE (below), view 1 at +0x80 */
+static int join_pend_on;
+static uint64_t join_pend_written,join_pend_equal,join_pend_unposed,join_pend_missing;static uint32_t join_pend_capn;
+static int join_pend_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_pend_rec *)a)->portable,y=((const join_pend_rec *)b)->portable;return x<y?-1:x>y;
+}
+static void join_capture_pend(join_tables *t) {
+    join_pend_capn=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *object=join_object(t->ids[i].runtime);join_pend_rec r={0,0,0};
+        if(!object || !t->ids[i].portable || !join_read(object+JOIN_PEND_AT,&r.word,4) || !r.word) continue;
+        r.portable=t->ids[i].portable;
+        if(!JOIN_PUSH(t->pend,t->npend,join_pend_capn,r)) return;
+    }
+    if(t->npend>1) qsort(t->pend,t->npend,sizeof(*t->pend),join_pend_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->npend;i++) {if(k && t->pend[k-1].portable==t->pend[i].portable) continue;t->pend[k++]=t->pend[i];}t->npend=k;}
+}
+static void join_admit_pend(const join_tables *s,const join_tables *mine) {
+    join_pend_written=join_pend_equal=join_pend_unposed=join_pend_missing=0;
+    if(!join_pend_on) return;
+    for(uint32_t i=0;i<mine->nids;i++) {
+        unsigned char *object=join_object(mine->ids[i].runtime),*p0=NULL,*p1=NULL;uint32_t have=0,want=0;
+        if(!object || !mine->ids[i].portable) continue;
+        if(!join_read(object+JOIN_PEND_AT,&have,4)) {++join_pend_missing;continue;}
+        uint32_t lo=0,hi=s->npend;
+        while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(s->pend[mid].portable<mine->ids[i].portable) lo=mid+1u;else hi=mid;}
+        if(lo<s->npend && s->pend[lo].portable==mine->ids[i].portable) want=s->pend[lo].word;
+        if(have==want) {++join_pend_equal;continue;}
+        if(!join_read(object+JOIN_PEND_VIEW_POSE,&p0,8) || !join_read(object+JOIN_PEND_VIEW_POSE+0x80u,&p1,8) || !p0 || !p1)
+            {++join_pend_unposed;continue;}
+        if(join_poke((uintptr_t)(object+JOIN_PEND_AT),&want,4)) ++join_pend_written; else ++join_pend_equal;
+    }
+}
 static int join_pbnk_cmp(const void *a,const void *b) {
     uint64_t x=((const join_pbnk_rec *)a)->portable,y=((const join_pbnk_rec *)b)->portable;return x<y?-1:x>y;
 }
@@ -3044,6 +3085,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_gravd(t);           /* version 13 */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
+    join_capture_pend(t);            /* version 13 */
     join_capture_viewp(t);           /* version 13 */
     join_capture_shoot(t);           /* version 13 */
     join_capture_attk(t);            /* version 13 */
@@ -4714,6 +4756,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_agtt(s,&mine);   /* the Agents' times the load resets */
     if(s->version>=13) join_admit_agcb(s,&mine);   /* the pilot slot ships' command and probe blocks */
     if(s->version>=13) join_admit_pbnk(s,&mine);   /* the pilot slot ships' pathing state banks */
+    if(s->version>=13) join_admit_pend(s,&mine);   /* the pending view cache flags (opt-in) */
     if(s->version>=13) join_admit_ldc(s,&mine);    /* the drift controllers, before the bodies they set */
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
     if(s->version>=13) for(uint32_t i=0;i<s->nbupd;i++) {   /* BUPD: the session's last build updates */

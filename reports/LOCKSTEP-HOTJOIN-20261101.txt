@@ -2013,6 +2013,26 @@ proposed and rejected.
   j1-153 7fe05d6c (build-hj16w)   event rows 633..653: the one-sided events above
   j1-154 0e475973 (build-hj16x)   GRAV +0x10 (the radar group's object): no change
   j1-155 987243b6 (build-hj16y)   GRAV +0x50..+0x5f: the view events gone; 651 stays
+- The radar's published poses after a reparent [F: j1-157 GRAVIDAR_POST_ROW, the package's GRAVP/GRAVD; j1-158 JOIN_WATCH and
+  JOIN_WATCHPCF on the XS ship c:8002306b2d933056, its dock parts 0x8d8b2/0x8d8b5, the carrier 0x8d8b1 and 0x92789]: the radar
+  splits of 643..659 are two ships at wrong published positions on the joiner. The XS ship (docked at 0x8d8b5, cached parent
+  0x8d8b2, identity pose) at the zone 0x29's origin (33098.5, 0, -121434.3) from 643 (the session: (38431, 7057, -120793), 3 units
+  fewer add it); 0x92789 at the zone 0x10e plus its pose relative to the old zone 0x109 from 644 (15 units drop it). Both
+  sides republish them alike: PropagateCacheFlags 0x3d46b0 gates each part by the view's flag word +0x3c (1 the cached parent
+  from the live one, 2 the children, 8 the pose through slot 0x1440, 0x40 the attention; a part's bit is cleared where the live
+  flags +0x1e4 hold it), and BuildCache 0x3d4a80's child loop calls it with (the ancestors' due specification flags | child
+  +0x1e0). At 0x92789's zone change (636) both views get 0x50059 and BuildCache (0x3d4d0f, flags 0x19) republishes view 1 at
+  636 and view 0 at 637 with parent 0x10e and the pose relative to it, on both sides; the XS ship's undock at 641 the same with
+  parent 0x29 and (5333, 7057, 641). The joiner's GRAVP restore after each step T+1 .. T+10 then put the session's poses of T
+  back under the new parents (0x92789 at 637/638, the XS ship at 642/643). f607ad26: each restore entry keeps its view's cached
+  parent at the end of the admission and is dropped for good once the view names another (status gravp_moved).
+  The restore exists for the joiner's publication at T+1: after its load every component holds +0x1e0 0x19 (the session's 0 but
+  for a few, the docked XS ship 0x19 on both) and +0x1e8 (the subtree's specification entries) above the session's (0x8d8b1
+  0xf against 4), so its first BuildCache republishes everything whose view words allow it. native_gate_join_viewf_bits (f607ad26,
+  diagnostic) takes chosen bits of the session's view words; PEND (next) carries the session's +0x1e0 words.
+  j1-156 (build249, the merged tree)  first mismatch 651; 900: 170 + 85/87
+  j1-157 08070780 (build-hj16z)   AGTT +0xf40: 651; 900: 166 + 85/87; the radar splits above
+  j1-158 90d284ea (build-hj17a)   PBNK (pbnk=1 written): 651; 900: 168 + 85/87; the watch rows above
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

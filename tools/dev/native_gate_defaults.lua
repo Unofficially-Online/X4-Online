@@ -265,6 +265,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_ids','hot joiner saved objects at the session runtime IDs'},
  {'native_gate_join_buildp','hot join build processor busy rows (diagnostic)'},
  {'native_gate_join_view_skip','hot join view-bank writes a joiner leaves out (diagnostic)'},
+ {'native_gate_join_pend','hot join: a joiner takes the session pending view cache flags (PEND)'},
  {'native_gate_join_viewf_bits','hot join VIEWF flag bits a joiner takes from the session (diagnostic; 0 off)'},
  {'native_gate_join_viewf_write','hot join VIEWF writes on a joiner (diagnostic; off: no flip after STOP)'},
  {'native_gate_join_shipyards','hot join shipyard capacity rows at these ticks (diagnostic)'},
