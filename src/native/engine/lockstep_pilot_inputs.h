@@ -516,6 +516,10 @@ static unsigned char *pilot_player_controller(void);
 #include "lockstep_pilot_native.h"
 static int pilot_install(void);
 static uint64_t join_tick_base(void);   /* lockstep_join.h: a joiner's save tick T (it counts session ticks from T+1), else 0 */
+/* lockstep_gate.c: a joiner before its handover (its catch-up at its own pace, or a J1 replay that never hands over). Its
+ * screen shows the plain steps: no own-ship prediction presenting, no render-only frames (w1w: a catching-up joiner drew
+ * other ships extrapolated at 60 fps from steps arriving at about 15 a second, which flashed). */
+static int join_catching_up(void);
 /* Main pass boundary, before the pathing pass is released: resolve every slot,
  * choose this tick's records and publish an immutable table for the workers. */
 static int pilot_before_release_using(pilot_find_fn find,void *map,const void *player_object,void *controller,

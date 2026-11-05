@@ -288,6 +288,7 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_precise then   -- savers write the join save at full precision, a version 13 joiner reads it exactly
   assert(gate.join_precise and gate.join_precise(1)==1,'join precise save refused')
  end
+ if cfg.native_gate_join_buildp then assert(gate.join_buildp and gate.join_buildp(1)==1,'join buildp refused') end   -- diagnostic rows
  if cfg.native_gate_join_ids then   -- a joiner's saved objects take the session's runtime IDs in its load (needs runtime IDs set mode)
   assert(cfg.native_gate_runtime_ids~=nil and cfg.native_gate_runtime_ids~='observe' and cfg.native_gate_created_identities and
    gate.join_ids and gate.join_ids(1)==1,'join ids refused')
@@ -4967,6 +4968,11 @@ local function frame()
   assert(anchor:match(' applied=1 ') and anchor:match(' failures=0 ') and anchor:match(' late=0$'),'boot RNG anchor not applied before load completed')
  end
  if profile then profile.mark('modules') end
+ -- Hot join diagnostic (native_gate_join_shipyards.xml): what Process_Ships reads, logged by every client at these ticks.
+ if cfg.native_gate_join_shipyards then
+  local mask=cfg.native_gate_join_shipyards_mask or 31   -- which reads run (native_gate_join_shipyards.xml)
+  for _,at in ipairs(cfg.native_gate_join_shipyards) do if tick==at then AddUITriggeredEvent('X4LAN_NativeGate','JoinShipyards',{mask=mask}) end end
+ end
  if cfg.native_gate_hash=='battle' then
   if tick==1 then AddUITriggeredEvent('X4LAN_NativeGate',snapshot and 'RestoreActors' or 'Spawn',{}) end
   if tick==5 and cfg.native_gate_docking_state then AddUITriggeredEvent('X4LAN_NativeCommands','DockSetup',{mode=cfg.native_gate_command_test}) end

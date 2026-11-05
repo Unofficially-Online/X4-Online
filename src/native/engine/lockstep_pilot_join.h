@@ -61,7 +61,8 @@ static int pjoin_status_text(char *out,size_t capacity) {
 /* ---- the joiner's side (W3 R1, R2; reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 8) ---- */
 static int join_ids_replay(const uint64_t *ids,unsigned n);   /* lockstep_join_ids.h (the hot join's allocator) */
 static unsigned join_ids_replay_n,join_ids_replay_done,join_ids_replay_other,join_ids_replay_wrong;   /* its counters (tentative) */
-static char pjoin_why_text[96];
+static char pjoin_why_text[192];
+static uint64_t pjoin_replay_got(unsigned i);   /* lockstep_gate.c: join_ids_replay_got[i] of the last replay */
 static int join_ids_replay_end(void);
 static int join_package_line(const char *name,char *out,size_t capacity);   /* lockstep_gate.c: a line of the package's LUA section */
 #define PJOIN_IDS_MAX 32u
@@ -142,8 +143,9 @@ static int pjoin_rebuild_slot(unsigned k) {
     const int placed=join_ids_replay_end();
     if(!built) {pjoin_resume_why=pslot_why;return 0;}
     if(!placed) {
-        snprintf(pjoin_why_text,sizeof(pjoin_why_text),"rebuild_ids:slot%u:adopt%d:n%u:done%u:other%u:wrong%u",k,adopt,join_ids_replay_n,
-                 join_ids_replay_done,join_ids_replay_other,join_ids_replay_wrong);
+        snprintf(pjoin_why_text,sizeof(pjoin_why_text),"rebuild_ids:slot%u:adopt%d:n%u:done%u:other%u:wrong%u:got%llx,%llx",k,adopt,
+                 join_ids_replay_n,join_ids_replay_done,join_ids_replay_other,join_ids_replay_wrong,
+                 (unsigned long long)pjoin_replay_got(0),(unsigned long long)pjoin_replay_got(1));
         pjoin_resume_why=pjoin_why_text;return 0;
     }
     if(adopt && !(pjoin_adopted>>(k-1)&1u)) {pjoin_resume_why="rebuild_adopt";return 0;}
@@ -208,6 +210,35 @@ static int pjoin_hex_put(char *out,size_t capacity,int n,const unsigned char *da
     if((size_t)n>=capacity) return -1;
     out[n]=0;return n;
 }
+/* A seat's store holds X4's control banks (pslot_store_init: the image-base regions of PSLOT_CLASSES, in table order); a region
+ * marked pointer (environment_zone: the zone d95180 compares) is a process address, which travels as the zone's portable ID
+ * (w1v: the session's raw pointer crashed the joiner's d9a478). to_portable 1: pointer -> portable (the saver); 0: back to the
+ * joiner's object (its find). 0 on a pointer without a portable ID or a portable ID without an object here. */
+static int pjoin_store_pointers(unsigned char *store,unsigned length,int to_portable) {
+    unsigned n=0;
+    for(unsigned i=0;i<VPL_REGION_COUNT;i++) {
+        const vpl_region *r=&vpl_regions[i];
+        if(r->base!=VPL_BASE_IMAGE || !(PSLOT_CLASSES>>r->cls&1u)) continue;
+        if(n+r->size>length) return 0;
+        if(r->pointer && r->size==8) {
+            uint64_t v=0;memcpy(&v,store+n,8);
+            if(v) {
+                if(to_portable) {
+                    uint64_t runtime=0;
+                    if(!read_local((unsigned char*)(uintptr_t)v+8,&runtime,8) || !(v=world_identity_portable(runtime))) return 0;
+                } else {
+                    const uint64_t runtime=(v&CREATED_BIT)?created_runtime_of(v):pilot_reverse(v);
+                    void *object=runtime && pdeath_find?pdeath_find(pdeath_map,runtime,4):NULL;
+                    if(!object) return 0;
+                    v=(uint64_t)(uintptr_t)object;
+                }
+            }
+            memcpy(store+n,&v,8);
+        }
+        n+=r->size;
+    }
+    return n==length;
+}
 /* gate.pilot_join_state() on a saver in frame T: every blob (the stores per seated slot after them). 0 when it does not fit. */
 static int pjoin_tables_state(char *out,size_t capacity,uint64_t t) {
     pjoin_stock_pack();pjoin_rings_pack(t);
@@ -230,8 +261,10 @@ static int pjoin_tables_state(char *out,size_t capacity,uint64_t t) {
     }
     for(unsigned k=2;n>0 && (size_t)n<capacity && k<=PILOT_SLOTS;k++) {
         if(!(pslot_mask>>(k-1)&1u) || !pslots[k].player || !pslots[k].length || pslots[k].length>VPL_BLOCK_MAX) continue;
+        static unsigned char portable[VPL_BLOCK_MAX];memcpy(portable,pslots[k].store,pslots[k].length);
+        if(!pjoin_store_pointers(portable,pslots[k].length,1)) return 0;
         n+=snprintf(out+n,capacity-(size_t)n,"|store%u=",k);
-        if(n<=0 || (size_t)n>=capacity || (n=pjoin_hex_put(out,capacity,n,pslots[k].store,pslots[k].length))<0) return 0;
+        if(n<=0 || (size_t)n>=capacity || (n=pjoin_hex_put(out,capacity,n,portable,pslots[k].length))<0) return 0;
     }
     return n>0 && (size_t)n<capacity?n:0;
 }
@@ -311,6 +344,7 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
         if(pjoin_store_rx_len[k]) {
             if(pjoin_store_rx_len[k]>VPL_BLOCK_MAX) {pjoin_resume_why="store_size";return 0;}
             memcpy(pslots[k].store,pjoin_store_rx[k],pjoin_store_rx_len[k]);
+            if(!pjoin_store_pointers(pslots[k].store,pjoin_store_rx_len[k],0)) {pjoin_resume_why="store_pointer";return 0;}
         }
         pjoin_seat_unpack(k);
         if(pslots[k].length!=pjoin_store_rx_len[k]) {pjoin_resume_why="store_length";return 0;}

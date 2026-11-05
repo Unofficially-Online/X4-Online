@@ -33,10 +33,21 @@ static void test_pilot_join_tables(void) {
     pilot_ring[42%PILOT_RING].tick=42;pilot_ring[42%PILOT_RING].present=1;pilot_ring[42%PILOT_RING].bytes[1][0]=7;
     pstk_slot_frames[1].tick=40;pstk_slot_frames[1].hash=0x1234;pstk_slot_frames[1].r.count=1;pstk_slot_frames[1].r.events[0]=(pstk_event){1,0xd,1};
     pstk_held_states[1][0]=1;pstk_fire_on[1]=1;pstk_fire_tick[1]=39;pview_target_replay[1]=0x77;pstk_flight=1;pstk_flight_known=1;pstk_frame_tick=40;
-    pslot_mask=2;static unsigned char fake_player[8];pslots[2].player=fake_player;pslots[2].length=4;memcpy(pslots[2].store,"\x01\x02\x03\x04",4);
+    /* A store of the real layout (pslot_store_init's regions), a pattern everywhere but the zone pointer (0: no zone). */
+    unsigned layout=0,zone=0;
+    for(unsigned i=0;i<VPL_REGION_COUNT;i++) {
+        const vpl_region *g=&vpl_regions[i];
+        if(g->base!=VPL_BASE_IMAGE || !(PSLOT_CLASSES>>g->cls&1u)) continue;
+        if(g->pointer) zone=layout;
+        layout+=g->size;
+    }
+    assert(layout && layout<=VPL_BLOCK_MAX && zone+8<=layout);
+    pslot_mask=2;static unsigned char fake_player[8];pslots[2].player=fake_player;pslots[2].length=layout;
+    for(unsigned i=0;i<layout;i++) pslots[2].store[i]=(unsigned char)(i*7+1);
+    memset(pslots[2].store+zone,0,8);
     pslots[2].throttle=0.5f;pslots[2].assist[0]=1;pslots[2].authority=1;
     const int n=pjoin_tables_state(text,sizeof(text),40);
-    assert(n>0 && !strncmp(text,"v1/t28|stock=",13) && strstr(text,"|store2=01020304"));
+    assert(n>0 && !strncmp(text,"v1/t28|stock=",13) && strstr(text,"|store2=01080f16"));
     /* Clear what the text carries, read it back, unpack. */
     memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));memset(pstk_held_states,0,sizeof(pstk_held_states));memset(pstk_fire_on,0,sizeof(pstk_fire_on));
     memset(pstk_fire_tick,0,sizeof(pstk_fire_tick));memset(pview_target_replay,0,sizeof(pview_target_replay));pstk_flight=0;pstk_flight_known=0;pstk_frame_tick=0;
@@ -45,8 +56,11 @@ static void test_pilot_join_tables(void) {
     pjoin_stock_unpack();pjoin_seat_unpack(2);
     assert(pstk_slot_frames[1].tick==40 && pstk_slot_frames[1].hash==0x1234 && pstk_slot_frames[1].r.events[0].id==0xd && pstk_held_states[1][0]==1);
     assert(pstk_fire_on[1]==1 && pstk_fire_tick[1]==39 && pview_target_replay[1]==0x77 && pstk_flight==1 && pstk_flight_known==1 && pstk_frame_tick==40);
-    assert(pslots[2].throttle==0.5f && pslots[2].assist[0]==1 && pslots[2].authority==1 && pslots[2].length==4);
-    assert(pjoin_store_rx_len[2]==4 && !memcmp(pjoin_store_rx[2],"\x01\x02\x03\x04",4));
+    assert(pslots[2].throttle==0.5f && pslots[2].assist[0]==1 && pslots[2].authority==1 && pslots[2].length==layout);
+    assert(pjoin_store_rx_len[2]==layout && !memcmp(pjoin_store_rx[2],pslots[2].store,layout));
+    /* A zone pointer travels as a portable ID: one without a readable runtime ID refuses the state (never a raw address). */
+    {   static unsigned char bad_zone[16];uint64_t pointer=(uint64_t)(uintptr_t)bad_zone;memcpy(pslots[2].store+zone,&pointer,8);
+        assert(!pjoin_tables_state(text,sizeof(text),40));memset(pslots[2].store+zone,0,8);}
     assert(pjoin_pstk_ring[1][41%PSTK_RING].tick==41 && pjoin_pstk_ring[1][41%PSTK_RING].bytes[4]==5 && !pjoin_pstk_ring[1][40%PSTK_RING].present);
     assert(pjoin_pilot_ring[42%PILOT_RING].tick==42 && pjoin_pilot_ring[42%PILOT_RING].bytes[1][0]==7);
     /* Refusals: a wrong head, a blob of the wrong size, one missing, a stray name. */

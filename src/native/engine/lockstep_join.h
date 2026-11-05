@@ -569,7 +569,8 @@ typedef struct {uint64_t portable;unsigned char cache[0x60];} join_navc_rec;
  * (+0x30) and its seven requests (ship, requester, timeout 1800, no time) are equal, and by 660 the session has built its waiting
  * ship 6 (0x1248cf), the joiner its ship 2 (0x124633)]. The job by the FNV-1a hash of its ID (the tree's std::string key, node
  * +0x20) and its place in the tree's order; sorted by place; not in the portable digest. */
-typedef struct {uint64_t hash,value;uint32_t index,pad;} join_jobs_rec;
+/* JOBS: active and waiting, the lengths of the state's ship vectors (+0x18, +0x30; 65535 at most), in the former padding. */
+typedef struct {uint64_t hash,value;uint32_t index;uint16_t active,waiting;} join_jobs_rec;
 /* GONE (v13, section 49): a census row of the session whose object is gone at T (join_capture_gone). */
 typedef struct {uint64_t portable;} join_gone_rec;
 /* BODY (v13, section 50): a destructible object's physics body (lockstep_join_body.h): position and rotation, the motion properties'
@@ -722,7 +723,7 @@ static struct {
              /* NAVC: controllers whose cache was written, already equal, not found */
              navc_written,navc_equal,navc_missing,
              /* JOBS: jobs whose state +0x48 differs (compared only), equal, not found by ID (or without a state object) */
-             jobs_written,jobs_equal,jobs_missing;
+             jobs_written,jobs_equal,jobs_missing,jobs_active_differ,jobs_waiting_differ;
     uint32_t evq_sources,evq_events,evq_due,evq_fault;char evq_top[640];   /* the census at the admission (the joiner's own load) */   /* gravs_cursor: 1 set, 2 no record or no ai_schedule, 3 refused */
     volatile LONG64 unmapped_ids[JOIN_UNMAPPED_SET];volatile LONG64 unmapped_set_full;
     char rows[JOIN_ROWS][400];unsigned nrows;
@@ -1540,7 +1541,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     if(version>=13) for(uint32_t i=0;i<t->nnavc;i++)
         if(!t->navc[i].portable || (i && t->navc[i-1].portable>=t->navc[i].portable)) {*why="navc_shape";return 0;}
     if(version>=13) for(uint32_t i=0;i<t->njobs;i++)
-        if(t->jobs[i].pad || !t->jobs[i].hash || (i && t->jobs[i-1].index>=t->jobs[i].index)) {*why="jobs_shape";return 0;}
+        if(!t->jobs[i].hash || (i && t->jobs[i-1].index>=t->jobs[i].index)) {*why="jobs_shape";return 0;}
     if(version>=13) for(uint32_t i=0;i<t->ngone;i++)
         if(!t->gone[i].portable || (i && t->gone[i-1].portable>=t->gone[i].portable)) {*why="gone_shape";return 0;}
     if(version>=13) for(uint32_t i=0;i<t->nbody;i++) {
@@ -2338,10 +2339,21 @@ static void join_jobs_walk(join_jobs_visit visit,void *ctx) {
         node=p;
     }
 }
+/* A state's ship vector {begin, end} at +0x18 (active) or +0x30 (waiting): its length, 65535 at most. X4's waiting check
+ * (StaticShipCheckerByIsWaitingJobShip 0x854cf0) is membership in the waiting one; find_waiting_job_ship, then shuffle_list,
+ * in Job_Helper's Process_Ships (j1-122 at 648: 81 draws on the joiner against the session's 77, a list four longer). */
+#define JOIN_JOBS_ACTIVE 0x18u
+#define JOIN_JOBS_WAITING 0x30u
+static uint32_t join_jobs_ships(unsigned char *state,unsigned field) {
+    uintptr_t v[2]={0,0};if(!join_read(state+field,v,16) || v[1]<v[0] || (v[1]-v[0])%8u) return 0xffffu;
+    const uintptr_t n=(v[1]-v[0])/8u;return n>0xffffu?0xffffu:(uint32_t)n;
+}
 typedef struct {join_tables *t;uint32_t cap;} join_jobs_capture_ctx;
 static void join_jobs_capture_one(void *c,uint32_t index,uint64_t hash,unsigned char *state) {
-    join_jobs_capture_ctx *x=c;join_jobs_rec r={hash,0,index,0};
-    if(join_read(state+JOIN_JOBS_FIELD,&r.value,8)) (void)JOIN_PUSH(x->t->jobs,x->t->njobs,x->cap,r);
+    join_jobs_capture_ctx *x=c;join_jobs_rec r={hash,0,index,0,0};
+    if(!join_read(state+JOIN_JOBS_FIELD,&r.value,8)) return;
+    r.active=(uint16_t)join_jobs_ships(state,JOIN_JOBS_ACTIVE);r.waiting=(uint16_t)join_jobs_ships(state,JOIN_JOBS_WAITING);
+    (void)JOIN_PUSH(x->t->jobs,x->t->njobs,x->cap,r);
 }
 static void join_capture_jobs(join_tables *t) {join_jobs_capture_ctx x={t,0};join_jobs_walk(join_jobs_capture_one,&x);}
 typedef struct {uint64_t hash;unsigned char *state;} join_jobs_mine;
@@ -2350,7 +2362,7 @@ static void join_jobs_admit_one(void *c,uint32_t index,uint64_t hash,unsigned ch
     (void)index;join_jobs_admit_ctx *x=c;join_jobs_mine e={hash,state};(void)JOIN_PUSH(x->v,x->n,x->cap,e);
 }
 static void join_admit_jobs(const join_tables *s) {
-    join_jobs_admit_ctx x={NULL,0,0};join_jobs_walk(join_jobs_admit_one,&x);
+    join_jobs_admit_ctx x={NULL,0,0};unsigned rows=0;join_jobs_walk(join_jobs_admit_one,&x);
     for(uint32_t i=0;i<s->njobs;i++) {
         unsigned char *state=NULL;
         for(uint32_t k=0;k<x.n;k++) if(x.v[k].hash==s->jobs[i].hash) {state=x.v[k].state;break;}
@@ -2359,6 +2371,19 @@ static void join_admit_jobs(const join_tables *s) {
          * in the other order]: its meaning is not known and it does not decide the pick */
         uint64_t own=0;
         if(join_read(state+JOIN_JOBS_FIELD,&own,8) && own==s->jobs[i].value) ++join_rx.jobs_equal; else ++join_rx.jobs_written;
+        const uint32_t active=join_jobs_ships(state,JOIN_JOBS_ACTIVE),waiting=join_jobs_ships(state,JOIN_JOBS_WAITING);
+        if(active!=s->jobs[i].active) ++join_rx.jobs_active_differ;
+        if(waiting!=s->jobs[i].waiting) ++join_rx.jobs_waiting_differ;
+        if(active!=s->jobs[i].active || waiting!=s->jobs[i].waiting) {   /* the joiner's waiting ships by portable ID (8 at most) */
+            char ships[160];int n=0;uintptr_t v[2]={0,0};ships[0]=0;
+            if(join_read(state+JOIN_JOBS_WAITING,v,16)) for(uintptr_t at=v[0];at<v[1] && at<v[0]+64u && n>=0 && n<(int)sizeof(ships)-20;at+=8) {
+                unsigned char *ship=NULL;uint64_t runtime=0;unsigned klass=0;
+                if(join_read((void*)at,&ship,8) && ship && join_read(ship+8,&runtime,8))
+                    n+=snprintf(ships+n,sizeof(ships)-(size_t)n,"%s%llx",n?",":"",(unsigned long long)world_identity_key(runtime,&klass));
+            }
+            join_world_row(&rows,"jobs side=joiner hash=%016llx index=%u active=%u/%u waiting=%u/%u ships=%s",(unsigned long long)s->jobs[i].hash,
+                           s->jobs[i].index,active,s->jobs[i].active,waiting,s->jobs[i].waiting,ships[0]?ships:"-");
+        }
     }
     free(x.v);
 }
@@ -2960,6 +2985,10 @@ static int join_admit_rid(void) {
     return ok || join_rx.mode!=JOIN_STRICT?1:join_fail_rx(JOIN_WHY_MISMATCH,why);
 }
 /* At the admission (boot phase 3, main thread): clocks, AI, MD, allocator, tick base. 0 stops (strict). */
+/* Set by a layer that rebuilds or releases objects the join save holds in another form (the lockstep session's pilot layer: a
+ * loaded PlayerController): called at the admission on the main thread right before the runtime ID skip, while the joiner's
+ * load list still takes every shared allocation (lockstep_join_ids.h); 0 stops the join (before_skip). */
+static int (*join_admit_before_skip)(void);
 static int join_admit(void) {
     if(!join_rx.loaded || join_rx.admitted) return 1;
     join_rx.admitted=1;join_jobinit_restore();join_bootev_restore();   /* Init and the boot event passes ran in the load (version 13) */
@@ -2980,7 +3009,9 @@ static int join_admit(void) {
     {char why[48];if(!join_pins_check(why,sizeof(why))) return join_fail_rx(JOIN_WHY_CAPTURE,why);}
     join_engine e=join_engine_get();
     if(!e.director || !e.scheduler) return join_fail_rx(JOIN_WHY_CAPTURE,"engine");
-    if(!join_admit_ai(&e) || !join_admit_md(&e) || !join_admit_rid() || !join_admit_world()) return 0;
+    if(!join_admit_ai(&e) || !join_admit_md(&e)) return 0;
+    if(join_admit_before_skip && !join_admit_before_skip()) return join_fail_rx(JOIN_WHY_CAPTURE,"before_skip");
+    if(!join_admit_rid() || !join_admit_world()) return 0;
     join_admit_flight_generations();
     join_bootev_repost();   /* the events of T the boot passes kept (native_gate_join_hold_boot_events) */
     join_ai_watch_dump('j',join_rx.t.gate.tick);join_job_watch_dump('j');   /* diagnostic (native_gate_join_watch) */
@@ -3015,7 +3046,7 @@ static int join_status(char *out,size_t cap) {
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
         " steer=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu t1=%u:%llu:%llu:%llu:%llu:%llu:%llu"
         " solver=%llu:%llu:%llu:%llu:%llu:%llu bullet_walk=%u:%llu:%llu grav=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravs=%llu:%llu:%llu:%llu md_dropped=%llu"
-        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
+        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
         states[join_cap.state],(unsigned long long)join_cap.tick,join_cap.slot_k,join_cap.mask,join_cap.why,join_cap.detail[0]?join_cap.detail:"-",
         (unsigned long long)join_cap.save_bytes,(unsigned long long)join_cap.package_bytes,(unsigned long long)join_cap.save_us,
         (unsigned long long)join_cap.capture_us,pkg,port,join_cap.modified_cleared,join_cap.possible,join_rx.loaded,join_rx.mode,join_rx.based,
@@ -3108,7 +3139,8 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_rx.spec_written,(unsigned long long)join_rx.spec_equal,(unsigned long long)join_rx.spec_conflict,
         (unsigned long long)join_rx.spec_missing,(unsigned long long)join_rx.spec_extra,(unsigned long long)join_rx.spec_added,join_cap.spec,
         (unsigned long long)join_rx.navc_written,(unsigned long long)join_rx.navc_equal,(unsigned long long)join_rx.navc_missing,join_cap.navc,
-        (unsigned long long)join_rx.jobs_written,(unsigned long long)join_rx.jobs_equal,(unsigned long long)join_rx.jobs_missing,join_cap.jobs,
+        (unsigned long long)join_rx.jobs_written,(unsigned long long)join_rx.jobs_equal,(unsigned long long)join_rx.jobs_missing,
+        (unsigned long long)join_rx.jobs_active_differ,(unsigned long long)join_rx.jobs_waiting_differ,join_cap.jobs,
         (long long)join_fmt_calls,(long long)join_fmt_raised,(long long)join_parse_calls,(long long)join_parse_long,(long long)join_parse_exact,
         (long long)join_parse_far,ids,join_cap.gone,join_rx.t.ngone,world_hash_gone_added,world_hash_gone_dupes,
         (unsigned long long)join_body_written,(unsigned long long)join_body_equal,(unsigned long long)join_body_pose,(unsigned long long)join_body_motion,

@@ -904,6 +904,10 @@ static void gate_step(tick_fn original,void *frame,unsigned char loading,LARGE_I
 #define ADAPT_WITH_PILOT 1
 #include "lockstep_adaptive.h"
 #include "lockstep_join.h"   /* hot join: join save, side table and gate state (native_gate_join, default off) */
+/* lockstep_pilot_inputs.h: a joiner before its handover (no handover yet, or this tick before it). */
+static int join_catching_up(void) {return join_rx.based && (join_rx.handover==UINT64_MAX || stats.issued<join_rx.handover);}
+/* lockstep_pilot_join.h: the IDs the last join_ids_replay handed out (lockstep_join_ids.h), for its failure row. */
+static uint64_t pjoin_replay_got(unsigned i) {return i<JOIN_IDS_REPLAY_MAX?join_ids_replay_got[i]:0;}
 /* lockstep_pilot_join.h: on a joiner, the value of a line "name=value" of its package's LUA section (the probe's providers),
  * NUL-terminated into out; 0 when there is none or it does not fit. */
 __attribute__((unused)) static int join_package_line(const char *name,char *out,size_t capacity) {
@@ -4111,7 +4115,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(body);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
-    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_unpaired);
+    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_buildp);METHOD(join_unpaired);
 #undef METHOD
     return 1;
 }

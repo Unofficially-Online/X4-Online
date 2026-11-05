@@ -361,7 +361,7 @@ ATTK = struct.Struct('<QQ3QII')   # ATTK: a destructible, its attacker (portable
 LIVEF = struct.Struct('<QII')   # LIVEF: a component, the live flag bits to set and to clear (0x20 only)
 SPEC = struct.Struct('<QIIIIQQ')   # SPEC: a component, a view cache specification entry: kind, flags, class, truncated, interval, last
 NAVC = struct.Struct('<Q96s')   # NAVC: a ship, its navigation controller's cached transform and velocity (+0x60..+0xbf)
-JOBS = struct.Struct('<QQII')   # JOBS: a job's ID hash (FNV-1a), its state's +0x48, its place in the job DB, padding
+JOBS = struct.Struct('<QQIHH')  # JOBS: a job's ID hash (FNV-1a), its state's +0x48, its place in the job DB, active and waiting ships
 GONE = struct.Struct('<Q')      # GONE: a census row of the session whose object is gone at T (portable ID, sorted)
 BODY = struct.Struct('<QII8I23II8I8I')   # BODY: portable, which, record flags, pose, motion (23 words), moving, pre, delta
 assert SPLM.size == 1264 and SPLME.size == 192 and GRAVN.size == 32 and GRAVP.size == 80 and GRAVQ.size == 48 and JOBE.size == 128 and EVQT.size == 32 and GRAVD.size == 24 and VIEWK.size == 24 and VIEWKC.size == 24 and VIEWF.size == 24 and VIEWP.size == 72 and SHOOT.size == 104 and ATTK.size == 48 and LIVEF.size == 16 and SPEC.size == 40 and NAVC.size == 104 and JOBS.size == 24 and GONE.size == 8 and BODY.size == 208
@@ -950,7 +950,7 @@ def read_package(data):
         raise JoinError('spec_shape')
     if version >= 13 and any(not r[0] or (i and sections['navc'][i-1][0] >= r[0]) for i, r in enumerate(sections['navc'])):
         raise JoinError('navc_shape')
-    if version >= 13 and any(r[3] or not r[0] or (i and sections['jobs'][i-1][2] >= r[2]) for i, r in enumerate(sections['jobs'])):
+    if version >= 13 and any(not r[0] or (i and sections['jobs'][i-1][2] >= r[2]) for i, r in enumerate(sections['jobs'])):
         raise JoinError('jobs_shape')
     if version >= 13 and any(not r[0] or (i and sections['gone'][i-1][0] >= r[0]) for i, r in enumerate(sections['gone'])):
         raise JoinError('gone_shape')

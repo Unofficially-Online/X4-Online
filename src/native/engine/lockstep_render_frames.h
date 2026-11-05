@@ -334,7 +334,8 @@ static unsigned rf_admit(tick_fn original,void *frame,unsigned char loading,char
  * this is lookahead_frame (protocol 5: adapt_frame) exactly. */
 static unsigned rf_boundary(tick_fn original,void *frame,unsigned char loading,const char *packet,size_t length,
                             char *reply,size_t capacity,LARGE_INTEGER ft_begin) {
-    if(!rf_ready()) {++rf_not_ready;return wire_adaptive?adapt_frame(packet,length,reply,capacity):lookahead_frame(packet,length,reply,capacity);}
+    /* A joiner before its handover takes its steps as fast as they come, without render-only frames in between. */
+    if(!rf_ready() || join_catching_up()) {++rf_not_ready;return wire_adaptive?adapt_frame(packet,length,reply,capacity):lookahead_frame(packet,length,reply,capacity);}
     if(wire_adaptive) {unsigned quiet=adapt_quiet_check();if(quiet) return quiet;}
     if(!lookahead_seal(stats.completed,packet,length,blob_proposal)) return 56;
     lookahead_send(&lookahead_reports[stats.completed%LOOKAHEAD_RING],GetTickCount64());

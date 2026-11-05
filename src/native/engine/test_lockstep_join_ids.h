@@ -24,6 +24,8 @@ static uint64_t test_jids_insert(void *mapv,void *object,uint32_t slot,void *ref
     *(uint32_t*)(map+0x40)+=1u;*(uint32_t*)(map+0x44)-=1u;*(uint64_t*)(map+0x38)+=1u;
     return ((uint64_t)rid_slot_generation(map,slot)<<25)|slot;
 }
+/* The native AssignNewID's contract: the ID at object+8, nothing meaningful in rax. */
+static uint64_t test_jids_assign_void(void *object) {(void)test_rid_assign_stub(object);return 0xdeadbeefull;}
 #define TEST_JIDS_SAVED 0x30000u
 static void test_join_ids(void) {
     void *saved_map=*(void**)(image+RID_MAP);uint32_t saved_active=stats.active;DWORD saved_ui=ui_thread;int saved_created=created_installed;
@@ -115,11 +117,14 @@ static void test_join_ids(void) {
          * order given, the shared list untouched; one allocation too many, or an ID it cannot take, refuses. */
         unsigned char o[3][16];const uint64_t holes[3]={0x10003u,0x10001u,0x10006u};
         const rid_counts_t before=rid_counts(j.map);
+        /* As the native AssignNewID: the ID stored at +8 only, rax garbage (w1u: wrong=2 from comparing the return value). */
+        rid_assign_native=test_jids_assign_void;
         assert(join_ids_replay(holes,3) && !join_ids_replay(holes,3));
-        for(unsigned i=0;i<3;i++) {uint64_t at;assert(rid_assign(o[i],image+0x997000u)==holes[i]);memcpy(&at,o[i]+8,8);assert(at==holes[i]);}
+        for(unsigned i=0;i<3;i++) {uint64_t at;(void)rid_assign(o[i],image+0x997000u);memcpy(&at,o[i]+8,8);assert(at==holes[i] && join_ids_replay_got[i]==holes[i]);}
         const rid_counts_t mid=rid_counts(j.map);
         assert(mid.head==before.head && mid.tail==before.tail && mid.free==before.free && rid_slot_used(j.map,0x10001u) && rid_walk(j.map));
-        assert(join_ids_replay_end() && !join_ids_replay_end());
+        assert(!join_ids_replay_wrong && join_ids_replay_end() && !join_ids_replay_end());
+        rid_assign_native=test_rid_assign_stub;
         const uint64_t one[1]={0x10002u};assert(join_ids_replay(one,1) && rid_assign(o[0],image+0x997000u)==one[0]);
         assert(rid_assign(o[1],image+0x997000u)==before.head && !join_ids_replay_end());   /* past the one: the shared head */
         const uint64_t above[1]={rid_counts(j.map).head},used[1]={0x10003u},generation[1]={((uint64_t)1<<25)|0x10005u},twice[2]={0x10005u,0x10005u};

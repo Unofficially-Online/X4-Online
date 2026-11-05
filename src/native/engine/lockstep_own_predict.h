@@ -172,6 +172,7 @@ static __attribute__((aligned(16))) float opred_blocks[PILOT_SLOTS][32];
 static unsigned char *volatile *opred_open_at[PILOT_SLOTS];
 static unsigned char *opred_open_saved[PILOT_SLOTS],*opred_open_object[PILOT_SLOTS];
 static int opred_open;
+static uint64_t opred_present_catchup;   /* present calls skipped while this client is a joiner catching up */
 static uint64_t opred_present_calls,opred_present_applied,opred_present_restored,opred_present_lost,opred_present_refused,
     opred_present_stale,opred_present_previous,opred_present_thread;
 /* The camera's view bank follows the presented own ship (lockstep_render_display.h, rdisp_follow_enter): bank written and
@@ -581,6 +582,7 @@ static __attribute__((unused)) int opred_owns(const void *object) {
 }
 static int opred_present_enter(void) {
     if(!opred_armed || (opred_mode!=OPRED_PRESENT && opred_mode!=OPRED_SWAP) || !stats.active) return 0;
+    if(join_catching_up()) {++opred_present_catchup;return 0;}   /* a joiner before its handover draws the plain steps */
     ++opred_present_calls;
     if(opred_open) {InterlockedIncrement64(&opred_failures);opred_stage="present_nested";return 0;}
     if(GetCurrentThreadId()!=ui_thread) {++opred_present_thread;return 0;}
@@ -733,6 +735,7 @@ static int opred_status(char *out,size_t capacity) {
         (unsigned long long)opred_follow_written,(unsigned long long)opred_follow_restored,(unsigned long long)opred_follow_eye,
         (unsigned long long)opred_follow_rdisp,(unsigned long long)opred_follow_outside,(unsigned long long)opred_follow_parent,
         (unsigned long long)opred_follow_table,(unsigned long long)opred_follow_cached);
+    if(n>0 && (size_t)n<capacity && opred_present_catchup) n+=snprintf(out+n,capacity-(size_t)n," present_catchup=%llu",(unsigned long long)opred_present_catchup);
     for(unsigned i=0;n>0 && (size_t)n<capacity && i<pilot_slot_count && i<PILOT_SLOTS;i++) {
         const opred_slot *p=&opred_slots[i];int more;
         if(!p->enabled) continue;

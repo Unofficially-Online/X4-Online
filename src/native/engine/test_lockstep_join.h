@@ -384,7 +384,7 @@ static void test_join_golden(void) {
     static join_spec_rec spec[2];spec[0]=(join_spec_rec){0x2001,3u,0x4fu,2u,0u,0x3fc5555555555555ull,0x403c26508dfea31bull};
     spec[1]=(join_spec_rec){0x2001,7u,0x7fu,0u,0u,0u,0x403c2ed916872b02ull};
     static join_navc_rec navc[1];navc[0].portable=0x2001;for(unsigned k=0;k<96u;k++) navc[0].cache[k]=(unsigned char)k;
-    static join_jobs_rec jobs[1];jobs[0]=(join_jobs_rec){0xcbf29ce484222325ull,3u,524u,0u};
+    static join_jobs_rec jobs[1];jobs[0]=(join_jobs_rec){0xcbf29ce484222325ull,3u,524u,0u,0u};
     static join_gone_rec gone[2]={{0x6a0adull},{0x8000000000001234ull}};
     static join_body_rec body[1];body[0].portable=0x2001;body[0].which=0;body[0].flags=3;body[0].pad=1;
     for(unsigned i=0;i<8;i++) {body[0].pose[i]=0x3f800000u+i;body[0].pre[i]=0x1000u+i;body[0].delta[i]=0x2000u+i;}
@@ -2772,7 +2772,13 @@ static void test_join_body(void) {
     assert(t.body[0].portable==0x2001 && !t.body[0].which && t.body[1].which==1 && t.body[2].portable==0x3001 && join_body_cap==3);
     assert(JOIN_PUSH(t.body,t.nbody,cap,rec) && !join_body_sort(&t));
     free(t.body);join_body_cap=0;
-    printf("hot join BODY: the Jolt body behind a record, moving and static, refusals, order PASS\n");
+    {   /* JOBS: the lengths of a job state's ship vectors (a broken vector reads 65535) */
+        static unsigned char state[0x50];static uint64_t ships[3];uintptr_t v[2]={(uintptr_t)ships,(uintptr_t)(ships+3)};
+        memset(state,0,sizeof(state));memcpy(state+JOIN_JOBS_WAITING,v,16);v[1]=(uintptr_t)ships;memcpy(state+JOIN_JOBS_ACTIVE,v,16);
+        assert(join_jobs_ships(state,JOIN_JOBS_WAITING)==3u && !join_jobs_ships(state,JOIN_JOBS_ACTIVE));
+        v[1]=(uintptr_t)ships+4u;memcpy(state+JOIN_JOBS_ACTIVE,v,16);assert(join_jobs_ships(state,JOIN_JOBS_ACTIVE)==0xffffu);
+    }
+    printf("hot join BODY: the Jolt body behind a record, moving and static, refusals, order; JOBS ship vectors PASS\n");
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();

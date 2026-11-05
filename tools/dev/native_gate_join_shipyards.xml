@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hot join diagnostic (native_gate_join_shipyards = {ticks}, native_gate_join_shipyards_mask): what Job_Helper's
+     Process_Ships reads for a faction's ship builds, logged by every client at the same gated ticks (the probe raises
+     JoinShipyards with {mask}). j1-122..j1-124: at 648 the Split faction's Process_Ships drew 81 times on a joiner, 77 on
+     the session, with the waiting lists and every build processor's own fields equal. j1-125 (every read, at 646 and 647):
+     the rows equal on both sides, and 648 then equal too (73 draws each), the 900 census from 418 objects to 162: one of
+     these reads brings lazily updated state to the frame's time on both sides alike. The mask names which ones run:
+       1  find_station (the shipyards; also needed by 2, 4, 8)   2  get_ship_build_wares (requireblueprints, canbuild)
+       4  the build modules' free processors (busy=false)        8  the queued builds and those Process_Ships keeps
+       16 find_waiting_subordinate, find_waiting_job_ship and the waiting ships
+     Rows: JOIN_SHIPYARDS (counts), JOIN_SHIPYARD_SHIP (16), JOIN_SHIPYARD (per shipyard; - for a read the mask leaves out). -->
+<mdscript name="X4LAN_NativeJoinShipyards" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="md.xsd">
+ <cues>
+  <cue name="JoinShipyards" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_NativeGate'" control="'JoinShipyards'"/></conditions>
+   <actions>
+    <set_value name="$Mask" exact="if event.param3.$mask? then event.param3.$mask else 31"/>
+    <set_value name="$Faction" exact="faction.split"/>
+    <set_value name="$Shipyards" exact="[]"/>
+    <do_if value="$Mask % 2 == 1 or ($Mask / 2) % 2 == 1 or ($Mask / 4) % 2 == 1 or ($Mask / 8) % 2 == 1">
+     <find_station name="$Shipyards" canbuildships="true" canbuildfor="$Faction" hascontrolentity="controlpost.shiptrader" space="player.galaxy" multiple="true"/>
+    </do_if>
+    <set_value name="$Ships" exact="[]"/>
+    <set_value name="$Subordinates" exact="0"/>
+    <do_if value="($Mask / 16) % 2 == 1">
+     <find_waiting_subordinate name="$Ships" owner="$Faction" hasbuildingtask="false" multiple="true"/>
+     <set_value name="$Subordinates" exact="$Ships.count"/>
+     <find_waiting_job_ship name="$Ships" owner="$Faction" hasbuildingtask="false" multiple="true" append="true"/>
+    </do_if>
+    <debug_text text="'[X4LAN] NATIVE_GATE JOIN_SHIPYARDS time=%s mask=%s shipyards=%s waiting=%s subordinates=%s'.[player.age, $Mask, $Shipyards.count, $Ships.count, $Subordinates]"/>
+    <do_all exact="$Ships.count" counter="$i">
+     <debug_text text="'[X4LAN] NATIVE_GATE JOIN_SHIPYARD_SHIP i=%s code=%s macro=%s'.[$i, $Ships.{$i}.idcode, $Ships.{$i}.macro]"/>
+    </do_all>
+    <do_all exact="$Shipyards.count" counter="$i">
+     <set_value name="$Shipyard" exact="$Shipyards.{$i}"/>
+     <set_value name="$WareCount" exact="'-'"/>
+     <do_if value="($Mask / 2) % 2 == 1">
+      <get_ship_build_wares object="$Shipyard" result="$Wares" otherfaction="$Faction" requireblueprints="true" canbuild="true"/>
+      <set_value name="$WareCount" exact="$Wares.count"/>
+     </do_if>
+     <set_value name="$ModuleCount" exact="'-'"/>
+     <set_value name="$Free" exact="'-'"/>
+     <do_if value="($Mask / 4) % 2 == 1">
+      <set_value name="$Modules" exact="$Shipyard.buildmodules"/>
+      <set_value name="$ModuleCount" exact="$Modules.count"/>
+      <set_value name="$Free" exact="0"/>
+      <do_all exact="$Modules.count" counter="$j">
+       <find_object_component name="$Processors" class="class.buildprocessor" busy="false" object="$Modules.{$j}" multiple="true"/>
+       <set_value name="$Free" operation="add" exact="$Processors.count"/>
+      </do_all>
+     </do_if>
+     <set_value name="$QueuedCount" exact="'-'"/>
+     <set_value name="$Kept" exact="'-'"/>
+     <do_if value="($Mask / 8) % 2 == 1">
+      <set_value name="$Queued" exact="$Shipyard.builds.queued"/>
+      <set_value name="$QueuedCount" exact="$Queued.count"/>
+      <set_value name="$Kept" exact="0"/>
+      <do_all exact="$Queued.count" counter="$j">
+       <do_if value="$Queued.{$j}.isshipbuild and not ($Queued.{$j}.buildobject.exists and $Queued.{$j}.buildprocessor)">
+        <set_value name="$Kept" operation="add"/>
+       </do_if>
+      </do_all>
+     </do_if>
+     <debug_text text="'[X4LAN] NATIVE_GATE JOIN_SHIPYARD i=%s code=%s owner=%s wares=%s modules=%s free=%s queued=%s kept=%s'.[$i, $Shipyard.idcode, $Shipyard.owner, $WareCount, $ModuleCount, $Free, $QueuedCount, $Kept]"/>
+    </do_all>
+   </actions>
+  </cue>
+ </cues>
+</mdscript>

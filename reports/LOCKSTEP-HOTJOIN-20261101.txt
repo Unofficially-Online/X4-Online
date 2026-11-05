@@ -1893,9 +1893,20 @@ proposed and rejected.
 - join_ids_replay(ids, n) / join_ids_replay_end() (b60b52e3) for the lockstep session's rebuild of the slots' virtual players
   on a joiner inside the pilot window (their objects left out of the join save): the calling thread's next n shared
   allocations take the session's slots, holes below the head, in order.
-- Open: the Split faction logic's 81 draws at 648 against the session's 77 (same seed and key; FactionLogic Manager library:
-  its weighted goal pick, delays, shuffle_group of prefab candidates; the job ships' pick and most of the 420 at 900 follow);
-  the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
+- The job ships' pick at 648 [F: the row's owner key; j1-123 JOBS counts (b7ac7dd4); j1-124 JOIN_BUILDP (0e74e90c)]: the
+  draws are those of FactionLogic.FactionLogicManagers.SplitFactionLogic.SplitFactionLogic_Manager.Ship_Construction_Manager.
+  Process_Ships (Job_Helper's Manager library; the row's owner 3dc3111c29c581be is the FNV-1a of that path): a draw for the
+  wait, find_waiting_subordinate and find_waiting_job_ship (hasbuildingtask=false), shuffle_list (a draw an element), then a
+  loop that draws once a ship ($SelectedShipyardIndex, profile decreasing) and places it until no shipyard has a free build
+  module (the shipyards find_station gives, get_ship_build_wares canbuild, the build modules' processors with busy=false less
+  the queued ship builds without a processor). The waiting list is not longer on the joiner: X4's waiting check
+  (StaticShipCheckerByIsWaitingJobShip 0x854cf0) is membership in the job state's waiting vector (+0x30), and at the admission
+  every job's active and waiting vector lengths are the session's (jobs=458:753:0:0:0); the 660 census holds the same 526,019
+  objects. Nor are the processors: all 2,027 have the session's +0x260 and +0x504 after T+1 and T+14 and read idle by them
+  (U::BuildFilterByIsBusy 0x388580; its third test, 0x38c100, is the build's progress at the frame's time). So the joiner
+  places more ships at 648 because a shipyard offers more free capacity: the shipyard set, its buildable wares (resources),
+  its queued builds after the filter, or a build in progress.
+- Open: that capacity input at 648; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)

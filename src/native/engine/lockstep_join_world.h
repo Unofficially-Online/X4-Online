@@ -1975,9 +1975,33 @@ static void join_watch_session(const join_tables *t,uint64_t tick) {
 /* Both sides, at the boundaries after T+1 (t), T+2 (u) and, up to native_gate_join_watch_span, after each later step (v). */
 #define JOIN_WATCH_SPAN_MAX 64u
 static uint32_t join_watch_span=2u;
+/* native_gate_join_buildp (diagnostic, both sides, with the watch): every build processor's busy fields after T+1 and T+14.
+ * j1-122 at 648: Job_Helper's Process_Ships drew 81 times on the joiner, 77 on the session; its loop runs one ship a draw
+ * until no shipyard has a free build processor (find_object_component class.buildprocessor busy=false), and X4's busy test
+ * (U::BuildFilterByIsBusy 0x388580) for a processor is +0x260 >= -0.9999999 or +0x504 set or 0x38c100 (the build's progress
+ * at the frame's time). Rows JOIN_BUILDP side= tick= id=<portable> at=<+0x260 bits> flag=<+0x504> busy=, then a sum. */
+static int join_buildp_on;
+#define JOIN_BUILDP_CLASS 10u
+static void join_buildp_dump(char side,uint64_t tick) {
+    if(!join_buildp_on || !world_identities) return;
+    size_t cap=1u<<20,at=0;char *out=malloc(cap);if(!out) return;
+    unsigned rows=0,busy=0;
+    for(unsigned i=0;i<WORLD_IDENTITY_CAPACITY && at+256<cap;i++) {
+        const uint64_t runtime=world_identities[i].runtime;if(!runtime) continue;
+        unsigned char *o=join_object(runtime);uintptr_t vt=0;uint32_t words[8];
+        if(!o || !join_read(o,&vt,8) || !world_class_words(vt,words) || !world_class_has(words,JOIN_BUILDP_CLASS)) continue;
+        uint64_t bits=0;unsigned char flag=0;(void)join_read(o+0x260,&bits,8);(void)join_read(o+0x504,&flag,1);
+        double d;memcpy(&d,&bits,8);const int b=d>=-0.9999999 || flag;busy+=(unsigned)b;++rows;
+        at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_BUILDP side=%c tick=%llu id=%llx at=%016llx flag=%u busy=%d\r\n",side,
+                             (unsigned long long)tick,(unsigned long long)world_identities[i].saved,(unsigned long long)bits,flag,b);
+    }
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_BUILDP_SUM side=%c tick=%llu rows=%u busy=%u\r\n",side,(unsigned long long)tick,rows,busy);
+    crash_note_write(out,(int)at);free(out);
+}
 static void join_watch_probe(uint64_t completed) {
     if(!join_watch.armed || completed<=join_watch.tick) return;
     const uint64_t k=completed-join_watch.tick;
+    if(k==1u || k==14u) join_buildp_dump(k==1u?'t':'v',completed);
     if(k<=join_watch_span) join_watch_dump(k==1u?'t':k==2u?'u':'v',completed);
     if(k>=join_watch_span) join_watch.armed=0;
 }

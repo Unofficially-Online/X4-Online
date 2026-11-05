@@ -101,7 +101,7 @@ static uint64_t join_ids_assign_pinned(void *object) {
 static rid_local_t join_ids_replay_list;
 static volatile LONG join_ids_replay_on;
 static DWORD join_ids_replay_thread;
-static uint64_t join_ids_replay_ids[JOIN_IDS_REPLAY_MAX];
+static uint64_t join_ids_replay_ids[JOIN_IDS_REPLAY_MAX],join_ids_replay_got[JOIN_IDS_REPLAY_MAX];   /* named; taken (at +8) */
 static unsigned join_ids_replay_n,join_ids_replay_done,join_ids_replay_other,join_ids_replay_wrong;
 static volatile LONG64 join_ids_replays,join_ids_replay_failures;
 static uint64_t join_ids_assign_replay(void *object) {
@@ -113,7 +113,10 @@ static uint64_t join_ids_assign_replay(void *object) {
         rid_fields_t shared;rid_local_in(map,&join_ids_replay_list,&shared);
         result=original(object);
         rid_local_out(map,&join_ids_replay_list,&shared);
-        if(join_ids_replay_done<join_ids_replay_n && result!=join_ids_replay_ids[join_ids_replay_done]) ++join_ids_replay_wrong;
+        /* The ID is the one AssignNewID stored at +8: the native returns no ID in rax (w1u: wrong=2 from that alone). */
+        uint64_t id=0;(void)read_local((unsigned char *)object+8,&id,8);
+        if(join_ids_replay_done<JOIN_IDS_REPLAY_MAX) join_ids_replay_got[join_ids_replay_done]=id;
+        if(join_ids_replay_done<join_ids_replay_n && id!=join_ids_replay_ids[join_ids_replay_done]) ++join_ids_replay_wrong;
         ++join_ids_replay_done;
     } else {result=original(object);++join_ids_replay_other;}   /* past the n: the shared head, counted against the replay */
     LeaveCriticalSection(lock);return result;

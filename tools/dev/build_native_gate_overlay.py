@@ -550,6 +550,8 @@ def main():
     if args.join or args.join_package:
         # Hot join: the JOIN input section and the probe state providers (native_gate_join_core.lua).
         shutil.copy2(root/'tools/dev/native_gate_join_core.lua', args.out/'ui/native_gate_join_core.lua')
+        # The shipyard diagnostic's cue (native_gate_join_shipyards = {ticks}); it acts only on the probe's event.
+        shutil.copy2(root/'tools/dev/native_gate_join_shipyards.xml', args.out/'md/native_gate_join_shipyards.xml')
         ui_files = 'ui/native_gate_join_core.lua\n'+ui_files
     if args.session_clients:
         # Protocol 3 input multiplexer (pilot, orders and hit claim sections share one blob).

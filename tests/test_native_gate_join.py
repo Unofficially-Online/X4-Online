@@ -414,7 +414,7 @@ def golden_v13():
             join.SEC_LIVEF: [(0x2001, 0, 0x20)],
             join.SEC_SPEC: [(0x2001, 3, 0x4f, 2, 0, 0x3fc5555555555555, 0x403c26508dfea31b), (0x2001, 7, 0x7f, 0, 0, 0, 0x403c2ed916872b02)],
             join.SEC_NAVC: [(0x2001, bytes(range(96)))],
-            join.SEC_JOBS: [(0xcbf29ce484222325, 3, 524, 0)],
+            join.SEC_JOBS: [(0xcbf29ce484222325, 3, 524, 0, 0)],
             join.SEC_GONE: [(0x6a0ad,), (0x8000000000001234,)],
             join.SEC_BODY: [(0x2001, 0, 3, *[0x3f800000+i for i in range(8)], *[0x40000000+i for i in range(23)], 1,
                              *[0x1000+i for i in range(8)], *[0x2000+i for i in range(8)])]}
