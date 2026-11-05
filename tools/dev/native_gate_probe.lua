@@ -288,6 +288,12 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_precise then   -- savers write the join save at full precision, a version 13 joiner reads it exactly
   assert(gate.join_precise and gate.join_precise(1)==1,'join precise save refused')
  end
+ if cfg.native_gate_join_viewf_write then   -- diagnostic: the joiner writes the session's VIEWF words (off: a joiner's window flips after its STOP)
+  assert(gate.join_viewf_write and gate.join_viewf_write(1)==1,'join viewf write refused')
+ end
+ if cfg.native_gate_join_view_skip then   -- diagnostic: view-bank writes a joiner's admission leaves out (1 VIEWF, 2 VIEWK, 4 VIEWP, 8 GRAVD)
+  assert(gate.join_view_skip and gate.join_view_skip(cfg.native_gate_join_view_skip)==1,'join view skip refused')
+ end
  if cfg.native_gate_join_buildp then assert(gate.join_buildp and gate.join_buildp(1)==1,'join buildp refused') end   -- diagnostic rows
  if cfg.native_gate_join_ids then   -- a joiner's saved objects take the session's runtime IDs in its load (needs runtime IDs set mode)
   assert(cfg.native_gate_runtime_ids~=nil and cfg.native_gate_runtime_ids~='observe' and cfg.native_gate_created_identities and

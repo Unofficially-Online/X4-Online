@@ -45,7 +45,7 @@ static int lua_pilot_players_state(lua_State *L) {
 }
 /* gate.pilot_join_state(): the pilot tables a joiner needs at T+1 (lockstep_pilot_join.h 'pilot_state'), nil when too large. */
 static int lua_pilot_join_state(lua_State *L) {
-    static char out[1u<<17];int n=accept_ui() && pilot_armed?pjoin_tables_state(out,sizeof(out),stats.issued):0;
+    static char out[1u<<18];int n=accept_ui() && pilot_armed?pjoin_tables_state(out,sizeof(out),stats.issued):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* gate.pilot_join_in_window(1): the joiner's resume inside the window (diagnostic, before the first tick). */

@@ -1929,6 +1929,16 @@ proposed and rejected.
 - The joiner's window after STOP: X4 alternates two camera views for the ~3 s before it closes (the lockstep session's burst
   capture of j1-132 and of its own joiners; ordinary clients do not): what the user saw recurring with every J1. The J1 joiner
   closes at STOP now (--settle 0); the cause is open (j1-135: the same with the join watch, and so JOIN_WATCHPCF, off).
+  The cause: VIEWF's writes [F: native_gate_join_view_skip 6baff0c4, joiner --settle 3, the lockstep session's capture of b5].
+  From the end banner on, the window alternates every presented frame between the banner over the dimmed HUD and the bare
+  cockpit without HUD, tutorial box or banner (j1-137): a UI layer missing on every other frame rather than a second camera.
+  j1-136 6baff0c4 (build-hj16k)   mask 15 (VIEWF, VIEWK, the restore after T+1, GRAVD): no flip (35 frames after the
+                                  banner alike); 900 1,434
+  j1-137 6baff0c4 (build-hj16k)   mask 4 (the restore only): the flip back from the banner's first frame; 900 1,438 (the
+                                  restore holds the 900 gain)
+  j1-138 6baff0c4 (build-hj16k)   mask 1 (VIEWF only): no flip (36 frames alike); T+1 0, 900 172 (equal to j1-135 with VIEWF)
+  So the joiner no longer writes VIEWF (native_gate_join_viewf_write, default off; the section stays, the restore selects by its
+  attention): the census is the same, as j1-82 had found (equal to no VIEWF).
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

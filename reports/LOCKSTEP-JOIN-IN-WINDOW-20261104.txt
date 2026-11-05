@@ -184,3 +184,29 @@ Open:
   not see them yet.
 - The 3 objects at T+1 and the 728 at 900: run again on the merged build refresh (f2763e9b) before reading them; the
   difference to an ordinary J1 joiner names what the window adds.
+
+11. R5: THE PER-SLOT MODULES' STATE AT T (lockstep_pilot_join_modules.h; offline, 4 November)
+What a joiner inside the window ran without until now, each found in the module's own state (section 8's R5 list):
+- Fire: the slots' guns are leased at the window start on every client (MindlessShootController, trigger written each
+  tick). A joiner leased anew at T+1; in w1x the save brought every gun with its Mindless (installs 0, replaced_at_lease 0
+  on the joiner; installs 4 and 2 on the session at the window start), but a gun firing at T+1 would have made the joiner's
+  lease wait while the session held the trigger. Now the lease travels by runtime ID (guns, group, last trigger) and the
+  joiner binds it to its own objects; a gun gone or with another controller refuses.
+- The UI replay: sections captured before T and staged for an apply tick after T (uirep_ring) are in rows the joiner's
+  catch-up does not carry, as the stock ring of R4; they travel the same way (urK_I). The order queue aliases and every
+  slot's applied creates (uirep_q_aliases, uirep_q_applied; runtime IDs) decide which index a later order edit takes, so
+  they travel too.
+- Hit claims: claims staged for an apply tick after T (hit_stage_ring) and the consumed projectile keys (hit_consumed)
+  travel; the carried claims go first in their tick (the session staged them from earlier rows).
+- Death: each slot's record (counts, ticks, the respawn's state) and slot 1's held keys travel.
+Refused by name before anything changes (stop 91 with join_resume=<why>), not carried yet: a slot dead, stranded, in its
+suit or respawning at T (death_at_T); a slot ship other than the window's (slot_respawned, a respawn before T); missiles
+shooting at T (missiles_at_T); a gun the simulation holds at T (fire_foreign); slot 1 or a slot k on foot at T
+(foot_at_T); a module armed on one side only (modules_armed). Also open, not checked: the hit claims' projectile keys of
+bullets in flight at T (lockstep_hit_native.h hitn_table: a key is the shooter's ordinal of first casts in the creation
+tick; a joiner's first cast of a loaded bullet is at T+1), the hit queue of this client's own claims (empty on a joiner
+before its handover), and R6 (the window's Lua state).
+The pilot_state text grew (m5 about 4 KB of hex, the consumed keys up to 64 KB): both buffers are 256 KB now; the
+package's LUA section takes up to 1 MB.
+Offline: test_pilot_join_modules (round trip, the merge order of carried and caught-up claims, three refusals, malformed
+entries named). Live: next in-window run.

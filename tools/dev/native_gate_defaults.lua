@@ -262,6 +262,8 @@ D.DIAGNOSTIC={
  {'native_gate_join_in_window','hot join save inside the pilot window, measured (diagnostic)'},
  {'native_gate_join_ids','hot joiner saved objects at the session runtime IDs'},
  {'native_gate_join_buildp','hot join build processor busy rows (diagnostic)'},
+ {'native_gate_join_view_skip','hot join view-bank writes a joiner leaves out (diagnostic)'},
+ {'native_gate_join_viewf_write','hot join VIEWF writes on a joiner (diagnostic; off: no flip after STOP)'},
  {'native_gate_join_shipyards','hot join shipyard capacity rows at these ticks (diagnostic)'},
  {'native_gate_join_refresh_builds','hot join: every station build state refreshed at T+1 on every client'},
  {'native_gate_join_shipyards_mask','hot join shipyard rows: which reads run (diagnostic)'},

@@ -201,15 +201,26 @@ static void pjoin_rings_pack(uint64_t t) {
         if(pstk_ring[k][i].present && pstk_ring[k][i].tick>t) pjoin_pstk_ring[k][i]=pstk_ring[k][i];
     for(unsigned i=0;i<PILOT_RING;i++) if(pilot_ring[i].present && pilot_ring[i].tick>t) pjoin_pilot_ring[i]=pilot_ring[i];
 }
+/* Every byte as two hex digits; -1 when it does not fit. */
+static int pjoin_hex_raw(char *out,size_t capacity,int n,const unsigned char *data,size_t size) {
+    static const char hex[]="0123456789abcdef";
+    if(n<0 || (size_t)n+2*size>=capacity) return -1;
+    for(size_t i=0;i<size;i++) {out[n++]=hex[data[i]>>4];out[n++]=hex[data[i]&15];}
+    out[n]=0;return n;
+}
 /* Blob bytes that are all zero are written as "<name>=0" (most rings and frames are sparse). */
 static int pjoin_hex_put(char *out,size_t capacity,int n,const unsigned char *data,size_t size) {
     size_t used=0;while(used<size && !data[used]) used++;
     if(used==size) return n+snprintf(out+n,capacity-(size_t)n,"0");
-    static const char hex[]="0123456789abcdef";
-    for(size_t i=0;i<size && n>0 && (size_t)n+2<capacity;i++) {out[n++]=hex[data[i]>>4];out[n++]=hex[data[i]&15];}
-    if((size_t)n>=capacity) return -1;
-    out[n]=0;return n;
+    return pjoin_hex_raw(out,capacity,n,data,size);
 }
+/* lockstep_pilot_join_modules.h (R5, after lockstep_ui_replay.h): the per-slot modules' state at T. */
+static int pjoin_m5_put(char *out,size_t capacity,int n,uint64_t t);
+static void pjoin_m5_reset(void);
+static int pjoin_m5_get(const char *name,size_t length,const char *value,size_t chars);
+static int pjoin_m5_complete(uint64_t t);
+static int pjoin_m5_check(void);
+static void pjoin_m5_apply(void);
 /* A seat's store holds X4's control banks (pslot_store_init: the image-base regions of PSLOT_CLASSES, in table order); a region
  * marked pointer (environment_zone: the zone d95180 compares) is a process address, which travels as the zone's portable ID
  * (w1v: the session's raw pointer crashed the joiner's d9a478). to_portable 1: pointer -> portable (the saver); 0: back to the
@@ -266,6 +277,7 @@ static int pjoin_tables_state(char *out,size_t capacity,uint64_t t) {
         n+=snprintf(out+n,capacity-(size_t)n,"|store%u=",k);
         if(n<=0 || (size_t)n>=capacity || (n=pjoin_hex_put(out,capacity,n,portable,pslots[k].length))<0) return 0;
     }
+    if(n>0 && (size_t)n<capacity && (n=pjoin_m5_put(out,capacity,n,t))<0) return 0;   /* R5 */
     return n>0 && (size_t)n<capacity?n:0;
 }
 __attribute__((unused)) static int pjoin_hex_get(const char *hex,size_t chars,unsigned char *data,size_t size) {
@@ -284,8 +296,9 @@ static uint64_t pjoin_tables_t;
 static unsigned char pjoin_store_rx[PILOT_SLOTS+1][VPL_BLOCK_MAX];
 static unsigned pjoin_store_rx_len[PILOT_SLOTS+1];
 static int pjoin_tables_parse(const char *text) {
-    unsigned long long t=0;int used=0;unsigned seen=0;
+    unsigned long long t=0;int used=0,r5=0;unsigned seen=0;
     memset(pjoin_store_rx_len,0,sizeof(pjoin_store_rx_len));memset(pjoin_pstk_ring,0,sizeof(pjoin_pstk_ring));memset(pjoin_pilot_ring,0,sizeof(pjoin_pilot_ring));
+    pjoin_m5_reset();
     if(!text || sscanf(text,"v1/t%llx%n",&t,&used)!=1) {pjoin_resume_why="state_head";return 0;}
     text+=used;
     while(*text=='|') {
@@ -307,6 +320,8 @@ static int pjoin_tables_parse(const char *text) {
             if(sscanf(name,"pr%u=",&i)!=1 || i>=PILOT_RING || pjoin_pilot_ring[i].present ||
                !pjoin_hex_get(value,(size_t)(end-value),(unsigned char*)&pjoin_pilot_ring[i],sizeof(pilot_staged)) ||
                !pjoin_pilot_ring[i].present) {pjoin_resume_why="state_ring";return 0;}
+        } else if((r5=pjoin_m5_get(name,(size_t)(eq-name),value,(size_t)(end-value)))>=0) {
+            if(!r5) return 0;
         } else {
             unsigned k=0;
             if(sscanf(name,"store%u=",&k)!=1 || k<2 || k>PILOT_SLOTS || pjoin_store_rx_len[k] || (end-value)%2 || (size_t)(end-value)/2>VPL_BLOCK_MAX ||
@@ -316,17 +331,20 @@ static int pjoin_tables_parse(const char *text) {
         text=end;
     }
     if(*text || seen!=(1u<<PJOIN_BLOBS)-1u) {pjoin_resume_why="state_missing";return 0;}
+    if(!pjoin_m5_complete(t)) return 0;
     pjoin_tables_t=t;return 1;
 }
 
-/* ---- the resume (W3 R1-R4; diagnostic: native_gate_join_in_window) ----
+/* ---- the resume (W3 R1-R5; diagnostic: native_gate_join_in_window) ----
  * A joiner's first pass at T+1 inside a running window, after the slots' resolve and before the per-slot passes: the
- * package's pilot_players and pilot_state, the slots' players and seats rebuilt with the session's IDs (R1) and their
- * stores and flags, the slots' hook (its update of frame T is in the save: the check's last tick is T), the body guard
- * parked as the session's after its park at T (R2), the native layer installed and the stock path's state (R3), the ring
- * entries in flight (R4). Not covered yet (R5, R6): death, fire, foot and foot slots, the UI replay queues, the window's
- * Lua state; a joiner runs on with them as its own arming left them, which is why this is a diagnostic. */
-static char pjoin_state_text[1u<<17];
+ * package's pilot_players and pilot_state, R5's checks (lockstep_pilot_join_modules.h: what is not carried yet refuses
+ * before anything changes), the slots' players and seats rebuilt with the session's IDs (R1) and their stores and flags,
+ * the slots' hook (its update of frame T is in the save: the check's last tick is T), the body guard parked as the
+ * session's after its park at T (R2), the native layer installed and the stock path's state (R3), the ring entries in
+ * flight (R4), the per-slot modules' state (R5: death records, leased guns, the UI replay's staged sections and order
+ * aliases, the hit claims in flight). Not covered yet (R6): the window's Lua state; a joiner runs on with it as its own
+ * arming left it, which is why this is a diagnostic. */
+static char pjoin_state_text[1u<<18];
 static int pjoin_resume(uint64_t tick,unsigned char *controller) {
     char players[4096];const uint64_t base=join_tick_base();
     if(!join_package_line("pilot_players",players,sizeof(players)) || !pjoin_parse_players(players)) {
@@ -337,6 +355,7 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
     }
     if(pjoin_tables_t!=base || tick!=base+1) {pjoin_resume_why="state_tick";return 0;}
     if(pjoin_rx_slots!=pslot_mask) {pjoin_resume_why="slot_mask";return 0;}
+    if(!pjoin_m5_check()) return 0;   /* R5's refusals, before anything changes */
     /* R1 */
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         if(!(pjoin_rx_mask>>(k-1)&1u)) continue;
@@ -365,6 +384,8 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
         if(pjoin_pstk_ring[k][i].present && !(pstk_ring[k][i].present && pstk_ring[k][i].tick==pjoin_pstk_ring[k][i].tick)) pstk_ring[k][i]=pjoin_pstk_ring[k][i];
     for(unsigned i=0;i<PILOT_RING;i++)
         if(pjoin_pilot_ring[i].present && !(pilot_ring[i].present && pilot_ring[i].tick==pjoin_pilot_ring[i].tick)) pilot_ring[i]=pjoin_pilot_ring[i];
+    /* R5 */
+    pjoin_m5_apply();
     pjoin_resume_why="resumed";
     return 1;
 }

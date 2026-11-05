@@ -1244,6 +1244,7 @@ int main(int argc,char **argv) {
     test_pilot_slots();
     test_pilot_join_players();
     test_pilot_join_tables();
+    test_pilot_join_modules();
     test_pilot_eye();
     test_pilot_foot();
     test_pilot_foot_diag();

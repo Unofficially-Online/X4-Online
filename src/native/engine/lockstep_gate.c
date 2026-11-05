@@ -365,6 +365,7 @@ static int world_nav_live_prefixes(void) {
 #include "lockstep_crash_note.h"
 #include "lockstep_cutscene_ready.h"
 #include "lockstep_ui_replay.h"
+#include "lockstep_pilot_join_modules.h"   /* the join inside the window, R5: the per-slot modules' state at T */
 #include "lockstep_view_points.h"
 #include "lockstep_hybrid.h"       /* hybrid sectors, slice H1 (native_gate_hybrid, default off) */
 #include "lockstep_sample_profile.h"
@@ -4115,7 +4116,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(body);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
-    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_buildp);METHOD(join_unpaired);
+    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_buildp);METHOD(join_view_skip);METHOD(join_viewf_write);METHOD(join_unpaired);
 #undef METHOD
     return 1;
 }

@@ -1344,7 +1344,19 @@ static void join_gravp_settled_build(const join_tables *s,const join_tables *min
         }
     }
 }
+/* native_gate_join_view_skip (diagnostic, a joiner): leave view-bank writes of the admission out. 1 VIEWF (both views' flags and
+ * attention, written only with native_gate_join_viewf_write), 2 VIEWK, 4 the GRAVP/VIEWP pose restores after T+1, 8 GRAVD (the cached parent in both views). The lockstep
+ * session's captures: a joiner's window alternates two camera views after its STOP (w1x, j1-132, j1-135 with the watch off),
+ * ordinary clients do not; a bank written settled here that X4 does not republish would alternate once the gate stops. */
+static unsigned join_view_skip;
+/* native_gate_join_viewf_write (diagnostic, default off): the joiner writes the session's VIEWF words (both views' flags and
+ * attention). Off since j1-138: with them a joiner's window alternates every presented frame after its STOP, the HUD layer
+ * missing on every other one (j1-132, j1-135, j1-137 with only bit 4 skipped); without them none (j1-136 mask 15, j1-138 mask
+ * 1), and the census is the same (900: 172 both ways; j1-82 already: equal to no VIEWF). The package still carries VIEWF: the
+ * restore after T+1 selects its low-attention objects by the session's published attention. */
+static int join_viewf_write;
 static void join_gravp_restore(void) {
+    if(join_view_skip&4u) return;
     for(uint32_t i=0;i<join_gravp_nset;i++) {
         unsigned char *object=join_object(join_gravp_set[i].runtime);const unsigned char *want=join_gravp_set[i].pose;
         if(!object) {++join_gravp_gone;continue;}
@@ -4359,7 +4371,7 @@ static int join_admit_world(void) {
     if(s->version>=11) join_admit_grav(s,&mine);    /* the radar */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */
-    if(s->version>=13 && s->ngravd) {   /* version 13: every ship's cached parent in both views as the session's (the radar's docked filter) */
+    if(s->version>=13 && s->ngravd && !(join_view_skip&8u)) {   /* version 13: every ship's cached parent in both views as the session's (the radar's docked filter) */
         const uint32_t cur=join_view_index();
         for(uint32_t i=0;i<s->ngravd;i++) {
             const join_gravd_rec *r=&s->gravd[i];
@@ -4375,9 +4387,9 @@ static int join_admit_world(void) {
     }
     for(unsigned i=0;i<join_watch.n;i++) join_watch.runtime[i]=join_runtime_of(&mine,join_watch.portable[i]);   /* diagnostic */
     join_watch_dump('k',s->gate.tick);   /* the joiner's own views before VIEWK and VIEWF */
-    if(s->version>=13 && s->nviewk) join_admit_viewk(s,&mine);   /* version 13: the views the session left unpublished, as its */
+    if(s->version>=13 && s->nviewk && !(join_view_skip&2u)) join_admit_viewk(s,&mine);   /* version 13: the views the session left unpublished, as its */
     if(s->version>=13 && s->nviewf) {join_viewf_hist_n=0;join_viewf_keep_build(s,&mine);}
-    if(s->version>=13 && s->nviewf) {   /* version 13: every view's flags as the session's (a load leaves its current view pending) */
+    if(s->version>=13 && s->nviewf && join_viewf_write && !(join_view_skip&1u)) {   /* opt-in (diagnostic): every view's flags as the session's (a load leaves its current view pending) */
         const uint32_t cur=join_view_index();
         for(uint32_t i=0;i<s->nviewf;i++) {
             unsigned char *object=join_object(join_runtime_of(&mine,s->viewf[i].portable));
@@ -4399,7 +4411,7 @@ static int join_admit_world(void) {
     {double now=0;memcpy(&now,&s->gate.game,8);   /* census: what this load scheduled, against the session's (JOIN_STATUS evq/evq_rx) */
      join_evq_census(now,&join_rx.evq_sources,&join_rx.evq_events,&join_rx.evq_due,&join_rx.evq_fault,join_rx.evq_top,sizeof(join_rx.evq_top));
      join_evq_dump('j',now);}
-    if(s->version>=13 && s->nviewf) join_viewf_hist_note();   /* diagnostic */
+    if(s->version>=13 && s->nviewf && join_viewf_write) join_viewf_hist_note();   /* diagnostic */
     for(unsigned i=0;i<join_watch.n;i++) join_watch.runtime[i]=join_runtime_of(&mine,join_watch.portable[i]);   /* diagnostic */
     join_watch_dump('j',s->gate.tick);
     if(s->version>=13 && s->njobe) {   /* version 13: the job engine's schedule (main thread, phase 3: its update does not run) */

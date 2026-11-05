@@ -59,6 +59,13 @@ static int lua_join_precise(lua_State *L) {join_precise_on=p_lua_tonumber(L,1)!=
 static int lua_join_ids(lua_State *L) {join_ids_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_buildp(on): JOIN_BUILDP rows after T+1 and T+14 on both sides (lockstep_join_world.h; diagnostic, with the watch). */
 static int lua_join_buildp(lua_State *L) {join_buildp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_viewf_write(on): the joiner writes the session's VIEWF words (lockstep_join_world.h; diagnostic, default off). */
+static int lua_join_viewf_write(lua_State *L) {join_viewf_write=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_view_skip(mask): view-bank writes a joiner's admission leaves out (lockstep_join_world.h; diagnostic). */
+static int lua_join_view_skip(lua_State *L) {
+    const double m=p_lua_tonumber(L,1);const int ok=isfinite(m) && m>=0 && m<=15 && floor(m)==m;
+    if(ok) join_view_skip=(unsigned)m;p_lua_pushnumber(L,ok?1:0);return 1;
+}
 /* gate.join_watch_span(n): the JOIN_WATCH rows after each step T+1 .. T+n (2 .. 64; default 2); n, 0 refused. */
 static int lua_join_watch_span(lua_State *L) {
     const double n=p_lua_tonumber(L,1);const int ok=isfinite(n) && floor(n)==n && n>=2.0 && n<=(double)JOIN_WATCH_SPAN_MAX;
