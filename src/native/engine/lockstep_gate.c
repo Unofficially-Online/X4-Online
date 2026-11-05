@@ -1589,7 +1589,7 @@ static int lua_warp_rng(lua_State *L) {
     p_lua_pushnumber(L,m!=WR_OFF && wr_arm(m));return 1;
 }
 static int lua_warp_rng_status(lua_State *L) {
-    char out[512];int n=accept_ui()?wr_status(out,sizeof(out)):0;
+    char out[640];int n=accept_ui()?wr_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_transition_rows(lua_State *L) {p_lua_pushnumber(L,trr_arm());return 1;}
@@ -1617,7 +1617,7 @@ static int lua_tempzone_order_row(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_warp_rng_row(lua_State *L) {
-    double index=p_lua_tonumber(L,1);char out[384];int n=0;
+    double index=p_lua_tonumber(L,1);char out[1280];int n=0; /* a watch row with its frame: about 840 characters */
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=wr_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }

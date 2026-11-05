@@ -161,6 +161,29 @@ race: both Linux clients carry the same 1 object at 2400 and the same 13 at 6000
   Against w22 (no tempzone_order) lx13 differs from 1200 in all four domains (28 .. 1,021 objects): with the key the
   zones are made on the MoveWorker and get created identities, without it they are unnamed; the key sets differ.
 
+THE PLATFORM RESIDUE: A GATE JUMP'S EXIT POSITION, 1 ULP (W24/W25 against lx14/lx15, 540f1090)
+  The one object at 2400 is 0a5d7a (ship_arg_s_fighter_01_b, an Antigone escort of frigate 0a5d4a, pointguard, on a
+  nine-point route through gates 0x125/0x123). Its motion is bit-equal through 1860; between 1861 and 1864 it jumps
+  (58.6 km, 1378 -> 92 m/s; the Linear model is not stepped at 1862/1863) into zone 0x124 on both platforms (same parent,
+  equal timing). The step trace (now a 60-tick window ending at N for N above 600, 1831..1890; W25 and lx15 give the same
+  12,296 rows) shows the first difference at 1864, the first step after the jump: the step's input position x is 1 ulp
+  apart (W 30960.611328, L 30960.613281), the orientation still equal. That step's attitude builder then gets yaw exactly
+  -3*pi/4 on Windows (c016cbe4, rows of exactly sqrt(2)/2) and 106 ulps off on Linux (c016cb7a): a 0.002 m offset seen
+  from a steering point ~78 m away. From 1865 the pose differs (rows 2.4e-5 apart), at 1890 ~2900 ulps of yaw.
+  Ruled out: warp_rng (a push would be metres), libm (the preload covers every transcendental Linux imports), the
+  approximate reciprocals (Linux's 1185 scalar sites are all rewritten; its 3 packed rcpps/rsqrtps are unreachable from
+  flight, pathing, warp and zone-switch code). The cause is the jump's position arithmetic (the gate's transform
+  composition or OnWarpEvent's safe-position push, GCC against MSVC rounding).
+  W26 against lx16 (the warp watch, c73a89b2; warp_rng 'observe' on both): the jump's WarpEvent (tick 1863, posted 1862
+  on the MoveWorker, no record, so no safe-position push) carries a transform that is byte-identical on both platforms
+  except its first float, the requested position x (W 39e1f146, L 3ae1f146): the exit position is already 1 ulp apart
+  when the event is built. The poster is Windows 0x5ce690 (site 0x5cf1cb) / Linux 0x1614ff0 (0x1615867): A =
+  GetTransformRelativeTo(ship, gate), its position clamped (maxps/minps, exact), B = GetTransformRelativeTo(gate, space),
+  transform = A*B. That product, GetTransformRelativeTo's transpose block, ShipSmall's own-transform slot and the
+  NavigationController's getter use the same association on both compilers (the source's explicit SIMD order), so the
+  ulp comes from an input further down (the pose extrapolation, or a double/float step). Next: capture A and B at the
+  construction on both platforms.
+
 WINDOWS AGAINST LINUX, w22 client 1 (build235, W21 + player_timer) against lx9
   tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
   w22 c1 vs lx9 c1        0      0      0      0      0      3     13     17     29     34     33     38

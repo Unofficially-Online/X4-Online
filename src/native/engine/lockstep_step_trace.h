@@ -901,6 +901,12 @@ static int st_watch(uint64_t id) {
     if(st_installed || st_id_count>=ST_IDS) return 0;
     st_ids[st_id_count++]=id;return 1;
 }
+/* A saved ID in the list (the warp watch of lockstep_warp_rng.h reads it too). */
+static int st_key_watched(uint64_t key) {
+    for(unsigned i=0;key && i<st_id_count;i++) if(st_ids[i]==key) return 1;
+    return 0;
+}
+static int st_watching(void) {return st_id_count!=0;}
 /* Before the first admitted frame, on the MoveWorker; a rerun with the same ticks is accepted. */
 static int st_arm(uint64_t ticks) {
     if(st_installed) return stats.active && ticks==st_ticks;

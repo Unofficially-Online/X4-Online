@@ -316,6 +316,7 @@ static int join_path_shape(const join_path_rec *r,uint32_t n) {
  * moved five along its leg. */
 #define JOIN_AGENT_MODEL 0xf10u              /* the Agent's flight control model */
 #define JOIN_FLIGHT_LINEAR 0x2c4f610u        /* U::Path::LinearFlightControlModel (model type 3) */
+#define JOIN_FLIGHT_NOMODEL 1u               /* a FLIGHT record's kind for a pilot slot ship's Agent without a flight model */
 #define JOIN_FLIGHT_OWNER 0x10u              /* the model's Agent */
 #define JOIN_FLIGHT_WORD_AT 0x60u            /* SetState's third argument (0 from the Agent update) */
 #define JOIN_FLIGHT_SPLINE 0xe0u             /* the leg spline, a Math::CompositeSpline<5> */
@@ -875,6 +876,23 @@ static unsigned char *join_nav_agent(const unsigned char *object) {
     return agent;
 }
 #define JOIN_AGENT_SOLVER 0xf80u             /* the Agent's motion solver (0: it never stepped a steering or spline model) */
+/* AGTT (v13, section 56): the Agent's times its load resets, which AGENT does not carry. j1-148 (the join watch's Agent dump of
+ * actors 5 and 11, both sides, T .. T+20): +0x658 the session's 7.083 (its load at the start), the joiner's 28.183 (its load);
+ * +0xf38 the session's 12.316, the joiner's -1 (actor 11); at 651 actor 5's pathing step writes another command into its banks
+ * (+0xad0 ..) with every other word equal. The lockstep session's in-window dump (slot agents): +0x658 alike and +0xac0 (22.43
+ * against the joiner's 39.66). Status agtt=written:equal:missing agtt_cap=. */
+static const unsigned join_agtt_at[JOIN_AGTT_FIELDS]={0x658u,0u,0xf38u};   /* 0: unused (+0xac0 is the probe's due, NAV's) */
+static uint64_t join_agtt_written,join_agtt_equal,join_agtt_missing;static uint32_t join_agtt_capn;
+/* One AGTT record for the AGENT record just pushed, from that Agent (j1-149: a lookup by portable ID during the world capture,
+ * before the ID list is sorted, read other Agents). */
+static int join_agtt_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_agtt_rec *)a)->portable,y=((const join_agtt_rec *)b)->portable;return x<y?-1:x>y;
+}
+static int join_agtt_push(join_tables *t,const unsigned char *agent,uint64_t portable) {
+    join_agtt_rec r;memset(&r,0,sizeof(r));r.portable=portable;
+    for(unsigned k=0;k<JOIN_AGTT_FIELDS;k++) if(join_agtt_at[k] && !join_read(agent+join_agtt_at[k],&r.v[k],8)) r.v[k]=0;
+    return JOIN_PUSH(t->agtt,t->nagtt,join_agtt_capn,r);
+}
 #define JOIN_SPLINE_VTABLE 0x2c4f480u        /* U::Path::SplineFlightControlModel */
 #define JOIN_SPLINE_STATE 0x218u             /* the spline model's state word (8: no route, it brakes) */
 static void join_t1x_probe(void) {
@@ -1794,6 +1812,8 @@ static int join_gravd_shape(const join_gravd_rec *g,uint32_t n) {
 #define JOIN_WATCH_RAW_REQ 0x100u
 #define JOIN_WATCH_MOV 0x200u      /* and the movement controller (Positional +0x200) */
 #define JOIN_WATCH_RAW_MOV 0x200u
+#define JOIN_WATCH_RAW_AGENT 0xf90u   /* and a nav or pilot controller's Agent (+0x40, 0xf90 bytes, lockstep_travel_snapshot.h) */
+#define JOIN_WATCH_RAW_CMD 0x400u     /* and its command and probe block (+0x48; the probe's due +0x3e0, enable +0x3e8) */
 static struct {uint64_t portable[JOIN_WATCH_MAX],runtime[JOIN_WATCH_MAX];unsigned n;uint64_t tick;int armed;
                unsigned char *volatile object[JOIN_WATCH_MAX];} join_watch;
 /* JOIN_WATCHPCF (diagnostic, with native_gate_join_watch): every PropagateCacheFlags 0x3d46b0 call on a watched object whose flags
@@ -1932,7 +1952,7 @@ static void join_watch_dump(char side,uint64_t tick) {
                 } else at+=(size_t)snprintf(out+at,cap-at," unit=-");
             }
             at+=(size_t)snprintf(out+at,cap-at,"\r\n");
-            if(!lvl && at+2u*(JOIN_WATCH_RAW+JOIN_WATCH_RAW_REQ+JOIN_WATCH_RAW_MOV)+400u<cap) {
+            if(!lvl && at+2u*(JOIN_WATCH_RAW+JOIN_WATCH_RAW_REQ+JOIN_WATCH_RAW_MOV+JOIN_WATCH_RAW_AGENT+JOIN_WATCH_RAW_CMD)+400u<cap) {
                 /* JOIN_WATCHRAW: the object's first bytes and those of what +0x318 points at (a weapon's fire request, which
                  * Weapon::Move 0x819a90 asks through its slot +0x80 before the fire procedure 0x817d20), pointers raw. */
                 unsigned char *req=NULL;
@@ -1971,6 +1991,18 @@ static void join_watch_dump(char side,uint64_t tick) {
                 at+=(size_t)snprintf(out+at,cap-at," mov=");
                 if(join_read(level+JOIN_WATCH_MOV,&req,8) && req) for(uint32_t o=0;o<JOIN_WATCH_RAW_MOV;o+=64u) at+=join_watch_hex(out+at,cap-at,req+o,64);
                 else at+=(size_t)snprintf(out+at,cap-at,"-");
+                {   /* j1-139..j1-147: actor 5's pathing step writes another command at 651 with every logged field equal before: its
+                     * Agent and the controller's command and probe block, pointers raw (a nav or pilot controller only) */
+                    unsigned char *ctl=req,*agent=NULL,*cmd=NULL;uintptr_t vt=0;
+                    const int nav=ctl && join_read(ctl,&vt,8) && ((vt=pslot_canonical_vtable(vt))==(uintptr_t)image+JOIN_NAV_VTABLE ||
+                                                               vt==(uintptr_t)image+PSLOT_VTABLE);
+                    at+=(size_t)snprintf(out+at,cap-at," agent=");
+                    if(nav && join_read(ctl+0x40,&agent,8) && agent) for(uint32_t o=0;o<JOIN_WATCH_RAW_AGENT;o+=16u) at+=join_watch_hex(out+at,cap-at,agent+o,16);
+                    else at+=(size_t)snprintf(out+at,cap-at,"-");
+                    at+=(size_t)snprintf(out+at,cap-at," cmd=");
+                    if(nav && join_read(ctl+0x48,&cmd,8) && cmd) for(uint32_t o=0;o<JOIN_WATCH_RAW_CMD;o+=64u) at+=join_watch_hex(out+at,cap-at,cmd+o,64);
+                    else at+=(size_t)snprintf(out+at,cap-at,"-");
+                }
                 at+=(size_t)snprintf(out+at,cap-at,"\r\n");
                 if(at+ln+4<cap) {memcpy(out+at,line,ln);at+=ln;at+=(size_t)snprintf(out+at,cap-at,"\r\n");}
             }
@@ -2626,13 +2658,29 @@ static int join_capture_flight(join_tables *t,const unsigned char *controller,ui
     unsigned char *agent=NULL,*model=NULL,*owner=NULL;uintptr_t vtable=0,spline=0,seg[3],pair[3];uint64_t word=0,nseg=0,npair=0,room=0;
     if(!join_read(controller+0x40,&agent,8) || !agent || !join_read(agent+JOIN_AGENT_MODEL,&model,8))
         return join_note("flight,id=%llx,check=agent",(unsigned long long)portable);
-    if(!model) return 1;
+    if(!model) {
+        /* A pilot slot ship a player flies (X4's PlayerController or a slot's copy: the Agent has no flight model). The lockstep
+         * session's w1z5/w1z6: an in-window joiner's slot ships load their Agents without a solver, with default limits and the
+         * load's timestamps, and none of them was carried (this returned here). Its AGENT, PARAM, ROUTE and SOLVER records, paired
+         * with a FLIGHT record of kind JOIN_FLIGHT_NOMODEL (flags OTHER; the FLIGHT admission skips it). A nav ship without a
+         * model carries nothing, as before. */
+        uintptr_t cvt=0;
+        if(!join_read(controller,&cvt,8) || pslot_canonical_vtable(cvt)!=(uintptr_t)image+PSLOT_VTABLE) return 1;
+        join_agent_rec a;memset(&a,0,sizeof(a));a.portable=portable;
+        if(!join_agent_read(agent,&a)) return join_note("agent,id=%llx",(unsigned long long)portable);
+        if(!JOIN_PUSH(t->agent,t->nagent,*acap,a) || !join_agtt_push(t,agent,portable)) return join_note("memory");
+        if(!join_capture_param(t,agent,portable,pcap)) return 0;
+        if(!join_capture_route(t,agent,portable,0,0,rcap)) return 0;
+        if(!join_capture_solver(t,agent,runtime,portable,JOIN_FLIGHT_NOMODEL,socap)) return 0;
+        join_flight_rec r;memset(&r,0,sizeof(r));r.portable=portable;r.kind=JOIN_FLIGHT_NOMODEL;r.flags=JOIN_FLIGHT_OTHER;
+        return JOIN_PUSH(t->flight,t->nflight,*fcap,r)?1:join_note("memory");
+    }
     if(!join_read(model,&vtable,8) || vtable<(uintptr_t)image || vtable>=(uintptr_t)image+JOIN_FLIGHT_IMAGE)
         return join_note("flight,id=%llx,check=vtable",(unsigned long long)portable);
     {   /* version 6: the Agent's step inputs, one record per FLIGHT record */
         join_agent_rec a;memset(&a,0,sizeof(a));a.portable=portable;
         if(!join_agent_read(agent,&a)) return join_note("agent,id=%llx",(unsigned long long)portable);
-        if(!JOIN_PUSH(t->agent,t->nagent,*acap,a)) return join_note("memory");
+        if(!JOIN_PUSH(t->agent,t->nagent,*acap,a) || !join_agtt_push(t,agent,portable)) return join_note("memory");   /* AGTT with it */
         if(!join_capture_param(t,agent,portable,pcap)) return 0;   /* version 8: its flight parameter slots, one record per AGENT record */
     }
     {   /* version 7: its waypoint entries, the IDs around them and the linear model's SetState word */
@@ -2743,6 +2791,15 @@ static void join_capture_ldc(join_tables *t) {
     if(t->nldc>1) qsort(t->ldc,t->nldc,sizeof(*t->ldc),join_ldc_cmp);
 }
 static void join_capture_nmesh(join_tables *t);   /* NMESH (lockstep_join.h, at join_admit_rid) */
+static void join_admit_agtt(const join_tables *s,const join_tables *mine) {
+    for(uint32_t i=0;i<s->nagtt;i++) {
+        unsigned char *object=join_object(join_runtime_of(mine,s->agtt[i].portable)),*agent=object?join_nav_agent(object):NULL;
+        if(!agent) {++join_agtt_missing;continue;}
+        int changed=0;
+        for(unsigned k=0;k<JOIN_AGTT_FIELDS;k++) if(join_agtt_at[k]) changed|=join_poke((uintptr_t)(agent+join_agtt_at[k]),&s->agtt[i].v[k],8);
+        if(changed) ++join_agtt_written; else ++join_agtt_equal;
+    }
+}
 static void join_capture_noct(join_tables *t);    /* NOCT (lockstep_join.h, at join_admit_rid) */
 static void join_admit_noct(const join_tables *s,const join_tables *mine);
 static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
@@ -2757,6 +2814,7 @@ static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
     }
 }
 static int join_capture_world(join_tables *t,double now) {
+    join_agtt_capn=0;
     uint32_t ntcap=0,bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
     join_solver_dormant=0;join_cap.solver_over=0;join_cap.solver_mapped=0;join_cap.bullet_fault=0;join_cap.bullet_blocks=0;join_cap.bullet_live=0;join_cap.bullet_unkeyed=0;
@@ -2844,6 +2902,8 @@ static int join_capture_world(join_tables *t,double now) {
     for(uint32_t i=1;i<t->nflight;i++) if(t->flight[i].portable==t->flight[i-1].portable)
         return join_note("flight_duplicate,id=%llx",(unsigned long long)t->flight[i].portable);
     if(t->nagent) qsort(t->agent,t->nagent,sizeof(*t->agent),join_agent_cmp);   /* pushed with FLIGHT: the same portable IDs */
+    if(t->nagtt) qsort(t->agtt,t->nagtt,sizeof(*t->agtt),join_agtt_cmp);        /* pushed with AGENT: the same portable IDs (j1-150/151:
+                                                                                 * unsorted, the driver's reader refused the package) */
     if(t->nroute) qsort(t->route,t->nroute,sizeof(*t->route),join_route_cmp);   /* each Agent's head and points, keys unique */
     if(t->nparam) qsort(t->param,t->nparam,sizeof(*t->param),join_param_cmp);   /* pushed with AGENT: the same portable IDs */
     if(t->ndock) qsort(t->dock,t->ndock,sizeof(*t->dock),join_dock_cmp);
@@ -3298,6 +3358,7 @@ static int join_admit_flight(const join_tables *s,const join_tables *mine) {
     unsigned rows=0;uint32_t j=0;join_t1_reset();
     for(uint32_t i=0;i<s->nflight;i++) {
         const join_flight_rec *r=&s->flight[i];
+        if(r->kind==JOIN_FLIGHT_NOMODEL && r->flags==JOIN_FLIGHT_OTHER) {++join_rx.flight_other;continue;}   /* a slot ship's Agent: AGENT and the rest */
         while(j<s->nspline && s->spline[j].portable<r->portable) ++j;
         const join_spline_rec *g=s->spline+j;
         uint64_t runtime=join_runtime_of(mine,r->portable);unsigned char *object=join_object(runtime),*controller=NULL,*agent=NULL,*model=NULL,*owner=NULL;
@@ -4515,6 +4576,7 @@ static int join_admit_world(void) {
     if(s->version>=4) {join_admit_region(s,&mine);join_admit_path(s,strict);}
     if(!join_admit_created(s,&mine)) {join_tables_free(&mine);return 0;}
     if(s->version>=13) join_admit_noct(s,&mine);   /* the nav octree's index table and hidden keys */
+    if(s->version>=13) join_admit_agtt(s,&mine);   /* the Agents' times the load resets */
     if(s->version>=13) join_admit_ldc(s,&mine);    /* the drift controllers, before the bodies they set */
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
     if(s->version>=13) for(uint32_t i=0;i<s->nbupd;i++) {   /* BUPD: the session's last build updates */

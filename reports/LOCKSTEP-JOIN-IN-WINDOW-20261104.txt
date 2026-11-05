@@ -296,3 +296,20 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   In an ordinary J1 these ships have not flown through the stock path before T, so this is the window's own part (the three
   fighters in the slot ships' zone at T+1 read these ships). Next: what builds the solver and the limits (X4's take-control
   path) and replaying it at the resume, or carrying the value blocks.
+
+16. THE PASS OF T LIVE AND THE SLOT AGENTS (j1-145..147, w1z6; builds 244, 245; 4/5 November)
+- j1-145: the probe armed native_gate_join_passes_admit at its config, before the gate had started, so accept_ui refused it
+  (CONFIG_REFUSED); 298eef28 arms it after gate.join_load.
+- j1-147 (x4mods-28, an ordinary J1 with it): passes_admit=1/1 done, steps=4, kicks=0, 0.24 s. kicks=0 is right: the pass
+  stride is 2 (native_gate_pass_stride), passes run at the end of even frames only, and the session held its kick at the end
+  of frame 633 as well. TRAVEL_SNAPSHOT is equal at 634 now. The REGION_PASS and MASS_TRAFFIC "word" moved one tick: these
+  passes take no draws (draws=0 throughout), so the word is only the last seed written, and the joiner's admission seeds
+  twice (passes_admit's join and the gate's own join of the loading frame right after join_admit); the camera keys are
+  equal on both. Actor 5 still parts at 651, actor 11 at 652: not the passes, not the travel snapshot.
+- w1z6 (in-window, build245 = passes_admit and x4mods-28's slot agents in the agent sections): resumed, run to 1199;
+  T+1 3 differ (176cef no longer: 6dae5 and 176c95 motion, 800259fc's nav timing), 900 726. The dump at 634 shows the slot
+  agents not carried yet: the package's agent, flight and param sections hold exactly 10000 records each (keys sorted) and
+  none for slot 1's ship ae79c or slot 2's 7a8fe (slot 3's 7a8dc, AI-flown, is there); solver holds 15, none of a slot
+  ship. So slot 1's agent still has no solver and zero limits at +0x6e0, and slot 2's limits at +0x348 still differ.
+  Either the capture stops at 10000 before it sorts, or its selector misses the PlayerController ships on the saver
+  (with x4mods-28).

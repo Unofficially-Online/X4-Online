@@ -269,8 +269,9 @@ class Driver:
     def session_over(self, why):
         out = []
         for j in self.joins:
-            if not j.passed and not j.failed:
-                out.append(self.fail(j, f'{why}:state_{j.state or "not_requested"}'))
+            if not j.passed and not j.failed:   # with the files' last refusal (j1-150/151: a reader shape error, retried silently)
+                files = f':files_{j.files_why}' if j.files_why else ''
+                out.append(self.fail(j, f'{why}:state_{j.state or "not_requested"}{files}'))
         return out
 
     def fail(self, j, reason):

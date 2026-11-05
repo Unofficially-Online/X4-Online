@@ -58,6 +58,39 @@ static void test_wr_ctor_abi(void) {
     wr_poster_t p=wr_take_poster(event);assert(p.event==(uintptr_t)event && p.site==531 && p.thread==PATH_THREAD_MOVEWORKER);
     VirtualFree(code,0,MEM_RELEASE);
 }
+/* Watch: a listener in the step trace's list first logs a kind=watch row with its event's transform, the record and
+ * the 16 bytes its +0x30 points at, then the warp row; a listener not in it only the warp row; missing parts print '-'. */
+static void test_wr_watch(unsigned char *event,unsigned char *record,unsigned char *ship,unsigned char *other) {
+    unsigned prior_ids=st_id_count;uint64_t prior_id0=st_ids[0];st_ids[0]=0xadd39;st_id_count=1;
+    static unsigned char transform[0x40],pointed[16];
+    for(unsigned i=0;i<0x40;i++) transform[i]=(unsigned char)(0x40+i);
+    for(unsigned i=0;i<16;i++) pointed[i]=(unsigned char)(0xa0+i);
+    void *tp=transform,*pp=pointed;memcpy(event+0x20,&tp,8);memcpy(record+0x30,&pp,8);record[4]=0x11;
+    uint64_t word=0x1234;int thrown;stats.issued=1791;LONG64 before=wr_rows,watches=wr_watches;
+    test_wr_guarded(&word,event,ship,&thrown);assert(!thrown && wr_rows==before+2 && wr_watches==watches+1);
+    char hex_t[0x81],hex_r[0x81],hex_p[0x21],hex_f[2*WR_FRAME_BYTES+1],expect[1152],row[1280];
+    wr_hex(hex_t,transform,0x40);wr_hex(hex_r,record,0x40);wr_hex(hex_p,pointed,16);
+    snprintf(expect,sizeof(expect),"index=%lld tick=1791 kind=watch key=s:00000000000add39 ordinal=1 space=000000000013e75f zone=00000000007a0100 "
+        "transform=%s record=%s pointed=%s frame=-",(long long)before,hex_t,hex_r,hex_p);
+    assert(wr_row((uint64_t)before,row,sizeof(row))>0 && !strcmp(row,expect) && strlen(row)<1280);
+    assert(wr_row((uint64_t)before+1,row,sizeof(row))>0 && strstr(row," tick=1791 key=s:00000000000add39 ordinal=1 ") && !strstr(row,"kind="));
+    /* The gate poster's frame: noted at construction (the WR_FRAME_BYTES below its transform), taken by the watched dispatch once. */
+    {unsigned char stack[WR_FRAME_BYTES+0x40];for(unsigned i=0;i<sizeof(stack);i++) stack[i]=(unsigned char)(0x10+i);
+     int prior_ok=wr_frame_ok;LONG64 framed=wr_framed;
+     wr_frame_ok=0;wr_frame_note(event,stack+WR_FRAME_BYTES);assert(wr_framed==framed); /* not pinned: nothing */
+     wr_frame_ok=1;wr_frame_note(event,stack+WR_FRAME_BYTES);assert(wr_framed==framed+1);
+     before=wr_rows;stats.issued=1792;test_wr_guarded(&word,event,ship,&thrown);wr_hex(hex_f,stack,WR_FRAME_BYTES);
+     char want[0x1a0];snprintf(want,sizeof(want)," frame=%s",hex_f);
+     assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row,want) && strlen(row)<1280);
+     before=wr_rows;test_wr_guarded(&word,event,ship,&thrown);assert(wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row," frame=-"));
+     st_id_count=0;wr_frame_note(event,stack+WR_FRAME_BYTES);assert(wr_framed==framed+1);st_id_count=1; /* nothing watched: no note */
+     wr_frame_ok=prior_ok;}
+    before=wr_rows;test_wr_guarded(&word,event,other,&thrown);assert(wr_rows==before+1);
+    memset(event+0x20,0,8);memset(record+0x30,0,8);memset(event+0x28,0,8);before=wr_rows;test_wr_guarded(&word,event,ship,&thrown);
+    assert(wr_rows==before+2 && wr_row((uint64_t)before,row,sizeof(row))>0 && strstr(row," transform=- record=- pointed=-"));
+    void *rp=record;memcpy(event+0x28,&rp,8);record[4]=0;st_ids[0]=prior_id0;st_id_count=prior_ids;
+    printf("warp watch rows (transform, record, pointed; listed only) PASS\n");
+}
 static void test_warp_rng(void) {
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;int saved_boot=boot_mode,saved_phase=boot_phase;
     int saved_installed=world_identity_installed;
@@ -118,7 +151,7 @@ static void test_warp_rng(void) {
     assert(thrown && word==0x1234 && wr_failures==1 && !wr_check() && !strcmp(wr_stage,"exception"));wr_failures=0;
     /* Beyond the step bound: unknown. */
     test_wr_draws=ACTOR_ALL_STEP_CAP+2;test_wr_guarded(&word,event,ship,&thrown);assert(wr_unknown==1 && word==0x1234);test_wr_draws=2;
-    char status[512];int n=wr_status(status,sizeof(status));
+    char status[640];int n=wr_status(status,sizeof(status));
     assert(n>0 && strstr(status,"mode=split installed=0 calls=15 admitted=11 keyed=8 ") && strstr(status," unmapped=1 foreign=1 outside=3 full=1 "));
     /* Attribution: the constructor notes (site, thread class, tick); the dispatch takes it once. */
     DWORD saved_main=main_thread;LONG saved_open=path_pass_open;
@@ -145,6 +178,7 @@ static void test_warp_rng(void) {
     assert(wr_constructed==constructed && !wr_take_poster(posted).event);wr_active=1;
     ui_thread=GetCurrentThreadId();main_thread=saved_main;path_pass_open=saved_open;wr_mode=WR_SPLIT;
     test_wr_ctor_abi();wr_active=1;
+    test_wr_watch(event,record,ship,other);
     wr_rows=WR_RING+2;assert(wr_row(1,row,sizeof(row))>0 && !strcmp(row,"index=1 evicted=1"));
     /* Arming: a mode, before the first admitted frame, on the MoveWorker, with the world identities; pins (zero image refuses). */
     test_wr_reset();stats.active=1;boot_mode=1;boot_phase=0;stats.issued=0;world_identity_installed=1;
@@ -163,11 +197,11 @@ static void test_warp_rng(void) {
     *(void**)(image+WR_ENTRY)=(void*)wr_dispatch;wr_installed=1;wr_active=1;wr_restored=0;uint32_t saved_reason=stats.reason;stats.active=1;stats.restored=1;
     finish(WR_STOP_REASON);assert(stats.reason==WR_STOP_REASON && !wr_installed && wr_restored && *(void**)(image+WR_ENTRY)==image+WR_DISPATCH);
     /* Status and rows at the widest values. */
-    wr_mode=WR_OBSERVE;wr_installed=1;wr_calls=wr_failures=wr_rows=INT64_MAX;
+    wr_mode=WR_OBSERVE;wr_installed=1;wr_calls=wr_failures=wr_rows=wr_watches=wr_framed=INT64_MAX;wr_frame_ok=1;
     wr_admitted=wr_keyed=wr_unmapped=wr_foreign=wr_outside=wr_full=wr_drew=wr_draws=wr_unknown=UINT64_MAX;wr_stage="block_changed";
-    n=wr_status(status,sizeof(status));assert(n>0 && n+strlen("[X4LAN] NATIVE_GATE WARP_RNG_STOP \n")<512);
+    n=wr_status(status,sizeof(status));assert(n>0 && n+strlen("[X4LAN] NATIVE_GATE WARP_RNG_STOP \n")<640);wr_watches=wr_framed=0;wr_frame_ok=0;
     wr_rows=1;wr_ring[0]=(wr_row_t){UINT64_MAX,UINT64_MAX,UINT64_MAX,UINT64_MAX,UINT64_MAX,UINT32_MAX,UINT32_MAX,WORLD_KEY_CREATED,255,1,1,UINT64_MAX,UINT64_MAX,
-        UINT64_MAX,UINT64_MAX,UINT32_MAX,PATH_THREAD_MOVEWORKER};
+        UINT64_MAX,UINT64_MAX,UINT32_MAX,PATH_THREAD_MOVEWORKER,WR_ROW_WARP,0};
     n=wr_row(0,row,sizeof(row));assert(n>0 && n+strlen("[X4LAN] NATIVE_GATE WARP_RNG_ROW \n")<384);
     memcpy(image+WR_ENTRY,&saved_entry,8);test_wr_reset();memset(wr_ring,0,sizeof(wr_ring));
     VirtualFree(world_identities,0,MEM_RELEASE);world_identities=prior;world_identity_count=prior_count;world_identity_sealed=prior_sealed;

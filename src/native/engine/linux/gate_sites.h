@@ -138,6 +138,11 @@
 #define LX_TZ_SWITCH_CREATE_RET_VA 0x142fa33u /* the zone switch 0x142efa0: create=1 (Windows 0xe890a6) */
 #define LX_TZ_SWITCH_FIND_CALL_VA 0x142fb34u  /* create=0 (Windows 0xe89131) */
 #define LX_TZ_OTHER_CALL_VA 0x12ec389u        /* 0x12eb620, from the region manager's Run 0x12ef310 (Windows 0xee7c7a) */
+/* Warps on a keyed word, and the warp watch (gate_warp_rng.h; lockstep_warp_rng.h). */
+#define LX_WR_DISPATCH_VA 0x16b3e30u          /* U::WarpEvent::Dispatch (Windows 0x9aa290) */
+#define LX_WR_ENTRY_VA 0x3b83458u             /* its slot 3 of U::WarpEvent 0x3b83440 (Windows WR_ENTRY 0x2baa8d0, slot 2) */
+#define LX_WR_CTOR_VA 0x16bbe40u              /* U::WarpEvent's constructor (Windows 0x9a9d00) */
+#define LX_WR_FRAME_CALL_VA 0x1615867u        /* the gate poster 0x1614ff0's call of it (Windows 0x5ce690's at 0x5cf1c6) */
 /* AI Wait restores (gate_ai_wait.h, lockstep_ai_wait_rng.h). */
 #define LX_AI_WAIT_SLOT_VA 0x3b2a680u       /* U::AI::WaitAction vtable 0x3b2a650, restore slot +0x30 (Windows +0x28) */
 #define LX_AI_WAIT_RESTORE_VA 0x10c12b0u    /* WaitAction::Reattach (Windows 0x10a50d0) */
@@ -555,5 +560,11 @@ static const lx_site lx_sites[]={
     {"tempzone_runpass_test",0x13e3d78,0xe,"93056c02490f3ab131659156e374f92165751f290dff0dedb773628a30f5f562"},
     {"tempzone_runpass_clear",0x13e4143,0x6b,"cadcdc7bca5a195e675118b40207062acee8c6532c9c53762594f9cf0e3c6f74"},
     {"tempzone_region_call",0x12ec381,0xd,"1fb1ad65f6b477df43785690f73bb6bda83dbdd35aed0bfcda2a42fbed8a1b51"},
+    {"warp_dispatch",0x16b3e30,0x130,"8bc85c7f59452b43ab28bae7a0e145b69321a25ce9d0e554fe3b6253b135d752"},
+    {"warp_place",0x14622c0,0xf3,"0dc370c5d6177a3d106e382ad1b18f5dcae05d0326a25ce92d22a812ee7fa42e"},
+    {"warp_direction",0x11556e0,0x6a,"757b216752d8fae513aa82b7b76540bcca909173a4f2308ba6f04b6b488735ba"},
+    {"warp_draws",0x11557f8,0x16,"3b4181770200ccb0e889f194966dc74e06d0c8c2084265b3809a04f4371ecdd8"},
+    {"warp_frame_product",0x16159fc,0xdc,"19304b1b7f1635dbfe80dde7fafb98b4973558057950193979d2454a2c7028a4"},
+    {"warp_frame_call",0x1615817,0x55,"6e5b13caa6d9d2bd929c9152e64dbf1b4e89125bd790404135eec06fa88c685a"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */
