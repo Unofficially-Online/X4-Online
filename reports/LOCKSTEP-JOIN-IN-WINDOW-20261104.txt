@@ -431,3 +431,19 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   list and +0x1e0 0, the joiner's (rows k, j) a list and 0x19; both equal the session's after step T+1.
 - Next candidate (opt-in, with the hot join): the joiner drops the lists the session does not hold at T, or applies them at
   its admission, so that its first frame publishes what the session's does.
+
+25. SPECDROP (NEGATIVE) AND IKV IN THE WINDOW (w1z16, w1z17; builds 262, 263; 5 November)
+- native_gate_join_specdrop (lockstep_join_specdrop.h, 4814e872; default off, with PEND): on every posed component whose session
+  record holds no kind 7 entry, the joiner clears the flags of the load's one-shot kind 7 specifications (+0xd8), so its first
+  BuildCache republishes nothing of the load; nothing freed, +0x1e8 and the lists' counts untouched.
+- w1z16 (build262) did not run its joiner: the hot join's IKV merge into this worktree during the run changed the live package
+  reader, which then refused build262's package (package_layout). Runs use the worktree's tools; merges only between runs.
+- w1z17 (build263 = 942882ad: the hot join's IKV, the skeletons' IK joints, section 62, plus specdrop and PEND):
+  ikv=98:16:0:5, specdrop=1:431522:112651:6232:312639:0. T+1 2 differ (176c95 and 176cef, motion): 800259fc's nav timing is
+  gone. But the window parts from there: 660 295 differ (w1z14: 10), 720 495, 780 1,171, 840 2,527, 900 4,290 (w1z14: 72),
+  ships of every faction (motion and the pathing banks' pending references). The census does not hash the view cache: without
+  the first-frame republication the joiner's views of 112,651 components keep the load's state, and the hot join's view restore
+  (VIEWP, GRAVP after the steps T+1 .. T+10) is built on that republication. Specdrop stays off; the one transient field it
+  removes is not worth a second view model.
+- IKV does not move the two fighters at T+1 (176c95, 176cef as before). Next: w1z18, build263 with PEND and without specdrop, the
+  window's baseline with IKV.

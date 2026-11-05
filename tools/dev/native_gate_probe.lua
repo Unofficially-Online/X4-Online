@@ -297,6 +297,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_pend then   -- a joiner takes the session's pending view cache flags (PEND)
   assert(gate.join_pend and gate.join_pend(1)==1,'join pend refused')
  end
+ if cfg.native_gate_join_specdrop then   -- and clears the load's one-shot view cache specifications (lockstep_join_specdrop.h)
+  assert(gate.join_specdrop and gate.join_specdrop(1)==1,'join specdrop refused')
+ end
  if cfg.native_gate_join_viewf_bits~=nil then   -- the bits of the session's VIEWF flag words a joiner takes (1 parent, 8 pose; 0 off)
   local m=cfg.native_gate_join_viewf_bits
   assert(type(m)=='number' and gate.join_viewf_bits and gate.join_viewf_bits(m)==1,'join viewf bits refused')
@@ -4718,7 +4721,7 @@ local function frame()
   assert(base and tick==base+1,'join: first tick '..tick..' after the tick base '..tostring(base))
   X4LAN_JOIN_CORE.restore_text(gate.join_lua_state())
   join_restored=true
-  log('JOIN_ADMITTED base='..base..' '..tostring(gate.join_status())..(gate.join_passes_status and tostring(gate.join_passes_status()) or ''))
+  log('JOIN_ADMITTED base='..base..' '..tostring(gate.join_status())..(gate.join_passes_status and tostring(gate.join_passes_status()) or '')..(gate.join_specdrop_status and tostring(gate.join_specdrop_status()) or ''))
   X4LAN_JOIN_CORE.log_unpaired(gate,log)
  end
  if (tonumber(s.registry_count) or 0)>0 then

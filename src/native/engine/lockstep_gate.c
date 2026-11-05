@@ -906,6 +906,7 @@ static void gate_step(tick_fn original,void *frame,unsigned char loading,LARGE_I
 #include "lockstep_adaptive.h"
 #include "lockstep_join.h"   /* hot join: join save, side table and gate state (native_gate_join, default off) */
 #include "lockstep_join_passes.h"   /* hot join: the joiner's pass of T at its admission (native_gate_join_passes_admit) */
+#include "lockstep_join_specdrop.h"   /* hot join: the load's one-shot view cache specifications (native_gate_join_specdrop) */
 /* lockstep_pilot_inputs.h: a joiner before its handover (no handover yet, or this tick before it). */
 static int join_catching_up(void) {return join_rx.based && (join_rx.handover==UINT64_MAX || stats.issued<join_rx.handover);}
 /* lockstep_pilot_join.h: the IDs the last join_ids_replay handed out (lockstep_join_ids.h), for its failure row. */
@@ -3439,6 +3440,12 @@ static int lua_join_passes_status(lua_State *L) {
     char out[160];int n=accept_ui()?jpass_status(out,sizeof(out)):0;
     if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
+/* gate.join_specdrop(on) / gate.join_specdrop_status(): lockstep_join_specdrop.h (diagnostic native_gate_join_specdrop, with PEND). */
+static int lua_join_specdrop(lua_State *L) {join_specdrop_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+static int lua_join_specdrop_status(lua_State *L) {
+    char out[96];int n=join_specdrop_status(out,sizeof(out));
+    if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 static int lua_world_detail(lua_State *L) {
     double number=p_lua_tonumber(L,1);
     if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures) {p_lua_pushnil(L);return 1;}
@@ -4104,7 +4111,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(player_request_enable);METHOD(player_request_event);METHOD(player_request_scope);
     METHOD(player_fire_enable);METHOD(player_trigger);METHOD(player_target);METHOD(player_fire_state);METHOD(player_fire_event);METHOD(player_trigger_cleanup);
     METHOD(player_launch_enable);METHOD(player_launch_event);
-    METHOD(pilot_inputs);METHOD(pilot_inputs_status);METHOD(pilot_why);METHOD(pilot_absent);METHOD(pilot_handover);METHOD(pilot_abort);METHOD(pilot_absent_state);METHOD(pilot_absent_restore);METHOD(pilot_join_park_at);METHOD(pilot_players_state);METHOD(pilot_join_state);METHOD(pilot_join_in_window);METHOD(pilot_dump);METHOD(join_passes_admit);METHOD(join_passes_status);METHOD(pilot_join_status);METHOD(pilot_inputs_frame);METHOD(pilot_capture);METHOD(pilot_apply);METHOD(pilot_pending);
+    METHOD(pilot_inputs);METHOD(pilot_inputs_status);METHOD(pilot_why);METHOD(pilot_absent);METHOD(pilot_handover);METHOD(pilot_abort);METHOD(pilot_absent_state);METHOD(pilot_absent_restore);METHOD(pilot_join_park_at);METHOD(pilot_players_state);METHOD(pilot_join_state);METHOD(pilot_join_in_window);METHOD(pilot_dump);METHOD(join_passes_admit);METHOD(join_passes_status);METHOD(join_specdrop);METHOD(join_specdrop_status);METHOD(pilot_join_status);METHOD(pilot_inputs_frame);METHOD(pilot_capture);METHOD(pilot_apply);METHOD(pilot_pending);
     METHOD(pilot_device);METHOD(pilot_camera_follow);METHOD(pilot_camera);METHOD(pilot_camera_status);METHOD(pilot_ship);METHOD(pilot_native_capture);
     METHOD(pilot_native);METHOD(pilot_native_refusals);METHOD(pilot_stock);METHOD(pilot_stock_pins);METHOD(pilot_stock_callers);METHOD(pilot_present);METHOD(pilot_present_pause);METHOD(pilot_present_resume);METHOD(pilot_present_diff);METHOD(pilot_death);METHOD(pilot_foot);METHOD(pilot_foot_bodies);METHOD(pilot_foot_slots);METHOD(pilot_death_frame);METHOD(pilot_death_ship);METHOD(pilot_death_suit);METHOD(crash_note);METHOD(cutscene_ready);METHOD(cutscene_ready_status);METHOD(cutscene_ready_row);METHOD(pilot_death_status);METHOD(pilot_stock_capture);METHOD(pilot_stock_apply);METHOD(pilot_stock_inject);METHOD(pilot_stock_local);METHOD(pilot_stock_frame);
     METHOD(virtual_players);METHOD(virtual_players_status);METHOD(virtual_players_regions);METHOD(virtual_players_undeclared);METHOD(virtual_players_map);METHOD(virtual_players_hashes);METHOD(virtual_players_raw);METHOD(virtual_players_neighbours);

@@ -937,6 +937,7 @@ static void join_admit_pend(const join_tables *s,const join_tables *mine) {
         if(join_poke((uintptr_t)(object+JOIN_PEND_AT),&want,4)) ++join_pend_written; else ++join_pend_equal;
     }
 }
+static void join_admit_specdrop(const join_tables *s,const join_tables *mine);   /* lockstep_join_specdrop.h (opt-in) */
 static int join_pbnk_cmp(const void *a,const void *b) {
     uint64_t x=((const join_pbnk_rec *)a)->portable,y=((const join_pbnk_rec *)b)->portable;return x<y?-1:x>y;
 }
@@ -2324,7 +2325,7 @@ static void join_watch_dump(char side,uint64_t tick) {
                 }
                 /* JOIN_WATCHATT (after this row): the components in its attachment container (+0xa0: a bucketed container,
                  * +0x08/+0x10 buckets of 0x20 {begin, end, ..}, +0x20 count; BuildCache refreshes each with 0x7f) and what +0x238 holds */
-                char line[1600];size_t ln=0;
+                char line[2400];size_t ln=0;
                 {
                     unsigned char *att=NULL,*p238=NULL;uintptr_t bk[2]={0,0};uint32_t natt=0;
                     ln=(size_t)snprintf(line,sizeof(line),"[X4LAN] NATIVE_GATE JOIN_WATCHATT side=%c tick=%llu id=%llx att=",
@@ -2346,6 +2347,26 @@ static void join_watch_dump(char side,uint64_t tick) {
                         if(join_read(p238,hx,sizeof(hx))) for(unsigned k=0;k<sizeof(hx) && ln+4<sizeof(line);k++) ln+=(size_t)snprintf(line+ln,sizeof(line)-ln,"%02x",hx[k]);
                         ln+=(size_t)snprintf(line+ln,sizeof(line)-ln," p238key=%llx",(unsigned long long)join_watch_key(join_watch_live(p238)));
                     } else ln+=(size_t)snprintf(line+ln,sizeof(line)-ln,"-");
+                    /* j1-171: the joiner's weapon frames sit at their rest pose. The frame slot 0x1ec8 = 0x81c960 takes the bone
+                     * transform (0xe22b70) when the animation container +0x208 has a skeleton at +0x48, else the static connection
+                     * transform. a208: the container's first 0x80 bytes; a48: the skeleton's vtable RVA and first 0x80 bytes;
+                     * a48o: what the skeleton's +0 points at (its owner, key and vtable RVA). */
+                    unsigned char *a208=NULL,*a48=NULL,*a48o=NULL;uintptr_t avt=0,aovt=0;
+                    if(ln+800u<sizeof(line)) ln+=(size_t)snprintf(line+ln,sizeof(line)-ln," a208=");
+                    if(ln+800u<sizeof(line) && join_read(level+0x208,&a208,8) && a208) {
+                        unsigned char hx[0x80];
+                        if(join_read(a208,hx,sizeof(hx))) for(unsigned k=0;k<sizeof(hx) && ln+4<sizeof(line);k++) ln+=(size_t)snprintf(line+ln,sizeof(line)-ln,"%02x",hx[k]);
+                        ln+=(size_t)snprintf(line+ln,sizeof(line)-ln," a48=");
+                        if(join_read(a208+0x48,&a48,8) && a48 && join_read(a48,&avt,8)) {
+                            ln+=(size_t)snprintf(line+ln,sizeof(line)-ln,"%x:",avt>=(uintptr_t)image && avt-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint32_t)(avt-(uintptr_t)image):0u);
+                            if(join_read(a48,hx,sizeof(hx))) for(unsigned k=0;k<sizeof(hx) && ln+4<sizeof(line);k++) ln+=(size_t)snprintf(line+ln,sizeof(line)-ln,"%02x",hx[k]);
+                            ln+=(size_t)snprintf(line+ln,sizeof(line)-ln," a48o=");
+                            if(join_read(a48,&a48o,8) && a48o && join_read(a48o,&aovt,8))
+                                ln+=(size_t)snprintf(line+ln,sizeof(line)-ln,"%llx/%x",(unsigned long long)join_watch_key(join_watch_live(a48o)),
+                                                     aovt>=(uintptr_t)image && aovt-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint32_t)(aovt-(uintptr_t)image):0u);
+                            else ln+=(size_t)snprintf(line+ln,sizeof(line)-ln,"-");
+                        } else ln+=(size_t)snprintf(line+ln,sizeof(line)-ln,"-");
+                    } else if(ln+800u<sizeof(line)) ln+=(size_t)snprintf(line+ln,sizeof(line)-ln,"-");
                     if(ln>=sizeof(line)) ln=sizeof(line)-1;
                 }
                 at+=(size_t)snprintf(out+at,cap-at," mov=");
@@ -2365,6 +2386,32 @@ static void join_watch_dump(char side,uint64_t tick) {
                 }
                 at+=(size_t)snprintf(out+at,cap-at,"\r\n");
                 if(at+ln+4<cap) {memcpy(out+at,line,ln);at+=ln;at+=(size_t)snprintf(out+at,cap-at,"\r\n");}
+                {   /* JOIN_WATCHANIM: the units of the weapon's skeleton (+0x208 -> +0x48: +0x10 a vector of groups {begin, end, cap},
+                     * each an array of 0x680-byte units), which 0xe20370 evaluates at the thread time for the bone transform. A unit
+                     * (0xe1f840 moves it toward a target at a limited rate): +8 the value, +0x10 the time (double), +0x18 the rate,
+                     * +0x1c the target, +0x21 wraps, its virtual base (the vbtable at +0, offset at +4) the keyed curve. Per unit: group,
+                     * index, the vbase offset and all 0x680 bytes (at most 8 units). */
+                    unsigned char *a208=NULL,*sk=NULL;uintptr_t gv[2]={0,0};
+                    if(join_read(level+0x208,&a208,8) && a208 && join_read(a208+0x48,&sk,8) && sk && join_read(sk+0x10,gv,16) &&
+                       gv[1]>=gv[0] && (gv[1]-gv[0])%0x18u==0 && (gv[1]-gv[0])/0x18u<=16u) {
+                        unsigned shown=0;
+                        for(uintptr_t g=gv[0];g<gv[1] && shown<8u;g+=0x18u) {
+                            uintptr_t ub[2]={0,0};
+                            if(!join_read((void *)g,ub,16) || ub[1]<ub[0] || (ub[1]-ub[0])%0x680u) continue;
+                            for(uintptr_t u=ub[0];u<ub[1] && shown<8u;u+=0x680u) {
+                                if(at+2u*0x680u+300u>=cap) break;
+                                unsigned char *vbt=NULL;int32_t vbo=0;
+                                if(!join_read((void *)u,&vbt,8) || !vbt || !join_read(vbt+4,&vbo,4)) vbo=0;
+                                at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHANIM side=%c tick=%llu id=%llx group=%u unit=%u vbo=%d bytes=",
+                                                     side,(unsigned long long)tick,(unsigned long long)join_watch.portable[i],
+                                                     (unsigned)((g-gv[0])/0x18u),(unsigned)((u-ub[0])/0x680u),vbo);
+                                for(uint32_t o=0;o<0x680u;o+=64u) at+=join_watch_hex(out+at,cap-at,(unsigned char *)u+o,64);
+                                at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+                                ++shown;
+                            }
+                        }
+                    }
+                }
             }
             if(rva==JOIN_GRAV_SECTOR_VT) break;
             below=level;level=join_watch_live(parent);
@@ -2760,6 +2807,87 @@ static void join_capture_shoot(join_tables *t) {
         if(!JOIN_PUSH(t->shoot,t->nshoot,cap,r)) return;
     }
     if(t->nshoot>1) qsort(t->shoot,t->nshoot,sizeof(*t->shoot),join_shoot_cmp);
+}
+/* IKV (v13, section 62): the skeletons' IK joints. j1-171: the weapon frames the request check aims from differ on the joiner from T+1
+ * (rest pose there, the gimbals tracking on the session). The frame slot 0x1ec8 = 0x81c960 takes the bone transform (0xe22b70 ->
+ * 0xe20370) of the weapon's skeleton (+0x208 -> +0x48; its +0x10 a vector of groups {begin, end, cap}, each an array of 0x680-byte
+ * joints, their vbtable 0x2c450c0 with U::IKValue at +0x678), evaluated at the thread time. A joint moves toward a target at a limited
+ * rate (0xe1f840, driven by the weapon's aim 0x81c580 -> 0x7569a0 -> 0xe221a0 -> 0xe21110): +0x08 the value, +0x10 the time (a
+ * double), +0x18 the rate, +0x1c the target. j1-175 (JOIN_WATCHANIM, all 0x680 bytes of actor 5's ship's and weapons' joints): the
+ * session's two clients equal byte for byte; the joiner's differ only in those four words: the load leaves every joint at value 0,
+ * rate 0, the time of the load. IKV carries those 24 bytes (+0x08..+0x1f) of every joint of every object with a skeleton; the admission
+ * writes them where the joiner's skeleton has the same joint (same group and index, same vbtable). Status ikv=written:equal:missing:shape
+ * (missing: a joiner joint without a record; shape: a skeleton the walk refuses). */
+#define JOIN_IKV_CONTAINER 0x208u
+#define JOIN_IKV_SKELETON 0x48u
+#define JOIN_IKV_GROUP_VEC 0x10u
+#define JOIN_IKV_JOINT 0x680u
+#define JOIN_IKV_VBT 0x2c450c0u
+#define JOIN_IKV_AT 0x08u
+static uint64_t join_ikv_written,join_ikv_equal,join_ikv_missing,join_ikv_shape;
+/* The joints of an object's skeleton: calls visit(group, joint index, joint) for each; 0 none, 1 walked, -1 refused (a shape the walk
+ * does not know: more than JOIN_IKV_GROUPS groups or JOIN_IKV_JOINTS joints in one, a size not a multiple, a joint with another vbtable). */
+typedef void (*join_ikv_visit)(void *ctx,uint16_t group,uint16_t joint,unsigned char *at);
+static int join_ikv_walk(unsigned char *object,join_ikv_visit visit,void *ctx) {
+    unsigned char *container=NULL,*skeleton=NULL;uintptr_t gv[2]={0,0};
+    if(!object || !join_read(object+JOIN_IKV_CONTAINER,&container,8) || !container || !join_read(container+JOIN_IKV_SKELETON,&skeleton,8) ||
+       !skeleton) return 0;
+    if(!join_read(skeleton+JOIN_IKV_GROUP_VEC,gv,16)) return -1;
+    if(gv[0]==gv[1]) return 0;
+    if(gv[1]<gv[0] || (gv[1]-gv[0])%0x18u || (gv[1]-gv[0])/0x18u>JOIN_IKV_GROUPS) return -1;
+    for(int pass=0;pass<2;pass++)   /* the first pass checks the whole skeleton, the second visits */
+        for(uintptr_t g=gv[0];g<gv[1];g+=0x18u) {
+            uintptr_t jb[2]={0,0};
+            if(!join_read((void *)g,jb,16) || jb[1]<jb[0] || (jb[1]-jb[0])%JOIN_IKV_JOINT || (jb[1]-jb[0])/JOIN_IKV_JOINT>JOIN_IKV_JOINTS) return -1;
+            for(uintptr_t j=jb[0];j<jb[1];j+=JOIN_IKV_JOINT) {
+                uintptr_t vbt=0;
+                if(!pass) {if(!join_read((void *)j,&vbt,8) || vbt!=(uintptr_t)image+JOIN_IKV_VBT) return -1;continue;}
+                visit(ctx,(uint16_t)((g-gv[0])/0x18u),(uint16_t)((j-jb[0])/JOIN_IKV_JOINT),(unsigned char *)j);
+            }
+        }
+    return 1;
+}
+typedef struct {join_tables *t;uint32_t *cap;uint64_t portable;int full;} join_ikv_capture_ctx;
+static void join_ikv_capture_one(void *ctx,uint16_t group,uint16_t joint,unsigned char *at) {
+    join_ikv_capture_ctx *c=(join_ikv_capture_ctx *)ctx;join_ikv_rec r;
+    if(c->full) return;
+    memset(&r,0,sizeof(r));r.portable=c->portable;r.group=group;r.joint=joint;
+    if(!join_read(at+JOIN_IKV_AT,r.state,JOIN_IKV_STATE)) return;
+    if(!JOIN_PUSH(c->t->ikv,c->t->nikv,*c->cap,r)) c->full=1;
+}
+static int join_ikv_cmp(const void *a,const void *b) {
+    const join_ikv_rec *x=(const join_ikv_rec *)a,*y=(const join_ikv_rec *)b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    if(x->group!=y->group) return x->group<y->group?-1:1;
+    return x->joint<y->joint?-1:x->joint>y->joint;
+}
+static void join_capture_ikv(join_tables *t) {
+    uint32_t cap=0;join_ikv_capture_ctx c={t,&cap,0,0};
+    for(uint32_t i=0;i<t->nids && !c.full;i++) {
+        if(!t->ids[i].portable) continue;
+        c.portable=t->ids[i].portable;
+        (void)join_ikv_walk(join_object(t->ids[i].runtime),join_ikv_capture_one,&c);
+    }
+    if(t->nikv>1) qsort(t->ikv,t->nikv,sizeof(*t->ikv),join_ikv_cmp);
+}
+typedef struct {const join_tables *s;uint64_t portable;} join_ikv_admit_ctx;
+static void join_ikv_admit_one(void *ctx,uint16_t group,uint16_t joint,unsigned char *at) {
+    const join_ikv_admit_ctx *c=(const join_ikv_admit_ctx *)ctx;const join_ikv_rec key={c->portable,group,joint,0,{0}};
+    uint32_t lo=0,hi=c->s->nikv;unsigned char own[JOIN_IKV_STATE];
+    while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(join_ikv_cmp(&c->s->ikv[mid],&key)<0) lo=mid+1u;else hi=mid;}
+    if(lo>=c->s->nikv || join_ikv_cmp(&c->s->ikv[lo],&key)) {++join_ikv_missing;return;}
+    if(!join_read(at+JOIN_IKV_AT,own,JOIN_IKV_STATE)) {++join_ikv_missing;return;}
+    if(!memcmp(own,c->s->ikv[lo].state,JOIN_IKV_STATE)) {++join_ikv_equal;return;}
+    if(join_poke((uintptr_t)(at+JOIN_IKV_AT),c->s->ikv[lo].state,JOIN_IKV_STATE)) ++join_ikv_written; else ++join_ikv_equal;
+}
+static void join_admit_ikv(const join_tables *s,const join_tables *mine) {
+    join_ikv_admit_ctx c={s,0};
+    join_ikv_written=join_ikv_equal=join_ikv_missing=join_ikv_shape=0;
+    for(uint32_t i=0;i<mine->nids;i++) {
+        if(!mine->ids[i].portable) continue;
+        c.portable=mine->ids[i].portable;
+        if(join_ikv_walk(join_object(mine->ids[i].runtime),join_ikv_admit_one,&c)<0) ++join_ikv_shape;
+    }
 }
 static int join_viewp_cmp(const void *a,const void *b) {
     uint64_t x=((const join_viewp_rec *)a)->portable,y=((const join_viewp_rec *)b)->portable;return x<y?-1:x>y;
@@ -3410,6 +3538,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_gravd(t);           /* version 13 */
     join_capture_gravb(t);           /* version 13 */
     join_capture_viewl(t);           /* version 13 */
+    join_capture_ikv(t);             /* version 13 */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
     join_capture_pend(t);            /* version 13 */
@@ -5022,6 +5151,7 @@ static int join_admit_world(void) {
     if(s->version>=11) join_admit_grav(s,&mine);    /* the radar */
     if(s->version>=13) join_admit_gravb(s,&mine);   /* the radar's mapped bounds */
     if(s->version>=13) join_admit_viewl(s,&mine);   /* the live and player view flags (opt-in) */
+    if(s->version>=13) join_admit_ikv(s,&mine);     /* the skeletons' IK joints (the weapons' gimbals) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */
     if(s->version>=13 && s->ngravd && !(join_view_skip&8u)) {   /* version 13: every ship's cached parent in both views as the session's (the radar's docked filter) */
@@ -5086,6 +5216,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_agtt(s,&mine);   /* the Agents' times the load resets */
     if(s->version>=13) join_admit_agcb(s,&mine);   /* the pilot slot ships' command and probe blocks */
     if(s->version>=13) join_admit_pbnk(s,&mine);   /* the pilot slot ships' pathing state banks */
+    if(s->version>=13) join_admit_specdrop(s,&mine);   /* the load's one-shot view cache specifications, after SPEC and VIEWK (opt-in) */
     if(s->version>=13) join_admit_pend(s,&mine);   /* the pending view cache flags (opt-in) */
     if(s->version>=13) join_admit_ldc(s,&mine);    /* the drift controllers, before the bodies they set */
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */

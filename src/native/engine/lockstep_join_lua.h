@@ -91,7 +91,7 @@ static int lua_join_watch(lua_State *L) {
     p_lua_pushnumber(L,ok?(double)join_watch_add(id):0.0);return 1;
 }
 static int lua_join_status(lua_State *L) {
-    char out[3584];int n=accept_ui()?join_status(out,sizeof(out)):0;
+    char out[8192];int n=accept_ui()?join_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
     return 1;
 }

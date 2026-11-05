@@ -267,6 +267,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_view_skip','hot join view-bank writes a joiner leaves out (diagnostic)'},
  {'native_gate_join_viewl','hot join: a joiner runs the live and player view handlers where its flags differ (VIEWL)'},
  {'native_gate_join_pend','hot join: a joiner takes the session pending view cache flags (PEND)'},
+ {'native_gate_join_specdrop','hot join: a joiner clears the load one-shot view cache specifications (with PEND; diagnostic)'},
  {'native_gate_join_viewf_bits','hot join VIEWF flag bits a joiner takes from the session (diagnostic; 0 off)'},
  {'native_gate_join_viewf_write','hot join VIEWF writes on a joiner (diagnostic; off: no flip after STOP)'},
  {'native_gate_join_shipyards','hot join shipyard capacity rows at these ticks (diagnostic)'},

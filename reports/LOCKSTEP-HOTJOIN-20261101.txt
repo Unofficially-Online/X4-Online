@@ -2077,6 +2077,38 @@ proposed and rejected.
   j1-165 bab073ad (build-hj17h)   JOIN_WATCHRULE: one ruling more on the joiner at 650 (target actor 11)
   j1-166 b88a4a6b (build-hj17i)   SHOOT's cone: shoot=71, the cone equal; 650 and 651 stay; 900: 165 + 85/87
   j1-167 f32eb8ee (build-hj17j)   floats at full precision in the join save: the same
+- The weapons' frames [F: JOIN_WATCHACOS (07a405aa: acosf 0x1a19250 runs on the portable library, its table entry logs the calls
+  returning to 0x8176e2), JOIN_WATCHAIM (4160cf83, 43f330f2: the shoot controller's aim routine, vtable 0x2b7fcc0 slot 0xa8 =
+  0x7e72b0, hooked with JOIN_WATCHRULE's slot swap: target, weapon, origin, aim point, the weapon frame's rows)]: the request checks'
+  aim angles (20 a step; the session's two clients agree bit for bit) differ on the joiner from T+1 by up to ~0.1 rad (j1-168), with
+  PEND as without (j1-169). The aim points (the targets through the view cache, 0x3dee20) are equal (j1-170); the weapon frames are
+  not (j1-171): at T+1 up to 0.25 rad, the origins 0.1..0.3 m apart. On the joiner both weapons of a ship share one frame (their rest
+  pose), on the session each its own (the gimbals tracking); some converge by 650, actor 5's do not (0.19 rad), and its gun, resting
+  ahead, comes within its cone of actor 11 at 650. The weapon objects' own 0x380 bytes are equal; the frame is built by 0x81cb80
+  (the weapon's attachments +0xa0, slot 0x1ec8 with +0x2e8) and composed at 0x817070. Ruled out: SMOV (1e7c6b32, section 62: the
+  weapons' U::StaticMovementController block +0x90..+0xcf, on actor 5's weapons a direction and a ten-degree rotation the load writes,
+  the session's zeros). Raw it broke the joiner's admission (j1-172: 76,417 of 97,137 session blocks hold a pointer and two counts
+  there; written into the joiner they crashed EVQT's removal 0x99a870); with a float-only rule it ran (j1-173: 9,950 written) but the
+  frames stayed and T+1 parted (first mismatch 634): reverted (82a08d5c).
+  j1-168 07a405aa (build-hj17k)   the aim angles apart from T+1
+  j1-169 07a405aa (build-hj17k)   the same with PEND
+  j1-170 4160cf83 (build-hj17l)   aim points equal, origins 0.1..0.3 m apart
+  j1-171 43f330f2 (build-hj17m)   the frames: rest on the joiner, tracking on the session
+  j1-172 1e7c6b32 (build-hj17n)   SMOV raw: the joiner's admission crashes (twice; pre-SMOV j1-172q clean)
+  j1-173 1e7c6b32+ (build-hj17o)  SMOV float-only: no crash, the frames unchanged, first mismatch 634: reverted
+- The weapons' gimbals [F: JOIN_WATCHATT a208=/a48= (the animation container +0x208 and its skeleton +0x48), JOIN_WATCHANIM (every
+  0x680-byte joint of the skeleton)]: the frame slot 0x1ec8 = 0x81c960 takes the bone transform (0xe22b70 -> 0xe20370) when the
+  container has a skeleton, else the static connection transform. Every side has the skeleton (j1-174). Its joints (+0x10 a vector
+  of groups {begin, end, cap}, each an array of 0x680-byte joints, vbtable 0x2c450c0, U::IKValue the virtual base at +0x678) move
+  toward a target at a limited rate (0xe1f840, driven by the weapon's aim 0x81c580 -> 0x7569a0 -> 0xe221a0 -> 0xe21110; 0x81c7a0 ->
+  0x756a80 sets them up from the macro): +0x08 the value, +0x10 the time (double), +0x18 the rate, +0x1c the target. j1-175: the
+  session's two clients equal byte for byte in all 0x680 bytes; the joiner's differ only in those four words: the load leaves every
+  joint at value 0, rate 0, the time of the load (actor 5's ship: six joints, its spinning parts near -11.05 on the session, 0 on the
+  joiner; each weapon two, the session's tracking at 0.14 and 0.17 rad). IKV (section 62, v13) carries the 24 bytes +0x08..+0x1f of
+  every joint of every object with a skeleton (the walk checks each joint's vbtable); the admission writes them where the joiner's
+  skeleton has the same group and index. Status ikv=written:equal:missing:shape.
+  j1-174 local (build-hj17p)   every side has the weapons' skeleton (one group each)
+  j1-175 local (build-hj17q)   the joints: the joiner's at rest (value 0, rate 0, the load time), only +0x08..+0x1f differ
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 
