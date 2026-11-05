@@ -372,10 +372,6 @@ if cfg.native_gate_join then
    end
   end}
  input_section('join','join',join_client)
- -- Diagnostic native_gate_join_passes_admit (a joiner): the pass of T at its admission (lockstep_join_passes.h).
- if join_joiner and cfg.native_gate_join_passes_admit then
-  assert(gate.join_passes_admit and gate.join_passes_admit(1)==1,'join passes admit refused')
- end
  DebugError('[X4LAN] NATIVE_GATE JOIN_ARMED slot='..own..' save='..save_mode..' joiner='..(join_joiner and 1 or 0)..' absent='..absent_mask..' rejoin='..rejoin_mask)
  -- native_gate_world_hash_join = true (DEFAULT OFF; reports/LOCKSTEP-HOTJOIN-20261101.txt 1.6): one more world capture at the
  -- join's T+1, on every client of the session (T of each SAVE_AT it applied, whether it saves or not: the capture enters the
@@ -4676,6 +4672,11 @@ local function frame()
    -- The save this client boots from must be the one the package names.
    local named=tostring(gate.join_status()):match(' rx_save_sha=(%x+) ')
    assert(named==snapshot,'join: the snapshot '..tostring(snapshot)..' is not the package\'s save '..tostring(named))
+   -- Diagnostic native_gate_join_passes_admit: the pass of T at the admission (lockstep_join_passes.h); armed with the gate
+   -- started (j1-145: at the config, before it, the gate refuses every caller).
+   if cfg.native_gate_join_passes_admit then
+    assert(gate.join_passes_admit and gate.join_passes_admit(1)==1,'join passes admit refused '..tostring(gate.join_passes_status and gate.join_passes_status()))
+   end
    log('JOIN_LOADED '..tostring(gate.join_status()))
   end
   assert(gate.load_requested()==1,'load request refused')

@@ -864,11 +864,14 @@ static int join_t1_add(uint64_t runtime,const unsigned char *target) {
     return JOIN_PUSH(join_t1.items,join_t1.n,join_t1.cap,item);
 }
 static void join_t1_arm(uint64_t tick) {join_t1.tick=tick;join_t1.listed=join_t1.n;join_t1.armed=join_t1.n!=0 || join_t1x.n!=0;}
-/* An object's navigation Agent (the nav controller's +0x40), NULL without one. */
+/* An object's navigation Agent (the controller's +0x40), NULL without one: a NavigationController's, or a pilot slot ship's
+ * (X4's PlayerController or a slot's vtable copy of it, lockstep_pilot_slots.h; the lockstep session's w1z5: an in-window
+ * joiner's slot ships loaded their Agents without a solver, with default limits and the load's timestamps). */
 static unsigned char *join_nav_agent(const unsigned char *object) {
-    unsigned char *controller=NULL,*agent=NULL;uintptr_t nav=0;
-    if(!join_read(object+JOIN_CONTROLLER,&controller,8) || !controller || !join_read(controller,&nav,8) || nav!=(uintptr_t)image+JOIN_NAV_VTABLE ||
-       !join_read(controller+0x40,&agent,8)) return NULL;
+    unsigned char *controller=NULL,*agent=NULL;uintptr_t vt=0;
+    if(!join_read(object+JOIN_CONTROLLER,&controller,8) || !controller || !join_read(controller,&vt,8)) return NULL;
+    vt=pslot_canonical_vtable(vt);
+    if((vt!=(uintptr_t)image+JOIN_NAV_VTABLE && vt!=(uintptr_t)image+PSLOT_VTABLE) || !join_read(controller+0x40,&agent,8)) return NULL;
     return agent;
 }
 #define JOIN_AGENT_SOLVER 0xf80u             /* the Agent's motion solver (0: it never stepped a steering or spline model) */
@@ -2803,6 +2806,10 @@ static int join_capture_world(join_tables *t,double now) {
                 if(!join_capture_flight(t,controller,id->runtime,id->portable,&fcap,&lcap,&agcap,&rcap,&pacap,&stcap,&stpcap,&socap)) return 0;   /* versions 5..10 */
                 continue;
             }
+            /* A pilot slot ship (X4's PlayerController or a slot's copy): its Agent's sections as a nav ship's (FLIGHT, AGENT, PARAM,
+             * ROUTE, SOLVER, STEER), then its pose as before. */
+            if(p.kind==PSLOT_VTABLE && !join_capture_flight(t,controller,id->runtime,id->portable,&fcap,&lcap,&agcap,&rcap,&pacap,&stcap,&stpcap,&socap))
+                return 0;
             if(join_dock_kind(p.kind)) {   /* version 8: a ship docking or undocking */
                 join_dock_rec d;memset(&d,0,sizeof(d));d.portable=id->portable;
                 if(!join_dock_read(controller,object,p.kind,&d)) return join_note("dock,id=%llx",(unsigned long long)id->portable);

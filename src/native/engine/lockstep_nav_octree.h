@@ -593,6 +593,18 @@ static uint64_t noct_content(const unsigned char *octree,uint64_t *cells) {
     return h|1u;
 }
 /* Inside a build ('deadline'): the octree just made, hidden until its record is due. */
+/* Hot join (noct_join_adopt): the keys the session held hidden that had no octree on the joiner at its admission. An octree
+ * built for one of them later without a record stays hidden, as the session's (its stale build, hidden for good). Under the lock. */
+#define NOCT_JOIN_MARKS 4096u
+static uint64_t noct_join_marks[NOCT_JOIN_MARKS];static unsigned noct_join_nmarked;static uint64_t noct_join_marked_hides;
+static void noct_join_mark(uint64_t key) {
+    for(unsigned i=0;i<noct_join_nmarked;i++) if(noct_join_marks[i]==key) return;
+    if(noct_join_nmarked<NOCT_JOIN_MARKS) noct_join_marks[noct_join_nmarked++]=key;
+}
+static int noct_join_marked(uint64_t key) {
+    for(unsigned i=0;i<noct_join_nmarked;i++) if(noct_join_marks[i]==key) return 1;
+    return 0;
+}
 static void *noct_octree_with(noct_octree_fn original,void *builder) {
     void *octree=original(builder);
     if(!octree || !noct_ctx.valid || !noct_lock_ready) return octree;
@@ -611,6 +623,8 @@ static void *noct_octree_with(noct_octree_fn original,void *builder) {
         else noct_hide(octree,NOCT_NEVER,key);
     } else if(r && r->state!=NOCT_R_VISIBLE) { /* its record (also one opened while a build begun before it ran) */
         r->state=NOCT_R_BUILT;r->octree=octree;noct_hide(octree,r->due,key);
+    } else if(!r && noct_join_marked(key)) { /* a hot joiner: a key the session held hidden had no octree at the admission */
+        noct_hide(octree,NOCT_NEVER,key);++noct_join_marked_hides;
     } else { /* shown already, or asked before arming */
         noct_show(octree,key);if(!r) ++noct_unrecorded;
     }
@@ -997,7 +1011,7 @@ static int noct_join_adopt(const uint64_t head[4],const noct_join_entry *e,uint3
         *noct_entry(e[i].index)=(noct_order_entry){key,gen,e[i].assigned,e[i].agreed,e[i].shown};
     }
     for(uint32_t i=0;i<nh;i++) {
-        if(!found_h[i]) {++counts[3];continue;}
+        if(!found_h[i]) {++counts[3];if(h[i].id) noct_join_mark(h[i].id*2+(h[i].flag&1u));continue;}
         if(noct_hidden_find(found_h[i])<0) {noct_hide(found_h[i],h[i].due,h[i].id*2+(h[i].flag&1u));++counts[2];}
     }
     LeaveCriticalSection(&noct_lock);
@@ -1139,6 +1153,7 @@ static void noct_snap_clear(void) {
     memset(noct_snaps,0,sizeof(noct_snaps));noct_snap_count=0;noct_snap_fresh_count=0;
 }
 static void noct_reset_counters(void) {
+    noct_join_nmarked=0;noct_join_marked_hides=0;
     noct_closed=noct_busy=noct_held=noct_deferred=noct_joining=noct_drained=0;
     noct_rows=noct_failures=0;noct_pops=noct_builds=noct_deferrals=noct_join_builds=noct_free_builds=noct_build_us=noct_max_build_us=noct_waited=0;
     noct_joins=noct_join_passes=noct_join_us=noct_max_join_us=noct_last_pending=noct_max_pending=noct_held_deferred=0;
