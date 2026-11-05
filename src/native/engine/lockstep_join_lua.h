@@ -72,6 +72,8 @@ static int lua_join_shpw(lua_State *L) {join_shpw_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_trdn(lua_State *L) {join_trdn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_npca(on): a joiner takes the session's NPC activations (NPCA, default off). */
 static int lua_join_npca(lua_State *L) {join_npca_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_jobg(on): a joiner takes the session's job generator words (JOBG, default off). */
+static int lua_join_jobg(lua_State *L) {join_jobg_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 static int lua_join_rcnt(lua_State *L) {join_rcnt_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_pend(on): a joiner takes the session's pending view cache flags (PEND; lockstep_join_world.h; default off). */
 static int lua_join_pend(lua_State *L) {join_pend_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}

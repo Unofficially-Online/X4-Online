@@ -271,6 +271,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_shpw','hot join: a joiner takes the session ship words a load leaves at defaults (SHPW)'},
  {'native_gate_join_trdn','hot join: a joiner takes the session next trade offer updates the load leaves at -1 (TRDN)'},
  {'native_gate_join_npca','hot join: a joiner takes the session NPC activations its load does not repeat (NPCA)'},
+ {'native_gate_join_jobg','hot join: a joiner takes the session job generator words its load reseeds (JOBG)'},
  {'native_gate_join_ecos','hot join: a joiner takes the session economy schedules of stations and ships (ECOS)'},
  {'native_gate_join_rcnt','hot join experiment: a joiner lowers created ships and bays reference counts to the session (RCNT)'},
  {'native_gate_join_pend','hot join: a joiner takes the session pending view cache flags (PEND)'},

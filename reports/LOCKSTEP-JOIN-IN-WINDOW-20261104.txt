@@ -561,3 +561,16 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   (the hot join: the shipyard's build module counter +0x350 five higher on the joiner, j1-200).
 - The lanes' crash notes stopped reaching the runs at 200 MB (the lane tool copies a changed profile file only below that,
   lanes/<release>/dev/x4lane.py): rotate x4lan-crash.txt in the lane profiles when it grows.
+
+33. THE JOIN DEFAULTS AND JOBG: THE WINDOW EQUAL THROUGH 780 (w1z35..w1z37, builds 276..278; 5 November)
+- The join overlays (native_gate_join_overlays.py JOIN_DEFAULT_ON) now default rcnt, trdn, ecos, passes_admit, pctl and jobg on
+  savers and joiners unless a --set names them. w1z35 (the defaults without a --set, ECOS still off): every default applied
+  (passes_admit=1/1, jpctl written, rcnt and trdn records written); 660 equal, 900 36 against w1z34's 30 with ECOS (a due time):
+  ECOS joined the defaults. w1z36 (build277, the hot join's NPCA merged and off): as w1z34, 900 30.
+- The hot join's JOBG (section 68, f13f383c): a job's own generator word (job+0x528, the explicit state of Generate 0xc841b0 for
+  the job spawn 0xf06650: the macro choice draws from it, SPAWN_RNG's loadout key is seeded from it), which the save does not
+  keep (a load reseeds it from the job ID). The window's five ships near 700 were such a spawn: 13 keyed Generate calls between
+  660 and 720 on both sides, the joiner's choices from the reseeded word. w1z37 (build278, the defaults and jobg):
+  jobg=1:98:1113:0; T+1 1 (800259fc's one-step nav refresh), 660, 720 and 780 equal with no one-sided object, 840 4, 900 4.
+- Left at 840: a fight in zone 668, the Paranid destroyer 79009 (motion) and the Kha'ak fighter 829e5 with its two lasers
+  829e9/829ea (health): a combat outcome parting between 780 and 840.

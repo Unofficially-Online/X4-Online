@@ -2513,7 +2513,8 @@ static void join_objsample_dump(uint64_t tick) {
 #define JOIN_NPC_VT 0x2b38a48u
 #define JOIN_NPC_SLOT 0x5a0u
 static void join_npcslot_dump(char side,uint64_t tick) {
-    const size_t cap=1u<<16;char *out=malloc(cap);size_t at=0;unsigned n=0,set=0,line=0;
+    const size_t cap=1u<<16;char *out=malloc(cap);size_t at=0;unsigned n=0,set=0,line=0,nraw=0;
+    unsigned char *raw_npc[16];uint64_t raw_id[16];
     if(!out) return;
     const unsigned total=world_hash_count+world_hash_created_count;
     for(unsigned i=0;i<total;i++) {
@@ -2522,7 +2523,7 @@ static void join_npcslot_dump(char side,uint64_t tick) {
         if(!o || !join_read(o,&vt,8) || vt!=(uintptr_t)image+JOIN_NPC_VT) continue;
         unsigned char *p=NULL;uintptr_t pvt=0;uint64_t index=0;
         (void)join_read(o+JOIN_NPC_SLOT,&p,8);
-        if(p) {(void)join_read(p,&pvt,8);(void)join_read(p+0x1f0,&index,8);++set;}
+        if(p) {(void)join_read(p,&pvt,8);(void)join_read(p+0x1f0,&index,8);++set;if(nraw<16u) {raw_npc[nraw]=o;raw_id[nraw++]=item->saved;}}
         ++n;
         const uint32_t rva=pvt>=(uintptr_t)image && pvt-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint32_t)(pvt-(uintptr_t)image):0u;
         if(!line) at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_NPCSLOT side=%c tick=%llu rows=",side,(unsigned long long)tick);
@@ -2532,6 +2533,17 @@ static void join_npcslot_dump(char side,uint64_t tick) {
     }
     if(line) at+=(size_t)snprintf(out+at,cap-at,"\r\n");
     at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_NPCSLOT_SUM side=%c tick=%llu npcs=%u set=%u\r\n",side,(unsigned long long)tick,n,set);
+    for(unsigned k=0;k<nraw;k++) {   /* JOIN_NPCANIM: the NPC's +0x4e0 .. +0x5e0 and its animation state's first 0x240 bytes */
+        static const char digits[]="0123456789abcdef";unsigned char npc[0x100],anim[0x240];unsigned char *p=NULL;
+        if(at+2u*(sizeof(npc)+sizeof(anim))+200u>=cap) {crash_note_write(out,(int)at);at=0;}
+        memset(npc,0,sizeof(npc));memset(anim,0,sizeof(anim));
+        (void)join_read(raw_npc[k]+0x4e0,npc,sizeof(npc));(void)join_read(raw_npc[k]+JOIN_NPC_SLOT,&p,8);if(p) (void)join_read(p,anim,sizeof(anim));
+        at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_NPCANIM side=%c tick=%llu id=%llx npc4e0=",side,(unsigned long long)tick,(unsigned long long)raw_id[k]);
+        for(unsigned b=0;b<sizeof(npc);b++) {out[at++]=digits[npc[b]>>4];out[at++]=digits[npc[b]&15u];}
+        at+=(size_t)snprintf(out+at,cap-at," anim=");
+        for(unsigned b=0;b<sizeof(anim);b++) {out[at++]=digits[anim[b]>>4];out[at++]=digits[anim[b]&15u];}
+        at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+    }
     crash_note_write(out,(int)at);free(out);
 }
 static void join_watch_dump(char side,uint64_t tick) {
@@ -3158,6 +3170,8 @@ static void join_capture_spec(join_tables *t) {
 }
 static void join_capture_jobs(join_tables *t);   /* lockstep_join.h: JOBS, by the job DB's layout */
 static void join_admit_jobs(const join_tables *s);
+static void join_capture_jobg(join_tables *t);   /* lockstep_join.h: JOBG */
+static void join_admit_jobg(const join_tables *s);
 /* NAVC: an object's navigation controller (+0x200, vtable JOIN_NAV_VTABLE), NULL when it has none. */
 #define JOIN_NAVC_CACHE 0x60u
 static unsigned char *join_navc_controller(unsigned char *object) {
@@ -4201,6 +4215,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_nmesh(t);           /* version 13 */
     join_capture_noct(t);            /* version 13 */
     join_capture_jobs(t);            /* version 13 */
+    join_capture_jobg(t);            /* version 13 */
     join_watch_session(t,t->gate.tick);   /* diagnostic (native_gate_join_watch) */
     if(t->nsplm) qsort(t->splm,t->nsplm,sizeof(*t->splm),join_splm_cmp);            /* version 12 */
     if(t->nsplme) qsort(t->splme,t->nsplme,sizeof(*t->splme),join_splme_cmp);
@@ -5391,6 +5406,7 @@ static int join_admit_grav(const join_tables *s,const join_tables *mine) {
         if(changed) ++join_rx.shoot_written; else ++join_rx.shoot_equal;
     }
     if(s->version>=13) join_admit_jobs(s);   /* version 13: the jobs' state +0x48 */
+    if(s->version>=13) join_admit_jobg(s);   /* the jobs' own generator words (opt-in) */
     for(uint32_t i=0;s->version>=13 && i<s->nnavc;i++) {   /* version 13: the navigation controllers' cached transform and velocity */
         const join_navc_rec *r=&s->navc[i];
         unsigned char *c=join_navc_controller(join_object(join_runtime_of(mine,r->portable)));

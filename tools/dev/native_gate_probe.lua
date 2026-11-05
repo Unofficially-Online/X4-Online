@@ -303,6 +303,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_npca then   -- a joiner takes the session's NPC activations (NPCA)
   assert(gate.join_npca and gate.join_npca(1)==1,'join npca refused')
  end
+ if cfg.native_gate_join_jobg then   -- a joiner takes the session's job generator words (JOBG)
+  assert(gate.join_jobg and gate.join_jobg(1)==1,'join jobg refused')
+ end
  if cfg.native_gate_join_ecos then   -- a joiner takes the session's economy schedules (ECOS)
   assert(gate.join_ecos and gate.join_ecos(1)==1,'join ecos refused')
  end

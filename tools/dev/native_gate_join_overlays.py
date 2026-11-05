@@ -190,7 +190,7 @@ def check_world_table(package, mode):
     if version >= 13:
         text += f' jobe={len(sections.get("jobe", []))} evqt={len(sections.get("evqt", []))} gravd={len(sections.get("gravd", []))}'
         text += f' viewk={len(sections.get("viewk", []))}/{len(sections.get("viewkc", []))} viewf={len(sections.get("viewf", []))}'
-        text += f' viewp={len(sections.get("viewp", []))} shoot={len(sections.get("shoot", []))} attk={len(sections.get("attk", []))} livef={len(sections.get("livef", []))} spec={len(sections.get("spec", []))} navc={len(sections.get("navc", []))} jobs={len(sections.get("jobs", []))} gone={len(sections.get("gone", []))} body={len(sections.get("body", []))} bupd={len(sections.get("bupd", []))} ldc={len(sections.get("ldc", []))} navt={len(sections.get("navt", []))} nmesh={len(sections.get("nmesh", []))} noct={len(sections.get("noct", []))} agtt={len(sections.get("agtt", []))} agcb={len(sections.get("agcb", []))} pbnk={len(sections.get("pbnk", []))} pend={len(sections.get("pend", []))} gravb={len(sections.get("gravb", []))} viewl={len(sections.get("viewl", []))} ikv={len(sections.get("ikv", []))} rcnt={len(sections.get("rcnt", []))} ecos={len(sections.get("ecos", []))} shpw={len(sections.get("shpw", []))} trdn={len(sections.get("trdn", []))} npca={len(sections.get("npca", []))}'
+        text += f' viewp={len(sections.get("viewp", []))} shoot={len(sections.get("shoot", []))} attk={len(sections.get("attk", []))} livef={len(sections.get("livef", []))} spec={len(sections.get("spec", []))} navc={len(sections.get("navc", []))} jobs={len(sections.get("jobs", []))} gone={len(sections.get("gone", []))} body={len(sections.get("body", []))} bupd={len(sections.get("bupd", []))} ldc={len(sections.get("ldc", []))} navt={len(sections.get("navt", []))} nmesh={len(sections.get("nmesh", []))} noct={len(sections.get("noct", []))} agtt={len(sections.get("agtt", []))} agcb={len(sections.get("agcb", []))} pbnk={len(sections.get("pbnk", []))} pend={len(sections.get("pend", []))} gravb={len(sections.get("gravb", []))} viewl={len(sections.get("viewl", []))} ikv={len(sections.get("ikv", []))} rcnt={len(sections.get("rcnt", []))} ecos={len(sections.get("ecos", []))} shpw={len(sections.get("shpw", []))} trdn={len(sections.get("trdn", []))} npca={len(sections.get("npca", []))} jobg={len(sections.get("jobg", []))}'
     return text
 
 
@@ -238,9 +238,10 @@ def ids_sets(sets):
 #   native_gate_join_passes_admit  the joiner's pass of T at its admission (lockstep_join_passes.h; every in-window run since w1z6)
 #   native_gate_join_pctl          X4's own PlayerController's values at T (lockstep_join_pctl.h; j1-196 neutral, the window's slot 1)
 #   native_gate_join_ecos          the containers' economy schedules, a due time (w1z34 with it against w1z35 without: 900 30 / 36)
+#   native_gate_join_jobg          the jobs' own generator words (j1-214: 900 0 from 42; w1z37: the window equal 660..780, 900 4)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
-                   'native_gate_join_ecos')
+                   'native_gate_join_ecos', 'native_gate_join_jobg')
 
 
 def default_sets(sets):
