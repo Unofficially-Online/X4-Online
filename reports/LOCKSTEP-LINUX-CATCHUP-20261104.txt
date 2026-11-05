@@ -189,6 +189,32 @@ THE PLATFORM RESIDUE: A GATE JUMP'S EXIT POSITION, 1 ULP (W24/W25 against lx14/l
   identity). So the ulp is born in GetTransformRelativeTo(ship, gate, time) itself (Windows call 0x5ceacc, Linux
   0x161529e), from equal banks, time and gate: the ship's own transform at that time (ShipSmall slot +0x1440/+0x1488,
   the NavigationController's getter) or the composition. Next: the inputs and output of that one call on both platforms.
+  W28 against lx18 (own/up at the watched dispatch, 69cfe886; inert: lx18 = lx17 and W28 = W27 at all 65 digests on
+  both clients): the ship relative to its parent (0x65fc2) and grandparent (0x65967) at the event's time is
+  byte-identical on both platforms (own position 523bd8c6aae1d243bc1bedc6). The dispatch runs at 1863, a tick after the
+  construction, so this only weakly clears the ship's own transform. The rel capture (008ba210) takes the poster's ship
+  and gate from its registers at the construction (Windows rdi/r12, Linux rbx/r13) and runs GetTransformRelativeTo for
+  ship->gate, ship->parent, gate->parent, ship->grandparent and gate->grandparent at that time: the first of those that
+  differs between the platforms names the side (the ship's pose or the gate's) carrying the ulp.
+  W29 against lx19 (the rel capture; inert: lx19 = lx18 and W29 = W28 at all 65 digests on both clients): all five
+  positions are byte-identical on both platforms (ship->gate (60.78, -78.24, -0.00079), ship 0x662e3, gate 0x65fd3,
+  both in zone 0x65fc2). GetTransformRelativeTo agrees; A is built from it afterwards: A.x = -rel.x, A.y = rel.y and
+  A.z = the sum of two extents of the poster's other gate and two of the ship, a plain float sum the compilers
+  associate apart:
+    Windows 0x5ceb7c..0x5ceb9d (MSVC):  (X+0x258 + X+0x268) + (S+0x258 + |S+0x268|)    X = [r13+0x58], S = [rdi+0x58]
+    Linux 0x1615324..0x161534f (GCC):  ((G+0x268 + G+0x278) + S+0x268) + |S+0x278|     G = [r12+0x58], S = [rbx+0x58]
+  (the same fields: Linux's offsets are 0x10 higher). That is the 1 ulp of A.z (W 453a6a72, L 453a6a71).
+  THE FIX (native_gate_warp_exit, Linux gate only, linux/gate_warp_exit.h, stop reason 146): the poster's own seven
+  instructions in the Windows order in a stub near the image (the fourth add retargeted from xmm0 to xmm1), entered by
+  a jmp rel32 + nop3 in place of the 8-byte movss at 0x1615324 (bytes 4..11 of one 16-byte line, one
+  compare-exchange) and jumping back to 0x1615353; it counts its runs. No branch, rel32 call or absolute pointer leads
+  into 0x1615325..0x1615352. Pin warp_exit_sum 0x16152fc..0x1615353 read with the entry as found. Windows is the order
+  kept and arms nothing (the probe arms it only on gate.platform() == 'linux'). Tests: the native bytes and the stub
+  through a register harness on 2900.5 + 80.125 + 1.7 + |-0.0123| (GCC 453a6565, MSVC 453a6566); on the real
+  executable's own bytes through the patched entry, the same two results before and after arming; arming, the check
+  (a changed stub or block), the restore. Linux host ALL PASS, site check 454 PASS, Python 43 + 1562 OK.
+  Next: lx20 = lx19's flags + --warp-exit, 6000 ticks, against W29 at 1863 (A.z, the transform) and a Windows
+  6000-tick reference.
 
 WINDOWS AGAINST LINUX, w22 client 1 (build235, W21 + player_timer) against lx9
   tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
@@ -199,7 +225,8 @@ NEXT
   1. (done: actor_rng_all, player_timer, tempzone_order, warp_rng on Linux; Linux vs Linux 0 through 6000, lx13.)
   2. (done: W23 against lx13, identical through 1800.) The platform residue: the 1-ulp z of the ship's position relative
      to an orb accelerator in GetTransformRelativeTo at the jump (0a5d7a, tick 1862): find the operation that rounds
-     differently, then make it portable (one shared implementation on both platforms).
+     differently: found (the exit sum's association, MSVC against GCC); the Linux fix native_gate_warp_exit is in test
+     (lx20 against a 6000-tick Windows reference). Then a Linux default.
   3. The rest of the defaults' determinism stack the clock-mode census does not exercise (the battle scope's fixture
      state, shape order, view points), then the people stack on Linux (pilot replay first: a Linux server simulates the
      players).

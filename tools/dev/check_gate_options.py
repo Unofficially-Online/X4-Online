@@ -89,6 +89,7 @@ PROBE_OPTIONS = {
     'native_gate_nav_probe_init': (('true',), ('native_gate_nav_rng', 'native_gate_nav_diag', 'native_gate_nav_initial_refresh'), 'nav'),
     'native_gate_ship_sound_rng': (('true', 'split', 'observe'), (), None),
     'native_gate_player_timer': (('true',), (), None),
+    'native_gate_warp_exit': (('true',), (), None),
     'native_gate_nav_params_init': (('true',), ('native_gate_nav_rng', 'native_gate_nav_diag', 'native_gate_nav_initial_refresh'), 'nav'),
     'native_gate_nav_player': (('true',), ('native_gate_nav_rng', 'native_gate_nav_diag', 'native_gate_nav_initial_refresh'), 'nav'),
     'native_gate_attention_all': (('true',), ('native_gate_attention_rng', 'native_gate_attention_initial_refresh'), 'attention'),

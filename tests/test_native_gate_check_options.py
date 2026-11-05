@@ -178,6 +178,17 @@ class PlayerTimerOptionTests(unittest.TestCase):
         self.assertEqual(self.failures(BASE+'X4LAN_CONFIG.native_gate_player_timer = false\n'), [])
 
 
+class WarpExitOptionTests(unittest.TestCase):
+    def failures(self, text):
+        return [f['rule'] for f in module.check(text)[1] if 'warp_exit' in f['rule']]
+
+    def test_true_only_and_the_snapshot_boot(self):
+        self.assertEqual(self.failures(BASE+'X4LAN_CONFIG.native_gate_warp_exit = true\n'), [])
+        self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_warp_exit = 'order'\n")), 1)
+        self.assertEqual(len(self.failures('X4LAN_CONFIG.native_gate_warp_exit = true\n')), 1)
+        self.assertEqual(self.failures(BASE+'X4LAN_CONFIG.native_gate_warp_exit = false\n'), [])
+
+
 class DrawWatchOptionTests(unittest.TestCase):
     ALL = 'X4LAN_CONFIG.native_gate_actor_rng_all = true\n'
 

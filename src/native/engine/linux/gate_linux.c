@@ -127,6 +127,10 @@ static int tz_installed,tz_restored;
 static void wr_restore(void);
 static int wr_check(void);
 static int wr_installed,wr_restored;
+/* The gate exit sum in the Windows order (gate_warp_exit.h, included below). */
+static void wx_restore(void);
+static int wx_check(void);
+static int wx_installed,wx_restored;
 /* AI Wait restores (gate_ai_wait.h, included below). */
 static void ai_wait_restore(void);
 static int ai_wait_owned(void);
@@ -467,6 +471,8 @@ static void finish(unsigned reason) {
     if(tz_installed) stats.restored=0;
     wr_restore();
     if(wr_installed) stats.restored=0;
+    wx_restore();
+    if(wx_installed) stats.restored=0;
     ai_wait_restore();
     if(ai_wait_armed && !ai_wait_restored) stats.restored=0;
     md_resume_restore();
@@ -576,6 +582,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(pt_installed && !pt_check()) {finish(142);gate_original_once(frame,loading);return;} /* PT_STOP_REASON */
     if(tz_installed && !tz_check()) {finish(144);gate_original_once(frame,loading);return;} /* TZ_STOP_REASON */
     if(wr_installed && !wr_check()) {finish(143);gate_original_once(frame,loading);return;} /* WR_STOP_REASON */
+    if(wx_installed && !wx_check()) {finish(146);gate_original_once(frame,loading);return;} /* WX_STOP_REASON */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
     if(boot_hold_armed && boot_hold_failures) {finish(86);gate_original_once(frame,loading);return;}
     if(md_resume_armed && md_resume_failures) {finish(87);gate_original_once(frame,loading);return;}
@@ -789,6 +796,7 @@ static int lua_start(lua_State *L) {
 #include "gate_player_timer.h"
 #include "gate_tempzone_order.h"
 #include "gate_warp_rng.h"
+#include "gate_warp_exit.h"
 static int lua_read_cost(lua_State *L) {
     char out[256];
     int n=accept_ui()?snprintf(out,sizeof(out),"fast=%d installed=%d reads=%llu faults=%llu lost=%llu slow_ns=%llu fast_ns=%llu.%llu gettid_ns=%llu",
@@ -895,7 +903,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);METHOD(world_health);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
-    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);
+    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);

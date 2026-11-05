@@ -61,6 +61,11 @@ static int lua_join_ids(lua_State *L) {join_ids_on=p_lua_tonumber(L,1)!=0.0;p_lu
 static int lua_join_buildp(lua_State *L) {join_buildp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_viewf_write(on): the joiner writes the session's VIEWF words (lockstep_join_world.h; diagnostic, default off). */
 static int lua_join_viewf_write(lua_State *L) {join_viewf_write=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_viewf_bits(mask): the bits of the session's VIEWF flag words a joiner takes (lockstep_join_world.h; 0 off); 1 or 0 refused. */
+static int lua_join_viewf_bits(lua_State *L) {
+    const double m=p_lua_tonumber(L,1);const int ok=isfinite(m) && m>=0 && m<=4294967295.0 && floor(m)==m;
+    if(ok) join_viewf_bits=(uint32_t)m;p_lua_pushnumber(L,ok?1:0);return 1;
+}
 /* gate.join_view_skip(mask): view-bank writes a joiner's admission leaves out (lockstep_join_world.h; diagnostic). */
 static int lua_join_view_skip(lua_State *L) {
     const double m=p_lua_tonumber(L,1);const int ok=isfinite(m) && m>=0 && m<=15 && floor(m)==m;

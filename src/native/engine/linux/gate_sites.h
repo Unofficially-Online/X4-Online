@@ -144,6 +144,9 @@
 #define LX_WR_CTOR_VA 0x16bbe40u              /* U::WarpEvent's constructor (Windows 0x9a9d00) */
 #define LX_WR_GTRT_VA 0x18a0090u              /* U::Component::GetTransformRelativeTo (Windows 0x3db8a0) */
 #define LX_WR_FRAME_CALL_VA 0x1615867u        /* the gate poster 0x1614ff0's call of it (Windows 0x5ce690's at 0x5cf1c6) */
+/* The gate exit sum in the Windows order (gate_warp_exit.h). */
+#define LX_WX_ENTRY_VA 0x1615324u            /* the poster's movss xmm0,[rdx+0x268]: the first of the exit sum (Windows 0x5ceb27..0x5ceb9d) */
+#define LX_WX_RETURN_VA 0x1615353u           /* the instruction after the sum (movss xmm1,[rbp-0x1c8]) */
 /* AI Wait restores (gate_ai_wait.h, lockstep_ai_wait_rng.h). */
 #define LX_AI_WAIT_SLOT_VA 0x3b2a680u       /* U::AI::WaitAction vtable 0x3b2a650, restore slot +0x30 (Windows +0x28) */
 #define LX_AI_WAIT_RESTORE_VA 0x10c12b0u    /* WaitAction::Reattach (Windows 0x10a50d0) */
@@ -568,5 +571,6 @@ static const lx_site lx_sites[]={
     {"warp_frame_product",0x16159fc,0xdc,"19304b1b7f1635dbfe80dde7fafb98b4973558057950193979d2454a2c7028a4"},
     {"warp_frame_call",0x1615817,0x55,"6e5b13caa6d9d2bd929c9152e64dbf1b4e89125bd790404135eec06fa88c685a"},
     {"warp_gtrt",0x18a0090,0x3e0,"8489683612cc942bd00c117405c4b2ba6e02307198a653f05b574d2e62b08ccd"},
+    {"warp_exit_sum",0x16152fc,0x57,"8796bf36163293c7d9ba764f473ccdd9b81cf114c9db8bdbc791f6884fa36436"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */

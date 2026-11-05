@@ -291,6 +291,10 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_viewf_write then   -- diagnostic: the joiner writes the session's VIEWF words (off: a joiner's window flips after its STOP)
   assert(gate.join_viewf_write and gate.join_viewf_write(1)==1,'join viewf write refused')
  end
+ if cfg.native_gate_join_viewf_bits~=nil then   -- the bits of the session's VIEWF flag words a joiner takes (1 parent, 8 pose; 0 off)
+  local m=cfg.native_gate_join_viewf_bits
+  assert(type(m)=='number' and gate.join_viewf_bits and gate.join_viewf_bits(m)==1,'join viewf bits refused')
+ end
  if cfg.native_gate_join_view_skip then   -- diagnostic: view-bank writes a joiner's admission leaves out (1 VIEWF, 2 VIEWK, 4 VIEWP, 8 GRAVD)
   assert(gate.join_view_skip and gate.join_view_skip(cfg.native_gate_join_view_skip)==1,'join view skip refused')
  end
@@ -2940,6 +2944,13 @@ local function frame()
     gate.tempzone_order(mode)==1,'tempzone order refused')
    log('TEMPZONE_ORDER_ARMED mode='..mode)
   end
+  -- The gate exit sum (linux/gate_warp_exit.h): the gate poster adds the exit's z from four extents; MSVC and GCC
+  -- associate that sum apart (1 ulp). The Linux gate runs the poster's own instructions in the Windows order; Windows
+  -- is that order, so a Windows client has nothing to arm. Default off.
+  if cfg.native_gate_warp_exit and gate.platform and gate.platform()=='linux' then
+   assert(cfg.native_gate_warp_exit==true and snapshot and gate.warp_exit and gate.warp_exit_status and gate.warp_exit()==1,'warp exit refused')
+   log('WARP_EXIT_ARMED')
+  end
   -- Object attention timer (0x6d1ff0) for every portable object, not only the
   -- fixture actors: the loading-time due is replaced by "due now" at the first
   -- admitted call per portable ID, and every call draws its next due from a
@@ -4490,6 +4501,7 @@ local function frame()
   if cfg.native_gate_warp_rng then log('WARP_RNG_STOP '..tostring(gate.warp_rng_status())) end
   if cfg.native_gate_transition_rows then log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end
   if cfg.native_gate_tempzone_order then log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end
+  if cfg.native_gate_warp_exit and gate.warp_exit_status then log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end
   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end
   if cfg.native_gate_attention_all then log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end
   if cfg.native_gate_view_points then log('VIEW_POINTS_STOP '..tostring(gate.view_points_status())) end
@@ -4857,6 +4869,9 @@ local function frame()
    log('TEMPZONE_ROW '..row);row_cursors.tempzone=row_cursors.tempzone+1
   end
  end
+ if cfg.native_gate_warp_exit and gate.warp_exit_status then
+  ticklog.status('WARP_EXIT',tick,gate.warp_exit_status,'warp exit status unavailable')
+ end
  if cfg.native_gate_command_order then
   ticklog.status('COMMAND_ORDER',tick,gate.command_order_status,'command order status unavailable')
   for _=1,4096 do
@@ -5207,6 +5222,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_warp_rng then ticklog.try(function() log('WARP_RNG_STOP '..tostring(gate.warp_rng_status())) end) end
    if cfg.native_gate_transition_rows then ticklog.try(function() log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end) end
    if cfg.native_gate_tempzone_order then ticklog.try(function() log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end) end
+   if cfg.native_gate_warp_exit and gate.warp_exit_status then ticklog.try(function() log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end) end
    if cfg.native_gate_path_transforms then ticklog.try(function() log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end) end
    if cfg.native_gate_body_pose then ticklog.try(function() log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end) end
    if cfg.native_gate_gravidar_wide then ticklog.try(function() log('GRAVIDAR_WIDE_STOP '..tostring(gate.gravidar_wide_status())) end) end

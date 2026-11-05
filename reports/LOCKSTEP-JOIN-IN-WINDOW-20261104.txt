@@ -341,3 +341,18 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   (+0xed8, +0xee8): NAV/NAVT carry those for navigation agents only (asked of the hot join); the rebuilt P_k's own fields
   +0x6a08 (a flag), +0x6e48 and +0x6e50 (two times, -1.0 on the joiner): carried by the resume from build250 on (pk_fields
   in pilot_state).
+
+19. w1z9 (build251: PBNK, AGTT +0xf40, the rebuilt P_k's fields; 5 November)
+- PBNK (the hot join: the PlayerController agents' pathing banks by role, NAV's and NAVT's fields) and AGTT's last travel
+  decision time (+0xf40: an ordinary J1's 168 extra travel decisions at T+1, x4mods-28 j1-157). T+1 4 differ (6dae5, 176c95,
+  176cef: the last comes and goes between runs; 800259fc's nav timing), 900 711 (w1z8 727). Slot 2's agent is down to 21
+  differing value words. The resume's three P_k fields (+0x6a08, +0x6e48, +0x6e50) arrive; +0x6e50 differs between the
+  session's own two clients (a per-client time), so it carries one saver's value harmlessly.
+- 21 more of slot 2's P_k fields (+0x6a18..+0x6e40: values like 2000, -50000, -286000, the word at +0x6a90) are set on the
+  session in w1z9 and 0 on the joiner; the session's two clients agree on them, but w1z8's session had them 0 too. So they
+  depend on the session run itself (an event, or bytes a rebuilt player never sets), not on the join; not carried until
+  their writer is known (a blind copy of the player's block could pair a count with an empty vector).
+- The ordinary J1's split at 651 (x4mods-28, j1-153..158): the radar's view of ships that changed parent after T. The hot
+  join's GRAVP restore wrote the session's T poses back for ten steps after T+1, over the joiner's own republication at a
+  zone change or an undock (0x92789 at 636/637, the XS ship at 641); fix in the hot join: drop a restore entry once its
+  cached parent differs.

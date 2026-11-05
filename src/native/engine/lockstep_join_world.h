@@ -1370,9 +1370,16 @@ static uint64_t join_runtime_of(const join_tables *mine,uint64_t portable);   /*
  * attention every frame (0x6f256, attention 6) and the rest on its own occasions. So every view of every GRAVP or VIEWP object whose
  * published attention (VIEWF) is below JOIN_VIEWF_KEEP gets the session's pose of that view back, by the view's slot as the
  * admission mapped it (the slots swap roles every frame, their contents stay). */
-typedef struct {uint64_t runtime;uint32_t slot;const unsigned char *pose;} join_gravp_settled;
+/* j1-158 (JOIN_WATCH, JOIN_WATCHPCF on 0x92789 and the XS ship c:8002306b2d933056): the restore ran over the engine's own
+ * republication. 0x92789 changes zone at 636: on both sides BuildCache (0x3d4d0f, flags 0x19) republishes view 1 at 636 and view 0 at
+ * 637 with the new zone 0x10e as cached parent and the pose relative to it; the joiner's restores after 637 and 638 put the pose
+ * relative to the old zone 0x109 back under the new parent (its radar position from 644: the new zone plus the old pose, 15 units
+ * lose it). The XS ship undocks at 641 (cached parent dock part 0x8d8b2 -> zone 0x29), the restores after 642 and 643 put its pose
+ * relative to the dock back (its radar position: the zone's origin, 3 units fewer add it at 643). So each entry keeps its view's
+ * cached parent after the admission and is dropped for good once the view names another one (status gravp_moved). */
+typedef struct {uint64_t runtime;uint32_t slot,dropped;const unsigned char *pose;unsigned char *parent;} join_gravp_settled;
 static join_gravp_settled *join_gravp_set;static uint32_t join_gravp_nset,join_gravp_setcap;
-static uint64_t join_gravp_restored,join_gravp_checked,join_gravp_gone;
+static uint64_t join_gravp_restored,join_gravp_checked,join_gravp_gone,join_gravp_moved;
 static int join_gravp_low_attention(const join_tables *s,uint64_t portable) {
     uint32_t lo=0,hi=s->nviewf;
     while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(s->viewf[mid].portable<portable) lo=mid+1u;else hi=mid;}
@@ -1381,19 +1388,19 @@ static int join_gravp_low_attention(const join_tables *s,uint64_t portable) {
 }
 static void join_gravp_settled_build(const join_tables *s,const join_tables *mine) {
     const uint32_t cur=join_view_index();
-    free(join_gravp_set);join_gravp_set=NULL;join_gravp_nset=join_gravp_setcap=0;join_gravp_restored=join_gravp_checked=join_gravp_gone=0;
+    free(join_gravp_set);join_gravp_set=NULL;join_gravp_nset=join_gravp_setcap=0;join_gravp_restored=join_gravp_checked=join_gravp_gone=join_gravp_moved=0;
     for(uint32_t i=0;i<s->ngravp;i++) {
         const join_gravp_rec *a=&s->gravp[i];
         if(!(a->flags&JOIN_GRAVP_PRESENT) || a->rel>1u || !join_gravp_low_attention(s,a->portable)) continue;
         const uint64_t runtime=join_runtime_of(mine,a->portable);
-        join_gravp_settled e={runtime,cur^a->rel,a->pose};
+        join_gravp_settled e={runtime,cur^a->rel,0u,a->pose,NULL};
         if(runtime && !JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) return;
     }
     for(uint32_t i=0;i<s->nviewp;i++) {   /* VIEWP: the other zone-held objects' settled poses, both slots */
         if(!join_gravp_low_attention(s,s->viewp[i].portable)) continue;
         const uint64_t runtime=join_runtime_of(mine,s->viewp[i].portable);
         for(uint32_t v=0;v<2u && runtime;v++) {
-            join_gravp_settled e={runtime,v,s->viewp[i].pose};
+            join_gravp_settled e={runtime,v,0u,s->viewp[i].pose,NULL};
             if(!JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) return;
         }
     }
@@ -1409,11 +1416,30 @@ static unsigned join_view_skip;
  * 1), and the census is the same (900: 172 both ways; j1-82 already: equal to no VIEWF). The package still carries VIEWF: the
  * restore after T+1 selects its low-attention objects by the session's published attention. */
 static int join_viewf_write;
+/* native_gate_join_viewf_bits (default 0): without join_viewf_write, the joiner takes only these bits of the session's VIEWF flag
+ * words (both views; the attention and the other bits stay its own), as with join_viewf_write never on a kept object (in flight, or
+ * above one). PropagateCacheFlags 0x3d46b0 republishes a view's part only while the view's word holds its bit (1 the cached parent
+ * from the live one, 2 the children, 8 the pose, 0x40 the attention) and clears the bit where the live flags +0x1e4 hold it; a load
+ * leaves the current view's words pending (0x240059, 0x40059 where the session has 0x250058, 0x10040). j1-157: the joiner refreshes
+ * the cached parent of 0x92789 at its zone change but not its pose (its radar position: the new zone plus the pose relative to the
+ * old one). */
+static uint32_t join_viewf_bits;
+/* Each entry's view's cached parent at the end of the admission (after GRAVD wrote the ships' ones). */
+static void join_gravp_settled_parents(void) {
+    for(uint32_t i=0;i<join_gravp_nset;i++) {
+        unsigned char *object=join_object(join_gravp_set[i].runtime),*parent=NULL;
+        if(object && join_read(object+JOIN_VIEW_SLOTS+(size_t)join_gravp_set[i].slot*0x80u,&parent,8)) join_gravp_set[i].parent=parent;
+    }
+}
 static void join_gravp_restore(void) {
     if(join_view_skip&4u) return;
     for(uint32_t i=0;i<join_gravp_nset;i++) {
+        if(join_gravp_set[i].dropped) continue;
         unsigned char *object=join_object(join_gravp_set[i].runtime);const unsigned char *want=join_gravp_set[i].pose;
         if(!object) {++join_gravp_gone;continue;}
+        unsigned char *parent=NULL;
+        if(!join_read(object+JOIN_VIEW_SLOTS+(size_t)join_gravp_set[i].slot*0x80u,&parent,8)) continue;
+        if(parent!=join_gravp_set[i].parent) {join_gravp_set[i].dropped=1;++join_gravp_moved;continue;}   /* republished by the engine */
         unsigned char *pose=NULL,own[0x40];
         if(!join_read(object+JOIN_VIEW_SLOTS+(size_t)join_gravp_set[i].slot*0x80u+JOIN_VIEW_POSE,&pose,8) || !pose || !join_read(pose,own,sizeof(own))) continue;
         ++join_gravp_checked;
@@ -4644,7 +4670,7 @@ static int join_admit_world(void) {
     join_watch_dump('k',s->gate.tick);   /* the joiner's own views before VIEWK and VIEWF */
     if(s->version>=13 && s->nviewk && !(join_view_skip&2u)) join_admit_viewk(s,&mine);   /* version 13: the views the session left unpublished, as its */
     if(s->version>=13 && s->nviewf) {join_viewf_hist_n=0;join_viewf_keep_build(s,&mine);}
-    if(s->version>=13 && s->nviewf && join_viewf_write && !(join_view_skip&1u)) {   /* opt-in (diagnostic): every view's flags as the session's (a load leaves its current view pending) */
+    if(s->version>=13 && s->nviewf && (join_viewf_write || join_viewf_bits) && !(join_view_skip&1u)) {   /* opt-in (diagnostic): every view's flags as the session's (a load leaves its current view pending), or only join_viewf_bits of them */
         const uint32_t cur=join_view_index();
         for(uint32_t i=0;i<s->nviewf;i++) {
             unsigned char *object=join_object(join_runtime_of(&mine,s->viewf[i].portable));
@@ -4654,11 +4680,12 @@ static int join_admit_world(void) {
                 unsigned char *at=object+JOIN_VIEW_SLOTS+(size_t)(cur^rel)*0x80u+JOIN_VIEW_FLAGS;uint32_t have=0;
                 if(!join_read(at,&have,4)) {++join_rx.viewf_missing;continue;}
                 uint32_t att=0;unsigned char *aat=object+JOIN_VIEW_SLOTS+(size_t)(cur^rel)*0x80u+JOIN_VIEW_ATTENTION;
-                if(join_read(aat,&att,4) && att!=s->viewf[i].attention[rel] && join_poke((uintptr_t)aat,&s->viewf[i].attention[rel],4)) ++join_rx.viewf_attention;
-                if(have==s->viewf[i].flags[rel]) ++join_rx.viewf_equal;
+                if(join_viewf_write && join_read(aat,&att,4) && att!=s->viewf[i].attention[rel] && join_poke((uintptr_t)aat,&s->viewf[i].attention[rel],4)) ++join_rx.viewf_attention;
+                const uint32_t want=join_viewf_write?s->viewf[i].flags[rel]:(have&~join_viewf_bits)|(s->viewf[i].flags[rel]&join_viewf_bits);
+                if(have==want) ++join_rx.viewf_equal;
                 else {
-                    join_viewf_hist_add(rel,have,s->viewf[i].flags[rel]);
-                    if(join_poke((uintptr_t)at,&s->viewf[i].flags[rel],4)) ++join_rx.viewf_written;
+                    join_viewf_hist_add(rel,have,want);
+                    if(join_poke((uintptr_t)at,&want,4)) ++join_rx.viewf_written;
                 }
             }
         }
@@ -4666,7 +4693,8 @@ static int join_admit_world(void) {
     {double now=0;memcpy(&now,&s->gate.game,8);   /* census: what this load scheduled, against the session's (JOIN_STATUS evq/evq_rx) */
      join_evq_census(now,&join_rx.evq_sources,&join_rx.evq_events,&join_rx.evq_due,&join_rx.evq_fault,join_rx.evq_top,sizeof(join_rx.evq_top));
      join_evq_dump('j',now);}
-    if(s->version>=13 && s->nviewf && join_viewf_write) join_viewf_hist_note();   /* diagnostic */
+    if(s->version>=13 && s->nviewf && (join_viewf_write || join_viewf_bits)) join_viewf_hist_note();   /* diagnostic */
+    if(s->version>=13) join_gravp_settled_parents();   /* the restore's cached parents, after GRAVD, VIEWK and VIEWF */
     for(unsigned i=0;i<join_watch.n;i++) join_watch.runtime[i]=join_runtime_of(&mine,join_watch.portable[i]);   /* diagnostic */
     join_watch_dump('j',s->gate.tick);
     if(s->version>=13 && s->njobe) {   /* version 13: the job engine's schedule (main thread, phase 3: its update does not run) */
