@@ -210,3 +210,22 @@ The pilot_state text grew (m5 about 4 KB of hex, the consumed keys up to 64 KB):
 package's LUA section takes up to 1 MB.
 Offline: test_pilot_join_modules (round trip, the merge order of carried and caught-up claims, three refusals, malformed
 entries named). Live: next in-window run.
+
+12. R5 LIVE (w1y, w1z; build238 = R5 and the hot join's VIEWF writes off, 4 November)
+- w1y: stop 91 at the joiner's first pass, join_resume=slot_respawned, no death anywhere. The slots' runtime IDs in the
+  package (0x6c725, 0x22bce, 0x8c66e, as the IDS section maps the window's ships) were not the joiner's: the in-window runs
+  so far had native_gate_join_ids off (a diagnostic key, default off; the J1 runs set it), so the joiner's loaded objects
+  took IDs of its own load order (JOIN_STATUS ids=idle). R5's check refused as designed. w1w and w1x had run that way too:
+  their slots resolved by saved identity, but every runtime-ID keyed record (UI replay events, the slots' rows) would have
+  meant other objects on the joiner.
+- w1z (w1y with native_gate_join_ids and native_gate_join_hold_boot_events, as the J1 runs): ids=armed (523,584 placed,
+  76 refused), join_resume=resumed at 634 with R5 applied (the carried leases: the joiner's fire module never leased,
+  installs 0, slots 1 and 2 at 2 guns each as on the session), the joiner ran the window to the session's end (stop
+  reason 1 at 1199). Census: T+1 527,168 of 527,172 equal (motion of three Xenon fighters 6dae5, 176c95, 176cef; one
+  created object's nav.refresh_time/refresh_relation); 900: 728 differ (motion 698, health 42, topology 27, timing 17;
+  47 on one side only). An ordinary J1 on the same build (the window after T: x4mods-28's j1-138) has T+1 0 and 900 172,
+  so the window adds those 4 at T+1 and about 556 at 900.
+- The joiner's window after its end, captured: 0 blips; the 36 frames after the end banner (3.3 s) all the same image
+  (w1x flipped there). The flip was the hot join's VIEWF writes (roadmap 18c).
+Next: native_gate_join_ids for every in-window joiner (the join overlays, as the build refresh); the three fighters at T+1
+with a watch run (they are in the J1 watch list too); R6.
