@@ -2295,15 +2295,16 @@ static void join_refcounts_dump(uint64_t tick) {
 #include <tlhelp32.h>
 #endif
 #define JOIN_RW_SET 0xE04A5257u
-#define JOIN_RW_ROWS 1024u
+#define JOIN_RW_ROWS 16384u
 #define JOIN_RW_CHAIN 6u
-typedef struct {uint64_t tick;uint32_t slot,count;uint64_t rip;uint64_t chain[JOIN_RW_CHAIN];uint64_t value;} join_rw_row;
+typedef struct {uint64_t tick;uint32_t slot,count;uint64_t rip;uint64_t chain[JOIN_RW_CHAIN];uint64_t value;uint64_t regs[4];} join_rw_row;   /* regs: rax, rbx, r12, r13 */
 /* native_gate_join_refwatch = {'<portable>:<deref>/<deref>:<offset>:<len>', ...} (hex; up to four; the derefs may be empty, len 1, 2, 4
  * or 8): watch that field instead (object -> *(object+deref) ... -> +offset). Without it: the first four watched objects' counts +0x40.
  * The portable ID must also be in native_gate_join_watch (the watch resolves it). */
 typedef struct {uint64_t portable;uint32_t nderef,deref[3],offset,len;} join_rw_spec_t;
 static join_rw_spec_t join_rw_spec[4];static uint32_t join_rw_nspec;
 static uint32_t join_rw_len[4];
+static unsigned char join_rw_exec[4];   /* an execution breakpoint (the pseudo ID fffffffffffffffe: the image, offset = RVA, len 1) */
 static int join_rw_add(const char *text,size_t length) {   /* 1 added, 0 refused */
     join_rw_spec_t s;memset(&s,0,sizeof(s));size_t i=0;unsigned field=0;uint64_t v=0;int digits=0;
     for(;i<=length;i++) {
@@ -2333,6 +2334,7 @@ static DWORD64 join_rw_dr7(void) {
     DWORD64 dr7=0;
     for(unsigned i=0;i<4u;i++) if(join_rw_addr[i]) {   /* local enable, write; LEN 00 1 byte, 01 2, 11 4, 10 8 */
         const unsigned len=join_rw_len[i]==1u?0u:join_rw_len[i]==2u?1u:join_rw_len[i]==8u?2u:3u;
+        if(join_rw_exec[i]) {dr7|=1ull<<(2u*i);continue;}   /* RW 00 execute, LEN 00 */
         dr7|=(1ull<<(2u*i))|(1ull<<(16u+4u*i))|((DWORD64)len<<(18u+4u*i));
     }
     return dr7;
@@ -2355,7 +2357,9 @@ static LONG CALLBACK join_rw_veh(EXCEPTION_POINTERS *e) {
     if(k<(LONG)JOIN_RW_ROWS) {
         join_rw_row *r=&join_rw_rows[k];uint64_t v=0;const uint32_t len=join_rw_len[slot]?join_rw_len[slot]:4u;
         r->tick=stats.issued;r->slot=slot;r->rip=c->Rip;
-        if(join_read((void *)join_rw_addr[slot],&v,len)) {r->value=v;r->count=(uint32_t)v;} else {r->value=~0ull;r->count=0xffffffffu;}
+        if(join_rw_exec[slot]) {r->value=c->Rax;r->count=(uint32_t)c->R13;}
+        else if(join_read((void *)join_rw_addr[slot],&v,len)) {r->value=v;r->count=(uint32_t)v;} else {r->value=~0ull;r->count=0xffffffffu;}
+        r->regs[0]=c->Rax;r->regs[1]=c->Rbx;r->regs[2]=c->R12;r->regs[3]=c->R13;
         CONTEXT u=*c;
         for(unsigned f=0;f<JOIN_RW_CHAIN;f++) {
             DWORD64 base=0;PVOID data=NULL;DWORD64 frame=0;
@@ -2367,6 +2371,7 @@ static LONG CALLBACK join_rw_veh(EXCEPTION_POINTERS *e) {
         }
     } else InterlockedIncrement64(&join_rw_dropped);
     c->Dr6=0;
+    if(join_rw_exec[slot]) c->EFlags|=0x10000u;   /* RF: run the instruction once without the breakpoint */
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 static void join_rw_apply(void) {   /* the debug registers of every thread of the process to join_rw_addr */
@@ -2400,10 +2405,12 @@ static void join_rw_arm(int on) {
         if(on && join_rw_nspec) {
             if(i<join_rw_nspec) {
                 const join_rw_spec_t *s=&join_rw_spec[i];unsigned char *o=NULL;
-                for(unsigned w=0;w<join_watch.n;w++) if(join_watch.portable[w]==s->portable) {o=join_watch.object[w];break;}
+                if(s->portable==~0ull) o=join_jobe_engine();   /* the pseudo ID ffffffffffffffff: the job engine (JOIN_JOBQ) */
+                else if(s->portable==~1ull) o=(unsigned char *)image;   /* fffffffffffffffe: the image (an execution breakpoint) */
+                for(unsigned w=0;w<join_watch.n && !o;w++) if(join_watch.portable[w]==s->portable) {o=join_watch.object[w];break;}
                 for(uint32_t d=0;o && d<s->nderef;d++) {unsigned char *p=NULL;o=join_read(o+s->deref[d],&p,8)?p:NULL;}
                 if(o) a=(uintptr_t)(o+s->offset);
-                len=s->len;
+                len=s->len;join_rw_exec[i]=s->portable==~1ull;
             }
         } else if(on && i<join_watch.n && join_watch.object[i]) a=(uintptr_t)(join_watch.object[i]+0x40);
         join_rw_addr[i]=a;join_rw_len[i]=len;
@@ -2464,6 +2471,9 @@ static size_t join_rw_rows_text(char *out,size_t cap,char side,uint64_t tick) {
             if(a>=lo && a<hi) at+=(size_t)snprintf(out+at,cap-at,"%s%x",f?",":"",(unsigned)(a-lo));
             else at+=(size_t)snprintf(out+at,cap-at,"%sx%x",f?",":"",(unsigned)a);
         }
+        if(join_rw_nspec && r->slot<join_rw_nspec && join_rw_spec[r->slot].portable==~1ull)
+            at+=(size_t)snprintf(out+at,cap-at," regs=%llx,%llx,%llx,%llx",(unsigned long long)r->regs[0],(unsigned long long)r->regs[1],
+                                 (unsigned long long)r->regs[2],(unsigned long long)r->regs[3]);
         at+=(size_t)snprintf(out+at,cap-at,"\r\n");
         join_rw_shown=k+1;
     }
@@ -2511,6 +2521,8 @@ static void join_objsample_dump(uint64_t tick) {
  * there on the session, none on the joiner; NPC Move 0x6bc420 skips its whole behaviour block, the +0x5b0 stamp included, at
  * 0x6bc611 when it is null). Rows id:set:vt:[+0x1f0] (vt the pointee's vtable RVA, 0 outside the image), 48 per line. */
 static void join_jobdump(char side,uint64_t tick);   /* lockstep_join.h: JOIN_JOBDUMP */
+static void join_jobq_dump(char side,uint64_t tick);   /* lockstep_join.h: JOIN_JOBQ */
+static void join_jobcnt_dump(uint64_t tick);   /* lockstep_join.h: JOIN_JOBCNT */
 #define JOIN_NPC_VT 0x2b38a48u
 #define JOIN_NPC_SLOT 0x5a0u
 static void join_npcslot_dump(char side,uint64_t tick) {
@@ -2550,7 +2562,7 @@ static void join_npcslot_dump(char side,uint64_t tick) {
 static void join_watch_dump(char side,uint64_t tick) {
     if(!join_watch.n) return;
     if(side=='t' || side=='k' || side=='s') join_npcslot_dump(side,tick);
-    if(side=='t' || side=='k' || side=='s') join_jobdump(side,tick);
+    if(side=='t' || side=='k' || side=='s') {join_jobdump(side,tick);join_jobq_dump(side,tick);}
     if(side=='t') join_objsample_dump(tick);
     if(side=='t') join_refcounts_dump(tick);
     {static int tried;if(!tried && thunk) {tried=1;(void)join_pcf_install();}}   /* the thunk page exists from the gate's start */
@@ -2934,6 +2946,9 @@ static void join_rw_early_probe(uint64_t completed) {
         uintptr_t a=0;uint32_t len=4u;
         if(i<join_rw_nspec) {
             const join_rw_spec_t *s=&join_rw_spec[i];unsigned char *o=NULL;len=s->len;
+            if(s->portable==~0ull) o=join_jobe_engine();   /* the job engine */
+            else if(s->portable==~1ull) o=(unsigned char *)image;   /* the image: an execution breakpoint */
+            join_rw_exec[i]=s->portable==~1ull;
             for(unsigned k=0;k<WORLD_IDENTITY_CAPACITY && !o;k++)
                 if(world_identities[k].runtime && world_identities[k].saved==s->portable) o=join_object(world_identities[k].runtime);
             for(uint32_t d=0;o && d<s->nderef;d++) {unsigned char *p=NULL;o=join_read(o+s->deref[d],&p,8)?p:NULL;}
@@ -2947,8 +2962,35 @@ static void join_rw_early_probe(uint64_t completed) {
     (void)completed;
 #endif
 }
+/* JOIN_SHIPCODE (diagnostic, at native_gate_join_jobcnt_at's step): every created ship's code, the std::string at +0x328 (vt+0x12c0;
+ * vt+0x1330 0x6cd820 is its FNV-1a hash, which seeds the job quota 0xefda70's draw: j1-223 at 902, the linked jobs' quotas 2 and 1
+ * on the session, 1 and 0 on the joiner after the same first spawn). */
+static uint64_t join_jobcnt_at;   /* lockstep_join.h (a tentative definition here) */
+static void join_shipcode_dump(uint64_t tick) {
+    if(!join_jobcnt_at || tick!=join_jobcnt_at) return;
+    static const uint32_t ships[]={0x2b7d738u,0x2b7feb8u,0x2b82440u,0x2b9bff8u,0x2b99a88u};
+    const size_t cap=1u<<16;char *out=malloc(cap);size_t at=0;if(!out) return;
+    const unsigned total=world_hash_count+world_hash_created_count;
+    for(unsigned i=world_hash_count;i<total;i++) {   /* the created items */
+        const world_hash_item *item=world_hash_item_at(i);const uint64_t runtime=item->runtime,key=item->saved;if(!runtime) continue;
+        unsigned char *o=join_object(runtime);uintptr_t vt=0;if(!o || !join_read(o,&vt,8)) continue;
+        unsigned k=0;for(;k<5u;k++) if(vt==(uintptr_t)image+ships[k]) break;
+        if(k>=5u) continue;
+        uint64_t size=0,capacity=0;char code[64];unsigned char *text=o+0x328;
+        if(!join_read(o+0x338,&size,8) || !join_read(o+0x340,&capacity,8) || size>=sizeof(code)) continue;
+        if(capacity>=16u) (void)join_read(o+0x328,&text,8);
+        if(!text || !join_read(text,code,(size_t)size)) continue;
+        code[size]=0;
+        if(at+128u>=cap) {crash_note_write(out,(int)at);at=0;}
+        at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_SHIPCODE tick=%llu id=%llx code=%s""\r\n",(unsigned long long)tick,(unsigned long long)key,code);
+    }
+    if(at) crash_note_write(out,(int)at);
+    free(out);
+}
 static void join_watch_probe(uint64_t completed) {
     join_rw_early_probe(completed);
+    join_jobcnt_dump(completed);
+    join_shipcode_dump(completed);
     if(!join_watch.armed || completed<=join_watch.tick) return;
     const uint64_t k=completed-join_watch.tick;
     if(k==1u || k==14u) join_buildp_dump(k==1u?'t':'v',completed);
@@ -3490,6 +3532,31 @@ static void join_admit_npca(const join_tables *s,const join_tables *mine) {
         uint64_t index=0;
         if(anim && join_read(anim+JOIN_NPCA_INDEX,&index,8) && (uint32_t)index!=r->index) ++join_npca_index_differs;
     }
+}
+/* CODE (v13, section 69; the admission opt-in, native_gate_join_code): X4's object codes ("ABC-123", ship and NPC +0x328 / +0x2a0) come
+ * from 0x6ea780: a global counter (0x38f0ae8, wrapped at 2^24) advanced for every new code, mixed with the game's code seed (0x3d19860,
+ * low 24 bits) and spelled by 0x6ea820. A code seeds more than its name: ship vt+0x1330 0x6cd820 is the FNV-1a hash of it, and the job
+ * quota 0xefda70 draws from that seed [F: j1-223 at 902 (a refwatch execution breakpoint on 0xf04817): after the same first spawn the
+ * linked jobs' quotas 2 and 1 on the session, 1 and 0 on the joiner: two job ships more and another order]. The load starts the counter
+ * at 0 (0x9edb60). The capture writes the counter and the seed; with the opt-in the admission writes the session's counter.
+ * Status code=on:written:session counter:own counter:session seed:own seed. */
+#define JOIN_CODE_COUNTER 0x38f0ae8u
+#define JOIN_CODE_SEED 0x3d19860u
+static int join_code_on;
+static uint32_t join_code_written,join_code_session_counter,join_code_own_counter,join_code_session_seed,join_code_own_seed;
+static void join_capture_code(join_tables *t) {
+    uint32_t counter=0,seed=0;uint32_t cap=0;
+    if(!join_read(image+JOIN_CODE_COUNTER,&counter,4) || !join_read(image+JOIN_CODE_SEED,&seed,4)) return;
+    join_code_rec r={counter>0x1000000u?0x1000000u:counter,seed&0xffffffu};
+    (void)JOIN_PUSH(t->code,t->ncode,cap,r);
+}
+static void join_admit_code(const join_tables *s) {
+    join_code_written=0;join_code_own_counter=join_code_own_seed=0;
+    if(!s->ncode) return;
+    join_code_session_counter=s->code[0].counter;join_code_session_seed=s->code[0].seed;
+    (void)join_read(image+JOIN_CODE_COUNTER,&join_code_own_counter,4);(void)join_read(image+JOIN_CODE_SEED,&join_code_own_seed,4);
+    join_code_own_seed&=0xffffffu;
+    if(join_code_on && join_poke((uintptr_t)(image+JOIN_CODE_COUNTER),&s->code[0].counter,4)) join_code_written=1;
 }
 /* SHPW (v13, section 65; the admission opt-in, native_gate_join_shpw): ship object words a load leaves at defaults [F: w1z28, the
  * hot join's watch on four traders and miners (TradeRoutine, linear flight): the ship objects differ from the load on in +0x3b0..
@@ -4204,6 +4271,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_shpw(t);            /* version 13 */
     join_capture_trdn(t);            /* version 13 */
     join_capture_npca(t);            /* version 13 */
+    join_capture_code(t);            /* version 13 */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
     join_capture_pend(t);            /* version 13 */
@@ -5823,6 +5891,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_shpw(s,&mine);    /* the ships' words a load leaves at defaults (opt-in) */
     if(s->version>=13) join_admit_trdn(s,&mine);    /* the containers' next trade offer update (opt-in) */
     if(s->version>=13) join_admit_npca(s,&mine);    /* the NPCs' activation (opt-in) */
+    if(s->version>=13) join_admit_code(s);          /* the object code counter (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */

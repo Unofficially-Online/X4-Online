@@ -309,6 +309,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_jobw then   -- experiment: a joiner writes the session's job state +0x48 (JOBS)
   assert(gate.join_jobw and gate.join_jobw(1)==1,'join jobw refused')
  end
+ if cfg.native_gate_join_code then   -- a joiner takes the session's object code counter (CODE)
+  assert(gate.join_code and gate.join_code(1)==1,'join code refused')
+ end
  if cfg.native_gate_join_ecos then   -- a joiner takes the session's economy schedules (ECOS)
   assert(gate.join_ecos and gate.join_ecos(1)==1,'join ecos refused')
  end
@@ -354,6 +357,10 @@ if cfg.native_gate_join then
   local jd=cfg.native_gate_join_jobdump
   assert(type(jd)=='table' and #jd>=1 and #jd<=8 and gate.join_jobdump,'native_gate_join_jobdump needs 1..8 job hashes')
   for i=1,#jd do assert(type(jd[i])=='string' and gate.join_jobdump(jd[i])==1,'invalid join jobdump hash') end
+ end
+ if cfg.native_gate_join_jobcnt_at~=nil then   -- JOIN_JOBCNT rows after this step (diagnostic)
+  local n=cfg.native_gate_join_jobcnt_at
+  assert(type(n)=='number' and gate.join_jobcnt_at and gate.join_jobcnt_at(n)==n,'native_gate_join_jobcnt_at needs 1 .. 100000')
  end
  if cfg.native_gate_join_refwatch_from~=nil then   -- a saver arms those fields from this step on (snapshot objects; diagnostic)
   local n=cfg.native_gate_join_refwatch_from

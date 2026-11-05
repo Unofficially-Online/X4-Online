@@ -76,6 +76,8 @@ static int lua_join_npca(lua_State *L) {join_npca_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_jobg(lua_State *L) {join_jobg_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_jobw(on): a joiner writes the session's job state +0x48 (experiment, default off). */
 static int lua_join_jobw(lua_State *L) {join_jobw_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_code(on): a joiner takes the session's object code counter (CODE, default off). */
+static int lua_join_code(lua_State *L) {join_code_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 static int lua_join_rcnt(lua_State *L) {join_rcnt_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_pend(on): a joiner takes the session's pending view cache flags (PEND; lockstep_join_world.h; default off). */
 static int lua_join_pend(lua_State *L) {join_pend_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
@@ -103,6 +105,12 @@ static int lua_join_watch(lua_State *L) {
         if(v>15u) ok=0;else id=id<<4|v;
     }
     p_lua_pushnumber(L,ok?(double)join_watch_add(id):0.0);return 1;
+}
+/* gate.join_jobcnt_at(n): JOIN_JOBCNT rows after step n (1 .. 100000); n, 0 refused. */
+static int lua_join_jobcnt_at(lua_State *L) {
+    const double n=p_lua_tonumber(L,1);const int ok=isfinite(n) && floor(n)==n && n>=1.0 && n<=100000.0;
+    if(ok) join_jobcnt_at=(uint64_t)n;
+    p_lua_pushnumber(L,ok?n:0.0);return 1;
 }
 /* gate.join_jobdump(hash): one more job for JOIN_JOBDUMP (16 hex digits, the FNV-1a hash of its ID); 1, 0 refused. */
 static int lua_join_jobdump(lua_State *L) {
