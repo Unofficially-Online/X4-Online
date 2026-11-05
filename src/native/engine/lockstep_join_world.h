@@ -727,7 +727,15 @@ static const join_steer_class join_steer_classes[]={
     /* SpiralBehaviour (0x30, the factory 0xec6249): +0x20 its creation time (the weave's phase in its update 0xed5d10:
      * sincos((now - +0x20) * k)), +0x28 a thread draw (draw % 100 > 50: the spiral's direction). Not carried, a loaded one has
      * the load's time and its own draw: w1z25, 176c95's want +0x1e0 (0.3086 on the session, -0.7635 on the joiner). */
-    {0x2c4e3c0u,4,{{0x10,2,0},{0x18,4,0},{0x20,8,0},{0x28,1,0}}}};
+    {0x2c4e3c0u,4,{{0x10,2,0},{0x18,4,0},{0x20,8,0},{0x28,1,0}}},
+    /* The factory's other constructors that draw (its scan, w1z26: 176cef's active DogfightBehaviour2 uncarried, its want
+     * +0x1d0 54.11 against -85.09): */
+    {0x2c4db70u,5,{{0x10,2,0},{0x20,0x40,1},{0x60,0x18,0},{0x80,4,0},{0x88,8,0}}},  /* DogfightBehaviour2 (0x90: Dogfight1's, +0x80 a draw +-1, +0x88 its creation time) */
+    {0x2c4dcf0u,4,{{0x10,2,0},{0x18,4,0},{0x20,0x18,0},{0x38,1,0}}},              /* CrazyIvanBehaviour (0x50: its time, two drawn times, a drawn direction) */
+    {0x2c4d1c8u,3,{{0x10,2,0},{0x20,0x40,1},{0x60,10,0}}},                         /* EvasiveRandomSteeringBehaviour (0x70: EvasiveSimple's) */
+    {0x2c4f0c0u,3,{{0x10,2,0},{0x20,0x10,1},{0x30,4,0}}},                          /* ParallelPathSteeringBehaviour (0x40: a drawn offset) */
+    {0x2c4ed00u,5,{{0x10,2,0},{0x18,4,0},{0x20,0x10,0},{0x30,0x10,1},{0x40,1,0}}}, /* FrontalCapitalCombatSteeringBehaviour (0x50: a drawn time) */
+    {0x2c4e6c0u,3,{{0x10,2,0},{0x18,8,0},{0x20,0x40,1}}}};                         /* MiningBehaviour (0x60: a drawn sign) */
 #define JOIN_STEER_NCLASSES ((unsigned)(sizeof(join_steer_classes)/sizeof(*join_steer_classes)))
 static unsigned join_steer_bytes(const join_steer_range *r,unsigned n) {
     unsigned b=0;for(unsigned i=0;i<n;i++) b+=r[i].vectors?r[i].len/16u*12u:r[i].len;return b;

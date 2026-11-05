@@ -285,7 +285,13 @@ STEER_CLASSES = {0x2c4edc0: ((0x10, 2, 0), (0x18, 1, 0)),                       
                  0x2c4e840: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 0x18, 0), (0x80, 0xc, 0), (0x90, 8, 0)),   # ChaseBehaviour
                  0x2c4dab0: ((0x10, 2, 0), (0x18, 5, 0), (0x20, 8, 0)),                            # GainDistanceBehaviour
                  0x2c4d288: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 10, 0)),                        # EvasiveSimpleSteeringBehaviour
-                 0x2c4e3c0: ((0x10, 2, 0), (0x18, 4, 0), (0x20, 8, 0), (0x28, 1, 0))}              # SpiralBehaviour
+                 0x2c4e3c0: ((0x10, 2, 0), (0x18, 4, 0), (0x20, 8, 0), (0x28, 1, 0)),              # SpiralBehaviour
+                 0x2c4db70: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 0x18, 0), (0x80, 4, 0), (0x88, 8, 0)),   # DogfightBehaviour2
+                 0x2c4dcf0: ((0x10, 2, 0), (0x18, 4, 0), (0x20, 0x18, 0), (0x38, 1, 0)),           # CrazyIvanBehaviour
+                 0x2c4d1c8: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 10, 0)),                        # EvasiveRandomSteeringBehaviour
+                 0x2c4f0c0: ((0x10, 2, 0), (0x20, 0x10, 1), (0x30, 4, 0)),                         # ParallelPathSteeringBehaviour
+                 0x2c4ed00: ((0x10, 2, 0), (0x18, 4, 0), (0x20, 0x10, 0), (0x30, 0x10, 1), (0x40, 1, 0)),   # FrontalCapitalCombat...
+                 0x2c4e6c0: ((0x10, 2, 0), (0x18, 8, 0), (0x20, 0x40, 1))}                         # MiningBehaviour
 
 
 def steer_bytes(ranges):

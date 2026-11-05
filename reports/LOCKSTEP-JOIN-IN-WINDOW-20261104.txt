@@ -506,3 +506,19 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   apart, so its remaining input is not slot 1's controller.
 - native_gate_join_pctl (lockstep_join_pctl.h, f9718021; default off): the same words for X4's own PlayerController in any hot
   join: the saver's package line join_pctl, written at the joiner's admission when its controller controls the same ship.
+
+29. THE STEERING BEHAVIOURS' DRAWS (w1z25..w1z27, builds 270..272; 5 November): T+1 1
+- w1z25 (the hot join's JOIN_REFWATCH on 176c95's steering model, ship +0x200 -> +0x40 -> +0xf10, at +0x1d0..+0x1ef): both
+  sides write the want vectors at the same site in step T+1 (0xed5ea8/0xed5eab, the active behaviour's update called from the
+  steering step), the second one's x 0.3086 on the session and -0.7635 on the joiner. The active behaviour was a
+  U::Path::SpiralBehaviour (0x2c4e3c0), which STEER did not know (its record's flag UNCARRIED0): the factory 0xec54b0 builds it
+  at 0x30 bytes with its creation time +0x20 (the weave's phase: sincos((now - +0x20) * k) in its update 0xed5d10) and a thread
+  RNG draw +0x28 (draw % 100 > 50: the spiral's direction). A loaded one has the load's time and its own draw, so the joiner's
+  fighter weaved the other way, and run to run differently (176cef, sections 21..28).
+- w1z26 (build271: STEER carries SpiralBehaviour): 176c95 equal at T+1; 900 46 (55..61 before; topology 9 -> 1). 176cef's active
+  behaviour was a DogfightBehaviour2 (0x90: DogfightBehaviour1's fields, +0x80 a drawn +-1, +0x88 its creation time),
+  uncarried. A scan of the factory finds six constructors that draw from the thread's RNG and that STEER did not know, each one's
+  fields read from its constructor: DogfightBehaviour2, CrazyIvanBehaviour, EvasiveRandomSteeringBehaviour,
+  ParallelPathSteeringBehaviour, FrontalCapitalCombatSteeringBehaviour, MiningBehaviour.
+- w1z27 (build272: all six carried): T+1 1 differs (800259fc's one-step nav refresh, section 24), every object's motion equal;
+  steer=10:10:0:0:0:0:0:0:0 (no unknown class); 900 44.
