@@ -2307,6 +2307,11 @@ typedef struct {uint64_t portable;uint32_t nderef,deref[3],offset,len;} join_rw_
 static join_rw_spec_t join_rw_spec[4];static uint32_t join_rw_nspec;
 static uint32_t join_rw_len[4];
 static unsigned char join_rw_exec[4];   /* an execution breakpoint (the pseudo ID fffffffffffffffe: the image, offset = RVA, len 1) */
+/* An execution breakpoint's filter: 'fffffffffffffffe:<k>:<rva>:1' keeps only the hits where a general register holds watched
+ * object k's pointer (1-based in native_gate_join_watch), its controller (+0x200) or that controller's agent (+0x40), taken
+ * when the watch arms [w1z44: the braking distance call 0xea2118 runs for every ship's refresh, 16384 rows by tick 768,
+ * the destroyer's at 794 among the dropped]. Without <k>: every hit. The filtered-out hits still cost the exception. */
+static uintptr_t join_rw_match[4][3];
 static int join_rw_add(const char *text,size_t length) {   /* 1 added, 0 refused */
     join_rw_spec_t s;memset(&s,0,sizeof(s));size_t i=0;unsigned field=0;uint64_t v=0;int digits=0;
     for(;i<=length;i++) {
@@ -2354,6 +2359,11 @@ static LONG CALLBACK join_rw_veh(EXCEPTION_POINTERS *e) {
     if(slot>=4u) {
         if(c->Dr7==join_rw_dr7() && c->Dr7) {InterlockedIncrement64(&join_rw_strays);c->Dr6=0;return EXCEPTION_CONTINUE_EXECUTION;}
         return EXCEPTION_CONTINUE_SEARCH;
+    }
+    if(join_rw_exec[slot] && join_rw_match[slot][0]) {
+        const DWORD64 g[]={c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->R8,c->R9,c->R10,c->R11,c->R12,c->R13,c->R14,c->R15};int mine=0;
+        for(unsigned q=0;q<sizeof(g)/sizeof(*g) && !mine;q++) for(unsigned m=0;m<3u;m++) if(join_rw_match[slot][m] && g[q]==join_rw_match[slot][m]) {mine=1;break;}
+        if(!mine) {c->Dr6=0;c->EFlags|=0x10000u;return EXCEPTION_CONTINUE_EXECUTION;}
     }
     const LONG k=InterlockedIncrement(&join_rw_n)-1;
     if(k<(LONG)JOIN_RW_ROWS) {
@@ -2408,10 +2418,21 @@ static void join_rw_arm(int on) {
         if(on && join_rw_nspec) {
             if(i<join_rw_nspec) {
                 const join_rw_spec_t *s=&join_rw_spec[i];unsigned char *o=NULL;
+                memset(join_rw_match[i],0,sizeof(join_rw_match[i]));
                 if(s->portable==~0ull) o=join_jobe_engine();   /* the pseudo ID ffffffffffffffff: the job engine (JOIN_JOBQ) */
-                else if(s->portable==~1ull) o=(unsigned char *)image;   /* fffffffffffffffe: the image (an execution breakpoint) */
+                else if(s->portable==~1ull) {   /* fffffffffffffffe: the image (an execution breakpoint), its derefs field the filter */
+                    o=(unsigned char *)image;
+                    if(s->nderef && s->deref[0] && s->deref[0]<=join_watch.n && join_watch.object[s->deref[0]-1u]) {
+                        unsigned char *w=join_watch.object[s->deref[0]-1u],*ctl=NULL,*agt=NULL;
+                        join_rw_match[i][0]=(uintptr_t)w;
+                        if(join_read(w+0x200,&ctl,8) && ctl) {
+                            join_rw_match[i][1]=(uintptr_t)ctl;
+                            if(join_read(ctl+0x40,&agt,8) && agt) join_rw_match[i][2]=(uintptr_t)agt;
+                        }
+                    }
+                }
                 for(unsigned w=0;w<join_watch.n && !o;w++) if(join_watch.portable[w]==s->portable) {o=join_watch.object[w];break;}
-                for(uint32_t d=0;o && d<s->nderef;d++) {unsigned char *p=NULL;o=join_read(o+s->deref[d],&p,8)?p:NULL;}
+                for(uint32_t d=0;o && s->portable!=~1ull && d<s->nderef;d++) {unsigned char *p=NULL;o=join_read(o+s->deref[d],&p,8)?p:NULL;}
                 if(o) a=(uintptr_t)(o+s->offset);
                 len=s->len;join_rw_exec[i]=s->portable==~1ull;
             }
@@ -2957,7 +2978,7 @@ static void join_rw_early_probe(uint64_t completed) {
             join_rw_exec[i]=s->portable==~1ull;
             for(unsigned k=0;k<WORLD_IDENTITY_CAPACITY && !o;k++)
                 if(world_identities[k].runtime && world_identities[k].saved==s->portable) o=join_object(world_identities[k].runtime);
-            for(uint32_t d=0;o && d<s->nderef;d++) {unsigned char *p=NULL;o=join_read(o+s->deref[d],&p,8)?p:NULL;}
+            for(uint32_t d=0;o && s->portable!=~1ull && d<s->nderef;d++) {unsigned char *p=NULL;o=join_read(o+s->deref[d],&p,8)?p:NULL;}
             if(o) {a=(uintptr_t)(o+s->offset);found|=1u<<i;}
         }
         join_rw_addr[i]=a;join_rw_len[i]=len;

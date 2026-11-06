@@ -139,7 +139,7 @@ typedef struct {uint64_t tick,saved;int attention;uint32_t ctrl_vt,model_vt,inde
     uint32_t wingmen;unsigned char fp[48];motion_ref_t target_ref,path_ref,leader,wingman0,parent;char dock[512];
     uint32_t spline_count[2],spline_segments,spline_core,spline_requests,spline_obstacles;uint64_t spline_obstacle_time;unsigned char spline_progress[16];
     uint32_t flight_obstacles;uint64_t flight_avoid_time;unsigned char flight_angles[8];
-    uint32_t flight_contacts_n;unsigned char flight_contacts[4][0x80];} motion_watch_row_t;
+    uint32_t flight_contacts_n;unsigned char flight_contacts[4][0x80];uint32_t flight_contact_fnv_n,flight_contact_fnv[64];} motion_watch_row_t;
 #define MOTION_PATHING_INDEX2 0x2f4b6f4u /* g_PathingStateBufferIndex2 */
 /* Flight parameter fields of one 0x1a0 slot: +0x24, +0x190..+0x193, +0x194, +0x198. */
 static int motion_fp_fields(const unsigned char *slot,unsigned char out[16]) {
@@ -300,9 +300,12 @@ static uint32_t motion_fnv(uint32_t h,const void *data,size_t n) {
  * every digest group equal before, flight= included; the contacts are copied from the obstacle publisher, 0xeaf660,
  * whose list the hot join package does not carry]. */
 #define MOTION_FLIGHT_CONTACTS 4u
+/* And every contact's FNV-1a 32 of its 0x80 bytes, up to MOTION_FLIGHT_CONTACT_FNV, in the cache's order (contact_fnv=) [j1-237:
+ * 176ad5's first four contacts byte-equal at 1008..1012 while its pathing state parts at 1011; it has 14]. */
+#define MOTION_FLIGHT_CONTACT_FNV 64u
 static void motion_flight_fields(const unsigned char *model,motion_watch_row_t *r) {
     unsigned char *begin=NULL,*end=NULL;
-    r->flight_obstacles=0xffffffffu;r->flight_avoid_time=0;memset(r->flight_angles,0,8);r->flight_contacts_n=0;
+    r->flight_obstacles=0xffffffffu;r->flight_avoid_time=0;memset(r->flight_angles,0,8);r->flight_contacts_n=0;r->flight_contact_fnv_n=0;
     if(!read_local(model+0x88,&r->flight_avoid_time,8) || !read_local(model+0x90,&begin,8) || !read_local(model+0x98,&end,8) ||
        end<begin || (size_t)(end-begin)%0x80 || (size_t)(end-begin)/0x80>65536 || !read_local(model+0x33c,r->flight_angles,8)) {
         r->flight_avoid_time=0;memset(r->flight_angles,0,8);return;
@@ -311,6 +314,11 @@ static void motion_flight_fields(const unsigned char *model,motion_watch_row_t *
     for(uint32_t k=0;k<r->flight_obstacles && k<MOTION_FLIGHT_CONTACTS;k++) {
         if(!read_local(begin+(size_t)k*0x80u,r->flight_contacts[k],0x80)) break;
         r->flight_contacts_n=k+1u;
+    }
+    for(uint32_t k=0;k<r->flight_obstacles && k<MOTION_FLIGHT_CONTACT_FNV;k++) {
+        unsigned char contact[0x80];
+        if(!read_local(begin+(size_t)k*0x80u,contact,0x80)) break;
+        r->flight_contact_fnv[k]=motion_fnv(MOTION_FNV_BASIS,contact,0x80);r->flight_contact_fnv_n=k+1u;
     }
 }
 /* A BezierSpline's length and coefficients (lanes 0-2); its type alone for another class. */
@@ -501,13 +509,20 @@ static int motion_watch_row(uint64_t index,char *out,size_t cap) {
     }
     if(!cn) contacts[cn++]='-';
     contacts[cn]=0;
+    char fnvs[MOTION_FLIGHT_CONTACT_FNV*9u+16u];size_t fn=0;   /* n:h,h,..; '-' none */
+    if(r->flight_contact_fnv_n) {
+        fn=(size_t)snprintf(fnvs,sizeof(fnvs),"%u:",r->flight_contact_fnv_n);
+        for(uint32_t k=0;k<r->flight_contact_fnv_n && k<MOTION_FLIGHT_CONTACT_FNV;k++)
+            fn+=(size_t)snprintf(fnvs+fn,sizeof(fnvs)-fn,"%s%08x",k?",":"",r->flight_contact_fnv[k]);
+    } else fnvs[fn++]='-';
+    fnvs[fn]=0;
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx attention=%d ctrl=%08x model=%08x flags=%u cur=%s prev=%s cache=%s target=%s "
         "target_ref=%s path=%u path0=%s path0_ref=%s/%u model_ext=%s agent_ext=%s formation=%u leader=%s leader_ext=%s ship_ext=%s wingmen=%u wingman0=%s fp=%s "
-        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx flight=%u/%016llx/%s contacts=%s",
+        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx flight=%u/%016llx/%s contacts=%s contact_fnv=%s",
         (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,r->attention,r->ctrl_vt,r->model_vt,r->flags,
         cur,prev,cache,target,target_ref,r->path_count,path0,path_ref,r->path_conn,model_ext,agent_ext,r->formation,leader,leader_ext,ship_ext,r->wingmen,wingman0,fp,
         parent,r->dock[0]?r->dock:"-",r->spline_count[0],r->spline_count[1],r->spline_segments,r->spline_core,progress,r->spline_requests,r->spline_obstacles,
-        (unsigned long long)r->spline_obstacle_time,r->flight_obstacles,(unsigned long long)r->flight_avoid_time,angles,contacts);
+        (unsigned long long)r->spline_obstacle_time,r->flight_obstacles,(unsigned long long)r->flight_avoid_time,angles,contacts,fnvs);
     return n>0 && (size_t)n<cap?n:0;
 }
 /* FNV-1a 32 of field groups (motion_fnv, above); references by their fields (no struct padding). */
