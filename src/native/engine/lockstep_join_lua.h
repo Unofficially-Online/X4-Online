@@ -99,7 +99,7 @@ static int lua_join_view_skip(lua_State *L) {
     const double m=p_lua_tonumber(L,1);const int ok=isfinite(m) && m>=0 && m<=15 && floor(m)==m;
     if(ok) join_view_skip=(unsigned)m;p_lua_pushnumber(L,ok?1:0);return 1;
 }
-/* gate.join_watch_span(n): the JOIN_WATCH rows after each step T+1 .. T+n (2 .. 300; default 2); n, 0 refused. */
+/* gate.join_watch_span(n): the JOIN_WATCH rows after each step T+1 .. T+n (2 .. 600; default 2); n, 0 refused. */
 static int lua_join_watch_span(lua_State *L) {
     const double n=p_lua_tonumber(L,1);const int ok=isfinite(n) && floor(n)==n && n>=2.0 && n<=(double)JOIN_WATCH_SPAN_MAX;
     if(ok) join_watch_span=(uint32_t)n;
@@ -133,6 +133,24 @@ static int lua_join_jobdump(lua_State *L) {
 static int lua_join_refwatch(lua_State *L) {
     size_t length=0;const char *text=p_lua_tolstring(L,1,&length);
     p_lua_pushnumber(L,text && length<96u && join_rw_add(text,length)?1.0:0.0);return 1;
+}
+/* gate.join_refwatch_peek(spec): '<slot>:<reg>:<offset>[*<offset2>]:<len>', the bytes an execution breakpoint's rows copy (lockstep_join_world.h); 1, 0 refused. */
+static int lua_join_refwatch_peek(lua_State *L) {
+    size_t length=0;const char *text=p_lua_tolstring(L,1,&length);
+    p_lua_pushnumber(L,text && join_rw_peek_add(text,length)?1.0:0.0);return 1;
+}
+/* gate.join_shape_at(T): a session client forgets its fixture shape holders after step T+1 (the SAVE_AT's T); 0: a joiner, after
+ * its package's T+1 (native_gate_join_shape_refresh, lockstep_join.h); T (0 for a joiner), -1 refused. */
+static int lua_join_shape_at(lua_State *L) {
+    const double n=p_lua_tonumber(L,1);const int ok=isfinite(n) && floor(n)==n && n>=0.0 && n<=1e9;
+    if(ok && n==0.0) join_shape_joiner=1;else if(ok) join_shape_at=(uint64_t)n;
+    p_lua_pushnumber(L,ok?n:-1.0);return 1;
+}
+/* gate.join_refwatch_at(n): with the watch, the JOIN_REFWATCH fields armed for the hits from step n on (1 .. 100000); n, 0 refused. */
+static int lua_join_refwatch_at(lua_State *L) {
+    const double n=p_lua_tonumber(L,1);const int ok=isfinite(n) && floor(n)==n && n>=1.0 && n<=100000.0;
+    if(ok) join_rw_at=(uint64_t)n;
+    p_lua_pushnumber(L,ok?n:0.0);return 1;
 }
 /* gate.join_refwatch_from(n): a saver arms the JOIN_REFWATCH fields from step n on (snapshot objects by portable ID; 1 .. 100000); n, 0 refused. */
 static int lua_join_refwatch_from(lua_State *L) {

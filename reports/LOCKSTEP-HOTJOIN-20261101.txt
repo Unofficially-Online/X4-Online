@@ -2247,6 +2247,56 @@ proposed and rejected.
   j1-236 local (build-hj19q)      motion watch digest on 176ad5: cur/prev first at 1011, flight= and model_ext equal until
                                   much later: an input outside the declared state (the steering model's contacts from the
                                   obstacle publisher 0xeaf660, not in the package; x4mods' STEER)
+  j1-237 3d7f24f4 (build-hj19u)   contacts= (x4mods 284fe8f8): 176ad5's first four avoidance contacts equal at 1008..1012; 14
+                                  contacts, flight= equal; at 1011 only the pathing slots' +0x50..+0x5b (angular velocity) one
+                                  ulp apart
+  j1-238 4829d20b (build-hj19v)   contact_fnv= (x4mods): all 14 contacts equal at 1008..1012: not the avoidance cache
+  j1-239 0a08b309 (build-hj19w)   JOIN_WATCHRAW of 176ad5 at T+1: +0x3b0 (an engine parameter, 0x6dc610) 208.9 on the joiner
+                                  against 626.8, +0xa18 the load stamp, two pose blocks pairs zero, flag words
+  j1-240 104d9be7 (build-hj19z)   SHPW with native_gate_join_shpw_words=1 (+0x3b0 alone, x4mods): 2,615 written; first
+                                  mismatch still 1011, census 900 differing 0: not +0x3b0 alone
+  j1-241 da6a40c6 (build-hj20b)   watch span 600 with write watches on 176ad5's engines 0x176adf/0x176ae0 +0x2f0/+0x2f8: the
+                                  load stamps the boost ramp time +0x2f0 = T (28.183; 0x54e556 <- 0x6dc8e3 <- 0x6cffba) where the
+                                  session holds 27.450 (its last ramp update), factor +0x2f8 1.0 on both; from 646 both write the
+                                  same updates (28.616 .. 40.616 at 1006): x4mods' destroyer case (ENGR, smoke 16dd6d4c). First
+                                  mismatch 1011, census 900 differing 0
+  j1-242 ac0f297f (build-hj20c)   ENGR on (engr=1:22058:279:0): first mismatch 1011 with the same 789 mismatches, census 900
+                                  differing 0: 176ad5's factor sits at 1.0, the stamp does not reach its angular velocity
+  j1-243 ac0f297f (build-hj20c)   write watches on 176ad5's pathing slots' angular velocity (ctrl+0x30 -> +0x50, +0x1f0): at
+                                  1011, after the three equal integration writes, a bullet impulse: U::Bullet::vfunc674 ->
+                                  vfunc5_at_0x30 (0xd53608: the target in r15, impulse = direction x rsqrt x magnitude) ->
+                                  U::Destructible::vfunc882 0x51b050 (impulse x a global scale, at the hit point) -> the rigid
+                                  body's ApplyImpulse 0x1405910 -> 0xbf230 reads the body's velocities back -> the
+                                  NavigationController 0xea5790 writes both slots (0xea599a). Its earlier impulses (898, 907,
+                                  910, 927, 928) are bit-equal; at 1011 angular x is 321 ulps apart, y one, then 1029, 1031
+  j1-244 ac0f297f (build-hj20c)   execution breakpoints filtered to 176ad5 (r15 holds it from 0xd52949 through the impulse):
+                                  the impulse (direction, magnitude: 0x51b0e5) equal, the hit point (0x51b0b5) not: session
+                                  (-7.902, 0.104, -0.695), joiner (-7.850, 0.030, 0.131); lever arm and the body's change follow,
+                                  its old angular velocity equal
+  j1-245 49815d94 (build-hj20d)   native_gate_join_refwatch_peek (memory at a register plus offset in the handler) and
+                                  native_gate_join_refwatch_at (armed from a step): UpdateFlight's raycast (0xbc4d0 from
+                                  0xd4fc61): the hitting bullet 0x168271 the same on both sides, its last cast time +0x268, the
+                                  ray's origin and vector bit-equal; the result not: fraction 0.377871 against 0.370590 (the
+                                  joiner hits 0.83 units earlier), normal (0.692, 0.196, -0.695) against (0.215, 0.185, -0.959).
+                                  The geometry, not the bullet. (This run parted at 872 first: the intermittent race.)
+  j1-246 local (build-hj20d)      the result's object (+0x48) is 176ad5 (runtime 0x6c6ad, U::ShipSmall); its view slot
+                                  transforms (+0x120 .., +0x1a0 ..) filled on the session, zero on the joiner; its weapons
+                                  0x176ae1/0x176ae3 bit-equal in frame and aim through 1012 (JOIN_WATCHAIM); 1028, 1029 equal
+  j1-247 9534f8fe (build-hj20e)   peek through a pointer: the result's +0x50 is the hit U::TemplatePart (vtable 0x2b97490), the
+                                  same part on both sides (equal content in its first 0x100 bytes), hit at another point
+  j1-248 local (build-hj20e)      the part's own transform (+0x100 ..: identity, translation (-6.553, 0.567, -3.281)) equal,
+                                  176ad5's animation units (JOIN_WATCHANIM) bit-equal at 1011; only +0x240 .. +0x27f (small
+                                  vectors, filled on the session, empty on the joiner) differ
+  j1-249 local (build-hj20e)      write watches on 176ad5's two body shape holders' due ([[object+0x260 / +0x268]+0x20]+0x28;
+                                  lockstep_shape.h): the session refreshes the Jolt compound at 742/747 and 890/896 (next
+                                  after 1011), the joiner at 634 (its load and shape_initial), 635, 784/785 and 932/935. At
+                                  1011 the compound's moving part is the session's 890/896 snapshot and the joiner's 932/935
+                                  one: the cause. (Intervals 4.90 .. 4.99 s; the region camera's shape stubs install on each
+                                  client after its first admitted frame, so a joiner's T+1 refresh takes the native interval.)
+  j1-250 b6bcd674 (build-hj20f)   native_gate_join_shape_refresh: every session client (T from SAVE_AT) and the joiner forget
+                                  their fixture shape holders after T+1; at T+2 all refresh with the keyed draw. 176ad5's
+                                  dues equal from 635 (33.226363, 38.236904, 43.216757); first mismatch 1020 (780), census
+                                  900 differing 0. Non-fixture bodies keep the region camera's per-client-start alignment
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

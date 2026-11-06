@@ -347,9 +347,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_hold_boot_events then   -- a version 13 joiner holds its boot event passes until its admission
   assert(gate.join_hold_boot_events and gate.join_hold_boot_events(1)==1,'join boot event hold refused')
  end
- if cfg.native_gate_join_watch_span~=nil then   -- JOIN_WATCH rows after each step T+1 .. T+n (2 .. 300)
+ if cfg.native_gate_join_watch_span~=nil then   -- JOIN_WATCH rows after each step T+1 .. T+n (2 .. 600)
   local n=cfg.native_gate_join_watch_span
-  assert(type(n)=='number' and gate.join_watch_span and gate.join_watch_span(n)==n,'native_gate_join_watch_span needs 2 .. 300')
+  assert(type(n)=='number' and gate.join_watch_span and gate.join_watch_span(n)==n,'native_gate_join_watch_span needs 2 .. 600')
  end
  if cfg.native_gate_join_watch~=nil then   -- JOIN_WATCH rows (diagnostic): up to 8 portable IDs, 16 hex digits each
   local watch=cfg.native_gate_join_watch
@@ -360,6 +360,15 @@ if cfg.native_gate_join then
   local rw=cfg.native_gate_join_refwatch
   assert(type(rw)=='table' and #rw>=1 and #rw<=4 and gate.join_refwatch,'native_gate_join_refwatch needs 1..4 fields')
   for i=1,#rw do assert(type(rw[i])=='string' and gate.join_refwatch(rw[i])==1,'invalid join refwatch field') end
+ end
+ if cfg.native_gate_join_refwatch_peek~=nil then   -- JOIN_REFWATCH execution rows: up to 4 '<slot>:<reg>:<offset>[*<offset2>]:<len>' memory copies (hex)
+  local pk=cfg.native_gate_join_refwatch_peek
+  assert(type(pk)=='table' and #pk>=1 and #pk<=4 and gate.join_refwatch_peek,'native_gate_join_refwatch_peek needs 1..4 copies')
+  for i=1,#pk do assert(type(pk[i])=='string' and gate.join_refwatch_peek(pk[i])==1,'invalid join refwatch peek') end
+ end
+ if cfg.native_gate_join_refwatch_at~=nil then   -- with the watch: those fields armed for the hits from this step on (diagnostic)
+  local n=cfg.native_gate_join_refwatch_at
+  assert(type(n)=='number' and gate.join_refwatch_at and gate.join_refwatch_at(n)==n,'native_gate_join_refwatch_at needs 1 .. 100000')
  end
  if cfg.native_gate_join_jobdump~=nil then   -- JOIN_JOBDUMP (diagnostic): up to 8 jobs by the FNV-1a hash of their ID (16 hex digits)
   local jd=cfg.native_gate_join_jobdump
@@ -429,12 +438,15 @@ if cfg.native_gate_join then
   -- Every client of the session, at the same record (lockstep_pilot_join.h): the cockpit bodies leave their rooms around
   -- the save at T, so X4's save holds one player (W1b). Without armed pilot modules there is nothing to take off.
   save_at=function(k,t,mask)
+   -- native_gate_join_shape_refresh: every client of the session forgets its fixture shape holders after T+1 (lockstep_join.h)
+   if cfg.native_gate_join_shape_refresh then assert(gate.join_shape_at and gate.join_shape_at(t)==t,'join shape refresh refused T='..t) end
    if gate.pilot_join_park_at and gate.pilot_players_state and gate.pilot_players_state() then
     assert(gate.pilot_join_park_at(t)==1,'pilot join park refused T='..t..' '..tostring(gate.pilot_join_status and gate.pilot_join_status()))
     DebugError('[X4LAN] NATIVE_GATE PILOT_JOIN_PARK armed T='..t..' k='..k..tostring(gate.pilot_join_status()))
    end
   end}
  input_section('join','join',join_client)
+ if cfg.native_gate_join_shape_refresh and join_joiner then assert(gate.join_shape_at and gate.join_shape_at(0)==0,'join shape refresh refused (joiner)') end
  DebugError('[X4LAN] NATIVE_GATE JOIN_ARMED slot='..own..' save='..save_mode..' joiner='..(join_joiner and 1 or 0)..' absent='..absent_mask..' rejoin='..rejoin_mask)
  -- native_gate_world_hash_join = true (DEFAULT OFF; reports/LOCKSTEP-HOTJOIN-20261101.txt 1.6): one more world capture at the
  -- join's T+1, on every client of the session (T of each SAVE_AT it applied, whether it saves or not: the capture enters the

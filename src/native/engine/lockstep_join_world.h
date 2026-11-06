@@ -2297,7 +2297,9 @@ static void join_refcounts_dump(uint64_t tick) {
 #define JOIN_RW_SET 0xE04A5257u
 #define JOIN_RW_ROWS 16384u
 #define JOIN_RW_CHAIN 6u
-typedef struct {uint64_t tick;uint32_t slot,count;uint64_t rip;uint64_t chain[JOIN_RW_CHAIN];uint64_t value;uint64_t regs[4];uint64_t regs2[2];uint32_t xmm[4];} join_rw_row;
+#define JOIN_RW_PEEK 0x80u
+typedef struct {uint64_t tick;uint32_t slot,count;uint64_t rip;uint64_t chain[JOIN_RW_CHAIN];uint64_t value;uint64_t regs[4];uint64_t regs2[2];uint32_t xmm[4];
+                uint32_t peek_len;unsigned char peek[JOIN_RW_PEEK];} join_rw_row;
 /* regs: rax, rbx, r12, r13; an execution breakpoint's row adds regs2 (rsi, rcx) and xmm (the low lane of xmm0..xmm3: a float argument or
  * result, e.g. the braking distance 0x6de670 returns to the slot refresh 0xea2118) */
 /* native_gate_join_refwatch = {'<portable>:<deref>/<deref>:<offset>:<len>', ...} (hex; up to four; the derefs may be empty, len 1, 2, 4
@@ -2312,6 +2314,56 @@ static unsigned char join_rw_exec[4];   /* an execution breakpoint (the pseudo I
  * when the watch arms [w1z44: the braking distance call 0xea2118 runs for every ship's refresh, 16384 rows by tick 768,
  * the destroyer's at 794 among the dropped]. Without <k>: every hit. The filtered-out hits still cost the exception. */
 static uintptr_t join_rw_match[4][3];
+/* native_gate_join_refwatch_peek = {'<slot>:<reg>:<offset>[*<offset2>]:<len>', ...} (slot 0..3, the field's position in
+ * native_gate_join_refwatch; reg rax rbx rcx rdx rsi rdi rbp rsp r8 .. r15; offset hex, a leading '-' below the register; with
+ * *offset2 the qword there is a pointer and the copy starts at it plus offset2 (hex); len hex 1 .. 80): that execution breakpoint's
+ * rows also copy len bytes, read in the handler at the hit, printed as peek= (hex, memory order; 'x' when unreadable) [j1-244: 176ad5's bullet hit at 1011 parts in the hit point alone, impulse equal; the raycast's segment
+ * and result live in UpdateFlight's frame (0xbc4d0 from 0xd4fc61: result rbp+0x20 .. +0x58, segment rbp+0x70, rbp+0x80), the bullet's
+ * own times in r14 (+0x268, +0x288)]. */
+typedef struct {uint32_t reg,len,deref,offset2;int64_t offset;} join_rw_peek_t;
+static join_rw_peek_t join_rw_peek[4];
+/* native_gate_join_refwatch_at = n: with the watch, the fields are armed from the dump of step n-1 on (both sides; the hits of step n
+ * onward), not at T: unfiltered execution breakpoints on a busy path (every bullet hit) keep their 16384 rows for the steps that matter. */
+static uint64_t join_rw_at;
+static int join_rw_peek_add(const char *text,size_t length) {   /* 1 set, 0 refused */
+    static const char *const regs[16]={"rax","rbx","rcx","rdx","rsi","rdi","rbp","rsp","r8","r9","r10","r11","r12","r13","r14","r15"};
+    char buf[48];if(!text || length<8u || length>=sizeof(buf)) return 0;
+    memcpy(buf,text,length);buf[length]=0;
+    if(buf[0]<'0' || buf[0]>'3' || buf[1]!=':') return 0;
+    const unsigned slot=(unsigned)(buf[0]-'0');char *p=buf+2,*colon=strchr(p,':');
+    if(!colon) return 0;
+    *colon=0;unsigned reg=16u;for(unsigned r=0;r<16u;r++) if(!strcmp(p,regs[r])) {reg=r;break;}
+    if(reg>=16u) return 0;
+    p=colon+1;int negative=0;if(*p=='-') {negative=1;++p;}
+    uint64_t v=0;int digits=0;
+    for(;*p && *p!=':' && *p!='*';p++) {
+        const char c=*p;const unsigned d=c>='0' && c<='9'?(unsigned)(c-'0'):c>='a' && c<='f'?(unsigned)(c-'a'+10):16u;
+        if(d>15u || ++digits>8) return 0;
+        v=v<<4|d;
+    }
+    if(!digits) return 0;
+    const int64_t offset=negative?-(int64_t)v:(int64_t)v;
+    uint32_t deref=0,offset2=0;
+    if(*p=='*') {
+        deref=1;digits=0;
+        for(++p;*p && *p!=':';p++) {
+            const char c=*p;const unsigned d=c>='0' && c<='9'?(unsigned)(c-'0'):c>='a' && c<='f'?(unsigned)(c-'a'+10):16u;
+            if(d>15u || ++digits>6) return 0;
+            offset2=offset2<<4|d;
+        }
+        if(!digits) return 0;
+    }
+    if(*p!=':') return 0;
+    uint64_t n=0;digits=0;
+    for(++p;*p;p++) {
+        const char c=*p;const unsigned d=c>='0' && c<='9'?(unsigned)(c-'0'):c>='a' && c<='f'?(unsigned)(c-'a'+10):16u;
+        if(d>15u || ++digits>2) return 0;
+        n=n<<4|d;
+    }
+    if(!digits || !n || n>JOIN_RW_PEEK) return 0;
+    join_rw_peek[slot].reg=reg;join_rw_peek[slot].offset=offset;join_rw_peek[slot].len=(uint32_t)n;
+    join_rw_peek[slot].deref=deref;join_rw_peek[slot].offset2=offset2;return 1;
+}
 static int join_rw_add(const char *text,size_t length) {   /* 1 added, 0 refused */
     join_rw_spec_t s;memset(&s,0,sizeof(s));size_t i=0;unsigned field=0;uint64_t v=0;int digits=0;
     for(;i<=length;i++) {
@@ -2373,6 +2425,20 @@ static LONG CALLBACK join_rw_veh(EXCEPTION_POINTERS *e) {
         else if(join_read((void *)join_rw_addr[slot],&v,len)) {r->value=v;r->count=(uint32_t)v;} else {r->value=~0ull;r->count=0xffffffffu;}
         r->regs[0]=c->Rax;r->regs[1]=c->Rbx;r->regs[2]=c->R12;r->regs[3]=c->R13;r->regs2[0]=c->Rsi;r->regs2[1]=c->Rcx;
         for(unsigned x=0;x<4u;x++) memcpy(&r->xmm[x],&c->FltSave.XmmRegisters[x],4);
+        r->peek_len=0;
+        if(join_rw_exec[slot] && join_rw_peek[slot].len) {
+            DWORD64 base=0;
+            switch(join_rw_peek[slot].reg) {
+                case 0: base=c->Rax;break;case 1: base=c->Rbx;break;case 2: base=c->Rcx;break;case 3: base=c->Rdx;break;
+                case 4: base=c->Rsi;break;case 5: base=c->Rdi;break;case 6: base=c->Rbp;break;case 7: base=c->Rsp;break;
+                case 8: base=c->R8;break;case 9: base=c->R9;break;case 10: base=c->R10;break;case 11: base=c->R11;break;
+                case 12: base=c->R12;break;case 13: base=c->R13;break;case 14: base=c->R14;break;default: base=c->R15;break;
+            }
+            DWORD64 at=base+(DWORD64)join_rw_peek[slot].offset;int ok=1;
+            if(join_rw_peek[slot].deref) {uint64_t q=0;ok=join_read((const void *)(uintptr_t)at,&q,8) && q;at=q+join_rw_peek[slot].offset2;}
+            if(ok && join_read((const void *)(uintptr_t)at,r->peek,join_rw_peek[slot].len)) r->peek_len=join_rw_peek[slot].len;
+            else r->peek_len=~0u;
+        }
         CONTEXT u=*c;
         for(unsigned f=0;f<JOIN_RW_CHAIN;f++) {
             DWORD64 base=0;PVOID data=NULL;DWORD64 frame=0;
@@ -2484,7 +2550,7 @@ static void join_rw_load_hit(void *object,uint64_t id) {
 static size_t join_rw_rows_text(char *out,size_t cap,char side,uint64_t tick) {
     size_t at=0;LONG n=join_rw_n;if(n>(LONG)JOIN_RW_ROWS) n=(LONG)JOIN_RW_ROWS;
     const uintptr_t lo=(uintptr_t)image,hi=(uintptr_t)image+JOIN_FLIGHT_IMAGE;
-    for(LONG k=join_rw_shown;k<n && at+400u<cap;k++) {
+    for(LONG k=join_rw_shown;k<n && at+720u<cap;k++) {
         const join_rw_row *r=&join_rw_rows[k];
         const uint64_t who=join_rw_nspec?(r->slot<join_rw_nspec?join_rw_spec[r->slot].portable:0u):join_watch.portable[r->slot];
         at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_REFWATCH side=%c tick=%llu at=%llu id=%llx slot=%u count=%u value=%llx rip=",side,
@@ -2509,6 +2575,11 @@ static size_t join_rw_rows_text(char *out,size_t cap,char side,uint64_t tick) {
             at+=(size_t)snprintf(out+at,cap-at," rbx_obj=%llx/%x rsi_obj=%llx/%x",
                                  (unsigned long long)join_watch_key((unsigned char *)(uintptr_t)r->regs[1]),vb>=lo && vb<hi?(unsigned)(vb-lo):0u,
                                  (unsigned long long)join_watch_key((unsigned char *)(uintptr_t)r->regs2[0]),vs>=lo && vs<hi?(unsigned)(vs-lo):0u);
+            if(r->peek_len==~0u) at+=(size_t)snprintf(out+at,cap-at," peek=x");
+            else if(r->peek_len && r->peek_len<=JOIN_RW_PEEK) {
+                at+=(size_t)snprintf(out+at,cap-at," peek=");
+                for(uint32_t b=0;b<r->peek_len;b++) at+=(size_t)snprintf(out+at,cap-at,"%02x",r->peek[b]);
+            }
         }
         at+=(size_t)snprintf(out+at,cap-at,"\r\n");
         join_rw_shown=k+1;
@@ -2915,7 +2986,8 @@ static void join_watch_dump(char side,uint64_t tick) {
     if(side=='s' || side=='k' || side=='t' || side=='u' || side=='v') {
         /* JOIN_REFWATCH: armed at the session's capture of T (s), at the joiner's admission before VIEWK (k) and after T+1 (t), the
          * threads started since every 10 steps */
-        if(side=='s' || side=='k' || side=='t' || !((tick-join_watch.tick)%10u)) join_rw_arm(1);
+        if(join_rw_at) {if(tick+1u>=join_rw_at && (tick+1u==join_rw_at || !((tick-join_watch.tick)%10u))) join_rw_arm(1);}
+        else if(side=='s' || side=='k' || side=='t' || !((tick-join_watch.tick)%10u)) join_rw_arm(1);
         if(at+65536u<cap) at+=join_rw_rows_text(out+at,cap-at,side,tick);
     }
     if(at) crash_note_write(out,(int)at);
@@ -2931,7 +3003,7 @@ static void join_watch_session(const join_tables *t,uint64_t tick) {
     join_watch_dump('s',tick);
 }
 /* Both sides, at the boundaries after T+1 (t), T+2 (u) and, up to native_gate_join_watch_span, after each later step (v). */
-#define JOIN_WATCH_SPAN_MAX 300u
+#define JOIN_WATCH_SPAN_MAX 600u
 static uint32_t join_watch_span=2u;
 /* native_gate_join_buildp (diagnostic, both sides, with the watch): every build processor's busy fields after T+1 and T+14.
  * j1-122 at 648: Job_Helper's Process_Ships drew 81 times on the joiner, 77 on the session; its loop runs one ship a draw

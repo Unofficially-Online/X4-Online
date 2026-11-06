@@ -2241,7 +2241,28 @@ static void join_gate_fields(join_tables *t,uint64_t tick) {
     t->gate.cid=join_cid_get();
 }
 #define JOIN_GRAVP_RESTORE_TICKS 10u   /* the boundaries after T+1 .. T+10 */
+/* native_gate_join_shape_refresh (session and joiner, default off; report 1.18, j1-243 .. j1-249): a body's Jolt compound holds
+ * its parts' poses as of its last shape refresh (XPhys::Body_UpdateShape 0xbff80 -> 0xc2c00), and the refresh comes at a due
+ * time per shape holder (record +0x20, due +0x28; lockstep_shape.h). The session's due times run on from long before T; the
+ * joiner's start at its load (its first frame refreshes every fixture holder, shape_initial). So at 1011 a bullet met fixture
+ * ship 0x176ad5's moving part as the session last snapshotted it at 890/896 and the joiner at 932/935: the same TemplatePart
+ * hit 0.83 units apart (j1-245, j1-247), one ulp of angular velocity, the J1 first mismatch. With this option every client
+ * forgets the fixture holders it has seen at the boundary after T+1 (shape_initialized), so at step T+2 every fixture holder
+ * on every client refreshes from the same poses with the keyed draw (shape_initial), and their due times run together after.
+ * The session learns T from the SAVE_AT record (every client of the session, saver or not), the joiner from its package.
+ * Other bodies keep the native refresh path (region camera alignment at each client's start): not covered here. */
+static uint64_t join_shape_at;static int join_shape_joiner;static uint32_t join_shape_resets;
+static void join_shape_reset(uint64_t completed) {
+    unsigned held=0;
+    for(unsigned a=0;a<ACTOR_CAPACITY;a++) for(unsigned w=0;w<SHAPE_RECORDS;w++) if(shape_initialized[a][w].holder) ++held;
+    memset(shape_initialized,0,sizeof(shape_initialized));++join_shape_resets;
+    char row[160];const int n=snprintf(row,sizeof(row),"[X4LAN] NATIVE_GATE JOIN_SHAPE_RESET tick=%llu forgotten=%u resets=%u joiner=%d\r\n",
+                                       (unsigned long long)completed,held,join_shape_resets,join_shape_joiner);
+    if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);
+}
 static void join_boundary(uint64_t completed) {
+    if(join_shape_joiner && join_rx.based && completed==join_rx.t.gate.tick+1) join_shape_reset(completed);
+    else if(join_shape_at && completed==join_shape_at+1) {join_shape_reset(completed);join_shape_at=0;}
     join_t1_probe(completed,stats.game);   /* both sides: the linear models after step T+1 (lockstep_join_world.h) */
     if(join_watch.armed && (completed==join_watch.tick+1 || completed==join_watch.tick+2)) join_ai_watch_dump(completed==join_watch.tick+1?'t':'u',completed);
     join_watch_probe(completed);           /* both sides: the watched objects after T+1, T+2 (diagnostic) */
