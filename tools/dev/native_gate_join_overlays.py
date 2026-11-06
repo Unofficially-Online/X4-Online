@@ -244,10 +244,12 @@ def ids_sets(sets):
 #                                  window equal 660..1020, the motion at 1080 gone)
 #   native_gate_join_bnds          the stations' bounding structs (j1-267: the first J1 equal 633..1799; w1z56: no difference
 #                                  outside the fixture zone through 1140)
+#   native_gate_join_code          the object code counter (j1-225: the 902 job spawns; j1-267..270 equal; w1z57: the window
+#                                  neutral, code=1:1:14a2e:1f000)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
-                   'native_gate_join_shape_refresh', 'native_gate_join_bnds')
+                   'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code')
 
 
 def default_sets(sets):
