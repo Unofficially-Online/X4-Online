@@ -249,6 +249,10 @@ def main():
     p.add_argument('--player-solver-observer', action='store_true', help='read-only existing player/12 registered fixture solver calls; no additional native control context')
     p.add_argument('--world-hash-stride', type=int, help='hash every imported component at tick1 and every N ticks; read-only, requires --world-identities')
     p.add_argument('--world-hash-schema', choices=('WORLD_IMPORTED_1','WORLD_IMPORTED_2'), default='WORLD_IMPORTED_1', help='opt-in enriched Nav timing/owned pending state; legacy raw timing remains the default')
+    p.add_argument('--world-hash-shields', action='store_true',
+                   help="census shields in canonical form (native_gate_world_hash_shields = 'canonical': a full shield hashes as its "
+                        'maximum with changed time 0, as the lazy read leaves it); both gates; requires --world-hash-stride '
+                        '(the Windows default stack sets it in sessions)')
     p.add_argument('--world-hash-watch', action='append', default=[], metavar='SAVED_ID', help='retain canonical hash bytes for up to64 saved IDs (16 lowercase hex digits); requires --world-hash-stride')
     p.add_argument('--fp-attack-capture', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='FR29b, both gates: FP_ATTACK_ROWs of the attack computation (get_attackstrength and its sub-calls, apply) in ticks FIRST..LAST; requires --fp-redirect and --world-identities')
     p.add_argument('--fp-attack-watch', action='append', default=[], metavar='SAVED_ID', help='FR29b: only calls whose attacker or target is one of these saved IDs (up to 32); requires --fp-attack-capture')
@@ -354,6 +358,8 @@ def main():
         p.error('--world-identities requires a battle snapshot (or the Linux gate with a snapshot)')
     if args.world_hash_stride is not None and (not args.world_identities or not 1<=args.world_hash_stride<=18000):
         p.error('--world-hash-stride requires --world-identities and stride1..18000')
+    if args.world_hash_shields and args.world_hash_stride is None:
+        p.error('--world-hash-shields requires --world-hash-stride')
     if args.world_hash_schema=='WORLD_IMPORTED_2' and args.world_hash_stride is None:
         p.error('--world-hash-schema WORLD_IMPORTED_2 requires --world-hash-stride')
     if args.world_hash_watch and (args.world_hash_stride is None or len(args.world_hash_watch)>64 or len(set(args.world_hash_watch))!=len(args.world_hash_watch) or any(len(s)!=16 or any(c not in '0123456789abcdef' for c in s) or int(s,16)==0 for s in args.world_hash_watch)):
@@ -502,7 +508,7 @@ def main():
         if not args.snapshot or args.mode != 'clock':
             p.error('--gate-so supports the snapshot boot with --mode clock only')
         allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
-                   'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch',
+                   'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
@@ -1004,6 +1010,8 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
                 config.write(f'X4LAN_CONFIG.native_gate_world_hash_stride = {args.world_hash_stride}\n')
                 config.write(f'X4LAN_CONFIG.native_gate_world_hash_schema = {args.world_hash_schema!r}\n')
                 config.write('X4LAN_CONFIG.native_gate_world_timing_fields = true\n')
+                if args.world_hash_shields:
+                    config.write("X4LAN_CONFIG.native_gate_world_hash_shields = 'canonical'\n")
             if args.world_hash_watch:config.write('X4LAN_CONFIG.native_gate_world_hash_watch = {'+','.join(repr(s) for s in args.world_hash_watch)+'}\n')
             if args.world_health_ticks:config.write('X4LAN_CONFIG.native_gate_world_health_ticks = {%d,%d}\n' % tuple(args.world_health_ticks))
             if args.fp_attack_capture:config.write('X4LAN_CONFIG.native_gate_fp_attack_capture = {%d,%d}\n' % tuple(args.fp_attack_capture))

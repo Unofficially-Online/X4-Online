@@ -513,6 +513,16 @@ class Overlay(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.build(*self.snapshot, '--mode', 'clock', '--world-identities', *missing)
 
+    def test_linux_overlay_takes_world_hash_shields(self):
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--world-hash-stride', '60', '--world-hash-shields')
+        config = (out / 'ui/config.lua.append').read_text()
+        self.assertIn("native_gate_world_hash_shields = 'canonical'", config)
+        self.assertIn('native_gate_world_hash_stride = 60', config)
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--world-hash-stride', '60')
+        self.assertNotIn('native_gate_world_hash_shields', (out / 'ui/config.lua.append').read_text())
+        with self.assertRaises(SystemExit):
+            self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--world-hash-shields')
+
     def test_linux_overlay_takes_travel_snapshot(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--serial-pathing', '--path-determinism', '3', '--travel-snapshot')
         self.assertIn('native_gate_travel_snapshot = true', (out / 'ui/config.lua.append').read_text())

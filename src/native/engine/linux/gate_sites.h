@@ -61,6 +61,11 @@
 #define LX_IMPORT_CLEAR_ORIGINAL 0x578b4840ec834853ull /* push rbx; sub rsp,0x40; mov rdx,[rdi+8] (first 8 bytes) */
 #define LX_IMPORT_CLEAR_PROLOGUE 5u     /* push rbx; sub rsp,0x40, relocated into the trampoline */
 #define LX_SHIELD_SOURCE_VTABLE 0x3b8d6d8u /* U::ShieldRechargeSource (Windows 0x2b19700), stored by shield_group_construct */
+#define LX_SHIELD_HOLDER_VTABLE 0x3b8d668u /* the group's value holder at +0x58, stored by shield_group_construct: write +0x20, read +0x30 */
+#define LX_SHIELD_MAX_VA 0x1293200u        /* the source's getters (slots +8, +0x10, +0x18), inlined into the read behind a slot test */
+#define LX_SHIELD_DELAY_VA 0x1293230u
+#define LX_SHIELD_RATE_VA 0x12932a0u
+#define LX_SHIELD_WRITE_VA 0x1293310u      /* the holder's write: value = max, changed time 0 */
 /* Serial pathing and path determinism (gate_path.h, lockstep_path_determinism.h). */
 #define LX_PATH_MANAGER_VA 0x3e0ced0u    /* PathingManager pointer (Windows 0x6cf21c8) */
 #define LX_PATH_RELEASE_SITE 0x12125e3u  /* MoveWorker::Run: call of the release with manager+0x70 */

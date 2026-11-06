@@ -7,7 +7,7 @@ local open=assert(package.loadlib(path,'luaopen_x4lan_gate'))
 local gate=assert(open(),'module did not resolve the Lua ABI')
 local core={'sha256','start','boot','load_requested','report','poll','stop','frame_timing','qpc_us','tick_rate','wire','propose',
  'relay_host','lookahead','lookahead_status','peer_links','peer_status','wire_crypto','wire_crypto_status','platform','verify_stage',
- 'world_watch','world_capture','world_capture_nav_v2','world_page','world_detail','world_banks','saved_identity','world_health',
+ 'world_watch','world_capture','world_capture_nav_v2','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status',
  'path_determinism','path_determinism_status','path_budget','path_budget_status','region_rng','region_rng_status','region_rng_row',
  'ai_wait_rng','ai_wait_rng_status','ai_wait_rng_row','read_cost',
  'md_resume_rng','md_resume_rng_status','md_resume_rng_row','boot_hold','boot_hold_status',
@@ -28,6 +28,8 @@ for _,name in ipairs({'actor','world_trace','thread_rng','boot_rng_anchor','pilo
  assert(gate[name]==nil,'unported method present: '..name)
 end
 assert(gate.platform()=='linux')
+-- Canonical shields arm only on a running gate (its image verified), and only in canonical mode.
+assert(gate.world_hash_shields('canonical')==0 and gate.world_hash_shields('view')==0 and gate.world_hash_shields_status()=='mode=off canonical=0')
 assert(gate.sha256('')=='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
 assert(gate.sha256('abc')=='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
 assert(gate.sha256(string.rep('a',1000000))=='cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0')

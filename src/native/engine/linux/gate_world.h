@@ -52,6 +52,7 @@
 #define LXW_SG_FACTOR 0x50u        /* 0x50 */
 #define LXW_SG_VALUE 0x60u         /* 0x68 */
 #define LXW_SG_CHANGED 0x68u       /* 0x70 */
+#define LXW_SG_SOURCE 0x70u        /* 0x78: the recharge source the read uses (the group's own, at +0x78) */
 #define LXW_SG_SOURCE_VTABLE 0x78u /* 0x90 */
 #define LXW_SG_SOURCE_GROUP 0x80u  /* 0x98 */
 #define LXW_SG_MODIFIERS 0x88u     /* 0xa0 */
@@ -284,13 +285,35 @@ static int lxw_dock_state(unsigned char *controller,void *object,unsigned family
     for(unsigned i=0;i<count;i++) for(unsigned j=0;j<3;j++) n+=snprintf(out+n,512-(size_t)n,"%08x",vectors[i][j]);
     return n==(undock?233:377);
 }
-static int lxw_shield_state(unsigned char *object,char out[192]) {
+/* native_gate_world_hash_shields = 'canonical' (world hash only, default off; lockstep_state.h): a shield as the lazy
+ * read leaves it. The read 0x1293330 (Windows 0x79ddb0; the start pin shield_recharge) is the value holder's slot +0x30
+ * (the holder at group+0x58): value +0x60, changed time +0x68 and the recharge source +0x70 (the group's own
+ * ShieldRechargeSource at +0x78). GCC inlines the source's getters, each behind a test of its slot against that getter:
+ * max (slot +8, 0x1293200), delay (+0x10, 0x1293230) and rate (+0x18, 0x12932a0), in the Windows arithmetic and order
+ * (shield_full_at, shared). Once the recharge is complete at the read time, and the thread's time is not behind it, the
+ * holder's write (+0x20, 0x1293310) stores value = max and changed time 0. The capture hashes that state at the thread's
+ * game time (fs:-0x2728, Windows tls[0]+0x300); nothing native is called and nothing is written. Pins: the read, the
+ * source's three slots and the holder's write slot, checked when armed. The WORLD_HEALTH rows stay the stored fields. */
+#define SHIELD_OWN_PLATFORM
+#include "lockstep_state.h"   /* shield_canonical, its count and shield_full_at are shared; the reads are Linux's */
+static double lxw_shield_now;
+static int lxw_shield_canonical_pins(void) {
+    static const uint32_t slots[4][2]={{LX_SHIELD_SOURCE_VTABLE+0x8u,LX_SHIELD_MAX_VA},{LX_SHIELD_SOURCE_VTABLE+0x10u,LX_SHIELD_DELAY_VA},
+        {LX_SHIELD_SOURCE_VTABLE+0x18u,LX_SHIELD_RATE_VA},{LX_SHIELD_HOLDER_VTABLE+0x20u,LX_SHIELD_WRITE_VA}};
+    const lx_site *read=site_named("shield_recharge");
+    if(!read || !hash_ok(LX(read->va),read->length,read->sha256)) return 0;
+    for(unsigned i=0;i<4;i++) {uint64_t slot;memcpy(&slot,LX(slots[i][0]),8);if(slot!=(uint64_t)(uintptr_t)LX(slots[i][1])) return 0;}
+    return 1;
+}
+/* now: NULL for the stored fields, else the canonical form at that time (Windows shield_state_at). */
+static int lxw_shield_state(unsigned char *object,char out[192],const double *now) {
     unsigned char *group,*modifiers,sg[LXW_SG_SPAN];
-    uintptr_t begin,end,source_vtable;unsigned char *source_group;
+    uintptr_t begin,end,source_vtable;unsigned char *source_group,*source;
     uint64_t value,changed,maximum,delay;uint32_t rate,factor,mods[3]={0x3f800000,0x3f800000,0x3f800000};
     if(!WREAD(object+LXW_OBJ_SHIELD,&group,8)) return 0;
     if(!group) {strcpy(out,"none");return 1;}
     if(!WREAD(group,sg,sizeof(sg))) return 0;
+    memcpy(&source,sg+LXW_SG_SOURCE,8);if(now && source!=group+LXW_SG_SOURCE_VTABLE) return 0;
     memcpy(&source_vtable,sg+LXW_SG_SOURCE_VTABLE,8);memcpy(&source_group,sg+LXW_SG_SOURCE_GROUP,8);
     memcpy(&begin,sg+LXW_SG_BEGIN,8);memcpy(&end,sg+LXW_SG_END,8);
     memcpy(&value,sg+LXW_SG_VALUE,8);memcpy(&changed,sg+LXW_SG_CHANGED,8);
@@ -298,6 +321,15 @@ static int lxw_shield_state(unsigned char *object,char out[192]) {
     memcpy(&rate,sg+LXW_SG_RATE,4);memcpy(&factor,sg+LXW_SG_FACTOR,4);memcpy(&modifiers,sg+LXW_SG_MODIFIERS,8);
     if(source_vtable!=(uintptr_t)LX(LX_SHIELD_SOURCE_VTABLE) || source_group!=group ||
        end<begin || (end-begin)%8 || (end-begin)/8>4096 || (modifiers && !WREAD(modifiers+LXW_MODIFIERS,mods,12))) return 0;
+    if(now) {
+        double v,c,m,d,full;float r,f,fm[3];
+        memcpy(&v,&value,8);memcpy(&c,&changed,8);memcpy(&m,&maximum,8);memcpy(&d,&delay,8);memcpy(&r,&rate,4);memcpy(&f,&factor,4);memcpy(fm,mods,12);
+        if(shield_full_at(v,c,m,d,r,f,(uint64_t)((end-begin)/8),fm,*now,&full)) {
+            uint64_t bits;memcpy(&bits,&full,8);
+            if(bits!=value || changed) ++shield_canonical_count;   /* a rewrite (an already canonical full shield is not one; Windows shield_state) */
+            value=bits;changed=0;
+        }
+    }
     snprintf(out,192,"%016llx%016llx%016llx%016llx%08x%08x%016llx%u%08x%08x%08x",
         (unsigned long long)value,(unsigned long long)changed,(unsigned long long)maximum,(unsigned long long)delay,
         rate,factor,(unsigned long long)((end-begin)/8),modifiers!=NULL,mods[0],mods[1],mods[2]);
@@ -538,7 +570,7 @@ static int world_hash_record(world_hash_item *item,world_hash_data data[WORLD_HA
         if(classes&1) {
             world_hash_stage="health";
             char shield[192];item->flags|=2;
-            if(!world_hash_read(&data[1],object+LXW_OBJ_HULL,8) || !lxw_shield_state(object,shield) ||
+            if(!world_hash_read(&data[1],object+LXW_OBJ_HULL,8) || !lxw_shield_state(object,shield,shield_canonical?&lxw_shield_now:NULL) ||
                !world_hash_add(&data[1],shield,(unsigned)strlen(shield))) return 0;
         }
         if(classes&2) {
@@ -598,6 +630,12 @@ static int world_hash_capture(uint64_t tick,unsigned schema) {
     world_hash_stage="schema";
     if((schema!=1 && schema!=2) || (world_hash_scans && schema!=world_hash_schema)) return 0;
     world_hash_schema=schema;
+    if(shield_canonical) {
+        world_hash_stage="shield_time";
+        const double *time=gate_tls_time(gate_tls_self());
+        if(!time) return 0;
+        memcpy(&lxw_shield_now,time,8);if(!isfinite(lxw_shield_now)) return 0;
+    }
     world_hash_stage="initialization";
     if(!world_hash_items && !world_hash_init()) return 0;
     lxw_find_fn find=world_find?world_find:(lxw_find_fn)(void*)LX(LX_FIND_VA);
@@ -676,7 +714,7 @@ static int world_health_row(unsigned index,uint64_t tick,char *out,size_t size) 
     if(!object) n=snprintf(out,size,"tick=%llu id=%016llx present=0 time=%016llx hull=- shield=-",
         (unsigned long long)tick,(unsigned long long)watch->saved,(unsigned long long)now);
     else {
-        if(!WREAD(object+LXW_OBJ_HULL,&hull,8) || !lxw_shield_state(object,shield)) return 0;
+        if(!WREAD(object+LXW_OBJ_HULL,&hull,8) || !lxw_shield_state(object,shield,NULL)) return 0;
         n=snprintf(out,size,"tick=%llu id=%016llx present=1 time=%016llx hull=%016llx shield=%s",(unsigned long long)tick,
             (unsigned long long)watch->saved,(unsigned long long)now,(unsigned long long)hull,shield);
     }
@@ -731,6 +769,18 @@ static int lua_world_capture_schema(lua_State *L,unsigned schema) {
 }
 static int lua_world_capture(lua_State *L) {return lua_world_capture_schema(L,1);}
 static int lua_world_capture_nav_v2(lua_State *L) {return lua_world_capture_schema(L,2);}
+/* native_gate_world_hash_shields = 'canonical', before the first capture (as Windows lockstep_gate.c); the pins are read
+ * once the gate runs (the image verified). */
+static int lua_world_hash_shields(lua_State *L) {
+    size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);
+    p_lua_pushnumber(L,mode && length==9 && !memcmp(mode,"canonical",9) &&
+        (shield_canonical || (stats.active && !world_hash_scans && lxw_shield_canonical_pins())) &&
+        (shield_canonical=1));return 1;
+}
+static int lua_world_hash_shields_status(lua_State *L) {
+    char out[96];int n=snprintf(out,sizeof(out),"mode=%s canonical=%llu",shield_canonical?"canonical":"off",(unsigned long long)shield_canonical_count);
+    p_lua_pushlstring(L,out,(size_t)n);return 1;
+}
 static int lua_world_page(lua_State *L) {
     double number=p_lua_tonumber(L,1);
     if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures) {p_lua_pushnil(L);return 1;}

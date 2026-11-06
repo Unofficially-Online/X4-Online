@@ -302,6 +302,26 @@ LOCAL RUNTIME IDS ON LINUX (native_gate_runtime_ids_local, a Windows default)
   the Linux offsets, Remove, and the hook end to end from planted code (backtrace gives the X4 return address). On
   the executable it checks every row's call and both slot functions behind their vtables.
 
+CANONICAL SHIELDS ON LINUX (native_gate_world_hash_shields = 'canonical', a Windows default with a world hash stride)
+  Windows hashes a full shield as its maximum with changed time 0, the state the lazy read leaves (5dcfe1d1: also one
+  that was already full). The Linux gate hashed the stored fields only, so full shields with equal changed times on
+  both platforms hashed differently Windows against Linux once Windows ran the canonical form.
+  The port shares shield_full_at, the read's test: the rest of lockstep_state.h is #ifndef SHIELD_OWN_PLATFORM.
+  linux/gate_world.h reads the Linux layout (the source at group+0x70, the group's own at +0x78) and takes the
+  thread's game time (fs:-0x2728) at the capture.
+  The Linux read is 0x1293330, the value holder's slot +0x30 (holder at group+0x58, vtable 0x3b8d668). GCC inlines
+  the source's three getters, each behind a test of its slot: max +8, delay +0x10, rate +0x18. It writes value =
+  max, changed 0 through the holder's slot +0x20. Same arithmetic and order as Windows, the same 1e-7 and 1e-4f
+  tests.
+  Pins, checked when it arms (only on a running gate): the read (a start pin) and those four slots.
+  Overlay and live flag: --world-hash-shields (needs --world-hash-stride; both gates). The WORLD_HEALTH rows stay the
+  stored fields, as on Windows.
+  On Linux, as on Windows since bdc5e360, a NaN value is not full, and only a real rewrite is counted (the maximum's
+  bits or a changed time that differ). Both native test failures of 5dcfe1d1 came from these two cases.
+  Tests: linux/test_gate_shield_canonical.h prints the Windows test's text at the Linux layout, and covers the NaN,
+  already-full and rewrite-count cases, the source check, the arming refusals and the capture's time. On the executable it checks the
+  pins, the read's slot tests, constants and write, and the construct.
+
 OFFLINE CHECKS IN WSL
   check_lockstep_gate_linux.py runs complete in WSL (Ubuntu 24.04, gcc 13.3, LuaJIT) against the local copy of the
   pinned executable: the unit tests on both images, the Lua bridge and the 29 engine scenarios.
@@ -323,7 +343,8 @@ NEXT
      W30 = lx20 through 2400). Next residue: the Recyclable at 2664, the region object search's native camera test
      (the mining group, ported to Linux: cd24d90d; lx23 against W30; the lx24 trace to rerun). Then Linux defaults
      for warp_exit and mining. A live run with --runtime-ids-local: armed, the local counts (the status' local=1,ui:,
-     view:), and its census against the same run without it.
+     view:), and its census against the same run without it. Windows runs with canonical shields compare only with
+     Linux runs with --world-hash-shields (and bare Windows runs without it with Linux runs without it).
   3. The rest of the defaults' determinism stack the clock-mode census does not exercise (the battle scope's fixture
      state, shape order, view points), then the people stack on Linux (pilot replay first: a Linux server simulates the
      players).
