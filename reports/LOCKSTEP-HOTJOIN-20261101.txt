@@ -2206,6 +2206,47 @@ proposed and rejected.
   j1-216 a0ad54f8 (build-hj19b)   SPAWN_RNG_ROW site=: every Generate after T is the job spawn 0xf0673a; as j1-215 (872, 2)
   j1-217 local (build-hj19c)      native_gate_join_jobw (the session's job state +0x48, which JOBS only compares; 705 of 1,211
                                   differ): jobw=1:521, first mismatch 903, 900 differing 0; the 902 spawns unchanged: not it
+- The job spawns of 902 [F: j1-218 JOIN_JOBDUMP (the two jobs equal at T+1), j1-219 SPAWN_RNG_ROW chain= (the job engine's pass
+  0xef4400 -> 0xf0b870 -> 0xf0bff0 -> 0xf05de0 -> 0xf06650), j1-220 JOIN_JOBQ (its spawn request queue, a std::deque at engine +0x48
+  .. +0x60, empty at T), j1-221 JOIN_REFWATCH on the queue size (the pseudo ID ffffffffffffffff: the job engine), j1-222 JOIN_JOBCNT
+  (every job's active and waiting ships equal after 901; JOBS's +0x48 is no field, leftover bytes), j1-223 an execution breakpoint on
+  0xf04817 (the pseudo ID fffffffffffffffe: the image)]: after the same first spawn the job update 0xf03e40 asks for its quota minus
+  the linked jobs' active and waiting ships; the quota 0xefda70 draws from the FNV-1a hash of a ship's code (vt+0x1330 0x6cd820 of
+  +0x328): 2 and 1 on the session, 1 and 0 on the joiner. The codes ("%c%c%c-%03d", 0x6ea820) come from 0x6ea780: a global counter
+  0x38f0ae8 (advanced for every new code, wrapped at 2^24) mixed with the code seed 0x3d19860; the load restarts the counter (0x9edb60)
+  and hands out about 42,000 codes anew. CODE (section 69, v13; opt-in native_gate_join_code): the counter and the seed; the admission
+  writes the session's counter.
+  j1-218 local (build-hj19d)      JOIN_JOBDUMP: the jobs of 902 equal at T+1 (pointers and leftover bytes apart)
+  j1-219 afead941 (build-hj19e)   chain=: the 902 spawns from the job engine's queue, 891 and 920 from MD (RequestJobShipAction)
+  j1-220/221 local (hj19f/19g)    the queue empty at T; at 902 the update after the first spawn queues three (joiner: one)
+  j1-222 local (build-hj19h)      JOIN_JOBCNT 901: the counts equal
+  j1-223 local (build-hj19i)      quotas 2/1 against 1/0 (r13 0)
+  j1-224 local (build-hj19j)      first mismatch 872 (no ship code rows: the identity table holds saved objects only)
+  j1-225 525b9a11 (build-hj19k)   CODE on: code=1:1:148d8:1ed64:81d6b6:81d6b6; the spawns equal to 920; first mismatch 935
+                                  (872/903), census 900 differing 0
+- Two more [F: j1-226..231]: (1) intermittent, the fixture ships 0x176b36/0x176cb3 in zone 0x13e75f part near 872 in about every
+  second run of the same build and options (j1-215/216/224/226/231; not j1-214/217/219/220/225/227..230), fixture STATE_ROW 4
+  drifting from about 870; census 900 then has their motion (2). x4mods' window runs part them at other ticks (w1z38 by 780, w1z41
+  at 1114): a wall-clock input (the async spline route calculator, a worker race). (2) 935: only the digest part rid (DIGEST_PARTS)
+  differs; the joiner allocates two runtime IDs more at 934 (RUNTIME_IDS_ROW: keys 296cb238, 7821077f): the player entity's two
+  query spheres (U::Player::vfunc674 0x7113e0, +0x8a520/+0x8a528 from 0xb82d0, made the first time its scan deadline +0x8a4d0 comes
+  due, 10 s after the client's start or load, and kept): the session at tick 300, the joiner at 934 = T+300. 531b256a puts both call
+  sites on the view list (runtime_ids_local; one per client, the local player's own).
+  j1-226 525b9a11 (build-hj19k)   CODE on, windows 920..960: 872 (intermittent)
+  j1-227/228 local (build-hj19k)  windows 850..880: 935 both, no 872
+  j1-229 local (build-hj19k)      935: DIGEST_PARTS only rid; created count and STATE_ROWs equal
+  j1-230 local (build-hj19k)      RUNTIME_IDS_ROW: the joiner's two extra allocations at 934, the player's query spheres
+  j1-231 531b256a (build-hj19p)   the runtime ID counter equal to 960; the run itself parted at 872 (intermittent)
+  j1-232 local (build-hj19p)      motion watch digest on 0x176b36/0x176cb3, an 872 run: 176b36's model_ext differs from T+1, 176cb3
+                                  parts at 873 (target, then cur/prev/cache)
+  j1-233/234 local (build-hj19p)  raw rows of 176b36 at 633..640: model_ext differs only in +0xb4/+0xb5, the Steering model's
+                                  padding (never written; 4707db88 zeroes it in the watch); neither run parted at 872: first
+                                  mismatch 1011 (935 with the player's query spheres local), census 900 differing 0
+  j1-235 4707db88 (build-hj19q)   1011: only the digest part sample; fixture actor 3 = 0x176ad5, a vector of its raw state
+                                  (angular velocity) one ulp apart, bit-equal through 1010
+  j1-236 local (build-hj19q)      motion watch digest on 176ad5: cur/prev first at 1011, flight= and model_ext equal until
+                                  much later: an input outside the declared state (the steering model's contacts from the
+                                  obstacle publisher 0xeaf660, not in the package; x4mods' STEER)
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

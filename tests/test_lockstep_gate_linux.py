@@ -507,6 +507,11 @@ class Overlay(unittest.TestCase):
         self.assertIn('native_gate_runtime_ids_callers = true', (out / 'ui/config.lua.append').read_text())
         with self.assertRaises(SystemExit):
             self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--runtime-id-callers')
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--runtime-ids', '--created-identities', '--runtime-ids-local')
+        self.assertIn('native_gate_runtime_ids_local = true', (out / 'ui/config.lua.append').read_text())
+        for missing in (('--runtime-ids', '--runtime-ids-local'), ('--created-identities', '--runtime-ids-local')):
+            with self.assertRaises(SystemExit):
+                self.build(*self.snapshot, '--mode', 'clock', '--world-identities', *missing)
 
     def test_linux_overlay_takes_travel_snapshot(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--serial-pathing', '--path-determinism', '3', '--travel-snapshot')

@@ -1528,7 +1528,7 @@ static int lua_motion_watch_frame(lua_State *L) {
     p_lua_pushnumber(L,isfinite(tick) && tick>=1 && tick<9007199254740992.0 && floor(tick)==tick && motion_watch_frame((uint64_t)tick));return 1;
 }
 static int lua_motion_watch_row(lua_State *L) {
-    double index=p_lua_tonumber(L,1);char out[3072];int n=0;
+    double index=p_lua_tonumber(L,1);char out[6144];int n=0;   /* a Steering ship's row carries up to four raw contacts */
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=motion_watch_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }

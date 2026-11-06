@@ -202,6 +202,7 @@ def main():
     p.add_argument('--coverage-list', type=Path, help='the function list (virtual addresses, one per line), copied next to the gate as coverage.txt')
     p.add_argument('--loadout-order-rows', type=int, nargs=2, metavar=('FROM', 'TO'), help='LOADOUT_ROWs in this tick window, at most 600 ticks (needs --loadout-order and --world-identities)')
     p.add_argument('--runtime-id-callers', action='store_true', help='the Linux gate: the table of who allocates runtime IDs, RUNTIME_IDS_CALLER rows (needs --runtime-ids)')
+    p.add_argument('--runtime-ids-local', action='store_true', help='the Linux gate: what only the view asks for takes runtime IDs from its own lists (native_gate_runtime_ids_local; needs --runtime-ids and --created-identities)')
     p.add_argument('--travel-snapshot', action='store_true', help='the Linux gate: the wingman travel decision reads a per-pass snapshot of the leader flag (needs --serial-pathing and path determinism bit 2)')
     p.add_argument('--gravidar-deadlines', action='store_true', help='the Linux gate: factor-pass deadlines rebased at the first gated Move, low-attention passes keyed (needs --gravidar)')
     p.add_argument('--gravidar', action='store_true', help='the Linux gate: the gated Gravidar pass with keyed units, time sync and the sector round-robin in saved order (needs --serial-pathing, --world-identities, --gate-so)')
@@ -500,7 +501,7 @@ def main():
         # world identities and the world hash are ported (src/native/engine/linux/gate_world.h).
         if not args.snapshot or args.mode != 'clock':
             p.error('--gate-so supports the snapshot boot with --mode clock only')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
@@ -924,6 +925,11 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--runtime-id-callers needs --runtime-ids')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_runtime_ids_callers = true\n')
+    if args.runtime_ids_local:
+        if not args.runtime_ids or not args.created_identities:
+            p.error('--runtime-ids-local needs --runtime-ids and --created-identities')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_runtime_ids_local = true\n')
     if args.travel_snapshot:
         if not args.gate_so or not args.snapshot or not args.serial_pathing or not args.path_determinism or not args.path_determinism & 2:
             p.error('--travel-snapshot needs --gate-so, the snapshot boot, --serial-pathing and path determinism bit 2')

@@ -216,7 +216,12 @@ static const rid_site_t rid_sites[]={
     /* AI::NavSplineCalculator's sweep test 0xecc6f0 (from its vfunc1, a pathing job on a worker thread): the query sphere
      * from 0xb82d0 (a JPH::SphereShape in an IDBase wrapper), swept with 0x841500/0x841620 and deleted (vfunc 0) before it
      * returns. Its shared ID raced the frame thread's allocations: h1h3, client 2 one more at 3903 (on-foot report 15m). */
-    RID_CALL(0xecc728u,0xb82d0u,RID_ROUTE_VIEW)};
+    RID_CALL(0xecc728u,0xb82d0u,RID_ROUTE_VIEW),
+    /* The player entity's two query spheres (U::Player::vfunc674 0x7113e0: +0x8a520 and +0x8a528 from 0xb82d0, made the first
+     * time its scan deadline +0x8a4d0 comes due, 10 s after the client's start or load, and kept): the local player's own, one per
+     * client. Shared, they moved every later ID on a hot joiner, whose load leaves them null: j1-230, the session at tick 300, the
+     * joiner at 934 (T+300), the first mismatch there (the digest part rid). */
+    RID_CALL(0x711ab6u,0xb82d0u,RID_ROUTE_VIEW),RID_CALL(0x711bf9u,0xb82d0u,RID_ROUTE_VIEW)};
 #define RID_SITES (sizeof(rid_sites)/sizeof(*rid_sites))
 static const struct {unsigned rva,size;const char *sha;} rid_local_bodies[]={
     {0xaf0ec0u,0x1e0u,"ae79899a9a827afd1c6fe4f3e073e52cb9afb281834e1f6fdebbfb8b79d33678"},
@@ -399,6 +404,7 @@ static void *rid_allocate(size_t size) {
     typedef void *(*allocate_fn)(size_t,uint64_t,uint64_t,uint64_t,uint32_t);
     return rid_allocate_native?rid_allocate_native(size):((allocate_fn)(void *)(image+RID_ALLOCATE))(size,0,0,0,0x10);
 }
+#endif
 /* Block in the map's table, every slot free, the list in slot order: what EnsureFreeSlots builds. Under the critical section. */
 static void rid_local_link(unsigned char *map,rid_local_t *list,unsigned block,void *base) {
     memcpy(map+RID_F_BLOCKS+block*8u,&base,8);
@@ -427,6 +433,7 @@ static int rid_local_arm(void) {
     if(!rid_local_build(map)) return 0;
     InterlockedExchange(&rid_local_on,1);return 1;
 }
+#ifndef RID_OWN_PLATFORM
 /* Around an engine call this client makes alone for its own view. */
 static void rid_scope(int open) {rid_scope_thread=open?GetCurrentThreadId():0;}
 /* A client's guidance, what X4 runs for it in the simulation (native_gate_guidance_local, default off). */
@@ -450,6 +457,7 @@ static unsigned rid_route_of(const uint32_t *frames,unsigned count) {
     return route;
 }
 static created_assign_fn rid_assign_original(void) {return rid_assign_native?rid_assign_native:(created_assign_fn)(void *)(thunk+CREATED_THUNK);}
+#endif
 /* AssignNewID on a local list, the shared fields untouched afterwards. A list near its end: the shared one, and the gate stops at the boundary. */
 static uint64_t rid_local_assign(rid_local_t *list,void *object) {
     const created_assign_fn original=rid_assign_original();unsigned char *map=rid_map();
@@ -468,7 +476,6 @@ static uint64_t rid_local_assign(rid_local_t *list,void *object) {
 }
 static uint64_t rid_assign_ui(void *object) {return rid_local_assign(&rid_local[RID_ROUTE_UI],object);}
 static uint64_t rid_assign_view(void *object) {return rid_local_assign(&rid_local[RID_ROUTE_VIEW],object);}
-#endif
 /* A caller row's key: (phase, thread class, route, X4 return addresses[, cue]); its low 32 bits are the
  * key= of RUNTIME_IDS_CALLER and of RUNTIME_IDS_ROW. */
 static uint64_t rid_caller_hash(const uint32_t *frames,unsigned phase,unsigned thread,unsigned route,const char *cue) {

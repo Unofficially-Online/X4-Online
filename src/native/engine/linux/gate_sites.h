@@ -215,6 +215,7 @@
 #define LX_ID_ASSIGN_ENTRY_ORIGINAL 0x4855544155415641ull /* push r14; push r13; push r12; push rbp; the first byte of mov rbp,rdi */
 #define LX_ID_ASSIGN_PROLOGUE 6u            /* push r14; push r13; push r12, relocated into the trampoline */
 #define LX_ID_COMPONENT_RETURN_VA 0x189e28cu /* the return from AssignNewID in the constructor every U::Positional goes through */
+#define LX_RID_ALLOCATE_VA 0x1e23dc0u        /* (size, alignment): what EnsureFreeSlots in AssignNewID allocates a block with (Windows SMem::Allocate 0x14b7140) */
 /* The script RNG (gate_script_rng.h, lockstep_script_rng.h). */
 #define LX_EXEC_RUN_VA 0xd5fbb0u            /* ExecState_Run (Windows 0xb58bb0) */
 #define LX_EXEC_RUN_ENTRY_ORIGINAL 0xec8348fb89485355ull /* push rbp; push rbx; mov rbx,rdi; the start of sub rsp,8 */
@@ -579,5 +580,11 @@ static const lx_site lx_sites[]={
     {"warp_gtrt",0x18a0090,0x3e0,"8489683612cc942bd00c117405c4b2ba6e02307198a653f05b574d2e62b08ccd"},
     {"warp_exit_sum",0x16152fc,0x57,"8796bf36163293c7d9ba764f473ccdd9b81cf114c9db8bdbc791f6884fa36436"},
     {"mining_search",0x1f47b20,0x6d0,"2793312d8762d21df2f389e8d00a52856fad88569264f6c63e0365e368a9ba07"},
+    {"rid_ui_create_instance",0xb08820,0x280,"668801b166713825545657c8f611638dc1d2d0fedd503458e50f692d235a2f63"},
+    {"rid_ui_controller_move",0xa758a0,0x25f0,"e28098824694f1b812c0c0ad5889df11d7feec884245cb8d7e5851d22f5e46e0"},
+    {"rid_ui_game_render_move",0xfb0180,0x70,"fa4b6b5d88d285cb39eb2160f8382cb54b1b2b4e2578a5d9613c8fc0a4c9b59b"},
+    {"rid_view_message_start",0xc78bc0,0x1d0,"3ac92db32210fe28cddfcb868a385e1b3cf7da8246ad036d7dda7710f45c6060"},
+    {"rid_view_create_source",0xa70cd0,0xbf0,"40eb3dfb659d525c4cc16548a7fd1b31c9d30eee3bbcf228b344fe2f4323b2ea"},
+    {"rid_allocate",0x1e23dc0,0x180,"9623eb2a8bdc9d4bdf8ab7ea34fd69b95557c42c29c90e1c1c0df037490dd282"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */

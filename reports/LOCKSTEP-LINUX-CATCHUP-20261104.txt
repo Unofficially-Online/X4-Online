@@ -266,6 +266,49 @@ THE NEXT RESIDUE: A RECYCLABLE 300 TICKS APART (W30 against lx20)
   The mining port stays (it is the Windows default's Linux side) but is not this residue's fix. Next: uprobes
   (tracefs, file offsets = VA - 0x400000) on 0xe10a60, 0x1f47b20 (entry and return), its cluster compare 0x1f47b9b
   and the camera block 0x1f47f40 in an untouched run (lx24, lx20's flags) to see which.
+  lx24 was cut short when the host went offline mid-run; it is to be rerun.
+
+LOCAL RUNTIME IDS ON LINUX (native_gate_runtime_ids_local, a Windows default)
+  The Linux gate had no local lists, so on Linux every view object moved every later shared runtime ID. Windows
+  531b256a added the player entity's two query spheres to the view list: U::Player::vfunc674 makes them 10 s after
+  start or load and keeps them, and a hot joiner's load leaves them null (j1-230: the first mismatch at 935, in the
+  rid part).
+  The port: the shared header's lists, build, arming and assignment are now shared. Only the
+  #ifndef RID_OWN_PLATFORM lines moved; the Windows -E -P of lockstep_gate.c and test_lockstep_gate.c is
+  byte-identical (3739b3e2..., 234e32b1...).
+  linux/gate_runtime_ids.h holds the Linux route table, the call pins, the allocator and the route, and the
+  AssignNewID hook picks the list after the seal.
+  The table has 61 Linux rows for the 59 Windows rows, every one matched by RTTI vtables, log strings or the pair
+  table, then checked:
+  - U::UIElement, HoloMap, CutsceneAnchor, EffectObject, FogVolume, LensFlare and Stardust: GCC inlines their
+    constructors into the two component factories 0x119bd70 and 0x11a2560 (Windows 0x8e0250 and 0x8e2ec0), so each
+    row is the Positional call before the class's vtable store. Only that call reaches AssignNewID; the U::Scene
+    base's other call (0x127b730, Windows 0x7793a0) does not.
+  - The three animation listeners are inlined where they are made, so each class has two rows, one per AssignNewID
+    call before its vtable store. The message configuration listener has one such row (in 0xf4ca20); its other
+    vtable reference is an inlined destructor.
+  - UIElement::CreateInstance is 0xb08820 and CMessageManager::CreateSource is 0xa70cd0 (10 allocations and 10
+    AssignNewID calls, as on Windows), both by their log strings.
+  - Slot 6 is UI::CUIController's implementation 0xa758a0, behind the secondary vtable's thunk 0xa77e90 (the same
+    fields at full+0x78 and +0x70..0x73; it inlines what Windows calls). Slot 10 is X4::GameRender 0xfb0180.
+  - The nav spline sweep is 0x10b0cd7. The player's spheres are 0x13927d7 and 0x1392be5: player +0x8a510 and
+    +0x8a518, radius +0x4ed4 and +0x4ed8 (Windows +0x8a520 and +0x8a528, +0x4f54 and +0x4f58).
+  Pins: every call row is checked as a call to its target when it arms; the five bodies and the allocator 0x1e23dc0
+  (size, alignment: what AssignNewID's inlined EnsureFreeSlots allocates a block with) are start pins. X4's Linux
+  mutex is created PTHREAD_MUTEX_RECURSIVE, so holding the map lock around AssignNewID is safe, as on Windows.
+  Not on Linux: presentation scope, UI dispatch, rid_scope and client guidance (none of them is ported).
+  Overlay and live flag: --runtime-ids-local (needs --runtime-ids and --created-identities).
+  Tests: linux/test_gate_runtime_ids_local.h covers the table, the pins, the route, the arming refusals, the lists at
+  the Linux offsets, Remove, and the hook end to end from planted code (backtrace gives the X4 return address). On
+  the executable it checks every row's call and both slot functions behind their vtables.
+
+OFFLINE CHECKS IN WSL
+  check_lockstep_gate_linux.py runs complete in WSL (Ubuntu 24.04, gcc 13.3, LuaJIT) against the local copy of the
+  pinned executable: the unit tests on both images, the Lua bridge and the 29 engine scenarios.
+  Two stale checks are fixed:
+  - test_gate_lua.lua's method list lacked the 28 methods ported since it was written; its host had no LuaJIT.
+  - The scenarios stopped at DEFAULTS_MISSING; they are now the bare gate (native_gate_defaults = false), like every
+    Linux overlay.
 
 WINDOWS AGAINST LINUX, w22 client 1 (build235, W21 + player_timer) against lx9
   tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
@@ -278,7 +321,9 @@ NEXT
      to an orb accelerator in GetTransformRelativeTo at the jump (0a5d7a, tick 1862): find the operation that rounds
      differently: found (the exit sum's association, MSVC against GCC) and fixed on Linux (native_gate_warp_exit:
      W30 = lx20 through 2400). Next residue: the Recyclable at 2664, the region object search's native camera test
-     (the mining group, ported to Linux: cd24d90d; lx23 against W30). Then Linux defaults for warp_exit and mining.
+     (the mining group, ported to Linux: cd24d90d; lx23 against W30; the lx24 trace to rerun). Then Linux defaults
+     for warp_exit and mining. A live run with --runtime-ids-local: armed, the local counts (the status' local=1,ui:,
+     view:), and its census against the same run without it.
   3. The rest of the defaults' determinism stack the clock-mode census does not exercise (the battle scope's fixture
      state, shape order, view points), then the people stack on Linux (pilot replay first: a Linux server simulates the
      players).

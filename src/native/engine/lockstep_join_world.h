@@ -2297,7 +2297,9 @@ static void join_refcounts_dump(uint64_t tick) {
 #define JOIN_RW_SET 0xE04A5257u
 #define JOIN_RW_ROWS 16384u
 #define JOIN_RW_CHAIN 6u
-typedef struct {uint64_t tick;uint32_t slot,count;uint64_t rip;uint64_t chain[JOIN_RW_CHAIN];uint64_t value;uint64_t regs[4];} join_rw_row;   /* regs: rax, rbx, r12, r13 */
+typedef struct {uint64_t tick;uint32_t slot,count;uint64_t rip;uint64_t chain[JOIN_RW_CHAIN];uint64_t value;uint64_t regs[4];uint64_t regs2[2];uint32_t xmm[4];} join_rw_row;
+/* regs: rax, rbx, r12, r13; an execution breakpoint's row adds regs2 (rsi, rcx) and xmm (the low lane of xmm0..xmm3: a float argument or
+ * result, e.g. the braking distance 0x6de670 returns to the slot refresh 0xea2118) */
 /* native_gate_join_refwatch = {'<portable>:<deref>/<deref>:<offset>:<len>', ...} (hex; up to four; the derefs may be empty, len 1, 2, 4
  * or 8): watch that field instead (object -> *(object+deref) ... -> +offset). Without it: the first four watched objects' counts +0x40.
  * The portable ID must also be in native_gate_join_watch (the watch resolves it). */
@@ -2359,7 +2361,8 @@ static LONG CALLBACK join_rw_veh(EXCEPTION_POINTERS *e) {
         r->tick=stats.issued;r->slot=slot;r->rip=c->Rip;
         if(join_rw_exec[slot]) {r->value=c->Rax;r->count=(uint32_t)c->R13;}
         else if(join_read((void *)join_rw_addr[slot],&v,len)) {r->value=v;r->count=(uint32_t)v;} else {r->value=~0ull;r->count=0xffffffffu;}
-        r->regs[0]=c->Rax;r->regs[1]=c->Rbx;r->regs[2]=c->R12;r->regs[3]=c->R13;
+        r->regs[0]=c->Rax;r->regs[1]=c->Rbx;r->regs[2]=c->R12;r->regs[3]=c->R13;r->regs2[0]=c->Rsi;r->regs2[1]=c->Rcx;
+        for(unsigned x=0;x<4u;x++) memcpy(&r->xmm[x],&c->FltSave.XmmRegisters[x],4);
         CONTEXT u=*c;
         for(unsigned f=0;f<JOIN_RW_CHAIN;f++) {
             DWORD64 base=0;PVOID data=NULL;DWORD64 frame=0;
@@ -2474,6 +2477,9 @@ static size_t join_rw_rows_text(char *out,size_t cap,char side,uint64_t tick) {
         if(join_rw_nspec && r->slot<join_rw_nspec && join_rw_spec[r->slot].portable==~1ull)
             at+=(size_t)snprintf(out+at,cap-at," regs=%llx,%llx,%llx,%llx",(unsigned long long)r->regs[0],(unsigned long long)r->regs[1],
                                  (unsigned long long)r->regs[2],(unsigned long long)r->regs[3]);
+        if(join_rw_nspec && r->slot<join_rw_nspec && join_rw_spec[r->slot].portable==~1ull)
+            at+=(size_t)snprintf(out+at,cap-at," regs2=%llx,%llx xmm=%08x,%08x,%08x,%08x",(unsigned long long)r->regs2[0],
+                                 (unsigned long long)r->regs2[1],r->xmm[0],r->xmm[1],r->xmm[2],r->xmm[3]);
         at+=(size_t)snprintf(out+at,cap-at,"\r\n");
         join_rw_shown=k+1;
     }

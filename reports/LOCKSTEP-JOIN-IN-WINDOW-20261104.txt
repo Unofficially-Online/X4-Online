@@ -574,3 +574,34 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   jobg=1:98:1113:0; T+1 1 (800259fc's one-step nav refresh), 660, 720 and 780 equal with no one-sided object, 840 4, 900 4.
 - Left at 840: a fight in zone 668, the Paranid destroyer 79009 (motion) and the Kha'ak fighter 829e5 with its two lasers
   829e9/829ea (health): a combat outcome parting between 780 and 840.
+
+34. THE FIGHT AT 840: THE DESTROYER'S BRAKING DISTANCE AT 794 (w1z38..w1z43, builds 278..279; 5 November)
+- w1z38 (watch span 210 on 79009 and 829e5): the watch rows' published pose stays equal to 843 (low attention: the view's pose
+  is not republished), the census at 840 has 79009 about 90 m apart. JOIN_WATCHRAW: the destroyer's agent +0x4c8 is written once,
+  at 795, 1337.98 on the session and 1394.08 on the joiner.
+- The field (lockstep_motion_watch.h's flight parameter slots, agent + i*0x1a0, the third copy at agent+0x340): slot +0x188,
+  written by the slot refresh 0xea1e80 (OnUpdateEngineParameters and the navigation controller's slots) at 0xea2126 from
+  0x6de670(ship, forward speed, slot +0x2c, slot +0x24 max speed, slot +0x4): a braking distance; the refresh's forward speed is
+  the NavigationController's velocity getter 0xea6280 dotted with its transform's forward axis.
+- w1z39/w1z40 (native_gate_motion_watch with orders, then its digest: every tick, the order/target/event rows at once): 79009 is
+  equal through 797 in every digest group; the slot refresh at 794 (boost on, through an event, 0x99c5b0) is the same call on both
+  sides; at 798 its Linear model plan and pathing state part, at 837 its new target point (a point in zone 668: x 9093.5 against
+  9216.1) follows, at 891 the boost/travel stops (session both at 891, joiner travel at 891 and boost at 896). 829e5 parts at 913.
+- w1z41 (refwatch on the three +0x188 copies and the controller's velocity cache): only the written slot at 794 (0xea2126 and
+  0xea2990, 1337.98 against 1394.08) and its copy at 795 (0xe84a67); the velocity cache ctrl +0xa0 is zero on every side (the
+  getter does not use it: the pathing state's space ID +0xb0 is the ship's zone, the reference +0xb8 0) and the getter copies
+  slot[g_PathingStateBufferIndex] +0x40..+0x60 directly. The pathing slots are equal on the joiner and session client 1 in the
+  same physical order, including which one is current (the two session clients hold them in opposite order); the destroyer's
+  state updates every 5 ticks (710, 715 .. 793). So the forward speed is equal.
+- What differs on the ship object from T on: +0xa14 (a float, -1 on the joiner, 0.0 on the session) and its stamp +0xa18 (T
+  38.733 against 7.083); obj +0xe40 (a count one higher on the joiner). w1z42 (refwatch from the load on): the load writes -1
+  (0x3efad2, 0x80379c) and stamps +0xa18 (0x41a97e); the refresh at 794 recomputes +0xa14 on the joiner only (0x6dc610 ->
+  0x6db200 -> ship vfunc +0x1ff0 = 0x3564f0: when < 0, the sum over the container at +0xa8 times a config factor) to 0.0, the
+  session's value. Not the cause: the value is equal.
+- The braking function's boost term (0x6de939..0x6de99d): the ship's engine (0x6d6d80) +0x2e0/+0x2e8 boost times and the macro
+  durations (0x4bb560/0x4bb680/0x4bb710: +0x9a0, +0x99c, +0x994). w1z43 (join watch on the three engines 79037..79039; the save
+  keeps only their position): +0x2e0 -1 and +0x2e8 27.673 on both sides from T (the load restores 27.673), 42.583 at 710 on both.
+  Not the cause either. Watching the engines with the join watch moved 900 from 4 to 17 (its vfunc calls touch the engines).
+- Next: execution breakpoints (the hot join's refwatch pseudo ID fffffffffffffffe, rows with rsi, rcx and xmm0..xmm3 since
+  98dbc272) on the call 0xea2118 (its float arguments), its return 0xea211d (the distance), 0x6de860 (the deceleration factor)
+  and 0x6de987 (the remaining boost time), filtered by the destroyer's controller (r12) and ship (rsi).

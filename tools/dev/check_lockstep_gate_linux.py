@@ -254,8 +254,9 @@ def engine_scenario(build, name, peers, clients, lookahead, ticks, extras, game0
             raise AssertionError('relay did not start')
         procs = []
         for slot in range(1, peers + 1):
+            # The bare gate: every scenario names its features (the session defaults are the Windows stack's).
             cfg = {'native_gate_test': True, 'test_profile': '45841', 'slot': f'p{slot}', 'port': port, 'token': token,
-                   'native_gate_hash': 'clock', 'native_gate_snapshot_sha': 'c' * 64, **extras}
+                   'native_gate_hash': 'clock', 'native_gate_snapshot_sha': 'c' * 64, 'native_gate_defaults': False, **extras}
             if clients:
                 cfg['native_gate_clients'] = clients
             if lookahead:
