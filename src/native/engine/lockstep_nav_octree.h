@@ -593,6 +593,18 @@ static uint64_t noct_content(const unsigned char *octree,uint64_t *cells) {
     return h|1u;
 }
 /* Inside a build ('deadline'): the octree just made, hidden until its record is due. */
+/* Hot join (noct_join_adopt): the keys the session held hidden that had no octree on the joiner at its admission. An octree
+ * built for one of them later without a record stays hidden, as the session's (its stale build, hidden for good). Under the lock. */
+#define NOCT_JOIN_MARKS 4096u
+static uint64_t noct_join_marks[NOCT_JOIN_MARKS];static unsigned noct_join_nmarked;static uint64_t noct_join_marked_hides;
+static void noct_join_mark(uint64_t key) {
+    for(unsigned i=0;i<noct_join_nmarked;i++) if(noct_join_marks[i]==key) return;
+    if(noct_join_nmarked<NOCT_JOIN_MARKS) noct_join_marks[noct_join_nmarked++]=key;
+}
+static int noct_join_marked(uint64_t key) {
+    for(unsigned i=0;i<noct_join_nmarked;i++) if(noct_join_marks[i]==key) return 1;
+    return 0;
+}
 static void *noct_octree_with(noct_octree_fn original,void *builder) {
     void *octree=original(builder);
     if(!octree || !noct_ctx.valid || !noct_lock_ready) return octree;
@@ -611,6 +623,8 @@ static void *noct_octree_with(noct_octree_fn original,void *builder) {
         else noct_hide(octree,NOCT_NEVER,key);
     } else if(r && r->state!=NOCT_R_VISIBLE) { /* its record (also one opened while a build begun before it ran) */
         r->state=NOCT_R_BUILT;r->octree=octree;noct_hide(octree,r->due,key);
+    } else if(!r && noct_join_marked(key)) { /* a hot joiner: a key the session held hidden had no octree at the admission */
+        noct_hide(octree,NOCT_NEVER,key);++noct_join_marked_hides;
     } else { /* shown already, or asked before arming */
         noct_show(octree,key);if(!r) ++noct_unrecorded;
     }
@@ -941,6 +955,72 @@ static int noct_agreed_join(unsigned char *cache,uint64_t tick) {
     LeaveCriticalSection(&noct_lock);
     return ok && !InterlockedCompareExchange64(&noct_failures,0,0);
 }
+/* Hot join (lockstep_join.h NOCT, 'agreed' only). DIGEST_INPUT (j1-142): a joiner's OCT_1 receipt started empty (0 assigned,
+ * the FNV basis) where the session's had 28 indices assigned and waiting (slot 3 had never reported), and the joiner kept no
+ * record, so its loaded octrees showed natively where the session's were hidden. The saver exports the index table (next,
+ * shown, agreed, keys hash; every index not shown: its object, flag, assigned tick, agreement, whether its record is live) and
+ * the hidden list's keys; the joiner adopts them: the session's indices and receipt, a record for each live index (built and
+ * hidden when its octree is already there, else requested natively), the session's hidden keys hidden, and no first-join
+ * enumeration (its load's requests show natively, as the session's boot's did). Main thread, at the admission. */
+typedef struct {uint64_t index,id,assigned;uint8_t flag,agreed,shown,live;} noct_join_entry;
+typedef struct {uint64_t id,due;uint8_t flag;} noct_join_hide;
+static int noct_join_export(uint64_t head[4],noct_join_entry **entries,uint32_t *ne,noct_join_hide **hidden,uint32_t *nh) {
+    *entries=NULL;*hidden=NULL;*ne=*nh=0;
+    if(!noct_installed || !noct_lock_ready || noct_mode!=NOCT_AGREED) return 0;
+    EnterCriticalSection(&noct_lock);
+    const uint64_t n=noct_next_index-noct_shown_index;
+    noct_join_entry *e=n?calloc((size_t)n,sizeof(*e)):NULL;noct_join_hide *h=noct_hidden_count?calloc(noct_hidden_count,sizeof(*h)):NULL;
+    if((n && !e) || (noct_hidden_count && !h)) {LeaveCriticalSection(&noct_lock);free(e);free(h);return 0;}
+    head[0]=noct_next_index;head[1]=noct_shown_index;head[2]=noct_agreed_total;head[3]=noct_keys_hash;
+    for(uint64_t i=0;i<n;i++) {
+        const noct_order_entry *o=noct_entry(noct_shown_index+i);const noct_record *r=noct_find(o->key);
+        e[i]=(noct_join_entry){noct_shown_index+i,o->key>>1,o->assigned,(uint8_t)(o->key&1),o->agreed,o->shown,
+                               (uint8_t)(r && r->gen==o->gen && noct_is_live(r))};
+    }
+    for(unsigned i=0;i<noct_hidden_count;i++) h[i]=(noct_join_hide){noct_hidden[i].key>>1,noct_hidden[i].due,(uint8_t)(noct_hidden[i].key&1)};
+    *ne=(uint32_t)n;*nh=noct_hidden_count;*entries=e;*hidden=h;
+    LeaveCriticalSection(&noct_lock);
+    return 1;
+}
+/* objects_e / objects_h: the joiner's objects of the entries and hidden keys (NULL: not here; e[i].id the joiner's runtime ID).
+ * counts: 0 live records made, 1 requested natively, 2 octrees hidden, 3 hidden keys without an octree here. */
+static int noct_join_adopt(const uint64_t head[4],const noct_join_entry *e,uint32_t ne,const noct_join_hide *h,uint32_t nh,
+                           void *const *objects_e,void *const *objects_h,uint64_t counts[4]) {
+    unsigned char *cache=NULL;
+    if(!noct_installed || !noct_lock_ready || noct_mode!=NOCT_AGREED || !read_local(image+NOCT_CACHE,&cache,8) || !cache) return 0;
+    noct_get_fn get=(noct_get_fn)(void *)(image+NOCT_GET);noct_request_fn request=(noct_request_fn)(void *)(image+NOCT_REQUEST);
+    void **found_e=calloc(ne?ne:1u,sizeof(void *)),**found_h=calloc(nh?nh:1u,sizeof(void *));
+    if(!found_e || !found_h) {free(found_e);free(found_h);return 0;}
+    /* The octrees the joiner holds already (the get takes the cache's own locks; no request on a miss). */
+    for(uint32_t i=0;i<ne;i++) if(e[i].live && objects_e[i]) {void *o=NULL;get(cache,&o,objects_e[i],e[i].flag,0);found_e[i]=o;}
+    for(uint32_t i=0;i<nh;i++) if(objects_h[i]) {void *o=NULL;get(cache,&o,objects_h[i],h[i].flag,0);found_h[i]=o;}
+    EnterCriticalSection(&noct_lock);
+    noct_next_index=head[0];noct_shown_index=head[1];noct_agreed_total=head[2];noct_keys_hash=head[3];noct_local_w=noct_shown_index;
+    noct_enumerated=1;noct_fresh_count=0;
+    for(uint32_t i=0;i<ne;i++) {
+        const uint64_t key=e[i].id*2+(e[i].flag&1u);uint64_t gen=0;
+        if(e[i].live && e[i].id && objects_e[i]) {
+            noct_record *r=noct_find(key);
+            if(!r) r=noct_insert(key);else if(noct_is_live(r)) --noct_live;
+            if(r) {
+                r->state=found_e[i]?NOCT_R_BUILT:NOCT_R_REQUESTED;r->gen=++noct_gen;r->due=NOCT_NEVER;r->index=e[i].index+1;
+                r->opened=noct_frame();r->octree=found_e[i];++noct_live;++noct_requested;gen=r->gen;++counts[0];
+                if(found_e[i]) {noct_hide(found_e[i],NOCT_NEVER,key);++counts[2];}
+            }
+        }
+        *noct_entry(e[i].index)=(noct_order_entry){key,gen,e[i].assigned,e[i].agreed,e[i].shown};
+    }
+    for(uint32_t i=0;i<nh;i++) {
+        if(!found_h[i]) {++counts[3];if(h[i].id) noct_join_mark(h[i].id*2+(h[i].flag&1u));continue;}
+        if(noct_hidden_find(found_h[i])<0) {noct_hide(found_h[i],h[i].due,h[i].id*2+(h[i].flag&1u));++counts[2];}
+    }
+    LeaveCriticalSection(&noct_lock);
+    for(uint32_t i=0;i<ne;i++) if(e[i].live && e[i].id && objects_e[i] && !found_e[i]) {request(cache,e[i].id,e[i].flag);++counts[1];}
+    for(uint32_t i=0;i<ne;i++) if(found_e[i]) InterlockedDecrement((volatile LONG *)found_e[i]);   /* the get's reference */
+    for(uint32_t i=0;i<nh;i++) if(found_h[i]) InterlockedDecrement((volatile LONG *)found_h[i]);
+    free(found_e);free(found_h);
+    return !InterlockedCompareExchange64(&noct_failures,0,0);
+}
 /* Gate tick, main thread (MoveWorker joined, before FrameTick). 0 fails closed. */
 static int noct_join_with(unsigned char *cache,noct_build_fn build,uint64_t tick,unsigned timeout_ms) {
     if(!noct_installed || !noct_lock_ready || (noct_mode<NOCT_SYNC && !noct_snapshot)) return 1;
@@ -1073,6 +1153,7 @@ static void noct_snap_clear(void) {
     memset(noct_snaps,0,sizeof(noct_snaps));noct_snap_count=0;noct_snap_fresh_count=0;
 }
 static void noct_reset_counters(void) {
+    noct_join_nmarked=0;noct_join_marked_hides=0;
     noct_closed=noct_busy=noct_held=noct_deferred=noct_joining=noct_drained=0;
     noct_rows=noct_failures=0;noct_pops=noct_builds=noct_deferrals=noct_join_builds=noct_free_builds=noct_build_us=noct_max_build_us=noct_waited=0;
     noct_joins=noct_join_passes=noct_join_us=noct_max_join_us=noct_last_pending=noct_max_pending=noct_held_deferred=0;

@@ -14,7 +14,8 @@ Three parts, each testable without X4 (tests/test_native_gate_join.py):
      3 FAILED    + reason u8                     a saving client whose save or capture failed (REASONS)
      4 HANDOVER  (tick = H)                      relay, in slot k's stand-in blob: from tick H on slot k is a full
                                                  client; every client applies slot k's identity steps at H
-     5 ABORT     + reason u8                     relay: the join of slot k ended without a handover
+     5 ABORT     + reason u8                     relay: the join of slot k ended without a handover; reason 16 dropped:
+                                                 the relay dropped slot k from this row (--stall-drop-ms, roadmap 15)
 2. The join package (<save folder>/mpjoin/j<T>.x4join, written by lockstep_join.h right after the join save
    j<T>.xml.gz): read_package verifies every hash and the record shapes; write_package builds one (tests,
    golden vectors shared with the C test); portable_digest recomputes the digest the SAVED record carries.
@@ -47,6 +48,11 @@ Three parts, each testable without X4 (tests/test_native_gate_join.py):
    the per-tick check of the joiner against the session (game and real time exact, digest from T+1 on),
    HANDOVER at a tick H, then slot k is a normal client. Every refusal is reported (NGJOINSTATE ... failed
    <reason>, a JOIN line) and never desyncs the session: until H slot k stays a stand-in.
+   Drop and rejoin (roadmap 15; --stall-drop-ms, --rejoin): a client the others waited for that long is dropped if its
+   slot may be (a --rejoin slot, present from the start, or an absent slot after its handover): from its first missing
+   row the relay stands in for it, that row carries ABORT(k, dropped), so every client makes the slot neutral from the same
+   row (gate.pilot_abort), the slot is absent again and a later NGJOIN takes it like any absent slot. Its old address is
+   answered NGDROP; its real clock base becomes the reference slot's (a rejoiner restores the saver's clocks).
 
 Launcher messages (UDP to the relay port, authenticated by the session token like NGSTATE):
   joiner -> relay  NGJOIN|1|token|slot|nonce                    ask to join as absent slot k; resend to poll
@@ -78,7 +84,7 @@ _BODY = {OP_SAVE_AT: struct.Struct('<BQ'), OP_SAVED: struct.Struct('<Q32s16s'), 
 # FAILED/ABORT reasons (lockstep_join.h JOIN_WHY_*; the same numbers in native_gate_join_core.lua).
 REASONS = {1: 'not_armed', 2: 'not_possible', 3: 'save_failed', 4: 'file_missing', 5: 'capture', 6: 'unsupported_module',
            7: 'package_write', 8: 'busy', 9: 'timeout', 10: 'mismatch', 11: 'saver_disagree', 12: 'joiner_lost',
-           13: 'pause_too_long', 14: 'refused_by_relay', 15: 'platform'}
+           13: 'pause_too_long', 14: 'refused_by_relay', 15: 'platform', 16: 'dropped'}
 REASON_CODES = {name: code for code, name in REASONS.items()}
 
 
@@ -155,9 +161,9 @@ def blob_record(blob):
 
 # ---- the join package ----
 MAGIC = b'X4MPJN01'
-PACKAGE_VERSION = 12          # 1: GATE..LUA; 2: and HEALTH, POSE; 3: and SHIELD, NAV, ATTN, KEYS; 4: and PATH, REGION; 5: and FLIGHT,
-PACKAGE_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)   # SPLINE; 6: and AGENT; 7: and ROUTE; 8: and PARAM, DOCK; 9: and STEER,
-#                                                        STEERPT; 10: and SOLVER, BULLET; 11: and GRAV, GRAVC, GRAVS; 12: and SPLM, SPLME, SPLMSEG, GRAVN, GRAVP, GRAVQ
+PACKAGE_VERSION = 13          # 1: GATE..LUA; 2: and HEALTH, POSE; 3: and SHIELD, NAV, ATTN, KEYS; 4: and PATH, REGION; 5: and FLIGHT,
+PACKAGE_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)   # SPLINE; 6: and AGENT; 7: and ROUTE; 8: and PARAM, DOCK; 9: and STEER,
+#                                                        STEERPT; 10: and SOLVER, BULLET; 11: and GRAV, GRAVC, GRAVS; 12: and SPLM, SPLME, SPLMSEG, GRAVN, GRAVP, GRAVQ; 13: and JOBE, EVQT, GRAVD, VIEWK, VIEWKC, VIEWF, VIEWP, SHOOT, ATTK, LIVEF, SPEC, NAVC, JOBS, GONE, BODY, BUPD, LDC, NAVT, NMESH, NOCT, AGTT, AGCB, PBNK, PEND, GRAVB, VIEWL, IKV, RCNT, ECOS, SHPW, TRDN, NPCA, JOBG, CODE, ENGR, SHGR, BNDS
 HEADER = struct.Struct('<8sIIQQQ32sQIIQ')      # 96 bytes
 SECTION = struct.Struct('<IIQ32s')            # 48 bytes before each payload
 SEC_GATE, SEC_IDS, SEC_WAKE, SEC_WAKEVEC, SEC_MDHEAP, SEC_MODULES, SEC_CTX, SEC_LUA, SEC_HEALTH, SEC_POSE = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
@@ -170,7 +176,8 @@ SEC_PARAM, SEC_DOCK = 21, 22
 SEC_STEER, SEC_STEERPT = 23, 24
 SEC_SOLVER, SEC_BULLET = 25, 26
 SEC_GRAV, SEC_GRAVC, SEC_GRAVS = 27, 28, 29
-SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ = 30, 31, 32, 33, 34, 35
+SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ, SEC_JOBE, SEC_EVQT, SEC_GRAVD = 30, 31, 32, 33, 34, 35, 36, 37, 38
+SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK, SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT, SEC_AGTT, SEC_AGCB, SEC_PBNK, SEC_PEND, SEC_GRAVB, SEC_VIEWL, SEC_IKV, SEC_RCNT, SEC_ECOS, SEC_SHPW, SEC_TRDN, SEC_NPCA, SEC_JOBG, SEC_CODE, SEC_ENGR, SEC_SHGR, SEC_BNDS = 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72
 SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC: 'wakevec', SEC_MDHEAP: 'mdheap',
                  SEC_MODULES: 'modules', SEC_CTX: 'ctx', SEC_LUA: 'lua', SEC_HEALTH: 'health', SEC_POSE: 'pose',
                  SEC_SHIELD: 'shield', SEC_NAV: 'nav', SEC_ATTN: 'attn', SEC_KEYS: 'keys', SEC_PATH: 'path', SEC_REGION: 'region',
@@ -178,7 +185,8 @@ SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC
                  SEC_STEER: 'steer', SEC_STEERPT: 'steerpt', SEC_SOLVER: 'solver', SEC_BULLET: 'bullet',
                  SEC_GRAV: 'grav', SEC_GRAVC: 'gravc', SEC_GRAVS: 'gravs', SEC_SPLM: 'splm', SEC_SPLME: 'splme',
                  SEC_SPLMSEG: 'splmseg', SEC_GRAVN: 'gravn', SEC_GRAVP: 'gravp',
-                 SEC_GRAVQ: 'gravq'}
+                 SEC_GRAVQ: 'gravq', SEC_JOBE: 'jobe',
+                 SEC_EVQT: 'evqt', SEC_GRAVD: 'gravd', SEC_VIEWK: 'viewk', SEC_VIEWKC: 'viewkc', SEC_VIEWF: 'viewf', SEC_VIEWP: 'viewp', SEC_SHOOT: 'shoot', SEC_ATTK: 'attk', SEC_LIVEF: 'livef', SEC_SPEC: 'spec', SEC_NAVC: 'navc', SEC_JOBS: 'jobs', SEC_GONE: 'gone', SEC_BODY: 'body', SEC_BUPD: 'bupd', SEC_LDC: 'ldc', SEC_NAVT: 'navt', SEC_NMESH: 'nmesh', SEC_NOCT: 'noct', SEC_AGTT: 'agtt', SEC_AGCB: 'agcb', SEC_PBNK: 'pbnk', SEC_PEND: 'pend', SEC_GRAVB: 'gravb', SEC_VIEWL: 'viewl', SEC_IKV: 'ikv', SEC_RCNT: 'rcnt', SEC_ECOS: 'ecos', SEC_SHPW: 'shpw', SEC_TRDN: 'trdn', SEC_NPCA: 'npca', SEC_JOBG: 'jobg', SEC_CODE: 'code', SEC_ENGR: 'engr', SEC_SHGR: 'shgr', SEC_BNDS: 'bnds'}
 WORLD_SECTIONS = (SEC_HEALTH, SEC_POSE)         # version 2 and later, always both
 WORLD3_SECTIONS = (SEC_SHIELD, SEC_NAV, SEC_ATTN, SEC_KEYS)   # version 3, always all four
 WORLD4_SECTIONS = (SEC_PATH, SEC_REGION)                      # version 4, always both
@@ -190,12 +198,14 @@ WORLD9_SECTIONS = (SEC_STEER, SEC_STEERPT)                    # version 9, alway
 WORLD10_SECTIONS = (SEC_SOLVER, SEC_BULLET)                   # version 10, always both
 WORLD11_SECTIONS = (SEC_GRAV, SEC_GRAVC, SEC_GRAVS)           # version 11, always all three
 WORLD12_SECTIONS = (SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ)   # version 12, always all six
+WORLD13_SECTIONS = (SEC_JOBE, SEC_EVQT, SEC_GRAVD, SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK,
+                    SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT, SEC_AGTT, SEC_AGCB, SEC_PBNK, SEC_PEND, SEC_GRAVB, SEC_VIEWL, SEC_IKV, SEC_RCNT, SEC_ECOS, SEC_SHPW, SEC_TRDN, SEC_NPCA, SEC_JOBG, SEC_CODE, SEC_ENGR, SEC_SHGR, SEC_BNDS)   # version 13, all thirty-seven
 LAST_SECTION = {1: SEC_LUA, 2: SEC_POSE, 3: SEC_KEYS, 4: SEC_REGION, 5: SEC_SPLINE, 6: SEC_AGENT, 7: SEC_ROUTE, 8: SEC_DOCK, 9: SEC_STEERPT,
-                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ}
+                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ, 13: SEC_BNDS}
 TEXT_SECTIONS = (SEC_MODULES, SEC_LUA)          # newline-terminated printable lines; count = lines
 # Fixed record shapes (lockstep_join.h join_*_rec). GATE is one 256-byte record; MODULES and LUA (the probe's own state
 # providers, native_gate_join_core.lua) are text (count = lines).
-GATE = struct.Struct('<QQQIIIIIIQQIIIIIIIIIIII64s16sQQII12s28x')
+GATE = struct.Struct('<QQQIIIIIIQQIIIIIIIIIIII64s16sQQII12s12sQ8x')
 IDS = struct.Struct('<QQII')                  # runtime (the save's ID), portable ID, class (0 saved, 1 created), 0
 CTX = struct.Struct('<QQII')                  # owner ID, script name hash, owner class, script version
 WAKE = struct.Struct('<QQQIIII')              # owner, script, due bits, class, version, reason, flags
@@ -274,7 +284,14 @@ STEER_CLASSES = {0x2c4edc0: ((0x10, 2, 0), (0x18, 1, 0)),                       
                  0x2c4dc30: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 0x18, 0)),                      # DogfightBehaviour1
                  0x2c4e840: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 0x18, 0), (0x80, 0xc, 0), (0x90, 8, 0)),   # ChaseBehaviour
                  0x2c4dab0: ((0x10, 2, 0), (0x18, 5, 0), (0x20, 8, 0)),                            # GainDistanceBehaviour
-                 0x2c4d288: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 10, 0))}                        # EvasiveSimpleSteeringBehaviour
+                 0x2c4d288: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 10, 0)),                        # EvasiveSimpleSteeringBehaviour
+                 0x2c4e3c0: ((0x10, 2, 0), (0x18, 4, 0), (0x20, 8, 0), (0x28, 1, 0)),              # SpiralBehaviour
+                 0x2c4db70: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 0x18, 0), (0x80, 4, 0), (0x88, 8, 0)),   # DogfightBehaviour2
+                 0x2c4dcf0: ((0x10, 2, 0), (0x18, 4, 0), (0x20, 0x18, 0), (0x38, 1, 0)),           # CrazyIvanBehaviour
+                 0x2c4d1c8: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 10, 0)),                        # EvasiveRandomSteeringBehaviour
+                 0x2c4f0c0: ((0x10, 2, 0), (0x20, 0x10, 1), (0x30, 4, 0)),                         # ParallelPathSteeringBehaviour
+                 0x2c4ed00: ((0x10, 2, 0), (0x18, 4, 0), (0x20, 0x10, 0), (0x30, 0x10, 1), (0x40, 1, 0)),   # FrontalCapitalCombat...
+                 0x2c4e6c0: ((0x10, 2, 0), (0x18, 8, 0), (0x20, 0x40, 1))}                         # MiningBehaviour
 
 
 def steer_bytes(ranges):
@@ -328,22 +345,65 @@ SPLME_SPLINE = 1
 GRAVN_NONE = 4
 GRAVP_PRESENT = 1
 GRAVQ_UNMAPPED, GRAVQ_OTHER, GRAVQ_EVENT_VT = 1, 2, 0x2baf7d8
+JOBE_ENABLED, JOBE_RUNNING, JOBE_GATE, JOBE_CURSOR = 1, 2, 4, 112   # JOBE: the job engine's last run (bits), flags, the cursor job ID
 SPLM = struct.Struct('<QI2II2I2I2I%ds' % SPLM_BYTES)
 SPLME = struct.Struct('<QIIIIII80s80s')
 GRAVN = struct.Struct('<QQQII')
 GRAVP = struct.Struct('<QII64s')
 GRAVQ = struct.Struct('<QIIIIQQQ')
-assert SPLM.size == 1264 and SPLME.size == 192 and GRAVN.size == 32 and GRAVP.size == 80 and GRAVQ.size == 48
+JOBE = struct.Struct('<QII%ds' % JOBE_CURSOR)
+EVQT = struct.Struct('<QIIIIQ')   # EVQT: source portable, class RVA, type ID, place, flags, time bits
+EVQT_UNMAPPED = 1
+GRAVD = struct.Struct('<QQII')   # GRAVD: ship, cached parent (portable IDs), view (relative), flags NONE/UNMAPPED
+GRAVD_NONE, GRAVD_UNMAPPED = 1, 2
+VIEWK = struct.Struct('<QIIII')   # VIEWK: component, view (relative), flags UNMAPPED/UNREAD, the view flags, the children count
+VIEWKC = struct.Struct('<QQII')   # VIEWKC: component, child (portable IDs), view, place
+VIEWK_UNMAPPED, VIEWK_UNREAD, VIEWK_CHILDREN = 1, 2, 65536
+VIEWF = struct.Struct('<QIIII')   # VIEWF: component, its view flags and published attention (current view, the other)
+VIEWP = struct.Struct('<Q64s')   # VIEWP: a zone-held component, its settled published pose
+# SHOOT: a weapon, its last shot time, its controller's +0x28 +0x40 +0x48 +0x50 +0x58 (double bits), aim, controller vtable RVA,
+# the weapon's +0x30c..+0x30e, the controller's +0x84 +0x85, has a controller, padding
+SHOOT = struct.Struct('<QQ5Q32sI3s2sB2sI')   # ... has controller, padding, the controller's aim cone (+0x80, float bits)
+ATTK = struct.Struct('<QQ3QII')   # ATTK: a destructible, its attacker (portable), attack times (bits), method, padding
+LIVEF = struct.Struct('<QII')   # LIVEF: a component, the live flag bits to set and to clear (0x20 only)
+SPEC = struct.Struct('<QIIIIQQ')   # SPEC: a component, a view cache specification entry: kind, flags, class, truncated, interval, last
+NAVC = struct.Struct('<Q96s')   # NAVC: a ship, its navigation controller's cached transform and velocity (+0x60..+0xbf)
+JOBS = struct.Struct('<QQIHH')  # JOBS: a job's ID hash (FNV-1a), its state's +0x48, its place in the job DB, active and waiting ships
+GONE = struct.Struct('<Q')      # GONE: a census row of the session whose object is gone at T (portable ID, sorted)
+BODY = struct.Struct('<QII8I23II8I8I')   # BODY: portable, which, record flags, pose, motion (23 words), moving, pre, delta
+BUPD = struct.Struct('<QQ')     # BUPD: a class-0x6f object's last build update (+0xa58, the double's bits)
+LDC = struct.Struct('<Q113s7x')   # LDC: a LinearDecelerationController's fields (transform, start, velocities, duration, flag)
+NAVT = struct.Struct('<Q30I')     # NAVT: a navigation controller's bank vectors +0x60..+0xaf, x, y, z lanes, two banks by role
+NMESH = struct.Struct('<Q')       # NMESH: the nav mesh receipt, its build count, then the folded terms (sorted, each once)
+NOCT = struct.Struct('<QQQQIBBBB')   # NOCT: the octree index table: a, b, c, d, class, flag, kind (0 head, 1 entry, 2 hidden), agreed, shown
+AGTT = struct.Struct('<QQQQ')        # AGTT: per AGENT record, the Agent's times +0x658, +0xf40, +0xf38 (the doubles' bits)
+AGCB = struct.Struct('<Q1024s')      # AGCB: a pilot slot ship's Agent's command and probe block (+0x6e0, raw)
+PBNK = struct.Struct('<QII'+NAV_BANK*2+'30I')   # PBNK: a pilot slot ship's Agent's banks by role (NAV's fields, NAVT's vectors)
+PEND = struct.Struct('<QII')         # PEND: a component's nonzero pending view cache flags (+0x1e0), padding
+GRAVB = struct.Struct('<QI3I')       # GRAVB: the Gravidar's mapped bounds by role (0 read, 1 write, 2 base): sector, x, y, r bits
+VIEWL = struct.Struct('<QBB6s')      # VIEWL: an object's live view and player view flags (+0x3c8, +0x3c9), either set
+IKV = struct.Struct('<QHHI24s')      # IKV: a skeleton IK joint's group, index and bytes +0x08..+0x1f (value, time, rate, target)
+SHPW = struct.Struct('<Q6Q')        # SHPW: a ship's object words a load leaves at defaults
+TRDN = struct.Struct('<Qd')         # TRDN: a container's next trade offer update (+0x928)
+NPCA = struct.Struct('<QII48s')     # NPCA: an active NPC's flags, animation index and bytes +0x5b0 .. +0x5e0
+JOBG = struct.Struct('<QQ')         # JOBG: a job's own generator word *(job+0x528), by its ID's FNV-1a hash
+CODE = struct.Struct('<II')         # CODE: the object code counter and the game's code seed (one record)
+ENGR = struct.Struct('<QdQ')        # ENGR: an engine's boost ramp time (+0x2f0) and factor word (+0x2f8)
+BNDS = struct.Struct('<Q27II')      # BNDS: a station's three bounding structs (+0xc90, +0xcc0, +0xcf0: 9 words each)
+SHGR = struct.Struct('<QQIIdd')     # SHGR: a container's shield recharge group for a ship: value (+0x68), changed time (+0x70)
+ECOS = struct.Struct('<Qdd')         # ECOS: a station's, build storage's or ship's next and last economy run (+0xa38, +0xa40)
+RCNT = struct.Struct('<QII')         # RCNT: a created ship's or bay's reference count (+0x40)
+assert SPLM.size == 1264 and SPLME.size == 192 and GRAVN.size == 32 and GRAVP.size == 80 and GRAVQ.size == 48 and JOBE.size == 128 and EVQT.size == 32 and GRAVD.size == 24 and VIEWK.size == 24 and VIEWKC.size == 24 and VIEWF.size == 24 and VIEWP.size == 72 and SHOOT.size == 104 and ATTK.size == 48 and LIVEF.size == 16 and SPEC.size == 40 and NAVC.size == 104 and JOBS.size == 24 and GONE.size == 8 and BODY.size == 208 and BUPD.size == 16 and LDC.size == 128 and NAVT.size == 128 and NMESH.size == 8 and NOCT.size == 40 and AGTT.size == 32 and AGCB.size == 1032 and PBNK.size == 376 and PEND.size == 16 and GRAVB.size == 24 and VIEWL.size == 16 and IKV.size == 40 and RCNT.size == 16 and ECOS.size == 24 and SHPW.size == 56 and TRDN.size == 16 and NPCA.size == 64 and JOBG.size == 16 and CODE.size == 8 and ENGR.size == 24 and SHGR.size == 40 and BNDS.size == 120
 RECORDS = {SEC_IDS: IDS, SEC_CTX: CTX, SEC_WAKE: WAKE, SEC_WAKEVEC: WAKEVEC, SEC_MDHEAP: MDHEAP, SEC_HEALTH: HEALTH, SEC_POSE: POSE,
            SEC_SHIELD: SHIELD, SEC_NAV: NAV, SEC_ATTN: ATTN, SEC_KEYS: KEYS, SEC_PATH: PATH, SEC_REGION: REGION,
            SEC_FLIGHT: FLIGHT, SEC_SPLINE: SPLINE, SEC_AGENT: AGENT, SEC_ROUTE: ROUTE, SEC_PARAM: PARAM, SEC_DOCK: DOCK,
            SEC_STEER: STEER, SEC_STEERPT: ROUTE, SEC_SOLVER: SOLVER, SEC_BULLET: BULLET, SEC_GRAV: GRAV, SEC_GRAVC: GRAVC,
            SEC_GRAVS: GRAVS, SEC_SPLM: SPLM, SEC_SPLME: SPLME, SEC_SPLMSEG: SPLINE, SEC_GRAVN: GRAVN,
-           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ}
+           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ, SEC_JOBE: JOBE, SEC_EVQT: EVQT, SEC_GRAVD: GRAVD, SEC_VIEWK: VIEWK, SEC_VIEWKC: VIEWKC, SEC_VIEWF: VIEWF, SEC_VIEWP: VIEWP, SEC_SHOOT: SHOOT, SEC_ATTK: ATTK, SEC_LIVEF: LIVEF, SEC_SPEC: SPEC, SEC_NAVC: NAVC, SEC_JOBS: JOBS, SEC_GONE: GONE, SEC_BODY: BODY, SEC_BUPD: BUPD, SEC_LDC: LDC, SEC_NAVT: NAVT, SEC_NMESH: NMESH, SEC_NOCT: NOCT, SEC_AGTT: AGTT, SEC_AGCB: AGCB, SEC_PBNK: PBNK, SEC_PEND: PEND, SEC_GRAVB: GRAVB, SEC_VIEWL: VIEWL, SEC_IKV: IKV, SEC_RCNT: RCNT, SEC_ECOS: ECOS, SEC_SHPW: SHPW, SEC_TRDN: TRDN, SEC_NPCA: NPCA, SEC_JOBG: JOBG, SEC_CODE: CODE, SEC_ENGR: ENGR, SEC_SHGR: SHGR, SEC_BNDS: BNDS}
 GATE_FIELDS = ('tick', 'game', 'real', 'wire_version', 'clients', 'lookahead', 'tick_hz', 'slot', 'md_seq', 'rid_next',
                'created_generation', 'created_live', 'identities', 'ctx_count', 'wake_count', 'vec_index', 'vec0', 'vec1',
                'md_count', 'md_void', 'md_release', 'md_queued', 'unsupported', 'digest', 'portable', 'save_us',
-               'capture_us', 'ambiguous', 'flags', 'fixture')
+               'capture_us', 'ambiguous', 'flags', 'fixture', 'flight', 'cid')
 FLAG_DIAGNOSTIC, FLAG_NO_SAVE = 1, 2
 ACTOR_CAPACITY = 30                           # the gate's fixture actor slots (lockstep_registry.h ACTOR_CAPACITY: 15 + 16 - 1)
 # The session's view of each snapshot fixture actor at T (GATE fixture, one byte per actor; lockstep_snapshot_fixture.h
@@ -686,6 +746,55 @@ def gravq_shape(gravq):
     return True
 
 
+def jobe_shape(jobe):
+    """lockstep_join_world.h join_jobe_shape: at most one, flags ENABLED/RUNNING/GATE only, a printable cursor shorter than the field."""
+    if len(jobe) > 1:
+        return False
+    for last, flags, length, cursor in jobe:
+        if flags & ~7 or length >= JOBE_CURSOR or any(cursor[length:]) or any(not 33 <= c <= 126 for c in cursor[:length]):
+            return False
+    return True
+
+
+def _evqt_key(r):
+    return (r[0], r[1], struct.unpack('<d', struct.pack('<Q', r[5]))[0], r[3])
+
+
+def evqt_shape(evqt):
+    """lockstep_join_world.h join_evqt_shape: sorted by (portable, class, time, place), flags UNMAPPED only, exactly without a source."""
+    for i, r in enumerate(evqt):
+        if r[4] & ~EVQT_UNMAPPED or (not r[0]) != bool(r[4] & EVQT_UNMAPPED) or (i and _evqt_key(evqt[i-1]) > _evqt_key(r)):
+            return False
+    return True
+
+
+def gravd_shape(gravd):
+    """lockstep_join_world.h join_gravd_shape: by (ship, view) each once, view 0/1, flags NONE or UNMAPPED, a parent exactly without."""
+    for i, (portable, parent, rel, flags) in enumerate(gravd):
+        if not portable or rel > 1 or flags & ~3 or flags == 3 or (not parent) != bool(flags) or (i and gravd[i-1][0:3:2] >= (portable, rel)):
+            return False
+    return True
+
+
+def viewk_shape(viewk, viewkc):
+    """lockstep_join_world.h join_viewk_shape: by (component, view) each once, view 0/1, flags UNMAPPED/UNREAD, UNREAD without children;
+    VIEWKC exactly each record's children in order, a child 0 exactly under UNMAPPED."""
+    j = 0
+    for i, (portable, rel, flags, vflags, count) in enumerate(viewk):
+        if not portable or rel > 1 or flags & ~3 or count > VIEWK_CHILDREN or (flags & VIEWK_UNREAD and count) or \
+                (i and viewk[i-1][0:2] >= (portable, rel)):
+            return False
+        zero = False
+        for x in range(count):
+            if j >= len(viewkc) or (viewkc[j][0], viewkc[j][2], viewkc[j][3]) != (portable, rel, x):
+                return False
+            zero = zero or not viewkc[j][1]
+            j += 1
+        if zero != bool(flags & VIEWK_UNMAPPED):
+            return False
+    return j == len(viewkc)
+
+
 def bullet_differences(left, right):
     """The object offsets where two savers' BULLET records of one projectile differ ('fields' for its named ones, 'bullet+0x..', 'motion+0x..')."""
     out = ['fields'] if left[:7] != right[:7] else []
@@ -747,6 +856,7 @@ def _records(kind, payload, count):
         if any(view >= len(FIXTURE_VIEWS) for view in gate['fixture']):
             raise JoinError('gate_fixture')
         gate['fixture'] = ''.join(str(view) for view in gate['fixture'])
+        gate['flight'] = list(gate['flight'])   # each fixture actor's flight sample init generation at T
         return gate
     if kind in TEXT_SECTIONS:
         text = payload.decode('ascii')
@@ -769,7 +879,7 @@ def read_package(data):
     if hashlib.sha256(data[:-32]).digest() != data[-32:]:
         raise JoinError('package_sha')
     magic, version, count, tick, game, real, save_sha, save_bytes, slot, flags, reserved = HEADER.unpack_from(data)
-    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 35:
+    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 72:
         raise JoinError('package_magic')
     header = {'tick': tick, 'game': game, 'real': real, 'save_sha': save_sha.hex(), 'save_bytes': save_bytes, 'slot': slot,
               'flags': flags, 'sections': count, 'version': version}
@@ -797,7 +907,8 @@ def read_package(data):
             (version >= 9 and not all(SECTION_NAMES[k] in sections for k in WORLD9_SECTIONS)) or \
             (version >= 10 and not all(SECTION_NAMES[k] in sections for k in WORLD10_SECTIONS)) or \
             (version >= 11 and not all(SECTION_NAMES[k] in sections for k in WORLD11_SECTIONS)) or \
-            (version >= 12 and not all(SECTION_NAMES[k] in sections for k in WORLD12_SECTIONS)):
+            (version >= 12 and not all(SECTION_NAMES[k] in sections for k in WORLD12_SECTIONS)) or \
+            (version >= 13 and not all(SECTION_NAMES[k] in sections for k in WORLD13_SECTIONS)):
         raise JoinError('package_layout')
     for name in ('health', 'pose', 'shield', 'nav', 'attn', 'flight', 'dock', 'steer'):   # sorted by portable ID, each once (world_order)
         keys = [r[0] for r in sections.get(name, [])]
@@ -843,6 +954,95 @@ def read_package(data):
         raise JoinError('gravp_shape')
     if version >= 12 and not gravq_shape(sections['gravq']):
         raise JoinError('gravq_shape')
+    if version >= 13 and not jobe_shape(sections['jobe']):
+        raise JoinError('jobe_shape')
+    if version >= 13 and not evqt_shape(sections['evqt']):
+        raise JoinError('evqt_shape')
+    if version >= 13 and not gravd_shape(sections['gravd']):
+        raise JoinError('gravd_shape')
+    if version >= 13 and not viewk_shape(sections['viewk'], sections['viewkc']):
+        raise JoinError('viewk_shape')
+    if version >= 13 and any(not r[0] or (i and sections['viewf'][i-1][0] >= r[0]) for i, r in enumerate(sections['viewf'])):
+        raise JoinError('viewf_shape')
+    if version >= 13 and any(not r[0] or (i and sections['viewp'][i-1][0] >= r[0]) for i, r in enumerate(sections['viewp'])):
+        raise JoinError('viewp_shape')
+    if version >= 13 and any(not r[0] or (i and sections['shoot'][i-1][0] >= r[0]) or r[11] > 1 or (not r[8]) != (not r[11])
+                             or max(r[9]) > 1 or max(r[10]) > 1 or any(r[12]) or (not r[11] and r[13]) for i, r in enumerate(sections['shoot'])):
+        raise JoinError('shoot_shape')
+    if version >= 13 and any(not r[0] or (i and sections['attk'][i-1][0] >= r[0]) or r[6] or not (r[2] | r[3] | r[4])
+                             for i, r in enumerate(sections['attk'])):
+        raise JoinError('attk_shape')
+    if version >= 13 and any(not r[0] or (i and sections['livef'][i-1][0] >= r[0]) or r[1] & r[2] or (r[1] | r[2]) & ~0x20 or not (r[1] | r[2])
+                             for i, r in enumerate(sections['livef'])):
+        raise JoinError('livef_shape')
+    if version >= 13 and any(not r[0] or (i and sections['spec'][i-1][:2] >= r[:2]) for i, r in enumerate(sections['spec'])):
+        raise JoinError('spec_shape')
+    if version >= 13 and any(not r[0] or (i and sections['navc'][i-1][0] >= r[0]) for i, r in enumerate(sections['navc'])):
+        raise JoinError('navc_shape')
+    if version >= 13 and any(not r[0] or (i and sections['jobs'][i-1][2] >= r[2]) for i, r in enumerate(sections['jobs'])):
+        raise JoinError('jobs_shape')
+    if version >= 13 and any(not r[0] or (i and sections['gone'][i-1][0] >= r[0]) for i, r in enumerate(sections['gone'])):
+        raise JoinError('gone_shape')
+    if version >= 13 and any(not r[0] or r[1] > 1 or r[34] > 1 or (i and (sections['body'][i-1][0], sections['body'][i-1][1]) >= (r[0], r[1]))
+                             for i, r in enumerate(sections['body'])):
+        raise JoinError('body_shape')
+    if version >= 13 and any(not r[0] or (i and sections['bupd'][i-1][0] >= r[0]) for i, r in enumerate(sections['bupd'])):
+        raise JoinError('bupd_shape')
+    if version >= 13 and any(not r[0] or (i and sections['ldc'][i-1][0] >= r[0]) for i, r in enumerate(sections['ldc'])):
+        raise JoinError('ldc_shape')
+    if version >= 13 and any(not r[0] or (i and sections['navt'][i-1][0] >= r[0]) for i, r in enumerate(sections['navt'])):
+        raise JoinError('navt_shape')
+    nmesh = sections.get('nmesh', [])
+    if version >= 13 and (len(nmesh) == 1 or any(nmesh[i-1][0] >= nmesh[i][0] for i in range(3, len(nmesh)))):
+        raise JoinError('nmesh_shape')
+    if version >= 13 and not noct_shape(sections.get('noct', [])):
+        raise JoinError('noct_shape')
+    agtt = sections.get('agtt', [])
+    if version >= 13 and agtt and (len(agtt) != len(sections.get('agent', [])) or
+                                   any(r[0] != a[0] for r, a in zip(agtt, sections.get('agent', [])))):
+        raise JoinError('agtt_shape')
+    if version >= 13 and any(not r[0] or (i and sections['agcb'][i-1][0] >= r[0]) for i, r in enumerate(sections.get('agcb', []))):
+        raise JoinError('agcb_shape')
+    if version >= 13 and any(not r[0] or r[2] or r[1] & ~63 or (i and sections['pbnk'][i-1][0] >= r[0])
+                             for i, r in enumerate(sections.get('pbnk', []))):
+        raise JoinError('pbnk_shape')
+    if version >= 13 and any(not r[0] or not r[1] or r[2] or (i and sections['pend'][i-1][0] >= r[0])
+                             for i, r in enumerate(sections.get('pend', []))):
+        raise JoinError('pend_shape')
+    if version >= 13 and any(not r[0] or r[1] > 2 or (i and sections['gravb'][i-1][:2] >= r[:2])
+                             for i, r in enumerate(sections.get('gravb', []))):
+        raise JoinError('gravb_shape')
+    if version >= 13 and any(not r[0] or r[1] > 1 or r[2] > 1 or not (r[1] | r[2]) or any(r[3]) or (i and sections['viewl'][i-1][0] >= r[0])
+                             for i, r in enumerate(sections.get('viewl', []))):
+        raise JoinError('viewl_shape')
+    if version >= 13 and any(not r[0] or r[3] or r[1] >= 16 or r[2] >= 64 or (i and sections['ikv'][i-1][:3] >= r[:3])
+                             for i, r in enumerate(sections.get('ikv', []))):
+        raise JoinError('ikv_shape')
+    if version >= 13 and any(not r[0] >> 63 or r[2] or not r[1] or (i and sections['rcnt'][i-1][0] >= r[0])
+                             for i, r in enumerate(sections.get('rcnt', []))):
+        raise JoinError('rcnt_shape')
+    if version >= 13 and any(not r[0] or (i and sections['ecos'][i-1][0] >= r[0]) for i, r in enumerate(sections.get('ecos', []))):
+        raise JoinError('ecos_shape')
+    if version >= 13 and any(not r[0] or (i and sections['shpw'][i-1][0] >= r[0]) for i, r in enumerate(sections.get('shpw', []))):
+        raise JoinError('shpw_shape')
+    if version >= 13 and any(not r[0] or (i and sections['trdn'][i-1][0] >= r[0]) for i, r in enumerate(sections.get('trdn', []))):
+        raise JoinError('trdn_shape')
+    if version >= 13 and any(not r[0] or not r[1] or r[1] > 3 or (i and sections['npca'][i-1][0] >= r[0])
+                             for i, r in enumerate(sections.get('npca', []))):
+        raise JoinError('npca_shape')
+    if version >= 13 and any(not r[0] or (i and sections['jobg'][i-1][0] >= r[0]) for i, r in enumerate(sections.get('jobg', []))):
+        raise JoinError('jobg_shape')
+    code = sections.get('code', [])
+    if version >= 13 and (len(code) > 1 or any(r[0] > 0x1000000 or r[1] > 0xffffff for r in code)):
+        raise JoinError('code_shape')
+    if version >= 13 and any(not r[0] or (i and sections['engr'][i-1][0] >= r[0]) for i, r in enumerate(sections.get('engr', []))):
+        raise JoinError('engr_shape')
+    shgr = sections.get('shgr', [])
+    if version >= 13 and any(not r[0] or not r[1] or r[3] or (i and shgr[i-1][:3] >= r[:3]) for i, r in enumerate(shgr)):
+        raise JoinError('shgr_shape')
+    bnds = sections.get('bnds', [])
+    if version >= 13 and any(not r[0] or r[-1] or (i and bnds[i-1][0] >= r[0]) for i, r in enumerate(bnds)):
+        raise JoinError('bnds_shape')
     gate = sections['gate']
     if (gate['tick'], gate['game'], gate['real'], gate['slot']) != (tick, game, real, slot):
         raise JoinError('gate_header')
@@ -896,6 +1096,9 @@ def portable_text(sections):
         lines.append(f"GRAVP|{len(gravp)}|{hashlib.sha256(b''.join(struct.pack('<QII', *r[:3]) for r in gravp)).hexdigest()}")
         gravq = sections['gravq']              # which sources, kinds, flags and events in which order; not the times
         lines.append(f"GRAVQ|{len(gravq)}|{hashlib.sha256(b''.join(struct.pack('<QIIII', *r[:5]) for r in gravq)).hexdigest()}")
+    if 'jobe' in sections:                     # version 13: the job engine's schedule, whole
+        jobe = sections['jobe']
+        lines.append(f"JOBE|{len(jobe)}|{hashlib.sha256(b''.join(JOBE.pack(*r) for r in jobe)).hexdigest()}")
     return ''.join(line+'\n' for line in lines)
 
 
@@ -905,6 +1108,24 @@ def _double(bits):
 
 def portable_digest(sections):
     return hashlib.sha256(portable_text(sections).encode('ascii')).digest()[:16].hex()
+
+
+def noct_shape(records):
+    """NOCT (lockstep_join.h join_noct_shape): none, or the head (next >= shown), one entry per index shown..next-1 in order
+    (flag and live 0/1), then hidden keys (flag 0/1)."""
+    if not records:
+        return True
+    head = records[0]
+    if head[6] != 0 or head[1] > head[0]:
+        return False
+    i, want = 1, head[1]
+    while i < len(records) and records[i][6] == 1:
+        if records[i][0] != want or records[i][5] > 1 or records[i][3] > 1:
+            return False
+        want, i = want+1, i+1
+    if want != head[0]:
+        return False
+    return all(r[6] == 2 and r[5] <= 1 for r in records[i:])
 
 
 def write_package(gate, sections, save_sha=b'\0'*32, save_bytes=0, flags=0, version=PACKAGE_VERSION):
@@ -923,9 +1144,9 @@ def write_package(gate, sections, save_sha=b'\0'*32, save_bytes=0, flags=0, vers
     allowed = (WORLD_SECTIONS if version >= 2 else ())+(WORLD3_SECTIONS if version >= 3 else ())+(WORLD4_SECTIONS if version >= 4 else ())+\
         (WORLD5_SECTIONS if version >= 5 else ())+(WORLD6_SECTIONS if version >= 6 else ())+(WORLD7_SECTIONS if version >= 7 else ())+\
         (WORLD8_SECTIONS if version >= 8 else ())+(WORLD9_SECTIONS if version >= 9 else ())+(WORLD10_SECTIONS if version >= 10 else ())+\
-        (WORLD11_SECTIONS if version >= 11 else ())+(WORLD12_SECTIONS if version >= 12 else ())
+        (WORLD11_SECTIONS if version >= 11 else ())+(WORLD12_SECTIONS if version >= 12 else ())+(WORLD13_SECTIONS if version >= 13 else ())
     if any(kind in sections for kind in WORLD_SECTIONS+WORLD3_SECTIONS+WORLD4_SECTIONS+WORLD5_SECTIONS+WORLD6_SECTIONS+WORLD7_SECTIONS+
-           WORLD8_SECTIONS+WORLD9_SECTIONS+WORLD10_SECTIONS+WORLD11_SECTIONS+WORLD12_SECTIONS if kind not in allowed):
+           WORLD8_SECTIONS+WORLD9_SECTIONS+WORLD10_SECTIONS+WORLD11_SECTIONS+WORLD12_SECTIONS+WORLD13_SECTIONS if kind not in allowed):
         raise JoinError('package_version')
     if version >= 4:
         sections.setdefault(SEC_PATH, [(0, PATH_MANAGER, 0, 0, 0, 0, 0), (0, PATH_MANAGER, 1, 0, 0, 0, 0)])
@@ -938,8 +1159,13 @@ def write_package(gate, sections, save_sha=b'\0'*32, save_bytes=0, flags=0, vers
     named = {SECTION_NAMES[k]: v for k, v in sections.items()}
     named['gate'] = gate
     gate['portable'] = portable_digest(named)
+    gate['flight'] = list(gate.get('flight') or [0]*12)   # a 0 or a missing field: every fixture actor's generation 0
+    gate['cid'] = int(gate.get('cid') or 0)   # X4's construction ID counter at T (0: not carried)
+    if len(gate['flight']) != 12 or any(not 0 <= g <= 255 for g in gate['flight']):
+        raise JoinError('gate_flight')
     values = [gate[name] for name in GATE_FIELDS]
     values[GATE_FIELDS.index('fixture')] = bytes(int(c) for c in gate['fixture'])
+    values[GATE_FIELDS.index('flight')] = bytes(gate['flight'])
     values[GATE_FIELDS.index('digest')] = gate['digest'].encode('ascii')
     values[GATE_FIELDS.index('portable')] = bytes.fromhex(gate['portable'])
     parts = [(SEC_GATE, 1, GATE.pack(*values))]
@@ -981,10 +1207,12 @@ def world_differences(left, right, samples=8):
     out = {}
     for name in ('health', 'pose', 'shield', 'nav', 'attn', 'keys', 'path', 'region', 'flight', 'spline', 'agent', 'route', 'param',
                  'dock', 'steer', 'steerpt', 'solver', 'bullet', 'grav', 'gravc', 'gravs', 'splm', 'splme', 'splmseg', 'gravn',
-                 'gravp', 'gravq'):
+                 'gravp', 'gravq', 'jobe', 'evqt', 'gravd', 'viewk', 'viewkc', 'viewf', 'viewp', 'shoot', 'attk', 'livef', 'spec', 'navc', 'jobs', 'gone', 'body', 'bupd', 'ldc', 'navt', 'nmesh', 'noct', 'agtt', 'agcb', 'pbnk', 'pend', 'gravb', 'viewl', 'ikv', 'rcnt', 'ecos', 'shpw', 'trdn', 'npca', 'jobg', 'code', 'engr', 'shgr', 'bnds'):
         if name not in left and name not in right:
             continue
         key = (lambda r: (r[1] << 64) | r[0]) if name == 'keys' else (lambda r: r[0])   # KEYS by (table, key)
+        if name == 'body':                     # BODY by (portable, which): two records an object
+            key = lambda r: (r[0] << 1) | r[1]
         if name == 'path':                     # PATH by (kind, vector, batch, position): a batch's position is its cursor (data)
             key = lambda r: (r[1] << 96) | (r[2] << 64) | (r[3] << 32) | (r[4] if r[1] >= PATH_MEMBER else 0)
         elif name == 'region':                 # REGION by (region, field)
@@ -1009,6 +1237,16 @@ def world_differences(left, right, samples=8):
             key = lambda r: (r[1] << 64) | r[0]
         elif name == 'gravq':                  # GRAVQ by its place in the list
             key = lambda r: r[1]
+        elif name == 'jobe':                   # JOBE: the one record
+            key = lambda r: 0
+        elif name == 'evqt':                   # EVQT by (source, class, place)
+            key = lambda r: (r[0] << 64) | (r[1] << 32) | r[3]
+        elif name == 'gravd':                  # GRAVD by (ship, view)
+            key = lambda r: (r[2] << 64) | r[0]
+        elif name == 'viewk':                  # VIEWK by (component, view)
+            key = lambda r: (r[1] << 64) | r[0]
+        elif name == 'viewkc':                 # VIEWKC by (component, view, place)
+            key = lambda r: (r[2] << 96) | (r[3] << 64) | r[0]
         x = {key(r): r for r in left.get(name, [])}
         y = {key(r): r for r in right.get(name, [])}
         differ = sorted(i for i in x.keys() & y.keys() if x[i] != y[i])
@@ -1107,8 +1345,12 @@ class JoinCoordinator:
     placed, waiting for the save tick and the savers' SAVED records), saved (package known, the joiner boots),
     catching_up (the joiner replays), handover (H announced), joined, failed."""
     def __init__(self, barrier, slot, nonce, lead=30, handover_gap=60, handover_lead=8, max_pause=60.0, catchup_limit=300.0,
-                 joiner_timeout=900.0, savers=None):
+                 joiner_timeout=900.0, savers=None, observe=False):
         self.b, self.slot, self.nonce = barrier, slot, nonce
+        # --join-observe (diagnostic, default off): a joiner's declared digest that differs from the session's before H is
+        # counted and noticed, not fatal, so the handover and what follows it can run while the join is not yet equal.
+        # Game and real time stay exact. Every line of such a join says diagnostic=join_observe: it is never an acceptance.
+        self.observe, self.digest_mismatches, self.first_digest_mismatch = observe, 0, None
         self.lead, self.handover_gap, self.handover_lead = lead, handover_gap, handover_lead
         self.max_pause, self.catchup_limit, self.joiner_timeout = max_pause, catchup_limit, joiner_timeout
         present = [s for s in barrier.slots if s not in barrier.absent]
@@ -1119,6 +1361,7 @@ class JoinCoordinator:
         self.saved = {}            # saver slot -> SAVED record
         self.saver = None          # the slot whose files the joiner loads
         self.joiner_tick, self.first_real, self.started, self.progress = None, None, None, []
+        self.catchup_started = None   # the first report's time (progress keeps only the last 64 reports)
         self.address, self.last_seen, self.notices = None, None, []
 
     def notice(self, text):
@@ -1211,13 +1454,20 @@ class JoinCoordinator:
             reason = f'mismatch:real_tick_{tick}'
         elif tick != self.save_tick and digest != ref['digest']:
             # Tick T carries the loaded world's boot report; from T+1 on the declared state must equal the session's.
-            reason = f'mismatch:digest_tick_{tick}'
+            if self.observe:
+                if self.joiner_tick is None or tick > self.joiner_tick:      # each tick once (resent reports repeat it)
+                    self.digest_mismatches += 1
+                    if self.first_digest_mismatch is None:
+                        self.first_digest_mismatch = tick
+                        self.notice(f'digest_mismatch first={tick} diagnostic=join_observe (counted, not fatal)')
+            else:
+                reason = f'mismatch:digest_tick_{tick}'
         if reason:
             self.fail(reason, now)
             return [(address, f'NGSTOP|{version}|{self.b.token}|{slot}|{tick}'.encode('ascii'))]
         first = self.joiner_tick is None
         if first:
-            self.address, self.state = address, 'catching_up'
+            self.address, self.state, self.catchup_started = address, 'catching_up', now
             self.notice(f'catching_up first_report={tick}')
         if self.joiner_tick is None or tick > self.joiner_tick:
             self.joiner_tick = tick
@@ -1248,7 +1498,9 @@ class JoinCoordinator:
         gap = self.b.released-self.joiner_tick
         lead = self.b.lookahead+1+self.handover_lead
         rate = self.rate()
-        waited = now-(self.progress[0][0] if self.progress else now)
+        # Since the catch-up began (not progress[0]: that list keeps the last 64 reports, about 2-3 s, so a joiner no faster
+        # than the session never reached --join-catchup-limit and was never handed over; rj2, rj3).
+        waited = now-(self.catchup_started if self.catchup_started is not None else now)
         if gap > self.handover_gap and waited < self.catchup_limit:
             return
         pause = handover_pause(max(gap, 0), lead, self.b.tick_hz, rate) if rate else math.inf
@@ -1265,7 +1517,11 @@ class JoinCoordinator:
 
     def joined(self, now):
         self.state = 'joined'
-        self.notice(f'joined tick={self.handover} catch_up_s={now-self.progress[0][0]:.1f}' if self.progress else 'joined')
+        observed = (f' diagnostic=join_observe digest_mismatches={self.digest_mismatches} '
+                    f'first_digest_mismatch={self.first_digest_mismatch if self.first_digest_mismatch is not None else "-"}'
+                    if self.observe else '')
+        self.notice((f'joined tick={self.handover} catch_up_s={now-self.catchup_started:.1f}' if self.catchup_started is not None
+                     else 'joined')+observed)
 
 
 def _barrier_base():
@@ -1276,14 +1532,27 @@ def _barrier_base():
 class JoinBarrier(_barrier_base()):
     """The relay's Barrier with absent slots (native_gate_relay.py --join). Absent slots are stand-ins: once every
     present slot reported tick t, each absent slot gets the reference slot's game, real and digest and the blob the
-    relay scheduled for it (a JOIN record) or ''. Protocols 3 and 4 only; no live inputs, peer links or crypto."""
-    def __init__(self, token, absent=(), join_options=None, **kw):
+    relay scheduled for it (a JOIN record) or ''. Protocols 3 and 4 only; no live inputs, peer links or crypto.
+    stall_drop_ms > 0: drops (module docstring, part 3); rejoin: the slots present from the start that may be dropped."""
+    def __init__(self, token, absent=(), join_options=None, rejoin=(), stall_report_ms=1000.0, stall_drop_ms=0.0, **kw):
         super().__init__(token, **kw)
         if kw.get('live_inputs') or kw.get('peer_window') is not None:
             raise ValueError('--join covers protocols 3 and 4 without live inputs or peer links')
         self.absent = set(absent)
         if not self.absent <= set(self.slots) or len(self.absent) >= self.clients:
             raise ValueError('absent slots must leave at least one present slot')
+        self.rejoin, self.absent_at_start = set(rejoin), frozenset(self.absent)
+        if not self.rejoin <= set(self.slots)-{1} or self.rejoin & self.absent:
+            raise ValueError('rejoin slots must be 2..N and not absent')
+        if self.rejoin and not stall_drop_ms:
+            raise ValueError('rejoin slots need a stall drop bound')
+        if stall_drop_ms and (not stall_drop_ms > 0 or stall_drop_ms < stall_report_ms):
+            raise ValueError('the stall drop bound must be positive and not below the stall report bound')
+        self.stall_report, self.stall_drop = stall_report_ms/1000.0, stall_drop_ms/1000.0
+        self.dropped = {}          # slot -> the first stand-in row of its current drop
+        self.dropped_peers = {}    # slot -> the dropped client's address (answered NGDROP)
+        self.stall_seen = set()
+        self.stalls, self.drops = [], []
         self.controls = {}         # (tick, slot) -> blob for an absent slot's stand-in row
         self.handovers = {}        # slot -> H
         self.join, self.joins, self.join_options = None, [], dict(join_options or {})
@@ -1315,10 +1584,14 @@ class JoinBarrier(_barrier_base()):
             return None
         return rows[min(present)]
 
+    def standing(self, tick):
+        """The slots whose row at tick is a stand-in: before its handover tick H a slot is one, from H on a client;
+        without a handover an absent slot is one."""
+        return [s for s in self.slots if (tick < self.handovers[s] if s in self.handovers else s in self.absent)]
+
     def fill(self, tick):
         rows = self.states.get(tick, {})
-        # A slot with a handover tick H is a stand-in before H and a client from H on; otherwise absent = stand-in.
-        stand = [s for s in self.slots if (tick < self.handovers[s] if s in self.handovers else s in self.absent)]
+        stand = self.standing(tick)
         present = [s for s in self.slots if s not in stand]
         if not all(s in rows for s in present) or not present:
             return False
@@ -1341,6 +1614,8 @@ class JoinBarrier(_barrier_base()):
                 slot, tick = fields[0], fields[1]
                 h = self.handovers.get(slot)
                 joining = self.join and self.join.slot == slot and self.join.state in ('saved', 'catching_up', 'handover')
+                if slot in self.dropped and address == self.dropped_peers.get(slot) and not joining:
+                    return [(address, self.drop_packet(slot))] if self.version == 4 else []
                 if h is None or tick < h:
                     # Before H: the catch-up replay (also a joined slot's resent older reports, never a session row).
                     return self.join.joiner_report(*fields, address, now) if joining else []
@@ -1348,6 +1623,8 @@ class JoinBarrier(_barrier_base()):
                     if not (joining and self.join.state == 'handover'):
                         return []
                     self.absent.discard(slot)           # from H on slot k is a client like any other
+                    self.dropped.pop(slot, None)        # a rejoin: its old address is no longer answered
+                    self.dropped_peers.pop(slot, None)
                     self.join.joined(now)
         out = super().receive(data, address, now)
         self.after_release(now)
@@ -1405,7 +1682,76 @@ class JoinBarrier(_barrier_base()):
             self.join.poll(now)
             self.notices += self.join.notices
             self.join.notices = []
-        return []
+        return self.poll_stall(now) if self.stall_drop else []
+
+    # -- drops (roadmap 15) --
+    def droppable(self, slot):
+        """Every client has the slot in its pilot absent mask, so an ABORT makes it neutral: a --rejoin slot, or a slot
+        absent at the start (after its handover)."""
+        return slot != 1 and (slot in self.rejoin or slot in self.absent_at_start)
+
+    def drop_packet(self, slot):
+        return f'NGDROP|4|{self.token}|{slot}|{self.dropped[slot]}'.encode('ascii')
+
+    def poll_stall(self, now):
+        """The present clients the others wait for at the first unreleased tick are reported, then dropped."""
+        if self.failed or self.done or self.released < 0:
+            return []
+        tick = self.released+1
+        if tick > self.limit:
+            return []
+        rows = self.states.get(tick, {})
+        stand = self.standing(tick)
+        present = [s for s in self.slots if s not in stand]
+        missing = [s for s in present if s not in rows]
+        if not missing or len(missing) == len(present):
+            return []
+        since = max(self.arrivals.get(tick, now), self.released_at.get(self.released, now))
+        waited = now-since
+        for s in missing:
+            if waited >= self.stall_report and (s, tick) not in self.stall_seen:
+                self.stall_seen.add((s, tick))
+                self.stalls.append({'slot': s, 'tick': tick, 'reported_ms': round(1000*waited, 1)})
+                self.notices.append(f'NATIVE_GATE STALL slot={s} tick={tick} waited_ms={1000*waited:.0f}'
+                                    f'{"" if self.droppable(s) else " droppable=0"}')
+        if waited < self.stall_drop:
+            return []
+        out, dropped = [], False
+        for s in missing:
+            if self.droppable(s):
+                out += self.drop(s, tick, now, waited)
+                dropped = True
+        return out+self.advance(now) if dropped else []
+
+    def drop(self, slot, tick, now, waited):
+        """Slot's rows are stand-ins from tick, the first it did not report; that row carries ABORT(slot, dropped)."""
+        ref = min(s for s in self.slots if s not in self.standing(tick) and s != slot)
+        self.dropped[slot] = tick
+        record = {'slot': slot, 'tick': tick, 'waited_ms': round(1000*waited, 1)}
+        base = self.states.get(0, {})
+        if slot in base and ref in base and base[slot]['real'] != base[ref]['real']:
+            # --relative-real compares each slot's real time since its tick 0: the stand-ins and a rejoiner carry the
+            # reference slot's clock from here on.
+            record['real_base_was'] = base[slot]['real']
+            base[slot] = dict(base[slot], real=base[ref]['real'])
+        address = self.peers.pop(slot, None)
+        if address is not None:
+            self.dropped_peers[slot] = address
+        if self.join and self.join.state in ('queued', 'saved', 'catching_up', 'handover'):
+            if self.join.slot == slot:
+                self.join.fail('joiner_lost:dropped', now)      # its ABORT goes in the first row it did not report
+            elif slot in self.join.savers and slot not in self.join.saved:
+                self.join.fail('refused_by_relay:saver_dropped', now)
+            self.notices += self.join.notices
+            self.join.notices = []
+        self.absent.add(slot)
+        self.handovers.pop(slot, None)
+        if (tick, slot) not in self.controls:               # (a failed join's ABORT may be there already)
+            self.schedule(slot, encode_record(OP_ABORT, slot, tick, reason=REASON_CODES['dropped']), tick)
+        self.drops.append(record)
+        self.notices.append(f'NATIVE_GATE DROP slot={slot} tick={tick} waited_ms={1000*waited:.0f} '
+                            f'remaining={",".join(str(s) for s in self.slots if s not in self.absent)}')
+        return [(address, self.drop_packet(slot))] if address is not None and self.version == 4 else []
 
     def take_notices(self):
         notices = super().take_notices()
@@ -1435,9 +1781,14 @@ class JoinBarrier(_barrier_base()):
     def summary(self):
         out = super().summary()
         out['join'] = [{'slot': j.slot, 'state': j.state, 'failure': j.failure, 'save_tick': j.save_tick, 'saver': j.saver,
-                        'saved': j.saved, 'handover': j.handover, 'joiner_tick': j.joiner_tick, 'joiner_rate': round(j.rate(), 2)}
+                        'saved': j.saved, 'handover': j.handover, 'joiner_tick': j.joiner_tick, 'joiner_rate': round(j.rate(), 2),
+                        **({'diagnostic': 'join_observe', 'digest_mismatches': j.digest_mismatches,
+                            'first_digest_mismatch': j.first_digest_mismatch} if j.observe else {})}
                        for j in self.joins]
         out['absent'] = sorted(self.absent)
+        if self.stall_drop:
+            out['drop'] = {'stall_report_ms': 1000*self.stall_report, 'stall_drop_ms': 1000*self.stall_drop,
+                           'rejoin': sorted(self.rejoin), 'stalls': self.stalls, 'drops': self.drops}
         return out
 
 

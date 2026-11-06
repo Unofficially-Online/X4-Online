@@ -47,6 +47,7 @@ class Client:
         self.inputs = {}                      # tick -> own blob to propose (tests put pilot-like records here)
         self.fail_save, self.failed = None, None   # a FAILED reason code instead of the save
         self.portable_salt = b''               # a saver whose package content differs from the others'
+        self.clock = 0.0                       # this process's own real clock base (--relative-real compares elapsed time)
 
     def digest(self):
         if self.joined_from is not None and self.tick == self.joined_from:
@@ -70,7 +71,7 @@ class Client:
             version = 4 if self.k else 3
             extra = f'|{self.k}' if self.k else ''
             self.reports[self.tick] = (f'NGSTATE|{version}|{TOKEN}|{self.slot}|{self.tick}|{struct.pack(">d", game(self.tick)).hex()}|'
-                                       f'{struct.pack(">d", real(self.tick)).hex()}|{self.digest()}|{self.clients}{extra}|'
+                                       f'{struct.pack(">d", real(self.tick)+self.clock).hex()}|{self.digest()}|{self.clients}{extra}|'
                                        f'{self.proposal()}').encode()
         return self.reports[self.tick]
 
@@ -118,10 +119,10 @@ class Client:
 
 class Network:
     """The relay (a JoinBarrier) and its clients, stepped in lock: every client reports, the relay answers."""
-    def __init__(self, clients=3, absent=(3,), k=0, ticks=400, **options):
+    def __init__(self, clients=3, absent=(3,), k=0, ticks=400, barrier=None, **options):
         self.k, self.now, self.clients = k, 0.0, clients
         self.relay = join.JoinBarrier(TOKEN, absent=absent, ticks=ticks, hold_seconds=0, relative_real=True, clients=clients,
-                                      lookahead=k, tick_hz=HZ, join_options=options)
+                                      lookahead=k, tick_hz=HZ, join_options=options, **(barrier or {}))
         self.packages, self.notices = {}, []
         self.live = {s: Client(s, clients, k, ('127.0.0.1', 10000+s), saver_packages=self.packages)
                      for s in range(1, clients+1) if s not in absent}
@@ -249,6 +250,8 @@ def golden(version=join.PACKAGE_VERSION):
         sections.update(golden_v11())
     if version >= 12:
         sections.update(golden_v12())
+    if version >= 13:
+        sections.update(golden_v13())
     return join.write_package(gate, sections, save_sha=bytes(range(32)), save_bytes=123456, version=version)
 
 
@@ -394,7 +397,54 @@ def golden_v12():
                              (0x2006, 2, 1, join.GRAVQ_OTHER, 0, 0, 0x55, 0)]}
 
 
-GOLDEN_SHA = '67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef'
+def golden_v13():
+    """Version 13's records (test_lockstep_join.h join_golden): the job engine's schedule (its last run 23.25, its cursor); three
+    pending events (two of one source, one of a source without a portable ID)."""
+    return {join.SEC_JOBE: [(0x4037400000000000, join.JOBE_ENABLED | join.JOBE_RUNNING, 13, b'xenon_miner_1'+bytes(join.JOBE_CURSOR-13))],
+            join.SEC_EVQT: [(0, 0x2ac1710, 0x20d, 0, join.EVQT_UNMAPPED, bits(40.0)), (0x2001, 0x2ac17b8, 0x215, 1, 0, bits(31.5)),
+                            (0x2001, 0x2baf650, 0x20f, 0, 0, bits(30.25))],
+            join.SEC_GRAVD: [(0x2001, 0x2003, 0, 0), (0x2001, 0, 1, join.GRAVD_NONE)],
+            join.SEC_VIEWK: [(0x2002, 0, 0, 0x10042, 1), (0x2002, 1, join.VIEWK_UNMAPPED, 0x10042, 1)],
+            join.SEC_VIEWKC: [(0x2002, 0x2003, 0, 0), (0x2002, 0, 1, 0)],
+            join.SEC_VIEWF: [(0x2001, 0x10058, 0x10058, 1, 1), (0x2002, 0x10042, 0x10042, 6, 6)],
+            join.SEC_VIEWP: [(0x2001, bytes(range(64)))],
+            join.SEC_SHOOT: [(0x2001, 0x4039d983c465091e, 0x403c2ed916872ba4, 0x403c26508dfea31b, 0x3f9eb851e0000000, 0x403c2ed916872ba4,
+                              0x403bf31d5acb6fe5, bytes(range(32)), 0x2b7fcc0, b'\x01\x01\x01', b'\x01\x00', 1, bytes(2), 0x3db2b8c2)],
+            join.SEC_ATTK: [(0x2001, 0x2002, 0x403b5987f5df8f7b, 0x403b5987f5df8f7b, 0, 7, 0)],
+            join.SEC_LIVEF: [(0x2001, 0, 0x20)],
+            join.SEC_SPEC: [(0x2001, 3, 0x4f, 2, 0, 0x3fc5555555555555, 0x403c26508dfea31b), (0x2001, 7, 0x7f, 0, 0, 0, 0x403c2ed916872b02)],
+            join.SEC_NAVC: [(0x2001, bytes(range(96)))],
+            join.SEC_JOBS: [(0xcbf29ce484222325, 3, 524, 0, 0)],
+            join.SEC_GONE: [(0x6a0ad,), (0x8000000000001234,)],
+            join.SEC_BODY: [(0x2001, 0, 3, *[0x3f800000+i for i in range(8)], *[0x40000000+i for i in range(23)], 1,
+                             *[0x1000+i for i in range(8)], *[0x2000+i for i in range(8)])],
+            join.SEC_BUPD: [(0x2001, 0x401c54fdf3b645a2), (0x2003, 0x403c2ed916872ba4)],
+            join.SEC_LDC: [(0x2001, bytes(range(113)))],
+            join.SEC_NAVT: [(0x2001, *[0x3f800000+i for i in range(30)])],
+            join.SEC_NMESH: [(0xa5ec412f2588ab8d,), (16,), (0x1234,), (0x5678,)],
+            join.SEC_NOCT: [(3, 1, 0, 0x67a818fdb1644740, 0, 0, 0, 0, 0), (1, 0x2001, 12, 1, 2, 1, 1, 0, 0),
+                            (2, 0x2003, 12, 0, 2, 0, 1, 1, 0), (0xffffffffffffffff, 0x2001, 0, 0, 2, 1, 2, 0, 0)],
+            join.SEC_AGTT: [(0x2001, 0x401c54fdf3b645a2, 0, 0x4028a1f671529a3e), (0x2004, 0xbff0000000000000, 0, 0)],
+            join.SEC_AGCB: [(0x2001, bytes(range(256))*4)],
+            join.SEC_PBNK: [(0x2001, 0, 0, *[0x3f800000+i for i in range(18)], 0x2003, 0, 0x4000000000000000, 0, 1, 3, 1, 0, 2, 1, *[0x3f800000+i for i in range(18)], 0x2003, 0, 0x4000000000000000, 0, 1, 3, 1, 0, 2, 1, *[0x40000000+i for i in range(30)])],
+            join.SEC_PEND: [(0x2001, 0x19, 0), (0x2004, 0x8, 0)],
+            join.SEC_GRAVB: [(0x16, 0, 0x454b1b00, 0x4638f638, 0x48a34182), (0x16, 2, 0x454b1b00, 0x4638f638, 0x48970c82)],
+            join.SEC_VIEWL: [(0x2001, 1, 1, bytes(6)), (0x2004, 1, 0, bytes(6))],
+            join.SEC_IKV: [(0x2001, 0, 0, 0, bytes(range(1, 25))), (0x2001, 0, 1, 0, bytes(24))],
+            join.SEC_RCNT: [(0x8000000000002001, 31, 0)],
+            join.SEC_ECOS: [(0x2001, 612.5, 70.25)],
+            join.SEC_SHPW: [(0x2001, 1, 2, 3, 4, 5, 6)],
+            join.SEC_TRDN: [(0x2001, 88.5)],
+            join.SEC_NPCA: [(0x2001, 3, 12, bytes(range(48)))],
+            join.SEC_JOBG: [(0x2001, 0x1234)],
+            join.SEC_CODE: [(77, 0x123456)],
+            join.SEC_ENGR: [(0x2001, 37.25, 0x13f800000)],
+            join.SEC_SHGR: [(0x2001, 0x2002, 7, 0, 888.0, 7.25)],
+            join.SEC_BNDS: [(0x2001,) + tuple(range(27)) + (0,)]}
+
+
+GOLDEN_SHA = 'f389d91ac8b256a6ccacc0703e3c55c57d6500910c521e48c48199e3a11d364d'
+GOLDEN_SHA_V12 = '67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef'   # a version 12 package (before JOBE)
 GOLDEN_SHA_V11 = 'f0874152607c013ff72febfbf675b20f64b391fb5a9d431795bd302fc0964e7f'   # a version 11 package (before SPLM..GRAVP)
 GOLDEN_SHA_V10 = '1a324e00b49dbc814f757c26ad28741675b7d8e0b9df120c63d52594724e27bd'   # a version 10 package (before GRAV, GRAVC, GRAVS)
 GOLDEN_SHA_V9 = 'dc43e62589f878b9f7dcbd36907ec4bbdbea4b715287dcde799cd239248e2983'   # a version 9 package (before SOLVER, BULLET)
@@ -418,8 +468,9 @@ class Package(unittest.TestCase):
                                        'pose': 1, 'shield': 2, 'nav': 1, 'attn': 2, 'keys': 2, 'path': 9, 'region': 2, 'flight': 2,
                                        'spline': 2, 'agent': 2, 'route': 3, 'param': 2, 'dock': 1, 'steer': 1, 'steerpt': 1, 'solver': 1,
                                        'bullet': 2, 'grav': 2, 'gravc': 3, 'gravs': 4, 'splm': 1, 'splme': 1,
-                                       'splmseg': 4, 'gravn': 3, 'gravp': 3, 'gravq': 3})
-        self.assertEqual(s['version'], 12)
+                                       'splmseg': 4, 'gravn': 3, 'gravp': 3, 'gravq': 3, 'jobe': 1, 'evqt': 3, 'gravd': 2,
+                                       'viewk': 2, 'viewkc': 2, 'viewf': 2, 'viewp': 1, 'shoot': 1, 'attk': 1, 'livef': 1, 'spec': 2, 'navc': 1, 'jobs': 1, 'gone': 2, 'body': 1, 'bupd': 2, 'ldc': 1, 'navt': 1, 'nmesh': 4, 'noct': 4, 'agtt': 2, 'agcb': 1, 'pbnk': 1, 'pend': 2, 'gravb': 2, 'viewl': 2, 'ikv': 2, 'rcnt': 1, 'ecos': 1, 'shpw': 1, 'trdn': 1, 'npca': 1, 'jobg': 1, 'code': 1, 'engr': 1, 'shgr': 1, 'bnds': 1})
+        self.assertEqual(s['version'], 13)
         self.assertEqual(s['save_sha'], bytes(range(32)).hex())
         # The MD heap enters the portable digest in pop order (time, then seq) and without its seq.
         text = join.portable_text(package['sections'])
@@ -462,7 +513,8 @@ class Package(unittest.TestCase):
                        dict(version=8, sections={join.SEC_STEER: []}), dict(version=8, sections={join.SEC_STEERPT: []}),
                        dict(version=9, sections={join.SEC_SOLVER: []}), dict(version=9, sections={join.SEC_BULLET: []}),
                        dict(version=10, sections={join.SEC_GRAV: []}), dict(version=11, sections={join.SEC_SPLM: []}),
-                       dict(version=11, sections={join.SEC_GRAVN: []}), dict(version=13, sections={})):
+                       dict(version=11, sections={join.SEC_GRAVN: []}), dict(version=12, sections={join.SEC_JOBE: []}),
+                       dict(version=14, sections={})):
             with self.subTest(kwargs=kwargs), self.assertRaisesRegex(join.JoinError, 'package_version'):
                 join.write_package(gate, kwargs['sections'], version=kwargs['version'])
         # The reader: a world section in a version 1 header (resealed), a version 2 package without them, unsorted records.
@@ -934,11 +986,12 @@ class Package(unittest.TestCase):
     def test_version_12_splm_and_gravn(self):
         # Version 12 (report 1.16): SPLM, SPLME, SPLMSEG, GRAVN and GRAVP after GRAVS; the digest takes SPLM's counts, GRAVN whole and
         # GRAVP's keys; the reader refuses every shape fault and a version 11 header with them.
-        v12 = join.read_package(golden())
-        self.assertEqual((v12['sha'], v12['header']['version'], v12['header']['sections']), (GOLDEN_SHA, 12, 35))
+        v12 = join.read_package(golden(12))
+        self.assertEqual((v12['sha'], v12['header']['version'], v12['header']['sections']), (GOLDEN_SHA_V12, 12, 35))
         lines = join.portable_text(v12['sections']).splitlines()
         self.assertEqual([line.split('|')[0] for line in lines[-5:]], ['GRAV', 'SPLM', 'GRAVN', 'GRAVP', 'GRAVQ'])
         self.assertEqual(lines[-4].split('|')[1:4], ['1', '1', '4'])
+        self.assertNotIn('jobe', v12['sections'])
         expected = golden_v12()
         for kind, name in ((join.SEC_SPLM, 'splm'), (join.SEC_SPLME, 'splme'), (join.SEC_SPLMSEG, 'splmseg'), (join.SEC_GRAVN, 'gravn'),
                            (join.SEC_GRAVP, 'gravp')):
@@ -980,6 +1033,41 @@ class Package(unittest.TestCase):
             self.assertFalse(join.gravn_shape(bad))
         with self.assertRaisesRegex(join.JoinError, 'package_version'):
             join.write_package({name: 0 for name in join.GATE_FIELDS}, {join.SEC_SPLM: []}, version=11)
+
+    def test_version_13_jobe(self):
+        # Version 13 (report 1.17): JOBE after GRAVQ, in the digest whole; the reader refuses its shape faults and a version 12 header
+        # with it.
+        v13 = join.read_package(golden())
+        self.assertEqual((v13['sha'], v13['header']['version'], v13['header']['sections']), (GOLDEN_SHA, 13, 72))
+        self.assertEqual(join.portable_text(v13['sections']).splitlines()[-1].split('|')[:2], ['JOBE', '1'])   # EVQT: not in the digest
+        other = dict(v13['sections']);other['evqt'] = []
+        self.assertEqual(join.portable_digest(other), join.portable_digest(v13['sections']))
+        ev = golden_v13()[join.SEC_EVQT]
+        self.assertEqual(v13['sections']['evqt'], ev)
+        self.assertTrue(join.evqt_shape(ev) and join.evqt_shape([]))
+        for bad in ([ev[1], ev[0], ev[2]], [ev[0], ev[2], ev[1]], [ev[0][:4]+(0,)+ev[0][5:]]+ev[1:], [ev[0], ev[1][:4]+(2,)+ev[1][5:], ev[2]]):
+            self.assertFalse(join.evqt_shape(bad))
+        d = golden_v13()[join.SEC_GRAVD]
+        self.assertEqual(v13['sections']['gravd'], d)
+        self.assertTrue(join.gravd_shape(d) and join.gravd_shape([]))
+        for bad in ([d[1], d[0]], [d[0], d[0]], [d[0][:3]+(1,)], [d[0], d[1][:3]+(0,)], [d[0], (0x2001, 0x2003, 2, 0)]):
+            self.assertFalse(join.gravd_shape(bad))
+        k, kc = golden_v13()[join.SEC_VIEWK], golden_v13()[join.SEC_VIEWKC]
+        self.assertEqual((v13['sections']['viewk'], v13['sections']['viewkc']), (k, kc))
+        self.assertTrue(join.viewk_shape(k, kc) and join.viewk_shape([], []))
+        for bad_k, bad_kc in (([k[1], k[0]], kc), (k, kc[:1]), (k, [kc[1], kc[0]]), ([k[0], k[1][:2]+(0,)+k[1][3:]], kc),
+                              ([k[0][:2]+(join.VIEWK_UNREAD,)+k[0][3:], k[1]], kc), ([k[0], (0x2002, 2)+k[1][2:]], kc)):
+            self.assertFalse(join.viewk_shape(bad_k, bad_kc))
+        j = golden_v13()[join.SEC_JOBE]
+        self.assertEqual(v13['sections']['jobe'], j)
+        self.assertTrue(join.jobe_shape(j) and join.jobe_shape([]))
+        for bad in (j+j, [j[0][:1]+(8,)+j[0][2:]], [j[0][:2]+(12,)+j[0][3:]], [j[0][:3]+(b'xenon miner_1'+bytes(join.JOBE_CURSOR-13),)]):
+            self.assertFalse(join.jobe_shape(bad))
+        other = dict(v13['sections'])          # the schedule is in the digest whole
+        other['jobe'] = [(0x4037800000000000,)+j[0][1:]]
+        self.assertNotEqual(join.portable_digest(other), join.portable_digest(v13['sections']))
+        with self.assertRaisesRegex(join.JoinError, 'package_version'):
+            join.write_package({name: 0 for name in join.GATE_FIELDS}, {join.SEC_JOBE: []}, version=12)
 
     def test_version_9_steer(self):
         # Version 9 (report 1.13): STEER and STEERPT after the fourteen world lines, one STEER record per steering model of FLIGHT
@@ -1085,13 +1173,26 @@ class Package(unittest.TestCase):
             with self.subTest(reason=reason), self.assertRaisesRegex(join.JoinError, reason):
                 join.read_package(resealed(mutate))
 
+    def test_flight_generations(self):
+        # Each fixture actor's flight sample init generation at T rides the GATE record's former padding (j1-120: steering=1 on
+        # the session's live fixture actors, 0 on the joiner); a package without them reads as zeros, as before.
+        package = join.read_package(golden())
+        self.assertEqual(package['sections']['gate']['flight'], [0]*12)
+        gate = dict(package['sections']['gate'], flight=[1]*7+[0]+[1]*4)
+        sections = {k: v for k, v in package['sections'].items() if k != 'gate'}
+        raw = {next(kind for kind, name in join.SECTION_NAMES.items() if name == k): v for k, v in sections.items()}
+        again = join.read_package(join.write_package(gate, raw, save_sha=bytes(range(32)), save_bytes=123456))
+        self.assertEqual(again['sections']['gate']['flight'], [1]*7+[0]+[1]*4)
+        with self.assertRaises(join.JoinError):
+            join.write_package(dict(gate, flight=[256]+[0]*11), raw, save_sha=bytes(range(32)), save_bytes=123456)
+
     def test_fixture_views(self):
         # The session's view of each snapshot fixture actor at T rides the GATE record (j1-9: actor 8 a wreck with its
         # drift controller, view 2) and enters the portable digest; a package without a fixture keeps its old digest.
         package = join.read_package(golden())
         self.assertEqual(package['sections']['gate']['fixture'], '111111121111')
         self.assertEqual(join.summary(package)['fixture'], '111111121111')
-        self.assertEqual(join.portable_text(package['sections']).splitlines()[-23], 'FIXTURE|111111121111')   # then the world lines
+        self.assertEqual(join.portable_text(package['sections']).splitlines()[-24], 'FIXTURE|111111121111')   # then the world lines
         sections = dict(package['sections'])
         sections['gate'] = dict(sections['gate'], fixture='111111111111')
         self.assertNotEqual(join.portable_digest(sections), package['sections']['gate']['portable'])
@@ -1210,6 +1311,45 @@ class Relay(unittest.TestCase):
         aborts = [t for t, blobs in net.live[1].applied if blobs[2] and join.blob_record(blobs[2])['op'] == 'abort']
         self.assertEqual(len(aborts), 1)
 
+    def test_join_observe_counts_a_diverged_joiner_and_hands_over(self):
+        # --join-observe (diagnostic): the digest is not held before H, the clocks are; the lines say so.
+        net = Network(barrier={'observe': True}, observe=True)
+        for _ in range(40):
+            net.round()
+        net.request()
+        while net.relay.join.state == 'queued':
+            net.round()
+        net.boot_joiner()
+        net.joiner.state = b'not the saved world'
+        for _ in range(380):
+            net.round(joiner_steps=3)
+            if net.relay.join.state in ('joined', 'failed') and net.relay.released > net.relay.join.handover+20:
+                break
+        j = net.relay.join
+        self.assertEqual(j.state, 'joined', (j.failure, net.notices[-4:]))
+        self.assertEqual(j.first_digest_mismatch, j.save_tick+1)
+        self.assertEqual(j.digest_mismatches, j.handover-j.save_tick-1)
+        notices = ' '.join(net.notices)
+        self.assertIn(f'digest_mismatch first={j.save_tick+1} diagnostic=join_observe', notices)
+        self.assertIn(f'joined tick={j.handover} ', notices)
+        self.assertIn('diagnostic=join_observe digest_mismatches=', notices)
+        self.assertEqual(net.relay.summary()['join'][0]['diagnostic'], 'join_observe')
+        self.assertIsNone(net.relay.failed)
+        self.assertGreater(len(net.relay.mismatches), 0)     # after H the session's --observe records the divergence
+        # Without it the same joiner is stopped at T+1 (test above); a clock mismatch stays fatal with it.
+        net2 = Network(barrier={'observe': True}, observe=True)
+        for _ in range(40):
+            net2.round()
+        net2.request()
+        while net2.relay.join.state == 'queued':
+            net2.round()
+        net2.boot_joiner()
+        net2.joiner.clock = 0.5
+        for _ in range(20):
+            net2.round(joiner_steps=2)
+        self.assertEqual(net2.relay.join.state, 'failed')
+        self.assertTrue(net2.relay.join.failure.startswith('mismatch:real_tick_'), net2.relay.join.failure)
+
     def test_a_slow_joiner_is_refused_when_the_pause_would_be_too_long(self):
         net = Network(catchup_limit=0.5, max_pause=1.0, handover_gap=5)
         for _ in range(40):
@@ -1226,6 +1366,31 @@ class Relay(unittest.TestCase):
         self.assertEqual(j.state, 'failed')
         self.assertTrue(j.failure.startswith('pause_too_long'), j.failure)
         self.assertIsNone(net.relay.failed)
+
+    def test_a_joiner_no_faster_than_the_session_is_handed_over_after_the_catchup_limit(self):
+        # The limit counts from the catch-up's first report: 5 s is longer than the coordinator's 64-report progress window
+        # (about 2 s at 30 Hz), which it was once measured from, so such a joiner was never handed over (rj2, rj3).
+        net = Network(ticks=3000, catchup_limit=5.0, max_pause=60.0, handover_gap=5)
+        for _ in range(40):
+            net.round()
+        net.request()
+        while net.relay.join.state == 'queued':
+            net.round()
+        for _ in range(100):
+            net.round()                                     # the joiner loads while the session runs on
+        net.boot_joiner()
+        for _ in range(140):
+            net.round(joiner_steps=1)                       # 4.7 s at the session's own rate: not yet
+        j = net.relay.join
+        self.assertEqual(j.state, 'catching_up')
+        gap = net.relay.released-net.joiner.tick
+        for _ in range(600):
+            net.round(joiner_steps=1)                       # still no faster: only the limit can hand it over
+            if j.state in ('joined', 'failed') and net.relay.released > j.handover+20:
+                break
+        self.assertGreater(gap, 50)
+        self.assertEqual(j.state, 'joined', (j.failure, net.notices[-3:]))
+        self.assertIn('joined tick=', ' '.join(net.notices))
 
     def test_launcher_answers_and_refusals(self):
         net = Network()
@@ -1313,6 +1478,133 @@ class Relay(unittest.TestCase):
         self.assertEqual(join.catch_up_seconds(100, 30, 30), float('inf'))
         self.assertAlmostEqual(join.handover_pause(60, 10, 30, 40), 70/40-10/30)
         self.assertEqual(join.handover_pause(0, 10, 30, 60), 0.0)
+
+
+class Rejoin(unittest.TestCase):
+    """Drop and rejoin (roadmap 15): slot 3 plays from the start (--rejoin 3), stalls, is dropped with ABORT(3, dropped) in
+    the first row it did not report, and a later join takes the slot again; the session never stops."""
+    DROP = {'rejoin': (3,), 'stall_report_ms': 500, 'stall_drop_ms': 1000}
+
+    def stall(self, net, slot=3, at=30):
+        for _ in range(at):
+            net.round()
+        stalled = net.live.pop(slot)
+        first = stalled.tick                                # it stepped to this tick and never reported it
+        for _ in range(75):                                 # 2.5 s at 30 Hz: reported at 0.5 s, dropped at 1 s
+            net.round()
+        return stalled, first
+
+    def rejoin(self, k=1, clock=0.25):
+        net = Network(absent=(), k=k, ticks=600, barrier=self.DROP)
+        net.live[3].clock = clock
+        stalled, first = self.stall(net)
+        r = net.relay
+        notices = ' '.join(net.notices)
+        self.assertIn(f'NATIVE_GATE STALL slot=3 tick={first} ', notices)
+        self.assertIn(f'NATIVE_GATE DROP slot=3 tick={first} ', notices)
+        self.assertIsNone(r.failed)
+        self.assertEqual((r.dropped, sorted(r.absent)), ({3: first}, [3]))
+        self.assertGreater(r.released, first+20)            # the session went on without slot 3
+        # Its first missing row carries ABORT(3, dropped) for every client; the rows after it are empty stand-ins.
+        row = r.states[first][3]
+        record = join.blob_record(row['blob'])
+        self.assertTrue(row['standin'])
+        self.assertEqual((record['op'], record['slot'], record['tick'], record['reason']), ('abort', 3, first, 'dropped'))
+        self.assertEqual([r.states[t][3]['blob'] for t in range(first+1, first+6)], ['']*5)
+        self.assertEqual(r.states[first-1][3].get('standin'), None)
+        held = net.live[1].permits[first+1+k]
+        self.assertEqual(held[2], row['blob'])
+        self.assertEqual(r.summary()['drop']['drops'][0]['slot'], 3)
+        # The dropped process's later reports are answered NGDROP (protocol 4), never counted.
+        answer = r.receive(stalled.report(), stalled.address, net.now)   # the frozen process wakes up and reports
+        self.assertEqual(answer, [(stalled.address, f'NGDROP|4|{TOKEN}|3|{first}'.encode())] if k else [])
+        # A later join takes the slot like any absent one (here from the same address the dropped client had).
+        for _ in range(20):
+            net.round()
+        self.assertEqual(net.request()[5], 'queued')
+        while r.join.state == 'queued':
+            net.round()
+        self.assertEqual(r.join.state, 'saved', net.notices[-4:])
+        self.assertEqual(sorted(r.join.saved), [1, 2])
+        for _ in range(10):
+            net.round()
+        save_tick = r.join.save_tick
+        net.boot_joiner()
+        for _ in range(400):
+            net.round(joiner_steps=3)
+            if r.join.state in ('joined', 'failed') and r.released > r.join.handover+40:
+                break
+        j = r.join
+        self.assertEqual(j.state, 'joined', (j.failure, net.notices[-5:]))
+        self.assertIsNone(r.failed)
+        self.assertNotIn(3, r.absent)
+        self.assertEqual((r.dropped, r.dropped_peers), ({}, {}))
+        theirs = {t: b for t, b in net.live[1].applied if t > save_tick}
+        mine = dict(net.joiner.applied)
+        common = sorted(set(theirs) & set(mine))
+        self.assertGreater(len(common), 30)
+        self.assertEqual([mine[t] for t in common], [theirs[t] for t in common])
+        self.assertTrue(r.states[j.handover-1][3].get('standin'))
+        self.assertFalse(r.states[j.handover][3].get('standin', False))
+        return net
+
+    def test_protocol_4_drop_then_rejoin(self):
+        net = self.rejoin(k=1)
+        # Its own real clock base (0.25 s off) became the reference slot's at the drop: stand-ins and the rejoiner agree.
+        self.assertEqual(net.relay.summary()['drop']['drops'][0]['real_base_was'], real(0)+0.25)
+
+    def test_protocol_3_drop_then_rejoin(self):
+        self.rejoin(k=0, clock=0.0)
+
+    def test_the_rejoined_slot_can_be_dropped_again(self):
+        net = self.rejoin(k=1)
+        net.live[3] = net.joiner
+        net.joiner = None
+        stalled, first = self.stall(net, at=10)
+        self.assertEqual(net.relay.dropped, {3: first})
+        self.assertEqual(len(net.relay.drops), 2)
+        self.assertIsNone(net.relay.failed)
+
+    def test_a_slot_that_may_not_be_dropped_is_waited_for(self):
+        net = Network(absent=(), k=1, ticks=600, barrier=self.DROP)
+        stalled, first = self.stall(net, slot=2)
+        self.assertIn(f'NATIVE_GATE STALL slot=2 tick={first} ', ' '.join(net.notices))
+        self.assertIn('droppable=0', ' '.join(net.notices))
+        self.assertNotIn('NATIVE_GATE DROP', ' '.join(net.notices))
+        self.assertEqual(net.relay.released, first-1)
+        self.assertEqual(net.relay.dropped, {})
+
+    def test_a_saver_dropped_before_its_save_refuses_the_join(self):
+        net = Network(absent=(), k=1, ticks=600, barrier={'rejoin': (2, 3), 'stall_report_ms': 500, 'stall_drop_ms': 1000})
+        stalled, first = self.stall(net, slot=3)
+        net.request(slot=3)
+        stalled2 = net.live.pop(2)                          # slot 2 stalls before its save tick
+        for _ in range(60):
+            net.round()
+        self.assertEqual(net.relay.join.state, 'failed')
+        self.assertEqual(net.relay.join.failure, 'refused_by_relay:saver_dropped')
+        self.assertEqual(sorted(net.relay.absent), [2, 3])
+        self.assertIsNone(net.relay.failed)
+        self.assertGreater(net.relay.released, first+40)
+
+    def test_refusals(self):
+        for options in ({'rejoin': (1,), 'stall_drop_ms': 1000}, {'rejoin': (4,), 'stall_drop_ms': 1000},
+                        {'rejoin': (3,)}, {'rejoin': (2,), 'stall_drop_ms': 500, 'stall_report_ms': 1000}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                join.JoinBarrier(TOKEN, absent=(), clients=3, lookahead=1, **options)
+        with self.assertRaises(ValueError):
+            join.JoinBarrier(TOKEN, absent=(3,), rejoin=(3,), stall_drop_ms=1000, clients=3, lookahead=1)
+
+    def test_relay_cli(self):
+        import subprocess
+        base = [sys.executable, str(ROOT/'tools/dev/native_gate_relay.py'), '--port', '40998', '--token', TOKEN, '--clients', '3',
+                '--report', 'unused.json']
+        for extra, text in ((['--rejoin', '3'], '--rejoin and --join-observe need --join'), (['--join', '--rejoin', '3'], '--rejoin needs --stall-drop-ms'),
+                            (['--join', '--rejoin', '1', '--stall-drop-ms', '3000'], 'rejoin slots must be 2..N')):
+            with self.subTest(extra=extra):
+                proc = subprocess.run(base+extra, capture_output=True, text=True, timeout=60)
+                self.assertEqual(proc.returncode, 2, proc.stderr)
+                self.assertIn(text, proc.stderr)
 
 
 if __name__ == '__main__':

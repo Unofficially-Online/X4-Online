@@ -95,6 +95,42 @@
     </cue>
    </cues>
   </cue>
+  <!-- A replayed StartConversationFromMenu (reports/LOCKSTEP-UI-MISSIONS-20261101.txt section 9): X4 starts a menu conversation
+       only as the result of a closing menu, so the call from the replay's frame was ignored (m1d, m1e). The replay raises this
+       event instead, on every client at the apply tick, and the same conversation starts here. MD names a conversation
+       statically: the names the stock menus start (default: talking to someone; gTrade_offerselect, gMain_propertyResult: the
+       player computer) and our X4LAN_Talk; any other is refused, the same on every client. The actor must be an entity: a
+       cue actor (a mission's client) is one but not .exists (it is outside the universe; m1g). -->
+  <cue name="ConversationStart" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiConversation'" control="'Start'"/></conditions>
+   <actions>
+    <set_value name="$Actor" exact="@event.param3.$actor"/>
+    <set_value name="$Name" exact="@event.param3.$conversation"/>
+    <set_value name="$Param" exact="@event.param3.$convparam"/>
+    <do_if value="not $Actor or not @$Actor.isclass.entity">
+     <debug_text text="'[X4LAN] UI_CONVERSATION_MD_REFUSED why=actor name=%s actor=%s time=%s'.[$Name, @event.param3.$actor, player.age]"/>
+    </do_if>
+    <do_elseif value="$Name == 'default'">
+     <start_conversation actor="$Actor" conversation="default" convparam="$Param"/>
+     <debug_text text="'[X4LAN] UI_CONVERSATION_MD_START name=%s actor=%s time=%s'.[$Name, $Actor, player.age]"/>
+    </do_elseif>
+    <do_elseif value="$Name == 'gTrade_offerselect'">
+     <start_conversation actor="$Actor" conversation="gTrade_offerselect" convparam="$Param"/>
+     <debug_text text="'[X4LAN] UI_CONVERSATION_MD_START name=%s actor=%s time=%s'.[$Name, $Actor, player.age]"/>
+    </do_elseif>
+    <do_elseif value="$Name == 'gMain_propertyResult'">
+     <start_conversation actor="$Actor" conversation="gMain_propertyResult" convparam="$Param"/>
+     <debug_text text="'[X4LAN] UI_CONVERSATION_MD_START name=%s actor=%s time=%s'.[$Name, $Actor, player.age]"/>
+    </do_elseif>
+    <do_elseif value="$Name == 'X4LAN_Talk'">
+     <start_conversation actor="$Actor" conversation="X4LAN_Talk" convparam="$Param"/>
+     <debug_text text="'[X4LAN] UI_CONVERSATION_MD_START name=%s actor=%s time=%s'.[$Name, $Actor, player.age]"/>
+    </do_elseif>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_CONVERSATION_MD_REFUSED why=name name=%s time=%s'.[$Name, player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
   <!-- A conversation of our own: two choices; the chosen section and every conversation's end are logged. -->
   <cue name="Talk" instantiate="true">
    <conditions><event_conversation_started conversation="X4LAN_Talk"/></conditions>

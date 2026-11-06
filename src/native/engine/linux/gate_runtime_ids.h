@@ -16,9 +16,17 @@
  * Linux addresses, so census_runtime_callers.py compares two clients of either platform. It costs one
  * unwind per allocation in play, about 16 a tick, and it only reports.
  *
- * Not ported: the local lists for view objects (native_gate_runtime_ids_local), whose route table
- * needs the Linux stacks of the rows above. Without them a view object still moves every later
- * simulation ID, and next= shows it. */
+ * The local lists for what only the view asks for (native_gate_runtime_ids_local): the shared
+ * header's lists, build and assignment, with this executable's route table (lx_rid_sites) on the
+ * hook's stack. Every Windows row has its Linux rows, matched by RTTI vtables, log strings and the
+ * pair table, then pinned: GCC inlines the constructors of U::UIElement, HoloMap, CutsceneAnchor,
+ * EffectObject, FogVolume, LensFlare and Stardust into the two component factories (0x119bd70,
+ * 0x11a2560), so their rows are the Positional calls there, the one before each class's vtable store;
+ * the three animation listeners and the message configuration listener are inlined where they are
+ * made, so each row is the AssignNewID call before the vtable store. Slot 6 (CUIController, through
+ * the secondary vtable's thunk) and slot 10 (GameRender) are their whole bodies, as on Windows; slot
+ * 6 inlines what Windows calls. Linux has no presentation scope, UI dispatch, rid_scope caller or
+ * client guidance, so the table is the whole route. */
 #include <execinfo.h>
 #define RID_OWN_PLATFORM
 #define RID_MAP (LX_ID_MAP_VA-LX_IMAGE_BASE)
@@ -39,6 +47,10 @@
 #define EnterCriticalSection(mutex) lxg_lock(mutex)
 #define LeaveCriticalSection(mutex) lxg_unlock(mutex)
 #define LONG long /* the status prints no active word; rid_local_on stays this type */
+/* The shared local lists call these; this file defines them for this executable. */
+static int rid_local_pins(void);
+static void *rid_allocate(size_t size);
+static created_assign_fn rid_assign_original(void);
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #pragma GCC diagnostic ignored "-Wunused-function"
@@ -52,6 +64,82 @@ static int rid_pins(void) {return 1;} /* the gate's site pins, checked at start 
 static int rid_swap(uint64_t expected,uint64_t value) {return gate_code_swap64(LX(LX_ID_REMOVE_VA),expected,value);}
 static int rid_callers_on; /* the table of who allocates; the hook also serves the created identities */
 static uint64_t rid_assign_patched_word;
+/* The route table: return addresses in this image (VA - LX_IMAGE_BASE, as rid_frames_of reports them).
+ * A call row's target is checked at arming; a body's bytes are lx_sites pins (rid_ui_*, rid_view_*). */
+#define LXR(va) ((uint32_t)((va)-LX_IMAGE_BASE))
+#define LX_RID_CALL(ret,target,route) {LXR(ret),LXR(ret),LXR(target),route,0}
+#define LX_RID_BODY(start,end,route,ui_move) {LXR(start),LXR(end)-1u,0,route,ui_move}
+#define LX_RID_POS_A 0x1316e40u /* U::Positional's constructors (Windows 0x7429c0, 0x7426d0) */
+#define LX_RID_POS_B 0x13215c0u
+#define LX_RID_SPHERE 0xeedd70u /* the query sphere, a JPH::SphereShape in an IDBase wrapper (Windows 0xb82d0) */
+static const rid_site_t lx_rid_sites[]={
+    /* U::UIElement in both factories (Windows: both constructors' Positional calls); U::UIElement::CreateInstance (the
+     * log string; it calls factory 0x119bd70 itself). */
+    LX_RID_CALL(0x119c625u,LX_RID_POS_A,RID_ROUTE_UI),LX_RID_CALL(0x11a58bdu,LX_RID_POS_B,RID_ROUTE_UI),LX_RID_BODY(0xb08820u,0xb08aa0u,RID_ROUTE_UI,0),
+    /* U::HoloMap (Windows: its constructors' bodies; only their CutsceneAnchor base reaches AssignNewID), U::CutsceneAnchor. */
+    LX_RID_CALL(0x119e108u,LX_RID_POS_A,RID_ROUTE_UI),LX_RID_CALL(0x11a3760u,LX_RID_POS_B,RID_ROUTE_UI),
+    LX_RID_CALL(0x119f4b4u,LX_RID_POS_A,RID_ROUTE_UI),LX_RID_CALL(0x11a2e6eu,LX_RID_POS_B,RID_ROUTE_UI),
+    /* Lua::NotifyOn*, in the Windows order. */
+    LX_RID_CALL(0xa71953u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa71ae3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa71cc9u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0xa71e99u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa72033u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa721a3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0xa72323u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa724a3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa72663u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0xa72823u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa729e3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa72b63u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0xa72ce3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa72e73u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa72fe3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0xa73163u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa73b93u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa73d23u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0xa73ea3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa74033u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa741a3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0xa74323u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa744e3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa746a3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0xa7483bu,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa749e3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0xa74ba3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0xa74d7du,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    /* The cockpit animation listeners (U::Animation::CockpitStateListener, CockpitActivationStateListener,
+     * DockingBayFenceStateListener), each made in two places; Modules::StartMenu. */
+    LX_RID_CALL(0x12acd29u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0x179bf15u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0x1c9a6a3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0x1c9a7f3u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0x177fdb9u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),LX_RID_CALL(0x177ff09u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    LX_RID_CALL(0xf4ea97u,LX_ID_ASSIGN_VA,RID_ROUTE_UI),
+    /* Slot 6 (UI::CUIController, the implementation behind the secondary vtable's thunk 0xa77e90; not the probe's frame)
+     * and slot 10 (X4::GameRender). */
+    LX_RID_BODY(0xa758a0u,0xa77e90u,RID_ROUTE_UI,1),LX_RID_BODY(0xfb0180u,0xfb01f0u,RID_ROUTE_UI,0),
+    /* UI::ICom: a message (0xc8c400) and what its start makes, CMessageManager::CreateSource (its log string), the
+     * message configuration listener (inlined in 0xf4ca20). */
+    LX_RID_CALL(0xc8c5a8u,LX_ID_ASSIGN_VA,RID_ROUTE_VIEW),LX_RID_BODY(0xc78bc0u,0xc78d90u,RID_ROUTE_VIEW,0),LX_RID_BODY(0xa70cd0u,0xa718c0u,RID_ROUTE_VIEW,0),
+    LX_RID_CALL(0xf4dad0u,LX_ID_ASSIGN_VA,RID_ROUTE_VIEW),
+    /* EffectObject, FogVolume, LensFlare, Stardust in both factories; EffectObjectCreator. */
+    LX_RID_CALL(0x119e50fu,LX_RID_POS_A,RID_ROUTE_VIEW),LX_RID_CALL(0x11a35f5u,LX_RID_POS_B,RID_ROUTE_VIEW),LX_RID_CALL(0x119dcd1u,LX_RID_POS_A,RID_ROUTE_VIEW),
+    LX_RID_CALL(0x11a3d89u,LX_RID_POS_B,RID_ROUTE_VIEW),LX_RID_CALL(0x119f6d9u,LX_RID_POS_A,RID_ROUTE_VIEW),LX_RID_CALL(0x11a507au,LX_RID_POS_B,RID_ROUTE_VIEW),
+    LX_RID_CALL(0x119c4c8u,LX_RID_POS_A,RID_ROUTE_VIEW),LX_RID_CALL(0x11a572eu,LX_RID_POS_B,RID_ROUTE_VIEW),
+    LX_RID_CALL(0x1796d53u,LX_ID_ASSIGN_VA,RID_ROUTE_VIEW),LX_RID_CALL(0x178460bu,LX_ID_ASSIGN_VA,RID_ROUTE_VIEW),
+    /* AI::NavSplineCalculator's sweep test (0x10b0b30, the only maker of the sphere that sweeps it) and the player
+     * entity's two query spheres (vfunc674 0x138e6a0: +0x8a510 radius +0x4ed4, +0x8a518 radius +0x4ed8; Windows
+     * +0x8a520/+0x4f54 and +0x8a528/+0x4f58). */
+    LX_RID_CALL(0x10b0cd7u,LX_RID_SPHERE,RID_ROUTE_VIEW),LX_RID_CALL(0x13927d7u,LX_RID_SPHERE,RID_ROUTE_VIEW),LX_RID_CALL(0x1392be5u,LX_RID_SPHERE,RID_ROUTE_VIEW)};
+#define LX_RID_SITES (sizeof(lx_rid_sites)/sizeof(*lx_rid_sites))
+static created_assign_fn lxr_assign_native; /* tests only: replaces the thunk's original */
+/* Every call row checked: the table's return addresses are this build's (the bodies are start pins). */
+static int rid_local_pins(void) {
+    for(unsigned i=0;i<LX_RID_SITES;i++) {
+        const rid_site_t *s=&lx_rid_sites[i];if(!s->target) continue;
+        int32_t rel;memcpy(&rel,image+s->lo-4u,4);
+        if(image[s->lo-5u]!=0xe8 || (uint32_t)((int64_t)s->lo+rel)!=s->target) return 0;
+    }
+    return 1;
+}
+/* What AssignNewID's inlined EnsureFreeSlots allocates a block with: (size, alignment). */
+static void *rid_allocate(size_t size) {
+    typedef void *(*allocate_fn)(size_t,size_t);
+    return rid_allocate_native?rid_allocate_native(size):((allocate_fn)(void *)LX(LX_RID_ALLOCATE_VA))(size,0x10);
+}
+static created_assign_fn rid_assign_original(void) {return lxr_assign_native?lxr_assign_native:(created_assign_fn)(void *)(thunk+RID_ASSIGN_THUNK);}
+/* Which list a stack belongs to: the table, ui over view; off or before the seal, the shared one. */
+static unsigned lxr_route_of(const uint32_t *frames,unsigned count) {
+    if(!InterlockedCompareExchange(&rid_local_on,0,0) || !rid_sealed) return RID_ROUTE_SHARED;
+    const int probe=InterlockedCompareExchange(&rid_probe_frame,0,0)!=0;unsigned route=RID_ROUTE_SHARED;
+    for(unsigned i=0;i<count;i++) for(unsigned s=0;s<LX_RID_SITES;s++) {
+        const rid_site_t *site=&lx_rid_sites[s];
+        if(frames[i]<site->lo || frames[i]>site->hi || (site->ui_move && probe)) continue;
+        if(site->route==RID_ROUTE_UI) return RID_ROUTE_UI;
+        route=site->route;
+    }
+    return route;
+}
 /* The X4 return addresses of an allocation, innermost first: the direct caller before the seal, the stack after it and for components. */
 static unsigned rid_frames_of(void *caller,uint32_t *frames) {
     const uintptr_t low=(uintptr_t)image,high=low+(LX_TEXT_END_VA-LX_IMAGE_BASE);unsigned n=0;
@@ -62,15 +150,18 @@ static unsigned rid_frames_of(void *caller,uint32_t *frames) {
     if(!n && (uintptr_t)caller>=low && (uintptr_t)caller<high) frames[n++]=(uint32_t)((uintptr_t)caller-low);
     return n;
 }
-/* The thunk jumps, so the return address is AssignNewID's caller. */
+/* The thunk jumps, so the return address is AssignNewID's caller. With the local lists, after the seal, the
+ * stack picks the list (lxr_route_of). */
 static __attribute__((noinline)) uint64_t rid_assign(void *object) {
-    const created_assign_fn original=(created_assign_fn)(void*)(thunk+RID_ASSIGN_THUNK);
-    if(!rid_callers_on) return created_assign_execute(original,object);
+    const created_assign_fn original=rid_assign_original();
+    const int local=InterlockedCompareExchange(&rid_local_on,0,0) && rid_sealed;
+    if(!rid_callers_on && !local) return created_assign_execute(original,object);
     void *caller=__builtin_return_address(0);uint32_t frames[RID_STACK];
-    const unsigned count=rid_frames_of(caller,frames);
+    const unsigned count=rid_frames_of(caller,frames),route=lxr_route_of(frames,count);
     const DWORD thread=GetCurrentThreadId();
-    const uint64_t result=created_assign_execute(original,object);
-    rid_note_caller(frames,count,RID_ROUTE_SHARED,thread==ui_thread?0u:thread==main_thread?1u:2u);
+    const created_assign_fn assign=route==RID_ROUTE_UI?rid_assign_ui:route==RID_ROUTE_VIEW?rid_assign_view:original;
+    const uint64_t result=created_assign_execute(assign,object);
+    if(rid_callers_on) rid_note_caller(frames,count,route,thread==ui_thread?0u:thread==main_thread?1u:2u);
     return result;
 }
 static void lxi_thunk_write(unsigned char *page) {
@@ -113,6 +204,13 @@ static void rid_callers_restore(void) {
     if(rid_assign_installed) rid_restored=0;
 }
 static int lua_runtime_ids_callers(lua_State *L) {p_lua_pushnumber(L,rid_callers_arm());return 1;}
+/* runtime_ids_local(): right after a set runtime_ids, with the created identities; the view's allocations on their own lists. */
+static int lua_runtime_ids_local(lua_State *L) {p_lua_pushnumber(L,accept_ui() && rid_local_arm());return 1;}
+/* runtime_ids_probe(1|0): around the probe's own frame, which runs in slot 6 and is not the view. */
+static int lua_runtime_ids_probe(lua_State *L) {
+    if(accept_ui()) InterlockedExchange(&rid_probe_frame,p_lua_tonumber(L,1)!=0?1L:0L);
+    return 0;
+}
 static int lua_runtime_ids(lua_State *L) {
     double base=p_lua_tonumber(L,1);
     p_lua_pushnumber(L,isfinite(base) && base>=0 && base<=RID_BASE_MAX && floor(base)==base && rid_arm((uint32_t)base));return 1;

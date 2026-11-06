@@ -7,7 +7,7 @@ local open=assert(package.loadlib(path,'luaopen_x4lan_gate'))
 local gate=assert(open(),'module did not resolve the Lua ABI')
 local core={'sha256','start','boot','load_requested','report','poll','stop','frame_timing','qpc_us','tick_rate','wire','propose',
  'relay_host','lookahead','lookahead_status','peer_links','peer_status','wire_crypto','wire_crypto_status','platform','verify_stage',
- 'world_watch','world_capture','world_capture_nav_v2','world_page','world_detail','world_banks','saved_identity','world_health',
+ 'world_watch','world_capture','world_capture_nav_v2','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status',
  'path_determinism','path_determinism_status','path_budget','path_budget_status','region_rng','region_rng_status','region_rng_row',
  'ai_wait_rng','ai_wait_rng_status','ai_wait_rng_row','read_cost',
  'md_resume_rng','md_resume_rng_status','md_resume_rng_row','boot_hold','boot_hold_status',
@@ -15,7 +15,11 @@ local core={'sha256','start','boot','load_requested','report','poll','stop','fra
  'gravidar_key','gravidar_time','gravidar_key_status','gravidar','ai_schedule','ai_schedule_status','ai_schedule_fallbacks',
  'gravidar_deadlines','gravidar_deadlines_status','travel_snapshot','travel_snapshot_status',
  'runtime_ids','runtime_ids_status','runtime_ids_word','runtime_ids_map_row','runtime_ids_caller_row','runtime_ids_callers',
- 'script_rng','script_rng_status','script_rng_row','script_rng_own_entries','md_timed_rng','md_timed_rng_status','find_order','find_order_status','find_order_row','loadout_order','loadout_order_status','loadout_order_row','nav_key','attention_all','attention_all_status','step_trace','step_trace_arm','step_trace_status','step_trace_row','step_chain','fp_redirect','fp_redirect_watch','fp_redirect_status','fp_redirect_row','fp_redirect_solver','coverage','coverage_frame','coverage_status','coverage_row','nav_cadence','nav_cadence_status','nav_cadence_row','nav_cadence_watch','nav_probe_init','nav_params_init','created_identities','portable_created','created_load','created_identities_status','created_row','created_identity','created_runtime','gravidar_wide','gravidar_wide_status','spawn_rng','spawn_rng_status','spawn_rng_row','fork_save','fork_save_status','fp_redirect_drones','fp_attack','fp_attack_watch','fp_attack_status','fp_attack_row'}
+ 'script_rng','script_rng_status','script_rng_row','script_rng_own_entries','md_timed_rng','md_timed_rng_status','find_order','find_order_status','find_order_row','loadout_order','loadout_order_status','loadout_order_row','nav_key','attention_all','attention_all_status','step_trace','step_trace_arm','step_trace_status','step_trace_row','step_chain','fp_redirect','fp_redirect_watch','fp_redirect_status','fp_redirect_row','fp_redirect_solver','coverage','coverage_frame','coverage_status','coverage_row','nav_cadence','nav_cadence_status','nav_cadence_row','nav_cadence_watch','nav_probe_init','nav_params_init','created_identities','portable_created','created_load','created_identities_status','created_row','created_identity','created_runtime','gravidar_wide','gravidar_wide_status','spawn_rng','spawn_rng_status','spawn_rng_row','fork_save','fork_save_status','fp_redirect_drones','fp_attack','fp_attack_watch','fp_attack_status','fp_attack_row',
+ 'weapon_fire_rng','weapon_fire_rng_status','engine_refresh_rng','engine_refresh_rng_status','spline_join_all','spline_join_all_status',
+ 'mass_traffic','mass_traffic_status','region_pass','region_pass_status','pass_stride','actor_rng_all','actor_rng_all_status','actor_rng_rows','actor_rng_row',
+ 'player_timer','player_timer_status','tempzone_order','tempzone_order_status','tempzone_order_row','warp_rng','warp_rng_status','warp_rng_row',
+ 'warp_exit','warp_exit_status','region_camera','region_camera_frame','region_camera_status','runtime_ids_local','runtime_ids_probe'}
 local count=0
 for _,name in ipairs(core) do assert(type(gate[name])=='function','missing gate.'..name) end
 for _ in pairs(gate) do count=count+1 end
@@ -24,6 +28,8 @@ for _,name in ipairs({'actor','world_trace','thread_rng','boot_rng_anchor','pilo
  assert(gate[name]==nil,'unported method present: '..name)
 end
 assert(gate.platform()=='linux')
+-- Canonical shields arm only on a running gate (its image verified), and only in canonical mode.
+assert(gate.world_hash_shields('canonical')==0 and gate.world_hash_shields('view')==0 and gate.world_hash_shields_status()=='mode=off canonical=0')
 assert(gate.sha256('')=='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
 assert(gate.sha256('abc')=='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
 assert(gate.sha256(string.rep('a',1000000))=='cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0')

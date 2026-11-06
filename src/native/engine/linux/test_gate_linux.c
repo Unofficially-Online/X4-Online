@@ -352,6 +352,18 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_fp_drones.h"
 #include "test_gate_coverage.h"
 #include "test_gate_fork_save.h"
+#include "test_gate_weapon_fire.h"
+#include "test_gate_engine_rng.h"
+#include "test_gate_spline_join.h"
+#include "test_gate_mass_traffic.h"
+#include "test_gate_actor_all.h"
+#include "test_gate_player_timer.h"
+#include "test_gate_tempzone_order.h"
+#include "test_gate_warp_rng.h"
+#include "test_gate_warp_exit.h"
+#include "test_gate_mining_camera.h"
+#include "test_gate_runtime_ids_local.h"
+#include "test_gate_shield_canonical.h"
 /* The real entry bytes: the hook patch and its exact restoration, without running them. */
 static void test_world_install_elf(void) {
     reset_session();wt_reset_identities();
@@ -384,6 +396,18 @@ int main(int argc,char **argv) {
     test_fa_linux();
     test_coverage_linux();
     test_fork_save_linux();
+    test_weapon_fire_linux();
+    test_engine_rng_linux();
+    test_spline_join_linux();
+    test_mass_traffic_linux();
+    test_actor_all_linux();
+    test_player_timer_linux();
+    test_tempzone_order_linux();
+    test_warp_rng_linux();
+    test_warp_exit_linux();
+    test_mining_camera_linux();
+    test_runtime_ids_local_linux();
+    test_shield_canonical_linux();
     test_world_hook(); /* last on the synthetic image: it replaces the insert's bytes */
     if(argc>1) {
         /* The real executable's bytes: file pin, every site, the call, the patches. */
@@ -399,6 +423,18 @@ int main(int argc,char **argv) {
         test_fa_elf();
         test_fdr_elf();
         test_step_chain_elf();
+        test_weapon_fire_elf();
+        test_engine_rng_elf();
+        test_spline_join_elf();
+        test_mass_traffic_elf();
+        test_actor_all_elf();
+        test_player_timer_elf();
+        test_tempzone_order_elf();
+        test_warp_rng_elf();
+        test_warp_exit_elf();
+        test_mining_camera_elf();
+        test_runtime_ids_local_elf();
+        test_shield_canonical_elf();
         printf("ELF image PASS (%s)\n",argv[1]);
     } else printf("ELF image SKIPPED (no executable path)\n");
     printf("ALL PASS\n");

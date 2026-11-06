@@ -39,8 +39,8 @@
 #define SPAWN_RNG_RING 1024u
 #define SPAWN_RNG_STOP_REASON 110u
 enum {SPAWN_RNG_OBSERVE=0,SPAWN_RNG_KEY=1};
-typedef struct {uint64_t *word;uint64_t saved,state,key,entry,tick;unsigned phase,ui,active;} spawn_rng_scope;
-typedef struct {uint64_t tick,state,key,caller,entry,exit;uint32_t draws,phase,ui,normal,mode;} spawn_rng_row_t;
+typedef struct {uint64_t *word;uint64_t saved,state,key,entry,tick;unsigned phase,ui,active;uint64_t site;uint32_t chain[4];} spawn_rng_scope;   /* site: Generate's return RVA; chain: the image frames above it */
+typedef struct {uint64_t tick,state,key,caller,entry,exit;uint32_t draws,phase,ui,normal,mode;uint64_t site;uint32_t chain[4];} spawn_rng_row_t;
 static volatile LONG spawn_rng_active;
 static int spawn_rng_armed,spawn_rng_installed,spawn_rng_restored,spawn_rng_mode;
 static uint64_t spawn_rng_original_word,spawn_rng_patched_word;
@@ -71,7 +71,7 @@ static void spawn_rng_end(spawn_rng_scope *s,int normal) {
     LONG64 index=InterlockedIncrement64(&spawn_rng_cursor)-1;
     spawn_rng_row_t *r=&spawn_rng_ring[(uint64_t)index%SPAWN_RNG_RING];
     *r=(spawn_rng_row_t){s->tick,s->state,s->key,s->saved,s->entry,exit,script_rng_steps(s->entry,exit),s->phase,s->ui,
-        (uint32_t)(normal!=0),(uint32_t)spawn_rng_mode};
+        (uint32_t)(normal!=0),(uint32_t)spawn_rng_mode,s->site,{s->chain[0],s->chain[1],s->chain[2],s->chain[3]}};
     s->active=0;
 }
 
@@ -137,9 +137,10 @@ static int spawn_rng_row(uint64_t index,char *out,size_t cap) {
     else {
         const spawn_rng_row_t *r=&spawn_rng_ring[index%SPAWN_RNG_RING];
         n=snprintf(out,cap,"index=%llu tick=%llu phase=%u ui=%u mode=%u normal=%u state=%016llx key=%016llx caller=%016llx"
-            " entry=%016llx exit=%016llx draws=%lld",(unsigned long long)index,(unsigned long long)r->tick,r->phase,r->ui,r->mode,
+            " entry=%016llx exit=%016llx draws=%lld site=%llx chain=%x,%x,%x,%x",(unsigned long long)index,(unsigned long long)r->tick,r->phase,r->ui,r->mode,
             r->normal,(unsigned long long)r->state,(unsigned long long)r->key,(unsigned long long)r->caller,(unsigned long long)r->entry,
-            (unsigned long long)r->exit,r->draws==UINT32_MAX?-1LL:(long long)r->draws);
+            (unsigned long long)r->exit,r->draws==UINT32_MAX?-1LL:(long long)r->draws,(unsigned long long)r->site,
+            r->chain[0],r->chain[1],r->chain[2],r->chain[3]);
     }
     return n>0 && (size_t)n<cap?n:0;
 }

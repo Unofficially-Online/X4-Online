@@ -227,7 +227,7 @@ static uint64_t stc_point(unsigned site,unsigned which,void *a1,void *a2,void *a
     InterlockedIncrement64(&st_chain_hits[site]);
     const stc_any_fn native=(stc_any_fn)(void*)(image+stc_sites[site].target);
     const uint64_t tick=stats.issued;uint64_t key=0;int w=-1;const unsigned char *agent=NULL,*point=NULL;unsigned point_size=0;
-    if(stats.active && boot_phase==3 && tick>=1 && tick<=st_ticks) {
+    if(stats.active && boot_phase==3 && tick>=st_from && tick<=st_ticks) {
         agent=stc_pc_agent(which,a1,a2,a3,&point,&point_size);
         if((uintptr_t)agent>0x10000u) w=st_agent_watched(agent,&key);
     }
@@ -309,7 +309,7 @@ static uint64_t stc_pathset(void *agent,void *desc,void *a3,void *a4) {
     InterlockedIncrement64(&st_chain_hits[STC_PS_SITE]);
     const stc_ps_fn native=(stc_ps_fn)(void*)(image+STC_PS);
     const uint64_t tick=stats.issued;uint64_t key=0;int w=-1;
-    if(!stats.active || boot_phase!=3 || tick<1 || tick>st_ticks || (w=st_agent_watched(agent,&key))<0) return native(agent,desc,a3,a4);
+    if(!stats.active || boot_phase!=3 || tick<st_from || tick>st_ticks || (w=st_agent_watched(agent,&key))<0) return native(agent,desc,a3,a4);
     uint32_t e[ST_PS_WORDS];memset(e,0,sizeof(e));
     e[0]=ST_PS_TAG;e[1]=(uint32_t)tick;e[2]=GetCurrentThreadId()==ui_thread?0:1;memcpy(e+4,&key,8);
     stc_stack(e);

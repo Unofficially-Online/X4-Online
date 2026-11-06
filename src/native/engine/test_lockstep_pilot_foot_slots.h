@@ -218,6 +218,19 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
         assert(pslot_seat(2));pfbody_connect=test_pfbody_connect;pfbody_filter=test_pfbody_filter_object;test_pfbody_mode=0;test_pfbody_calls=0;
         memcpy(region+PFBODY_KILL_SITE,pfbody_kill_bytes,sizeof(pfbody_kill_bytes));
         assert(pfbody_arm_using() && pfbody_kill_install() && pfbody_connect_slot(2) && pfbody_mask==2 && *(void**)(p2+0x70)==room);
+        /* A join save at T (lockstep_pilot_join.h, W3): armed from the join core's save_at on every client, ahead of this
+         * tick; T's pass takes the body off as for a get-up (X4's save after step T holds one player), it comes back
+         * PFBODY_SETTLE ticks of everyone seated later; another tick moves nothing. The state names slot 2's ranges. */
+        {   const int armed=pilot_armed;pilot_armed=1;pfoot_state=PFOOT_SEATED;memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));
+            assert(!pjoin_park_arm(6) && pjoin_park_arm(12) && pjoin_park_arm(12) && !pjoin_park_arm(13) && pjoin_park_tick==12);
+            assert(pfbody_guard(11) && pfbody_mask==2 && !pfbody_parked);
+            assert(pfbody_guard(12) && !pfbody_mask && pfbody_parked && pjoin_parks==1 && !pjoin_park_tick && pjoin_last_park==12 &&
+                   *(void**)(p2+0x70)==room && test_pslot_singleton()==p1 && !pstk_scope_slot);
+            assert(pfbody_guard(13) && pfbody_parked && pfbody_seated_since==13 && pfbody_guard(13+PFBODY_SETTLE-1) && pfbody_parked);
+            assert(pfbody_guard(13+PFBODY_SETTLE) && !pfbody_parked && pfbody_mask==2 && test_pfbody_target==room);
+            {char row[160];assert(pjoin_status_text(row,sizeof(row))>0 && strstr(row," join_park=0/12 parks=1 bodies=2 parked=0"));}
+            {char st[512];assert(pjoin_state(st,sizeof(st))>0 && !strncmp(st,"v1/m",4) && strstr(st,"|2:0-0,0-0,0-0"));}
+            pjoin_parks=0;pjoin_last_park=0;pfbody_parks=0;pfbody_unparks=0;pfbody_seated_since=0;pilot_armed=armed;}
         pfoot_state=PFOOT_SEATED;memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));
         assert(pfbody_guard(20) && pfbody_mask==2 && !pfbody_parked);
         pfoot_state=PFOOT_LEAVING;   /* slot 1's GET_UP was replayed in this pass */
@@ -244,5 +257,6 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
     test_pslot_ship_vt[PSLOT_IS_CLASS]=ship_is;memcpy(test_pslot_room+0x70,room_parent,8);memcpy(test_pslot_ship2+0x70,ship_parent,8);
     memset(region+PFSLOT_CONVERSATION,0,8);memset(region+PFOOT_BANK,0,PFOOT_BANK_SIZE);(void)null;
     pilot_start=start;pilot_stop=stop;stats.issued=saved_issued;pstk_capturing=capturing;pstk_capture_slot=capture_slot;
-    printf("pilot foot slots: slot 2 up in its scope (release, FPC, placement, bank), its walk and update, receipt, eye, sit-down, bodies parked around get-ups PASS\n");
+    printf("pilot foot slots: slot 2 up in its scope (release, FPC, placement, bank), its walk and update, receipt, eye, sit-down, bodies parked around get-ups "
+           "and for a join save PASS\n");
 }

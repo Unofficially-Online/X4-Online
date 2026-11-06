@@ -61,6 +61,11 @@
 #define LX_IMPORT_CLEAR_ORIGINAL 0x578b4840ec834853ull /* push rbx; sub rsp,0x40; mov rdx,[rdi+8] (first 8 bytes) */
 #define LX_IMPORT_CLEAR_PROLOGUE 5u     /* push rbx; sub rsp,0x40, relocated into the trampoline */
 #define LX_SHIELD_SOURCE_VTABLE 0x3b8d6d8u /* U::ShieldRechargeSource (Windows 0x2b19700), stored by shield_group_construct */
+#define LX_SHIELD_HOLDER_VTABLE 0x3b8d668u /* the group's value holder at +0x58, stored by shield_group_construct: write +0x20, read +0x30 */
+#define LX_SHIELD_MAX_VA 0x1293200u        /* the source's getters (slots +8, +0x10, +0x18), inlined into the read behind a slot test */
+#define LX_SHIELD_DELAY_VA 0x1293230u
+#define LX_SHIELD_RATE_VA 0x12932a0u
+#define LX_SHIELD_WRITE_VA 0x1293310u      /* the holder's write: value = max, changed time 0 */
 /* Serial pathing and path determinism (gate_path.h, lockstep_path_determinism.h). */
 #define LX_PATH_MANAGER_VA 0x3e0ced0u    /* PathingManager pointer (Windows 0x6cf21c8) */
 #define LX_PATH_RELEASE_SITE 0x12125e3u  /* MoveWorker::Run: call of the release with manager+0x70 */
@@ -76,6 +81,83 @@
 #define LX_REGION_MOVE_VA 0x12c7f80u        /* U::Region::Move (Windows 0x767410) */
 #define LX_DAMAGE_FIELD_VTABLE 0x3b57b88u   /* U::Regions::DamageField (Windows 0x2c4b2f0) */
 #define LX_DAMAGE_FIELD_UPDATE_VA 0x12d7a80u /* its per-frame update, slot +0x48 (Windows 0xee16a0, +0x40) */
+/* Weapon shots on keyed streams (gate_weapon_fire.h, lockstep_weapon_fire.h). */
+#define LX_WEAPON_VTABLE 0x3c6a440u          /* U::Weapon (Windows 0x2b68278) */
+#define LX_TURRET_VTABLE 0x3d38dd8u          /* U::Turret (Windows 0x2b6e910) */
+#define LX_WFIRE_SLOT 0x1fc0u                /* the shot's slot in both (Windows +0x1f30, slot 998) */
+#define LX_WFIRE_SHOT_VA 0x1138c70u          /* the shot, U::Weapon::vfunc998 (Windows 0x8185b0) */
+#define LX_WFIRE_LOOP_VA 0x1d698b0u          /* the fire loop, its only caller (Windows 0x817d20) */
+/* Engine-parameter refreshes on keyed streams (gate_engine_rng.h, lockstep_engine_rng.h). */
+#define LX_ERNG_LISTENER_VA 0x14382f0u       /* the UpdateEngineParametersEvent listener (Windows 0xea1d70) */
+#define LX_ERNG_SITE_VA 0x1438348u           /* the inlined FloatRange: the aligned word starting movabs rax, the multiplier */
+#define LX_ERNG_SITE_ORIGINAL 0xf42d4c957f2db848ull /* its 8 bytes */
+#define LX_ERNG_ADDSD_VA 0x1438370u          /* addsd xmm1, fs:CurTime (replayed by the stub) */
+#define LX_ERNG_ADDSD_LENGTH 10u
+#define LX_ERNG_RESUME_VA 0x143838au         /* mov eax,eax: the draw goes on with the stepped word in rax */
+/* Spline routes joined (gate_spline_join.h; lockstep_spline.h's spline_join_all). */
+#define LX_SPLINE_VTABLE 0x3b5d6b8u          /* the spline model (Windows 0x2c4f480) */
+#define LX_SPLINE_SLOT_VA 0x3b5d730u         /* its update slot +0x78 (Windows 0x2c4f4f0, +0x70) */
+#define LX_SPLINE_UPDATE_VA 0x1363de0u       /* the update (Windows 0xeb7230) */
+#define LX_SPLINE_DEQUE_CUR 0x478u           /* model: the request deque's start.cur (libstdc++ deque at +0x468) */
+#define LX_SPLINE_DEQUE_FINISH 0x498u        /* model: its finish.cur */
+#define LX_SPLINE_REQUEST_STATUS 0xb8u       /* request: 0 pending, 1 published (Windows +0xa8) */
+#define LX_SPLINE_RESULT_MUTEX_VA 0x3e76960u /* XLib::Mutex the calculator publishes under (Windows 0x3d74938); LX_MUTEX_LOCK_VA/UNLOCK_VA */
+#define LX_SPLINE_WORKER_VA 0x3e5b850u       /* the calculator worker* (Windows 0x6cf29c0), stored by 0x2001180 */
+#define LX_SPLINE_WORKER_VTABLE 0x3b28b38u   /* its vtable (Windows 0x2c68f98); slot 2 is Run */
+#define LX_SPLINE_WORKER_RUN_VA 0x10b0b30u   /* Run (Windows 0x1099650) */
+#define LX_SPLINE_WORKER_RUNNING 0xb8u       /* worker: running byte, Run sets it to 1 (Windows +0x58) */
+/* Mass traffic and region passes joined (gate_mass_traffic.h; lockstep_mass_traffic.h). Tasks: LX_FS_MASS_VA, LX_FS_REGION_VA. */
+#define LX_SEM_WAIT_VA 0x1a23cc0u              /* XLib::Semaphore wait (semaphore) */
+#define LX_CONDVAR_WAIT_VA 0x1a23f70u          /* XLib condition wait (condition, XLib::Mutex) */
+#define LX_PTHREAD_COND_WAIT_PLT_VA 0x6589a0u  /* pthread_cond_wait's PLT entry */
+#define LX_MT_WORKER_WAIT_CALL_VA 0x12125b5u   /* MoveWorker::Run frame start: E8 to the g_semSimStart wait (Windows 0xef45ea) */
+#define LX_MT_WORKER_WAIT_BLOCK_VA 0x12125b0u  /* the aligned 16 bytes holding its rel32 */
+#define LX_MT_TRAFFIC_WAIT_CALL_VA 0x11f9735u  /* traffic Run: E8 to the parked wait on +0xd8 */
+#define LX_MT_TRAFFIC_WAIT_BLOCK_VA 0x11f9730u
+#define LX_MT_REGION_WAIT_CALL_VA 0x12ef3bfu   /* region Run: E8 to pthread_cond_wait(+0x1a0, +0x140) */
+#define LX_MT_REGION_WAIT_BLOCK_VA 0x12ef3c0u
+#define LX_MT_TRAFFIC_LOCK 0x70u               /* traffic task: XLib::Mutex (Windows +0x60) */
+#define LX_MT_TRAFFIC_PARKED 0xa0u             /* traffic task: parked byte, set when its pass is done (Windows ready +0x88) */
+#define LX_MT_REGION_LOCK 0x138u               /* region task: XLib::Mutex (Windows +0x118) */
+#define LX_MT_REGION_PARKED 0x168u             /* region task: parked byte (Windows ready +0x140) */
+/* Per-ship RNG keys for every portable ship (gate_actor_all.h; lockstep_actor_all.h). */
+#define LX_SHIP_MOVE_VA 0x12b81d0u            /* Ship Move (Windows 0x7cc810), slot +0x1558 of every ship vtable (Windows +0x1510) */
+#define LX_SHIP_SMALL_MOVE_SLOT_VA 0x3d22ca0u /* U::ShipSmall 0x3d21748 (Windows SHIP_ENTRY 0x2b813c8) */
+#define LX_SHIP_XL_MOVE_SLOT_VA 0x3d403e8u    /* U::ShipExtraLarge 0x3d3ee90 (Windows SHIP_XL_ENTRY 0x2b9af98) */
+#define LX_AGENT_UPDATE_VA 0x1444c70u         /* the pathing Agent update (Windows 0xe8f250) */
+#define LX_AGENT_CALL_VA 0x13e33a2u           /* its only call, in the batch job 0x13e32f0 (Windows 0xeaed6f in 0xeaecc0) */
+#define LX_AGENT_CALL_BLOCK_VA 0x13e33a0u     /* the aligned 16 bytes holding its rel32 */
+/* The player's fleet rebuild timer on game time (gate_player_timer.h; lockstep_player_timer.h). */
+#define LX_PLAYER_MOVE_VA 0x138e6a0u          /* U::Player::vfunc674 (Windows 0x7113e0) */
+#define LX_PLAYER_MOVE_SLOT_VA 0x3b60cf8u     /* its slot +0x1558 of U::Player 0x3b5f7a0 (Windows PT_ENTRY 0x2b33eb8) */
+/* The pathing pass's tempzone requests (gate_tempzone_order.h; lockstep_tempzone_order.h). */
+#define LX_TZ_FIND_VA 0x12981b0u              /* zone at a position, create=1 makes one (Windows 0x785db0; lookup 0x785b90 inlined) */
+#define LX_TZ_ACTIVE_VA 0x1cb3f40u            /* zone active in the thread's view (Windows 0x69ed50) */
+#define LX_TZ_RESET_VA 0x1dc8de0u             /* release the reference held in *ref, *ref = 0 (Windows 0x96940) */
+#define LX_TZ_FLAG_VA 0x3eb9730u              /* one new tempzone pending (Windows 0x3d72b88) */
+#define LX_TZ_ZONE_VA 0x3eb96f0u              /* that zone (Windows 0x3d72c40) */
+#define LX_TZ_LOCK_VA 0x3eb9700u              /* their XLib::Mutex, LX_MUTEX_LOCK_VA/UNLOCK_VA (Windows 0x3d72c48) */
+#define LX_TZ_VIEW_VA 0x3e7742cu              /* g_ComponentViewCacheIndex, the published view the jobs read (Windows 0x38f4eb4) */
+#define LX_TZ_PATH_CREATE_RET_VA 0x14490c3u   /* return addresses of the request calls: Agent_UpdatePathing create=1 (Windows 0xe910a6) */
+#define LX_TZ_PATH_FIND_CALL_VA 0x1449609u    /* create=0 (Windows 0xe9123c) */
+#define LX_TZ_SWITCH_CREATE_RET_VA 0x142fa33u /* the zone switch 0x142efa0: create=1 (Windows 0xe890a6) */
+#define LX_TZ_SWITCH_FIND_CALL_VA 0x142fb34u  /* create=0 (Windows 0xe89131) */
+#define LX_TZ_OTHER_CALL_VA 0x12ec389u        /* 0x12eb620, from the region manager's Run 0x12ef310 (Windows 0xee7c7a) */
+/* Warps on a keyed word, and the warp watch (gate_warp_rng.h; lockstep_warp_rng.h). */
+#define LX_WR_DISPATCH_VA 0x16b3e30u          /* U::WarpEvent::Dispatch (Windows 0x9aa290) */
+#define LX_WR_ENTRY_VA 0x3b83458u             /* its slot 3 of U::WarpEvent 0x3b83440 (Windows WR_ENTRY 0x2baa8d0, slot 2) */
+#define LX_WR_CTOR_VA 0x16bbe40u              /* U::WarpEvent's constructor (Windows 0x9a9d00) */
+#define LX_WR_GTRT_VA 0x18a0090u              /* U::Component::GetTransformRelativeTo (Windows 0x3db8a0) */
+#define LX_WR_FRAME_CALL_VA 0x1615867u        /* the gate poster 0x1614ff0's call of it (Windows 0x5ce690's at 0x5cf1c6) */
+/* The gate exit sum in the Windows order (gate_warp_exit.h). */
+#define LX_WX_ENTRY_VA 0x1615324u            /* the poster's movss xmm0,[rdx+0x268]: the first of the exit sum (Windows 0x5ceb27..0x5ceb9d) */
+#define LX_WX_RETURN_VA 0x1615353u           /* the instruction after the sum (movss xmm1,[rbp-0x1c8]) */
+/* The region object search's camera test from the player's ship (gate_mining_camera.h; lockstep_region_camera.h mining). */
+#define LX_MC_FUNC_VA 0x1f47b20u             /* the search (Windows 0x7884a0): rdi sector, rsi position, rdx frame, the object in rax */
+#define LX_MC_SITE_VA 0x1f47f40u             /* its camera block, entered only from 0x1f47b9e (the player's cluster is the region's) */
+#define LX_MC_NEAR_VA 0x1f47fc5u             /* near: release r15+0x38, return nothing */
+#define LX_MC_FAR_VA 0x1f48130u              /* far: release r15+0x38, back to the search at 0x1f47bc0 */
+#define LX_UNIVERSE_VA 0x3db6948u            /* g_Universe (Windows 0x3d198f8); its player object +0x238 (Windows +0x230) */
 /* AI Wait restores (gate_ai_wait.h, lockstep_ai_wait_rng.h). */
 #define LX_AI_WAIT_SLOT_VA 0x3b2a680u       /* U::AI::WaitAction vtable 0x3b2a650, restore slot +0x30 (Windows +0x28) */
 #define LX_AI_WAIT_RESTORE_VA 0x10c12b0u    /* WaitAction::Reattach (Windows 0x10a50d0) */
@@ -138,6 +220,7 @@
 #define LX_ID_ASSIGN_ENTRY_ORIGINAL 0x4855544155415641ull /* push r14; push r13; push r12; push rbp; the first byte of mov rbp,rdi */
 #define LX_ID_ASSIGN_PROLOGUE 6u            /* push r14; push r13; push r12, relocated into the trampoline */
 #define LX_ID_COMPONENT_RETURN_VA 0x189e28cu /* the return from AssignNewID in the constructor every U::Positional goes through */
+#define LX_RID_ALLOCATE_VA 0x1e23dc0u        /* (size, alignment): what EnsureFreeSlots in AssignNewID allocates a block with (Windows SMem::Allocate 0x14b7140) */
 /* The script RNG (gate_script_rng.h, lockstep_script_rng.h). */
 #define LX_EXEC_RUN_VA 0xd5fbb0u            /* ExecState_Run (Windows 0xb58bb0) */
 #define LX_EXEC_RUN_ENTRY_ORIGINAL 0xec8348fb89485355ull /* push rbp; push rbx; mov rbx,rdi; the start of sub rsp,8 */
@@ -466,5 +549,47 @@ static const lx_site lx_sites[]={
     {"fs_sound_play_head",0x1a62520,0x60,"224dae565497fc9f6fd890b0f9b79fee64de293038204f9323263da729fbf5ea"},
     {"fs_sound_manager_use",0xa69e6a,0x10,"032cfe9051445ae0fc464dc76e7ad7a776e67415c2fdff02bb5e185b18714393"},
     {"fs_save_dir_init",0x8a0d60,0x1d,"9636ee83c514904556579b8ea6712c5c29074ee53204809a25883ad0f17728d0"},
+    {"wfire_shot_head",0x1138c70,0x110,"8cfb97d19dc638180e4124820a7d99da3c4c9eb1d66c587727d2db784ad41182"},
+    {"wfire_fire_loop_call",0x1d69a10,0x80,"2d2595c5e3c41e67cbe91b7310c26c96a3fa18c872dd3d4bc0fada7c691e7528"},
+    {"erng_listener_head",0x14382f0,0x58,"93b8240094f88e774f4ded9f45ec8cb805ddcdd9588218575a3e4a8a422de45c"},
+    {"erng_listener_tail",0x1438350,0xc2,"2a0cbb338bb82c0a492b6b013e484597c6fd63233614e1f429c0d12edcc7ef18"},
+    {"spline_update_head",0x1363de0,0x110,"53ce49e351fba194737e429eb0ebf71daa1d84a01a357241cd243b9382208ef7"},
+    {"spline_worker_run",0x10b0b30,0x140,"c955dfb74cada4c8b9c88f2f6bba275f92a13600064ad440f1193368773ac0a1"},
+    {"spline_worker_make",0x2001180,0x88,"ff6e4eb1570b0d3ec5d61eb773e2319cb2871ecc1cd493d3585b010352bb2616"},
+    {"ship_move_head",0x12b81d0,0x80,"caef5e06d738d33e8e9fa58899f08d841f86c59dac77d949b6b9c1bac96ed3c1"},
+    {"agent_update_head",0x1444c70,0x80,"d4d0dea0ff9f3a22a764f0db3bb2458fce330121a696f61a8f46a6b469e73d54"},
+    {"player_timer_head",0x138e6a0,0x40,"1108f59e815cb16932eafd2abb90b3712f8b317593d8bcba99253e15182f3ca4"},
+    {"player_timer_check",0x1390297,0xb0,"e7369926888691a76f43bb38861795dff5e9bf833ba7bccc7ced28aa9ca9f8b6"},
+    {"player_timer_init",0x1daf7d9,0x3f,"b65ee778863f9825537abd0c5961d1263a7a1ae545b829d3143e02bb5ba5185f"},
+    {"mt_region_kick",0x12d1680,0xb6,"fff0564cb5e327552abb9dc2a477d8360d7a36ab6acfde1d2f4e44319d4e9eca"},
+    {"tempzone_find",0x12981b0,0x370,"d5f9f35b15c60ebb3d4030a0869335719f2672cb60f1097379604efaf9be5d3d"},
+    {"tempzone_active",0x1cb3f40,0x63,"34908166d8fc2caa0857e17c563ebf6247642b20af7fbcc6e96e465f084e82a6"},
+    {"tempzone_view",0x12021e0,0x1f,"2ef64c84b2b3fc6c1f518dae50e6506e023c192bfdb605616e811d45f3bbf513"},
+    {"tempzone_reset",0x1dc8de0,0x44,"33edf50b7952aed29d92d6da68b8010080f86d69cff1a478f527f60b4ae6ad60"},
+    {"tempzone_addref",0x1fa4030,0x1d,"e5af245e2067a61a22515f18edf95055890c87ca5adde31064b8bd358ec62658"},
+    {"tempzone_path_create",0x144907d,0x14c,"481557ea5ea44e65b747f4e2e19e465bc9a019099a4459af5ee96c65fe12b827"},
+    {"tempzone_path_store",0x1449577,0x40,"4b142b9c6e782c808ed3f137baf42c5f296a9d88b2c1ab8a47b32cf0622dbc9e"},
+    {"tempzone_path_find",0x14495eb,0x2d,"df6aff5d24d3bde72af5eaf9ad8d1483b06dd70e39f8473c4abc73d9e805f632"},
+    {"tempzone_switch_create",0x142f9e7,0x9f,"f4d4403453e5e9d129973c440d222b295ca6014cf30c98e9ae8fb7ea074810a9"},
+    {"tempzone_switch_find",0x142fb14,0x32,"aba5058e48115c99e73f950ceee3521a4127ae5f1e03967e94ac04db7041989a"},
+    {"tempzone_switch_store",0x142fc3b,0x34,"8760f6eb462b271cc5147c0788de2ad43fc11d52762c2a16287e16a2ed04356d"},
+    {"tempzone_runpass_test",0x13e3d78,0xe,"93056c02490f3ab131659156e374f92165751f290dff0dedb773628a30f5f562"},
+    {"tempzone_runpass_clear",0x13e4143,0x6b,"cadcdc7bca5a195e675118b40207062acee8c6532c9c53762594f9cf0e3c6f74"},
+    {"tempzone_region_call",0x12ec381,0xd,"1fb1ad65f6b477df43785690f73bb6bda83dbdd35aed0bfcda2a42fbed8a1b51"},
+    {"warp_dispatch",0x16b3e30,0x130,"8bc85c7f59452b43ab28bae7a0e145b69321a25ce9d0e554fe3b6253b135d752"},
+    {"warp_place",0x14622c0,0xf3,"0dc370c5d6177a3d106e382ad1b18f5dcae05d0326a25ce92d22a812ee7fa42e"},
+    {"warp_direction",0x11556e0,0x6a,"757b216752d8fae513aa82b7b76540bcca909173a4f2308ba6f04b6b488735ba"},
+    {"warp_draws",0x11557f8,0x16,"3b4181770200ccb0e889f194966dc74e06d0c8c2084265b3809a04f4371ecdd8"},
+    {"warp_frame_product",0x16159fc,0xdc,"19304b1b7f1635dbfe80dde7fafb98b4973558057950193979d2454a2c7028a4"},
+    {"warp_frame_call",0x1615817,0x55,"6e5b13caa6d9d2bd929c9152e64dbf1b4e89125bd790404135eec06fa88c685a"},
+    {"warp_gtrt",0x18a0090,0x3e0,"8489683612cc942bd00c117405c4b2ba6e02307198a653f05b574d2e62b08ccd"},
+    {"warp_exit_sum",0x16152fc,0x57,"8796bf36163293c7d9ba764f473ccdd9b81cf114c9db8bdbc791f6884fa36436"},
+    {"mining_search",0x1f47b20,0x6d0,"2793312d8762d21df2f389e8d00a52856fad88569264f6c63e0365e368a9ba07"},
+    {"rid_ui_create_instance",0xb08820,0x280,"668801b166713825545657c8f611638dc1d2d0fedd503458e50f692d235a2f63"},
+    {"rid_ui_controller_move",0xa758a0,0x25f0,"e28098824694f1b812c0c0ad5889df11d7feec884245cb8d7e5851d22f5e46e0"},
+    {"rid_ui_game_render_move",0xfb0180,0x70,"fa4b6b5d88d285cb39eb2160f8382cb54b1b2b4e2578a5d9613c8fc0a4c9b59b"},
+    {"rid_view_message_start",0xc78bc0,0x1d0,"3ac92db32210fe28cddfcb868a385e1b3cf7da8246ad036d7dda7710f45c6060"},
+    {"rid_view_create_source",0xa70cd0,0xbf0,"40eb3dfb659d525c4cc16548a7fd1b31c9d30eee3bbcf228b344fe2f4323b2ea"},
+    {"rid_allocate",0x1e23dc0,0x180,"9623eb2a8bdc9d4bdf8ab7ea34fd69b95557c42c29c90e1c1c0df037490dd282"},
 };
 #define LX_SITE_DT "frame_tick_time_advance" /* hashed with the two dt qwords normalised to the original */

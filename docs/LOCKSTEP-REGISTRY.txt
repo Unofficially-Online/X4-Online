@@ -183,6 +183,8 @@ Modules (define, owner):
   143 WR_STOP_REASON            lockstep_warp_rng.h
   144 TZ_STOP_REASON            lockstep_tempzone_order.h
   145 TRR_STOP_REASON           lockstep_transition_rows.h (was 144, shared with the tempzone order)
+  146 WX_STOP_REASON            linux/gate_warp_exit.h (native_gate_warp_exit, Linux gate only: the gate exit sum in the
+                                Windows order; whys entry_changed, block_changed)
   150 GWIDE_STOP_REASON         lockstep_gravidar_wide.h
   151 EVENT_RNG_STOP_REASON     lockstep_event_rng.h
   152 BRNG_STOP_REASON          lockstep_build_rng.h
@@ -203,7 +205,8 @@ Modules (define, owner):
                                 lockstep_player_settings.h (whys player_settings_install, _hook_lost,
                                 _restore, _scope, _scope_open, _present)
   165 RC_STOP_REASON            lockstep_region_camera.h (was 130)
-  166 RC_MINING_STOP            lockstep_region_camera.h (group mining)
+  166 RC_MINING_STOP            lockstep_region_camera.h (group mining); on the Linux gate LXMC_STOP_REASON,
+                                linux/gate_mining_camera.h (whys entry_changed, block_changed)
   167 RC_XS_STOP                lockstep_region_camera.h (group xs)
   168 RC_PROBE_STOP             lockstep_region_camera.h (group camera_probe)
   169 RC_HIGHWAY_ROWS_STOP      lockstep_region_camera.h (group highway_rows)
@@ -255,7 +258,7 @@ Modules (define, owner):
   200 JOIN_STOP_REASON          lockstep_join.h (hot join: a strict joiner's admission refused; the status line's
                                 rx_detail names why: contexts_differ, wakes_unplaced, md_heap_differs, clock,
                                 ids_foreign, created_entries, rid_*, pins, engine)
-  free: 109, 114-119, 122-129, 146-149, 189, 197-199, 201-255.
+  free: 109, 114-119, 122-129, 147-149, 189, 197-199, 201-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

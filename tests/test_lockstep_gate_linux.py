@@ -195,6 +195,18 @@ class LiveRunner(unittest.TestCase):
             watch.poll()
             self.assertTrue(watch.stopped)
             self.assertEqual(watch.stop_reason, 72)
+            # The session defaults' loud rows are recorded, not fatal (as in the Windows lane runs; w3b2 stopped at tick 1 on
+            # one); any other ERROR or REFUSED is.
+            loud = Path(tmp) / 'loud.log'
+            loud.write_text('[=ERROR=] 9.0 [X4LAN] NATIVE_GATE ERROR DEGRADED status=SCRIPT_RNG unmapped=362 (+362) tick=1\n'
+                            '[=ERROR=] 9.0 [X4LAN] NATIVE_GATE ERROR DEFAULT_SKIPPED key=native_gate_render_fps why=x\n')
+            watch = live.LogWatch(loud)
+            watch.poll()
+            self.assertIsNone(watch.failure)
+            with loud.open('a') as stream:
+                stream.write('[=ERROR=] 9.1 [X4LAN] NATIVE_GATE ERROR capture failed stage=x\n')
+            watch.poll()
+            self.assertTrue(watch.failure.startswith('NATIVE_GATE ERROR capture failed'))
         error = live.stop_error
         # One failed: the peer gets a moment to report its own, never long.
         self.assertIsNone(error({1: 72}, {1: 100.0}, 100.0 + live.FAILED_STOP_PEER - 1))
@@ -261,6 +273,32 @@ class LiveRunner(unittest.TestCase):
             finally:
                 process.communicate('')
 
+    def test_case_config_fills_the_session_and_the_wire_crypto_credential(self):
+        live = load_tool('linux_gate_live')
+        plain = 'port=@X4LANE_PORT@ token="@X4LANE_TOKEN@" slot="@X4LANE_SLOT@" clients=@X4LANE_CLIENTS@\n'
+        self.assertEqual(live.case_config(plain, 45999, 'ab' * 16, 3, 3), f'port=45999 token="{"ab" * 16}" slot="p3" clients=3\n')
+        keyed = plain + f'X4LAN_CONFIG.native_gate_wire_crypto = "{live.WIRE_CRYPTO_TOKEN}"\n'
+        credential = 'x4c1:' + '1' * 64 + ':' + '2' * 64
+        self.assertTrue(live.case_config(keyed, 1, 'ab' * 16, 3, 3, credential).endswith(f'native_gate_wire_crypto = "{credential}"\n'))
+        with self.assertRaisesRegex(RuntimeError, 'needs a credential'):
+            live.case_config(keyed, 1, 'ab' * 16, 3, 3)                       # a crypto bundle without its credential
+        with self.assertRaisesRegex(RuntimeError, 'no wire crypto line'):
+            live.case_config(plain, 1, 'ab' * 16, 3, 3, credential)           # a credential for a plain bundle
+        with self.assertRaisesRegex(RuntimeError, 'not a wire crypto credential'):
+            live.case_config(keyed, 1, 'ab' * 16, 3, 3, 'x4c1:short')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'credentials.json'
+            path.write_text(json.dumps({'3': credential}))
+            if platform.system() == 'Linux':
+                path.chmod(0o644)
+                with self.assertRaises(SystemExit):
+                    live.load_credentials(path)                                # readable by others: refused
+                path.chmod(0o600)
+            self.assertEqual(live.load_credentials(path), {3: credential})
+            path.write_text(json.dumps({'3': 'nope'}))
+            with self.assertRaises(SystemExit):
+                live.load_credentials(path)
+
     @unittest.skipUnless(platform.system() == 'Linux', 'symbolic links of the private view need Linux')
     def test_private_instance_staging(self):
         live = load_tool('linux_gate_live')
@@ -287,6 +325,32 @@ class LiveRunner(unittest.TestCase):
             command = live.namespace_command(case, game, binds, lock, {'HOME': str(case / 'home')}, ['X4'], 'x4server')
             self.assertEqual(command[:5], ['runuser', '-u', 'x4server', '--', 'bwrap'])
             self.assertIn('/tmp/EGOSOFT_X4.lock', command)
+            self.assertNotIn('/dev/shm', command)
+
+    def test_confined_steam_shared_memory_is_bound_over_dev_shm(self):
+        """run --shm (snap Steam): the directory replaces /dev/shm after the /dev bind, before the case binds."""
+        live = load_tool('linux_gate_live')
+        with tempfile.TemporaryDirectory() as folder:
+            case, game, shm = Path(folder) / 'case', Path(folder) / 'game', Path(folder) / 'snap.steam'
+            for path in (case, game, shm):
+                path.mkdir()
+            command = live.namespace_command(case, game, [], case / 'x4.lock', {}, ['X4'], 'topsnek', shm)
+            dev = command.index('--dev-bind')
+            self.assertEqual(command[dev:dev + 6], ['--dev-bind', '/dev', '/dev', '--bind', str(shm), '/dev/shm'])
+            self.assertLess(command.index('/dev/shm'), command.index(str(case / 'game')))
+
+    @unittest.skipUnless(hasattr(os, 'getuid'), 'file owners need POSIX')
+    def test_steam_shared_memory_is_the_users_own(self):
+        live = load_tool('linux_gate_live')
+        with tempfile.TemporaryDirectory() as folder:
+            shm, uid = Path(folder), os.getuid()
+            self.assertFalse(live.steam_shared_memory(shm, uid))
+            (shm / 'other-file').write_text('')
+            self.assertFalse(live.steam_shared_memory(shm, uid))
+            (shm / f'u{uid}-Shm_125376fc').write_text('')
+            self.assertTrue(live.steam_shared_memory(shm, uid))
+            self.assertFalse(live.steam_shared_memory(shm, uid + 1))
+            self.assertFalse(live.steam_shared_memory(shm / 'missing', uid))
 
 
 class ProbeLibrary(unittest.TestCase):
@@ -418,6 +482,22 @@ class Overlay(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.build(*self.snapshot, '--mode', 'clock', '--script-rng', 'key')
 
+    def test_linux_overlay_takes_a_script_rng_row_window(self):
+        base = (*self.snapshot, '--mode', 'clock', '--world-identities', '--script-rng', 'key')
+        config = (self.build(*base, '--script-rng-rows-window', '2600', '3000') / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_script_rng_rows = true', config)
+        self.assertIn('native_gate_script_rng_rows_window = {2600, 3000}', config)
+        self.assertNotIn('native_gate_script_rng_rows_ticks', config)
+        for wrong in (('--script-rng-rows-window', '3000', '2600'), ('--script-rng-rows-window', '1', '700'), ('--script-rng-rows-window', '0', '10')):
+            with self.assertRaises(SystemExit):
+                self.build(*base, *wrong)
+        with self.assertRaises(SystemExit):
+            self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--script-rng-rows-window', '1', '10')
+        config = (self.build(*base, '--script-rng-rows-window', '2650', '2975', '--script-rng-trace') / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_script_rng_trace = true', config)
+        with self.assertRaises(SystemExit):
+            self.build(*base, '--script-rng-trace')
+
     def test_linux_overlay_takes_runtime_ids(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--runtime-ids')
         self.assertIn('native_gate_runtime_ids = true', (out / 'ui/config.lua.append').read_text())
@@ -427,6 +507,21 @@ class Overlay(unittest.TestCase):
         self.assertIn('native_gate_runtime_ids_callers = true', (out / 'ui/config.lua.append').read_text())
         with self.assertRaises(SystemExit):
             self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--runtime-id-callers')
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--runtime-ids', '--created-identities', '--runtime-ids-local')
+        self.assertIn('native_gate_runtime_ids_local = true', (out / 'ui/config.lua.append').read_text())
+        for missing in (('--runtime-ids', '--runtime-ids-local'), ('--created-identities', '--runtime-ids-local')):
+            with self.assertRaises(SystemExit):
+                self.build(*self.snapshot, '--mode', 'clock', '--world-identities', *missing)
+
+    def test_linux_overlay_takes_world_hash_shields(self):
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--world-hash-stride', '60', '--world-hash-shields')
+        config = (out / 'ui/config.lua.append').read_text()
+        self.assertIn("native_gate_world_hash_shields = 'canonical'", config)
+        self.assertIn('native_gate_world_hash_stride = 60', config)
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--world-hash-stride', '60')
+        self.assertNotIn('native_gate_world_hash_shields', (out / 'ui/config.lua.append').read_text())
+        with self.assertRaises(SystemExit):
+            self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--world-hash-shields')
 
     def test_linux_overlay_takes_travel_snapshot(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--serial-pathing', '--path-determinism', '3', '--travel-snapshot')

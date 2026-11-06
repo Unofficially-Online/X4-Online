@@ -25,6 +25,16 @@ static uintptr_t creation_generate_execute(creation_generate_fn original,uintptr
     uintptr_t result=0;unsigned rng_scope=0;
     /* native_gate_spawn_rng: g is the caller's explicit generator state. */
     spawn_rng_scope spawn;DWORD spawn_error=GetLastError();spawn_rng_begin(g,&spawn);SetLastError(spawn_error);
+    spawn.site=caller>=(uintptr_t)image && caller-(uintptr_t)image<0x6fa9000u?caller-(uintptr_t)image:0;   /* the call site: job 0xf0673a, god 0xba1b8b, create_ship 0x5e672a */
+    if(spawn.active) {   /* the first four image frames above the site (j1-218: which of the job spawn's callers) */
+        void *frames[16];const USHORT n=RtlCaptureStackBackTrace(0,16,frames,NULL);unsigned k=0;int past=0;
+        for(USHORT f=0;f<n && k<4u;f++) {
+            const uintptr_t a=(uintptr_t)frames[f];
+            if(a<(uintptr_t)image || a-(uintptr_t)image>=0x6fa9000u) continue;
+            if(!past) {past=a==caller;continue;}
+            spawn.chain[k++]=(uint32_t)(a-(uintptr_t)image);
+        }
+    }
     __try {
         registry_creation_trace(index,0);
         creation_rng_begin(index,CREATION_GENERATE,caller,args,&rng_scope);

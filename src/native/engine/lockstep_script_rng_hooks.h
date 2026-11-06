@@ -84,7 +84,7 @@ static int script_rng_arm(int mode,unsigned mask,int rows,unsigned options) {
         script_rng_options==options;
     if(!stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId()!=ui_thread ||
        !mask || mask>7 || !(mask&(SCRIPT_RNG_AI|SCRIPT_RNG_MD)) || options>SCRIPT_RNG_OPTIONS ||
-       ((options&SCRIPT_RNG_OPT_NATURAL) && !rows) || ((options&SCRIPT_RNG_OPT_UNMAPPED) && !(mask&SCRIPT_RNG_AI))) return 0;
+       ((options&(SCRIPT_RNG_OPT_NATURAL|SCRIPT_RNG_OPT_TRACE)) && !rows) || ((options&SCRIPT_RNG_OPT_UNMAPPED) && !(mask&SCRIPT_RNG_AI))) return 0;
     if(!interrupt_installed || !interrupt_event_installed || !nested_action_installed || !world_identity_installed) return 0;
     if(mode==SCRIPT_RNG_KEY && (ai_seeded || interrupt_seeded || (boot_options&140737488355328ULL))) return 0;
     if((mask&SCRIPT_RNG_BOOT) && boot_rng_anchor_armed) return 0;

@@ -481,7 +481,7 @@ function K.session(p)
    local ok,what=gate.ui_missions_run(slot,hex)
    return ok==1,what
   end
-  -- Conversations (op 0x49): the stock global with the captured arguments.
+  -- Conversations (op 0x49): the stock global with the captured arguments; a conversation start through MD (below).
   if op==K.OP_CONVERSATION then
    local number=tonumber(hex:sub(1,2),16) or 0
    local name=K.CONVERSATION[number] or (number==K.HIRE_MONEY and 'TransferPlayerMoneyTo' or nil)   -- the hire scope's fee
@@ -490,6 +490,21 @@ function K.session(p)
    if not args then
     if n=='mismatch' then gate.ui_replay_fail('ui_ref_mismatch') elseif n~='gone' then gate.ui_replay_fail('ui_lua_decode') end
     return false,n
+   end
+   -- X4 starts a menu conversation only as the result of a closing menu (Helper.closeMenuForNewConversation): a bare call
+   -- from the replay's frame was ignored (m1d, m1e). So every client raises X4LAN_UiConversation/Start here and our MD
+   -- (native_gate_ui_replay.xml ConversationStart) starts the same conversation at the same tick: start_conversation with the
+   -- captured actor, name and parameter (the names MD knows; another is refused there, the same on every client).
+   if name=='StartConversationFromMenu' and stock.AddUITriggeredEvent then
+    -- MD takes a component from a Lua ID only: a 64-bit actor (the captured call's own form) is converted here (m1f).
+    local actor,form=args[2],type(args[2])
+    if form=='cdata' or form=='number' then
+     local okd,text=pcall(decimal,actor)
+     actor=okd and env.ConvertStringToLuaID(text) or actor
+    end
+    local okt,text=pcall(decimal,actor)
+    local ok,result=pcall(stock.AddUITriggeredEvent,'X4LAN_UiConversation','Start',{conversation=args[1],actor=actor,convparam=args[3]})
+    return ok,ok and 'md:'..name..'('..tostring(args[1])..','..form..':'..(okt and text or '?')..')' or tostring(result)
    end
    local ok,result=pcall(stock[name],unpack(args,1,n))
    return ok,ok and name..'('..tostring(args[1])..')' or tostring(result)
@@ -712,6 +727,8 @@ function K.script(plan,start,tools)
   elseif op=='input' then call=function() return tools.gate.pilot_stock_inject(e[3],e[4],e[5]) end
   -- The flight families: autopilot by Lua (no guidance needed) and by the FFI toggle, dock, undock, weapon groups.
   elseif op=='ap_to' then call=function() return tools.env.StartAutoPilot(tools.slot_lua(e[3])) end
+  -- The autopilot to any saved object, as the map's "Autopilot" on a station (e.g. to get within docking range first).
+  elseif op=='ap_obj' then call=function() return tools.env.StartAutoPilot(tools.saved_lua(e[3])) end
   elseif op=='ap_stop' then call=function() return tools.env.StopAutoPilot() end
   elseif op=='ap_toggle' then call=function() return tools.C.ToggleAutoPilot(false) end
   elseif op=='quickdock' then call=function() return tools.C.QuickDock() end
@@ -729,6 +746,12 @@ function K.script(plan,start,tools)
   elseif op=='q_move' then call=function()
     local id=tools.saved_id(e[3]);local idx=tools.C.CreateOrder(id,'MoveWait',false)
     if idx>0 then tools.env.SetOrderParam(tools.saved_lua(e[3]),idx,1,nil,{tools.saved_lua(e[4]),{e[5],e[6],e[7]}});tools.C.EnableOrder(id,idx) end
+    return idx end
+  -- {tick,'q_dock',ship,station}: DockAndWait at the station, as the map's "Dock at" (create + destination + enable); the
+  -- ship's own pilot docks it (a player-flown ship once its autopilot follows the queue: ap_toggle).
+  elseif op=='q_dock' then call=function()
+    local id=tools.saved_id(e[3]);local idx=tools.C.CreateOrder(id,'DockAndWait',false)
+    if idx>0 then tools.env.SetOrderParam(tools.saved_lua(e[3]),idx,1,nil,tools.saved_lua(e[4]));tools.C.EnableOrder(id,idx) end
     return idx end
   elseif op=='q_wait' then call=function()
     local id=tools.saved_id(e[3]);local idx=tools.C.CreateOrder(id,'Wait',false)
@@ -798,6 +821,15 @@ function K.script(plan,start,tools)
       local target=type(e[3])=='number' and tools.slot_id(e[3]) or tools.saved_id(e[3])
       menu.contextMenuData=menu.contextMenuData or {}
       menu.contextMenuData.hireObject,menu.contextMenuData.hireRole,menu.contextMenuData.hireIsPost=target,e[4],e[5]==true
+      -- The hire context (createHireContext) sets the container's discounts before its button exists (h1h): read here
+      -- the same way, read only on this client.
+      if not menu.hiringdiscounts and type(menu.modeparam)=='table' then
+       local env=tools.env
+       local discounts=env.GetComponentData(env.GetContextByClass(env.ConvertIDTo64Bit(menu.modeparam[2]),'container',true),'hiringdiscounts') or {}
+       discounts.totalfactor=1
+       for _,entry in ipairs(discounts) do discounts.totalfactor=discounts.totalfactor-entry.amount/100 end
+       menu.hiringdiscounts=discounts
+      end
       menu.buttonHire()
       return 'hire '..tostring(e[4])
      end

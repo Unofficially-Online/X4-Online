@@ -330,12 +330,90 @@ static void test_rd_flow(void) {
     gate_tick_hz=saved_hz;rf_fps=saved_fps;render_rng_mode=saved_mode;stats.issued=saved_issued;stats.active=0;
     render_rng_calls=render_rng_steps=render_rng_unknown=render_rng_ids=0;render_rng_frame=UINT64_MAX;rf_slot10_r_us=rf_slot10_step_us=rf_slot10_r_calls=0;
 }
+/* The camera follows the presented own ship (rdisp_follow_enter), here with render-only frames off as the session defaults
+ * run: the predictor's swap left as opred_present_enter leaves it, slot 10 through the real wrapper. */
+static void test_rd_follow_swap(const rdisp_xf *predicted) {
+    float pf[16];test_rd_floats(predicted,pf);
+    memcpy(opred_blocks[0],test_rd_blocks[TRD_SHIP],RDISP_BLOCK_BYTES);memcpy(opred_blocks[0],pf,64);
+    unsigned char *volatile *at=(unsigned char *volatile *)(test_rd_vc(TRD_SHIP)+RDISP_VC_BLOCK);
+    *at=(unsigned char*)opred_blocks[0];
+    opred_open=1;opred_open_at[0]=at;opred_open_saved[0]=test_rd_blocks[TRD_SHIP];opred_open_object[0]=test_rd_objects[TRD_SHIP];
+}
+static void test_rd_follow_unswap(void) {
+    *(unsigned char**)(test_rd_vc(TRD_SHIP)+RDISP_VC_BLOCK)=test_rd_blocks[TRD_SHIP];
+    opred_open=0;memset(opred_open_at,0,sizeof(opred_open_at));memset(opred_open_object,0,sizeof(opred_open_object));
+}
+static void test_rd_follow_counters(void) {
+    opred_follow_written=opred_follow_restored=opred_follow_eye=opred_follow_rdisp=opred_follow_outside=0;
+    opred_follow_parent=opred_follow_table=opred_follow_cached=0;opred_failures=0;opred_stage="live";
+}
+static void test_rd_follow(void) {
+    unsigned saved_hz=gate_tick_hz,saved_fps=rf_fps;int saved_mode=render_rng_mode;uint64_t saved_issued=stats.issued;
+    gate_tick_hz=30;rf_fps=0;stats.active=1;render_rng_mode=RENDER_RNG_SPLIT;rf_ready_flag=1;rdisp_is_a_override=test_rd_is_a;
+    test_rd_engine();test_rd_reset(RDISP_OFF,RDISP_OFF);rdisp_armed=0;rdisp_active=0;test_rd_follow_counters();
+    stats.issued=40;test_rd_world(2);
+    unsigned char before[4][64];for(unsigned i=0;i<4;i++) memcpy(before[i],test_rd_entry(i),64);
+    /* A step frame: the own ship (the camera's chain, key 1, its parent the zone, key 2) drawn at the predicted pose; the
+     * entries inside it stay, the zone, the sector and the root follow it: the camera hangs under the drawn ship. */
+    rdisp_xf predicted;test_rd_xf(&predicted,2,0.05,250,4,50);test_rd_follow_swap(&predicted);
+    test_rd_slot10(0);
+    rdisp_xf m2,m3,m0;rdisp_compose(&test_rd_c,&predicted,&m2);rdisp_compose(&m2,&test_rd_z,&m3);rdisp_compose(&m3,&test_rd_q,&m0);
+    assert(test_rd_calls==1 && test_rd_seen_block[TRD_SHIP]==(unsigned char*)opred_blocks[0]);
+    assert(!memcmp(test_rd_seen_entries[1],before[1],64) && test_rd_near(test_rd_seen_entries[2],&m2,1e-6));
+    assert(test_rd_near(test_rd_seen_entries[3],&m3,1e-6) && test_rd_near(test_rd_seen_entries[0],&m0,1e-6));
+    /* Everything back bit for bit; the eye of a step frame stays what slot 10 computed (the drawn camera's). */
+    for(unsigned i=0;i<4;i++) assert(!memcmp(test_rd_entry(i),before[i],64));
+    unsigned char eye[RDISP_EYE_BYTES];memset(eye,0xab,sizeof(eye));assert(!memcmp(test_rd_camera+RDISP_EYE,eye,sizeof(eye)));
+    assert(opred_follow_written==1 && opred_follow_restored==1 && !opred_follow_eye && !opred_failures && !rfol_open);
+    /* The simulated pose drawn ('swap'): the bank written with what it holds, up to the float rounding. */
+    rdisp_xf simulated=test_rd_s;test_rd_follow_swap(&simulated);test_rd_slot10(0);
+    for(unsigned i=0;i<4;i++) {rdisp_xf m;float f[16];memcpy(f,before[i],64);rdisp_xf_from(f,&m);assert(test_rd_near(test_rd_seen_entries[i],&m,1e-6));}
+    assert(opred_follow_written==2 && opred_follow_restored==2);
+    /* A render-only frame: the eye slot 10 recomputed goes back as well. */
+    test_rd_follow_swap(&predicted);memset(test_rd_camera+RDISP_EYE,0x33,RDISP_EYE_BYTES);memset(eye,0x33,sizeof(eye));
+    test_rd_timing(0.5);test_rd_slot10(1);
+    assert(test_rd_near(test_rd_seen_entries[2],&m2,1e-6) && !memcmp(test_rd_camera+RDISP_EYE,eye,sizeof(eye)) && opred_follow_eye==1);
+    for(unsigned i=0;i<4;i++) assert(!memcmp(test_rd_entry(i),before[i],64));
+    /* Stage 2/3 wrote the bank in this call: it already follows the swap, nothing written twice. */
+    rdisp_cam_open_count=4;assert(!rdisp_follow_enter(1) && opred_follow_rdisp==1);rdisp_cam_open_count=0;
+    assert(rdisp_follow_enter(0));rdisp_follow_leave(1);   /* without stage 2/3's write: followed */
+    /* Nothing to follow: no swap, a swapped ship outside the camera's chain, a parent that is not the next key, no bank. */
+    uint64_t written=opred_follow_written;
+    test_rd_follow_unswap();test_rd_slot10(0);assert(opred_follow_written==written);
+    test_rd_follow_swap(&predicted);opred_open_object[0]=test_rd_objects[TRD_OTHER];
+    test_rd_slot10(0);assert(opred_follow_outside==1 && opred_follow_written==written);
+    opred_open_object[0]=test_rd_objects[TRD_SHIP];*(unsigned char**)test_rd_vc(TRD_SHIP)=test_rd_objects[TRD_SECTOR];
+    test_rd_slot10(0);assert(opred_follow_parent==1 && opred_follow_written==written);
+    *(unsigned char**)test_rd_vc(TRD_SHIP)=test_rd_objects[TRD_ZONE];
+    *(unsigned char**)(test_rd_universe+RDISP_CAMERA)=NULL;test_rd_slot10(0);
+    assert(opred_follow_table==1 && opred_follow_written==written);*(unsigned char**)(test_rd_universe+RDISP_CAMERA)=test_rd_camera;
+    for(unsigned i=0;i<4;i++) assert(!memcmp(test_rd_entry(i),before[i],64));
+    assert(!opred_failures && test_rd_calls==7);
+    /* Fail closed: a foreign write into a followed entry stays and stops the gate (184). */
+    test_rd_foreign_entry=1;test_rd_slot10(0);test_rd_foreign_entry=0;
+    assert(opred_failures==1 && !strcmp(opred_stage,"follow_foreign") && memcmp(test_rd_entry(2),before[2],64) && !rfol_open);
+    memcpy(test_rd_entry(2),before[2],64);test_rd_follow_counters();
+    /* An exception in slot 10: the wrapper's __finally puts the bank back. */
+    test_rd_throw=1;assert(test_rd_slot10_throwing());test_rd_throw=0;
+    for(unsigned i=0;i<4;i++) assert(!memcmp(test_rd_entry(i),before[i],64));
+    assert(opred_follow_restored==1 && !opred_failures && !rfol_open);
+    render_rng_failures=0;render_rng_stage="idle";
+    /* Nested: a follow already open fails closed. */
+    rfol_open=1;assert(!rdisp_follow_enter(0) && opred_failures==1 && !strcmp(opred_stage,"follow_nested"));rfol_open=0;
+    test_rd_follow_unswap();test_rd_follow_counters();opred_stage="off";
+    rdisp_is_a_override=NULL;rf_ready_flag=0;rf_gap_first=rf_interval=rf_estimate=rf_frame_start=0;
+    *(unsigned char**)(image+RDISP_UNIVERSE)=NULL;*(uint32_t*)(image+RDISP_VIEW_INDEX)=0;
+    gate_tick_hz=saved_hz;rf_fps=saved_fps;render_rng_mode=saved_mode;stats.issued=saved_issued;stats.active=0;
+    render_rng_calls=render_rng_steps=render_rng_unknown=render_rng_ids=0;render_rng_frame=UINT64_MAX;rf_slot10_r_us=rf_slot10_step_us=rf_slot10_r_calls=0;
+}
 static void test_render_display(void) {
-    test_rd_math();test_rd_offset();test_rd_arm();test_rd_boot_point();test_rd_flow();
+    test_rd_math();test_rd_offset();test_rd_arm();test_rd_boot_point();test_rd_flow();test_rd_follow();
     puts("render display: pose arithmetic, display offset, arming (through the Lua binding before the start, image NULL: no engine "
          "read; pins on the first tick), the boot point (no camera, empty bank), extrapolate and interpolate on fake engine memory "
          "through the render wrapper (objects swapped and restored, the camera bank following camera and own ship, predictor swap and "
-         "override, stale, snap, re-identified, foreign writes fail closed, exception unwind, nesting) PASS");
+         "override, stale, snap, re-identified, foreign writes fail closed, exception unwind, nesting), the bank following a "
+         "predictor's swap in every frame without render frames (step and render-only, eye, skip after stage 2/3, outside the "
+         "chain, parent, no bank, foreign, unwind, nesting) PASS");
 }
 static void test_render_display_native_image(const char *path) {
     unsigned char *prior=image;int saved=rdisp_pins_checked;

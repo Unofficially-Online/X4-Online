@@ -194,6 +194,9 @@ static unsigned adapt_take(uint64_t tick) {
     for(unsigned i=0;i<wire_clients;i++) memcpy(blob_inputs[i],p->blobs[i],strlen(p->blobs[i])+1);
     if(p->gap) {adapt_source_set=0;++adapt_gaps;}
     else {
+#ifdef ADAPT_WITH_PILOT
+        if(adapt_mask) pilot_drop_note(adapt_mask,adapt_cursor); /* a dropped slot's rows stop with this proposal tick */
+#endif
         adapt_source=adapt_cursor;adapt_source_set=1;
         wire_lookahead=adapt_lag(adapt_cursor)-1; /* hit claims reconstruct the source as T-1-k */
         adapt_cursor=adapt_next_source(adapt_cursor);
@@ -272,9 +275,19 @@ static unsigned adapt_wait(char *reply,size_t capacity) {
         if(reason) return reason;
     }
 }
+/* Whether the permit for tick is held (the render-only frames' plan, lockstep_render_frames.h). */
+static int adapt_held(uint64_t tick) {
+    const adapt_permit *p=&adapt_permits[tick%LOOKAHEAD_RING];return p->used && p->tick==tick;
+}
+/* A proposal at a quiet tick stops the session before it is sealed (192); 0 otherwise. */
+static unsigned adapt_quiet_check(void) {
+    if(adapt_epoch && blob_proposal[0] && adapt_quiet(stats.completed)) {adapt_why="quiet_input";return ADAPT_STOP_QUIET;}
+    return 0;
+}
 /* One gated frame: seal the report of stats.completed (quiet ticks carry nothing), send it, wait for the next permit. */
 static unsigned adapt_frame(const char *packet,size_t length,char *reply,size_t capacity) {
-    if(adapt_epoch && blob_proposal[0] && adapt_quiet(stats.completed)) {adapt_why="quiet_input";return ADAPT_STOP_QUIET;}
+    unsigned quiet=adapt_quiet_check();
+    if(quiet) return quiet;
     if(!lookahead_seal(stats.completed,packet,length,blob_proposal)) return 56;
     lookahead_send(&lookahead_reports[stats.completed%LOOKAHEAD_RING],GetTickCount64());
     return adapt_wait(reply,capacity);

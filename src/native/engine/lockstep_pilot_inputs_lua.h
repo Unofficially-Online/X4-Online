@@ -8,12 +8,15 @@ static int lua_pilot_inputs(lua_State *L) {
         (suppress==0 || suppress==1) && pilot_arm(manifest,kind,(unsigned)delay,(uint64_t)start,(uint64_t)stop,(unsigned)suppress);
     p_lua_pushnumber(L,ok);return 1;
 }
-/* Absent slots (hot join; lockstep_pilot_inputs.h): gate.pilot_absent(mask) before the first tick (bit s-1, never slot 1);
+/* Absent slots (hot join; lockstep_pilot_inputs.h): gate.pilot_absent(mask[, rejoin]) before the first tick (bit s-1, never
+ * slot 1; rejoin: the subset present from the start, roadmap 15);
  * gate.pilot_handover(k, H) and gate.pilot_abort(k) from the join section's HANDOVER and ABORT records, on every client at
  * the tick they are applied. 1 accepted, 0 refused (the probe stops: a client that disagrees would part from the others). */
 static int lua_pilot_absent(lua_State *L) {
-    double mask=p_lua_tonumber(L,1);
-    p_lua_pushnumber(L,accept_ui() && isfinite(mask) && floor(mask)==mask && mask>0 && mask<(double)(1u<<PILOT_SLOTS) && pilot_absent_arm((unsigned)mask));
+    double mask=p_lua_tonumber(L,1),rejoin=p_lua_tonumber(L,2);   /* none: 0 */
+    p_lua_pushnumber(L,accept_ui() && isfinite(mask) && floor(mask)==mask && mask>0 && mask<(double)(1u<<PILOT_SLOTS) &&
+        isfinite(rejoin) && floor(rejoin)==rejoin && rejoin>=0 && rejoin<(double)(1u<<PILOT_SLOTS) &&
+        pilot_absent_arm2((unsigned)mask,(unsigned)rejoin));
     return 1;
 }
 static int lua_pilot_handover(lua_State *L) {
@@ -27,6 +30,69 @@ static int lua_pilot_abort(lua_State *L) {
     p_lua_pushnumber(L,accept_ui() && stats.active && isfinite(slot) && floor(slot)==slot && slot>=2 && slot<=PILOT_SLOTS &&
         pilot_abort_apply((unsigned)slot,stats.issued,wire_lookahead));
     return 1;
+}
+/* Joining inside the window (lockstep_pilot_join.h): gate.pilot_join_park_at(T) from the join core's save_at on every client
+ * (1 armed), gate.pilot_players_state() for the join provider 'pilot_players' (nil when it does not fit),
+ * gate.pilot_join_status() for the probe's rows. */
+static int lua_pilot_join_park_at(lua_State *L) {
+    double tick=p_lua_tonumber(L,1);
+    p_lua_pushnumber(L,accept_ui() && stats.active && isfinite(tick) && floor(tick)==tick && tick>0 && pjoin_park_arm((uint64_t)tick));
+    return 1;
+}
+static int lua_pilot_players_state(lua_State *L) {
+    static char out[8192];int n=accept_ui() && pilot_armed?pjoin_state(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.pilot_join_state(): the pilot tables a joiner needs at T+1 (lockstep_pilot_join.h 'pilot_state'), nil when too large. */
+static int lua_pilot_join_state(lua_State *L) {
+    static char out[1u<<18];int n=accept_ui() && pilot_armed?pjoin_tables_state(out,sizeof(out),stats.issued):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.pilot_join_in_window(1): the joiner's resume inside the window (diagnostic, before the first tick). */
+/* gate.pilot_join_slotk_quats(1): a joiner's slot k (k >= 2) also takes the session's three PlayerController double quaternions
+ * (lockstep_pilot_join.h pjoin_pctl_quat; experiment, before the first tick). */
+static int lua_pilot_join_slotk_quats(lua_State *L) {
+    double on=p_lua_tonumber(L,1);
+    if(accept_ui() && on==1 && !stats.issued) pjoin_slotk_quats=1;
+    p_lua_pushnumber(L,pjoin_slotk_quats);return 1;
+}
+/* gate.pilot_join_slotk_words(mask): the slot-1-only word groups a joiner's slot k takes as well (lockstep_pilot_join.h
+ * pjoin_pctl_group; 1..63; experiment, before the first tick). Returns the mask, 0 refused. */
+static int lua_pilot_join_slotk_words(lua_State *L) {
+    const double m=p_lua_tonumber(L,1);
+    if(!accept_ui() || stats.issued || !(m>=1.0 && m<=63.0) || (double)(unsigned)m!=m) {p_lua_pushnumber(L,0);return 1;}
+    pjoin_slotk_mask=(unsigned)m;p_lua_pushnumber(L,m);return 1;
+}
+static int lua_pilot_join_in_window(lua_State *L) {
+    double on=p_lua_tonumber(L,1);
+    if(accept_ui() && on==1 && !stats.issued) pjoin_in_window_diag=1;
+    p_lua_pushnumber(L,pjoin_in_window_diag);return 1;
+}
+/* gate.pilot_dump(slot, which, offset): 256 bytes of slot k's ship (0), its controller (1, ship+0x200), agent (2), solver (3)
+ * or player (4: slot 1 X4's own player, slot k its P_k) from offset, as hex; nil when unreadable. Diagnostic native_gate_pilot_dump_tick: the session's bytes and a joiner's
+ * side by side (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 15). Reads only. */
+static int lua_pilot_dump(lua_State *L) {
+    const double slot=p_lua_tonumber(L,1),which=p_lua_tonumber(L,2),offset=p_lua_tonumber(L,3);
+    unsigned char bytes[256],*base=NULL;char hex[2*sizeof(bytes)];
+    if(!accept_ui() || !(slot>=1 && slot<=PILOT_SLOTS) || floor(slot)!=slot || !(which>=0 && which<=6) || floor(which)!=which ||
+       !(offset>=0 && offset<=0x8000) || floor(offset)!=offset) {p_lua_pushnil(L);return 1;}
+    if(which>=5) {   /* the resume's snapshots of the slot's controller (lockstep_pilot_join.h pjoin_snap) */
+        const unsigned w=(unsigned)which-5u,k=(unsigned)slot;
+        if(!pjoin_snap_ok[w][k] || offset+sizeof(bytes)>PJOIN_SNAP) {p_lua_pushnil(L);return 1;}
+        memcpy(bytes,pjoin_snap[w][k]+(unsigned)offset,sizeof(bytes));base=bytes;
+    }
+    const pilot_slot *s=&pilot_slots[(unsigned)slot-1u];
+    if(base) ;else if(which==0) base=s->object;else if(which==2) base=s->agent;else if(which==3) base=s->solver;
+    else if(which==4) base=slot==1?pslot_p1:pslots[(unsigned)slot].player;
+    else if(!s->object || !read_local(s->object+0x200,&base,8)) base=NULL;
+    if(!base || (base!=bytes && !read_local(base+(unsigned)offset,bytes,sizeof(bytes)))) {p_lua_pushnil(L);return 1;}
+    static const char digits[]="0123456789abcdef";
+    for(unsigned i=0;i<sizeof(bytes);i++) {hex[2*i]=digits[bytes[i]>>4];hex[2*i+1]=digits[bytes[i]&15];}
+    p_lua_pushlstring(L,hex,sizeof(hex));return 1;
+}
+static int lua_pilot_join_status(lua_State *L) {
+    char out[160];int n=accept_ui()?pjoin_status_text(out,sizeof(out)):0;
+    if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* gate.pilot_absent_state() / gate.pilot_absent_restore(text): the join package's copy of the above (a joiner, before T+1). */
 static int lua_pilot_absent_state(lua_State *L) {
@@ -61,11 +127,13 @@ static int pilot_why_text(char *out,size_t capacity) {
     if(n>0 && (size_t)n<capacity && pres_armed) n+=snprintf(out+n,capacity-(size_t)n," present=%s present_why=%s",pres_stage,pres_why);
     if(n>0 && (size_t)n<capacity && uirep_armed) n+=snprintf(out+n,capacity-(size_t)n," replay=%s replay_why=%s",uirep_stage_name,uirep_why);
     if(n>0 && (size_t)n<capacity && pilot_absent) {int more=pilot_absent_text(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
+    if(n>0 && (size_t)n<capacity && pjoin_controls[0]) n+=snprintf(out+n,capacity-(size_t)n," join_controls=%s",pjoin_controls);
+    if(n>0 && (size_t)n<capacity && pjoin_in_window_diag) n+=snprintf(out+n,capacity-(size_t)n," join_resume=%s",pjoin_resume_why);
     return n>0 && (size_t)n<capacity?n:0;
 }
 /* gate.pilot_why(): pilot_why_text, or nil. */
 static int lua_pilot_why(lua_State *L) {
-    char out[768];int n=accept_ui()?pilot_why_text(out,sizeof(out)):0;
+    char out[1024];int n=accept_ui()?pilot_why_text(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_pilot_inputs_frame(lua_State *L) {

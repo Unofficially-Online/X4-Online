@@ -187,12 +187,11 @@ D.ON={
  {'native_gate_pilot_foot_slots',true,'native_gate_pilot_foot native_gate_pilot_stock_slots','slots 2..N get up and walk'},
  {'native_gate_player_settings_per_slot',true,'native_gate_ui_replay~faction','each slot its own faction settings'},
  {'native_gate_guidance_local',true,'native_gate_pilot_present native_gate_runtime_ids_local native_gate_script_rng native_gate_md_timed_rng','a client own guidance takes local runtime IDs'},
- -- Prediction first: render frames are skipped while it presents (they flash together, render report section 17).
- {'native_gate_own_predict','present','native_gate_pilot_stock native_gate_render_rng_split','the own ship answers the controls at once (display only)'},
- {'native_gate_own_predict_rows',0,'native_gate_own_predict','no per-step OWN_PREDICT row (diagnostic); OWN_PREDICT_STATUS every 600 ticks stays'},
- {'native_gate_render_fps',60,'@fixed @no_present native_gate_lookahead native_gate_tick_hz native_gate_snapshot_sha native_gate_serial_pathing native_gate_radar_serial native_gate_render_rng_split native_gate_mass_traffic=sync native_gate_region_pass=sync native_gate_runtime_ids_local','render-only frames between the steps, up to 60 per second'},
+ {'native_gate_render_fps',60,'native_gate_lookahead native_gate_tick_hz native_gate_snapshot_sha native_gate_serial_pathing native_gate_radar_serial native_gate_render_rng_split native_gate_mass_traffic=sync native_gate_region_pass=sync native_gate_runtime_ids_local','render-only frames between the steps, up to 60 per second'},
  {'native_gate_render_camera','extrapolate','native_gate_render_fps','the camera moves in the render-only frames'},
  {'native_gate_render_motion','extrapolate','native_gate_render_fps','moving objects drawn smoothed in the render-only frames'},
+ {'native_gate_own_predict','present','native_gate_pilot_stock native_gate_render_rng_split','the own ship answers the controls at once (display only)'},
+ {'native_gate_own_predict_rows',0,'native_gate_own_predict','no per-step OWN_PREDICT row (diagnostic); OWN_PREDICT_STATUS every 600 ticks stays'},
 }
 -- Why a '!' conflict won (added to the skip reason).
 D.CONFLICTS={
@@ -263,12 +262,55 @@ D.DIAGNOSTIC={
  {'native_gate_command_order_rows','command order rows'},
  {'native_gate_created_rows','created identity rows'},
  {'native_gate_created_load_stacks','load-created object stacks'},
+ {'native_gate_join_evq_dump','hot join pending event rows'},
+ {'native_gate_join_watch','hot join watched object rows'},
+ {'native_gate_join_watch_span','hot join watched object rows after T+1 .. T+n'},
+ {'native_gate_join_refwatch','hot join watched field writes'},
+ {'native_gate_join_refwatch_from','hot join watched field writes from a step'},
+ {'native_gate_join_refwatch_peek','hot join watched execution rows memory copies'},
+ {'native_gate_join_refwatch_at','hot join watched field writes from a step of the watch'},
+ {'native_gate_join_shape_refresh','hot join: every client refreshes the fixture body shapes at T+2'},
+ {'native_gate_join_jobdump','hot join job raw rows (diagnostic)'},
+ {'native_gate_join_jobcnt_at','hot join job count rows after a step (diagnostic)'},
+ {'native_gate_join_hold_boot_events','hot join boot event passes held'},
+ {'native_gate_join_precise','hot join save at full precision'},
+ {'native_gate_join_in_window','hot join save inside the pilot window, measured (diagnostic)'},
+ {'native_gate_pilot_dump_tick','pilot slot ship, controller, agent and solver bytes at this tick (diagnostic)'},
+ {'native_gate_join_passes_admit','hot joiner: the synced passes, stand-ins and travel snapshot of T at its admission (diagnostic)'},
+ {'native_gate_join_ids','hot joiner saved objects at the session runtime IDs'},
+ {'native_gate_join_buildp','hot join build processor busy rows (diagnostic)'},
+ {'native_gate_join_view_skip','hot join view-bank writes a joiner leaves out (diagnostic)'},
+ {'native_gate_join_viewl','hot join: a joiner runs the live and player view handlers where its flags differ (VIEWL)'},
+ {'native_gate_join_shpw','hot join: a joiner takes the session ship words a load leaves at defaults (SHPW)'},
+ {'native_gate_join_shpw_words','hot join experiment: the SHPW words the admission writes (bit k = word k)'},
+ {'native_gate_join_trdn','hot join: a joiner takes the session next trade offer updates the load leaves at -1 (TRDN)'},
+ {'native_gate_join_npca','hot join: a joiner takes the session NPC activations its load does not repeat (NPCA)'},
+ {'native_gate_join_jobg','hot join: a joiner takes the session job generator words its load reseeds (JOBG)'},
+ {'native_gate_join_jobw','hot join experiment: a joiner writes the session job state +0x48 (JOBS)'},
+ {'native_gate_join_code','hot join: a joiner takes the session object code counter its load restarts (CODE)'},
+ {'native_gate_join_slotk_quats','hot join in window experiment: slot k takes the session PlayerController double quaternions'},
+ {'native_gate_join_slotk_words','hot join in window experiment: the slot-1-only word groups slot k takes (mask)'},
+ {'native_gate_join_engr','hot join: a joiner takes the session engine boost ramps its load restamps (ENGR)'},
+ {'native_gate_join_bnds','hot join: a joiner takes the session stations bounding structs (BNDS)'},
+ {'native_gate_join_shgr','hot join: a joiner takes the session shield recharge groups of docked ships its load restamps (SHGR)'},
+ {'native_gate_join_ecos','hot join: a joiner takes the session economy schedules of stations and ships (ECOS)'},
+ {'native_gate_join_rcnt','hot join experiment: a joiner lowers created ships and bays reference counts to the session (RCNT)'},
+ {'native_gate_join_pend','hot join: a joiner takes the session pending view cache flags (PEND)'},
+ {'native_gate_join_specdrop','hot join: a joiner clears the load one-shot view cache specifications (with PEND; diagnostic)'},
+ {'native_gate_join_pctl','hot join: a joiner takes the session X4 PlayerController values at T (diagnostic)'},
+ {'native_gate_join_viewf_bits','hot join VIEWF flag bits a joiner takes from the session (diagnostic; 0 off)'},
+ {'native_gate_join_viewf_write','hot join VIEWF writes on a joiner (diagnostic; off: no flip after STOP)'},
+ {'native_gate_join_shipyards','hot join shipyard capacity rows at these ticks (diagnostic)'},
+ {'native_gate_join_refresh_builds','hot join: every station build state refreshed at T+1 on every client'},
+ {'native_gate_join_shipyards_mask','hot join shipyard rows: which reads run (diagnostic)'},
  {'native_gate_event_rows','event rows'},
+ {'native_gate_event_rows_from','event rows from this tick (the window of a hot joiner)'},
  {'native_gate_event_rng_rows','event RNG rows'},
  {'native_gate_script_rng_rows','script RNG rows'},
  {'native_gate_script_rng_rows_ticks','script RNG rows window'},
  {'native_gate_script_rng_rows_window','script RNG rows window'},
  {'native_gate_script_rng_natural','natural script RNG rows'},
+ {'native_gate_script_rng_trace','script RNG trace rows (nested scopes, PCs, range bounds)'},
  {'native_gate_runtime_ids_rows','runtime ID rows'},
  {'native_gate_runtime_ids_callers','runtime ID caller rows'},
  {'native_gate_runtime_ids_caller_stride','RUNTIME_IDS_CALLER rows every N ticks'},
@@ -390,6 +432,7 @@ D.EXCLUDED={
  {'native_gate_boot_rng_anchor','boot RNG anchor experiment'},
  {'native_gate_travel_determinism','alternative to travel_snapshot (mutually exclusive)'},
  {'native_gate_nav_key','Linux gate only'},
+ {'native_gate_warp_exit','Linux gate only: the gate exit sum in the Windows order (Windows is that order); a Linux default after a 0 W vs L census'},
  {'native_gate_timer_resolution','timer experiment'},
  {'native_gate_tick_pace','unset = paced (false unpaces)'},
  {'native_gate_world_timing_fields','no reader in the probe (obsolete key)'},
@@ -434,7 +477,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [107]='wire crypto: handshake',[108]='peer equivocation',[110]='spawn RNG',[111]='hit claims',[112]='pilot fire',[113]='pilot native',
  [120]='speech time',[121]='Gravidar deadlines',[130]='runtime IDs',[131]='command order',[132]='weapon fire',[133]='physics trace',
  [134]='body order',[135]='shape order',[136]='engine RNG',[137]='nav octree',[138]='camera anchor',[139]='speak timer',[140]='ship sound',
- [141]='draw watch',[142]='player timer',[143]='warp RNG',[144]='tempzone order',[145]='transition rows',[150]='Gravidar wide',
+ [141]='draw watch',[142]='player timer',[143]='warp RNG',[144]='tempzone order',[145]='transition rows',[146]='warp exit',[150]='Gravidar wide',
  [151]='event RNG',[152]='build RNG',[153]='UI cargo',[154]='supply rows',[155]='pilot stock',[156]='portable math',[157]='exact reciprocal',
  [158]='fp environment',[159]='decimal reader',[160]='virtual players',[161]='pilot slots',[162]='pilot present',[163]='pilot death',
  [164]='UI replay',[165]='region camera',[166]='region camera (mining)',[167]='region camera (xs)',[168]='region camera (probe)',
@@ -507,8 +550,6 @@ local CONDITIONS={
  ['@wire3']={function(cfg) return type(cfg.native_gate_clients)=='number' end,'needs the protocol 3 input wire (native_gate_clients)'},
  ['@plan']={function(cfg) return type(cfg.native_gate_player_identity_plan)=='table' end,'needs native_gate_player_identity_plan'},
  ['@fixed']={function(cfg) return cfg.native_gate_lookahead~='adaptive' end,'protocol 5 (native_gate_lookahead=adaptive) excludes it'},
- ['@no_present']={function(cfg) local m=cfg.native_gate_own_predict;if type(m)=='table' then m=m[1] end;return m~='present' and m~='swap' end,
-  'own-ship prediction presents: with render-only frames single frames flash (render report section 17); set native_gate_render_fps for both'},
 }
 -- nil when every token of needs holds, else the first reason.
 function D.unmet(cfg,needs)
@@ -673,23 +714,21 @@ function D.announce(R)
  end
 end
 
--- Degraded paths in module statuses: a counter of WATCH that grows is an ERROR row (every growth) and an info line (at most
--- once per D.WATCH_TICKS per status and counter; not for counters whose module already shows its own info line).
+-- Degraded paths in module statuses: a counter of WATCH that grows is an ERROR row (every growth), in the log only. The in-game
+-- info line it also showed is gone (user, 3 Nov): the counters seen in every session (build rng fallback, find order unmapped,
+-- created identities macro_unknown) are deterministic paths the census confirms equal, and a player cannot act on them.
 D.WATCH={failures=true,unmapped=true,fallback=true,unknown=true,unsupported=true,refused=true,swap_refused=true,lost=true,torn=true}
 D.WATCH_SUFFIX={'_failures','_unmapped','_refused','_unknown'}
 -- 'lua=a/b/c/d' composites of the UI families (native_gate_ui_replay_core.lua): the names of their parts.
 D.WATCH_LUA={UI_TRADE_STATUS={'captured','applied','skipped','refused'},UI_FACTION_STATUS={'applied','skipped','parts','dropped','refused'}}
 D.WATCH_LUA_ON={skipped=true,dropped=true,refused=true}
--- Statuses whose module shows its own info line for these counters (UI guard, missions, faction): the ERROR row only.
-D.WATCH_NOTIFIED={['UI_GUARD_STATUS refused']=true,['UI_MISSIONS_STATUS refused']=true,['UI_FACTION_STATUS lua_refused']=true}
-D.WATCH_TICKS=1800
 local function watched(name)
  if D.WATCH[name] then return true end
  for _,suffix in ipairs(D.WATCH_SUFFIX) do if name:sub(-#suffix)==suffix then return true end end
  return false
 end
 function D.watcher()
- local W={last={},shown={}}
+ local W={last={}}
  -- status: the row's name (e.g. 'RUNTIME_IDS'), tick, text (key=value pairs); returns the loud events.
  function W.line(status,tick,text)
   local events={}
@@ -701,11 +740,6 @@ function D.watcher()
     local row='status='..status..' '..name..'='..value..' (+'..(value-(before or 0))..') tick='..tostring(tick)
     D.loud('DEGRADED',row,false)
     events[#events+1]=row
-    local due=W.shown[id]
-    if not D.WATCH_NOTIFIED[id] and (due==nil or (tonumber(tick) or 0)>=due) then
-     W.shown[id]=(tonumber(tick) or 0)+D.WATCH_TICKS
-     D.notice((status:lower():gsub('_status$',''):gsub('_',' '))..': '..name..' '..value..' - see the log (DEGRADED)')
-    end
    end
   end
   for name,value in tostring(text):gmatch('([%a_][%w_]*)=(%d+)') do

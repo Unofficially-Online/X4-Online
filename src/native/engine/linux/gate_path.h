@@ -91,6 +91,9 @@ static volatile long tsnap_active;
 static volatile int64_t tsnap_failures;
 static int tsnap_before_release(unsigned char *manager);
 static int tsnap_after_join(unsigned char *manager);
+/* The tempzone order (gate_tempzone_order.h): 0 stops the gate with reason 144. */
+static int lxtz_before_release(void);
+static int lxtz_after_join(void);
 static void lxp_path_release(void *semaphore,unsigned count) {
     const lxp_release_fn release=(lxp_release_fn)(void*)LX(LX_SEM_RELEASE_VA);
     if(boot_mode && boot_phase<3) {release(semaphore,count);return;}
@@ -109,6 +112,8 @@ static void lxp_path_release(void *semaphore,unsigned count) {
         InterlockedIncrement64(&tsnap_failures);finish(89);
         release(semaphore,count);return;
     }
+    /* Tempzone order: RunPass's slot clear, then the slot parked for the pass. */
+    if(valid && !lxtz_before_release()) {finish(144);release(semaphore,count);return;}
     if(valid) InterlockedExchange(&path_pass_open,1);
     release(semaphore,count);
     if(!valid) {InterlockedExchange(&path_pass_open,0);finish(22);return;}
@@ -128,6 +133,8 @@ static void lxp_path_release(void *semaphore,unsigned count) {
     if(InterlockedCompareExchange(&tsnap_active,0,0) && stats.active && !tsnap_after_join(manager)) {
         InterlockedIncrement64(&tsnap_failures);finish(89);
     }
+    /* Late splices drained: the parked slot back and at most one tempzone grant, before the stamping. */
+    if(!lxtz_after_join()) finish(144);
     if((path_det_mask&PATH_DET_REFRESH_BIT) && stats.active && !path_det_frame(manager)) {
         InterlockedIncrement64(&path_det_failures);finish(79);
     }

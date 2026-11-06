@@ -474,6 +474,55 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
         assert(!pilot_absent_restore("1|2|-1,-1,-1|12,16,12|-1,-1,-1") && !pilot_absent_restore("1|4|5,-1,-1|12,16,12|-1,-1,-1") &&
                !pilot_absent_restore("1|4|-1,-1,-1|12,16,12") && pilot_from[2]==UINT64_MAX);
         assert(pilot_absent_restore(state) && pilot_from[2]==12 && pilot_until[2]==16 && pilot_enroll[2]==12);}
+    /* Dropped (protocols 4 and 5, roadmap D15): the permit with proposal 14 names slot 2 in its mask. At 16 every record
+     * is there (captured at 13); at 17 slot 2 has none (captured at 14: refused, no own row): its frame of 17 is the release
+     * (its held accelerate back to 0, then the stop action 0x7b), replayed once in its scope; from 18 it is neutral like an
+     * absent slot. Slot 3 (its rows until 16) still replays. */
+    {   const LONG64 drops=pilot_drop_skips,absents=pilot_absent_skips;
+        for(unsigned k=1;k<=3;k++) assert(test_absent_stage(k,13));
+        stats.issued=16;assert(pstk_frame(16,&why) && pstk_slot_frames[1].tick==16 && pslot_replay(16));
+        const LONG64 replays2=pslots[2].replays,replays3=pslots[3].replays;
+        pilot_drop_note(2u,14);
+        assert(test_absent_stage(1,14) && !test_absent_stage(2,14) && test_absent_stage(3,14));
+        const LONG64 releases=pstk_releases;
+        stats.issued=17;assert(pstk_frame(17,&why) && pstk_slot_frames[1].tick==17 && pstk_slot_frames[2].tick==17);
+        const pstk_record *rel=&pstk_slot_frames[1].r;
+        assert(rel->count==2 && rel->events[0].kind==PSTK_STATE && rel->events[0].id==0xd && !rel->events[0].value &&
+               rel->events[1].kind==PSTK_ACTION && rel->events[1].id==PSTK_ACTION_STOP && pstk_releases==releases+1);
+        assert(pilot_drop_skips==drops+1 && pilot_absent_skips==absents && pslot_replay(17));
+        assert(pslots[2].replays==replays2+1 && pslots[3].replays==replays3+1 && !pstk_fire_on[1] && pstk_fire_tick[1]==17);
+        {unsigned i=0;while(pstk_replay_states[i]!=0xd) ++i;assert(!pstk_held_states[1][i]);}   /* released, once */
+        /* Slot 1 dropped from proposal 15: at 18 the canonical update replays nothing (hash 0, no trigger), a record of
+         * its refused; slot 3 (captured at 15, inside its rows) still replays. */
+        pilot_drop_note(1u,15);
+        assert(!test_absent_stage(1,15) && !test_absent_stage(2,15) && test_absent_stage(3,15));
+        const LONG64 records=pstk_records;
+        stats.issued=18;assert(pstk_frame(18,&why));
+        assert(!pstk_frame_hash && pstk_records==records+1 && !pstk_fire_on[0] && pstk_fire_tick[0]==18);   /* slot 3's record only */
+        assert(pilot_drop_skips==drops+3 && pstk_slot_frames[2].tick==18 && pstk_slot_frames[1].tick==17 && pstk_releases==releases+2);
+        assert(pslot_replay(18) && pslots[3].replays==replays3+2 && pslots[2].replays==replays2+1);   /* slot 2 neutral now */
+        pilot_dropped=0;memset(pilot_drop_from,0,sizeof(pilot_drop_from));pilot_drop_skips=0;}
+    /* Rejoinable (roadmap 15): slot 3 present from the start (rows its own from 0, enrolled at 0). The relay's drop is an
+     * ABORT in its first missing row: neutral from there, its keys released at its first silent tick (once); a later
+     * HANDOVER makes it a client again (enrollment kept: its seat stayed), and it can be dropped again. */
+    {   const unsigned sa=pilot_absent,sr=pilot_rejoin;const uint64_t sv[3]={pilot_from[2],pilot_until[2],pilot_enroll[2]},si=stats.issued;
+        stats.issued=0;pilot_absent=0;
+        assert(!pilot_absent_arm2(4,2) && !pilot_absent_arm2(4,1) && !pilot_absent);
+        assert(pilot_absent_arm2(4,4) && pilot_rejoin==4 && pilot_absent_arm2(4,4) && !pilot_absent_arm2(4,0) && !pilot_absent_arm(4));
+        assert(pilot_from[2]==0 && pilot_enroll[2]==0 && pilot_until[2]==UINT64_MAX && pilot_from[1]==UINT64_MAX);
+        assert(pilot_slot_present(3,0) && pilot_slot_enrolled(3,0) && !pilot_slot_silent(3,5,3) && !pstk_release_due(3,5));
+        assert(!pilot_handover_apply(3,20,10));                        /* present: no handover before its drop */
+        const unsigned sp=pres_slot;pres_slot=3;assert(pres_begin()==pilot_start);   /* its own client presents as any other */
+        assert(pilot_abort_apply(3,25,1) && pilot_until[2]==23 && pilot_enroll[2]==0 && pilot_slot_present(3,22) && !pilot_slot_present(3,23));
+        assert(!pilot_slot_silent(3,25,3) && pilot_slot_silent(3,26,3) && pilot_slot_enrolled(3,40) && pres_begin()==UINT64_MAX);
+        assert(!pstk_release_due(3,25) && pstk_release_due(3,26) && !pstk_release_due(3,27));
+        assert(pilot_handover_apply(3,40,30) && pilot_from[2]==40 && pilot_until[2]==UINT64_MAX && pilot_enroll[2]==0);
+        assert(pres_begin()==40+PILOT_SUPPRESS_LEAD);pres_slot=sp;     /* a rejoiner presents from its new handover H+3 */
+        assert(!pilot_slot_present(3,39) && pilot_slot_present(3,40) && pilot_slot_silent(3,42,3) && !pilot_slot_silent(3,43,3));
+        assert(!pstk_release_due(3,43) && !pstk_release_due(3,26));
+        {char state[160];assert(pilot_absent_state(state,sizeof(state)) && !strcmp(state,"1|4|-1,-1,-1|40,-1,0|-1,-1,-1"));}
+        assert(pilot_abort_apply(3,60,1) && pilot_until[2]==58 && pstk_release_due(3,61) && !pstk_release_due(3,62));
+        pilot_absent=sa;pilot_rejoin=sr;pilot_from[2]=sv[0];pilot_until[2]=sv[1];pilot_enroll[2]=sv[2];stats.issued=si;}
     /* An ABORT before the player is built (applied before H-2) undoes the enrollment; a later join hands over again. */
     pilot_from[2]=pilot_until[2]=pilot_enroll[2]=UINT64_MAX;
     assert(pilot_handover_apply(3,30,20) && pilot_abort_apply(3,25,1) && pilot_until[2]==23 && pilot_enroll[2]==UINT64_MAX &&
@@ -498,7 +547,8 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
     pstk_capture_start=pstk_first_apply=0;pnat_input=saved_input;stats.issued=saved_issued;
     vps_create=test_pslot_factory;pnat_fn.controller=test_pslot_controller_of;
     printf("pilot stock slots: an absent slot (hot join) neutral and unseated until its handover, built at H-2, seated at H-1, "
-           "its records required from H+delay, a missing record of a present slot still 155, the abort and the package state PASS\n");
+           "its records required from H+delay, a missing record of a present slot still 155, the abort and the package state, a "
+           "rejoinable slot dropped (keys released), rejoined and dropped again PASS\n");
 }
 static void test_pilot_slots(void) {
     pstk_focus_forced=1;

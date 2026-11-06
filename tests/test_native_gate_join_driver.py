@@ -74,10 +74,28 @@ class Options(unittest.TestCase):
         for argv, why in ((['--token', TOKEN, '--join', '--absent', '3'], '--port'),
                           (['--port', '1', '--token', 'x', '--join', '--absent', '3'], '--token'),
                           (['--port', '1', '--token', TOKEN, '--join-lead', '5', '--absent', '3'], '--join'),
-                          (['--port', '1', '--token', TOKEN, '--join', '--clients', '3'], '--absent'),
+                          (['--port', '1', '--token', TOKEN, '--join', '--clients', '3'], '--absent or --rejoin'),
                           (['--port', '1', '--token', TOKEN, '--join', '--absent', '3', '--bind', '10.0.0.2'], 'loopback')):
             with self.subTest(why=why), self.assertRaisesRegex(ValueError, why):
                 driver.relay_options(argv)
+
+    def test_rejoin_options(self):
+        # Roadmap 15: no absent slot, slot 3 rejoinable; the savers default to the other present slots.
+        info = driver.relay_options(['--port', '1', '--token', TOKEN, '--clients', '3', '--join', '--rejoin', '3', '--stall-drop-ms', '3000'])
+        self.assertEqual((info['absent'], info['rejoin'], info['present'], info['savers']), ([], [3], [1, 2, 3], [1, 2]))
+        d = driver.Driver(info, 3, [400], {1: 'b1', 2: 'b2'}, 'x')
+        self.assertIn('JOIN_DRIVER READY slot=3 join_at=400', d.ready_line())
+        with self.assertRaisesRegex(ValueError, 'nor a rejoinable one'):
+            driver.Driver(info, 2, [400], {1: 'b1', 2: 'b2'}, 'x')
+        with self.assertRaisesRegex(ValueError, 'one of the savers'):
+            driver.Driver(dict(info, rejoin=[2, 3]), 2, [400], {1: 'b1', 2: 'b2'}, 'x')
+        # --join-observe (diagnostic): its PASS line says so.
+        seen = driver.relay_options(['--port', '1', '--token', TOKEN, '--clients', '3', '--join', '--rejoin', '3', '--join-observe'])
+        self.assertTrue(seen['observe'] and not info['observe'])
+        d = driver.Driver(seen, 3, [400], {1: 'b1', 2: 'b2'}, 'x', expect='joined')
+        j = d.joins[0]
+        j.state, j.save_tick, j.files = 'joined', 433, {'verified': 1}
+        self.assertTrue(d.check_pass(j)[0].endswith('expect=joined diagnostic=join_observe'))
 
     def test_saver_lanes(self):
         self.assertEqual(driver.saver_lanes('b3,b4', [1, 2]), {1: 'b3', 2: 'b4'})
@@ -269,9 +287,9 @@ class Replay(unittest.TestCase):
         journal = {t: {s: dict(row) for s, row in rows.items()} for t, rows in net.relay.states.items() if t <= net.relay.released}
         return net, int(answer[6]), package, json.loads(json.dumps({str(t): {str(s): r for s, r in rows.items()} for t, rows in journal.items()}))
 
-    def replay(self, journal, save_tick, k=K, observe=False, last=None):
+    def replay(self, journal, save_tick, k=K, observe=False, last=None, hold=None):
         rows = {int(t): {int(s): r for s, r in v.items()} for t, v in journal.items()}
-        return driver.JournalReplay(TOKEN, rows, 3, save_tick, 3, k, HZ, last=last, observe=observe)
+        return driver.JournalReplay(TOKEN, rows, 3, save_tick, 3, k, HZ, last=last, observe=observe, hold=hold)
 
     def drive(self, replay, joiner, steps=2000):
         address = ('127.0.0.1', 30003)
@@ -298,6 +316,28 @@ class Replay(unittest.TestCase):
                 theirs = {t: b for t, b in net.live[1].applied if save_tick < t <= replay.last}
                 self.assertEqual(dict(joiner.applied), theirs)               # every permit the session itself got
                 self.assertIn('NATIVE_GATE JOIN_REPLAY FIRST tick=%d slot=3' % save_tick, replay.notices)
+
+    def test_a_hold_is_due_once_after_its_tick(self):
+        net, save_tick, package, journal = self.session()
+        replay = self.replay(journal, save_tick, hold=(save_tick+5, 2.5))
+        joiner = jt.Client(3, 3, K, None, tick=package['tick'], state=package['state'], joined_from=package['tick'])
+        address, due = ('127.0.0.1', 30003), []
+        for _ in range(2000):
+            joiner.report()
+            for tick in range(max(joiner.tick-replay.lookahead, 0), joiner.tick+1):
+                if tick in joiner.reports:
+                    packets = replay.receive(joiner.reports[tick], address, time.monotonic())
+                    wait = replay.hold_due() if packets else 0.0
+                    if wait: due.append((replay.joiner_tick, wait))
+                    for _, packet in packets: joiner.receive(packet)
+            if replay.state in ('done', 'failed') or not joiner.step():
+                break
+        self.assertEqual(due, [(save_tick+5, 2.5)])
+        self.assertEqual(replay.summary()['verdict'], 'equal')                # the hold changes no permit
+        self.assertIn(f'NATIVE_GATE JOIN_REPLAY HOLD tick={save_tick+5} seconds=2.5', replay.notices)
+        for bad in ((save_tick, 1.0), (replay.last, 1.0), (save_tick+5, 0.0), (save_tick+5, 121.0)):
+            with self.subTest(hold=bad), self.assertRaisesRegex(ValueError, 'hold'):
+                self.replay(journal, save_tick, hold=bad)
 
     def test_a_diverged_joiner_is_recorded_or_stopped(self):
         net, save_tick, package, journal = self.session()
@@ -477,6 +517,14 @@ class Overlays(unittest.TestCase):
                                   *WINDOW)
             self.assertIn('relay: --clients 3 --join --absent 3 --join-savers 1,2', notes)
             self.assertIn('lane session: --clients 2 ', notes)
+            # A rejoin session (roadmap 15): every slot on a lane, slot 3 rejoinable, the savers the others.
+            again = self.run_main('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'rejoin', '--absent', '', '--rejoin', '3', *WINDOW)
+            self.assertIn('relay: --clients 3 --join --rejoin 3 --stall-drop-ms MS --join-savers 1,2', again)
+            self.assertIn('lane session: --clients 3 ', again)
+            self.assertIn("X4LAN_CONFIG.native_gate_join = {save = 'report', rejoin = {3}}",
+                          (root/'rejoin/ui/config.lua.append').read_text().splitlines())
+            self.assertIn('--rejoin needs slots', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'rejoin2',
+                                                              '--rejoin', '3'))
             text = (root/'savers/ui/config.lua.append').read_text()
             self.assertNotIn('@X4LANE_CLIENTS@', text)
             for line in ('X4LAN_CONFIG.native_gate_clients = 3', "X4LAN_CONFIG.native_gate_join = {save = 'report', absent = {3}}",
@@ -535,6 +583,14 @@ class Overlays(unittest.TestCase):
             (root/'handoff3.json').write_text(json.dumps(dict(handoff, absent=[2])))
             self.assertIn('absent slots', self.refused('joiner', '--gate-dll', dll, '--handoff', root/'handoff3.json', '--out', root/'joiner3',
                                                        '--join-mode', 'report'))
+            # A rejoin (roadmap 15): no absent slot, the joining slot is a rejoinable one; both lists reach the joiner's config.
+            (root/'handoff5.json').write_text(json.dumps(dict(handoff, absent=[], rejoin=[3])))
+            self.run_main('joiner', '--gate-dll', dll, '--handoff', root/'handoff5.json', '--out', root/'joiner5', '--join-mode', 'report', *WINDOW)
+            self.assertIn("mode = 'report'}, rejoin = {3}}", (root/'joiner5/ui/config.lua.append').read_text())
+            self.assertEqual(json.loads((root/'joiner5/x4lane-join.json').read_text())['rejoin'], [3])
+            (root/'handoff6.json').write_text(json.dumps(dict(handoff, absent=[3], rejoin=[3])))
+            self.assertIn('absent or rejoin slots', self.refused('joiner', '--gate-dll', dll, '--handoff', root/'handoff6.json',
+                                                                 '--out', root/'joiner6', '--join-mode', 'report'))
             # A saved ID of the config the package has no saved identity for (the session had no such object at T, or only a
             # created one): refused naming key and ID, the overlay renamed .refused.
             fixture = named['native_gate_snapshot_fixture'][0]
@@ -583,6 +639,17 @@ class Overlays(unittest.TestCase):
                                   'native_gate_world_hash_stride=300', '--join-census', *WINDOW)
             self.assertIn(' census_t1=1 ', notes)
             self.assertIn('X4LAN_CONFIG.native_gate_world_hash_join = true', (root/'savers/ui/config.lua.append').read_text().splitlines())
+            # the join save at full precision: on by default for savers and joiners, a --set keeps its own value
+            self.assertIn('X4LAN_CONFIG.native_gate_join_precise = true', (root/'savers/ui/config.lua.append').read_text().splitlines())
+            self.assertEqual(overlays.precise_sets(['a=1']), ['a=1', 'native_gate_join_precise=true'])
+            self.assertEqual(overlays.precise_sets(['native_gate_join_precise = false']), ['native_gate_join_precise = false'])
+            self.assertEqual(overlays.refresh_sets(['a=1']), ['a=1', 'native_gate_join_refresh_builds=true'])
+            self.assertEqual(overlays.refresh_sets(['native_gate_join_refresh_builds = false']), ['native_gate_join_refresh_builds = false'])
+            self.assertEqual(overlays.ids_sets(['a=1']), ['a=1', 'native_gate_join_ids=true'])
+            self.assertEqual(overlays.ids_sets(['native_gate_join_ids = false']), ['native_gate_join_ids = false'])
+            self.assertEqual(overlays.default_sets(['a=1']), ['a=1']+[f'{k}=true' for k in overlays.JOIN_DEFAULT_ON])
+            self.assertEqual(overlays.default_sets(['native_gate_join_rcnt = false']),
+                             ['native_gate_join_rcnt = false']+[f'{k}=true' for k in overlays.JOIN_DEFAULT_ON[1:]])
             text = (root/'savers/ui/config.lua.append').read_text()
             named = overlays.saved_id_keys(text)
             ids = [(0x6c000+k, int(i, 16), 0, 0) for k, i in enumerate(sorted({i for v in named.values() for i in v}))]
@@ -596,13 +663,13 @@ class Overlays(unittest.TestCase):
             (root/'handoff.json').write_text(json.dumps(handoff))
             notes = self.run_main('joiner', '--gate-dll', dll, '--handoff', root/'handoff.json', '--out', root/'joiner', '--join-mode', 'report',
                                   '--set', 'native_gate_world_hash_stride=300', '--join-census', *WINDOW)
-            self.assertIn(' world=v12 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
-                          ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 census_t1=1 ',
+            self.assertIn(' world=v13 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
+                          ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 jobe=0 evqt=0 gravd=0 viewk=0/0 viewf=0 viewp=0 shoot=0 attk=0 livef=0 spec=0 navc=0 jobs=0 gone=0 body=0 bupd=0 ldc=0 navt=0 nmesh=0 noct=0 agtt=0 agcb=0 pbnk=0 pend=0 gravb=0 viewl=0 ikv=0 rcnt=0 ecos=0 shpw=0 trdn=0 npca=0 jobg=0 code=0 engr=0 shgr=0 bnds=0 census_t1=1 ',
                           notes)
             self.assertIn('X4LAN_CONFIG.native_gate_world_hash_join = true', (root/'joiner/ui/config.lua.append').read_text().splitlines())
             self.assertEqual(json.loads((root/'joiner/x4lane-join.json').read_text())['world'],
-                             'v12 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
-                             ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0')
+                             'v13 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
+                             ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 jobe=0 evqt=0 gravd=0 viewk=0/0 viewf=0 viewp=0 shoot=0 attk=0 livef=0 spec=0 navc=0 jobs=0 gone=0 body=0 bupd=0 ldc=0 navt=0 nmesh=0 noct=0 agtt=0 agcb=0 pbnk=0 pend=0 gravb=0 viewl=0 ikv=0 rcnt=0 ecos=0 shpw=0 trdn=0 npca=0 jobg=0 code=0 engr=0 shgr=0 bnds=0')
         old = join.read_package(join.write_package(dict(package['sections']['gate']), {join.SEC_IDS: ids}, version=1))
         self.assertEqual(overlays.check_world_table(old, 'report'), 'v1 health=0 pose=0')
         with self.assertRaisesRegex(ValueError, 'package_v1'):

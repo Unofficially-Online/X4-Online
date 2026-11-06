@@ -90,6 +90,7 @@ PROBE_OPTIONS = {
     'native_gate_nav_probe_init': (('true',), ('native_gate_nav_rng', 'native_gate_nav_diag', 'native_gate_nav_initial_refresh'), 'nav'),
     'native_gate_ship_sound_rng': (('true', 'split', 'observe'), (), None),
     'native_gate_player_timer': (('true',), (), None),
+    'native_gate_warp_exit': (('true',), (), None),
     'native_gate_nav_params_init': (('true',), ('native_gate_nav_rng', 'native_gate_nav_diag', 'native_gate_nav_initial_refresh'), 'nav'),
     'native_gate_nav_player': (('true',), ('native_gate_nav_rng', 'native_gate_nav_diag', 'native_gate_nav_initial_refresh'), 'nav'),
     'native_gate_attention_all': (('true',), ('native_gate_attention_rng', 'native_gate_attention_initial_refresh'), 'attention'),
@@ -613,7 +614,8 @@ def render_fps_rules(config_text, enabled):
         if (lua_value(config_text, name) or '').strip('\'"') not in ('true', 'sync'):
             missing.append(name + " = 'sync'")
     lookahead = lua_value(config_text, 'native_gate_lookahead')
-    if not lookahead or not re.fullmatch(r'[1-8]', lookahead):
+    # Protocol 4 (a fixed window) or protocol 5 ('adaptive'): the render-only frames' gap runs over either permit ring.
+    if not lookahead or not (re.fullmatch(r'[1-8]', lookahead) or lookahead.strip('\'"') == 'adaptive'):
         missing.append('native_gate_lookahead')
     if 'native_gate_runtime_ids' in enabled and 'native_gate_runtime_ids_local' not in enabled:
         missing.append('native_gate_runtime_ids_local')

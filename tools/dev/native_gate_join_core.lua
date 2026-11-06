@@ -4,7 +4,8 @@
 --   SAVE_AT  (relay, in absent slot k's stand-in blob)  every client in the mask arms its gate to save after step T
 --   SAVED / FAILED (a saver, in its own blob after T)   the package it wrote, or why it could not
 --   HANDOVER (relay, in slot k's blob)                  slot k is a full client from tick H on: its setup runs at H
---   ABORT    (relay, in slot k's blob)                  the join of slot k is over
+--   ABORT    (relay, in slot k's blob)                  the join of slot k is over; reason 'dropped': the relay dropped
+--                                                       rejoinable slot k from this row (roadmap 15), a later join may take it
 -- A control record counts only in the blob of the slot it names (the relay's stand-in for that absent slot); a
 -- saver's record only in another slot's blob. Anything else is refused and logged, never applied.
 X4LAN_JOIN_CORE={}
@@ -13,7 +14,7 @@ K.VERSION=1
 K.OP={save_at=1,saved=2,failed=3,handover=4,abort=5}
 K.OPNAME={'save_at','saved','failed','handover','abort'}
 K.REASONS={'not_armed','not_possible','save_failed','file_missing','capture','unsupported_module','package_write','busy','timeout',
- 'mismatch','saver_disagree','joiner_lost','pause_too_long','refused_by_relay','platform'}
+ 'mismatch','saver_disagree','joiner_lost','pause_too_long','refused_by_relay','platform','dropped'}
 K.SIZE={16,63,8,7,8}
 local function hex_ok(h) return type(h)=='string' and #h%2==0 and not h:find('[^0-9a-f]') end
 local function byte(h,i) return tonumber(h:sub(2*i-1,2*i),16) end
@@ -65,8 +66,9 @@ end
 
 -- The section adapter of one client. o: slot (own), log(text), arm(T,k,mask) -> true|false,
 -- result() -> 'state|T|k|bytes|package|portable|why|detail' (gate.join_result), handover(k,H), optional abort(k) (the
--- absent slot's records end: gate.pilot_abort), joiner (true for a client that loaded a join package; it applies no
--- SAVE_AT).
+-- absent slot's records end: gate.pilot_abort), optional save_at(k,T,mask) (every client but a joiner, saver or not: the
+-- pilot layer takes the cockpit bodies off around the save at T on all of them), joiner (true for a client that loaded a
+-- join package; it applies no SAVE_AT).
 function K.client(o)
  assert(integer(o.slot,1,8) and type(o.log)=='function' and type(o.arm)=='function' and type(o.result)=='function' and
   type(o.handover)=='function','join client needs slot, log, arm, result and handover')
@@ -88,6 +90,7 @@ function K.client(o)
       local mine=math.floor(r.mask/2^(o.slot-1))%2==1
       o.log(string.format('JOIN_SAVE_AT tick=%d k=%d save_tick=%d mask=%d nonce=%s mine=%d',tick,r.slot,r.tick,r.mask,r.nonce,mine and 1 or 0))
       C.save_ticks[r.tick]=true
+      if o.save_at and not o.joiner then o.save_at(r.slot,r.tick,r.mask) end
       if mine and not o.joiner then
        if C.armed then
         C.outbox={op='failed',slot=r.slot,tick=r.tick,reason='busy'}

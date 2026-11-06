@@ -1,0 +1,779 @@
+LOCKSTEP: JOINING INSIDE A RUNNING PILOT WINDOW (plan, coordinator, 4 November 2026)
+
+Why. A hot join (reports/LOCKSTEP-HOTJOIN-20261101.txt) and a rejoin after a drop (roadmap 15, adaptive report 14) work
+only when the join's save tick T lies before the pilot window's take-2: a joiner whose T+1 is past it stops at once with
+91 join_inside_window (lockstep_pilot_inputs.h), and the probe refuses it as well (lua_state:pilot_window:late). In a real
+session the players fly from the first minute, so every useful join, and every rejoin after a drop, is inside the window.
+The join package does not carry the pilot modules' state (hot join report 8, item 5a). This plan inventories that state,
+sorts it by where it lives, and stages the work so each stage is measured live before the next.
+
+1. INVENTORY (build218; the pilot modules lockstep_pilot_*.h, the UI replay lockstep_ui_*.h)
+A. Objects the gate makes in X4's world during the window (are they in X4's save, and with which IDs?):
+   - P_k, slots 2..N: a U::Player from X4's factory (lockstep_virtual_players.h vps_make, take-2), every side effect on the
+     canonical player put back; one reference, ours.
+   - C_k: the PlayerController the ship's take() (ship vtable 1074) creates when P_k is seated (take-1); its vtable is
+     swapped for the slot's own copy (counting thunks, routes 6/7/10, scoped entries 14/23/33-36/49/50).
+   - P_k's seat links: parent +0x70 = the ship's control room, controlled-object vector +0x308 (ours), control position,
+     assist copied from P_1.
+   - After a death (lockstep_pilot_death.h): the respawned ship (renewed), the seat moved to it, the retired controllers.
+   - On foot (lockstep_pilot_foot_body.h, _foot_slots.h): P_k as a child of its seat's room, its body.
+B. Gate tables that feed the simulation from tick to tick (must reach the joiner byte for byte):
+   - pilot_ring (records captured before T, applied after it: delay = 1+lookahead ticks), pilot_slots[] (resolved ship,
+     last record, driving), pilot_locals (this client's own, not needed on a joiner of another slot).
+   - pstk_ring[slot][tick] (stock records in flight), pstk_slot_frames[] (each slot's last frame: tick, hash, record,
+     flight), pstk_held_states/ranges (held keys, roadmap D15), pstk_fire_on/fire2_on/fire_tick, pstk_aim_*, the cursor
+     replay, pstk_settings, pstk_flight.
+   - pslots[k]: store (the slot's PlayerController block, swapped in for its scope), length, first, authority, assist[2],
+     agent_mode, no_highway, throttle, seated/released/roomless/walking, post, retired controllers.
+   - pview_state/target_replay/target_tick (the replayed soft target and view), pdeath_slots (dying, lost, respawn dues),
+     pfslots (walking state), pfbody mask/parked/back, pfire_slots/missiles (guns leased, missile locks), the UI replay
+     queues (lockstep_ui_*.h: operations scheduled for later ticks).
+C. Local only, rebuilt by arming on the joiner (never carried): hooks and call-site patches, the slots' vtable copies and
+   thunks, presentation (camera, HUD, eye), own prediction, local input rings, counters and status text.
+
+2. STAGES (each one live before the next; the hot join session owns the package and the joiner's load)
+W1 Measure (diagnostic, default off): a joiner may load a T inside the window (native_gate_join_in_window = true lifts 91
+   and the probe's late refusal, never otherwise); the saver writes a PILOT_JOIN row at T (per slot: seated, P_k and C_k
+   runtime IDs and created identities, store hash, held keys, ring ticks in flight) and the joiner writes the same row from
+   what its load gave it at admission (does the save hold P_k and C_k, under which IDs, with which parents and vtables).
+   J1-style run with T inside the window; census at T+1 and the declared digest parts named.
+W2 Carry B: a provider 'pilot_state' in the package's LUA section (gate.pilot_join_state / gate.pilot_join_restore: text,
+   versioned, every table above with tick-relative fields), restored before T+1; the joiner's arming takes the restored
+   rings instead of empty ones.
+W3 Rebuild A on the joiner at admission, from what W1 shows: adopt the loaded P_k/C_k where the save holds them (rekeyed to
+   the session's IDs), else build them as at take-2/take-1 with the carried stores, seats and vtable copies; then the
+   joiner's per-slot modules start in their 'live' stage at T+1 instead of at take.
+W4 Live: J1 census at T+1 equal inside the window; then a J2 and a rejoin (rj) with T inside the window, the slots flying.
+Each stage keeps the 91 refusal for every case it does not cover yet (fail loudly, never partly applied).
+
+3. FIRST LIVE DATA (rejoin before the window, for reference)
+rj1 (adaptive report 14): drop at 412, T=633, window 1500..72000; the rejoiner restored h2=0/412/0 and was admitted with exact
+clocks, then stopped at the hot join's open T+1 digest (634, as every J1 replay).
+
+4. W1 LIVE: WHAT X4'S SAVE HOLDS INSIDE THE WINDOW (w1a, build218, 4 November)
+Session b1,b2 of 3 slots (slot 3 absent) at 20 Hz, pilot window from 300, NGJOIN at 600: both savers saved at T=633 inside
+the window with the same portable digest (the save path itself is fine inside a window). The save (w1_inspect.py, the
+package's IDS section mapping the plan's ships to the save's IDs):
+  - two <component class="player">: the real player in slot 1's ship's room (name, lastcontrolled, controlgroup
+    pilotcontrol) and P_2 in slot 2's ship's room (connection room, controlgroup pilotcontrol, no name, a ship listener
+    'controlstarted', a full player body: traits, spacesuit weapon groups, autopilot, scanner, discovered sectors), with
+    its own computer (entity_betty_macro, connection player); slot 2's NPC pilot stays on its post;
+  - slot 3 (absent, never seated): its NPC pilot only, as every slot ship before the window (rj1's save: one player).
+  - X4's player creation path stores every new player into Universe+0x230 (the player singleton) unconditionally
+    (6fad4f/6fad56, releasing the previous one; vps_make puts it back after it builds P_k), and P_2 comes after the real
+    player in the file: a joiner's load is expected to leave P_2 as its singleton. W1b measures it (JOIN_IN_WINDOW rows).
+  (A first reading of the design, kept P_k in the save; W1b below rules it out.)
+
+5. W1B LIVE: X4 DOES NOT LOAD A SAVE WITH TWO PLAYERS (w1b, build218, 4 November)
+J1 with T=633 inside the window (from 300) and native_gate_join_in_window on both sides; the joiner replays on b1 after the
+session. The joiner's second load pass: "UniverseClass::Import(): Invalid number of players. GameClass::Load(): Invalid
+savegame. Failed to load the universe from save_009"; X4 goes back to the start menu, the probe boots again and the gate
+refuses (code 10: a second session in the process). Static [F, 9.00]: Import collects every loaded player into the vector
+Universe+0x200 (40-byte entries) and requires exactly one (8dca31: cmp 1, jne 8de119 'Invalid number of players'), then
+makes entry 0 the singleton (8dca72: Universe+0x230 = entry 0). In the save, P_2 and its computer are referenced only by
+their own elements. P_2 is in the save because the default stack connects every P_k into its cockpit room
+(native_gate_pilot_foot_bodies, lockstep_pilot_foot_body.h): a saved component of the room's child list.
+Consequences:
+  - Any save taken while the bodies are connected is unloadable, a player's own save during a session included (not
+    only the join save). The join save, and later X4's own save path, must not see P_k.
+  - Patching Import to take more than one player would load P_k through X4's player path (input context requests, the
+    singleton, a camera, control start: the log's 'already a ContextRequest ... PLAYERCONTROLLER' at the first pass),
+    unlike the session's vps_make, which puts every side effect back. Not taken.
+W3, revised: (1) every saver takes every body off its room around GameClass::Save of the join save (pfbody_call: X4's own
+3d8420 with no target, held, with the stand-in camera; the same on every client of the SAVE_AT mask, which is every
+present client) and connects it again right after, so the save holds the real player only; (2) the package carries the
+pilot state (W2) and each P_k's runtime IDs; (3) the joiner rebuilds each P_k at its admission through the session's own
+path (vps_make, the seat, the body's connect) with the session's runtime IDs (the hot join's join_ids allocator places
+them), restores the stores and tables, and starts the per-slot modules live at T+1. X4's own saves during a session need
+the same park around their save (later).
+
+6. W3 PART 1 LIVE: THE BODIES OFF FOR THE SAVE, ONE PLAYER, THE JOINER LOADS (w1p, w1q; builds 219, 221)
+The park needs a slot's scope, which opens only on the UI thread (pslot_can_enter: the frame thread): w1p (build219, the
+park at the frame thread's join boundary) stopped both clients at T=633 with 155 park_scope, before anything moved. So the
+park moved into the body guard (lockstep_pilot_foot_body.h, the pass on the UI thread): the join core's save_at callback
+arms T on every client of the session (savers or not; native_gate_join_core.lua, the probe), and T's pass takes every body
+off as for a get-up; the guard brings them back PFBODY_SETTLE (24) ticks of everyone seated later, as after any get-up, on
+every client the same way. lockstep_join.h needs no change. Native test: test_lockstep_pilot_foot_slots.h (armed only ahead
+of the tick, once; T's pass parks, T+1+24 brings it back; the state names slot 2).
+w1q (build221; session b1,b2 of 3 slots, window from 300, NGJOIN at 600, T=633; the joiner on b1 afterwards):
+  - the session: both clients to 1200 with STOP reason 1, relay pass, no digest mismatch; bodies parked at 633 and back;
+  - the save: one player component (the real player); P_2 is not in it;
+  - the joiner: X4 loaded the save (no 'Invalid number of players'), the gate's first pilot frame stopped it with 91
+    join_inside_window as designed (completed 633), before the probe's T+1 restore;
+  - the package's LUA section carries pilot_players for slot 2 (slot 3 absent: none): construct (vps_make, 295) took 2
+    shared IDs, 0x16467c (P_2, created 8001273562e1e15e) and 0x16467d (its computer, created 800127c8e4f05e6e); the seat
+    (take(), 296) took 1, 0x16469c (no created component: a listener or the controller); the body's first connect took 17
+    (0x16469d..0x1646ad), which the park undoes and the guard's reconnect at T+1+24 redoes on every client and a joiner
+    alike, so only construct and seat need join_ids_replay on a joiner.
+Next (W2/W3 joiner side): replace the joiner's 91 by a rebuild in its first pilot pass (T+1): P_k through vps_make and the
+seat with join_ids_replay of the carried IDs and created_live_add of their created identities, the bodies parked with the
+guard's state from the package (parked, seated_since), and each per-slot module started live with its carried tables
+(rings in flight, stores, held keys, frames, the stock and UI queues).
+
+7. W3 MEASURE: X4'S CONTROL STATE AT T AND ON THE JOINER (w1r, build224; the merged hot join with BODY and Linux batch 1)
+The window's start runs over take-2..take+1 (pnat_pass): construct, seat, the controls take (a share of X4's view
+counter, the input contexts' requests off), one frame later the check (flight control 0), the native install, the
+FIRST_PERSON swap, the stock capture start, and the controls' release. A joiner at T+1 cannot run take and check in one
+pass. Measured (join_controls in the status rows; pjoin_note_controls):
+  session, T=633's pass:  count=0 requested=1 flight=1 authority=0 owned=0 controller=1 (both clients)
+  joiner, its first pass: count=0 requested=1 flight=1 authority=0 owned=0 controller=1
+Inside the running window the session has released the controls (owned 0) and X4's own control state is the normal one,
+and the joiner's loaded state is the same. So the joiner's resume does not take the controls: at its first pass it needs
+the native install (local hooks), the FIRST_PERSON swap, the slots' players and seats (vps_make and take() with
+join_ids_replay of the carried IDs and created_live_add), the body guard's state (parked, the kill guard installed), the
+stock path's capture start and first apply (the window's take+1 and take+1+delay), and the tables still in flight at T
+(the records captured before T and applied after it, pilot_ring and pstk_ring; the slots' stores and held keys; pstk's
+flight state). Then the live branch runs from T+1 as on the session.
+
+8. THE JOINER'S RESUME, WORK LIST (W2/W3; each step built, tested offline, then live; a live stop names the next one)
+The joiner's native pass at T+1 runs before the probe's restore of the package (w1q/w1r: 91 at completed 633 with no T+1
+restore row), so the resume reads its data from the package natively: join_package_line(name) in lockstep_gate.c (after
+lockstep_join.h; join_rx.t.lua holds the LUA section's lines), never changing lockstep_join.h.
+  R1 the slots' players and seats: per pilot_players, vps_make and take() around one join_ids_replay of the construct and
+     seat IDs, created_live_add of their created identities, the slots' hook (pslot_hook_install), pslot_update_tick=T so
+     the first check does not take X4's skipped update for a missing one; the stores, authority, assist, agent mode, no
+     highway and throttle of each seat from the package (pslot_slot fields, 'pilot_state').
+  R2 the body guard: the kill guard installed, parked=1, mask 0, seated_since and back[] from the package (the session
+     parked at T and counts from T+1).
+  R3 the native layer and the stock path: pnat_install(controller), the FIRST_PERSON swap (pfoot), pstk capture start =
+     take+1 and first apply = take+1+delay of the session's window, pstk_flight and pstk_flight_known, the cursor and aim
+     replay state, pview_state and the soft target replays, the fire state (pstk_fire_on/fire2_on/fire_tick), the held keys.
+  R4 the records in flight at T: pilot_ring and pstk_ring entries with an apply tick after T (captured before T, rows the
+     joiner's catch-up permits do not carry), pstk_slot_frames (each slot's last frame).
+  R5 the per-slot modules' own state: death (pdeath_slots), fire (pfire_slots and missiles: guns leased), foot (pfoot,
+     pfslots walking state), presentation of this client's own slot (only from its handover: an absent or dropped slot
+     needs none at T), the UI replay queues (lockstep_ui_*.h, operations scheduled after T), hit claims.
+  R6 the probe's window Lua state (the death module's start poses and counters, the stock aim, the UI one-shot fixtures at
+     window start - 4): a provider of its own, restored at T+1 (today it refuses a T past take-2: lua_state:pilot_window).
+Each R-step keeps 91 for what it does not cover yet (a joiner stops loudly, never runs partly restored).
+
+9. FIRST LIVE RESUME (w1s, build228, 4 November): THE LOADED SHIP COMES WITH ITS PLAYERCONTROLLER
+R1-R4 wired in behind native_gate_join_in_window (52ca8472): the joiner's first pass at T+1 read pilot_players and
+pilot_state from its package and started the rebuild; slot 2's seat refused with ship_controlled (pslot_seat_ship: the ship
+already has a controller of the PlayerController class), stop 91 with pilot=join_resume. Cause, in the join save: slot 2's
+ship's movement is saved as <movement forceposition="0" player="1" class="player"> (slot 3, never seated, is
+class="navigation"), with a shootcontroller and no flightcontrolmodel; X4's loader recreates the PlayerController from it.
+The controller is not a component with a saved id (the seat's take() allocation on the session, 0x16469c, is no created
+identity). Next: either adopt the loaded controller (its vtable to the slot's copy, its player binding to P_k if it holds
+one, the seat's store from the package) and replay only the construct IDs, or release it and take() anew with the release's
+allocations kept off the shared head (the hot join's load list before the admission skip). To find out first: what the
+loaded controller is bound to (the player singleton at load time, or none) and what X4's release allocates.
+
+10. THE RESUME RUNS TO THE END (w1t-w1x, builds 229-234, 4 November)
+- w1t (build229): the seat adopts the loaded PlayerController (3731b842: its vtable to the slot's copy, its player binding
+  to P_k, the store from the package; only the construct IDs replayed). Stop 91 with join_resume=rebuild_ids: the replayed
+  IDs were not the ones the session created.
+- w1u (build230): the failure row names the replay (rebuild_ids:slot2:adopt1:n2:done2:other0:wrong2): both construct IDs
+  handed out, both different from the session's. Cause: the hot join's ID replay did not follow AssignNewID's contract
+  (set mode: the head is a plain counter, the ID stored at [object+8]); fixed on the hot join branch (join_ids_replay).
+- w1v (build232): the IDs matched; the joiner crashed (0xC0000005) in its first pass after the resume. The seat's store
+  holds X4's control banks, one of them a pointer (environment_zone, vpl_regions pointer=1); the package carried the
+  session's raw address. Fixed c2f6e11f: a store's pointer region travels as a portable ID (the zone's runtime ID, resolved
+  on the joiner), a pointer without a readable ID refuses the state (offline test: test_pilot_join_tables).
+- w1w (build233): join_resume=resumed at T+1=634; the joiner ran the window to the session's end (stop reason 1 at 1199,
+  the session at 1200). Census at T+1: 527,168 of 527,172 objects equal; 900: 728 differ (motion 698, health 44,
+  topology 29, timing 20; 47 objects on one side only). For comparison, an ordinary J1 joiner (outside a window) at 900
+  before the hot join's build refresh: 420; with it: 172 (hot join report).
+- w1x (build234, b0bb0d4c): the same with a catching-up joiner drawing plain steps (no render-only frames, no own-ship
+  presenting; the w1w capture flashed during the catch-up). Census: T+1 3 differ (two Xenon fighters' motion, one created
+  object's nav.refresh_time/refresh_relation), 900: 728 as w1w. Flash capture: 0 blips during the catch-up; the joiner's
+  window flips between two camera views for a few seconds after the session's end (report 18c in the roadmap; joiners only).
+Open:
+- R5/R6: death, fire, foot and foot slots, the UI replay queues, the window's Lua state are not carried; the joiner runs
+  with them as its own arming left them. The window in these runs has no deaths, fire or foot passes, so the census does
+  not see them yet.
+- The 3 objects at T+1 and the 728 at 900: run again on the merged build refresh (f2763e9b) before reading them; the
+  difference to an ordinary J1 joiner names what the window adds.
+
+11. R5: THE PER-SLOT MODULES' STATE AT T (lockstep_pilot_join_modules.h; offline, 4 November)
+What a joiner inside the window ran without until now, each found in the module's own state (section 8's R5 list):
+- Fire: the slots' guns are leased at the window start on every client (MindlessShootController, trigger written each
+  tick). A joiner leased anew at T+1; in w1x the save brought every gun with its Mindless (installs 0, replaced_at_lease 0
+  on the joiner; installs 4 and 2 on the session at the window start), but a gun firing at T+1 would have made the joiner's
+  lease wait while the session held the trigger. Now the lease travels by runtime ID (guns, group, last trigger) and the
+  joiner binds it to its own objects; a gun gone or with another controller refuses.
+- The UI replay: sections captured before T and staged for an apply tick after T (uirep_ring) are in rows the joiner's
+  catch-up does not carry, as the stock ring of R4; they travel the same way (urK_I). The order queue aliases and every
+  slot's applied creates (uirep_q_aliases, uirep_q_applied; runtime IDs) decide which index a later order edit takes, so
+  they travel too.
+- Hit claims: claims staged for an apply tick after T (hit_stage_ring) and the consumed projectile keys (hit_consumed)
+  travel; the carried claims go first in their tick (the session staged them from earlier rows).
+- Death: each slot's record (counts, ticks, the respawn's state) and slot 1's held keys travel.
+Refused by name before anything changes (stop 91 with join_resume=<why>), not carried yet: a slot dead, stranded, in its
+suit or respawning at T (death_at_T); a slot ship other than the window's (slot_respawned, a respawn before T); missiles
+shooting at T (missiles_at_T); a gun the simulation holds at T (fire_foreign); slot 1 or a slot k on foot at T
+(foot_at_T); a module armed on one side only (modules_armed). Also open, not checked: the hit claims' projectile keys of
+bullets in flight at T (lockstep_hit_native.h hitn_table: a key is the shooter's ordinal of first casts in the creation
+tick; a joiner's first cast of a loaded bullet is at T+1), the hit queue of this client's own claims (empty on a joiner
+before its handover), and R6 (the window's Lua state).
+The pilot_state text grew (m5 about 4 KB of hex, the consumed keys up to 64 KB): both buffers are 256 KB now; the
+package's LUA section takes up to 1 MB.
+Offline: test_pilot_join_modules (round trip, the merge order of carried and caught-up claims, three refusals, malformed
+entries named). Live: next in-window run.
+
+12. R5 LIVE (w1y, w1z; build238 = R5 and the hot join's VIEWF writes off, 4 November)
+- w1y: stop 91 at the joiner's first pass, join_resume=slot_respawned, no death anywhere. The slots' runtime IDs in the
+  package (0x6c725, 0x22bce, 0x8c66e, as the IDS section maps the window's ships) were not the joiner's: the in-window runs
+  so far had native_gate_join_ids off (a diagnostic key, default off; the J1 runs set it), so the joiner's loaded objects
+  took IDs of its own load order (JOIN_STATUS ids=idle). R5's check refused as designed. w1w and w1x had run that way too:
+  their slots resolved by saved identity, but every runtime-ID keyed record (UI replay events, the slots' rows) would have
+  meant other objects on the joiner.
+- w1z (w1y with native_gate_join_ids and native_gate_join_hold_boot_events, as the J1 runs): ids=armed (523,584 placed,
+  76 refused), join_resume=resumed at 634 with R5 applied (the carried leases: the joiner's fire module never leased,
+  installs 0, slots 1 and 2 at 2 guns each as on the session), the joiner ran the window to the session's end (stop
+  reason 1 at 1199). Census: T+1 527,168 of 527,172 equal (motion of three Xenon fighters 6dae5, 176c95, 176cef; one
+  created object's nav.refresh_time/refresh_relation); 900: 728 differ (motion 698, health 42, topology 27, timing 17;
+  47 on one side only). An ordinary J1 on the same build (the window after T: x4mods-28's j1-138) has T+1 0 and 900 172,
+  so the window adds those 4 at T+1 and about 556 at 900.
+- The joiner's window after its end, captured: 0 blips; the 36 frames after the end banner (3.3 s) all the same image
+  (w1x flipped there). The flip was the hot join's VIEWF writes (roadmap 18c).
+Next: native_gate_join_ids for every in-window joiner (the join overlays, as the build refresh); the three fighters at T+1
+with a watch run (they are in the J1 watch list too); R6.
+
+13. R6 (PART) AND THE WINDOW'S EXTRA DIFFERENCES (w1z2, build238 with the probe at 3fb66c0f, 4 November)
+- R6, the death module's window Lua state: join provider pilot_death (native_gate_probe.lua) carries the start poses
+  (noted at the window start, where a respawn builds), the respawn and suit counters (their MD seeds) and the last poses
+  (where a suit is built), exact (%.17g); a joiner's restore replaces its own, which never saw the window start. LuaJIT
+  round trip and refusals checked; live in w1z2: the provider pair accepted, the joiner resumed and ran to 1199. The rest of
+  the window's Lua state is test fixtures only (the scripted aim plan, the UI replay's test fleet and fund at the window
+  start - 4); the pilot_window provider still refuses T past take-2 without native_gate_join_in_window.
+- w1z2 = w1z with a watch list (the three fighters, the slot ships, 24 objects differing at 900) and census stride 60:
+  T+1 4 differ as in w1z, 900 726. The three fighters sit in the slot ships' zone (tempzone 0x13e75f, all three slot ships
+  and 176c95, 176cef; 6dae5 elsewhere), and at T+1 it is their own steering that differs: 176c95's orientation by about
+  0.003 per axis, 176cef's velocity by about 4 m/s (position 0.1 m), 6dae5 by one float ulp. The slot ships themselves are
+  equal at T+1. So the fighters read something of the players' ships that the joiner's load does not have; in an ordinary
+  J1 (the window after T) the same ships are AI-flown and nothing differs at T+1. Candidates: the PlayerController the
+  joiner's load recreates from <movement class="player"> (its flight state is not in the save) and the pathing banks
+  beyond NAV's vectors (+0x60..+0xaf; x4mods-28's NAVT section, j1-139: every live actor differs there at T+1).
+Next: the in-window watch run again with NAVT; then the slot ships' controllers at T and T+1 side by side.
+
+14. THE WINDOW'S T+1 DIFFERENCES: NAVT, THE REGION CAMERA, THE NAV HELPERS (w1z3, w1z4, 4 November)
+- w1z3 (build240, the hot join's NAVT and LDC merged): T+1 the same 4, 900 727. The pathing banks beyond NAV's vectors
+  are not what the window adds.
+- The region camera (x4mods-28, j1-141): the session installs its sites after step 1 (install_tick=1), a joiner after
+  step T+2 (install_tick=635, install_waits=1: the pass kicked by its last loading frame still runs at the join point after
+  T+1), so the joiner's steps T+1 and T+2 use the local camera where the session's use the stand-in (REGION_PASS,
+  MASS_TRAFFIC and TRAVEL_SNAPSHOT apart at 634). In-window joiners show the same (w1z3: 635/1). c1efa5cb tried the
+  install in rc_frame of T+1, waiting up to 5 s for a parked MoveWorker and idle passes: w1z4 join_install=0/1, nothing
+  changed (T+1 4, 900 727), and a 5 s stall at T+1. The probe's frame is the wrong place to wait (whatever the loading
+  frame's pass or the MoveWorker needs, it does not get while that frame is held); the attempt no longer waits and counts
+  which condition fails (join_install=installs/not parked/busy). Next place: the admission in the gate tick (after
+  join_admit, before the first admitted frame), with the stand-in set there too.
+- The interior nav helpers (NAV_MESH_ROW): the session builds 15 at ticks 1 and 3 (the three slot ships among them, and
+  176c95 and 176cef, two of the three fighters at T+1); a joiner's catch-up at 634 builds 10 of them, without 7a8fe and
+  7a8dc (slot ships 2 and 3), 176bf8, 176c59 (built at 736 on both) and 176cef; later builds differ too (176b97 at 969 on
+  the session, 1073 on the joiner; 176c95 again at 978 on the session only). A helper's request comes with an object's
+  props (GeneratePropsEvent, lockstep_nav_mesh.h), so the set a joiner's load asks for is its own; the helpers are world
+  state (a station's people come with them). x4mods-28 carries the receipt (NMESH); building the session's helper set at
+  T+1 from the package is the open part.
+
+15. THE JOINER'S PASS OF T AND THE SLOT SHIPS' FLIGHT STATE (4 November, late)
+- Where a frame's code runs: ui_thread is the MoveWorker (path_release, the probe's Lua frame, rc_frame and view_frame all run
+  inside its frame); the gate tick (mt_join, rc_join_point, join_admit) runs on the main thread while the MoveWorker is parked
+  at its frame start. So w1z4's wait in rc_frame could never see the MoveWorker parked.
+- What a joiner's T+1 starts from (with x4mods-28, j1-141..144): the session's frame T+1 starts from the synced passes kicked
+  at the end of T (mass traffic and the region manager, with the stand-in cameras of T, seeded with key(T-1), joined at the
+  gate tick after T) and its pathing pass reads the travel snapshot's copy. A joiner's starts from its last loading frame's
+  passes (local camera, unseeded, not joined, running into T+1), its view points latch for the first time at T+1 (with the
+  first latch's attention refresh, SetAttention on each view point's ancestors, which the session made long before), its
+  sites go in after T+2 and its first pathing pass reads the live +0xf7b. With LDC, NAVT, NMESH and NOCT carried, an ordinary
+  J1's digest is equal 634..650 (j1-144); the world parts at 651 (actor 5, an avoidance command), and REGION_PASS,
+  MASS_TRAFFIC and TRAVEL_SNAPSHOT differed only at 634.
+- lockstep_join_passes.h (diagnostic native_gate_join_passes_admit; the hot join's join_admit_passes hook, main thread,
+  after T is published): the loading frame's passes waited out and seeded for the pass of T with key(T-1); the slot ships
+  resolved, the view points latched without the refresh (view_frame_latch(T,0)) and the stand-ins written (rc_frame_body(T,0):
+  a stand-in camera is attached to its view point object, so the same objects give the same cameras; no scenes, fill or
+  shape latch from the main thread); the region camera's sites installed; the travel snapshot taken and its read moved;
+  traffic and region kicked as MoveWorker::Run kicks them (its conditions, lock, ready byte, SetEvent on a parked thread;
+  the stride's ticks) and joined as mt_join(T). Offline: test_join_passes (the kicks, the arming). Live: next.
+- The slot ships' flight state at T+1 (w1z5, native_gate_pilot_dump_tick=634: every slot's ship, controller, agent and
+  solver, 256-byte rows, compared offline by .local/census/dump_diff.py): on the joiner slot 1's agent has no steering
+  solver (agent+0xf80 0; the session's has one since the stock path flies the ship), zero limits at agent+0x6e0..0x720 (the
+  session's 100/150/225/139), other direction tables at +0x980..+0xa88, and the PlayerController's and agent's timestamps
+  are the load's game time; slot 2's flight limits (agent+0x348..0x378, the block the steering clamp reads) are 1.4 to 2
+  times the session's; slot 3's controller differs in 139 value words. The ship transforms agree to float rounding. The load
+  recreates a controller from <movement class="player">, not the flight state the stock path built since the window start.
+  In an ordinary J1 these ships have not flown through the stock path before T, so this is the window's own part (the three
+  fighters in the slot ships' zone at T+1 read these ships). Next: what builds the solver and the limits (X4's take-control
+  path) and replaying it at the resume, or carrying the value blocks.
+
+16. THE PASS OF T LIVE AND THE SLOT AGENTS (j1-145..147, w1z6; builds 244, 245; 4/5 November)
+- j1-145: the probe armed native_gate_join_passes_admit at its config, before the gate had started, so accept_ui refused it
+  (CONFIG_REFUSED); 298eef28 arms it after gate.join_load.
+- j1-147 (x4mods-28, an ordinary J1 with it): passes_admit=1/1 done, steps=4, kicks=0, 0.24 s. kicks=0 is right: the pass
+  stride is 2 (native_gate_pass_stride), passes run at the end of even frames only, and the session held its kick at the end
+  of frame 633 as well. TRAVEL_SNAPSHOT is equal at 634 now. The REGION_PASS and MASS_TRAFFIC "word" moved one tick: these
+  passes take no draws (draws=0 throughout), so the word is only the last seed written, and the joiner's admission seeds
+  twice (passes_admit's join and the gate's own join of the loading frame right after join_admit); the camera keys are
+  equal on both. Actor 5 still parts at 651, actor 11 at 652: not the passes, not the travel snapshot.
+- w1z6 (in-window, build245 = passes_admit and x4mods-28's slot agents in the agent sections): resumed, run to 1199;
+  T+1 3 differ (176cef no longer: 6dae5 and 176c95 motion, 800259fc's nav timing), 900 726. The dump at 634 shows the slot
+  agents not carried yet: the package's agent, flight and param sections hold exactly 10000 records each (keys sorted) and
+  none for slot 1's ship ae79c or slot 2's 7a8fe (slot 3's 7a8dc, AI-flown, is there); solver holds 15, none of a slot
+  ship. So slot 1's agent still has no solver and zero limits at +0x6e0, and slot 2's limits at +0x348 still differ.
+  Either the capture stops at 10000 before it sorts, or its selector misses the PlayerController ships on the saver
+  (with x4mods-28).
+
+17. THE SLOT AGENTS CARRIED, PART ONE (w1z7, build247 = d8ca33f8, 5 November)
+- x4mods-28's 5537cc5d carries a PlayerController ship's Agent without a flight model (its capture stopped at the missing
+  model before AGENT, PARAM, ROUTE and SOLVER), and AGTT (5f78b121) carries agent+0x658 and +0xf38, the load-time stamps that
+  parted an ordinary J1's actor 5 at 651 (now: every Agent byte of actors 5 and 11 equal 634..650, j1-152).
+- w1z7: resumed, run to 1199; T+1 4 differ (6dae5, 176c95, 176cef, 800259fc's nav timing), 900 725. Slot 1's agent has its
+  solver now (one word differs in the dumped 0x400). Still different on it: the command and probe block inside the Agent
+  (agent+0x6e0..: the table at +0x6e0..0x720, the direction tables at +0x980..0xa88, the probe's due at +0xac0), which NAV
+  carries for navigation ships only; four copies of one word (+0xe8, +0x288, +0x428, +0x5c8) and of another (+0x138...);
+  two swapped times (+0x178, +0x318). Slot 2's limits (+0x348..0x380) still differ by the same factors. Asked of the hot join:
+  NAV's command block for the PlayerController agents too.
+- The ordinary J1's remaining split (with x4mods-28): the joiner delivers a different number of due events per pass from T+3
+  (EVENT_ORDER counters; local and local_ties equal), with the census equal: a schedule difference, to be named by event
+  rows over the joiner's window (native_gate_event_rows_from, x4mods-28). Separately, event_order orders sources without a
+  saved identity by runtime ID, and a joiner's controllers take theirs from its load list: portable only once those IDs are
+  the session's.
+
+18. THE SLOT AGENTS CARRIED, PART TWO (w1z8, build249 = 2ce1028d, 5 November)
+- With the hot join's AGCB (the PlayerController agents' 0x400-byte command block) and the radar units' view states written
+  (GRAV +0x50..+0x5f; the joiner had re-entered every unit into live and player view at T+1, x4mods-28 j1-153..155): T+1 3
+  differ (6dae5 and 176c95 motion, 800259fc's nav timing), 900 727. Slot 1's agent differs only in the role mapping of two
+  times (+0x178/+0x318, the parameter slots' read/write roles) and float rounding rows (+0xc80..); its solver is equal.
+  Slot 2's limits (+0x348..0x380) are equal now.
+- Still different: slot 2's agent pose banks (+0xad0..0xb18 and +0xc70..0xcb8 hold the same two poses swapped between session
+  and joiner: a bank role; the banks' tails +0xb38..0xb50 / +0xcd8..0xcf8 set on the session, 0 on the joiner) and two flags
+  (+0xed8, +0xee8): NAV/NAVT carry those for navigation agents only (asked of the hot join); the rebuilt P_k's own fields
+  +0x6a08 (a flag), +0x6e48 and +0x6e50 (two times, -1.0 on the joiner): carried by the resume from build250 on (pk_fields
+  in pilot_state).
+
+19. w1z9 (build251: PBNK, AGTT +0xf40, the rebuilt P_k's fields; 5 November)
+- PBNK (the hot join: the PlayerController agents' pathing banks by role, NAV's and NAVT's fields) and AGTT's last travel
+  decision time (+0xf40: an ordinary J1's 168 extra travel decisions at T+1, x4mods-28 j1-157). T+1 4 differ (6dae5, 176c95,
+  176cef: the last comes and goes between runs; 800259fc's nav timing), 900 711 (w1z8 727). Slot 2's agent is down to 21
+  differing value words. The resume's three P_k fields (+0x6a08, +0x6e48, +0x6e50) arrive; +0x6e50 differs between the
+  session's own two clients (a per-client time), so it carries one saver's value harmlessly.
+- 21 more of slot 2's P_k fields (+0x6a18..+0x6e40: values like 2000, -50000, -286000, the word at +0x6a90) are set on the
+  session in w1z9 and 0 on the joiner; the session's two clients agree on them, but w1z8's session had them 0 too. So they
+  depend on the session run itself (an event, or bytes a rebuilt player never sets), not on the join; not carried until
+  their writer is known (a blind copy of the player's block could pair a count with an empty vector).
+- The ordinary J1's split at 651 (x4mods-28, j1-153..158): the radar's view of ships that changed parent after T. The hot
+  join's GRAVP restore wrote the session's T poses back for ten steps after T+1, over the joiner's own republication at a
+  zone change or an undock (0x92789 at 636/637, the XS ship at 641); fix in the hot join: drop a restore entry once its
+  cached parent differs.
+
+20. w1z10 (build255: the hot join's GRAVB and VIEWL; 5 November, morning)
+- GRAVB (the Gravidar's mapped-bounds maps: a joiner refilled 15 sectors per step after its load, posting the player's
+  MappedBoundsChanged until 644) and VIEWL (the objects' live and player view entries: their flags +0x3c8/+0x3c9 and the
+  registration their enter handlers make, which the IsInLiveView predicate and its MD, trade and AI callers read), both by
+  x4mods-28, on the joiner with native_gate_join_viewl: T+1 3 differ (6dae5, 176c95, 800259fc's nav timing), 900 141
+  (w1z9 711; motion 113, health 30, topology 17, timing 6; 44 objects on one side only), below an ordinary J1 on the same
+  fixes (165 at 900, where actor 5's weapon fires once more at 650: a line-of-fire ray that the joiner finds clear one tick
+  earlier). The in-window extra over an ordinary J1 is gone at 900; the T+1 three remain.
+
+21. THE TWO FIGHTERS AT T+1 (w1z11, build255 with the hot join's watch; 5 November)
+- The join watch (JOIN_WATCH* rows in the crash note, <profile>/x4lan-crash.txt; x4mods-28's watchraw.py and its role-aware
+  bank pairing) on 176c95 and 6dae5: both have every agent record in the package (AGENT, FLIGHT, PARAM, AGTT, NAV, NAVT;
+  176c95 SOLVER too) and their pathing banks are equal at T.
+- 6dae5 (not in the slot ships' zone): from T+1 exactly one word per bank differs, the y position, by 2..4 float ULPs, the
+  rest equal. Likely a float the save writes with 6 or 7 significant digits and the joiner reads back (the class of the shoot
+  controllers' aim cone, j1-165); the hot join's float-precision writer for the join save is the test.
+- 176c95 (in the slot ships' zone 0x13e75f): whole orientation rows differ from T+1 (about 1e-3), a turn computed
+  differently in step T+1, not ULPs. Open; it reads the slot ships (its target) or its own steering input in the window.
+
+22. w1z12 (build257: the hot join's shoot controllers' aim cone and the join save's floats at full precision; 5 November)
+- The join save writes every float attribute (35 writer sites, the shoot controllers' angle= and script values among them)
+  in 17 digits on the join save's thread (x4mods-28 f32eb8ee): 6dae5's few-ULP y at T+1 is gone. T+1 3 differ: 176c95 and
+  176cef (the two fighters in the slot ships' zone; motion) and 800259fc's nav timing. 900: 72 differ (w1z10 141; motion 44,
+  health 30, topology 17, timing 6; 44 objects on one side only).
+- Left at T+1 for the window: the fighters next to the slot ships turn differently in step T+1 (176c95's orientation by about
+  1e-3), and one created object's nav refresh time.
+
+23. THE SLOTS' PLAYERCONTROLLERS (w1z13, build258; 5 November)
+- A load recreates a slot ship's PlayerController from <movement class="player">: on the joiner its times are the load's
+  game time, three doubles are 1.035/1.325/1.365 (the session's 0.31/2.995/2.996), its cached transform rows and double
+  positions carry text precision (w1z12's dump; the session's two clients agree on every one of them). pilot_state's pctl
+  blob carries 49 value words of slot 1's (X4's own) and each seated slot k's controller (not the listener ID +0x18, not the
+  counters and indices) and the resume writes them once the controllers exist.
+- w1z13: T+1 2 differ (176c95's motion, 800259fc's nav timing; 176cef not this time), 900 72. The times and timers are equal
+  at T+1 now; slot 1's +0x3f0/+0x5c8 return to 1.325/1.365 within step T+1 (recomputed each step from another input) and
+  the cached rows +0x220..0x278 differ by 1-4 ULPs after the step (recomputed from the ship's transform).
+- 176c95 (in the slot ships' zone, turning differently at T+1) is the window's last mover at T+1. x4mods-28 (j1-168/169):
+  weapons aim through the controller's lead routine (slot 0xa8) at the target's relative transform from the view cache, and
+  the joiner's aim angles differ from T+1 in an ordinary J1 as well; the same routine, aimed at the slot ships, is the
+  likely cause here.
+
+24. SMOV DROPPED; 800259FC'S NAV TIMING AT T+1 (w1z14, build261 = 14f507fd; 5 November)
+- SMOV (the hot join's section 62, 1e7c6b32: the weapons' StaticMovementController +0x90..+0xcf as the session's) crashed the
+  joiner in its admission (j1-172b: gate -> 0x99a870, EVQT's removal of a source's pending events -> the allocator,
+  c0000005): on some weapons the range holds pointers (a shared object, then small integers), and the session's were written.
+  The pre-SMOV build joined clean (j1-172q, T+1 all equal). A float-only SMOV (j1-173) no longer crashed but moved the J1's first
+  mismatch from 651 to 634 and left the weapon frames as before (0.246 rad at 634): the block is not the gimbal state. Reverted on
+  both branches (smoke 14f507fd, hot join 82a08d5c); JOIN_WATCHAIM stays (X4-Online e0353fc4).
+- w1z14 (build261, the hot join's watch on 800259fc and 176c95): T+1 3 differ (176c95 and 176cef motion, 800259fc timing), 900
+  72, as w1z12/13.
+- 800259fc (a created ShipSmall in zone 0xa8, attention 2): its movement controller is the StaticMovementController 0x2a34b38 at
+  T on the session and on the joiner after its load and admission (watch rows s, k, j), and a NavigationController 0x2c51158 with
+  an Agent on both at T+1: the swap happens in step T+1 on every side. After that step the joiner's controller holds the refresh
+  time 38.783 (the last refresh's game time: T+1's) and the read selector as its cursor, the session's -1 and cursor 2 (none); the session
+  refreshes it at T+2 (38.833), and from there the two agree (660: only the absolute selectors differ, as for every ship).
+- Not the gate's stamp: at 634 both stamp the same 10,000 batched Agents with equal order and stamp hashes (PATH_DETERMINISM);
+  at 635 both batch the new Agent (10,001), the joiner finds one more current (190 newly current against 189) and only the
+  stamp hash of 635 differs. The joiner's refresh at T+1 comes from a transform query: its only PropagateCacheFlags call on
+  800259fc in step T+1 (JOIN_WATCHPCF site 0x3d4d0f, flags 0x19, view 0), which the session does not make. The joiner calls
+  PropagateCacheFlags 425,464 times in step T+1, the session 6,163: the load leaves every component's live flags pending
+  (+0x1e0 0x19, hot join report: PEND), so the joiner's first BuildCache republishes every pose its view words allow, and a pose
+  republished after the swap refreshes the new controller (RefreshFromPathingState 0xea2a20, on the first transform query after
+  a bank flip).
+- The same republication may matter for 176c95: its steering and its weapons' lead routine read the slot ships' (their
+  targets') transforms from the view cache, which the joiner refreshes in T+1 where the session keeps them as published. Next:
+  w1z15, build261 with PEND (native_gate_join_pend, the session's pending words; j1-160: no flicker).
+- w1z15 (PEND on: pend=1:112659:6698:312643:0): T+1 2 differ (176c95 motion, 800259fc timing), 900 74. The joiner's
+  PropagateCacheFlags calls in step T+1 are 425,464 as without PEND, and 800259fc's call is still there: the load also leaves
+  each object a pending cache-specification list (+0xd8, a small vector AddCacheSpecification 0x3d5180 allocates; the count
+  +0x1e8; x4mods-28), which the first BuildCache 0x3d4a80 applies to the subtree, setting +0x1e0 again, and then frees. PEND's
+  words are overwritten in the same frame (likely why j1-160's PEND left the J1 as it was). At T the session's 176c95 holds no
+  list and +0x1e0 0, the joiner's (rows k, j) a list and 0x19; both equal the session's after step T+1.
+- Next candidate (opt-in, with the hot join): the joiner drops the lists the session does not hold at T, or applies them at
+  its admission, so that its first frame publishes what the session's does.
+
+25. SPECDROP (NEGATIVE) AND IKV IN THE WINDOW (w1z16, w1z17; builds 262, 263; 5 November)
+- native_gate_join_specdrop (lockstep_join_specdrop.h, 4814e872; default off, with PEND): on every posed component whose session
+  record holds no kind 7 entry, the joiner clears the flags of the load's one-shot kind 7 specifications (+0xd8), so its first
+  BuildCache republishes nothing of the load; nothing freed, +0x1e8 and the lists' counts untouched.
+- w1z16 (build262) did not run its joiner: the hot join's IKV merge into this worktree during the run changed the live package
+  reader, which then refused build262's package (package_layout). Runs use the worktree's tools; merges only between runs.
+- w1z17 (build263 = 942882ad: the hot join's IKV, the skeletons' IK joints, section 62, plus specdrop and PEND):
+  ikv=98:16:0:5, specdrop=1:431522:112651:6232:312639:0. T+1 2 differ (176c95 and 176cef, motion): 800259fc's nav timing is
+  gone. But the window parts from there: 660 295 differ (w1z14: 10), 720 495, 780 1,171, 840 2,527, 900 4,290 (w1z14: 72),
+  ships of every faction (motion and the pathing banks' pending references). The census does not hash the view cache: without
+  the first-frame republication the joiner's views of 112,651 components keep the load's state, and the hot join's view restore
+  (VIEWP, GRAVP after the steps T+1 .. T+10) is built on that republication. Specdrop stays off; the one transient field it
+  removes is not worth a second view model.
+- IKV does not move the two fighters at T+1 (176c95, 176cef as before). Next: w1z18, build263 with PEND and without specdrop, the
+  window's baseline with IKV.
+
+26. THE WINDOW WITH IKV (w1z18, build263 with PEND, without specdrop; 5 November)
+- ikv=98:16:0:5. T+1 2 differ (176c95 motion, 800259fc nav timing, as w1z14/w1z15); 900 55 (motion 37, health 21, topology 9,
+  timing 4; 44 objects on one side only), from 72 (w1z14) and 74 (w1z15): the skeletons' joints are part of the window's residue
+  as of the J1 (j1-176: 900 55 -> 51).
+- The two fighters at T+1 with IKV (w1z17's watch): the weapons of the watched ship aim alike on both sides (JOIN_WATCHAIM rows
+  of 634 equal), yet 176c95's state after step T+1 differs most in its turn rate (bank 0 vector 5: (-0.428, 0.770, -0.031) on the
+  session, (-0.350, 0.871, -0.051) on the joiner; orientation rows by about 2e-3, position by 6e-5): its steering command in that
+  step differs. 176cef (velocity by up to 5.5 m/s, position by 0.16 m) differs in w1z12, w1z14 and w1z17, not in w1z13 and
+  w1z15: run to run on the joiner, so an input of its first step that depends on timing (an update order or a read across the
+  step's threads), not a value the package lacks.
+- 176c95's steering model after step T+1 (the hot join's JOIN_T1 rows, +0x1d0): (70.91, 70.91, 219.75), (0.309, 0.764, -1.005)
+  on the session, (-70.91, 70.91, 219.75), (-0.764, -0.764, 1.005) on the joiner; every other listed model alike. Not a draw:
+  ACTOR_RNG_ALL's agent and ship keys and key sets of step 634 are equal on both sides and no keyed scope drew in that step.
+- The slot ships after step T+1 (w1z18 PILOT_DUMP 634; 6c725 slot 1, 22bce slot 2, the session's attention view points): their
+  view slots' +0x40..+0x7f (object +0x120..+0x15f, +0x1a0..+0x1df: three rows and a position, 22bce's at (1024.5, -32.9,
+  709.4)) hold the session's transform in both views and zeros on the joiner; view 0's attention 9 against 8, 6c725's view
+  flags with 0x500000 more. 176c95 fights those ships; if its steering reads their view transform, the joiner reads zeros.
+  Slot 1's controller still returns +0x3f0/+0x5c8 to the load's 1.325/1.365 in step T+1 (the session 2.995/2.996). Next:
+  w1z19, the hot join's watch on 6c725, 22bce and 176c95 (their views at s, k, j and t).
+
+27. THE SLOT SHIPS AT T+1 (w1z19, w1z20, build264; 5 November)
+- The slot ships are ae79c, 7a8fe and 7a8dc (PILOT_SHIPS; 6c725, 22bce and 8c66e are their runtime IDs on the session and the
+  view points' IDs). w1z19 watched the runtime IDs as portable ones (a part and a missing object); w1z20 the right ones.
+  w1z19: T+1 3, 900 59; w1z20: T+1 3, 900 61 (176cef again, run to run).
+- Their published view poses (behind the views' pose pointers, JOIN_WATCH p=) are the session's at T+1 on the joiner, but for
+  single float ULPs of 7a8fe (y at 634, x at 635). The views' +0x40..+0x7f (section 26) is not the pose here (the pose pointers
+  point elsewhere): stale on the session (constant over 633..635), zero on the joiner, likely unread; no VIEWS section.
+- The slot ships' PlayerControllers after step T+1 (PILOT_DUMP 634): +0x3f0 and +0x5c8 are doubles, elapsed times: 31.70/31.72
+  (slot 1: T+1's time minus the session's start 7.083) and 16.95/16.96 (slot 2: since 21.833, its take) on the session,
+  0.05/0.06 on the joiner (since its load at T). The resume's pctl writes the session's at T; step T+1 sets them from a start the
+  package does not hold (no direct double store to either offset in the image: a block copy from elsewhere). Slot 2's
+  double-precision state +0x448..+0x4a0 and +0x550..+0x578 then differs in its low bits, its position by one ULP.
+- Slot 1's cached basis rows (+0x250..+0x268, the Agent's +0xc80..+0xc98): 2^-24 residues on the session (5.96e-08, 0.000345267
+  with its last bit) where the joiner's are exact (0, last bit apart). Slot 1's ship points almost exactly along an axis, so a
+  side test on those components is at its boundary; 176c95 (580 m from it) chooses the other side (section 26).
+- Slot 2's Player (P_2, which=4): 28 value words of +0x6a18..+0x6c40 hold the session's values (141.4, 184.8, 200, 7482.2,
+  8249.4, 6656, rotations) and zeros on the joiner (the P_k block, not carried).
+
+28. THE SLOT CONTROLLERS' STATE CARRIED (w1z21..w1z24, builds 265..269; 5 November)
+- The watch on the slot ships' controllers (the session at T against the joiner before the resume) and the resume's own
+  snapshots (gate.pilot_dump which 5/6, the slot controllers just before and after pctl is written; dump ticks {633,634}) name
+  what pctl missed: the current transform +0x60..+0x9f and its copies +0x100..+0x13f and +0x320..+0x35f, three double
+  quaternions (+0x428..+0x440, +0x530..+0x548, +0x5d0..+0x5e8: the session's with their history's residues, (0,0,0,1) after a
+  load, the source of the cached rows' 2^-24), the last update's time +0xf0, the step's dt +0x3c0, +0x3e8..+0x420, +0x4d8/+0x4e0,
+  three -0.0 doubles a load leaves +0.0, and four factors +0x6f8..+0x710 (0.8, 0.8, 0.2, 0.8 against -1).
+- Why it matters [F: the hot join's JOIN_REFWATCH (hardware write watch), j1-187c]: in step T+1 the controller's transform check
+  0x1191740 compares the incoming transform with the stored previous one (+0x220..+0x258); on a mismatch the history reset
+  0x11914a0 sets the elapsed times +0x3f0/+0x5c8 to one step (the 0.05 of section 27) and rebuilds the cached rows.
+- w1z21 (build265: the current transform, +0xf0, +0x1c0/+0x1c8, +0x3e8): slot 1's cached rows and its Agent equal at T+1.
+  w1z23 (build267: every word above): slot 1's controller equal to the session's after T+1 but for its listener ID (no
+  reset, 31.70); T+1 2 (176c95, 800259fc), 900 55. But slot k's controller (made by the resume's rebuild with empty containers
+  +0x2b0..+0x318) runs a first update in step T+1 that builds them, and with w1z22's words its transforms came out 4 km off
+  (w1z21 without them: ULPs). w1z24 (build269: those words for slot 1 only): slot 1 as in w1z23, slot 2 at ULPs again; T+1 2,
+  900 59 (the window's 900 is 55..61 run to run).
+- 176c95's steering model after T+1: the first of its two +0x1d0 vectors is the session's since build265, the second still
+  apart, so its remaining input is not slot 1's controller.
+- native_gate_join_pctl (lockstep_join_pctl.h, f9718021; default off): the same words for X4's own PlayerController in any hot
+  join: the saver's package line join_pctl, written at the joiner's admission when its controller controls the same ship.
+
+29. THE STEERING BEHAVIOURS' DRAWS (w1z25..w1z27, builds 270..272; 5 November): T+1 1
+- w1z25 (the hot join's JOIN_REFWATCH on 176c95's steering model, ship +0x200 -> +0x40 -> +0xf10, at +0x1d0..+0x1ef): both
+  sides write the want vectors at the same site in step T+1 (0xed5ea8/0xed5eab, the active behaviour's update called from the
+  steering step), the second one's x 0.3086 on the session and -0.7635 on the joiner. The active behaviour was a
+  U::Path::SpiralBehaviour (0x2c4e3c0), which STEER did not know (its record's flag UNCARRIED0): the factory 0xec54b0 builds it
+  at 0x30 bytes with its creation time +0x20 (the weave's phase: sincos((now - +0x20) * k) in its update 0xed5d10) and a thread
+  RNG draw +0x28 (draw % 100 > 50: the spiral's direction). A loaded one has the load's time and its own draw, so the joiner's
+  fighter weaved the other way, and run to run differently (176cef, sections 21..28).
+- w1z26 (build271: STEER carries SpiralBehaviour): 176c95 equal at T+1; 900 46 (55..61 before; topology 9 -> 1). 176cef's active
+  behaviour was a DogfightBehaviour2 (0x90: DogfightBehaviour1's fields, +0x80 a drawn +-1, +0x88 its creation time),
+  uncarried. A scan of the factory finds six constructors that draw from the thread's RNG and that STEER did not know, each one's
+  fields read from its constructor: DogfightBehaviour2, CrazyIvanBehaviour, EvasiveRandomSteeringBehaviour,
+  ParallelPathSteeringBehaviour, FrontalCapitalCombatSteeringBehaviour, MiningBehaviour.
+- w1z27 (build272: all six carried): T+1 1 differs (800259fc's one-step nav refresh, section 24), every object's motion equal;
+  steer=10:10:0:0:0:0:0:0:0 (no unknown class); 900 44.
+
+30. AFTER T+1: THE MINERS (w1z27 captures, w1z28 watch span 30, build272; 5 November)
+- w1z27's captures: 660 2 differ (a Split miner 83e03, motion; 800231311ef0aee9 on the joiner only, the session's deleted: the
+  hot join's leaked references, RCNT), 720 29 (four miners, created ships' health around a fight), 780 30, 840 39, 900 44.
+- w1z28 (the hot join's watch with a 30-step span on the miners 83e03, 746ae, 84068, 8c581, all ShipMedium miner_solid with a
+  linear flight model, no STEER record): the controllers equal through T+30; the ship objects apart from the load on in the
+  words +0x3b4/+0x3bc (two floats: the session's 40.64/50.80, the joiner's an equal pair 63.50/63.50), +0xa10 (a float: 19.30
+  against -1), +0xa18 (a time: 7.083 against T), +0xc38 (a double: 0 against 1500), and +0xa78 (8c581) and +0x11a8 (84068).
+  83e03 at 657: the session sets +0xa18 to its time (39.933) and the Agent's +0xf34, the joiner keeps +0xa18 from 649 and sets
+  +0xf78; from 658 the Agent's path points (+0xad0..) part, so its motion differs by 660. A miner's object state the package
+  does not carry; with the hot join (its object sections).
+
+31. ECOS, SHPW AND RCNT IN THE WINDOW (w1z29..w1z31, builds 272..275; 5 November)
+- w1z29 (the hot join's JOIN_REFWATCH on the trader 83e03's object, span 30): of its words only +0xa18 is written in the span,
+  by 0x41a910 (callers 0x3fac6e <- 0xd0557c <- 0xcf98ad/0xcf6ad6 <- 0xcec1e9, and 0x3fe5fb <- 0x40d78b <- 0x89261c, the slot +0x18
+  of U::TradeFilterByCanTradeWith): the session at 649, 657, 658, the joiner at 649, 658, 659. 83e03 runs a TradeRoutine order.
+  0x41a910 is the lazy update of a container's cargo and production (lockstep_ui_lazy.h): +0xa18 its "brought up to date" time.
+- ECOS (section 64, 213df913; native_gate_join_ecos, default off): every Station's, BuildStorage's and ship's economy schedule
+  (+0xa38 next run, +0xa40 last; a load draws the next from the last, lockstep_economy_load.h). w1z30 (ECOS and the hot join's
+  RCNT on): ecos=1:15:13297:0 (only 15 containers apart), rcnt=1:855:4380:5:2; T+1 1, 660 1 (83e03 only; 800231311ef0aee9 gone
+  with RCNT), 720 29, 900 43 (44 without), no topology left. 83e03 still a step late from 657. (The 64th section overflowed the
+  reader's 64-bit seen mask: 30a9d760 widens it to 128 bits.)
+- SHPW (section 65, 0afed698; native_gate_join_shpw, default off): six words of every ship's object a load leaves at defaults
+  (+0x3b0, +0x3b8, +0xa10, +0xa18, +0xa78, +0xc38). w1z31 (SHPW, ECOS, RCNT): shpw=1:9622:988:0; 83e03's words equal from T, its
+  order still a step late at 657, so not its own state; 660/720 as w1z30, but 840 50 and 900 58 with 8 topology (176c95's parts:
+  it dies on one side). Negative: the save writes a container's state as of T without restamping it, so the load's stamp T is
+  the consistent one and the session's older stamp makes the joiner integrate again. SHPW stays off. Next suspect (the hot
+  join): the trade offers themselves (the save's trade entries' IDs, order and reservations).
+
+32. TRDN IN THE WINDOW: 660 EQUAL (w1z34, build276; 5 November)
+- The hot join's TRDN (section 66, 19a28e47; native_gate_join_trdn): a container's next trade offer update +0x928, which the save
+  does not keep (-1 after a load: the first query rebuilds the station's offers; j1-198 with UI_LAZY_ROW: the hot join's
+  trade.find.free at 639). w1z34 (TRDN, ECOS, RCNT): trdn=1:427:12885:0; T+1 1 (800259fc's one-step nav refresh), 660 0 (the
+  trader 83e03 no longer a step late), 720 24, 780 24, 840 28, 900 30 (43 before; no timing or topology left).
+- What is left at 720: five ships created near 700 without a parent (8002c66a.., 8002c6b7.. ShipMedium; 8002c686.., 8002c6ad..,
+  8002c6fd.. ShipSmall), their health, and their shield generators', weapons' and turrets' motion: ships under construction
+  (the hot join: the shipyard's build module counter +0x350 five higher on the joiner, j1-200).
+- The lanes' crash notes stopped reaching the runs at 200 MB (the lane tool copies a changed profile file only below that,
+  lanes/<release>/dev/x4lane.py): rotate x4lan-crash.txt in the lane profiles when it grows.
+
+33. THE JOIN DEFAULTS AND JOBG: THE WINDOW EQUAL THROUGH 780 (w1z35..w1z37, builds 276..278; 5 November)
+- The join overlays (native_gate_join_overlays.py JOIN_DEFAULT_ON) now default rcnt, trdn, ecos, passes_admit, pctl and jobg on
+  savers and joiners unless a --set names them. w1z35 (the defaults without a --set, ECOS still off): every default applied
+  (passes_admit=1/1, jpctl written, rcnt and trdn records written); 660 equal, 900 36 against w1z34's 30 with ECOS (a due time):
+  ECOS joined the defaults. w1z36 (build277, the hot join's NPCA merged and off): as w1z34, 900 30.
+- The hot join's JOBG (section 68, f13f383c): a job's own generator word (job+0x528, the explicit state of Generate 0xc841b0 for
+  the job spawn 0xf06650: the macro choice draws from it, SPAWN_RNG's loadout key is seeded from it), which the save does not
+  keep (a load reseeds it from the job ID). The window's five ships near 700 were such a spawn: 13 keyed Generate calls between
+  660 and 720 on both sides, the joiner's choices from the reseeded word. w1z37 (build278, the defaults and jobg):
+  jobg=1:98:1113:0; T+1 1 (800259fc's one-step nav refresh), 660, 720 and 780 equal with no one-sided object, 840 4, 900 4.
+- Left at 840: a fight in zone 668, the Paranid destroyer 79009 (motion) and the Kha'ak fighter 829e5 with its two lasers
+  829e9/829ea (health): a combat outcome parting between 780 and 840.
+
+34. THE FIGHT AT 840: THE DESTROYER'S BRAKING DISTANCE AT 794 (w1z38..w1z43, builds 278..279; 5 November)
+- w1z38 (watch span 210 on 79009 and 829e5): the watch rows' published pose stays equal to 843 (low attention: the view's pose
+  is not republished), the census at 840 has 79009 about 90 m apart. JOIN_WATCHRAW: the destroyer's agent +0x4c8 is written once,
+  at 795, 1337.98 on the session and 1394.08 on the joiner.
+- The field (lockstep_motion_watch.h's flight parameter slots, agent + i*0x1a0, the third copy at agent+0x340): slot +0x188,
+  written by the slot refresh 0xea1e80 (OnUpdateEngineParameters and the navigation controller's slots) at 0xea2126 from
+  0x6de670(ship, forward speed, slot +0x2c, slot +0x24 max speed, slot +0x4): a braking distance; the refresh's forward speed is
+  the NavigationController's velocity getter 0xea6280 dotted with its transform's forward axis.
+- w1z39/w1z40 (native_gate_motion_watch with orders, then its digest: every tick, the order/target/event rows at once): 79009 is
+  equal through 797 in every digest group; the slot refresh at 794 (boost on, through an event, 0x99c5b0) is the same call on both
+  sides; at 798 its Linear model plan and pathing state part, at 837 its new target point (a point in zone 668: x 9093.5 against
+  9216.1) follows, at 891 the boost/travel stops (session both at 891, joiner travel at 891 and boost at 896). 829e5 parts at 913.
+- w1z41 (refwatch on the three +0x188 copies and the controller's velocity cache): only the written slot at 794 (0xea2126 and
+  0xea2990, 1337.98 against 1394.08) and its copy at 795 (0xe84a67); the velocity cache ctrl +0xa0 is zero on every side (the
+  getter does not use it: the pathing state's space ID +0xb0 is the ship's zone, the reference +0xb8 0) and the getter copies
+  slot[g_PathingStateBufferIndex] +0x40..+0x60 directly. The pathing slots are equal on the joiner and session client 1 in the
+  same physical order, including which one is current (the two session clients hold them in opposite order); the destroyer's
+  state updates every 5 ticks (710, 715 .. 793). So the forward speed is equal.
+- What differs on the ship object from T on: +0xa14 (a float, -1 on the joiner, 0.0 on the session) and its stamp +0xa18 (T
+  38.733 against 7.083); obj +0xe40 (a count one higher on the joiner). w1z42 (refwatch from the load on): the load writes -1
+  (0x3efad2, 0x80379c) and stamps +0xa18 (0x41a97e); the refresh at 794 recomputes +0xa14 on the joiner only (0x6dc610 ->
+  0x6db200 -> ship vfunc +0x1ff0 = 0x3564f0: when < 0, the sum over the container at +0xa8 times a config factor) to 0.0, the
+  session's value. Not the cause: the value is equal.
+- The braking function's boost term (0x6de939..0x6de99d): the ship's engine (0x6d6d80) +0x2e0/+0x2e8 boost times and the macro
+  durations (0x4bb560/0x4bb680/0x4bb710: +0x9a0, +0x99c, +0x994). w1z43 (join watch on the three engines 79037..79039; the save
+  keeps only their position): +0x2e0 -1 and +0x2e8 27.673 on both sides from T (the load restores 27.673), 42.583 at 710 on both.
+  Not the cause either. Watching the engines with the join watch moved 900 from 4 to 17 (its vfunc calls touch the engines).
+- Next: execution breakpoints (the hot join's refwatch pseudo ID fffffffffffffffe, rows with rsi, rcx and xmm0..xmm3 since
+  98dbc272) on the call 0xea2118 (its float arguments), its return 0xea211d (the distance), 0x6de860 (the deceleration factor)
+  and 0x6de987 (the remaining boost time), filtered by the destroyer's controller (r12) and ship (rsi).
+
+35. ENGR: THE WINDOW EQUAL THROUGH 960 (w1z44..w1z49, builds 280..283; 5 November)
+- w1z44 (execution breakpoints on the braking distance call 0xea2118, its return and two points inside 0x6de670): every ship's
+  refresh hits them; the 16384-row buffer was full by 768. 0a08b309: an execution breakpoint can keep only the hits where a
+  register holds a watched object, its controller or its agent ('fffffffffffffffe:<k>:<rva>:1').
+- w1z45 (filtered to the destroyer 79009): at 794 the call's arguments (slot +0x4 31.212, forward speed 179.374, slot +0x2c
+  -40.318, max speed 847.671), the deceleration factor (1.0) and the remaining boost time (4.0) are equal on both sides; only
+  the result differs (1337.98 against 1394.08). w1z46 (four points in the integration loop 0x6dea22..0x6deb78): all 36 rows
+  equal; the difference is the loop's start value, the boost term 0.5 * (xmm8 + xmm7) * 4.0 with xmm8 = xmm15 / max(c+0x2f8,
+  c+0x330, 1.0) for the component c that 0x6d6d80 finds first in the ship's attachment container (+0xa8).
+- w1z47 (rbx_obj=, 04f37742): c is the same on both sides, the engine 79037 (U::Engine, vtable 0x2ad58f8), but its +0x2f8 is
+  4.056 on the session and 3.576 on the joiner at 794; all three engines get +0x2f0 = 46.783 and these factors at the boost
+  start. w1z43's rows (re-read): before 794 +0x2f8 is 1.0 on both sides, +0x2f0 37.233 on the session and 38.733 = T on the
+  joiner. w1z48 (refwatch from the load): 0x54e3a0..0x54e507 integrates the factor toward its target at a macro rate over
+  dt = now - +0x2f0 and stamps +0x2f0 = now (0x54e556, through 0x6dc8e3); the load itself runs that update (0x6cffba <-
+  0x9bd5f9) and stamps T. At 794: dt 9.55 against 8.05, and 1 + 0.32 * dt gives 4.056 and 3.576 exactly.
+- The stamp belongs to the value the save does not integrate, so it is carried (the load-time split: carry a past event's
+  stamp, not the base time of a value the save writes as of T). ENGR (section 70, 16dd6d4c; native_gate_join_engr): every
+  U::Engine's +0x2f0 and +0x2f8 by portable ID, written at the admission where they differ.
+- w1z49 (build283, the defaults, jobg and engr, no join watch): engr=1:22288:197:0; T+1 1 (800259fc's one-step nav refresh);
+  660, 720, 780, 840, 900 and 960 equal with no one-sided object (w1z37 without ENGR: 840 4, 900 4). 1020: two fixture ships
+  in zone 0x13e75f (176a13, 176c59 motion), the hot join's parting at 1011 (fixture 176ad5, its pathing state by one ulp;
+  j1-241: its engines carry the same load stamp, their factors stay 1.0). ENGR joined the join overlay defaults.
+- Also found on the way: the fixture 176ad5's +0x3b0 differs from T (626.8 against 208.9; the engine parameter refresh
+  rewrites it), but carrying it alone (native_gate_join_shpw_words=1, j1-240) did not move 1011; the Steering model's
+  padding +0xb4..+0xb7 is now out of the motion watch digest (j1-233/234); all 14 avoidance contacts of 176ad5 are equal at
+  1008..1012 (contact_fnv=, j1-238).
+
+36. THE SHAPE REFRESH: THE WINDOW EQUAL THROUGH 1020 (w1z50, build284; 6 November)
+- The hot join's native_gate_join_shape_refresh (b6bcd674; j1-243..250): a fixture body's compound shape is a snapshot of its
+  parts that XPhys::Body_UpdateShape 0xbff80 refreshes at a randomized due the package does not carry; the joiner refreshed
+  every holder at T+1 (shape_initial) while the session kept older snapshots, so a moving part sat elsewhere and a bullet hit
+  another surface (176ad5 at 1011: same bullet, ray and cast times, another fraction and normal). Every client now forgets its
+  fixture holders after T+1 and refreshes them all at T+2 with the keyed draw.
+- w1z50 (w1z49's settings plus the shape refresh): 660, 780, 900, 960 and 1020 equal (w1z49: 1020 two fixture ships in
+  0x13e75f, 176a13 and 176c59, motion). 1080 and 1140: 19 differing, health only: seven small ships with one weapon each and
+  five medium ships, children of 0x1aed9..0x1aedb, 0x1dd82..0x1dd84 and 0x1b4ad..0x1b4b1. The shape refresh joined the join
+  overlay defaults.
+
+37. THE DOCKED SHIPS' SHIELDS AT 1080: A CENSUS ARTEFACT (w1z51..w1z55, builds 284..286; 6 November)
+- w1z51 (WORLD_HEALTH rows 634..1080 on five of the 19): the docked ships have no shield group (+0x290 null) until 1059;
+  then one whose changed time +0x70 is 7.083 on the session and 38.733 = T on the joiner, value and maximum equal (888 of
+  888), delay and rate equal from 1060. w1z52 (SHPW with only the ships' lazy stamp +0xa18, shpw_words=8): written on 9,163
+  ships, the shield time unchanged; the window stays equal through 1020, so +0xa18 alone is harmless and w1z31's regression
+  came from SHPW's other words.
+- w1z53 (refwatch on 778b6 +0x290): at 1059 0x51f240 (from 0x3f5e5d) sets the ship's group through 0x4d6270(parent isa
+  0x23, ship), which first searches the parent's list +0x5d8 for a group keyed by the ship's runtime ID. SHGR (section 71,
+  7dd5a90c; native_gate_join_shgr) carried those lists' groups: w1z54 shgr=1:78:92159:3, the docked ships' time unchanged
+  (their groups are new at 1059) and the 78 writes broke a created object's turrets and shield generators (660: 11
+  differing). Negative; SHGR stays off.
+- The residue is a full shield's changed time, which carries no state (the lazily computed value is the maximum whatever it
+  is, and the first hit overwrites it); the census's canonical shield form left an already-full shield's time in the hash.
+  5dcfe1d1 with the hot join's fix bdc5e360 (an already-canonical shield is not counted again, NaN is not full): an
+  already-full shield hashes as its maximum with changed time 0. w1z55 (build286): 1080 has no difference outside the
+  fixture zone 0x13e75f. The run hit the intermittent fixture race early (780: 176ad5, 176b36, 176c95; 900 17 with
+  topology), the window's only residue now (the hot join's 872 thread).
+
+38. BNDS IN THE WINDOW; THE FIRST EQUAL J1 (w1z56, build287; 6 November)
+- The hot join's BNDS (section 72, f893643a; j1-258..266): an AI script's park position (move.hack.station.storage: the
+  target's size / 2 + the ship's size * 2.5) put ShipMedium 0x82335's move point of 962 an ulp apart, from station 0x593cc's
+  radius: a station's bounding structs (+0xc90, +0xcc0, +0xcf0: centre, extents, radius) were grown module by module on the
+  session and rebuilt in one pass by the joiner's load. BNDS carries them (the three per-process words after each radius
+  left out). j1-267 (CODE, JOBG, ENGR, the shape refresh, BNDS): JOIN_REPLAY verdict equal over 633..1799, the first fully
+  equal J1.
+- w1z56 (w1z55's settings plus BNDS): bnds=1:589:789:0; no difference outside the fixture zone 0x13e75f at any capture
+  through 1140 (this run hit the intermittent fixture race at 780: 176b36, 176cb3). BNDS joined the join overlay defaults.
+
+39. CODE BY DEFAULT; THE FIXTURE RACE IN THE WINDOW (w1z57..w1z60, build287; 6 November)
+- w1z57 (w1z56 plus CODE): code=1:1:14a2e:1f000, no difference outside the fixture zone 0x13e75f through 1140; CODE joined the
+  join overlay defaults (rcnt, trdn, passes_admit, pctl, ecos, jobg, engr, shape_refresh, bnds, code).
+- The fixture race: in the window it parts at varying ticks (w1z55..57 by 780, w1z58 at 900 with other ships first); the
+  hot join's J1 hits it at exactly 872 in about one run in five (j1-267..282 with BNDS: 10 equal, 3 at 872, 2 at 1042, 1
+  crash). w1z59 (the motion watch digest on the whole zone, native_gate_motion_watch_zones): 176b36 parts first at 721 in
+  its pathing state alone (target, path, model_ext, flight equal), 176cb3's target follows at 722, 176ad5 and 176c95 at
+  747/748; the same signature as J1's 872 (j1-274: 176b36's position x and linear velocity an ulp or so apart, angular
+  velocity equal).
+- w1z60 (hardware write watches on 176b36's pathing slots' linear velocity from T): no race; the census equal at 780, 900,
+  1020 and 1080, the first fully equal window run with all defaults. The watch's exception round trips slow the very writes
+  in question, which fits a race on the timing of the pathing writes against the frame (a candidate: the double-buffered
+  pathing state, slot[index] read and slot[index2] written, flipped at 0xeac1d9/0xeac1df, and a pathing job finishing
+  after the flip).
+
+40. THE FIXTURE RACE'S INPUT IN THE WINDOW: A SLOT SHIP AN ULP OFF (w1z61..w1z63, build287; 6 November)
+- w1z61 (the zone digest with flight, agent and params rows and the motion watch orders) refused: "motion watch orders
+  refused", the orders' SetTarget patches do not arm together with flight_diag's Steering hook. w1z62 and w1z63 (without the
+  orders, trace 705..790): both raced (176ad5 first at 747; 176b36 first at 721). The parting step's recorded inputs (before,
+  input, dt, the RNG words, limits, params) are equal on both sides; the model differs only in never-written padding
+  (+0xb4..+0xb7, +0x118, +0x1c8, +0x274.., +0x320..); params +0xe8 differs between the two session clients too (noise).
+- The one differing input is the avoidance cache's entry for runtime 0x22bce, from the first logged tick (660) to the end, in
+  every fixture actor's list: the slot ship 0x7a8fe (RADAR_OBJECT: XVP-890, ship_arg_s_scout_01_a, owner player), whose
+  PlayerController's cached transform and pathing state carry its rotation a few ulps apart from its first digest (635) on
+  and its position an ulp apart (z -1416.4088 against -1416.4089 at 720). The player ship 0xae79c is equal.
+- That is the residue lockstep_pilot_join.h records for w1z21/w1z23: a slot k (k >= 2) controller is rebuilt by the resume
+  with empty containers +0x2b0..+0x318, builds them in its first update in T+1, and its transforms come out ulps from the
+  session's. In the fixture dogfight the fixture ships avoid that slot ship, so the race fires when one of them steers close
+  (the tick and the ship vary).
+
+41. THE SLOT-K WORDS ARE NEUTRAL; THE FIXTURE RACE HAS TWO OUTCOMES (w1z64..w1z66, build288/289; 6 November)
+- w1z64 (build288, native_gate_join_slotk_quats: slot k also takes the session's three PlayerController double
+  quaternions): the quaternion words are equal after the resume (9 differed in w1z63), 29 other words still differ, 36 after
+  T+1 (57 in w1z63); census 660 0, 780 2, 900 4, 1020 12, 1080 15; 176b36 first at 721.
+- w1z65 / w1z66 (build289 = build-hj20k, native_gate_join_slotk_words, a mask of the slot-1-only word groups slot k takes):
+  mask 29 (the quaternions, +0x3f8..+0x420, +0x4d8/+0x4e0, the factors +0x6f8..+0x710) leaves 17 words apart after the
+  resume, mask 63 (all, with dt +0x3c0 and the transform copy +0x320..+0x358) 8 (+0x18, the containers +0x2d0/+0x308/+0x310,
+  +0x3c8, +0x670, +0x718, +0x788). After T+1 the same 36 words differ in all three runs, and the joiner's digests of 0x7a8fe
+  are bit-identical in w1z64, w1z65 and w1z66 over 634..900: these words do not make the slot ship's ulps.
+- w1z65 was equal at 660, 780, 900, 1020 and 1080, the second fully equal window run; w1z66 equals w1z64 tick for tick. The
+  race did not fire in w1z65 although 0x7a8fe was the same ulps off as in the others.
+- 176b36's step at 721 has exactly two results over w1z62..w1z66: the session's (w1z62, w1z65) or one diverged state that is
+  bit-identical in w1z63, w1z64 and w1z66 (linear velocity a few per cent of the step's change apart, z 12.1358 against
+  12.1495; not ulps). Every recorded input of that step is equal in all five joiners: before, input, dt, the time argument,
+  the TLS time and view, the flags, the RNG words, limits, params and both avoidance lists (0x7a8fe's ulp-off entry
+  included); the model differs only in never-written words (+0x118 and +0x1c8 hold stale heap addresses in some processes,
+  sessions included). +0x25c and +0x26c are 0.5 on every session client and 0 on every joiner, race or not.
+- No gate row of 600..720, nor any row without a tick, is constant within the race runs and within the calm runs and different
+  between the two groups; the first such row is 176b36's own digest at 721. w1z62 raced later instead (176ad5, actor 3, at
+  747), w1z65 not at all.
+- J1 races on the same ship at 872 (j1-293/294; j1-291/292 equal) with the same save tick 633, so the race is not one world
+  event at a fixed tick. The candidate selector is the joiner's wall-clock time since its load: an asynchronous job started
+  by the load (a model or collision level of detail, a navigation build, a cache the steering behaviour consults) that has or
+  has not finished when a ship first consults it. Test: native_gate_join_driver.py replay --hold-tick H --hold-seconds S holds
+  the permits after the joiner's report of tick H once (smoke 1fba38a7); queue w1z67..w1z72 replays w1z66's joiner again,
+  four times with 30 s at 640 and twice without.
+
+42. THE JOINER IS DETERMINISTIC PER SESSION; THE SELECTOR IS IN WHAT THE SESSION WROTE AT T (w1z67..w1z73; 6 November)
+- runJoinerOnly.sh (.local/census) replays a finished run's joiner again from that run's journal and join files (lane b1
+  alone). w1z67..w1z72 replay w1z66's joiner six times, four with a 30 s wall-clock hold after its report of tick 640
+  (replay --hold-tick 640 --hold-seconds 30) and two without: all six give the same race, 176b36's diverged state at 721
+  bit-identical to w1z63/64/66's, census 4 at 900. w1z73 replays w1z65's joiner: equal at 721, census 0 at 900. The
+  outcome is fixed by the session run; not timing on the joiner, and not the wall-clock time since its load.
+- The session runs agree with each other in every digest and their packages compare equal (native_gate_join.py compare
+  across runs: equal, portable content). Their journals differ only in the real clock (session clients 1 and 2 differ in
+  it too and agree, so it does not reach the world), in early pilot input words (ticks 2..57) and in the join announcements.
+  Their saves (j633.xml.gz, 8.0 million lines, the same size) differ in 679,000 lines, nearly all order: listener lists,
+  hash-ordered part lists, renumbered list references.
+- In 176b36's temporary zone only two variant patterns occur, neither the race's: the animated parts' order (two hash
+  orders; w1z62, w1z64 and w1z66 against w1z63 and w1z65) and the list reference numbering (the lists empty in every save).
+  Universe-wide 141 lines split the race saves from the calm ones, listener orders of ships elsewhere nearly all; with
+  two calm and three race saves a two-variant item does that by chance one time in sixteen.
+- Working hypothesis: the joiner's heap order. Each session writes its save in its own order, the joiner allocates in that
+  order, and something 176b36's step reads in pointer order comes out in one of two relative orders; the session clients
+  load the same snapshot, allocate alike and agree (the tick-187 loadout maps were this class). Fewer races with the digest
+  and watch diagnostics in J1 (x4mods-28: 1 of 8 against 7 of 12) would then be an allocation effect, not timing.
+- Next: w1z74/w1z75 replay the race and the calm joiner with execution breakpoints at the steering entry from step 721,
+  peeking the pathing slot (to find 176b36's call) and 0x180 bytes of its behaviour (the model's +0x70/+0x78), unrecorded so
+  far.
+
+43. THE RACE INSIDE 176b36's STEP: LEAD PURSUIT READS ITS TARGET'S STATE OF THE SAME PASS (w1z74..w1z87; 6 November)
+- Execution breakpoints (native_gate_join_refwatch with peeks, armed from step 721; native_gate_join_watch_span 100 so the
+  watch dumps reach 720) in replays of the race joiner (w1z66's) and the calm one (w1z65's); both outcomes reproduce with
+  the breakpoints set. Each pair finds 176b36's call by its pathing slot at the Steering entry (0xec72b9, r14) and its
+  behaviour pointer (r12, unchanged through the callees).
+- At the entry the behaviour (ChaseBehaviour, vtable 0x2c4e840; first 0x100 bytes) and the Agent's +0xf00..+0xf7f are
+  byte-identical, but for heap pointers in the same relative order (w1z76/77).
+- After the step writes slot +0x60/+0x70 (0xec8b38) one word differs: model +0x1d4, the y of the steering vector at
+  model +0x1d0, 7.967 against 8.190 (w1z78/79). It is equal after behaviour vt+0xb0 (0xec84b1) and apart after vt+0x88
+  (0xec84c1) (w1z80/81). vt+0x88 0xeccc90 dispatches on the Agent's +0xf20/+0xf18 (null) and model +0x318 (1) to the
+  +0x90 thunk 0xecd9f0 (w1z84/85: entered with the vector equal), i.e. ChaseBehaviour's +0x98 0xed68e0, which at 0xed6b37
+  hands over to 0xed1d10 (the dogfight steering) and leaves through its epilogue (w1z82/83: no hit at 0xed6d44).
+- 0xed1d10 is lead pursuit: the target by the handle model +0x300 (0x6c70d in the session and both joiners: HOY-237,
+  ship_xen_s_fighter_01_a, saved 176cb3 = FLIGHT actor 10, whose own attacker is 176b36) through 0xeadc70, which
+  (x4mods-28's reading) holds the manager's read lock, finds the target's Agent in a std::map and copies its transform and
+  velocities from the Agent's bank at g_PathingStateBufferIndex (0x38f4ee4, flipped once a frame by 0xeac170); the aim
+  point is the target position plus min(distance / beh+0x64, 3) times the target's linear velocity.
+- The diverged velocity of 176b36 at 721 is the session's plus (+0.0187, -0.0204, -0.0137); 176cb3's own step at 721
+  changes its velocity by (+1.879, -1.996, -1.054): about 1% of it, every component with its sign. In the race joiner
+  176b36 reads the target's state of the same pass: the bank it reads holds what 176cb3 has just written. Candidates: the
+  two steps fall on different sides of a flip, a write into the read bank, or 176cb3 stepping in an earlier phase than
+  176b36; the order of the two steps is what the joiner's heap order (section 42) can change.
+- Smoke 73c00bc0 adds to the FLIGHT rows each fixture step's place among all Steering updates (seq=<entry>/<exit>), its
+  thread, the read and write selectors at entry (banks=) and the slot's offset from the Agent (slot=): next, a session run
+  and the race and calm joiners with it.

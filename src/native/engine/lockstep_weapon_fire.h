@@ -25,13 +25,19 @@
  * natively (counted). Pins: the vfunc head and the fire loop's slot-998 call;
  * entries swapped by CAS of the data pointer; every gate tick re-checks them
  * (stop reason 132); stop restores. */
+/* WFIRE_OWN_PLATFORM (linux/gate_weapon_fire.h): the domain, the per-tick ordinals, the counters and the status are
+ * shared; the shot's signature, the slots, the pins and the swap are the platform's own. */
 #define WFIRE_DOMAIN 0x5746495245534854ULL /* "WFIRESHT" */
+#ifndef WFIRE_OWN_PLATFORM
 #define WFIRE_FN 0x8185b0u
 #define WFIRE_ENTRIES 2u
+#endif
 #define WFIRE_STOP_REASON 132u /* 131 is the command order module's */
 #define WFIRE_ORDINALS 4096u
+#ifndef WFIRE_OWN_PLATFORM
 static const unsigned wfire_entries[WFIRE_ENTRIES]={0x2b6a1a8u,0x2b70840u}; /* U::Weapon, U::Turret slot 998 */
 typedef double (*wfire_fn)(void *,void *,void *,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
+#endif
 static int wfire_installed,wfire_restored;
 static unsigned wfire_swapped;
 static uint64_t wfire_keyed,wfire_native,wfire_unmapped,wfire_tick=UINT64_MAX,wfire_frame_keyed,wfire_table_full;
@@ -46,6 +52,7 @@ static uint64_t wfire_ordinal(uint64_t key) {
     }
     ++wfire_table_full;return 0;
 }
+#ifndef WFIRE_OWN_PLATFORM
 /* One shot: the keyed scope around the original (testable with any original and word). */
 static double wfire_run(wfire_fn original,uint64_t *rng,void *weapon,void *a2,void *a3,uint64_t shot,uint64_t a5,uint64_t a6,uint64_t a7,
                         uint64_t a8,uint64_t a9,uint64_t a10,uint64_t a11,uint64_t a12) {
@@ -117,6 +124,7 @@ static void wfire_restore(void) {
     for(unsigned i=0;i<WFIRE_ENTRIES;i++) if((wfire_swapped&(1u<<i)) && wfire_swap(i,(void*)wfire_shot,image+WFIRE_FN)) wfire_swapped&=~(1u<<i);
     if(!wfire_swapped) {wfire_installed=0;wfire_restored=1;}
 }
+#endif
 static int wfire_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"installed=%d frame=%llu keyed=%llu total_keyed=%llu native=%llu unmapped=%llu table_full=%llu restored=%d stage=%s failures=%lld",
         wfire_installed,(unsigned long long)stats.issued,(unsigned long long)(wfire_tick==stats.issued?wfire_frame_keyed:0),

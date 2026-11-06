@@ -141,11 +141,38 @@ static uint64_t nmesh_generated,nmesh_regenerated,nmesh_join_builds,nmesh_free_b
                 nmesh_max_pending,nmesh_tls_set,nmesh_tls_inits,nmesh_tls_missing,nmesh_receipt_builds,nmesh_unkeyed,nmesh_gated,
                 nmesh_pre_gate,nmesh_released;
 static uint64_t nmesh_receipt=0xcbf29ce484222325ull;
+/* Hot join (lockstep_join.h NMESH): every build term the receipt folded, sorted, each once (every client), and a joiner's
+ * catch-up: the session's terms, each left out of the fold once at the joiner's joins up to nmesh_skip_until. A joiner's load
+ * builds the helpers the session built long before (j1-141: the session's sixteen at ticks 1..3 and 366, the joiner's twelve
+ * of them at 634), so its receipt started from the FNV basis and folded them; with the session's receipt adopted and those
+ * builds left out it reads as the session's. A later build folds on both (j1-141: 176b36 at 1144 on both). */
+static uint64_t *nmesh_known,*nmesh_skip;static unsigned char *nmesh_skip_used;
+static uint32_t nmesh_nknown,nmesh_known_cap,nmesh_nskip;static uint64_t nmesh_skip_until,nmesh_skipped;
 static const char *nmesh_stage="idle";
 static unsigned char *nmesh_tls_native(void);
 static nmesh_tls_fn nmesh_tls=nmesh_tls_native;   /* a test's own block */
 static int nmesh_fail(const char *why) {nmesh_stage=why;InterlockedIncrement64(&nmesh_failures);return 0;}
 static uint64_t nmesh_fnv(uint64_t hash,uint64_t value) {for(unsigned i=0;i<8;i++) {hash^=(value>>(8*i))&0xffu;hash*=0x100000001b3ull;}return hash;}
+static int64_t nmesh_term_find(const uint64_t *a,uint32_t n,uint64_t v) {
+    uint32_t lo=0,hi=n;
+    while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(a[mid]<v) lo=mid+1u;else hi=mid;}
+    return lo<n && a[lo]==v?(int64_t)lo:-1;
+}
+static void nmesh_known_add(uint64_t term) {
+    uint32_t lo=0,hi=nmesh_nknown;
+    while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(nmesh_known[mid]<term) lo=mid+1u;else hi=mid;}
+    if(lo<nmesh_nknown && nmesh_known[lo]==term) return;
+    if(nmesh_nknown==nmesh_known_cap) {
+        uint32_t cap=nmesh_known_cap?nmesh_known_cap*2u:64u;uint64_t *grown=realloc(nmesh_known,(size_t)cap*sizeof(*grown));
+        if(!grown) return;
+        nmesh_known=grown;nmesh_known_cap=cap;
+    }
+    memmove(nmesh_known+lo+1,nmesh_known+lo,(size_t)(nmesh_nknown-lo)*sizeof(*nmesh_known));nmesh_known[lo]=term;++nmesh_nknown;
+}
+static void nmesh_join_forget(void) {
+    free(nmesh_known);free(nmesh_skip);free(nmesh_skip_used);nmesh_known=nmesh_skip=NULL;nmesh_skip_used=NULL;
+    nmesh_nknown=nmesh_known_cap=nmesh_nskip=0;nmesh_skip_until=nmesh_skipped=0;
+}
 static uint64_t nmesh_us(LARGE_INTEGER from,LARGE_INTEGER to,LARGE_INTEGER frequency) {
     return frequency.QuadPart && to.QuadPart>=from.QuadPart?(uint64_t)((to.QuadPart-from.QuadPart)*1000000/frequency.QuadPart):0;
 }
@@ -299,13 +326,19 @@ static int nmesh_join_with(unsigned char *cache,uint64_t tick,double now,unsigne
     if(InterlockedCompareExchange64(&nmesh_failures,0,0)) return 0;   /* join_full, shutdown */
     /* The builds of this join, closed: their portable keys, folded order-independently. */
     if(nmesh_join_count) {
-        uint64_t sum=0;
+        uint64_t sum=0;unsigned folded=0;
         for(unsigned i=0;i<nmesh_join_count;i++) {
             unsigned klass=WORLD_KEY_NONE;uint64_t key=world_identity_key(nmesh_join_ids[i],&klass);
             if(klass==WORLD_KEY_NONE) ++nmesh_unkeyed;
-            sum+=nmesh_fnv(nmesh_fnv(nmesh_fnv(0xcbf29ce484222325ull,key),klass),nmesh_join_kinds[i]);
+            const uint64_t term=nmesh_fnv(nmesh_fnv(nmesh_fnv(0xcbf29ce484222325ull,key),klass),nmesh_join_kinds[i]);
+            nmesh_known_add(term);
+            if(tick<=nmesh_skip_until) {   /* a hot joiner's catch-up build of a helper the session had (lockstep_join.h NMESH) */
+                const int64_t k=nmesh_term_find(nmesh_skip,nmesh_nskip,term);
+                if(k>=0 && !nmesh_skip_used[k]) {nmesh_skip_used[k]=1;++nmesh_skipped;continue;}
+            }
+            sum+=term;++folded;
         }
-        nmesh_receipt=nmesh_fnv(nmesh_fnv(nmesh_fnv(nmesh_receipt,tick),nmesh_join_count),sum);nmesh_receipt_builds+=nmesh_join_count;
+        if(folded) {nmesh_receipt=nmesh_fnv(nmesh_fnv(nmesh_fnv(nmesh_receipt,tick),folded),sum);nmesh_receipt_builds+=folded;}
     }
     nmesh_join_passes+=passes;++nmesh_joins;nmesh_join_us+=us;if(us>nmesh_max_join_us) nmesh_max_join_us=us;
     return 1;
@@ -407,7 +440,7 @@ static void nmesh_reset_counters(void) {
     nmesh_generated=nmesh_regenerated=nmesh_join_builds=nmesh_free_builds=nmesh_waited=nmesh_deferrals=nmesh_held_deferred=0;
     nmesh_joins=nmesh_join_passes=nmesh_join_us=nmesh_max_join_us=nmesh_build_us=nmesh_max_build_us=nmesh_last_pending=nmesh_max_pending=0;
     nmesh_tls_set=nmesh_tls_inits=nmesh_tls_missing=nmesh_receipt_builds=nmesh_unkeyed=nmesh_gated=nmesh_pre_gate=nmesh_released=0;
-    nmesh_receipt=0xcbf29ce484222325ull;nmesh_restored=0;
+    nmesh_receipt=0xcbf29ce484222325ull;nmesh_restored=0;nmesh_join_forget();
 }
 /* Under the lock: the mode's first state. 'sync' starts open with the gate waiting for the thread's arrival (or the
  * load's request); 'observe' never closes. */
@@ -461,6 +494,21 @@ static void nmesh_restore(void) {
 }
 static const char *nmesh_mode_name(void) {return nmesh_mode==NMESH_SYNC?"sync":nmesh_mode==NMESH_OBSERVE?"observe":"off";}
 static const char *nmesh_gate_name(void) {return nmesh_gate==NMESH_GATE_ARRIVED?"arrived":nmesh_gate==NMESH_GATE_FORCED?"forced":"wait";}
+/* Hot join: the receipt, its build count and the folded terms ('sync' only; the saver's package). */
+static int nmesh_join_state(uint64_t *receipt,uint64_t *builds,const uint64_t **terms,uint32_t *n) {
+    if(!nmesh_installed || nmesh_mode!=NMESH_SYNC) return 0;
+    *receipt=nmesh_receipt;*builds=nmesh_receipt_builds;*terms=nmesh_known;*n=nmesh_nknown;return 1;
+}
+/* A joiner's admission: the session's receipt and count, its terms left out once each at the joins up to until. */
+static int nmesh_join_adopt(uint64_t receipt,uint64_t builds,const uint64_t *terms,uint32_t n,uint64_t until) {
+    if(!nmesh_installed || nmesh_mode!=NMESH_SYNC) return 0;
+    uint64_t *skip=n?malloc((size_t)n*sizeof(*skip)):NULL;unsigned char *used=n?calloc(n,1):NULL;
+    if(n && (!skip || !used)) {free(skip);free(used);return 0;}
+    if(n) memcpy(skip,terms,(size_t)n*sizeof(*skip));
+    free(nmesh_skip);free(nmesh_skip_used);nmesh_skip=skip;nmesh_skip_used=used;nmesh_nskip=n;nmesh_skip_until=until;nmesh_skipped=0;
+    for(uint32_t i=0;i<n;i++) nmesh_known_add(terms[i]);
+    nmesh_receipt=receipt;nmesh_receipt_builds=builds;return 1;
+}
 /* The receipt for the declared state ('sync'). */
 static int nmesh_frame_text(char *out,size_t cap) {
     if(!nmesh_installed || nmesh_mode!=NMESH_SYNC) return 0;

@@ -1076,6 +1076,44 @@ class SnapshotProbeTests(unittest.TestCase):
             self.assertEqual(self.lua.globals().loads,0)
             self.assertTrue(any('player timer refused' in line for line in self.lua.globals().logs.values()))
 
+    def test_warp_exit_arms_on_the_linux_gate_only(self):
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_warp_exit=true
+          local gate=package.loadlib('gate')();calls=0
+          gate.platform=function() return 'linux' end
+          gate.warp_exit=function(...) assert(select('#',...)==0);calls=calls+1;return 1 end
+          gate.warp_exit_status=function() return 'installed=1 restored=0 calls=1 failures=0 state=1 pin=1 stage=armed' end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().calls,1);self.assertEqual(self.lua.globals().loads,1)
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false;update()')
+        lines=list(self.lua.globals().logs.values())
+        self.assertTrue(any('WARP_EXIT_ARMED' in line for line in lines))
+        self.assertTrue(any('WARP_EXIT tick=1 installed=1 restored=0 calls=1' in line for line in lines))
+        self.lua.execute('state.active=0;state.reason=1;update()')
+        self.assertTrue(any('WARP_EXIT_STOP installed=1' in line for line in self.lua.globals().logs.values()))
+        # Windows keeps its own order: nothing to arm, no status lines.
+        self.setUp()
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_warp_exit=true
+          local gate=package.loadlib('gate')()
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,1)
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false;update()')
+        self.assertFalse(any('WARP_EXIT' in line for line in self.lua.globals().logs.values()))
+        for config in ("X4LAN_CONFIG.native_gate_warp_exit='order'","X4LAN_CONFIG.native_gate_warp_exit=true;native=0"):
+            self.setUp()
+            self.lua.execute(config+'''
+              local gate=package.loadlib('gate')()
+              gate.platform=function() return 'linux' end
+              gate.warp_exit=function() return native or 1 end
+              gate.warp_exit_status=function() return 'stage=pins' end
+            ''')
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads,0)
+            self.assertTrue(any('warp exit refused' in line for line in self.lua.globals().logs.values()))
+
     def test_warp_rng_arms_before_loading_and_drains_rows_every_admitted_tick(self):
         for value,mode in (('true','split'),("'split'",'split'),("'observe'",'observe')):
             self.setUp()
@@ -1973,6 +2011,42 @@ class SnapshotProbeTests(unittest.TestCase):
                 self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
                 self.assertEqual(self.lua.globals().loads,0,config)
                 self.assertTrue(any(' refused' in line for line in self.lua.globals().logs.values()),config)
+
+    def test_linux_gate_arms_the_mining_group_without_view_points(self):
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_region_pass='sync'
+          X4LAN_CONFIG.native_gate_mining_camera='view'
+          local gate=package.loadlib('gate')();order={}
+          gate.platform=function() return 'linux' end
+          gate.region_pass=function(mode) return 1 end
+          gate.region_pass_status=function() return 'mode=sync' end
+          gate.region_camera=function(m,...) assert(select('#',...)==0);order[#order+1]='group:'..m;return 1 end
+          gate.region_camera_frame=function(t) order[#order+1]='frame:'..t;return 1 end
+          gate.region_camera_status=function() return 'installed=1 groups=mining' end
+        """)
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,1)
+        self.assertIn('group:mining',list(self.lua.globals().order.values()))
+        self.assertTrue(any('MINING_CAMERA_ARMED mode=view' in line for line in self.lua.globals().logs.values()))
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update();state.issued=2;update()')
+        self.assertTrue(any(o.startswith('frame:') for o in self.lua.globals().order.values()))
+        # Only the mining group: another group still needs view points on the Linux gate.
+        self.setUp()
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_region_pass='sync'
+          X4LAN_CONFIG.native_gate_xs_camera='view'
+          local gate=package.loadlib('gate')()
+          gate.platform=function() return 'linux' end
+          gate.region_pass=function() return 1 end
+          gate.region_pass_status=function() return 'mode=sync' end
+          gate.region_camera=function() return 1 end
+          gate.region_camera_frame=function() return 1 end
+          gate.region_camera_status=function() return 'stage=idle' end
+        """)
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads,0)
+        self.assertTrue(any('xs camera refused' in line for line in self.lua.globals().logs.values()))
 
     def test_shape_refresh_arms_its_group_and_drives_the_frame(self):
         self.lua.execute("""
@@ -4046,7 +4120,11 @@ class SnapshotProbeTests(unittest.TestCase):
                ('X4LAN_CONFIG.native_gate_script_rng_natural=true','X4LAN_CONFIG.native_gate_script_rng_rows=nil',None,False),
                ('X4LAN_CONFIG.native_gate_script_rng_natural=1','',None,False),
                ('X4LAN_CONFIG.native_gate_script_rng_unmapped=true','',None,False),
-               ("X4LAN_CONFIG.native_gate_script_rng_unmapped='key'",'X4LAN_CONFIG.native_gate_script_rng_mask=2',None,False))
+               ("X4LAN_CONFIG.native_gate_script_rng_unmapped='key'",'X4LAN_CONFIG.native_gate_script_rng_mask=2',None,False),
+               ('X4LAN_CONFIG.native_gate_script_rng_trace=true','',4,True),
+               ("X4LAN_CONFIG.native_gate_script_rng_trace=true;X4LAN_CONFIG.native_gate_script_rng_unmapped='key'",'',6,True),
+               ('X4LAN_CONFIG.native_gate_script_rng_trace=true','X4LAN_CONFIG.native_gate_script_rng_rows=nil',None,False),
+               ('X4LAN_CONFIG.native_gate_script_rng_trace=1','',None,False))
         for option,extra,expected,accepted in cases:
             self.setUp()
             self.lua.execute(self.SCRIPT_RNG_PREREQUISITES+'''

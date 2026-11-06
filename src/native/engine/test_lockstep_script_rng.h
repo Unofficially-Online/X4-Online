@@ -51,6 +51,7 @@ static void test_sr_reset(void) {
     script_rng_unmapped_keyed=script_rng_unkeyed_rows=0;
 }
 static void test_sr_exec(void *exec) {(void)exec;test_sr_seen[0]=*test_sr_word;test_sr_draw(test_sr_draws);}
+static void test_sr_pc(void *exec) {*(uint64_t*)((unsigned char*)exec+0x18)=0x2a;test_sr_draw(test_sr_draws);} /* the slice moves the PC */
 static void test_sr_child(void *exec) {(void)exec;test_sr_seen[3]=*test_sr_word;test_sr_draw(test_sr_child_draws);}
 static uintptr_t test_sr_range(void *exec,void *program,uint64_t begin,uint64_t end,unsigned char mode) {
     (void)exec;(void)program;(void)begin;(void)end;(void)mode;test_sr_seen[4]=*test_sr_word;test_sr_draw(1);return 0x51;
@@ -148,6 +149,28 @@ static void test_script_rng(void) {
     uint64_t row_a=script_rng_ring[1].exit;test_sr_reset();word=42;test_sr_child_draws=9;
     npc_exec_entry(test_sr_nested,test_sr_a.exec,&word,0);
     assert(script_rng_ring[1].exit==row_a && script_rng_ring[0].draws==9 && word==42);test_sr_child_draws=5;
+    /* Option 4 (trace): the same keys, words and tallies; rows also for A's own range (its raw bounds, the Exec's PC
+     * at entry and leave) and A's own call-stack event, both named as A; the rows' text gains pc= and range=. */
+    {test_sr_reset();stats.issued=9;word=0x0123456789abcdefULL;npc_exec_entry(test_sr_nested,test_sr_a.exec,&word,0);
+     uint64_t keyset=script_rng_now.keyset,drawset=script_rng_now.drawset,draws=script_rng_now.draws,exit_a=script_rng_ring[1].exit;
+     test_sr_reset();script_rng_options=SCRIPT_RNG_OPT_TRACE;stats.issued=9;word=0x0123456789abcdefULL;
+     npc_exec_entry(test_sr_nested,test_sr_a.exec,&word,0);
+     assert(word==0x0123456789abcdefULL && script_rng_now.keyset==keyset && script_rng_now.drawset==drawset && script_rng_now.draws==draws);
+     assert(script_rng_outer==1 && script_rng_child==1 && script_rng_same==2 && script_rng_nested_unkeyed==1 && script_rng_cursor==4);
+     const script_rng_row_t *b=&script_rng_ring[0],*range=&script_rng_ring[1],*stack=&script_rng_ring[2],*a=&script_rng_ring[3];
+     assert(b->state==SR_CHILD && b->pc_begin==9 && b->pc_end==9 && a->state==SR_OUTER && a->exit==exit_a && a->pc_begin==4 && a->pc_end==4);
+     assert(range->state==SR_SAME && range->source==SR_RANGE && range->owner==0xa1 && !strcmp(range->name,"move.idle") && range->draws==1 &&
+            range->range_begin==0 && range->range_end==3 && range->pc_begin==4 && range->pc_end==4 && !range->key && !range->seeded);
+     assert(stack->state==SR_SAME && stack->source==SR_STACK && stack->owner==0xa1 && stack->draws==4 && !stack->pc_begin && !stack->range_end);
+     char text[640];assert(script_rng_row(1,text,sizeof(text))>0 && strstr(text," state=3 ") && strstr(text," why=0 pc=4..4 range=0..3"));
+     /* The PC at leave is the Exec's then: a slice that moves it reports both. */
+     test_sr_reset();script_rng_options=SCRIPT_RNG_OPT_TRACE;test_sr_draws=1;
+     npc_exec_entry(test_sr_pc,test_sr_a.exec,&word,0);*(uint64_t*)(test_sr_a.exec+0x18)=4;
+     assert(script_rng_cursor==1 && script_rng_ring[0].pc_begin==4 && script_rng_ring[0].pc_end==0x2a);
+     /* Without the option: no such rows, no fields in the text. */
+     test_sr_reset();script_rng_options=0;npc_exec_entry(test_sr_nested,test_sr_a.exec,&word,0);
+     assert(script_rng_cursor==2 && !script_rng_ring[1].pc_begin && script_rng_row(1,text,sizeof(text))>0 && !strstr(text," pc="));
+     test_sr_draws=6;}
     /* Context-free: B run outermost in the same tick gets the key it got nested. */
     test_sr_reset();npc_exec_entry(test_sr_child,test_sr_b.exec,&word,0);assert(test_sr_seen[3]==kb && script_rng_outer==1);
     /* Listener order inside one parent does not change any listener's key. */

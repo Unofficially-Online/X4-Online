@@ -71,6 +71,7 @@ static event_order_row_t event_order_ring[EVENT_ORDER_ROWS];
 static volatile LONG64 event_order_row_cursor;
 static volatile LONG event_order_rows_armed;
 static unsigned event_order_rows_ticks;
+static uint64_t event_order_rows_from;   /* rows for from <= issued <= from+ticks (0: 1..ticks; a hot joiner's window starts at T) */
 static uint64_t event_order_row_faults;
 /* Vtable pointer as an image RVA; no virtual call is made. Foreign: ffffffff. */
 static uint32_t event_order_rva(uint64_t pointer) {
@@ -216,7 +217,8 @@ static int event_order_sort(unsigned char *batch,uint64_t begin,uint64_t end,int
     event_order_collisions+=collisions;event_order_moved+=moved;event_order_saturated+=end==EVENT_ORDER_CAPACITY;
     event_order_view_runs+=view_runs;event_order_view_entries+=view_entries;
     event_order_hash=hash;event_order_last_count=n;event_order_last_runs=runs;event_order_stage="done";
-    if(event_order_rows_armed && (boot || stats.issued<=event_order_rows_ticks)) event_order_record(begin,runs,event_order_now());
+    if(event_order_rows_armed && (boot || (stats.issued>=event_order_rows_from && stats.issued-event_order_rows_from<=event_order_rows_ticks)))
+        event_order_record(begin,runs,event_order_now());
     return 1;
 }
 static uint64_t event_order_find(const unsigned char *batch,uint64_t count,const void *source,const void *event,uint64_t time) {
@@ -291,12 +293,13 @@ static int event_order_arm(void) {
 #ifndef EVENT_ORDER_ROW_TICKS_MAX
 #define EVENT_ORDER_ROW_TICKS_MAX 600
 #endif
-static int event_order_rows_arm(unsigned ticks) {
-    if(event_order_rows_armed) return stats.active && event_order_rows_ticks==ticks;
+static int event_order_rows_arm_from(unsigned ticks,uint64_t from) {
+    if(event_order_rows_armed) return stats.active && event_order_rows_ticks==ticks && event_order_rows_from==from;
     if(!event_order_armed || !event_order_installed || !stats.active || !boot_mode || boot_phase || stats.issued ||
        GetCurrentThreadId()!=ui_thread || ticks>EVENT_ORDER_ROW_TICKS_MAX) return 0;
-    event_order_rows_ticks=ticks;InterlockedExchange(&event_order_rows_armed,1);return 1;
+    event_order_rows_ticks=ticks;event_order_rows_from=from;InterlockedExchange(&event_order_rows_armed,1);return 1;
 }
+__attribute__((unused)) static int event_order_rows_arm(unsigned ticks) {return event_order_rows_arm_from(ticks,0);}
 /* One row per call; the probe walks absolute indices until nil. Rows
  * overwritten before they were drained report evicted=1. */
 static int event_order_row(uint64_t index,char *out,size_t capacity) {

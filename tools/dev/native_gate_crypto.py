@@ -30,6 +30,12 @@ OVERHEAD, SIG, HELLO, WELCOME = 32, 64, 88, 104
 ZERO_SIG = bytes(SIG)
 
 
+def dropped_mask(window):
+    """The protocol 4 window field k or k/<mask> (the relay's drop, native_gate_relay.py DropBarrier): the mask, 0 without."""
+    _, _, mask = window.partition(b'/')
+    return int(mask, 16) if mask else 0
+
+
 def default_library():
     configured = os.environ.get('X4MP_WIRE_CRYPTO_LIB')
     if configured:
@@ -363,8 +369,10 @@ class RelayCrypto:
         tick = int(f[4])
         blobs = [bytes.fromhex(b.decode()) for b in f[6 if f[1] == b'4' else 5:]]
         source = tick - 1 - self.lookahead if tick > self.lookahead else None
+        # A dropped slot's record is the relay's empty stand-in: nobody signed it (a zero signature, as before tick 0).
+        dropped = dropped_mask(f[5]) if f[1] == b'4' else 0
         try:
-            sigs = [ZERO_SIG if source is None else self.sigs[(source, s)] for s in range(1, self.clients + 1)]
+            sigs = [ZERO_SIG if source is None or dropped >> (s-1) & 1 else self.sigs[(source, s)] for s in range(1, self.clients + 1)]
         except KeyError:
             self.failure = self.failure or f'wire_crypto_missing_signature_tick_{source}'
             return None
@@ -447,8 +455,9 @@ class Client:
         if len(trailer) != SIG * (self.clients + 1) or len(blobs) != self.clients:
             return False
         source = tick - 1 - self.lookahead if tick > self.lookahead else None
+        dropped = dropped_mask(f[5]) if self.lookahead else 0
         for s in range(1, self.clients + 1):
-            if source is None:
+            if source is None or dropped >> (s-1) & 1:
                 if blobs[s - 1] or sigs[s - 1] != ZERO_SIG:
                     return False
             elif s != self.slot and not self.lib.record_verify(sigs[s - 1], self.roster[s - 1], self.sid, s, self.clients,

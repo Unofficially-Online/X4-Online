@@ -111,7 +111,7 @@ static void test_motion_watch(void) {
         assert(!memcmp(r.agent_ext,&speed,4) && r.agent_ext[4]==1 && r.agent_ext[5]==2 && r.agent_ext[28]==7 && r.agent_ext[MOTION_AGENT_EXT-1]==3);
         assert(!memcmp(r.leader_ext,&leader_speed,4) && r.leader.key==0x123456 && r.leader.depth==2 && r.leader.type==0x2b6e910u);
         /* The Steering class: behaviour pointers (+0x70/+0x78) and the avoidance vector (+0x90..+0xa7) zeroed; this vector is malformed. */
-        for(unsigned b=0;b<0x70;b++) assert(r.model_ext[b]==((b<0x10 || (b>=0x20 && b<0x38))?0:(unsigned char)(0x10+b)));
+        for(unsigned b=0;b<0x70;b++) assert(r.model_ext[b]==((b<0x10 || (b>=0x20 && b<0x38) || (b>=0x44 && b<0x48))?0:(unsigned char)(0x10+b)));   /* +0xb4..+0xb7 padding */
         assert(r.flight_obstacles==0xffffffffu);
         /* Models smaller than the window: only their own bytes; the zeroed rest cannot differ between clients. */
         {

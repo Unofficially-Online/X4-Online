@@ -2093,3 +2093,35 @@ SUIT VIEW FIX LIVE (recorded 3 November from the 1 November run missile2, 10:22,
 v12 present but off, pool faction accounts, render frames skipped while prediction presents; the session defaults, 2 clients,
 stock demo pilots with the pilot window to 36000, 30 steps/s): relay pass, 0 digest mismatches through 36,000 ticks,
 28.96 steps/s, both stopped with reason 1; census 0 at 9000, 18000, 27000 and 36000 (550,467 objects at 36000).
+
+20-MINUTE DEFAULT SESSION WITH RENDER FRAMES AND THE CAMERA FOLLOW (3 November, l205-soak: build205 = smoke 509ba14c, the
+session defaults with render frames back (own-ship prediction presenting, the camera bank following the drawn ship), 2 clients,
+stock demo pilots, pilot window to 36000, 30 steps/s): relay pass, no digest mismatch through 36,000 ticks, both stopped with
+reason 1 restored=1; census 0 at 1800, 9000, 18000, 27000 and 36000 (550,467 objects at 36000, as l204-soak). OWN_PREDICT
+failures=0, present_applied = present_restored (95,798 and 81,186), follow written = restored = 35,962 on each client
+(rdisp 11,937 and 4,631: stage 2 followed the swap itself in those render-only frames); render-only frames 12,135 and 4,810,
+RENDER_DISPLAY failures=0 foreign=0 restored=1.
+
+FOUR CLIENTS ON THE CURRENT DEFAULTS (4 November, d4s208b: build208 = smoke dd9df5bc, the session defaults (render frames,
+own-ship prediction with the camera follow, on foot, every UI family), a 4-slot coop plan (ships 0ae79c, 07a8fe, 07a8dc, 07a931,
+starts for slots 2-4 as p4-people), stock demo scripts 1-4, lanes b1..b4 through .local/census/x4lane4.py (the release lane
+tool with its client limit raised to 4; the release refuses --clients 4), 3000 ticks): relay pass (4 clients), no digest
+mismatch; all four STOP reason=1 restored=1; census at 1800: clients 2, 3 and 4 each equal to client 1, 528,306 objects;
+OWN_PREDICT failures=0 and follow written = restored = 2,963 on every client; render-only frames 1,248 / 938 / 461 / 1,528;
+bursts of all four windows: 0 one-frame flashes, no pilot head (scans at baseline, sheets of clients 3 and 4 checked), no
+DEGRADED line on screen. The earlier 4-client runs (p4-people, scene-n2) predate this stack.
+
+DROPPED CLIENTS (4 November; 3 clients, the 3-slot defaults stack with demo pilots 1-3, census every 600, one lane's X4
+frozen with NtSuspendProcess when the relay passed tick 1200 and never resumed; adaptive delay report section 13):
+  run       wire                           frozen  dropped at  survivors' census to 3000        notes
+  d3drop    protocol 5 (--adaptive)        3       1226        0 at 1800 / 2400 / 3000          build209
+  d3drop1   protocol 5                     1       1221        0 (clients 2 vs 3)               slot 1 (MD's player)
+  d3drop4   protocol 4, lookahead 1        2       1219        0 (clients 1 vs 3)               relay DropBarrier
+  d3drop4c  protocol 4 + wire crypto       3       1225        0, 3001 permits verified each    zero-signed stand-in
+  d3drop4r  protocol 4                     3       1216        0                                dropped ship released + stopped
+  d4drop    protocol 4, 4 clients          4       1227        0 (clients 2 and 3 vs 1)         build215 (+ the nav sweep fix):
+                                                                                                   slot 4's ship stops by ~1500
+  Every survivor STOP reason=1 restored=1 at 3001, relay pass, no digest mismatch. Census counts 522,294 at 1 to 531,000
+  at 3000 (the same in every run: the drop changes no imported object's state apart from the dropped ship's own path,
+  which is the same on every survivor).
+

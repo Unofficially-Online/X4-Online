@@ -263,10 +263,11 @@ static void created_note_with(void *object,unsigned thread) {
  * parts and crew): native_gate_created_load_stacks = <runtime ID>. Each load note at or above it (a save's IDs are all below its
  * next ID) records its call stack; the seal writes them as CREATED_LOAD_STACK rows (frames as X4.exe RVAs, @ before an address
  * outside it) to the crash note and the debug log. Nothing is called or written in the game. */
-#define CREATED_LOAD_STACKS 512u
+#define CREATED_LOAD_STACKS 65536u
 #define CREATED_LOAD_FRAMES 28u
 typedef struct {uint64_t runtime;uint32_t n,thread;uint64_t frame[CREATED_LOAD_FRAMES];} created_load_stack_t;
 static created_load_stack_t *created_load_stack;static uint64_t created_load_stack_min;static volatile LONG created_load_stack_n;
+static unsigned created_load_chosen;   /* the resolve's load-created objects (created_load[0..n), runtime IDs) */
 static void (*created_stack_sink)(const char *,int);
 static void *created_alloc(size_t bytes);
 static int created_load_stacks_arm(uint64_t min) {
@@ -277,6 +278,7 @@ static int created_load_stacks_arm(uint64_t min) {
 static void created_load_stack_note(uint64_t runtime) {
 #ifndef CREATED_OWN_PLATFORM
     LONG i=InterlockedIncrement(&created_load_stack_n)-1;
+    if(created_load_stack_min==1u) i=(LONG)((unsigned long)i%CREATED_LOAD_STACKS);   /* 1: a ring of the last notes (a load assigns new IDs) */
     if(i<0 || i>=(LONG)CREATED_LOAD_STACKS) return;
     void *f[CREATED_LOAD_FRAMES];USHORT n=RtlCaptureStackBackTrace(2,CREATED_LOAD_FRAMES,f,NULL);
     created_load_stack_t *s=&created_load_stack[i];s->thread=(uint32_t)GetCurrentThreadId();s->n=n;
@@ -288,10 +290,17 @@ static void created_load_stack_note(uint64_t runtime) {
 }
 static void created_load_stacks_flush(void) {
     if(!created_load_stack || !created_stack_sink) return;
+    {char head[200];int n=snprintf(head,sizeof(head),"[X4LAN] NATIVE_GATE CREATED_LOAD_STACK_SUMMARY min=%llu noted=%ld chosen=%u\r\n",
+                                    (unsigned long long)created_load_stack_min,(long)created_load_stack_n,created_load_chosen);
+     if(n>0) created_stack_sink(head,n);}
     LONG count=InterlockedCompareExchange(&created_load_stack_n,0,0);if(count>(LONG)CREATED_LOAD_STACKS) count=CREATED_LOAD_STACKS;
     const uintptr_t base=(uintptr_t)image;
     for(LONG i=0;i<count;i++) {
         const created_load_stack_t *s=&created_load_stack[i];char line[1024];
+        if(created_load_stack_min==1u) {   /* the ring: only the notes of objects the load created */
+            unsigned k=0;while(k<created_load_chosen && created_load[k].runtime!=s->runtime) ++k;
+            if(k==created_load_chosen) continue;
+        }
         int at=snprintf(line,sizeof(line),"[X4LAN] NATIVE_GATE CREATED_LOAD_STACK index=%ld of=%ld runtime=%llx thread=%u frames=",
                         (long)i,(long)created_load_stack_n,(unsigned long long)s->runtime,s->thread);
         for(uint32_t k=0;k<s->n && at>0 && at<(int)sizeof(line)-40;k++) {
@@ -311,7 +320,10 @@ static void created_load_note(void *object) {
     if(!created_load || index>=(LONG64)CREATED_LOAD_NOTES) {InterlockedIncrement64(&created_load_overflow);return;}
     created_load[index].thread=(uint32_t)GetCurrentThreadId();created_load[index].reserved=0;
     MemoryBarrier();created_load[index].runtime=runtime;
-    if(created_load_stack_min && runtime>=created_load_stack_min && created_load_stack) created_load_stack_note(runtime);
+    if(created_load_stack_min && runtime>=created_load_stack_min && created_load_stack) {
+        /* the ring (1): the last 65,536 notes (an object's class is not yet its own when its ID is assigned: j1-55) */
+        (void)object;created_load_stack_note(runtime);
+    }
 }
 static uint64_t created_assign_execute(created_assign_fn original,void *object) {
     uint64_t result=original(object); /* exactly once, same argument and result */
@@ -527,7 +539,7 @@ static int created_load_resolve_with(world_hash_find_fn find,void *map) {
     }
     AcquireSRWLockExclusive(&created_lock);
     uint64_t before=created_assigned;
-    int ok=created_resolve(0,created_load,n,find,map);
+    int ok=created_resolve(0,created_load,n,find,map);created_load_chosen=n;
     created_load_assigned=created_assigned-before;
     if(created_load_assigned) InterlockedIncrement64(&world_created_generation);
     ReleaseSRWLockExclusive(&created_lock);

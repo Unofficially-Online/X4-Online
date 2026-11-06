@@ -93,6 +93,48 @@ static void region_rng_restore(void);
 static int region_rng_owned(void);
 static int region_rng_armed,region_rng_restored;
 static volatile int64_t region_rng_failures;
+/* Weapon shots on keyed streams (gate_weapon_fire.h, included below). */
+static void wfire_restore(void);
+static int wfire_check(void);
+static int wfire_installed,wfire_restored;
+/* Engine-parameter refreshes on keyed streams (gate_engine_rng.h, included below). */
+static void erng_restore(void);
+static int erng_check(void);
+static int erng_installed,erng_restored;
+/* Spline routes joined (gate_spline_join.h, included below). */
+static void lsj_restore(void);
+static int lsj_check(void);
+static int lsj_installed,lsj_restored;
+/* Mass traffic and region passes joined (gate_mass_traffic.h, included below). */
+static void lmt_restore(void);
+static int lmt_check(void);
+static int lmt_join(uint64_t tick);
+static int lmt_installed,lmt_restored;
+/* Per-ship RNG keys for every portable ship (gate_actor_all.h, included below). */
+static void laa_restore(void);
+static int laa_check(void);
+static void actor_all_frame(uint64_t tick);
+static int laa_ship_installed,laa_agent_installed;
+/* The player's fleet rebuild timer (gate_player_timer.h, included below). */
+static void pt_restore(void);
+static int pt_check(void);
+static int pt_installed,pt_restored;
+/* The pathing pass's tempzone order (gate_tempzone_order.h, included below). */
+static void tz_restore(void);
+static int tz_check(void);
+static int tz_installed,tz_restored;
+/* Warps on a keyed word and the warp watch (gate_warp_rng.h, included below). */
+static void wr_restore(void);
+static int wr_check(void);
+static int wr_installed,wr_restored;
+/* The gate exit sum in the Windows order (gate_warp_exit.h, included below). */
+static void wx_restore(void);
+static int wx_check(void);
+static int wx_installed,wx_restored;
+/* The region object search's camera test (gate_mining_camera.h, included below). */
+static void lxmc_restore(void);
+static int lxmc_check(void);
+static int lxmc_installed,lxmc_restored;
 /* AI Wait restores (gate_ai_wait.h, included below). */
 static void ai_wait_restore(void);
 static int ai_wait_owned(void);
@@ -417,6 +459,26 @@ static void finish(unsigned reason) {
     if(path_det_budget_applied) stats.restored=0;
     region_rng_restore();
     if(region_rng_armed && !region_rng_restored) stats.restored=0;
+    wfire_restore();
+    if(wfire_installed) stats.restored=0;
+    erng_restore();
+    if(erng_installed) stats.restored=0;
+    lsj_restore();
+    if(lsj_installed) stats.restored=0;
+    lmt_restore();
+    if(lmt_installed) stats.restored=0;
+    laa_restore();
+    if(laa_ship_installed || laa_agent_installed) stats.restored=0;
+    pt_restore();
+    if(pt_installed) stats.restored=0;
+    tz_restore();
+    if(tz_installed) stats.restored=0;
+    wr_restore();
+    if(wr_installed) stats.restored=0;
+    wx_restore();
+    if(wx_installed) stats.restored=0;
+    lxmc_restore();
+    if(lxmc_installed) stats.restored=0;
     ai_wait_restore();
     if(ai_wait_armed && !ai_wait_restored) stats.restored=0;
     md_resume_restore();
@@ -518,6 +580,16 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(world_identity_installed && world_identity_failures) {finish(72);gate_original_once(frame,loading);return;}
     if(path_det_mask && path_det_failures) {finish(79);gate_original_once(frame,loading);return;}
     if(region_rng_armed && region_rng_failures) {finish(93);gate_original_once(frame,loading);return;}
+    if(wfire_installed && !wfire_check()) {finish(132);gate_original_once(frame,loading);return;} /* WFIRE_STOP_REASON */
+    if(erng_installed && !erng_check()) {finish(136);gate_original_once(frame,loading);return;} /* ERNG_STOP_REASON */
+    if(lsj_installed && !lsj_check()) {finish(58);gate_original_once(frame,loading);return;} /* LSJ_STOP_REASON */
+    if(lmt_installed && !lmt_check()) {finish(100);gate_original_once(frame,loading);return;} /* LMT_STOP_REASON */
+    if((laa_ship_installed || laa_agent_installed) && !laa_check()) {finish(161);gate_original_once(frame,loading);return;}
+    if(pt_installed && !pt_check()) {finish(142);gate_original_once(frame,loading);return;} /* PT_STOP_REASON */
+    if(tz_installed && !tz_check()) {finish(144);gate_original_once(frame,loading);return;} /* TZ_STOP_REASON */
+    if(wr_installed && !wr_check()) {finish(143);gate_original_once(frame,loading);return;} /* WR_STOP_REASON */
+    if(wx_installed && !wx_check()) {finish(146);gate_original_once(frame,loading);return;} /* WX_STOP_REASON */
+    if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
     if(boot_hold_armed && boot_hold_failures) {finish(86);gate_original_once(frame,loading);return;}
     if(md_resume_armed && md_resume_failures) {finish(87);gate_original_once(frame,loading);return;}
@@ -569,6 +641,8 @@ static void gate_tick(void *frame,unsigned char loading) {
     /* The frame just run is complete and its MoveWorker joined: resolve its creations. */
     if(!created_frame(stats.completed)) {finish(96);gate_original_once(frame,loading);return;}
     if(!rid_frame(stats.completed)) {finish(130);gate_original_once(frame,loading);return;}
+    if(lmt_installed && !lmt_join(stats.completed)) {finish(100);gate_original_once(frame,loading);return;} /* the passes kicked at its end */
+    actor_all_frame(stats.completed); /* fold the frame's all-ship actor RNG tallies (default off) */
     fork_save_frame(stats.completed); /* default off; never stops the session */
     static char packet[GATE_STATE_MAX],reply[GATE_PERMIT_MAX];uint64_t gamebits,realbits;
     memcpy(&gamebits,&stats.game,8);memcpy(&realbits,&stats.real,8);
@@ -721,6 +795,16 @@ static int lua_start(lua_State *L) {
 #include "gate_travel_snapshot.h"
 #include "gate_runtime_ids.h"
 #include "gate_fork_save.h"
+#include "gate_weapon_fire.h"
+#include "gate_engine_rng.h"
+#include "gate_spline_join.h"
+#include "gate_mass_traffic.h"
+#include "gate_actor_all.h"
+#include "gate_player_timer.h"
+#include "gate_tempzone_order.h"
+#include "gate_warp_rng.h"
+#include "gate_warp_exit.h"
+#include "gate_mining_camera.h"
 static int lua_read_cost(lua_State *L) {
     char out[256];
     int n=accept_ui()?snprintf(out,sizeof(out),"fast=%d installed=%d reads=%llu faults=%llu lost=%llu slow_ns=%llu fast_ns=%llu.%llu gettid_ns=%llu",
@@ -732,12 +816,17 @@ static int lua_read_cost(lua_State *L) {
 }
 /* Ported boot options; every other bit names a module the Linux gate lacks.
  * 1: serial pathing; 2: per-frame MoveWorker seed; 2^37: the gated Gravidar pass (native_gate_radar_serial,
- * needs 1); 2^46: world identities (native_gate_world_identities). */
+ * needs 1); 2^35: the spline update hook for the route join (native_gate_spline_join, needs 1; gate_spline_join.h);
+ * 256: the agent update hook (native_gate_agent_rng) and 2048: the ship Move hook (native_gate_ship_rng), both for
+ * actor_rng_all (gate_actor_all.h); 2^46: world identities (native_gate_world_identities). */
+#define LX_BOOT_AGENT_RNG 256ull
+#define LX_BOOT_SHIP_RNG 2048ull
+#define LX_BOOT_SPLINE_JOIN 34359738368ull
 #define LX_BOOT_GRAVIDAR 137438953472ull
 #define LX_BOOT_WORLD_IDENTITIES 70368744177664ull
 /* The attention hook (gate_attention.h): attention_rng or its initial refresh. Only 'all' is ported, which needs either. */
 #define LX_BOOT_ATTENTION (536870912ull|1073741824ull)
-#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_WORLD_IDENTITIES)
+#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_AGENT_RNG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_WORLD_IDENTITIES)
 static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *hash,double options) {
     if(!isfinite(options) || options<0 || options>9007199254740991.0 || floor(options)!=options) return 10;
     if((uint64_t)options & ~LX_BOOT_OPTIONS) return LX_STOP_UNPORTED_OPTION;
@@ -755,6 +844,9 @@ static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned time
         if(!result && (boot_options&1) && !path_install((unsigned)(boot_options&3))) {finish(21);result=21;}
         if(!result && (boot_options&LX_BOOT_GRAVIDAR) && !gravidar_install()) {finish(61);result=61;}
         if(!result && (boot_options&LX_BOOT_ATTENTION) && !attention_install()) {finish(53);result=53;}
+        if(!result && (boot_options&LX_BOOT_SPLINE_JOIN) && !lsj_install()) {finish(58);result=58;}
+        if(!result && (boot_options&LX_BOOT_SHIP_RNG) && !laa_ship_install()) {finish(161);result=161;}
+        if(!result && (boot_options&LX_BOOT_AGENT_RNG) && !laa_agent_install()) {finish(161);result=161;}
     }
     return result;
 }
@@ -816,10 +908,10 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(sha256);METHOD(start);METHOD(boot);METHOD(load_requested);METHOD(report);METHOD(poll);METHOD(stop);
     METHOD(frame_timing);METHOD(qpc_us);METHOD(tick_rate);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(peer_links);METHOD(peer_status);METHOD(wire_crypto);METHOD(wire_crypto_status);
     METHOD(platform);METHOD(verify_stage);
-    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);METHOD(world_health);
+    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
-    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);
+    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);
@@ -828,7 +920,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(ai_schedule);METHOD(ai_schedule_status);METHOD(ai_schedule_fallbacks);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
     METHOD(travel_snapshot);METHOD(travel_snapshot_status);
-    METHOD(runtime_ids);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_callers);
+    METHOD(runtime_ids);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_callers);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);
     METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(attention_all);METHOD(attention_all_status);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(read_cost);METHOD(fork_save);METHOD(fork_save_status);METHOD(fp_redirect_drones);METHOD(fp_attack);METHOD(fp_attack_watch);METHOD(fp_attack_status);METHOD(fp_attack_row);
 #undef METHOD

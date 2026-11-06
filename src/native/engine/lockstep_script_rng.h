@@ -104,7 +104,10 @@ enum {SCRIPT_RNG_AI=1,SCRIPT_RNG_MD=2,SCRIPT_RNG_BOOT=4}; /* arm mask; BOOT also
 enum {SR_EXEC=1,SR_RANGE=2,SR_EVENT=3,SR_STACK=4,SR_CUE=5,SR_TIMED=6,SR_WAIT=7,SR_RAISE=8,SR_SOURCES=9};
 enum {SR_PASS=0,SR_OUTER=1,SR_CHILD=2,SR_SAME=3,SR_NESTED_UNKEYED=4,SR_UNKEYED=5};
 enum {SR_OK=0,SR_UNREADABLE=1,SR_UNMAPPED=2,SR_UNNAMED=3,SR_FOREIGN=4,SR_MASKED=5,SR_REASONS=6};
-enum {SCRIPT_RNG_OPT_NATURAL=1,SCRIPT_RNG_OPT_UNMAPPED=2,SCRIPT_RNG_OPTIONS=3};
+/* Option 4 (trace, needs rows): a row also for each nested scope of the same script (SR_SAME: the ranges and
+ * events an owner runs inside its own slice), and on every row of an execution or a range the Exec's PC
+ * (+0x18) at entry and at leave and a range's raw bounds. Read only, rows only: no key, word or tally changes. */
+enum {SCRIPT_RNG_OPT_NATURAL=1,SCRIPT_RNG_OPT_UNMAPPED=2,SCRIPT_RNG_OPT_TRACE=4,SCRIPT_RNG_OPTIONS=7};
 #define SCRIPT_RNG_UNMAPPED_OWNER 0x7f554e4d41505044ULL /* "\x7fUNMAPPD": above every saved ID, bit 63 clear (created IDs set it) */
 #define SCRIPT_RNG_UNKEYED_DOMAIN 0x58344c53554e4b59ULL /* "X4LSUNKY": census join keys of unkeyed rows */
 typedef struct {
@@ -115,12 +118,14 @@ typedef struct script_rng_frame {
     struct script_rng_frame *parent,*owner;
     uint64_t tick,key,parent_key,saved,seed,ordinal;
     script_rng_identity id;unsigned source,state,depth,seeded,why;
+    uintptr_t exec;uint64_t pc_begin,pc_end,range_begin,range_end; /* option 4 */
 } script_rng_frame;
 typedef struct {uint64_t owner,stream;uint32_t count,epoch;} script_rng_slot;
 typedef struct {uintptr_t definition,module;uint64_t hash;char name[64];} script_rng_name;
 typedef struct {
     uint64_t tick,owner,stream,detail,ordinal,key,parent,seed,exit,caller;
     uint32_t draws,depth;uint8_t source,state,kind,instance,seeded,why;char name[64];
+    uint64_t pc_begin,pc_end,range_begin,range_end; /* option 4 */
 } script_rng_row_t;
 typedef struct {uint64_t tick,draws,keyset,drawset,self;uint32_t phase,open,entries,outer,child,unkeyed,unknown;} script_rng_tally;
 /* Performance caches (UI thread only, never a key input of their own): an AI
@@ -268,7 +273,7 @@ static unsigned script_rng_resolve(unsigned source,void *object,void *program,ui
     unsigned why=id->kind==SCRIPT_RNG_AI?script_rng_ai(id):script_rng_md(id);
     /* An unmapped AI owner is still named: with an option set, finish its
      * stream and detail (natural rows name it, option 2 keys it). */
-    if(why && !(why==SR_UNMAPPED && script_rng_options)) return why;
+    if(why && !(why==SR_UNMAPPED && (script_rng_options&(SCRIPT_RNG_OPT_NATURAL|SCRIPT_RNG_OPT_UNMAPPED)))) return why;
     uint64_t length=0;
     if(source==SR_EXEC || source==SR_RANGE) {
         uintptr_t head[2],bounds[2];
@@ -315,6 +320,7 @@ static void script_rng_push(const script_rng_frame *f,uint64_t exit,uint32_t dra
     r->key=f->key;r->parent=f->parent_key;r->seed=f->seed;r->exit=exit;r->caller=f->saved;r->draws=draws;r->depth=f->depth;
     r->source=(uint8_t)f->source;r->state=(uint8_t)f->state;r->kind=(uint8_t)f->id.kind;r->instance=(uint8_t)f->id.instance;
     r->seeded=(uint8_t)f->seeded;r->why=(uint8_t)f->why;memcpy(r->name,f->id.name,sizeof(r->name));
+    r->pc_begin=f->pc_begin;r->pc_end=f->pc_end;r->range_begin=f->range_begin;r->range_end=f->range_end;
 }
 static void script_rng_record(const script_rng_frame *f,uint64_t exit) {
     uint32_t draws=script_rng_steps(f->seed,exit);
@@ -347,7 +353,12 @@ static int script_rng_enter(script_rng_frame *f,unsigned source,void *object,voi
     if(f->depth>script_rng_depth_max) script_rng_depth_max=f->depth;
     script_rng_frame *owner=parent?parent->owner:NULL;uintptr_t record=0;
     unsigned why=script_rng_locate(source,object,&f->id,&record);
-    if(owner && !why && f->id.local==owner->id.local) {f->state=SR_SAME;++script_rng_same;}
+    if(owner && !why && f->id.local==owner->id.local) {
+        f->state=SR_SAME;++script_rng_same;
+        if(script_rng_rows && (script_rng_options&SCRIPT_RNG_OPT_TRACE)) { /* its row names the owner's scope */
+            f->id.owner=owner->id.owner;f->id.stream=owner->id.stream;memcpy(f->id.name,owner->id.name,sizeof(f->id.name));
+        }
+    }
     else {
         if(!why) why=script_rng_resolve(source,object,program,begin,end,mode,record,&f->id);
         if(why==SR_UNMAPPED && (script_rng_options&SCRIPT_RNG_OPT_UNMAPPED)) {
@@ -374,6 +385,10 @@ static int script_rng_enter(script_rng_frame *f,unsigned source,void *object,voi
         }
     }
     f->owner=f->state==SR_OUTER || f->state==SR_CHILD?f:owner;
+    if(script_rng_rows && (script_rng_options&SCRIPT_RNG_OPT_TRACE) && (source==SR_EXEC || source==SR_RANGE) && object) {
+        f->exec=(uintptr_t)object;if(!script_rng_read((unsigned char*)object+0x18,&f->pc_begin,8)) f->pc_begin=UINT64_MAX;
+        if(source==SR_RANGE) {f->range_begin=begin;f->range_end=end;}
+    }
     f->saved=*rng;
     if(f->owner==f && script_rng_mode==SCRIPT_RNG_KEY) {*rng=f->key;f->seeded=1;}
     f->seed=*rng;script_rng_current=f;SetLastError(error);script_rng_spent(start);return 1;
@@ -386,8 +401,12 @@ static void script_rng_leave(script_rng_frame *f,int entered,uint64_t *rng,int a
     if(f->seeded) {*rng=f->saved;++script_rng_restores;}
     script_rng_current=f->parent;
     if(abnormal) InterlockedIncrement64(&script_rng_failures);
+    if(f->exec && !script_rng_read((unsigned char*)f->exec+0x18,&f->pc_end,8)) f->pc_end=UINT64_MAX;
     if(f->owner==f) script_rng_record(f,exit);
     else if(f->state==SR_UNKEYED && f->why!=SR_MASKED && (script_rng_options&SCRIPT_RNG_OPT_NATURAL)) script_rng_record_unkeyed(f,exit);
+    else if(f->state==SR_SAME && script_rng_rows && (script_rng_options&SCRIPT_RNG_OPT_TRACE)) {
+        script_rng_push(f,exit,script_rng_steps(f->seed,exit)); /* evidence only, outside every tally */
+    }
     script_rng_spent(start);
 }
 /* One census row per call (never one huge line per tick): the probe walks
@@ -408,6 +427,11 @@ static int script_rng_row(uint64_t index,char *out,size_t cap) {
             (unsigned long long)r->owner,(unsigned long long)r->stream,(unsigned long long)r->detail,(unsigned long long)r->ordinal,
             (unsigned long long)r->key,(unsigned long long)r->parent,r->seeded,(unsigned long long)r->seed,(unsigned long long)r->exit,
             r->draws==UINT32_MAX?-1LL:(long long)r->draws,name[0]?name:"-",(unsigned long long)r->caller,r->why);
+        if(n>0 && (size_t)n<cap && (script_rng_options&SCRIPT_RNG_OPT_TRACE)) {
+            int m=snprintf(out+n,cap-(size_t)n," pc=%llx..%llx range=%llx..%llx",(unsigned long long)r->pc_begin,(unsigned long long)r->pc_end,
+                           (unsigned long long)r->range_begin,(unsigned long long)r->range_end);
+            n=m>0?n+m:-1;
+        }
     }
     return n>0 && (size_t)n<cap?n:0;
 }

@@ -179,7 +179,7 @@ static int script_rng_arm(int mode,unsigned mask,int rows,unsigned options) {
     if(script_rng_armed) return stats.active && script_rng_mode==mode && script_rng_mask==mask && script_rng_rows==rows && script_rng_options==options;
     if(!stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId()!=ui_thread ||
        !mask || mask>7 || !(mask&(SCRIPT_RNG_AI|SCRIPT_RNG_MD)) || options>SCRIPT_RNG_OPTIONS ||
-       ((options&SCRIPT_RNG_OPT_NATURAL) && !rows) || ((options&SCRIPT_RNG_OPT_UNMAPPED) && !(mask&SCRIPT_RNG_AI))) return 0;
+       ((options&(SCRIPT_RNG_OPT_NATURAL|SCRIPT_RNG_OPT_TRACE)) && !rows) || ((options&SCRIPT_RNG_OPT_UNMAPPED) && !(mask&SCRIPT_RNG_AI))) return 0;
     if(!world_identity_installed || !thunk) return 0;
     if(rd64(LX(LX_EXEC_RUN_VA))!=LX_EXEC_RUN_ENTRY_ORIGINAL || rd64(LX(LX_EXEC_RANGE_VA))!=LX_EXEC_RANGE_ENTRY_ORIGINAL ||
        rd64(LX(LX_AI_EVENT_SLOT_VA))!=(uint64_t)(uintptr_t)LX(LX_AI_EVENT_VA) || rd64(LX(LX_STACK_EVENT_SLOT_VA))!=(uint64_t)(uintptr_t)LX(LX_STACK_EVENT_VA) ||

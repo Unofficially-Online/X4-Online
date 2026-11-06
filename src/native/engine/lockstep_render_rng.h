@@ -50,6 +50,9 @@ static void predict_present_leave(int entered);
 static void rdisp_sample(void);
 static int rdisp_enter(void);
 static void rdisp_leave(int entered);
+/* The camera's view bank follows the presented own ship when stage 2/3 did not write it (lockstep_render_display.h). */
+static int rdisp_follow_enter(int displayed);
+static void rdisp_follow_leave(int entered);
 /* Slot 10 inside the presentation scope (lockstep_pilot_present.h); the original alone when off. */
 static void pres_render_call(render_rng_fn original,void *self);
 static volatile LONG render_rng_active;
@@ -79,6 +82,7 @@ static void render_rng_execute(render_rng_fn original,void *self,volatile uint64
     rdisp_sample();
     const int presented=predict_present_enter();
     const int displayed=rdisp_enter();
+    const int followed=rdisp_follow_enter(displayed);
     __try {
         if(split) *word=start;
         InterlockedExchange(&render_rng_in_slot,1);
@@ -86,6 +90,7 @@ static void render_rng_execute(render_rng_fn original,void *self,volatile uint64
     } __finally {
         DWORD error=GetLastError();
         InterlockedExchange(&render_rng_in_slot,0);
+        rdisp_follow_leave(followed);
         rdisp_leave(displayed);
         predict_present_leave(presented);
         after=*word;

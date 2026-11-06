@@ -191,7 +191,8 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
     include and the frame branch in gate_linux.c and a Linux build.
   - The choice uses the slowest client's p90 over 8 samples taken while everyone waits at tick 0; a client whose round trip is
     worse later is only covered with --adaptive-changes (and, with pilot records, the headroom).
-  - Drop/rejoin of a player's ship and assets (D15) is not designed here beyond what section 4 lists.
+  - Drop/rejoin of a player's ship and assets (D15): a dropped slot's ship goes neutral under protocols 4 and 5 (section 13);
+    rejoining it is open.
 
 11. FIRST LIVE RESULTS (coordinator, 2 November 2026; build199, session defaults, 2 clients, 3000 ticks, stock demo pilots)
   run  relay                        plan              steps/s  digests        census at 1800
@@ -211,3 +212,136 @@ real relay code, and the real relay process over loopback UDP. "live" marks what
   a4d  --adaptive --stall-report-ms 1000, lane b2's X4 frozen 3 s (NtSuspendProcess/NtResumeProcess) about tick 1450:
        NATIVE_GATE STALL slot=2 tick=1454 waited_ms=1012 in the relay log and report (stalls), the session went on to 3000,
        no mismatch, census 0 of 528,288 at 1800, both stopped with reason 1, ADAPTIVE_STOP why=none. A0-A4 all pass live.
+
+12. RENDER FRAMES UNDER PROTOCOL 5 (coordinator, 3 November 2026)
+  Until now an adaptive session drew one frame per step (section 11: the defaults' @fixed, and the gate sent protocol 5 frames
+  to adapt_frame, past rf_boundary). Change (smoke 5dbbe59d, build206): rf_admit's wire calls go through the protocol in use
+  (adapt_drain, adapt_resend, adapt_held, adapt_take under protocol 5: gap permits, epochs, pings and the schedule's stops stay
+  this module's; a ping answered between two render-only frames reports the time it waited unread, as between two steps);
+  rf_boundary runs adapt_frame's quiet-input check first and falls back to adapt_frame when not ready; rf_ready accepts protocol
+  5 at k = 0; the gate dispatch runs render frames under either protocol; the probe, check_gate_options.py and the defaults
+  (render_fps without @fixed) accept native_gate_lookahead = 'adaptive', so an adaptive session gets render frames, camera and
+  motion by default. Native test test_rf_admit_adaptive: with a held gap permit a render-only frame, then the step through
+  adapt_take (a gap), a source permit where the schedule has a gap stops with 191, k = 0 is not "lookahead missing".
+  Live a206r (build206; a1d's setup: --adaptive, --latency-ms 100, the session defaults, 2 clients, 3000 ticks, burst capture):
+    RENDER_FRAMES_ARMED fps=60 on both; render-only frames 905 and 976, failures 0, missing=-;
+    ADAPTIVE_PLAN k=4 pilot_delay=6 on both (as a1d), ADAPTIVE_STOP why=none, gaps 4, pings ~600;
+    both STOP reason=1 restored=1, relay pass, census 0 of 528,288 at 1800; OWN_PREDICT failures 0, follow written = restored;
+    the bursts: 0 one-frame flashes on both clients, client 2's head scan at its baseline (23).
+  Found on the way: the gap resent every report of the window on each pass (resends 6,264 and stale permits 6,130 on client 1,
+    a1d 337 and 208); the protocol 4 gap does the same (p2d/p2f at 100 ms: about 2,250). The waits resend only while the
+    step's permit is missing; the gap now does too (the window's later reports are in flight, not lost). Rerun: a206r2 below.
+  a207r (build207 = the change above plus the resend rule; otherwise a206r): resends 248 and 254, stale permits 113 and 113 (a206r
+    6,264 and 6,130; a1d without render frames 337 and 208); ready 2,997 on client 1; ADAPTIVE_STOP why=none, plan k=4 pilot 6;
+    both STOP reason=1 restored=1, relay pass, census 0 of 528,288 at 1800; 0 flashes, head scan at baseline (19).
+    Render-only frames 1,473 on client 2 (a206r 976); client 1 drew 163, all late: its window ran slow in this run (mean frame
+    period 12.4 ms against 2.7 ms in a206r, slot 10 itself 1.6 ms as before), the machine-side slowdown of one lane window seen in
+    d205r and the hot join runs, not the change.
+  Render frames under adaptive delay pass live; the defaults now draw them in adaptive sessions too.
+
+13. A DROPPED CLIENT'S SHIP GOES NEUTRAL: THE OTHERS PLAY ON (coordinator, 4 November 2026; roadmap D15, first part)
+  Until now a drop (section 4) only helped sessions without slot-bound inputs: the dropped slot's pilot records stopped, and
+  pilot_frame_records (91) or the stock path (155) stopped everyone at its first missing record.
+  Change (lockstep_pilot_inputs.h, lockstep_adaptive.h, lockstep_pilot_stock.h): adapt_take notes, on the first permit that
+  carries proposals and names slot k in its mask, that proposal tick c (pilot_drop_note; the permits are identical, so every
+  client notes the same c at the same tick). From c on slot k's rows are no longer its own (pilot_slot_present 0), so from
+  c+delay it has no record and is silent (pilot_slot_silent), exactly like an absent hot-join slot after its ABORT: the seat
+  stays, no record is needed or accepted, no events, no view, no trigger; its ship keeps its last command and is still
+  watched for death; its hits are native. Status: PILOT_INPUTS ... dropped=<mask> drop_skips=<n> drop<k>=<c>.
+  Native tests: pilot records (records through c+delay-1 apply, then silent; a later record of the slot refused; slot 1
+  still required; slot 1 dropped -> slot1_dropped), the stock path (neutral at c+delay, counted as a drop, the other slots
+  replay), adapt_take (gap permits note nothing, the first proposal permit with the mask does).
+  Live d3drop (build209; the 4-client defaults stack with 3 slots and demo pilots 1-3, native_gate_lookahead = 'adaptive',
+  relay --adaptive --stall-drop-ms 5000, 3 clients b1-b3, 3000 ticks, census every 600; lane b3's X4 frozen with
+  NtSuspendProcess when the relay passed tick 1200 and never resumed):
+    relay: STALL slot=3 tick=1226 after 1005 ms, DROP slot=3 tick=1226 after 5009 ms, remaining=1,2; the session went on
+    to 3000, verdict pass, no digest mismatch.
+    clients 1 and 2: STOP completed=3001 reason=1 restored=1; ADAPTIVE_STOP mask=04 why=none (plan k=1 pilot 3); dropped=4
+    drop3=1226 on both.
+    census client 1 vs client 2: 0 of 522,294 / 525,874 / 527,250 at 1 / 600 / 1200 and 0 of 528,290 / 529,745 / 531,000
+    at 1800 / 2400 / 3000, after the drop.
+  So a client that hangs or crashes no longer ends the session for the others under protocol 5; they wait the drop bound
+  (5 s here) and play on in sync.
+  Slot 1 (MD's player) too (e480ebea): its record goes silent the same way and the stock path's canonical update replays
+  nothing for it (no view, no trigger, hash 0) while slots 2..N go on. Live d3drop1 (build211; d3drop with client 1 frozen):
+  DROP slot=1 tick=1221, clients 2 and 3 STOP reason=1 at 3001 with drop_skips=1777, relay pass, census client 2 vs client 3
+  0 at all six captures to 3000.
+  Protocol 4 (the defaults' wire): the relay's DropBarrier (native_gate_relay.py --stall-drop-ms without --adaptive; not with
+  --wire-crypto, --join, --live-inputs or --peer-window) reports a client the others wait for at the first unreleased tick
+  after --stall-report-ms, and past --stall-drop-ms stands in for it from that tick: the lowest live slot's digest and game
+  time, the dropped slot's own real clock offset (the relative real check compares elapsed time from tick 0), an empty blob.
+  It answers the dropped client NGDROP|4 instead of permits, ignores its later reports, and every permit whose proposal tick
+  is at or after the stand-in names the slot in its window field, k/<mask>. Without a drop the wire is the protocol 4 wire
+  byte for byte (test: the same outputs as Barrier). The client (lockstep_lookahead.h): a stand-in's blob must be empty, the
+  mask never shrinks (103), a permit naming this client or NGDROP|4 stops with 193, a mask with peer links or wire crypto is
+  refused (102); taking a permit notes its mask with its proposal tick T-1-k (pilot_drop_note), then the pilot modules do
+  as above. Tests: tests/test_native_gate_drop.py (7), test_lockstep_lookahead.h (the mask rules, NGDROP, the take).
+  Live d3drop4 (build212; the 3-slot defaults stack on protocol 4, lookahead 1, relay --stall-drop-ms 5000, client 2 frozen
+  at relay tick 1200): STALL slot=2 tick=1219 after 1011 ms, DROP slot=2 tick=1219 after 5009 ms, remaining=1,3; clients 1
+  and 3 STOP reason=1 at 3001 (LOOKAHEAD_STOP dropped=02, drop_skips=1779, drop2=1219), relay pass, no digest mismatch,
+  census client 1 vs client 3 0 of 522,294 ... 531,000 at all six captures to 3000.
+  Wire crypto (smoke after 6423dd2e): a stand-in record has no client signature, so the relay's trailer carries a zero
+  signature for every slot the permit's mask names (native_gate_crypto.py reads the mask from the permit it seals), the
+  native check (wcg_permit) and the Python client accept exactly that for a masked slot (empty blob, zero signature) and
+  verify every other record and the relay's signature as before; stripping the mask makes the permit invalid (106). The
+  relay accepts --stall-drop-ms with --wire-crypto. Tests: test_native_gate_crypto.py (a dropped slot is a zero-signed
+  stand-in, the mask stripped is refused), test_lockstep_wire_crypto_gate.h (accepted with the mask; refused without it,
+  with a non-empty stand-in, with mask 00).
+  Live d3drop4c (build213; d3drop4 with relay --wire-crypto and 3-slot credentials, client 3 frozen at 1200): DROP slot=3
+  tick=1225 after 5006 ms; clients 1 and 2 STOP reason=1 at 3001, each verified 3001 permits and 4,225 record signatures
+  (forged 0), LOOKAHEAD_STOP dropped=04; relay pass, wire crypto failure none, 3001 permits signed; census client 1 vs
+  client 2 0 at all six captures to 3000.
+  Parking (smoke after 42f8b2da): the stock path keeps every slot's last replayed value of each replayable state and range
+  (from the replay itself, so the same on every client); at a dropped slot's first silent tick (c+delay) it replays them
+  released and then X4's own stop action 0x7b (d86c80: the occupied ship's engine target to 0), once, in the slot's scope
+  (slot 1: the canonical update). The mouse steering is neutral by itself (no frame, pstk_cursor). Status: PILOT_STOCK
+  releases=<n>/<events>. Native test: the release frame (held accelerate back to 0, then stop), replayed once, neutral after.
+  Live d3drop4r (build214; d3drop4 with client 3 frozen): DROP slot=3 tick=1216; releases=1/1 on clients 1 and 2 (nothing
+  held: the stop action alone); slot 3's ship (000000000007a8dc, PILOT_SHIPS) decelerated from about 220 m/s and stands
+  still from about 1380 to 3000, where in d3drop (no release) it flew on 13 km by 3000; both STOP reason=1 at 3001, relay
+  pass, census 0 at all six captures.
+  Four clients (d4drop, build215; the 4-slot defaults stack on protocol 4, lookahead 1, relay --stall-drop-ms 5000, client 4
+  frozen at 1200): DROP slot=4 tick=1227, remaining=1,2,3; clients 1-3 STOP reason=1 at 3001, releases=1/1 on each, relay
+  pass, census clients 2 and 3 each equal to client 1 at all six captures to 3000; slot 4's ship (07a931) stands still from
+  about 1500.
+  Open: peer links, rejoining a dropped slot (a handover into it, the hot join path), carrying a drop in the join package.
+
+14. DROP AND REJOIN IN JOIN SESSIONS (coordinator, 4 November 2026; roadmap 15, second part)
+  Design: in a hot join session (relay --join; protocols 3 and 4) a drop rides the JOIN records instead of the permit mask.
+  A rejoinable slot (relay --rejoin K, clients native_gate_join.rejoin={K}; never slot 1, never an absent slot) plays from
+  the start; the pilot modules hold it in the absent mask with its rows its own from tick 0 (gate.pilot_absent(mask, rejoin):
+  from 0, enrolled 0, seated at take-1 like every slot). The JoinBarrier's stall timer (--stall-report-ms, --stall-drop-ms)
+  reports a present slot the others wait for and, past the drop bound, drops it if it may be (a --rejoin slot, or a slot
+  absent at the start after its handover): from its first missing row c the relay stands in for it, and row c carries
+  ABORT(K, reason 16 'dropped'), so every client applies gate.pilot_abort at the same tick and the slot is neutral from row c
+  (the seat stays). The slot is then absent again: a later NGJOIN takes it through the normal hot join (SAVE_AT, the
+  savers' package, catch-up, HANDOVER(K, H)); pilot_handover_apply already accepts a handover after an ABORT. The relay
+  forgets the dropped client's address (its later reports are answered NGDROP|4, never counted), resets the slot's real
+  clock base to the reference slot's (a rejoiner restores the saver's clocks; --relative-real compares elapsed time), and
+  fails a join whose unsaved saver or whose joiner is dropped. The stock path's held-key release fires at the first silent
+  row after an ABORT as after a mask drop; a rejoiner presents its ship from its new H+3, not during its catch-up. The
+  driver and overlays accept --rejoin (the handoff names absent and rejoin slots); --join-observe (diagnostic, default off)
+  counts a joiner's digest mismatches before H instead of stopping it, every line of such a run says diagnostic=join_observe.
+  Tests: test_native_gate_join.py Rejoin (protocol 3 and 4 drop then rejoin, a slot with its own clock base, a second drop
+  of the rejoined slot, a slot that may not be dropped is waited for, a saver dropped before its save refuses the join,
+  refusals, the CLI), the join-observe test, test_native_gate_join_driver.py (options, overlays); native
+  test_lockstep_pilot_slots.h (a rejoinable slot dropped with its keys released once, rejoined, presented from H+3, dropped
+  again). 1558 Python tests OK; build218 native tests pass.
+  Live rj1 (build218, 2 slots at 20 Hz on b1/b2, slot 2 rejoinable, pilot window 1500..72000, relay --stall-drop-ms 5000,
+  lane b2 frozen at relay tick 400; the rejoiner on b3): STALL slot=2 tick=412 after 1006 ms, DROP slot=2 tick=412 after
+  5009 ms, remaining=1; client 1 JOIN_ABORT tick=414 k=2 reason=dropped (row 412 + 1 + lookahead), PILOT_INPUTS h2=0/412/0,
+  and through the window's start slot 2 stayed neutral (absent_skips=600 by 2100, no stop). NGJOIN at 600: SAVE_AT, slot 1
+  saved at T=633 (pause 6.2 s), files verified, handoff written; the rejoiner booted in about 80 s, restored h2=0/412/0
+  from the package, and its first report (T=633) was accepted (game and real time exact: the real base reset holds). It
+  then stopped at mismatch:digest_tick_634, the same first mismatch as every J1 replay (j1-115, j1-116: 634 on, though their
+  T+1 census is 0): rejoin now waits on the hot join's declared-state equality at T+1, which the hot join session is on.
+  rj2 (rj1 with --join-observe, 9000 ticks): drop at 413, T=633 (pause 5.8 s); the rejoiner booted in about 80 s and caught
+  up at 20.2 steps/s with every tick's digest different from 634 on (6,756 counted, not fatal), but the session runs at the
+  same 20 Hz, so the gap of about 1,600 ticks from its boot never closed: it reached 7,389 when the session ended at 9000.
+  rj3 (--join-catchup-limit 20 --join-max-pause 110, 12000 ticks): no handover either, which showed a coordinator bug: the
+  catch-up time was measured from progress[0], a list of the last 64 reports (about 3 s), so a joiner no faster than the
+  session never reached the limit (default 600 s) and was never handed over. Fixed (b0d00520: from the first report), with a
+  test that fails on the old code. The T+1 digest split (634) is now explained by the hot join session: the census keeps
+  rows for the session's dead objects, the join save does not (2,360 absent rows at 634); their GONE section carries them.
+  Next: a rejoin with that fix and the catch-up fix, without --join-observe; a joiner here runs at about real time with
+  2-3 X4 up, so J2 and rejoin hand over with a pause of about the joiner's boot time until the joiner is faster.

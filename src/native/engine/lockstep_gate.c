@@ -218,6 +218,7 @@ static void portable_import_capture(void *,uint64_t,uint64_t);
 static int join_import_active(void);
 static uint64_t join_tick_base(void); /* a joiner's session tick T after its admission, else 0 (the snapshot fixture binds there) */
 static int join_import(uint64_t saved,uint64_t runtime,uint64_t *portable);
+static void join_ids_imported(void *object,uint64_t saved); /* lockstep_join_ids.h: a saved object's ID against the save's */
 static int join_unsealed_ok(uint64_t source);
 #define JOIN_UNSEALED_OK(source) join_unsealed_ok(source)
 static void snapshot_nav_observe(unsigned,const void *);
@@ -360,10 +361,12 @@ static int world_nav_live_prefixes(void) {
 #include "lockstep_pilot_death.h"
 #include "lockstep_pilot_foot_body.h"   /* slots 2..N in the world tree at their seats (native_gate_pilot_foot_bodies) */
 #include "lockstep_pilot_foot_slots.h"  /* slots 2..N get up and walk (native_gate_pilot_foot_slots) */
+#include "lockstep_pilot_join.h"        /* a join save inside the window: the bodies off around it, P_k's IDs (W3) */
 #include "lockstep_own_predict.h"
 #include "lockstep_crash_note.h"
 #include "lockstep_cutscene_ready.h"
 #include "lockstep_ui_replay.h"
+#include "lockstep_pilot_join_modules.h"   /* the join inside the window, R5: the per-slot modules' state at T */
 #include "lockstep_view_points.h"
 #include "lockstep_hybrid.h"       /* hybrid sectors, slice H1 (native_gate_hybrid, default off) */
 #include "lockstep_sample_profile.h"
@@ -651,6 +654,12 @@ static const char *gate_sites_unowned(void) {
 static const char *gate_unowned_detail; /* recorded at stop reason 3 */
 
 #include "lockstep_getup_diagnostic_transport.h"
+static void join_jobinit_restore(void);   /* lockstep_join.h: a version 13 joiner's JobEngine::Init call */
+static void join_bootev_restore(void);    /* lockstep_join.h: a version 13 joiner's boot event passes */
+static void join_rule_restore(void);static void join_pcf_restore(void);       /* lockstep_join.h: JOIN_WATCHPCF's call sites (diagnostic) */
+static void join_fmt_restore(void);       /* lockstep_join_precise.h: the full-precision join save */
+static void join_parse_restore(void);
+static void join_ids_restore(void);        /* lockstep_join_ids.h */
 static void finish(unsigned reason) {
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
     timer_resolution_restore();
@@ -751,6 +760,8 @@ static void finish(unsigned reason) {
     gravidar_restore();
     gpost_restore();
     gwide_restore();
+    join_jobinit_restore();
+    join_bootev_restore();join_pcf_restore();join_rule_restore();join_fmt_restore();join_parse_restore();join_ids_restore();
     attention_restore();
     mass_restore();
     death_restore();
@@ -976,6 +987,7 @@ static int closed_window(void) {
 }
 #include "lockstep_gate_timing.h"
 #include "lockstep_wire_crypto_gate.h"
+#define LOOKAHEAD_WITH_PILOT 1   /* protocol 4 drops reach the pilot modules (pilot_drop_note) */
 #include "lockstep_lookahead.h"
 #include "lockstep_render_frames.h"
 #include "lockstep_render_display.h"
@@ -996,6 +1008,30 @@ static void gate_step(tick_fn original,void *frame,unsigned char loading,LARGE_I
 #define ADAPT_WITH_PILOT 1
 #include "lockstep_adaptive.h"
 #include "lockstep_join.h"   /* hot join: join save, side table and gate state (native_gate_join, default off) */
+#include "lockstep_join_passes.h"   /* hot join: the joiner's pass of T at its admission (native_gate_join_passes_admit) */
+#include "lockstep_join_specdrop.h"   /* hot join: the load's one-shot view cache specifications (native_gate_join_specdrop) */
+#include "lockstep_join_pctl.h"   /* hot join: X4's own PlayerController's values at T (native_gate_join_pctl) */
+/* lockstep_pilot_inputs.h: a joiner before its handover (no handover yet, or this tick before it). */
+static int join_catching_up(void) {return join_rx.based && (join_rx.handover==UINT64_MAX || stats.issued<join_rx.handover);}
+/* lockstep_pilot_join.h: the IDs the last join_ids_replay handed out (lockstep_join_ids.h), for its failure row. */
+static uint64_t pjoin_replay_got(unsigned i) {return i<JOIN_IDS_REPLAY_MAX?join_ids_replay_got[i]:0;}
+/* lockstep_pilot_join.h: on a joiner, the value of a line "name=value" of its package's LUA section (the probe's providers),
+ * NUL-terminated into out; 0 when there is none or it does not fit. */
+__attribute__((unused)) static int join_package_line(const char *name,char *out,size_t capacity) {
+    const size_t len=strlen(name);
+    if(!join_rx.based || !join_rx.t.lua || !len || !capacity) return 0;
+    const char *p=join_rx.t.lua,*end=join_rx.t.lua+join_rx.t.lua_len;
+    while(p<end) {
+        const char *eol=memchr(p,'\n',(size_t)(end-p));if(!eol) eol=end;
+        if((size_t)(eol-p)>len && !memcmp(p,name,len) && p[len]=='=') {
+            const size_t n=(size_t)(eol-p)-len-1;
+            if(n+1>capacity) return 0;
+            memcpy(out,p+len+1,n);out[n]=0;return 1;
+        }
+        p=eol+1;
+    }
+    return 0;
+}
 static void gate_tick(void *frame,unsigned char loading) {
     tick_fn original=(tick_fn)(image+TICK_RVA);
     if(!stats.active) {gate_original_once(original,frame,loading);return;}
@@ -1102,6 +1138,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(origin_failed() || getup_failed()) {finish(74);gate_original_once(original,frame,loading);return;}
     if(snapshot_configured && (snapshot_failures || (stats.issued>=join_tick_base()+4 && snapshot_enrolled!=12))) {finish(74);gate_original_once(original,frame,loading);return;}
     if(boot_mode && boot_phase<3) {
+        join_boot_frame();   /* hot join: the joiner's job engine stays off until its admission (lockstep_join.h) */
         unsigned boot_timeout=portable_wire_enabled?portable_wire_startup_ms:120000;
         if(thread!=main_thread || GetTickCount64()-boot_started>boot_timeout) {finish(26);gate_original_once(original,frame,loading);return;}
         boot_phase=boot_next(boot_phase,loading || (table && *(int*)((unsigned char*)table+0x130)));
@@ -1201,10 +1238,11 @@ static void gate_tick(void *frame,unsigned char loading) {
     {uint64_t reads=read_local_calls;ft_reads=reads-ft_reads_last;ft_reads_last=reads;}
     if(length<0 || (size_t)length>=sizeof(packet)) finish(56);
     else if(wire_lookahead || wire_adaptive) {
-        /* Protocols 4 and 5: the permit for the next tick is often held already. With native_gate_render_fps
-         * (protocol 4 only) the time until the step is due fills with render-only frames (lockstep_render_frames.h). */
-        unsigned reason=wire_adaptive?adapt_frame(packet,(size_t)length,reply,sizeof(reply)):
-            rf_fps?rf_boundary(original,frame,loading,packet,(size_t)length,reply,sizeof(reply),ft_begin):
+        /* Protocols 4 and 5: the permit for the next tick is often held already. With native_gate_render_fps the
+         * time until the step is due fills with render-only frames (lockstep_render_frames.h; under protocol 5 over the
+         * adaptive permits). */
+        unsigned reason=rf_fps?rf_boundary(original,frame,loading,packet,(size_t)length,reply,sizeof(reply),ft_begin):
+            wire_adaptive?adapt_frame(packet,(size_t)length,reply,sizeof(reply)):
             lookahead_frame(packet,(size_t)length,reply,sizeof(reply));
         if(reason==RF_STARTED) return;
         if(!reason && portable_native_configured) {
@@ -1600,7 +1638,7 @@ static int lua_motion_watch_frame(lua_State *L) {
     p_lua_pushnumber(L,isfinite(tick) && tick>=1 && tick<9007199254740992.0 && floor(tick)==tick && motion_watch_frame((uint64_t)tick));return 1;
 }
 static int lua_motion_watch_row(lua_State *L) {
-    double index=p_lua_tonumber(L,1);char out[3072];int n=0;
+    double index=p_lua_tonumber(L,1);char out[6144];int n=0;   /* a Steering ship's row carries up to four raw contacts */
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=motion_watch_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
@@ -1663,7 +1701,7 @@ static int lua_warp_rng(lua_State *L) {
     p_lua_pushnumber(L,m!=WR_OFF && wr_arm(m));return 1;
 }
 static int lua_warp_rng_status(lua_State *L) {
-    char out[512];int n=accept_ui()?wr_status(out,sizeof(out)):0;
+    char out[640];int n=accept_ui()?wr_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_transition_rows(lua_State *L) {p_lua_pushnumber(L,trr_arm());return 1;}
@@ -1691,7 +1729,7 @@ static int lua_tempzone_order_row(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_warp_rng_row(lua_State *L) {
-    double index=p_lua_tonumber(L,1);char out[384];int n=0;
+    double index=p_lua_tonumber(L,1);char out[2048];int n=0; /* a watch row with its frame, own/up and rel: about 1450 characters */
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=wr_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
@@ -2032,7 +2070,7 @@ static int lua_step_trace(lua_State *L) {
 }
 static int lua_step_trace_arm(lua_State *L) {
     double ticks=p_lua_tonumber(L,1);
-    p_lua_pushnumber(L,isfinite(ticks) && ticks>=1 && ticks<=600 && floor(ticks)==ticks && st_arm((uint64_t)ticks));return 1;
+    p_lua_pushnumber(L,isfinite(ticks) && ticks>=1 && ticks<=ST_TICKS_MAX && floor(ticks)==ticks && st_arm((uint64_t)ticks));return 1;
 }
 static int lua_step_trace_status(lua_State *L) {
     char out[1280];int n=accept_ui()?st_status(out,sizeof(out)):0;
@@ -2525,9 +2563,11 @@ static int lua_event_order_status(lua_State *L) {
     char out[768];int n=accept_ui()?event_order_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
+/* gate.event_rows(ticks[, from]): rows for from <= issued <= from+ticks (from 0: 1..ticks). */
 static int lua_event_rows(lua_State *L) {
-    double ticks=p_lua_tonumber(L,1);
-    p_lua_pushnumber(L,isfinite(ticks) && ticks>=0 && ticks<=600 && floor(ticks)==ticks && event_order_rows_arm((unsigned)ticks));return 1;
+    double ticks=p_lua_tonumber(L,1),from=p_lua_tonumber(L,2);
+    p_lua_pushnumber(L,isfinite(ticks) && ticks>=0 && ticks<=600 && floor(ticks)==ticks && isfinite(from) && from>=0 && from<=4294967295.0 &&
+                       floor(from)==from && event_order_rows_arm_from((unsigned)ticks,(uint64_t)from));return 1;
 }
 static int lua_event_order_row(lua_State *L) {
     double index=p_lua_tonumber(L,1);char out[384];int n=0;
@@ -3260,6 +3300,10 @@ static int lua_flight(lua_State *L) {
     for(unsigned i=0;i<0x1a0/4;i++) n+=snprintf(out+n,sizeof(out)-(size_t)n,"%08x",s->slot_before[i]);
     n+=snprintf(out+n,sizeof(out)-(size_t)n," params=");
     for(unsigned i=0;i<0x1a0/4;i++) n+=snprintf(out+n,sizeof(out)-(size_t)n,"%08x",s->params_before[i]);
+    n+=snprintf(out+n,sizeof(out)-(size_t)n," time=%016llx tls_time=%016llx tls_view=%u flags=%u/%u",(unsigned long long)s->time_bits,
+                (unsigned long long)s->tls_time,s->tls_view,(unsigned)s->last_cheap,(unsigned)s->last_player);
+    n+=snprintf(out+n,sizeof(out)-(size_t)n," seq=%llu/%llu thread=%lu banks=%u/%u slot=%llx",(unsigned long long)s->seq_in,
+                (unsigned long long)s->seq_out,(unsigned long)s->thread,s->bank_read,s->bank_write,(unsigned long long)s->slot_rel);
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
 static int lua_spline(lua_State *L) {
@@ -3586,6 +3630,31 @@ static int lua_world_watch(lua_State *L) {
 #include "lockstep_virtual_players_lua.h"
 #include "lockstep_hit_native_lua.h"
 #include "lockstep_join_lua.h"       /* hot join (lockstep_join.h) */
+/* gate.join_passes_admit(1) / gate.join_passes_status(): lockstep_join_passes.h (diagnostic native_gate_join_passes_admit). */
+static int lua_join_passes_admit(lua_State *L) {
+    const double on=p_lua_tonumber(L,1);
+    p_lua_pushnumber(L,accept_ui() && on==1 && jpass_arm());return 1;
+}
+static int lua_join_passes_status(lua_State *L) {
+    char out[160];int n=accept_ui()?jpass_status(out,sizeof(out)):0;
+    if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.join_specdrop(on) / gate.join_specdrop_status(): lockstep_join_specdrop.h (diagnostic native_gate_join_specdrop, with PEND). */
+static int lua_join_specdrop(lua_State *L) {join_specdrop_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+static int lua_join_specdrop_status(lua_State *L) {
+    char out[96];int n=join_specdrop_status(out,sizeof(out));
+    if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.join_pctl(1) / gate.join_pctl_state() / gate.join_pctl_status(): lockstep_join_pctl.h (diagnostic native_gate_join_pctl). */
+static int lua_join_pctl(lua_State *L) {p_lua_pushnumber(L,p_lua_tonumber(L,1)==1 && jpctl_arm());return 1;}
+static int lua_join_pctl_state(lua_State *L) {
+    static char out[64+16*PJOIN_PCTL_WORDS];int n=accept_ui()?jpctl_state(out,sizeof(out)):0;
+    if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_join_pctl_status(lua_State *L) {
+    char out[96];int n=jpctl_status(out,sizeof(out));
+    if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 static int lua_world_detail(lua_State *L) {
     double number=p_lua_tonumber(L,1);
     if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures) {p_lua_pushnil(L);return 1;}
@@ -4265,7 +4334,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(player_request_enable);METHOD(player_request_event);METHOD(player_request_scope);
     METHOD(player_fire_enable);METHOD(player_trigger);METHOD(player_target);METHOD(player_fire_state);METHOD(player_fire_event);METHOD(player_trigger_cleanup);
     METHOD(player_launch_enable);METHOD(player_launch_event);
-    METHOD(pilot_inputs);METHOD(pilot_inputs_status);METHOD(pilot_why);METHOD(pilot_absent);METHOD(pilot_handover);METHOD(pilot_abort);METHOD(pilot_absent_state);METHOD(pilot_absent_restore);METHOD(pilot_inputs_frame);METHOD(pilot_capture);METHOD(pilot_apply);METHOD(pilot_pending);
+    METHOD(pilot_inputs);METHOD(pilot_inputs_status);METHOD(pilot_why);METHOD(pilot_absent);METHOD(pilot_handover);METHOD(pilot_abort);METHOD(pilot_absent_state);METHOD(pilot_absent_restore);METHOD(pilot_join_park_at);METHOD(pilot_players_state);METHOD(pilot_join_state);METHOD(pilot_join_in_window);METHOD(pilot_join_slotk_quats);METHOD(pilot_join_slotk_words);METHOD(pilot_dump);METHOD(join_passes_admit);METHOD(join_passes_status);METHOD(join_specdrop);METHOD(join_specdrop_status);METHOD(join_pctl);METHOD(join_pctl_state);METHOD(join_pctl_status);METHOD(pilot_join_status);METHOD(pilot_inputs_frame);METHOD(pilot_capture);METHOD(pilot_apply);METHOD(pilot_pending);
     METHOD(pilot_device);METHOD(pilot_camera_follow);METHOD(pilot_camera);METHOD(pilot_camera_status);METHOD(pilot_ship);METHOD(pilot_native_capture);
     METHOD(pilot_native);METHOD(pilot_native_refusals);METHOD(pilot_stock);METHOD(pilot_stock_pins);METHOD(pilot_stock_callers);METHOD(pilot_present);METHOD(pilot_present_pause);METHOD(pilot_present_resume);METHOD(pilot_present_diff);METHOD(pilot_death);METHOD(pilot_foot);METHOD(pilot_foot_bodies);METHOD(pilot_foot_slots);METHOD(pilot_death_frame);METHOD(pilot_death_ship);METHOD(pilot_death_suit);METHOD(crash_note);METHOD(cutscene_ready);METHOD(cutscene_ready_status);METHOD(cutscene_ready_row);METHOD(pilot_death_status);METHOD(pilot_stock_capture);METHOD(pilot_stock_apply);METHOD(pilot_stock_inject);METHOD(pilot_stock_local);METHOD(pilot_stock_frame);
     METHOD(virtual_players);METHOD(virtual_players_status);METHOD(virtual_players_regions);METHOD(virtual_players_undeclared);METHOD(virtual_players_map);METHOD(virtual_players_hashes);METHOD(virtual_players_raw);METHOD(virtual_players_neighbours);
@@ -4289,7 +4358,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(body);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
-    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_unpaired);
+    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_refwatch);METHOD(join_refwatch_from);METHOD(join_refwatch_peek);METHOD(join_refwatch_at);METHOD(join_shape_at);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_buildp);METHOD(join_view_skip);METHOD(join_viewf_write);METHOD(join_viewf_bits);METHOD(join_pend);METHOD(join_viewl);METHOD(join_rcnt);METHOD(join_ecos);METHOD(join_shpw);METHOD(join_shpw_words);METHOD(join_trdn);METHOD(join_npca);METHOD(join_jobg);METHOD(join_jobw);METHOD(join_code);METHOD(join_engr);METHOD(join_shgr);METHOD(join_bnds);METHOD(join_jobdump);METHOD(join_jobcnt_at);METHOD(join_unpaired);
 #undef METHOD
     return 1;
 }

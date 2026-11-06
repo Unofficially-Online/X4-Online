@@ -1239,6 +1239,7 @@ static int rc_is_below(unsigned char *frame,const void *ancestor) {
     return 0;
 }
 /* mining: 0x7884a0's camera test from the latched view points. */
+#include "lockstep_mining_near.h"
 static volatile LONG64 rc_mining_calls,rc_mining_near_count,rc_mining_foreign;
 static int rc_mining_near(void *cluster,const float *pos,void *frame) {
     InterlockedIncrement64(&rc_mining_calls);
@@ -1254,14 +1255,12 @@ static int rc_mining_near(void *cluster,const float *pos,void *frame) {
                 if(i==own && !hyb_inside(frame)) continue; /* hybrid: the owner's ship counts inside its sector only */
                 if(!have_frame) {rc_gtr(frame,f,now,cluster);have_frame=1;}
                 __declspec(align(16)) float v[16];rc_gtr(point,v,now,cluster);
-                const float dx=v[0]-f[0],dy=v[1]-f[1],dz=v[2]-f[2];
-                const float lx=dx*f[4]+dy*f[5]+dz*f[6]-pos[0],ly=dx*f[8]+dy*f[9]+dz*f[10]-pos[1],lz=dx*f[12]+dy*f[13]+dz*f[14]-pos[2];
-                const float d=lx*lx+ly*ly+lz*lz;++candidates;
+                const float d=rc_mining_dist2(f,v,pos);++candidates;
                 if(best<0 || d<best) best=d;
             }
         }
     }
-    const int is_near=best>=0 && best<2.5e9f;
+    const int is_near=rc_mining_is_near(best);
     if(is_near) InterlockedIncrement64(&rc_mining_near_count);
     if(rc_pick_rows_ticks && cluster) {const float row[3]={best,(float)candidates,(float)is_near};rc_pick_note_pos(0x109u,cluster,RC_OBJ_R12,is_near,row);}
     return is_near;
@@ -1869,8 +1868,16 @@ static int rc_standins_arm(unsigned n) {
 }
 /* Slot 6 of every admitted frame, after the view points latch: the stand-in
  * for the next region and traffic passes and the next frame's simulation. */
+static int rc_join_install(uint64_t tick);
+static int rc_frame_body(uint64_t tick,int full);
 static int rc_frame(uint64_t tick) {
     if(!rc_installed || !stats.active || GetCurrentThreadId()!=ui_thread || tick!=stats.issued) return rc_fail("frame_guard");
+    return rc_frame_body(tick,1);
+}
+/* The stand-ins of this tick from the latched view points. full 0 (lockstep_join_passes.h: a joiner's admission, the main
+ * thread with the MoveWorker parked): the cameras, their sectors and the uncovered count only, without the view scenes, the
+ * shape latch and the field fill, which belong to a frame. */
+static int rc_frame_body(uint64_t tick,int full) {
     void *viewpoint=NULL;uint64_t id=0;
     if(view_latched && view_count) {
         viewpoint=view_points[0];
@@ -1889,7 +1896,7 @@ static int rc_frame(uint64_t tick) {
         InterlockedExchangePointer(rc_shadow_player(),viewpoint);InterlockedExchangePointer(rc_shadow_camera(),camera);
         InterlockedExchangePointer(rc_manager_camera(),camera);rc_next^=1;
     }
-    if(vsc_armed && viewpoint && !vsc_frame(tick)) return rc_fail("view_scenes");
+    if(full && vsc_armed && viewpoint && !vsc_frame(tick)) return rc_fail("view_scenes");
     /* Viewpoint 2 for the scene choice: the first view point in slot order in another sector, else the second. */
     void *viewpoint2=NULL;uint64_t id2=0;
     if(viewpoint && view_count>=2) {
@@ -1950,10 +1957,11 @@ static int rc_frame(uint64_t tick) {
         if(!covered) ++rc_uncovered_now;
     }
     if(rc_uncovered_now) ++rc_uncovered_ticks;
-    rc_shape_latch();
-    if(rc_fill_view && viewpoint && (rc_installed_groups&(1u<<RC_FIELD_FILL)) && !rc_fill_frame(viewpoint,tick)) return rc_fail("field_fill_entries");
+    if(full) rc_shape_latch();
+    if(full && rc_fill_view && viewpoint && (rc_installed_groups&(1u<<RC_FIELD_FILL)) && !rc_fill_frame(viewpoint,tick)) return rc_fail("field_fill_entries");
     unsigned klass;rc_viewpoint_key=id?world_identity_key(id,&klass):0;
-    rc_viewpoint_id=id;rc_tick=tick;++rc_updates;return 1;
+    rc_viewpoint_id=id;rc_tick=tick;++rc_updates;
+    return 1;
 }
 /* Gate tick, main thread, right after mt_join: the sites of every armed group,
  * once an admitted frame has set the stand-in, while the MoveWorker is parked
@@ -1967,6 +1975,23 @@ static int rc_join_point(uint64_t tick) {
     }
     for(unsigned g=0;g<RC_GROUPS;g++) if((pending&(1u<<g)) && !rc_install_group(g)) {rc_remove_patches();return rc_fail("cas");}
     rc_install_tick=tick;rc_stage="installed";return 1;
+}
+/* A hot joiner (lockstep_join.h) admits its first frame T+1 straight after its load, whose last frame's passes are not
+ * joined before it; the join point after step T+1 finds them busy and installs after T+2, so the joiner's steps T+1 and
+ * T+2 run with the local camera where the session's ran with the stand-in (j1-141: REGION_PASS, MASS_TRAFFIC and
+ * TRAVEL_SNAPSHOT apart at 634, the joiner's 634 snapshot the session's 635; the session installs after its step 1, which
+ * both its clients run alike from the same snapshot load). w1z4 tried it in rc_frame of T+1 and waited in vain: rc_frame runs
+ * on ui_thread, which is the MoveWorker, so the MoveWorker is never parked there. Now lockstep_join_passes.h calls it at the
+ * admission on the main thread (the MoveWorker parked, the loading frame's passes waited out), after the stand-ins of T.
+ * Never waits; which condition stood in the way is counted (not parked / busy). */
+static uint64_t rc_join_installs,rc_join_not_parked,rc_join_busy;
+static int rc_join_install(uint64_t tick) {
+    const unsigned pending=rc_armed_groups&~rc_installed_groups;
+    if(!pending) return 1;
+    if(!mt_worker_parked()) {++rc_join_not_parked;return 1;}
+    if(!rc_passes_idle()) {++rc_join_busy;return 1;}
+    for(unsigned g=0;g<RC_GROUPS;g++) if((pending&(1u<<g)) && !rc_install_group(g)) {rc_remove_patches();return rc_fail("cas");}
+    rc_install_tick=tick;rc_stage="installed";++rc_join_installs;return 1;
 }
 static int rc_owned(void) {
     if(!rc_patched) return 1;
@@ -2049,7 +2074,7 @@ static int rc_status(char *out,size_t capacity) {
         if(rc_installed_groups&(1u<<g)) b+=snprintf(installed+b,sizeof(installed)-(size_t)b,"%s%s",b?",":"",rc_group_names[g]);
     }
     int n=snprintf(out,capacity,"mode=%s installed=%d frame=%llu viewpoint=%llx key=%016llx updates=%llu native_frames=%llu restored=%d stage=%s "
-        "failures=%lld groups=%s patched=%s stub_calls=%llu/%llu/%llu/%llu/%llu/%llu install_tick=%llu install_waits=%llu effects=%u/%u effect_rows=%llu key2=%016llx scene_calls=%llu "
+        "failures=%lld groups=%s patched=%s stub_calls=%llu/%llu/%llu/%llu/%llu/%llu install_tick=%llu install_waits=%llu join_install=%llu/%llu/%llu effects=%u/%u effect_rows=%llu key2=%016llx scene_calls=%llu "
         "context_calls=%llu context_skipped=%llu policy=%s picks=%llu/%llu alternations=%llu pick_rows=%lld site_picks=%s "
         "shape_refresh=%llu/%llu aligned=%llu unmapped=%llu near=%llu far=%llu shape_native=%llu "
         "mining=%llu/%llu/%llu crystal=%llu/%llu/%llu,far:%llu xs=%llu/%llu/%llu/%llu xs_target=%llu/%llu probe=walk:%llu/%llu/%llu,booster:%llu/%llu/%llu,"
@@ -2059,7 +2084,7 @@ static int rc_status(char *out,size_t capacity) {
         (long long)rc_failures,groups,installed,(unsigned long long)rc_stub_calls[0],(unsigned long long)rc_stub_calls[1],
         (unsigned long long)rc_stub_calls[2],(unsigned long long)rc_stub_calls[3],(unsigned long long)rc_stub_calls[4],
         (unsigned long long)rc_stub_calls[5],(unsigned long long)rc_install_tick,
-        (unsigned long long)rc_install_waits,attempts,culls,(unsigned long long)rc_effect_rows,(unsigned long long)rc_vp2_key,
+        (unsigned long long)rc_install_waits,(unsigned long long)rc_join_installs,(unsigned long long)rc_join_not_parked,(unsigned long long)rc_join_busy,attempts,culls,(unsigned long long)rc_effect_rows,(unsigned long long)rc_vp2_key,
         (unsigned long long)(rc_stub_calls[6]+rc_stub_calls[7]+rc_stub_calls[8]+rc_stub_calls[9]+rc_stub_calls[10]),
         (unsigned long long)rc_stub_calls[RC_CONTEXT_CALL],(unsigned long long)rc_context_skipped,rc_policy?"sector":"off",
         (unsigned long long)rc_picks,(unsigned long long)rc_picks_two,(unsigned long long)rc_alternations,(long long)rc_pick_rows,site_picks,

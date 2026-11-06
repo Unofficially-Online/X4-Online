@@ -161,14 +161,20 @@ def bundle(args):
         command.append('--runtime-ids')
     if args.runtime_id_callers:
         command.append('--runtime-id-callers')
+    if args.runtime_ids_local:
+        command.append('--runtime-ids-local')
     if args.script_rng:
         command += ['--script-rng', args.script_rng]
     if args.script_rng_mask is not None:
         command += ['--script-rng-mask', str(args.script_rng_mask)]
     if args.script_rng_rows:
         command += ['--script-rng-rows', str(args.script_rng_rows)]
+    if args.script_rng_rows_window:
+        command += ['--script-rng-rows-window', *map(str, args.script_rng_rows_window)]
     if args.script_rng_natural:
         command.append('--script-rng-natural')
+    if args.script_rng_trace:
+        command.append('--script-rng-trace')
     if args.script_rng_unmapped:
         command.append('--script-rng-unmapped')
     if args.md_timed_rng:
@@ -181,6 +187,8 @@ def bundle(args):
         command.append('--attention-all')
     if args.step_trace:
         command += ['--step-trace', *args.step_trace, '--step-trace-ticks', str(args.step_trace_ticks)]
+        if args.step_chain:
+            command.append('--step-chain')
     if args.fp_redirect:
         command += ['--fp-redirect', args.fp_redirect, '--fp-redirect-ticks', str(args.fp_redirect_ticks)]
         if args.fp_redirect_solver:
@@ -211,6 +219,34 @@ def bundle(args):
         command.append('--portable-created')
     if args.spawn_rng:
         command += ['--spawn-rng', args.spawn_rng]
+    if args.weapon_fire_rng:
+        command.append('--weapon-fire-rng')
+    if args.engine_refresh_rng:
+        command.append('--engine-refresh-rng')
+    if args.spline_join_all:
+        command.append('--spline-join-all')
+    if args.actor_rng_all:
+        command.append('--actor-rng-all')
+    if args.actor_rng_rows:
+        command.append('--actor-rng-rows')
+    if args.player_timer:
+        command.append('--player-timer')
+    if args.tempzone_order:
+        command.append('--tempzone-order')
+    if args.warp_rng:
+        command += ['--warp-rng', args.warp_rng]
+    if args.warp_exit:
+        command.append('--warp-exit')
+    if args.world_hash_shields:
+        command.append('--world-hash-shields')
+    if args.mining_camera:
+        command.append('--mining-camera')
+    if args.mass_traffic:
+        command += ['--mass-traffic', args.mass_traffic]
+    if args.region_pass:
+        command += ['--region-pass', args.region_pass]
+    if args.pass_stride is not None:
+        command += ['--pass-stride', str(args.pass_stride)]
     if args.serial_pathing or (args.path_determinism or 0) & 1:
         command.append('--serial-pathing')
     if args.fork_save:
@@ -244,6 +280,10 @@ def bundle(args):
             raise SystemExit(f'composed config lacks {token}')
     if snapshot_sha not in config:
         raise SystemExit('composed config does not pin the snapshot')
+    if args.wire_crypto:
+        # The slot's credential depends on the session token: filled in at run time (run --wire-crypto-credentials).
+        with (extension / 'ui/config.lua').open('a', newline='\n') as handle:
+            handle.write(f'X4LAN_CONFIG.native_gate_wire_crypto = "{WIRE_CRYPTO_TOKEN}"\n')
     (out / 'snapshot').mkdir()
     shutil.copy2(args.snapshot, out / 'snapshot' / SLOT_SAVE)
     shutil.copy2(repo / 'tools/dev/native_gate_relay.py', out / 'native_gate_relay.py')
@@ -251,10 +291,10 @@ def bundle(args):
     shutil.rmtree(work)
     commit = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
     files = {p.relative_to(out).as_posix(): sha(p) for p in sorted(out.rglob('*')) if p.is_file()}
-    manifest = {'commit': commit, 'ticks': args.ticks, 'stride': args.stride, 'snapshot_sha256': snapshot_sha,
+    manifest = {'commit': commit, 'ticks': args.ticks, 'stride': args.stride, 'snapshot_sha256': snapshot_sha, 'wire_crypto': bool(args.wire_crypto),
                 'gate_so_sha256': files['extension/x4_lan_lab/native/x4lan_gate.so'], 'files': files,
                 'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'), 'seed_rng': bool(args.seed_rng),
-                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
+                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'runtime_ids_local': args.runtime_ids_local,'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'script_rng_rows_window': args.script_rng_rows_window, 'script_rng_trace': args.script_rng_trace, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'step_chain': args.step_chain, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'weapon_fire_rng': args.weapon_fire_rng, 'engine_refresh_rng': args.engine_refresh_rng, 'spline_join_all': args.spline_join_all, 'actor_rng_all': args.actor_rng_all, 'actor_rng_rows': args.actor_rng_rows, 'player_timer': args.player_timer, 'tempzone_order': args.tempzone_order, 'warp_rng': args.warp_rng, 'warp_exit': args.warp_exit, 'world_hash_shields': args.world_hash_shields, 'mining_camera': args.mining_camera, 'mass_traffic': args.mass_traffic, 'region_pass': args.region_pass, 'pass_stride': args.pass_stride, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
                 'world_hash_watch': args.world_hash_watch or [],
                 'fork_save': args.fork_save and {'request': args.fork_save, 'every': args.fork_save_every, 'slot': args.fork_save_slot,
                                                  'budget_ms': args.fork_save_budget_ms, 'watchdog_s': args.fork_save_watchdog}, 'fp_redirect_drones': args.fp_redirect_drones, 'world_health_ticks': args.world_health_ticks, 'fp_attack_capture': args.fp_attack_capture, 'fp_attack_watch': args.fp_attack_watch}
@@ -326,6 +366,15 @@ def steam_identity(userhome, uid):
     return {'pid': pid, 'start': row['start'], 'uid': uid}
 
 
+def steam_shared_memory(shm, uid):
+    """Whether shm holds the Steam client's shared memory for uid (u<uid>-Shm_* owned by uid). The directory itself is
+    usually root's with mode 1777, as /dev/shm is (snap: /dev/shm/snap.steam)."""
+    try:
+        return any(p.name.startswith(f'u{uid}-Shm_') and p.stat().st_uid == uid for p in shm.iterdir())
+    except OSError:
+        return False
+
+
 def bounded_tail(path, limit=1 << 20):
     try:
         with open(path, 'rb') as stream:
@@ -366,7 +415,9 @@ class LogWatch:
                 self.stopped = True
                 reason = re.search(r'NATIVE_GATE STOP .*?reason=(\d+)', text)
                 self.stop_reason = int(reason.group(1)) if reason else -1
-            if self.failure is None and re.search(r'NATIVE_GATE (?:REFUSED|ERROR)', text):
+            # As the Windows lane runs: the session defaults' loud rows (a degraded counter grew, a default skipped) are
+            # recorded, not fatal; every other ERROR and any REFUSED is.
+            if self.failure is None and re.search(r'NATIVE_GATE (?:REFUSED|ERROR (?!DEGRADED|DEFAULT_SKIPPED))', text):
                 self.failure = text[text.index('NATIVE_GATE'):][:300]
 
 
@@ -378,12 +429,16 @@ def gate_lines(path):
                 yield raw.decode(errors='replace').rstrip('\r\n')
 
 
-def namespace_command(case, game, dlc_binds, lock, env, program, user):
+def namespace_command(case, game, dlc_binds, lock, env, program, user, shm=None):
     """bwrap view as tools/dev/linux_native_admission_run.py: read-only host, private case,
-    game read-only at case/game, extension directory replaced by this case's allowlist."""
+    game read-only at case/game, extension directory replaced by this case's allowlist.
+    shm (run --shm): a directory bound over /dev/shm, where a confined Steam client keeps its
+    shared memory (the snap's /dev/shm/snap.steam), so X4 outside the snap reaches it."""
     game = game.resolve(strict=True)
-    command = ['runuser', '-u', user, '--', 'bwrap', '--ro-bind', '/', '/', '--proc', '/proc', '--dev-bind', '/dev', '/dev',
-               '--bind', str(case), str(case), '--ro-bind', str(game), str(case / 'game')]
+    command = ['runuser', '-u', user, '--', 'bwrap', '--ro-bind', '/', '/', '--proc', '/proc', '--dev-bind', '/dev', '/dev']
+    if shm:
+        command += ['--bind', str(shm), '/dev/shm']
+    command += ['--bind', str(case), str(case), '--ro-bind', str(game), str(case / 'game')]
     for source, view in dlc_binds:
         command += ['--ro-bind', str(source), str(view)]
     command += ['--ro-bind', str(case / 'extensions'), str(case / 'game/extensions'),
@@ -414,7 +469,37 @@ def portable_math_state(case):
     return active, [line[:300] for line in lines[:16]]
 
 
-def stage_case(root, run, slot, game, userhome, port, token, clients=2):
+WIRE_CRYPTO_TOKEN = '@X4LANE_WIRE_CRYPTO@'
+CREDENTIAL = re.compile(r'x4c1:[0-9a-f]{64}:[0-9a-f]{64}')
+
+
+def case_config(text, port, token, slot, clients, credential=None):
+    """A client's config.lua: the session's port, token, slot and size; with wire crypto (bundle --wire-crypto) the slot's
+    credential (native_gate_crypto.py credential for this token and slot; a secret, never logged)."""
+    wants = WIRE_CRYPTO_TOKEN in text
+    if wants and not credential:
+        raise RuntimeError(f'the bundle has wire crypto: slot {slot} needs a credential (run --wire-crypto-credentials)')
+    if credential and not wants:
+        raise RuntimeError('a wire crypto credential, but the bundle has no wire crypto line (bundle --wire-crypto)')
+    if credential and not CREDENTIAL.fullmatch(credential):
+        raise RuntimeError(f'slot {slot}: not a wire crypto credential (x4c1:<64 hex>:<64 hex>)')
+    text = (text.replace('@X4LANE_PORT@', str(port)).replace('@X4LANE_TOKEN@', token)
+            .replace('@X4LANE_SLOT@', f'p{slot}').replace('@X4LANE_CLIENTS@', str(clients)))
+    return text.replace(WIRE_CRYPTO_TOKEN, credential or '')
+
+
+def load_credentials(path):
+    """--wire-crypto-credentials FILE: JSON {"<slot>": "x4c1:...", ...}, readable by its owner only (it is a secret)."""
+    if os.name == 'posix' and path.stat().st_mode & 0o077:
+        raise SystemExit(f'{path}: a credential file must not be readable by others (chmod 600)')
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict) or not data or any(not str(k).isdigit() or not isinstance(v, str) or not CREDENTIAL.fullmatch(v)
+                                                     for k, v in data.items()):
+        raise SystemExit(f'{path}: expected {{"<slot>": "x4c1:<64 hex>:<64 hex>", ...}}')
+    return {int(k): v for k, v in data.items()}
+
+
+def stage_case(root, run, slot, game, userhome, port, token, clients=2, credential=None):
     """One private instance: HOME, profile 45841 (autosave off), snapshot, extensions."""
     case = run / f'case{slot}'
     profile = case / 'home/.config/EgoSoft/X4/45841'
@@ -441,9 +526,9 @@ def stage_case(root, run, slot, game, userhome, port, token, clients=2):
     lab = case / 'extensions/x4_lan_lab'
     shutil.copytree(root / 'extension/x4_lan_lab', lab)
     config = lab / 'ui/config.lua'
-    text = (config.read_text().replace('@X4LANE_PORT@', str(port)).replace('@X4LANE_TOKEN@', token)
-            .replace('@X4LANE_SLOT@', f'p{slot}').replace('@X4LANE_CLIENTS@', str(clients)))
-    config.write_text(text)
+    config.write_text(case_config(config.read_text(), port, token, slot, clients, credential))
+    if credential:
+        config.chmod(0o600)
     ids = sorted(p.name for p in (case / 'extensions').iterdir())
     if any(not (n.startswith('ego_dlc_') or n == 'x4_lan_lab') for n in ids):
         raise RuntimeError('unexpected extension in the private view')
@@ -482,10 +567,15 @@ def run(args):
     for rel, digest in manifest['files'].items():
         if sha(root / rel) != digest:
             raise SystemExit(f'bundle file changed: {rel}')
+    # A desktop host (e.g. snap Steam) keeps the game, the Steam client's .steam and its shared memory elsewhere:
+    # --game, --steam-home and --shm name them; the defaults are the VPS dedicated-server layout.
+    game_path = args.game or userhome / 'x4/game'
     try:
-        game = (userhome / 'x4/game').resolve(strict=True)
+        game = game_path.resolve(strict=True)
     except OSError:
-        raise SystemExit(f'REFUSED: no X4 installation at {userhome}/x4/game') from None
+        raise SystemExit(f'REFUSED: no X4 installation at {game_path}') from None
+    steam_home = args.steam_home or userhome
+    shm = args.shm.resolve(strict=True) if args.shm else None
     problems = []
     if sha(game / 'X4') != EXE_SHA:
         problems.append('X4 is not the pinned Linux 9.00 executable')
@@ -510,16 +600,22 @@ def run(args):
     if memory < needed:
         problems.append(f'MemAvailable {memory:.1f} GiB < {needed} GiB for {clients} instances')
     try:
-        steam = steam_identity(userhome, user.pw_uid)
+        steam = steam_identity(steam_home, user.pw_uid)
     except (OSError, ValueError, RuntimeError) as error:
         problems.append(str(error))
         steam = None
+    if shm and not steam_shared_memory(shm, user.pw_uid):
+        problems.append(f'--shm {shm} holds no shared memory of the Steam client of {args.user} (u{user.pw_uid}-Shm_*)')
     if problems:
         raise SystemExit('REFUSED: ' + '; '.join(problems))
-    discard = Path('/opt/x4mp/vklayer').is_dir() and not args.no_discard
+    layer = args.discard_layer or Path('/opt/x4mp/vklayer')
+    discard = layer.is_dir() and not args.no_discard
+    if args.discard_layer and not discard and not args.no_discard:
+        raise SystemExit(f'REFUSED: --discard-layer {layer} is not a directory')
     if args.preflight:
         print('PREFLIGHT OK ' + json.dumps({'game': str(game), 'memory_available_gib': round(memory, 1), 'steam': steam,
-                                            'discard_layer': discard, 'bundle_commit': manifest['commit'],
+                                            'steam_home': str(steam_home), 'shm': shm and str(shm), 'discard_layer': discard and str(layer),
+                                            'bundle_commit': manifest['commit'],
                                             'portable_math': bool(manifest.get('portable_math_sha256')), 'seed_rng': manifest.get('seed_rng'),
                                             'gate_so_sha256': manifest['gate_so_sha256']}))
         return
@@ -535,7 +631,14 @@ def run(args):
             port = reserve.getsockname()[1]
         token = secrets.token_hex(16)
     order = [slot for slot in launch_order(args.launch_order, clients) if slot in local]
-    by_slot = {slot: stage_case(root, run_dir, slot, game, userhome, port, token, clients) for slot in local}
+    credentials = {}
+    if args.wire_crypto_credentials:
+        if not external:
+            raise SystemExit('--wire-crypto-credentials needs an external relay with --wire-crypto (--relay-port)')
+        credentials = load_credentials(args.wire_crypto_credentials)
+        if any(slot not in credentials for slot in local):
+            raise SystemExit(f'--wire-crypto-credentials lacks a credential for slots {[s for s in local if s not in credentials]}')
+    by_slot = {slot: stage_case(root, run_dir, slot, game, steam_home, port, token, clients, credentials.get(slot)) for slot in local}
     cases = [by_slot[slot] for slot in local]
     for path in [run_dir, *run_dir.rglob('*')]:
         if not path.is_symlink():
@@ -604,12 +707,12 @@ def run(args):
                    'VK_ICD_FILENAMES': '/usr/share/vulkan/icd.d/lvp_icd.json', 'VK_DRIVER_FILES': '/usr/share/vulkan/icd.d/lvp_icd.json',
                    'SDL_AUDIODRIVER': 'dummy', 'ALSOFT_DRIVERS': 'null'}
             if discard:
-                env.update(VK_LAYER_PATH='/opt/x4mp/vklayer', VK_INSTANCE_LAYERS='VK_LAYER_X4MP_discard', X4MP_VK_DISCARD='1')
+                env.update(VK_LAYER_PATH=str(layer), VK_INSTANCE_LAYERS='VK_LAYER_X4MP_discard', X4MP_VK_DISCARD='1')
             if manifest.get('portable_math_sha256'):
                 env.update(portable_math_env(case))
             program = [str(case / 'game/X4'), '-personalfolderid', '45841', '-skipintro', '-debug', 'scripts',
                        '-logfile', 'engine-output.log', '-nocputhrottle', '-noworkshopsync', '-seed:276944566']
-            games_by_slot[slot] = (launch(f'game{slot}', namespace_command(case, game, dlc_binds, lock, env, program, args.user)), profile)
+            games_by_slot[slot] = (launch(f'game{slot}', namespace_command(case, game, dlc_binds, lock, env, program, args.user, shm)), profile)
         games = [games_by_slot[slot] for slot in local]
         result['started'] = time.time()
         deadline = time.monotonic() + args.timeout
@@ -620,7 +723,7 @@ def run(args):
                 raise RuntimeError('cancelled')
             if time.monotonic() > deadline:
                 raise RuntimeError('timeout (loading or relay); see the client logs')
-            if steam_identity(userhome, user.pw_uid) != steam:
+            if steam_identity(steam_home, user.pw_uid) != steam:
                 raise RuntimeError('Steam client identity changed')
             for slot, watch, (proc, _) in zip(local, watches, games):
                 watch.poll()
@@ -667,7 +770,7 @@ def run(args):
             lock_target.unlink(missing_ok=True)
         result['steam_after'] = None
         try:
-            result['steam_after'] = steam_identity(userhome, user.pw_uid)
+            result['steam_after'] = steam_identity(steam_home, user.pw_uid)
         except (OSError, ValueError, RuntimeError) as error:
             result['steam_after'] = {'error': str(error)}
         result['steam_unchanged'] = result['steam_after'] == steam
@@ -753,20 +856,27 @@ def main():
     b.add_argument('--extension-base', type=Path, help='extension to compose on (default src/extension/x4_lan_lab); use the lane base for the same Lua as Windows')
     b.add_argument('--portable-math', action='store_true', help='preload libx4mp_portable_math.so with its decimal and exact_reciprocal patches')
     b.add_argument('--seed-rng', action='store_true', help='key the MoveWorker RNG word each frame (boot option 2)')
+    b.add_argument('--wire-crypto', action='store_true',
+                   help='wire crypto (reports/LOCKSTEP-WIRE-CRYPTO-20261101.txt): the config carries native_gate_wire_crypto, each '
+                        "slot's credential filled in at run time (run --wire-crypto-credentials; needs a relay with --wire-crypto)")
     b.add_argument('--serial-pathing', action='store_true', help='join the pathing pass before the frame goes on (boot option 1)')
     b.add_argument('--md-resume-rng', action='store_true', help='load-time MD cue delays on per-cue streams')
     b.add_argument('--runtime-ids', action='store_true', help='the same runtime IDs on every client (set mode)')
     b.add_argument('--runtime-id-callers', action='store_true', help='the table of who allocates runtime IDs (needs --runtime-ids)')
+    b.add_argument('--runtime-ids-local', action='store_true', help='what only the view asks for takes runtime IDs from its own lists (needs --runtime-ids and --created-identities)')
     b.add_argument('--script-rng', choices=('observe', 'key'), help='AI scripts and MD cues on per-script streams')
     b.add_argument('--script-rng-mask', type=int, choices=range(1, 8), metavar='1..7', help='1 AI scripts, 2 MD cues, 4 also boot phase 2 (default 3)')
     b.add_argument('--script-rng-rows', type=int, metavar='TICKS', help='SCRIPT_RNG_ROW lines for the first TICKS ticks')
+    b.add_argument('--script-rng-rows-window', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='SCRIPT_RNG_ROW lines of ticks FIRST..LAST only')
+    b.add_argument('--script-rng-trace', action='store_true', help='script RNG rows of nested scopes too, with PCs and range bounds')
     b.add_argument('--script-rng-natural', action='store_true', help='rows of outermost unkeyed scopes too')
     b.add_argument('--script-rng-unmapped', action='store_true', help='AI owners without a portable ID are keyed by their rank')
     b.add_argument('--md-timed-rng', action='store_true', help='direct MD cue checks on the per-cue streams')
     b.add_argument('--find-order', choices=('observe', 'sort'), help='find_* candidate lists on saved IDs')
     b.add_argument('--loadout-order', choices=('observe', 'canonical'), help="what a station wants to restock does not depend on the macros' heap addresses")
     b.add_argument('--step-trace', nargs='+', metavar='SAVED_ID', help="the Linear flight model's step, entry and exit, for up to four saved IDs (diagnostic)")
-    b.add_argument('--step-trace-ticks', type=int, default=3, help='ticks 1..N of the step trace (default 3)')
+    b.add_argument('--step-trace-ticks', type=int, default=3, help='ticks 1..N of the step trace (default 3); N above 600: the 60 ticks ending at N')
+    b.add_argument('--step-chain', action='store_true', help="FR8's step chain rows with the step trace (native_gate_step_chain)")
     b.add_argument('--fp-redirect', choices=('shadow', 'writer', 'redirect'), help='the flight parameter refresh recomputed by strict code next to the native one (Option B slice 1; writer and redirect write the writer\'s +0x0..+0xc; the spline length hook is Windows-only)')
     b.add_argument('--fp-redirect-watch', nargs='+', metavar='SAVED_ID', help='FP_REDIRECT_ROWs for up to four saved IDs')
     b.add_argument('--fp-redirect-ticks', type=int, default=3, help='ticks 1..N of the FP_REDIRECT_ROWs (default 3)')
@@ -785,6 +895,22 @@ def main():
     b.add_argument('--portable-created', action='store_true', help='ordering and keying modules use created IDs')
     b.add_argument('--gravidar-wide', choices=('sort',), help='the Gravidar\'s zone groups in portable order for the pass (needs --gravidar)')
     b.add_argument('--spawn-rng', choices=('observe', 'key'), help='ship loadouts on the generator\'s explicit state')
+    b.add_argument('--weapon-fire-rng', action='store_true', help='every weapon shot on its own keyed stream (native_gate_weapon_fire_rng)')
+    b.add_argument('--engine-refresh-rng', action='store_true', help="a ship's next engine-parameter refresh from a keyed stream (native_gate_engine_refresh_rng)")
+    b.add_argument('--actor-rng-all', action='store_true', help="every portable ship's Move and Agent update on keyed streams (native_gate_actor_rng_all)")
+    b.add_argument('--player-timer', action='store_true', help="the player's fleet rebuild timer from the first admitted frame (native_gate_player_timer)")
+    b.add_argument('--warp-rng', choices=('split', 'observe'), help="warps on a keyed word or counted natively; with --step-trace the listed ships' warp watch rows (native_gate_warp_rng)")
+    b.add_argument('--tempzone-order', action='store_true', help="the pathing pass's tempzone requests in a portable order (native_gate_tempzone_order; needs --travel-snapshot)")
+    b.add_argument('--warp-exit', action='store_true', help='the gate exit sum in the Windows order (native_gate_warp_exit)')
+    b.add_argument('--world-hash-shields', action='store_true', help="census shields in canonical form (native_gate_world_hash_shields = "
+                   "'canonical', as the Windows default stack hashes them)")
+    b.add_argument('--mining-camera', action='store_true', help="the region object search's camera test from the player's ship "
+                   "(native_gate_mining_camera = 'view')")
+    b.add_argument('--actor-rng-rows', action='store_true', help='one ACTOR_RNG_ROW per keyed scope that drew (diagnostic)')
+    b.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the mass traffic pass joined at the gate tick (native_gate_mass_traffic)')
+    b.add_argument('--region-pass', choices=('sync', 'observe'), help='the region manager pass joined at the gate tick (native_gate_region_pass)')
+    b.add_argument('--pass-stride', type=int, help='the synced passes only every Nth frame (native_gate_pass_stride)')
+    b.add_argument('--spline-join-all', action='store_true', help='every spline update waits until its route request is published (native_gate_spline_join_all; needs serial pathing)')
     b.add_argument('--travel-snapshot', action='store_true', help='the wingman travel decision reads a per-pass snapshot of the leader flag')
     b.add_argument('--gravidar-deadlines', action='store_true', help='factor-pass deadlines rebased at the first gated Move, low-attention passes keyed')
     b.add_argument('--gravidar', action='store_true', help='the gated Gravidar pass, keyed units, time sync, sector order (implies serial pathing)')
@@ -815,11 +941,18 @@ def main():
     r.add_argument('--timeout', type=int, default=3600, help='seconds for load and the whole run')
     r.add_argument('--min-memory-gib', type=float, help='default 6.5 per instance')
     r.add_argument('--no-discard', action='store_true', help='render with lavapipe instead of the discard layer')
+    r.add_argument('--discard-layer', type=Path, help='the X4MP discard layer directory (default /opt/x4mp/vklayer)')
+    r.add_argument('--game', type=Path, help='the X4 installation (default ~USER/x4/game, the VPS layout), e.g. a Steam library\'s common/X4 Foundations')
+    r.add_argument('--steam-home', type=Path, help='the directory whose .steam belongs to the running Steam client (default ~USER; snap Steam: ~USER/snap/steam/common)')
+    r.add_argument('--shm', type=Path, help="bind this directory over /dev/shm for X4 (a confined Steam client's shared memory, e.g. /dev/shm/snap.steam)")
     r.add_argument('--preflight', action='store_true', help='only check the host requirements and the bundle; start nothing')
     r.add_argument('--relay-port', type=int, help='mixed session: use the relay already listening on 127.0.0.1:PORT of this host '
                    '(e.g. one serving Windows clients too) instead of starting one; needs --relay-token and --local-slots')
     r.add_argument('--relay-token', help='the token of that relay (32 hex)')
     r.add_argument('--local-slots', metavar='2', help='mixed session: the slots this host runs (the others join from elsewhere)')
+    r.add_argument('--wire-crypto-credentials', type=Path, metavar='FILE',
+                   help='a bundle built with --wire-crypto: JSON {"<slot>": "x4c1:...", ...} (native_gate_crypto.py credential for '
+                        'this --relay-token), mode 600; with an external relay only (--relay-port)')
     r.add_argument('--launch-order', metavar='2,1', help='the order the clients start in; a difference that follows it is startup timing, one that follows the number is keyed on the slot')
     args = p.parse_args()
     bundle(args) if args.command == 'bundle' else run(args)

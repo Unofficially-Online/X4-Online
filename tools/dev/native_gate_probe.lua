@@ -271,6 +271,9 @@ end
 -- joiner: every per-slot module (pilot inputs, stock, slots, bodies, death, presentation, fire, UI replay, own prediction,
 -- hit claims) treats slot K as neutral until its HANDOVER, applied at the same tick everywhere (gate.pilot_handover), and
 -- requires its records from H+delay; an ABORT ends its records again (gate.pilot_abort).
+-- rejoin={K,...}: slots present from the start that the relay may drop (--rejoin, --stall-drop-ms; roadmap 15): its drop is
+-- an ABORT (reason dropped) in the slot's first missing row, after which it is neutral like an absent slot, and a later join
+-- hands it over again. The same list on every client and on a joiner; never slot 1, never an absent slot.
 local join_client,join_joiner,join_restored
 if cfg.native_gate_join then
  local j=cfg.native_gate_join==true and {} or cfg.native_gate_join
@@ -289,6 +292,111 @@ if cfg.native_gate_join then
   assert(not cfg[key],'hot join: '..key..' keeps Lua state across ticks that the join package does not carry')
  end
  assert(not (join_joiner and cfg.native_gate_world_trace_ticks),'hot join: the world trace (native_gate_world_trace_ticks) arms at the session tick 1 only')
+ if cfg.native_gate_join_evq_dump then assert(gate.join_evq_dump and gate.join_evq_dump(1)==1,'join evq dump refused') end
+ if cfg.native_gate_join_precise then   -- savers write the join save at full precision, a version 13 joiner reads it exactly
+  assert(gate.join_precise and gate.join_precise(1)==1,'join precise save refused')
+ end
+ if cfg.native_gate_join_viewf_write then   -- diagnostic: the joiner writes the session's VIEWF words (off: a joiner's window flips after its STOP)
+  assert(gate.join_viewf_write and gate.join_viewf_write(1)==1,'join viewf write refused')
+ end
+ if cfg.native_gate_join_viewl then   -- a joiner runs the view handlers where its live/player view flags differ (VIEWL)
+  assert(gate.join_viewl and gate.join_viewl(1)==1,'join viewl refused')
+ end
+ if cfg.native_gate_join_shpw then   -- a joiner takes the session's ship words (SHPW)
+  assert(gate.join_shpw and gate.join_shpw(1)==1,'join shpw refused')
+ end
+ if cfg.native_gate_join_shpw_words~=nil then   -- which SHPW words (bit k = word k; experiment)
+  local m=cfg.native_gate_join_shpw_words
+  assert(cfg.native_gate_join_shpw and type(m)=='number' and m>=1 and m<=63 and m==math.floor(m) and gate.join_shpw_words and
+   gate.join_shpw_words(m)==m,'join shpw words refused (needs native_gate_join_shpw, 1..63)')
+ end
+ if cfg.native_gate_join_trdn then   -- a joiner takes the session's next trade offer updates (TRDN)
+  assert(gate.join_trdn and gate.join_trdn(1)==1,'join trdn refused')
+ end
+ if cfg.native_gate_join_npca then   -- a joiner takes the session's NPC activations (NPCA)
+  assert(gate.join_npca and gate.join_npca(1)==1,'join npca refused')
+ end
+ if cfg.native_gate_join_jobg then   -- a joiner takes the session's job generator words (JOBG)
+  assert(gate.join_jobg and gate.join_jobg(1)==1,'join jobg refused')
+ end
+ if cfg.native_gate_join_jobw then   -- experiment: a joiner writes the session's job state +0x48 (JOBS)
+  assert(gate.join_jobw and gate.join_jobw(1)==1,'join jobw refused')
+ end
+ if cfg.native_gate_join_code then   -- a joiner takes the session's object code counter (CODE)
+  assert(gate.join_code and gate.join_code(1)==1,'join code refused')
+ end
+ if cfg.native_gate_join_engr then   -- a joiner takes the session's engine boost ramps (ENGR)
+  assert(gate.join_engr and gate.join_engr(1)==1,'join engr refused')
+ end
+ if cfg.native_gate_join_bnds then   -- a joiner takes the session's stations' bounding structs (BNDS)
+  assert(gate.join_bnds and gate.join_bnds(1)==1,'join bnds refused')
+ end
+ if cfg.native_gate_join_shgr then   -- a joiner takes the session's containers' shield recharge groups (SHGR)
+  assert(gate.join_shgr and gate.join_shgr(1)==1,'join shgr refused')
+ end
+ if cfg.native_gate_join_ecos then   -- a joiner takes the session's economy schedules (ECOS)
+  assert(gate.join_ecos and gate.join_ecos(1)==1,'join ecos refused')
+ end
+ if cfg.native_gate_join_rcnt then   -- experiment: a joiner lowers created ships' and bays' reference counts to the session's (RCNT)
+  assert(gate.join_rcnt and gate.join_rcnt(1)==1,'join rcnt refused')
+ end
+ if cfg.native_gate_join_pend then   -- a joiner takes the session's pending view cache flags (PEND)
+  assert(gate.join_pend and gate.join_pend(1)==1,'join pend refused')
+ end
+ if cfg.native_gate_join_specdrop then   -- and clears the load's one-shot view cache specifications (lockstep_join_specdrop.h)
+  assert(gate.join_specdrop and gate.join_specdrop(1)==1,'join specdrop refused')
+ end
+ if cfg.native_gate_join_viewf_bits~=nil then   -- the bits of the session's VIEWF flag words a joiner takes (1 parent, 8 pose; 0 off)
+  local m=cfg.native_gate_join_viewf_bits
+  assert(type(m)=='number' and gate.join_viewf_bits and gate.join_viewf_bits(m)==1,'join viewf bits refused')
+ end
+ if cfg.native_gate_join_view_skip then   -- diagnostic: view-bank writes a joiner's admission leaves out (1 VIEWF, 2 VIEWK, 4 VIEWP, 8 GRAVD)
+  assert(gate.join_view_skip and gate.join_view_skip(cfg.native_gate_join_view_skip)==1,'join view skip refused')
+ end
+ if cfg.native_gate_join_buildp then assert(gate.join_buildp and gate.join_buildp(1)==1,'join buildp refused') end   -- diagnostic rows
+ if cfg.native_gate_join_ids then   -- a joiner's saved objects take the session's runtime IDs in its load (needs runtime IDs set mode)
+  assert(cfg.native_gate_runtime_ids~=nil and cfg.native_gate_runtime_ids~='observe' and cfg.native_gate_created_identities and
+   gate.join_ids and gate.join_ids(1)==1,'join ids refused')
+ end
+ if cfg.native_gate_join_hold_boot_events then   -- a version 13 joiner holds its boot event passes until its admission
+  assert(gate.join_hold_boot_events and gate.join_hold_boot_events(1)==1,'join boot event hold refused')
+ end
+ if cfg.native_gate_join_watch_span~=nil then   -- JOIN_WATCH rows after each step T+1 .. T+n (2 .. 600)
+  local n=cfg.native_gate_join_watch_span
+  assert(type(n)=='number' and gate.join_watch_span and gate.join_watch_span(n)==n,'native_gate_join_watch_span needs 2 .. 600')
+ end
+ if cfg.native_gate_join_watch~=nil then   -- JOIN_WATCH rows (diagnostic): up to 8 portable IDs, 16 hex digits each
+  local watch=cfg.native_gate_join_watch
+  assert(type(watch)=='table' and #watch>=1 and #watch<=8 and gate.join_watch,'native_gate_join_watch needs 1..8 portable IDs')
+  for i=1,#watch do assert(type(watch[i])=='string' and gate.join_watch(watch[i])==i,'invalid join watch ID') end
+ end
+ if cfg.native_gate_join_refwatch~=nil then   -- JOIN_REFWATCH (diagnostic): up to 4 fields '<portable>:<deref>/..:<offset>:<len>' (hex)
+  local rw=cfg.native_gate_join_refwatch
+  assert(type(rw)=='table' and #rw>=1 and #rw<=4 and gate.join_refwatch,'native_gate_join_refwatch needs 1..4 fields')
+  for i=1,#rw do assert(type(rw[i])=='string' and gate.join_refwatch(rw[i])==1,'invalid join refwatch field') end
+ end
+ if cfg.native_gate_join_refwatch_peek~=nil then   -- JOIN_REFWATCH execution rows: up to 4 '<slot>:<reg>:<offset>[*<offset2>]:<len>' memory copies (hex)
+  local pk=cfg.native_gate_join_refwatch_peek
+  assert(type(pk)=='table' and #pk>=1 and #pk<=4 and gate.join_refwatch_peek,'native_gate_join_refwatch_peek needs 1..4 copies')
+  for i=1,#pk do assert(type(pk[i])=='string' and gate.join_refwatch_peek(pk[i])==1,'invalid join refwatch peek') end
+ end
+ if cfg.native_gate_join_refwatch_at~=nil then   -- with the watch: those fields armed for the hits from this step on (diagnostic)
+  local n=cfg.native_gate_join_refwatch_at
+  assert(type(n)=='number' and gate.join_refwatch_at and gate.join_refwatch_at(n)==n,'native_gate_join_refwatch_at needs 1 .. 100000')
+ end
+ if cfg.native_gate_join_jobdump~=nil then   -- JOIN_JOBDUMP (diagnostic): up to 8 jobs by the FNV-1a hash of their ID (16 hex digits)
+  local jd=cfg.native_gate_join_jobdump
+  assert(type(jd)=='table' and #jd>=1 and #jd<=8 and gate.join_jobdump,'native_gate_join_jobdump needs 1..8 job hashes')
+  for i=1,#jd do assert(type(jd[i])=='string' and gate.join_jobdump(jd[i])==1,'invalid join jobdump hash') end
+ end
+ if cfg.native_gate_join_jobcnt_at~=nil then   -- JOIN_JOBCNT rows after this step (diagnostic)
+  local n=cfg.native_gate_join_jobcnt_at
+  assert(type(n)=='number' and gate.join_jobcnt_at and gate.join_jobcnt_at(n)==n,'native_gate_join_jobcnt_at needs 1 .. 100000')
+ end
+ if cfg.native_gate_join_refwatch_from~=nil then   -- a saver arms those fields from this step on (snapshot objects; diagnostic)
+  local n=cfg.native_gate_join_refwatch_from
+  assert(type(n)=='number' and gate.join_refwatch_from and gate.join_refwatch_from(n)==n,'native_gate_join_refwatch_from needs 1 .. 100000')
+ end
  local core=assert(X4LAN_JOIN_CORE,'hot join core missing (ui/native_gate_join_core.lua)')
  local own=tonumber(cfg.slot:sub(2))
  assert(gate.join_arm and gate.join_result and gate.join_load and gate.join_handover and gate.join_lua,'gate without hot join')
@@ -302,10 +410,22 @@ if cfg.native_gate_join then
    if k<=4 then absent_mask=absent_mask+2^(k-1) end   -- the pilot modules' slots (at most four)
   end
   assert(not absent[own] or join_joiner,'native_gate_join.absent names this client slot '..own..' (only a joiner starts absent)')
+ end
+ local rejoin,rejoin_mask={},0
+ if j.rejoin~=nil then
+  assert(type(j.rejoin)=='table' and #j.rejoin>=1,'native_gate_join.rejoin must be a list of slots')
+  for _,k in ipairs(j.rejoin) do
+   assert(type(k)=='number' and k%1==0 and k>=2 and k<=clients and not absent[k] and not rejoin[k],
+    'native_gate_join.rejoin: slots 2..'..clients..', each once, none of them absent (slot 1 is never dropped and rejoined)')
+   rejoin[k]=true
+   if k<=4 then rejoin_mask=rejoin_mask+2^(k-1) end
+  end
+ end
+ if j.absent~=nil or j.rejoin~=nil then
   -- The Windows gate's pilot modules take the mask when they arm (gate.pilot_absent after gate.pilot_inputs: the gate has
   -- started then); the Linux gate has none of them. In the join package: a joiner takes over the session's handovers so
   -- far (an earlier join's slot is present at T); '-' when the session flies no pilot modules.
-  if gate.pilot_absent and absent_mask>0 then
+  if gate.pilot_absent and absent_mask+rejoin_mask>0 then
    core.provide('pilot_absent',function() return gate.pilot_absent_state() or '-' end,function(text)
     if text=='-' then assert(not gate.pilot_absent_state(),'pilot absent: the session armed no pilot modules, this joiner did')
     else assert(gate.pilot_absent_restore(text)==1,'pilot absent state refused '..tostring(text)) end
@@ -322,15 +442,26 @@ if cfg.native_gate_join then
    if join_joiner and k==own then assert(gate.join_handover(h)==1,'join handover refused '..tostring(gate.join_status())) end
    -- Every client, the same tick: slot k's ship is enrolled at H, its records required from H+delay (when the pilot
    -- modules took the absent slots: gate.pilot_absent_state answers).
-   if absent[k] and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then
+   if (absent[k] or rejoin[k]) and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then
     assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
    end
   end,
   abort=function(k)
-   if absent[k] and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then assert(gate.pilot_abort(k)==1,'pilot abort refused k='..k) end
+   if (absent[k] or rejoin[k]) and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then assert(gate.pilot_abort(k)==1,'pilot abort refused k='..k) end
+  end,
+  -- Every client of the session, at the same record (lockstep_pilot_join.h): the cockpit bodies leave their rooms around
+  -- the save at T, so X4's save holds one player (W1b). Without armed pilot modules there is nothing to take off.
+  save_at=function(k,t,mask)
+   -- native_gate_join_shape_refresh: every client of the session forgets its fixture shape holders after T+1 (lockstep_join.h)
+   if cfg.native_gate_join_shape_refresh then assert(gate.join_shape_at and gate.join_shape_at(t)==t,'join shape refresh refused T='..t) end
+   if gate.pilot_join_park_at and gate.pilot_players_state and gate.pilot_players_state() then
+    assert(gate.pilot_join_park_at(t)==1,'pilot join park refused T='..t..' '..tostring(gate.pilot_join_status and gate.pilot_join_status()))
+    DebugError('[X4LAN] NATIVE_GATE PILOT_JOIN_PARK armed T='..t..' k='..k..tostring(gate.pilot_join_status()))
+   end
   end}
  input_section('join','join',join_client)
- DebugError('[X4LAN] NATIVE_GATE JOIN_ARMED slot='..own..' save='..save_mode..' joiner='..(join_joiner and 1 or 0)..' absent='..absent_mask)
+ if cfg.native_gate_join_shape_refresh and join_joiner then assert(gate.join_shape_at and gate.join_shape_at(0)==0,'join shape refresh refused (joiner)') end
+ DebugError('[X4LAN] NATIVE_GATE JOIN_ARMED slot='..own..' save='..save_mode..' joiner='..(join_joiner and 1 or 0)..' absent='..absent_mask..' rejoin='..rejoin_mask)
  -- native_gate_world_hash_join = true (DEFAULT OFF; reports/LOCKSTEP-HOTJOIN-20261101.txt 1.6): one more world capture at the
  -- join's T+1, on every client of the session (T of each SAVE_AT it applied, whether it saves or not: the capture enters the
  -- declared state of all of them alike) and on a joiner (its tick base + 1, its first frame). Both sides have then run the
@@ -1240,6 +1371,12 @@ if cfg.native_gate_join and cfg.native_gate_world_hash_stride and X4LAN_JOIN_COR
   for _,saved in ipairs(cfg.native_gate_world_hash_watch or {}) do assert(gate.world_watch(saved)==1,'world watch refused '..saved) end
  end)
 end
+-- native_gate_join_pctl (diagnostic): X4's own PlayerController's values at T, written at a joiner's admission
+-- (lockstep_join_pctl.h); armed on every client before the first tick, the line provided by the saver.
+if cfg.native_gate_join and cfg.native_gate_join_pctl and X4LAN_JOIN_CORE then
+ assert(gate.join_pctl and gate.join_pctl(1)==1,'join pctl refused')
+ X4LAN_JOIN_CORE.provide('join_pctl',function() return gate.join_pctl_state() or '-' end,function(text) end)
+end
 local probe_last_us -- previous frame() wall time, native_gate_frame_timing only
 local camera_perturb=false -- this client perturbs its camera (native_gate_camera_perturb)
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
@@ -2083,6 +2220,42 @@ local function death_frame(tick)
  if tick%600==0 then ticklog.status('PILOT_DEATH_STATUS',tick,gate.pilot_death_status) end
 end
 pilot_view.death_arm,pilot_view.death_frame=death_arm,death_frame
+-- R6 (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 8): the death module's window state for a joiner whose T is inside
+-- the window: the start poses (noted at the window start, where a respawn builds), the respawn and suit counters (their MD
+-- seeds), the last poses (where a suit is built). The saver's at T; the joiner's restore replaces its own (empty: it never
+-- saw the window start). Exact numbers: %.17g.
+local function death_pose_text(p) return string.format('%.17g,%.17g,%.17g,%.17g,%.17g,%.17g',p.x,p.y,p.z,p.yaw,p.pitch,p.roll) end
+local function death_pose_parse(text)
+ if text=='-' then return nil end
+ local v={}
+ for n in text:gmatch('[^,]+') do v[#v+1]=assert(tonumber(n),'join: pilot_death pose '..text) end
+ assert(#v==6,'join: pilot_death pose '..text)
+ return {x=v[1],y=v[2],z=v[3],yaw=v[4],pitch=v[5],roll=v[6]}
+end
+function pilot_view.death_state()
+ local parts={'v1'}
+ for slot=1,#cfg.native_gate_pilot_slots do
+  local p,l=death.poses[slot],pilot_view.death_last and pilot_view.death_last[slot]
+  parts[#parts+1]=slot..':'..(death.built[slot] or 0)..':'..(death.suits[slot] or 0)..':'..(p and death_pose_text(p) or '-')..':'..
+   (l and death_pose_text(l) or '-')
+ end
+ return table.concat(parts,'|')
+end
+function pilot_view.death_restore(text)
+ local head,seen=nil,0
+ for part in text:gmatch('[^|]+') do
+  if not head then head=part;assert(part=='v1','join: pilot_death '..tostring(part))
+  else
+   local slot,built,suits,p,l=part:match('^(%d+):(%d+):(%d+):([^:]+):([^:]+)$')
+   slot=tonumber(slot)
+   assert(slot and slot>=1 and slot<=#cfg.native_gate_pilot_slots,'join: pilot_death '..part)
+   death.built[slot]=tonumber(built);death.suits[slot]=tonumber(suits);death.poses[slot]=death_pose_parse(p)
+   if pilot_view.death_last then pilot_view.death_last[slot]=death_pose_parse(l) end
+   seen=seen+1
+  end
+ end
+ assert(head=='v1' and seen==#cfg.native_gate_pilot_slots,'join: pilot_death '..text..' is not this client slots')
+end
 -- Scripted fire of some slots only (a test's shooter): the list as a bit mask.
 function X4LAN_PILOT_FIRE_MASK(list,fire,count)
  if list==nil then return 0 end
@@ -2298,6 +2471,22 @@ end
 local function pilot_frame(s,tick)
  if cfg.native_gate_pilot_block_orders then block_orders() end
  if pilot_view.death then pilot_view.death_frame(tick) end
+ -- Diagnostic native_gate_pilot_dump_tick: every slot's ship, controller, agent and solver bytes at that tick, read only, so
+ -- that the session's and a joiner's can be compared offline (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 15).
+ local dump_at=cfg.native_gate_pilot_dump_tick
+ if dump_at and gate.pilot_dump and (dump_at==tick or (type(dump_at)=='table' and (dump_at[1]==tick or dump_at[2]==tick))) then
+  -- which 5 and 6: a joiner's slot controllers just before and after the resume wrote their carried values (once, at T+1).
+  local sizes={0x800,0x800,0x1000,0x400,0x6f00,0x800,0x800}
+  for slot=1,#cfg.native_gate_pilot_slots do
+   for which=0,6 do
+    -- The players: only their seat and flight fields (+0x6a00..+0x6f00).
+    for off=(which==4 and 0x6a00 or 0),sizes[which+1]-256,256 do
+     local hex=gate.pilot_dump(slot,which,off)
+     if hex then ticklog.write('PILOT_DUMP tick='..tick..' slot='..slot..' which='..which..' off='..off..' hex='..hex) end
+    end
+   end
+  end
+ end
  local wire=cfg.native_gate_pilot_source=='wire'
  if wire and pilot_records then
   for slot=1,#cfg.native_gate_pilot_slots do
@@ -2736,7 +2925,7 @@ local function frame()
   if cfg.native_gate_render_fps~=nil and cfg.native_gate_render_fps~=false then
    local fps=cfg.native_gate_render_fps
    assert(type(fps)=='number' and fps%1==0 and type(cfg.native_gate_tick_hz)=='number' and fps>cfg.native_gate_tick_hz and fps<=360 and
-    snapshot and (cfg.native_gate_lookahead or 0)>0 and cfg.native_gate_serial_pathing and cfg.native_gate_radar_serial and
+    snapshot and (cfg.native_gate_lookahead=='adaptive' or (tonumber(cfg.native_gate_lookahead) or 0)>0) and cfg.native_gate_serial_pathing and cfg.native_gate_radar_serial and
     cfg.native_gate_render_rng_split==true and (cfg.native_gate_mass_traffic==true or cfg.native_gate_mass_traffic=='sync') and
     (cfg.native_gate_region_pass==true or cfg.native_gate_region_pass=='sync') and (not cfg.native_gate_runtime_ids or cfg.native_gate_runtime_ids_local==true),
     'native_gate_render_fps needs native_gate_tick_hz below it, a snapshot boot, native_gate_lookahead, serial pathing, radar serial, '..
@@ -3107,6 +3296,13 @@ local function frame()
     gate.tempzone_order(mode)==1,'tempzone order refused')
    log('TEMPZONE_ORDER_ARMED mode='..mode)
   end
+  -- The gate exit sum (linux/gate_warp_exit.h): the gate poster adds the exit's z from four extents; MSVC and GCC
+  -- associate that sum apart (1 ulp). The Linux gate runs the poster's own instructions in the Windows order; Windows
+  -- is that order, so a Windows client has nothing to arm. Default off.
+  if cfg.native_gate_warp_exit and gate.platform and gate.platform()=='linux' then
+   assert(cfg.native_gate_warp_exit==true and snapshot and gate.warp_exit and gate.warp_exit_status and gate.warp_exit()==1,'warp exit refused')
+   log('WARP_EXIT_ARMED')
+  end
   -- Object attention timer (0x6d1ff0) for every portable object, not only the
   -- fixture actors: the loading-time due is replaced by "due now" at the first
   -- admitted call per portable ID, and every call draws its next due from a
@@ -3311,7 +3507,10 @@ local function frame()
                      {'native_gate_sound_rng','sound_rng','SOUND_RNG','split'},{'native_gate_view_scenes','view_scenes','VIEW_SCENES',true},
                      {'native_gate_traffic_rows','traffic_rows','TRAFFIC_ROWS',true}}) do
    if cfg[g[1]] then
-    assert(cfg[g[1]]==g[4] and cfg.native_gate_view_points and (cfg.native_gate_mass_traffic or cfg.native_gate_region_pass) and gate.region_camera and
+    -- The Linux gate has the mining group without view points yet (linux/gate_mining_camera.h): it latches the
+    -- player object's ship, as rc_shape_latch does when no view point is latched.
+    local linux_mining=g[2]=='mining' and gate.platform and gate.platform()=='linux'
+    assert(cfg[g[1]]==g[4] and (cfg.native_gate_view_points or linux_mining) and (cfg.native_gate_mass_traffic or cfg.native_gate_region_pass) and gate.region_camera and
      gate.region_camera_frame and gate.region_camera_status and gate.region_camera(g[2])==1,
      g[3]:lower():gsub('_',' ')..' refused '..tostring(gate.region_camera_status and gate.region_camera_status()))
     log(g[3]..'_ARMED mode='..tostring(g[4]))
@@ -3876,9 +4075,12 @@ local function frame()
   -- Census rows for boot passes and the first N gated ticks (true means 3).
   if cfg.native_gate_event_rows~=nil then
    local ticks=cfg.native_gate_event_rows==true and 3 or cfg.native_gate_event_rows
+   -- native_gate_event_rows_from (a hot joiner's window): rows for from <= tick <= from+ticks instead of 1..ticks.
+   local from=cfg.native_gate_event_rows_from or 0
+   assert(type(from)=='number' and from>=0 and from==math.floor(from),'native_gate_event_rows_from must be a tick')
    assert(cfg.native_gate_event_order and type(ticks)=='number' and ticks>=0 and ticks<=(gate.platform and gate.platform()=='linux' and 20000 or 600) and ticks==math.floor(ticks) and
-    gate.event_rows and gate.event_rows(ticks)==1,'event rows refused')
-   log('EVENT_ROWS_ARMED ticks='..ticks)
+    gate.event_rows and gate.event_rows(ticks,from)==1,'event rows refused')
+   log('EVENT_ROWS_ARMED ticks='..ticks..(from>0 and ' from='..from or ''))
   end
   -- Portable IDs for components created after the snapshot load: creation
   -- tick, parent's saved/created ID, class, macro and ordinal, high bit set.
@@ -4076,13 +4278,16 @@ local function frame()
   -- creation frame) by a marker plus per-tick rank (needs the AI bit).
   if cfg.native_gate_script_rng then
    local mode,mask=cfg.native_gate_script_rng,cfg.native_gate_script_rng_mask or 3
-   local natural,unmapped=cfg.native_gate_script_rng_natural,cfg.native_gate_script_rng_unmapped
-   local options=(natural and 1 or 0)+(unmapped and 2 or 0)
+   -- native_gate_script_rng_trace=true (needs rows) also rows each nested scope of the same script and adds the
+   -- Exec's PC at entry and leave and a range's bounds to the rows (diagnostic; keys and words unchanged).
+   local natural,unmapped,trace=cfg.native_gate_script_rng_natural,cfg.native_gate_script_rng_unmapped,cfg.native_gate_script_rng_trace
+   local options=(natural and 1 or 0)+(unmapped and 2 or 0)+(trace and 4 or 0)
    -- The Linux gate's scopes have their own entries (gate.script_rng_own_entries), so they need neither trace.
    assert(snapshot and (mode=='observe' or mode=='key') and (gate.script_rng_own_entries or (cfg.native_gate_interrupt_diag and cfg.native_gate_nested_actions)) and
     cfg.native_gate_world_identities and type(mask)=='number' and mask>=1 and mask<=7 and mask==math.floor(mask) and mask%4~=0 and
     (cfg.native_gate_script_rng_rows==nil or cfg.native_gate_script_rng_rows==true) and
     (natural==nil or (natural==true and cfg.native_gate_script_rng_rows==true)) and
+    (trace==nil or (trace==true and cfg.native_gate_script_rng_rows==true)) and
     (unmapped==nil or (unmapped=='key' and mask%2==1)) and
     not (mask>=4 and cfg.native_gate_boot_rng_anchor) and
     not (mode=='key' and (cfg.native_gate_ai_rng or cfg.native_gate_interrupt_rng or cfg.native_gate_npc_rng)) and
@@ -4179,10 +4384,12 @@ local function frame()
    -- their HANDOVER (lockstep_pilot_inputs.h). Before the first tick, with the pilot modules.
    do
     local listed=type(cfg.native_gate_join)=='table' and cfg.native_gate_join.absent
-    local mask=0
+    local relisted=type(cfg.native_gate_join)=='table' and cfg.native_gate_join.rejoin
+    local mask,rmask=0,0
     for _,k in ipairs(listed or {}) do if k<=4 then mask=mask+2^(k-1) end end
-    if mask>0 then
-     assert(gate.pilot_absent and gate.pilot_absent(mask)==1,'pilot absent slots refused mask='..mask)
+    for _,k in ipairs(relisted or {}) do if k<=4 then rmask=rmask+2^(k-1) end end
+    if mask+rmask>0 then
+     assert(gate.pilot_absent and gate.pilot_absent(mask+rmask,rmask)==1,'pilot absent slots refused mask='..mask..' rejoin='..rmask)
      log('PILOT_ABSENT_ARMED mask='..mask..' '..tostring(gate.pilot_absent_state()))
     end
     -- The window's Lua state (the death module's start poses and counters, the stock aim, the UI families' one-shot test
@@ -4190,9 +4397,51 @@ local function frame()
     -- session's window and joins before take-2 (start - 5), where all of it is still unset on the session (the gate stops a
     -- join inside the window, 91 join_inside_window; this refuses one after it as well).
     if cfg.native_gate_join and X4LAN_JOIN_CORE then
-     X4LAN_JOIN_CORE.provide('pilot_window',function() return 'v1|'..window[1]..','..window[2] end,function(text)
+     -- native_gate_join_in_window = true (DIAGNOSTIC, default off; reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt W1): a join
+     -- save inside the window is measured instead of refused here: the saver logs the real player and its ship at T, the
+     -- joiner the same after its load; the gate still stops the joiner at its first pilot frame (91 join_inside_window).
+     local in_window=cfg.native_gate_join_in_window==true
+     -- A joiner inside the window resumes its pilot state at its first pass (lockstep_pilot_join.h; diagnostic).
+     if in_window and join_joiner and gate.pilot_join_in_window then assert(gate.pilot_join_in_window(1)==1,'join in window refused') end
+     -- native_gate_join_slotk_quats (experiment): slot k also takes the session's PlayerController double quaternions
+     if cfg.native_gate_join_slotk_quats and in_window and join_joiner then
+      assert(gate.pilot_join_slotk_quats and gate.pilot_join_slotk_quats(1)==1,'join slotk quats refused')
+     end
+     -- native_gate_join_slotk_words = mask (experiment): the slot-1-only word groups slot k takes as well
+     if cfg.native_gate_join_slotk_words~=nil and in_window and join_joiner then
+      local m=cfg.native_gate_join_slotk_words
+      assert(type(m)=='number' and gate.pilot_join_slotk_words and gate.pilot_join_slotk_words(m)==m,'join slotk words refused (1..63)')
+     end
+     local function players(what)
+      local ok,player=pcall(function() return C.GetPlayerID() end)
+      local ok2,ship=pcall(function() return C.GetPlayerOccupiedShipID() end)
+      log('JOIN_IN_WINDOW '..what..' tick='..tostring(gate.join_base and gate.join_base())..' window='..window[1]..' player='..
+       (ok and tostring(ConvertStringTo64Bit(tostring(player))) or 'error')..' occupied='..(ok2 and tostring(ConvertStringTo64Bit(tostring(ship))) or 'error')..
+       ' diagnostic=join_in_window')
+     end
+     -- P_k's runtime IDs and created identities per step (lockstep_pilot_join.h), for a joiner inside the window (W3; the
+     -- rebuild is not built yet: the joiner logs what it got).
+     if gate.pilot_players_state then
+      X4LAN_JOIN_CORE.provide('pilot_players',function()
+       local text=gate.pilot_players_state() or '-'
+       log('PILOT_PLAYERS saver '..text)
+       return text
+      end,function(text) log('PILOT_PLAYERS joiner '..tostring(text)) end)
+     end
+     -- The pilot tables at T (lockstep_pilot_join.h 'pilot_state': rings in flight, frames, held keys, stores); a joiner's
+     -- gate reads them from the package natively at its first pass (before this restore runs).
+     if gate.pilot_join_state then
+      X4LAN_JOIN_CORE.provide('pilot_state',function() return gate.pilot_join_state() or '-' end,function(text) end)
+     end
+     -- R6: the death module's window state (pilot_view.death_state above).
+     X4LAN_JOIN_CORE.provide('pilot_death',pilot_view.death_state,pilot_view.death_restore)
+     X4LAN_JOIN_CORE.provide('pilot_window',function()
+      if in_window then players('saver') end
+      return 'v1|'..window[1]..','..window[2]
+     end,function(text)
       assert(text=='v1|'..window[1]..','..window[2],'join: the session pilot window '..tostring(text)..' is not this client window '..window[1]..','..window[2])
       local base=gate.join_base and gate.join_base()
+      if in_window and base and base+1>window[1]-5 then players('joiner') return end
       assert(base and base+1<=window[1]-5,'join: the session tick T='..tostring(base)..' is past the pilot window take-2 ('..(window[1]-5)..
        '): the window Lua state (death poses and counters, stock aim, the UI one-shot fixtures) is not in the join package')
      end)
@@ -4628,6 +4877,8 @@ local function frame()
   if cfg.native_gate_path_transforms then log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end
   if cfg.native_gate_body_pose then log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end
   if cfg.native_gate_path_budget then log('PATH_BUDGET_STOP '..tostring(gate.path_budget_status())) end
+  -- The Linux gate's spline join keeps its own counters (linux/gate_spline_join.h); Windows reports them in SPLINE_JOIN_ALL.
+  if cfg.native_gate_spline_join_all and gate.spline_join_all_status then log('SPLINE_JOIN_ALL_STOP '..tostring(gate.spline_join_all_status())) end
   if cfg.native_gate_render_rng_split then log('RENDER_RNG_SPLIT_STOP '..tostring(gate.render_rng_split_status())) end
   if cfg.native_gate_render_fps then log('RENDER_FRAMES_STOP '..tostring(gate.render_frames_status())) end
   if cfg.native_gate_render_camera or cfg.native_gate_render_motion then log('RENDER_DISPLAY_STOP '..tostring(gate.render_display_status())) end
@@ -4644,6 +4895,7 @@ local function frame()
   if cfg.native_gate_warp_rng then log('WARP_RNG_STOP '..tostring(gate.warp_rng_status())) end
   if cfg.native_gate_transition_rows then log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end
   if cfg.native_gate_tempzone_order then log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end
+  if cfg.native_gate_warp_exit and gate.warp_exit_status then log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end
   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end
   if cfg.native_gate_attention_all then log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end
   if cfg.native_gate_view_points then log('VIEW_POINTS_STOP '..tostring(gate.view_points_status())) end
@@ -4831,6 +5083,11 @@ local function frame()
    -- The save this client boots from must be the one the package names.
    local named=tostring(gate.join_status()):match(' rx_save_sha=(%x+) ')
    assert(named==snapshot,'join: the snapshot '..tostring(snapshot)..' is not the package\'s save '..tostring(named))
+   -- Diagnostic native_gate_join_passes_admit: the pass of T at the admission (lockstep_join_passes.h); armed with the gate
+   -- started (j1-145: at the config, before it, the gate refuses every caller).
+   if cfg.native_gate_join_passes_admit then
+    assert(gate.join_passes_admit and gate.join_passes_admit(1)==1,'join passes admit refused '..tostring(gate.join_passes_status and gate.join_passes_status()))
+   end
    log('JOIN_LOADED '..tostring(gate.join_status()))
   end
   assert(gate.load_requested()==1,'load request refused')
@@ -4844,7 +5101,7 @@ local function frame()
   assert(base and tick==base+1,'join: first tick '..tick..' after the tick base '..tostring(base))
   X4LAN_JOIN_CORE.restore_text(gate.join_lua_state())
   join_restored=true
-  log('JOIN_ADMITTED base='..base..' '..tostring(gate.join_status()))
+  log('JOIN_ADMITTED base='..base..' '..tostring(gate.join_status())..(gate.join_passes_status and tostring(gate.join_passes_status()) or '')..(gate.join_specdrop_status and tostring(gate.join_specdrop_status()) or '')..(gate.join_pctl_status and tostring(gate.join_pctl_status()) or ''))
   X4LAN_JOIN_CORE.log_unpaired(gate,log)
  end
  ticklog.ui_events.tick=tick
@@ -5007,6 +5264,9 @@ local function frame()
    if not row then break end
    log('TEMPZONE_ROW '..row);row_cursors.tempzone=row_cursors.tempzone+1
   end
+ end
+ if cfg.native_gate_warp_exit and gate.warp_exit_status then
+  ticklog.status('WARP_EXIT',tick,gate.warp_exit_status,'warp exit status unavailable')
  end
  if cfg.native_gate_command_order then
   ticklog.status('COMMAND_ORDER',tick,gate.command_order_status,'command order status unavailable')
@@ -5198,6 +5458,19 @@ local function frame()
   assert(anchor:match(' applied=1 ') and anchor:match(' failures=0 ') and anchor:match(' late=0$'),'boot RNG anchor not applied before load completed')
  end
  if profile then profile.mark('modules') end
+ -- Hot join (native_gate_join_shipyards.xml JoinRefreshBuilds): every station's builds brought to one frame time at the join's
+ -- T+1 on every client (the session's T of each SAVE_AT it applied, a joiner's base + 1), in MD's keyed stream.
+ if cfg.native_gate_join_refresh_builds and join_client then
+  local at_t1=join_joiner and (gate.join_base and gate.join_base() and tick==gate.join_base()+1) or (not join_joiner and join_client.save_ticks and join_client.save_ticks[tick-1]==true)
+  if at_t1 then AddUITriggeredEvent('X4LAN_NativeGate','JoinRefreshBuilds',{}) end
+ end
+ -- Hot join diagnostic (native_gate_join_shipyards.xml): what Process_Ships reads, logged by every client at these ticks.
+ if cfg.native_gate_join_shipyards then
+  local mask=cfg.native_gate_join_shipyards_mask or 31   -- which reads run (native_gate_join_shipyards.xml)
+  local bit=function(b) return math.floor(mask/b)%2 end   -- MD gets 0/1 flags (it has no modulo for the mask)
+  local flags={mask=mask,yards=bit(1),wares=bit(2),busy=bit(4),queued=bit(8),waiting=bit(16)}
+  for _,at in ipairs(cfg.native_gate_join_shipyards) do if tick==at then AddUITriggeredEvent('X4LAN_NativeGate','JoinShipyards',flags) end end
+ end
  if cfg.native_gate_hash=='battle' then
   if tick==1 then AddUITriggeredEvent('X4LAN_NativeGate',snapshot and 'RestoreActors' or 'Spawn',{}) end
   if tick==5 and cfg.native_gate_docking_state then AddUITriggeredEvent('X4LAN_NativeCommands','DockSetup',{mode=cfg.native_gate_command_test}) end
@@ -5222,13 +5495,23 @@ local function frame()
  -- After this tick's fixture events, so their MD order is fixed relative to the identity steps.
  local identity_state=identity and identity.frame(tick)
  local data=sample(tick)
+ -- Inside native_gate_trace_window: one DIGEST_PARTS row, the first 16 hex of the SHA-256 of each part the report hashes
+ -- (by the data's length after each), so that a digest mismatch (a hot join's replay) names its part (j1-140: every state
+ -- row equal, the replay apart from 634 on).
+ local parts=ticklog.window and tick>=ticklog.window[1] and tick<=ticklog.window[2] and {{'sample',#data}} or nil
  if profile then profile.mark('sample') end
  if pilot_receipt then data=data..'|'..pilot_receipt end
+ if parts then parts[#parts+1]={'pilot',#data} end
  if identity_state then data=data..'|'..identity_state end
+ if parts then parts[#parts+1]={'identity',#data} end
  if cfg.native_gate_runtime_ids_barrier then data=data..'|RUNTIME_IDS_1|'..assert(gate.runtime_ids_word(),'runtime ids word unavailable') end
+ if parts then parts[#parts+1]={'rid',#data} end
  if cfg.native_gate_nav_mesh=='sync' then data=data..'|'..assert(gate.nav_mesh_frame(),'nav mesh receipt unavailable') end
+ if parts then parts[#parts+1]={'navmesh',#data} end
  if input_state then data=data..'|'..input_state end
+ if parts then parts[#parts+1]={'input',#data} end
  if cfg.native_gate_player_probe then data=data..'|'..assert(X4LAN_NATIVE_PLAYER,'native player probe missing')(tick,gate) end
+ if parts then parts[#parts+1]={'player',#data} end
  if cfg.native_gate_world_hash_stride then
   if tick==1 then
    for _,saved in ipairs(cfg.native_gate_world_hash_watch or {}) do assert(gate.world_watch(saved)==1,'world watch refused '..saved) end
@@ -5269,6 +5552,17 @@ local function frame()
  end
  if profile then profile.mark('capture') end
  local hash=(gate.sha256 or X4LAN_SHA256.digest)(data)
+ if parts then
+  parts[#parts+1]={'world',#data}
+  local out,from={},0
+  for _,p in ipairs(parts) do
+   if p[2]>from then out[#out+1]=p[1]..'='..string.sub((gate.sha256 or X4LAN_SHA256.digest)(data:sub(from+1,p[2])),1,16) end
+   from=p[2]
+  end
+  log('DIGEST_PARTS tick='..tick..' '..table.concat(out,' ')..' hash='..string.sub(hash,1,16))
+  -- The input mux's receipt itself (INPUTS_1, small): which section a joiner's differs in.
+  if input_state then log('DIGEST_INPUT tick='..tick..' '..input_state) end
+ end
  local command=cfg.native_gate_command_test and X4LAN_NATIVE_COMMANDS.proposal(tick) or '00000000'
  if X4LAN_NATIVE_PLAYER_COMMANDS then command=X4LAN_NATIVE_PLAYER_COMMANDS.proposal(tick) end
  if wire3 then
@@ -5334,6 +5628,7 @@ SetScript('onUpdate',function()
    end
    if cfg.native_gate_player_origin_token and X4LAN_NATIVE_ORIGIN then ticklog.try(X4LAN_NATIVE_ORIGIN.drain,gate,true) end
    if cfg.native_gate_render_rng_split then ticklog.try(function() log('RENDER_RNG_SPLIT_STOP '..tostring(gate.render_rng_split_status())) end) end
+   if cfg.native_gate_spline_join_all and gate.spline_join_all_status then ticklog.try(function() log('SPLINE_JOIN_ALL_STOP '..tostring(gate.spline_join_all_status())) end) end
    if cfg.native_gate_ui_guard then ticklog.try(function() log('UI_GUARD_STOP '..tostring(gate.ui_guard_status())) end) end
    if cfg.native_gate_created_identities then ticklog.try(function() drain_created_rows();log('CREATED_IDENTITIES_STOP '..tostring(gate.created_identities_status())) end) end
    if cfg.native_gate_actor_rng_all then ticklog.try(function() log('ACTOR_RNG_ALL_STOP '..tostring(gate.actor_rng_all_status())) end) end
@@ -5347,6 +5642,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_warp_rng then ticklog.try(function() log('WARP_RNG_STOP '..tostring(gate.warp_rng_status())) end) end
    if cfg.native_gate_transition_rows then ticklog.try(function() log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end) end
    if cfg.native_gate_tempzone_order then ticklog.try(function() log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end) end
+   if cfg.native_gate_warp_exit and gate.warp_exit_status then ticklog.try(function() log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end) end
    if cfg.native_gate_path_transforms then ticklog.try(function() log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end) end
    if cfg.native_gate_body_pose then ticklog.try(function() log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end) end
    if cfg.native_gate_gravidar_wide then ticklog.try(function() log('GRAVIDAR_WIDE_STOP '..tostring(gate.gravidar_wide_status())) end) end

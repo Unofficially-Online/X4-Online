@@ -287,14 +287,15 @@ class SessionTests(unittest.TestCase):
           C.EnableOrder=function(id,idx) stock_calls[#stock_calls+1]='EnableOrder:'..tostring(id)..':'..idx;return true end
           C.AdjustOrder=function(id,a,b,c,d,e) stock_calls[#stock_calls+1]='AdjustOrder:'..tostring(id)..':'..a..':'..b..':'..tostring(c)..':'..tostring(d)..':'..tostring(e);return true end
           C.RemoveOrder=function(id,a,b,c) stock_calls[#stock_calls+1]='RemoveOrder:'..tostring(id)..':'..a..':'..tostring(b)..':'..tostring(c);return true end
-          plan={{0,'q_move','F','S',1,2,3},{1,'q_wait','F'},{2,'q_adjust','F',2,1},{3,'q_remove','F',1}}
+          plan={{0,'q_move','F','S',1,2,3},{1,'q_wait','F'},{2,'q_adjust','F',2,1},{3,'q_remove','F',1},{4,'q_dock','F','ST'}}
           tools={gate=gate,C=C,env=env,own_slot=1,saved_id=function(s) return 7ULL end,saved_lua=function(s) return make_id(s=='F' and '100' or '300') end}
           S=new_session({mask=4+128,script=X4LAN_UI_REPLAY_CORE.script(plan,40,tools)})
-          for t=40,44 do S.frame(t) end
+          for t=40,45 do S.frame(t) end
         ''')
         self.assertEqual(values(g.stock_calls), ['CreateOrder:7ULL:MoveWait:false', 'EnableOrder:7ULL:4', 'CreateOrder:7ULL:Wait:false',
-                                                 'EnableOrder:7ULL:4', 'AdjustOrder:7ULL:2:1:true:false:false', 'RemoveOrder:7ULL:1:false:false'])
-        self.assertEqual([p[1] for p in values(g.pushed)], [0x45])   # the parameter, through the wrapper
+                                                 'EnableOrder:7ULL:4', 'AdjustOrder:7ULL:2:1:true:false:false', 'RemoveOrder:7ULL:1:false:false',
+                                                 'CreateOrder:7ULL:DockAndWait:false', 'EnableOrder:7ULL:4'])
+        self.assertEqual([p[1] for p in values(g.pushed)], [0x45, 0x45])   # the parameters, through the wrapper
         self.assertTrue(any('UI_REPLAY_SCRIPT tick=40 op=q_move ok=true result=4' in l for l in values(g.logs)))
 
     def test_a_family_off_leaves_the_globals_alone(self):
@@ -359,14 +360,15 @@ class SessionTests(unittest.TestCase):
           C.SetDefensibleActiveWeaponGroup=function(id,p,n) stock_calls[#stock_calls+1]='Group:'..tostring(id)..':'..tostring(p)..':'..n end
           env.StartAutoPilot=function(target) stock_calls[#stock_calls+1]='StartAutoPilot:'..tostring(ids[target]);return true end
           env.StopAutoPilot=function() stock_calls[#stock_calls+1]='StopAutoPilot' end
-          plan={{0,'ap_to',1},{1,'ap_stop'},{2,'ap_toggle'},{3,'quickdock'},{4,'dock_at','st'},{5,'undock'},{6,'wgroup',1,2},{7,'wkey',140}}
+          plan={{0,'ap_to',1},{1,'ap_stop'},{2,'ap_toggle'},{3,'quickdock'},{4,'dock_at','st'},{5,'undock'},{6,'wgroup',1,2},{7,'wkey',140},
+                {8,'ap_obj','st'}}
           tools={gate=gate,C=C,env=env,own_slot=2,slot_id=function(s) return s+1000ULL end,slot_lua=function(s) return make_id(tostring(s+1000)) end,
             saved_id=function(s) return 7ULL end,saved_lua=function(s) return make_id('100') end}
           S=new_session({script=X4LAN_UI_REPLAY_CORE.script(plan,40,tools)})
-          for t=40,48 do S.frame(t) end
+          for t=40,49 do S.frame(t) end
         ''')
         self.assertEqual(values(g.stock_calls), ['StartAutoPilot:1001', 'StopAutoPilot', 'ToggleAutoPilot:false', 'QuickDock', 'RequestDockAt:7ULL:false',
-                                                 'Undock:false', 'Group:1002ULL:true:2', 'inject:action/140/0'])
+                                                 'Undock:false', 'Group:1002ULL:true:2', 'inject:action/140/0', 'StartAutoPilot:100'])
         logs = values(g.logs)
         self.assertTrue(any('UI_REPLAY_SCRIPT tick=45 op=undock ok=true result=granted' in l for l in logs))
 

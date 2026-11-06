@@ -40,7 +40,14 @@
  * return RVA; 0 for the inline constructions, e.g. gates and transitions),
  * thread (moveworker, main, pass = any other thread while a joined pathing pass
  * runs, other; none when not seen), posted (the tick) and zone (the target's
- * runtime ID, also when it has no portable key). */
+ * runtime ID, also when it has no portable key).
+ * Watch (diagnostic, with native_gate_step_trace's saved IDs): for a listener in that list each admitted warp first
+ * appends a kind=watch row: the event's transform (*(event+0x20), 0x40 bytes: rows, then the requested position), the
+ * warp record's first 0x40 bytes and the 16 bytes its +0x30 points at, the target space; the next step trace record
+ * of the ship has the pose after (lx15/W25: 0a5d7a's first step after a gate jump is 1 ulp apart in x). */
+/* The Linux gate (linux/gate_warp_rng.h) defines the entry, the pins and its own dispatch, arming, check and restore;
+ * the constructor's poster attribution is Windows-only there. */
+#ifndef WR_OWN_PLATFORM
 #define WR_ENTRY 0x2baa8d0u    /* U::WarpEvent vtable 0x2baa8c0 slot 2 */
 #define WR_DISPATCH 0x9aa290u  /* U::WarpEvent::Dispatch */
 #define WR_DISPATCH_SIZE 0xc8u
@@ -56,14 +63,49 @@
 #define WR_CTOR_SHA "795761efaf244531268cb102685a18a944ed6b0631bc302f9cd6a3de38e49473"
 #define WR_CTOR_TAIL_SHA "3dddcfb71f432dcefb88382a28c6b5a96ecba740aa56af067279d7c0d4ce2805" /* +5.. */
 #define WR_CTOR_THUNK 2976u
+#define WR_FRAME_SITE 0x5cf1cbu  /* the gate poster 0x5ce690's WarpEvent construction (return RVA) */
+#define WR_FRAME_BLOCK 0x5cf091u /* its product A*B (A [rbp-0x70], B [rbp-0x30]), the copy to [rbp+0x50] and the call */
+#define WR_FRAME_BLOCK_SIZE 0x13au
+#define WR_FRAME_BLOCK_SHA "f48bdaeb1ecd3538bde17180fa91a1fab463ac2deac9eaac8bd09a8490897eca"
+#define WR_GTRT 0x3db8a0u        /* U::Component::GetTransformRelativeTo (lockstep_path_transforms.h's PTF_GTR) */
+#define WR_GTRT_SIZE 0x465u
+#define WR_GTRT_SHA "6e28847e1ab6eb2e206ec564645b32dee94a0fdd2eefe0884bdedad46da1ad90"
+#define WR_GTRT_ADDR (image+WR_GTRT)
+#define WR_NOW(p) do {unsigned char *s_=NULL,*b_=NULL;if(read_local((unsigned char*)NtCurrentTeb()+0x58,&s_,8) && s_ && read_local(s_,&b_,8) && b_) read_local(b_+0x300,(p),8);} while(0)
+#endif
 #define WR_POSTERS 4096u
 #define WR_DOMAIN 0x58344c5741525052ULL /* "X4LWARPR" */
 #define WR_ORDINALS 512u
 #define WR_RING 4096u
 #define WR_STOP_REASON 143u
+#define WR_WATCH_RING 256u
+#define WR_FRAME_BYTES 0xc0u /* the gate poster's stack below its transform: Windows A +0x00, B +0x40, A*B +0x80; Linux A +0x40, B +0x80 */
+#define WR_FRAMES 64u
 enum {WR_OFF,WR_SPLIT,WR_OBSERVE};
+enum {WR_ROW_WARP,WR_ROW_WATCH};
 typedef void (*wr_fn)(void *,void *,void *,double);
-typedef struct {uint64_t tick,key,space,natural,word;uint32_t ordinal,draws;uint8_t klass,flag,direction,keyed;uint64_t time,now,zone,posted;uint32_t site;uint8_t thread;} wr_row_t;
+typedef struct {uint64_t tick,key,space,natural,word;uint32_t ordinal,draws;uint8_t klass,flag,direction,keyed;uint64_t time,now,zone,posted;uint32_t site;uint8_t thread;uint8_t kind;uint32_t watch;} wr_row_t;
+typedef struct {unsigned char transform[0x40],record[0x40],pointed[16],frame[WR_FRAME_BYTES],own[0x40],up[0x40],rel[5][16];
+    uint8_t has_transform,has_record,has_pointed,has_frame,has_own,has_up;uint64_t parent,grand,ids[6];uint32_t rel_mask;} wr_watch_t;
+/* GetTransformRelativeTo(a, out, time, b, flag): the C prototype maps on both ABIs (MSVC rcx rdx xmm2 r9 [rsp+0x20],
+ * System V rdi rsi xmm0 rdx ecx). */
+typedef void *(*wr_gtrt_fn)(void *,void *,double,void *,unsigned char);
+#define WR_PARENT 0x70u /* the live parent (both executables) */
+static wr_gtrt_fn wr_gtrt_override; /* tests only */
+static int wr_gtrt_ok; /* GetTransformRelativeTo pinned at arming: the watched dispatch's own/up only then */
+/* rel: the gate poster's GetTransformRelativeTo positions at the construction (its thread, its time): [0] ship to gate (the
+ * poster's A before its clamp), [1] ship to its parent, [2] gate to its parent, [3] ship to its grandparent, [4] gate to
+ * its grandparent; ids: ship, gate and those parents (runtime). */
+#define WR_RELS 5u
+typedef struct {uintptr_t event;uint64_t tick;unsigned char bytes[WR_FRAME_BYTES],rel[WR_RELS][16];uint32_t rel_mask;uint64_t ids[6];} wr_frame_t;
+static void *volatile wr_regs[2] __attribute__((used)); /* written by wr_construct's asm on Windows; the gate poster's ship and gate at its WarpEvent construction (Windows rdi, r12; Linux rbx, r13) */
+static wr_watch_t wr_watch_ring[WR_WATCH_RING];
+static wr_frame_t wr_frames[WR_FRAMES];
+static volatile LONG64 wr_watches,wr_framed;
+static int wr_frame_ok; /* the poster's block pinned at arming: frames are taken only then */
+static int st_key_watched(uint64_t key); /* lockstep_step_trace.h: a saved ID in native_gate_step_trace's list */
+static int st_watching(void); /* lockstep_step_trace.h: that list is not empty */
+static void wr_frame_note(const void *event,const unsigned char *transform);
 typedef struct {uint64_t key;uint32_t count;} wr_slot_t;
 typedef void *(*wr_ctor_fn)(void *,void *,void *,void *,unsigned char,unsigned char);
 typedef struct {uintptr_t event;uint64_t tick;uint32_t site;uint8_t thread;} wr_poster_t;
@@ -80,6 +122,7 @@ static wr_slot_t wr_slots[WR_ORDINALS];
 static wr_row_t wr_ring[WR_RING];
 static wr_fn wr_original_override; /* tests only; NULL runs WarpEvent::Dispatch */
 static const char *wr_stage="idle";
+#ifndef WR_OWN_PLATFORM
 static int wr_pins(void) {
     return hash_ok(image+WR_DISPATCH,WR_DISPATCH_SIZE,WR_DISPATCH_SHA) && hash_ok(image+WR_PLACE,WR_PLACE_SIZE,WR_PLACE_SHA) &&
         hash_ok(image+WR_DIRECTION,WR_DIRECTION_SIZE,WR_DIRECTION_SHA) && hash_ok(image+WR_CTOR+5,WR_CTOR_SIZE-5,WR_CTOR_TAIL_SHA);
@@ -89,7 +132,9 @@ static int wr_owned(void) {
     return (!wr_installed || *(void*volatile*)(image+WR_ENTRY)==(void*)wr_dispatch) &&
         (!wr_ctor_installed || *(volatile uint64_t*)(image+WR_CTOR)==wr_ctor_patched_word);
 }
+#endif
 static unsigned wr_poster_slot(const void *event) {return (unsigned)(lockstep_mix((uint64_t)(uintptr_t)event)&(WR_POSTERS-1));}
+#ifndef WR_OWN_PLATFORM
 /* Any thread: the constructor ran; ret is its caller's return address. */
 static void *wr_construct_run(wr_ctor_fn original,uintptr_t ret,void *event,void *space,void *transform,void *record,unsigned char a,unsigned char b) {
     void *result=original(event,space,transform,record,a,b);
@@ -99,14 +144,21 @@ static void *wr_construct_run(wr_ctor_fn original,uintptr_t ret,void *event,void
         unsigned slot=wr_poster_slot(event);
         AcquireSRWLockExclusive(&wr_poster_lock);wr_posters[slot]=p;ReleaseSRWLockExclusive(&wr_poster_lock);
         InterlockedIncrement64(&wr_constructed);
+        if(p.site==WR_FRAME_SITE) wr_frame_note(event,(const unsigned char*)transform);
     }
     return result;
 }
-/* noinline: the return address read is the native caller's (entered by jmp from the thunk). */
-static __attribute__((noinline)) void *wr_construct(void *event,void *space,void *transform,void *record,unsigned char a,unsigned char b) {
+/* noinline: the return address read is the native caller's (entered by jmp from the thunk and wr_construct). */
+static __attribute__((noinline,used)) void *wr_construct_c(void *event,void *space,void *transform,void *record,unsigned char a,unsigned char b) {
     return wr_construct_run(wr_ctor_override?wr_ctor_override:(wr_ctor_fn)(thunk+WR_CTOR_THUNK),(uintptr_t)__builtin_return_address(0),
         event,space,transform,record,a,b);
 }
+/* The thunk's dispatch: the caller's rdi and r12 (nonvolatile; at the gate poster's construction its ship and gate) into
+ * wr_regs, then the C body by jmp, so its return address stays the native caller's. */
+__attribute__((naked)) static void *wr_construct(void *event,void *space,void *transform,void *record,unsigned char a,unsigned char b) {
+    __asm__("movq %rdi, wr_regs(%rip)\n\tmovq %r12, wr_regs+8(%rip)\n\tjmp wr_construct_c");
+}
+#endif
 /* The dispatch takes its event's note (an inline-constructed event finds none or another address's). */
 static wr_poster_t wr_take_poster(const void *event) {
     wr_poster_t p;memset(&p,0,sizeof(p));if(!event) return p;
@@ -125,6 +177,79 @@ static uint32_t wr_ordinal(uint64_t key) {
         if(!wr_slots[h].key) {wr_slots[h].key=key;wr_slots[h].count=1;return 1;}
     }
     return 0;
+}
+/* The gate poster's WarpEvent construction (Windows: the constructor hook at WR_FRAME_SITE; Linux: its redirected
+ * call), with the step trace's list in use: the WR_FRAME_BYTES below the transform, keyed by the event like the poster
+ * note. Only a watched listener's dispatch takes it (wr_watch_note). */
+/* At the gate poster's construction, on its thread at its time, with GetTransformRelativeTo pinned: the positions of
+ * wr_frame_t.rel (only positions: the function writes the matrix's position and leaves its rows). These calls read: the
+ * poster has just made the same request at this time. */
+static void wr_frame_rel(wr_frame_t *f) {
+    unsigned char *ship=(unsigned char*)wr_regs[0],*gate=(unsigned char*)wr_regs[1],*sp=NULL,*gp=NULL,*sg=NULL,*gg=NULL;
+    if(wr_mode!=WR_OBSERVE || !wr_gtrt_ok || !ship || !gate) return;
+    {uint64_t runtime=0,key=0;unsigned klass=WORLD_KEY_NONE; /* only the step trace's listed ship */
+     if(!read_local(ship+8,&runtime,8) || !runtime || !(key=world_identity_key(runtime,&klass)) || klass!=WORLD_KEY_SAVED || !st_key_watched(key)) return;}
+    double t=0;WR_NOW(&t);
+    wr_gtrt_fn g=wr_gtrt_override?wr_gtrt_override:(wr_gtrt_fn)(void*)(WR_GTRT_ADDR);
+    if(read_local(ship+WR_PARENT,&sp,8) && sp) read_local(sp+WR_PARENT,&sg,8);
+    if(read_local(gate+WR_PARENT,&gp,8) && gp) read_local(gp+WR_PARENT,&gg,8);
+    unsigned char *const pair[WR_RELS][2]={{ship,gate},{ship,sp},{gate,gp},{ship,sg},{gate,gg}};
+    unsigned char *const who[6]={ship,gate,sp,gp,sg,gg};
+    for(unsigned i=0;i<6;i++) if(who[i]) read_local(who[i]+8,&f->ids[i],8);
+    for(unsigned i=0;i<WR_RELS;i++) {
+        if(!pair[i][0] || !pair[i][1]) continue;
+        unsigned char out[0x40] __attribute__((aligned(16)));memset(out,0,sizeof(out));
+        g(pair[i][0],out,t,pair[i][1],0);memcpy(f->rel[i],out,16);f->rel_mask|=1u<<i;
+    }
+}
+static void wr_frame_note(const void *event,const unsigned char *transform) {
+    if(!event || !transform || !wr_frame_ok || !InterlockedCompareExchange(&wr_active,0,0) || !st_watching()) return;
+    wr_frame_t f;memset(&f,0,sizeof(f));f.event=(uintptr_t)event;f.tick=stats.issued;
+    if(!read_local(transform-WR_FRAME_BYTES,f.bytes,WR_FRAME_BYTES)) return;
+    wr_frame_rel(&f);
+    unsigned slot=wr_poster_slot(event)&(WR_FRAMES-1u);
+    AcquireSRWLockExclusive(&wr_poster_lock);wr_frames[slot]=f;ReleaseSRWLockExclusive(&wr_poster_lock);
+    InterlockedIncrement64(&wr_framed);
+}
+static int wr_take_frame(const void *event,wr_frame_t *out) {
+    if(!event) return 0;
+    unsigned slot=wr_poster_slot(event)&(WR_FRAMES-1u);int found=0;
+    AcquireSRWLockExclusive(&wr_poster_lock);
+    if(wr_frames[slot].event==(uintptr_t)event) {*out=wr_frames[slot];memset(&wr_frames[slot],0,sizeof(wr_frames[slot]));found=1;}
+    ReleaseSRWLockExclusive(&wr_poster_lock);
+    return found;
+}
+/* A watched listener's warp, before the dispatch: the event's transform, the record and what its +0x30 points at. */
+/* 'observe' only, GetTransformRelativeTo pinned: the listener's transform relative to its parent (its own transform)
+ * and to its grandparent, at the event's time, before the dispatch moves it. That time is the poster's, so the
+ * controller is not refreshed again (it reads); the gate poster's A = GetTransformRelativeTo(ship, gate) at that time
+ * is built from these. */
+static void wr_watch_own(wr_watch_t *m,void *listener,double time) {
+    if(wr_mode!=WR_OBSERVE || !wr_gtrt_ok || !listener) return;
+    wr_gtrt_fn g=wr_gtrt_override?wr_gtrt_override:(wr_gtrt_fn)(void*)(WR_GTRT_ADDR);
+    unsigned char *parent=NULL,*grand=NULL,out[0x40] __attribute__((aligned(16)));
+    if(!read_local((unsigned char*)listener+WR_PARENT,&parent,8) || !parent) return;
+    read_local(parent+8,&m->parent,8);
+    memset(out,0,sizeof(out));g(listener,out,time,parent,0);memcpy(m->own,out,0x40);m->has_own=1;
+    if(!read_local(parent+WR_PARENT,&grand,8) || !grand) return;
+    read_local(grand+8,&m->grand,8);
+    memset(out,0,sizeof(out));g(listener,out,time,grand,0);memcpy(m->up,out,0x40);m->has_up=1;
+}
+static void wr_watch_note(const void *event,const unsigned char *record,uint64_t key,uint64_t space,uint64_t target,uint32_t ordinal,unsigned klass,
+                          void *listener,double time) {
+    LONG64 w=InterlockedIncrement64(&wr_watches)-1;wr_watch_t *m=&wr_watch_ring[(uint64_t)w%WR_WATCH_RING];memset(m,0,sizeof(*m));
+    const unsigned char *transform=NULL,*pointed=NULL;
+    if(event && read_local((const unsigned char*)event+0x20,&transform,8) && transform) m->has_transform=(uint8_t)(read_local(transform,m->transform,0x40)!=0);
+    if(record) {
+        m->has_record=(uint8_t)(read_local(record,m->record,0x40)!=0);
+        if(read_local(record+0x30,&pointed,8) && pointed) m->has_pointed=(uint8_t)(read_local(pointed,m->pointed,16)!=0);
+    }
+    {wr_frame_t f;if(wr_take_frame(event,&f)) {
+        memcpy(m->frame,f.bytes,WR_FRAME_BYTES);m->has_frame=1;memcpy(m->rel,f.rel,sizeof(m->rel));m->rel_mask=f.rel_mask;memcpy(m->ids,f.ids,sizeof(m->ids));}}
+    wr_watch_own(m,listener,time);
+    wr_row_t r;memset(&r,0,sizeof(r));
+    r.tick=stats.issued;r.key=key;r.space=space;r.zone=target;r.ordinal=ordinal;r.klass=(uint8_t)klass;r.kind=WR_ROW_WATCH;r.watch=(uint32_t)((uint64_t)w%WR_WATCH_RING);
+    LONG64 index=InterlockedIncrement64(&wr_rows)-1;wr_ring[(uint64_t)index%WR_RING]=r;
 }
 /* One dispatch; rng is the calling thread's word (NULL when unreadable), tls its TLS block (game time +0x300). */
 static void wr_run(wr_fn original,uint64_t *rng,const unsigned char *tls,void *event,void *listener,void *arg,double time) {
@@ -145,18 +270,24 @@ static void wr_run(wr_fn original,uint64_t *rng,const unsigned char *tls,void *e
     int split=wr_mode==WR_SPLIT && key && ordinal;
     uint64_t natural=*rng,seed=natural;
     if(split) {seed=lockstep_seed(WR_DOMAIN,stats.issued,key,ordinal,0,klass);*rng=seed;++wr_keyed;}
+    if(key && klass==WORLD_KEY_SAVED && st_key_watched(key)) wr_watch_note(event,record,key,space,target,ordinal,klass,listener,time);
     __try {original(event,listener,arg,time);}
     __finally {
         uint64_t exit=*rng;if(split) *rng=natural;
         uint32_t draws=actor_all_steps(seed,exit);
         if(draws==UINT32_MAX) ++wr_unknown;else if(draws) {++wr_drew;wr_draws+=draws;}
         wr_row_t r={stats.issued,key,space,natural,seed,ordinal,draws,(uint8_t)klass,head[0],(uint8_t)(direction!=NULL),(uint8_t)split,0,0,
-            target,poster.tick,poster.site,poster.thread};
+            target,poster.tick,poster.site,poster.thread,WR_ROW_WARP,0};
+#ifndef WR_OWN_PLATFORM
         memcpy(&r.time,&time,8);if(tls) read_local(tls+0x300,&r.now,8);
+#else
+        memcpy(&r.time,&time,8);WR_TLS_NOW(tls,&r.now);
+#endif
         LONG64 index=InterlockedIncrement64(&wr_rows)-1;wr_ring[(uint64_t)index%WR_RING]=r;
         if(AbnormalTermination()) InterlockedIncrement64(&wr_failures);
     }
 }
+#ifndef WR_OWN_PLATFORM
 /* noinline keeps the TEB read out of the caller. */
 static __attribute__((noinline)) void wr_dispatch(void *event,void *listener,void *arg,double time) {
     void **slots=*(void***)((unsigned char*)NtCurrentTeb()+0x58);unsigned char *tls=slots?(unsigned char*)slots[0]:NULL;
@@ -188,6 +319,8 @@ static int wr_arm(int mode) {
     if(!wr_pins()) {wr_stage="pins";return 0;}
     wr_calls=wr_failures=wr_rows=wr_constructed=0;wr_admitted=wr_keyed=wr_unmapped=wr_foreign=wr_outside=wr_full=wr_drew=wr_draws=wr_unknown=0;
     wr_attributed=0;wr_tick=UINT64_MAX;memset(wr_slots,0,sizeof(wr_slots));memset(wr_posters,0,sizeof(wr_posters));
+    wr_framed=0;memset(wr_frames,0,sizeof(wr_frames));wr_frame_ok=hash_ok(image+WR_FRAME_BLOCK,WR_FRAME_BLOCK_SIZE,WR_FRAME_BLOCK_SHA);
+    wr_gtrt_ok=hash_ok(image+WR_GTRT,WR_GTRT_SIZE,WR_GTRT_SHA);
     if(!wr_ctor_install()) {wr_stage="ctor";return 0;}
     wr_mode=mode;InterlockedExchange(&wr_active,1);
     if(!script_rng_slot_swap(WR_ENTRY,image+WR_DISPATCH,(void*)wr_dispatch)) {
@@ -209,12 +342,36 @@ static void wr_restore(void) {
     if(!script_rng_slot_swap(WR_ENTRY,(void*)wr_dispatch,image+WR_DISPATCH)) return; /* a foreign value stays */
     wr_installed=0;wr_restored=!wr_ctor_installed;
 }
+#endif
+static void wr_hex(char *out,const unsigned char *bytes,unsigned n) {
+    static const char digits[]="0123456789abcdef";
+    for(unsigned i=0;i<n;i++) {out[2*i]=digits[bytes[i]>>4];out[2*i+1]=digits[bytes[i]&15];}
+    out[2*n]=0;
+}
 static int wr_row(uint64_t index,char *out,size_t cap) {
     LONG64 count=InterlockedCompareExchange64(&wr_rows,0,0);int n;
     if((LONG64)index>=count) return 0;
     if(count>(LONG64)WR_RING && index<(uint64_t)(count-(LONG64)WR_RING))
         return (n=snprintf(out,cap,"index=%llu evicted=1",(unsigned long long)index))>0 && (size_t)n<cap?n:0;
     const wr_row_t *r=&wr_ring[index%WR_RING];
+    if(r->kind==WR_ROW_WATCH) {
+        const wr_watch_t *m=&wr_watch_ring[r->watch%WR_WATCH_RING];char t[0x81],rec[0x81],pt[0x21],fr[2*WR_FRAME_BYTES+1];
+        if(m->has_transform) wr_hex(t,m->transform,0x40);else strcpy(t,"-");
+        if(m->has_record) wr_hex(rec,m->record,0x40);else strcpy(rec,"-");
+        if(m->has_pointed) wr_hex(pt,m->pointed,16);else strcpy(pt,"-");
+        if(m->has_frame) wr_hex(fr,m->frame,WR_FRAME_BYTES);else strcpy(fr,"-");
+        char own[0x81],up[0x81],rel[2*16*WR_RELS+1];
+        if(m->has_own) wr_hex(own,m->own,0x40);else strcpy(own,"-");
+        if(m->has_up) wr_hex(up,m->up,0x40);else strcpy(up,"-");
+        if(m->rel_mask) wr_hex(rel,&m->rel[0][0],16*WR_RELS);else strcpy(rel,"-");
+        n=snprintf(out,cap,"index=%llu tick=%llu kind=watch key=%c:%016llx ordinal=%u space=%016llx zone=%016llx transform=%s record=%s pointed=%s frame=%s "
+            "own=%s up=%s parent=%016llx grand=%016llx rel=%s mask=%x ids=%016llx,%016llx,%016llx,%016llx,%016llx,%016llx",
+            (unsigned long long)index,(unsigned long long)r->tick,r->klass==WORLD_KEY_CREATED?'c':r->klass==WORLD_KEY_SAVED?'s':'-',
+            (unsigned long long)r->key,r->ordinal,(unsigned long long)r->space,(unsigned long long)r->zone,t,rec,pt,fr,own,up,
+            (unsigned long long)m->parent,(unsigned long long)m->grand,rel,m->rel_mask,(unsigned long long)m->ids[0],(unsigned long long)m->ids[1],
+            (unsigned long long)m->ids[2],(unsigned long long)m->ids[3],(unsigned long long)m->ids[4],(unsigned long long)m->ids[5]);
+        return n>0 && (size_t)n<cap?n:0;
+    }
     n=snprintf(out,cap,"index=%llu tick=%llu key=%c:%016llx ordinal=%u space=%016llx flag=%u direction=%u keyed=%u natural=%016llx word=%016llx draws=%u "
         "time=%016llx now=%016llx site=%x thread=%s posted=%llu zone=%016llx",
         (unsigned long long)index,(unsigned long long)r->tick,r->klass==WORLD_KEY_CREATED?'c':r->klass==WORLD_KEY_SAVED?'s':'-',
@@ -225,10 +382,11 @@ static int wr_row(uint64_t index,char *out,size_t cap) {
 }
 static int wr_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"mode=%s installed=%d calls=%lld admitted=%llu keyed=%llu unmapped=%llu foreign=%llu outside=%llu full=%llu "
-        "drew=%llu draws=%llu unknown=%llu constructed=%lld attributed=%llu rows=%lld restored=%d stage=%s failures=%lld",
+        "drew=%llu draws=%llu unknown=%llu constructed=%lld attributed=%llu rows=%lld restored=%d stage=%s failures=%lld watches=%lld framed=%lld frame_pin=%d",
         wr_mode==WR_SPLIT?"split":wr_mode==WR_OBSERVE?"observe":"off",wr_installed,(long long)wr_calls,(unsigned long long)wr_admitted,
         (unsigned long long)wr_keyed,(unsigned long long)wr_unmapped,(unsigned long long)wr_foreign,(unsigned long long)wr_outside,
         (unsigned long long)wr_full,(unsigned long long)wr_drew,(unsigned long long)wr_draws,(unsigned long long)wr_unknown,
-        (long long)wr_constructed,(unsigned long long)wr_attributed,(long long)wr_rows,wr_restored,wr_stage,(long long)wr_failures);
+        (long long)wr_constructed,(unsigned long long)wr_attributed,(long long)wr_rows,wr_restored,wr_stage,(long long)wr_failures,
+        (long long)wr_watches,(long long)wr_framed,wr_frame_ok);
     return n>0 && (size_t)n<capacity?n:0;
 }

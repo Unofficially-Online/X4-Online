@@ -8,6 +8,9 @@
  * rows follow every saved row (high bit set) and references resolve to them. */
 static uint64_t world_identity_portable(uint64_t runtime);
 static int created_enabled(void);
+static uint32_t join_gone_keys(const uint64_t **keys);   /* lockstep_join.h: a hot joiner's rows of the session's gone objects */
+static uint64_t created_runtime_of(uint64_t id);         /* lockstep_world_created.h */
+static unsigned world_hash_gone_added,world_hash_gone_dupes;   /* a joiner's GONE rows taken, and those it has rows of itself */
 #define WORLD_HASH_CREATED_MAX 524288u /* CREATED_LIVE */
 #define WORLD_HASH_DOMAINS 4u
 #define WORLD_HASH_PAGE 12u
@@ -240,8 +243,13 @@ static int world_hash_init(void) {
     if(!world_identities || world_identity_count<=0 || world_identity_count>WORLD_IDENTITY_CAPACITY/2 ||
        !hash_ok(image+0xced70,32,"de126e38d2532250fc386f851f355cdb4812bf6b4507ace0549728e27505f268") || !dock_state_pins()) return 0;
     unsigned count=(unsigned)world_identity_count;
-    world_hash_items=VirtualAlloc(NULL,sizeof(*world_hash_items)*count,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
-    world_hash_changed=VirtualAlloc(NULL,sizeof(*world_hash_changed)*(count+WORLD_HASH_CREATED_MAX),MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+    /* A hot joiner's rows come from the join save, the living objects only; the session also keeps rows for the snapshot and
+     * created objects gone since, which the package carries (GONE, lockstep_join.h join_capture_gone): runtime 0, absent. */
+    const uint64_t *gone=NULL;const uint32_t ngone=join_gone_keys(&gone);unsigned gone_saved=0,gone_created=0;
+    for(uint32_t i=0;i<ngone;i++) {if(gone[i]>>63) ++gone_created;else ++gone_saved;}
+    world_hash_gone_added=world_hash_gone_dupes=0;
+    world_hash_items=VirtualAlloc(NULL,sizeof(*world_hash_items)*(count+gone_saved),MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+    world_hash_changed=VirtualAlloc(NULL,sizeof(*world_hash_changed)*(count+gone_saved+WORLD_HASH_CREATED_MAX),MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
     if(!world_hash_items || !world_hash_changed) return 0;
     for(unsigned i=0;i<WORLD_IDENTITY_CAPACITY;i++) if(world_identities[i].runtime) {
         if(world_hash_count==count) return 0;
@@ -249,13 +257,27 @@ static int world_hash_init(void) {
     }
     if(world_hash_count!=count) return 0;
     qsort(world_hash_items,count,sizeof(*world_hash_items),world_hash_compare);
+    /* A row the joiner has itself stays its own (rows of the session's objects only; a saver leaves out what the map still holds). */
+    for(uint32_t i=0;i<ngone;i++) if(!(gone[i]>>63)) {
+        const world_hash_item key={.saved=gone[i]};
+        if(bsearch(&key,world_hash_items,count,sizeof(*world_hash_items),world_hash_compare)) {++world_hash_gone_dupes;continue;}
+        world_hash_items[world_hash_count++]=(world_hash_item){.runtime=0,.saved=gone[i]};++world_hash_gone_added;
+    }
+    world_hash_stage="gone_rows";
+    if(gone_created && !created_enabled()) return 0;
+    count=world_hash_count;
+    qsort(world_hash_items,count,sizeof(*world_hash_items),world_hash_compare);
     for(unsigned i=1;i<count;i++) if(world_hash_items[i-1].saved==world_hash_items[i].saved) return 0;
     if(created_enabled()) {
         /* Created rows sort after every saved row: the high bit is theirs. */
         world_hash_stage="created_saved_range";
         if(world_hash_items[count-1].saved>>63) return 0;
         world_hash_created=VirtualAlloc(NULL,sizeof(*world_hash_created)*WORLD_HASH_CREATED_MAX,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
-        if(!world_hash_created) return 0;
+        if(!world_hash_created || gone_created>WORLD_HASH_CREATED_MAX) return 0;
+        for(uint32_t i=0;i<ngone;i++) if(gone[i]>>63) {
+            if(created_runtime_of(gone[i])) {++world_hash_gone_dupes;continue;}   /* a created object the joiner has */
+            world_hash_created[world_hash_created_count++]=(world_hash_item){.runtime=0,.saved=gone[i]};++world_hash_gone_added;
+        }
     }
     if(BCryptOpenAlgorithmProvider(&world_sha_algorithm,BCRYPT_SHA256_ALGORITHM,NULL,0)<0 ||
        BCryptCreateHash(world_sha_algorithm,&world_sha_row,NULL,0,NULL,0,BCRYPT_HASH_REUSABLE_FLAG)<0) return 0;
@@ -311,7 +333,7 @@ static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find
         memcpy(previous_raw,item->nav_raw,sizeof(previous_raw));
         world_hash_failure_id=item->saved;
         memcpy(previous,item->hash,sizeof(previous));world_hash_data data[WORLD_HASH_DOMAINS]={0};
-        unsigned char *object=find(map,item->runtime,4);
+        unsigned char *object=item->runtime?find(map,item->runtime,4):NULL;   /* runtime 0: a joiner's row of a gone object */
         if(!world_hash_record(item,data,object)) return 0;
         if(world_hash_member_note) world_hash_member_note(tick,item,object);
         if(data[3].length<16 || data[3].length-16>WORLD_TIMING_BYTES) {world_hash_stage="timing_schema";return 0;}

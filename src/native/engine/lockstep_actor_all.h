@@ -69,8 +69,10 @@ static const uint64_t actor_all_domains[ACTOR_ALL_PATHS]={
 typedef struct {uint64_t v[ACTOR_ALL_PATHS][AA_FIELDS];} __attribute__((aligned(64))) actor_all_shard;
 static actor_all_shard actor_all_shards[ACTOR_ALL_SHARDS];
 static volatile LONG actor_all_shard_next;
+#ifndef ACTOR_ALL_OWN_PLATFORM /* the Linux gate keeps these per thread without TLS of its own (linux/gate_actor_all.h) */
 static _Thread_local int actor_all_shard_slot=-1;
 static _Thread_local unsigned actor_all_timer;
+#endif
 static uint64_t actor_all_total[ACTOR_ALL_PATHS][AA_FIELDS],actor_all_frame_delta[ACTOR_ALL_PATHS][AA_FIELDS];
 static uint64_t actor_all_frame_tick,actor_all_frames,actor_all_table_full;
 static volatile LONG actor_all_armed;
@@ -78,7 +80,9 @@ static volatile LONG64 actor_all_failures;
 /* Open fixture or umbrella scopes: ship scopes on the sim thread only, agent
  * scopes per thread (the pathing JobThreads run agents in parallel). */
 static unsigned actor_all_ship_depth;
+#ifndef ACTOR_ALL_OWN_PLATFORM
 static _Thread_local unsigned actor_all_agent_depth;
+#endif
 typedef struct {uint64_t id;uint32_t path,count,epoch;} actor_all_slot;
 static actor_all_slot actor_all_slots[ACTOR_ALL_ORDINALS];
 static uint32_t actor_all_epoch;
@@ -87,6 +91,13 @@ static uint64_t actor_all_tsc0;
 static LARGE_INTEGER actor_all_qpc0;
 
 static int actor_all_on(void) {return *(volatile LONG*)&actor_all_armed!=0;}
+/* ACTOR_ALL_OWN_PLATFORM (linux/gate_actor_all.h): the scopes, keys, tallies, rows and status are shared; the guarded
+ * read, the thread's word, the agent's object offset and the hooks are the platform's own; the steering, navigation and
+ * weapon fallbacks are Windows-only for now. */
+#ifndef ACTOR_ALL_AGENT_OBJECT
+#define ACTOR_ALL_AGENT_OBJECT 0xef0
+#endif
+#ifndef ACTOR_ALL_OWN_PLATFORM
 /* Guarded copy (clang's __try covers faults only inside calls). */
 static __attribute__((noinline)) void actor_all_copy(void *dest,const void *source,size_t bytes) {memcpy(dest,source,bytes);}
 static void (*volatile actor_all_copy_fn)(void *,const void *,size_t)=actor_all_copy;
@@ -96,6 +107,9 @@ static int actor_all_read(const void *source,void *dest,size_t bytes) {
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {return 0;}
     return 1;
 }
+#else
+static int actor_all_read(const void *source,void *dest,size_t bytes) {return source && gate_read_local(source,dest,bytes);}
+#endif
 static actor_all_shard *actor_all_shard_here(void) {
     if(actor_all_shard_slot<0) {
         LONG next=InterlockedIncrement(&actor_all_shard_next)-1;
@@ -201,7 +215,7 @@ typedef void (*actor_all_agent_fn)(void *,void *,float,double,unsigned char);
 static void actor_all_agent_execute(actor_all_agent_fn original,void *self,void *commands,float dt,double time,unsigned char cheap,uint64_t *rng) {
     int timed=actor_all_timed();uint64_t t0=timed?__builtin_ia32_rdtsc():0;unsigned klass;unsigned char *object=NULL;
     if(actor_all_agent_depth) {actor_all_count(ACTOR_ALL_AGENT,AA_NESTED);original(self,commands,dt,time,cheap);return;}
-    uint64_t id=rng && actor_all_read((unsigned char*)self+0xef0,&object,8)?actor_all_identity(object,&klass):0;
+    uint64_t id=rng && actor_all_read((unsigned char*)self+ACTOR_ALL_AGENT_OBJECT,&object,8)?actor_all_identity(object,&klass):0;
     if(!id) {actor_all_count(ACTOR_ALL_AGENT,AA_UNMAPPED);original(self,commands,dt,time,cheap);return;}
     uint32_t dt_bits;uint64_t time_bits;memcpy(&dt_bits,&dt,4);memcpy(&time_bits,&time,8);
     actor_all_scope c;actor_all_open(&c,ACTOR_ALL_AGENT,rng,actor_all_key(ACTOR_ALL_AGENT,stats.issued,id,dt_bits,0,time_bits),id,klass,t0,timed);
@@ -209,6 +223,7 @@ static void actor_all_agent_execute(actor_all_agent_fn original,void *self,void 
     __try {original(self,commands,dt,time,cheap);}
     __finally {--actor_all_agent_depth;actor_all_close(&c,rng);if(AbnormalTermination()) InterlockedIncrement64(&actor_all_failures);}
 }
+#ifndef ACTOR_ALL_OWN_PLATFORM
 /* Steering update outside an agent scope (fallback). */
 typedef void (*actor_all_flight_fn)(void *,void *,float,double,unsigned char,unsigned char);
 static void actor_all_flight_execute(actor_all_flight_fn original,void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player,uint64_t *rng) {
@@ -253,6 +268,9 @@ static uint64_t *actor_all_tls_rng(void) {
     void **tls=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
     return tls && tls[0]?(uint64_t*)((unsigned char*)tls[0]+0x318):NULL;
 }
+#else
+static uint64_t *actor_all_tls_rng(void) {return gate_tls_rng(gate_tls_self());}
+#endif
 /* Gate boundary (main thread; MoveWorker and pathing joined): fold frame T. */
 static void actor_all_frame(uint64_t tick) {
     if(!actor_all_on()) return;

@@ -48,6 +48,7 @@
 #include "test_lockstep_attention_all.h"
 #include "test_lockstep_view_scenes.h"
 #include "test_lockstep_region_camera.h"
+#include "test_lockstep_mining_near.h"
 #include "test_lockstep_weapon_fire.h"
 #include "test_lockstep_engine_rng.h"
 #include "test_lockstep_portable_math.h"
@@ -72,6 +73,10 @@
 #include "test_lockstep_ui_construct.h"
 #include "test_lockstep_pilot_foot.h"
 #include "test_lockstep_pilot_foot_slots.h"
+#include "test_lockstep_pilot_join.h"
+#include "test_lockstep_join_passes.h"
+#include "test_lockstep_join_specdrop.h"
+#include "test_lockstep_join_pctl.h"
 #include "test_lockstep_pilot_death_foot.h"
 #include "test_lockstep_pilot_device.h"
 #include "test_lockstep_pilot_predict.h"
@@ -1062,6 +1067,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_peer.h"
 #include "test_lockstep_world_created.h"
 #include "test_lockstep_runtime_ids.h"
+#include "test_lockstep_join_ids.h"
 #include "test_lockstep_guidance_local.h"
 #include "test_lockstep_portable_created.h"
 #include "test_lockstep_created_load.h"
@@ -1156,8 +1162,10 @@ int main(int argc,char **argv) {
     test_world_created();
     test_join();
     test_world_nav_hash();
+    test_join_body();
     test_runtime_ids();
     test_runtime_ids_local();
+    test_join_ids();
     test_guidance_local();
     test_runtime_ids_rows();
     test_render_rng();
@@ -1197,6 +1205,7 @@ int main(int argc,char **argv) {
     test_gravidar_digest();
     test_attention_all();
     test_region_camera();
+    test_mining_near_core();
     test_rc_field_fill();
     test_rc_traffic_rows();
     test_rc_traffic_pass();
@@ -1244,6 +1253,12 @@ int main(int argc,char **argv) {
     test_pilot_native_controls();
     test_pilot_stock();
     test_pilot_slots();
+    test_pilot_join_players();
+    test_pilot_join_tables();
+    test_pilot_join_modules();
+    test_join_passes();
+    test_join_specdrop();
+    test_join_pctl();
     test_pilot_eye();
     test_pilot_foot();
     test_pilot_foot_diag();
@@ -1745,7 +1760,8 @@ int main(int argc,char **argv) {
         assert(!shield_full_at(1156.6,3.08,1196,15,1,50,1,slow,34.0,&m) && shield_full_at(1156.6,3.08,1196,15,1,50,1,slow,34.7,&m));
         assert(!shield_full_at(1156.6,3.08,1196,15,1,50,2,none,10.0,&m) && !shield_full_at(1156.6,3.08,1196,15,1,50,2,none,12.0,&m) && shield_full_at(1156.6,3.08,1196,15,1,50,2,none,12.2,&m));
         assert(shield_full_at(1156.6,3.08,1196,15,1,50,0,none,4.0,&m)); /* no generator: no delay, the rate undivided */
-        assert(!shield_full_at(1196.0,3.08,1196,15,1,50,1,none,99.0,&m) && !shield_full_at(0,0,0,15,1,50,1,none,99.0,&m)); /* already full, no maximum */
+        assert(shield_full_at(1196.0,3.08,1196,15,1,50,1,none,99.0,&m) && m==1196.0 && shield_full_at(1196.0,3.08,1196,15,1,50,1,none,1.0,&m) &&
+               !shield_full_at(0,0,0,15,1,50,1,none,99.0,&m)); /* already full (any time: the changed time is no state), no maximum */
         assert(!shield_full_at(1156.6,3.08,1196,15,0.00005f,1,1,none,1e9,&m)); /* no recharge */
         assert(!shield_full_at(NAN,3.08,1196,15,1,50,1,none,99.0,&m) && !shield_full_at(1156.6,3.08,1196,15,1,50,1,none,NAN,&m));
         /* The source must be the group's ShieldRechargeSource. */

@@ -133,6 +133,28 @@ static uint64_t pslot_caller_dropped;
 __attribute__((used)) static void *pslot_getter_orig[PSLOT_VT_SLOTS];
 __attribute__((used)) static void *pslot_player_resume[3];
 static const unsigned pslot_routed[3]={6,7,10};
+/* Joining inside the window (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt W3): the shared runtime ID head around each step
+ * that builds P_k. With native_gate_runtime_ids in set mode the head is a plain counter on the thread that allocates, so
+ * [before, after) are the slots that step allocated, identical on every client; a joiner replays them (join_ids_replay).
+ * Steps: 0 construct (vps_make, take-2), 1 seat (take(), take-1), 2 body connect (take-1). 0 when runtime IDs are not in set
+ * mode. pjoin_park_tick: a join save after this step T (lockstep_pilot_join.h; the body guard takes the bodies off in T's
+ * pass, lockstep_pilot_foot_body.h). */
+enum {PJOIN_CONSTRUCT,PJOIN_SEAT,PJOIN_CONNECT,PJOIN_STEPS};
+static uint32_t pjoin_range[PILOT_SLOTS+1][PJOIN_STEPS][2];
+/* A joiner inside the window (lockstep_pilot_join.h, w1s): its loaded ship already has the PlayerController X4's loader
+ * made from the saved <movement class="player">; the seat adopts it instead of take() making one. */
+static int pslot_adopt;
+static unsigned pjoin_adopted;   /* bit k-1: slot k's seat adopted the loaded controller */
+static uint32_t pjoin_head(void) {
+    unsigned char *map=rid_mode==RID_SET?rid_map():NULL;
+    if(!map) return 0;
+    CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(map+0x10);EnterCriticalSection(lock);
+    const uint32_t head=*(volatile uint32_t *)(map+RID_F_HEAD);LeaveCriticalSection(lock);
+    return head;
+}
+static void pjoin_mark(unsigned k,unsigned step,int after) {
+    if(k>=2 && k<=PILOT_SLOTS && step<PJOIN_STEPS) pjoin_range[k][step][after?1:0]=pjoin_head();
+}
 
 /* ---- vtable copy pieces ---- */
 /* vfunc 6/7/10: the route of the controller's own copy (vptr-0x28/-0x20/-0x18). */
@@ -523,7 +545,10 @@ static int pslot_is(void *component,int cls) {
 }
 static int pslot_construct(unsigned k) {
     unsigned char *p1=NULL,*made=NULL;
-    if(!vps_make(pnat_base,&p1,&made)) return pslot_fail(vps_why);
+    pjoin_mark(k,PJOIN_CONSTRUCT,0);
+    const int ok=vps_make(pnat_base,&p1,&made);
+    pjoin_mark(k,PJOIN_CONSTRUCT,1);
+    if(!ok) return pslot_fail(vps_why);
     if(pslot_p1 && p1!=pslot_p1) return pslot_fail("p1_changed");
     pslot_p1=p1;pslots[k].player=made;return 1;
 }
@@ -559,7 +584,8 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
     int64_t index=0;int position=0;
     if(!read_local(ship,&vtable,8) || !vtable || !read_local(vtable+PSLOT_TAKE,&take,8) || take!=(void*)pslot_fn.take ||
        !read_local(vtable+PSLOT_RELEASE,&release,8) || release!=(void*)pslot_fn.release) return pslot_fail("ship_vtable");
-    if(pslot_controller_has(ship,PSLOT_CONTROLLER_CLASS,NULL)!=0) return pslot_fail("ship_controlled");
+    int adopt=0;
+    if(pslot_controller_has(ship,PSLOT_CONTROLLER_CLASS,NULL)!=0) {if(!pslot_adopt) return pslot_fail("ship_controlled");adopt=1;}
     s->roomless=!read_local(ship+PSLOT_ROOM,&room,8) || !room || !pslot_is(room,PSLOT_ROOM_CLASS);
     if(s->roomless) room=ship;
     if(!read_local(s->player+0x70,&parent,8) || parent) return pslot_fail("player_parented");
@@ -582,12 +608,13 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
     pslot_seat_player(s);
     if(!pslot_enter(k)) {pslot_unseat_player(s);return pslot_fail("seat_scope");}
     void *controller=NULL;int fault=0;
-    __try {((void(*)(void*))take)(ship);controller=pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY);}
+    __try {if(!adopt) ((void(*)(void*))take)(ship);controller=pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY);}
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
     void *back=NULL,*cvt=NULL;
     int ok=!fault && controller && read_local(controller,&cvt,8) && cvt==(void*)(pnat_base+PSLOT_VTABLE) &&
         read_local((unsigned char*)controller+0x28,&back,8) && back==ship && pslot_controller_has(ship,0,controller)==1;
     if(ok) s->controller=controller;
+    if(ok && adopt) pjoin_adopted|=1u<<(k-1);
     if(ok && k==stats.slot) pview_slot_player=s->player;
     int left=pslot_leave(k);
     if(!ok) pslot_unseat_player(s);
@@ -614,7 +641,10 @@ static int pslot_seat(unsigned k) {
     pslot_slot *s=&pslots[k];pilot_slot *ps=&pilot_slots[k-1];
     if(!s->player) return pslot_fail("no_player");
     if(!ps->resolved || !ps->object || ps->player) return pslot_fail("ship_unresolved");
-    return pslot_seat_ship(k,ps->object);
+    pjoin_mark(k,PJOIN_SEAT,0);
+    const int ok=pslot_seat_ship(k,ps->object);
+    pjoin_mark(k,PJOIN_SEAT,1);
+    return ok;
 }
 static unsigned char *pslot_alloc_page(void) {
     uintptr_t at=(uintptr_t)(pnat_base+PSLOT_CALL_SITE)&~(uintptr_t)65535;
@@ -785,7 +815,8 @@ static int pslot_replay(uint64_t tick) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         pslot_slot *s=&pslots[k];
         if(!s->seated || pilot_slots[k-1].dead) continue;   /* a dead slot's records are consumed and ignored, in a suit too */
-        if(pilot_slot_silent(k,tick,pilot_delay)) continue; /* enrolled, its records from H+delay: neutral meanwhile (hot join) */
+        /* Enrolled, its records from H+delay: neutral meanwhile (hot join); dropped: neutral after its release frame. */
+        if(pilot_slot_silent(k,tick,pilot_delay) && pstk_slot_frames[k-1].tick!=tick) continue;
         if(pstk_slot_frames[k-1].tick!=tick) return pslot_fail("replay_missing");
         if(!pslot_enter(k)) return pslot_fail("replay_scope");
         int replayed=0,left=0;

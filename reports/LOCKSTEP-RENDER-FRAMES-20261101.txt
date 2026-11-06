@@ -584,3 +584,14 @@ session defaults skip native_gate_render_fps while own-ship prediction presents 
 with the reason; an explicit native_gate_render_fps or prediction 'observe' still gets render frames). Check d201f (build201 =
 smoke 93642254, defaults, 2 clients, 3000 ticks): no RENDER_FRAMES_ARMED, prediction present (failures 0, snaps 0), 0 flashes
 in 2,354 burst frames, relay pass, census 0 of 528,288 at 1800, 29.72 steps/s.
+
+Correction and fix (3 November 2026, coordinator). The decision above rested on the one-frame blip count, and that count
+missed the defect: looked at as contact sheets, d201f shows client 2's pilot head in 8 of 24 sampled frames, for seconds at a
+time, and p2n (prediction, no render frames) in 7. [F] The cause is the prediction alone; render-only frames only turned some
+of it into single-frame flashes. [F] Mechanism and fix: LOCKSTEP-OWN-SHIP-PREDICTION-20261101.txt section 13 (the camera's view
+bank above the own ship stayed at the simulated camera while the ship was drawn predicted; X4 places characters through that
+bank). Since build205 the bank follows the drawn own ship in every slot 10 call (rdisp_follow_enter), and stage 2 keeps
+following it in its own render-only frames. Live: d205a (defaults) and d205r, d205r2 (defaults plus native_gate_render_fps =
+60): no head in any, 0 one-frame flashes on both clients (p2f had 25), the travel-charge light flip gone too, census 0 of
+528,288 at 1800, relay pass. The @no_present skip is withdrawn: the session defaults draw render-only frames again together with the
+prediction.

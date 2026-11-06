@@ -351,3 +351,49 @@ G people (two persons, Play42P + native_gate_own_predict = 'present', LATENCY_MS
   Slot 2 seen from client 1: model 0.602, dead reckoning 0.488, no prediction 33.33, drawn 0.630, lead 23.06.
   Reading: the prediction runs live with the simulation unaffected in this run. At the demo scripts' gentle inputs the response model is not
   measurably better than dead reckoning (for slot 2, seen from client 1, it is worse). Whether it pays needs sharper manoeuvres or people. P2 (100 ms) and G (people) are still open.
+
+13. DEFECT AND FIX: THE OWN PILOT DRAWN FROM INSIDE ITS HEAD (3 November 2026, coordinator)
+  What a person saw (a model in the pilot seat clipping into view), and what the burst captures of the p2 runs show once looked at as
+  contact sheets (every 50th of about 1,170 PrintWindow frames of client 2) instead of only counted as one-frame blips:
+    run    render frames  prediction        client 2 frames showing the pilot's head (of 24 sampled)
+    p2o    60             off               0
+    p2j    60             swap              0
+    p2n    off            present           7
+    d201f  off            present           8   (the session defaults since 2 Nov; its 0 "flashes" counted blips only)
+    p2k    off            present, cap 1    12  (lead mean 1.4 m instead of about 7)
+  [F] The head is seen from inside (teeth, the inside of the mouth) or from just behind, for seconds at a time (b2-0018590 to
+  b2-0019882 of d201f: 18 consecutive frames). [F] Render-only frames are not needed; the prediction's drawn pose is. A
+  smaller lead shows it more often: the head is drawn off by about the lead, visible only when that is a few centimetres.
+  Mechanism [F: read in X4.exe 9.00; I: that it is the path the pilot takes]: the predictor swaps the own ship's pose block,
+  but the camera's view bank (camera+0x30+A*0x2b0, refilled in slot 3 by 0x9799f0 from the live, simulated chain) still holds
+  the simulated camera for every entry above the ship: its zone, sector and the root. X4 places a character with
+  BodyClass::QueueRenderObjects 0x382a70 relative to the render's reference param_2[1] through the pose blocks (0x3dde10, so
+  through the swapped ship block), and the camera relative to the same reference from that bank (0x979ef0, the zone entry):
+  the pilot moves with the drawn ship, the camera stays at the simulated one. Components, the cockpit among them, go through
+  U::Positional::vfunc693 0x751770 with their parent's reference and are drawn in place. Client 2's slot ship has an
+  ordinary character in its pilot seat and the camera sits in that head; X4 draws no body for client 1's player. The eye
+  camera+0x890 (0x9835a0, the zone entry inverted), culling and LOD come from the same entries.
+  Fix (build205, lockstep_render_display.h rdisp_follow_enter): in every slot 10 call in which the predictor swapped a ship that
+  is in the camera's chain (key k, its cached parent the key k+1), every entry from k+1 up and the root become G M_X,
+  G = (M_k S'_k) M_(k+1)^-1 with S'_k the drawn pose, as render stage 2 already did for a displaced chain member in its
+  render-only frames. Put back after the original when each entry still holds what was written (else stop 184, foreign bytes
+  kept); in a render-only frame the eye goes back too, in a step frame it stays the drawn camera's (client-local, as any
+  camera). Skipped when stage 2/3 wrote the bank in that call (it follows the swap itself). Present and swap now also need
+  the bank's pins (rdisp's five) at arm (why=present_pins). Status: OWN_PREDICT follow=written/restored/eye/rdisp/outside/
+  parent/table/cached. Offline tests: test_rd_follow (step frame, swap, render-only frame with the eye, the stage 2/3 skip,
+  outside the chain, parent, no bank, foreign, unwind, nesting) and the arm refusal.
+  Live (build205 = smoke 6f112338; session defaults, 2 clients, 3000 ticks, burst capture of both windows):
+    run    render frames                  client 2 head (sampled / scan)   one-frame flashes   census at 1800
+    d205a  off (the defaults)             0 of 24 / 23                     0 (b1 0, b2 0)      0 of 528,288
+    d205r  60, camera + motion            0 of 24 / 24                     0 (b1 0, b2 0)      0 of 528,288
+    d205r2 60, camera + motion (again)    - / 22                           0 (b1 0, b2 0)      0 of 528,288
+  The scan counts frames with skin-coloured pixels above 2 % of the upper 60 % of the frame: 23 in the runs without the head
+  (p2o, p2j: the orange travel-charge light), 64 / 83 / 87 in d201f / p2n / p2k. Both runs: OWN_PREDICT failures=0,
+  present_applied = present_restored, follow written = restored = 2963 per client (every step frame), d205r client 1
+  rdisp=1155 (stage 2 wrote the bank in its render-only frames and followed the swap itself); relay pass, STOP reason=1
+  restored=1 on both clients. cached=2963: X4 had view blocks cached before slot 10 in every step frame; the pilot follows
+  regardless (the burst), so the character path is not among them. Client 2 drew few render-only frames in d205r and d205r2
+  (174 and 177 against 1,314 and 1,290 on client 1; est_us 13980 and 7383 against about 2400 in the p2 runs, slot 10 itself
+  1.1-1.3 ms as before). [F] Not this change: the hot join runs of another branch without it show the same on their client 2
+  in j1-53, j1-56..58 (159-171 frames, est_us 7788-14668) and not in j1-55, j1-59..61 (509-838): a machine-side slowdown of
+  one lane window that comes and goes. Render-only coverage with the fix: client 1 2,604 frames, client 2 351, all clean.

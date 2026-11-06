@@ -1,7 +1,8 @@
 """Hot join test harness for the live tests J1 and J2 (reports/LOCKSTEP-HOTJOIN-20261101.txt section 9).
 
 session  The lane session's --server-cmd wrapper. Everything after '--' is the relay: its script and its arguments
-         (native_gate_relay.py with --join and --absent naming --slot). The driver starts it, passes its output through
+         (native_gate_relay.py with --join and --absent naming --slot; or a rejoin, roadmap 15: --rejoin naming --slot
+         and --stall-drop-ms, the slot is joined again after the relay dropped it, so --join-at must follow the drop). The driver starts it, passes its output through
          unchanged (the lane tool's --server-ready/--server-until/--server-fail-on read it), follows the released tick
          (the relay's 'NATIVE_GATE tick=' lines), sends NGJOIN for --slot once the session released each --join-at tick
          (one join at a time), polls NGJOINSTATE and prints JOIN_DRIVER lines. When a join is saved it finds
@@ -108,10 +109,12 @@ def load_handoff(path, verify=False):
     need(1 <= data['port'] <= 65535 and 2 <= data['clients'] <= 8 and 1 <= data['slot'] <= data['clients'], 'port, clients or slot')
     need(0 <= data['lookahead'] <= 8 and data['tick_hz'] in TICK_RATES and data['save_tick'] > 0, 'wire shape')
     need(1 <= data['saver'] <= data['clients'] and data['saver'] != data['slot'], 'saver')
-    # The session's absent slots (the relay's --absent; the joiner's overlay names them: native_gate_join.absent).
-    need('absent' not in data or (isinstance(data['absent'], list) and all(type(k) is int and 2 <= k <= data['clients']
-                                                                          for k in data['absent']) and data['slot'] in data['absent']),
-         'absent slots')
+    # The session's absent slots (the relay's --absent; the joiner's overlay names them: native_gate_join.absent) and its
+    # rejoinable ones (--rejoin, native_gate_join.rejoin; roadmap 15): the joining slot is one of them.
+    def slots(key):
+        return key not in data or (isinstance(data[key], list) and all(type(k) is int and 2 <= k <= data['clients'] for k in data[key]))
+    need(slots('absent') and slots('rejoin') and not set(data.get('absent', [])) & set(data.get('rejoin', [])), 'absent or rejoin slots')
+    need('absent' not in data or data['slot'] in data['absent']+data.get('rejoin', []), 'absent slots')
     need(isinstance(data.get('token'), str) and len(data['token']) == 32 and not set(data['token'])-set('0123456789abcdef'), 'token')
     for key in ('save_sha', 'package_sha'):
         need(isinstance(data.get(key), str) and HEX64.fullmatch(data[key]), key)
@@ -141,7 +144,9 @@ def relay_options(argv):
     p.add_argument('--tick-hz', type=int, default=60)
     p.add_argument('--join', action='store_true')
     p.add_argument('--absent', default='')
+    p.add_argument('--rejoin', default='')
     p.add_argument('--join-savers', default='')
+    p.add_argument('--join-observe', action='store_true')
     p.add_argument('--bind', default='127.0.0.1')
     known, _ = p.parse_known_args(argv)
     if known.port is None or not 1 <= known.port <= 65535:
@@ -154,14 +159,17 @@ def relay_options(argv):
         raise ValueError('the driver talks to a loopback relay only (--bind 127.0.0.1)')
     try:
         absent = sorted({int(v) for v in known.absent.split(',') if v.strip()})
+        rejoin = sorted({int(v) for v in known.rejoin.split(',') if v.strip()})
         savers = sorted({int(v) for v in known.join_savers.split(',') if v.strip()})
     except ValueError:
-        raise ValueError('--absent and --join-savers are slot lists') from None
+        raise ValueError('--absent, --rejoin and --join-savers are slot lists') from None
     present = [s for s in range(1, known.clients+1) if s not in absent]
-    if not absent or not present:
-        raise ValueError('the relay needs --absent with at least one present slot left')
+    if not (absent or rejoin) or not present:
+        raise ValueError('the relay needs --absent or --rejoin with at least one present slot left')
+    # A rejoinable slot is dropped before its join, so it never saves for it: savers default to the other present slots.
     return {'port': known.port, 'token': known.token, 'clients': known.clients, 'lookahead': known.lookahead,
-            'tick_hz': known.tick_hz, 'absent': absent, 'present': present, 'savers': savers or present}
+            'tick_hz': known.tick_hz, 'absent': absent, 'rejoin': rejoin, 'present': present,
+            'savers': savers or [s for s in present if s not in rejoin], 'observe': known.join_observe}
 
 
 def saver_lanes(text, present):
@@ -212,8 +220,11 @@ class Driver:
     timers (step); out: emitted lines (emit) and NGJOIN datagrams (send)."""
     def __init__(self, relay, slot, join_at, lanes, copy_to, expect='saved', profiles=None, poll=1.0, file_wait=60.0,
                  emit=print, send=None):
-        if slot not in relay['absent']:
-            raise ValueError(f'--slot {slot} is not an absent slot of the relay (--absent {",".join(map(str, relay["absent"]))})')
+        if slot not in relay['absent']+relay.get('rejoin', []):
+            raise ValueError(f'--slot {slot} is not an absent slot of the relay (--absent {",".join(map(str, relay["absent"]))})'
+                             f' nor a rejoinable one (--rejoin {",".join(map(str, relay.get("rejoin", [])))})')
+        if slot in relay['savers']:
+            raise ValueError(f'--slot {slot} is one of the savers (--join-savers)')
         if expect not in ('saved', 'joined'):
             raise ValueError('--expect saved|joined')
         if not join_at or any(t < 1 for t in join_at) or sorted(join_at) != list(join_at) or len(set(join_at)) != len(join_at):
@@ -258,8 +269,9 @@ class Driver:
     def session_over(self, why):
         out = []
         for j in self.joins:
-            if not j.passed and not j.failed:
-                out.append(self.fail(j, f'{why}:state_{j.state or "not_requested"}'))
+            if not j.passed and not j.failed:   # with the files' last refusal (j1-150/151: a reader shape error, retried silently)
+                files = f':files_{j.files_why}' if j.files_why else ''
+                out.append(self.fail(j, f'{why}:state_{j.state or "not_requested"}{files}'))
         return out
 
     def fail(self, j, reason):
@@ -299,7 +311,9 @@ class Driver:
         if j.passed or j.failed or j.state not in RANK or RANK[j.state] < RANK[self.expect] or not j.files:
             return []
         j.passed = True
-        return [f'JOIN_DRIVER PASS slot={j.slot} T={j.save_tick} state={j.state} expect={self.expect}']
+        # --join-observe: the joiner's digest was not held to the session's before H; never an acceptance.
+        diagnostic = ' diagnostic=join_observe' if self.relay.get('observe') else ''
+        return [f'JOIN_DRIVER PASS slot={j.slot} T={j.save_tick} state={j.state} expect={self.expect}{diagnostic}']
 
     # -- timers --
     def step(self, now):
@@ -419,6 +433,7 @@ class Driver:
         modules = ','.join(f'{k}:{v}' for k, v in sorted(classes.items())) or '-'
         handoff = {'kind': HANDOFF_KIND, 'version': HANDOFF_VERSION, 'source': 'session', 'port': self.relay['port'],
                    'token': self.relay['token'], 'slot': j.slot, 'clients': self.relay['clients'], 'absent': self.relay['absent'],
+                   'rejoin': self.relay.get('rejoin', []),
                    'lookahead': self.relay['lookahead'], 'tick_hz': self.relay['tick_hz'], 'save_tick': T, 'saver': j.saver,
                    'save': str(save_copy.resolve()), 'save_sha': save_sha, 'package': str((target/f'j{T}.x4join').resolve()),
                    'package_sha': announced[j.saver], 'portable': gate['portable'], 'diagnostic': header['flags'] & 1,
@@ -546,7 +561,7 @@ def run_session(argv):
 # ---- replay: J1's relay from the session journal ----
 class JournalReplay:
     """Serves one joiner (slot k, loaded at T) from the session's journal: tick -> {slot: row} (native_gate_join.load_journal)."""
-    def __init__(self, token, journal, slot, save_tick, clients, lookahead, tick_hz, last=None, observe=False):
+    def __init__(self, token, journal, slot, save_tick, clients, lookahead, tick_hz, last=None, observe=False, hold=None):
         if len(token) != 32 or set(token)-set('0123456789abcdef'):
             raise ValueError('invalid token')
         if not 1 <= slot <= clients <= 8 or not 0 <= lookahead <= 8 or tick_hz not in TICK_RATES:
@@ -566,6 +581,11 @@ class JournalReplay:
                 raise ValueError(f'the journal has no present slot at tick {tick}')
         self.address, self.joiner_tick, self.state, self.failure = None, None, 'waiting', None
         self.mismatches, self.notices, self.first_at, self.last_at, self.diverged = [], [], None, None, False
+        # hold = (tick, seconds), a test (--hold-tick): the permits answering the joiner's first report of that tick wait
+        # that many wall-clock seconds, once. The joiner's world stands at the gate meanwhile; only its own threads go on.
+        if hold is not None and not (save_tick < hold[0] < self.last and 0 < hold[1] <= 120):
+            raise ValueError('--hold-tick must lie inside the replay and --hold-seconds in (0, 120]')
+        self.hold, self.held = hold, False
 
     def reference(self, tick):
         rows = self.journal.get(tick, {})
@@ -636,6 +656,14 @@ class JournalReplay:
         permits = range(tick+1, tick+2+self.lookahead) if first else (tick+1+self.lookahead,)
         return [(address, self.packet('NGGO', permit)) for permit in permits if permit <= self.last]
 
+    def hold_due(self):
+        """Seconds to wait before sending the permits just made (once, after the joiner's report of the hold tick)."""
+        if self.hold is None or self.held or self.joiner_tick != self.hold[0] or self.state != 'replaying':
+            return 0.0
+        self.held = True
+        self.notices.append(f'NATIVE_GATE JOIN_REPLAY HOLD tick={self.hold[0]} seconds={self.hold[1]:g}')
+        return float(self.hold[1])
+
     def rate(self):
         if self.first_at is None or self.last_at is None or self.last_at <= self.first_at:
             return 0.0
@@ -666,18 +694,23 @@ def run_replay(argv):
     p.add_argument('--token', help='32 hex (default: a new random token, written to --handoff-out)')
     p.add_argument('--ticks', type=int, help='last tick to replay (default: the journal end)')
     p.add_argument('--observe', action='store_true', help='record every differing declared digest and go on (census)')
+    p.add_argument('--hold-tick', type=int, help='test: hold the permits after the joiner reports this tick (with --hold-seconds)')
+    p.add_argument('--hold-seconds', type=float, help='test: wall-clock seconds of that hold (0 < s <= 120)')
     p.add_argument('--boot-timeout', type=float, default=900, help='seconds to wait for the first report (default 900)')
     p.add_argument('--idle-timeout', type=float, default=180, help='seconds without a new report before giving up (default 180)')
     p.add_argument('--log', type=Path, help='write the relay lines here instead of stdout (with a command after --)')
     p.add_argument('command', nargs=argparse.REMAINDER, help="optional: '--' and the joiner's command, run while serving")
     args = p.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
+    if (args.hold_tick is None) != (args.hold_seconds is None):
+        p.error('--hold-tick and --hold-seconds go together')
     try:
         session = load_handoff(args.handoff, verify=True)
         journal = join.load_journal(args.journal)
         token = args.token or secrets.token_hex(16)
         replay = JournalReplay(token, journal, session['slot'], session['save_tick'], session['clients'], session['lookahead'],
-                               session['tick_hz'], args.ticks, args.observe)
+                               session['tick_hz'], args.ticks, args.observe,
+                               None if args.hold_tick is None else (args.hold_tick, args.hold_seconds))
     except (ValueError, OSError, KeyError) as error:
         p.error(str(error))
     out = open(args.log, 'a', encoding='utf-8') if args.log else sys.stdout
@@ -700,7 +733,14 @@ def run_replay(argv):
                 data = None
             now = time.monotonic()
             if data is not None:
-                for dest, packet in replay.receive(data, address, now):
+                packets = replay.receive(data, address, now)
+                wait = replay.hold_due() if packets else 0.0
+                if wait:
+                    for text in replay.notices:
+                        emit(text)
+                    replay.notices = []
+                    time.sleep(wait)
+                for dest, packet in packets:
                     try:
                         sock.sendto(packet, dest)
                     except ConnectionResetError:

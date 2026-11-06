@@ -568,6 +568,81 @@ static void rdisp_leave(int entered) {
     QueryPerformanceCounter(&t1);rdisp_apply_us+=rf_us(t1.QuadPart-t0.QuadPart);
     rdisp_apply_us_sum+=rdisp_apply_us;if(rdisp_apply_us>rdisp_apply_us_max) rdisp_apply_us_max=rdisp_apply_us;
 }
+/* ---- the camera follows the presented own ship (own-ship prediction 'present'/'swap', every slot 10 call) ----
+ * Found live 3 Nov (burst sheets of p2n, p2k and the defaults run d201f: client 2's own pilot drawn from inside or just
+ * behind its head in 7 to 12 of 24 sampled frames whenever the prediction presents, render-only frames or not; none
+ * without prediction (p2o), none with 'swap' (p2j)). The predictor swaps the own ship's pose block, but the camera's view
+ * bank above the ship (its zone, sector, the root) is slot 3's refill from the live, simulated chain. X4 draws a character
+ * relative to the render's reference through those entries (BodyClass::QueueRenderObjects 0x382a70: 0x3dde10 to
+ * param_2[1], the camera through 0x979ef0), while the cockpit goes through the entries inside the ship: the pilot in the
+ * own seat is drawn off by the lead, from inside or behind its head when the lead is a few centimetres (client 2's slot
+ * ship has an ordinary character in its pilot seat; X4 draws no body for client 1's player). The eye, culling and LOD come
+ * from the same zone-level entries.
+ * So, as stage 2 does for a displaced chain member in its frames: when a ship the predictor swapped in this call is in the
+ * camera's chain (key k, its cached parent the key k+1), every entry from k+1 up and the root becomes G M_X,
+ * G = (M_k S'_k) M_(k+1)^-1 with S'_k the drawn pose: the camera hangs under the drawn ship. Written in this slot 10 call
+ * only, after rdisp_enter (skipped when stage 2/3 wrote the bank in this call: it already follows the swap), put back
+ * after the original when each entry still holds what was written (else foreign: stop 184, the foreign bytes stay).
+ * In a render-only frame the eye camera+0x890 that slot 10 recomputes goes back too (as stage 2); in a step frame it
+ * stays the drawn camera's: outside slot 10 it is as client-local as the camera itself. The pins are rdisp's (checked at
+ * the predictor's arm). Counted in OWN_PREDICT follow=written/restored/eye/rdisp/outside/parent/table/cached. */
+static unsigned char rfol_saved[RDISP_CHAIN_MAX][64],rfol_written[RDISP_CHAIN_MAX][64],rfol_eye[RDISP_EYE_BYTES];
+static unsigned char *rfol_entries,*rfol_camera;
+static unsigned rfol_first,rfol_count;
+static int rfol_open,rfol_eye_open;
+static int rfol_written_entry(unsigned i) {return i==0 || i>rfol_first;}
+static int rdisp_follow_enter(int displayed) {
+    if(!opred_open) return 0;
+    if(displayed && rdisp_cam_open_count) {++opred_follow_rdisp;return 0;}
+    if(rfol_open) {InterlockedIncrement64(&opred_failures);opred_stage="follow_nested";return 0;}
+    unsigned bank=2;unsigned char *camera,*table,*entries,*anchor;uint64_t count;unsigned char bytes[RDISP_CHAIN_MAX*RDISP_ENTRY];
+    if(!image || !sample_read(image+RDISP_VIEW_INDEX,&bank,4) || bank>1 || !rdisp_table(bank,&camera,&table,&entries,&count,&anchor) ||
+       !sample_read(entries,bytes,(size_t)count*RDISP_ENTRY) || rdisp_entry_key(bytes,0) || rdisp_entry_key(bytes,1)!=anchor) {
+        ++opred_follow_table;return 0;
+    }
+    unsigned k=0,slot=0;
+    for(unsigned i=1;i+1<count && !k;i++) {
+        unsigned char *key=rdisp_entry_key(bytes,i);
+        for(unsigned j=0;j<PILOT_SLOTS;j++) if(opred_open_at[j] && opred_open_object[j]==key) {k=i;slot=j;break;}
+    }
+    if(!k) {++opred_follow_outside;return 0;}
+    unsigned char *parent=NULL;float f[16];
+    rdisp_xf mk,mp,shown,mp_new,mp_inv,g;
+    memcpy(f,opred_blocks[slot],64);
+    if(!sample_read(rdisp_vc(rdisp_entry_key(bytes,k),bank),&parent,8) || parent!=rdisp_entry_key(bytes,k+1) || !rdisp_finite(f)) {
+        ++opred_follow_parent;return 0;
+    }
+    rdisp_xf_from(f,&shown);rdisp_entry_pose(bytes,k,f);rdisp_xf_from(f,&mk);rdisp_entry_pose(bytes,k+1,f);rdisp_xf_from(f,&mp);
+    for(unsigned i=0;i<count;i++) {rdisp_entry_pose(bytes,i,f);if(!rdisp_finite(f)) {++opred_follow_table;return 0;}}
+    if(!rdisp_inverse(&mp,&mp_inv)) {++opred_follow_parent;return 0;}
+    rdisp_compose(&mk,&shown,&mp_new);rdisp_compose(&mp_new,&mp_inv,&g);
+    int render=InterlockedCompareExchange(&rf_frame_open,0,0)!=0;
+    if(!render) {uint64_t blocks=0;if(sample_read(camera+RDISP_CAMERA_BLOCKS,&blocks,8) && blocks) ++opred_follow_cached;}
+    rfol_first=k;rfol_count=(unsigned)count;
+    for(unsigned i=0;i<rfol_count;i++) {
+        if(!rfol_written_entry(i)) continue;
+        rdisp_xf m,out;rdisp_entry_pose(bytes,i,f);rdisp_xf_from(f,&m);rdisp_compose(&g,&m,&out);
+        memcpy(rfol_saved[i],f,64);rdisp_xf_to(&out,f);memcpy(rfol_written[i],f,64);
+    }
+    rfol_eye_open=render && sample_read(camera+RDISP_EYE,rfol_eye,RDISP_EYE_BYTES);
+    for(unsigned i=0;i<rfol_count;i++) if(rfol_written_entry(i)) memcpy(entries+i*RDISP_ENTRY+RDISP_ENTRY_POSE,rfol_written[i],64);
+    rfol_entries=entries;rfol_camera=camera;rfol_open=1;++opred_follow_written;
+    return 1;
+}
+/* After the original (also on unwind; before rdisp_leave): the bank back, in a render-only frame the eye too. */
+static void rdisp_follow_leave(int entered) {
+    if(!entered || !rfol_open) return;
+    int foreign=0;
+    for(unsigned i=0;i<rfol_count;i++) {
+        if(!rfol_written_entry(i)) continue;
+        unsigned char *pose=rfol_entries+i*RDISP_ENTRY+RDISP_ENTRY_POSE;
+        if(memcmp(pose,rfol_written[i],64)) {foreign=1;continue;}
+        memcpy(pose,rfol_saved[i],64);
+    }
+    if(foreign) {InterlockedIncrement64(&opred_failures);opred_stage="follow_foreign";} else ++opred_follow_restored;
+    if(rfol_eye_open) {memcpy(rfol_camera+RDISP_EYE,rfol_eye,RDISP_EYE_BYTES);++opred_follow_eye;}
+    rfol_open=0;rfol_eye_open=0;rfol_count=0;
+}
 /* ---- arming, the gate's checks, status ---- */
 static int rdisp_mode_of(const char *text,size_t length) {
     if(!text) return RDISP_OFF;

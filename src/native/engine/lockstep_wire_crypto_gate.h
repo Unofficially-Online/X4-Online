@@ -85,9 +85,13 @@ static int wcg_keys(const char *text,size_t ascii,const uint8_t *trailer,size_t 
     return 1;
 }
 /* An authentic NGGO|3 or NGGO|4: parse it exactly, then check every other
- * slot's record signature and the relay's permit signature. 1: valid. */
+ * slot's record signature and the relay's permit signature. 1: valid. A
+ * protocol 4 window k/<mask> (the relay's drop, lockstep_lookahead.h) names
+ * slots the relay stands in for: their record is empty with a zero signature
+ * (no client signed it); the relay's permit signature covers them as every
+ * other record, and the sealed channel covers the mask. */
 static int wcg_permit(const char *text,size_t ascii,const uint8_t *trailer,size_t tn) {
-    char head[80];uint64_t tick=0;
+    char head[80];uint64_t tick=0;unsigned dropped=0;
     int n=snprintf(head,sizeof(head),"NGGO|%u|%s|%u|",wire_lookahead?4u:3u,secret,stats.slot);
     if(!wcg.keyed || n<=0 || ascii<=(size_t)n || memcmp(text,head,(size_t)n) || tn!=WC_SIG*(wire_clients+1u)) return 0;
     size_t at=(size_t)n,digits=wcg_decimal(text+at,ascii-at,&tick);
@@ -99,6 +103,14 @@ static int wcg_permit(const char *text,size_t ascii,const uint8_t *trailer,size_
         digits=wcg_decimal(text+at+1,ascii-at-1,&k);
         if(!digits || k!=wire_lookahead) return 0;
         at+=1+digits;
+        if(at+2<ascii && text[at]=='/') {
+            const char hi=text[at+1],lo=text[at+2];
+            const int h=hi>='0'&&hi<='9'?hi-'0':hi>='a'&&hi<='f'?hi-'a'+10:-1,l=lo>='0'&&lo<='9'?lo-'0':lo>='a'&&lo<='f'?lo-'a'+10:-1;
+            if(h<0 || l<0) return 0;
+            dropped=(unsigned)(h*16+l);
+            if(!dropped || (dropped>>wire_clients)) return 0;
+            at+=3;
+        }
     }
     size_t start[GATE_CLIENTS_MAX],size[GATE_CLIENTS_MAX];
     for(unsigned i=0;i<wire_clients;i++) {
@@ -119,7 +131,7 @@ static int wcg_permit(const char *text,size_t ascii,const uint8_t *trailer,size_
     for(unsigned i=0;i<wire_clients;i++) {
         uint8_t blob[WC_BLOB_MAX];const uint8_t *sig=trailer+WC_SIG*i;size_t bytes=size[i]/2;
         if(!wc_unhex(blob,text+start[i],bytes)) return 0;
-        if(source==WC_NO_SOURCE) {if(bytes || !wc_zero(sig,WC_SIG)) return 0;}
+        if(source==WC_NO_SOURCE || (dropped>>i&1u)) {if(bytes || !wc_zero(sig,WC_SIG)) return 0;}
         else if(i+1!=stats.slot) {
             if(!wc_record_verify(sig,wcg.roster[i],wcg.sid,i+1,wire_clients,wire_lookahead,source,blob,bytes)) return 0;
             ++wcg.records;

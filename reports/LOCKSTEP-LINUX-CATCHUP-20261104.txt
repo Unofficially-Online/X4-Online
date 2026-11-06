@@ -1,0 +1,350 @@
+LINUX CATCH-UP: THE LINUX GATE AGAINST THE CURRENT SESSION DEFAULTS
+4 November 2026 | branch contrib/ferrite-linux-catchup | roadmap 12 (Windows/Linux) and 13 (a Linux server)
+
+WHY
+The Linux gate last changed on 1 November; the Windows session defaults (tools/dev/native_gate_defaults.lua,
+174 ON entries) have grown since. The Windows-vs-Linux comparison stopped at 1200 ticks because the 1 November
+measurement config is not self-consistent past ~1200-1800 even on one platform (census report, 3 November).
+Goal of this branch: the Linux gate runs the Windows defaults' determinism stack, then the people stack.
+
+THE GAP (smoke 15aa54ca)
+  Lua methods: Windows gate 663, Linux gate 121.
+  Pinned Windows engine sites (tools/dev/lockstep_linux_map.py --disasm, rebuilt today): 1282, of which 433 have a
+  high or verified Linux candidate. Families without a Linux port: the battle scope's fixture state (strict_state,
+  shield_refresh, strict_physics, order/fleet state), actor-keyed RNG (flight, steering, radar, agent/spline, ship,
+  weapon, nav, death, bullet, shape), the view-point family (~25 keys), and the people stack (pilot inputs, UI replay,
+  on foot, prediction, render frames).
+
+A DESKTOP LINUX HOST (2e162ed9)
+tools/dev/linux_gate_live.py run assumed the VPS layout. --game, --steam-home and --shm name a desktop host's Steam
+library, the running client's .steam and its shared memory; with snap Steam the client keeps that in
+/dev/shm/snap.steam, so it is bound over /dev/shm in each X4's namespace (X4 runs outside the snap and reaches the
+client). --discard-layer names a locally built X4MP discard layer (src/native/vk-discard). On a desktop host with
+24 cores, 600 ticks with load take ~85 s and 6000 ticks ~6 min (the VPS took many times that).
+
+LINUX VS LINUX, 6000 TICKS, 2 CLIENTS (census every 30 ticks; differing objects of 521,929 saved)
+  run   key set                                                   first split   1800  3000  4200  4800  6000
+  lx1   the L8 set of 1 November, current code                    1 (timing)       8   159   514  2299  4958
+        (lx1a, 600 ticks: the 176bf8/176cef nav.parameters_due pair only, as on the VPS)
+  lx2   + every key the Linux gate already had and the defaults  1800 (motion)     2    26    55  1684  4577
+        turn on: script_rng_unmapped, nav_cadence far + params/probe init + nav_key, created identities/load/
+        portable_created, attention_all, spawn_rng key, loadout_order canonical, gravidar_wide sort
+  lx3   lx2 + weapon_fire_rng (240fda02)                          1800 (motion)     2    32    62  1675  4668
+        the hook was armed and never called: no shot was fired near a camera in this clock-mode world
+        (out-of-sight combat is attack strength, not shots). It matters for the battle scope.
+  lx4   lx3 + engine_refresh_rng (32df7f50)                       1920 (motion)     0     6    13    15    18
+        ENGINE_REFRESH_RNG_STOP keyed=111773 native=0 unmapped=0 fallback=0
+  lx5   lx4 + spline_join_all (27cfaf6e)                         2910 (motion)     0     5    14    17    25
+        SPLINE_JOIN_ALL_STOP calls=71988 requests=0 waits=0: in this clock-mode world no spline update ever
+        found a route request outstanding (the Windows battle-mode sessions count 86 requests, 63 waits), so the
+        join is armed and inert here; it is kept for the battle scope. The residue is not cause B:
+          intermittent: lx4 19 objects from 1920 (ter_m_corvette x2, xen_s_fighter), lx5 27 from 2910
+            (spl_m_miner, arg_s_fighter); neither recurs in the other run;
+          systematic: root 09df69 at 4710 in both runs, 15 objects at 4710 in both.
+  lx6   lx5 + mass_traffic and region_pass 'sync', stride 2 (bff889ef)  1920       3    11    16    20    27
+        MASS_TRAFFIC_STOP joins=6001 busy=2996 (the traffic pass still ran at half the gate ticks; ~2.5 ms joins)
+        seeds=6001 applied=3000; REGION_PASS_STOP joins=6001 busy=56 applied=3001; worker=6003/6003; failures=0.
+        The roots are lx4's (1920, 4710) and lx5's (5490): the passes were not their cause. The same small set of
+        splits at fixed ticks appears in some runs and not in others (1920: lx4, lx6; 2910: lx5a, lx5b; 4710: lx4,
+        lx5a, lx6, not with launch order 2,1; 5490: lx5a, lx5b, lx6), i.e. races at particular events. Linux's script
+        RNG keys every scope (unkeyed=0, nested_unkeyed=0), but the clients' outer scope counts end one apart.
+  lx2 and lx3 differ by run-to-run noise only (the same first split, 19 = 19 at 2400).
+
+WINDOWS AGAINST LINUX PAST 1200 (w20b client 1 against lx4a client 1, census_compare at the capture ticks)
+w20b (coordinator, build226): Windows clock mode, 6000 ticks, 2 clients, overlay-W20b = the Windows form of lx4's key
+set (W18 without its diagnostics + nav_rng/nav_cadence far/params/probe init, created identities/load/portable,
+attention_rng + attention_all, spawn_rng, loadout_order canonical, gravidar_wide sort, weapon_fire_rng,
+engine_refresh_rng). Its two clients agree at every capture through 6000. The one known asymmetry: Linux keys the nav
+refresh draws (nav_key); Windows keys them only with actor_rng_all, which this set has not.
+  tick        1     30    600   1200   1800   2400   3000   3600   4200   4800   5400   6000
+  differing  12     12     12     12     18     19     21     30     40     44     42     49   (of ~530,000)
+  of these   12 timing (nav.parameters_due, the asymmetry) at every tick; motion 0 through 1200, then 6 .. 37.
+Windows and Linux now agree outside the known nav asymmetry through tick 1200 and stay within 49 objects at 6000
+(3 November: the 1 November measurement config parted from 1170, ~4,700 by 6000 on either platform).
+  Against lx4a client 2 the same picture (1800: 6 motion + 12 timing; 6000: 43 + 12). The 12 timing objects are the
+  snapshot's 12 fixture actors (176a13..176cef): Windows keys their nav draws through its fixture registry (nav_rng),
+  Linux through nav_key. The 6 motion objects at 1800 are the same on both Linux clients, which still agree with each
+  other there: two groups of three consecutive saved IDs (6dbd2/6dbde/6dbea, 7eb5f/7eb70/7eb7c), most likely the same
+  asymmetry (this Windows set leaves the other ships' nav draws on the natural word, Linux keys them). The next step for
+  Windows/Linux equality is one nav key on both executables (Windows' actor_rng_all ship scope on Linux, or nav_key on
+  Windows).
+  Reading it: lx2's slow growth from 1800 matches the spline-route cause B of the Windows long runs (a route
+  consumed on a wall-clock tick; spline_join_all), and its cascade from 4140 (dozens of independent roots in many
+  sectors at once) was the engine-parameter refresh drawing from the thread's word: lx4 removes it entirely.
+
+THE PORTS (each: the shared header keeps its domain, seeds, counters and status under a *_OWN_PLATFORM guard, so a
+Linux draw seeds exactly as on Windows; the Windows preprocessed lockstep_gate.c is byte-identical, zig cc -E -P)
+  weapon_fire_rng (linux/gate_weapon_fire.h): the shot 0x1138c70 in slot +0x1fc0 of U::Weapon 0x3c6a440 and
+    U::Turret 0x3d38dd8 (Windows +0x1f30), the fire loop 0x1d698b0 its only caller; System V signature with the base
+    time in xmm0, a float in xmm1 and four stack qwords.
+  engine_refresh_rng (linux/gate_engine_rng.h): the listener 0x14382f0; GCC inlined FloatRange, so the aligned word
+    at 0x1438348 jumps to a stub that steps either the Windows keyed state ((tick, key), or (tick, the class's
+    Windows vtable RVA) for a ship without a key) or the thread's word natively. The step, the 2^-32 scale and 8.0
+    are Windows' own; Linux's "+ itself" equals Windows' "* 2.0".
+  Tests: linux/test_gate_weapon_fire.h, linux/test_gate_engine_rng.h (the stub's machine code is run against a
+  landing pad); check_lockstep_gate_linux.py --x4 PASS on the Linux host; site check 423 PASS.
+
+  spline_join_all (linux/gate_spline_join.h): the update 0x1363de0 in slot +0x78 of the model 0x3b5d6b8; its
+    pending requests are a libstdc++ deque at +0x468 (start.cur +0x478, finish.cur +0x498), the request's status
+    +0xb8 read under the XLib::Mutex 0x3e76960; the calculator worker in 0x3e5b850 (running byte +0xb8). Boot
+    option 2^35 installs the slot; gate.spline_join_all() arms the bounded wait (stop reason 58 on a failure).
+    On Windows the same key needs the agent module (agent_full), so a Windows run cannot carry it alone yet.
+
+ONE NAV KEY ON BOTH: actor_rng_all ON LINUX (ff5be020), lx7 AGAINST w21
+lx7 = lx6 + actor_rng_all (agent_rng + ship_rng), without nav_key. w21 (coordinator, build232) = W20b + agent_rng,
+ship_rng, actor_rng_all, spline_diag/agent_full/spline_join/spline_join_all, mass_traffic and region_pass 'sync',
+pass_stride 2 (nav_rng kept). Both clients of w21 agree at every capture through 6000.
+  ACTOR_RNG_ALL_STOP, Windows client 1 / Linux client 1: ship_keyed 78000 / 78000, ship_draws 1291 / 1291,
+  ship_drawn 1191 / 1190, agent_keyed 59,823,194 / 59,823,194, agent_created 253,144 / 253,144, unmapped 0 / 0;
+  Windows' navigation fallback nav_nested=72000 nav_keyed=0 (every navigation upkeep ran inside a ship scope, so the
+  fallbacks Linux has not ported are not needed here).
+  tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
+  w21 c1 vs lx7 c1        0      0      0      0      0      1      3      9     13     16     15     18
+  w21 c1 vs lx7 c2        0      0      0      3      6      9     16     20     31     41     39     46
+  lx7 c1 vs lx7 c2: first split 1440 (06dbd2, 07eb70, 07eb7c: three ShipSmall), 33 objects by 6000.
+WINDOWS AND LINUX ARE IDENTICAL ON EVERY OBJECT, TIMING INCLUDED, THROUGH TICK 1800 (~526,500 objects, lx7 client 1).
+What remains is first the Linux-only race (client 2 from 1440), then 1 object at 2400 against client 1.
+
+THE LINUX-ONLY RACE AT 1440: THE PLAYER'S FLEET REBUILD TIMER (lx8, 97a62afe)
+lx8 = lx7 + actor_rng_rows (3944baa6: the shared per-draw rows of the actor scopes, Linux's form of the Windows
+diagnostic), 3000 ticks. Every ship and agent scope row agrees between the clients except one: the player ship 0ae79c's
+ship scope draws once at tick 816 on client 2 and at tick 1032 on client 1. That is Windows' long-L16: the player's
+fleet rebuild deadline (Player+0x8a528 on Linux, +0x8a538 on Windows) is first set by the Player constructor while the
+save loads and is not restored by the import, so each client checks it at its own tick, and the re-arm's draw
+(time + 60 + FloatState(word, 10)) lands in the ship's keyed stream on that client only; 06dbd2/07eb70/07eb7c at 1440
+follow. Ported as linux/gate_player_timer.h (native_gate_player_timer): U::Player::vfunc674 0x138e6a0 in slot +0x1558
+of U::Player 0x3b5f7a0 (Windows +0x1510); the first admitted call rebases the deadline to that frame's game time
++ 15 s, exactly as on Windows, so both clients check it at the same tick. Pins on the Move's head, the check and
+re-arm block, and the constructor's first deadline; stop reason 142. The shared header's guard leaves the Windows
+preprocessed lockstep_gate.c byte-identical.
+  lx9 = lx8 set + player_timer, 6000 ticks: PLAYER_TIMER_STOP equal on both clients (rebased=1 from different load
+  values to due 40361983c131d5ad, fires=2, last_fire=4922; Windows w22 the same due and fires); the actor rows now agree
+  through 3229. The 1440 split stayed: it was not this draw.
+
+THE 1440 SPLIT: THE TEMPZONE SLOT (lx10, lx11b, 627cb40c)
+  w21/w22 against lx9: Windows client 1 = Windows client 2 = Linux client 1 at 1440 and 1800; only Linux client 2 differs.
+  lx10 (lx9 + world_hash_watch on the six fighters, census every 3 ticks, 1500 ticks): no split at all, so it is timing.
+  lx11b (census every 30, launch order 2,1): the same three ships on client 2, so the loser follows the slot, not the
+  start order (the relay's order of service is the likely asymmetry).
+  The watch rows (nav banks: position, three rows, linear and angular velocity): between 1410 and 1440 06dbd2 (cluster_21)
+  and 07eb70/07eb7c (wingmen of 07eb5f, cluster_414) fly at about 3 km/s (travel) into new zones while 07eb5f stays in its
+  own. Topology and timing agree (the zones are made off the MoveWorker, parent 0 on both), velocities agree, and each
+  zone-relative position is exactly one step apart: client 2's read bank is client 1's write bank (49.5 m at 2967 m/s,
+  54.6 m at 3247 m/s, 1/60 s). That is lockstep_tempzone_order.h's full-G1o class: the pathing pass's jobs race for the one
+  process-wide tempzone slot and the zone's origin is a different ship's position. Not travel_snapshot: the Linux build's
+  wingman reads +0x4d2, +0x4d3, +0xf99 and +0xf9b of its leader; only +0xf9b has a pass-time writer, and no +0xf99/+0x4d2/
+  +0x4d3 writer is reachable from the job thunk or the agent update (direct calls, 976 functions).
+  tempzone_order is in the defaults but in neither W22 nor the Linux set; Windows is exposed too (its timing did not lose
+  the race in w21/w22). Ported as linux/gate_tempzone_order.h ('order'): the query 0x12981b0 (lookup inlined by GCC; five
+  callers), the slot flag 0x3eb9730 / zone 0x3eb96f0 / XLib::Mutex 0x3eb9700, RunPass 0x13e35e0's test and clear with
+  Windows' zone fields and the published view 0x3e7742c. The three request calls whose rel32 fits one aligned 16 bytes
+  (both create=0 calls, the region caller) go through a stub; the two create=1 calls cross a 16-byte line and are left
+  alone (with the slot parked no job reaches them; one that did would show as slot_changed, stop 144). 14 pins.
+  lx12 (lx9 set + tempzone_order): 66 grants, no divergence through 1800, then client 1's MoveWorker took a #GP at tick
+  1810 at 0x11436f5, movaps on the grant's position in the zone builder 0x1143620 (tz_candidate_t.position is 8 mod 16 at
+  every other entry of the 40-byte table; the winning request of that grant was noted second on client 1 only). Windows'
+  query loads it with movups (0x785df6); the Linux adapter now passes an aligned copy (77a284ee).
+
+LINUX VS LINUX, lx13 (lx12 + the alignment fix), 6000 TICKS: NO DIVERGENCE
+  0 differing objects at all 201 captures through 6000 (521,929 saved objects; lx7 33, lx9 25).
+  TEMPZONE_ORDER_STOP equal on both clients: passes 6000, granted 580, stored 580, requests 620, max 3, creates 0,
+  unblocked 0, other_creates 34, failures 0; the 580 TEMPZONE_ROWs are identical. PLAYER_TIMER_STOP equal (fires 2).
+
+WINDOWS AGAINST LINUX WITH THE SAME KEYS: W23 (coordinator, build238 = W22 + tempzone_order 'order') AGAINST lx13
+W23's two clients agree at every capture through 6000.
+  tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
+  W23 c1 vs lx13 c1       0      0      0      0      0      1      3      4      8     10      8     13
+  W23 c1 vs lx13 c2       0      0      0      0      0      1      3      4      8     10      8     13
+  (of ~522,000 .. 531,000 objects; motion only, one timing field at 3000; ShipSmall, ShipMedium, from 4800 one or two Zones)
+WINDOWS AND LINUX ARE IDENTICAL ON EVERY OBJECT THROUGH TICK 1800 ON BOTH LINUX CLIENTS. The residue is no longer a
+race: both Linux clients carry the same 1 object at 2400 and the same 13 at 6000, a platform difference to find next.
+  Against w22 (no tempzone_order) lx13 differs from 1200 in all four domains (28 .. 1,021 objects): with the key the
+  zones are made on the MoveWorker and get created identities, without it they are unnamed; the key sets differ.
+
+THE PLATFORM RESIDUE: A GATE JUMP'S EXIT POSITION, 1 ULP (W24/W25 against lx14/lx15, 540f1090)
+  The one object at 2400 is 0a5d7a (ship_arg_s_fighter_01_b, an Antigone escort of frigate 0a5d4a, pointguard, on a
+  nine-point route through gates 0x125/0x123). Its motion is bit-equal through 1860; between 1861 and 1864 it jumps
+  (58.6 km, 1378 -> 92 m/s; the Linear model is not stepped at 1862/1863) into zone 0x124 on both platforms (same parent,
+  equal timing). The step trace (now a 60-tick window ending at N for N above 600, 1831..1890; W25 and lx15 give the same
+  12,296 rows) shows the first difference at 1864, the first step after the jump: the step's input position x is 1 ulp
+  apart (W 30960.611328, L 30960.613281), the orientation still equal. That step's attitude builder then gets yaw exactly
+  -3*pi/4 on Windows (c016cbe4, rows of exactly sqrt(2)/2) and 106 ulps off on Linux (c016cb7a): a 0.002 m offset seen
+  from a steering point ~78 m away. From 1865 the pose differs (rows 2.4e-5 apart), at 1890 ~2900 ulps of yaw.
+  Ruled out: warp_rng (a push would be metres), libm (the preload covers every transcendental Linux imports), the
+  approximate reciprocals (Linux's 1185 scalar sites are all rewritten; its 3 packed rcpps/rsqrtps are unreachable from
+  flight, pathing, warp and zone-switch code). The cause is the jump's position arithmetic (the gate's transform
+  composition or OnWarpEvent's safe-position push, GCC against MSVC rounding).
+  W26 against lx16 (the warp watch, c73a89b2; warp_rng 'observe' on both): the jump's WarpEvent (tick 1863, posted 1862
+  on the MoveWorker, no record, so no safe-position push) carries a transform that is byte-identical on both platforms
+  except its first float, the requested position x (W 39e1f146, L 3ae1f146): the exit position is already 1 ulp apart
+  when the event is built. The poster is Windows 0x5ce690 (site 0x5cf1cb) / Linux 0x1614ff0 (0x1615867): A =
+  GetTransformRelativeTo(ship, gate), its position clamped (maxps/minps, exact), B = GetTransformRelativeTo(gate, space),
+  transform = A*B. That product, GetTransformRelativeTo's transpose block, ShipSmall's own-transform slot and the
+  NavigationController's getter use the same association on both compilers (the source's explicit SIMD order), so the
+  ulp comes from an input further down (the pose extrapolation, or a double/float step). Next: capture A and B at the
+  construction on both platforms.
+  W27 against lx17 (the poster's frame, bf8d8485): B (the destination side, GetTransformRelativeTo(exit, zone 0x124):
+  (33026.6875, 500, -27539.627), rows +-sqrt(2)/2) is byte-identical; A, the ship relative to the source gate after the
+  clamp, differs only in its position z, 1 ulp (W 2982.65283 = 453a6a72, L 2982.65259 = 453a6a71; its rows are the preset
+  identity). So the ulp is born in GetTransformRelativeTo(ship, gate, time) itself (Windows call 0x5ceacc, Linux
+  0x161529e), from equal banks, time and gate: the ship's own transform at that time (ShipSmall slot +0x1440/+0x1488,
+  the NavigationController's getter) or the composition. Next: the inputs and output of that one call on both platforms.
+  W28 against lx18 (own/up at the watched dispatch, 69cfe886; inert: lx18 = lx17 and W28 = W27 at all 65 digests on
+  both clients): the ship relative to its parent (0x65fc2) and grandparent (0x65967) at the event's time is
+  byte-identical on both platforms (own position 523bd8c6aae1d243bc1bedc6). The dispatch runs at 1863, a tick after the
+  construction, so this only weakly clears the ship's own transform. The rel capture (008ba210) takes the poster's ship
+  and gate from its registers at the construction (Windows rdi/r12, Linux rbx/r13) and runs GetTransformRelativeTo for
+  ship->gate, ship->parent, gate->parent, ship->grandparent and gate->grandparent at that time: the first of those that
+  differs between the platforms names the side (the ship's pose or the gate's) carrying the ulp.
+  W29 against lx19 (the rel capture; inert: lx19 = lx18 and W29 = W28 at all 65 digests on both clients): all five
+  positions are byte-identical on both platforms (ship->gate (60.78, -78.24, -0.00079), ship 0x662e3, gate 0x65fd3,
+  both in zone 0x65fc2). GetTransformRelativeTo agrees; A is built from it afterwards: A.x = -rel.x, A.y = rel.y and
+  A.z = the sum of two extents of the poster's other gate and two of the ship, a plain float sum the compilers
+  associate apart:
+    Windows 0x5ceb7c..0x5ceb9d (MSVC):  (X+0x258 + X+0x268) + (S+0x258 + |S+0x268|)    X = [r13+0x58], S = [rdi+0x58]
+    Linux 0x1615324..0x161534f (GCC):  ((G+0x268 + G+0x278) + S+0x268) + |S+0x278|     G = [r12+0x58], S = [rbx+0x58]
+  (the same fields: Linux's offsets are 0x10 higher). That is the 1 ulp of A.z (W 453a6a72, L 453a6a71).
+  THE FIX (native_gate_warp_exit, Linux gate only, linux/gate_warp_exit.h, stop reason 146): the poster's own seven
+  instructions in the Windows order in a stub near the image (the fourth add retargeted from xmm0 to xmm1), entered by
+  a jmp rel32 + nop3 in place of the 8-byte movss at 0x1615324 (bytes 4..11 of one 16-byte line, one
+  compare-exchange) and jumping back to 0x1615353; it counts its runs. No branch, rel32 call or absolute pointer leads
+  into 0x1615325..0x1615352. Pin warp_exit_sum 0x16152fc..0x1615353 read with the entry as found. Windows is the order
+  kept and arms nothing (the probe arms it only on gate.platform() == 'linux'). Tests: the native bytes and the stub
+  through a register harness on 2900.5 + 80.125 + 1.7 + |-0.0123| (GCC 453a6565, MSVC 453a6566); on the real
+  executable's own bytes through the patched entry, the same two results before and after arming; arming, the check
+  (a changed stub or block), the restore. Linux host ALL PASS, site check 454 PASS, Python 43 + 1562 OK.
+  W30 (W29's overlay, 6000 ticks) against lx20 (lx19's flags + --warp-exit, ae3c4873): the jump's A.z is 726a3a45 and
+  the WarpEvent transform's x 39e1f146 on both Linux clients, the Windows bits; the patched sum ran 406 times per client.
+  Linux vs Linux (census_world.py) 0 at every tick through 6000.
+    tick                    1    600   1200   1440   1800   1890   2400   3000   3600   4200   4800   5400   6000
+    W30 c1 vs lx20 c1       0      0      0      0      0      0      0      1      1      2      2      2      2
+    W30 c1 vs lx20 c2       0      0      0      0      0      0      0      1      1      2      2      2      2
+  (W23 against lx13 before the fix: 1 at 2400, 13 at 6000.)
+
+THE NEXT RESIDUE: A RECYCLABLE 300 TICKS APART (W30 against lx20)
+  The first differing capture is 2670 (2640 equal): no census object differs, but Windows has one more created object,
+  a Recyclable in saved zone 0x327 (created key 0x800a6877d000bad3, made at 2664/2665); Linux makes its own only at
+  ~2964 (in the 2970 capture, key 0x800b93b1e1277c90; its key differs because the tick is part of it). The script RNG
+  says a script ran apart: the draw offset W-L is constant from tick 2 to 2663 (the per-tick draw sets equal), then
+  Windows draws 7 more at 2664 and more at 2665..2667 (exec, entries), and Linux catches up at 2963..2966. Region RNG
+  rows are identical through 6000. Recyclables are a region resource that salvage orders tow and crush
+  (order.salvage.*), so a script's check went true 10 s (300 ticks) earlier on Windows. From 3000 a created ShipMedium
+  (0x80012cc70973c8bf) differs in motion; 2 objects at 6000.
+  W31 against lx21 (script RNG rows 2600..3000, 9011af29; both 33,847 rows): the only differing rows belong to the salvage
+  ship 80012c85986bd321. At 2664 its order.salvage.routine slice starts at PC 0xc2 with the same key and seed on both;
+  Windows draws 12, spawns the Recyclable and starts order.salvage.collect at 2665; Linux draws 5 and suspends. lx22
+  (script RNG option 4, the trace, ad8f66c7; inert: lx22 = lx21 at all 101 digests on both clients): Linux's 2664
+  slice runs PC c2..c2 and its 2963 slice c2..11c (12 draws, then collect at 2964): 11c is the bare <wait/> after
+  create_order SalvageCollect, so at 2963 Linux does what Windows did at 2664. The routine's find path per space:
+  find_object (towable), else find_closest_resource (an area of the sector's list, sector+0x3f8 / Linux +0x3e8,
+  available when area+0x90 <= now, integer yield = amount - reservations, nearest by x^2+(y^2+z^2)) and
+  find_recyclable_with_yield_in_sector (objects of the sector's region fields within 3000 m, else spawned from the
+  region: Windows 0x7884a0). Every compared piece is the same on both platforms: the association, the integer yield,
+  the time test, and the radius test (its rsqrt/rcp pairs rewritten to the same exact sqrtss on both, Windows
+  0x768405, Linux 0x1a4a28f / 0xe11487).
+  W32 (W31 + the trace; inert against W31 at all 101 captures): Windows' 2664 slice is PC c2..11c with 12 draws, the
+  same as Linux's 2963 slice, and every later PC matches across the platforms (PCs are portable).
+  First guess, wrong: the region field fill (the render pass's 0xee6a80 sets the nodes' ware and yield; Windows'
+  default field_fill = 'view'). W33 (W30 + view_points, region_fields, field_fill) = W30 at all 101 captures.
+  The cause: the search's spawn-from-region step (Windows 0x7884a0, Linux 0x1f47b20) returns nothing when the region's
+  cluster is the player object's and the camera (the cutscene camera, else the player camera, its view-bank transform)
+  is within 50 km of the requested position: lockstep_region_camera.h's mining group, which Windows fixes by default
+  (native_gate_mining_camera = 'view'). Sector 0x327 is in cluster 0x323, the player's: Windows' camera answered
+  "far" (spawn), Linux's "near" (nothing; retry 10 s later). W34 (W33 + mining_camera) = W30 at all 101 captures with
+  mining=2/0/0 (two calls, both far): Windows answers far with and without the stand-in, so Linux's camera is the lever.
+  THE FIX (cd24d90d): the distance core moved into lockstep_mining_near.h (rc_mining_dist2, rc_mining_is_near; one
+  copy for both gates, Windows -E -P differs only by the move); linux/gate_mining_camera.h: the camera block 0x1f47f40
+  (16-aligned, entered only from 0x1f47b9e) becomes a jmp to a thunk that asks lxmc_near(cluster [rbp-0x178],
+  position [rbp-0x168], frame r12) and continues at the native near (0x1f47fc5) or far (0x1f48130) path with rdi =
+  r15+0x38; the latch is rc_shape_latch's without view points (the player object's ship). Pin mining_search; stop
+  reason 166. The probe arms the mining group without view points on the Linux gate only.
+  lx23 (lx20 + --mining-camera, 6000 ticks): the patch was installed all run and restored, latched every tick, but
+  mining=0/0/0: Linux's search never reached its camera block (Windows' twice in 3000 ticks), and lx23 still splits
+  from W30 at 2670 (112 of 201 digests). So on Linux the 2664 search ends before the camera test: either the
+  search 0x1f47b20 is not called (the field queries inlined in 0xe10a60 found an object the script then rejects), or
+  it returns nothing earlier (0x127c340 null, or the player's view-cache cluster 0xc7e2b0 differs from the region's).
+  The mining port stays (it is the Windows default's Linux side) but is not this residue's fix. Next: uprobes
+  (tracefs, file offsets = VA - 0x400000) on 0xe10a60, 0x1f47b20 (entry and return), its cluster compare 0x1f47b9b
+  and the camera block 0x1f47f40 in an untouched run (lx24, lx20's flags) to see which.
+  lx24 was cut short when the host went offline mid-run; it is to be rerun.
+
+LOCAL RUNTIME IDS ON LINUX (native_gate_runtime_ids_local, a Windows default)
+  The Linux gate had no local lists, so on Linux every view object moved every later shared runtime ID. Windows
+  531b256a added the player entity's two query spheres to the view list: U::Player::vfunc674 makes them 10 s after
+  start or load and keeps them, and a hot joiner's load leaves them null (j1-230: the first mismatch at 935, in the
+  rid part).
+  The port: the shared header's lists, build, arming and assignment are now shared. Only the
+  #ifndef RID_OWN_PLATFORM lines moved; the Windows -E -P of lockstep_gate.c and test_lockstep_gate.c is
+  byte-identical (3739b3e2..., 234e32b1...).
+  linux/gate_runtime_ids.h holds the Linux route table, the call pins, the allocator and the route, and the
+  AssignNewID hook picks the list after the seal.
+  The table has 61 Linux rows for the 59 Windows rows, every one matched by RTTI vtables, log strings or the pair
+  table, then checked:
+  - U::UIElement, HoloMap, CutsceneAnchor, EffectObject, FogVolume, LensFlare and Stardust: GCC inlines their
+    constructors into the two component factories 0x119bd70 and 0x11a2560 (Windows 0x8e0250 and 0x8e2ec0), so each
+    row is the Positional call before the class's vtable store. Only that call reaches AssignNewID; the U::Scene
+    base's other call (0x127b730, Windows 0x7793a0) does not.
+  - The three animation listeners are inlined where they are made, so each class has two rows, one per AssignNewID
+    call before its vtable store. The message configuration listener has one such row (in 0xf4ca20); its other
+    vtable reference is an inlined destructor.
+  - UIElement::CreateInstance is 0xb08820 and CMessageManager::CreateSource is 0xa70cd0 (10 allocations and 10
+    AssignNewID calls, as on Windows), both by their log strings.
+  - Slot 6 is UI::CUIController's implementation 0xa758a0, behind the secondary vtable's thunk 0xa77e90 (the same
+    fields at full+0x78 and +0x70..0x73; it inlines what Windows calls). Slot 10 is X4::GameRender 0xfb0180.
+  - The nav spline sweep is 0x10b0cd7. The player's spheres are 0x13927d7 and 0x1392be5: player +0x8a510 and
+    +0x8a518, radius +0x4ed4 and +0x4ed8 (Windows +0x8a520 and +0x8a528, +0x4f54 and +0x4f58).
+  Pins: every call row is checked as a call to its target when it arms; the five bodies and the allocator 0x1e23dc0
+  (size, alignment: what AssignNewID's inlined EnsureFreeSlots allocates a block with) are start pins. X4's Linux
+  mutex is created PTHREAD_MUTEX_RECURSIVE, so holding the map lock around AssignNewID is safe, as on Windows.
+  Not on Linux: presentation scope, UI dispatch, rid_scope and client guidance (none of them is ported).
+  Overlay and live flag: --runtime-ids-local (needs --runtime-ids and --created-identities).
+  Tests: linux/test_gate_runtime_ids_local.h covers the table, the pins, the route, the arming refusals, the lists at
+  the Linux offsets, Remove, and the hook end to end from planted code (backtrace gives the X4 return address). On
+  the executable it checks every row's call and both slot functions behind their vtables.
+
+CANONICAL SHIELDS ON LINUX (native_gate_world_hash_shields = 'canonical', a Windows default with a world hash stride)
+  Windows hashes a full shield as its maximum with changed time 0, the state the lazy read leaves (5dcfe1d1: also one
+  that was already full). The Linux gate hashed the stored fields only, so full shields with equal changed times on
+  both platforms hashed differently Windows against Linux once Windows ran the canonical form.
+  The port shares shield_full_at, the read's test: the rest of lockstep_state.h is #ifndef SHIELD_OWN_PLATFORM.
+  linux/gate_world.h reads the Linux layout (the source at group+0x70, the group's own at +0x78) and takes the
+  thread's game time (fs:-0x2728) at the capture.
+  The Linux read is 0x1293330, the value holder's slot +0x30 (holder at group+0x58, vtable 0x3b8d668). GCC inlines
+  the source's three getters, each behind a test of its slot: max +8, delay +0x10, rate +0x18. It writes value =
+  max, changed 0 through the holder's slot +0x20. Same arithmetic and order as Windows, the same 1e-7 and 1e-4f
+  tests.
+  Pins, checked when it arms (only on a running gate): the read (a start pin) and those four slots.
+  Overlay and live flag: --world-hash-shields (needs --world-hash-stride; both gates). The WORLD_HEALTH rows stay the
+  stored fields, as on Windows.
+  On Linux, as on Windows since bdc5e360, a NaN value is not full, and only a real rewrite is counted (the maximum's
+  bits or a changed time that differ). Both native test failures of 5dcfe1d1 came from these two cases.
+  Tests: linux/test_gate_shield_canonical.h prints the Windows test's text at the Linux layout, and covers the NaN,
+  already-full and rewrite-count cases, the source check, the arming refusals and the capture's time. On the executable it checks the
+  pins, the read's slot tests, constants and write, and the construct.
+
+OFFLINE CHECKS IN WSL
+  check_lockstep_gate_linux.py runs complete in WSL (Ubuntu 24.04, gcc 13.3, LuaJIT) against the local copy of the
+  pinned executable: the unit tests on both images, the Lua bridge and the 29 engine scenarios.
+  Two stale checks are fixed:
+  - test_gate_lua.lua's method list lacked the 28 methods ported since it was written; its host had no LuaJIT.
+  - The scenarios stopped at DEFAULTS_MISSING; they are now the bare gate (native_gate_defaults = false), like every
+    Linux overlay.
+
+WINDOWS AGAINST LINUX, w22 client 1 (build235, W21 + player_timer) against lx9
+  tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
+  w22 c1 vs lx9 c1        0      0      0      0      0      3     13     17     29     34     33     38
+  w22 c1 vs lx9 c2        0      0      0      3      6     16     27     31     43     51     49     55
+
+NEXT
+  1. (done: actor_rng_all, player_timer, tempzone_order, warp_rng on Linux; Linux vs Linux 0 through 6000, lx13.)
+  2. (done: W23 against lx13, identical through 1800.) The platform residue: the 1-ulp z of the ship's position relative
+     to an orb accelerator in GetTransformRelativeTo at the jump (0a5d7a, tick 1862): find the operation that rounds
+     differently: found (the exit sum's association, MSVC against GCC) and fixed on Linux (native_gate_warp_exit:
+     W30 = lx20 through 2400). Next residue: the Recyclable at 2664, the region object search's native camera test
+     (the mining group, ported to Linux: cd24d90d; lx23 against W30; the lx24 trace to rerun). Then Linux defaults
+     for warp_exit and mining. A live run with --runtime-ids-local: armed, the local counts (the status' local=1,ui:,
+     view:), and its census against the same run without it. Windows runs with canonical shields compare only with
+     Linux runs with --world-hash-shields (and bare Windows runs without it with Linux runs without it).
+  3. The rest of the defaults' determinism stack the clock-mode census does not exercise (the battle scope's fixture
+     state, shape order, view points), then the people stack on Linux (pilot replay first: a Linux server simulates the
+     players).

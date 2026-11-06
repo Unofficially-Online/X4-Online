@@ -1,3 +1,4 @@
+#ifndef SHIELD_OWN_PLATFORM /* the Linux gate reads its own layout and shares shield_full_at (linux/gate_world.h) */
 /* Read stored shield state without invoking a lazy recharge getter (which can
  * write). Field layout is pinned by the executable and ShieldRechargeSource. */
 static uint64_t shield_refresh_calls,shield_refresh_failures;
@@ -19,6 +20,7 @@ static int shield_refresh_native(unsigned char *object) {
     ++shield_refresh_calls;
     return isfinite(percent) && percent>=0 && percent<=100.0f;
 }
+#endif
 /* native_gate_world_hash_shields = 'canonical' (world hash only, DEFAULT OFF): a shield as the lazy
  * getter leaves it. GetShieldPercent 0x51f5b0 -> 0x79ddb0 (through the thunk 0x7c5f0c) reads value
  * (group+0x68), time (+0x70) and the recharge source (+0x78, the ShieldRechargeSource at +0x90): max
@@ -33,6 +35,7 @@ static int shield_refresh_native(unsigned char *object) {
  * nothing is written. Pins: the read and the three getters, the source's slots 1..3; checked when armed. */
 static int shield_canonical;
 static uint64_t shield_canonical_count;
+#ifndef SHIELD_OWN_PLATFORM
 static int shield_canonical_pins(void) {
     return hash_ok(image+0x79ddb0,376,"3902e1ea32691f964ebafb2d5d930c34b96a6f4058ffe83de28df3cdc0504a21") &&
         hash_ok(image+0x7c5f0c,0xc,"2738d3ac99f46d09b62acf72b99b177250fe443ca97dc813c315e045f0d2f369") &&
@@ -44,11 +47,17 @@ static int shield_canonical_pins(void) {
         *(void **)(image+0x2b19708)==(void *)(image+0x790950) && *(void **)(image+0x2b19710)==(void *)(image+0x790990) &&
         *(void **)(image+0x2b19718)==(void *)(image+0x7909b0);
 }
+#endif
 /* 0x79ddb0's test for a complete recharge at now, with the getters' arithmetic (float where they are float). */
 static int shield_full_at(double value,double changed,double maximum,double delay,float rate,float factor,uint64_t count,
                           const float mods[3],double now,double *max_out) {
     const double max=(double)mods[0]*maximum;
-    if(!(fabs(max)>=1e-7) || !(fabs(value-max)>=1e-7)) return 0;
+    if(!(fabs(max)>=1e-7)) return 0;
+    /* Already full: the lazily computed value is the maximum whatever the changed time, and the first hit overwrites that
+     * time, so it carries no state [w1z51: 19 docked ships' shield groups, built at 1059 full (888 of 888), keep the changed
+     * time each client's load stamped (7.083 on the session, T on the joiner); the census told them apart]. */
+    if(fabs(value-max)<1e-7) {*max_out=max;return 1;}   /* false for a NaN value */
+    if(!(fabs(value-max)>=1e-7)) return 0;               /* NaN */
     const double ready=changed+(count?((double)mods[1]*delay)/(double)(int64_t)count:0.0);
     if(!(now>ready)) return 0;
     float per=rate;
@@ -58,6 +67,7 @@ static int shield_full_at(double value,double changed,double maximum,double dela
     if(!(now>=(max-value)/(double)per+ready)) return 0;
     *max_out=max;return 1;
 }
+#ifndef SHIELD_OWN_PLATFORM
 static int shield_state(unsigned char *object,char out[192]);
 static int shield_canonical_reading;
 static double shield_canonical_now,shield_reading_now;
@@ -85,7 +95,9 @@ static int shield_state(unsigned char *object,char out[192]) {
         double v,c,m,d,full;float r,f,fm[3];
         memcpy(&v,&value,8);memcpy(&c,&changed,8);memcpy(&m,&maximum,8);memcpy(&d,&delay,8);memcpy(&r,&rate,4);memcpy(&f,&factor,4);memcpy(fm,mods,12);
         if(shield_full_at(v,c,m,d,r,f,(uint64_t)((end-begin)/8),fm,shield_reading_now,&full)) {
-            memcpy(&value,&full,8);changed=0;++shield_canonical_count;
+            uint64_t bits;memcpy(&bits,&full,8);
+            if(bits!=value || changed) ++shield_canonical_count;   /* a rewrite (an already canonical full shield is not one) */
+            value=bits;changed=0;
         }
     }
     snprintf(out,192,"%016llx%016llx%016llx%016llx%08x%08x%016llx%u%08x%08x%08x",
@@ -93,3 +105,4 @@ static int shield_state(unsigned char *object,char out[192]) {
         rate,factor,(unsigned long long)((end-begin)/8),modifiers!=NULL,mods[0],mods[1],mods[2]);
     return 1;
 }
+#endif

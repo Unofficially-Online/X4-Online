@@ -10,7 +10,7 @@
 #include <assert.h>
 static unsigned char *image,*thunk;
 /* native_gate_spawn_rng stays off here too (test_lockstep_spawn_rng.h runs it). */
-typedef struct {int active;} spawn_rng_scope;
+typedef struct {int active;uint64_t site;uint32_t chain[4];} spawn_rng_scope;
 static int spawn_rng_begin(uintptr_t state,spawn_rng_scope *s) {(void)state;s->active=0;return 0;}
 static void spawn_rng_end(spawn_rng_scope *s,int normal) {(void)normal;assert(!s->active);}
 #include "lockstep_creation_trace_contract.h"

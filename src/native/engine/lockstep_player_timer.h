@@ -27,6 +27,9 @@
  * the check/re-arm block and the constructor's first deadline. Every gate tick
  * re-checks entry and pins (stop reason 142); stop restores by CAS and leaves a
  * foreign value in place. */
+/* PT_OWN_PLATFORM (linux/gate_player_timer.h): the first-call table, the rebase, the arm, check, restore and status are
+ * shared; the slot, the offsets, the pins, the thread's game time and the hook are the platform's own. */
+#ifndef PT_OWN_PLATFORM
 #define PT_ENTRY 0x2b33eb8u   /* U::Player vtable 0x2b329a8 slot 674 */
 #define PT_MOVE 0x7113e0u     /* U::Player::vfunc674 */
 #define PT_HEAD 0x65u         /* prologue through mov r15,rcx (0x711442) */
@@ -39,6 +42,7 @@
 #define PT_INIT_SHA "918a40513ded81b214601672393bfde048983e77cae1bd967e19d98ae5b89250"
 #define PT_DUE 0x8a538u       /* Player: fleet rebuild deadline (double, game time) */
 #define PT_AUTOPILOT_DUE 0x8a540u
+#endif
 #define PT_FIRST 15.0
 #define PT_OBJECTS 4u
 #define PT_STOP_REASON 142u
@@ -51,10 +55,12 @@ static const void *pt_objects[PT_OBJECTS];
 static unsigned pt_object_count;
 static pt_fn pt_original_override; /* tests only; NULL runs U::Player::vfunc674 */
 static const char *pt_stage="idle";
+#ifndef PT_OWN_PLATFORM
 static int pt_pins(void) {
     return hash_ok(image+PT_MOVE,PT_HEAD,PT_HEAD_SHA) && hash_ok(image+PT_CHECK,PT_CHECK_SIZE,PT_CHECK_SHA) &&
         hash_ok(image+PT_INIT,PT_INIT_SIZE,PT_INIT_SHA);
 }
+#endif
 static void pt_move(void *self);
 static int pt_owned(void) {return !pt_installed || *(void*volatile*)(image+PT_ENTRY)==(void*)pt_move;}
 /* 1 when the object is new (and now recorded), 0 when known, -1 when the table is full. */
@@ -63,6 +69,7 @@ static int pt_first_call(const void *self) {
     if(pt_object_count>=PT_OBJECTS) return -1;
     pt_objects[pt_object_count++]=self;return 1;
 }
+#ifndef PT_OWN_PLATFORM
 /* tls: the calling thread's TLS block (slot 0), NULL when unset. */
 static void pt_run(pt_fn original,void *self,const unsigned char *tls) {
     InterlockedIncrement64(&pt_calls);
@@ -88,6 +95,7 @@ static __attribute__((noinline)) void pt_move(void *self) {
     void **tls=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
     pt_run(pt_original_override?pt_original_override:(pt_fn)(image+PT_MOVE),self,tls?(const unsigned char*)tls[0]:NULL);
 }
+#endif
 /* Before the first admitted frame, on the MoveWorker. */
 static int pt_arm(void) {
     if(pt_installed) return stats.active; /* Identical rerun after a loading-UI reload. */
