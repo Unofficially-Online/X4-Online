@@ -246,10 +246,13 @@ def ids_sets(sets):
 #                                  outside the fixture zone through 1140)
 #   native_gate_join_code          the object code counter (j1-225: the 902 job spawns; j1-267..270 equal; w1z57: the window
 #                                  neutral, code=1:1:14a2e:1f000)
+#   native_gate_join_omgs          the steering ships' OmegaSwitched controllers (w1z108..119: per session, the off replays
+#                                  raced at 721 and split at 900, the on replays equal to 1140; j1-313..320 all equal
+#                                  633..1799, census 900 0: the 872 race and the 1042 item gone)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
-                   'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code')
+                   'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code', 'native_gate_join_omgs')
 
 
 def default_sets(sets):

@@ -2398,7 +2398,12 @@ proposed and rejected.
                                   step at ec8b56); its data holds no pointers (the constructors store constants), and the
                                   axis sub-object constructor 0xa5f00 leaves +0x130..+0x13f unwritten (heap residue on every
                                   client): masked with the paddings, 0 in the record and not written. A/B per session:
-                                  w1z108 .. 111 with it, w1z112 .. 115 the same sessions' joiners without it (pending)
+                                  w1z108 .. 111 recorded with it; their joiners replayed without it (w1z112 .. 115: 110 the 721
+                                  race, 111 a split at 900) and with it after the vector fix 3c4ad6d9 (w1z116 .. 119: all four
+                                  equal, census 0 to 1140); four fresh in-window runs with it (w1z120 .. 123) equal 660 .. 1140
+  j1-313 .. 320 (build-hj20o)     j1-267's set plus native_gate_join_omgs: all eight equal 633 .. 1799 (0 mismatches), census
+                                  900 differing 0; the joiner omgs=1:6:14:0, omgs_vec=0:120:0:0, the speech clock carried. The
+                                  872 race (9 of 37 runs before) and the 1042 item (4 of 37) are gone: OMGS is on by default
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 
