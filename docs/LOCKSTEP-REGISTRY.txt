@@ -111,6 +111,9 @@ function's entry, must agree with its owner first)
 Codes 1..99 belong to the gate core (lockstep_gate.c, linux/gate_linux.c);
 100 and up to opt-in modules. One code, one owner. A module that stops for
 several causes names them in its why/status text, not with another code.
+A port or mirror of an owner's code under another define (the Linux gate's, the
+lookahead's drop) is named on the owner's line; tests/test_lockstep_registry.py
+lists them in ALIASES (a module's code) and CORE_PORTS (a core code).
 
 Core (lockstep_gate.c; the Linux gate uses the same numbers where ported):
   1 relay stop            2 not the main thread / loading at start
@@ -134,7 +137,7 @@ Core (lockstep_gate.c; the Linux gate uses the same numbers where ported):
   49/50 death             51/52 mass
   53/54 attention         55 flight
   56 local proposal differs / packet too long / nonzero permit
-  57/58 spline            59/60 radar
+  57/58 spline (the Linux gate's spline join: LSJ_STOP_REASON 58)   59/60 radar
   61/62 gravidar          64 gravidar registration
   65/66 damage            67/68 interrupt
   69/70 contact           71/72 world identity
@@ -152,7 +155,7 @@ Core (lockstep_gate.c; the Linux gate uses the same numbers where ported):
   97 view                 98 camera offset         99 test harness close only
 
 Modules (define, owner):
-  100 MT_STOP_REASON            lockstep_mass_traffic.h
+  100 MT_STOP_REASON            lockstep_mass_traffic.h; on the Linux gate LMT_STOP_REASON (linux/gate_mass_traffic.h)
   101 PREDICT_STOP_REASON       lockstep_pilot_predict.h
   102 LOOKAHEAD_STOP_AHEAD      lockstep_lookahead.h (protocol 4)
   103 LOOKAHEAD_STOP_CONFLICT   lockstep_lookahead.h (also a peer copy of a final permit)
@@ -249,7 +252,8 @@ Modules (define, owner):
   190 ADAPT_STOP_PLAN           lockstep_adaptive.h (protocol 5)
   191 ADAPT_STOP_SOURCE         lockstep_adaptive.h
   192 ADAPT_STOP_QUIET          lockstep_adaptive.h
-  193 ADAPT_STOP_DROPPED        lockstep_adaptive.h
+  193 ADAPT_STOP_DROPPED        lockstep_adaptive.h; LOOKAHEAD_STOP_DROPPED (lockstep_lookahead.h) is the same drop under
+                                protocol 4
   194 ADAPT_STOP_PILOT          lockstep_adaptive.h
   195 UX_STOP_REASON            lockstep_ui_exports.h (native_gate_ui_exports: a hooked export table entry no longer
                                 holds its stub at a gate tick)
