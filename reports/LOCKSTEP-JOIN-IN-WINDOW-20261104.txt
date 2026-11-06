@@ -728,3 +728,52 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   has not finished when a ship first consults it. Test: native_gate_join_driver.py replay --hold-tick H --hold-seconds S holds
   the permits after the joiner's report of tick H once (smoke 1fba38a7); queue w1z67..w1z72 replays w1z66's joiner again,
   four times with 30 s at 640 and twice without.
+
+42. THE JOINER IS DETERMINISTIC PER SESSION; THE SELECTOR IS IN WHAT THE SESSION WROTE AT T (w1z67..w1z73; 6 November)
+- runJoinerOnly.sh (.local/census) replays a finished run's joiner again from that run's journal and join files (lane b1
+  alone). w1z67..w1z72 replay w1z66's joiner six times, four with a 30 s wall-clock hold after its report of tick 640
+  (replay --hold-tick 640 --hold-seconds 30) and two without: all six give the same race, 176b36's diverged state at 721
+  bit-identical to w1z63/64/66's, census 4 at 900. w1z73 replays w1z65's joiner: equal at 721, census 0 at 900. The
+  outcome is fixed by the session run; not timing on the joiner, and not the wall-clock time since its load.
+- The session runs agree with each other in every digest and their packages compare equal (native_gate_join.py compare
+  across runs: equal, portable content). Their journals differ only in the real clock (session clients 1 and 2 differ in
+  it too and agree, so it does not reach the world), in early pilot input words (ticks 2..57) and in the join announcements.
+  Their saves (j633.xml.gz, 8.0 million lines, the same size) differ in 679,000 lines, nearly all order: listener lists,
+  hash-ordered part lists, renumbered list references.
+- In 176b36's temporary zone only two variant patterns occur, neither the race's: the animated parts' order (two hash
+  orders; w1z62, w1z64 and w1z66 against w1z63 and w1z65) and the list reference numbering (the lists empty in every save).
+  Universe-wide 141 lines split the race saves from the calm ones, listener orders of ships elsewhere nearly all; with
+  two calm and three race saves a two-variant item does that by chance one time in sixteen.
+- Working hypothesis: the joiner's heap order. Each session writes its save in its own order, the joiner allocates in that
+  order, and something 176b36's step reads in pointer order comes out in one of two relative orders; the session clients
+  load the same snapshot, allocate alike and agree (the tick-187 loadout maps were this class). Fewer races with the digest
+  and watch diagnostics in J1 (x4mods-28: 1 of 8 against 7 of 12) would then be an allocation effect, not timing.
+- Next: w1z74/w1z75 replay the race and the calm joiner with execution breakpoints at the steering entry from step 721,
+  peeking the pathing slot (to find 176b36's call) and 0x180 bytes of its behaviour (the model's +0x70/+0x78), unrecorded so
+  far.
+
+43. THE RACE INSIDE 176b36's STEP: LEAD PURSUIT READS ITS TARGET'S STATE OF THE SAME PASS (w1z74..w1z87; 6 November)
+- Execution breakpoints (native_gate_join_refwatch with peeks, armed from step 721; native_gate_join_watch_span 100 so the
+  watch dumps reach 720) in replays of the race joiner (w1z66's) and the calm one (w1z65's); both outcomes reproduce with
+  the breakpoints set. Each pair finds 176b36's call by its pathing slot at the Steering entry (0xec72b9, r14) and its
+  behaviour pointer (r12, unchanged through the callees).
+- At the entry the behaviour (ChaseBehaviour, vtable 0x2c4e840; first 0x100 bytes) and the Agent's +0xf00..+0xf7f are
+  byte-identical, but for heap pointers in the same relative order (w1z76/77).
+- After the step writes slot +0x60/+0x70 (0xec8b38) one word differs: model +0x1d4, the y of the steering vector at
+  model +0x1d0, 7.967 against 8.190 (w1z78/79). It is equal after behaviour vt+0xb0 (0xec84b1) and apart after vt+0x88
+  (0xec84c1) (w1z80/81). vt+0x88 0xeccc90 dispatches on the Agent's +0xf20/+0xf18 (null) and model +0x318 (1) to the
+  +0x90 thunk 0xecd9f0 (w1z84/85: entered with the vector equal), i.e. ChaseBehaviour's +0x98 0xed68e0, which at 0xed6b37
+  hands over to 0xed1d10 (the dogfight steering) and leaves through its epilogue (w1z82/83: no hit at 0xed6d44).
+- 0xed1d10 is lead pursuit: the target by the handle model +0x300 (0x6c70d in the session and both joiners: HOY-237,
+  ship_xen_s_fighter_01_a, saved 176cb3 = FLIGHT actor 10, whose own attacker is 176b36) through 0xeadc70, which
+  (x4mods-28's reading) holds the manager's read lock, finds the target's Agent in a std::map and copies its transform and
+  velocities from the Agent's bank at g_PathingStateBufferIndex (0x38f4ee4, flipped once a frame by 0xeac170); the aim
+  point is the target position plus min(distance / beh+0x64, 3) times the target's linear velocity.
+- The diverged velocity of 176b36 at 721 is the session's plus (+0.0187, -0.0204, -0.0137); 176cb3's own step at 721
+  changes its velocity by (+1.879, -1.996, -1.054): about 1% of it, every component with its sign. In the race joiner
+  176b36 reads the target's state of the same pass: the bank it reads holds what 176cb3 has just written. Candidates: the
+  two steps fall on different sides of a flip, a write into the read bank, or 176cb3 stepping in an earlier phase than
+  176b36; the order of the two steps is what the joiner's heap order (section 42) can change.
+- Smoke 73c00bc0 adds to the FLIGHT rows each fixture step's place among all Steering updates (seq=<entry>/<exit>), its
+  thread, the read and write selectors at entry (banks=) and the slot's offset from the Agent (slot=): next, a session run
+  and the race and calm joiners with it.

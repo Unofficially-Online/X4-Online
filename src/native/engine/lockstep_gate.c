@@ -3110,6 +3110,8 @@ static int lua_flight(lua_State *L) {
     for(unsigned i=0;i<0x1a0/4;i++) n+=snprintf(out+n,sizeof(out)-(size_t)n,"%08x",s->params_before[i]);
     n+=snprintf(out+n,sizeof(out)-(size_t)n," time=%016llx tls_time=%016llx tls_view=%u flags=%u/%u",(unsigned long long)s->time_bits,
                 (unsigned long long)s->tls_time,s->tls_view,(unsigned)s->last_cheap,(unsigned)s->last_player);
+    n+=snprintf(out+n,sizeof(out)-(size_t)n," seq=%llu/%llu thread=%lu banks=%u/%u slot=%llx",(unsigned long long)s->seq_in,
+                (unsigned long long)s->seq_out,(unsigned long)s->thread,s->bank_read,s->bank_write,(unsigned long long)s->slot_rel);
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
 static int lua_spline(lua_State *L) {

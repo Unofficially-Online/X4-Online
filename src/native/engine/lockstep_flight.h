@@ -28,10 +28,19 @@ typedef struct {
     uint64_t time_bits,tls_time;
     uint32_t tls_view;
     unsigned char last_cheap,last_player;
+    /* The call's place among all Steering updates of the process [w1z78..w1z87: in the window's race 176b36's lead
+     * pursuit (0xed1d10) reads its target 176cb3's live velocity through 0xeadc70; the diverged result is the session's
+     * plus about 1% of the target's own change in that tick, as if the target had stepped first]: the counter at entry and
+     * at exit (every Steering update counts, fixture or not) and the thread. The read and write selectors at entry
+     * (g_PathingStateBufferIndex 0x38f4ee4, ..Index2 0x2f4b6f4; the lead pursuit reads the target's bank by the first) and the
+     * slot's offset from the Agent (+0xad0 + 0x1a0 x the bank this update writes). */
+    uint64_t seq_in,seq_out,slot_rel;
+    uint32_t thread,bank_read,bank_write;
 } flight_sample;
 static flight_sample flight_samples[ACTOR_CAPACITY];
 static int flight_installed, flight_restored, flight_seeded, flight_full, flight_avoidance_refresh, flight_initial;
 static uint64_t flight_calls, flight_failures, flight_refreshes, flight_inits, flight_avoidance_truncated;
+static volatile LONG64 flight_steer_seq;   /* every Steering update, at entry and at a fixture's exit (seq_in/seq_out) */
 static uint64_t flight_ctor_original_word,flight_ctor_patched_word,flight_ctor_calls,flight_registration_inits;
 static int flight_ctor_installed,flight_ctor_restored;
 static int read_local(const void *,void *,size_t);
@@ -218,6 +227,7 @@ static void flight_update(void *self,void *slot,float dt,double time,unsigned ch
     if(registry_is_observing() && read_local((unsigned char*)self+0x10,&registry_agent,8)) registry_observe_owner(registry_agent,0xef0,REGISTRY_FLIGHT);
     flight_fn original=(flight_fn)(image+FLIGHT_UPDATE);
     flight_sample *sample=NULL;unsigned actor=0;
+    const LONG64 enter=InterlockedIncrement64(&flight_steer_seq);
     if(stats.active && boot_phase==3) sample=flight_sample_for(self,&actor);
     if(!sample) {
         /* Kind0 is a nonpublishing excluded marker, so nested unregistered
@@ -249,7 +259,12 @@ static void flight_update(void *self,void *slot,float dt,double time,unsigned ch
     uint64_t *rng=tls && tls[0]?(uint64_t*)((unsigned char*)tls[0]+0x318):NULL;
     sample->tls_time=0;sample->tls_view=0;
     if(tls && tls[0]) {memcpy(&sample->tls_time,(unsigned char*)tls[0]+0x300,8);memcpy(&sample->tls_view,(unsigned char*)tls[0]+0x314,4);}
+    sample->seq_in=(uint64_t)enter;sample->thread=GetCurrentThreadId();
+    sample->slot_rel=(uint64_t)((unsigned char*)slot-(unsigned char*)sample->agent);
+    sample->bank_read=sample->bank_write=0xffffffffu;
+    (void)read_local(image+0x38f4ee4u,&sample->bank_read,4);(void)read_local(image+0x2f4b6f4u,&sample->bank_write,4);
     flight_execute(original,sample,actor,rng,self,slot,dt,time,cheap,player);
+    sample->seq_out=(uint64_t)InterlockedIncrement64(&flight_steer_seq);
     if(!flight_read_avoidance(sample,self,1)) flight_fault(FLIGHT_FAULT_AVOIDANCE_AFTER,actor,0,0);
     memcpy(sample->after,slot,sizeof(sample->after));
     InterlockedIncrement64((volatile LONG64*)&flight_calls);
