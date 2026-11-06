@@ -281,6 +281,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_jobw','hot join experiment: a joiner writes the session job state +0x48 (JOBS)'},
  {'native_gate_join_code','hot join: a joiner takes the session object code counter its load restarts (CODE)'},
  {'native_gate_join_engr','hot join: a joiner takes the session engine boost ramps its load restamps (ENGR)'},
+ {'native_gate_join_shgr','hot join: a joiner takes the session shield recharge groups of docked ships its load restamps (SHGR)'},
  {'native_gate_join_ecos','hot join: a joiner takes the session economy schedules of stations and ships (ECOS)'},
  {'native_gate_join_rcnt','hot join experiment: a joiner lowers created ships and bays reference counts to the session (RCNT)'},
  {'native_gate_join_pend','hot join: a joiner takes the session pending view cache flags (PEND)'},

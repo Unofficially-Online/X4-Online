@@ -3709,6 +3709,71 @@ static void join_admit_engr(const join_tables *s,const join_tables *mine) {
         if(changed) ++join_engr_written; else ++join_engr_equal;
     }
 }
+/* SHGR (v13, section 71; the admission opt-in, native_gate_join_shgr): the shield recharge groups containers keep for their docked
+ * ships [F: w1z50/w1z51, the window's census at 1080: 19 docked ships' children differ in health only; WORLD_HEALTH: the ships have
+ * no shield group (+0x290 null) until 1059, then one whose changed time +0x70 is 7.083 on the session and 38.733 = T on the
+ * joiner, every other field equal; w1z53 (refwatch on +0x290): 0x51f240 (from 0x3f5e5d) gives the ship its parent container's
+ * group through 0x4d6270(parent isa 0x23, ship), which first searches the parent's list +0x5d8..+0x5e0 for a group keyed by
+ * the ship's runtime ID (+0) and a second key (+8) and returns it]. Those groups were built by each client's own load and
+ * stamped then (the session's boot load, the joiner's load at T); a new group would read 0. The capture writes, for every
+ * container (isa 0x23) with such a list, each group's value +0x68 and changed time +0x70 by the container's and the ship's
+ * portable IDs and the second key; with the opt-in the admission writes the session's where they differ. Status
+ * shgr=on:written:equal:missing. */
+static int join_shgr_on;
+static uint64_t join_shgr_written,join_shgr_equal,join_shgr_missing;
+#define JOIN_SHGR_LIST 0x5d8u              /* a container's shield recharge groups: {begin, end} of group pointers */
+#define JOIN_SHGR_SOURCE_VT 0x2b19700u     /* U::ShieldRechargeSource, embedded at group +0x90 */
+static int join_shgr_list(unsigned char *o,uintptr_t v[2]) {
+    v[0]=v[1]=0;
+    return o && join_read(o+JOIN_SHGR_LIST,v,16) && v[1]>v[0] && !((v[1]-v[0])%8u) && (v[1]-v[0])/8u<=4096u;
+}
+static unsigned char *join_shgr_group(uintptr_t at,uint64_t *ship_runtime,uint32_t *key) {
+    unsigned char *g=NULL;uintptr_t src=0;
+    if(!join_read((void *)at,&g,8) || !g || !join_read(g,ship_runtime,8) || !join_read(g+8,key,4) ||
+       !join_read(g+0x90,&src,8) || src!=(uintptr_t)image+JOIN_SHGR_SOURCE_VT) return NULL;
+    return g;
+}
+static int join_shgr_cmp(const void *a,const void *b) {
+    const join_shgr_rec *x=a,*y=b;
+    if(x->container!=y->container) return x->container<y->container?-1:1;
+    if(x->ship!=y->ship) return x->ship<y->ship?-1:1;
+    return x->key<y->key?-1:x->key>y->key;
+}
+static void join_capture_shgr(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        if(!t->ids[i].portable) continue;
+        unsigned char *o=join_object(t->ids[i].runtime);uintptr_t v[2];
+        if(!join_shgr_list(o,v) || join_watch_call(o,0x11e8u,0x23,1)!=1) continue;
+        for(uintptr_t q=v[0];q<v[1];q+=8u) {
+            uint64_t ship_runtime=0;uint32_t key=0;unsigned klass=0;join_shgr_rec r;
+            unsigned char *g=join_shgr_group(q,&ship_runtime,&key);
+            if(!g) continue;
+            memset(&r,0,sizeof(r));r.container=t->ids[i].portable;r.ship=join_key(ship_runtime,&klass);r.key=key;
+            if(!r.ship || !join_read(g+0x68,&r.value,8) || !join_read(g+0x70,&r.changed,8)) continue;
+            if(!JOIN_PUSH(t->shgr,t->nshgr,cap,r)) return;
+        }
+    }
+    if(t->nshgr>1) qsort(t->shgr,t->nshgr,sizeof(*t->shgr),join_shgr_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->nshgr;i++) {if(k && !join_shgr_cmp(&t->shgr[k-1],&t->shgr[i])) continue;t->shgr[k++]=t->shgr[i];}t->nshgr=k;}
+}
+static void join_admit_shgr(const join_tables *s,const join_tables *mine) {
+    join_shgr_written=join_shgr_equal=join_shgr_missing=0;
+    if(!join_shgr_on) return;
+    for(uint32_t i=0;i<s->nshgr;i++) {
+        const join_shgr_rec *r=&s->shgr[i];unsigned char *o=join_object(join_runtime_of(mine,r->container)),*hit=NULL;
+        const uint64_t want=join_runtime_of(mine,r->ship);uintptr_t v[2];
+        if(want && join_shgr_list(o,v))
+            for(uintptr_t q=v[0];q<v[1] && !hit;q+=8u) {
+                uint64_t ship_runtime=0;uint32_t key=0;unsigned char *g=join_shgr_group(q,&ship_runtime,&key);
+                if(g && ship_runtime==want && key==r->key) hit=g;
+            }
+        if(!hit) {++join_shgr_missing;continue;}
+        int changed=join_poke((uintptr_t)(hit+0x68),&r->value,8);
+        changed|=join_poke((uintptr_t)(hit+0x70),&r->changed,8);
+        if(changed) ++join_shgr_written; else ++join_shgr_equal;
+    }
+}
 /* SHPW (v13, section 65; the admission opt-in, native_gate_join_shpw): ship object words a load leaves at defaults [F: w1z28, the
  * hot join's watch on four traders and miners (TradeRoutine, linear flight): the ship objects differ from the load on in +0x3b0..
  * +0x3bf (four floats: the session's 540/40.64/50.80, the joiner's 540 and an equal pair 63.50/63.50), +0xa10/+0xa14 (an int 1 and a
@@ -4429,6 +4494,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_npca(t);            /* version 13 */
     join_capture_code(t);            /* version 13 */
     join_capture_engr(t);            /* version 13 */
+    join_capture_shgr(t);            /* version 13 */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
     join_capture_pend(t);            /* version 13 */
@@ -6050,6 +6116,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_npca(s,&mine);    /* the NPCs' activation (opt-in) */
     if(s->version>=13) join_admit_code(s);          /* the object code counter (opt-in) */
     if(s->version>=13) join_admit_engr(s,&mine);    /* the engines' boost ramps (opt-in) */
+    if(s->version>=13) join_admit_shgr(s,&mine);    /* the containers' shield recharge groups (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */
