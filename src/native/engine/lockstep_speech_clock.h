@@ -23,7 +23,9 @@
  * Joining a running session (hotjoin, checkpoint loads): the clients in the session hold
  * SCLOCK_VALUE plus every frame's addition since tick 0. A joiner at tick T needs that exact
  * double: the same T additions of the fixed step, in order, from SCLOCK_VALUE (not
- * SCLOCK_VALUE + T * step, which rounds differently). This module only sets the start. */
+ * SCLOCK_VALUE + T * step, which rounds differently). The hot join carries the saver's value at T
+ * in its GATE record; the joiner's admission writes it and marks the clock set (stage join), so this
+ * module neither sets the start again nor refuses (lockstep_join.h join_admit_unpaused). */
 #define SCLOCK_CLOCK 0x6b60e48u
 #define SCLOCK_LOCK 0x6b60e10u
 #define SCLOCK_VALUE 65536.0

@@ -23,6 +23,28 @@ static void test_sclock_cycle(double before) {
     DeleteCriticalSection((CRITICAL_SECTION*)(image+SCLOCK_LOCK));memset(image+SCLOCK_LOCK,0,sizeof(CRITICAL_SECTION));
     test_sclock_reset();stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;
 }
+/* Hot join (lockstep_join.h join_admit_unpaused): the saver's clock at T rides the GATE record; the admission writes it and
+ * marks the clock set, so the joiner's first gated frame neither sets the start again nor refuses past it. */
+static void test_speech_clock_join(void) {
+    uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;
+    const uint32_t saved_version=join_rx.t.version;const uint64_t saved_unpaused=join_rx.t.gate.unpaused;
+    InitializeCriticalSection((CRITICAL_SECTION*)(image+SCLOCK_LOCK));test_sclock_write_sites();
+    const double session=SCLOCK_VALUE+633.0/30,own=4.25;uint64_t want,got;memcpy(&want,&session,8);
+    *(double*)(image+SCLOCK_CLOCK)=session;assert(join_unpaused_get()==want);   /* the saver's capture */
+    test_sclock_reset();stats.active=1;stats.issued=0;ui_thread=GetCurrentThreadId();assert(sclock_arm());
+    *(double*)(image+SCLOCK_CLOCK)=own;join_rx.t.version=13;join_rx.t.gate.unpaused=0;join_unpaused_before=0;
+    join_admit_unpaused();assert(sclock_read()==own && !sclock_set && !join_unpaused_before);   /* not carried: untouched */
+    join_rx.t.gate.unpaused=want;stats.issued=633;join_admit_unpaused();
+    memcpy(&got,image+SCLOCK_CLOCK,8);assert(got==want && sclock_set && sclock_set_tick==633 && !strcmp(sclock_stage,"join"));
+    memcpy(&got,&own,8);assert(join_unpaused_before==got && sclock_before_bits==got);
+    stats.issued=634;assert(sclock_tick() && sclock_read()==session);   /* the first gated frame after it: no set, no refusal */
+    DeleteCriticalSection((CRITICAL_SECTION*)(image+SCLOCK_LOCK));memset(image+SCLOCK_LOCK,0,sizeof(CRITICAL_SECTION));
+    for(unsigned i=0;i<SCLOCK_SITES;i++) memset(image+sclock_site[i],0,8);
+    memset(image+SCLOCK_CLOCK,0,8);assert(!join_unpaused_get());   /* an uninitialized lock (a mapped image): not carried */
+    join_rx.t.version=saved_version;join_rx.t.gate.unpaused=saved_unpaused;join_unpaused_before=0;
+    test_sclock_reset();stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;
+    printf("speech clock hot join admission tests PASS\n");
+}
 static void test_speech_clock(void) {
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;
     test_sclock_reset();
@@ -51,6 +73,7 @@ static void test_speech_clock(void) {
     memset(image+SCLOCK_CLOCK,0,8);
     test_sclock_reset();stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;
     printf("speech clock arming, forward set, pins and status tests PASS\n");
+    test_speech_clock_join();
 }
 static void test_speech_clock_native_image(const char *path) {
     FILE *file=fopen(path,"rb");assert(file);IMAGE_DOS_HEADER dos;IMAGE_NT_HEADERS64 nt;

@@ -672,7 +672,7 @@ typedef struct {
     unsigned char fixture[12];   /* the session's view of each snapshot fixture actor at T (SNAPSHOT_VIEW_*; all 0: none bound) */
     unsigned char flight[12];    /* each fixture actor's flight sample init generation at T (lockstep_flight.h; 255 at most; 0 before) */
     uint64_t cid;                /* X4's construction ID counter at T (0x38f4dd0; 0: not carried) */
-    unsigned char pad[8];
+    uint64_t unpaused;           /* the unpaused clock's bits at T (0x6b60e48, native_gate_speech_clock's; 0: not carried) */
 } join_gate_rec;
 _Static_assert(sizeof(join_ctx_rec)==24 && sizeof(join_wake_rec)==40 && sizeof(join_vec_rec)==40 && sizeof(join_md_rec)==48 &&
                sizeof(join_id_rec)==24 && sizeof(join_gate_rec)==256 && sizeof(join_health_rec)==48 && sizeof(join_pose_rec)==64,
@@ -2253,11 +2253,13 @@ static void join_admit_flight_generations(void) {
     for(unsigned i=0;i<12;i++) flight_samples[i].init_generation=join_rx.t.gate.flight[i];
 }
 static uint64_t join_cid_get(void);   /* X4's construction ID counter (below, at join_admit_rid) */
+static uint64_t join_unpaused_get(void);   /* the unpaused clock (below, at join_admit_cid) */
 static void join_gate_fields(join_tables *t,uint64_t tick) {
     t->gate.tick=tick;t->gate.game=join_bits(stats.game);t->gate.real=join_bits(stats.real);t->gate.wire_version=wire_version;
     t->gate.clients=wire_clients;t->gate.lookahead=wire_lookahead;t->gate.tick_hz=gate_tick_hz;t->gate.slot=stats.slot;
     t->gate.rid_next=rid_mode?rid_next_id:0;memcpy(t->gate.digest,digest,64);
     t->gate.cid=join_cid_get();
+    t->gate.unpaused=join_unpaused_get();
 }
 #define JOIN_GRAVP_RESTORE_TICKS 10u   /* the boundaries after T+1 .. T+10 */
 /* native_gate_join_shape_refresh (session and joiner, default off; report 1.18, j1-243 .. j1-249): a body's Jolt compound holds
@@ -3334,6 +3336,26 @@ static void join_admit_cid(void) {
     EnterCriticalSection(lock);join_cid_before=*(volatile uint64_t*)(image+JOIN_CID_COUNTER);
     *(volatile uint64_t*)(image+JOIN_CID_COUNTER)=join_rx.t.gate.cid;LeaveCriticalSection(lock);
 }
+/* The unpaused clock (TimerBase 0x6b60e48 under 0x6b60e10; lockstep_speech_clock.h): NPC speech lines end on it. With
+ * native_gate_speech_clock every session client set it to SCLOCK_VALUE at its first gated frame and has added each frame's step
+ * since, so at T it holds the same double on all of them; a joiner's own boot left another value, and its speech clock module
+ * would set the start again (or refuse, past_value, stop 196). The saver's value at T rides the GATE record; the admission
+ * writes it and marks the speech clock set (stage join), so the joiner adds the same steps from T on. Status
+ * unpaused=session:joiner_before (0:0 when not carried). */
+static uint64_t join_unpaused_before;
+static uint64_t join_unpaused_get(void) {
+    CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(void*)(image+SCLOCK_LOCK);uint64_t v;
+    if(!join_cid_ready(lock)) return 0;
+    EnterCriticalSection(lock);v=*(volatile uint64_t*)(image+SCLOCK_CLOCK);LeaveCriticalSection(lock);return v;
+}
+static void join_admit_unpaused(void) {
+    if(join_rx.t.version<13 || !join_rx.t.gate.unpaused) return;
+    CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(void*)(image+SCLOCK_LOCK);
+    if(!join_cid_ready(lock)) return;
+    EnterCriticalSection(lock);join_unpaused_before=*(volatile uint64_t*)(image+SCLOCK_CLOCK);
+    *(volatile uint64_t*)(image+SCLOCK_CLOCK)=join_rx.t.gate.unpaused;LeaveCriticalSection(lock);
+    if(sclock_armed) {sclock_before_bits=join_unpaused_before;sclock_set=1;sclock_set_tick=stats.issued;sclock_stage="join";}
+}
 /* NMESH (v13, section 54; lockstep_nav_mesh.h): the saver's nav mesh receipt, its count and the terms it folded; the joiner adopts
  * them and leaves its catch-up builds of those helpers out of its fold up to T + JOIN_NMESH_CATCHUP (status nmesh=adopted:skipped). */
 #define JOIN_NMESH_CATCHUP 10u
@@ -3457,7 +3479,7 @@ static int join_admit(void) {
     if(!join_admit_ai(&e) || !join_admit_md(&e)) return 0;
     if(join_admit_before_skip && !join_admit_before_skip()) return join_fail_rx(JOIN_WHY_CAPTURE,"before_skip");
     if(!join_admit_rid() || !join_admit_world()) return 0;
-    join_admit_cid();join_admit_nmesh();
+    join_admit_cid();join_admit_unpaused();join_admit_nmesh();
     join_admit_flight_generations();
     join_bootev_repost();   /* the events of T the boot passes kept (native_gate_join_hold_boot_events) */
     join_ai_watch_dump('j',join_rx.t.gate.tick);join_job_watch_dump('j');   /* diagnostic (native_gate_join_watch) */
@@ -3493,7 +3515,7 @@ static int join_status(char *out,size_t cap) {
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
         " steer=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu t1=%u:%llu:%llu:%llu:%llu:%llu:%llu"
         " solver=%llu:%llu:%llu:%llu:%llu:%llu bullet_walk=%u:%llu:%llu grav=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravs=%llu:%llu:%llu:%llu md_dropped=%llu"
-        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u gravp_moved=%llu viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u bupd=%llu:%llu:%llu:%llu bupd_cap=%u ldc=%llu:%llu:%llu:%llu ldc_cap=%u navt=%llu:%llu:%llu navt_cap=%u cid=%llx:%llx nmesh=%d:%llu nmesh_cap=%u noct=%d:%llu:%llu:%llu:%llu:%llu noct_cap=%u agtt=%llu:%llu:%llu agtt_cap=%u agcb=%llu:%llu:%llu agcb_cap=%u pbnk=%llu:%llu:%llu:%llu pbnk_cap=%u pend=%d:%llu:%llu:%llu:%llu pend_cap=%u gravb=%llu:%llu:%llu:%llu gravb_cap=%u viewl=%d:%llu:%llu:%llu:%llu:%llu viewl_cap=%u ikv=%llu:%llu:%llu:%llu ikv_cap=%u ikv_refused=%s rcnt=%d:%llu:%llu:%llu:%llu rcnt_cap=%u ecos=%d:%llu:%llu:%llu ecos_cap=%u shpw=%d:%llu:%llu:%llu shpw_cap=%u trdn=%d:%llu:%llu:%llu trdn_cap=%u npca=%d:%llu:%llu:%llu:%llu:%llu:%llu npca_cap=%u jobg=%d:%llu:%llu:%llu jobg_cap=%u code=%d:%u:%x:%x:%x:%x code_cap=%u engr=%d:%llu:%llu:%llu engr_cap=%u shgr=%d:%llu:%llu:%llu shgr_cap=%u bnds=%d:%llu:%llu:%llu bnds_cap=%u jobw=%d:%llu viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
+        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u gravp_moved=%llu viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u bupd=%llu:%llu:%llu:%llu bupd_cap=%u ldc=%llu:%llu:%llu:%llu ldc_cap=%u navt=%llu:%llu:%llu navt_cap=%u cid=%llx:%llx unpaused=%llx:%llx nmesh=%d:%llu nmesh_cap=%u noct=%d:%llu:%llu:%llu:%llu:%llu noct_cap=%u agtt=%llu:%llu:%llu agtt_cap=%u agcb=%llu:%llu:%llu agcb_cap=%u pbnk=%llu:%llu:%llu:%llu pbnk_cap=%u pend=%d:%llu:%llu:%llu:%llu pend_cap=%u gravb=%llu:%llu:%llu:%llu gravb_cap=%u viewl=%d:%llu:%llu:%llu:%llu:%llu viewl_cap=%u ikv=%llu:%llu:%llu:%llu ikv_cap=%u ikv_refused=%s rcnt=%d:%llu:%llu:%llu:%llu rcnt_cap=%u ecos=%d:%llu:%llu:%llu ecos_cap=%u shpw=%d:%llu:%llu:%llu shpw_cap=%u trdn=%d:%llu:%llu:%llu trdn_cap=%u npca=%d:%llu:%llu:%llu:%llu:%llu:%llu npca_cap=%u jobg=%d:%llu:%llu:%llu jobg_cap=%u code=%d:%u:%x:%x:%x:%x code_cap=%u engr=%d:%llu:%llu:%llu engr_cap=%u shgr=%d:%llu:%llu:%llu shgr_cap=%u bnds=%d:%llu:%llu:%llu bnds_cap=%u jobw=%d:%llu viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
         states[join_cap.state],(unsigned long long)join_cap.tick,join_cap.slot_k,join_cap.mask,join_cap.why,join_cap.detail[0]?join_cap.detail:"-",
         (unsigned long long)join_cap.save_bytes,(unsigned long long)join_cap.package_bytes,(unsigned long long)join_cap.save_us,
         (unsigned long long)join_cap.capture_us,pkg,port,join_cap.modified_cleared,join_cap.possible,join_rx.loaded,join_rx.mode,join_rx.based,
@@ -3595,7 +3617,8 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_bupd_written,(unsigned long long)join_bupd_equal,(unsigned long long)join_bupd_missing,(unsigned long long)join_bupd_shape,join_cap.bupd,
         (unsigned long long)join_ldc_written,(unsigned long long)join_ldc_equal,(unsigned long long)join_ldc_missing,(unsigned long long)join_ldc_shape,join_cap.ldc,
         (unsigned long long)join_navt_written,(unsigned long long)join_navt_equal,(unsigned long long)join_navt_missing,join_cap.navt,
-        (unsigned long long)join_rx.t.gate.cid,(unsigned long long)join_cid_before,join_nmesh_adopted,(unsigned long long)nmesh_skipped,join_cap.nmesh,
+        (unsigned long long)join_rx.t.gate.cid,(unsigned long long)join_cid_before,
+        (unsigned long long)join_rx.t.gate.unpaused,(unsigned long long)join_unpaused_before,join_nmesh_adopted,(unsigned long long)nmesh_skipped,join_cap.nmesh,
         join_noct_adopted,(unsigned long long)join_noct_counts[0],(unsigned long long)join_noct_counts[1],(unsigned long long)join_noct_counts[2],
         (unsigned long long)join_noct_counts[3],(unsigned long long)join_noct_unmapped,join_cap.noct,
         (unsigned long long)join_agtt_written,(unsigned long long)join_agtt_equal,(unsigned long long)join_agtt_missing,join_cap.agtt,

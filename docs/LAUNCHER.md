@@ -210,6 +210,8 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   should check those first.
   A client that joins a running session needs the session's clock value, not 65536.0: the
   same per-frame double additions of the fixed step, replayed from tick 0 (see the header).
+  The hot join carries it: the saver's value at T rides the package's GATE record, and the
+  joiner's admission writes it and marks the clock set (status `unpaused=session:before`).
 - **Base seed with the speech clock: 43,052 ticks (23.9 game minutes).** The soak passed 39,060
   and parted at 43,052. The always-on actor rows name the split: three Argon fighters
   (73e9c, 73ead, 73ee3, queued to dock at carrier 73dce) drew their agent updates at 43,051 on
