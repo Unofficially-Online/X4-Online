@@ -2297,6 +2297,17 @@ proposed and rejected.
                                   their fixture shape holders after T+1; at T+2 all refresh with the keyed draw. 176ad5's
                                   dues equal from 635 (33.226363, 38.236904, 43.216757); first mismatch 1020 (780), census
                                   900 differing 0. Non-fixture bodies keep the region camera's per-client-start alignment
+  j1-251 local (build-hj20f)      (parted at 872 first) the bullet hit path from 1015 to 1033: 1028, 1029, 1031 only, all
+                                  bit-equal; no hit at 1020
+  j1-252 local (build-hj20f)      fixture ships 0x176a13/0x176c59 (the window's 1020, w1z49): their pathing slots' angular
+                                  velocity writes equal per ship from 1015; J1's 1020 is DIGEST_PARTS world only, the census at
+                                  1020 one object: ShipMedium 0x82335 (zone 0x1905d), motion; equal at 1019
+  j1-253 local (build-hj20f)      0x82335 in the world hash watch: at 1020 its pathing state's position x one ulp apart
+                                  (-38899.5, both slots); its linear and angular velocity writes equal from 1015
+  j1-254 local (build-hj20f)      its position is written every 5 steps by 0xeb3bb1 (<- 0xe901d7 <- 0xeaed74), jumps of ~445
+                                  units: at 1019 -38899.5 against -38899.496, at 1024 equal again. The motion digest: cur, target,
+                                  path, model_ext apart from 965 (a new plan); at 1018 the target transform's position x one ulp
+                                  (0x46c63a10 / 0x46c63a11), its rotation a few: the move order of 965 reads an input an ulp apart
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

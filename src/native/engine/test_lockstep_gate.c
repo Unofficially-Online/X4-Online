@@ -1754,7 +1754,8 @@ int main(int argc,char **argv) {
         assert(!shield_full_at(1156.6,3.08,1196,15,1,50,1,slow,34.0,&m) && shield_full_at(1156.6,3.08,1196,15,1,50,1,slow,34.7,&m));
         assert(!shield_full_at(1156.6,3.08,1196,15,1,50,2,none,10.0,&m) && !shield_full_at(1156.6,3.08,1196,15,1,50,2,none,12.0,&m) && shield_full_at(1156.6,3.08,1196,15,1,50,2,none,12.2,&m));
         assert(shield_full_at(1156.6,3.08,1196,15,1,50,0,none,4.0,&m)); /* no generator: no delay, the rate undivided */
-        assert(!shield_full_at(1196.0,3.08,1196,15,1,50,1,none,99.0,&m) && !shield_full_at(0,0,0,15,1,50,1,none,99.0,&m)); /* already full, no maximum */
+        assert(shield_full_at(1196.0,3.08,1196,15,1,50,1,none,99.0,&m) && m==1196.0 && shield_full_at(1196.0,3.08,1196,15,1,50,1,none,1.0,&m) &&
+               !shield_full_at(0,0,0,15,1,50,1,none,99.0,&m)); /* already full (any time: the changed time is no state), no maximum */
         assert(!shield_full_at(1156.6,3.08,1196,15,0.00005f,1,1,none,1e9,&m)); /* no recharge */
         assert(!shield_full_at(NAN,3.08,1196,15,1,50,1,none,99.0,&m) && !shield_full_at(1156.6,3.08,1196,15,1,50,1,none,NAN,&m));
         /* The source must be the group's ShieldRechargeSource. */

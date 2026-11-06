@@ -643,3 +643,21 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   0x13e75f, 176a13 and 176c59, motion). 1080 and 1140: 19 differing, health only: seven small ships with one weapon each and
   five medium ships, children of 0x1aed9..0x1aedb, 0x1dd82..0x1dd84 and 0x1b4ad..0x1b4b1. The shape refresh joined the join
   overlay defaults.
+
+37. THE DOCKED SHIPS' SHIELDS AT 1080: A CENSUS ARTEFACT (w1z51..w1z55, builds 284..286; 6 November)
+- w1z51 (WORLD_HEALTH rows 634..1080 on five of the 19): the docked ships have no shield group (+0x290 null) until 1059;
+  then one whose changed time +0x70 is 7.083 on the session and 38.733 = T on the joiner, value and maximum equal (888 of
+  888), delay and rate equal from 1060. w1z52 (SHPW with only the ships' lazy stamp +0xa18, shpw_words=8): written on 9,163
+  ships, the shield time unchanged; the window stays equal through 1020, so +0xa18 alone is harmless and w1z31's regression
+  came from SHPW's other words.
+- w1z53 (refwatch on 778b6 +0x290): at 1059 0x51f240 (from 0x3f5e5d) sets the ship's group through 0x4d6270(parent isa
+  0x23, ship), which first searches the parent's list +0x5d8 for a group keyed by the ship's runtime ID. SHGR (section 71,
+  7dd5a90c; native_gate_join_shgr) carried those lists' groups: w1z54 shgr=1:78:92159:3, the docked ships' time unchanged
+  (their groups are new at 1059) and the 78 writes broke a created object's turrets and shield generators (660: 11
+  differing). Negative; SHGR stays off.
+- The residue is a full shield's changed time, which carries no state (the lazily computed value is the maximum whatever it
+  is, and the first hit overwrites it); the census's canonical shield form left an already-full shield's time in the hash.
+  5dcfe1d1 with the hot join's fix bdc5e360 (an already-canonical shield is not counted again, NaN is not full): an
+  already-full shield hashes as its maximum with changed time 0. w1z55 (build286): 1080 has no difference outside the
+  fixture zone 0x13e75f. The run hit the intermittent fixture race early (780: 176ad5, 176b36, 176c95; 900 17 with
+  topology), the window's only residue now (the hot join's 872 thread).
