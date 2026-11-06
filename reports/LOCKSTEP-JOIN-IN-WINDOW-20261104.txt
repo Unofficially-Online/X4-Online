@@ -671,3 +671,18 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   equal J1.
 - w1z56 (w1z55's settings plus BNDS): bnds=1:589:789:0; no difference outside the fixture zone 0x13e75f at any capture
   through 1140 (this run hit the intermittent fixture race at 780: 176b36, 176cb3). BNDS joined the join overlay defaults.
+
+39. CODE BY DEFAULT; THE FIXTURE RACE IN THE WINDOW (w1z57..w1z60, build287; 6 November)
+- w1z57 (w1z56 plus CODE): code=1:1:14a2e:1f000, no difference outside the fixture zone 0x13e75f through 1140; CODE joined the
+  join overlay defaults (rcnt, trdn, passes_admit, pctl, ecos, jobg, engr, shape_refresh, bnds, code).
+- The fixture race: in the window it parts at varying ticks (w1z55..57 by 780, w1z58 at 900 with other ships first); the
+  hot join's J1 hits it at exactly 872 in about one run in five (j1-267..282 with BNDS: 10 equal, 3 at 872, 2 at 1042, 1
+  crash). w1z59 (the motion watch digest on the whole zone, native_gate_motion_watch_zones): 176b36 parts first at 721 in
+  its pathing state alone (target, path, model_ext, flight equal), 176cb3's target follows at 722, 176ad5 and 176c95 at
+  747/748; the same signature as J1's 872 (j1-274: 176b36's position x and linear velocity an ulp or so apart, angular
+  velocity equal).
+- w1z60 (hardware write watches on 176b36's pathing slots' linear velocity from T): no race; the census equal at 780, 900,
+  1020 and 1080, the first fully equal window run with all defaults. The watch's exception round trips slow the very writes
+  in question, which fits a race on the timing of the pathing writes against the frame (a candidate: the double-buffered
+  pathing state, slot[index] read and slot[index2] written, flipped at 0xeac1d9/0xeac1df, and a pathing job finishing
+  after the flip).
