@@ -561,7 +561,7 @@ def run_session(argv):
 # ---- replay: J1's relay from the session journal ----
 class JournalReplay:
     """Serves one joiner (slot k, loaded at T) from the session's journal: tick -> {slot: row} (native_gate_join.load_journal)."""
-    def __init__(self, token, journal, slot, save_tick, clients, lookahead, tick_hz, last=None, observe=False):
+    def __init__(self, token, journal, slot, save_tick, clients, lookahead, tick_hz, last=None, observe=False, hold=None):
         if len(token) != 32 or set(token)-set('0123456789abcdef'):
             raise ValueError('invalid token')
         if not 1 <= slot <= clients <= 8 or not 0 <= lookahead <= 8 or tick_hz not in TICK_RATES:
@@ -581,6 +581,11 @@ class JournalReplay:
                 raise ValueError(f'the journal has no present slot at tick {tick}')
         self.address, self.joiner_tick, self.state, self.failure = None, None, 'waiting', None
         self.mismatches, self.notices, self.first_at, self.last_at, self.diverged = [], [], None, None, False
+        # hold = (tick, seconds), a test (--hold-tick): the permits answering the joiner's first report of that tick wait
+        # that many wall-clock seconds, once. The joiner's world stands at the gate meanwhile; only its own threads go on.
+        if hold is not None and not (save_tick < hold[0] < self.last and 0 < hold[1] <= 120):
+            raise ValueError('--hold-tick must lie inside the replay and --hold-seconds in (0, 120]')
+        self.hold, self.held = hold, False
 
     def reference(self, tick):
         rows = self.journal.get(tick, {})
@@ -651,6 +656,14 @@ class JournalReplay:
         permits = range(tick+1, tick+2+self.lookahead) if first else (tick+1+self.lookahead,)
         return [(address, self.packet('NGGO', permit)) for permit in permits if permit <= self.last]
 
+    def hold_due(self):
+        """Seconds to wait before sending the permits just made (once, after the joiner's report of the hold tick)."""
+        if self.hold is None or self.held or self.joiner_tick != self.hold[0] or self.state != 'replaying':
+            return 0.0
+        self.held = True
+        self.notices.append(f'NATIVE_GATE JOIN_REPLAY HOLD tick={self.hold[0]} seconds={self.hold[1]:g}')
+        return float(self.hold[1])
+
     def rate(self):
         if self.first_at is None or self.last_at is None or self.last_at <= self.first_at:
             return 0.0
@@ -681,18 +694,23 @@ def run_replay(argv):
     p.add_argument('--token', help='32 hex (default: a new random token, written to --handoff-out)')
     p.add_argument('--ticks', type=int, help='last tick to replay (default: the journal end)')
     p.add_argument('--observe', action='store_true', help='record every differing declared digest and go on (census)')
+    p.add_argument('--hold-tick', type=int, help='test: hold the permits after the joiner reports this tick (with --hold-seconds)')
+    p.add_argument('--hold-seconds', type=float, help='test: wall-clock seconds of that hold (0 < s <= 120)')
     p.add_argument('--boot-timeout', type=float, default=900, help='seconds to wait for the first report (default 900)')
     p.add_argument('--idle-timeout', type=float, default=180, help='seconds without a new report before giving up (default 180)')
     p.add_argument('--log', type=Path, help='write the relay lines here instead of stdout (with a command after --)')
     p.add_argument('command', nargs=argparse.REMAINDER, help="optional: '--' and the joiner's command, run while serving")
     args = p.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
+    if (args.hold_tick is None) != (args.hold_seconds is None):
+        p.error('--hold-tick and --hold-seconds go together')
     try:
         session = load_handoff(args.handoff, verify=True)
         journal = join.load_journal(args.journal)
         token = args.token or secrets.token_hex(16)
         replay = JournalReplay(token, journal, session['slot'], session['save_tick'], session['clients'], session['lookahead'],
-                               session['tick_hz'], args.ticks, args.observe)
+                               session['tick_hz'], args.ticks, args.observe,
+                               None if args.hold_tick is None else (args.hold_tick, args.hold_seconds))
     except (ValueError, OSError, KeyError) as error:
         p.error(str(error))
     out = open(args.log, 'a', encoding='utf-8') if args.log else sys.stdout
@@ -715,7 +733,14 @@ def run_replay(argv):
                 data = None
             now = time.monotonic()
             if data is not None:
-                for dest, packet in replay.receive(data, address, now):
+                packets = replay.receive(data, address, now)
+                wait = replay.hold_due() if packets else 0.0
+                if wait:
+                    for text in replay.notices:
+                        emit(text)
+                    replay.notices = []
+                    time.sleep(wait)
+                for dest, packet in packets:
                     try:
                         sock.sendto(packet, dest)
                     except ConnectionResetError:

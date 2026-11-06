@@ -2321,6 +2321,26 @@ proposed and rejected.
                                   position parameter at [rbp-0x50], which 0xc6f7b0 evaluates from the action's script
                                   expression; no 0x3dde10 composition runs for it. The value (25373.03125 / 25373.0332) is not in
                                   the join save: the AI script computes it after T
+  j1-264 local (build-hj20h)      script rows at 960..963: 0x82335's pilot 0x8233a runs move.generic, order.plunder and, from
+                                  962, move.hack.station.storage, every key and draw equal on both sides
+  j1-265 local (build-hj20h)      that script's create_position / create_orientation / transform_position results: every
+                                  position equal; the parking offset $target.size / 2 + this.ship.size * 2.5 is 3848.31177
+                                  against 3848.31201, so its $parkposition x is an ulp apart
+  j1-266 local (build-hj20h)      the stations' bounding structs (vfunc 0x14b0 = 0x7eb460: station+0xc90, +0xcc0, +0xcf0):
+                                  819 of 855 an ulp or more apart (the session's grown module by module, the joiner's rebuilt
+                                  at its load); the target 0x593cc's radius 3531.08252 against 3531.08276. The words after each
+                                  radius differ between the two session clients too (per process)
+  j1-267 f893643a (build-hj20i)   BNDS (section 72, opt-in native_gate_join_bnds: centre, extents, radius of the three structs):
+                                  bnds=1:589:789:0. JOIN_REPLAY verdict=equal, first_mismatch none, 0 mismatches from 633 to
+                                  1799, census 900 differing 0: the first J1 hot join equal to the end (with CODE, JOBG, ENGR,
+                                  the shape refresh; the intermittent 872 race did not occur in this run)
+  j1-268 .. 270 (build-hj20i)     the same three more times: verdict=equal, 0 mismatches to 1799, census 900 differing 0 in
+                                  each (4 of 4 with BNDS; before it the 872 race hit 3 of 16 runs: not yet shown gone)
+  j1-271 .. 274 (build-hj20i)     with the motion watch (digest, orders) on the fixture ships 0x176b36/0x176cb3: 271 diverged at
+                                  1042 (new; census 900 equal), 272 equal to the end, 273 the joiner crashed at 642 (X4 exit
+                                  0xC0000005, no dump; once), 274 the 872 race: 176b36's pathing state parts first at 872 in
+                                  position x and linear velocity (+0x40..+0x48, 2e-4 .. 5e-4), angular velocity, target, path,
+                                  model_ext and flight equal; 176cb3's target at 873
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

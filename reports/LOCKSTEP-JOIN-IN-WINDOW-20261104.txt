@@ -701,3 +701,30 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   with empty containers +0x2b0..+0x318, builds them in its first update in T+1, and its transforms come out ulps from the
   session's. In the fixture dogfight the fixture ships avoid that slot ship, so the race fires when one of them steers close
   (the tick and the ship vary).
+
+41. THE SLOT-K WORDS ARE NEUTRAL; THE FIXTURE RACE HAS TWO OUTCOMES (w1z64..w1z66, build288/289; 6 November)
+- w1z64 (build288, native_gate_join_slotk_quats: slot k also takes the session's three PlayerController double
+  quaternions): the quaternion words are equal after the resume (9 differed in w1z63), 29 other words still differ, 36 after
+  T+1 (57 in w1z63); census 660 0, 780 2, 900 4, 1020 12, 1080 15; 176b36 first at 721.
+- w1z65 / w1z66 (build289 = build-hj20k, native_gate_join_slotk_words, a mask of the slot-1-only word groups slot k takes):
+  mask 29 (the quaternions, +0x3f8..+0x420, +0x4d8/+0x4e0, the factors +0x6f8..+0x710) leaves 17 words apart after the
+  resume, mask 63 (all, with dt +0x3c0 and the transform copy +0x320..+0x358) 8 (+0x18, the containers +0x2d0/+0x308/+0x310,
+  +0x3c8, +0x670, +0x718, +0x788). After T+1 the same 36 words differ in all three runs, and the joiner's digests of 0x7a8fe
+  are bit-identical in w1z64, w1z65 and w1z66 over 634..900: these words do not make the slot ship's ulps.
+- w1z65 was equal at 660, 780, 900, 1020 and 1080, the second fully equal window run; w1z66 equals w1z64 tick for tick. The
+  race did not fire in w1z65 although 0x7a8fe was the same ulps off as in the others.
+- 176b36's step at 721 has exactly two results over w1z62..w1z66: the session's (w1z62, w1z65) or one diverged state that is
+  bit-identical in w1z63, w1z64 and w1z66 (linear velocity a few per cent of the step's change apart, z 12.1358 against
+  12.1495; not ulps). Every recorded input of that step is equal in all five joiners: before, input, dt, the time argument,
+  the TLS time and view, the flags, the RNG words, limits, params and both avoidance lists (0x7a8fe's ulp-off entry
+  included); the model differs only in never-written words (+0x118 and +0x1c8 hold stale heap addresses in some processes,
+  sessions included). +0x25c and +0x26c are 0.5 on every session client and 0 on every joiner, race or not.
+- No gate row of 600..720, nor any row without a tick, is constant within the race runs and within the calm runs and different
+  between the two groups; the first such row is 176b36's own digest at 721. w1z62 raced later instead (176ad5, actor 3, at
+  747), w1z65 not at all.
+- J1 races on the same ship at 872 (j1-293/294; j1-291/292 equal) with the same save tick 633, so the race is not one world
+  event at a fixed tick. The candidate selector is the joiner's wall-clock time since its load: an asynchronous job started
+  by the load (a model or collision level of detail, a navigation build, a cache the steering behaviour consults) that has or
+  has not finished when a ship first consults it. Test: native_gate_join_driver.py replay --hold-tick H --hold-seconds S holds
+  the permits after the joiner's report of tick H once (smoke 1fba38a7); queue w1z67..w1z72 replays w1z66's joiner again,
+  four times with 30 s at 640 and twice without.

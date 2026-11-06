@@ -23,6 +23,11 @@ typedef struct {
     uint64_t behaviour_rva;
     void *initialized_model;
     uint64_t init_generation;
+    /* The call's other inputs [j1-283/285: the 872 race parts 176b36's step with before, dt and the avoidance equal]: the
+     * double time argument, the calling thread's TLS game time (+0x300) and view (+0x314), the cheap and player flags. */
+    uint64_t time_bits,tls_time;
+    uint32_t tls_view;
+    unsigned char last_cheap,last_player;
 } flight_sample;
 static flight_sample flight_samples[ACTOR_CAPACITY];
 static int flight_installed, flight_restored, flight_seeded, flight_full, flight_avoidance_refresh, flight_initial;
@@ -227,6 +232,7 @@ static void flight_update(void *self,void *slot,float dt,double time,unsigned ch
     ++sample->calls;sample->cheap+=cheap!=0;
     sample->applied_cheap+=!flight_full && cheap!=0;
     memcpy(&sample->dt,&dt,4);memcpy(sample->before,slot,sizeof(sample->before));
+    memcpy(&sample->time_bits,&time,8);sample->last_cheap=cheap;sample->last_player=player;
     memcpy(sample->model_before,self,sizeof(sample->model_before));
     memcpy(sample->agent_limits,(unsigned char*)sample->agent+0x340,sizeof(sample->agent_limits));
     memcpy(sample->slot_before,slot,sizeof(sample->slot_before));
@@ -241,6 +247,8 @@ static void flight_update(void *self,void *slot,float dt,double time,unsigned ch
     if(!flight_read_avoidance(sample,self,0)) flight_fault(FLIGHT_FAULT_AVOIDANCE_BEFORE,actor,0,0);
     void **tls=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
     uint64_t *rng=tls && tls[0]?(uint64_t*)((unsigned char*)tls[0]+0x318):NULL;
+    sample->tls_time=0;sample->tls_view=0;
+    if(tls && tls[0]) {memcpy(&sample->tls_time,(unsigned char*)tls[0]+0x300,8);memcpy(&sample->tls_view,(unsigned char*)tls[0]+0x314,4);}
     flight_execute(original,sample,actor,rng,self,slot,dt,time,cheap,player);
     if(!flight_read_avoidance(sample,self,1)) flight_fault(FLIGHT_FAULT_AVOIDANCE_AFTER,actor,0,0);
     memcpy(sample->after,slot,sizeof(sample->after));

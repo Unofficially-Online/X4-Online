@@ -287,9 +287,9 @@ class Replay(unittest.TestCase):
         journal = {t: {s: dict(row) for s, row in rows.items()} for t, rows in net.relay.states.items() if t <= net.relay.released}
         return net, int(answer[6]), package, json.loads(json.dumps({str(t): {str(s): r for s, r in rows.items()} for t, rows in journal.items()}))
 
-    def replay(self, journal, save_tick, k=K, observe=False, last=None):
+    def replay(self, journal, save_tick, k=K, observe=False, last=None, hold=None):
         rows = {int(t): {int(s): r for s, r in v.items()} for t, v in journal.items()}
-        return driver.JournalReplay(TOKEN, rows, 3, save_tick, 3, k, HZ, last=last, observe=observe)
+        return driver.JournalReplay(TOKEN, rows, 3, save_tick, 3, k, HZ, last=last, observe=observe, hold=hold)
 
     def drive(self, replay, joiner, steps=2000):
         address = ('127.0.0.1', 30003)
@@ -316,6 +316,28 @@ class Replay(unittest.TestCase):
                 theirs = {t: b for t, b in net.live[1].applied if save_tick < t <= replay.last}
                 self.assertEqual(dict(joiner.applied), theirs)               # every permit the session itself got
                 self.assertIn('NATIVE_GATE JOIN_REPLAY FIRST tick=%d slot=3' % save_tick, replay.notices)
+
+    def test_a_hold_is_due_once_after_its_tick(self):
+        net, save_tick, package, journal = self.session()
+        replay = self.replay(journal, save_tick, hold=(save_tick+5, 2.5))
+        joiner = jt.Client(3, 3, K, None, tick=package['tick'], state=package['state'], joined_from=package['tick'])
+        address, due = ('127.0.0.1', 30003), []
+        for _ in range(2000):
+            joiner.report()
+            for tick in range(max(joiner.tick-replay.lookahead, 0), joiner.tick+1):
+                if tick in joiner.reports:
+                    packets = replay.receive(joiner.reports[tick], address, time.monotonic())
+                    wait = replay.hold_due() if packets else 0.0
+                    if wait: due.append((replay.joiner_tick, wait))
+                    for _, packet in packets: joiner.receive(packet)
+            if replay.state in ('done', 'failed') or not joiner.step():
+                break
+        self.assertEqual(due, [(save_tick+5, 2.5)])
+        self.assertEqual(replay.summary()['verdict'], 'equal')                # the hold changes no permit
+        self.assertIn(f'NATIVE_GATE JOIN_REPLAY HOLD tick={save_tick+5} seconds=2.5', replay.notices)
+        for bad in ((save_tick, 1.0), (replay.last, 1.0), (save_tick+5, 0.0), (save_tick+5, 121.0)):
+            with self.subTest(hold=bad), self.assertRaisesRegex(ValueError, 'hold'):
+                self.replay(journal, save_tick, hold=bad)
 
     def test_a_diverged_joiner_is_recorded_or_stopped(self):
         net, save_tick, package, journal = self.session()
