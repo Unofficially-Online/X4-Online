@@ -605,3 +605,30 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
 - Next: execution breakpoints (the hot join's refwatch pseudo ID fffffffffffffffe, rows with rsi, rcx and xmm0..xmm3 since
   98dbc272) on the call 0xea2118 (its float arguments), its return 0xea211d (the distance), 0x6de860 (the deceleration factor)
   and 0x6de987 (the remaining boost time), filtered by the destroyer's controller (r12) and ship (rsi).
+
+35. ENGR: THE WINDOW EQUAL THROUGH 960 (w1z44..w1z49, builds 280..283; 5 November)
+- w1z44 (execution breakpoints on the braking distance call 0xea2118, its return and two points inside 0x6de670): every ship's
+  refresh hits them; the 16384-row buffer was full by 768. 0a08b309: an execution breakpoint can keep only the hits where a
+  register holds a watched object, its controller or its agent ('fffffffffffffffe:<k>:<rva>:1').
+- w1z45 (filtered to the destroyer 79009): at 794 the call's arguments (slot +0x4 31.212, forward speed 179.374, slot +0x2c
+  -40.318, max speed 847.671), the deceleration factor (1.0) and the remaining boost time (4.0) are equal on both sides; only
+  the result differs (1337.98 against 1394.08). w1z46 (four points in the integration loop 0x6dea22..0x6deb78): all 36 rows
+  equal; the difference is the loop's start value, the boost term 0.5 * (xmm8 + xmm7) * 4.0 with xmm8 = xmm15 / max(c+0x2f8,
+  c+0x330, 1.0) for the component c that 0x6d6d80 finds first in the ship's attachment container (+0xa8).
+- w1z47 (rbx_obj=, 04f37742): c is the same on both sides, the engine 79037 (U::Engine, vtable 0x2ad58f8), but its +0x2f8 is
+  4.056 on the session and 3.576 on the joiner at 794; all three engines get +0x2f0 = 46.783 and these factors at the boost
+  start. w1z43's rows (re-read): before 794 +0x2f8 is 1.0 on both sides, +0x2f0 37.233 on the session and 38.733 = T on the
+  joiner. w1z48 (refwatch from the load): 0x54e3a0..0x54e507 integrates the factor toward its target at a macro rate over
+  dt = now - +0x2f0 and stamps +0x2f0 = now (0x54e556, through 0x6dc8e3); the load itself runs that update (0x6cffba <-
+  0x9bd5f9) and stamps T. At 794: dt 9.55 against 8.05, and 1 + 0.32 * dt gives 4.056 and 3.576 exactly.
+- The stamp belongs to the value the save does not integrate, so it is carried (the load-time split: carry a past event's
+  stamp, not the base time of a value the save writes as of T). ENGR (section 70, 16dd6d4c; native_gate_join_engr): every
+  U::Engine's +0x2f0 and +0x2f8 by portable ID, written at the admission where they differ.
+- w1z49 (build283, the defaults, jobg and engr, no join watch): engr=1:22288:197:0; T+1 1 (800259fc's one-step nav refresh);
+  660, 720, 780, 840, 900 and 960 equal with no one-sided object (w1z37 without ENGR: 840 4, 900 4). 1020: two fixture ships
+  in zone 0x13e75f (176a13, 176c59 motion), the hot join's parting at 1011 (fixture 176ad5, its pathing state by one ulp;
+  j1-241: its engines carry the same load stamp, their factors stay 1.0). ENGR joined the join overlay defaults.
+- Also found on the way: the fixture 176ad5's +0x3b0 differs from T (626.8 against 208.9; the engine parameter refresh
+  rewrites it), but carrying it alone (native_gate_join_shpw_words=1, j1-240) did not move 1011; the Steering model's
+  padding +0xb4..+0xb7 is now out of the motion watch digest (j1-233/234); all 14 avoidance contacts of 176ad5 are equal at
+  1008..1012 (contact_fnv=, j1-238).
