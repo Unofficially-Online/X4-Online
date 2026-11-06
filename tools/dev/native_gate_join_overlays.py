@@ -240,9 +240,12 @@ def ids_sets(sets):
 #   native_gate_join_ecos          the containers' economy schedules, a due time (w1z34 with it against w1z35 without: 900 30 / 36)
 #   native_gate_join_jobg          the jobs' own generator words (j1-214: 900 0 from 42; w1z37: the window equal 660..780, 900 4)
 #   native_gate_join_engr          the engines' boost ramps (w1z49: the window equal 660..960, 900 0 from w1z37's 4)
+#   native_gate_join_shape_refresh every client refreshes the fixture body shapes at T+2 (j1-250: 1011 -> 1020; w1z50: the
+#                                  window equal 660..1020, the motion at 1080 gone)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
-                   'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr')
+                   'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
+                   'native_gate_join_shape_refresh')
 
 
 def default_sets(sets):

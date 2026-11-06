@@ -632,3 +632,14 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   rewrites it), but carrying it alone (native_gate_join_shpw_words=1, j1-240) did not move 1011; the Steering model's
   padding +0xb4..+0xb7 is now out of the motion watch digest (j1-233/234); all 14 avoidance contacts of 176ad5 are equal at
   1008..1012 (contact_fnv=, j1-238).
+
+36. THE SHAPE REFRESH: THE WINDOW EQUAL THROUGH 1020 (w1z50, build284; 6 November)
+- The hot join's native_gate_join_shape_refresh (b6bcd674; j1-243..250): a fixture body's compound shape is a snapshot of its
+  parts that XPhys::Body_UpdateShape 0xbff80 refreshes at a randomized due the package does not carry; the joiner refreshed
+  every holder at T+1 (shape_initial) while the session kept older snapshots, so a moving part sat elsewhere and a bullet hit
+  another surface (176ad5 at 1011: same bullet, ray and cast times, another fraction and normal). Every client now forgets its
+  fixture holders after T+1 and refreshes them all at T+2 with the keyed draw.
+- w1z50 (w1z49's settings plus the shape refresh): 660, 780, 900, 960 and 1020 equal (w1z49: 1020 two fixture ships in
+  0x13e75f, 176a13 and 176c59, motion). 1080 and 1140: 19 differing, health only: seven small ships with one weapon each and
+  five medium ships, children of 0x1aed9..0x1aedb, 0x1dd82..0x1dd84 and 0x1b4ad..0x1b4b1. The shape refresh joined the join
+  overlay defaults.
