@@ -3709,6 +3709,56 @@ static void join_admit_engr(const join_tables *s,const join_tables *mine) {
         if(changed) ++join_engr_written; else ++join_engr_equal;
     }
 }
+/* BNDS (v13, section 72; the admission opt-in, native_gate_join_bnds): every station's bounding structs [F: j1-258 .. j1-266, J1's
+ * 1020: ShipMedium 0x82335's AI move.hack.station.storage parks at $target.size / 2 + this.ship.size * 2.5 from the station;
+ * station 0x593cc's radius is 3531.08252 on the session and 3531.08276 on the joiner, so its move point of 962 is an ulp apart
+ * and its position from 1019]. A station's size (vfunc 0x14b0 = 0x7eb460: station+0xc90) comes from three bounding structs at
+ * +0xc90, +0xcc0 and +0xcf0 (0x30 bytes each: centre, extents with w 1, radius +0x20, then three words), which the session grew
+ * module by module and the joiner's load rebuilt in one pass: 819 of 855 stations an ulp or more apart in centre, extents or
+ * radius (j1-266). The three words after each radius differ between two session clients too (per process) and are not carried.
+ * The capture takes the 0x24 bytes of each struct for every object whose vfunc 0x14b0 is 0x7eb460; with the opt-in the admission
+ * writes the session's where they differ. Status bnds=on:written:equal:missing. */
+static int join_bnds_on;
+static uint64_t join_bnds_written,join_bnds_equal,join_bnds_missing;
+#define JOIN_BNDS_GETTER 0x7eb460u   /* the station's vfunc 0x14b0: lea rax,[rcx+0xc90] */
+#define JOIN_BNDS_AT 0xc90u
+#define JOIN_BNDS_STRIDE 0x30u
+#define JOIN_BNDS_BYTES 0x24u       /* centre, extents, radius */
+static int join_bnds_type(unsigned char *o) {
+    uintptr_t vt=0,fn=0;
+    return o && join_read(o,&vt,8) && vt && join_read((void *)(vt+0x14b0u),&fn,8) && fn==(uintptr_t)image+JOIN_BNDS_GETTER;
+}
+static int join_bnds_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_bnds_rec *)a)->portable,y=((const join_bnds_rec *)b)->portable;return x<y?-1:x>y;
+}
+static int join_bnds_read(unsigned char *o,uint32_t word[JOIN_BNDS_WORDS]) {
+    for(unsigned k=0;k<3u;k++) if(!join_read(o+JOIN_BNDS_AT+k*JOIN_BNDS_STRIDE,word+k*9u,JOIN_BNDS_BYTES)) return 0;
+    return 1;
+}
+static void join_capture_bnds(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        if(!t->ids[i].portable) continue;
+        unsigned char *o=join_object(t->ids[i].runtime);join_bnds_rec r;
+        if(!join_bnds_type(o)) continue;
+        memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;
+        if(!join_bnds_read(o,r.word)) continue;
+        if(!JOIN_PUSH(t->bnds,t->nbnds,cap,r)) return;
+    }
+    if(t->nbnds>1) qsort(t->bnds,t->nbnds,sizeof(*t->bnds),join_bnds_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->nbnds;i++) {if(k && t->bnds[k-1].portable==t->bnds[i].portable) continue;t->bnds[k++]=t->bnds[i];}t->nbnds=k;}
+}
+static void join_admit_bnds(const join_tables *s,const join_tables *mine) {
+    join_bnds_written=join_bnds_equal=join_bnds_missing=0;
+    if(!join_bnds_on) return;
+    for(uint32_t i=0;i<s->nbnds;i++) {
+        const join_bnds_rec *r=&s->bnds[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable));
+        if(!join_bnds_type(o)) {++join_bnds_missing;continue;}
+        int changed=0;
+        for(unsigned k=0;k<3u;k++) changed|=join_poke((uintptr_t)(o+JOIN_BNDS_AT+k*JOIN_BNDS_STRIDE),r->word+k*9u,JOIN_BNDS_BYTES);
+        if(changed) ++join_bnds_written; else ++join_bnds_equal;
+    }
+}
 /* SHGR (v13, section 71; the admission opt-in, native_gate_join_shgr): the shield recharge groups containers keep for their docked
  * ships [F: w1z50/w1z51, the window's census at 1080: 19 docked ships' children differ in health only; WORLD_HEALTH: the ships have
  * no shield group (+0x290 null) until 1059, then one whose changed time +0x70 is 7.083 on the session and 38.733 = T on the
@@ -4495,6 +4545,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_code(t);            /* version 13 */
     join_capture_engr(t);            /* version 13 */
     join_capture_shgr(t);            /* version 13 */
+    join_capture_bnds(t);            /* version 13 */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
     join_capture_pend(t);            /* version 13 */
@@ -6117,6 +6168,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_code(s);          /* the object code counter (opt-in) */
     if(s->version>=13) join_admit_engr(s,&mine);    /* the engines' boost ramps (opt-in) */
     if(s->version>=13) join_admit_shgr(s,&mine);    /* the containers' shield recharge groups (opt-in) */
+    if(s->version>=13) join_admit_bnds(s,&mine);    /* the stations' bounding structs (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */

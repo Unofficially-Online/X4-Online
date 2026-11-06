@@ -2308,6 +2308,19 @@ proposed and rejected.
                                   units: at 1019 -38899.5 against -38899.496, at 1024 equal again. The motion digest: cur, target,
                                   path, model_ext apart from 965 (a new plan); at 1018 the target transform's position x one ulp
                                   (0x46c63a10 / 0x46c63a11), its rotation a few: the move order of 965 reads an input an ulp apart
+  j1-255 local (build-hj20f)      motion watch orders: no AI move point among the four known creators; MOTION_TARGET at 965
+                                  (0xe8d777 <- 0xe90064 <- 0xeaed74), the new first waypoint already an ulp apart
+  j1-256 local (build-hj20g)      (872 first) at 965 UpdatePathing 0xe8f250 moves the Agent's pending waypoint (+0x6c0) into its
+                                  path (0xe8dfc0, push 0xe89ed0); the pending point's position x 25373.03125 against 25373.0332
+  j1-257 local (build-hj20h)      (872 first) the pending point is pushed at 962 by PathingManager::AddOrder 0xeacd40 (order
+                                  Apply 0xeacf63 <- 0xeac1ae, the MoveWorker), already apart
+  j1-258 local (build-hj20h)      the order queue 0xeadf30 at 962: the point is queued by 0x6e05af <- AI::MoveToAction::Execute
+                                  (0x109c100 -> 0x109c1a0 -> the point builder 0x6e0450), apart; the order's Apply filtered to
+                                  the Agent (0xeacf63) confirms it
+  j1-259 .. 263 local (hj20h)     inside MoveTo: the point is a U::NavPoint (vtable 0x2ae9380) built by 0x10ca210 from the
+                                  position parameter at [rbp-0x50], which 0xc6f7b0 evaluates from the action's script
+                                  expression; no 0x3dde10 composition runs for it. The value (25373.03125 / 25373.0332) is not in
+                                  the join save: the AI script computes it after T
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

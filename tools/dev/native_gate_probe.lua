@@ -320,6 +320,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_engr then   -- a joiner takes the session's engine boost ramps (ENGR)
   assert(gate.join_engr and gate.join_engr(1)==1,'join engr refused')
  end
+ if cfg.native_gate_join_bnds then   -- a joiner takes the session's stations' bounding structs (BNDS)
+  assert(gate.join_bnds and gate.join_bnds(1)==1,'join bnds refused')
+ end
  if cfg.native_gate_join_shgr then   -- a joiner takes the session's containers' shield recharge groups (SHGR)
   assert(gate.join_shgr and gate.join_shgr(1)==1,'join shgr refused')
  end
