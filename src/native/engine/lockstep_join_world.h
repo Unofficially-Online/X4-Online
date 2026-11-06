@@ -2322,8 +2322,12 @@ static uintptr_t join_rw_match[4][3];
  * own times in r14 (+0x268, +0x288)]. */
 typedef struct {uint32_t reg,len,deref,offset2;int64_t offset;} join_rw_peek_t;
 static join_rw_peek_t join_rw_peek[4];
-/* native_gate_join_refwatch_at = n: with the watch, the fields are armed from the dump of step n-1 on (both sides; the hits of step n
- * onward), not at T: unfiltered execution breakpoints on a busy path (every bullet hit) keep their 16384 rows for the steps that matter. */
+/* native_gate_join_refwatch_at = n: with the watch, the fields are armed from the boundary of step n-1 on (both sides; the hits of
+ * step n onward), not at T: unfiltered execution breakpoints on a busy path (every bullet hit) keep their 16384 rows for the steps that
+ * matter. The watch stays armed for it past native_gate_join_watch_span: from n-1 to n-1+JOIN_RW_AT_STEPS each boundary refreshes the
+ * watched objects, re-arms every 10 steps and prints the new rows, without the JOIN_WATCH dumps [w1z74/75: with the default span of 2
+ * the watch ended at T+2 and the fields never armed]. */
+#define JOIN_RW_AT_STEPS 600u
 static uint64_t join_rw_at;
 static int join_rw_peek_add(const char *text,size_t length) {   /* 1 set, 0 refused */
     static const char *const regs[16]={"rax","rbx","rcx","rdx","rsi","rdi","rbp","rsp","r8","r9","r10","r11","r12","r13","r14","r15"};
@@ -3095,15 +3099,28 @@ static void join_shipcode_dump(uint64_t tick) {
     if(at) crash_note_write(out,(int)at);
     free(out);
 }
+/* refwatch_at past the span: the watched objects again (as the dump finds them), the fields armed at n-1 and every 10 steps after
+ * (threads started since), the rows since the last print. */
+static void join_rw_dump(uint64_t tick) {
+    for(unsigned i=0;i<join_watch.n;i++) join_watch.object[i]=join_watch.runtime[i]?join_object(join_watch.runtime[i]):NULL;
+    if(tick+1u==join_rw_at || !((tick+1u-join_rw_at)%10u)) join_rw_arm(1);
+    const size_t cap=1u<<18;char *out=malloc(cap);
+    if(!out) return;
+    const size_t at=join_rw_rows_text(out,cap,'v',tick);
+    if(at) crash_note_write(out,(int)at);
+    free(out);
+}
 static void join_watch_probe(uint64_t completed) {
     join_rw_early_probe(completed);
     join_jobcnt_dump(completed);
     join_shipcode_dump(completed);
     if(!join_watch.armed || completed<=join_watch.tick) return;
     const uint64_t k=completed-join_watch.tick;
-    if(k==1u || k==14u) join_buildp_dump(k==1u?'t':'v',completed);
+    if(k==1u || (k==14u && k<=join_watch_span)) join_buildp_dump(k==1u?'t':'v',completed);
+    const int rw_open=join_rw_at && completed+1u>=join_rw_at && completed+1u<join_rw_at+JOIN_RW_AT_STEPS;
     if(k<=join_watch_span) join_watch_dump(k==1u?'t':k==2u?'u':'v',completed);
-    if(k>=join_watch_span) {join_watch.armed=0;join_rw_arm(0);}
+    else if(rw_open) join_rw_dump(completed);
+    if(k>=join_watch_span && !rw_open && !(join_rw_at && completed+1u<join_rw_at)) {join_watch.armed=0;join_rw_arm(0);}
 }
 /* ---- version 13: VIEWK, VIEWKC (report 1.18) ---- */
 #define JOIN_VIEW_FLAGS 0x3cu

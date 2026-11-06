@@ -2341,6 +2341,34 @@ proposed and rejected.
                                   0xC0000005, no dump; once), 274 the 872 race: 176b36's pathing state parts first at 872 in
                                   position x and linear velocity (+0x40..+0x48, 2e-4 .. 5e-4), angular velocity, target, path,
                                   model_ext and flight equal; 176cb3's target at 873
+  j1-275 .. 278 (build-hj20i)     write watches on 176b36's linear velocity from 868: no race (275 parted at 1042, 276..278
+                                  equal); x4mods' w1z60 with the same watches was fully equal: the exception round trips
+                                  on those writes may suppress the race
+  j1-279 .. 282 (build-hj20i)     279/282 equal, 280/281 the 872 race; 1042 (j1-271, j1-275, j1-289: census 1080 0x176ad5
+                                  and 0x176c95 motion) a second intermittent item
+  j1-283 .. 290 (build-hj20i)     FLIGHT/AVOIDANCE/AGENT/PARAMS rows (no watches): in the race runs 283/285/290 176b36's
+                                  step at 872 has before, input, dt, RNG words, limits, behaviour and both avoidance phases
+                                  equal and only after apart; params +0xe8/+0x13c and model +0x25c/+0x26c differ in clean runs
+                                  and between the two session clients too (per process). Avoidance differs at 634 for 10 of
+                                  12 actors in every run and agrees again by 700
+  j1-291 .. 294 (build-hj20j)     FLIGHT rows with the step's double time argument, the thread's TLS time and view and the
+                                  call's flags (abba56a9): equal at 870..872 in the race runs 293/294 too. Every argument and
+                                  recorded input of the step is equal; it reads another object's state inside. In the window
+                                  x4mods found the race input: the slot ship 0x7a8fe (a slot k ship whose PlayerController the
+                                  joiner rebuilds) a few ulps apart from 635, consulted by the fixture ships' avoidance; the
+                                  census has no motion for PlayerController ships, so it is invisible there
+  j1-295 .. 298 (build-hj20k)     the defaults with the motion watch digest on the slot ship 0x7a8fe and 176b36: all four
+                                  equal to 1799 (no race to compare)
+  j1-299 .. 304 (build-hj20k)     as j1-283, with the join files kept (the save and both savers' packages): 302 the 872
+                                  race, 303 the 1042 item, the rest equal. The two savers' packages can differ in NOCT alone:
+                                  one kind-2 hidden key (0x1144, due never) on the saver whose builder thread built 0x1144's
+                                  octree before the record was invalidated (noct_erase keeps the hidden entry; natively
+                                  neither client keeps that octree). Per process, not a capture race. On the joiner NOCT is
+                                  idle in the window (j1-304: 4 live records built, the hidden keys only marked; hides,
+                                  lookups and unrecorded builds 0, nothing agreed or shown 634..1799), so it cannot select
+                                  the race. Across the kept joiner packages of j1-267..304 the key still goes with the race
+                                  (with it: 872 in 6 of 16 runs, 1042 in 3; without: 3 of 22 and 1 of 22): a common cause in
+                                  the session's thread timing before T, not the octrees
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 
