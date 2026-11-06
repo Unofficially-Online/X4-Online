@@ -242,10 +242,12 @@ def ids_sets(sets):
 #   native_gate_join_engr          the engines' boost ramps (w1z49: the window equal 660..960, 900 0 from w1z37's 4)
 #   native_gate_join_shape_refresh every client refreshes the fixture body shapes at T+2 (j1-250: 1011 -> 1020; w1z50: the
 #                                  window equal 660..1020, the motion at 1080 gone)
+#   native_gate_join_bnds          the stations' bounding structs (j1-267: the first J1 equal 633..1799; w1z56: no difference
+#                                  outside the fixture zone through 1140)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
-                   'native_gate_join_shape_refresh')
+                   'native_gate_join_shape_refresh', 'native_gate_join_bnds')
 
 
 def default_sets(sets):

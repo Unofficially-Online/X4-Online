@@ -661,3 +661,13 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   already-full shield hashes as its maximum with changed time 0. w1z55 (build286): 1080 has no difference outside the
   fixture zone 0x13e75f. The run hit the intermittent fixture race early (780: 176ad5, 176b36, 176c95; 900 17 with
   topology), the window's only residue now (the hot join's 872 thread).
+
+38. BNDS IN THE WINDOW; THE FIRST EQUAL J1 (w1z56, build287; 6 November)
+- The hot join's BNDS (section 72, f893643a; j1-258..266): an AI script's park position (move.hack.station.storage: the
+  target's size / 2 + the ship's size * 2.5) put ShipMedium 0x82335's move point of 962 an ulp apart, from station 0x593cc's
+  radius: a station's bounding structs (+0xc90, +0xcc0, +0xcf0: centre, extents, radius) were grown module by module on the
+  session and rebuilt in one pass by the joiner's load. BNDS carries them (the three per-process words after each radius
+  left out). j1-267 (CODE, JOBG, ENGR, the shape refresh, BNDS): JOIN_REPLAY verdict equal over 633..1799, the first fully
+  equal J1.
+- w1z56 (w1z55's settings plus BNDS): bnds=1:589:789:0; no difference outside the fixture zone 0x13e75f at any capture
+  through 1140 (this run hit the intermittent fixture race at 780: 176b36, 176cb3). BNDS joined the join overlay defaults.
