@@ -835,3 +835,22 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
 - In window with an empty J1SET (w1z126, w1z127: runW1b's native_gate_join_in_window, tick rate 20 and window
   {300,72000}, every join option from the overlay defaults at 48934f0c): both joiners admitted OMGS and are
   census-equal at 660, 720, 780, 900, 1020, 1080 and 1140. VIEWL and PEND are not needed.
+
+46. THE LONG RUN: A LATE DIVERGENCE AT A FIXED TIME AFTER THE JOIN (w1z128..w1z132; 6 November, evening)
+- runW1b.sh takes TICKS and JOINAT now. w1z128 (session to 6000, empty J1SET, OMGS admitted): census 0 at 900 and 1200,
+  then 1500: 1, 1800: 2, 2100: 983, 2400: 6996, about 10.6k by 5700; the session clients agree throughout. w1z129 (a fresh
+  session to 2400, stride 60) repeats it exactly (1440: 1, 1800: 2, 2040: 40, 2100: 983): systematic, not save order.
+- J1 to 6000 (x4mods-28, j1-329) parts the same way by time after the join: the first census difference at join + 39..41 s
+  in both scenarios (here 1440, J1 1800..1860), the jump at join + 73 s (here 2100, J1 2820); not tick, not game time.
+- The first sign is an AI move one census misses: at 1052 (join + 20.9 s) the Terran miner NJM-003 (saved 742be,
+  MiningRoutine) gets its next waypoint on both sides in the same tick, through UpdatePathing 0xe8f250; its position's y is
+  2 ulps apart (0xc26f946a against 0xc26f946c, relative to the temp zone ZRL-560, portable 80016e3d588242a4). J1's first
+  is the Teladi destroyer EUE-849 at 1837 (x +1, y +3 ulps, ProtectPosition's get_safe_pos), x4mods-28's j1-330.
+- 742be's destination: the save writes it under the gate zone FZK-245 while its runtime parent is ZRL-560 on both sides.
+  Write watches on its destination queue ([Agent+0x6a8], 0x90-byte entries) show no write from 634 to 1051 and the new
+  entry pushed at 1052 (e8ef47 -> e89ed0 -> eaa6f0) already 2 ulps apart; it is computed from the previous destination
+  converted into the target space (e8bd20: a32280 composes the stored matrix with its reference object, ZRL-560, by ID)
+  and the agent's pathing bank. The stored matrix is equal at T; the reference's transform as composed is the lead (a
+  runtime-created zone's cached world transform against the joiner's recomputation from its saved offset).
+- Open: the field a32280 composes with, ZRL-560's at T+1 on both sides; a census of the controller-less objects'
+  transforms (x4mods-28, a diagnostic). The README's claim stands as written (equal to the end of each test).

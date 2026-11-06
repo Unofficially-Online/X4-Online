@@ -103,6 +103,12 @@ FINDINGS, IN ORDER OF DISCOVERY
    Region::Move on a stream keyed by tick and saved region ID (vtable slot
    swap, stop reason 93) and logs one REGION_RNG_ROW per pass;
    census_scripts.py joins passes by region, field and rank.
+16. Hot join T+1 timing (known, benign; reports/LOCKSTEP-HOTJOIN-20261101.txt 1.18):
+   T+1 timing on a ship created just before T (session: pose controller at T,
+   nav controller from 634; joiner: nav from its load). In-window runs show one
+   created ShipSmall with nav.refresh_time and nav.refresh_relation apart at
+   T+1 only (session refresh -1.0 / cursor 2, joiner refreshed at T+1); both
+   refresh alike from 635 and the census is equal from 660.
 
 RESULT: W01 AND W02 (29 OCTOBER 2026)
 Full stack plus native_gate_ai_wait_rng, two native Windows clients on one

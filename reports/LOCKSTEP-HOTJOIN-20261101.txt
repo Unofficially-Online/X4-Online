@@ -2411,6 +2411,11 @@ proposed and rejected.
   j1-327 .. 328 (48934f0c)        the join defaults alone with the hold (J1SET only the pilot window): both equal 633 .. 1799,
                                   census 900 differing 0, omgs=1:8:12:0
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
+  In-window T+1 (w1z126/127, every in-window run): the created ShipSmall 800259fc6382a6b7 (built 1.6 s before T) has no NAV
+  record (at T its controller is a pure transform one, POSE kind 0x2a34038); at 634 the session's new NavigationController
+  reads refresh -1.0, cursor 2 (never refreshed), the joiner's refresh 38.783 = T+1, cursor = its read selector: the
+  joiner's controller existed before step 634 (inferred: its load builds the ship onto a nav controller) and refreshed a
+  frame early. Both refresh alike from 635 (census 0 from 660). Understood and self-healing; not patched.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
