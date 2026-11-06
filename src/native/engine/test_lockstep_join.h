@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "f389d91ac8b256a6ccacc0703e3c55c57d6500910c521e48c48199e3a11d364d"   /* version 13 (JOBE .. BNDS; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "3ab43bca09948f9406a13fee1943ffea0f619563faa0b65972361288467b4c40"   /* version 13 (JOBE .. OMGS; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -443,6 +443,9 @@ static void test_join_golden(void) {
     static join_engr_rec engr[1]={{0x2001ull,37.25,0x13f800000ull}};t.engr=engr;t.nengr=1;
     static join_shgr_rec shgr[1]={{0x2001ull,0x2002ull,7u,0u,888.0,7.25}};t.shgr=shgr;t.nshgr=1;
     static join_bnds_rec bnds[1]={{0x2001ull,{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26},0u}};t.bnds=bnds;t.nbnds=1;
+    static join_omgs_rec omgs[1];omgs[0].portable=0x2001ull;omgs[0].which=0;omgs[0].pad=0;
+    for(unsigned i=0;i<JOIN_OMGS_BYTES;i++) omgs[0].data[i]=(unsigned char)i;
+    t.omgs=omgs;t.nomgs=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -494,7 +497,8 @@ static void test_join_golden(void) {
            r.ncode==1 && !memcmp(r.code,code,sizeof(code)) &&
            r.nengr==1 && !memcmp(r.engr,engr,sizeof(engr)) &&
            r.nshgr==1 && !memcmp(r.shgr,shgr,sizeof(shgr)) &&
-           r.nbnds==1 && !memcmp(r.bnds,bnds,sizeof(bnds)));
+           r.nbnds==1 && !memcmp(r.bnds,bnds,sizeof(bnds)) &&
+           r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -528,7 +532,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -2831,7 +2835,34 @@ static void test_join_body(void) {
     }
     printf("hot join BODY: the Jolt body behind a record, moving and static, refusals, order; JOBS ship vectors PASS\n");
 }
+/* OMGS admission write (lockstep_join_world.h join_omgs_write): the raw runs land, the masked words and the vector triples are not
+ * written raw; an empty session vector empties the joiner's own (its begin and capacity kept), a non-empty one leaves it. */
+static void test_join_omgs_write(void) {
+    join_omgs_masks();assert(join_omgs_nmask>=35u && join_omgs_vec[0]==0x50u+0x190u+0x168u && join_omgs_vec[5]==0x50u+2u*0x4f0u+0x340u+0x168u);
+    static unsigned char o[JOIN_OMGS_SIZE];static join_omgs_rec r;
+    for(unsigned i=0;i<JOIN_OMGS_SIZE;i++) o[i]=0xee;
+    memset(&r,0,sizeof(r));r.portable=0x2001;for(unsigned i=0;i<JOIN_OMGS_BYTES;i++) r.data[i]=(unsigned char)(i*7u+1u);
+    uint64_t own[2][3];
+    for(unsigned v=0;v<JOIN_OMGS_VECTORS;v++) {
+        const unsigned at=join_omgs_vec[v];uint64_t s[3]={0x1e8cfcf7f70ull,0x1e8cfcf7f70ull,0x1e8cfcf7f78ull};   /* the saver's: empty */
+        if(v==1u) {s[1]=s[0]+16u;s[2]=s[0]+32u;}                                                          /* the saver's: 2 doubles */
+        memcpy(r.data+(at-JOIN_OMGS_FROM),s,24);
+        uint64_t j[3]={0x2277bb48000ull+v*64u,0x2277bb48000ull+v*64u+24u,0x2277bb48000ull+v*64u+40u};          /* the joiner's: 3 doubles */
+        memcpy(o+at,j,24);if(v<2u) memcpy(own[v],j,24);
+    }
+    join_omgs_vec_cleared=join_omgs_vec_equal=join_omgs_vec_kept=join_omgs_vec_differs=0;
+    assert(join_omgs_write(o,&r)==1);
+    uint64_t got[3];memcpy(got,o+join_omgs_vec[0],24);
+    assert(got[0]==own[0][0] && got[1]==own[0][0] && got[2]==own[0][2]);   /* emptied in place: the joiner's storage */
+    memcpy(got,o+join_omgs_vec[1],24);assert(!memcmp(got,own[1],24));     /* a non-empty session vector: left alone */
+    assert(join_omgs_vec_cleared==5u && join_omgs_vec_differs==1u && !join_omgs_vec_kept && !join_omgs_vec_equal);
+    for(unsigned k=0;k<join_omgs_nmask;k++) for(unsigned b=0;b<join_omgs_mask[k].len;b++) assert(o[join_omgs_mask[k].at+b]==0xee);
+    for(unsigned i=0;i<JOIN_OMGS_FROM;i++) assert(o[i]==0xee);   /* the vtable and the marker bytes: never */
+    assert(o[0x50]==r.data[0x40] && o[0x2b0+0x50]==r.data[0x2b0+0x40] && o[JOIN_OMGS_SIZE-1u]==r.data[JOIN_OMGS_BYTES-1u]);
+    assert(join_omgs_write(o,&r)==0 && join_omgs_vec_equal==5u);   /* again: nothing left to write */
+    printf("hot join OMGS: raw runs, masks, the vector triples emptied in place or left PASS\n");
+}
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();
 }

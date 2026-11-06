@@ -167,7 +167,7 @@
 enum {JOIN_SEC_GATE=1,JOIN_SEC_IDS,JOIN_SEC_WAKE,JOIN_SEC_WAKEVEC,JOIN_SEC_MDHEAP,JOIN_SEC_MODULES,JOIN_SEC_CTX,JOIN_SEC_LUA,
       JOIN_SEC_HEALTH,JOIN_SEC_POSE,JOIN_SEC_SHIELD,JOIN_SEC_NAV,JOIN_SEC_ATTN,JOIN_SEC_KEYS,JOIN_SEC_PATH,JOIN_SEC_REGION,JOIN_SEC_FLIGHT,JOIN_SEC_SPLINE,
       JOIN_SEC_AGENT,JOIN_SEC_ROUTE,JOIN_SEC_PARAM,JOIN_SEC_DOCK,JOIN_SEC_STEER,JOIN_SEC_STEERPT,JOIN_SEC_SOLVER,JOIN_SEC_BULLET,
-      JOIN_SEC_GRAV,JOIN_SEC_GRAVC,JOIN_SEC_GRAVS,JOIN_SEC_SPLM,JOIN_SEC_SPLME,JOIN_SEC_SPLMSEG,JOIN_SEC_GRAVN,JOIN_SEC_GRAVP,JOIN_SEC_GRAVQ,JOIN_SEC_JOBE,JOIN_SEC_EVQT,JOIN_SEC_GRAVD,JOIN_SEC_VIEWK,JOIN_SEC_VIEWKC,JOIN_SEC_VIEWF,JOIN_SEC_VIEWP,JOIN_SEC_SHOOT,JOIN_SEC_ATTK,JOIN_SEC_LIVEF,JOIN_SEC_SPEC,JOIN_SEC_NAVC,JOIN_SEC_JOBS,JOIN_SEC_GONE,JOIN_SEC_BODY,JOIN_SEC_BUPD,JOIN_SEC_LDC,JOIN_SEC_NAVT,JOIN_SEC_NMESH,JOIN_SEC_NOCT,JOIN_SEC_AGTT,JOIN_SEC_AGCB,JOIN_SEC_PBNK,JOIN_SEC_PEND,JOIN_SEC_GRAVB,JOIN_SEC_VIEWL,JOIN_SEC_IKV,JOIN_SEC_RCNT,JOIN_SEC_ECOS,JOIN_SEC_SHPW,JOIN_SEC_TRDN,JOIN_SEC_NPCA,JOIN_SEC_JOBG,JOIN_SEC_CODE,JOIN_SEC_ENGR,JOIN_SEC_SHGR,JOIN_SEC_BNDS};
+      JOIN_SEC_GRAV,JOIN_SEC_GRAVC,JOIN_SEC_GRAVS,JOIN_SEC_SPLM,JOIN_SEC_SPLME,JOIN_SEC_SPLMSEG,JOIN_SEC_GRAVN,JOIN_SEC_GRAVP,JOIN_SEC_GRAVQ,JOIN_SEC_JOBE,JOIN_SEC_EVQT,JOIN_SEC_GRAVD,JOIN_SEC_VIEWK,JOIN_SEC_VIEWKC,JOIN_SEC_VIEWF,JOIN_SEC_VIEWP,JOIN_SEC_SHOOT,JOIN_SEC_ATTK,JOIN_SEC_LIVEF,JOIN_SEC_SPEC,JOIN_SEC_NAVC,JOIN_SEC_JOBS,JOIN_SEC_GONE,JOIN_SEC_BODY,JOIN_SEC_BUPD,JOIN_SEC_LDC,JOIN_SEC_NAVT,JOIN_SEC_NMESH,JOIN_SEC_NOCT,JOIN_SEC_AGTT,JOIN_SEC_AGCB,JOIN_SEC_PBNK,JOIN_SEC_PEND,JOIN_SEC_GRAVB,JOIN_SEC_VIEWL,JOIN_SEC_IKV,JOIN_SEC_RCNT,JOIN_SEC_ECOS,JOIN_SEC_SHPW,JOIN_SEC_TRDN,JOIN_SEC_NPCA,JOIN_SEC_JOBG,JOIN_SEC_CODE,JOIN_SEC_ENGR,JOIN_SEC_SHGR,JOIN_SEC_BNDS,JOIN_SEC_OMGS};
 /* Package versions: 1 (sections GATE..LUA), 2 (and the world side table HEALTH, POSE: lockstep_join_world.h), 3 (and SHIELD,
  * NAV, ATTN, KEYS: the shield groups' other census fields, flying ships' navigation state, every object's attention level and
  * due, the gate's first-call key tables; J1 j1-12, report 1.7), 4 (and PATH, REGION: the pathing manager's agent batches and
@@ -184,7 +184,7 @@ enum {JOIN_SEC_GATE=1,JOIN_SEC_IDS,JOIN_SEC_WAKE,JOIN_SEC_WAKEVEC,JOIN_SEC_MDHEA
  * the Gravidar zone groups' neighbour lists, which X4 builds when a zone is added: j1-37).
  * A version 11, 10, 9, 8, 7, 6, 5, 4, 3, 2 or 1 package is still read; a strict joiner refuses it (package_v11 ... package_v1). */
 #define JOIN_PACKAGE_VERSION 13u
-#define JOIN_SECTIONS(version) ((version)>=13?72u:(version)>=12?35u:(version)>=11?29u:(version)>=10?26u:(version)>=9?24u:(version)>=8?22u:(version)>=7?20u:(version)>=6?19u:(version)>=5?18u:(version)>=4?16u:(version)>=3?14u:\
+#define JOIN_SECTIONS(version) ((version)>=13?73u:(version)>=12?35u:(version)>=11?29u:(version)>=10?26u:(version)>=9?24u:(version)>=8?22u:(version)>=7?20u:(version)>=6?19u:(version)>=5?18u:(version)>=4?16u:(version)>=3?14u:\
                                 (version)>=2?10u:8u)
 /* FAILED/ABORT reasons, shared with native_gate_join.py REASONS and native_gate_join_core.lua. */
 enum {JOIN_WHY_NONE,JOIN_WHY_NOT_ARMED,JOIN_WHY_NOT_POSSIBLE,JOIN_WHY_SAVE_FAILED,JOIN_WHY_FILE_MISSING,JOIN_WHY_CAPTURE,
@@ -660,10 +660,16 @@ typedef struct {uint64_t container,ship;uint32_t key,pad;double value,changed;} 
  * the radius are per process and not carried), by portable ID (lockstep_join_world.h). */
 #define JOIN_BNDS_WORDS 27u
 typedef struct {uint64_t portable;uint32_t word[JOIN_BNDS_WORDS],pad;} join_bnds_rec;
+/* OMGS (v13, section 73): each steering ship's two OmegaSwitched controllers (Agent+0xf80's +0xa0c8 and +0x16398), the object
+ * from +0x10 to its end, by (portable ID, which) (lockstep_join_world.h). */
+#define JOIN_OMGS_FROM 0x10u
+#define JOIN_OMGS_SIZE 0x2248u
+#define JOIN_OMGS_BYTES (JOIN_OMGS_SIZE-JOIN_OMGS_FROM)
+typedef struct {uint64_t portable;uint32_t which,pad;unsigned char data[JOIN_OMGS_BYTES];} join_omgs_rec;
 _Static_assert(sizeof(join_splm_rec)==1264 && sizeof(join_splme_rec)==192 && sizeof(join_gravn_rec)==32 && sizeof(join_gravp_rec)==80 &&
                sizeof(join_gravq_rec)==48 && sizeof(join_jobe_rec)==128 && sizeof(join_evqt_rec)==32 &&
                sizeof(join_gravd_rec)==24 && sizeof(join_viewk_rec)==24 && sizeof(join_viewkc_rec)==24 &&
-               sizeof(join_viewf_rec)==24 && sizeof(join_viewp_rec)==72 && sizeof(join_shoot_rec)==104 && sizeof(join_attk_rec)==48 && sizeof(join_livef_rec)==16 && sizeof(join_spec_rec)==40 && sizeof(join_navc_rec)==104 && sizeof(join_jobs_rec)==24 && sizeof(join_gone_rec)==8 && sizeof(join_body_rec)==208 && sizeof(join_bupd_rec)==16 && sizeof(join_ldc_rec)==128 && sizeof(join_navt_rec)==128 && sizeof(join_nmesh_rec)==8 && sizeof(join_noct_rec)==40 && sizeof(join_agtt_rec)==32 && sizeof(join_agcb_rec)==1032 && sizeof(join_pbnk_rec)==376 && sizeof(join_pend_rec)==16 && sizeof(join_gravb_rec)==24 && sizeof(join_viewl_rec)==16 && sizeof(join_ikv_rec)==40 && sizeof(join_rcnt_rec)==16 && sizeof(join_ecos_rec)==24 && sizeof(join_shpw_rec)==56 && sizeof(join_trdn_rec)==16 && sizeof(join_npca_rec)==64 && sizeof(join_jobg_rec)==16 && sizeof(join_code_rec)==8 && sizeof(join_engr_rec)==24 && sizeof(join_shgr_rec)==40 && sizeof(join_bnds_rec)==120,
+               sizeof(join_viewf_rec)==24 && sizeof(join_viewp_rec)==72 && sizeof(join_shoot_rec)==104 && sizeof(join_attk_rec)==48 && sizeof(join_livef_rec)==16 && sizeof(join_spec_rec)==40 && sizeof(join_navc_rec)==104 && sizeof(join_jobs_rec)==24 && sizeof(join_gone_rec)==8 && sizeof(join_body_rec)==208 && sizeof(join_bupd_rec)==16 && sizeof(join_ldc_rec)==128 && sizeof(join_navt_rec)==128 && sizeof(join_nmesh_rec)==8 && sizeof(join_noct_rec)==40 && sizeof(join_agtt_rec)==32 && sizeof(join_agcb_rec)==1032 && sizeof(join_pbnk_rec)==376 && sizeof(join_pend_rec)==16 && sizeof(join_gravb_rec)==24 && sizeof(join_viewl_rec)==16 && sizeof(join_ikv_rec)==40 && sizeof(join_rcnt_rec)==16 && sizeof(join_ecos_rec)==24 && sizeof(join_shpw_rec)==56 && sizeof(join_trdn_rec)==16 && sizeof(join_npca_rec)==64 && sizeof(join_jobg_rec)==16 && sizeof(join_code_rec)==8 && sizeof(join_engr_rec)==24 && sizeof(join_shgr_rec)==40 && sizeof(join_bnds_rec)==120 && sizeof(join_omgs_rec)==8776,
                "join v12 record layout (native_gate_join.py)");
 typedef struct {
     uint64_t tick,game,real;uint32_t wire_version,clients,lookahead,tick_hz,slot,md_seq;uint64_t rid_next,created_generation;
@@ -695,7 +701,7 @@ typedef struct {
     join_solver_rec *solver;uint32_t nsolver;join_bullet_rec *bullet;uint32_t nbullet; /* version 10 */
     join_grav_rec *grav;uint32_t ngrav;join_gravc_rec *gravc;uint32_t ngravc;join_gravs_rec *gravs;uint32_t ngravs;   /* version 11 */
     join_splm_rec *splm;uint32_t nsplm;join_splme_rec *splme;uint32_t nsplme;join_spline_rec *splmseg;uint32_t nsplmseg;   /* version 12 */
-    join_gravn_rec *gravn;uint32_t ngravn;join_gravp_rec *gravp;uint32_t ngravp;join_gravq_rec *gravq;uint32_t ngravq;join_jobe_rec *jobe;uint32_t njobe;join_evqt_rec *evqt;uint32_t nevqt;join_gravd_rec *gravd;uint32_t ngravd;join_viewk_rec *viewk;uint32_t nviewk;join_viewkc_rec *viewkc;uint32_t nviewkc;join_viewf_rec *viewf;uint32_t nviewf;join_viewp_rec *viewp;uint32_t nviewp;join_shoot_rec *shoot;uint32_t nshoot;join_attk_rec *attk;uint32_t nattk;join_livef_rec *livef;uint32_t nlivef;join_spec_rec *spec;uint32_t nspec;join_navc_rec *navc;uint32_t nnavc;join_jobs_rec *jobs;uint32_t njobs;join_gone_rec *gone;uint32_t ngone;join_body_rec *body;uint32_t nbody;join_bupd_rec *bupd;uint32_t nbupd;join_ldc_rec *ldc;uint32_t nldc;join_navt_rec *navt;uint32_t nnavt;join_nmesh_rec *nmesh;uint32_t nnmesh;join_noct_rec *noct;uint32_t nnoct;join_agtt_rec *agtt;uint32_t nagtt;join_agcb_rec *agcb;uint32_t nagcb;join_pbnk_rec *pbnk;uint32_t npbnk;join_pend_rec *pend;uint32_t npend;join_gravb_rec *gravb;uint32_t ngravb;join_viewl_rec *viewl;uint32_t nviewl;join_ikv_rec *ikv;uint32_t nikv;join_rcnt_rec *rcnt;uint32_t nrcnt;join_ecos_rec *ecos;uint32_t necos;join_shpw_rec *shpw;uint32_t nshpw;join_trdn_rec *trdn;uint32_t ntrdn;join_npca_rec *npca;uint32_t nnpca;join_jobg_rec *jobg;uint32_t njobg;join_code_rec *code;uint32_t ncode;join_engr_rec *engr;uint32_t nengr;join_shgr_rec *shgr;uint32_t nshgr;join_bnds_rec *bnds;uint32_t nbnds;
+    join_gravn_rec *gravn;uint32_t ngravn;join_gravp_rec *gravp;uint32_t ngravp;join_gravq_rec *gravq;uint32_t ngravq;join_jobe_rec *jobe;uint32_t njobe;join_evqt_rec *evqt;uint32_t nevqt;join_gravd_rec *gravd;uint32_t ngravd;join_viewk_rec *viewk;uint32_t nviewk;join_viewkc_rec *viewkc;uint32_t nviewkc;join_viewf_rec *viewf;uint32_t nviewf;join_viewp_rec *viewp;uint32_t nviewp;join_shoot_rec *shoot;uint32_t nshoot;join_attk_rec *attk;uint32_t nattk;join_livef_rec *livef;uint32_t nlivef;join_spec_rec *spec;uint32_t nspec;join_navc_rec *navc;uint32_t nnavc;join_jobs_rec *jobs;uint32_t njobs;join_gone_rec *gone;uint32_t ngone;join_body_rec *body;uint32_t nbody;join_bupd_rec *bupd;uint32_t nbupd;join_ldc_rec *ldc;uint32_t nldc;join_navt_rec *navt;uint32_t nnavt;join_nmesh_rec *nmesh;uint32_t nnmesh;join_noct_rec *noct;uint32_t nnoct;join_agtt_rec *agtt;uint32_t nagtt;join_agcb_rec *agcb;uint32_t nagcb;join_pbnk_rec *pbnk;uint32_t npbnk;join_pend_rec *pend;uint32_t npend;join_gravb_rec *gravb;uint32_t ngravb;join_viewl_rec *viewl;uint32_t nviewl;join_ikv_rec *ikv;uint32_t nikv;join_rcnt_rec *rcnt;uint32_t nrcnt;join_ecos_rec *ecos;uint32_t necos;join_shpw_rec *shpw;uint32_t nshpw;join_trdn_rec *trdn;uint32_t ntrdn;join_npca_rec *npca;uint32_t nnpca;join_jobg_rec *jobg;uint32_t njobg;join_code_rec *code;uint32_t ncode;join_engr_rec *engr;uint32_t nengr;join_shgr_rec *shgr;uint32_t nshgr;join_bnds_rec *bnds;uint32_t nbnds;join_omgs_rec *omgs;uint32_t nomgs;
     unsigned char save_sha[32];uint64_t save_bytes;uint32_t flags,version;
 } join_tables;
 /* The engine as the module sees it; tests build a synthetic one. */
@@ -722,7 +728,7 @@ static struct {
     int state,mode;unsigned why,slot_k,mask;uint64_t tick;char name[24];WCHAR folder[MAX_PATH];uintptr_t mw_tls;
     unsigned char package_sha[32],portable[16],save_sha[32];uint64_t save_bytes,package_bytes,save_us,capture_us;
     unsigned modified_cleared,possible;char detail[320];char *lua;size_t lua_len;uint32_t nlua;unsigned char fixture[12];
-    uint32_t health,pose,shield,nav,attn,keys,path,region,flight,spline,agent,route,param,dock,steer,steerpt,solver,bullet,grav,gravc,gravs,splm,splme,splmseg,gravn,gravp,gravq,jobe,evqt,gravd,viewk,viewkc,viewf,viewp,shoot,attk,livef,spec,navc,jobs,gone,body,bupd,ldc,navt,nmesh,noct,agtt,agcb,pbnk,pend,gravb,viewl,ikv,rcnt,ecos,shpw,trdn,npca,jobg,code,engr,shgr,bnds;   /* the world side table at the last capture */
+    uint32_t health,pose,shield,nav,attn,keys,path,region,flight,spline,agent,route,param,dock,steer,steerpt,solver,bullet,grav,gravc,gravs,splm,splme,splmseg,gravn,gravp,gravq,jobe,evqt,gravd,viewk,viewkc,viewf,viewp,shoot,attk,livef,spec,navc,jobs,gone,body,bupd,ldc,navt,nmesh,noct,agtt,agcb,pbnk,pend,gravb,viewl,ikv,rcnt,ecos,shpw,trdn,npca,jobg,code,engr,shgr,bnds,omgs;   /* the world side table at the last capture */
     uint32_t solver_over,bullet_fault;                                         /* dormant solvers past the cap, bullets not readable */
     uint32_t solver_mapped;                                                    /* version 12: solver qwords that were addresses of this process */
     uint32_t gravq_global,gravq_busy;                                          /* GRAVQ: entries in the event queue at T (not carried), worker not idle */
@@ -838,7 +844,7 @@ static int join_grow(void **items,uint32_t *count,uint32_t *cap,size_t size) {
 static void join_tables_free(join_tables *t) {
     free(t->ctx);free(t->wake);free(t->vec);free(t->md);free(t->ids);free(t->modules);free(t->lua);free(t->health);free(t->pose);
     free(t->shield);free(t->nav);free(t->attn);free(t->keys);free(t->path);free(t->region);free(t->flight);free(t->spline);free(t->agent);
-    free(t->route);free(t->param);free(t->dock);free(t->steer);free(t->steerpt);free(t->solver);free(t->bullet);free(t->grav);free(t->gravc);free(t->gravs);free(t->splm);free(t->splme);free(t->splmseg);free(t->gravn);free(t->gravp);free(t->gravq);free(t->jobe);free(t->evqt);free(t->gravd);free(t->viewk);free(t->viewkc);free(t->viewf);free(t->viewp);free(t->shoot);free(t->attk);free(t->livef);free(t->spec);free(t->navc);free(t->jobs);free(t->gone);free(t->body);free(t->bupd);free(t->ldc);free(t->navt);free(t->nmesh);free(t->noct);free(t->agtt);free(t->agcb);free(t->pbnk);free(t->pend);free(t->gravb);free(t->viewl);free(t->ikv);free(t->rcnt);free(t->ecos);free(t->shpw);free(t->trdn);free(t->npca);free(t->jobg);free(t->code);free(t->engr);free(t->shgr);free(t->bnds);memset(t,0,sizeof(*t));
+    free(t->route);free(t->param);free(t->dock);free(t->steer);free(t->steerpt);free(t->solver);free(t->bullet);free(t->grav);free(t->gravc);free(t->gravs);free(t->splm);free(t->splme);free(t->splmseg);free(t->gravn);free(t->gravp);free(t->gravq);free(t->jobe);free(t->evqt);free(t->gravd);free(t->viewk);free(t->viewkc);free(t->viewf);free(t->viewp);free(t->shoot);free(t->attk);free(t->livef);free(t->spec);free(t->navc);free(t->jobs);free(t->gone);free(t->body);free(t->bupd);free(t->ldc);free(t->navt);free(t->nmesh);free(t->noct);free(t->agtt);free(t->agcb);free(t->pbnk);free(t->pend);free(t->gravb);free(t->viewl);free(t->ikv);free(t->rcnt);free(t->ecos);free(t->shpw);free(t->trdn);free(t->npca);free(t->jobg);free(t->code);free(t->engr);free(t->shgr);free(t->bnds);free(t->omgs);memset(t,0,sizeof(*t));
 }
 static uint64_t join_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static double join_double(uint64_t b) {double v;memcpy(&v,&b,8);return v;}
@@ -1458,6 +1464,7 @@ static int join_package_build(join_tables *t,join_buf *b) {
     join_section(b,JOIN_SEC_ENGR,t->nengr,t->engr,(uint64_t)t->nengr*sizeof(*t->engr));
     join_section(b,JOIN_SEC_SHGR,t->nshgr,t->shgr,(uint64_t)t->nshgr*sizeof(*t->shgr));
     join_section(b,JOIN_SEC_BNDS,t->nbnds,t->bnds,(uint64_t)t->nbnds*sizeof(*t->bnds));
+    join_section(b,JOIN_SEC_OMGS,t->nomgs,t->omgs,(uint64_t)t->nomgs*sizeof(*t->omgs));
     unsigned char sha[32];if(!b->failed) {lockstep_sha256(b->data,b->size,sha);join_put(b,sha,32);}
     return !b->failed;
 }
@@ -1473,9 +1480,9 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     uint32_t version,count,slot,flags;uint64_t tick,game,real,reserved;*why="package_magic";
     memcpy(&version,data+8,4);memcpy(&count,data+12,4);memcpy(&tick,data+16,8);memcpy(&game,data+24,8);memcpy(&real,data+32,8);
     memcpy(&slot,data+80,4);memcpy(&flags,data+84,4);memcpy(&reserved,data+88,8);
-    if(memcmp(data,"X4MPJN01",8) || version<1 || version>JOIN_PACKAGE_VERSION || reserved || count>72) return 0;
+    if(memcmp(data,"X4MPJN01",8) || version<1 || version>JOIN_PACKAGE_VERSION || reserved || count>73) return 0;
     memcpy(t->save_sha,data+40,32);memcpy(&t->save_bytes,data+72,8);t->flags=flags;t->version=version;
-    const uint32_t last=version>=13?JOIN_SEC_BNDS:version>=12?JOIN_SEC_GRAVQ:version>=11?JOIN_SEC_GRAVS:version>=10?JOIN_SEC_BULLET:version>=9?JOIN_SEC_STEERPT:version>=8?JOIN_SEC_DOCK:version>=7?JOIN_SEC_ROUTE:version>=6?JOIN_SEC_AGENT:version>=5?JOIN_SEC_SPLINE:version>=4?JOIN_SEC_REGION:version>=3?JOIN_SEC_KEYS:
+    const uint32_t last=version>=13?JOIN_SEC_OMGS:version>=12?JOIN_SEC_GRAVQ:version>=11?JOIN_SEC_GRAVS:version>=10?JOIN_SEC_BULLET:version>=9?JOIN_SEC_STEERPT:version>=8?JOIN_SEC_DOCK:version>=7?JOIN_SEC_ROUTE:version>=6?JOIN_SEC_AGENT:version>=5?JOIN_SEC_SPLINE:version>=4?JOIN_SEC_REGION:version>=3?JOIN_SEC_KEYS:
                         version>=2?JOIN_SEC_POSE:JOIN_SEC_LUA;
     size_t at=96,end=size-32;unsigned __int128 seen=0;   /* 128 bits: section kinds reach 64 (version 13, ECOS) */
     for(uint32_t s=0;s<count;s++) {
@@ -1495,7 +1502,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
                                      sizeof(join_splm_rec),sizeof(join_splme_rec),sizeof(join_spline_rec),sizeof(join_gravn_rec),
                                      sizeof(join_gravp_rec),sizeof(join_gravq_rec),
                                      sizeof(join_jobe_rec),sizeof(join_evqt_rec),sizeof(join_gravd_rec),sizeof(join_viewk_rec),
-                                     sizeof(join_viewkc_rec),sizeof(join_viewf_rec),sizeof(join_viewp_rec),sizeof(join_shoot_rec),sizeof(join_attk_rec),sizeof(join_livef_rec),sizeof(join_spec_rec),sizeof(join_navc_rec),sizeof(join_jobs_rec),sizeof(join_gone_rec),sizeof(join_body_rec),sizeof(join_bupd_rec),sizeof(join_ldc_rec),sizeof(join_navt_rec),sizeof(join_nmesh_rec),sizeof(join_noct_rec),sizeof(join_agtt_rec),sizeof(join_agcb_rec),sizeof(join_pbnk_rec),sizeof(join_pend_rec),sizeof(join_gravb_rec),sizeof(join_viewl_rec),sizeof(join_ikv_rec),sizeof(join_rcnt_rec),sizeof(join_ecos_rec),sizeof(join_shpw_rec),sizeof(join_trdn_rec),sizeof(join_npca_rec),sizeof(join_jobg_rec),sizeof(join_code_rec),sizeof(join_engr_rec),sizeof(join_shgr_rec),sizeof(join_bnds_rec)};
+                                     sizeof(join_viewkc_rec),sizeof(join_viewf_rec),sizeof(join_viewp_rec),sizeof(join_shoot_rec),sizeof(join_attk_rec),sizeof(join_livef_rec),sizeof(join_spec_rec),sizeof(join_navc_rec),sizeof(join_jobs_rec),sizeof(join_gone_rec),sizeof(join_body_rec),sizeof(join_bupd_rec),sizeof(join_ldc_rec),sizeof(join_navt_rec),sizeof(join_nmesh_rec),sizeof(join_noct_rec),sizeof(join_agtt_rec),sizeof(join_agcb_rec),sizeof(join_pbnk_rec),sizeof(join_pend_rec),sizeof(join_gravb_rec),sizeof(join_viewl_rec),sizeof(join_ikv_rec),sizeof(join_rcnt_rec),sizeof(join_ecos_rec),sizeof(join_shpw_rec),sizeof(join_trdn_rec),sizeof(join_npca_rec),sizeof(join_jobg_rec),sizeof(join_code_rec),sizeof(join_engr_rec),sizeof(join_shgr_rec),sizeof(join_bnds_rec),sizeof(join_omgs_rec)};
         *why="section_shape";
         if(kind==JOIN_SEC_MODULES || kind==JOIN_SEC_LUA) {
             uint32_t lines=0;for(uint64_t i=0;i<bytes;i++) {if(payload[i]=='\n') ++lines;else if(payload[i]<32 || payload[i]>126) return 0;}
@@ -1578,6 +1585,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
             else if(kind==JOIN_SEC_ENGR) {t->engr=copy;t->nengr=n;}
             else if(kind==JOIN_SEC_SHGR) {t->shgr=copy;t->nshgr=n;}
             else if(kind==JOIN_SEC_BNDS) {t->bnds=copy;t->nbnds=n;}
+            else if(kind==JOIN_SEC_OMGS) {t->omgs=copy;t->nomgs=n;}
             else {t->ctx=copy;t->nctx=n;}
         }
         at+=48+(size_t)bytes;
@@ -1594,7 +1602,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     if(version>=10 && ((seen>>JOIN_SEC_SOLVER&3u)!=3u)) return 0;                               /* v10: SOLVER, BULLET */
     if(version>=11 && ((seen>>JOIN_SEC_GRAV&7u)!=7u)) return 0;                                 /* v11: GRAV, GRAVC, GRAVS */
     if(version>=12 && ((seen>>JOIN_SEC_SPLM&63u)!=63u)) return 0;                               /* v12: SPLM .. GRAVQ */
-    if(version>=13 && ((seen>>JOIN_SEC_JOBE&137438953471ull)!=137438953471ull)) return 0;       /* v13: JOBE .. BNDS */
+    if(version>=13 && ((seen>>JOIN_SEC_JOBE&274877906943ull)!=274877906943ull)) return 0;       /* v13: JOBE .. OMGS */
     *why="world_order";   /* the world records sorted by portable ID, each once (the admission's identity lookups rely on it) */
     for(uint32_t i=1;i<t->nhealth;i++) if(t->health[i].portable<=t->health[i-1].portable) return 0;
     for(uint32_t i=1;i<t->npose;i++) if(t->pose[i].portable<=t->pose[i-1].portable) return 0;
@@ -1749,6 +1757,10 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     }
     if(version>=13) for(uint32_t i=0;i<t->nbnds;i++)
         if(!t->bnds[i].portable || t->bnds[i].pad || (i && t->bnds[i-1].portable>=t->bnds[i].portable)) {*why="bnds_shape";return 0;}
+    if(version>=13) for(uint32_t i=0;i<t->nomgs;i++) {
+        const join_omgs_rec *o=&t->omgs[i],*p=i?&t->omgs[i-1]:NULL;
+        if(!o->portable || o->which>1u || o->pad || (p && (p->portable>o->portable || (p->portable==o->portable && p->which>=o->which)))) {*why="omgs_shape";return 0;}
+    }
     *why="gate_header";if(t->gate.tick!=tick || t->gate.game!=game || t->gate.real!=real || t->gate.slot!=slot) return 0;
     unsigned char portable[16];*why="portable_digest";
     if(!join_portable(t,portable) || memcmp(portable,t->gate.portable,16)) return 0;
@@ -2341,7 +2353,7 @@ static void join_boundary(uint64_t completed) {
     join_cap.path=t.npath;join_cap.region=t.nregion;join_cap.flight=t.nflight;join_cap.spline=t.nspline;join_cap.agent=t.nagent;
     join_cap.route=t.nroute;join_cap.param=t.nparam;join_cap.dock=t.ndock;join_cap.steer=t.nsteer;join_cap.steerpt=t.nsteerpt;
     join_cap.solver=t.nsolver;join_cap.bullet=t.nbullet;join_cap.grav=t.ngrav;join_cap.gravc=t.ngravc;join_cap.gravs=t.ngravs;
-    join_cap.splm=t.nsplm;join_cap.splme=t.nsplme;join_cap.splmseg=t.nsplmseg;join_cap.gravn=t.ngravn;join_cap.gravp=t.ngravp;join_cap.gravq=t.ngravq;join_cap.jobe=t.njobe;join_cap.evqt=t.nevqt;join_cap.gravd=t.ngravd;join_cap.viewk=t.nviewk;join_cap.viewkc=t.nviewkc;join_cap.viewf=t.nviewf;join_cap.viewp=t.nviewp;join_cap.shoot=t.nshoot;join_cap.attk=t.nattk;join_cap.livef=t.nlivef;join_cap.spec=t.nspec;join_cap.navc=t.nnavc;join_cap.jobs=t.njobs;join_cap.gone=t.ngone;join_cap.body=t.nbody;join_cap.bupd=t.nbupd;join_cap.ldc=t.nldc;join_cap.navt=t.nnavt;join_cap.nmesh=t.nnmesh;join_cap.noct=t.nnoct;join_cap.agtt=t.nagtt;join_cap.agcb=t.nagcb;join_cap.pbnk=t.npbnk;join_cap.pend=t.npend;join_cap.gravb=t.ngravb;join_cap.viewl=t.nviewl;join_cap.ikv=t.nikv;join_cap.rcnt=t.nrcnt;join_cap.ecos=t.necos;join_cap.shpw=t.nshpw;join_cap.trdn=t.ntrdn;join_cap.npca=t.nnpca;join_cap.jobg=t.njobg;join_cap.code=t.ncode;join_cap.engr=t.nengr;join_cap.shgr=t.nshgr;join_cap.bnds=t.nbnds;
+    join_cap.splm=t.nsplm;join_cap.splme=t.nsplme;join_cap.splmseg=t.nsplmseg;join_cap.gravn=t.ngravn;join_cap.gravp=t.ngravp;join_cap.gravq=t.ngravq;join_cap.jobe=t.njobe;join_cap.evqt=t.nevqt;join_cap.gravd=t.ngravd;join_cap.viewk=t.nviewk;join_cap.viewkc=t.nviewkc;join_cap.viewf=t.nviewf;join_cap.viewp=t.nviewp;join_cap.shoot=t.nshoot;join_cap.attk=t.nattk;join_cap.livef=t.nlivef;join_cap.spec=t.nspec;join_cap.navc=t.nnavc;join_cap.jobs=t.njobs;join_cap.gone=t.ngone;join_cap.body=t.nbody;join_cap.bupd=t.nbupd;join_cap.ldc=t.nldc;join_cap.navt=t.nnavt;join_cap.nmesh=t.nnmesh;join_cap.noct=t.nnoct;join_cap.agtt=t.nagtt;join_cap.agcb=t.nagcb;join_cap.pbnk=t.npbnk;join_cap.pend=t.npend;join_cap.gravb=t.ngravb;join_cap.viewl=t.nviewl;join_cap.ikv=t.nikv;join_cap.rcnt=t.nrcnt;join_cap.ecos=t.necos;join_cap.shpw=t.nshpw;join_cap.trdn=t.ntrdn;join_cap.npca=t.nnpca;join_cap.jobg=t.njobg;join_cap.code=t.ncode;join_cap.engr=t.nengr;join_cap.shgr=t.nshgr;join_cap.bnds=t.nbnds;join_cap.omgs=t.nomgs;
     QueryPerformanceCounter(&t2);t.gate.save_us=join_cap.save_us;t.gate.capture_us=(uint64_t)((t2.QuadPart-t1.QuadPart)*1000000/f.QuadPart);
     join_buf b={0};
     if(!join_package_build(&t,&b)) {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"build");return;}
@@ -3515,7 +3527,7 @@ static int join_status(char *out,size_t cap) {
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
         " steer=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu t1=%u:%llu:%llu:%llu:%llu:%llu:%llu"
         " solver=%llu:%llu:%llu:%llu:%llu:%llu bullet_walk=%u:%llu:%llu grav=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravs=%llu:%llu:%llu:%llu md_dropped=%llu"
-        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u gravp_moved=%llu viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u bupd=%llu:%llu:%llu:%llu bupd_cap=%u ldc=%llu:%llu:%llu:%llu ldc_cap=%u navt=%llu:%llu:%llu navt_cap=%u cid=%llx:%llx unpaused=%llx:%llx nmesh=%d:%llu nmesh_cap=%u noct=%d:%llu:%llu:%llu:%llu:%llu noct_cap=%u agtt=%llu:%llu:%llu agtt_cap=%u agcb=%llu:%llu:%llu agcb_cap=%u pbnk=%llu:%llu:%llu:%llu pbnk_cap=%u pend=%d:%llu:%llu:%llu:%llu pend_cap=%u gravb=%llu:%llu:%llu:%llu gravb_cap=%u viewl=%d:%llu:%llu:%llu:%llu:%llu viewl_cap=%u ikv=%llu:%llu:%llu:%llu ikv_cap=%u ikv_refused=%s rcnt=%d:%llu:%llu:%llu:%llu rcnt_cap=%u ecos=%d:%llu:%llu:%llu ecos_cap=%u shpw=%d:%llu:%llu:%llu shpw_cap=%u trdn=%d:%llu:%llu:%llu trdn_cap=%u npca=%d:%llu:%llu:%llu:%llu:%llu:%llu npca_cap=%u jobg=%d:%llu:%llu:%llu jobg_cap=%u code=%d:%u:%x:%x:%x:%x code_cap=%u engr=%d:%llu:%llu:%llu engr_cap=%u shgr=%d:%llu:%llu:%llu shgr_cap=%u bnds=%d:%llu:%llu:%llu bnds_cap=%u jobw=%d:%llu viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
+        " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u gravp_moved=%llu viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u bupd=%llu:%llu:%llu:%llu bupd_cap=%u ldc=%llu:%llu:%llu:%llu ldc_cap=%u navt=%llu:%llu:%llu navt_cap=%u cid=%llx:%llx unpaused=%llx:%llx nmesh=%d:%llu nmesh_cap=%u noct=%d:%llu:%llu:%llu:%llu:%llu noct_cap=%u agtt=%llu:%llu:%llu agtt_cap=%u agcb=%llu:%llu:%llu agcb_cap=%u pbnk=%llu:%llu:%llu:%llu pbnk_cap=%u pend=%d:%llu:%llu:%llu:%llu pend_cap=%u gravb=%llu:%llu:%llu:%llu gravb_cap=%u viewl=%d:%llu:%llu:%llu:%llu:%llu viewl_cap=%u ikv=%llu:%llu:%llu:%llu ikv_cap=%u ikv_refused=%s rcnt=%d:%llu:%llu:%llu:%llu rcnt_cap=%u ecos=%d:%llu:%llu:%llu ecos_cap=%u shpw=%d:%llu:%llu:%llu shpw_cap=%u trdn=%d:%llu:%llu:%llu trdn_cap=%u npca=%d:%llu:%llu:%llu:%llu:%llu:%llu npca_cap=%u jobg=%d:%llu:%llu:%llu jobg_cap=%u code=%d:%u:%x:%x:%x:%x code_cap=%u engr=%d:%llu:%llu:%llu engr_cap=%u shgr=%d:%llu:%llu:%llu shgr_cap=%u bnds=%d:%llu:%llu:%llu bnds_cap=%u omgs=%d:%llu:%llu:%llu omgs_cap=%u omgs_vec=%llu:%llu:%llu:%llu jobw=%d:%llu viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
         states[join_cap.state],(unsigned long long)join_cap.tick,join_cap.slot_k,join_cap.mask,join_cap.why,join_cap.detail[0]?join_cap.detail:"-",
         (unsigned long long)join_cap.save_bytes,(unsigned long long)join_cap.package_bytes,(unsigned long long)join_cap.save_us,
         (unsigned long long)join_cap.capture_us,pkg,port,join_cap.modified_cleared,join_cap.possible,join_rx.loaded,join_rx.mode,join_rx.based,
@@ -3642,6 +3654,10 @@ static int join_status(char *out,size_t cap) {
         join_cap.shgr,
         join_bnds_on,(unsigned long long)join_bnds_written,(unsigned long long)join_bnds_equal,(unsigned long long)join_bnds_missing,
         join_cap.bnds,
+        join_omgs_on,(unsigned long long)join_omgs_written,(unsigned long long)join_omgs_equal,(unsigned long long)join_omgs_missing,
+        join_cap.omgs,
+        (unsigned long long)join_omgs_vec_cleared,(unsigned long long)join_omgs_vec_equal,(unsigned long long)join_omgs_vec_kept,
+        (unsigned long long)join_omgs_vec_differs,
         join_jobw_on,(unsigned long long)join_jobw_written,
         (unsigned long long)join_rx.viewk_children,(unsigned long long)join_rx.viewk_flags,(unsigned long long)join_rx.viewk_equal,
         (unsigned long long)join_rx.viewk_missing,(unsigned long long)join_rx.viewk_unmapped,(unsigned long long)join_rx.viewk_superset,

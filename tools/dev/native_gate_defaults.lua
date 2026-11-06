@@ -291,6 +291,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_slotk_quats','hot join in window experiment: slot k takes the session PlayerController double quaternions'},
  {'native_gate_join_slotk_words','hot join in window experiment: the slot-1-only word groups slot k takes (mask)'},
  {'native_gate_join_engr','hot join: a joiner takes the session engine boost ramps its load restamps (ENGR)'},
+ {'native_gate_join_omgs','hot join: a joiner takes the session steering ships OmegaSwitched controllers (OMGS)'},
  {'native_gate_join_bnds','hot join: a joiner takes the session stations bounding structs (BNDS)'},
  {'native_gate_join_shgr','hot join: a joiner takes the session shield recharge groups of docked ships its load restamps (SHGR)'},
  {'native_gate_join_ecos','hot join: a joiner takes the session economy schedules of stations and ships (ECOS)'},

@@ -2369,6 +2369,36 @@ proposed and rejected.
                                   the race. Across the kept joiner packages of j1-267..304 the key still goes with the race
                                   (with it: 872 in 6 of 16 runs, 1042 in 3; without: 3 of 22 and 1 of 22): a common cause in
                                   the session's thread timing before T, not the octrees
+  j1-305 .. 312 (build-hj20k)     as j1-299, join files kept: 310 the 872 race, the other seven equal to 1799. Where the
+                                  carrier is not: the session's declared digests are the same in race and calm runs for every
+                                  tick and slot (the session itself is the same in every run; per run the journal differs in
+                                  'real', each process's clock offset, the early octree reports and slot 3's join container);
+                                  no record of any package section (37 joiner packages, j1-267 .. 304: 9 races, 24 calm) has
+                                  a value shared by 8 of the 9 races and at most one calm run, or the reverse; and no save
+                                  line (positional, races 302 and 310 against 11 calm saves) has a value both races share
+                                  and the calm saves lack, outside the misaligned MD list-ref region and four listener-order
+                                  lines of unrelated ships. x4mods (w1z74 .. 87): the race is inside 176b36's lead pursuit
+                                  (ChaseBehaviour 0xed68e0 -> 0xed1d10), whose target 176cb3's velocity 0xeadc70 reads from
+                                  the Agent's bank at the read selector g_PathingStateBufferIndex 0x38f4ee4 (double
+                                  buffered); the race result is the session's plus about 1% of 176cb3's own change in that
+                                  tick, as if it read the same pass's state: the order of the two steps decides
+  speech clock (96f370f8)         Julian's native_gate_speech_clock (on by default since PR #1, ada0398e) sets the unpaused
+                                  clock 0x6b60e48 to 65536.0 at each client's first gated frame; a joiner would set it again
+                                  (or refuse with stop 196 past it). The GATE record's last 8 bytes carry the saver's value at
+                                  T (unpaused, 0 when not carried); the admission writes it under 0x6b60e10 and marks the
+                                  clock set (stage join). Status unpaused=session:before. C test; no native hot join run yet
+  OMGS (370e1e57, build-hj20n)    section 73, opt-in native_gate_join_omgs: each steering ship's two OmegaSwitched controllers
+                                  (JPM::OmegaSwitched<JPVec3,double,MapCTC,3,20>, vtable 0x2a24338; Agent+0xf80's +0xa0c8 and
+                                  +0x16398), the object +0x10 .. +0x2248 raw by (portable, which). x4mods' w1z78 .. w1z107
+                                  (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt) found the carrier: the steer call 0xec9fd0
+                                  reads it through vt+0x3a8 0x9db30, whose lazy per-axis recompute 0xa8720 depends on four
+                                  MapCTC tables cached on their key within 1.19e-7 and on a reversal gate at 0.001; at 634
+                                  the race joiner's axis 1 had not run its computed part since the load. Built by 0x9e9c0
+                                  (inline in a JPM::Motion at +0x1480; d48c70 <- d48bd0 <- d47ac0, also from the steering
+                                  step at ec8b56); its data holds no pointers (the constructors store constants), and the
+                                  axis sub-object constructor 0xa5f00 leaves +0x130..+0x13f unwritten (heap residue on every
+                                  client): masked with the paddings, 0 in the record and not written. A/B per session:
+                                  w1z108 .. 111 with it, w1z112 .. 115 the same sessions' joiners without it (pending)
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 

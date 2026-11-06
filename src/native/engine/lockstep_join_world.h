@@ -3735,6 +3735,131 @@ static void join_admit_engr(const join_tables *s,const join_tables *mine) {
  * radius (j1-266). The three words after each radius differ between two session clients too (per process) and are not carried.
  * The capture takes the 0x24 bytes of each struct for every object whose vfunc 0x14b0 is 0x7eb460; with the opt-in the admission
  * writes the session's where they differ. Status bnds=on:written:equal:missing. */
+/* OMGS (v13, section 73; the admission opt-in, native_gate_join_omgs): each steering ship's two OmegaSwitched controllers
+ * [w1z78 .. w1z107: J1's 872 race (and the second pair's 1042) is 176b36's lead pursuit (ChaseBehaviour 0xed68e0 -> 0xed1d10),
+ * whose steer call 0xec9fd0 reads a vector through [[agent+0xf80]+0xa0c8] vt+0x3a8 = 0x9db30. That getter recomputes each axis
+ * lazily (0x9dba0 -> 0xa8720) from the axis block (+0x50 + i x 0x4f0), four MapCTC tables an axis (+0x1048 + 0x180 each, cached on
+ * their key within 1.19e-7) and a reversal gate on a 0.001 threshold: history. At 634 the race joiner's axis 1 had not run its
+ * computed part since the reset (sub-object +0x161/+0x162 0 and +0x1a8 0) where the session and the calm joiner had (1, 1, 24); the
+ * y it returned at 721 parted by 0.03, and the lead pursuit turned it into 176b36's track]. The object is
+ * JPM::OmegaSwitched<JPVec3,double,MapCTC,3,20> (vtable 0x2a24338, built by 0x9e9c0 inside a JPM::Motion at +0x1480, 0x2248 bytes
+ * to the Motion's next field); the second one, read on the 0xecb31a path, sits at +0x16398. Its data from +0x10 holds doubles,
+ * counters and flags, no pointers (the constructors 0xa5c60, 0xa5df0, 0xa5f00 and 0x9b000 store constants), so the capture takes
+ * it raw for every Agent whose flight model is the steering one, and the admission writes it where it differs. Never written, so
+ * heap residue on every client: each axis sub-object's (axis +0x190 and +0x340, 0xa5f00) +0x130..+0x13f and its padding, the data
+ * block's padding; masked (0 in the record, not written). Status omgs=on:written:equal:missing.
+ * One pointer field: each sub-object's std::vector<double> {begin +0x168, end +0x170, capacity +0x178} (zeroed by 0xa5f00; the
+ * push_back 0xaf0e0 from the recompute 0xa8720 is the only vector access in the object's 200 vfuncs and the recompute chain)
+ * [w1z108: the raw write put the session's heap pointers there and the joiner died at 755 in af405 writing through them]. The
+ * record keeps the saver's triple as captured; the admission never writes it raw: a session vector that is empty (every one in
+ * w1z108's captures) empties the joiner's own (its end set to its begin); a non-empty one cannot be carried (its elements live in
+ * the saver's heap) and the joiner's is left alone. Status omgs_vec=cleared:equal:kept:differs (kept: the same size). */
+#define JOIN_OMGS_VTABLE 0x2a24338u   /* JPM::OmegaSwitched<JPVec3,double,MapCTC,3,20> */
+#define JOIN_OMGS_HOLDER 0xf80u       /* the Agent's motion block */
+static const uint32_t join_omgs_at[2]={0xa0c8u,0x16398u};
+typedef struct {uint16_t at,len;} join_omgs_mask_t;
+static join_omgs_mask_t join_omgs_mask[64];static unsigned join_omgs_nmask;
+#define JOIN_OMGS_VECTORS 6u           /* 3 axes x 2 sub-objects */
+#define JOIN_OMGS_VECTOR_AT 0x168u      /* in the sub-object: begin, end, capacity */
+static uint16_t join_omgs_vec[JOIN_OMGS_VECTORS];   /* object offsets of the vectors' begin */
+static uint64_t join_omgs_vec_cleared,join_omgs_vec_equal,join_omgs_vec_kept,join_omgs_vec_differs;
+static void join_omgs_masks(void) {
+    if(join_omgs_nmask) return;
+    static const uint16_t data_pad[][2]={{0x4c,4},{0xf22,6},{0xf8a,6},{0x1014,4},{0x1045,3}};   /* object offsets */
+    for(unsigned k=0;k<sizeof(data_pad)/sizeof(*data_pad);k++) join_omgs_mask[join_omgs_nmask++]=(join_omgs_mask_t){data_pad[k][0],data_pad[k][1]};
+    static const uint16_t sub_pad[][2]={{0x130,16},{0x164,4},{0x194,4},{0x1a1,7},{0x1ac,4}};     /* in each 0x1b0-byte sub-object */
+    for(unsigned axis=0;axis<3u;axis++) for(unsigned s=0;s<2u;s++) {
+        const unsigned base=0x50u+axis*0x4f0u+(s?0x340u:0x190u);
+        for(unsigned k=0;k<sizeof(sub_pad)/sizeof(*sub_pad);k++) join_omgs_mask[join_omgs_nmask++]=(join_omgs_mask_t){(uint16_t)(base+sub_pad[k][0]),sub_pad[k][1]};
+        join_omgs_vec[axis*2u+s]=(uint16_t)(base+JOIN_OMGS_VECTOR_AT);
+    }
+}
+/* Does [at, at+n) touch a vector triple (never written raw)? */
+static int join_omgs_in_vector(unsigned at,unsigned n) {
+    for(unsigned v=0;v<JOIN_OMGS_VECTORS;v++) if(at<join_omgs_vec[v]+24u && join_omgs_vec[v]<at+n) return 1;
+    return 0;
+}
+/* The joiner's own vector against the session's size (from the record's triple, the saver's pointers): see OMGS above. */
+static int join_omgs_vector(unsigned char *o,const join_omgs_rec *r,unsigned v) {
+    uint64_t s[3],j[3];const unsigned at=join_omgs_vec[v];
+    memcpy(s,r->data+(at-JOIN_OMGS_FROM),24);
+    if(!join_read(o+at,j,24)) return 0;
+    const int s_ok=s[0]<=s[1] && s[1]<=s[2] && !((s[1]-s[0])%8u),j_ok=j[0]<=j[1] && j[1]<=j[2] && !((j[1]-j[0])%8u);
+    if(!s_ok || !j_ok) {++join_omgs_vec_differs;return 0;}
+    const uint64_t ns=(s[1]-s[0])/8u,nj=(j[1]-j[0])/8u;
+    if(ns) {if(ns==nj) ++join_omgs_vec_kept; else ++join_omgs_vec_differs;return 0;}
+    if(!nj) {++join_omgs_vec_equal;return 0;}
+    const int changed=join_poke((uintptr_t)(o+at+8u),&j[0],8);   /* end = begin: empty, the joiner's own storage kept */
+    ++join_omgs_vec_cleared;return changed;
+}
+static unsigned char *join_omgs_object(const unsigned char *agent,unsigned which) {
+    unsigned char *holder=NULL,*o=NULL;uintptr_t vt=0;
+    if(!agent || which>1u || !join_read(agent+JOIN_OMGS_HOLDER,&holder,8) || !holder || !join_read(holder+join_omgs_at[which],&o,8) || !o ||
+       !join_read(o,&vt,8) || vt!=(uintptr_t)image+JOIN_OMGS_VTABLE) return NULL;
+    return o;
+}
+static int join_omgs_on;
+static uint64_t join_omgs_written,join_omgs_equal,join_omgs_missing;
+static uint32_t join_omgs_cap;   /* the FLIGHT walk's OMGS capacity (reset with each new table) */
+static int join_capture_omgs(join_tables *t,const unsigned char *agent,uint64_t portable,uint32_t *cap) {
+    join_omgs_masks();
+    if(!t->omgs) *cap=0;
+    for(unsigned which=0;which<2u;which++) {
+        unsigned char *o=join_omgs_object(agent,which);join_omgs_rec r;
+        if(!o) continue;
+        memset(&r,0,sizeof(r));r.portable=portable;r.which=which;
+        if(!join_read(o+JOIN_OMGS_FROM,r.data,JOIN_OMGS_BYTES)) continue;
+        for(unsigned k=0;k<join_omgs_nmask;k++) memset(r.data+join_omgs_mask[k].at-JOIN_OMGS_FROM,0,join_omgs_mask[k].len);
+        if(!JOIN_PUSH(t->omgs,t->nomgs,*cap,r)) return join_note("memory");
+    }
+    return 1;
+}
+static int join_omgs_cmp(const void *a,const void *b) {
+    const join_omgs_rec *x=a,*y=b;
+    return x->portable<y->portable?-1:x->portable>y->portable?1:x->which<y->which?-1:x->which>y->which;
+}
+static void join_sort_omgs(join_tables *t) {
+    if(t->nomgs>1) qsort(t->omgs,t->nomgs,sizeof(*t->omgs),join_omgs_cmp);
+    uint32_t k=0;
+    for(uint32_t i=0;i<t->nomgs;i++) {
+        if(k && t->omgs[k-1].portable==t->omgs[i].portable && t->omgs[k-1].which==t->omgs[i].which) continue;
+        if(k!=i) t->omgs[k]=t->omgs[i];
+        ++k;
+    }
+    t->nomgs=k;
+}
+/* Write the record's bytes between the masked ranges and the vector triples (sorted by offset), each run only where it differs;
+ * then each vector by its size. */
+static int join_omgs_write(unsigned char *o,const join_omgs_rec *r) {
+    int changed=0;unsigned at=JOIN_OMGS_FROM;
+    for(;;) {
+        unsigned next=JOIN_OMGS_SIZE,len=0;
+        for(unsigned k=0;k<join_omgs_nmask;k++) if(join_omgs_mask[k].at>=at && join_omgs_mask[k].at<next) {next=join_omgs_mask[k].at;len=join_omgs_mask[k].len;}
+        for(unsigned v=0;v<JOIN_OMGS_VECTORS;v++) if(join_omgs_vec[v]>=at && join_omgs_vec[v]<next) {next=join_omgs_vec[v];len=24u;}
+        if(next>at) {
+            if(join_omgs_in_vector(at,next-at)) return -1;   /* a run across a vector: the layout is not the one read */
+            changed|=join_poke((uintptr_t)(o+at),r->data+(at-JOIN_OMGS_FROM),next-at);
+        }
+        if(next>=JOIN_OMGS_SIZE) break;
+        at=next+len;
+    }
+    for(unsigned v=0;v<JOIN_OMGS_VECTORS;v++) changed|=join_omgs_vector(o,r,v);
+    return changed;
+}
+static void join_admit_omgs(const join_tables *s,const join_tables *mine) {
+    join_omgs_written=join_omgs_equal=join_omgs_missing=0;
+    join_omgs_vec_cleared=join_omgs_vec_equal=join_omgs_vec_kept=join_omgs_vec_differs=0;
+    if(!join_omgs_on) return;
+    join_omgs_masks();
+    for(uint32_t i=0;i<s->nomgs;i++) {
+        const join_omgs_rec *r=&s->omgs[i];unsigned char *object=join_object(join_runtime_of(mine,r->portable));
+        unsigned char *o=join_omgs_object(object?join_nav_agent(object):NULL,r->which);
+        if(!o) {++join_omgs_missing;continue;}
+        const int w=join_omgs_write(o,r);
+        if(w<0) {++join_omgs_missing;continue;}
+        if(w) ++join_omgs_written; else ++join_omgs_equal;
+    }
+}
 static int join_bnds_on;
 static uint64_t join_bnds_written,join_bnds_equal,join_bnds_missing;
 #define JOIN_BNDS_GETTER 0x7eb460u   /* the station's vfunc 0x14b0: lea rax,[rcx+0xc90] */
@@ -4257,6 +4382,7 @@ static int join_capture_flight(join_tables *t,const unsigned char *controller,ui
     if(r.kind!=JOIN_FLIGHT_LINEAR) {
         r.flags=JOIN_FLIGHT_OTHER;
         if(r.kind==JOIN_STEER_VTABLE && !join_capture_steer(t,agent,model,portable,stcap,stpcap)) return 0;   /* version 9 */
+        if(r.kind==JOIN_STEER_VTABLE && !join_capture_omgs(t,agent,portable,&join_omgs_cap)) return 0;        /* version 13 */
         if(r.kind==JOIN_SPLINE_VTABLE && !join_capture_splm(t,model,portable)) return 0;                      /* version 12 */
         return JOIN_PUSH(t->flight,t->nflight,*fcap,r)?1:join_note("memory");
     }
@@ -4563,6 +4689,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_engr(t);            /* version 13 */
     join_capture_shgr(t);            /* version 13 */
     join_capture_bnds(t);            /* version 13 */
+    join_sort_omgs(t);               /* version 13: OMGS, taken in the FLIGHT walk */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
     join_capture_pend(t);            /* version 13 */
@@ -6186,6 +6313,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_engr(s,&mine);    /* the engines' boost ramps (opt-in) */
     if(s->version>=13) join_admit_shgr(s,&mine);    /* the containers' shield recharge groups (opt-in) */
     if(s->version>=13) join_admit_bnds(s,&mine);    /* the stations' bounding structs (opt-in) */
+    if(s->version>=13) join_admit_omgs(s,&mine);    /* the steering ships' OmegaSwitched controllers (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */
