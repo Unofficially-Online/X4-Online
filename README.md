@@ -22,9 +22,15 @@ software with a noncommercial restriction, not an OSI open-source project.
 - **Player actions:** a guard counts, blocks or relays every game write the UI makes,
   so one client's click happens on every client at the same tick
   ([players](docs/PLAYERS.md)).
+- **Joining a running game:** a third client loads the session's save at tick T and
+  replays to the session. In native tests on one PC with the join defaults it stays
+  census-equal to the end of each test: 58 s after a join made before the pilot window
+  starts ([hot join](reports/LOCKSTEP-HOTJOIN-20261101.txt)), and 25 s after a join
+  inside the pilot window, which still needs the opt-in `native_gate_join_in_window`
+  ([in window](reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt)). Not yet tested across PCs.
 - **Not yet done:** a session between two PCs (especially Intel vs AMD, whose
-  approximate `rcpss`/`rsqrtss` results differ), joining a running game, desync
-  recovery, and a packaged release. Windows vs Linux still differs in 35 objects
+  approximate `rcpss`/`rsqrtss` results differ), desync recovery, and a packaged
+  release. Windows vs Linux still differs in 35 objects
   at tick 600, so v1 is Windows-only.
 - **Pinned build:** X4 9.00 Windows (Steam build 23660954). The gate verifies the
   exact `X4.exe` and refuses anything else. It patches only process memory at

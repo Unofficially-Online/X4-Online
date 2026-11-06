@@ -822,5 +822,16 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
 - Fresh full window runs with OMGS on (build-hj20o, w1z120..w1z123, the whole pipeline): every joiner admitted it
   (omgs=1:3..9:11..17:0, omgs_vec=0:120:0:0) and ran to the end; census 0 at 660, 720, 780, 900, 1020, 1080 and 1140
   in all four. T+1 keeps its one timing-only item (ship 800259fc6382a6b7 nav.refresh_time / refresh_relation, in every
-  run before too, never spreading). The first four fully equal in-window joins in a row. Next: the J1 batch with OMGS
-  (x4mods-28, j1-313..320), then OMGS in the join defaults.
+  run before too, never spreading). The first four fully equal in-window joins in a row.
+- J1 with OMGS (x4mods-28, j1-313..j1-320): all eight equal from 633 to 1799 (before it 13 of 37 raced at 872 or 1042).
+  OMGS is in the join defaults since f413083b (X4-Online 7286c766).
+- Without the diagnostics and the slot-k experiment (w1z124, w1z125, build-hj20o: JOIN_DEFAULT_ON with OMGS, plus
+  native_gate_join_hold_boot_events, _viewl and _pend, which are not defaults, and runW1b's native_gate_join_in_window;
+  native_gate_join_ids and _refresh_builds the overlays add to every join): both joiners admitted OMGS and are census-equal at 660, 720, 780, 900, 1020, 1080 and
+  1140 (T+1 only the timing item above). J1 with an empty J1SET (x4mods-28, j1-323/324) diverges from 635 (two ships'
+  pending pathing banks): JOIN_DEFAULT_ON alone was not yet the working set. x4mods-28's bisection (j1-325/326:
+  equal with hold_boot_events alone) put native_gate_join_hold_boot_events into JOIN_DEFAULT_ON (48934f0c); J1 with
+  only the scenario's pilot window (j1-327/328) is equal from 633 to 1799.
+- In window with an empty J1SET (w1z126, w1z127: runW1b's native_gate_join_in_window, tick rate 20 and window
+  {300,72000}, every join option from the overlay defaults at 48934f0c): both joiners admitted OMGS and are
+  census-equal at 660, 720, 780, 900, 1020, 1080 and 1140. VIEWL and PEND are not needed.

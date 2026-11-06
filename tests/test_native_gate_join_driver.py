@@ -649,6 +649,7 @@ class Overlays(unittest.TestCase):
             self.assertEqual(overlays.ids_sets(['native_gate_join_ids = false']), ['native_gate_join_ids = false'])
             self.assertEqual(overlays.default_sets(['a=1']), ['a=1']+[f'{k}=true' for k in overlays.JOIN_DEFAULT_ON])
             self.assertIn('native_gate_join_omgs', overlays.JOIN_DEFAULT_ON)   # j1-313..320, w1z116..123: the 872/721 race gone
+            self.assertIn('native_gate_join_hold_boot_events', overlays.JOIN_DEFAULT_ON)   # j1-323..326: 635 without it
             self.assertEqual(overlays.default_sets(['native_gate_join_rcnt = false']),
                              ['native_gate_join_rcnt = false']+[f'{k}=true' for k in overlays.JOIN_DEFAULT_ON[1:]])
             text = (root/'savers/ui/config.lua.append').read_text()

@@ -249,10 +249,14 @@ def ids_sets(sets):
 #   native_gate_join_omgs          the steering ships' OmegaSwitched controllers (w1z108..119: per session, the off replays
 #                                  raced at 721 and split at 900, the on replays equal to 1140; j1-313..320 all equal
 #                                  633..1799, census 900 0: the 872 race and the 1042 item gone)
+#   native_gate_join_hold_boot_events  the joiner's boot event passes hold T's due events until its admission (j1-323/324
+#                                  without it: 635 diverged, two ships' pending pathing entries; j1-325/326 with it: equal
+#                                  633..1799, census 900 0; in every J1 set since report 1.18)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
-                   'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code', 'native_gate_join_omgs')
+                   'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code', 'native_gate_join_omgs',
+                   'native_gate_join_hold_boot_events')
 
 
 def default_sets(sets):

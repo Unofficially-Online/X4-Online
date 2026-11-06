@@ -2404,6 +2404,12 @@ proposed and rejected.
   j1-313 .. 320 (build-hj20o)     j1-267's set plus native_gate_join_omgs: all eight equal 633 .. 1799 (0 mismatches), census
                                   900 differing 0; the joiner omgs=1:6:14:0, omgs_vec=0:120:0:0, the speech clock carried. The
                                   872 race (9 of 37 runs before) and the 1042 item (4 of 37) are gone: OMGS is on by default
+  j1-321 .. 326 (build-hj20o)     the join defaults alone (J1SET only the scenario's pilot window {1500,1790}; 321/322 without
+                                  it were refused, a join inside the window): 323/324 diverged at 635 (two ships' pending
+                                  pathing entries, census 900 2), 325/326 with native_gate_join_hold_boot_events equal 633 ..
+                                  1799, census 900 0. The hold was in every J1 set but not in JOIN_DEFAULT_ON: now it is
+  j1-327 .. 328 (48934f0c)        the join defaults alone with the hold (J1SET only the pilot window): both equal 633 .. 1799,
+                                  census 900 differing 0, omgs=1:8:12:0
 - Open: the 172 at 900; the wreck's per-step body source; attention timing; the UI listeners' 20-tick phase.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
 
