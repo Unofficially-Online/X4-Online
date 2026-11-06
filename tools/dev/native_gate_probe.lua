@@ -297,6 +297,11 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_shpw then   -- a joiner takes the session's ship words (SHPW)
   assert(gate.join_shpw and gate.join_shpw(1)==1,'join shpw refused')
  end
+ if cfg.native_gate_join_shpw_words~=nil then   -- which SHPW words (bit k = word k; experiment)
+  local m=cfg.native_gate_join_shpw_words
+  assert(cfg.native_gate_join_shpw and type(m)=='number' and m>=1 and m<=63 and m==math.floor(m) and gate.join_shpw_words and
+   gate.join_shpw_words(m)==m,'join shpw words refused (needs native_gate_join_shpw, 1..63)')
+ end
  if cfg.native_gate_join_trdn then   -- a joiner takes the session's next trade offer updates (TRDN)
   assert(gate.join_trdn and gate.join_trdn(1)==1,'join trdn refused')
  end
@@ -311,6 +316,9 @@ if cfg.native_gate_join then
  end
  if cfg.native_gate_join_code then   -- a joiner takes the session's object code counter (CODE)
   assert(gate.join_code and gate.join_code(1)==1,'join code refused')
+ end
+ if cfg.native_gate_join_engr then   -- a joiner takes the session's engine boost ramps (ENGR)
+  assert(gate.join_engr and gate.join_engr(1)==1,'join engr refused')
  end
  if cfg.native_gate_join_ecos then   -- a joiner takes the session's economy schedules (ECOS)
   assert(gate.join_ecos and gate.join_ecos(1)==1,'join ecos refused')

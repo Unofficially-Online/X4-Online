@@ -68,6 +68,12 @@ static int lua_join_viewl(lua_State *L) {join_viewl_on=p_lua_tonumber(L,1)!=0.0;
 static int lua_join_ecos(lua_State *L) {join_ecos_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shpw(on): a joiner takes the session's ship words (SHPW, default off). */
 static int lua_join_shpw(lua_State *L) {join_shpw_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_shpw_words(mask): the SHPW words the admission writes, 1..63 (bit k = word k); returns the mask, 0 refused. */
+static int lua_join_shpw_words(lua_State *L) {
+    const double m=p_lua_tonumber(L,1);
+    if(!(m>=1.0 && m<=63.0) || floor(m)!=m) {p_lua_pushnumber(L,0);return 1;}
+    join_shpw_mask=(unsigned)m;p_lua_pushnumber(L,m);return 1;
+}
 /* gate.join_trdn(on): a joiner takes the session's next trade offer updates (TRDN, default off). */
 static int lua_join_trdn(lua_State *L) {join_trdn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_npca(on): a joiner takes the session's NPC activations (NPCA, default off). */
@@ -78,6 +84,8 @@ static int lua_join_jobg(lua_State *L) {join_jobg_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_jobw(lua_State *L) {join_jobw_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_code(on): a joiner takes the session's object code counter (CODE, default off). */
 static int lua_join_code(lua_State *L) {join_code_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_engr(on): a joiner takes the session's engine boost ramps (ENGR, default off). */
+static int lua_join_engr(lua_State *L) {join_engr_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 static int lua_join_rcnt(lua_State *L) {join_rcnt_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_pend(on): a joiner takes the session's pending view cache flags (PEND; lockstep_join_world.h; default off). */
 static int lua_join_pend(lua_State *L) {join_pend_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}

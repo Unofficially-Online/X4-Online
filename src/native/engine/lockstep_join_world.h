@@ -2498,9 +2498,18 @@ static size_t join_rw_rows_text(char *out,size_t cap,char side,uint64_t tick) {
         if(join_rw_nspec && r->slot<join_rw_nspec && join_rw_spec[r->slot].portable==~1ull)
             at+=(size_t)snprintf(out+at,cap-at," regs=%llx,%llx,%llx,%llx",(unsigned long long)r->regs[0],(unsigned long long)r->regs[1],
                                  (unsigned long long)r->regs[2],(unsigned long long)r->regs[3]);
-        if(join_rw_nspec && r->slot<join_rw_nspec && join_rw_spec[r->slot].portable==~1ull)
+        if(join_rw_nspec && r->slot<join_rw_nspec && join_rw_spec[r->slot].portable==~1ull) {
             at+=(size_t)snprintf(out+at,cap-at," regs2=%llx,%llx xmm=%08x,%08x,%08x,%08x",(unsigned long long)r->regs2[0],
                                  (unsigned long long)r->regs2[1],r->xmm[0],r->xmm[1],r->xmm[2],r->xmm[3]);
+            /* rbx_obj= and rsi_obj=: what the two registers point at, as the watch keys a component (its portable key, or bit 62
+             * and its runtime ID) and its vtable RVA (0: none in the image), read now at the dump, not in the handler [w1z46: which
+             * component 0x6d6d80 hands the braking function 0x6de670 in rbx; the engines 79037..79039 have 1.0 there] */
+            uintptr_t vb=0,vs=0;
+            (void)join_read((const void *)(uintptr_t)r->regs[1],&vb,8);(void)join_read((const void *)(uintptr_t)r->regs2[0],&vs,8);
+            at+=(size_t)snprintf(out+at,cap-at," rbx_obj=%llx/%x rsi_obj=%llx/%x",
+                                 (unsigned long long)join_watch_key((unsigned char *)(uintptr_t)r->regs[1]),vb>=lo && vb<hi?(unsigned)(vb-lo):0u,
+                                 (unsigned long long)join_watch_key((unsigned char *)(uintptr_t)r->regs2[0]),vs>=lo && vs<hi?(unsigned)(vs-lo):0u);
+        }
         at+=(size_t)snprintf(out+at,cap-at,"\r\n");
         join_rw_shown=k+1;
     }
@@ -3585,6 +3594,49 @@ static void join_admit_code(const join_tables *s) {
     join_code_own_seed&=0xffffffu;
     if(join_code_on && join_poke((uintptr_t)(image+JOIN_CODE_COUNTER),&s->code[0].counter,4)) join_code_written=1;
 }
+/* ENGR (v13, section 70; the admission opt-in, native_gate_join_engr): every engine's boost ramp [F: w1z43..w1z48, the window's fight
+ * at 840: the destroyer 79009's braking distance at its boost refresh of 794 is 1337.98 on the session and 1394.08 on the joiner
+ * with every input of 0x6de670 equal but the boost term, which divides by the engine's (0x6d6d80: 79037) +0x2f8: 4.056 against
+ * 3.576]. 0x54e3a0..0x54e4b7 integrates that factor toward its target at a macro rate over dt = now - +0x2f0 and stamps +0x2f0 =
+ * now; before 794 +0x2f8 is 1.0 on both sides, +0x2f0 37.233 on the session (the ramp's last update) and 38.733 = T on the joiner
+ * (the load's stamp), so dt is 9.55 against 8.05 at 794 (1 + 0.32 * dt). The stamp belongs to the unintegrated value, so it is
+ * carried (the load-time split: a past event's stamp, not the base time of a value the save writes as of T). The capture writes
+ * +0x2f0 and +0x2f8 of every U::Engine; with the opt-in the admission writes the session's where they differ. Status
+ * engr=on:written:equal:missing. */
+static int join_engr_on;
+static uint64_t join_engr_written,join_engr_equal,join_engr_missing;
+#define JOIN_ENGR_VTABLE 0x2ad58f8u   /* U::Engine */
+static int join_engr_type(unsigned char *o) {
+    uintptr_t vt=0;
+    return o && join_read(o,&vt,8) && vt==(uintptr_t)image+JOIN_ENGR_VTABLE;
+}
+static int join_engr_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_engr_rec *)a)->portable,y=((const join_engr_rec *)b)->portable;return x<y?-1:x>y;
+}
+static void join_capture_engr(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        if(!t->ids[i].portable) continue;
+        unsigned char *o=join_object(t->ids[i].runtime);join_engr_rec r;
+        if(!join_engr_type(o)) continue;
+        memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;
+        if(!join_read(o+0x2f0,&r.ramp_time,8) || !join_read(o+0x2f8,&r.ramp_word,8)) continue;
+        if(!JOIN_PUSH(t->engr,t->nengr,cap,r)) return;
+    }
+    if(t->nengr>1) qsort(t->engr,t->nengr,sizeof(*t->engr),join_engr_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->nengr;i++) {if(k && t->engr[k-1].portable==t->engr[i].portable) continue;t->engr[k++]=t->engr[i];}t->nengr=k;}
+}
+static void join_admit_engr(const join_tables *s,const join_tables *mine) {
+    join_engr_written=join_engr_equal=join_engr_missing=0;
+    if(!join_engr_on) return;
+    for(uint32_t i=0;i<s->nengr;i++) {
+        const join_engr_rec *r=&s->engr[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable));
+        if(!join_engr_type(o)) {++join_engr_missing;continue;}
+        int changed=join_poke((uintptr_t)(o+0x2f0),&r->ramp_time,8);
+        changed|=join_poke((uintptr_t)(o+0x2f8),&r->ramp_word,8);
+        if(changed) ++join_engr_written; else ++join_engr_equal;
+    }
+}
 /* SHPW (v13, section 65; the admission opt-in, native_gate_join_shpw): ship object words a load leaves at defaults [F: w1z28, the
  * hot join's watch on four traders and miners (TradeRoutine, linear flight): the ship objects differ from the load on in +0x3b0..
  * +0x3bf (four floats: the session's 540/40.64/50.80, the joiner's 540 and an equal pair 63.50/63.50), +0xa10/+0xa14 (an int 1 and a
@@ -3594,6 +3646,11 @@ static void join_admit_code(const join_tables *s) {
  * admission writes the session's where they differ. Status shpw=on:written:equal:missing. */
 static const unsigned short join_shpw_offsets[JOIN_SHPW_WORDS]={0x3b0,0x3b8,0xa10,0xa18,0xa78,0xc38};
 static int join_shpw_on;
+/* native_gate_join_shpw_words (experiment): which of the six words the admission writes, bit k = join_shpw_offsets[k] (default
+ * all). j1-239: fixture 176ad5's +0x3b0 is 626.8 on the session and 208.9 on the joiner from T+1 (the float vfunc 0x1a90 returns;
+ * 0x6dad90 reads it in the braking loop of 0x6de670; the engine parameter refresh 0x6dc610 rewrites +0x3ac..+0x3b7), and it
+ * parts by one ulp at 1011; mask 1 carries that word alone, without SHPW's stamp +0xa18 (w1z31: carrying the stamp was wrong). */
+static unsigned join_shpw_mask=0x3fu;
 static uint64_t join_shpw_written,join_shpw_equal,join_shpw_missing;
 static const uint32_t join_shpw_vtables[]={0x2b7d738u,0x2b7feb8u,0x2b82440u,0x2b9bff8u,0x2b99a88u};   /* ShipXS, S, M, L, XL */
 static int join_shpw_type(unsigned char *o) {
@@ -3625,7 +3682,7 @@ static void join_admit_shpw(const join_tables *s,const join_tables *mine) {
     for(uint32_t i=0;i<s->nshpw;i++) {
         const join_shpw_rec *r=&s->shpw[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable));int changed=0;
         if(!join_shpw_type(o)) {++join_shpw_missing;continue;}
-        for(unsigned k=0;k<JOIN_SHPW_WORDS;k++) changed|=join_poke((uintptr_t)(o+join_shpw_offsets[k]),&r->word[k],8);
+        for(unsigned k=0;k<JOIN_SHPW_WORDS;k++) if(join_shpw_mask>>k&1u) changed|=join_poke((uintptr_t)(o+join_shpw_offsets[k]),&r->word[k],8);
         if(changed) ++join_shpw_written; else ++join_shpw_equal;
     }
 }
@@ -4299,6 +4356,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_trdn(t);            /* version 13 */
     join_capture_npca(t);            /* version 13 */
     join_capture_code(t);            /* version 13 */
+    join_capture_engr(t);            /* version 13 */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
     join_capture_pend(t);            /* version 13 */
@@ -5919,6 +5977,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_trdn(s,&mine);    /* the containers' next trade offer update (opt-in) */
     if(s->version>=13) join_admit_npca(s,&mine);    /* the NPCs' activation (opt-in) */
     if(s->version>=13) join_admit_code(s);          /* the object code counter (opt-in) */
+    if(s->version>=13) join_admit_engr(s,&mine);    /* the engines' boost ramps (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
     if(s->version>=13) join_admit_evqt(s,&mine);   /* version 13: the pending events of the rebuilt classes, the session's */
