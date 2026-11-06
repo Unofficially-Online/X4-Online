@@ -287,6 +287,19 @@ static int world_hash_init(void) {
 typedef void *(*world_hash_find_fn)(void *,uint64_t,unsigned);
 static int created_capture_rows(world_hash_find_fn,void *,world_hash_item *,unsigned *,unsigned);
 /* Saved rows first, then created rows; both runs are sorted by ID. */
+/* Nav-only hash, DEFAULT OFF (native_gate_world_nav_stride = N; schema 2 only). The census folds the navigation
+ * part of every object with a NavigationController (lockstep_world_nav.h) into its motion and timing roots, but
+ * only every stride ticks: seeds 2222222 and 3333333 parted at capture ticks 100,200 and 86,100 with nothing else
+ * differing, so the split sat somewhere in the 300 ticks before. Every capture keeps the indices of the items whose
+ * navigation part it read; every N ticks world_nav_hash reads just those again, with the same capture, checks and
+ * encoding as the census (bank phase unchanged, the object's identity rechecked), and hashes per item: saved key,
+ * a marker (0 gone, 1 another controller, 2 navigation), then the canonical timing and motion tuples and the
+ * encoding's flags. Nothing is written and no engine function but the object find is called. */
+static unsigned *world_nav_index,world_nav_index_count,world_nav_index_capacity;
+static uint64_t world_nav_hashes,world_nav_gone,world_nav_moved,world_nav_last_us,world_nav_max_us;
+static const char *world_nav_stage="idle";
+static BCRYPT_HASH_HANDLE world_sha_nav;
+static int world_nav_index_rebuild(unsigned total);
 static world_hash_item *world_hash_item_at(unsigned index) {
     return world_hash_created_count && index>=world_hash_count?&world_hash_created[index-world_hash_count]:&world_hash_items[index];
 }
@@ -351,6 +364,7 @@ static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find
     char roots[WORLD_HASH_DOMAINS][65];unsigned char raw[32];
     for(unsigned d=0;d<WORLD_HASH_DOMAINS;d++) {if(BCryptFinishHash(world_sha_roots[d],raw,32,0)<0) return 0;hex32(raw,roots[d]);}
     world_hash_tick=tick;++world_hash_scans;world_hash_failure_id=0;world_hash_stage="complete";
+    if(schema==2 && !world_nav_index_rebuild(total)) return 0;
     /* objects counts saved plus created rows; created= appears only when
      * created identities are enabled, so default captures are unchanged. */
     char created[32]="";if(world_hash_created) snprintf(created,sizeof(created)," created=%u",world_hash_created_count);
@@ -361,6 +375,75 @@ static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find
 }
 static int world_hash_capture(uint64_t tick,unsigned schema) {
     return world_hash_capture_with(tick,schema,(world_hash_find_fn)(image+0xced70));
+}
+static int world_nav_index_rebuild(unsigned total) {
+    world_hash_stage="nav_index";
+    if(total>world_nav_index_capacity) {
+        if(world_nav_index) VirtualFree(world_nav_index,0,MEM_RELEASE);
+        world_nav_index_capacity=total+WORLD_HASH_CREATED_MAX;
+        world_nav_index=VirtualAlloc(NULL,sizeof(*world_nav_index)*world_nav_index_capacity,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+        if(!world_nav_index) {world_nav_index_capacity=0;return 0;}
+    }
+    world_nav_index_count=0;
+    for(unsigned i=0;i<total;i++) if(world_hash_item_at(i)->nav_raw_length==WORLD_NAV_RAW_BYTES) world_nav_index[world_nav_index_count++]=i;
+    world_hash_stage="complete";return 1;
+}
+/* The hash over the indexed items, through find (the object lookup) and resolve (references to portable keys). */
+static int world_nav_hash_core(world_hash_find_fn find,void *map,world_nav_resolver resolve,unsigned char out[32]) {
+    world_nav_stage="sha";
+    if(!world_sha_nav && (!world_sha_algorithm || BCryptCreateHash(world_sha_algorithm,&world_sha_nav,NULL,0,NULL,0,BCRYPT_HASH_REUSABLE_FLAG)<0)) return 0;
+    world_nav_stage="bank_phase";
+    world_bank_phase banks;if(!world_banks_read(&banks)) return 0;
+    uint64_t gone=0,moved=0;
+    for(unsigned k=0;k<world_nav_index_count;k++) {
+        const world_hash_item *item=world_hash_item_at(world_nav_index[k]);
+        unsigned char row[8+1+4+WORLD_NAV_TIMING_BYTES+WORLD_NAV_MOTION_BYTES];unsigned length=9;
+        memcpy(row,&item->saved,8);row[8]=0;
+        unsigned char *object=find(map,item->runtime,4),*controller=NULL;uint64_t id=0;uintptr_t vtable=0;
+        if(object) {
+            world_nav_stage="nav_object";
+            if(!world_hash_reader(object+8,&id,8) || id!=item->runtime || !world_hash_reader(object+0x200,&controller,8)) return 0;
+            row[8]=1;
+            if(controller && world_hash_reader(controller,&vtable,8) && pslot_canonical_vtable(vtable)==(uintptr_t)(image+0x2c51158)) {
+                world_nav_snapshot captured;unsigned char raw[WORLD_NAV_RAW_BYTES];unsigned flags=0;
+                if(!world_nav_capture(world_hash_reader,resolve,(uintptr_t)image,(uintptr_t)object,(uintptr_t)controller,item->runtime,
+                                      &captured,&world_nav_stage)) return 0;
+                world_nav_stage="nav_phase_changed";
+                if(captured.links.read!=banks.read || captured.links.write!=banks.write) return 0;
+                world_nav_encode(&captured,row+13,row+13+WORLD_NAV_TIMING_BYTES,raw,&flags);
+                row[8]=2;memcpy(row+9,&flags,4);length=sizeof(row);
+            }
+            else ++moved;
+        }
+        else ++gone;
+        if(BCryptHashData(world_sha_nav,row,length,0)<0) {world_nav_stage="sha";return 0;}
+    }
+    if(BCryptFinishHash(world_sha_nav,out,32,0)<0) {world_nav_stage="sha";return 0;}
+    world_nav_gone=gone;world_nav_moved=moved;world_nav_stage="complete";return 1;
+}
+/* After a schema-2 capture, between captures: NAV_1:tick:count:sha256 into out. */
+static int world_nav_hash(uint64_t tick,char *out,size_t capacity) {
+    world_nav_stage="no_capture";
+    if(world_hash_schema!=2 || !world_hash_scans || world_hash_failures || tick<=world_hash_tick) return 0;
+    world_nav_stage="nav_layout_pins";
+    if(!world_nav_layout_pins()) return 0;
+    void *map=*(void**)(image+0x6cf1500);
+    world_nav_stage="map";if(!map) return 0;
+    LARGE_INTEGER t0,t1,frequency;QueryPerformanceCounter(&t0);
+    unsigned char raw[32];char hex[65];
+    if(!world_nav_hash_core((world_hash_find_fn)(image+0xced70),map,world_identity_portable,raw)) return 0;
+    QueryPerformanceCounter(&t1);QueryPerformanceFrequency(&frequency);
+    world_nav_last_us=(uint64_t)((t1.QuadPart-t0.QuadPart)*1000000/frequency.QuadPart);
+    if(world_nav_last_us>world_nav_max_us) world_nav_max_us=world_nav_last_us;
+    ++world_nav_hashes;hex32(raw,hex);
+    int n=snprintf(out,capacity,"NAV_1:%llu:%u:%s",(unsigned long long)tick,world_nav_index_count,hex);
+    return n>0 && (size_t)n<capacity;
+}
+static int world_nav_status(char *out,size_t capacity) {
+    int n=snprintf(out,capacity,"hashes=%llu index=%u gone=%llu moved=%llu last_us=%llu max_us=%llu stage=%s",
+        (unsigned long long)world_nav_hashes,world_nav_index_count,(unsigned long long)world_nav_gone,(unsigned long long)world_nav_moved,
+        (unsigned long long)world_nav_last_us,(unsigned long long)world_nav_max_us,world_nav_stage);
+    return n>0 && (size_t)n<capacity?n:0;
 }
 /* FR28, DEFAULT OFF, read-only (native_gate_world_health_ticks = {first,last}): the stored hull and
  * shield of every watched object at any tick, not only at a capture. The census hashes them every

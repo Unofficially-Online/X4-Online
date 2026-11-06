@@ -38,7 +38,10 @@
  * result and counts the calls where they differ (differs=).
  * Rows (PATH_TRANSFORMS_ROW): calls whose span holds a class-0x49 object without an Agent (objects=), and in
  * 'observe' also every differing call; at most 256 per tick (dropped=). Keys are portable (saved or created ID
- * of the object or its nearest keyed ancestor).
+ * of the object or its nearest keyed ancestor). Formation window (gate.path_transforms(mode, from, to), at
+ * most 600 ticks): every call of the formation site (GetTargetPositionForWingMan) in it is a row too, whatever
+ * happens to it (outcome=outside|trivial|nav|not_ancestor|spaces|failure|observe|diverted), with the result
+ * matrix as sim= and the image return addresses above the hook as chain= (up to eight RVAs).
  * Not covered: the velocity variant 0x3df3f0 (0xe8a214, 0xe8a40c; the target path passes no velocity) and the
  * walk's own choice of stops and common ancestor (0xf231e0, 0x3d8f90), which read the published view's cached
  * parents (the result in b's frame does not depend on it while cached and live parents agree).
@@ -96,7 +99,11 @@ static volatile LONG64 ptf_site_calls[PTF_SITES],ptf_outside,ptf_trivial,ptf_spa
 static double ptf_last_time;
 typedef struct {uint64_t key;unsigned klass,depth;} ptf_ref_t;
 typedef struct {volatile LONG64 ready;uint64_t tick;unsigned site,mode,differs,object;ptf_ref_t a,b,obj;uint32_t ctrl_vt;
-    double time;float sim[16],native[16];} ptf_row_t;
+    double time;float sim[16],native[16];unsigned win;} ptf_row_t; /* win: formation window row, outcome + 1 */
+enum {PTF_OUT_OUTSIDE,PTF_OUT_TRIVIAL,PTF_OUT_NAV,PTF_OUT_NOT_ANCESTOR,PTF_OUT_SPACES,PTF_OUT_FAILURE,PTF_OUT_OBSERVE,PTF_OUT_DIVERTED};
+static const char *const ptf_outcomes[8]={"outside","trivial","nav","not_ancestor","spaces","failure","observe","diverted"};
+#define PTF_SITE_FORMATION 4u
+static uint64_t ptf_window_from,ptf_window_to; /* formation calls of these ticks are rows; 0/0 none */
 static ptf_row_t *ptf_ring;
 static int ptf_on(void) {return InterlockedCompareExchange(&ptf_active,0,0)!=0;}
 /* The portable key of a component or of its nearest keyed ancestor (+0x70), depth walked; 0 none. */
@@ -141,54 +148,72 @@ static int ptf_chain(unsigned char *a,const unsigned char *b,unsigned char **obj
     return 0;
 }
 static void ptf_row(unsigned site,const unsigned char *a,const unsigned char *b,const unsigned char *object,uint32_t ctrl_vt,
-                    double time,const float *sim,const float *native,int differs) {
+                    double time,const float *sim,const float *native,int differs,unsigned win) {
     if(!ptf_ring) return;
     if(InterlockedIncrement64(&ptf_tick_rows)>(LONG64)PTF_ROWS_PER_TICK) {InterlockedIncrement64(&ptf_dropped);return;}
     LONG64 index=InterlockedIncrement64(&ptf_rows)-1;
     ptf_row_t *r=&ptf_ring[(uint64_t)index%PTF_RING];
     InterlockedExchange64(&r->ready,0);
     r->tick=stats.issued;r->site=site;r->mode=(unsigned)ptf_mode;r->differs=(unsigned)differs;r->object=object!=NULL;
-    r->a=ptf_ref(a);r->b=ptf_ref(b);r->obj=ptf_ref(object);r->ctrl_vt=ctrl_vt;r->time=time;
+    r->a=ptf_ref(a);r->b=ptf_ref(b);r->obj=ptf_ref(object);r->ctrl_vt=ctrl_vt;r->time=time;r->win=win;
     memcpy(r->sim,sim,sizeof(r->sim));
     if(native) memcpy(r->native,native,sizeof(r->native));else memset(r->native,0,sizeof(r->native));
     InterlockedExchange64(&r->ready,index+1);
 }
 /* One call of a site: cls the thread's path_thread_class, tls its TLS block, manager the PathingManager. */
-static void *ptf_call_using(unsigned site,void *a,float *out,void *b,uint64_t flag,unsigned cls,const unsigned char *tls,
-                            ptf_hier_fn native,ptf_gtr_fn gtr,const unsigned char *manager) {
-    InterlockedIncrement64(&ptf_site_calls[site]);
+static void *ptf_call_core(unsigned site,void *a,float *out,void *b,uint64_t flag,unsigned cls,const unsigned char *tls,
+                           ptf_hier_fn native,ptf_gtr_fn gtr,const unsigned char *manager,unsigned *outcome) {
     uint32_t view=1;
     if(!ptf_on() || !stats.active || boot_phase!=3 || cls!=PATH_THREAD_PASS || !tls || !read_local(tls+PTF_TLS_VIEW,&view,4) || view) {
-        InterlockedIncrement64(&ptf_outside);return native(a,out,b,flag);
+        *outcome=PTF_OUT_OUTSIDE;InterlockedIncrement64(&ptf_outside);return native(a,out,b,flag);
     }
-    if((flag&0xff) || !a || !b || a==b || !out) {InterlockedIncrement64(&ptf_trivial);return native(a,out,b,flag);}
+    if((flag&0xff) || !a || !b || a==b || !out) {*outcome=PTF_OUT_TRIVIAL;InterlockedIncrement64(&ptf_trivial);return native(a,out,b,flag);}
     unsigned char *object;uint32_t ctrl_vt;
     const int chain=ptf_chain(a,b,&object,&ctrl_vt);
-    if(chain<0) {InterlockedIncrement64(&ptf_nav);return native(a,out,b,flag);}
-    if(!chain) {InterlockedIncrement64(&ptf_not_ancestor);return native(a,out,b,flag);}
+    if(chain<0) {*outcome=PTF_OUT_NAV;InterlockedIncrement64(&ptf_nav);return native(a,out,b,flag);}
+    if(!chain) {*outcome=PTF_OUT_NOT_ANCESTOR;InterlockedIncrement64(&ptf_not_ancestor);return native(a,out,b,flag);}
     /* Spaces only (zones, sectors, parts): static, the same on every client either way; stock bits stay. */
-    if(!object && ptf_mode==PTF_SIM) {InterlockedIncrement64(&ptf_spaces);return native(a,out,b,flag);}
+    if(!object && ptf_mode==PTF_SIM) {*outcome=PTF_OUT_SPACES;InterlockedIncrement64(&ptf_spaces);return native(a,out,b,flag);}
     double time=0;
     if(!manager || !read_local(manager+PTF_PASS_TIME,&time,8) || !isfinite(time)) {
-        ptf_stage="pass_time";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);
+        *outcome=PTF_OUT_FAILURE;ptf_stage="pass_time";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);
     }
     __declspec(align(16)) float sim[16];memcpy(sim,out,sizeof(sim));
     int ok=1;
     __try {gtr(a,sim,time,b,0);} __except(EXCEPTION_EXECUTE_HANDLER) {ok=0;}
-    if(!ok) {ptf_stage="compose";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);}
+    if(!ok) {*outcome=PTF_OUT_FAILURE;ptf_stage="compose";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);}
     ptf_last_time=time;
     if(object) InterlockedIncrement64(&ptf_objects);
     if(ptf_mode==PTF_OBSERVE) {
-        void *result=native(a,out,b,flag);
+        *outcome=PTF_OUT_OBSERVE;void *result=native(a,out,b,flag);
         const int differs=memcmp(sim,out,sizeof(sim))!=0;
         if(differs) InterlockedIncrement64(&ptf_differs);
-        if(object || differs) ptf_row(site,a,b,object,ctrl_vt,time,sim,out,differs);
+        if(object || differs) ptf_row(site,a,b,object,ctrl_vt,time,sim,out,differs,0);
         return result;
     }
-    InterlockedIncrement64(&ptf_diverted);
+    *outcome=PTF_OUT_DIVERTED;InterlockedIncrement64(&ptf_diverted);
     memcpy(out,sim,sizeof(sim));
-    if(object) ptf_row(site,a,b,object,ctrl_vt,time,sim,NULL,0);
+    if(object) ptf_row(site,a,b,object,ctrl_vt,time,sim,NULL,0,0);
     return out;
+}
+static void *ptf_call_using(unsigned site,void *a,float *out,void *b,uint64_t flag,unsigned cls,const unsigned char *tls,
+                            ptf_hier_fn native,ptf_gtr_fn gtr,const unsigned char *manager) {
+    InterlockedIncrement64(&ptf_site_calls[site]);
+    unsigned outcome=PTF_OUT_OUTSIDE;
+    void *result=ptf_call_core(site,a,out,b,flag,cls,tls,native,gtr,manager,&outcome);
+    if(site==PTF_SITE_FORMATION && ptf_window_to && stats.issued>=ptf_window_from && stats.issued<=ptf_window_to && out) {
+        __declspec(align(16)) float m[16];memcpy(m,out,sizeof(m));
+        uint32_t chain[16];memset(chain,0xff,sizeof(chain));void *frames[24];USHORT n=RtlCaptureStackBackTrace(1,24,frames,NULL);unsigned k=0;
+        for(USHORT j=0;j<n && k<8;j++) {const unsigned char *f=frames[j];if(f>=image && f<image+0x6fa9000) chain[k++]=(uint32_t)(f-image);}
+        ptf_row(site,a,b,NULL,cls,ptf_last_time,m,(const float*)chain,0,outcome+1u);
+    }
+    return result;
+}
+/* The formation row window; an identical rerun is accepted. Before arming. */
+static int ptf_window(uint64_t from,uint64_t to) {
+    if(ptf_installed) return from==ptf_window_from && to==ptf_window_to;
+    if(to && (from<1 || to<from || to-from>600)) return 0;
+    ptf_window_from=from;ptf_window_to=to;return 1;
 }
 static void *ptf_call(unsigned site,void *a,float *out,void *b,uint64_t flag) {
     void **slots=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
@@ -328,6 +353,11 @@ static int ptf_row_text(uint64_t index,char *out,size_t cap) {
     n=snprintf(out,cap,"index=%llu tick=%llu site=%s mode=%s a=%s b=%s object=%s ctrl=%08x time=%016llx differs=%u sim=%s%s%s",
         (unsigned long long)index,(unsigned long long)r->tick,ptf_sites[r->site<PTF_SITES?r->site:0].name,r->mode==PTF_OBSERVE?"observe":"sim",
         a,b,r->object?o:"-",r->ctrl_vt,(unsigned long long)time,r->differs,sim,r->mode==PTF_OBSERVE?" native=":"",r->mode==PTF_OBSERVE?native:"");
+    if(n>0 && (size_t)n<cap && r->win) { /* window rows: ctrl= is the thread class, native[] holds the chain */
+        const uint32_t *c=(const uint32_t*)r->native;
+        int m=snprintf(out+n,cap-(size_t)n," outcome=%s chain=%x,%x,%x,%x,%x,%x,%x,%x",ptf_outcomes[(r->win-1u)&7u],c[0],c[1],c[2],c[3],c[4],c[5],c[6],c[7]);
+        n=m>0 && (size_t)m<cap-(size_t)n?n+m:-1;
+    }
     return n>0 && (size_t)n<cap?n:0;
 }
 static int ptf_status(char *out,size_t cap) {

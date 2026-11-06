@@ -8,6 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT/'src/native/engine'
 REGISTRY = (ROOT/'docs/LOCKSTEP-REGISTRY.txt').read_text(encoding='utf-8')
 NOT_REASONS = {'PSLOT_STOP_WAIT', 'PFIRE_STOP', 'PNAT_STOP_IN_MENU', 'PNAT_FULL_STOP'}   # a count and flags, not stop reasons
+# Another define for an owner's code: the Linux gate's ports, the lookahead's drop (the protocol 5 number).
+ALIASES = {'LMT_STOP_REASON': 'MT_STOP_REASON', 'LXMC_STOP_REASON': 'RC_MINING_STOP', 'LOOKAHEAD_STOP_DROPPED': 'ADAPT_STOP_DROPPED'}
+CORE_PORTS = {'CREATED_STOP_REASON': 96, 'LSJ_STOP_REASON': 58}   # module defines that carry a core code (96 world created, 58 spline)
 
 
 def sources():
@@ -31,7 +34,7 @@ class StopReasonTests(unittest.TestCase):
         for name, places in stop_defines().items():
             self.assertEqual(len({v for v, _ in places}), 1, name)   # one value wherever it is defined
             value = next(iter(places))[0]
-            by_value.setdefault(value, set()).add(name)
+            by_value.setdefault(value, set()).add(ALIASES.get(name, name))
         shared = {value: names for value, names in by_value.items() if len(names) > 1}
         self.assertEqual(shared, {})
 
@@ -49,9 +52,9 @@ class StopReasonTests(unittest.TestCase):
         for value in core:
             if value >= 100:
                 self.assertIn(value, modules, value)
-        for value in modules:
+        for value, name in modules.items():
             if value < 100:
-                self.assertEqual(modules[value], 'CREATED_STOP_REASON')   # 96: the world created module, written literally on Linux
+                self.assertEqual(CORE_PORTS.get(name), value, name)   # 96 the world created module, 58 the Linux spline join
 
 
 class FamilyTests(unittest.TestCase):

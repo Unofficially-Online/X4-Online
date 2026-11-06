@@ -1,0 +1,100 @@
+-- Simulation-determinism keys of the x4ls soak profile (appended to the base overlay's config).
+-- Reconstructed from the census play chain (reports/LOCKSTEP-CENSUS-20261028.txt, Play38L/Play41P);
+-- validated: two clients, 1800 ticks, 0 mismatches, world hashes identical (2026-11-01).
+X4LAN_CONFIG.native_gate_script_rng = 'key'
+X4LAN_CONFIG.native_gate_script_rng_mask = 3
+X4LAN_CONFIG.native_gate_script_rng_unmapped = 'key'
+X4LAN_CONFIG.native_gate_md_timed_rng = true
+X4LAN_CONFIG.native_gate_gravidar_key_all = true
+X4LAN_CONFIG.native_gate_gravidar_time_sync = true
+X4LAN_CONFIG.native_gate_ai_schedule = true
+X4LAN_CONFIG.native_gate_gravidar_load_pass = true
+X4LAN_CONFIG.native_gate_gravidar_sector_order = true
+X4LAN_CONFIG.native_gate_gravidar_deadlines = true
+X4LAN_CONFIG.native_gate_gravidar_wide = 'sort'
+-- travel_determinism, not travel_snapshot: pathing batches inline in RunPass order. The snapshot covers only the
+-- leader's +0xf7b; a wingman's formation branch (0xeb27c0, +0xf20) still raced across batches (split at tick 17441).
+-- Costs speed: about 8 ms per pass single-threaded (0.78x real time paced, against 0.92x).
+X4LAN_CONFIG.native_gate_travel_determinism = true
+X4LAN_CONFIG.native_gate_find_order = 'sort'
+X4LAN_CONFIG.native_gate_created_identities = true
+X4LAN_CONFIG.native_gate_portable_created = true
+X4LAN_CONFIG.native_gate_created_load = true
+X4LAN_CONFIG.native_gate_spawn_rng = 'key'
+X4LAN_CONFIG.native_gate_attention_all = true
+X4LAN_CONFIG.native_gate_nav_probe_init = true
+X4LAN_CONFIG.native_gate_nav_params_init = true
+X4LAN_CONFIG.native_gate_nav_player = true
+X4LAN_CONFIG.native_gate_mass_traffic = 'sync'
+X4LAN_CONFIG.native_gate_region_pass = 'sync'
+X4LAN_CONFIG.native_gate_speech_game_time = true
+X4LAN_CONFIG.native_gate_view_points_source = 'ship'
+X4LAN_CONFIG.native_gate_region_camera = 'view'
+X4LAN_CONFIG.native_gate_region_fields = 'view'
+X4LAN_CONFIG.native_gate_mass_traffic_camera = 'view'
+X4LAN_CONFIG.native_gate_effect_camera = 'view'
+X4LAN_CONFIG.native_gate_highway_camera = 'view'
+X4LAN_CONFIG.native_gate_weapon_fire_rng = true
+X4LAN_CONFIG.native_gate_engine_refresh_rng = true
+X4LAN_CONFIG.native_gate_player_timer = true
+X4LAN_CONFIG.native_gate_warp_rng = true
+X4LAN_CONFIG.native_gate_ship_sound_rng = 'split'
+X4LAN_CONFIG.native_gate_sound_rng = 'split'
+X4LAN_CONFIG.native_gate_physics_scenes = 'viewpoints'
+X4LAN_CONFIG.native_gate_view_scenes = true
+X4LAN_CONFIG.native_gate_viewpoint_policy = 'sector'
+X4LAN_CONFIG.native_gate_viewpoint_standins = 4
+X4LAN_CONFIG.native_gate_tempzone_order = 'order'
+X4LAN_CONFIG.native_gate_nav_octree = 'agreed'
+X4LAN_CONFIG.native_gate_nav_octree_snapshot = true
+X4LAN_CONFIG.native_gate_camera_anchor = 'own'
+X4LAN_CONFIG.native_gate_camera_context = 'view'
+X4LAN_CONFIG.native_gate_event_rng = 'key'
+X4LAN_CONFIG.native_gate_build_rng = true
+X4LAN_CONFIG.native_gate_loadout_order = 'canonical'
+X4LAN_CONFIG.native_gate_order_canon = 'canonical'
+X4LAN_CONFIG.native_gate_highway_speed = 'key'
+X4LAN_CONFIG.native_gate_shape_order = 'sync'
+X4LAN_CONFIG.native_gate_pick_order = 'canonical'
+X4LAN_CONFIG.native_gate_macro_arena = true
+X4LAN_CONFIG.native_gate_runtime_ids = true
+X4LAN_CONFIG.native_gate_runtime_ids_barrier = true
+X4LAN_CONFIG.native_gate_runtime_ids_local = true
+X4LAN_CONFIG.native_gate_economy_load_rng = true
+X4LAN_CONFIG.native_gate_field_fill = 'view'
+X4LAN_CONFIG.native_gate_mining_camera = 'view'
+X4LAN_CONFIG.native_gate_xs_camera = 'view'
+X4LAN_CONFIG.native_gate_traffic_views = 'view'
+X4LAN_CONFIG.native_gate_cutscene_ready = true
+X4LAN_CONFIG.native_gate_speak_timer = true
+-- speech_clock: the unpaused clock that times those lines starts the session at one value on every client
+-- (lockstep_speech_clock.h; without it seed 1111111 parted at tick 3749: a mentor line ended two ticks apart).
+X4LAN_CONFIG.native_gate_speech_clock = true
+-- world_nav_stride: the navigation parts hashed every 30 ticks between the 300-tick census captures (lockstep_world_hash.h);
+-- seeds 2222222 and 3333333 parted with only the navigation part differing, seen at the next capture.
+X4LAN_CONFIG.native_gate_world_nav_stride = 30
+X4LAN_CONFIG.native_gate_world_hash_shields = 'canonical'
+X4LAN_CONFIG.native_gate_view_ui = 'block'
+X4LAN_CONFIG.native_gate_view_triggers = 'block'
+X4LAN_CONFIG.native_gate_spline_join_all = true
+X4LAN_CONFIG.native_gate_path_transforms = 'sim'
+X4LAN_CONFIG.native_gate_body_pose = 'sim'
+X4LAN_CONFIG.native_gate_tick_hz = 30
+X4LAN_CONFIG.native_gate_path_budget = 100
+X4LAN_CONFIG.native_gate_pass_stride = 2
+X4LAN_CONFIG.native_gate_fast_reads = true
+X4LAN_CONFIG.native_gate_lookahead = 1
+X4LAN_CONFIG.native_gate_status_stride = 60
+X4LAN_CONFIG.native_gate_shape_refresh = 'view'
+-- ui_lazy supersedes ui_cargo (it detours the same 0x41a910 entry ui_cargo pins; both together stop the gate, reason 153).
+-- 'key': UI queries blocked as in 'block'; simulation cargo/trade/unit updates draw from a word keyed by the station,
+-- not by whichever actor asked first (without it: station event splits at ticks 4658 and 5424 on the seed snapshot).
+X4LAN_CONFIG.native_gate_ui_lazy = 'key'
+-- seed_rng: the MoveWorker's own word is seeded per admitted frame, so engine draws outside every keyed scope
+-- (a new pilot's character macro at a drone launch split the clients at tick 35601) start from the same word.
+-- A draw watch over 3600 ticks (native_gate_draw_watch_frame) found the frame-level draws identical on both clients.
+X4LAN_CONFIG.native_gate_seed_rng = true
+-- actor_rng_rows: every drawing keyed actor scope (agent, flight, nav, weapon, ...) as a row, about 3.5 per tick.
+-- Timing-dependent splits (39,060 on the seed snapshot: one more agent draw on one client, not reproduced in every
+-- rerun) cannot be caught by a rerun's row window; the soak's own rows name the actor.
+X4LAN_CONFIG.native_gate_actor_rng_rows = true

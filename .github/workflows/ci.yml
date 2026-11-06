@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    name: Python/Lua suite (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned Zig
+        run: |
+          curl -sSfL "https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz" -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "X4LAN_ZIG=$RUNNER_TEMP/zig-x86_64-linux-0.15.2/zig" >> "$GITHUB_ENV"
+      - name: Rust Linux agent build and tests
+        run: |
+          cargo build --release --locked --manifest-path src/rust/Cargo.toml
+          cargo test --locked --manifest-path src/rust/Cargo.toml
+      - name: Bootstrap
+        run: python3 tools/dev/bootstrap.py
+      # The Linux gate and the relay's wire crypto library (libx4mp_wire_crypto.so): the crypto
+      # tests load the library instead of skipping.
+      - name: Linux gate and wire crypto build
+        run: python3 tools/dev/build_native_gate_linux.py --zig "$X4LAN_ZIG"
+      # Every skip fails the run unless its reason names something a hosted runner
+      # cannot have (Egosoft files and data derived from them are never in the repository).
+      # Each skip is printed with its reason.
+      - name: Check
+        run: >-
+          .venv/bin/python tools/dev/check.py
+          --allow-skip 'Linux X4 executable not available'
+          --allow-skip 'read-only x4-re md.xsd'
+          --allow-skip 'need a Linux host with gcc and luajit'
+          --allow-skip 'x4-re'
+          --allow-skip 'the pinned X4.exe is not at hand'
+          --allow-skip 'the stock md.xsd'
+          --allow-skip 'resolved stock data'
+          --allow-skip 'no released lane tool on this machine'
+          --allow-skip 'cross-check from Windows with Zig'
+
+  gate:
+    name: Lockstep gate build (Windows, Zig 0.15.2)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      ZIG_VERSION: 0.15.2
+      ZIG_SHA256: 3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned Zig
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\zig.zip"
+          Invoke-WebRequest "https://ziglang.org/download/$env:ZIG_VERSION/zig-x86_64-windows-$env:ZIG_VERSION.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:ZIG_SHA256) { throw "Zig checksum mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+          "X4LAN_ZIG=$env:RUNNER_TEMP\zig-x86_64-windows-$env:ZIG_VERSION\zig.exe" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      # Compile only. The C tests need the pinned X4.exe image, which is never
+      # redistributed; run them locally:
+      #   python tools/dev/build_native_gate.py --zig <zig> --test --native-image <X4.exe>
+      - name: Build x4lan_gate_64.dll (-Werror)
+        run: python -B tools/dev/build_native_gate.py --zig "$env:X4LAN_ZIG"
+        shell: pwsh

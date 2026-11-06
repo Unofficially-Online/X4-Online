@@ -584,7 +584,9 @@ def main():
     if args.session_clients:
         # Protocol 3 input multiplexer (pilot, orders and hit claim sections share one blob).
         shutil.copy2(root/'tools/dev/native_gate_inputs_core.lua',args.out/'ui/native_gate_inputs_core.lua')
-        ui_files = 'ui/native_gate_inputs_core.lua\n'+ui_files
+        # Relayed UI FFI calls' section codec (native_gate_ui_relay, lockstep_ui_exports.h).
+        shutil.copy2(root/'tools/dev/native_gate_ffi_relay_core.lua',args.out/'ui/native_gate_ffi_relay_core.lua')
+        ui_files = 'ui/native_gate_inputs_core.lua\nui/native_gate_ffi_relay_core.lua\n'+ui_files
     # The session defaults (native_gate_defaults.lua): a battle snapshot session on the Windows gate runs the default stack;
     # every other overlay is the bare gate, said in its config and in the probe's log (DEFAULTS_OFF).
     fixtures = [name for name in ('command_test', 'player_probe', 'docking_state', 'docking_shape_rng', 'docking_shape_refresh')

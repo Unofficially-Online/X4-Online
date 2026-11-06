@@ -54,8 +54,7 @@ download, fork or make permitted noncommercial changes in their own copy.
 
 ## Contributions and third-party material
 
-Read [CONTRIBUTING.txt](CONTRIBUTING.txt) before proposing changes. Contributors
-must have the rights to submit their work under this project's license and
+Contributors must have the rights to submit their work under this project's license and
 identify any separately licensed material. Existing third-party licenses and
 attribution must be preserved. New contribution terms do not retroactively claim
 rights over previously submitted or separately owned work.

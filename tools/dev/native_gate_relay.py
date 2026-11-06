@@ -788,7 +788,7 @@ def main():
         if wire: summary['wire_crypto'] = wire.summary()
         return json.dumps(summary, indent=2)+'\n'
     last = None
-    last_report = 0
+    last_report = float('-inf')  # perf_counter's origin is arbitrary (Linux: near boot); first report always writes
     last_status, final_written = 0, False
     def write_status(now):
         if not args.status_file:

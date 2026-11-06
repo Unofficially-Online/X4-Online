@@ -53,8 +53,8 @@ PATH = re.compile(r'(?:\.\./)?[A-Za-z0-9_]+')
 LANE_TOOL = '../lanes/release-5d5a680ec6ef/dev/x4lane.py'
 LANE_BASE = '.local/lockstep-live/frozen-v3/src/extension/x4_lan_lab'
 CAPTURE_SEED = 276944566    # capture 005's seed
-EXTENSION = Path(__file__).resolve().parents[2] / 'src/extension/x4_lan_lab'
-POOL_LIBRARY = 'libraries/factions.xml'   # the pool factions with their own accounts (tools/dev/build_player_factions.py)
+EXTENSION = Path(__file__).resolve().parents[2] / 'src/lockstep/base'   # what x4ls installs under every client's x4_lan_lab
+POOL_LIBRARY = 'libraries/factions.xml'   # the pool factions with their own accounts (<account amount="0" />)
 
 
 class SessionError(ValueError):

@@ -896,6 +896,7 @@ def build_parser():
     common.add_argument('--mode', choices=identity.MODES, default='factions')
     common.add_argument('--source', choices=SOURCES, default='wire')
     common.add_argument('--ships', type=ids, help='comma list of saved slot ship IDs (default: player scout, fixtures 3..5)')
+    common.add_argument('--fixture', type=ids, help="the snapshot's twelve fixture actor IDs in order (default: snapshot 005's)")
     common.add_argument('--session', help='session.json of native_gate_session_start.py register: the session save (any usable stock start) '
                                            'replaces snapshot 005; its per-player starts apply at the setup tick')
     common.add_argument('--create', type=create_spec, action='append', help='SLOT=MACRO@X,Y,Z[/YAW][#SEED], sector-local metres (fixture area y=100000); needs --source none')
@@ -995,7 +996,12 @@ def build_parser():
 
 def main(argv=None):
     p = build_parser()
-    args = p.parse_args(argv)
+    parsed = p.parse_args(argv)
+    if getattr(parsed, 'fixture', None):  # another snapshot's fixture (tools/build_soak_overlay.py passes it)
+        if len(parsed.fixture) != 12:
+            p.error('--fixture needs twelve IDs')
+        sandbox.FIXTURES = tuple(parsed.fixture)
+    args = parsed
     try:
         args = defaults(args)
         if args.command == 'config':

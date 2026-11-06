@@ -119,10 +119,24 @@ static void test_path_transforms(void) {
     ptf_tick_rows=PTF_ROWS_PER_TICK;rows=ptf_rows;assert(PTF_CALL(1,wreck,zone,0,PATH_THREAD_PASS)==m && ptf_rows==rows && ptf_dropped==1);
     ptf_installed=0;assert(!ptf_check() && !ptf_tick_rows);ptf_failures=0;assert(ptf_check());
     assert(PTF_CALL(1,wreck,zone,0,PATH_THREAD_PASS)==m && ptf_rows==rows+1);
+    /* Formation window: every formation call of its ticks is a row with its outcome and result; other sites and ticks not. */
+    assert(!ptf_window(0,5) && !ptf_window(9,5) && !ptf_window(1,700) && ptf_window(2460,2470));
+    rows=ptf_rows;test_ptf_native_value=7.0f;
+    assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_rows==rows+1);
+    assert(ptf_row_text((uint64_t)rows,out,sizeof(out))>0 && strstr(out,"site=formation ") && strstr(out," a=000000000013e75f/0/0 ") &&
+           strstr(out," sim=0000e040") && strstr(out," outcome=not_ancestor chain="));
+    assert(PTF_CALL(PTF_SITE_FORMATION,wreck,zone,0,PATH_THREAD_MOVEWORKER)==(void*)0x77 && ptf_rows==rows+2);
+    assert(ptf_row_text((uint64_t)rows+1,out,sizeof(out))>0 && strstr(out," outcome=outside"));
+    assert(PTF_CALL(PTF_SITE_FORMATION,wreck,zone,0,PATH_THREAD_PASS)==m && ptf_rows==rows+4); /* the object row and the window row */
+    assert(ptf_row_text((uint64_t)rows+3,out,sizeof(out))>0 && strstr(out," outcome=diverted") && ptf_row_text((uint64_t)rows+2,out,sizeof(out))>0 && !strstr(out,"outcome="));
+    assert(PTF_CALL(2,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_rows==rows+4);
+    stats.issued=2471;assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_rows==rows+4);stats.issued=2468;
+    ptf_installed=1;assert(!ptf_window(1,2) && ptf_window(2460,2470));ptf_installed=0;ptf_window_from=ptf_window_to=0;
+    rows=ptf_rows-1;
     /* Rows evicted from the ring say so. */
     ptf_rows=PTF_RING+5;assert(ptf_row_text(2,out,sizeof(out))>0 && !strcmp(out,"index=2 evicted=1"));ptf_rows=rows+1;
     assert(ptf_status(out,sizeof(out))>0 && strstr(out,"mode=sim installed=0 ") && strstr(out," spaces=1 diverted=") && strstr(out," time=4054900000000000 sites=walk:1,walk_end:") &&
-           strstr(out,"point_space:4,agent_space:0,formation:0"));
+           strstr(out,"point_space:5,agent_space:0,formation:4"));
     assert(!ptf_status(out,40));
     #undef PTF_CALL
     InterlockedExchange(&ptf_active,0);ptf_mode=PTF_OFF;ptf_ring=saved_ring;ptf_stage="idle";test_ptf_counts_reset();ptf_last_time=0;

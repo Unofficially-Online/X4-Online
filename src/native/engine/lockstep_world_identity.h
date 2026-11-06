@@ -2,7 +2,7 @@
  * runtime IDs and display codes are not portable identities. Objects created
  * after loading remain unknown. No engine registry or simulation state writes. */
 #define WORLD_IDENTITY_ENTRY 0x79f720u
-#define WORLD_IDENTITY_CAPACITY 1048576u
+#define WORLD_IDENTITY_CAPACITY 4194304u /* at most half full: 2.1 million saved objects (a checkpoint at tick 1200 of the seed snapshot imports 525870) */
 #define WORLD_IDENTITY_PROBES 256u
 typedef unsigned char (*world_identity_fn)(void *,void *);
 typedef struct { uint64_t runtime,saved; } world_identity_entry;

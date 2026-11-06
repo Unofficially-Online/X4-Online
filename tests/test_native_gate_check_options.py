@@ -34,6 +34,23 @@ class BulletCadenceOptionTests(unittest.TestCase):
 
 
 
+class WorldNavStrideOptionTests(unittest.TestCase):
+    CENSUS = BASE + "X4LAN_CONFIG.native_gate_world_hash_schema = 'WORLD_IMPORTED_2'\nX4LAN_CONFIG.native_gate_world_hash_stride = 300\n"
+
+    def failures(self, text):
+        return [f['rule'] for f in module.check(text)[1] if 'world_nav_stride' in f['rule']]
+
+    def test_needs_the_enriched_census_with_a_longer_stride(self):
+        self.assertEqual(self.failures(self.CENSUS + 'X4LAN_CONFIG.native_gate_world_nav_stride = 30\n'), [])
+        self.assertEqual(self.failures(self.CENSUS + 'X4LAN_CONFIG.native_gate_world_nav_stride = false\n'), [])
+        for value in ('300', '0', "'30'", '1.5'):
+            with self.subTest(value=value):
+                self.assertEqual(len(self.failures(self.CENSUS + 'X4LAN_CONFIG.native_gate_world_nav_stride = %s\n' % value)), 1)
+        legacy = BASE + 'X4LAN_CONFIG.native_gate_world_hash_stride = 300\nX4LAN_CONFIG.native_gate_world_nav_stride = 30\n'
+        self.assertEqual(len(self.failures(legacy)), 1)
+        self.assertEqual(len(self.failures(BASE + 'X4LAN_CONFIG.native_gate_world_nav_stride = 30\n')), 2)
+
+
 class NavCadenceOptionTests(unittest.TestCase):
     def failures(self, text):
         return [f['rule'] for f in module.check(text)[1] if 'nav_cadence' in f['rule']]

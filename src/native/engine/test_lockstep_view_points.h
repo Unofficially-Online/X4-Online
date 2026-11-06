@@ -314,6 +314,7 @@ static void test_view_ui(void) {
     image[VIEW_CAMERA_LO+4]^=1;assert(!view_ui_camera_ok());image[VIEW_CAMERA_LO+4]^=1;
     view_stage="idle";
     assert(view_ui_arm(VIEW_UI_BLOCK) && view_ui_mode==VIEW_UI_BLOCK && view_ui_arm(VIEW_UI_BLOCK) && !view_ui_arm(VIEW_UI_OBSERVE));
+    stats.issued=1;assert(view_ui_arm(VIEW_UI_BLOCK) && !view_ui_arm(VIEW_UI_OBSERVE));stats.issued=0; /* identical re-arm after a UI reload */
     /* Scopes, in order: presentation scope, a client-only view call, the dispatch of presentation ids, slot 10, then (not
      * in the probe's frame) slot 6 by the UI replay's depth or the stack; another thread or the gate's refresh: none. */
     assert(view_ui_scope()==VIEW_UI_NONE);
@@ -413,6 +414,8 @@ static void test_view_source(void) {
     ui_thread=GetCurrentThreadId()+1;assert(!view_source_arm("ship"));ui_thread=GetCurrentThreadId();
     assert(!view_source_arm("camera") && !view_source_arm("") && !view_source_arm(NULL));
     assert(view_source_arm("ship") && view_source_mode==VIEW_SOURCE_SHIP);
+    /* The UI reloads after the snapshot load: an identical re-arm after the first tick is accepted, a change is not. */
+    stats.issued=1;assert(view_source_arm("ship") && !view_source_arm("player") && view_source_mode==VIEW_SOURCE_SHIP);stats.issued=0;
     view_installed=1;stats.active=1;view_mode=VIEW_OBSERVE;pilot_slot_count=0;view_latched=0;view_count=0;
     /* The seat entry is an ancestor: the ship is the viewpoint. */
     stats.issued=20;assert(view_frame(20) && view_count==1 && view_points[0]==&test_vp_a && view_ids[0]==test_vp_a.id && view_source==3 && !view_ship_misses);

@@ -1,0 +1,98 @@
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'src'))
+from lockstep.launcher import triage  # noqa: E402
+
+
+class Triage(unittest.TestCase):
+    def test_window_covers_the_ticks_after_the_last_equal_capture(self):
+        self.assertEqual(triage.window(35700), (35461, 35760))
+        self.assertEqual(triage.window(150), (1, 210))
+        self.assertEqual(triage.pages(35700), (35400, 35700))  # a mismatch on a capture: the one before it
+        self.assertEqual(triage.pages(39060), (39000, 39300))
+        sets = triage.diagnostic_sets(35700)
+        self.assertIn('native_gate_trace_window={35461,35760}', sets)
+        self.assertIn('native_gate_world_pages_window={35400,35700}', sets)
+
+    def test_rebuild_keeps_the_recorded_arguments_and_replaces_out(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            overlay = Path(tmp) / 'soak'
+            Path(f'{overlay}.build.json').write_text(json.dumps({'argv': ['--snapshot', 'S', '--play-mode', '--set',
+                                                                          'native_gate_event_rng_play_rows=true']}))
+            args = triage.rebuild_args(overlay, Path(tmp) / 'triage-x', 600)
+            self.assertEqual(args[:3], ['--snapshot', 'S', '--play-mode'])
+            self.assertEqual(sum(a.startswith('native_gate_event_rng_play_rows') for a in args), 1)  # not set twice
+            self.assertEqual(args[-2:], ['--out', str(Path(tmp) / 'triage-x')])
+            self.assertIn('native_gate_script_rng_rows_window={361,660}', args)
+            with self.assertRaises(SystemExit):
+                triage.rebuild_args(Path(tmp) / 'unrecorded', Path(tmp) / 'o', 600)
+
+    def test_rows_drop_process_local_fields_and_compare_as_multisets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = Path(tmp) / 'a.log', Path(tmp) / 'b.log'
+            a.write_text('[X4LAN] NATIVE_GATE SCRIPT_RNG_ROW index=4 tick=3 owner=1 caller=aa name=x\n'
+                         '[X4LAN] NATIVE_GATE SCRIPT_RNG_ROW index=5 tick=3 owner=2 caller=bb name=y\n'
+                         '[X4LAN] NATIVE_GATE SCRIPT_RNG_ROW index=6 tick=4 owner=1 caller=cc name=x\n')
+            b.write_text('[X4LAN] NATIVE_GATE SCRIPT_RNG_ROW index=9 tick=3 owner=2 caller=dd name=y\n'
+                         '[X4LAN] NATIVE_GATE SCRIPT_RNG_ROW index=8 tick=3 owner=1 caller=ee name=x\n'
+                         '[X4LAN] NATIVE_GATE SCRIPT_RNG_ROW index=7 tick=4 owner=3 caller=ff name=z\n')
+            fields = ('index', 'caller')
+            ra, rb = triage.rows(a, 'SCRIPT_RNG_ROW', fields), triage.rows(b, 'SCRIPT_RNG_ROW', fields)
+            self.assertEqual(ra[3], rb[3])  # order and local fields do not count
+            self.assertEqual(triage.first_row_difference(ra, rb), (4, ['tick=4 owner=1 name=x'], ['tick=4 owner=3 name=z']))
+            self.assertIsNone(triage.first_row_difference(ra, ra))
+
+    def test_known_local_status_differences_are_not_leads(self):
+        self.assertEqual(triage.classify("1 PATH_DETERMINISM [('bank=1', 'bank=0')]"), 'local')
+        self.assertEqual(triage.classify("17 WEAPON_FIRE_RNG [('keyed=0', 'keyed=2')]"), 'lead')
+        self.assertEqual(triage.classify("1 SCRIPT_RNG [('ai_hits=1', 'ai_hits=2'), ('drawn=3', 'drawn=4')]"), 'lead')
+        self.assertEqual(triage.classify("1 SPEECH_CLOCK [('before=4060c4', 'before=4061a8')]"), 'local')
+        self.assertEqual(triage.classify("900 SPEECH_CLOCK [('clock=40f0000000000000', 'clock=40f0000000000001')]"), 'lead')
+
+
+    def test_a_rerun_that_parts_before_its_window_gets_a_second_rerun_there(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            original = d / 'runs/orig'
+            original.mkdir(parents=True)
+            (original / 'summary.json').write_text(json.dumps({'first_digest_mismatch': 100200, 'overlay': str(d / 'ov'),
+                                                               'snapshot': str(d / 'snap.xml.gz')}))
+            firsts = {'r1': 92400, 'r2': 92400}
+
+            def fake_rerun(overlay, snapshot, out, first, steam_fix, log):
+                run = d / f'r{len(calls) + 1}'
+                run.mkdir()
+                (run / 'summary.json').write_text(json.dumps({'first_digest_mismatch': firsts[run.name]}))
+                calls.append((out.name, first))
+                return run
+
+            saved = triage.rerun, triage.report
+            triage.rerun, triage.report = fake_rerun, lambda run, first: f'report {Path(run).name} {first}'
+            try:
+                text = triage.triage(original, log=lambda *_: None)
+            finally:
+                triage.rerun, triage.report = saved
+            self.assertEqual(calls, [('triage-orig', 100200), ('triage-orig-2', 92400)])
+            self.assertEqual(text, 'report r1 100200\nreport r2 92400')
+            self.assertEqual((d / 'runs/orig-triage.txt').read_text(), text)
+            # A rerun that parts inside its window (or passes) is reported alone.
+            calls.clear()
+            firsts['r1'] = 100190
+            for r in ('r1', 'r2'):
+                (d / r / 'summary.json').unlink()
+                (d / r).rmdir()
+            triage.rerun, triage.report = fake_rerun, lambda run, first: f'report {Path(run).name} {first}'
+            try:
+                text = triage.triage(original, log=lambda *_: None)
+            finally:
+                triage.rerun, triage.report = saved
+            self.assertEqual(calls, [('triage-orig', 100200)])
+
+if __name__ == '__main__':
+    unittest.main()

@@ -2,13 +2,17 @@
  * trampoline and stub layout, arming refusals, the pinned prologues. */
 static int test_ul_lua;
 static int test_ul_from_lua(uint32_t *chain) {for(unsigned i=0;i<UL_CHAIN;i++) chain[i]=0x1000u+i;return test_ul_lua;}
+static uint64_t *test_ul_word_ptr;
+static uint64_t *test_ul_word(void) {return test_ul_word_ptr;}
+static uint64_t test_ul_seen;
+static uint64_t test_ul_trade_native(void *c,uint64_t f,uint64_t a3,uint64_t a4) {(void)c;(void)f;(void)a3;(void)a4;test_ul_seen=*test_ul_word_ptr;*test_ul_word_ptr^=1;return 0x55;}
 static void test_ui_lazy(void) {
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;int saved_boot=boot_mode,saved_phase=boot_phase;
     int saved_ids=world_identity_installed;
     world_identity_entry *prior=world_identities;unsigned prior_count=world_identity_count;LONG prior_sealed=world_identity_sealed;
     world_identities=VirtualAlloc(NULL,sizeof(*world_identities)*WORLD_IDENTITY_CAPACITY,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
     assert(world_identities);world_identity_count=0;world_identity_sealed=0;assert(world_identity_record(0xa0001,0x1f2df));
-    static unsigned char station[0x700];memset(station,0,sizeof(station));*(uint64_t*)(station+8)=0xa0001;*(uint32_t*)(station+0x680)=17;
+    static unsigned char station[0xb00];memset(station,0,sizeof(station));*(uint64_t*)(station+8)=0xa0001;*(uint32_t*)(station+0x680)=17;
     ul_row_t *saved_ring=ul_ring;ul_ring=VirtualAlloc(NULL,sizeof(ul_row_t)*UL_RING,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);assert(ul_ring);
     ul_from_lua_fn=test_ul_from_lua;memset(ul_lua,0,sizeof(ul_lua));memset(ul_sim,0,sizeof(ul_sim));ul_blocked=ul_unmapped=0;ul_rows=0;
     stats.active=1;boot_mode=1;boot_phase=3;stats.issued=1077;ui_thread=GetCurrentThreadId();
@@ -16,9 +20,14 @@ static void test_ui_lazy(void) {
     ul_mode=UL_OFF;test_ul_lua=1;assert(!ul_ui_query(UL_TRADE,station,0,0) && !ul_rows);
     /* Simulation calls (no Lua on the stack) run natively and are counted. */
     ul_mode=UL_BLOCK;test_ul_lua=0;assert(!ul_ui_query(UL_TRADE,station,0,0) && ul_sim[UL_TRADE]==1 && !ul_rows);
+    /* Simulation calls are counted per call site (chain[0], chain[1]). */
+    {static char text[4096];memset(ul_callers,0,sizeof(ul_callers));ul_callers_full=0;test_ul_lua=0;
+     assert(!ul_ui_query(UL_TRADE,station,0,0) && !ul_ui_query(UL_CARGO,station,0,0) && !ul_ui_query(UL_TRADE,station,0,0));
+     assert(ul_callers_text(text,sizeof(text))>0 && !strcmp(text,"sites=2 full=0 c:1000/1001=1 t:1000/1001=2"));
+     ul_sim[UL_TRADE]=1;ul_sim[UL_CARGO]=0;}
     /* A UI query: blocked, counted, one row with the portable key. */
     test_ul_lua=1;assert(ul_ui_query(UL_TRADE,station,0,0) && ul_lua[UL_TRADE]==1 && ul_blocked==1 && ul_rows==1);
-    char out[384];assert(ul_row(0,out,sizeof(out))>0 && strstr(out,"tick=1077 target=trade class=saved key=000000000001f2df lua=1 blocked=1 ") && strstr(out," chain=00001000,00001001"));
+    char out[512];assert(ul_row(0,out,sizeof(out))>0 && strstr(out,"tick=1077 target=trade class=saved key=000000000001f2df lua=1 blocked=1 ") && strstr(out," chain=00001000,00001001"));
     /* observe: counted and recorded, not blocked. */
     ul_mode=UL_OBSERVE;assert(!ul_ui_query(UL_CARGO,station,0,0) && ul_lua[UL_CARGO]==1 && ul_blocked==1 && ul_rows==2);
     assert(ul_row(1,out,sizeof(out))>0 && strstr(out," target=cargo ") && strstr(out," blocked=0 "));
@@ -46,6 +55,26 @@ static void test_ui_lazy(void) {
         stats.issued=1081;ui_thread=GetCurrentThreadId()+1;assert(!ul_ui_query(UL_TRADE,station,1,0) && ul_rows==rows+3 && ul_other[UL_TRADE]==2);ui_thread=GetCurrentThreadId();stats.issued=1077;
         assert(ul_status(out,sizeof(out))>0 && strstr(out," window=1070-1080 "));
         assert(ul_filter_class(NULL)==0);ul_window_from=ul_window_to=0;test_ul_lua=1;
+    }
+    /* 'key': a simulation cargo call gets the word lockstep_seed(domain, time bits, portable key), restored after;
+     * UI queries are blocked as in 'block'; no portable key or another thread: not keyed. */
+    {
+        static uint64_t word;uint64_t bits=0x403907ae147ae148ULL,seed=0;ul_tls_word_fn=test_ul_word;test_ul_word_ptr=&word;
+        /* The trade trampoline jumps to a stand-in that reads the word it is called with. */
+        unsigned char *saved_page=ul_page;ul_page=VirtualAlloc(NULL,0x1000,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);assert(ul_page);
+        {void *to=(void*)test_ul_trade_native;unsigned char *t=ul_trampoline(UL_TRADE);t[0]=0xff;t[1]=0x25;memset(t+2,0,4);memcpy(t+6,&to,8);}
+        ul_mode=UL_KEY;test_ul_lua=1;assert(ul_ui_query(UL_CARGO,station,bits,0));test_ul_lua=0;
+        assert(ul_key_word(UL_CARGO,station,bits,&seed)==&word && seed==lockstep_seed(UL_KEY_DOMAIN,bits,0x1f2df,0,0,0) && ul_keyed[UL_CARGO]==1);
+        *(double*)(station+0x928)=31.0;uint64_t next;memcpy(&next,station+0x928,8);
+        assert(ul_key_word(UL_TRADE,station,0,&seed)==&word && seed==lockstep_seed(UL_KEY_DOMAIN,1077,0x1f2df,UL_TRADE,next,0) && ul_keyed[UL_TRADE]==1);
+        word=5;assert(ul_trade(station,0,0,0)==0x55 && word==5 && test_ul_seen==lockstep_seed(UL_KEY_DOMAIN,1077,0x1f2df,UL_TRADE,next,0));
+        assert(!ul_key_word(UL_CARGO,ship,bits,&seed) && ul_unkeyed==1);
+        ui_thread=GetCurrentThreadId()+1;assert(!ul_key_word(UL_CARGO,station,bits,&seed));ui_thread=GetCurrentThreadId();
+        test_ul_word_ptr=NULL;assert(!ul_key_word(UL_CARGO,station,bits,&seed) && ul_unkeyed==2);
+        ul_mode=UL_BLOCK;test_ul_word_ptr=&word;assert(!ul_key_word(UL_CARGO,station,bits,&seed) && ul_keyed[UL_CARGO]==1);
+        ul_mode=UL_KEY;assert(ul_status(out,sizeof(out))>0 && strstr(out,"mode=key ") && strstr(out," keyed=1/2/0 unkeyed=2"));
+        VirtualFree(ul_page,0,MEM_RELEASE);ul_page=saved_page;
+        ul_tls_word_fn=NULL;memset(ul_keyed,0,sizeof(ul_keyed));ul_unkeyed=0;test_ul_lua=1;
     }
     /* Code layout: stolen bytes, jmp [rip] back; entry stub at +0x20 jmp [rip] to the C entry. */
     unsigned char page[UL_STUB];const unsigned char stolen[7]={0x48,0x8b,0xc4,0x48,0x89,0x58,0x10};ul_write_code(page,UL_TRADE,stolen);

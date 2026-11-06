@@ -43,6 +43,28 @@
     </cue>
    </cues>
   </cue>
+  <!-- x4ls checkpoints: a fresh twelve-ship fixture beside the player's ship, so a mid-game save carries
+       a complete Spawn.$ships list (the old one may hold wrecks). No warp, no engage: the new ships wait. -->
+  <cue name="Respawn" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_NativeGate'" control="'Respawn'"/></conditions>
+   <actions>
+    <do_if value="player.ship and Spawn.$ships?">
+     <set_value name="Spawn.$ships" exact="[]"/>
+     <do_all exact="12" counter="$i">
+      <create_ship name="$ship" macro="if $i le 6 then macro.ship_arg_s_fighter_01_a_macro else macro.ship_xen_s_fighter_01_a_macro" zone="player.zone" seed="4711 + $i">
+       <owner exact="if $i le 6 then faction.argon else faction.xenon" overridenpc="true"/>
+       <loadout><level exact="1.0"/><variation exact="0"/></loadout>
+       <pilot><select faction="if $i le 6 then faction.argon else faction.xenon" tags="if $i le 6 then tag.aipilot else tag.pilot"/></pilot>
+       <position x="player.ship.position.x + (if $i le 6 then -400m else 400m)" y="player.ship.position.y + 2km" z="player.ship.position.z + 500m + (($i - 1) % 6) * 100m"/>
+       <rotation yaw="if $i le 6 then 90deg else -90deg"/>
+      </create_ship>
+      <append_to_list name="Spawn.$ships" exact="$ship"/>
+      <create_order object="$ship" id="'Wait'" default="true"/>
+     </do_all>
+     <debug_text text="'[X4LAN] NATIVE_GATE FIXTURE respawned=%s'.[Spawn.$ships.count]"/>
+    </do_if>
+   </actions>
+  </cue>
   <cue name="RestoreActors" instantiate="true">
    <conditions><event_ui_triggered screen="'X4LAN_NativeGate'" control="'RestoreActors'"/></conditions>
    <actions>

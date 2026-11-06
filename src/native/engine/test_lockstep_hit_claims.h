@@ -61,6 +61,14 @@ static void test_hit_mux(void) {
         size_t n=input_mux_encode(&with,built,sizeof(built));
         assert(n==2+2+sizeof(ui) && built[2]==INPUT_KIND_UI && input_mux_decode(built,n,&out,&why) && out.ui_len==sizeof(ui) && !memcmp(out.ui,ui,sizeof(ui)));
         built[4]=2;assert(!input_mux_decode(built,n,&out,&why) && !strcmp(why,"ui_version"));}
+    /* Relayed UI FFI calls (lockstep_ui_exports.h): a container alone, after the UI replay, its version checked. */
+    {   static const unsigned char ui[]={INPUT_UI_VERSION,1},ffi[]={INPUT_FFI_VERSION,3,7,0,1};unsigned char built[32];input_sections with;
+        memset(&with,0,sizeof(with));with.ffi=ffi;with.ffi_len=sizeof(ffi);
+        size_t n=input_mux_encode(&with,built,sizeof(built));
+        assert(n==2+2+sizeof(ffi) && built[2]==INPUT_KIND_FFI && input_mux_decode(built,n,&out,&why) && out.ffi_len==sizeof(ffi) && !out.ui);
+        with.ui=ui;with.ui_len=sizeof(ui);n=input_mux_encode(&with,built,sizeof(built));
+        assert(built[2]==INPUT_KIND_UI && built[2+2+sizeof(ui)]==INPUT_KIND_FFI && input_mux_decode(built,n,&out,&why) && out.ffi_len==sizeof(ffi) && out.ui_len==sizeof(ui));
+        built[2+2+sizeof(ui)+2]=2;assert(!input_mux_decode(built,n,&out,&why) && !strcmp(why,"ffi_version"));}
     assert(!input_mux_decode(pilot,PILOT_RECORD_BYTES-1,&out,&why) && !strcmp(why,"pilot_length"));
     assert(input_mux_decode(orders,sizeof(orders),&out,&why) && out.orders==orders && out.orders_len==sizeof(orders));
     /* Legacy forms are their own canonical encoding. */

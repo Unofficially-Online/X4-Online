@@ -112,6 +112,7 @@ D.ON={
  {'native_gate_fp_env','default','','MXCSR 0x1f80 on every X4 thread'},
  {'native_gate_cutscene_ready',true,'native_gate_serial_pathing','cutscene readiness at the join'},
  {'native_gate_speak_timer',true,'','speak timers on game time'},
+ {'native_gate_speech_clock',true,'','the unpaused clock that times speech lines starts the session at one value on every client'},
  {'native_gate_fast_reads',true,'','small reads by a guarded copy (same values, faster)'},
  {'native_gate_tick_hz',30,'','30 simulation steps per second (the relay runs --tick-hz 30)'},
  {'native_gate_runtime_ids',true,'native_gate_world_identities','runtime IDs allocated alike on every client'},
@@ -203,6 +204,13 @@ D.FAMILIES={'travel','target','orders','autopilot','dock','weapons','missiles','
 D.FAMILY_NEEDS={missiles='native_gate_pilot_fire',missions='guard:missions',conversation='guard:conversation',build='guard',assets='guard',faction='guard'}
 -- Diagnostics and measurement: off by default (they only log, capture, trace, profile, watch or measure). {'key','why'}.
 D.DIAGNOSTIC={
+ {'native_gate_world_nav_stride','nav-only world hash every N ticks between census captures (soak split location)'},
+ {'native_gate_checkpoint_at','x4ls --checkpoint-at: every client saves after tick T (the save pauses the game: the session ends)'},
+ {'native_gate_event_rng_play_rows','EVENT_RNG rows in play mode (soak attribution)'},
+ {'native_gate_path_transforms_rows','PATH_TRANSFORMS rows of a tick window'},
+ {'native_gate_world_pages_window','per-object world pages of a tick window in play mode (x4ls triage)'},
+ {'native_gate_ui_events_log','UI_EVENT rows of AddUITriggeredEvent calls (UI census)'},
+ {'native_gate_ui_exports_test','one client makes an unrelayed UI write at tick T (guard and relay check)'},
  {'native_gate_frame_timing','FRAME_TIMING per frame (measurement)'},
  {'native_gate_probe_profile','PROBE_PROFILE timing (measurement)'},
  {'native_gate_sample_profile','MoveWorker stack sampler (measurement)'},
@@ -365,6 +373,12 @@ D.DIAGNOSTIC={
 }
 -- Neither a feature default nor a diagnostic: fixtures, experiments, alternatives and cross-platform keys. {'key','why'}.
 D.EXCLUDED={
+ {'native_gate_ui_exports','generic UI write guard (lockstep_ui_exports.h): opt-in beside native_gate_ui_guard (tools/build_soak_overlay.py --ui-guard)'},
+ {'native_gate_ui_exports_block','generic UI write guard: the exports it refuses'},
+ {'native_gate_ui_relay','generic UI write guard: exports relayed through the ffi section (--ui-relay)'},
+ {'native_gate_ui_lua','generic UI write guard, Lua layer: opt-in beside native_gate_ui_guard'},
+ {'native_gate_ui_lua_names','generic UI write guard, Lua layer: the globals it wraps'},
+ {'native_gate_ui_lua_relay','generic UI write guard, Lua layer: globals relayed through the ffi section (--ui-relay)'},
  {'native_gate_missions','census scenario fixture (MD events at fixed ticks)'},
  {'native_gate_highway','census scenario fixture'},
  {'native_gate_highway_super','census scenario fixture'},
@@ -453,6 +467,7 @@ D.TUNING={
 }
 -- The keys a session config supplies itself (no default).
 D.SESSION={'native_gate_test','native_gate_clients','native_gate_player_identity_plan','native_gate_relay_host','native_gate_arm_timeout_ms',
+ 'native_gate_arm_at',
  'native_gate_input_priority','native_gate_defaults'}
 -- Stop reasons the probe names in its info line (docs/LOCKSTEP-REGISTRY.txt, section 4; tests check them).
 D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or loading at start',[3]='load or state mismatch',
@@ -469,7 +484,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot'}
+ [187]='hybrid sectors',[188]='character play',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

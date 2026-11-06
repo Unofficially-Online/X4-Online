@@ -620,6 +620,7 @@ class BuilderTests(unittest.TestCase):
             files = (out / 'ui.xml.files').read_text().splitlines()
             # A battle snapshot session: the session defaults' files first (native_gate_defaults.lua), then the orders adapter.
             self.assertEqual(files[:2], ['ui/native_gate_defaults.lua', 'ui/native_gate_inputs_core.lua'])
+            self.assertIn('ui/native_gate_ffi_relay_core.lua', files)   # the relay codec ships with the mux
             self.assertLess(files.index('ui/native_gate_player_orders_core.lua'), files.index('ui/native_gate_player_orders.lua'))
             self.assertNotIn('native_gate_defaults', (out / 'ui/config.lua.append').read_text())
             self.assertEqual(files[-1], 'ui/native_gate_probe.lua')

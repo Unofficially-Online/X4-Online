@@ -38,6 +38,16 @@
  * status) and, in the window, a row with other=1 (the gate's frames do not bound
  * these rows: main-thread calls between two admitted frames are rows too, with
  * the last issued tick).
+ * 'key' is 'block' plus keyed cargo: a simulation call of 0x41a910 in an
+ * admitted frame on the MoveWorker draws its production-cycle RNG from the
+ * calling thread's TLS word (slot0+0x318), so whichever actor first asks
+ * decides the station's stream, and the draws move that actor's own stream.
+ * With 'key' the word is set to lockstep_seed(UL_KEY_DOMAIN, game time bits,
+ * container portable key) for the call and restored after it: bringing a
+ * station to a time gives the same result whoever triggers it. Trade offers
+ * (0x4079e0, the next update's due time) and units draw the same way and have
+ * no time argument: their seed is (tick, portable key, target, the state above).
+ * keyed=cargo/trade/units, unkeyed= (no portable key or no TLS word: native).
  * Pins: each function's first bytes. Written by CAS at arm (before
  * the snapshot load), re-checked every gate tick (stop reason 170), restored at
  * stop. */
@@ -46,7 +56,8 @@
 #define UL_RING 16384u
 #define UL_CHAIN 6u
 #define UL_STUB 0x40u
-enum {UL_OFF=0,UL_OBSERVE=1,UL_BLOCK=2};
+enum {UL_OFF=0,UL_OBSERVE=1,UL_BLOCK=2,UL_KEY=3};
+#define UL_KEY_DOMAIN 0x58344c554c4b4559ULL /* "X4LULKEY" */
 enum {UL_CARGO=0,UL_TRADE=1,UL_UNITS=2};
 static const struct {uint32_t rva,stolen,pin_size;const char *sha,*name;} ul_targets[UL_TARGETS]={
     {0x41a910u,7u,0x70u,"5b94da94f107e9c097551381a91e1ff9868ace79480c4cbaf7958292f77f666a","cargo"},
@@ -63,7 +74,8 @@ static unsigned ul_done;
 static unsigned char *ul_page; /* per target: trampoline at +0, entry stub at +0x20 */
 static ul_row_t *ul_ring;
 static volatile LONG64 ul_rows,ul_failures,ul_other[UL_TARGETS];
-static uint64_t ul_lua[UL_TARGETS],ul_sim[UL_TARGETS],ul_blocked,ul_unmapped;
+static uint64_t ul_lua[UL_TARGETS],ul_sim[UL_TARGETS],ul_blocked,ul_unmapped,ul_keyed[UL_TARGETS],ul_unkeyed;
+static uint64_t *(*ul_tls_word_fn)(void); /* tests substitute */
 static uintptr_t ul_lua_base,ul_lua_end;
 static const char *ul_stage="idle";
 static int (*ul_from_lua_fn)(uint32_t *chain); /* tests substitute */
@@ -100,6 +112,38 @@ static uint64_t ul_state_of(unsigned target,const void *container) {
     else {read_local(c+0x680,&total,4);read_local(c+0x684,&pending,1);v=total|((uint64_t)pending<<32);}
     return v;
 }
+/* Simulation calls by caller (always on while armed): (target, the image return address of the call, the
+ * one above it) -> count, so that a run whose clients part on a lazy update names the call site without a
+ * row window (the timing-dependent cases do not reproduce at the same tick). MoveWorker only: no lock. */
+#define UL_CALLERS 1024u
+typedef struct {uint32_t c0,c1,count;uint8_t target,used;} ul_caller_t;
+static ul_caller_t ul_callers[UL_CALLERS];
+static uint64_t ul_callers_full;
+static void ul_caller_count(unsigned target,const uint32_t *chain) {
+    uint32_t h=(chain[0]*0x9e3779b1u)^(chain[1]*0x85ebca6bu)^target;
+    for(unsigned i=0;i<UL_CALLERS;i++) {
+        ul_caller_t *e=&ul_callers[(h+i)&(UL_CALLERS-1)];
+        if(!e->used) {e->used=1;e->target=(uint8_t)target;e->c0=chain[0];e->c1=chain[1];e->count=1;return;}
+        if(e->target==target && e->c0==chain[0] && e->c1==chain[1]) {++e->count;return;}
+    }
+    ++ul_callers_full;
+}
+static int ul_caller_order(const void *a,const void *b) {
+    const ul_caller_t *p=a,*q=b;
+    if(p->target!=q->target) return p->target<q->target?-1:1;
+    if(p->c0!=q->c0) return p->c0<q->c0?-1:1;
+    return p->c1<q->c1?-1:p->c1>q->c1;
+}
+/* UI_LAZY_CALLERS: one token per call site in a fixed order, 'c|t|u:caller/above=count'. */
+static int ul_callers_text(char *out,size_t cap) {
+    static ul_caller_t sorted[UL_CALLERS];unsigned n=0;
+    for(unsigned i=0;i<UL_CALLERS;i++) if(ul_callers[i].used) sorted[n++]=ul_callers[i];
+    qsort(sorted,n,sizeof(sorted[0]),ul_caller_order);
+    int w=snprintf(out,cap,"sites=%u full=%llu",n,(unsigned long long)ul_callers_full);
+    for(unsigned i=0;i<n && w>0 && (size_t)w<cap;i++)
+        w+=snprintf(out+w,cap-(size_t)w," %c:%x/%x=%u","ctu"[sorted[i].target<3?sorted[i].target:0],sorted[i].c0,sorted[i].c1,sorted[i].count);
+    return w>0 && (size_t)w<cap?w:0;
+}
 /* 1: a UI query in an admitted frame that 'block' skips; 0: run natively. */
 static int ul_ui_query(unsigned target,const void *container,uint64_t a1,uint64_t a2) {
     if(!ul_mode || !(stats.active && boot_phase==3)) return 0;
@@ -111,11 +155,11 @@ static int ul_ui_query(unsigned target,const void *container,uint64_t a1,uint64_
     }
     uint32_t chain[UL_CHAIN];int lua=(ul_from_lua_fn?ul_from_lua_fn:ul_stack_from_lua)(chain);
     if(!lua) {
-        ++ul_sim[target];
+        ++ul_sim[target];ul_caller_count(target,chain);
         if(window) ul_record(target,container,chain,0,0,a1,a2,ul_state_of(target,container));
         return 0;
     }
-    ++ul_lua[target];int block=ul_mode==UL_BLOCK;if(block) ++ul_blocked;
+    ++ul_lua[target];int block=ul_mode>=UL_BLOCK;if(block) ++ul_blocked;
     ul_record(target,container,chain,block,1,a1,a2,ul_state_of(target,container));
     return block;
 }
@@ -130,18 +174,43 @@ static uint64_t ul_filter_class(const void *filter) {
     if(!read_local(filter,&vt,8)) return 0xffffffffu;
     return ul_rva(vt);
 }
+/* 'key': the TLS word to seed for a call that ran past ul_ui_query (NULL: run as is). */
+static uint64_t *ul_key_word(unsigned target,const void *container,uint64_t bits,uint64_t *seed) {
+    if(ul_mode!=UL_KEY || !(stats.active && boot_phase==3) || GetCurrentThreadId()!=ui_thread) return NULL;
+    uint64_t runtime=0,key=0;unsigned klass=WORLD_KEY_NONE;
+    if(container && read_local((const unsigned char*)container+8,&runtime,8) && runtime) key=world_identity_key(runtime,&klass);
+    uint64_t *word=key?(ul_tls_word_fn?ul_tls_word_fn:actor_all_tls_rng)():NULL;
+    if(!word) {++ul_unkeyed;return NULL;}
+    ++ul_keyed[target];
+    *seed=target==UL_CARGO?lockstep_seed(UL_KEY_DOMAIN,bits,key,0,0,0):lockstep_seed(UL_KEY_DOMAIN,stats.issued,key,target,ul_state_of(target,container),0);
+    return word;
+}
 static void ul_cargo(void *container,double now,uint64_t force) {
-    uint64_t bits;memcpy(&bits,&now,8);
+    uint64_t bits,seed=0;memcpy(&bits,&now,8);
     if(ul_ui_query(UL_CARGO,container,bits,force&0xff)) return;
-    ((ul_cargo_fn)(void *)ul_trampoline(UL_CARGO))(container,now,force);
+    uint64_t *word=ul_key_word(UL_CARGO,container,bits,&seed);
+    if(!word) {((ul_cargo_fn)(void *)ul_trampoline(UL_CARGO))(container,now,force);return;}
+    uint64_t saved=*word;*word=seed;
+    __try {((ul_cargo_fn)(void *)ul_trampoline(UL_CARGO))(container,now,force);}
+    __finally {*word=saved;}
 }
 static uint64_t ul_trade(void *container,uint64_t force,uint64_t a3,uint64_t a4) {
     if(ul_ui_query(UL_TRADE,container,force&0xff,a3&0xff)) return 0;
-    return ((ul_trade_fn)(void *)ul_trampoline(UL_TRADE))(container,force,a3,a4);
+    uint64_t seed=0,*word=ul_key_word(UL_TRADE,container,0,&seed);
+    if(!word) return ((ul_trade_fn)(void *)ul_trampoline(UL_TRADE))(container,force,a3,a4);
+    uint64_t saved=*word,result=0;*word=seed;
+    __try {result=((ul_trade_fn)(void *)ul_trampoline(UL_TRADE))(container,force,a3,a4);}
+    __finally {*word=saved;}
+    return result;
 }
 static uint64_t ul_units(void *container,void *filter,uint64_t flag) {
     if(ul_ui_query(UL_UNITS,container,ul_filter_class(filter),flag&0xff)) {uint32_t total=0;read_local((unsigned char*)container+0x680,&total,4);return total;}
-    return ((ul_units_fn)(void *)ul_trampoline(UL_UNITS))(container,filter,flag);
+    uint64_t seed=0,*word=ul_key_word(UL_UNITS,container,0,&seed);
+    if(!word) return ((ul_units_fn)(void *)ul_trampoline(UL_UNITS))(container,filter,flag);
+    uint64_t saved=*word,result=0;*word=seed;
+    __try {result=((ul_units_fn)(void *)ul_trampoline(UL_UNITS))(container,filter,flag);}
+    __finally {*word=saved;}
+    return result;
 }
 static void *const ul_entries[UL_TARGETS]={(void*)ul_cargo,(void*)ul_trade,(void*)ul_units};
 /* Trampoline: the stolen bytes, then jmp [rip] back; entry stub (+0x20): jmp [rip] to the C entry. */
@@ -194,7 +263,7 @@ static int ul_lua_module(void) {
 /* Before the snapshot load and the first admitted frame, on the MoveWorker. */
 static int ul_arm(int mode) {
     if(ul_installed) return stats.active && ul_mode==mode;
-    if(mode!=UL_OBSERVE && mode!=UL_BLOCK) {ul_stage="mode";return 0;}
+    if(mode!=UL_OBSERVE && mode!=UL_BLOCK && mode!=UL_KEY) {ul_stage="mode";return 0;}
     if(!stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
     if(!world_identity_installed) {ul_stage="needs";return 0;}
     for(unsigned i=0;i<UL_TARGETS;i++) if(ul_state(i)!=0) {ul_stage="pins";return 0;}
@@ -206,7 +275,7 @@ static int ul_arm(int mode) {
     for(unsigned i=0;i<UL_TARGETS;i++) ul_write_code(ul_page+UL_STUB*i,i,image+ul_targets[i].rva);
     if(!VirtualProtect(ul_page,0x1000,PAGE_EXECUTE_READ,&ignored)) {ul_stage="page";return 0;}
     FlushInstructionCache(GetCurrentProcess(),ul_page,0x1000);
-    memset(ul_lua,0,sizeof(ul_lua));memset(ul_sim,0,sizeof(ul_sim));for(unsigned i=0;i<UL_TARGETS;i++) ul_other[i]=0;ul_blocked=ul_unmapped=0;ul_rows=0;ul_failures=0;ul_restored=0;
+    memset(ul_lua,0,sizeof(ul_lua));memset(ul_sim,0,sizeof(ul_sim));memset(ul_callers,0,sizeof(ul_callers));ul_callers_full=0;for(unsigned i=0;i<UL_TARGETS;i++) ul_other[i]=0;ul_blocked=ul_unmapped=ul_unkeyed=0;memset(ul_keyed,0,sizeof(ul_keyed));ul_rows=0;ul_failures=0;ul_restored=0;
     ul_mode=mode;ul_installed=1;
     for(unsigned i=0;i<UL_TARGETS;i++) {
         unsigned char orig[5],patch[5]={0xe9};int32_t d=ul_rel(i);memcpy(orig,image+ul_targets[i].rva,5);memcpy(patch+1,&d,4);
@@ -239,10 +308,10 @@ static int ul_row(uint64_t index,char *out,size_t cap) {
     return n>0 && (size_t)n<cap?n:0;
 }
 static int ul_status(char *out,size_t cap) {
-    static const char *const modes[3]={"off","observe","block"};
-    int n=snprintf(out,cap,"installed=%d mode=%s frame=%llu lua=%llu/%llu/%llu sim=%llu/%llu/%llu other=%lld/%lld/%lld blocked=%llu unmapped=%llu rows=%lld window=%llu-%llu restored=%d stage=%s failures=%lld",
-        ul_installed,modes[ul_mode>=0 && ul_mode<3?ul_mode:0],(unsigned long long)stats.issued,(unsigned long long)ul_lua[0],(unsigned long long)ul_lua[1],
+    static const char *const modes[4]={"off","observe","block","key"};
+    int n=snprintf(out,cap,"installed=%d mode=%s frame=%llu lua=%llu/%llu/%llu sim=%llu/%llu/%llu other=%lld/%lld/%lld blocked=%llu unmapped=%llu rows=%lld window=%llu-%llu restored=%d stage=%s failures=%lld keyed=%llu/%llu/%llu unkeyed=%llu",
+        ul_installed,modes[ul_mode>=0 && ul_mode<4?ul_mode:0],(unsigned long long)stats.issued,(unsigned long long)ul_lua[0],(unsigned long long)ul_lua[1],
         (unsigned long long)ul_lua[2],(unsigned long long)ul_sim[0],(unsigned long long)ul_sim[1],(unsigned long long)ul_sim[2],(long long)ul_other[0],(long long)ul_other[1],(long long)ul_other[2],(unsigned long long)ul_blocked,
-        (unsigned long long)ul_unmapped,(long long)ul_rows,(unsigned long long)ul_window_from,(unsigned long long)ul_window_to,ul_restored,ul_stage,(long long)ul_failures);
+        (unsigned long long)ul_unmapped,(long long)ul_rows,(unsigned long long)ul_window_from,(unsigned long long)ul_window_to,ul_restored,ul_stage,(long long)ul_failures,(unsigned long long)ul_keyed[0],(unsigned long long)ul_keyed[1],(unsigned long long)ul_keyed[2],(unsigned long long)ul_unkeyed);
     return n>0 && (size_t)n<cap?n:0;
 }

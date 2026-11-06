@@ -280,6 +280,7 @@ static int pslot_vtable_is_copy(uintptr_t vtable);
 #include "lockstep_bullet.h"
 #include "lockstep_bullet_cadence.h"
 #include "lockstep_speak_timer.h"
+#include "lockstep_speech_clock.h"
 #include "lockstep_death.h"
 #include "lockstep_mass.h"
 #include "lockstep_attention.h"
@@ -378,6 +379,7 @@ static int world_nav_live_prefixes(void) {
 #include "lockstep_ui_cargo.h"
 #include "lockstep_supply_rows.h"
 #include "lockstep_ui_lazy.h"
+#include "lockstep_ui_exports.h"
 #include "lockstep_supply_wants.h"
 #include "lockstep_loadout_order.h"
 #include "lockstep_order_canon.h"
@@ -552,6 +554,105 @@ static int gate_sites_owned(void) {
        (event_order_installed && *(uint64_t*)(image+EVENT_ORDER_SITE)!=event_order_patched_word) ||
        *(unsigned short*)(image+0xfa3302)!=0x9066||*(double*)(image+0x6adfc60)!=gate_tick_dt() || *(unsigned char*)(image+0x6adfc58));
 }
+/* Which term of gate_sites_owned failed first (stop reason 3 diagnostics); NULL: all owned. */
+static const char *gate_sites_unowned(void) {
+    if(*(uint64_t*)(image+WORD_RVA)!=patched_word) return "*(uint64_t*)(image+WORD_RVA)!=patched_word";
+    if((path_installed && *(unsigned __int128*)(image+0xef4610)!=path_patched)) return "(path_installed && *(unsigned __int128*)(image+0xef4610)!=path_patched)";
+    if(!travel_owned()) return "!travel_owned()";
+    if(!tsnap_owned()) return "!tsnap_owned()";
+    if(!pilot_owned()) return "!pilot_owned()";
+    if((ship_installed && *(void**)(image+SHIP_ENTRY)!=(void*)ship_move)) return "(ship_installed && *(void**)(image+SHIP_ENTRY)!=(void*)ship_move)";
+    if(!weapon_owned()) return "!weapon_owned()";
+    if(!bullet_owned()) return "!bullet_owned()";
+    if(!bullet_cadence_owned()) return "!bullet_cadence_owned()";
+    if(!speak_timer_owned()) return "!speak_timer_owned()";
+    if(!cr_owned()) return "!cr_owned()";
+    if(!nav_cadence_owned()) return "!nav_cadence_owned()";
+    if(!nav_player_owned()) return "!nav_player_owned()";
+    if(!ss_owned()) return "!ss_owned()";
+    if(!pt_owned()) return "!pt_owned()";
+    if(!wr_owned()) return "!wr_owned()";
+    if(!trr_owned()) return "!trr_owned()";
+    if(!tz_owned()) return "!tz_owned()";
+    if(!gwide_owned()) return "!gwide_owned()";
+    if(!view_owned()) return "!view_owned()";
+    if(!mt_owned()) return "!mt_owned()";
+    if(!rc_owned()) return "!rc_owned()";
+    if(!wfire_owned()) return "!wfire_owned()";
+    if(!motion_order_owned()) return "!motion_order_owned()";
+    if(!wreck_owned()) return "!wreck_owned()";
+    if(!ptrace_owned()) return "!ptrace_owned()";
+    if(!border_owned()) return "!border_owned()";
+    if(!sorder_owned()) return "!sorder_owned()";
+    if(!erng_owned()) return "!erng_owned()";
+    if(!brng_owned()) return "!brng_owned()";
+    if(!uic_owned()) return "!uic_owned()";
+    if(!spr_owned()) return "!spr_owned()";
+    if(!ul_owned()) return "!ul_owned()";
+    if(!noct_owned()) return "!noct_owned()";
+    if(!pmath_owned()) return "!pmath_owned()";
+    if(!xrcp_owned()) return "!xrcp_owned()";
+    if(!fpenv_owned()) return "!fpenv_owned()";
+    if(!pdec_owned()) return "!pdec_owned()";
+    if(!pbud_owned()) return "!pbud_owned()";
+    if(!ptf_owned()) return "!ptf_owned()";
+    if(!bpose_owned()) return "!bpose_owned()";
+    if(!sw_owned()) return "!sw_owned()";
+    if(!ll_owned()) return "!ll_owned()";
+    if(!oc_owned()) return "!oc_owned()";
+    if(!po_owned()) return "!po_owned()";
+    if(!ma_owned()) return "!ma_owned()";
+    if(!br_owned()) return "!br_owned()";
+    if(!eco_owned()) return "!eco_owned()";
+    if((attention_installed && *(uint64_t*)(image+ATTENTION_ENTRY)!=attention_patched_word)) return "(attention_installed && *(uint64_t*)(image+ATTENTION_ENTRY)!=attention_patched_word)";
+    if((mass_installed && *(uint64_t*)(image+MASS_ENTRY)!=mass_patched_word)) return "(mass_installed && *(uint64_t*)(image+MASS_ENTRY)!=mass_patched_word)";
+    if((death_installed && *(void**)(image+DEATH_ENTRY)!=(void*)death_listener)) return "(death_installed && *(void**)(image+DEATH_ENTRY)!=(void*)death_listener)";
+    if((params_installed && *(unsigned __int128*)(image+PARAMS_ENTRY)!=params_patched_word)) return "(params_installed && *(unsigned __int128*)(image+PARAMS_ENTRY)!=params_patched_word)";
+    if((nav_installed && *(void**)(image+NAV_ENTRY)!=(void*)nav_move)) return "(nav_installed && *(void**)(image+NAV_ENTRY)!=(void*)nav_move)";
+    if((velocity_installed && *(void**)(image+VELOCITY_ENTRY)!=(void*)velocity_move)) return "(velocity_installed && *(void**)(image+VELOCITY_ENTRY)!=(void*)velocity_move)";
+    if((shape_installed && *(uint64_t*)(image+SHAPE_ENTRY)!=shape_patched_word)) return "(shape_installed && *(uint64_t*)(image+SHAPE_ENTRY)!=shape_patched_word)";
+    if((agent_installed && *(int32_t*)(image+AGENT_REL)!=agent_patched_rel)) return "(agent_installed && *(int32_t*)(image+AGENT_REL)!=agent_patched_rel)";
+    if((ai_installed && *(unsigned __int128*)(image+AI_WORD)!=ai_patched_word)) return "(ai_installed && *(unsigned __int128*)(image+AI_WORD)!=ai_patched_word)";
+    if((radar_installed && *(void**)(image+RADAR_ENTRY)!=(void*)radar_handler)) return "(radar_installed && *(void**)(image+RADAR_ENTRY)!=(void*)radar_handler)";
+    if((interrupt_installed && *(uint64_t*)(image+INTERRUPT_ENTRY)!=interrupt_patched_word)) return "(interrupt_installed && *(uint64_t*)(image+INTERRUPT_ENTRY)!=interrupt_patched_word)";
+    if((job_rng_installed && *(uint64_t*)(image+JOB_QUEUE_ENTRY)!=job_rng_patched_word)) return "(job_rng_installed && *(uint64_t*)(image+JOB_QUEUE_ENTRY)!=job_rng_patched_word)";
+    if(!script_rng_owned()) return "!script_rng_owned()";
+    if(!md_timed_owned()) return "!md_timed_owned()";
+    if(!boot_hold_owned()) return "!boot_hold_owned()";
+    if(!md_resume_owned()) return "!md_resume_owned()";
+    if(!find_order_owned()) return "!find_order_owned()";
+    if(!region_rng_owned()) return "!region_rng_owned()";
+    if(!ai_wait_owned()) return "!ai_wait_owned()";
+    if(!spawn_rng_owned()) return "!spawn_rng_owned()";
+    if(!gdl_owned()) return "!gdl_owned()";
+    if((interrupt_step_installed && *(uint64_t*)(image+INTERRUPT_STEP_ENTRY)!=interrupt_step_patched_word)) return "(interrupt_step_installed && *(uint64_t*)(image+INTERRUPT_STEP_ENTRY)!=interrupt_step_patc";
+    if((nested_action_installed && *(unsigned __int128*)(image+NESTED_ACTION_WORD)!=nested_action_patched)) return "(nested_action_installed && *(unsigned __int128*)(image+NESTED_ACTION_WORD)!=nested_action";
+    if((npc_exec_installed && *(uint64_t*)(image+NPC_EXEC_ENTRY)!=npc_exec_patched_word)) return "(npc_exec_installed && *(uint64_t*)(image+NPC_EXEC_ENTRY)!=npc_exec_patched_word)";
+    if((npc_speak_installed && *(uint64_t*)(image+NPC_SPEAK_ENTRY)!=npc_speak_patched_word)) return "(npc_speak_installed && *(uint64_t*)(image+NPC_SPEAK_ENTRY)!=npc_speak_patched_word)";
+    if((npc_enqueue_installed && *(uint64_t*)(image+NPC_ENQUEUE_ENTRY)!=npc_enqueue_patched_word)) return "(npc_enqueue_installed && *(uint64_t*)(image+NPC_ENQUEUE_ENTRY)!=npc_enqueue_patched_word)";
+    if((npc_finish_installed && *(uint64_t*)(image+NPC_FINISH_ENTRY)!=npc_finish_patched_word)) return "(npc_finish_installed && *(uint64_t*)(image+NPC_FINISH_ENTRY)!=npc_finish_patched_word)";
+    if((npc_ready_installed && *(unsigned __int128*)(image+NPC_READY_WORD)!=npc_ready_patched)) return "(npc_ready_installed && *(unsigned __int128*)(image+NPC_READY_WORD)!=npc_ready_patched)";
+    if((npc_deadline_installed && *(unsigned __int128*)(image+NPC_DEADLINE_WORD)!=npc_deadline_patched)) return "(npc_deadline_installed && *(unsigned __int128*)(image+NPC_DEADLINE_WORD)!=npc_deadline_pa";
+    if((world_identity_installed && *(uint64_t*)(image+WORLD_IDENTITY_ENTRY)!=world_identity_patched_word)) return "(world_identity_installed && *(uint64_t*)(image+WORLD_IDENTITY_ENTRY)!=world_identity_patc";
+    if((created_installed && *(uint64_t*)(image+CREATED_ENTRY)!=created_patched_word)) return "(created_installed && *(uint64_t*)(image+CREATED_ENTRY)!=created_patched_word)";
+    if((rid_installed && *(uint64_t*)(image+RID_REMOVE_ENTRY)!=rid_patched_word)) return "(rid_installed && *(uint64_t*)(image+RID_REMOVE_ENTRY)!=rid_patched_word)";
+    if((interrupt_event_installed && *(void**)(image+INTERRUPT_EVENT_ENTRY)!=(void*)interrupt_event)) return "(interrupt_event_installed && *(void**)(image+INTERRUPT_EVENT_ENTRY)!=(void*)interrupt_eve";
+    if((damage_installed && *(uint64_t*)(image+DAMAGE_ENTRY)!=damage_patched_word)) return "(damage_installed && *(uint64_t*)(image+DAMAGE_ENTRY)!=damage_patched_word)";
+    if((contact_installed && *(uint64_t*)(image+CONTACT_ENTRY)!=contact_patched_word)) return "(contact_installed && *(uint64_t*)(image+CONTACT_ENTRY)!=contact_patched_word)";
+    if((contact_properties_installed && *(uint64_t*)(image+CONTACT_PROPERTIES_ENTRY)!=contact_properties_patched_word)) return "(contact_properties_installed && *(uint64_t*)(image+CONTACT_PROPERTIES_ENTRY)!=contact_pro";
+    if((gravidar_installed && *(uint64_t*)(image+GRAVIDAR_WORD)!=gravidar_patched_word)) return "(gravidar_installed && *(uint64_t*)(image+GRAVIDAR_WORD)!=gravidar_patched_word)";
+    if((gravidar_unit_installed && *(void**)(image+GRAVIDAR_UNIT_ENTRY)!=(void*)gravidar_unit)) return "(gravidar_unit_installed && *(void**)(image+GRAVIDAR_UNIT_ENTRY)!=(void*)gravidar_unit)";
+    if((flight_installed && *(void**)(image+FLIGHT_ENTRY)!=(void*)flight_update)) return "(flight_installed && *(void**)(image+FLIGHT_ENTRY)!=(void*)flight_update)";
+    if(*(double*)(image+SPEED_RVA)!=1.0) return "*(double*)(image+SPEED_RVA)!=1.0";
+    if((flight_ctor_installed && *(uint64_t*)(image+FLIGHT_CTOR)!=flight_ctor_patched_word)) return "(flight_ctor_installed && *(uint64_t*)(image+FLIGHT_CTOR)!=flight_ctor_patched_word)";
+    if((event_order_installed && *(uint64_t*)(image+EVENT_ORDER_SITE)!=event_order_patched_word)) return "(event_order_installed && *(uint64_t*)(image+EVENT_ORDER_SITE)!=event_order_patched_word)";
+    if(*(unsigned short*)(image+0xfa3302)!=0x9066) return "*(unsigned short*)(image+0xfa3302)!=0x9066";
+    if(*(double*)(image+0x6adfc60)!=gate_tick_dt()) return "*(double*)(image+0x6adfc60)!=gate_tick_dt()";
+    if(*(unsigned char*)(image+0x6adfc58)) return "*(unsigned char*)(image+0x6adfc58)";
+    return NULL;
+}
+static const char *gate_unowned_detail; /* recorded at stop reason 3 */
+
 #include "lockstep_getup_diagnostic_transport.h"
 static void join_jobinit_restore(void);   /* lockstep_join.h: a version 13 joiner's JobEngine::Init call */
 static void join_bootev_restore(void);    /* lockstep_join.h: a version 13 joiner's boot event passes */
@@ -596,6 +697,7 @@ static void finish(unsigned reason) {
     uic_restore();
     spr_restore();
     ul_restore();
+    ux_restore();
     pmath_restore();
     xrcp_restore();
     fpenv_restore();
@@ -787,8 +889,9 @@ static void gate_original_once(tick_fn original,void *frame,unsigned char loadin
  * original late join still applies queued orders and swaps state buffers. Wait
  * for the pass before universe/AI updates can race its reads; replace exactly
  * the one completion token we consumed for the original join to consume later. */
+static uint64_t path_boot_passes[3]; /* pathing passes released natively in boot phases 0-2 (loading frames) */
 static BOOL WINAPI path_release(HANDLE semaphore,LONG count,LPLONG previous) {
-    if(boot_mode && boot_phase<3) return ReleaseSemaphore(semaphore,count,previous);
+    if(boot_mode && boot_phase<3) {++path_boot_passes[boot_phase>=0 && boot_phase<3?boot_phase:0];return ReleaseSemaphore(semaphore,count,previous);}
     if(boot_mode) accept_ui();
     /* A render-only frame (lockstep_render_frames.h): no pass and none of the step's work. */
     if(InterlockedCompareExchange(&rf_frame_open,0,0)) return rf_path_release(semaphore,count,previous);
@@ -975,6 +1078,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(render_rng_installed && !render_rng_check()) {finish(90);gate_original_once(original,frame,loading);return;}
     if(bullet_cadence_installed && !bullet_cadence_check()) {finish(94);gate_original_once(original,frame,loading);return;}
     if(speak_timer_installed && !speak_timer_check()) {finish(SPEAK_TIMER_STOP);gate_original_once(original,frame,loading);return;}
+    if(sclock_armed && !sclock_tick()) {finish(SCLOCK_STOP);gate_original_once(original,frame,loading);return;}
     if(nav_cadence_installed && !nav_cadence_check()) {finish(95);gate_original_once(original,frame,loading);return;}
     if(nav_player_installed && !nav_player_check()) {finish(95);gate_original_once(original,frame,loading);return;}
     if(co_armed && !co_check()) {finish(CO_STOP_REASON);gate_original_once(original,frame,loading);return;}
@@ -997,6 +1101,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(uic_installed && !uic_check()) {finish(UIC_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(spr_installed && !spr_check()) {finish(SPR_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(ul_installed && !ul_check()) {finish(UL_STOP_REASON);gate_original_once(original,frame,loading);return;}
+    if(ux_installed && !ux_check()) {finish(UX_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(pmath_installed && !pmath_check()) {finish(PMATH_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(xrcp_installed && !xrcp_check()) {finish(XRCP_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(fpenv_installed && !fpenv_tick(stats.issued)) {finish(FPENV_STOP_REASON);gate_original_once(original,frame,loading);return;}
@@ -1058,7 +1163,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     }
     if(thread!=main_thread||loading||!table||*(int*)((unsigned char*)table+0x130)) {finish(2);gate_original_once(original,frame,loading);return;}
     if(!gate_sites_owned()) {
-        finish(3);gate_original_once(original,frame,loading);return;
+        gate_unowned_detail=gate_sites_unowned();finish(3);gate_original_once(original,frame,loading);return;
     }
     if(snapshot_configured && !snapshot_bound &&
        !snapshot_bind((snapshot_find_fn)(image+0xced70),*(void**)(image+0x6cf1500))) {
@@ -1439,6 +1544,11 @@ static int lua_bullet_cadence_status(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_speak_timer(lua_State *L) {p_lua_pushnumber(L,speak_timer_arm());return 1;}
+static int lua_speech_clock(lua_State *L) {p_lua_pushnumber(L,sclock_arm());return 1;}
+static int lua_speech_clock_status(lua_State *L) {
+    char out[256];int n=accept_ui()?sclock_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 static int lua_speak_timer_status(lua_State *L) {
     char out[256];int n=accept_ui()?speak_timer_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
@@ -1773,7 +1883,10 @@ static int lua_path_budget_status(lua_State *L) {
 static int lua_path_transforms(lua_State *L) {
     const char *mode=p_lua_tolstring(L,1,NULL);
     int m=mode && !strcmp(mode,"sim")?PTF_SIM:mode && !strcmp(mode,"observe")?PTF_OBSERVE:PTF_OFF;
-    p_lua_pushnumber(L,m!=PTF_OFF && ptf_arm(m));return 1;
+    double from=p_lua_tonumber(L,2),to=p_lua_tonumber(L,3);int window=1; /* (mode, from, to): the formation row window */
+    if(isfinite(from) && isfinite(to) && to>0) window=from>=1 && to>=from && to<9007199254740992.0 && floor(from)==from && floor(to)==to &&
+        ptf_window((uint64_t)from,(uint64_t)to);
+    p_lua_pushnumber(L,m!=PTF_OFF && window && ptf_arm(m));return 1;
 }
 static int lua_path_transforms_status(lua_State *L) {
     char out[512];int n=accept_ui()?ptf_status(out,sizeof(out)):0;
@@ -1904,7 +2017,7 @@ static int lua_supply_row(lua_State *L) {
 /* ui_lazy(mode): 'observe' or 'block'. */
 static int lua_ui_lazy(lua_State *L) {
     size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);
-    int m=mode && length==5 && !memcmp(mode,"block",5)?UL_BLOCK:mode && length==7 && !memcmp(mode,"observe",7)?UL_OBSERVE:-1;
+    int m=mode && length==5 && !memcmp(mode,"block",5)?UL_BLOCK:mode && length==3 && !memcmp(mode,"key",3)?UL_KEY:mode && length==7 && !memcmp(mode,"observe",7)?UL_OBSERVE:-1;
     double from=p_lua_tonumber(L,2),to=p_lua_tonumber(L,3);int window=1;
     if(isfinite(from) && isfinite(to) && to>0) window=from>=1 && to>=from && to<9007199254740992.0 && floor(from)==from && floor(to)==to &&
         ul_window((uint64_t)from,(uint64_t)to);
@@ -2054,6 +2167,83 @@ static int lua_address_order_row(lua_State *L) {
     double index=p_lua_tonumber(L,1);char out[512];int n=0;
     if(accept_ui()) ao_on_tick();
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=ao_row((uint64_t)index,out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.ui_exports('observe'|'block'): native_gate_ui_exports, lockstep_ui_exports.h. Before the snapshot load. */
+static int lua_ui_exports(lua_State *L) {
+    size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);
+    int m=mode && length==7 && !memcmp(mode,"observe",7)?UX_OBSERVE:mode && length==5 && !memcmp(mode,"block",5)?UX_BLOCK:UX_OFF;
+    p_lua_pushnumber(L,m!=UX_OFF && ux_arm(m));return 1;
+}
+/* gate.ui_exports_relay_kinds(name, kinds): relay a hooked export (lockstep_ui_exports.h); 1 on success. */
+static int lua_ui_exports_relay_kinds(lua_State *L) {
+    size_t length=0,count=0;const char *name=p_lua_tolstring(L,1,&length),*kinds=p_lua_tolstring(L,2,&count);
+    p_lua_pushnumber(L,name && kinds && ux_installed && ux_mark_relay(name,length,kinds,count));return 1;
+}
+/* gate.ui_exports_take(): the oldest captured UI call as hex, or nil. */
+static int lua_ui_exports_take(lua_State *L) {
+    char out[2*UX_RECORD+1];int n=accept_ui()?ux_take(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.ui_exports_name(index): the hooked export's name, or nil. */
+static int lua_ui_exports_name(lua_State *L) {
+    double index=p_lua_tonumber(L,1);
+    if(isfinite(index) && index>=0 && index<ux_count && floor(index)==index) p_lua_pushlstring(L,ux_name[(unsigned)index],strlen(ux_name[(unsigned)index]));
+    else p_lua_pushnil(L);
+    return 1;
+}
+/* gate.ui_exports_address(index): the hooked export's original entry (a number; user-mode addresses fit a
+ * double), for the relay's replay through a function pointer: X4 refuses some FFI symbols to extension
+ * code, and the pointer neither resolves a symbol nor passes the stub. */
+static int lua_ui_exports_address(lua_State *L) {
+    double index=p_lua_tonumber(L,1);
+    if(ux_installed && isfinite(index) && index>=0 && index<ux_count && floor(index)==index) p_lua_pushnumber(L,(double)(uintptr_t)ux_target[(unsigned)index]);
+    else p_lua_pushnil(L);
+    return 1;
+}
+/* gate.runtime_of(key): this client's runtime ID (16 hex) of a portable key (saved, or created with
+ * bit 63), or nil. Saved keys scan the sealed import table (a UI call's replay, not a per-frame path). */
+static int lua_runtime_of(lua_State *L) {
+    size_t length=0;const char *text=p_lua_tolstring(L,1,&length);uint64_t key=0,runtime=0;
+    if(!text || length!=16) {p_lua_pushnil(L);return 1;}
+    for(unsigned i=0;i<16;i++) {char c=text[i];unsigned d=c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:16;if(d>15) {p_lua_pushnil(L);return 1;}key=(key<<4)|d;}
+    if(key&CREATED_BIT) runtime=created_runtime_of(key);
+    else if(key && world_identities) for(unsigned i=0;i<WORLD_IDENTITY_CAPACITY && !runtime;i++) if(world_identities[i].saved==key) runtime=world_identities[i].runtime;
+    if(!runtime) {p_lua_pushnil(L);return 1;}
+    char out[17];snprintf(out,sizeof(out),"%016llx",(unsigned long long)runtime);p_lua_pushlstring(L,out,16);return 1;
+}
+/* gate.key_of(runtime): the portable key (16 hex) of this client's runtime ID (16 hex), or nil when the
+ * object has none: the Lua-global relay's component arguments, the inverse of runtime_of. */
+static int lua_key_of(lua_State *L) {
+    size_t length=0;const char *text=p_lua_tolstring(L,1,&length);uint64_t runtime=0,key;unsigned klass;
+    if(!text || length!=16) {p_lua_pushnil(L);return 1;}
+    for(unsigned i=0;i<16;i++) {char c=text[i];unsigned d=c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:16;if(d>15) {p_lua_pushnil(L);return 1;}runtime=(runtime<<4)|d;}
+    if(!runtime || !(key=world_identity_key(runtime,&klass))) {p_lua_pushnil(L);return 1;}
+    char out[17];snprintf(out,sizeof(out),"%016llx",(unsigned long long)key);p_lua_pushlstring(L,out,16);return 1;
+}
+/* gate.ui_exports_block(name): mark a hooked export for 'block'; 1 if hooked. */
+static int lua_ui_exports_block(lua_State *L) {
+    size_t length=0;const char *name=p_lua_tolstring(L,1,&length);
+    p_lua_pushnumber(L,name && ux_installed && ux_mark_block(name,length));return 1;
+}
+static int lua_ui_exports_status(lua_State *L) {
+    char out[384];int n=accept_ui()?ux_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_ui_exports_row(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[256];
+    int n=accept_ui() && isfinite(index) && index>=0 && floor(index)==index?ux_row_text((uint64_t)index,out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.ui_exports_relay(1|0): bracket the probe's application of relayed commands (calls inside are not UI writes). */
+static int lua_ui_exports_relay(lua_State *L) {
+    double on=p_lua_tonumber(L,1);
+    if(on==1) InterlockedIncrement(&ux_relay_depth);else if(InterlockedCompareExchange(&ux_relay_depth,0,0)>0) InterlockedDecrement(&ux_relay_depth);
+    p_lua_pushnumber(L,(double)InterlockedCompareExchange(&ux_relay_depth,0,0));return 1;
+}
+/* gate.ui_lazy_callers(): simulation calls per call site (UI_LAZY_CALLERS). */
+static int lua_ui_lazy_callers(lua_State *L) {
+    static char out[65536];int n=accept_ui()?ul_callers_text(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_ui_lazy_status(lua_State *L) {
@@ -2729,6 +2919,8 @@ static int lua_poll(lua_State *L) {
     p_lua_pushnumber(L,path_restored);p_lua_setfield(L,-2,"path_restored");
     p_lua_pushnumber(L,(double)rng_seeds);p_lua_setfield(L,-2,"rng_seeds");
     p_lua_pushnumber(L,boot_phase);p_lua_setfield(L,-2,"boot_phase");
+    p_lua_pushnumber(L,(double)(path_boot_passes[0]+path_boot_passes[1]));p_lua_setfield(L,-2,"path_boot_passes_menu");
+    p_lua_pushnumber(L,(double)path_boot_passes[2]);p_lua_setfield(L,-2,"path_boot_passes_load");
     p_lua_pushnumber(L,dt_restored);p_lua_setfield(L,-2,"dt_restored");
     p_lua_pushnumber(L,flight_restored);p_lua_setfield(L,-2,"flight_restored");
     p_lua_pushnumber(L,(double)flight_calls);p_lua_setfield(L,-2,"flight_calls");
@@ -3358,6 +3550,8 @@ static int lua_interrupt(lua_State *L) {
 }
 /* gate.play_mode(): native_gate_play_mode, before the boot. */
 static int lua_play_mode(lua_State *L) {gate_play_mode=1;p_lua_pushnumber(L,1);return 1;}
+/* gate.unowned(): the first gate_sites_owned term that failed at a stop with reason 3, else nil. */
+static int lua_unowned(lua_State *L) {if(gate_unowned_detail) p_lua_pushlstring(L,gate_unowned_detail,strlen(gate_unowned_detail));else p_lua_pushnil(L);return 1;}
 /* gate.npc_action_rows(): native_gate_npc_lifecycle, something drains the NPC action rows. */
 static int lua_npc_action_rows(lua_State *L) {npc_action_rows=1;p_lua_pushnumber(L,1);return 1;}
 static int lua_interrupt_faults(lua_State *L) {
@@ -3513,6 +3707,20 @@ static int lua_world_hash_shields_status(lua_State *L) {
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
 static int lua_world_capture_nav_v2(lua_State *L) {return lua_world_capture_schema(L,2);}
+/* gate.world_nav_hash(tick): NAV_1:tick:count:sha256 of the indexed navigation parts (after a schema-2 capture), or
+ * nil and the stage. */
+static int lua_world_nav_hash(lua_State *L) {
+    double number=p_lua_tonumber(L,1);char out[128];
+    if(!accept_ui() || !stats.active || !boot_mode || boot_phase!=3 || !world_identity_installed ||
+       !isfinite(number) || number<1 || number!=(double)stats.issued || !world_nav_hash((uint64_t)number,out,sizeof(out))) {
+        p_lua_pushnil(L);p_lua_pushlstring(L,world_nav_stage,strlen(world_nav_stage));return 2;
+    }
+    p_lua_pushlstring(L,out,strlen(out));return 1;
+}
+static int lua_world_nav_status(lua_State *L) {
+    char out[256];int n=accept_ui()?world_nav_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 static int lua_world_page(lua_State *L) {
     double number=p_lua_tonumber(L,1);
     if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures) {p_lua_pushnil(L);return 1;}
@@ -4061,8 +4269,8 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(sha256);
     METHOD(start);METHOD(report);METHOD(poll);METHOD(stop);METHOD(actor);METHOD(boot);METHOD(load_requested);METHOD(frame_timing);METHOD(qpc_us);METHOD(timer_resolution);METHOD(timer_resolution_status);METHOD(boot_rng_anchor);METHOD(boot_rng_anchor_status);METHOD(path_determinism);METHOD(path_determinism_status);METHOD(travel_determinism);METHOD(travel_determinism_status);METHOD(ai_schedule);METHOD(ai_schedule_status);METHOD(ai_schedule_fallbacks);METHOD(thread_rng);METHOD(event_order);METHOD(event_order_status);METHOD(event_rows);METHOD(event_order_row);METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(boot_hold);METHOD(boot_hold_status);METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);METHOD(gravidar_key);METHOD(gravidar_time);METHOD(gravidar_key_status);METHOD(gravidar_watch);METHOD(gravidar_watch_row);METHOD(gravidar_watch_set);METHOD(gravidar_watch_status);METHOD(gravidar_posts);METHOD(gravidar_posts_status);METHOD(gravidar_post_row);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(job_rng);METHOD(job_rng_status);METHOD(job_rng_row);METHOD(flight);METHOD(avoidance);METHOD(ai);METHOD(agent);METHOD(ship);METHOD(travel_snapshot);METHOD(travel_snapshot_status);METHOD(event_rng);METHOD(event_rng_status);METHOD(event_rng_row);
     METHOD(render_rng_split);METHOD(render_rng_split_status);METHOD(camera_perturb);METHOD(camera_perturb_status);
-    METHOD(bullet_cadence);METHOD(bullet_cadence_status);METHOD(speak_timer);METHOD(speak_timer_status);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(draw_watch_add);METHOD(draw_watch_frame);METHOD(draw_watch_frame_end);METHOD(draw_watch);METHOD(draw_watch_status);METHOD(draw_watch_row);METHOD(nav_params_init);METHOD(nav_player);METHOD(nav_player_status);METHOD(command_order);METHOD(command_order_status);METHOD(command_order_row);METHOD(attention_all);METHOD(attention_all_status);METHOD(command_order_rows);METHOD(ship_sound_rng);METHOD(ship_sound_rng_status);METHOD(draw_watch_stray);METHOD(player_timer);METHOD(player_timer_status);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(transition_rows);METHOD(transition_rows_status);METHOD(transition_row);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);
-    METHOD(view_points);METHOD(view_points_frame);METHOD(view_points_status);METHOD(view_points_rows);METHOD(view_points_row);METHOD(view_points_triggers);METHOD(view_points_ui);METHOD(view_points_source);METHOD(view_points_mask);METHOD(hybrid);METHOD(hybrid_frame);METHOD(hybrid_proposal);METHOD(hybrid_apply);METHOD(hybrid_census);METHOD(hybrid_private);METHOD(hybrid_inside);METHOD(hybrid_status);METHOD(sample_profile);METHOD(sample_profile_status);METHOD(sample_profile_row);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_uncovered);METHOD(region_camera_standins);METHOD(region_camera_status);METHOD(region_camera_effect_row);METHOD(region_camera_policy_rows);METHOD(region_camera_policy_row);METHOD(region_camera_highway_rows);METHOD(region_camera_highway_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(motion_watch);METHOD(motion_watch_zone);METHOD(motion_watch_digest);METHOD(motion_watch_doors);METHOD(motion_watch_door_row);METHOD(motion_watch_splines);METHOD(motion_watch_spline_row);METHOD(spline_join_all);METHOD(motion_watch_frame);METHOD(motion_watch_row);METHOD(motion_watch_status);METHOD(motion_watch_orders);METHOD(motion_watch_order_row);METHOD(motion_watch_target_row);METHOD(motion_watch_event_row);METHOD(motion_watch_refresh_row);METHOD(wreck_watch);METHOD(wreck_watch_frame);METHOD(wreck_watch_row);METHOD(wreck_watch_write_row);METHOD(wreck_watch_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(build_rng);METHOD(build_rng_status);METHOD(ui_cargo);METHOD(ui_cargo_status);METHOD(ui_cargo_row);METHOD(supply_rows);METHOD(supply_rows_status);METHOD(supply_row);METHOD(ui_lazy);METHOD(ui_lazy_status);METHOD(ui_lazy_row);METHOD(portable_math);METHOD(portable_math_status);METHOD(exact_reciprocal);METHOD(exact_reciprocal_status);METHOD(fp_env);METHOD(fp_env_status);METHOD(decimal);METHOD(decimal_status);METHOD(supply_wants);METHOD(supply_wants_status);METHOD(supply_wants_row);METHOD(macro_arena);METHOD(macro_arena_status);METHOD(macro_arena_row);METHOD(pick_order);METHOD(pick_order_status);METHOD(pick_order_row);METHOD(order_canon);METHOD(order_canon_status);METHOD(order_canon_row);METHOD(address_order);METHOD(address_order_status);METHOD(address_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(runtime_ids);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_rows);METHOD(runtime_ids_row);METHOD(guidance_local);METHOD(guidance_local_status);METHOD(fp_redirect_drones);METHOD(fp_attack);METHOD(fp_attack_watch);METHOD(fp_attack_status);METHOD(fp_attack_row);
+    METHOD(bullet_cadence);METHOD(bullet_cadence_status);METHOD(speak_timer);METHOD(speak_timer_status);METHOD(speech_clock);METHOD(speech_clock_status);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(draw_watch_add);METHOD(draw_watch_frame);METHOD(draw_watch_frame_end);METHOD(draw_watch);METHOD(draw_watch_status);METHOD(draw_watch_row);METHOD(nav_params_init);METHOD(nav_player);METHOD(nav_player_status);METHOD(command_order);METHOD(command_order_status);METHOD(command_order_row);METHOD(attention_all);METHOD(attention_all_status);METHOD(command_order_rows);METHOD(ship_sound_rng);METHOD(ship_sound_rng_status);METHOD(draw_watch_stray);METHOD(player_timer);METHOD(player_timer_status);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(transition_rows);METHOD(transition_rows_status);METHOD(transition_row);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);
+    METHOD(view_points);METHOD(view_points_frame);METHOD(view_points_status);METHOD(view_points_rows);METHOD(view_points_row);METHOD(view_points_triggers);METHOD(view_points_ui);METHOD(view_points_source);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_uncovered);METHOD(region_camera_standins);METHOD(region_camera_status);METHOD(region_camera_effect_row);METHOD(region_camera_policy_rows);METHOD(region_camera_policy_row);METHOD(region_camera_highway_rows);METHOD(region_camera_highway_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(motion_watch);METHOD(motion_watch_zone);METHOD(motion_watch_digest);METHOD(motion_watch_doors);METHOD(motion_watch_door_row);METHOD(motion_watch_splines);METHOD(motion_watch_spline_row);METHOD(spline_join_all);METHOD(motion_watch_frame);METHOD(motion_watch_row);METHOD(motion_watch_status);METHOD(motion_watch_orders);METHOD(motion_watch_order_row);METHOD(motion_watch_target_row);METHOD(motion_watch_event_row);METHOD(motion_watch_refresh_row);METHOD(wreck_watch);METHOD(wreck_watch_frame);METHOD(wreck_watch_row);METHOD(wreck_watch_write_row);METHOD(wreck_watch_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(build_rng);METHOD(build_rng_status);METHOD(ui_cargo);METHOD(ui_cargo_status);METHOD(ui_cargo_row);METHOD(supply_rows);METHOD(supply_rows_status);METHOD(supply_row);METHOD(ui_lazy);METHOD(ui_lazy_status);METHOD(ui_lazy_row);METHOD(portable_math);METHOD(portable_math_status);METHOD(exact_reciprocal);METHOD(exact_reciprocal_status);METHOD(fp_env);METHOD(fp_env_status);METHOD(decimal);METHOD(decimal_status);METHOD(supply_wants);METHOD(supply_wants_status);METHOD(supply_wants_row);METHOD(macro_arena);METHOD(macro_arena_status);METHOD(macro_arena_row);METHOD(pick_order);METHOD(pick_order_status);METHOD(pick_order_row);METHOD(order_canon);METHOD(order_canon_status);METHOD(order_canon_row);METHOD(address_order);METHOD(address_order_status);METHOD(address_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(runtime_ids);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_rows);METHOD(runtime_ids_row);METHOD(guidance_local);METHOD(guidance_local_status);METHOD(view_points_mask);METHOD(hybrid);METHOD(hybrid_frame);METHOD(hybrid_proposal);METHOD(hybrid_apply);METHOD(hybrid_census);METHOD(hybrid_private);METHOD(hybrid_inside);METHOD(hybrid_status);METHOD(sample_profile);METHOD(sample_profile_status);METHOD(sample_profile_row);METHOD(fp_redirect_solver);METHOD(fp_redirect_drones);METHOD(fp_attack);METHOD(fp_attack_watch);METHOD(fp_attack_status);METHOD(fp_attack_row);
     METHOD(physics_trace);METHOD(physics_trace_status);METHOD(physics_trace_row);METHOD(body_order);METHOD(body_order_status);METHOD(body_order_row);METHOD(physics_trace_children);METHOD(physics_trace_saved);METHOD(physics_trace_from);
     METHOD(shape_order);METHOD(shape_order_status);METHOD(shape_order_row);
     METHOD(character_play);METHOD(character_play_status);METHOD(character_play_row);
@@ -4070,7 +4278,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(camera_offset);METHOD(camera_offset_status);METHOD(camera_anchor);METHOD(camera_anchor_keys);METHOD(camera_anchor_status);
     METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(gravidar_digest);METHOD(gravidar_digest_frame);METHOD(gravidar_digest_row);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
-    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(render_frames);METHOD(render_frames_status);METHOD(render_split);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);METHOD(lookahead_adaptive);METHOD(adaptive_status);METHOD(adaptive_plan);METHOD(wire_crypto);METHOD(wire_crypto_status);METHOD(render_camera);METHOD(render_motion);METHOD(render_display_rows);METHOD(render_display_status);METHOD(render_display_row);METHOD(peer_links);METHOD(peer_status);
+    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(unowned);METHOD(ui_exports);METHOD(ui_lazy_callers);METHOD(ui_exports_status);METHOD(ui_exports_row);METHOD(ui_exports_relay);METHOD(ui_exports_block);METHOD(ui_exports_relay_kinds);METHOD(ui_exports_take);METHOD(ui_exports_name);METHOD(runtime_of);METHOD(key_of);METHOD(ui_exports_address);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);METHOD(render_frames);METHOD(render_frames_status);METHOD(render_split);METHOD(lookahead_adaptive);METHOD(adaptive_status);METHOD(adaptive_plan);METHOD(wire_crypto);METHOD(wire_crypto_status);METHOD(render_camera);METHOD(render_motion);METHOD(render_display_rows);METHOD(render_display_status);METHOD(render_display_row);METHOD(peer_links);METHOD(peer_status);
     METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(register_weapon);METHOD(weapon);
@@ -4099,7 +4307,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(created_identities);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);
     METHOD(portable_created);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);
     METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);
-    METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_watch);METHOD(world_detail);METHOD(world_health);METHOD(world_banks);
+    METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_nav_hash);METHOD(world_nav_status);METHOD(world_page);METHOD(world_watch);METHOD(world_detail);METHOD(world_health);METHOD(world_banks);
     METHOD(world_trace);METHOD(world_trace_status);METHOD(world_trace_row);METHOD(world_trace_config);
     METHOD(world_queue_trace_config);METHOD(world_queue_trace_status);METHOD(world_queue_trace_row);
     METHOD(world_wait_trace_config);METHOD(world_wait_trace_status);METHOD(world_wait_trace_row);

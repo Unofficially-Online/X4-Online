@@ -11,11 +11,13 @@ assert(cfg.enabled==false,'snapshot requires disabled multiplayer gameplay')
 -- Optional: other player starts (tools/dev/native_gate_scenarios.py capture-overlay).
 local gamestart=cfg.native_gate_snapshot_gamestart
 assert(gamestart==nil or (type(gamestart)=='string' and gamestart:match('^[A-Za-z0-9_]+$')),'invalid snapshot gamestart')
+-- native_gate_snapshot_fixed=false captures at the normal frame rate (no fixed-tick DLL): the
+-- snapshot is a save file every client loads byte for byte, so the capture clock does not matter.
 -- Optional: hulls of per-player starts (tools/dev/native_gate_session_start.py). The overlay's generated MD
 -- X4LAN_SessionHulls creates them after the fixture check and before the save, so they get saved IDs.
 local hulls=cfg.native_gate_snapshot_hulls
 assert(hulls==nil or (type(hulls)=='number' and hulls%1==0 and hulls>=1 and hulls<=15),'invalid snapshot hull count')
-local fixed=assert(package.loadlib('./extensions/x4_lan_lab/native/x4lan_fixedtick_64.dll','luaopen_x4lan_fixedtick'))()
+local fixed=cfg.native_gate_snapshot_fixed~=false and assert(package.loadlib('./extensions/x4_lan_lab/native/x4lan_fixedtick_64.dll','luaopen_x4lan_fixedtick'))() or nil
 local owner,spawned,ready,refreshed,saving,done,inspecting,nearby
 local hulls_raised,hulls_count
 local function log(s) DebugError('[X4LAN] NATIVE_SNAPSHOT '..s) end
@@ -33,7 +35,7 @@ end)
 RegisterEvent('X4LAN_NativeGate.Attention',function(_,count) nearby=tonumber(count) end)
 local function frame()
  if done then return end
- if not owner then owner=assert(fixed.start('fixed60'));log('FIXED60 armed') end
+ if fixed and not owner then owner=assert(fixed.start('fixed60'));log('FIXED60 armed') end
  if not C.IsPlayerValid() then return end
  -- Story starts may open with a fullscreen intro; spawn and inspect only outside it.
  if C.IsFullscreenCutsceneActive() then return end
