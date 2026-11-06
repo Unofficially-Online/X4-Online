@@ -222,7 +222,27 @@ static int pjoin_snap_ok[2][PILOT_SLOTS+1];
  * slot k's (C_k, made by the resume's rebuild with empty containers +0x2b0..+0x318) runs a first update in step T+1 that builds
  * them, and with the words w1z22 added its transforms came out 4 km from the session's (w1z21, without them: ULPs). Those words
  * go to slot 1 only. */
+/* w1z62/w1z63 (in-window 40): the window's fixture race starts from slot 2's ship 0x7a8fe a few ULPs off from T+1 (its cached
+ * transform and pathing state); the fixture ships' avoidance sees it. Of the slot-1-only words above, the three double
+ * quaternions (+0x428..+0x447, +0x530..+0x54f, +0x5d0..+0x5ef: the session's with their history's residues, (0,0,0,1) after
+ * a load, the source of the cached rows' 2^-24) are the ULP candidates; w1z22's 4 km came with all the words together.
+ * native_gate_join_slotk_quats lets those quaternion words through for slot k as well. */
+static int pjoin_pctl_quat(unsigned short at) {return (at>=0x428 && at<0x448) || (at>=0x530 && at<0x550) || (at>=0x5d0 && at<0x5f0);}
+/* native_gate_join_slotk_words = mask (experiment): the slot-1-only word groups slot k takes as well. w1z64 (the quaternions): slot
+ * 2's rotation equal after T+1, its position and velocity still ULPs apart. Bits: 1 the three double quaternions, 2 the step's
+ * dt +0x3c0, 4 +0x3f8..+0x420, 8 +0x4d8/+0x4e0, 16 the factors +0x6f8..+0x710, 32 the transform copy +0x320..+0x358. */
+static unsigned pjoin_pctl_group(unsigned short at) {
+    if(pjoin_pctl_quat(at)) return 1u;
+    if(at==0x3c0) return 2u;
+    if(at>=0x3f8 && at<=0x420) return 4u;
+    if(at==0x4d8 || at==0x4e0) return 8u;
+    if(at>=0x6f8 && at<=0x710) return 16u;
+    if(at>=0x320 && at<=0x358) return 32u;
+    return 0u;
+}
 static int pjoin_pctl_slot1_only(unsigned short at) {
+    if(pjoin_slotk_quats && pjoin_pctl_quat(at)) return 0;
+    if(pjoin_slotk_mask & pjoin_pctl_group(at)) return 0;
     return (at>=0x320 && at<=0x358) || at==0x3c0 || (at>=0x3f8 && at<=0x430) || at==0x440 || at==0x4d8 || at==0x4e0 ||
            at==0x530 || at==0x538 || at==0x548 || at==0x5d0 || at==0x5d8 || at==0x5e8 || (at>=0x6f8 && at<=0x710);
 }

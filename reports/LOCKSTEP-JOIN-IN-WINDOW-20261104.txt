@@ -686,3 +686,18 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   in question, which fits a race on the timing of the pathing writes against the frame (a candidate: the double-buffered
   pathing state, slot[index] read and slot[index2] written, flipped at 0xeac1d9/0xeac1df, and a pathing job finishing
   after the flip).
+
+40. THE FIXTURE RACE'S INPUT IN THE WINDOW: A SLOT SHIP AN ULP OFF (w1z61..w1z63, build287; 6 November)
+- w1z61 (the zone digest with flight, agent and params rows and the motion watch orders) refused: "motion watch orders
+  refused", the orders' SetTarget patches do not arm together with flight_diag's Steering hook. w1z62 and w1z63 (without the
+  orders, trace 705..790): both raced (176ad5 first at 747; 176b36 first at 721). The parting step's recorded inputs (before,
+  input, dt, the RNG words, limits, params) are equal on both sides; the model differs only in never-written padding
+  (+0xb4..+0xb7, +0x118, +0x1c8, +0x274.., +0x320..); params +0xe8 differs between the two session clients too (noise).
+- The one differing input is the avoidance cache's entry for runtime 0x22bce, from the first logged tick (660) to the end, in
+  every fixture actor's list: the slot ship 0x7a8fe (RADAR_OBJECT: XVP-890, ship_arg_s_scout_01_a, owner player), whose
+  PlayerController's cached transform and pathing state carry its rotation a few ulps apart from its first digest (635) on
+  and its position an ulp apart (z -1416.4088 against -1416.4089 at 720). The player ship 0xae79c is equal.
+- That is the residue lockstep_pilot_join.h records for w1z21/w1z23: a slot k (k >= 2) controller is rebuilt by the resume
+  with empty containers +0x2b0..+0x318, builds them in its first update in T+1, and its transforms come out ulps from the
+  session's. In the fixture dogfight the fixture ships avoid that slot ship, so the race fires when one of them steers close
+  (the tick and the ship vary).

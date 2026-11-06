@@ -49,6 +49,20 @@ static int lua_pilot_join_state(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* gate.pilot_join_in_window(1): the joiner's resume inside the window (diagnostic, before the first tick). */
+/* gate.pilot_join_slotk_quats(1): a joiner's slot k (k >= 2) also takes the session's three PlayerController double quaternions
+ * (lockstep_pilot_join.h pjoin_pctl_quat; experiment, before the first tick). */
+static int lua_pilot_join_slotk_quats(lua_State *L) {
+    double on=p_lua_tonumber(L,1);
+    if(accept_ui() && on==1 && !stats.issued) pjoin_slotk_quats=1;
+    p_lua_pushnumber(L,pjoin_slotk_quats);return 1;
+}
+/* gate.pilot_join_slotk_words(mask): the slot-1-only word groups a joiner's slot k takes as well (lockstep_pilot_join.h
+ * pjoin_pctl_group; 1..63; experiment, before the first tick). Returns the mask, 0 refused. */
+static int lua_pilot_join_slotk_words(lua_State *L) {
+    const double m=p_lua_tonumber(L,1);
+    if(!accept_ui() || stats.issued || !(m>=1.0 && m<=63.0) || (double)(unsigned)m!=m) {p_lua_pushnumber(L,0);return 1;}
+    pjoin_slotk_mask=(unsigned)m;p_lua_pushnumber(L,m);return 1;
+}
 static int lua_pilot_join_in_window(lua_State *L) {
     double on=p_lua_tonumber(L,1);
     if(accept_ui() && on==1 && !stats.issued) pjoin_in_window_diag=1;

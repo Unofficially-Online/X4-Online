@@ -229,6 +229,8 @@ static char pjoin_controls[192];
 /* The joiner's resume (lockstep_pilot_join.h, W3): armed by gate.pilot_join_in_window(1) (the probe's diagnostic
  * native_gate_join_in_window); pending from the first pass inside the window until it ran once after the slots' resolve. */
 static int pjoin_in_window_diag,pjoin_resume_pending,pjoin_resume_done;
+static int pjoin_slotk_quats;   /* native_gate_join_slotk_quats (experiment): slot k also takes the three double quaternions */
+static unsigned pjoin_slotk_mask;   /* native_gate_join_slotk_words (experiment): which slot-1-only word groups slot k takes */
 static int pjoin_resume(uint64_t tick,unsigned char *controller);
 static void pjoin_note_controls(const char *side,uint64_t tick,uint32_t *counter,const unsigned char *contexts,
                                 const unsigned char *flight,unsigned char (*authority)(void *),void *controller) {

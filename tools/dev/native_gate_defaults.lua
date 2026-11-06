@@ -280,6 +280,8 @@ D.DIAGNOSTIC={
  {'native_gate_join_jobg','hot join: a joiner takes the session job generator words its load reseeds (JOBG)'},
  {'native_gate_join_jobw','hot join experiment: a joiner writes the session job state +0x48 (JOBS)'},
  {'native_gate_join_code','hot join: a joiner takes the session object code counter its load restarts (CODE)'},
+ {'native_gate_join_slotk_quats','hot join in window experiment: slot k takes the session PlayerController double quaternions'},
+ {'native_gate_join_slotk_words','hot join in window experiment: the slot-1-only word groups slot k takes (mask)'},
  {'native_gate_join_engr','hot join: a joiner takes the session engine boost ramps its load restamps (ENGR)'},
  {'native_gate_join_bnds','hot join: a joiner takes the session stations bounding structs (BNDS)'},
  {'native_gate_join_shgr','hot join: a joiner takes the session shield recharge groups of docked ships its load restamps (SHGR)'},

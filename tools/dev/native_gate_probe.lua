@@ -4112,6 +4112,15 @@ local function frame()
      local in_window=cfg.native_gate_join_in_window==true
      -- A joiner inside the window resumes its pilot state at its first pass (lockstep_pilot_join.h; diagnostic).
      if in_window and join_joiner and gate.pilot_join_in_window then assert(gate.pilot_join_in_window(1)==1,'join in window refused') end
+     -- native_gate_join_slotk_quats (experiment): slot k also takes the session's PlayerController double quaternions
+     if cfg.native_gate_join_slotk_quats and in_window and join_joiner then
+      assert(gate.pilot_join_slotk_quats and gate.pilot_join_slotk_quats(1)==1,'join slotk quats refused')
+     end
+     -- native_gate_join_slotk_words = mask (experiment): the slot-1-only word groups slot k takes as well
+     if cfg.native_gate_join_slotk_words~=nil and in_window and join_joiner then
+      local m=cfg.native_gate_join_slotk_words
+      assert(type(m)=='number' and gate.pilot_join_slotk_words and gate.pilot_join_slotk_words(m)==m,'join slotk words refused (1..63)')
+     end
      local function players(what)
       local ok,player=pcall(function() return C.GetPlayerID() end)
       local ok2,ship=pcall(function() return C.GetPlayerOccupiedShipID() end)
