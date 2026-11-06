@@ -777,3 +777,25 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
 - Smoke 73c00bc0 adds to the FLIGHT rows each fixture step's place among all Steering updates (seq=<entry>/<exit>), its
   thread, the read and write selectors at entry (banks=) and the slot's offset from the Agent (slot=): next, a session run
   and the race and calm joiners with it.
+
+44. THE CARRIER: 176b36's FLIGHT CONTROLLER, AXIS 1, NOT COMPUTED AFTER THE JOINER'S LOAD (w1z88..w1z107; 6 November)
+- FLIGHT seq/banks/slot rows (build290 = build-hj20m, smoke 73c00bc0): 176b36 and its target 176cb3 step in parallel on
+  different threads every tick, with the same selectors, both writing the same bank; their completion order is not the
+  selector (w1z91 races with 176b36 finishing first). 0xe8acc0's bank read gives the same target velocity in race and calm.
+- The lead pursuit's lookup result and local aim are equal (w1z93/94); the split is in the steer call 0xec9fd0, which reads
+  a live vector through [[Agent+0xf80]+0xa0c8] vt+0x3a8: an object of JPM::OmegaSwitched<JPVec3,double,MapCTC,3,20>
+  (vtable 0x2a24338). Its y comes out -1.03936 in the race joiner against -1.01105 in the calm one, x and z equal (w1z95/96).
+- The getter is per axis and lazy (0x9dba0: a dirty flag at +0xfa8+i, a recompute 0xa8720 from the axis block
+  +0x50+i*0x4f0 and per-axis tables). Before the 721 recompute axis 1's block differs, race against calm: +0x2b0 8.743 /
+  12.610, +0x2b8 1.205 / 3.379, +0x2f0 1 / 0, +0x328 -0.0201 / -1.0, +0x338 0 / 24; axes 0 and 2 only in padding (w1z103/104).
+- From the first recompute after the resume (634; w1z105 session client 1, w1z105's joiner, the race and the calm
+  joiner): every compared field is equal except the sub-object at block +0x190 (built by 0xa5f00, which zeroes it): its
+  flags +0x161/+0x162 are 1 and its count +0x1a8 (block +0x338; computed at 0xae9d8 as (int)(+0x98 x a constant)) is 24 on
+  the session, the w1z105 joiner and the calm joiner, 0 and 0 on the race joiner. The race joiner's axis 1 has not been
+  computed since its reset when it resumes; from 635 its y history parts, reaching 176b36's steering at 721.
+- x4mods-28 read the construction chain (0x9e9c0 <- d48c70 <- d48bd0 <- d47ac0, also from the steering step via e95fb0):
+  0xa5f00 leaves +0x120..+0x13f of each sub-object uninitialized (heap residue: the session holds old pointers there, both
+  joiners zeros). The residue is not the selector at 634; the computed state is.
+- Fix in progress (x4mods-28): carry every steering ship's OmegaSwitched data region from the saver at T and write it at
+  the joiner's admission (a raw section, the uninitialized words masked). The other dogfight pair (176ad5 <-> 176c95, J1's
+  1042 item) is the free second check.
