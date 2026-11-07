@@ -93,6 +93,8 @@ static int lua_join_pcsv(lua_State *L) {join_pcsv_on=p_lua_tonumber(L,1)!=0.0;p_
 /* gate.join_conn(on): a joiner connects the NPC connections the session has connected and its load left without a partner
  * (CONN, default off). */
 static int lua_join_conn(lua_State *L) {join_conn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_warp(on): a joiner takes the session's pending warps' destinations (WARP, default off). */
+static int lua_join_warp(lua_State *L) {join_warp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_gravn_extra(on): GRAVN keeps the joiner's extra zone groups in the neighbour lists it writes (default off). */
 static int lua_join_gravn_extra(lua_State *L) {join_gravn_extra_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shgr(on): a joiner takes the session's containers' shield recharge groups (SHGR, default off). */

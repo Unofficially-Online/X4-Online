@@ -4234,6 +4234,73 @@ static void join_admit_conn(const join_tables *s,const join_tables *mine) {
         if(join_conn_npc(o)) (void)join_conn_walk(o,join_conn_left_visit,&join_conn_left);
     }
 }
+/* WARP (v13, section 77; the admission opt-in, native_gate_join_warp): the pending U::WarpEvents' destinations [F: j1-367 .. j1-371,
+ * a late J1 join (T=3033): ShipSmall 0x92c2b entered a gate at T, its EnteredGateEvent and WarpEvent due at T+1; the save writes the
+ * warp's destination as <offset> with the position in 17 digits and <rotation yaw="180"/>, so the joiner's event, rebuilt from the
+ * angle, holds a rotation whose near-zero lanes are float sin(pi) (8.742278e-8) where the session's (the arrival gate's own rotation)
+ * are -2.38e-8: the ship arrives turned by an ulp and its motion parts from T+1, the only object the census at T+1 finds apart (j1-371)].
+ * U::WarpEvent (vtable 0x2baa8c0, built by 0x9a9d00): +0x18 the zone's runtime ID, +0x20 a 0x40-byte copy of the destination
+ * transform, +0x28 a 0x40-byte descriptor, +0x30/+0x31 flags. An event source is its component (the schedule's node +0x28; +0x20 its
+ * own event tree: leftmost +0x20, count +0x28; per node the due time +0x20 and the event +0x28). The capture takes the transform of
+ * every pending WarpEvent of a keyed source with its place among that source's warps; with the opt-in the admission writes the
+ * session's into the joiner's event at the same place of the same source. Status warp=on:written:equal:missing:extra warp_cap=N. */
+#define JOIN_WARP_VTABLE 0x2baa8c0u
+#define JOIN_WARP_XFORM 0x20u
+static int join_warp_on;
+static uint64_t join_warp_written,join_warp_equal,join_warp_missing,join_warp_extra;
+static int join_warp_cmp(const void *a,const void *b) {
+    const join_warp_rec *x=a,*y=b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    return x->index<y->index?-1:x->index>y->index;
+}
+/* The place-th WarpEvent pending at a source (its due time into *time), NULL past the last; their count into *n. */
+static unsigned char *join_warp_event(unsigned char *source,uint32_t place,uint32_t *n,uint64_t *time) {
+    unsigned char *q=NULL,*e=NULL,*hit=NULL;uint64_t count=0;uint32_t seen=0;
+    if(n) *n=0;
+    if(!source || !join_read(source+0x20,&q,8) || !q || !join_read(q+0x28,&count,8) || !join_read(q+0x20,&e,8)) return NULL;
+    for(uint64_t k=0;k<count && k<4096u && e;k++,e=join_evq_next(e)) {
+        unsigned char *ev=NULL;uintptr_t v=0;
+        if(!join_read(e+0x28,&ev,8) || !ev || !join_read(ev,&v,8)) break;
+        if(v!=(uintptr_t)image+JOIN_WARP_VTABLE) continue;
+        if(seen==place && !hit) {hit=ev;if(time && !join_read(e+0x20,time,8)) *time=0;}
+        ++seen;
+    }
+    if(n) *n=seen;
+    return hit;
+}
+static void join_capture_warp(join_tables *t) {
+    uint64_t count=0;unsigned char *node=NULL;uint32_t cap=0;
+    if(!join_read(join_evq_at(JOIN_EVQ_COUNT),&count,8) || !count || !join_read(join_evq_at(JOIN_EVQ_LEFT),&node,8)) return;
+    for(uint64_t i=0;i<count && i<200000u && node;i++,node=join_evq_next(node)) {
+        unsigned char *src=NULL;uint64_t runtime=0;unsigned klass;uint32_t n=0;
+        if(!join_read(node+0x28,&src,8) || !src || !join_read(src+8,&runtime,8)) continue;
+        const uint64_t key=runtime?join_key(runtime,&klass):0;
+        if(!key) continue;
+        (void)join_warp_event(src,0xffffffffu,&n,NULL);
+        for(uint32_t k=0;k<n && k<64u;k++) {
+            join_warp_rec r;unsigned char *xf=NULL;memset(&r,0,sizeof(r));
+            unsigned char *ev=join_warp_event(src,k,NULL,&r.time);
+            if(!ev || !join_read(ev+JOIN_WARP_XFORM,&xf,8) || !xf || !join_read(xf,r.xform,sizeof(r.xform))) continue;
+            r.portable=key;r.index=k;
+            if(!JOIN_PUSH(t->warp,t->nwarp,cap,r)) return;
+        }
+    }
+    if(t->nwarp>1) qsort(t->warp,t->nwarp,sizeof(*t->warp),join_warp_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->nwarp;i++) {if(k && !join_warp_cmp(&t->warp[k-1],&t->warp[i])) continue;t->warp[k++]=t->warp[i];}t->nwarp=k;}
+}
+static void join_admit_warp(const join_tables *s,const join_tables *mine) {
+    join_warp_written=join_warp_equal=join_warp_missing=join_warp_extra=0;
+    if(!join_warp_on) return;
+    for(uint32_t i=0;i<s->nwarp;i++) {
+        const join_warp_rec *r=&s->warp[i];
+        unsigned char *o=join_object(join_runtime_of(mine,r->portable)),*xf=NULL,now[0x40];uint32_t n=0;
+        unsigned char *ev=o?join_warp_event(o,r->index,&n,NULL):NULL;
+        if(o && (i+1==s->nwarp || s->warp[i+1].portable!=r->portable) && n>r->index+1u) join_warp_extra+=n-(r->index+1u);   /* the source's last */
+        if(!ev || !join_read(ev+JOIN_WARP_XFORM,&xf,8) || !xf || !join_read(xf,now,sizeof(now))) {++join_warp_missing;continue;}
+        if(!memcmp(now,r->xform,sizeof(now))) {++join_warp_equal;continue;}
+        if(join_poke((uintptr_t)xf,r->xform,sizeof(r->xform))) ++join_warp_written; else ++join_warp_equal;
+    }
+}
 static int join_bnds_on;
 static uint64_t join_bnds_written,join_bnds_equal,join_bnds_missing;
 #define JOIN_BNDS_GETTER 0x7eb460u   /* the station's vfunc 0x14b0: lea rax,[rcx+0xc90] */
@@ -5067,6 +5134,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_bnds(t);            /* version 13 */
     join_capture_resv(t);            /* version 13: the zones' space reservations */
     join_capture_conn(t);            /* version 13: the NPCs' connected connections */
+    join_capture_warp(t);            /* version 13: the pending warps' destinations */
     if(t->npcsv>1) qsort(t->pcsv,t->npcsv,sizeof(*t->pcsv),join_solver_cmp);   /* version 13: the PlayerControllers' solvers */
     for(uint32_t i=1;i<t->npcsv;i++) if(t->pcsv[i].portable==t->pcsv[i-1].portable) return join_note("pcsv_duplicate,id=%llx",(unsigned long long)t->pcsv[i].portable);
     join_sort_omgs(t);               /* version 13: OMGS, taken in the FLIGHT walk */
@@ -6732,6 +6800,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_resv(s,&mine);    /* the zones' space reservations' boxes and expiries (opt-in) */
     if(s->version>=13) join_admit_pcsv(s,&mine);    /* the PlayerControllers' own motion solvers (opt-in) */
     if(s->version>=13) join_admit_conn(s,&mine);    /* the NPCs' connections' partners a waiting ship's load leaves null (opt-in) */
+    if(s->version>=13) join_admit_warp(s,&mine);    /* the pending warps' destinations a load rebuilds from angles (opt-in) */
     if(s->version>=13) join_admit_omgs(s,&mine);    /* the steering ships' OmegaSwitched controllers (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */

@@ -2571,6 +2571,21 @@ proposed and rejected.
   joiner whenever a spline ship had a route (j1-359 .. j1-363 at 3722, w1z182), with every route equal. 76908054 hashes the
   composite's length, each piece's spline type, length and eight vectors (lanes 0-2) and each parameter's float (also the
   model's own composites +0x158/+0x1a8); j1-365: 0x6f1e7's segments hash equal on both sides from 3780 (23ba3bb2).
+- A later join [F: j1-366 .. j1-370; runJ1T.sh is runJ1L.sh with the driver's --join-at as JOIN_AT; the join save j3033]: with the
+  join at 3000 (T=3033) J1 is not clean. j1-366 was refused by the joiner overlay (lua_state:pilot_window:late: the scenario's pilot
+  window 1500..1790 lay before T and its Lua state is not in the package; j1-367 on moves it to 3500..3790). j1-367 (to 6000): first
+  mismatch 3060, census 3 at 3060 (ShipSmall 0x92c2b and 0x92c7a in zone 0x4f, created 8000a189ab4d9e61), 21 at 3300, 3,058 at
+  3600, about 9,800 at 5940. j1-368 (motion watch digests on the three): 0x92c2b and the created ship apart from T+1, 0x92c7a
+  from 3056 (another target). j1-369 (JOIN_WATCH(RAW)): (1) the created ship held a 68-waypoint highway route at T; ROUTE capped a
+  vector at 64 (JOIN_ROUTE_POINTS), so its head went out as other with no points (JOIN_UNPAIRED route ... why=other waypoints=68),
+  the joiner's load left it no path and it re-planned at T+2. Fix b576e038: the cap is 256 (C and Python; the record layout
+  unchanged). j1-370 (with it): census 2 at 3060. (2) 0x92c2b is in travel mode at T on the session (ship +0x3ac 3261.3 against
+  245.2, ship +0x1084, +0x10c8 and a block +0x11a0 .. +0x12ff with heap pointers filled; zero on the joiner's load) and jumps from
+  zone 0x832 (cluster 0x82f) to zone 0x4f (cluster 0x43) at T+1 on both sides, arriving at Gate 0x50: its new orientation's
+  near-zero lanes are -2.38e-8 on the session (the gate's published rotation, equal on both sides: j1-370 WORLD_STATIC at 3060,
+  49,945 rows, no gate, zone or station apart) and 8.742278e-8 on the joiner (float sin(pi)). So the arrival takes another path on
+  the joiner, which arrives out of travel mode: the ship's travel state is not in the package. Next: the census at T+1 for the
+  whole list (--join-census, runJ1T.sh JOIN_CENSUS=1).
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

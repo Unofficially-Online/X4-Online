@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "683368360229f78c4c03efb85497a934f86436fac410a0df6b0d47b7adb17108"   /* version 13 (JOBE .. CONN; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "c6546bfc2ae5fb5a07910dfbe5dab55849df7cd4926eb0b53996adaab6f8fff2"   /* version 13 (JOBE .. CONN; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -455,6 +455,9 @@ static void test_join_golden(void) {
     t.pcsv=pcsv;t.npcsv=1;
     static join_conn_rec conn[1];conn[0].owner=0x2001ull;conn[0].id=0x163e5cull;conn[0].peer_owner=0x2002ull;conn[0].peer_id=0x163e5dull;
     t.conn=conn;t.nconn=1;
+    static join_warp_rec warp[1];warp[0].portable=0x2001ull;warp[0].time=0x405b0bb645a1c9c6ull;warp[0].index=0;warp[0].flags=0;
+    for(unsigned k=0;k<0x40;k++) warp[0].xform[k]=(unsigned char)(0x80+k);
+    t.warp=warp;t.nwarp=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -509,7 +512,7 @@ static void test_join_golden(void) {
            r.nbnds==1 && !memcmp(r.bnds,bnds,sizeof(bnds)) &&
            r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)) &&
            r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)) &&
-           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)));
+           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -543,7 +546,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -3134,7 +3137,56 @@ static void test_join_conn(void) {
     join_conn_on=0;join_key=key;join_world_find=find;join_world_map=map;
     printf("join CONN: the connection buckets (lists, sizes checked), the capture of both directions by owner key and ID, the admission's partner writes, equal, conflict, missing and left PASS\n");
 }
+/* WARP: a source's pending events in its own tree (one non-warp, one warp), the schedule naming it; the capture takes the warp's
+ * destination by the source's key and place, the admission writes the session's into the joiner's event at the same place. */
+static _Alignas(16) unsigned char twarp_obj[2][0x40],twarp_q[2][0x40],twarp_node[2][2][0x40],twarp_ev[2][2][0x40],twarp_xf[2][0x40],
+    twarp_sched[0x40],twarp_snode[0x40];
+static void *twarp_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime==0x81ull?twarp_obj[0]:runtime==0x91ull?twarp_obj[1]:NULL;}
+static void twarp_put(unsigned char *at,const void *value) {memcpy(at,&value,8);}
+static void twarp_build(unsigned side,unsigned char fill) {
+    unsigned char *o=twarp_obj[side],*q=twarp_q[side];memset(o,0,0x40);memset(q,0,0x40);
+    uint64_t runtime=side?0x91ull:0x81ull,two=2;memcpy(o+8,&runtime,8);twarp_put(o+0x20,q);twarp_put(q+0x20,twarp_node[side][0]);memcpy(q+0x28,&two,8);
+    for(unsigned k=0;k<2;k++) {
+        unsigned char *n=twarp_node[side][k],*ev=twarp_ev[side][k];memset(n,0,0x40);memset(ev,0,0x40);
+        double time=101.1+(double)k;memcpy(n+0x20,&time,8);twarp_put(n+0x28,ev);
+        twarp_put(ev,image+(k?JOIN_WARP_VTABLE:0x2baf650u));
+    }
+    twarp_put(twarp_node[side][0]+0x10,twarp_node[side][1]);twarp_put(twarp_node[side][1],twarp_node[side][0]);   /* node 1: node 0's right child */
+    for(unsigned b=0;b<0x40;b++) twarp_xf[side][b]=(unsigned char)(fill+b);
+    twarp_put(twarp_ev[side][1]+JOIN_WARP_XFORM,twarp_xf[side]);
+}
+static void test_join_warp(void) {
+    twarp_build(0,0x10);
+    uint32_t n=9;uint64_t time=0;double want=102.1,got_time;
+    assert(join_warp_event(twarp_obj[0],0,&n,&time)==twarp_ev[0][1] && n==1);memcpy(&got_time,&time,8);assert(got_time==want);
+    assert(!join_warp_event(twarp_obj[0],1,&n,NULL) && n==1 && !join_warp_event(twarp_obj[1],0,&n,NULL) && !n);   /* past the last; no tree */
+    /* the capture: the schedule (leftmost +0x18 from the root, count +0x20) names source 0 */
+    uint64_t (*key)(uint64_t,unsigned *)=join_key;join_find_fn find=join_world_find;void *map=join_world_map;unsigned char *head=join_evq_head_test;
+    join_key=tconn_key;join_world_find=twarp_find;join_world_map=twarp_obj;
+    memset(twarp_sched,0,sizeof(twarp_sched));memset(twarp_snode,0,sizeof(twarp_snode));join_evq_head_test=twarp_sched;
+    {uint64_t one=1;twarp_put(twarp_sched+(JOIN_EVQ_LEFT-JOIN_EVQ_ROOT),twarp_snode);memcpy(twarp_sched+(JOIN_EVQ_COUNT-JOIN_EVQ_ROOT),&one,8);}
+    twarp_put(twarp_snode+0x28,twarp_obj[0]);
+    join_tables t;memset(&t,0,sizeof(t));join_capture_warp(&t);
+    assert(t.nwarp==1 && t.warp[0].portable==0x100081ull && !t.warp[0].index && !t.warp[0].flags && !memcmp(t.warp[0].xform,twarp_xf[0],0x40));
+    memcpy(&got_time,&t.warp[0].time,8);assert(got_time==want);
+    /* the admission: the joiner's source 0 with another destination; a record of a source the joiner lacks: missing */
+    join_warp_rec s_rec[2];memcpy(s_rec,t.warp,sizeof(*t.warp));free(t.warp);s_rec[1]=s_rec[0];s_rec[1].portable=0x100099ull;
+    unsigned char session[0x40];memcpy(session,twarp_xf[0],0x40);twarp_build(0,0x55);
+    join_id_rec ids[2]={{0x81ull,0x100081ull,0,0},{0x91ull,0x100091ull,0,0}};
+    join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));s.warp=s_rec;s.nwarp=2;mine.ids=ids;mine.nids=2;
+    join_warp_on=0;join_admit_warp(&s,&mine);assert(!join_warp_written && !join_warp_equal && !join_warp_missing && twarp_xf[0][0]==0x55);
+    join_warp_on=1;join_admit_warp(&s,&mine);
+    assert(join_warp_written==1 && !join_warp_equal && join_warp_missing==1 && !join_warp_extra && !memcmp(twarp_xf[0],session,0x40));
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," warp=1:1:0:1:0 "));}
+    join_admit_warp(&s,&mine);assert(!join_warp_written && join_warp_equal==1);   /* again: equal */
+    /* a second warp at the joiner's source the session had none of: extra */
+    twarp_put(twarp_ev[0][0],image+JOIN_WARP_VTABLE);twarp_put(twarp_ev[0][0]+JOIN_WARP_XFORM,twarp_xf[1]);
+    join_admit_warp(&s,&mine);assert(join_warp_extra==1);
+    join_warp_on=0;join_key=key;join_world_find=find;join_world_map=map;join_evq_head_test=head;
+    printf("join WARP: a source's pending warp by place (other events skipped, the tree walked), the capture by key and place with its due "
+           "time, the admission's destination write, equal, missing and extra PASS\n");
+}
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_conn();test_join_bnds_layout();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_conn();test_join_bnds_layout();test_join_warp();
 }

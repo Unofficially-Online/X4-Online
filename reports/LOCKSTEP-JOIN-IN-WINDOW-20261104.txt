@@ -1078,3 +1078,8 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   within the lane timeout of 1680 s, runW1b.sh LANE_TIMEOUT): both phases to 13999; census 0 at 900, 6600, 7980, 9000, 10020,
   11040, 12000, 12960 and 13980 (T+1 the one nav refresh time as always). The window joiner is equal to the session for the
   whole soak, 11 minutes of game time after the join.
+- d1k3 (the people stack, D1: overlay-D1s234 with this probe and stack, two clients, stock scripts demo/demo2, to 3600, relay
+  --lookahead 1 --tick-hz 30, runD.sh): relay pass, 0 digest mismatches, both clients completed 3600; UI_LAZY mode=key on both
+  with the same counts (keyed 123,139 / 55,447 / 8,775, unkeyed 1,130, lua=0 blocked=0: no UI query without people); census
+  client 1 against client 2: 0 at 1800 and 3600; ERROR DEGRADED as in earlier D1 runs (BUILD_RNG 3, FIND_ORDER 3,
+  CREATED_IDENTITIES 1). A session with people at the UI (trade menus, the map) remains to be run.
