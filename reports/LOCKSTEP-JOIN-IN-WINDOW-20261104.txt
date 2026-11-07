@@ -1074,3 +1074,7 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
 - Default: native_gate_ui_lazy = 'key' (needs the world identities). Not validated in a people-stack session (Play42P): the
   UI's own GetComponentData / storage queries now show a container as the simulation last brought it. The Linux gate has no
   port yet (0x407160's draw lies elsewhere in the Linux binary; an unported option stops with reason 105). J1 A/B: x4mods-28.
+- w1z188 (build-hash1, the defaults of 90d90d84 alone: UI_LAZY_ARMED mode=key from the stack; in window to 14000, each phase
+  within the lane timeout of 1680 s, runW1b.sh LANE_TIMEOUT): both phases to 13999; census 0 at 900, 6600, 7980, 9000, 10020,
+  11040, 12000, 12960 and 13980 (T+1 the one nav refresh time as always). The window joiner is equal to the session for the
+  whole soak, 11 minutes of game time after the join.
