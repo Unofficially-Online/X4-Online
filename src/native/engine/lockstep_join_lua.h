@@ -86,6 +86,8 @@ static int lua_join_jobw(lua_State *L) {join_jobw_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_code(lua_State *L) {join_code_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_engr(on): a joiner takes the session's engine boost ramps (ENGR, default off). */
 static int lua_join_engr(lua_State *L) {join_engr_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_resv(on): a joiner takes the session's zones' space reservation boxes and expiries (RESV, default off). */
+static int lua_join_resv(lua_State *L) {join_resv_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shgr(on): a joiner takes the session's containers' shield recharge groups (SHGR, default off). */
 static int lua_join_shgr(lua_State *L) {join_shgr_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_bnds(on): a joiner takes the session's stations' bounding structs (BNDS, default off). */

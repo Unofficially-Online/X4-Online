@@ -2439,8 +2439,26 @@ proposed and rejected.
   entry 1046 .. 1059, about 820 calls a side): counts, box 0, the point, the direction and the radius equal call for call
   through 1050, so the order of boxes 1..n is what differs. Fix, opt-in: native_gate_safe_pos_order (68d87ae9,
   lockstep_safe_pos_order.h) sorts the boxes by the bytes the solver reads at its entry, then runs the native solver;
-  native image test: 654 of 1212 reversed scenes apart through the native entry, 0 through the hooked one. A/B pending:
-  x4mods' in-window long run and J1 j1-334 (to 3000) against j1-329.
+  native image test: 654 of 1212 reversed scenes apart through the native entry, 0 through the hooked one. A/B: no
+  effect. w1z150 (in-window, the sort on every client) grew as w1z129 did; j1-334 (J1, the sort on every lane, to 3000)
+  diverged as j1-329 did (first mismatch 1860, census 26 at 1980, 32 at 2640, 416 at 2820 against 417). The order is not
+  the selector; the sort stays an experiment (D.EXCLUDED).
+  The contents are (SAFE_POS_DUMP, 73ab65c2: every solver call in a tick window, the boxes as given). j1-335 (1790 ..
+  1870): calls pair 1:1 (count, n, scalars, p0, dir equal), nearly every call's boxes differ from 1790 on, the results
+  stay equal until 1834 call 3 (caller 0x83717e, Zone::GetSafePos's solver call at 0x837179, n 36), where boxes 26 and
+  27 differ in their rotation rows only (3 .. 8 ulps). Over the window 1010 distinct boxes differ: in rotation rows (all
+  but one; one also in the position, 2 ulps), sizes of ships, positions in zone space; the half/centre w lanes besides
+  (unread). w1z151 (in-window 1046 .. 1052): 742be's call is 1049 call 4 (caller 0x83717e, n 65): 11 boxes differ, in the
+  rotation rows only. Zone::GetSafePos (0x835b80) builds the boxes per call: its main loop (0x8368c0 .. 0x836af2) takes
+  each object's bounds (vt+0x14b0) and its transform relative to the zone; with the get_safe_pos evaluation's flag 0
+  (0xc72e11) that is 3db8a0(object, now, zone) at 0x8369d1, the timed walk (each link's controller vt+0x30): so the same
+  ships whose published poses are equal (j1-333) get an orientation at now a few ulps apart, their positions equal.
+  j1-336 (WORLD_STATIC with the nav ships' raw agent banks, 94e8eaec): the pathing read selector 0x38f4ee4 has the
+  opposite parity on the joiner (session 0, joiner 1, every nav ship at 634, 660, 1800); paired by role the banks' first
+  0x60 bytes are equal in all four lanes (the census pairs by role; nothing hides in the unhashed w lanes). For a nav ship
+  vt+0x30 (0xea5a90) takes the read bank's vec0 .. 3 (position, rotation rows) through its pathing parent's timed
+  transform (0xea5ded), or the controller's stored transform +0x60 .. +0x9f (0xea5b3e); which ships and controllers
+  differ is w1z153's question (x4mods: the main loop's transform per object).
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

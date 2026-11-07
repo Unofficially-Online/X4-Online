@@ -271,6 +271,8 @@ D.DIAGNOSTIC={
  {'native_gate_join_refwatch_at','hot join watched field writes from a step of the watch'},
  {'native_gate_join_shape_refresh','hot join: every client refreshes the fixture body shapes at T+2'},
  {'native_gate_join_jobdump','hot join job raw rows (diagnostic)'},
+ {'native_gate_nav_refresh_watch','nav refresh rows: which thread refreshes a navigation controller first after a bank flip (diagnostic)'},
+ {'native_gate_safe_pos_dump','safe pos dump rows: the GetSafePos solver calls in a tick window, every box as given (diagnostic)'},
  {'native_gate_world_static','world static rows: the published poses of uncompared positional objects at ticks (diagnostic)'},
  {'native_gate_join_jobcnt_at','hot join job count rows after a step (diagnostic)'},
  {'native_gate_join_hold_boot_events','hot join boot event passes held'},
@@ -294,6 +296,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_engr','hot join: a joiner takes the session engine boost ramps its load restamps (ENGR)'},
  {'native_gate_join_omgs','hot join: a joiner takes the session steering ships OmegaSwitched controllers (OMGS)'},
  {'native_gate_join_bnds','hot join: a joiner takes the session stations bounding structs (BNDS)'},
+ {'native_gate_join_resv','hot join: a joiner takes the session zones space reservation boxes and expiries its load re-derives (RESV)'},
  {'native_gate_join_shgr','hot join: a joiner takes the session shield recharge groups of docked ships its load restamps (SHGR)'},
  {'native_gate_join_ecos','hot join: a joiner takes the session economy schedules of stations and ships (ECOS)'},
  {'native_gate_join_rcnt','hot join experiment: a joiner lowers created ships and bays reference counts to the session (RCNT)'},
@@ -487,7 +490,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order'}
+ [187]='hybrid sectors',[188]='character play',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

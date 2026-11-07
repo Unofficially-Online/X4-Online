@@ -877,3 +877,32 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   stop counts (calls/sorted) are not in the logs yet, so whether it sorted 742be's call is unconfirmed; if it did, the
   box order is not the selector and the box contents beyond box 0 are next (at 1051 one box's rotation rows differ).
   The README's claim stands as written (equal to the end of each test).
+
+47. THE SOURCE: THE ZONES' SPACE RESERVATIONS, RE-DERIVED AFTER THE JOINER'S LOAD (w1z151..w1z155; 6 November, night)
+- native_gate_safe_pos_dump={from,to} (73ab65c2: every GetSafePos solver call in the window, its point, direction, radius
+  and all boxes) on w1z151 (build295, in window): 742be's call at 1049 (the fourth that tick, caller 83717e, 65 boxes)
+  has its count, point, direction and radius equal, and 11 of its boxes differ in their rotation rows (1..8 ulps) and some
+  in their unused w lanes (0 against 0.5); its result's y is 0xc26f946a against 0xc26f946c, section 46's waypoint.
+  x4mods-28's j1-336: the agents' pathing banks are bit-equal by role; only the read selector's parity is flipped on the
+  joiner, which nothing above depends on.
+- w1z153/w1z154: execution breakpoints in GetSafePos's main box loop at 1049 (after its timed walk, 0x8369d6/0x8369d9)
+  find every transform equal, and with the breakpoints on the 11 boxes still differ and the census still splits as in
+  w1z129 (1440: 1, 1800: 2, 2040: 40, 2100: 983): not a race that the breakpoints would serialize.
+- w1z155 places every box (the vector's end around each stage at 0x836e3d/0x836e42/0x836f9a/0x836fcb): the main loop's
+  boxes and the zone's collision list (0x85dd00) are bit-equal in all ten calls at 1049; every differing box, 64 in the
+  ten calls, is a space reservation appended by 0x835630, from the calling zone's own reservation tree or from one of its
+  child zones'. In 742be's call: child zones 500 (boxes 39, 42, 43), 502 (48, 49, 51), 505, 506, 800253f89c393787 and the
+  zone's own (61, 64). The reserved boxes are the ships' destination volumes (same sizes as the ships, at their parking
+  spots), so every later get_safe_pos in those zones reads them.
+- x4mods-28's static reading: a zone keeps its reservations in a tree (zone+0x3b0..+0x3d8), each node keyed by its owner
+  and an index, holding the box (node+0x30, 0x70 bytes) and an expiry in game time (node+0xa0); 0x835860 expires them.
+  The session's boxes are the reserve-time math (0x834f90, through a vtable); the save carries only the keys, and the
+  import (0x835230) creates each node with a zeroed box, identity rows and expiry -1.0, filled again from the loaded ship.
+  Nothing hashes or carries them (they are not world objects), so the census sees them only through the moves they place.
+- Section 46's sort result fits: the box order was equal by index throughout; the contents were not.
+- RESV (x4mods-28, ac0e30fb; package section 74, opt-in native_gate_join_resv): every identified zone's reservation
+  nodes (zone, owner, index, box, expiry) captured at T and poked into the joiner's nodes of the same key in the world
+  admission. w1z156 (in window to 2160, the joiner with RESV): resv=1:4326:302:0:0 (4326 nodes written, 302 already
+  equal, none missing or extra); every solver call 1049..1052 equal in its boxes and result; 742be's split gone (census
+  1440..1740: 0). A second, later source remains: 1800: 1 (a small ship, saved 6d92f, motion), 2040: 39, 2100: 982;
+  it is census-equal at 1740, so it starts in 1740..1800.

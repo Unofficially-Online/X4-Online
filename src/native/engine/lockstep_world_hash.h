@@ -220,8 +220,27 @@ static int world_static_add(uint64_t tick) {
     for(unsigned i=0;i<world_static_nticks;i++) if(world_static_ticks[i]==tick) return 1;
     world_static_ticks[world_static_nticks++]=tick;return 1;
 }
+/* For a NavigationController's object (controller+0x30: the pathing agent's two banks, 0x1a0 apart), both banks' first
+ * 0x60 bytes in memory order (the six vectors the census hashes 12 bytes of, here all 16) and the read selector:
+ * ' sel=N bank0=<hex> bank1=<hex>', or '' for any other controller. [j1-335/w1z151: the ships' timed transforms differ
+ * in rotation only on the joiner while their published poses and hashed bank lanes are equal.] */
+#define WORLD_STATIC_NAV_VTABLE 0x2c51158u
+static void world_static_banks(unsigned char *object,char *out,size_t capacity) {
+    static const char digits[]="0123456789abcdef";unsigned char *controller=NULL,*slots=NULL,bank[0x60];uintptr_t vtable=0;uint32_t sel=9;
+    out[0]=0;
+    if(!world_hash_reader(object+0x200,&controller,8) || !controller || !world_hash_reader(controller,&vtable,8) ||
+       vtable!=(uintptr_t)image+WORLD_STATIC_NAV_VTABLE || !world_hash_reader(controller+0x30,&slots,8) || !slots) return;
+    (void)world_hash_reader(image+0x38f4ee4,&sel,4);
+    size_t at=(size_t)snprintf(out,capacity," sel=%u",sel);
+    for(unsigned b=0;b<2u && at+8+0x60*2<capacity;b++) {
+        at+=(size_t)snprintf(out+at,capacity-at," bank%u=",b);
+        if(!world_hash_reader(slots+(size_t)b*0x1a0u,bank,sizeof(bank))) {out[at++]='x';out[at]=0;continue;}
+        for(unsigned j=0;j<sizeof(bank);j++) {out[at++]=digits[bank[j]>>4];out[at++]=digits[bank[j]&15];}
+        out[at]=0;
+    }
+}
 static void world_static_row(const world_hash_item *item,unsigned char *object) {
-    if(world_static_used+512u>world_static_capacity) {
+    if(world_static_used+1024u>world_static_capacity) {
         size_t want=world_static_capacity?world_static_capacity*2u:(size_t)1<<22;char *grown=realloc(world_static_buffer,want);
         if(!grown) {++world_static_dropped;return;}
         world_static_buffer=grown;world_static_capacity=want;
@@ -235,10 +254,11 @@ static void world_static_row(const world_hash_item *item,unsigned char *object) 
         for(unsigned j=0;j<sizeof(bytes);j++) {pose[rel][2*j]=digits[bytes[j]>>4];pose[rel][2*j+1]=digits[bytes[j]&15];}
         pose[rel][2*sizeof(bytes)]=0;
     }
+    char banks[16+2*(8+0x60*2)];world_static_banks(object,banks,sizeof(banks));
     int n=snprintf(world_static_buffer+world_static_used,world_static_capacity-world_static_used,
-        "[X4LAN] NATIVE_GATE WORLD_STATIC tick=%llu id=%016llx type=%x parent=%016llx created=%u view=%u pose0=%s pose1=%s\r\n",
+        "[X4LAN] NATIVE_GATE WORLD_STATIC tick=%llu id=%016llx type=%x parent=%016llx created=%u view=%u pose0=%s pose1=%s%s\r\n",
         (unsigned long long)world_static_tick,(unsigned long long)item->saved,item->type,(unsigned long long)item->parent,
-        (unsigned)(item->saved>>63),current,pose[0],pose[1]);
+        (unsigned)(item->saved>>63),current,pose[0],pose[1],banks);
     if(n>0 && (size_t)n<world_static_capacity-world_static_used) {world_static_used+=(size_t)n;++world_static_rows;} else ++world_static_dropped;
 }
 static int world_hash_record(world_hash_item *item,world_hash_data data[WORLD_HASH_DOMAINS],unsigned char *object) {

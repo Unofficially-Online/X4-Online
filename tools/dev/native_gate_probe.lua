@@ -334,6 +334,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_bnds then   -- a joiner takes the session's stations' bounding structs (BNDS)
   assert(gate.join_bnds and gate.join_bnds(1)==1,'join bnds refused')
  end
+ if cfg.native_gate_join_resv then   -- a joiner takes the session's zones' space reservation boxes and expiries (RESV)
+  assert(gate.join_resv and gate.join_resv(1)==1,'join resv refused')
+ end
  if cfg.native_gate_join_shgr then   -- a joiner takes the session's containers' shield recharge groups (SHGR)
   assert(gate.join_shgr and gate.join_shgr(1)==1,'join shgr refused')
  end
@@ -3017,10 +3020,25 @@ local function frame()
   -- The GetSafePos solver's boxes sorted by content at its entry: get_safe_pos results independent of the order the
   -- space's box cache was built and permuted in (a hot joiner builds its caches after the load). Before the load.
   -- Default off (an experiment: D.EXCLUDED).
-  if cfg.native_gate_safe_pos_order then
-   assert(cfg.native_gate_safe_pos_order==true and gate.safe_pos_order and gate.safe_pos_order_status and gate.safe_pos_order()==1,
+  -- native_gate_safe_pos_dump = {from,to}: SAFE_POS_DUMP rows (the solver's inputs, every box as given, the result) for
+  -- the calls in those ticks, in the crash notes (diagnostic); hooks the entry without sorting unless the order is set.
+  if cfg.native_gate_safe_pos_dump~=nil then
+   local w=cfg.native_gate_safe_pos_dump
+   assert(type(w)=='table' and #w==2 and gate.safe_pos_dump and gate.safe_pos_dump(w[1],w[2])==1,'native_gate_safe_pos_dump needs {from,to}')
+  end
+  if cfg.native_gate_safe_pos_order or cfg.native_gate_safe_pos_dump~=nil then
+   assert((cfg.native_gate_safe_pos_order==nil or cfg.native_gate_safe_pos_order==true or cfg.native_gate_safe_pos_order==false) and
+    gate.safe_pos_order and gate.safe_pos_order_status and gate.safe_pos_order(cfg.native_gate_safe_pos_order and 1 or 0)==1,
     'safe pos order refused '..tostring(gate.safe_pos_order_status and gate.safe_pos_order_status()))
    log('SAFE_POS_ORDER_ARMED '..tostring(gate.safe_pos_order_status()))
+  end
+  -- native_gate_nav_refresh_watch = {from,to}: NAV_REFRESH rows (which thread refreshes a navigation controller first
+  -- after a bank flip, its time, whether its stamp held) in the crash notes (diagnostic; counts and records only).
+  if cfg.native_gate_nav_refresh_watch~=nil then
+   local w=cfg.native_gate_nav_refresh_watch
+   assert(type(w)=='table' and #w==2 and gate.nav_refresh_watch and gate.nav_refresh_watch(w[1],w[2])==1,
+    'nav refresh watch refused '..tostring(gate.nav_refresh_watch_status and gate.nav_refresh_watch_status()))
+   log('NAV_REFRESH_WATCH_ARMED '..tostring(gate.nav_refresh_watch_status()))
   end
   -- RCPSS/RSQRTSS in X4.exe to exactly rounded division and square root (1,272
   -- instructions, 824 windows): vendor-independent results. Before the load. Default off.
@@ -4921,6 +4939,8 @@ local function frame()
   if cfg.native_gate_weapon_fire_rng then log('WEAPON_FIRE_RNG_STOP '..tostring(gate.weapon_fire_rng_status())) end
   if cfg.native_gate_engine_refresh_rng then log('ENGINE_REFRESH_RNG_STOP '..tostring(gate.engine_refresh_rng_status())) end
   if cfg.native_gate_portable_math then log('PORTABLE_MATH_STOP '..tostring(gate.portable_math_status())) end
+  if (cfg.native_gate_safe_pos_order or cfg.native_gate_safe_pos_dump~=nil) and gate.safe_pos_order_status then log('SAFE_POS_ORDER_STOP '..tostring(gate.safe_pos_order_status())) end
+  if cfg.native_gate_nav_refresh_watch~=nil and gate.nav_refresh_watch_status then log('NAV_REFRESH_WATCH_STOP '..tostring(gate.nav_refresh_watch_status())) end
   if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.stop() end
   if cfg.native_gate_sample_profile then
    log('SAMPLE_PROFILE_STOP '..tostring(gate.sample_profile_status()))
@@ -5671,6 +5691,8 @@ SetScript('onUpdate',function()
    if cfg.native_gate_weapon_fire_rng then ticklog.try(function() log('WEAPON_FIRE_RNG_STOP '..tostring(gate.weapon_fire_rng_status())) end) end
    if cfg.native_gate_engine_refresh_rng then ticklog.try(function() log('ENGINE_REFRESH_RNG_STOP '..tostring(gate.engine_refresh_rng_status())) end) end
    if cfg.native_gate_portable_math then ticklog.try(function() log('PORTABLE_MATH_STOP '..tostring(gate.portable_math_status())) end) end
+   if (cfg.native_gate_safe_pos_order or cfg.native_gate_safe_pos_dump~=nil) and gate.safe_pos_order_status then ticklog.try(function() log('SAFE_POS_ORDER_STOP '..tostring(gate.safe_pos_order_status())) end) end
+   if cfg.native_gate_nav_refresh_watch~=nil and gate.nav_refresh_watch_status then ticklog.try(function() log('NAV_REFRESH_WATCH_STOP '..tostring(gate.nav_refresh_watch_status())) end) end
    if X4LAN_NATIVE_HYBRID then ticklog.try(X4LAN_NATIVE_HYBRID.stop) end
    if cfg.native_gate_sample_profile then ticklog.try(function()
     log('SAMPLE_PROFILE_STOP '..tostring(gate.sample_profile_status()))

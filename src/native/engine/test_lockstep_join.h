@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "3ab43bca09948f9406a13fee1943ffea0f619563faa0b65972361288467b4c40"   /* version 13 (JOBE .. OMGS; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "470a3cf290d8eb8fed14dd587f3ef8f73586b4182c890f910d0fe8d0fe0c81ce"   /* version 13 (JOBE .. RESV; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -446,6 +446,9 @@ static void test_join_golden(void) {
     static join_omgs_rec omgs[1];omgs[0].portable=0x2001ull;omgs[0].which=0;omgs[0].pad=0;
     for(unsigned i=0;i<JOIN_OMGS_BYTES;i++) omgs[0].data[i]=(unsigned char)i;
     t.omgs=omgs;t.nomgs=1;
+    static join_resv_rec resv[1];resv[0].zone=0x2001ull;resv[0].owner=0x2002ull;resv[0].index=3u;resv[0].expiry=12.5;
+    for(unsigned i=0;i<JOIN_RESV_BOX_BYTES;i++) resv[0].box[i]=(unsigned char)i;
+    t.resv=resv;t.nresv=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -498,7 +501,8 @@ static void test_join_golden(void) {
            r.nengr==1 && !memcmp(r.engr,engr,sizeof(engr)) &&
            r.nshgr==1 && !memcmp(r.shgr,shgr,sizeof(shgr)) &&
            r.nbnds==1 && !memcmp(r.bnds,bnds,sizeof(bnds)) &&
-           r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)));
+           r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)) &&
+           r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -532,7 +536,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -2835,6 +2839,56 @@ static void test_join_body(void) {
     }
     printf("hot join BODY: the Jolt body behind a record, moving and static, refusals, order; JOBS ship vectors PASS\n");
 }
+/* RESV (lockstep_join_world.h): a zone's reservation tree walked in order as 0x835aa9 .. 0x835aef takes it, a count that does not
+ * match refused; the capture's records by the zone's and the owner's portable IDs and the index; the admission writes the
+ * session's box and expiry into the joiner's node with the same key, counts missing and extra nodes. */
+static _Alignas(16) unsigned char tresv_zone[0x500],tresv_node[4][0xb0];
+static uint64_t tresv_key(uint64_t runtime,unsigned *klass) {*klass=0;return runtime?runtime|0x100000ull:0;}
+static void *tresv_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime==0x77ull?tresv_zone:NULL;}
+static int tresv_visit(unsigned char *node,void *p) {uint64_t *seen=(uint64_t*)p,index=0;memcpy(&index,node+JOIN_RESV_INDEX,8);seen[++seen[0]]=index;return 1;}
+static void tresv_link(unsigned char *n,unsigned char *parent,unsigned char *left,unsigned char *right) {memcpy(n,&parent,8);memcpy(n+8,&left,8);memcpy(n+0x10,&right,8);}
+static void tresv_build(void) {
+    memset(tresv_zone,0,sizeof(tresv_zone));memset(tresv_node,0,sizeof(tresv_node));
+    uintptr_t vt=(uintptr_t)image+JOIN_ZONE_VTABLE;uint64_t runtime=0x77ull;memcpy(tresv_zone,&vt,8);memcpy(tresv_zone+8,&runtime,8);
+    unsigned char *h=tresv_zone+JOIN_RESV_TREE,*a=tresv_node[0],*b=tresv_node[1],*c=tresv_node[2];
+    /* root b (index 2), its left a (1), its right c (3); the header's +8 the root */
+    tresv_link(b,h,a,c);tresv_link(a,b,NULL,NULL);tresv_link(c,b,NULL,NULL);memcpy(h+8,&b,8);
+    memcpy(tresv_zone+JOIN_RESV_BEGIN,&a,8);uint64_t count=3;memcpy(tresv_zone+JOIN_RESV_COUNT,&count,8);
+    for(unsigned i=0;i<3;i++) {
+        uint64_t owner=0x500ull+i,index=i+1u;double expiry=40.0+i;unsigned char *n=tresv_node[i==0?0:i==1?1:2];
+        memcpy(n+JOIN_RESV_OWNER,&owner,8);memcpy(n+JOIN_RESV_INDEX,&index,8);memcpy(n+JOIN_RESV_EXPIRY,&expiry,8);
+        for(unsigned k=0;k<JOIN_RESV_BOX_BYTES;k++) n[JOIN_RESV_BOX+k]=(unsigned char)(0x10*i+k);
+    }
+}
+static void test_join_resv(void) {
+    tresv_build();
+    uint64_t seen[8]={0};assert(join_resv_walk(tresv_zone,tresv_visit,seen)==3 && seen[0]==3 && seen[1]==1 && seen[2]==2 && seen[3]==3);
+    {uint64_t two=2;memcpy(tresv_zone+JOIN_RESV_COUNT,&two,8);assert(join_resv_walk(tresv_zone,NULL,NULL)==-1);two=3;memcpy(tresv_zone+JOIN_RESV_COUNT,&two,8);}
+    assert(join_resv_zone(tresv_zone) && !join_resv_zone(tresv_node[0]));
+    /* the capture: three records by (zone, owner, index), the owners' portable keys */
+    uint64_t (*key)(uint64_t,unsigned *)=join_key;join_find_fn find=join_world_find;void *map=join_world_map;
+    join_key=tresv_key;join_world_find=tresv_find;join_world_map=tresv_zone;
+    join_tables t;memset(&t,0,sizeof(t));join_id_rec ids[1]={{0x77ull,0x2077ull,0,0}};t.ids=ids;t.nids=1;
+    join_capture_resv(&t);
+    assert(t.nresv==3 && t.resv[0].zone==0x2077ull && t.resv[0].owner==(0x500ull|0x100000ull) && t.resv[0].index==1u && t.resv[2].index==3u &&
+           t.resv[1].expiry==41.0 && t.resv[1].box[5]==0x15);
+    /* the admission: the joiner's same tree with other boxes and expiries; one session record has no node, one node no record */
+    join_resv_rec s_rec[3];memcpy(s_rec,t.resv,sizeof(s_rec));free(t.resv);
+    s_rec[2].index=9u;                                                    /* no joiner node with index 9 */
+    for(unsigned i=0;i<3;i++) {memset(tresv_node[i]+JOIN_RESV_BOX,0xee,JOIN_RESV_BOX_BYTES);double e=-1.0;memcpy(tresv_node[i]+JOIN_RESV_EXPIRY,&e,8);}
+    memcpy(tresv_node[1]+JOIN_RESV_BOX,s_rec[1].box,JOIN_RESV_BOX_BYTES);memcpy(tresv_node[1]+JOIN_RESV_EXPIRY,&s_rec[1].expiry,8); /* equal already */
+    join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));s.resv=s_rec;s.nresv=3;
+    join_id_rec mine_ids[4]={{0x77ull,0x2077ull,0,0},{0x500ull,0x100500ull,0,0},{0x501ull,0x100501ull,0,0},{0x502ull,0x100502ull,0,0}};
+    mine.ids=mine_ids;mine.nids=4;   /* sorted by portable */
+    join_resv_on=0;join_admit_resv(&s,&mine);assert(!join_resv_written && !join_resv_equal && !join_resv_missing);
+    join_resv_on=1;join_admit_resv(&s,&mine);
+    assert(join_resv_written==1 && join_resv_equal==1 && join_resv_missing==1 && join_resv_extra==1);
+    assert(!memcmp(tresv_node[0]+JOIN_RESV_BOX,s_rec[0].box,JOIN_RESV_BOX_BYTES) && !memcmp(tresv_node[0]+JOIN_RESV_EXPIRY,&s_rec[0].expiry,8));
+    {double e;memcpy(&e,tresv_node[2]+JOIN_RESV_EXPIRY,8);assert(e==-1.0 && tresv_node[2][JOIN_RESV_BOX]==0xee);}   /* the unmatched node untouched */
+    join_admit_resv(&s,&mine);assert(join_resv_written==0 && join_resv_equal==2 && join_resv_missing==1);   /* again: nothing left */
+    join_resv_on=0;join_key=key;join_world_find=find;join_world_map=map;
+    printf("join RESV: the reservation tree in order (count checked), the capture by zone/owner/index, the admission's box and expiry writes, missing and extra PASS\n");
+}
 /* OMGS admission write (lockstep_join_world.h join_omgs_write): the raw runs land, the masked words and the vector triples are not
  * written raw; an empty session vector empties the joiner's own (its begin and capacity kept), a non-empty one leaves it. */
 static void test_join_omgs_write(void) {
@@ -2864,5 +2918,5 @@ static void test_join_omgs_write(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();
 }

@@ -3860,6 +3860,109 @@ static void join_admit_omgs(const join_tables *s,const join_tables *mine) {
         if(w) ++join_omgs_written; else ++join_omgs_equal;
     }
 }
+/* RESV (v13, section 74; the admission opt-in, native_gate_join_resv): every zone's space reservations [j1-335, w1z151, w1z155:
+ * Zone::GetSafePos 0x835b80 adds each reservation's stored box (0x835630 walks the tree at zone+0x3b0 and appends node+0x30 ..
+ * +0x9f) to the solver's boxes; on the joiner those boxes differ in their rotation rows (1 .. 8 ulps) and w lanes, the positions
+ * equal, and the get_safe_pos points from about 40 s after the join come out 1 .. 3 ulps apart. The session computed them when
+ * the ships reserved (0x834f90); the joiner's load imports each node with a zeroed box, identity rows and expiry -1.0
+ * (U::Zone::ImportReservation 0x835230), refilled from its own state.] The tree: header zone+0x3b0 (a node: +0 parent, +8 left,
+ * +0x10 right; the header's +8 the root), the leftmost node at +0x3d0, the count +0x3d8; a node's key: +0x20 the owner's runtime
+ * ID, +0x28 the index; its box +0x30 .. +0x9f, its expiry +0xa0 (0x835860 drops nodes past it). The capture takes every Zone's
+ * nodes by the zone's and the owner's portable IDs and the index: the box raw and the expiry; with the opt-in the admission
+ * writes the session's where they differ. Status resv=on:written:equal:missing:extra (extra: the joiner's nodes no record
+ * matched). */
+#define JOIN_RESV_TREE 0x3b0u
+#define JOIN_RESV_BEGIN 0x3d0u
+#define JOIN_RESV_COUNT 0x3d8u
+#define JOIN_RESV_OWNER 0x20u
+#define JOIN_RESV_INDEX 0x28u
+#define JOIN_RESV_BOX 0x30u
+#define JOIN_RESV_EXPIRY 0xa0u
+#define JOIN_RESV_MAX 100000u
+static int join_resv_on;
+static uint64_t join_resv_written,join_resv_equal,join_resv_missing,join_resv_extra;
+static int join_resv_zone(unsigned char *o) {uintptr_t vt=0;return o && join_read(o,&vt,8) && vt==(uintptr_t)image+JOIN_ZONE_VTABLE;}
+/* The in-order successor as 0x835aa9 .. 0x835aef takes it; NULL on a read failure (the header ends the walk). */
+static unsigned char *join_resv_next(unsigned char *node) {
+    unsigned char *r=NULL;
+    if(!join_read(node+0x10,&r,8)) return NULL;
+    if(r) {for(unsigned d=0;d<128u;d++) {unsigned char *l=NULL;if(!join_read(r+8,&l,8)) return NULL;if(!l) return r;r=l;}return NULL;}
+    unsigned char *q=node,*p=NULL;
+    for(unsigned d=0;d<128u;d++) {
+        unsigned char *pl=NULL;
+        if(!join_read(q,&p,8) || !p || !join_read(p+8,&pl,8)) return NULL;
+        if(pl==q) return p;
+        q=p;
+    }
+    return NULL;
+}
+/* Each node of a zone's tree in order: visit(node, ctx) returns 0 to stop; the node count, or -1 on a broken walk. */
+static long join_resv_walk(unsigned char *zone,int (*visit)(unsigned char *,void *),void *ctx) {
+    unsigned char *header=zone+JOIN_RESV_TREE,*node=NULL;uint64_t count=0;long seen=0;
+    if(!join_read(zone+JOIN_RESV_BEGIN,&node,8) || !join_read(zone+JOIN_RESV_COUNT,&count,8) || count>JOIN_RESV_MAX) return -1;
+    while(node && node!=header) {
+        if((uint64_t)seen>=count) return -1;
+        ++seen;if(visit && !visit(node,ctx)) return seen;
+        node=join_resv_next(node);
+    }
+    return node==header && (uint64_t)seen==count?seen:-1;
+}
+typedef struct {join_tables *t;uint64_t zone;uint32_t *cap;int failed;} join_resv_capture_ctx;
+static int join_resv_capture_visit(unsigned char *node,void *p) {
+    join_resv_capture_ctx *c=(join_resv_capture_ctx*)p;uint64_t owner=0;unsigned klass=0;join_resv_rec r;memset(&r,0,sizeof(r));
+    if(!join_read(node+JOIN_RESV_OWNER,&owner,8) || !join_read(node+JOIN_RESV_INDEX,&r.index,8) ||
+       !join_read(node+JOIN_RESV_BOX,r.box,JOIN_RESV_BOX_BYTES) || !join_read(node+JOIN_RESV_EXPIRY,&r.expiry,8)) return 1;
+    r.zone=c->zone;r.owner=join_key(owner,&klass);
+    if(!r.owner) return 1;
+    if(!JOIN_PUSH(c->t->resv,c->t->nresv,*c->cap,r)) {c->failed=1;return 0;}
+    return 1;
+}
+static int join_resv_cmp(const void *a,const void *b) {
+    const join_resv_rec *x=a,*y=b;
+    if(x->zone!=y->zone) return x->zone<y->zone?-1:1;
+    if(x->owner!=y->owner) return x->owner<y->owner?-1:1;
+    return x->index<y->index?-1:x->index>y->index;
+}
+static void join_capture_resv(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        if(!t->ids[i].portable) continue;
+        unsigned char *o=join_object(t->ids[i].runtime);
+        if(!join_resv_zone(o)) continue;
+        join_resv_capture_ctx c={t,t->ids[i].portable,&cap,0};
+        (void)join_resv_walk(o,join_resv_capture_visit,&c);
+        if(c.failed) return;
+    }
+    if(t->nresv>1) qsort(t->resv,t->nresv,sizeof(*t->resv),join_resv_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->nresv;i++) {if(k && !join_resv_cmp(&t->resv[k-1],&t->resv[i])) continue;t->resv[k++]=t->resv[i];}t->nresv=k;}
+}
+typedef struct {uint64_t owner,index;unsigned char *hit;} join_resv_find_ctx;
+static int join_resv_find_visit(unsigned char *node,void *p) {
+    join_resv_find_ctx *c=(join_resv_find_ctx*)p;uint64_t owner=0,index=0;
+    if(join_read(node+JOIN_RESV_OWNER,&owner,8) && join_read(node+JOIN_RESV_INDEX,&index,8) && owner==c->owner && index==c->index) {c->hit=node;return 0;}
+    return 1;
+}
+static void join_admit_resv(const join_tables *s,const join_tables *mine) {
+    join_resv_written=join_resv_equal=join_resv_missing=join_resv_extra=0;
+    if(!join_resv_on) return;
+    uint64_t matched=0,nodes=0;
+    for(uint32_t i=0;i<s->nresv;i++) {
+        const join_resv_rec *r=&s->resv[i];unsigned char *zone=join_object(join_runtime_of(mine,r->zone));
+        join_resv_find_ctx c={join_runtime_of(mine,r->owner),r->index,NULL};
+        if(c.owner && join_resv_zone(zone)) (void)join_resv_walk(zone,join_resv_find_visit,&c);
+        if(!c.hit) {++join_resv_missing;continue;}
+        ++matched;
+        int changed=join_poke((uintptr_t)(c.hit+JOIN_RESV_BOX),r->box,JOIN_RESV_BOX_BYTES);
+        changed|=join_poke((uintptr_t)(c.hit+JOIN_RESV_EXPIRY),&r->expiry,8);
+        if(changed) ++join_resv_written; else ++join_resv_equal;
+    }
+    for(uint32_t i=0;i<mine->nids;i++) {
+        unsigned char *o=mine->ids[i].portable?join_object(mine->ids[i].runtime):NULL;
+        if(!join_resv_zone(o)) continue;
+        const long n=join_resv_walk(o,NULL,NULL);if(n>0) nodes+=(uint64_t)n;
+    }
+    join_resv_extra=nodes>matched?nodes-matched:0;
+}
 static int join_bnds_on;
 static uint64_t join_bnds_written,join_bnds_equal,join_bnds_missing;
 #define JOIN_BNDS_GETTER 0x7eb460u   /* the station's vfunc 0x14b0: lea rax,[rcx+0xc90] */
@@ -4689,6 +4792,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_engr(t);            /* version 13 */
     join_capture_shgr(t);            /* version 13 */
     join_capture_bnds(t);            /* version 13 */
+    join_capture_resv(t);            /* version 13: the zones' space reservations */
     join_sort_omgs(t);               /* version 13: OMGS, taken in the FLIGHT walk */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
@@ -6313,6 +6417,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_engr(s,&mine);    /* the engines' boost ramps (opt-in) */
     if(s->version>=13) join_admit_shgr(s,&mine);    /* the containers' shield recharge groups (opt-in) */
     if(s->version>=13) join_admit_bnds(s,&mine);    /* the stations' bounding structs (opt-in) */
+    if(s->version>=13) join_admit_resv(s,&mine);    /* the zones' space reservations' boxes and expiries (opt-in) */
     if(s->version>=13) join_admit_omgs(s,&mine);    /* the steering ships' OmegaSwitched controllers (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */

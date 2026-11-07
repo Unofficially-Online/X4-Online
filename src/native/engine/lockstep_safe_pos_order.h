@@ -38,11 +38,25 @@
 #define SPO_CODE 0x40u
 static const unsigned char spo_original[7]={0x48,0x8b,0xc4,0x48,0x89,0x58,0x18};
 typedef uint64_t (*spo_fn)(void *,float *,float,float *,float,uint64_t,uint64_t,float *,float);
-static int spo_installed,spo_restored;
+static int spo_installed,spo_restored,spo_sort_on;
 static unsigned char *spo_page;
 static volatile LONG spo_any;   /* the entry may hold our bytes: the view is on */
 static volatile LONG64 spo_calls,spo_sorted,spo_moved,spo_invalid,spo_max_n,spo_failures;
 static const char *spo_stage="idle";
+/* SAFE_POS_DUMP (diagnostic, native_gate_safe_pos_dump = {from,to}): every solver call while stats.issued lies in
+ * [from,to] writes one row: the tick, a sequence number, the thread, the caller (return address less the image), the
+ * radius, a5, the allow-y byte, a9, the move direction ('-' when null), the point before and after, the direction, n and
+ * the boxes as given (before any sort; +0x24..+0x2f zeroed; 'boxes=over' past SPO_DUMP_BOXES). Rows collect under a
+ * lock and go to the sink (the crash notes, set by gate.safe_pos_dump) at the next gate tick (spo_check). The hook runs
+ * then without sorting unless native_gate_safe_pos_order is set too. */
+#define SPO_DUMP_BOXES 512u
+#define SPO_DUMP_CAP ((size_t)96<<20)
+static uint64_t spo_dump_from,spo_dump_to;
+static void (*spo_dump_sink)(const char *,int);
+static SRWLOCK spo_dump_lock=SRWLOCK_INIT;
+static char *spo_dump_buffer;static size_t spo_dump_used,spo_dump_capacity;
+static volatile LONG spo_dump_seq;
+static volatile LONG64 spo_dump_rows,spo_dump_dropped;
 
 /* The order: the bytes the solver reads, as unsigned bytes. */
 static int spo_compare(const unsigned char *a,const unsigned char *b) {
@@ -76,10 +90,77 @@ static void spo_sort_vector(void *vec) {
     LONG64 now=spo_max_n;
     while((LONG64)n>now) {const LONG64 seen=InterlockedCompareExchange64(&spo_max_n,(LONG64)n,now);if(seen==now) break;now=seen;}
 }
-static uint64_t spo_hook(void *vec,float *p,float r,float *dir,float a5,uint64_t a6,uint64_t a7,float *move,float a9) {
+static void spo_hex(char *out,const void *data,size_t bytes) {
+    static const char digits[]="0123456789abcdef";const unsigned char *b=(const unsigned char*)data;
+    for(size_t i=0;i<bytes;i++) {out[2*i]=digits[b[i]>>4];out[2*i+1]=digits[b[i]&15];}
+    out[2*bytes]=0;
+}
+/* The row up to the point after (appended by spo_dump_finish); NULL when unreadable or out of memory. */
+static char *spo_dump_begin(void *vec,const float *p,float r,const float *dir,float a5,uint64_t a7,const float *move,float a9,
+                            uint64_t tick,uintptr_t caller,size_t *used) {
+    uintptr_t be[2];float pt[4],d[4],mv[4];size_t n=0;int over=0;
+    if(!vec || !read_local(vec,be,16) || be[1]<be[0] || (be[1]-be[0])%SPO_BOX || !p || !read_local(p,pt,16) || !dir || !read_local(dir,d,16) ||
+       (move && !read_local(move,mv,16))) {InterlockedIncrement64(&spo_dump_dropped);return NULL;}
+    n=(be[1]-be[0])/SPO_BOX;over=n>SPO_DUMP_BOXES;
+    const size_t capacity=640+(over?0:n*SPO_BOX*2);char *row=(char*)malloc(capacity);
+    if(!row) {InterlockedIncrement64(&spo_dump_dropped);return NULL;}
+    uint32_t rb,a5b,a9b;memcpy(&rb,&r,4);memcpy(&a5b,&a5,4);memcpy(&a9b,&a9,4);
+    char ph[33],dh[33],mh[33];spo_hex(ph,pt,16);spo_hex(dh,d,16);if(move) spo_hex(mh,mv,16);else strcpy(mh,"-");
+    int k=snprintf(row,capacity,"[X4LAN] NATIVE_GATE SAFE_POS_DUMP tick=%llu seq=%ld thread=%lu caller=%llx n=%llu r=%08x a5=%08x y=%u a9=%08x move=%s p0=%s dir=%s boxes=",
+        (unsigned long long)tick,(long)InterlockedIncrement(&spo_dump_seq),(unsigned long)GetCurrentThreadId(),(unsigned long long)caller,
+        (unsigned long long)n,rb,a5b,(unsigned)(a7&0xffu),a9b,mh,ph,dh);
+    if(k<=0 || (size_t)k>=capacity) {free(row);InterlockedIncrement64(&spo_dump_dropped);return NULL;}
+    size_t at=(size_t)k;
+    if(over) {memcpy(row+at,"over",5);at+=4;}
+    else {
+        unsigned char box[SPO_BOX];
+        for(size_t i=0;i<n;i++) {
+            if(!read_local((const unsigned char*)be[0]+i*SPO_BOX,box,SPO_BOX)) {free(row);InterlockedIncrement64(&spo_dump_dropped);return NULL;}
+            memset(box+0x24,0,0x0c);spo_hex(row+at,box,SPO_BOX);at+=SPO_BOX*2;
+        }
+    }
+    *used=at;return row;
+}
+static void spo_dump_finish(char *row,size_t used,const float *p) {
+    float pt[4];char ph[33];
+    if(!read_local(p,pt,16)) strcpy(ph,"x");else spo_hex(ph,pt,16);
+    const size_t tail=strlen(ph)+8;
+    AcquireSRWLockExclusive(&spo_dump_lock);
+    if(spo_dump_used+used+tail>spo_dump_capacity && spo_dump_capacity<SPO_DUMP_CAP) {
+        size_t want=spo_dump_capacity?spo_dump_capacity:(size_t)1<<22;
+        while(want<spo_dump_used+used+tail && want<SPO_DUMP_CAP) want*=2;
+        char *grown=(char*)realloc(spo_dump_buffer,want);
+        if(grown) {spo_dump_buffer=grown;spo_dump_capacity=want;}
+    }
+    if(spo_dump_used+used+tail<=spo_dump_capacity) {
+        memcpy(spo_dump_buffer+spo_dump_used,row,used);spo_dump_used+=used;
+        spo_dump_used+=(size_t)sprintf(spo_dump_buffer+spo_dump_used," p1=%s\r\n",ph);
+        InterlockedIncrement64(&spo_dump_rows);
+    } else InterlockedIncrement64(&spo_dump_dropped);
+    ReleaseSRWLockExclusive(&spo_dump_lock);
+    free(row);
+}
+/* Rows to the sink (UI thread, the gate tick). */
+static void spo_dump_flush(void) {
+    if(!spo_dump_sink) return;
+    AcquireSRWLockExclusive(&spo_dump_lock);
+    if(spo_dump_used) {spo_dump_sink(spo_dump_buffer,(int)spo_dump_used);spo_dump_used=0;}
+    ReleaseSRWLockExclusive(&spo_dump_lock);
+}
+static __attribute__((noinline)) uint64_t spo_hook(void *vec,float *p,float r,float *dir,float a5,uint64_t a6,uint64_t a7,float *move,float a9) {
     InterlockedIncrement64(&spo_calls);
-    if(stats.active) spo_sort_vector(vec);
-    return ((spo_fn)(void*)(spo_page+SPO_TRAMP))(vec,p,r,dir,a5,a6,a7,move,a9);
+    const uint64_t tick=stats.issued;char *row=NULL;size_t used=0;
+    if(spo_dump_to && tick>=spo_dump_from && tick<=spo_dump_to)
+        row=spo_dump_begin(vec,p,r,dir,a5,a7,move,a9,tick,(uintptr_t)__builtin_return_address(0)-(uintptr_t)image,&used);
+    if(stats.active && spo_sort_on) spo_sort_vector(vec);
+    const uint64_t result=((spo_fn)(void*)(spo_page+SPO_TRAMP))(vec,p,r,dir,a5,a6,a7,move,a9);
+    if(row) spo_dump_finish(row,used,p);
+    return result;
+}
+/* gate.safe_pos_dump(from,to): config time (before the UI thread is known), like gate.world_static. */
+static int spo_dump_set(double from,double to) {
+    if(!isfinite(from) || !isfinite(to) || floor(from)!=from || floor(to)!=to || from<1 || to<from || to>1e9) return 0;
+    spo_dump_from=(uint64_t)from;spo_dump_to=(uint64_t)to;return 1;
 }
 
 /* ---- the page and the entry ---- */
@@ -170,9 +251,11 @@ static int spo_switch(int install) {
     if(install) InterlockedExchange(&spo_any,0);
     return 0;
 }
-/* gate.safe_pos_order(): UI thread, before the first admitted frame. */
-static int spo_arm(void) {
-    if(spo_installed) return stats.active!=0;
+/* gate.safe_pos_order(sort): UI thread, before the first admitted frame; sort 1 sorts the boxes, 0 only hooks the entry
+ * (for the dump). */
+static int spo_arm(int sort) {
+    if(spo_installed) return stats.active!=0 && spo_sort_on==sort;
+    spo_sort_on=sort;
     if(!stats.active || stats.issued || (boot_mode && boot_phase) || GetCurrentThreadId()!=ui_thread) {spo_stage="state";return 0;}
     if(!spo_pins()) {spo_stage="pins";return 0;}
     if(spo_state()!=0) {spo_stage="entry";return 0;} /* another module's patch (FR27, the step chain) */
@@ -185,6 +268,7 @@ static int spo_arm(void) {
 static int spo_owned(void) {return !spo_installed || (spo_state()==1 && spo_page_ok());}
 /* Gate tick: any change stops the gate with reason 197. */
 static int spo_check(void) {
+    spo_dump_flush();
     if(InterlockedCompareExchange64(&spo_failures,0,0)) return 0;
     if(!spo_owned()) {spo_stage="site_changed";InterlockedIncrement64(&spo_failures);return 0;}
     return 1;
@@ -196,8 +280,10 @@ static void spo_restore(void) {
     else spo_stage="restore_busy";
 }
 static int spo_status(char *out,size_t capacity) {
-    const int n=snprintf(out,capacity,"installed=%d restored=%d stage=%s calls=%lld sorted=%lld moved=%lld invalid=%lld max_n=%lld failures=%lld",
-        spo_installed,spo_restored,spo_stage,(long long)spo_calls,(long long)spo_sorted,(long long)spo_moved,(long long)spo_invalid,
-        (long long)spo_max_n,(long long)spo_failures);
+    const int n=snprintf(out,capacity,"installed=%d sort=%d restored=%d stage=%s calls=%lld sorted=%lld moved=%lld invalid=%lld max_n=%lld failures=%lld"
+        " dump=%llu:%llu dump_rows=%lld dump_dropped=%lld",
+        spo_installed,spo_sort_on,spo_restored,spo_stage,(long long)spo_calls,(long long)spo_sorted,(long long)spo_moved,(long long)spo_invalid,
+        (long long)spo_max_n,(long long)spo_failures,(unsigned long long)spo_dump_from,(unsigned long long)spo_dump_to,
+        (long long)spo_dump_rows,(long long)spo_dump_dropped);
     return n>0 && (size_t)n<capacity?n:0;
 }
