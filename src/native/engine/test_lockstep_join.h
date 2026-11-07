@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "1f993578efc161e25c224738cfd194775894160839572c3e0dec1ea5006eeab3"   /* version 13 (JOBE .. PCSV; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "2d2b63f7198141fac4dc576d32359bb8f2d70f962585a40cfc10579a0b8733eb"   /* version 13 (JOBE .. CONN; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -452,6 +452,8 @@ static void test_join_golden(void) {
     static join_solver_rec pcsv[1];memset(pcsv,0,sizeof(pcsv));pcsv[0].portable=0x2001ull;pcsv[0].kind=PSLOT_VTABLE;pcsv[0].pointers=1;
     pcsv[0].pointer[0]=(0x18u/8u)<<1;pcsv[0].data[0x18]=0x40;
     t.pcsv=pcsv;t.npcsv=1;
+    static join_conn_rec conn[1];conn[0].owner=0x2001ull;conn[0].id=0x163e5cull;conn[0].peer_owner=0x2002ull;conn[0].peer_id=0x163e5dull;
+    t.conn=conn;t.nconn=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -506,7 +508,7 @@ static void test_join_golden(void) {
            r.nbnds==1 && !memcmp(r.bnds,bnds,sizeof(bnds)) &&
            r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)) &&
            r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)) &&
-           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)));
+           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -540,7 +542,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -2946,6 +2948,18 @@ static void test_join_pcsv(void) {
     join_pcsv_on=0;join_world_find=find;join_world_map=map;join_mapped=mapped;free(t.pcsv);
     printf("join PCSV: a PlayerController's solver block captured as SOLVER (relative, RVA, heap mark), admitted into the joiner's controller (absolute, own heap value, nothing else), missing and shape PASS\n");
 }
+/* CODE over the in-window resume: the counter held from begin to end (the codes the rebuild drew counted, the counter put back);
+ * without CODE nothing happens. */
+static void test_join_code_hold(void) {
+    uint32_t *counter=(uint32_t *)(image+JOIN_CODE_COUNTER),keep=*counter;
+    join_code_on=0;*counter=100u;join_code_hold(1);*counter=103u;join_code_hold(0);assert(*counter==103u && !join_code_resume_draws);
+    join_code_on=1;*counter=100u;join_code_hold(1);*counter=104u;join_code_hold(0);assert(*counter==100u && join_code_resume_draws==4u);
+    join_code_hold(0);assert(*counter==100u && join_code_resume_draws==4u);   /* an end without a begin changes nothing */
+    *counter=0xffffffu;join_code_hold(1);*counter=1u;join_code_hold(0);assert(*counter==0xffffffu && join_code_resume_draws==2u);   /* wrapped */
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," code_resume=2"));}
+    join_code_on=0;*counter=keep;join_code_resume_draws=0;
+    printf("join CODE resume: the code counter held over the in-window resume, the draws counted, nothing without CODE PASS\n");
+}
 static void test_join_resv(void) {
     tresv_build();
     uint64_t seen[8]={0};assert(join_resv_walk(tresv_zone,tresv_visit,seen)==3 && seen[0]==3 && seen[1]==1 && seen[2]==2 && seen[3]==3);
@@ -3002,7 +3016,73 @@ static void test_join_omgs_write(void) {
     assert(join_omgs_write(o,&r)==0 && join_omgs_vec_equal==5u);   /* again: nothing left to write */
     printf("hot join OMGS: raw runs, masks, the vector triples emptied in place or left PASS\n");
 }
+/* CONN (lockstep_join_world.h): an NPC (runtime 0x81) with two connection buckets (kind 1 empty, kind 2 its roomposition 0x163e5c)
+ * and a ship (0x91) with one (its con_control 0x163e5d), connected to each other on the session. The capture keeps both directions by
+ * (owner key, ID); the joiner's pair is unconnected and the admission connects it (written 2, left 0), then finds it equal; another
+ * partner is a conflict and stays; an unknown ID is missing. */
+static _Alignas(16) unsigned char tconn_obj[2][0x100],tconn_cont[2][0x20],tconn_bucket[2][2][0x18],tconn_head[2][2][0x40],tconn_node[3][0x40];
+static uint64_t tconn_key(uint64_t runtime,unsigned *klass) {*klass=0;return runtime?runtime|0x100000ull:0;}
+static void *tconn_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime==0x81ull?tconn_obj[0]:runtime==0x91ull?tconn_obj[1]:NULL;}
+static void tconn_put(unsigned char *at,const void *value) {memcpy(at,&value,8);}
+static void tconn_build(void) {
+    memset(tconn_obj,0,sizeof(tconn_obj));memset(tconn_cont,0,sizeof(tconn_cont));memset(tconn_bucket,0,sizeof(tconn_bucket));
+    memset(tconn_head,0,sizeof(tconn_head));memset(tconn_node,0,sizeof(tconn_node));
+    for(unsigned side=0;side<2;side++) {
+        uintptr_t vt=(uintptr_t)image+(side?0x2b7feb8u:JOIN_CONN_NPC_VTABLE);uint64_t runtime=side?0x91ull:0x81ull;const unsigned nb=side?1u:2u;
+        memcpy(tconn_obj[side],&vt,8);memcpy(tconn_obj[side]+8,&runtime,8);tconn_put(tconn_obj[side]+JOIN_CONN_CONTAINER,tconn_cont[side]);
+        tconn_put(tconn_cont[side],tconn_bucket[side][0]);tconn_put(tconn_cont[side]+8,tconn_bucket[side][nb]);
+        uint32_t count=1;memcpy(tconn_cont[side]+0x18,&count,4);
+        for(unsigned k=0;k<nb;k++) {
+            const int used=k+1u==nb;uint64_t size=used?1u:0u;unsigned char *head=tconn_head[side][k],*node=tconn_node[side];
+            tconn_put(tconn_bucket[side][k],head);memcpy(tconn_bucket[side][k]+8,&size,8);
+            if(!used) {tconn_put(head,head);tconn_put(head+8,head);continue;}
+            tconn_put(head,node);tconn_put(head+8,node);tconn_put(node,head);tconn_put(node+8,head);
+            uintptr_t cvt=(uintptr_t)image+JOIN_CONN_VTABLE;uint64_t id=side?0x163e5dull:0x163e5cull;
+            memcpy(node+JOIN_CONN_NODE,&cvt,8);memcpy(node+JOIN_CONN_NODE+JOIN_CONN_ID,&id,8);tconn_put(node+JOIN_CONN_NODE+JOIN_CONN_OWNER,tconn_obj[side]);
+        }
+    }
+    tconn_put(tconn_node[0]+JOIN_CONN_NODE+JOIN_CONN_PEER,tconn_node[1]+JOIN_CONN_NODE);   /* connected both ways */
+    tconn_put(tconn_node[1]+JOIN_CONN_NODE+JOIN_CONN_PEER,tconn_node[0]+JOIN_CONN_NODE);
+}
+static int tconn_count(unsigned char *conn,void *p) {(void)conn;++*(long *)p;return 1;}
+static void test_join_conn(void) {
+    tconn_build();
+    long n=0;assert(join_conn_walk(tconn_obj[0],tconn_count,&n)==1 && n==1 && join_conn_walk(tconn_obj[1],NULL,NULL)==1);
+    assert(join_conn_npc(tconn_obj[0]) && !join_conn_npc(tconn_obj[1]) && join_conn_is(tconn_node[0]+JOIN_CONN_NODE) && !join_conn_is(tconn_obj[0]));
+    {uint64_t two=2;memcpy(tconn_bucket[0][1]+8,&two,8);assert(join_conn_walk(tconn_obj[0],NULL,NULL)==-1);two=1;memcpy(tconn_bucket[0][1]+8,&two,8);}
+    {unsigned char *none=NULL;tconn_put(tconn_obj[1]+JOIN_CONN_CONTAINER,none);assert(join_conn_walk(tconn_obj[1],NULL,NULL)==0);
+     tconn_put(tconn_obj[1]+JOIN_CONN_CONTAINER,tconn_cont[1]);}
+    /* the capture (the session): the NPC's connection and its partner's, both directions, sorted */
+    uint64_t (*key)(uint64_t,unsigned *)=join_key;join_find_fn find=join_world_find;void *map=join_world_map;
+    join_key=tconn_key;join_world_find=tconn_find;join_world_map=tconn_obj;
+    join_tables t;memset(&t,0,sizeof(t));join_id_rec ids[2]={{0x81ull,0x100081ull,0,0},{0x91ull,0x100091ull,0,0}};t.ids=ids;t.nids=2;
+    join_capture_conn(&t);
+    assert(t.nconn==2 && t.conn[0].owner==0x100081ull && t.conn[0].id==0x163e5cull && t.conn[0].peer_owner==0x100091ull &&
+           t.conn[0].peer_id==0x163e5dull && t.conn[1].owner==0x100091ull && t.conn[1].id==0x163e5dull && t.conn[1].peer_id==0x163e5cull);
+    /* the admission (the joiner): the same pair unconnected */
+    join_conn_rec s_rec[3];memcpy(s_rec,t.conn,2*sizeof(*t.conn));free(t.conn);
+    memset(&s_rec[2],0,sizeof(s_rec[2]));s_rec[2].owner=0x100091ull;s_rec[2].id=0x777ull;s_rec[2].peer_owner=0x100081ull;s_rec[2].peer_id=0x163e5cull;
+    unsigned char *none=NULL,*got=NULL;
+    tconn_put(tconn_node[0]+JOIN_CONN_NODE+JOIN_CONN_PEER,none);tconn_put(tconn_node[1]+JOIN_CONN_NODE+JOIN_CONN_PEER,none);
+    join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));s.conn=s_rec;s.nconn=3;mine.ids=ids;mine.nids=2;
+    join_conn_on=0;join_admit_conn(&s,&mine);assert(!join_conn_written && !join_conn_equal && !join_conn_missing && !join_conn_left);
+    memcpy(&got,tconn_node[0]+JOIN_CONN_NODE+JOIN_CONN_PEER,8);assert(!got);
+    join_conn_on=1;join_admit_conn(&s,&mine);
+    assert(join_conn_written==2 && !join_conn_equal && join_conn_missing==1 && !join_conn_conflict && !join_conn_left);
+    memcpy(&got,tconn_node[0]+JOIN_CONN_NODE+JOIN_CONN_PEER,8);assert(got==tconn_node[1]+JOIN_CONN_NODE);
+    memcpy(&got,tconn_node[1]+JOIN_CONN_NODE+JOIN_CONN_PEER,8);assert(got==tconn_node[0]+JOIN_CONN_NODE);
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," conn=1:2:0:1:0:0 "));}
+    join_admit_conn(&s,&mine);assert(!join_conn_written && join_conn_equal==2 && join_conn_missing==1);   /* again: nothing left */
+    /* another partner on the joiner: a conflict, left as it is */
+    tconn_put(tconn_node[0]+JOIN_CONN_NODE+JOIN_CONN_PEER,tconn_node[2]);
+    join_admit_conn(&s,&mine);assert(join_conn_conflict==1 && join_conn_equal==1 && !join_conn_written);
+    memcpy(&got,tconn_node[0]+JOIN_CONN_NODE+JOIN_CONN_PEER,8);assert(got==tconn_node[2]);
+    /* an NPC connection the records do not reach stays null: left */
+    tconn_put(tconn_node[0]+JOIN_CONN_NODE+JOIN_CONN_PEER,none);s.nconn=0;join_admit_conn(&s,&mine);assert(join_conn_left==1 && !join_conn_written);
+    join_conn_on=0;join_key=key;join_world_find=find;join_world_map=map;
+    printf("join CONN: the connection buckets (lists, sizes checked), the capture of both directions by owner key and ID, the admission's partner writes, equal, conflict, missing and left PASS\n");
+}
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_conn();
 }

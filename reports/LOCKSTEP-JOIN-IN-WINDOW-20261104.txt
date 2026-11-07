@@ -967,3 +967,23 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   (82aa2's motion is likely outside the census); and from 1981..2040 the joiner spawns four job ships (3 S, 1 M, with their
   equipment and crew: the 48 objects only it has at 2040) that the session does not, which grows to 38 at 2040 and 981 at
   2100.
+
+50. THE 2040 SPLIT: OBJECT CODES THE RESUME DREW (w1z168..w1z171; 7 November, morning)
+- w1z167's 2040 census had 48 objects only on the joiner: four created ships (3 S, 1 M) with their equipment and crew, made
+  in 1981..2040, nothing session-only. w1z168 (native_gate_join_jobcnt_at=2040: JOIN_JOBCNT and JOIN_SHIPCODE): two jobs
+  differ, antigone_fighter_escort_s_miningfleet (active 0 on the session, 3 on the joiner) and
+  antigone_miningfleet_m_liquid_small (1 against 2), both subordinate jobs (quota with variation) of
+  antigone_free_miner_ml_liquid_deepspace_smallgroup (1 active on both sides). (The gate's job hash is FNV-1a with the offset
+  1469598103934665603, not the standard 14695981039346656037.)
+- x4mods-28's CONN (b72db0eb, package section 76: the NPCs' connection partners a waiting ship's load leaves null) applies in
+  window too (w1z169: conn=1:502:30392:0:0:0) and changes nothing here.
+- JOIN_SHIPCODE: every ship made before T has the same code on both sides (328); every ship made after T, from 710 on, has
+  another (173 of 173, shifted by about one). CODE wrote the session's counter at the admission (code=1:1:14a2e:1f000), but
+  the in-window resume at T+1 rebuilds the slots' players, seats and modules, objects the session made at its window start
+  before T, and so draws codes the session's counter of T already holds. The job quota 0xefda70 draws from ship codes (report
+  1.18, j1-223), hence the extra subordinates.
+- CODE hold (ff2db7dd): with CODE on (a join default), pjoin_resume reads the counter before R1 and puts it back after R5;
+  status code_resume=the codes it drew. w1z171 (in window to 2160, PCSV + GRAVN extra + CONN): code_resume=2; the census is 0
+  at 900, 1800, 1980, 2040 and 2100, no object on one side only. In window the joiner is equal to the session through 2100
+  (the replay digest parts from T+1 in every in-window run, the diagnostic mode's uncarried Lua state, as before).
+- Next: a long in-window soak with the four; PCSV and GRAVN extra into the join defaults once a J1 run with them stays clean.

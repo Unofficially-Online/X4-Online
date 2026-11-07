@@ -340,6 +340,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_pcsv then   -- a joiner takes the session's PlayerControllers' own motion solvers (PCSV)
   assert(gate.join_pcsv and gate.join_pcsv(1)==1,'join pcsv refused')
  end
+ if cfg.native_gate_join_conn then   -- a joiner connects the NPC connections its load left without a partner (CONN)
+  assert(gate.join_conn and gate.join_conn(1)==1,'join conn refused')
+ end
  if cfg.native_gate_join_gravn_extra then   -- GRAVN keeps the joiner's extra zone groups in the neighbour lists it writes
   assert(gate.join_gravn_extra and gate.join_gravn_extra(1)==1,'join gravn extra refused')
  end

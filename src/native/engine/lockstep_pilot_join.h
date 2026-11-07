@@ -436,6 +436,7 @@ static int pjoin_tables_parse(const char *text) {
  * aliases, the hit claims in flight). Not covered yet (R6): the window's Lua state; a joiner runs on with it as its own
  * arming left it, which is why this is a diagnostic. */
 static char pjoin_state_text[1u<<18];
+static void join_code_hold(int begin);   /* lockstep_join_world.h: the code counter held over the resume (CODE) */
 static int pjoin_resume(uint64_t tick,unsigned char *controller) {
     char players[4096];const uint64_t base=join_tick_base();
     if(!join_package_line("pilot_players",players,sizeof(players)) || !pjoin_parse_players(players)) {
@@ -447,6 +448,7 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
     if(pjoin_tables_t!=base || tick!=base+1) {pjoin_resume_why="state_tick";return 0;}
     if(pjoin_rx_slots!=pslot_mask) {pjoin_resume_why="slot_mask";return 0;}
     if(!pjoin_m5_check()) return 0;   /* R5's refusals, before anything changes */
+    join_code_hold(1);   /* the session made what follows before T: its codes are in the counter already */
     /* R1 */
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         if(!(pjoin_rx_mask>>(k-1)&1u)) continue;
@@ -478,6 +480,7 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
         if(pjoin_pilot_ring[i].present && !(pilot_ring[i].present && pilot_ring[i].tick==pjoin_pilot_ring[i].tick)) pilot_ring[i]=pjoin_pilot_ring[i];
     /* R5 */
     pjoin_m5_apply();
+    join_code_hold(0);
     pjoin_resume_why="resumed";
     return 1;
 }

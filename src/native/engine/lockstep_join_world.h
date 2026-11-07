@@ -2770,6 +2770,63 @@ static void join_watch_dump(char side,uint64_t tick) {
                 unsigned char *w=join_grav_worker(),*unit=NULL;uintptr_t uvt=0;uint64_t runtime=join_watch.runtime[i];
                 at+=(size_t)snprintf(out+at,cap-at," isa49=%d",join_watch_call(level,0x11e8u,0x49,1));
                 {uint32_t attention=0;(void)join_read(level+0x1ec,&attention,4);at+=(size_t)snprintf(out+at,cap-at," att=%u",attention);}
+                /* ctl=: the control link 0x44d790 (a controllable's control entity setter) writes on the entity: +0x3c0 (the post's
+                 * +0x118), whether +0x3c8 (the post) is set, the flags +0x3d0 and +0x6a30 (the controlled object's runtime ID, when the
+                 * post's +0x110 is set) as a portable key. j1-343: the waiting minelayers' pilots are not 'controlled' on the joiner. */
+                {
+                    uint64_t c0=0,c8=0,cid=0;uint32_t d0=0;unsigned kl=0;
+                    (void)join_read(level+0x3c0,&c0,8);(void)join_read(level+0x3c8,&c8,8);(void)join_read(level+0x3d0,&d0,4);
+                    (void)join_read(level+0x6a30,&cid,8);
+                    uint64_t ckey=cid?join_key(cid,&kl):0;
+                    const uintptr_t c8i=(uintptr_t)c8>=(uintptr_t)image && (uintptr_t)c8-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uintptr_t)c8-(uintptr_t)image:0;
+                    at+=(size_t)snprintf(out+at,cap-at," ctl=%llx:%d:%llx:%08x:%llx",(unsigned long long)c0,c8!=0,(unsigned long long)c8i,d0,
+                                         (unsigned long long)(ckey?ckey:cid?(cid|(1ull<<62)):0));
+                    /* A U::NPC (vtable 0x2b38a48) only: its first reference slot (+0x308 vector) holding a controllable (class 0x70) as
+                     * a portable key, and vt+0x1c50(1) (0x6c71f0, the test behind 'controlled': flags +0x3d0, +0x3d8, that slot, its
+                     * ancestor chain, the post's control position 0x455ce0 and the NPC's link of kind 2 at +0xc0 to it). */
+                    uintptr_t evt=0;
+                    if(join_read(level,&evt,8) && evt==(uintptr_t)image+0x2b38a48u) {
+                        unsigned char *sb=NULL,*se=NULL,*slot=NULL;uint64_t skey=0;
+                        if(join_read(level+0x308,&sb,8) && join_read(level+0x310,&se,8) && sb && se>=sb && (size_t)(se-sb)<=0x400u)
+                            for(unsigned char *q=sb;q<se;q+=8) if(join_read(q,&slot,8) && slot && join_watch_call(slot,0x11e8u,0x70,1)==1) {skey=join_watch_key(slot);break;}
+                        at+=(size_t)snprintf(out+at,cap-at,":%llx:%d",(unsigned long long)skey,join_watch_call(level,0x1c50u,1,1));
+                        /* links=: the connection links at *(+0xc0) (0x49aac0's container: 0x18-byte buckets by kind, begin +0, end +8,
+                         * count +0x18; a bucket's list head +0, size +8): each kind 1 .. 4's list size, then kind 2's first link (node
+                         * +0x20: +0x18 the target component as a portable key, +0x20 set). 0x6c71f0 wants kind 2's target to be the
+                         * post's control position. */
+                        unsigned char *lc=NULL,*lb=NULL,*le=NULL;uint32_t lcount=0;
+                        at+=(size_t)snprintf(out+at,cap-at," links=");
+                        if(join_read(level+0xc0,&lc,8) && lc && join_read(lc,&lb,8) && join_read(lc+8,&le,8) && join_read(lc+0x18,&lcount,4) &&
+                           lb && le>=lb && (size_t)(le-lb)<=0x18u*16u) {
+                            const unsigned nb=(unsigned)((size_t)(le-lb)/0x18u);
+                            at+=(size_t)snprintf(out+at,cap-at,"%u/%u",lcount,nb);
+                            for(unsigned k=0;k<4u && k<nb;k++) {
+                                uint64_t lsize=0;(void)join_read(lb+k*0x18u+8u,&lsize,8);at+=(size_t)snprintf(out+at,cap-at,":%llu",(unsigned long long)lsize);
+                            }
+                            unsigned char *head=NULL,*node=NULL,*link=NULL,*tgt=NULL,*tslot=NULL;uint64_t lsize=0;
+                            if(nb>=2u && join_read(lb+0x18u+8u,&lsize,8) && lsize && join_read(lb+0x18u,&head,8) && head && join_read(head,&node,8) &&
+                               node && node!=head && join_read(node+0x20,&link,8) && link) {
+                                (void)join_read(link+0x18,&tgt,8);(void)join_read(link+0x20,&tslot,8);
+                                at+=(size_t)snprintf(out+at,cap-at,":k2=%llx/%d",(unsigned long long)join_watch_key(tgt),tslot!=NULL);
+                            }
+                            /* j1-348: the joiner's kind-2 entry has no link. The bucket, its first node (+0x10 .. +0x40: the payload), the
+                             * link's vtable RVA and first 0x40 bytes and the slot's vtable RVA and first 0x40 bytes, pointers raw. */
+                            if(nb>=2u) {
+                                at+=(size_t)snprintf(out+at,cap-at," k2b=");at+=join_watch_hex(out+at,cap-at,lb+0x18u,0x18);
+                                if(head && node && node!=head) {at+=(size_t)snprintf(out+at,cap-at," k2n=");at+=join_watch_hex(out+at,cap-at,node,0x40);}
+                                uintptr_t lvt=0,svt=0;
+                                if(link && join_read(link,&lvt,8)) {
+                                    at+=(size_t)snprintf(out+at,cap-at," k2l=%x:",lvt>=(uintptr_t)image && lvt-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint32_t)(lvt-(uintptr_t)image):0u);
+                                    at+=join_watch_hex(out+at,cap-at,link,0x40);
+                                }
+                                if(tslot && join_read(tslot,&svt,8)) {
+                                    at+=(size_t)snprintf(out+at,cap-at," k2s=%x:",svt>=(uintptr_t)image && svt-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint32_t)(svt-(uintptr_t)image):0u);
+                                    at+=join_watch_hex(out+at,cap-at,tslot,0x40);
+                                }
+                            }
+                        } else at+=(size_t)snprintf(out+at,cap-at,"-");
+                    }
+                }
                 for(uint32_t rel=0;rel<2u;rel++) {   /* both view blocks whole (pointers raw) */
                     at+=(size_t)snprintf(out+at,cap-at," vb%u=",rel);
                     at+=join_watch_hex(out+at,cap-at,level+JOIN_VIEW_SLOTS+(size_t)(cur^rel)*0x80u,0x40);
@@ -3729,6 +3786,22 @@ static void join_admit_code(const join_tables *s) {
     join_code_own_seed&=0xffffffu;
     if(join_code_on && join_poke((uintptr_t)(image+JOIN_CODE_COUNTER),&s->code[0].counter,4)) join_code_written=1;
 }
+/* The in-window resume (lockstep_pilot_join.h pjoin_resume, at T+1) rebuilds the slots' players, seats and modules: objects the
+ * session made at its window start, before T, so their codes are already counted in the session's counter of T [w1z168: every ship
+ * created after T, from 710 on, had another code on the joiner (173 of 501 created ships; the 328 made before T equal), and the job
+ * quota 0xefda70 draws from those codes: the Antigone mining fleet's subordinate jobs built four ships more on the joiner in
+ * 1981..2040, 48 objects and from there the 2040/2100 split]. With CODE on, the counter is held over the resume: begin reads it,
+ * end puts it back. Status code_resume=the codes the resume drew. */
+static uint32_t join_code_resume_draws,join_code_resume_held;
+static int join_code_resume_open;
+static void join_code_hold(int begin) {
+    uint32_t c=0;
+    if(!join_code_on || !join_read(image+JOIN_CODE_COUNTER,&c,4)) return;
+    if(begin) {join_code_resume_held=c;join_code_resume_open=1;return;}
+    if(!join_code_resume_open) return;
+    join_code_resume_open=0;join_code_resume_draws=(c-join_code_resume_held)&0xffffffu;
+    if(c!=join_code_resume_held) (void)join_poke((uintptr_t)(image+JOIN_CODE_COUNTER),&join_code_resume_held,4);
+}
 /* ENGR (v13, section 70; the admission opt-in, native_gate_join_engr): every engine's boost ramp [F: w1z43..w1z48, the window's fight
  * at 840: the destroyer 79009's braking distance at its boost refresh of 794 is 1337.98 on the session and 1394.08 on the joiner
  * with every input of 0x6de670 equal but the boost term, which divides by the engine's (0x6d6d80: 79037) +0x2f8: 4.056 against
@@ -4008,6 +4081,126 @@ static void join_admit_resv(const join_tables *s,const join_tables *mine) {
         const long n=join_resv_walk(o,NULL,NULL);if(n>0) nodes+=(uint64_t)n;
     }
     join_resv_extra=nodes>matched?nodes-matched:0;
+}
+/* CONN (v13, section 76; the admission opt-in, native_gate_join_conn) [j1-341 .. j1-349: three minelayers that wait in their
+ * jobs' <waiting> lists at T launch 44 ticks late on the joiner. NPC_State_Machines' ENTER_ai_pilot walks a pilot to its post unless
+ * $NPC.controlled, and the NPC's test behind it (vt+0x1c50(1), 0x6c71f0) wants the NPC's connection of kind 2 (the save's
+ * roomposition) connected to its controllable's con_control. The joiner's load creates both U::Connections, with the session's
+ * IDs, but leaves such a waiting ship's pairs unconnected; X4's connect 0x3d87e0 creates the two and sets each one's +0x10 to the
+ * other.] A component's connections: *(component+0xc0) (0x3d87e0 creates it), 0x18-byte buckets by kind from +0 to +8, each a
+ * std::list (head +0, size +8) whose nodes embed a U::Connection at +0x10 (vtable 0x2bab2e0: +8 its ID, +0x10 the partner
+ * connection, +0x18 the owner component, +0x20 its TemplateConnection). The capture takes every U::NPC's connections that have a
+ * partner and each partner's own partner, as (owner's portable ID, ID) -> (partner owner's portable ID, partner ID). With the
+ * opt-in the admission sets a joiner connection's partner where it is null and the record's partner resolves. Status
+ * conn=on:written:equal:missing:conflict:left (conflict: another partner, left untouched; left: the joiner's NPC connections
+ * still without a partner afterwards). */
+#define JOIN_CONN_VTABLE 0x2bab2e0u       /* U::Connection */
+#define JOIN_CONN_NPC_VTABLE 0x2b38a48u   /* U::NPC */
+#define JOIN_CONN_CONTAINER 0xc0u
+#define JOIN_CONN_BUCKET 0x18u
+#define JOIN_CONN_BUCKETS 64u
+#define JOIN_CONN_LIST_MAX 4096u
+#define JOIN_CONN_NODE 0x10u              /* the node's embedded connection */
+#define JOIN_CONN_ID 0x08u
+#define JOIN_CONN_PEER 0x10u
+#define JOIN_CONN_OWNER 0x18u
+static int join_conn_on;
+static uint64_t join_conn_written,join_conn_equal,join_conn_missing,join_conn_conflict,join_conn_left;
+static int join_conn_is(const unsigned char *c) {uintptr_t vt=0;return c && join_read(c,&vt,8) && vt==(uintptr_t)image+JOIN_CONN_VTABLE;}
+static int join_conn_npc(const unsigned char *o) {uintptr_t vt=0;return o && join_read(o,&vt,8) && vt==(uintptr_t)image+JOIN_CONN_NPC_VTABLE;}
+/* Each U::Connection of a component: visit(connection, ctx) returns 0 to stop; the count, or -1 on a broken container. */
+static long join_conn_walk(const unsigned char *component,int (*visit)(unsigned char *,void *),void *ctx) {
+    unsigned char *c=NULL,*b=NULL,*e=NULL;long seen=0;
+    if(!component || !join_read(component+JOIN_CONN_CONTAINER,&c,8)) return -1;
+    if(!c) return 0;
+    if(!join_read(c,&b,8) || !join_read(c+8,&e,8) || !b || e<b || (size_t)(e-b)%JOIN_CONN_BUCKET ||
+       (size_t)(e-b)/JOIN_CONN_BUCKET>JOIN_CONN_BUCKETS) return -1;
+    for(unsigned char *k=b;k<e;k+=JOIN_CONN_BUCKET) {
+        unsigned char *head=NULL,*node=NULL;uint64_t size=0,n=0;
+        if(!join_read(k,&head,8) || !join_read(k+8,&size,8) || size>JOIN_CONN_LIST_MAX) return -1;
+        if(!size) continue;
+        if(!head || !join_read(head,&node,8)) return -1;
+        while(node && node!=head) {
+            unsigned char *conn=node+JOIN_CONN_NODE;
+            if(++n>size || !join_conn_is(conn)) return -1;
+            ++seen;if(visit && !visit(conn,ctx)) return seen;
+            if(!join_read(node,&node,8)) return -1;
+        }
+        if(node!=head || n!=size) return -1;
+    }
+    return seen;
+}
+/* A connection's owner as a portable ID (0: none) and its ID. */
+static uint64_t join_conn_key(const unsigned char *conn,uint64_t *id) {
+    unsigned char *owner=NULL;uint64_t runtime=0;unsigned klass=0;*id=0;
+    if(!join_conn_is(conn) || !join_read(conn+JOIN_CONN_ID,id,8) || !join_read(conn+JOIN_CONN_OWNER,&owner,8) || !owner ||
+       !join_read(owner+8,&runtime,8) || !runtime) return 0;
+    return join_key(runtime,&klass);
+}
+typedef struct {join_tables *t;uint32_t *cap;int failed;} join_conn_capture_ctx;
+static int join_conn_record(join_conn_capture_ctx *c,const unsigned char *conn) {
+    unsigned char *peer=NULL;join_conn_rec r;memset(&r,0,sizeof(r));
+    if(!join_read(conn+JOIN_CONN_PEER,&peer,8) || !peer) return 1;
+    r.owner=join_conn_key(conn,&r.id);r.peer_owner=join_conn_key(peer,&r.peer_id);
+    if(!r.owner || !r.id || !r.peer_owner || !r.peer_id) return 1;
+    if(!JOIN_PUSH(c->t->conn,c->t->nconn,*c->cap,r)) {c->failed=1;return 0;}
+    return 1;
+}
+static int join_conn_capture_visit(unsigned char *conn,void *p) {
+    join_conn_capture_ctx *c=(join_conn_capture_ctx*)p;unsigned char *peer=NULL;
+    if(!join_conn_record(c,conn)) return 0;
+    if(join_read(conn+JOIN_CONN_PEER,&peer,8) && peer && !join_conn_record(c,peer)) return 0;   /* the partner's own partner */
+    return 1;
+}
+static int join_conn_cmp(const void *a,const void *b) {
+    const join_conn_rec *x=a,*y=b;
+    if(x->owner!=y->owner) return x->owner<y->owner?-1:1;
+    return x->id<y->id?-1:x->id>y->id;
+}
+static void join_capture_conn(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        if(!t->ids[i].portable) continue;
+        unsigned char *o=join_object(t->ids[i].runtime);
+        if(!join_conn_npc(o)) continue;
+        join_conn_capture_ctx c={t,&cap,0};
+        (void)join_conn_walk(o,join_conn_capture_visit,&c);
+        if(c.failed) return;
+    }
+    if(t->nconn>1) qsort(t->conn,t->nconn,sizeof(*t->conn),join_conn_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->nconn;i++) {if(k && !join_conn_cmp(&t->conn[k-1],&t->conn[i])) continue;t->conn[k++]=t->conn[i];}t->nconn=k;}
+}
+typedef struct {uint64_t id;unsigned char *hit;} join_conn_find_ctx;
+static int join_conn_find_visit(unsigned char *conn,void *p) {
+    join_conn_find_ctx *c=(join_conn_find_ctx*)p;uint64_t id=0;
+    if(join_read(conn+JOIN_CONN_ID,&id,8) && id==c->id) {c->hit=conn;return 0;}
+    return 1;
+}
+static unsigned char *join_conn_find(const join_tables *mine,uint64_t owner,uint64_t id) {
+    join_conn_find_ctx c={id,NULL};const uint64_t runtime=join_runtime_of(mine,owner);
+    unsigned char *o=runtime?join_object(runtime):NULL;
+    if(o) (void)join_conn_walk(o,join_conn_find_visit,&c);
+    return c.hit;
+}
+static int join_conn_left_visit(unsigned char *conn,void *p) {
+    unsigned char *peer=NULL;if(join_read(conn+JOIN_CONN_PEER,&peer,8) && !peer) ++*(uint64_t*)p;
+    return 1;
+}
+static void join_admit_conn(const join_tables *s,const join_tables *mine) {
+    join_conn_written=join_conn_equal=join_conn_missing=join_conn_conflict=join_conn_left=0;
+    if(!join_conn_on) return;
+    for(uint32_t i=0;i<s->nconn;i++) {
+        const join_conn_rec *r=&s->conn[i];unsigned char *now=NULL;
+        unsigned char *a=join_conn_find(mine,r->owner,r->id),*b=a?join_conn_find(mine,r->peer_owner,r->peer_id):NULL;
+        if(!a || !b || !join_read(a+JOIN_CONN_PEER,&now,8)) {++join_conn_missing;continue;}
+        if(now==b) {++join_conn_equal;continue;}
+        if(now) {++join_conn_conflict;continue;}
+        if(join_poke((uintptr_t)(a+JOIN_CONN_PEER),&b,8)) ++join_conn_written; else ++join_conn_equal;
+    }
+    for(uint32_t i=0;i<mine->nids;i++) {
+        unsigned char *o=mine->ids[i].portable?join_object(mine->ids[i].runtime):NULL;
+        if(join_conn_npc(o)) (void)join_conn_walk(o,join_conn_left_visit,&join_conn_left);
+    }
 }
 static int join_bnds_on;
 static uint64_t join_bnds_written,join_bnds_equal,join_bnds_missing;
@@ -4840,6 +5033,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_shgr(t);            /* version 13 */
     join_capture_bnds(t);            /* version 13 */
     join_capture_resv(t);            /* version 13: the zones' space reservations */
+    join_capture_conn(t);            /* version 13: the NPCs' connected connections */
     if(t->npcsv>1) qsort(t->pcsv,t->npcsv,sizeof(*t->pcsv),join_solver_cmp);   /* version 13: the PlayerControllers' solvers */
     for(uint32_t i=1;i<t->npcsv;i++) if(t->pcsv[i].portable==t->pcsv[i-1].portable) return join_note("pcsv_duplicate,id=%llx",(unsigned long long)t->pcsv[i].portable);
     join_sort_omgs(t);               /* version 13: OMGS, taken in the FLIGHT walk */
@@ -6504,6 +6698,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_bnds(s,&mine);    /* the stations' bounding structs (opt-in) */
     if(s->version>=13) join_admit_resv(s,&mine);    /* the zones' space reservations' boxes and expiries (opt-in) */
     if(s->version>=13) join_admit_pcsv(s,&mine);    /* the PlayerControllers' own motion solvers (opt-in) */
+    if(s->version>=13) join_admit_conn(s,&mine);    /* the NPCs' connections' partners a waiting ship's load leaves null (opt-in) */
     if(s->version>=13) join_admit_omgs(s,&mine);    /* the steering ships' OmegaSwitched controllers (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */

@@ -2473,6 +2473,30 @@ proposed and rejected.
   U::Zone's nodes by the zone's and the owner's portable IDs and the index, the box raw and the expiry, written into the
   joiner's node with the same key; status resv=on:written:equal:missing:extra. A/B: x4mods' w1z156 (in-window to 2160)
   and J1 j1-337 (to 3000) against j1-329.
+  Result: RESV holds (JOIN_DEFAULT_ON from cf0cb0d4). w1z156: resv=1:4326:302:0:0, every solver call of 1049 .. 1052 equal,
+  742be's split gone. j1-337: first mismatch 2522 (was 1860), census 0 through 2460. In-window the next split is slot-k
+  PlayerController state (x4mods: PCSV, section 75).
+- The J1 split at 2522 [F: j1-338 .. j1-343; the join save j633.xml.gz; X4's order.deploystaticdefensestrategy and
+  npc_state_machines, read only]: no get_safe_pos difference in 2450 .. 2530 (j1-338). The census is equal through 2520; at
+  2530, 2540 and 2550 one more created ShipSmall each differs in motion: minelayers 80016fca7e54c78f, 80016fc3ccb1429c
+  (scavenger, station SDM-739's bays 1ea82/1ea83) and 8001a354d24ebf8d (hatikvah, bay 1d963). At T they are not in the
+  universe: they sit in their jobs' <waiting> lists (scavenger/hatikvah_staticdefense_minelayer_s, a <requested> entry
+  each), built at ~370 and ~420, with a default order DeployStaticDefenseStrategy and pilots without scripts. Both sides
+  place them in the bays at ~720 with the same DockMovementController (0x2c3fdc0, equal bits) and change their topology,
+  health and ship +0x3b0 at the same capture; only the session's motion moves at the launch (j1-341 WORLD_STATIC: published
+  poses equal). The motion watch (131d77da: created keys; 3e9883bc: the joiner overlay passes them) shows the launch:
+  j1-342's UndockMovementController (0x2c3e568) starts 1.2 .. 1.7 s later on the joiner (game time 93.08, 92.68, 93.55
+  against 91.35, 91.48, 91.88; the dock doors do not change after boot). j1-343's script RNG rows (trace, 2500 .. 2600)
+  for the three pilots: orders.base and move.undock start at 2521, 2523 and 2538 on the session and exactly 44 ticks later
+  on the joiner (2565, 2567, 2582), with equal script keys besides the tick. The session starts them inside the station
+  ship trader's build.shiptrader interrupt (owner 0x458ea / 0x4577d), which runs with equal keys and draws on both sides at
+  2521; the joiner starts them from the timed MD cue NPC_State_Machines.Base.STATE_ai_pilot.STATE_ai_pilot_move_to_post
+  (150 rows of that state machine on the joiner in the window, none on the session). npc_state_machines' ENTER_ai_pilot
+  sends a pilot whose $NPC.controlled is set to STATE_ai_pilot_at_post at once and an assigned pilot without it to
+  STATE_ai_pilot_return_to_post: a walk to the pilot slot (here 44 ticks) before the order runs. So the joiner's load
+  leaves the waiting ships' pilots assigned but not controlling (the save has the ship's <control><post id="aipilot"> and
+  the NPC's crossconnection movement attached at con_control). Which field: j1-344 (the join watch's raw bytes of the
+  pilots and ships at the session's capture of T and the joiner's admission).
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9
