@@ -1030,3 +1030,15 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
 - Kept: 8ff91170. Open: the discriminator is the object's own live position at the admission (the load publishes the live pose
   of the first frames, a jump lands far from it): for a navigation ship the read pathing bank's vec0 ([ctrl+0x30] + the
   index 0x38f4ee4 * 0x1a0, the motion watch's cur=), valid where the pathing parent is the cached parent (x4mods-28).
+
+54. EQUAL THROUGH 5000: THE STATIONS' BOUNDING STRUCTS (w1z181, w1z182; 7 November, afternoon)
+- w1z181 (8ff91170's GRAVP restore, in window to 5000): the census as w1z173's (0 through 4560, 9e832 from 4620): no regression.
+- x4mods-28 (j1-355 .. j1-363): the J1 split at 3780 and the in-window one at 4554 are a large ship's spline route computed
+  from an equal request; the calculator's obstacle volume (0xec0800, class 0x62) reads each station's bounding box at +0xd20,
+  1 .. 64 ulps apart on the joiner (centre, extents, radius). A station keeps five such structs (+0xc60, +0xc90, +0xcc0, +0xcf0,
+  +0xd20; the reset 0x7f77d0 seeds +0xd20 from +0xc90, Station vfunc978 0x8013f0 widens each) and six floats at +0xd50, and
+  BNDS carried three of the structs. 6867c0fe: BNDS carries all five and the six floats (the section 72 record 216 bytes;
+  golden 683368360229f78c). J1 j1-363: equal 633 .. 4299, 0 mismatches.
+- w1z182 (build-bnds1 = 36080eef, in window to 5000, the defaults; the spline rows on 9e832): bnds=1:1296:82:0; 9e832's route
+  at 4554 has the same result and control points on both sides (the raw segment entries differ in their heap pointers only);
+  census 0 at 4560, 4620, 4800 and 4980. The window joiner is equal to the session through the end of the soak.

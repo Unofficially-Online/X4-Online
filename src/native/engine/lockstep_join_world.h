@@ -3878,7 +3878,14 @@ static void join_admit_engr(const join_tables *s,const join_tables *mine) {
  * module by module and the joiner's load rebuilt in one pass: 819 of 855 stations an ulp or more apart in centre, extents or
  * radius (j1-266). The three words after each radius differ between two session clients too (per process) and are not carried.
  * The capture takes the 0x24 bytes of each struct for every object whose vfunc 0x14b0 is 0x7eb460; with the opt-in the admission
- * writes the session's where they differ. Status bnds=on:written:equal:missing. */
+ * writes the session's where they differ. Status bnds=on:written:equal:missing.
+ * [j1-362: J1's 3780 split is ShipLarge 0x6f1e7's route at 3722, whose two inner nodes the joiner's calculator places 1..4
+ * ulps off. Every input the request and the calculator read is equal (the request, its component vector, the 405 transforms
+ * of 0x3dde10) except the stations' box at +0xd20, 1..64 ulps apart in centre, extents and radius: the calculator's obstacle
+ * volume (0xec0800) takes it for class 0x62.] A station holds five such structs, +0xc60, +0xc90, +0xcc0, +0xcf0 and +0xd20 (the
+ * reset 0x7f77d0 fills them from the macro, +0xd20 a copy of +0xc90; the growth paths of Station vfunc978 0x8013f0 widen each,
+ * +0xd20 at 0x8026f0), and six floats at +0xd50 (-1 at the reset, widened there too). The record carries all five structs
+ * (the first three in their old places) and the six floats. */
 /* OMGS (v13, section 73; the admission opt-in, native_gate_join_omgs): each steering ship's two OmegaSwitched controllers
  * [w1z78 .. w1z107: J1's 872 race (and the second pair's 1042) is 176b36's lead pursuit (ChaseBehaviour 0xed68e0 -> 0xed1d10),
  * whose steer call 0xec9fd0 reads a vector through [[agent+0xf80]+0xa0c8] vt+0x3a8 = 0x9db30. That getter recomputes each axis
@@ -4230,9 +4237,9 @@ static void join_admit_conn(const join_tables *s,const join_tables *mine) {
 static int join_bnds_on;
 static uint64_t join_bnds_written,join_bnds_equal,join_bnds_missing;
 #define JOIN_BNDS_GETTER 0x7eb460u   /* the station's vfunc 0x14b0: lea rax,[rcx+0xc90] */
-#define JOIN_BNDS_AT 0xc90u
-#define JOIN_BNDS_STRIDE 0x30u
 #define JOIN_BNDS_BYTES 0x24u       /* centre, extents, radius */
+#define JOIN_BNDS_TAIL 0xd50u       /* six floats */
+static const unsigned join_bnds_at[JOIN_BNDS_STRUCTS]={0xc90u,0xcc0u,0xcf0u,0xc60u,0xd20u};
 static int join_bnds_type(unsigned char *o) {
     uintptr_t vt=0,fn=0;
     return o && join_read(o,&vt,8) && vt && join_read((void *)(vt+0x14b0u),&fn,8) && fn==(uintptr_t)image+JOIN_BNDS_GETTER;
@@ -4241,8 +4248,8 @@ static int join_bnds_cmp(const void *a,const void *b) {
     uint64_t x=((const join_bnds_rec *)a)->portable,y=((const join_bnds_rec *)b)->portable;return x<y?-1:x>y;
 }
 static int join_bnds_read(unsigned char *o,uint32_t word[JOIN_BNDS_WORDS]) {
-    for(unsigned k=0;k<3u;k++) if(!join_read(o+JOIN_BNDS_AT+k*JOIN_BNDS_STRIDE,word+k*9u,JOIN_BNDS_BYTES)) return 0;
-    return 1;
+    for(unsigned k=0;k<JOIN_BNDS_STRUCTS;k++) if(!join_read(o+join_bnds_at[k],word+k*9u,JOIN_BNDS_BYTES)) return 0;
+    return join_read(o+JOIN_BNDS_TAIL,word+JOIN_BNDS_STRUCTS*9u,4u*JOIN_BNDS_TAIL_WORDS);
 }
 static void join_capture_bnds(join_tables *t) {
     uint32_t cap=0;
@@ -4264,7 +4271,8 @@ static void join_admit_bnds(const join_tables *s,const join_tables *mine) {
         const join_bnds_rec *r=&s->bnds[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable));
         if(!join_bnds_type(o)) {++join_bnds_missing;continue;}
         int changed=0;
-        for(unsigned k=0;k<3u;k++) changed|=join_poke((uintptr_t)(o+JOIN_BNDS_AT+k*JOIN_BNDS_STRIDE),r->word+k*9u,JOIN_BNDS_BYTES);
+        for(unsigned k=0;k<JOIN_BNDS_STRUCTS;k++) changed|=join_poke((uintptr_t)(o+join_bnds_at[k]),r->word+k*9u,JOIN_BNDS_BYTES);
+        changed|=join_poke((uintptr_t)(o+JOIN_BNDS_TAIL),r->word+JOIN_BNDS_STRUCTS*9u,4u*JOIN_BNDS_TAIL_WORDS);
         if(changed) ++join_bnds_written; else ++join_bnds_equal;
     }
 }

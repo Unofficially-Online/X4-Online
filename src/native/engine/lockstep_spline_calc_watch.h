@@ -27,7 +27,8 @@
 #define SCW_PAGE_ANCHOR 0xec0000u
 #define SCW_STUB 0x00u
 #define SCW_TRAMP 0x20u
-#define SCW_CODE 0x40u
+#define SCW_XFORM_STUB 0x40u   /* + 0x20 per site */
+#define SCW_CODE 0x80u
 #define SCW_CAP ((size_t)8<<20)
 static const unsigned char scw_original[7]={0x48,0x8b,0xc4,0x48,0x89,0x58,0x08};
 typedef uint64_t (*scw_fn)(void *,void *,void *,void *);
@@ -127,6 +128,55 @@ static int scw_row(char *out,size_t capacity,uint64_t tick_in,int open_in,long l
         (unsigned long long)tick_in,open_in,us_in,(unsigned long long)tick_out,open_out,us_out,thread,index,(unsigned long long)key);
     return n>0 && (size_t)n<capacity?n:0;
 }
+/* SPLINE_XFORM (with the window): j1-360 found the request's own inputs equal at 3722 (req=, inp=, obs=, the component vector
+ * cmp= in the same order) and the route's two inner nodes 1..4 ulps apart. The calculator takes its components' transforms
+ * relative to the request's space through 0x3dde10(component, out, space, 0) at 0xec13db and 0xec1ebd: while the window is
+ * armed both calls (E8 rel32) go through our page, the original runs, and a call while stats.issued lies in [from,to] writes a
+ * row: the tick, the site, the request being calculated (the component of its +0x28 as a portable key, its index), the
+ * component and the space as portable keys and the 0x40-byte result raw. Patched with every other thread suspended (a rel32
+ * may straddle two 16-byte blocks), owned and restored with the entry.
+ * j1-361: all 405 transforms of 3715..3730 equal. The calculator's obstacle volume (0xec0800) is the component's bounds
+ * (vfunc 0x14b0) inflated by the request's margin, for class 0x62 the box at +0xd20: for a station (its vfunc 0x14b0 the
+ * getter 0x7eb460, lea rax,[rcx+0xc90]) the row adds b= the struct at +0xc90 and the box at +0xd20, 0x30 bytes each raw
+ * (read only, no call); '-' for other classes. */
+#define SCW_XFORM_FN 0x3dde10u
+#define SCW_BOUNDS_GETTER 0x7eb460u
+#define SCW_XFORM_SITES 2u
+static const unsigned scw_xform_sites[SCW_XFORM_SITES]={0xec13dbu,0xec1ebdu};
+typedef uint64_t (*scw_xform_fn)(void *,void *,void *,uint64_t,uint64_t,uint64_t);
+static int scw_xform_on;
+static volatile LONG64 scw_xform_rows;
+static uint64_t scw_cur_key;static uint32_t scw_cur_index;   /* the request the calculator runs (one worker) */
+static int scw_xform_row(char *out,size_t capacity,uint64_t tick,unsigned site,uint64_t request,uint32_t index,uint64_t key,uint64_t space,
+                         const unsigned char m[0x40],const unsigned char *bounds) {
+    char hex[0x81],bh[2*0x60+1];static const char digits[]="0123456789abcdef";
+    for(unsigned i=0;i<0x40;i++) {hex[2*i]=digits[m[i]>>4];hex[2*i+1]=digits[m[i]&15];}
+    hex[0x80]=0;
+    if(bounds) {for(unsigned i=0;i<0x60;i++) {bh[2*i]=digits[bounds[i]>>4];bh[2*i+1]=digits[bounds[i]&15];} bh[0xc0]=0;}
+    else {bh[0]='-';bh[1]=0;}
+    const int n=snprintf(out,capacity,"[X4LAN] NATIVE_GATE SPLINE_XFORM tick=%llu site=%u request=%016llx index=%u key=%016llx space=%016llx m=%s b=%s\r\n",
+        (unsigned long long)tick,site,(unsigned long long)request,index,(unsigned long long)key,(unsigned long long)space,hex,bh);
+    return n>0 && (size_t)n<capacity?n:0;
+}
+static void scw_xform_note(unsigned site,void *component,const void *out,void *space) {
+    const uint64_t tick=stats.issued;
+    if(!scw_to || tick<scw_from || tick>scw_to) return;
+    uint64_t id=0,sid=0;unsigned char m[0x40];
+    if(!component || !read_local((const unsigned char*)component+8,&id,8)) id=0;
+    if(!space || !read_local((const unsigned char*)space+8,&sid,8)) sid=0;
+    if(!out || !read_local(out,m,0x40)) memset(m,0,0x40);
+    unsigned char b[0x60];int hb=0;void *vt=NULL;uintptr_t fn=0;
+    if(component && read_local(component,&vt,8) && vt && read_local((const unsigned char*)vt+0x14b0,&fn,8) && fn==(uintptr_t)(image+SCW_BOUNDS_GETTER) &&
+       read_local((const unsigned char*)component+0xc90,b,0x30) && read_local((const unsigned char*)component+0xd20,b+0x30,0x30)) hb=1;
+    char row[640];
+    const int n=scw_xform_row(row,sizeof(row),tick,site,scw_cur_key,scw_cur_index,id?world_identity_portable(id):0,sid?world_identity_portable(sid):0,m,
+                              hb?b:NULL);
+    if(n) {scw_append(row,n);InterlockedIncrement64(&scw_xform_rows);} else InterlockedIncrement64(&scw_dropped);
+}
+#define SCW_XFORM_HOOK(i) static __attribute__((noinline)) uint64_t scw_xform_hook##i(void *c,void *out,void *space,uint64_t a4,uint64_t a5,uint64_t a6) { \
+    const uint64_t r=((scw_xform_fn)(void*)(image+SCW_XFORM_FN))(c,out,space,a4,a5,a6);scw_xform_note(i,c,out,space);return r;}
+SCW_XFORM_HOOK(0) SCW_XFORM_HOOK(1)
+static const void *scw_xform_hook(unsigned i) {return i?(const void*)scw_xform_hook1:(const void*)scw_xform_hook0;}
 static __attribute__((noinline)) uint64_t scw_hook(void *request,void *a2,void *a3,void *a4) {
     scw_phase_hold();   /* SPLINE_PHASE: only inside a phase */
     InterlockedIncrement64(&scw_calls);
@@ -135,6 +185,7 @@ static __attribute__((noinline)) uint64_t scw_hook(void *request,void *a2,void *
     if(open_in) InterlockedIncrement64(&scw_in_frame_calls);
     uint32_t index=0;uint64_t runtime=0;
     if(request) {memcpy(&index,(const unsigned char*)request+SCW_INDEX,4);memcpy(&runtime,(const unsigned char*)request+SCW_RUNTIME,8);}   /* the original reads them next */
+    if(scw_xform_on && scw_to && tick_in>=scw_from && tick_in<=scw_to) {scw_cur_key=runtime?world_identity_portable(runtime):0;scw_cur_index=index;}
     const uint64_t result=((scw_fn)(void*)(scw_page+SCW_TRAMP))(request,a2,a3,a4);
     const uint64_t tick_out=stats.issued;const int open_out=InterlockedCompareExchange(&scw_frame_open,0,0)!=0;
     const long long us_out=scw_us_since_frame();
@@ -150,6 +201,7 @@ static void scw_code(unsigned char out[SCW_CODE]) {
     memset(out,0xcc,SCW_CODE);
     spo_jump_to(out+SCW_STUB,(const void*)scw_hook);
     memcpy(out+SCW_TRAMP,scw_original,7);spo_jump_to(out+SCW_TRAMP+7,(const void*)(image+SCW_RESUME));
+    for(unsigned i=0;i<SCW_XFORM_SITES;i++) spo_jump_to(out+SCW_XFORM_STUB+0x20u*i,scw_xform_hook(i));
 }
 static int scw_reach(const unsigned char *page) {
     const intptr_t d=(intptr_t)(page+SCW_STUB)-(intptr_t)(image+SCW_ENTRY+5);
@@ -200,15 +252,61 @@ static int scw_pins(void) {
     static unsigned char body[SCW_SIZE];
     return read_local(image+SCW_ENTRY,body,SCW_SIZE) && hash_ok(body,SCW_SIZE,SCW_SHA) && !memcmp(body,scw_original,7) && scw_loop_pins();
 }
+/* The transform sites' rel32: the original (to 0x3dde10) and ours (to the site's stub). */
+static int32_t scw_xform_rel(unsigned i,const void *target) {return (int32_t)((intptr_t)target-(intptr_t)(image+scw_xform_sites[i]+5));}
+static int scw_xform_state(unsigned i) {
+    unsigned char now[5];memcpy(now,(const void*)(image+scw_xform_sites[i]),5);
+    if(now[0]!=0xe8) return -1;
+    int32_t d;memcpy(&d,now+1,4);
+    if(d==scw_xform_rel(i,image+SCW_XFORM_FN)) return 0;
+    if(scw_page && d==scw_xform_rel(i,scw_page+SCW_XFORM_STUB+0x20u*i)) return 1;
+    return -1;
+}
+static int scw_xform_pins(void) {
+    for(unsigned i=0;i<SCW_XFORM_SITES;i++) {
+        unsigned char now[5];int32_t d;
+        if(!read_local(image+scw_xform_sites[i],now,5) || now[0]!=0xe8) return 0;
+        memcpy(&d,now+1,4);if(d!=scw_xform_rel(i,image+SCW_XFORM_FN)) return 0;
+    }
+    return 1;
+}
 static int scw_overlaps(const void *source,size_t bytes) {
     if(!*(volatile LONG*)&scw_any || !image || !source || !bytes) return 0;
     const uintptr_t a=(uintptr_t)source,lo=(uintptr_t)(image+SCW_ENTRY),hi=lo+7;
-    return a<hi && a+bytes>lo;
+    if(a<hi && a+bytes>lo) return 1;
+    if(scw_xform_on) for(unsigned i=0;i<SCW_XFORM_SITES;i++) {
+        const uintptr_t s=(uintptr_t)(image+scw_xform_sites[i]+1);
+        if(a<s+4 && a+bytes>s) return 1;
+    }
+    return 0;
 }
 static void scw_unpatch_copy(const void *source,void *copy,size_t bytes) {
     if(!scw_overlaps(source,bytes)) return;
     const uintptr_t a=(uintptr_t)source,lo=(uintptr_t)(image+SCW_ENTRY);
     for(unsigned i=0;i<7;i++) if(lo+i>=a && lo+i<a+bytes) ((unsigned char*)copy)[lo+i-a]=scw_original[i];
+    if(scw_xform_on) for(unsigned i=0;i<SCW_XFORM_SITES;i++) {
+        const uintptr_t s=(uintptr_t)(image+scw_xform_sites[i]+1);const int32_t d=scw_xform_rel(i,image+SCW_XFORM_FN);unsigned char o[4];memcpy(o,&d,4);
+        for(unsigned k=0;k<4;k++) if(s+k>=a && s+k<a+bytes) ((unsigned char*)copy)[s+k-a]=o[k];
+    }
+}
+/* Both sites to ours (install) or back, every other thread suspended; all or none. */
+static int scw_xform_switch(int install) {
+    for(unsigned attempt=0;attempt<200;attempt++) {
+        if(!pmath_freeze()) break;
+        unsigned done=0;int ok=1;
+        for(unsigned i=0;i<SCW_XFORM_SITES && ok;i++) {
+            const int32_t orig=scw_xform_rel(i,image+SCW_XFORM_FN),ours=scw_xform_rel(i,scw_page+SCW_XFORM_STUB+0x20u*i);
+            unsigned char e[4],v[4];memcpy(e,install?&orig:&ours,4);memcpy(v,install?&ours:&orig,4);
+            if(view_cas_bytes(scw_xform_sites[i]+1,e,v,4)) done|=1u<<i;else ok=0;
+        }
+        if(!ok) for(unsigned i=0;i<SCW_XFORM_SITES;i++) if(done&(1u<<i)) {   /* undo */
+            const int32_t orig=scw_xform_rel(i,image+SCW_XFORM_FN),ours=scw_xform_rel(i,scw_page+SCW_XFORM_STUB+0x20u*i);
+            unsigned char e[4],v[4];memcpy(e,install?&ours:&orig,4);memcpy(v,install?&orig:&ours,4);view_cas_bytes(scw_xform_sites[i]+1,e,v,4);
+        }
+        pmath_thaw();
+        return ok;
+    }
+    return 0;
 }
 static int scw_window_clear(void) {
     const uintptr_t entry=(uintptr_t)(image+SCW_ENTRY);
@@ -253,8 +351,12 @@ static int scw_install(void) {
 static int scw_arm(double from,double to) {
     if(!isfinite(from) || !isfinite(to) || floor(from)!=from || floor(to)!=to || from<1 || to<from || to>1e9) {scw_stage="window";return 0;}
     if(scw_to) return (uint64_t)from==scw_from && (uint64_t)to==scw_to && scw_owned();
+    if(!scw_xform_pins()) {scw_stage="xform_pins";return 0;}
+    for(unsigned i=0;i<SCW_XFORM_SITES;i++) if(scw_xform_state(i)!=0) {scw_stage="xform_site";return 0;}
     if(!scw_install()) return 0;
-    scw_from=(uint64_t)from;scw_to=(uint64_t)to;return 1;
+    scw_xform_on=1;   /* before the switch: the view hides the sites from the first byte written */
+    if(!scw_xform_switch(1)) {scw_xform_on=0;scw_stage="xform_busy";return 0;}
+    scw_xform_rows=0;scw_from=(uint64_t)from;scw_to=(uint64_t)to;return 1;
 }
 /* gate.spline_phase(1): the calculator at the frame's phase points only (repeatable, as the setup's repeat needs). */
 static int scw_phase_arm(void) {
@@ -265,7 +367,12 @@ static int scw_phase_arm(void) {
     scw_phase_drains=scw_phase_jobs=scw_phase_held=scw_phase_timeouts=scw_phase_max_us=0;
     scw_phase_on=1;return 1;
 }
-static int scw_owned(void) {return !scw_installed || (scw_state()==1 && scw_page_ok());}
+static int scw_owned(void) {
+    if(!scw_installed) return 1;
+    if(scw_state()!=1 || !scw_page_ok()) return 0;
+    for(unsigned i=0;scw_xform_on && i<SCW_XFORM_SITES;i++) if(scw_xform_state(i)!=1) return 0;
+    return 1;
+}
 static int scw_check(void) {
     scw_flush();
     if(InterlockedCompareExchange64(&scw_failures,0,0)) return 0;
@@ -275,15 +382,21 @@ static int scw_check(void) {
 static void scw_restore(void) {
     if(scw_phase_on) {scw_phase_on=0;if(scw_phase_event) SetEvent(scw_phase_event);}   /* a held calculator runs on */
     if(!scw_installed) return;
+    if(scw_xform_on) {
+        int ours=1;for(unsigned i=0;i<SCW_XFORM_SITES;i++) if(scw_xform_state(i)!=1) ours=0;
+        if(!ours) {scw_stage="restore_foreign";return;}
+        if(!scw_xform_switch(0)) {scw_stage="restore_busy";return;}
+        scw_xform_on=0;
+    }
     if(scw_state()!=1) {scw_stage="restore_foreign";return;}
     if(scw_switch(0)) {scw_installed=0;scw_restored=1;scw_stage="restored";scw_flush();}
     else scw_stage="restore_busy";
 }
 static int scw_status(char *out,size_t capacity) {
     const int n=snprintf(out,capacity,"installed=%d restored=%d stage=%s window=%llu:%llu calls=%lld in_frame=%lld rows=%lld dropped=%lld failures=%lld"
-        " phase=%d:%lld:%lld:%lld:%lld:%lld",
+        " phase=%d:%lld:%lld:%lld:%lld:%lld xform=%d:%lld",
         scw_installed,scw_restored,scw_stage,(unsigned long long)scw_from,(unsigned long long)scw_to,(long long)scw_calls,(long long)scw_in_frame_calls,
         (long long)scw_rows,(long long)scw_dropped,(long long)scw_failures,scw_phase_on,(long long)scw_phase_drains,(long long)scw_phase_jobs,
-        (long long)scw_phase_held,(long long)scw_phase_timeouts,(long long)scw_phase_max_us);
+        (long long)scw_phase_held,(long long)scw_phase_timeouts,(long long)scw_phase_max_us,scw_xform_on,(long long)scw_xform_rows);
     return n>0 && (size_t)n<capacity?n:0;
 }

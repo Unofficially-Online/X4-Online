@@ -1656,7 +1656,7 @@ static int lua_motion_watch_digest(lua_State *L) {
 static int lua_motion_watch_doors(lua_State *L) {p_lua_pushnumber(L,motion_door_arm());return 1;}
 static int lua_motion_watch_splines(lua_State *L) {p_lua_pushnumber(L,motion_spline_arm());return 1;}
 static int lua_motion_watch_spline_row(lua_State *L) {
-    double index=p_lua_tonumber(L,1);char out[2048];int n=0;
+    double index=p_lua_tonumber(L,1);char out[MOTION_SPLINE_ROW_CAP];int n=0;
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=motion_spline_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }

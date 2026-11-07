@@ -18,8 +18,16 @@ static void test_spline_calc_watch(void) {
         const LONG64 q=scw_frame_qpc,hz=scw_qpc_hz;scw_frame_qpc=0;scw_qpc_hz=10000000;assert(scw_us_since_frame()==-1);
         LARGE_INTEGER now;QueryPerformanceCounter(&now);scw_frame_qpc=now.QuadPart;assert(scw_us_since_frame()>=0);scw_frame_qpc=q;scw_qpc_hz=hz;
     }
-    {char out[400];assert(scw_status(out,sizeof(out))>0 && strstr(out,"installed=0 restored=0 stage=idle window=0:0"));}
-    printf("spline calc watch: the row, the sink, the frame clock PASS\n");
+    {char out[400];assert(scw_status(out,sizeof(out))>0 && strstr(out,"installed=0 restored=0 stage=idle window=0:0") && strstr(out," xform=0:0"));}
+    {   /* SPLINE_XFORM: the row */
+        unsigned char m[0x40];for(unsigned i=0;i<0x40;i++) m[i]=(unsigned char)i;
+        n=scw_xform_row(row,sizeof(row),3722,1,0x6f1e7,2,0x2697,0x72b,m,NULL);assert(n>0 && row[n-2]=='\r' && row[n-1]=='\n');
+        assert(strstr(row,"[X4LAN] NATIVE_GATE SPLINE_XFORM tick=3722 site=1 request=000000000006f1e7 index=2 key=0000000000002697 space=000000000000072b m=000102030405"));
+        assert(strstr(row,"3c3d3e3f b=-\r\n") && !scw_xform_row(row,100,1,0,0,0,0,0,m,NULL));
+        unsigned char b[0x60];for(unsigned i=0;i<0x60;i++) b[i]=(unsigned char)(0xa0+i);
+        char big[640];n=scw_xform_row(big,sizeof(big),3722,0,1,0,2,3,m,b);assert(n>0 && strstr(big," b=a0a1a2") && strstr(big,"fdfeff\r\n"));
+    }
+    printf("spline calc watch: the row, the sink, the frame clock, the transform row PASS\n");
 }
 /* SPLINE_PHASE: the drain against a queue of our own (the calculator a thread that empties it once the phase opens), the hold. */
 static CRITICAL_SECTION tscw_cs;static uint64_t tscw_count;
@@ -53,6 +61,9 @@ static void test_spline_calc_watch_native_image(const char *path) {
     unsigned char *prior=image,*saved=scw_page;image=test_pmath_map(path);scw_page=NULL;
     assert(scw_pins() && scw_state()==0 && !memcmp(image+SCW_ENTRY,scw_original,7));
     image[SCW_ENTRY+0x80]^=1;assert(!scw_pins());image[SCW_ENTRY+0x80]^=1;
+    /* the calculator's two transform calls: E8 to 0x3dde10 (tamper refused) */
+    assert(scw_xform_pins() && scw_xform_state(0)==0 && scw_xform_state(1)==0);
+    image[0xec13dc]^=1;assert(!scw_xform_pins() && scw_xform_state(0)<0);image[0xec13dc]^=1;
     /* the request reads the hook mirrors: rsi is the request (mov rsi,rcx), its +0x70 index and +0x28 runtime ID */
     assert(!memcmp(image+0xec0d12,"\x48\x8b\xf1",3) && !memcmp(image+0xec0d91,"\x44\x8b\x7e\x70",4) && !memcmp(image+0xec0d9a,"\x48\x8b\x7e\x28",4));
     const uint32_t sa=stats.active;const uint64_t si=stats.issued;const DWORD su=ui_thread;const int sb=boot_mode;
@@ -60,6 +71,12 @@ static void test_spline_calc_watch_native_image(const char *path) {
     assert(!scw_arm(0,3) && !strcmp(scw_stage,"window"));
     stats.issued=4;assert(!scw_arm(3700,3800) && !strcmp(scw_stage,"state"));stats.issued=0;
     assert(scw_arm(3700,3800) && scw_installed && scw_state()==1 && scw_owned() && scw_check() && !strcmp(scw_stage,"armed"));
+    assert(scw_xform_on && scw_xform_state(0)==1 && scw_xform_state(1)==1 && scw_xform_pins());   /* patched; the view keeps the pins */
+    for(unsigned i=0;i<SCW_XFORM_SITES;i++) {
+        unsigned char viewed[7],raw[5];int32_t a,b;assert(read_local(image+scw_xform_sites[i]-1,viewed,7));memcpy(raw,image+scw_xform_sites[i],5);
+        memcpy(&a,viewed+2,4);memcpy(&b,raw+1,4);
+        assert(viewed[1]==0xe8 && a==scw_xform_rel(i,image+SCW_XFORM_FN) && b==scw_xform_rel(i,scw_page+SCW_XFORM_STUB+0x20u*i));
+    }
     assert(scw_arm(3700,3800) && !scw_arm(3700,3801) && scw_installed && scw_to==3800);   /* the setup's repeat: the same window only */
     assert(scw_loop_pins() && scw_phase_arm() && scw_phase_on && scw_phase_event && scw_phase_arm() && scw_installed);   /* the phase shares the entry */
     {char out[400];assert(scw_status(out,sizeof(out))>0 && strstr(out," phase=1:0:0:0:0:0"));}
@@ -71,11 +88,13 @@ static void test_spline_calc_watch_native_image(const char *path) {
         assert(view_cas_bytes(SCW_ENTRY,other,ours,7) && scw_owned() && !scw_check());scw_failures=0;assert(scw_check());
     }
     scw_restore();assert(!scw_installed && scw_restored && scw_state()==0 && !strcmp(scw_stage,"restored") && !scw_any && scw_pins() && !scw_phase_on);
+    assert(!scw_xform_on && scw_xform_state(0)==0 && scw_xform_state(1)==0 && scw_xform_pins());
     CloseHandle(scw_phase_event);scw_phase_event=NULL;scw_queue_lock=NULL;scw_queue_at=NULL;
     stats.active=sa;stats.issued=si;ui_thread=su;boot_mode=sb;
     VirtualFree(scw_page,0,MEM_RELEASE);scw_page=saved;scw_restored=0;scw_stage="idle";scw_from=scw_to=0;
-    scw_calls=scw_in_frame_calls=scw_rows=scw_dropped=scw_failures=0;
+    scw_calls=scw_in_frame_calls=scw_rows=scw_dropped=scw_failures=0;scw_xform_rows=0;
     VirtualFree(image,0,MEM_RELEASE);image=prior;
     printf("spline calc watch native image: the calculator 0xec0cb0 pinned (tamper refused), its request reads, window/state refusals, "
-           "armed/owned (the view keeps the pin), a foreign entry fails the tick check, restored PASS\n");
+           "armed/owned (the view keeps the pin), a foreign entry fails the tick check, restored; the transform sites pinned, patched, "
+           "hidden by the view, restored PASS\n");
 }

@@ -1136,9 +1136,33 @@ static int motion_door_row(uint64_t index,char *out,size_t cap) {
  * lanes 0-2, +0x70 .. +0xa6 and +0xac .. +0xb0) and pts= (the route's first four segments' control points, lanes 0-2) say where. */
 #define MOTION_SPLINE_REQ (4u*12u+0x36u+4u)
 #define MOTION_SPLINE_PTS (4u*4u*12u)
+/* j1-358: with the calculator at the phase points (SPLINE_PHASE) req= is equal and the route still parts after its first
+ * segment, and the segments hash parts at 3722 already. inp= (a pending request's input list, the points the calculator
+ * reads: its size and the first MOTION_SPLINE_INP nodes' four rows, lanes 0-2), segs= (both deques' sizes and the first
+ * MOTION_SPLINE_SEGS entries raw: end points, index and flags, the segment's length and coefficients, lanes 0-2) and obs=
+ * (the avoidance cache: count, publication time and the first MOTION_SPLINE_OBS obstacles raw, 0x80 bytes each, a layout
+ * not known that may hold pointers) say which input parts. */
+#define MOTION_SPLINE_INP 6u
+#define MOTION_SPLINE_INP_BYTES (MOTION_SPLINE_INP*48u)
+#define MOTION_SPLINE_SEGS 3u
+#define MOTION_SPLINE_SEG_BYTES (36u+6u+4u+48u)
+#define MOTION_SPLINE_OBS 2u
+/* j1-359: req=, inp= and obs= equal at 3722, the route's start and end equal, its two inner nodes 1..4 ulps apart. The
+ * builder 0xeb55a0 also gives the request +0x10 a vector of components: the children (current view, +0xf0/+0xf8, in vector
+ * order) of the ship's class-0x58 ancestor that pass 0x4835e0; the calculator takes their transforms (0x3dde10). cmp= prints
+ * that vector in order (its length, then each component's portable reference key/depth and vtable RVA, the first
+ * MOTION_SPLINE_CMP): the session's children order is its insertion history, the joiner's its load's. */
+#define MOTION_SPLINE_CMP 48u
+#define MOTION_SPLINE_ROW_CAP 8192u
 typedef struct {volatile LONG64 ready;uint64_t tick,saved;uint32_t ordinal,count_in,count_out,status,flags,points,result,segments,consumed,cheap,waited;
-    unsigned char progress[16],req[MOTION_SPLINE_REQ],pts[MOTION_SPLINE_PTS];} motion_spline_row_t;
+    uint32_t inp_n,seg_count[2],seg_n,obs_n;double obs_time;
+    uint32_t cmp_n,cmp_vt[MOTION_SPLINE_CMP];uint64_t cmp_id[MOTION_SPLINE_CMP];
+    unsigned char progress[16],req[MOTION_SPLINE_REQ],pts[MOTION_SPLINE_PTS],inp[MOTION_SPLINE_INP_BYTES],seg[MOTION_SPLINE_SEGS*MOTION_SPLINE_SEG_BYTES],
+        obs[MOTION_SPLINE_OBS*0x80u];} motion_spline_row_t;
 static unsigned char motion_spline_req[MOTION_WATCH_MAX][MOTION_SPLINE_REQ],motion_spline_pts[MOTION_WATCH_MAX][MOTION_SPLINE_PTS];
+static unsigned char motion_spline_inp[MOTION_WATCH_MAX][MOTION_SPLINE_INP_BYTES];static uint32_t motion_spline_inp_n[MOTION_WATCH_MAX];
+static uint32_t motion_spline_cmp_n[MOTION_WATCH_MAX],motion_spline_cmp_vt[MOTION_WATCH_MAX][MOTION_SPLINE_CMP];
+static uint64_t motion_spline_cmp_id[MOTION_WATCH_MAX][MOTION_SPLINE_CMP];
 static motion_spline_row_t *motion_spline_ring;
 static volatile LONG64 motion_spline_rows,motion_spline_misses;
 static unsigned motion_spline_armed;
@@ -1165,6 +1189,60 @@ static uint32_t motion_spline_result(const unsigned char *request,uint32_t *poin
     if(at!=head) return 0;
     *points=(uint32_t)size;return h?h:1;
 }
+/* A pending request's input list (inp=): its size, the first MOTION_SPLINE_INP nodes' rows; 0xffffffff when it does not read. */
+static uint32_t motion_spline_input(const unsigned char *request,unsigned char *inp) {
+    unsigned char *head=NULL,*at=NULL;uint64_t size=0;memset(inp,0,MOTION_SPLINE_INP_BYTES);
+    if(!request || !read_local(request,&head,8) || !read_local(request+8,&size,8) || !head || size>MOTION_SPLINE_POINTS_MAX || !read_local(head,&at,8)) return 0xffffffffu;
+    for(uint64_t k=0;k<size && k<MOTION_SPLINE_INP;k++) {
+        unsigned char n[0x50];
+        if(!at || at==head || !read_local(at,n,sizeof(n))) return 0xffffffffu;
+        for(unsigned j=0;j<4;j++) memcpy(inp+(k*4u+j)*12u,n+0x10+16*j,12);
+        memcpy(&at,n,8);
+    }
+    return (uint32_t)size;
+}
+/* A request's component vector (cmp=): its length and the first MOTION_SPLINE_CMP runtime IDs (+8) and vtable RVAs;
+ * 0xffffffff when it does not read. Resolved to portable keys when the row is formatted (the UI thread). */
+static uint32_t motion_spline_components(const unsigned char *request,uint64_t *ids,uint32_t *vts) {
+    unsigned char *vec=NULL,*begin=NULL,*end=NULL;
+    memset(ids,0,8*MOTION_SPLINE_CMP);memset(vts,0,4*MOTION_SPLINE_CMP);
+    if(!request || !read_local(request+0x10,&vec,8) || !vec || !read_local(vec,&begin,8) || !read_local(vec+8,&end,8) || end<begin ||
+       (size_t)(end-begin)%8 || (size_t)(end-begin)/8>65536) return 0xffffffffu;
+    const uint32_t n=(uint32_t)((size_t)(end-begin)/8);
+    for(uint32_t k=0;k<n && k<MOTION_SPLINE_CMP;k++) {
+        unsigned char *c=NULL;void *vt=NULL;
+        if(!read_local(begin+8*k,&c,8) || !c || !read_local(c,&vt,8) || !read_local(c+8,&ids[k],8)) {ids[k]=0;vts[k]=0xffffffffu;continue;}
+        vts[k]=motion_watch_rva(vt);
+    }
+    return n;
+}
+/* One deque's entries raw (segs=), appended after `have` entries; returns the entries held. */
+static unsigned motion_spline_deque_raw(const unsigned char *model,unsigned at,uint32_t *count,unsigned char *out,unsigned have) {
+    uint64_t q[5];*count=0xffffffffu;
+    if(!read_local(model+at,q,sizeof(q))) return have;
+    const uint64_t map=q[1],mapsize=q[2],off=q[3],size=q[4];
+    *count=(uint32_t)(size>0xffffffffULL?0xffffffffu:size);
+    if(!size || !map || !mapsize || mapsize>0x100000u || (mapsize&(mapsize-1)) || size>mapsize) return have;
+    for(uint64_t i=0;i<size && have<MOTION_SPLINE_SEGS;i++) {
+        unsigned char *entry=NULL,e[0x46],*segment=NULL,b[0x50],*o=out+have*MOTION_SPLINE_SEG_BYTES;
+        if(!read_local((const void*)(uintptr_t)(map+8*((off+i)&(mapsize-1))),&entry,8) || !entry || !read_local(entry,e,sizeof(e))) return have;
+        for(unsigned k=0;k<3;k++) memcpy(o+12*k,e+0x10+16*k,12);
+        memcpy(o+36,e+0x40,6);memcpy(&segment,e,8);
+        if(segment && read_local(segment,b,sizeof(b))) {memcpy(o+42,b+8,4);for(unsigned k=0;k<4;k++) memcpy(o+46+12*k,b+0x10+16*k,12);}
+        have++;
+    }
+    return have;
+}
+/* The model's raw segments and avoidance cache into a row. */
+static void motion_spline_raw(const unsigned char *model,motion_spline_row_t *r) {
+    r->seg_n=motion_spline_deque_raw(model,0x70,&r->seg_count[0],r->seg,0);
+    r->seg_n=motion_spline_deque_raw(model,0x98,&r->seg_count[1],r->seg,r->seg_n);
+    unsigned char *begin=NULL,*end=NULL;r->obs_n=0xffffffffu;
+    if(!read_local(model+0xf0,&begin,8) || !read_local(model+0xf8,&end,8) || end<begin || (size_t)(end-begin)%0x80 ||
+       (size_t)(end-begin)/0x80>65536 || !read_local(model+0x108,&r->obs_time,8)) return;
+    r->obs_n=(uint32_t)((size_t)(end-begin)/0x80);
+    for(uint32_t k=0;k<r->obs_n && k<MOTION_SPLINE_OBS;k++) if(!read_local(begin+(size_t)k*0x80u,r->obs+k*0x80u,0x80)) {memset(r->obs+k*0x80u,0,0x80);break;}
+}
 static int motion_spline_begin(void *model,unsigned char cheap,spline_watch_t *w) {
     memset(w,0,sizeof(*w));w->cheap=cheap;
     if(!motion_spline_armed || !model) return 0;
@@ -1181,8 +1259,16 @@ static void motion_spline_seen(void *model,spline_watch_t *w) {
     if(!f.count) motion_spline_front[i]=NULL;
     else if(f.front!=motion_spline_front[i]) {motion_spline_front[i]=f.front;++motion_spline_ordinal[i];}
     w->ordinal=motion_spline_ordinal[i];
+    motion_spline_inp_n[i]=0xffffffffu;memset(motion_spline_inp[i],0,MOTION_SPLINE_INP_BYTES);
+    motion_spline_cmp_n[i]=0xffffffffu;memset(motion_spline_cmp_id[i],0,sizeof(motion_spline_cmp_id[i]));memset(motion_spline_cmp_vt[i],0,sizeof(motion_spline_cmp_vt[i]));
     if(f.count && f.status) w->result=motion_spline_result(f.front,&w->points,motion_spline_req[i],motion_spline_pts[i]);
-    else {memset(motion_spline_req[i],0,MOTION_SPLINE_REQ);memset(motion_spline_pts[i],0,MOTION_SPLINE_PTS);}
+    else {
+        memset(motion_spline_req[i],0,MOTION_SPLINE_REQ);memset(motion_spline_pts[i],0,MOTION_SPLINE_PTS);
+        if(f.count) {   /* pending: the calculator's input */
+            motion_spline_inp_n[i]=motion_spline_input(f.front,motion_spline_inp[i]);
+            motion_spline_cmp_n[i]=motion_spline_components(f.front,motion_spline_cmp_id[i],motion_spline_cmp_vt[i]);
+        }
+    }
 }
 /* After the native update: a row when a request was pending before or after it. */
 static void motion_spline_end(void *model,spline_watch_t *w) {
@@ -1201,6 +1287,9 @@ static void motion_spline_end(void *model,spline_watch_t *w) {
     r->segments=motion_spline_segments((const unsigned char*)model,counts,&h)?motion_fnv(motion_fnv(MOTION_FNV_BASIS,counts,8),&h,4):0;
     if(!read_local((unsigned char*)model+0xd0,r->progress,16)) memset(r->progress,0,16);
     memcpy(r->req,motion_spline_req[i],MOTION_SPLINE_REQ);memcpy(r->pts,motion_spline_pts[i],MOTION_SPLINE_PTS);
+    r->inp_n=motion_spline_inp_n[i];memcpy(r->inp,motion_spline_inp[i],MOTION_SPLINE_INP_BYTES);
+    r->cmp_n=motion_spline_cmp_n[i];memcpy(r->cmp_id,motion_spline_cmp_id[i],sizeof(r->cmp_id));memcpy(r->cmp_vt,motion_spline_cmp_vt[i],sizeof(r->cmp_vt));
+    motion_spline_raw((const unsigned char*)model,r);
     InterlockedExchange64(&r->ready,index+1);
 }
 /* Before the first admitted frame, on the MoveWorker: needs the watch and the installed spline hook. */
@@ -1220,10 +1309,27 @@ static int motion_spline_row(uint64_t index,char *out,size_t cap) {
     if(InterlockedCompareExchange64((volatile LONG64*)&r->ready,0,0)!=(LONG64)index+1) return 0; /* still being written */
     char progress[33],req[2*MOTION_SPLINE_REQ+1],pts[2*MOTION_SPLINE_PTS+1];motion_watch_hex(progress,r->progress,16);
     motion_watch_hex(req,r->req,MOTION_SPLINE_REQ);motion_watch_hex(pts,r->pts,MOTION_SPLINE_PTS);
+    char inp[2*MOTION_SPLINE_INP_BYTES+1],seg[2*MOTION_SPLINE_SEGS*MOTION_SPLINE_SEG_BYTES+1],obs[2*MOTION_SPLINE_OBS*0x80u+1];
+    const unsigned in_nodes=r->inp_n==0xffffffffu?0u:(r->inp_n<MOTION_SPLINE_INP?r->inp_n:MOTION_SPLINE_INP);
+    const unsigned obs_k=r->obs_n==0xffffffffu?0u:(r->obs_n<MOTION_SPLINE_OBS?r->obs_n:MOTION_SPLINE_OBS);
+    motion_watch_hex(inp,r->inp,in_nodes*48u);motion_watch_hex(seg,r->seg,(r->seg_n<MOTION_SPLINE_SEGS?r->seg_n:MOTION_SPLINE_SEGS)*MOTION_SPLINE_SEG_BYTES);
+    motion_watch_hex(obs,r->obs,obs_k*0x80u);
+    uint64_t obs_time;memcpy(&obs_time,&r->obs_time,8);
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx request=%u in=%u status=%u flags=%08x points=%u result=%08x out=%u consumed=%u "
-        "segments=%08x progress=%s cheap=%u waited=%u req=%s pts=%s",(unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,
-        r->ordinal,r->count_in,r->status,r->flags,r->points,r->result,r->count_out,r->consumed,r->segments,progress,r->cheap,r->waited,req,pts);
-    return n>0 && (size_t)n<cap?n:0;
+        "segments=%08x progress=%s cheap=%u waited=%u req=%s pts=%s inp=%d/%s segs=%d/%d/%s obs=%d/%016llx/%s",(unsigned long long)index,
+        (unsigned long long)r->tick,(unsigned long long)r->saved,r->ordinal,r->count_in,r->status,r->flags,r->points,r->result,r->count_out,
+        r->consumed,r->segments,progress,r->cheap,r->waited,req,pts,(int)r->inp_n,inp,(int)r->seg_count[0],(int)r->seg_count[1],seg,
+        (int)r->obs_n,(unsigned long long)obs_time,obs);
+    if(n<=0 || (size_t)n>=cap) return 0;
+    /* cmp=: the component vector in order, each key/depth/vtable (keys resolved now, on the UI thread) */
+    int m=snprintf(out+n,cap-(size_t)n," cmp=%d/",(int)r->cmp_n);
+    if(m<=0 || (size_t)(n+=m)>=cap) return 0;
+    for(uint32_t k=0;r->cmp_n!=0xffffffffu && k<r->cmp_n && k<MOTION_SPLINE_CMP;k++) {
+        const motion_ref_t ref=motion_watch_ref(r->cmp_id[k]);
+        m=snprintf(out+n,cap-(size_t)n,"%s%016llx/%u/%x",k?",":"",(unsigned long long)ref.key,ref.depth,r->cmp_vt[k]);
+        if(m<=0 || (size_t)(n+=m)>=cap) return 0;
+    }
+    return n;
 }
 static int motion_order_owned(void) {
     for(unsigned i=0;i<MOTION_ORDER_SITES;i++) if(motion_order_done[i] && motion_order_state(i)!=1) return 0;

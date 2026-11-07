@@ -388,8 +388,8 @@ static void test_motion_doors(void) {
  * addresses and with other bytes wherever the model holds pointers, padding or unused vector lanes. */
 typedef struct {
     unsigned char object[0x400],ctrl[0x100],agent[0x1000],slots[0x400],model[0x4c0],entry[3][0x50],segment[3][0x50];
-    unsigned char request[0xc0],head[0x50],node[2][0x50],obstacles[2][0x80];
-    void *map_a[4],*map_b[2],*req_block[2],*req_map[2];
+    unsigned char request[0xc0],head[0x50],node[2][0x50],obstacles[2][0x80],comp[2][0x10];
+    void *map_a[4],*map_b[2],*req_block[2],*req_map[2],*comps[3];
 } test_sp_rig;
 static __declspec(align(16)) test_sp_rig test_sp[2];
 static void test_sp_bytes(unsigned char *at,unsigned n,unsigned seed) {for(unsigned i=0;i<n;i++) at[i]=(unsigned char)(seed+7*i);}
@@ -426,6 +426,7 @@ static void test_sp_fill(test_sp_rig *g,unsigned char noise) {
     for(unsigned k=0;k<4;k++) {test_sp_vec(m+0x220+16*k,1.0f,(float)k,2.0f);test_sp_vec(m+0x450+16*k,3.0f,(float)k,4.0f);}
     m[0x424]=1;test_sp_bytes(m+0x490,0x30,9);
     /* The avoidance cache: two obstacles, published at 12800/30. */
+    test_sp_bytes(g->obstacles[0],2*0x80,13);
     p=g->obstacles[0];memcpy(m+0xf0,&p,8);p=(unsigned char*)g->obstacles+2*0x80;memcpy(m+0xf8,&p,8);
     double published=12800.0/30.0;memcpy(m+0x108,&published,8);
     /* No request pending. */
@@ -437,13 +438,17 @@ static void test_sp_fill(test_sp_rig *g,unsigned char noise) {
     test_sp_bytes(q+0x70,0x36,11);memset(q+0xa8,0,8);
     p=g->node[0];memcpy(g->head,&p,8);p=g->node[1];memcpy(g->node[0],&p,8);p=g->head;memcpy(g->node[1],&p,8);
     for(unsigned n=0;n<2;n++) for(unsigned k=0;k<4;k++) test_sp_vec(g->node[n]+0x10+16*k,(float)n,(float)k,9.0f);
+    /* The component vector +0x10: two components (a vtable, an unkeyed runtime ID) at this rig's addresses. */
+    g->comps[0]=g->comp[0];g->comps[1]=g->comp[1];g->comps[2]=(void*)&g->comps[2];
+    for(unsigned c=0;c<2;c++) {p=image+MOTION_SPLINE_SEGMENT;memcpy(g->comp[c],&p,8);uint64_t id=0x7fff000000000000ull+c;memcpy(g->comp[c]+8,&id,8);}
+    {   static void *vec[2][3];void **v=vec[g==&test_sp[0]?0:1];v[0]=&g->comps[0];v[1]=&g->comps[2];v[2]=&g->comps[2];p=v;memcpy(q+0x10,&p,8);}
 }
 static void test_sp_request(test_sp_rig *g,uint64_t count,uint32_t status,uint32_t flags) {
     memcpy(g->model+0x428+0x20,&count,8);memcpy(g->request+0xa8,&status,4);memcpy(g->request+0xac,&flags,4);
 }
 static unsigned char tsp_req[MOTION_SPLINE_REQ],tsp_pts[MOTION_SPLINE_PTS];   /* motion_spline_result's raw copies */
 static int test_sp_row_body(uint64_t index,char *out,size_t cap) {
-    char row[2048];if(!motion_spline_row(index,row,sizeof(row))) return 0;
+    char row[MOTION_SPLINE_ROW_CAP];if(!motion_spline_row(index,row,sizeof(row))) return 0;
     const char *body=strstr(row," tick=");if(!body) return 0;
     snprintf(out,cap,"%s",body);return 1;
 }
@@ -507,7 +512,8 @@ static void test_motion_spline(void) {
     assert(!motion_spline_begin(test_sp[0].model,0,&w)); /* not armed */
     motion_spline_armed=1;motion_watch_count=1;motion_watch_saved[0]=0xa1885;
     assert(!motion_spline_begin(test_sp[0].model,0,&w)); /* armed, but the watch did not read this agent */
-    char rows[2][8][512];unsigned nrows[2]={0,0};
+    static char rows[2][8][MOTION_SPLINE_ROW_CAP];unsigned nrows[2]={0,0};
+    motion_watch_lookup_fn prior_lookup=motion_watch_lookup;motion_watch_lookup=test_mw_lookup;   /* cmp=: no engine lookup */
     for(unsigned c=0;c<2;c++) {
         test_sp_rig *g=&test_sp[c];motion_watch_agent[0]=g->agent;motion_spline_front[0]=NULL;motion_spline_ordinal[0]=0;
         LONG64 first=motion_spline_rows;
@@ -530,15 +536,21 @@ static void test_motion_spline(void) {
         test_sp_request(g,1,0,0);stats.issued=12816;
         assert(motion_spline_begin(g->model,0,&w));motion_spline_seen(g->model,&w);motion_spline_end(g->model,&w);
         assert(motion_spline_rows==first+3 && w.ordinal==2);
-        for(LONG64 i=first;i<motion_spline_rows;i++) assert(test_sp_row_body((uint64_t)i,rows[c][nrows[c]++],512));
+        for(LONG64 i=first;i<motion_spline_rows;i++) assert(test_sp_row_body((uint64_t)i,rows[c][nrows[c]++],MOTION_SPLINE_ROW_CAP));
     }
     /* The two rigs (clients) write the same rows. */
+    motion_watch_lookup=prior_lookup;
     assert(nrows[0]==3 && nrows[1]==3);
     for(unsigned i=0;i<3;i++) assert(!strcmp(rows[0][i],rows[1][i]));
     assert(strstr(rows[0][0],"tick=12813 saved=00000000000a1885 request=1 in=1 status=0 flags=00000000 points=0 result=00000000 out=1 consumed=0 segments="));
     assert(strstr(rows[0][0]," progress=0000803e0000803f0000803f0000003f cheap=1 waited=0"));
     assert(strstr(rows[0][1],"tick=12814 saved=00000000000a1885 request=1 in=1 status=1 flags=00000100 points=2 result=") && strstr(rows[0][1]," out=0 consumed=1 "));
     assert(!strstr(rows[0][1]," result=00000000") && strstr(rows[0][2],"tick=12816 saved=00000000000a1885 request=2 in=1 status=0 "));
+    /* inp= (pending only: the input list, node 0's rows (0,k,9)), segs= (deque A's first entry: (0,1.5,-2), ...), obs= (count, time, raw) */
+    assert(strstr(rows[0][0]," inp=2/000000000000000000001041000000000000803f00001041") && strstr(rows[0][1]," inp=-1/ "));
+    assert(strstr(rows[0][0]," segs=2/1/000000000000c03f000000c0") && strstr(rows[0][0]," obs=2/") && strstr(rows[0][0],"/0d141b22"));
+    {char want[96];snprintf(want,sizeof(want)," cmp=2/0000000000000000/%u/%x,0000000000000000/%u/%x",MOTION_REF_UNRESOLVED,MOTION_SPLINE_SEGMENT,MOTION_REF_UNRESOLVED,MOTION_SPLINE_SEGMENT);
+     assert(strstr(rows[0][0],want) && strstr(rows[0][1]," cmp=-1/"));}   /* pending only, in order */
     /* The result hash: the route and request transform, not the unused lanes or the request's tail. */
     uint32_t points[2],r0=motion_spline_result(test_sp[0].request,&points[0],tsp_req,tsp_pts),r1=motion_spline_result(test_sp[1].request,&points[1],tsp_req,tsp_pts);
     assert(motion_spline_result(test_sp[0].request,&points[0],tsp_req,tsp_pts)==r0 && !memcmp(tsp_req,test_sp[0].request+0x30,12) && !memcmp(tsp_req+48,test_sp[0].request+0x70,0x36));   /* req= raw */

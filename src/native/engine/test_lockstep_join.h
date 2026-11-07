@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "2d2b63f7198141fac4dc576d32359bb8f2d70f962585a40cfc10579a0b8733eb"   /* version 13 (JOBE .. CONN; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "683368360229f78c4c03efb85497a934f86436fac410a0df6b0d47b7adb17108"   /* version 13 (JOBE .. CONN; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -442,7 +442,8 @@ static void test_join_golden(void) {
     static join_code_rec code[1]={{77u,0x123456u}};t.code=code;t.ncode=1;
     static join_engr_rec engr[1]={{0x2001ull,37.25,0x13f800000ull}};t.engr=engr;t.nengr=1;
     static join_shgr_rec shgr[1]={{0x2001ull,0x2002ull,7u,0u,888.0,7.25}};t.shgr=shgr;t.nshgr=1;
-    static join_bnds_rec bnds[1]={{0x2001ull,{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26},0u}};t.bnds=bnds;t.nbnds=1;
+    static join_bnds_rec bnds[1]={{0x2001ull,{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,
+        40,41,42,43,44,45,46,47,48,49,50},0u}};t.bnds=bnds;t.nbnds=1;
     static join_omgs_rec omgs[1];omgs[0].portable=0x2001ull;omgs[0].which=0;omgs[0].pad=0;
     for(unsigned i=0;i<JOIN_OMGS_BYTES;i++) omgs[0].data[i]=(unsigned char)i;
     t.omgs=omgs;t.nomgs=1;
@@ -3087,6 +3088,15 @@ static void tconn_build(void) {
     tconn_put(tconn_node[1]+JOIN_CONN_NODE+JOIN_CONN_PEER,tconn_node[0]+JOIN_CONN_NODE);
 }
 static int tconn_count(unsigned char *conn,void *p) {(void)conn;++*(long *)p;return 1;}
+/* BNDS: the five bounding structs and the six floats of a station, in the record's order, and nothing between them. */
+static void test_join_bnds_layout(void) {
+    static unsigned char station[0xd80];for(unsigned i=0;i<sizeof(station);i++) station[i]=(unsigned char)(i*7+3);
+    uint32_t w[JOIN_BNDS_WORDS];assert(join_bnds_read(station,w));
+    static const unsigned at[5]={0xc90u,0xcc0u,0xcf0u,0xc60u,0xd20u};
+    for(unsigned k=0;k<5u;k++) assert(!memcmp(w+k*9u,station+at[k],0x24));
+    assert(!memcmp(w+45,station+0xd50,0x18) && JOIN_BNDS_WORDS==51u);
+    printf("join BNDS layout: five structs (+0xc90 +0xcc0 +0xcf0 +0xc60 +0xd20, 0x24 each) and +0xd50 six floats PASS\n");
+}
 static void test_join_conn(void) {
     tconn_build();
     long n=0;assert(join_conn_walk(tconn_obj[0],tconn_count,&n)==1 && n==1 && join_conn_walk(tconn_obj[1],NULL,NULL)==1);
@@ -3126,5 +3136,5 @@ static void test_join_conn(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_conn();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_conn();test_join_bnds_layout();
 }

@@ -656,9 +656,12 @@ typedef struct {uint64_t portable;double ramp_time;uint64_t ramp_word;} join_eng
  * runtime ID and a second key), by the container's and the ship's portable IDs: the group's value +0x68 and changed time +0x70
  * (lockstep_join_world.h). */
 typedef struct {uint64_t container,ship;uint32_t key,pad;double value,changed;} join_shgr_rec;
-/* BNDS (v13, section 72): every station's three bounding structs (+0xc90, +0xcc0, +0xcf0: centre, extents, radius; the words after
- * the radius are per process and not carried), by portable ID (lockstep_join_world.h). */
-#define JOIN_BNDS_WORDS 27u
+/* BNDS (v13, section 72): every station's five bounding structs (+0xc90, +0xcc0, +0xcf0, then +0xc60 and +0xd20: centre,
+ * extents, radius, 9 words each; the words after the radius are per process and not carried) and the six floats at +0xd50, by
+ * portable ID (lockstep_join_world.h). */
+#define JOIN_BNDS_STRUCTS 5u
+#define JOIN_BNDS_TAIL_WORDS 6u
+#define JOIN_BNDS_WORDS (JOIN_BNDS_STRUCTS*9u+JOIN_BNDS_TAIL_WORDS)
 typedef struct {uint64_t portable;uint32_t word[JOIN_BNDS_WORDS],pad;} join_bnds_rec;
 /* RESV (v13, section 74): every zone's space reservations (the tree at zone+0x3b0), by the zone's and the owner's portable IDs
  * and the reservation's index: its box node+0x30 .. +0x9f (raw) and its expiry node+0xa0 (lockstep_join_world.h). */
@@ -679,7 +682,7 @@ typedef struct {uint64_t portable;uint32_t which,pad;unsigned char data[JOIN_OMG
 _Static_assert(sizeof(join_splm_rec)==1264 && sizeof(join_splme_rec)==192 && sizeof(join_gravn_rec)==32 && sizeof(join_gravp_rec)==80 &&
                sizeof(join_gravq_rec)==48 && sizeof(join_jobe_rec)==128 && sizeof(join_evqt_rec)==32 &&
                sizeof(join_gravd_rec)==24 && sizeof(join_viewk_rec)==24 && sizeof(join_viewkc_rec)==24 &&
-               sizeof(join_viewf_rec)==24 && sizeof(join_viewp_rec)==72 && sizeof(join_shoot_rec)==104 && sizeof(join_attk_rec)==48 && sizeof(join_livef_rec)==16 && sizeof(join_spec_rec)==40 && sizeof(join_navc_rec)==104 && sizeof(join_jobs_rec)==24 && sizeof(join_gone_rec)==8 && sizeof(join_body_rec)==208 && sizeof(join_bupd_rec)==16 && sizeof(join_ldc_rec)==128 && sizeof(join_navt_rec)==128 && sizeof(join_nmesh_rec)==8 && sizeof(join_noct_rec)==40 && sizeof(join_agtt_rec)==32 && sizeof(join_agcb_rec)==1032 && sizeof(join_pbnk_rec)==376 && sizeof(join_pend_rec)==16 && sizeof(join_gravb_rec)==24 && sizeof(join_viewl_rec)==16 && sizeof(join_ikv_rec)==40 && sizeof(join_rcnt_rec)==16 && sizeof(join_ecos_rec)==24 && sizeof(join_shpw_rec)==56 && sizeof(join_trdn_rec)==16 && sizeof(join_npca_rec)==64 && sizeof(join_jobg_rec)==16 && sizeof(join_code_rec)==8 && sizeof(join_engr_rec)==24 && sizeof(join_shgr_rec)==40 && sizeof(join_bnds_rec)==120 && sizeof(join_omgs_rec)==8776 && sizeof(join_resv_rec)==144 && sizeof(join_conn_rec)==32,
+               sizeof(join_viewf_rec)==24 && sizeof(join_viewp_rec)==72 && sizeof(join_shoot_rec)==104 && sizeof(join_attk_rec)==48 && sizeof(join_livef_rec)==16 && sizeof(join_spec_rec)==40 && sizeof(join_navc_rec)==104 && sizeof(join_jobs_rec)==24 && sizeof(join_gone_rec)==8 && sizeof(join_body_rec)==208 && sizeof(join_bupd_rec)==16 && sizeof(join_ldc_rec)==128 && sizeof(join_navt_rec)==128 && sizeof(join_nmesh_rec)==8 && sizeof(join_noct_rec)==40 && sizeof(join_agtt_rec)==32 && sizeof(join_agcb_rec)==1032 && sizeof(join_pbnk_rec)==376 && sizeof(join_pend_rec)==16 && sizeof(join_gravb_rec)==24 && sizeof(join_viewl_rec)==16 && sizeof(join_ikv_rec)==40 && sizeof(join_rcnt_rec)==16 && sizeof(join_ecos_rec)==24 && sizeof(join_shpw_rec)==56 && sizeof(join_trdn_rec)==16 && sizeof(join_npca_rec)==64 && sizeof(join_jobg_rec)==16 && sizeof(join_code_rec)==8 && sizeof(join_engr_rec)==24 && sizeof(join_shgr_rec)==40 && sizeof(join_bnds_rec)==216 && sizeof(join_omgs_rec)==8776 && sizeof(join_resv_rec)==144 && sizeof(join_conn_rec)==32,
                "join v12 record layout (native_gate_join.py)");
 typedef struct {
     uint64_t tick,game,real;uint32_t wire_version,clients,lookahead,tick_hz,slot,md_seq;uint64_t rid_next,created_generation;

@@ -440,7 +440,7 @@ def golden_v13():
             join.SEC_CODE: [(77, 0x123456)],
             join.SEC_ENGR: [(0x2001, 37.25, 0x13f800000)],
             join.SEC_SHGR: [(0x2001, 0x2002, 7, 0, 888.0, 7.25)],
-            join.SEC_BNDS: [(0x2001,) + tuple(range(27)) + (0,)],
+            join.SEC_BNDS: [(0x2001,) + tuple(range(51)) + (0,)],
             join.SEC_OMGS: [(0x2001, 0, 0, bytes(i & 0xff for i in range(8760)))],
             join.SEC_RESV: [(0x2001, 0x2002, 3, bytes(range(112)), 12.5)],
             join.SEC_PCSV: [(0x2001, 0, join.PCSV_VT, 1, 0, struct.pack('<I', (0x18//8) << 1)+bytes(4*join.SOLVER_POINTERS-4),
@@ -448,7 +448,7 @@ def golden_v13():
             join.SEC_CONN: [(0x2001, 0x163e5c, 0x2002, 0x163e5d)]}
 
 
-GOLDEN_SHA = '2d2b63f7198141fac4dc576d32359bb8f2d70f962585a40cfc10579a0b8733eb'
+GOLDEN_SHA = '683368360229f78c4c03efb85497a934f86436fac410a0df6b0d47b7adb17108'
 GOLDEN_SHA_V12 = '67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef'   # a version 12 package (before JOBE)
 GOLDEN_SHA_V11 = 'f0874152607c013ff72febfbf675b20f64b391fb5a9d431795bd302fc0964e7f'   # a version 11 package (before SPLM..GRAVP)
 GOLDEN_SHA_V10 = '1a324e00b49dbc814f757c26ad28741675b7d8e0b9df120c63d52594724e27bd'   # a version 10 package (before GRAV, GRAVC, GRAVS)
