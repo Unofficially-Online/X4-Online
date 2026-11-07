@@ -9,6 +9,7 @@
 static uint64_t world_identity_portable(uint64_t runtime);
 static int created_enabled(void);
 static uint32_t join_gone_keys(const uint64_t **keys);   /* lockstep_join.h: a hot joiner's rows of the session's gone objects */
+static uint32_t join_row_keys(const uint64_t **keys);    /* lockstep_join.h: the created objects whose row the session held at T */
 static uint64_t created_runtime_of(uint64_t id);         /* lockstep_world_created.h */
 static unsigned world_hash_gone_added,world_hash_gone_dupes;   /* a joiner's GONE rows taken, and those it has rows of itself */
 #define WORLD_HASH_CREATED_MAX 524288u /* CREATED_LIVE */
@@ -304,6 +305,8 @@ static int world_hash_compare(const void *a,const void *b) {
     uint64_t x=((const world_hash_item*)a)->saved,y=((const world_hash_item*)b)->saved;
     return x<y?-1:x>y;
 }
+static int created_take_rows(const uint64_t *keys,uint32_t nkeys,world_hash_item *items,unsigned *count,unsigned capacity);
+static uint64_t world_hash_rows_taken;
 static int world_hash_init(void) {
     if(!world_identities || world_identity_count<=0 || world_identity_count>WORLD_IDENTITY_CAPACITY/2 ||
        !hash_ok(image+0xced70,32,"de126e38d2532250fc386f851f355cdb4812bf6b4507ace0549728e27505f268") || !dock_state_pins()) return 0;
@@ -343,6 +346,17 @@ static int world_hash_init(void) {
             if(created_runtime_of(gone[i])) {++world_hash_gone_dupes;continue;}   /* a created object the joiner has */
             world_hash_created[world_hash_created_count++]=(world_hash_item){.runtime=0,.saved=gone[i]};++world_hash_gone_added;
         }
+        /* A hot joiner: the rows of the created objects the session's census held at T, taken now, so that one that dies before this
+         * process's first capture keeps its row as on the session (a capture adds only what it finds present). j1-351: four such
+         * objects, the joiner's total four short at 900 and the replay digest apart from there with the census equal. */
+        const uint64_t *rows=NULL;const uint32_t nrows=join_row_keys(&rows);
+        world_hash_stage="joiner_rows";
+        if(nrows) {
+            const int taken=created_take_rows(rows,nrows,world_hash_created,&world_hash_created_count,WORLD_HASH_CREATED_MAX);
+            if(taken<0) return 0;
+            world_hash_rows_taken=(uint64_t)taken;
+        }
+        if(world_hash_created_count>1) qsort(world_hash_created,world_hash_created_count,sizeof(*world_hash_created),world_hash_compare);
     }
     if(BCryptOpenAlgorithmProvider(&world_sha_algorithm,BCRYPT_SHA256_ALGORITHM,NULL,0)<0 ||
        BCryptCreateHash(world_sha_algorithm,&world_sha_row,NULL,0,NULL,0,BCRYPT_HASH_REUSABLE_FLAG)<0) return 0;

@@ -564,6 +564,27 @@ static int created_capture_rows(world_hash_find_fn find,void *map,world_hash_ite
     return 1;
 }
 
+/* A hot joiner's census rows the session's capture already held (lockstep_world_hash.h world_hash_init): each key's created entry
+ * marked captured and its row appended, as created_capture_rows does for an object a capture finds; the count appended, -1 when
+ * the rows are full. */
+#ifndef CREATED_OWN_PLATFORM
+static int created_take_rows(const uint64_t *keys,uint32_t nkeys,world_hash_item *items,unsigned *count,unsigned capacity) {
+    int added=0;
+    AcquireSRWLockExclusive(&created_lock);
+    for(uint32_t k=0;k<nkeys && created_by_id;k++) {
+        if(!keys[k]) continue;
+        const unsigned slot=created_index_slot(created_by_id,1,keys[k]);
+        if(!created_by_id[slot]) continue;
+        created_live_t *e=&created_live[created_by_id[slot]-1u];
+        if(e->captured) continue;
+        if(*count>=capacity) {added=-1;break;}
+        memset(&items[*count],0,sizeof(*items));items[*count].runtime=e->runtime;items[*count].saved=e->created;
+        ++*count;e->captured=1;++added;
+    }
+    ReleaseSRWLockExclusive(&created_lock);
+    return added;
+}
+#endif
 /* Installation, owned by the gate session. */
 #ifdef CREATED_OWN_PLATFORM
 static void *created_alloc(size_t bytes);

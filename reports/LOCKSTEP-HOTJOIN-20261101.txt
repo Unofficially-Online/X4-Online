@@ -2495,8 +2495,27 @@ proposed and rejected.
   sends a pilot whose $NPC.controlled is set to STATE_ai_pilot_at_post at once and an assigned pilot without it to
   STATE_ai_pilot_return_to_post: a walk to the pilot slot (here 44 ticks) before the order runs. So the joiner's load
   leaves the waiting ships' pilots assigned but not controlling (the save has the ship's <control><post id="aipilot"> and
-  the NPC's crossconnection movement attached at con_control). Which field: j1-344 (the join watch's raw bytes of the
-  pilots and ships at the session's capture of T and the joiner's admission).
+  the NPC's crossconnection movement attached at con_control).
+  Which field [F: j1-344 .. j1-349 JOIN_WATCH with its ctl=/links= diagnostics (e578600f, 111ab8dd, 30af69ab, 3682930b); X4.exe
+  read only]: the controllable's control entity setter 0x44d790 writes the entity's post (+0x3c8, via 0xf0ea0), the post's +0x118
+  (+0x3c0) and posts ControlEntityAddedEvent; those, the flags +0x3d0 (8) and the reference slot (+0x308 vector, the ship) are equal
+  on both sides at T (j1-346/347). The NPC's vt+0x1c50(1) (0x6c71f0), the test behind $NPC.controlled, is 1 on the session and 0 on
+  the joiner for all three pilots (j1-347). Besides the flags (+0x3d0 & 0xc0, +0x3d8 > 0), the slot and the ancestor chain it asks
+  the post's control position (0x455ce0) and the NPC's link of kind 2 at *(+0xc0) to it. *(component+0xc0) holds a component's
+  connections (0x3d87e0 creates it): 0x18-byte buckets by kind, each a std::list whose nodes embed a U::Connection (vtable
+  0x2bab2e0: +8 its ID, +0x10 the partner connection, +0x18 the owner, +0x20 its U::TemplateConnection). j1-348/349: both sides
+  hold the pilot's kind-2 connection, ID 0x163e5c (the save's roomposition); its partner is the ship's connection 0x163e5d (owner
+  the ship, template con_control) on the session and null on the joiner, every other field and both IDs equal. The save pairs
+  them both ways (roomposition [0x163e5c] <connected [0x163e5d]>, con_control [0x163e5d] <connected [0x163e5c]>), so the joiner's
+  load creates the connections of a ship in a job's <waiting> list but leaves their pairs unconnected. X4's connect 0x3d87e0
+  creates the two connections and sets each one's +0x10 to the other; InitialiseControlEntityAction (0xbebea0 -> 0x44f170, the
+  state machine's initialise_control_entity after the walk) needs the same test and so cannot seat them alone.
+  Fix: CONN (package v13 section 76, b72db0eb; opt-in native_gate_join_conn): every U::NPC connection that has a partner at T and
+  that partner's own partner, as (owner's portable ID, connection ID) -> (partner owner's portable ID, partner ID); the admission
+  sets a joiner connection's partner where it is null and the record's partner resolves (status
+  conn=on:written:equal:missing:conflict:left conn_cap=N; synthetic test test_join_conn). A/B: j1-350 (CONN on, to 2600, stride 10):
+  conn=1:376:30226:0:0:0 (the saver conn_cap=30602), verdict equal through 2599 with no mismatch (j1-342/343: first mismatch 2522),
+  census 0 at 900 and 2520 .. 2560, the three minelayers' motion rows equal.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

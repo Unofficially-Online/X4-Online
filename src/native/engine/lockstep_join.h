@@ -1184,7 +1184,10 @@ static int join_capture_ids(join_tables *t) {
     if(created_enabled() && created_live) {
         AcquireSRWLockShared(&created_lock);int ok=1;
         for(unsigned i=0;i<created_live_count && ok;i++) {
-            join_id_rec r={created_live[i].runtime,created_live[i].created,WORLD_KEY_CREATED,0};ok=JOIN_PUSH(t->ids,t->nids,cap,r);
+            /* pad 1: this session's census holds the object's row (a capture saw it; lockstep_world_hash.h), so a joiner takes the
+             * row at its first capture even when the object is gone by then (j1-351: four such rows at 900, stride 300) */
+            join_id_rec r={created_live[i].runtime,created_live[i].created,WORLD_KEY_CREATED,created_live[i].captured?1u:0u};
+            ok=JOIN_PUSH(t->ids,t->nids,cap,r);
         }
         t->gate.created_live=created_live_count;
         ReleaseSRWLockShared(&created_lock);
@@ -1216,6 +1219,20 @@ static int join_capture_gone(join_tables *t,world_hash_find_fn find,void *map) {
     if(t->ngone) qsort(t->gone,t->ngone,sizeof(*t->gone),join_gone_cmp);
     for(uint32_t i=0;i<t->ngone;i++) if(!t->gone[i].portable || (i && t->gone[i-1].portable==t->gone[i].portable)) return 0;
     return 1;
+}
+/* lockstep_world_hash.h's first capture on a joiner: the created objects whose census row the session held at T (IDS pad 1),
+ * their portable keys (0 none). */
+static uint32_t join_row_keys(const uint64_t **keys) {
+    static uint64_t *rows;static uint32_t nrows;static const join_id_rec *from;static uint32_t from_n;
+    if(!join_rx.loaded || join_rx.t.version<13 || !join_rx.t.ids) return 0;
+    if(from!=join_rx.t.ids || from_n!=join_rx.t.nids) {   /* built once per package */
+        free(rows);rows=NULL;nrows=0;from=join_rx.t.ids;from_n=join_rx.t.nids;uint32_t n=0;
+        for(uint32_t i=0;i<join_rx.t.nids;i++) n+=join_rx.t.ids[i].klass==WORLD_KEY_CREATED && join_rx.t.ids[i].pad==1u;
+        rows=n?malloc(n*sizeof(*rows)):NULL;
+        if(rows) for(uint32_t i=0;i<join_rx.t.nids;i++)
+            if(join_rx.t.ids[i].klass==WORLD_KEY_CREATED && join_rx.t.ids[i].pad==1u) rows[nrows++]=join_rx.t.ids[i].portable;
+    }
+    *keys=rows;return nrows;
 }
 /* lockstep_world_hash.h's first capture on a joiner: the session's rows of gone objects, sorted (0 none). */
 static uint32_t join_gone_keys(const uint64_t **keys) {

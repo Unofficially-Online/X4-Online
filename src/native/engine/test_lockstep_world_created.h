@@ -298,6 +298,32 @@ static void test_created_capture_image(void) {
         assert(world_hash_gone_added==1 && world_hash_gone_dupes==2);
         join_rx.loaded=0;join_rx.t.version=0;join_rx.t.gone=NULL;join_rx.t.ngone=0;free(gt.gone);
     }
+    /* Hot join census rows from IDS (lockstep_join.h join_row_keys, j1-351): the session's capture held the rows of both created
+     * objects, and the ship, alive at T (IDS pad 1), is gone before the joiner's first capture. A capture adds only what it finds
+     * present, so without the rows the joiner is one row short; with them it has the session's state, each row taken once. */
+    {
+        char session[sizeof(world_hash_state)];memcpy(session,world_hash_state,sizeof(session));
+        for(int with=0;with<2;with++) {
+            VirtualFree(world_hash_created,0,MEM_RELEASE);VirtualFree(world_hash_items,0,MEM_RELEASE);VirtualFree(world_hash_changed,0,MEM_RELEASE);
+            world_hash_items=NULL;world_hash_created=NULL;world_hash_changed=NULL;world_hash_count=world_hash_created_count=0;world_hash_scans=0;world_hash_tick=0;
+            {const unsigned objects=test_created_map_count;test_created_reset();test_created_map_count=objects;}
+            AcquireSRWLockExclusive(&created_lock);assert(created_live_add(101,z,1) && created_live_add(102,a,1));ReleaseSRWLockExclusive(&created_lock);
+            /* without: the IDS pads 0; with: another table (rebuilt), the created ones 1; a saved identity's pad never makes a row */
+            static join_id_rec ids[2][3];
+            ids[with][0]=(join_id_rec){0x9077,0x77,WORLD_KEY_SAVED,1};
+            ids[with][1]=(join_id_rec){0x9101,z,WORLD_KEY_CREATED,(uint32_t)with};ids[with][2]=(join_id_rec){0x9102,a,WORLD_KEY_CREATED,(uint32_t)with};
+            join_rx.loaded=1;join_rx.t.version=13;join_rx.t.ids=ids[with];join_rx.t.nids=3;
+            world_hash_rows_taken=0;
+            assert(world_hash_capture_with(2,1,test_created_find));
+            if(!with) assert(world_hash_created_count==1 && strcmp(world_hash_state,session) && !world_hash_rows_taken);
+            else assert(world_hash_created_count==2 && !strcmp(world_hash_state,session) && world_hash_rows_taken==2);
+        }
+        {   /* taken once: the rows' entries are captured, so a later capture adds nothing */
+            unsigned count=world_hash_created_count;
+            assert(created_capture_rows(test_created_find,test_created_map,world_hash_created,&count,WORLD_HASH_CREATED_MAX) && count==2);
+        }
+        join_rx.loaded=0;join_rx.t.version=0;join_rx.t.ids=NULL;join_rx.t.nids=0;
+    }
     /* Disabled: no created rows and the summary keeps its original form. */
     VirtualFree(world_hash_created,0,MEM_RELEASE);VirtualFree(world_hash_items,0,MEM_RELEASE);VirtualFree(world_hash_changed,0,MEM_RELEASE);
     world_hash_items=NULL;world_hash_created=NULL;world_hash_changed=NULL;world_hash_count=world_hash_created_count=0;world_hash_scans=0;world_hash_tick=0;

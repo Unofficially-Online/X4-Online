@@ -262,11 +262,19 @@ def ids_sets(sets):
 #   native_gate_join_resv          the zones' space reservation boxes and expiries (w1z156: resv=1:4326:302:0:0, every
 #                                  GetSafePos call 1049..1052 equal, 742be's split gone, census 0 to 1740 from 1440's 1;
 #                                  j1-337: resv=1:4162:443:0:0, first mismatch 2522 from j1-329's 1860, census 0 to 2460)
+#   native_gate_join_pcsv          the PlayerControllers' own motion solvers (w1z161: pcsv=1:2:0:0:0, the slot ship equal
+#                                  from T+1, every GetSafePos call 1750..1760 equal)
+#   native_gate_join_gravn_extra   GRAVN keeps the joiner's extra zone groups in the neighbour lists it writes (w1z167:
+#                                  gravn_kept=1:9, the 652 radar swap and the 1800 split gone, census 0 to 1980)
+#   native_gate_join_conn          the NPCs' connection partners a waiting ship's load leaves null (x4mods-28; j1-350: conn=
+#                                  1:376:30226:0:0:0, the 2522 split gone; w1z171: in window equal to 2100 with the three
+#                                  and CODE's hold over the resume; j1-353: J1 with the three equal to 3720)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
                    'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code', 'native_gate_join_omgs',
-                   'native_gate_join_hold_boot_events', 'native_gate_join_resv')
+                   'native_gate_join_hold_boot_events', 'native_gate_join_resv', 'native_gate_join_pcsv',
+                   'native_gate_join_gravn_extra', 'native_gate_join_conn')
 
 
 def default_sets(sets):

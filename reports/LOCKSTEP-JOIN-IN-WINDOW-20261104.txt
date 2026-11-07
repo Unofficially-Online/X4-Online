@@ -987,3 +987,14 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   at 900, 1800, 1980, 2040 and 2100, no object on one side only. In window the joiner is equal to the session through 2100
   (the replay digest parts from T+1 in every in-window run, the diagnostic mode's uncarried Lua state, as before).
 - Next: a long in-window soak with the four; PCSV and GRAVN extra into the join defaults once a J1 run with them stays clean.
+
+51. EQUAL THROUGH 3600 WITH THE DEFAULTS (w1z172; 7 November, morning)
+- JOIN_DEFAULT_ON gains native_gate_join_pcsv, native_gate_join_gravn_extra and native_gate_join_conn (58f39bcc), after
+  w1z171 in window (0 to 2100) and x4mods-28's j1-353 in J1 (RESV, CONN, PCSV and GRAVN extra; stride 60: equal through
+  3720, first mismatch 3780 at ShipLarge 0x6f1e7's pathing state, his next item). CODE (a default) holds the object code
+  counter over the in-window resume (section 50). x4mods-28's d85715ef: a joiner's census takes the session's rows of
+  created objects alive at T (IDS pad), the stride-300 replay artefact of j1-351.
+- w1z172 (build-code2 = f802c276; in window to 3600, every fix on): census 0 at 900, 1800, 2100, 2400, 2700, 3000, 3300 and
+  3540, no object on one side only. The window joiner is equal to the session to the end of the soak.
+- Sections 47..51 in order: zone reservations (RESV), the slot ship's own solver (PCSV), a tempzone's radar group (GRAVN
+  extra), NPC connection partners (CONN, x4mods-28) and the object codes the resume drew (CODE hold).
