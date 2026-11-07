@@ -3721,6 +3721,13 @@ static int lua_world_nav_status(lua_State *L) {
     char out[256];int n=accept_ui()?world_nav_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
+/* gate.world_static(tick): WORLD_STATIC rows at that tick's capture (diagnostic; up to 8 ticks; lockstep_world_hash.h). */
+static int lua_world_static(lua_State *L) {
+    const double n=p_lua_tonumber(L,1);
+    const int ok=isfinite(n) && floor(n)==n && n>=1 && n<=1e9 && world_static_add((uint64_t)n);   /* config time: before the UI thread is known */
+    if(ok) world_static_sink=crash_note_write;
+    p_lua_pushnumber(L,ok);return 1;
+}
 static int lua_world_page(lua_State *L) {
     double number=p_lua_tonumber(L,1);
     if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures) {p_lua_pushnil(L);return 1;}
@@ -4307,7 +4314,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(created_identities);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);
     METHOD(portable_created);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);
     METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);
-    METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_nav_hash);METHOD(world_nav_status);METHOD(world_page);METHOD(world_watch);METHOD(world_detail);METHOD(world_health);METHOD(world_banks);
+    METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_nav_hash);METHOD(world_nav_status);METHOD(world_page);METHOD(world_static);METHOD(world_watch);METHOD(world_detail);METHOD(world_health);METHOD(world_banks);
     METHOD(world_trace);METHOD(world_trace_status);METHOD(world_trace_row);METHOD(world_trace_config);
     METHOD(world_queue_trace_config);METHOD(world_queue_trace_status);METHOD(world_queue_trace_row);
     METHOD(world_wait_trace_config);METHOD(world_wait_trace_status);METHOD(world_wait_trace_row);

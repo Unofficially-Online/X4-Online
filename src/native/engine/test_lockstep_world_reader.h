@@ -93,6 +93,11 @@ static void wcr_run(int (*reader)(const void *,void *,size_t),char *out,size_t c
     char failure[96];snprintf(failure,sizeof(failure),"FAILED stage=%s saved=%016llx",world_hash_stage,(unsigned long long)world_hash_failure_id);
     wcr_append(out,capacity,failure);
 }
+static char wcr_static_rows[8192];static size_t wcr_static_length;
+static void wcr_static_sink(const char *text,int length) {
+    assert(length>0 && wcr_static_length+(size_t)length<sizeof(wcr_static_rows));memcpy(wcr_static_rows+wcr_static_length,text,(size_t)length);
+    wcr_static_length+=(size_t)length;wcr_static_rows[wcr_static_length]=0;
+}
 static void test_world_reader_equivalence(void) {
     double (*tonumber)(lua_State *,int)=p_lua_tonumber;void (*pushnumber)(lua_State *,double)=p_lua_pushnumber;
     void (*pushnil)(lua_State *)=p_lua_pushnil;void (*pushlstring)(lua_State *,const char *,size_t)=p_lua_pushlstring;
@@ -110,11 +115,18 @@ static void test_world_reader_equivalence(void) {
     world_hash_watch_count=0;assert(world_hash_watch_add("0000000000000511",16) && world_hash_watch_add("0000000000000533",16));
     unsigned char *noaccess=VirtualAlloc(NULL,4096,MEM_COMMIT|MEM_RESERVE,PAGE_NOACCESS);assert(noaccess);
     static char by_system_call[65536],guarded[65536];
+    world_static_nticks=0;assert(world_static_add(2) && world_static_add(2) && world_static_nticks==1 && !world_static_add(0));
+    world_static_sink=wcr_static_sink;wcr_static_length=0;wcr_static_rows[0]=0;
     wcr_run(read_local,by_system_call,sizeof(by_system_call),noaccess);
     uint64_t calls=read_local_calls;
     wcr_run(sample_read,guarded,sizeof(guarded),noaccess);
     assert(read_local_calls==calls); /* the guarded capture makes no ReadProcessMemory call */
     assert(!strcmp(by_system_call,guarded));
+    /* WORLD_STATIC at tick 2 only (both runs): the positional object with the unknown controller (2002, flags 8), no view cache pose. */
+    assert(strstr(wcr_static_rows,"NATIVE_GATE WORLD_STATIC tick=2 id=0000000000000522 type=4000 parent=0000000000000500 created=0 view=0 pose0=- pose1=-\r\n") &&
+           !strstr(wcr_static_rows,"tick=1 ") && !strstr(wcr_static_rows,"tick=3 ") && !strstr(wcr_static_rows,"id=0000000000000511"));
+    {const char *a=strstr(wcr_static_rows,"WORLD_STATIC"),*b=a?strstr(a+1,"WORLD_STATIC"):NULL;assert(a && b && !strstr(b+1,"WORLD_STATIC"));}
+    world_static_nticks=0;world_static_sink=NULL;free(world_static_buffer);world_static_buffer=NULL;world_static_capacity=world_static_used=0;
     assert(strstr(guarded,"WORLD_OBJECT tick=1 id=0000000000000500 ") && strstr(guarded,"WORLD_OBJECT tick=2 id=0000000000000511 ") &&
            strstr(guarded,"WORLD_OBJECT tick=3 id=0000000000000544 ") && strstr(guarded," timing_fields=") &&
            strstr(guarded,"tick=1 objects=7 present=6 changed=7 ") && strstr(guarded,"tick=4 objects=7 present=5 changed=0 ") &&

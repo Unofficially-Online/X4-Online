@@ -852,5 +852,16 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   converted into the target space (e8bd20: a32280 composes the stored matrix with its reference object, ZRL-560, by ID)
   and the agent's pathing bank. The stored matrix is equal at T; the reference's transform as composed is the lead (a
   runtime-created zone's cached world transform against the joiner's recomputation from its saved offset).
-- Open: the field a32280 composes with, ZRL-560's at T+1 on both sides; a census of the controller-less objects'
-  transforms (x4mods-28, a diagnostic). The README's claim stands as written (equal to the end of each test).
+- WORLD_STATIC (x4mods-28's diagnostic, d919dbd5: both views' published poses of every controller-less object and every
+  Zone/Sector/Cluster/Highway at chosen ticks): no zone, sector, cluster or highway pose differs at 634, 660 or 1020 in
+  window (w1z134) nor at 634, 660 or 1800 in J1 (j1-332), ZRL-560 included; NPC crew poses differ from T+1 (on-foot
+  placement, a separate item), a few engines and ships persistently (178fb4/178fb7, 82aa2, the slot ship 7a8fe).
+- The chain back from 1052 (exec breakpoints k-filtered on 742be, w1z135..w1z145): the waypoint is pushed from the
+  Agent's pending queue (+0x6c0), whose entry 0 is created at 1049 by the swap-time transfer (eac170 -> the queued order's
+  push) already 2 ulps apart; its FlightPoint is built at 0x6e0720 (eaa020, a plain copy of the position handed in) by
+  the AI MoveTo action 0x109c1a0, which reads it from a U::NavPoint list entry (0xa321c0 copies the NavPoint's stored
+  transform; the entry's header, its reference ZRL-560 included, is equal). The banks and the converted inputs on the
+  way are equal. The NavPoint is not in the save (742be's move.generic holds $pos_input = (-70000, 30000, -50000) in the
+  sector, $endzone = ZRL-560, an empty $reservedspace): it is computed at runtime on both sides, a spot about 290 m from
+  the destination in ZRL-560, and already differs by 2 ulps. Open: where that NavPoint is computed and from what.
+  The README's claim stands as written (equal to the end of each test).

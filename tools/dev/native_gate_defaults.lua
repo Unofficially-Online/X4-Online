@@ -271,6 +271,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_refwatch_at','hot join watched field writes from a step of the watch'},
  {'native_gate_join_shape_refresh','hot join: every client refreshes the fixture body shapes at T+2'},
  {'native_gate_join_jobdump','hot join job raw rows (diagnostic)'},
+ {'native_gate_world_static','world static rows: the published poses of uncompared positional objects at ticks (diagnostic)'},
  {'native_gate_join_jobcnt_at','hot join job count rows after a step (diagnostic)'},
  {'native_gate_join_hold_boot_events','hot join boot event passes held'},
  {'native_gate_join_precise','hot join save at full precision'},

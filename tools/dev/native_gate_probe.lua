@@ -392,6 +392,11 @@ if cfg.native_gate_join then
   assert(type(jd)=='table' and #jd>=1 and #jd<=8 and gate.join_jobdump,'native_gate_join_jobdump needs 1..8 job hashes')
   for i=1,#jd do assert(type(jd[i])=='string' and gate.join_jobdump(jd[i])==1,'invalid join jobdump hash') end
  end
+ if cfg.native_gate_world_static~=nil then   -- WORLD_STATIC rows (uncompared statics' published poses) at these ticks (diagnostic)
+  local ticks=cfg.native_gate_world_static
+  assert(type(ticks)=='table' and #ticks>=1 and #ticks<=8 and gate.world_static,'native_gate_world_static needs {tick,...}, 1..8 ticks')
+  for _,t in ipairs(ticks) do assert(type(t)=='number' and gate.world_static(t)==1,'native_gate_world_static refused a tick') end
+ end
  if cfg.native_gate_join_jobcnt_at~=nil then   -- JOIN_JOBCNT rows after this step (diagnostic)
   local n=cfg.native_gate_join_jobcnt_at
   assert(type(n)=='number' and gate.join_jobcnt_at and gate.join_jobcnt_at(n)==n,'native_gate_join_jobcnt_at needs 1 .. 100000')

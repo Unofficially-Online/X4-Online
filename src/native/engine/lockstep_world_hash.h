@@ -197,6 +197,49 @@ static int world_hash_motion(void *object,unsigned char *controller,world_hash_d
     /* Unknown controller identity is still visible; its state is not claimed. */
     *flags|=8;return 1;
 }
+/* WORLD_STATIC (diagnostic, native_gate_world_static = {ticks}): at the listed ticks' captures one row per positional object
+ * whose motion the census does not hash (flags 8: no controller, or one of an unknown kind; the summary's unknown_motion): its
+ * saved key, type, parent key, created (key bit 63), the current view index (g_ComponentViewCacheIndex 0x38f4eb4) and the
+ * published view cache pose of both views relative to it (object+0xe0+view*0x80, +0x28: the 0x40-byte transform, '-' without
+ * one, 'x' unreadable). [w1z130/j1-330: hot join decisions 20..40 s after the join get a destination 1..3 ulps apart, computed
+ * relative to objects nothing compared; the joiner's statics come from its load.] Also every Zone, Sector, Cluster and Highway
+ * (world_static_space): their published poses are what 0x3dde10 composes with. The rows go to the sink (the crash notes,
+ * set by gate.world_static) when the capture completes. */
+#define WORLD_STATIC_TICKS 8u
+#define WORLD_STATIC_VIEW_INDEX 0x38f4eb4u
+static uint64_t world_static_ticks[WORLD_STATIC_TICKS];static unsigned world_static_nticks;
+static void (*world_static_sink)(const char *,int);
+static char *world_static_buffer;static size_t world_static_used,world_static_capacity;
+static int world_static_now;static uint64_t world_static_tick,world_static_rows,world_static_dropped;
+/* The spaces a destination is composed through (lockstep_world_hash.h WORLD_STATIC; e8a4a0 -> e8a110 -> 0x3dde10 per link): every
+ * U::Zone (temp zones too), U::Sector, U::Cluster and U::Highway, whatever their controller. */
+static int world_static_space(unsigned type) {return type==0x2b66080u || type==0x2b1ea48u || type==0x2aa2498u || type==0x2b091e0u;}
+static int world_static_add(uint64_t tick) {
+    if(!tick || world_static_nticks>=WORLD_STATIC_TICKS) return 0;
+    for(unsigned i=0;i<world_static_nticks;i++) if(world_static_ticks[i]==tick) return 1;
+    world_static_ticks[world_static_nticks++]=tick;return 1;
+}
+static void world_static_row(const world_hash_item *item,unsigned char *object) {
+    if(world_static_used+512u>world_static_capacity) {
+        size_t want=world_static_capacity?world_static_capacity*2u:(size_t)1<<22;char *grown=realloc(world_static_buffer,want);
+        if(!grown) {++world_static_dropped;return;}
+        world_static_buffer=grown;world_static_capacity=want;
+    }
+    uint32_t current=0;(void)world_hash_reader(image+WORLD_STATIC_VIEW_INDEX,&current,4);
+    static const char digits[]="0123456789abcdef";char pose[2][0x40*2+1];
+    for(unsigned rel=0;rel<2u;rel++) {
+        unsigned char *published=NULL,bytes[0x40];
+        if(!world_hash_reader(object+0xe0+(size_t)((current^rel)&1u)*0x80u+0x28u,&published,8) || !published) {strcpy(pose[rel],"-");continue;}
+        if(!world_hash_reader(published,bytes,sizeof(bytes))) {strcpy(pose[rel],"x");continue;}
+        for(unsigned j=0;j<sizeof(bytes);j++) {pose[rel][2*j]=digits[bytes[j]>>4];pose[rel][2*j+1]=digits[bytes[j]&15];}
+        pose[rel][2*sizeof(bytes)]=0;
+    }
+    int n=snprintf(world_static_buffer+world_static_used,world_static_capacity-world_static_used,
+        "[X4LAN] NATIVE_GATE WORLD_STATIC tick=%llu id=%016llx type=%x parent=%016llx created=%u view=%u pose0=%s pose1=%s\r\n",
+        (unsigned long long)world_static_tick,(unsigned long long)item->saved,item->type,(unsigned long long)item->parent,
+        (unsigned)(item->saved>>63),current,pose[0],pose[1]);
+    if(n>0 && (size_t)n<world_static_capacity-world_static_used) {world_static_used+=(size_t)n;++world_static_rows;} else ++world_static_dropped;
+}
 static int world_hash_record(world_hash_item *item,world_hash_data data[WORLD_HASH_DOMAINS],unsigned char *object) {
     world_hash_stage="topology";
     item->type=item->flags=0;item->parent=0;item->nav_raw_length=0;
@@ -227,6 +270,7 @@ static int world_hash_record(world_hash_item *item,world_hash_data data[WORLD_HA
         if(!world_hash_reader(object+8,&id,8) || id!=item->runtime) return 0;
         ++world_hash_alive;
         if(item->flags&8) ++world_hash_motion_unknown;
+        if(world_static_now && ((item->flags&8) || world_static_space(item->type))) world_static_row(item,object);
         if(item->flags&16) ++world_hash_parent_unknown;
     }
     /* Absence, class and reference coverage are part of every domain. */
@@ -306,6 +350,8 @@ static world_hash_item *world_hash_item_at(unsigned index) {
 static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find_fn find) {
     world_hash_stage="schema";
     if((schema!=1 && schema!=2) || (world_hash_scans && schema!=world_hash_schema)) return 0;
+    world_static_now=0;world_static_used=0;world_static_tick=tick;
+    for(unsigned i=0;i<world_static_nticks;i++) if(world_static_ticks[i]==tick) world_static_now=1;
     world_hash_schema=schema;
     if(shield_canonical) {
         world_hash_stage="shield_time";
@@ -364,6 +410,8 @@ static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find
     char roots[WORLD_HASH_DOMAINS][65];unsigned char raw[32];
     for(unsigned d=0;d<WORLD_HASH_DOMAINS;d++) {if(BCryptFinishHash(world_sha_roots[d],raw,32,0)<0) return 0;hex32(raw,roots[d]);}
     world_hash_tick=tick;++world_hash_scans;world_hash_failure_id=0;world_hash_stage="complete";
+    if(world_static_now && world_static_sink && world_static_used) world_static_sink(world_static_buffer,(int)world_static_used);
+    world_static_now=0;world_static_used=0;
     if(schema==2 && !world_nav_index_rebuild(total)) return 0;
     /* objects counts saved plus created rows; created= appears only when
      * created identities are enabled, so default captures are unchanged. */
