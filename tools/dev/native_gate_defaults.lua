@@ -298,6 +298,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_bnds','hot join: a joiner takes the session stations bounding structs (BNDS)'},
  {'native_gate_join_resv','hot join: a joiner takes the session zones space reservation boxes and expiries its load re-derives (RESV)'},
  {'native_gate_join_pcsv','hot join: a joiner takes the session PlayerControllers own motion solvers its load rebuilds (PCSV)'},
+ {'native_gate_join_gravn_extra','hot join: GRAVN keeps the joiner zone groups the session adds later in the neighbour lists (GRAVN extra)'},
  {'native_gate_join_shgr','hot join: a joiner takes the session shield recharge groups of docked ships its load restamps (SHGR)'},
  {'native_gate_join_ecos','hot join: a joiner takes the session economy schedules of stations and ships (ECOS)'},
  {'native_gate_join_rcnt','hot join experiment: a joiner lowers created ships and bays reference counts to the session (RCNT)'},

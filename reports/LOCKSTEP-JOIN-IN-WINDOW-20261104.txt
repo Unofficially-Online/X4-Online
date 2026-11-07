@@ -939,3 +939,31 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   destination: a script decision, the family of x4mods-28's J1 finding (pilots the load leaves assigned but not
   controlling walk to their post first, ENTER_ai_pilot with $NPC.controlled unset, 44 ticks late on the joiner).
 - Next: trace 6d92f's pilot's script 1740..1800 on both sides; A/B x4mods-28's controlled fix in window when it lands.
+
+49. THE 1800 SPLIT: A TEMPZONE'S RADAR GROUP THE JOINER MADE TOO EARLY (GRAVN EXTRA) (w1z163..w1z167; 7 November, morning)
+- w1z163 (script RNG rows and trace 1740..1800): 6d92f's pilot (saved 6d934) runs equal through 1793 (move.idle,
+  order.move.recon, move.seekenemies waiting at pc 9e); the session resumes it at 1795 and recon picks the new target,
+  the joiner does not by 1800. The first script difference anywhere is at 1764: on the joiner only, the defence
+  computers of station XBD-894 (42a93) and of the L miner VID-056 (a63f1) take a stack event (SR_STACK) and start
+  fight.attack.object.station / .capital. Its key decodes (lockstep_mix(keyword << 32 ^ lockstep_mix(saved ID)), keyword
+  brute-forced against x4-re's md_keywords.csv) to keyword 1286, event_gravidar_has_scanned, of each computer's own object.
+- w1z164 (native_gate_gravidar_watch on 42a93, a63f1, 6d92f): at T the radar units are equal (GRAV: 14632 applied,
+  289052 contacts, none missing); later the joiner's scans lack contacts the session's have (a63f1 at 1620: Kha'ak fighter
+  82aa2; 6d92f's set before 1080: three Paranid fighters).
+- w1z165/w1z166 (native_gate_gravidar_digest with rows, native_gate_gravidar_posts, native_gate_trace_window={634,660}):
+  the digest is equal at T and parts at 660 in the active units' scan times alone. The first parting apply is at 652 in
+  sector 0x852: zone group 1's units 90532 and 9f134 swap a change over contact 96a98 (the session's 90532 adds it, the
+  joiner's 9f134 drops it although it lies inside its bound). 96a98 warped at 637 into tempzone c:800278ac659ccc22, the one
+  JOIN_UNPAIRED row of GRAVN at the admission ("why=extra"): the zone exists, empty, on both sides at T; the session's
+  Gravidar has no group for it yet, the joiner's load made one. When the ship arrives, the session's Update 0x10b1810 adds
+  the zone's group and puts it into its neighbours' lists; the joiner already has the group and adds nothing, while
+  GRAVN had rewritten group 1's list with the session's of T, which cannot name the tempzone. A scan pairs a group's near
+  units only with its later neighbours' (lockstep_gravidar_wide.h), so the joiner never paired group 1 with it.
+- GRAVN extra (007e0e9d, opt-in native_gate_join_gravn_extra): each joiner group the session has no record of gets its
+  index added to the lists GRAVN writes for the groups in its own load-built neighbour list, as the session's later add
+  does. w1z167 (in window to 2160, PCSV and GRAVN extra): gravn_kept=1:9; the 652 swap and 6d92f's split are gone, census
+  900..1980 all 0 (1800: 0, was 1).
+- Left: at 682/692 the joiner's a63f1 and 42a93 drop 82aa2 (60.9 km against a 40.5 km bound) while the session keeps it
+  (82aa2's motion is likely outside the census); and from 1981..2040 the joiner spawns four job ships (3 S, 1 M, with their
+  equipment and crew: the 48 objects only it has at 2040) that the session does not, which grows to 38 at 2040 and 981 at
+  2100.

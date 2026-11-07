@@ -2539,6 +2539,29 @@ static void test_join_world(void) {
                         memcpy(v,ggrp[1][1]+0x38,24);assert(v[1]-v[0]==8 && *(uint64_t *)v[0]==0);
                         assert(join_rx.gravn_groups==2 && join_rx.gravn_fixed==2 && !join_rx.gravn_missing && !join_rx.gravn_unfound);
                     }
+                    {   /* GRAVN extra (opt-in): a third joiner group the session has no record of (the turret's "zone": a zone the joiner's load
+                         * grouped before the session added it), its own neighbour list {0}. Off: group 0 gets the session's list {1} alone;
+                         * on: {1, 2}, the extra group's own list untouched, counted. */
+                        static __attribute__((aligned(16))) unsigned char g3[3][JOIN_GRAVN_GROUP];static uint64_t nb3[3][4];
+                        for(unsigned on=0;on<2;on++) {
+                            memset(g3,0,sizeof(g3));memset(nb3,0,sizeof(nb3));
+                            *(unsigned char **)g3[0]=tw_joiner.object[TW_MODULE];*(unsigned char **)g3[1]=tw_joiner.object[TW_CARGO];
+                            *(unsigned char **)g3[2]=tw_joiner.object[TW_TURRET];nb3[2][0]=0;
+                            for(unsigned g=0;g<3;g++) {uintptr_t v[3]={(uintptr_t)nb3[g],(uintptr_t)(nb3[g]+(g==2?1:0)),(uintptr_t)(nb3[g]+4)};memcpy(g3[g]+0x38,v,24);}
+                            jsectors[1]=(uintptr_t)g3;jsectors[2]=(uintptr_t)(g3+3);
+                            join_gravn_extra_on=(int)on;join_t1_reset();tw_admit(&tw_joiner,&f,JOIN_REPORT);assert(join_admit_world());
+                            uintptr_t v[3];
+                            memcpy(v,g3[0]+0x38,24);
+                            if(on) assert(v[1]-v[0]==16 && ((uint64_t *)v[0])[0]==1 && ((uint64_t *)v[0])[1]==2 && join_gravn_kept==1);
+                            else assert(v[1]-v[0]==8 && *(uint64_t *)v[0]==1 && !join_gravn_kept);
+                            memcpy(v,g3[1]+0x38,24);assert(v[1]-v[0]==8 && *(uint64_t *)v[0]==0);
+                            memcpy(v,g3[2]+0x38,24);assert(v[1]-v[0]==8 && *(uint64_t *)v[0]==0);
+                            assert(join_rx.gravn_missing==1 && join_rx.gravn_groups==2);
+                            if(on) {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," gravn_kept=1:1 "));}
+                        }
+                        join_gravn_extra_on=0;jsectors[1]=(uintptr_t)ggrp[1];jsectors[2]=(uintptr_t)(ggrp[1]+2);
+                        printf("join GRAVN extra: a joiner-only zone group kept in its neighbours' rewritten lists (opt-in), untouched itself PASS\n");
+                    }
                     /* Strict: a unit the joiner cannot find refuses. */
                     tj_grav_units[0]=NULL;tw_admit(&tw_joiner,&f,JOIN_STRICT);assert(!join_admit_world() && !strcmp(join_rx.detail,"world:grav_missing"));
                     join_tables_free(&f);join_t1_reset();

@@ -1608,6 +1608,20 @@ static int join_gdl_seen(uint64_t runtime) {
  * are counted (grav_cap's first field) and left out. */
 #define JOIN_GRAVN_GROUP 0x58u
 static uint32_t join_gravn_cap;
+/* GRAVN extra (opt-in native_gate_join_gravn_extra) [w1z164..w1z166, in window: tempzone c:800278ac659ccc22 of sector 0x852 exists
+ * on both sides at T, empty; the session's Gravidar has no group for it yet, the joiner's load made one (JOIN_UNPAIRED gravn
+ * why=extra). Ship 96a98 warps into it at 637 on both sides; the session's Update 0x10b1810 then adds the zone's group and puts it
+ * into its neighbours' lists, the joiner already has the group and adds nothing. GRAVN had rewritten every other group's list
+ * with the session's of T, which cannot name the tempzone, so the joiner's scan at 652 never paired zone group 1 with it: unit
+ * 9f134 dropped 96a98 (12 -> 11, inside its bound) and 90532 did not gain it (4 -> 5 on the session); from there the units'
+ * has_scanned times parted (the Gravidar digest's times at 660), two defence computers took event_gravidar_has_scanned at 1764
+ * on the joiner only, and 6d92f's pilot picked another target by 1800.] With the opt-in each joiner group the session has no
+ * record of keeps its place in the lists GRAVN writes: every group in the extra group's own neighbour list (the joiner's load
+ * built it from the zone's spatial query, as the session's add will) gets the extra group's index added. Status
+ * gravn_kept=on:indices added. */
+static int join_gravn_extra_on;
+static uint64_t join_gravn_kept;
+#define JOIN_GRAVN_EXTRA_MAX 16u
 static int join_gravn_cmp(const void *a,const void *b) {
     const join_gravn_rec *x=a,*y=b;
     if(x->sector!=y->sector) return x->sector<y->sector?-1:1;
@@ -5967,6 +5981,7 @@ static int join_admit_grav(const join_tables *s,const join_tables *mine) {
         if(!set) {++join_rx.grav_shape;join_world_row(&rows,"gravs side=joiner why=cursor value=%llu count=%u joiner_count=%llu",
                                                         (unsigned long long)r->value,r->index,(unsigned long long)ai_sched_count);}
     }
+    join_gravn_kept=0;
     if(s->version>=12 && s->ngravn) {   /* version 12: every zone group's neighbour list as the session's, in this process's indices */
         uintptr_t v[2];
         join_grav_lock(w+0x6890,1);
@@ -5977,6 +5992,18 @@ static int join_admit_grav(const join_tables *s,const join_tables *mine) {
                 uint32_t lo=0;while(lo<s->ngravn && s->gravn[lo].sector<skey) ++lo;
                 if(lo==s->ngravn || s->gravn[lo].sector!=skey) continue;
                 uint32_t hi=lo;while(hi<s->ngravn && s->gravn[hi].sector==skey) ++hi;
+                /* GRAVN extra: the joiner's groups of this sector the session has no record of, with their own neighbour lists */
+                static uint64_t xidx[JOIN_GRAVN_EXTRA_MAX],xlist[JOIN_GRAVN_EXTRA_MAX][64];static uint32_t xn[JOIN_GRAVN_EXTRA_MAX];uint32_t nx=0;
+                for(uint64_t i=0;join_gravn_extra_on && i<n && nx<JOIN_GRAVN_EXTRA_MAX;i++) {
+                    unsigned char *zone=NULL;uint64_t zkey;uintptr_t nb[3];
+                    if(!join_read((void *)(begin+i*JOIN_GRAVN_GROUP),&zone,8) || !(zkey=join_gravn_key(zone))) continue;
+                    uint32_t a=lo;while(a<hi && s->gravn[a].zone<zkey) ++a;
+                    if(a<hi && s->gravn[a].zone==zkey) continue;
+                    if(!join_read((void *)(begin+i*JOIN_GRAVN_GROUP+0x38),nb,24) || nb[1]<nb[0] || ((nb[1]-nb[0])&7u) || (nb[1]-nb[0])/8u>64u) continue;
+                    xn[nx]=(uint32_t)((nb[1]-nb[0])/8u);
+                    if(xn[nx] && !join_read((void *)nb[0],xlist[nx],(size_t)xn[nx]*8u)) continue;
+                    xidx[nx++]=i;
+                }
                 for(uint64_t i=0;i<n;i++) {
                     unsigned char *zone=NULL;uint64_t zkey;
                     if(!join_read((void *)(begin+i*JOIN_GRAVN_GROUP),&zone,8) || !(zkey=join_gravn_key(zone))) continue;
@@ -5993,6 +6020,11 @@ static int join_admit_grav(const join_tables *s,const join_tables *mine) {
                         for(;j<n;j++) {unsigned char *nz=NULL;if(join_read((void *)(begin+j*JOIN_GRAVN_GROUP),&nz,8) && join_gravn_key(nz)==s->gravn[a].neighbour) break;}
                         if(j==n) {++join_rx.gravn_unfound;continue;}
                         join_grav_out[m++]=j;
+                    }
+                    for(uint32_t x=0;x<nx;x++) for(uint32_t q=0;q<xn[x];q++) {   /* GRAVN extra: this group is in an extra group's list */
+                        if(xlist[x][q]!=i) continue;
+                        int dup=0;for(uint32_t r=0;r<m;r++) dup|=join_grav_out[r]==xidx[x];
+                        if(!dup && m<64u) {join_grav_out[m++]=xidx[x];++join_gravn_kept;}
                     }
                     if(m>1) qsort(join_grav_out,m,8u,join_u64_cmp);
                     {   /* compare with the group's own list as a set before writing */
