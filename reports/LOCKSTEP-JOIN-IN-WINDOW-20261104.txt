@@ -1042,3 +1042,10 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
 - w1z182 (build-bnds1 = 36080eef, in window to 5000, the defaults; the spline rows on 9e832): bnds=1:1296:82:0; 9e832's route
   at 4554 has the same result and control points on both sides (the raw segment entries differ in their heap pointers only);
   census 0 at 4560, 4620, 4800 and 4980. The window joiner is equal to the session through the end of the soak.
+
+55. THE SOAK TO 8000: A SHIPYARD'S NEW SHIP AT 6500 (w1z183; 7 November, afternoon)
+- w1z183 (build-bnds1, in window to 8000, the defaults; both phases within the lane timeout): census 0 at every capture through
+  6480 (5400, 6000 and 6060 .. 6480 checked); from 6540 one object (ShipMedium 717db, GQD-632, ship_arg_m_trans_container_01_a,
+  Argon; in the snapshot a ship under construction in a shipyard's dock, state="construction"), in motion alone, through 7200;
+  then 2210 objects at 7800 (motion 2189, health 36, topology 6, six objects on one side only) and 2820 at 7980.
+- x4mods-28's J1 j1-364 (BNDS, to 6000): equal 633 .. 5999. Next: 717db's launch and route (motion watch with spline rows).

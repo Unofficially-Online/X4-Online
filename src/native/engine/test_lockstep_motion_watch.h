@@ -387,7 +387,8 @@ static void test_motion_doors(void) {
 /* Spline fields and request rows (cause B): two rigs stand for two clients, the same spline state at other
  * addresses and with other bytes wherever the model holds pointers, padding or unused vector lanes. */
 typedef struct {
-    unsigned char object[0x400],ctrl[0x100],agent[0x1000],slots[0x400],model[0x4c0],entry[3][0x50],segment[3][0x50];
+    unsigned char object[0x400],ctrl[0x100],agent[0x1000],slots[0x400],model[0x4c0],entry[3][0x50],segment[3][0x50],piece[3][2][0xa0],
+        param[3][2][8];
     unsigned char request[0xc0],head[0x50],node[2][0x50],obstacles[2][0x80],comp[2][0x10];
     void *map_a[4],*map_b[2],*req_block[2],*req_map[2],*comps[3];
 } test_sp_rig;
@@ -412,7 +413,14 @@ static void test_sp_fill(test_sp_rig *g,unsigned char noise) {
         for(unsigned k=0;k<3;k++) test_sp_vec(x+0x10+16*k,(float)(10*e+k),1.5f,-2.0f);
         uint32_t index=e+1;memcpy(x+0x40,&index,4);x[0x44]=1;x[0x45]=(unsigned char)(e&1);
         p=image+MOTION_SPLINE_SEGMENT;memcpy(z,&p,8);float length=100.0f+(float)e;memcpy(z+8,&length,4);
-        for(unsigned k=0;k<4;k++) test_sp_vec(z+0x10+16*k,(float)k,(float)e,3.25f);
+        /* the composite: two pieces (a 16-byte head, a BezierSpline at +0x10: vtable, length, eight vectors), two parameters */
+        p=g->piece[e][0];memcpy(z+0x10,&p,8);p=(unsigned char*)g->piece[e]+sizeof(g->piece[e]);memcpy(z+0x18,&p,8);memcpy(z+0x20,&p,8);
+        p=g->param[e][0];memcpy(z+0x28,&p,8);p=(unsigned char*)g->param[e]+sizeof(g->param[e]);memcpy(z+0x30,&p,8);memcpy(z+0x38,&p,8);
+        for(unsigned q=0;q<2;q++) {
+            unsigned char *x2=g->piece[e][q];p=image+MOTION_SPLINE_BEZIER;memcpy(x2+0x10,&p,8);float pl=10.0f*(float)(q+1);memcpy(x2+0x18,&pl,4);
+            for(unsigned k=0;k<8;k++) test_sp_vec(x2+0x20+16*k,(float)k,(float)e,3.25f+(float)q);
+            float pv=0.5f*(float)q;memcpy(g->param[e][q],&pv,4);
+        }
     }
     /* The rest of the state: +0xc0 (all four lanes, as the native writes them), +0xd0 progress, +0xe0, flags, times,
      * the embedded BezierSplines, the transforms, +0x424, the request parameters. */
@@ -420,7 +428,7 @@ static void test_sp_fill(test_sp_rig *g,unsigned char noise) {
     test_sp_bytes(m+0x110,3,2);double step=12813.0/30.0;memcpy(m+0x118,&step,8);m[0x150]=0;
     for(unsigned b=0;b<2;b++) {
         unsigned char *z=m+0x158+0x50*b;p=image+MOTION_SPLINE_SEGMENT;memcpy(z,&p,8);test_sp_bytes(z+8,4,3+b);
-        for(unsigned k=0;k<4;k++) test_sp_vec(z+0x10+16*k,(float)b,(float)k,0.0f);
+        memset(z+0x10,0,0x30);   /* the model's own composites: empty piece and parameter vectors */
     }
     test_sp_bytes(m+0x218,4,5);
     for(unsigned k=0;k<4;k++) {test_sp_vec(m+0x220+16*k,1.0f,(float)k,2.0f);test_sp_vec(m+0x450+16*k,3.0f,(float)k,4.0f);}
@@ -460,9 +468,20 @@ static void test_motion_spline(void) {
     for(unsigned c=0;c<2;c++) assert(motion_spline_segments(test_sp[c].model,count[c],&h[c]) && motion_spline_core(test_sp[c].model,&core[c]));
     assert(count[0][0]==2 && count[0][1]==1 && !memcmp(count[0],count[1],8) && h[0]==h[1] && core[0]==core[1]);
     test_sp[1].entry[1][0x40]^=1;assert(motion_spline_segments(test_sp[1].model,count[1],&h[1]) && h[0]!=h[1]);test_sp[1].entry[1][0x40]^=1;
-    test_sp[1].segment[2][0x30]^=1;assert(motion_spline_segments(test_sp[1].model,count[1],&h[1]) && h[0]!=h[1]);test_sp[1].segment[2][0x30]^=1;
-    test_sp[1].entry[0][0x08]^=1;test_sp[1].segment[0][0x1f]^=1;test_sp[1].entry[2][0x47]^=1;
+    /* the composite's contents are state: a piece's vector, its length, a parameter, the composite's length */
+    test_sp[1].piece[2][1][0x24]^=1;assert(motion_spline_segments(test_sp[1].model,count[1],&h[1]) && h[0]!=h[1]);test_sp[1].piece[2][1][0x24]^=1;
+    test_sp[1].piece[0][0][0x18]^=1;assert(motion_spline_segments(test_sp[1].model,count[1],&h[1]) && h[0]!=h[1]);test_sp[1].piece[0][0][0x18]^=1;
+    test_sp[1].param[1][1][0]^=1;assert(motion_spline_segments(test_sp[1].model,count[1],&h[1]) && h[0]!=h[1]);test_sp[1].param[1][1][0]^=1;
+    test_sp[1].segment[2][8]^=1;assert(motion_spline_segments(test_sp[1].model,count[1],&h[1]) && h[0]!=h[1]);test_sp[1].segment[2][8]^=1;
+    /* not state: entry +8 and +0x46.., the pieces' heads and unused lanes, the parameters' other bytes, the vectors' addresses
+     * (each rig's own, above) and the composite's +0x40.. */
+    test_sp[1].entry[0][0x08]^=1;test_sp[1].entry[2][0x47]^=1;test_sp[1].piece[0][1][0x05]^=1;test_sp[1].piece[1][0][0x2c]^=1;
+    test_sp[1].param[2][0][5]^=1;test_sp[1].segment[0][0x44]^=1;
     assert(motion_spline_segments(test_sp[1].model,count[1],&h[1]) && h[0]==h[1]);
+    {   /* a malformed piece vector (not a whole number of pieces): counted, still one hash, apart from the readable one */
+        unsigned char *e0;memcpy(&e0,test_sp[1].segment[1]+0x18,8);unsigned char *bad_end=e0+1;memcpy(test_sp[1].segment[1]+0x18,&bad_end,8);
+        assert(motion_spline_segments(test_sp[1].model,count[1],&h[1]) && h[0]!=h[1]);memcpy(test_sp[1].segment[1]+0x18,&e0,8);
+    }
     /* Another segment class hashes by its type only. */
     void *other=image+0x2b00000;memcpy(test_sp[1].segment[1],&other,8);assert(motion_spline_segments(test_sp[1].model,count[1],&h[1]) && h[0]!=h[1]);
     other=image+MOTION_SPLINE_SEGMENT;memcpy(test_sp[1].segment[1],&other,8);
@@ -471,7 +490,7 @@ static void test_motion_spline(void) {
     bad=4;memcpy(test_sp[1].model+0x70+0x10,&bad,8);
     /* The core: a progress float is state, +0x120 and the deque pointers are not. */
     test_sp[1].model[0xd4]^=1;assert(motion_spline_core(test_sp[1].model,&core[1]) && core[0]!=core[1]);test_sp[1].model[0xd4]^=1;
-    test_sp[1].model[0x120]^=1;test_sp[1].model[0x1fc]^=1;test_sp[1].model[0x1c4]^=1;assert(motion_spline_core(test_sp[1].model,&core[1]) && core[0]==core[1]);
+    test_sp[1].model[0x120]^=1;test_sp[1].model[0x1fc]^=1;test_sp[1].model[0x1ec]^=1;assert(motion_spline_core(test_sp[1].model,&core[1]) && core[0]==core[1]);
     /* Rows and digests through motion_watch_read: model_ext without the deque pointers, flag 4096, the four groups. */
     motion_watch_row_t *saved_ring=motion_watch_ring;LONG64 saved_rows=motion_watch_rows;
     static motion_watch_row_t ring[4];motion_watch_ring=ring;

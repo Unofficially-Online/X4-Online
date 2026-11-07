@@ -286,7 +286,15 @@ static uint32_t motion_fnv(uint32_t h,const void *data,size_t n) {
 #define MOTION_FNV_BASIS 2166136261u
 /* The spline model's stable fields (see the header). */
 #define MOTION_SPLINE_VTABLE 0x2c4f480u
-#define MOTION_SPLINE_SEGMENT 0x2b6c6d0u /* U::BezierSpline */
+/* A route segment's spline: Math::CompositeSpline<5> (0x50 bytes, built by 0xebcad0, filled by 0xebc070): +8 its length,
+ * +0x10/+0x18 a vector of 0xa0-byte pieces, each a 16-byte head and a Math::BezierSpline at +0x10 (vtable, +8 length, eight
+ * vectors +0x10 .. +0x8f; the copy loop 0x173960), +0x28/+0x30 a vector of 8-byte parameters (a float and 4 more bytes). The
+ * first hash read +0x10 .. +0x4f as coefficients, the two vectors' pointers: per process, so the segments group parted between
+ * a session and its joiner with every route equal (j1-359 .. j1-363, w1z182). The hash now walks the pieces. */
+#define MOTION_SPLINE_SEGMENT 0x2b6c6d0u /* Math::CompositeSpline<5> */
+#define MOTION_SPLINE_PIECE 0xa0u
+#define MOTION_SPLINE_PIECES_MAX 256u
+#define MOTION_SPLINE_BEZIER 0x2a84ef8u /* Math::BezierSpline */
 #define MOTION_SPLINE_SEGMENTS_MAX 1024u
 #define MOTION_SPLINE_POINTS_MAX 4096u
 #define MOTION_LINEAR_VTABLE 0x2c4f610u
@@ -321,15 +329,41 @@ static void motion_flight_fields(const unsigned char *model,motion_watch_row_t *
         r->flight_contact_fnv[k]=motion_fnv(MOTION_FNV_BASIS,contact,0x80);r->flight_contact_fnv_n=k+1u;
     }
 }
-/* A BezierSpline's length and coefficients (lanes 0-2); its type alone for another class. */
+/* A vector {begin, end} of `stride`-byte entries: its count, 0 when empty, 0xffffffff when it does not read. */
+static uint32_t motion_spline_vector(const unsigned char *at,size_t stride,unsigned char **begin) {
+    unsigned char *e=NULL;*begin=NULL;
+    memcpy(begin,at,8);memcpy(&e,at+8,8);
+    if(!*begin && !e) return 0;
+    if(!*begin || e<*begin || (size_t)(e-*begin)%stride || (size_t)(e-*begin)/stride>MOTION_SPLINE_PIECES_MAX) return 0xffffffffu;
+    return (uint32_t)((size_t)(e-*begin)/stride);
+}
+/* A composite spline (its 0x50 bytes already read): length, pieces (each piece's spline type, length and eight vectors, lanes
+ * 0-2), parameters (each entry's float). */
+static uint32_t motion_spline_composite(uint32_t h,const unsigned char b[0x50]) {
+    h=motion_fnv(h,b+8,4);
+    unsigned char *pieces,*params;
+    const uint32_t n=motion_spline_vector(b+0x10,MOTION_SPLINE_PIECE,&pieces),m=motion_spline_vector(b+0x28,8,&params);
+    h=motion_fnv(h,&n,4);h=motion_fnv(h,&m,4);
+    for(uint32_t k=0;n!=0xffffffffu && k<n;k++) {
+        unsigned char p[MOTION_SPLINE_PIECE];void *vt=NULL;uint32_t type=0xffffffffu;
+        if(read_local(pieces+(size_t)k*MOTION_SPLINE_PIECE,p,sizeof(p))) {memcpy(&vt,p+0x10,8);type=motion_watch_rva(vt);}
+        h=motion_fnv(h,&type,4);
+        if(type==0xffffffffu) continue;
+        h=motion_fnv(h,p+0x18,4);for(unsigned j=0;j<8;j++) h=motion_fnv(h,p+0x20+16*j,12);
+    }
+    for(uint32_t k=0;m!=0xffffffffu && k<m;k++) {
+        uint32_t f=0xffffffffu;if(!read_local(params+8*k,&f,4)) f=0xffffffffu;
+        h=motion_fnv(h,&f,4);
+    }
+    return h;
+}
+/* A segment's spline: its type, and for the composite its contents; the type alone for another class. */
 static uint32_t motion_spline_bezier(uint32_t h,const unsigned char *segment) {
     unsigned char b[0x50];void *vt=NULL;uint32_t type=0xffffffffu;
     if(segment && read_local(segment,b,sizeof(b))) {memcpy(&vt,b,8);type=motion_watch_rva(vt);}
     h=motion_fnv(h,&type,4);
     if(type!=MOTION_SPLINE_SEGMENT) return h;
-    h=motion_fnv(h,b+8,4);
-    for(unsigned k=0;k<4;k++) h=motion_fnv(h,b+0x10+16*k,12);
-    return h;
+    return motion_spline_composite(h,b);
 }
 /* One segment deque (+0x70 or +0x98): size, then each entry in order; 0 when the layout does not read. */
 static int motion_spline_deque(const unsigned char *model,unsigned at,uint32_t *count,uint32_t *h) {
@@ -363,7 +397,8 @@ static int motion_spline_core(const unsigned char *model,uint32_t *h) {
     *h=motion_fnv(*h,m+0x110,3);*h=motion_fnv(*h,m+0x118,8);*h=motion_fnv(*h,m+0x150,1);
     for(unsigned b=0;b<2;b++) {
         const unsigned char *z=m+0x158+0x50*b;void *vt;uint32_t type;memcpy(&vt,z,8);type=motion_watch_rva(vt);
-        *h=motion_fnv(*h,&type,4);*h=motion_fnv(*h,z+8,4);for(unsigned k=0;k<4;k++) *h=motion_fnv(*h,z+0x10+16*k,12);
+        *h=motion_fnv(*h,&type,4);
+        if(type==MOTION_SPLINE_SEGMENT) *h=motion_spline_composite(*h,z);   /* the model's own composites (the ctor's 0xeb5060) */
     }
     *h=motion_fnv(*h,m+0x218,4);
     for(unsigned k=0;k<4;k++) {*h=motion_fnv(*h,m+0x220+16*k,12);*h=motion_fnv(*h,m+0x450+16*k,12);}
@@ -1228,7 +1263,11 @@ static unsigned motion_spline_deque_raw(const unsigned char *model,unsigned at,u
         if(!read_local((const void*)(uintptr_t)(map+8*((off+i)&(mapsize-1))),&entry,8) || !entry || !read_local(entry,e,sizeof(e))) return have;
         for(unsigned k=0;k<3;k++) memcpy(o+12*k,e+0x10+16*k,12);
         memcpy(o+36,e+0x40,6);memcpy(&segment,e,8);
-        if(segment && read_local(segment,b,sizeof(b))) {memcpy(o+42,b+8,4);for(unsigned k=0;k<4;k++) memcpy(o+46+12*k,b+0x10+16*k,12);}
+        if(segment && read_local(segment,b,sizeof(b))) {   /* the composite's length, its first piece's first four vectors */
+            unsigned char *pieces,p[MOTION_SPLINE_PIECE];memcpy(o+42,b+8,4);
+            if(motion_spline_vector(b+0x10,MOTION_SPLINE_PIECE,&pieces)+1u>1u && read_local(pieces,p,sizeof(p)))
+                for(unsigned k=0;k<4;k++) memcpy(o+46+12*k,p+0x20+16*k,12);
+        }
         have++;
     }
     return have;
