@@ -1049,3 +1049,28 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   Argon; in the snapshot a ship under construction in a shipyard's dock, state="construction"), in motion alone, through 7200;
   then 2210 objects at 7800 (motion 2189, health 36, topology 6, six objects on one side only) and 2820 at 7980.
 - x4mods-28's J1 j1-364 (BNDS, to 6000): equal 633 .. 5999. Next: 717db's launch and route (motion watch with spline rows).
+
+56. EQUAL TO 8000: THE TRADE OFFER INTERVAL KEYED (w1z184 .. w1z187; 7 November, afternoon)
+- w1z184/w1z185 (motion watch with spline rows on 717db, script trace 6470..6545): 717db's route request and result are equal;
+  its destination differs from 6540. The first differing script row of the run is at 6476: its pilot 717e0's trade.find.free
+  (same key, pc 0..172) draws 93 times on the session and 94 on the joiner: one of its shuffle_list calls (the sell offers of
+  find_sell_offer multiple, the buy offers of find_buy_offer multiple) has one offer more on the joiner.
+- w1z186 (native_gate_ui_lazy='observe', every lazy call of 6466..6478 a row): no UI queries (lua=0) and no calls of other
+  threads in the whole run, only simulation calls on the MoveWorker; 8 containers differ. Their next trade offer update
+  (+0x928) differs by whole seconds (stations 38dc6 -1 s, 3f30f -6 s, 39340 +7 s, 42a4e +7 s), with the same fraction:
+  each was last brought up at the same time on both sides with another interval. Station 3a85e is due at 6473 (330.733 s)
+  on the session only: its offers, cargo and units are brought up there and not on the joiner, and 717e0's search at 6476
+  finds one offer more on the joiner.
+- The interval: UpdateTradeOffers 0x4079e0 ends with 0x407160(container, 60.0): next = now + max(delay, C) - C + (s mod 10),
+  s one PCG step of the calling thread's TLS word (slot0+0x318, the word 0x41a910's production cycle draws from too). So it
+  depends on whichever actor's stream brings the station up, at that stream's position. Its other callers (0x9dc37c,
+  0x9dc440, FactionClass, delay 0) only touch containers of one faction (owner == a global).
+- 'key' mode of the lazy hook (lockstep_ui_lazy.h) seeds that word for each cargo, trade offer and unit update of an admitted
+  frame on the MoveWorker from (tick, the container's portable key, target, its state) and restores it after; a UI query is
+  skipped ('block'). w1z187 (build-hash1 + native_gate_ui_lazy='key', in window to 8000): keyed 347,486 cargo / 163,606 trade
+  / 25,603 unit updates on the session (unkeyed 1,598: no portable key); census T+1 as before (the one created ShipSmall's nav
+  refresh time); 0 at 900, 5400, 6000, 6480, 6540, 6600, 7200, 7800 and 7980 (w1z183, the defaults: 717db from 6540, 2210 at
+  7800, 2820 at 7980).
+- Default: native_gate_ui_lazy = 'key' (needs the world identities). Not validated in a people-stack session (Play42P): the
+  UI's own GetComponentData / storage queries now show a container as the simulation last brought it. The Linux gate has no
+  port yet (0x407160's draw lies elsewhere in the Linux binary; an unported option stops with reason 105). J1 A/B: x4mods-28.
