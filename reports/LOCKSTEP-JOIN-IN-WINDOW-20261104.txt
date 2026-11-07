@@ -863,5 +863,17 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   transform; the entry's header, its reference ZRL-560 included, is equal). The banks and the converted inputs on the
   way are equal. The NavPoint is not in the save (742be's move.generic holds $pos_input = (-70000, 30000, -50000) in the
   sector, $endzone = ZRL-560, an empty $reservedspace): it is computed at runtime on both sides, a spot about 290 m from
-  the destination in ZRL-560, and already differs by 2 ulps. Open: where that NavPoint is computed and from what.
+  the destination in ZRL-560, and already differs by 2 ulps.
+- w1z146/w1z147: 742be takes the action's short path (already in the destination space, no pathfinder); its destination
+  is already off right after the script position evaluator 0xc6f7b0 (0x109c469), a plain copy of the script value: so
+  move.generic's $position, a get_safe_pos result (x4mods-28's reading of the script), is the source. The GetSafePos
+  solver 0x14e4320 absorbs a sector's (or zone's) cached collision boxes one at a time and swaps each absorbed box to the
+  end of the cache in place (x4mods-28: the cache at sector+0x3d0/+0x3d8 is built once and never invalidated), so its
+  result depends on the cache's order, i.e. on the history of every earlier call; a joiner builds the cache fresh after
+  its load. w1z149 (the solver's inputs 1046..1059): box counts, box 0, the point, the direction and the radius are equal
+  call for call through 1050; boxes 1..n are out of a peek's reach.
+- w1z150 (x4mods-28's native_gate_safe_pos_order, 68d87ae9: the solver's boxes sorted by content at its entry, on every
+  client; armed on both sides): no change, census 1440: 1, 1800: 2, 2040: 41, 2100: 989, 2340: 6340 as without it. Its
+  stop counts (calls/sorted) are not in the logs yet, so whether it sorted 742be's call is unconfirmed; if it did, the
+  box order is not the selector and the box contents beyond box 0 are next (at 1051 one box's rotation rows differ).
   The README's claim stands as written (equal to the end of each test).

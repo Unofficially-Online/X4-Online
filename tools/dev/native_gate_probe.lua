@@ -705,6 +705,7 @@ ticklog.watcher=X4LAN_NATIVE_GATE_DEFAULTS and X4LAN_NATIVE_GATE_DEFAULTS.watche
 -- Modules whose status the frame does not poll (written at the stop only): read for the watcher every 600 ticks, no row.
 ticklog.watched={{'native_gate_engine_refresh_rng','engine_refresh_rng_status','ENGINE_REFRESH_RNG'},
  {'native_gate_build_rng','build_rng_status','BUILD_RNG'},{'native_gate_portable_math','portable_math_status','PORTABLE_MATH'},
+ {'native_gate_safe_pos_order','safe_pos_order_status','SAFE_POS_ORDER'},
  {'native_gate_exact_reciprocal','exact_reciprocal_status','EXACT_RECIPROCAL'},{'native_gate_fp_env','fp_env_status','FP_ENV'},
  {'native_gate_decimal','decimal_status','DECIMAL'},{'native_gate_macro_arena','macro_arena_status','MACRO_ARENA'},
  {'native_gate_pick_order','pick_order_status','PICK_ORDER'},{'native_gate_order_canon','order_canon_status','ORDER_CANON'},
@@ -3012,6 +3013,14 @@ local function frame()
    assert(cfg.native_gate_portable_math==true and gate.portable_math and gate.portable_math_status and gate.portable_math()==1,
     'portable math refused '..tostring(gate.portable_math_status and gate.portable_math_status()))
    log('PORTABLE_MATH_ARMED '..tostring(gate.portable_math_status()))
+  end
+  -- The GetSafePos solver's boxes sorted by content at its entry: get_safe_pos results independent of the order the
+  -- space's box cache was built and permuted in (a hot joiner builds its caches after the load). Before the load.
+  -- Default off (an experiment: D.EXCLUDED).
+  if cfg.native_gate_safe_pos_order then
+   assert(cfg.native_gate_safe_pos_order==true and gate.safe_pos_order and gate.safe_pos_order_status and gate.safe_pos_order()==1,
+    'safe pos order refused '..tostring(gate.safe_pos_order_status and gate.safe_pos_order_status()))
+   log('SAFE_POS_ORDER_ARMED '..tostring(gate.safe_pos_order_status()))
   end
   -- RCPSS/RSQRTSS in X4.exe to exactly rounded division and square root (1,272
   -- instructions, 824 windows): vendor-independent results. Before the load. Default off.

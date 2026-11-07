@@ -259,10 +259,12 @@ Modules (define, owner):
                                 holds its stub at a gate tick)
   196 SCLOCK_STOP               lockstep_speech_clock.h (native_gate_speech_clock: a pinned clock instruction changed,
                                 or the clock was already past its session value at the set)
+  197 SPO_STOP_REASON           lockstep_safe_pos_order.h (native_gate_safe_pos_order: the GetSafePos solver's entry or
+                                our stub page changed at a gate tick)
   200 JOIN_STOP_REASON          lockstep_join.h (hot join: a strict joiner's admission refused; the status line's
                                 rx_detail names why: contexts_differ, wakes_unplaced, md_heap_differs, clock,
                                 ids_foreign, created_entries, rid_*, pins, engine)
-  free: 109, 114-119, 122-129, 147-149, 189, 197-199, 201-255.
+  free: 109, 114-119, 122-129, 147-149, 189, 198-199, 201-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

@@ -114,6 +114,7 @@ PROBE_REQUIRES_ALL = {
     'native_gate_shape_order': (('true', 'wait', 'sync'), ()),
     'native_gate_engine_refresh_rng': (('true',), ('native_gate_world_identities',)),
     'native_gate_portable_math': (('true',), ()),
+    'native_gate_safe_pos_order': (('true',), ()),
     'native_gate_exact_reciprocal': (('true',), ()),
     'native_gate_fp_redirect_solver': (('shadow', 'redirect'), ()),  # and native_gate_fp_redirect (a mode, below)
     'native_gate_fp_redirect_drones': (('shadow', 'redirect'), ()),  # FR30; and native_gate_fp_redirect (below)

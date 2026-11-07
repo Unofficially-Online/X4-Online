@@ -203,7 +203,8 @@ static int world_hash_motion(void *object,unsigned char *controller,world_hash_d
  * published view cache pose of both views relative to it (object+0xe0+view*0x80, +0x28: the 0x40-byte transform, '-' without
  * one, 'x' unreadable). [w1z130/j1-330: hot join decisions 20..40 s after the join get a destination 1..3 ulps apart, computed
  * relative to objects nothing compared; the joiner's statics come from its load.] Also every Zone, Sector, Cluster and Highway
- * (world_static_space): their published poses are what 0x3dde10 composes with. The rows go to the sink (the crash notes,
+ * (world_static_space), and every controllable (class 73 = 0x49: ships; e8a110's agent links, Agent::SetContext's inputs): their
+ * published poses are what 0x3dde10 composes with. The rows go to the sink (the crash notes,
  * set by gate.world_static) when the capture completes. */
 #define WORLD_STATIC_TICKS 8u
 #define WORLD_STATIC_VIEW_INDEX 0x38f4eb4u
@@ -270,7 +271,7 @@ static int world_hash_record(world_hash_item *item,world_hash_data data[WORLD_HA
         if(!world_hash_reader(object+8,&id,8) || id!=item->runtime) return 0;
         ++world_hash_alive;
         if(item->flags&8) ++world_hash_motion_unknown;
-        if(world_static_now && ((item->flags&8) || world_static_space(item->type))) world_static_row(item,object);
+        if(world_static_now && ((item->flags&8) || (classes&4u) || world_static_space(item->type))) world_static_row(item,object);   /* 4: class 73 (0x49), the controllables */
         if(item->flags&16) ++world_hash_parent_unknown;
     }
     /* Absence, class and reference coverage are part of every domain. */

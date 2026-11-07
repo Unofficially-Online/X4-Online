@@ -2417,6 +2417,30 @@ proposed and rejected.
   joiner's controller existed before step 634 (inferred: its load builds the ship onto a nav controller) and refreshed a
   frame early. Both refresh alike from 635 (census 0 from 660). Understood and self-healing; not patched.
   nav.refresh_relation (the sectors' specification entries) and the T+1 shield record (the full-precision join save) are closed.
+  Long soak (j1-329/330 to 5999/2399; in-window w1z130 ..): both modes equal for about 40 s after the join, then split on the
+  time-since-join axis (J1 first mismatch 1860; census motion 26 at 1980, universe-wide from about +73 s). The first decisions
+  apart get a destination 1 .. 3 ulps off: in-window 742be (ShipMedium, MiningCollect -> move.generic, $endzone ZRL-560
+  0x164ccd, the temp zone of the move's end) at 1049; J1 EUE-849 (ProtectPosition get_safe_pos) alike. Chain (w1z143 .. 145,
+  x4mods' peeks): the MoveTo point eaa020 builds is a verbatim copy of 6e05e0's r8; 6e05e0 is called at 109ea4b by the
+  script action 109c1a0, which walks a route of inline NavPoints (stride 0x60, small-vector at rbp+0x7b0, count +0x610)
+  filled by the pathfinder 5c97e0 (109cfb0: start = the ship, end = the destination NavPoint); a321c0 copies the NavPoint's
+  stored transform, already 2 ulps apart (y -59.894936 / -59.894943 relative to ZRL-560, 290 m from its centre, a runtime
+  route point, not in the save). Ruled out: the agent banks and ROUTE carry (equal), eaa020's conversion (a copy), and every
+  published view pose 0x3dde10 composes with (j1-333, WORLD_STATIC 3f25570f, about 48.6k rows per tick: at 660 and 1800 the
+  current views of every ship, station, zone, sector, cluster, highway and asteroid are bit-equal, only NPCs differ; the back
+  views of 4 parked ShipSmall hold a stale older pose on the session, constant, separate). Not the pathfinder either
+  (w1z146: 109c1a0 takes its short path, one entry (ref, [rbp-0x50])): [rbp-0x50] is already off right after the script
+  <position> evaluation c6f7b0 (w1z147, 109c469), whose stage 1 copies move.generic's $position, a get_safe_pos result
+  (label move: sector=$positionspace value=$position radius=safesize/2 max=size*3). The GetSafePos solver 0x14e4320 absorbs
+  the boxes it is given in vector order and permutes the vector in place (FR27's reading, lockstep_safe_pos.h), and
+  Sector::GetSafePos 0x786d10 passes a cache on the sector ([sector+0x3d0], built once while null from the sector's
+  children; a copy at +0x3d8 when +0x440 is set; only the constructor 0x781e60 writes them otherwise): the session's order
+  is its build order permuted by every get_safe_pos since, the joiner's is built after its load. w1z149 (the solver's
+  entry 1046 .. 1059, about 820 calls a side): counts, box 0, the point, the direction and the radius equal call for call
+  through 1050, so the order of boxes 1..n is what differs. Fix, opt-in: native_gate_safe_pos_order (68d87ae9,
+  lockstep_safe_pos_order.h) sorts the boxes by the bytes the solver reads at its entry, then runs the native solver;
+  native image test: 654 of 1212 reversed scenes apart through the native entry, 0 through the hooked one. A/B pending:
+  x4mods' in-window long run and J1 j1-334 (to 3000) against j1-329.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

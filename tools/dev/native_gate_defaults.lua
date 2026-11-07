@@ -449,6 +449,7 @@ D.EXCLUDED={
  {'native_gate_npc_provenance_origin','NPC provenance rows (diagnostic)'},
  {'native_gate_shape_lifetimes','shape lifetime rows (diagnostic)'},
  {'native_gate_player_orders_capture','orders UI capture: excluded by the order block of piloting (one owner of the order menus)'},
+ {'native_gate_safe_pos_order','experiment: the GetSafePos solver boxes sorted at its entry (hot join long soak A/B pending)'},
 }
 -- Settings of a feature with the probe's own value when absent (no session default needed). {'key','why'}.
 D.TUNING={
@@ -486,7 +487,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock'}
+ [187]='hybrid sectors',[188]='character play',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)
