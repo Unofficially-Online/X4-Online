@@ -998,3 +998,35 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   3540, no object on one side only. The window joiner is equal to the session to the end of the soak.
 - Sections 47..51 in order: zone reservations (RESV), the slot ship's own solver (PCSV), a tempzone's radar group (GRAVN
   extra), NPC connection partners (CONN, x4mods-28) and the object codes the resume drew (CODE hold).
+
+52. THE SOAK TO 5000: THE NEXT SPLIT AT A LARGE SHIP'S MOTION (w1z173; 7 November, morning)
+- w1z173 (build-code2, in window to 5000, the defaults, the motion watch on ShipLarge 6f1e7): census 0 at every capture from
+  900 to 4560, 3720/3780/3840 among them (x4mods-28's J1 split at 3780, ShipLarge 6f1e7's spline route request of 3722 with
+  another result on the joiner, does not happen in window). The first in-window split is in 4561..4620: ShipLarge 9e832
+  (WCN-776, ship_arg_l_trans_container_02_a, an Argon L container transport), in motion alone, one object through 4800.
+- Next: x4mods-28's raw spline request rows (his j1-355 build) on 9e832 around 4560..4620.
+- w1z174 (build-spl1 = 0a653cb3 with x4mods-28's MOTION_SPLINE rows, d2b035e3; motion watch on 9e832 with splines): the
+  ship's one spline route request, at 4554, has an identical req= (input transform, parameters, flags) on both sides, but its
+  result hash, segment count, progress and route control points differ, from segment 1's first point on (S -37899.2891,
+  -2350.4944, -15218.8271 against J -37899.2930, -2350.4949, -15218.8311). The same signature as J1's 6f1e7 at 3722 (j1-354,
+  j1-355): the route calculation itself parts with the same input. x4mods-28's lead: the calculator 0xec0cb0 resolves the
+  request's references and looks up components live when its FIFO worker reaches the job, between the request (frame N's
+  pathing) and the consuming update (frame N+1), so its result depends on where the main thread is by then.
+
+53. THE RADAR REMAINDER: A JUMP THE GRAVP RESTORE PUT BACK (w1z176..w1z180; 7 November, midday)
+- w1z176 (the defaults, Gravidar digest rows and posts 634..720): the joiner-only drop of Kha'ak fighter 82aa2 by L miner
+  a63f1 at 682 (and station 42a93 at 692) is still there with every default on; no census difference follows it through 4560.
+- native_gate_gravidar_posts_probe={unit,contact} (3fd9fb67, diagnostic): every apply of one unit logs a probe row with one
+  contact's scan entry, posted or not. w1z177 (probe a63f1 / 82aa2): at 651 both sides gather 82aa2 at (-108793, 3768,
+  -105190), about 40 km from where it was at 600 (it jumped inside its zone); at 682 the session gathers it there again, the
+  joiner at (-133114, -1961, -137241), its pose of T. One of 82aa2's view slots on the joiner holds the pose of T: the GRAVP
+  restore (T+1 .. T+10) puts the session's settled pose back unless the view's cached parent changed, and a jump inside the
+  zone keeps the parent, so the restore overwrote the engine's own republication (j1-158's case without a zone change).
+- Three rules tried (w1z178..w1z180): dropping at a 1 m distance or a change after the first check keeps 82aa2 but drops
+  17,784 entries and the load's republications with them (a63f1 one contact more at 651); the load's first publications lie
+  102 < 1 m, 100 < 100 m, 708 < 1 km, 7287 < 10 km and 3270 further from the session's settled poses (gravp_first=), so a 10 km
+  line keeps 82aa2 but parts the posts at 641; with no distance rule (8ff91170: the first publication is the load's, a later
+  different one drops the entry; 9999 restored, 2 dropped) 82aa2's jump is its slot's first publication and is put back again.
+- Kept: 8ff91170. Open: the discriminator is the object's own live position at the admission (the load publishes the live pose
+  of the first frames, a jump lands far from it): for a navigation ship the read pathing bank's vec0 ([ctrl+0x30] + the
+  index 0x38f4ee4 * 0x1a0, the motion watch's cur=), valid where the pathing parent is the cached parent (x4mods-28).

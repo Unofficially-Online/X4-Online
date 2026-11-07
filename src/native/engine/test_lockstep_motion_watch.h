@@ -441,8 +441,9 @@ static void test_sp_fill(test_sp_rig *g,unsigned char noise) {
 static void test_sp_request(test_sp_rig *g,uint64_t count,uint32_t status,uint32_t flags) {
     memcpy(g->model+0x428+0x20,&count,8);memcpy(g->request+0xa8,&status,4);memcpy(g->request+0xac,&flags,4);
 }
+static unsigned char tsp_req[MOTION_SPLINE_REQ],tsp_pts[MOTION_SPLINE_PTS];   /* motion_spline_result's raw copies */
 static int test_sp_row_body(uint64_t index,char *out,size_t cap) {
-    char row[512];if(!motion_spline_row(index,row,sizeof(row))) return 0;
+    char row[2048];if(!motion_spline_row(index,row,sizeof(row))) return 0;
     const char *body=strstr(row," tick=");if(!body) return 0;
     snprintf(out,cap,"%s",body);return 1;
 }
@@ -539,11 +540,12 @@ static void test_motion_spline(void) {
     assert(strstr(rows[0][1],"tick=12814 saved=00000000000a1885 request=1 in=1 status=1 flags=00000100 points=2 result=") && strstr(rows[0][1]," out=0 consumed=1 "));
     assert(!strstr(rows[0][1]," result=00000000") && strstr(rows[0][2],"tick=12816 saved=00000000000a1885 request=2 in=1 status=0 "));
     /* The result hash: the route and request transform, not the unused lanes or the request's tail. */
-    uint32_t points[2],r0=motion_spline_result(test_sp[0].request,&points[0]),r1=motion_spline_result(test_sp[1].request,&points[1]);
+    uint32_t points[2],r0=motion_spline_result(test_sp[0].request,&points[0],tsp_req,tsp_pts),r1=motion_spline_result(test_sp[1].request,&points[1],tsp_req,tsp_pts);
+    assert(motion_spline_result(test_sp[0].request,&points[0],tsp_req,tsp_pts)==r0 && !memcmp(tsp_req,test_sp[0].request+0x30,12) && !memcmp(tsp_req+48,test_sp[0].request+0x70,0x36));   /* req= raw */
     assert(r0 && r0==r1 && points[0]==2);
-    test_sp[1].node[1][0x1c]^=1;test_sp[1].request[0xb5]^=1;assert(motion_spline_result(test_sp[1].request,&points[1])==r0);
-    test_sp[1].node[1][0x20]^=1;assert(motion_spline_result(test_sp[1].request,&points[1])!=r0);test_sp[1].node[1][0x20]^=1;
-    uint64_t three=3;memcpy(test_sp[1].request+8,&three,8);assert(!motion_spline_result(test_sp[1].request,&points[1]));  /* a list shorter than its size */
+    test_sp[1].node[1][0x1c]^=1;test_sp[1].request[0xb5]^=1;assert(motion_spline_result(test_sp[1].request,&points[1],tsp_req,tsp_pts)==r0);
+    test_sp[1].node[1][0x20]^=1;assert(motion_spline_result(test_sp[1].request,&points[1],tsp_req,tsp_pts)!=r0);test_sp[1].node[1][0x20]^=1;
+    uint64_t three=3;memcpy(test_sp[1].request+8,&three,8);assert(!motion_spline_result(test_sp[1].request,&points[1],tsp_req,tsp_pts));  /* a list shorter than its size */
     /* Rows: ready word, eviction. */
     spline_ring[0].ready=0;char row[512];assert(!motion_spline_row(0,row,sizeof(row)));
     motion_spline_rows=MOTION_SPLINE_RING+2;assert(motion_spline_row(1,row,sizeof(row))>0 && !strcmp(row,"index=1 evicted=1"));

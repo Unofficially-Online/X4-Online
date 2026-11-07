@@ -2516,6 +2516,20 @@ proposed and rejected.
   conn=on:written:equal:missing:conflict:left conn_cap=N; synthetic test test_join_conn). A/B: j1-350 (CONN on, to 2600, stride 10):
   conn=1:376:30226:0:0:0 (the saver conn_cap=30602), verdict equal through 2599 with no mismatch (j1-342/343: first mismatch 2522),
   census 0 at 900 and 2520 .. 2560, the three minelayers' motion rows equal.
+- The long soak [F: j1-351 .. j1-353; lockstep_world_hash.h, lockstep_world_created.h]: j1-351 (CONN, to 4800, stride 300) had
+  the replay apart on every tick from 900 with the census 0 at 900, 2700, 3000 and 3600: the joiner's census table held four
+  rows fewer (objects 526777 against 526781, present equal, created 4848 against 4852). A capture adds a created object's row
+  only when it finds the object present (created_capture_rows) and the row stays after the object dies; four created objects
+  the session's census held at T died before the joiner's first capture, so they kept their rows on the session and never got
+  one on the joiner. Every census stride hides it until a created object dies in the window between T and the joiner's first
+  capture (the default stride 1800 too). Fix (d85715ef): the saver's IDS record of a created object carries pad 1 when its
+  census holds the row; a joiner's first capture takes those rows (created_take_rows) after the gone rows.
+  j1-353 (build d85715ef; RESV, CONN, PCSV and GRAVN extra on; stride 60, to 4300): equal through 3720, replay first mismatch
+  3780; census 0 at 900 and 3600, 1 at 3780, 16 from 3960 (motion: the ShipLarge 0x6f1e7 in zone 0x72b and the S/M ships of
+  its group). 0x6f1e7 changes at 3720 .. 3780 on both sides to attention 7 and the SplineFlightControlModel (0x2c4f480 from
+  0x2c4f610); its cached pose is equal at 3780, its spline segments and core differ (motion watch spline= hashes) and the
+  progress and the pathing bank's velocity y are 1 ulp apart: the spline the joiner builds for it differs. Next: the motion
+  watch's spline request rows for 0x6f1e7 around 3720 .. 3780.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

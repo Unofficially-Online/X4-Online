@@ -148,8 +148,53 @@ static void gpost_walk(gpost_row_t *r,const uintptr_t groups[2],const gpost_scan
     }
 }
 /* Gravidar thread, right after one keyed apply of the unit with portable key saved; result is its scan entry. */
+/* Probe (diagnostic, native_gate_gravidar_posts_probe = {unit, contact} saved IDs) [w1z164..w1z176, in window: at 682 the joiner's
+ * L miner a63f1 drops Kha'ak fighter 82aa2 (60.9 km against a 40.5 km bound) while the session keeps it with the same scan time;
+ * only change posts have rows, so the session's keeping apply shows nothing]: every apply of the unit, posted or not, logs one
+ * GRAVIDAR_POST_ROW with probe=1: the contact in plus= when the applied set holds it, in minus= when not, with its scan entry
+ * as the walk finds it (z=- when the scan did not gather it). */
+enum {GPOST_PROBE=2};
+static uint64_t gpost_probe_unit,gpost_probe_contact,gpost_probe_runtime;
+static uint64_t pilot_reverse(uint64_t saved);   /* lockstep_pilot_inputs.h */
+static void gpost_push(const gpost_row_t *r) {
+    if(gpost_tick!=r->tick) {gpost_tick=r->tick;gpost_tick_rows=0;}
+    if(++gpost_tick_rows>GPOST_TICK_ROWS) ++gpost_dropped;
+    else {LONG64 index=InterlockedCompareExchange64(&gpost_rows,0,0);gpost_ring[(uint64_t)index%GPOST_RING]=*r;InterlockedExchange64(&gpost_rows,index+1);}
+}
+static void gpost_probe_note(void *unit,void *result,uint64_t saved,unsigned klass) {
+    if(InterlockedExchange(&gpost_busy,1)) {++gpost_failures;return;}
+    DWORD error=GetLastError();unsigned now=0,old=0;double scan=0;
+    if(!gpost_probe_runtime) gpost_probe_runtime=pilot_reverse(gpost_probe_contact);
+    if(!gpost_read_set((unsigned char*)unit+0x68,gpost_new,&now) || !gpost_read_set((unsigned char*)result+0x10,gpost_old,&old) ||
+       !read_local((unsigned char*)unit+0xa8,&scan,8)) {++gpost_failures;InterlockedExchange(&gpost_busy,0);SetLastError(error);return;}
+    gpost_sort(gpost_new,now);gpost_sort(gpost_old,old);
+    static gpost_row_t r;memset(&r,0,sizeof(r));
+    r.tick=stats.issued;r.unit=saved;r.unit_klass=(uint8_t)klass;r.now=now;r.old=old;memcpy(&r.time,&scan,8);r.state|=GPOST_PROBE;
+    static unsigned char self[GWIDE_ENTRY];gpost_scanner_t a;memset(&a,0,sizeof(a));
+    const int entry=read_local(result,self,GWIDE_ENTRY);
+    if(entry) {
+        memcpy(a.pos,self+0x70,12);memcpy(&a.size,self+0xa8,4);memcpy(&a.range,self+0xac,4);memcpy(&a.factor,self+0xb0,4);memcpy(&a.runtime,self,8);
+        for(unsigned i=0;i<3;i++) r.pos[i]=gpost_bits(a.pos[i]);
+        r.range=gpost_bits(a.range);r.factor=gpost_bits(a.factor);r.size=gpost_bits(a.size);memcpy(&r.vis,self+0xb4,4);r.flags=gpost_entry_flags(self);
+    } else ++gpost_failures;
+    if(gpost_probe_runtime) {
+        gpost_item_t item;gpost_key(gpost_probe_runtime,&item);
+        if(gpost_has(gpost_new,now,gpost_probe_runtime)) {r.plus[0]=item;r.added=1;} else {r.minus[0]=item;r.removed=1;}
+    }
+    void *worker=NULL;uintptr_t groups[2]={0,0};unsigned group=0,wide=0;
+    const unsigned char *home=entry && read_local(image+GPOST_WORKER,&worker,8)?
+        gwide_entry_home((const unsigned char*)worker,(const unsigned char*)result,groups,&group,&wide):NULL;
+    if(home) {
+        r.state|=GPOST_FOUND;r.group=group;r.wide=(uint8_t)wide;r.groups=(uint32_t)((groups[1]-groups[0])/GWIDE_GROUP);
+        gpost_walk(&r,groups,&a,now,old);
+        for(unsigned i=0;i<r.edges;i++) {gpost_item_t keyed;gpost_key(r.edge[i].runtime,&keyed);r.edge[i].key=keyed.key;r.edge[i].klass=keyed.klass;r.edge[i].type=keyed.type;}
+    }
+    gpost_push(&r);
+    InterlockedExchange(&gpost_busy,0);SetLastError(error);
+}
 static void gpost_note(void *unit,void *result,uint64_t saved,unsigned klass) {
     if(!InterlockedCompareExchange(&gpost_active,0,0) || !unit || !result) return;
+    if(gpost_probe_unit && saved==gpost_probe_unit) gpost_probe_note(unit,result,saved,klass);
     double scan=0,event=0;
     if(!read_local((unsigned char*)unit+0xa8,&scan,8) || !read_local((unsigned char*)unit+0xb8,&event,8)) {++gpost_failures;return;}
     if(scan!=event || !(scan>=0)) return; /* no post in this apply */
@@ -198,9 +243,7 @@ static void gpost_note(void *unit,void *result,uint64_t saved,unsigned klass) {
     for(unsigned i=0;i<r.added && i<GPOST_LIST;i++) if(!(r.plus[i].state&GPOST_FOUND)) ++gpost_absent;
     for(unsigned i=0;i<r.removed && i<GPOST_LIST;i++) if(!(r.minus[i].state&GPOST_FOUND)) ++gpost_absent;
     ++gpost_changes;gpost_digest+=lockstep_mix(lockstep_seed(0x58344c4750535453ULL,r.tick,saved,hash,klass,0)); /* "X4LGPSTS" */
-    if(gpost_tick!=r.tick) {gpost_tick=r.tick;gpost_tick_rows=0;}
-    if(++gpost_tick_rows>GPOST_TICK_ROWS) ++gpost_dropped;
-    else {LONG64 index=InterlockedCompareExchange64(&gpost_rows,0,0);gpost_ring[(uint64_t)index%GPOST_RING]=r;InterlockedExchange64(&gpost_rows,index+1);}
+    gpost_push(&r);
     InterlockedExchange(&gpost_busy,0);SetLastError(error);
 }
 /* Before the first admitted frame, on the MoveWorker, with the keyed unit apply armed. */
@@ -240,9 +283,10 @@ static int gpost_row(uint64_t index,char *out,size_t cap) {
        gpost_list(edge,sizeof(edge),r->edge,r->edges)<0) return 0;
     if(r->state&GPOST_FOUND) snprintf(zone,sizeof(zone),"%u/%u%c",r->group,r->groups,r->wide?'w':'n');else strcpy(zone,"-");
     n=snprintf(out,cap,"index=%llu tick=%llu unit=%c:%016llx sizes=%u/%u added=%u removed=%u time=%016llx "
-        "a={p=%08x,%08x,%08x r=%08x f=%08x s=%08x v=%08x fl=%x z=%s} plus=%s minus=%s edge=%s",
+        "a={p=%08x,%08x,%08x r=%08x f=%08x s=%08x v=%08x fl=%x z=%s} plus=%s minus=%s edge=%s%s",
         (unsigned long long)index,(unsigned long long)r->tick,gpost_klass_char(r->unit_klass),(unsigned long long)r->unit,r->old,r->now,
-        r->added,r->removed,(unsigned long long)r->time,r->pos[0],r->pos[1],r->pos[2],r->range,r->factor,r->size,r->vis,r->flags,zone,plus,minus,edge);
+        r->added,r->removed,(unsigned long long)r->time,r->pos[0],r->pos[1],r->pos[2],r->range,r->factor,r->size,r->vis,r->flags,zone,plus,minus,edge,
+        (r->state&GPOST_PROBE)?" probe=1":"");
     return n>0 && (size_t)n<cap?n:0;
 }
 static int gpost_status(char *out,size_t cap) {

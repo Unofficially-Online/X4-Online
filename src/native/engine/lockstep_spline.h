@@ -24,6 +24,10 @@ static uint64_t spline_calls,spline_failures,spline_refreshes,spline_joins,splin
  * it. A timeout, an unreadable deque, an unknown status or an unavailable calculator stops the gate (reason 58). */
 #define SPLINE_JOIN_ALL_TIMEOUT 2000u
 static int spline_join_all;
+/* SPLINE_PHASE (lockstep_spline_calc_watch.h): the calculator publishes only at the frame's phase points, so a request's status
+ * in a pathing pass is the same on every client and an update consumes a route exactly when a phase published it; the joins do
+ * not wait then (j1-357: a pass's update waiting for a request of that pass held the pathing join past its 5 s, reason 23). */
+static int scw_phase_on;
 static uint64_t spline_all_joins,spline_all_waits,spline_all_timeouts,spline_all_failures;
 /* The motion watch's request rows for watched ships (native_gate_motion_watch_splines; lockstep_motion_watch.h):
  * begin matches the model's agent against the watch (pointer compare), seen reads the front request the native
@@ -119,7 +123,7 @@ static void spline_observe(flight_fn original,spline_sample *s,void *self,void *
        !read_local(slot,s->slot[0],sizeof(s->slot[0])) ||
        !read_local((unsigned char*)agent+0x340,s->params,sizeof(s->params)) || !spline_pending(s,self,0))
         InterlockedIncrement64((volatile LONG64*)&spline_failures);
-    if(spline_join && !spline_join_pending(s,self,1000))
+    if(spline_join && !scw_phase_on && !spline_join_pending(s,self,1000))
         InterlockedIncrement64((volatile LONG64*)&spline_failures);
     if(spline_refresh) {
         /* Same native eaf660 helper as steering, but spline stores its obstacle
@@ -137,7 +141,7 @@ static void spline_observe(flight_fn original,spline_sample *s,void *self,void *
 /* Every spline update that is not a fixture's: the join for all (gated frames only) and the watch's request rows. */
 static void spline_other(flight_fn original,void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player,int gated,unsigned timeout) {
     spline_watch_t w;int watched=motion_spline_begin(self,cheap,&w);
-    if(gated && spline_join_all) {
+    if(gated && spline_join_all && !scw_phase_on) {
         spline_front_t f;int waited=0;
         if(!spline_join_core(self,timeout,&f,&waited,(volatile LONG64*)&spline_all_joins,(volatile LONG64*)&spline_all_waits,
                              (volatile LONG64*)&spline_all_timeouts)) {

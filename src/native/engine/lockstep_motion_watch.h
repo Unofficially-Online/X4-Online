@@ -1132,18 +1132,25 @@ static int motion_door_row(uint64_t index,char *out,size_t cap) {
 /* Request rows (native_gate_motion_watch_splines; see the header). Written on the pathing workers that run the
  * spline updates; a row publishes through its ready word. */
 #define MOTION_SPLINE_RING 8192u
+/* j1-354: the result hashes of 0x6f1e7's request at 3722 differ; req= (the bytes the hash reads: the transform +0x30 .. +0x70,
+ * lanes 0-2, +0x70 .. +0xa6 and +0xac .. +0xb0) and pts= (the route's first four segments' control points, lanes 0-2) say where. */
+#define MOTION_SPLINE_REQ (4u*12u+0x36u+4u)
+#define MOTION_SPLINE_PTS (4u*4u*12u)
 typedef struct {volatile LONG64 ready;uint64_t tick,saved;uint32_t ordinal,count_in,count_out,status,flags,points,result,segments,consumed,cheap,waited;
-    unsigned char progress[16];} motion_spline_row_t;
+    unsigned char progress[16],req[MOTION_SPLINE_REQ],pts[MOTION_SPLINE_PTS];} motion_spline_row_t;
+static unsigned char motion_spline_req[MOTION_WATCH_MAX][MOTION_SPLINE_REQ],motion_spline_pts[MOTION_WATCH_MAX][MOTION_SPLINE_PTS];
 static motion_spline_row_t *motion_spline_ring;
 static volatile LONG64 motion_spline_rows,motion_spline_misses;
 static unsigned motion_spline_armed;
 /* A published request's route: its list size and each segment's four control points (lanes 0-2), the request
  * transform +0x30..+0x70 (lanes 0-2), +0x70..+0xa6 (index, parameters, flags) and the result flags +0xac..+0xaf;
  * 0 when it does not read. */
-static uint32_t motion_spline_result(const unsigned char *request,uint32_t *points) {
+static uint32_t motion_spline_result(const unsigned char *request,uint32_t *points,unsigned char *req,unsigned char *pts) {
     unsigned char q[0xb0],*head=NULL,*at=NULL;uint64_t size=0;uint32_t h=MOTION_FNV_BASIS;
-    *points=0;
+    *points=0;memset(req,0,MOTION_SPLINE_REQ);memset(pts,0,MOTION_SPLINE_PTS);
     if(!request || !read_local(request,q,sizeof(q))) return 0;
+    for(unsigned k=0;k<4;k++) memcpy(req+12u*k,q+0x30+16*k,12);
+    memcpy(req+48,q+0x70,0x36);memcpy(req+48+0x36,q+0xac,4);
     memcpy(&head,q,8);memcpy(&size,q+8,8);
     if(!head || size>MOTION_SPLINE_POINTS_MAX || !read_local(head,&at,8)) return 0;
     h=motion_fnv(h,&size,8);
@@ -1152,7 +1159,7 @@ static uint32_t motion_spline_result(const unsigned char *request,uint32_t *poin
     for(uint64_t k=0;k<size;k++) {
         unsigned char n[0x50];
         if(!at || at==head || !read_local(at,n,sizeof(n))) return 0;
-        for(unsigned j=0;j<4;j++) h=motion_fnv(h,n+0x10+16*j,12);
+        for(unsigned j=0;j<4;j++) {h=motion_fnv(h,n+0x10+16*j,12);if(k<4u) memcpy(pts+(k*4u+j)*12u,n+0x10+16*j,12);}
         memcpy(&at,n,8);
     }
     if(at!=head) return 0;
@@ -1174,7 +1181,8 @@ static void motion_spline_seen(void *model,spline_watch_t *w) {
     if(!f.count) motion_spline_front[i]=NULL;
     else if(f.front!=motion_spline_front[i]) {motion_spline_front[i]=f.front;++motion_spline_ordinal[i];}
     w->ordinal=motion_spline_ordinal[i];
-    if(f.count && f.status) w->result=motion_spline_result(f.front,&w->points);
+    if(f.count && f.status) w->result=motion_spline_result(f.front,&w->points,motion_spline_req[i],motion_spline_pts[i]);
+    else {memset(motion_spline_req[i],0,MOTION_SPLINE_REQ);memset(motion_spline_pts[i],0,MOTION_SPLINE_PTS);}
 }
 /* After the native update: a row when a request was pending before or after it. */
 static void motion_spline_end(void *model,spline_watch_t *w) {
@@ -1192,6 +1200,7 @@ static void motion_spline_end(void *model,spline_watch_t *w) {
     uint32_t counts[2]={0,0},h=0;
     r->segments=motion_spline_segments((const unsigned char*)model,counts,&h)?motion_fnv(motion_fnv(MOTION_FNV_BASIS,counts,8),&h,4):0;
     if(!read_local((unsigned char*)model+0xd0,r->progress,16)) memset(r->progress,0,16);
+    memcpy(r->req,motion_spline_req[i],MOTION_SPLINE_REQ);memcpy(r->pts,motion_spline_pts[i],MOTION_SPLINE_PTS);
     InterlockedExchange64(&r->ready,index+1);
 }
 /* Before the first admitted frame, on the MoveWorker: needs the watch and the installed spline hook. */
@@ -1209,10 +1218,11 @@ static int motion_spline_row(uint64_t index,char *out,size_t cap) {
         return (n=snprintf(out,cap,"index=%llu evicted=1",(unsigned long long)index))>0 && (size_t)n<cap?n:0;
     const motion_spline_row_t *r=&motion_spline_ring[index%MOTION_SPLINE_RING];
     if(InterlockedCompareExchange64((volatile LONG64*)&r->ready,0,0)!=(LONG64)index+1) return 0; /* still being written */
-    char progress[33];motion_watch_hex(progress,r->progress,16);
+    char progress[33],req[2*MOTION_SPLINE_REQ+1],pts[2*MOTION_SPLINE_PTS+1];motion_watch_hex(progress,r->progress,16);
+    motion_watch_hex(req,r->req,MOTION_SPLINE_REQ);motion_watch_hex(pts,r->pts,MOTION_SPLINE_PTS);
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx request=%u in=%u status=%u flags=%08x points=%u result=%08x out=%u consumed=%u "
-        "segments=%08x progress=%s cheap=%u waited=%u",(unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,
-        r->ordinal,r->count_in,r->status,r->flags,r->points,r->result,r->count_out,r->consumed,r->segments,progress,r->cheap,r->waited);
+        "segments=%08x progress=%s cheap=%u waited=%u req=%s pts=%s",(unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,
+        r->ordinal,r->count_in,r->status,r->flags,r->points,r->result,r->count_out,r->consumed,r->segments,progress,r->cheap,r->waited,req,pts);
     return n>0 && (size_t)n<cap?n:0;
 }
 static int motion_order_owned(void) {

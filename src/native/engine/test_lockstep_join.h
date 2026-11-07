@@ -2948,6 +2948,48 @@ static void test_join_pcsv(void) {
     join_pcsv_on=0;join_world_find=find;join_world_map=map;join_mapped=mapped;free(t.pcsv);
     printf("join PCSV: a PlayerController's solver block captured as SOLVER (relative, RVA, heap mark), admitted into the joiner's controller (absolute, own heap value, nothing else), missing and shape PASS\n");
 }
+/* GRAVP restore after T+1: a view still holding the session's pose is left; the first publication after the admission is the load's
+ * and is mended (also again while the view keeps it), however far (counted in gravp_first's buckets); a later publication that is
+ * neither the session's pose nor the load's drops the entry for good (gravp_moved_pose). */
+static _Alignas(16) unsigned char tgravp_obj[2][0x200],tgravp_pose[2][0x40],tgravp_want[2][0x40],tgravp_parent[16];
+static void *tgravp_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime==0x91ull?tgravp_obj[0]:runtime==0x92ull?tgravp_obj[1]:NULL;}
+static void tgravp_pos(unsigned char *pose,float x,float y,float z) {float p[3]={x,y,z};memcpy(pose,p,12);}
+static void test_join_gravp_restore(void) {
+    join_find_fn find=join_world_find;void *map=join_world_map;join_world_find=tgravp_find;join_world_map=tgravp_obj;
+    for(unsigned k=0;k<2;k++) {
+        const uint64_t runtime=0x91ull+k;unsigned char *parent=tgravp_parent,*pose=tgravp_pose[k];
+        memset(tgravp_obj[k],0,sizeof(tgravp_obj[k]));memcpy(tgravp_obj[k]+8,&runtime,8);
+        memcpy(tgravp_obj[k]+JOIN_VIEW_SLOTS,&parent,8);memcpy(tgravp_obj[k]+JOIN_VIEW_SLOTS+JOIN_VIEW_POSE,&pose,8);
+        for(unsigned i=0;i<0x40;i++) tgravp_want[k][i]=(unsigned char)(i*5u+k);
+    }
+    tgravp_pos(tgravp_want[0],-108792.4f,3759.1f,-105166.9f);tgravp_pos(tgravp_want[1],-133114.0f,-1960.9f,-137241.0f);
+    free(join_gravp_set);join_gravp_set=calloc(2,sizeof(*join_gravp_set));join_gravp_nset=2;join_gravp_setcap=2;
+    for(unsigned k=0;k<2;k++) {join_gravp_set[k].runtime=0x91ull+k;join_gravp_set[k].pose=tgravp_want[k];join_gravp_set[k].parent=tgravp_parent;}
+    join_gravp_restored=join_gravp_checked=join_gravp_gone=join_gravp_moved=join_gravp_moved_pose=0;join_view_skip=0;
+    memset(join_gravp_first,0,sizeof(join_gravp_first));
+    /* entry 0 still holds the session's pose (the admission's): left, not yet seen */
+    memcpy(tgravp_pose[0],tgravp_want[0],0x40);memcpy(tgravp_pose[1],tgravp_want[1],0x40);
+    join_gravp_restore();assert(!join_gravp_restored && !join_gravp_moved_pose && !join_gravp_set[0].seen && join_gravp_checked==2);
+    /* entry 0: the load's publication (ulps from the session's) is mended; entry 1: its first publication 40 km off, mended too */
+    tgravp_pose[0][0]^=1;tgravp_pos(tgravp_pose[1],-108792.4f,3759.1f,-105166.9f);
+    unsigned char load[0x40];memcpy(load,tgravp_pose[0],0x40);
+    join_gravp_restore();
+    assert(join_gravp_restored==2 && !join_gravp_moved_pose && !join_gravp_set[1].dropped && !join_gravp_set[0].dropped);
+    assert(join_gravp_first[0]==1 && join_gravp_first[4]==1 && !join_gravp_first[1] && !join_gravp_first[2] && !join_gravp_first[3]);
+    assert(!memcmp(tgravp_pose[0],tgravp_want[0],0x40) && !memcmp(tgravp_pose[1],tgravp_want[1],0x40));
+    /* the load's republication again (own0): mended again */
+    memcpy(tgravp_pose[0],load,0x40);join_gravp_restore();assert(join_gravp_restored==3 && !join_gravp_set[0].dropped);
+    /* the engine publishes something new (a few cm moved): dropped for good, left as published */
+    memcpy(tgravp_pose[0],tgravp_want[0],0x40);tgravp_pos(tgravp_pose[0],-108792.3f,3759.1f,-105166.9f);
+    unsigned char fresh[0x40];memcpy(fresh,tgravp_pose[0],0x40);
+    join_gravp_restore();assert(join_gravp_moved_pose==1 && join_gravp_set[0].dropped && !memcmp(tgravp_pose[0],fresh,0x40) && join_gravp_restored==3);
+    join_gravp_restore();assert(join_gravp_moved_pose==1 && join_gravp_restored==3);   /* dropped entries stay dropped */
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," gravp_moved=0 gravp_moved_pose=1 gravp_first=1:0:0:0:1 "));}
+    free(join_gravp_set);join_gravp_set=NULL;join_gravp_nset=join_gravp_setcap=0;
+    join_gravp_restored=join_gravp_checked=join_gravp_gone=join_gravp_moved=join_gravp_moved_pose=0;
+    join_world_find=find;join_world_map=map;
+    printf("join GRAVP restore: the session's pose left, the load's first publication mended however far, a later new one dropped for good PASS\n");
+}
 /* CODE over the in-window resume: the counter held from begin to end (the codes the rebuild drew counted, the counter put back);
  * without CODE nothing happens. */
 static void test_join_code_hold(void) {
@@ -3084,5 +3126,5 @@ static void test_join_conn(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_conn();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_conn();
 }

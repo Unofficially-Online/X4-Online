@@ -272,6 +272,8 @@ D.DIAGNOSTIC={
  {'native_gate_join_shape_refresh','hot join: every client refreshes the fixture body shapes at T+2'},
  {'native_gate_join_jobdump','hot join job raw rows (diagnostic)'},
  {'native_gate_nav_refresh_watch','nav refresh rows: which thread refreshes a navigation controller first after a bank flip (diagnostic)'},
+ {'native_gate_spline_calc_watch','spline calc rows: when the spline route calculator runs relative to the gated frames (diagnostic)'},
+ {'native_gate_spline_phase','the spline route calculator at the frame phase points only (before the pathing pass, after its join)'},
  {'native_gate_safe_pos_dump','safe pos dump rows: the GetSafePos solver calls in a tick window, every box as given (diagnostic)'},
  {'native_gate_world_static','world static rows: the published poses of uncompared positional objects at ticks (diagnostic)'},
  {'native_gate_join_jobcnt_at','hot join job count rows after a step (diagnostic)'},
@@ -332,6 +334,7 @@ D.DIAGNOSTIC={
  {'native_gate_gravidar_digest','Gravidar digest rows (read only)'},
  {'native_gate_gravidar_digest_rows','Gravidar digest rows'},
  {'native_gate_gravidar_posts','Gravidar post rows (read only)'},
+ {'native_gate_gravidar_posts_probe','Gravidar post probe rows of one unit and contact (read only)'},
  {'native_gate_motion_watch','motion watch'},
  {'native_gate_motion_watch_digest','motion watch digest'},
  {'native_gate_motion_watch_doors','motion watch doors'},
@@ -493,7 +496,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch'}
+ [187]='hybrid sectors',[188]='character play',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

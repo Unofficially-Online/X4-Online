@@ -97,6 +97,23 @@ static void test_gravidar_posts(void) {
     now_set[0]=0x7002;now_set[1]=0x7004;now_set[2]=0x7005;now_set[3]=0x7006;now_set[4]=0x7007;test_gpost_vector(unit->bytes+0x68,now_set,5);
     gpost_note(unit,result,0x23a8c,WORLD_KEY_SAVED);assert(gpost_timers==1 && gpost_rows==2 && gpost_posts==3);
     test_gpost_times(unit,26.0,25.5);gpost_note(unit,result,0x23a8c,WORLD_KEY_SAVED);assert(gpost_posts==3);
+    {   /* The probe (diagnostic): unit 23a8c and contact 6dd60 (runtime 0x7003, through the identity map): a probe row at every apply
+         * of the unit, posted or not: the contact in minus= while the applied set lacks it, in plus= once it holds it, with its scan
+         * entry found by the walk; no row for another unit. */
+        const LONG64 before=gpost_rows;const uint64_t posts=gpost_posts;
+        gpost_probe_unit=0x23a8c;gpost_probe_contact=0x6dd60;gpost_probe_runtime=0;
+        gpost_note(unit,result,0x23a8c,WORLD_KEY_SAVED);   /* no post (event older than the scan) */
+        assert(gpost_rows==before+1 && gpost_posts==posts && gpost_probe_runtime==0x7003);
+        assert(gpost_row((uint64_t)(gpost_rows-1),row,sizeof(row))>0 && strstr(row," probe=1") && strstr(row," plus= minus=s:000000000006dd60{p=") &&
+               strstr(row," z=0n}"));
+        static uint64_t probe_set[1]={0x7003};test_gpost_vector(unit->bytes+0x68,probe_set,1);
+        gpost_note(unit,result,0x23a8c,WORLD_KEY_SAVED);
+        assert(gpost_rows==before+2 && gpost_row((uint64_t)(gpost_rows-1),row,sizeof(row))>0 && strstr(row," probe=1") &&
+               strstr(row," plus=s:000000000006dd60{p=") && strstr(row," minus= "));
+        gpost_note(unit,result,0x6dd4b,WORLD_KEY_CREATED);assert(gpost_rows==before+2);   /* another unit: none */
+        gpost_probe_unit=gpost_probe_contact=gpost_probe_runtime=0;
+        test_gpost_vector(unit->bytes+0x68,now_set,5);
+    }
     /* Removal only, an empty new set (no edges); an empty old set. */
     test_gpost_times(unit,25.5,25.5);test_gpost_vector(unit->bytes+0x68,now_set,0);gpost_note(unit,result,0x23a8c,WORLD_KEY_SAVED);
     assert(gpost_row((uint64_t)(gpost_rows-1),row,sizeof(row))>0 && strstr(row," sizes=5/0 added=0 removed=5 ") && strstr(row," plus= minus=s:000000000006dd4b{") &&

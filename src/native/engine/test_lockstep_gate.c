@@ -1096,6 +1096,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_fp_redirect.h"
 #include "test_lockstep_safe_pos_order.h"
 #include "test_lockstep_nav_refresh_watch.h"
+#include "test_lockstep_spline_calc_watch.h"
 #include "test_lockstep_step_chain.h"
 #include "test_lockstep_path_transforms.h"
 #include "test_lockstep_body_pose.h"
@@ -1117,6 +1118,7 @@ int main(int argc,char **argv) {
     if(argc==2) test_fp_redirect_native_image(argv[1]);
     if(argc==2) test_safe_pos_order_native_image(argv[1]);
     if(argc==2) test_nav_refresh_watch_native_image(argv[1]);
+    if(argc==2) test_spline_calc_watch_native_image(argv[1]);
     if(argc==2) test_step_chain_native_image(argv[1]);
     if(argc==2) test_path_transforms_native_image(argv[1]);
     if(argc==2) test_body_pose_native_image(argv[1]);
@@ -1220,6 +1222,8 @@ int main(int argc,char **argv) {
     test_portable_math();
     test_safe_pos_order();
     test_nav_refresh_watch();
+    test_spline_calc_watch();
+    test_spline_phase();
     test_exact_reciprocal();
     test_fp_env();
     test_tick();

@@ -3049,6 +3049,21 @@ local function frame()
     'nav refresh watch refused '..tostring(gate.nav_refresh_watch_status and gate.nav_refresh_watch_status()))
    log('NAV_REFRESH_WATCH_ARMED '..tostring(gate.nav_refresh_watch_status()))
   end
+  -- native_gate_spline_calc_watch = {from,to}: SPLINE_CALC rows (when the spline route calculator runs relative to the gated
+  -- frames; diagnostic, lockstep_spline_calc_watch.h). Rows go to the crash notes.
+  if cfg.native_gate_spline_calc_watch~=nil then
+   local w=cfg.native_gate_spline_calc_watch
+   assert(type(w)=='table' and #w==2 and gate.spline_calc_watch and gate.spline_calc_watch(w[1],w[2])==1,
+    'spline calc watch refused '..tostring(gate.spline_calc_watch_status and gate.spline_calc_watch_status()))
+   log('SPLINE_CALC_WATCH_ARMED '..tostring(gate.spline_calc_watch_status()))
+  end
+  -- native_gate_spline_phase = true: the spline route calculator runs at the frame's phase points only (before the pathing
+  -- pass and after its join), on every client, so each route reads the same world (lockstep_spline_calc_watch.h).
+  if cfg.native_gate_spline_phase then
+   assert(cfg.native_gate_spline_phase==true and gate.spline_phase and gate.spline_phase(1)==1,
+    'spline phase refused '..tostring(gate.spline_calc_watch_status and gate.spline_calc_watch_status()))
+   log('SPLINE_PHASE_ARMED '..tostring(gate.spline_calc_watch_status()))
+  end
   -- RCPSS/RSQRTSS in X4.exe to exactly rounded division and square root (1,272
   -- instructions, 824 windows): vendor-independent results. Before the load. Default off.
   if cfg.native_gate_exact_reciprocal then
@@ -4015,6 +4030,14 @@ local function frame()
    assert(cfg.native_gate_gravidar_posts==true and cfg.native_gate_gravidar_key_all and gate.gravidar_posts and gate.gravidar_posts_status and
     gate.gravidar_post_row and gate.gravidar_posts()==1,'Gravidar posts refused')
    log('GRAVIDAR_POSTS_ARMED')
+   -- Diagnostic: native_gate_gravidar_posts_probe={unit,contact} (saved IDs): every apply of the unit logs a probe row with
+   -- the contact's scan entry, posted or not.
+   local probe=cfg.native_gate_gravidar_posts_probe
+   if probe~=nil then
+    assert(type(probe)=='table' and #probe==2 and gate.gravidar_posts_probe and gate.gravidar_posts_probe(probe[1],probe[2])==1,
+     'native_gate_gravidar_posts_probe needs {unit,contact} saved IDs (16 hex digits)')
+    log('GRAVIDAR_POSTS_PROBE unit='..probe[1]..' contact='..probe[2])
+   end
   end
   -- Determinism fix for stations' Gravidar contacts (lockstep_gravidar_wide.h,
   -- stop reason 150). Natively a wide-range unit (stations) is applied before
@@ -4950,6 +4973,7 @@ local function frame()
   if cfg.native_gate_portable_math then log('PORTABLE_MATH_STOP '..tostring(gate.portable_math_status())) end
   if (cfg.native_gate_safe_pos_order or cfg.native_gate_safe_pos_dump~=nil) and gate.safe_pos_order_status then log('SAFE_POS_ORDER_STOP '..tostring(gate.safe_pos_order_status())) end
   if cfg.native_gate_nav_refresh_watch~=nil and gate.nav_refresh_watch_status then log('NAV_REFRESH_WATCH_STOP '..tostring(gate.nav_refresh_watch_status())) end
+  if (cfg.native_gate_spline_calc_watch~=nil or cfg.native_gate_spline_phase) and gate.spline_calc_watch_status then log('SPLINE_CALC_WATCH_STOP '..tostring(gate.spline_calc_watch_status())) end
   if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.stop() end
   if cfg.native_gate_sample_profile then
    log('SAMPLE_PROFILE_STOP '..tostring(gate.sample_profile_status()))
@@ -5702,6 +5726,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_portable_math then ticklog.try(function() log('PORTABLE_MATH_STOP '..tostring(gate.portable_math_status())) end) end
    if (cfg.native_gate_safe_pos_order or cfg.native_gate_safe_pos_dump~=nil) and gate.safe_pos_order_status then ticklog.try(function() log('SAFE_POS_ORDER_STOP '..tostring(gate.safe_pos_order_status())) end) end
    if cfg.native_gate_nav_refresh_watch~=nil and gate.nav_refresh_watch_status then ticklog.try(function() log('NAV_REFRESH_WATCH_STOP '..tostring(gate.nav_refresh_watch_status())) end) end
+   if (cfg.native_gate_spline_calc_watch~=nil or cfg.native_gate_spline_phase) and gate.spline_calc_watch_status then ticklog.try(function() log('SPLINE_CALC_WATCH_STOP '..tostring(gate.spline_calc_watch_status())) end) end
    if X4LAN_NATIVE_HYBRID then ticklog.try(X4LAN_NATIVE_HYBRID.stop) end
    if cfg.native_gate_sample_profile then ticklog.try(function()
     log('SAMPLE_PROFILE_STOP '..tostring(gate.sample_profile_status()))
