@@ -408,6 +408,14 @@ static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t
         if(dock_controller_state(ctrl,(void*)object,r->dock)) r->flags|=2048;else r->dock[0]=0;
         return 1;
     }
+    /* Another controller whose state the census hashes (world_hash_motion: its vt+0x30 0x10ba20 reads four vectors at +0x10,
+     * 0x46ff70 at +0x20): those 0x40 bytes raw as cache= (flag 16384). j1-341: three docked minelayers' motion moves on the
+     * session only when they leave their bays. */
+    {
+        uintptr_t getter=0;
+        if(read_local((const unsigned char*)vt+0x30,&getter,8) && (getter==(uintptr_t)(image+0x10ba20) || getter==(uintptr_t)(image+0x46ff70)) &&
+           read_local(ctrl+(getter==(uintptr_t)(image+0x10ba20)?0x10:0x20),r->cache,0x40)) {r->flags|=16384;return 1;}
+    }
     /* The occupied ship's PlayerController (or a stock slot's copy) has the NavigationController's layout here: +0x28
      * the ship, +0x30 the Agent's pathing state slots (agent+0xad0), +0x40 the Agent (lockstep_pilot_inputs.h and the
      * stock slot actors read it so); flag 8192 says which. L1 (fight start, script piloting): the occupied ship parted
@@ -471,7 +479,9 @@ static int motion_watch_frame(uint64_t tick) {
     if(!read_local(image+0x6cf1500,&map,8) || !map) {++motion_watch_misses;return 1;}
     for(unsigned i=0;i<motion_watch_count;i++) {
         if(motion_watch_member[i] && !motion_watch_saved[i]) continue; /* a free member slot */
-        if(!motion_watch_runtime[i]) motion_watch_runtime[i]=pilot_reverse(motion_watch_saved[i]);
+        /* A created key (CREATED_BIT: a ship built in the session, j1-341's dock-bay ships) has no saved identity. */
+        if(!motion_watch_runtime[i]) motion_watch_runtime[i]=motion_watch_saved[i]&CREATED_BIT?created_runtime_of(motion_watch_saved[i]):
+                                                             pilot_reverse(motion_watch_saved[i]);
         uint64_t id=0;unsigned char *object=motion_watch_runtime[i]?find(map,motion_watch_runtime[i],4):NULL;
         if(!object || !read_local(object+8,&id,8) || id!=motion_watch_runtime[i]) {
             if(motion_watch_member[i]) {motion_zone_leave(i);++motion_zone_gone;continue;}

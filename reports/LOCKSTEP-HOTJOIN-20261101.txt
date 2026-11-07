@@ -2459,6 +2459,20 @@ proposed and rejected.
   vt+0x30 (0xea5a90) takes the read bank's vec0 .. 3 (position, rotation rows) through its pathing parent's timed
   transform (0xea5ded), or the controller's stored transform +0x60 .. +0x9f (0xea5b3e); which ships and controllers
   differ is w1z153's question (x4mods: the main loop's transform per object).
+  Answer: none. w1z153 (the main loop's transform per object at 0x8369d6, 1049): every transform and controller vtable
+  equal; w1z154 (the same breakpoints plus the dump): the 11 boxes still differ and the census still splits, so no race.
+  w1z155 placed every box of the 1049 calls: the loop's [0, 38) and the zone list (0x85dd00, [zone+0x3a0]/[+0x3a8]) are
+  equal; all 64 differing boxes of the ten calls lie in 0x835630's ranges, the zones' space reservations, the calling
+  zone's own tree and its child zones' (742be's call: child zones 500, 502, 505, 506, a temp zone, its own). 0x835630
+  walks the tree at zone+0x3b0 (a node: +0 parent, +8 left, +0x10 right; leftmost +0x3d0, count +0x3d8; key +0x20 the
+  owner's runtime ID, +0x28 the index) and appends each node's stored box +0x30 .. +0x9f; 0x835860 drops nodes past their
+  expiry +0xa0. The session computed the boxes when the ships reserved (0x834f90, a vtable slot); the joiner's load
+  imports each node with a zeroed box, identity rows and expiry -1.0 (U::Zone::ImportReservation 0x835230) and refills it
+  from its own state: rotation rows 1 .. 8 ulps apart, w lanes 0 against 0.5, positions equal. Not world objects: neither
+  the census nor the package saw them. Fix: RESV (package v13 section 74, ac0e30fb; opt-in native_gate_join_resv): every
+  U::Zone's nodes by the zone's and the owner's portable IDs and the index, the box raw and the expiry, written into the
+  joiner's node with the same key; status resv=on:written:equal:missing:extra. A/B: x4mods' w1z156 (in-window to 2160)
+  and J1 j1-337 (to 3000) against j1-329.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

@@ -65,6 +65,10 @@ ID_TOKEN = re.compile(r'(?<![0-9a-f])[0-9a-f]{16}(?![0-9a-f])')
 # keys whose 16-hex-digit values are no saved IDs: native_gate_join_watch and native_gate_join_refwatch name portable IDs (saved or
 # created), the same on every side; the gate resolves them through its own ID table (lockstep_join_world.h join_watch)
 NOT_SAVED_IDS = frozenset({'native_gate_join_watch', 'native_gate_join_refwatch', 'native_gate_join_jobdump'})
+# keys that also take created keys (CREATED_BIT, a created identity of the package): the motion watch resolves them through the
+# gate's created table (lockstep_motion_watch.h; j1-342's docked minelayers were built in the session)
+CREATED_OK = frozenset({'native_gate_motion_watch'})
+CREATED_BIT = 1 << 63
 
 
 def saved_id_keys(config_text):
@@ -83,11 +87,14 @@ def saved_id_keys(config_text):
 
 
 def check_saved_ids(config_text, package):
-    """Every saved ID the joiner's config names must be a saved identity (class 0) of the package; returns {key: count}.
+    """Every saved ID the joiner's config names must be a saved identity (class 0) of the package, or for a CREATED_OK key a created
+    one (class 1); returns {key: count}.
     ValueError names every key and ID that is not."""
     saved = {portable for _, portable, klass, _ in package['sections']['ids'] if klass == 0}
+    created = {portable for _, portable, klass, _ in package['sections']['ids'] if klass == 1 and portable & CREATED_BIT}
     keys = saved_id_keys(config_text)
-    missing = {key: [i for i in ids if int(i, 16) not in saved] for key, ids in keys.items()}
+    missing = {key: [i for i in ids if int(i, 16) not in saved and not (key in CREATED_OK and int(i, 16) in created)]
+               for key, ids in keys.items()}
     missing = {key: ids for key, ids in missing.items() if ids}
     if missing:
         raise ValueError('saved IDs of the joiner config are no saved identity of the package (the session had no such object '
@@ -190,7 +197,7 @@ def check_world_table(package, mode):
     if version >= 13:
         text += f' jobe={len(sections.get("jobe", []))} evqt={len(sections.get("evqt", []))} gravd={len(sections.get("gravd", []))}'
         text += f' viewk={len(sections.get("viewk", []))}/{len(sections.get("viewkc", []))} viewf={len(sections.get("viewf", []))}'
-        text += f' viewp={len(sections.get("viewp", []))} shoot={len(sections.get("shoot", []))} attk={len(sections.get("attk", []))} livef={len(sections.get("livef", []))} spec={len(sections.get("spec", []))} navc={len(sections.get("navc", []))} jobs={len(sections.get("jobs", []))} gone={len(sections.get("gone", []))} body={len(sections.get("body", []))} bupd={len(sections.get("bupd", []))} ldc={len(sections.get("ldc", []))} navt={len(sections.get("navt", []))} nmesh={len(sections.get("nmesh", []))} noct={len(sections.get("noct", []))} agtt={len(sections.get("agtt", []))} agcb={len(sections.get("agcb", []))} pbnk={len(sections.get("pbnk", []))} pend={len(sections.get("pend", []))} gravb={len(sections.get("gravb", []))} viewl={len(sections.get("viewl", []))} ikv={len(sections.get("ikv", []))} rcnt={len(sections.get("rcnt", []))} ecos={len(sections.get("ecos", []))} shpw={len(sections.get("shpw", []))} trdn={len(sections.get("trdn", []))} npca={len(sections.get("npca", []))} jobg={len(sections.get("jobg", []))} code={len(sections.get("code", []))} engr={len(sections.get("engr", []))} shgr={len(sections.get("shgr", []))} bnds={len(sections.get("bnds", []))} omgs={len(sections.get("omgs", []))} resv={len(sections.get("resv", []))}'
+        text += f' viewp={len(sections.get("viewp", []))} shoot={len(sections.get("shoot", []))} attk={len(sections.get("attk", []))} livef={len(sections.get("livef", []))} spec={len(sections.get("spec", []))} navc={len(sections.get("navc", []))} jobs={len(sections.get("jobs", []))} gone={len(sections.get("gone", []))} body={len(sections.get("body", []))} bupd={len(sections.get("bupd", []))} ldc={len(sections.get("ldc", []))} navt={len(sections.get("navt", []))} nmesh={len(sections.get("nmesh", []))} noct={len(sections.get("noct", []))} agtt={len(sections.get("agtt", []))} agcb={len(sections.get("agcb", []))} pbnk={len(sections.get("pbnk", []))} pend={len(sections.get("pend", []))} gravb={len(sections.get("gravb", []))} viewl={len(sections.get("viewl", []))} ikv={len(sections.get("ikv", []))} rcnt={len(sections.get("rcnt", []))} ecos={len(sections.get("ecos", []))} shpw={len(sections.get("shpw", []))} trdn={len(sections.get("trdn", []))} npca={len(sections.get("npca", []))} jobg={len(sections.get("jobg", []))} code={len(sections.get("code", []))} engr={len(sections.get("engr", []))} shgr={len(sections.get("shgr", []))} bnds={len(sections.get("bnds", []))} omgs={len(sections.get("omgs", []))} resv={len(sections.get("resv", []))} pcsv={len(sections.get("pcsv", []))}'
     return text
 
 
@@ -252,11 +259,14 @@ def ids_sets(sets):
 #   native_gate_join_hold_boot_events  the joiner's boot event passes hold T's due events until its admission (j1-323/324
 #                                  without it: 635 diverged, two ships' pending pathing entries; j1-325/326 with it: equal
 #                                  633..1799, census 900 0; in every J1 set since report 1.18)
+#   native_gate_join_resv          the zones' space reservation boxes and expiries (w1z156: resv=1:4326:302:0:0, every
+#                                  GetSafePos call 1049..1052 equal, 742be's split gone, census 0 to 1740 from 1440's 1;
+#                                  j1-337: resv=1:4162:443:0:0, first mismatch 2522 from j1-329's 1860, census 0 to 2460)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
                    'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code', 'native_gate_join_omgs',
-                   'native_gate_join_hold_boot_events')
+                   'native_gate_join_hold_boot_events', 'native_gate_join_resv')
 
 
 def default_sets(sets):

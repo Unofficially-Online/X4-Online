@@ -650,6 +650,7 @@ class Overlays(unittest.TestCase):
             self.assertEqual(overlays.default_sets(['a=1']), ['a=1']+[f'{k}=true' for k in overlays.JOIN_DEFAULT_ON])
             self.assertIn('native_gate_join_omgs', overlays.JOIN_DEFAULT_ON)   # j1-313..320, w1z116..123: the 872/721 race gone
             self.assertIn('native_gate_join_hold_boot_events', overlays.JOIN_DEFAULT_ON)   # j1-323..326: 635 without it
+            self.assertIn('native_gate_join_resv', overlays.JOIN_DEFAULT_ON)   # w1z156, j1-337: the 1049/1860 split gone
             self.assertEqual(overlays.default_sets(['native_gate_join_rcnt = false']),
                              ['native_gate_join_rcnt = false']+[f'{k}=true' for k in overlays.JOIN_DEFAULT_ON[1:]])
             text = (root/'savers/ui/config.lua.append').read_text()
@@ -666,12 +667,12 @@ class Overlays(unittest.TestCase):
             notes = self.run_main('joiner', '--gate-dll', dll, '--handoff', root/'handoff.json', '--out', root/'joiner', '--join-mode', 'report',
                                   '--set', 'native_gate_world_hash_stride=300', '--join-census', *WINDOW)
             self.assertIn(' world=v13 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
-                          ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 jobe=0 evqt=0 gravd=0 viewk=0/0 viewf=0 viewp=0 shoot=0 attk=0 livef=0 spec=0 navc=0 jobs=0 gone=0 body=0 bupd=0 ldc=0 navt=0 nmesh=0 noct=0 agtt=0 agcb=0 pbnk=0 pend=0 gravb=0 viewl=0 ikv=0 rcnt=0 ecos=0 shpw=0 trdn=0 npca=0 jobg=0 code=0 engr=0 shgr=0 bnds=0 omgs=0 resv=0 census_t1=1 ',
+                          ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 jobe=0 evqt=0 gravd=0 viewk=0/0 viewf=0 viewp=0 shoot=0 attk=0 livef=0 spec=0 navc=0 jobs=0 gone=0 body=0 bupd=0 ldc=0 navt=0 nmesh=0 noct=0 agtt=0 agcb=0 pbnk=0 pend=0 gravb=0 viewl=0 ikv=0 rcnt=0 ecos=0 shpw=0 trdn=0 npca=0 jobg=0 code=0 engr=0 shgr=0 bnds=0 omgs=0 resv=0 pcsv=0 census_t1=1 ',
                           notes)
             self.assertIn('X4LAN_CONFIG.native_gate_world_hash_join = true', (root/'joiner/ui/config.lua.append').read_text().splitlines())
             self.assertEqual(json.loads((root/'joiner/x4lane-join.json').read_text())['world'],
                              'v13 health=1 pose=0 shield=0 nav=0 attn=0 keys=0 path=0/0/0 region=0 flight=0/0 spline=0 agent=0 route=0/0'
-                             ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 jobe=0 evqt=0 gravd=0 viewk=0/0 viewf=0 viewp=0 shoot=0 attk=0 livef=0 spec=0 navc=0 jobs=0 gone=0 body=0 bupd=0 ldc=0 navt=0 nmesh=0 noct=0 agtt=0 agcb=0 pbnk=0 pend=0 gravb=0 viewl=0 ikv=0 rcnt=0 ecos=0 shpw=0 trdn=0 npca=0 jobg=0 code=0 engr=0 shgr=0 bnds=0 omgs=0 resv=0')
+                             ' param=0 dock=0 steer=0/0 solver=0/0 bullet=0 grav=0/0/0 splm=0/0/0 gravn=0 gravp=0 gravq=0 jobe=0 evqt=0 gravd=0 viewk=0/0 viewf=0 viewp=0 shoot=0 attk=0 livef=0 spec=0 navc=0 jobs=0 gone=0 body=0 bupd=0 ldc=0 navt=0 nmesh=0 noct=0 agtt=0 agcb=0 pbnk=0 pend=0 gravb=0 viewl=0 ikv=0 rcnt=0 ecos=0 shpw=0 trdn=0 npca=0 jobg=0 code=0 engr=0 shgr=0 bnds=0 omgs=0 resv=0 pcsv=0')
         old = join.read_package(join.write_package(dict(package['sections']['gate']), {join.SEC_IDS: ids}, version=1))
         self.assertEqual(overlays.check_world_table(old, 'report'), 'v1 health=0 pose=0')
         with self.assertRaisesRegex(ValueError, 'package_v1'):
@@ -794,6 +795,17 @@ class SavedIdKeys(unittest.TestCase):
         with self.assertRaises(ValueError) as refused:
             overlays.check_saved_ids(self.CONFIG, self.package([r for r in every if r[0] != 0x729]+[(0x729, 1)]))
         self.assertIn('native_gate_world_hash_watch: 0000000000000729', str(refused.exception))
+        # The motion watch also takes created keys of the package (class 1); any other key does not.
+        created = 'X4LAN_CONFIG.native_gate_motion_watch = {'+"'80016fca7e54c78f'"+'}'
+        withc = self.CONFIG+'\n'+created
+        self.assertEqual(overlays.check_saved_ids(withc, self.package(every+[(0x80016fca7e54c78f, 1)]))['native_gate_motion_watch'], 1)
+        with self.assertRaises(ValueError) as refused:
+            overlays.check_saved_ids(withc, self.package(every))
+        self.assertIn('native_gate_motion_watch: 80016fca7e54c78f', str(refused.exception))
+        hashc = self.CONFIG.replace("'0000000000000729'", "'80016fca7e54c78f'")
+        with self.assertRaises(ValueError) as refused:
+            overlays.check_saved_ids(hashc, self.package(every+[(0x80016fca7e54c78f, 1)]))
+        self.assertIn('native_gate_world_hash_watch: 80016fca7e54c78f', str(refused.exception))
         # A config without the session defaults names only its own keys.
         bare = self.CONFIG+'\nX4LAN_CONFIG.native_gate_defaults = false'
         self.assertEqual(sorted(overlays.saved_id_keys(bare)), ['native_gate_world_hash_watch'])

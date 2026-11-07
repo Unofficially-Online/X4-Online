@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "470a3cf290d8eb8fed14dd587f3ef8f73586b4182c890f910d0fe8d0fe0c81ce"   /* version 13 (JOBE .. RESV; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "1f993578efc161e25c224738cfd194775894160839572c3e0dec1ea5006eeab3"   /* version 13 (JOBE .. PCSV; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -449,6 +449,9 @@ static void test_join_golden(void) {
     static join_resv_rec resv[1];resv[0].zone=0x2001ull;resv[0].owner=0x2002ull;resv[0].index=3u;resv[0].expiry=12.5;
     for(unsigned i=0;i<JOIN_RESV_BOX_BYTES;i++) resv[0].box[i]=(unsigned char)i;
     t.resv=resv;t.nresv=1;
+    static join_solver_rec pcsv[1];memset(pcsv,0,sizeof(pcsv));pcsv[0].portable=0x2001ull;pcsv[0].kind=PSLOT_VTABLE;pcsv[0].pointers=1;
+    pcsv[0].pointer[0]=(0x18u/8u)<<1;pcsv[0].data[0x18]=0x40;
+    t.pcsv=pcsv;t.npcsv=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -502,7 +505,8 @@ static void test_join_golden(void) {
            r.nshgr==1 && !memcmp(r.shgr,shgr,sizeof(shgr)) &&
            r.nbnds==1 && !memcmp(r.bnds,bnds,sizeof(bnds)) &&
            r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)) &&
-           r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)));
+           r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)) &&
+           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -536,7 +540,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -2860,6 +2864,65 @@ static void tresv_build(void) {
         for(unsigned k=0;k<JOIN_RESV_BOX_BYTES;k++) n[JOIN_RESV_BOX+k]=(unsigned char)(0x10*i+k);
     }
 }
+/* PCSV (lockstep_join_world.h): a PlayerController's own solver block (+0x3b0) captured as SOLVER keeps an Agent's (a pointer into
+ * itself relative, an image pointer as its RVA, an address of the saver's memory marked) and admitted into the joiner's controller
+ * of the same ship (the pointers absolute, the joiner's own value at the mark, nothing outside the block touched); a ship without
+ * a PlayerController and one the joiner lacks count missing, a record of another kind shape. */
+static _Alignas(16) unsigned char tpcsv_obj[2][0x300],tpcsv_ctl[2][JOIN_PCSV_AT+JOIN_SOLVER_BYTES+0x40];
+static uint64_t tpcsv_cell;
+static int tpcsv_mapped(uint64_t q) {return q==tpcsv_cell;}
+static void *tpcsv_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime==0x81ull?tpcsv_obj[1]:NULL;}
+static void test_join_pcsv(void) {
+    for(unsigned side=0;side<2;side++) {
+        unsigned char *c=tpcsv_ctl[side],*sv=c+JOIN_PCSV_AT;uintptr_t vt=(uintptr_t)image+PSLOT_VTABLE;
+        const uint64_t runtime=side?0x81ull:0x82ull;
+        memset(tpcsv_obj[side],0,sizeof(tpcsv_obj[side]));memcpy(tpcsv_obj[side]+8,&runtime,8);memcpy(tpcsv_obj[side]+JOIN_CONTROLLER,&c,8);
+        for(unsigned i=0;i<sizeof(tpcsv_ctl[side]);i++) c[i]=(unsigned char)(i*13u+(side?71u:3u));
+        memcpy(c,&vt,8);
+        *(uintptr_t *)(sv+0x40)=(uintptr_t)sv+0x100;                  /* into the block itself */
+        *(uintptr_t *)(sv+0x48)=(uintptr_t)image+0x2c1f0f8;           /* a vtable */
+    }
+    assert(join_pcsv_controller(tpcsv_obj[0])==tpcsv_ctl[0] && !join_pcsv_controller(NULL));
+    int (*mapped)(uint64_t)=join_mapped;join_mapped=tpcsv_mapped;tpcsv_cell=0x00007ff012345670ull;
+    memcpy(tpcsv_ctl[0]+JOIN_PCSV_AT+0x81c8,&tpcsv_cell,8);
+    join_tables t;memset(&t,0,sizeof(t));join_pcsv_capn=0;
+    assert(join_capture_pcsv(&t,tpcsv_ctl[0],0x2082ull) && t.npcsv==1);
+    const join_solver_rec *r=&t.pcsv[0];uint64_t q;
+    assert(r->portable==0x2082ull && r->kind==PSLOT_VTABLE && !r->flags && !r->reserved && r->pointers==2 &&
+           r->pointer[0]==((0x40u/8u)<<1) && r->pointer[1]==((0x48u/8u)<<1|1u) && !r->pointer[2] && join_solver_shape(r,1));
+    memcpy(&q,r->data+0x40,8);assert(q==0x100);memcpy(&q,r->data+0x48,8);assert(q==0x2c1f0f8);
+    memcpy(&q,r->data+0x81c8,8);assert(q==JOIN_SOLVER_HEAP);
+    assert(r->data[0x10]==tpcsv_ctl[0][JOIN_PCSV_AT+0x10]);
+    /* the admission: the joiner's ship 0x81 (portable 0x2082) with its own controller; a second record for a ship it lacks */
+    join_find_fn find=join_world_find;void *map=join_world_map;join_world_find=tpcsv_find;join_world_map=tpcsv_obj;
+    static join_solver_rec recs[2];memcpy(&recs[0],r,sizeof(*r));memcpy(&recs[1],r,sizeof(*r));recs[1].portable=0x2083ull;
+    join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));s.version=JOIN_PACKAGE_VERSION;s.pcsv=recs;s.npcsv=2;
+    join_id_rec mine_ids[1]={{0x81ull,0x2082ull,0,0}};mine.ids=mine_ids;mine.nids=1;
+    unsigned char *a=tpcsv_ctl[0]+JOIN_PCSV_AT,*b=tpcsv_ctl[1]+JOIN_PCSV_AT;
+    uint64_t own;memcpy(&own,b+0x81c8,8);
+    const unsigned char before=tpcsv_ctl[1][JOIN_PCSV_AT-1],after=b[JOIN_SOLVER_BYTES];
+    join_pcsv_on=0;join_admit_pcsv(&s,&mine);assert(!join_pcsv_written && !join_pcsv_equal && !join_pcsv_missing && !join_pcsv_shape);
+    join_pcsv_on=1;join_admit_pcsv(&s,&mine);
+    assert(join_pcsv_written==1 && !join_pcsv_equal && join_pcsv_missing==1 && !join_pcsv_shape);
+    for(unsigned i=0;i<JOIN_SOLVER_BYTES;i+=8) {
+        if(i==0x40) assert(*(uintptr_t *)(b+i)==(uintptr_t)b+0x100);
+        else if(i==0x48) assert(*(uintptr_t *)(b+i)==(uintptr_t)image+0x2c1f0f8);
+        else if(i==0x81c8) {memcpy(&q,b+i,8);assert(q==own);}
+        else assert(!memcmp(a+i,b+i,8));
+    }
+    assert(tpcsv_ctl[1][JOIN_PCSV_AT-1]==before && b[JOIN_SOLVER_BYTES]==after);   /* the controller outside the block untouched */
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," pcsv=1:1:0:1:0 "));}
+    join_admit_pcsv(&s,&mine);assert(!join_pcsv_written && join_pcsv_equal==1 && join_pcsv_missing==1);   /* again: nothing left */
+    {   /* the joiner's ship has another controller: missing, nothing written */
+        uintptr_t vt=(uintptr_t)image+JOIN_NAV_VTABLE;memcpy(tpcsv_ctl[1],&vt,8);b[0x10]^=1;
+        join_admit_pcsv(&s,&mine);assert(join_pcsv_missing==2 && !join_pcsv_written && !join_pcsv_equal && b[0x10]!=a[0x10]);
+        vt=(uintptr_t)image+PSLOT_VTABLE;memcpy(tpcsv_ctl[1],&vt,8);
+    }
+    recs[0].kind=JOIN_STEER_VTABLE;join_admit_pcsv(&s,&mine);assert(join_pcsv_shape==1 && !join_pcsv_written && b[0x10]!=a[0x10]);
+    recs[0].kind=PSLOT_VTABLE;join_admit_pcsv(&s,&mine);assert(join_pcsv_written==1 && b[0x10]==a[0x10]);
+    join_pcsv_on=0;join_world_find=find;join_world_map=map;join_mapped=mapped;free(t.pcsv);
+    printf("join PCSV: a PlayerController's solver block captured as SOLVER (relative, RVA, heap mark), admitted into the joiner's controller (absolute, own heap value, nothing else), missing and shape PASS\n");
+}
 static void test_join_resv(void) {
     tresv_build();
     uint64_t seen[8]={0};assert(join_resv_walk(tresv_zone,tresv_visit,seen)==3 && seen[0]==3 && seen[1]==1 && seen[2]==2 && seen[3]==3);
@@ -2918,5 +2981,5 @@ static void test_join_omgs_write(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();
 }

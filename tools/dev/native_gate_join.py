@@ -177,7 +177,7 @@ SEC_STEER, SEC_STEERPT = 23, 24
 SEC_SOLVER, SEC_BULLET = 25, 26
 SEC_GRAV, SEC_GRAVC, SEC_GRAVS = 27, 28, 29
 SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ, SEC_JOBE, SEC_EVQT, SEC_GRAVD = 30, 31, 32, 33, 34, 35, 36, 37, 38
-SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK, SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT, SEC_AGTT, SEC_AGCB, SEC_PBNK, SEC_PEND, SEC_GRAVB, SEC_VIEWL, SEC_IKV, SEC_RCNT, SEC_ECOS, SEC_SHPW, SEC_TRDN, SEC_NPCA, SEC_JOBG, SEC_CODE, SEC_ENGR, SEC_SHGR, SEC_BNDS, SEC_OMGS, SEC_RESV = 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74
+SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK, SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT, SEC_AGTT, SEC_AGCB, SEC_PBNK, SEC_PEND, SEC_GRAVB, SEC_VIEWL, SEC_IKV, SEC_RCNT, SEC_ECOS, SEC_SHPW, SEC_TRDN, SEC_NPCA, SEC_JOBG, SEC_CODE, SEC_ENGR, SEC_SHGR, SEC_BNDS, SEC_OMGS, SEC_RESV, SEC_PCSV = 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75
 SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC: 'wakevec', SEC_MDHEAP: 'mdheap',
                  SEC_MODULES: 'modules', SEC_CTX: 'ctx', SEC_LUA: 'lua', SEC_HEALTH: 'health', SEC_POSE: 'pose',
                  SEC_SHIELD: 'shield', SEC_NAV: 'nav', SEC_ATTN: 'attn', SEC_KEYS: 'keys', SEC_PATH: 'path', SEC_REGION: 'region',
@@ -186,7 +186,7 @@ SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC
                  SEC_GRAV: 'grav', SEC_GRAVC: 'gravc', SEC_GRAVS: 'gravs', SEC_SPLM: 'splm', SEC_SPLME: 'splme',
                  SEC_SPLMSEG: 'splmseg', SEC_GRAVN: 'gravn', SEC_GRAVP: 'gravp',
                  SEC_GRAVQ: 'gravq', SEC_JOBE: 'jobe',
-                 SEC_EVQT: 'evqt', SEC_GRAVD: 'gravd', SEC_VIEWK: 'viewk', SEC_VIEWKC: 'viewkc', SEC_VIEWF: 'viewf', SEC_VIEWP: 'viewp', SEC_SHOOT: 'shoot', SEC_ATTK: 'attk', SEC_LIVEF: 'livef', SEC_SPEC: 'spec', SEC_NAVC: 'navc', SEC_JOBS: 'jobs', SEC_GONE: 'gone', SEC_BODY: 'body', SEC_BUPD: 'bupd', SEC_LDC: 'ldc', SEC_NAVT: 'navt', SEC_NMESH: 'nmesh', SEC_NOCT: 'noct', SEC_AGTT: 'agtt', SEC_AGCB: 'agcb', SEC_PBNK: 'pbnk', SEC_PEND: 'pend', SEC_GRAVB: 'gravb', SEC_VIEWL: 'viewl', SEC_IKV: 'ikv', SEC_RCNT: 'rcnt', SEC_ECOS: 'ecos', SEC_SHPW: 'shpw', SEC_TRDN: 'trdn', SEC_NPCA: 'npca', SEC_JOBG: 'jobg', SEC_CODE: 'code', SEC_ENGR: 'engr', SEC_SHGR: 'shgr', SEC_BNDS: 'bnds', SEC_OMGS: 'omgs', SEC_RESV: 'resv'}
+                 SEC_EVQT: 'evqt', SEC_GRAVD: 'gravd', SEC_VIEWK: 'viewk', SEC_VIEWKC: 'viewkc', SEC_VIEWF: 'viewf', SEC_VIEWP: 'viewp', SEC_SHOOT: 'shoot', SEC_ATTK: 'attk', SEC_LIVEF: 'livef', SEC_SPEC: 'spec', SEC_NAVC: 'navc', SEC_JOBS: 'jobs', SEC_GONE: 'gone', SEC_BODY: 'body', SEC_BUPD: 'bupd', SEC_LDC: 'ldc', SEC_NAVT: 'navt', SEC_NMESH: 'nmesh', SEC_NOCT: 'noct', SEC_AGTT: 'agtt', SEC_AGCB: 'agcb', SEC_PBNK: 'pbnk', SEC_PEND: 'pend', SEC_GRAVB: 'gravb', SEC_VIEWL: 'viewl', SEC_IKV: 'ikv', SEC_RCNT: 'rcnt', SEC_ECOS: 'ecos', SEC_SHPW: 'shpw', SEC_TRDN: 'trdn', SEC_NPCA: 'npca', SEC_JOBG: 'jobg', SEC_CODE: 'code', SEC_ENGR: 'engr', SEC_SHGR: 'shgr', SEC_BNDS: 'bnds', SEC_OMGS: 'omgs', SEC_RESV: 'resv', SEC_PCSV: 'pcsv'}
 WORLD_SECTIONS = (SEC_HEALTH, SEC_POSE)         # version 2 and later, always both
 WORLD3_SECTIONS = (SEC_SHIELD, SEC_NAV, SEC_ATTN, SEC_KEYS)   # version 3, always all four
 WORLD4_SECTIONS = (SEC_PATH, SEC_REGION)                      # version 4, always both
@@ -199,9 +199,9 @@ WORLD10_SECTIONS = (SEC_SOLVER, SEC_BULLET)                   # version 10, alwa
 WORLD11_SECTIONS = (SEC_GRAV, SEC_GRAVC, SEC_GRAVS)           # version 11, always all three
 WORLD12_SECTIONS = (SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ)   # version 12, always all six
 WORLD13_SECTIONS = (SEC_JOBE, SEC_EVQT, SEC_GRAVD, SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK,
-                    SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT, SEC_AGTT, SEC_AGCB, SEC_PBNK, SEC_PEND, SEC_GRAVB, SEC_VIEWL, SEC_IKV, SEC_RCNT, SEC_ECOS, SEC_SHPW, SEC_TRDN, SEC_NPCA, SEC_JOBG, SEC_CODE, SEC_ENGR, SEC_SHGR, SEC_BNDS, SEC_OMGS, SEC_RESV)   # version 13, all thirty-nine
+                    SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT, SEC_AGTT, SEC_AGCB, SEC_PBNK, SEC_PEND, SEC_GRAVB, SEC_VIEWL, SEC_IKV, SEC_RCNT, SEC_ECOS, SEC_SHPW, SEC_TRDN, SEC_NPCA, SEC_JOBG, SEC_CODE, SEC_ENGR, SEC_SHGR, SEC_BNDS, SEC_OMGS, SEC_RESV, SEC_PCSV)   # version 13, all forty
 LAST_SECTION = {1: SEC_LUA, 2: SEC_POSE, 3: SEC_KEYS, 4: SEC_REGION, 5: SEC_SPLINE, 6: SEC_AGENT, 7: SEC_ROUTE, 8: SEC_DOCK, 9: SEC_STEERPT,
-                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ, 13: SEC_RESV}
+                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ, 13: SEC_PCSV}
 TEXT_SECTIONS = (SEC_MODULES, SEC_LUA)          # newline-terminated printable lines; count = lines
 # Fixed record shapes (lockstep_join.h join_*_rec). GATE is one 256-byte record; MODULES and LUA (the probe's own state
 # providers, native_gate_join_core.lua) are text (count = lines).
@@ -315,6 +315,7 @@ assert steer_bytes(STEER_RANGES) == 569 and all(steer_bytes(r) <= STEER_STATE fo
 SOLVER_BYTES, SOLVER_POINTERS, SOLVER_ACTIVE, SOLVER_OVERFLOW = 0x18f60, 256, 1, 2
 SOLVER_IMAGE = 0x6fa9000                       # lockstep_join_world.h JOIN_FLIGHT_IMAGE
 SOLVER_HEAP = 0x8000000000000007              # version 12: a qword that was an address of the saver's memory (the joiner keeps its own)
+PCSV_VT = 0x2c39488                           # PCSV's kind: U::PlayerController (lockstep_pilot_slots.h PSLOT_VTABLE)
 SOLVER = struct.Struct('<QIIII%ds%ds' % (4*SOLVER_POINTERS, SOLVER_BYTES))
 BULLET_BYTES, BULLET_MOTION, BULLET_MACRO = 0x330, 0xb0, 64
 BULLET_NO_SHOOTER, BULLET_NO_MACRO, BULLET_NO_MOTION = 1, 2, 4
@@ -401,7 +402,7 @@ RECORDS = {SEC_IDS: IDS, SEC_CTX: CTX, SEC_WAKE: WAKE, SEC_WAKEVEC: WAKEVEC, SEC
            SEC_FLIGHT: FLIGHT, SEC_SPLINE: SPLINE, SEC_AGENT: AGENT, SEC_ROUTE: ROUTE, SEC_PARAM: PARAM, SEC_DOCK: DOCK,
            SEC_STEER: STEER, SEC_STEERPT: ROUTE, SEC_SOLVER: SOLVER, SEC_BULLET: BULLET, SEC_GRAV: GRAV, SEC_GRAVC: GRAVC,
            SEC_GRAVS: GRAVS, SEC_SPLM: SPLM, SEC_SPLME: SPLME, SEC_SPLMSEG: SPLINE, SEC_GRAVN: GRAVN,
-           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ, SEC_JOBE: JOBE, SEC_EVQT: EVQT, SEC_GRAVD: GRAVD, SEC_VIEWK: VIEWK, SEC_VIEWKC: VIEWKC, SEC_VIEWF: VIEWF, SEC_VIEWP: VIEWP, SEC_SHOOT: SHOOT, SEC_ATTK: ATTK, SEC_LIVEF: LIVEF, SEC_SPEC: SPEC, SEC_NAVC: NAVC, SEC_JOBS: JOBS, SEC_GONE: GONE, SEC_BODY: BODY, SEC_BUPD: BUPD, SEC_LDC: LDC, SEC_NAVT: NAVT, SEC_NMESH: NMESH, SEC_NOCT: NOCT, SEC_AGTT: AGTT, SEC_AGCB: AGCB, SEC_PBNK: PBNK, SEC_PEND: PEND, SEC_GRAVB: GRAVB, SEC_VIEWL: VIEWL, SEC_IKV: IKV, SEC_RCNT: RCNT, SEC_ECOS: ECOS, SEC_SHPW: SHPW, SEC_TRDN: TRDN, SEC_NPCA: NPCA, SEC_JOBG: JOBG, SEC_CODE: CODE, SEC_ENGR: ENGR, SEC_SHGR: SHGR, SEC_BNDS: BNDS, SEC_OMGS: OMGS, SEC_RESV: RESV}
+           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ, SEC_JOBE: JOBE, SEC_EVQT: EVQT, SEC_GRAVD: GRAVD, SEC_VIEWK: VIEWK, SEC_VIEWKC: VIEWKC, SEC_VIEWF: VIEWF, SEC_VIEWP: VIEWP, SEC_SHOOT: SHOOT, SEC_ATTK: ATTK, SEC_LIVEF: LIVEF, SEC_SPEC: SPEC, SEC_NAVC: NAVC, SEC_JOBS: JOBS, SEC_GONE: GONE, SEC_BODY: BODY, SEC_BUPD: BUPD, SEC_LDC: LDC, SEC_NAVT: NAVT, SEC_NMESH: NMESH, SEC_NOCT: NOCT, SEC_AGTT: AGTT, SEC_AGCB: AGCB, SEC_PBNK: PBNK, SEC_PEND: PEND, SEC_GRAVB: GRAVB, SEC_VIEWL: VIEWL, SEC_IKV: IKV, SEC_RCNT: RCNT, SEC_ECOS: ECOS, SEC_SHPW: SHPW, SEC_TRDN: TRDN, SEC_NPCA: NPCA, SEC_JOBG: JOBG, SEC_CODE: CODE, SEC_ENGR: ENGR, SEC_SHGR: SHGR, SEC_BNDS: BNDS, SEC_OMGS: OMGS, SEC_RESV: RESV, SEC_PCSV: SOLVER}
 GATE_FIELDS = ('tick', 'game', 'real', 'wire_version', 'clients', 'lookahead', 'tick_hz', 'slot', 'md_seq', 'rid_next',
                'created_generation', 'created_live', 'identities', 'ctx_count', 'wake_count', 'vec_index', 'vec0', 'vec1',
                'md_count', 'md_void', 'md_release', 'md_queued', 'unsupported', 'digest', 'portable', 'save_us',
@@ -881,7 +882,7 @@ def read_package(data):
     if hashlib.sha256(data[:-32]).digest() != data[-32:]:
         raise JoinError('package_sha')
     magic, version, count, tick, game, real, save_sha, save_bytes, slot, flags, reserved = HEADER.unpack_from(data)
-    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 74:
+    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 75:
         raise JoinError('package_magic')
     header = {'tick': tick, 'game': game, 'real': real, 'save_sha': save_sha.hex(), 'save_bytes': save_bytes, 'slot': slot,
               'flags': flags, 'sections': count, 'version': version}
@@ -1048,6 +1049,8 @@ def read_package(data):
     resv = sections.get('resv', [])
     if version >= 13 and any(not r[0] or not r[1] or (i and resv[i-1][:3] >= r[:3]) for i, r in enumerate(resv)):
         raise JoinError('resv_shape')
+    if version >= 13 and not solver_shape(sections.get('pcsv', [])):   # PCSV: SOLVER's record, by the ship's portable ID
+        raise JoinError('pcsv_shape')
     omgs = sections.get('omgs', [])
     if version >= 13 and any(not r[0] or r[1] > 1 or r[2] or (i and (omgs[i-1][0], omgs[i-1][1]) >= (r[0], r[1])) for i, r in enumerate(omgs)):
         raise JoinError('omgs_shape')
@@ -1216,7 +1219,7 @@ def world_differences(left, right, samples=8):
     out = {}
     for name in ('health', 'pose', 'shield', 'nav', 'attn', 'keys', 'path', 'region', 'flight', 'spline', 'agent', 'route', 'param',
                  'dock', 'steer', 'steerpt', 'solver', 'bullet', 'grav', 'gravc', 'gravs', 'splm', 'splme', 'splmseg', 'gravn',
-                 'gravp', 'gravq', 'jobe', 'evqt', 'gravd', 'viewk', 'viewkc', 'viewf', 'viewp', 'shoot', 'attk', 'livef', 'spec', 'navc', 'jobs', 'gone', 'body', 'bupd', 'ldc', 'navt', 'nmesh', 'noct', 'agtt', 'agcb', 'pbnk', 'pend', 'gravb', 'viewl', 'ikv', 'rcnt', 'ecos', 'shpw', 'trdn', 'npca', 'jobg', 'code', 'engr', 'shgr', 'bnds', 'omgs', 'resv'):
+                 'gravp', 'gravq', 'jobe', 'evqt', 'gravd', 'viewk', 'viewkc', 'viewf', 'viewp', 'shoot', 'attk', 'livef', 'spec', 'navc', 'jobs', 'gone', 'body', 'bupd', 'ldc', 'navt', 'nmesh', 'noct', 'agtt', 'agcb', 'pbnk', 'pend', 'gravb', 'viewl', 'ikv', 'rcnt', 'ecos', 'shpw', 'trdn', 'npca', 'jobg', 'code', 'engr', 'shgr', 'bnds', 'omgs', 'resv', 'pcsv'):
         if name not in left and name not in right:
             continue
         key = (lambda r: (r[1] << 64) | r[0]) if name == 'keys' else (lambda r: r[0])   # KEYS by (table, key)
@@ -1264,10 +1267,10 @@ def world_differences(left, right, samples=8):
         if name == 'steer':                    # the offsets that differ, over every differing model (per process: carry them as 0)
             offsets = collections.Counter(o for i in differ for o in steer_differences(x[i], y[i]))
             out[name]['offsets'] = [f'{o}:{n}' for o, n in offsets.most_common(24)]
-        elif name in ('solver', 'bullet'):     # the same; report 1.14: not in the digest, so a difference here does not refuse the join
-            differences = solver_differences if name == 'solver' else bullet_differences
+        elif name in ('solver', 'bullet', 'pcsv'):   # the same; report 1.14: not in the digest, so a difference here does not refuse the join
+            differences = bullet_differences if name == 'bullet' else solver_differences
             offsets = collections.Counter(o for i in differ for o in differences(x[i], y[i]))
-            out[name]['offsets'] = [f'{o}:{n}' for o, n in offsets.most_common(4096 if name == 'solver' else 96)]
+            out[name]['offsets'] = [f'{o}:{n}' for o, n in offsets.most_common(96 if name == 'bullet' else 4096)]
         elif name == 'grav':                   # report 1.15: the unit bytes apart, by offset (a pointer or a per-process field)
             offsets = collections.Counter(f'unit+{at:#x}' for i in differ for at in range(0, GRAV_BYTES, 8)
                                           if x[i][7][at:at+8] != y[i][7][at:at+8])

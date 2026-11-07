@@ -906,3 +906,36 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   equal, none missing or extra); every solver call 1049..1052 equal in its boxes and result; 742be's split gone (census
   1440..1740: 0). A second, later source remains: 1800: 1 (a small ship, saved 6d92f, motion), 2040: 39, 2100: 982;
   it is census-equal at 1740, so it starts in 1740..1800.
+
+48. THE SLOT SHIP'S OWN SOLVER (PCSV), AND A SCRIPT DECISION AT 1800 (w1z157..w1z162; 7 November, night)
+- w1z157/w1z158 (dump 1740..1800, the box origins and names): with RESV the first differing GetSafePos call is at 1757
+  (call 3 of 8, box 62 of 82): the main loop's box of the slot-2 ship 0x7a8fe (XVP-890, its controller a slot's vtable
+  copy), and its reservation in the temp zone 80001dc3049754eb. That ship has been a few ulps apart since T+1 (section
+  40); the census does not hash a PlayerController ship's motion, so it shows only when its box enters another ship's
+  get_safe_pos.
+- w1z159 (execution breakpoints at the slot update d95180 from 634): the controller's +0x2b0..+0x318 are two scratch
+  pools (0x70- and 0x50-byte elements, block lists +0x2d8 and +0x318, cleared by 0xe4d8b0 and 0x91ede0 at 0xd944a3 in
+  every update), not state; +0x320..+0x35f is the ship's transform from the timed walk 0x3db8a0 at the controller's last
+  update time +0xf0 (0xd9679d). The component view cache (+0xe0, its +0x40..+0x7f filled on the session and zero on the
+  joiner) differs between the session's own two clients too: a render cache, not an input.
+- w1z160 (write watches on the controller's +0x60, +0x68, +0x70, +0x80 from 634): both sides first write the same T
+  state (0xea547f from 0xd98241); then 0xd93440 (called at 0xd96694) writes the new transform at 0xd9455f..0xd94580 from
+  the one it integrated at +0x100: y 0x4703a18e against 0x4703a18f, row 0 y 1.49e-8 against 2.98e-8, row 1 x an ulp.
+- 0xd93440 steps the controller's own motion solver: 0x1197fe0(controller+0x3b0, +0x1a0, +0x1c0, +0x100, +0x160) at
+  0xd93554, the same 0x18f60-byte JPM block an Agent keeps at +0xf80 (report 1.14's SOLVER). Every PlayerController
+  constructor builds it in place (0xd47ac0 at 0xd8379e, 0xd83d1b, 0xd8401f; it ends at +0x19310). The save does not hold
+  it; PCTL carries about sixty of its words (+0x3b8..+0x710), which is why section 41's word masks changed nothing.
+- PCSV (f37cf926; package section 75, opt-in native_gate_join_pcsv): every PlayerController's solver at T in SOLVER's
+  record (pointers into itself and the image relative, the session's heap addresses marked and the joiner's own kept
+  there), written into the joiner's controller of the same ship in the world admission. Gate tests and the package tests
+  pass (golden 1f993578).
+- w1z161 (in window to 2160, PCSV on): pcsv=1:2:0:0:0 (two controllers written); slot 2's transform writes are bit-equal
+  at T+1 and at every tick 635..1232 (the watch span). The census is still w1z156's: 1440 and 1740 0, 1800 1, 2040 39,
+  2100 982.
+- w1z162 (PCSV, the box-naming set from 1750, x4mods-28's motion watch on 6d92f and 0x7a8fe): every GetSafePos call
+  1750..1760 is equal (the 1757 box is gone). 6d92f keeps its NavigationController on both sides (not a dock or undock
+  swap); every motion field is equal at 1740, and at 1800 it has a wholly different move target: the session's
+  (21486, -3315, 26968), the joiner's (-9644, 26764, -28119). So between 1760 and 1800 its AI took another order or
+  destination: a script decision, the family of x4mods-28's J1 finding (pilots the load leaves assigned but not
+  controlling walk to their post first, ENTER_ai_pilot with $NPC.controlled unset, 44 ticks late on the joiner).
+- Next: trace 6d92f's pilot's script 1740..1800 on both sides; A/B x4mods-28's controlled fix in window when it lands.

@@ -337,6 +337,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_resv then   -- a joiner takes the session's zones' space reservation boxes and expiries (RESV)
   assert(gate.join_resv and gate.join_resv(1)==1,'join resv refused')
  end
+ if cfg.native_gate_join_pcsv then   -- a joiner takes the session's PlayerControllers' own motion solvers (PCSV)
+  assert(gate.join_pcsv and gate.join_pcsv(1)==1,'join pcsv refused')
+ end
  if cfg.native_gate_join_shgr then   -- a joiner takes the session's containers' shield recharge groups (SHGR)
   assert(gate.join_shgr and gate.join_shgr(1)==1,'join shgr refused')
  end

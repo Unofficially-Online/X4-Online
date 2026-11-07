@@ -1215,16 +1215,10 @@ static int join_mapped_os(uint64_t q) {
     join_mapped_lo=(uintptr_t)m.BaseAddress;join_mapped_hi=join_mapped_lo+m.RegionSize;return 1;
 }
 static int (*join_mapped)(uint64_t)=join_mapped_os;
-/* The Agent's solver at T into SOLVER (none: nothing). A dormant one (a linear model's) only up to the cap. 0 with join_fault. */
-static int join_capture_solver(join_tables *t,const unsigned char *agent,uint64_t runtime,uint64_t portable,uint32_t kind,uint32_t *cap) {
-    unsigned char *solver=NULL;
-    if(!join_read(agent+JOIN_AGENT_SOLVER,&solver,8)) return join_note("solver,id=%llx,check=agent",(unsigned long long)portable);
-    if(!solver) return 1;
-    const int active=kind==JOIN_STEER_VTABLE || kind==JOIN_SPLINE_VTABLE;
-    if(!active && join_solver_dormant>=JOIN_SOLVER_DORMANT) {++join_cap.solver_over;return 1;}
-    join_solver_rec *r=&join_solver_scratch;memset(r,0,sizeof(*r));
-    r->portable=portable;r->kind=kind;r->flags=active?JOIN_SOLVER_ACTIVE:0u;
-    if(!join_read(solver,r->data,JOIN_SOLVER_BYTES)) return join_note("solver,id=%llx,check=data",(unsigned long long)portable);
+/* A solver block's bytes into r: its pointers into itself or the image made relative and listed, every address of this process's
+ * memory marked JOIN_SOLVER_HEAP (version 12); JOIN_SOLVER_OVERFLOW and the bytes raw when the list does not fit. 0: unreadable. */
+static int join_solver_fill(join_solver_rec *r,const unsigned char *solver) {
+    if(!join_read(solver,r->data,JOIN_SOLVER_BYTES)) return 0;
     const uint32_t count=join_relative(r->data,JOIN_SOLVER_BYTES,(uintptr_t)solver,r->pointer,JOIN_SOLVER_POINTERS);
     if(count>JOIN_SOLVER_POINTERS) {r->flags|=JOIN_SOLVER_OVERFLOW;memset(r->pointer,0,sizeof(r->pointer));join_read(solver,r->data,JOIN_SOLVER_BYTES);}
     else {
@@ -1234,9 +1228,47 @@ static int join_capture_solver(join_tables *t,const unsigned char *agent,uint64_
             if(JOIN_HEAPISH(q) && join_mapped(q)) {q=JOIN_SOLVER_HEAP;memcpy(r->data+at,&q,8);++join_cap.solver_mapped;}
         }
     }
+    return 1;
+}
+/* The Agent's solver at T into SOLVER (none: nothing). A dormant one (a linear model's) only up to the cap. 0 with join_fault. */
+static int join_capture_solver(join_tables *t,const unsigned char *agent,uint64_t runtime,uint64_t portable,uint32_t kind,uint32_t *cap) {
+    unsigned char *solver=NULL;
+    if(!join_read(agent+JOIN_AGENT_SOLVER,&solver,8)) return join_note("solver,id=%llx,check=agent",(unsigned long long)portable);
+    if(!solver) return 1;
+    const int active=kind==JOIN_STEER_VTABLE || kind==JOIN_SPLINE_VTABLE;
+    if(!active && join_solver_dormant>=JOIN_SOLVER_DORMANT) {++join_cap.solver_over;return 1;}
+    join_solver_rec *r=&join_solver_scratch;memset(r,0,sizeof(*r));
+    r->portable=portable;r->kind=kind;r->flags=active?JOIN_SOLVER_ACTIVE:0u;
+    if(!join_solver_fill(r,solver)) return join_note("solver,id=%llx,check=data",(unsigned long long)portable);
     if(!JOIN_PUSH(t->solver,t->nsolver,*cap,*r)) return join_note("memory");
     if(active) join_t1x_add(runtime,portable);else ++join_solver_dormant;
     return 1;
+}
+/* PCSV (v13, section 75; the admission opt-in, native_gate_join_pcsv) [w1z159/w1z160, in window: slot 2's ship 0x7a8fe comes out
+ * of step T+1 an ulp apart (position y 0x4703a18e against 0x4703a18f, rotation rows 1 .. 2 ulps) with every PCTL word and the
+ * ship's pose equal at T. Its update d95180 calls 0xd93440, which steps the controller's own motion solver (0x1197fe0 with
+ * controller+0x3b0 at 0xd93554: the same 0x18f60-byte JPM block an Agent keeps at +0xf80, built by 0xd47ac0 in each
+ * PlayerController constructor at 0xd8379e/0xd83d1b/0xd8401f) and copies the transform it integrated (+0x100) to +0x60 at
+ * 0xd9455f. The save does not hold that solver; PCTL carries only its first words.] Every PlayerController's (X4's or a slot's
+ * vtable copy) solver at T, as SOLVER keeps an Agent's: the bytes with pointers into itself and the image relative, the
+ * session's heap addresses marked (the joiner keeps its own there), kind PSLOT_VTABLE, by the ship's portable ID. With the opt-in
+ * the admission (boot phase 3) writes it into the joiner's controller of the same ship. Status pcsv=on:written:equal:missing:shape
+ * pcsv_cap=. */
+#define JOIN_PCSV_AT 0x3b0u
+static int join_pcsv_on;
+static uint32_t join_pcsv_capn;
+static uint64_t join_pcsv_written,join_pcsv_equal,join_pcsv_missing,join_pcsv_shape;
+static int join_capture_pcsv(join_tables *t,const unsigned char *controller,uint64_t portable) {
+    join_solver_rec *r=&join_solver_scratch;memset(r,0,sizeof(*r));
+    r->portable=portable;r->kind=PSLOT_VTABLE;
+    if(!join_solver_fill(r,controller+JOIN_PCSV_AT)) return join_note("pcsv,id=%llx,check=data",(unsigned long long)portable);
+    return JOIN_PUSH(t->pcsv,t->npcsv,join_pcsv_capn,*r)?1:join_note("memory");
+}
+/* The ship's PlayerController (X4's or a slot's vtable copy), NULL for any other controller. */
+static unsigned char *join_pcsv_controller(const unsigned char *object) {
+    unsigned char *controller=NULL;uintptr_t vt=0;
+    if(!object || !join_read(object+JOIN_CONTROLLER,&controller,8) || !controller || !join_read(controller,&vt,8)) return NULL;
+    return pslot_canonical_vtable(vt)==(uintptr_t)image+PSLOT_VTABLE?controller:NULL;
 }
 /* A bullet's macro name into out (0 filled); 0: not readable. */
 static int join_bullet_macro(const unsigned char *bullet,char *out) {
@@ -4645,7 +4677,7 @@ static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
     }
 }
 static int join_capture_world(join_tables *t,double now) {
-    join_agtt_capn=0;join_agcb_capn=0;join_pbnk_capn=0;
+    join_agtt_capn=0;join_agcb_capn=0;join_pbnk_capn=0;join_pcsv_capn=0;
     uint32_t ntcap=0,bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
     join_solver_dormant=0;join_cap.solver_over=0;join_cap.solver_mapped=0;join_cap.bullet_fault=0;join_cap.bullet_blocks=0;join_cap.bullet_live=0;join_cap.bullet_unkeyed=0;
@@ -4720,6 +4752,7 @@ static int join_capture_world(join_tables *t,double now) {
                     free(r);
                 }
             }
+            if(p.kind==PSLOT_VTABLE && !join_capture_pcsv(t,controller,id->portable)) return 0;   /* PCSV: its own motion solver */
             if(p.kind==PSLOT_VTABLE) {   /* AGCB: its Agent's command and probe block */
                 unsigned char *agent=NULL;join_agcb_rec *c=calloc(1,sizeof(*c));
                 if(!c) return join_note("memory");
@@ -4793,6 +4826,8 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_shgr(t);            /* version 13 */
     join_capture_bnds(t);            /* version 13 */
     join_capture_resv(t);            /* version 13: the zones' space reservations */
+    if(t->npcsv>1) qsort(t->pcsv,t->npcsv,sizeof(*t->pcsv),join_solver_cmp);   /* version 13: the PlayerControllers' solvers */
+    for(uint32_t i=1;i<t->npcsv;i++) if(t->pcsv[i].portable==t->pcsv[i-1].portable) return join_note("pcsv_duplicate,id=%llx",(unsigned long long)t->pcsv[i].portable);
     join_sort_omgs(t);               /* version 13: OMGS, taken in the FLIGHT walk */
     join_capture_viewk(t);           /* version 13 */
     join_capture_viewf(t);           /* version 13 */
@@ -5705,6 +5740,25 @@ typedef void *(*join_solver_prepare_fn)(void *agent);
 static void *join_solver_prepare_native(void *agent) {return ((void *(*)(void *,int,int,float))(void *)(image+JOIN_SOLVER_PREPARE))(agent,1,0,0.0f);}
 static join_solver_prepare_fn join_solver_prepare=join_solver_prepare_native;   /* tests replace it */
 static unsigned char join_solver_buffer[JOIN_SOLVER_BYTES];
+/* A record's bytes for the joiner's solver block at `solver` into join_solver_buffer. J1 j1-39: a session heap pointer copied raw
+ * (ship 176bf8's solver +0x81c8: a vector {begin, end, capacity} the JPM controllers allocate on demand) crashed the joiner at 1281
+ * when it pushed into it. Version 12: the session marked each qword that was an address of its memory (JOIN_SOLVER_HEAP); the
+ * joiner keeps its own value from its solver there (its own vector, its own unset bytes) and writes the rest. Before version 12:
+ * every qword that looks like a user address (8-aligned, 4 GiB .. 2^47) keeps the joiner's own. Counted (solver_heap). Then the
+ * listed pointers absolute for this block and this image. */
+static void join_solver_absolute(const join_solver_rec *r,unsigned char *solver,uint32_t version) {
+    static unsigned char own[JOIN_SOLVER_BYTES];
+    memcpy(join_solver_buffer,r->data,JOIN_SOLVER_BYTES);
+    if(join_read(solver,own,JOIN_SOLVER_BYTES))
+        for(unsigned at=0;at+8u<=JOIN_SOLVER_BYTES;at+=8) {
+            uint64_t q;memcpy(&q,join_solver_buffer+at,8);
+            if(version>=12?q==JOIN_SOLVER_HEAP:JOIN_HEAPISH(q)) {memcpy(join_solver_buffer+at,own+at,8);++join_rx.solver_heap;}
+        }
+    for(uint32_t k=0;k<r->pointers;k++) {
+        const uint32_t e=r->pointer[k],at=(e>>1)*8u;uint64_t q;
+        memcpy(&q,r->data+at,8);q+=(e&1u)?(uint64_t)(uintptr_t)image:(uint64_t)(uintptr_t)solver;memcpy(join_solver_buffer+at,&q,8);
+    }
+}
 /* SOLVER into the joiner's Agents (boot phase 3: no pass runs; a record that does not fit changes nothing): the Agent's solver, through
  * the engine when it has none yet (solver created), every byte the session's, its pointers made absolute for this object and this image
  * (solver fixed). Counted: missing (no object), shape (no navigation Agent, no solver after the preparation, a record the saver could not
@@ -5738,28 +5792,27 @@ static int join_admit_solver(const join_tables *s,const join_tables *mine) {
             join_world_row(&rows,"solver side=joiner id=%016llx why=kind kind=%x/%llx",(unsigned long long)r->portable,r->kind,
                            (unsigned long long)(vtable>=(uintptr_t)image?vtable-(uintptr_t)image:0));
         }
-        memcpy(join_solver_buffer,r->data,JOIN_SOLVER_BYTES);
-        {   /* J1 j1-39: a session heap pointer copied raw (ship 176bf8's solver +0x81c8: a vector {begin, end, capacity} the JPM
-             * controllers allocate on demand) crashed the joiner at 1281 when it pushed into it. Version 12: the session marked each
-             * qword that was an address of its memory (JOIN_SOLVER_HEAP); the joiner keeps its own value from its solver there (its own
-             * vector, its own unset bytes) and writes the rest. Before version 12: every qword that looks like a user address (8-aligned,
-             * 4 GiB .. 2^47) keeps the joiner's own. Counted (solver_heap). */
-            static unsigned char own[JOIN_SOLVER_BYTES];
-            if(join_read(solver,own,JOIN_SOLVER_BYTES))
-                for(unsigned at=0;at+8u<=JOIN_SOLVER_BYTES;at+=8) {
-                    uint64_t q;memcpy(&q,join_solver_buffer+at,8);
-                    if(s->version>=12?q==JOIN_SOLVER_HEAP:JOIN_HEAPISH(q)) {memcpy(join_solver_buffer+at,own+at,8);++join_rx.solver_heap;}
-                }
-        }
-        for(uint32_t k=0;k<r->pointers;k++) {
-            const uint32_t e=r->pointer[k],at=(e>>1)*8u;uint64_t q;
-            memcpy(&q,r->data+at,8);q+=(e&1u)?(uint64_t)(uintptr_t)image:(uint64_t)(uintptr_t)solver;memcpy(join_solver_buffer+at,&q,8);
-        }
+        join_solver_absolute(r,solver,s->version);
         if(join_poke((uintptr_t)solver,join_solver_buffer,JOIN_SOLVER_BYTES)) ++join_rx.solver_fixed;
         ++join_rx.solver_applied;
         if(r->flags&JOIN_SOLVER_ACTIVE) join_t1x_add(runtime,r->portable);
     }
     return 1;
+}
+/* PCSV into the joiner's PlayerControllers (boot phase 3, opt-in): each record's solver block into the controller of the same ship,
+ * as SOLVER writes an Agent's (join_solver_absolute). Counted: written / equal, missing (no object or no PlayerController: a slot
+ * the resume builds later), shape (an uncarried record or another kind). */
+static void join_admit_pcsv(const join_tables *s,const join_tables *mine) {
+    join_pcsv_written=join_pcsv_equal=join_pcsv_missing=join_pcsv_shape=0;
+    if(!join_pcsv_on) return;
+    for(uint32_t i=0;i<s->npcsv;i++) {
+        const join_solver_rec *r=&s->pcsv[i];
+        unsigned char *controller=join_pcsv_controller(join_object(join_runtime_of(mine,r->portable)));
+        if(!controller) {++join_pcsv_missing;continue;}
+        if((r->flags&JOIN_SOLVER_OVERFLOW) || r->kind!=PSLOT_VTABLE) {++join_pcsv_shape;continue;}
+        join_solver_absolute(r,controller+JOIN_PCSV_AT,s->version);
+        if(join_poke((uintptr_t)(controller+JOIN_PCSV_AT),join_solver_buffer,JOIN_SOLVER_BYTES)) ++join_pcsv_written; else ++join_pcsv_equal;
+    }
 }
 /* ---- the joiner, version 11 ----
  * GRAV, GRAVC and GRAVS into the joiner (boot phase 3, after gdl_admit set every active unit's times back to -1; the Gravidar thread
@@ -6418,6 +6471,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_shgr(s,&mine);    /* the containers' shield recharge groups (opt-in) */
     if(s->version>=13) join_admit_bnds(s,&mine);    /* the stations' bounding structs (opt-in) */
     if(s->version>=13) join_admit_resv(s,&mine);    /* the zones' space reservations' boxes and expiries (opt-in) */
+    if(s->version>=13) join_admit_pcsv(s,&mine);    /* the PlayerControllers' own motion solvers (opt-in) */
     if(s->version>=13) join_admit_omgs(s,&mine);    /* the steering ships' OmegaSwitched controllers (opt-in) */
     if(s->version>=13) join_admit_rcnt(s,&mine);    /* the created ships' and bays' reference counts (opt-in, experiment) */
     if(s->version>=12) join_admit_splm(s,&mine);    /* the spline models' routes */
