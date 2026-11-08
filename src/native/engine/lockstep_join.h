@@ -2428,7 +2428,7 @@ static void join_boundary(uint64_t completed) {
     /* version 13: the low-attention published poses back after the load's publication; j1-89: some land after T+2 (the attacks
      * of 638 and 644 between low-attention ships: the batched updates of low attention publish within the first frames) */
     if(join_rx.based && join_rx.t.version>=13 && completed>join_rx.t.gate.tick && completed<=join_rx.t.gate.tick+JOIN_GRAVP_RESTORE_TICKS)
-        join_gravp_restore();
+        {join_gravp_step=(uint32_t)(completed-join_rx.t.gate.tick);join_gravp_restore();join_gravp_step=0;}
     if(join_rx.based && join_rx.t.version>=13 && (completed==join_rx.t.gate.tick+1 || completed==join_rx.t.gate.tick+2))
         join_shoot_late_probe(completed==join_rx.t.gate.tick+1?0u:1u);   /* version 13: SHOOT's controllers missing at the admission */
     if(join_cap.state!=JOIN_ARMED || completed!=join_cap.tick) {

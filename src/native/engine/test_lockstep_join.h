@@ -3137,6 +3137,13 @@ static void test_join_gravp_settled(void) {
     assert(join_gravp_nset==2 && join_gravp_set[0].runtime==0x102 && join_gravp_set[1].runtime==0x102 && !join_gravp_settled_extra);
     join_gravp_settled_on=1;join_gravp_settled_build(&s,&mine);
     assert(join_gravp_nset==6 && join_gravp_settled_extra==4);
+    {unsigned extra=0;for(uint32_t i=0;i<join_gravp_nset;i++) {extra+=join_gravp_set[i].extra!=0;assert(!join_gravp_set[i].extra==(join_gravp_set[i].runtime==0x102));}
+     assert(extra==4);}
+    /* the extra entries take the restore at the first boundary only: later ones leave them (counted neither checked nor restored) */
+    {join_find_fn find=join_world_find;void *map=join_world_map;join_world_find=tgravp_find;join_world_map=tgravp_obj;
+     join_gravp_restored=join_gravp_checked=join_gravp_gone=0;join_gravp_step=2;join_gravp_restore();
+     assert(!join_gravp_checked && !join_gravp_restored && join_gravp_gone==2);   /* only the two low-attention entries looked at (not found here) */
+     join_gravp_step=0;join_world_find=find;join_world_map=map;}
     unsigned n10=0,n12=0,n14=0;
     for(uint32_t i=0;i<join_gravp_nset;i++) {
         const uint64_t r=join_gravp_set[i].runtime;n10+=r==0x100;n12+=r==0x102;n14+=r==0x104;

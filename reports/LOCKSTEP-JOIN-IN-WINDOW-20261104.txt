@@ -1252,3 +1252,7 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   gravp_settled): 900 25, 1740 1,512, as w1z216: gravp_settled breaks the in-window join at T=633 (x4mods-28's reading: it
   restores T's pose over the first publication through T+10 for settled objects at attention 3..5, and near a fight the engine
   republishes some of them itself in that time). LSTN joins JOIN_DEFAULT_ON; gravp_settled stays opt-in (x4mods-28).
+- w1z220 (build-gs2 = 60407d9b with x4mods-28's acd85a21: GRAVP settled restores the attention 3..5 entries at T+1 only; T=633
+  to 1800, the defaults + gravp_settled): 900 0, 1740 0 (gravp_settled=1:560); j1-404 (the J1 late join, same build) as j1-401:
+  3060 0, 3120 0, 3300 6, 4200 2. gravp_settled joins JOIN_DEFAULT_ON: all six late-join fixes (UNDK, SRCS, FOBJ, LSTN,
+  gravp_settled with WARP/attn_set/ARES/PORD before them) are defaults.

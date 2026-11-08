@@ -1568,7 +1568,7 @@ static uint64_t join_runtime_of(const join_tables *mine,uint64_t portable);   /*
  * the first publication after the admission that differs from the session's pose is the load's (own0, mended); any later one
  * that is neither the session's pose nor own0 is the engine's own, and the entry drops for good (status gravp_moved_pose;
  * gravp_first= the first publications' distances from the session's pose: < 1 m, < 100 m, < 1 km, < 10 km, more). */
-typedef struct {uint64_t runtime;uint32_t slot,dropped;const unsigned char *pose;unsigned char *parent;unsigned char own0[0x40];int seen;} join_gravp_settled;
+typedef struct {uint64_t runtime;uint32_t slot,dropped;const unsigned char *pose;unsigned char *parent;unsigned char own0[0x40];int seen,extra;} join_gravp_settled;
 static join_gravp_settled *join_gravp_set;static uint32_t join_gravp_nset,join_gravp_setcap;
 static uint64_t join_gravp_restored,join_gravp_checked,join_gravp_gone,join_gravp_moved,join_gravp_moved_pose;
 static uint64_t join_gravp_first[5];
@@ -1584,8 +1584,15 @@ static float join_gravp_dist(const unsigned char *own,const unsigned char *want)
  * 0x74ef1) where the session's kept them, the joiner alone ran the fight scripts' event_gravidar_has_scanned handlers, and the
  * zone 0x561 escorts parted at 3092. With the option, a GRAVP object whose two views the session had equal, and every VIEWP object
  * (settled by definition), is restored below attention JOIN_GRAVP_SETTLED_KEEP too; an object in flight (its views apart) stays
- * under JOIN_VIEWF_KEEP. Attention 6 and more stay with the joiner (j1-88: published every frame). */
+ * under JOIN_VIEWF_KEEP. Attention 6 and more stay with the joiner (j1-88: published every frame).
+ * x4mods-67's in-window regression at T=633 (w1z215/w1z216/w1z219: 25 differing at 900, a Xenon and Split fight at a cluster_408
+ * gatezone; w1z218, the same set without it, 0): an object of attention 3..5 is one the engine republishes on its own soon after
+ * the join where a fight raises it, and the restore through T+10 took that republication for the load's and put T's pose back.
+ * So these entries (extra) are restored at the boundary after T+1 only, after the admission's write; the low-attention ones keep
+ * the whole window (JOIN_GRAVP_SETTLED_STEPS; the caller sets join_gravp_step to the boundary's step after T). */
 #define JOIN_GRAVP_SETTLED_KEEP 6u
+#define JOIN_GRAVP_SETTLED_STEPS 1u
+static uint32_t join_gravp_step;   /* the restore's boundary: steps after T (0: tests, every entry) */
 static int join_gravp_settled_on;
 static int join_gravp_attention_below(const join_tables *s,uint64_t portable,uint32_t keep) {
     uint32_t lo=0,hi=s->nviewf;
@@ -1612,7 +1619,7 @@ static void join_gravp_settled_build(const join_tables *s,const join_tables *min
         const int low=join_gravp_low_attention(s,a->portable);
         if(!low && !(join_gravp_settled_on && join_gravp_views_equal(s,i) && join_gravp_attention_below(s,a->portable,JOIN_GRAVP_SETTLED_KEEP))) continue;
         const uint64_t runtime=join_runtime_of(mine,a->portable);
-        join_gravp_settled e={runtime,cur^a->rel,0u,a->pose,NULL,{0},0};
+        join_gravp_settled e={runtime,cur^a->rel,0u,a->pose,NULL,{0},0,!low};
         if(runtime && !JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) return;
         if(runtime && !low) ++join_gravp_settled_extra;
     }
@@ -1622,7 +1629,7 @@ static void join_gravp_settled_build(const join_tables *s,const join_tables *min
         const uint64_t runtime=join_runtime_of(mine,s->viewp[i].portable);
         if(runtime && !low) join_gravp_settled_extra+=2u;
         for(uint32_t v=0;v<2u && runtime;v++) {
-            join_gravp_settled e={runtime,v,0u,s->viewp[i].pose,NULL,{0},0};
+            join_gravp_settled e={runtime,v,0u,s->viewp[i].pose,NULL,{0},0,!low};
             if(!JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) return;
         }
     }
@@ -1656,7 +1663,7 @@ static void join_gravp_settled_parents(void) {
 static void join_gravp_restore(void) {
     if(join_view_skip&4u) return;
     for(uint32_t i=0;i<join_gravp_nset;i++) {
-        if(join_gravp_set[i].dropped) continue;
+        if(join_gravp_set[i].dropped || (join_gravp_set[i].extra && join_gravp_step>JOIN_GRAVP_SETTLED_STEPS)) continue;
         unsigned char *object=join_object(join_gravp_set[i].runtime);const unsigned char *want=join_gravp_set[i].pose;
         if(!object) {++join_gravp_gone;continue;}
         unsigned char *parent=NULL;

@@ -287,7 +287,7 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_hold_boot_events', 'native_gate_join_resv', 'native_gate_join_pcsv',
                    'native_gate_join_gravn_extra', 'native_gate_join_conn', 'native_gate_join_porders', 'native_gate_join_attn_set',
                    'native_gate_join_ares', 'native_gate_join_warp', 'native_gate_join_undk', 'native_gate_join_srcs',
-                   'native_gate_join_fobj', 'native_gate_join_lstn')
+                   'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled')
 
 
 def default_sets(sets):

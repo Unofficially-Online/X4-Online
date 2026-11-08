@@ -2665,6 +2665,18 @@ proposed and rejected.
   parent, poses and attention 2 equal on both sides). Open: the fields' +0x90 lists (the recyclables hold no direct Region pointer,
   JOIN_RECYF 5f9014a6; the joiner's JOIN_WATCH does not resolve region portables). j1-395 failed at the handoff
   (session_done:state_queued): with a 159 MB package a session needs TICKS of T+60 or more.
+- The cause and FOBJ [F: j1-398 .. j1-401]. JOIN_RGNOBJ with the field lists (95d2ef5f; the joiner's watch now takes the session's
+  runtime ID for a portable its identity table leaves out, the load keeping saved IDs): region 0x6b3's fields 36, 42, 43 and 49
+  hold one spawned object each on the session (f42 and f49 zone 0x21fd6's two recyclables), every list is empty on the joiner at
+  T, T+1, T+2. A region field (U::Region +0x288) keeps the objects it spawned in a std::list at +0x90 (sentinel; node +0 next,
+  +8 prev, +0x10 the object; size +0x98; the field constructor 0xedac40 makes the sentinel through SMem::Allocate 0x14b7140); the
+  spawn is the field's slot 21; a load leaves the lists empty. FOBJ (1202b2f7, section 82, opt-in native_gate_join_fobj, golden
+  bd920263): the saver records every list (region portable, field index, place, object portable), the joiner appends the session's
+  objects to an empty list and counts any other. j1-400: the joiner lane b5 failed to start (an Access-denied rename in its
+  game-view, transient). j1-401 (defaults + gravp_settled + LSTN + SRCS + FOBJ): fobj=1:6:6:0:0:0:6, the code counter equal at
+  3317, census T+1 0, 3060 0, 3120 0, 3300 6, 3360 3, 3600 1, 4200 2 (before: 122, 2,430, 6,924), the rest large ships that part
+  and meet again (ShipLarge 0x9d2ec, XL 0x78889; x4mods-67's zone-change rotation family). SRCS (x4mods-67, section 81, j1-398):
+  36 contexts moved, lstn partial 36 -> 7, the census unchanged. Next: the T=633 regression with the opt-ins, then the defaults.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

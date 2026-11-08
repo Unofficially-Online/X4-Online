@@ -655,7 +655,8 @@ class Overlays(unittest.TestCase):
                 self.assertIn(name, overlays.JOIN_DEFAULT_ON)
             for name in ('native_gate_join_pcsv', 'native_gate_join_gravn_extra', 'native_gate_join_conn'):   # w1z171, j1-353
                 self.assertIn(name, overlays.JOIN_DEFAULT_ON)
-            for name in ('native_gate_join_undk', 'native_gate_join_srcs', 'native_gate_join_fobj', 'native_gate_join_lstn'):   # j1-401/j1-402, w1z209/w1z217/w1z218
+            for name in ('native_gate_join_undk', 'native_gate_join_srcs', 'native_gate_join_fobj', 'native_gate_join_lstn',
+                         'native_gate_join_gravp_settled'):   # j1-401/j1-402/j1-404, w1z209/w1z217/w1z218/w1z220
                 self.assertIn(name, overlays.JOIN_DEFAULT_ON)
             self.assertEqual(overlays.default_sets(['native_gate_join_rcnt = false']),
                              ['native_gate_join_rcnt = false']+[f'{k}=true' for k in overlays.JOIN_DEFAULT_ON[1:]])
