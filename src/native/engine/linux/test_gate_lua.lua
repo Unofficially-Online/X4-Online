@@ -11,7 +11,7 @@ local core={'sha256','start','boot','load_requested','report','poll','stop','fra
  'economy_load_rng','economy_load_rng_status','economy_load_rng_row',
  'navmesh_post_observe','navmesh_post_observe_status','navmesh_post_observe_row',
  'relay_host','lookahead','lookahead_status','peer_links','peer_status','wire_crypto','wire_crypto_status','platform','verify_stage',
- 'world_watch','world_capture','world_capture_nav_v2','world_capture_rolling','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status',
+ 'world_watch','world_capture','world_capture_nav_v2','world_capture_rolling','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status','flight_faults','flight','avoidance','actor','snapshot_fixture','snapshot_actor','snapshot_enroll','snapshot_status',
  'path_determinism','path_determinism_status','path_budget','path_budget_status','region_rng','region_rng_status','region_rng_row',
  'ai_wait_rng','ai_wait_rng_status','ai_wait_rng_row','read_cost',
  'md_resume_rng','md_resume_rng_status','md_resume_rng_row','boot_hold','boot_hold_status',
@@ -30,7 +30,7 @@ local count=0
 for _,name in ipairs(core) do assert(type(gate[name])=='function','missing gate.'..name) end
 for _ in pairs(gate) do count=count+1 end
 assert(count==#core,'unexpected gate methods: '..count)
-for _,name in ipairs({'actor','world_trace','thread_rng','boot_rng_anchor','pilot_inputs','snapshot_fixture'}) do
+for _,name in ipairs({'world_trace','thread_rng','boot_rng_anchor','pilot_inputs','body'}) do
  assert(gate[name]==nil,'unported method present: '..name)
 end
 assert(gate.platform()=='linux')
@@ -57,13 +57,13 @@ assert(gate.boot(1,47000,token,5000,digest,0)==11 and gate.verify_stage()=='file
 assert(gate.start(1,47000,token,5000,digest,0)==11)
 assert(gate.boot(1,47000,'short',5000,digest,0)==10)
 assert(gate.boot(1,80,token,5000,digest,0)==10)
-assert(gate.boot(1,47000,token,5000,digest,4)==105,'unported option bits refuse before anything else')
+assert(gate.boot(1,47000,token,5000,digest,32)==105,'unported option bits refuse before anything else') -- 32: ai_diag
 assert(gate.boot(1,47000,token,5000,digest,0.5)==10)
 -- World identities (2^46) are a ported option: refused only at the file pin here.
 assert(gate.boot(1,47000,token,5000,digest,70368744177664)==11)
 assert(gate.boot(1,47000,token,5000,digest,70368744177664+2)==11) -- with the frame seed
 assert(gate.boot(1,47000,token,5000,digest,70368744177664+3)==11) -- with serial pathing
-assert(gate.boot(1,47000,token,5000,digest,70368744177664+4)==105)
+assert(gate.boot(1,47000,token,5000,digest,70368744177664+32)==105) -- 32: ai_diag (4, flight_diag, is ported)
 local summary,why=gate.world_capture(1)
 assert(summary==nil and why:match('stage=') and gate.world_page(0)==nil and gate.world_banks()==nil)
 local rolling, rolling_why=gate.world_capture_rolling(1,1)

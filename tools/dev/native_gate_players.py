@@ -763,7 +763,10 @@ def build_overlay(args):
         raise ValueError('base overlay already has a player orders block; this builder writes its own (--orders)')
     world = getattr(args, 'session_data', None)
     base_sha = sandbox.parse_config(stripped).get('native_gate_snapshot_sha', '').strip('"' + "'")
-    if world and base_sha != world['snapshot']['sha256']:
+    joiner_base = 'joiner = {package' in (sandbox.parse_config(stripped).get('native_gate_join') or '')
+    if getattr(args, 'session_joiner', False) and not (world and joiner_base):
+        raise ValueError('--session-joiner needs --session and a joiner base overlay (build_native_gate_overlay.py --join-package)')
+    if world and base_sha != world['snapshot']['sha256'] and not (args.session_joiner and joiner_base):
         raise ValueError(f"--session: the base overlay boots snapshot {base_sha or 'none'}, the session save is {world['snapshot']['sha256']} "
                          '(rebase it: native_gate_session_start.py rebase)')
     if session:
@@ -903,6 +906,9 @@ def build_parser():
     common.add_argument('--source', choices=SOURCES, default='wire')
     common.add_argument('--ships', type=ids, help='comma list of saved slot ship IDs (default: player scout, fixtures 3..5)')
     common.add_argument('--fixture', type=ids, help="the snapshot's twelve fixture actor IDs in order (default: snapshot 005's)")
+    common.add_argument('--session-joiner', action='store_true',
+                        help="with --session: the base boots a join save of that session (a hot joiner's overlay, "
+                             'build_native_gate_overlay.py --join-package), not the session save')
     common.add_argument('--session', help='session.json of native_gate_session_start.py register: the session save (any usable stock start) '
                                            'replaces snapshot 005; its per-player starts apply at the setup tick')
     common.add_argument('--create', type=create_spec, action='append', help='SLOT=MACRO@X,Y,Z[/YAW][#SEED], sector-local metres (fixture area y=100000); needs --source none')

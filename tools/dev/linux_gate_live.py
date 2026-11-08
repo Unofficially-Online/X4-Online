@@ -252,9 +252,15 @@ def bundle(args):
     subprocess.run([sys.executable, str(repo / 'tools/dev/build_native_gate_linux.py'), '--zig', str(args.zig), '--out', str(work)], check=True)
     overlay = work / 'overlay'
     command = [sys.executable, str(repo / 'tools/dev/build_native_gate_overlay.py'), '--gate-so', str(work / 'x4lan_gate.so'),
-               '--snapshot', str(args.snapshot), '--mode', 'clock', '--world-identities',
+               '--snapshot', str(args.snapshot), '--mode', 'battle' if args.battle else 'clock', '--world-identities',
                '--world-hash-stride', str(args.stride), '--world-hash-schema', 'WORLD_IMPORTED_2', '--out', str(overlay)]
     command += ['--world-log-mode', args.world_log_mode]
+    if args.battle:
+        command.append('--snapshot-prebind')
+    for name in ('actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state', 'flight_rng', 'flight_full',
+                 'avoidance_refresh', 'steering_init'):
+        if getattr(args, name):
+            command.append('--' + name.replace('_', '-'))
     if args.world_rolling_slices is not None:
         command += ['--world-rolling-slices', str(args.world_rolling_slices)]
     if args.economy_watch is not None:
@@ -1303,6 +1309,17 @@ def main(argv=None):
                    "'canonical', as the Windows default stack hashes them)")
     b.add_argument('--mining-camera', action='store_true', help="the region object search's camera test from the player's ship "
                    "(native_gate_mining_camera = 'view')")
+    b.add_argument('--battle', action='store_true', help="the battle fixture: native_gate_hash = 'battle' with the snapshot's "
+                   'twelve (--mode battle --snapshot-prebind; needs --serial-pathing, --path-determinism 1 or 3 and world identities)')
+    for name, why in (('actor-diag', "the fixture actors' raw native state row (gate.actor)"),
+                      ('strict-state', 'the raw hull, shield and navigation banks in the digest (needs --actor-diag)'),
+                      ('shield-refresh', 'GetShieldPercent at the game time before the shield is read (needs --strict-state)'),
+                      ('order-state', "the fixture's order queues in the digest"), ('fleet-state', 'their fleet membership in the digest'),
+                      ('flight-rng', "each fixture steering update on its keyed word (gate_flight.h)"),
+                      ('flight-full', 'full steering updates for the fixture (no cheap updates)'),
+                      ('avoidance-refresh', "the fixture's avoidance geometry rebuilt every steering update (needs --flight-full)"),
+                      ('steering-init', "the steering constructor's two angles keyed per fixture model (needs --flight-rng)")):
+        b.add_argument('--' + name, action='store_true', help=why)
     b.add_argument('--actor-rng-rows', action='store_true', help='one ACTOR_RNG_ROW per keyed scope that drew (diagnostic)')
     b.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the mass traffic pass joined at the gate tick (native_gate_mass_traffic)')
     b.add_argument('--region-pass', choices=('sync', 'observe'), help='the region manager pass joined at the gate tick (native_gate_region_pass)')

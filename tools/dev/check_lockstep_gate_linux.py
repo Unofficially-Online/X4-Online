@@ -562,7 +562,7 @@ def engine_scenario(build, name, peers, clients, lookahead, ticks, extras, game0
     if extras.get('native_gate_find_order'):
         seen = []
         for text in outputs:
-            engine = re.search(r'ENGINE_FIND_ORDER site_restored=(\d) calls=(\d+) hash=([0-9a-f]+)', text)
+            engine = re.search(r'ENGINE_FIND_ORDER site_restored=(\d) calls=(\d+) hash=([0-9a-f]+) space_restored=1', text)
             stop = re.search(r'FIND_ORDER_STOP armed=1 installed=0 active=0 mode=2 restored=1 calls=(\d+) applied=(\d+) observed=0 passed=0 threads=0 empty=0 candidates=(\d+) duplicates=(\d+) unmapped=(\d+) reordered=(\d+) collisions=0 oversize=0 unreadable=0 foreign=0 .*? failures=0', text)
             row = re.search(r'FIND_ORDER_ROW index=\d+ tick=\d+ scope=\S+ ord=\d+ mode=2 raw=5 dups=1 unmapped=1 n=4 moved=\d+ set=(\S+) native=\S+ name=\S+ ids=([0-9a-f,]+)', text)
             if not engine or not stop or not row or engine[1] != '1' or int(engine[2]) != 80 or int(stop[1]) != 80 or int(stop[4]) != 80 or int(stop[5]) != 80:

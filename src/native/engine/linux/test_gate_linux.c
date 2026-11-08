@@ -264,7 +264,7 @@ static void boot_to_admission(fake_relay *r,double options) {
     char perms[5];perms_of(thunk,perms);assert(!strcmp(perms,"r-xp"));
     assert(!memcmp(window,LX(LX_CALL_WINDOW),7) && !memcmp(window+11,LX(LX_CALL_WINDOW)+11,5)); /* only the rel32 changed */
     assert(boot_gate(1,(unsigned)r->port,r->token,5000,DIGEST0,options)==0); /* the reloaded UI repeats it */
-    assert(boot_gate(1,(unsigned)r->port,r->token,5000,DIGEST0,options+4)==LX_STOP_UNPORTED_OPTION);
+    assert(boot_gate(1,(unsigned)r->port,r->token,5000,DIGEST0,options+32)==LX_STOP_UNPORTED_OPTION); /* 32: ai_diag */
     call_frame(0);assert(boot_phase==0 && r->packets==0); /* menu: passes through */
     assert(load_requested() && boot_phase==1);
     memset(fake_table+LX_VBI_LOADING,1,1);call_frame(1);call_frame(1);assert(boot_phase==2);
@@ -276,7 +276,7 @@ static void test_frame_gate(void) {
     unsigned char original[16];memcpy(original,LX(LX_CALL_WINDOW),16);
     /* Refusals leave the image untouched. */
     assert(boot_gate(1,(unsigned)r.port,"short",5000,DIGEST0,0)==10 && !used);
-    assert(boot_gate(1,(unsigned)r.port,r.token,5000,DIGEST0,4)==LX_STOP_UNPORTED_OPTION && !used);
+    assert(boot_gate(1,(unsigned)r.port,r.token,5000,DIGEST0,32)==LX_STOP_UNPORTED_OPTION && !used); /* 32: ai_diag (4, flight_diag, is ported) */
     *LX(LX_MOVIE_FLAG_VA)=1;assert(boot_gate(1,(unsigned)r.port,r.token,5000,DIGEST0,0)==27 && !used);*LX(LX_MOVIE_FLAG_VA)=0;
     assert(start_gate(1,(unsigned)r.port,r.token,5000,DIGEST0,0)==12 && !used); /* start needs an external dt owner */
     assert(!memcmp(original,LX(LX_CALL_WINDOW),16) && dt_state()==DT_ORIGINAL);
@@ -375,6 +375,8 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_mining_camera.h"
 #include "test_gate_runtime_ids_local.h"
 #include "test_gate_shield_canonical.h"
+#include "test_gate_flight.h"
+#include "test_gate_battle.h"
 /* The real entry bytes: the hook patch and its exact restoration, without running them. */
 static void test_world_install_elf(void) {
     reset_session();wt_reset_identities();
@@ -427,6 +429,8 @@ int main(int argc,char **argv) {
     test_mining_camera_linux();
     test_runtime_ids_local_linux();
     test_shield_canonical_linux();
+    test_flight_linux();
+    test_battle_linux();
     test_world_hook(); /* last on the synthetic image: it replaces the insert's bytes */
     if(argc>1) {
         /* The real executable's bytes: file pin, every site, the call, the patches. */
@@ -460,6 +464,8 @@ int main(int argc,char **argv) {
         test_mining_camera_elf();
         test_runtime_ids_local_elf();
         test_shield_canonical_elf();
+        test_flight_elf();
+        test_battle_elf();
         printf("ELF image PASS (%s)\n",argv[1]);
     } else printf("ELF image SKIPPED (no executable path)\n");
     printf("ALL PASS\n");

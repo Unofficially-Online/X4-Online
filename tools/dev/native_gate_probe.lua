@@ -2803,6 +2803,11 @@ local function pilot_frame(s,tick)
   local callers=gate.pilot_stock_callers()
   if callers then log('PILOT_STOCK_CALLERS tick='..tick..' '..callers) end
  end
+ -- Personal missions C1 (iii) (diagnostic, native_gate_pilot_slots_registry): does the component registry answer each slot
+ -- player's runtime ID with that player (MD resolves "the player" through it)? Every 600 ticks: k:id:found (1 yes).
+ if cfg.native_gate_pilot_slots_registry and tick%600==0 and gate.pilot_slots_registry then
+  log('PILOT_SLOTS_REGISTRY tick='..tick..' '..tostring(gate.pilot_slots_registry()))
+ end
  if pilot_view.stock and gate.pilot_present_diff then
   local diff=gate.pilot_present_diff()
   if diff then log('PILOT_PRESENT_DIFF tick='..tick..' '..diff) end

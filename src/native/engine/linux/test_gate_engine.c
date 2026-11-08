@@ -419,6 +419,11 @@ static void find_standin(void) {
     if(mprotect(page,8192,PROT_READ|PROT_EXEC)) {perror("mprotect");exit(2);}
     const uint64_t runtimes[4]={7003,7001,9999,7002};
     for(unsigned i=0;i<4;i++) memcpy(find_objects[i]+8,&runtimes[i],8);
+    /* The range finds' Execute in its vtable slot and its two store entries' native bytes: the second site installs
+     * (nothing runs through it here; the unit tests drive its stub). */
+    static const unsigned char entry[12]={0x66,0x0f,0xef,0xc0,0x0f,0x29,0x84,0x24,0x60,0x01,0x00,0x00};
+    unsigned char *execute=AT(LX_FIND_SPACE_EXECUTE_VA);memcpy(AT(LX_FIND_SPACE_VTABLE+0x20u),&execute,8);
+    memcpy(AT(LX_FIND_SPACE_SITE_A_VA),entry,12);memcpy(AT(LX_FIND_SPACE_SITE_B_VA),entry,12);
 }
 static void find_frame(uint64_t tick) {
     if(tick<1 || tick>80 || tick==find_last_tick) return;
@@ -1444,7 +1449,9 @@ int main(int argc,char **argv) {
     }
     if(find_on) {
         int32_t rel;memcpy(&rel,AT(LX_FIND_ORDER_SITE_VA)+1,4);
-        printf("ENGINE_FIND_ORDER site_restored=%d calls=%llu hash=%016llx\n",AT(LX_FIND_ORDER_SITE_VA)+5+rel==AT(LX_FIND_ORDER_ASSIGN_VA),(unsigned long long)find_calls,(unsigned long long)find_hash);
+        static const unsigned char entry[12]={0x66,0x0f,0xef,0xc0,0x0f,0x29,0x84,0x24,0x60,0x01,0x00,0x00};
+        const int space_restored=!memcmp(AT(LX_FIND_SPACE_SITE_A_VA),entry,12) && !memcmp(AT(LX_FIND_SPACE_SITE_B_VA),entry,12);
+        printf("ENGINE_FIND_ORDER site_restored=%d calls=%llu hash=%016llx space_restored=%d\n",AT(LX_FIND_ORDER_SITE_VA)+5+rel==AT(LX_FIND_ORDER_ASSIGN_VA),(unsigned long long)find_calls,(unsigned long long)find_hash,space_restored);
     }
     if(script_on) {
         uint64_t exec_head,range_head;void *ai,*stack,*cue;

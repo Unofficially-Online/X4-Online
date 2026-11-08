@@ -94,6 +94,8 @@ static int tsnap_after_join(unsigned char *manager);
 /* The tempzone order (gate_tempzone_order.h): 0 stops the gate with reason 144. */
 static int lxtz_before_release(void);
 static int lxtz_after_join(void);
+/* The battle fixture's preparation at tick 1 (gate_battle.h): 0 stops the gate with reason 74, as Windows' path_release. */
+static int lxb_prepare(void);
 static void lxp_path_release(void *semaphore,unsigned count) {
     const lxp_release_fn release=(lxp_release_fn)(void*)LX(LX_SEM_RELEASE_VA);
     if(boot_mode && boot_phase<3) {release(semaphore,count);return;}
@@ -103,6 +105,7 @@ static void lxp_path_release(void *semaphore,unsigned count) {
     if(manager) memcpy(&state,manager+LXP_STATE,4);
     int valid=stats.active && GetCurrentThreadId()==ui_thread && manager && count==1 &&
         semaphore==(void*)(manager+LXP_RELEASE_SEMAPHORE) && state==2 && manager[LXP_JOINED]==0;
+    if(valid && !lxb_prepare()) {__atomic_add_fetch(&lxb_failures,1,__ATOMIC_SEQ_CST);finish(74);release(semaphore,count);return;}
     if(valid && !lxg_before_release()) {release(semaphore,count);return;}
     if(valid && (path_det_mask&PATH_DET_BUDGET_BIT) && !path_det_budget_frame(manager)) {
         InterlockedIncrement64(&path_det_failures);finish(79);

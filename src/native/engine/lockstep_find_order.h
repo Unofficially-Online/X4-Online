@@ -70,7 +70,7 @@
  * find_order_space_assign, which tail-jumps to 0xc602e0. Pins: Execute,
  * 0xc602e0 and 0xd2ada0 whole. Rows carry site=space (site=component for the
  * first site); the status counts both and the range finds apart (space_*).
- * The Linux gate has no second site (space_installed=0). */
+ * The Linux gate inlines the store into Execute; linux/gate_find_order.h hooks its two entries. */
 /* The Linux gate (linux/gate_find_order.h) defines these for its executable, and its own hook, pins and swap. */
 #ifndef FIND_ORDER_OWN_PLATFORM
 #define FIND_ORDER_EXECUTE 0xb87a30u /* FindComponentAction::Execute */
@@ -349,7 +349,7 @@ static int find_order_site_prepare(unsigned site,unsigned target,unsigned slot,i
 static int find_order_prepare(void) {
     return find_order_site_prepare(FIND_ORDER_SITE,FIND_ORDER_ASSIGN,FIND_ORDER_THUNK,&find_order_original_rel,&find_order_patched_rel);
 }
-#ifdef FIND_ORDER_SPACE_SITE
+#if defined(FIND_ORDER_SPACE_SITE) && !defined(FIND_ORDER_SPACE_OWN_SITE) /* Linux: jmp hooks into an inlined store (linux/gate_find_order.h) */
 static int find_order_space_prepare(void) {
     return find_order_site_prepare(FIND_ORDER_SPACE_SITE,FIND_ORDER_SPACE_ASSIGN,FIND_ORDER_SPACE_THUNK,
                                    &find_order_space_original_rel,&find_order_space_patched_rel);

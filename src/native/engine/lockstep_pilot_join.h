@@ -461,10 +461,22 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
         pjoin_seat_unpack(k);pjoin_pk_unpack(k);pjoin_pctl_unpack(k);
         if(pslots[k].length!=pjoin_store_rx_len[k]) {pjoin_resume_why="store_length";return 0;}
     }
-    if(pjoin_rx_mask && !pslot_hook_install()) {pjoin_resume_why="slots_hook";return 0;}
+    /* The slots' frame hook as the session's take made it: pslot_seat_all installs it for every armed session, seated
+     * slots or not, so a joiner whose session had no other present slot (pjoin_rx_mask 0, hj1) needs it too (hook_lost). */
+    if(pslot_mask && !pslot_p1) {   /* no slot rebuilt: the canonical player from the singleton, as take-2 latches it with every
+                                    * slot absent (pslot_construct_all; hj1: singleton_changed at the first check) */
+        unsigned char *universe=NULL,*p1=NULL;
+        if(!read_local(pnat_base+VPL_UNIVERSE,&universe,8) || !universe || !read_local(universe+VPS_SINGLETON,&p1,8) || !p1)
+            {pjoin_resume_why="p1_unknown";return 0;}
+        pslot_p1=p1;
+    }
+    if(pslot_mask && !pslot_hook_install()) {pjoin_resume_why="slots_hook";return 0;}
     pslot_update_tick=base;pslot_stage="live";
     /* R2 */
     if(pfbody_armed) {
+        /* The body kill stub lives on the slots' near page, which R1's rebuild makes. A session whose only present slot is 1
+         * rebuilds none (pjoin_rx_mask 0: a 2-slot x4ls play session joined in its open slot 2, hj1), so make it here. */
+        if(!pslot_page && !(pslot_page=pslot_alloc_page())) {pjoin_resume_why="slot_page";return 0;}
         if(!pfbody_kill_install()) {pjoin_resume_why="body_kill_install";return 0;}
         pfbody_mask=0;pfbody_parked=1;pfbody_seated_since=0;memset(pfbody_back,0,sizeof(pfbody_back));pfbody_stage="parked";
     }

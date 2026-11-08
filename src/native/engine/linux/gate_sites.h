@@ -66,6 +66,7 @@
 #define LX_SHIELD_DELAY_VA 0x1293230u
 #define LX_SHIELD_RATE_VA 0x12932a0u
 #define LX_SHIELD_WRITE_VA 0x1293310u      /* the holder's write: value = max, changed time 0 */
+#define LX_SHIELD_PERCENT_VA 0x17d7b70u    /* GetShieldPercent (object, time) -> float (Windows 0x51f5b0): the read 0x1293330 */
 /* Serial pathing and path determinism (gate_path.h, lockstep_path_determinism.h). */
 #define LX_PATH_MANAGER_VA 0x3e0ced0u    /* PathingManager pointer (Windows 0x6cf21c8) */
 #define LX_PATH_RELEASE_SITE 0x12125e3u  /* MoveWorker::Run: call of the release with manager+0x70 */
@@ -249,6 +250,10 @@
 #define LX_FIND_ORDER_EXECUTE_VA 0xd87ad0u   /* its Execute (Windows 0xb87a30), slot 4 */
 #define LX_FIND_ORDER_SITE_VA 0xd87b33u      /* its call of the result store (Windows 0xb87ae3) */
 #define LX_FIND_ORDER_ASSIGN_VA 0x1d2b330u   /* the result store (Windows 0xd2ab50) */
+#define LX_FIND_SPACE_VTABLE 0x3b00918u      /* Scripts::FindSpaceInRangeAction (Windows 0x2c0f660) */
+#define LX_FIND_SPACE_EXECUTE_VA 0xda9920u   /* its Execute (Windows 0xb8a890), slot 4, 0x23c0 bytes: the store inlined */
+#define LX_FIND_SPACE_SITE_A_VA 0xdaa0e5u    /* the inlined store's two entries (Windows' call 0xb8af09 of 0xc602e0): */
+#define LX_FIND_SPACE_SITE_B_VA 0xdaa348u    /* pxor xmm0,xmm0; movaps [rsp+0x160],xmm0; the range tree at rsp+0x120 */
 /* Ship loadouts (gate_spawn_rng.h, lockstep_spawn_rng.h). */
 #define LX_GENERATE_VA 0xd2a470u             /* U::ShipGenerator::Generate (Windows 0xc841b0) */
 #define LX_GENERATE_ENTRY_ORIGINAL 0x56415741e5894855ull /* push rbp; mov rbp,rsp; push r15; the start of push r14 */
@@ -489,6 +494,10 @@ static const lx_site lx_sites[]={
     {"gravidar_scan_groups",0x1caf009,0x30,"4bc72dbb1aaca2184158c8bf5512f273a0a0d6871b8e1de288f41646746a51a5"},
     {"gravidar_group_init",0x10ff73b,0x26,"dca043e4618cf83ee17c204d94dbe3fccc4dd0a8e2002d42dc122b6cd5c460a8"},
     {"find_order_execute",0xd87ad0,0x70,"5fc0b6a1bfb50182222ecd1133469332582f404ace3f96a5f4aa03262a0561f5"},
+    {"find_space_execute",0xda9920,0x23c0,"437f08f2263e3255ed7ce4bfabb4ca4280a17b9e21cd588d014be0e3c1cda7b1"},
+    {"flight_update",0x13e9d50,32,"09f259f5cb97414053102eb0715f69b31cc5e0216e8f3ec7cb8eda999553aa33"},
+    {"agent_set_model",0x1432b80,0x1280,"8ba9e7c46cb10431a0632f3dd29e4ac1d1a3bce4666a2f2c5e07b61d8f37b8c1"},
+    {"shield_percent",0x17d7b70,0xb6,"d8e75cdbda4450259bb1b2503407f66ceba721584f6e9384a64b4ae3b2bb6f30"},
     {"script_exec_run",0xd5fbb0,0x73,"ba595478c53852158f7ca0d93fc6a24ab3a4e0aa7442dfa3d74510d137c490f1"},
     {"script_exec_range",0xd5fc30,0x6f,"a75340d2594bb8d07cf693976b4630a66483a9ab63db2dd1411089540470b450"},
     {"script_ai_event",0x10d4270,0x50,"5a5288bf8d4649e9cbff9fa15b725393604cf377952019b6ed49ef84eef731dd"},

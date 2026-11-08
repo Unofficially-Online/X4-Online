@@ -1,4 +1,4 @@
-"""x4ls command line: doctor, session, play, join, snapshot, triage, clean, steam-fix."""
+"""x4ls command line: doctor, session, play, join, starts, new-session, snapshot, triage, clean, steam-fix."""
 import argparse
 import json
 from pathlib import Path
@@ -74,16 +74,25 @@ def main(argv=None):
     pl.add_argument('--public-host', default='', help='with --remote-slots: the address the other PCs reach (default --bind)')
     pl.add_argument('--join-wait', type=int, default=240, metavar='SECONDS',
                     help='with --remote-slots: extra time before the common load for the other PCs to start')
+    pl.add_argument('--open', default='', metavar='K[,K...]',
+                    help='hot join: these slots start absent and a player joins one while the session runs (x4ls join without '
+                         '--arm-at); the overlay must be built with build_play_overlay.py --open K')
     pl.add_argument('relay_args', nargs='*', help='extra relay arguments after --')
 
-    j = sub.add_parser('join', help='play one slot of a session whose relay runs on another PC (the line x4ls play printed)')
+    j = sub.add_parser('join', help='play one slot of a session whose relay runs on another PC (the line x4ls play printed): '
+                                    'with --arm-at a slot that loads with the others, without it an open slot (hot join)')
     j.add_argument('--relay', required=True, metavar='HOST:PORT')
     j.add_argument('--token', required=True)
     j.add_argument('--slot', type=int, required=True)
-    j.add_argument('--clients', type=int, required=True)
-    j.add_argument('--arm-at', type=int, required=True, metavar='UTC_SECOND')
+    j.add_argument('--clients', type=int, help='with --arm-at: the session\'s slots (a hot join reads them from the overlay)')
+    j.add_argument('--arm-at', type=int, metavar='UTC_SECOND',
+                   help='the UTC second the session loads at (a --remote-slots slot); without it: a hot join of an --open slot')
     j.add_argument('--overlay', type=Path, required=True, help='the same play overlay as the host (a copy of its folder)')
-    j.add_argument('--snapshot', type=Path, required=True, help='the same snapshot save as the host')
+    j.add_argument('--snapshot', type=Path, help='with --arm-at: the same snapshot save as the host (a hot join gets the join save)')
+    j.add_argument('--wait', type=int, default=600, metavar='SECONDS',
+                   help='hot join: how long to wait for the session to save the join (default 600)')
+    j.add_argument('--nonce', metavar='HEX16', help="hot join: resume the join this PC asked for (its run folder's join/state.json; "
+                                                     'the last one of the slot and relay is resumed by default)')
     j.add_argument('--size', default='1280x720')
     j.add_argument('--timeout', type=int, default=0)
     j.add_argument('--close-when-over', action='store_true')
@@ -91,6 +100,29 @@ def main(argv=None):
     j.add_argument('--lanes', type=Path)
     j.add_argument('--startup', type=int, default=70)
     j.add_argument('--steam-fix', action='store_true')
+    j.add_argument('--same-pc', action='store_true', help='test: the host runs on this PC too (own state file, its X4 tolerated)')
+
+    st = sub.add_parser('starts', help="the game's starts: which can be the session's (slot 1) and which a player's own")
+    st.add_argument('--game', type=Path)
+    st.add_argument('--all', action='store_true', help='also list the refused starts (tutorials, tests, Timelines)')
+
+    ns = sub.add_parser('new-session', help='a session from a chosen start with per-player starts: capture, register, overlay')
+    ns.add_argument('--base-start', required=True, metavar='GAMESTART', help='the session start (slot 1; x4ls starts: session-base=yes)')
+    ns.add_argument('--players', type=int, default=2)
+    ns.add_argument('--mode', choices=('coop', 'factions'), default='coop')
+    ns.add_argument('--start', action='append', default=[], metavar='K=GAMESTART',
+                    help="slot K's own start (x4ls starts: player-start=yes); other slots start with slot 1")
+    ns.add_argument('--omit', action='append', default=[], metavar='K=PART[,PART]',
+                    help="kit parts slot K's start leaves out (money, reputation, blueprints, research, map)")
+    ns.add_argument('--gate-dll', type=Path, required=True)
+    ns.add_argument('--out', type=Path, required=True, help='new session folder (spec, save, session.json, overlay)')
+    ns.add_argument('--minutes', type=float, default=40)
+    ns.add_argument('--open', default='', metavar='K[,K...]', help='hot-joinable slots (x4ls play --open)')
+    ns.add_argument('--set', action='append', default=[], metavar='native_gate_KEY=LUA_VALUE')
+    ns.add_argument('--game', type=Path)
+    ns.add_argument('--lanes', type=Path)
+    ns.add_argument('--timeout', type=int, default=900, help='seconds for the capture')
+    ns.add_argument('--steam-fix', action='store_true')
 
     n = sub.add_parser('snapshot', help='capture a starting snapshot (new game + 12-ship gate fixture)')
     n.add_argument('--out', type=Path, required=True, help='new .xml.gz file')
@@ -118,6 +150,26 @@ def main(argv=None):
     state = session.ROOT / '.local/x4ls'
     if args.command == 'doctor':
         return doctor(args)
+    if args.command == 'starts':
+        from . import newsession
+        newsession.starts(args.game, show_all=args.all)
+        return 0
+    if args.command == 'new-session':
+        from . import newsession
+        def slots(texts, what):
+            out = {}
+            for text in texts:
+                k, _, v = text.partition('=')
+                if not k.isdigit() or not v or int(k) in out:
+                    raise SystemExit(f'{what} takes K=VALUE once per slot, not {text!r}')
+                out[int(k)] = v
+            return out
+        result = newsession.new_session(newsession.NewSessionOptions(
+            base_start=args.base_start, players=args.players, mode=args.mode, out=args.out, gate_dll=args.gate_dll,
+            starts=slots(args.start, '--start'), omit=slots(args.omit, '--omit'), minutes=args.minutes, open=args.open,
+            sets=args.set, game=args.game, lanes=args.lanes, timeout=args.timeout, steam_fix=args.steam_fix))
+        print(json.dumps(result, indent=2))
+        return 0
     if args.command == 'snapshot':
         outcome = session.capture_snapshot(args.out, args.gamestart, args.game, args.lanes, args.timeout,
                                            seed=args.seed, steam_fix=args.steam_fix)
@@ -141,13 +193,28 @@ def main(argv=None):
             print(f'ActiveProcess pid {previous} -> {pid}; undo with: x4ls steam-fix --restore')
         return 0
     width, height = (int(v) for v in args.size.lower().split('x'))
+    if args.command == 'join' and args.arm_at is None:
+        from . import hotjoin
+        if args.snapshot or args.clients:
+            raise SystemExit('a hot join (no --arm-at) takes no --snapshot or --clients: the join save and the slots come from the session')
+        result = hotjoin.hot_join(hotjoin.HotJoinOptions(relay=args.relay, token=args.token, slot=args.slot, overlay=args.overlay,
+                                                         wait=args.wait, nonce=args.nonce, width=width, height=height, game=args.game,
+                                                         lanes=args.lanes, startup=args.startup, steam_fix=args.steam_fix,
+                                                         timeout=args.timeout, close_when_over=args.close_when_over,
+                                                         same_pc=args.same_pc,
+                                                         **({'state': session.ROOT / '.local/x4ls-join'} if args.same_pc else {})))
+        print(json.dumps(result, indent=2))
+        return 0 if result['outcome'] == 'played' else 1
     if args.command == 'join':
+        if not args.clients or not args.snapshot:
+            raise SystemExit('x4ls join --arm-at needs --clients and --snapshot')
         _, tick_hz, _ = session.play_settings(args.overlay, args.clients)
         result = session.join(session.JoinOptions(relay=args.relay, token=args.token, slot=args.slot, clients=args.clients,
                                                   arm_at=args.arm_at, overlay=args.overlay, snapshot=args.snapshot, width=width,
                                                   height=height, game=args.game, lanes=args.lanes, startup=args.startup,
                                                   steam_fix=args.steam_fix, timeout=args.timeout,
-                                                  close_when_over=args.close_when_over, tick_hz=tick_hz))
+                                                  close_when_over=args.close_when_over, tick_hz=tick_hz, same_pc=args.same_pc,
+                                                  **({'state': session.ROOT / '.local/x4ls-join'} if args.same_pc else {})))
         print(json.dumps(result, indent=2))
         return 0 if result['outcome'] == 'played' else 1
     if args.command == 'play':
@@ -164,7 +231,8 @@ def main(argv=None):
                                   close_when_over=args.close_when_over,
                                   remote_slots=tuple(int(v) for v in args.remote_slots.split(',') if v.strip()),
                                   bind=args.bind, allow_from=tuple(a for a in args.allow_from.split(',') if a.strip()),
-                                  port=args.port, join_wait=args.join_wait, public_host=args.public_host)
+                                  port=args.port, join_wait=args.join_wait, public_host=args.public_host,
+                                  open_slots=tuple(int(v) for v in args.open.split(',') if v.strip()))
         print(f'play: {args.clients} clients, relay ticks {ticks} ({ticks / tick_hz / 60:.0f} min at {tick_hz} Hz), lookahead '
               f'{lookahead}, stall drop ' + (f'{args.stall_drop:g} s' if lookahead else 'off'))
         result = session.run(options)

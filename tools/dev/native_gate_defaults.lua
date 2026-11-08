@@ -363,6 +363,7 @@ D.DIAGNOSTIC={
  {'native_gate_motion_watch_orders','motion watch orders'},
  {'native_gate_motion_watch_splines','motion watch splines'},
  {'native_gate_motion_watch_spline_every','motion watch: a spline row on every watched update'},
+ {'native_gate_pilot_slots_registry','personal missions C1: the slot players in the component registry (diagnostic)'},
  {'native_gate_motion_watch_zones','motion watch zones'},
  {'native_gate_wreck_watch','wreck watch'},
  {'native_gate_draw_watch','draw watch'},

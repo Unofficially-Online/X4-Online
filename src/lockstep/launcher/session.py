@@ -66,6 +66,11 @@ class Options:
     port: int = 0
     join_wait: int = 240
     public_host: str = ''  # the address the other PCs use (default: bind; the router's when it forwards the port)
+    # Hot join (x4ls play --open K, an overlay built with build_play_overlay.py --open K): these slots start absent and a
+    # player joins one while the session runs (x4ls join without --arm-at; hotjoin.py). The host's own clients save the
+    # join and its file service hands the join files out on the relay's port number (TCP).
+    open_slots: tuple = ()
+    relay_hook: object = None  # monitor_play hands it every relay log line (hotjoin.HostJoins.line)
 
 
 @dataclass
@@ -75,7 +80,7 @@ class JoinOptions:
     token: str
     slot: int
     clients: int
-    arm_at: int         # the agreed UTC second every client loads at (printed by the host)
+    arm_at: int | None  # the agreed UTC second every client loads at (printed by the host); None: a hot joiner loads at once
     overlay: Path
     snapshot: Path
     width: int = 1280
@@ -89,6 +94,8 @@ class JoinOptions:
     timeout: int = 0
     close_when_over: bool = False
     tick_hz: int | None = None
+    run_dir: Path | None = None  # default: .local/runs/<time>-join<slot> (a hot join brings its own, with the join files)
+    same_pc: bool = False  # test: the host's X4 runs on this PC too (no "X4 is running" refusal; own state file)
 
 
 def free_udp_port():
@@ -147,9 +154,13 @@ def relay_command(o, port, token, run):
         cmd += ['--lookahead', str(o.lookahead)]
     if o.stall_drop_ms:
         cmd += ['--stall-drop-ms', f'{o.stall_drop_ms:g}']
-    if o.remote_slots:
+    if o.remote_slots or (o.open_slots and o.bind != '127.0.0.1'):
         # the host's own clients send to the bound address, so it is one of the allowed sources too
         cmd += ['--bind', o.bind, '--allow-from', ','.join(dict.fromkeys((*o.allow_from, o.bind)))]
+    if o.open_slots:
+        from . import hotjoin
+        savers = [k for k in range(1, o.clients + 1) if k not in o.open_slots and k not in o.remote_slots]
+        cmd += hotjoin.relay_join_args(sorted(o.open_slots), savers, given=o.relay_args)
     return cmd + list(o.relay_args)
 
 
@@ -171,7 +182,10 @@ def client_tail(arm_at=None, checkpoint_at=None, relay_host=None):
 
 
 def join_command(o, host, port, token, slot, arm_at):
-    """The x4ls join line the host prints for a remote slot."""
+    """The x4ls join line the host prints for a remote slot (arm_at None: an open slot's hot join)."""
+    if arm_at is None:
+        return (f'python tools/x4ls.py join --relay {host}:{port} --token {token} --slot {slot} '
+                f'--overlay <a copy of this overlay folder>')
     return (f'python tools/x4ls.py join --relay {host}:{port} --token {token} --slot {slot} --clients {o.clients} '
             f'--arm-at {arm_at} --overlay <this overlay> --snapshot <this snapshot>')
 
@@ -294,6 +308,19 @@ def run(o: Options, log=print):
                    or (o.public_host and not IPV4.fullmatch(o.public_host))):
         raise SystemExit("--remote-slots needs --port, slots 2..clients, --bind (this PC's address, not 127.0.0.1) and "
                          '--allow-from (and --public-host) as dotted IPv4, and --snapshot')
+    opened = sorted(set(o.open_slots))
+    if opened:
+        from . import hotjoin
+        recipe = hotjoin.recipe_tools().read_recipe(o.overlay)
+        if not o.snapshot or not all(2 <= k <= o.clients for k in opened) or set(opened) & set(remote):
+            raise SystemExit('--open needs --snapshot and slots 2..clients that are not --remote-slots')
+        if recipe is None or recipe['open'] != opened or recipe['players'] != o.clients:
+            raise SystemExit(f'--open {",".join(map(str, opened))} needs an overlay built for {o.clients} players with that '
+                             f'--open (tools/build_play_overlay.py --players {o.clients} --open ...)')
+        if not o.lookahead:
+            raise SystemExit('--open needs a protocol 4 overlay (a lookahead): the join and the drop of a joiner use it')
+        if o.bind != '127.0.0.1' and (not IPV4.fullmatch(o.bind) or not o.allow_from or not all(IPV4.fullmatch(a) for a in o.allow_from)):
+            raise SystemExit('--open with --bind needs --allow-from (the joiners\' addresses) as dotted IPv4')
     if (o.state / 'session.json').exists():
         raise SystemExit('a previous session is still recorded; run x4ls clean first')
     if x4_running():
@@ -307,11 +334,11 @@ def run(o: Options, log=print):
     lanes = Path(o.lanes) if o.lanes else Path(os.path.splitdrive(str(install))[0] + '\\x4ls-lanes')
     run_dir = o.runs / time.strftime('%Y%m%d-%H%M%S')
     run_dir.mkdir(parents=True)
-    local = [k for k in range(1, o.clients + 1) if k not in remote]
+    local = [k for k in range(1, o.clients + 1) if k not in remote and k not in opened]
     port, token = o.port or free_udp_port(), secrets.token_hex(16)
     state = {'run': str(run_dir), 'views': [], 'pids': [], 'relay_pid': None}
     save_state(o, state)
-    clients, relay, relay_log = [], None, None
+    clients, relay, relay_log, files, save_dirs = [], None, None, None, {}
     # Every client arms and loads at the same UTC second (native_gate_arm_at in the probe): after the load the
     # gate adopts X4's new UI thread only once the first tick is issued, which needs all clients.
     arm_at = int(time.time()) + o.startup * len(local) + 20 + (o.join_wait if remote else 0) if o.snapshot else None
@@ -326,6 +353,15 @@ def run(o: Options, log=print):
         for k in remote:
             log(f'slot {k} plays on another PC; there, within {o.join_wait} s, with the same overlay and snapshot:\n  '
                 + join_command(o, o.public_host or o.bind, port, token, k, arm_at))
+        if opened:
+            from . import hotjoin, joinfiles
+            files = joinfiles.FileService(token, o.bind, port, allow=o.allow_from, slots=opened).start()
+            save_dirs = {k: profile.profile_dir(profile.PROFILES[k - 1]) / 'save' for k in local}
+            hosting = hotjoin.HostJoins(files, save_dirs, log)
+            o.relay_hook = hosting.line
+            for k in opened:
+                log(f'slot {k} is open: a player joins it while the session runs (on any PC the relay allows), with:\n  '
+                    + join_command(o, o.public_host or o.bind, port, token, k, None))
         for k in local:
             view = lanes / f'c{k}'
             game.create_view(install, view)
@@ -350,7 +386,7 @@ def run(o: Options, log=print):
             wait_for_log(profile.profile_dir(profile_id) / f'x4ls-c{k}.log', 'Entering startmenu', proc, 180)
             if arm_at and time.time() > arm_at - 5:
                 raise SystemExit(f'client {k} reached the start menu after the common arm time; raise --startup')
-            if k != local[-1]:  # X4 refuses to start while another process holds EGOSOFT_X4_INSTANCE
+            if k != local[-1] or remote or opened:  # X4 refuses to start while another process holds EGOSOFT_X4_INSTANCE
                 log(f'client {k}: released {instance.release_instance_mutex(proc.pid)} instance mutex handle(s)')
         result = (monitor_play if o.play else monitor)(o, run_dir, relay, clients, log)
         if o.checkpoint_at:  # a save may still be writing when the relay ends
@@ -364,9 +400,14 @@ def run(o: Options, log=print):
             kill(relay.pid)
         if relay_log:
             relay_log.close()
+        if files:
+            files.close()
         time.sleep(2)
         for k, profile_id, _ in clients:
             profile.collect(profile_id, f'x4ls-c{k}.log', run_dir / f'client{k}')
+        if save_dirs:
+            from . import hotjoin
+            hotjoin.remove_join_files(save_dirs)
             profile.unstage(profile_id)  # the lane tool shares these profiles
         if not o.keep_views:
             for view in state['views']:
@@ -402,7 +443,7 @@ def join(o: JoinOptions, log=print):
         raise SystemExit(f'--slot must be 2..clients and clients at most {len(profile.PROFILES)}')
     if (o.state / 'session.json').exists():
         raise SystemExit('a previous session is still recorded; run x4ls clean first')
-    if x4_running():
+    if x4_running() and not o.same_pc:
         raise SystemExit('X4 is running; close it first')
     ok, message = steam.status()
     if not ok and not o.steam_fix:
@@ -410,12 +451,12 @@ def join(o: JoinOptions, log=print):
     extension.verify_overlay(o.overlay)
     install = Path(o.game) if o.game else game.find_install()
     game.verify_exe(install)
-    if time.time() > o.arm_at - o.startup:
+    if o.arm_at is not None and time.time() > o.arm_at - o.startup:
         raise SystemExit(f'the arm time is {round(o.arm_at - time.time())} s away, less than --startup {o.startup} s: '
                          'the host has to start again')
     lanes = Path(o.lanes) if o.lanes else Path(os.path.splitdrive(str(install))[0] + '\\x4ls-lanes')
-    run_dir = o.runs / (time.strftime('%Y%m%d-%H%M%S') + f'-join{o.slot}')
-    run_dir.mkdir(parents=True)
+    run_dir = o.run_dir or o.runs / (time.strftime('%Y%m%d-%H%M%S') + f'-join{o.slot}')
+    run_dir.mkdir(parents=True, exist_ok=bool(o.run_dir))
     state = {'run': str(run_dir), 'views': [], 'pids': [], 'relay_pid': None}
     save_state(o, state)
     view, profile_id, proc, result = lanes / f'c{o.slot}', profile.PROFILES[o.slot - 1], None, {'outcome': 'failed'}
@@ -437,7 +478,8 @@ def join(o: JoinOptions, log=print):
                                 env=steam.client_environment())
         state['pids'].append(proc.pid)
         save_state(o, state)
-        log(f'client {o.slot}: pid {proc.pid}, profile {profile_id}, relay {host}:{port}, loads in {round(o.arm_at - time.time())} s')
+        log(f'client {o.slot}: pid {proc.pid}, profile {profile_id}, relay {host}:{port}, '
+            + (f'loads in {round(o.arm_at - time.time())} s' if o.arm_at is not None else 'loads the join save at the start menu'))
         result = monitor_play(play, run_dir, None, [(o.slot, profile_id, proc)], log)
     finally:
         if proc and proc.poll() is None:
@@ -456,10 +498,16 @@ def join(o: JoinOptions, log=print):
     return result
 
 
+CAPTURE_FAIL = ('NATIVE_SNAPSHOT ERROR', 'SESSION_HULL_FAILED', 'Error in MD cue md.X4LAN_SessionHulls')
+
+
 def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None, timeout=900,
-                     runs=ROOT / '.local/runs', state_dir=ROOT / '.local/x4ls', log=print, seed=SESSION_SEED, steam_fix=False):
+                     runs=ROOT / '.local/runs', state_dir=ROOT / '.local/x4ls', log=print, seed=SESSION_SEED, steam_fix=False,
+                     overlay=None):
     """One client starts `gamestart` with session seed `seed`, spawns the 12-ship gate fixture and saves
-    save_009; copied to `out`. The save header carries the seed, so sessions from it use the same one."""
+    save_009; copied to `out`. The save header carries the seed, so sessions from it use the same one.
+    overlay: a capture overlay built elsewhere (x4ls new-session: native_gate_session_start.build_capture, with the
+    per-player start hulls); its hull failures end the capture too."""
     sys.path.insert(0, str(ROOT / 'tools/dev'))
     from native_gate_scenarios import build_capture_overlay
     out = Path(out)
@@ -476,7 +524,8 @@ def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None
     game.verify_exe(install)
     lanes = Path(lanes) if lanes else Path(os.path.splitdrive(str(install))[0] + '\\x4ls-lanes')
     run_dir = Path(runs) / time.strftime('snapshot-%Y%m%d-%H%M%S')
-    overlay = build_capture_overlay(gamestart, None, run_dir / 'overlay')
+    overlay = Path(overlay) if overlay else build_capture_overlay(gamestart, None, run_dir / 'overlay')
+    run_dir.mkdir(parents=True, exist_ok=True)
     o = Options(clients=1, overlay=overlay, state=Path(state_dir))
     view, proc, log_name = lanes / 'capture', None, 'x4ls-capture.log'
     state = {'run': str(run_dir), 'views': [], 'pids': [], 'relay_pid': None}
@@ -505,7 +554,7 @@ def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None
                 time.sleep(5)  # let X4 finish writing the file
                 outcome = 'saved'
                 break
-            if 'NATIVE_SNAPSHOT ERROR' in text or proc.poll() is not None:
+            if any(mark in text for mark in CAPTURE_FAIL) or proc.poll() is not None:
                 outcome = 'failed'
                 break
         if outcome == 'saved':
@@ -594,6 +643,8 @@ def monitor_play(o, run_dir, relay, clients, log):
                 for line in relay_tail.lines():
                     if armed_at is None and line.startswith('NATIVE_GATE tick=0 '):
                         armed_at = time.time()
+                    if o.relay_hook:
+                        o.relay_hook(line)
                     notice = PLAY_NOTICE.match(line)
                     if notice:
                         desyncs.write(f'{stamp} {line}\n')

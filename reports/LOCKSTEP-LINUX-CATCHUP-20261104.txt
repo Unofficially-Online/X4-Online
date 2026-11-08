@@ -266,7 +266,29 @@ THE NEXT RESIDUE: A RECYCLABLE 300 TICKS APART (W30 against lx20)
   The mining port stays (it is the Windows default's Linux side) but is not this residue's fix. Next: uprobes
   (tracefs, file offsets = VA - 0x400000) on 0xe10a60, 0x1f47b20 (entry and return), its cluster compare 0x1f47b9b
   and the camera block 0x1f47f40 in an untouched run (lx24, lx20's flags) to see which.
-  lx24 was cut short when the host went offline mid-run; it is to be rerun.
+  lx24 was cut short when the host went offline mid-run (and its script, run under sudo, used /root paths).
+  lx24b (lx20's bundle and flags, 3000 ticks, the uprobes above plus 0x1f47b53, 0x1f47c9e, 0x1f47ccf, 0x1f47d23,
+  0x1f47ec0, 0x1f47ee8; ticks from log marks, about +-60): the script call 0xe10a60 and the search ran twice, at
+  about 2430 and 2910, alike on both clients. Both times the region's cluster differed from the player's (0xc7e2b0)
+  at 0x1f47b9b, so the camera block was never entered, and both found an object (the +0xb0 call's result returned).
+  There is no call near 2664. Windows entered its camera block twice (W34), so there the player's cluster is the
+  region's and on Linux it is not: the residue is the player's cluster (g_Universe +0x238 through 0xc7e2b0), not
+  the camera distance. Next: that cluster on both platforms at the first call (likely the view-point stack's
+  player object, a Windows default the Linux gate lacks).
+  Correction (W34's counters): Windows' mining=1/0/0 at 2464 and 2/0/0 at 2664 count every search (its thunk replaces
+  the block from the player load), none near. Both platforms take the normal search at 2464; the cluster test does
+  not decide it. Windows searches again at 2664, Linux 300 ticks (a 10 s retry) later.
+  In 2400..2700 every lib.find.sectors.inrange scope had one more row on Windows, its site=space find:
+  find_order's second site (find_sector_in_range / find_cluster_in_range: a tree keyed by the Component* value,
+  so the result is in address order) was never ported. f833fd03 ports it (linux/gate_find_order.h: Execute 0xda9920
+  inlines the store; jmp hooks at its two entries 0xdaa0e5 and 0xdaa348 into a stub that sorts the tree at rsp+0x120
+  with the shared code). lx26 (lx20's flags): Linux-Linux 101/101 and every site=space row equal to W30's.
+  lx28 (lx26 + --script-rng-unmapped: W30 has script_rng_unmapped='key', which lx20's runner had no option for;
+  without it an order.fight.patrol find at tick 42 runs unkeyed): W30 = lx28 at the 89 captures through 2640, and
+  every FIND_ORDER, REGION_RNG, WARP_RNG and TEMPZONE row of 2400..2700 is equal (sites, threads and runtime zone IDs
+  aside). The 2670 split stays: one object more on Windows (528338 against 528337), the salvage ship's recyclable.
+  Its cause is outside every row type: the script skips its 2664 search on Linux. Likely the region fields'
+  render-driven object fill (hot join met the same: a joiner-only salvage recyclable; FOBJ).
 
 LOCAL RUNTIME IDS ON LINUX (native_gate_runtime_ids_local, a Windows default)
   The Linux gate had no local lists, so on Linux every view object moved every later shared runtime ID. Windows
@@ -357,6 +379,31 @@ WINDOWS AGAINST LINUX, w22 client 1 (build235, W21 + player_timer) against lx9
   tick                    1    600   1200   1440   1800   2400   3000   3600   4200   4800   5400   6000
   w22 c1 vs lx9 c1        0      0      0      0      0      3     13     17     29     34     33     38
   w22 c1 vs lx9 c2        0      0      0      3      6     16     27     31     43     51     49     55
+
+A LINUX PLAYER IN A WINDOWS SESSION (user decision 8 November: the native Linux player stack, not Proton)
+  The playtest's play overlay runs the full session default stack (native_gate_defaults.lua D.ON, 176 keys). The
+  Linux gate accepts 46 of them (scratchpad defaults_gap.py against build_native_gate_overlay.py's Linux set). The
+  130 others, by kind:
+  - covered on Linux under another key (to map): agent_rng and ship_rng (actor_rng_all), gravidar_key_all,
+    gravidar_time_sync, gravidar_load_pass and gravidar_sector_order (--gravidar), portable_math, exact_reciprocal
+    and decimal (the portable math preload), tick_hz, snapshot_sha (the runner);
+  - Windows-only or outside the simulation (to accept or refuse loudly): fp_env (MXCSR), fast_reads, crash_note,
+    trace_stride, rng_schema, lookahead/wire_crypto/peer_window (the wire), render_fps/render_camera/render_motion
+    and own_predict (display only);
+  - simulation fixes to port: the battle scope's fixture and declared state (hash=battle, snapshot_fixture,
+    actor_diag, strict_state, shield_refresh, strict_physics, spline_state, order/fleet state), flight_rng,
+    flight_full, avoidance_refresh, steering_init/schema, the radar group (ai_diag, radar_diag/serial/rng/initial),
+    spline_diag/refresh/join, params_init, weapon_diag/rng, nav_rng, nav_initial_refresh, attention_rng and its
+    initial refresh, death/bullet/shape RNG and shape refresh, interrupt_diag and nested_actions (the Windows script
+    RNG's keys), path_budget, path_transforms, body_pose, ui_lazy, ai_schedule, speech/speak timers, ship and other
+    sound RNG, order_canon, pick_order, macro_arena, shape_order, character_play, cutscene_ready, render_rng_split,
+    bullet_cadence, nav_player, runtime_ids_barrier, the view-point stack (view_points .. viewpoint_standins: about 20
+    keys, the coordinator's headers), physics/view scenes, nav_octree and its snapshot, nav_mesh;
+  - the people stack: player_identity, pilot_slots .. pilot_death_suit (about 20 keys), hit_claims, ui_replay,
+    ui_guard, pilot_foot and its bodies/slots, player_settings_per_slot, guidance_local.
+  Every simulation key has to match the Windows clients' or the session splits. Order of the port: the mapping and a
+  loud refusal for what is missing (native_gate_defaults on the Linux gate), then the simulation fixes in D.ON's
+  arming order, measured each against the matching Windows run, then the people stack (pilot replay first).
 
 NEXT
   1. (done: actor_rng_all, player_timer, tempzone_order, warp_rng on Linux; Linux vs Linux 0 through 6000, lx13.)

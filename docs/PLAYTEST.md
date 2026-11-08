@@ -85,7 +85,7 @@ Nothing in this table ends the session for the clients that are still in it. In 
 X4 was killed at tick 2017; the relay reported the stall at 2031 and dropped it 15 s later, and client 1 played on to
 the end of the window in sync.
 
-## Two PCs (built 8 Nov, not yet run between two PCs)
+## Two PCs (built 8 Nov; run on one PC through its LAN address, not yet between two PCs)
 
 On the host PC (it runs the relay and slot 1), with UDP 47000 forwarded to it if the other PC is outside the LAN:
 
@@ -101,8 +101,59 @@ python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <save>    
    python tools/x4ls.py join --relay <host>:47000 --token <t> --slot 2 --clients 2 --arm-at <utc>        --overlay <copy of play-1> --snapshot <copy of the save>
    ```
 
-Both PCs load at the agreed UTC second, so their clocks must agree within a few seconds. Each PC writes its own
+Smoke play-sR (8 Nov): the host relay on this PC's LAN address (port 47000) and the joiner on the same PC (`x4ls join ... --same-pc`, a
+test switch) played to the end in sync, with 0 errors and 0 drops. A VPN address (Tailscale, Hamachi, ZeroTier) works as
+`--bind` and `--allow-from` too, with no port forwarding. Both PCs load at the agreed UTC second, so their clocks must agree
+within a few seconds. Each PC writes its own
 `errors.log`; the host's run folder also holds the relay's logs.
+
+## Joining a running game (built 8 Nov; through x4ls up to the catch-up, the handover still refused)
+
+A slot can stay empty at the start and be taken later by a player on any PC the relay allows. Only the joiner
+loads; the others play on.
+
+1. Build the overlay with the open slots: `python tools/build_play_overlay.py ... --players 3 --open 3`.
+2. Host: `python tools/x4ls.py play --clients 3 --overlay <overlay> --snapshot <save> --open 3`. For another PC,
+   add `--bind`, `--allow-from` and `--port` as in "Two PCs". The host prints the join line for slot 3.
+3. Joiner, at any time during the session, with a copy of the host's overlay folder:
+
+   ```
+   python tools/x4ls.py join --relay <host>:<port> --token <t> --slot 3 --overlay <copy of the overlay>
+   ```
+
+   Without `--arm-at` this is a hot join. The joiner asks the relay for the slot, and the host's clients save
+   the world at the next join tick (a short pause for everyone). The joiner then downloads the join save and
+   package from the host (TCP on the relay's port number; checked against the hashes the relay announced),
+   builds its overlay from the host's recipe (`play-recipe.json`), and starts X4. It loads at once, catches up
+   from the session's rows, and takes over its ship at the handover tick.
+
+The joiner has 900 s from the save to report in (the relay's `--join-joiner-timeout`). The host serves the files
+of its own clients only, so slot 1's PC must be one of the savers. With `--open` the relay hands over after 20 s
+of catch-up and may pause everyone for up to 180 s while the joiner closes the gap.
+
+Status (8 Nov, one PC, hj1..hj6). These steps run: the request, the save at the next join tick, the 192 MB
+download (verified), the joiner's overlay and its checks, the load, the resume into the open pilot window and the
+catch-up. The relay then refuses the join on its digest check within a few ticks of T. At T+1 the world is equal on
+both sides (same world hash, state rows, ships and inputs); only the simulation's own RNG word differs. The lane
+tool's in-window joins show the same word apart at T+1 (w1z199) and a world census equal for 5900 ticks after it.
+They pass only because their replay runs with `--observe`. Next: carry or key what moves that word on the joiner's
+first step (its AI wait checks with no context mapping, 64 to 71 of them, draw from the shared stream).
+
+## Choosing the starts (built 8 Nov, not yet run through x4ls)
+
+`python tools/x4ls.py starts` lists the game's starts from this PC's own game files, read-only and unpacked into
+`.local/x4ls/gamedata`. For each it says whether it can be the session's start (slot 1, `session-base`) and
+whether it can be a player's own start (slots 2..N, `player-start`), with the reasons when not.
+
+```
+python tools/x4ls.py new-session --base-start custom_creative --players 3 --mode coop --start 2=x4ep1_gamestart_fight \
+    --gate-dll <x4lan_gate_64.dll> --out .local/sessions/fight3 [--open 3]
+```
+
+This captures the session save on the capture profile: X4's new game for the base start, the gate fixture and
+one hull per player start at its start position. It then registers the save and builds the play overlay. Each
+player's start kit (money, reputation, blueprints, research and map) is applied at the setup tick on every
+client. It ends by printing the `x4ls play` line.
 
 ## Ending
 
@@ -124,16 +175,19 @@ first mismatch.
 
 ## Not yet
 
-- **Two PCs: built, not yet run.** See "Two PCs" above.
+- **Two PCs: built and run on one PC through the LAN address, not yet between two PCs.** See "Two PCs" above.
   - Intel against AMD is untested: their reciprocal instructions differ, and a desync there would be silent and
     logged.
   - Windows against Linux differs in about 35 objects.
 - **Two people on one PC.** Keyboard and mouse go to the focused window only. Whether X4 reads a gamepad in an
   unfocused window is unverified.
 - **Desync recovery.** None: a session that differs stays different.
-  - Hot join and rejoin exist in lane runs (relay `--join --rejoin`), not in `x4ls`.
+  - Hot join: `x4ls play --open` with `x4ls join` (no `--arm-at`) runs up to the catch-up, but the relay refuses
+    the handover on the T+1 RNG word (see "Joining a running game"). Rejoin after a drop exists in lane runs only.
   - After a late join a few large ships still differ (reports/LOCKSTEP-HOTJOIN-20261101.txt).
 - **Desync indicator in game.** None, so that desyncs stay silent. `tools/dev/native_gate_desync_watch.py --status
   .local/runs/<time>/desync-status.json` shows one in the console.
-- **Not built yet:** more than 4 players, a lobby and start picker, joining from inside X4, and per-player story
-  missions (in progress).
+- **Up to 8 players.** The gate has 8 slots (`--players 2..8`), but natively it has only been run with 2 or 3.
+  Stock piloting knows 4 cockpit ships, so slots 5..8 need a session with per-player starts (`x4ls new-session`).
+- **Not built yet:** an in-game lobby and join menu (the start choice and the join go through `x4ls`), and
+  per-player story missions (in progress).
