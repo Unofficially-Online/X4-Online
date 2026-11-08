@@ -164,6 +164,13 @@ static int gravidar_installed,gravidar_restored;
 static volatile int gravidar_time_sync;
 static volatile int64_t gravidar_failures,gravidar_key_failures,gravidar_time_failures;
 static int travel_inline_installed;
+/* Optional, ordered-job-only path transform observer. */
+static int path_transform_observer_installed;
+static void path_transform_observer_restore(void);
+static int path_transform_observer_owned(void);
+static int path_transform_observer_check(void);
+static int path_transform_observer_scope_enter(void);
+static void path_transform_observer_scope_leave(int entered);
 static void lxt_inline_restore(void);
 static int lxt_inline_owned(void);
 static void tsnap_restore(void);
@@ -439,7 +446,7 @@ static int gate_sites_owned(void) {
     unsigned __int128 window;double speed;
     memcpy(&window,LX(LX_CALL_WINDOW),16);memcpy(&speed,LX(LX_SPEED_VA),8);
     return window==call_patched && dt_state()==DT_FIXED && !*(volatile unsigned char*)LX(LX_MOVIE_FLAG_VA) && speed==1.0 &&
-           world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && lxt_inline_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned();
+           world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && lxt_inline_owned() && path_transform_observer_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned();
 }
 static void finish(unsigned reason) {
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
@@ -504,6 +511,8 @@ static void finish(unsigned reason) {
     if(ll_installed) stats.restored=0;
     attention_restore();
     if(attention_installed) stats.restored=0;
+    path_transform_observer_restore();
+    if(path_transform_observer_installed) stats.restored=0;
     st_restore();
     if(st_installed || st_chain_installed) stats.restored=0;
     fr_restore();
@@ -583,6 +592,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     gate_fetch_check();
     void *table;memcpy(&table,LX(LX_VBI_TABLE_VA),8);
     if(world_identity_installed && world_identity_failures) {finish(72);gate_original_once(frame,loading);return;}
+    if(path_transform_observer_installed && !path_transform_observer_check()) {finish(191);gate_original_once(frame,loading);return;}
     if(path_det_mask && path_det_failures) {finish(79);gate_original_once(frame,loading);return;}
     if(region_rng_armed && region_rng_failures) {finish(93);gate_original_once(frame,loading);return;}
     if(wfire_installed && !wfire_check()) {finish(132);gate_original_once(frame,loading);return;} /* WFIRE_STOP_REASON */
@@ -801,6 +811,7 @@ static int lua_start(lua_State *L) {
 #include "gate_gravidar_deadlines.h"
 #include "gate_travel_snapshot.h"
 #include "gate_travel_determinism.h"
+#include "gate_path_transform_observe.h"
 #include "gate_runtime_ids.h"
 #include "gate_fork_save.h"
 #include "gate_weapon_fire.h"
@@ -930,7 +941,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(travel_snapshot);METHOD(travel_snapshot_status);
     METHOD(travel_determinism);METHOD(travel_determinism_status);
     METHOD(runtime_ids);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_callers);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);
-    METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(attention_all);METHOD(attention_all_status);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
+    METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(attention_all);METHOD(attention_all_status);METHOD(path_transform_observe);METHOD(path_transform_observe_status);METHOD(path_transform_observe_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(read_cost);METHOD(fork_save);METHOD(fork_save_status);METHOD(fp_redirect_drones);METHOD(fp_attack);METHOD(fp_attack_watch);METHOD(fp_attack_status);METHOD(fp_attack_row);
 #undef METHOD
     return 1;

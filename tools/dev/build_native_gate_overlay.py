@@ -126,6 +126,8 @@ def main():
     p.add_argument('--script-rng-natural', action='store_true', help='with --script-rng-rows: rows of outermost unkeyed scopes too')
     p.add_argument('--script-rng-unmapped', action='store_true', help='with --script-rng: AI owners without a portable ID are keyed by their rank')
     p.add_argument('--md-timed-rng', action='store_true', help='the Linux gate: direct MD cue checks on the per-cue streams (needs --script-rng with the MD bit)')
+    p.add_argument('--path-transform-observe', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='Linux ordered path diagnostic: compare native and live transforms in a tick window')
     p.add_argument('--nav-cadence', choices=('far', 'observe'), help='the Linux gate: nav refresh intervals no longer depend on the camera distance')
     p.add_argument('--nav-params-init', action='store_true', help='the Linux gate: parameter deadlines reset at the first call (needs --nav-cadence)')
     p.add_argument('--nav-key', action='store_true', help="the Linux gate: the nav refresh's draws keyed per ship (needs --nav-cadence and --world-identities)")
@@ -540,6 +542,7 @@ def main():
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
+        allowed.add('path_transform_observe')
         allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile', 'status_stride'))
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
@@ -916,6 +919,13 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_attention_initial_refresh = true\n')
             config.write('X4LAN_CONFIG.native_gate_attention_all = true\n')
+    if args.path_transform_observe:
+        first, last = args.path_transform_observe
+        if (not args.gate_so or not args.snapshot or not args.world_identities or
+                not args.travel_determinism or args.step_chain or first < 1 or last < first or last - first >= 600):
+            p.error('--path-transform-observe needs Linux ordered pathing, identities, a window of at most 600 ticks, and no step chain')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write(f'X4LAN_CONFIG.native_gate_path_transform_observe = {{{first}, {last}}}\n')
     if args.step_trace:
         ids = [i.lower() for i in args.step_trace]
         if not args.gate_so or not args.snapshot or not args.world_identities or len(ids) > 4 or any(len(i) != 16 or any(c not in '0123456789abcdef' for c in i) for i in ids):

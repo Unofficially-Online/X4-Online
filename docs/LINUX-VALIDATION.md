@@ -166,5 +166,19 @@ final-source repeat with reversed launch order diverged in motion at tick 11612.
 An earlier snapshot-mode control also diverged. The desync is still unresolved;
 one passing comparison is not evidence of reliable whole-world synchronization.
 
+For a bounded transform investigation, add `--path-transform-observe FIRST LAST`
+to an ordered-pathing bundle, for example `--path-transform-observe 8461 8520`.
+The interval is inclusive and may cover at most 600 ticks. This diagnostic
+requires ordered pathing and cannot run with `--step-chain`, which owns one of
+the same call sites. Retain `PATH_TRANSFORM_OBSERVE_ARMED`, the STOP status and
+all `PATH_TRANSFORM_OBSERVE_ROW` lines from each client.
+
+The observer compares native cached results with candidate live transforms only
+for eligible, identified ancestor chains inside ordered jobs. It records rows
+only for differences; `compared=0` is inconclusive, and excluded calls are not
+covered. A full row buffer fails the run rather than producing complete evidence.
+The candidate invokes engine virtual methods and may have side effects, so this
+is an experimental diagnostic rather than a passive or production-safe observer.
+
 See [the performance investigation](../reports/LOCKSTEP-LINUX-PERFORMANCE-20261108.txt)
 for measured intervals, retained failures and graphics findings.

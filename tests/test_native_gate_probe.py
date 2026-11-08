@@ -177,6 +177,30 @@ class SnapshotProbeTests(unittest.TestCase):
         self.assertTrue(any('TRAVEL_DETERMINISM tick=1 armed=1 installed=1' in line for line in lines))
         self.assertFalse(any('ERROR' in line for line in lines))
 
+    def test_linux_path_transform_observer_arms_after_ordered_batches(self):
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_serial_pathing=true
+          X4LAN_CONFIG.native_gate_path_determinism=3
+          X4LAN_CONFIG.native_gate_travel_determinism=true
+          X4LAN_CONFIG.native_gate_path_transform_observe={8461,8520}
+          local gate=package.loadlib('gate')();order={}
+          gate.path_determinism=function() order[#order+1]='path';return 1 end
+          gate.path_determinism_status=function() return 'armed=1' end
+          gate.travel_determinism=function() order[#order+1]='travel';return 1 end
+          gate.travel_determinism_status=function() return 'armed=1' end
+          gate.path_transform_observe=function(first,last)
+            assert(first==8461 and last==8520);order[#order+1]='observer';return 1
+          end
+          gate.path_transform_observe_status=function() return 'installed=1 rows=0 failures=0' end
+          gate.path_transform_observe_row=function() return nil end
+          local load=LoadGame;LoadGame=function(slot) assert(#order==3);load(slot) end
+        """)
+        self.lua.execute(SOURCE)
+        self.lua.execute('update();update();update()')
+        self.assertEqual(list(self.lua.globals().order.values()), ['path', 'travel', 'observer'])
+        self.assertTrue(any('PATH_TRANSFORM_OBSERVE_ARMED' in line for line in self.lua.globals().logs.values()))
+        self.assertFalse(any('ERROR' in line for line in self.lua.globals().logs.values()))
+
     def test_travel_snapshot_arms_after_path_determinism_and_logs_every_admitted_tick(self):
         self.lua.execute('''
           X4LAN_CONFIG.native_gate_serial_pathing=true
@@ -5781,6 +5805,29 @@ class StatusStrideTests(unittest.TestCase):
         self.assertTrue(any('PATH_DETERMINISM_STOP armed=1 frames=8' in line for line in lines[stop:]))
         self.assertLess(held,stop)
         self.assertEqual(self.ticks(lines,'RNG'),[1,2,3,6,7,8])  # 4 and 5 preceded the written tick 6
+
+    def test_path_transform_observer_receipts_survive_status_thinning(self):
+        lines = self.run_ticks(5, """
+          X4LAN_CONFIG.native_gate_status_stride=100
+          X4LAN_CONFIG.native_gate_travel_determinism=true
+          X4LAN_CONFIG.native_gate_path_transform_observe={1,5}
+          local gate=package.loadlib('gate')()
+          gate.travel_determinism=function() return 1 end
+          gate.travel_determinism_status=function() return 'armed=1' end
+          gate.path_transform_observe=function() return 1 end
+          gate.path_transform_observe_status=function() return 'installed=1 compared=2 rows=2 dropped=0 failures=0' end
+          gate.path_transform_observe_row=function(index)
+            if index==0 then return 'tick=4 site=1' end
+            if index==1 then return 'tick=5 site=2' end
+            return nil
+          end
+        """)
+        self.assertTrue(any('PATH_TRANSFORM_OBSERVE_ARMED' in line for line in lines))
+        lines = self.stop()
+        self.assertEqual(sum('PATH_TRANSFORM_OBSERVE_STOP' in line for line in lines), 1)
+        self.assertEqual([line.split('PATH_TRANSFORM_OBSERVE_ROW ')[1] for line in lines
+                          if 'PATH_TRANSFORM_OBSERVE_ROW ' in line], ['tick=4 site=1', 'tick=5 site=2'])
+        self.assertNotIn("log('PATH_TRANSFORM_OBSERVE_", SOURCE)
 
     def test_written_ticks_are_batched_in_bounded_calls(self):
         self.run_ticks(3,'''

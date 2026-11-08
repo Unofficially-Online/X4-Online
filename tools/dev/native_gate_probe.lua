@@ -3768,6 +3768,15 @@ local function frame()
     gate.coverage_row and gate.coverage(ticks)==1,'coverage refused '..tostring(gate.coverage_status and gate.coverage_status()))
    log('COVERAGE_ARMED ticks='..ticks..' '..tostring(gate.coverage_status()))
   end
+  -- Linux-only diagnostic: the candidate live getter can have engine side effects.
+  if cfg.native_gate_path_transform_observe then
+   local window=cfg.native_gate_path_transform_observe
+   assert(type(window)=='table' and #window==2 and cfg.native_gate_travel_determinism and
+    not cfg.native_gate_step_chain and gate.path_transform_observe and gate.path_transform_observe_status and
+    gate.path_transform_observe_row and gate.path_transform_observe(window[1],window[2])==1,
+    'path transform observer refused '..tostring(gate.path_transform_observe_status and gate.path_transform_observe_status()))
+   ticklog.write('PATH_TRANSFORM_OBSERVE_ARMED '..tostring(gate.path_transform_observe_status()))
+  end
   -- The Linear flight model's step, entry and exit, for watched ships in ticks 1..N (diagnostic, read-only:
   -- swaps one vtable entry; Option B evidence). native_gate_step_trace_ticks defaults to 3. Default off.
   if cfg.native_gate_step_trace then
@@ -4982,6 +4991,14 @@ local function frame()
    if gate.virtual_players_hashes then log('VPLAYER_HASHES '..tostring(gate.virtual_players_hashes())) end
    if gate.virtual_players_raw then log('VPLAYER_RAW class=config '..tostring(gate.virtual_players_raw('config'))..' option='..tostring(gate.virtual_players_raw('option'))) end
   end
+  if cfg.native_gate_path_transform_observe then
+   ticklog.write('PATH_TRANSFORM_OBSERVE_STOP '..tostring(gate.path_transform_observe_status()))
+   for index=0,511 do
+    local row=gate.path_transform_observe_row(index)
+    if not row then break end
+    ticklog.write('PATH_TRANSFORM_OBSERVE_ROW '..row)
+   end
+  end
   if cfg.native_gate_travel_determinism then log('TRAVEL_DETERMINISM_STOP '..tostring(gate.travel_determinism_status())) end
   if cfg.native_gate_travel_snapshot then log('TRAVEL_SNAPSHOT_STOP '..tostring(gate.travel_snapshot_status())) end
   if cfg.native_gate_path_transforms then log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end
@@ -5782,6 +5799,16 @@ SetScript('onUpdate',function()
    if cfg.native_gate_transition_rows then ticklog.try(function() log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end) end
    if cfg.native_gate_tempzone_order then ticklog.try(function() log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end) end
    if cfg.native_gate_warp_exit and gate.warp_exit_status then ticklog.try(function() log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end) end
+   if cfg.native_gate_path_transform_observe then
+    ticklog.try(function()
+     ticklog.write('PATH_TRANSFORM_OBSERVE_STOP '..tostring(gate.path_transform_observe_status()))
+     for index=0,511 do
+      local row=gate.path_transform_observe_row(index)
+      if not row then break end
+      ticklog.write('PATH_TRANSFORM_OBSERVE_ROW '..row)
+     end
+    end)
+   end
    if cfg.native_gate_path_transforms then ticklog.try(function() log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end) end
    if cfg.native_gate_body_pose then ticklog.try(function() log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end) end
    if cfg.native_gate_gravidar_wide then ticklog.try(function() log('GRAVIDAR_WIDE_STOP '..tostring(gate.gravidar_wide_status())) end) end

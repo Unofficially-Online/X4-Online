@@ -269,6 +269,8 @@ def bundle(args):
         command.append('--travel-snapshot')
     if args.travel_determinism:
         command.append('--travel-determinism')
+    if args.path_transform_observe:
+        command += ['--path-transform-observe', *map(str, args.path_transform_observe)]
     if args.runtime_ids:
         command.append('--runtime-ids')
     if args.runtime_id_callers:
@@ -418,6 +420,7 @@ def bundle(args):
         'gravidar_deadlines',
         'travel_snapshot',
         'travel_determinism',
+        'path_transform_observe',
         'world_log_mode',
         'world_rolling_slices',
         'status_stride',
@@ -1211,6 +1214,8 @@ def main(argv=None):
     b.add_argument('--coverage-list', type=Path, help='the Linux function list for --coverage (fp_inventory.py --coverage-lists)')
     b.add_argument('--attention-all', action='store_true', help="every portable object's attention timer keyed by (tick, ID), its first due at the first admitted call")
     b.add_argument('--loadout-order-rows', type=int, nargs=2, metavar=('FROM', 'TO'), help='LOADOUT_ROWs in this tick window (at most 600 ticks)')
+    b.add_argument('--path-transform-observe', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='compare ordered batch native and live path transforms (experimental)')
     b.add_argument('--nav-cadence', choices=('far', 'observe'), help='nav refresh intervals no longer depend on the camera distance')
     b.add_argument('--nav-params-init', action='store_true', help='parameter deadlines reset at the first call')
     b.add_argument('--nav-key', action='store_true', help="the nav refresh's draws keyed per ship (tick, portable ID, ordinal, time)")

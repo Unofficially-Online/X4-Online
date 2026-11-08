@@ -104,7 +104,9 @@ static int lxt_inline_dispatch(lxt_inline_queue_fn queue, lxt_inline_job_fn job,
     memcpy(tls + GATE_TLS_LINUX_PREVIOUS_TIME, &zero, 8);
     memcpy(tls + GATE_TLS_LINUX_RNG, &seed, 8);
     memcpy(tls + GATE_TLS_LINUX_VIEW, &zero_view, 4);
+    int observer_scope = path_transform_observer_scope_enter();
     job(payload, NULL);
+    path_transform_observer_scope_leave(observer_scope);
     memcpy(tls + GATE_TLS_LINUX_TIME, &old_time, 8);
     memcpy(tls + GATE_TLS_LINUX_PREVIOUS_TIME, &old_previous, 8);
     memcpy(tls + GATE_TLS_LINUX_RNG, &old_rng, 8);

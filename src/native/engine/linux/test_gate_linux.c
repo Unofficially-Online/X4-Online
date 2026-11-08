@@ -345,6 +345,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_world_rolling.h"
 #include "test_gate_path.h"
 #include "test_gate_travel_determinism.h"
+#include "test_gate_path_transform_observe.h"
 #include "test_gate_load.h"
 #include "test_gate_loadout.h"
 #include "test_gate_attention.h"
@@ -404,6 +405,7 @@ int main(int argc,char **argv) {
     test_engine_rng_linux();
     test_spline_join_linux();
     test_mass_traffic_linux();
+    test_path_transform_observer();
     test_actor_all_linux();
     test_player_timer_linux();
     test_tempzone_order_linux();
@@ -422,6 +424,7 @@ int main(int argc,char **argv) {
         test_frame_gate();test_frame_gate_failures();
         assert(!memcmp(window,LX(LX_CALL_WINDOW),16) && !memcmp(dt,LX(LX_DT_LOAD_VA),16));
         test_travel_inline_elf();
+        test_path_transform_observer_elf();
         test_world_install_elf();test_path_install();test_path_budget();test_load_patches();test_world_golden(getenv("GATE_WORLD_GOLDEN"));
         test_loadout_order_elf();
         test_fp_redirect_elf();

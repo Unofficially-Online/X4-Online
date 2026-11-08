@@ -542,6 +542,21 @@ class Overlay(unittest.TestCase):
         self.assertNotIn('native_gate_travel_snapshot', config)
         self.assertIn("native_gate_tempzone_order = 'order'", config)
 
+    def test_linux_path_transform_observer_requires_ordered_pathing_and_excludes_step_chain(self):
+        options = ('--mode', 'clock', '--world-identities', '--serial-pathing',
+                   '--path-determinism', '3', '--travel-determinism')
+        out = self.build(*self.snapshot, *options, '--path-transform-observe', '8461', '8520')
+        self.assertIn('native_gate_path_transform_observe = {8461, 8520}',
+                      (out / 'ui/config.lua.append').read_text())
+        for invalid in (('--path-transform-observe', '0', '10'),
+                        ('--path-transform-observe', '1', '601'),
+                        ('--path-transform-observe', '10', '9'),
+                        ('--path-transform-observe', '1', '2', '--step-chain')):
+            with self.assertRaises(SystemExit):
+                self.build(*self.snapshot, *options, *invalid)
+        with self.assertRaises(SystemExit):
+            self.build(*self.snapshot, '--mode', 'clock', '--path-transform-observe', '1', '2')
+
     def test_linux_hash_logging_changes_output_without_disabling_the_census(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities',
                          '--world-hash-stride', '120', '--world-log-mode', 'hashes', '--probe-profile')
