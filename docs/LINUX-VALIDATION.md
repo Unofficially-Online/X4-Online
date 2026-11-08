@@ -232,3 +232,44 @@ still differ, specifically in build-storage update traffic. This is a bounded
 positive result, not a declaration that Linux desync is solved. See the
 [motion investigation](../reports/LOCKSTEP-LINUX-MOTION-ONSET-20261108.txt)
 for raw-evidence limits and the separate load-time scheduling investigation.
+
+## Experimental build-update scheduling
+
+`--build-rng` enables a separate, default-off hook before snapshot loading. It
+requires the snapshot boot and world identities. The hook keys the randomized
+delay in the pinned shared Container scheduler, which schedules build-update
+events. That scheduler can run from constructors while an object still has its
+Container vtable; this is broader than the final BuildStorage class alone.
+Event-delivery keying cannot repair a delay already chosen during loading.
+
+The wrapper temporarily seeds the calling thread's RNG from the available
+portable identity and exact game-time bits, calls the original native draw
+once and restores the ambient RNG word on normal return. It preserves the
+scheduler's explicit-time path. Missing identities use a mapped class/time
+fallback: multiple objects can then share a delay, so inspect fallback counts
+and timing bursts. Unknown classes and invalid calls fail the gate. Function
+bodies, referenced constants, the complete stub and the owned call window are
+checked; restoration never overwrites a foreign patch.
+
+`BUILD_RNG_STOP` reports keyed, native, unmapped and fallback counts, including
+separate counts for calls outside admitted frames. `BUILD_RNG_ROW` retains only
+the first 128 successful calls outside admitted frames; `rows` is the total
+population and `overflow` states how much was not retained. The `phase` field
+distinguishes actual load-phase samples from other boot phases. A complete
+128-row sample with nonzero overflow is not a complete population audit.
+
+These rows contain the selected seed and the native draw's actual float bits.
+The logged caller is the scheduler continuation, not the higher loader caller.
+Due times reconstructed from the sampled game time and draw are derived values,
+not independent observations of the scheduled event queue. Retain event rows
+around ticks 3600..4200 to compare the first update deliveries, along with world
+evidence and a successful restored stop. This remains an experimental Linux
+hook; Windows interoperability and playable multiplayer require separate tests.
+
+A first same-PC run at source `fbb6f6d` passed 15,000 ticks with this hook and
+event RNG enabled: 126 sampled full censuses agree, and the earlier event
+aggregate split at tick 3601 is absent across all 15,000 status records. The
+complete 3600..4200 delivery window and 11360..11900 script window also agree.
+Loading reports 1,452 keyed calls with no fallback, but only the first 128 have
+individual receipts; seven later class fallbacks remain. See the linked motion
+investigation for sample coverage, cleanup evidence and remaining limits.

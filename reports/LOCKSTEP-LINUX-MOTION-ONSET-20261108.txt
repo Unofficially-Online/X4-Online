@@ -238,3 +238,61 @@ Private evidence: event-key-rolling-independent-audit/summary.json and
 event-key-rolling-prefix-timing.json. The first attempted rolling bundle was
 rejected before launch because it requested world-hash watches. Motion-only
 watches are compatible with rolling mode; this comparison omits both kinds.
+
+Load-time build-update RNG comparison
+------------------------------------
+Clean source fbb6f6d4a2c93745c16c3add5537c114cf032cfb adds a default-off
+build_rng hook at the shared Container scheduler's randomized-delay draw.
+Pinned Linux disassembly identifies the call at VA 0x1838f16 to FloatRange
+at VA 0x1a491c0. The explicit-time path remains native and unchanged. The
+wrapper seeds one native draw using portable identity and exact game-time
+bits, then restores the caller's RNG word on normal return. It resolves
+available saved identities before the import registry is sealed. A mapped
+Component class is required even when an identity lookup succeeds; otherwise
+the gate fails. Class/time fallback remains possible when identity is absent.
+
+The final source passed pinned ELF and synthetic guard checks, 168 Lua bridge
+method checks, 29 mock relay scenarios and 16 focused Python tests. Separate
+source review corrected a valid-identity/unknown-class guard bypass before
+the native run. These are source and synthetic checks, not native evidence.
+
+The native comparison retains the prior seed-2222222 snapshot and reversed
+launch order 2,1. It enables build_rng alongside event_rng/key, nav-key and
+ordered travel. Gate SHA256 is
+5523ae986c2da491897b60b9a34f353d323d40a43ce7e2cfa987e67777861ea1.
+Both peers finish 15000 ticks. Independent canonical-log audits confirm all
+126 sampled full censuses match, as do 16004 motion rows per peer across the
+four watched objects at ticks 8000..12000. Each peer has 544 successful
+watch/census checks. STOP reason=1/restored=1, matching bundle hashes, an
+unchanged recorded Steam identity and no remaining owned X4 processes are
+verified. This does not inspect every internal state between census captures.
+
+All 15000 EVENT cumulative status payloads now match field for field, with
+no missing ticks: the earlier first split at tick 3601 is absent. The complete
+delivery window 3600..4200 contains 33089 matching rows per peer, including
+33064 zero-draw deliveries. All 43413 logged rows per peer have contiguous
+drain indices. Outside the window, zero-draw delivery identities are omitted;
+matching aggregates are not full identity-history proof. SCRIPT retains
+69815 matching rows per peer across all 541 ticks at 11360..11900, without
+unrepresented scopes. The strict row comparisons show no differing category.
+
+BUILD_RNG reports 1452 keyed calls outside admitted frames and zero loading
+fallbacks per peer. All 128 retained samples have boot phase 2 and saved IDs;
+their multisets match: 117 BuildStorage, six ShipExtraLarge and five Station.
+The remaining 1324 calls are explicitly unsampled, so individual identities
+and draw equivalence for that population are not established by these rows.
+Seven class-fallback calls occur later in the run; their identities are not
+retained. No sampled call uses the temporary Container class, although the
+pinned scheduler has a constructor path. Native/unmapped/failure counts are
+zero and the final build hook reports restored=1. Sampled native float bits
+are checked against independently derived expected values; due times and
+RNG exits are not separately observed fields.
+
+The private BUILD validator initially required live status rows that this
+module deliberately emits only at STOP. That unsupported assertion was
+removed and the false-failure artifact retained; no native evidence or gate
+was relaxed. This is a bounded same-PC success, not evidence for another
+world seed, future simulation duration, interactive play or Windows parity.
+
+Private evidence: build-event-key-independent-audit/summary.json,
+build-event-key-audit-summary.json and build-event-key-{loading,events,scripts}.json.
