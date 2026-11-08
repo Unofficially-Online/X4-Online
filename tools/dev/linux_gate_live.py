@@ -229,6 +229,12 @@ def bundle(args):
             validate_configuration(args.economy_watch, args.economy_watch_window, args.ticks)
         except ValueError as error:
             raise SystemExit(str(error)) from error
+    if args.navmesh_post_observe is not None:
+        from navmesh_post_config import validate_window
+        try:
+            validate_window(args.navmesh_post_observe, args.ticks)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
     if args.world_motion_watch is not None or args.world_motion_window is not None:
         from world_motion_evidence import validate_configuration
         try:
@@ -254,6 +260,8 @@ def bundle(args):
     if args.economy_watch is not None:
         command += ['--economy-watch', args.economy_watch,
                     '--economy-watch-window', *map(str, args.economy_watch_window)]
+    if args.navmesh_post_observe is not None:
+        command += ['--navmesh-post-observe', *map(str, args.navmesh_post_observe)]
     if args.world_motion_watch is not None:
         command += ['--world-motion-watch', *args.world_motion_watch,
                     '--world-motion-window', *map(str, args.world_motion_window)]
@@ -431,7 +439,7 @@ def bundle(args):
     shutil.copy2(repo / 'tools/dev/native_gate_relay.py', out / 'native_gate_relay.py')
     shutil.copy2(Path(__file__), out / 'linux_gate_live.py')
     shutil.copy2(Path(__file__).with_name('linux_gate_evidence.py'), out / 'linux_gate_evidence.py')
-    for helper in ('world_motion_evidence.py', 'native_world_evidence.py', 'economy_watch_config.py'):
+    for helper in ('world_motion_evidence.py', 'native_world_evidence.py', 'economy_watch_config.py', 'navmesh_post_config.py'):
         shutil.copy2(Path(__file__).with_name(helper), out / helper)
     shutil.rmtree(work)
     commit = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
@@ -451,6 +459,7 @@ def bundle(args):
         'travel_snapshot',
         'travel_determinism',
         'path_transform_observe',
+        'navmesh_post_observe',
         'world_log_mode',
         'world_rolling_slices',
         'status_stride',
@@ -1016,6 +1025,9 @@ def run(args):
                                             'gate_so_sha256': manifest['gate_so_sha256']}))
         return
     ticks = manifest['ticks'] if args.ticks is None else args.ticks
+    if manifest.get('navmesh_post_observe') is not None:
+        from navmesh_post_config import validate_window
+        validate_window(manifest['navmesh_post_observe'], ticks)
     if manifest.get('economy_watch') is not None or manifest.get('economy_watch_window') is not None:
         from economy_watch_config import validate_configuration
         validate_configuration(manifest.get('economy_watch'), manifest.get('economy_watch_window'), ticks)
@@ -1224,6 +1236,8 @@ def main(argv=None):
     b.add_argument('--economy-watch', metavar='SAVED_ID', help='read-only station economy deadline evidence')
     b.add_argument('--economy-watch-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),
                    help='inclusive economy watch window, at most 36000 ticks')
+    b.add_argument('--navmesh-post-observe', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='observe Linux navmesh post attempts during startup and this inclusive live tick window')
     b.add_argument('--world-motion-watch', nargs='+', metavar='SAVED_ID',
                    help='default-off per-tick canonical Nav evidence for up to four imported saved IDs')
     b.add_argument('--world-motion-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),

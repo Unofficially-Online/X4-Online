@@ -646,6 +646,20 @@ do
   type(gate.economy_watch_capture)=='function' and type(gate.economy_watch_status)=='function'),
   'economy watch requires one saved Station and a bounded complete tick window')
 end
+do
+  local window = cfg.native_gate_navmesh_post_observe
+  assert(window == nil or (
+    type(window) == 'table' and #window == 2 and
+    type(window[1]) == 'number' and type(window[2]) == 'number' and
+    window[1] % 1 == 0 and window[2] % 1 == 0 and
+    window[1] >= 1 and window[1] <= window[2] and window[2] <= 9007199254740991 and
+    cfg.native_gate_world_identities and cfg.native_gate_snapshot_sha and
+    type(gate.platform) == 'function' and gate.platform() == 'linux' and
+    type(gate.navmesh_post_observe) == 'function' and
+    type(gate.navmesh_post_observe_status) == 'function' and
+    type(gate.navmesh_post_observe_row) == 'function'
+  ), 'navmesh post observer requires Linux, saved identities, snapshot and a valid tick window')
+end
 -- FR28 (DEFAULT OFF, read-only): native_gate_world_health_ticks = {first,last} writes a WORLD_HEALTH row per
 -- world-hash watch on every tick first..last, after that tick's capture point: its stored hull and shield
 -- (value, changed time, maximum, delay, rate, factor, generators, modifiers) and the game time, as bits. The
@@ -1477,6 +1491,54 @@ local camera_perturb=false -- this client perturbs its camera (native_gate_camer
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
 local nav_cadence_cursor=0
 local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,character_play=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,vplayer_map=0,vplayer_spike='',event_rng=0,build_rng=0,economy_load_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,ui_exports=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+row_cursors.navmesh_post = 0
+row_cursors.drain_navmesh_post = function(can_resolve)
+  while row_cursors.navmesh_post < 8192 do
+    local row = gate.navmesh_post_observe_row(row_cursors.navmesh_post)
+    if row == nil then break end -- a reserved row can publish on a later tick
+    assert(type(row) == 'string', 'navmesh post row unavailable')
+    assert(tonumber(row:match('^index=(%d+)')) == row_cursors.navmesh_post,
+      'navmesh post row index mismatch')
+    ticklog.write('NAVMESH_POST_ROW '..row)
+    -- Runtime IDs can be reused: this is a post-seal lookup at drain time,
+    -- never proof of the identity when the producer made the attempt.
+    local saved_hint = 'unresolved'
+    local runtime_hex = row:match('%f[%w]runtime=(%x+)')
+    if can_resolve and gate.saved_identity and runtime_hex and #runtime_hex == 16 then
+      local ok, saved_id = pcall(function()
+        local high = tonumber(runtime_hex:sub(1, 8), 16)
+        local low = tonumber(runtime_hex:sub(9), 16)
+        local runtime_id = ffi.cast('uint64_t', high) * 4294967296ULL + low
+        return gate.saved_identity((tostring(runtime_id):gsub('ULL$', '')))
+      end)
+      if ok and type(saved_id) == 'string' and #saved_id == 16 and
+          saved_id:match('^[0-9a-f]+$') and saved_id ~= '0000000000000000' then
+        saved_hint = saved_id
+      end
+    end
+    ticklog.write('NAVMESH_POST_IDENTITY index='..row_cursors.navmesh_post..
+      ' saved_hint='..saved_hint..' lookup=drain')
+    row_cursors.navmesh_post = row_cursors.navmesh_post + 1
+  end
+end
+row_cursors.stop_navmesh_post = function(can_resolve, aborted)
+  row_cursors.drain_navmesh_post(can_resolve)
+  local status = assert(gate.navmesh_post_observe_status(), 'navmesh post status unavailable')
+  ticklog.write((aborted and 'NAVMESH_POST_ABORT ' or 'NAVMESH_POST_STOP ')..status)
+  local attempts = tonumber(status:match('%f[%w]attempts=(%d+)'))
+  local eligible = tonumber(status:match('%f[%w]eligible=(%d+)'))
+  local recorded = tonumber(status:match('%f[%w]recorded=(%d+)'))
+  local overflow = tonumber(status:match('%f[%w]overflow=(%d+)'))
+  local unreadable = tonumber(status:match('%f[%w]unreadable=(%d+)'))
+  local inflight = tonumber(status:match('%f[%w]inflight=(%d+)'))
+  local restored = tonumber(status:match('%f[%w]restored=(%d+)'))
+  local cleanup = tonumber(status:match('%f[%w]cleanup_uncertain=(%d+)'))
+  local installed = tonumber(status:match('%f[%w]installed=(%d+)'))
+  assert(attempts and eligible and attempts >= eligible and eligible == recorded and
+    recorded == row_cursors.navmesh_post and overflow == 0 and unreadable == 0 and
+    installed == 0 and inflight == 0 and restored == 1 and cleanup == 0,
+    'navmesh post evidence incomplete')
+end
 local world_trace_rows,world_queue_rows,world_wait_rows,world_wait_rng_rows=0,0,0,0
 local world_action_rows,world_values_rows,world_values_unknown_rows,world_unknown_identity_rows=0,0,0,0
 local world_values_cursors_loaded=false
@@ -3068,6 +3130,12 @@ local function frame()
   local code=start(tonumber(cfg.slot:sub(2)),cfg.port,cfg.token,wait_ms,digest,options)
   if code~=0 then ticklog.refuse('code='..code..(gate.verify_stage and ' stage='..tostring(gate.verify_stage()) or ''),X4LAN_NATIVE_GATE_DEFAULTS and X4LAN_NATIVE_GATE_DEFAULTS.STOP_REASONS[code]);done=true;return end
   native_owned=true
+  if cfg.native_gate_navmesh_post_observe then
+    local window = cfg.native_gate_navmesh_post_observe
+    assert(gate.navmesh_post_observe(window[1], window[2]) == 1,
+      'navmesh post observer refused '..tostring(gate.navmesh_post_observe_status()))
+    ticklog.write('NAVMESH_POST_ARMED '..tostring(gate.navmesh_post_observe_status()))
+  end
   if cfg.native_gate_registry_md_trace then
    local capability=gate.poll();assert(capability.registry_md_installed==1 and capability.registry_md_schema==2,'native MD observer schema2 not installed')
    assert(cfg.native_gate_registry_origin_schema==1 and capability.registry_origin_schema==1 and capability.registry_origin_enabled==1,'native registry origin observer not enabled')
@@ -4924,6 +4992,11 @@ local function frame()
  end
  -- Status stride: this frame's output belongs to tick s.issued; a stop first writes the held ticks.
  if s.active==0 then ticklog.flush() else ticklog.open((not snapshot or (s.boot_phase>=3 and s.issued~=s.report_tick)) and tonumber(s.issued)) end
+ -- The post ring survives UI reload. Drain only after loading, so a new UI
+ -- does not emit the earlier menu rows again from its own cursor zero.
+ if cfg.native_gate_navmesh_post_observe and (s.active == 0 or s.boot_phase >= 3) then
+   row_cursors.drain_navmesh_post(s.boot_phase >= 3)
+ end
  if diagnostic and s.active==0 and not assert(X4LAN_NATIVE_DIAGNOSTIC,'diagnostic adapter missing').drain(gate,false) then return end
  if cfg.native_gate_player_transition_observer then assert(X4LAN_NATIVE_TRANSITION,'transition adapter missing').drain(gate,s.active==0) end
  if cfg.native_gate_player_origin_token then assert(X4LAN_NATIVE_ORIGIN,'origin adapter missing').drain(gate,s.active==0) end
@@ -4951,6 +5024,9 @@ local function frame()
   -- Every piloting module's why at once, before any other stop row can fail (w1foot: stop 185 without its why).
   if gate.pilot_why then pcall(function() local why=gate.pilot_why();if why then log('PILOT_STOP_WHY '..why) end end) end
   ticklog.stopped(s.reason)
+  if cfg.native_gate_navmesh_post_observe then
+    row_cursors.stop_navmesh_post(s.boot_phase >= 3, false)
+  end
   if s.reason==3 and gate.unowned then log('UNOWNED '..tostring(gate.unowned())) end
   log('PATH joins='..s.path_joins..' restored='..s.path_restored..' rng_seeds='..s.rng_seeds..' boot_passes_menu='..tostring(s.path_boot_passes_menu)..' boot_passes_load='..tostring(s.path_boot_passes_load))
   if X4LAN_NATIVE_ADAPTIVE then log('ADAPTIVE_STOP '..tostring(gate.adaptive_status()))
@@ -5613,6 +5689,9 @@ local function frame()
  if cfg.native_gate_md_resume_rng then ticklog.status('MD_RESUME_RNG',tick,gate.md_resume_rng_status,'MD resume RNG status unavailable');drain_md_resume() end
  if cfg.native_gate_ai_wait_rng then ticklog.status('AI_WAIT_RNG',tick,gate.ai_wait_rng_status,'AI wait RNG status unavailable');drain_ai_wait() end
  if cfg.native_gate_economy_load_rng then ticklog.status('ECONOMY_LOAD_RNG',tick,gate.economy_load_rng_status,'economy load RNG status unavailable') end
+ if cfg.native_gate_navmesh_post_observe then
+   ticklog.status('NAVMESH_POST', tick, gate.navmesh_post_observe_status, 'navmesh post status unavailable')
+ end
  if cfg.native_gate_find_order then ticklog.status('FIND_ORDER',tick,gate.find_order_status,'find order status unavailable');drain_find_order() end
  if cfg.native_gate_region_rng~=nil then ticklog.status('REGION_RNG',tick,gate.region_rng_status,'region RNG status unavailable');drain_region() end
  if cfg.native_gate_spawn_rng~=nil then ticklog.status('SPAWN_RNG',tick,gate.spawn_rng_status,'spawn RNG status unavailable');drain_spawn() end
@@ -5860,6 +5939,9 @@ SetScript('onUpdate',function()
    end
    local status=gate.poll() or {}
    log('ABORT stopped='..tostring(stopped)..' active='..tostring(status.active)..' restored='..tostring(status.restored)..' tick='..tostring(status.issued))
+   if cfg.native_gate_navmesh_post_observe then
+     ticklog.try(row_cursors.stop_navmesh_post, (tonumber(status.boot_phase) or 0) >= 3, true)
+   end
    if gate.pilot_why then pcall(function() local why=gate.pilot_why();if why then log('PILOT_STOP_WHY '..why) end end) end
    if cfg.native_gate_player_transition_observer and X4LAN_NATIVE_TRANSITION then
     local drained,why=pcall(X4LAN_NATIVE_TRANSITION.drain,gate,true)

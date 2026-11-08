@@ -8,6 +8,7 @@
  * Built and run by tools/dev/check_lockstep_gate_linux.py. */
 #define GATE_TLS_TEST
 #define ECONOMY_RNG_CANARY
+#define NAVMESH_POST_TEST
 #include "gate_linux.c"
 #ifdef NDEBUG
 #undef NDEBUG
@@ -347,6 +348,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_world_motion_watch.h"
 #include "test_gate_economy_watch.h"
 #include "test_gate_economy_rng.h"
+#include "test_gate_navmesh_post_observe.h"
 #include "test_gate_path.h"
 #include "test_gate_travel_determinism.h"
 #include "test_gate_path_transform_observe.h"
@@ -396,6 +398,7 @@ int main(int argc,char **argv) {
     test_world_motion_watch();
     test_economy_watch();
     test_economy_rng();
+    test_navmesh_post();
     test_path_determinism();
     test_travel_inline_dispatch();
     test_path_install();
@@ -445,6 +448,7 @@ int main(int argc,char **argv) {
         test_engine_rng_elf();
         test_build_rng_elf();
         test_economy_rng_elf();
+        test_navmesh_post_elf();
         test_event_rng_elf();
         test_spline_join_elf();
         test_mass_traffic_elf();

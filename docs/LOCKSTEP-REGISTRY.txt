@@ -270,7 +270,8 @@ Modules (define, owner):
                                 ids_foreign, created_entries, rid_*, pins, engine)
   201 ECONOMY_RNG_STOP_REASON   Linux economy load RNG detour
   202 PATH_TRANSFORM_OBSERVER_STOP_REASON Linux path-transform observer
-  free: 109, 114-119, 122-129, 147-149, 189, 203-255.
+  203 NAVMESH_POST_STOP_REASON Linux NavMesh producer-post observer (ownership/pin failure)
+  free: 109, 114-119, 122-129, 147-149, 189, 204-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

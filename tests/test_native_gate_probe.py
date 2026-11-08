@@ -201,6 +201,81 @@ class SnapshotProbeTests(unittest.TestCase):
         self.assertTrue(any('PATH_TRANSFORM_OBSERVE_ARMED' in line for line in self.lua.globals().logs.values()))
         self.assertFalse(any('ERROR' in line for line in self.lua.globals().logs.values()))
 
+    def test_navmesh_post_observer_load_rows_retry_and_stop(self):
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_world_identities=true
+          X4LAN_CONFIG.native_gate_navmesh_post_observe={1,5}
+          local gate=package.loadlib('gate')();arms=0;available=0
+          local fakeffi=require('ffi');fakeffi.cast=package.loaders[1]('ffi')().cast
+          gate.platform=function() return 'linux' end
+          gate.saved_identity=function(id) saved_runtime=id;return '0000000000036fe9' end
+          gate.navmesh_post_observe=function(first,last)
+            assert(first==1 and last==5);arms=arms+1;return 1
+          end
+          gate.navmesh_post_observe_status=function()
+            return 'installed='..(state.active==0 and '0' or '1')..' attempts=2 eligible=2 recorded=2 overflow=0 unreadable=0 inflight=0 restored='..
+              (state.active==0 and '1' or '0')..' cleanup_uncertain=0'
+          end
+          gate.navmesh_post_observe_row=function(index)
+            if index>=available then return nil end
+            return 'index='..index..' phase=1 runtime=ffffffffffffffff'
+          end
+          local load=LoadGame;LoadGame=function(slot) assert(arms==1);load(slot) end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads, 1)
+        self.lua.execute('available=1;update()')
+        self.assertFalse(any('NAVMESH_POST_ROW ' in line for line in self.lua.globals().logs.values()))
+        self.lua.execute('available=1;state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        self.lua.execute('available=2;state.issued=2;update()')
+        self.lua.execute(STOP_FIELDS + 'state.reason=1;state.active=0;update()')
+        logs = list(self.lua.globals().logs.values())
+        rows = [line for line in logs if 'NAVMESH_POST_ROW ' in line]
+        self.assertEqual(len(rows), 2, logs)
+        self.assertTrue(any('index=0 ' in line for line in rows))
+        self.assertTrue(any('index=1 ' in line for line in rows))
+        self.assertTrue(any('NAVMESH_POST_STOP ' in line for line in logs))
+        self.assertEqual(self.lua.globals().saved_runtime, '18446744073709551615')
+        self.assertTrue(any('NAVMESH_POST_IDENTITY index=0 saved_hint=0000000000036fe9 lookup=drain' in line for line in logs))
+
+    def test_navmesh_post_observer_refuses_incomplete_configuration(self):
+        for window, platform, identities in (('{0,2}', 'linux', True), ('{2,1}', 'linux', True),
+                                             ('true', 'linux', True), ('{1,2}', 'windows', True),
+                                             ('{1,2}', 'linux', False)):
+            self.setUp()
+            self.lua.execute(f"X4LAN_CONFIG.native_gate_navmesh_post_observe={window};"
+                             f"X4LAN_CONFIG.native_gate_world_identities={'true' if identities else 'false'};"
+                             "local gate=package.loadlib('gate')();"
+                             f"gate.platform=function() return '{platform}' end;"
+                             "gate.navmesh_post_observe=function() return 1 end;"
+                             "gate.navmesh_post_observe_status=function() return '' end;"
+                             "gate.navmesh_post_observe_row=function() end")
+            with self.subTest(window=window, platform=platform, identities=identities), self.assertRaises(LuaError):
+                self.lua.execute(SOURCE)
+            self.assertEqual(self.lua.globals().loads, 0)
+
+    def test_navmesh_post_observer_rejects_incomplete_stop(self):
+        for recorded, overflow in ((1, 0), (0, 1)):
+            self.setUp()
+            self.lua.execute('''
+              X4LAN_CONFIG.native_gate_world_identities=true
+              X4LAN_CONFIG.native_gate_navmesh_post_observe={1,2}
+              local gate=package.loadlib('gate')()
+              gate.platform=function() return 'linux' end
+              gate.navmesh_post_observe=function() return 1 end
+              gate.navmesh_post_observe_status=function()
+                return 'installed=0 attempts=1 eligible=1 recorded='..recorded..
+                  ' overflow='..overflow..' unreadable=0 inflight=0 restored=1 cleanup_uncertain=0'
+              end
+              gate.navmesh_post_observe_row=function() return nil end
+            ''' + f'recorded={recorded};overflow={overflow}')
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.lua.execute(STOP_FIELDS + 'state.reason=1;state.active=0;update()')
+            logs = list(self.lua.globals().logs.values())
+            self.assertTrue(any('NAVMESH_POST_STOP' in line for line in logs), logs)
+            self.assertTrue(any('navmesh post evidence incomplete' in line for line in logs), logs)
+
     def test_travel_snapshot_arms_after_path_determinism_and_logs_every_admitted_tick(self):
         self.lua.execute('''
           X4LAN_CONFIG.native_gate_serial_pathing=true

@@ -215,6 +215,8 @@ def main():
     p.add_argument('--economy-watch', metavar='SAVED_ID', help='read-only Linux station economy deadlines')
     p.add_argument('--economy-watch-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),
                    help='inclusive station economy evidence window, at most 36000 ticks')
+    p.add_argument('--navmesh-post-observe', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='observe Linux navmesh post attempts during startup and this inclusive live tick window')
     p.add_argument('--world-motion-watch', nargs='+', metavar='SAVED_ID',
                    help='default-off Linux Nav motion/timing evidence for up to four saved IDs')
     p.add_argument('--world-motion-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),
@@ -407,6 +409,14 @@ def main():
             p.error(str(error))
         if not args.gate_so or not args.snapshot or not args.world_identities:
             p.error('--economy-watch requires Linux, a snapshot and --world-identities')
+    if args.navmesh_post_observe is not None:
+        from navmesh_post_config import validate_window
+        try:
+            validate_window(args.navmesh_post_observe)
+        except ValueError as error:
+            p.error(str(error))
+        if not args.gate_so or not args.snapshot or not args.world_identities:
+            p.error('--navmesh-post-observe requires Linux, a snapshot and --world-identities')
     if args.world_motion_watch is not None or args.world_motion_window is not None:
         from world_motion_evidence import validate_configuration
         try:
@@ -570,7 +580,7 @@ def main():
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
         allowed.add('path_transform_observe')
-        allowed.update(('world_motion_watch', 'world_motion_window', 'economy_watch', 'economy_watch_window'))
+        allowed.update(('world_motion_watch', 'world_motion_window', 'economy_watch', 'economy_watch_window', 'navmesh_post_observe'))
         allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile', 'status_stride'))
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
@@ -676,6 +686,8 @@ X4LAN_CONFIG.token = "@X4LANE_TOKEN@"
 X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
 ''' % args.mode)
     with (args.out / 'ui/config.lua.append').open('a') as config:
+        if args.navmesh_post_observe is not None:
+            config.write('X4LAN_CONFIG.native_gate_navmesh_post_observe = {%d,%d}\n' % tuple(args.navmesh_post_observe))
         if args.economy_watch is not None:
             config.write(f"X4LAN_CONFIG.native_gate_economy_watch = '{args.economy_watch}'\n")
             config.write('X4LAN_CONFIG.native_gate_economy_watch_window = {%d,%d}\n' % tuple(args.economy_watch_window))

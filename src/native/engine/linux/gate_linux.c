@@ -71,6 +71,7 @@ static unsigned remote_port;
 static uint32_t relay_address;
 #include "lockstep_gate_common.h"
 #include "lockstep_tick.h"
+#include <sched.h>
 #include "lockstep_seed_core.h"
 #include "lockstep_tls.h"
 /* World identities (gate_world.h, included below). */
@@ -79,6 +80,11 @@ static int world_identity_owned(void);
 static void world_identity_seal(void);
 static volatile int64_t world_identity_failures;
 static int world_identity_installed;
+static void navmesh_post_restore(void);
+static int navmesh_post_check(void);
+static void navmesh_post_publish(unsigned phase, uint64_t epoch);
+static int navmesh_post_installed, navmesh_post_cleanup_uncertain;
+#define NAVMESH_POST_STOP_REASON 203u
 static void economy_rng_restore(void);
 static int economy_rng_check(void);
 static int economy_rng_installed, economy_rng_restored;
@@ -472,6 +478,8 @@ static void finish(unsigned reason) {
     if(dt_installed && main_thread && GetCurrentThreadId()!=main_thread) wait_parked(500);
     restore_dt();
     if(dt_installed) stats.restored=0;
+    navmesh_post_restore();
+    if(navmesh_post_installed || navmesh_post_cleanup_uncertain) stats.restored=0;
     economy_rng_restore(); /* Must not outlive its identity hooks. */
     if(economy_rng_installed || economy_rng_cleanup_uncertain) stats.restored=0;
     linux_build_rng_restore(); /* The scheduler must not outlive its identity hooks. */
@@ -610,6 +618,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     gate_fetch_check();
     void *table;memcpy(&table,LX(LX_VBI_TABLE_VA),8);
     if(world_identity_installed && world_identity_failures) {finish(72);gate_original_once(frame,loading);return;}
+    if(navmesh_post_installed && !navmesh_post_check()) {finish(NAVMESH_POST_STOP_REASON);gate_original_once(frame,loading);return;}
     if(path_transform_observer_installed && !path_transform_observer_check()) {finish(PATH_TRANSFORM_OBSERVER_STOP_REASON);gate_original_once(frame,loading);return;}
     if(path_det_mask && path_det_failures) {finish(79);gate_original_once(frame,loading);return;}
     if(region_rng_armed && region_rng_failures) {finish(93);gate_original_once(frame,loading);return;}
@@ -648,6 +657,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(boot_mode && boot_phase<3) {
         if(thread!=main_thread || GetTickCount64()-boot_started>LX_BOOT_TIMEOUT_MS) {finish(26);gate_original_once(frame,loading);return;}
         boot_phase=boot_next(boot_phase,loading || (table && table_loading(table)));
+        navmesh_post_publish((unsigned)boot_phase,stats.issued);
         if(boot_phase<3) {
             /* Zero the idle Gravidar round-robin cursor before the load pass. */
             if(ai_sched_armed && !ai_sched_boot(boot_phase)) {InterlockedIncrement64(&ai_sched_failures);finish(84);}
@@ -706,6 +716,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(reason) finish(reason);
     else {
         previous_game=stats.game;++stats.issued;
+        navmesh_post_publish((unsigned)boot_phase,stats.issued);
         if(seed_frames && !path_installed) seed_frame(); /* else after the release, as on Windows (gate_path.h) */
     }
     QueryPerformanceCounter(&ft_permit);
@@ -813,6 +824,7 @@ static int lua_start(lua_State *L) {
 #include "gate_world.h"
 #include "gate_world_created.h"
 #include "gate_world_motion_watch.h"
+#include "gate_navmesh_post_observe.h"
 #include "gate_economy_watch.h"
 #include "gate_path.h"
 #include "gate_path_budget.h"
@@ -902,7 +914,7 @@ static int lua_boot(lua_State *L) {
 }
 static int load_requested(void) {
     int ok=boot_mode && stats.active && boot_phase==0 && GetCurrentThreadId()==ui_thread;
-    if(ok) boot_phase=1;
+    if(ok) {boot_phase=1;navmesh_post_publish(1,stats.issued);}
     return ok;
 }
 static int lua_load_requested(lua_State *L) {p_lua_pushnumber(L,load_requested());return 1;}
@@ -955,6 +967,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(platform);METHOD(verify_stage);
     METHOD(world_motion_config);METHOD(world_motion_capture);METHOD(world_motion_row);METHOD(world_motion_status);
     METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(economy_load_rng_row);
+    METHOD(navmesh_post_observe);METHOD(navmesh_post_observe_status);METHOD(navmesh_post_observe_row);
     METHOD(economy_watch_config);METHOD(economy_watch_capture);METHOD(economy_watch_status);
     METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);
     METHOD(world_banks);METHOD(saved_identity);

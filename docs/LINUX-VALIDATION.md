@@ -361,3 +361,25 @@ at the same admitted tick would need additional synchronized clock and relay
 work; no such implementation is claimed here. Running more fixed steps per
 wall-clock second, if possible, is a separate experiment from increasing game
 time per step. Changing the configured tick rate also changes the step size.
+
+## Observe NavMesh producer post attempts
+
+`--navmesh-post-observe FIRST LAST` adds a default-off Linux diagnostic to a
+snapshot bundle. It records startup (including epoch zero before the first
+permit) and the inclusive live-tick window. It requires saved identities for
+later diagnostic lookups. Only the pinned worker's `NavHelperGeneratedEvent`
+post call is observed; rebuild and imported-event paths are not covered.
+
+`NAVMESH_POST_ROW` identifies a producer post attempt, not successful queue
+admission or event delivery. Native posting can reject the source and destroy
+the event. The atomic phase/epoch stamp is the last published gate boundary,
+not an exact engine timestamp. Raw handles, addresses and thread values are
+local to one process. `NAVMESH_POST_IDENTITY` carries a separate saved-identity
+hint looked up when draining the row; it does not prove capture-time identity.
+
+The ring retains at most 8192 rows without overwriting them. Check contiguous
+indices, the configured window, and the complete `NAVMESH_POST_STOP` counters.
+Overflow, unreadable data, missing rows, active readers or uncertain restoration
+invalidate the capture. The observer preserves the native call and its errno
+behavior, but adds timing overhead; compare against a control without it.
+No deterministic navigation correction is implemented by this observer.

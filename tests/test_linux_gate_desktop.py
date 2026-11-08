@@ -44,10 +44,15 @@ class DesktopSetup(unittest.TestCase):
             with mock.patch.object(live.subprocess, 'run', side_effect=run_command), \
                     mock.patch.object(live, 'compose_extension_template', side_effect=compose):
                 live.main(['bundle', '--zig', '/unused/zig', '--snapshot', str(snapshot),
-                           '--out', str(output), '--status-stride', '17'])
+                           '--out', str(output), '--status-stride', '17',
+                           '--navmesh-post-observe', '1', '10'])
             position = forwarded.index('--status-stride')
             self.assertEqual(forwarded[position + 1], '17')
             self.assertEqual(json.loads((output / 'manifest.json').read_text())['status_stride'], 17)
+            position = forwarded.index('--navmesh-post-observe')
+            self.assertEqual(forwarded[position + 1:position + 3], ['1', '10'])
+            self.assertEqual(json.loads((output / 'manifest.json').read_text())['navmesh_post_observe'], [1, 10])
+            self.assertTrue((output / 'navmesh_post_config.py').is_file())
 
     def test_status_stride_bundle_rejects_invalid_before_output(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -117,6 +122,14 @@ class DesktopSetup(unittest.TestCase):
             self.assertFalse(build.call_args.args[0].economy_load_rng)
             live.main([*command, '--preset', 'linux-core', '--economy-load-rng'])
             self.assertTrue(build.call_args.args[0].economy_load_rng)
+
+    def test_navmesh_post_observer_is_opt_in(self):
+        command = ['bundle', '--zig', '/unused/zig', '--snapshot', '/unused/save', '--out', '/unused/output']
+        with mock.patch.object(live, 'bundle') as build:
+            live.main([*command, '--preset', 'linux-core'])
+            self.assertIsNone(build.call_args.args[0].navmesh_post_observe)
+            live.main([*command, '--preset', 'linux-core', '--navmesh-post-observe', '2', '8'])
+            self.assertEqual(build.call_args.args[0].navmesh_post_observe, [2, 8])
 
     def test_reload_seed_comes_from_snapshot_and_invalid_headers_fail(self):
         with tempfile.TemporaryDirectory() as directory:
