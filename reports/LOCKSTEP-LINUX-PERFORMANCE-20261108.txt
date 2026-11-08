@@ -91,9 +91,32 @@ control. This validates that the shared range-scanning refactor retained that
 control's full-capture output, independently of the new rolling semantics.
 Both bundles retain gate SHA-256:
 827c460da852efc91cf144f3443d5cafc1b8c9046248af3f2acd90a67935ef60.
-They were built with dirty source based on b3be9c8; a source-commit hash alone
-does not pin those native changes. Their binaries, scripts and raw evidence
-are retained, and that provenance limit must accompany historical results.
+Those two historical bundles were built with dirty source based on b3be9c8.
+A subsequent build from clean commit a9e70aaa1eb30eb1a93d0ee3fe93d460de33b189
+reproduced the exact same gate binary hash above. Their original manifests and
+raw evidence are retained unchanged; this later reproduction identifies the
+committed native source without rewriting the earlier provenance records.
+
+Long rolling comparison (same committed native binary)
+------------------------------------------------------
+The 12,000-tick run completed 100 cycles and both clients stopped with restored=1.
+It FAILS: the first differing rolling sample is tick 8473, exclusively in the
+motion domain, with 477 differing samples in total. The first range is
+[318598,323023), wholly within the 521224 imported identities. Summary-only
+hashes cannot identify the individual differing object. Logged created-identity
+event digests match on all 12000 common ticks; that is not movement equality.
+The corrected evidence validator independently reproduces this failure.
+
+After tick 120, 11879 relay intervals had median 24.031 ms, p99 34.331 ms
+(nearest rank), and maximum 550.402 ms. There were 22 intervals above 50 ms.
+At the old periodic capture boundaries, 98 intervals had median 25.4975 ms
+and maximum 64.932 ms. Thus the regular full-census pauses are reduced, but
+all stalls are not eliminated. The single 550 ms interval was tick 11082;
+client 2's containing profile window reports maximum probe time 530.171 ms,
+with the module/status stage elevated, while average world scan stayed near
+3.62 ms. This localizes the remaining outlier to a different stage, without
+proving the particular native call, logging or garbage-collection cause.
+Steam identity remained unchanged and no owned process remained.
 
 Validation
 ----------
@@ -138,12 +161,18 @@ fixture without any native gate or portable-math preload still shows them.
 This removes native lockstep hooks from that particular reproduction; fixture
 MD and Lua autostart remain present, so it is not an unmodified gameplay test.
 
-Two further independent fresh-world checks changed only antialiasing 0 to the
-current UI's canonical disabled value 'none', or only SSAO to 0. Both retained
-the artifacts. All three captures saved successfully, stopped their owned game
-and left the running Steam identity unchanged. Normal graphics settings were
-not changed. A graphics cause has not yet been established; the artifacts must
-not be described as an expected harmless test effect.
+Further independent fresh-world checks changed only antialiasing 0 to the
+current UI's canonical disabled value 'none', SSAO to 0, glow to 0, SSR to false,
+or RADV_DEBUG=zerovram in the owned process environment. Each retained the
+artifacts. A grouped check with AA=none, SSAO/glow/UI glow=0, SSR=false and
+chromatic aberration=false produced a clean captured image. This narrows the
+problem to that configuration or its interactions; it does not yet identify
+a single cause. A subsequent check changed only chromatic aberration to false
+and also produced a clean captured image. The private Linux test profiles now
+disable that effect. This is a local graphics workaround, not a claim that the
+engine or driver bug has been identified or repaired. All these captures saved
+successfully, stopped their owned game and left the running Steam identity
+unchanged. Normal graphics settings were not changed.
 
 Evidence
 --------
@@ -151,7 +180,11 @@ Local-only artifacts are under .local/evidence/ and .local/native-runs/;
 these include snapshots and raw game data and must not be redistributed.
 Key comparisons: census-profile-comparison.json,
 log-mode-native-equivalence.json, census-accelerated-comparison.json,
-census-cached-comparison.json.
+census-cached-comparison.json, census-rolling-comparison.json,
+full-refactor-native-equivalence.json, census-rolling-long-comparison.json
+and rolling-long-12000-independent-audit.json.
 Bundles: linux-20261108-profile-full, linux-20261108-profile-hashes,
-linux-20261108-profile-accelerated, linux-20261108-profile-cached. Each retains exact scripts, binaries,
-manifest hashes, raw logs, relay timing and cleanup evidence.
+linux-20261108-profile-accelerated, linux-20261108-profile-cached,
+linux-20261108-profile-rolling and linux-20261108-profile-full-refactor.
+Each retains exact scripts, binaries, manifest hashes, raw logs, relay timing
+and cleanup evidence.

@@ -61,10 +61,13 @@ def prepare_case(out, game, home):
                  case / 'game', case / 'extensions', case / 'home/.steam'):
         path.mkdir(parents=True, exist_ok=True)
     (case / 'runtime').chmod(0o700)
+    # Match the comparison runner's isolated graphics workaround; normal
+    # graphics settings are neither read nor changed.
     (profile / 'config.xml').write_text(
         '<?xml version="1.0"?><root><autosave>false</autosave><uisafemode>false</uisafemode>'
         '<fullscreen>false</fullscreen><borderless>false</borderless><res_width>800</res_width>'
-        '<res_height>600</res_height><antialiasing>0</antialiasing><vsync>false</vsync></root>\n')
+        '<res_height>600</res_height><antialiasing>0</antialiasing><vsync>false</vsync>'
+        '<chromaticaberration>false</chromaticaberration></root>\n')
     for name in ('root', 'steam.pid', 'sdk32', 'sdk64'):
         source = home / '.steam' / name
         if source.exists():

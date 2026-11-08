@@ -6,6 +6,7 @@ stops only after receiving the requested final tick's report. Unknown class,
 motion and reference counts are reported as coverage limits: the native hash
 includes their flags, but does not claim the missing underlying state.
 """
+import hashlib
 import re
 
 STOP = re.compile(
@@ -157,6 +158,7 @@ def validate_evidence(logs_by_slot, ticks, stride, rolling_slices=None):
 
 ROLLING_FIELDS = ('tick', 'cycle', 'slice', 'slices', 'begin', 'end', 'objects', 'created')
 ROLLING_COVERAGE = ('present', 'unknown_class', 'unknown_motion', 'unknown_references')
+EMPTY_SHA256 = hashlib.sha256(b'').hexdigest()
 ROLLING = re.compile(
     r'NATIVE_GATE WORLD_ROLLING '
     + ' '.join(name + r'=(?P<' + name + r'>\d+)' for name in ROLLING_FIELDS + ROLLING_COVERAGE)
@@ -223,6 +225,8 @@ def parse_rolling_client(slot, lines, ticks, slices):
                     row['begin'] != expected_begin or row['end'] != expected_end):
                 errors.append(f'client {slot}: invalid WORLD_ROLLING bounds at tick {tick}')
             width = max(0, row['end'] - row['begin'])
+            if row['begin'] == row['end'] and fields['state'].split(':')[-4:] != [EMPTY_SHA256] * 4:
+                errors.append(f'client {slot}: invalid empty WORLD_ROLLING roots at tick {tick}')
             if (row['present'] > width or
                     any(row[name] > row['present'] for name in ROLLING_COVERAGE[1:])):
                 errors.append(f'client {slot}: invalid WORLD_ROLLING coverage at tick {tick}')

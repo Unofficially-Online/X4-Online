@@ -223,6 +223,7 @@ local rolling_slices = cfg.native_gate_world_rolling_slices
 if rolling_slices ~= nil then
  assert(type(rolling_slices)=='number' and rolling_slices%1==0 and
   rolling_slices>=1 and rolling_slices<=18000, 'invalid rolling census slice count')
+ assert(cfg.native_gate_created_identities==true, 'rolling census requires created identities')
  assert(world_hash_schema=='WORLD_IMPORTED_2' and cfg.native_gate_world_hash_stride and
   cfg.native_gate_world_detail_rows==false, 'rolling census requires schema 2 and hashes-only output')
  for _,key in ipairs({'native_gate_join', 'native_gate_world_hash_join', 'native_gate_world_pages_window',

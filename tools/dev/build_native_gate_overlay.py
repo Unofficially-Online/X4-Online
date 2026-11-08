@@ -371,6 +371,8 @@ def main():
     if args.world_hash_schema=='WORLD_IMPORTED_2' and args.world_hash_stride is None:
         p.error('--world-hash-schema WORLD_IMPORTED_2 requires --world-hash-stride')
     if args.world_rolling_slices is not None:
+        if not args.created_identities:
+            p.error('--world-rolling-slices requires --created-identities')
         if (not args.gate_so or not 1 <= args.world_rolling_slices <= 18000
                 or args.world_hash_schema != 'WORLD_IMPORTED_2' or args.world_hash_stride is None
                 or args.world_log_mode != 'hashes'):

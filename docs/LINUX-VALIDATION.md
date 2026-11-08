@@ -105,8 +105,9 @@ exact-byte leaf cache preserve the SHA-256 values and all captured fields.
 Neither logging mode repairs a simulation divergence.
 
 The Linux-only `--world-rolling-slices 120 --world-log-mode hashes` experiment
-spreads the census across 120 ticks. It is off by default. At the beginning of
-each cycle, the native gate fixes a sorted cohort of imported and previously
+spreads the census across 120 ticks. It is off by default and requires
+created-identity capture, enabled by `--preset linux-core` or the explicit
+`--created-identities` option. At the beginning of each cycle, the native gate fixes a sorted cohort of imported and previously
 captured created identities. Tick by tick, it reads a disjoint range of that
 cohort; object pointers are resolved again at the sampling tick. Newly created
 objects enter at the next cycle boundary and can wait almost two cycles for

@@ -554,19 +554,23 @@ class Overlay(unittest.TestCase):
     def test_linux_rolling_census_is_explicit_and_keeps_its_distinct_config(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities',
                          '--world-hash-stride', '120', '--world-hash-schema', 'WORLD_IMPORTED_2',
-                         '--world-log-mode', 'hashes', '--world-rolling-slices', '120')
+                         '--world-log-mode', 'hashes', '--world-rolling-slices', '120', '--created-identities')
         config = (out / 'ui/config.lua.append').read_text()
         self.assertIn('native_gate_world_rolling_slices = 120', config)
         self.assertIn('native_gate_world_detail_rows = false', config)
 
     def test_linux_rolling_census_rejects_incompatible_modes(self):
-        required = ['--world-identities', '--world-hash-stride', '120',
+        required = ['--world-identities', '--created-identities', '--world-hash-stride', '120',
                     '--world-hash-schema', 'WORLD_IMPORTED_2', '--world-log-mode', 'hashes']
         for extra in (['--world-rolling-slices', '0'], ['--world-rolling-slices', '18001'],
                       ['--world-rolling-slices', '3', '--world-log-mode', 'full'],
                       ['--world-rolling-slices', '3', '--world-hash-watch', '0000000000000001']):
             with self.subTest(extra=extra), self.assertRaises(SystemExit):
                 self.build(*self.snapshot, '--mode', 'clock', *required, *extra)
+        with self.assertRaises(SystemExit):
+            self.build(*self.snapshot, '--mode', 'clock',
+                       *[option for option in required if option != '--created-identities'],
+                       '--world-rolling-slices', '3')
 
     def test_linux_ordered_batches_reject_conflicts_and_missing_prerequisites(self):
         required = ['--world-identities', '--serial-pathing', '--path-determinism', '3']

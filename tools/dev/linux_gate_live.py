@@ -812,9 +812,12 @@ def stage_case(root, run, slot, game, userhome, port, token, clients=2, credenti
                  case / 'extensions', case / 'home/.steam'):
         path.mkdir(parents=True, exist_ok=True)
     (case / 'runtime').chmod(0o700)
+    # This effect produced RGB speckles on the tested RADV setup, even without
+    # native hooks. Disable it only in this disposable diagnostic profile.
     (profile / 'config.xml').write_text('<?xml version="1.0"?><root><autosave>false</autosave><uisafemode>false</uisafemode>'
                                         '<fullscreen>false</fullscreen><borderless>false</borderless><res_width>800</res_width>'
-                                        '<res_height>600</res_height><antialiasing>0</antialiasing><vsync>false</vsync></root>\n')
+                                        '<res_height>600</res_height><antialiasing>0</antialiasing><vsync>false</vsync>'
+                                        '<chromaticaberration>false</chromaticaberration></root>\n')
     if snapshot:
         shutil.copyfile(root / 'snapshot' / SLOT_SAVE, profile / 'save' / SLOT_SAVE)
     for name in ('root', 'steam.pid', 'sdk32', 'sdk64'):

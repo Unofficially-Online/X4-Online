@@ -1,4 +1,5 @@
 """Adversarial synthetic rolling logs; no game or native capture is run."""
+import hashlib
 import sys
 import unittest
 from pathlib import Path
@@ -17,8 +18,9 @@ def capture(tick, slices=3, imported=7, created=0, digest='a', **overrides):
     row.update(overrides)
     state = ':'.join(str(row[key]) for key in ('tick', 'cycle', 'slice', 'slices', 'begin', 'end', 'objects', 'created'))
     counts = 'present=0 unknown_class=0 unknown_motion=0 unknown_references=0'
+    root = hashlib.sha256(b'').hexdigest() if row['begin'] == row['end'] else digest * 64
     return ('NATIVE_GATE WORLD_ROLLING ' + ' '.join(f'{key}={value}' for key, value in row.items()) +
-            f' {counts} state=WORLD_ROLLING_1:{state}:' + ':'.join([digest * 64] * 4))
+            f' {counts} state=WORLD_ROLLING_1:{state}:' + ':'.join([root] * 4))
 
 
 def log(slot, ticks=7, slices=3):
@@ -46,6 +48,19 @@ class RollingEvidenceTest(unittest.TestCase):
                   'NATIVE_GATE WORLD_IDENTITY_STOP calls=1 count=1 late=0 restored=1 failures=0',
                   'NATIVE_GATE WORLD_ROLLING_STOP scans=5 cycles=1 failures=0']
         self.assertTrue(validate_evidence({1: small}, 5, 1, rolling_slices=5)['evidence_ok'])
+
+    def test_matching_wrong_empty_slice_roots_fail(self):
+        rows = [capture(t, slices=5, imported=1) for t in range(1, 6)]
+        empty_hash = hashlib.sha256(b'').hexdigest()
+        rows[0] = rows[0].replace(empty_hash, 'a' * 64)
+        footer = ['NATIVE_GATE STOP slot=p{} completed=5 reason=1 restored=1',
+                  'NATIVE_GATE WORLD_IDENTITY_STOP calls=1 count=1 late=0 restored=1 failures=0',
+                  'NATIVE_GATE WORLD_ROLLING_STOP scans=5 cycles=1 failures=0']
+        logs = {slot: rows + [line.format(slot) for line in footer] for slot in (1, 2)}
+        result = validate_evidence(logs, 5, 1, rolling_slices=5)
+        self.assertFalse(result['evidence_ok'])
+        self.assertIsNone(result['world_hash_first_difference'])
+        self.assertIn('invalid empty WORLD_ROLLING roots', ' '.join(result['evidence_errors']))
 
     def test_missing_duplicate_order_and_late_capture(self):
         rows = log(1)

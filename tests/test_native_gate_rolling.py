@@ -19,7 +19,12 @@ class RollingProbeTests(unittest.TestCase):
           X4LAN_CONFIG.native_gate_world_hash_schema='WORLD_IMPORTED_2'
           X4LAN_CONFIG.native_gate_world_detail_rows=false
           X4LAN_CONFIG.native_gate_world_rolling_slices=3
+          X4LAN_CONFIG.native_gate_created_identities=true
+          X4LAN_CONFIG.native_gate_world_identities=true
           local gate=package.loadlib('gate')()
+          gate.created_identities=function() return 1 end
+          gate.created_identities_status=function() return 'failures=0' end
+          gate.created_row=function() return nil end
           calls={}; digest_inputs={}
           gate.world_capture_rolling=function(tick,slices)
             assert(slices==3); calls[#calls+1]=tick
@@ -65,6 +70,8 @@ class RollingProbeTests(unittest.TestCase):
             'X4LAN_CONFIG.native_gate_world_rolling_slices=18001',
             'X4LAN_CONFIG.native_gate_world_rolling_slices=1.5',
             'X4LAN_CONFIG.native_gate_world_rolling_slices=true',
+            'X4LAN_CONFIG.native_gate_created_identities=nil',
+            'X4LAN_CONFIG.native_gate_created_identities=false',
             "X4LAN_CONFIG.native_gate_world_hash_schema='WORLD_IMPORTED_1'",
             'X4LAN_CONFIG.native_gate_world_detail_rows=true',
             'X4LAN_CONFIG.native_gate_join=true',
