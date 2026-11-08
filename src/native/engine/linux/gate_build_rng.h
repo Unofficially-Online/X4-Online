@@ -49,8 +49,10 @@ static const char *linux_build_rng_stage = "idle";
 static uint64_t linux_build_rng_identity(uint64_t runtime, unsigned *identity_class) {
     uint64_t identity = 0;
     *identity_class = WORLD_KEY_NONE;
-    if (!runtime || !world_identities) return 0;
-    if (!world_identity_sealed) lxw_resolve(1);
+    if (!runtime || !world_identities)
+        return 0;
+    if (!world_identity_sealed)
+        lxw_resolve(1);
     pthread_mutex_lock(&lxw_insert_lock);
     identity = lxw_identity_probe(runtime);
     pthread_mutex_unlock(&lxw_insert_lock);
@@ -65,7 +67,8 @@ static uint64_t linux_build_rng_identity(uint64_t runtime, unsigned *identity_cl
     return 0;
 }
 
-static float linux_build_rng_run(linux_build_rng_draw_fn native, const void *storage, float range, uintptr_t caller) {
+static float linux_build_rng_run(linux_build_rng_draw_fn native, const void *storage,
+                                 float range, uintptr_t caller) {
     unsigned char *tls = gate_tls_self();
     uint64_t *word = gate_tls_rng(tls);
     double *time = gate_tls_time(tls);
@@ -94,9 +97,12 @@ static float linux_build_rng_run(linux_build_rng_draw_fn native, const void *sto
         __atomic_add_fetch(&linux_build_rng_native, 1, __ATOMIC_RELAXED);
         return native(range);
     }
-    if (vtable == (uintptr_t)LX(0x3c76e90u)) __atomic_add_fetch(&linux_build_rng_container, 1, __ATOMIC_RELAXED);
-    else if (vtable == (uintptr_t)LX(0x3c99a10u)) __atomic_add_fetch(&linux_build_rng_storage, 1, __ATOMIC_RELAXED);
-    else __atomic_add_fetch(&linux_build_rng_other, 1, __ATOMIC_RELAXED);
+    if (vtable == (uintptr_t)LX(0x3c76e90u))
+        __atomic_add_fetch(&linux_build_rng_container, 1, __ATOMIC_RELAXED);
+    else if (vtable == (uintptr_t)LX(0x3c99a10u))
+        __atomic_add_fetch(&linux_build_rng_storage, 1, __ATOMIC_RELAXED);
+    else
+        __atomic_add_fetch(&linux_build_rng_other, 1, __ATOMIC_RELAXED);
     unsigned phase = (unsigned)boot_phase;
     int during_load = !stats.active || phase != 3;
     unsigned identity_class = WORLD_KEY_NONE;
@@ -105,13 +111,17 @@ static float linux_build_rng_run(linux_build_rng_draw_fn native, const void *sto
     if (identity) {
         seed = lockstep_seed(LINUX_BUILD_RNG_DOMAIN, 0, identity, time_bits, 0, identity_class);
         __atomic_add_fetch(&linux_build_rng_keyed, 1, __ATOMIC_RELAXED);
-        if (during_load) __atomic_add_fetch(&linux_build_rng_load_keyed, 1, __ATOMIC_RELAXED);
+        if (during_load)
+            __atomic_add_fetch(&linux_build_rng_load_keyed, 1, __ATOMIC_RELAXED);
     } else {
-        seed = lockstep_seed(LINUX_BUILD_RNG_DOMAIN, 0, 0, object_class->windows_rva, time_bits, WORLD_KEY_NONE);
+        seed = lockstep_seed(LINUX_BUILD_RNG_DOMAIN, 0, 0, object_class->windows_rva,
+                             time_bits, WORLD_KEY_NONE);
         __atomic_add_fetch(&linux_build_rng_fallback, 1, __ATOMIC_RELAXED);
-        if (during_load) __atomic_add_fetch(&linux_build_rng_load_fallback, 1, __ATOMIC_RELAXED);
+        if (during_load)
+            __atomic_add_fetch(&linux_build_rng_load_fallback, 1, __ATOMIC_RELAXED);
     }
-    if (during_load) __atomic_add_fetch(&linux_build_rng_loading, 1, __ATOMIC_RELAXED);
+    if (during_load)
+        __atomic_add_fetch(&linux_build_rng_loading, 1, __ATOMIC_RELAXED);
     uint64_t saved_word = *word;
     *word = seed;
     float result = native(range);
@@ -157,8 +167,10 @@ static int linux_build_rng_stub_owned(void) {
 
 static int linux_build_rng_owned(void) {
     unsigned __int128 current;
-    if (!linux_build_rng_installed) return 1;
-    if (!gate_read_local(LX(LX_BUILD_CALL_BLOCK_VA), &current, sizeof(current))) return 0;
+    if (!linux_build_rng_installed)
+        return 1;
+    if (!gate_read_local(LX(LX_BUILD_CALL_BLOCK_VA), &current, sizeof(current)))
+        return 0;
     return current == linux_build_rng_patched && linux_build_rng_stub_owned();
 }
 
@@ -178,39 +190,63 @@ static int linux_build_rng_literals(void) {
     for (unsigned index = 0; index < sizeof(literals) / sizeof(literals[0]); ++index) {
         unsigned char actual[8];
         if (!gate_read_local(LX(literals[index].address), actual, literals[index].size) ||
-            memcmp(actual, literals[index].bytes, literals[index].size)) return 0;
+            memcmp(actual, literals[index].bytes, literals[index].size))
+            return 0;
     }
     return 1;
 }
 
 static int linux_build_rng_pins(void) {
     unsigned char scheduler[LINUX_BUILD_RNG_SCHEDULER_SIZE];
-    if (!gate_read_local(LX(LX_BUILD_SCHEDULER_VA), scheduler, sizeof(scheduler))) return 0;
+    if (!gate_read_local(LX(LX_BUILD_SCHEDULER_VA), scheduler, sizeof(scheduler)))
+        return 0;
     size_t block_offset = LX_BUILD_CALL_BLOCK_VA - LX_BUILD_SCHEDULER_VA;
     if (linux_build_rng_installed) {
-        if (!linux_build_rng_owned()) return 0;
-        memcpy(scheduler + block_offset, linux_build_rng_original_block, sizeof(linux_build_rng_original_block));
-    } else if (memcmp(scheduler + block_offset, linux_build_rng_original_block, sizeof(linux_build_rng_original_block))) return 0;
-    return linux_build_rng_literals() && hash_ok(scheduler, sizeof(scheduler), linux_build_rng_scheduler_hash) &&
+        if (!linux_build_rng_owned())
+            return 0;
+        memcpy(scheduler + block_offset, linux_build_rng_original_block,
+               sizeof(linux_build_rng_original_block));
+    } else if (memcmp(scheduler + block_offset, linux_build_rng_original_block,
+                      sizeof(linux_build_rng_original_block)))
+        return 0;
+    return linux_build_rng_literals() &&
+           hash_ok(scheduler, sizeof(scheduler), linux_build_rng_scheduler_hash) &&
            hash_ok(LX(LX_BUILD_FLOAT_RANGE_VA), 0x7e, linux_build_rng_draw_hash);
 }
 
 static int linux_build_rng_arm(void) {
     if (linux_build_rng_installed)
         return stats.active && linux_build_rng_owned() && linux_build_rng_pins() && !linux_build_rng_failures;
-    if (!stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId() != ui_thread || !world_identity_installed) {
+    if (!stats.active || !boot_mode || boot_phase || stats.issued ||
+        GetCurrentThreadId() != ui_thread || !world_identity_installed) {
         linux_build_rng_stage = "needs";
         return 0;
     }
-    if (!linux_build_rng_pins()) { linux_build_rng_stage = "pins"; return 0; }
-    if (!linux_build_rng_page) linux_build_rng_page = gate_near_page(LX(LX_BUILD_CALL_VA));
-    if (!linux_build_rng_page) { linux_build_rng_stage = "page"; return 0; }
+    if (!linux_build_rng_pins()) {
+        linux_build_rng_stage = "pins";
+        return 0;
+    }
+    if (!linux_build_rng_page)
+        linux_build_rng_page = gate_near_page(LX(LX_BUILD_CALL_VA));
+    if (!linux_build_rng_page) {
+        linux_build_rng_stage = "page";
+        return 0;
+    }
     intptr_t displacement = (intptr_t)linux_build_rng_page - (intptr_t)(LX(LX_BUILD_CALL_VA) + 5);
-    if (displacement < INT32_MIN || displacement > INT32_MAX) { linux_build_rng_stage = "range"; return 0; }
-    if (mprotect(linux_build_rng_page, GATE_PAGE, PROT_READ | PROT_WRITE)) { linux_build_rng_stage = "page"; return 0; }
+    if (displacement < INT32_MIN || displacement > INT32_MAX) {
+        linux_build_rng_stage = "range";
+        return 0;
+    }
+    if (mprotect(linux_build_rng_page, GATE_PAGE, PROT_READ | PROT_WRITE)) {
+        linux_build_rng_stage = "page";
+        return 0;
+    }
     memset(linux_build_rng_page, 0xcc, GATE_PAGE);
     linux_build_rng_write_stub(linux_build_rng_page);
-    if (mprotect(linux_build_rng_page, GATE_PAGE, PROT_READ | PROT_EXEC)) { linux_build_rng_stage = "page"; return 0; }
+    if (mprotect(linux_build_rng_page, GATE_PAGE, PROT_READ | PROT_EXEC)) {
+        linux_build_rng_stage = "page";
+        return 0;
+    }
     memcpy(&linux_build_rng_original, linux_build_rng_original_block, sizeof(linux_build_rng_original));
     linux_build_rng_patched = linux_build_rng_original;
     int32_t relative = (int32_t)displacement;
@@ -233,33 +269,54 @@ static int linux_build_rng_arm(void) {
 }
 
 static int linux_build_rng_check(void) {
-    if (__atomic_load_n(&linux_build_rng_failures, __ATOMIC_RELAXED)) { linux_build_rng_stage = "failure"; return 0; }
-    if (!linux_build_rng_owned() || !linux_build_rng_pins()) { linux_build_rng_stage = "ownership"; return 0; }
+    if (__atomic_load_n(&linux_build_rng_failures, __ATOMIC_RELAXED)) {
+        linux_build_rng_stage = "failure";
+        return 0;
+    }
+    if (!linux_build_rng_owned() || !linux_build_rng_pins()) {
+        linux_build_rng_stage = "ownership";
+        return 0;
+    }
     return 1;
 }
 
 static void linux_build_rng_restore(void) {
-    if (!linux_build_rng_installed) return;
-    if (linux_build_rng_owned() && gate_code_swap128(LX(LX_BUILD_CALL_BLOCK_VA), linux_build_rng_patched, linux_build_rng_original))
+    if (!linux_build_rng_installed)
+        return;
+    if (linux_build_rng_owned() &&
+        gate_code_swap128(LX(LX_BUILD_CALL_BLOCK_VA), linux_build_rng_patched, linux_build_rng_original))
         linux_build_rng_installed = 0;
     linux_build_rng_restored = !linux_build_rng_installed;
 }
 
-static int lua_build_rng(lua_State *L) { p_lua_pushnumber(L, linux_build_rng_arm()); return 1; }
+static int lua_build_rng(lua_State *L) {
+    p_lua_pushnumber(L, linux_build_rng_arm());
+    return 1;
+}
 static int lua_build_rng_status(lua_State *L) {
     char out[512];
     int length = accept_ui() ? snprintf(out, sizeof(out),
         "installed=%d frame=%llu keyed=%llu loading=%llu native=%llu unmapped=%llu fallback=%llu load_keyed=%llu load_fallback=%llu container=%llu storage=%llu other=%llu rows=%llu overflow=%llu restored=%d stage=%s failures=%lld",
-        linux_build_rng_installed, (unsigned long long)stats.issued, (unsigned long long)__atomic_load_n(&linux_build_rng_keyed, __ATOMIC_RELAXED),
-        (unsigned long long)__atomic_load_n(&linux_build_rng_loading, __ATOMIC_RELAXED), (unsigned long long)__atomic_load_n(&linux_build_rng_native, __ATOMIC_RELAXED),
-        (unsigned long long)__atomic_load_n(&linux_build_rng_unmapped, __ATOMIC_RELAXED), (unsigned long long)__atomic_load_n(&linux_build_rng_fallback, __ATOMIC_RELAXED),
-        (unsigned long long)__atomic_load_n(&linux_build_rng_load_keyed, __ATOMIC_RELAXED), (unsigned long long)__atomic_load_n(&linux_build_rng_load_fallback, __ATOMIC_RELAXED),
-        (unsigned long long)__atomic_load_n(&linux_build_rng_container, __ATOMIC_RELAXED), (unsigned long long)__atomic_load_n(&linux_build_rng_storage, __ATOMIC_RELAXED), (unsigned long long)__atomic_load_n(&linux_build_rng_other, __ATOMIC_RELAXED),
+        linux_build_rng_installed, (unsigned long long)stats.issued,
+        (unsigned long long)__atomic_load_n(&linux_build_rng_keyed, __ATOMIC_RELAXED),
+        (unsigned long long)__atomic_load_n(&linux_build_rng_loading, __ATOMIC_RELAXED),
+        (unsigned long long)__atomic_load_n(&linux_build_rng_native, __ATOMIC_RELAXED),
+        (unsigned long long)__atomic_load_n(&linux_build_rng_unmapped, __ATOMIC_RELAXED),
+        (unsigned long long)__atomic_load_n(&linux_build_rng_fallback, __ATOMIC_RELAXED),
+        (unsigned long long)__atomic_load_n(&linux_build_rng_load_keyed, __ATOMIC_RELAXED),
+        (unsigned long long)__atomic_load_n(&linux_build_rng_load_fallback, __ATOMIC_RELAXED),
+        (unsigned long long)__atomic_load_n(&linux_build_rng_container, __ATOMIC_RELAXED),
+        (unsigned long long)__atomic_load_n(&linux_build_rng_storage, __ATOMIC_RELAXED),
+        (unsigned long long)__atomic_load_n(&linux_build_rng_other, __ATOMIC_RELAXED),
         (unsigned long long)__atomic_load_n(&linux_build_rng_row_count, __ATOMIC_RELAXED),
         (unsigned long long)(__atomic_load_n(&linux_build_rng_row_count, __ATOMIC_RELAXED) > LINUX_BUILD_RNG_ROW_CAPACITY ?
             __atomic_load_n(&linux_build_rng_row_count, __ATOMIC_RELAXED) - LINUX_BUILD_RNG_ROW_CAPACITY : 0),
-        linux_build_rng_restored, linux_build_rng_stage, (long long)__atomic_load_n(&linux_build_rng_failures, __ATOMIC_RELAXED)) : 0;
-    if (length > 0 && (size_t)length < sizeof(out)) p_lua_pushlstring(L, out, (size_t)length); else p_lua_pushnil(L);
+        linux_build_rng_restored, linux_build_rng_stage,
+        (long long)__atomic_load_n(&linux_build_rng_failures, __ATOMIC_RELAXED)) : 0;
+    if (length > 0 && (size_t)length < sizeof(out))
+        p_lua_pushlstring(L, out, (size_t)length);
+    else
+        p_lua_pushnil(L);
     return 1;
 }
 
@@ -268,18 +325,25 @@ static int lua_build_rng_status(lua_State *L) {
  * not its higher loader caller. Overflow remains visible in status. */
 static int lua_build_rng_row(lua_State *L) {
     double requested = p_lua_tonumber(L, 1);
-    if (!accept_ui() || !isfinite(requested) || requested < 0 || requested >= LINUX_BUILD_RNG_ROW_CAPACITY || floor(requested) != requested) {
+    if (!accept_ui() || !isfinite(requested) || requested < 0 ||
+        requested >= LINUX_BUILD_RNG_ROW_CAPACITY || floor(requested) != requested) {
         p_lua_pushnil(L);
         return 1;
     }
     unsigned index = (unsigned)requested;
     const linux_build_rng_row *row = &linux_build_rng_rows[index];
-    if (!__atomic_load_n(&row->ready, __ATOMIC_ACQUIRE)) { p_lua_pushnil(L); return 1; }
+    if (!__atomic_load_n(&row->ready, __ATOMIC_ACQUIRE)) {
+        p_lua_pushnil(L);
+        return 1;
+    }
     char out[384];
     int length = snprintf(out, sizeof(out),
         "index=%u phase=%u class=%08x identity=%016llx identity_class=%u fallback=%u time=%016llx seed=%016llx range=%08x draw=%08x caller=%08x",
         index, row->phase, row->class_rva, (unsigned long long)row->identity, row->identity_class, row->fallback,
         (unsigned long long)row->time_bits, (unsigned long long)row->seed, row->range_bits, row->result_bits, row->caller_rva);
-    if (length > 0 && (size_t)length < sizeof(out)) p_lua_pushlstring(L, out, (size_t)length); else p_lua_pushnil(L);
+    if (length > 0 && (size_t)length < sizeof(out))
+        p_lua_pushlstring(L, out, (size_t)length);
+    else
+        p_lua_pushnil(L);
     return 1;
 }
