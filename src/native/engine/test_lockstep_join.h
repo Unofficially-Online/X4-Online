@@ -3403,6 +3403,7 @@ static void test_join_srcs(void) {
     join_find_fn find=join_world_find;void *map=join_world_map;uint64_t (*key)(uint64_t,unsigned *)=join_key;
     void (*add)(unsigned char *,unsigned char *)=join_srcs_add,(*rem)(unsigned char *,unsigned char *)=join_srcs_remove;
     join_world_find=tsrcs_find;join_world_map=tsrcs_obj;join_key=tsrcs_key;join_srcs_add=tsrcs_add;join_srcs_remove=tsrcs_remove;
+    const unsigned kinds=join_srcs_kinds;join_srcs_kinds|=1u<<3;   /* the fixture listeners are components */
     memset(tsrcs_obj,0,sizeof(tsrcs_obj));
     for(unsigned k=0;k<4;k++) {uint64_t runtime=0xb0u+k;memcpy(tsrcs_obj[k]+8,&runtime,8);}
     /* objects: 0 a, 1 b (sources), 2 c (the listener), 3 d (a second listener on b, sources b and d itself) */
@@ -3432,8 +3433,13 @@ static void test_join_srcs(void) {
     join_admit_srcs(&s,&mine);assert(join_srcs_unmapped==1 && !tsrcs_ncalls);
     /* a listener the joiner does not have: missing */
     u[0].owner=0x10b9u;join_admit_srcs(&s,&mine);assert(join_srcs_missing==1 && !tsrcs_ncalls);
+    {   /* the listener set across its growth: 200000 distinct pointers, each added twice */
+        join_srcs_set set={0};uint32_t fresh=0;
+        for(uint32_t r=0;r<2u;r++) for(uintptr_t k=1;k<=200000u;k++) {const int a=join_srcs_set_add(&set,k*0x40u);assert(a>=0);fresh+=(uint32_t)a;}
+        assert(fresh==200000u && set.n==200000u && set.cap>=400000u);free(set.slot);
+    }
     join_srcs_on=0;free(t.srcs);
-    join_world_find=find;join_world_map=map;join_key=key;join_srcs_add=add;join_srcs_remove=rem;
+    join_world_find=find;join_world_map=map;join_key=key;join_srcs_add=add;join_srcs_remove=rem;join_srcs_kinds=kinds;
     printf("join SRCS: each keyed listener's sources by portable ID, the joiner's extra removed and the session's added through the "
            "engine's pair, equal, unmapped and missing PASS\n");
 }

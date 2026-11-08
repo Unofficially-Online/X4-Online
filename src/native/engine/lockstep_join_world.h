@@ -4644,7 +4644,24 @@ static int join_srcs_key_cmp(const join_srcs_ctx *x,const join_srcs_ctx *y) {
     return x->script<y->script?-1:x->script>y->script;
 }
 static int join_srcs_ctx_cmp(const void *a,const void *b) {return join_srcs_key_cmp(a,b);}
-static int join_srcs_ptr_cmp(const void *a,const void *b) {uintptr_t x=*(const uintptr_t *)a,y=*(const uintptr_t *)b;return x<y?-1:x>y;}
+/* The listener kinds SRCS records (bit per join_lstn_key kind): the script contexts. The load registers components alike; their
+ * sources follow the component tree (and a component per object would make the section large). Tests add components. */
+static unsigned join_srcs_kinds=(1u<<1)|(1u<<2);
+/* A set of listener pointers (open addressing; a source's vectors repeat a listener once per event type: millions of entries,
+ * w1z207 overran JOIN_MAX_RECORDS collecting them whole). */
+typedef struct {uintptr_t *slot;uint32_t cap,n;} join_srcs_set;
+static uint32_t join_srcs_hash(uintptr_t p,uint32_t cap) {return (uint32_t)(((uint64_t)(p>>4)*0x9e3779b97f4a7c15ull)>>32)&(cap-1u);}
+static int join_srcs_set_add(join_srcs_set *s,uintptr_t p) {   /* 1 new, 0 present, -1 memory */
+    if((s->n+1u)*2u>s->cap) {
+        const uint32_t nc=s->cap?s->cap*2u:65536u;uintptr_t *ns;
+        if(nc>(1u<<26) || !(ns=calloc(nc,sizeof(*ns)))) return -1;
+        for(uint32_t i=0;i<s->cap;i++) if(s->slot[i]) {uint32_t h=join_srcs_hash(s->slot[i],nc);while(ns[h]) h=(h+1u)&(nc-1u);ns[h]=s->slot[i];}
+        free(s->slot);s->slot=ns;s->cap=nc;
+    }
+    uint32_t h=join_srcs_hash(p,s->cap);
+    while(s->slot[h]) {if(s->slot[h]==p) return 0;h=(h+1u)&(s->cap-1u);}
+    s->slot[h]=p;++s->n;return 1;
+}
 /* A source's portable ID (0: not a keyed component). */
 static uint64_t join_srcs_portable(unsigned char *x) {
     uint64_t runtime=0;unsigned klass;
@@ -4659,7 +4676,7 @@ static int join_srcs_of(unsigned char *ctx,unsigned char **out) {
 }
 /* Every keyed listener on a keyed source of the table, once, sorted by key; dup: another listener has its key. */
 static join_srcs_ctx *join_srcs_listeners(const join_tables *t,uint32_t *count) {
-    const join_engine e=join_lstn_engine();uintptr_t *ptrs=NULL;uint32_t np=0,cap=0;*count=0;
+    const join_engine e=join_lstn_engine();join_srcs_set seen={0};join_srcs_ctx *c=NULL;uint32_t n=0,cap=0;*count=0;
     for(uint32_t i=0;i<t->nids;i++) {
         unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL;uintptr_t table=0,v[2]={0,0};
         if(!o || !join_read(o+JOIN_LSTN_TABLE,&table,8) || !table || !join_read((void *)table,v,16) || v[1]<v[0] ||
@@ -4668,21 +4685,18 @@ static join_srcs_ctx *join_srcs_listeners(const join_tables *t,uint32_t *count) 
             uintptr_t lv[2]={0,0};
             if(!join_read((void *)(p+8),lv,16) || lv[1]<lv[0] || (lv[1]-lv[0])&7u || (lv[1]-lv[0])/8u>65536u) continue;
             for(uintptr_t q=lv[0];q<lv[1];q+=8u) {
-                uintptr_t l=0;
-                if(join_read((void *)q,&l,8) && l && !JOIN_PUSH(ptrs,np,cap,l)) {free(ptrs);return NULL;}
+                uintptr_t l=0;int fresh;
+                if(!join_read((void *)q,&l,8) || !l) continue;
+                if((fresh=join_srcs_set_add(&seen,l))<0) {free(seen.slot);free(c);return NULL;}
+                if(!fresh) continue;
+                join_srcs_ctx x;memset(&x,0,sizeof(x));x.ctx=(unsigned char *)l;
+                x.kind=join_lstn_key(&e,x.ctx,&x.owner,&x.script);
+                if(x.kind>3u || !(join_srcs_kinds>>x.kind&1u) || !x.owner) continue;
+                if(!JOIN_PUSH(c,n,cap,x)) {free(seen.slot);free(c);return NULL;}
             }
         }
     }
-    if(np>1) qsort(ptrs,np,sizeof(*ptrs),join_srcs_ptr_cmp);
-    join_srcs_ctx *c=np?malloc((size_t)np*sizeof(*c)):NULL;uint32_t n=0;
-    if(np && !c) {free(ptrs);return NULL;}
-    for(uint32_t i=0;i<np;i++) {
-        if(i && ptrs[i]==ptrs[i-1]) continue;
-        join_srcs_ctx x;memset(&x,0,sizeof(x));x.ctx=(unsigned char *)ptrs[i];
-        x.kind=join_lstn_key(&e,x.ctx,&x.owner,&x.script);
-        if(x.kind && x.kind<=3u && x.owner) c[n++]=x;
-    }
-    free(ptrs);
+    free(seen.slot);
     if(n>1) qsort(c,n,sizeof(*c),join_srcs_ctx_cmp);
     for(uint32_t i=1;i<n;i++) if(!join_srcs_key_cmp(&c[i-1],&c[i])) c[i-1].dup=c[i].dup=1u;
     *count=n;return c;

@@ -1174,3 +1174,17 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   ones the session's lacks and adds the ones it lacks through that pair, before LSTN orders the vectors (both pinned). Status
   srcs=on:contexts:added:removed:equal:missing:dup:unmapped. The JOIN_LSTN dump prints each listener's own sources ({..}, '!'
   where the dumped source is not among them).
+- w1z206 failed at the package check (JOIN_DRIVER files_package_layout): its DLL (build-undk1) predates SRCS, which the tree's
+  join reader then required for version 13; a queued run's DLL must be built from the tree's commit at its start. Rerun as
+  w1z206b (build-srcs1, SRCS off; defaults + gravp_settled + LSTN + UNDK): undk=1:3:0:0:0 (three behaviours written), census
+  T+1 1 (was 4), 3060 4, 3120 6, 3180 16 (w1z202/w1z204: 4, 5, 6, 16). The three containers re-part by 3060 (717ab, 717db)
+  and 3120 (717bb). The fourth, 717eb, has no steering behaviour on either side (beh=-): at T+1 its NavigationController
+  (0x2c51158) holds state at +0xf0..+0x1ff on the session (+0xf0 a position with w 1, +0x128 two floats, small counters,
+  heap pointers) that the joiner's lacks; NAV carries the controller's +0xc0..+0xd8 and its pathing banks only.
+- WORLD_STATIC at 3034 (w1z206b): 50,298 rows on each side; every zone, sector and cluster equal (zones 0x920 and 0x844
+  included); the ships' published poses equal across the flipped view parity (the session's current view 0 is the joiner's
+  view 1 for every ship). The destroyer's zone change at 3135 does not read a differing published zone pose.
+- w1z207 (w1z206b + SRCS, sectors 0x26/0x37 watched): census as w1z206b at every tick, srcs_cap=0: the saver recorded no
+  listener. Collecting every listener entry whole (a listener repeats once per event type in each vector of a source) overran
+  JOIN_MAX_RECORDS and the capture gave up; the listeners are now collected once each through a pointer set, and SRCS keeps
+  the script contexts (kinds 1 and 2; components follow the component tree).
