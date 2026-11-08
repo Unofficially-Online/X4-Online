@@ -497,3 +497,32 @@ Linux gate checks passed with the pinned executable read from disk, 174 Lua
 bridge methods and all 29 synthetic relay scenarios. No native X4 process is
 launched by these checks. Private logs: full-python-check-fixed.log and
 final-zig-check.log under the same evidence directory.
+
+NavMesh producer observer: control and initial refusal
+-----------------------------------------------------
+Source 27c495721c7531bfdebaf7b911e2b303e8f8ecbc, gate SHA256
+9b849e1d3d6a92c3eb04a08e4acf35479201d3a7cd830929c1592db1f20af8a6,
+used the same df116bdd... snapshot and reverse launch order (2,1). The control
+without the observer completed 4200 ticks per peer with reason=1/restored=1.
+All 4200 retained station-timer rows and rolling samples matched, covering
+35 complete 120-slice cycles. This also exercises the source after the stop-code
+integration corrections, but does not exercise those failure branches.
+
+Each control peer retained nine ERROR DEGRADED notices: FIND_ORDER unmapped,
+CREATED_IDENTITIES macro_unknown, and BUILD_RNG fallback. They remain explicit
+coverage gaps despite the matching bounded samples; this is not complete
+world-determinism acceptance. Steam identity and owned-process cleanup matched
+the retained runner records. The independent audit is
+.local/evidence/economy-review-resume/navmesh-preload-control-independent.json.
+
+The paired observer run on exactly that source failed before LOAD_REQUEST and
+tick zero: both peers refused at stage=pins. There are no producer rows or normal
+STOP records. ABORT active=0/restored=1 records cleanup, not successful testing.
+The failed bundle linux-20261108-navmesh-post and its raw evidence are preserved.
+Static comparison identifies three exact-reciprocal patches inside the fully
+pinned NavMesh worker body. Their installed jump bytes depend on the preload's
+allocation address. The original raw worker hash cannot accept these changes;
+compatibility must verify the actual owned sites and thunks before normalizing
+only those three windows for the original whole-function hash. This diagnosis
+is a static explanation consistent with the preload ACTIVE records; it is not
+a dump of the failed processes' live worker bytes.

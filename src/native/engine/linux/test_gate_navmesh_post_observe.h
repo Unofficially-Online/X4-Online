@@ -68,9 +68,29 @@ static void test_navmesh_post(void) {
     navmesh_post_count=navmesh_post_attempts=navmesh_post_published=navmesh_post_unreadable=navmesh_post_overflow=0;
     printf("navmesh post synthetic threads, filtering, overflow and forwarding PASS\n");
 }
+static void navmesh_test_flip_byte(uint32_t address) {
+    unsigned char *byte = LX(address);
+    void *page = (void *)((uintptr_t)byte & ~(uintptr_t)(GATE_PAGE - 1));
+    assert(!mprotect(page, GATE_PAGE, PROT_READ | PROT_WRITE | PROT_EXEC));
+    *byte ^= 1;
+    assert(!mprotect(page, GATE_PAGE, PROT_READ | PROT_EXEC));
+}
+static void navmesh_test_rejected_pin(uint32_t address, const char *stage) {
+    navmesh_test_flip_byte(address);
+    assert(!navmesh_post_arm(1, 60));
+    assert(!strcmp(navmesh_post_stage, stage));
+    assert(!navmesh_post_installed && !navmesh_post_ever);
+    navmesh_test_flip_byte(address);
+}
 static void test_navmesh_post_elf(void) {
     reset_session();stats.active=1;boot_mode=1;boot_phase=0;ui_thread=GetCurrentThreadId();
     unsigned char original[16],patched[16];memcpy(original,LX(NAVMESH_POST_SITE),16);
+    /* Each independent pin detects arbitrary modifications in its own span.
+     * The exact original image remains the only accepted variant here. */
+    navmesh_test_rejected_pin(NAVMESH_POST_SITE, "pin_site");
+    navmesh_test_rejected_pin(0x10a6ef0u, "pin_body");
+    navmesh_test_rejected_pin(NAVMESH_POST_NATIVE + 0x20u, "pin_native");
+    navmesh_test_rejected_pin(0x10a5e40u, "pin_worker");
     assert(navmesh_post_pins() && navmesh_post_arm(1,60));
     assert(navmesh_post_owned() && navmesh_post_check() && navmesh_post_arm(1,60));
     assert(!navmesh_post_arm(1,61));

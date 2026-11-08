@@ -383,3 +383,12 @@ Overflow, unreadable data, missing rows, active readers or uncertain restoration
 invalidate the capture. The observer preserves the native call and its errno
 behavior, but adds timing overhead; compare against a control without it.
 No deterministic navigation correction is implemented by this observer.
+
+The worker pin accepts the original executable bytes or the three known
+exact-reciprocal preload patches. For the latter it verifies the actual exported
+region, its read/execute permissions, complete patched windows and trampoline
+slots, and both jump destinations. Only those verified windows are normalized
+in a private copy before checking the original full worker hash. A mixed or
+unknown patch is refused. The copied-ELF compatibility test in
+`check_lockstep_gate_linux.py --x4 ...` invokes the real preload installer but
+does not execute X4 code; it is not gameplay evidence.

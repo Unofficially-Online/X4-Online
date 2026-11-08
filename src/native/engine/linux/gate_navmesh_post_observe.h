@@ -108,15 +108,35 @@ static int navmesh_post_owned(void) {
         !memcmp(expected,current,sizeof(current)) &&
         gate_read_local(LX(NAVMESH_POST_SITE),&block,sizeof(block)) && block==navmesh_post_patched;
 }
+/* Each refusal names the failed part while retaining the original exact pins. */
 static int navmesh_post_pins(void) {
-    unsigned char body[0x60];
-    if (!gate_read_local(LX(0x10a6ef0u),body,sizeof(body))) return 0;
+    unsigned char site[sizeof(navmesh_post_block)];
     if (navmesh_post_installed) {
-        if (!navmesh_post_owned()) return 0;
-        memcpy(body+0x40,navmesh_post_block,sizeof(navmesh_post_block));
-    } else if (memcmp(body+0x40,navmesh_post_block,sizeof(navmesh_post_block))) return 0;
-    return hash_ok(body,sizeof(body),"03092ef66d4971b31d8a19d2ad74a1e075e4ff9645efa648b580f13a5a4321de") &&
-        hash_ok(LX(NAVMESH_POST_NATIVE),0x10c,"431c42fcaaeea6b0fb501e6b8de072ba301720f303d77871efcd192d8f7cee0a");
+        if (!navmesh_post_owned()) {
+            navmesh_post_stage = "pin_site";
+            return 0;
+        }
+    } else if (!gate_read_local(LX(NAVMESH_POST_SITE), site, sizeof(site)) ||
+               memcmp(site, navmesh_post_block, sizeof(site))) {
+        navmesh_post_stage = "pin_site";
+        return 0;
+    }
+    unsigned char body[0x60];
+    if (!gate_read_local(LX(0x10a6ef0u), body, sizeof(body))) {
+        navmesh_post_stage = "pin_body";
+        return 0;
+    }
+    if (navmesh_post_installed)
+        memcpy(body + 0x40, navmesh_post_block, sizeof(navmesh_post_block));
+    if (!hash_ok(body, sizeof(body), "03092ef66d4971b31d8a19d2ad74a1e075e4ff9645efa648b580f13a5a4321de")) {
+        navmesh_post_stage = "pin_body";
+        return 0;
+    }
+    if (!hash_ok(LX(NAVMESH_POST_NATIVE), 0x10c, "431c42fcaaeea6b0fb501e6b8de072ba301720f303d77871efcd192d8f7cee0a")) {
+        navmesh_post_stage = "pin_native";
+        return 0;
+    }
+    return 1;
 }
 
 #ifdef NAVMESH_POST_TEST
@@ -135,6 +155,132 @@ static int navmesh_post_swap(unsigned __int128 expected, unsigned __int128 desir
     return result;
 }
 
+/* Only these three complete preload windows overlap the worker pin. The
+ * original instructions and their emitted trampoline prefixes are specific to
+ * this pinned ELF; the return jumps depend on the actual region address. */
+typedef struct {
+    uint32_t address;
+    unsigned index, length, prefix_length;
+    unsigned char original[12], prefix[8];
+} navmesh_reciprocal_window;
+static const navmesh_reciprocal_window navmesh_reciprocal_windows[] = {
+    {0x10a66c3u, 104, 8, 4, {0xf3,0x0f,0x52,0xc0,0xf3,0x0f,0x53,0xc0},
+        {0xf3,0x0f,0x51,0xc0}},
+    {0x10a74e3u, 105, 8, 8, {0xf3,0x0f,0x52,0xc0,0xf3,0x0f,0x5e,0xea},
+        {0xf3,0x0f,0x51,0xc0,0xf3,0x0f,0x5e,0xea}},
+    {0x10a74ebu, 106, 12, 8, {0xf3,0x0f,0x53,0xc0,0xf3,0x0f,0x11,0x85,0xa0,0xfd,0xff,0xff},
+        {0xf3,0x0f,0x11,0x85,0xa0,0xfd,0xff,0xff}}
+};
+#define NAVMESH_WORKER_START 0x10a5e30u
+#define NAVMESH_WORKER_SIZE 0x1d6bu
+#define NAVMESH_RECIPROCAL_REGION_SIZE 0x20000u
+#define NAVMESH_RECIPROCAL_WINDOWS 765u
+#define NAVMESH_RECIPROCAL_SLOT 128u
+#define NAVMESH_RECIPROCAL_CONSTANTS 64u
+static const char navmesh_worker_hash[] = "646a09194597e066fecfe3dbfdfc9ff2b601276f06900b96445ba73aca0335bd";
+static const unsigned char navmesh_reciprocal_constants[32] = {
+    0,0,0,0,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+    0,0,0x80,0x3f,0,0,0,0,0,0,0,0,0,0,0,0
+};
+typedef unsigned (*navmesh_reciprocal_region_fn)(const unsigned char **, size_t *, const unsigned char **);
+#ifdef NAVMESH_POST_TEST
+static navmesh_reciprocal_region_fn navmesh_test_region_override;
+#endif
+
+static int navmesh_post_rel32(uintptr_t from, uintptr_t to, int32_t *out) {
+    if (from > INT64_MAX || to > INT64_MAX) return 0;
+    int64_t delta = (int64_t)to - (int64_t)from;
+    if (delta < INT32_MIN || delta > INT32_MAX) return 0;
+    *out = (int32_t)delta;
+    return 1;
+}
+
+static int navmesh_post_provider_ok(void *region, void *info) {
+    Dl_info region_owner, info_owner;
+    if (!region || !info || !dladdr(region, &region_owner) || !dladdr(info, &info_owner) ||
+        region_owner.dli_fbase != info_owner.dli_fbase || !region_owner.dli_fname) return 0;
+    const char *name = strrchr(region_owner.dli_fname, '/');
+    name = name ? name + 1 : region_owner.dli_fname;
+    return !strcmp(name, "libx4mp_portable_math.so");
+}
+
+static navmesh_reciprocal_region_fn navmesh_post_region_export(void) {
+#ifdef NAVMESH_POST_TEST
+    if (navmesh_test_region_override) return navmesh_test_region_override;
+#endif
+    void *region = dlsym(RTLD_DEFAULT, "x4mp_exact_reciprocal_region");
+    void *info = dlsym(RTLD_DEFAULT, "x4mp_portable_math_info");
+    if (!navmesh_post_provider_ok(region, info)) return NULL;
+    return (navmesh_reciprocal_region_fn)region;
+}
+
+/* Validate every selected patch, the exported region, used lengths, constants,
+ * complete thunk bytes and both jump destinations before normalizing anything. */
+static int navmesh_post_normalize_reciprocal(unsigned char worker[NAVMESH_WORKER_SIZE],
+                                              const unsigned char *region, size_t size,
+                                              const unsigned char *used, unsigned count) {
+    if (!region || !used || size != NAVMESH_RECIPROCAL_REGION_SIZE || count != NAVMESH_RECIPROCAL_WINDOWS)
+        return 0;
+    uintptr_t base = (uintptr_t)region;
+    uintptr_t used_address = (uintptr_t)used;
+    if (base > UINTPTR_MAX - size || base > INT64_MAX - size || (base & (GATE_PAGE - 1)) ||
+        used_address > UINTPTR_MAX - (NAVMESH_RECIPROCAL_WINDOWS - 1)) return 0;
+    char permissions[5], path[PATH_MAX];
+    for (size_t offset = 0; offset < size; offset += GATE_PAGE) {
+        if (!gate_maps_find(base + offset, permissions, path, sizeof(path)) ||
+            strcmp(permissions, "r-xp") || path[0]) return 0;
+    }
+    unsigned char constants[NAVMESH_RECIPROCAL_CONSTANTS];
+    if (!gate_read_local(region, constants, sizeof(constants)) ||
+        memcmp(constants, navmesh_reciprocal_constants, sizeof(navmesh_reciprocal_constants))) return 0;
+    for (unsigned i = sizeof(navmesh_reciprocal_constants); i < sizeof(constants); ++i)
+        if (constants[i] != 0xcc) return 0;
+    for (unsigned i = 0; i < sizeof(navmesh_reciprocal_windows) / sizeof(navmesh_reciprocal_windows[0]); ++i) {
+        const navmesh_reciprocal_window *window = &navmesh_reciprocal_windows[i];
+        size_t offset = NAVMESH_RECIPROCAL_CONSTANTS + (size_t)window->index * NAVMESH_RECIPROCAL_SLOT;
+        if (offset > size || NAVMESH_RECIPROCAL_SLOT > size - offset) return 0;
+        unsigned char used_length;
+        if (!gate_read_local((const void *)(used_address + window->index), &used_length, 1) || used_length != window->prefix_length + 5) return 0;
+        uintptr_t site = (uintptr_t)LX(window->address);
+        uintptr_t slot = base + offset;
+        int32_t jump_to_slot, jump_back;
+        if (!navmesh_post_rel32(site + 5, slot, &jump_to_slot) ||
+            !navmesh_post_rel32(slot + window->prefix_length + 5, site + window->length, &jump_back)) return 0;
+        unsigned char expected_site[12];
+        memset(expected_site, 0xcc, window->length);
+        expected_site[0] = 0xe9;
+        memcpy(expected_site + 1, &jump_to_slot, sizeof(jump_to_slot));
+        size_t worker_offset = window->address - NAVMESH_WORKER_START;
+        if (worker_offset > NAVMESH_WORKER_SIZE || window->length > NAVMESH_WORKER_SIZE - worker_offset ||
+            memcmp(worker + worker_offset, expected_site, window->length)) return 0;
+        unsigned char expected_slot[NAVMESH_RECIPROCAL_SLOT], actual_slot[NAVMESH_RECIPROCAL_SLOT];
+        memset(expected_slot, 0xcc, sizeof(expected_slot));
+        memcpy(expected_slot, window->prefix, window->prefix_length);
+        expected_slot[window->prefix_length] = 0xe9;
+        memcpy(expected_slot + window->prefix_length + 1, &jump_back, sizeof(jump_back));
+        if (!gate_read_local((const void *)slot, actual_slot, sizeof(actual_slot)) ||
+            memcmp(actual_slot, expected_slot, sizeof(actual_slot))) return 0;
+    }
+    for (unsigned i = 0; i < sizeof(navmesh_reciprocal_windows) / sizeof(navmesh_reciprocal_windows[0]); ++i) {
+        const navmesh_reciprocal_window *window = &navmesh_reciprocal_windows[i];
+        memcpy(worker + window->address - NAVMESH_WORKER_START, window->original, window->length);
+    }
+    return 1;
+}
+
+static int navmesh_post_worker_pin(void) {
+    unsigned char worker[NAVMESH_WORKER_SIZE];
+    if (!gate_read_local(LX(NAVMESH_WORKER_START), worker, sizeof(worker))) return 0;
+    if (hash_ok(worker, sizeof(worker), navmesh_worker_hash)) return 1;
+    navmesh_reciprocal_region_fn get_region = navmesh_post_region_export();
+    if (!get_region) return 0;
+    const unsigned char *region = NULL, *used = NULL;
+    size_t size = 0;
+    unsigned count = get_region(&region, &size, &used);
+    return navmesh_post_normalize_reciprocal(worker, region, size, used, count) &&
+        hash_ok(worker, sizeof(worker), navmesh_worker_hash);
+}
+
 static int navmesh_post_arm(uint64_t first, uint64_t last) {
     if (navmesh_post_installed) {
         return stats.active && !navmesh_post_cleanup_uncertain &&
@@ -150,9 +296,9 @@ static int navmesh_post_arm(uint64_t first, uint64_t last) {
         navmesh_post_stage = "needs";
         return 0;
     }
-    if (!navmesh_post_pins() ||
-        !hash_ok(LX(0x10a5e30u), 0x1d6b, "646a09194597e066fecfe3dbfdfc9ff2b601276f06900b96445ba73aca0335bd")) {
-        navmesh_post_stage = "pins";
+    if (!navmesh_post_pins()) return 0;
+    if (!navmesh_post_worker_pin()) {
+        navmesh_post_stage = "pin_worker";
         return 0;
     }
     navmesh_post_page = gate_near_page(LX(NAVMESH_POST_SITE));
@@ -201,11 +347,7 @@ static int navmesh_post_arm(uint64_t first, uint64_t last) {
 }
 
 static int navmesh_post_check(void) {
-    if (!navmesh_post_pins()) {
-        navmesh_post_stage = "ownership";
-        return 0;
-    }
-    return 1;
+    return navmesh_post_pins();
 }
 
 static void navmesh_post_restore(void) {
