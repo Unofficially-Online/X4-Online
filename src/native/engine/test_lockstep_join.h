@@ -3529,6 +3529,25 @@ static void test_join_srcs(void) {
     printf("join SRCS: each keyed listener's sources from its own list by portable ID, a one-source move registered for the types "
            "of its entry and the old source dropped, equal, left and missing PASS\n");
 }
+/* AGCB for a nav ship: written only with join_agcb_nav_on. */
+static _Alignas(16) unsigned char tagcb_obj[0x300],tagcb_ctl[0x80],tagcb_agent[0x1000];static unsigned char *tagcb_objs[1];
+static void *tagcb_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime==0x81u?tagcb_objs[0]:NULL;}
+static void test_join_agcb_nav(void) {
+    join_find_fn find=join_world_find;void *map=join_world_map;join_world_find=tagcb_find;join_world_map=tagcb_objs;tagcb_objs[0]=tagcb_obj;
+    memset(tagcb_obj,0,sizeof(tagcb_obj));memset(tagcb_ctl,0,sizeof(tagcb_ctl));memset(tagcb_agent,0,sizeof(tagcb_agent));
+    {uintptr_t c=(uintptr_t)tagcb_ctl,vt=(uintptr_t)image+JOIN_NAV_VTABLE,a=(uintptr_t)tagcb_agent;
+     memcpy(tagcb_obj+JOIN_CONTROLLER,&c,8);memcpy(tagcb_ctl,&vt,8);memcpy(tagcb_ctl+0x40,&a,8);uint64_t rt=0x81u;memcpy(tagcb_obj+8,&rt,8);}
+    static join_agcb_rec rec[1];memset(rec,0,sizeof(rec));rec[0].portable=0x100081ull;for(unsigned k=0;k<JOIN_AGCB_BYTES;k++) rec[0].block[k]=(unsigned char)(k|1u);
+    join_id_rec ids[1]={{0x81ull,0x100081ull,0,0}};
+    join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));s.agcb=rec;s.nagcb=1;mine.ids=ids;mine.nids=1;
+    join_agcb_written=join_agcb_equal=join_agcb_missing=0;join_agcb_nav_on=0;join_admit_agcb(&s,&mine);
+    assert(!join_agcb_written && !join_agcb_equal && !join_agcb_missing && !tagcb_agent[JOIN_AGCB_AT]);   /* off: a nav ship's block left */
+    join_agcb_nav_on=1;join_admit_agcb(&s,&mine);
+    assert(join_agcb_written==1 && !memcmp(tagcb_agent+JOIN_AGCB_AT,rec[0].block,JOIN_AGCB_BYTES));
+    join_admit_agcb(&s,&mine);assert(join_agcb_equal==1);
+    join_agcb_nav_on=0;join_agcb_written=join_agcb_equal=join_agcb_missing=0;join_world_find=find;join_world_map=map;
+    printf("join AGCB nav: a nav ship's Agent block left without the option, written with it, equal again PASS\n");
+}
 /* JOIN_BP: the first hit restores the byte and resumes; a second thread trapped on the same int3 (a parallel pass, w1z214) resumes
  * too instead of falling through to the process's crash; a breakpoint not armed is not ours. */
 static void test_join_bp_late(void) {
@@ -3584,5 +3603,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();
 }

@@ -2677,6 +2677,14 @@ proposed and rejected.
   3317, census T+1 0, 3060 0, 3120 0, 3300 6, 3360 3, 3600 1, 4200 2 (before: 122, 2,430, 6,924), the rest large ships that part
   and meet again (ShipLarge 0x9d2ec, XL 0x78889; x4mods-67's zone-change rotation family). SRCS (x4mods-67, section 81, j1-398):
   36 contexts moved, lstn partial 36 -> 7, the census unchanged. Next: the T=633 regression with the opt-ins, then the defaults.
+- The defaults [F: j1-402 .. j1-405; x4mods-67's w1z215 .. w1z220]. J1@633 with gravp_settled, LSTN, UNDK, SRCS and FOBJ (j1-402):
+  verdict equal 633 .. 5999, census 0 at 900 .. 5940 (lstn 2,724 vectors written at T=633, srcs 2 moved). In window at T=633 the
+  five parted at 900 (w1z215: 25, 1,512 at 1740; a Xenon and Split fight at a cluster_408 gatezone); the bisect named gravp_settled
+  (w1z216/w1z219 bad, w1z217/w1z218 clean): objects of attention 3 .. 5 the engine republishes itself soon after the join, which the
+  restore through T+10 took for the load's publication. acd85a21: those entries restored after T+1 only; w1z220 0 at 900 and 1740,
+  j1-404 the late join as j1-401. Every late-join fix is a default (smoke 04b41dcd: WARP, PORD, ATTN set, ARES, UNDK, SRCS, FOBJ,
+  LSTN, gravp_settled). The late join with the defaults alone (j1-405, to 9000): 3600 1, 4800 2, 6000 1, 7200 2, 8400 2, 8940 2,
+  the large-ship family only (ShipLarge 0x9d2ec to 4800; XL 0x78889 travelling, and from 7200 a created zone on its way).
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

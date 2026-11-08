@@ -968,6 +968,22 @@ static uint64_t join_agtt_written,join_agtt_equal,join_agtt_missing;static uint3
  * +0x980..+0xa88 other; the probe's due +0xac0 the joiner's load time. NAV writes only the probe's due and enable, for nav
  * ships, whose blocks come out equal (j1-152: byte-equal, no per-process word in them). Raw, written at the admission. */
 static uint64_t join_agcb_written,join_agcb_equal,join_agcb_missing;static uint32_t join_agcb_capn;
+/* native_gate_join_agcb_nav (opt-in; in-window report 57, w1z213/w1z221): the saver records the block of every NavigationController
+ * ship's Agent too, and the joiner writes those only with the option. j1-152 found nav ships' blocks equal after the load; a ship
+ * whose block the session computed shortly before T is not: the shipyard container 717eb (launched before T) has +0x6d8..+0x72c
+ * zero on the joiner (the session's per-axis limits 551.98, 99.6, 275.99, 437.29, 291.53, 501.75) and other direction tables
+ * +0x980.., and its Agent skips the flight model's update at T+1 (no spline update call on the joiner at 3034, w1z221), one tick
+ * behind from then on. */
+static int join_agcb_nav_on;
+/* AGCB's record of a controller's Agent (+0x40): 1 recorded or nothing to record, 0 out of memory. */
+static int join_capture_agcb(join_tables *t,const unsigned char *controller,uint64_t portable) {
+    unsigned char *agent=NULL;join_agcb_rec *c=calloc(1,sizeof(*c));
+    if(!c) return join_note("memory");
+    c->portable=portable;
+    const int ok=join_read(controller+0x40,&agent,8) && agent && join_read(agent+JOIN_AGCB_AT,c->block,JOIN_AGCB_BYTES);
+    if(ok && !JOIN_PUSH(t->agcb,t->nagcb,join_agcb_capn,*c)) {free(c);return join_note("memory");}
+    free(c);return 1;
+}
 /* PBNK (v13, section 58): a pilot slot ship's Agent's pathing state banks (Agent +0xad0 + 0x1a0 x bank, pending +0xed0 + 16 x bank),
  * which NAV and NAVT carry for a NavigationController's Agent only. The lockstep session's w1z8 (slot 2's Agent at 634): the two
  * poses in the other banks (a role), the tails (+0xb38 260.22, +0xb40/+0xb48, +0xb50, +0xcf8) 0 on the joiner, the pending
@@ -5673,6 +5689,10 @@ static void join_admit_agcb(const join_tables *s,const join_tables *mine) {
     for(uint32_t i=0;i<s->nagcb;i++) {
         unsigned char *object=join_object(join_runtime_of(mine,s->agcb[i].portable)),*agent=object?join_nav_agent(object):NULL;
         if(!agent) {++join_agcb_missing;continue;}
+        unsigned char *controller=NULL;uintptr_t cvt=0;
+        const int nav=join_read(object+JOIN_CONTROLLER,&controller,8) && controller && join_read(controller,&cvt,8) &&
+                      pslot_canonical_vtable(cvt)==(uintptr_t)image+JOIN_NAV_VTABLE;
+        if(nav && !join_agcb_nav_on) continue;   /* a nav ship's block: only with native_gate_join_agcb_nav */
         if(join_poke((uintptr_t)(agent+JOIN_AGCB_AT),s->agcb[i].block,JOIN_AGCB_BYTES)) ++join_agcb_written; else ++join_agcb_equal;
     }
 }
@@ -5772,6 +5792,7 @@ static int join_capture_world(join_tables *t,double now) {
                 join_nav_rec r;join_navt_rec tr;if(!join_nav_capture(object,controller,id->runtime,id->portable,&r,&tr)) return 0;
                 if(!JOIN_PUSH(t->nav,t->nnav,ncap,r) || !JOIN_PUSH(t->navt,t->nnavt,ntcap,tr)) return join_note("memory");
                 if(!join_capture_flight(t,controller,id->runtime,id->portable,&fcap,&lcap,&agcap,&rcap,&pacap,&stcap,&stpcap,&socap)) return 0;   /* versions 5..10 */
+                if(!join_capture_agcb(t,controller,id->portable)) return 0;   /* AGCB: a nav ship's Agent block too (native_gate_join_agcb_nav) */
                 continue;
             }
             /* A pilot slot ship (X4's PlayerController or a slot's copy): its Agent's sections as a nav ship's (FLIGHT, AGENT, PARAM,
@@ -5800,14 +5821,7 @@ static int join_capture_world(join_tables *t,double now) {
                 }
             }
             if(p.kind==PSLOT_VTABLE && !join_capture_pcsv(t,controller,id->portable)) return 0;   /* PCSV: its own motion solver */
-            if(p.kind==PSLOT_VTABLE) {   /* AGCB: its Agent's command and probe block */
-                unsigned char *agent=NULL;join_agcb_rec *c=calloc(1,sizeof(*c));
-                if(!c) return join_note("memory");
-                c->portable=id->portable;
-                int ok=join_read(controller+0x40,&agent,8) && agent && join_read(agent+JOIN_AGCB_AT,c->block,JOIN_AGCB_BYTES);
-                if(ok && !JOIN_PUSH(t->agcb,t->nagcb,join_agcb_capn,*c)) {free(c);return join_note("memory");}
-                free(c);
-            }
+            if(p.kind==PSLOT_VTABLE && !join_capture_agcb(t,controller,id->portable)) return 0;   /* AGCB: its Agent's command and probe block */
             if(join_dock_kind(p.kind)) {   /* version 8: a ship docking or undocking */
                 join_dock_rec d;memset(&d,0,sizeof(d));d.portable=id->portable;
                 if(!join_dock_read(controller,object,p.kind,&d)) return join_note("dock,id=%llx",(unsigned long long)id->portable);

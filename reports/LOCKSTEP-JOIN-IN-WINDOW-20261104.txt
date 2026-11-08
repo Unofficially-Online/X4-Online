@@ -1256,3 +1256,15 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   to 1800, the defaults + gravp_settled): 900 0, 1740 0 (gravp_settled=1:560); j1-404 (the J1 late join, same build) as j1-401:
   3060 0, 3120 0, 3300 6, 4200 2. gravp_settled joins JOIN_DEFAULT_ON: all six late-join fixes (UNDK, SRCS, FOBJ, LSTN,
   gravp_settled with WARP/attn_set/ARES/PORD before them) are defaults.
+- The gate hooks the spline update itself (lockstep_spline.h, the vtable slot 0x2c4f4f0: (model, slot, dt, time, cheap, player)),
+  so JOIN_BP's chain had no .text return address to show. w1z221 (e97ba831: native_gate_motion_watch_spline_every, a spline row
+  on every watched update): the session's 717eb is updated every tick, never cheap; the joiner's rows start at 3035 (the watch
+  learns the Agent pointer after the first pass, so 3034 has no row) one step behind. Its Agent's command block +0x6d8..+0x72c
+  is zero on the joiner (the session's per-axis limits 551.98, 99.6, 275.99, 437.29, 291.53, 501.75) and the direction tables
+  +0x980.. other: AGCB carried that block for pilot slot ships only. 36821c3c/d24042f3: the saver records every nav ship's block
+  (the first build recorded none: the capture's NAV branch continues before AGCB), the joiner writes them with opt-in
+  native_gate_join_agcb_nav. w1z223: agcb=9849:0:0 (every block differed), no crash, the census unchanged (T+1 1, 3060 4, 3120
+  6), 717eb's first step after the admission 40 % of a frame (progress 0.10174; without 0.10119; the session 0.10258). w1z224
+  (717eb watched): after the block the Agent still differs at +0x4dc (0.5 / 0), +0x6d8 (-0.057 / 0) and +0xf7c (211.17 / 0), zero
+  on the joiner through T+2 (+0xf88/+0xf8c are the 0xf90-byte Agent's padding, which the travel snapshot uses: noise); no
+  pathing code reads them directly. agcb_nav stays opt-in.

@@ -346,6 +346,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_warp then   -- a joiner takes the session's pending warps' destinations (WARP)
   assert(gate.join_warp and gate.join_warp(1)==1,'join warp refused')
  end
+ if cfg.native_gate_join_agcb_nav then   -- AGCB: the nav ships' Agent command blocks too (agcb=)
+  assert(gate.join_agcb_nav and gate.join_agcb_nav(1)==1,'join agcb nav refused')
+ end
  if cfg.native_gate_join_srcs then   -- SRCS: each keyed listener's sources as the session's (srcs=)
   assert(gate.join_srcs and gate.join_srcs(1)==1,'join srcs refused')
  end
