@@ -296,3 +296,42 @@ world seed, future simulation duration, interactive play or Windows parity.
 
 Private evidence: build-event-key-independent-audit/summary.json,
 build-event-key-audit-summary.json and build-event-key-{loading,events,scripts}.json.
+
+Fresh-world admission limit and correction
+-----------------------------------------
+A new seed-3333333 snapshot was captured and completely gzip/XML-validated in
+an isolated profile. SHA256 is
+df116bdd4a52988b6104cf7bd082d357e54abd00cbaaa6bdac1825bb6676c6f8.
+Capture cleanup succeeded and the recorded Steam identity was unchanged.
+Source 9924c3b with the same 5523ae98 gate requested 36000 rolling ticks, but
+both clients stopped before admission: completed=0 reason=72 restored=1,
+526235 identity import calls, table count 524288, failures 1680. The count
+exactly saturates the Linux table's half-full limit. There are no world
+samples and no passing simulation result. The original failed run remains
+retained; its owned-process cleanup and Steam checks passed.
+
+The correction matches the existing Windows allocation of 4194304 buckets.
+Maximum admitted saved identities remain half that number, 2097152; the
+256-probe bound and conflicting-identity checks are unchanged. The pending
+import queue retains its prior two-times-population allowance for repeated
+imports. Together the two 16-byte-entry tables allocate up to 128 MiB rather
+than 32 MiB. This is a bounded capacity increase, not unlimited world support;
+allocation, occupancy or probe exhaustion must still stop the gate.
+
+The focused pinned-image Zig checker passes the actual insertion and lookup
+of all 2097152 entries, refusal of the next entry, duplicate/conflicting IDs,
+256 deliberately colliding hashes, all 4194304 pending slots and overflow
+failure latching. Remaining census buffers derive their saved population
+from the admitted count. The separate created-object limit is unchanged.
+Independent source review found no additional blocker; the fresh-world
+native comparison must still be repeated after this correction.
+
+Separately, ac6deaf formats the two new RNG headers without changing their
+ordered C tokens. A build comparison finds all 20 allocated ELF sections
+identical to the prior gate, including code, data and relocation contents.
+Only .debug_info and .debug_line differ; the whole-file hashes are different.
+This formatting result does not cover the later capacity change.
+
+Private evidence: linux-20261108-build-event-newseed failed native bundle,
+linux-identity-capacity-check.log in the isolated capacity worktree, and
+rng-format-elf-comparison.json. No normal profile or game file was modified.
