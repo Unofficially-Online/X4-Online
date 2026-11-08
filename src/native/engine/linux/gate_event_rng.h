@@ -3,7 +3,11 @@
  * they are stable only for this pinned ELF, not equal to Windows RVAs. The
  * fallback is shared by objects of one class and is not a unique identity.
  * The Linux normal-return path restores the caller's word, including nested
- * deliveries. It does not promise recovery if a native call unwinds or exits. */
+ * deliveries. It does not promise recovery if a native call unwinds or exits.
+ * The delivery must run on the currently adopted ui_thread: a new worker that
+ * delivers before accept_ui adopts it is counted foreign and stops the gate.
+ * The existing event-order hook accesses its batch before this scope checks the
+ * thread; this scope does not make that shared ordering operation thread-safe. */
 #define LINUX_EVENT_RNG_DOMAIN 0x58344c45564e5452ULL
 #define LINUX_EVENT_RNG_CAPACITY 16384u
 #define LINUX_EVENT_RNG_STEP_LIMIT 4096u

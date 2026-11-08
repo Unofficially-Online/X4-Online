@@ -17,6 +17,21 @@ static void event_rng_test_native(void *source, void *event, double due) {
     if (!event_rng_test_skip_draw) *word = erng_lx_pcg(*word);
 }
 
+typedef struct {
+    void *source;
+    void *event;
+    uint64_t final_word;
+} event_rng_foreign_test;
+
+static void *event_rng_foreign_thread(void *argument) {
+    event_rng_foreign_test *test = argument;
+    uint64_t *word = gate_tls_rng(gate_tls_self());
+    *word = 0x7777;
+    linux_event_rng_deliver(event_rng_test_native, test->source, test->event, 4.0);
+    test->final_word = *word;
+    return NULL;
+}
+
 static void test_event_rng_linux(void) {
     reset_session();
     stats.active = 1;
@@ -78,6 +93,44 @@ static void test_event_rng_linux(void) {
     *word = 0x42;
     linux_event_rng_deliver(event_rng_test_native, source, event, due);
     assert(event_rng_test_calls == 1 && *word == erng_lx_pcg(0x42));
+    /* Distinct unmapped runtime IDs of one class deliberately share a fallback. */
+    linux_event_rng_mode = LINUX_EVENT_RNG_KEY;
+    runtime = 8001;
+    memcpy(source + 8, &runtime, 8);
+    runtime = 8002;
+    memcpy(inner_source + 8, &runtime, 8);
+    uint64_t local_before = linux_event_rng_local;
+    event_rng_test_calls = 0;
+    linux_event_rng_deliver(event_rng_test_native, source, event, due);
+    linux_event_rng_deliver(event_rng_test_native, inner_source, event, due);
+    assert(event_rng_test_calls == 2 && linux_event_rng_local == local_before + 2);
+    assert(event_rng_test_seen[0] == event_rng_test_seen[1]);
+    assert(event_rng_test_seen[0] == linux_event_rng_seed(20, 0x1234, WORLD_KEY_NONE, 0x5678, due_bits));
+
+    /* A genuinely different thread must forward exactly once on its own word. */
+    event_rng_foreign_test foreign_test = {source, event, 0};
+    pthread_t foreign_thread;
+    uint64_t foreign_before = linux_event_rng_foreign;
+    int64_t failures_before = linux_event_rng_failures;
+    event_rng_test_calls = 0;
+    assert(!pthread_create(&foreign_thread, NULL, event_rng_foreign_thread, &foreign_test));
+    assert(!pthread_join(foreign_thread, NULL));
+    assert(event_rng_test_calls == 1 && event_rng_test_seen[0] == 0x7777);
+    assert(foreign_test.final_word == erng_lx_pcg(0x7777));
+    assert(linux_event_rng_foreign == foreign_before + 1 && linux_event_rng_failures == failures_before + 1);
+
+    /* A readable but foreign vtable also forwards once without a keyed word. */
+    uintptr_t foreign_vtable = 1;
+    memcpy(event, &foreign_vtable, 8);
+    failures_before = linux_event_rng_failures;
+    uint64_t unreadable_before = linux_event_rng_unreadable;
+    event_rng_test_calls = 0;
+    *word = 0x2468;
+    linux_event_rng_deliver(event_rng_test_native, source, event, due);
+    assert(event_rng_test_calls == 1 && event_rng_test_seen[0] == 0x2468 && *word == erng_lx_pcg(0x2468));
+    assert(linux_event_rng_unreadable == unreadable_before + 1 && linux_event_rng_failures == failures_before + 1);
+    memcpy(event, &event_type, 8);
+
     event_rng_test_calls = 0;
     boot_phase = 2;
     linux_event_rng_deliver(event_rng_test_native, source, event, due);
