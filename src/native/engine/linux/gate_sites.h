@@ -558,6 +558,8 @@ static const lx_site lx_sites[]={
     {"wfire_fire_loop_call",0x1d69a10,0x80,"2d2595c5e3c41e67cbe91b7310c26c96a3fa18c872dd3d4bc0fada7c691e7528"},
     {"build_rng_scheduler",0x1838e80,0x180,"c6b5cd949298ae677d231ff345d92e22295830999b43a2a949b9027fc50ff6e7"},
     {"build_rng_float_range",0x1a491c0,0x7e,"bd0f5a41ee0f72ece023eec0b6ae4134c62e345874c57fe45dc17194d190c6ea"},
+    {"economy_watch_import",0x18412e3,0xae,"03d28287744ceff1c336a17b4482cfb63ef156e6e51a33044e58b5c5d352bb4c"},
+    {"economy_watch_guard",0x1878db0,0x80,"e570edab29e58f8e5c464e611cfafbbdca8f36811466ac8fd5c2ccf40dbae58b"},
     {"erng_listener_head",0x14382f0,0x58,"93b8240094f88e774f4ded9f45ec8cb805ddcdd9588218575a3e4a8a422de45c"},
     {"erng_listener_tail",0x1438350,0xc2,"2a0cbb338bb82c0a492b6b013e484597c6fd63233614e1f429c0d12edcc7ef18"},
     {"spline_update_head",0x1363de0,0x110,"53ce49e351fba194737e429eb0ebf71daa1d84a01a357241cd243b9382208ef7"},

@@ -223,6 +223,12 @@ def bundle(args):
         raise SystemExit('--status-stride must be between 1 and 3600')
     if args.created_rows and not args.created_identities:
         raise SystemExit('--created-rows requires --created-identities')
+    if args.economy_watch is not None or args.economy_watch_window is not None:
+        from economy_watch_config import validate_configuration
+        try:
+            validate_configuration(args.economy_watch, args.economy_watch_window, args.ticks)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
     if args.world_motion_watch is not None or args.world_motion_window is not None:
         from world_motion_evidence import validate_configuration
         try:
@@ -245,6 +251,9 @@ def bundle(args):
     command += ['--world-log-mode', args.world_log_mode]
     if args.world_rolling_slices is not None:
         command += ['--world-rolling-slices', str(args.world_rolling_slices)]
+    if args.economy_watch is not None:
+        command += ['--economy-watch', args.economy_watch,
+                    '--economy-watch-window', *map(str, args.economy_watch_window)]
     if args.world_motion_watch is not None:
         command += ['--world-motion-watch', *args.world_motion_watch,
                     '--world-motion-window', *map(str, args.world_motion_window)]
@@ -420,7 +429,7 @@ def bundle(args):
     shutil.copy2(repo / 'tools/dev/native_gate_relay.py', out / 'native_gate_relay.py')
     shutil.copy2(Path(__file__), out / 'linux_gate_live.py')
     shutil.copy2(Path(__file__).with_name('linux_gate_evidence.py'), out / 'linux_gate_evidence.py')
-    for helper in ('world_motion_evidence.py', 'native_world_evidence.py'):
+    for helper in ('world_motion_evidence.py', 'native_world_evidence.py', 'economy_watch_config.py'):
         shutil.copy2(Path(__file__).with_name(helper), out / helper)
     shutil.rmtree(work)
     commit = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
@@ -521,6 +530,8 @@ def bundle(args):
         },
     }
     manifest.update({name: getattr(args, name) for name in recorded_options})
+    manifest['economy_watch'] = args.economy_watch
+    manifest['economy_watch_window'] = args.economy_watch_window
     manifest['world_motion_watch'] = args.world_motion_watch
     manifest['world_motion_window'] = args.world_motion_window
     manifest['created_rows'] = bool(args.created_rows)
@@ -1002,6 +1013,9 @@ def run(args):
                                             'gate_so_sha256': manifest['gate_so_sha256']}))
         return
     ticks = manifest['ticks'] if args.ticks is None else args.ticks
+    if manifest.get('economy_watch') is not None or manifest.get('economy_watch_window') is not None:
+        from economy_watch_config import validate_configuration
+        validate_configuration(manifest.get('economy_watch'), manifest.get('economy_watch_window'), ticks)
     if manifest.get('world_motion_watch') is not None or manifest.get('world_motion_window') is not None:
         from world_motion_evidence import validate_configuration
         validate_configuration(manifest.get('world_motion_watch'), manifest.get('world_motion_window'), ticks)
@@ -1204,6 +1218,9 @@ def main(argv=None):
                    help='hashes suppresses object detail logs while keeping every full world capture')
     b.add_argument('--world-rolling-slices', type=int, metavar='N',
                    help='experimental per-tick object slices; requires hashes-only logging, changes census coverage timing')
+    b.add_argument('--economy-watch', metavar='SAVED_ID', help='read-only station economy deadline evidence')
+    b.add_argument('--economy-watch-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='inclusive economy watch window, at most 36000 ticks')
     b.add_argument('--world-motion-watch', nargs='+', metavar='SAVED_ID',
                    help='default-off per-tick canonical Nav evidence for up to four imported saved IDs')
     b.add_argument('--world-motion-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),

@@ -344,6 +344,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_world.h"
 #include "test_gate_world_rolling.h"
 #include "test_gate_world_motion_watch.h"
+#include "test_gate_economy_watch.h"
 #include "test_gate_path.h"
 #include "test_gate_travel_determinism.h"
 #include "test_gate_path_transform_observe.h"
@@ -391,6 +392,7 @@ int main(int argc,char **argv) {
     test_world_golden(getenv("GATE_WORLD_GOLDEN"));
     test_world_rolling();
     test_world_motion_watch();
+    test_economy_watch();
     test_path_determinism();
     test_travel_inline_dispatch();
     test_path_install();

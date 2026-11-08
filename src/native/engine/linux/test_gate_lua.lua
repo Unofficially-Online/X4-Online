@@ -7,6 +7,7 @@ local open=assert(package.loadlib(path,'luaopen_x4lan_gate'))
 local gate=assert(open(),'module did not resolve the Lua ABI')
 local core={'sha256','start','boot','load_requested','report','poll','stop','frame_timing','qpc_us','tick_rate','wire','propose',
  'world_motion_config','world_motion_capture','world_motion_row','world_motion_status',
+ 'economy_watch_config','economy_watch_capture','economy_watch_status',
  'relay_host','lookahead','lookahead_status','peer_links','peer_status','wire_crypto','wire_crypto_status','platform','verify_stage',
  'world_watch','world_capture','world_capture_nav_v2','world_capture_rolling','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status',
  'path_determinism','path_determinism_status','path_budget','path_budget_status','region_rng','region_rng_status','region_rng_row',

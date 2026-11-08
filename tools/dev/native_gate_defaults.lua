@@ -205,6 +205,8 @@ D.FAMILIES={'travel','target','orders','autopilot','dock','weapons','missiles','
 D.FAMILY_NEEDS={missiles='native_gate_pilot_fire',missions='guard:missions',conversation='guard:conversation',build='guard',assets='guard',faction='guard'}
 -- Diagnostics and measurement: off by default (they only log, capture, trace, profile, watch or measure). {'key','why'}.
 D.DIAGNOSTIC={
+ {'native_gate_economy_watch','Linux saved-station deadline observation'},
+ {'native_gate_economy_watch_window','Inclusive station deadline observation window'},
  {'native_gate_world_motion_watch','Linux saved-ID Nav evidence; independent of full census bookkeeping'},
  {'native_gate_world_motion_window','explicit bounded tick window for canonical Nav motion/timing evidence'},
  {'native_gate_world_nav_stride','nav-only world hash every N ticks between census captures (soak split location)'},

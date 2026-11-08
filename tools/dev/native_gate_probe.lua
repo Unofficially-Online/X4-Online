@@ -634,6 +634,18 @@ if rolling_slices then
  assert(type(gate.world_capture_rolling)=='function', 'rolling census export unavailable on this platform')
  assert(not X4LAN_NATIVE_HYBRID, 'rolling census does not support hybrid census consumers')
 end
+-- This Linux-only observer reads one saved Station's stored economy deadlines.
+do
+ local id,window=cfg.native_gate_economy_watch,cfg.native_gate_economy_watch_window
+ assert((id==nil and window==nil) or (type(id)=='string' and #id==16 and
+  id:match('^[0-7][0-9a-f]+$') and id~='0000000000000000' and
+  type(window)=='table' and #window==2 and type(window[1])=='number' and type(window[2])=='number' and
+  window[1]%1==0 and window[2]%1==0 and window[1]>=1 and window[1]<=window[2] and
+  window[2]-window[1]<36000 and window[2]<=9007199254740991 and cfg.native_gate_world_identities and
+  cfg.native_gate_snapshot_sha and type(gate.economy_watch_config)=='function' and
+  type(gate.economy_watch_capture)=='function' and type(gate.economy_watch_status)=='function'),
+  'economy watch requires one saved Station and a bounded complete tick window')
+end
 -- FR28 (DEFAULT OFF, read-only): native_gate_world_health_ticks = {first,last} writes a WORLD_HEALTH row per
 -- world-hash watch on every tick first..last, after that tick's capture point: its stored hull and shield
 -- (value, changed time, maximum, delay, rate, factor, generators, modifiers) and the game time, as bits. The
@@ -5142,6 +5154,9 @@ local function frame()
   if cfg.native_gate_gravidar_deadlines then log('GRAVIDAR_DEADLINES_STOP '..tostring(gate.gravidar_deadlines_status())) end
   if cfg.native_gate_spawn_rng~=nil then drain_spawn();log('SPAWN_RNG_STOP '..tostring(gate.spawn_rng_status())) end
   if cfg.native_gate_created_identities then drain_created_rows();log('CREATED_IDENTITIES_STOP '..tostring(gate.created_identities_status())) end
+  if cfg.native_gate_economy_watch then
+   ticklog.write('ECONOMY_WATCH_STOP '..assert(gate.economy_watch_status(),'economy watch status unavailable'))
+  end
   if cfg.native_gate_world_motion_watch then
    ticklog.write('WORLD_MOTION_STOP '..assert(gate.world_motion_status(),'world motion status unavailable'))
   end
@@ -5679,6 +5694,20 @@ local function frame()
  if parts then parts[#parts+1]={'player',#data} end
  -- These are mandatory diagnostic receipts even when status thinning is enabled.
  -- Do not append them to data: observation must not change the comparison contract.
+ if cfg.native_gate_economy_watch then
+  local window=cfg.native_gate_economy_watch_window
+  if tick==1 then
+   assert(gate.economy_watch_config(cfg.native_gate_economy_watch,window[1],window[2])==1,
+    'economy watch configuration refused')
+   ticklog.write('ECONOMY_WATCH_ARMED version=1 first='..window[1]..' last='..window[2]..' id='..cfg.native_gate_economy_watch)
+  end
+  if tick>=window[1] and tick<=window[2] then
+   local row,why=gate.economy_watch_capture(tick)
+   if not row then ticklog.write('ECONOMY_WATCH_ERROR tick='..tick..' stage='..tostring(why)) end
+   assert(row,'economy watch capture failed '..tostring(why))
+   ticklog.write('ECONOMY_WATCH '..row)
+  end
+ end
  if cfg.native_gate_world_motion_watch then
   local window=cfg.native_gate_world_motion_window
   if tick==1 then

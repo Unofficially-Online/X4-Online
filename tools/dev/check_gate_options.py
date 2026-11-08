@@ -688,6 +688,20 @@ def hybrid_rules(config_text, enabled):
 def probe_rules(config_text, enabled):
     """Prerequisites of options native_gate_probe.lua arms after the boot."""
     failures = []
+    if re.search(r'X4LAN_CONFIG\.native_gate_economy_watch(?:_window)?\s*=', config_text):
+        from economy_watch_config import validate_configuration
+        saved_match = re.search(r"X4LAN_CONFIG\.native_gate_economy_watch\s*=\s*['\"]([0-9a-f]+)['\"]", config_text)
+        window_match = re.search(r'X4LAN_CONFIG\.native_gate_economy_watch_window\s*=\s*\{\s*(\d+)\s*,\s*(\d+)\s*\}', config_text)
+        saved = saved_match.group(1) if saved_match else None
+        window = [int(value) for value in window_match.groups()] if window_match else None
+        try:
+            validate_configuration(saved, window)
+            if saved is None and window is None:
+                raise ValueError('economy watch configuration is malformed')
+        except ValueError as error:
+            failures.append(dict(rule=str(error), bits=['native_gate_economy_watch', 'native_gate_economy_watch_window']))
+        if 'native_gate_world_identities' not in enabled or not re.search(r'X4LAN_CONFIG\.native_gate_snapshot_sha\s*=', config_text):
+            failures.append(dict(rule='economy watch needs saved identities and a snapshot', bits=['native_gate_world_identities', 'native_gate_snapshot_sha']))
     if re.search(r'X4LAN_CONFIG\.native_gate_world_motion_(?:watch|window)\s*=', config_text):
         from world_motion_evidence import configured_watch
         try:

@@ -212,6 +212,9 @@ def main():
                    help='hashes retains complete captures and their digests without per-object log rows')
     p.add_argument('--world-rolling-slices', type=int, metavar='N',
                    help='experimental Linux census: sample one of N object ranges each tick; not an instantaneous world snapshot')
+    p.add_argument('--economy-watch', metavar='SAVED_ID', help='read-only Linux station economy deadlines')
+    p.add_argument('--economy-watch-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='inclusive station economy evidence window, at most 36000 ticks')
     p.add_argument('--world-motion-watch', nargs='+', metavar='SAVED_ID',
                    help='default-off Linux Nav motion/timing evidence for up to four saved IDs')
     p.add_argument('--world-motion-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),
@@ -395,6 +398,14 @@ def main():
             p.error('rolling census does not support watches, trace or join/checkpoint consumers')
     if args.world_hash_watch and (args.world_hash_stride is None or len(args.world_hash_watch)>64 or len(set(args.world_hash_watch))!=len(args.world_hash_watch) or any(len(s)!=16 or any(c not in '0123456789abcdef' for c in s) or int(s,16)==0 for s in args.world_hash_watch)):
         p.error('--world-hash-watch requires stride,1..64 unique nonzero16-digit lowercase hex IDs')
+    if args.economy_watch is not None or args.economy_watch_window is not None:
+        from economy_watch_config import validate_configuration
+        try:
+            validate_configuration(args.economy_watch, args.economy_watch_window)
+        except ValueError as error:
+            p.error(str(error))
+        if not args.gate_so or not args.snapshot or not args.world_identities:
+            p.error('--economy-watch requires Linux, a snapshot and --world-identities')
     if args.world_motion_watch is not None or args.world_motion_window is not None:
         from world_motion_evidence import validate_configuration
         try:
@@ -558,7 +569,7 @@ def main():
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
         allowed.add('path_transform_observe')
-        allowed.update(('world_motion_watch', 'world_motion_window'))
+        allowed.update(('world_motion_watch', 'world_motion_window', 'economy_watch', 'economy_watch_window'))
         allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile', 'status_stride'))
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
@@ -664,6 +675,9 @@ X4LAN_CONFIG.token = "@X4LANE_TOKEN@"
 X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
 ''' % args.mode)
     with (args.out / 'ui/config.lua.append').open('a') as config:
+        if args.economy_watch is not None:
+            config.write(f"X4LAN_CONFIG.native_gate_economy_watch = '{args.economy_watch}'\n")
+            config.write('X4LAN_CONFIG.native_gate_economy_watch_window = {%d,%d}\n' % tuple(args.economy_watch_window))
         if args.world_motion_watch is not None:
             config.write('X4LAN_CONFIG.native_gate_world_motion_watch = {' + ','.join(repr(saved) for saved in args.world_motion_watch) + '}\n')
             config.write('X4LAN_CONFIG.native_gate_world_motion_window = {%d,%d}\n' % tuple(args.world_motion_window))
