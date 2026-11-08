@@ -3716,6 +3716,9 @@ local function frame()
      gate.motion_watch_splines and gate.motion_watch_spline_row and gate.motion_watch_splines()==1,
      'motion watch splines refused '..tostring(gate.motion_watch_status and gate.motion_watch_status()))
     log('MOTION_WATCH_SPLINES_ARMED')
+    if cfg.native_gate_motion_watch_spline_every then   -- a row on every watched spline update (cheap flag, progress)
+     assert(gate.motion_watch_spline_every and gate.motion_watch_spline_every(1)==1,'motion watch spline every refused')
+    end
    end
    -- The AI move points queued for watched ships and the flight model targets set for them
    -- (diagnostic; patches four calls and four SetTarget vtable entries).
