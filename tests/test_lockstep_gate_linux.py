@@ -144,7 +144,9 @@ class Executables(unittest.TestCase):
 def load_tool(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / 'tools/dev' / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Match direct script execution so sibling imports work in this test alone.
+    with mock.patch.object(sys, 'path', [str(ROOT / 'tools/dev'), *sys.path]):
+        spec.loader.exec_module(module)
     return module
 
 
@@ -322,7 +324,8 @@ class LiveRunner(unittest.TestCase):
             self.assertEqual((case / 'extensions/x4_lan_lab/ui/config.lua').read_text(),
                              f'port=45999 token="{"ab" * 16}" slot="p2" clients=4\n')
             self.assertTrue((case / 'home/.steam/steam.pid').is_symlink() and lock.is_file())
-            command = live.namespace_command(case, game, binds, lock, {'HOME': str(case / 'home')}, ['X4'], 'x4server')
+            with mock.patch.object(live.os, 'geteuid', return_value=0):
+                command = live.namespace_command(case, game, binds, lock, {'HOME': str(case / 'home')}, ['X4'], 'x4server')
             self.assertEqual(command[:5], ['runuser', '-u', 'x4server', '--', 'bwrap'])
             self.assertIn('/tmp/EGOSOFT_X4.lock', command)
             self.assertNotIn('/dev/shm', command)
@@ -334,7 +337,8 @@ class LiveRunner(unittest.TestCase):
             case, game, shm = Path(folder) / 'case', Path(folder) / 'game', Path(folder) / 'snap.steam'
             for path in (case, game, shm):
                 path.mkdir()
-            command = live.namespace_command(case, game, [], case / 'x4.lock', {}, ['X4'], 'topsnek', shm)
+            with mock.patch.object(live.os, 'geteuid', return_value=0):
+                command = live.namespace_command(case, game, [], case / 'x4.lock', {}, ['X4'], 'topsnek', shm)
             dev = command.index('--dev-bind')
             self.assertEqual(command[dev:dev + 6], ['--dev-bind', '/dev', '/dev', '--bind', str(shm), '/dev/shm'])
             self.assertLess(command.index('/dev/shm'), command.index(str(case / 'game')))

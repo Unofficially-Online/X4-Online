@@ -1,0 +1,139 @@
+Linux desktop lockstep validation - 8 November 2026
+=================================================
+
+Scope
+-----
+Source baseline: 94bc6e1d2f50da33e80af789a1a2e47909dfe0c3.
+The test bundles include the uncommitted developer-tool changes described here;
+the baseline commit alone does not reproduce those changes. Each bundle retains
+its copied scripts, snapshot and binary hashes. No production gate hook changed.
+
+All native runs use two X4 Linux 9.00 instances on one Linux desktop, the same
+snapshot per pair, a local protocol-2 relay and hardware Vulkan rendering. No
+player input, Windows peer, remote PC, GPU-less mode, hot join or recovery was
+tested. The clock-only probe does not inject the fixture's combat scenario.
+
+Restored Linux workflow
+-----------------------
+The existing Linux engine port was substantial, but linux_gate_live.py still
+required a retired extension directory, a removed preload builder, and a stale
+ui/lockstep.lua entry. The desktop path now composes the current minimal base,
+loads SHA-256 before the probe, and runs as the Steam user without root/Xvfb.
+The existing server/Xvfb path remains available but was not tested here.
+
+The new capture command uses a disposable creative world/profile, validates
+the complete gzip/XML after the native save event and checks cleanup. Reloads
+read their JobDB seed from the saved world instead of forcing 276944566.
+The opt-in linux-core preset collects the supported simulation switches; it
+does not enable unsupported Windows player/UI hooks or change global defaults.
+
+The evidence validator now requires every scheduled world capture, exact tick
+completion, identity/scan footers, no capture failures and no fatal gate records
+anywhere in the retained log. The old nonempty intersection comparison could
+accept missing captures. Cleanup records ownership, checks process identity
+before signals and refuses to remove a replaced lock file.
+
+Native results
+--------------
+All successful captures and completed pairs below use private profiles and a
+read-only game/extension view. Raw evidence is local under .local/; it contains
+game data and must not be redistributed with this report.
+
+Snapshot A: seed 276944566
+SHA256 943a0941a4d3fbaf16e2d6e65f9ac98cd4536df5b07aa60a981f01bd93bf1747
+
+1. Manual core configuration without md_timed_rng or find_order: FAIL.
+   Both clients completed 600 ticks. The 11 scheduled captures were complete;
+   first world-hash difference was tick 120. Reversing launch order repeated
+   that difference. This is not proof of a slot-dependent engine bug.
+
+2. Diagnostic repeat to 180 ticks: FAIL at 120.
+   At tick 87 DefendArea Evaluate entered the same keyed scope but drew 24/21
+   values. At tick 110 only client 1 requested two heavy fighters and a scout.
+   Their spawn rows map to the corresponding MD job-request scopes. The draw
+   counters describe RNG advances, not the sampled values or their bounds.
+
+3. Add only find_order=sort: FAIL at 120.
+   This equalized the observed faction queries, tick-87 draw counts and number
+   of tick-110 ship creations, but created identities still differed. Matching
+   counts alone were not accepted as synchronized world state.
+
+4. Add only md_timed_rng to the initial configuration: PASS to 180.
+   Four complete scheduled captures matched. This option covers direct cue
+   condition checks outside the other script/event wrappers.
+
+5. Enable both options, retaining the other core switches: PASS to 6000.
+   51/51 scheduled captures matched (tick 1, then every 120 ticks). Both clients
+   imported 523,779 saved identities, completed tick 6000 with reason=1 and
+   restored=1, and reported zero identity/capture failures. Portable math was
+   active on both. Steam identity was unchanged and no owned process remained.
+   The census tracked 524,117 objects at tick 1 and 532,779 at tick 6000.
+   Unknown class/reference counts were zero; unknown motion peaked at 34,299.
+
+Snapshot B: seed 2222222
+SHA256 dd7127abc06a7bdaffe4ef62b8d708d78fe882608de5c227d1ccd3ae1b2a5917
+Capture completed successfully with the requested saved seed, no remaining
+owned process and unchanged Steam identity. The preset's 12,000-tick comparison,
+started in reverse order (2,1), FAILED at the first differing capture, tick 8520.
+All 101 captures were present. Both clients reached 12000 with reason=1 and
+restored=1; identity/capture failures were zero, Steam identity unchanged, and
+no owned process remained. Both tracked 521,658 objects at tick 1 and 531,995 at
+12000. Unknown motion peaked at 34,255; unknown class/reference counts were zero.
+Equal object counts did not hide the differing state. This longer run prevents
+claiming that the preset fixes all Linux desyncs.
+
+The first difference is saved ship 000000000006ec76 (Holy Order M transport
+SYZ-673), in motion only. Through tick 12000, 106 saved objects differ; there
+are no created-object or inventory differences. Creation digests match through
+all 12000 ticks. These observations narrow the failure to movement but do not
+identify its cause.
+
+A diagnostic repeat of Snapshot B completed 9000 ticks and 76 captures, with
+the first differing capture at 8640. The original first ship stayed equal in
+all captures. This time only saved ship 00000000000993f0 differed at the first
+split: positions were 31.6505 m apart, linear velocity vectors differed by
+9.0904 m/s, and forward axes by 2.8541 degrees. Ship 000000000009ec98 followed
+at 8760. Topology, health and timing remained equal for the watched ships.
+The retained step trace covers 8461-8520, before this repeat's first split:
+all three ships' numeric motion inputs/outputs match there, with 180 complete
+records per client and zero drops. Pointer fields are process-local. This is
+not a trace of the failing step and does not establish floating-point causality.
+Both clients stopped at 9000 with hooks restored and clean process/Steam checks.
+
+The first Snapshot A capture retained a failed cleanup result: an exiting owned
+child was still visible at the immediate check. A later read found no survivor.
+That original failure remains recorded. The revised bounded cleanup wait was
+subsequently exercised by the successful Snapshot B capture and long pair run.
+
+Automated checks
+----------------
+- Linux gate: 152 Lua methods and 29 synthetic relay/gate scenarios passed with
+  Zig 0.15.2. The Gravidar mock's synthetic stack markers needed volatile storage
+  and an address escape to survive optimization by GCC and Clang. This changed
+  the mock only. Both compiler variants passed the focused regression.
+- Python/Lua suite: 1925 discovered, 1900 passed, 25 skipped; no test failures.
+  check.py correctly exits nonzero because the missing Windows/reference checks
+  were not waived. This is incomplete full-suite acceptance, not an all-pass.
+- Latest focused Linux helper checks: 30 passed, no skips. These cover seed
+  parsing, preset opt-in, complete evidence, missing/late failures, private path
+  setup, malformed saves, lock replacement and process identity/cleanup.
+- Portable math: three executable variants against two builds, synthetic
+  reciprocal checks and mapped-pinned-ELF checks passed. All 765 trampoline
+  windows decoded to 1185 expected instructions; decimal samples and negative
+  altered-image cases passed. These checks do not replace gameplay tests.
+
+Limits and follow-up
+--------------------
+Periodic world equality does not prove every state field or every intervening
+tick is equal. Unknown motion is explicitly outside the captured-field claim.
+The relay's per-tick comparison also does not widen that census coverage.
+Two processes on one CPU do not test different CPU architectures or PCs.
+
+The Linux range-find ordering hook remains absent (space_installed=0). Read-only
+inspection found that the Linux compiler inlines the result walk, so the Windows
+call-site hook cannot simply be copied. The current A/B results do not prove that
+this missing hook causes the observed manual-configuration failure. Porting it
+requires its own register/control-flow proof, build pins and native comparison.
+
+Developer procedure: docs/LINUX-VALIDATION.md.
+No release package, merged integration or public-playtest acceptance is implied.

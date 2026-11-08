@@ -54,6 +54,10 @@ python tools/x4ls.py session --clients 2 --overlay <built overlay> --snapshot <s
 disposable profile, so your normal saves and settings are never touched. See
 the [launcher guide](docs/LAUNCHER.md) for overlays, Steam, and cleanup.
 
+Linux developers can run isolated simulation comparisons with the
+[local Linux validation workflow](docs/LINUX-VALIDATION.md). This is a separate
+test harness; the Windows player and UI feature set has not been ported by that workflow.
+
 ## Layout
 
 | Path | What |
