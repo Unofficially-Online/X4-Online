@@ -164,8 +164,13 @@ reproduced interference with the already installed agent-RNG call patch. The
 arm check now normalizes only verified owned patches in a private byte copy
 and still requires the original full-body SHA. Foreign patches remain refused.
 Synthetic checks cover this interaction, complete batch execution and guarded
-refusal; no performance comparison above enables the ordered mode. Native
-acceptance of the correction is pending; it is not a motion-desync fix claim.
+refusal; no performance comparison above enables the ordered mode. The corrected native candidate (clean source 6e303e2, gate c898c6d) passed
+600 rolling samples and five cycles. Each peer completed 599 pathing passes
+and 8386 ordered batches; both the main STOP and ordered-mode STOP confirm
+restoration and no reported failures. Cleanup found no owned processes and
+Steam identity was unchanged. This is short local evidence, not a motion-desync
+fix claim. The attempted screenshots were captured before the initial fade
+completed and are black, so they provide no graphics acceptance.
 
 Graphics investigation
 ----------------------

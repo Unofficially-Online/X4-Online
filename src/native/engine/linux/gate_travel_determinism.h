@@ -40,12 +40,12 @@ static int lxt_inline_body_pin(void) {
     if (laa_agent_installed) {
         if (laa_call_state() != 1 || !laa_stub_ok()) return 0;
         int32_t original_displacement = (int32_t)(LX_AGENT_UPDATE_VA - (LX_AGENT_CALL_VA + 5));
-        memcpy(body + LX_AGENT_CALL_VA + 1 - LXT_INLINE_BODY,
+        memcpy(body + (LX_AGENT_CALL_VA + 1 - LXT_INLINE_BODY),
                &original_displacement, sizeof(original_displacement));
     }
     if (pbud_installed) {
         if (!pbud_owned()) return 0;
-        memcpy(body + LX_PBUD_SITE - LXT_INLINE_BODY, lx_pbud_native, sizeof(lx_pbud_native));
+        memcpy(body + (LX_PBUD_SITE - LXT_INLINE_BODY), lx_pbud_native, sizeof(lx_pbud_native));
     }
     return hash_ok(body, sizeof(body),
         "3222ca2e412f8df6cc8db1c64295b34b0f0ce1c377a01a6a329430d6cb0f2229");
