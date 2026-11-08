@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "c6546bfc2ae5fb5a07910dfbe5dab55849df7cd4926eb0b53996adaab6f8fff2"   /* version 13 (JOBE .. CONN; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "fc9acc91dbbdf32f4096ebe655b91e0810d934d5a85c39a3652d6fde239430fd"   /* version 13 (JOBE .. CONN; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -458,6 +458,9 @@ static void test_join_golden(void) {
     static join_warp_rec warp[1];warp[0].portable=0x2001ull;warp[0].time=0x405b0bb645a1c9c6ull;warp[0].index=0;warp[0].flags=0;
     for(unsigned k=0;k<0x40;k++) warp[0].xform[k]=(unsigned char)(0x80+k);
     t.warp=warp;t.nwarp=1;
+    static join_ares_rec ares[1];memset(ares,0,sizeof(ares));ares[0].portable=0x2001ull;ares[0].ref[0]=0x2002ull;
+    for(unsigned k=8;k<0x60;k++) {ares[0].bank[0][k]=(unsigned char)k;ares[0].bank[1][k]=(unsigned char)(0x60+k);}
+    t.ares=ares;t.nares=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -512,7 +515,7 @@ static void test_join_golden(void) {
            r.nbnds==1 && !memcmp(r.bnds,bnds,sizeof(bnds)) &&
            r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)) &&
            r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)) &&
-           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)));
+           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)) && r.nares==1 && !memcmp(r.ares,ares,sizeof(ares)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -546,7 +549,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -1759,6 +1762,17 @@ static void test_join_world(void) {
            join_rx.nav_field[JOIN_NAVF_MODE]==1 && join_rx.nav_field[JOIN_NAVF_ETA]==0 && join_rx.nav_field[JOIN_NAVF_LAYER]==0 &&
            join_rx.nav_field[JOIN_NAVF_PENDING]==1);
     assert(join_rx.attn_applied==7 && join_rx.attn_level_fixed==2 && join_rx.attn_due_fixed==1 && !join_rx.attn_missing && !join_rx.attn_shape);
+    assert(!join_attn_high && !join_attn_high_n);   /* the fixes 2>5 and 2>3 lie below 7 */
+    {   /* a fix across 7 is counted and listed (status attn_high=), one below is not; the list keeps the first JOIN_ATTN_HIGH_IDS */
+        char text[JOIN_ATTN_HIGH_IDS*40+8],status[8192];
+        join_attn_high_text(text,sizeof(text));assert(!strcmp(text,"-"));
+        join_attn_note(0x6f1e7ull,6,7);join_attn_note(0x2003ull,2,3);join_attn_note(0x6f226ull,8,7);
+        join_attn_high_text(text,sizeof(text));assert(join_attn_high==2 && !strcmp(text,"000000000006f1e7:6>7,000000000006f226:8>7"));
+        assert(join_status(status,sizeof(status)) && strstr(status," attn_high=2:000000000006f1e7:6>7,000000000006f226:8>7 "));
+        for(unsigned i=0;i<JOIN_ATTN_HIGH_IDS+3;i++) join_attn_note(0x100ull+i,7,5);
+        assert(join_attn_high==JOIN_ATTN_HIGH_IDS+5 && join_attn_high_n==JOIN_ATTN_HIGH_IDS);
+        join_attn_high=0;join_attn_high_n=0;
+    }
     assert(join_rx.keys_applied[JOIN_KEYS_ATTENTION_ALL]==1 && join_rx.keys_applied[JOIN_KEYS_NAV_PARAMS]==1 &&
            join_rx.keys_applied[JOIN_KEYS_ATTENTION_ACTOR]==1 && !join_rx.keys_known && !join_rx.keys_unarmed && !join_rx.keys_actor &&
            !join_rx.created_extra);
@@ -2614,9 +2628,9 @@ static void test_join_world(void) {
                     {void **s=calloc(1,0x40);s[0]=(void *)join_bootev_standin_vt;
                      assert(((int (*)(void *))join_bootev_standin_vt[1])(s)==JOIN_BOOTEV_STANDIN_TYPE);((void (*)(void *,int))join_bootev_standin_vt[0])(s,1);}
                     static unsigned char hdr[0x40];memset(hdr,0,sizeof(hdr));join_evq_head_test=hdr;   /* an empty schedule */
-                    join_boot_events();assert(tj_bootev_n==1 && join_bootev_held==1 && join_bootev_n==0);   /* nothing due: nothing kept */
-                    join_rx.admitted=1;join_boot_events();assert(tj_bootev_n==2 && join_bootev_held==1);
-                    join_rx.admitted=0;join_rx.t.version=12;join_boot_events();assert(tj_bootev_n==3 && join_bootev_held==1);
+                    join_boot_events(NULL,NULL);assert(tj_bootev_n==1 && join_bootev_held==1 && join_bootev_n==0);   /* nothing due: nothing kept */
+                    join_rx.admitted=1;join_boot_events(NULL,NULL);assert(tj_bootev_n==2 && join_bootev_held==1);
+                    join_rx.admitted=0;join_rx.t.version=12;join_boot_events(NULL,NULL);assert(tj_bootev_n==3 && join_bootev_held==1);
                     join_rx.t.evqt=NULL;join_rx.t.nevqt=0;join_bootev_nclasses=0;join_evq_head_test=NULL;
                     join_bootev_fn=fn;join_bootev_calls=join_bootev_held=0;memset(&join_rx,0,sizeof(join_rx));join_t1_reset();
                 }
@@ -3155,6 +3169,102 @@ static void twarp_build(unsigned side,unsigned char fill) {
     for(unsigned b=0;b<0x40;b++) twarp_xf[side][b]=(unsigned char)(fill+b);
     twarp_put(twarp_ev[side][1]+JOIN_WARP_XFORM,twarp_xf[side]);
 }
+/* ATTN set: the native change only where a write at or over level 6 leaves the states apart, SetAttention's PostEvent sites swapped
+ * for the calls (slot 80's join_boot_events destroys what they post); every due event the calls queued (absent from the snapshot
+ * before them) swapped for a stand-in and destroyed unless the session's EVQT names that source and class due at T. */
+static unsigned char tattn_state[2],tattn_need[2];static unsigned tattn_calls,tattn_level,tattn_destroyed,tattn_swaps,tattn_swap_ok;
+static _Alignas(16) unsigned char tattn_obj[2][0x40],tattn_q[0x40],tattn_node[3][0x40],tattn_ev[3][0x40],tattn_sched[0x40],tattn_snode[0x40];
+static unsigned char tattn_flag(unsigned char *object,uint32_t level,int need) {(void)level;const unsigned k=object==tattn_obj[1];return need?tattn_need[k]:tattn_state[k];}
+static void tattn_set(unsigned char *object,uint32_t level) {(void)object;++tattn_calls;tattn_level=level;}
+static void tattn_destroy(unsigned char *ev) {(void)ev;++tattn_destroyed;}
+static int tattn_swap(int on) {++tattn_swaps;return on?(int)tattn_swap_ok:1;}
+static void test_join_attn_set(void) {
+    unsigned char (*flag)(unsigned char *,uint32_t,int)=join_attn_flag;void (*set)(unsigned char *,uint32_t)=join_set_attention;
+    void (*destroy)(unsigned char *)=join_event_destroy;void (*pass)(void)=join_bootev_fn;uint64_t (*key)(uint64_t,unsigned *)=join_key;
+    int (*swap)(int)=join_attn_post_swap;unsigned char *head=join_evq_head_test;
+    join_attn_flag=tattn_flag;join_set_attention=tattn_set;join_event_destroy=tattn_destroy;join_bootev_fn=tj_bootev;join_key=tconn_key;
+    join_attn_post_swap=tattn_swap;
+    tattn_state[0]=0;tattn_need[0]=1;tattn_state[1]=tattn_need[1]=1;tattn_calls=tattn_swaps=0;join_attn_set_calls=join_attn_set_refused=0;
+    join_attn_set_on=0;assert(!join_attn_reconcile(tattn_obj[0],6,7) && !tattn_calls);              /* off */
+    join_attn_set_on=1;
+    assert(!join_attn_reconcile(tattn_obj[0],2,3) && !join_attn_reconcile(tattn_obj[0],2,5));      /* below 6: the direct write stays */
+    assert(!join_attn_reconcile(tattn_obj[0],7,1));                                               /* 1: SetAttention computes its own */
+    assert(!join_attn_reconcile(tattn_obj[1],6,7) && !tattn_swaps);                               /* the states agree */
+    tattn_swap_ok=0;assert(!join_attn_reconcile(tattn_obj[0],6,7) && !tattn_calls && join_attn_set_refused==1 && !join_attn_post_on);
+    tattn_swap_ok=1;assert(join_attn_reconcile(tattn_obj[0],6,7) && tattn_calls==1 && tattn_level==7 && join_attn_set_calls==1 && join_attn_post_on);
+    assert(join_attn_reconcile(tattn_obj[0],6,7) && tattn_calls==2 && tattn_swaps==2);           /* swapped once for the pass */
+    /* a post through the swapped sites: destroyed, counted; the boot passes untouched */
+    {uint64_t calls=(uint64_t)join_bootev_calls;tattn_destroyed=0;InterlockedExchange64(&join_attn_set_posted,0);
+     join_boot_events(tattn_obj[0],tattn_ev[0]);assert(tattn_destroyed==1 && join_attn_set_posted==1 && (uint64_t)join_bootev_calls==calls);}
+    InterlockedExchange(&join_attn_post_on,0);
+    /* the schedule: one source (runtime 0x81); before the calls its tree holds the UpdateEngineParametersEvent (node 1) alone, after
+     * them also a ChangedAttentionEvent (node 0) and a ChangedAdjacentZoneAttentionEvent (node 2), all due at T; the session's EVQT
+     * holds the adjacent-zone one */
+    memset(tattn_sched,0,sizeof(tattn_sched));memset(tattn_snode,0,sizeof(tattn_snode));memset(tattn_q,0,sizeof(tattn_q));
+    memset(tattn_obj,0,sizeof(tattn_obj));join_evq_head_test=tattn_sched;
+    {uint64_t one=1,three=3,runtime=0x81ull;unsigned char *p;
+     p=tattn_snode;memcpy(tattn_sched+(JOIN_EVQ_LEFT-JOIN_EVQ_ROOT),&p,8);memcpy(tattn_sched+(JOIN_EVQ_COUNT-JOIN_EVQ_ROOT),&one,8);
+     p=tattn_obj[0];memcpy(tattn_snode+0x28,&p,8);memcpy(tattn_obj[0]+8,&runtime,8);p=tattn_q;memcpy(tattn_obj[0]+0x20,&p,8);
+     const uint32_t cls[3]={JOIN_ATTN_EVENT,0x2baf650u,JOIN_ATTN_ADJ_EVENT};
+     for(unsigned k=0;k<3;k++) {
+         memset(tattn_node[k],0,0x40);memset(tattn_ev[k],0,0x40);double t=9.0+0.5*k;memcpy(tattn_node[k]+0x20,&t,8);
+         p=tattn_ev[k];memcpy(tattn_node[k]+0x28,&p,8);p=image+cls[k];memcpy(tattn_ev[k],&p,8);
+     }
+     p=tattn_node[1];memcpy(tattn_node[0]+0x10,&p,8);p=tattn_node[0];memcpy(tattn_node[1],&p,8);    /* node 1: node 0's right child */
+     p=tattn_node[2];memcpy(tattn_node[1]+0x10,&p,8);p=tattn_node[1];memcpy(tattn_node[2],&p,8);    /* node 2: node 1's right child */
+     p=tattn_node[1];memcpy(tattn_q+0x20,&p,8);memcpy(tattn_q+0x28,&one,8);                         /* before: node 1 alone */
+     static join_evqt_rec ev[1];double now=10.0;memset(&join_rx,0,sizeof(join_rx));memcpy(&join_rx.t.gate.game,&now,8);
+     ev[0]=(join_evqt_rec){0x100081ull,JOIN_ATTN_ADJ_EVENT,0,0,0,0};memcpy(&ev[0].time,&now,8);join_rx.t.evqt=ev;join_rx.t.nevqt=1;
+     tattn_destroyed=0;assert(join_attn_events_drop(1,NULL)==1);
+     p=tattn_node[0];memcpy(tattn_q+0x20,&p,8);memcpy(tattn_q+0x28,&three,8);}                      /* after: all three */
+    uint64_t kept=0;assert(join_attn_events_drop(0,&kept)==1 && kept==1 && tattn_destroyed==1);
+    {void *now_ev;memcpy(&now_ev,tattn_node[0]+0x28,8);assert(now_ev!=tattn_ev[0] && *(void **)now_ev==(void *)join_bootev_standin_vt);
+     ((void (*)(void *,int))join_bootev_standin_vt[0])(now_ev,1);}
+    {void *e1,*e2;memcpy(&e1,tattn_node[1]+0x28,8);memcpy(&e2,tattn_node[2]+0x28,8);assert(e1==tattn_ev[1] && e2==tattn_ev[2]);}
+    assert(join_attn_events_drop(1,NULL)==2 && !join_attn_events_drop(0,&kept));   /* nothing new: nothing dropped */
+    {char status[8192];join_attn_set_dropped=1;join_attn_set_kept=1;join_attn_set_due[0]=join_attn_set_due[1]=5;
+     assert(join_status(status,sizeof(status)) && strstr(status," attn_set=1:2:1:1:1:5:5 attn_set_refused=1 "));}
+    join_rx.t.evqt=NULL;join_rx.t.nevqt=0;memset(&join_rx,0,sizeof(join_rx));InterlockedExchange64(&join_attn_set_posted,0);
+    join_attn_set_on=0;join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
+    join_attn_flag=flag;join_set_attention=set;join_event_destroy=destroy;join_bootev_fn=pass;join_key=key;join_attn_post_swap=swap;
+    join_evq_head_test=head;
+    printf("join ATTN set: the native change where a write at or over 6 leaves the states apart, its posts destroyed through the swapped sites, the events it queued dropped (the session's kept) PASS\n");
+}
+/* ARES: the capture takes both result banks by role through the read selector, the first qword's runtime ID as a portable ID
+ * (0 in the bank, a flag when it has none); the write maps it back and puts each role into the joiner's bank of that role. */
+static _Alignas(16) unsigned char tares_agent[0x1000];static uint32_t tares_sel;
+static uint32_t tares_selector(void) {return tares_sel;}
+static void test_join_ares(void) {
+    uint32_t (*selector)(void)=join_read_selector;uint64_t (*key)(uint64_t,unsigned *)=join_key;
+    join_read_selector=tares_selector;join_key=tconn_key;
+    memset(tares_agent,0,sizeof(tares_agent));
+    for(unsigned b=0;b<2;b++) {
+        unsigned char *bank=tares_agent+JOIN_ARES_AT+JOIN_ARES_BANK*b;uint64_t runtime=b?0x91ull:0;
+        for(unsigned k=8;k<JOIN_ARES_BANK;k++) bank[k]=(unsigned char)(0x10*b+k);
+        memcpy(bank,&runtime,8);
+    }
+    /* the session's selector 1: role 0 is bank 1 (runtime 0x91 -> portable 0x100091), role 1 bank 0 (no ID) */
+    join_tables t;memset(&t,0,sizeof(t));tares_sel=1;join_ares_capn=0;
+    assert(join_ares_push(&t,tares_agent,0x100081ull) && t.nares==1);
+    const join_ares_rec *r=&t.ares[0];uint64_t w0;memcpy(&w0,r->bank[0],8);
+    assert(r->portable==0x100081ull && r->ref[0]==0x100091ull && !r->ref[1] && !r->flags && !w0 && r->bank[0][8]==0x18 && r->bank[1][8]==0x08);
+    tares_sel=2;assert(join_ares_push(&t,tares_agent,0x100082ull) && t.nares==1);   /* no selector: nothing */
+    /* the joiner's selector 0: role 0 goes into bank 0 with the joiner's runtime of 0x100091 (0x91), role 1 into bank 1 */
+    join_id_rec ids[2]={{0x81ull,0x100081ull,0,0},{0x91ull,0x100091ull,0,0}};
+    join_tables mine;memset(&mine,0,sizeof(mine));mine.ids=ids;mine.nids=2;
+    static _Alignas(16) unsigned char joiner[0x1000];memset(joiner,0,sizeof(joiner));
+    assert(join_ares_write(joiner,r,&mine,0)==1);
+    {uint64_t id0,id1;memcpy(&id0,joiner+JOIN_ARES_AT,8);memcpy(&id1,joiner+JOIN_ARES_AT+JOIN_ARES_BANK,8);
+     assert(id0==0x91ull && !id1 && joiner[JOIN_ARES_AT+8]==0x18 && joiner[JOIN_ARES_AT+JOIN_ARES_BANK+8]==0x08);}
+    assert(join_ares_write(joiner,r,&mine,0)==0);   /* again: equal */
+    join_ares_rec u=*r;u.ref[0]=0x100099ull;assert(join_ares_write(joiner,&u,&mine,0)==-1);   /* an ID the joiner lacks */
+    u=*r;u.flags=JOIN_ARES_UNMAPPED1;assert(join_ares_write(joiner,&u,&mine,0)==-1);
+    {char status[8192];join_ares_on=1;join_ares_written=1;join_ares_unmapped=2;
+     assert(join_status(status,sizeof(status)) && strstr(status," ares=1:1:0:0:2 ") && strstr(status," join_bp=0:0:0:0:0:0:0:- "));
+     join_ares_on=0;join_ares_written=join_ares_unmapped=0;}
+    free(t.ares);join_read_selector=selector;join_key=key;
+    printf("join ARES: both Agent result banks by role through the read selector, their first qword's ID as a portable, written back by role PASS\n");
+}
 static void test_join_warp(void) {
     twarp_build(0,0x10);
     uint32_t n=9;uint64_t time=0;double want=102.1,got_time;
@@ -3182,11 +3292,19 @@ static void test_join_warp(void) {
     /* a second warp at the joiner's source the session had none of: extra */
     twarp_put(twarp_ev[0][0],image+JOIN_WARP_VTABLE);twarp_put(twarp_ev[0][0]+JOIN_WARP_XFORM,twarp_xf[1]);
     join_admit_warp(&s,&mine);assert(join_warp_extra==1);
+    /* the warp held by the boot event hold (a stand-in in the tree, the event kept): place 0 is the kept one */
+    twarp_build(0,0x55);static void *standin_vt[1];twarp_put(twarp_ev[0][1],standin_vt);
+    {static unsigned char held[0x40],held_xf[0x40];memset(held,0,sizeof(held));memset(held_xf,0x66,sizeof(held_xf));
+     twarp_put(held,image+JOIN_WARP_VTABLE);twarp_put(held+JOIN_WARP_XFORM,held_xf);
+     join_bootev_item it={twarp_obj[0],held,102.1};join_bootev_items=&it;join_bootev_n=1;
+     uint32_t nh=0;assert(join_bootev_warp(twarp_obj[0],0,&nh)==held && nh==1 && !join_bootev_warp(twarp_obj[1],0,&nh) && !nh);
+     join_admit_warp(&s,&mine);assert(join_warp_written==1 && !join_warp_extra && !memcmp(held_xf,session,0x40) && twarp_xf[0][0]==0x55);
+     join_bootev_items=NULL;join_bootev_n=0;}
     join_warp_on=0;join_key=key;join_world_find=find;join_world_map=map;join_evq_head_test=head;
     printf("join WARP: a source's pending warp by place (other events skipped, the tree walked), the capture by key and place with its due "
            "time, the admission's destination write, equal, missing and extra PASS\n");
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_conn();test_join_bnds_layout();test_join_warp();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();
 }

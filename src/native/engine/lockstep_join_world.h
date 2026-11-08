@@ -961,10 +961,36 @@ static int join_agcb_cmp(const void *a,const void *b) {
 static int join_agtt_cmp(const void *a,const void *b) {
     uint64_t x=((const join_agtt_rec *)a)->portable,y=((const join_agtt_rec *)b)->portable;return x<y?-1:x>y;
 }
+/* ARES (opt-in native_gate_join_ares; in-window report 57, w1z195): the Agent result banks. JOIN_WATCHRAW of the in-window late join
+ * (T=3033): the session's escort 6f226 and its leader 6f1e7 hold both banks filled at T (+0x50 0xf, +0x5a 1; +0 a runtime ID, +8 a
+ * count and a distance), the joiner's load leaves them 0; at T+1 the joiner's Agents read an empty result bank, the escorts take
+ * fresh Splines and the formation update the session posts at T+1 comes a step late. Captured with AGTT (every Agent AGENT carries),
+ * written at the admission by role through each side's read selector. Status ares=on:written:equal:missing:unmapped ares_cap=. */
+#define JOIN_ARES_AT 0xe10u
+#define JOIN_ARES_BANK 0x60u
+#define JOIN_READ_SELECTOR 0x38f4ee4u    /* g_PathingStateBufferIndex */
+static int join_ares_on;
+static uint64_t join_ares_written,join_ares_equal,join_ares_missing,join_ares_unmapped;static uint32_t join_ares_capn;
+static uint32_t join_read_selector_native(void) {uint32_t sel=2;if(!join_read(image+JOIN_READ_SELECTOR,&sel,4)) sel=2;return sel;}
+static uint32_t (*join_read_selector)(void)=join_read_selector_native;   /* tests replace it */
+static int join_ares_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_ares_rec *)a)->portable,y=((const join_ares_rec *)b)->portable;return x<y?-1:x>y;
+}
+static int join_ares_push(join_tables *t,const unsigned char *agent,uint64_t portable) {
+    const uint32_t sel=join_read_selector();if(sel>1u) return 1;
+    join_ares_rec r;memset(&r,0,sizeof(r));r.portable=portable;
+    for(unsigned role=0;role<2;role++) {
+        const unsigned b=role?1u-sel:sel;uint64_t runtime=0;unsigned klass=0;
+        if(!join_read(agent+JOIN_ARES_AT+JOIN_ARES_BANK*b,r.bank[role],JOIN_ARES_BANK)) return 1;
+        memcpy(&runtime,r.bank[role],8);memset(r.bank[role],0,8);
+        if(runtime) {r.ref[role]=join_key(runtime,&klass);if(!r.ref[role]) r.flags|=1u<<role;}
+    }
+    return JOIN_PUSH(t->ares,t->nares,join_ares_capn,r);
+}
 static int join_agtt_push(join_tables *t,const unsigned char *agent,uint64_t portable) {
     join_agtt_rec r;memset(&r,0,sizeof(r));r.portable=portable;
     for(unsigned k=0;k<JOIN_AGTT_FIELDS;k++) if(join_agtt_at[k] && !join_read(agent+join_agtt_at[k],&r.v[k],8)) r.v[k]=0;
-    return JOIN_PUSH(t->agtt,t->nagtt,join_agtt_capn,r);
+    return JOIN_PUSH(t->agtt,t->nagtt,join_agtt_capn,r) && join_ares_push(t,agent,portable);   /* ARES with it */
 }
 #define JOIN_SPLINE_VTABLE 0x2c4f480u        /* U::Path::SplineFlightControlModel */
 #define JOIN_SPLINE_STATE 0x218u             /* the spline model's state word (8: no route, it brakes) */
@@ -1915,8 +1941,11 @@ static int join_evqt_cmp(const void *a,const void *b) {
     if(x->time!=y->time) {double p,q;memcpy(&p,&x->time,8);memcpy(&q,&y->time,8);return p<q?-1:p>q?1:(x->time<y->time?-1:1);}
     return x->index<y->index?-1:x->index>y->index;
 }
+static int64_t join_pord_walk(int drop,uint32_t *v,uint32_t *n);   /* lockstep_join.h (PORD) */
+static int64_t join_pord_saver;static uint32_t join_pord_svt[4],join_pord_svtn[4];
 static void join_capture_evqt(join_tables *t) {
     uint64_t count=0;unsigned char *node=NULL;uint32_t cap=0;
+    join_pord_saver=join_pord_walk(0,join_pord_svt,join_pord_svtn);   /* PORD: the session's queued Path orders at T (counted only) */
     if(!join_read(join_evq_at(JOIN_EVQ_COUNT),&count,8) || !count || !join_read(join_evq_at(JOIN_EVQ_LEFT),&node,8)) return;
     for(uint64_t i=0;i<count && i<200000u && node;i++,node=join_evq_next(node)) {
         unsigned char *src=NULL,*q=NULL,*e=NULL;uint64_t n=0,runtime=0;unsigned klass;
@@ -4243,7 +4272,10 @@ static void join_admit_conn(const join_tables *s,const join_tables *mine) {
  * transform, +0x28 a 0x40-byte descriptor, +0x30/+0x31 flags. An event source is its component (the schedule's node +0x28; +0x20 its
  * own event tree: leftmost +0x20, count +0x28; per node the due time +0x20 and the event +0x28). The capture takes the transform of
  * every pending WarpEvent of a keyed source with its place among that source's warps; with the opt-in the admission writes the
- * session's into the joiner's event at the same place of the same source. Status warp=on:written:equal:missing:extra warp_cap=N. */
+ * session's into the joiner's event at the same place of the same source. Status warp=on:written:equal:missing:extra warp_cap=N.
+ * j1-372: missing 1. The warp is due at T's game time, so the joiner's boot event hold (native_gate_join_hold_boot_events) had swapped
+ * it in the source's tree for a stand-in and kept it (lockstep_join.h join_bootev_items) until the admission's repost: a source's
+ * places are its held warps first (they are its earliest, due at or before T), then the warps still in its tree. */
 #define JOIN_WARP_VTABLE 0x2baa8c0u
 #define JOIN_WARP_XFORM 0x20u
 static int join_warp_on;
@@ -4288,13 +4320,17 @@ static void join_capture_warp(join_tables *t) {
     if(t->nwarp>1) qsort(t->warp,t->nwarp,sizeof(*t->warp),join_warp_cmp);
     {uint32_t k=0;for(uint32_t i=0;i<t->nwarp;i++) {if(k && !join_warp_cmp(&t->warp[k-1],&t->warp[i])) continue;t->warp[k++]=t->warp[i];}t->nwarp=k;}
 }
+static unsigned char *join_bootev_warp(unsigned char *source,uint32_t place,uint32_t *n);   /* lockstep_join.h: the held ones */
 static void join_admit_warp(const join_tables *s,const join_tables *mine) {
     join_warp_written=join_warp_equal=join_warp_missing=join_warp_extra=0;
     if(!join_warp_on) return;
     for(uint32_t i=0;i<s->nwarp;i++) {
         const join_warp_rec *r=&s->warp[i];
-        unsigned char *o=join_object(join_runtime_of(mine,r->portable)),*xf=NULL,now[0x40];uint32_t n=0;
-        unsigned char *ev=o?join_warp_event(o,r->index,&n,NULL):NULL;
+        unsigned char *o=join_object(join_runtime_of(mine,r->portable)),*xf=NULL,now[0x40],*ev=NULL;uint32_t n=0,held=0,tree=0;
+        if(o) {
+            (void)join_bootev_warp(o,0xffffffffu,&held);(void)join_warp_event(o,0xffffffffu,&tree,NULL);n=held+tree;
+            ev=r->index<held?join_bootev_warp(o,r->index,NULL):join_warp_event(o,r->index-held,NULL,NULL);
+        }
         if(o && (i+1==s->nwarp || s->warp[i+1].portable!=r->portable) && n>r->index+1u) join_warp_extra+=n-(r->index+1u);   /* the source's last */
         if(!ev || !join_read(ev+JOIN_WARP_XFORM,&xf,8) || !xf || !join_read(xf,now,sizeof(now))) {++join_warp_missing;continue;}
         if(!memcmp(now,r->xform,sizeof(now))) {++join_warp_equal;continue;}
@@ -4961,6 +4997,31 @@ static void join_admit_agcb(const join_tables *s,const join_tables *mine) {
         if(join_poke((uintptr_t)(agent+JOIN_AGCB_AT),s->agcb[i].block,JOIN_AGCB_BYTES)) ++join_agcb_written; else ++join_agcb_equal;
     }
 }
+/* One record into an Agent through the joiner's read selector: 1 written, 0 equal, -1 an ID it cannot map (left). */
+static int join_ares_write(unsigned char *agent,const join_ares_rec *r,const join_tables *mine,uint32_t sel) {
+    unsigned char want[2][JOIN_ARES_BANK];memcpy(want,r->bank,sizeof(want));
+    for(unsigned role=0;role<2;role++) {
+        uint64_t runtime=0;
+        if(r->flags>>role&1u) return -1;
+        if(r->ref[role] && !(runtime=join_runtime_of(mine,r->ref[role]))) return -1;
+        memcpy(want[role],&runtime,8);
+    }
+    int changed=0;
+    for(unsigned role=0;role<2;role++) changed|=join_poke((uintptr_t)(agent+JOIN_ARES_AT+JOIN_ARES_BANK*(role?1u-sel:sel)),want[role],JOIN_ARES_BANK);
+    return changed;
+}
+static void join_admit_ares(const join_tables *s,const join_tables *mine) {
+    join_ares_written=join_ares_equal=join_ares_missing=join_ares_unmapped=0;
+    if(!join_ares_on) return;
+    const uint32_t sel=join_read_selector();if(sel>1u) {join_ares_missing=s->nares;return;}
+    for(uint32_t i=0;i<s->nares;i++) {
+        const join_ares_rec *r=&s->ares[i];
+        unsigned char *object=join_object(join_runtime_of(mine,r->portable)),*agent=object?join_nav_agent(object):NULL;
+        if(!agent) {++join_ares_missing;continue;}
+        const int w=join_ares_write(agent,r,mine,sel);
+        if(w<0) ++join_ares_unmapped; else if(w) ++join_ares_written; else ++join_ares_equal;
+    }
+}
 static void join_admit_agtt(const join_tables *s,const join_tables *mine) {
     for(uint32_t i=0;i<s->nagtt;i++) {
         unsigned char *object=join_object(join_runtime_of(mine,s->agtt[i].portable)),*agent=object?join_nav_agent(object):NULL;
@@ -4984,7 +5045,7 @@ static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
     }
 }
 static int join_capture_world(join_tables *t,double now) {
-    join_agtt_capn=0;join_agcb_capn=0;join_pbnk_capn=0;join_pcsv_capn=0;
+    join_agtt_capn=0;join_ares_capn=0;join_agcb_capn=0;join_pbnk_capn=0;join_pcsv_capn=0;
     uint32_t ntcap=0,bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
     join_solver_dormant=0;join_cap.solver_over=0;join_cap.solver_mapped=0;join_cap.bullet_fault=0;join_cap.bullet_blocks=0;join_cap.bullet_live=0;join_cap.bullet_unkeyed=0;
@@ -5104,6 +5165,7 @@ static int join_capture_world(join_tables *t,double now) {
     if(t->nagent) qsort(t->agent,t->nagent,sizeof(*t->agent),join_agent_cmp);   /* pushed with FLIGHT: the same portable IDs */
     if(t->nagcb>1) qsort(t->agcb,t->nagcb,sizeof(*t->agcb),join_agcb_cmp);
     if(t->npbnk>1) qsort(t->pbnk,t->npbnk,sizeof(*t->pbnk),join_pbnk_cmp);
+    if(t->nares>1) qsort(t->ares,t->nares,sizeof(*t->ares),join_ares_cmp);       /* pushed with AGTT: unique portable IDs */
     if(t->nagtt) qsort(t->agtt,t->nagtt,sizeof(*t->agtt),join_agtt_cmp);        /* pushed with AGENT: the same portable IDs (j1-150/151:
                                                                                  * unsorted, the driver's reader refused the package) */
     if(t->nroute) qsort(t->route,t->nroute,sizeof(*t->route),join_route_cmp);   /* each Agent's head and points, keys unique */
@@ -5282,8 +5344,81 @@ static int join_admit_nav(const join_tables *s,const join_tables *mine) {
     return 1;
 }
 /* ATTN: the level and an Object's due, written where they differ (no SetAttention: lockstep_join_world.h ATTN). */
+/* ATTN level fixes that involve a level of 7 or more (diagnostic, status attn_high=count:id:joiner>session,...). The direct
+ * write was chosen for the levels 2, 3, 5 of the first joins, below 7, where vfunc 688/689's per-level work (bodies, per-frame)
+ * is off on both sides (report 1.x); a late in-window join (w1z189..w1z191, T=3033) has zone 0x72b at 7 on the session since
+ * 2489, and at T+1 only the joiner posts event_object_changed_attention for its destroyer 6f1e7 and the escorts swap their
+ * Steering models for fresh Splines. This counts such fixes and keeps the first JOIN_ATTN_HIGH_IDS. */
+#define JOIN_ATTN_HIGH 7u
+#define JOIN_ATTN_HIGH_IDS 8u
+static uint64_t join_attn_high;static unsigned join_attn_high_n;
+static struct {uint64_t portable;uint32_t from,to;} join_attn_high_ids[JOIN_ATTN_HIGH_IDS];
+static void join_attn_note(uint64_t portable,uint32_t from,uint32_t to) {
+    if(from<JOIN_ATTN_HIGH && to<JOIN_ATTN_HIGH) return;
+    ++join_attn_high;
+    if(join_attn_high_n<JOIN_ATTN_HIGH_IDS) {
+        join_attn_high_ids[join_attn_high_n].portable=portable;join_attn_high_ids[join_attn_high_n].from=from;
+        join_attn_high_ids[join_attn_high_n].to=to;++join_attn_high_n;
+    }
+}
+static void join_attn_high_text(char *out,size_t cap) {
+    size_t at=0;
+    if(!join_attn_high_n) {snprintf(out,cap,"-");return;}
+    out[0]=0;
+    for(unsigned i=0;i<join_attn_high_n && at+40<cap;i++)
+        at+=(size_t)snprintf(out+at,cap-at,"%s%016llx:%u>%u",i?",":"",(unsigned long long)join_attn_high_ids[i].portable,
+                             join_attn_high_ids[i].from,join_attn_high_ids[i].to);
+}
+/* ATTN set (opt-in native_gate_join_attn_set; w1z189..w1z192, in-window report 57). SetAttention 0x3d5660(object, level) returns at
+ * once only when the level equals +0x1ec and vfunc 689 (0x1588: the object's per-level state, for its level) equals vfunc 688
+ * (0x1580: the state the level needs); otherwise it writes +0x1ec, marks the views (0x40), runs the class's handler vfunc 0x15e8 (the
+ * per-level work: bodies, children) and posts a ChangedAttentionEvent 0x2ba8160 (and a ChangedAdjacentZoneAttentionEvent
+ * 0x2ac1748 when the level crosses 6). ATTN's direct write leaves the state of the load's level: w1z192 attn_high=1305, zone 0x72b
+ * and its objects 6>7 (the session's zone at 7 since 2489), and at T+1 the joiner's attention timer runs the whole change, posts the
+ * events (only the joiner's destroyer pilot hears event_object_changed_attention) and its escorts replace their Steering models by
+ * fresh Splines (29 ships one step apart at T+1). With attn_set, a level ATTN writes where either side is 6 or more and the two
+ * states then differ gets the native call at the admission (before FLIGHT, STEER and BODY write over what its handler built).
+ * Its events must not reach a listener: PostEvent 0x99a3f0 dispatches an immediate event due now at once (0x99c470), and the AI
+ * and MD admissions ran before the world's [w1z193: the calls alone, the escorts re-planned all the same]. So for the calls
+ * SetAttention's two PostEvent sites (0x3d57d5, 0x3d584b; children's calls go through them too) are swapped to the boot event
+ * hold's thunk slot, idle after the admission's start, whose join_boot_events destroys the event (posted=); and every due event
+ * the calls queued otherwise (the schedule's due events before the calls against after) is dropped unless the session's EVQT holds
+ * its source and class due at T (join_attn_events_drop; status attn_set=on:calls:posted:dropped:kept:due_before:due_after). */
+#define JOIN_SET_ATTENTION 0x3d5660u
+#define JOIN_ATTN_NEED_SLOT (0x1580u/8u)
+#define JOIN_ATTN_STATE_SLOT (0x1588u/8u)
+#define JOIN_ATTN_VISIBLE 6u
+static int join_attn_set_on;
+static volatile LONG join_attn_post_on;   /* join_boot_events: a swapped PostEvent site's call (the event destroyed) */
+static volatile LONG64 join_attn_set_posted;
+static uint64_t join_attn_set_calls,join_attn_set_dropped,join_attn_set_kept,join_attn_set_due[2],join_attn_set_refused;
+static void join_event_destroy_native(unsigned char *ev) {((void (*)(void *,int))(*(void ***)ev)[0])(ev,1);}
+static void (*join_event_destroy)(unsigned char *)=join_event_destroy_native;   /* tests replace it */
+static int join_attn_post_swap_native(int on);   /* lockstep_join.h: SetAttention's PostEvent sites to the thunk and back */
+static int (*join_attn_post_swap)(int)=join_attn_post_swap_native;   /* tests replace it */
+static unsigned char join_attn_flag_native(unsigned char *object,uint32_t level,int need) {
+    void **vt=*(void ***)object;
+    return ((unsigned char (*)(void *,uint32_t,uint32_t))vt[need?JOIN_ATTN_NEED_SLOT:JOIN_ATTN_STATE_SLOT])(object,level,0);
+}
+static void join_set_attention_native(unsigned char *object,uint32_t level) {((void (*)(void *,uint32_t))(void *)(image+JOIN_SET_ATTENTION))(object,level);}
+static unsigned char (*join_attn_flag)(unsigned char *,uint32_t,int)=join_attn_flag_native;   /* tests replace them */
+static void (*join_set_attention)(unsigned char *,uint32_t)=join_set_attention_native;
+static uint64_t join_attn_events_drop(int count_only,uint64_t *kept);   /* lockstep_join.h */
+/* After ATTN wrote the session's level (was: the joiner's): the native change where the states differ, its posts destroyed; 1 called. */
+static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level) {
+    if(!join_attn_set_on || level==1u || (was<JOIN_ATTN_VISIBLE && level<JOIN_ATTN_VISIBLE)) return 0;   /* 1: SetAttention computes its own */
+    if(join_attn_flag(object,level,0)==join_attn_flag(object,level,1)) return 0;
+    if(!InterlockedCompareExchange(&join_attn_post_on,0,0)) {
+        if(!join_attn_post_swap(1)) {++join_attn_set_refused;return 0;}
+        InterlockedExchange(&join_attn_post_on,1);
+    }
+    join_set_attention(object,level);++join_attn_set_calls;return 1;
+}
 static int join_admit_attn(const join_tables *s,const join_tables *mine) {
-    unsigned rows=0,samples=0;
+    unsigned rows=0,samples=0;join_attn_high=0;join_attn_high_n=0;
+    join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
+    InterlockedExchange64(&join_attn_set_posted,0);
+    if(join_attn_set_on) join_attn_set_due[0]=join_attn_events_drop(1,NULL);
     for(uint32_t i=0;i<s->nattn;i++) {
         const join_attn_rec *a=&s->attn[i];uint64_t runtime=join_runtime_of(mine,a->portable);unsigned char *object=join_object(runtime);uintptr_t vtable=0;
         if(!object) {
@@ -5300,6 +5435,7 @@ static int join_admit_attn(const join_tables *s,const join_tables *mine) {
             continue;
         }
         if(level!=a->level) {
+            join_attn_note(a->portable,level,a->level);
             memcpy(object+JOIN_ATTENTION,&a->level,4);++join_rx.attn_level_fixed;
             if(samples<JOIN_WORLD_ROWS && join_rx.nrows<JOIN_ROWS) {
                 ++samples;snprintf(join_rx.rows[join_rx.nrows++],sizeof(join_rx.rows[0]),"attn side=joiner id=%016llx level=%u/%u vtable=%llx",
@@ -5307,7 +5443,13 @@ static int join_admit_attn(const join_tables *s,const join_tables *mine) {
             }
         }
         if((a->flags&JOIN_ATTN_DUE) && due!=a->due) {memcpy(object+JOIN_ATTENTION_DUE,&a->due,8);++join_rx.attn_due_fixed;}
+        if(level!=a->level) (void)join_attn_reconcile(object,level,a->level);
         ++join_rx.attn_applied;
+    }
+    if(join_attn_set_on) {
+        if(InterlockedCompareExchange(&join_attn_post_on,0,0)) {(void)join_attn_post_swap(0);InterlockedExchange(&join_attn_post_on,0);}
+        if(join_attn_set_calls) join_attn_set_dropped=join_attn_events_drop(0,&join_attn_set_kept);
+        join_attn_set_due[1]=join_attn_events_drop(1,NULL);
     }
     return 1;
 }
@@ -6865,6 +7007,7 @@ static int join_admit_world(void) {
     if(!join_admit_created(s,&mine)) {join_tables_free(&mine);return 0;}
     if(s->version>=13) join_admit_noct(s,&mine);   /* the nav octree's index table and hidden keys */
     if(s->version>=13) join_admit_agtt(s,&mine);   /* the Agents' times the load resets */
+    if(s->version>=13) join_admit_ares(s,&mine);   /* the Agents' result banks (opt-in) */
     if(s->version>=13) join_admit_agcb(s,&mine);   /* the pilot slot ships' command and probe blocks */
     if(s->version>=13) join_admit_pbnk(s,&mine);   /* the pilot slot ships' pathing state banks */
     if(s->version>=13) join_admit_specdrop(s,&mine);   /* the load's one-shot view cache specifications, after SPEC and VIEWK (opt-in) */

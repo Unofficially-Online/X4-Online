@@ -95,6 +95,19 @@ static int lua_join_pcsv(lua_State *L) {join_pcsv_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_conn(lua_State *L) {join_conn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_warp(on): a joiner takes the session's pending warps' destinations (WARP, default off). */
 static int lua_join_warp(lua_State *L) {join_warp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_porders(on): PORD, the joiner drops the pathing manager's queued Path orders at the admission's end (default off). */
+static int lua_join_porders(lua_State *L) {join_pord_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_bp(rva): JOIN_BP's one-shot int3 at that image RVA (hex text), armed at the admission's end (diagnostic); 1, 0 refused. */
+static int lua_join_bp(lua_State *L) {
+    size_t n=0;const char *t=p_lua_tolstring(L,1,&n);char *end=NULL;unsigned long v=t&&n?strtoul(t,&end,16):0;
+    const int ok=t && n && end && !*end && v>=0x1000ul && v<JOIN_BP_TEXT_END;if(ok) join_bp_rva=(uint32_t)v;
+    p_lua_pushnumber(L,ok);return 1;
+}
+/* gate.join_ares(on): ARES writes the session's Agent result banks at the admission (default off; lockstep_join_world.h). */
+static int lua_join_ares(lua_State *L) {join_ares_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_attn_set(on): ATTN runs SetAttention where its direct write leaves the per-level state of the load's level, and drops
+ * the attention events that posts (default off; lockstep_join_world.h join_attn_reconcile). */
+static int lua_join_attn_set(lua_State *L) {join_attn_set_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_gravn_extra(on): GRAVN keeps the joiner's extra zone groups in the neighbour lists it writes (default off). */
 static int lua_join_gravn_extra(lua_State *L) {join_gravn_extra_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shgr(on): a joiner takes the session's containers' shield recharge groups (SHGR, default off). */

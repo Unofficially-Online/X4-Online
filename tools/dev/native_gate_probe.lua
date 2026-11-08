@@ -346,6 +346,18 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_warp then   -- a joiner takes the session's pending warps' destinations (WARP)
   assert(gate.join_warp and gate.join_warp(1)==1,'join warp refused')
  end
+ if cfg.native_gate_join_porders then   -- PORD: the joiner drops the queued Path orders its load left (pord=)
+  assert(gate.join_porders and gate.join_porders(1)==1,'join porders refused')
+ end
+ if cfg.native_gate_join_bp~=nil then   -- JOIN_BP (diagnostic): a one-shot int3 at an image RVA after the admission (join_bp=)
+  assert(type(cfg.native_gate_join_bp)=='string' and gate.join_bp and gate.join_bp(cfg.native_gate_join_bp)==1,'join bp refused')
+ end
+ if cfg.native_gate_join_ares then   -- ARES writes the session's Agent result banks at the admission (ares=)
+  assert(gate.join_ares and gate.join_ares(1)==1,'join ares refused')
+ end
+ if cfg.native_gate_join_attn_set then   -- ATTN runs SetAttention where its write leaves the load's per-level state (attn_set=)
+  assert(gate.join_attn_set and gate.join_attn_set(1)==1,'join attn set refused')
+ end
  if cfg.native_gate_join_gravn_extra then   -- GRAVN keeps the joiner's extra zone groups in the neighbour lists it writes
   assert(gate.join_gravn_extra and gate.join_gravn_extra(1)==1,'join gravn extra refused')
  end

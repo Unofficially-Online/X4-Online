@@ -1083,3 +1083,34 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   with the same counts (keyed 123,139 / 55,447 / 8,775, unkeyed 1,130, lua=0 blocked=0: no UI query without people); census
   client 1 against client 2: 0 at 1800 and 3600; ERROR DEGRADED as in earlier D1 runs (BUILD_RNG 3, FIND_ORDER 3,
   CREATED_IDENTITIES 1). A session with people at the UI (trade menus, the map) remains to be run.
+57. THE LATE JOIN IN WINDOW (T=3033): ATTENTION AT 7, THE AGENTS' RESULT BANKS, THE QUEUED PATH ORDERS (w1z189 .. w1z198; 7 Nov)
+- w1z189 (JOINAT=3000, T=3033, x4mods-28's WARP merged, to 6000): 29 objects differ in motion at T+1, all in zone 0x72b
+  (cluster_14 sector001: fighters, frigates, destroyer 6f1e7, the shipyard's containers 717ab..717eb, XL builder 89eb7), 86 at
+  3300 (J1's late join at T=3033: 1 at T+1). The 7 session-only objects at T+1 are dead: six detached tempzones (flags d, parent 0,
+  created 607..1821) and a type-0 row, which the save no longer holds: a census artifact. warp=1:0:0:0:0 (no warp pending in window).
+- w1z190/w1z191 (decoded census and motion digests): zone 0x72b went to attention 7 at 2489 (a slot ship there; at T=633 it was 6).
+  At T+1 the joiner's escorts (6f226, 6f256) leave their U::Path::SteeringFlightControlModel for a fresh SplineFlightControlModel
+  (identity target, no flight state, no contacts, one request) and do not move in the step; STEER had admitted them as Steering
+  (25 applied). Only the joiner runs fight.attack.object.* / move.seekenemies, Signal_Leaks ObjectChangedAttention and a burst of
+  NPC_Instantiation cues at T+1: its destroyer pilot hears event_object_changed_attention for 6f1e7 (the event detail decoded
+  with the inverse of lockstep_mix over md_keywords).
+- ATTN (w1z192, attn_high=): 1,305 fixes across level 7 (the zone 6>7, its objects 6>7). SetAttention 0x3d5660 returns early only
+  when the level equals +0x1ec and vfunc 689 (the object's per-level state) equals vfunc 688 (what the level needs); ATTN's direct
+  write leaves the state at the load's level, so at T+1 the joiner's attention timer runs the whole change. attn_set (c28009f8,
+  b5e774ff; opt-in native_gate_join_attn_set): the native SetAttention at the admission where the states differ, its PostEvent
+  sites (0x3d57d5, 0x3d584b) swapped to slot 80 for the calls (PostEvent dispatches an immediate event due now at once, and the AI
+  and MD admissions run before the world's) and the events the calls queued dropped: attn_set=1:5:1388:38, the joiner-only script
+  rows at T+1 gone, the census unchanged (29).
+- The Agents' result banks (w1z195 JOIN_WATCHRAW, the saver's capture against the joiner's admission): Agent +0xe10 + 0x60 x bank,
+  which the pathing pass fills and the Agent update 0xe8f250 reads through the read selector (FormationUpdateSucceeded/Failed from
+  +0x5b/+0x5c), are full on the session and empty after the joiner's load. ARES (d3abecc6; v13 section 78, opt-in
+  native_gate_join_ares; golden fc9acc91..): ares=1:6246:3603:0:0, the census unchanged (29).
+- The queued Path orders (JOIN_BP, a one-shot int3 diagnostic, on SetFlightControlModel 0xe87cf0): the first call after the
+  admission comes at T+1 from a Path order that UniverseFrameUpdate's 0xeac170 -> 0xeace40 runs: g_PathingManager (*0x6cf21c8)
+  +0xb8, a std::list of {key, U::Path::*Order} swapped out under the lock +0x90 every frame. The session's list is empty at T
+  (pord_s=0), the joiner's load left 80 (abort, formation and model orders). PORD (cd5b538e, opt-in native_gate_join_porders):
+  the joiner empties the list under the manager's lock at the admission's end and destroys each order. w1z198 (PORD + attn_set +
+  ARES + WARP): T+1 4 (the shipyard's containers 717ab, 717bb, 717db, 717eb: STEER leaves 717ab/717bb, behaviours of uncarried
+  classes 2c4e0b0/2c4edc0), 6f226 bit-equal at T+1 and T+2; 3060 5, 3120 6, 3180 18, 3240 30 (w1z189: 86 by 3300).
+- Open: the containers at T+1; whether PORD, attn_set and ARES keep the T=633 joins equal (then defaults); J1's late join with
+  them (x4mods-28).
