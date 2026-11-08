@@ -303,6 +303,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_pcsv','hot join: a joiner takes the session PlayerControllers own motion solvers its load rebuilds (PCSV)'},
  {'native_gate_join_conn','hot join: a joiner connects the NPC connections a waiting ship load leaves without a partner (CONN)'},
  {'native_gate_join_warp','hot join: a joiner takes the session pending warps destinations its load rebuilds from angles (WARP)'},
+ {'native_gate_join_rprt','hot join: the watched ships re-parent transforms (JOIN_RPRT, diagnostic)'},
  {'native_gate_join_agcb_nav','hot join: the nav ships Agent command and probe blocks written at the admission (AGCB)'},
  {'native_gate_join_srcs','hot join: each keyed event listener gets the session sources (SRCS)'},
  {'native_gate_join_fobj','hot join: the joiner fills its region fields spawned-object lists as the session (FOBJ)'},

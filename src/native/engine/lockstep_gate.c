@@ -662,7 +662,7 @@ static const char *gate_unowned_detail; /* recorded at stop reason 3 */
 #include "lockstep_getup_diagnostic_transport.h"
 static void join_jobinit_restore(void);   /* lockstep_join.h: a version 13 joiner's JobEngine::Init call */
 static void join_bootev_restore(void);    /* lockstep_join.h: a version 13 joiner's boot event passes */
-static void join_rule_restore(void);static void join_pcf_restore(void);       /* lockstep_join.h: JOIN_WATCHPCF's call sites (diagnostic) */
+static void join_rule_restore(void);static void join_pcf_restore(void);static void join_rprt_restore(void);       /* lockstep_join.h: JOIN_WATCHPCF's call sites (diagnostic) */
 static void join_fmt_restore(void);       /* lockstep_join_precise.h: the full-precision join save */
 static void join_parse_restore(void);
 static void join_ids_restore(void);        /* lockstep_join_ids.h */
@@ -770,7 +770,7 @@ static void finish(unsigned reason) {
     gpost_restore();
     gwide_restore();
     join_jobinit_restore();
-    join_bootev_restore();join_pcf_restore();join_rule_restore();join_fmt_restore();join_parse_restore();join_ids_restore();
+    join_bootev_restore();join_pcf_restore();join_rprt_restore();join_rule_restore();join_fmt_restore();join_parse_restore();join_ids_restore();
     attention_restore();
     mass_restore();
     death_restore();
@@ -4436,7 +4436,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(body);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
-    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_refwatch);METHOD(join_refwatch_from);METHOD(join_refwatch_peek);METHOD(join_refwatch_at);METHOD(join_shape_at);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_buildp);METHOD(join_view_skip);METHOD(join_viewf_write);METHOD(join_viewf_bits);METHOD(join_pend);METHOD(join_viewl);METHOD(join_rcnt);METHOD(join_ecos);METHOD(join_shpw);METHOD(join_shpw_words);METHOD(join_trdn);METHOD(join_npca);METHOD(join_jobg);METHOD(join_jobw);METHOD(join_code);METHOD(join_engr);METHOD(join_shgr);METHOD(join_resv);METHOD(join_pcsv);METHOD(join_conn);METHOD(join_warp);METHOD(join_gravn_extra);METHOD(join_attn_set);METHOD(join_ares);METHOD(join_undk);METHOD(join_bp);METHOD(join_porders);METHOD(join_gravp_settled);METHOD(join_lstn);METHOD(join_fobj);METHOD(join_srcs);METHOD(join_agcb_nav);METHOD(join_bnds);METHOD(join_omgs);METHOD(join_jobdump);METHOD(join_jobcnt_at);METHOD(join_unpaired);
+    METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_refwatch);METHOD(join_refwatch_from);METHOD(join_refwatch_peek);METHOD(join_refwatch_at);METHOD(join_shape_at);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_buildp);METHOD(join_view_skip);METHOD(join_viewf_write);METHOD(join_viewf_bits);METHOD(join_pend);METHOD(join_viewl);METHOD(join_rcnt);METHOD(join_ecos);METHOD(join_shpw);METHOD(join_shpw_words);METHOD(join_trdn);METHOD(join_npca);METHOD(join_jobg);METHOD(join_jobw);METHOD(join_code);METHOD(join_engr);METHOD(join_shgr);METHOD(join_resv);METHOD(join_pcsv);METHOD(join_conn);METHOD(join_warp);METHOD(join_gravn_extra);METHOD(join_attn_set);METHOD(join_ares);METHOD(join_undk);METHOD(join_bp);METHOD(join_porders);METHOD(join_gravp_settled);METHOD(join_lstn);METHOD(join_fobj);METHOD(join_srcs);METHOD(join_agcb_nav);METHOD(join_rprt);METHOD(join_bnds);METHOD(join_omgs);METHOD(join_jobdump);METHOD(join_jobcnt_at);METHOD(join_unpaired);
 #undef METHOD
     return 1;
 }

@@ -346,6 +346,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_warp then   -- a joiner takes the session's pending warps' destinations (WARP)
   assert(gate.join_warp and gate.join_warp(1)==1,'join warp refused')
  end
+ if cfg.native_gate_join_rprt then   -- JOIN_RPRT: the watched ships' re-parent transforms (diagnostic)
+  assert(gate.join_rprt and gate.join_rprt(1)==1,'join rprt refused')
+ end
  if cfg.native_gate_join_agcb_nav then   -- AGCB: the nav ships' Agent command blocks too (agcb=)
   assert(gate.join_agcb_nav and gate.join_agcb_nav(1)==1,'join agcb nav refused')
  end

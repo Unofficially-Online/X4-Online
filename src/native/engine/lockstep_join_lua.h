@@ -95,6 +95,8 @@ static int lua_join_pcsv(lua_State *L) {join_pcsv_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_conn(lua_State *L) {join_conn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_warp(on): a joiner takes the session's pending warps' destinations (WARP, default off). */
 static int lua_join_warp(lua_State *L) {join_warp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_rprt(on): JOIN_RPRT, the re-parent transforms of the watched ships' linear models (diagnostic; lockstep_join_world.h). */
+static int lua_join_rprt(lua_State *L) {join_rprt_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_agcb_nav(on): AGCB writes the nav ships' Agent blocks too (default off; lockstep_join_world.h). */
 static int lua_join_agcb_nav(lua_State *L) {join_agcb_nav_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_srcs(on): SRCS, the joiner gives each keyed listener the session's sources (default off; lockstep_join_world.h). */

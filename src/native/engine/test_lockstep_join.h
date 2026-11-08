@@ -3529,6 +3529,25 @@ static void test_join_srcs(void) {
     printf("join SRCS: each keyed listener's sources from its own list by portable ID, a one-source move registered for the types "
            "of its entry and the old source dropped, equal, left and missing PASS\n");
 }
+/* JOIN_RPRT: a watched ship's model gets a row (matrix, +0x70 before and after); another model none. */
+static float trprt_called;
+static void trprt_original(void *model,const float *m) {float v[4];memcpy(v,(unsigned char *)model+0x70,16);v[0]+=m[0];memcpy((unsigned char *)model+0x70,v,16);trprt_called+=1.0f;}
+static void test_join_rprt(void) {
+    void (*orig)(void *,const float *)=join_rprt_original;join_rprt_original=trprt_original;
+    static _Alignas(16) unsigned char obj[0x300],ctl[0x80],agent[0x100],model[0x100],other[0x100];
+    memset(obj,0,sizeof(obj));memset(ctl,0,sizeof(ctl));memset(model,0,sizeof(model));memset(other,0,sizeof(other));
+    {uintptr_t c=(uintptr_t)ctl,vt=(uintptr_t)image+JOIN_NAV_VTABLE,a=(uintptr_t)agent;
+     memcpy(obj+JOIN_CONTROLLER,&c,8);memcpy(ctl,&vt,8);memcpy(ctl+0x40,&a,8);memcpy(model+0x10,&a,8);}
+    const unsigned keep=join_watch.n;unsigned char *keep_obj=join_watch.object[0];uint64_t keep_id=join_watch.portable[0];
+    join_watch.n=1;join_watch.object[0]=obj;join_watch.portable[0]=0x99d18u;join_rprt_n=0;join_rprt_shown=0;
+    float m[16];for(unsigned k=0;k<16;k++) m[k]=(float)k+0.5f;
+    {float v[4]={1,2,3,0};memcpy(model+0x70,v,16);}
+    join_rprt_hook(model,m);join_rprt_hook(other,m);
+    assert(trprt_called==2.0f && join_rprt_n==1 && join_rprt_rows[0].watched==0 && !memcmp(join_rprt_rows[0].m,m,sizeof(m)) &&
+           join_rprt_rows[0].before[0]==1.0f && join_rprt_rows[0].after[0]==1.5f);
+    join_watch.n=keep;join_watch.object[0]=keep_obj;join_watch.portable[0]=keep_id;join_rprt_n=0;join_rprt_shown=0;join_rprt_original=orig;
+    printf("join RPRT: a watched ship's re-parent transform recorded with its plan before and after, another model's not PASS\n");
+}
 /* AGCB for a nav ship: written only with join_agcb_nav_on. */
 static _Alignas(16) unsigned char tagcb_obj[0x300],tagcb_ctl[0x80],tagcb_agent[0x1000];static unsigned char *tagcb_objs[1];
 static void *tagcb_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime==0x81u?tagcb_objs[0]:NULL;}
@@ -3603,5 +3622,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();test_join_rprt();
 }

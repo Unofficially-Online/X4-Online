@@ -2378,6 +2378,49 @@ static __attribute__((noinline)) void join_pcf_hook(void *object,uint32_t view,c
     }
     join_pcf_native(object,view,flags);
 }
+/* JOIN_RPRT (diagnostic, native_gate_join_rprt with native_gate_join_watch; in-window report 57, w1z226): the destroyer 99d18's
+ * controller cache parts by 1..2 ulps at its zone change 3135 with every watched input equal through 3134. At a zone change the
+ * engine re-expresses a LinearFlightControlModel's plan by the relative transform it hands the model's vtable slot 7 (0xe84ea0:
+ * +0x70 = rotation(rdx +0x10..+0x3f) x +0x70 + rdx +0x00). The hook (that vtable entry, 0x2c4f648; both sides, from the first
+ * watch dump) records for a watched ship's model the tick, the matrix (16 floats) and +0x70 before and after; JOIN_RPRT rows
+ * in the watch dump. */
+#define JOIN_RPRT_ENTRY 0x2c4f648u
+#define JOIN_RPRT_FN 0xe84ea0u
+#define JOIN_RPRT_ROWS 256u
+typedef struct {uint64_t tick;uint32_t watched,thread;float m[16],before[4],after[4];} join_rprt_row;
+static join_rprt_row join_rprt_rows[JOIN_RPRT_ROWS];
+static volatile LONG join_rprt_n;static LONG join_rprt_shown;static volatile LONG64 join_rprt_calls;
+static int join_rprt_on,join_rprt_installed;
+static void join_rprt_native(void *model,const float *m) {((void (*)(void *,const float *))(void *)(image+JOIN_RPRT_FN))(model,m);}
+static void (*join_rprt_original)(void *,const float *)=join_rprt_native;   /* tests replace it */
+static void join_rprt_hook(unsigned char *model,const float *m) {
+    unsigned char *agent=NULL;int w=-1;float before[4]={0,0,0,0};
+    InterlockedIncrement64(&join_rprt_calls);
+    if(model && join_read(model+0x10,&agent,8) && agent)
+        for(unsigned i=0;i<join_watch.n && i<JOIN_WATCH_MAX;i++)
+            if(join_watch.object[i] && join_nav_agent(join_watch.object[i])==agent) {w=(int)i;break;}
+    if(w>=0) (void)join_read(model+0x70,before,16);
+    join_rprt_original(model,m);
+    if(w<0) return;
+    const LONG k=InterlockedIncrement(&join_rprt_n)-1;
+    if(k<0 || (ULONG)k>=JOIN_RPRT_ROWS) return;
+    join_rprt_row *r=&join_rprt_rows[k];r->tick=stats.issued;r->watched=(uint32_t)w;r->thread=GetCurrentThreadId();
+    memcpy(r->m,m,sizeof(r->m));memcpy(r->before,before,16);(void)join_read(model+0x70,r->after,16);
+}
+#ifndef JOIN_OWN_PLATFORM
+static int join_rprt_swap(void *expected,void *value) {
+    DWORD old,ignored;if(!VirtualProtect(image+JOIN_RPRT_ENTRY,8,PAGE_READWRITE,&old)) return 0;
+    void *actual=InterlockedCompareExchangePointer((void*volatile*)(image+JOIN_RPRT_ENTRY),value,expected);
+    VirtualProtect(image+JOIN_RPRT_ENTRY,8,old,&ignored);return actual==expected;
+}
+static void join_rprt_install(void) {
+    if(join_rprt_on && !join_rprt_installed && join_rprt_swap(image+JOIN_RPRT_FN,(void *)join_rprt_hook)) join_rprt_installed=1;
+}
+static void join_rprt_restore(void) {if(join_rprt_installed && join_rprt_swap((void *)join_rprt_hook,image+JOIN_RPRT_FN)) join_rprt_installed=0;}
+#else
+static void join_rprt_install(void) {}
+static void join_rprt_restore(void) {}
+#endif
 /* The ID's place in the list (1-based; one already listed keeps its place: the probe's setup may run again), 0 refused. */
 static unsigned join_watch_add(uint64_t portable) {
     if(!portable) return 0;
@@ -3075,6 +3118,7 @@ static void join_watch_dump(char side,uint64_t tick) {
     if(side=='t') join_objsample_dump(tick);
     if(side=='t') join_refcounts_dump(tick);
     {static int tried;if(!tried && thunk) {tried=1;(void)join_pcf_install();}}   /* the thunk page exists from the gate's start */
+    join_rprt_install();
     const uint32_t cur=join_view_index();size_t cap=1u<<18,at=0;char *out=malloc(cap);
     if(!out) return;
     for(unsigned i=0;i<join_watch.n;i++) {
@@ -3393,6 +3437,21 @@ static void join_watch_dump(char side,uint64_t tick) {
         at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHPCF side=%c tick=%llu rows=%ld calls=%lld dropped=%lld sites=%x\r\n",side,(unsigned long long)tick,
                              (long)n,(long long)join_pcf_calls,(long long)join_pcf_dropped,join_pcf_mask);
         InterlockedExchange(&join_pcf_n,0);
+    }
+    {   /* JOIN_RPRT: the relative transforms handed to watched ships' linear models since the last dump */
+        LONG n=join_rprt_n;if(n>(LONG)JOIN_RPRT_ROWS) n=(LONG)JOIN_RPRT_ROWS;
+        for(LONG k=join_rprt_shown;k<n && at+700<cap;k++) {
+            const join_rprt_row *r=&join_rprt_rows[k];
+            at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_RPRT side=%c tick=%llu at=%llu id=%llx thread=%u m=",side,(unsigned long long)tick,
+                                 (unsigned long long)r->tick,(unsigned long long)join_watch.portable[r->watched],r->thread);
+            at+=join_watch_hex(out+at,cap-at,(const unsigned char *)r->m,sizeof(r->m));
+            at+=(size_t)snprintf(out+at,cap-at," before=");at+=join_watch_hex(out+at,cap-at,(const unsigned char *)r->before,16);
+            at+=(size_t)snprintf(out+at,cap-at," after=");at+=join_watch_hex(out+at,cap-at,(const unsigned char *)r->after,16);
+            at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+        }
+        if(n>join_rprt_shown) join_rprt_shown=n;
+        if(join_rprt_on) at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_RPRT side=%c tick=%llu installed=%d calls=%lld rows=%ld\r\n",side,
+                                              (unsigned long long)tick,join_rprt_installed,(long long)join_rprt_calls,(long)join_rprt_n);
     }
     {   /* JOIN_WATCHACOS: the weapon request checks' aim angles since the last dump (lockstep_portable_math.h) */
         LONG n=pmath_acos_n;if(n>(LONG)PMATH_ACOS_ROWS) n=(LONG)PMATH_ACOS_ROWS;
