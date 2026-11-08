@@ -210,6 +210,8 @@ def main():
                    help='hashes retains complete captures and their digests without per-object log rows')
     p.add_argument('--world-rolling-slices', type=int, metavar='N',
                    help='experimental Linux census: sample one of N object ranges each tick; not an instantaneous world snapshot')
+    p.add_argument('--status-stride', type=int, metavar='N',
+                   help='thin diagnostic status logs every N ticks (1..3600)')
     p.add_argument('--probe-profile', action='store_true',
                    help='measure probe sections, including world scan and detailed log output')
     p.add_argument('--gravidar-deadlines', action='store_true', help='the Linux gate: factor-pass deadlines rebased at the first gated Move, low-attention passes keyed (needs --gravidar)')
@@ -368,6 +370,8 @@ def main():
         p.error('--world-hash-stride requires --world-identities and stride1..18000')
     if args.world_hash_shields and args.world_hash_stride is None:
         p.error('--world-hash-shields requires --world-hash-stride')
+    if args.status_stride is not None and not 1 <= args.status_stride <= 3600:
+        p.error('--status-stride must be between 1 and 3600')
     if args.world_hash_schema=='WORLD_IMPORTED_2' and args.world_hash_stride is None:
         p.error('--world-hash-schema WORLD_IMPORTED_2 requires --world-hash-stride')
     if args.world_rolling_slices is not None:
@@ -536,7 +540,7 @@ def main():
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
-        allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile'))
+        allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile', 'status_stride'))
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
             p.error('not ported to the Linux gate: ' + ', '.join('--' + k.replace('_', '-') for k in unported))
@@ -645,6 +649,8 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             config.write('X4LAN_CONFIG.native_gate_world_detail_rows = false\n')
         if args.world_rolling_slices is not None:
             config.write(f'X4LAN_CONFIG.native_gate_world_rolling_slices = {args.world_rolling_slices}\n')
+        if args.status_stride is not None:
+            config.write(f'X4LAN_CONFIG.native_gate_status_stride = {args.status_stride}\n')
         if args.probe_profile:
             config.write('X4LAN_CONFIG.native_gate_probe_profile = true\n')
     if args.session_clients:

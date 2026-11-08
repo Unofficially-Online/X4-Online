@@ -25,6 +25,31 @@ static unsigned __int128 lxt_inline_original_second, lxt_inline_patched_second;
 static int lxt_inline_first_installed, lxt_inline_second_installed, lxt_inline_restored;
 static uint64_t lxt_inline_tick = UINT64_MAX, lxt_inline_passes, lxt_inline_batches;
 static unsigned lxt_inline_ordinal;
+static const char *lxt_inline_stage = "idle";
+
+/* Actor hooks are defined later in gate_linux.c. */
+static int laa_call_state(void);
+static int laa_stub_ok(void);
+
+/* The boot agent hook and optional path budget patch precede this arm call.
+ * Normalize only their verified owned bytes in a private copy, then require
+ * the original SHA for every byte of the complete batch body. */
+static int lxt_inline_body_pin(void) {
+    unsigned char body[0x24b];
+    memcpy(body, LX(LXT_INLINE_BODY), sizeof(body));
+    if (laa_agent_installed) {
+        if (laa_call_state() != 1 || !laa_stub_ok()) return 0;
+        int32_t original_displacement = (int32_t)(LX_AGENT_UPDATE_VA - (LX_AGENT_CALL_VA + 5));
+        memcpy(body + LX_AGENT_CALL_VA + 1 - LXT_INLINE_BODY,
+               &original_displacement, sizeof(original_displacement));
+    }
+    if (pbud_installed) {
+        if (!pbud_owned()) return 0;
+        memcpy(body + LX_PBUD_SITE - LXT_INLINE_BODY, lx_pbud_native, sizeof(lx_pbud_native));
+    }
+    return hash_ok(body, sizeof(body),
+        "3222ca2e412f8df6cc8db1c64295b34b0f0ce1c377a01a6a329430d6cb0f2229");
+}
 
 /* Check the fields consumed by the pinned zero-cleanup thunk path. */
 static int lxt_inline_payload_ok(const void *payload, const void *body) {
@@ -123,12 +148,16 @@ static int lxt_inline_arm(void) {
     if (travel_inline_installed)
         return stats.active && !tsnap_installed && lxt_inline_first_installed &&
             lxt_inline_second_installed && lxt_inline_owned();
+    lxt_inline_stage = "state";
     if (!stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId() != ui_thread ||
         !thunk || !path_installed || !(path_options & 1) || !(path_det_mask & PATH_DET_BUDGET_BIT) || tsnap_installed)
         return 0;
-    if (!hash_ok(LX(0x13e3d86), 0x116, "bf41201f69cd1aac19d13349ef89eec5ae943392b05a4db95b76dcb6b340579c") ||
-        !hash_ok(LX(0x13e32f0), 0x24b, "3222ca2e412f8df6cc8db1c64295b34b0f0ce1c377a01a6a329430d6cb0f2229") ||
-        !hash_ok(LX(0x13c45c0), 0x36, "8a95d70d88b3e3fcda8d82e34592726184e102a6c5113f865650ecf67baa849b") ||
+    lxt_inline_stage = "runpass_pin";
+    if (!hash_ok(LX(0x13e3d86), 0x116, "bf41201f69cd1aac19d13349ef89eec5ae943392b05a4db95b76dcb6b340579c")) return 0;
+    lxt_inline_stage = "batch_pin";
+    if (!lxt_inline_body_pin()) return 0;
+    lxt_inline_stage = "completion_pins";
+    if (!hash_ok(LX(0x13c45c0), 0x36, "8a95d70d88b3e3fcda8d82e34592726184e102a6c5113f865650ecf67baa849b") ||
         !hash_ok(LX(0x13e91d8), 0xa9, "a3634bde30e731d984d0e138d90f2357c9210961c4b5a0ed9b5c3fa845be961f") ||
         !hash_ok(LX(0x1a23520), 0x40, "45527f113535fa1e3702f38c5d5d96b8be073d0f7d814468702b9b0336221e09") ||
         !hash_ok(LX(0x1a23be0), 0x6a, "2f7e3764d17dc9ff4269fd115a22ed3ec472a7612846d55b6b33a0e771c7f7bd"))
@@ -136,6 +165,7 @@ static int lxt_inline_arm(void) {
     memcpy(&lxt_inline_original_first, LX(LXT_INLINE_SITE_A), 8);
     memcpy(&lxt_inline_original_second, LX(LXT_INLINE_SITE_B), 16);
     lxt_inline_patched_first = lxt_inline_original_first; lxt_inline_patched_second = lxt_inline_original_second;
+    lxt_inline_stage = "displacement";
     intptr_t first_distance = (intptr_t)(thunk + LXT_INLINE_STUB) - (intptr_t)LX(0x13e3e0f);
     intptr_t second_distance = (intptr_t)(thunk + LXT_INLINE_STUB) - (intptr_t)LX(0x13e3e89);
     if (first_distance < INT32_MIN || first_distance > INT32_MAX ||
@@ -144,11 +174,13 @@ static int lxt_inline_arm(void) {
     int32_t second_displacement = (int32_t)second_distance;
     memcpy((unsigned char *)&lxt_inline_patched_first + 3, &first_displacement, 4);
     memcpy((unsigned char *)&lxt_inline_patched_second + 5, &second_displacement, 4);
+    lxt_inline_stage = "swap";
     lxt_inline_restored = 0;
     travel_inline_installed = 1;
     lxt_inline_first_installed = gate_code_swap64(LX(LXT_INLINE_SITE_A), lxt_inline_original_first, lxt_inline_patched_first);
     lxt_inline_second_installed = lxt_inline_first_installed && gate_code_swap128(LX(LXT_INLINE_SITE_B), lxt_inline_original_second, lxt_inline_patched_second);
     if (!lxt_inline_second_installed) { lxt_inline_restore(); return 0; }
+    lxt_inline_stage = "armed";
     return 1;
 }
 
@@ -158,10 +190,10 @@ static int lua_travel_determinism(lua_State *L) {
 static int lua_travel_determinism_status(lua_State *L) {
     char out[256];
     int n = accept_ui() ? snprintf(out, sizeof(out),
-        "armed=%d installed=%d tick=%llu passes=%llu batches=%u total_batches=%llu restored=%d failures=0",
+        "armed=%d installed=%d tick=%llu passes=%llu batches=%u total_batches=%llu restored=%d failures=0 stage=%s",
         travel_inline_installed, travel_inline_installed, (unsigned long long)lxt_inline_tick,
         (unsigned long long)lxt_inline_passes, lxt_inline_ordinal, (unsigned long long)lxt_inline_batches,
-        lxt_inline_restored) : 0;
+        lxt_inline_restored, lxt_inline_stage) : 0;
     if (n > 0 && (size_t)n < sizeof(out)) p_lua_pushlstring(L, out, (size_t)n); else p_lua_pushnil(L);
     return 1;
 }

@@ -572,6 +572,16 @@ class Overlay(unittest.TestCase):
                        *[option for option in required if option != '--created-identities'],
                        '--world-rolling-slices', '3')
 
+    def test_status_stride_overlay_bounds_and_default(self):
+        default = self.build(*self.snapshot, '--mode', 'clock')
+        self.assertNotIn('native_gate_status_stride', (default / 'ui/config.lua.append').read_text())
+        for stride in (1, 3600):
+            out = self.build(*self.snapshot, '--mode', 'clock', '--status-stride', str(stride))
+            self.assertIn(f'native_gate_status_stride = {stride}', (out / 'ui/config.lua.append').read_text())
+        for stride in (0, 3601):
+            with self.subTest(stride=stride), self.assertRaises(SystemExit):
+                self.build(*self.snapshot, '--mode', 'clock', '--status-stride', str(stride))
+
     def test_linux_ordered_batches_reject_conflicts_and_missing_prerequisites(self):
         required = ['--world-identities', '--serial-pathing', '--path-determinism', '3']
         variants = [required + ['--travel-snapshot']]

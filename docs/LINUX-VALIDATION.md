@@ -130,5 +130,12 @@ modes. A rolling pass establishes only agreement in the sampled fields at the
 declared sample times. It is not equivalent to passing the old instantaneous
 census, nor proof of Windows interoperability or playable multiplayer.
 
+Optional `--status-stride N` (1 to 3600) reduces ordinary diagnostic status
+output; omitting it preserves the existing configuration. Native ring drains,
+per-tick digest reports and rolling evidence remain enabled. Intermediate
+diagnostic status rows can be omitted, and failure counters monitored through
+those statuses may only be noticed on a written status tick or at stop. Use
+the default when an investigation needs the intermediate diagnostic rows.
+
 See [the performance investigation](../reports/LOCKSTEP-LINUX-PERFORMANCE-20261108.txt)
 for measured intervals, retained failures and graphics findings.

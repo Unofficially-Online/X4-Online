@@ -116,7 +116,20 @@ client 2's containing profile window reports maximum probe time 530.171 ms,
 with the module/status stage elevated, while average world scan stayed near
 3.62 ms. This localizes the remaining outlier to a different stage, without
 proving the particular native call, logging or garbage-collection cause.
+Without status thinning, DebugError calls execute inside the module stage;
+log_us measures only the final flush, not all logging work. The suspect tick
+has ordinary row volume, and these wall-time clocks also include descheduling.
 Steam identity remained unchanged and no owned process remained.
+
+Further diagnostic changes (native comparison pending)
+-----------------------------------------------------
+The existing status-stride mechanism is now exposed as --status-stride N in
+the Linux bundle. It reduces intermediate module status output and delays
+observation of their failure counters until a written status or STOP. Every
+rolling capture, bank record, shield-cycle summary and relay report remains
+mandatory. A non-divisible-stride Lua regression validates complete sample
+coverage through STOP. Reported complete cycles now derive from observed
+contiguous valid samples, not merely the requested tick limit.
 
 Validation
 ----------
@@ -145,9 +158,14 @@ cross-check both passed in a focused rerun. The remaining 25 checks require
 unavailable reference files or separate validation prerequisites.
 
 An independent, default-off Linux ordered-pathing experiment is also compiled
-into this candidate. Synthetic checks exercise complete batch execution and
-fail-closed guards; no performance comparison above enables it. It has not yet
-received native acceptance and is not presented as a motion-desync fix.
+into this candidate. Its first native attempt refused activation before any
+rolling sample on both clients; that failure is retained. A pinned-ELF test
+reproduced interference with the already installed agent-RNG call patch. The
+arm check now normalizes only verified owned patches in a private byte copy
+and still requires the original full-body SHA. Foreign patches remain refused.
+Synthetic checks cover this interaction, complete batch execution and guarded
+refusal; no performance comparison above enables the ordered mode. Native
+acceptance of the correction is pending; it is not a motion-desync fix claim.
 
 Graphics investigation
 ----------------------

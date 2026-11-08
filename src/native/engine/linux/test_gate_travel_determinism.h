@@ -152,6 +152,42 @@ static void test_travel_inline_elf(void) {
     lxt_inline_restore();
     assert(!travel_inline_installed && lxt_inline_restored && lxt_inline_owned());
     assert(!memcmp(before_a, LX(LXT_INLINE_SITE_A), 8) && !memcmp(before_b, LX(LXT_INLINE_SITE_B), 16));
+    /* Boot agent RNG and the optional budget patch both precede inline arm.
+     * The unmodified hash must fail with these hooks physically installed. */
+    assert(laa_agent_install());
+    assert(!hash_ok(LX(LXT_INLINE_BODY), 0x24b,
+        "3222ca2e412f8df6cc8db1c64295b34b0f0ce1c377a01a6a329430d6cb0f2229"));
+    assert(lxt_inline_body_pin());
+    assert(lxt_inline_arm() && lxt_inline_owned());
+    lxt_inline_restore();
+    assert(lxt_inline_restored);
+    laa_agent_installed = 0;
+    assert(!lxt_inline_arm() && !strcmp(lxt_inline_stage, "batch_pin"));
+    laa_agent_installed = 1;
+    assert(pbud_arm(4));
+    assert(lxt_inline_body_pin());
+    assert(lxt_inline_arm() && lxt_inline_owned());
+    lxt_inline_restore();
+    assert(lxt_inline_restored);
+
+    /* A foreign agent displacement or a foreign budget patch is never masked. */
+    uintptr_t call_page = (uintptr_t)LX(LX_AGENT_CALL_VA) & ~(uintptr_t)(GATE_PAGE - 1);
+    assert(!mprotect((void *)call_page, GATE_PAGE, PROT_READ | PROT_WRITE | PROT_EXEC));
+    LX(LX_AGENT_CALL_VA + 1)[0] ^= 1;
+    assert(!mprotect((void *)call_page, GATE_PAGE, PROT_READ | PROT_EXEC));
+    assert(!lxt_inline_arm() && !strcmp(lxt_inline_stage, "batch_pin"));
+    assert(!mprotect((void *)call_page, GATE_PAGE, PROT_READ | PROT_WRITE | PROT_EXEC));
+    LX(LX_AGENT_CALL_VA + 1)[0] ^= 1;
+    LX(LX_PBUD_SITE)[0] ^= 1;
+    assert(!mprotect((void *)call_page, GATE_PAGE, PROT_READ | PROT_EXEC));
+    assert(!lxt_inline_arm() && !strcmp(lxt_inline_stage, "batch_pin"));
+    assert(!mprotect((void *)call_page, GATE_PAGE, PROT_READ | PROT_WRITE | PROT_EXEC));
+    LX(LX_PBUD_SITE)[0] ^= 1;
+    assert(!mprotect((void *)call_page, GATE_PAGE, PROT_READ | PROT_EXEC));
+    pbud_restore();
+    laa_restore();
+    assert(!pbud_installed && !laa_agent_installed);
+    assert(lxt_inline_body_pin());
     /* A changed completion body is refused before either site can be patched. */
     uintptr_t body_page = (uintptr_t)LX(LXT_INLINE_BODY) & ~(uintptr_t)(GATE_PAGE - 1);
     assert(!mprotect((void *)body_page, GATE_PAGE, PROT_READ | PROT_WRITE | PROT_EXEC));

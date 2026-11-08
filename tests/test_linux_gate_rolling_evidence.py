@@ -70,6 +70,29 @@ class RollingEvidenceTest(unittest.TestCase):
             with self.subTest(changed=changed):
                 self.assertFalse(self.check(changed)['evidence_ok'])
 
+    def test_cycles_count_only_contiguous_valid_samples(self):
+        result = self.check([], [])
+        self.assertFalse(result['evidence_ok'])
+        self.assertEqual(result['requestedcycles'], 2)
+        self.assertEqual(result['completecycles'], 0)
+        self.assertIsNone(result['partialcycle'])
+        rows = log(1)
+        missing = rows[:4] + rows[5:]
+        result = self.check(missing)
+        self.assertFalse(result['evidence_ok'])
+        self.assertEqual(result['observed_contiguous_ticks'], 4)
+        self.assertEqual(result['completecycles'], 1)
+        self.assertEqual(result['partialcycle']['sampled_slices'], 1)
+        missing_prefix = rows[1:]
+        result = self.check(missing_prefix)
+        self.assertEqual(result['observed_contiguous_ticks'], 0)
+        self.assertEqual(result['completecycles'], 0)
+        peer = log(2)
+        peer[3] = capture(4, created=1, digest='b')
+        result = self.check(rows, peer)
+        self.assertFalse(result['evidence_ok'])
+        self.assertEqual(result['completecycles'], 2)
+
     def test_metadata_schedule_bounds_and_coverage(self):
         base = log(1)
         changes = [capture(2, cycle=3), capture(2, slice=2), capture(2, slices=4),

@@ -3,6 +3,7 @@ import unittest
 
 import test_native_gate_probe as fixture
 from test_linux_gate_rolling_evidence import capture as rolling
+from linux_gate_evidence import validate_evidence
 
 
 class RollingProbeTests(unittest.TestCase):
@@ -25,6 +26,8 @@ class RollingProbeTests(unittest.TestCase):
           gate.created_identities=function() return 1 end
           gate.created_identities_status=function() return 'failures=0' end
           gate.created_row=function() return nil end
+          gate.world_hash_shields=function() return 1 end
+          gate.world_hash_shields_status=function() return 'canonical=1' end
           calls={}; digest_inputs={}
           gate.world_capture_rolling=function(tick,slices)
             assert(slices==3); calls[#calls+1]=tick
@@ -83,6 +86,32 @@ class RollingProbeTests(unittest.TestCase):
                 self.run_probe(configuration)
         with self.assertRaises(fixture.LuaError):
             self.run_probe(available=False)
+
+    def test_status_thinning_keeps_all_rolling_evidence_and_reports(self):
+        lua, logs = self.run_probe('''
+            X4LAN_CONFIG.native_gate_status_stride=6
+            X4LAN_CONFIG.native_gate_world_hash_shields='canonical'
+        ''', ticks=23)
+        self.assertEqual(list(lua.globals().calls.values()), list(range(1, 24)))
+        self.assertEqual(lua.globals().reports, 23)
+        for tick in range(1, 24):
+            self.assertEqual(sum(f'WORLD_ROLLING tick={tick} ' in line for line in logs), 1)
+        self.assertEqual(sum('WORLD_BANKS ' in line for line in logs), 23)
+        for tick in (1, 3, 6, 9, 12, 15, 18, 21):
+            self.assertEqual(sum(f'WORLD_SHIELDS_ROLLING tick={tick} ' in line for line in logs), 1)
+        inputs = [item for item in lua.globals().digest_inputs.values() if '|WORLD_ROLLING_1:' in item]
+        self.assertEqual(len(inputs), 23)
+        lua.execute('''
+            state.active=0;state.completed=23;state.reason=1;state.restored=1
+            state.world_identity_calls=7;state.world_identity_count=7
+            state.world_identity_restored=1;state.world_identity_failures=0
+            setmetatable(state,{__index=function() return 0 end});update()
+        ''')
+        logs = list(lua.globals().logs.values())
+        self.assertEqual(sum('WORLD_ROLLING_STOP scans=23 cycles=7 failures=0' in line for line in logs), 1)
+        self.assertTrue(any('NATIVE_GATE STOP slot=p1 completed=23' in line for line in logs))
+        evidence = validate_evidence({1: logs}, 23, 120, rolling_slices=3)
+        self.assertTrue(evidence['evidence_ok'], evidence['evidence_errors'])
 
     def test_native_failure_cannot_be_submitted_as_a_slice(self):
         lua, logs = self.run_probe("""

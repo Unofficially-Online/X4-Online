@@ -3153,8 +3153,9 @@ local function frame()
   -- cross-agent reads (formation travel flags) see one fixed order. Default off.
   if cfg.native_gate_travel_determinism then
    local mask=cfg.native_gate_path_determinism
-   assert(snapshot and cfg.native_gate_travel_determinism==true and cfg.native_gate_serial_pathing and
-    type(mask)=='number' and (mask==2 or mask==3) and gate.travel_determinism and gate.travel_determinism()==1,'travel determinism refused')
+   local armed=snapshot and cfg.native_gate_travel_determinism==true and cfg.native_gate_serial_pathing and
+    type(mask)=='number' and (mask==2 or mask==3) and gate.travel_determinism and gate.travel_determinism()==1
+   assert(armed, 'travel determinism refused '..tostring(gate.travel_determinism_status and gate.travel_determinism_status()))
    log('TRAVEL_DETERMINISM_ARMED')
   end
   -- Parallel alternative: wingmen read their leader's pass-start travel flag
@@ -5636,10 +5637,11 @@ local function frame()
   assert(summary, 'native rolling census failed '..tostring(why))
   world_hash_state = assert(summary:match(' state=(WORLD_ROLLING_1:[^ ]+)$'),
    'invalid rolling census summary')
-  log('WORLD_BANKS '..assert(gate.world_banks(),'rolling census bank phase unavailable'))
-  log('WORLD_ROLLING '..summary)
+  -- Each sample is evidence even when ordinary status rows are held or dropped.
+  ticklog.write('WORLD_BANKS '..assert(gate.world_banks(),'rolling census bank phase unavailable'))
+  ticklog.write('WORLD_ROLLING '..summary)
   if cfg.native_gate_world_hash_shields and (tick==1 or tick%rolling_slices==0) then
-   log('WORLD_SHIELDS_ROLLING tick='..tick..' '..gate.world_hash_shields_status())
+   ticklog.write('WORLD_SHIELDS_ROLLING tick='..tick..' '..gate.world_hash_shields_status())
   end
   ticklog.ui_guard(tick)
   data = data..'|'..world_hash_state

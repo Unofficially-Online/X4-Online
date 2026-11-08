@@ -17,6 +17,47 @@ import linux_gate_live as live
 
 @unittest.skipUnless(sys.platform == "linux", "Linux desktop isolation is Linux-only")
 class DesktopSetup(unittest.TestCase):
+    def test_status_stride_bundle_argument_and_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / 'snapshot.gz'
+            snapshot.write_bytes(gzip.compress(b'<savegame><info><game seed="1"/></info></savegame>'))
+            output = root / 'bundle'
+            forwarded = []
+
+            def run_command(command, **kwargs):
+                if 'build_native_gate_linux.py' in str(command[1]):
+                    (output / '.build/x4lan_gate.so').write_bytes(b'fake gate')
+                elif 'build_native_gate_overlay.py' in str(command[1]):
+                    forwarded.extend(command)
+                return mock.Mock(stdout='', returncode=0)
+
+            def compose(overlay, extension, extension_base):
+                (extension / 'ui').mkdir(parents=True)
+                (extension / 'native').mkdir()
+                (extension / 'native/x4lan_gate.so').write_bytes(b'fake gate')
+                (extension / 'ui/native_gate_probe.lua').write_text('-- fake')
+                (extension / 'ui/sha256.lua').write_text('-- fake')
+                (extension / 'ui/config.lua').write_text(
+                    '@X4LANE_PORT@ @X4LANE_TOKEN@ @X4LANE_SLOT@ ' + live.sha(snapshot))
+
+            with mock.patch.object(live.subprocess, 'run', side_effect=run_command), \
+                    mock.patch.object(live, 'compose_extension_template', side_effect=compose):
+                live.main(['bundle', '--zig', '/unused/zig', '--snapshot', str(snapshot),
+                           '--out', str(output), '--status-stride', '17'])
+            position = forwarded.index('--status-stride')
+            self.assertEqual(forwarded[position + 1], '17')
+            self.assertEqual(json.loads((output / 'manifest.json').read_text())['status_stride'], 17)
+
+    def test_status_stride_bundle_rejects_invalid_before_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'bundle'
+            for stride in (0, 3601):
+                with self.subTest(stride=stride), self.assertRaises(SystemExit):
+                    live.main(['bundle', '--zig', '/unused/zig', '--snapshot', '/unused/save',
+                               '--out', str(output), '--status-stride', str(stride)])
+                self.assertFalse(output.exists())
+
     def test_linux_core_is_opt_in_and_keeps_explicit_modes(self):
         command = ['bundle', '--zig', '/unused/zig', '--snapshot', '/unused/save', '--out', '/unused/output']
         with mock.patch.object(live, 'bundle') as build:
@@ -72,7 +113,7 @@ class DesktopSetup(unittest.TestCase):
             for ticks, stride, rows, identities in ((0, 60, False, False), (600, 0, False, False),
                                                    (600, 60, True, False)):
                 args = mock.Mock(out=output, ticks=ticks, stride=stride,
-                                 created_rows=rows, created_identities=identities)
+                                 created_rows=rows, created_identities=identities, status_stride=None)
                 with self.assertRaises(SystemExit):
                     live.bundle(args)
                 self.assertFalse(output.exists())

@@ -219,6 +219,8 @@ def bundle(args):
     repo = Path(__file__).resolve().parents[2]
     if args.ticks < 1 or args.stride < 1:
         raise SystemExit('--ticks and --stride must be positive')
+    if args.status_stride is not None and not 1 <= args.status_stride <= 3600:
+        raise SystemExit('--status-stride must be between 1 and 3600')
     if args.created_rows and not args.created_identities:
         raise SystemExit('--created-rows requires --created-identities')
     out = args.out
@@ -237,6 +239,8 @@ def bundle(args):
     command += ['--world-log-mode', args.world_log_mode]
     if args.world_rolling_slices is not None:
         command += ['--world-rolling-slices', str(args.world_rolling_slices)]
+    if args.status_stride is not None:
+        command += ['--status-stride', str(args.status_stride)]
     if args.probe_profile:
         command.append('--probe-profile')
     if args.seed_rng:
@@ -416,6 +420,7 @@ def bundle(args):
         'travel_determinism',
         'world_log_mode',
         'world_rolling_slices',
+        'status_stride',
         'probe_profile',
         'runtime_ids',
         'runtime_id_callers',
@@ -1169,6 +1174,8 @@ def main(argv=None):
                    help='hashes suppresses object detail logs while keeping every full world capture')
     b.add_argument('--world-rolling-slices', type=int, metavar='N',
                    help='experimental per-tick object slices; requires hashes-only logging, changes census coverage timing')
+    b.add_argument('--status-stride', type=int, metavar='N',
+                   help='thin diagnostic status logs every N ticks (1..3600)')
     b.add_argument('--probe-profile', action='store_true',
                    help='record probe timings for scan/output performance comparisons')
     b.add_argument('--extension-base', type=Path, help='explicit historical extension base (default: current minimal lockstep base)')

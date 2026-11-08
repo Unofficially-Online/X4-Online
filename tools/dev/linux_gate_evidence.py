@@ -185,6 +185,8 @@ def parse_rolling_client(slot, lines, ticks, slices):
     imported_count = None
     cohort_by_cycle = {}
     last_created = None
+    contiguous_ticks = 0
+    prefix_open = True
     for line in lines:
         if is_fatal_gate_message(line):
             errors.append(f'client {slot}: fatal gate message: {line.strip()}')
@@ -204,7 +206,9 @@ def parse_rolling_client(slot, lines, ticks, slices):
             match = ROLLING.search(line)
             if not match:
                 errors.append(f'client {slot}: malformed WORLD_ROLLING')
+                prefix_open = False
                 continue
+            previous_errors = len(errors)
             fields = match.groupdict()
             row = {name: int(fields[name]) for name in ROLLING_FIELDS + ROLLING_COVERAGE}
             tick = row['tick']
@@ -248,6 +252,10 @@ def parse_rolling_client(slot, lines, ticks, slices):
             else:
                 captures[tick] = fields['state']
             coverage.append(row)
+            if prefix_open and len(errors) == previous_errors and tick == contiguous_ticks + 1:
+                contiguous_ticks = tick
+            else:
+                prefix_open = False
         elif 'NATIVE_GATE WORLD_IDENTITY_STOP' in line:
             match = IDENTITY.search(line)
             if not match:
@@ -279,7 +287,7 @@ def parse_rolling_client(slot, lines, ticks, slices):
         errors.append(f'client {slot}: missing, duplicate, or unsuccessful WORLD_ROLLING_STOP')
     if problems:
         errors.append(f'client {slot}: world capture problem')
-    return stop, identity, problems, captures, coverage, errors
+    return stop, identity, problems, captures, coverage, errors, contiguous_ticks
 
 
 def validate_rolling_evidence(logs_by_slot, ticks, slices):
@@ -292,8 +300,9 @@ def validate_rolling_evidence(logs_by_slot, ticks, slices):
     if isinstance(slices, bool) or not isinstance(slices, int) or not 1 <= slices <= 18000:
         raise ValueError('rolling_slices must be an integer from 1 to 18000')
     stops, identities, problems, hashes, coverage, errors = [], [], [], [], [], []
+    contiguous_counts = []
     for slot, lines in logs_by_slot.items():
-        stop, identity, client_problems, captures, client_coverage, client_errors = parse_rolling_client(
+        stop, identity, client_problems, captures, client_coverage, client_errors, contiguous = parse_rolling_client(
             slot, lines, ticks, slices)
         stops.append(stop)
         identities.append(identity)
@@ -301,16 +310,19 @@ def validate_rolling_evidence(logs_by_slot, ticks, slices):
         hashes.append(captures)
         coverage.append(client_coverage)
         errors.extend(client_errors)
+        contiguous_counts.append(contiguous)
     common = sorted(set.intersection(*(set(client_hashes) for client_hashes in hashes)))
     difference = next((tick for tick in common
                        if any(client_hashes[tick] != hashes[0][tick] for client_hashes in hashes[1:])), None)
     if difference is not None:
         errors.append(f'WORLD_ROLLING differs at tick {difference}')
-    partial = ticks % slices
+    observed_ticks = min(contiguous_counts)
+    partial = observed_ticks % slices
     return {'stops': stops, 'world_identity': identities, 'world_capture_problems': problems,
             'world_hash_ticks': len(common), 'world_hash_first_difference': difference,
             'world_hash_coverage': coverage, 'evidence_errors': errors, 'evidence_ok': not errors,
-            'mode': 'rolling', 'completecycles': ticks // slices,
-            'partialcycle': {'cycle': ticks // slices + 1, 'sampled_slices': partial,
+            'mode': 'rolling', 'requestedcycles': ticks // slices,
+            'observed_contiguous_ticks': observed_ticks, 'completecycles': observed_ticks // slices,
+            'partialcycle': {'cycle': observed_ticks // slices + 1, 'sampled_slices': partial,
                              'total_slices': slices} if partial else None,
             'coverage_semantic': 'Sequential slices are sampled on different ticks; counts do not prove cohort membership. New objects may wait until the next cycle.'}
