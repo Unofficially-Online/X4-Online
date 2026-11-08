@@ -1119,3 +1119,13 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   containers at T+1 (717ab/717bb: STEER's uncarried behaviours) and the growth after 3120 in the late join; J1's late join is the
   radar's settled objects at attention 3..5 (x4mods-28, native_gate_join_gravp_settled).
   Erratum: the publish 19729803's message names ARES's option native_gate_join_attn_ares; it is native_gate_join_ares.
+- w1z200 (the late join on the new join defaults + WARP, to 3200; gravidar post rows, script trace 3100..3180, motion digests):
+  the Gravidar posts (contact changes) are equal from 3034 through 3179; the first differs at 3180, joiner-only drops of 0x95f9a,
+  the settled miner of x4mods-28's J1 finding (attention 5, the session's view pose stale; native_gate_join_gravp_settled). The
+  scripts part before: from 3102 the joiner alone runs fight.attack.object.* handlers of event_gravidar_has_scanned (the pilot's
+  own ship: 9bcd6 on 9bcb5, a40e8 on a40ba) and event_object_enemy_found (a410e), and order.fight.escort, on ships far from the
+  players (3102, 3104, 3112, 3120): with equal posts the listeners themselves differ (x4mods-28's LSTN, section 79: the joiner's
+  registrations in load order). The scout 6d940 takes another target at 3069, the Split destroyer 99d18 steps apart at 3135 with
+  equal target and path, its fighter 99da1 retargets at 3180. Local: the container pilot 717c0 undocks at 3116 on the session,
+  3117 on the joiner (U::Path::UndockPathBehaviour 0x2c4e0b0, 0xe0 bytes, base ctor 0xed2a10: about 124 bytes of state, more
+  than STEER's 96 per behaviour; deferred).

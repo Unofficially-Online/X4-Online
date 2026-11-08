@@ -2586,6 +2586,34 @@ proposed and rejected.
   49,945 rows, no gate, zone or station apart) and 8.742278e-8 on the joiner (float sin(pi)). So the arrival takes another path on
   the joiner, which arrives out of travel mode: the ship's travel state is not in the package. Next: the census at T+1 for the
   whole list (--join-census, runJ1T.sh JOIN_CENSUS=1).
+  j1-371 (--join-census, the join watch on 0x92c2b and its engine 0x92c35): the census at T+1 finds one object apart, 0x92c2b; the
+  engine is equal (travel flag +0x340 off on both sides, ENGR's +0x2f0/+0x2f8 equal). The cause is in the join save: the ship's
+  <events> hold <event event="enteredgate" time="108.183" entry=.. exit=../> and <event event="warp" time="108.183" zone=..>
+  <offset><position (17 digits)/><rotation yaw="180"/></offset></event>, both due at T+1. The joiner's U::WarpEvent (vtable
+  0x2baa8c0, built by 0x9a9d00: +0x18 the zone's runtime ID, +0x20 a 0x40-byte copy of the destination transform, +0x28 a 0x40-byte
+  descriptor) is rebuilt from yaw 180, so its rotation's near-zero lanes are float sin(pi); the session's holds the arrival gate's
+  rotation. (The travel-looking fields of (2), ship +0x3ac and the block +0x11a0 .., are the transit in progress, which the warp
+  ends on both sides.) Fix: WARP (package v13 section 77, 478c1453; opt-in native_gate_join_warp): every pending WarpEvent of a
+  keyed source by (portable, place among its warps), its due time and transform; the admission writes the session's transform into
+  the joiner's event at that place (golden c6546bfc). j1-372 (WARP on, to 6000): warp=1:0:0:1:0, the record missing: a warp due at
+  T's game time is one the boot event hold swaps for a stand-in and keeps until the post-admission repost. 409b247c: a source's
+  places are its held warps first, then its tree's. j1-372's census otherwise as j1-367 (T+1 1, 3300 20, 3600 3,058, 5940 9,846):
+  more sources than the warp. At 3300, all equal at T+1: 0x92c2b's four squad mates (zone 0x4f), twelve ShipSmall of zone 0x561
+  (0x123b06 .. 0x123d1a), ShipLarge 0x9d32b (zone 0x6a), 0xa7a7a and 0xac0ed (zone 0xa2), ShipExtraLarge 0x78889 (zone 0x7f8).
+  j1-373 (409b247c): warp=1:1:0:0:0, census 0 at T+1 and 3060 (0x92c2b's squad equal: escorts of the warp ship, its save orders
+  Escort on 0x92c2b), 9 at 3120 (ShipLarges 0x9d2ec/0x9d32b, XL 0xa5e46: x4mods-67's; six ShipSmall of zone 0x561). The zone 0x561
+  ships escort the freesplit carrier 0x1235b7 (mission cue 661001). j1-374 (310ab40b, the motion watch's wings=): the carrier's
+  wingmen in order are equal on both sides at T+1 and through 3097 ([carrier, 0x123cf3, 0x123c0f, 0x123cba, 0x123b2b, 0x123bd6]); at
+  3098 one heavy fighter leaves, 0x123cf3 on the session and 0x123b2b on the joiner. j1-375 (script RNG rows 3085 .. 3100): the
+  leaver's pilot (0x123cf8 / 0x123b30) runs order.fight.escort's interrupt and goes to order.dock. j1-376 (JOIN_AIWATCH): both pilots'
+  AI contexts and timed wakes equal at T, the admission, T+1 and T+2 (the wakes far out), so the 3098 run is event-driven; j1-377
+  (EVENT_ROWs 3085 .. 3105): the timed events equal through 3098 but for created sources' runtime IDs. The first script difference
+  of the window, by tick as multisets: 3090, seven joiner-only src=4 handler rows of fight.attack.object.station/medium (and two at
+  3094), the session's order.salvage.routine draw alone. x4mods-67's in-window late join (w1z189 .. w1z193) names the mechanism: ATTN
+  writes a level of 7 or more directly, but SetAttention 0x3d5660 also keeps a per-level state (vfunc 689 against 688), so the first
+  attention update at T+1 runs a full change (ChangedAttentionEvent) and the fight scripts react; fix in progress there
+  (native_gate_join_attn_set, c28009f8 merged into this branch as 7c0a6f0e, revised next). The replay digest is apart from 3034 in
+  every late join with the census equal: destroyed temp zones the session's census still lists (x4mods-67; an artifact).
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

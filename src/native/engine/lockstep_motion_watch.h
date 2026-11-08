@@ -55,7 +55,11 @@
  * Linear
  * step also slows a formation leader for its wingmen (agent+0xf18: the
  * formation it leads, wingman agents at +0x48..+0x50): wingmen= their count,
- * wingman0= the first one's ship as a portable reference.
+ * wingman0= the first one's ship as a portable reference, wings= the first
+ * MOTION_WINGS ships' portable keys in the vector's order (rows and the leader
+ * digest) [j1-373, the late join: at 3098 the freesplit carrier 0x1235b7's
+ * formation keeps 0x123b2b on the session and 0x123cf3 on the joiner, both
+ * members at T: is its member order the joiner's load's?].
  * Rows are raw bytes without local pointers or runtime IDs: references print
  * as the portable key of the referenced component or of its nearest keyed
  * ancestor, the depth walked and the component's type (cam-B14: the target's
@@ -137,6 +141,7 @@ typedef struct {uint64_t key;unsigned klass,depth;uint32_t type;} motion_ref_t;
 typedef struct {uint64_t tick,saved;int attention;uint32_t ctrl_vt,model_vt,index,flags,path_count,path_conn,formation;
     unsigned char slot[2][0x60],cache[0x40],target[0x50],path0[0x50],model_ext[0x70],agent_ext[MOTION_AGENT_EXT],leader_ext[MOTION_AGENT_EXT],ship_ext[5];
     uint32_t wingmen;unsigned char fp[48];motion_ref_t target_ref,path_ref,leader,wingman0,parent;char dock[512];
+    uint64_t wings[8];
     uint32_t spline_count[2],spline_segments,spline_core,spline_requests,spline_obstacles;uint64_t spline_obstacle_time;unsigned char spline_progress[16];
     uint32_t flight_obstacles;uint64_t flight_avoid_time;unsigned char flight_angles[8];
     uint32_t flight_contacts_n;unsigned char flight_contacts[4][0x80];uint32_t flight_contact_fnv_n,flight_contact_fnv[64];} motion_watch_row_t;
@@ -482,6 +487,10 @@ static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t
         r->wingmen=(uint32_t)((size_t)(end-begin)/8);
         if(r->wingmen && read_local(begin,&wingman,8) && wingman && read_local(wingman+0xef0,&wingman_object,8) && wingman_object &&
            read_local(wingman_object+8,&wingman_id,8)) r->wingman0=motion_watch_ref(wingman_id);
+        for(uint32_t k=0;k<r->wingmen && k<8u;k++) {
+            unsigned char *w=NULL,*wo=NULL;uint64_t wid=0;
+            if(read_local(begin+8*k,&w,8) && w && read_local(w+0xef0,&wo,8) && wo && read_local(wo+8,&wid,8)) r->wings[k]=motion_watch_ref(wid).key;
+        }
     }
     if(read_local(agent+0xf10,&model,8) && model && read_local(model,&vt,8)) {
         r->model_vt=motion_watch_rva(vt);
@@ -561,13 +570,17 @@ static int motion_watch_row(uint64_t index,char *out,size_t cap) {
             fn+=(size_t)snprintf(fnvs+fn,sizeof(fnvs)-fn,"%s%08x",k?",":"",r->flight_contact_fnv[k]);
     } else fnvs[fn++]='-';
     fnvs[fn]=0;
+    char wings[8*17+2];size_t wn=0;
+    for(uint32_t k=0;k<r->wingmen && k<8u;k++) wn+=(size_t)snprintf(wings+wn,sizeof(wings)-wn,"%s%016llx",k?",":"",(unsigned long long)r->wings[k]);
+    if(!wn) wings[wn++]='-';
+    wings[wn]=0;
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx attention=%d ctrl=%08x model=%08x flags=%u cur=%s prev=%s cache=%s target=%s "
         "target_ref=%s path=%u path0=%s path0_ref=%s/%u model_ext=%s agent_ext=%s formation=%u leader=%s leader_ext=%s ship_ext=%s wingmen=%u wingman0=%s fp=%s "
-        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx flight=%u/%016llx/%s contacts=%s contact_fnv=%s",
+        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx flight=%u/%016llx/%s contacts=%s contact_fnv=%s wings=%s",
         (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,r->attention,r->ctrl_vt,r->model_vt,r->flags,
         cur,prev,cache,target,target_ref,r->path_count,path0,path_ref,r->path_conn,model_ext,agent_ext,r->formation,leader,leader_ext,ship_ext,r->wingmen,wingman0,fp,
         parent,r->dock[0]?r->dock:"-",r->spline_count[0],r->spline_count[1],r->spline_segments,r->spline_core,progress,r->spline_requests,r->spline_obstacles,
-        (unsigned long long)r->spline_obstacle_time,r->flight_obstacles,(unsigned long long)r->flight_avoid_time,angles,contacts,fnvs);
+        (unsigned long long)r->spline_obstacle_time,r->flight_obstacles,(unsigned long long)r->flight_avoid_time,angles,contacts,fnvs,wings);
     return n>0 && (size_t)n<cap?n:0;
 }
 /* FNV-1a 32 of field groups (motion_fnv, above); references by their fields (no struct padding). */
@@ -587,6 +600,7 @@ static int motion_watch_digest(uint64_t index,char *out,size_t cap) {
     uint32_t agent=motion_fnv(motion_fnv(basis,r->agent_ext,MOTION_AGENT_EXT),r->ship_ext,5);
     uint32_t leader=motion_fnv(basis,&r->formation,4);leader=motion_fnv_ref(motion_fnv(leader,r->leader_ext,MOTION_AGENT_EXT),r->leader);
     leader=motion_fnv_ref(motion_fnv(leader,&r->wingmen,4),r->wingman0);
+    if(r->wingmen) leader=motion_fnv(leader,r->wings,8u*(r->wingmen<8u?r->wingmen:8u));   /* the order */
     /* Spline ships (flag 4096): the segments, the rest of the model's state, the request deque's size, the obstacle cache; 0 otherwise. */
     const int spline=(r->flags&4096u)!=0;
     uint32_t segments=spline?motion_fnv(motion_fnv(basis,r->spline_count,8),&r->spline_segments,4):0,core=spline?r->spline_core:0;

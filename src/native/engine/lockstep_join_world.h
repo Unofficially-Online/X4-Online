@@ -1512,26 +1512,50 @@ static float join_gravp_dist(const unsigned char *own,const unsigned char *want)
     const float dx=a[0]-b[0],dy=a[1]-b[1],dz=a[2]-b[2],d2=dx*dx+dy*dy+dz*dz;
     return d2==d2?sqrtf(d2):INFINITY;   /* NaN counts as far */
 }
-static int join_gravp_low_attention(const join_tables *s,uint64_t portable) {
+/* GRAVP settled (native_gate_join_gravp_settled, opt-in): the late join (T=3033; j1-381..384, gravidar post rows): the session keeps
+ * the published pose of some objects of attention 3..5 stale as well, both views equal (miner 0x95f9a in travel mode, attention 5:
+ * its settled pose 33 km behind its live one; 0x74ef1 and 0x8fbb8 at 5, 0x80fc5 at 3). The restore above left them to the joiner,
+ * whose load published the live pose in the first frames: from 3037 its radar units dropped 0x95f9a (and the contacts of observer
+ * 0x74ef1) where the session's kept them, the joiner alone ran the fight scripts' event_gravidar_has_scanned handlers, and the
+ * zone 0x561 escorts parted at 3092. With the option, a GRAVP object whose two views the session had equal, and every VIEWP object
+ * (settled by definition), is restored below attention JOIN_GRAVP_SETTLED_KEEP too; an object in flight (its views apart) stays
+ * under JOIN_VIEWF_KEEP. Attention 6 and more stay with the joiner (j1-88: published every frame). */
+#define JOIN_GRAVP_SETTLED_KEEP 6u
+static int join_gravp_settled_on;
+static int join_gravp_attention_below(const join_tables *s,uint64_t portable,uint32_t keep) {
     uint32_t lo=0,hi=s->nviewf;
     while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(s->viewf[mid].portable<portable) lo=mid+1u;else hi=mid;}
     if(lo>=s->nviewf || s->viewf[lo].portable!=portable) return 0;   /* unknown: left to the joiner */
-    return s->viewf[lo].attention[0]<JOIN_VIEWF_KEEP && (s->viewf[lo].attention[1]&~JOIN_VIEWF_INFLIGHT)<JOIN_VIEWF_KEEP;
+    return s->viewf[lo].attention[0]<keep && (s->viewf[lo].attention[1]&~JOIN_VIEWF_INFLIGHT)<keep;
 }
+static int join_gravp_low_attention(const join_tables *s,uint64_t portable) {return join_gravp_attention_below(s,portable,JOIN_VIEWF_KEEP);}
+/* GRAVP records are sorted by (portable, rel): the object's two views, both present and equal. */
+static int join_gravp_views_equal(const join_tables *s,uint32_t i) {
+    const join_gravp_rec *a=&s->gravp[i],*b=NULL;
+    if(i+1u<s->ngravp && s->gravp[i+1u].portable==a->portable) b=&s->gravp[i+1u];
+    else if(i && s->gravp[i-1u].portable==a->portable) b=&s->gravp[i-1u];
+    return b && b->rel!=a->rel && (a->flags&b->flags&JOIN_GRAVP_PRESENT) && !memcmp(a->pose,b->pose,sizeof(a->pose));
+}
+static uint64_t join_gravp_settled_extra;   /* status gravp_settled=on:entries beyond the low-attention ones */
 static void join_gravp_settled_build(const join_tables *s,const join_tables *mine) {
     const uint32_t cur=join_view_index();
     free(join_gravp_set);join_gravp_set=NULL;join_gravp_nset=join_gravp_setcap=0;join_gravp_restored=join_gravp_checked=join_gravp_gone=join_gravp_moved=0;
-    join_gravp_moved_pose=0;memset(join_gravp_first,0,sizeof(join_gravp_first));
+    join_gravp_moved_pose=0;memset(join_gravp_first,0,sizeof(join_gravp_first));join_gravp_settled_extra=0;
     for(uint32_t i=0;i<s->ngravp;i++) {
         const join_gravp_rec *a=&s->gravp[i];
-        if(!(a->flags&JOIN_GRAVP_PRESENT) || a->rel>1u || !join_gravp_low_attention(s,a->portable)) continue;
+        if(!(a->flags&JOIN_GRAVP_PRESENT) || a->rel>1u) continue;
+        const int low=join_gravp_low_attention(s,a->portable);
+        if(!low && !(join_gravp_settled_on && join_gravp_views_equal(s,i) && join_gravp_attention_below(s,a->portable,JOIN_GRAVP_SETTLED_KEEP))) continue;
         const uint64_t runtime=join_runtime_of(mine,a->portable);
         join_gravp_settled e={runtime,cur^a->rel,0u,a->pose,NULL,{0},0};
         if(runtime && !JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) return;
+        if(runtime && !low) ++join_gravp_settled_extra;
     }
     for(uint32_t i=0;i<s->nviewp;i++) {   /* VIEWP: the other zone-held objects' settled poses, both slots */
-        if(!join_gravp_low_attention(s,s->viewp[i].portable)) continue;
+        const int low=join_gravp_low_attention(s,s->viewp[i].portable);
+        if(!low && !(join_gravp_settled_on && join_gravp_attention_below(s,s->viewp[i].portable,JOIN_GRAVP_SETTLED_KEEP))) continue;
         const uint64_t runtime=join_runtime_of(mine,s->viewp[i].portable);
+        if(runtime && !low) join_gravp_settled_extra+=2u;
         for(uint32_t v=0;v<2u && runtime;v++) {
             join_gravp_settled e={runtime,v,0u,s->viewp[i].pose,NULL,{0},0};
             if(!JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) return;

@@ -144,7 +144,7 @@ static void test_motion_watch(void) {
         memset(led,0,sizeof(led));memset(wingman_agent,0,sizeof(wingman_agent));wingmen[0]=wingman_agent;wingmen[1]=wingman_agent;
         void *wb=&wingmen[0],*we=&wingmen[2];memcpy(led+0x48,&wb,8);memcpy(led+0x50,&we,8);p=led;memcpy(test_mw_agent+0xf18,&p,8);
         p=test_mw_station;memcpy(wingman_agent+0xef0,&p,8); /* wingman ship: id 0x3edc2 (saved 0x123456) */
-        assert(motion_watch_read(test_mw_object,0xa214c,8,&r,NULL) && r.wingmen==2 && r.wingman0.key==0x123456 && !r.wingman0.depth);
+        assert(motion_watch_read(test_mw_object,0xa214c,8,&r,NULL) && r.wingmen==2 && r.wingman0.key==0x123456 && !r.wingman0.depth && r.wings[0]==0x123456 && r.wings[1]==0x123456 && !r.wings[2]);
         memset(test_mw_agent+0xf18,0,8);
         memset(formation+0x48,0,8);assert(motion_watch_read(test_mw_object,0xa214c,8,&r,NULL) && r.formation==1 && !(r.flags&128) && !r.leader.key);
         memset(formation+0x48,0,8);memcpy(formation+0x48,&ps,8);
@@ -161,7 +161,7 @@ static void test_motion_watch(void) {
     assert(motion_watch_read(test_mw_object,0xa214c,12,&ring[0],NULL));
     assert(strstr(out,"fcfdfeff000000000000000008090a"));
     assert(strstr(out," target_ref=0000000000123456/0/2/2b6e910 path=2 path0=0000000000000000000000000000000040414243"));
-    assert(strstr(out," path0_ref=00000000000a214c/0/0/ffffffff/1") && strstr(out," ship_ext=0000c04201 wingmen=0 wingman0=0000000000000000/2/0/0") && strlen(out)<2400);
+    assert(strstr(out," path0_ref=00000000000a214c/0/0/ffffffff/1") && strstr(out," ship_ext=0000c04201 wingmen=0 wingman0=0000000000000000/2/0/0") && strstr(out," wings=-") && strlen(out)<2400);
     assert(!motion_watch_row(1,out,sizeof(out)));
     { /* The Steering group: a constructor draw alone parts flight=. */
         char a[512],b[512];ring[1]=ring[0];ring[1].flight_angles[0]^=1;motion_watch_rows=2;

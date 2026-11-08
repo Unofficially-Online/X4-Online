@@ -95,6 +95,8 @@ static int lua_join_pcsv(lua_State *L) {join_pcsv_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_conn(lua_State *L) {join_conn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_warp(on): a joiner takes the session's pending warps' destinations (WARP, default off). */
 static int lua_join_warp(lua_State *L) {join_warp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_gravp_settled(on): GRAVP settled, the restore after T+1 also takes settled objects below attention 6 (default off). */
+static int lua_join_gravp_settled(lua_State *L) {join_gravp_settled_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_porders(on): PORD, the joiner drops the pathing manager's queued Path orders at the admission's end (default off). */
 static int lua_join_porders(lua_State *L) {join_pord_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_bp(rva): JOIN_BP's one-shot int3 at that image RVA (hex text), armed at the admission's end (diagnostic); 1, 0 refused. */

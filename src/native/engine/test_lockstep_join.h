@@ -3008,6 +3008,40 @@ static void test_join_gravp_restore(void) {
     join_world_find=find;join_world_map=map;
     printf("join GRAVP restore: the session's pose left, the load's first publication mended however far, a later new one dropped for good PASS\n");
 }
+/* GRAVP settled (j1-381..384): which session poses the restore after T+1 takes, with and without native_gate_join_gravp_settled. */
+static void test_join_gravp_settled(void) {
+    static join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));
+    static join_gravp_rec g[8];memset(g,0,sizeof(g));
+    static join_viewf_rec f[5];memset(f,0,sizeof(f));
+    static join_viewp_rec vp[1];memset(vp,0,sizeof(vp));
+    static join_id_rec ids[5];memset(ids,0,sizeof(ids));
+    const uint32_t attention[5]={5,5,1,6,5};   /* 0x10 settled at 5, 0x11 in flight at 5, 0x12 settled at 1, 0x13 settled at 6, 0x14 VIEWP at 5 */
+    for(unsigned k=0;k<5;k++) {
+        f[k].portable=0x10u+k;f[k].attention[0]=attention[k];f[k].attention[1]=attention[k];
+        ids[k].portable=0x10u+k;ids[k].runtime=0x100u+k;
+    }
+    for(unsigned k=0;k<4;k++) for(unsigned r=0;r<2;r++) {
+        join_gravp_rec *e=&g[2*k+r];e->portable=0x10u+k;e->rel=r;e->flags=JOIN_GRAVP_PRESENT;
+        for(unsigned i=0;i<sizeof(e->pose);i++) e->pose[i]=(unsigned char)(k*7u+i+(k==1u?r:0u));   /* 0x11's views differ */
+    }
+    vp[0].portable=0x14;memset(vp[0].pose,0x33,sizeof(vp[0].pose));
+    s.gravp=g;s.ngravp=8;s.viewf=f;s.nviewf=5;s.viewp=vp;s.nviewp=1;mine.ids=ids;mine.nids=5;
+    assert(join_gravp_shape(g,8) && join_gravp_views_equal(&s,0) && join_gravp_views_equal(&s,1) && !join_gravp_views_equal(&s,2) &&
+           !join_gravp_views_equal(&s,3) && join_gravp_views_equal(&s,4));
+    join_gravp_settled_on=0;join_gravp_settled_build(&s,&mine);
+    assert(join_gravp_nset==2 && join_gravp_set[0].runtime==0x102 && join_gravp_set[1].runtime==0x102 && !join_gravp_settled_extra);
+    join_gravp_settled_on=1;join_gravp_settled_build(&s,&mine);
+    assert(join_gravp_nset==6 && join_gravp_settled_extra==4);
+    unsigned n10=0,n12=0,n14=0;
+    for(uint32_t i=0;i<join_gravp_nset;i++) {
+        const uint64_t r=join_gravp_set[i].runtime;n10+=r==0x100;n12+=r==0x102;n14+=r==0x104;
+        assert(r!=0x101 && r!=0x103);   /* in flight at 5, settled at 6: the joiner's */
+    }
+    assert(n10==2 && n12==2 && n14==2);
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," gravp_settled=1:4 "));}
+    join_gravp_settled_on=0;free(join_gravp_set);join_gravp_set=NULL;join_gravp_nset=join_gravp_setcap=0;join_gravp_settled_extra=0;
+    printf("join GRAVP settled: settled poses below attention 6 restored with the option, in-flight and attention 6 left PASS\n");
+}
 /* CODE over the in-window resume: the counter held from begin to end (the codes the rebuild drew counted, the counter put back);
  * without CODE nothing happens. */
 static void test_join_code_hold(void) {
@@ -3306,5 +3340,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();
 }

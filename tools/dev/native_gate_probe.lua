@@ -346,6 +346,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_warp then   -- a joiner takes the session's pending warps' destinations (WARP)
   assert(gate.join_warp and gate.join_warp(1)==1,'join warp refused')
  end
+ if cfg.native_gate_join_gravp_settled then   -- GRAVP settled: settled poses below attention 6 restored too (gravp_settled=)
+  assert(gate.join_gravp_settled and gate.join_gravp_settled(1)==1,'join gravp settled refused')
+ end
  if cfg.native_gate_join_porders then   -- PORD: the joiner drops the queued Path orders its load left (pord=)
   assert(gate.join_porders and gate.join_porders(1)==1,'join porders refused')
  end
