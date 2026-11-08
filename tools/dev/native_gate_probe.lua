@@ -346,6 +346,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_warp then   -- a joiner takes the session's pending warps' destinations (WARP)
   assert(gate.join_warp and gate.join_warp(1)==1,'join warp refused')
  end
+ if cfg.native_gate_join_srcs then   -- SRCS: each keyed listener's sources as the session's (srcs=)
+  assert(gate.join_srcs and gate.join_srcs(1)==1,'join srcs refused')
+ end
  if cfg.native_gate_join_lstn then   -- LSTN: the script listeners in the session's order per event source and type (lstn=)
   assert(gate.join_lstn and gate.join_lstn(1)==1,'join lstn refused')
  end

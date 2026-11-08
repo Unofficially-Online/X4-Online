@@ -2889,7 +2889,21 @@ static size_t join_lstn_dump(char *out,size_t cap,char side,uint64_t tick,uint64
                 unsigned char *l=NULL;uint64_t ow=0,sc=0;
                 if(!join_read((void *)(lv[0]+8u*k),&l,8)) continue;
                 const unsigned kind=join_lstn_key(&e,l,&ow,&sc);
-                at+=(size_t)snprintf(out+at,cap-at,"%u.%llx.%08x;",kind,(unsigned long long)ow,(uint32_t)sc);
+                at+=(size_t)snprintf(out+at,cap-at,"%u.%llx.%08x",kind,(unsigned long long)ow,(uint32_t)sc);
+                /* the listener's own sources (+0x38..+0x40, AddSource 0xc9ce30 / RemoveSource 0xc9d070) as keys, '!' when this
+                 * source is not among them (a registration its context does not know) */
+                uintptr_t s[2]={0,0};
+                if(kind && kind<3u && join_read(l+0x38,s,16) && s[1]>=s[0] && !((s[1]-s[0])&7u) && (s[1]-s[0])/8u<=64u) {
+                    int has=0;at+=(size_t)snprintf(out+at,cap-at,"{");
+                    for(uintptr_t q=s[0];q<s[1] && at+64<cap;q+=8u) {
+                        unsigned char *x=NULL;uint64_t rt=0;unsigned klass;
+                        if(!join_read((void *)q,&x,8) || !x) continue;
+                        if(x==o) has=1;
+                        if(q<s[0]+64u && join_read(x+8,&rt,8)) at+=(size_t)snprintf(out+at,cap-at,"%llx,",(unsigned long long)(rt?join_key(rt,&klass):0));
+                    }
+                    at+=(size_t)snprintf(out+at,cap-at,"}%s",has?"":"!");
+                }
+                at+=(size_t)snprintf(out+at,cap-at,";");
             }
             at+=(size_t)snprintf(out+at,cap-at,"|");
         }
@@ -4599,6 +4613,125 @@ static void join_admit_lstn(const join_tables *s,const join_tables *mine) {
         i=j;
     }
 }
+/* SRCS (v13, section 81; opt-in native_gate_join_srcs on the joiner; in-window report 57, w1z202): a listener (AIScriptContext,
+ * AICallStackContext, a component) keeps the objects it listens on at +0x38..+0x48; AddSource 0xc9ce30(listener, source, reserve,
+ * force) appends one and registers the listener there for its fixed types (0xed, 0x1da; 0x52 when the source is of class 0x2c)
+ * and every type of its tree +0x50, RemoveSource 0xc9d070(listener, source) erases it and drops the listener from each of the
+ * source's vectors (0x999ef0), and AddScriptListener 0xc9d0e0 adds a type on every source it has. A script that listens on its
+ * ship's sector keeps the sector of its start: the session's pilot 0x9327c (move.gate) hears sector 0x26's signal at 3061 after
+ * its jump into 0x37, the joiner's load registered it on 0x37 (its signal at 3074). The saver records each keyed listener's
+ * sources by portable ID; the joiner removes the ones the session's lacks and adds the session's it lacks, with the engine's own
+ * pair, before LSTN orders the vectors. Listeners two share a key with are left (dup), a context whose sources include one
+ * without a key too (unmapped). Status srcs=on:contexts:added:removed:equal:missing:dup:unmapped srcs_cap=. */
+#define JOIN_SRCS_AT 0x38u
+#define JOIN_SRCS_MAX 256u
+#define JOIN_SRCS_ADD 0xc9ce30u
+#define JOIN_SRCS_REMOVE 0xc9d070u
+enum {JOIN_SRCS_UNMAPPED=1u};
+typedef struct {uint64_t owner,script;uint32_t kind,dup;unsigned char *ctx;} join_srcs_ctx;
+static int join_srcs_on;
+static uint64_t join_srcs_contexts,join_srcs_added,join_srcs_removed,join_srcs_equal,join_srcs_missing,join_srcs_dup,join_srcs_unmapped;
+static uint32_t join_srcs_capn;
+static void join_srcs_add_native(unsigned char *ctx,unsigned char *source) {
+    ((unsigned char (*)(void *,void *,uint64_t,unsigned char))(void *)(image+JOIN_SRCS_ADD))(ctx,source,0,0);
+}
+static void join_srcs_remove_native(unsigned char *ctx,unsigned char *source) {((void (*)(void *,void *))(void *)(image+JOIN_SRCS_REMOVE))(ctx,source);}
+static void (*join_srcs_add)(unsigned char *,unsigned char *)=join_srcs_add_native;      /* tests replace them */
+static void (*join_srcs_remove)(unsigned char *,unsigned char *)=join_srcs_remove_native;
+static int join_srcs_key_cmp(const join_srcs_ctx *x,const join_srcs_ctx *y) {
+    if(x->kind!=y->kind) return x->kind<y->kind?-1:1;
+    if(x->owner!=y->owner) return x->owner<y->owner?-1:1;
+    return x->script<y->script?-1:x->script>y->script;
+}
+static int join_srcs_ctx_cmp(const void *a,const void *b) {return join_srcs_key_cmp(a,b);}
+static int join_srcs_ptr_cmp(const void *a,const void *b) {uintptr_t x=*(const uintptr_t *)a,y=*(const uintptr_t *)b;return x<y?-1:x>y;}
+/* A source's portable ID (0: not a keyed component). */
+static uint64_t join_srcs_portable(unsigned char *x) {
+    uint64_t runtime=0;unsigned klass;
+    return x && join_read(x+8,&runtime,8) && runtime && join_object(runtime)==x?join_key(runtime,&klass):0;
+}
+/* A listener's sources (at most JOIN_SRCS_MAX): their count, -1 unreadable. */
+static int join_srcs_of(unsigned char *ctx,unsigned char **out) {
+    uintptr_t s[2]={0,0};
+    if(!join_read(ctx+JOIN_SRCS_AT,s,16) || s[1]<s[0] || (s[1]-s[0])&7u || (s[1]-s[0])/8u>JOIN_SRCS_MAX) return -1;
+    const int n=(int)((s[1]-s[0])/8u);
+    return n && !join_read((void *)s[0],out,(size_t)n*8u)?-1:n;
+}
+/* Every keyed listener on a keyed source of the table, once, sorted by key; dup: another listener has its key. */
+static join_srcs_ctx *join_srcs_listeners(const join_tables *t,uint32_t *count) {
+    const join_engine e=join_lstn_engine();uintptr_t *ptrs=NULL;uint32_t np=0,cap=0;*count=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL;uintptr_t table=0,v[2]={0,0};
+        if(!o || !join_read(o+JOIN_LSTN_TABLE,&table,8) || !table || !join_read((void *)table,v,16) || v[1]<v[0] ||
+           (v[1]-v[0])%JOIN_LSTN_ENTRY || (v[1]-v[0])/JOIN_LSTN_ENTRY>4096u) continue;
+        for(uintptr_t p=v[0];p<v[1];p+=JOIN_LSTN_ENTRY) {
+            uintptr_t lv[2]={0,0};
+            if(!join_read((void *)(p+8),lv,16) || lv[1]<lv[0] || (lv[1]-lv[0])&7u || (lv[1]-lv[0])/8u>65536u) continue;
+            for(uintptr_t q=lv[0];q<lv[1];q+=8u) {
+                uintptr_t l=0;
+                if(join_read((void *)q,&l,8) && l && !JOIN_PUSH(ptrs,np,cap,l)) {free(ptrs);return NULL;}
+            }
+        }
+    }
+    if(np>1) qsort(ptrs,np,sizeof(*ptrs),join_srcs_ptr_cmp);
+    join_srcs_ctx *c=np?malloc((size_t)np*sizeof(*c)):NULL;uint32_t n=0;
+    if(np && !c) {free(ptrs);return NULL;}
+    for(uint32_t i=0;i<np;i++) {
+        if(i && ptrs[i]==ptrs[i-1]) continue;
+        join_srcs_ctx x;memset(&x,0,sizeof(x));x.ctx=(unsigned char *)ptrs[i];
+        x.kind=join_lstn_key(&e,x.ctx,&x.owner,&x.script);
+        if(x.kind && x.kind<=3u && x.owner) c[n++]=x;
+    }
+    free(ptrs);
+    if(n>1) qsort(c,n,sizeof(*c),join_srcs_ctx_cmp);
+    for(uint32_t i=1;i<n;i++) if(!join_srcs_key_cmp(&c[i-1],&c[i])) c[i-1].dup=c[i].dup=1u;
+    *count=n;return c;
+}
+static void join_capture_srcs(join_tables *t) {
+    uint32_t n=0;join_srcs_ctx *c=join_srcs_listeners(t,&n);static unsigned char *src[JOIN_SRCS_MAX];
+    join_srcs_capn=0;
+    for(uint32_t i=0;c && i<n;i++) {
+        const int ns=c[i].dup?-1:join_srcs_of(c[i].ctx,src);
+        for(int k=0;k<ns;k++) {
+            join_srcs_rec r;memset(&r,0,sizeof(r));r.kind=c[i].kind;r.owner=c[i].owner;r.script=c[i].script;r.index=(uint32_t)k;
+            r.source=join_srcs_portable(src[k]);if(!r.source) r.flags=JOIN_SRCS_UNMAPPED;
+            if(!JOIN_PUSH(t->srcs,t->nsrcs,join_srcs_capn,r)) {free(c);return;}
+        }
+    }
+    free(c);
+}
+static int join_srcs_has(unsigned char *const *v,int n,const unsigned char *x) {for(int k=0;k<n;k++) if(v[k]==x) return 1;return 0;}
+static void join_admit_srcs(const join_tables *s,const join_tables *mine) {
+    join_srcs_contexts=join_srcs_added=join_srcs_removed=join_srcs_equal=join_srcs_missing=join_srcs_dup=join_srcs_unmapped=0;
+    if(!join_srcs_on || !s->nsrcs) return;
+    uint32_t n=0;join_srcs_ctx *c=join_srcs_listeners(mine,&n);
+    if(!c) return;
+    static unsigned char *want[JOIN_SRCS_MAX],*have[JOIN_SRCS_MAX];
+    for(uint32_t i=0;i<s->nsrcs;) {
+        const join_srcs_rec *g=&s->srcs[i];uint32_t j=i+1u;
+        while(j<s->nsrcs && s->srcs[j].kind==g->kind && s->srcs[j].owner==g->owner && s->srcs[j].script==g->script) ++j;
+        ++join_srcs_contexts;
+        join_srcs_ctx key;memset(&key,0,sizeof(key));key.kind=g->kind;key.owner=g->owner;key.script=g->script;
+        const join_srcs_ctx *f=n?bsearch(&key,c,n,sizeof(*c),join_srcs_ctx_cmp):NULL;
+        if(!f) {++join_srcs_missing;i=j;continue;}
+        if(f->dup) {++join_srcs_dup;i=j;continue;}
+        int nw=0,bad=0;
+        for(uint32_t k=i;k<j;k++) {
+            unsigned char *x=s->srcs[k].flags&JOIN_SRCS_UNMAPPED?NULL:join_object(join_runtime_of(mine,s->srcs[k].source));
+            if(!x || nw>=(int)JOIN_SRCS_MAX) {bad=1;break;}
+            want[nw++]=x;
+        }
+        const int nh=bad?-1:join_srcs_of(f->ctx,have);
+        for(int k=0;k<nh && !bad;k++) if(!join_srcs_portable(have[k])) bad=1;
+        if(bad || nh<0) {++join_srcs_unmapped;i=j;continue;}
+        int changed=0;
+        for(int k=0;k<nh;k++) if(!join_srcs_has(want,nw,have[k])) {join_srcs_remove(f->ctx,have[k]);++join_srcs_removed;changed=1;}
+        for(int k=0;k<nw;k++) if(!join_srcs_has(have,nh,want[k])) {join_srcs_add(f->ctx,want[k]);++join_srcs_added;changed=1;}
+        if(!changed) ++join_srcs_equal;
+        i=j;
+    }
+    free(c);
+}
 static int join_bnds_on;
 static uint64_t join_bnds_written,join_bnds_equal,join_bnds_missing;
 #define JOIN_BNDS_GETTER 0x7eb460u   /* the station's vfunc 0x14b0: lea rax,[rcx+0xc90] */
@@ -5461,6 +5594,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_conn(t);            /* version 13: the NPCs' connected connections */
     join_capture_warp(t);            /* version 13: the pending warps' destinations */
     join_capture_lstn(t);            /* version 13: the script listeners' order per event source and type */
+    join_capture_srcs(t);            /* version 13: the listeners' sources */
     if(t->npcsv>1) qsort(t->pcsv,t->npcsv,sizeof(*t->pcsv),join_solver_cmp);   /* version 13: the PlayerControllers' solvers */
     for(uint32_t i=1;i<t->npcsv;i++) if(t->pcsv[i].portable==t->pcsv[i-1].portable) return join_note("pcsv_duplicate,id=%llx",(unsigned long long)t->pcsv[i].portable);
     join_sort_omgs(t);               /* version 13: OMGS, taken in the FLIGHT walk */
@@ -7273,6 +7407,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_noct(s,&mine);   /* the nav octree's index table and hidden keys */
     if(s->version>=13) join_admit_agtt(s,&mine);   /* the Agents' times the load resets */
     if(s->version>=13) join_admit_ares(s,&mine);   /* the Agents' result banks (opt-in) */
+    if(s->version>=13) join_admit_srcs(s,&mine);   /* the listeners' sources (opt-in), before their order */
     if(s->version>=13) join_admit_lstn(s,&mine);   /* the script listeners' order (opt-in) */
     if(s->version>=13) join_admit_agcb(s,&mine);   /* the pilot slot ships' command and probe blocks */
     if(s->version>=13) join_admit_pbnk(s,&mine);   /* the pilot slot ships' pathing state banks */

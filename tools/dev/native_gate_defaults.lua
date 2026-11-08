@@ -303,6 +303,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_pcsv','hot join: a joiner takes the session PlayerControllers own motion solvers its load rebuilds (PCSV)'},
  {'native_gate_join_conn','hot join: a joiner connects the NPC connections a waiting ship load leaves without a partner (CONN)'},
  {'native_gate_join_warp','hot join: a joiner takes the session pending warps destinations its load rebuilds from angles (WARP)'},
+ {'native_gate_join_srcs','hot join: each keyed event listener gets the session sources (SRCS)'},
  {'native_gate_join_lstn','hot join: the joiner orders each event source script listeners as the session (LSTN)'},
  {'native_gate_join_gravp_settled','hot join: the published pose restore also takes settled objects below attention 6 (GRAVP settled)'},
  {'native_gate_join_porders','hot join: the joiner drops the pathing manager queued Path orders at the admission (PORD)'},

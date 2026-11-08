@@ -1160,3 +1160,17 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
 - UNDK (package v13 section 80, opt-in native_gate_join_undk): per steering Agent whose active behaviour is of that class, the
   bytes +0x10 .. +0xd7, the ID +0x18 as a portable, the two vtables as image RVAs; the admission writes them after STEER into
   the joiner's behaviour of the same class (+0xd8 stays the joiner's). Status undk=on:written:equal:missing:unmapped undk_cap=.
+- The move.gate signal of w1z202 (0x9327c at 3061 / 3074) is one listener on another source on each side: the pilot 0x9327c
+  (ship 0x93277 in zone 0x3d, sector 0x37 at T+1 on both sides) hears event_object_signalled of sector 0x26 at 3061 on the
+  session (17 listeners, outermost) and not on the joiner (the other 16 equal), and that of sector 0x37 at 3074 on the joiner
+  only (nested in the signaller). The session's handler stays registered on the sector of before its gate jump, the joiner's
+  load registers it on the current one: LSTN orders within a source (w1z205: lstn missing 5, partial 57) and does not move a
+  listener between sources (to x4mods-28, LSTN's owner).
+- A listener (AIScriptContext, AICallStackContext, a component) keeps the objects it listens on at +0x38..+0x48: AddSource
+  0xc9ce30(listener, source, reserve, force) appends one and registers the listener there for the fixed types 0xed and 0x1da
+  (0x52 on a source of class 0x2c) and every type of its tree +0x50; RemoveSource 0xc9d070 erases it and drops the listener from
+  each of the source's vectors (0x999ef0); AddScriptListener 0xc9d0e0 adds a type on every source the listener has. SRCS
+  (package v13 section 81, opt-in native_gate_join_srcs): each keyed listener's sources by portable ID; the joiner removes the
+  ones the session's lacks and adds the ones it lacks through that pair, before LSTN orders the vectors (both pinned). Status
+  srcs=on:contexts:added:removed:equal:missing:dup:unmapped. The JOIN_LSTN dump prints each listener's own sources ({..}, '!'
+  where the dumped source is not among them).
