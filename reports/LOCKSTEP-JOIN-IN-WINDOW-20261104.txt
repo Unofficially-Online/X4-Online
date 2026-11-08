@@ -1286,3 +1286,10 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   1800.033). At the zone change the engine hands the Linear model a relative transform (its vtable slot 7, 0xe84ea0, re-expresses
   the plan's +0x70 by the matrix in rdx): next, that matrix for the watched ships on both sides, to tell the zones' transforms
   as the re-parent sees them (a lazily built world-transform cache in the zone's controller?) from the ship's own input.
+- w1z227/w1z228 (cdde1d85/54361c6a: JOIN_RPRT, the Linear model's vtable slot 7 hooked, with a summary row; 99d18 in the join and
+  motion watch): the hook is installed and slot 7 runs (533 calls by 3143 over all linear models), never for 99d18: its zone
+  change does not re-express its plan through it. Per tick: 99d18 is updated every fifth tick (3126, 3131, 3136, equal through
+  3131); at 3135 its zone change rewrites both pathing banks and the controller cache (cur, prev, cache; parent and Agent change;
+  no new plan, model_ext unchanged), and both banks come out apart: the NavigationController's re-expression of its banks into
+  the new zone, from equal inputs. x4mods-28's J1 0x9d2ec (no zone change) parts at its first turning update after a new plan,
+  ulps in rotation with equal watched inputs: the same symptom on another path.
