@@ -163,6 +163,9 @@ static int gravidar_boot_drain(void);
 static int gravidar_installed,gravidar_restored;
 static volatile int gravidar_time_sync;
 static volatile int64_t gravidar_failures,gravidar_key_failures,gravidar_time_failures;
+static int travel_inline_installed;
+static void lxt_inline_restore(void);
+static int lxt_inline_owned(void);
 static void tsnap_restore(void);
 static int tsnap_owned(void);
 static int tsnap_installed;
@@ -436,7 +439,7 @@ static int gate_sites_owned(void) {
     unsigned __int128 window;double speed;
     memcpy(&window,LX(LX_CALL_WINDOW),16);memcpy(&speed,LX(LX_SPEED_VA),8);
     return window==call_patched && dt_state()==DT_FIXED && !*(volatile unsigned char*)LX(LX_MOVIE_FLAG_VA) && speed==1.0 &&
-           world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned();
+           world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && lxt_inline_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned();
 }
 static void finish(unsigned reason) {
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
@@ -511,6 +514,8 @@ static void finish(unsigned reason) {
     if(script_rng_armed && !script_rng_restored) stats.restored=0;
     gdl_restore();
     if(gdl_armed && !gdl_restored) stats.restored=0;
+    lxt_inline_restore();
+    if(travel_inline_installed) stats.restored=0;
     tsnap_restore();
     if(tsnap_installed) stats.restored=0;
     rid_restore();
@@ -691,6 +696,7 @@ static void lxb_thunk_write(unsigned char *page);
 static void lxe_thunk_write(unsigned char *page);
 static void lxg_thunk_write(unsigned char *page);
 static void lxt_thunk_write(unsigned char *page);
+static void lxt_inline_thunk_write(unsigned char *page);
 static void lxi_thunk_write(unsigned char *page);
 static void lxs_thunk_write(unsigned char *page);
 static void lxo_thunk_write(unsigned char *page);
@@ -709,6 +715,7 @@ static unsigned char *make_thunk(void) {
     lxb_thunk_write(p); /* AIDirector::Move (gate_boot_hold.h), likewise */
     lxe_thunk_write(p); /* the event delivery call (gate_event_order.h), likewise */
     lxg_thunk_write(p); /* the MoveWorker's Gravidar publish (gate_gravidar.h), likewise */
+    lxt_inline_thunk_write(p);
     lxt_thunk_write(p); /* the batch job (gate_travel_snapshot.h), likewise */
     lxi_thunk_write(p); /* the ID map's Remove (gate_runtime_ids.h), likewise */
     lxs_thunk_write(p); /* the script entries (gate_script_rng.h), likewise */
@@ -793,6 +800,7 @@ static int lua_start(lua_State *L) {
 #include "gate_gravidar.h"
 #include "gate_gravidar_deadlines.h"
 #include "gate_travel_snapshot.h"
+#include "gate_travel_determinism.h"
 #include "gate_runtime_ids.h"
 #include "gate_fork_save.h"
 #include "gate_weapon_fire.h"
@@ -908,7 +916,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(sha256);METHOD(start);METHOD(boot);METHOD(load_requested);METHOD(report);METHOD(poll);METHOD(stop);
     METHOD(frame_timing);METHOD(qpc_us);METHOD(tick_rate);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(peer_links);METHOD(peer_status);METHOD(wire_crypto);METHOD(wire_crypto_status);
     METHOD(platform);METHOD(verify_stage);
-    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);
+    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
@@ -920,6 +928,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(ai_schedule);METHOD(ai_schedule_status);METHOD(ai_schedule_fallbacks);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
     METHOD(travel_snapshot);METHOD(travel_snapshot_status);
+    METHOD(travel_determinism);METHOD(travel_determinism_status);
     METHOD(runtime_ids);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_callers);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);
     METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(attention_all);METHOD(attention_all_status);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(read_cost);METHOD(fork_save);METHOD(fork_save_status);METHOD(fp_redirect_drones);METHOD(fp_attack);METHOD(fp_attack_watch);METHOD(fp_attack_status);METHOD(fp_attack_row);

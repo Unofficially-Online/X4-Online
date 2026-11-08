@@ -533,6 +533,51 @@ class Overlay(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--serial-pathing', '--path-determinism', '1', '--travel-snapshot')
 
+    def test_linux_ordered_batches_include_config_and_complete_splice_ordering(self):
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities',
+                         '--serial-pathing', '--path-determinism', '3',
+                         '--travel-determinism', '--tempzone-order')
+        config = (out / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_travel_determinism = true', config)
+        self.assertNotIn('native_gate_travel_snapshot', config)
+        self.assertIn("native_gate_tempzone_order = 'order'", config)
+
+    def test_linux_hash_logging_changes_output_without_disabling_the_census(self):
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities',
+                         '--world-hash-stride', '120', '--world-log-mode', 'hashes', '--probe-profile')
+        config = (out / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_world_detail_rows = false', config)
+        self.assertIn('native_gate_world_hash_stride = 120', config)
+        self.assertIn('native_gate_probe_profile = true', config)
+        self.assertNotIn('native_gate_play_mode', config)
+
+    def test_linux_rolling_census_is_explicit_and_keeps_its_distinct_config(self):
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities',
+                         '--world-hash-stride', '120', '--world-hash-schema', 'WORLD_IMPORTED_2',
+                         '--world-log-mode', 'hashes', '--world-rolling-slices', '120')
+        config = (out / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_world_rolling_slices = 120', config)
+        self.assertIn('native_gate_world_detail_rows = false', config)
+
+    def test_linux_rolling_census_rejects_incompatible_modes(self):
+        required = ['--world-identities', '--world-hash-stride', '120',
+                    '--world-hash-schema', 'WORLD_IMPORTED_2', '--world-log-mode', 'hashes']
+        for extra in (['--world-rolling-slices', '0'], ['--world-rolling-slices', '18001'],
+                      ['--world-rolling-slices', '3', '--world-log-mode', 'full'],
+                      ['--world-rolling-slices', '3', '--world-hash-watch', '0000000000000001']):
+            with self.subTest(extra=extra), self.assertRaises(SystemExit):
+                self.build(*self.snapshot, '--mode', 'clock', *required, *extra)
+
+    def test_linux_ordered_batches_reject_conflicts_and_missing_prerequisites(self):
+        required = ['--world-identities', '--serial-pathing', '--path-determinism', '3']
+        variants = [required + ['--travel-snapshot']]
+        variants.extend([option for option in required if option != missing]
+                        for missing in ('--world-identities', '--serial-pathing'))
+        variants.append(['--world-identities', '--serial-pathing', '--path-determinism', '1'])
+        for options in variants:
+            with self.subTest(options=options), self.assertRaises(SystemExit):
+                self.build(*self.snapshot, '--mode', 'clock', *options, '--travel-determinism')
+
     def test_linux_overlay_takes_gravidar(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--serial-pathing', '--gravidar')
         config = (out / 'ui/config.lua.append').read_text()

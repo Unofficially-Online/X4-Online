@@ -7,13 +7,14 @@ local open=assert(package.loadlib(path,'luaopen_x4lan_gate'))
 local gate=assert(open(),'module did not resolve the Lua ABI')
 local core={'sha256','start','boot','load_requested','report','poll','stop','frame_timing','qpc_us','tick_rate','wire','propose',
  'relay_host','lookahead','lookahead_status','peer_links','peer_status','wire_crypto','wire_crypto_status','platform','verify_stage',
- 'world_watch','world_capture','world_capture_nav_v2','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status',
+ 'world_watch','world_capture','world_capture_nav_v2','world_capture_rolling','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status',
  'path_determinism','path_determinism_status','path_budget','path_budget_status','region_rng','region_rng_status','region_rng_row',
  'ai_wait_rng','ai_wait_rng_status','ai_wait_rng_row','read_cost',
  'md_resume_rng','md_resume_rng_status','md_resume_rng_row','boot_hold','boot_hold_status',
  'event_order','event_order_status','event_rows','event_order_row',
  'gravidar_key','gravidar_time','gravidar_key_status','gravidar','ai_schedule','ai_schedule_status','ai_schedule_fallbacks',
  'gravidar_deadlines','gravidar_deadlines_status','travel_snapshot','travel_snapshot_status',
+ 'travel_determinism','travel_determinism_status',
  'runtime_ids','runtime_ids_status','runtime_ids_word','runtime_ids_map_row','runtime_ids_caller_row','runtime_ids_callers',
  'script_rng','script_rng_status','script_rng_row','script_rng_own_entries','md_timed_rng','md_timed_rng_status','find_order','find_order_status','find_order_row','loadout_order','loadout_order_status','loadout_order_row','nav_key','attention_all','attention_all_status','step_trace','step_trace_arm','step_trace_status','step_trace_row','step_chain','fp_redirect','fp_redirect_watch','fp_redirect_status','fp_redirect_row','fp_redirect_solver','coverage','coverage_frame','coverage_status','coverage_row','nav_cadence','nav_cadence_status','nav_cadence_row','nav_cadence_watch','nav_probe_init','nav_params_init','created_identities','portable_created','created_load','created_identities_status','created_row','created_identity','created_runtime','gravidar_wide','gravidar_wide_status','spawn_rng','spawn_rng_status','spawn_rng_row','fork_save','fork_save_status','fp_redirect_drones','fp_attack','fp_attack_watch','fp_attack_status','fp_attack_row',
  'weapon_fire_rng','weapon_fire_rng_status','engine_refresh_rng','engine_refresh_rng_status','spline_join_all','spline_join_all_status',
@@ -28,6 +29,7 @@ for _,name in ipairs({'actor','world_trace','thread_rng','boot_rng_anchor','pilo
  assert(gate[name]==nil,'unported method present: '..name)
 end
 assert(gate.platform()=='linux')
+assert(gate.travel_determinism()==0,'ordered jobs must refuse outside a verified session')
 -- Canonical shields arm only on a running gate (its image verified), and only in canonical mode.
 assert(gate.world_hash_shields('canonical')==0 and gate.world_hash_shields('view')==0 and gate.world_hash_shields_status()=='mode=off canonical=0')
 assert(gate.sha256('')=='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
@@ -55,6 +57,8 @@ assert(gate.boot(1,47000,token,5000,digest,70368744177664+3)==11) -- with serial
 assert(gate.boot(1,47000,token,5000,digest,70368744177664+4)==105)
 local summary,why=gate.world_capture(1)
 assert(summary==nil and why:match('stage=') and gate.world_page(0)==nil and gate.world_banks()==nil)
+local rolling, rolling_why=gate.world_capture_rolling(1,1)
+assert(rolling==nil and rolling_why:match('stage='))
 assert(gate.poll()==nil and gate.stop()==0 and gate.load_requested()==0)
 -- Non-blocking save by fork: refused outside an admitted session; its status is readable once stopped.
 assert(gate.fork_save(600,'join_600','/tmp/x4save')==0)

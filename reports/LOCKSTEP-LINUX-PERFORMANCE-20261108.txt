@@ -1,0 +1,157 @@
+Linux lockstep performance investigation - 8 November 2026
+=========================================================
+
+Scope
+-----
+Two isolated Linux X4 9.00 (611726) instances on one Ryzen 7 7800X3D desktop,
+hardware Vulkan rendering, the same owned snapshot (seed 2222222), reverse
+launch order 2,1, 600 ticks per comparison and a full census at tick 1 and every
+120 ticks. Ordered pathing remains OFF in these performance comparisons.
+This is simulation validation, not a playable Linux client or a remote-peer test.
+
+The scalar and accelerated comparisons capture exactly the same object fields,
+identity list, unknown-field counters and per-domain SHA-256 values. No object
+sampling, reduced census frequency, weaker digest or disabled validation is used.
+Unknown motion fields remain outside the existing census coverage.
+
+Measured cause and first improvements
+-------------------------------------
+Probe profiling now separates native world capture from per-object log output.
+After the initial load, the scalar implementation spends about 950 ms scanning
+and hashing the world and another 60 ms writing detailed rows. Ordinary relay
+steps have a median near 16 ms in these short comparisons. Initial-census
+logging has much greater volume and is reported separately by the raw profile.
+
+The optional --world-log-mode hashes keeps every full world capture, bank record
+and relay digest, but omits per-object diagnostic pages. Full logging remains the
+default. Over 600 ticks, one client log shrank from about 291 MB to 19.5 MB;
+the three measured steady capture-frame intervals had median 1050 ms with full
+logging and 969 ms with hashes-only logging. This alone does not fix stutter.
+Hashes-only logs cannot reconstruct an object-level divergence; retain full logs
+or a targeted capture when investigating one.
+
+The Linux SHA-256 implementation now selects SHA-NI and SSSE3 only after CPUID
+checks, with the previous scalar implementation as fallback. The accelerated
+function is separately compiled for its required instructions; the module does
+not require a globally raised CPU target or a new system-library dependency.
+The actual Zig/glibc-2.17 module confines SHA/SSSE3 instructions to that function.
+The checksum implementation is original code. Instruction semantics were checked
+against Intel's SHA extensions documentation:
+https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sha-extensions.html
+
+With SHA-NI and hashes-only logging, the full scan measured 411-429 ms across
+the two instances, and the three steady capture-frame intervals had median
+438 ms. All six WORLD_HASH rows of both instances exactly match the earlier
+scalar/full-log control. Both peers stopped at tick 600 with restored=1;
+Steam process identity was unchanged and no owned process remained.
+This is a measured improvement, but the remaining periodic stall is visible.
+
+An exact-byte leaf cache then reduced the steady capture-frame median to
+398 ms (maximum 414 ms in the three measured intervals). Its 2.75 MiB table
+uses a bounded sample only to choose a slot; a hit requires equal length and
+every input byte to match. Allocation failure or oversized inputs hash directly.
+All six full WORLD_HASH rows per peer still exactly match the scalar/full-log
+control. Both peers again stopped at 600 with restored=1 and complete cleanup.
+This remains a visible periodic stall; it is not described as playable.
+
+Experimental distributed census
+-------------------------------
+A separate, opt-in WORLD_ROLLING_1 mode captures one deterministic range each
+tick. It freezes a sorted identity cohort for 120 ticks and resolves each native
+object again at its sampling tick. All four domain serializers, identity
+rechecks, bank checks and unknown-field flags remain in use. This changes when
+objects are sampled and is deliberately not presented as equivalent to the
+instantaneous WORLD_IMPORTED_2 check. Full capture remains the default.
+
+The first two-peer native run compared 600 matching slice states, completing
+five cycles. Cohort sizes were 521658, 521673, 522197, 522537 and 522788;
+521224 were imported identities. Both clients stopped at 600/restored=1, the
+relay passed, Steam identity was unchanged and no owned process remained.
+After tick 120, the 479 measured relay intervals had median 19.877 ms,
+99th percentile 27.072 ms (nearest-rank method), and maximum 45.377 ms.
+None exceeded 50 ms. At the former periodic capture boundaries the three
+intervals had median 17.159 ms and maximum 21.302 ms. Ordinary steps are now
+slightly more expensive, but the former 398-1050 ms periodic pauses are absent
+in this short measurement. These are relay-step timings, not display-frame
+timings or a human playability verdict. Startup is excluded: the first profile
+window still includes a roughly 283-286 ms maximum probe call. Tick 600 is the
+terminal report and has no released_at interval in the relay record.
+
+Rolling samples are not an atomic whole-world snapshot. Newly created objects
+may wait almost two cycles for their first sample; an object born and destroyed
+between cycle boundaries may never enter this census at all. Creation-event
+digests run separately. Unknown motion reached 1477 objects in a single slice;
+unknown class and reference counters were zero in this run. Unmeasured state,
+transient differences between samples, Windows interoperability and player
+controls are not established. The known later motion divergence remains open.
+
+The same new binary was also run in the original full-census mode for 600 ticks.
+All six complete WORLD_HASH lines per client exactly match the original scalar
+control. This validates that the shared range-scanning refactor retained that
+control's full-capture output, independently of the new rolling semantics.
+Both bundles retain gate SHA-256:
+827c460da852efc91cf144f3443d5cafc1b8c9046248af3f2acd90a67935ef60.
+They were built with dirty source based on b3be9c8; a source-commit hash alone
+does not pin those native changes. Their binaries, scripts and raw evidence
+are retained, and that provenance limit must accompany historical results.
+
+Validation
+----------
+Seven focused SHA tests compare scalar, accelerated and automatic selection
+against hashlib: boundary sizes, unaligned input, incremental writes, messages
+larger than 1 MiB, arbitrary initial chaining states, concurrent initialization,
+a hardware-disabled build and mocked missing CPU features with hardware code
+still compiled. A standalone throughput benchmark varies input and consumes all
+digest bytes; its timings are not substituted for the native measurements above.
+
+The Linux Zig gate checker passed its synthetic scenarios, Lua bridge checks,
+pinned-ELF checks and existing canonical world fixtures. These checks do not
+prove gameplay or cross-machine determinism. Earlier 8520/8640-tick motion
+failures remain open; a later diagnostic control passed 9000 ticks, so a short
+pass cannot be interpreted as a fix for that timing-sensitive divergence.
+
+The complete Python run after the changes discovered 1950 tests: 1923 passed,
+27 were skipped and none failed. The project's strict checker correctly exits
+nonzero for skips. An earlier intermediate run caught a transient test-header
+formatting error while that file was being edited; its failed log is retained.
+The clean rerun, rather than that intermediate result, describes the final tests.
+The remaining skipped checks are not counted as passes.
+Two of those skips were compiler-discovery configuration: after explicitly
+setting X4LAN_ZIG, the NAT module build in both gates and C container codec
+cross-check both passed in a focused rerun. The remaining 25 checks require
+unavailable reference files or separate validation prerequisites.
+
+An independent, default-off Linux ordered-pathing experiment is also compiled
+into this candidate. Synthetic checks exercise complete batch execution and
+fail-closed guards; no performance comparison above enables it. It has not yet
+received native acceptance and is not presented as a motion-desync fix.
+
+Graphics investigation
+----------------------
+RGB/white speckle artifacts were captured from the owned X4 window. They also
+remain visible in a diagnostic run without the portable-math preload. That run
+changes arithmetic and cannot be used as acceptance of the linux-core preset.
+The checksum implementation had also changed while its bundle was built; its
+exact binary is retained in that bundle. Disabling local render-ID allocation
+also left the artifacts visible. More decisively, a fresh isolated creative
+fixture without any native gate or portable-math preload still shows them.
+This removes native lockstep hooks from that particular reproduction; fixture
+MD and Lua autostart remain present, so it is not an unmodified gameplay test.
+
+Two further independent fresh-world checks changed only antialiasing 0 to the
+current UI's canonical disabled value 'none', or only SSAO to 0. Both retained
+the artifacts. All three captures saved successfully, stopped their owned game
+and left the running Steam identity unchanged. Normal graphics settings were
+not changed. A graphics cause has not yet been established; the artifacts must
+not be described as an expected harmless test effect.
+
+Evidence
+--------
+Local-only artifacts are under .local/evidence/ and .local/native-runs/;
+these include snapshots and raw game data and must not be redistributed.
+Key comparisons: census-profile-comparison.json,
+log-mode-native-equivalence.json, census-accelerated-comparison.json,
+census-cached-comparison.json.
+Bundles: linux-20261108-profile-full, linux-20261108-profile-hashes,
+linux-20261108-profile-accelerated, linux-20261108-profile-cached. Each retains exact scripts, binaries,
+manifest hashes, raw logs, relay timing and cleanup evidence.

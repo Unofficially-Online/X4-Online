@@ -215,6 +215,24 @@ end
 local world_hash_schema=cfg.native_gate_world_hash_schema
 if world_hash_schema==nil then world_hash_schema='WORLD_IMPORTED_1' end
 assert(world_hash_schema=='WORLD_IMPORTED_1' or world_hash_schema=='WORLD_IMPORTED_2','invalid world hash schema')
+assert(cfg.native_gate_world_detail_rows==nil or type(cfg.native_gate_world_detail_rows)=='boolean',
+ 'native_gate_world_detail_rows must be a boolean')
+-- Rolling captures compare disjoint ranges at their sample ticks. They are a
+-- Linux diagnostic, not an instantaneous snapshot or a hot-join checkpoint.
+local rolling_slices = cfg.native_gate_world_rolling_slices
+if rolling_slices ~= nil then
+ assert(type(rolling_slices)=='number' and rolling_slices%1==0 and
+  rolling_slices>=1 and rolling_slices<=18000, 'invalid rolling census slice count')
+ assert(world_hash_schema=='WORLD_IMPORTED_2' and cfg.native_gate_world_hash_stride and
+  cfg.native_gate_world_detail_rows==false, 'rolling census requires schema 2 and hashes-only output')
+ for _,key in ipairs({'native_gate_join', 'native_gate_world_hash_join', 'native_gate_world_pages_window',
+  'native_gate_world_trace_ticks', 'native_gate_world_health_ticks', 'native_gate_world_nav_stride',
+  'native_gate_nav_cadence_watch', 'native_gate_motion_watch_zones', 'native_gate_player_probe'}) do
+  assert(not cfg[key], 'rolling census does not support '..key)
+ end
+ assert(not cfg.native_gate_world_hash_watch or #cfg.native_gate_world_hash_watch==0,
+  'rolling census does not support object watches')
+end
 if world_hash_schema=='WORLD_IMPORTED_2' then
  local stride=cfg.native_gate_world_hash_stride
  assert(type(stride)=='number' and stride==math.floor(stride) and stride>=1 and stride<=18000,'enriched world hash requires census stride1..18000')
@@ -611,6 +629,10 @@ end
 local world_capture=gate.world_capture
 if world_hash_schema=='WORLD_IMPORTED_2' then world_capture=gate.world_capture_nav_v2 end
 if cfg.native_gate_world_hash_stride then assert(type(world_capture)=='function','configured world hash export unavailable') end
+if rolling_slices then
+ assert(type(gate.world_capture_rolling)=='function', 'rolling census export unavailable on this platform')
+ assert(not X4LAN_NATIVE_HYBRID, 'rolling census does not support hybrid census consumers')
+end
 -- FR28 (DEFAULT OFF, read-only): native_gate_world_health_ticks = {first,last} writes a WORLD_HEALTH row per
 -- world-hash watch on every tick first..last, after that tick's capture point: its stored hull and shield
 -- (value, changed time, maximum, delay, rate, factor, generators, modifiers) and the game time, as bits. The
@@ -913,7 +935,8 @@ if cfg.native_gate_probe_profile~=nil then
  assert(cfg.native_gate_probe_profile==true or cfg.native_gate_probe_profile==false,'native_gate_probe_profile accepts only true')
  if cfg.native_gate_probe_profile then
   assert(type(gate.qpc_us)=='function','native_gate_probe_profile needs gate.qpc_us')
-  profile={sections={'drains','inputs','pilot','modules','sample','capture','digest','log'},parts={'actor','health','orders','fleet','bodies'},
+  profile={sections={'drains','inputs','pilot','modules','sample','capture','digest','log'},
+   parts={'actor','health','orders','fleet','bodies','world_scan','world_output'},
    sum={},n=0,max=0}
   function profile.begin() profile.cur={};profile.at=gate.qpc_us();profile.start=profile.at end
   function profile.mark(name)
@@ -5074,7 +5097,12 @@ local function frame()
   if cfg.native_gate_spawn_rng~=nil then drain_spawn();log('SPAWN_RNG_STOP '..tostring(gate.spawn_rng_status())) end
   if cfg.native_gate_created_identities then drain_created_rows();log('CREATED_IDENTITIES_STOP '..tostring(gate.created_identities_status())) end
   if cfg.native_gate_actor_rng_all then log('ACTOR_RNG_ALL_STOP '..tostring(gate.actor_rng_all_status())) end
-  if cfg.native_gate_world_hash_stride then log('WORLD_HASH_STOP scans='..s.world_hash_scans..' failures='..s.world_hash_failures) end
+  if rolling_slices then
+   log('WORLD_ROLLING_STOP scans='..s.world_hash_scans..' cycles='..
+    math.floor(s.world_hash_scans/rolling_slices)..' failures='..s.world_hash_failures)
+  elseif cfg.native_gate_world_hash_stride then
+   log('WORLD_HASH_STOP scans='..s.world_hash_scans..' failures='..s.world_hash_failures)
+  end
   if cfg.native_gate_world_trace_ticks then
    drain_world_trace();log('WORLD_TRACE_STOP '..assert(gate.world_trace_status(),'world trace status unavailable'))
    if cfg.native_gate_world_queue_trace then log('WORLD_QUEUE_STOP '..assert(gate.world_queue_trace_status(),'world queue status unavailable')) end
@@ -5600,21 +5628,41 @@ local function frame()
  if parts then parts[#parts+1]={'input',#data} end
  if cfg.native_gate_player_probe then data=data..'|'..assert(X4LAN_NATIVE_PLAYER,'native player probe missing')(tick,gate) end
  if parts then parts[#parts+1]={'player',#data} end
- if cfg.native_gate_world_hash_stride then
+ if rolling_slices then
+  local capture_started = profile and gate.qpc_us()
+  local summary,why = gate.world_capture_rolling(tick,rolling_slices)
+  if profile then profile.part('world_scan',capture_started) end
+  assert(summary, 'native rolling census failed '..tostring(why))
+  world_hash_state = assert(summary:match(' state=(WORLD_ROLLING_1:[^ ]+)$'),
+   'invalid rolling census summary')
+  log('WORLD_BANKS '..assert(gate.world_banks(),'rolling census bank phase unavailable'))
+  log('WORLD_ROLLING '..summary)
+  if cfg.native_gate_world_hash_shields and (tick==1 or tick%rolling_slices==0) then
+   log('WORLD_SHIELDS_ROLLING tick='..tick..' '..gate.world_hash_shields_status())
+  end
+  ticklog.ui_guard(tick)
+  data = data..'|'..world_hash_state
+ elseif cfg.native_gate_world_hash_stride then
   if tick==1 then
    for _,saved in ipairs(cfg.native_gate_world_hash_watch or {}) do assert(gate.world_watch(saved)==1,'world watch refused '..saved) end
   end
   if tick==1 or tick%cfg.native_gate_world_hash_stride==0 or (join_client and join_client.capture_at and join_client.capture_at(tick)) then
+   local capture_started=profile and gate.qpc_us()
    local summary,why=world_capture(tick)
+   if profile then profile.part('world_scan',capture_started) end
    assert(summary,'native world hash capture failed '..tostring(why))
    log('WORLD_BANKS '..assert(gate.world_banks(),'native world bank phase unavailable'))
    world_hash_state=assert(summary:match(' state=('..world_hash_schema..':[^ ]+)$'),'invalid world hash summary')
    -- play mode logs no pages, except for captures in native_gate_world_pages_window = {first, last tick}
    local pages_window=cfg.native_gate_world_pages_window
-   if not cfg.native_gate_play_mode or (pages_window and pages_window[1]<=tick and tick<=pages_window[2]) then
+   local output_started=profile and gate.qpc_us()
+   -- Summary-only logging changes output volume, never the captured state or relay digest.
+   if cfg.native_gate_world_detail_rows~=false and
+    (not cfg.native_gate_play_mode or (pages_window and pages_window[1]<=tick and tick<=pages_window[2])) then
     for page=1,assert(gate.world_page(0)) do log_world_page(assert(gate.world_page(page))) end
     for row=1,assert(gate.world_detail(0)) do log('WORLD_DETAIL '..assert(gate.world_detail(row))) end
    end
+   if profile then profile.part('world_output',output_started) end
    log('WORLD_HASH '..summary)
    if X4LAN_NATIVE_HYBRID then world_hash_state=X4LAN_NATIVE_HYBRID.census(tick,world_hash_state) end
    if cfg.native_gate_world_hash_shields then log('WORLD_HASH_SHIELDS tick='..tick..' '..gate.world_hash_shields_status()) end

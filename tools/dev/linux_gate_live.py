@@ -122,6 +122,9 @@ def apply_bundle_preset(args):
     """Fill unspecified options; explicit diagnostic modes keep their value."""
     if args.preset == 'linux-core':
         for name, value in LINUX_CORE_OPTIONS.items():
+            # Ordered batches replace the snapshot strategy; never arm both.
+            if name == 'travel_snapshot' and args.travel_determinism:
+                continue
             current = getattr(args, name)
             if current is None or current is False:
                 setattr(args, name, value)
@@ -231,6 +234,11 @@ def bundle(args):
     command = [sys.executable, str(repo / 'tools/dev/build_native_gate_overlay.py'), '--gate-so', str(work / 'x4lan_gate.so'),
                '--snapshot', str(args.snapshot), '--mode', 'clock', '--world-identities',
                '--world-hash-stride', str(args.stride), '--world-hash-schema', 'WORLD_IMPORTED_2', '--out', str(overlay)]
+    command += ['--world-log-mode', args.world_log_mode]
+    if args.world_rolling_slices is not None:
+        command += ['--world-rolling-slices', str(args.world_rolling_slices)]
+    if args.probe_profile:
+        command.append('--probe-profile')
     if args.seed_rng:
         command.append('--seed-rng')
     if args.clients > 2:
@@ -255,6 +263,8 @@ def bundle(args):
         command.append('--gravidar-deadlines')
     if args.travel_snapshot:
         command.append('--travel-snapshot')
+    if args.travel_determinism:
+        command.append('--travel-determinism')
     if args.runtime_ids:
         command.append('--runtime-ids')
     if args.runtime_id_callers:
@@ -403,6 +413,10 @@ def bundle(args):
         'gravidar',
         'gravidar_deadlines',
         'travel_snapshot',
+        'travel_determinism',
+        'world_log_mode',
+        'world_rolling_slices',
+        'probe_profile',
         'runtime_ids',
         'runtime_id_callers',
         'runtime_ids_local',
@@ -858,7 +872,8 @@ def collect_run_evidence(run_dir, slots, cases, ticks, manifest):
             shutil.copyfile(case / 'portable-math.log', client / 'portable-math.log')
         retained_log = client / 'engine-output.log'
         logs_by_slot[slot] = gate_lines(retained_log) if retained_log.exists() else ()
-    result.update(validate_evidence(logs_by_slot, ticks, manifest['stride']))
+    result.update(validate_evidence(logs_by_slot, ticks, manifest['stride'],
+                                    rolling_slices=manifest.get('world_rolling_slices')))
     try:
         result['relay'] = json.loads((run_dir / 'relay.json').read_text())
     except (OSError, ValueError):
@@ -1147,6 +1162,12 @@ def main(argv=None):
     b.add_argument('--out', type=Path, required=True)
     b.add_argument('--preset', choices=('linux-core',),
                    help='opt-in Linux simulation test configuration; omit for manual hook experiments')
+    b.add_argument('--world-log-mode', choices=('full', 'hashes'), default='full',
+                   help='hashes suppresses object detail logs while keeping every full world capture')
+    b.add_argument('--world-rolling-slices', type=int, metavar='N',
+                   help='experimental per-tick object slices; requires hashes-only logging, changes census coverage timing')
+    b.add_argument('--probe-profile', action='store_true',
+                   help='record probe timings for scan/output performance comparisons')
     b.add_argument('--extension-base', type=Path, help='explicit historical extension base (default: current minimal lockstep base)')
     b.add_argument('--portable-math', action='store_true', help='preload libx4mp_portable_math.so with its decimal and exact_reciprocal patches')
     b.add_argument('--seed-rng', action='store_true', help='key the MoveWorker RNG word each frame (boot option 2)')
@@ -1195,7 +1216,8 @@ def main(argv=None):
     b.add_argument('--actor-rng-all', action='store_true', help="every portable ship's Move and Agent update on keyed streams (native_gate_actor_rng_all)")
     b.add_argument('--player-timer', action='store_true', help="the player's fleet rebuild timer from the first admitted frame (native_gate_player_timer)")
     b.add_argument('--warp-rng', choices=('split', 'observe'), help="warps on a keyed word or counted natively; with --step-trace the listed ships' warp watch rows (native_gate_warp_rng)")
-    b.add_argument('--tempzone-order', action='store_true', help="the pathing pass's tempzone requests in a portable order (native_gate_tempzone_order; needs --travel-snapshot)")
+    b.add_argument('--tempzone-order', action='store_true',
+                   help='order tempzone requests after snapshot-tracked or inline pathing batches finish')
     b.add_argument('--warp-exit', action='store_true', help='the gate exit sum in the Windows order (native_gate_warp_exit)')
     b.add_argument('--world-hash-shields', action='store_true', help="census shields in canonical form (native_gate_world_hash_shields = "
                    "'canonical', as the Windows default stack hashes them)")
@@ -1206,7 +1228,11 @@ def main(argv=None):
     b.add_argument('--region-pass', choices=('sync', 'observe'), help='the region manager pass joined at the gate tick (native_gate_region_pass)')
     b.add_argument('--pass-stride', type=int, help='the synced passes only every Nth frame (native_gate_pass_stride)')
     b.add_argument('--spline-join-all', action='store_true', help='every spline update waits until its route request is published (native_gate_spline_join_all; needs serial pathing)')
-    b.add_argument('--travel-snapshot', action='store_true', help='the wingman travel decision reads a per-pass snapshot of the leader flag')
+    travel = b.add_mutually_exclusive_group()
+    travel.add_argument('--travel-snapshot', action='store_true',
+                        help='wingmen read a per-pass snapshot of the leader travel flag')
+    travel.add_argument('--travel-determinism', action='store_true',
+                        help='experimental: execute pathing batches in order; replaces the preset snapshot strategy')
     b.add_argument('--gravidar-deadlines', action='store_true', help='factor-pass deadlines rebased at the first gated Move, low-attention passes keyed')
     b.add_argument('--gravidar', action='store_true', help='the gated Gravidar pass, keyed units, time sync, sector order (implies serial pathing)')
     b.add_argument('--event-rows', type=int, metavar='TICKS', help='one EVENT_ROW per due event in the boot passes and the first TICKS gated ticks (up to 20000; about 50 MB per client for 6000 ticks)')
@@ -1228,7 +1254,7 @@ def main(argv=None):
     b.add_argument('--clients', type=int, default=2, choices=range(2, 9), metavar='2..8', help='instances on the host; above 2 they use the protocol 3 wire')
     b.add_argument('--ticks', type=int, default=600)
     b.add_argument('--stride', type=int, default=60, help='world hash capture every N ticks (and tick 1)')
-    r = sub.add_parser('run', help='on the Linux host, as root')
+    r = sub.add_parser('run', help='run on Linux as the Steam user, or select one as root')
     r.add_argument('--root', type=Path, required=True)
     r.add_argument('--user', default='x4server')
     r.add_argument('--display', help='use this existing local X11 display instead of private Xvfb instances, e.g. :0')

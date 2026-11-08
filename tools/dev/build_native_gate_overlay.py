@@ -204,6 +204,14 @@ def main():
     p.add_argument('--runtime-id-callers', action='store_true', help='the Linux gate: the table of who allocates runtime IDs, RUNTIME_IDS_CALLER rows (needs --runtime-ids)')
     p.add_argument('--runtime-ids-local', action='store_true', help='the Linux gate: what only the view asks for takes runtime IDs from its own lists (native_gate_runtime_ids_local; needs --runtime-ids and --created-identities)')
     p.add_argument('--travel-snapshot', action='store_true', help='the Linux gate: the wingman travel decision reads a per-pass snapshot of the leader flag (needs --serial-pathing and path determinism bit 2)')
+    p.add_argument('--travel-determinism', action='store_true',
+                   help='experimental Linux ordered pathing batches; requires serial pathing, budget lift and saved identities')
+    p.add_argument('--world-log-mode', choices=('full', 'hashes'), default='full',
+                   help='hashes retains complete captures and their digests without per-object log rows')
+    p.add_argument('--world-rolling-slices', type=int, metavar='N',
+                   help='experimental Linux census: sample one of N object ranges each tick; not an instantaneous world snapshot')
+    p.add_argument('--probe-profile', action='store_true',
+                   help='measure probe sections, including world scan and detailed log output')
     p.add_argument('--gravidar-deadlines', action='store_true', help='the Linux gate: factor-pass deadlines rebased at the first gated Move, low-attention passes keyed (needs --gravidar)')
     p.add_argument('--gravidar', action='store_true', help='the Linux gate: the gated Gravidar pass with keyed units, time sync and the sector round-robin in saved order (needs --serial-pathing, --world-identities, --gate-so)')
     p.add_argument('--event-rows', type=int, metavar='TICKS', help='native_gate_event_rows: one EVENT_ROW per due event in the boot passes and the first TICKS gated ticks, up to 600 (20000 on the Linux gate; needs --event-order)')
@@ -362,6 +370,14 @@ def main():
         p.error('--world-hash-shields requires --world-hash-stride')
     if args.world_hash_schema=='WORLD_IMPORTED_2' and args.world_hash_stride is None:
         p.error('--world-hash-schema WORLD_IMPORTED_2 requires --world-hash-stride')
+    if args.world_rolling_slices is not None:
+        if (not args.gate_so or not 1 <= args.world_rolling_slices <= 18000
+                or args.world_hash_schema != 'WORLD_IMPORTED_2' or args.world_hash_stride is None
+                or args.world_log_mode != 'hashes'):
+            p.error('--world-rolling-slices requires Linux, 1..18000 slices, schema 2 and hashes-only output')
+        if any((args.world_hash_watch, args.world_trace_ticks, args.world_health_ticks,
+                args.join, args.join_package)):
+            p.error('rolling census does not support watches, trace or join/checkpoint consumers')
     if args.world_hash_watch and (args.world_hash_stride is None or len(args.world_hash_watch)>64 or len(set(args.world_hash_watch))!=len(args.world_hash_watch) or any(len(s)!=16 or any(c not in '0123456789abcdef' for c in s) or int(s,16)==0 for s in args.world_hash_watch)):
         p.error('--world-hash-watch requires stride,1..64 unique nonzero16-digit lowercase hex IDs')
     if args.world_health_ticks and (not args.world_hash_watch or not 1<=args.world_health_ticks[0]<=args.world_health_ticks[1]):
@@ -502,6 +518,13 @@ def main():
         p.error('--strict-state requires battle mode')
     if args.shield_refresh and (not args.strict_state or not args.snapshot):
         p.error('--shield-refresh requires a strict-state battle snapshot')
+    if args.travel_determinism:
+        if args.travel_snapshot:
+            p.error('--travel-determinism and --travel-snapshot are alternatives')
+        if (not args.gate_so or not args.snapshot or not args.world_identities
+                or not args.serial_pathing or not (args.path_determinism or 0) & 2):
+            p.error('--travel-determinism needs --gate-so, a snapshot, --world-identities, '
+                    '--serial-pathing and path determinism bit 2')
     if args.gate_so:
         # The Linux gate core owns fixed dt itself (snapshot boot) and has no fixture modules yet;
         # world identities and the world hash are ported (src/native/engine/linux/gate_world.h).
@@ -510,6 +533,8 @@ def main():
         allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
+        allowed.add('travel_determinism')
+        allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile'))
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
             p.error('not ported to the Linux gate: ' + ', '.join('--' + k.replace('_', '-') for k in unported))
@@ -613,6 +638,13 @@ X4LAN_CONFIG.port = @X4LANE_PORT@
 X4LAN_CONFIG.token = "@X4LANE_TOKEN@"
 X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
 ''' % args.mode)
+    with (args.out / 'ui/config.lua.append').open('a') as config:
+        if args.world_log_mode == 'hashes':
+            config.write('X4LAN_CONFIG.native_gate_world_detail_rows = false\n')
+        if args.world_rolling_slices is not None:
+            config.write(f'X4LAN_CONFIG.native_gate_world_rolling_slices = {args.world_rolling_slices}\n')
+        if args.probe_profile:
+            config.write('X4LAN_CONFIG.native_gate_probe_profile = true\n')
     if args.session_clients:
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@\n')
@@ -768,8 +800,9 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
     if args.tempzone_order:
         if not args.gate_so or not args.snapshot:
             p.error('--tempzone-order needs --gate-so and the snapshot boot')
-        if not args.travel_snapshot:
-            p.error('--tempzone-order needs --travel-snapshot (the late-splice join)')
+        if not (args.travel_snapshot or args.travel_determinism):
+            p.error('--tempzone-order needs --travel-snapshot or --travel-determinism '
+                    '(complete pathing command-list splices)')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write("X4LAN_CONFIG.native_gate_tempzone_order = 'order'\n")
     if args.warp_exit:
@@ -938,6 +971,9 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--runtime-ids-local needs --runtime-ids and --created-identities')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_runtime_ids_local = true\n')
+    if args.travel_determinism:
+        with (args.out / 'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_travel_determinism = true\n')
     if args.travel_snapshot:
         if not args.gate_so or not args.snapshot or not args.serial_pathing or not args.path_determinism or not args.path_determinism & 2:
             p.error('--travel-snapshot needs --gate-so, the snapshot boot, --serial-pathing and path determinism bit 2')

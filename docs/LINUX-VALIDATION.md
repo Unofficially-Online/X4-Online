@@ -95,3 +95,39 @@ must not be committed or distributed with the code.
 
 See [the retained test report](../reports/LOCKSTEP-LINUX-LOCAL-20261108.txt) for
 specific runs and their limitations.
+
+## Reduce diagnostic stalls
+
+`--world-log-mode hashes` omits the large object-detail pages while retaining
+the complete census at every scheduled capture tick. `--probe-profile` records
+scan and log-output time separately. CPU-supported SHA acceleration and an
+exact-byte leaf cache preserve the SHA-256 values and all captured fields.
+Neither logging mode repairs a simulation divergence.
+
+The Linux-only `--world-rolling-slices 120 --world-log-mode hashes` experiment
+spreads the census across 120 ticks. It is off by default. At the beginning of
+each cycle, the native gate fixes a sorted cohort of imported and previously
+captured created identities. Tick by tick, it reads a disjoint range of that
+cohort; object pointers are resolved again at the sampling tick. Newly created
+objects enter at the next cycle boundary and can wait almost two cycles for
+their first state sample. Creation-event digests continue to run separately.
+An object born and destroyed entirely between cycle boundaries may never enter
+the census cohort; its state is not covered by these slices. The existing sparse
+instantaneous mode likewise cannot capture objects absent at all capture ticks.
+
+Every slice carries its tick, cycle, range, cohort size, coverage counters and
+four digests in the distinct `WORLD_ROLLING_1` schema. Peers compare the same
+range at the same tick. These records represent samples at different times,
+not an instantaneous universe snapshot. They cannot be used for hot join,
+checkpoint recovery, full object-detail reconstruction or strict per-tick
+player-transition checks; incompatible configurations are refused. The full
+instantaneous mode remains available for those investigations.
+
+The evidence validator requires every requested slice in order and reports any
+partial final cycle explicitly. Unknown fields remain outside coverage in both
+modes. A rolling pass establishes only agreement in the sampled fields at the
+declared sample times. It is not equivalent to passing the old instantaneous
+census, nor proof of Windows interoperability or playable multiplayer.
+
+See [the performance investigation](../reports/LOCKSTEP-LINUX-PERFORMANCE-20261108.txt)
+for measured intervals, retained failures and graphics findings.

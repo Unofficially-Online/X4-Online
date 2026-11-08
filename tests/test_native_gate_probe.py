@@ -5842,7 +5842,8 @@ class StatusStrideTests(unittest.TestCase):
         self.assertEqual([row.split()[0] for row in rows],['tick=60','tick=120'])
         fields=dict(item.split('=') for item in rows[1].split()[1:])
         self.assertEqual(list(fields),['ticks']+[f'{name}_us' for name in ('drains','inputs','pilot','modules','sample','capture',
-                         'digest','log','actor','health','orders','fleet','bodies','total')]+['max_total_us'])
+                         'digest','log','actor','health','orders','fleet','bodies',
+                         'world_scan','world_output','total')]+['max_total_us'])
         self.assertEqual(fields['ticks'],'60')
         self.assertTrue(all(value.isdigit() for value in fields.values()))
         self.assertGreater(int(fields['total_us']),0)

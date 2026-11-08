@@ -32,6 +32,7 @@
 #include "lockstep_world_nav.h"   /* snapshot, resolve and encode are shared; the reads are Linux's */
 #pragma GCC diagnostic pop
 #include "gate_world_classes.h"
+#include "gate_world_digest_cache.h"
 
 /* ---- Linux layouts (Windows offset in comments) ---- */
 #define LXW_OBJ_RUNTIME 0x8u       /* 0x8 */
@@ -401,11 +402,18 @@ typedef void *(*lxw_find_fn)(void *,uint64_t,unsigned,unsigned);
 static world_hash_watch world_hash_watches[WORLD_HASH_WATCH_MAX];
 static unsigned world_hash_watch_count;
 static world_hash_item *world_hash_items;
+/* The UI capture thread owns this process-lifetime table. Every capture still
+ * reads, validates and serializes every object; only identical leaf SHA inputs
+ * reuse a result. The aggregate roots and saved identities are always hashed. */
+static world_digest_cache world_leaf_digests = {.allocate = calloc};
 static unsigned *world_hash_changed;
 static unsigned world_hash_count,world_hash_changes,world_hash_alive,world_hash_class_unknown;
 static unsigned world_hash_motion_unknown,world_hash_parent_unknown;
 static uint64_t world_hash_tick,world_hash_scans,world_hash_failures,world_hash_failure_id;
 static unsigned world_hash_schema=1;
+/* Rolling mode retains IDs only; native objects are looked up at each slice. */
+static unsigned world_rolling_slices;
+static unsigned world_rolling_total,world_rolling_created;
 static const char *world_hash_stage="not_started";
 /* A capture reads every object even after a failure, so one run names everything that
  * does not hold: each distinct (stage, vtable) with its count and first saved ID. It still
@@ -626,76 +634,223 @@ static int world_hash_init(void) {
     }
     return 1;
 }
-static int world_hash_capture(uint64_t tick,unsigned schema) {
-    world_hash_stage="schema";
-    if((schema!=1 && schema!=2) || (world_hash_scans && schema!=world_hash_schema)) return 0;
-    world_hash_schema=schema;
-    if(shield_canonical) {
-        world_hash_stage="shield_time";
-        const double *time=gate_tls_time(gate_tls_self());
-        if(!time) return 0;
-        memcpy(&lxw_shield_now,time,8);if(!isfinite(lxw_shield_now)) return 0;
+/* Shared bounded scan. A failed item or bank check never publishes roots. */
+static int world_hash_range(unsigned begin, unsigned end, unsigned total, int rolling,
+                            char hexroots[WORLD_HASH_DOMAINS][65]) {
+    lxw_find_fn find = world_find ? world_find : (lxw_find_fn)(void *)LX(LX_FIND_VA);
+    void *map = *(world_component_map ? world_component_map : (void **)LX(LX_COMPONENT_MAP_VA));
+    if (!map || begin > end || end > total) {
+        world_hash_stage = "range";
+        return 0;
     }
-    world_hash_stage="initialization";
-    if(!world_hash_items && !world_hash_init()) return 0;
-    lxw_find_fn find=world_find?world_find:(lxw_find_fn)(void*)LX(LX_FIND_VA);
-    void *map=*(world_component_map?world_component_map:(void**)LX(LX_COMPONENT_MAP_VA));
-    if(!map || world_hash_failures || (world_hash_scans && tick<=world_hash_tick)) return 0;
-    if(world_hash_created) {
-        world_hash_stage="created_rows";
-        if(!created_capture_rows(lxc_find,map,world_hash_created,&world_hash_created_count,WORLD_HASH_CREATED_MAX)) return 0;
-    }
-    const unsigned total=world_hash_count+world_hash_created_count;
-    world_hash_stage="bank_phase_before";
-    if(!world_banks_read(&world_banks_before)) return 0;
-    world_hash_changes=world_hash_alive=world_hash_class_unknown=world_hash_motion_unknown=world_hash_parent_unknown=0;
-    lxw_capture_problem_count=0;lxw_capture_failed_objects=lxw_capture_problems_dropped=0;
-    /* Aggregate buffers contain only savedID + per-domain SHA, little endian. */
-    static unsigned char aggregate[WORLD_HASH_DOMAINS][40960];unsigned used=0,watch=0;
+    world_hash_stage = "bank_phase_before";
+    if (!world_banks_read(&world_banks_before)) return 0;
+    world_hash_changes = 0;
+    world_hash_alive = 0;
+    world_hash_class_unknown = 0;
+    world_hash_motion_unknown = 0;
+    world_hash_parent_unknown = 0;
+    lxw_capture_problem_count = 0;
+    lxw_capture_failed_objects = 0;
+    lxw_capture_problems_dropped = 0;
+    static unsigned char aggregate[WORLD_HASH_DOMAINS][40960];
+    unsigned used = 0;
+    unsigned watch = 0;
     lockstep_sha256_ctx roots[WORLD_HASH_DOMAINS];
-    for(unsigned d=0;d<WORLD_HASH_DOMAINS;d++) lockstep_sha256_init(&roots[d]);
-    for(unsigned i=0;i<total;i++) {
-        world_hash_item *item=world_hash_item_at(i);unsigned char previous[WORLD_HASH_DOMAINS][32];
-        unsigned char previous_raw[WORLD_NAV_RAW_BYTES],previous_raw_length=item->nav_raw_length;
-        memcpy(previous_raw,item->nav_raw,sizeof(previous_raw));
-        world_hash_failure_id=item->saved;
-        memcpy(previous,item->hash,sizeof(previous));world_hash_data data[WORLD_HASH_DOMAINS]={0};
-        unsigned char *object=find(map,item->runtime,4,0);
-        lxw_capture_vtable=0;
-        if(!world_hash_record(item,data,object)) {lxw_capture_problem_note(item->saved);continue;}
-        if(data[3].length<16 || data[3].length-16>WORLD_TIMING_BYTES) {world_hash_stage="timing_schema";lxw_capture_problem_note(item->saved);continue;}
-        item->timing_length=(unsigned char)(data[3].length-16);
-        memcpy(item->timing,data[3].data,item->timing_length);
-        if(watch<world_hash_watch_count && world_hash_watches[watch].saved==item->saved) {
-            world_hash_watches[watch].runtime=item->runtime;world_hash_watches[watch].object=object;
-            memcpy(world_hash_watches[watch].data,data,sizeof(data));++watch;
+    for (unsigned domain = 0; domain < WORLD_HASH_DOMAINS; ++domain)
+        lockstep_sha256_init(&roots[domain]);
+    for (unsigned index = begin; index < end; ++index) {
+        world_hash_item *item = world_hash_item_at(index);
+        unsigned char previous[WORLD_HASH_DOMAINS][32];
+        unsigned char previous_raw[WORLD_NAV_RAW_BYTES];
+        unsigned char previous_raw_length = item->nav_raw_length;
+        if (!rolling) {
+            memcpy(previous, item->hash, sizeof(previous));
+            memcpy(previous_raw, item->nav_raw, sizeof(previous_raw));
         }
-        for(unsigned d=0;d<WORLD_HASH_DOMAINS;d++) {
-            lockstep_sha256(data[d].data,data[d].length,item->hash[d]);
-            memcpy(aggregate[d]+used,&item->saved,8);memcpy(aggregate[d]+used+8,item->hash[d],32);
+        world_hash_failure_id = item->saved;
+        world_hash_data data[WORLD_HASH_DOMAINS] = {0};
+        unsigned char *object = find(map, item->runtime, 4, 0);
+        lxw_capture_vtable = 0;
+        if (!world_hash_record(item, data, object)) {
+            lxw_capture_problem_note(item->saved);
+            continue;
         }
-        used+=40;
-        if(!world_hash_scans || memcmp(previous,item->hash,sizeof(previous)) || previous_raw_length!=item->nav_raw_length ||
-           memcmp(previous_raw,item->nav_raw,item->nav_raw_length)) world_hash_changed[world_hash_changes++]=i;
-        if(used==sizeof(aggregate[0]) || i+1==total) {
-            for(unsigned d=0;d<WORLD_HASH_DOMAINS;d++) lockstep_sha256_update(&roots[d],aggregate[d],used);
-            used=0;
+        if (data[3].length < 16 || data[3].length - 16 > WORLD_TIMING_BYTES) {
+            world_hash_stage = "timing_schema";
+            lxw_capture_problem_note(item->saved);
+            continue;
+        }
+        item->timing_length = (unsigned char)(data[3].length - 16);
+        memcpy(item->timing, data[3].data, item->timing_length);
+        if (!rolling && watch < world_hash_watch_count && world_hash_watches[watch].saved == item->saved) {
+            world_hash_watches[watch].runtime = item->runtime;
+            world_hash_watches[watch].object = object;
+            memcpy(world_hash_watches[watch].data, data, sizeof(data));
+            ++watch;
+        }
+        for (unsigned domain = 0; domain < WORLD_HASH_DOMAINS; ++domain) {
+            world_digest_cache_hash(&world_leaf_digests, data[domain].data, data[domain].length, item->hash[domain]);
+            memcpy(aggregate[domain] + used, &item->saved, 8);
+            memcpy(aggregate[domain] + used + 8, item->hash[domain], 32);
+        }
+        used += 40;
+        if (!rolling && (!world_hash_scans || memcmp(previous, item->hash, sizeof(previous)) ||
+                         previous_raw_length != item->nav_raw_length ||
+                         memcmp(previous_raw, item->nav_raw, item->nav_raw_length)))
+            world_hash_changed[world_hash_changes++] = index;
+        if (used == sizeof(aggregate[0])) {
+            for (unsigned domain = 0; domain < WORLD_HASH_DOMAINS; ++domain)
+                lockstep_sha256_update(&roots[domain], aggregate[domain], used);
+            used = 0;
         }
     }
-    if(lxw_capture_problem_count) { /* the first one names the failure; lxw_capture_problems_text lists them all */
-        world_hash_failure_id=lxw_capture_problems[0].first_saved;world_hash_stage=lxw_capture_problems[0].stage;return 0;
+    if (lxw_capture_problem_count) {
+        world_hash_failure_id = lxw_capture_problems[0].first_saved;
+        world_hash_stage = lxw_capture_problems[0].stage;
+        return 0;
     }
-    if(watch!=world_hash_watch_count) {world_hash_failure_id=world_hash_watches[watch].saved;world_hash_stage="watch_identity_missing";return 0;}
-    world_hash_stage="bank_phase_after";
-    if(!world_banks_read(&world_banks_after) || memcmp(&world_banks_before,&world_banks_after,sizeof(world_banks_before))) return 0;
-    char hexroots[WORLD_HASH_DOMAINS][65];unsigned char raw[32];
-    for(unsigned d=0;d<WORLD_HASH_DOMAINS;d++) {lockstep_sha256_final(&roots[d],raw);hex32(raw,hexroots[d]);}
-    world_hash_tick=tick;++world_hash_scans;world_hash_failure_id=0;world_hash_stage="complete";
-    snprintf(world_hash_state,sizeof(world_hash_state),"WORLD_IMPORTED_%u:%llu:%u:%s:%s:%s:%s",schema,(unsigned long long)tick,total,hexroots[0],hexroots[1],hexroots[2],hexroots[3]);
-    /* created= appears only when created identities are enabled, so default captures are unchanged. */
-    char created[32]="";if(world_hash_created) snprintf(created,sizeof(created)," created=%u",world_hash_created_count);
-    snprintf(world_hash_summary,sizeof(world_hash_summary),"tick=%llu objects=%u present=%u changed=%u unknown_class=%u unknown_motion=%u unknown_references=%u%s state=%s",
-        (unsigned long long)tick,total,world_hash_alive,world_hash_changes,world_hash_class_unknown,world_hash_motion_unknown,world_hash_parent_unknown,created,world_hash_state);
+    if (!rolling && watch != world_hash_watch_count) {
+        world_hash_failure_id = world_hash_watches[watch].saved;
+        world_hash_stage = "watch_identity_missing";
+        return 0;
+    }
+    world_hash_stage = "bank_phase_after";
+    if (!world_banks_read(&world_banks_after) ||
+        memcmp(&world_banks_before, &world_banks_after, sizeof(world_banks_before))) return 0;
+    if (used) {
+        for (unsigned domain = 0; domain < WORLD_HASH_DOMAINS; ++domain)
+            lockstep_sha256_update(&roots[domain], aggregate[domain], used);
+    }
+    unsigned char raw[32];
+    for (unsigned domain = 0; domain < WORLD_HASH_DOMAINS; ++domain) {
+        lockstep_sha256_final(&roots[domain], raw);
+        hex32(raw, hexroots[domain]);
+    }
+    return 1;
+}
+
+static int world_hash_prepare(unsigned schema) {
+    world_hash_schema = schema;
+    if (shield_canonical) {
+        world_hash_stage = "shield_time";
+        const double *time = gate_tls_time(gate_tls_self());
+        if (!time) return 0;
+        memcpy(&lxw_shield_now, time, 8);
+        if (!isfinite(lxw_shield_now)) return 0;
+    }
+    world_hash_stage = "initialization";
+    if (!world_hash_items && !world_hash_init()) return 0;
+    void *map = *(world_component_map ? world_component_map : (void **)LX(LX_COMPONENT_MAP_VA));
+    if (!map || world_hash_failures) {
+        world_hash_stage = "map";
+        return 0;
+    }
+    return 1;
+}
+
+static int world_hash_capture(uint64_t tick, unsigned schema) {
+    world_hash_stage = "schema";
+    if ((schema != 1 && schema != 2) ||
+        (world_hash_scans && (world_rolling_slices || schema != world_hash_schema))) return 0;
+    if (world_hash_scans && tick <= world_hash_tick) {
+        world_hash_stage = "tick";
+        return 0;
+    }
+    if (!world_hash_scans) world_rolling_slices = 0;
+    if (!world_hash_prepare(schema)) return 0;
+    void *map = *(world_component_map ? world_component_map : (void **)LX(LX_COMPONENT_MAP_VA));
+    if (world_hash_created) {
+        world_hash_stage = "created_rows";
+        if (!created_capture_rows(lxc_find, map, world_hash_created,
+                                  &world_hash_created_count, WORLD_HASH_CREATED_MAX)) return 0;
+    }
+    const unsigned total = world_hash_count + world_hash_created_count;
+    char hexroots[WORLD_HASH_DOMAINS][65];
+    if (!world_hash_range(0, total, total, 0, hexroots)) return 0;
+    char state[sizeof(world_hash_state)];
+    int state_length = snprintf(state, sizeof(state), "WORLD_IMPORTED_%u:%llu:%u:%s:%s:%s:%s",
+        schema, (unsigned long long)tick, total, hexroots[0], hexroots[1], hexroots[2], hexroots[3]);
+    if (state_length < 0 || (size_t)state_length >= sizeof(state)) {
+        world_hash_stage = "format";
+        return 0;
+    }
+    char created[32] = "";
+    if (world_hash_created) {
+        int created_length = snprintf(created, sizeof(created), " created=%u", world_hash_created_count);
+        if (created_length < 0 || (size_t)created_length >= sizeof(created)) {
+            world_hash_stage = "format";
+            return 0;
+        }
+    }
+    char summary[sizeof(world_hash_summary)];
+    int summary_length = snprintf(summary, sizeof(summary),
+        "tick=%llu objects=%u present=%u changed=%u unknown_class=%u unknown_motion=%u unknown_references=%u%s state=%s",
+        (unsigned long long)tick, total, world_hash_alive, world_hash_changes, world_hash_class_unknown,
+        world_hash_motion_unknown, world_hash_parent_unknown, created, state);
+    if (summary_length < 0 || (size_t)summary_length >= sizeof(summary)) {
+        world_hash_stage = "format";
+        return 0;
+    }
+    memcpy(world_hash_state, state, (size_t)state_length + 1);
+    memcpy(world_hash_summary, summary, (size_t)summary_length + 1);
+    world_hash_tick = tick;
+    ++world_hash_scans;
+    world_hash_failure_id = 0;
+    world_hash_stage = "complete";
+    return 1;
+}
+
+/* A cycle freezes sorted ID rows only. Object pointers are resolved anew for
+ * every slice; newborns are appended when the next cycle begins. */
+static int world_hash_capture_rolling(uint64_t tick, unsigned slices) {
+    world_hash_stage = "rolling_sequence";
+    if (!slices || slices > 18000 || !tick || world_hash_watch_count ||
+        (world_hash_scans && (!world_rolling_slices || slices != world_rolling_slices || tick != world_hash_tick + 1)) ||
+        (!world_hash_scans && tick != 1)) return 0;
+    if (!world_hash_prepare(2)) return 0;
+    const unsigned slice = (unsigned)((tick - 1) % slices);
+    const uint64_t cycle = 1 + (tick - 1) / slices;
+    if (slice == 0) {
+        void *map = *(world_component_map ? world_component_map : (void **)LX(LX_COMPONENT_MAP_VA));
+        if (world_hash_created) {
+            world_hash_stage = "created_rows";
+            if (!created_capture_rows(lxc_find, map, world_hash_created,
+                                      &world_hash_created_count, WORLD_HASH_CREATED_MAX)) return 0;
+        }
+        world_rolling_created = world_hash_created_count;
+        world_rolling_total = world_hash_count + world_rolling_created;
+    }
+    const unsigned begin = (unsigned)((uint64_t)world_rolling_total * slice / slices);
+    const unsigned end = (unsigned)((uint64_t)world_rolling_total * (slice + 1u) / slices);
+    char hexroots[WORLD_HASH_DOMAINS][65];
+    if (!world_hash_range(begin, end, world_rolling_total, 1, hexroots)) return 0;
+    char state[sizeof(world_hash_state)];
+    int state_length = snprintf(state, sizeof(state), "WORLD_ROLLING_1:%llu:%llu:%u:%u:%u:%u:%u:%u:%s:%s:%s:%s",
+        (unsigned long long)tick, (unsigned long long)cycle, slice, slices, begin, end,
+        world_rolling_total, world_rolling_created, hexroots[0], hexroots[1], hexroots[2], hexroots[3]);
+    if (state_length < 0 || (size_t)state_length >= sizeof(state)) {
+        world_hash_stage = "format";
+        return 0;
+    }
+    char summary[sizeof(world_hash_summary)];
+    int summary_length = snprintf(summary, sizeof(summary),
+        "tick=%llu cycle=%llu slice=%u slices=%u begin=%u end=%u objects=%u created=%u "
+        "present=%u unknown_class=%u unknown_motion=%u unknown_references=%u state=%s",
+        (unsigned long long)tick, (unsigned long long)cycle, slice, slices, begin, end,
+        world_rolling_total, world_rolling_created, world_hash_alive, world_hash_class_unknown,
+        world_hash_motion_unknown, world_hash_parent_unknown, state);
+    if (summary_length < 0 || (size_t)summary_length >= sizeof(summary)) {
+        world_hash_stage = "format";
+        return 0;
+    }
+    memcpy(world_hash_state, state, (size_t)state_length + 1);
+    memcpy(world_hash_summary, summary, (size_t)summary_length + 1);
+    world_rolling_slices = slices;
+    world_hash_tick = tick;
+    ++world_hash_scans;
+    world_hash_failure_id = 0;
+    world_hash_stage = "complete";
     return 1;
 }
 
@@ -728,7 +883,7 @@ static int lua_world_watch(lua_State *L) {
 }
 static int lua_world_detail(lua_State *L) {
     double number=p_lua_tonumber(L,1);
-    if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures) {p_lua_pushnil(L);return 1;}
+    if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures || world_rolling_slices) {p_lua_pushnil(L);return 1;}
     unsigned count=world_hash_watch_count*WORLD_HASH_DOMAINS;
     if(number==0) {p_lua_pushnumber(L,count);return 1;}
     if(number>count) {p_lua_pushnil(L);return 1;}
@@ -745,7 +900,7 @@ static int lua_world_detail(lua_State *L) {
 /* world_health(0) = the watch count; world_health(i) = watch i's WORLD_HEALTH row now. */
 static int lua_world_health(lua_State *L) {
     double number=p_lua_tonumber(L,1);char out[320];int n=0;
-    if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number) {p_lua_pushnil(L);return 1;}
+    if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || world_rolling_slices) {p_lua_pushnil(L);return 1;}
     if(number==0) {p_lua_pushnumber(L,world_hash_watch_count);return 1;}
     if(number<=world_hash_watch_count) n=world_health_row((unsigned)number-1,stats.issued,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
@@ -769,6 +924,29 @@ static int lua_world_capture_schema(lua_State *L,unsigned schema) {
 }
 static int lua_world_capture(lua_State *L) {return lua_world_capture_schema(L,1);}
 static int lua_world_capture_nav_v2(lua_State *L) {return lua_world_capture_schema(L,2);}
+static int lua_world_capture_rolling(lua_State *L) {
+    double tick = p_lua_tonumber(L, 1);
+    double slices = p_lua_tonumber(L, 2);
+    if (!accept_ui() || !stats.active || !boot_mode || boot_phase != 3 || !world_identity_installed ||
+        !isfinite(tick) || tick < 1 || tick > 9007199254740991.0 || floor(tick) != tick ||
+        tick != (double)stats.issued || !isfinite(slices) || slices < 1 || slices > 18000 ||
+        floor(slices) != slices || !world_hash_capture_rolling((uint64_t)tick, (unsigned)slices)) {
+        char error[256];
+        int length = snprintf(error, sizeof(error), "saved=%016llx stage=%s",
+                              (unsigned long long)world_hash_failure_id, world_hash_stage);
+        ++world_hash_failures;
+        p_lua_pushnil(L);
+        if (length < 0 || (size_t)length >= sizeof(error)) {
+            static const char fallback[] = "stage=error_format";
+            p_lua_pushlstring(L, fallback, sizeof(fallback) - 1);
+        } else {
+            p_lua_pushlstring(L, error, (size_t)length);
+        }
+        return 2;
+    }
+    p_lua_pushlstring(L, world_hash_summary, strlen(world_hash_summary));
+    return 1;
+}
 /* native_gate_world_hash_shields = 'canonical', before the first capture (as Windows lockstep_gate.c); the pins are read
  * once the gate runs (the image verified). */
 static int lua_world_hash_shields(lua_State *L) {
@@ -783,7 +961,7 @@ static int lua_world_hash_shields_status(lua_State *L) {
 }
 static int lua_world_page(lua_State *L) {
     double number=p_lua_tonumber(L,1);
-    if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures) {p_lua_pushnil(L);return 1;}
+    if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number || !world_hash_scans || world_hash_failures || world_rolling_slices) {p_lua_pushnil(L);return 1;}
     unsigned pages=(world_hash_changes+WORLD_HASH_PAGE-1)/WORLD_HASH_PAGE;
     if(number==0) {p_lua_pushnumber(L,pages);return 1;}
     if(number>pages) {p_lua_pushnil(L);return 1;}

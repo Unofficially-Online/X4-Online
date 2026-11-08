@@ -37,6 +37,20 @@ class DesktopSetup(unittest.TestCase):
             live.main([*command, '--gravidar'])
             self.assertTrue(build.call_args.args[0].serial_pathing)
 
+    def test_ordered_batches_replace_only_the_preset_snapshot_strategy(self):
+        command = ['bundle', '--zig', '/unused/zig', '--snapshot', '/unused/save', '--out', '/unused/output']
+        with mock.patch.object(live, 'bundle') as build:
+            live.main([*command, '--preset', 'linux-core'])
+            self.assertTrue(build.call_args.args[0].travel_snapshot)
+            self.assertFalse(build.call_args.args[0].travel_determinism)
+            live.main([*command, '--preset', 'linux-core', '--travel-determinism'])
+            options = build.call_args.args[0]
+            self.assertTrue(options.travel_determinism)
+            self.assertFalse(options.travel_snapshot)
+            self.assertTrue(options.tempzone_order)
+            with self.assertRaises(SystemExit):
+                live.main([*command, '--travel-determinism', '--travel-snapshot'])
+
     def test_reload_seed_comes_from_snapshot_and_invalid_headers_fail(self):
         with tempfile.TemporaryDirectory() as directory:
             save = Path(directory) / 'save.xml.gz'

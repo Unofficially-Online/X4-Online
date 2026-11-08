@@ -119,7 +119,7 @@ def validate_client(slot, records, ticks, expected_ticks):
     return stop, identity
 
 
-def validate_evidence(logs_by_slot, ticks, stride):
+def validate_evidence(logs_by_slot, ticks, stride, rolling_slices=None):
     """Return runner-compatible fields and errors for each local client's log.
 
     logs_by_slot maps actual slot numbers to iterables of decoded lines. A
@@ -127,6 +127,8 @@ def validate_evidence(logs_by_slot, ticks, stride):
     """
     if not logs_by_slot or ticks < 1 or stride < 1:
         raise ValueError('at least one slot and positive ticks and stride are required')
+    if rolling_slices is not None:
+        return validate_rolling_evidence(logs_by_slot, ticks, rolling_slices)
     expected_ticks = {1, *range(stride, ticks + 1, stride)}
     stops = []
     identities = []
@@ -151,3 +153,160 @@ def validate_evidence(logs_by_slot, ticks, stride):
     return {'stops': stops, 'world_identity': identities, 'world_capture_problems': problems,
             'world_hash_ticks': len(common), 'world_hash_first_difference': difference,
             'world_hash_coverage': coverage, 'evidence_errors': errors, 'evidence_ok': not errors}
+
+
+ROLLING_FIELDS = ('tick', 'cycle', 'slice', 'slices', 'begin', 'end', 'objects', 'created')
+ROLLING_COVERAGE = ('present', 'unknown_class', 'unknown_motion', 'unknown_references')
+ROLLING = re.compile(
+    r'NATIVE_GATE WORLD_ROLLING '
+    + ' '.join(name + r'=(?P<' + name + r'>\d+)' for name in ROLLING_FIELDS + ROLLING_COVERAGE)
+    + r' state=(?P<state>WORLD_ROLLING_1:'
+    + ':'.join(r'(?P<state_' + name + r'>\d+)' for name in ROLLING_FIELDS)
+    + ':' + ':'.join([r'[0-9a-f]{64}'] * 4) + r')\s*$'
+)
+ROLLING_STOP = re.compile(
+    r'NATIVE_GATE WORLD_ROLLING_STOP scans=(?P<scans>\d+) '
+    r'cycles=(?P<cycles>\d+) failures=(?P<failures>\d+)\s*$'
+)
+
+
+def parse_rolling_client(slot, lines, ticks, slices):
+    """Validate in log order; completed slices precede STOP and its footers."""
+    errors = []
+    captures = {}
+    coverage = []
+    stops = []
+    identities = []
+    footers = []
+    problems = []
+    last_tick = 0
+    imported_count = None
+    cohort_by_cycle = {}
+    last_created = None
+    for line in lines:
+        if is_fatal_gate_message(line):
+            errors.append(f'client {slot}: fatal gate message: {line.strip()}')
+        if 'NATIVE_GATE WORLD_CAPTURE_PROBLEM' in line:
+            problems.append(line.split('NATIVE_GATE WORLD_CAPTURE_PROBLEM', 1)[1].strip())
+        elif 'NATIVE_GATE WORLD_HASH ' in line or 'NATIVE_GATE WORLD_HASH_STOP' in line:
+            errors.append(f'client {slot}: unexpected instantaneous world hash evidence')
+        elif 'NATIVE_GATE WORLD_ROLLING_STOP' in line:
+            match = ROLLING_STOP.search(line)
+            if not match:
+                errors.append(f'client {slot}: malformed WORLD_ROLLING_STOP')
+            else:
+                footers.append(numeric_fields(match))
+            if not stops:
+                errors.append(f'client {slot}: WORLD_ROLLING_STOP before STOP')
+        elif 'NATIVE_GATE WORLD_ROLLING' in line:
+            match = ROLLING.search(line)
+            if not match:
+                errors.append(f'client {slot}: malformed WORLD_ROLLING')
+                continue
+            fields = match.groupdict()
+            row = {name: int(fields[name]) for name in ROLLING_FIELDS + ROLLING_COVERAGE}
+            tick = row['tick']
+            if stops or footers or identities:
+                errors.append(f'client {slot}: WORLD_ROLLING after STOP or footer')
+            if tick != last_tick + 1 or tick > ticks:
+                errors.append(f'client {slot}: duplicate, missing, or out-of-order WORLD_ROLLING at tick {tick}')
+            last_tick = tick
+            if any(row[name] != int(fields['state_' + name]) for name in ROLLING_FIELDS):
+                errors.append(f'client {slot}: WORLD_ROLLING state metadata mismatch at tick {tick}')
+            if tick < 1 or row['slices'] != slices or row['cycle'] != 1 + (tick - 1) // slices or row['slice'] != (tick - 1) % slices:
+                errors.append(f'client {slot}: WORLD_ROLLING schedule mismatch at tick {tick}')
+            total = row['objects']
+            created = row['created']
+            expected_begin = total * row['slice'] // slices
+            expected_end = total * (row['slice'] + 1) // slices
+            if (total < 1 or created > total or row['slice'] >= slices or
+                    row['begin'] != expected_begin or row['end'] != expected_end):
+                errors.append(f'client {slot}: invalid WORLD_ROLLING bounds at tick {tick}')
+            width = max(0, row['end'] - row['begin'])
+            if (row['present'] > width or
+                    any(row[name] > row['present'] for name in ROLLING_COVERAGE[1:])):
+                errors.append(f'client {slot}: invalid WORLD_ROLLING coverage at tick {tick}')
+            imported = total - created
+            if imported_count is None:
+                imported_count = imported
+            elif imported != imported_count:
+                errors.append(f'client {slot}: imported cohort count changed at tick {tick}')
+            cycle = row['cycle']
+            if cycle in cohort_by_cycle and cohort_by_cycle[cycle] != (total, created):
+                errors.append(f'client {slot}: cohort changed within cycle {cycle}')
+            elif cycle not in cohort_by_cycle:
+                if last_created is not None and created < last_created:
+                    errors.append(f'client {slot}: created cohort count decreased at cycle {cycle}')
+                cohort_by_cycle[cycle] = (total, created)
+                last_created = created
+            if tick in captures:
+                errors.append(f'client {slot}: duplicate WORLD_ROLLING at tick {tick}')
+            else:
+                captures[tick] = fields['state']
+            coverage.append(row)
+        elif 'NATIVE_GATE WORLD_IDENTITY_STOP' in line:
+            match = IDENTITY.search(line)
+            if not match:
+                errors.append(f'client {slot}: malformed WORLD_IDENTITY_STOP')
+            else:
+                identities.append(numeric_fields(match))
+            if not stops:
+                errors.append(f'client {slot}: WORLD_IDENTITY_STOP before STOP')
+        elif re.search(r'NATIVE_GATE STOP(?:\s|$)', line):
+            match = STOP.search(line)
+            if not match:
+                errors.append(f'client {slot}: malformed STOP')
+            else:
+                stops.append(numeric_fields(match))
+            if footers or identities:
+                errors.append(f'client {slot}: STOP after footer')
+    if set(captures) != set(range(1, ticks + 1)):
+        errors.append(f'client {slot}: incomplete WORLD_ROLLING tick coverage')
+    stop = stops[0] if len(stops) == 1 else None
+    identity = identities[0] if len(identities) == 1 else None
+    if stop != {'slot': slot, 'completed': ticks, 'reason': 1, 'restored': 1}:
+        errors.append(f'client {slot}: missing, duplicate, or unsuccessful STOP')
+    if (not identity or identity['restored'] != 1 or identity['failures'] != 0
+            or identity['count'] < 1 or identity['calls'] < identity['count']):
+        errors.append(f'client {slot}: missing, duplicate, or unsuccessful WORLD_IDENTITY_STOP')
+    if identity and imported_count is not None and imported_count != identity['count']:
+        errors.append(f'client {slot}: imported cohort count differs from WORLD_IDENTITY_STOP')
+    if footers != [{'scans': ticks, 'cycles': ticks // slices, 'failures': 0}]:
+        errors.append(f'client {slot}: missing, duplicate, or unsuccessful WORLD_ROLLING_STOP')
+    if problems:
+        errors.append(f'client {slot}: world capture problem')
+    return stop, identity, problems, captures, coverage, errors
+
+
+def validate_rolling_evidence(logs_by_slot, ticks, slices):
+    """Compare sequential slice receipts, not simultaneous whole-world states.
+
+    Counts establish the declared cohort size, not its actual membership.
+    Newly created objects may wait until the next cycle; changes between slice
+    samples are not an instantaneous whole-world capture.
+    """
+    if isinstance(slices, bool) or not isinstance(slices, int) or not 1 <= slices <= 18000:
+        raise ValueError('rolling_slices must be an integer from 1 to 18000')
+    stops, identities, problems, hashes, coverage, errors = [], [], [], [], [], []
+    for slot, lines in logs_by_slot.items():
+        stop, identity, client_problems, captures, client_coverage, client_errors = parse_rolling_client(
+            slot, lines, ticks, slices)
+        stops.append(stop)
+        identities.append(identity)
+        problems.append(client_problems)
+        hashes.append(captures)
+        coverage.append(client_coverage)
+        errors.extend(client_errors)
+    common = sorted(set.intersection(*(set(client_hashes) for client_hashes in hashes)))
+    difference = next((tick for tick in common
+                       if any(client_hashes[tick] != hashes[0][tick] for client_hashes in hashes[1:])), None)
+    if difference is not None:
+        errors.append(f'WORLD_ROLLING differs at tick {difference}')
+    partial = ticks % slices
+    return {'stops': stops, 'world_identity': identities, 'world_capture_problems': problems,
+            'world_hash_ticks': len(common), 'world_hash_first_difference': difference,
+            'world_hash_coverage': coverage, 'evidence_errors': errors, 'evidence_ok': not errors,
+            'mode': 'rolling', 'completecycles': ticks // slices,
+            'partialcycle': {'cycle': ticks // slices + 1, 'sampled_slices': partial,
+                             'total_slices': slices} if partial else None,
+            'coverage_semantic': 'Sequential slices are sampled on different ticks; counts do not prove cohort membership. New objects may wait until the next cycle.'}

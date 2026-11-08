@@ -342,7 +342,9 @@ static void test_frame_gate_failures(void) {
     printf("frame gate failures PASS (56, 4, 3 foreign, 3 speed, 7, 2, stop)\n");
 }
 #include "test_gate_world.h"
+#include "test_gate_world_rolling.h"
 #include "test_gate_path.h"
+#include "test_gate_travel_determinism.h"
 #include "test_gate_load.h"
 #include "test_gate_loadout.h"
 #include "test_gate_attention.h"
@@ -383,7 +385,9 @@ int main(int argc,char **argv) {
     test_sha256();test_relay_host();test_compat();test_code_swap();test_near_page();
     synth_image();test_verify_stages();test_dt();test_frame_gate();test_frame_gate_failures();
     test_world_golden(getenv("GATE_WORLD_GOLDEN"));
+    test_world_rolling();
     test_path_determinism();
+    test_travel_inline_dispatch();
     test_path_install();
     test_path_budget();
     test_load_patches();test_boot_hold_decisions();test_cue_identity();test_event_order_linux();test_gravidar_linux();
@@ -417,6 +421,7 @@ int main(int argc,char **argv) {
         unsigned char window[16],dt[16];memcpy(window,LX(LX_CALL_WINDOW),16);memcpy(dt,LX(LX_DT_LOAD_VA),16);
         test_frame_gate();test_frame_gate_failures();
         assert(!memcmp(window,LX(LX_CALL_WINDOW),16) && !memcmp(dt,LX(LX_DT_LOAD_VA),16));
+        test_travel_inline_elf();
         test_world_install_elf();test_path_install();test_path_budget();test_load_patches();test_world_golden(getenv("GATE_WORLD_GOLDEN"));
         test_loadout_order_elf();
         test_fp_redirect_elf();
