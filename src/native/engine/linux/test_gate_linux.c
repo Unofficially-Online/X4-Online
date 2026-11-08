@@ -358,6 +358,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_fork_save.h"
 #include "test_gate_weapon_fire.h"
 #include "test_gate_engine_rng.h"
+#include "test_gate_event_rng.h"
 #include "test_gate_spline_join.h"
 #include "test_gate_mass_traffic.h"
 #include "test_gate_actor_all.h"
@@ -393,7 +394,7 @@ int main(int argc,char **argv) {
     test_travel_inline_dispatch();
     test_path_install();
     test_path_budget();
-    test_load_patches();test_boot_hold_decisions();test_cue_identity();test_event_order_linux();test_gravidar_linux();
+    test_load_patches();test_boot_hold_decisions();test_cue_identity();test_event_order_linux();test_event_rng_linux();test_gravidar_linux();
     test_loadout_order_linux();
     test_attention_linux();
     test_step_trace_linux();
@@ -435,6 +436,7 @@ int main(int argc,char **argv) {
         test_step_chain_elf();
         test_weapon_fire_elf();
         test_engine_rng_elf();
+        test_event_rng_elf();
         test_spline_join_elf();
         test_mass_traffic_elf();
         test_actor_all_elf();

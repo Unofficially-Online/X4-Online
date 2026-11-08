@@ -268,6 +268,10 @@ def bundle(args):
         command.append('--boot-hold')
     if args.event_order:
         command.append('--event-order')
+    if args.event_rng:
+        command += ['--event-rng', args.event_rng]
+    if args.event_rng_rows_window:
+        command += ['--event-rng-rows-window', *map(str, args.event_rng_rows_window)]
     if args.event_rows is not None:
         command += ['--event-rows', str(args.event_rows)]
     if args.gravidar:
@@ -427,6 +431,8 @@ def bundle(args):
         'boot_hold',
         'event_order',
         'event_rows',
+        'event_rng',
+        'event_rng_rows_window',
         'gravidar',
         'gravidar_deadlines',
         'travel_snapshot',
@@ -1274,6 +1280,8 @@ def main(argv=None):
     b.add_argument('--gravidar', action='store_true', help='the gated Gravidar pass, keyed units, time sync, sector order (implies serial pathing)')
     b.add_argument('--event-rows', type=int, metavar='TICKS', help='one EVENT_ROW per due event in the boot passes and the first TICKS gated ticks (up to 20000; about 50 MB per client for 6000 ticks)')
     b.add_argument('--event-order', action='store_true', help='due events delivered in (time, saved ID) source order')
+    b.add_argument('--event-rng', choices=('observe', 'key'), help='scope RNG around event deliveries (needs --event-order)')
+    b.add_argument('--event-rng-rows-window', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='record all event deliveries in this tick window')
     b.add_argument('--boot-hold', action='store_true', help='the first AIDirector::Move after the load runs in tick 1')
     b.add_argument('--ai-wait-rng', action='store_true', help='load-time AI Wait durations on per-wait streams')
     b.add_argument('--region-rng', choices=('key', 'observe'), help='hazard region updates on per-region streams')

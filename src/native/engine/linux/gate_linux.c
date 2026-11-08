@@ -152,6 +152,9 @@ static int boot_hold_armed,boot_hold_restored;
 static volatile int64_t boot_hold_failures;
 /* Event order (gate_event_order.h, included below). */
 static void event_order_restore(void);
+static void linux_event_rng_stop(void);
+static int linux_event_rng_check(void);
+static volatile long linux_event_rng_armed;
 static int event_order_owned(void);
 static volatile long event_order_armed;
 static int event_order_installed;
@@ -495,6 +498,7 @@ static void finish(unsigned reason) {
     if(md_resume_armed && !md_resume_restored) stats.restored=0;
     boot_hold_restore();
     if(boot_hold_armed && !boot_hold_restored) stats.restored=0;
+    linux_event_rng_stop();
     event_order_restore();
     if(event_order_installed) stats.restored=0;
     gravidar_restore();
@@ -609,6 +613,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(boot_hold_armed && boot_hold_failures) {finish(86);gate_original_once(frame,loading);return;}
     if(md_resume_armed && md_resume_failures) {finish(87);gate_original_once(frame,loading);return;}
     if(event_order_armed && event_order_failures) {finish(80);gate_original_once(frame,loading);return;}
+    if(linux_event_rng_armed && !linux_event_rng_check()) {finish(151);gate_original_once(frame,loading);return;}
     if(gravidar_installed && gravidar_failures) {finish(62);gate_original_once(frame,loading);return;}
     if(gravidar_key_failures || gravidar_time_failures) {finish(83);gate_original_once(frame,loading);return;}
     if(ai_sched_armed && ai_sched_failures) {finish(84);gate_original_once(frame,loading);return;}
@@ -807,6 +812,7 @@ static int lua_start(lua_State *L) {
 #include "gate_ai_wait.h"
 #include "gate_md_resume.h"
 #include "gate_boot_hold.h"
+#include "gate_event_rng.h"
 #include "gate_event_order.h"
 #include "gate_gravidar.h"
 #include "gate_gravidar_deadlines.h"
@@ -937,6 +943,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);
     METHOD(event_order);METHOD(event_order_status);METHOD(event_rows);METHOD(event_order_row);
+    METHOD(event_rng);METHOD(event_rng_status);METHOD(event_rng_row);
     METHOD(gravidar_key);METHOD(gravidar_time);METHOD(gravidar_key_status);METHOD(gravidar);
     METHOD(ai_schedule);METHOD(ai_schedule_status);METHOD(ai_schedule_fallbacks);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);

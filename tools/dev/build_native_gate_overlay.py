@@ -224,6 +224,8 @@ def main():
     p.add_argument('--gravidar', action='store_true', help='the Linux gate: the gated Gravidar pass with keyed units, time sync and the sector round-robin in saved order (needs --serial-pathing, --world-identities, --gate-so)')
     p.add_argument('--event-rows', type=int, metavar='TICKS', help='native_gate_event_rows: one EVENT_ROW per due event in the boot passes and the first TICKS gated ticks, up to 600 (20000 on the Linux gate; needs --event-order)')
     p.add_argument('--event-order', action='store_true', help='native_gate_event_order: due events delivered in (time, saved ID) source order (needs --world-identities)')
+    p.add_argument('--event-rng', choices=('observe', 'key'), help='Linux event-delivery RNG scope (needs --event-order and --world-identities)')
+    p.add_argument('--event-rng-rows-window', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='record all event deliveries in this tick window (needs --event-rng)')
     p.add_argument('--md-resume-rng', action='store_true', help='native_gate_md_resume_rng: load-time MD cue delays on per-cue streams (needs the snapshot boot)')
     p.add_argument('--boot-hold', action='store_true', help='native_gate_boot_hold: the first AIDirector::Move after the load runs in tick 1 (needs the snapshot boot)')
     p.add_argument('--ai-wait-rng', action='store_true', help='native_gate_ai_wait_rng: load-time AI Wait durations on per-wait streams (needs --world-identities)')
@@ -550,7 +552,7 @@ def main():
         # world identities and the world hash are ported (src/native/engine/linux/gate_world.h).
         if not args.snapshot or args.mode != 'clock':
             p.error('--gate-so supports the snapshot boot with --mode clock only')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
@@ -1033,6 +1035,19 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             config.write('X4LAN_CONFIG.native_gate_event_order = true\n')
             if args.event_rows is not None:
                 config.write(f'X4LAN_CONFIG.native_gate_event_rows = {args.event_rows}\n')
+    if args.event_rng_rows_window and not args.event_rng:
+        p.error('--event-rng-rows-window needs --event-rng')
+    if args.event_rng:
+        if not args.gate_so or not args.event_order or not args.snapshot or not args.world_identities:
+            p.error('--event-rng needs --gate-so, --event-order, the snapshot boot and --world-identities')
+        if args.event_rng_rows_window:
+            first, last = args.event_rng_rows_window
+            if first < 1 or last < first or last - first > 600:
+                p.error('--event-rng-rows-window needs 1 <= FIRST <= LAST, at most 600 apart')
+        with (args.out / 'ui/config.lua.append').open('a') as config:
+            config.write(f"X4LAN_CONFIG.native_gate_event_rng = '{args.event_rng}'\n")
+            if args.event_rng_rows_window:
+                config.write(f'X4LAN_CONFIG.native_gate_event_rng_rows = {{{first},{last}}}\n')
     if args.md_resume_rng or args.boot_hold:
         if not args.snapshot:
             p.error('--md-resume-rng and --boot-hold need the snapshot boot')

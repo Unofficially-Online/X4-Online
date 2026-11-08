@@ -72,6 +72,7 @@ class DesktopSetup(unittest.TestCase):
             self.assertTrue(preset.serial_pathing)
             self.assertEqual(preset.find_order, 'observe')
             self.assertFalse(preset.nav_key)
+            self.assertIsNone(preset.event_rng)
             self.assertFalse(preset.created_rows)
             live.main([*command, '--path-determinism', '3'])
             self.assertTrue(build.call_args.args[0].serial_pathing)
@@ -91,6 +92,16 @@ class DesktopSetup(unittest.TestCase):
             self.assertTrue(options.tempzone_order)
             with self.assertRaises(SystemExit):
                 live.main([*command, '--travel-determinism', '--travel-snapshot'])
+
+    def test_event_rng_options_parse_for_the_bundle(self):
+        command = ['bundle', '--zig', '/unused/zig', '--snapshot', '/unused/save', '--out', '/unused/output']
+        with mock.patch.object(live, 'bundle') as build:
+            live.main([*command, '--preset', 'linux-core', '--event-rng', 'observe',
+                       '--event-rng-rows-window', '8400', '8460'])
+            options = build.call_args.args[0]
+            self.assertEqual(options.event_rng, 'observe')
+            self.assertEqual(options.event_rng_rows_window, [8400, 8460])
+            self.assertTrue(options.event_order)
 
     def test_reload_seed_comes_from_snapshot_and_invalid_headers_fail(self):
         with tempfile.TemporaryDirectory() as directory:

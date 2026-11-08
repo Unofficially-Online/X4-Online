@@ -458,6 +458,19 @@ class Overlay(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.build(*self.snapshot, '--mode', 'clock', *wrong)
 
+    def test_linux_event_rng_needs_delivery_order_and_accepts_a_window(self):
+        base = (*self.snapshot, '--mode', 'clock', '--world-identities', '--event-order')
+        config = (self.build(*base, '--event-rng', 'observe', '--event-rng-rows-window', '8400', '8460') / 'ui/config.lua.append').read_text()
+        self.assertIn("native_gate_event_rng = 'observe'", config)
+        self.assertIn('native_gate_event_rng_rows = {8400,8460}', config)
+        for wrong in (('--event-rng-rows-window', '1', '2'),
+                      ('--event-rng', 'key', '--event-rng-rows-window', '0', '2'),
+                      ('--event-rng', 'key', '--event-rng-rows-window', '1', '602')):
+            with self.subTest(wrong=wrong), self.assertRaises(SystemExit):
+                self.build(*base, *wrong)
+        with self.assertRaises(SystemExit):
+            self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--event-rng', 'key')
+
     def test_linux_overlay_takes_spawn_rng(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--spawn-rng', 'key')
         self.assertIn("native_gate_spawn_rng = 'key'", (out / 'ui/config.lua.append').read_text())

@@ -6,8 +6,8 @@
  * 0x38-byte slots as Windows (+0x18 source, +0x28 event, +0x30 time), through DeliverEvent 0x16c5db0
  * at 0x16c6b63, return 0x16c6b68: rdi source, rsi event, xmm0 time. The rel32 ends one aligned
  * qword, so one compare-exchange changes it. U::UIElement's vtable is 0x3d3b040 (view-local runs).
- * The event RNG scope of lockstep_event_rng.h is not ported: deliveries stay on the caller's word.
- * Created identities are not ported either: a source without a saved ID ranks by its runtime ID. */
+ * The opt-in Linux event RNG scope uses this same delivery redirect.
+ * Portable created identities are used when available; other sources rank by runtime ID. */
 #define EVENT_ORDER_OWN_PLATFORM
 #define EVENT_ORDER_DELIVER (LX_EVENT_DELIVER_VA-LX_IMAGE_BASE)
 #define EVENT_ORDER_BATCH (LX_EVENT_BATCH_VA-LX_IMAGE_BASE)
@@ -15,7 +15,7 @@
 #define EVENT_ORDER_VIEW_LOCAL (LX_UI_ELEMENT_VTABLE-LX_IMAGE_BASE)
 #define EVENT_ORDER_TLS_TIME GATE_TLS_LINUX_TIME
 #define EVENT_ORDER_ROW_TICKS_MAX 20000 /* long census runs: about 60 rows a tick, drained every tick */
-#define event_rng_deliver(native,source,event,due) (native)((source),(event),(due))
+#define event_rng_deliver(native,source,event,due) linux_event_rng_deliver((native),(source),(event),(due))
 #define LONG long /* the status prints the armed word with %ld */
 #include "lockstep_event_order.h"
 #undef LONG
