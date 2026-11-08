@@ -106,9 +106,14 @@ static const lxw_class *lxw_class_of(uintptr_t vtable) {
 }
 
 /* ---- identities (lockstep_world_identity.h semantics) ---- */
-#define WORLD_IDENTITY_CAPACITY 1048576u
+/* Match Windows: fresh worlds already import more than 524288 saved objects.
+ * Keep the table at most half full; increasing the bucket count preserves the
+ * existing probe bound and refusal policy instead of raising the load factor. */
+#define WORLD_IDENTITY_CAPACITY 4194304u
 #define WORLD_IDENTITY_PROBES 256u
-#define LXW_INSERTS_MAX 1048576u
+/* Pending imports can include repeated IDs before resolution. Retain twice
+ * the admitted saved population, as with the original smaller table. */
+#define LXW_INSERTS_MAX WORLD_IDENTITY_CAPACITY
 typedef struct {uint64_t runtime,saved;} world_identity_entry;
 typedef struct {uint64_t saved;unsigned char *node;} lxw_insert;
 typedef struct {unsigned char *node;uint64_t inserted;} lxw_insert_result;

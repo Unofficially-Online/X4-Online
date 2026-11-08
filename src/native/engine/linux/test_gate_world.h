@@ -72,6 +72,72 @@ static void wt_reset_identities(void) {
     world_identity_count=world_identity_calls=world_identity_failures=world_identity_late=0;
     world_identity_sealed=0;lxw_insert_count=0;world_identity_restored=0;
 }
+/* Reverse the bucket mixer so these distinct runtime IDs all select bucket0.
+ * This exercises the real probe bound without searching a billion IDs. */
+static uint64_t wt_colliding_runtime(unsigned index) {
+    uint64_t value=(uint64_t)(index+1)*WORLD_IDENTITY_CAPACITY;
+    value^=value>>33;
+    value*=UINT64_C(0x4f74430c22a54005); /* inverse of 0xff51afd7ed558ccd modulo 2^64 */
+    return value^(value>>33);
+}
+static void test_world_identity_capacity(void) {
+    const unsigned old_saved_limit=524288u;
+    const unsigned saved_limit=WORLD_IDENTITY_CAPACITY/2;
+    assert(WORLD_IDENTITY_CAPACITY==4194304u && saved_limit==2097152u);
+    assert(LXW_INSERTS_MAX>=saved_limit && world_identities && lxw_inserts);
+    wt_reset_identities();
+    /* Insert every entry, including the old ceiling and the new last entry:
+     * assigning only the count would not test the enlarged bucket mask. */
+    for(unsigned runtime=1;runtime<=saved_limit;runtime++) {
+        assert(world_identity_record(runtime,UINT64_C(0x100000000)+runtime));
+        if(runtime==old_saved_limit+1)
+            assert(world_identity_count==runtime && lxw_identity_probe(runtime)==UINT64_C(0x100000000)+runtime);
+    }
+    assert(world_identity_count==saved_limit);
+    assert(world_identity_record(saved_limit,UINT64_C(0x100000000)+saved_limit));
+    assert(!world_identity_record(saved_limit,UINT64_C(0x200000000)+saved_limit));
+    assert(!world_identity_record(saved_limit+1,UINT64_C(0x100000000)+saved_limit+1));
+    assert(world_identity_count==saved_limit && !lxw_identity_probe(saved_limit+1));
+    /* The import resolver must retain the same hard failure when it reaches
+     * the admitted population limit, so the gate cannot proceed with a subset. */
+    unsigned char exhausted_node[0x30]={0};
+    uint64_t runtime_after_limit=(uint64_t)saved_limit+1;
+    memcpy(exhausted_node+0x28,&runtime_after_limit,sizeof(runtime_after_limit));
+    lxw_inserts[0]=(lxw_insert){UINT64_C(0x100000000)+runtime_after_limit,exhausted_node};
+    lxw_insert_count=1;lxw_resolve_inserts();
+    assert(world_identity_failures==1 && world_identity_count==saved_limit && !lxw_insert_count);
+    world_identity_sealed=1;
+    for(unsigned runtime=1;runtime<=saved_limit;runtime++)
+        assert(world_identity_lookup(runtime)==UINT64_C(0x100000000)+runtime);
+    assert(!world_identity_record(1,UINT64_C(0x100000001))); /* still sealed */
+    wt_reset_identities();
+    for(unsigned index=0;index<WORLD_IDENTITY_PROBES;index++) {
+        uint64_t runtime=wt_colliding_runtime(index);
+        assert(runtime && !world_identity_bucket(runtime));
+        assert(world_identity_record(runtime,index+1));
+    }
+    uint64_t exhausted_runtime=wt_colliding_runtime(WORLD_IDENTITY_PROBES);
+    assert(!world_identity_bucket(exhausted_runtime));
+    assert(!world_identity_record(exhausted_runtime,WORLD_IDENTITY_PROBES+1));
+    assert(world_identity_count==WORLD_IDENTITY_PROBES && !lxw_identity_probe(exhausted_runtime));
+    assert(world_identity_record(wt_colliding_runtime(WORLD_IDENTITY_PROBES-1),WORLD_IDENTITY_PROBES));
+    assert(!world_identity_record(wt_colliding_runtime(WORLD_IDENTITY_PROBES-1),WORLD_IDENTITY_PROBES+1));
+    /* The installed stand-in import hook must retain pending entries beyond
+     * its old 1M ceiling, accept its last slot, and latch refusal when full. */
+    wt_reset_identities();boot_mode=1;boot_phase=1;
+    for(unsigned index=0;index<LXW_INSERTS_MAX;index++) {
+        uint64_t saved=0x100+(index&15);
+        lxw_insert_result result=wt_insert(LX(LX_IMPORT_MAP_VA),saved);
+        assert(result.node==wt_nodes[index&15]);
+        if(index==1048576u) assert(lxw_insert_count==1048577u && !world_identity_failures);
+    }
+    assert(lxw_insert_count==LXW_INSERTS_MAX && world_identity_calls==LXW_INSERTS_MAX && !world_identity_failures);
+    assert(lxw_inserts[LXW_INSERTS_MAX-1].saved==0x10f && lxw_inserts[LXW_INSERTS_MAX-1].node==wt_nodes[15]);
+    wt_insert(LX(LX_IMPORT_MAP_VA),0x110);
+    assert(lxw_insert_count==LXW_INSERTS_MAX && world_identity_calls==(uint64_t)LXW_INSERTS_MAX+1 && world_identity_failures==1);
+    wt_reset_identities();boot_mode=0;boot_phase=0;
+    printf("world identity capacity PASS saved=%u pending=%u probes=%u\n",saved_limit,LXW_INSERTS_MAX,WORLD_IDENTITY_PROBES);
+}
 static void test_world_hook(void) {
     reset_session();wt_reset_identities();
     unsigned char *entry=LX(LX_IMPORT_INSERT_VA),*clear=LX(LX_IMPORT_CLEAR_VA);wt_standin(entry);wt_clear_standin(clear);
@@ -85,6 +151,7 @@ static void test_world_hook(void) {
     assert(clear[0]==0xe9 && clear+5+rel==thunk+LXW_THUNK_CLEAR_HOOK && !memcmp(clear+5,"\x48\x8b\x57",3));
     assert(!world_identity_install()); /* once */
     assert(world_identity_owned());
+    test_world_identity_capacity();
     /* Outside the load window: counted late, not recorded; other maps pass through untouched. */
     unsigned char other_map[16];
     lxw_insert_result r=wt_insert(LX(LX_IMPORT_MAP_VA),0x51);
