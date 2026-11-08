@@ -1226,3 +1226,11 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   0.1026; the read bank's position the T position; the model's +0xa8 8 on the session, 0 on the joiner), and the joiner's other
   bank and controller cache hold a stale (28720, 111.4, 41721). The session's Agent had a full update at T+1, the joiner's not:
   the update cadence of a container launched shortly before T. Next: the trace window 3033..3058 for every tick's full rows.
+- w1z213 (build-fobj1 = 1202b2f7 with x4mods-28's FOBJ, off; the trace window 3033..3058 gives every tick's full motion rows):
+  717eb on the joiner runs exactly one tick behind the session from T+1 on (its spline parameter and position at tick t are the
+  session's at t-1: 0.10119 at 3034 against the session's 0.10118 at 3033, and both advance 0.0014 a tick after): its first step
+  after the admission moved by about 0.7 % of a frame. The model's words +0x70..+0xdf are equal but +0xa8 (the second deque's map
+  size, 8 against 0 with both deques empty: SPLM skips the deques, harmless). It is one of seven spline ships without a motion
+  solver on either side (JOIN_T1 rows on the joiner only: 6f1e7, 717eb, 7a8dc, 7add1, 89eb7, 9c1c7, 9e69a), so SOLVER is not it; the
+  spline step 0xeb7230 takes its dt as an argument (the third, a float) from the Agent update; PATH is clean (9849 members, none
+  pending or unplaced). Next: JOIN_BP at 0xeb7230 for the caller that computes the dt (w1z214).

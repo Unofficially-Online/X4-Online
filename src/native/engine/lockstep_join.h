@@ -3220,7 +3220,13 @@ static uint64_t join_bp_tick,join_bp_regs[4];static uint32_t join_bp_chain[JOIN_
 static LONG CALLBACK join_bp_handler(EXCEPTION_POINTERS *e) {
     if(e->ExceptionRecord->ExceptionCode!=EXCEPTION_BREAKPOINT || !join_bp_rva) return EXCEPTION_CONTINUE_SEARCH;
     unsigned char *at=(unsigned char *)e->ExceptionRecord->ExceptionAddress;
-    if(at!=image+join_bp_rva || InterlockedCompareExchange(&join_bp_state,2,1)!=1) return EXCEPTION_CONTINUE_SEARCH;
+    if(at!=image+join_bp_rva) return EXCEPTION_CONTINUE_SEARCH;
+    if(InterlockedCompareExchange(&join_bp_state,2,1)!=1) {
+        /* w1z214: another thread of a parallel pass hit the same int3 before the first restored the byte (the spline step 0xeb7230 in
+         * the pathing workers): it resumes at the instruction, which is the original byte again or soon will be. */
+        if(InterlockedCompareExchange(&join_bp_state,2,2)==2) {e->ContextRecord->Rip=(DWORD64)(uintptr_t)at;return EXCEPTION_CONTINUE_EXECUTION;}
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     DWORD old,ignored;
     if(VirtualProtect(at,1,PAGE_EXECUTE_READWRITE,&old)) {*at=join_bp_saved;VirtualProtect(at,1,old,&ignored);}
     FlushInstructionCache(GetCurrentProcess(),at,1);

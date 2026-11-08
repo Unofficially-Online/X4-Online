@@ -3522,6 +3522,20 @@ static void test_join_srcs(void) {
     printf("join SRCS: each keyed listener's sources from its own list by portable ID, a one-source move registered for the types "
            "of its entry and the old source dropped, equal, left and missing PASS\n");
 }
+/* JOIN_BP: the first hit restores the byte and resumes; a second thread trapped on the same int3 (a parallel pass, w1z214) resumes
+ * too instead of falling through to the process's crash; a breakpoint not armed is not ours. */
+static void test_join_bp_late(void) {
+    const uint32_t rva=0x1000u;unsigned char keep=image[rva];uint64_t stack[4]={0,0,0,0};
+    EXCEPTION_RECORD er;CONTEXT ctx;EXCEPTION_POINTERS ep={&er,&ctx};memset(&er,0,sizeof(er));memset(&ctx,0,sizeof(ctx));
+    er.ExceptionCode=EXCEPTION_BREAKPOINT;er.ExceptionAddress=image+rva;ctx.Rsp=(DWORD64)(uintptr_t)stack;
+    join_bp_rva=rva;join_bp_saved=0x48;join_bp_state=1;image[rva]=0xcc;
+    assert(join_bp_handler(&ep)==EXCEPTION_CONTINUE_EXECUTION && join_bp_state==2 && image[rva]==0x48 && ctx.Rip==(DWORD64)(uintptr_t)(image+rva));
+    ctx.Rip=0;assert(join_bp_handler(&ep)==EXCEPTION_CONTINUE_EXECUTION && ctx.Rip==(DWORD64)(uintptr_t)(image+rva));   /* the late hit */
+    join_bp_state=0;assert(join_bp_handler(&ep)==EXCEPTION_CONTINUE_SEARCH);
+    er.ExceptionAddress=image+rva+1u;join_bp_state=2;assert(join_bp_handler(&ep)==EXCEPTION_CONTINUE_SEARCH);   /* another address */
+    join_bp_rva=0;join_bp_state=0;join_bp_tick=0;join_bp_nchain=0;memset(join_bp_regs,0,sizeof(join_bp_regs));image[rva]=keep;
+    printf("join BP: the first hit restores and resumes, a late hit of another thread resumes, others pass PASS\n");
+}
 static void test_join_warp(void) {
     twarp_build(0,0x10);
     uint32_t n=9;uint64_t time=0;double want=102.1,got_time;
@@ -3563,5 +3577,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();
 }
