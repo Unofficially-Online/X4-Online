@@ -12,7 +12,7 @@ local core={'sha256','start','boot','load_requested','report','poll','stop','fra
  'path_determinism','path_determinism_status','path_budget','path_budget_status','region_rng','region_rng_status','region_rng_row',
  'ai_wait_rng','ai_wait_rng_status','ai_wait_rng_row','read_cost',
  'md_resume_rng','md_resume_rng_status','md_resume_rng_row','boot_hold','boot_hold_status',
- 'event_order','event_order_status','event_rows','event_order_row','event_rng','event_rng_status','event_rng_row',
+ 'event_order','event_order_status','event_rows','event_order_row','event_rng','event_rng_status','event_rng_row','build_rng','build_rng_status','build_rng_row',
  'gravidar_key','gravidar_time','gravidar_key_status','gravidar','ai_schedule','ai_schedule_status','ai_schedule_fallbacks',
  'gravidar_deadlines','gravidar_deadlines_status','travel_snapshot','travel_snapshot_status',
  'travel_determinism','travel_determinism_status',
@@ -32,6 +32,7 @@ for _,name in ipairs({'actor','world_trace','thread_rng','boot_rng_anchor','pilo
 end
 assert(gate.platform()=='linux')
 assert(gate.travel_determinism()==0,'ordered jobs must refuse outside a verified session')
+assert(gate.build_rng()==0,'build RNG must refuse outside a verified session')
 assert(gate.event_rng('key')==0 and gate.event_rng('observe', 1, 2)==0 and gate.event_rng('invalid')==0,
  'event RNG must refuse outside a verified session')
 assert(gate.world_motion_config('000000000006ec76',1,2)==0,'motion observer must refuse outside a verified live session')

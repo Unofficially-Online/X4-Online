@@ -350,6 +350,8 @@ def bundle(args):
         command.append('--weapon-fire-rng')
     if args.engine_refresh_rng:
         command.append('--engine-refresh-rng')
+    if args.build_rng:
+        command.append('--build-rng')
     if args.spline_join_all:
         command.append('--spline-join-all')
     if args.actor_rng_all:
@@ -468,6 +470,7 @@ def bundle(args):
         'spawn_rng',
         'weapon_fire_rng',
         'engine_refresh_rng',
+        'build_rng',
         'spline_join_all',
         'actor_rng_all',
         'actor_rng_rows',
@@ -1280,6 +1283,7 @@ def main(argv=None):
     b.add_argument('--gravidar', action='store_true', help='the gated Gravidar pass, keyed units, time sync, sector order (implies serial pathing)')
     b.add_argument('--event-rows', type=int, metavar='TICKS', help='one EVENT_ROW per due event in the boot passes and the first TICKS gated ticks (up to 20000; about 50 MB per client for 6000 ticks)')
     b.add_argument('--event-order', action='store_true', help='due events delivered in (time, saved ID) source order')
+    b.add_argument('--build-rng', action='store_true', help='key build-storage update scheduling by identity and game time')
     b.add_argument('--event-rng', choices=('observe', 'key'), help='scope RNG around event deliveries (needs --event-order)')
     b.add_argument('--event-rng-rows-window', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='record all event deliveries in this tick window')
     b.add_argument('--boot-hold', action='store_true', help='the first AIDirector::Move after the load runs in tick 1')

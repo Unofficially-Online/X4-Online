@@ -1464,7 +1464,7 @@ local probe_last_us -- previous frame() wall time, native_gate_frame_timing only
 local camera_perturb=false -- this client perturbs its camera (native_gate_camera_perturb)
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
 local nav_cadence_cursor=0
-local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,character_play=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,ui_exports=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,character_play=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,vplayer_map=0,vplayer_spike='',event_rng=0,build_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,ui_exports=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
 local world_trace_rows,world_queue_rows,world_wait_rows,world_wait_rng_rows=0,0,0,0
 local world_action_rows,world_values_rows,world_values_unknown_rows,world_unknown_identity_rows=0,0,0,0
 local world_values_cursors_loaded=false
@@ -1655,6 +1655,13 @@ local function drain_gravidar_watch(final)
    local row=gate.event_rng_row(row_cursors.event_rng)
    if not row then break end
    ticklog.write('EVENT_RNG_ROW '..row);row_cursors.event_rng=row_cursors.event_rng+1
+  end
+ end
+ if cfg.native_gate_build_rng and gate.build_rng_row then
+  for _=1,128 do
+   local row=gate.build_rng_row(row_cursors.build_rng)
+   if not row then break end
+   ticklog.write('BUILD_RNG_ROW '..row);row_cursors.build_rng=row_cursors.build_rng+1
   end
  end
  if cfg.native_gate_motion_watch then
@@ -5091,7 +5098,7 @@ local function frame()
   if pilot_view.fire then log('PILOT_FIRE_STOP '..tostring(gate.pilot_fire_status())) end
   if cfg.native_gate_gravidar_key_all or cfg.native_gate_gravidar_time_sync then log('GRAVIDAR_KEY_STOP '..tostring(gate.gravidar_key_status())) end
   if cfg.native_gate_gravidar_watch or cfg.native_gate_speech_game_time or cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or
-     cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree or cfg.native_gate_nav_mesh or cfg.native_gate_event_rng or cfg.native_gate_ui_cargo or cfg.native_gate_supply_rows or cfg.native_gate_ui_lazy or cfg.native_gate_supply_wants~=nil or cfg.native_gate_loadout_order or cfg.native_gate_order_canon or cfg.native_gate_address_order or cfg.native_gate_pick_order or cfg.native_gate_macro_arena then
+     cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree or cfg.native_gate_nav_mesh or cfg.native_gate_event_rng or cfg.native_gate_build_rng or cfg.native_gate_ui_cargo or cfg.native_gate_supply_rows or cfg.native_gate_ui_lazy or cfg.native_gate_supply_wants~=nil or cfg.native_gate_loadout_order or cfg.native_gate_order_canon or cfg.native_gate_address_order or cfg.native_gate_pick_order or cfg.native_gate_macro_arena then
    drain_gravidar_watch(true)
   end
   if cfg.native_gate_gravidar_watch then log('GRAVIDAR_WATCH_STOP '..tostring(gate.gravidar_watch_status())) end
@@ -5885,7 +5892,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_pick_order then ticklog.try(function() log('PICK_ORDER_STOP '..tostring(gate.pick_order_status())) end) end
    if cfg.native_gate_macro_arena then ticklog.try(function() log('MACRO_ARENA_STOP '..tostring(gate.macro_arena_status())) end) end
    if cfg.native_gate_address_order then ticklog.try(function() log('ADDRESS_ORDER_STOP '..tostring(gate.address_order_status())) end) end
-   if cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree then ticklog.try(drain_gravidar_watch,true) end
+   if cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree or cfg.native_gate_build_rng then ticklog.try(drain_gravidar_watch,true) end
    if cfg.native_gate_physics_trace~=nil then ticklog.try(function() log('PHYSICS_TRACE_STOP '..tostring(gate.physics_trace_status())) end) end
    if cfg.native_gate_body_order then ticklog.try(function() log('BODY_ORDER_STOP '..tostring(gate.body_order_status())) end) end
    if cfg.native_gate_shape_order then ticklog.try(function() log('SHAPE_ORDER_STOP '..tostring(gate.shape_order_status())) end) end

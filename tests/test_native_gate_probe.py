@@ -4636,6 +4636,26 @@ class SnapshotProbeTests(unittest.TestCase):
             self.assertEqual(self.lua.globals().loads,0)
             self.assertTrue(any('build rng refused' in line for line in self.lua.globals().logs.values()),config)
 
+    def test_build_rng_rows_survive_status_thinning(self):
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_world_identities=true
+          X4LAN_CONFIG.native_gate_build_rng=true
+          X4LAN_CONFIG.native_gate_status_stride=100
+          local gate=package.loadlib('gate')()
+          gate.build_rng=function() return 1 end
+          gate.build_rng_status=function() return 'installed=1 keyed=2 rows=2 overflow=0' end
+          gate.build_rng_row=function(index)
+            if index<2 then return 'index='..index..' phase=2' end
+          end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        lines = list(self.lua.globals().logs.values())
+        rows = [line.split('BUILD_RNG_ROW ')[1] for line in lines if 'BUILD_RNG_ROW ' in line]
+        self.assertEqual(rows, ['index=0 phase=2', 'index=1 phase=2'])
+        self.assertFalse(any('ERROR' in line for line in lines))
+
     def test_ui_cargo_arms_logs_status_and_drains_rows(self):
         self.lua.execute('''
           X4LAN_CONFIG.native_gate_world_identities=true

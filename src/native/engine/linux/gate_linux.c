@@ -101,6 +101,10 @@ static int wfire_installed,wfire_restored;
 static void erng_restore(void);
 static int erng_check(void);
 static int erng_installed,erng_restored;
+/* Shared Container build-event scheduling (gate_build_rng.h, included below). */
+static void linux_build_rng_restore(void);
+static int linux_build_rng_check(void);
+static int linux_build_rng_installed, linux_build_rng_restored;
 /* Spline routes joined (gate_spline_join.h, included below). */
 static void lsj_restore(void);
 static int lsj_check(void);
@@ -462,6 +466,8 @@ static void finish(unsigned reason) {
     if(dt_installed && main_thread && GetCurrentThreadId()!=main_thread) wait_parked(500);
     restore_dt();
     if(dt_installed) stats.restored=0;
+    linux_build_rng_restore(); /* The scheduler must not outlive its identity hooks. */
+    if(linux_build_rng_installed) stats.restored=0;
     world_identity_restore();
     if(world_identity_installed) stats.restored=0;
     pbud_restore();
@@ -601,6 +607,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(region_rng_armed && region_rng_failures) {finish(93);gate_original_once(frame,loading);return;}
     if(wfire_installed && !wfire_check()) {finish(132);gate_original_once(frame,loading);return;} /* WFIRE_STOP_REASON */
     if(erng_installed && !erng_check()) {finish(136);gate_original_once(frame,loading);return;} /* ERNG_STOP_REASON */
+    if(linux_build_rng_installed && !linux_build_rng_check()) {finish(152);gate_original_once(frame,loading);return;}
     if(lsj_installed && !lsj_check()) {finish(58);gate_original_once(frame,loading);return;} /* LSJ_STOP_REASON */
     if(lmt_installed && !lmt_check()) {finish(100);gate_original_once(frame,loading);return;} /* LMT_STOP_REASON */
     if((laa_ship_installed || laa_agent_installed) && !laa_check()) {finish(161);gate_original_once(frame,loading);return;}
@@ -823,6 +830,7 @@ static int lua_start(lua_State *L) {
 #include "gate_fork_save.h"
 #include "gate_weapon_fire.h"
 #include "gate_engine_rng.h"
+#include "gate_build_rng.h"
 #include "gate_spline_join.h"
 #include "gate_mass_traffic.h"
 #include "gate_actor_all.h"
@@ -939,6 +947,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
+    METHOD(build_rng);METHOD(build_rng_status);METHOD(build_rng_row);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);

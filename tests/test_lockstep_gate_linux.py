@@ -471,6 +471,13 @@ class Overlay(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--event-rng', 'key')
 
+    def test_linux_build_rng_requires_snapshot_and_identities(self):
+        base = (*self.snapshot, '--mode', 'clock')
+        config = (self.build(*base, '--world-identities', '--build-rng') / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_build_rng = true', config)
+        with self.assertRaises(SystemExit):
+            self.build(*base, '--build-rng')
+
     def test_linux_overlay_takes_spawn_rng(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--spawn-rng', 'key')
         self.assertIn("native_gate_spawn_rng = 'key'", (out / 'ui/config.lua.append').read_text())
