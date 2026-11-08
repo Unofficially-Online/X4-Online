@@ -273,3 +273,35 @@ complete 3600..4200 delivery window and 11360..11900 script window also agree.
 Loading reports 1,452 keyed calls with no fallback, but only the first 128 have
 individual receipts; seven later class fallbacks remain. See the linked motion
 investigation for sample coverage, cleanup evidence and remaining limits.
+
+
+## Observe stored station economy deadlines
+
+`--economy-watch SAVED_ID --economy-watch-window FIRST LAST` adds a default-off,
+read-only Linux diagnostic to the bundle command. Supply one nonzero lowercase
+16-digit saved ID for a Station and an inclusive window of at most 36,000 ticks
+within the run. It requires the snapshot and saved identities; `linux-core`
+already includes those prerequisites. Use a saved ID from the exact snapshot,
+not a runtime handle from another process.
+
+The observer reads the station's stored last/next economy times and native game
+time as exact double bits. It resolves the imported identity after admission,
+looks up the component afresh and checks class, identity and field stability
+before emitting each row. It does not invoke an economy update or change RNG,
+timers or the world-comparison payload. The reads are not locked against object
+lifetime changes; matching double reads alone cannot exclude an ABA change.
+
+Retain one `ECONOMY_WATCH_ARMED`, exactly one `ECONOMY_WATCH` row for every tick
+in the requested window, a successful restored gate STOP and the matching
+`ECONOMY_WATCH_STOP` footer. These rows bypass `--status-stride`. Missing objects
+have explicit `present=0` rows; wrong classes, unreadable/non-finite fields or
+identity changes fail the observation. The general runner's world PASS does
+not validate this extra receipt stream or establish equality of these fields;
+compare complete retained receipts independently before drawing conclusions.
+
+On source `a2a19e6`, a 600-tick comparison demonstrated different first economy
+deadlines for one station immediately after the same snapshot loaded. Game
+time and last economy time matched. The rolling world digests still matched
+because their current field set omits these deadlines. See the motion report
+for the exact values, provenance and limits; the observation itself is not a
+correction or proof of the earlier long-run failure's causal chain.
