@@ -1197,3 +1197,20 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   a context whose sources differ by one on each side: registers it on the session's source for every type of its entry for its
   own (the refusal slot +0x11b0, the flush 0x99abe0, 0x999ae0 with create, 0x999120), then drops it from its own (0x999ef0);
   pins for those four replace AddSource/RemoveSource. Same record format and golden.
+- w1z209 (build-srcs3, f77c079c: UNDK + SRCS on +0x10, sectors 0x26/0x37 watched): the saver recorded 91,548 sources;
+  srcs=1:38458:43:43:38374:0:0:41 (43 contexts moved, one type each; 41 left with other differences). The pilot 0x9327c
+  moved: from T+1 sector 0x26's ObjectSignalled vector holds 17 listeners and 0x37's 8 on both sides, in the same order (LSTN
+  after the move). The census is w1z206b's at every capture (T+1 1, 3060 4, 3120 6, 3180 16): no divergence through 3180
+  starts at a moved listener. The containers' NavigationController is 0xf0 bytes (operator new in 0x6e0160): the 0x200-byte
+  JOIN_WATCHRAW mov block reads past it into the heap (text of the gate's own rows on the session); inside it 717eb differs at
+  T+1 in the cached transform +0x60 (about 1.1 km in x), the cursor +0xc8 and +0xcc/+0xdc/+0xe0; the census hashes the
+  controller's pathing banks (lockstep_world_nav.h), which NAV writes: next, w1z210 with the containers in the world hash
+  watch for the decoded fields.
+- w1z210 (the containers in the world hash watch, to 3120): T+1 1 (717eb), 3060 4 (717ab, 717db, 717eb, 9d9fd). The decoded
+  fields: 717eb at T+1 differs in its pathing banks only, the read bank's position (session (27870.0, 112.0, 36668.9), the T
+  position plus velocity x dt; joiner (27873.8, 111.4, 36678.4), about the T position) and velocity, the other bank on the
+  joiner a stale (23379, 111, 34610) like its NavigationController's cached transform. 717ab/717db part by 3060 in position
+  (3 m, 1 m) and heading. Their UndockPathBehaviour after UNDK: 717ab equal at T+1 and T+2; on 717bb +0x38 is the float
+  -13545.0 and +0x9c -1.0 (no vtables), which UNDK's RVA translation wrote as 0, and +0xd8 (past the class's fields, nothing
+  reads it in the class code) differs freely. Fix: +0x38/+0x98 as RVAs only when they hold image pointers, else raw (flags
+  2/4), a heap pointer the joiner keeps (8/16). The beh= dump names another flight model (-m<vtable>).

@@ -688,7 +688,8 @@ enum {JOIN_ARES_UNMAPPED0=1u,JOIN_ARES_UNMAPPED1=2u};
 typedef struct {uint64_t source,owner,script;uint32_t type,index,kind,flags;} join_lstn_rec;
 /* UNDK (v13, section 80): a steering model's active U::Path::UndockPathBehaviour (lockstep_join_world.h join_undk_push), by its
  * Agent's portable ID: the behaviour's bytes +0x10..+0xd7 (state), the qword +0x18 a runtime ID carried as ref (a portable ID;
- * flags 1: it had none) and 0 in state, the qwords +0x38 and +0x98 its embedded objects' vtables as image RVAs. Sorted by portable. */
+ * flags 1: it had none) and 0 in state, the qwords +0x38 and +0x98 as image RVAs when they hold image pointers (else raw, flags
+ * 2/4, or a heap pointer the joiner keeps, flags 8/16). Sorted by portable. */
 #define JOIN_UNDK_BYTES 0xc8u
 typedef struct {uint64_t portable,ref;uint32_t flags,reserved;unsigned char state[JOIN_UNDK_BYTES];} join_undk_rec;
 /* SRCS (v13, section 81): a keyed script context's sources (lockstep_join_world.h join_capture_srcs), its own list at +0x10 that
@@ -1860,7 +1861,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     }
     if(version>=13) for(uint32_t i=0;i<t->nundk;i++) {   /* UNDK: by portable ID, each once, known flags, the ID qword 0 in state */
         const join_undk_rec *a=&t->undk[i];uint64_t id;memcpy(&id,a->state+8,8);
-        if(!a->portable || (a->flags&~1u) || a->reserved || id || (i && t->undk[i-1].portable>=a->portable)) {*why="undk_shape";return 0;}
+        if(!a->portable || (a->flags&~0x1fu) || a->reserved || id || (i && t->undk[i-1].portable>=a->portable)) {*why="undk_shape";return 0;}
     }
     if(version>=13) for(uint32_t i=0;i<t->nsrcs;i++) {   /* SRCS: by (kind, owner, script, index), each once, known kinds and flags */
         const join_srcs_rec *a=&t->srcs[i],*p=i?&t->srcs[i-1]:NULL;

@@ -815,7 +815,10 @@ static unsigned char *join_nav_agent(const unsigned char *object);   /* below */
 #define JOIN_UNDK_FROM 0x10u
 static int join_undk_on;
 static uint64_t join_undk_written,join_undk_equal,join_undk_missing,join_undk_unmapped;static uint32_t join_undk_capn;
-static const unsigned join_undk_vt_at[2]={0x38u,0x98u};   /* the embedded objects' vtables (offsets in the behaviour) */
+static const unsigned join_undk_vt_at[2]={0x38u,0x98u};   /* the embedded objects' vtables when set (offsets in the behaviour) */
+/* w1z210: the qwords at +0x38 and +0x98 hold an image vtable only on some containers (717ab); on 717bb +0x38 is the float
+ * -13545.0 and +0x9c -1.0, which the RVA translation wrote as 0. Flags: 2/4 the slot raw, 8/16 a heap pointer (the joiner's kept). */
+enum {JOIN_UNDK_RAW=2u,JOIN_UNDK_HEAP=8u};
 static int join_undk_cmp(const void *a,const void *b) {
     uint64_t x=((const join_undk_rec *)a)->portable,y=((const join_undk_rec *)b)->portable;return x<y?-1:x>y;
 }
@@ -824,10 +827,12 @@ static int join_undk_push(join_tables *t,const unsigned char *behaviour,uint64_t
     if(!join_read(behaviour+JOIN_UNDK_FROM,r.state,JOIN_UNDK_BYTES)) return 1;
     memcpy(&id,r.state+8,8);memset(r.state+8,0,8);
     if(id) {r.ref=join_route_portable(id,&f,0);if(!r.ref) r.flags|=1u;}
-    for(unsigned k=0;k<2;k++) {
-        uintptr_t v=0;memcpy(&v,r.state+join_undk_vt_at[k]-JOIN_UNDK_FROM,8);
-        const uint64_t rva=v>=(uintptr_t)image && v-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint64_t)(v-(uintptr_t)image):0;
-        memcpy(r.state+join_undk_vt_at[k]-JOIN_UNDK_FROM,&rva,8);
+    for(unsigned k=0;k<2;k++) {   /* an image pointer as its RVA; a heap pointer left (flags 8 << k); any other value raw (2 << k) */
+        uintptr_t v=0;memcpy(&v,r.state+join_undk_vt_at[k]-JOIN_UNDK_FROM,8);uint64_t keep;
+        if(v>=(uintptr_t)image && v-(uintptr_t)image<JOIN_FLIGHT_IMAGE) keep=(uint64_t)(v-(uintptr_t)image);
+        else if(v>=0x10000u && v<0x7fffffffffffull) {keep=0;r.flags|=JOIN_UNDK_HEAP<<k;}
+        else {keep=v;r.flags|=JOIN_UNDK_RAW<<k;}
+        memcpy(r.state+join_undk_vt_at[k]-JOIN_UNDK_FROM,&keep,8);
     }
     return JOIN_PUSH(t->undk,t->nundk,join_undk_capn,r);
 }
@@ -839,8 +844,11 @@ static int join_undk_write(unsigned char *behaviour,const join_undk_rec *r,const
     if(r->ref && !(runtime=join_runtime_of(mine,r->ref))) return -1;
     memcpy(want+8,&runtime,8);
     for(unsigned k=0;k<2;k++) {
-        uint64_t rva=0;memcpy(&rva,want+join_undk_vt_at[k]-JOIN_UNDK_FROM,8);
-        const uintptr_t v=rva?(uintptr_t)image+(uintptr_t)rva:0;memcpy(want+join_undk_vt_at[k]-JOIN_UNDK_FROM,&v,8);
+        unsigned char *slot=want+join_undk_vt_at[k]-JOIN_UNDK_FROM;uint64_t rva=0;uintptr_t v;memcpy(&rva,slot,8);
+        if(r->flags&(JOIN_UNDK_RAW<<k)) continue;   /* the session's value as it was */
+        if(r->flags&(JOIN_UNDK_HEAP<<k)) {if(!join_read(behaviour+join_undk_vt_at[k],&v,8)) return -1;}   /* the joiner's own */
+        else v=rva?(uintptr_t)image+(uintptr_t)rva:0;
+        memcpy(slot,&v,8);
     }
     return join_poke((uintptr_t)(behaviour+JOIN_UNDK_FROM),want,sizeof(want));
 }
@@ -3207,7 +3215,8 @@ static void join_watch_dump(char side,uint64_t tick) {
                        join_read(model+JOIN_STEER_BEHAVIOURS,&beh,8) && beh && join_read(beh,&bvt,8)) {
                         at+=(size_t)snprintf(out+at,cap-at,"%x:",bvt>=(uintptr_t)image?(uint32_t)(bvt-(uintptr_t)image):0u);
                         for(uint32_t o=0;o<JOIN_WATCH_RAW_BEH;o+=64u) at+=join_watch_hex(out+at,cap-at,beh+o,64);
-                    } else at+=(size_t)snprintf(out+at,cap-at,"-");
+                    } else if(mvt) at+=(size_t)snprintf(out+at,cap-at,"-m%x",mvt>=(uintptr_t)image?(uint32_t)(mvt-(uintptr_t)image):0u);   /* another model */
+                    else at+=(size_t)snprintf(out+at,cap-at,"-");
                 }
                 at+=(size_t)snprintf(out+at,cap-at,"\r\n");
                 if(at+ln+4<cap) {memcpy(out+at,line,ln);at+=ln;at+=(size_t)snprintf(out+at,cap-at,"\r\n");}

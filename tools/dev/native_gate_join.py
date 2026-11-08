@@ -1073,7 +1073,7 @@ def read_package(data):
                              for i, r in enumerate(lstn)):
         raise JoinError('lstn_shape')
     undk = sections.get('undk', [])   # UNDK: by portable ID, each once, known flags, the ID qword 0 in the state
-    if version >= 13 and any(not r[0] or r[2] & ~1 or r[3] or r[4][8:16] != bytes(8) or (i and undk[i-1][0] >= r[0])
+    if version >= 13 and any(not r[0] or r[2] & ~0x1f or r[3] or r[4][8:16] != bytes(8) or (i and undk[i-1][0] >= r[0])
                              for i, r in enumerate(undk)):
         raise JoinError('undk_shape')
     srcs = sections.get('srcs', [])   # SRCS: by (kind, owner, script, index), known kinds and flags, source 0 exactly when unmapped

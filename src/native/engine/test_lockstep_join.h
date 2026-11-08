@@ -3370,6 +3370,15 @@ static void test_join_undk(void) {
     assert(join_undk_write(tundk_beh,r,&mine)==1 && !memcmp(tundk_beh+JOIN_UNDK_FROM,session_state,sizeof(session_state)));
     {uintptr_t heap;memcpy(&heap,tundk_beh+0xd8,8);assert(heap==0x7ff012345678ull);}   /* +0xd8 stays the joiner's */
     assert(join_undk_write(tundk_beh,r,&mine)==0);   /* again: equal */
+    {   /* +0x98 a float pair (copied raw), +0x38 a heap pointer (the joiner's kept) */
+        uint64_t f=0xbf80000000000000ull,h=0x7ff012345000ull;memcpy(tundk_beh+0x98,&f,8);memcpy(tundk_beh+0x38,&h,8);
+        join_tables t2;memset(&t2,0,sizeof(t2));join_undk_capn=0;
+        assert(join_undk_push(&t2,tundk_beh,0x100081ull) && t2.nundk==1 && t2.undk[0].flags==(JOIN_UNDK_HEAP|(JOIN_UNDK_RAW<<1)));
+        uint64_t own38=0x7ff0aaaa0000ull,z=0,g38=0,g98=0;memcpy(tundk_beh+0x38,&own38,8);memcpy(tundk_beh+0x98,&z,8);
+        assert(join_undk_write(tundk_beh,&t2.undk[0],&mine)==1);
+        memcpy(&g38,tundk_beh+0x38,8);memcpy(&g98,tundk_beh+0x98,8);assert(g38==own38 && g98==f);
+        free(t2.undk);join_undk_capn=0;
+    }
     join_undk_rec u=*r;u.ref=0x100099ull;assert(join_undk_write(tundk_beh,&u,&mine)==-1);   /* an ID the joiner lacks */
     u=*r;u.flags=1;assert(join_undk_write(tundk_beh,&u,&mine)==-1);
     /* the admission: off writes nothing; on, an Agent without the model counts missing */
