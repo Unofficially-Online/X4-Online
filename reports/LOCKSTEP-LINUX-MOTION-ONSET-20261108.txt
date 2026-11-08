@@ -1,0 +1,101 @@
+Linux motion divergence investigation — 8 November 2026
+======================================================
+
+Status: OPEN. These are isolated, same-machine diagnostic runs, not a
+multiplayer release or cross-machine determinism acceptance. The original
+failed captures remain retained. All raw saves and logs stay private.
+
+Retained branch comparison
+--------------------------
+The full-census ordered-pathing control diverges at tick 8520 in one imported
+ShipMedium motion leaf, saved ID 000000000006ec76. Both clients finish all
+12000 ticks and restore the owned hooks. See the performance report for that
+control and the earlier rolling-census counterexample.
+
+Two subsequent 9000-tick runs on source 81016e3 / gate 88c02db pass internally:
+the targeted baseline and a comparison enabling the existing nav-key option.
+Each retains 76 complete full-world captures and clean process cleanup. Their
+motion roots agree across runs through tick 8400, then differ from tick 8520.
+Timing roots already differ from tick 1; topology and health roots agree.
+
+At ticks 8520 and 8640, both nav-key clients reproduce exactly the motion leaf
+of client 1 of the failed control. Both baseline clients reproduce its client
+2 leaf. This is a useful association with the retained failure, not proof
+that nav-key caused or fixed it. The aggregate 108000 keyed calls per client
+do not establish coverage of this particular ship.
+
+The step trace at ticks 8461..8520 already shows different incoming position
+and flight-model state between those runs. Target matrices and parameter
+banks agree after comparing their logical read/write roles. Different physical
+bank selectors are not themselves a desync. Zero retained path-conversion or
+SetTarget events in this window do not establish equality of earlier events.
+The next trace therefore targets ticks 8401..8460.
+
+Bounded diagnostic additions
+----------------------------
+The default-off per-tick Nav watch uses the existing canonical motion/timing
+serializer for at most four saved identities over an explicit bounded window.
+It does not advance or rewrite census state. Its independent evidence parser
+requires the complete ordered tick/identity set, validates canonical metadata,
+cross-checks matching census preimages and hashes, and rejects failed cleanup.
+Mandatory watch receipts bypass optional status thinning.
+
+A separate default-off path-transform observer can compare the native cached
+transform with a live-transform candidate inside ordered path jobs. It returns
+the native result unchanged, but the additional engine getter may have side
+effects. It is a diagnostic experiment, not a passive or production-safe fix.
+Its native behaviour has not yet been validated. It excludes the overlapping
+step-chain hook and fails closed on ownership, bounds or buffer failures.
+
+Validation of source 386e919
+---------------------------
+The combined Linux checker passes the pinned ELF and synthetic C checks,
+162 Lua bridge methods and 29 relay scenarios. Thirteen focused motion-watch
+tests pass. These do not replace native or Windows validation.
+
+An independently audited 600-tick native pair retains all 1800 watch rows per
+client despite status stride 15. Both clients agree in all watched canonical
+bytes. Each has 72 successful census byte/hash comparisons. All six full-world
+captures per client exactly match the old targeted baseline. Both emit
+STOP completed=600 reason=1 restored=1; no owned process remains and Steam is
+unchanged. This establishes agreement at the sampled captures, not diagnostic
+noninterference between them or successful reproduction of the later failure.
+
+Private evidence: motion-watch-validation-audit.json,
+motion-branch-hash-associations.json, motion-branch-trace-comparison.json and
+motion-nav-key-comparison.json under .local/evidence/.
+
+Per-tick onset comparison
+-------------------------
+The new 12000-tick baseline fails its full census at tick 11520: exactly one
+motion leaf, imported ShipLarge 000000000008b613, differs among identical
+9983-object delta sets. The three watched ships remain equal across all 12003
+rows per client. The snapshot identifies the new object as Boron transport
+ZVZ-026. Its imported-list index 403298 falls inside the previously failing
+rolling slice at 11612; that older slice hash does not prove the same cause.
+
+The nav-key comparison passes all 101 full captures and 16004 watch rows per
+client, now including 8b613. Both runs reach STOP12000/restored1, with no owned
+process left and Steam unchanged. Both use the exact b53e4a7 gate binary. The
+nav-key manifest correctly records source_dirty=true: the only then-untracked
+file was this report, recorded separately before further changes. That manifest
+is retained unchanged and is not described as a clean build.
+
+Across these runs, 6ec76 first differs at tick 8435. Its incoming pose and step
+arguments still agree then, but its flight target already differs before the
+step. The baseline queues three points at 8434 and adopts a new target at 8435;
+the nav-key run queues them at 8450 and adopts the target at 8451. Parameters
+remain equal through all 60 captured steps. Corresponding adopted-point
+conversion input/output, hierarchy transforms and target matrices agree byte
+for byte when comparing those shifted events. The third queued point differs;
+it is separate from the point adopted at this transition.
+
+This localizes the observed split upstream of the flight step, to the timing
+of point production/adoption. It does not establish why the event is delayed,
+that nav-key directly covers this ship, or that nav-key removes all desyncs.
+Other watched ships have opaque parameter bytes that differ despite equal
+movement; their meaning remains unresolved and they are not masked as padding.
+
+Private evidence: motion-onset-audit.json, motion-onset-nav-key-audit.json,
+motion-onset-crossrun-fields.json and the motion-onset-step-audit / 
+motion-onset-nav-key-step-audit directories under .local/evidence/.
