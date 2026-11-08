@@ -84,6 +84,9 @@ static void test_build_rng_linux(void) {
     assert(linux_build_rng_rows[0].seed != linux_build_rng_rows[1].seed);
     assert(linux_build_rng_rows[0].caller_rva == LX_BUILD_CALL_VA + 5 - LX_IMAGE_BASE);
 
+    /* A saved ID cannot make a foreign vtable eligible for keying. */
+    runtime = 7001;
+    memcpy(storage + 8, &runtime, 8);
     vtable = 1;
     memcpy(storage, &vtable, 8);
     build_rng_test_calls = 0;

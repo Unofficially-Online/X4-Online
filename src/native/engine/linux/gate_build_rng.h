@@ -88,6 +88,12 @@ static float linux_build_rng_run(linux_build_rng_draw_fn native, const void *sto
     }
     memcpy(&time_bits, &game_time, sizeof(time_bits));
     const lxw_class *object_class = lxw_class_of((uintptr_t)vtable);
+    if (!object_class || object_class->family != LXW_FAMILY_NONE) {
+        __atomic_add_fetch(&linux_build_rng_unmapped, 1, __ATOMIC_RELAXED);
+        InterlockedIncrement64(&linux_build_rng_failures);
+        __atomic_add_fetch(&linux_build_rng_native, 1, __ATOMIC_RELAXED);
+        return native(range);
+    }
     if (vtable == (uintptr_t)LX(0x3c76e90u)) __atomic_add_fetch(&linux_build_rng_container, 1, __ATOMIC_RELAXED);
     else if (vtable == (uintptr_t)LX(0x3c99a10u)) __atomic_add_fetch(&linux_build_rng_storage, 1, __ATOMIC_RELAXED);
     else __atomic_add_fetch(&linux_build_rng_other, 1, __ATOMIC_RELAXED);
@@ -101,12 +107,6 @@ static float linux_build_rng_run(linux_build_rng_draw_fn native, const void *sto
         __atomic_add_fetch(&linux_build_rng_keyed, 1, __ATOMIC_RELAXED);
         if (during_load) __atomic_add_fetch(&linux_build_rng_load_keyed, 1, __ATOMIC_RELAXED);
     } else {
-        if (!object_class) {
-            __atomic_add_fetch(&linux_build_rng_unmapped, 1, __ATOMIC_RELAXED);
-            InterlockedIncrement64(&linux_build_rng_failures);
-            __atomic_add_fetch(&linux_build_rng_native, 1, __ATOMIC_RELAXED);
-            return native(range);
-        }
         seed = lockstep_seed(LINUX_BUILD_RNG_DOMAIN, 0, 0, object_class->windows_rva, time_bits, WORLD_KEY_NONE);
         __atomic_add_fetch(&linux_build_rng_fallback, 1, __ATOMIC_RELAXED);
         if (during_load) __atomic_add_fetch(&linux_build_rng_load_fallback, 1, __ATOMIC_RELAXED);
@@ -123,7 +123,7 @@ static float linux_build_rng_run(linux_build_rng_draw_fn native, const void *sto
             row->identity = identity;
             row->time_bits = time_bits;
             row->seed = seed;
-            row->class_rva = object_class ? object_class->windows_rva : UINT32_MAX;
+            row->class_rva = object_class->windows_rva;
             row->caller_rva = (uint32_t)(caller - (uintptr_t)image);
             memcpy(&row->range_bits, &range, sizeof(range));
             memcpy(&row->result_bits, &result, sizeof(result));
