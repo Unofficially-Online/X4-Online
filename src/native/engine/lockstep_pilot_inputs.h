@@ -25,7 +25,7 @@
  * has no pilot record and no Steering substitution. */
 #define PILOT_RECORD_BYTES 28u
 #define PILOT_RECORD_VERSION 1u
-#define PILOT_SLOTS 4u
+#define PILOT_SLOTS 8u
 #define PILOT_TICK_MAX 8388607u /* a window's last tick, CREATED_TICK_LIMIT: 77 hours at 30 ticks a second */
 #define PILOT_RING 64u
 #define PILOT_LOCAL_RING 32u

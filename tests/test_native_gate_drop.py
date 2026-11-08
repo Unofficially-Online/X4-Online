@@ -111,6 +111,32 @@ class DropBarrierTests(unittest.TestCase):
         b.receive(state(1, 4), addr(1), 5.0);b.receive(state(2, 4, digest='c'*64), addr(2), 5.0)
         self.assertEqual(b.mismatch_slots.get(4), [2])
 
+    def test_keep_going_turns_clock_and_timestep_splits_into_notices(self):
+        # Play sessions (x4ls play, relay --keep-going): a split clock is a CLOCK_SPLIT notice and a clock_splits row; the
+        # session runs on to its last tick. Without it the same split stops everyone (as before).
+        def split(b):
+            run_ticks(b, range(0, 5), 0.0)
+            for s in (1, 2, 3):
+                fields = state(s, 5).split(b'|')
+                if s == 2:
+                    fields[5] = struct.pack('>d', 20+5/30+0.5).hex().encode()   # slot 2's game time jumps
+                b.receive(b'|'.join(fields), addr(s), 1.0)
+            return run_ticks(b, range(6, 41), 2.0)
+        plain = make(observe=True)
+        split(plain)
+        self.assertTrue(plain.failed and plain.failed.startswith('native_dt_mismatch_player_2_tick_5'))
+        b = make(observe=True)
+        b.keep_going = True
+        out = split(b)
+        self.assertTrue(b.done and not b.failed)
+        self.assertEqual([t for t, _ in b.clock_splits], [5, 6])   # 5: the jump; 6: back (dt), the clock stays apart
+        notices = b.take_notices()
+        self.assertTrue(notices[0].startswith('NATIVE_GATE CLOCK_SPLIT tick=5 why=native_dt_mismatch_player_2_tick_5'), notices)
+        self.assertEqual(len([n for n in notices if 'CLOCK_SPLIT' in n]), 1)   # one notice per run of split ticks
+        self.assertEqual(sorted(s for s, p in decoded(out) if p.startswith('NGSTOP')), [1, 2, 3])
+        self.assertEqual(b.summary()['clock_splits'][0], [5, 'native_dt_mismatch_player_2_tick_5'])
+        self.assertEqual(b.status(3.0)['clock_splits'], len(b.clock_splits))
+
     def test_refusals(self):
         with self.assertRaises(ValueError):
             make(lookahead=0)

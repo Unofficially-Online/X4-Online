@@ -113,11 +113,11 @@ static void test_vpl_swaps(void) {
     /* Scopes: MoveWorker only, slots 2..4 with a store, reentry clear, never nested. */
     test_vpl_reset();vpl_thread_fn=test_vpl_thread;test_vpl_thread_value=77;base[VPL_REENTRY]=0;
     assert(!vpl_enter(2,base,player,77));                         /* no store yet */
-    assert(!vpl_store_init(1,base,player) && !vpl_store_init(5,base,player) && vpl_store_init(2,base,player) && vpl_store_init(3,base,player));
+    assert(!vpl_store_init(1,base,player) && !vpl_store_init(VPL_SLOTS_MAX+1,base,player) && vpl_store_init(2,base,player) && vpl_store_init(3,base,player));
     assert(vpl_stores[2].length==(unsigned)sim);
     for(unsigned i=0;i<vpl_stores[2].length;i++) vpl_stores[2].data[i]^=0x5a; /* slot 2 differs from slot 1 */
     memcpy(other,vpl_stores[2].data,vpl_stores[2].length);
-    assert(!vpl_enter(1,base,player,77) && !vpl_enter(5,base,player,77) && !vpl_enter(2,base,NULL,77) && !vpl_enter(2,base,player,78));
+    assert(!vpl_enter(1,base,player,77) && !vpl_enter(VPL_SLOTS_MAX+1,base,player,77) && !vpl_enter(2,base,NULL,77) && !vpl_enter(2,base,player,78));
     base[VPL_REENTRY]=1;assert(!vpl_enter(2,base,player,77));base[VPL_REENTRY]=0;
     assert(vpl_scope_refused==6 && !vpl_scope_slot);
     assert(vpl_gather(base,player,1u<<VPL_SIM,before,sizeof(before))==sim);

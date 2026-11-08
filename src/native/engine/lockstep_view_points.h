@@ -43,7 +43,7 @@
 #define VIEW_CALL 0x3d567du
 #define VIEW_SITES 20u
 #define VIEW_FUNCS 12u
-#define VIEW_MAX 4u
+#define VIEW_MAX 8u   /* one view point per pilot slot (PILOT_SLOTS) */
 #define VIEW_PAGE_SIZE 0x10000u
 #define VIEW_PAGE_CALL 0x0u     /* view_attention pointer read by the rewritten call */
 #define VIEW_PAGE_UNIVERSE 0x8u /* universe pointer read by the rewritten loads */

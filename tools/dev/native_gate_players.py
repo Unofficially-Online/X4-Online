@@ -34,7 +34,7 @@ the sandbox's base-overlay checks and adds the player identity plan
                    camera-centred traffic and highway parameters answer for two sectors (lockstep_region_camera.h):
                    slot 1's and the first other one in slot order. --set native_gate_view_scenes=true with
                    --set native_gate_viewpoint_standins=N (needs native_gate_viewpoint_policy) covers N sectors, up to
-                   four; a scene a slot leaves serves the next sector once its bodies are gone, VSC_GRACE (600) ticks
+                   eight; a scene a slot leaves serves the next sector once its bodies are gone, VSC_GRACE (600) ticks
                    after the release at the latest (lockstep_view_scenes.h). A slot beyond the covered sectors has none
                    of them on any client, so it is refused unless this asks for it; keys in the base overlay are not
                    seen here, so pass this for those. A ship without a --start that the builder does not know gets a
@@ -47,7 +47,8 @@ the sandbox's base-overlay checks and adds the player identity plan
 
 Defaults (snapshot capture 005, one zone of Argon Prime): slot 1 = 00000000000ae79c (the player's scout,
 occupied on every client), slots 2..4 = fixture actors 3..5 (0000000000176ad5, 0000000000176b36,
-0000000000176b97: Argon S fighters at zone offset -395/0/+700..900 m from slot 1). --battle engage
+0000000000176b97: Argon S fighters at zone offset -395/0/+700..900 m from slot 1). Up to 8 players
+(PILOT_SLOTS): slots 5..8 take --ships, --create or a --session's starts (stock piloting knows four). --battle engage
 (default, as in the sandbox) gives them their scripted Attack orders: a waiting fixture has no Steering
 solver, so calm slots 2..N cannot be flown (live pf3/pc3: s2/s3 applied 0, no_solver).
 
@@ -75,6 +76,8 @@ import native_gate_sandbox as sandbox          # noqa: E402  (shared base checks
 import native_gate_player_identity as identity  # noqa: E402
 import native_gate_player_orders as player_orders  # noqa: E402
 import native_gate_defaults as session_defaults   # noqa: E402  (the session defaults: tools/dev/native_gate_defaults.lua)
+
+MAX_PLAYERS = 8   # the pilot modules' slots (PILOT_SLOTS, lockstep_pilot_inputs.h; the wire carries 8 clients)
 import check_gate_options as gate_options          # noqa: E402
 import native_gate_session_start as session_start  # noqa: E402  (a session from a stock start, per-player starts)
 
@@ -193,7 +196,7 @@ COVERED_SECTORS = 2   # without the census keys below: slot 1's sector and the f
 
 
 def covered_sectors(args):
-    """The sectors a run covers, from its --set keys: native_gate_view_scenes (a physics scene per sector, up to four)
+    """The sectors a run covers, from its --set keys: native_gate_view_scenes (a physics scene per sector, up to eight)
     with native_gate_viewpoint_standins=N (traffic and highway parameters for N sectors) cover N, anything else the
     region camera's two. Keys in the base overlay are not seen here."""
     sets = {}
@@ -202,7 +205,7 @@ def covered_sectors(args):
         if m:
             sets[m[1]] = m[2].strip()
     standins = sets.get('native_gate_viewpoint_standins')
-    if sets.get('native_gate_view_scenes') == 'true' and standins in ('3', '4'):
+    if sets.get('native_gate_view_scenes') == 'true' and standins in ('3', '4', '5', '6', '7', '8'):
         return int(standins)
     return COVERED_SECTORS
 
@@ -237,7 +240,7 @@ def sector_warnings(args, ships, starts, creates):
         message = (', '.join(beyond) + f': beyond the {limit} covered sectors ({", ".join(covered)}). A view point there has no physics scene '
                    '(without native_gate_view_scenes), no camera-centred mass traffic and no highway parameter (without '
                    'native_gate_viewpoint_standins=N) on any client (lockstep_region_camera.h). --set native_gate_view_scenes=true with '
-                   '--set native_gate_viewpoint_standins=N covers N sectors, up to four.')
+                   '--set native_gate_viewpoint_standins=N covers N sectors, up to eight.')
         if not args.third_sector:
             raise ValueError(message + ' Put the slot in a covered sector, set those keys, or pass --third-sector to build it anyway '
                              '(keys in the base overlay are not seen here).')
@@ -313,6 +316,9 @@ def defaults(args):
         apply_session(args)
     people = args.source == 'stock' and not args.stock_script
     if args.source == 'stock' and not args.ships and not args.create:
+        if args.players > len(identity.STOCK_SHIPS):
+            raise ValueError(f'stock piloting knows {len(identity.STOCK_SHIPS)} cockpit ships: give --ships or --create for slots '
+                             f'{len(identity.STOCK_SHIPS) + 1}..{args.players}')
         # The stock ships sit far apart in the save: every slot without its own --start comes to slot 1's sector, or a partial
         # --start would leave the rest in sectors of their own.
         given = {s['target'] for s in args.start or []}
@@ -338,8 +344,8 @@ def defaults(args):
 
 
 def plan_of(args):
-    if not 2 <= args.players <= 4:
-        raise ValueError('2..4 players (the pilot module drives at most four slot ships)')
+    if not 2 <= args.players <= MAX_PLAYERS:
+        raise ValueError(f'2..{MAX_PLAYERS} players (the pilot modules drive at most {MAX_PLAYERS} slot ships)')
     ships = args.ships or list(identity.DEFAULT_SHIPS[:args.players])
     creates = dict(args.create or [])
     if creates and args.source != 'none':
@@ -892,7 +898,7 @@ def build_parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='command', required=True)
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument('--players', type=int, default=2, help='clients = slots = players, 2..4')
+    common.add_argument('--players', type=int, default=2, help=f'clients = slots = players, 2..{MAX_PLAYERS}')
     common.add_argument('--mode', choices=identity.MODES, default='factions')
     common.add_argument('--source', choices=SOURCES, default='wire')
     common.add_argument('--ships', type=ids, help='comma list of saved slot ship IDs (default: player scout, fixtures 3..5)')

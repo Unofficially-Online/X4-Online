@@ -87,7 +87,12 @@ static void test_pilot_inputs(void) {
     assert(!pilot_parse_manifest("0000000000176a13,0000000000176a13",saved,&count));
     assert(!pilot_parse_manifest("0000000000000000",saved,&count) && !pilot_parse_manifest("0000000000176A13",saved,&count));
     assert(!pilot_parse_manifest("0000000000176a13,",saved,&count) && !pilot_parse_manifest("000000000176a13",saved,&count));
-    assert(!pilot_parse_manifest("0000000000000001,0000000000000002,0000000000000003,0000000000000004,0000000000000005",saved,&count));
+    {   /* PILOT_SLOTS ships parse, one more is refused */
+        char text[(PILOT_SLOTS+1)*17+1];size_t at=0;
+        for(unsigned k=1;k<=PILOT_SLOTS+1;k++) at+=(size_t)snprintf(text+at,sizeof(text)-at,"%s%016x",k>1?",":"",k);
+        assert(!pilot_parse_manifest(text,saved,&count));
+        text[PILOT_SLOTS*17-1]=0;assert(pilot_parse_manifest(text,saved,&count) && count==PILOT_SLOTS && saved[PILOT_SLOTS-1]==PILOT_SLOTS);
+    }
     assert(pilot_config_valid(2,PILOT_SOURCE_SCRIPT,0,30,600,0) && !pilot_config_valid(2,PILOT_SOURCE_SCRIPT,2,30,600,0));
     assert(pilot_config_valid(2,PILOT_SOURCE_WIRE,3,30,600,1) && !pilot_config_valid(2,PILOT_SOURCE_WIRE,1,30,600,0));
     assert(!pilot_config_valid(2,PILOT_SOURCE_WIRE,31,40,600,0) && !pilot_config_valid(2,PILOT_SOURCE_WIRE,3,3,600,0));

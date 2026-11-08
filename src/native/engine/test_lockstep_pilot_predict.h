@@ -326,9 +326,9 @@ static void test_predict_native_image(const char *path) {
     fclose(f);
     puts("pinned native image prediction present pins (render transform, camera-table reader, view-cache publish) and index loads verified");
 }
-/* Worst-width status and row: four slots, every counter and statistic extreme. */
+/* Worst-width status and row: every slot, every counter and statistic extreme. */
 static void test_predict_widths(void) {
-    unsigned saved_count=pilot_slot_count;char status[8192],row[512];
+    unsigned saved_count=pilot_slot_count;char status[16384],row[2048];
     pilot_slot_count=PILOT_SLOTS;predict_armed=1;predict_mode=PREDICT_PRESENT;predict_horizon=PREDICT_HORIZON_MAX;predict_tau_ms=PREDICT_TAU_MAX_MS;
     predict_stage="present_unreadable";predict_frames=predict_last_tick=UINT64_MAX;predict_failures=predict_present_failures=INT64_MIN;
     predict_present_calls=predict_present_applied=predict_present_restored=predict_present_foreign=predict_present_stale=predict_present_refused=UINT64_MAX;

@@ -168,6 +168,12 @@ class Barrier:
         self.diverged = False
         self.notices = []
         self.last_notice = None
+        # Play sessions (--keep-going, set after construction; implies observe): a timestep or clock split is a notice
+        # (NATIVE_GATE CLOCK_SPLIT, the first of a run and every DESYNC_REPEAT ticks while it lasts) and a row of
+        # clock_splits instead of the end of the session. Off: such a split stops everyone, as before.
+        self.keep_going = False
+        self.clock_splits = []     # [tick, failure name] per split tick (the first name of the tick)
+        self.last_clock_notice = None
 
     def receive(self, data, address, now):
         if self.live_inputs and data.startswith((b'NGCMD|', b'NGPOLL|')):
@@ -328,11 +334,14 @@ class Barrier:
     def check(self, tick):
         """Timestep, declared digest and clock checks of one complete tick."""
         rows = self.states[tick]
+        split = None
         if tick > 0:
             for s in self.slots:
                 delta = rows[s]['game']-self.states[tick-1][s]['game']
                 if abs(delta-1/self.tick_hz) > 1e-8:
-                    self.failed = f'native_dt_mismatch_player_{s}_tick_{tick}'
+                    split = split or f'native_dt_mismatch_player_{s}_tick_{tick}'
+                    if not self.keep_going:
+                        self.failed = f'native_dt_mismatch_player_{s}_tick_{tick}'
         differing = [s for s in self.slots if rows[s]['digest'] != rows[1]['digest']]
         if self.compare and differing:
             self.mismatch_slots[tick] = differing
@@ -356,7 +365,15 @@ class Barrier:
             elapsed = [rows[s]['real']-self.states[0][s]['real'] for s in self.slots]
             real_equal = all(abs(elapsed[0]-t) <= 1e-8 for t in elapsed) and all(abs(t-tick/self.tick_hz) <= 1e-8 for t in elapsed)
         if not self.failed and (any(rows[s]['game'] != rows[1]['game'] for s in self.slots) or not real_equal):
-            self.failed = f'native_clock_mismatch_tick_{tick}'
+            split = split or f'native_clock_mismatch_tick_{tick}'
+            if not self.keep_going:
+                self.failed = f'native_clock_mismatch_tick_{tick}'
+        if split and self.keep_going:
+            self.clock_splits.append([tick, split])
+            if self.last_clock_notice is None or tick-self.last_clock_notice >= DESYNC_REPEAT or \
+                    (len(self.clock_splits) > 1 and self.clock_splits[-2][0] != tick-1):
+                self.notices.append(f'NATIVE_GATE CLOCK_SPLIT tick={tick} why={split} splits={len(self.clock_splits)}')
+                self.last_clock_notice = tick
 
     def packet(self, kind, slot, tick):
         data = f'{kind}|{self.version or 1}|{self.token}|{slot}|{tick}'
@@ -380,6 +397,8 @@ class Barrier:
                 'first_mismatch': self.mismatches[0] if self.mismatches else None, 'last_mismatch': last,
                 'mismatches': len(self.mismatches), 'slots': self.mismatch_slots.get(last, []) if last is not None else [],
                 'failure': self.failed, 'done': self.done, 'observe': self.observe, 'updated': round(now, 3),
+                **({'keep_going': True, 'clock_splits': len(self.clock_splits),
+                    'first_clock_split': self.clock_splits[0][0] if self.clock_splits else None} if self.keep_going else {}),
                 **({'lookahead': self.lookahead, 'permitted': self.permitted()} if self.lookahead else {}),
                 **self.peer_summary()}
 
@@ -395,6 +414,7 @@ class Barrier:
                 'verdict': 'fail' if self.failed else 'diverged' if self.mismatches else 'pass' if self.done else 'incomplete',
                 'failure': self.failed, 'common_ticks': common,
                 'observe': self.observe,
+                **({'keep_going': True, 'clock_splits': self.clock_splits} if self.keep_going else {}),
                 'first_digest_mismatch': self.mismatches[0] if self.mismatches else None,
                 'digest_mismatch_ticks': self.mismatches,
                 'digest_mismatch_slots': self.mismatch_slots,
@@ -592,6 +612,9 @@ def main():
     p.add_argument('--relative-real', action='store_true')
     p.add_argument('--live-inputs', action='store_true', help='accept local per-client tactical input queues')
     p.add_argument('--observe', action='store_true', help='census: record state mismatches and keep running to --ticks')
+    p.add_argument('--keep-going', action='store_true',
+                   help='play sessions (x4ls play): --observe, and a timestep or clock split is a CLOCK_SPLIT notice and a '
+                        'clock_splits row instead of the end of the session')
     p.add_argument('--clients', type=int, default=2, help='full-simulation clients 2..8 (more than 2 needs protocol 1 or 3)')
     p.add_argument('--lookahead', type=int, default=0, metavar='K',
                    help='protocol 4: release the permit for tick T once every client reported tick T-1-K (0..8; '
@@ -680,6 +703,7 @@ def main():
     join.add_argument('--join-joiner-timeout', type=float, default=900, metavar='S',
                       help='a joiner that stays silent this long is given up (default 900: load time included)')
     args = p.parse_args()
+    args.observe = args.observe or args.keep_going   # a play session never stops on a digest split either
     allowed = set(filter(None, (part.strip() for part in args.allow_from.split(','))))
     if args.bind != '127.0.0.1':
         # A remote relay (e.g. the dedicated server host) serves only the listed client
@@ -770,6 +794,9 @@ def main():
         barrier = Barrier(args.token, args.ticks, args.hold_tick, args.hold_seconds, relative_real=args.relative_real, live_inputs=args.live_inputs,
                           observe=args.observe, clients=args.clients, remote=bool(allowed), lookahead=args.lookahead, tick_hz=args.tick_hz,
                           peer_window=args.peer_window)
+    if args.keep_going:
+        barrier.keep_going = True
+        print('NATIVE_GATE RELAY KEEP_GOING observe=1 clock_splits=notice', flush=True)
     poll = getattr(barrier, 'poll', None)
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind((args.bind, args.port));s.settimeout(.1)

@@ -476,7 +476,7 @@ static void test_opred_arming(void) {
 }
 /* Worst-width status and row: four slots, every counter and statistic extreme. */
 static void test_opred_widths(void) {
-    unsigned saved_count=pilot_slot_count;char status[8192],row[512];
+    unsigned saved_count=pilot_slot_count;char status[16384],row[2048];
     pilot_slot_count=PILOT_SLOTS;opred_armed=1;opred_mode=OPRED_PRESENT;opred_horizon=opred_cap=OPRED_HORIZON_MAX;opred_tau_ms=OPRED_TAU_MAX_MS;
     pilot_delay=PILOT_DELAY_MAX;opred_others=1;opred_stage="present_restore";opred_frames=opred_last_tick=UINT64_MAX;opred_failures=INT64_MIN;
     opred_present_calls=opred_present_applied=opred_present_restored=opred_present_lost=opred_present_refused=UINT64_MAX;

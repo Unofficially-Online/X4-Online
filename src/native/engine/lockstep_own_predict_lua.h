@@ -20,7 +20,7 @@ static int lua_own_predict(lua_State *L) {
     p_lua_pushlstring(L,why,strlen(why));return 2;
 }
 static int lua_own_predict_frame(lua_State *L) {
-    double tick=p_lua_tonumber(L,1);char out[512];const char *why="ui";int n=0;
+    double tick=p_lua_tonumber(L,1);char out[2048];const char *why="ui";int n=0;
     if(accept_ui() && stats.active && boot_phase==3 && isfinite(tick) && floor(tick)==tick && tick>=1 && tick<9007199254740992.0 &&
        opred_frame((uint64_t)tick,&why)) n=opred_row(out,sizeof(out));
     if(n) {p_lua_pushlstring(L,out,(size_t)n);return 1;}
@@ -28,6 +28,6 @@ static int lua_own_predict_frame(lua_State *L) {
     p_lua_pushnil(L);p_lua_pushlstring(L,why,strlen(why));return 2;
 }
 static int lua_own_predict_status(lua_State *L) {
-    char out[8192];int n=accept_ui() && opred_armed?opred_status(out,sizeof(out)):0;
+    char out[16384];int n=accept_ui() && opred_armed?opred_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }

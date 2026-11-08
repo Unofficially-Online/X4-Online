@@ -1,0 +1,139 @@
+# Playtest: people in one lockstep session (`x4ls play`)
+
+`x4ls play` runs a lockstep session for people rather than for tests. A desync is logged and the session runs on.
+Nothing a client logs ends the session for the others: errors and actions the session does not share go to
+`errors.log`, not to a teardown. A client that stops or crashes is dropped, and the others play on.
+
+## A test game
+
+- **Where:** two X4 windows on one PC, side by side. `x4ls` runs every client locally (see "Not yet" for two PCs).
+- **World:** the owned snapshot 005, Argon Prime.
+  - Player 1 (window 1) flies the snapshot's Argon scout.
+  - Player 2 (window 2) flies a second Argon scout, which the session moves near player 1 at tick 20.
+  - The scripted fixture fight (6 Argon against 6 Xenon) starts nearby at tick 10.
+- **Every window is player 1:** each client shows its own ship with X4's own cockpit, HUD, camera, menus and map.
+  - Controls are X4's own, with the default key map of a fresh profile.
+  - A control input reaches every client 3 steps later (100 ms). Your own ship answers at once on your screen.
+- **Rate:** 30 simulation steps per second, drawn at 60 frames per second.
+- **Length:** the pilot window, 40 minutes by default (`--minutes`). Then the controls go back to X4 and each window
+  plays on alone.
+
+## Build once
+
+```
+python tools/dev/build_native_gate.py --zig <zig 0.15.2> --test --native-image <X4.exe>      # the gate DLL
+python tools/build_play_overlay.py --snapshot <snapshot 005 save_009.xml.gz> \
+    --gate-dll .local/native-lockstep/build/x4lan_gate_64.dll --out .local/overlays/play-1 [--minutes 40] [--mode coop|factions]
+```
+
+- **coop:** both ships belong to `player`: one faction, one wallet.
+- **factions:** each player gets their own pool faction and account.
+
+The builder also blocks `Pause`, `Unpause` and `SaveGame` (see "During the game").
+
+## Start
+
+```
+python tools/x4ls.py doctor                      # X4 9.00 found, Steam pid registered (else add --steam-fix below)
+python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <the same save_009.xml.gz>
+```
+
+1. Both windows open one after the other, reach the start menu and load the snapshot at an agreed second
+   (2 to 3 minutes).
+2. The session starts at tick 0. Controls come at tick 40.
+3. The console prints progress once a minute: the tick, game minutes and speed against real time, and "in sync" or
+   "desync since tick N".
+
+## During the game
+
+**Shared** (every client runs the action at the same step, so the worlds stay the same):
+
+- flying, guns and missiles, hits, death, the spacesuit and respawn
+- docking and trading
+- orders from the map
+- missions and conversations
+- station construction
+- faction and player settings
+- walking on foot
+
+**Refused:** any other menu action that would change the world on one client only.
+
+- X4 shows an info line ("... refused" or "... is off during a lockstep session") and nothing happens.
+- Each refusal is one row in `errors.log`.
+- Pausing and saving are refused this way. The options menu and the ship configuration menu then open without
+  pausing.
+- Why they are refused: X4's `Pause()` stops the gate on that client at once. In smoke play-sA (8 Nov), client 2
+  paused at tick 900 and stopped with reason 3; the relay dropped it after 15 s and client 1 played on. A save
+  pauses the same way. In smoke play-sB, with the refusal, the same `Pause()` left the game running and the session
+  in sync.
+
+**Avoid:**
+
+- SETA (time acceleration) and the Pause key. Both are untested under the gate.
+
+## When something goes wrong
+
+| What happens | In X4 | The session | Where it is logged |
+|---|---|---|---|
+| The worlds differ (desync) | nothing | runs on | `desyncs.log`: `DESYNC tick=N`, `RESYNC` when equal again |
+| A client's clock or step splits | nothing | runs on | `desyncs.log`: `CLOCK_SPLIT` |
+| An action the session does not share | an info line | runs on | `errors.log` |
+| A probe error or a gate stop on one client | "the session stopped - ..." on that client, which then plays on alone | the others wait up to 15 s (`--stall-drop`), then the relay drops it and they go on; its ship stops answering | `errors.log` (`ERROR`, `STOP reason=N`), `desyncs.log` (`STALL`, `DROP`) |
+| An X4 window is closed or X4 crashes | - | as above | `errors.log` (`X4 exited`), `clientK/x4lan-crash.txt` after a crash |
+
+Nothing in this table ends the session for the clients that are still in it. In smoke play-sB (8 Nov), client 2's
+X4 was killed at tick 2017; the relay reported the stall at 2031 and dropped it 15 s later, and client 1 played on to
+the end of the window in sync.
+
+## Two PCs (built 8 Nov, not yet run between two PCs)
+
+On the host PC (it runs the relay and slot 1), with UDP 47000 forwarded to it if the other PC is outside the LAN:
+
+```
+python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <save>     --remote-slots 2 --bind <this PC's LAN address> --allow-from <the other PC's address> --port 47000     [--public-host <the router's public address>]
+```
+
+1. The host prints one `x4ls join ...` line for slot 2.
+2. On the other PC, from a checkout of the same commit, with copies of the same overlay folder and snapshot, run
+   that line within `--join-wait` seconds (default 240):
+
+   ```
+   python tools/x4ls.py join --relay <host>:47000 --token <t> --slot 2 --clients 2 --arm-at <utc>        --overlay <copy of play-1> --snapshot <copy of the save>
+   ```
+
+Both PCs load at the agreed UTC second, so their clocks must agree within a few seconds. Each PC writes its own
+`errors.log`; the host's run folder also holds the relay's logs.
+
+## Ending
+
+- The session ends by itself at the end of the pilot window.
+- Close the X4 windows when you are done. The launcher then collects the logs.
+- To end it at once, press Ctrl+C in the console. The launcher closes both windows and collects the logs.
+- To leave early alone, close your window. The others go on after 15 s.
+
+## What to send back
+
+The run folder `.local/runs/<time>/`:
+
+- small files: `summary.json`, `errors.log`, `desyncs.log`, `desync-status.json`, `relay.log`
+- the client logs: `clientK/engine-output.log` (play mode: about 5 MB per client-minute; `--full-logs` overlays
+  write about 120 MB more for each world capture, every 1800 ticks)
+
+`python tools/x4ls.py triage .local/runs/<time>` reruns a diverged session with diagnostic windows before its
+first mismatch.
+
+## Not yet
+
+- **Two PCs: built, not yet run.** See "Two PCs" above.
+  - Intel against AMD is untested: their reciprocal instructions differ, and a desync there would be silent and
+    logged.
+  - Windows against Linux differs in about 35 objects.
+- **Two people on one PC.** Keyboard and mouse go to the focused window only. Whether X4 reads a gamepad in an
+  unfocused window is unverified.
+- **Desync recovery.** None: a session that differs stays different.
+  - Hot join and rejoin exist in lane runs (relay `--join --rejoin`), not in `x4ls`.
+  - After a late join a few large ships still differ (reports/LOCKSTEP-HOTJOIN-20261101.txt).
+- **Desync indicator in game.** None, so that desyncs stay silent. `tools/dev/native_gate_desync_watch.py --status
+  .local/runs/<time>/desync-status.json` shows one in the console.
+- **Not built yet:** more than 4 players, a lobby and start picker, joining from inside X4, and per-player story
+  missions (in progress).

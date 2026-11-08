@@ -299,8 +299,8 @@ def default_sets(sets):
 def check_absent(clients, absent, rejoin=()):
     """The absent slots must be the last ones: the lane tool's clients are p1..pL in --lanes order. Without absent slots
     the session has rejoinable ones (2..N, not absent)."""
-    if not 2 <= clients <= 4:
-        raise ValueError('--clients 2..4 (the identity plan drives at most four slot ships)')
+    if not 2 <= clients <= 8:
+        raise ValueError('--clients 2..8 (the pilot modules drive at most eight slot ships)')
     absent, rejoin = sorted(set(absent)), sorted(set(rejoin))
     if rejoin and (rejoin[0] < 2 or rejoin[-1] > clients or set(rejoin) & set(absent)):
         raise ValueError(f'--rejoin needs slots 2..{clients}, none of them absent')

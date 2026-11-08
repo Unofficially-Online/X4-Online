@@ -11,6 +11,9 @@ disposable profile.
 | `doctor [--overlay DIR]` | Finds X4 through Steam's library folders, verifies the pinned 9.00 `X4.exe`, and checks that directly started clients can reach Steam |
 | `snapshot --out FILE [--gamestart custom_creative]` | One client starts a new game, spawns the 12-ship gate fixture and saves it; FILE is the starting snapshot |
 | `session --clients N --overlay DIR [--snapshot FILE] [--ticks T] [--observe] [--lookahead 1] [--fast] [--steam-fix]` | Starts the relay and N clients, tiles their windows, waits for the relay to finish, collects logs into `.local/runs/<time>/` and cleans up |
+| `play --overlay DIR --snapshot FILE [--stall-drop 15] [--timeout 0]` | A session for people (docs/PLAYTEST.md): desyncs are silent (relay `--observe --keep-going`), error rows go to `errors.log` instead of ending the session, a client that stops or exits is dropped after `--stall-drop` seconds and the others play on; lookahead, tick rate and length come from the overlay (`tools/build_play_overlay.py`) |
+| `play ... --remote-slots K --bind IP --allow-from IP --port P` | The same with slot K on another PC: the relay listens on this PC's address, and the launcher prints the `join` line for the other PC (docs/PLAYTEST.md "Two PCs"); `--close-when-over` ends an unattended run with its session |
+| `join --relay HOST:PORT --token T --slot K --clients N --arm-at UTC --overlay DIR --snapshot FILE` | One client on this PC for slot K of that session (the same overlay and snapshot as the host), logged as `play` does |
 | `session ... --checkpoint-at T` | Every client saves the world right after tick T (`clientK/save_001.xml.gz`); the session ends there (outcome `checkpointed`) |
 | `triage RUN [--steam-fix]` | Reruns a diverged session with diagnostic windows over the 300 ticks before its first mismatch and writes `RUN-triage.txt`; `--report-only RERUN` only reports |
 | `clean` | Stops processes and removes views left behind by a crashed session |
@@ -88,7 +91,10 @@ Overlays are frozen: a builder refuses to write into an existing directory, and
 `.local/runs/<time>/`: `relay.log`, `native-barrier.json` (relay report),
 `native-inputs.jsonl` (input journal), `desync-status.json` (observe mode),
 `clientK/x4ls-cK.log` (each X4 log), and `summary.json` (passed, failed,
-relay-failed, or timeout).
+relay-failed, or timeout; `played` for `x4ls play`). `x4ls play` adds `errors.log`
+(every row a test session fails on, with its client), `desyncs.log` (the relay's
+DESYNC, RESYNC, CLOCK_SPLIT, STALL and DROP notices) and `clientK/x4lan-crash.txt`
+after a crash.
 
 ## Soak profile and determinism findings (1 November 2026)
 

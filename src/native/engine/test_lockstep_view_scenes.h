@@ -36,6 +36,8 @@ static void *test_vsc_ctor(void *self,void *name,uint64_t unused,uint32_t a,uint
 static void *test_vsc_allocate(size_t size) {
     static unsigned next;assert(size==0x50);return test_vsc_scene_store[(next++)%2u+1u];
 }
+static __declspec(align(16)) unsigned char test_vsc_more_store[VSC_EXTRA][0x80];static unsigned test_vsc_more_next;
+static void *test_vsc_allocate_more(size_t size) {assert(size==0x50 && test_vsc_more_next<VSC_EXTRA);return test_vsc_more_store[test_vsc_more_next++];}
 static unsigned test_vsc_anchor_calls;static unsigned char test_vsc_anchor_rebase;static void *test_vsc_anchor_scene;static LONG test_vsc_anchor_count;
 static void test_vsc_anchor(void *scene,void **zone,unsigned char rebase) {
     /* The engine's: the zone held across the call, its own reference on the anchor. */
@@ -181,8 +183,34 @@ static void test_view_scenes(void) {
         assert(vsc_extra[0]==scene_c && vsc_entries[0].sector);
         (void)sc;
     }
+    /* More than four pilot slots: one new scene per slot beyond the second (five slots: C, D, E), the entries past them have
+     * none and are never handed out; with four slots' C and D a fourth further sector is blocked; the step takes every one. */
+    {
+        const unsigned saved_slots=pilot_slot_count;
+        pilot_slot_count=3;assert(vsc_extra_count()==2);pilot_slot_count=8;assert(vsc_extra_count()==6 && VSC_EXTRA==6u);
+        test_vsc_world();
+        for(unsigned i=0;i<5;i++) {view_points[i]=test_vsc_ships[i];view_ids[i]=0x5ca90u+i;}
+        view_count=5;rc_view_sector58=rc_ancestor(view_points[0],0x58);rid_allocate_native=test_vsc_allocate_more;
+        pilot_slot_count=5;memset(vsc_entries,0,sizeof(vsc_entries));memset((void *)vsc_extra,0,sizeof(vsc_extra));
+        vsc_created=0;test_vsc_ctors=0;test_vsc_more_next=0;memset(test_vsc_more_store,0,sizeof(test_vsc_more_store));
+        assert(vsc_extra_count()==3 && vsc_create() && test_vsc_ctors==3 && vsc_entries[0].scene==b);
+        for(unsigned k=1;k<=3;k++) assert(vsc_entries[k].scene==test_vsc_more_store[k-1] && vsc_extra[k-1]==vsc_entries[k].scene);
+        for(unsigned k=4;k<VSC_ENTRIES;k++) assert(!vsc_entries[k].scene && !vsc_extra[k-1]);
+        vsc_assigns=0;vsc_blocked_now=0;vsc_latch(1);
+        assert(!vsc_blocked_now && vsc_assigns==4);
+        for(unsigned k=0;k<4;k++) assert(vsc_entries[k].sector==test_vsc_sectors[k+1] && vsc_entries[k].view==k+1);
+        for(unsigned k=4;k<VSC_ENTRIES;k++) assert(!vsc_entries[k].sector);
+        InterlockedExchange(&vsc_active,1);test_vsc_step_count=0;vsc_steps=0;vsc_step(sb,14.0);InterlockedExchange(&vsc_active,0);
+        assert(test_vsc_step_count==4 && test_vsc_steps[0]==sb && test_vsc_steps[3]==vsc_extra[2] && vsc_steps==3);
+        pilot_slot_count=4;memset(vsc_entries,0,sizeof(vsc_entries));memset((void *)vsc_extra,0,sizeof(vsc_extra));
+        vsc_created=0;test_vsc_ctors=0;test_vsc_more_next=0;
+        assert(vsc_create() && test_vsc_ctors==2 && !vsc_entries[3].scene);
+        vsc_assigns=0;vsc_blocked_now=0;vsc_latch(2);
+        assert(vsc_blocked_now==1 && vsc_assigns==3 && vsc_entries[2].sector==test_vsc_sectors[3] && !vsc_entries[3].sector);
+        pilot_slot_count=saved_slots;
+    }
     vsc_ctor_native=NULL;vsc_anchor_native=NULL;vsc_step_native=NULL;vsc_zone_native=NULL;vsc_highway_native=NULL;rid_allocate_native=NULL;
-    memset(vsc_entries,0,sizeof(vsc_entries));vsc_extra[0]=vsc_extra[1]=NULL;vsc_created=vsc_armed=vsc_installed=0;vsc_active=0;rc_failures=0;
+    memset(vsc_entries,0,sizeof(vsc_entries));memset((void *)vsc_extra,0,sizeof(vsc_extra));vsc_created=vsc_armed=vsc_installed=0;vsc_active=0;rc_failures=0;
     vsc_steps=vsc_moves=vsc_rebases=vsc_assigns=vsc_releases=vsc_early=vsc_blocked_ticks=0;vsc_blocked_now=0;
     memcpy(view_points,saved_points,sizeof(saved_points));memcpy(view_ids,saved_ids,sizeof(saved_ids));view_count=saved_count;rc_view_sector58=saved_home;memcpy(image+VSC_SCENE_B,&saved_b,8);
     printf("view scenes table/anchors/slot 943/steps/create/stop tests PASS\n");

@@ -49,7 +49,8 @@ RAW_PLAN = re.compile(r'plan=(PIDENT_PLAN_1\|\S+)')
 READY = re.compile(r'PLAYER_IDENTITY READY tick=(\d+) steps=(\d+) md=(\S+)')
 # Defaults: snapshot capture 005, all in the same zone of Argon Prime (sector saved ID 0x729).
 PLAYER_SHIP = '00000000000ae79c'                     # the player's Argon scout, occupied on every client
-DEFAULT_SHIPS = (PLAYER_SHIP, '0000000000176ad5', '0000000000176b36', '0000000000176b97')  # + fixture actors 3, 4, 5
+DEFAULT_SHIPS = (PLAYER_SHIP, '0000000000176ad5', '0000000000176b36', '0000000000176b97',   # + fixture actors 3, 4, 5
+                 '0000000000176bf8', '0000000000176c59', '0000000000176c77', '0000000000176c95')  # and 6..9: slots 5..8
 # Stock slots with a working first-person cockpit: Argon scouts, the macro of the player's own ship
 # (ship_arg_s_scout_01_a_macro; the fixture fighters show one flat panel, live st-C1). Two primary guns each,
 # none near the player in the save, so MD moves them to STOCK_STARTS at the setup tick. Live st-C2 flew the first.

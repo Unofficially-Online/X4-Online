@@ -1210,11 +1210,13 @@ static void test_rc_traffic_pass(void) {
     rc_installed_groups=saved_installed;
     puts("traffic pass camera, per view point calls, writes per mode and thread, relative transform, hook thunk and status verified");
 }
-/* Stand-ins 2..3: a third and a fourth sector's first view point get a stand-in of their own when allowed. */
+/* Stand-ins 2..7: a third to an eighth sector's first view point get a stand-in of their own when allowed. */
 static __declspec(align(16)) unsigned char test_rcs_ship_c[0x200],test_rcs_sector_c[0x200],test_rcs_ship_d[0x200],test_rcs_sector_d[0x200];
+static __declspec(align(16)) unsigned char test_rcs_more_ships[4][0x200],test_rcs_more_sectors[4][0x200];   /* sectors 5..8 */
 static void *test_rcs_vtable[0x11e8/8+1];
 static char test_rcs_class(void *o,int klass) {
     if(klass==0x58 && (o==test_rcs_sector_c || o==test_rcs_sector_d)) return 1;
+    for(unsigned i=0;i<4;i++) if(klass==0x58 && o==test_rcs_more_sectors[i]) return 1;
     return test_rcp_class(o,klass);
 }
 static void test_rc_standins(void) {
@@ -1233,8 +1235,8 @@ static void test_rc_standins(void) {
     /* Two (the default): sectors c and d stay uncovered and answer as view point 1. */
     stats.issued=30;assert(rc_frame(30) && rc_more==0 && rc_uncovered_now==2 && !*rc_k_manager_camera(2) && !*rc_k_manager_camera(3));
     assert(rc_object_k(test_rcp_ship_b,RC_OBJ_R12)==1 && rc_object_k(test_rcs_ship_c,RC_OBJ_R12)==0);
-    /* Arming: only before the first admitted frame, 2..4, with the policy. */
-    assert(!rc_standins_arm(3));stats.issued=0;assert(!rc_standins_arm(1) && !rc_standins_arm(5));
+    /* Arming: only before the first admitted frame, 2..VIEW_MAX, with the policy. */
+    assert(!rc_standins_arm(3));stats.issued=0;assert(!rc_standins_arm(1) && !rc_standins_arm(VIEW_MAX+1));
     rc_policy=0;assert(!rc_standins_arm(4));rc_policy=1;assert(rc_standins_arm(4) && rc_standins_max==4);
     stats.issued=1;assert(rc_standins_arm(4) && !rc_standins_arm(3) && rc_standins_max==4);stats.issued=0; /* identical re-arm after a UI reload */
     /* Four: each further sector gets the next stand-in, its camera at its view point. */
@@ -1259,6 +1261,31 @@ static void test_rc_standins(void) {
     char status[3072];assert(rc_status(status,sizeof(status))>0 && strstr(status," standins=3/4 "));
     /* View point 2 in view point 1's sector: no further stand-ins either. */
     view_points[1]=test_rcp_ship_a;view_points[2]=test_rcp_ship_a;view_count=3;stats.issued=35;assert(rc_frame(35) && rc_more==0);
+    /* Eight view points in eight sectors (more than four players): stand-ins 4..7 in the page's further blocks, each the
+     * first view point of its sector; with four stand-ins allowed the fifth further sector stays uncovered. */
+    {
+        for(unsigned i=0;i<4;i++) {
+            unsigned char *ship=test_rcs_more_ships[i],*sector=test_rcs_more_sectors[i];void *s=sector;
+            memset(ship,0,0x200);memset(sector,0,0x200);memcpy(ship,&vt,8);memcpy(sector,&vt,8);
+            memcpy(ship+0x70,&s,8);memcpy(sector+0x70,&cl,8);*(uint64_t*)(ship+8)=0x5ca85u+i;
+        }
+        view_points[0]=test_rcp_ship_a;view_ids[0]=0x5ca81;view_points[1]=test_rcp_ship_b;view_ids[1]=0x5ca82;
+        view_points[2]=test_rcs_ship_c;view_ids[2]=0x5ca83;view_points[3]=test_rcs_ship_d;view_ids[3]=0x5ca84;
+        for(unsigned i=0;i<4;i++) {view_points[4+i]=test_rcs_more_ships[i];view_ids[4+i]=0x5ca85u+i;}
+        view_count=VIEW_MAX;rc_standins_max=VIEW_MAX;stats.issued=36;
+        assert(rc_frame(36) && rc_more==(LONG)VIEW_MAX-2 && !rc_uncovered_now);
+        for(unsigned k=4;k<VIEW_MAX;k++) {
+            void *ck=*rc_k_manager_camera(k),*p=NULL,*c=NULL;
+            assert(ck==rc_page+rc_k_cameras[k] && rc_camera_k(ck)==(int)k && rc_k_sector[k]==test_rcs_more_sectors[k-4]);
+            memcpy(&p,rc_page+rc_k_shadow[k]+0x230,8);memcpy(&c,rc_page+rc_k_shadow[k]+0x3d0,8);assert(p==test_rcs_more_ships[k-4] && c==ck);
+            assert(rc_object_k(test_rcs_more_ships[k-4],RC_OBJ_R12)==(int)k && rc_k_cluster_of(k)==test_rcp_cluster);
+            assert(rc_k_manager[k]>=0xa000u && rc_k_manager[k]+0xb8u<=rc_k_shadow[k] && rc_k_shadow[k]+0x3d8u<=rc_k_cameras[k] &&
+                   rc_k_cameras[k]+2u*RC_CAMERA_SIZE<=(k+1u<VIEW_MAX?rc_k_manager[k+1]:RC_PAGE_SIZE));
+        }
+        assert(rc_owned());
+        rc_standins_max=4;view_count=5;stats.issued=37;
+        assert(rc_frame(37) && rc_more==2 && rc_uncovered_now==1 && !*rc_k_manager_camera(4) && !rc_object_k(test_rcs_more_ships[0],RC_OBJ_R12));
+    }
     memcpy(view_points,saved_points,sizeof(saved_points));memcpy(view_ids,saved_ids,sizeof(saved_ids));view_count=saved_count;view_latched=saved_latched;
     stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;rc_installed=saved_installed;rc_policy=saved_policy;rc_more=0;rc_standins_max=2;
     puts("viewpoint stand-ins: arming, further sectors in slot order, cameras and shadows, object and camera mapping, picks, buffers, status verified");

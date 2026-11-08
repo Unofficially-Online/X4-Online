@@ -59,6 +59,15 @@ def prepare(profile, extension_ids, width=1280, height=720, snapshot=None, root=
     return path
 
 
+def unstage(profile, root=None):
+    """Remove the snapshot prepare() staged: the lane tool shares these profiles and refuses to overwrite a staged save."""
+    staged = profile_dir(profile, root) / 'save' / SNAPSHOT_SLOT
+    if staged.is_file():
+        staged.unlink()
+        return True
+    return False
+
+
 def collect(profile, logfile, out, root=None):
     """Copy the client's log (and any saves it wrote) into the run directory."""
     path = profile_dir(profile, root)
@@ -66,6 +75,8 @@ def collect(profile, logfile, out, root=None):
     out.mkdir(parents=True, exist_ok=True)
     if (path / logfile).is_file():
         shutil.copy2(path / logfile, out / 'engine-output.log')  # the name the census tools read
+    if (path / 'x4lan-crash.txt').is_file():  # the crash note (native_gate_crash_note): an unhandled exception's CRASH line
+        shutil.copy2(path / 'x4lan-crash.txt', out / 'x4lan-crash.txt')
     saves = [p for p in (path / 'save').glob('*') if p.name != SNAPSHOT_SLOT] if (path / 'save').is_dir() else []
     for save in saves:
         shutil.copy2(save, out / save.name)

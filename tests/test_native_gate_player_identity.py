@@ -50,7 +50,7 @@ RE = Path(os.environ.get('X4_RE', ROOT.parent / 'x4-re'))
 MD_XSD = RE / 'gamescripts/resolved/base/libraries/md.xsd'
 L = identity.lua_literal
 
-S1, S2, S3, S4 = identity.DEFAULT_SHIPS
+S1, S2, S3, S4 = identity.DEFAULT_SHIPS[:4]
 SECTOR = '0000000000000729'
 WORLD = {'player': [S1], 'argon': [S2, S3, S4, '0000000000176a13'], 'xenon': ['0000000000176c59']}
 CREATE = {'macro': 'ship_arg_s_fighter_01_a_macro', 'seed': 4803, 'sector': 'player', 'x': 0, 'y': 100000, 'z': -600, 'yaw': 90}
@@ -115,8 +115,12 @@ class PlanTests(unittest.TestCase):
     def test_default_plans_follow_the_documented_slot_factions(self):
         P = identity.validate(identity.build_plan(4, 'factions'))
         self.assertEqual([r['faction'] for r in P['slots']], ['player', 'x4lan_player2', 'x4lan_player3', 'x4lan_player4'])
-        self.assertEqual([r['ship'] for r in P['slots']], list(identity.DEFAULT_SHIPS))
+        self.assertEqual([r['ship'] for r in P['slots']], list(identity.DEFAULT_SHIPS[:4]))
         self.assertEqual(len(P['relations']), 6)
+        P = identity.validate(identity.build_plan(8, 'factions'))   # eight slots: the pilot modules' PILOT_SLOTS
+        self.assertEqual([r['faction'] for r in P['slots']], ['player'] + [f'x4lan_player{k}' for k in range(2, 9)])
+        self.assertEqual([r['ship'] for r in P['slots']], list(identity.DEFAULT_SHIPS))
+        self.assertEqual(len(P['relations']), 28)
         P = identity.validate(identity.build_plan(3, 'factions', occupied='pool'))
         self.assertEqual([r['faction'] for r in P['slots']], ['x4lan_player1', 'x4lan_player2', 'x4lan_player3'])
         P = identity.validate(identity.build_plan(3, 'coop'))
@@ -693,7 +697,7 @@ class PlayersBuilderTests(unittest.TestCase):
         self.assertIn('X4LAN_CONFIG.native_gate_pilot_camera_follow = {false,true,true}', lines)
 
     def test_invalid_sessions_are_refused(self):
-        bad = [('--players', '5'), ('--players', '1'), ('--source', 'script', '--ships', S1 + ',0000000000176c95'),
+        bad = [('--players', '9'), ('--players', '1'), ('--source', 'script', '--ships', S1 + ',0000000000176c95'),
                ('--source', 'script', '--create', '2=ship_arg_s_fighter_01_a_macro@0,100000,-600'),
                ('--source', 'script', '--camera-follow'), ('--setup-tick', '26', '--source', 'script'),
                ('--players', '3', '--devices', 'kbm,xinput'), ('--relation', '1-3=allied'),
