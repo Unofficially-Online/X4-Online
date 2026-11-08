@@ -305,3 +305,59 @@ time and last economy time matched. The rolling world digests still matched
 because their current field set omits these deadlines. See the motion report
 for the exact values, provenance and limits; the observation itself is not a
 correction or proof of the earlier long-run failure's causal chain.
+
+## Key economy draws during snapshot loading
+
+`--economy-load-rng` is an experimental, default-off option for the Linux
+`bundle` command. Add it to the build command above to key eligible economy
+schedule draws during snapshot loading by saved identity and saved last-update
+time. The bundle requires a snapshot and enables saved identities. When
+building an overlay directly, supply `--gate-so`, `--snapshot`, `--mode clock`
+and `--world-identities` as well.
+
+The gate checks the pinned executable and the host's enabled CPU state before
+arming. It requires XSAVE/OSXSAVE and a supported XCR0 layout; unsupported or
+unverified state layouts are refused. Once installation reaches its code-swap
+attempt, it is one-shot per process: start a fresh disposable client process
+for another attempt.
+
+If a draw cannot be keyed, the gate executes the native draw, advances the
+native RNG and latches a failure. A fallback or failure means the run cannot
+establish the intended deterministic result. Check the economy RNG status and
+STOP records, including restoration and cleanup status, alongside the normal
+run results.
+
+`ECONOMY_LOAD_RNG_ROW` retains at most 128 indexed receipts. Their seed and
+`expected_draw` describe the prepared integer draw; they do not observe the
+stored floating-point deadline. Status counts and order-independent aggregates
+cover all prepared draws, but cannot individually validate omitted receipts.
+Use `--economy-watch` to compare actual stored station deadlines and validate
+its complete receipt stream as described above.
+
+On one PC, two Linux clients using source `ef85d188`, the same snapshot and
+this option matched all 600 watched timer rows in a short run and all 36,000
+watched rows for ticks 6001..42000 in a longer run. The long run's 42,000
+rolling samples matched across 350 complete cycles; 33,724 retained drawn-event
+rows also matched in order. A reverse-launch-order run and a separate actor-row
+run each completed 4,200 ticks with matching rolling samples and watched timer
+rows. Both retained internal timing differences described in the
+[motion investigation](../reports/LOCKSTEP-LINUX-MOTION-ONSET-20261108.txt).
+Only one station was watched. Rolling slices are sampled on different ticks and
+omit the economy timer, so their equality is not an atomic whole-world census.
+These results do not establish cross-PC, cross-CPU or Windows/Linux parity.
+
+The source used by the native runs assigned stop reason 192 to an economy RNG
+check failure and 191 to a path-transform observer failure; neither was a
+failure observed in these runs. The subsequent integration correction
+changes those codes to 201 and 202 respectively and corrects diagnostic
+classification; that change was not part of these native runs.
+
+## Time acceleration and SETA
+
+The current Linux gate requires the native speed factor to remain `1.0` and the
+relay checks a fixed game-time step of `1 / tick_hz`. SETA acceleration is not
+supported by this gate. A multiplayer vote and a host-authorized factor applied
+at the same admitted tick would need additional synchronized clock and relay
+work; no such implementation is claimed here. Running more fixed steps per
+wall-clock second, if possible, is a separate experiment from increasing game
+time per step. Changing the configured tick rate also changes the step size.

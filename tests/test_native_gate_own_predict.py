@@ -178,7 +178,12 @@ class OwnPredictOptionTests(unittest.TestCase):
         self.assertEqual(own_failures(device+"X4LAN_CONFIG.native_gate_own_predict = {'observe',false}\n"), [])
 
     def test_wired_into_the_probe_rules(self):
-        self.assertIn(options.own_predict_rules.__name__, Path(options.__file__).read_text(encoding='utf-8').split('def probe_rules')[1][:800])
+        invalid = "X4LAN_CONFIG.native_gate_own_predict = 'observe'\n"
+        missing_stock = 'native_gate_own_predict needs native_gate_pilot_stock'
+        self.assertIn(missing_stock, [f['rule'] for f in options.probe_rules(invalid, set())])
+        valid = STOCK_ALL + invalid
+        enabled = set(re.findall(r'X4LAN_CONFIG\.(native_gate_\w+)\s*=\s*true\b', valid))
+        self.assertNotIn(missing_stock, [f['rule'] for f in options.probe_rules(valid, enabled)])
 
 
 if __name__ == '__main__':

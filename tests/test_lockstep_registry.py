@@ -9,7 +9,8 @@ ENGINE = ROOT/'src/native/engine'
 REGISTRY = (ROOT/'docs/LOCKSTEP-REGISTRY.txt').read_text(encoding='utf-8')
 NOT_REASONS = {'PSLOT_STOP_WAIT', 'PFIRE_STOP', 'PNAT_STOP_IN_MENU', 'PNAT_FULL_STOP'}   # a count and flags, not stop reasons
 # Another define for an owner's code: the Linux gate's ports, the lookahead's drop (the protocol 5 number).
-ALIASES = {'LMT_STOP_REASON': 'MT_STOP_REASON', 'LXMC_STOP_REASON': 'RC_MINING_STOP', 'LOOKAHEAD_STOP_DROPPED': 'ADAPT_STOP_DROPPED'}
+ALIASES = {'LMT_STOP_REASON': 'MT_STOP_REASON', 'LXMC_STOP_REASON': 'RC_MINING_STOP', 'LOOKAHEAD_STOP_DROPPED': 'ADAPT_STOP_DROPPED',
+           'LINUX_EVENT_RNG_STOP_REASON': 'EVENT_RNG_STOP_REASON', 'LINUX_BUILD_RNG_STOP_REASON': 'BRNG_STOP_REASON'}
 CORE_PORTS = {'CREATED_STOP_REASON': 96, 'LSJ_STOP_REASON': 58}   # module defines that carry a core code (96 world created, 58 spline)
 
 
@@ -42,6 +43,12 @@ class StopReasonTests(unittest.TestCase):
         for name, places in stop_defines().items():
             value = next(iter(places))[0]
             self.assertRegex(REGISTRY, rf'\b{value} [^\n]*\b{name}\b', name)   # its line names the value and the define
+
+    def test_linux_observers_use_registered_stop_reasons(self):
+        gate = (ENGINE/'linux/gate_linux.c').read_text(encoding='utf-8')
+        for flag, reason in (('economy_rng_installed', 'ECONOMY_RNG_STOP_REASON'),
+                             ('path_transform_observer_installed', 'PATH_TRANSFORM_OBSERVER_STOP_REASON')):
+            self.assertRegex(gate, rf'if\({flag}[^\n]+finish\({reason}\)')
 
     def test_no_module_reason_reuses_a_core_literal(self):
         core = set()

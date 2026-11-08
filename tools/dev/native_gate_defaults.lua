@@ -213,6 +213,7 @@ D.DIAGNOSTIC={
  {'native_gate_checkpoint_at','x4ls --checkpoint-at: every client saves after tick T (the save pauses the game: the session ends)'},
  {'native_gate_event_rng_play_rows','EVENT_RNG rows in play mode (soak attribution)'},
  {'native_gate_path_transforms_rows','PATH_TRANSFORMS rows of a tick window'},
+ {'native_gate_path_transform_observe','Linux path-transform observation in a bounded tick window'},
  {'native_gate_world_pages_window','per-object world pages of a tick window in play mode (x4ls triage)'},
  {'native_gate_world_detail_rows','false suppresses per-object log rows; all world captures and relay digests remain enabled'},
  {'native_gate_world_rolling_slices','Linux diagnostic only: sample one of N ranges each tick; not an instantaneous census'},

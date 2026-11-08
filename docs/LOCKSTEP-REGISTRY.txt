@@ -189,8 +189,8 @@ Modules (define, owner):
   146 WX_STOP_REASON            linux/gate_warp_exit.h (native_gate_warp_exit, Linux gate only: the gate exit sum in the
                                 Windows order; whys entry_changed, block_changed)
   150 GWIDE_STOP_REASON         lockstep_gravidar_wide.h
-  151 EVENT_RNG_STOP_REASON     lockstep_event_rng.h
-  152 BRNG_STOP_REASON          lockstep_build_rng.h
+  151 EVENT_RNG_STOP_REASON     lockstep_event_rng.h; Linux port LINUX_EVENT_RNG_STOP_REASON
+  152 BRNG_STOP_REASON          lockstep_build_rng.h; Linux port LINUX_BUILD_RNG_STOP_REASON
   153 UIC_STOP_REASON           lockstep_ui_cargo.h
   154 SPR_STOP_REASON           lockstep_supply_rows.h
   155 PSTK_STOP_REASON          lockstep_pilot_stock.h
@@ -268,7 +268,9 @@ Modules (define, owner):
   200 JOIN_STOP_REASON          lockstep_join.h (hot join: a strict joiner's admission refused; the status line's
                                 rx_detail names why: contexts_differ, wakes_unplaced, md_heap_differs, clock,
                                 ids_foreign, created_entries, rid_*, pins, engine)
-  free: 109, 114-119, 122-129, 147-149, 189, 201-255.
+  201 ECONOMY_RNG_STOP_REASON   Linux economy load RNG detour
+  202 PATH_TRANSFORM_OBSERVER_STOP_REASON Linux path-transform observer
+  free: 109, 114-119, 122-129, 147-149, 189, 203-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

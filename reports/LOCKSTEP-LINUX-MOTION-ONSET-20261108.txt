@@ -411,3 +411,89 @@ linux-20261108-economy-observe bundle, and retained import/guard disassembly.
 The observer received focused C/ELF checks, 171 Lua method checks and five
 Python checks; its separate retained-log validator passed eight adversarial
 checks. Synthetic checks do not establish native correction or portability.
+
+Opt-in load-time economy RNG: bounded native comparisons
+-------------------------------------------------------
+Clean source ef85d1881eea0658f03813bc83d39c46e76e1654, gate SHA256
+d18481d00090e3c523b44adfe9ccc670b0bf512f93162e714e4daa60499d7a10,
+uses the seed-3333333 snapshot SHA256
+df116bdd4a52988b6104cf7bd082d357e54abd00cbaaa6bdac1825bb6676c6f8.
+The default-off economy-load RNG keys an eligible import draw by saved identity
+and last-time bits; missing keys execute the native draw, advance the ambient
+word and latch a failure. The original floating-point continuation remains in
+place. These are Linux same-PC comparisons, not cross-platform validation.
+
+The 600-tick two-client run matched all 600 observed timer rows for saved
+Station 36fe9, including last, next and game time. The next deadline was
+599.2775764465332 on both peers. Each reported 1068 prepared draws, zero
+fallbacks and failures, and a restored gate. The first 128 indexed prepared
+receipts per peer were retained and independently recomputed; they are predicted
+integer results, not observations of the stored floating-point timer. The
+remaining 940 individual receipts were not retained, although the population
+counts and order-independent aggregates matched.
+
+The 42000-tick run completed on both peers with reason 1, restored=1, no economy
+fallback or failure, and the same 1068 prepared draws per peer. All 42000
+rolling samples matched, comprising 350 complete cycles of 120 slices. The
+separate station observer covered ticks 6001..42000 and retained all 36000
+rows per peer with equal last/next/game-time values and no absence or observer
+failure. The observed timer changed at tick 36443 on both peers. Independent
+comparison also found all 33724 retained drawn-event rows equal in order. Those
+rows exclude zero-draw event deliveries outside an explicitly configured window;
+they do not establish equality of all event calls or their internal branches.
+
+For the long run's 41879 relay release intervals after tick 120, median/p95/
+p99/maximum were 38.488/44.2061/98.80424/168.882 ms. There were 1128 intervals
+above 50 ms and 401 above 100 ms. These measurements describe relay pacing,
+not rendered FPS. The previously recurring roughly 489 ms diagnostic stalls
+did not recur in this capture; occasional longer intervals remain.
+
+A separate 4200-tick run reversed client launch order. Both clients completed
+with restored hooks; all 4200 station rows and 35 rolling cycles matched.
+Its complete early event window retained zero-draw deliveries and exposed
+13 unmatched event rows on each side. The identified rows are zero-draw
+NavHelperGeneratedEvent deliveries with differing tick or ambient entry word;
+shared source identities do not establish their cause. An independent
+4200-tick actor-row run likewise matched the station and rolling samples but
+found ship-scope draw timing differences beginning at tick 3232: 183 versus
+182 retained drawn-scope rows, with 281 total draws per peer. Six affected
+saved IDs are 17bcf9, 17bd5a, 17bdbb, 17be1c, 17be7d and 17bede. The snapshot's
+completed X4LAN_NativeGate Spawn.$ships list identifies them as its first six
+fixture actors: Argon ship_s components with the same fighter macro and Wait
+orders. Their association with the early NavHelper sources is correlation,
+not evidence of a causal direction or a specific ShipMove subsystem.
+
+The observer covers only Station 36fe9; its unlocked double reads cannot
+exclude ABA changes. Rolling slices are collected over different ticks and
+omit economy timer fields, so matching cycles are not an atomic whole-world
+comparison. Prepared rows are capped at 128 and exclude the watched station
+in these samples. Per-tick rolling equality and retained event equality do not
+prove all game state or internal event timing equal, and the older 36000-tick
+failure's inner branch remains unproven. The result does not establish
+cross-PC, cross-CPU or Windows/Linux compatibility.
+
+The retained hardened and independent audits are under the private
+.local/evidence/economy-review-resume directory: economy-key-600-audit-hardened,
+economy-key-42000-audit-hardened, economy-key-42000-independent,
+economy-key-42000-events, economy-events-reverse-4200-audit-hardened,
+economy-reverse-4200-independent, economy-actor-watch-4200-audit-hardened and
+economy-actor-watch-4200-independent (JSON). The original failed runs and their
+evidence remain unchanged.
+
+The source used by the native runs assigned stop reason 192 to the economy RNG
+check and 191 to the path-transform observer; neither failure was observed in
+these runs. Subsequent integration corrections use 201 and
+202 respectively and correct diagnostic classification; those changes have not
+been native-tested by the runs above. The current Linux gate also requires speed
+factor 1.0 and the relay requires the fixed game-time step, so SETA acceleration
+is not presently supported. No acceleration implementation or native SETA
+test is claimed by this report.
+
+Offline integration validation after these corrections ran 1987 Python tests:
+1962 passed, 25 were skipped, and no test failed. The development check exits
+1 because skips are incomplete validation; missing Windows/private reference
+assets and platform-specific checks remain explicit gaps. GCC and Zig 0.15.2
+Linux gate checks passed with the pinned executable read from disk, 174 Lua
+bridge methods and all 29 synthetic relay scenarios. No native X4 process is
+launched by these checks. Private logs: full-python-check-fixed.log and
+final-zig-check.log under the same evidence directory.

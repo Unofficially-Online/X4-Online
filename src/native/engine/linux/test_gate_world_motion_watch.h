@@ -41,7 +41,7 @@ static void test_world_motion_watch(void) {
     world_hash_schema = 2;
     assert(world_banks_read(&world_banks_before));
     world_hash_item expected_item = {.runtime = 100, .saved = 77};
-    world_hash_data expected[WORLD_HASH_DOMAINS] = {{0}};
+    world_hash_data expected[WORLD_HASH_DOMAINS] = {0};
     assert(world_hash_record(&expected_item, expected, wscen_object[0]));
     char expected_motion[WORLD_MOTION_ROW_BYTES], expected_timing[WORLD_MOTION_ROW_BYTES];
     world_motion_hex(expected[2].data, expected[2].length, expected_motion);

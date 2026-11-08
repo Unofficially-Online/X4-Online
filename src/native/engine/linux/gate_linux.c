@@ -83,7 +83,8 @@ static void economy_rng_restore(void);
 static int economy_rng_check(void);
 static int economy_rng_installed, economy_rng_restored;
 static int economy_rng_cleanup_uncertain;
-#define ECONOMY_RNG_STOP_REASON 192u
+#define ECONOMY_RNG_STOP_REASON 201u
+#define PATH_TRANSFORM_OBSERVER_STOP_REASON 202u
 /* Serial pathing and path determinism (gate_path.h, included below). */
 static void path_restore(void);
 static int path_owned(void);
@@ -609,7 +610,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     gate_fetch_check();
     void *table;memcpy(&table,LX(LX_VBI_TABLE_VA),8);
     if(world_identity_installed && world_identity_failures) {finish(72);gate_original_once(frame,loading);return;}
-    if(path_transform_observer_installed && !path_transform_observer_check()) {finish(191);gate_original_once(frame,loading);return;}
+    if(path_transform_observer_installed && !path_transform_observer_check()) {finish(PATH_TRANSFORM_OBSERVER_STOP_REASON);gate_original_once(frame,loading);return;}
     if(path_det_mask && path_det_failures) {finish(79);gate_original_once(frame,loading);return;}
     if(region_rng_armed && region_rng_failures) {finish(93);gate_original_once(frame,loading);return;}
     if(wfire_installed && !wfire_check()) {finish(132);gate_original_once(frame,loading);return;} /* WFIRE_STOP_REASON */
