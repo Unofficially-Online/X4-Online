@@ -497,7 +497,6 @@ static const lx_site lx_sites[]={
     {"find_space_execute",0xda9920,0x23c0,"437f08f2263e3255ed7ce4bfabb4ca4280a17b9e21cd588d014be0e3c1cda7b1"},
     {"flight_update",0x13e9d50,32,"09f259f5cb97414053102eb0715f69b31cc5e0216e8f3ec7cb8eda999553aa33"},
     {"agent_set_model",0x1432b80,0x1280,"8ba9e7c46cb10431a0632f3dd29e4ac1d1a3bce4666a2f2c5e07b61d8f37b8c1"},
-    {"shield_percent",0x17d7b70,0xb6,"d8e75cdbda4450259bb1b2503407f66ceba721584f6e9384a64b4ae3b2bb6f30"},
     {"script_exec_run",0xd5fbb0,0x73,"ba595478c53852158f7ca0d93fc6a24ab3a4e0aa7442dfa3d74510d137c490f1"},
     {"script_exec_range",0xd5fc30,0x6f,"a75340d2594bb8d07cf693976b4630a66483a9ab63db2dd1411089540470b450"},
     {"script_ai_event",0x10d4270,0x50,"5a5288bf8d4649e9cbff9fa15b725393604cf377952019b6ed49ef84eef731dd"},
