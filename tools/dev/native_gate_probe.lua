@@ -638,6 +638,26 @@ end
 -- world-hash watch on every tick first..last, after that tick's capture point: its stored hull and shield
 -- (value, changed time, maximum, delay, rate, factor, generators, modifiers) and the game time, as bits. The
 -- census sees them only every stride ticks; this names the tick and the field of a health split.
+-- A separate Linux Nav observer never contributes to report hashes or census counters.
+-- Its canonical read/write bytes include the same metadata trailers as WORLD_DETAIL.
+do
+ local ids,window=cfg.native_gate_world_motion_watch,cfg.native_gate_world_motion_window
+ assert((ids==nil and window==nil) or (type(ids)=='table' and #ids>=1 and #ids<=4 and
+  type(window)=='table' and #window==2 and type(window[1])=='number' and type(window[2])=='number' and
+  window[1]%1==0 and window[2]%1==0 and window[1]>=1 and window[1]<=window[2] and
+  window[2]-window[1]<18000 and window[2]<=9007199254740991 and cfg.native_gate_world_identities and
+  cfg.native_gate_snapshot_sha and type(gate.world_motion_config)=='function' and
+  type(gate.world_motion_capture)=='function' and type(gate.world_motion_row)=='function' and
+  type(gate.world_motion_status)=='function'), 'world motion watch requires 1..4 saved IDs and a bounded complete tick window')
+ if ids then
+  local seen={}
+  for _,saved in ipairs(ids) do
+   assert(type(saved)=='string' and #saved==16 and saved:match('^[0-7][0-9a-f]+$') and
+    saved~='0000000000000000' and not seen[saved], 'world motion watch IDs must be unique saved IDs')
+   seen[saved]=true
+  end
+ end
+end
 do
  local w=cfg.native_gate_world_health_ticks
  assert(w==nil or (type(w)=='table' and #w==2 and type(w[1])=='number' and type(w[2])=='number' and w[1]%1==0 and w[2]%1==0 and
@@ -5115,6 +5135,9 @@ local function frame()
   if cfg.native_gate_gravidar_deadlines then log('GRAVIDAR_DEADLINES_STOP '..tostring(gate.gravidar_deadlines_status())) end
   if cfg.native_gate_spawn_rng~=nil then drain_spawn();log('SPAWN_RNG_STOP '..tostring(gate.spawn_rng_status())) end
   if cfg.native_gate_created_identities then drain_created_rows();log('CREATED_IDENTITIES_STOP '..tostring(gate.created_identities_status())) end
+  if cfg.native_gate_world_motion_watch then
+   ticklog.write('WORLD_MOTION_STOP '..assert(gate.world_motion_status(),'world motion status unavailable'))
+  end
   if cfg.native_gate_actor_rng_all then log('ACTOR_RNG_ALL_STOP '..tostring(gate.actor_rng_all_status())) end
   if rolling_slices then
    log('WORLD_ROLLING_STOP scans='..s.world_hash_scans..' cycles='..
@@ -5647,6 +5670,22 @@ local function frame()
  if parts then parts[#parts+1]={'input',#data} end
  if cfg.native_gate_player_probe then data=data..'|'..assert(X4LAN_NATIVE_PLAYER,'native player probe missing')(tick,gate) end
  if parts then parts[#parts+1]={'player',#data} end
+ -- These are mandatory diagnostic receipts even when status thinning is enabled.
+ -- Do not append them to data: observation must not change the comparison contract.
+ if cfg.native_gate_world_motion_watch then
+  local window=cfg.native_gate_world_motion_window
+  if tick==1 then
+   local ids=table.concat(cfg.native_gate_world_motion_watch,',')
+   assert(gate.world_motion_config(ids,window[1],window[2])==1,'world motion watch configuration refused')
+   ticklog.write('WORLD_MOTION_ARMED version=1 first='..window[1]..' last='..window[2]..' ids='..ids)
+  end
+  if tick>=window[1] and tick<=window[2] then
+   local count,why=gate.world_motion_capture(tick)
+   if not count then ticklog.write('WORLD_MOTION_ERROR tick='..tick..' stage='..tostring(why)) end
+   assert(count==#cfg.native_gate_world_motion_watch,'world motion capture failed '..tostring(why))
+   for index=1,count do ticklog.write('WORLD_MOTION '..assert(gate.world_motion_row(index),'world motion row unavailable')) end
+  end
+ end
  if rolling_slices then
   local capture_started = profile and gate.qpc_us()
   local summary,why = gate.world_capture_rolling(tick,rolling_slices)

@@ -86,6 +86,25 @@ Retain these counts with any result; do not describe a passing digest as proof
 that unobserved state is synchronized. An external-relay run validates only its
 local participants until both hosts' evidence is compared.
 
+For a focused motion investigation, add `--world-motion-watch SAVED_ID ...`
+and `--world-motion-window FIRST LAST` to the bundle command. This diagnostic
+is off by default, accepts up to four imported saved IDs and an explicit window
+of at most 18,000 ticks within the run. It reads only NavigationController state;
+a missing object, lost identity, unsupported controller or unstable read fails
+the evidence check. It does not add fields to report digests or census coverage.
+
+The automatic runner validation checks every declared tick and ID exactly once,
+including the arm receipt and successful stop/footer. `WORLD_MOTION` rows contain
+the existing canonical read/write motion and timing preimages, including census
+metadata trailers. Retained census detail or object leafs at matching ticks are
+checked against them. Physical read/write selectors and cursor are diagnostics;
+their raw values are excluded from equality. These receipts bypass status
+thinning, including when the regular census uses rolling slices. Results appear
+as `world_motion_*` fields in `run-result.json`; a single local client reports
+zero compared pairs and no peer-equality verdict. There is no standalone motion
+analysis command. Passing this observer covers only the selected objects and
+window, and does not establish equal hidden pathing state or causality.
+
 All game views use private HOME/XDG profiles, disabled autosaves and Workshop
 sync, and only official DLC plus the test extension. Normal profiles and game
 files are mounted read-only. Device access, shared memory, Steam IPC and the

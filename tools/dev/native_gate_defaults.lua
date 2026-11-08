@@ -205,6 +205,8 @@ D.FAMILIES={'travel','target','orders','autopilot','dock','weapons','missiles','
 D.FAMILY_NEEDS={missiles='native_gate_pilot_fire',missions='guard:missions',conversation='guard:conversation',build='guard',assets='guard',faction='guard'}
 -- Diagnostics and measurement: off by default (they only log, capture, trace, profile, watch or measure). {'key','why'}.
 D.DIAGNOSTIC={
+ {'native_gate_world_motion_watch','Linux saved-ID Nav evidence; independent of full census bookkeeping'},
+ {'native_gate_world_motion_window','explicit bounded tick window for canonical Nav motion/timing evidence'},
  {'native_gate_world_nav_stride','nav-only world hash every N ticks between census captures (soak split location)'},
  {'native_gate_checkpoint_at','x4ls --checkpoint-at: every client saves after tick T (the save pauses the game: the session ends)'},
  {'native_gate_event_rng_play_rows','EVENT_RNG rows in play mode (soak attribution)'},

@@ -791,6 +791,7 @@ static int lua_start(lua_State *L) {
 #include "lockstep_gate_lua_wire.h"
 #include "gate_world.h"
 #include "gate_world_created.h"
+#include "gate_world_motion_watch.h"
 #include "gate_path.h"
 #include "gate_path_budget.h"
 #include "gate_script_rng.h"
@@ -927,6 +928,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(sha256);METHOD(start);METHOD(boot);METHOD(load_requested);METHOD(report);METHOD(poll);METHOD(stop);
     METHOD(frame_timing);METHOD(qpc_us);METHOD(tick_rate);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(peer_links);METHOD(peer_status);METHOD(wire_crypto);METHOD(wire_crypto_status);
     METHOD(platform);METHOD(verify_stage);
+    METHOD(world_motion_config);METHOD(world_motion_capture);METHOD(world_motion_row);METHOD(world_motion_status);
     METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);

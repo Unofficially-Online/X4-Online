@@ -688,6 +688,14 @@ def hybrid_rules(config_text, enabled):
 def probe_rules(config_text, enabled):
     """Prerequisites of options native_gate_probe.lua arms after the boot."""
     failures = []
+    if re.search(r'X4LAN_CONFIG\.native_gate_world_motion_(?:watch|window)\s*=', config_text):
+        from world_motion_evidence import configured_watch
+        try:
+            configured_watch(config_text)
+        except ValueError as error:
+            failures.append(dict(rule=str(error), bits=['native_gate_world_motion_watch', 'native_gate_world_motion_window']))
+        if 'native_gate_world_identities' not in enabled or not re.search(r'X4LAN_CONFIG\.native_gate_snapshot_sha\s*=', config_text):
+            failures.append(dict(rule='world motion watch needs saved identities and a snapshot', bits=['native_gate_world_identities', 'native_gate_snapshot_sha']))
     for rule in (predict_rules, hit_claim_rules, pilot_fire_rules, capture_source_rules, pilot_stock_rules, pilot_present_rules,
                  pilot_death_rules, pilot_foot_rules, pilot_foot_bodies_rules, pilot_foot_slots_rules, ui_replay_rules,
                  player_settings_rules, crash_note_rules, render_fps_rules, render_display_rules, own_predict_rules, hybrid_rules):

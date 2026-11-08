@@ -6,6 +6,7 @@ local path=assert(arg[1],'module path required')
 local open=assert(package.loadlib(path,'luaopen_x4lan_gate'))
 local gate=assert(open(),'module did not resolve the Lua ABI')
 local core={'sha256','start','boot','load_requested','report','poll','stop','frame_timing','qpc_us','tick_rate','wire','propose',
+ 'world_motion_config','world_motion_capture','world_motion_row','world_motion_status',
  'relay_host','lookahead','lookahead_status','peer_links','peer_status','wire_crypto','wire_crypto_status','platform','verify_stage',
  'world_watch','world_capture','world_capture_nav_v2','world_capture_rolling','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status',
  'path_determinism','path_determinism_status','path_budget','path_budget_status','region_rng','region_rng_status','region_rng_row',
@@ -31,6 +32,7 @@ for _,name in ipairs({'actor','world_trace','thread_rng','boot_rng_anchor','pilo
 end
 assert(gate.platform()=='linux')
 assert(gate.travel_determinism()==0,'ordered jobs must refuse outside a verified session')
+assert(gate.world_motion_config('000000000006ec76',1,2)==0,'motion observer must refuse outside a verified live session')
 -- Canonical shields arm only on a running gate (its image verified), and only in canonical mode.
 assert(gate.world_hash_shields('canonical')==0 and gate.world_hash_shields('view')==0 and gate.world_hash_shields_status()=='mode=off canonical=0')
 assert(gate.sha256('')=='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')

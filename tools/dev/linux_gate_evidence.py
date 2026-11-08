@@ -120,7 +120,28 @@ def validate_client(slot, records, ticks, expected_ticks):
     return stop, identity
 
 
-def validate_evidence(logs_by_slot, ticks, stride, rolling_slices=None):
+def validate_evidence(logs_by_slot, ticks, stride, rolling_slices=None, motion_watch=None, motion_window=None):
+    """Validate census and optional independent motion receipts in one stream pass."""
+    if motion_watch is None and motion_window is None:
+        return validate_world_evidence(logs_by_slot, ticks, stride, rolling_slices)
+    from world_motion_evidence import MotionEvidence, compare_evidence
+    watchers = {slot: MotionEvidence(slot, motion_watch, motion_window, ticks) for slot in logs_by_slot}
+
+    def observed_lines(slot, lines):
+        for line in lines:
+            watchers[slot].observe(line)
+            yield line
+
+    result = validate_world_evidence({slot: observed_lines(slot, lines) for slot, lines in logs_by_slot.items()},
+                                     ticks, stride, rolling_slices)
+    motion = compare_evidence(list(watchers.values()))
+    result.update(motion)
+    result['evidence_errors'].extend(motion['world_motion_errors'])
+    result['evidence_ok'] = not result['evidence_errors']
+    return result
+
+
+def validate_world_evidence(logs_by_slot, ticks, stride, rolling_slices=None):
     """Return runner-compatible fields and errors for each local client's log.
 
     logs_by_slot maps actual slot numbers to iterables of decoded lines. A

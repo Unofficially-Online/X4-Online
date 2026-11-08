@@ -223,6 +223,12 @@ def bundle(args):
         raise SystemExit('--status-stride must be between 1 and 3600')
     if args.created_rows and not args.created_identities:
         raise SystemExit('--created-rows requires --created-identities')
+    if args.world_motion_watch is not None or args.world_motion_window is not None:
+        from world_motion_evidence import validate_configuration
+        try:
+            validate_configuration(args.world_motion_watch, args.world_motion_window, args.ticks)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
     out = args.out
     if out.exists():
         raise SystemExit(f'{out} exists; use a new directory')
@@ -239,6 +245,9 @@ def bundle(args):
     command += ['--world-log-mode', args.world_log_mode]
     if args.world_rolling_slices is not None:
         command += ['--world-rolling-slices', str(args.world_rolling_slices)]
+    if args.world_motion_watch is not None:
+        command += ['--world-motion-watch', *args.world_motion_watch,
+                    '--world-motion-window', *map(str, args.world_motion_window)]
     if args.status_stride is not None:
         command += ['--status-stride', str(args.status_stride)]
     if args.probe_profile:
@@ -405,6 +414,8 @@ def bundle(args):
     shutil.copy2(repo / 'tools/dev/native_gate_relay.py', out / 'native_gate_relay.py')
     shutil.copy2(Path(__file__), out / 'linux_gate_live.py')
     shutil.copy2(Path(__file__).with_name('linux_gate_evidence.py'), out / 'linux_gate_evidence.py')
+    for helper in ('world_motion_evidence.py', 'native_world_evidence.py'):
+        shutil.copy2(Path(__file__).with_name(helper), out / helper)
     shutil.rmtree(work)
     commit = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
     files = {p.relative_to(out).as_posix(): sha(p) for p in sorted(out.rglob('*')) if p.is_file()}
@@ -501,6 +512,8 @@ def bundle(args):
         },
     }
     manifest.update({name: getattr(args, name) for name in recorded_options})
+    manifest['world_motion_watch'] = args.world_motion_watch
+    manifest['world_motion_window'] = args.world_motion_window
     manifest['created_rows'] = bool(args.created_rows)
     manifest['snapshot_seed'] = world_seed
     manifest['preset'] = args.preset
@@ -884,7 +897,9 @@ def collect_run_evidence(run_dir, slots, cases, ticks, manifest):
         retained_log = client / 'engine-output.log'
         logs_by_slot[slot] = gate_lines(retained_log) if retained_log.exists() else ()
     result.update(validate_evidence(logs_by_slot, ticks, manifest['stride'],
-                                    rolling_slices=manifest.get('world_rolling_slices')))
+                                    rolling_slices=manifest.get('world_rolling_slices'),
+                                    motion_watch=manifest.get('world_motion_watch'),
+                                    motion_window=manifest.get('world_motion_window')))
     try:
         result['relay'] = json.loads((run_dir / 'relay.json').read_text())
     except (OSError, ValueError):
@@ -978,6 +993,9 @@ def run(args):
                                             'gate_so_sha256': manifest['gate_so_sha256']}))
         return
     ticks = manifest['ticks'] if args.ticks is None else args.ticks
+    if manifest.get('world_motion_watch') is not None or manifest.get('world_motion_window') is not None:
+        from world_motion_evidence import validate_configuration
+        validate_configuration(manifest.get('world_motion_watch'), manifest.get('world_motion_window'), ticks)
     if ticks < 1 or manifest['stride'] < 1:
         raise SystemExit('--ticks and the bundle stride must be positive')
     name = args.name or time.strftime('live-%Y%m%d-%H%M%S')
@@ -1177,6 +1195,10 @@ def main(argv=None):
                    help='hashes suppresses object detail logs while keeping every full world capture')
     b.add_argument('--world-rolling-slices', type=int, metavar='N',
                    help='experimental per-tick object slices; requires hashes-only logging, changes census coverage timing')
+    b.add_argument('--world-motion-watch', nargs='+', metavar='SAVED_ID',
+                   help='default-off per-tick canonical Nav evidence for up to four imported saved IDs')
+    b.add_argument('--world-motion-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='explicit inclusive motion evidence window, at most 18000 ticks')
     b.add_argument('--status-stride', type=int, metavar='N',
                    help='thin diagnostic status logs every N ticks (1..3600)')
     b.add_argument('--probe-profile', action='store_true',
