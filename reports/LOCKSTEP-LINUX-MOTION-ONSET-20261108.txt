@@ -135,7 +135,7 @@ difference. No matched-scope PC difference appears in the retained window.
 
 This ties an earlier script divergence to the pilot of the later diverging
 ship. It does not yet identify a differing trade-offer list or prove the
-origin of its inputs. Linux currently sorts due events but runs their native
+origin of its inputs. That Linux control sorts due events but runs their native
 handlers on the caller's RNG word. Windows battle-snapshot defaults enable
 an independent RNG scope per delivery; its existing investigation describes
 related trader/offer failures. An opt-in Linux scope is the next controlled
@@ -145,3 +145,96 @@ scope does not by itself establish Windows/Linux seed parity.
 Private evidence: nav-key-script-soak-partial-audit.json,
 nav-key-script-window-comparison-corrected.json, nav-key-script-first11396/,
 boron-trader-pilot-identity.json and trader-script-pcg-independent.json.
+
+Opt-in event RNG comparison
+--------------------------
+Source 18f3be5152e7373da8d1831c8168f32141e4a260 adds a Linux event-delivery
+scope through the existing event-order redirect. The scope derives a private
+RNG word from the admitted tick, portable source identity, event type and due
+time, and restores the caller's word on normal return. It remains default-off.
+The pinned ELF checks, synthetic native guards, 165 Lua bridge methods and 29
+mock relay scenarios pass. Added cases cover nested restoration, foreign
+threads, unreadable identities, ownership loss and explicit class-fallback
+collisions. These checks do not replace native execution.
+
+The first native comparison uses the same seed-2222222 snapshot, nav-key and
+ordered pathing, launch order 2,1, full census every 120 ticks, and gate SHA256
+980ee2a31badb83f60e047b7a7e44a9e227ad891233bec62d95cdefce60dc767.
+Both peers complete 15000 ticks. All 126 full census captures agree across
+the recorded domains, as do all 16004 motion-watch rows per peer from ticks
+8000..12000. There are 544 successful watch/census comparisons per peer.
+Both emit STOP completed=15000 reason=1 restored=1; manifest file hashes agree,
+no owned X4 process remains, and the recorded Steam process is unchanged.
+This is agreement of the recorded domains at the sampled times, not proof of
+every internal engine state, mixed-platform play or a complete gameplay test.
+
+The independently checked SCRIPT window 11360..11900 has 69815 rows per peer,
+complete indices and all 541 matching closed tick tallies. Matched scope
+contents, draw counts, PCs and scope order agree. Pilot 8b61b now calls
+trade.find.free at ticks 11383, 11401, 11428, 11479 and 11518 with identical
+rows on both peers. Neither calls it at 11396: scheduling changed, so this is
+not a comparison of the identical failing invocation from the prior run.
+
+The EVENT receipts are internally complete but are not identical between
+peers. Cumulative counts/keyset/drawset first differ at tick 3601. The complete
+all-delivery window 11360..11900 contains 36066 versus 36047 rows; no matched
+delivery differs in its reported draw count. Outside that window only drawn
+deliveries have rows, so the first cumulative split cannot identify every
+extra zero-draw delivery. All 15000 status receipts have zero foreign-thread,
+unreadable, unknown-draw and failure counts, with 53 class-fallback calls per
+peer. Final call counts are 941261 versus 941259. The raw row does not contain
+an observed exit word; reconstructed terminal words are not independent exit
+observations. Sixteen adversarial parser checks pass.
+
+Bounded RTTI inspection identifies the differing source/event RVAs as
+U::BuildStorage and U::UpdateBuildEvent. The snapshot identifies the retained
+source objects as build storages. The Windows build_rng hook already addresses
+randomized load-time scheduling of these events. The Linux event scope starts
+at admitted delivery and cannot retrospectively align timers created while
+loading. This is the next candidate mechanism, not proof that the remaining
+event differences are harmless or the only remaining source of divergence.
+
+Native Linux vtable RVAs are seed inputs here. Same-ELF validation does not
+establish seed parity with Windows. An unmapped source uses its class as a
+fallback key; this is not a unique object identity. Native unwind recovery and
+the thread safety of the pre-existing event-order batch are not established
+by the new scope.
+
+Private evidence: event-rng-key-independent-audit/summary.json,
+event-key-comparison-summary.json, event-key-script-window.json,
+event-key-event-receipts.json, event-rng-receipts-synthetic-results.json and
+event-key-focused/. The failed longer nav-key control remains FAIL.
+
+Longer event RNG comparison with rolling samples
+-----------------------------------------------
+The same clean 18f3be5 source and 980ee2a gate complete a second, 24000-tick
+native pair with launch order 1,2. It uses 120 rolling slices, hashes-only
+output and status stride 15, without the motion/script window diagnostics.
+All 24000 slice receipts agree, covering 200 complete declared cohort cycles;
+there is no partial final cycle. Both STOP records and identity/rolling
+footers succeed. All bundled hashes match, no owned process remains, and
+the recorded Steam identity is unchanged. The complete retained client
+engine-output logs are authoritative here: client 1's stdout copy lacks its
+last rolling footer and cannot alone establish successful completion.
+
+These are sequential slice samples, not simultaneous whole-world snapshots.
+Each client retains 24000 WORLD_BANKS and 201 shield receipts. The thinned
+EVENT status histories contain 1614 rows each; their final failure, foreign
+and unknown-draw counts are zero, with 93 class-fallback calls each. Final
+event call totals still differ, 1565903 versus 1565906.
+
+Across 23879 relay intervals after tick 120, the median is 36.915 ms, p99
+63.163 ms and maximum 103.989 ms; 378 exceed 50 ms and one exceeds 100 ms.
+The first 12000-tick prefix has 11879 comparable intervals: median 35.066 ms,
+p99 42.863 ms, maximum 94.535 ms, with 17 over 50 ms. At its 98 former full-
+census boundaries, median/maximum are 37.005/43.868 ms. Across the whole run,
+198 such boundaries have median 38.616 ms and maximum 79.491 ms. The old
+roughly 489 ms periodic full-capture pauses are absent in this run; ordinary
+variation remains. These measured local relay intervals are not rendered FPS.
+Different run lengths and simulation options preclude attributing every
+timing difference to one hook. Percentiles use the nearest-rank method.
+
+Private evidence: event-key-rolling-independent-audit/summary.json and
+event-key-rolling-prefix-timing.json. The first attempted rolling bundle was
+rejected before launch because it requested world-hash watches. Motion-only
+watches are compatible with rolling mode; this comparison omits both kinds.

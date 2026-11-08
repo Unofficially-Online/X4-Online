@@ -201,3 +201,34 @@ is an experimental diagnostic rather than a passive or production-safe observer.
 
 See [the performance investigation](../reports/LOCKSTEP-LINUX-PERFORMANCE-20261108.txt)
 for measured intervals, retained failures and graphics findings.
+
+## Experimental event RNG isolation
+
+Adding `--event-rng key` scopes the random generator around each native event
+delivery through the existing event-order hook. It requires `--event-order`,
+which the `linux-core` preset already enables. The event option itself remains
+off by default. `--event-rng observe` records generator use without replacing
+the caller's word. Key mode restores that word on normal return; native
+exception unwinding and process termination are outside that guarantee.
+
+The derived seed includes the admitted tick, portable source key, native event
+type and due time. An unmapped source instead shares its class key with other
+sources of that class; retain the `local` count as a coverage limitation. Native
+Linux vtable RVAs appear in these keys, so this mode does not establish seed
+parity with Windows. Deliveries during snapshot loading still use native RNG.
+
+For a focused comparison, add `--event-rng-rows-window FIRST LAST`. The inclusive
+window may span at most 601 ticks and retains zero-draw deliveries as well as
+drawn deliveries. Outside it, rows describe only deliveries that consumed RNG.
+Use `--status-stride 1` when auditing complete row and status histories; optional
+logging can otherwise omit intermediate rows. Retain arm, status, row and stop
+receipts and reject gaps, overwritten ring rows and failed cleanup. An `entry`
+word is the caller's ambient word before keying, not the derived initial word;
+the receipt does not contain an independently observed exit word.
+
+A 15000-tick two-instance comparison on source `18f3be5` agrees in all 126 full
+census captures and the selected motion window. Its internal event histories
+still differ, specifically in build-storage update traffic. This is a bounded
+positive result, not a declaration that Linux desync is solved. See the
+[motion investigation](../reports/LOCKSTEP-LINUX-MOTION-ONSET-20261108.txt)
+for raw-evidence limits and the separate load-time scheduling investigation.
