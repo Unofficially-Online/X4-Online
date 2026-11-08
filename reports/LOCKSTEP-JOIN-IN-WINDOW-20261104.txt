@@ -1234,3 +1234,17 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   solver on either side (JOIN_T1 rows on the joiner only: 6f1e7, 717eb, 7a8dc, 7add1, 89eb7, 9c1c7, 9e69a), so SOLVER is not it; the
   spline step 0xeb7230 takes its dt as an argument (the third, a float) from the Agent update; PATH is clean (9849 members, none
   pending or unplaced). Next: JOIN_BP at 0xeb7230 for the caller that computes the dt (w1z214).
+- w1z214 (JOIN_BP at the spline step 0xeb7230): the joiner died with STATUS_BREAKPOINT; the step runs on the pathing pass's worker
+  threads and a second thread's hit of the same int3 fell through the handler (fixed, 6a08eae3). w1z214b (build-bp2): hit at 3034
+  (rcx the model, rdx the write bank, r8 0, r9 1); the chain's .text words (e8d9e3, eb7230, e901d7, e8f250, ...) include stale
+  ones (0xe8d9e3 follows a call of 0xeab2c0, a float getter), so the dt's caller is not placed yet.
+- w1z215 (build-fobj1, the in-window regression at T=633 to 6000 with the defaults + gravp_settled + LSTN + UNDK + SRCS + FOBJ,
+  x4mods-28's J1 at 633 with the same set equal 633..5999): not clean. Census T+1 1 (w1z199's timing artifact), 900 25 (a
+  Xenon/Split fight at a gatezone in cluster_408 sector002: fighters, a corvette, frigates, a heavy fighter's weapons' health),
+  1800 2,427, 3000 9,753, 5940 10,730 (w1z199, the defaults alone: 0 to 5940). lstn=1:47767:3716:44051:0:3:0 (J1 at 633: 2,724
+  reordered), srcs=1:38542:3:3:38535:0:0:4, gravp_settled=1:560, undk and fobj nothing. The promotion waits: w1z216 (gravp_settled
+  + LSTN) and w1z217 (UNDK + SRCS + FOBJ) bisect it.
+- w1z216 (T=633, defaults + gravp_settled + LSTN): 900 25, 1740 1,512; w1z217 (defaults + UNDK + SRCS + FOBJ): 900 0, 1740 0.
+  UNDK, SRCS and FOBJ join JOIN_DEFAULT_ON (with x4mods-28's j1-401: the J1 late join to 4220, 3300 6 .. 4200 2; j1-402: J1 at
+  633 equal 633..5999; j1-403: the J1 late join to 6000, 1..2 large ships through 5940). gravp_settled and LSTN stay opt-in: w1z218
+  (LSTN alone) and w1z219 (gravp_settled alone) split them.
