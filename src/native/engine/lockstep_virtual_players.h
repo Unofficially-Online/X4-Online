@@ -50,7 +50,7 @@
 #define VPL_INPUT 0x6cf1560u
 #define VPL_MAPPING 0x63e0u                 /* InputMapping multimaps in the input object (d898c0) */
 #define VPL_REENTRY 0x38f4db4u
-#define VPL_SLOTS_MAX 4u
+#define VPL_SLOTS_MAX 8u
 #define VPL_IMAGE_SPAN 0x6fa9000u
 enum {VPL_SIM=1,VPL_DEVICE=2,VPL_LOCAL=3,VPL_OPTION=4,VPL_SHARED=5,VPL_CONFIG=6,VPL_CLASSES=7};
 enum {VPL_BASE_IMAGE=0,VPL_BASE_PLAYER=1};

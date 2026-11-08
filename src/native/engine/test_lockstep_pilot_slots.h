@@ -469,9 +469,9 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
     assert(test_absent_stage(3,15) && !test_absent_stage(3,16));
     {char status[512];assert(pilot_absent_text(status,sizeof(status)) && strstr(status," absent=4 ") && strstr(status," h3=12/16/12"));}
     /* The join package's copy of this state, and a joiner restoring it (the mask must be the session's). */
-    {   char state[160];assert(pilot_absent_state(state,sizeof(state)) && !strcmp(state,"1|4|-1,-1,-1|12,16,12|-1,-1,-1"));
+    {   char state[512];assert(pilot_absent_state(state,sizeof(state)) && !strcmp(state,"1|4|-1,-1,-1|12,16,12|-1,-1,-1|-1,-1,-1|-1,-1,-1|-1,-1,-1|-1,-1,-1"));
         pilot_from[2]=pilot_until[2]=pilot_enroll[2]=UINT64_MAX;
-        assert(!pilot_absent_restore("1|2|-1,-1,-1|12,16,12|-1,-1,-1") && !pilot_absent_restore("1|4|5,-1,-1|12,16,12|-1,-1,-1") &&
+        assert(!pilot_absent_restore("1|2|-1,-1,-1|12,16,12|-1,-1,-1|-1,-1,-1|-1,-1,-1|-1,-1,-1|-1,-1,-1") && !pilot_absent_restore("1|4|5,-1,-1|12,16,12|-1,-1,-1|-1,-1,-1|-1,-1,-1|-1,-1,-1|-1,-1,-1") &&
                !pilot_absent_restore("1|4|-1,-1,-1|12,16,12") && pilot_from[2]==UINT64_MAX);
         assert(pilot_absent_restore(state) && pilot_from[2]==12 && pilot_until[2]==16 && pilot_enroll[2]==12);}
     /* Dropped (protocols 4 and 5, roadmap D15): the permit with proposal 14 names slot 2 in its mask. At 16 every record
@@ -520,7 +520,7 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
         assert(pres_begin()==40+PILOT_SUPPRESS_LEAD);pres_slot=sp;     /* a rejoiner presents from its new handover H+3 */
         assert(!pilot_slot_present(3,39) && pilot_slot_present(3,40) && pilot_slot_silent(3,42,3) && !pilot_slot_silent(3,43,3));
         assert(!pstk_release_due(3,43) && !pstk_release_due(3,26));
-        {char state[160];assert(pilot_absent_state(state,sizeof(state)) && !strcmp(state,"1|4|-1,-1,-1|40,-1,0|-1,-1,-1"));}
+        {char state[512];assert(pilot_absent_state(state,sizeof(state)) && !strcmp(state,"1|4|-1,-1,-1|40,-1,0|-1,-1,-1|-1,-1,-1|-1,-1,-1|-1,-1,-1|-1,-1,-1"));}
         assert(pilot_abort_apply(3,60,1) && pilot_until[2]==58 && pstk_release_due(3,61) && !pstk_release_due(3,62));
         pilot_absent=sa;pilot_rejoin=sr;pilot_from[2]=sv[0];pilot_until[2]=sv[1];pilot_enroll[2]=sv[2];stats.issued=si;}
     /* An ABORT before the player is built (applied before H-2) undoes the enrollment; a later join hands over again. */

@@ -338,7 +338,7 @@ class LiveRunner(unittest.TestCase):
             for path in (case, game, shm):
                 path.mkdir()
             with mock.patch.object(live.os, 'geteuid', return_value=0):
-                command = live.namespace_command(case, game, [], case / 'x4.lock', {}, ['X4'], 'topsnek', shm)
+                command = live.namespace_command(case, game, [], case / 'x4.lock', {}, ['X4'], 'steamuser', shm)
             dev = command.index('--dev-bind')
             self.assertEqual(command[dev:dev + 6], ['--dev-bind', '/dev', '/dev', '--bind', str(shm), '/dev/shm'])
             self.assertLess(command.index('/dev/shm'), command.index(str(case / 'game')))

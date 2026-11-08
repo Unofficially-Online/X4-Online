@@ -931,7 +931,7 @@ class SimulationCameraOptionTests(unittest.TestCase):
         policy = "X4LAN_CONFIG.native_gate_viewpoint_policy = 'sector'\n"
         for n in ('2', '3', '4'):
             self.assertEqual(self.failures(BASE+policy+"X4LAN_CONFIG.native_gate_viewpoint_standins = %s\n" % n, key), [])
-        self.assertEqual(len(self.failures(BASE+policy+"X4LAN_CONFIG.native_gate_viewpoint_standins = 5\n", key)), 1)
+        self.assertEqual(len(self.failures(BASE+policy+"X4LAN_CONFIG.native_gate_viewpoint_standins = 9\n", key)), 1)
         self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_viewpoint_standins = 3\n", key)), 1)
         self.assertEqual(self.failures(BASE+"X4LAN_CONFIG.native_gate_viewpoint_standins = nil\n", key), [])
 

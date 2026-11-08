@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "fc9acc91dbbdf32f4096ebe655b91e0810d934d5a85c39a3652d6fde239430fd"   /* version 13 (JOBE .. CONN; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "bd920263161e3cf5973ed46e9ab15d0f4c3bff85ba78730306bc21fda91db4f9"   /* version 13 (JOBE .. FOBJ; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -461,6 +461,14 @@ static void test_join_golden(void) {
     static join_ares_rec ares[1];memset(ares,0,sizeof(ares));ares[0].portable=0x2001ull;ares[0].ref[0]=0x2002ull;
     for(unsigned k=8;k<0x60;k++) {ares[0].bank[0][k]=(unsigned char)k;ares[0].bank[1][k]=(unsigned char)(0x60+k);}
     t.ares=ares;t.nares=1;
+    static join_lstn_rec lstn[1];memset(lstn,0,sizeof(lstn));lstn[0].source=0x2001ull;lstn[0].owner=0x2002ull;lstn[0].script=0x7d7d6d0full;
+    lstn[0].type=306;lstn[0].kind=2;t.lstn=lstn;t.nlstn=1;
+    static join_undk_rec undk[1];memset(undk,0,sizeof(undk));undk[0].portable=0x2001ull;undk[0].ref=0x2002ull;
+    for(unsigned k=0;k<JOIN_UNDK_BYTES;k++) undk[0].state[k]=(unsigned char)(0x10+k);
+    memset(undk[0].state+8,0,8);t.undk=undk;t.nundk=1;
+    static join_srcs_rec srcs[1];memset(srcs,0,sizeof(srcs));srcs[0].owner=0x2001ull;srcs[0].script=0x7d7d6d0full;srcs[0].source=0x2002ull;
+    srcs[0].kind=1;t.srcs=srcs;t.nsrcs=1;
+    static join_fobj_rec fobj[1];memset(fobj,0,sizeof(fobj));fobj[0].region=0x2001ull;fobj[0].object=0x2002ull;fobj[0].field=42;t.fobj=fobj;t.nfobj=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -515,7 +523,7 @@ static void test_join_golden(void) {
            r.nbnds==1 && !memcmp(r.bnds,bnds,sizeof(bnds)) &&
            r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)) &&
            r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)) &&
-           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)) && r.nares==1 && !memcmp(r.ares,ares,sizeof(ares)));
+           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)) && r.nares==1 && !memcmp(r.ares,ares,sizeof(ares)) && r.nlstn==1 && !memcmp(r.lstn,lstn,sizeof(lstn)) && r.nundk==1 && !memcmp(r.undk,undk,sizeof(undk)) && r.nsrcs==1 && !memcmp(r.srcs,srcs,sizeof(srcs)) && r.nfobj==1 && !memcmp(r.fobj,fobj,sizeof(fobj)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -549,7 +557,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec)+48+sizeof(join_lstn_rec)+48+sizeof(join_undk_rec)+48+sizeof(join_srcs_rec)+48+sizeof(join_fobj_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -3008,6 +3016,103 @@ static void test_join_gravp_restore(void) {
     join_world_find=find;join_world_map=map;
     printf("join GRAVP restore: the session's pose left, the load's first publication mended however far, a later new one dropped for good PASS\n");
 }
+/* FOBJ (j1-399): a region field's spawned-object list the load left empty takes the session's objects in order (the capture writes
+ * them back the same); an equal list is left, another one counted as a conflict, a region not found as missing. */
+static _Alignas(16) unsigned char tfobj_obj[6][0x300];static unsigned char *tfobj_fields[2];static _Alignas(16) unsigned char tfobj_field[2][0xa8];
+static unsigned char *tfobj_sent[2][3];static uintptr_t tfobj_vt[1];
+static void *tfobj_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime>=0xc0u && runtime<0xc6u?tfobj_obj[runtime-0xc0u]:NULL;}
+static uint64_t tfobj_key(uint64_t runtime,unsigned *klass) {*klass=WORLD_KEY_SAVED;return runtime+0x1000u;}
+static void *tfobj_alloc(size_t n) {return calloc(1,n);}
+static void tfobj_reset(void) {
+    for(unsigned f=0;f<2;f++) {
+        unsigned char *s=(unsigned char *)tfobj_sent[f];memcpy(s,&s,8);memcpy(s+8,&s,8);
+        memset(tfobj_field[f],0,sizeof(tfobj_field[f]));memcpy(tfobj_field[f]+JOIN_FOBJ_LIST,&s,8);
+    }
+}
+static unsigned tfobj_list(unsigned f,unsigned char **out) {
+    unsigned char *s=(unsigned char *)tfobj_sent[f],*node=NULL;unsigned n=0;memcpy(&node,s,8);
+    while(node!=s && n<8) {memcpy(&out[n++],node+0x10,8);memcpy(&node,node,8);}
+    return n;
+}
+static void test_join_fobj(void) {
+    join_find_fn find=join_world_find;void *map=join_world_map;uint64_t (*key)(uint64_t,unsigned *)=join_key;void *(*alloc)(size_t)=join_fobj_alloc;
+    join_world_find=tfobj_find;join_world_map=tfobj_obj;join_key=tfobj_key;join_fobj_alloc=tfobj_alloc;join_fobj_region_vt=(uintptr_t)tfobj_vt;
+    memset(tfobj_obj,0,sizeof(tfobj_obj));
+    for(unsigned k=0;k<6;k++) {uint64_t runtime=0xc0u+k;memcpy(tfobj_obj[k]+8,&runtime,8);}
+    {uintptr_t vt=(uintptr_t)tfobj_vt;memcpy(tfobj_obj[0],&vt,8);}   /* object 0: the region */
+    tfobj_fields[0]=tfobj_field[0];tfobj_fields[1]=tfobj_field[1];
+    {unsigned char **b=tfobj_fields,**e=tfobj_fields+2;memcpy(tfobj_obj[0]+JOIN_FOBJ_FIELDS,&b,8);memcpy(tfobj_obj[0]+JOIN_FOBJ_FIELDS+8,&e,8);}
+    tfobj_reset();
+    static join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));
+    static join_id_rec ids[6];for(unsigned k=0;k<6;k++) {ids[k].runtime=0xc0u+k;ids[k].portable=0x10c0u+k;}
+    mine.ids=ids+1;mine.nids=5;   /* the joiner's own table leaves the region out: the session's runtime ID finds it */
+    s.ids=ids;s.nids=6;
+    static join_fobj_rec g[3];memset(g,0,sizeof(g));
+    g[0].region=0x10c0u;g[0].field=1;g[0].index=0;g[0].object=0x10c3u;
+    g[1].region=0x10c0u;g[1].field=1;g[1].index=1;g[1].object=0x10c2u;
+    s.fobj=g;s.nfobj=2;
+    join_fobj_on=0;join_admit_fobj(&s,&mine);assert(!join_fobj_groups);
+    join_fobj_on=1;join_admit_fobj(&s,&mine);
+    unsigned char *got[8];uint64_t size=0;memcpy(&size,tfobj_field[1]+JOIN_FOBJ_SIZE,8);
+    assert(join_fobj_groups==1 && join_fobj_written==1 && join_fobj_inserted==2 && size==2);
+    assert(tfobj_list(1,got)==2 && got[0]==tfobj_obj[3] && got[1]==tfobj_obj[2] && !tfobj_list(0,got));
+    join_admit_fobj(&s,&mine);assert(join_fobj_equal==1 && !join_fobj_written && !join_fobj_inserted);   /* again: equal */
+    /* the capture writes the joiner's lists back as the session's records */
+    {join_tables t;memset(&t,0,sizeof(t));t.ids=ids;t.nids=6;join_capture_fobj(&t);
+     assert(t.nfobj==2 && t.fobj[0].region==0x10c0u && t.fobj[0].field==1 && t.fobj[0].object==0x10c3u && t.fobj[1].object==0x10c2u && t.fobj[1].index==1);
+     free(t.fobj);}
+    /* another object in the joiner's list: a conflict, left */
+    g[1].object=0x10c4u;join_admit_fobj(&s,&mine);assert(join_fobj_conflict==1 && tfobj_list(1,got)==2 && got[1]==tfobj_obj[2]);
+    /* a region the joiner does not have: missing */
+    g[0].region=g[1].region=0x10c9u;join_admit_fobj(&s,&mine);assert(join_fobj_missing==1);
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," fobj=1:1:0:0:1:0:0 "));}
+    for(unsigned f=0;f<2;f++) {   /* free the test's nodes */
+        unsigned char *sent=(unsigned char *)tfobj_sent[f],*node=NULL;memcpy(&node,sent,8);
+        while(node!=sent) {unsigned char *next=NULL;memcpy(&next,node,8);free(node);node=next;}
+    }
+    join_fobj_on=0;join_world_find=find;join_world_map=map;join_key=key;join_fobj_alloc=alloc;join_fobj_region_vt=0;
+    printf("join FOBJ: an empty region field list takes the session's objects in order, an equal one left, others counted PASS\n");
+}
+/* LSTN (j1-386): a source's listener vector for one event type, keyed listeners (here components) put into the session's order in
+ * the slots they hold; a key the joiner lacks orders the common ones (partial); a key twice leaves the vector. */
+static unsigned char tlstn_obj[5][0x40],tlstn_table[16],tlstn_entries[2][0x28];static unsigned char *tlstn_vec[8];
+static void *tlstn_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime>=0xa0u && runtime<0xa5u?tlstn_obj[runtime-0xa0u]:NULL;}
+static uint64_t tlstn_key(uint64_t runtime,unsigned *klass) {*klass=WORLD_KEY_SAVED;return runtime+0x1000u;}
+static void test_join_lstn(void) {
+    join_find_fn find=join_world_find;void *map=join_world_map;uint64_t (*key)(uint64_t,unsigned *)=join_key;
+    join_world_find=tlstn_find;join_world_map=tlstn_obj;join_key=tlstn_key;
+    memset(tlstn_obj,0,sizeof(tlstn_obj));memset(tlstn_entries,0,sizeof(tlstn_entries));
+    for(unsigned k=0;k<5;k++) {uint64_t runtime=0xa0u+k;memcpy(tlstn_obj[k]+8,&runtime,8);}
+    unsigned char *t=tlstn_table;void *p=tlstn_entries[0];memcpy(t,&p,8);p=tlstn_entries[0]+0x50;memcpy(t+8,&p,8);
+    memcpy(tlstn_obj[0]+JOIN_LSTN_TABLE,&t,8);
+    uint32_t other=70,type=306;memcpy(tlstn_entries[0],&other,4);memcpy(tlstn_entries[1],&type,4);   /* entry 0: another type, empty */
+    tlstn_vec[0]=tlstn_obj[2];tlstn_vec[1]=tlstn_obj[3];tlstn_vec[2]=tlstn_obj[1];   /* the joiner's order: a2, a3, a1 */
+    p=tlstn_vec;memcpy(tlstn_entries[1]+8,&p,8);p=tlstn_vec+3;memcpy(tlstn_entries[1]+0x10,&p,8);
+    static join_lstn_rec g[4];memset(g,0,sizeof(g));
+    const uint64_t order[3]={0x10a1u,0x10a3u,0x10a2u};   /* the session's: a1, a3, a2 */
+    for(unsigned k=0;k<3;k++) {g[k].source=0x10a0u;g[k].owner=order[k];g[k].type=306;g[k].index=k;g[k].kind=3;}
+    static join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));
+    static join_id_rec ids[1];ids[0].runtime=0xa0u;ids[0].portable=0x10a0u;mine.ids=ids;mine.nids=1;s.lstn=g;s.nlstn=3;
+    join_lstn_on=0;join_admit_lstn(&s,&mine);assert(!join_lstn_groups && tlstn_vec[0]==tlstn_obj[2]);
+    join_lstn_on=1;join_admit_lstn(&s,&mine);
+    assert(join_lstn_groups==1 && join_lstn_written==1 && !join_lstn_partial && !join_lstn_dup);
+    assert(tlstn_vec[0]==tlstn_obj[1] && tlstn_vec[1]==tlstn_obj[3] && tlstn_vec[2]==tlstn_obj[2]);
+    join_admit_lstn(&s,&mine);assert(join_lstn_equal==1 && !join_lstn_written);   /* again: equal */
+    /* the session also holds a4, the joiner does not: the three common ones ordered all the same (partial) */
+    tlstn_vec[0]=tlstn_obj[3];tlstn_vec[1]=tlstn_obj[2];tlstn_vec[2]=tlstn_obj[1];
+    g[3]=g[2];g[2].owner=0x10a4u;g[3].index=3;s.nlstn=4;
+    join_admit_lstn(&s,&mine);assert(join_lstn_written==1 && join_lstn_partial==1);
+    assert(tlstn_vec[0]==tlstn_obj[1] && tlstn_vec[1]==tlstn_obj[3] && tlstn_vec[2]==tlstn_obj[2]);
+    /* a key twice in the session's: left */
+    g[2].owner=0x10a1u;tlstn_vec[0]=tlstn_obj[2];join_admit_lstn(&s,&mine);assert(join_lstn_dup==1 && !join_lstn_written && tlstn_vec[0]==tlstn_obj[2]);
+    /* no such object or type on the joiner: missing */
+    for(unsigned k=0;k<4;k++) g[k].type=307;
+    join_admit_lstn(&s,&mine);assert(join_lstn_missing==1);
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," lstn=1:1:0:0:1:0:0 "));}
+    assert(join_lstn_cmp(&g[0],&g[1])<0);
+    join_lstn_on=0;join_world_find=find;join_world_map=map;join_key=key;
+    printf("join LSTN: a source's keyed listeners in the session's order in their slots, partial and duplicate keys PASS\n");
+}
 /* GRAVP settled (j1-381..384): which session poses the restore after T+1 takes, with and without native_gate_join_gravp_settled. */
 static void test_join_gravp_settled(void) {
     static join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));
@@ -3032,6 +3137,13 @@ static void test_join_gravp_settled(void) {
     assert(join_gravp_nset==2 && join_gravp_set[0].runtime==0x102 && join_gravp_set[1].runtime==0x102 && !join_gravp_settled_extra);
     join_gravp_settled_on=1;join_gravp_settled_build(&s,&mine);
     assert(join_gravp_nset==6 && join_gravp_settled_extra==4);
+    {unsigned extra=0;for(uint32_t i=0;i<join_gravp_nset;i++) {extra+=join_gravp_set[i].extra!=0;assert(!join_gravp_set[i].extra==(join_gravp_set[i].runtime==0x102));}
+     assert(extra==4);}
+    /* the extra entries take the restore at the first boundary only: later ones leave them (counted neither checked nor restored) */
+    {join_find_fn find=join_world_find;void *map=join_world_map;join_world_find=tgravp_find;join_world_map=tgravp_obj;
+     join_gravp_restored=join_gravp_checked=join_gravp_gone=0;join_gravp_step=2;join_gravp_restore();
+     assert(!join_gravp_checked && !join_gravp_restored && join_gravp_gone==2);   /* only the two low-attention entries looked at (not found here) */
+     join_gravp_step=0;join_world_find=find;join_world_map=map;}
     unsigned n10=0,n12=0,n14=0;
     for(uint32_t i=0;i<join_gravp_nset;i++) {
         const uint64_t r=join_gravp_set[i].runtime;n10+=r==0x100;n12+=r==0x102;n14+=r==0x104;
@@ -3299,6 +3411,176 @@ static void test_join_ares(void) {
     free(t.ares);join_read_selector=selector;join_key=key;
     printf("join ARES: both Agent result banks by role through the read selector, their first qword's ID as a portable, written back by role PASS\n");
 }
+/* UNDK: a steering model's active undocking behaviour, +0x10 .. +0xd7 with its ID as a portable and its two embedded vtables as RVAs */
+static _Alignas(16) unsigned char tundk_agent[0x1000],tundk_model[0x100],tundk_beh[0xe0];
+static unsigned char *tundk_obj[1];
+static void *tundk_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime==0x81u?tundk_obj[0]:NULL;}
+static void test_join_undk(void) {
+    uint64_t (*key)(uint64_t,unsigned *)=join_key;join_key=tconn_key;
+    memset(tundk_beh,0,sizeof(tundk_beh));
+    {uintptr_t v=(uintptr_t)image+JOIN_UNDK_VTABLE;memcpy(tundk_beh,&v,8);}
+    for(unsigned k=JOIN_UNDK_FROM;k<JOIN_UNDK_FROM+JOIN_UNDK_BYTES;k++) tundk_beh[k]=(unsigned char)k;
+    {uint64_t id=0x91ull;memcpy(tundk_beh+0x18,&id,8);uintptr_t a=(uintptr_t)image+0x2c4e100u,b=(uintptr_t)image+0x2c4e200u;
+     memcpy(tundk_beh+0x38,&a,8);memcpy(tundk_beh+0x98,&b,8);uintptr_t heap=0x7ff012345678ull;memcpy(tundk_beh+0xd8,&heap,8);}
+    join_tables t;memset(&t,0,sizeof(t));join_undk_capn=0;
+    assert(join_undk_push(&t,tundk_beh,0x100081ull) && t.nundk==1);
+    const join_undk_rec *r=&t.undk[0];uint64_t q[3];
+    memcpy(&q[0],r->state+8,8);memcpy(&q[1],r->state+0x38-JOIN_UNDK_FROM,8);memcpy(&q[2],r->state+0x98-JOIN_UNDK_FROM,8);
+    assert(r->portable==0x100081ull && r->ref==0x100091ull && !r->flags && !q[0] && q[1]==0x2c4e100u && q[2]==0x2c4e200u && r->state[0]==0x10 && r->state[0x30]==0x40);
+    /* the joiner: a freshly constructed behaviour of the class under the Agent's steering model */
+    unsigned char session_state[JOIN_UNDK_BYTES];memcpy(session_state,tundk_beh+JOIN_UNDK_FROM,sizeof(session_state));
+    memset(tundk_beh+JOIN_UNDK_FROM,0,0xd8u-JOIN_UNDK_FROM);
+    join_id_rec ids[2]={{0x81ull,0x100081ull,0,0},{0x91ull,0x100091ull,0,0}};
+    join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));mine.ids=ids;mine.nids=2;s.version=13;s.undk=t.undk;s.nundk=1;
+    assert(join_undk_write(tundk_beh,r,&mine)==1 && !memcmp(tundk_beh+JOIN_UNDK_FROM,session_state,sizeof(session_state)));
+    {uintptr_t heap;memcpy(&heap,tundk_beh+0xd8,8);assert(heap==0x7ff012345678ull);}   /* +0xd8 stays the joiner's */
+    assert(join_undk_write(tundk_beh,r,&mine)==0);   /* again: equal */
+    {   /* +0x98 a float pair (copied raw), +0x38 a heap pointer (the joiner's kept) */
+        uint64_t f=0xbf80000000000000ull,h=0x7ff012345000ull;memcpy(tundk_beh+0x98,&f,8);memcpy(tundk_beh+0x38,&h,8);
+        join_tables t2;memset(&t2,0,sizeof(t2));join_undk_capn=0;
+        assert(join_undk_push(&t2,tundk_beh,0x100081ull) && t2.nundk==1 && t2.undk[0].flags==(JOIN_UNDK_HEAP|(JOIN_UNDK_RAW<<1)));
+        uint64_t own38=0x7ff0aaaa0000ull,z=0,g38=0,g98=0;memcpy(tundk_beh+0x38,&own38,8);memcpy(tundk_beh+0x98,&z,8);
+        assert(join_undk_write(tundk_beh,&t2.undk[0],&mine)==1);
+        memcpy(&g38,tundk_beh+0x38,8);memcpy(&g98,tundk_beh+0x98,8);assert(g38==own38 && g98==f);
+        free(t2.undk);join_undk_capn=0;
+        uint64_t small=0xc6e51f80ull;memcpy(tundk_beh+0x38,&small,8);memcpy(tundk_beh+0x98,&z,8);   /* a float over a zero high word: raw */
+        join_tables t3;memset(&t3,0,sizeof(t3));
+        assert(join_undk_push(&t3,tundk_beh,0x100081ull) && t3.nundk==1 && (t3.undk[0].flags&(JOIN_UNDK_RAW|JOIN_UNDK_HEAP))==JOIN_UNDK_RAW);
+        free(t3.undk);join_undk_capn=0;
+    }
+    join_undk_rec u=*r;u.ref=0x100099ull;assert(join_undk_write(tundk_beh,&u,&mine)==-1);   /* an ID the joiner lacks */
+    u=*r;u.flags=1;assert(join_undk_write(tundk_beh,&u,&mine)==-1);
+    /* the admission: off writes nothing; on, an Agent without the model counts missing */
+    join_find_fn find=join_world_find;void *map=join_world_map;join_world_find=tundk_find;join_world_map=tundk_obj;tundk_obj[0]=tundk_agent;
+    join_undk_on=0;join_admit_undk(&s,&mine);assert(!join_undk_written && !join_undk_missing);
+    join_undk_on=1;join_admit_undk(&s,&mine);assert(!join_undk_written && join_undk_missing==1);
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," undk=1:0:0:1:0 "));}
+    join_undk_on=0;join_undk_missing=0;join_world_find=find;join_world_map=map;
+    free(t.undk);join_key=key;
+    printf("join UNDK: a steering model's undocking behaviour, its ID as a portable and embedded vtables as RVAs, written back, equal, "
+           "unmapped and missing PASS\n");
+}
+/* SRCS: keyed listeners (here components) with their sources in their +0x10 lists; the session's listener c on a, the joiner's on b */
+static _Alignas(16) unsigned char tsrcs_obj[4][0x60],tsrcs_table[2][16],tsrcs_entry[2][0x28],tsrcs_ent[4][2][JOIN_SRCS_ENTRY];
+static unsigned char *tsrcs_vec[2][2];static uintptr_t tsrcs_book[4][3];
+static unsigned char *tsrcs_calls[8][2];static uint32_t tsrcs_types[8];static unsigned tsrcs_ncalls;
+static void *tsrcs_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime>=0xb0u && runtime<0xb4u?tsrcs_obj[runtime-0xb0u]:NULL;}
+static uint64_t tsrcs_key(uint64_t runtime,unsigned *klass) {*klass=WORLD_KEY_SAVED;return runtime+0x1000u;}
+static void tsrcs_set(unsigned o,const unsigned *src,const uint64_t *bits,unsigned n) {   /* object o's +0x10 list: n sources */
+    memset(tsrcs_ent[o],0,sizeof(tsrcs_ent[o]));
+    for(unsigned k=0;k<n;k++) {unsigned char *x=tsrcs_obj[src[k]];memcpy(tsrcs_ent[o][k],&x,8);memcpy(tsrcs_ent[o][k]+8,&bits[k],8);}
+    tsrcs_book[o][0]=(uintptr_t)tsrcs_ent[o];tsrcs_book[o][1]=tsrcs_book[o][2]=(uintptr_t)tsrcs_ent[o]+(uintptr_t)n*JOIN_SRCS_ENTRY;
+    uintptr_t b=(uintptr_t)tsrcs_book[o];memcpy(tsrcs_obj[o]+0x10,&b,8);
+}
+static void tsrcs_listen(unsigned source,unsigned slot,unsigned char *const *l,unsigned n) {   /* source's one type entry */
+    uintptr_t t=(uintptr_t)tsrcs_table[slot],p=(uintptr_t)tsrcs_entry[slot];memcpy(tsrcs_obj[source]+0x28,&t,8);
+    memcpy(tsrcs_table[slot],&p,8);p+=0x28u;memcpy(tsrcs_table[slot]+8,&p,8);
+    uint32_t type=306;memcpy(tsrcs_entry[slot],&type,4);for(unsigned k=0;k<n;k++) tsrcs_vec[slot][k]=l[k];
+    p=(uintptr_t)tsrcs_vec[slot];memcpy(tsrcs_entry[slot]+8,&p,8);p+=8u*n;memcpy(tsrcs_entry[slot]+0x10,&p,8);
+}
+static int tsrcs_register(unsigned char *source,uint32_t type,unsigned char *listener) {
+    tsrcs_calls[tsrcs_ncalls][0]=source;tsrcs_calls[tsrcs_ncalls][1]=listener;tsrcs_types[tsrcs_ncalls++]=type;return 1;
+}
+static void tsrcs_drop(unsigned char *source,unsigned char *listener) {
+    tsrcs_calls[tsrcs_ncalls][0]=source;tsrcs_calls[tsrcs_ncalls][1]=listener;tsrcs_types[tsrcs_ncalls++]=0xffffffffu;
+}
+static void test_join_srcs(void) {
+    join_find_fn find=join_world_find;void *map=join_world_map;uint64_t (*key)(uint64_t,unsigned *)=join_key;
+    int (*reg)(unsigned char *,uint32_t,unsigned char *)=join_srcs_register;void (*drop)(unsigned char *,unsigned char *)=join_srcs_drop;
+    join_world_find=tsrcs_find;join_world_map=tsrcs_obj;join_key=tsrcs_key;join_srcs_register=tsrcs_register;join_srcs_drop=tsrcs_drop;
+    const unsigned kinds=join_srcs_kinds;join_srcs_kinds|=1u<<3;   /* the fixture listeners are components */
+    memset(tsrcs_obj,0,sizeof(tsrcs_obj));
+    for(unsigned k=0;k<4;k++) {uint64_t runtime=0xb0u+k;memcpy(tsrcs_obj[k]+8,&runtime,8);}
+    /* objects: 0 a, 1 b (sources), 2 c (the listener), 3 d (a second listener, on b and itself) */
+    join_id_rec ids[4]={{0xb0u,0x10b0u,0,0},{0xb1u,0x10b1u,0,0},{0xb2u,0x10b2u,0,0},{0xb3u,0x10b3u,0,0}};
+    join_tables t;memset(&t,0,sizeof(t));t.ids=ids;t.nids=4;
+    /* the session: c on a, d on b (and its own entry, not recorded) */
+    {const unsigned sc[1]={0},sd[2]={1,3};const uint64_t bc[1]={1ull<<50},bd[2]={1ull<<50,1ull<<5};tsrcs_set(2,sc,bc,1);tsrcs_set(3,sd,bd,2);}
+    {unsigned char *l0[1]={tsrcs_obj[2]},*l1[1]={tsrcs_obj[3]};tsrcs_listen(0,0,l0,1);tsrcs_listen(1,1,l1,1);}
+    join_capture_srcs(&t);
+    assert(t.nsrcs==2 && t.srcs[0].kind==3 && t.srcs[0].owner==0x10b2u && t.srcs[0].source==0x10b0u && !t.srcs[0].index && !t.srcs[0].flags);
+    assert(t.srcs[1].owner==0x10b3u && t.srcs[1].source==0x10b1u && !t.srcs[1].index);
+    /* the joiner: c on b instead (types 50 and 51 there), d as the session's; b's vector holds both */
+    {const unsigned sc[1]={1};const uint64_t bc[1]={3ull<<50};tsrcs_set(2,sc,bc,1);}
+    memset(tsrcs_obj[0]+0x28,0,8);
+    {unsigned char *l[2]={tsrcs_obj[2],tsrcs_obj[3]};tsrcs_listen(1,0,l,2);}
+    join_tables s;memset(&s,0,sizeof(s));s.version=13;s.srcs=t.srcs;s.nsrcs=t.nsrcs;
+    join_tables mine;memset(&mine,0,sizeof(mine));mine.ids=ids;mine.nids=4;
+    tsrcs_ncalls=0;join_srcs_on=0;join_admit_srcs(&s,&mine);assert(!tsrcs_ncalls && !join_srcs_contexts);
+    join_srcs_on=1;join_admit_srcs(&s,&mine);
+    assert(join_srcs_contexts==2 && join_srcs_added==2 && join_srcs_removed==1 && join_srcs_equal==1 && !join_srcs_missing && !join_srcs_dup && !join_srcs_unmapped);
+    assert(tsrcs_ncalls==3 && tsrcs_calls[0][0]==tsrcs_obj[0] && tsrcs_calls[0][1]==tsrcs_obj[2] && tsrcs_types[0]==50u);   /* a, its types */
+    assert(tsrcs_calls[1][0]==tsrcs_obj[0] && tsrcs_types[1]==51u);
+    assert(tsrcs_calls[2][0]==tsrcs_obj[1] && tsrcs_calls[2][1]==tsrcs_obj[2] && tsrcs_types[2]==0xffffffffu);              /* then b dropped */
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," srcs=1:2:2:1:1:0:0:0 "));}
+    /* two sources the joiner's lacks against its one: left; a source of the session's the joiner lacks: left */
+    join_srcs_rec u[2];u[0]=t.srcs[0];u[1]=t.srcs[0];u[1].source=0x10b3u;u[1].index=1;s.srcs=u;s.nsrcs=2;tsrcs_ncalls=0;
+    join_admit_srcs(&s,&mine);assert(join_srcs_unmapped==1 && !tsrcs_ncalls);
+    u[1].source=0x10b9u;join_admit_srcs(&s,&mine);assert(join_srcs_unmapped==1 && !tsrcs_ncalls);
+    /* a listener the joiner does not have: missing */
+    u[0].owner=u[1].owner=0x10b9u;join_admit_srcs(&s,&mine);assert(join_srcs_missing==1 && !tsrcs_ncalls);
+    {   /* the listener set across its growth: 200000 distinct pointers, each added twice */
+        join_srcs_set set={0};uint32_t fresh=0;
+        for(uint32_t r=0;r<2u;r++) for(uintptr_t k=1;k<=200000u;k++) {const int a=join_srcs_set_add(&set,k*0x40u);assert(a>=0);fresh+=(uint32_t)a;}
+        assert(fresh==200000u && set.n==200000u && set.cap>=400000u);free(set.slot);
+    }
+    join_srcs_on=0;free(t.srcs);
+    join_world_find=find;join_world_map=map;join_key=key;join_srcs_register=reg;join_srcs_drop=drop;join_srcs_kinds=kinds;
+    printf("join SRCS: each keyed listener's sources from its own list by portable ID, a one-source move registered for the types "
+           "of its entry and the old source dropped, equal, left and missing PASS\n");
+}
+/* JOIN_RPRT: a watched ship's model gets a row (matrix, +0x70 before and after); another model none. */
+static float trprt_called;
+static void trprt_original(void *model,const float *m) {float v[4];memcpy(v,(unsigned char *)model+0x70,16);v[0]+=m[0];memcpy((unsigned char *)model+0x70,v,16);trprt_called+=1.0f;}
+static void test_join_rprt(void) {
+    void (*orig)(void *,const float *)=join_rprt_original;join_rprt_original=trprt_original;
+    static _Alignas(16) unsigned char obj[0x300],ctl[0x80],agent[0x100],model[0x100],other[0x100];
+    memset(obj,0,sizeof(obj));memset(ctl,0,sizeof(ctl));memset(model,0,sizeof(model));memset(other,0,sizeof(other));
+    {uintptr_t c=(uintptr_t)ctl,vt=(uintptr_t)image+JOIN_NAV_VTABLE,a=(uintptr_t)agent;
+     memcpy(obj+JOIN_CONTROLLER,&c,8);memcpy(ctl,&vt,8);memcpy(ctl+0x40,&a,8);memcpy(model+0x10,&a,8);}
+    const unsigned keep=join_watch.n;unsigned char *keep_obj=join_watch.object[0];uint64_t keep_id=join_watch.portable[0];
+    join_watch.n=1;join_watch.object[0]=obj;join_watch.portable[0]=0x99d18u;join_rprt_n=0;join_rprt_shown=0;
+    float m[16];for(unsigned k=0;k<16;k++) m[k]=(float)k+0.5f;
+    {float v[4]={1,2,3,0};memcpy(model+0x70,v,16);}
+    join_rprt_hook(model,m);join_rprt_hook(other,m);
+    assert(trprt_called==2.0f && join_rprt_n==1 && join_rprt_rows[0].watched==0 && !memcmp(join_rprt_rows[0].m,m,sizeof(m)) &&
+           join_rprt_rows[0].before[0]==1.0f && join_rprt_rows[0].after[0]==1.5f);
+    join_watch.n=keep;join_watch.object[0]=keep_obj;join_watch.portable[0]=keep_id;join_rprt_n=0;join_rprt_shown=0;join_rprt_original=orig;
+    printf("join RPRT: a watched ship's re-parent transform recorded with its plan before and after, another model's not PASS\n");
+}
+/* AGCB for a nav ship: written only with join_agcb_nav_on. */
+static _Alignas(16) unsigned char tagcb_obj[0x300],tagcb_ctl[0x80],tagcb_agent[0x1000];static unsigned char *tagcb_objs[1];
+static void *tagcb_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime==0x81u?tagcb_objs[0]:NULL;}
+static void test_join_agcb_nav(void) {
+    join_find_fn find=join_world_find;void *map=join_world_map;join_world_find=tagcb_find;join_world_map=tagcb_objs;tagcb_objs[0]=tagcb_obj;
+    memset(tagcb_obj,0,sizeof(tagcb_obj));memset(tagcb_ctl,0,sizeof(tagcb_ctl));memset(tagcb_agent,0,sizeof(tagcb_agent));
+    {uintptr_t c=(uintptr_t)tagcb_ctl,vt=(uintptr_t)image+JOIN_NAV_VTABLE,a=(uintptr_t)tagcb_agent;
+     memcpy(tagcb_obj+JOIN_CONTROLLER,&c,8);memcpy(tagcb_ctl,&vt,8);memcpy(tagcb_ctl+0x40,&a,8);uint64_t rt=0x81u;memcpy(tagcb_obj+8,&rt,8);}
+    static join_agcb_rec rec[1];memset(rec,0,sizeof(rec));rec[0].portable=0x100081ull;for(unsigned k=0;k<JOIN_AGCB_BYTES;k++) rec[0].block[k]=(unsigned char)(k|1u);
+    join_id_rec ids[1]={{0x81ull,0x100081ull,0,0}};
+    join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));s.agcb=rec;s.nagcb=1;mine.ids=ids;mine.nids=1;
+    join_agcb_written=join_agcb_equal=join_agcb_missing=0;join_agcb_nav_on=0;join_admit_agcb(&s,&mine);
+    assert(!join_agcb_written && !join_agcb_equal && !join_agcb_missing && !tagcb_agent[JOIN_AGCB_AT]);   /* off: a nav ship's block left */
+    join_agcb_nav_on=1;join_admit_agcb(&s,&mine);
+    assert(join_agcb_written==1 && !memcmp(tagcb_agent+JOIN_AGCB_AT,rec[0].block,JOIN_AGCB_BYTES));
+    join_admit_agcb(&s,&mine);assert(join_agcb_equal==1);
+    join_agcb_nav_on=0;join_agcb_written=join_agcb_equal=join_agcb_missing=0;join_world_find=find;join_world_map=map;
+    printf("join AGCB nav: a nav ship's Agent block left without the option, written with it, equal again PASS\n");
+}
+/* JOIN_BP: the first hit restores the byte and resumes; a second thread trapped on the same int3 (a parallel pass, w1z214) resumes
+ * too instead of falling through to the process's crash; a breakpoint not armed is not ours. */
+static void test_join_bp_late(void) {
+    const uint32_t rva=0x1000u;unsigned char keep=image[rva];uint64_t stack[4]={0,0,0,0};
+    EXCEPTION_RECORD er;CONTEXT ctx;EXCEPTION_POINTERS ep={&er,&ctx};memset(&er,0,sizeof(er));memset(&ctx,0,sizeof(ctx));
+    er.ExceptionCode=EXCEPTION_BREAKPOINT;er.ExceptionAddress=image+rva;ctx.Rsp=(DWORD64)(uintptr_t)stack;
+    join_bp_rva=rva;join_bp_saved=0x48;join_bp_state=1;image[rva]=0xcc;
+    assert(join_bp_handler(&ep)==EXCEPTION_CONTINUE_EXECUTION && join_bp_state==2 && image[rva]==0x48 && ctx.Rip==(DWORD64)(uintptr_t)(image+rva));
+    ctx.Rip=0;assert(join_bp_handler(&ep)==EXCEPTION_CONTINUE_EXECUTION && ctx.Rip==(DWORD64)(uintptr_t)(image+rva));   /* the late hit */
+    join_bp_state=0;assert(join_bp_handler(&ep)==EXCEPTION_CONTINUE_SEARCH);
+    er.ExceptionAddress=image+rva+1u;join_bp_state=2;assert(join_bp_handler(&ep)==EXCEPTION_CONTINUE_SEARCH);   /* another address */
+    join_bp_rva=0;join_bp_state=0;join_bp_tick=0;join_bp_nchain=0;memset(join_bp_regs,0,sizeof(join_bp_regs));image[rva]=keep;
+    printf("join BP: the first hit restores and resumes, a late hit of another thread resumes, others pass PASS\n");
+}
 static void test_join_warp(void) {
     twarp_build(0,0x10);
     uint32_t n=9;uint64_t time=0;double want=102.1,got_time;
@@ -3340,5 +3622,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();test_join_rprt();
 }

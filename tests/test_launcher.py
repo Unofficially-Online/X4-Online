@@ -97,6 +97,20 @@ class Profiles(unittest.TestCase):
             self.assertIn('id="x4_lan_lab" enabled="true"', (path / 'content.xml').read_text())
 
 
+class Unstage(unittest.TestCase):
+    def test_the_staged_snapshot_is_removed_after_a_session_and_saves_stay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / 'snap.xml.gz'
+            snapshot.write_bytes(b'snapshot')
+            pid = profile.PROFILES[0]
+            path = profile.prepare(pid, ['ego_dlc_boron'], snapshot=snapshot, root=tmp)
+            (path / 'save' / 'save_001.xml.gz').write_bytes(b'checkpoint')
+            self.assertTrue(profile.unstage(pid, root=tmp))
+            self.assertFalse((path / 'save' / profile.SNAPSHOT_SLOT).exists())
+            self.assertTrue((path / 'save' / 'save_001.xml.gz').exists())
+            self.assertFalse(profile.unstage(pid, root=tmp))
+
+
 class Views(unittest.TestCase):
     def test_view_links_game_and_removal_never_enters_links(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,6 +171,109 @@ class Session(unittest.TestCase):
         self.assertIn(f'-seed:{session.SESSION_SEED}', args)
         self.assertTrue(re.fullmatch(r'x4ls-c2\.log', args[-1]))
 
+
+
+class Play(unittest.TestCase):
+    def test_relay_command_settings_and_log_tail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            overlay = Path(tmp) / 'o'
+            write_overlay(overlay, 'X4LAN_CONFIG.native_gate_tick_hz = 30\nX4LAN_CONFIG.native_gate_lookahead = 1\n'
+                                   'X4LAN_CONFIG.native_gate_pilot_window = {40,81040}\nX4LAN_CONFIG.port = @X4LANE_PORT@\n')
+            self.assertEqual(session.play_settings(overlay), (1, 30, 81040))
+            o = session.Options(clients=2, overlay=overlay, snapshot=Path('s.xml.gz'), ticks=81043, tick_hz=30, lookahead=1,
+                                play=True, stall_drop_ms=15000)
+            cmd = ' '.join(session.relay_command(o, 5000, 'b' * 32, Path('run')))
+            for expected in ('--observe', '--keep-going', '--lookahead 1', '--stall-drop-ms 15000', '--ticks 81043', '--status-file'):
+                self.assertIn(expected, cmd)
+            self.assertNotIn('--keep-going', ' '.join(session.relay_command(session.Options(clients=2, overlay=overlay), 1, 'b' * 32,
+                                                                            Path('run'))))
+            log = Path(tmp) / 'x.log'
+            tail = session.LogTail(log)
+            self.assertEqual(tail.lines(), [])                   # not there yet
+            log.write_bytes(b'one\r\ntw')
+            self.assertEqual(tail.lines(), ['one'])
+            with log.open('ab') as f:
+                f.write(b'o\nthree\n')
+            self.assertEqual(tail.lines(), ['two', 'three'])
+            self.assertEqual(tail.lines(), [])
+
+    def test_two_pcs_relay_tail_and_join_line(self):
+        o = session.Options(clients=2, overlay=Path('o'), snapshot=Path('s.xml.gz'), ticks=900, tick_hz=30, lookahead=1, play=True,
+                            stall_drop_ms=15000, remote_slots=(2,), bind='192.168.1.5', allow_from=('192.168.1.7',), port=47000)
+        cmd = ' '.join(session.relay_command(o, 47000, 'b' * 32, Path('run')))
+        self.assertIn('--bind 192.168.1.5 --allow-from 192.168.1.7,192.168.1.5', cmd)   # the host's own clients too
+        tail = session.client_tail(1700000000, relay_host='192.168.1.5')
+        self.assertIn('native_gate_arm_at = 1700000000', tail)
+        self.assertIn("native_gate_relay_host = '192.168.1.5'", tail)
+        self.assertNotIn('relay_host', session.client_tail(1700000000))
+        with self.assertRaises(SystemExit):
+            session.client_tail(relay_host='relay.example')
+        line = session.join_command(o, '203.0.113.9', 47000, 'b' * 32, 2, 1700000000)
+        self.assertIn('join --relay 203.0.113.9:47000 --token ' + 'b' * 32 + ' --slot 2 --clients 2 --arm-at 1700000000', line)
+        for bad in (dict(port=0), dict(bind='127.0.0.1'), dict(allow_from=()), dict(remote_slots=(1,)), dict(public_host='x')):
+            with self.subTest(bad=bad), self.assertRaises(SystemExit):
+                session.run(session.Options(**{**o.__dict__, **bad, 'state': Path(tempfile.gettempdir()) / 'x4ls-none'}),
+                            log=lambda *_: None)
+        with self.assertRaises(SystemExit):   # a join checks its arguments before anything else
+            session.join(session.JoinOptions(relay='relay.example:47000', token='b' * 32, slot=2, clients=2, arm_at=0,
+                                             overlay=Path('o'), snapshot=Path('s')))
+
+    def test_errors_and_exits_are_logged_and_the_session_runs_until_every_window_closed(self):
+        class Proc:
+            def __init__(self, pid):
+                self.pid, self.returncode, self.alive = pid, None, True
+
+            def poll(self):
+                return None if self.alive else self.returncode
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, docs = Path(tmp) / 'run', Path(tmp) / 'docs'
+            run_dir.mkdir()
+            ids = profile.PROFILES[:2]
+            for i in ids:
+                (docs / str(i)).mkdir(parents=True)
+            clients = [(1, ids[0], Proc(11)), (2, ids[1], Proc(12))]
+            logs = {k: docs / str(i) / f'x4ls-c{k}.log' for k, i, _ in clients}
+            for path in logs.values():
+                path.write_text('')
+            relay_log = run_dir / 'relay.log'
+            relay_log.write_text('')
+            script = [
+                lambda: relay_log.write_text('NATIVE_GATE tick=0 failure=none done=False\n'),
+                lambda: logs[1].write_text('[X4LAN] NATIVE_GATE ERROR frame: attempt to index nil\n'
+                                           '[X4LAN] NATIVE_GATE ERROR frame: attempt to index nil\n'),
+                lambda: relay_log.write_text('NATIVE_GATE tick=0 failure=none done=False\n'
+                                             'NATIVE_GATE DESYNC tick=90 slots=2 first=90 mismatches=1\n'),
+                lambda: logs[2].write_text('[X4LAN] NATIVE_GATE STOP tick=120 reason=91 restored=1\n'),
+                lambda: setattr(clients[1][2], 'alive', False) or setattr(clients[1][2], 'returncode', 3),
+                lambda: logs[1].write_text(logs[1].read_text() + '[X4LAN] NATIVE_GATE STOP tick=900 reason=1 restored=1\n'),
+                lambda: setattr(clients[0][2], 'alive', False) or setattr(clients[0][2], 'returncode', 0),
+            ]
+            said = []
+
+            def sleep(_):
+                self.assertTrue(script, 'monitor_play ran past the end')
+                script.pop(0)()
+            keep = session.time.sleep, profile.documents, session.tile
+            session.time.sleep, profile.documents, session.tile = sleep, (lambda: docs), (lambda *a: 2)
+            try:
+                o = session.Options(clients=2, overlay=Path(tmp), tick_hz=30, play=True)
+                result = session.monitor_play(o, run_dir, None, clients, said.append)
+            finally:
+                session.time.sleep, profile.documents, session.tile = keep
+            self.assertEqual(result['outcome'], 'played')
+            self.assertEqual(result['ended'], 'every X4 window closed')
+            self.assertEqual((result['errors'], result['stopped'], result['exited']),
+                             (3, {"client1": 1, "client2": 91}, {'client1': 0, 'client2': 3}))
+            text = (run_dir / 'errors.log').read_text()
+            self.assertEqual(text.count('client1 [X4LAN] NATIVE_GATE ERROR frame'), 2)
+            self.assertIn('client2 [X4LAN] NATIVE_GATE STOP tick=120 reason=91', text)
+            self.assertIn('client2 X4 exited with 3', text)
+            self.assertIn('NATIVE_GATE DESYNC tick=90', (run_dir / 'desyncs.log').read_text())
+            # The console: one line per kind and client, the drop explained, the end of the session.
+            self.assertEqual(len([s for s in said if 'ERROR frame:' in s]), 1)
+            self.assertTrue(any('its gate stopped (reason 91)' in s for s in said))
+            self.assertTrue(any('the session is over' in s for s in said))
 
 
 class Checkpoint(unittest.TestCase):

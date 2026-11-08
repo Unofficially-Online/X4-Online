@@ -74,7 +74,8 @@ static int lxt_inline_pending_ok(void *path_manager) {
 
 static void lxt_inline_fatal(void) {
     static const char diagnostic[] = "X4LAN LINUX_TRAVEL_INLINE_FATAL dispatch mismatch; exiting 190\n";
-    (void)write(STDERR_FILENO, diagnostic, sizeof(diagnostic) - 1);
+    ssize_t written = write(STDERR_FILENO, diagnostic, sizeof(diagnostic) - 1); /* glibc's warn_unused_result ignores a (void) cast */
+    (void)written;
     _exit(190);
 }
 

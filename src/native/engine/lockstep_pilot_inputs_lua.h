@@ -95,8 +95,10 @@ static int lua_pilot_join_status(lua_State *L) {
     if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* gate.pilot_absent_state() / gate.pilot_absent_restore(text): the join package's copy of the above (a joiner, before T+1). */
+/* gate.pilot_slots_max(): how many slots the pilot modules drive (PILOT_SLOTS; the probe's slot checks use it). */
+static int lua_pilot_slots_max(lua_State *L) {p_lua_pushnumber(L,PILOT_SLOTS);return 1;}
 static int lua_pilot_absent_state(lua_State *L) {
-    char out[160];int n=accept_ui() && pilot_absent?pilot_absent_state(out,sizeof(out)):0;
+    char out[512];int n=accept_ui() && pilot_absent?pilot_absent_state(out,sizeof(out)):0;   /* 7 slots of 3 ticks */
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_pilot_absent_restore(lua_State *L) {

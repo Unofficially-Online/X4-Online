@@ -17,7 +17,8 @@
  * With this group:
  *  - Scenes C and D are made at the first frame like A and B (0x83f7d0: SMem::Allocate 0x50,
  *    0xba090 with the name and three times 0x10000). The constructor registers them where
- *    Scene::Step and the asset loader find every scene.
+ *    Scene::Step and the asset loader find every scene. With more than four pilot slots, E..H
+ *    too, as many as the slots can need (pilot_slot_count - 2: every client has the same slots).
  *  - B, C and D belong to sectors, not to slots: a table of (sector, scene), kept in rc_frame
  *    in slot order. A sector keeps its scene while a view point is in it, because a body
  *    stays in the scene it was made in; view point 1's sector is A's and never in the table.
@@ -43,7 +44,8 @@
  * leaves a sector another slot is in) keeps its existing bodies in the old scene; new ones go
  * to the new scene. Traffic and highway parameters still answer for two sectors (uncovered=
  * in the status). */
-#define VSC_ENTRIES 3u
+#define VSC_ENTRIES (VIEW_MAX-1u)   /* B and the new scenes: one per sector other than view point 1's */
+_Static_assert(VSC_EXTRA==VSC_ENTRIES-1u,"VSC_EXTRA (lockstep_contact.h): the new scenes C, D (always) and E..H (more than four pilot slots)");
 #define VSC_GRACE 600u
 #define VSC_BODIES 0x10000u
 #define VSC_SCENE_B 0x38f0740u
@@ -65,13 +67,14 @@ static vsc_anchor_fn vsc_anchor_native; /* tests only: replaces 0xbd410 */
 static vsc_step_fn vsc_step_native;     /* tests only: replaces 0xba600 */
 static vsc_zone_fn vsc_zone_native,vsc_highway_native; /* tests only: replace slot 943's natives */
 static vsc_entry_t vsc_entries[VSC_ENTRIES];
-static void *volatile vsc_extra[2];     /* scenes C and D, for the modules that name a scene */
 static volatile LONG vsc_active;
 static int vsc_armed,vsc_created,vsc_installed;
 static uint64_t vsc_steps,vsc_moves,vsc_rebases,vsc_assigns,vsc_releases,vsc_early,vsc_blocked_ticks;
 static unsigned vsc_blocked_now;
 static int vsc_read_ok(void *p,uint64_t id) {uint64_t now=0;return p && read_local((unsigned char*)p+8,&now,8) && now==id;}
-/* B from the image, C and D new. Frame thread, first frame. */
+/* How many new scenes: C and D, or one per further slot beyond four (B and the new ones serve every sector but slot 1's). */
+static unsigned vsc_extra_count(void) {const unsigned n=pilot_slot_count>4u?pilot_slot_count-2u:2u;return n<VSC_EXTRA?n:VSC_EXTRA;}
+/* B from the image, C, D (E..) new. Frame thread, first frame. */
 static void *vsc_new_scene(void) {
     void *self=rid_allocate(0x50);if(!self) return NULL;
     vsc_name_t name;memset(&name,0,sizeof(name));memcpy(name.text,"Cutscene",8);name.size=8;name.capacity=15;
@@ -79,9 +82,10 @@ static void *vsc_new_scene(void) {
 }
 static int vsc_create(void) {
     void *b=NULL;if(!read_local(image+VSC_SCENE_B,&b,8) || !b) return 0;
-    void *c=vsc_new_scene(),*d=c?vsc_new_scene():NULL;if(!c || !d) return 0;
-    memset(vsc_entries,0,sizeof(vsc_entries));
-    vsc_entries[0].scene=b;vsc_entries[1].scene=c;vsc_entries[2].scene=d;vsc_extra[0]=c;vsc_extra[1]=d;
+    void *made[VSC_EXTRA];const unsigned n=vsc_extra_count();
+    for(unsigned i=0;i<n;i++) if(!(made[i]=vsc_new_scene())) return 0;
+    memset(vsc_entries,0,sizeof(vsc_entries));vsc_entries[0].scene=b;
+    for(unsigned i=0;i<n;i++) {vsc_entries[1+i].scene=made[i];vsc_extra[i]=made[i];}
     vsc_created=1;return 1;
 }
 /* No body left in a scene: its PhysicsSystem (scene+0x20) counts none (+0x28) and has none in its
@@ -91,9 +95,10 @@ static int vsc_empty(void *scene) {
     return scene && read_local((unsigned char*)scene+0x20,&system,8) && system &&
            read_local(system+0x28,&num,4) && read_local(system+0x680,&active,8) && !num && !active;
 }
-/* 0 held or still waiting, 1 free (never used or the grace over), 2 free early (released and empty). */
+/* 0 held, still waiting or no scene (an entry beyond vsc_extra_count), 1 free (never used or the grace over), 2 free early
+ * (released and empty). */
 static int vsc_free(const vsc_entry_t *e,uint64_t tick) {
-    if(e->sector) return 0;
+    if(e->sector || !e->scene) return 0;
     if(!e->released || tick>=e->released+VSC_GRACE) return 1;
     return vsc_empty(e->scene)?2:0;
 }
@@ -162,13 +167,13 @@ static void *vsc_answer(void *zone,vsc_zone_fn native) {
 }
 static void *vsc_zone_scene(void *zone) {return vsc_answer(zone,vsc_zone_native?vsc_zone_native:(vsc_zone_fn)(void *)(image+VSC_ZONE));}
 static void *vsc_highway_scene(void *zone) {return vsc_answer(zone,vsc_highway_native?vsc_highway_native:(vsc_zone_fn)(void *)(image+VSC_HIGHWAY));}
-/* UniverseFrameUpdate's step of B, then C and D. */
+/* UniverseFrameUpdate's step of B, then C, D (E..). */
 static void vsc_step(void *scene,double time) {
     const vsc_step_fn step=vsc_step_native?vsc_step_native:(vsc_step_fn)(void *)(image+VSC_STEP);
     InterlockedIncrement64(&rc_stub_calls[RC_VIEW_STEP_CALL]);
     step(scene,time);
     if(!InterlockedCompareExchange(&vsc_active,0,0)) return;
-    for(unsigned i=0;i<2u;i++) if(vsc_extra[i]) {step(vsc_extra[i],time);++vsc_steps;}
+    for(unsigned i=0;i<VSC_EXTRA;i++) if(vsc_extra[i]) {step(vsc_extra[i],time);++vsc_steps;}
 }
 static int vsc_swap(unsigned slot,void *expected,void *value) {
     DWORD old,ignored;if(!VirtualProtect(image+slot,8,PAGE_READWRITE,&old)) return 0;

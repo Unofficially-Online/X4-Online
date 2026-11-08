@@ -95,6 +95,16 @@ static int lua_join_pcsv(lua_State *L) {join_pcsv_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_conn(lua_State *L) {join_conn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_warp(on): a joiner takes the session's pending warps' destinations (WARP, default off). */
 static int lua_join_warp(lua_State *L) {join_warp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_rprt(on): JOIN_RPRT, the re-parent transforms of the watched ships' linear models (diagnostic; lockstep_join_world.h). */
+static int lua_join_rprt(lua_State *L) {join_rprt_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_agcb_nav(on): AGCB writes the nav ships' Agent blocks too (default off; lockstep_join_world.h). */
+static int lua_join_agcb_nav(lua_State *L) {join_agcb_nav_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_srcs(on): SRCS, the joiner gives each keyed listener the session's sources (default off; lockstep_join_world.h). */
+static int lua_join_srcs(lua_State *L) {join_srcs_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_fobj(on): FOBJ, the joiner fills its region fields' empty spawned-object lists as the session's (default off). */
+static int lua_join_fobj(lua_State *L) {join_fobj_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_lstn(on): LSTN, the joiner orders the script listeners of each event source and type as the session's (default off). */
+static int lua_join_lstn(lua_State *L) {join_lstn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_gravp_settled(on): GRAVP settled, the restore after T+1 also takes settled objects below attention 6 (default off). */
 static int lua_join_gravp_settled(lua_State *L) {join_gravp_settled_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_porders(on): PORD, the joiner drops the pathing manager's queued Path orders at the admission's end (default off). */
@@ -105,6 +115,8 @@ static int lua_join_bp(lua_State *L) {
     const int ok=t && n && end && !*end && v>=0x1000ul && v<JOIN_BP_TEXT_END;if(ok) join_bp_rva=(uint32_t)v;
     p_lua_pushnumber(L,ok);return 1;
 }
+/* gate.join_undk(on): UNDK writes the session's undocking behaviours at the admission (default off; lockstep_join_world.h). */
+static int lua_join_undk(lua_State *L) {join_undk_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_ares(on): ARES writes the session's Agent result banks at the admission (default off; lockstep_join_world.h). */
 static int lua_join_ares(lua_State *L) {join_ares_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_attn_set(on): ATTN runs SetAttention where its direct write leaves the per-level state of the load's level, and drops

@@ -277,13 +277,17 @@ def ids_sets(sets):
 #                                  queued events dropped (w1z194/195: the joiner-only scripts at T+1 gone; w1z199 neutral)
 #   native_gate_join_ares         the Agents' result banks, section 78 (w1z196: written 6246; the formation results the
 #                                  load leaves empty; w1z199 and j1-380 neutral)
+#   native_gate_join_warp          the pending warps' destinations, section 77 (j1-372/373: a gate transit due at T+1, its
+#                                  transform rebuilt from the save's angles (sin(pi)); on in every late J1 since and in w1z199,
+#                                  T=633: census 0 to 5940)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
                    'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code', 'native_gate_join_omgs',
                    'native_gate_join_hold_boot_events', 'native_gate_join_resv', 'native_gate_join_pcsv',
                    'native_gate_join_gravn_extra', 'native_gate_join_conn', 'native_gate_join_porders', 'native_gate_join_attn_set',
-                   'native_gate_join_ares')
+                   'native_gate_join_ares', 'native_gate_join_warp', 'native_gate_join_undk', 'native_gate_join_srcs',
+                   'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled')
 
 
 def default_sets(sets):
@@ -295,8 +299,8 @@ def default_sets(sets):
 def check_absent(clients, absent, rejoin=()):
     """The absent slots must be the last ones: the lane tool's clients are p1..pL in --lanes order. Without absent slots
     the session has rejoinable ones (2..N, not absent)."""
-    if not 2 <= clients <= 4:
-        raise ValueError('--clients 2..4 (the identity plan drives at most four slot ships)')
+    if not 2 <= clients <= 8:
+        raise ValueError('--clients 2..8 (the pilot modules drive at most eight slot ships)')
     absent, rejoin = sorted(set(absent)), sorted(set(rejoin))
     if rejoin and (rejoin[0] < 2 or rejoin[-1] > clients or set(rejoin) & set(absent)):
         raise ValueError(f'--rejoin needs slots 2..{clients}, none of them absent')

@@ -248,6 +248,8 @@ assert(nav_stride==nil or (type(nav_stride)=='number' and nav_stride%1==0 and na
 -- core subset, src/native/engine/linux/gate_linux.c: configurations needing an unported module refuse).
 local gate=assert(package.loadlib('./extensions/x4_lan_lab/native/'..(package.config:sub(1,1)=='\\' and 'x4lan_gate_64.dll' or 'x4lan_gate.so'),
  'luaopen_x4lan_gate'))()
+-- How many player slots the gate's pilot modules drive (8 from PILOT_SLOTS 8; a gate without the call drives 4).
+local PILOT_SLOTS_MAX=(gate.pilot_slots_max and gate.pilot_slots_max()) or 4
 -- Crash note (lockstep_crash_note.h; native_gate_crash_note, default off): an unhandled exception writes one
 -- CRASH line beside the debug log of this profile (x4lan-crash.txt, and x4lan-debug.txt when X4 shares it).
 if cfg.native_gate_crash_note~=nil then
@@ -365,6 +367,21 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_warp then   -- a joiner takes the session's pending warps' destinations (WARP)
   assert(gate.join_warp and gate.join_warp(1)==1,'join warp refused')
  end
+ if cfg.native_gate_join_rprt then   -- JOIN_RPRT: the watched ships' re-parent transforms (diagnostic)
+  assert(gate.join_rprt and gate.join_rprt(1)==1,'join rprt refused')
+ end
+ if cfg.native_gate_join_agcb_nav then   -- AGCB: the nav ships' Agent command blocks too (agcb=)
+  assert(gate.join_agcb_nav and gate.join_agcb_nav(1)==1,'join agcb nav refused')
+ end
+ if cfg.native_gate_join_srcs then   -- SRCS: each keyed listener's sources as the session's (srcs=)
+  assert(gate.join_srcs and gate.join_srcs(1)==1,'join srcs refused')
+ end
+ if cfg.native_gate_join_fobj then   -- FOBJ: the region fields' spawned-object lists the load leaves empty (fobj=)
+  assert(gate.join_fobj and gate.join_fobj(1)==1,'join fobj refused')
+ end
+ if cfg.native_gate_join_lstn then   -- LSTN: the script listeners in the session's order per event source and type (lstn=)
+  assert(gate.join_lstn and gate.join_lstn(1)==1,'join lstn refused')
+ end
  if cfg.native_gate_join_gravp_settled then   -- GRAVP settled: settled poses below attention 6 restored too (gravp_settled=)
   assert(gate.join_gravp_settled and gate.join_gravp_settled(1)==1,'join gravp settled refused')
  end
@@ -373,6 +390,9 @@ if cfg.native_gate_join then
  end
  if cfg.native_gate_join_bp~=nil then   -- JOIN_BP (diagnostic): a one-shot int3 at an image RVA after the admission (join_bp=)
   assert(type(cfg.native_gate_join_bp)=='string' and gate.join_bp and gate.join_bp(cfg.native_gate_join_bp)==1,'join bp refused')
+ end
+ if cfg.native_gate_join_undk then   -- UNDK writes the session's undocking behaviours at the admission (undk=)
+  assert(gate.join_undk and gate.join_undk(1)==1,'join undk refused')
  end
  if cfg.native_gate_join_ares then   -- ARES writes the session's Agent result banks at the admission (ares=)
   assert(gate.join_ares and gate.join_ares(1)==1,'join ares refused')
@@ -464,7 +484,7 @@ if cfg.native_gate_join then
    assert(type(k)=='number' and k%1==0 and k>=2 and k<=clients and not absent[k],
     'native_gate_join.absent: slots 2..'..clients..', each once (slot 1 is never absent)')
    absent[k]=true
-   if k<=4 then absent_mask=absent_mask+2^(k-1) end   -- the pilot modules' slots (at most four)
+   if k<=PILOT_SLOTS_MAX then absent_mask=absent_mask+2^(k-1) end   -- the pilot modules' slots
   end
   assert(not absent[own] or join_joiner,'native_gate_join.absent names this client slot '..own..' (only a joiner starts absent)')
  end
@@ -475,7 +495,7 @@ if cfg.native_gate_join then
    assert(type(k)=='number' and k%1==0 and k>=2 and k<=clients and not absent[k] and not rejoin[k],
     'native_gate_join.rejoin: slots 2..'..clients..', each once, none of them absent (slot 1 is never dropped and rejoined)')
    rejoin[k]=true
-   if k<=4 then rejoin_mask=rejoin_mask+2^(k-1) end
+   if k<=PILOT_SLOTS_MAX then rejoin_mask=rejoin_mask+2^(k-1) end
   end
  end
  if j.absent~=nil or j.rejoin~=nil then
@@ -499,12 +519,12 @@ if cfg.native_gate_join then
    if join_joiner and k==own then assert(gate.join_handover(h)==1,'join handover refused '..tostring(gate.join_status())) end
    -- Every client, the same tick: slot k's ship is enrolled at H, its records required from H+delay (when the pilot
    -- modules took the absent slots: gate.pilot_absent_state answers).
-   if (absent[k] or rejoin[k]) and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then
+   if (absent[k] or rejoin[k]) and k<=PILOT_SLOTS_MAX and gate.pilot_absent_state and gate.pilot_absent_state() then
     assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
    end
   end,
   abort=function(k)
-   if (absent[k] or rejoin[k]) and k<=4 and gate.pilot_absent_state and gate.pilot_absent_state() then assert(gate.pilot_abort(k)==1,'pilot abort refused k='..k) end
+   if (absent[k] or rejoin[k]) and k<=PILOT_SLOTS_MAX and gate.pilot_absent_state and gate.pilot_absent_state() then assert(gate.pilot_abort(k)==1,'pilot abort refused k='..k) end
   end,
   -- Every client of the session, at the same record (lockstep_pilot_join.h): the cockpit bodies leave their rooms around
   -- the save at T, so X4's save holds one player (W1b). Without armed pilot modules there is nothing to take off.
@@ -899,12 +919,12 @@ if cfg.native_gate_hybrid~=nil and cfg.native_gate_hybrid~=false then
  local h,H=cfg.native_gate_hybrid,{}
  local function integer(v,lo,hi) return type(v)=='number' and v==math.floor(v) and v>=lo and v<=hi end
  local mask,owners=0,{}
- local ok=type(h)=='table' and type(h.owners)=='table' and #h.owners>=1 and #h.owners<=4 and integer(h.tick,2,8388607) and
+ local ok=type(h)=='table' and type(h.owners)=='table' and #h.owners>=1 and #h.owners<=PILOT_SLOTS_MAX and integer(h.tick,2,8388607) and
   (h.poses==nil or integer(h.poses,0,5)) and (cfg.native_gate_view_points=='players' or cfg.native_gate_view_points==true) and
   type(cfg.native_gate_pilot_slots)=='table'
  for key in pairs(type(h)=='table' and h or {}) do ok=ok and (key=='owners' or key=='tick' or key=='poses') end
  for _,k in ipairs(ok and h.owners or {}) do
-  ok=ok and integer(k,1,#cfg.native_gate_pilot_slots) and k<=4 and math.floor(mask/2^(k-1))%2==0
+  ok=ok and integer(k,1,#cfg.native_gate_pilot_slots) and k<=PILOT_SLOTS_MAX and math.floor(mask/2^(k-1))%2==0
   if ok then mask=mask+2^(k-1);owners[#owners+1]=k end
  end
  assert(ok,'hybrid refused: native_gate_hybrid={owners={k,...},tick=T>=2,poses=0..5} needs native_gate_view_points=players and pilot slots')
@@ -1132,7 +1152,13 @@ local function ui_lua_arm()
       return nil
      end
      if n<=4 then ticklog.write('UI_LUA_ROW tick='..ui_events.tick..' name='..name..' blocked='..(mode=='block' and 1 or 0)) end
-     if mode=='block' then ui_lua.blocked=ui_lua.blocked+1;return nil end
+     if mode=='block' then
+      ui_lua.blocked=ui_lua.blocked+1
+      -- The first refusal of each global says so in game (x4ls play blocks Pause, Unpause and SaveGame: a pause or a save
+      -- stops the gate on that client).
+      if n==1 and X4LAN_NATIVE_GATE_DEFAULTS then pcall(X4LAN_NATIVE_GATE_DEFAULTS.notice,name..' is off during a lockstep session') end
+      return nil
+     end
     end
     return native(...)
    end
@@ -1170,12 +1196,38 @@ local function ui_write_check(tick)
   ticklog.write('UI_WRITE_TEST tick='..tick..' called=AddPlayerMoney via='..via..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
  end
 end
+-- Pause test (diagnostic; native_gate_pause_test = {slot='pK', pause=T0, unpause=T1}): client K calls the Lua globals
+-- Pause() at T0 and Unpause() at T1, as X4's options and ship configuration menus do (with native_gate_ui_lua = 'block'
+-- and both names in native_gate_ui_lua_names the Lua guard refuses them); every client logs IsGamePaused around both.
+local pause_test=cfg.native_gate_pause_test
+if pause_test then
+ assert(type(pause_test)=='table' and type(pause_test.slot)=='string' and type(pause_test.pause)=='number' and
+  type(pause_test.unpause)=='number' and 1<pause_test.pause and pause_test.pause<pause_test.unpause,
+  'native_gate_pause_test must be {slot=pK, pause=T0, unpause=T1} with 1 < T0 < T1')
+ pcall(ffi.cdef,'bool IsGamePaused(void);')
+end
+local function pause_check(tick)
+ if not pause_test then return end
+ local p,u=pause_test.pause,pause_test.unpause
+ if cfg.slot==pause_test.slot and (tick==p or tick==u) then
+  local name=tick==p and 'Pause' or 'Unpause'
+  local ok,why=pcall(function() _G[name]() end)
+  ticklog.write('PAUSE_TEST tick='..tick..' called='..name..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
+ end
+ if tick==p-1 or tick==p or tick==p+1 or tick==p+30 or tick==u or tick==u+1 or tick==u+30 then
+  local ok,paused=pcall(function() return ffi.C.IsGamePaused() end)
+  ticklog.write('PAUSE_TEST tick='..tick..' paused='..tostring(ok and paused))
+ end
+end
 local function checkpoint(tick)
  if checkpoint_at and tick==checkpoint_at-150 then AddUITriggeredEvent('X4LAN_NativeGate','Respawn',{}) end
  if tick~=checkpoint_at or checkpoint_state then return end
  if not IsSavingPossible(false) then checkpoint_state='refused';ticklog.write('CHECKPOINT refused slot=save_001 tick='..tick);return end
  checkpoint_state='saving';ticklog.write('CHECKPOINT_REQUEST slot=save_001 tick='..tick)
- SaveGame('save_001','x4ls checkpoint tick '..tick)
+ UI_LUA_RELAYING=true   -- the probe's own save passes the Lua guard (x4ls play blocks SaveGame for people)
+ local saved,why=pcall(SaveGame,'save_001','x4ls checkpoint tick '..tick)
+ UI_LUA_RELAYING=false
+ if not saved then error(why,0) end
 end
 -- The per-tick UI guard steps in one function. The frame function is at LuaJIT's 60-upvalue limit, so it reaches
 -- this and the UI event tick through ticklog (an upvalue it has anyway): ticklog.ui_guard(tick), ticklog.ui_events.
@@ -1184,6 +1236,7 @@ local function ui_guard_tick(tick)
  ui_lua_arm()
  if cfg.native_gate_ui_lua and tick%(cfg.native_gate_status_stride or 60)==0 then ticklog.write('UI_LUA tick='..tick..' '..ui_lua_status()) end
  ui_write_check(tick)
+ pause_check(tick)
  ui_globals_census(tick)
 end
 ticklog.ui_guard=ui_guard_tick
@@ -3771,11 +3824,12 @@ local function frame()
     'viewpoint policy refused '..tostring(gate.region_camera_status and gate.region_camera_status()))
    log('VIEWPOINT_POLICY_ARMED mode=sector')
   end
-  -- native_gate_viewpoint_standins = 2..4: how many view points the policy answers for, one per sector in slot order
-  -- (2: view points 1 and 2, as without it). Needs the policy. Default 2.
+  -- native_gate_viewpoint_standins = 2..8: how many view points the policy answers for, one per sector in slot order
+  -- (2: view points 1 and 2, as without it). Needs the policy. Default 2 (the defaults' 8: every slot's sector).
   if cfg.native_gate_viewpoint_standins~=nil then
    local n=cfg.native_gate_viewpoint_standins
-   assert(cfg.native_gate_viewpoint_policy and type(n)=='number' and n%1==0 and n>=2 and n<=4 and gate.region_camera_standins and
+   local most=(gate.view_points_max and gate.view_points_max()) or 4   -- a gate without the call keeps 4
+   assert(cfg.native_gate_viewpoint_policy and type(n)=='number' and n%1==0 and n>=2 and n<=most and gate.region_camera_standins and
     gate.region_camera_standins(n)==1,'viewpoint standins refused')
    log('VIEWPOINT_STANDINS_ARMED n='..n)
   end
@@ -3844,6 +3898,9 @@ local function frame()
      gate.motion_watch_splines and gate.motion_watch_spline_row and gate.motion_watch_splines()==1,
      'motion watch splines refused '..tostring(gate.motion_watch_status and gate.motion_watch_status()))
     log('MOTION_WATCH_SPLINES_ARMED')
+    if cfg.native_gate_motion_watch_spline_every then   -- a row on every watched spline update (cheap flag, progress)
+     assert(gate.motion_watch_spline_every and gate.motion_watch_spline_every(1)==1,'motion watch spline every refused')
+    end
    end
    -- The AI move points queued for watched ships and the flight model targets set for them
    -- (diagnostic; patches four calls and four SetTarget vtable entries).
@@ -4132,7 +4189,7 @@ local function frame()
     if type(target)=='string' then target=tonumber(target:match('^p([12])$')) end
    end
    local back,up=type(o)=='table' and o.back or 40,type(o)=='table' and o.up or 10
-   assert((own and mine and mine>=1 and mine<=4 or type(o)=='table' and (target==1 or target==2) and (slot==1 or slot==2)) and
+   assert((own and mine and mine>=1 and mine<=PILOT_SLOTS_MAX or type(o)=='table' and (target==1 or target==2) and (slot==1 or slot==2)) and
     not cfg.native_gate_camera_offset and
     not cfg.native_gate_pilot_camera_follow and type(back)=='number' and type(up)=='number' and back==back and up==up and
     math.abs(back)<=5000 and math.abs(up)<=5000 and
@@ -4610,7 +4667,7 @@ local function frame()
    if source=='wire' and X4LAN_NATIVE_ADAPTIVE then delay=(gate.adaptive_plan and gate.adaptive_plan()) or X4LAN_NATIVE_ADAPTIVE.kmax+2 end
    local suppress=cfg.native_gate_pilot_suppress_local
    assert(snapshot and cfg.native_gate_pilot_inputs==true and cfg.native_gate_serial_pathing and cfg.native_gate_world_identities and
-    not cfg.native_gate_player_request_observer and type(slots)=='table' and #slots>=1 and #slots<=4 and
+    not cfg.native_gate_player_request_observer and type(slots)=='table' and #slots>=1 and #slots<=PILOT_SLOTS_MAX and
     (source=='script' or (source=='wire' and type(gate.propose)=='function')) and type(window)=='table' and #window==2 and
     (suppress==nil or suppress==true) and (cfg.native_gate_pilot_capture==nil or cfg.native_gate_pilot_capture==true) and
     gate.pilot_inputs and gate.pilot_inputs(table.concat(slots,','),source,delay,window[1],window[2],suppress and 1 or 0)==1,'pilot inputs refused')
@@ -4620,8 +4677,8 @@ local function frame()
     local listed=type(cfg.native_gate_join)=='table' and cfg.native_gate_join.absent
     local relisted=type(cfg.native_gate_join)=='table' and cfg.native_gate_join.rejoin
     local mask,rmask=0,0
-    for _,k in ipairs(listed or {}) do if k<=4 then mask=mask+2^(k-1) end end
-    for _,k in ipairs(relisted or {}) do if k<=4 then rmask=rmask+2^(k-1) end end
+    for _,k in ipairs(listed or {}) do if k<=PILOT_SLOTS_MAX then mask=mask+2^(k-1) end end
+    for _,k in ipairs(relisted or {}) do if k<=PILOT_SLOTS_MAX then rmask=rmask+2^(k-1) end end
     if mask+rmask>0 then
      assert(gate.pilot_absent and gate.pilot_absent(mask+rmask,rmask)==1,'pilot absent slots refused mask='..mask..' rejoin='..rmask)
      log('PILOT_ABSENT_ARMED mask='..mask..' '..tostring(gate.pilot_absent_state()))
@@ -5245,9 +5302,9 @@ local function frame()
    ticklog.write('WORLD_MOTION_STOP '..assert(gate.world_motion_status(),'world motion status unavailable'))
   end
   if cfg.native_gate_actor_rng_all then log('ACTOR_RNG_ALL_STOP '..tostring(gate.actor_rng_all_status())) end
-  if rolling_slices then
+  if cfg.native_gate_world_rolling_slices then -- through cfg: frame() is at LuaJIT's limit of 60 upvalues
    log('WORLD_ROLLING_STOP scans='..s.world_hash_scans..' cycles='..
-    math.floor(s.world_hash_scans/rolling_slices)..' failures='..s.world_hash_failures)
+    math.floor(s.world_hash_scans/cfg.native_gate_world_rolling_slices)..' failures='..s.world_hash_failures)
   elseif cfg.native_gate_world_hash_stride then
    log('WORLD_HASH_STOP scans='..s.world_hash_scans..' failures='..s.world_hash_failures)
   end
@@ -5809,6 +5866,7 @@ local function frame()
    for index=1,count do ticklog.write('WORLD_MOTION '..assert(gate.world_motion_row(index),'world motion row unavailable')) end
   end
  end
+ local rolling_slices=cfg.native_gate_world_rolling_slices -- a local, not an upvalue (frame()'s limit of 60)
  if rolling_slices then
   local capture_started = profile and gate.qpc_us()
   local summary,why = gate.world_capture_rolling(tick,rolling_slices)

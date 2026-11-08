@@ -79,3 +79,8 @@ native tests on one PC; recovery (resync from a mid-game save) is the next miles
 - One pinned X4 build. A game patch disables the gate until it is re-verified.
 - Windows-only for v1. The Linux gate (`src/native/engine/linux`) is in progress.
 - Tested on one PC so far. Intel vs AMD CPUs may differ in approximate float instructions.
+- Up to 8 players. The relay and wire take 2 to 8 clients. The gate keeps 8 pilot slots (`PILOT_SLOTS`), 8 view
+  points with one region-camera stand-in each (`VIEW_MAX`), and a physics scene per further sector (B plus up to 6
+  new ones). The identity plan has 16 pool factions. Native runs so far used 2 or 3 clients; 5 to 8 are covered by
+  the unit tests only. Stock piloting knows 4 cockpit ships, so slots 5 to 8 need `--ships`, `--create` or a
+  session's starts.

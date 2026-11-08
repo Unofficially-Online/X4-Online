@@ -322,6 +322,29 @@ CANONICAL SHIELDS ON LINUX (native_gate_world_hash_shields = 'canonical', a Wind
   already-full and rewrite-count cases, the source check, the arming refusals and the capture's time. On the executable it checks the
   pins, the read's slot tests, constants and write, and the construct.
 
+X4-ONLINE PR #2 ON SMOKE (8 November: Linux validation, rolling census, Linux RNG options and observers)
+  Draft PR #2 (contrib/astra-lockstep-desync-validation at f1bd35a7, 31 commits on online/main 94bc6e1d) is merged
+  onto smoke 2edc747e as one three-way merge of its trees: no conflicts, the PR's 72 files and lines. It builds on
+  the ports in this report: its linux-core preset (linux_gate_live.py bundle --preset linux-core) turns on
+  warp_exit, world_hash_shields, mining_camera and runtime_ids_local with the rest of the Linux core.
+  Three fixes the merge needed (d0f1c90d):
+  - native_gate_probe.lua: with smoke's additions since 94bc6e1d, frame() had 61 upvalues and LuaJIT refused the
+    whole probe on every platform (the protocol2_seed_relay_host scenario caught it). The rolling slice count is now
+    read through cfg.
+  - linux/gate_travel_determinism.h: Ubuntu's gcc (fortified -O2) fails -Werror on a (void) write(); the result is
+    kept.
+  - tests/test_lockstep_gate_linux.py: a neutral user name.
+  Windows: lockstep_sha256.h is the one shared header. Its -E -P differs from 2edc747e in those lines only (18 per
+  file): the context's new hardware field (always 0 off Linux), compress renamed to compress_scalar behind a
+  wrapper, and init storing the field. Behaviour is the scalar path as before; the gate compiles with -Werror.
+  Offline (WSL): the unit tests on both images, the NavMesh copied-ELF checks, the Lua bridge (177 methods) and the
+  29 scenarios pass.
+  lx25a (bundle from d0f1c90d, --preset linux-core, the census snapshot 7816351056e6, 3000 ticks, stride 30, Xvfb
+  and the discard layer): PASS. Both clients completed 3000 with reason 1 and restored hooks, 101 of 101 captures
+  equal, no evidence errors, portable math active, Steam unchanged, no X4 left. It is the first live Linux run of the
+  local runtime ID lists: RUNTIME_IDS local=1,ui:7/0/1048568,view:785/755/1048546 on both clients and the same
+  shared digest (441f35aea8cce7a9); WORLD_HASH_SHIELDS mode=canonical canonical=2868771 on both.
+
 OFFLINE CHECKS IN WSL
   check_lockstep_gate_linux.py runs complete in WSL (Ubuntu 24.04, gcc 13.3, LuaJIT) against the local copy of the
   pinned executable: the unit tests on both images, the Lua bridge and the 29 engine scenarios.
@@ -342,8 +365,8 @@ NEXT
      differently: found (the exit sum's association, MSVC against GCC) and fixed on Linux (native_gate_warp_exit:
      W30 = lx20 through 2400). Next residue: the Recyclable at 2664, the region object search's native camera test
      (the mining group, ported to Linux: cd24d90d; lx23 against W30; the lx24 trace to rerun). Then Linux defaults
-     for warp_exit and mining. A live run with --runtime-ids-local: armed, the local counts (the status' local=1,ui:,
-     view:), and its census against the same run without it. Windows runs with canonical shields compare only with
+     for warp_exit and mining. A live run with --runtime-ids-local: armed and equal on both clients (lx25a, linux-core);
+     still to do: its census against the same run without it. Windows runs with canonical shields compare only with
      Linux runs with --world-hash-shields (and bare Windows runs without it with Linux runs without it).
   3. The rest of the defaults' determinism stack the clock-mode census does not exercise (the battle scope's fixture
      state, shape order, view points), then the people stack on Linux (pilot replay first: a Linux server simulates the

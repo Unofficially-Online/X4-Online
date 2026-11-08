@@ -2614,6 +2614,77 @@ proposed and rejected.
   attention update at T+1 runs a full change (ChangedAttentionEvent) and the fight scripts react; fix in progress there
   (native_gate_join_attn_set, c28009f8 merged into this branch as 7c0a6f0e, revised next). The replay digest is apart from 3034 in
   every late join with the census equal: destroyed temp zones the session's census still lists (x4mods-67; an artifact).
+- The late join's zone 0x561 escorts, continued [F: j1-380 .. j1-386, queue-hj310 .. queue-hj316.sh]. With WARP, attn_set and ARES
+  (j1-380) and then PORD (j1-384: 8 queued Path orders dropped, the session's list empty) the census is that of j1-378 (3120 3: the
+  escorts 0x123b2b, 0x123cf3 and 0x123d1a; 3600 2,831; 4740 9,217). Script RNG rows 3034 .. 3099 (j1-381): the first differences are
+  joiner-only fight.attack.object.* handler rows from 3038, decoded from the stack key's detail (lockstep_mix is invertible: detail
+  = mix((keyword << 32) ^ mix(saved ID of the first object parameter)); md_keywords.csv names the keyword) as event_gravidar_has_scanned
+  (1286) of the pilot's own ship. Gravidar post rows with native_gate_trace_window 3034 .. 3099 (j1-383; without the window the
+  probe logs rows at stride ticks only): the joiner alone drops 0x95f9a from the sets of 0x881c1 (3037), 0x9c0b7 (3047), 0x9e678
+  (3068) and three more (3078), and the contacts of observer 0x74ef1 (3057). 0x95f9a, a miner in travel mode at attention 5, has a
+  settled published pose (both views equal) 33 km behind its live one on the session; the joiner's load published the live pose
+  and the restore after T+1 takes attention < 3 only. Every joiner-only drop involves a settled object at attention 3 .. 5
+  (contacts 0x95f9a, 0x8fbb8; observers 0x74ef1, 0x80fc5). GRAVP settled (32f42f73, opt-in native_gate_join_gravp_settled): the
+  restore also takes a settled GRAVP object and every VIEWP object below attention 6 (j1-385: gravp_settled=1:570, the joiner-only
+  drops and has_scanned handlers of 3037 .. 3093 gone; the census unchanged). x4mods-67's in-window late join (w1z200) parts on
+  the same miner at 3180.
+- The escorts' own cause (j1-385 rows at 3092): the carrier's defence NPC 0x123675 gets event_object_signalled (1408), the
+  'blockingdockapproach cleared' handler of order.fight.escort that all nine escort pilots hold; the first handler to run takes
+  the dock slot and docks. Delivery order: session cf8, c14, cbf, b30, bdb, b69, d31, ba2, c4d; joiner b30, b69, ba2, bdb, c14,
+  c4d, cbf, cf8, d31 (ascending: the load's). The listeners: an event source keeps at +0x28 a vector of 0x28-byte entries {int
+  type; vector<listener *>} sorted by type (0x999ae0); 0x999120 appends a listener if absent, DeliverEvent 0x99c470 collects the
+  vector in order (the source first when its vt 0x11b8 says it listens to itself) and calls each still registered listener's vt[4]
+  (0x998700: the event's Dispatch, for ObjectSignalled 0x9cb930 -> the listener's slot 0xbb0). AIScriptContext and
+  AICallStackContext are listeners themselves (their slot 0xbb0 0xcb7590). AddScriptListener 0xc9d0e0 also keeps a tree at +0x50
+  (type -> listener) and the object's sources at +0x38. So delivery follows registration order, which the session built over time
+  and the joiner's load rebuilt in its own order ("listener registration order", the package's "not covered" list). JOIN_LSTN
+  (7ba558d2, diagnostic with JOIN_WATCH) dumps a watched object's vectors and tree; next LSTN, the session's listener order per
+  (source, type) by owner and script, the joiner's permuted to it at the admission.
+- LSTN (3bf221ab, section 79, opt-in native_gate_join_lstn) [F: j1-386 .. j1-397, queue-hj316 .. queue-hj327.sh]. j1-386: the
+  NPC's type-306 vector holds the ten AICallStackContexts (its own and the nine escorts') in registration order on the session,
+  ascending on the joiner. j1-387: lstn=1:48900:14708:34188:4:36:0 (14,708 of 48,900 vectors written; 226,441 records, about 9 MB);
+  census T+1 0, 3060 0, 3120 0 (the escorts equal), 3300 6, 3600 2,430, 4740 8,941. Unmapped listeners (left in their slots):
+  Scripts::ScriptGroupRef 39,143, MD::Cue 856. x4mods-67's SRCS (section 81) moves a script context registered on another
+  source on each side (the session keeps a context on its old sector after a jump: J1's 0x932e0 on sector 0x44 at 3293,
+  0x7a8e1/0x7a903 on 0x729 at 3298, joiner-only handlers without draws).
+- The J1 late join after LSTN (j1-388 .. j1-397). Census every 60 ticks: 3180 3 (ShipLarges 0x6d9d3, 0x9cefb, 0x9d2ec: x4mods-67's),
+  3240 3, 3300 6, 3360 122 in 80+ zones (1 .. 6 objects each), then 711, 1,251, 1,888, 2,430. The 3300 -> 3360 jump is the job
+  engine at 3318: the "job ship activated" cues fire 5 times on the session, 3 on the joiner (j1-389); JOIN_JOBCNT (j1-390): every
+  job's active and waiting ships equal at 3317; the queue after the same first spawn holds 4 linked ships on the session, 2 on the
+  joiner, as J1@633's 902 before CODE: the quotas draw from the first spawned ship's code. JOIN_SHIPCODE at 3317: the four ships
+  created after T have other codes on the joiner (the 492 others equal, the seeds equal). JOIN_CODEW (8760b0e3: the code counter's
+  changes 2917 .. 3317, j1-391): the joiner draws one code more at 3093. At 3093 the tug 0x9c691 (pilot 0x9c696, order.salvage.routine
+  the same PC range 0xc2 .. 0x11c on both sides, 18 draws against 24) spawns a U::Recyclable on the joiner alone (created
+  800c158da3fd3a1d, zone 0x21fd6, sector 0x6b7; recyclables 300 against 301 from 3120). find_recyclable_with_yield_in_sector is
+  Scripts::FindRegionObjectWithYieldInSectorAction (execute 0xbf5f80): per region of the sector 0x7680a0 (the region's object list
+  +0x2a0, runtime IDs of Recyclables (isa 0x49) passing the tow/dismantle tests, by distance through 0x3dde10's published pose,
+  then its fields +0x288 through 0xedd0c0: each field's spawned-object list +0x90, node +0x10 the object), at sector attention 5
+  or more also the RegionManager store 0xeee270; with none found the spawn 0x7884a0, then 0x794700 adds it. Ruled out by dumps:
+  the store (JOIN_RSTORE b62a98b2/a6b58ffd: empty after the load, 34 equal cells at T+1 and 3092, none of sector 0x6b7), region
+  0x6b3's own list (JOIN_RGNOBJ e246cc40: empty on the session, 97 fields), zone 0x21fd6's two recyclables' views (j1-396: cached
+  parent, poses and attention 2 equal on both sides). Open: the fields' +0x90 lists (the recyclables hold no direct Region pointer,
+  JOIN_RECYF 5f9014a6; the joiner's JOIN_WATCH does not resolve region portables). j1-395 failed at the handoff
+  (session_done:state_queued): with a 159 MB package a session needs TICKS of T+60 or more.
+- The cause and FOBJ [F: j1-398 .. j1-401]. JOIN_RGNOBJ with the field lists (95d2ef5f; the joiner's watch now takes the session's
+  runtime ID for a portable its identity table leaves out, the load keeping saved IDs): region 0x6b3's fields 36, 42, 43 and 49
+  hold one spawned object each on the session (f42 and f49 zone 0x21fd6's two recyclables), every list is empty on the joiner at
+  T, T+1, T+2. A region field (U::Region +0x288) keeps the objects it spawned in a std::list at +0x90 (sentinel; node +0 next,
+  +8 prev, +0x10 the object; size +0x98; the field constructor 0xedac40 makes the sentinel through SMem::Allocate 0x14b7140); the
+  spawn is the field's slot 21; a load leaves the lists empty. FOBJ (1202b2f7, section 82, opt-in native_gate_join_fobj, golden
+  bd920263): the saver records every list (region portable, field index, place, object portable), the joiner appends the session's
+  objects to an empty list and counts any other. j1-400: the joiner lane b5 failed to start (an Access-denied rename in its
+  game-view, transient). j1-401 (defaults + gravp_settled + LSTN + SRCS + FOBJ): fobj=1:6:6:0:0:0:6, the code counter equal at
+  3317, census T+1 0, 3060 0, 3120 0, 3300 6, 3360 3, 3600 1, 4200 2 (before: 122, 2,430, 6,924), the rest large ships that part
+  and meet again (ShipLarge 0x9d2ec, XL 0x78889; x4mods-67's zone-change rotation family). SRCS (x4mods-67, section 81, j1-398):
+  36 contexts moved, lstn partial 36 -> 7, the census unchanged. Next: the T=633 regression with the opt-ins, then the defaults.
+- The defaults [F: j1-402 .. j1-405; x4mods-67's w1z215 .. w1z220]. J1@633 with gravp_settled, LSTN, UNDK, SRCS and FOBJ (j1-402):
+  verdict equal 633 .. 5999, census 0 at 900 .. 5940 (lstn 2,724 vectors written at T=633, srcs 2 moved). In window at T=633 the
+  five parted at 900 (w1z215: 25, 1,512 at 1740; a Xenon and Split fight at a cluster_408 gatezone); the bisect named gravp_settled
+  (w1z216/w1z219 bad, w1z217/w1z218 clean): objects of attention 3 .. 5 the engine republishes itself soon after the join, which the
+  restore through T+10 took for the load's publication. acd85a21: those entries restored after T+1 only; w1z220 0 at 900 and 1740,
+  j1-404 the late join as j1-401. Every late-join fix is a default (smoke 04b41dcd: WARP, PORD, ATTN set, ARES, UNDK, SRCS, FOBJ,
+  LSTN, gravp_settled). The late join with the defaults alone (j1-405, to 9000): 3600 1, 4800 2, 6000 1, 7200 2, 8400 2, 8940 2,
+  the large-ship family only (ShipLarge 0x9d2ec to 4800; XL 0x78889 travelling, and from 7200 a created zone on its way).
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9

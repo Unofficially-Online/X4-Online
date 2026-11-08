@@ -279,7 +279,7 @@ class SpecTests(unittest.TestCase):
                         ((c, 'war_start', 2, 'coop', {2: 'station_start'}), 'slot 2: start station_start is class b'),
                         ((c, 'war_start', 2, 'coop', {1: 'beta_start'}), 'slot 1 plays the session base start war_start'),
                         ((c, 'war_start', 2, 'coop', {2: 'alpha_start'}), 'parts inventory, reputation'),
-                        ((c, 'war_start', 5, 'coop', {}), '2..4 players'),
+                        ((c, 'war_start', 9, 'coop', {}), '2..8 players'),
                         ((c, 'war_start', 2, 'coop', {}, {2: 'inventory'}), 'slot 2 has no per-player start')]
             for call, text in refusals:
                 with self.subTest(text=text), self.assertRaises(session_start.SessionError) as caught:

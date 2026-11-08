@@ -250,8 +250,8 @@ static unsigned ptrace_scene_of(const unsigned char *system) {
         unsigned char *scene=NULL,*owned=NULL;
         if(created_read(image+ptrace_scenes[i],&scene,8) && scene && created_read(scene+0x20,&owned,8) && owned==system) return i;
     }
-    /* native_gate_view_scenes: C and D; 3 stays "none of the known". */
-    for(unsigned i=0;i<2u;i++) {
+    /* native_gate_view_scenes: C, D (E..) as 4, 5 (6..); 3 stays "none of the known". */
+    for(unsigned i=0;i<VSC_EXTRA;i++) {
         unsigned char *owned=NULL;
         if(vsc_extra[i] && created_read((unsigned char*)vsc_extra[i]+0x20,&owned,8) && owned==system) return 4u+i;
     }

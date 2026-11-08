@@ -30,7 +30,8 @@ static unsigned contact_actor(void *body) {
     for(unsigned i=0;i<ACTOR_CAPACITY;i++) if(component==actor_components[i] && id==actor_ids[i]) return i+1;
     return 0;
 }
-static void *volatile vsc_extra[2]; /* native_gate_view_scenes: scenes C and D (lockstep_view_scenes.h) */
+#define VSC_EXTRA 6u   /* VIEW_MAX - 2: the new scenes C, D, E.. (lockstep_view_scenes.h checks it) */
+static void *volatile vsc_extra[VSC_EXTRA]; /* native_gate_view_scenes: scenes C, D (E..) (lockstep_view_scenes.h) */
 static int contact_body_read(void *body,contact_body *out) {
     void *record,*component,*type,*shape,*shape_type,*motion,*holder,*scene,*known;
     static const unsigned scene_rvas[3]={0x38f0748u,0x38f0740u,0x38f0738u};
@@ -54,7 +55,7 @@ static int contact_body_read(void *body,contact_body *out) {
         if(out->scene!=3) return 0;
         out->scene=i;
     }
-    for(unsigned i=0;i<2u;i++) if(vsc_extra[i] && vsc_extra[i]==scene) out->scene=4u+i;
+    for(unsigned i=0;i<VSC_EXTRA;i++) if(vsc_extra[i] && vsc_extra[i]==scene) out->scene=4u+i;
     if(out->scene==3 || out->body_type>1 || out->motion_type>2) return 0;
     if((uintptr_t)type<(uintptr_t)image || (uintptr_t)type>=(uintptr_t)(image+0x6fa9000) ||
        (uintptr_t)shape_type<(uintptr_t)image || (uintptr_t)shape_type>=(uintptr_t)(image+0x6fa9000)) return 0;

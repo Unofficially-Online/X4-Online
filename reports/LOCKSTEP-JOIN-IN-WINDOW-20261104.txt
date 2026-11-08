@@ -1129,3 +1129,167 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   equal target and path, its fighter 99da1 retargets at 3180. Local: the container pilot 717c0 undocks at 3116 on the session,
   3117 on the joiner (U::Path::UndockPathBehaviour 0x2c4e0b0, 0xe0 bytes, base ctor 0xed2a10: about 124 bytes of state, more
   than STEER's 96 per behaviour; deferred).
+- The post rows in the debug log are a sample (the session's 14,675 rows against changes=127,345): the counters differ before
+  3180 (3060..3120: +3968 changes on the session, +4029 on the joiner). w1z201 (+ gravp_settled, x4mods-28's 32f42f73, merged
+  74985d12): gravp_settled=1:638, the counters within 1 of the session's (3060..3120 +3969, 3120..3180 equal), the census as
+  without (T+1 4, 3060 5, 3120 6, 3180 18, 3240 30).
+- w1z202 (+ LSTN, x4mods-28's 3bf221ab, section 79, merged 0c72acc0): lstn=1:50189:18864 (18,864 listener groups reordered);
+  census T+1 4, 3060 5, 3120 6, 3180 16, 3240 28: a small gain in window (J1's late join: 3120 3 -> 0, j1-387). The first
+  script differences after 3060: 0x9327c's move.gate stack hears event_object_signalled at 3061 on the session, at 3074 on the
+  joiner; 0xa8abb's move.generic at 3065 on the session only; the container pilot 717b0 undocks at 3071 on the joiner only.
+  The Split destroyer 99d18 (attention 2, Linear) is bit-equal through 3134 with every watched field; at 3135 it changes zone
+  0x920 -> 0x844 on both sides and the re-parented pose differs by 1 ulp in a rotation lane (ax0.z -0.330567 / -0.330568): the
+  zone-change transform (x4mods-28's warp exit lanes are the same family).
+- WARP is a join default (x4mods-28, 2d47f110); gravp_settled and LSTN stay opt-in.
+- w1z203 (JOIN_WATCHRAW on the zones 0x920 and 0x844): after T+1 zone 0x844 differs in four words only, +0x3a0 a pointer on
+  the session and null on the joiner (GetSafePos's zone list [zone+0x3a0]/[+0x3a8], 0x85dd00, equal at T=633 in w1z155: built
+  at a process's first use) and +0x3f0 (as a double 1800.0 on the session, 1800.0326 on the joiner); zone 0x920 the same and
+  +0x3c0 (a pointer, null on the joiner), +0x3e0 (0x10 against 8). Zone slot 15 (0x839de0) uses +0x3e0/+0x3e8/+0x3f0 as a vector,
+  which 1800.0 does not fit: +0x3f0 not placed yet. Next: what builds the zone list and writes +0x3f0 (a ZONE carry).
+- w1z204 (every fix: the join defaults + gravp_settled + LSTN, to 3600): 3240 28, 3300 32, 3360 39, 3420 45, 3480 52, 3540 62;
+  no jump ten seconds after T (J1's late join j1-388/389: 3300 6, 3360 122, a job engine activating five job ships on the
+  session and three on the joiner at 3318, x4mods-28), the one-sided objects still the 7/1 dead tempzones. The destroyer's
+  zone change at 3135 differs by 1..8 ulps in seven rotation lanes with the position bit-equal: the composition, not a safe
+  position; PropagateCacheFlags 0x3d46b0(object, view, flags) works on the view caches, so a stale input would be the zones'
+  published views (the load published them from its lanes, before POSE's writes): not yet tested.
+- w1z205 (JOIN_WATCHRAW beh=: a steering model's active behaviour, its class and first 0x100 bytes, on the four containers apart
+  at T+1): the session's U::Path::UndockPathBehaviour is mid-undock (+0x18 an ID, +0x28 and +0x90 progress, +0x30 300, the
+  embedded objects' vtables +0x38 and +0x98, two vectors +0x40/+0x50, two transforms +0x60/+0xa0), the joiner's as constructed
+  (+0x24 -1, +0x30 100, +0x38/+0x98 0, identity transforms): the load builds the behaviour afresh and the undock starts over.
+  +0xd8 is a heap pointer on both sides.
+- UNDK (package v13 section 80, opt-in native_gate_join_undk): per steering Agent whose active behaviour is of that class, the
+  bytes +0x10 .. +0xd7, the ID +0x18 as a portable, the two vtables as image RVAs; the admission writes them after STEER into
+  the joiner's behaviour of the same class (+0xd8 stays the joiner's). Status undk=on:written:equal:missing:unmapped undk_cap=.
+- The move.gate signal of w1z202 (0x9327c at 3061 / 3074) is one listener on another source on each side: the pilot 0x9327c
+  (ship 0x93277 in zone 0x3d, sector 0x37 at T+1 on both sides) hears event_object_signalled of sector 0x26 at 3061 on the
+  session (17 listeners, outermost) and not on the joiner (the other 16 equal), and that of sector 0x37 at 3074 on the joiner
+  only (nested in the signaller). The session's handler stays registered on the sector of before its gate jump, the joiner's
+  load registers it on the current one: LSTN orders within a source (w1z205: lstn missing 5, partial 57) and does not move a
+  listener between sources (to x4mods-28, LSTN's owner).
+- A listener (AIScriptContext, AICallStackContext, a component) keeps the objects it listens on at +0x38..+0x48: AddSource
+  0xc9ce30(listener, source, reserve, force) appends one and registers the listener there for the fixed types 0xed and 0x1da
+  (0x52 on a source of class 0x2c) and every type of its tree +0x50; RemoveSource 0xc9d070 erases it and drops the listener from
+  each of the source's vectors (0x999ef0); AddScriptListener 0xc9d0e0 adds a type on every source the listener has. SRCS
+  (package v13 section 81, opt-in native_gate_join_srcs): each keyed listener's sources by portable ID; the joiner removes the
+  ones the session's lacks and adds the ones it lacks through that pair, before LSTN orders the vectors (both pinned). Status
+  srcs=on:contexts:added:removed:equal:missing:dup:unmapped. The JOIN_LSTN dump prints each listener's own sources ({..}, '!'
+  where the dumped source is not among them).
+- w1z206 failed at the package check (JOIN_DRIVER files_package_layout): its DLL (build-undk1) predates SRCS, which the tree's
+  join reader then required for version 13; a queued run's DLL must be built from the tree's commit at its start. Rerun as
+  w1z206b (build-srcs1, SRCS off; defaults + gravp_settled + LSTN + UNDK): undk=1:3:0:0:0 (three behaviours written), census
+  T+1 1 (was 4), 3060 4, 3120 6, 3180 16 (w1z202/w1z204: 4, 5, 6, 16). The three containers re-part by 3060 (717ab, 717db)
+  and 3120 (717bb). The fourth, 717eb, has no steering behaviour on either side (beh=-): at T+1 its NavigationController
+  (0x2c51158) holds state at +0xf0..+0x1ff on the session (+0xf0 a position with w 1, +0x128 two floats, small counters,
+  heap pointers) that the joiner's lacks; NAV carries the controller's +0xc0..+0xd8 and its pathing banks only.
+- WORLD_STATIC at 3034 (w1z206b): 50,298 rows on each side; every zone, sector and cluster equal (zones 0x920 and 0x844
+  included); the ships' published poses equal across the flipped view parity (the session's current view 0 is the joiner's
+  view 1 for every ship). The destroyer's zone change at 3135 does not read a differing published zone pose.
+- w1z207 (w1z206b + SRCS, sectors 0x26/0x37 watched): census as w1z206b at every tick, srcs_cap=0: the saver recorded no
+  listener. Collecting every listener entry whole (a listener repeats once per event type in each vector of a source) overran
+  JOIN_MAX_RECORDS and the capture gave up; the listeners are now collected once each through a pointer set, and SRCS keeps
+  the script contexts (kinds 1 and 2; components follow the component tree).
+- SRCS on the real bookkeeping: w1z207's JOIN_LSTN dumps show AddSource's +0x38 empty (or not a vector) for every script
+  listener on both sides; the pilot 0x9327c (an AICallStackContext) sits in sector 0x26's ObjectSignalled (306) vector on the
+  session (17 listeners) and in 0x37's on the joiner (9 against the session's 8). A listener's own list of sources is +0x10:
+  {begin, end, cap} of 0x50-byte entries {source, a 0x232-type bit set}, sorted by source; 0x999120 appends a listener to a
+  source's type vector and sets the type in its entry (0x998720), 0x999ef0 drops a listener from a source (0x998a80 its entry),
+  0x998b20 unregisters it from all. SRCS now records each keyed script context's keyed sources from that list; the joiner moves
+  a context whose sources differ by one on each side: registers it on the session's source for every type of its entry for its
+  own (the refusal slot +0x11b0, the flush 0x99abe0, 0x999ae0 with create, 0x999120), then drops it from its own (0x999ef0);
+  pins for those four replace AddSource/RemoveSource. Same record format and golden.
+- w1z209 (build-srcs3, f77c079c: UNDK + SRCS on +0x10, sectors 0x26/0x37 watched): the saver recorded 91,548 sources;
+  srcs=1:38458:43:43:38374:0:0:41 (43 contexts moved, one type each; 41 left with other differences). The pilot 0x9327c
+  moved: from T+1 sector 0x26's ObjectSignalled vector holds 17 listeners and 0x37's 8 on both sides, in the same order (LSTN
+  after the move). The census is w1z206b's at every capture (T+1 1, 3060 4, 3120 6, 3180 16): no divergence through 3180
+  starts at a moved listener. The containers' NavigationController is 0xf0 bytes (operator new in 0x6e0160): the 0x200-byte
+  JOIN_WATCHRAW mov block reads past it into the heap (text of the gate's own rows on the session); inside it 717eb differs at
+  T+1 in the cached transform +0x60 (about 1.1 km in x), the cursor +0xc8 and +0xcc/+0xdc/+0xe0; the census hashes the
+  controller's pathing banks (lockstep_world_nav.h), which NAV writes: next, w1z210 with the containers in the world hash
+  watch for the decoded fields.
+- w1z210 (the containers in the world hash watch, to 3120): T+1 1 (717eb), 3060 4 (717ab, 717db, 717eb, 9d9fd). The decoded
+  fields: 717eb at T+1 differs in its pathing banks only, the read bank's position (session (27870.0, 112.0, 36668.9), the T
+  position plus velocity x dt; joiner (27873.8, 111.4, 36678.4), about the T position) and velocity, the other bank on the
+  joiner a stale (23379, 111, 34610) like its NavigationController's cached transform. 717ab/717db part by 3060 in position
+  (3 m, 1 m) and heading. Their UndockPathBehaviour after UNDK: 717ab equal at T+1 and T+2; on 717bb +0x38 is the float
+  -13545.0 and +0x9c -1.0 (no vtables), which UNDK's RVA translation wrote as 0, and +0xd8 (past the class's fields, nothing
+  reads it in the class code) differs freely. Fix: +0x38/+0x98 as RVAs only when they hold image pointers, else raw (flags
+  2/4), a heap pointer the joiner keeps (8/16). The beh= dump names another flight model (-m<vtable>).
+- w1z211 (build-undk2, de156130): census as before (T+1 1, 3060 4, 3120 6). 717ab's undock behaviour equal at T+1 and T+2;
+  717bb's and 717db's still part at +0x38 (the floats 9117.2 and -29327.75 over a zero high word: the heap-pointer test took
+  them, the joiner's 0 kept; a heap pointer is now an aligned value above 4 GB). 717eb flies a SplineFlightControlModel
+  (0x2c4f480): its T+1 split is the spline model's, not the undock. 717ab parts by 3060 with an equal behaviour: next, the
+  per-tick motion watch on the four.
+- w1z212 (build-undk3, 457e7aa8, + the per-tick motion watch on the four containers): census T+1 1, 3060 4. Per tick: 717bb
+  equal through 3070 (the heap-pointer test fixed its +0x38); 717ab and 717db equal through 3053 and part at 3054 in their pose
+  only (cur, cache; target, path, model, agent equal), when they come near 717eb (same shipyard zone); 717eb parts at T+1: its
+  SplineFlightControlModel did not step on the joiner (the spline parameter 0.1012, its value at T, against the session's
+  0.1026; the read bank's position the T position; the model's +0xa8 8 on the session, 0 on the joiner), and the joiner's other
+  bank and controller cache hold a stale (28720, 111.4, 41721). The session's Agent had a full update at T+1, the joiner's not:
+  the update cadence of a container launched shortly before T. Next: the trace window 3033..3058 for every tick's full rows.
+- w1z213 (build-fobj1 = 1202b2f7 with x4mods-28's FOBJ, off; the trace window 3033..3058 gives every tick's full motion rows):
+  717eb on the joiner runs exactly one tick behind the session from T+1 on (its spline parameter and position at tick t are the
+  session's at t-1: 0.10119 at 3034 against the session's 0.10118 at 3033, and both advance 0.0014 a tick after): its first step
+  after the admission moved by about 0.7 % of a frame. The model's words +0x70..+0xdf are equal but +0xa8 (the second deque's map
+  size, 8 against 0 with both deques empty: SPLM skips the deques, harmless). It is one of seven spline ships without a motion
+  solver on either side (JOIN_T1 rows on the joiner only: 6f1e7, 717eb, 7a8dc, 7add1, 89eb7, 9c1c7, 9e69a), so SOLVER is not it; the
+  spline step 0xeb7230 takes its dt as an argument (the third, a float) from the Agent update; PATH is clean (9849 members, none
+  pending or unplaced). Next: JOIN_BP at 0xeb7230 for the caller that computes the dt (w1z214).
+- w1z214 (JOIN_BP at the spline step 0xeb7230): the joiner died with STATUS_BREAKPOINT; the step runs on the pathing pass's worker
+  threads and a second thread's hit of the same int3 fell through the handler (fixed, 6a08eae3). w1z214b (build-bp2): hit at 3034
+  (rcx the model, rdx the write bank, r8 0, r9 1); the chain's .text words (e8d9e3, eb7230, e901d7, e8f250, ...) include stale
+  ones (0xe8d9e3 follows a call of 0xeab2c0, a float getter), so the dt's caller is not placed yet.
+- w1z215 (build-fobj1, the in-window regression at T=633 to 6000 with the defaults + gravp_settled + LSTN + UNDK + SRCS + FOBJ,
+  x4mods-28's J1 at 633 with the same set equal 633..5999): not clean. Census T+1 1 (w1z199's timing artifact), 900 25 (a
+  Xenon/Split fight at a gatezone in cluster_408 sector002: fighters, a corvette, frigates, a heavy fighter's weapons' health),
+  1800 2,427, 3000 9,753, 5940 10,730 (w1z199, the defaults alone: 0 to 5940). lstn=1:47767:3716:44051:0:3:0 (J1 at 633: 2,724
+  reordered), srcs=1:38542:3:3:38535:0:0:4, gravp_settled=1:560, undk and fobj nothing. The promotion waits: w1z216 (gravp_settled
+  + LSTN) and w1z217 (UNDK + SRCS + FOBJ) bisect it.
+- w1z216 (T=633, defaults + gravp_settled + LSTN): 900 25, 1740 1,512; w1z217 (defaults + UNDK + SRCS + FOBJ): 900 0, 1740 0.
+  UNDK, SRCS and FOBJ join JOIN_DEFAULT_ON (with x4mods-28's j1-401: the J1 late join to 4220, 3300 6 .. 4200 2; j1-402: J1 at
+  633 equal 633..5999; j1-403: the J1 late join to 6000, 1..2 large ships through 5940). gravp_settled and LSTN stay opt-in: w1z218
+  (LSTN alone) and w1z219 (gravp_settled alone) split them.
+- w1z218 (T=633 to 1800, the new defaults + LSTN): 900 0, 1740 0 (lstn=1:47767:3721:44046:0:3:0); w1z219 (the new defaults +
+  gravp_settled): 900 25, 1740 1,512, as w1z216: gravp_settled breaks the in-window join at T=633 (x4mods-28's reading: it
+  restores T's pose over the first publication through T+10 for settled objects at attention 3..5, and near a fight the engine
+  republishes some of them itself in that time). LSTN joins JOIN_DEFAULT_ON; gravp_settled stays opt-in (x4mods-28).
+- w1z220 (build-gs2 = 60407d9b with x4mods-28's acd85a21: GRAVP settled restores the attention 3..5 entries at T+1 only; T=633
+  to 1800, the defaults + gravp_settled): 900 0, 1740 0 (gravp_settled=1:560); j1-404 (the J1 late join, same build) as j1-401:
+  3060 0, 3120 0, 3300 6, 4200 2. gravp_settled joins JOIN_DEFAULT_ON: all six late-join fixes (UNDK, SRCS, FOBJ, LSTN,
+  gravp_settled with WARP/attn_set/ARES/PORD before them) are defaults.
+- The gate hooks the spline update itself (lockstep_spline.h, the vtable slot 0x2c4f4f0: (model, slot, dt, time, cheap, player)),
+  so JOIN_BP's chain had no .text return address to show. w1z221 (e97ba831: native_gate_motion_watch_spline_every, a spline row
+  on every watched update): the session's 717eb is updated every tick, never cheap; the joiner's rows start at 3035 (the watch
+  learns the Agent pointer after the first pass, so 3034 has no row) one step behind. Its Agent's command block +0x6d8..+0x72c
+  is zero on the joiner (the session's per-axis limits 551.98, 99.6, 275.99, 437.29, 291.53, 501.75) and the direction tables
+  +0x980.. other: AGCB carried that block for pilot slot ships only. 36821c3c/d24042f3: the saver records every nav ship's block
+  (the first build recorded none: the capture's NAV branch continues before AGCB), the joiner writes them with opt-in
+  native_gate_join_agcb_nav. w1z223: agcb=9849:0:0 (every block differed), no crash, the census unchanged (T+1 1, 3060 4, 3120
+  6), 717eb's first step after the admission 40 % of a frame (progress 0.10174; without 0.10119; the session 0.10258). w1z224
+  (717eb watched): after the block the Agent still differs at +0x4dc (0.5 / 0), +0x6d8 (-0.057 / 0) and +0xf7c (211.17 / 0), zero
+  on the joiner through T+2 (+0xf88/+0xf8c are the 0xf90-byte Agent's padding, which the travel snapshot uses: noise); no
+  pathing code reads them directly. agcb_nav stays opt-in.
+- w1z225 (the in-window late join on the defaults alone, every late-join fix among them, to 3600): T+1 1, 3060 4, 3120 6,
+  3180 16, 3240 27, 3300 31, 3360 38, 3420 44, 3480 51, 3540 61, motion only: w1z204's curve, linear (about 6 a minute), no
+  cascade. At 3240: the Split destroyer 99d18's escorts in zone 0x844 (15 fighters; 99d18 changes zone 0x920 -> 0x844 at 3135),
+  six Paranid destroyers in 0x621 (ab36a changes zone 0xd5 -> 0x621 between 3120 and 3180, its first divergence), a Split L
+  miner in 0x920, the four containers, a scout: the large ships' re-parent family of x4mods-28's J1 late join. The zones'
+  transforms are equal (a zone's StaticMovementController 0x2a34b38: the getter 0x10ba20 reads +0x10..+0x4f, which POSE
+  carries; its +0x58.. differs, unread there). A lead: WORLD_STATIC at 3034 (w1z206b) had the session's two views of about
+  5,100 ships equal and the joiner's current view (index 1, flipped) a third pose; code that reads the current view's pose of
+  a moving ship would read other data on the joiner. w1z226 watches 99d18 and both zones every tick through 3140.
+- w1z226 (99d18 and the zones 0x920/0x844 watched every tick T..3140; the session lane hit its timeout at the end): 99d18's
+  published views (parents, positions) are equal from T+2 through the zone change and after (at T+1 the joiner's view 1 holds
+  a stale position for one tick); its NavigationController's cached transform +0x60..+0x9f is bit-equal through 3134 and from
+  3135, the zone change, 1..2 ulps apart in lanes 4, 6, 8, 10, 12..14. The zones' controller transforms (+0x10..+0x4f) are equal;
+  their StaticMovementControllers differ past +0x58 (the session's: zeros, 50000 x4 at +0xd0, 3794.5/35096.9 at +0x110/+0x118;
+  the joiner's: a one-element vector and list heads), and both zones' +0x3e0..+0x3f8 (a counted list and a time: 1800.0 against
+  1800.033). At the zone change the engine hands the Linear model a relative transform (its vtable slot 7, 0xe84ea0, re-expresses
+  the plan's +0x70 by the matrix in rdx): next, that matrix for the watched ships on both sides, to tell the zones' transforms
+  as the re-parent sees them (a lazily built world-transform cache in the zone's controller?) from the ship's own input.
+- w1z227/w1z228 (cdde1d85/54361c6a: JOIN_RPRT, the Linear model's vtable slot 7 hooked, with a summary row; 99d18 in the join and
+  motion watch): the hook is installed and slot 7 runs (533 calls by 3143 over all linear models), never for 99d18: its zone
+  change does not re-express its plan through it. Per tick: 99d18 is updated every fifth tick (3126, 3131, 3136, equal through
+  3131); at 3135 its zone change rewrites both pathing banks and the controller cache (cur, prev, cache; parent and Agent change;
+  no new plan, model_ext unchanged), and both banks come out apart: the NavigationController's re-expression of its banks into
+  the new zone, from equal inputs. x4mods-28's J1 0x9d2ec (no zone change) parts at its first turning update after a new plan,
+  ulps in rotation with equal watched inputs: the same symptom on another path.

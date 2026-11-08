@@ -1215,6 +1215,9 @@ static uint64_t motion_spline_cmp_id[MOTION_WATCH_MAX][MOTION_SPLINE_CMP];
 static motion_spline_row_t *motion_spline_ring;
 static volatile LONG64 motion_spline_rows,motion_spline_misses;
 static unsigned motion_spline_armed;
+/* native_gate_motion_watch_spline_every (diagnostic): a row on every watched ship's spline update, not only with a request pending
+ * (its cheap flag and progress +0xd0 per update: w1z213's 717eb steps by almost nothing at T+1 on the joiner). */
+static int motion_spline_every;
 /* A published request's route: its list size and each segment's four control points (lanes 0-2), the request
  * transform +0x30..+0x70 (lanes 0-2), +0x70..+0xa6 (index, parameters, flags) and the result flags +0xac..+0xaf;
  * 0 when it does not read. */
@@ -1331,7 +1334,7 @@ static void motion_spline_end(void *model,spline_watch_t *w) {
     const uint32_t out=(uint32_t)(f.count>0xfffffffeULL?0xfffffffeu:f.count);
     const int consumed=w->count_in && (f.count<w->count_in || f.front!=motion_spline_front[i]);
     if(consumed) motion_spline_front[i]=NULL;
-    if(!w->count_in && !out) return;
+    if(!w->count_in && !out && !motion_spline_every) return;
     LONG64 index=InterlockedIncrement64(&motion_spline_rows)-1;motion_spline_row_t *r=&motion_spline_ring[(uint64_t)index%MOTION_SPLINE_RING];
     InterlockedExchange64(&r->ready,0);memset((unsigned char*)r+sizeof(r->ready),0,sizeof(*r)-sizeof(r->ready));
     r->tick=stats.issued;r->saved=motion_watch_saved[i];r->ordinal=w->ordinal;r->count_in=w->count_in;r->count_out=out;r->status=w->status;

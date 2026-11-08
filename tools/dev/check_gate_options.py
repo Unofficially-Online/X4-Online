@@ -659,7 +659,7 @@ HYBRID_KEYS = re.compile(r'(owners|tick|poses)\s*=\s*(\{[^{}]*\}|[^,{}]+)')
 
 
 def hybrid_rules(config_text, enabled):
-    """native_gate_hybrid = {owners={k,...}, tick=T, poses=P} (lockstep_hybrid.h, stop reason 187): owner slots 1..4
+    """native_gate_hybrid = {owners={k,...}, tick=T, poses=P} (lockstep_hybrid.h, stop reason 187): owner slots 1..8
     among the pilot slots, each once, T >= 2, P 0..5 (default 4); view points 'players', pilot slots and the protocol 3
     input wire (the 'hybrid' input section). The census filter needs native_gate_world_hash_stride (not required)."""
     value = lua_value(config_text, 'native_gate_hybrid')
@@ -671,9 +671,9 @@ def hybrid_rules(config_text, enabled):
     owners = [o.strip() for o in values.get('owners', '{}')[1:-1].split(',') if o.strip()] if 'owners' in values else []
     tick, poses = values.get('tick', ''), values.get('poses', '4')
     if (not found or rest or len(values) != len(found) or not owners or not all(o.isdigit() for o in owners) or
-            len(set(owners)) != len(owners) or any(not 1 <= int(o) <= 4 for o in owners) or
+            len(set(owners)) != len(owners) or any(not 1 <= int(o) <= 8 for o in owners) or
             not re.fullmatch(r'[0-9]{1,7}', tick) or int(tick) < 2 or not re.fullmatch(r'[0-5]', poses)):
-        return [dict(rule='native_gate_hybrid must be {owners={k,...},tick=T,poses=P}: owner slots 1..4 once each, T >= 2, P 0..5',
+        return [dict(rule='native_gate_hybrid must be {owners={k,...},tick=T,poses=P}: owner slots 1..8 once each, T >= 2, P 0..5',
                      bits=[value])]
     failures = []
     if (lua_value(config_text, 'native_gate_view_points') or '').strip('\'"') not in ('players', 'true'):
@@ -942,8 +942,8 @@ def probe_rules(config_text, enabled):
             failures.append(dict(rule='native_gate_world_health_ticks needs native_gate_world_hash_watch', bits=['native_gate_world_hash_watch']))
     for value in re.findall(r'X4LAN_CONFIG\.native_gate_viewpoint_standins\s*=\s*([^\s;]+)', config_text):
         if value in ('nil', 'false'): continue
-        if value not in ('2', '3', '4'):
-            failures.append(dict(rule='native_gate_viewpoint_standins must be 2, 3 or 4', bits=[value]))
+        if value not in ('2', '3', '4', '5', '6', '7', '8'):
+            failures.append(dict(rule='native_gate_viewpoint_standins must be 2..8 (VIEW_MAX)', bits=[value]))
         if not re.search(r"X4LAN_CONFIG\.native_gate_viewpoint_policy\s*=\s*['\"]sector['\"]", config_text):
             failures.append(dict(rule='native_gate_viewpoint_standins needs native_gate_viewpoint_policy', bits=['native_gate_viewpoint_policy']))
     if re.search(r'X4LAN_CONFIG\.native_gate_field_fill\s*=\s*(?!false\b|nil\b)\S', config_text) and \

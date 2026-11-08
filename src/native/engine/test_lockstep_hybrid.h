@@ -99,7 +99,7 @@ static void test_hybrid(void) {
     view_mode=VIEW_OBSERVE;assert(!hyb_arm(2,5,4));view_mode=VIEW_PLAYERS;
     stats.issued=3;assert(!hyb_arm(2,5,4));stats.issued=0;
     ui_thread=GetCurrentThreadId()+1;assert(!hyb_arm(2,5,4));ui_thread=GetCurrentThreadId();
-    assert(!hyb_arm(0,5,4) && !hyb_arm(16,5,4) && !hyb_arm(2,1,4) && !hyb_arm(2,5,6) && !hyb_arm(1.5,5,4) && !hyb_arm(NAN,5,4) && !hyb_armed);
+    assert(!hyb_arm(0,5,4) && !hyb_arm((double)(1u<<HYB_SLOTS),5,4) && !hyb_arm(2,1,4) && !hyb_arm(2,5,6) && !hyb_arm(1.5,5,4) && !hyb_arm(NAN,5,4) && !hyb_armed);
     stats.slot=0;assert(!hyb_arm(2,5,4));stats.slot=1;
     world_hash_after_item=test_hy_other_observer;assert(!hyb_arm(2,5,4));world_hash_after_item=NULL; /* another observer holds the capture */
     assert(hyb_arm(2,5,4) && hyb_arm(2,5,4) && !hyb_arm(2,6,4)); /* an identical rerun after a reload only */

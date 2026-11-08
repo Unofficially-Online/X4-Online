@@ -470,7 +470,7 @@
  * pass runs, else reports not restored. Pages are never freed. */
 #define RC_CUTSCENE 0x3d19900u
 #define RC_UNIVERSE 0x3d198f8u
-#define RC_PAGE_SIZE 0xa000u
+#define RC_PAGE_SIZE 0x16000u   /* 0xa000 for stand-ins 0..3, 0x3000 for each of 4..7 (RC_K_BLOCK) */
 #define RC_STUB_SIZE 0x2000u
 #define RC_STOP_REASON 165u /* 130 until 1 November 2026 (the runtime IDs'); docs/LOCKSTEP-REGISTRY.txt */
 #define RC_MANAGER 0x100u   /* stand-in cutscene manager on the page; +0xb0 its camera */
@@ -480,11 +480,15 @@
 #define RC_CAMERAS2 0x3000u /* two stand-in cameras at viewpoint 2 */
 #define RC_CAMERA_SIZE 0x1000u
 #define RC_SHADOW2 0x800u   /* second shadow universe; +0x230 viewpoint 2, +0x3d0 its stand-in camera */
-/* Stand-ins by index k: 0 view point 1, 1 view point 2, 2 and 3 the first view point of a third and a fourth sector
- * (native_gate_viewpoint_standins): their manager (+0xb0 the camera), shadow universe (+0x230, +0x3d0) and camera pair. */
-_Static_assert(VIEW_MAX==4u,"one stand-in per view point");
-static const unsigned rc_k_manager[VIEW_MAX]={RC_MANAGER,RC_MANAGER2,0x300u,0x5000u},rc_k_shadow[VIEW_MAX]={RC_SHADOW,RC_SHADOW2,0xc00u,0x5400u},
-    rc_k_cameras[VIEW_MAX]={RC_CAMERAS,RC_CAMERAS2,0x6000u,0x8000u};
+/* Stand-ins by index k: 0 view point 1, 1 view point 2, 2..7 the first view point of a third to an eighth sector
+ * (native_gate_viewpoint_standins): their manager (+0xb0 the camera), shadow universe (+0x230, +0x3d0) and camera pair.
+ * 0..3 keep their places in the first 0xa000 bytes; 4..7 (more than four players) follow, RC_K_BLOCK(k): the manager at
+ * +0, the shadow universe at +0x400 and the two cameras at +0x1000. */
+#define RC_K_BLOCK(k) (0xa000u+((k)-4u)*0x3000u)
+_Static_assert(VIEW_MAX==8u && RC_K_BLOCK(VIEW_MAX)==RC_PAGE_SIZE,"one stand-in per view point");
+static const unsigned rc_k_manager[VIEW_MAX]={RC_MANAGER,RC_MANAGER2,0x300u,0x5000u,RC_K_BLOCK(4),RC_K_BLOCK(5),RC_K_BLOCK(6),RC_K_BLOCK(7)},
+    rc_k_shadow[VIEW_MAX]={RC_SHADOW,RC_SHADOW2,0xc00u,0x5400u,RC_K_BLOCK(4)+0x400u,RC_K_BLOCK(5)+0x400u,RC_K_BLOCK(6)+0x400u,RC_K_BLOCK(7)+0x400u},
+    rc_k_cameras[VIEW_MAX]={RC_CAMERAS,RC_CAMERAS2,0x6000u,0x8000u,RC_K_BLOCK(4)+0x1000u,RC_K_BLOCK(5)+0x1000u,RC_K_BLOCK(6)+0x1000u,RC_K_BLOCK(7)+0x1000u};
 #define RC_THUNKS 0x700u    /* policy thunks on the stub page, RC_THUNK_SIZE apart */
 #define RC_JUMP_STUBS 0xd80u /* jump thunks (rc_jumps) on the stub page, 0x80 apart */
 #define RC_MINING_STOP 166u
@@ -830,8 +834,8 @@ static void *volatile *rc_shadow_player(void) {return (void *volatile *)(rc_page
 static void *volatile *rc_shadow_camera(void) {return (void *volatile *)(rc_page+RC_SHADOW+0x3d0);}
 static void *volatile *rc_manager2_camera(void) {return (void *volatile *)(rc_page+RC_MANAGER2+0xb0);}
 static void *volatile *rc_k_manager_camera(unsigned k) {return (void *volatile *)(rc_page+rc_k_manager[k]+0xb0);}
-/* Stand-ins 2..3 (k): the first view point of each sector neither view point 1 nor 2 is in, slot order, while
- * native_gate_viewpoint_standins allows (rc_standins_max, 2..4); rc_more of them are set. */
+/* Stand-ins 2..7 (k): the first view point of each sector neither view point 1 nor 2 is in, slot order, while
+ * native_gate_viewpoint_standins allows (rc_standins_max, 2..VIEW_MAX); rc_more of them are set. */
 static unsigned rc_standins_max=2u,rc_standins_armed,rc_k_next[VIEW_MAX];
 static volatile LONG rc_more;
 static void *volatile rc_k_sector[VIEW_MAX],*volatile rc_k_cluster[VIEW_MAX],*volatile rc_k_zone[VIEW_MAX];
@@ -972,7 +976,7 @@ static void rc_write_camera(unsigned char *camera,void *viewpoint) {
  * (+0x70 parents through the class test slot, the traffic object's zone), so
  * they are read directly here instead of through read_local's system call. */
 static int rc_object_two(void *object,unsigned kind) {return rc_object_k(object,kind)!=0;}
-/* The stand-in for the object's sector: 1 view point 2's, 2..3 a further one's, 0 view point 1 (or none). */
+/* The stand-in for the object's sector: 1 view point 2's, 2..7 a further one's, 0 view point 1 (or none). */
 static int rc_object_k(void *object,unsigned kind) {
     if(!object || !rc_two_sectors()) return 0;
     unsigned char *p=object;
@@ -1030,7 +1034,7 @@ static void rc_gtr(void *self,float out[16],double time,void *ancestor) {
     memcpy(out,identity,sizeof(identity));
     (rc_gtr_native?rc_gtr_native:(rc_gtr_fn)(void *)(image+0x3db8a0u))(self,out,time,ancestor,0);
 }
-/* The stand-in a camera belongs to (either buffer): 1..3, 0 for view point 1's or another. */
+/* The stand-in a camera belongs to (either buffer): 1..7, 0 for view point 1's or another. */
 static int rc_camera_k(const void *camera) {
     if(!rc_page || !camera) return 0;
     for(unsigned k=1;k<VIEW_MAX;k++)
@@ -1860,7 +1864,7 @@ static int rc_arm(int group) {
     if(group==RC_VIEW_SCENES) vsc_armed=1;
     rc_armed_groups|=1u<<group;rc_mode=RC_VIEW;rc_installed=1;rc_stage="armed";return 1;
 }
-/* native_gate_viewpoint_standins: how many view points the policy answers for (2..4), before the first frame. */
+/* native_gate_viewpoint_standins: how many view points the policy answers for (2..VIEW_MAX), before the first frame. */
 static int rc_standins_arm(unsigned n) {
     if(rc_standins_armed) return rc_standins_max==n; /* identical re-arm after the post-load UI reload */
     if(n<2u || n>VIEW_MAX || !rc_policy || !rc_installed || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
@@ -1923,7 +1927,7 @@ static int rc_frame_body(uint64_t tick,int full) {
         InterlockedExchangePointer(rc_manager2_camera(),camera2);rc_next2^=1;++rc_vp2_updates;
     }
     unsigned klass2;rc_vp2_key=id2?world_identity_key(id2,&klass2):0;rc_vp2_id=id2;
-    /* Stand-ins 2..3: the first view point of each further sector, while view point 2 is in a sector of its own. */
+    /* Stand-ins 2..7: the first view point of each further sector, while view point 2 is in a sector of its own. */
     unsigned more=0;
     if(rc_standins_max>2u && viewpoint2 && rc_vp2_sector && rc_vp2_sector!=rc_view_sector58) {
         for(unsigned i=1;i<view_count && i<VIEW_MAX && 2u+more<rc_standins_max;i++) {
