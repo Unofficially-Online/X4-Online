@@ -99,3 +99,49 @@ movement; their meaning remains unresolved and they are not masked as padding.
 Private evidence: motion-onset-audit.json, motion-onset-nav-key-audit.json,
 motion-onset-crossrun-fields.json and the motion-onset-step-audit / 
 motion-onset-nav-key-step-audit directories under .local/evidence/.
+
+Longer nav-key control and trader-script divergence
+--------------------------------------------------
+The reversed-launch-order 24000-tick control on clean source 6b3dcb5 and the
+same b53e4a7 binary fails. Its first full-world mismatch is again at 11520;
+the per-tick watch first differs at 11515 in the motion of 8b613. The three
+preceding watched ticks agree. At the first difference one peer has zero
+linear velocity while the other has a small nonzero velocity. Watch and
+detail bytes at 11520 reproduce their respective differing census leaves.
+The earlier 12000-tick nav-key pass therefore does not establish a fix.
+
+This control does not finish its requested duration. Both peers abort at
+14436 with WORLD_MOTION_ERROR stage=nav_owner_invalid. That receipt has no
+target identity, so it cannot identify which watch failed or prove that a
+ship died. There are 121 complete census captures through 14400 and 25744
+watch rows per peer through 14435, not the requested full-run coverage.
+Both report ABORT active=0 restored=1; the controller finds no owned process
+remaining and the same Steam process. Normal completion footers are absent.
+The overall result remains FAIL, independently of the useful earlier data.
+
+The retained script window 11360..11900 is internally complete: 69577 rows
+per peer, contiguous absolute indices 1517751..1587327, exact boundary
+cursors, and all 541 closed per-tick counts/keyset/drawset tallies match
+their exported rows. Every entered scope in that window has a row. This
+bounded evidence does not turn the aborted run into a passing test.
+
+The first matched keyed scope with different draw counts is at tick 11396:
+trade.find.free, saved owner 8b61b, outer Exec scope, PC 0x172..0x172. Its key,
+initial RNG word and caller word agree. One peer consumes 56 generator steps,
+the other 57; independent stepping reproduces both logged exit words. The
+snapshot explicitly assigns 8b61b to ship 8b613's aipilot post. At 11424 the
+scope membership/keyset differs; that missing call is not a matched PC-value
+difference. No matched-scope PC difference appears in the retained window.
+
+This ties an earlier script divergence to the pilot of the later diverging
+ship. It does not yet identify a differing trade-offer list or prove the
+origin of its inputs. Linux currently sorts due events but runs their native
+handlers on the caller's RNG word. Windows battle-snapshot defaults enable
+an independent RNG scope per delivery; its existing investigation describes
+related trader/offer failures. An opt-in Linux scope is the next controlled
+comparison. Native event type RVAs differ between platforms, so a Linux-only
+scope does not by itself establish Windows/Linux seed parity.
+
+Private evidence: nav-key-script-soak-partial-audit.json,
+nav-key-script-window-comparison-corrected.json, nav-key-script-first11396/,
+boron-trader-pilot-identity.json and trader-script-pcg-independent.json.
