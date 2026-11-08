@@ -107,8 +107,9 @@ Neither logging mode repairs a simulation divergence.
 The Linux-only `--world-rolling-slices 120 --world-log-mode hashes` experiment
 spreads the census across 120 ticks. It is off by default and requires
 created-identity capture, enabled by `--preset linux-core` or the explicit
-`--created-identities` option. At the beginning of each cycle, the native gate fixes a sorted cohort of imported and previously
-captured created identities. Tick by tick, it reads a disjoint range of that
+`--created-identities` option. At the beginning of each cycle, the native gate
+fixes a sorted cohort of imported and previously captured created identities.
+Tick by tick, it reads a disjoint range of that
 cohort; object pointers are resolved again at the sampling tick. Newly created
 objects enter at the next cycle boundary and can wait almost two cycles for
 their first state sample. Creation-event digests continue to run separately.
@@ -136,6 +137,33 @@ per-tick digest reports and rolling evidence remain enabled. Intermediate
 diagnostic status rows can be omitted, and failure counters monitored through
 those statuses may only be noticed on a written status tick or at stop. Use
 the default when an investigation needs the intermediate diagnostic rows.
+
+## Experimental ordered pathing
+
+The `linux-core` preset normally captures pathing snapshots. Adding
+`--travel-determinism` replaces that strategy with ordered, synchronous execution
+of the two pinned path-job dispatch sites. The runner refuses a configuration
+that explicitly enables both strategies. This experiment is off by default:
+it changes scheduler bookkeeping, and indirect scheduler readers and transitive
+thread-local effects are not fully established.
+
+For the measured low-stall diagnostic configuration, add these options to the
+bundle command above:
+
+```sh
+--travel-determinism --world-log-mode hashes --world-rolling-slices 120 \
+--status-stride 60 --probe-profile
+```
+
+The native adapter verifies the executable bodies and the complete owned jump
+stubs before activation. A runtime dispatch mismatch exits the disposable
+process with status 190; that is a failed run without a successful restoration
+claim. Retain the peer's cleanup evidence too. A successful run must retain both
+the main STOP and `TRAVEL_DETERMINISM_STOP` with restored hooks.
+
+Ordered pathing has passed a local 12000-tick rolling comparison, while an earlier
+snapshot-mode control diverged. This is bounded evidence in the sampled fields,
+not proof that all motion desyncs or cross-machine differences are fixed.
 
 See [the performance investigation](../reports/LOCKSTEP-LINUX-PERFORMANCE-20261108.txt)
 for measured intervals, retained failures and graphics findings.

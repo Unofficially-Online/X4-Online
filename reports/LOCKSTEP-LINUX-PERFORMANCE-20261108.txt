@@ -166,16 +166,19 @@ prove gameplay or cross-machine determinism. Earlier 8520/8640-tick motion
 failures remain open; a later diagnostic control passed 9000 ticks, so a short
 pass cannot be interpreted as a fix for that timing-sensitive divergence.
 
-The complete Python run after the changes discovered 1950 tests: 1923 passed,
-27 were skipped and none failed. The project's strict checker correctly exits
-nonzero for skips. An earlier intermediate run caught a transient test-header
-formatting error while that file was being edited; its failed log is retained.
-The clean rerun, rather than that intermediate result, describes the final tests.
-The remaining skipped checks are not counted as passes.
-Two of those skips were compiler-discovery configuration: after explicitly
-setting X4LAN_ZIG, the NAT module build in both gates and C container codec
-cross-check both passed in a focused rerun. The remaining 25 checks require
-unavailable reference files or separate validation prerequisites.
+The final Python run on source 5702d2e discovered 1956 tests: 1931 passed,
+25 were skipped and none failed. The project's strict checker correctly exits
+nonzero for skips. Those checks require unavailable reference files or separate
+validation prerequisites and are not counted as passes. An earlier intermediate
+run caught a transient test-header formatting error while that file was being
+edited; its failed log is retained. Two earlier compiler-discovery skips are
+resolved in the final run by explicitly setting X4LAN_ZIG.
+
+The final Linux gate checker on the same source passed all 155 Lua methods,
+29 synthetic scenarios, pinned executable-image checks and the existing
+canonical world fixture. Separate adversarial tests cover all four foreign
+agent-stub displacement bytes. These checks execute synthetic adapters and read
+the installed ELF image; they do not launch the native game or validate Windows.
 
 An independent, default-off Linux ordered-pathing experiment is also compiled
 into this candidate. Its first native attempt refused activation before any
@@ -256,8 +259,11 @@ these include snapshots and raw game data and must not be redistributed.
 Key comparisons: census-profile-comparison.json,
 log-mode-native-equivalence.json, census-accelerated-comparison.json,
 census-cached-comparison.json, census-rolling-comparison.json,
-full-refactor-native-equivalence.json, census-rolling-long-comparison.json
-and rolling-long-12000-independent-audit.json.
+full-refactor-native-equivalence.json, census-rolling-long-comparison.json,
+rolling-long-12000-independent-audit.json, census-thinned-rolling-comparison.json,
+thinned-rolling-long-independent-audit.json,
+census-ordered-thinned-long-comparison.json and
+ordered-thinned-12000-independent-audit.json.
 Bundles: linux-20261108-profile-full, linux-20261108-profile-hashes,
 linux-20261108-profile-accelerated, linux-20261108-profile-cached,
 linux-20261108-profile-rolling and linux-20261108-profile-full-refactor.
