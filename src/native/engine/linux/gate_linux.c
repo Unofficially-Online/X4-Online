@@ -71,6 +71,7 @@ static unsigned remote_port;
 static uint32_t relay_address;
 #include "lockstep_gate_common.h"
 #include "lockstep_tick.h"
+#include <sched.h>
 #include "lockstep_seed_core.h"
 #include "lockstep_tls.h"
 /* World identities (gate_world.h, included below). */
@@ -79,6 +80,17 @@ static int world_identity_owned(void);
 static void world_identity_seal(void);
 static volatile int64_t world_identity_failures;
 static int world_identity_installed;
+static void navmesh_post_restore(void);
+static int navmesh_post_check(void);
+static void navmesh_post_publish(unsigned phase, uint64_t epoch);
+static int navmesh_post_installed, navmesh_post_cleanup_uncertain;
+#define NAVMESH_POST_STOP_REASON 203u
+static void economy_rng_restore(void);
+static int economy_rng_check(void);
+static int economy_rng_installed, economy_rng_restored;
+static int economy_rng_cleanup_uncertain;
+#define ECONOMY_RNG_STOP_REASON 201u
+#define PATH_TRANSFORM_OBSERVER_STOP_REASON 202u
 /* Serial pathing and path determinism (gate_path.h, included below). */
 static void path_restore(void);
 static int path_owned(void);
@@ -101,6 +113,10 @@ static int wfire_installed,wfire_restored;
 static void erng_restore(void);
 static int erng_check(void);
 static int erng_installed,erng_restored;
+/* Shared Container build-event scheduling (gate_build_rng.h, included below). */
+static void linux_build_rng_restore(void);
+static int linux_build_rng_check(void);
+static int linux_build_rng_installed, linux_build_rng_restored;
 /* Spline routes joined (gate_spline_join.h, included below). */
 static void lsj_restore(void);
 static int lsj_check(void);
@@ -152,6 +168,9 @@ static int boot_hold_armed,boot_hold_restored;
 static volatile int64_t boot_hold_failures;
 /* Event order (gate_event_order.h, included below). */
 static void event_order_restore(void);
+static void linux_event_rng_stop(void);
+static int linux_event_rng_check(void);
+static volatile long linux_event_rng_armed;
 static int event_order_owned(void);
 static volatile long event_order_armed;
 static int event_order_installed;
@@ -163,6 +182,16 @@ static int gravidar_boot_drain(void);
 static int gravidar_installed,gravidar_restored;
 static volatile int gravidar_time_sync;
 static volatile int64_t gravidar_failures,gravidar_key_failures,gravidar_time_failures;
+static int travel_inline_installed;
+/* Optional, ordered-job-only path transform observer. */
+static int path_transform_observer_installed;
+static void path_transform_observer_restore(void);
+static int path_transform_observer_owned(void);
+static int path_transform_observer_check(void);
+static int path_transform_observer_scope_enter(void);
+static void path_transform_observer_scope_leave(int entered);
+static void lxt_inline_restore(void);
+static int lxt_inline_owned(void);
 static void tsnap_restore(void);
 static int tsnap_owned(void);
 static int tsnap_installed;
@@ -436,7 +465,7 @@ static int gate_sites_owned(void) {
     unsigned __int128 window;double speed;
     memcpy(&window,LX(LX_CALL_WINDOW),16);memcpy(&speed,LX(LX_SPEED_VA),8);
     return window==call_patched && dt_state()==DT_FIXED && !*(volatile unsigned char*)LX(LX_MOVIE_FLAG_VA) && speed==1.0 &&
-           world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned();
+           world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && lxt_inline_owned() && path_transform_observer_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned();
 }
 static void finish(unsigned reason) {
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
@@ -449,7 +478,13 @@ static void finish(unsigned reason) {
     if(dt_installed && main_thread && GetCurrentThreadId()!=main_thread) wait_parked(500);
     restore_dt();
     if(dt_installed) stats.restored=0;
-    world_identity_restore();
+    navmesh_post_restore();
+    if(navmesh_post_installed || navmesh_post_cleanup_uncertain) stats.restored=0;
+    economy_rng_restore(); /* Must not outlive its identity hooks. */
+    if(economy_rng_installed || economy_rng_cleanup_uncertain) stats.restored=0;
+    linux_build_rng_restore(); /* The scheduler must not outlive its identity hooks. */
+    if(linux_build_rng_installed) stats.restored=0;
+    if(!economy_rng_installed && !economy_rng_cleanup_uncertain && !linux_build_rng_installed) world_identity_restore();
     if(world_identity_installed) stats.restored=0;
     pbud_restore();
     if(pbud_installed) stats.restored=0;
@@ -485,6 +520,7 @@ static void finish(unsigned reason) {
     if(md_resume_armed && !md_resume_restored) stats.restored=0;
     boot_hold_restore();
     if(boot_hold_armed && !boot_hold_restored) stats.restored=0;
+    linux_event_rng_stop();
     event_order_restore();
     if(event_order_installed) stats.restored=0;
     gravidar_restore();
@@ -501,6 +537,8 @@ static void finish(unsigned reason) {
     if(ll_installed) stats.restored=0;
     attention_restore();
     if(attention_installed) stats.restored=0;
+    path_transform_observer_restore();
+    if(path_transform_observer_installed) stats.restored=0;
     st_restore();
     if(st_installed || st_chain_installed) stats.restored=0;
     fr_restore();
@@ -511,6 +549,8 @@ static void finish(unsigned reason) {
     if(script_rng_armed && !script_rng_restored) stats.restored=0;
     gdl_restore();
     if(gdl_armed && !gdl_restored) stats.restored=0;
+    lxt_inline_restore();
+    if(travel_inline_installed) stats.restored=0;
     tsnap_restore();
     if(tsnap_installed) stats.restored=0;
     rid_restore();
@@ -578,10 +618,14 @@ static void gate_tick(void *frame,unsigned char loading) {
     gate_fetch_check();
     void *table;memcpy(&table,LX(LX_VBI_TABLE_VA),8);
     if(world_identity_installed && world_identity_failures) {finish(72);gate_original_once(frame,loading);return;}
+    if(navmesh_post_installed && !navmesh_post_check()) {finish(NAVMESH_POST_STOP_REASON);gate_original_once(frame,loading);return;}
+    if(path_transform_observer_installed && !path_transform_observer_check()) {finish(PATH_TRANSFORM_OBSERVER_STOP_REASON);gate_original_once(frame,loading);return;}
     if(path_det_mask && path_det_failures) {finish(79);gate_original_once(frame,loading);return;}
     if(region_rng_armed && region_rng_failures) {finish(93);gate_original_once(frame,loading);return;}
     if(wfire_installed && !wfire_check()) {finish(132);gate_original_once(frame,loading);return;} /* WFIRE_STOP_REASON */
     if(erng_installed && !erng_check()) {finish(136);gate_original_once(frame,loading);return;} /* ERNG_STOP_REASON */
+    if(economy_rng_installed && !economy_rng_check()) {finish(ECONOMY_RNG_STOP_REASON);gate_original_once(frame,loading);return;}
+    if(linux_build_rng_installed && !linux_build_rng_check()) {finish(152);gate_original_once(frame,loading);return;}
     if(lsj_installed && !lsj_check()) {finish(58);gate_original_once(frame,loading);return;} /* LSJ_STOP_REASON */
     if(lmt_installed && !lmt_check()) {finish(100);gate_original_once(frame,loading);return;} /* LMT_STOP_REASON */
     if((laa_ship_installed || laa_agent_installed) && !laa_check()) {finish(161);gate_original_once(frame,loading);return;}
@@ -594,6 +638,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(boot_hold_armed && boot_hold_failures) {finish(86);gate_original_once(frame,loading);return;}
     if(md_resume_armed && md_resume_failures) {finish(87);gate_original_once(frame,loading);return;}
     if(event_order_armed && event_order_failures) {finish(80);gate_original_once(frame,loading);return;}
+    if(linux_event_rng_armed && !linux_event_rng_check()) {finish(151);gate_original_once(frame,loading);return;}
     if(gravidar_installed && gravidar_failures) {finish(62);gate_original_once(frame,loading);return;}
     if(gravidar_key_failures || gravidar_time_failures) {finish(83);gate_original_once(frame,loading);return;}
     if(ai_sched_armed && ai_sched_failures) {finish(84);gate_original_once(frame,loading);return;}
@@ -612,6 +657,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(boot_mode && boot_phase<3) {
         if(thread!=main_thread || GetTickCount64()-boot_started>LX_BOOT_TIMEOUT_MS) {finish(26);gate_original_once(frame,loading);return;}
         boot_phase=boot_next(boot_phase,loading || (table && table_loading(table)));
+        navmesh_post_publish((unsigned)boot_phase,stats.issued);
         if(boot_phase<3) {
             /* Zero the idle Gravidar round-robin cursor before the load pass. */
             if(ai_sched_armed && !ai_sched_boot(boot_phase)) {InterlockedIncrement64(&ai_sched_failures);finish(84);}
@@ -670,6 +716,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(reason) finish(reason);
     else {
         previous_game=stats.game;++stats.issued;
+        navmesh_post_publish((unsigned)boot_phase,stats.issued);
         if(seed_frames && !path_installed) seed_frame(); /* else after the release, as on Windows (gate_path.h) */
     }
     QueryPerformanceCounter(&ft_permit);
@@ -691,6 +738,7 @@ static void lxb_thunk_write(unsigned char *page);
 static void lxe_thunk_write(unsigned char *page);
 static void lxg_thunk_write(unsigned char *page);
 static void lxt_thunk_write(unsigned char *page);
+static void lxt_inline_thunk_write(unsigned char *page);
 static void lxi_thunk_write(unsigned char *page);
 static void lxs_thunk_write(unsigned char *page);
 static void lxo_thunk_write(unsigned char *page);
@@ -709,6 +757,7 @@ static unsigned char *make_thunk(void) {
     lxb_thunk_write(p); /* AIDirector::Move (gate_boot_hold.h), likewise */
     lxe_thunk_write(p); /* the event delivery call (gate_event_order.h), likewise */
     lxg_thunk_write(p); /* the MoveWorker's Gravidar publish (gate_gravidar.h), likewise */
+    lxt_inline_thunk_write(p);
     lxt_thunk_write(p); /* the batch job (gate_travel_snapshot.h), likewise */
     lxi_thunk_write(p); /* the ID map's Remove (gate_runtime_ids.h), likewise */
     lxs_thunk_write(p); /* the script entries (gate_script_rng.h), likewise */
@@ -774,6 +823,9 @@ static int lua_start(lua_State *L) {
 #include "lockstep_gate_lua_wire.h"
 #include "gate_world.h"
 #include "gate_world_created.h"
+#include "gate_world_motion_watch.h"
+#include "gate_navmesh_post_observe.h"
+#include "gate_economy_watch.h"
 #include "gate_path.h"
 #include "gate_path_budget.h"
 #include "gate_script_rng.h"
@@ -789,14 +841,19 @@ static int lua_start(lua_State *L) {
 #include "gate_ai_wait.h"
 #include "gate_md_resume.h"
 #include "gate_boot_hold.h"
+#include "gate_event_rng.h"
 #include "gate_event_order.h"
 #include "gate_gravidar.h"
 #include "gate_gravidar_deadlines.h"
 #include "gate_travel_snapshot.h"
+#include "gate_travel_determinism.h"
+#include "gate_path_transform_observe.h"
 #include "gate_runtime_ids.h"
 #include "gate_fork_save.h"
 #include "gate_weapon_fire.h"
 #include "gate_engine_rng.h"
+#include "gate_build_rng.h"
+#include "gate_economy_rng.h"
 #include "gate_spline_join.h"
 #include "gate_mass_traffic.h"
 #include "gate_actor_all.h"
@@ -857,7 +914,7 @@ static int lua_boot(lua_State *L) {
 }
 static int load_requested(void) {
     int ok=boot_mode && stats.active && boot_phase==0 && GetCurrentThreadId()==ui_thread;
-    if(ok) boot_phase=1;
+    if(ok) {boot_phase=1;navmesh_post_publish(1,stats.issued);}
     return ok;
 }
 static int lua_load_requested(lua_State *L) {p_lua_pushnumber(L,load_requested());return 1;}
@@ -908,20 +965,27 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(sha256);METHOD(start);METHOD(boot);METHOD(load_requested);METHOD(report);METHOD(poll);METHOD(stop);
     METHOD(frame_timing);METHOD(qpc_us);METHOD(tick_rate);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(peer_links);METHOD(peer_status);METHOD(wire_crypto);METHOD(wire_crypto_status);
     METHOD(platform);METHOD(verify_stage);
-    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);
+    METHOD(world_motion_config);METHOD(world_motion_capture);METHOD(world_motion_row);METHOD(world_motion_status);
+    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(economy_load_rng_row);
+    METHOD(navmesh_post_observe);METHOD(navmesh_post_observe_status);METHOD(navmesh_post_observe_row);
+    METHOD(economy_watch_config);METHOD(economy_watch_capture);METHOD(economy_watch_status);
+    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
+    METHOD(build_rng);METHOD(build_rng_status);METHOD(build_rng_row);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);
     METHOD(event_order);METHOD(event_order_status);METHOD(event_rows);METHOD(event_order_row);
+    METHOD(event_rng);METHOD(event_rng_status);METHOD(event_rng_row);
     METHOD(gravidar_key);METHOD(gravidar_time);METHOD(gravidar_key_status);METHOD(gravidar);
     METHOD(ai_schedule);METHOD(ai_schedule_status);METHOD(ai_schedule_fallbacks);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
     METHOD(travel_snapshot);METHOD(travel_snapshot_status);
+    METHOD(travel_determinism);METHOD(travel_determinism_status);
     METHOD(runtime_ids);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_callers);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);
-    METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(attention_all);METHOD(attention_all_status);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
+    METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(attention_all);METHOD(attention_all_status);METHOD(path_transform_observe);METHOD(path_transform_observe_status);METHOD(path_transform_observe_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(read_cost);METHOD(fork_save);METHOD(fork_save_status);METHOD(fp_redirect_drones);METHOD(fp_attack);METHOD(fp_attack_watch);METHOD(fp_attack_status);METHOD(fp_attack_row);
 #undef METHOD
     return 1;

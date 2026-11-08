@@ -742,9 +742,13 @@ static void gv_apply(unsigned char *entry,int counting) {
 static void *gv_thread(void *unused) {
     (void)unused;
     pthread_setname_np(pthread_self(),"Gravidar");
-    /* Run's frame: the return address at [48], worker+0x40 below it, the cursor below that. */
-    uint64_t frame[64];memset(frame,0,sizeof(frame));
-    frame[48]=(uint64_t)(uintptr_t)AT(LX_TEXT_VA+0x100);frame[48-0xa8/8]=(uint64_t)(uintptr_t)gv_worker+0x40;
+    /* Run's frame: the return address at [48], worker+0x40 below it, the cursor below that.
+     * The gate scans these words from another thread; preserve even those C never reads,
+     * and expose the array's address so the compiler keeps its words contiguous. */
+    volatile uint64_t frame[64] = {0};
+    frame[48] = (uint64_t)(uintptr_t)AT(LX_TEXT_VA + 0x100);
+    frame[48 - 0xa8 / 8] = (uint64_t)(uintptr_t)gv_worker + 0x40;
+    __asm__ volatile("" : : "r"(frame) : "memory");
     volatile uint64_t *cursor=&frame[48-0xf8/8];
     uint64_t natural=0x4000000000000000ull+(uint64_t)getpid();memcpy(gate_tls()-0x2720,&natural,8);
     double start=0;memcpy(gate_tls()-0x2728,&start,8);

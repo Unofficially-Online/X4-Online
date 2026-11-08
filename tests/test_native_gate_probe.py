@@ -177,6 +177,105 @@ class SnapshotProbeTests(unittest.TestCase):
         self.assertTrue(any('TRAVEL_DETERMINISM tick=1 armed=1 installed=1' in line for line in lines))
         self.assertFalse(any('ERROR' in line for line in lines))
 
+    def test_linux_path_transform_observer_arms_after_ordered_batches(self):
+        self.lua.execute("""
+          X4LAN_CONFIG.native_gate_serial_pathing=true
+          X4LAN_CONFIG.native_gate_path_determinism=3
+          X4LAN_CONFIG.native_gate_travel_determinism=true
+          X4LAN_CONFIG.native_gate_path_transform_observe={8461,8520}
+          local gate=package.loadlib('gate')();order={}
+          gate.path_determinism=function() order[#order+1]='path';return 1 end
+          gate.path_determinism_status=function() return 'armed=1' end
+          gate.travel_determinism=function() order[#order+1]='travel';return 1 end
+          gate.travel_determinism_status=function() return 'armed=1' end
+          gate.path_transform_observe=function(first,last)
+            assert(first==8461 and last==8520);order[#order+1]='observer';return 1
+          end
+          gate.path_transform_observe_status=function() return 'installed=1 rows=0 failures=0' end
+          gate.path_transform_observe_row=function() return nil end
+          local load=LoadGame;LoadGame=function(slot) assert(#order==3);load(slot) end
+        """)
+        self.lua.execute(SOURCE)
+        self.lua.execute('update();update();update()')
+        self.assertEqual(list(self.lua.globals().order.values()), ['path', 'travel', 'observer'])
+        self.assertTrue(any('PATH_TRANSFORM_OBSERVE_ARMED' in line for line in self.lua.globals().logs.values()))
+        self.assertFalse(any('ERROR' in line for line in self.lua.globals().logs.values()))
+
+    def test_navmesh_post_observer_load_rows_retry_and_stop(self):
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_world_identities=true
+          X4LAN_CONFIG.native_gate_navmesh_post_observe={1,5}
+          local gate=package.loadlib('gate')();arms=0;available=0
+          local fakeffi=require('ffi');fakeffi.cast=package.loaders[1]('ffi')().cast
+          gate.platform=function() return 'linux' end
+          gate.saved_identity=function(id) saved_runtime=id;return '0000000000036fe9' end
+          gate.navmesh_post_observe=function(first,last)
+            assert(first==1 and last==5);arms=arms+1;return 1
+          end
+          gate.navmesh_post_observe_status=function()
+            return 'installed='..(state.active==0 and '0' or '1')..' attempts=2 eligible=2 recorded=2 overflow=0 unreadable=0 inflight=0 restored='..
+              (state.active==0 and '1' or '0')..' cleanup_uncertain=0'
+          end
+          gate.navmesh_post_observe_row=function(index)
+            if index>=available then return nil end
+            return 'index='..index..' phase=1 runtime=ffffffffffffffff'
+          end
+          local load=LoadGame;LoadGame=function(slot) assert(arms==1);load(slot) end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads, 1)
+        self.lua.execute('available=1;update()')
+        self.assertFalse(any('NAVMESH_POST_ROW ' in line for line in self.lua.globals().logs.values()))
+        self.lua.execute('available=1;state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        self.lua.execute('available=2;state.issued=2;update()')
+        self.lua.execute(STOP_FIELDS + 'state.reason=1;state.active=0;update()')
+        logs = list(self.lua.globals().logs.values())
+        rows = [line for line in logs if 'NAVMESH_POST_ROW ' in line]
+        self.assertEqual(len(rows), 2, logs)
+        self.assertTrue(any('index=0 ' in line for line in rows))
+        self.assertTrue(any('index=1 ' in line for line in rows))
+        self.assertTrue(any('NAVMESH_POST_STOP ' in line for line in logs))
+        self.assertEqual(self.lua.globals().saved_runtime, '18446744073709551615')
+        self.assertTrue(any('NAVMESH_POST_IDENTITY index=0 saved_hint=0000000000036fe9 lookup=drain' in line for line in logs))
+
+    def test_navmesh_post_observer_refuses_incomplete_configuration(self):
+        for window, platform, identities in (('{0,2}', 'linux', True), ('{2,1}', 'linux', True),
+                                             ('true', 'linux', True), ('{1,2}', 'windows', True),
+                                             ('{1,2}', 'linux', False)):
+            self.setUp()
+            self.lua.execute(f"X4LAN_CONFIG.native_gate_navmesh_post_observe={window};"
+                             f"X4LAN_CONFIG.native_gate_world_identities={'true' if identities else 'false'};"
+                             "local gate=package.loadlib('gate')();"
+                             f"gate.platform=function() return '{platform}' end;"
+                             "gate.navmesh_post_observe=function() return 1 end;"
+                             "gate.navmesh_post_observe_status=function() return '' end;"
+                             "gate.navmesh_post_observe_row=function() end")
+            with self.subTest(window=window, platform=platform, identities=identities), self.assertRaises(LuaError):
+                self.lua.execute(SOURCE)
+            self.assertEqual(self.lua.globals().loads, 0)
+
+    def test_navmesh_post_observer_rejects_incomplete_stop(self):
+        for recorded, overflow in ((1, 0), (0, 1)):
+            self.setUp()
+            self.lua.execute('''
+              X4LAN_CONFIG.native_gate_world_identities=true
+              X4LAN_CONFIG.native_gate_navmesh_post_observe={1,2}
+              local gate=package.loadlib('gate')()
+              gate.platform=function() return 'linux' end
+              gate.navmesh_post_observe=function() return 1 end
+              gate.navmesh_post_observe_status=function()
+                return 'installed=0 attempts=1 eligible=1 recorded='..recorded..
+                  ' overflow='..overflow..' unreadable=0 inflight=0 restored=1 cleanup_uncertain=0'
+              end
+              gate.navmesh_post_observe_row=function() return nil end
+            ''' + f'recorded={recorded};overflow={overflow}')
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.lua.execute(STOP_FIELDS + 'state.reason=1;state.active=0;update()')
+            logs = list(self.lua.globals().logs.values())
+            self.assertTrue(any('NAVMESH_POST_STOP' in line for line in logs), logs)
+            self.assertTrue(any('navmesh post evidence incomplete' in line for line in logs), logs)
+
     def test_travel_snapshot_arms_after_path_determinism_and_logs_every_admitted_tick(self):
         self.lua.execute('''
           X4LAN_CONFIG.native_gate_serial_pathing=true
@@ -4612,6 +4711,51 @@ class SnapshotProbeTests(unittest.TestCase):
             self.assertEqual(self.lua.globals().loads,0)
             self.assertTrue(any('build rng refused' in line for line in self.lua.globals().logs.values()),config)
 
+    def test_economy_load_rng_arms_before_load_and_refuses_bad_config(self):
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_world_identities=true
+          X4LAN_CONFIG.native_gate_economy_load_rng=true
+          local gate=package.loadlib('gate')();order={}
+          gate.economy_load_rng=function() order[#order+1]='arm';return 1 end
+          gate.economy_load_rng_status=function() return 'installed=1' end
+          local load=LoadGame;LoadGame=function(slot) assert(#order==1);load(slot) end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads, 1)
+        self.assertTrue(any('ECONOMY_LOAD_RNG_ARMED' in line for line in self.lua.globals().logs.values()))
+        for config in ("X4LAN_CONFIG.native_gate_economy_load_rng=true",
+                       "X4LAN_CONFIG.native_gate_world_identities=true;X4LAN_CONFIG.native_gate_economy_load_rng='key'",
+                       "X4LAN_CONFIG.native_gate_world_identities=true;X4LAN_CONFIG.native_gate_economy_load_rng=true;native=0"):
+            self.setUp()
+            self.lua.execute(config+'''
+              local gate=package.loadlib('gate')()
+              gate.economy_load_rng=function() return native or 1 end
+              gate.economy_load_rng_status=function() return 'stage=pins' end
+            ''')
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads, 0)
+            self.assertTrue(any('economy load RNG refused' in line for line in self.lua.globals().logs.values()), config)
+
+    def test_build_rng_rows_survive_status_thinning(self):
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_world_identities=true
+          X4LAN_CONFIG.native_gate_build_rng=true
+          X4LAN_CONFIG.native_gate_status_stride=100
+          local gate=package.loadlib('gate')()
+          gate.build_rng=function() return 1 end
+          gate.build_rng_status=function() return 'installed=1 keyed=2 rows=2 overflow=0' end
+          gate.build_rng_row=function(index)
+            if index<2 then return 'index='..index..' phase=2' end
+          end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        lines = list(self.lua.globals().logs.values())
+        rows = [line.split('BUILD_RNG_ROW ')[1] for line in lines if 'BUILD_RNG_ROW ' in line]
+        self.assertEqual(rows, ['index=0 phase=2', 'index=1 phase=2'])
+        self.assertFalse(any('ERROR' in line for line in lines))
+
     def test_ui_cargo_arms_logs_status_and_drains_rows(self):
         self.lua.execute('''
           X4LAN_CONFIG.native_gate_world_identities=true
@@ -5782,6 +5926,29 @@ class StatusStrideTests(unittest.TestCase):
         self.assertLess(held,stop)
         self.assertEqual(self.ticks(lines,'RNG'),[1,2,3,6,7,8])  # 4 and 5 preceded the written tick 6
 
+    def test_path_transform_observer_receipts_survive_status_thinning(self):
+        lines = self.run_ticks(5, """
+          X4LAN_CONFIG.native_gate_status_stride=100
+          X4LAN_CONFIG.native_gate_travel_determinism=true
+          X4LAN_CONFIG.native_gate_path_transform_observe={1,5}
+          local gate=package.loadlib('gate')()
+          gate.travel_determinism=function() return 1 end
+          gate.travel_determinism_status=function() return 'armed=1' end
+          gate.path_transform_observe=function() return 1 end
+          gate.path_transform_observe_status=function() return 'installed=1 compared=2 rows=2 dropped=0 failures=0' end
+          gate.path_transform_observe_row=function(index)
+            if index==0 then return 'tick=4 site=1' end
+            if index==1 then return 'tick=5 site=2' end
+            return nil
+          end
+        """)
+        self.assertTrue(any('PATH_TRANSFORM_OBSERVE_ARMED' in line for line in lines))
+        lines = self.stop()
+        self.assertEqual(sum('PATH_TRANSFORM_OBSERVE_STOP' in line for line in lines), 1)
+        self.assertEqual([line.split('PATH_TRANSFORM_OBSERVE_ROW ')[1] for line in lines
+                          if 'PATH_TRANSFORM_OBSERVE_ROW ' in line], ['tick=4 site=1', 'tick=5 site=2'])
+        self.assertNotIn("log('PATH_TRANSFORM_OBSERVE_", SOURCE)
+
     def test_written_ticks_are_batched_in_bounded_calls(self):
         self.run_ticks(3,'''
           X4LAN_CONFIG.native_gate_status_stride=3
@@ -5842,7 +6009,8 @@ class StatusStrideTests(unittest.TestCase):
         self.assertEqual([row.split()[0] for row in rows],['tick=60','tick=120'])
         fields=dict(item.split('=') for item in rows[1].split()[1:])
         self.assertEqual(list(fields),['ticks']+[f'{name}_us' for name in ('drains','inputs','pilot','modules','sample','capture',
-                         'digest','log','actor','health','orders','fleet','bodies','total')]+['max_total_us'])
+                         'digest','log','actor','health','orders','fleet','bodies',
+                         'world_scan','world_output','total')]+['max_total_us'])
         self.assertEqual(fields['ticks'],'60')
         self.assertTrue(all(value.isdigit() for value in fields.values()))
         self.assertGreater(int(fields['total_us']),0)

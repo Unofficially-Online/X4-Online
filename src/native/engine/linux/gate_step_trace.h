@@ -221,6 +221,7 @@ static void st_chain_restore(void) {
     if(!lxc_done && !lxc_sp_entry_done) {st_chain_installed=0;st_chain_restored=1;st_chain_stage="restored";st_sp_gate_clear();}
 }
 static int st_chain_arm(void) {
+    if(path_transform_observer_installed) {st_chain_stage="path_transform_observer";return 0;}
     if(!thunk) {st_chain_stage="page";return 0;}
     for(unsigned i=0;i<ST_CHAIN_SITE_COUNT;i++) if(lxc_site_state(i)!=0) {st_chain_stage="pins";return 0;}
     if(lxc_sp_entry_state()!=0 || ((uintptr_t)LX(LX_SC_SP_SOLVER_VA)&15)) {st_chain_stage="pins";return 0;}

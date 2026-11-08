@@ -680,6 +680,23 @@ def main():
                          env=env).stdout
     print(out, end='')
     report['unit'] = 'pass' + (' with executable image' if args.x4 else ' (synthetic image only)')
+    if args.x4:
+        # The preload patches a copied ELF mapped at its expected addresses;
+        # this test never starts the game or executes any X4 instructions.
+        portable = ROOT / 'src/native/portable_math'
+        preload = build / 'libx4mp_portable_math.so'
+        run(cc + ['-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', '-ffp-contract=off', '-fno-builtin',
+                  '-fPIC', '-shared', '-fvisibility=hidden', portable / 'preload/x4mp_portable_math.c',
+                  portable / 'portable_math.c', portable / 'portable_decimal.c', '-o', preload])
+        preload_test = build / 'test_gate_navmesh_preload'
+        run(cc + FLAGS + ['-O1', '-g', '-fPIE', '-pie', LINUX / 'test_gate_navmesh_preload.c',
+                          *MONOCYPHER_SOURCES, '-ldl', '-lpthread', '-lm', '-o', preload_test])
+        out = subprocess.run([str(preload_test), str(args.x4), str(preload)], check=True, capture_output=True,
+                             text=True, timeout=300).stdout
+        print(out, end='')
+        report['navmesh_preload_compatibility'] = 'pass (copied ELF; no game execution)'
+    else:
+        report['navmesh_preload_compatibility'] = 'skipped: no pinned Linux executable'
     luajit = shutil.which('luajit')
     if luajit:
         out = subprocess.run([luajit, str(LINUX / 'test_gate_lua.lua'), str(so)], check=True, capture_output=True, text=True).stdout

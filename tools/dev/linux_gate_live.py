@@ -1,52 +1,48 @@
-"""First native Linux lockstep run of the Linux gate: two X4 9.00 instances on one Linux host.
+"""Compare isolated native X4 clients on one Linux host.
 
-Two steps, one script (copy only the bundle directory to the host):
+Create a fresh fixture with tools/dev/linux_snapshot_capture.py, then build a
+bundle containing the gate, minimal lockstep extension, snapshot and relay:
 
-  1. bundle  (any machine with this repository; Linux/WSL, Python 3.11+, Zig 0.15.2):
-       python3 tools/dev/linux_gate_live.py bundle --zig ZIG --snapshot SAVE_009.xml.gz \
-         --extension-base LANE_BASE/src/extension/x4_lan_lab --out DIR
-         [--clients N] [--portable-math] [--seed-rng] [--path-determinism 3] [--region-rng key] [--ai-wait-rng] [--md-resume-rng] [--boot-hold] [--event-order [--event-rows TICKS]] [--gravidar [--gravidar-deadlines]] [--travel-snapshot] [--runtime-ids] [--world-hash-watch SAVED_ID ...]
-     builds x4lan_gate.so (glibc 2.17 target), the overlay (clock mode, world identities,
-     world hash WORLD_IMPORTED_2 every --stride ticks), composes the x4_lan_lab extension
-     (src/extension/x4_lan_lab + overlay, as the Windows lane tool does), copies the owned
-     snapshot, the relay and this script, and writes DIR/manifest.json (SHA-256 of every file).
-     --portable-math adds libx4mp_portable_math.so with its decimal and exact_reciprocal patches
-     (the Linux side of the Windows FP keys, reports/PORTABLE-MATH-20261029.txt); --seed-rng keys
-     the MoveWorker's RNG each frame; --world-hash-watch logs the hashed bytes of up to 64 objects;
-     --clients N runs N instances (above 2 on the protocol 3 wire, as the N-client Windows runs).
-  2. run     (the Linux host, as root; the game runs as the Steam user, default x4server):
-       copy DIR to ~x4server/x4mp-linux-gate-live-<id>/ and touch .x4mp-linux-gate-live in it, then
-       python3 ~x4server/x4mp-linux-gate-live-<id>/linux_gate_live.py run --root ~x4server/x4mp-linux-gate-live-<id> --preflight
-       python3 ~x4server/x4mp-linux-gate-live-<id>/linux_gate_live.py run --root ~x4server/x4mp-linux-gate-live-<id>
-     Exit 0 = both clients stopped with reason 1 (the relay's end), restored=1, relay verdict
-     pass and every WORLD_HASH line equal. Any STOP with another reason ends the run within
-     two minutes. Results: ROOT/runs/<name>/ (census layout:
-     client1/engine-output.log, client1/installed/x4_lan_lab-config.lua, relay.json,
-     run-result.json); copy that directory back and run tools/dev/census_world.py on it.
+    python3 tools/dev/linux_gate_live.py bundle --zig PATH/zig \
+        --snapshot PATH/save_009.xml.gz --out .local/linux-test
 
-Host requirements (checked before anything starts; the run refuses otherwise):
-  - X4 Foundations 9.00 Linux (Steam build 23660954, X4 SHA-256 113f73d7...045f20) at
-    ~USER/x4/game (the VPS dedicated-server layout), all seven DLCs as installed.
-  - The Steam client of USER already running and logged in (~USER/.steam/steam.pid);
-    it is never started, stopped or copied; its identity must not change during the run.
-  - No other X4 process on the host (the dedicated x4mp-server must be stopped).
-  - Memory: two instances need about 2 x 6 GiB (Windows lanes use ~6 GiB each; Linux with
-    software Vulkan is not measured yet): MemAvailable >= --min-memory-gib (default 6.5 per instance).
-  - No GPU needed: each instance gets its own Xvfb display (800x600) and Mesa lavapipe
-    (/usr/share/vulkan/icd.d/lvp_icd.json). With /opt/x4mp/vklayer present the X4MP
-    discard layer is enabled (as for the dedicated server, ~23 fps instead of ~1 fps).
-  - Tools: bwrap (bubblewrap), runuser, Xvfb, xauth, python3 >= 3.9.
-  - Disk: about 2 GiB under ROOT (two profiles, logs).
-Isolation (the pattern of tools/dev/linux_native_admission_run.py, run live on the VPS):
-each instance gets a private HOME/XDG tree, profile 45841 with autosave off, the staged
-snapshot as save_009, read-only game files, an extension view of the DLCs plus this run's
-x4_lan_lab only, a private X4 single-instance lock and a private Xvfb; both share the
-running Steam client. The relay listens on 127.0.0.1 only. No service, unit or other
-user (tpf2server) is touched; nothing outside ROOT is written, except an empty
-/tmp/EGOSOFT_X4.lock when absent (the mount point for the private locks; removed after).
+The gate's determinism features are opt-in; use the configuration documented in
+an experiment report when reproducing it. This harness exercises the Linux
+simulation core, not complete Windows/Linux multiplayer or player controls.
+
+On a desktop, run as the Steam user using its existing X11 display:
+
+    python3 tools/dev/linux_gate_live.py run --root .local/linux-test \
+        --user STEAM_USER --game PATH/TO/X4 --display :0 --preflight
+
+Remove --preflight to start the run. XAUTHORITY must identify the local display.
+The default Vulkan driver is Mesa lavapipe. Supply --vulkan-icd PATH/driver.json
+to use a different installed driver. Without --display, each client gets a
+private Xvfb display; that mode requires Xvfb and xauth. A root-owned server
+harness can still select a different Steam user with --user.
+
+Requirements: pinned Linux X4 9.00 (Steam build 23660954), running Steam,
+bubblewrap, Python 3.11+, and enough available RAM (default 6.5 GiB per client).
+Another X4 process prevents startup. The bundle must be marked by this builder
+and reside beneath the selected user's home directory.
+
+Each client gets private HOME/XDG directories, a windowed profile with autosave
+disabled, an owned snapshot, and an extension view containing official DLC and
+this test extension. Host files and game files are mounted read-only; device
+access, shared memory, Steam IPC and the selected display remain shared with the
+desktop. The harness never starts or stops Steam. Its file writes are confined
+to owned run directories and a temporary lock mount point.
+
+Exit 0 requires clean stops at the requested tick, restored hooks, complete
+scheduled world captures, no capture/identity errors, matching captured hashes,
+and the local relay's passing verdict. Unknown object/controller fields remain
+explicit coverage limits in run-result.json. For an external relay this host
+can validate only its local clients; combine both hosts' evidence separately.
+Results and raw logs remain in ROOT/runs/NAME, including failed attempts.
 """
 import argparse
 import ctypes
+import gzip
 import hashlib
 import json
 import os
@@ -60,6 +56,8 @@ import subprocess
 import sys
 import time
 
+from linux_gate_evidence import is_fatal_gate_message, validate_evidence
+
 EXE_SHA = '113f73d74570084f6ce18a659b365009eccf579fb66dbabb5dad2b1718045f20'
 MARKER = '.x4mp-linux-gate-live'
 SLOT_SAVE = 'save_009.xml.gz'
@@ -71,6 +69,69 @@ FAILED_STOP_PEER = 120   # for the peer's own STOP after a failed one
 PEER_STOP = 300          # for the peer's STOP after a clean one
 RELAY_VERDICT = 120      # for the relay's verdict after both stopped
 
+# An opt-in simulation test configuration, not Windows player/UI feature parity.
+# Keep these options explicit: the generic session defaults include hooks that
+# the Linux engine adapter does not yet implement.
+LINUX_CORE_OPTIONS = {
+    'portable_math': True,
+    'seed_rng': True,
+    'serial_pathing': True,
+    'path_determinism': 3,
+    'region_rng': 'key',
+    'ai_wait_rng': True,
+    'md_resume_rng': True,
+    'md_timed_rng': True,
+    'boot_hold': True,
+    'event_order': True,
+    'gravidar': True,
+    'gravidar_deadlines': True,
+    'gravidar_wide': 'sort',
+    'travel_snapshot': True,
+    'runtime_ids': True,
+    'runtime_ids_local': True,
+    'script_rng': 'key',
+    'script_rng_mask': 7,
+    'script_rng_unmapped': True,
+    'find_order': 'sort',
+    'loadout_order': 'canonical',
+    'attention_all': True,
+    'spawn_rng': 'key',
+    'weapon_fire_rng': True,
+    'engine_refresh_rng': True,
+    'spline_join_all': True,
+    'actor_rng_all': True,
+    'player_timer': True,
+    'tempzone_order': True,
+    'warp_rng': 'split',
+    'warp_exit': True,
+    'world_hash_shields': True,
+    'mining_camera': True,
+    'mass_traffic': 'sync',
+    'region_pass': 'sync',
+    'pass_stride': 2,
+    'created_identities': True,
+    'created_load': True,
+    'portable_created': True,
+    'nav_cadence': 'far',
+    'nav_params_init': True,
+    'nav_probe_init': True,
+}
+
+
+def apply_bundle_preset(args):
+    """Fill unspecified options; explicit diagnostic modes keep their value."""
+    if args.preset == 'linux-core':
+        for name, value in LINUX_CORE_OPTIONS.items():
+            # Ordered batches replace the snapshot strategy; never arm both.
+            if name == 'travel_snapshot' and args.travel_determinism:
+                continue
+            current = getattr(args, name)
+            if current is None or current is False:
+                setattr(args, name, value)
+    # Both modes require serialization even when the CLI flag was omitted.
+    if args.gravidar or (args.path_determinism or 0) & 1:
+        args.serial_pathing = True
+
 
 def sha(path):
     with open(path, 'rb') as stream:
@@ -78,6 +139,17 @@ def sha(path):
         for block in iter(lambda: stream.read(1 << 20), b''):
             h.update(block)
         return h.hexdigest()
+
+
+def snapshot_seed(path):
+    """Use the save's world seed for JobDB initialization on every reload."""
+    with gzip.open(path, 'rb') as stream:
+        header = stream.read(8192)
+    # The fixed-size prefix may end inside an unrelated UTF-8 character.
+    match = re.search(rb'<game\s[^>]*\bseed="(\d+)"', header)
+    if match is None or int(match.group(1)) > 0xffffffff:
+        raise ValueError('snapshot must contain a 32-bit unsigned world seed in its header')
+    return int(match.group(1))
 
 
 # ------------------------------------------------------------------ bundle
@@ -119,12 +191,61 @@ def apply_overlay(target, overlay):
         ui.write_text(insert_ui_files(ui.read_text(), ui_files))
 
 
+def compose_extension_template(overlay, target, extension_base=None):
+    """Build a verified extension while retaining the per-client placeholders.
+
+    The retired replica extension is no longer present in this repository. Use
+    the same minimal base and UI registration as the current Windows launcher.
+    An explicit base remains available for reproducing historical experiments.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(repo / 'src'))
+    from lockstep.launcher import extension
+
+    extension.verify_overlay(overlay)
+    shutil.copytree(extension_base or extension.BASE, target)
+    if extension_base is None:
+        (target / 'content.xml').write_text(extension.CONTENT, encoding='utf-8')
+        (target / 'ui.xml').write_text(extension.ui_xml(extension.BASE_UI), encoding='utf-8')
+        (target / 'ui/config.lua').write_text('X4LAN_CONFIG = {enabled = false}\n', encoding='utf-8')
+    apply_overlay(target, overlay)
+    if extension_base is None:
+        overlay_files = [line.strip() for line in (overlay / 'ui.xml.files').read_text().splitlines()
+                         if line.strip() and not line.startswith('#')]
+        (target / 'ui.xml').write_text(extension.ui_xml([*extension.BASE_UI, *overlay_files]), encoding='utf-8')
+
+
 def bundle(args):
     repo = Path(__file__).resolve().parents[2]
+    if args.ticks < 1 or args.stride < 1:
+        raise SystemExit('--ticks and --stride must be positive')
+    if args.status_stride is not None and not 1 <= args.status_stride <= 3600:
+        raise SystemExit('--status-stride must be between 1 and 3600')
+    if args.created_rows and not args.created_identities:
+        raise SystemExit('--created-rows requires --created-identities')
+    if args.economy_watch is not None or args.economy_watch_window is not None:
+        from economy_watch_config import validate_configuration
+        try:
+            validate_configuration(args.economy_watch, args.economy_watch_window, args.ticks)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+    if args.navmesh_post_observe is not None:
+        from navmesh_post_config import validate_window
+        try:
+            validate_window(args.navmesh_post_observe, args.ticks)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+    if args.world_motion_watch is not None or args.world_motion_window is not None:
+        from world_motion_evidence import validate_configuration
+        try:
+            validate_configuration(args.world_motion_watch, args.world_motion_window, args.ticks)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
     out = args.out
     if out.exists():
         raise SystemExit(f'{out} exists; use a new directory')
     snapshot_sha = sha(args.snapshot)
+    world_seed = snapshot_seed(args.snapshot)
     out.mkdir(parents=True)
     work = out / '.build'
     work.mkdir()
@@ -133,6 +254,21 @@ def bundle(args):
     command = [sys.executable, str(repo / 'tools/dev/build_native_gate_overlay.py'), '--gate-so', str(work / 'x4lan_gate.so'),
                '--snapshot', str(args.snapshot), '--mode', 'clock', '--world-identities',
                '--world-hash-stride', str(args.stride), '--world-hash-schema', 'WORLD_IMPORTED_2', '--out', str(overlay)]
+    command += ['--world-log-mode', args.world_log_mode]
+    if args.world_rolling_slices is not None:
+        command += ['--world-rolling-slices', str(args.world_rolling_slices)]
+    if args.economy_watch is not None:
+        command += ['--economy-watch', args.economy_watch,
+                    '--economy-watch-window', *map(str, args.economy_watch_window)]
+    if args.navmesh_post_observe is not None:
+        command += ['--navmesh-post-observe', *map(str, args.navmesh_post_observe)]
+    if args.world_motion_watch is not None:
+        command += ['--world-motion-watch', *args.world_motion_watch,
+                    '--world-motion-window', *map(str, args.world_motion_window)]
+    if args.status_stride is not None:
+        command += ['--status-stride', str(args.status_stride)]
+    if args.probe_profile:
+        command.append('--probe-profile')
     if args.seed_rng:
         command.append('--seed-rng')
     if args.clients > 2:
@@ -149,6 +285,10 @@ def bundle(args):
         command.append('--boot-hold')
     if args.event_order:
         command.append('--event-order')
+    if args.event_rng:
+        command += ['--event-rng', args.event_rng]
+    if args.event_rng_rows_window:
+        command += ['--event-rng-rows-window', *map(str, args.event_rng_rows_window)]
     if args.event_rows is not None:
         command += ['--event-rows', str(args.event_rows)]
     if args.gravidar:
@@ -157,6 +297,10 @@ def bundle(args):
         command.append('--gravidar-deadlines')
     if args.travel_snapshot:
         command.append('--travel-snapshot')
+    if args.travel_determinism:
+        command.append('--travel-determinism')
+    if args.path_transform_observe:
+        command += ['--path-transform-observe', *map(str, args.path_transform_observe)]
     if args.runtime_ids:
         command.append('--runtime-ids')
     if args.runtime_id_callers:
@@ -223,6 +367,10 @@ def bundle(args):
         command.append('--weapon-fire-rng')
     if args.engine_refresh_rng:
         command.append('--engine-refresh-rng')
+    if args.build_rng:
+        command.append('--build-rng')
+    if args.economy_load_rng:
+        command.append('--economy-load-rng')
     if args.spline_join_all:
         command.append('--spline-join-all')
     if args.actor_rng_all:
@@ -265,21 +413,23 @@ def bundle(args):
         command += ['--fp-attack-watch', saved]
     subprocess.run(command, check=True)
     extension = out / 'extension/x4_lan_lab'
-    shutil.copytree(args.extension_base or repo / 'src/extension/x4_lan_lab', extension)
-    apply_overlay(extension, overlay)
+    compose_extension_template(overlay, extension, args.extension_base)
     if args.portable_math:
         subprocess.run([sys.executable, str(repo / 'tools/dev/build_portable_math_preload.py'), '--zig', str(args.zig)], check=True)
         (out / 'portable_math').mkdir()
         shutil.copy2(repo / '.local/portable-math/preload' / PORTABLE_MATH, out / 'portable_math' / PORTABLE_MATH)
-    missing = [name for name in ('ui/lockstep.lua', 'ui/sha256.lua') if not (extension / name).is_file()]
+    missing = [name for name in ('ui/native_gate_probe.lua', 'ui/sha256.lua') if not (extension / name).is_file()]
     if missing:
-        raise SystemExit(f'the extension lacks {missing}: pass --extension-base with the lane base, the same Lua as Windows')
+        raise SystemExit(f'the composed lockstep extension lacks required files: {missing}')
     config = (extension / 'ui/config.lua').read_text()
     for token in ('@X4LANE_PORT@', '@X4LANE_TOKEN@', '@X4LANE_SLOT@'):
         if token not in config:
             raise SystemExit(f'composed config lacks {token}')
     if snapshot_sha not in config:
         raise SystemExit('composed config does not pin the snapshot')
+    if args.created_rows:
+        with (extension / 'ui/config.lua').open('a', encoding='utf-8', newline='\n') as handle:
+            handle.write('X4LAN_CONFIG.native_gate_created_rows = true\n')
     if args.wire_crypto:
         # The slot's credential depends on the session token: filled in at run time (run --wire-crypto-credentials).
         with (extension / 'ui/config.lua').open('a', newline='\n') as handle:
@@ -288,17 +438,119 @@ def bundle(args):
     shutil.copy2(args.snapshot, out / 'snapshot' / SLOT_SAVE)
     shutil.copy2(repo / 'tools/dev/native_gate_relay.py', out / 'native_gate_relay.py')
     shutil.copy2(Path(__file__), out / 'linux_gate_live.py')
+    shutil.copy2(Path(__file__).with_name('linux_gate_evidence.py'), out / 'linux_gate_evidence.py')
+    for helper in ('world_motion_evidence.py', 'native_world_evidence.py', 'economy_watch_config.py', 'navmesh_post_config.py'):
+        shutil.copy2(Path(__file__).with_name(helper), out / helper)
     shutil.rmtree(work)
     commit = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
     files = {p.relative_to(out).as_posix(): sha(p) for p in sorted(out.rglob('*')) if p.is_file()}
-    manifest = {'commit': commit, 'ticks': args.ticks, 'stride': args.stride, 'snapshot_sha256': snapshot_sha, 'wire_crypto': bool(args.wire_crypto),
-                'gate_so_sha256': files['extension/x4_lan_lab/native/x4lan_gate.so'], 'files': files,
-                'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'), 'seed_rng': bool(args.seed_rng),
-                'path_determinism': args.path_determinism, 'region_rng': args.region_rng, 'ai_wait_rng': args.ai_wait_rng, 'md_resume_rng': args.md_resume_rng, 'boot_hold': args.boot_hold, 'event_order': args.event_order, 'event_rows': args.event_rows, 'gravidar': args.gravidar, 'gravidar_deadlines': args.gravidar_deadlines, 'travel_snapshot': args.travel_snapshot, 'runtime_ids': args.runtime_ids, 'runtime_id_callers': args.runtime_id_callers, 'runtime_ids_local': args.runtime_ids_local,'script_rng': args.script_rng, 'script_rng_mask': args.script_rng_mask, 'script_rng_rows': args.script_rng_rows, 'script_rng_rows_window': args.script_rng_rows_window, 'script_rng_trace': args.script_rng_trace, 'md_timed_rng': args.md_timed_rng, 'find_order': args.find_order, 'loadout_order': args.loadout_order, 'loadout_order_rows': args.loadout_order_rows, 'attention_all': args.attention_all, 'nav_key': args.nav_key, 'step_trace': args.step_trace, 'step_trace_ticks': args.step_trace_ticks, 'step_chain': args.step_chain, 'fp_redirect': args.fp_redirect, 'fp_redirect_watch': args.fp_redirect_watch, 'fp_redirect_ticks': args.fp_redirect_ticks, 'fp_redirect_solver': args.fp_redirect_solver, 'coverage': args.coverage, 'gravidar_wide': args.gravidar_wide, 'spawn_rng': args.spawn_rng, 'weapon_fire_rng': args.weapon_fire_rng, 'engine_refresh_rng': args.engine_refresh_rng, 'spline_join_all': args.spline_join_all, 'actor_rng_all': args.actor_rng_all, 'actor_rng_rows': args.actor_rng_rows, 'player_timer': args.player_timer, 'tempzone_order': args.tempzone_order, 'warp_rng': args.warp_rng, 'warp_exit': args.warp_exit, 'world_hash_shields': args.world_hash_shields, 'mining_camera': args.mining_camera, 'mass_traffic': args.mass_traffic, 'region_pass': args.region_pass, 'pass_stride': args.pass_stride, 'created_identities': args.created_identities, 'created_load': args.created_load, 'portable_created': args.portable_created, 'nav_cadence': args.nav_cadence, 'nav_params_init': args.nav_params_init, 'nav_probe_init': args.nav_probe_init, 'clients': args.clients,
-                'world_hash_watch': args.world_hash_watch or [],
-                'fork_save': args.fork_save and {'request': args.fork_save, 'every': args.fork_save_every, 'slot': args.fork_save_slot,
-                                                 'budget_ms': args.fork_save_budget_ms, 'watchdog_s': args.fork_save_watchdog}, 'fp_redirect_drones': args.fp_redirect_drones, 'world_health_ticks': args.world_health_ticks, 'fp_attack_capture': args.fp_attack_capture, 'fp_attack_watch': args.fp_attack_watch}
+    recorded_options = (
+        'path_determinism',
+        'region_rng',
+        'ai_wait_rng',
+        'md_resume_rng',
+        'boot_hold',
+        'event_order',
+        'event_rows',
+        'event_rng',
+        'event_rng_rows_window',
+        'gravidar',
+        'gravidar_deadlines',
+        'travel_snapshot',
+        'travel_determinism',
+        'path_transform_observe',
+        'navmesh_post_observe',
+        'world_log_mode',
+        'world_rolling_slices',
+        'status_stride',
+        'probe_profile',
+        'runtime_ids',
+        'runtime_id_callers',
+        'runtime_ids_local',
+        'script_rng',
+        'script_rng_mask',
+        'script_rng_rows',
+        'script_rng_rows_window',
+        'script_rng_trace',
+        'md_timed_rng',
+        'find_order',
+        'loadout_order',
+        'loadout_order_rows',
+        'attention_all',
+        'nav_key',
+        'step_trace',
+        'step_trace_ticks',
+        'step_chain',
+        'fp_redirect',
+        'fp_redirect_watch',
+        'fp_redirect_ticks',
+        'fp_redirect_solver',
+        'coverage',
+        'gravidar_wide',
+        'spawn_rng',
+        'weapon_fire_rng',
+        'engine_refresh_rng',
+        'build_rng',
+        'economy_load_rng',
+        'spline_join_all',
+        'actor_rng_all',
+        'actor_rng_rows',
+        'player_timer',
+        'tempzone_order',
+        'warp_rng',
+        'warp_exit',
+        'world_hash_shields',
+        'mining_camera',
+        'mass_traffic',
+        'region_pass',
+        'pass_stride',
+        'created_identities',
+        'created_load',
+        'portable_created',
+        'nav_cadence',
+        'nav_params_init',
+        'nav_probe_init',
+        'clients',
+        'fp_redirect_drones',
+        'world_health_ticks',
+        'fp_attack_capture',
+        'fp_attack_watch',
+        'serial_pathing',
+        'script_rng_unmapped',
+        'script_rng_natural',
+    )
+    manifest = {
+        'commit': commit,
+        'source_dirty': bool(subprocess.run(
+            ['git', '-C', str(repo), 'status', '--porcelain'],
+            check=True, capture_output=True, text=True).stdout),
+        'ticks': args.ticks,
+        'stride': args.stride,
+        'snapshot_sha256': snapshot_sha,
+        'wire_crypto': bool(args.wire_crypto),
+        'gate_so_sha256': files['extension/x4_lan_lab/native/x4lan_gate.so'],
+        'files': files,
+        'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'),
+        'seed_rng': bool(args.seed_rng),
+        'world_hash_watch': args.world_hash_watch or [],
+        'fork_save': args.fork_save and {
+            'request': args.fork_save,
+            'every': args.fork_save_every,
+            'slot': args.fork_save_slot,
+            'budget_ms': args.fork_save_budget_ms,
+            'watchdog_s': args.fork_save_watchdog,
+        },
+    }
+    manifest.update({name: getattr(args, name) for name in recorded_options})
+    manifest['economy_watch'] = args.economy_watch
+    manifest['economy_watch_window'] = args.economy_watch_window
+    manifest['world_motion_watch'] = args.world_motion_watch
+    manifest['world_motion_window'] = args.world_motion_window
+    manifest['created_rows'] = bool(args.created_rows)
+    manifest['snapshot_seed'] = world_seed
+    manifest['preset'] = args.preset
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    (out / MARKER).write_text('Disposable Linux lockstep test bundle.\n', encoding='utf-8')
     print(f'bundle {out}: {len(files)} files, gate {manifest["gate_so_sha256"][:16]}, snapshot {snapshot_sha[:16]}, commit {commit[:8]}')
 
 
@@ -349,6 +601,81 @@ def stop_error(reasons, stopped_at, now, clients=2):
 
 def start_ticks(pid):
     return int(Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19])
+
+
+
+def create_lock_target(path, uid, gid):
+    """Claim a new mount point atomically; never follow or take an existing path."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        if os.geteuid() == 0:
+            os.fchown(fd, uid, gid)
+        return fd, os.fstat(fd)
+    except BaseException:
+        stat = os.fstat(fd)
+        try:
+            current = path.lstat()
+            if (current.st_dev, current.st_ino) == (stat.st_dev, stat.st_ino):
+                path.unlink()
+        finally:
+            os.close(fd)
+        raise
+
+
+def release_lock_target(path, fd, stat):
+    """Remove only the inode created by this run, retaining replacements."""
+    try:
+        current = path.lstat()
+        if (current.st_dev, current.st_ino) != (stat.st_dev, stat.st_ino):
+            raise RuntimeError('lock target replaced; left untouched')
+        path.unlink()
+    except FileNotFoundError:
+        raise RuntimeError('lock target disappeared') from None
+    finally:
+        os.close(fd)
+
+
+def owned_group_members(group_id, started):
+    """Report surviving members of a launch group without signalling unknown PIDs."""
+    found = []
+    for path in Path('/proc').glob('[0-9]*'):
+        try:
+            fields = (path / 'stat').read_text().rsplit(')', 1)[1].split()
+            if int(fields[2]) == group_id and int(fields[19]) >= started:
+                found.append(int(path.name))
+        except (OSError, ValueError, IndexError):
+            continue
+    return sorted(found)
+
+
+def stop_owned_process(proc, started):
+    """Signal only while the group leader still has the recorded identity."""
+    def signal_if_owned(sig):
+        if proc.poll() is None and start_ticks(proc.pid) == started:
+            os.killpg(proc.pid, sig)
+            return True
+        return False
+
+    try:
+        if signal_if_owned(signal.SIGTERM):
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                if signal_if_owned(signal.SIGKILL):
+                    proc.wait(timeout=10)
+    except ProcessLookupError:
+        pass
+
+
+def wait_owned_groups(starts, timeout=5):
+    """Allow exiting descendants to settle; retain all survivors as failure evidence."""
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = {pid: owned_group_members(pid, start) for pid, start in starts.items()}
+        remaining = {pid: members for pid, members in remaining.items() if members}
+        if not remaining or time.monotonic() >= deadline:
+            return remaining
+        time.sleep(0.1)
 
 
 def memory_available_gib():
@@ -417,7 +744,7 @@ class LogWatch:
                 self.stop_reason = int(reason.group(1)) if reason else -1
             # As the Windows lane runs: the session defaults' loud rows (a degraded counter grew, a default skipped) are
             # recorded, not fatal; every other ERROR and any REFUSED is.
-            if self.failure is None and re.search(r'NATIVE_GATE (?:REFUSED|ERROR (?!DEGRADED|DEFAULT_SKIPPED))', text):
+            if self.failure is None and is_fatal_gate_message(text):
                 self.failure = text[text.index('NATIVE_GATE'):][:300]
 
 
@@ -429,13 +756,44 @@ def gate_lines(path):
                 yield raw.decode(errors='replace').rstrip('\r\n')
 
 
+def user_command(command, user):
+    """Switch users only for a root-owned server harness, never on a desktop."""
+    import pwd
+
+    current_user = pwd.getpwuid(os.geteuid()).pw_name
+    if user == current_user:
+        return list(command)
+    if os.geteuid() != 0:
+        raise SystemExit(f'cannot run as {user}: this process belongs to {current_user}')
+    return ['runuser', '-u', user, '--', *command]
+
+
+def lavapipe_icd(directory=Path('/usr/share/vulkan/icd.d')):
+    """Locate the 64-bit software driver on Debian and Fedora installations."""
+    for name in ('lvp_icd.x86_64.json', 'lvp_icd.json'):
+        candidate = directory / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def desktop_display(display):
+    """Validate an explicit local X11 display and its existing authentication file."""
+    if not re.fullmatch(r':\d+(?:\.\d+)?', display):
+        raise SystemExit('--display must name a local X11 display, for example :0')
+    authorization = os.environ.get('XAUTHORITY')
+    if not authorization or not Path(authorization).is_file():
+        raise SystemExit('--display requires an existing XAUTHORITY file in the environment')
+    return display, Path(authorization).resolve(strict=True)
+
+
 def namespace_command(case, game, dlc_binds, lock, env, program, user, shm=None):
     """bwrap view as tools/dev/linux_native_admission_run.py: read-only host, private case,
     game read-only at case/game, extension directory replaced by this case's allowlist.
     shm (run --shm): a directory bound over /dev/shm, where a confined Steam client keeps its
     shared memory (the snap's /dev/shm/snap.steam), so X4 outside the snap reaches it."""
     game = game.resolve(strict=True)
-    command = ['runuser', '-u', user, '--', 'bwrap', '--ro-bind', '/', '/', '--proc', '/proc', '--dev-bind', '/dev', '/dev']
+    command = user_command(['bwrap', '--ro-bind', '/', '/', '--proc', '/proc', '--dev-bind', '/dev', '/dev'], user)
     if shm:
         command += ['--bind', str(shm), '/dev/shm']
     command += ['--bind', str(case), str(case), '--ro-bind', str(game), str(case / 'game')]
@@ -499,7 +857,7 @@ def load_credentials(path):
     return {int(k): v for k, v in data.items()}
 
 
-def stage_case(root, run, slot, game, userhome, port, token, clients=2, credential=None):
+def stage_case(root, run, slot, game, userhome, port, token, clients=2, credential=None, snapshot=True):
     """One private instance: HOME, profile 45841 (autosave off), snapshot, extensions."""
     case = run / f'case{slot}'
     profile = case / 'home/.config/EgoSoft/X4/45841'
@@ -507,10 +865,14 @@ def stage_case(root, run, slot, game, userhome, port, token, clients=2, credenti
                  case / 'extensions', case / 'home/.steam'):
         path.mkdir(parents=True, exist_ok=True)
     (case / 'runtime').chmod(0o700)
+    # This effect produced RGB speckles on the tested RADV setup, even without
+    # native hooks. Disable it only in this disposable diagnostic profile.
     (profile / 'config.xml').write_text('<?xml version="1.0"?><root><autosave>false</autosave><uisafemode>false</uisafemode>'
                                         '<fullscreen>false</fullscreen><borderless>false</borderless><res_width>800</res_width>'
-                                        '<res_height>600</res_height><antialiasing>0</antialiasing><vsync>false</vsync></root>\n')
-    shutil.copyfile(root / 'snapshot' / SLOT_SAVE, profile / 'save' / SLOT_SAVE)
+                                        '<res_height>600</res_height><antialiasing>0</antialiasing><vsync>false</vsync>'
+                                        '<chromaticaberration>false</chromaticaberration></root>\n')
+    if snapshot:
+        shutil.copyfile(root / 'snapshot' / SLOT_SAVE, profile / 'save' / SLOT_SAVE)
     for name in ('root', 'steam.pid', 'sdk32', 'sdk64'):
         source = userhome / '.steam' / name
         if source.exists():
@@ -551,22 +913,56 @@ def launch_order(text, clients):
     return order
 
 
+def collect_run_evidence(run_dir, slots, cases, ticks, manifest):
+    """Retain both logs and installed config, then validate the complete evidence."""
+    result = {}
+    logs_by_slot = {}
+    for slot, (case, profile, *_rest) in zip(slots, cases):
+        client = run_dir / f'client{slot}'
+        (client / 'installed').mkdir(parents=True, exist_ok=True)
+        log = profile / 'engine-output.log'
+        if log.exists():
+            shutil.copyfile(log, client / 'engine-output.log')
+        shutil.copyfile(case / 'extensions/x4_lan_lab/ui/config.lua', client / 'installed/x4_lan_lab-config.lua')
+        if (case / 'portable-math.log').is_file():
+            shutil.copyfile(case / 'portable-math.log', client / 'portable-math.log')
+        retained_log = client / 'engine-output.log'
+        logs_by_slot[slot] = gate_lines(retained_log) if retained_log.exists() else ()
+    result.update(validate_evidence(logs_by_slot, ticks, manifest['stride'],
+                                    rolling_slices=manifest.get('world_rolling_slices'),
+                                    motion_watch=manifest.get('world_motion_watch'),
+                                    motion_window=manifest.get('world_motion_window')))
+    try:
+        result['relay'] = json.loads((run_dir / 'relay.json').read_text())
+    except (OSError, ValueError):
+        result['relay'] = None
+    if manifest.get('portable_math_sha256'):
+        states = [portable_math_state(case) for case, *_rest in cases]
+        result['portable_math'] = [lines for _, lines in states]
+        result['portable_math_active'] = [active for active, _ in states]
+    return result
+
+
 def run(args):
     import pwd
-    if os.geteuid() != 0:
-        raise SystemExit('run as root (process identity checks and owned cleanup); the game runs as --user')
     try:
         user = pwd.getpwnam(args.user)
     except KeyError:
         raise SystemExit(f'REFUSED: no user {args.user} on this host (--user names the Steam user)') from None
-    userhome = Path(user.pw_dir)
+    if os.geteuid() not in (0, user.pw_uid):
+        raise SystemExit('run as the selected Steam user or as root')
+    userhome = Path(user.pw_dir).resolve(strict=True)
     root = args.root.resolve(strict=True)
-    if not (root / MARKER).is_file() or root.parent != userhome:
+    if (root == userhome or not root.is_relative_to(userhome)
+            or not (root / MARKER).is_file() or root.stat().st_uid not in (0, user.pw_uid)):
         raise SystemExit(f'{root} is not a staged live-test root under {userhome} with {MARKER}')
     manifest = json.loads((root / 'manifest.json').read_text())
     for rel, digest in manifest['files'].items():
         if sha(root / rel) != digest:
             raise SystemExit(f'bundle file changed: {rel}')
+    world_seed = snapshot_seed(root / 'snapshot' / SLOT_SAVE)
+    if manifest.get('snapshot_seed', world_seed) != world_seed:
+        raise SystemExit('bundle seed differs from its snapshot')
     # A desktop host (e.g. snap Steam) keeps the game, the Steam client's .steam and its shared memory elsewhere:
     # --game, --steam-home and --shm name them; the defaults are the VPS dedicated-server layout.
     game_path = args.game or userhome / 'x4/game'
@@ -581,11 +977,20 @@ def run(args):
         problems.append('X4 is not the pinned Linux 9.00 executable')
     if x4_executables():
         problems.append('another X4 is running (stop the dedicated server first)')
-    for tool in ('bwrap', 'runuser', 'Xvfb', 'xauth'):
+    display = desktop_display(args.display) if args.display else None
+    required_tools = ['bwrap']
+    if os.geteuid() != user.pw_uid:
+        required_tools.append('runuser')
+    if display is None:
+        required_tools.extend(('Xvfb', 'xauth'))
+    for tool in required_tools:
         if not shutil.which(tool):
             problems.append(f'{tool} missing')
-    if not Path('/usr/share/vulkan/icd.d/lvp_icd.json').is_file():
-        problems.append('Mesa lavapipe ICD missing (/usr/share/vulkan/icd.d/lvp_icd.json)')
+    vulkan_driver = args.vulkan_icd or lavapipe_icd()
+    if vulkan_driver is None or not vulkan_driver.is_file():
+        problems.append('Vulkan driver missing: install Mesa lavapipe or supply --vulkan-icd')
+    else:
+        vulkan_driver = vulkan_driver.resolve(strict=True)
     memory = memory_available_gib()
     clients = manifest.get('clients', 2)
     external = args.relay_port is not None
@@ -619,8 +1024,21 @@ def run(args):
                                             'portable_math': bool(manifest.get('portable_math_sha256')), 'seed_rng': manifest.get('seed_rng'),
                                             'gate_so_sha256': manifest['gate_so_sha256']}))
         return
-    ticks = args.ticks or manifest['ticks']
+    ticks = manifest['ticks'] if args.ticks is None else args.ticks
+    if manifest.get('navmesh_post_observe') is not None:
+        from navmesh_post_config import validate_window
+        validate_window(manifest['navmesh_post_observe'], ticks)
+    if manifest.get('economy_watch') is not None or manifest.get('economy_watch_window') is not None:
+        from economy_watch_config import validate_configuration
+        validate_configuration(manifest.get('economy_watch'), manifest.get('economy_watch_window'), ticks)
+    if manifest.get('world_motion_watch') is not None or manifest.get('world_motion_window') is not None:
+        from world_motion_evidence import validate_configuration
+        validate_configuration(manifest.get('world_motion_watch'), manifest.get('world_motion_window'), ticks)
+    if ticks < 1 or manifest['stride'] < 1:
+        raise SystemExit('--ticks and the bundle stride must be positive')
     name = args.name or time.strftime('live-%Y%m%d-%H%M%S')
+    if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]*', name):
+        raise SystemExit('--name must be a single directory name containing letters, digits, dots, underscores or hyphens')
     run_dir = root / 'runs' / name
     run_dir.mkdir(parents=True, exist_ok=False)
     if external:
@@ -641,27 +1059,27 @@ def run(args):
     by_slot = {slot: stage_case(root, run_dir, slot, game, steam_home, port, token, clients, credentials.get(slot)) for slot in local}
     cases = [by_slot[slot] for slot in local]
     for path in [run_dir, *run_dir.rglob('*')]:
-        if not path.is_symlink():
+        if os.geteuid() == 0 and not path.is_symlink():
             os.chown(path, user.pw_uid, user.pw_gid)
     result = {'name': name, 'ticks': ticks, 'port': port, 'memory_available_gib': round(memory, 1), 'discard_layer': discard,
               'manifest_commit': manifest['commit'], 'gate_so_sha256': manifest['gate_so_sha256'], 'steam_before': steam,
               'portable_math_sha256': manifest.get('portable_math_sha256'), 'seed_rng': manifest.get('seed_rng'), 'launch_order': order,
-              'external_relay': external, 'local_slots': local}
+              'external_relay': external, 'local_slots': local, 'snapshot_seed': world_seed}
     procs, starts, logs = [], {}, []
     cancelled = []
     # bwrap binds each private lock over this path, and cannot create it in the read-only view.
     lock_target = Path('/tmp/EGOSOFT_X4.lock')
-    lock_created = not lock_target.exists()
-    if lock_created:
-        lock_target.touch()
-        os.chown(lock_target, user.pw_uid, user.pw_gid)
+    try:
+        lock_fd, lock_stat = create_lock_target(lock_target, user.pw_uid, user.pw_gid)
+    except OSError as error:
+        raise SystemExit(f'REFUSED: cannot exclusively create lock target {lock_target}: {error}') from error
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, lambda *_: cancelled.append(1))
 
     def launch(label, command, env=None, as_user=False):
         log = (run_dir / f'{label}.log').open('wb')
         logs.append(log)
-        extra = {'user': user.pw_uid, 'group': user.pw_gid, 'extra_groups': []} if as_user else {}
+        extra = {'user': user.pw_uid, 'group': user.pw_gid, 'extra_groups': []} if as_user and os.geteuid() == 0 else {}
         parent = os.getpid()
 
         def parent_death():
@@ -686,32 +1104,38 @@ def run(args):
         games_by_slot = {}
         for slot in order:
             case, profile, dlc_binds, lock, ids = by_slot[slot]
-            display = next(n for n in range(101, 140) if not Path(f'/tmp/.X{n}-lock').exists() and not Path(f'/tmp/.X11-unix/X{n}').exists())
-            auth = case / 'xauthority'
-            auth.touch(mode=0o600)
-            os.chown(auth, user.pw_uid, user.pw_gid)
-            subprocess.run(['runuser', '-u', args.user, '--', 'xauth', '-f', str(auth), 'add', f':{display}', '.', secrets.token_hex(16)],
-                           check=True, stdout=subprocess.DEVNULL)
-            xvfb = launch(f'xvfb{slot}', ['Xvfb', f':{display}', '-screen', '0', '800x600x24', '-nolisten', 'tcp', '-noreset', '-auth', str(auth)],
-                          as_user=True)
-            deadline = time.monotonic() + 10
-            while not Path(f'/tmp/.X11-unix/X{display}').exists():
-                if xvfb.poll() is not None or time.monotonic() > deadline:
-                    raise RuntimeError('private Xvfb failed')
-                time.sleep(0.1)
+            if display:
+                display_name, auth = display
+            else:
+                display_number = next(n for n in range(101, 140)
+                                      if not Path(f'/tmp/.X{n}-lock').exists() and not Path(f'/tmp/.X11-unix/X{n}').exists())
+                display_name = f':{display_number}'
+                auth = case / 'xauthority'
+                auth.touch(mode=0o600)
+                if os.geteuid() == 0:
+                    os.chown(auth, user.pw_uid, user.pw_gid)
+                subprocess.run(user_command(['xauth', '-f', str(auth), 'add', display_name, '.', secrets.token_hex(16)], args.user),
+                               check=True, stdout=subprocess.DEVNULL)
+                xvfb = launch(f'xvfb{slot}', ['Xvfb', display_name, '-screen', '0', '800x600x24', '-nolisten', 'tcp', '-noreset', '-auth', str(auth)],
+                              as_user=True)
+                deadline = time.monotonic() + 10
+                while not Path(f'/tmp/.X11-unix/X{display_number}').exists():
+                    if xvfb.poll() is not None or time.monotonic() > deadline:
+                        raise RuntimeError('private Xvfb failed')
+                    time.sleep(0.1)
             env = {'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': str(case / 'home'),
-                   'USER': args.user, 'LOGNAME': args.user, 'DISPLAY': f':{display}', 'XAUTHORITY': str(auth),
+                   'USER': args.user, 'LOGNAME': args.user, 'DISPLAY': display_name, 'XAUTHORITY': str(auth),
                    'XDG_CONFIG_HOME': str(case / 'home/.config'), 'XDG_CACHE_HOME': str(case / 'cache'),
                    'XDG_DATA_HOME': str(case / 'data'), 'XDG_RUNTIME_DIR': str(case / 'runtime'), 'TMPDIR': str(case / 'tmp'),
                    'SteamAppId': '392160', 'SteamGameId': '392160', 'LD_LIBRARY_PATH': str(case / 'game/lib'),
-                   'VK_ICD_FILENAMES': '/usr/share/vulkan/icd.d/lvp_icd.json', 'VK_DRIVER_FILES': '/usr/share/vulkan/icd.d/lvp_icd.json',
+                   'VK_ICD_FILENAMES': str(vulkan_driver), 'VK_DRIVER_FILES': str(vulkan_driver),
                    'SDL_AUDIODRIVER': 'dummy', 'ALSOFT_DRIVERS': 'null'}
             if discard:
                 env.update(VK_LAYER_PATH=str(layer), VK_INSTANCE_LAYERS='VK_LAYER_X4MP_discard', X4MP_VK_DISCARD='1')
             if manifest.get('portable_math_sha256'):
                 env.update(portable_math_env(case))
             program = [str(case / 'game/X4'), '-personalfolderid', '45841', '-skipintro', '-debug', 'scripts',
-                       '-logfile', 'engine-output.log', '-nocputhrottle', '-noworkshopsync', '-seed:276944566']
+                       '-logfile', 'engine-output.log', '-nocputhrottle', '-noworkshopsync', f'-seed:{world_seed}']
             games_by_slot[slot] = (launch(f'game{slot}', namespace_command(case, game, dlc_binds, lock, env, program, args.user, shm)), profile)
         games = [games_by_slot[slot] for slot in local]
         result['started'] = time.time()
@@ -753,107 +1177,76 @@ def run(args):
         result['error'] = str(error)
     finally:
         for proc in reversed(procs):
-            if proc.poll() is None:
-                try:
-                    if start_ticks(proc.pid) == starts[proc.pid]:
-                        os.killpg(proc.pid, signal.SIGTERM)
-                    proc.wait(timeout=15)
-                except (OSError, subprocess.TimeoutExpired):
-                    try:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                        proc.wait(timeout=10)
-                    except (OSError, subprocess.TimeoutExpired) as error:
-                        result.setdefault('cleanup_errors', []).append(str(error))
+            try:
+                stop_owned_process(proc, starts[proc.pid])
+            except (OSError, subprocess.TimeoutExpired) as error:
+                result.setdefault('cleanup_errors', []).append(str(error))
+        result['owned_processes_remaining'] = wait_owned_groups(starts)
+        if result['owned_processes_remaining']:
+            result.setdefault('cleanup_errors', []).append('owned process groups still have members')
         for log in logs:
             log.close()
-        if lock_created:
-            lock_target.unlink(missing_ok=True)
+        try:
+            release_lock_target(lock_target, lock_fd, lock_stat)
+        except (OSError, RuntimeError) as error:
+            result.setdefault('cleanup_errors', []).append(str(error))
         result['steam_after'] = None
         try:
             result['steam_after'] = steam_identity(steam_home, user.pw_uid)
         except (OSError, ValueError, RuntimeError) as error:
             result['steam_after'] = {'error': str(error)}
         result['steam_unchanged'] = result['steam_after'] == steam
-        # Our instances run from this run's directory; the process groups above normally ended
-        # them. Any other X4 is reported, never touched.
-        deadline = time.monotonic() + 30
-        while any(link.startswith(f'{run_dir}/') for _, link in x4_executables()) and time.monotonic() < deadline:
-            time.sleep(0.5)
-        for pid, link in x4_executables():
-            if link.startswith(f'{run_dir}/'):
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except OSError as error:
-                    result.setdefault('cleanup_errors', []).append(str(error))
-        deadline = time.monotonic() + 10
-        while any(link.startswith(f'{run_dir}/') for _, link in x4_executables()) and time.monotonic() < deadline:
-            time.sleep(0.5)
+        # Do not signal processes identified only by executable path or an unverified PID.
         result['x4_left'] = [pid for pid, _ in x4_executables()]
-    # Census layout and the quick verdict.
-    stops, hashes, identities, problems = [], [], [], []
-    for slot, (case, profile, *_rest) in zip(local, cases):
-        client = run_dir / f'client{slot}'
-        (client / 'installed').mkdir(parents=True, exist_ok=True)
-        log = profile / 'engine-output.log'
-        if log.exists():
-            shutil.copyfile(log, client / 'engine-output.log')
-        shutil.copyfile(case / 'extensions/x4_lan_lab/ui/config.lua', client / 'installed/x4_lan_lab-config.lua')
-        if (case / 'portable-math.log').is_file():
-            shutil.copyfile(case / 'portable-math.log', client / 'portable-math.log')
-        stop, world, identity, rows = None, {}, None, []
-        if (client / 'engine-output.log').exists():
-            for line in gate_lines(client / 'engine-output.log'):
-                m = re.search(r'NATIVE_GATE STOP slot=p\d completed=(\d+) reason=(\d+) restored=(\d+)', line)
-                if m:
-                    stop = {'slot': slot, 'completed': int(m.group(1)), 'reason': int(m.group(2)), 'restored': int(m.group(3))}
-                m = re.search(r'NATIVE_GATE WORLD_CAPTURE_PROBLEM (.*)', line)
-                if m:
-                    rows.append(m.group(1))
-                m = re.search(r'NATIVE_GATE WORLD_IDENTITY_STOP calls=(\d+) count=(\d+) late=(\d+) restored=(\d+) failures=(\d+)', line)
-                if m:
-                    identity = dict(zip(('calls', 'count', 'late', 'restored', 'failures'), map(int, m.groups())))
-                m = re.search(r'NATIVE_GATE WORLD_HASH tick=(\d+) .*? state=(WORLD_IMPORTED_\d:\S+)', line)
-                if m:
-                    world[m.group(1)] = m.group(2)
-        stops.append(stop)
-        identities.append(identity)
-        problems.append(rows)
-        hashes.append(world)
+    # Even failed postprocessing must leave an explicit result next to the raw logs.
+    result['pass'] = False
     try:
-        result['relay'] = json.loads((run_dir / 'relay.json').read_text())
-    except (OSError, ValueError):
-        result['relay'] = None
-    if manifest.get('portable_math_sha256'):
-        states = [portable_math_state(case) for case, *_rest in cases]
-        result['portable_math'] = [lines for _, lines in states]
-        result['portable_math_active'] = [active for active, _ in states]
-    common = sorted(set.intersection(*map(set, hashes)), key=int)
-    result['stops'] = stops
-    result['world_identity'] = identities
-    result['world_capture_problems'] = problems
-    result['world_hash_ticks'] = len(common)
-    result['world_hash_first_difference'] = next((int(t) for t in common if any(other[t] != hashes[0][t] for other in hashes[1:])), None)
-    ok = (not result.get('error') and not result.get('cleanup_errors') and result['steam_unchanged'] and not result['x4_left'] and
-          all(s and s['reason'] == 1 and s['restored'] == 1 for s in stops)
-          and (external or (result['relay'] and result['relay'].get('verdict') == 'pass'))
-          and result['world_hash_ticks'] > 0 and result['world_hash_first_difference'] is None
-          and all(result.get('portable_math_active', [True])))
-    result['pass'] = ok
+        result.update(collect_run_evidence(run_dir, local, cases, ticks, manifest))
+        result['pass'] = (
+            not result.get('error')
+            and not result.get('cleanup_errors')
+            and result['steam_unchanged']
+            and not result['x4_left']
+            and result['evidence_ok']
+            and (external or (result['relay'] and result['relay'].get('verdict') == 'pass'))
+            and all(result.get('portable_math_active', [True]))
+        )
+    except Exception as error:
+        result['postprocessing_error'] = str(error)
     (run_dir / 'run-result.json').write_text(json.dumps(result, indent=2, default=str) + '\n')
-    print('LINUX_GATE_LIVE ' + json.dumps({k: result.get(k) for k in ('name', 'pass', 'error', 'stops', 'world_identity', 'world_capture_problems', 'portable_math_active', 'world_hash_ticks',
-                                                                    'world_hash_first_difference', 'steam_unchanged', 'x4_left')}))
+    print('LINUX_GATE_LIVE ' + json.dumps({k: result.get(k) for k in ('name', 'pass', 'error', 'postprocessing_error', 'stops', 'world_identity', 'world_capture_problems', 'portable_math_active', 'world_hash_ticks',
+                                                                    'world_hash_first_difference', 'evidence_errors', 'steam_unchanged', 'x4_left')}))
     print(f'results: {run_dir}')
-    raise SystemExit(0 if ok else 1)
+    raise SystemExit(0 if result['pass'] else 1)
 
 
-def main():
+def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='command', required=True)
     b = sub.add_parser('bundle', help='build the gate, overlay and extension; collect the owned snapshot')
     b.add_argument('--zig', type=Path, required=True)
     b.add_argument('--snapshot', type=Path, required=True, help='owned native snapshot save_009.xml.gz (the census snapshot)')
     b.add_argument('--out', type=Path, required=True)
-    b.add_argument('--extension-base', type=Path, help='extension to compose on (default src/extension/x4_lan_lab); use the lane base for the same Lua as Windows')
+    b.add_argument('--preset', choices=('linux-core',),
+                   help='opt-in Linux simulation test configuration; omit for manual hook experiments')
+    b.add_argument('--world-log-mode', choices=('full', 'hashes'), default='full',
+                   help='hashes suppresses object detail logs while keeping every full world capture')
+    b.add_argument('--world-rolling-slices', type=int, metavar='N',
+                   help='experimental per-tick object slices; requires hashes-only logging, changes census coverage timing')
+    b.add_argument('--economy-watch', metavar='SAVED_ID', help='read-only station economy deadline evidence')
+    b.add_argument('--economy-watch-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='inclusive economy watch window, at most 36000 ticks')
+    b.add_argument('--navmesh-post-observe', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='observe Linux navmesh post attempts during startup and this inclusive live tick window')
+    b.add_argument('--world-motion-watch', nargs='+', metavar='SAVED_ID',
+                   help='default-off per-tick canonical Nav evidence for up to four imported saved IDs')
+    b.add_argument('--world-motion-window', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='explicit inclusive motion evidence window, at most 18000 ticks')
+    b.add_argument('--status-stride', type=int, metavar='N',
+                   help='thin diagnostic status logs every N ticks (1..3600)')
+    b.add_argument('--probe-profile', action='store_true',
+                   help='record probe timings for scan/output performance comparisons')
+    b.add_argument('--extension-base', type=Path, help='explicit historical extension base (default: current minimal lockstep base)')
     b.add_argument('--portable-math', action='store_true', help='preload libx4mp_portable_math.so with its decimal and exact_reciprocal patches')
     b.add_argument('--seed-rng', action='store_true', help='key the MoveWorker RNG word each frame (boot option 2)')
     b.add_argument('--wire-crypto', action='store_true',
@@ -886,11 +1279,14 @@ def main():
     b.add_argument('--coverage-list', type=Path, help='the Linux function list for --coverage (fp_inventory.py --coverage-lists)')
     b.add_argument('--attention-all', action='store_true', help="every portable object's attention timer keyed by (tick, ID), its first due at the first admitted call")
     b.add_argument('--loadout-order-rows', type=int, nargs=2, metavar=('FROM', 'TO'), help='LOADOUT_ROWs in this tick window (at most 600 ticks)')
+    b.add_argument('--path-transform-observe', type=int, nargs=2, metavar=('FIRST', 'LAST'),
+                   help='compare ordered batch native and live path transforms (experimental)')
     b.add_argument('--nav-cadence', choices=('far', 'observe'), help='nav refresh intervals no longer depend on the camera distance')
     b.add_argument('--nav-params-init', action='store_true', help='parameter deadlines reset at the first call')
     b.add_argument('--nav-key', action='store_true', help="the nav refresh's draws keyed per ship (tick, portable ID, ordinal, time)")
     b.add_argument('--nav-probe-init', action='store_true', help='obstacle-probe deadlines reset at the first call')
     b.add_argument('--created-identities', action='store_true', help='portable IDs and census rows for components made after the load')
+    b.add_argument('--created-rows', action='store_true', help='retain individual creation records for diagnosis (requires --created-identities)')
     b.add_argument('--created-load', action='store_true', help='also for those the load makes after the import')
     b.add_argument('--portable-created', action='store_true', help='ordering and keying modules use created IDs')
     b.add_argument('--gravidar-wide', choices=('sort',), help='the Gravidar\'s zone groups in portable order for the pass (needs --gravidar)')
@@ -900,7 +1296,8 @@ def main():
     b.add_argument('--actor-rng-all', action='store_true', help="every portable ship's Move and Agent update on keyed streams (native_gate_actor_rng_all)")
     b.add_argument('--player-timer', action='store_true', help="the player's fleet rebuild timer from the first admitted frame (native_gate_player_timer)")
     b.add_argument('--warp-rng', choices=('split', 'observe'), help="warps on a keyed word or counted natively; with --step-trace the listed ships' warp watch rows (native_gate_warp_rng)")
-    b.add_argument('--tempzone-order', action='store_true', help="the pathing pass's tempzone requests in a portable order (native_gate_tempzone_order; needs --travel-snapshot)")
+    b.add_argument('--tempzone-order', action='store_true',
+                   help='order tempzone requests after snapshot-tracked or inline pathing batches finish')
     b.add_argument('--warp-exit', action='store_true', help='the gate exit sum in the Windows order (native_gate_warp_exit)')
     b.add_argument('--world-hash-shields', action='store_true', help="census shields in canonical form (native_gate_world_hash_shields = "
                    "'canonical', as the Windows default stack hashes them)")
@@ -911,11 +1308,19 @@ def main():
     b.add_argument('--region-pass', choices=('sync', 'observe'), help='the region manager pass joined at the gate tick (native_gate_region_pass)')
     b.add_argument('--pass-stride', type=int, help='the synced passes only every Nth frame (native_gate_pass_stride)')
     b.add_argument('--spline-join-all', action='store_true', help='every spline update waits until its route request is published (native_gate_spline_join_all; needs serial pathing)')
-    b.add_argument('--travel-snapshot', action='store_true', help='the wingman travel decision reads a per-pass snapshot of the leader flag')
+    travel = b.add_mutually_exclusive_group()
+    travel.add_argument('--travel-snapshot', action='store_true',
+                        help='wingmen read a per-pass snapshot of the leader travel flag')
+    travel.add_argument('--travel-determinism', action='store_true',
+                        help='experimental: execute pathing batches in order; replaces the preset snapshot strategy')
     b.add_argument('--gravidar-deadlines', action='store_true', help='factor-pass deadlines rebased at the first gated Move, low-attention passes keyed')
     b.add_argument('--gravidar', action='store_true', help='the gated Gravidar pass, keyed units, time sync, sector order (implies serial pathing)')
     b.add_argument('--event-rows', type=int, metavar='TICKS', help='one EVENT_ROW per due event in the boot passes and the first TICKS gated ticks (up to 20000; about 50 MB per client for 6000 ticks)')
     b.add_argument('--event-order', action='store_true', help='due events delivered in (time, saved ID) source order')
+    b.add_argument('--economy-load-rng', action='store_true', help='key economy draws during snapshot loading')
+    b.add_argument('--build-rng', action='store_true', help='key build-storage update scheduling by identity and game time')
+    b.add_argument('--event-rng', choices=('observe', 'key'), help='scope RNG around event deliveries (needs --event-order)')
+    b.add_argument('--event-rng-rows-window', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='record all event deliveries in this tick window')
     b.add_argument('--boot-hold', action='store_true', help='the first AIDirector::Move after the load runs in tick 1')
     b.add_argument('--ai-wait-rng', action='store_true', help='load-time AI Wait durations on per-wait streams')
     b.add_argument('--region-rng', choices=('key', 'observe'), help='hazard region updates on per-region streams')
@@ -933,9 +1338,11 @@ def main():
     b.add_argument('--clients', type=int, default=2, choices=range(2, 9), metavar='2..8', help='instances on the host; above 2 they use the protocol 3 wire')
     b.add_argument('--ticks', type=int, default=600)
     b.add_argument('--stride', type=int, default=60, help='world hash capture every N ticks (and tick 1)')
-    r = sub.add_parser('run', help='on the Linux host, as root')
+    r = sub.add_parser('run', help='run on Linux as the Steam user, or select one as root')
     r.add_argument('--root', type=Path, required=True)
     r.add_argument('--user', default='x4server')
+    r.add_argument('--display', help='use this existing local X11 display instead of private Xvfb instances, e.g. :0')
+    r.add_argument('--vulkan-icd', type=Path, help='Vulkan driver JSON; default: detected 64-bit Mesa lavapipe ICD')
     r.add_argument('--ticks', type=int)
     r.add_argument('--name')
     r.add_argument('--timeout', type=int, default=3600, help='seconds for load and the whole run')
@@ -953,9 +1360,13 @@ def main():
     r.add_argument('--wire-crypto-credentials', type=Path, metavar='FILE',
                    help='a bundle built with --wire-crypto: JSON {"<slot>": "x4c1:...", ...} (native_gate_crypto.py credential for '
                         'this --relay-token), mode 600; with an external relay only (--relay-port)')
-    r.add_argument('--launch-order', metavar='2,1', help='the order the clients start in; a difference that follows it is startup timing, one that follows the number is keyed on the slot')
-    args = p.parse_args()
-    bundle(args) if args.command == 'bundle' else run(args)
+    r.add_argument('--launch-order', metavar='2,1', help='start clients in this order for comparison; repeated differences still need diagnosis and do not alone prove slot-specific behaviour')
+    args = p.parse_args(argv)
+    if args.command == 'bundle':
+        apply_bundle_preset(args)
+        bundle(args)
+    else:
+        run(args)
 
 
 if __name__ == '__main__':

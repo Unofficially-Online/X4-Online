@@ -507,6 +507,14 @@ class BuildRngAndUiCargoOptionTests(unittest.TestCase):
     def failures(self, text, name):
         return [f['rule'] for f in module.check(text)[1] if name in f['rule']]
 
+    def test_economy_load_rng_needs_snapshot_and_identities(self):
+        ids = 'X4LAN_CONFIG.native_gate_world_identities = true\n'
+        option = 'X4LAN_CONFIG.native_gate_economy_load_rng = true\n'
+        self.assertEqual(self.failures(BASE + ids + option, 'economy_load_rng'), [])
+        self.assertEqual(len(self.failures(BASE + option, 'economy_load_rng')), 1)
+        self.assertEqual(len(self.failures(ids + option, 'economy_load_rng')), 1)
+        self.assertEqual(len(self.failures(BASE + ids + "X4LAN_CONFIG.native_gate_economy_load_rng = 'key'\n", 'economy_load_rng')), 1)
+
     def test_need_the_world_identities_and_snapshot(self):
         ids = 'X4LAN_CONFIG.native_gate_world_identities = true\n'
         self.assertEqual(self.failures(BASE+ids+'X4LAN_CONFIG.native_gate_build_rng = true\n', 'build_rng'), [])

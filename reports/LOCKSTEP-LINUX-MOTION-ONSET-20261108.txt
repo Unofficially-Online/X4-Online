@@ -1,0 +1,577 @@
+Linux motion divergence investigation — 8 November 2026
+======================================================
+
+Status: OPEN. These are isolated, same-machine diagnostic runs, not a
+multiplayer release or cross-machine determinism acceptance. The original
+failed captures remain retained. All raw saves and logs stay private.
+
+Retained branch comparison
+--------------------------
+The full-census ordered-pathing control diverges at tick 8520 in one imported
+ShipMedium motion leaf, saved ID 000000000006ec76. Both clients finish all
+12000 ticks and restore the owned hooks. See the performance report for that
+control and the earlier rolling-census counterexample.
+
+Two subsequent 9000-tick runs on source 81016e3 / gate 88c02db pass internally:
+the targeted baseline and a comparison enabling the existing nav-key option.
+Each retains 76 complete full-world captures and clean process cleanup. Their
+motion roots agree across runs through tick 8400, then differ from tick 8520.
+Timing roots already differ from tick 1; topology and health roots agree.
+
+At ticks 8520 and 8640, both nav-key clients reproduce exactly the motion leaf
+of client 1 of the failed control. Both baseline clients reproduce its client
+2 leaf. This is a useful association with the retained failure, not proof
+that nav-key caused or fixed it. The aggregate 108000 keyed calls per client
+do not establish coverage of this particular ship.
+
+The step trace at ticks 8461..8520 already shows different incoming position
+and flight-model state between those runs. Target matrices and parameter
+banks agree after comparing their logical read/write roles. Different physical
+bank selectors are not themselves a desync. Zero retained path-conversion or
+SetTarget events in this window do not establish equality of earlier events.
+The next trace therefore targets ticks 8401..8460.
+
+Bounded diagnostic additions
+----------------------------
+The default-off per-tick Nav watch uses the existing canonical motion/timing
+serializer for at most four saved identities over an explicit bounded window.
+It does not advance or rewrite census state. Its independent evidence parser
+requires the complete ordered tick/identity set, validates canonical metadata,
+cross-checks matching census preimages and hashes, and rejects failed cleanup.
+Mandatory watch receipts bypass optional status thinning.
+
+A separate default-off path-transform observer can compare the native cached
+transform with a live-transform candidate inside ordered path jobs. It returns
+the native result unchanged, but the additional engine getter may have side
+effects. It is a diagnostic experiment, not a passive or production-safe fix.
+Its native behaviour has not yet been validated. It excludes the overlapping
+step-chain hook and fails closed on ownership, bounds or buffer failures.
+
+Validation of source 386e919
+---------------------------
+The combined Linux checker passes the pinned ELF and synthetic C checks,
+162 Lua bridge methods and 29 relay scenarios. Thirteen focused motion-watch
+tests pass. These do not replace native or Windows validation.
+
+An independently audited 600-tick native pair retains all 1800 watch rows per
+client despite status stride 15. Both clients agree in all watched canonical
+bytes. Each has 72 successful census byte/hash comparisons. All six full-world
+captures per client exactly match the old targeted baseline. Both emit
+STOP completed=600 reason=1 restored=1; no owned process remains and Steam is
+unchanged. This establishes agreement at the sampled captures, not diagnostic
+noninterference between them or successful reproduction of the later failure.
+
+Private evidence: motion-watch-validation-audit.json,
+motion-branch-hash-associations.json, motion-branch-trace-comparison.json and
+motion-nav-key-comparison.json under .local/evidence/.
+
+Per-tick onset comparison
+-------------------------
+The new 12000-tick baseline fails its full census at tick 11520: exactly one
+motion leaf, imported ShipLarge 000000000008b613, differs among identical
+9983-object delta sets. The three watched ships remain equal across all 12003
+rows per client. The snapshot identifies the new object as Boron transport
+ZVZ-026. Its imported-list index 403298 falls inside the previously failing
+rolling slice at 11612; that older slice hash does not prove the same cause.
+
+The nav-key comparison passes all 101 full captures and 16004 watch rows per
+client, now including 8b613. Both runs reach STOP12000/restored1, with no owned
+process left and Steam unchanged. Both use the exact b53e4a7 gate binary. The
+nav-key manifest correctly records source_dirty=true: the only then-untracked
+file was this report, recorded separately before further changes. That manifest
+is retained unchanged and is not described as a clean build.
+
+Across these runs, 6ec76 first differs at tick 8435. Its incoming pose and step
+arguments still agree then, but its flight target already differs before the
+step. The baseline queues three points at 8434 and adopts a new target at 8435;
+the nav-key run queues them at 8450 and adopts the target at 8451. Parameters
+remain equal through all 60 captured steps. Corresponding adopted-point
+conversion input/output, hierarchy transforms and target matrices agree byte
+for byte when comparing those shifted events. The third queued point differs;
+it is separate from the point adopted at this transition.
+
+This localizes the observed split upstream of the flight step, to the timing
+of point production/adoption. It does not establish why the event is delayed,
+that nav-key directly covers this ship, or that nav-key removes all desyncs.
+Other watched ships have opaque parameter bytes that differ despite equal
+movement; their meaning remains unresolved and they are not masked as padding.
+
+Private evidence: motion-onset-audit.json, motion-onset-nav-key-audit.json,
+motion-onset-crossrun-fields.json and the motion-onset-step-audit / 
+motion-onset-nav-key-step-audit directories under .local/evidence/.
+
+Longer nav-key control and trader-script divergence
+--------------------------------------------------
+The reversed-launch-order 24000-tick control on clean source 6b3dcb5 and the
+same b53e4a7 binary fails. Its first full-world mismatch is again at 11520;
+the per-tick watch first differs at 11515 in the motion of 8b613. The three
+preceding watched ticks agree. At the first difference one peer has zero
+linear velocity while the other has a small nonzero velocity. Watch and
+detail bytes at 11520 reproduce their respective differing census leaves.
+The earlier 12000-tick nav-key pass therefore does not establish a fix.
+
+This control does not finish its requested duration. Both peers abort at
+14436 with WORLD_MOTION_ERROR stage=nav_owner_invalid. That receipt has no
+target identity, so it cannot identify which watch failed or prove that a
+ship died. There are 121 complete census captures through 14400 and 25744
+watch rows per peer through 14435, not the requested full-run coverage.
+Both report ABORT active=0 restored=1; the controller finds no owned process
+remaining and the same Steam process. Normal completion footers are absent.
+The overall result remains FAIL, independently of the useful earlier data.
+
+The retained script window 11360..11900 is internally complete: 69577 rows
+per peer, contiguous absolute indices 1517751..1587327, exact boundary
+cursors, and all 541 closed per-tick counts/keyset/drawset tallies match
+their exported rows. Every entered scope in that window has a row. This
+bounded evidence does not turn the aborted run into a passing test.
+
+The first matched keyed scope with different draw counts is at tick 11396:
+trade.find.free, saved owner 8b61b, outer Exec scope, PC 0x172..0x172. Its key,
+initial RNG word and caller word agree. One peer consumes 56 generator steps,
+the other 57; independent stepping reproduces both logged exit words. The
+snapshot explicitly assigns 8b61b to ship 8b613's aipilot post. At 11424 the
+scope membership/keyset differs; that missing call is not a matched PC-value
+difference. No matched-scope PC difference appears in the retained window.
+
+This ties an earlier script divergence to the pilot of the later diverging
+ship. It does not yet identify a differing trade-offer list or prove the
+origin of its inputs. That Linux control sorts due events but runs their native
+handlers on the caller's RNG word. Windows battle-snapshot defaults enable
+an independent RNG scope per delivery; its existing investigation describes
+related trader/offer failures. An opt-in Linux scope is the next controlled
+comparison. Native event type RVAs differ between platforms, so a Linux-only
+scope does not by itself establish Windows/Linux seed parity.
+
+Private evidence: nav-key-script-soak-partial-audit.json,
+nav-key-script-window-comparison-corrected.json, nav-key-script-first11396/,
+boron-trader-pilot-identity.json and trader-script-pcg-independent.json.
+
+Opt-in event RNG comparison
+--------------------------
+Source 18f3be5152e7373da8d1831c8168f32141e4a260 adds a Linux event-delivery
+scope through the existing event-order redirect. The scope derives a private
+RNG word from the admitted tick, portable source identity, event type and due
+time, and restores the caller's word on normal return. It remains default-off.
+The pinned ELF checks, synthetic native guards, 165 Lua bridge methods and 29
+mock relay scenarios pass. Added cases cover nested restoration, foreign
+threads, unreadable identities, ownership loss and explicit class-fallback
+collisions. These checks do not replace native execution.
+
+The first native comparison uses the same seed-2222222 snapshot, nav-key and
+ordered pathing, launch order 2,1, full census every 120 ticks, and gate SHA256
+980ee2a31badb83f60e047b7a7e44a9e227ad891233bec62d95cdefce60dc767.
+Both peers complete 15000 ticks. All 126 full census captures agree across
+the recorded domains, as do all 16004 motion-watch rows per peer from ticks
+8000..12000. There are 544 successful watch/census comparisons per peer.
+Both emit STOP completed=15000 reason=1 restored=1; manifest file hashes agree,
+no owned X4 process remains, and the recorded Steam process is unchanged.
+This is agreement of the recorded domains at the sampled times, not proof of
+every internal engine state, mixed-platform play or a complete gameplay test.
+
+The independently checked SCRIPT window 11360..11900 has 69815 rows per peer,
+complete indices and all 541 matching closed tick tallies. Matched scope
+contents, draw counts, PCs and scope order agree. Pilot 8b61b now calls
+trade.find.free at ticks 11383, 11401, 11428, 11479 and 11518 with identical
+rows on both peers. Neither calls it at 11396: scheduling changed, so this is
+not a comparison of the identical failing invocation from the prior run.
+
+The EVENT receipts are internally complete but are not identical between
+peers. Cumulative counts/keyset/drawset first differ at tick 3601. The complete
+all-delivery window 11360..11900 contains 36066 versus 36047 rows; no matched
+delivery differs in its reported draw count. Outside that window only drawn
+deliveries have rows, so the first cumulative split cannot identify every
+extra zero-draw delivery. All 15000 status receipts have zero foreign-thread,
+unreadable, unknown-draw and failure counts, with 53 class-fallback calls per
+peer. Final call counts are 941261 versus 941259. The raw row does not contain
+an observed exit word; reconstructed terminal words are not independent exit
+observations. Sixteen adversarial parser checks pass.
+
+Bounded RTTI inspection identifies the differing source/event RVAs as
+U::BuildStorage and U::UpdateBuildEvent. The snapshot identifies the retained
+source objects as build storages. The Windows build_rng hook already addresses
+randomized load-time scheduling of these events. The Linux event scope starts
+at admitted delivery and cannot retrospectively align timers created while
+loading. This is the next candidate mechanism, not proof that the remaining
+event differences are harmless or the only remaining source of divergence.
+
+Native Linux vtable RVAs are seed inputs here. Same-ELF validation does not
+establish seed parity with Windows. An unmapped source uses its class as a
+fallback key; this is not a unique object identity. Native unwind recovery and
+the thread safety of the pre-existing event-order batch are not established
+by the new scope.
+
+Private evidence: event-rng-key-independent-audit/summary.json,
+event-key-comparison-summary.json, event-key-script-window.json,
+event-key-event-receipts.json, event-rng-receipts-synthetic-results.json and
+event-key-focused/. The failed longer nav-key control remains FAIL.
+
+Longer event RNG comparison with rolling samples
+-----------------------------------------------
+The same clean 18f3be5 source and 980ee2a gate complete a second, 24000-tick
+native pair with launch order 1,2. It uses 120 rolling slices, hashes-only
+output and status stride 15, without the motion/script window diagnostics.
+All 24000 slice receipts agree, covering 200 complete declared cohort cycles;
+there is no partial final cycle. Both STOP records and identity/rolling
+footers succeed. All bundled hashes match, no owned process remains, and
+the recorded Steam identity is unchanged. The complete retained client
+engine-output logs are authoritative here: client 1's stdout copy lacks its
+last rolling footer and cannot alone establish successful completion.
+
+These are sequential slice samples, not simultaneous whole-world snapshots.
+Each client retains 24000 WORLD_BANKS and 201 shield receipts. The thinned
+EVENT status histories contain 1614 rows each; their final failure, foreign
+and unknown-draw counts are zero, with 93 class-fallback calls each. Final
+event call totals still differ, 1565903 versus 1565906.
+
+Across 23879 relay intervals after tick 120, the median is 36.915 ms, p99
+63.163 ms and maximum 103.989 ms; 378 exceed 50 ms and one exceeds 100 ms.
+The first 12000-tick prefix has 11879 comparable intervals: median 35.066 ms,
+p99 42.863 ms, maximum 94.535 ms, with 17 over 50 ms. At its 98 former full-
+census boundaries, median/maximum are 37.005/43.868 ms. Across the whole run,
+198 such boundaries have median 38.616 ms and maximum 79.491 ms. The old
+roughly 489 ms periodic full-capture pauses are absent in this run; ordinary
+variation remains. These measured local relay intervals are not rendered FPS.
+Different run lengths and simulation options preclude attributing every
+timing difference to one hook. Percentiles use the nearest-rank method.
+
+Private evidence: event-key-rolling-independent-audit/summary.json and
+event-key-rolling-prefix-timing.json. The first attempted rolling bundle was
+rejected before launch because it requested world-hash watches. Motion-only
+watches are compatible with rolling mode; this comparison omits both kinds.
+
+Load-time build-update RNG comparison
+------------------------------------
+Clean source fbb6f6d4a2c93745c16c3add5537c114cf032cfb adds a default-off
+build_rng hook at the shared Container scheduler's randomized-delay draw.
+Pinned Linux disassembly identifies the call at VA 0x1838f16 to FloatRange
+at VA 0x1a491c0. The explicit-time path remains native and unchanged. The
+wrapper seeds one native draw using portable identity and exact game-time
+bits, then restores the caller's RNG word on normal return. It resolves
+available saved identities before the import registry is sealed. A mapped
+Component class is required even when an identity lookup succeeds; otherwise
+the gate fails. Class/time fallback remains possible when identity is absent.
+
+The final source passed pinned ELF and synthetic guard checks, 168 Lua bridge
+method checks, 29 mock relay scenarios and 16 focused Python tests. Separate
+source review corrected a valid-identity/unknown-class guard bypass before
+the native run. These are source and synthetic checks, not native evidence.
+
+The native comparison retains the prior seed-2222222 snapshot and reversed
+launch order 2,1. It enables build_rng alongside event_rng/key, nav-key and
+ordered travel. Gate SHA256 is
+5523ae986c2da491897b60b9a34f353d323d40a43ce7e2cfa987e67777861ea1.
+Both peers finish 15000 ticks. Independent canonical-log audits confirm all
+126 sampled full censuses match, as do 16004 motion rows per peer across the
+four watched objects at ticks 8000..12000. Each peer has 544 successful
+watch/census checks. STOP reason=1/restored=1, matching bundle hashes, an
+unchanged recorded Steam identity and no remaining owned X4 processes are
+verified. This does not inspect every internal state between census captures.
+
+All 15000 EVENT cumulative status payloads now match field for field, with
+no missing ticks: the earlier first split at tick 3601 is absent. The complete
+delivery window 3600..4200 contains 33089 matching rows per peer, including
+33064 zero-draw deliveries. All 43413 logged rows per peer have contiguous
+drain indices. Outside the window, zero-draw delivery identities are omitted;
+matching aggregates are not full identity-history proof. SCRIPT retains
+69815 matching rows per peer across all 541 ticks at 11360..11900, without
+unrepresented scopes. The strict row comparisons show no differing category.
+
+BUILD_RNG reports 1452 keyed calls outside admitted frames and zero loading
+fallbacks per peer. All 128 retained samples have boot phase 2 and saved IDs;
+their multisets match: 117 BuildStorage, six ShipExtraLarge and five Station.
+The remaining 1324 calls are explicitly unsampled, so individual identities
+and draw equivalence for that population are not established by these rows.
+Seven class-fallback calls occur later in the run; their identities are not
+retained. No sampled call uses the temporary Container class, although the
+pinned scheduler has a constructor path. Native/unmapped/failure counts are
+zero and the final build hook reports restored=1. Sampled native float bits
+are checked against independently derived expected values; due times and
+RNG exits are not separately observed fields.
+
+The private BUILD validator initially required live status rows that this
+module deliberately emits only at STOP. That unsupported assertion was
+removed and the false-failure artifact retained; no native evidence or gate
+was relaxed. This is a bounded same-PC success, not evidence for another
+world seed, future simulation duration, interactive play or Windows parity.
+
+Private evidence: build-event-key-independent-audit/summary.json,
+build-event-key-audit-summary.json and build-event-key-{loading,events,scripts}.json.
+
+Fresh-world admission limit and correction
+-----------------------------------------
+A new seed-3333333 snapshot was captured and completely gzip/XML-validated in
+an isolated profile. SHA256 is
+df116bdd4a52988b6104cf7bd082d357e54abd00cbaaa6bdac1825bb6676c6f8.
+Capture cleanup succeeded and the recorded Steam identity was unchanged.
+Source 9924c3b with the same 5523ae98 gate requested 36000 rolling ticks, but
+both clients stopped before admission: completed=0 reason=72 restored=1,
+526235 identity import calls, table count 524288, failures 1680. The count
+exactly saturates the Linux table's half-full limit. There are no world
+samples and no passing simulation result. The original failed run remains
+retained; its owned-process cleanup and Steam checks passed.
+
+The correction matches the existing Windows allocation of 4194304 buckets.
+Maximum admitted saved identities remain half that number, 2097152; the
+256-probe bound and conflicting-identity checks are unchanged. The pending
+import queue retains its prior two-times-population allowance for repeated
+imports. Together the two 16-byte-entry tables allocate up to 128 MiB rather
+than 32 MiB. This is a bounded capacity increase, not unlimited world support;
+allocation, occupancy or probe exhaustion must still stop the gate.
+
+The focused pinned-image Zig checker passes the actual insertion and lookup
+of all 2097152 entries, refusal of the next entry, duplicate/conflicting IDs,
+256 deliberately colliding hashes, all 4194304 pending slots and overflow
+failure latching. Remaining census buffers derive their saved population
+from the admitted count. The separate created-object limit is unchanged.
+Independent source review found no additional blocker; the fresh-world
+native comparison must still be repeated after this correction.
+
+Separately, ac6deaf formats the two new RNG headers without changing their
+ordered C tokens. A build comparison finds all 20 allocated ELF sections
+identical to the prior gate, including code, data and relocation contents.
+Only .debug_info and .debug_line differ; the whole-file hashes are different.
+This formatting result does not cover the later capacity change.
+
+Private evidence: linux-20261108-build-event-newseed failed native bundle,
+linux-identity-capacity-check.log in the isolated capacity worktree, and
+rng-format-elf-comparison.json. No normal profile or game file was modified.
+
+Fresh-world long run: later divergence remains
+---------------------------------------------
+Clean source 57f8b3624ebe6c5f9f49bf74823e40f714d91121, gate SHA256
+2ae593470b2580cc3e66b3d325b417d1329d1b00ea2235ae0406620ec85e9c8d,
+repeats the same seed-3333333 snapshot with launch order 1,2. It completes
+36000 rolling ticks, but the overall result is FAIL. The capacity correction
+admits 526373 saved identities on each peer with zero failures or late imports.
+All 36000 samples and 300 complete cycles are retained. Both STOP records
+report completed=36000 reason=1 restored=1; the manifest hashes match, no
+owned processes remain and the recorded Steam identity is unchanged.
+
+The first differing sample is tick 32146, cycle 268, slice 105, imported
+indices [474927,479450). Its motion and timing roots differ; the other roots,
+counts and coverage fields agree. This slice belongs to a 542774-object
+cohort including 16401 created identities. Further slices differ later.
+From tick 35401, the created populations themselves differ, 17096 versus
+17097, which shifts slice boundaries. Later whole-sample differences must
+therefore not be interpreted as independent object-level mismatches.
+
+Retained drawn-event rows identify an earlier matched-scope difference at
+tick 32001, row index 24946 on both peers: saved Station 36fe9, source RVA
+392ec50 and event RVA 3784b50 (U::UpdateTradeOffersEvent), due bits
+4080e30aec33de3f, ambient entry word 6fa9c33dc7d2ac6b. The reconstructed keyed
+start word is dc38aa18cec48fc2 on both, but the handler consumes three versus
+two PCG steps. This is a matched call with different draw counts, not an
+absent invocation. No script rows were requested, so the inner branch is not
+identified by this capture. The earlier cumulative event-delivery split and
+thinned actor-RNG counters remain separate observations, not discarded data.
+
+Across 35879 relay intervals after tick 120, median/p95/p99/maximum are
+38.145/42.923/85.042/124.428 ms; 849 exceed 50 ms. At 298 former full-census
+boundaries the median/p99/maximum are 39.764/80.612/90.447 ms. These are local
+relay intervals, not rendered FPS. The repeated roughly 489 ms diagnostic
+pauses are absent, but ordinary variability and a real later desync remain.
+
+Private evidence: build-newseed-capacity-independent-audit/summary.json and
+newseed-capacity-drawn-event-triage.json. The next investigation compares the
+Linux economy schedule initialized during loading against the corresponding
+Windows mechanism; the shared approximate 540-second onset is a hypothesis,
+not proof of the branch or field that differs in this Linux invocation.
+
+Read-only economy timer observation
+----------------------------------
+Clean source a2a19e6, gate SHA256
+807848965d4a36aadfe0d495175e810779168f28ff8d5cf47e4823200d8dc75a,
+uses the same seed-3333333 snapshot for 600 ticks, launch order 1,2, rolling
+120, status stride 15 and the preceding navigation/event/build options.
+A new default-off economy observer reads saved Station 36fe9 every tick.
+It resolves the sealed saved identity, performs fresh component lookups and
+checks class, runtime identity and stored fields again before logging. It
+calls no economy update and writes no engine state. These unlocked reads do
+not rule out ABA changes or changes immediately around the sample.
+
+Both peers retain all 600 mandatory rows, with no absence or observer error,
+and successful ARMED/STOP receipts. At tick 1 the game time is
+7.063666666666666 and the last economy time is 0 on both, but the next economy
+time is 628.4911575317383 versus 654.8726806640625. This 26.38152313232422-second
+difference persists through tick 600. The ordinary rolling-world comparison
+passes because its current field set does not include these stored deadlines;
+that PASS is not economic-state equality.
+
+Pinned import instructions store the saved last value at object+0xa70 and
+initialize object+0xa68 through an inline draw from the loading thread RNG.
+The pinned economy guard reads +0xa68. This observed initial discrepancy is
+a concrete determinism defect. It does not retrospectively prove the timers
+or inner branch in the prior tick-32001 event, where these fields were not
+recorded. A narrow, opt-in import RNG correction is being developed separately.
+
+The bundle hashes, full STOP/restoration records and unchanged Steam identity
+were independently audited; no owned game process remains. Private evidence:
+economy-observe-600-independent.json, economy-observe-600-audit.json, the
+linux-20261108-economy-observe bundle, and retained import/guard disassembly.
+The observer received focused C/ELF checks, 171 Lua method checks and five
+Python checks; its separate retained-log validator passed eight adversarial
+checks. Synthetic checks do not establish native correction or portability.
+
+Opt-in load-time economy RNG: bounded native comparisons
+-------------------------------------------------------
+Clean source ef85d1881eea0658f03813bc83d39c46e76e1654, gate SHA256
+d18481d00090e3c523b44adfe9ccc670b0bf512f93162e714e4daa60499d7a10,
+uses the seed-3333333 snapshot SHA256
+df116bdd4a52988b6104cf7bd082d357e54abd00cbaaa6bdac1825bb6676c6f8.
+The default-off economy-load RNG keys an eligible import draw by saved identity
+and last-time bits; missing keys execute the native draw, advance the ambient
+word and latch a failure. The original floating-point continuation remains in
+place. These are Linux same-PC comparisons, not cross-platform validation.
+
+The 600-tick two-client run matched all 600 observed timer rows for saved
+Station 36fe9, including last, next and game time. The next deadline was
+599.2775764465332 on both peers. Each reported 1068 prepared draws, zero
+fallbacks and failures, and a restored gate. The first 128 indexed prepared
+receipts per peer were retained and independently recomputed; they are predicted
+integer results, not observations of the stored floating-point timer. The
+remaining 940 individual receipts were not retained, although the population
+counts and order-independent aggregates matched.
+
+The 42000-tick run completed on both peers with reason 1, restored=1, no economy
+fallback or failure, and the same 1068 prepared draws per peer. All 42000
+rolling samples matched, comprising 350 complete cycles of 120 slices. The
+separate station observer covered ticks 6001..42000 and retained all 36000
+rows per peer with equal last/next/game-time values and no absence or observer
+failure. The observed timer changed at tick 36443 on both peers. Independent
+comparison also found all 33724 retained drawn-event rows equal in order. Those
+rows exclude zero-draw event deliveries outside an explicitly configured window;
+they do not establish equality of all event calls or their internal branches.
+
+For the long run's 41879 relay release intervals after tick 120, median/p95/
+p99/maximum were 38.488/44.2061/98.80424/168.882 ms. There were 1128 intervals
+above 50 ms and 401 above 100 ms. These measurements describe relay pacing,
+not rendered FPS. The previously recurring roughly 489 ms diagnostic stalls
+did not recur in this capture; occasional longer intervals remain.
+
+A separate 4200-tick run reversed client launch order. Both clients completed
+with restored hooks; all 4200 station rows and 35 rolling cycles matched.
+Its complete early event window retained zero-draw deliveries and exposed
+13 unmatched event rows on each side. The identified rows are zero-draw
+NavHelperGeneratedEvent deliveries with differing tick or ambient entry word;
+shared source identities do not establish their cause. An independent
+4200-tick actor-row run likewise matched the station and rolling samples but
+found ship-scope draw timing differences beginning at tick 3232: 183 versus
+182 retained drawn-scope rows, with 281 total draws per peer. Six affected
+saved IDs are 17bcf9, 17bd5a, 17bdbb, 17be1c, 17be7d and 17bede. The snapshot's
+completed X4LAN_NativeGate Spawn.$ships list identifies them as its first six
+fixture actors: Argon ship_s components with the same fighter macro and Wait
+orders. Their association with the early NavHelper sources is correlation,
+not evidence of a causal direction or a specific ShipMove subsystem.
+
+The observer covers only Station 36fe9; its unlocked double reads cannot
+exclude ABA changes. Rolling slices are collected over different ticks and
+omit economy timer fields, so matching cycles are not an atomic whole-world
+comparison. Prepared rows are capped at 128 and exclude the watched station
+in these samples. Per-tick rolling equality and retained event equality do not
+prove all game state or internal event timing equal, and the older 36000-tick
+failure's inner branch remains unproven. The result does not establish
+cross-PC, cross-CPU or Windows/Linux compatibility.
+
+The retained hardened and independent audits are under the private
+.local/evidence/economy-review-resume directory: economy-key-600-audit-hardened,
+economy-key-42000-audit-hardened, economy-key-42000-independent,
+economy-key-42000-events, economy-events-reverse-4200-audit-hardened,
+economy-reverse-4200-independent, economy-actor-watch-4200-audit-hardened and
+economy-actor-watch-4200-independent (JSON). The original failed runs and their
+evidence remain unchanged.
+
+The source used by the native runs assigned stop reason 192 to the economy RNG
+check and 191 to the path-transform observer; neither failure was observed in
+these runs. Subsequent integration corrections use 201 and
+202 respectively and correct diagnostic classification; those changes have not
+been native-tested by the runs above. The current Linux gate also requires speed
+factor 1.0 and the relay requires the fixed game-time step, so SETA acceleration
+is not presently supported. No acceleration implementation or native SETA
+test is claimed by this report.
+
+Offline integration validation after these corrections ran 1987 Python tests:
+1962 passed, 25 were skipped, and no test failed. The development check exits
+1 because skips are incomplete validation; missing Windows/private reference
+assets and platform-specific checks remain explicit gaps. GCC and Zig 0.15.2
+Linux gate checks passed with the pinned executable read from disk, 174 Lua
+bridge methods and all 29 synthetic relay scenarios. No native X4 process is
+launched by these checks. Private logs: full-python-check-fixed.log and
+final-zig-check.log under the same evidence directory.
+
+NavMesh producer observer: control and initial refusal
+-----------------------------------------------------
+Source 27c495721c7531bfdebaf7b911e2b303e8f8ecbc, gate SHA256
+9b849e1d3d6a92c3eb04a08e4acf35479201d3a7cd830929c1592db1f20af8a6,
+used the same df116bdd... snapshot and reverse launch order (2,1). The control
+without the observer completed 4200 ticks per peer with reason=1/restored=1.
+All 4200 retained station-timer rows and rolling samples matched, covering
+35 complete 120-slice cycles. This also exercises the source after the stop-code
+integration corrections, but does not exercise those failure branches.
+
+Each control peer retained nine ERROR DEGRADED notices: FIND_ORDER unmapped,
+CREATED_IDENTITIES macro_unknown, and BUILD_RNG fallback. They remain explicit
+coverage gaps despite the matching bounded samples; this is not complete
+world-determinism acceptance. Steam identity and owned-process cleanup matched
+the retained runner records. The independent audit is
+.local/evidence/economy-review-resume/navmesh-preload-control-independent.json.
+
+The paired observer run on exactly that source failed before LOAD_REQUEST and
+tick zero: both peers refused at stage=pins. There are no producer rows or normal
+STOP records. ABORT active=0/restored=1 records cleanup, not successful testing.
+The failed bundle linux-20261108-navmesh-post and its raw evidence are preserved.
+Static comparison identifies three exact-reciprocal patches inside the fully
+pinned NavMesh worker body. Their installed jump bytes depend on the preload's
+allocation address. The original raw worker hash cannot accept these changes;
+compatibility must verify the actual owned sites and thunks before normalizing
+only those three windows for the original whole-function hash. This diagnosis
+is a static explanation consistent with the preload ACTIVE records; it is not
+a dump of the failed processes' live worker bytes.
+
+NavMesh producer observer: verified preload compatibility and retained run
+-------------------------------------------------------------------------
+Source 66219ec7bd0cf3345b3ebdfb44d1ae2b0652c025 accepts only the original
+worker or the exactly verified reciprocal-preload variant. The full original
+worker SHA remains checked after normalization. Copied-ELF checks using the
+real preload exercise original/patched/mixed/corrupted sites, trampoline
+bytes and destinations, alternate region placement, page permissions and
+actual observer arm/check/restore. The Zig 0.15.2 gate check, including the
+177-method Lua bridge, passed; these checks do not execute the game. The
+unchanged 29 synthetic relay scenarios were not repeated for this pin-only
+correction; their earlier result remains scoped to source 27c4957.
+
+The fresh 4200-tick paired native run used gate SHA256
+8f3518be7eed6e103f19b4e133f16c78ae104f0f63368ee854b52aa09e0398f5,
+the same df116bdd... snapshot and launch order (2,1). Both peers completed
+with reason=1/restored=1; all 4200 observed station-timer rows and rolling
+samples matched. Independent producer validation retained 13 live post
+attempts per peer. Peer 2 also had one phase-0, epoch-0 bootstrap attempt
+whose saved-identity lookup remained unresolved. All 13/14 indexed rows
+and their lookup receipts were retained, with zero overflow, unreadable
+rows, active readers or uncertain cleanup. Steam identity was unchanged;
+the runner and an independent post-run process check found no X4 remaining.
+
+For the 13 live attempts, peer 1 sampled epochs 8/10 and peer 2 epochs 2..10.
+Within each peer, every attempt had exactly one early zero-draw NavHelper
+event candidate matching the later saved-identity hint, normalized source
+and event types, and due bits. Candidate delivery ticks were 9/11 on peer 1
+and 3..10 on peer 2. These are bounded correlations. The sampled producer
+epoch is not an exact engine timestamp; lookup-at-drain is not capture-time
+identity proof; a post attempt is not proof of queue admission or helper
+completion. No cause of the later actor differences is established.
+
+Those differences remain: the two STOP records report 183 versus 182 drawn
+ship scopes, with 281 ship draws each. The same nine degraded notices per
+peer remain explicit FIND_ORDER, CREATED_IDENTITIES and BUILD_RNG gaps.
+Thus this run validates the bounded observer and matching sampled states,
+not a deterministic navigation fix or complete multiplayer readiness. The
+prior pins-refusal run stays failed and is retained without filtering.
+
+Private evidence: navmesh-post-reciprocal-4200-audit.json,
+navmesh-post-reciprocal-producer-audit.json,
+navmesh-post-reciprocal-independent.json and
+navmesh-post-reciprocal-retained-hashes.json in the same evidence directory.
+The producer validator has six adversarial tests, including missing/reordered
+receipts, lost arm-time counts, null capture pointers and invalid identity
+hints. Further scheduling work requires Linux-specific build/lock/exit and
+busy-set rotation evidence; blocking only the post call is too late because
+cache publication precedes it.

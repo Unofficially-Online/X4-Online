@@ -215,6 +215,25 @@ end
 local world_hash_schema=cfg.native_gate_world_hash_schema
 if world_hash_schema==nil then world_hash_schema='WORLD_IMPORTED_1' end
 assert(world_hash_schema=='WORLD_IMPORTED_1' or world_hash_schema=='WORLD_IMPORTED_2','invalid world hash schema')
+assert(cfg.native_gate_world_detail_rows==nil or type(cfg.native_gate_world_detail_rows)=='boolean',
+ 'native_gate_world_detail_rows must be a boolean')
+-- Rolling captures compare disjoint ranges at their sample ticks. They are a
+-- Linux diagnostic, not an instantaneous snapshot or a hot-join checkpoint.
+local rolling_slices = cfg.native_gate_world_rolling_slices
+if rolling_slices ~= nil then
+ assert(type(rolling_slices)=='number' and rolling_slices%1==0 and
+  rolling_slices>=1 and rolling_slices<=18000, 'invalid rolling census slice count')
+ assert(cfg.native_gate_created_identities==true, 'rolling census requires created identities')
+ assert(world_hash_schema=='WORLD_IMPORTED_2' and cfg.native_gate_world_hash_stride and
+  cfg.native_gate_world_detail_rows==false, 'rolling census requires schema 2 and hashes-only output')
+ for _,key in ipairs({'native_gate_join', 'native_gate_world_hash_join', 'native_gate_world_pages_window',
+  'native_gate_world_trace_ticks', 'native_gate_world_health_ticks', 'native_gate_world_nav_stride',
+  'native_gate_nav_cadence_watch', 'native_gate_motion_watch_zones', 'native_gate_player_probe'}) do
+  assert(not cfg[key], 'rolling census does not support '..key)
+ end
+ assert(not cfg.native_gate_world_hash_watch or #cfg.native_gate_world_hash_watch==0,
+  'rolling census does not support object watches')
+end
 if world_hash_schema=='WORLD_IMPORTED_2' then
  local stride=cfg.native_gate_world_hash_stride
  assert(type(stride)=='number' and stride==math.floor(stride) and stride>=1 and stride<=18000,'enriched world hash requires census stride1..18000')
@@ -631,10 +650,60 @@ end
 local world_capture=gate.world_capture
 if world_hash_schema=='WORLD_IMPORTED_2' then world_capture=gate.world_capture_nav_v2 end
 if cfg.native_gate_world_hash_stride then assert(type(world_capture)=='function','configured world hash export unavailable') end
+if rolling_slices then
+ assert(type(gate.world_capture_rolling)=='function', 'rolling census export unavailable on this platform')
+ assert(not X4LAN_NATIVE_HYBRID, 'rolling census does not support hybrid census consumers')
+end
+-- This Linux-only observer reads one saved Station's stored economy deadlines.
+do
+ local id,window=cfg.native_gate_economy_watch,cfg.native_gate_economy_watch_window
+ assert((id==nil and window==nil) or (type(id)=='string' and #id==16 and
+  id:match('^[0-7][0-9a-f]+$') and id~='0000000000000000' and
+  type(window)=='table' and #window==2 and type(window[1])=='number' and type(window[2])=='number' and
+  window[1]%1==0 and window[2]%1==0 and window[1]>=1 and window[1]<=window[2] and
+  window[2]-window[1]<36000 and window[2]<=9007199254740991 and cfg.native_gate_world_identities and
+  cfg.native_gate_snapshot_sha and type(gate.economy_watch_config)=='function' and
+  type(gate.economy_watch_capture)=='function' and type(gate.economy_watch_status)=='function'),
+  'economy watch requires one saved Station and a bounded complete tick window')
+end
+do
+  local window = cfg.native_gate_navmesh_post_observe
+  assert(window == nil or (
+    type(window) == 'table' and #window == 2 and
+    type(window[1]) == 'number' and type(window[2]) == 'number' and
+    window[1] % 1 == 0 and window[2] % 1 == 0 and
+    window[1] >= 1 and window[1] <= window[2] and window[2] <= 9007199254740991 and
+    cfg.native_gate_world_identities and cfg.native_gate_snapshot_sha and
+    type(gate.platform) == 'function' and gate.platform() == 'linux' and
+    type(gate.navmesh_post_observe) == 'function' and
+    type(gate.navmesh_post_observe_status) == 'function' and
+    type(gate.navmesh_post_observe_row) == 'function'
+  ), 'navmesh post observer requires Linux, saved identities, snapshot and a valid tick window')
+end
 -- FR28 (DEFAULT OFF, read-only): native_gate_world_health_ticks = {first,last} writes a WORLD_HEALTH row per
 -- world-hash watch on every tick first..last, after that tick's capture point: its stored hull and shield
 -- (value, changed time, maximum, delay, rate, factor, generators, modifiers) and the game time, as bits. The
 -- census sees them only every stride ticks; this names the tick and the field of a health split.
+-- A separate Linux Nav observer never contributes to report hashes or census counters.
+-- Its canonical read/write bytes include the same metadata trailers as WORLD_DETAIL.
+do
+ local ids,window=cfg.native_gate_world_motion_watch,cfg.native_gate_world_motion_window
+ assert((ids==nil and window==nil) or (type(ids)=='table' and #ids>=1 and #ids<=4 and
+  type(window)=='table' and #window==2 and type(window[1])=='number' and type(window[2])=='number' and
+  window[1]%1==0 and window[2]%1==0 and window[1]>=1 and window[1]<=window[2] and
+  window[2]-window[1]<18000 and window[2]<=9007199254740991 and cfg.native_gate_world_identities and
+  cfg.native_gate_snapshot_sha and type(gate.world_motion_config)=='function' and
+  type(gate.world_motion_capture)=='function' and type(gate.world_motion_row)=='function' and
+  type(gate.world_motion_status)=='function'), 'world motion watch requires 1..4 saved IDs and a bounded complete tick window')
+ if ids then
+  local seen={}
+  for _,saved in ipairs(ids) do
+   assert(type(saved)=='string' and #saved==16 and saved:match('^[0-7][0-9a-f]+$') and
+    saved~='0000000000000000' and not seen[saved], 'world motion watch IDs must be unique saved IDs')
+   seen[saved]=true
+  end
+ end
+end
 do
  local w=cfg.native_gate_world_health_ticks
  assert(w==nil or (type(w)=='table' and #w==2 and type(w[1])=='number' and type(w[2])=='number' and w[1]%1==0 and w[2]%1==0 and
@@ -933,7 +1002,8 @@ if cfg.native_gate_probe_profile~=nil then
  assert(cfg.native_gate_probe_profile==true or cfg.native_gate_probe_profile==false,'native_gate_probe_profile accepts only true')
  if cfg.native_gate_probe_profile then
   assert(type(gate.qpc_us)=='function','native_gate_probe_profile needs gate.qpc_us')
-  profile={sections={'drains','inputs','pilot','modules','sample','capture','digest','log'},parts={'actor','health','orders','fleet','bodies'},
+  profile={sections={'drains','inputs','pilot','modules','sample','capture','digest','log'},
+   parts={'actor','health','orders','fleet','bodies','world_scan','world_output'},
    sum={},n=0,max=0}
   function profile.begin() profile.cur={};profile.at=gate.qpc_us();profile.start=profile.at end
   function profile.mark(name)
@@ -1473,7 +1543,55 @@ local probe_last_us -- previous frame() wall time, native_gate_frame_timing only
 local camera_perturb=false -- this client perturbs its camera (native_gate_camera_perturb)
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
 local nav_cadence_cursor=0
-local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,character_play=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,vplayer_map=0,vplayer_spike='',event_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,ui_exports=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,character_play=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,vplayer_map=0,vplayer_spike='',event_rng=0,build_rng=0,economy_load_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,ui_exports=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+row_cursors.navmesh_post = 0
+row_cursors.drain_navmesh_post = function(can_resolve)
+  while row_cursors.navmesh_post < 8192 do
+    local row = gate.navmesh_post_observe_row(row_cursors.navmesh_post)
+    if row == nil then break end -- a reserved row can publish on a later tick
+    assert(type(row) == 'string', 'navmesh post row unavailable')
+    assert(tonumber(row:match('^index=(%d+)')) == row_cursors.navmesh_post,
+      'navmesh post row index mismatch')
+    ticklog.write('NAVMESH_POST_ROW '..row)
+    -- Runtime IDs can be reused: this is a post-seal lookup at drain time,
+    -- never proof of the identity when the producer made the attempt.
+    local saved_hint = 'unresolved'
+    local runtime_hex = row:match('%f[%w]runtime=(%x+)')
+    if can_resolve and gate.saved_identity and runtime_hex and #runtime_hex == 16 then
+      local ok, saved_id = pcall(function()
+        local high = tonumber(runtime_hex:sub(1, 8), 16)
+        local low = tonumber(runtime_hex:sub(9), 16)
+        local runtime_id = ffi.cast('uint64_t', high) * 4294967296ULL + low
+        return gate.saved_identity((tostring(runtime_id):gsub('ULL$', '')))
+      end)
+      if ok and type(saved_id) == 'string' and #saved_id == 16 and
+          saved_id:match('^[0-9a-f]+$') and saved_id ~= '0000000000000000' then
+        saved_hint = saved_id
+      end
+    end
+    ticklog.write('NAVMESH_POST_IDENTITY index='..row_cursors.navmesh_post..
+      ' saved_hint='..saved_hint..' lookup=drain')
+    row_cursors.navmesh_post = row_cursors.navmesh_post + 1
+  end
+end
+row_cursors.stop_navmesh_post = function(can_resolve, aborted)
+  row_cursors.drain_navmesh_post(can_resolve)
+  local status = assert(gate.navmesh_post_observe_status(), 'navmesh post status unavailable')
+  ticklog.write((aborted and 'NAVMESH_POST_ABORT ' or 'NAVMESH_POST_STOP ')..status)
+  local attempts = tonumber(status:match('%f[%w]attempts=(%d+)'))
+  local eligible = tonumber(status:match('%f[%w]eligible=(%d+)'))
+  local recorded = tonumber(status:match('%f[%w]recorded=(%d+)'))
+  local overflow = tonumber(status:match('%f[%w]overflow=(%d+)'))
+  local unreadable = tonumber(status:match('%f[%w]unreadable=(%d+)'))
+  local inflight = tonumber(status:match('%f[%w]inflight=(%d+)'))
+  local restored = tonumber(status:match('%f[%w]restored=(%d+)'))
+  local cleanup = tonumber(status:match('%f[%w]cleanup_uncertain=(%d+)'))
+  local installed = tonumber(status:match('%f[%w]installed=(%d+)'))
+  assert(attempts and eligible and attempts >= eligible and eligible == recorded and
+    recorded == row_cursors.navmesh_post and overflow == 0 and unreadable == 0 and
+    installed == 0 and inflight == 0 and restored == 1 and cleanup == 0,
+    'navmesh post evidence incomplete')
+end
 local world_trace_rows,world_queue_rows,world_wait_rows,world_wait_rng_rows=0,0,0,0
 local world_action_rows,world_values_rows,world_values_unknown_rows,world_unknown_identity_rows=0,0,0,0
 local world_values_cursors_loaded=false
@@ -1664,6 +1782,21 @@ local function drain_gravidar_watch(final)
    local row=gate.event_rng_row(row_cursors.event_rng)
    if not row then break end
    ticklog.write('EVENT_RNG_ROW '..row);row_cursors.event_rng=row_cursors.event_rng+1
+  end
+ end
+ if cfg.native_gate_economy_load_rng and gate.economy_load_rng_row then
+  for _=1,128 do
+   local row=gate.economy_load_rng_row(row_cursors.economy_load_rng)
+   if not row then break end
+   ticklog.write('ECONOMY_LOAD_RNG_ROW '..row)
+   row_cursors.economy_load_rng=row_cursors.economy_load_rng+1
+  end
+ end
+ if cfg.native_gate_build_rng and gate.build_rng_row then
+  for _=1,128 do
+   local row=gate.build_rng_row(row_cursors.build_rng)
+   if not row then break end
+   ticklog.write('BUILD_RNG_ROW '..row);row_cursors.build_rng=row_cursors.build_rng+1
   end
  end
  if cfg.native_gate_motion_watch then
@@ -3050,6 +3183,12 @@ local function frame()
   local code=start(tonumber(cfg.slot:sub(2)),cfg.port,cfg.token,wait_ms,digest,options)
   if code~=0 then ticklog.refuse('code='..code..(gate.verify_stage and ' stage='..tostring(gate.verify_stage()) or ''),X4LAN_NATIVE_GATE_DEFAULTS and X4LAN_NATIVE_GATE_DEFAULTS.STOP_REASONS[code]);done=true;return end
   native_owned=true
+  if cfg.native_gate_navmesh_post_observe then
+    local window = cfg.native_gate_navmesh_post_observe
+    assert(gate.navmesh_post_observe(window[1], window[2]) == 1,
+      'navmesh post observer refused '..tostring(gate.navmesh_post_observe_status()))
+    ticklog.write('NAVMESH_POST_ARMED '..tostring(gate.navmesh_post_observe_status()))
+  end
   if cfg.native_gate_registry_md_trace then
    local capability=gate.poll();assert(capability.registry_md_installed==1 and capability.registry_md_schema==2,'native MD observer schema2 not installed')
    assert(cfg.native_gate_registry_origin_schema==1 and capability.registry_origin_schema==1 and capability.registry_origin_enabled==1,'native registry origin observer not enabled')
@@ -3182,8 +3321,9 @@ local function frame()
   -- cross-agent reads (formation travel flags) see one fixed order. Default off.
   if cfg.native_gate_travel_determinism then
    local mask=cfg.native_gate_path_determinism
-   assert(snapshot and cfg.native_gate_travel_determinism==true and cfg.native_gate_serial_pathing and
-    type(mask)=='number' and (mask==2 or mask==3) and gate.travel_determinism and gate.travel_determinism()==1,'travel determinism refused')
+   local armed=snapshot and cfg.native_gate_travel_determinism==true and cfg.native_gate_serial_pathing and
+    type(mask)=='number' and (mask==2 or mask==3) and gate.travel_determinism and gate.travel_determinism()==1
+   assert(armed, 'travel determinism refused '..tostring(gate.travel_determinism_status and gate.travel_determinism_status()))
    log('TRAVEL_DETERMINISM_ARMED')
   end
   -- Parallel alternative: wingmen read their leader's pass-start travel flag
@@ -3799,6 +3939,15 @@ local function frame()
    assert(type(ticks)=='number' and ticks>=1 and ticks<=6000 and ticks%1==0 and gate.coverage and gate.coverage_frame and gate.coverage_status and
     gate.coverage_row and gate.coverage(ticks)==1,'coverage refused '..tostring(gate.coverage_status and gate.coverage_status()))
    log('COVERAGE_ARMED ticks='..ticks..' '..tostring(gate.coverage_status()))
+  end
+  -- Linux-only diagnostic: the candidate live getter can have engine side effects.
+  if cfg.native_gate_path_transform_observe then
+   local window=cfg.native_gate_path_transform_observe
+   assert(type(window)=='table' and #window==2 and cfg.native_gate_travel_determinism and
+    not cfg.native_gate_step_chain and gate.path_transform_observe and gate.path_transform_observe_status and
+    gate.path_transform_observe_row and gate.path_transform_observe(window[1],window[2])==1,
+    'path transform observer refused '..tostring(gate.path_transform_observe_status and gate.path_transform_observe_status()))
+   ticklog.write('PATH_TRANSFORM_OBSERVE_ARMED '..tostring(gate.path_transform_observe_status()))
   end
   -- The Linear flight model's step, entry and exit, for watched ships in ticks 1..N (diagnostic, read-only:
   -- swaps one vtable entry; Option B evidence). native_gate_step_trace_ticks defaults to 3. Default off.
@@ -4490,7 +4639,7 @@ local function frame()
   end
   -- The economy schedule every container gets from the save: the load re-draws each station's next
   -- economy run from the loading thread's word; key that draw by saved ID and saved last run instead
-  -- (lockstep_economy_load.h). Before the load. Default off.
+  -- (gate_economy_rng.h). Before the load. Default off.
   if cfg.native_gate_economy_load_rng then
    assert(snapshot and cfg.native_gate_economy_load_rng==true and cfg.native_gate_world_identities and
     gate.economy_load_rng and gate.economy_load_rng_status and gate.economy_load_rng()==1,
@@ -4900,6 +5049,11 @@ local function frame()
  end
  -- Status stride: this frame's output belongs to tick s.issued; a stop first writes the held ticks.
  if s.active==0 then ticklog.flush() else ticklog.open((not snapshot or (s.boot_phase>=3 and s.issued~=s.report_tick)) and tonumber(s.issued)) end
+ -- The post ring survives UI reload. Drain only after loading, so a new UI
+ -- does not emit the earlier menu rows again from its own cursor zero.
+ if cfg.native_gate_navmesh_post_observe and (s.active == 0 or s.boot_phase >= 3) then
+   row_cursors.drain_navmesh_post(s.boot_phase >= 3)
+ end
  if diagnostic and s.active==0 and not assert(X4LAN_NATIVE_DIAGNOSTIC,'diagnostic adapter missing').drain(gate,false) then return end
  if cfg.native_gate_player_transition_observer then assert(X4LAN_NATIVE_TRANSITION,'transition adapter missing').drain(gate,s.active==0) end
  if cfg.native_gate_player_origin_token then assert(X4LAN_NATIVE_ORIGIN,'origin adapter missing').drain(gate,s.active==0) end
@@ -4927,6 +5081,9 @@ local function frame()
   -- Every piloting module's why at once, before any other stop row can fail (w1foot: stop 185 without its why).
   if gate.pilot_why then pcall(function() local why=gate.pilot_why();if why then log('PILOT_STOP_WHY '..why) end end) end
   ticklog.stopped(s.reason)
+  if cfg.native_gate_navmesh_post_observe then
+    row_cursors.stop_navmesh_post(s.boot_phase >= 3, false)
+  end
   if s.reason==3 and gate.unowned then log('UNOWNED '..tostring(gate.unowned())) end
   log('PATH joins='..s.path_joins..' restored='..s.path_restored..' rng_seeds='..s.rng_seeds..' boot_passes_menu='..tostring(s.path_boot_passes_menu)..' boot_passes_load='..tostring(s.path_boot_passes_load))
   if X4LAN_NATIVE_ADAPTIVE then log('ADAPTIVE_STOP '..tostring(gate.adaptive_status()))
@@ -5014,6 +5171,14 @@ local function frame()
    if gate.virtual_players_hashes then log('VPLAYER_HASHES '..tostring(gate.virtual_players_hashes())) end
    if gate.virtual_players_raw then log('VPLAYER_RAW class=config '..tostring(gate.virtual_players_raw('config'))..' option='..tostring(gate.virtual_players_raw('option'))) end
   end
+  if cfg.native_gate_path_transform_observe then
+   ticklog.write('PATH_TRANSFORM_OBSERVE_STOP '..tostring(gate.path_transform_observe_status()))
+   for index=0,511 do
+    local row=gate.path_transform_observe_row(index)
+    if not row then break end
+    ticklog.write('PATH_TRANSFORM_OBSERVE_ROW '..row)
+   end
+  end
   if cfg.native_gate_travel_determinism then log('TRAVEL_DETERMINISM_STOP '..tostring(gate.travel_determinism_status())) end
   if cfg.native_gate_travel_snapshot then log('TRAVEL_SNAPSHOT_STOP '..tostring(gate.travel_snapshot_status())) end
   if cfg.native_gate_path_transforms then log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end
@@ -5086,7 +5251,7 @@ local function frame()
   if pilot_view.fire then log('PILOT_FIRE_STOP '..tostring(gate.pilot_fire_status())) end
   if cfg.native_gate_gravidar_key_all or cfg.native_gate_gravidar_time_sync then log('GRAVIDAR_KEY_STOP '..tostring(gate.gravidar_key_status())) end
   if cfg.native_gate_gravidar_watch or cfg.native_gate_speech_game_time or cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or
-     cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree or cfg.native_gate_nav_mesh or cfg.native_gate_event_rng or cfg.native_gate_ui_cargo or cfg.native_gate_supply_rows or cfg.native_gate_ui_lazy or cfg.native_gate_supply_wants~=nil or cfg.native_gate_loadout_order or cfg.native_gate_order_canon or cfg.native_gate_address_order or cfg.native_gate_pick_order or cfg.native_gate_macro_arena then
+     cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree or cfg.native_gate_nav_mesh or cfg.native_gate_event_rng or cfg.native_gate_build_rng or cfg.native_gate_economy_load_rng or cfg.native_gate_ui_cargo or cfg.native_gate_supply_rows or cfg.native_gate_ui_lazy or cfg.native_gate_supply_wants~=nil or cfg.native_gate_loadout_order or cfg.native_gate_order_canon or cfg.native_gate_address_order or cfg.native_gate_pick_order or cfg.native_gate_macro_arena then
    drain_gravidar_watch(true)
   end
   if cfg.native_gate_gravidar_watch then log('GRAVIDAR_WATCH_STOP '..tostring(gate.gravidar_watch_status())) end
@@ -5130,8 +5295,19 @@ local function frame()
   if cfg.native_gate_gravidar_deadlines then log('GRAVIDAR_DEADLINES_STOP '..tostring(gate.gravidar_deadlines_status())) end
   if cfg.native_gate_spawn_rng~=nil then drain_spawn();log('SPAWN_RNG_STOP '..tostring(gate.spawn_rng_status())) end
   if cfg.native_gate_created_identities then drain_created_rows();log('CREATED_IDENTITIES_STOP '..tostring(gate.created_identities_status())) end
+  if cfg.native_gate_economy_watch then
+   ticklog.write('ECONOMY_WATCH_STOP '..assert(gate.economy_watch_status(),'economy watch status unavailable'))
+  end
+  if cfg.native_gate_world_motion_watch then
+   ticklog.write('WORLD_MOTION_STOP '..assert(gate.world_motion_status(),'world motion status unavailable'))
+  end
   if cfg.native_gate_actor_rng_all then log('ACTOR_RNG_ALL_STOP '..tostring(gate.actor_rng_all_status())) end
-  if cfg.native_gate_world_hash_stride then log('WORLD_HASH_STOP scans='..s.world_hash_scans..' failures='..s.world_hash_failures) end
+  if cfg.native_gate_world_rolling_slices then -- through cfg: frame() is at LuaJIT's limit of 60 upvalues
+   log('WORLD_ROLLING_STOP scans='..s.world_hash_scans..' cycles='..
+    math.floor(s.world_hash_scans/cfg.native_gate_world_rolling_slices)..' failures='..s.world_hash_failures)
+  elseif cfg.native_gate_world_hash_stride then
+   log('WORLD_HASH_STOP scans='..s.world_hash_scans..' failures='..s.world_hash_failures)
+  end
   if cfg.native_gate_world_trace_ticks then
    drain_world_trace();log('WORLD_TRACE_STOP '..assert(gate.world_trace_status(),'world trace status unavailable'))
    if cfg.native_gate_world_queue_trace then log('WORLD_QUEUE_STOP '..assert(gate.world_queue_trace_status(),'world queue status unavailable')) end
@@ -5570,6 +5746,9 @@ local function frame()
  if cfg.native_gate_md_resume_rng then ticklog.status('MD_RESUME_RNG',tick,gate.md_resume_rng_status,'MD resume RNG status unavailable');drain_md_resume() end
  if cfg.native_gate_ai_wait_rng then ticklog.status('AI_WAIT_RNG',tick,gate.ai_wait_rng_status,'AI wait RNG status unavailable');drain_ai_wait() end
  if cfg.native_gate_economy_load_rng then ticklog.status('ECONOMY_LOAD_RNG',tick,gate.economy_load_rng_status,'economy load RNG status unavailable') end
+ if cfg.native_gate_navmesh_post_observe then
+   ticklog.status('NAVMESH_POST', tick, gate.navmesh_post_observe_status, 'navmesh post status unavailable')
+ end
  if cfg.native_gate_find_order then ticklog.status('FIND_ORDER',tick,gate.find_order_status,'find order status unavailable');drain_find_order() end
  if cfg.native_gate_region_rng~=nil then ticklog.status('REGION_RNG',tick,gate.region_rng_status,'region RNG status unavailable');drain_region() end
  if cfg.native_gate_spawn_rng~=nil then ticklog.status('SPAWN_RNG',tick,gate.spawn_rng_status,'spawn RNG status unavailable');drain_spawn() end
@@ -5657,21 +5836,73 @@ local function frame()
  if parts then parts[#parts+1]={'input',#data} end
  if cfg.native_gate_player_probe then data=data..'|'..assert(X4LAN_NATIVE_PLAYER,'native player probe missing')(tick,gate) end
  if parts then parts[#parts+1]={'player',#data} end
- if cfg.native_gate_world_hash_stride then
+ -- These are mandatory diagnostic receipts even when status thinning is enabled.
+ -- Do not append them to data: observation must not change the comparison contract.
+ if cfg.native_gate_economy_watch then
+  local window=cfg.native_gate_economy_watch_window
+  if tick==1 then
+   assert(gate.economy_watch_config(cfg.native_gate_economy_watch,window[1],window[2])==1,
+    'economy watch configuration refused')
+   ticklog.write('ECONOMY_WATCH_ARMED version=1 first='..window[1]..' last='..window[2]..' id='..cfg.native_gate_economy_watch)
+  end
+  if tick>=window[1] and tick<=window[2] then
+   local row,why=gate.economy_watch_capture(tick)
+   if not row then ticklog.write('ECONOMY_WATCH_ERROR tick='..tick..' stage='..tostring(why)) end
+   assert(row,'economy watch capture failed '..tostring(why))
+   ticklog.write('ECONOMY_WATCH '..row)
+  end
+ end
+ if cfg.native_gate_world_motion_watch then
+  local window=cfg.native_gate_world_motion_window
+  if tick==1 then
+   local ids=table.concat(cfg.native_gate_world_motion_watch,',')
+   assert(gate.world_motion_config(ids,window[1],window[2])==1,'world motion watch configuration refused')
+   ticklog.write('WORLD_MOTION_ARMED version=1 first='..window[1]..' last='..window[2]..' ids='..ids)
+  end
+  if tick>=window[1] and tick<=window[2] then
+   local count,why=gate.world_motion_capture(tick)
+   if not count then ticklog.write('WORLD_MOTION_ERROR tick='..tick..' stage='..tostring(why)) end
+   assert(count==#cfg.native_gate_world_motion_watch,'world motion capture failed '..tostring(why))
+   for index=1,count do ticklog.write('WORLD_MOTION '..assert(gate.world_motion_row(index),'world motion row unavailable')) end
+  end
+ end
+ local rolling_slices=cfg.native_gate_world_rolling_slices -- a local, not an upvalue (frame()'s limit of 60)
+ if rolling_slices then
+  local capture_started = profile and gate.qpc_us()
+  local summary,why = gate.world_capture_rolling(tick,rolling_slices)
+  if profile then profile.part('world_scan',capture_started) end
+  assert(summary, 'native rolling census failed '..tostring(why))
+  world_hash_state = assert(summary:match(' state=(WORLD_ROLLING_1:[^ ]+)$'),
+   'invalid rolling census summary')
+  -- Each sample is evidence even when ordinary status rows are held or dropped.
+  ticklog.write('WORLD_BANKS '..assert(gate.world_banks(),'rolling census bank phase unavailable'))
+  ticklog.write('WORLD_ROLLING '..summary)
+  if cfg.native_gate_world_hash_shields and (tick==1 or tick%rolling_slices==0) then
+   ticklog.write('WORLD_SHIELDS_ROLLING tick='..tick..' '..gate.world_hash_shields_status())
+  end
+  ticklog.ui_guard(tick)
+  data = data..'|'..world_hash_state
+ elseif cfg.native_gate_world_hash_stride then
   if tick==1 then
    for _,saved in ipairs(cfg.native_gate_world_hash_watch or {}) do assert(gate.world_watch(saved)==1,'world watch refused '..saved) end
   end
   if tick==1 or tick%cfg.native_gate_world_hash_stride==0 or (join_client and join_client.capture_at and join_client.capture_at(tick)) then
+   local capture_started=profile and gate.qpc_us()
    local summary,why=world_capture(tick)
+   if profile then profile.part('world_scan',capture_started) end
    assert(summary,'native world hash capture failed '..tostring(why))
    log('WORLD_BANKS '..assert(gate.world_banks(),'native world bank phase unavailable'))
    world_hash_state=assert(summary:match(' state=('..world_hash_schema..':[^ ]+)$'),'invalid world hash summary')
    -- play mode logs no pages, except for captures in native_gate_world_pages_window = {first, last tick}
    local pages_window=cfg.native_gate_world_pages_window
-   if not cfg.native_gate_play_mode or (pages_window and pages_window[1]<=tick and tick<=pages_window[2]) then
+   local output_started=profile and gate.qpc_us()
+   -- Summary-only logging changes output volume, never the captured state or relay digest.
+   if cfg.native_gate_world_detail_rows~=false and
+    (not cfg.native_gate_play_mode or (pages_window and pages_window[1]<=tick and tick<=pages_window[2])) then
     for page=1,assert(gate.world_page(0)) do log_world_page(assert(gate.world_page(page))) end
     for row=1,assert(gate.world_detail(0)) do log('WORLD_DETAIL '..assert(gate.world_detail(row))) end
    end
+   if profile then profile.part('world_output',output_started) end
    log('WORLD_HASH '..summary)
    if X4LAN_NATIVE_HYBRID then world_hash_state=X4LAN_NATIVE_HYBRID.census(tick,world_hash_state) end
    if cfg.native_gate_world_hash_shields then log('WORLD_HASH_SHIELDS tick='..tick..' '..gate.world_hash_shields_status()) end
@@ -5766,6 +5997,9 @@ SetScript('onUpdate',function()
    end
    local status=gate.poll() or {}
    log('ABORT stopped='..tostring(stopped)..' active='..tostring(status.active)..' restored='..tostring(status.restored)..' tick='..tostring(status.issued))
+   if cfg.native_gate_navmesh_post_observe then
+     ticklog.try(row_cursors.stop_navmesh_post, (tonumber(status.boot_phase) or 0) >= 3, true)
+   end
    if gate.pilot_why then pcall(function() local why=gate.pilot_why();if why then log('PILOT_STOP_WHY '..why) end end) end
    if cfg.native_gate_player_transition_observer and X4LAN_NATIVE_TRANSITION then
     local drained,why=pcall(X4LAN_NATIVE_TRANSITION.drain,gate,true)
@@ -5788,6 +6022,16 @@ SetScript('onUpdate',function()
    if cfg.native_gate_transition_rows then ticklog.try(function() log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end) end
    if cfg.native_gate_tempzone_order then ticklog.try(function() log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end) end
    if cfg.native_gate_warp_exit and gate.warp_exit_status then ticklog.try(function() log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end) end
+   if cfg.native_gate_path_transform_observe then
+    ticklog.try(function()
+     ticklog.write('PATH_TRANSFORM_OBSERVE_STOP '..tostring(gate.path_transform_observe_status()))
+     for index=0,511 do
+      local row=gate.path_transform_observe_row(index)
+      if not row then break end
+      ticklog.write('PATH_TRANSFORM_OBSERVE_ROW '..row)
+     end
+    end)
+   end
    if cfg.native_gate_path_transforms then ticklog.try(function() log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end) end
    if cfg.native_gate_body_pose then ticklog.try(function() log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end) end
    if cfg.native_gate_gravidar_wide then ticklog.try(function() log('GRAVIDAR_WIDE_STOP '..tostring(gate.gravidar_wide_status())) end) end
@@ -5812,6 +6056,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_decimal then ticklog.try(function() log('DECIMAL_STOP '..tostring(gate.decimal_status())) end) end
    if cfg.native_gate_event_rng then ticklog.try(function() log('EVENT_RNG_STOP '..tostring(gate.event_rng_status())) end) end
    if cfg.native_gate_build_rng then ticklog.try(function() log('BUILD_RNG_STOP '..tostring(gate.build_rng_status())) end) end
+   if cfg.native_gate_economy_load_rng then ticklog.try(function() log('ECONOMY_LOAD_RNG_STOP '..tostring(gate.economy_load_rng_status())) end) end
    if cfg.native_gate_ui_cargo then ticklog.try(function() log('UI_CARGO_STOP '..tostring(gate.ui_cargo_status())) end) end
    if cfg.native_gate_supply_rows then ticklog.try(function() log('SUPPLY_ROWS_STOP '..tostring(gate.supply_rows_status())) end) end
    if cfg.native_gate_ui_lazy then ticklog.try(function() log('UI_LAZY_STOP '..tostring(gate.ui_lazy_status())) end) end
@@ -5825,7 +6070,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_pick_order then ticklog.try(function() log('PICK_ORDER_STOP '..tostring(gate.pick_order_status())) end) end
    if cfg.native_gate_macro_arena then ticklog.try(function() log('MACRO_ARENA_STOP '..tostring(gate.macro_arena_status())) end) end
    if cfg.native_gate_address_order then ticklog.try(function() log('ADDRESS_ORDER_STOP '..tostring(gate.address_order_status())) end) end
-   if cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree then ticklog.try(drain_gravidar_watch,true) end
+   if cfg.native_gate_physics_trace~=nil or cfg.native_gate_body_order or cfg.native_gate_shape_order or cfg.native_gate_character_play or cfg.native_gate_nav_octree or cfg.native_gate_build_rng or cfg.native_gate_economy_load_rng then ticklog.try(drain_gravidar_watch,true) end
    if cfg.native_gate_physics_trace~=nil then ticklog.try(function() log('PHYSICS_TRACE_STOP '..tostring(gate.physics_trace_status())) end) end
    if cfg.native_gate_body_order then ticklog.try(function() log('BODY_ORDER_STOP '..tostring(gate.body_order_status())) end) end
    if cfg.native_gate_shape_order then ticklog.try(function() log('SHAPE_ORDER_STOP '..tostring(gate.shape_order_status())) end) end

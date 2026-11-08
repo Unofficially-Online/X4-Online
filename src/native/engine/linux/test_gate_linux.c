@@ -7,6 +7,8 @@
  *   test_gate_linux [path/to/X4]
  * Built and run by tools/dev/check_lockstep_gate_linux.py. */
 #define GATE_TLS_TEST
+#define ECONOMY_RNG_CANARY
+#define NAVMESH_POST_TEST
 #include "gate_linux.c"
 #ifdef NDEBUG
 #undef NDEBUG
@@ -342,7 +344,14 @@ static void test_frame_gate_failures(void) {
     printf("frame gate failures PASS (56, 4, 3 foreign, 3 speed, 7, 2, stop)\n");
 }
 #include "test_gate_world.h"
+#include "test_gate_world_rolling.h"
+#include "test_gate_world_motion_watch.h"
+#include "test_gate_economy_watch.h"
+#include "test_gate_economy_rng.h"
+#include "test_gate_navmesh_post_observe.h"
 #include "test_gate_path.h"
+#include "test_gate_travel_determinism.h"
+#include "test_gate_path_transform_observe.h"
 #include "test_gate_load.h"
 #include "test_gate_loadout.h"
 #include "test_gate_attention.h"
@@ -354,6 +363,8 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_fork_save.h"
 #include "test_gate_weapon_fire.h"
 #include "test_gate_engine_rng.h"
+#include "test_gate_build_rng.h"
+#include "test_gate_event_rng.h"
 #include "test_gate_spline_join.h"
 #include "test_gate_mass_traffic.h"
 #include "test_gate_actor_all.h"
@@ -383,10 +394,16 @@ int main(int argc,char **argv) {
     test_sha256();test_relay_host();test_compat();test_code_swap();test_near_page();
     synth_image();test_verify_stages();test_dt();test_frame_gate();test_frame_gate_failures();
     test_world_golden(getenv("GATE_WORLD_GOLDEN"));
+    test_world_rolling();
+    test_world_motion_watch();
+    test_economy_watch();
+    test_economy_rng();
+    test_navmesh_post();
     test_path_determinism();
+    test_travel_inline_dispatch();
     test_path_install();
     test_path_budget();
-    test_load_patches();test_boot_hold_decisions();test_cue_identity();test_event_order_linux();test_gravidar_linux();
+    test_load_patches();test_boot_hold_decisions();test_cue_identity();test_event_order_linux();test_event_rng_linux();test_gravidar_linux();
     test_loadout_order_linux();
     test_attention_linux();
     test_step_trace_linux();
@@ -398,8 +415,10 @@ int main(int argc,char **argv) {
     test_fork_save_linux();
     test_weapon_fire_linux();
     test_engine_rng_linux();
+    test_build_rng_linux();
     test_spline_join_linux();
     test_mass_traffic_linux();
+    test_path_transform_observer();
     test_actor_all_linux();
     test_player_timer_linux();
     test_tempzone_order_linux();
@@ -417,6 +436,8 @@ int main(int argc,char **argv) {
         unsigned char window[16],dt[16];memcpy(window,LX(LX_CALL_WINDOW),16);memcpy(dt,LX(LX_DT_LOAD_VA),16);
         test_frame_gate();test_frame_gate_failures();
         assert(!memcmp(window,LX(LX_CALL_WINDOW),16) && !memcmp(dt,LX(LX_DT_LOAD_VA),16));
+        test_travel_inline_elf();
+        test_path_transform_observer_elf();
         test_world_install_elf();test_path_install();test_path_budget();test_load_patches();test_world_golden(getenv("GATE_WORLD_GOLDEN"));
         test_loadout_order_elf();
         test_fp_redirect_elf();
@@ -425,6 +446,10 @@ int main(int argc,char **argv) {
         test_step_chain_elf();
         test_weapon_fire_elf();
         test_engine_rng_elf();
+        test_build_rng_elf();
+        test_economy_rng_elf();
+        test_navmesh_post_elf();
+        test_event_rng_elf();
         test_spline_join_elf();
         test_mass_traffic_elf();
         test_actor_all_elf();

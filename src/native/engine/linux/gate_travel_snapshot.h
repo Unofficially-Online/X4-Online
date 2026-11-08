@@ -46,7 +46,7 @@ static int lxt_lea_target(unsigned site,unsigned displacement,unsigned char *tar
 }
 static int tsnap_arm(void) {
     if(tsnap_installed) return stats.active; /* Identical rerun after a loading-UI reload. */
-    if(!stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId()!=ui_thread || !thunk ||
+    if(travel_inline_installed || !stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId()!=ui_thread || !thunk ||
        !path_installed || !(path_options&1) || !(path_det_mask&PATH_DET_BUDGET_BIT)) return 0;
     memcpy(&tsnap_lea_original[0],image+TSNAP_LEA_A,16);memcpy(&tsnap_lea_original[1],image+TSNAP_LEA_B,16);
     memcpy(&tsnap_read_original,image+TSNAP_READ_WORD,8);

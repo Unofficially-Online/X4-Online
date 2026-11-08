@@ -205,11 +205,19 @@ D.FAMILIES={'travel','target','orders','autopilot','dock','weapons','missiles','
 D.FAMILY_NEEDS={missiles='native_gate_pilot_fire',missions='guard:missions',conversation='guard:conversation',build='guard',assets='guard',faction='guard'}
 -- Diagnostics and measurement: off by default (they only log, capture, trace, profile, watch or measure). {'key','why'}.
 D.DIAGNOSTIC={
+ {'native_gate_navmesh_post_observe','Linux navmesh post attempts during startup and a bounded live tick window'},
+ {'native_gate_economy_watch','Linux saved-station deadline observation'},
+ {'native_gate_economy_watch_window','Inclusive station deadline observation window'},
+ {'native_gate_world_motion_watch','Linux saved-ID Nav evidence; independent of full census bookkeeping'},
+ {'native_gate_world_motion_window','explicit bounded tick window for canonical Nav motion/timing evidence'},
  {'native_gate_world_nav_stride','nav-only world hash every N ticks between census captures (soak split location)'},
  {'native_gate_checkpoint_at','x4ls --checkpoint-at: every client saves after tick T (the save pauses the game: the session ends)'},
  {'native_gate_event_rng_play_rows','EVENT_RNG rows in play mode (soak attribution)'},
  {'native_gate_path_transforms_rows','PATH_TRANSFORMS rows of a tick window'},
+ {'native_gate_path_transform_observe','Linux path-transform observation in a bounded tick window'},
  {'native_gate_world_pages_window','per-object world pages of a tick window in play mode (x4ls triage)'},
+ {'native_gate_world_detail_rows','false suppresses per-object log rows; all world captures and relay digests remain enabled'},
+ {'native_gate_world_rolling_slices','Linux diagnostic only: sample one of N ranges each tick; not an instantaneous census'},
  {'native_gate_ui_events_log','UI_EVENT rows of AddUITriggeredEvent calls (UI census)'},
  {'native_gate_ui_exports_test','one client makes an unrelayed UI write at tick T (guard and relay check)'},
  {'native_gate_pause_test','one client calls the Lua globals Pause and Unpause at two ticks (pause under the gate, Lua guard check)'},

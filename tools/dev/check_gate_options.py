@@ -130,6 +130,7 @@ PROBE_REQUIRES_ALL = {
     'native_gate_pass_stride': (('1', '2', '3', '4'), ()),
     'native_gate_event_rng': (('observe', 'key'), ('native_gate_world_identities', 'native_gate_event_order')),
     'native_gate_build_rng': (('true',), ('native_gate_world_identities',)),
+    'native_gate_economy_load_rng': (('true',), ('native_gate_world_identities',)),
     'native_gate_ui_cargo': (('block', 'observe'), ('native_gate_world_identities',)),
     'native_gate_supply_rows': (('true',), ('native_gate_world_identities',)),
     'native_gate_ui_lazy': (('block', 'observe', 'key'), ('native_gate_world_identities',)),
@@ -688,6 +689,40 @@ def hybrid_rules(config_text, enabled):
 def probe_rules(config_text, enabled):
     """Prerequisites of options native_gate_probe.lua arms after the boot."""
     failures = []
+    if re.search(r'X4LAN_CONFIG\.native_gate_navmesh_post_observe\s*=', config_text):
+        from navmesh_post_config import validate_window
+        match = re.search(r'X4LAN_CONFIG\.native_gate_navmesh_post_observe\s*=\s*\{\s*(\d+)\s*,\s*(\d+)\s*\}', config_text)
+        try:
+            if not match:
+                raise ValueError('navmesh post observer requires an inclusive FIRST LAST window')
+            validate_window([int(value) for value in match.groups()])
+        except ValueError as error:
+            failures.append(dict(rule=str(error), bits=['native_gate_navmesh_post_observe']))
+        if 'native_gate_world_identities' not in enabled or not re.search(r'X4LAN_CONFIG\.native_gate_snapshot_sha\s*=', config_text):
+            failures.append(dict(rule='navmesh post observer needs saved identities and a snapshot',
+                                 bits=['native_gate_world_identities', 'native_gate_snapshot_sha']))
+    if re.search(r'X4LAN_CONFIG\.native_gate_economy_watch(?:_window)?\s*=', config_text):
+        from economy_watch_config import validate_configuration
+        saved_match = re.search(r"X4LAN_CONFIG\.native_gate_economy_watch\s*=\s*['\"]([0-9a-f]+)['\"]", config_text)
+        window_match = re.search(r'X4LAN_CONFIG\.native_gate_economy_watch_window\s*=\s*\{\s*(\d+)\s*,\s*(\d+)\s*\}', config_text)
+        saved = saved_match.group(1) if saved_match else None
+        window = [int(value) for value in window_match.groups()] if window_match else None
+        try:
+            validate_configuration(saved, window)
+            if saved is None and window is None:
+                raise ValueError('economy watch configuration is malformed')
+        except ValueError as error:
+            failures.append(dict(rule=str(error), bits=['native_gate_economy_watch', 'native_gate_economy_watch_window']))
+        if 'native_gate_world_identities' not in enabled or not re.search(r'X4LAN_CONFIG\.native_gate_snapshot_sha\s*=', config_text):
+            failures.append(dict(rule='economy watch needs saved identities and a snapshot', bits=['native_gate_world_identities', 'native_gate_snapshot_sha']))
+    if re.search(r'X4LAN_CONFIG\.native_gate_world_motion_(?:watch|window)\s*=', config_text):
+        from world_motion_evidence import configured_watch
+        try:
+            configured_watch(config_text)
+        except ValueError as error:
+            failures.append(dict(rule=str(error), bits=['native_gate_world_motion_watch', 'native_gate_world_motion_window']))
+        if 'native_gate_world_identities' not in enabled or not re.search(r'X4LAN_CONFIG\.native_gate_snapshot_sha\s*=', config_text):
+            failures.append(dict(rule='world motion watch needs saved identities and a snapshot', bits=['native_gate_world_identities', 'native_gate_snapshot_sha']))
     for rule in (predict_rules, hit_claim_rules, pilot_fire_rules, capture_source_rules, pilot_stock_rules, pilot_present_rules,
                  pilot_death_rules, pilot_foot_rules, pilot_foot_bodies_rules, pilot_foot_slots_rules, ui_replay_rules,
                  player_settings_rules, crash_note_rules, render_fps_rules, render_display_rules, own_predict_rules, hybrid_rules):

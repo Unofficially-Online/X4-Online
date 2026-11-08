@@ -144,7 +144,9 @@ class Executables(unittest.TestCase):
 def load_tool(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / 'tools/dev' / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Match direct script execution so sibling imports work in this test alone.
+    with mock.patch.object(sys, 'path', [str(ROOT / 'tools/dev'), *sys.path]):
+        spec.loader.exec_module(module)
     return module
 
 
@@ -322,7 +324,8 @@ class LiveRunner(unittest.TestCase):
             self.assertEqual((case / 'extensions/x4_lan_lab/ui/config.lua').read_text(),
                              f'port=45999 token="{"ab" * 16}" slot="p2" clients=4\n')
             self.assertTrue((case / 'home/.steam/steam.pid').is_symlink() and lock.is_file())
-            command = live.namespace_command(case, game, binds, lock, {'HOME': str(case / 'home')}, ['X4'], 'x4server')
+            with mock.patch.object(live.os, 'geteuid', return_value=0):
+                command = live.namespace_command(case, game, binds, lock, {'HOME': str(case / 'home')}, ['X4'], 'x4server')
             self.assertEqual(command[:5], ['runuser', '-u', 'x4server', '--', 'bwrap'])
             self.assertIn('/tmp/EGOSOFT_X4.lock', command)
             self.assertNotIn('/dev/shm', command)
@@ -334,7 +337,8 @@ class LiveRunner(unittest.TestCase):
             case, game, shm = Path(folder) / 'case', Path(folder) / 'game', Path(folder) / 'snap.steam'
             for path in (case, game, shm):
                 path.mkdir()
-            command = live.namespace_command(case, game, [], case / 'x4.lock', {}, ['X4'], 'topsnek', shm)
+            with mock.patch.object(live.os, 'geteuid', return_value=0):
+                command = live.namespace_command(case, game, [], case / 'x4.lock', {}, ['X4'], 'steamuser', shm)
             dev = command.index('--dev-bind')
             self.assertEqual(command[dev:dev + 6], ['--dev-bind', '/dev', '/dev', '--bind', str(shm), '/dev/shm'])
             self.assertLess(command.index('/dev/shm'), command.index(str(case / 'game')))
@@ -454,6 +458,35 @@ class Overlay(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self.build(*self.snapshot, '--mode', 'clock', *wrong)
 
+    def test_linux_event_rng_needs_delivery_order_and_accepts_a_window(self):
+        base = (*self.snapshot, '--mode', 'clock', '--world-identities', '--event-order')
+        config = (self.build(*base, '--event-rng', 'observe', '--event-rng-rows-window', '8400', '8460') / 'ui/config.lua.append').read_text()
+        self.assertIn("native_gate_event_rng = 'observe'", config)
+        self.assertIn('native_gate_event_rng_rows = {8400,8460}', config)
+        for wrong in (('--event-rng-rows-window', '1', '2'),
+                      ('--event-rng', 'key', '--event-rng-rows-window', '0', '2'),
+                      ('--event-rng', 'key', '--event-rng-rows-window', '1', '602')):
+            with self.subTest(wrong=wrong), self.assertRaises(SystemExit):
+                self.build(*base, *wrong)
+        with self.assertRaises(SystemExit):
+            self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--event-rng', 'key')
+
+    def test_linux_build_rng_requires_snapshot_and_identities(self):
+        base = (*self.snapshot, '--mode', 'clock')
+        config = (self.build(*base, '--world-identities', '--build-rng') / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_build_rng = true', config)
+        with self.assertRaises(SystemExit):
+            self.build(*base, '--build-rng')
+
+    def test_linux_economy_load_rng_is_opt_in_and_requires_identities(self):
+        base = (*self.snapshot, '--mode', 'clock')
+        config = (self.build(*base, '--world-identities') / 'ui/config.lua.append').read_text()
+        self.assertNotIn('native_gate_economy_load_rng', config)
+        config = (self.build(*base, '--world-identities', '--economy-load-rng') / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_economy_load_rng = true', config)
+        with self.assertRaises(SystemExit):
+            self.build(*base, '--economy-load-rng')
+
     def test_linux_overlay_takes_spawn_rng(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--spawn-rng', 'key')
         self.assertIn("native_gate_spawn_rng = 'key'", (out / 'ui/config.lua.append').read_text())
@@ -528,6 +561,80 @@ class Overlay(unittest.TestCase):
         self.assertIn('native_gate_travel_snapshot = true', (out / 'ui/config.lua.append').read_text())
         with self.assertRaises(SystemExit):
             self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--serial-pathing', '--path-determinism', '1', '--travel-snapshot')
+
+    def test_linux_ordered_batches_include_config_and_complete_splice_ordering(self):
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities',
+                         '--serial-pathing', '--path-determinism', '3',
+                         '--travel-determinism', '--tempzone-order')
+        config = (out / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_travel_determinism = true', config)
+        self.assertNotIn('native_gate_travel_snapshot', config)
+        self.assertIn("native_gate_tempzone_order = 'order'", config)
+
+    def test_linux_path_transform_observer_requires_ordered_pathing_and_excludes_step_chain(self):
+        options = ('--mode', 'clock', '--world-identities', '--serial-pathing',
+                   '--path-determinism', '3', '--travel-determinism')
+        out = self.build(*self.snapshot, *options, '--path-transform-observe', '8461', '8520')
+        self.assertIn('native_gate_path_transform_observe = {8461, 8520}',
+                      (out / 'ui/config.lua.append').read_text())
+        for invalid in (('--path-transform-observe', '0', '10'),
+                        ('--path-transform-observe', '1', '601'),
+                        ('--path-transform-observe', '10', '9'),
+                        ('--path-transform-observe', '1', '2', '--step-chain')):
+            with self.assertRaises(SystemExit):
+                self.build(*self.snapshot, *options, *invalid)
+        with self.assertRaises(SystemExit):
+            self.build(*self.snapshot, '--mode', 'clock', '--path-transform-observe', '1', '2')
+
+    def test_linux_hash_logging_changes_output_without_disabling_the_census(self):
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities',
+                         '--world-hash-stride', '120', '--world-log-mode', 'hashes', '--probe-profile')
+        config = (out / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_world_detail_rows = false', config)
+        self.assertIn('native_gate_world_hash_stride = 120', config)
+        self.assertIn('native_gate_probe_profile = true', config)
+        self.assertNotIn('native_gate_play_mode', config)
+
+    def test_linux_rolling_census_is_explicit_and_keeps_its_distinct_config(self):
+        out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities',
+                         '--world-hash-stride', '120', '--world-hash-schema', 'WORLD_IMPORTED_2',
+                         '--world-log-mode', 'hashes', '--world-rolling-slices', '120', '--created-identities')
+        config = (out / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_world_rolling_slices = 120', config)
+        self.assertIn('native_gate_world_detail_rows = false', config)
+
+    def test_linux_rolling_census_rejects_incompatible_modes(self):
+        required = ['--world-identities', '--created-identities', '--world-hash-stride', '120',
+                    '--world-hash-schema', 'WORLD_IMPORTED_2', '--world-log-mode', 'hashes']
+        for extra in (['--world-rolling-slices', '0'], ['--world-rolling-slices', '18001'],
+                      ['--world-rolling-slices', '3', '--world-log-mode', 'full'],
+                      ['--world-rolling-slices', '3', '--world-hash-watch', '0000000000000001']):
+            with self.subTest(extra=extra), self.assertRaises(SystemExit):
+                self.build(*self.snapshot, '--mode', 'clock', *required, *extra)
+        with self.assertRaises(SystemExit):
+            self.build(*self.snapshot, '--mode', 'clock',
+                       *[option for option in required if option != '--created-identities'],
+                       '--world-rolling-slices', '3')
+
+    def test_status_stride_overlay_bounds_and_default(self):
+        default = self.build(*self.snapshot, '--mode', 'clock')
+        self.assertNotIn('native_gate_status_stride', (default / 'ui/config.lua.append').read_text())
+        for stride in (1, 3600):
+            out = self.build(*self.snapshot, '--mode', 'clock', '--status-stride', str(stride))
+            self.assertIn(f'native_gate_status_stride = {stride}', (out / 'ui/config.lua.append').read_text())
+        for stride in (0, 3601):
+            with self.subTest(stride=stride), self.assertRaises(SystemExit):
+                self.build(*self.snapshot, '--mode', 'clock', '--status-stride', str(stride))
+
+    def test_linux_ordered_batches_reject_conflicts_and_missing_prerequisites(self):
+        required = ['--world-identities', '--serial-pathing', '--path-determinism', '3']
+        variants = [required + ['--travel-snapshot']]
+        variants.extend([option for option in required if option != missing]
+                        for missing in ('--world-identities', '--serial-pathing'))
+        variants.append(['--world-identities', '--serial-pathing', '--path-determinism', '1'])
+        for options in variants:
+            with self.subTest(options=options), self.assertRaises(SystemExit):
+                self.build(*self.snapshot, '--mode', 'clock', *options, '--travel-determinism')
 
     def test_linux_overlay_takes_gravidar(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities', '--serial-pathing', '--gravidar')

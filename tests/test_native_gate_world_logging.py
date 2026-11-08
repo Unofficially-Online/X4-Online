@@ -35,7 +35,7 @@ def captures():
     return result
 
 
-def run_probe(captured, source=probe_fixture.SOURCE, native_payload_limit=8191):
+def run_probe(captured, source=probe_fixture.SOURCE, native_payload_limit=8191, config=''):
     fixture=probe_fixture.SnapshotProbeTests();fixture.setUp();lua=fixture.lua
     lua.globals().captures=lua.table_from(captured,recursive=True)
     lua.globals().native_payload_limit=native_payload_limit
@@ -56,7 +56,13 @@ def run_probe(captured, source=probe_fixture.SOURCE, native_payload_limit=8191):
         logs[#logs+1]=text:sub(1,native_payload_limit)
       end
       state.boot_phase=3;is_menu=false
+      digest_inputs={}
+      X4LAN_SHA256.digest=function(data)
+        digest_inputs[#digest_inputs+1]=data
+        return string.rep('a',64)
+      end
     ''')
+    lua.execute(config)
     lua.execute(source)
     for tick in captured:
         lua.globals().state.issued=tick;lua.execute('update()')
@@ -71,6 +77,27 @@ def parse(logs):
 
 
 class WorldPageLogging(unittest.TestCase):
+    def test_summary_logging_keeps_every_captured_state_in_the_relay_digest(self):
+        captured = captures()
+        full, full_logs = run_probe(captured)
+        reduced, reduced_logs = run_probe(
+            captured, config='X4LAN_CONFIG.native_gate_world_detail_rows=false')
+        self.assertEqual(list(full.globals().digest_inputs.values()),
+                         list(reduced.globals().digest_inputs.values()))
+        self.assertEqual(reduced.globals().reports, 3)
+        hashes = lambda lines: [line for line in lines if 'NATIVE_GATE WORLD_HASH ' in line]
+        self.assertEqual(hashes(full_logs), hashes(reduced_logs))
+        self.assertTrue(any('NATIVE_GATE WORLD_OBJECT ' in line for line in full_logs))
+        self.assertFalse(any('NATIVE_GATE WORLD_OBJECT ' in line for line in reduced_logs))
+        for tick in captured:
+            state = captured[tick]['summary'].split(' state=')[1]
+            self.assertTrue(any(state in data for data in reduced.globals().digest_inputs.values()))
+
+    def test_invalid_detail_logging_option_fails_before_native_capture(self):
+        for value in ('0', "'false'", '{}'):
+            with self.subTest(value=value), self.assertRaises(probe_fixture.LuaError):
+                run_probe(captures(), config=f'X4LAN_CONFIG.native_gate_world_detail_rows={value}')
+
     def test_full_pages_roundtrip_with_sparse_phase_updates_under_native_truncation_sink(self):
         native=captures()
         self.assertGreater(len(native[1]['pages'][0]),8191)

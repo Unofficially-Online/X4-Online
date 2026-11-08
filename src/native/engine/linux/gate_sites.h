@@ -158,6 +158,11 @@
 #define LX_MC_NEAR_VA 0x1f47fc5u             /* near: release r15+0x38, return nothing */
 #define LX_MC_FAR_VA 0x1f48130u              /* far: release r15+0x38, back to the search at 0x1f47bc0 */
 #define LX_UNIVERSE_VA 0x3db6948u            /* g_Universe (Windows 0x3d198f8); its player object +0x238 (Windows +0x230) */
+/* Build storage's randomized UpdateBuildEvent schedule (gate_build_rng.h). */
+#define LX_BUILD_SCHEDULER_VA 0x1838e80u
+#define LX_BUILD_CALL_VA 0x1838f16u
+#define LX_BUILD_CALL_BLOCK_VA 0x1838f10u
+#define LX_BUILD_FLOAT_RANGE_VA 0x1a491c0u
 /* AI Wait restores (gate_ai_wait.h, lockstep_ai_wait_rng.h). */
 #define LX_AI_WAIT_SLOT_VA 0x3b2a680u       /* U::AI::WaitAction vtable 0x3b2a650, restore slot +0x30 (Windows +0x28) */
 #define LX_AI_WAIT_RESTORE_VA 0x10c12b0u    /* WaitAction::Reattach (Windows 0x10a50d0) */
@@ -551,6 +556,10 @@ static const lx_site lx_sites[]={
     {"fs_save_dir_init",0x8a0d60,0x1d,"9636ee83c514904556579b8ea6712c5c29074ee53204809a25883ad0f17728d0"},
     {"wfire_shot_head",0x1138c70,0x110,"8cfb97d19dc638180e4124820a7d99da3c4c9eb1d66c587727d2db784ad41182"},
     {"wfire_fire_loop_call",0x1d69a10,0x80,"2d2595c5e3c41e67cbe91b7310c26c96a3fa18c872dd3d4bc0fada7c691e7528"},
+    {"build_rng_scheduler",0x1838e80,0x180,"c6b5cd949298ae677d231ff345d92e22295830999b43a2a949b9027fc50ff6e7"},
+    {"build_rng_float_range",0x1a491c0,0x7e,"bd0f5a41ee0f72ece023eec0b6ae4134c62e345874c57fe45dc17194d190c6ea"},
+    {"economy_watch_import",0x18412e3,0xae,"03d28287744ceff1c336a17b4482cfb63ef156e6e51a33044e58b5c5d352bb4c"},
+    {"economy_watch_guard",0x1878db0,0x80,"e570edab29e58f8e5c464e611cfafbbdca8f36811466ac8fd5c2ccf40dbae58b"},
     {"erng_listener_head",0x14382f0,0x58,"93b8240094f88e774f4ded9f45ec8cb805ddcdd9588218575a3e4a8a422de45c"},
     {"erng_listener_tail",0x1438350,0xc2,"2a0cbb338bb82c0a492b6b013e484597c6fd63233614e1f429c0d12edcc7ef18"},
     {"spline_update_head",0x1363de0,0x110,"53ce49e351fba194737e429eb0ebf71daa1d84a01a357241cd243b9382208ef7"},
