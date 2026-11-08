@@ -817,7 +817,8 @@ static int join_undk_on;
 static uint64_t join_undk_written,join_undk_equal,join_undk_missing,join_undk_unmapped;static uint32_t join_undk_capn;
 static const unsigned join_undk_vt_at[2]={0x38u,0x98u};   /* the embedded objects' vtables when set (offsets in the behaviour) */
 /* w1z210: the qwords at +0x38 and +0x98 hold an image vtable only on some containers (717ab); on 717bb +0x38 is the float
- * -13545.0 and +0x9c -1.0, which the RVA translation wrote as 0. Flags: 2/4 the slot raw, 8/16 a heap pointer (the joiner's kept). */
+ * -13545.0 and +0x9c -1.0, which the RVA translation wrote as 0. Flags: 2/4 the slot raw, 8/16 a heap pointer (the joiner's kept):
+ * an aligned value above 4 GB (w1z211: 717db's +0x38 the float -29327.75 over a zero high word, below 4 GB, is a value). */
 enum {JOIN_UNDK_RAW=2u,JOIN_UNDK_HEAP=8u};
 static int join_undk_cmp(const void *a,const void *b) {
     uint64_t x=((const join_undk_rec *)a)->portable,y=((const join_undk_rec *)b)->portable;return x<y?-1:x>y;
@@ -830,7 +831,7 @@ static int join_undk_push(join_tables *t,const unsigned char *behaviour,uint64_t
     for(unsigned k=0;k<2;k++) {   /* an image pointer as its RVA; a heap pointer left (flags 8 << k); any other value raw (2 << k) */
         uintptr_t v=0;memcpy(&v,r.state+join_undk_vt_at[k]-JOIN_UNDK_FROM,8);uint64_t keep;
         if(v>=(uintptr_t)image && v-(uintptr_t)image<JOIN_FLIGHT_IMAGE) keep=(uint64_t)(v-(uintptr_t)image);
-        else if(v>=0x10000u && v<0x7fffffffffffull) {keep=0;r.flags|=JOIN_UNDK_HEAP<<k;}
+        else if(v>=0x100000000ull && v<0x7fffffffffffull && !(v&7u)) {keep=0;r.flags|=JOIN_UNDK_HEAP<<k;}   /* the heap lies above 4 GB */
         else {keep=v;r.flags|=JOIN_UNDK_RAW<<k;}
         memcpy(r.state+join_undk_vt_at[k]-JOIN_UNDK_FROM,&keep,8);
     }
@@ -2823,6 +2824,7 @@ static void join_objsample_dump(uint64_t tick) {
 static void join_jobdump(char side,uint64_t tick);   /* lockstep_join.h: JOIN_JOBDUMP */
 static void join_jobq_dump(char side,uint64_t tick);   /* lockstep_join.h: JOIN_JOBQ */
 static void join_jobcnt_dump(uint64_t tick);   /* lockstep_join.h: JOIN_JOBCNT */
+static void join_codew_step(uint64_t completed);   /* lockstep_join.h: JOIN_CODEW */
 #define JOIN_NPC_VT 0x2b38a48u
 #define JOIN_NPC_SLOT 0x5a0u
 static void join_npcslot_dump(char side,uint64_t tick) {
@@ -2938,8 +2940,113 @@ static size_t join_lstn_dump(char *out,size_t cap,char side,uint64_t tick,uint64
     at+=(size_t)snprintf(out+at,cap-at,"\r\n");
     return at<cap?at:cap;
 }
+/* JOIN_RSTORE (diagnostic, with JOIN_WATCH; j1-391): the late join's salvage pilot 0x9c696 finds no region recyclable at 3093 on
+ * the joiner (FindRegionObjectWithYieldInSectorAction 0xbf5f80: the search 0xeee270 over the RegionManager's store, then the spawn
+ * 0x7884a0 when it found none), the session one of zone 0x21fd6's two; the joiner's extra recyclable takes an object code and
+ * every later code shifts (the 3318 job quotas). The store (lockstep_region_camera.h field_fill: *(0x6cf21e0)+0x60, entries
+ * +0x40..+0x48; entry +0x8e0 the cell's zone, +0x10 its field tree, node +0x20 the field, +0x28 its record list, +0x30 the count;
+ * a record 0xa0 bytes, consumed +0x90): per entry the cell's key, its fields, records and consumed ones. */
+static size_t join_rstore_dump(char *out,size_t cap,char side,uint64_t tick) {
+    unsigned char *manager=NULL,**v[2]={NULL,NULL};size_t at=0;uint64_t total=0,consumed=0;
+    if(!join_read(image+0x6cf21e0u,&manager,8) || !manager || !join_read(manager+0x60+0x40,v,16) || v[1]<v[0]) return 0;
+    const size_t n=(size_t)(v[1]-v[0]);
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_RSTORE side=%c tick=%llu entries=%llu\r\n",side,(unsigned long long)tick,(unsigned long long)n);
+    for(size_t i=0;i<n && i<4096u && at+512<cap;i++) {
+        unsigned char *entry=NULL,*cell=NULL,*walk=NULL;uint64_t runtime=0,key=0;unsigned klass;uint32_t fields=0;uint64_t recs=0,cons=0;
+        if(!join_read(v[0]+i,&entry,8) || !entry) continue;
+        if(join_read(entry+0x8e0,&cell,8) && cell && join_read(cell+8,&runtime,8) && runtime) key=join_key(runtime,&klass);
+        unsigned char *const header=entry+0x10;
+        (void)join_read(entry+0x30,&walk,8);
+        for(unsigned g=0;walk && walk!=header && g<256u;g++) {
+            unsigned char *list=NULL,*node=NULL;++fields;
+            if(join_read(walk+0x28,&list,8) && list && join_read(list,&node,8))
+                for(unsigned k=0;node && node!=list && k<4096u;k++) {unsigned char c=0;(void)join_read(node+0x90,&c,1);++recs;cons+=c!=0;if(!join_read(node,&node,8)) break;}
+            unsigned char *right=NULL;
+            if(join_read(walk+0x10,&right,8) && right) {unsigned char *l=NULL;while(join_read(right+8,&l,8) && l) right=l;walk=right;continue;}
+            unsigned char *parent=NULL;
+            for(unsigned up=0;up<64u;up++) {unsigned char *pl=NULL;if(!join_read(walk,&parent,8) || !parent || !join_read(parent+8,&pl,8)) {parent=NULL;break;}if(pl==walk) break;walk=parent;}
+            walk=parent;
+        }
+        total+=recs;consumed+=cons;
+        at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_RSTORE side=%c tick=%llu i=%llu cell=%llx fields=%u records=%llu consumed=%llu\r\n",side,
+                             (unsigned long long)tick,(unsigned long long)i,(unsigned long long)key,fields,(unsigned long long)recs,(unsigned long long)cons);
+    }
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_RSTORE side=%c tick=%llu total records=%llu consumed=%llu\r\n",side,(unsigned long long)tick,
+                         (unsigned long long)total,(unsigned long long)consumed);
+    return at<cap?at:cap;
+}
+/* JOIN_RGNOBJ (diagnostic, with JOIN_WATCH on a region; j1-393): FindRegionObjectWithYieldInSectorAction's first search 0x7680a0
+ * walks a region's own object list +0x2a0..+0x2a8 (runtime IDs; a Recyclable, isa 0x49, that can be towed or dismantled, by
+ * distance through 0x3dde10's published pose) before its fields +0x288; the store search 0xeee270 only at sector attention 5 or
+ * more. Per watched U::Region: the list in order as portable keys, and its fields' count. */
+#define JOIN_RGN_VTABLE 0x2b2ad60u
+/* The joiner's runtime ID of a watched portable: its own table's, else (an object its identity table leaves out, a region) the
+ * session's runtime ID when that object exists here (the load keeps saved IDs). */
+static uint64_t join_watch_runtime(const join_tables *s,const join_tables *mine,uint64_t portable) {
+    uint64_t r=join_runtime_of(mine,portable);
+    if(r) return r;
+    for(uint32_t k=0;k<s->nids;k++) if(s->ids[k].portable==portable) return join_object(s->ids[k].runtime)?s->ids[k].runtime:0;
+    return 0;
+}
+static size_t join_rgnobj_dump(char *out,size_t cap,char side,uint64_t tick,uint64_t portable,unsigned char *o) {
+    uintptr_t vt=0,v[2]={0,0},f[2]={0,0};size_t at=0;
+    if(!join_read(o,&vt,8) || vt!=(uintptr_t)image+JOIN_RGN_VTABLE || !join_read(o+0x2a0,v,16) || v[1]<v[0] || (v[1]-v[0])&7u) return 0;
+    (void)join_read(o+0x288,f,16);
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_RGNOBJ side=%c tick=%llu id=%llx fields=%llu objects=%llu:",side,(unsigned long long)tick,
+                         (unsigned long long)portable,(unsigned long long)(f[1]>=f[0]?(f[1]-f[0])/8u:0),(unsigned long long)((v[1]-v[0])/8u));
+    for(uintptr_t p=v[0];p<v[1] && p<v[0]+8u*512u && at+40<cap;p+=8u) {
+        uint64_t runtime=0;unsigned klass;
+        if(join_read((void *)p,&runtime,8)) at+=(size_t)snprintf(out+at,cap-at,"%s%llx",p==v[0]?"":",",(unsigned long long)(runtime?join_key(runtime,&klass):0));
+    }
+    /* every field with objects in its spawned list (+0x90): index:length, the first six as portable keys */
+    for(uintptr_t q=f[0];f[1]>f[0] && q<f[1] && q<f[0]+8u*512u && at+256<cap;q+=8) {
+        unsigned char *field=NULL,*sent=NULL,*node=NULL;unsigned n=0;uint64_t keys[6];
+        if(!join_read((void *)q,&field,8) || !field || !join_read(field+0x90,&sent,8) || !sent || !join_read(sent,&node,8)) continue;
+        for(unsigned g=0;node && node!=sent && g<100000u;g++) {
+            unsigned char *obj=NULL;uint64_t rt=0;unsigned klass;
+            if(n<6u) {keys[n]=0;if(join_read(node+0x10,&obj,8) && obj && join_read(obj+8,&rt,8) && rt) keys[n]=join_key(rt,&klass);if(!keys[n]) keys[n]=rt|(1ull<<62);}
+            ++n;if(!join_read(node,&node,8)) break;
+        }
+        if(!n) continue;
+        at+=(size_t)snprintf(out+at,cap-at," f%u:%u[",(unsigned)((q-f[0])/8u),n);
+        for(unsigned k=0;k<n && k<6u;k++) at+=(size_t)snprintf(out+at,cap-at,"%s%llx",k?",":"",(unsigned long long)keys[k]);
+        at+=(size_t)snprintf(out+at,cap-at,"]");
+    }
+    at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+    return at<cap?at:cap;
+}
+/* JOIN_RECYF (diagnostic, with JOIN_WATCH on a U::Recyclable; j1-396): the salvage search's field pass 0xedd0c0 walks each of a
+ * region's fields (+0x288 vector) and its spawned-object list (field +0x90: a sentinel node, node +0x10 the object). Per watched
+ * recyclable: every offset of its first 0x1000 bytes holding a U::Region pointer, and for that region the fields whose list holds
+ * the recyclable (index:list length), or none. */
+#define JOIN_RECY_VTABLE 0x2acca90u
+static size_t join_recyf_dump(char *out,size_t cap,char side,uint64_t tick,uint64_t portable,unsigned char *o) {
+    uintptr_t vt=0;size_t at=0;
+    if(!join_read(o,&vt,8) || vt!=(uintptr_t)image+JOIN_RECY_VTABLE) return 0;
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_RECYF side=%c tick=%llu id=%llx",side,(unsigned long long)tick,(unsigned long long)portable);
+    unsigned found=0;
+    for(unsigned off=8;off<0x1000u && at+512<cap;off+=8) {
+        unsigned char *p=NULL;uintptr_t pvt=0;
+        if(!join_read(o+off,&p,8) || !p || !join_read(p,&pvt,8) || pvt!=(uintptr_t)image+JOIN_RGN_VTABLE) continue;
+        ++found;uintptr_t f[2]={0,0};uint64_t rt=0;unsigned klass;(void)join_read(p+8,&rt,8);
+        at+=(size_t)snprintf(out+at,cap-at," region@%x=%llx",off,(unsigned long long)(rt?join_key(rt,&klass):0));
+        if(!join_read(p+0x288,f,16) || f[1]<f[0] || (f[1]-f[0])/8u>4096u) continue;
+        int any=0;
+        for(uintptr_t q=f[0];q<f[1] && at+64<cap;q+=8) {
+            unsigned char *field=NULL,*sent=NULL,*node=NULL;unsigned n=0;int in=0;
+            if(!join_read((void *)q,&field,8) || !field || !join_read(field+0x90,&sent,8) || !sent || !join_read(sent,&node,8)) continue;
+            for(unsigned g=0;node && node!=sent && g<100000u;g++) {unsigned char *obj=NULL;(void)join_read(node+0x10,&obj,8);if(obj==o) in=1;++n;if(!join_read(node,&node,8)) break;}
+            if(in) {at+=(size_t)snprintf(out+at,cap-at," in=%u:%u",(unsigned)((q-f[0])/8u),n);any=1;}
+        }
+        if(!any) at+=(size_t)snprintf(out+at,cap-at," in=none");
+    }
+    if(!found) at+=(size_t)snprintf(out+at,cap-at," region=none");
+    at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+    return at<cap?at:cap;
+}
 static void join_watch_dump(char side,uint64_t tick) {
     if(!join_watch.n) return;
+    {size_t cap=1u<<20;char *o=malloc(cap);if(o) {const size_t at=join_rstore_dump(o,cap,side,tick);if(at) crash_note_write(o,(int)at);free(o);}}
     if(side=='t' || side=='k' || side=='s') join_npcslot_dump(side,tick);
     if(side=='t' || side=='k' || side=='s') {join_jobdump(side,tick);join_jobq_dump(side,tick);}
     if(side=='t') join_objsample_dump(tick);
@@ -2957,6 +3064,8 @@ static void join_watch_dump(char side,uint64_t tick) {
             if((rel==1u || rel==50u || rel==57u) && at+65536u<cap) at+=join_watch_refs(out+at,cap-at,side,tick,join_watch.portable[i],level);
         }
         if(at+65536u<cap) at+=join_lstn_dump(out+at,cap-at,side,tick,join_watch.portable[i],level);   /* JOIN_LSTN: its listeners in order */
+        if(at+65536u<cap) at+=join_rgnobj_dump(out+at,cap-at,side,tick,join_watch.portable[i],level);   /* JOIN_RGNOBJ: a region's objects */
+        if(at+65536u<cap) at+=join_recyf_dump(out+at,cap-at,side,tick,join_watch.portable[i],level);   /* JOIN_RECYF: a recyclable's field lists */
         for(unsigned lvl=0;lvl<JOIN_WATCH_LEVELS && level && at+2600<cap;lvl++) {
             uintptr_t vt=0;unsigned char *parent=NULL;uint32_t flags=0;
             (void)join_read(level,&vt,8);(void)join_read(level+JOIN_WATCH_PARENT,&parent,8);(void)join_read(level+JOIN_WATCH_FLAGS,&flags,4);
@@ -3447,6 +3556,10 @@ static void join_rw_dump(uint64_t tick) {
 }
 static void join_watch_probe(uint64_t completed) {
     join_rw_early_probe(completed);
+    join_codew_step(completed);   /* JOIN_CODEW: the code counter's changes before JOBCNT's step */
+    if(join_jobcnt_at && completed==join_jobcnt_at) {   /* JOIN_RSTORE at JOBCNT's step too (side c) */
+        size_t cap=1u<<20;char *o=malloc(cap);if(o) {const size_t at=join_rstore_dump(o,cap,'c',completed);if(at) crash_note_write(o,(int)at);free(o);}
+    }
     join_jobcnt_dump(completed);
     join_shipcode_dump(completed);
     if(!join_watch.armed || completed<=join_watch.tick) return;
@@ -4785,6 +4898,117 @@ static void join_admit_srcs(const join_tables *s,const join_tables *mine) {
     }
     free(c);
 }
+/* FOBJ (v13, section 82; opt-in native_gate_join_fobj on the joiner). A region's fields (U::Region +0x288, a vector of field
+ * pointers) keep the objects they spawned in a std::list at field +0x90 (sentinel node; node +0 next, +8 prev, +0x10 the object;
+ * the size +0x98; the field's constructor 0xedac40 makes the sentinel). The salvage search FindRegionObjectWithYieldInSectorAction
+ * (0xbf5f80: 0x7680a0 per region, its fields through 0xedd0c0) finds a recyclable only through those lists, else spawns one
+ * (0x7884a0, the field's slot 21). A load leaves every list empty: j1-399, region 0x6b3's fields 36, 42, 43 and 49 hold one object
+ * each on the session (f42 and f49 zone 0x21fd6's two recyclables), none on the joiner; at 3093 the tug 0x9c691's search spawns a
+ * recyclable on the joiner alone, its object code shifts every later one, and the 3318 job quotas (drawn from codes) part the
+ * world by 3360. The saver records every list in order (region portable, field index, place, the object's portable; flags 1:
+ * unmapped, object 0); the joiner appends the session's objects to a list it holds empty (nodes from SMem::Allocate 0x14b7140, as
+ * std::list's), leaves an equal one, and counts any other (conflict). Status fobj=on:groups:written:equal:missing:conflict:inserted. */
+#define JOIN_FOBJ_FIELDS 0x288u
+#define JOIN_FOBJ_LIST 0x90u
+#define JOIN_FOBJ_SIZE 0x98u
+#define JOIN_FOBJ_ALLOC 0x14b7140u
+#define JOIN_FOBJ_MAX 4096u
+enum {JOIN_FOBJ_UNMAPPED=1u};
+static int join_fobj_on;
+static uint64_t join_fobj_groups,join_fobj_written,join_fobj_equal,join_fobj_missing,join_fobj_conflict,join_fobj_inserted;
+static int join_fobj_cmp(const void *a,const void *b) {
+    const join_fobj_rec *x=a,*y=b;
+    if(x->region!=y->region) return x->region<y->region?-1:1;
+    if(x->field!=y->field) return x->field<y->field?-1:1;
+    return x->index<y->index?-1:x->index>y->index;
+}
+static void *join_fobj_alloc_native(size_t n) {
+    return ((void *(*)(size_t,uintptr_t,uintptr_t,uintptr_t,unsigned))(void *)(image+JOIN_FOBJ_ALLOC))(n,0,0,0,0x10);
+}
+static void *(*join_fobj_alloc)(size_t)=join_fobj_alloc_native;   /* tests replace it */
+static uintptr_t join_fobj_region_vt;   /* tests: a synthetic region vtable (0: the image's U::Region) */
+static int join_fobj_fields(unsigned char *region,uintptr_t f[2]) {
+    uintptr_t vt=0;f[0]=f[1]=0;
+    const uintptr_t want=join_fobj_region_vt?join_fobj_region_vt:(uintptr_t)image+JOIN_RGN_VTABLE;
+    return region && join_read(region,&vt,8) && vt==want && join_read(region+JOIN_FOBJ_FIELDS,f,16) && f[1]>=f[0] &&
+           !((f[1]-f[0])&7u) && (f[1]-f[0])/8u<=4096u;
+}
+/* A field's list: the objects in order (at most JOIN_FOBJ_MAX), their count; -1 unreadable. */
+static int join_fobj_list(unsigned char *field,unsigned char **objs,uint32_t *n,unsigned char **sentinel) {
+    unsigned char *sent=NULL,*node=NULL;*n=0;
+    if(!field || !join_read(field+JOIN_FOBJ_LIST,&sent,8) || !sent || !join_read(sent,&node,8)) return -1;
+    if(sentinel) *sentinel=sent;
+    for(;node && node!=sent;) {
+        if(*n>=JOIN_FOBJ_MAX) return -1;
+        unsigned char *obj=NULL;if(!join_read(node+0x10,&obj,8)) return -1;
+        objs[(*n)++]=obj;
+        if(!join_read(node,&node,8)) return -1;
+    }
+    return node?0:-1;
+}
+static unsigned char *join_fobj_objs[JOIN_FOBJ_MAX];
+static void join_capture_fobj(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL;uintptr_t f[2];
+        if(!o || !join_fobj_fields(o,f)) continue;
+        for(uintptr_t q=f[0];q<f[1];q+=8) {
+            unsigned char *field=NULL;uint32_t n=0;
+            if(!join_read((void *)q,&field,8) || !field || join_fobj_list(field,join_fobj_objs,&n,NULL)<0) continue;
+            for(uint32_t k=0;k<n;k++) {
+                join_fobj_rec r;memset(&r,0,sizeof(r));uint64_t rt=0;unsigned klass;
+                r.region=t->ids[i].portable;r.field=(uint32_t)((q-f[0])/8u);r.index=k;
+                if(join_fobj_objs[k] && join_read(join_fobj_objs[k]+8,&rt,8) && rt) r.object=join_key(rt,&klass);
+                if(!r.object) r.flags=JOIN_FOBJ_UNMAPPED;
+                if(!JOIN_PUSH(t->fobj,t->nfobj,cap,r)) return;
+            }
+        }
+    }
+    if(t->nfobj>1) qsort(t->fobj,t->nfobj,sizeof(*t->fobj),join_fobj_cmp);
+}
+/* The joiner's region: its own table's runtime ID, else the session's (a region its identity table leaves out; the load keeps
+ * saved IDs). */
+static unsigned char *join_fobj_region(const join_tables *s,const join_tables *mine,uint64_t portable) {
+    uint64_t r=join_runtime_of(mine,portable);
+    for(uint32_t k=0;!r && k<s->nids;k++) if(s->ids[k].portable==portable) r=s->ids[k].runtime;
+    return r?join_object(r):NULL;
+}
+static unsigned char *join_fobj_want[JOIN_FOBJ_MAX];
+static void join_admit_fobj(const join_tables *s,const join_tables *mine) {
+    join_fobj_groups=join_fobj_written=join_fobj_equal=join_fobj_missing=join_fobj_conflict=join_fobj_inserted=0;
+    if(!join_fobj_on) return;
+    for(uint32_t i=0;i<s->nfobj;) {
+        uint32_t j=i+1u;
+        while(j<s->nfobj && s->fobj[j].region==s->fobj[i].region && s->fobj[j].field==s->fobj[i].field) ++j;
+        ++join_fobj_groups;
+        const join_fobj_rec *g=&s->fobj[i];const uint32_t ng=j-i;i=j;
+        unsigned char *region=join_fobj_region(s,mine,g->region),*field=NULL,*sent=NULL;uintptr_t f[2];uint32_t n=0,m=0;
+        if(!join_fobj_fields(region,f) || f[0]+8u*(uintptr_t)g->field>=f[1] || !join_read((void *)(f[0]+8u*(uintptr_t)g->field),&field,8) ||
+           join_fobj_list(field,join_fobj_objs,&n,&sent)<0) {++join_fobj_missing;continue;}
+        int unmapped=0;
+        for(uint32_t k=0;k<ng && m<JOIN_FOBJ_MAX;k++) {
+            unsigned char *o=g[k].flags&JOIN_FOBJ_UNMAPPED?NULL:join_object(join_runtime_of(mine,g[k].object));
+            if(!o) {unmapped=1;break;}
+            join_fobj_want[m++]=o;
+        }
+        if(unmapped) {++join_fobj_missing;continue;}
+        if(n) {
+            if(n==m && !memcmp(join_fobj_objs,join_fobj_want,(size_t)n*sizeof(*join_fobj_want))) ++join_fobj_equal;
+            else ++join_fobj_conflict;
+            continue;
+        }
+        uint64_t size=0;
+        if(!join_read(field+JOIN_FOBJ_SIZE,&size,8) || size) {++join_fobj_conflict;continue;}
+        for(uint32_t k=0;k<m;k++) {   /* push_back: node {next, prev, value} before the sentinel */
+            unsigned char **node=join_fobj_alloc(0x18u),*last=NULL;
+            if(!node || !join_read(sent+8,&last,8) || !last) break;
+            node[0]=sent;node[1]=last;node[2]=join_fobj_want[k];
+            *(unsigned char **)last=(unsigned char *)node;*(unsigned char **)(sent+8)=(unsigned char *)node;
+            ++*(uint64_t *)(field+JOIN_FOBJ_SIZE);++join_fobj_inserted;
+        }
+        ++join_fobj_written;
+    }
+}
 static int join_bnds_on;
 static uint64_t join_bnds_written,join_bnds_equal,join_bnds_missing;
 #define JOIN_BNDS_GETTER 0x7eb460u   /* the station's vfunc 0x14b0: lea rax,[rcx+0xc90] */
@@ -5648,6 +5872,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_warp(t);            /* version 13: the pending warps' destinations */
     join_capture_lstn(t);            /* version 13: the script listeners' order per event source and type */
     join_capture_srcs(t);            /* version 13: the listeners' sources */
+    join_capture_fobj(t);            /* version 13: the region fields' spawned-object lists */
     if(t->npcsv>1) qsort(t->pcsv,t->npcsv,sizeof(*t->pcsv),join_solver_cmp);   /* version 13: the PlayerControllers' solvers */
     for(uint32_t i=1;i<t->npcsv;i++) if(t->pcsv[i].portable==t->pcsv[i-1].portable) return join_note("pcsv_duplicate,id=%llx",(unsigned long long)t->pcsv[i].portable);
     join_sort_omgs(t);               /* version 13: OMGS, taken in the FLIGHT walk */
@@ -7413,7 +7638,7 @@ static int join_admit_world(void) {
             if(join_poke((uintptr_t)slot,&want,8)) ++join_rx.gravd_fixed;
         }
     }
-    for(unsigned i=0;i<join_watch.n;i++) join_watch.runtime[i]=join_runtime_of(&mine,join_watch.portable[i]);   /* diagnostic */
+    for(unsigned i=0;i<join_watch.n;i++) join_watch.runtime[i]=join_watch_runtime(s,&mine,join_watch.portable[i]);   /* diagnostic */
     join_watch_dump('k',s->gate.tick);   /* the joiner's own views before VIEWK and VIEWF */
     if(s->version>=13 && s->nviewk && !(join_view_skip&2u)) join_admit_viewk(s,&mine);   /* version 13: the views the session left unpublished, as its */
     if(s->version>=13 && s->nviewf) {join_viewf_hist_n=0;join_viewf_keep_build(s,&mine);}
@@ -7442,7 +7667,7 @@ static int join_admit_world(void) {
      join_evq_dump('j',now);}
     if(s->version>=13 && s->nviewf && (join_viewf_write || join_viewf_bits)) join_viewf_hist_note();   /* diagnostic */
     if(s->version>=13) join_gravp_settled_parents();   /* the restore's cached parents, after GRAVD, VIEWK and VIEWF */
-    for(unsigned i=0;i<join_watch.n;i++) join_watch.runtime[i]=join_runtime_of(&mine,join_watch.portable[i]);   /* diagnostic */
+    for(unsigned i=0;i<join_watch.n;i++) join_watch.runtime[i]=join_watch_runtime(s,&mine,join_watch.portable[i]);   /* diagnostic */
     join_watch_dump('j',s->gate.tick);
     if(s->version>=13 && s->njobe) {   /* version 13: the job engine's schedule (main thread, phase 3: its update does not run) */
         unsigned char *e=join_jobe_engine();join_jobe_rec own;
@@ -7460,6 +7685,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_noct(s,&mine);   /* the nav octree's index table and hidden keys */
     if(s->version>=13) join_admit_agtt(s,&mine);   /* the Agents' times the load resets */
     if(s->version>=13) join_admit_ares(s,&mine);   /* the Agents' result banks (opt-in) */
+    if(s->version>=13) join_admit_fobj(s,&mine);   /* the region fields' spawned-object lists (opt-in) */
     if(s->version>=13) join_admit_srcs(s,&mine);   /* the listeners' sources (opt-in), before their order */
     if(s->version>=13) join_admit_lstn(s,&mine);   /* the script listeners' order (opt-in) */
     if(s->version>=13) join_admit_agcb(s,&mine);   /* the pilot slot ships' command and probe blocks */

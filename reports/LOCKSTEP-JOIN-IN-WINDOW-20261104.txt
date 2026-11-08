@@ -1214,3 +1214,15 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   -13545.0 and +0x9c -1.0 (no vtables), which UNDK's RVA translation wrote as 0, and +0xd8 (past the class's fields, nothing
   reads it in the class code) differs freely. Fix: +0x38/+0x98 as RVAs only when they hold image pointers, else raw (flags
   2/4), a heap pointer the joiner keeps (8/16). The beh= dump names another flight model (-m<vtable>).
+- w1z211 (build-undk2, de156130): census as before (T+1 1, 3060 4, 3120 6). 717ab's undock behaviour equal at T+1 and T+2;
+  717bb's and 717db's still part at +0x38 (the floats 9117.2 and -29327.75 over a zero high word: the heap-pointer test took
+  them, the joiner's 0 kept; a heap pointer is now an aligned value above 4 GB). 717eb flies a SplineFlightControlModel
+  (0x2c4f480): its T+1 split is the spline model's, not the undock. 717ab parts by 3060 with an equal behaviour: next, the
+  per-tick motion watch on the four.
+- w1z212 (build-undk3, 457e7aa8, + the per-tick motion watch on the four containers): census T+1 1, 3060 4. Per tick: 717bb
+  equal through 3070 (the heap-pointer test fixed its +0x38); 717ab and 717db equal through 3053 and part at 3054 in their pose
+  only (cur, cache; target, path, model, agent equal), when they come near 717eb (same shipyard zone); 717eb parts at T+1: its
+  SplineFlightControlModel did not step on the joiner (the spline parameter 0.1012, its value at T, against the session's
+  0.1026; the read bank's position the T position; the model's +0xa8 8 on the session, 0 on the joiner), and the joiner's other
+  bank and controller cache hold a stale (28720, 111.4, 41721). The session's Agent had a full update at T+1, the joiner's not:
+  the update cadence of a container launched shortly before T. Next: the trace window 3033..3058 for every tick's full rows.

@@ -97,6 +97,8 @@ static int lua_join_conn(lua_State *L) {join_conn_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_warp(lua_State *L) {join_warp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_srcs(on): SRCS, the joiner gives each keyed listener the session's sources (default off; lockstep_join_world.h). */
 static int lua_join_srcs(lua_State *L) {join_srcs_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_fobj(on): FOBJ, the joiner fills its region fields' empty spawned-object lists as the session's (default off). */
+static int lua_join_fobj(lua_State *L) {join_fobj_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_lstn(on): LSTN, the joiner orders the script listeners of each event source and type as the session's (default off). */
 static int lua_join_lstn(lua_State *L) {join_lstn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_gravp_settled(on): GRAVP settled, the restore after T+1 also takes settled objects below attention 6 (default off). */

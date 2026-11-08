@@ -349,6 +349,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_srcs then   -- SRCS: each keyed listener's sources as the session's (srcs=)
   assert(gate.join_srcs and gate.join_srcs(1)==1,'join srcs refused')
  end
+ if cfg.native_gate_join_fobj then   -- FOBJ: the region fields' spawned-object lists the load leaves empty (fobj=)
+  assert(gate.join_fobj and gate.join_fobj(1)==1,'join fobj refused')
+ end
  if cfg.native_gate_join_lstn then   -- LSTN: the script listeners in the session's order per event source and type (lstn=)
   assert(gate.join_lstn and gate.join_lstn(1)==1,'join lstn refused')
  end

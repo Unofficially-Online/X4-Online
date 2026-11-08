@@ -2640,6 +2640,31 @@ proposed and rejected.
   and the joiner's load rebuilt in its own order ("listener registration order", the package's "not covered" list). JOIN_LSTN
   (7ba558d2, diagnostic with JOIN_WATCH) dumps a watched object's vectors and tree; next LSTN, the session's listener order per
   (source, type) by owner and script, the joiner's permuted to it at the admission.
+- LSTN (3bf221ab, section 79, opt-in native_gate_join_lstn) [F: j1-386 .. j1-397, queue-hj316 .. queue-hj327.sh]. j1-386: the
+  NPC's type-306 vector holds the ten AICallStackContexts (its own and the nine escorts') in registration order on the session,
+  ascending on the joiner. j1-387: lstn=1:48900:14708:34188:4:36:0 (14,708 of 48,900 vectors written; 226,441 records, about 9 MB);
+  census T+1 0, 3060 0, 3120 0 (the escorts equal), 3300 6, 3600 2,430, 4740 8,941. Unmapped listeners (left in their slots):
+  Scripts::ScriptGroupRef 39,143, MD::Cue 856. x4mods-67's SRCS (section 81) moves a script context registered on another
+  source on each side (the session keeps a context on its old sector after a jump: J1's 0x932e0 on sector 0x44 at 3293,
+  0x7a8e1/0x7a903 on 0x729 at 3298, joiner-only handlers without draws).
+- The J1 late join after LSTN (j1-388 .. j1-397). Census every 60 ticks: 3180 3 (ShipLarges 0x6d9d3, 0x9cefb, 0x9d2ec: x4mods-67's),
+  3240 3, 3300 6, 3360 122 in 80+ zones (1 .. 6 objects each), then 711, 1,251, 1,888, 2,430. The 3300 -> 3360 jump is the job
+  engine at 3318: the "job ship activated" cues fire 5 times on the session, 3 on the joiner (j1-389); JOIN_JOBCNT (j1-390): every
+  job's active and waiting ships equal at 3317; the queue after the same first spawn holds 4 linked ships on the session, 2 on the
+  joiner, as J1@633's 902 before CODE: the quotas draw from the first spawned ship's code. JOIN_SHIPCODE at 3317: the four ships
+  created after T have other codes on the joiner (the 492 others equal, the seeds equal). JOIN_CODEW (8760b0e3: the code counter's
+  changes 2917 .. 3317, j1-391): the joiner draws one code more at 3093. At 3093 the tug 0x9c691 (pilot 0x9c696, order.salvage.routine
+  the same PC range 0xc2 .. 0x11c on both sides, 18 draws against 24) spawns a U::Recyclable on the joiner alone (created
+  800c158da3fd3a1d, zone 0x21fd6, sector 0x6b7; recyclables 300 against 301 from 3120). find_recyclable_with_yield_in_sector is
+  Scripts::FindRegionObjectWithYieldInSectorAction (execute 0xbf5f80): per region of the sector 0x7680a0 (the region's object list
+  +0x2a0, runtime IDs of Recyclables (isa 0x49) passing the tow/dismantle tests, by distance through 0x3dde10's published pose,
+  then its fields +0x288 through 0xedd0c0: each field's spawned-object list +0x90, node +0x10 the object), at sector attention 5
+  or more also the RegionManager store 0xeee270; with none found the spawn 0x7884a0, then 0x794700 adds it. Ruled out by dumps:
+  the store (JOIN_RSTORE b62a98b2/a6b58ffd: empty after the load, 34 equal cells at T+1 and 3092, none of sector 0x6b7), region
+  0x6b3's own list (JOIN_RGNOBJ e246cc40: empty on the session, 97 fields), zone 0x21fd6's two recyclables' views (j1-396: cached
+  parent, poses and attention 2 equal on both sides). Open: the fields' +0x90 lists (the recyclables hold no direct Region pointer,
+  JOIN_RECYF 5f9014a6; the joiner's JOIN_WATCH does not resolve region portables). j1-395 failed at the handoff
+  (session_done:state_queued): with a 159 MB package a session needs TICKS of T+60 or more.
 
 2. WHAT THE PACKAGE HOLDS (lockstep_join.h; reader tools/dev/native_gate_join.py)
 - File <save folder>/mpjoin/j<T>.x4join next to j<T>.xml.gz. Little endian: 96-byte header (magic X4MPJN01, version 9
