@@ -376,3 +376,38 @@ newseed-capacity-drawn-event-triage.json. The next investigation compares the
 Linux economy schedule initialized during loading against the corresponding
 Windows mechanism; the shared approximate 540-second onset is a hypothesis,
 not proof of the branch or field that differs in this Linux invocation.
+
+Read-only economy timer observation
+----------------------------------
+Clean source a2a19e6, gate SHA256
+807848965d4a36aadfe0d495175e810779168f28ff8d5cf47e4823200d8dc75a,
+uses the same seed-3333333 snapshot for 600 ticks, launch order 1,2, rolling
+120, status stride 15 and the preceding navigation/event/build options.
+A new default-off economy observer reads saved Station 36fe9 every tick.
+It resolves the sealed saved identity, performs fresh component lookups and
+checks class, runtime identity and stored fields again before logging. It
+calls no economy update and writes no engine state. These unlocked reads do
+not rule out ABA changes or changes immediately around the sample.
+
+Both peers retain all 600 mandatory rows, with no absence or observer error,
+and successful ARMED/STOP receipts. At tick 1 the game time is
+7.063666666666666 and the last economy time is 0 on both, but the next economy
+time is 628.4911575317383 versus 654.8726806640625. This 26.38152313232422-second
+difference persists through tick 600. The ordinary rolling-world comparison
+passes because its current field set does not include these stored deadlines;
+that PASS is not economic-state equality.
+
+Pinned import instructions store the saved last value at object+0xa70 and
+initialize object+0xa68 through an inline draw from the loading thread RNG.
+The pinned economy guard reads +0xa68. This observed initial discrepancy is
+a concrete determinism defect. It does not retrospectively prove the timers
+or inner branch in the prior tick-32001 event, where these fields were not
+recorded. A narrow, opt-in import RNG correction is being developed separately.
+
+The bundle hashes, full STOP/restoration records and unchanged Steam identity
+were independently audited; no owned game process remains. Private evidence:
+economy-observe-600-independent.json, economy-observe-600-audit.json, the
+linux-20261108-economy-observe bundle, and retained import/guard disassembly.
+The observer received focused C/ELF checks, 171 Lua method checks and five
+Python checks; its separate retained-log validator passed eight adversarial
+checks. Synthetic checks do not establish native correction or portability.
