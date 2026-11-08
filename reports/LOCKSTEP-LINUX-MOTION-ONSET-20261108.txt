@@ -526,3 +526,52 @@ compatibility must verify the actual owned sites and thunks before normalizing
 only those three windows for the original whole-function hash. This diagnosis
 is a static explanation consistent with the preload ACTIVE records; it is not
 a dump of the failed processes' live worker bytes.
+
+NavMesh producer observer: verified preload compatibility and retained run
+-------------------------------------------------------------------------
+Source 66219ec7bd0cf3345b3ebdfb44d1ae2b0652c025 accepts only the original
+worker or the exactly verified reciprocal-preload variant. The full original
+worker SHA remains checked after normalization. Copied-ELF checks using the
+real preload exercise original/patched/mixed/corrupted sites, trampoline
+bytes and destinations, alternate region placement, page permissions and
+actual observer arm/check/restore. The Zig 0.15.2 gate check, including the
+177-method Lua bridge, passed; these checks do not execute the game. The
+unchanged 29 synthetic relay scenarios were not repeated for this pin-only
+correction; their earlier result remains scoped to source 27c4957.
+
+The fresh 4200-tick paired native run used gate SHA256
+8f3518be7eed6e103f19b4e133f16c78ae104f0f63368ee854b52aa09e0398f5,
+the same df116bdd... snapshot and launch order (2,1). Both peers completed
+with reason=1/restored=1; all 4200 observed station-timer rows and rolling
+samples matched. Independent producer validation retained 13 live post
+attempts per peer. Peer 2 also had one phase-0, epoch-0 bootstrap attempt
+whose saved-identity lookup remained unresolved. All 13/14 indexed rows
+and their lookup receipts were retained, with zero overflow, unreadable
+rows, active readers or uncertain cleanup. Steam identity was unchanged;
+the runner and an independent post-run process check found no X4 remaining.
+
+For the 13 live attempts, peer 1 sampled epochs 8/10 and peer 2 epochs 2..10.
+Within each peer, every attempt had exactly one early zero-draw NavHelper
+event candidate matching the later saved-identity hint, normalized source
+and event types, and due bits. Candidate delivery ticks were 9/11 on peer 1
+and 3..10 on peer 2. These are bounded correlations. The sampled producer
+epoch is not an exact engine timestamp; lookup-at-drain is not capture-time
+identity proof; a post attempt is not proof of queue admission or helper
+completion. No cause of the later actor differences is established.
+
+Those differences remain: the two STOP records report 183 versus 182 drawn
+ship scopes, with 281 ship draws each. The same nine degraded notices per
+peer remain explicit FIND_ORDER, CREATED_IDENTITIES and BUILD_RNG gaps.
+Thus this run validates the bounded observer and matching sampled states,
+not a deterministic navigation fix or complete multiplayer readiness. The
+prior pins-refusal run stays failed and is retained without filtering.
+
+Private evidence: navmesh-post-reciprocal-4200-audit.json,
+navmesh-post-reciprocal-producer-audit.json,
+navmesh-post-reciprocal-independent.json and
+navmesh-post-reciprocal-retained-hashes.json in the same evidence directory.
+The producer validator has six adversarial tests, including missing/reordered
+receipts, lost arm-time counts, null capture pointers and invalid identity
+hints. Further scheduling work requires Linux-specific build/lock/exit and
+busy-set rotation evidence; blocking only the post call is too late because
+cache publication precedes it.
