@@ -220,6 +220,52 @@ require the ordered hook to refuse activation without changing its callsites,
 then restore the stub and verify acceptance. This is an additional rejection
 guard; the earlier native run retains its original source and artifact hashes.
 
+The final-source repeat (clean 5702d2e, launch order 1,2, no screenshots) FAILS
+at tick 11612, motion domain only. Its first differing slice is cycle 97,
+slice 91, range [403296,407727), entirely within the imported identities;
+3773 objects are present and 781 have unknown motion fields. Both peers retain
+all 12000 samples and complete 100 cycles, then STOP/restored=1 with successful
+ordered-hook restoration. Recorded creation digests match at all 259 common
+status ticks plus STOP; this is not separate per-tick status evidence. Steam
+identity is unchanged and no owned processes remain. This counterexample means
+the first ordered pass is not reliably repeatable and the desync remains open.
+
+That repeat uses gate SHA-256:
+88c02db1766cc871cb09d635e093231093ae530443e974682f8e9d664232ea62.
+After tick 120, its 11879 relay intervals have median 34.630 ms, p99 41.816 ms,
+maximum 88.601 ms and 12 intervals above 50 ms. Including startup, the maximum
+is 3093.045 ms at tick 10. The ownership-guard correction and launch order both
+differ from the previous passing run; the observations do not isolate a cause
+to either change. No claim of a complete motion-desync fix is made.
+
+Full-census control with ordered pathing
+---------------------------------------
+A final 12000-tick control uses the same 88c02db gate from clean source 39aa98d
+(documentation-only changes after 5702d2e), launch order 1,2, full world captures
+every 120 ticks and full object rows. It also FAILS, first at tick 8520. Both
+clients retain all 101 scheduled captures, successful identity and STOP records,
+restored ordered hooks, unchanged Steam identity and no owned processes.
+
+At tick 8520, both clients report 530977 identities, 434708 present objects and
+9753 created identities. Only the motion domain differs. The delta row sets
+contain the same 10192 IDs; exactly one has a differing canonical motion leaf:
+saved ID 000000000006ec76, ShipMedium (type 2b82440), flags 7 and parent
+000000000000093c. Its topology, health and timing leaf hashes match. Raw nav
+selectors differ for other rows too, but those are not canonical leaf failures.
+This is the same saved ID and first full-capture tick as a historical run in
+LOCKSTEP-LINUX-LOCAL-20261108.txt, which identifies it as Holy Order transport
+SYZ-673. The current raw rows do not include its name or watched WORLD_DETAIL
+components; exact position/velocity differences and the causal engine update
+are not established by this control.
+
+The control intentionally restores expensive full diagnostic captures. After
+tick 120 its relay intervals have median 30.698 ms, p99 43.028 ms and maximum
+525.212 ms. The 98 steady full-capture boundaries have median 488.810 ms. This
+supports separating the periodic census stalls from the remaining simulation
+divergence. The rolling optimization reduces those pauses but changes temporal
+coverage; it does not make the underlying lockstep simulation deterministic.
+No more native runs were started after this control; raw failures are retained.
+
 Graphics investigation
 ----------------------
 RGB/white speckle artifacts were captured from the owned X4 window. They also
@@ -263,7 +309,10 @@ full-refactor-native-equivalence.json, census-rolling-long-comparison.json,
 rolling-long-12000-independent-audit.json, census-thinned-rolling-comparison.json,
 thinned-rolling-long-independent-audit.json,
 census-ordered-thinned-long-comparison.json and
-ordered-thinned-12000-independent-audit.json.
+ordered-thinned-12000-independent-audit.json and
+ordered-owned-reverse-12000-independent-audit.json,
+census-ordered-full-detail-comparison.json and
+ordered-full-detail-12000-independent-audit.json.
 Bundles: linux-20261108-profile-full, linux-20261108-profile-hashes,
 linux-20261108-profile-accelerated, linux-20261108-profile-cached,
 linux-20261108-profile-rolling and linux-20261108-profile-full-refactor.

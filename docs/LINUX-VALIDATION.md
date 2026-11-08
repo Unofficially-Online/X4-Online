@@ -147,8 +147,8 @@ that explicitly enables both strategies. This experiment is off by default:
 it changes scheduler bookkeeping, and indirect scheduler readers and transitive
 thread-local effects are not fully established.
 
-For the measured low-stall diagnostic configuration, add these options to the
-bundle command above:
+To reproduce the ordered rolling comparison, add these options to the bundle
+command above:
 
 ```sh
 --travel-determinism --world-log-mode hashes --world-rolling-slices 120 \
@@ -161,9 +161,10 @@ process with status 190; that is a failed run without a successful restoration
 claim. Retain the peer's cleanup evidence too. A successful run must retain both
 the main STOP and `TRAVEL_DETERMINISM_STOP` with restored hooks.
 
-Ordered pathing has passed a local 12000-tick rolling comparison, while an earlier
-snapshot-mode control diverged. This is bounded evidence in the sampled fields,
-not proof that all motion desyncs or cross-machine differences are fixed.
+Ordered pathing passed one local 12000-tick rolling comparison, but the
+final-source repeat with reversed launch order diverged in motion at tick 11612.
+An earlier snapshot-mode control also diverged. The desync is still unresolved;
+one passing comparison is not evidence of reliable whole-world synchronization.
 
 See [the performance investigation](../reports/LOCKSTEP-LINUX-PERFORMANCE-20261108.txt)
 for measured intervals, retained failures and graphics findings.
