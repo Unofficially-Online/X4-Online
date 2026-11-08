@@ -1268,3 +1268,21 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   (717eb watched): after the block the Agent still differs at +0x4dc (0.5 / 0), +0x6d8 (-0.057 / 0) and +0xf7c (211.17 / 0), zero
   on the joiner through T+2 (+0xf88/+0xf8c are the 0xf90-byte Agent's padding, which the travel snapshot uses: noise); no
   pathing code reads them directly. agcb_nav stays opt-in.
+- w1z225 (the in-window late join on the defaults alone, every late-join fix among them, to 3600): T+1 1, 3060 4, 3120 6,
+  3180 16, 3240 27, 3300 31, 3360 38, 3420 44, 3480 51, 3540 61, motion only: w1z204's curve, linear (about 6 a minute), no
+  cascade. At 3240: the Split destroyer 99d18's escorts in zone 0x844 (15 fighters; 99d18 changes zone 0x920 -> 0x844 at 3135),
+  six Paranid destroyers in 0x621 (ab36a changes zone 0xd5 -> 0x621 between 3120 and 3180, its first divergence), a Split L
+  miner in 0x920, the four containers, a scout: the large ships' re-parent family of x4mods-28's J1 late join. The zones'
+  transforms are equal (a zone's StaticMovementController 0x2a34b38: the getter 0x10ba20 reads +0x10..+0x4f, which POSE
+  carries; its +0x58.. differs, unread there). A lead: WORLD_STATIC at 3034 (w1z206b) had the session's two views of about
+  5,100 ships equal and the joiner's current view (index 1, flipped) a third pose; code that reads the current view's pose of
+  a moving ship would read other data on the joiner. w1z226 watches 99d18 and both zones every tick through 3140.
+- w1z226 (99d18 and the zones 0x920/0x844 watched every tick T..3140; the session lane hit its timeout at the end): 99d18's
+  published views (parents, positions) are equal from T+2 through the zone change and after (at T+1 the joiner's view 1 holds
+  a stale position for one tick); its NavigationController's cached transform +0x60..+0x9f is bit-equal through 3134 and from
+  3135, the zone change, 1..2 ulps apart in lanes 4, 6, 8, 10, 12..14. The zones' controller transforms (+0x10..+0x4f) are equal;
+  their StaticMovementControllers differ past +0x58 (the session's: zeros, 50000 x4 at +0xd0, 3794.5/35096.9 at +0x110/+0x118;
+  the joiner's: a one-element vector and list heads), and both zones' +0x3e0..+0x3f8 (a counted list and a time: 1800.0 against
+  1800.033). At the zone change the engine hands the Linear model a relative transform (its vtable slot 7, 0xe84ea0, re-expresses
+  the plan's +0x70 by the matrix in rdx): next, that matrix for the watched ships on both sides, to tell the zones' transforms
+  as the re-parent sees them (a lazily built world-transform cache in the zone's controller?) from the ship's own input.
