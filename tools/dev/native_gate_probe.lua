@@ -358,6 +358,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_bp~=nil then   -- JOIN_BP (diagnostic): a one-shot int3 at an image RVA after the admission (join_bp=)
   assert(type(cfg.native_gate_join_bp)=='string' and gate.join_bp and gate.join_bp(cfg.native_gate_join_bp)==1,'join bp refused')
  end
+ if cfg.native_gate_join_undk then   -- UNDK writes the session's undocking behaviours at the admission (undk=)
+  assert(gate.join_undk and gate.join_undk(1)==1,'join undk refused')
+ end
  if cfg.native_gate_join_ares then   -- ARES writes the session's Agent result banks at the admission (ares=)
   assert(gate.join_ares and gate.join_ares(1)==1,'join ares refused')
  end

@@ -1152,3 +1152,11 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   zone change at 3135 differs by 1..8 ulps in seven rotation lanes with the position bit-equal: the composition, not a safe
   position; PropagateCacheFlags 0x3d46b0(object, view, flags) works on the view caches, so a stale input would be the zones'
   published views (the load published them from its lanes, before POSE's writes): not yet tested.
+- w1z205 (JOIN_WATCHRAW beh=: a steering model's active behaviour, its class and first 0x100 bytes, on the four containers apart
+  at T+1): the session's U::Path::UndockPathBehaviour is mid-undock (+0x18 an ID, +0x28 and +0x90 progress, +0x30 300, the
+  embedded objects' vtables +0x38 and +0x98, two vectors +0x40/+0x50, two transforms +0x60/+0xa0), the joiner's as constructed
+  (+0x24 -1, +0x30 100, +0x38/+0x98 0, identity transforms): the load builds the behaviour afresh and the undock starts over.
+  +0xd8 is a heap pointer on both sides.
+- UNDK (package v13 section 80, opt-in native_gate_join_undk): per steering Agent whose active behaviour is of that class, the
+  bytes +0x10 .. +0xd7, the ID +0x18 as a portable, the two vtables as image RVAs; the admission writes them after STEER into
+  the joiner's behaviour of the same class (+0xd8 stays the joiner's). Status undk=on:written:equal:missing:unmapped undk_cap=.

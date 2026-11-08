@@ -307,6 +307,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_gravp_settled','hot join: the published pose restore also takes settled objects below attention 6 (GRAVP settled)'},
  {'native_gate_join_porders','hot join: the joiner drops the pathing manager queued Path orders at the admission (PORD)'},
  {'native_gate_join_bp','hot join: a one-shot breakpoint after the admission (JOIN_BP)'},
+ {'native_gate_join_undk','hot join: the session undocking behaviours written at the admission (UNDK)'},
  {'native_gate_join_ares','hot join: the session Agent result banks written at the admission (ARES)'},
  {'native_gate_join_attn_set','hot join: ATTN runs SetAttention where its write leaves the load per-level state, its attention events dropped (ATTN set)'},
  {'native_gate_join_gravn_extra','hot join: GRAVN keeps the joiner zone groups the session adds later in the neighbour lists (GRAVN extra)'},

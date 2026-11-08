@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "2dc39630fe10f0b4b20f586eca6641deffbb12755a964097d6090de087714352"   /* version 13 (JOBE .. LSTN; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "27d0527c6ba9251c3664bd008180c508f08355ba0c82ca0c6646f9b13134371f"   /* version 13 (JOBE .. UNDK; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -463,6 +463,9 @@ static void test_join_golden(void) {
     t.ares=ares;t.nares=1;
     static join_lstn_rec lstn[1];memset(lstn,0,sizeof(lstn));lstn[0].source=0x2001ull;lstn[0].owner=0x2002ull;lstn[0].script=0x7d7d6d0full;
     lstn[0].type=306;lstn[0].kind=2;t.lstn=lstn;t.nlstn=1;
+    static join_undk_rec undk[1];memset(undk,0,sizeof(undk));undk[0].portable=0x2001ull;undk[0].ref=0x2002ull;
+    for(unsigned k=0;k<JOIN_UNDK_BYTES;k++) undk[0].state[k]=(unsigned char)(0x10+k);
+    memset(undk[0].state+8,0,8);t.undk=undk;t.nundk=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -517,7 +520,7 @@ static void test_join_golden(void) {
            r.nbnds==1 && !memcmp(r.bnds,bnds,sizeof(bnds)) &&
            r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)) &&
            r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)) &&
-           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)) && r.nares==1 && !memcmp(r.ares,ares,sizeof(ares)) && r.nlstn==1 && !memcmp(r.lstn,lstn,sizeof(lstn)));
+           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)) && r.nares==1 && !memcmp(r.ares,ares,sizeof(ares)) && r.nlstn==1 && !memcmp(r.lstn,lstn,sizeof(lstn)) && r.nundk==1 && !memcmp(r.undk,undk,sizeof(undk)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -551,7 +554,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec)+48+sizeof(join_lstn_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec)+48+sizeof(join_lstn_rec)+48+sizeof(join_undk_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -3341,6 +3344,42 @@ static void test_join_ares(void) {
     free(t.ares);join_read_selector=selector;join_key=key;
     printf("join ARES: both Agent result banks by role through the read selector, their first qword's ID as a portable, written back by role PASS\n");
 }
+/* UNDK: a steering model's active undocking behaviour, +0x10 .. +0xd7 with its ID as a portable and its two embedded vtables as RVAs */
+static _Alignas(16) unsigned char tundk_agent[0x1000],tundk_model[0x100],tundk_beh[0xe0];
+static unsigned char *tundk_obj[1];
+static void *tundk_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime==0x81u?tundk_obj[0]:NULL;}
+static void test_join_undk(void) {
+    uint64_t (*key)(uint64_t,unsigned *)=join_key;join_key=tconn_key;
+    memset(tundk_beh,0,sizeof(tundk_beh));
+    {uintptr_t v=(uintptr_t)image+JOIN_UNDK_VTABLE;memcpy(tundk_beh,&v,8);}
+    for(unsigned k=JOIN_UNDK_FROM;k<JOIN_UNDK_FROM+JOIN_UNDK_BYTES;k++) tundk_beh[k]=(unsigned char)k;
+    {uint64_t id=0x91ull;memcpy(tundk_beh+0x18,&id,8);uintptr_t a=(uintptr_t)image+0x2c4e100u,b=(uintptr_t)image+0x2c4e200u;
+     memcpy(tundk_beh+0x38,&a,8);memcpy(tundk_beh+0x98,&b,8);uintptr_t heap=0x7ff012345678ull;memcpy(tundk_beh+0xd8,&heap,8);}
+    join_tables t;memset(&t,0,sizeof(t));join_undk_capn=0;
+    assert(join_undk_push(&t,tundk_beh,0x100081ull) && t.nundk==1);
+    const join_undk_rec *r=&t.undk[0];uint64_t q[3];
+    memcpy(&q[0],r->state+8,8);memcpy(&q[1],r->state+0x38-JOIN_UNDK_FROM,8);memcpy(&q[2],r->state+0x98-JOIN_UNDK_FROM,8);
+    assert(r->portable==0x100081ull && r->ref==0x100091ull && !r->flags && !q[0] && q[1]==0x2c4e100u && q[2]==0x2c4e200u && r->state[0]==0x10 && r->state[0x30]==0x40);
+    /* the joiner: a freshly constructed behaviour of the class under the Agent's steering model */
+    unsigned char session_state[JOIN_UNDK_BYTES];memcpy(session_state,tundk_beh+JOIN_UNDK_FROM,sizeof(session_state));
+    memset(tundk_beh+JOIN_UNDK_FROM,0,0xd8u-JOIN_UNDK_FROM);
+    join_id_rec ids[2]={{0x81ull,0x100081ull,0,0},{0x91ull,0x100091ull,0,0}};
+    join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));mine.ids=ids;mine.nids=2;s.version=13;s.undk=t.undk;s.nundk=1;
+    assert(join_undk_write(tundk_beh,r,&mine)==1 && !memcmp(tundk_beh+JOIN_UNDK_FROM,session_state,sizeof(session_state)));
+    {uintptr_t heap;memcpy(&heap,tundk_beh+0xd8,8);assert(heap==0x7ff012345678ull);}   /* +0xd8 stays the joiner's */
+    assert(join_undk_write(tundk_beh,r,&mine)==0);   /* again: equal */
+    join_undk_rec u=*r;u.ref=0x100099ull;assert(join_undk_write(tundk_beh,&u,&mine)==-1);   /* an ID the joiner lacks */
+    u=*r;u.flags=1;assert(join_undk_write(tundk_beh,&u,&mine)==-1);
+    /* the admission: off writes nothing; on, an Agent without the model counts missing */
+    join_find_fn find=join_world_find;void *map=join_world_map;join_world_find=tundk_find;join_world_map=tundk_obj;tundk_obj[0]=tundk_agent;
+    join_undk_on=0;join_admit_undk(&s,&mine);assert(!join_undk_written && !join_undk_missing);
+    join_undk_on=1;join_admit_undk(&s,&mine);assert(!join_undk_written && join_undk_missing==1);
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," undk=1:0:0:1:0 "));}
+    join_undk_on=0;join_undk_missing=0;join_world_find=find;join_world_map=map;
+    free(t.undk);join_key=key;
+    printf("join UNDK: a steering model's undocking behaviour, its ID as a portable and embedded vtables as RVAs, written back, equal, "
+           "unmapped and missing PASS\n");
+}
 static void test_join_warp(void) {
     twarp_build(0,0x10);
     uint32_t n=9;uint64_t time=0;double want=102.1,got_time;
@@ -3382,5 +3421,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();
 }

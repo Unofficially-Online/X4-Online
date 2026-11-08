@@ -802,6 +802,61 @@ static int join_steer_cmp(const void *a,const void *b) {
 }
 /* The saver: a steering model's STEER record and its path's STEERPT points. 0 with join_fault. */
 static join_route_rec join_steer_points[JOIN_ROUTE_POINTS];
+/* UNDK (opt-in native_gate_join_undk; in-window report 57, w1z205): the shipyard containers of the late join's T+1 fly a Steering
+ * model whose active behaviour is a U::Path::UndockPathBehaviour (0x2c4e0b0, 0xe0 bytes; the factory 0xec60b4, base constructor
+ * 0xed2a10). STEER carries no state of that class; the joiner's load constructs it afresh (+0x24 -1, +0x30 100, identity rows, its
+ * embedded objects' vtables +0x38/+0x98 0) where the session's is mid-undock (+0x18 an ID, +0x28 and +0x90 progress, +0x30 300, two
+ * vectors +0x40/+0x50, two transforms), and the joiner restarts the undock: a tick late (717c0, 3116/3117). UNDK carries +0x10..
+ * +0xd7: the ID through portables, the vtables as RVAs; +0xd8 (a heap pointer) stays the joiner's. Status undk=on:written:equal:
+ * missing:unmapped undk_cap=. */
+#define JOIN_UNDK_VTABLE 0x2c4e0b0u
+static uint64_t join_runtime_of(const join_tables *mine,uint64_t portable);   /* below */
+static unsigned char *join_nav_agent(const unsigned char *object);   /* below */
+#define JOIN_UNDK_FROM 0x10u
+static int join_undk_on;
+static uint64_t join_undk_written,join_undk_equal,join_undk_missing,join_undk_unmapped;static uint32_t join_undk_capn;
+static const unsigned join_undk_vt_at[2]={0x38u,0x98u};   /* the embedded objects' vtables (offsets in the behaviour) */
+static int join_undk_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_undk_rec *)a)->portable,y=((const join_undk_rec *)b)->portable;return x<y?-1:x>y;
+}
+static int join_undk_push(join_tables *t,const unsigned char *behaviour,uint64_t portable) {
+    join_undk_rec r;memset(&r,0,sizeof(r));r.portable=portable;uint64_t id=0;uint32_t f=0;
+    if(!join_read(behaviour+JOIN_UNDK_FROM,r.state,JOIN_UNDK_BYTES)) return 1;
+    memcpy(&id,r.state+8,8);memset(r.state+8,0,8);
+    if(id) {r.ref=join_route_portable(id,&f,0);if(!r.ref) r.flags|=1u;}
+    for(unsigned k=0;k<2;k++) {
+        uintptr_t v=0;memcpy(&v,r.state+join_undk_vt_at[k]-JOIN_UNDK_FROM,8);
+        const uint64_t rva=v>=(uintptr_t)image && v-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint64_t)(v-(uintptr_t)image):0;
+        memcpy(r.state+join_undk_vt_at[k]-JOIN_UNDK_FROM,&rva,8);
+    }
+    return JOIN_PUSH(t->undk,t->nundk,join_undk_capn,r);
+}
+/* One record into a behaviour of the class: 1 written, 0 equal, -1 its ID unmapped (left). */
+static int join_undk_write(unsigned char *behaviour,const join_undk_rec *r,const join_tables *mine) {
+    unsigned char want[JOIN_UNDK_BYTES];memcpy(want,r->state,sizeof(want));
+    uint64_t runtime=0;
+    if(r->flags&1u) return -1;
+    if(r->ref && !(runtime=join_runtime_of(mine,r->ref))) return -1;
+    memcpy(want+8,&runtime,8);
+    for(unsigned k=0;k<2;k++) {
+        uint64_t rva=0;memcpy(&rva,want+join_undk_vt_at[k]-JOIN_UNDK_FROM,8);
+        const uintptr_t v=rva?(uintptr_t)image+(uintptr_t)rva:0;memcpy(want+join_undk_vt_at[k]-JOIN_UNDK_FROM,&v,8);
+    }
+    return join_poke((uintptr_t)(behaviour+JOIN_UNDK_FROM),want,sizeof(want));
+}
+static void join_admit_undk(const join_tables *s,const join_tables *mine) {
+    join_undk_written=join_undk_equal=join_undk_missing=join_undk_unmapped=0;
+    if(!join_undk_on) return;
+    for(uint32_t i=0;i<s->nundk;i++) {
+        const join_undk_rec *r=&s->undk[i];
+        unsigned char *object=join_object(join_runtime_of(mine,r->portable)),*agent=object?join_nav_agent(object):NULL,*model=NULL,*beh=NULL;
+        uintptr_t mvt=0,bvt=0;
+        if(!agent || !join_read(agent+JOIN_AGENT_MODEL,&model,8) || !model || !join_read(model,&mvt,8) || mvt!=(uintptr_t)image+JOIN_STEER_VTABLE ||
+           !join_read(model+JOIN_STEER_BEHAVIOURS,&beh,8) || !beh || !join_read(beh,&bvt,8) || bvt!=(uintptr_t)image+JOIN_UNDK_VTABLE) {++join_undk_missing;continue;}
+        const int w=join_undk_write(beh,r,mine);
+        if(w<0) ++join_undk_unmapped; else if(w) ++join_undk_written; else ++join_undk_equal;
+    }
+}
 static int join_capture_steer(join_tables *t,const unsigned char *agent,const unsigned char *model,uint64_t portable,uint32_t *scap,uint32_t *pcap) {
     join_steer_rec r;memset(&r,0,sizeof(r));r.portable=portable;r.kind=JOIN_STEER_VTABLE;
     unsigned char *owner=NULL,*behaviour=NULL;uint64_t id=0,n=0,room=0;uintptr_t v[3],job=0,vtable=0;uint32_t np=0;
@@ -822,6 +877,7 @@ static int join_capture_steer(join_tables *t,const unsigned char *agent,const un
         if(!join_read(behaviour,&vtable,8) || vtable<(uintptr_t)image || vtable>=(uintptr_t)image+JOIN_FLIGHT_IMAGE)
             return join_note("steer,id=%llx,check=behaviour_vtable,slot=%u",(unsigned long long)portable,b);
         r.behaviour[b]=(uint32_t)(vtable-(uintptr_t)image);
+        if(!b && r.behaviour[b]==JOIN_UNDK_VTABLE && !join_undk_push(t,behaviour,portable)) return join_note("memory");   /* UNDK */
         const int c=join_steer_class_of(r.behaviour[b]);
         if(c<0) {r.flags|=JOIN_STEER_UNCARRIED0<<b;continue;}
         if(!join_steer_read(behaviour,join_steer_classes[c].r,join_steer_classes[c].n,r.state[b]))
@@ -2192,6 +2248,7 @@ static int join_gravd_shape(const join_gravd_rec *g,uint32_t n) {
 #define JOIN_WATCH_RAW_MOV 0x200u
 #define JOIN_WATCH_RAW_AGENT 0xf90u   /* and a nav or pilot controller's Agent (+0x40, 0xf90 bytes, lockstep_travel_snapshot.h) */
 #define JOIN_WATCH_RAW_CMD 0x400u     /* and its command and probe block (+0x48; the probe's due +0x3e0, enable +0x3e8) */
+#define JOIN_WATCH_RAW_BEH 0x100u     /* and a steering model's active behaviour (model +0x70; w1z198: the containers' UndockPathBehaviour) */
 static struct {uint64_t portable[JOIN_WATCH_MAX],runtime[JOIN_WATCH_MAX];unsigned n;uint64_t tick;int armed;
                unsigned char *volatile object[JOIN_WATCH_MAX];} join_watch;
 /* JOIN_WATCHPCF (diagnostic, with native_gate_join_watch): every PropagateCacheFlags 0x3d46b0 call on a watched object whose flags
@@ -3036,7 +3093,7 @@ static void join_watch_dump(char side,uint64_t tick) {
                 }
                 at+=(size_t)snprintf(out+at,cap-at," nodes=%u own=%u\r\n",nodes,total);
             }
-            if(!lvl && at+2u*(JOIN_WATCH_RAW+JOIN_WATCH_RAW_REQ+JOIN_WATCH_RAW_MOV+JOIN_WATCH_RAW_AGENT+JOIN_WATCH_RAW_CMD)+400u<cap) {
+            if(!lvl && at+2u*(JOIN_WATCH_RAW+JOIN_WATCH_RAW_REQ+JOIN_WATCH_RAW_MOV+JOIN_WATCH_RAW_AGENT+JOIN_WATCH_RAW_CMD+JOIN_WATCH_RAW_BEH)+400u<cap) {
                 /* JOIN_WATCHRAW: the object's first bytes and those of what +0x318 points at (a weapon's fire request, which
                  * Weapon::Move 0x819a90 asks through its slot +0x80 before the fire procedure 0x817d20), pointers raw. */
                 unsigned char *req=NULL;
@@ -3129,6 +3186,14 @@ static void join_watch_dump(char side,uint64_t tick) {
                     at+=(size_t)snprintf(out+at,cap-at," cmd=");
                     if(nav && join_read(ctl+0x48,&cmd,8) && cmd) for(uint32_t o=0;o<JOIN_WATCH_RAW_CMD;o+=64u) at+=join_watch_hex(out+at,cap-at,cmd+o,64);
                     else at+=(size_t)snprintf(out+at,cap-at,"-");
+                    /* beh=: the steering model's active behaviour (its vtable RVA, then its first JOIN_WATCH_RAW_BEH bytes, pointers raw) */
+                    unsigned char *model=NULL,*beh=NULL;uintptr_t mvt=0,bvt=0;
+                    at+=(size_t)snprintf(out+at,cap-at," beh=");
+                    if(agent && join_read(agent+JOIN_AGENT_MODEL,&model,8) && model && join_read(model,&mvt,8) && mvt==(uintptr_t)image+JOIN_STEER_VTABLE &&
+                       join_read(model+JOIN_STEER_BEHAVIOURS,&beh,8) && beh && join_read(beh,&bvt,8)) {
+                        at+=(size_t)snprintf(out+at,cap-at,"%x:",bvt>=(uintptr_t)image?(uint32_t)(bvt-(uintptr_t)image):0u);
+                        for(uint32_t o=0;o<JOIN_WATCH_RAW_BEH;o+=64u) at+=join_watch_hex(out+at,cap-at,beh+o,64);
+                    } else at+=(size_t)snprintf(out+at,cap-at,"-");
                 }
                 at+=(size_t)snprintf(out+at,cap-at,"\r\n");
                 if(at+ln+4<cap) {memcpy(out+at,line,ln);at+=ln;at+=(size_t)snprintf(out+at,cap-at,"\r\n");}
@@ -5242,7 +5307,7 @@ static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
     }
 }
 static int join_capture_world(join_tables *t,double now) {
-    join_agtt_capn=0;join_ares_capn=0;join_agcb_capn=0;join_pbnk_capn=0;join_pcsv_capn=0;
+    join_agtt_capn=0;join_ares_capn=0;join_undk_capn=0;join_agcb_capn=0;join_pbnk_capn=0;join_pcsv_capn=0;
     uint32_t ntcap=0,bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
     join_solver_dormant=0;join_cap.solver_over=0;join_cap.solver_mapped=0;join_cap.bullet_fault=0;join_cap.bullet_blocks=0;join_cap.bullet_live=0;join_cap.bullet_unkeyed=0;
@@ -5362,7 +5427,8 @@ static int join_capture_world(join_tables *t,double now) {
     if(t->nagent) qsort(t->agent,t->nagent,sizeof(*t->agent),join_agent_cmp);   /* pushed with FLIGHT: the same portable IDs */
     if(t->nagcb>1) qsort(t->agcb,t->nagcb,sizeof(*t->agcb),join_agcb_cmp);
     if(t->npbnk>1) qsort(t->pbnk,t->npbnk,sizeof(*t->pbnk),join_pbnk_cmp);
-    if(t->nares>1) qsort(t->ares,t->nares,sizeof(*t->ares),join_ares_cmp);       /* pushed with AGTT: unique portable IDs */
+    if(t->nares>1) qsort(t->ares,t->nares,sizeof(*t->ares),join_ares_cmp);
+    if(t->nundk>1) qsort(t->undk,t->nundk,sizeof(*t->undk),join_undk_cmp);       /* pushed with AGTT: unique portable IDs */
     if(t->nagtt) qsort(t->agtt,t->nagtt,sizeof(*t->agtt),join_agtt_cmp);        /* pushed with AGENT: the same portable IDs (j1-150/151:
                                                                                  * unsorted, the driver's reader refused the package) */
     if(t->nroute) qsort(t->route,t->nroute,sizeof(*t->route),join_route_cmp);   /* each Agent's head and points, keys unique */
@@ -7123,7 +7189,8 @@ static int join_admit_world(void) {
     if(s->version>=6) join_admit_agent(s,&mine);
     if(s->version>=7) join_admit_route(s,&mine);   /* after AGENT's flags, before PATH primes the pathing thread */
     if(s->version>=8) {join_admit_param(s,&mine);join_admit_dock(s,&mine);}   /* PARAM after AGENT (its words are in the own copy) */
-    if(s->version>=9) join_admit_steer(s,&mine);   /* the steering models FLIGHT holds the kind of; before PATH primes the thread */
+    if(s->version>=9) join_admit_steer(s,&mine);
+    if(s->version>=13) join_admit_undk(s,&mine);   /* the undocking behaviours (opt-in), after STEER */   /* the steering models FLIGHT holds the kind of; before PATH primes the thread */
     if(s->version>=10) join_admit_solver(s,&mine);  /* the Agents' motion solvers */
     if(s->version>=11) join_admit_grav(s,&mine);    /* the radar */
     if(s->version>=13) join_admit_gravb(s,&mine);   /* the radar's mapped bounds */

@@ -107,6 +107,8 @@ static int lua_join_bp(lua_State *L) {
     const int ok=t && n && end && !*end && v>=0x1000ul && v<JOIN_BP_TEXT_END;if(ok) join_bp_rva=(uint32_t)v;
     p_lua_pushnumber(L,ok);return 1;
 }
+/* gate.join_undk(on): UNDK writes the session's undocking behaviours at the admission (default off; lockstep_join_world.h). */
+static int lua_join_undk(lua_State *L) {join_undk_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_ares(on): ARES writes the session's Agent result banks at the admission (default off; lockstep_join_world.h). */
 static int lua_join_ares(lua_State *L) {join_ares_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_attn_set(on): ATTN runs SetAttention where its direct write leaves the per-level state of the load's level, and drops
