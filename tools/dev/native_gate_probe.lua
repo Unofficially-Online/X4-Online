@@ -346,6 +346,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_warp then   -- a joiner takes the session's pending warps' destinations (WARP)
   assert(gate.join_warp and gate.join_warp(1)==1,'join warp refused')
  end
+ if cfg.native_gate_join_lstn then   -- LSTN: the script listeners in the session's order per event source and type (lstn=)
+  assert(gate.join_lstn and gate.join_lstn(1)==1,'join lstn refused')
+ end
  if cfg.native_gate_join_gravp_settled then   -- GRAVP settled: settled poses below attention 6 restored too (gravp_settled=)
   assert(gate.join_gravp_settled and gate.join_gravp_settled(1)==1,'join gravp settled refused')
  end

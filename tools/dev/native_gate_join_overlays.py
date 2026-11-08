@@ -277,13 +277,16 @@ def ids_sets(sets):
 #                                  queued events dropped (w1z194/195: the joiner-only scripts at T+1 gone; w1z199 neutral)
 #   native_gate_join_ares         the Agents' result banks, section 78 (w1z196: written 6246; the formation results the
 #                                  load leaves empty; w1z199 and j1-380 neutral)
+#   native_gate_join_warp          the pending warps' destinations, section 77 (j1-372/373: a gate transit due at T+1, its
+#                                  transform rebuilt from the save's angles (sin(pi)); on in every late J1 since and in w1z199,
+#                                  T=633: census 0 to 5940)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
                    'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code', 'native_gate_join_omgs',
                    'native_gate_join_hold_boot_events', 'native_gate_join_resv', 'native_gate_join_pcsv',
                    'native_gate_join_gravn_extra', 'native_gate_join_conn', 'native_gate_join_porders', 'native_gate_join_attn_set',
-                   'native_gate_join_ares')
+                   'native_gate_join_ares', 'native_gate_join_warp')
 
 
 def default_sets(sets):

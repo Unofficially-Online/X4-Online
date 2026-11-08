@@ -1129,3 +1129,26 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   equal target and path, its fighter 99da1 retargets at 3180. Local: the container pilot 717c0 undocks at 3116 on the session,
   3117 on the joiner (U::Path::UndockPathBehaviour 0x2c4e0b0, 0xe0 bytes, base ctor 0xed2a10: about 124 bytes of state, more
   than STEER's 96 per behaviour; deferred).
+- The post rows in the debug log are a sample (the session's 14,675 rows against changes=127,345): the counters differ before
+  3180 (3060..3120: +3968 changes on the session, +4029 on the joiner). w1z201 (+ gravp_settled, x4mods-28's 32f42f73, merged
+  74985d12): gravp_settled=1:638, the counters within 1 of the session's (3060..3120 +3969, 3120..3180 equal), the census as
+  without (T+1 4, 3060 5, 3120 6, 3180 18, 3240 30).
+- w1z202 (+ LSTN, x4mods-28's 3bf221ab, section 79, merged 0c72acc0): lstn=1:50189:18864 (18,864 listener groups reordered);
+  census T+1 4, 3060 5, 3120 6, 3180 16, 3240 28: a small gain in window (J1's late join: 3120 3 -> 0, j1-387). The first
+  script differences after 3060: 0x9327c's move.gate stack hears event_object_signalled at 3061 on the session, at 3074 on the
+  joiner; 0xa8abb's move.generic at 3065 on the session only; the container pilot 717b0 undocks at 3071 on the joiner only.
+  The Split destroyer 99d18 (attention 2, Linear) is bit-equal through 3134 with every watched field; at 3135 it changes zone
+  0x920 -> 0x844 on both sides and the re-parented pose differs by 1 ulp in a rotation lane (ax0.z -0.330567 / -0.330568): the
+  zone-change transform (x4mods-28's warp exit lanes are the same family).
+- WARP is a join default (x4mods-28, 2d47f110); gravp_settled and LSTN stay opt-in.
+- w1z203 (JOIN_WATCHRAW on the zones 0x920 and 0x844): after T+1 zone 0x844 differs in four words only, +0x3a0 a pointer on
+  the session and null on the joiner (GetSafePos's zone list [zone+0x3a0]/[+0x3a8], 0x85dd00, equal at T=633 in w1z155: built
+  at a process's first use) and +0x3f0 (as a double 1800.0 on the session, 1800.0326 on the joiner); zone 0x920 the same and
+  +0x3c0 (a pointer, null on the joiner), +0x3e0 (0x10 against 8). Zone slot 15 (0x839de0) uses +0x3e0/+0x3e8/+0x3f0 as a vector,
+  which 1800.0 does not fit: +0x3f0 not placed yet. Next: what builds the zone list and writes +0x3f0 (a ZONE carry).
+- w1z204 (every fix: the join defaults + gravp_settled + LSTN, to 3600): 3240 28, 3300 32, 3360 39, 3420 45, 3480 52, 3540 62;
+  no jump ten seconds after T (J1's late join j1-388/389: 3300 6, 3360 122, a job engine activating five job ships on the
+  session and three on the joiner at 3318, x4mods-28), the one-sided objects still the 7/1 dead tempzones. The destroyer's
+  zone change at 3135 differs by 1..8 ulps in seven rotation lanes with the position bit-equal: the composition, not a safe
+  position; PropagateCacheFlags 0x3d46b0(object, view, flags) works on the view caches, so a stale input would be the zones'
+  published views (the load published them from its lanes, before POSE's writes): not yet tested.

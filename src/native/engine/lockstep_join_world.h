@@ -2794,6 +2794,71 @@ static void join_npcslot_dump(char side,uint64_t tick) {
     }
     crash_note_write(out,(int)at);free(out);
 }
+/* JOIN_LSTN (diagnostic, with JOIN_WATCH; j1-385): the late join's zone 0x561 escorts part at 3092 on the order in which the
+ * carrier's defence NPC 0x123675 delivers an event_object_signalled ('blockingdockapproach cleared') to their pilots' handlers
+ * (the first handler takes the dock slot): session cf8,c14,cbf,b30,..., joiner b30,b69,ba2,... (ascending, the load's). An event
+ * source keeps, at +0x28, a vector of 0x28-byte entries {int type; vector<listener *> +8..+0x10} sorted by type (0x999ae0), which
+ * 0x999120 appends to and DeliverEvent 0x99c470 walks in order; AddScriptListener 0xc9d0e0 also keeps a tree at +0x50 (header
+ * embedded, root +0x58; node key int +0x20, listener +0x28) and the sources at +0x38..+0x40. Per watched object: both, the
+ * listeners as kind.owner.script (1 AIScriptContext, 2 AICallStackContext (+0xc8), 3 a component, 0 vtable RVA). */
+#define JOIN_LSTN_AI_VT 0x2c6a270u      /* AI::AIScriptContext */
+#define JOIN_LSTN_STACK_VT 0x2c690b8u   /* AI::AICallStackContext */
+static join_engine join_lstn_engine(void);   /* lockstep_join.h: join_engine_get */
+static unsigned join_lstn_key(const join_engine *e,unsigned char *l,uint64_t *owner,uint64_t *script) {
+    uintptr_t vt=0;uint64_t runtime=0;*owner=*script=0;
+    if(!l || !join_read(l,&vt,8)) return 0;
+    unsigned char *ctx=NULL;unsigned kind=0;
+    if(vt==(uintptr_t)image+JOIN_LSTN_AI_VT) {ctx=l;kind=1;}
+    else if(vt==(uintptr_t)image+JOIN_LSTN_STACK_VT) {if(!join_read(l+0xc8,&ctx,8)) ctx=NULL;kind=2;}
+    if(kind) {
+        join_ctx_rec k;unsigned f=0;
+        if(ctx && join_ctx_key(e,(uintptr_t)ctx,&k,&f)) {*owner=k.owner;*script=k.script;}
+        return kind;
+    }
+    if(join_read(l+8,&runtime,8) && runtime && join_object(runtime)==l) {unsigned klass;*owner=join_key(runtime,&klass);return 3;}
+    *owner=vt>=(uintptr_t)image && vt-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint64_t)(vt-(uintptr_t)image):0u;
+    return 0;
+}
+static size_t join_lstn_dump(char *out,size_t cap,char side,uint64_t tick,uint64_t portable,unsigned char *o) {
+    const join_engine e=join_lstn_engine();size_t at=0;uintptr_t table=0,v[2]={0,0};
+    at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_LSTN side=%c tick=%llu id=%llx t28=",side,(unsigned long long)tick,(unsigned long long)portable);
+    if(join_read(o+0x28,&table,8) && table && join_read((void *)table,v,16) && v[1]>=v[0] && (v[1]-v[0])%0x28u==0 && (v[1]-v[0])/0x28u<=512u) {
+        for(uintptr_t p=v[0];p<v[1] && at+4096<cap;p+=0x28u) {
+            int32_t type=0;uintptr_t lv[2]={0,0};
+            if(!join_read((void *)p,&type,4) || !join_read((void *)(p+8),lv,16) || lv[1]<lv[0] || (lv[1]-lv[0])&7u) continue;
+            const uint64_t n=(lv[1]-lv[0])/8u;
+            at+=(size_t)snprintf(out+at,cap-at,"%d/%llu:",type,(unsigned long long)n);
+            for(uint64_t k=0;k<n && k<24u && at+128<cap;k++) {
+                unsigned char *l=NULL;uint64_t ow=0,sc=0;
+                if(!join_read((void *)(lv[0]+8u*k),&l,8)) continue;
+                const unsigned kind=join_lstn_key(&e,l,&ow,&sc);
+                at+=(size_t)snprintf(out+at,cap-at,"%u.%llx.%08x;",kind,(unsigned long long)ow,(uint32_t)sc);
+            }
+            at+=(size_t)snprintf(out+at,cap-at,"|");
+        }
+    } else at+=(size_t)snprintf(out+at,cap-at,"-");
+    {uintptr_t s[2]={0,0};
+     if(join_read(o+0x38,s,16) && s[1]>=s[0] && !((s[1]-s[0])&7u)) {
+        at+=(size_t)snprintf(out+at,cap-at," v38=%llu:",(unsigned long long)((s[1]-s[0])/8u));
+        for(uintptr_t p=s[0];p<s[1] && p<s[0]+64u && at+64<cap;p+=8u) {
+            unsigned char *x=NULL;uint64_t rt=0;unsigned klass;
+            if(join_read((void *)p,&x,8) && x && join_read(x+8,&rt,8)) at+=(size_t)snprintf(out+at,cap-at,"%llx%s;",(unsigned long long)(rt?join_key(rt,&klass):0),x==o?"=self":"");
+        }
+     }}
+    {unsigned char *hdr=o+0x50,*node=NULL;uint64_t size=0;
+     (void)join_read(hdr+0x28,&size,8);at+=(size_t)snprintf(out+at,cap-at," m50=%llu:",(unsigned long long)size);
+     if(join_read(hdr+8,&node,8) && node && node!=hdr) {
+        unsigned char *l=NULL;for(unsigned g=0;g<64 && join_read(node+8,&l,8) && l;g++) node=l;   /* leftmost */
+        for(unsigned k=0;k<128 && node && node!=hdr && at+128<cap;k++,node=join_evq_next(node)) {
+            int32_t type=0;unsigned char *li=NULL;uint64_t ow=0,sc=0;
+            if(!join_read(node+0x20,&type,4) || !join_read(node+0x28,&li,8)) break;
+            const unsigned kind=join_lstn_key(&e,li,&ow,&sc);
+            at+=(size_t)snprintf(out+at,cap-at,"%d/%u.%llx.%08x;",type,kind,(unsigned long long)ow,(uint32_t)sc);
+        }
+     }}
+    at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+    return at<cap?at:cap;
+}
 static void join_watch_dump(char side,uint64_t tick) {
     if(!join_watch.n) return;
     if(side=='t' || side=='k' || side=='s') join_npcslot_dump(side,tick);
@@ -2812,6 +2877,7 @@ static void join_watch_dump(char side,uint64_t tick) {
             const uint64_t rel=tick-join_watch.tick;
             if((rel==1u || rel==50u || rel==57u) && at+65536u<cap) at+=join_watch_refs(out+at,cap-at,side,tick,join_watch.portable[i],level);
         }
+        if(at+65536u<cap) at+=join_lstn_dump(out+at,cap-at,side,tick,join_watch.portable[i],level);   /* JOIN_LSTN: its listeners in order */
         for(unsigned lvl=0;lvl<JOIN_WATCH_LEVELS && level && at+2600<cap;lvl++) {
             uintptr_t vt=0;unsigned char *parent=NULL;uint32_t flags=0;
             (void)join_read(level,&vt,8);(void)join_read(level+JOIN_WATCH_PARENT,&parent,8);(void)join_read(level+JOIN_WATCH_FLAGS,&flags,4);
@@ -4361,6 +4427,113 @@ static void join_admit_warp(const join_tables *s,const join_tables *mine) {
         if(join_poke((uintptr_t)xf,r->xform,sizeof(r->xform))) ++join_warp_written; else ++join_warp_equal;
     }
 }
+/* LSTN (v13, section 79; opt-in native_gate_join_lstn on the joiner). An event source's listeners for one event type sit in its
+ * +0x28 table (JOIN_LSTN above) in registration order, and DeliverEvent hands an event to them in that order. The session built
+ * the order over time; the joiner's load registers every script's listeners anew in its own order (j1-386: the carrier's defence
+ * NPC 0x123675, type 306 (ObjectSignalled): the escort pilots' AICallStackContexts cf8, c14, cbf, b30, ... on the session, ascending
+ * on the joiner; at 3092 the first handler of 'blockingdockapproach cleared' takes the dock slot). The saver records every vector
+ * of a keyed source with at least two script listeners (AIScriptContext or AICallStackContext with a keyed owner), each listener
+ * in order as (kind, owner portable, script hash); flags UNMAPPED: no key (kind 0: owner the vtable RVA). The joiner keys its own
+ * vector the same way and writes the listeners both sides key alike, each key once, into the session's relative order, in the
+ * slots they hold (the others stay); status lstn=on:groups:written:equal:missing:partial:dup (partial: the key sets differ, the
+ * common ones ordered; dup: a key twice, left). */
+#define JOIN_LSTN_TABLE 0x28u
+#define JOIN_LSTN_ENTRY 0x28u
+#define JOIN_LSTN_MAX 1024u
+enum {JOIN_LSTN_UNMAPPED=1u};
+static int join_lstn_on;
+static uint64_t join_lstn_groups,join_lstn_written,join_lstn_equal,join_lstn_missing,join_lstn_partial,join_lstn_dup;
+static int join_lstn_cmp(const void *a,const void *b) {
+    const join_lstn_rec *x=a,*y=b;
+    if(x->source!=y->source) return x->source<y->source?-1:1;
+    if(x->type!=y->type) return x->type<y->type?-1:1;
+    return x->index<y->index?-1:x->index>y->index;
+}
+static int join_lstn_table(unsigned char *o,uintptr_t v[2]) {
+    uintptr_t table=0;v[0]=v[1]=0;
+    return join_read(o+JOIN_LSTN_TABLE,&table,8) && table && join_read((void *)table,v,16) && v[1]>=v[0] &&
+           !((v[1]-v[0])%JOIN_LSTN_ENTRY) && (v[1]-v[0])/JOIN_LSTN_ENTRY<=1024u;
+}
+static int join_lstn_entry(uintptr_t p,uint32_t *type,uintptr_t lv[2]) {
+    return join_read((void *)p,type,4) && join_read((void *)(p+8),lv,16) && lv[1]>=lv[0] && !((lv[1]-lv[0])&7u) &&
+           (lv[1]-lv[0])/8u<=JOIN_LSTN_MAX;
+}
+static unsigned char *join_lstn_buf[JOIN_LSTN_MAX];
+static void join_capture_lstn(join_tables *t) {
+    const join_engine e=join_lstn_engine();uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL;uintptr_t v[2];
+        if(!o || !join_lstn_table(o,v)) continue;
+        for(uintptr_t p=v[0];p<v[1];p+=JOIN_LSTN_ENTRY) {
+            uint32_t type=0,ai=0;uintptr_t lv[2];
+            if(!join_lstn_entry(p,&type,lv) || (lv[1]-lv[0])/8u<2u) continue;
+            const uint32_t n=(uint32_t)((lv[1]-lv[0])/8u);
+            if(!join_read((void *)lv[0],join_lstn_buf,(size_t)n*8u)) continue;
+            static join_lstn_rec rs[JOIN_LSTN_MAX];
+            for(uint32_t k=0;k<n;k++) {
+                join_lstn_rec *r=&rs[k];memset(r,0,sizeof(*r));
+                r->source=t->ids[i].portable;r->type=type;r->index=k;
+                r->kind=join_lstn_key(&e,join_lstn_buf[k],&r->owner,&r->script);
+                if(!r->kind || !r->owner) r->flags=JOIN_LSTN_UNMAPPED;
+                if(r->kind && r->kind<3u && r->owner) ++ai;
+            }
+            if(ai<2u) continue;
+            for(uint32_t k=0;k<n;k++) if(!JOIN_PUSH(t->lstn,t->nlstn,cap,rs[k])) return;
+        }
+    }
+    if(t->nlstn>1) qsort(t->lstn,t->nlstn,sizeof(*t->lstn),join_lstn_cmp);
+}
+static int join_lstn_same(const join_lstn_rec *a,unsigned kind,uint64_t owner,uint64_t script) {return a->kind==kind && a->owner==owner && a->script==script;}
+/* One (source, type) group of the session's records against the joiner's vector of that object: -1 missing, else the slots written. */
+static int join_lstn_apply(const join_lstn_rec *g,uint32_t ng,unsigned char *o) {
+    const join_engine e=join_lstn_engine();uintptr_t v[2],lv[2]={0,0};int found=0;
+    if(!o || !join_lstn_table(o,v)) return -1;
+    for(uintptr_t p=v[0];p<v[1];p+=JOIN_LSTN_ENTRY) {uint32_t type=0;if(join_lstn_entry(p,&type,lv) && type==g[0].type) {found=1;break;}}
+    if(!found) return -1;
+    const uint32_t n=(uint32_t)((lv[1]-lv[0])/8u);
+    if(!n || !join_read((void *)lv[0],join_lstn_buf,(size_t)n*8u)) return -1;
+    static unsigned kinds[JOIN_LSTN_MAX];static uint64_t owners[JOIN_LSTN_MAX],scripts[JOIN_LSTN_MAX];static int at_session[JOIN_LSTN_MAX];
+    for(uint32_t k=0;k<n;k++) {
+        kinds[k]=join_lstn_key(&e,join_lstn_buf[k],&owners[k],&scripts[k]);at_session[k]=-1;
+        if(!kinds[k] || !owners[k]) continue;
+        for(uint32_t q=0;q<ng;q++) if(!g[q].flags && join_lstn_same(&g[q],kinds[k],owners[k],scripts[k])) {at_session[k]=(int)q;break;}
+    }
+    for(uint32_t a=0;a<ng;a++) for(uint32_t b=a+1u;b<ng;b++)   /* a key twice on either side: left as it is */
+        if(!g[a].flags && !g[b].flags && join_lstn_same(&g[a],g[b].kind,g[b].owner,g[b].script)) {++join_lstn_dup;return 0;}
+    uint32_t common=0,mapped=0,session_mapped=0;
+    for(uint32_t k=0;k<n;k++) {
+        if(kinds[k] && owners[k]) ++mapped;
+        if(at_session[k]<0) continue;
+        for(uint32_t k2=k+1u;k2<n;k2++) if(at_session[k2]==at_session[k]) {++join_lstn_dup;return 0;}
+        ++common;
+    }
+    for(uint32_t q=0;q<ng;q++) if(!g[q].flags) ++session_mapped;
+    if(common!=session_mapped || common!=mapped) ++join_lstn_partial;
+    if(common<2u) return 0;
+    /* the common listeners' slots, in the joiner's order, take them in the session's order */
+    static unsigned char *want[JOIN_LSTN_MAX];static uint32_t slots[JOIN_LSTN_MAX];uint32_t ns=0;
+    for(uint32_t k=0;k<n;k++) if(at_session[k]>=0) slots[ns++]=k;
+    uint32_t w=0;
+    for(uint32_t q=0;q<ng && w<ns;q++) for(uint32_t k=0;k<n;k++) if(at_session[k]==(int)q) {want[w++]=join_lstn_buf[k];break;}
+    int written=0;
+    for(uint32_t s=0;s<ns;s++) {
+        if(want[s]==join_lstn_buf[slots[s]]) continue;
+        if(join_poke(lv[0]+8u*slots[s],&want[s],8)) ++written;
+    }
+    return written;
+}
+static void join_admit_lstn(const join_tables *s,const join_tables *mine) {
+    join_lstn_groups=join_lstn_written=join_lstn_equal=join_lstn_missing=join_lstn_partial=join_lstn_dup=0;
+    if(!join_lstn_on) return;
+    for(uint32_t i=0;i<s->nlstn;) {
+        uint32_t j=i+1u;
+        while(j<s->nlstn && s->lstn[j].source==s->lstn[i].source && s->lstn[j].type==s->lstn[i].type) ++j;
+        ++join_lstn_groups;
+        const int w=join_lstn_apply(&s->lstn[i],j-i,join_object(join_runtime_of(mine,s->lstn[i].source)));
+        if(w<0) ++join_lstn_missing; else if(w) ++join_lstn_written; else ++join_lstn_equal;
+        i=j;
+    }
+}
 static int join_bnds_on;
 static uint64_t join_bnds_written,join_bnds_equal,join_bnds_missing;
 #define JOIN_BNDS_GETTER 0x7eb460u   /* the station's vfunc 0x14b0: lea rax,[rcx+0xc90] */
@@ -5221,6 +5394,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_resv(t);            /* version 13: the zones' space reservations */
     join_capture_conn(t);            /* version 13: the NPCs' connected connections */
     join_capture_warp(t);            /* version 13: the pending warps' destinations */
+    join_capture_lstn(t);            /* version 13: the script listeners' order per event source and type */
     if(t->npcsv>1) qsort(t->pcsv,t->npcsv,sizeof(*t->pcsv),join_solver_cmp);   /* version 13: the PlayerControllers' solvers */
     for(uint32_t i=1;i<t->npcsv;i++) if(t->pcsv[i].portable==t->pcsv[i-1].portable) return join_note("pcsv_duplicate,id=%llx",(unsigned long long)t->pcsv[i].portable);
     join_sort_omgs(t);               /* version 13: OMGS, taken in the FLIGHT walk */
@@ -7032,6 +7206,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_noct(s,&mine);   /* the nav octree's index table and hidden keys */
     if(s->version>=13) join_admit_agtt(s,&mine);   /* the Agents' times the load resets */
     if(s->version>=13) join_admit_ares(s,&mine);   /* the Agents' result banks (opt-in) */
+    if(s->version>=13) join_admit_lstn(s,&mine);   /* the script listeners' order (opt-in) */
     if(s->version>=13) join_admit_agcb(s,&mine);   /* the pilot slot ships' command and probe blocks */
     if(s->version>=13) join_admit_pbnk(s,&mine);   /* the pilot slot ships' pathing state banks */
     if(s->version>=13) join_admit_specdrop(s,&mine);   /* the load's one-shot view cache specifications, after SPEC and VIEWK (opt-in) */

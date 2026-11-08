@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "fc9acc91dbbdf32f4096ebe655b91e0810d934d5a85c39a3652d6fde239430fd"   /* version 13 (JOBE .. CONN; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "2dc39630fe10f0b4b20f586eca6641deffbb12755a964097d6090de087714352"   /* version 13 (JOBE .. LSTN; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -461,6 +461,8 @@ static void test_join_golden(void) {
     static join_ares_rec ares[1];memset(ares,0,sizeof(ares));ares[0].portable=0x2001ull;ares[0].ref[0]=0x2002ull;
     for(unsigned k=8;k<0x60;k++) {ares[0].bank[0][k]=(unsigned char)k;ares[0].bank[1][k]=(unsigned char)(0x60+k);}
     t.ares=ares;t.nares=1;
+    static join_lstn_rec lstn[1];memset(lstn,0,sizeof(lstn));lstn[0].source=0x2001ull;lstn[0].owner=0x2002ull;lstn[0].script=0x7d7d6d0full;
+    lstn[0].type=306;lstn[0].kind=2;t.lstn=lstn;t.nlstn=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -515,7 +517,7 @@ static void test_join_golden(void) {
            r.nbnds==1 && !memcmp(r.bnds,bnds,sizeof(bnds)) &&
            r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)) &&
            r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)) &&
-           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)) && r.nares==1 && !memcmp(r.ares,ares,sizeof(ares)));
+           r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)) && r.nares==1 && !memcmp(r.ares,ares,sizeof(ares)) && r.nlstn==1 && !memcmp(r.lstn,lstn,sizeof(lstn)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -549,7 +551,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec)+48+sizeof(join_lstn_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -3008,6 +3010,46 @@ static void test_join_gravp_restore(void) {
     join_world_find=find;join_world_map=map;
     printf("join GRAVP restore: the session's pose left, the load's first publication mended however far, a later new one dropped for good PASS\n");
 }
+/* LSTN (j1-386): a source's listener vector for one event type, keyed listeners (here components) put into the session's order in
+ * the slots they hold; a key the joiner lacks orders the common ones (partial); a key twice leaves the vector. */
+static unsigned char tlstn_obj[5][0x40],tlstn_table[16],tlstn_entries[2][0x28];static unsigned char *tlstn_vec[8];
+static void *tlstn_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime>=0xa0u && runtime<0xa5u?tlstn_obj[runtime-0xa0u]:NULL;}
+static uint64_t tlstn_key(uint64_t runtime,unsigned *klass) {*klass=WORLD_KEY_SAVED;return runtime+0x1000u;}
+static void test_join_lstn(void) {
+    join_find_fn find=join_world_find;void *map=join_world_map;uint64_t (*key)(uint64_t,unsigned *)=join_key;
+    join_world_find=tlstn_find;join_world_map=tlstn_obj;join_key=tlstn_key;
+    memset(tlstn_obj,0,sizeof(tlstn_obj));memset(tlstn_entries,0,sizeof(tlstn_entries));
+    for(unsigned k=0;k<5;k++) {uint64_t runtime=0xa0u+k;memcpy(tlstn_obj[k]+8,&runtime,8);}
+    unsigned char *t=tlstn_table;void *p=tlstn_entries[0];memcpy(t,&p,8);p=tlstn_entries[0]+0x50;memcpy(t+8,&p,8);
+    memcpy(tlstn_obj[0]+JOIN_LSTN_TABLE,&t,8);
+    uint32_t other=70,type=306;memcpy(tlstn_entries[0],&other,4);memcpy(tlstn_entries[1],&type,4);   /* entry 0: another type, empty */
+    tlstn_vec[0]=tlstn_obj[2];tlstn_vec[1]=tlstn_obj[3];tlstn_vec[2]=tlstn_obj[1];   /* the joiner's order: a2, a3, a1 */
+    p=tlstn_vec;memcpy(tlstn_entries[1]+8,&p,8);p=tlstn_vec+3;memcpy(tlstn_entries[1]+0x10,&p,8);
+    static join_lstn_rec g[4];memset(g,0,sizeof(g));
+    const uint64_t order[3]={0x10a1u,0x10a3u,0x10a2u};   /* the session's: a1, a3, a2 */
+    for(unsigned k=0;k<3;k++) {g[k].source=0x10a0u;g[k].owner=order[k];g[k].type=306;g[k].index=k;g[k].kind=3;}
+    static join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));
+    static join_id_rec ids[1];ids[0].runtime=0xa0u;ids[0].portable=0x10a0u;mine.ids=ids;mine.nids=1;s.lstn=g;s.nlstn=3;
+    join_lstn_on=0;join_admit_lstn(&s,&mine);assert(!join_lstn_groups && tlstn_vec[0]==tlstn_obj[2]);
+    join_lstn_on=1;join_admit_lstn(&s,&mine);
+    assert(join_lstn_groups==1 && join_lstn_written==1 && !join_lstn_partial && !join_lstn_dup);
+    assert(tlstn_vec[0]==tlstn_obj[1] && tlstn_vec[1]==tlstn_obj[3] && tlstn_vec[2]==tlstn_obj[2]);
+    join_admit_lstn(&s,&mine);assert(join_lstn_equal==1 && !join_lstn_written);   /* again: equal */
+    /* the session also holds a4, the joiner does not: the three common ones ordered all the same (partial) */
+    tlstn_vec[0]=tlstn_obj[3];tlstn_vec[1]=tlstn_obj[2];tlstn_vec[2]=tlstn_obj[1];
+    g[3]=g[2];g[2].owner=0x10a4u;g[3].index=3;s.nlstn=4;
+    join_admit_lstn(&s,&mine);assert(join_lstn_written==1 && join_lstn_partial==1);
+    assert(tlstn_vec[0]==tlstn_obj[1] && tlstn_vec[1]==tlstn_obj[3] && tlstn_vec[2]==tlstn_obj[2]);
+    /* a key twice in the session's: left */
+    g[2].owner=0x10a1u;tlstn_vec[0]=tlstn_obj[2];join_admit_lstn(&s,&mine);assert(join_lstn_dup==1 && !join_lstn_written && tlstn_vec[0]==tlstn_obj[2]);
+    /* no such object or type on the joiner: missing */
+    for(unsigned k=0;k<4;k++) g[k].type=307;
+    join_admit_lstn(&s,&mine);assert(join_lstn_missing==1);
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," lstn=1:1:0:0:1:0:0 "));}
+    assert(join_lstn_cmp(&g[0],&g[1])<0);
+    join_lstn_on=0;join_world_find=find;join_world_map=map;join_key=key;
+    printf("join LSTN: a source's keyed listeners in the session's order in their slots, partial and duplicate keys PASS\n");
+}
 /* GRAVP settled (j1-381..384): which session poses the restore after T+1 takes, with and without native_gate_join_gravp_settled. */
 static void test_join_gravp_settled(void) {
     static join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));
@@ -3340,5 +3382,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();
 }
