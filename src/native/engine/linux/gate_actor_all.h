@@ -130,8 +130,11 @@ static int laa_agent_install(void) {
     laa_agent_installed=1;return 1;
 }
 static int laa_stub_ok(void) {
-    void *t;if(!laa_page) return 0;memcpy(&t,laa_page+LAA_STUB_AGENT+6,8);
-    return laa_page[LAA_STUB_AGENT]==0xff && laa_page[LAA_STUB_AGENT+1]==0x25 && t==(void*)laa_agent_update;
+    if (!laa_page) return 0;
+    unsigned char expected[14] = {0xff, 0x25, 0, 0, 0, 0};
+    void *target = (void *)laa_agent_update;
+    memcpy(expected + 6, &target, sizeof(target));
+    return !memcmp(laa_page + LAA_STUB_AGENT, expected, sizeof(expected));
 }
 /* gate.actor_rng_all(): before loading, after the boot installed both hooks (as Windows' agent and ship modules). */
 static int laa_arm(void) {

@@ -170,6 +170,23 @@ static void test_travel_inline_elf(void) {
     lxt_inline_restore();
     assert(lxt_inline_restored);
 
+    /* The call can still target our stub while a foreign displacement changes
+     * where its indirect jump reads the target. Verify all four bytes. */
+    for (unsigned displacement_byte = 2; displacement_byte < 6; ++displacement_byte) {
+        assert(laa_stub_ok());
+        assert(!mprotect(laa_page, GATE_PAGE, PROT_READ | PROT_WRITE));
+        laa_page[LAA_STUB_AGENT + displacement_byte] ^= 1;
+        assert(!mprotect(laa_page, GATE_PAGE, PROT_READ | PROT_EXEC));
+        assert(laa_call_state() == 1 && !laa_stub_ok());
+        assert(!lxt_inline_body_pin());
+        assert(!lxt_inline_arm() && !travel_inline_installed && !strcmp(lxt_inline_stage, "batch_pin"));
+        assert(!memcmp(before_a, LX(LXT_INLINE_SITE_A), 8) && !memcmp(before_b, LX(LXT_INLINE_SITE_B), 16));
+        assert(!mprotect(laa_page, GATE_PAGE, PROT_READ | PROT_WRITE));
+        laa_page[LAA_STUB_AGENT + displacement_byte] ^= 1;
+        assert(!mprotect(laa_page, GATE_PAGE, PROT_READ | PROT_EXEC));
+        assert(laa_stub_ok() && lxt_inline_body_pin());
+    }
+
     /* A foreign agent displacement or a foreign budget patch is never masked. */
     uintptr_t call_page = (uintptr_t)LX(LX_AGENT_CALL_VA) & ~(uintptr_t)(GATE_PAGE - 1);
     assert(!mprotect((void *)call_page, GATE_PAGE, PROT_READ | PROT_WRITE | PROT_EXEC));

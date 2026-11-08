@@ -4,9 +4,10 @@ Linux lockstep performance investigation - 8 November 2026
 Scope
 -----
 Two isolated Linux X4 9.00 (611726) instances on one Ryzen 7 7800X3D desktop,
-hardware Vulkan rendering, the same owned snapshot (seed 2222222), reverse
-launch order 2,1, 600 ticks per comparison and a full census at tick 1 and every
-120 ticks. Ordered pathing remains OFF in these performance comparisons.
+hardware Vulkan rendering and the same owned snapshot (seed 2222222). The
+initial comparisons use launch order 2,1, 600 ticks and a full census at tick 1
+and every 120 ticks. Longer runs and the separate ordered-pathing experiment
+are identified below. Ordered pathing is OFF unless explicitly stated.
 This is simulation validation, not a playable Linux client or a remote-peer test.
 
 The scalar and accelerated comparisons capture exactly the same object fields,
@@ -121,8 +122,8 @@ log_us measures only the final flush, not all logging work. The suspect tick
 has ordinary row volume, and these wall-time clocks also include descheduling.
 Steam identity remained unchanged and no owned process remained.
 
-Further diagnostic changes (native comparison pending)
------------------------------------------------------
+Thinned-status comparison
+-------------------------
 The existing status-stride mechanism is now exposed as --status-stride N in
 the Linux bundle. It reduces intermediate module status output and delays
 observation of their failure counters until a written status or STOP. Every
@@ -130,6 +131,25 @@ rolling capture, bank record, shield-cycle summary and relay report remains
 mandatory. A non-divisible-stride Lua regression validates complete sample
 coverage through STOP. Reported complete cycles now derive from observed
 contiguous valid samples, not merely the requested tick limit.
+
+A second 12000-tick TSNAP comparison with --status-stride 60 retained all
+12000 rolling samples and 100 cycles. It still FAILS, first motion mismatch
+at tick 8621. Both peers stopped/restored cleanly. After tick 120, 11879 relay
+intervals had median 23.115 ms, p99 30.718 ms and maximum 80.796 ms; just one
+exceeded 50 ms (tick 1001). The 98 old census boundaries had maximum 30.580 ms.
+No half-second outlier appeared in this run. Besides status thinning, this
+candidate also disables chromatic aberration in its private profiles and
+contains the dormant ordered-mode arm correction; the comparison therefore
+does not isolate all changes to logging alone. These remain relay-step timings.
+An independent raw-log audit confirms every rolling sample and bank row, all
+101 scheduled shield summaries per peer and both terminal STOP records. Client
+log sizes fell from roughly 281.35 MB each to 20.28 MB each (92.79% smaller).
+
+Clean source 4fa5492 reconstructs the same gate binary as the 6e303e2 native
+candidate, SHA-256:
+c898c6d2193e69b15dab3ac157b683f2443fc9ffc8448916072f1ff02e28a4d8.
+This rebuild follows a correction to C pointer-expression
+parentheses in the local pin-normalization buffer.
 
 Validation
 ----------
@@ -164,13 +184,38 @@ reproduced interference with the already installed agent-RNG call patch. The
 arm check now normalizes only verified owned patches in a private byte copy
 and still requires the original full-body SHA. Foreign patches remain refused.
 Synthetic checks cover this interaction, complete batch execution and guarded
-refusal; no performance comparison above enables the ordered mode. The corrected native candidate (clean source 6e303e2, gate c898c6d) passed
+refusal; no performance comparison above enables the ordered mode.
+The corrected native candidate (clean source 6e303e2, gate c898c6d) passed
 600 rolling samples and five cycles. Each peer completed 599 pathing passes
 and 8386 ordered batches; both the main STOP and ordered-mode STOP confirm
 restoration and no reported failures. Cleanup found no owned processes and
 Steam identity was unchanged. This is short local evidence, not a motion-desync
 fix claim. The attempted screenshots were captured before the initial fade
 completed and are black, so they provide no graphics acceptance.
+
+The subsequent ordered run from clean 4fa5492 passed all 12000 rolling samples
+and 100 complete cycles. Both peers executed 11999 pathing passes and 167986
+ordered batches, then stopped and restored their hooks without reported errors.
+An independent audit confirms all samples, bank and scheduled shield rows,
+the bundle and installed binary hashes, and matching creation-event digests
+at the 259 commonly logged status ticks plus STOP. Steam identity remained
+unchanged and no owned process remained. This is a promising local result,
+not a general motion-desync fix: earlier failures varied with execution timing.
+
+Ordered execution increases ordinary step cost: after tick 120, 11879 relay
+intervals had median 34.103 ms, p99 41.740 ms and maximum 91.041 ms, with 12
+above 50 ms. The 98 former census boundaries had maximum 48.336 ms. Including
+startup, all 11999 intervals had maximum 3092.115 ms at tick 10; startup stalls
+remain and are not hidden by the steady-state figures. Screenshot acquisition
+overlapped ticks 303-329; none of those intervals exceeded 50 ms, but the capture
+is still a deliberate disturbance and no timing samples were removed.
+
+A subsequent static review found that the existing agent-stub ownership helper
+checked its opcode and target but omitted four displacement bytes. It now
+compares all 14 expected bytes. Synthetic tests mutate each displacement byte,
+require the ordered hook to refuse activation without changing its callsites,
+then restore the stub and verify acceptance. This is an additional rejection
+guard; the earlier native run retains its original source and artifact hashes.
 
 Graphics investigation
 ----------------------
@@ -196,6 +241,13 @@ disable that effect. This is a local graphics workaround, not a claim that the
 engine or driver bug has been identified or repaired. All these captures saved
 successfully, stopped their owned game and left the running Steam identity
 unchanged. Normal graphics settings were not changed.
+
+Later owned-window captures at observed tick 302 of the ordered 12000-tick run
+also show clear cockpit views in both active lockstep instances. Each screenshot
+capture took about 0.37 seconds; their retained monotonic timestamps identify
+this deliberate disturbance when interpreting that run's timing outliers.
+Two still images establish appearance at those moments, not an artifact-free
+video recording or a display-frame performance measurement.
 
 Evidence
 --------
