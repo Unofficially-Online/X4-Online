@@ -335,3 +335,44 @@ This formatting result does not cover the later capacity change.
 Private evidence: linux-20261108-build-event-newseed failed native bundle,
 linux-identity-capacity-check.log in the isolated capacity worktree, and
 rng-format-elf-comparison.json. No normal profile or game file was modified.
+
+Fresh-world long run: later divergence remains
+---------------------------------------------
+Clean source 57f8b3624ebe6c5f9f49bf74823e40f714d91121, gate SHA256
+2ae593470b2580cc3e66b3d325b417d1329d1b00ea2235ae0406620ec85e9c8d,
+repeats the same seed-3333333 snapshot with launch order 1,2. It completes
+36000 rolling ticks, but the overall result is FAIL. The capacity correction
+admits 526373 saved identities on each peer with zero failures or late imports.
+All 36000 samples and 300 complete cycles are retained. Both STOP records
+report completed=36000 reason=1 restored=1; the manifest hashes match, no
+owned processes remain and the recorded Steam identity is unchanged.
+
+The first differing sample is tick 32146, cycle 268, slice 105, imported
+indices [474927,479450). Its motion and timing roots differ; the other roots,
+counts and coverage fields agree. This slice belongs to a 542774-object
+cohort including 16401 created identities. Further slices differ later.
+From tick 35401, the created populations themselves differ, 17096 versus
+17097, which shifts slice boundaries. Later whole-sample differences must
+therefore not be interpreted as independent object-level mismatches.
+
+Retained drawn-event rows identify an earlier matched-scope difference at
+tick 32001, row index 24946 on both peers: saved Station 36fe9, source RVA
+392ec50 and event RVA 3784b50 (U::UpdateTradeOffersEvent), due bits
+4080e30aec33de3f, ambient entry word 6fa9c33dc7d2ac6b. The reconstructed keyed
+start word is dc38aa18cec48fc2 on both, but the handler consumes three versus
+two PCG steps. This is a matched call with different draw counts, not an
+absent invocation. No script rows were requested, so the inner branch is not
+identified by this capture. The earlier cumulative event-delivery split and
+thinned actor-RNG counters remain separate observations, not discarded data.
+
+Across 35879 relay intervals after tick 120, median/p95/p99/maximum are
+38.145/42.923/85.042/124.428 ms; 849 exceed 50 ms. At 298 former full-census
+boundaries the median/p99/maximum are 39.764/80.612/90.447 ms. These are local
+relay intervals, not rendered FPS. The repeated roughly 489 ms diagnostic
+pauses are absent, but ordinary variability and a real later desync remain.
+
+Private evidence: build-newseed-capacity-independent-audit/summary.json and
+newseed-capacity-drawn-event-triage.json. The next investigation compares the
+Linux economy schedule initialized during loading against the corresponding
+Windows mechanism; the shared approximate 540-second onset is a hypothesis,
+not proof of the branch or field that differs in this Linux invocation.
