@@ -1112,5 +1112,10 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   the joiner empties the list under the manager's lock at the admission's end and destroys each order. w1z198 (PORD + attn_set +
   ARES + WARP): T+1 4 (the shipyard's containers 717ab, 717bb, 717db, 717eb: STEER leaves 717ab/717bb, behaviours of uncarried
   classes 2c4e0b0/2c4edc0), 6f226 bit-equal at T+1 and T+2; 3060 5, 3120 6, 3180 18, 3240 30 (w1z189: 86 by 3300).
-- Open: the containers at T+1; whether PORD, attn_set and ARES keep the T=633 joins equal (then defaults); J1's late join with
-  them (x4mods-28).
+- w1z199 (T=633, WARP + attn_set + ARES + PORD, to 6000): pord=1:27:27 (the session's list empty), attn_set 2 calls, ares 6339
+  written; T+1 the usual nav refresh time, census 0 at 900, 1800, 3000, 3600, 4500, 5400 and 5940. J1 (x4mods-28): j1-380
+  (attn_set + ARES) and j1-384 (+ PORD, 8 dropped) have the census of the late join without them: neutral there.
+- PORD, attn_set and ARES join JOIN_DEFAULT_ON (native_gate_join_overlays.py); WARP stays opt-in (x4mods-28). Open: the four
+  containers at T+1 (717ab/717bb: STEER's uncarried behaviours) and the growth after 3120 in the late join; J1's late join is the
+  radar's settled objects at attention 3..5 (x4mods-28, native_gate_join_gravp_settled).
+  Erratum: the publish 19729803's message names ARES's option native_gate_join_attn_ares; it is native_gate_join_ares.

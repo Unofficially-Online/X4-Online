@@ -651,6 +651,8 @@ class Overlays(unittest.TestCase):
             self.assertIn('native_gate_join_omgs', overlays.JOIN_DEFAULT_ON)   # j1-313..320, w1z116..123: the 872/721 race gone
             self.assertIn('native_gate_join_hold_boot_events', overlays.JOIN_DEFAULT_ON)   # j1-323..326: 635 without it
             self.assertIn('native_gate_join_resv', overlays.JOIN_DEFAULT_ON)   # w1z156, j1-337: the 1049/1860 split gone
+            for name in ('native_gate_join_porders', 'native_gate_join_attn_set', 'native_gate_join_ares'):   # w1z198/w1z199, j1-384
+                self.assertIn(name, overlays.JOIN_DEFAULT_ON)
             for name in ('native_gate_join_pcsv', 'native_gate_join_gravn_extra', 'native_gate_join_conn'):   # w1z171, j1-353
                 self.assertIn(name, overlays.JOIN_DEFAULT_ON)
             self.assertEqual(overlays.default_sets(['native_gate_join_rcnt = false']),

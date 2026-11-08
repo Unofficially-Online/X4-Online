@@ -269,12 +269,21 @@ def ids_sets(sets):
 #   native_gate_join_conn          the NPCs' connection partners a waiting ship's load leaves null (x4mods-28; j1-350: conn=
 #                                  1:376:30226:0:0:0, the 2522 split gone; w1z171: in window equal to 2100 with the three
 #                                  and CODE's hold over the resume; j1-353: J1 with the three equal to 3720)
+#   native_gate_join_porders      the joiner drops the Path orders its load queued in the pathing manager's list (in-window
+#                                  report 57: the session's list empty at T; the late join's T=3033 joiner left 80, which
+#                                  rebuilt zone 0x72b's escorts' flight models at T+1: w1z198 T+1 4 from 29; w1z199 at
+#                                  T=633: 27 dropped, census 0 to 5940; J1 j1-384: 8 dropped, the census as without)
+#   native_gate_join_attn_set     SetAttention where ATTN's direct write leaves the load's per-level state, its posts and
+#                                  queued events dropped (w1z194/195: the joiner-only scripts at T+1 gone; w1z199 neutral)
+#   native_gate_join_ares         the Agents' result banks, section 78 (w1z196: written 6246; the formation results the
+#                                  load leaves empty; w1z199 and j1-380 neutral)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
                    'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code', 'native_gate_join_omgs',
                    'native_gate_join_hold_boot_events', 'native_gate_join_resv', 'native_gate_join_pcsv',
-                   'native_gate_join_gravn_extra', 'native_gate_join_conn')
+                   'native_gate_join_gravn_extra', 'native_gate_join_conn', 'native_gate_join_porders', 'native_gate_join_attn_set',
+                   'native_gate_join_ares')
 
 
 def default_sets(sets):
