@@ -79,6 +79,11 @@ static int world_identity_owned(void);
 static void world_identity_seal(void);
 static volatile int64_t world_identity_failures;
 static int world_identity_installed;
+static void economy_rng_restore(void);
+static int economy_rng_check(void);
+static int economy_rng_installed, economy_rng_restored;
+static int economy_rng_cleanup_uncertain;
+#define ECONOMY_RNG_STOP_REASON 192u
 /* Serial pathing and path determinism (gate_path.h, included below). */
 static void path_restore(void);
 static int path_owned(void);
@@ -466,9 +471,11 @@ static void finish(unsigned reason) {
     if(dt_installed && main_thread && GetCurrentThreadId()!=main_thread) wait_parked(500);
     restore_dt();
     if(dt_installed) stats.restored=0;
+    economy_rng_restore(); /* Must not outlive its identity hooks. */
+    if(economy_rng_installed || economy_rng_cleanup_uncertain) stats.restored=0;
     linux_build_rng_restore(); /* The scheduler must not outlive its identity hooks. */
     if(linux_build_rng_installed) stats.restored=0;
-    world_identity_restore();
+    if(!economy_rng_installed && !economy_rng_cleanup_uncertain && !linux_build_rng_installed) world_identity_restore();
     if(world_identity_installed) stats.restored=0;
     pbud_restore();
     if(pbud_installed) stats.restored=0;
@@ -607,6 +614,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(region_rng_armed && region_rng_failures) {finish(93);gate_original_once(frame,loading);return;}
     if(wfire_installed && !wfire_check()) {finish(132);gate_original_once(frame,loading);return;} /* WFIRE_STOP_REASON */
     if(erng_installed && !erng_check()) {finish(136);gate_original_once(frame,loading);return;} /* ERNG_STOP_REASON */
+    if(economy_rng_installed && !economy_rng_check()) {finish(ECONOMY_RNG_STOP_REASON);gate_original_once(frame,loading);return;}
     if(linux_build_rng_installed && !linux_build_rng_check()) {finish(152);gate_original_once(frame,loading);return;}
     if(lsj_installed && !lsj_check()) {finish(58);gate_original_once(frame,loading);return;} /* LSJ_STOP_REASON */
     if(lmt_installed && !lmt_check()) {finish(100);gate_original_once(frame,loading);return;} /* LMT_STOP_REASON */
@@ -832,6 +840,7 @@ static int lua_start(lua_State *L) {
 #include "gate_weapon_fire.h"
 #include "gate_engine_rng.h"
 #include "gate_build_rng.h"
+#include "gate_economy_rng.h"
 #include "gate_spline_join.h"
 #include "gate_mass_traffic.h"
 #include "gate_actor_all.h"
@@ -944,6 +953,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(frame_timing);METHOD(qpc_us);METHOD(tick_rate);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(peer_links);METHOD(peer_status);METHOD(wire_crypto);METHOD(wire_crypto_status);
     METHOD(platform);METHOD(verify_stage);
     METHOD(world_motion_config);METHOD(world_motion_capture);METHOD(world_motion_row);METHOD(world_motion_status);
+    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(economy_load_rng_row);
     METHOD(economy_watch_config);METHOD(economy_watch_capture);METHOD(economy_watch_status);
     METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);
     METHOD(world_banks);METHOD(saved_identity);

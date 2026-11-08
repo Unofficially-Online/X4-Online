@@ -361,6 +361,8 @@ def bundle(args):
         command.append('--engine-refresh-rng')
     if args.build_rng:
         command.append('--build-rng')
+    if args.economy_load_rng:
+        command.append('--economy-load-rng')
     if args.spline_join_all:
         command.append('--spline-join-all')
     if args.actor_rng_all:
@@ -480,6 +482,7 @@ def bundle(args):
         'weapon_fire_rng',
         'engine_refresh_rng',
         'build_rng',
+        'economy_load_rng',
         'spline_join_all',
         'actor_rng_all',
         'actor_rng_rows',
@@ -1300,6 +1303,7 @@ def main(argv=None):
     b.add_argument('--gravidar', action='store_true', help='the gated Gravidar pass, keyed units, time sync, sector order (implies serial pathing)')
     b.add_argument('--event-rows', type=int, metavar='TICKS', help='one EVENT_ROW per due event in the boot passes and the first TICKS gated ticks (up to 20000; about 50 MB per client for 6000 ticks)')
     b.add_argument('--event-order', action='store_true', help='due events delivered in (time, saved ID) source order')
+    b.add_argument('--economy-load-rng', action='store_true', help='key economy draws during snapshot loading')
     b.add_argument('--build-rng', action='store_true', help='key build-storage update scheduling by identity and game time')
     b.add_argument('--event-rng', choices=('observe', 'key'), help='scope RNG around event deliveries (needs --event-order)')
     b.add_argument('--event-rng-rows-window', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='record all event deliveries in this tick window')

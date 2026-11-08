@@ -228,6 +228,7 @@ def main():
     p.add_argument('--event-rows', type=int, metavar='TICKS', help='native_gate_event_rows: one EVENT_ROW per due event in the boot passes and the first TICKS gated ticks, up to 600 (20000 on the Linux gate; needs --event-order)')
     p.add_argument('--event-order', action='store_true', help='native_gate_event_order: due events delivered in (time, saved ID) source order (needs --world-identities)')
     p.add_argument('--event-rng', choices=('observe', 'key'), help='Linux event-delivery RNG scope (needs --event-order and --world-identities)')
+    p.add_argument('--economy-load-rng', action='store_true', help='key Linux economy load draws by saved identity and last time')
     p.add_argument('--build-rng', action='store_true', help='key build-storage update scheduling by identity and game time (needs --world-identities)')
     p.add_argument('--event-rng-rows-window', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='record all event deliveries in this tick window (needs --event-rng)')
     p.add_argument('--md-resume-rng', action='store_true', help='native_gate_md_resume_rng: load-time MD cue delays on per-cue streams (needs the snapshot boot)')
@@ -564,7 +565,7 @@ def main():
         # world identities and the world hash are ported (src/native/engine/linux/gate_world.h).
         if not args.snapshot or args.mode != 'clock':
             p.error('--gate-so supports the snapshot boot with --mode clock only')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
@@ -815,6 +816,11 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--weapon-fire-rng needs --gate-so, the snapshot boot and --world-identities')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_weapon_fire_rng = true\n')
+    if args.economy_load_rng:
+        if not args.gate_so or not args.snapshot or not args.world_identities:
+            p.error('--economy-load-rng needs --gate-so, snapshot boot and --world-identities')
+        with (args.out / 'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_economy_load_rng = true\n')
     if args.build_rng:
         if not args.gate_so or not args.snapshot or not args.world_identities:
             p.error('--build-rng needs --gate-so, the snapshot boot and --world-identities')

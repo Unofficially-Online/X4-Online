@@ -7,6 +7,7 @@
  *   test_gate_linux [path/to/X4]
  * Built and run by tools/dev/check_lockstep_gate_linux.py. */
 #define GATE_TLS_TEST
+#define ECONOMY_RNG_CANARY
 #include "gate_linux.c"
 #ifdef NDEBUG
 #undef NDEBUG
@@ -345,6 +346,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_world_rolling.h"
 #include "test_gate_world_motion_watch.h"
 #include "test_gate_economy_watch.h"
+#include "test_gate_economy_rng.h"
 #include "test_gate_path.h"
 #include "test_gate_travel_determinism.h"
 #include "test_gate_path_transform_observe.h"
@@ -393,6 +395,7 @@ int main(int argc,char **argv) {
     test_world_rolling();
     test_world_motion_watch();
     test_economy_watch();
+    test_economy_rng();
     test_path_determinism();
     test_travel_inline_dispatch();
     test_path_install();
@@ -441,6 +444,7 @@ int main(int argc,char **argv) {
         test_weapon_fire_elf();
         test_engine_rng_elf();
         test_build_rng_elf();
+        test_economy_rng_elf();
         test_event_rng_elf();
         test_spline_join_elf();
         test_mass_traffic_elf();

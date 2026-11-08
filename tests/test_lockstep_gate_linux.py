@@ -478,6 +478,15 @@ class Overlay(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.build(*base, '--build-rng')
 
+    def test_linux_economy_load_rng_is_opt_in_and_requires_identities(self):
+        base = (*self.snapshot, '--mode', 'clock')
+        config = (self.build(*base, '--world-identities') / 'ui/config.lua.append').read_text()
+        self.assertNotIn('native_gate_economy_load_rng', config)
+        config = (self.build(*base, '--world-identities', '--economy-load-rng') / 'ui/config.lua.append').read_text()
+        self.assertIn('native_gate_economy_load_rng = true', config)
+        with self.assertRaises(SystemExit):
+            self.build(*base, '--economy-load-rng')
+
     def test_linux_overlay_takes_spawn_rng(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--spawn-rng', 'key')
         self.assertIn("native_gate_spawn_rng = 'key'", (out / 'ui/config.lua.append').read_text())

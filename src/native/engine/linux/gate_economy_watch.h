@@ -114,7 +114,8 @@ static int lua_economy_watch_config(lua_State *L) {
     int valid = accept_ui() && stats.active && boot_mode && boot_phase == 3 && stats.issued == 1 &&
         isfinite(first) && isfinite(last) && first >= 1 && last <= 9007199254740991.0 &&
         floor(first) == first && floor(last) == last && first <= last &&
-        site_ok(site_named("economy_watch_import")) && site_ok(site_named("economy_watch_guard")) &&
+        (economy_rng_installed ? economy_rng_check() : site_ok(site_named("economy_watch_import"))) &&
+        site_ok(site_named("economy_watch_guard")) &&
         economy_watch_configure(saved, length, (uint64_t)first, (uint64_t)last);
     p_lua_pushnumber(L, valid);
     return 1;

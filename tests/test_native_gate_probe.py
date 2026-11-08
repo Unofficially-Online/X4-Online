@@ -4636,6 +4636,31 @@ class SnapshotProbeTests(unittest.TestCase):
             self.assertEqual(self.lua.globals().loads,0)
             self.assertTrue(any('build rng refused' in line for line in self.lua.globals().logs.values()),config)
 
+    def test_economy_load_rng_arms_before_load_and_refuses_bad_config(self):
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_world_identities=true
+          X4LAN_CONFIG.native_gate_economy_load_rng=true
+          local gate=package.loadlib('gate')();order={}
+          gate.economy_load_rng=function() order[#order+1]='arm';return 1 end
+          gate.economy_load_rng_status=function() return 'installed=1' end
+          local load=LoadGame;LoadGame=function(slot) assert(#order==1);load(slot) end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.assertEqual(self.lua.globals().loads, 1)
+        self.assertTrue(any('ECONOMY_LOAD_RNG_ARMED' in line for line in self.lua.globals().logs.values()))
+        for config in ("X4LAN_CONFIG.native_gate_economy_load_rng=true",
+                       "X4LAN_CONFIG.native_gate_world_identities=true;X4LAN_CONFIG.native_gate_economy_load_rng='key'",
+                       "X4LAN_CONFIG.native_gate_world_identities=true;X4LAN_CONFIG.native_gate_economy_load_rng=true;native=0"):
+            self.setUp()
+            self.lua.execute(config+'''
+              local gate=package.loadlib('gate')()
+              gate.economy_load_rng=function() return native or 1 end
+              gate.economy_load_rng_status=function() return 'stage=pins' end
+            ''')
+            self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+            self.assertEqual(self.lua.globals().loads, 0)
+            self.assertTrue(any('economy load RNG refused' in line for line in self.lua.globals().logs.values()), config)
+
     def test_build_rng_rows_survive_status_thinning(self):
         self.lua.execute('''
           X4LAN_CONFIG.native_gate_world_identities=true

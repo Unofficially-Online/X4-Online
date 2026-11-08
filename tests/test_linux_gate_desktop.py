@@ -110,6 +110,14 @@ class DesktopSetup(unittest.TestCase):
             live.main([*command, '--preset', 'linux-core', '--build-rng'])
             self.assertTrue(build.call_args.args[0].build_rng)
 
+    def test_economy_load_rng_is_opt_in(self):
+        command = ['bundle', '--zig', '/unused/zig', '--snapshot', '/unused/save', '--out', '/unused/output']
+        with mock.patch.object(live, 'bundle') as build:
+            live.main([*command, '--preset', 'linux-core'])
+            self.assertFalse(build.call_args.args[0].economy_load_rng)
+            live.main([*command, '--preset', 'linux-core', '--economy-load-rng'])
+            self.assertTrue(build.call_args.args[0].economy_load_rng)
+
     def test_reload_seed_comes_from_snapshot_and_invalid_headers_fail(self):
         with tempfile.TemporaryDirectory() as directory:
             save = Path(directory) / 'save.xml.gz'
