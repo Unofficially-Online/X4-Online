@@ -3382,66 +3382,74 @@ static void test_join_undk(void) {
     printf("join UNDK: a steering model's undocking behaviour, its ID as a portable and embedded vtables as RVAs, written back, equal, "
            "unmapped and missing PASS\n");
 }
-/* SRCS: keyed listeners (here components) with their sources at +0x38; the session's listener c on a, the joiner's on b */
-static _Alignas(16) unsigned char tsrcs_obj[4][0x60],tsrcs_table[2][16],tsrcs_entry[2][0x28];static unsigned char *tsrcs_vec[2][2],*tsrcs_src[4][4];
-static unsigned char *tsrcs_calls[8][3];static unsigned tsrcs_ncalls;
+/* SRCS: keyed listeners (here components) with their sources in their +0x10 lists; the session's listener c on a, the joiner's on b */
+static _Alignas(16) unsigned char tsrcs_obj[4][0x60],tsrcs_table[2][16],tsrcs_entry[2][0x28],tsrcs_ent[4][2][JOIN_SRCS_ENTRY];
+static unsigned char *tsrcs_vec[2][2];static uintptr_t tsrcs_book[4][3];
+static unsigned char *tsrcs_calls[8][2];static uint32_t tsrcs_types[8];static unsigned tsrcs_ncalls;
 static void *tsrcs_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime>=0xb0u && runtime<0xb4u?tsrcs_obj[runtime-0xb0u]:NULL;}
 static uint64_t tsrcs_key(uint64_t runtime,unsigned *klass) {*klass=WORLD_KEY_SAVED;return runtime+0x1000u;}
-static void tsrcs_set(unsigned o,unsigned char *const *v,unsigned n) {   /* object o's sources vector */
-    for(unsigned k=0;k<n;k++) tsrcs_src[o][k]=v[k];
-    uintptr_t b=(uintptr_t)tsrcs_src[o],e=b+8u*n,cap=b+32u;memcpy(tsrcs_obj[o]+0x38,&b,8);memcpy(tsrcs_obj[o]+0x40,&e,8);memcpy(tsrcs_obj[o]+0x48,&cap,8);
+static void tsrcs_set(unsigned o,const unsigned *src,const uint64_t *bits,unsigned n) {   /* object o's +0x10 list: n sources */
+    memset(tsrcs_ent[o],0,sizeof(tsrcs_ent[o]));
+    for(unsigned k=0;k<n;k++) {unsigned char *x=tsrcs_obj[src[k]];memcpy(tsrcs_ent[o][k],&x,8);memcpy(tsrcs_ent[o][k]+8,&bits[k],8);}
+    tsrcs_book[o][0]=(uintptr_t)tsrcs_ent[o];tsrcs_book[o][1]=tsrcs_book[o][2]=(uintptr_t)tsrcs_ent[o]+(uintptr_t)n*JOIN_SRCS_ENTRY;
+    uintptr_t b=(uintptr_t)tsrcs_book[o];memcpy(tsrcs_obj[o]+0x10,&b,8);
 }
-static void tsrcs_listen(unsigned source,unsigned slot,unsigned char *listener) {   /* source's one type entry, one listener */
+static void tsrcs_listen(unsigned source,unsigned slot,unsigned char *const *l,unsigned n) {   /* source's one type entry */
     uintptr_t t=(uintptr_t)tsrcs_table[slot],p=(uintptr_t)tsrcs_entry[slot];memcpy(tsrcs_obj[source]+0x28,&t,8);
     memcpy(tsrcs_table[slot],&p,8);p+=0x28u;memcpy(tsrcs_table[slot]+8,&p,8);
-    uint32_t type=306;memcpy(tsrcs_entry[slot],&type,4);tsrcs_vec[slot][0]=listener;
-    p=(uintptr_t)tsrcs_vec[slot];memcpy(tsrcs_entry[slot]+8,&p,8);p+=8u;memcpy(tsrcs_entry[slot]+0x10,&p,8);
+    uint32_t type=306;memcpy(tsrcs_entry[slot],&type,4);for(unsigned k=0;k<n;k++) tsrcs_vec[slot][k]=l[k];
+    p=(uintptr_t)tsrcs_vec[slot];memcpy(tsrcs_entry[slot]+8,&p,8);p+=8u*n;memcpy(tsrcs_entry[slot]+0x10,&p,8);
 }
-static void tsrcs_add(unsigned char *ctx,unsigned char *source) {tsrcs_calls[tsrcs_ncalls][0]=ctx;tsrcs_calls[tsrcs_ncalls][1]=source;tsrcs_calls[tsrcs_ncalls++][2]=(unsigned char *)1;}
-static void tsrcs_remove(unsigned char *ctx,unsigned char *source) {tsrcs_calls[tsrcs_ncalls][0]=ctx;tsrcs_calls[tsrcs_ncalls][1]=source;tsrcs_calls[tsrcs_ncalls++][2]=NULL;}
+static int tsrcs_register(unsigned char *source,uint32_t type,unsigned char *listener) {
+    tsrcs_calls[tsrcs_ncalls][0]=source;tsrcs_calls[tsrcs_ncalls][1]=listener;tsrcs_types[tsrcs_ncalls++]=type;return 1;
+}
+static void tsrcs_drop(unsigned char *source,unsigned char *listener) {
+    tsrcs_calls[tsrcs_ncalls][0]=source;tsrcs_calls[tsrcs_ncalls][1]=listener;tsrcs_types[tsrcs_ncalls++]=0xffffffffu;
+}
 static void test_join_srcs(void) {
     join_find_fn find=join_world_find;void *map=join_world_map;uint64_t (*key)(uint64_t,unsigned *)=join_key;
-    void (*add)(unsigned char *,unsigned char *)=join_srcs_add,(*rem)(unsigned char *,unsigned char *)=join_srcs_remove;
-    join_world_find=tsrcs_find;join_world_map=tsrcs_obj;join_key=tsrcs_key;join_srcs_add=tsrcs_add;join_srcs_remove=tsrcs_remove;
+    int (*reg)(unsigned char *,uint32_t,unsigned char *)=join_srcs_register;void (*drop)(unsigned char *,unsigned char *)=join_srcs_drop;
+    join_world_find=tsrcs_find;join_world_map=tsrcs_obj;join_key=tsrcs_key;join_srcs_register=tsrcs_register;join_srcs_drop=tsrcs_drop;
     const unsigned kinds=join_srcs_kinds;join_srcs_kinds|=1u<<3;   /* the fixture listeners are components */
     memset(tsrcs_obj,0,sizeof(tsrcs_obj));
     for(unsigned k=0;k<4;k++) {uint64_t runtime=0xb0u+k;memcpy(tsrcs_obj[k]+8,&runtime,8);}
-    /* objects: 0 a, 1 b (sources), 2 c (the listener), 3 d (a second listener on b, sources b and d itself) */
+    /* objects: 0 a, 1 b (sources), 2 c (the listener), 3 d (a second listener, on b and itself) */
     join_id_rec ids[4]={{0xb0u,0x10b0u,0,0},{0xb1u,0x10b1u,0,0},{0xb2u,0x10b2u,0,0},{0xb3u,0x10b3u,0,0}};
     join_tables t;memset(&t,0,sizeof(t));t.ids=ids;t.nids=4;
-    /* the session: c on a, d on b */
-    {unsigned char *v[1]={tsrcs_obj[0]};tsrcs_set(2,v,1);unsigned char *w[2]={tsrcs_obj[1],tsrcs_obj[3]};tsrcs_set(3,w,2);}
-    tsrcs_listen(0,0,tsrcs_obj[2]);tsrcs_listen(1,1,tsrcs_obj[3]);
+    /* the session: c on a, d on b (and its own entry, not recorded) */
+    {const unsigned sc[1]={0},sd[2]={1,3};const uint64_t bc[1]={1ull<<50},bd[2]={1ull<<50,1ull<<5};tsrcs_set(2,sc,bc,1);tsrcs_set(3,sd,bd,2);}
+    {unsigned char *l0[1]={tsrcs_obj[2]},*l1[1]={tsrcs_obj[3]};tsrcs_listen(0,0,l0,1);tsrcs_listen(1,1,l1,1);}
     join_capture_srcs(&t);
-    assert(t.nsrcs==3 && t.srcs[0].kind==3 && t.srcs[0].owner==0x10b2u && t.srcs[0].source==0x10b0u && !t.srcs[0].index && !t.srcs[0].flags);
-    assert(t.srcs[1].owner==0x10b3u && t.srcs[1].source==0x10b1u && !t.srcs[1].index && t.srcs[2].source==0x10b3u && t.srcs[2].index==1);
-    /* the joiner: c on b (its load registered it there), d as the session's */
-    {unsigned char *v[1]={tsrcs_obj[1]};tsrcs_set(2,v,1);}
-    memset(tsrcs_obj[0]+0x28,0,8);tsrcs_listen(1,0,tsrcs_obj[2]);
-    {uintptr_t p=(uintptr_t)tsrcs_entry[0];memcpy(tsrcs_table[0],&p,8);p+=0x28u;memcpy(tsrcs_table[0]+8,&p,8);
-     tsrcs_vec[0][1]=tsrcs_obj[3];p=(uintptr_t)tsrcs_vec[0];memcpy(tsrcs_entry[0]+8,&p,8);p+=16u;memcpy(tsrcs_entry[0]+0x10,&p,8);}   /* b: c, d */
+    assert(t.nsrcs==2 && t.srcs[0].kind==3 && t.srcs[0].owner==0x10b2u && t.srcs[0].source==0x10b0u && !t.srcs[0].index && !t.srcs[0].flags);
+    assert(t.srcs[1].owner==0x10b3u && t.srcs[1].source==0x10b1u && !t.srcs[1].index);
+    /* the joiner: c on b instead (types 50 and 51 there), d as the session's; b's vector holds both */
+    {const unsigned sc[1]={1};const uint64_t bc[1]={3ull<<50};tsrcs_set(2,sc,bc,1);}
+    memset(tsrcs_obj[0]+0x28,0,8);
+    {unsigned char *l[2]={tsrcs_obj[2],tsrcs_obj[3]};tsrcs_listen(1,0,l,2);}
     join_tables s;memset(&s,0,sizeof(s));s.version=13;s.srcs=t.srcs;s.nsrcs=t.nsrcs;
     join_tables mine;memset(&mine,0,sizeof(mine));mine.ids=ids;mine.nids=4;
     tsrcs_ncalls=0;join_srcs_on=0;join_admit_srcs(&s,&mine);assert(!tsrcs_ncalls && !join_srcs_contexts);
     join_srcs_on=1;join_admit_srcs(&s,&mine);
-    assert(join_srcs_contexts==2 && join_srcs_added==1 && join_srcs_removed==1 && join_srcs_equal==1 && !join_srcs_missing && !join_srcs_dup && !join_srcs_unmapped);
-    assert(tsrcs_ncalls==2 && tsrcs_calls[0][0]==tsrcs_obj[2] && tsrcs_calls[0][1]==tsrcs_obj[1] && !tsrcs_calls[0][2]);   /* removed b first */
-    assert(tsrcs_calls[1][0]==tsrcs_obj[2] && tsrcs_calls[1][1]==tsrcs_obj[0] && tsrcs_calls[1][2]);                       /* then added a */
-    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," srcs=1:2:1:1:1:0:0:0 "));}
-    /* a source of the session's the joiner lacks: unmapped, nothing called */
-    join_srcs_rec u[1];u[0]=t.srcs[0];u[0].source=0x10b9u;s.srcs=u;s.nsrcs=1;tsrcs_ncalls=0;
+    assert(join_srcs_contexts==2 && join_srcs_added==2 && join_srcs_removed==1 && join_srcs_equal==1 && !join_srcs_missing && !join_srcs_dup && !join_srcs_unmapped);
+    assert(tsrcs_ncalls==3 && tsrcs_calls[0][0]==tsrcs_obj[0] && tsrcs_calls[0][1]==tsrcs_obj[2] && tsrcs_types[0]==50u);   /* a, its types */
+    assert(tsrcs_calls[1][0]==tsrcs_obj[0] && tsrcs_types[1]==51u);
+    assert(tsrcs_calls[2][0]==tsrcs_obj[1] && tsrcs_calls[2][1]==tsrcs_obj[2] && tsrcs_types[2]==0xffffffffu);              /* then b dropped */
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," srcs=1:2:2:1:1:0:0:0 "));}
+    /* two sources the joiner's lacks against its one: left; a source of the session's the joiner lacks: left */
+    join_srcs_rec u[2];u[0]=t.srcs[0];u[1]=t.srcs[0];u[1].source=0x10b3u;u[1].index=1;s.srcs=u;s.nsrcs=2;tsrcs_ncalls=0;
     join_admit_srcs(&s,&mine);assert(join_srcs_unmapped==1 && !tsrcs_ncalls);
+    u[1].source=0x10b9u;join_admit_srcs(&s,&mine);assert(join_srcs_unmapped==1 && !tsrcs_ncalls);
     /* a listener the joiner does not have: missing */
-    u[0].owner=0x10b9u;join_admit_srcs(&s,&mine);assert(join_srcs_missing==1 && !tsrcs_ncalls);
+    u[0].owner=u[1].owner=0x10b9u;join_admit_srcs(&s,&mine);assert(join_srcs_missing==1 && !tsrcs_ncalls);
     {   /* the listener set across its growth: 200000 distinct pointers, each added twice */
         join_srcs_set set={0};uint32_t fresh=0;
         for(uint32_t r=0;r<2u;r++) for(uintptr_t k=1;k<=200000u;k++) {const int a=join_srcs_set_add(&set,k*0x40u);assert(a>=0);fresh+=(uint32_t)a;}
         assert(fresh==200000u && set.n==200000u && set.cap>=400000u);free(set.slot);
     }
     join_srcs_on=0;free(t.srcs);
-    join_world_find=find;join_world_map=map;join_key=key;join_srcs_add=add;join_srcs_remove=rem;join_srcs_kinds=kinds;
-    printf("join SRCS: each keyed listener's sources by portable ID, the joiner's extra removed and the session's added through the "
-           "engine's pair, equal, unmapped and missing PASS\n");
+    join_world_find=find;join_world_map=map;join_key=key;join_srcs_register=reg;join_srcs_drop=drop;join_srcs_kinds=kinds;
+    printf("join SRCS: each keyed listener's sources from its own list by portable ID, a one-source move registered for the types "
+           "of its entry and the old source dropped, equal, left and missing PASS\n");
 }
 static void test_join_warp(void) {
     twarp_build(0,0x10);

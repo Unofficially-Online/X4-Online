@@ -4613,31 +4613,47 @@ static void join_admit_lstn(const join_tables *s,const join_tables *mine) {
         i=j;
     }
 }
-/* SRCS (v13, section 81; opt-in native_gate_join_srcs on the joiner; in-window report 57, w1z202): a listener (AIScriptContext,
- * AICallStackContext, a component) keeps the objects it listens on at +0x38..+0x48; AddSource 0xc9ce30(listener, source, reserve,
- * force) appends one and registers the listener there for its fixed types (0xed, 0x1da; 0x52 when the source is of class 0x2c)
- * and every type of its tree +0x50, RemoveSource 0xc9d070(listener, source) erases it and drops the listener from each of the
- * source's vectors (0x999ef0), and AddScriptListener 0xc9d0e0 adds a type on every source it has. A script that listens on its
- * ship's sector keeps the sector of its start: the session's pilot 0x9327c (move.gate) hears sector 0x26's signal at 3061 after
- * its jump into 0x37, the joiner's load registered it on 0x37 (its signal at 3074). The saver records each keyed listener's
- * sources by portable ID; the joiner removes the ones the session's lacks and adds the session's it lacks, with the engine's own
- * pair, before LSTN orders the vectors. Listeners two share a key with are left (dup), a context whose sources include one
- * without a key too (unmapped). Status srcs=on:contexts:added:removed:equal:missing:dup:unmapped srcs_cap=. */
-#define JOIN_SRCS_AT 0x38u
+/* SRCS (v13, section 81; opt-in native_gate_join_srcs on the joiner; in-window report 57, w1z202, w1z207): a listener keeps the
+ * sources it is registered on at +0x10, a {begin, end, cap} of 0x50-byte entries {source, a 0x232-type bit set} sorted by source
+ * (0x998720 finds or adds one); 0x999120(table entry, source, listener) appends the listener to a source's type vector and sets
+ * the type's bit in the listener's entry for the source, 0x999ef0(source, listener) erases the listener from every type vector of
+ * the source and its entry (0x998a80), 0x998b20 unregisters a listener everywhere by that list. (AddSource 0xc9ce30's +0x38 list
+ * is empty for every script context, w1z207.) A script that listens on its ship's sector keeps the sector of its start: the
+ * session's pilot 0x9327c (move.gate) hears sector 0x26's signal at 3061 after its jump into 0x37, the joiner's load registered
+ * it on 0x37 (its signal at 3074). The saver records each keyed script context's keyed sources by portable ID; the joiner moves a
+ * context whose sources differ by exactly one (the session's S, its own S'): registers it on S for every type of its S' entry
+ * (0x999ae0 with create, 0x999120, as the engine's registrations do: the source's refusal slot first, the flush 0x99abe0) and
+ * drops it from S' (0x999ef0), before LSTN orders the vectors. A context two share a key with is left (dup), one that differs
+ * otherwise too (unmapped). Status srcs=on:contexts:added (types registered):removed (sources dropped):equal:missing:dup:unmapped
+ * srcs_cap=. */
+#define JOIN_SRCS_BOOK 0x10u
+#define JOIN_SRCS_ENTRY 0x50u
+#define JOIN_SRCS_TYPES 0x232u
 #define JOIN_SRCS_MAX 256u
-#define JOIN_SRCS_ADD 0xc9ce30u
-#define JOIN_SRCS_REMOVE 0xc9d070u
+#define JOIN_SRCS_GET 0x999ae0u       /* a source's vector of a type (source, type, create) */
+#define JOIN_SRCS_APPEND 0x999120u    /* (vector, source, listener) */
+#define JOIN_SRCS_DROP 0x999ef0u      /* (source, listener) */
+#define JOIN_SRCS_FLUSH 0x99abe0u     /* the pending listener changes, before each registration */
+#define JOIN_SRCS_REFUSE 0x11b0u      /* a source's vtable slot: it takes no listener (0x11b8 with the type when it is the listener) */
 enum {JOIN_SRCS_UNMAPPED=1u};
 typedef struct {uint64_t owner,script;uint32_t kind,dup;unsigned char *ctx;} join_srcs_ctx;
 static int join_srcs_on;
 static uint64_t join_srcs_contexts,join_srcs_added,join_srcs_removed,join_srcs_equal,join_srcs_missing,join_srcs_dup,join_srcs_unmapped;
 static uint32_t join_srcs_capn;
-static void join_srcs_add_native(unsigned char *ctx,unsigned char *source) {
-    ((unsigned char (*)(void *,void *,uint64_t,unsigned char))(void *)(image+JOIN_SRCS_ADD))(ctx,source,0,0);
+static int join_srcs_register_native(unsigned char *source,uint32_t type,unsigned char *listener) {
+    void **vt=*(void ***)source;
+    const unsigned char refuse=listener==source?((unsigned char (*)(void *,uint32_t))vt[(JOIN_SRCS_REFUSE+8u)/8u])(source,type):
+                                                ((unsigned char (*)(void *))vt[JOIN_SRCS_REFUSE/8u])(source);
+    if(refuse) return 0;
+    ((void (*)(void))(void *)(image+JOIN_SRCS_FLUSH))();
+    void *vector=((void *(*)(void *,uint32_t,unsigned char))(void *)(image+JOIN_SRCS_GET))(source,type,1);
+    if(!vector) return 0;
+    ((void (*)(void *,void *,void *))(void *)(image+JOIN_SRCS_APPEND))(vector,source,listener);
+    return 1;
 }
-static void join_srcs_remove_native(unsigned char *ctx,unsigned char *source) {((void (*)(void *,void *))(void *)(image+JOIN_SRCS_REMOVE))(ctx,source);}
-static void (*join_srcs_add)(unsigned char *,unsigned char *)=join_srcs_add_native;      /* tests replace them */
-static void (*join_srcs_remove)(unsigned char *,unsigned char *)=join_srcs_remove_native;
+static void join_srcs_drop_native(unsigned char *source,unsigned char *listener) {((void (*)(void *,void *))(void *)(image+JOIN_SRCS_DROP))(source,listener);}
+static int (*join_srcs_register)(unsigned char *,uint32_t,unsigned char *)=join_srcs_register_native;   /* tests replace them */
+static void (*join_srcs_drop)(unsigned char *,unsigned char *)=join_srcs_drop_native;
 static int join_srcs_key_cmp(const join_srcs_ctx *x,const join_srcs_ctx *y) {
     if(x->kind!=y->kind) return x->kind<y->kind?-1:1;
     if(x->owner!=y->owner) return x->owner<y->owner?-1:1;
@@ -4667,12 +4683,22 @@ static uint64_t join_srcs_portable(unsigned char *x) {
     uint64_t runtime=0;unsigned klass;
     return x && join_read(x+8,&runtime,8) && runtime && join_object(runtime)==x?join_key(runtime,&klass):0;
 }
-/* A listener's sources (at most JOIN_SRCS_MAX): their count, -1 unreadable. */
-static int join_srcs_of(unsigned char *ctx,unsigned char **out) {
-    uintptr_t s[2]={0,0};
-    if(!join_read(ctx+JOIN_SRCS_AT,s,16) || s[1]<s[0] || (s[1]-s[0])&7u || (s[1]-s[0])/8u>JOIN_SRCS_MAX) return -1;
-    const int n=(int)((s[1]-s[0])/8u);
-    return n && !join_read((void *)s[0],out,(size_t)n*8u)?-1:n;
+/* A listener's keyed sources from its +0x10 list (at most JOIN_SRCS_MAX; their entries' addresses in at): their count, -1
+ * unreadable. */
+static int join_srcs_of(unsigned char *ctx,unsigned char **out,uintptr_t *at) {
+    uintptr_t book=0,v[2]={0,0};int n=0;
+    if(!join_read(ctx+JOIN_SRCS_BOOK,&book,8)) return -1;
+    if(!book) return 0;
+    if(!join_read((void *)book,v,16) || v[1]<v[0] || (v[1]-v[0])%JOIN_SRCS_ENTRY || (v[1]-v[0])/JOIN_SRCS_ENTRY>4096u) return -1;
+    for(uintptr_t p=v[0];p<v[1];p+=JOIN_SRCS_ENTRY) {
+        unsigned char *x=NULL;
+        if(!join_read((void *)p,&x,8)) return -1;
+        if(x==ctx || !join_srcs_portable(x)) continue;   /* itself, or not a keyed component */
+        if(n>=(int)JOIN_SRCS_MAX) return -1;
+        if(at) at[n]=p;
+        out[n++]=x;
+    }
+    return n;
 }
 /* Every keyed listener on a keyed source of the table, once, sorted by key; dup: another listener has its key. */
 static join_srcs_ctx *join_srcs_listeners(const join_tables *t,uint32_t *count) {
@@ -4705,22 +4731,22 @@ static void join_capture_srcs(join_tables *t) {
     uint32_t n=0;join_srcs_ctx *c=join_srcs_listeners(t,&n);static unsigned char *src[JOIN_SRCS_MAX];
     join_srcs_capn=0;
     for(uint32_t i=0;c && i<n;i++) {
-        const int ns=c[i].dup?-1:join_srcs_of(c[i].ctx,src);
+        const int ns=c[i].dup?-1:join_srcs_of(c[i].ctx,src,NULL);
         for(int k=0;k<ns;k++) {
             join_srcs_rec r;memset(&r,0,sizeof(r));r.kind=c[i].kind;r.owner=c[i].owner;r.script=c[i].script;r.index=(uint32_t)k;
-            r.source=join_srcs_portable(src[k]);if(!r.source) r.flags=JOIN_SRCS_UNMAPPED;
+            r.source=join_srcs_portable(src[k]);
             if(!JOIN_PUSH(t->srcs,t->nsrcs,join_srcs_capn,r)) {free(c);return;}
         }
     }
     free(c);
 }
-static int join_srcs_has(unsigned char *const *v,int n,const unsigned char *x) {for(int k=0;k<n;k++) if(v[k]==x) return 1;return 0;}
+static int join_srcs_find(unsigned char *const *v,int n,const unsigned char *x) {for(int k=0;k<n;k++) if(v[k]==x) return k;return -1;}
 static void join_admit_srcs(const join_tables *s,const join_tables *mine) {
     join_srcs_contexts=join_srcs_added=join_srcs_removed=join_srcs_equal=join_srcs_missing=join_srcs_dup=join_srcs_unmapped=0;
     if(!join_srcs_on || !s->nsrcs) return;
     uint32_t n=0;join_srcs_ctx *c=join_srcs_listeners(mine,&n);
     if(!c) return;
-    static unsigned char *want[JOIN_SRCS_MAX],*have[JOIN_SRCS_MAX];
+    static unsigned char *want[JOIN_SRCS_MAX],*have[JOIN_SRCS_MAX];static uintptr_t have_at[JOIN_SRCS_MAX];
     for(uint32_t i=0;i<s->nsrcs;) {
         const join_srcs_rec *g=&s->srcs[i];uint32_t j=i+1u;
         while(j<s->nsrcs && s->srcs[j].kind==g->kind && s->srcs[j].owner==g->owner && s->srcs[j].script==g->script) ++j;
@@ -4729,19 +4755,23 @@ static void join_admit_srcs(const join_tables *s,const join_tables *mine) {
         const join_srcs_ctx *f=n?bsearch(&key,c,n,sizeof(*c),join_srcs_ctx_cmp):NULL;
         if(!f) {++join_srcs_missing;i=j;continue;}
         if(f->dup) {++join_srcs_dup;i=j;continue;}
-        int nw=0,bad=0;
-        for(uint32_t k=i;k<j;k++) {
+        int nw=0,lost=0;
+        for(uint32_t k=i;k<j && nw<(int)JOIN_SRCS_MAX;k++) {
             unsigned char *x=s->srcs[k].flags&JOIN_SRCS_UNMAPPED?NULL:join_object(join_runtime_of(mine,s->srcs[k].source));
-            if(!x || nw>=(int)JOIN_SRCS_MAX) {bad=1;break;}
-            want[nw++]=x;
+            if(x) want[nw++]=x; else lost=1;
         }
-        const int nh=bad?-1:join_srcs_of(f->ctx,have);
-        for(int k=0;k<nh && !bad;k++) if(!join_srcs_portable(have[k])) bad=1;
-        if(bad || nh<0) {++join_srcs_unmapped;i=j;continue;}
-        int changed=0;
-        for(int k=0;k<nh;k++) if(!join_srcs_has(want,nw,have[k])) {join_srcs_remove(f->ctx,have[k]);++join_srcs_removed;changed=1;}
-        for(int k=0;k<nw;k++) if(!join_srcs_has(have,nh,want[k])) {join_srcs_add(f->ctx,want[k]);++join_srcs_added;changed=1;}
-        if(!changed) ++join_srcs_equal;
+        const int nh=join_srcs_of(f->ctx,have,have_at);
+        int only_s=-1,only_j=-1,ns=0,nj=0;
+        for(int k=0;k<nw;k++) if(join_srcs_find(have,nh<0?0:nh,want[k])<0) {only_s=k;++ns;}
+        for(int k=0;k<nh;k++) if(join_srcs_find(want,nw,have[k])<0) {only_j=k;++nj;}
+        if(nh<0 || lost) {++join_srcs_unmapped;i=j;continue;}
+        if(!ns && !nj) {++join_srcs_equal;i=j;continue;}
+        if(ns!=1 || nj!=1) {++join_srcs_unmapped;i=j;continue;}
+        uint64_t bits[9];   /* the types of its entry for its own source, before the registrations move the list */
+        if(!join_read((void *)(have_at[only_j]+8u),bits,sizeof(bits))) {++join_srcs_unmapped;i=j;continue;}
+        unsigned char *to=want[only_s],*from=have[only_j];
+        for(uint32_t type=0;type<JOIN_SRCS_TYPES;type++) if(bits[type>>6]>>(type&63u)&1u) join_srcs_added+=(uint64_t)join_srcs_register(to,type,f->ctx);
+        join_srcs_drop(from,f->ctx);++join_srcs_removed;
         i=j;
     }
     free(c);

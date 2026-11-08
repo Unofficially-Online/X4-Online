@@ -1188,3 +1188,12 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   listener. Collecting every listener entry whole (a listener repeats once per event type in each vector of a source) overran
   JOIN_MAX_RECORDS and the capture gave up; the listeners are now collected once each through a pointer set, and SRCS keeps
   the script contexts (kinds 1 and 2; components follow the component tree).
+- SRCS on the real bookkeeping: w1z207's JOIN_LSTN dumps show AddSource's +0x38 empty (or not a vector) for every script
+  listener on both sides; the pilot 0x9327c (an AICallStackContext) sits in sector 0x26's ObjectSignalled (306) vector on the
+  session (17 listeners) and in 0x37's on the joiner (9 against the session's 8). A listener's own list of sources is +0x10:
+  {begin, end, cap} of 0x50-byte entries {source, a 0x232-type bit set}, sorted by source; 0x999120 appends a listener to a
+  source's type vector and sets the type in its entry (0x998720), 0x999ef0 drops a listener from a source (0x998a80 its entry),
+  0x998b20 unregisters it from all. SRCS now records each keyed script context's keyed sources from that list; the joiner moves
+  a context whose sources differ by one on each side: registers it on the session's source for every type of its entry for its
+  own (the refusal slot +0x11b0, the flush 0x99abe0, 0x999ae0 with create, 0x999120), then drops it from its own (0x999ef0);
+  pins for those four replace AddSource/RemoveSource. Same record format and golden.

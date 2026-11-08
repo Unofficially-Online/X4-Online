@@ -691,9 +691,10 @@ typedef struct {uint64_t source,owner,script;uint32_t type,index,kind,flags;} jo
  * flags 1: it had none) and 0 in state, the qwords +0x38 and +0x98 its embedded objects' vtables as image RVAs. Sorted by portable. */
 #define JOIN_UNDK_BYTES 0xc8u
 typedef struct {uint64_t portable,ref;uint32_t flags,reserved;unsigned char state[JOIN_UNDK_BYTES];} join_undk_rec;
-/* SRCS (v13, section 81): a keyed listener's sources (lockstep_join_world.h join_capture_srcs), the vector at +0x38 AddSource
- * 0xc9ce30 and RemoveSource 0xc9d070 keep: per listener (kind, owner portable, script hash as LSTN keys it) each source in its
- * order (index) as a portable (flags 1: it had none, source 0). Sorted by (kind, owner, script, index). */
+/* SRCS (v13, section 81): a keyed script context's sources (lockstep_join_world.h join_capture_srcs), its own list at +0x10 that
+ * the engine's registrations keep: per listener (kind, owner portable, script hash as LSTN keys it) each keyed source in its
+ * order (index) as a portable (flags 1: it had none, source 0; the saver records keyed sources only). Sorted by (kind, owner,
+ * script, index). */
 typedef struct {uint64_t owner,script,source;uint32_t kind,index,flags,reserved;} join_srcs_rec;
 /* PCSV (v13, section 75): every PlayerController's own motion solver (the controller+0x3b0 .. +0x1930f, built by 0xd47ac0 like an
  * Agent's), by the ship's portable ID, in SOLVER's record (kind PSLOT_VTABLE; lockstep_join_world.h). */
@@ -2086,9 +2087,11 @@ static const join_pin join_pin_table[]={
     {0x99a3f0,807,"5ca12a5d17041238645af6d6028c718bb3714cc53e9dd6963769d51827087c0d"},     /* U::EventSource::PostEvent */
     {0x99a870,543,"89f7a46ec199ad14ddf041c5b9ceefba36518a2e87fd3b1565c9f93efcde51b6"},     /* the removal of a source's pending events of a type */
     {0xf0b340,846,"1fee6c342524cc824017ef281edc187327421134ac685329f9547dc2ce5aa5e2"},     /* JobEngine::Init (the joiner calls it with an empty filter) */
-    /* Version 13 SRCS: a listener's source add and removal the joiner calls (with their .pdata fragments). */
-    {0xc9ce30,0x236,"9329a107859743d93c06036e838396a17844c2691f2329e95b960dc65e42b899"},    /* AddSource */
-    {0xc9d070,0x67,"2d01a0fb57e63b00d830a80ec24166004f0ac070459c68ccb7a6f171c31f6a67"}};    /* RemoveSource */
+    /* Version 13 SRCS: the listener registration the joiner calls (with their .pdata fragments). */
+    {0x999ae0,0x265,"084258cbc58aec67bc26725e55bf8b8af8e2a3294900f6dda6cda4df102e6954"},    /* a source's vector of a type */
+    {0x999120,0x11b,"c4f267c8a2081d152d2742cc150477fdcf04a2e72aa46d46fcaf13f3dcb76b4c"},    /* the append (and the listener's entry) */
+    {0x999ef0,0xba,"f772f31784fdbe542b34a8fd0c32224e73484ef9c73fe763294f56ef9e7cc5ed"},     /* a listener dropped from a source */
+    {0x99abe0,0x86c,"aa0a4bd8af4a026a868b5ac1fc810def6f9f3e547cdc0b984cc945fc4f10ec3e"}};   /* the pending listener changes */
 #define JOIN_PINS (sizeof(join_pin_table)/sizeof(*join_pin_table))
 static unsigned char *join_pristine[JOIN_PINS];
 /* The pinned ranges as they were when the join was armed (SAVE_AT, ~30 ticks before T): every module of the session has
