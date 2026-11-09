@@ -26,5 +26,14 @@ static int body_state(unsigned char *object,unsigned which,char out[1024]) {
     meta[4]=0; /* BodyID is process-local; identity was checked above. */
     n+=snprintf(out+n,1024-(size_t)n," meta=");
     n+=hex_words(out+n,1024-(size_t)n,meta,8);
+    /* Diagnostic, not in the digest (physics_bits reads pose, motion, pre, delta): the Jolt shape's type and subtype
+     * (Body+0x40 -> Shape+0x18/+0x19), as the Linux gate's body text. */
+    {unsigned char *shape=NULL,*inner=NULL,ts[2]={0xff,0xff},is[2]={0xff,0xff};
+     if(sample_read(body+0x40,&shape,8) && shape) (void)sample_read(shape+0x18,ts,2);
+     /* a decorated shape (type 2) keeps its inner shape at +0x20 (Jolt DecoratedShape::mInnerShape) */
+     if(shape && ts[0]==2 && sample_read(shape+0x20,&inner,8) && inner) (void)sample_read(inner+0x18,is,2);
+     /* a compound inner shape (type 1): its sub-shape count (Jolt CompoundShape::mSubShapes size, +0x50) */
+     uint64_t subs=UINT64_MAX;if(inner && is[0]==1) (void)sample_read(inner+0x50,&subs,8);
+     n+=snprintf(out+n,1024-(size_t)n," shape=%02x%02x/%02x%02x:%lld",ts[0],ts[1],is[0],is[1],subs==UINT64_MAX?-1ll:(long long)subs);}
     return 1;
 }

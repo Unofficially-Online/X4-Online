@@ -131,6 +131,37 @@ def apply_bundle_preset(args):
     # Both modes require serialization even when the CLI flag was omitted.
     if args.gravidar or (args.path_determinism or 0) & 1:
         args.serial_pathing = True
+    if getattr(args, 'mixed_platform', False):
+        apply_mixed_platform(args)
+
+
+def mixed_platform_options():
+    """tools/build_play_overlay.py's MIXED_PLATFORM_SETS (the Windows host's --mixed-platform) as bundle options:
+    imported, not copied, so a Windows host overlay and a Linux bundle carry the same keys and values."""
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / 'build_play_overlay.py'
+    spec = importlib.util.spec_from_file_location('build_play_overlay_mixed', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    options = {}
+    for text in module.MIXED_PLATFORM_SETS:
+        key, value = text.split('=', 1)
+        if not key.startswith('native_gate_'):
+            raise SystemExit(f'--mixed-platform: unexpected key {key}')
+        value = value.strip()
+        options[key[len('native_gate_'):]] = value.strip("'") if value.startswith("'") else int(value)
+    return options
+
+
+def apply_mixed_platform(args):
+    for name, value in mixed_platform_options().items():
+        if not hasattr(args, name):
+            raise SystemExit(f'--mixed-platform: no bundle option for native_gate_{name}')
+        current = getattr(args, name)
+        default_ticks = name == 'fp_redirect_ticks' and current == 3
+        if current not in (None, False, value) and not default_ticks:
+            raise SystemExit(f'--mixed-platform sets native_gate_{name}={value!r}, the command line {current!r}')
+        setattr(args, name, value)
 
 
 def sha(path):
@@ -258,7 +289,7 @@ def bundle(args):
     if args.battle:
         command.append('--snapshot-prebind')
     for name in ('actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state', 'flight_rng', 'flight_full',
-                 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics', 'body_diag'):
+                 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics', 'body_diag', 'params_diag'):
         if getattr(args, name):
             command.append('--' + name.replace('_', '-'))
     if args.world_rolling_slices is not None:
@@ -564,6 +595,7 @@ def bundle(args):
     manifest['snapshot_seed'] = world_seed
     manifest['preset'] = args.preset
     manifest['tick_hz'] = args.tick_hz or 60  # the clients' native_gate_tick_hz; the relay runs with the same
+    manifest['mixed_platform'] = bool(args.mixed_platform)  # MIXED_PLATFORM_SETS applied (tools/build_play_overlay.py)
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     (out / MARKER).write_text('Disposable Linux lockstep test bundle.\n', encoding='utf-8')
     print(f'bundle {out}: {len(files)} files, gate {manifest["gate_so_sha256"][:16]}, snapshot {snapshot_sha[:16]}, commit {commit[:8]}')
@@ -1294,6 +1326,9 @@ def main(argv=None):
     b.add_argument('--coverage', type=int, metavar='TICKS', help='which listed functions run in ticks 1..TICKS (diagnostic)')
     b.add_argument('--coverage-list', type=Path, help='the Linux function list for --coverage (fp_inventory.py --coverage-lists)')
     b.add_argument('--coverage-from', type=int, metavar='TICK', help='--coverage marks the list at tick TICK instead of tick 1')
+    b.add_argument('--mixed-platform', action='store_true',
+                   help="a mixed Windows/Linux session's settings, tools/build_play_overlay.py MIXED_PLATFORM_SETS (fp_redirect, its "
+                        "ticks, solver and drones), imported so both sides match")
     b.add_argument('--tick-hz', type=int, choices=(60, 40, 30, 20),
                    help="the clients' native_gate_tick_hz and the relay's --tick-hz (default 60; the session defaults and W35 use 30)")
     b.add_argument('--attention-all', action='store_true', help="every portable object's attention timer keyed by (tick, ID), its first due at the first admitted call")
@@ -1339,7 +1374,8 @@ def main(argv=None):
                       ('spline-state', "the fixture's spline state in the digest (needs --spline-diag)"),
                       ('params-init', "each fixture ship's flight parameters built once at its first sample (native_gate_params_init)"),
                       ('strict-physics', "the fixture ships' two physics bodies in the digest, Windows' STATE_ROW (needs --strict-state)"),
-                      ('body-diag', "BODY rows: the fixture ships' raw physics body state each traced tick (diagnostic)")):
+                      ('body-diag', "BODY rows: the fixture ships' raw physics body state each traced tick (diagnostic)"),
+                      ('params-diag', "PARAMS rows: every flight-parameter builder call on a fixture ship (diagnostic)")):
         b.add_argument('--' + name, action='store_true', help=why)
     b.add_argument('--actor-rng-rows', action='store_true', help='one ACTOR_RNG_ROW per keyed scope that drew (diagnostic)')
     b.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the mass traffic pass joined at the gate tick (native_gate_mass_traffic)')

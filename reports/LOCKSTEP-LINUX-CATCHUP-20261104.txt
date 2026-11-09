@@ -459,6 +459,14 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   the steps' inputs (S, the input vector, the engine factors) already differ by an ulp. Next: capture the inputs
   and outputs of the engine-parameter computation for the fixture ship on both executables, instead of reading
   the order from disassembly. Both stubs stay default off.
+  Found instead: the stacks differed. The Linux battle runs carried the census flags with native_gate_fp_redirect =
+  'redirect' (and its solver and drones), which rewrite the refresh's +0x0..+0xc from the gate's strict code
+  (overwriting what both stubs produce); W35, the session defaults, has fp_redirect off. W36g (W35 + the same
+  fp_redirect settings) moves Windows exactly onto the Linux bits: against lx38a raw is equal on 342 of 348 rows,
+  orders and fleet on all; the first raw difference moves from tick 14 to tick 28 (actors 2, 4, 6: one to four ulps in
+  the current bank's velocity and angular words, the first turning step). For a mixed session fp_redirect, its
+  solver and drones must be on, alike, on both platforms (the coordinator decides defaults or a mixed preset). Still
+  open: tick 28 (W36h/lx43 FLIGHT rows), the Xenon body0 ulp, body1.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

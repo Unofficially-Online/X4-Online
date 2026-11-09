@@ -11,7 +11,7 @@ local core={'sha256','start','boot','load_requested','report','poll','stop','fra
  'economy_load_rng','economy_load_rng_status','economy_load_rng_row',
  'navmesh_post_observe','navmesh_post_observe_status','navmesh_post_observe_row',
  'relay_host','lookahead','lookahead_status','peer_links','peer_status','wire_crypto','wire_crypto_status','platform','verify_stage',
- 'world_watch','world_capture','world_capture_nav_v2','world_capture_rolling','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status','flight_faults','flight','avoidance','agent','ship','spline','body','actor','snapshot_fixture','snapshot_actor','snapshot_enroll','snapshot_status',
+ 'world_watch','world_capture','world_capture_nav_v2','world_capture_rolling','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status','flight_faults','flight','avoidance','agent','ship','spline','body','actor','params','snapshot_fixture','snapshot_actor','snapshot_enroll','snapshot_status',
  'path_determinism','path_determinism_status','path_budget','path_budget_status','region_rng','region_rng_status','region_rng_row',
  'ai_wait_rng','ai_wait_rng_status','ai_wait_rng_row','read_cost',
  'md_resume_rng','md_resume_rng_status','md_resume_rng_row','boot_hold','boot_hold_status',

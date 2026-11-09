@@ -178,6 +178,19 @@ static void test_battle_linux(void) {
     assert(!lxb_params_once(0,tbt_ships[1].controller,slots1) && !lxb_params_once(13,tbt_ships[1].controller,slots1) && tbt_params_calls==2);
     memcpy(LX(LX_BANK_WRITE_VA),&write_saved,4);
     lxb_params_override=NULL;lxb_params_enabled=0;memset(lxb_params_done,0,sizeof(lxb_params_done));lxb_params_calls=0;
+    /* params_diag: a fixture controller's builder call recorded (its bank, the words it wrote), another passed through;
+     * gate.params gives the count and Windows' row text. */
+    {lxpt_original_override=tbt_params;lxpt_installed=1;memset(lxpt_traces,0,sizeof(lxpt_traces));lxpt_calls=lxpt_failures=0;tbt_params_calls=0;
+     const uint32_t word=0x41200000u;memcpy(tbt_ships[0].agent+LXB_BANK_STRIDE,&word,4);
+     stats.issued=33;lxpt_observe(tbt_ships[0].controller,tbt_ships[0].agent+LXB_BANK_STRIDE,0);
+     assert(tbt_params_calls==1 && lxpt_calls==1 && lxpt_traces[0].tick==33 && lxpt_traces[0].count==1 &&
+            lxpt_traces[0].records[0].destination==1 && lxpt_traces[0].records[0].values[0]==word);
+     lxpt_observe(tbt_ships[1].object,tbt_ships[1].agent,0);assert(tbt_params_calls==2 && lxpt_calls==1); /* not a controller */
+     tbt_args[1]=1;tbt_args[2]=0;assert(lua_params(NULL)==1 && tbt_result==1);
+     tbt_args[2]=1;tbt_nil=0;assert(lua_params(NULL)==1 && !tbt_nil && strstr(tbt_out,"tick=33 ") && strstr(tbt_out," destination=1 base=0 ") &&
+                                     strstr(tbt_out," values=41200000"));
+     stats.issued=34;tbt_args[2]=0;assert(lua_params(NULL)==1 && tbt_result==0); /* another tick: none yet */
+     lxpt_original_override=NULL;lxpt_installed=0;memset(lxpt_traces,0,sizeof(lxpt_traces));lxpt_calls=0;}
     /* gate.body: the ship's first owned record slot (+0x258), the record's X4 body and BodyID, its scene's PhysicsSystem
      * (+0x20), the no-lock lock interface (+0x140) and its BodyManager (+8), the Jolt body; Windows' text; an empty
      * second slot is none; a body whose user data is another record refuses. */
@@ -200,7 +213,10 @@ static void test_battle_linux(void) {
         tbt_args[1]=1;tbt_args[2]=0;tbt_nil=0;assert(lua_body(NULL)==1 && !tbt_nil && lxb_body_slot[0]==LXB_BODY_SLOT_LOW);
         assert(!strncmp(tbt_out,"flags=00000011 shape_due=4029000000000000 body_id=01000002 pose=0000030000000301",80));
         assert(strstr(tbt_out," motion=0000050000000501") && strstr(tbt_out," pre=0000010000000101") && strstr(tbt_out," delta=0000020000000201") &&
-               strstr(tbt_out," meta=00000400000004010000040200000403000000000000040500000406"));
+               strstr(tbt_out," meta=00000400000004010000040200000403000000000000040500000406") && strstr(tbt_out," shape=ffff/ffff:-1"));
+        {static unsigned char fake_shape[0x20];memset(fake_shape,0,sizeof(fake_shape));fake_shape[0x18]=1;fake_shape[0x19]=8;
+         void *fs=fake_shape;memcpy(jbody+0x40,&fs,8);tbt_nil=0;assert(lua_body(NULL)==1 && !tbt_nil && strstr(tbt_out," shape=0108/ffff:-1"));
+         memset(jbody+0x40,0,8);}
         tbt_args[2]=1;tbt_nil=0;assert(lua_body(NULL)==1 && !tbt_nil && !strcmp(tbt_out,"none"));
         void *other=xb;memcpy(jbody+0x50,&other,8);tbt_args[2]=0;tbt_nil=0;assert(lua_body(NULL)==1 && tbt_nil);
         tbt_args[1]=13;tbt_nil=0;assert(lua_body(NULL)==1 && tbt_nil);
@@ -225,6 +241,13 @@ static void test_battle_elf(void) {
     assert(!memcmp(LX(0x14383f0),refresh,sizeof(refresh)));
     int32_t to;memcpy(&to,LX(0x1438409),4);assert(0x143840du+(uint32_t)to==LXB_PARAMS_BUILD_VA);
     assert(0x14383f6u+0x2955e5eu==LX_BANK_WRITE_VA && LXW_NAV_AGENT==0x38u);
+    /* params_diag's entry: installed (jmp [rip] -> the observer, nop2; the pin still holds with the entry as found), restored. */
+    {unsigned char before[16];memcpy(before,LX(LXB_PARAMS_BUILD_VA),16);
+     assert(lxpt_install() && lxpt_installed && LX(LXB_PARAMS_BUILD_VA)[0]==0xff && LX(LXB_PARAMS_BUILD_VA)[1]==0x25 &&
+            LX(LXB_PARAMS_BUILD_VA)[14]==0x66 && LX(LXB_PARAMS_BUILD_VA)[15]==0x90 && lxb_params_pinned() &&
+            !memcmp(lxpt_page,before,16) && lxpt_page[16]==0xff && lxpt_page[17]==0x25);
+     lxpt_restore();assert(!lxpt_installed && lxpt_restored && !memcmp(LX(LXB_PARAMS_BUILD_VA),before,16) && lxb_params_pinned());
+     munmap(lxpt_page,GATE_PAGE);lxpt_page=NULL;lxpt_restored=0;}
     static const unsigned char add[]={0x48,0x83,0xc7,0x58},call=0xe8;
     assert(!memcmp(LX(0x17d7bdb),add,4) && *LX(0x17d7be4)==call);
     int32_t rel;memcpy(&rel,LX(0x17d7be5),4);assert(0x17d7be9u+(uint32_t)rel==0x1293330u); /* the read (gate_world.h's shield_recharge) */

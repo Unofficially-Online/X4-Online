@@ -49,7 +49,27 @@ typedef void (*lxb_params_fn)(void *controller,void *destination,unsigned char b
 static int lxb_params_enabled;
 static unsigned lxb_params_done[LXB_ACTORS],lxb_params_calls;
 static lxb_params_fn lxb_params_override; /* tests */
-static int lxb_params_pinned(void) {const lx_site *s=site_named("params_build");return s && site_ok(s);}
+/* native_gate_params_diag (boot option 32768, Windows lockstep_params.h): every builder call on a fixture ship's
+ * controller in an admitted frame on the UI thread, with its caller, the bank it fills (the Agent's +0/+0x1a0/+0x340),
+ * base, the thread's time and RNG word before and after, the 24 words and the four flag bytes at +0x190 it wrote. The
+ * builder's first 16 bytes (push r15 .. push rbx: six pushes and two register moves, nothing RIP-relative) become
+ * jmp [rip] -> lxpt_observe and a 2-byte nop in one aligned compare-exchange; the original runs through a trampoline
+ * (those 16 bytes, then jmp [rip] -> 0x14378d0). The params_build pin hashes the entry as original while it is ours. */
+#define LXPT_MAX 32u
+typedef struct {uint64_t source,time,rng_before,rng_after;int destination;unsigned base,view;uint32_t values[24];unsigned char flags[4];} lxpt_record;
+typedef struct {uint64_t tick;unsigned count;lxpt_record records[LXPT_MAX];} lxpt_trace;
+static lxpt_trace lxpt_traces[LXB_ACTORS];
+static unsigned char lxpt_original[16],*lxpt_page;
+static int lxpt_installed,lxpt_restored;
+static uint64_t lxpt_calls,lxpt_failures;
+static int lxb_params_pinned(void) {
+    const lx_site *s=site_named("params_build");
+    if(!s) return 0;
+    if(!lxpt_installed) return site_ok(s);
+    unsigned char copy[0xa30];
+    if(s->length!=sizeof(copy) || !gate_read_local(LX(s->va),copy,sizeof(copy))) return 0;
+    memcpy(copy,lxpt_original,16);return hash_ok(copy,s->length,s->sha256);
+}
 static int lxb_params_once(unsigned actor,unsigned char *controller,const unsigned char *slots) {
     if(actor<1 || actor>LXB_ACTORS || !controller || !slots) return 0;
     if(lxb_params_done[actor-1]) return 1;
@@ -60,6 +80,75 @@ static int lxb_params_once(unsigned actor,unsigned char *controller,const unsign
     lxb_params_fn build=lxb_params_override?lxb_params_override:(lxb_params_fn)(void*)LX(LXB_PARAMS_BUILD_VA);
     build(controller,agent+index*LXB_BANK_STRIDE,0);
     lxb_params_done[actor-1]=1;++lxb_params_calls;return 1;
+}
+static lxb_params_fn lxpt_original_override; /* tests */
+static void lxpt_observe(void *controller,void *destination,unsigned char base) {
+    lxb_params_fn original=lxpt_original_override?lxpt_original_override:(lxb_params_fn)(void*)lxpt_page;
+    unsigned actor=0;
+    if(stats.active && boot_phase==3 && GetCurrentThreadId()==ui_thread && lxb_bound==LXB_ACTORS)
+        for(unsigned i=0;i<LXB_ACTORS && !actor;i++) {
+            void *own=NULL;uint64_t id=0;
+            if(lxb_actors[i].object && gate_read_local((unsigned char*)lxb_actors[i].object+LXW_OBJ_CONTROLLER,&own,8) && own==controller &&
+               gate_read_local((unsigned char*)lxb_actors[i].object+8,&id,8) && id==lxb_actors[i].runtime) actor=i+1;
+        }
+    if(!actor) {original(controller,destination,base);return;}
+    lxpt_trace *trace=&lxpt_traces[actor-1];
+    if(trace->tick!=stats.issued) {trace->tick=stats.issued;trace->count=0;}
+    if(trace->count>=LXPT_MAX) {++lxpt_failures;original(controller,destination,base);return;}
+    lxpt_record *r=&trace->records[trace->count++];memset(r,0,sizeof(*r));
+    const unsigned char *caller=__builtin_return_address(0);
+    r->source=(uint64_t)(uintptr_t)(caller-image)+LX_IMAGE_BASE;r->base=base;r->destination=-1;
+    unsigned char *agent=NULL;
+    if(gate_read_local((unsigned char*)controller+LXW_NAV_AGENT,&agent,8) && agent)
+        for(int k=0;k<3;k++) if((unsigned char*)destination==agent+(size_t)k*LXB_BANK_STRIDE) r->destination=k;
+    unsigned char *tls=gate_tls_self();uint64_t *rng=tls?gate_tls_rng(tls):NULL;const double *now=tls?gate_tls_time(tls):NULL;
+    if(rng) r->rng_before=*rng; else ++lxpt_failures;
+    if(now) memcpy(&r->time,now,8);
+    original(controller,destination,base);
+    r->rng_after=rng?*rng:0;
+    if(!gate_read_local(destination,r->values,sizeof(r->values)) || !gate_read_local((unsigned char*)destination+0x190,r->flags,4)) ++lxpt_failures;
+    ++lxpt_calls;
+}
+static int lxpt_swap(const unsigned char from[16],const unsigned char to[16]) {
+    unsigned __int128 expected,desired;memcpy(&expected,from,16);memcpy(&desired,to,16);
+    return gate_code_swap128(LX(LXB_PARAMS_BUILD_VA),expected,desired);
+}
+static void lxpt_entry(unsigned char out[16]) {
+    const void *to=(const void*)lxpt_observe;out[0]=0xff;out[1]=0x25;memset(out+2,0,4);memcpy(out+6,&to,8);out[14]=0x66;out[15]=0x90;
+}
+static int lxpt_install(void) {
+    static const unsigned char prologue[16]={0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x41,0x89,0xd4,0x55,0x48,0x89,0xfd,0x53};
+    if(lxpt_installed) return 1;
+    if(!lxb_params_pinned() || !gate_read_local(LX(LXB_PARAMS_BUILD_VA),lxpt_original,16) || memcmp(lxpt_original,prologue,16)) return 0;
+    if(!lxpt_page) lxpt_page=gate_near_page(LX(LXB_PARAMS_BUILD_VA));
+    if(!lxpt_page || mprotect(lxpt_page,GATE_PAGE,PROT_READ|PROT_WRITE)) return 0;
+    memset(lxpt_page,0xcc,GATE_PAGE);memcpy(lxpt_page,lxpt_original,16);
+    {const void *back=LX(LXB_PARAMS_BUILD_VA+16u);lxpt_page[16]=0xff;lxpt_page[17]=0x25;memset(lxpt_page+18,0,4);memcpy(lxpt_page+22,&back,8);}
+    if(mprotect(lxpt_page,GATE_PAGE,PROT_READ|PROT_EXEC)) return 0;
+    unsigned char to[16];lxpt_entry(to);
+    if(!lxpt_swap(lxpt_original,to)) return 0;
+    lxpt_installed=1;lxpt_restored=0;return 1;
+}
+static void lxpt_restore(void) {
+    if(!lxpt_installed) return;
+    unsigned char ours[16];lxpt_entry(ours);
+    if(lxpt_swap(ours,lxpt_original)) {lxpt_installed=0;lxpt_restored=1;}
+}
+/* gate.params(actor, 0) the calls this tick, gate.params(actor, k) the k-th: Windows' PARAMS row text. */
+static int lua_params(lua_State *L) {
+    double actor=p_lua_tonumber(L,1),ordinal=p_lua_tonumber(L,2);
+    if((!lxpt_installed && !lxpt_restored) || GetCurrentThreadId()!=ui_thread || !isfinite(actor) || actor<1 || actor>LXB_ACTORS ||
+       floor(actor)!=actor || !isfinite(ordinal) || ordinal<0 || ordinal>LXPT_MAX || floor(ordinal)!=ordinal) {p_lua_pushnil(L);return 1;}
+    const lxpt_trace *trace=&lxpt_traces[(unsigned)actor-1];unsigned count=trace->tick==stats.issued?trace->count:0;
+    if(ordinal==0) {p_lua_pushnumber(L,count);return 1;}
+    if(ordinal>count) {p_lua_pushnil(L);return 1;}
+    const lxpt_record *r=&trace->records[(unsigned)ordinal-1];char out[768];
+    int n=snprintf(out,sizeof(out),"tick=%llu source=%llx destination=%d base=%u time=%016llx view=%u rng_before=%016llx rng_after=%016llx flags=%02x%02x%02x%02x values=",
+        (unsigned long long)trace->tick,(unsigned long long)r->source,r->destination,r->base,(unsigned long long)r->time,r->view,
+        (unsigned long long)r->rng_before,(unsigned long long)r->rng_after,r->flags[0],r->flags[1],r->flags[2],r->flags[3]);
+    for(unsigned i=0;i<24 && n>0 && (size_t)n<sizeof(out);i++) n+=snprintf(out+n,sizeof(out)-(size_t)n,"%08x",r->values[i]);
+    if(n<=0 || (size_t)n>=sizeof(out)) {p_lua_pushnil(L);return 1;}
+    p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
 static const double *lxb_time_override;     /* tests: the UI thread's game time */
 static uint64_t lxb_shield_refresh_calls,lxb_shield_refresh_failures;
@@ -326,6 +415,15 @@ static int lxb_body_state(unsigned actor,unsigned char *object,unsigned which,ch
     n+=snprintf(out+n,cap-(size_t)n," delta=");n+=lxb_hex_words(out+n,cap-(size_t)n,delta,8);
     meta[4]=0; /* the BodyID is process-local; its identity was checked above (Windows does the same) */
     n+=snprintf(out+n,cap-(size_t)n," meta=");n+=lxb_hex_words(out+n,cap-(size_t)n,meta,8);
+    /* Diagnostic, not in the digest (physics_bits reads pose, motion, pre, delta): the body's Jolt shape type and
+     * subtype (Body+0x40 -> Shape+0x18/+0x19, Jolt's own layout). */
+    {unsigned char *shape=NULL,*inner=NULL,ts[2]={0xff,0xff},is[2]={0xff,0xff};
+     if(gate_read_local(body+0x40,&shape,8) && shape) (void)gate_read_local(shape+0x18,ts,2);
+     /* a decorated shape (type 2) keeps its inner shape at +0x20 (Jolt DecoratedShape::mInnerShape) */
+     if(shape && ts[0]==2 && gate_read_local(shape+0x20,&inner,8) && inner) (void)gate_read_local(inner+0x18,is,2);
+     /* a compound inner shape (type 1): its sub-shape count (Jolt CompoundShape::mSubShapes size, +0x50) */
+     uint64_t subs=UINT64_MAX;if(inner && is[0]==1) (void)gate_read_local(inner+0x50,&subs,8);
+     n+=snprintf(out+n,cap-(size_t)n," shape=%02x%02x/%02x%02x:%lld",ts[0],ts[1],is[0],is[1],subs==UINT64_MAX?-1ll:(long long)subs);}
     return n>0 && (size_t)n<cap;
 }
 static int lua_body(lua_State *L) {

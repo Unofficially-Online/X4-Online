@@ -588,13 +588,15 @@ def main():
         allowed.add('travel_determinism')
         # The battle fixture on Linux (linux/gate_battle.h, gate_flight.h): the snapshot's twelve, their state row, steering.
         allowed.update(('snapshot_prebind', 'actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state',
-                        'flight_diag', 'flight_rng', 'flight_full', 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics', 'body_diag'))
+                        'flight_diag', 'flight_rng', 'flight_full', 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics', 'body_diag', 'params_diag'))
         allowed.add('path_transform_observe')
         allowed.update(('world_motion_watch', 'world_motion_window', 'economy_watch', 'economy_watch_window', 'navmesh_post_observe'))
         allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile', 'status_stride'))
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
             p.error('not ported to the Linux gate: ' + ', '.join('--' + k.replace('_', '-') for k in unported))
+        if args.params_diag and args.fp_redirect:
+            p.error('--params-diag and --fp-redirect both hook the Linux flight-parameter refresh entry (0x14378c0): use one')
     if not args.snapshot and not args.fixedtick_dll:
         p.error('ordinary gate requires --fixedtick-dll')
     agent = args.agent_diag or args.agent_rng or args.agent_full or args.spline_diag

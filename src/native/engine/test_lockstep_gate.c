@@ -1834,6 +1834,15 @@ int main(int argc,char **argv) {
         for(unsigned i=0;i<8;i++) n+=snprintf(expected+n,sizeof(expected)-(size_t)n,"%08x",((uint32_t*)(record+0x60))[i]);
         n+=snprintf(expected+n,sizeof(expected)-(size_t)n," meta=");
         for(unsigned i=0;i<8;i++) n+=snprintf(expected+n,sizeof(expected)-(size_t)n,"%08x",i==4?0u:((uint32_t*)(body+0x60))[i]);
+        int at=n;n+=snprintf(expected+n,sizeof(expected)-(size_t)n," shape=ffff/ffff:-1");   /* no shape at Body+0x40 */
+        assert(body_state(health_object,0,body_text) && !strcmp(body_text,expected));
+        /* X4's decorated user shape (type 2, subtype 0x11) over a compound (type 1) of 31 sub-shapes: Linux's Argon body1 */
+        unsigned char shape[0x28]={0},inner[0x58]={0};shape[0x18]=0x02;shape[0x19]=0x11;*(void**)(shape+0x20)=inner;
+        inner[0x18]=0x01;inner[0x19]=0x08;*(uint64_t*)(inner+0x50)=31;*(void**)(body+0x40)=shape;
+        snprintf(expected+at,sizeof(expected)-(size_t)at," shape=0211/0108:31");
+        assert(body_state(health_object,0,body_text) && !strcmp(body_text,expected));
+        shape[0x18]=0x05;                                                  /* not decorated: no inner shape */
+        snprintf(expected+at,sizeof(expected)-(size_t)at," shape=0511/ffff:-1");
         assert(body_state(health_object,0,body_text) && !strcmp(body_text,expected));
         memset(body,0,0x48);memset(motion,0,sizeof(motion));memset(record+0x38,0,0x48);memset(body+0x60,0,0x20);
     }
