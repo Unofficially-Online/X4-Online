@@ -23,7 +23,20 @@
  * weapons, not ported. Here only this call is keyed, in the hook above: in an admitted frame on the MoveWorker, a
  * controller whose ship (+0x20) has a portable key runs with the thread's word seeded from (tick, key, class, the
  * ship's ordinal of this call in the tick, the time's bits) and gets its word back after it. Its own domain, so its
- * draws differ from Windows' umbrella even where both key the same call; an unmapped ship keeps the natural word. */
+ * draws differ from Windows' umbrella even where both key the same call; an unmapped ship keeps the natural word.
+ *
+ * The battle fixture's upkeep (native_gate_nav_diag, _nav_rng, _nav_initial_refresh; boot options 65536, 131072,
+ * 262144, as on Windows): Windows' nav module (lockstep_nav.h) for the twelve actors. Windows wraps this function for
+ * every controller and takes a fixture actor's call (the controller at the bound ship's +0x200, the ship's runtime ID
+ * unchanged) on its own path whatever scope encloses it: a call ordinal per actor and tick; _initial_refresh sets the
+ * parameter deadline (+0xd0) to time - dt at the actor's first call; _nav_rng runs the call with the thread's word
+ * seeded from actor_seed("NAV_UPDT", tick, actor, 0, ordinal, 0) and gives the word back after; _nav_diag records
+ * only. Every other controller keeps the path above. Both are Windows defaults; without them the Linux fixture's
+ * refresh drew its 1-2 s interval from the enclosing ship stream ("SHIP_MOV") while Windows drew it from "NAV_UPDT":
+ * lx58a against W36p, actor 2's flight parameters were rebuilt at ticks 40 and 71 on Linux, 42 and 98 on Windows,
+ * and its speed limit parted at tick 99. The NAV row (gate.nav) is Windows' text; stop 41 for a refused install, 42
+ * for a failure, as on Windows. The hook is the cadence's (the two vtable slots); whichever of the two installs first
+ * swaps them, the last to restore swaps them back. */
 #define NAV_CADENCE_OWN_PLATFORM
 #define NAV_F_OWNER 0x20
 #define NAV_F_PROBE 0x40
@@ -75,13 +88,54 @@ static void lxk_move(void *self,double time) {
     native(self,time); /* X4's exceptions end the process: nothing to unwind */
     *rng=saved;
 }
+/* The battle fixture's path (Windows nav_move/nav_execute). */
+#define LXN_INSTALL_STOP 41u
+#define LXN_STOP_REASON 42u
+#define LXN_ACTORS 12u
+#define LXN_DOMAIN 0x4e41565f55504454ULL /* "NAV_UPDT" */
+typedef struct {uint64_t tick,calls,time,deadline_before,deadline_after,rng_before,rng_after;unsigned initialized;} lxn_sample;
+static lxn_sample lxn_samples[LXN_ACTORS];
+static int lxn_installed,lxn_restored,lxn_seeded,lxn_initial_refresh;
+static unsigned char lxn_initialized[LXN_ACTORS];
+static uint64_t lxn_calls,lxn_inits;
+static volatile int64_t lxn_failures;
+static uint64_t *lxn_rng_override; /* tests */
+static unsigned lxb_fixture_controller(const void *controller); /* gate_battle.h: the actor 1..12, else 0 */
+static void lxn_execute(lxv_move_fn native,void *self,double time,unsigned actor) {
+    lxn_sample *s=&lxn_samples[actor-1];
+    if(!isfinite(time)) {__atomic_add_fetch(&lxn_failures,1,__ATOMIC_SEQ_CST);native(self,time);return;}
+    if(s->tick!=stats.issued) {s->tick=stats.issued;s->calls=0;}
+    ++s->calls;++lxn_calls;memcpy(&s->time,&time,8);
+    uint64_t *rng=lxn_rng_override?lxn_rng_override:gate_tls_rng(gate_tls_self());
+    if(!rng) __atomic_add_fetch(&lxn_failures,1,__ATOMIC_SEQ_CST);
+    const uint64_t saved=rng?*rng:0;
+    memcpy(&s->deadline_before,(unsigned char*)self+0xd0,8);
+    s->initialized=0;
+    if(lxn_initial_refresh && !lxn_initialized[actor-1]) {
+        const double due=time-gate_tick_dt();memcpy((unsigned char*)self+0xd0,&due,8);
+        lxn_initialized[actor-1]=1;++lxn_inits;s->initialized=1;
+    }
+    const int keyed=lxn_seeded && rng;
+    if(keyed) *rng=lockstep_seed(LXN_DOMAIN,stats.issued,actor,0,s->calls,0); /* actor_seed: a fixture's identity is its number */
+    s->rng_before=rng?*rng:0;
+    native(self,time); /* X4's exceptions end the process: nothing to unwind */
+    s->rng_after=rng?*rng:0;
+    if(keyed) *rng=saved;
+    memcpy(&s->deadline_after,(unsigned char*)self+0xd0,8);
+}
+static lxv_move_fn lxv_native_override; /* tests */
 static __attribute__((noinline)) void lxv_move(void *self,double time) {
-    if(InterlockedCompareExchange(&nav_cadence_active,0,0) && stats.active && boot_phase==3 && GetCurrentThreadId()==ui_thread) {
+    lxv_move_fn native=lxv_native_override?lxv_native_override:(lxv_move_fn)(void*)LX(LX_NAV_MOVE_VA);
+    const int gated=stats.active && boot_phase==3 && GetCurrentThreadId()==ui_thread;
+    const int cadence=gated && InterlockedCompareExchange(&nav_cadence_active,0,0);
+    if(cadence) {
         if(nav_probe_armed) nav_probe_apply(self,time);
         if(nav_params_armed) nav_params_apply(self,time);
-        if(lxk_armed) {lxk_move(self,time);return;}
     }
-    ((lxv_move_fn)(void*)LX(LX_NAV_MOVE_VA))(self,time);
+    const unsigned actor=gated && lxn_installed?lxb_fixture_controller(self):0;
+    if(actor) {lxn_execute(native,self,time,actor);return;}
+    if(cadence && lxk_armed) {lxk_move(self,time);return;}
+    native(self,time);
 }
 /* With the cadence hook, before the first admitted frame; a rerun is accepted. */
 static int lxk_arm(void) {
@@ -102,10 +156,59 @@ static int lxv_slots_swap(void *expected,void *value) {
     int b=gate_data_swap64(LX(LX_NAV_MOVE_SLOT_B_VA),(uint64_t)(uintptr_t)expected,(uint64_t)(uintptr_t)value);
     return a && b;
 }
+/* The slots' holders: 1 the cadence, 2 the fixture path. The first to take them swaps them in; the last to drop them
+ * swaps them back. NULL when held, else the stage. */
+#define LXV_CADENCE 1u
+#define LXV_FIXTURE 2u
+static unsigned lxv_slots_holders;
+static int lxv_slots_ours(void) {
+    return rd64(LX(LX_NAV_MOVE_SLOT_A_VA))==(uint64_t)(uintptr_t)lxv_move && rd64(LX(LX_NAV_MOVE_SLOT_B_VA))==(uint64_t)(uintptr_t)lxv_move;
+}
+static const char *lxv_slots_take(unsigned holder) {
+    if(lxv_slots_installed) {if(!lxv_slots_ours()) return "slots";lxv_slots_holders|=holder;return NULL;}
+    if(rd64(LX(LX_NAV_MOVE_SLOT_A_VA))!=(uint64_t)(uintptr_t)LX(LX_NAV_MOVE_VA) || rd64(LX(LX_NAV_MOVE_SLOT_B_VA))!=(uint64_t)(uintptr_t)LX(LX_NAV_MOVE_VA)) return "slots";
+    if(!lxv_slots_swap(LX(LX_NAV_MOVE_VA),(void*)lxv_move)) {lxv_slots_swap((void*)lxv_move,LX(LX_NAV_MOVE_VA));return "slot_swap";}
+    lxv_slots_installed=1;lxv_slots_holders=holder;return NULL;
+}
+/* 1 when the slots are back or still held by the other holder. */
+static int lxv_slots_drop(unsigned holder) {
+    lxv_slots_holders&=~holder;
+    if(!lxv_slots_installed || lxv_slots_holders) return 1;
+    if(lxv_slots_swap((void*)lxv_move,LX(LX_NAV_MOVE_VA))) {lxv_slots_installed=0;return 1;}
+    lxv_slots_holders|=holder;return 0;
+}
 static int nav_cadence_owned(void) {
     if(!nav_cadence_installed) return 1;
-    if(rd64(LX(LX_NAV_MOVE_SLOT_A_VA))!=(uint64_t)(uintptr_t)lxv_move || rd64(LX(LX_NAV_MOVE_SLOT_B_VA))!=(uint64_t)(uintptr_t)lxv_move) return 0;
+    if(!lxv_slots_ours()) return 0;
     for(unsigned i=0;i<4;i++) if(!lxv_site_is(&lxv_sites[i],nav_cadence_patched?lxv_sites[i].far:lxv_sites[i].original)) return 0;
+    return 1;
+}
+/* The fixture path: at the boot, as Windows' nav_install (needs the hook's head as pinned). */
+static int lxn_install(int seed,int initial_refresh) {
+    const lx_site *head=site_named("nav_move_head");
+    if(lxn_installed) return 0;
+    if(!head || head->va!=LX_NAV_MOVE_VA || !hash_ok(LX(head->va),head->length,head->sha256) || lxv_slots_take(LXV_FIXTURE)) return 0;
+    memset(lxn_samples,0,sizeof(lxn_samples));memset(lxn_initialized,0,sizeof(lxn_initialized));
+    lxn_calls=lxn_inits=0;lxn_failures=0;lxn_seeded=seed;lxn_initial_refresh=initial_refresh;lxn_installed=1;lxn_restored=0;return 1;
+}
+static int lxn_owned(void) {return !lxn_installed || lxv_slots_ours();}
+static void lxn_restore(void) {
+    if(!lxn_installed) return;
+    if(lxv_slots_drop(LXV_FIXTURE)) {lxn_installed=0;lxn_restored=1;}
+}
+/* gate.nav(actor): Windows' NAV row. */
+static int lxn_text(unsigned actor,char *out,size_t size) {
+    if(!lxn_installed || actor<1 || actor>LXN_ACTORS) return 0;
+    const lxn_sample *s=&lxn_samples[actor-1];
+    const int n=snprintf(out,size,"tick=%llu calls=%llu time=%016llx deadline_before=%016llx deadline_after=%016llx initialized=%u rng_before=%016llx rng_after=%016llx",
+        (unsigned long long)s->tick,(unsigned long long)s->calls,(unsigned long long)s->time,(unsigned long long)s->deadline_before,
+        (unsigned long long)s->deadline_after,s->initialized,(unsigned long long)s->rng_before,(unsigned long long)s->rng_after);
+    return n>0 && (size_t)n<size?n:0;
+}
+static int lua_nav(lua_State *L) {
+    const double actor=p_lua_tonumber(L,1);char out[512];
+    const int n=accept_ui() && isfinite(actor) && actor>=1 && actor<=LXN_ACTORS && floor(actor)==actor?lxn_text((unsigned)actor,out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
     return 1;
 }
 /* Before the first admitted frame (idempotent on a loading-UI reload). */
@@ -113,14 +216,12 @@ static int nav_cadence_arm(int mode) {
     if(nav_cadence_installed) return stats.active && mode==nav_cadence_mode;
     if((mode!=NAV_CADENCE_FAR && mode!=NAV_CADENCE_OBSERVE) || !stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) {nav_cadence_stage="phase";return 0;}
     for(unsigned i=0;i<4;i++) if(!lxv_site_is(&lxv_sites[i],lxv_sites[i].original)) {nav_cadence_stage="site";return 0;}
-    if(rd64(LX(LX_NAV_MOVE_SLOT_A_VA))!=(uint64_t)(uintptr_t)LX(LX_NAV_MOVE_VA) || rd64(LX(LX_NAV_MOVE_SLOT_B_VA))!=(uint64_t)(uintptr_t)LX(LX_NAV_MOVE_VA)) {nav_cadence_stage="slots";return 0;}
-    if(!lxv_slots_swap(LX(LX_NAV_MOVE_VA),(void*)lxv_move)) {lxv_slots_swap((void*)lxv_move,LX(LX_NAV_MOVE_VA));nav_cadence_stage="slot_swap";return 0;}
-    lxv_slots_installed=1;
+    {const char *why=lxv_slots_take(LXV_CADENCE);if(why) {nav_cadence_stage=why;return 0;}}
     if(mode==NAV_CADENCE_FAR) {
         nav_cadence_patched=1;
         for(unsigned i=0;i<4;i++) if(!lxv_swap(&lxv_sites[i],lxv_sites[i].original,lxv_sites[i].far)) {
             for(unsigned j=0;j<i;j++) lxv_swap(&lxv_sites[j],lxv_sites[j].far,lxv_sites[j].original);
-            nav_cadence_patched=0;lxv_slots_swap((void*)lxv_move,LX(LX_NAV_MOVE_VA));lxv_slots_installed=0;nav_cadence_stage="cas";return 0;
+            nav_cadence_patched=0;lxv_slots_drop(LXV_CADENCE);nav_cadence_stage="cas";return 0;
         }
     }
     nav_cadence_mode=mode;nav_cadence_installed=1;nav_cadence_stage="armed";InterlockedExchange(&nav_cadence_active,1);return 1;
@@ -134,7 +235,7 @@ static void nav_cadence_restore(void) {
         for(unsigned i=0;i<4;i++) if(!lxv_site_is(&lxv_sites[i],lxv_sites[i].original) && !lxv_swap(&lxv_sites[i],lxv_sites[i].far,lxv_sites[i].original)) all=0;
         if(all) nav_cadence_patched=0;
     }
-    if(lxv_slots_installed) {if(lxv_slots_swap((void*)lxv_move,LX(LX_NAV_MOVE_VA))) lxv_slots_installed=0;else all=0;}
+    if(!lxv_slots_drop(LXV_CADENCE)) all=0;
     if(all) {nav_cadence_restored=1;nav_cadence_installed=0;}
 }
 static int nav_cadence_status(char *out,size_t capacity) {

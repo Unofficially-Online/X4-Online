@@ -242,6 +242,12 @@ static void nav_cadence_restore(void);
 static int nav_cadence_owned(void);
 static int nav_cadence_installed;
 static volatile int64_t nav_cadence_failures;
+static int lxn_install(int seed,int initial_refresh); /* the battle fixture's upkeep (Windows' nav module) */
+static void lxn_restore(void);
+static int lxn_owned(void);
+static int lxn_installed,lxn_restored;
+static uint64_t lxn_calls,lxn_inits;
+static volatile int64_t lxn_failures;
 /* Created identities (gate_world_created.h, included below). */
 static void created_stop(void);
 static void created_restore(void);
@@ -506,7 +512,7 @@ static int gate_sites_owned(void) {
     unsigned __int128 window;double speed;
     memcpy(&window,LX(LX_CALL_WINDOW),16);memcpy(&speed,LX(LX_SPEED_VA),8);
     return window==call_patched && dt_state()==DT_FIXED && !*(volatile unsigned char*)LX(LX_MOVIE_FLAG_VA) && speed==1.0 &&
-           world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && lxt_inline_owned() && path_transform_observer_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned();
+           world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && lxt_inline_owned() && path_transform_observer_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned() && lxn_owned();
 }
 static void finish(unsigned reason) {
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
@@ -585,6 +591,8 @@ static void finish(unsigned reason) {
     if(gravidar_installed) stats.restored=0;
     nav_cadence_restore();
     if(nav_cadence_installed) stats.restored=0;
+    lxn_restore();
+    if(lxn_installed) stats.restored=0;
     gwide_restore();
     if(gwide_armed && !gwide_restored) stats.restored=0;
     spawn_rng_restore();
@@ -718,6 +726,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(attention_installed && attention_failures) {finish(54);gate_original_once(frame,loading);return;}
     if(created_armed && created_failures) {finish(96);gate_original_once(frame,loading);return;}
     if(nav_cadence_installed && nav_cadence_failures) {finish(95);gate_original_once(frame,loading);return;}
+    if(lxn_installed && lxn_failures) {finish(42);gate_original_once(frame,loading);return;} /* LXN_STOP_REASON, Windows: 42 */
     if(gwide_active && !gwide_check()) {finish(150);gate_original_once(frame,loading);return;}
     if(spawn_rng_armed && spawn_rng_failures) {finish(110);gate_original_once(frame,loading);return;}
     if(boot_mode && boot_phase<3) {
@@ -1018,6 +1027,12 @@ static int lua_read_cost(lua_State *L) {
 #define LX_BOOT_PARAMS_INIT 4096ull /* the battle fixture's flight parameters built once at the first sample (gate_battle.h) */
 #define LX_BOOT_PARAMS_DIAG 32768ull /* the builder's calls on fixture controllers traced (gate_battle.h, Windows params_diag) */
 #define LX_BOOT_VELOCITY_DIAG 524288ull /* the fixture controllers' SetVelocity calls traced (gate_velocity.h, Windows velocity_diag) */
+/* The battle fixture's navigation upkeep (gate_nav.h, Windows' nav module): 65536 nav_diag, 131072 nav_rng (keyed),
+ * 262144 nav_initial_refresh (Windows: options&458752). */
+#define LX_BOOT_NAV_DIAG 65536ull
+#define LX_BOOT_NAV_RNG 131072ull
+#define LX_BOOT_NAV_INITIAL 262144ull
+#define LX_BOOT_NAV (LX_BOOT_NAV_DIAG|LX_BOOT_NAV_RNG|LX_BOOT_NAV_INITIAL)
 #define LX_BOOT_SPLINE_JOIN 34359738368ull
 #define LX_BOOT_SPLINE_DIAG 8589934592ull     /* the spline hook's battle-fixture path and spline_state (gate_spline_join.h) */
 #define LX_BOOT_SPLINE_REFRESH 17179869184ull /* its fixture refresh (needs diag and agent_full) */
@@ -1028,7 +1043,7 @@ static int lua_read_cost(lua_State *L) {
 /* The battle fixture's steering (gate_flight.h): 4 flight_diag, 8 flight_rng, 16 flight_full install it (Windows: options&28);
  * 2^31 avoidance_refresh and 2^32 steering_init are its settings. */
 #define LX_BOOT_FLIGHT (4ull|8ull|16ull|2147483648ull|4294967296ull)
-#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_PARAMS_INIT|LX_BOOT_PARAMS_DIAG|LX_BOOT_VELOCITY_DIAG|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
+#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_PARAMS_INIT|LX_BOOT_PARAMS_DIAG|LX_BOOT_VELOCITY_DIAG|LX_BOOT_NAV|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
 static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *hash,double options) {
     if(!isfinite(options) || options<0 || options>9007199254740991.0 || floor(options)!=options) return 10;
     if((uint64_t)options & ~LX_BOOT_OPTIONS) return LX_STOP_UNPORTED_OPTION;
@@ -1056,6 +1071,7 @@ static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned time
         if(!result && (boot_options&LX_BOOT_PARAMS_INIT)) {if(!lxb_params_pinned()) {finish(35);result=35;} else lxb_params_enabled=1;} /* Windows: 35, the pin */
         if(!result && (boot_options&LX_BOOT_PARAMS_DIAG) && !lxpt_install()) {finish(39);result=39;} /* Windows: 39 */
         if(!result && (boot_options&LX_BOOT_VELOCITY_DIAG) && !lxvd_install()) {finish(43);result=43;} /* Windows: 43 */
+        if(!result && (boot_options&LX_BOOT_NAV) && !lxn_install((boot_options&LX_BOOT_NAV_RNG)!=0,(boot_options&LX_BOOT_NAV_INITIAL)!=0)) {finish(41);result=41;} /* Windows: 41 */
         if(!result && (boot_options&28) && !lxf_install((boot_options&8)!=0,(boot_options&16)!=0,(boot_options&2147483648ull)!=0,
                                                      (boot_options&4294967296ull)!=0)) {finish(28);result=28;}
     }
@@ -1095,6 +1111,7 @@ static int lua_poll(lua_State *L) {
     NUMBER("params_calls",lxb_params_calls);
     NUMBER("params_trace_calls",lxpt_calls);NUMBER("params_restored",lxpt_restored);NUMBER("params_trace_failures",lxpt_failures);
     NUMBER("velocity_calls",lxvd_calls);NUMBER("velocity_restored",lxvd_restored);NUMBER("velocity_failures",lxvd_failures);
+    NUMBER("nav_calls",lxn_calls);NUMBER("nav_restored",lxn_restored);NUMBER("nav_failures",lxn_failures);NUMBER("nav_inits",lxn_inits);
     /* The probe's stop lines for the battle fixture (Windows' poll fields, from the Linux modules). */
     NUMBER("snapshot_bound",lxb_bound);NUMBER("snapshot_prepared",lxb_prepared);NUMBER("snapshot_enrolled",lxb_enrolled);
     NUMBER("snapshot_failures",lxb_failures);
@@ -1164,7 +1181,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(travel_snapshot);METHOD(travel_snapshot_status);
     METHOD(travel_determinism);METHOD(travel_determinism_status);
     METHOD(runtime_ids);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_callers);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);
-    METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(attention_all);METHOD(attention_all_status);METHOD(path_transform_observe);METHOD(path_transform_observe_status);METHOD(path_transform_observe_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
+    METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(nav);METHOD(attention_all);METHOD(attention_all_status);METHOD(path_transform_observe);METHOD(path_transform_observe_status);METHOD(path_transform_observe_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(read_cost);METHOD(fork_save);METHOD(fork_save_status);METHOD(fp_redirect_drones);METHOD(fp_attack);METHOD(fp_attack_watch);METHOD(fp_attack_status);METHOD(fp_attack_row);
 #undef METHOD
     return 1;

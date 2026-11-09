@@ -561,6 +561,27 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   only, opt-in) runs the two runs that hold the divisions in stubs with mulss by 50.0f (the Windows order). Next:
   lx52 (without it) and lx53 (with it) against W36l and W36g once the laptop answers; with lx53 equal, the key goes to
   the mixed-platform preset.
+  lx52a against W36l: every joint equal through tick 14 (value 0 there), then from tick 15 every gun's gimbal target
+  apart (3c4e3000 against 3c4e2fad, ...), so the joint step was not the first cause (the fixture never takes the
+  divided path apart). The wrapped target is: t2 = fmod((fmod(a, 2pi) - value) + pi, 2pi), then (t2 + value) - pi on
+  Windows (0xe1f840) but (t2 - pi) + value on Linux (0x15661fd); t2 is near pi, so Windows rounds at pi's ulp.
+  native_gate_ik_wrap (0b257c34, Linux only) rewrites the tail in place in the Windows order (stop 209): lx54a and
+  lx55a equal to Windows through tick 30 (the tick-28 bullet hit included), lx56a through tick 90. What stays apart
+  there is body0's inertia rotation of the Xenon fighters (BODY field 17), 1 ulp from Jolt's Jacobi solver (Windows
+  0x141404f40, Linux 0x1a83330, a different division count); harmless so far (the hits at 93..96 bit-identical).
+  The next split, tick 99 (actor 2's speed limit, its flight parameters +0x008 271.723 against 59.375): W36p (FLIGHT
+  rows 36..75) against lx58a, actor 2's parameters were rebuilt at ticks 40 and 71 on Linux and at 42 and 98 on
+  Windows; the rebuilt words that depend on the time (+0xec, +0x188) follow. The rebuild deadline is the navigation
+  controller's +0xd0, set at each refresh to now + 1 + FloatState(word, 1) under native_gate_nav_cadence 'far'. On
+  Windows native_gate_nav_rng and _nav_initial_refresh (defaults) take a fixture actor's upkeep through the nav module,
+  whose word is actor_seed("NAV_UPDT", tick, actor, 0, call ordinal, 0); the Linux gate had no such module, so its
+  fixture drew from the enclosing ship stream ("SHIP_MOV"). Ported (linux/gate_nav.h: boot options 65536, 131072,
+  262144 as on Windows, stop 41 for the install and 42 for a failure as on Windows, gate.nav NAV rows in Windows'
+  text; the vtable slots shared with the cadence; linux_gate_live --nav-diag --nav-rng --nav-initial-refresh). lx59a
+  (lx58 + --nav-rng --nav-initial-refresh, 120 ticks, 1440 fixture calls, 12 initial refreshes): every flight
+  parameter word equal to W36p (36..75) and W36o (96..99), where lx58a had 468 rows apart; state rows equal to W36m
+  through 120 apart from the Xenon body0 ulp. Left in the flight rows: the steering input's +0x078 (an angle near 1)
+  3..10 ulps apart on 8 rows (actors 4, 10, 11), the outputs equal; it was in lx58a too.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

@@ -314,7 +314,8 @@ class MixedPlatformTests(unittest.TestCase):
             players = dict(calls)['players']
             sets = [players[i + 1] for i, a in enumerate(players) if a == '--set']
             for key in ("native_gate_fp_redirect='redirect'", "native_gate_fp_redirect_solver='redirect'",
-                        "native_gate_fp_redirect_drones='redirect'", 'native_gate_fp_redirect_ticks=5'):
+                        "native_gate_fp_redirect_drones='redirect'", 'native_gate_fp_redirect_ticks=5', 'native_gate_nav_rng=true',
+                        'native_gate_nav_initial_refresh=true'):
                 self.assertIn(key, sets)
             self.assertNotIn('native_gate_fp_redirect_ticks=3', sets)   # the builder's own value wins
             recipe = build_play_overlay.read_recipe(Path(d) / 'ov')

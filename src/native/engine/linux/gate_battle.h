@@ -82,15 +82,20 @@ static int lxb_params_once(unsigned actor,unsigned char *controller,const unsign
     lxb_params_done[actor-1]=1;++lxb_params_calls;return 1;
 }
 static lxb_params_fn lxpt_original_override; /* tests */
+/* Which bound actor owns this navigation controller (at its ship's +0x200, the ship's runtime ID unchanged), else 0:
+ * Windows' test in nav_move and params_trace (actor_components[i]+0x200). */
+static unsigned lxb_fixture_controller(const void *controller) {
+    if(lxb_bound!=LXB_ACTORS || !controller) return 0;
+    for(unsigned i=0;i<LXB_ACTORS;i++) {
+        void *own=NULL;uint64_t id=0;
+        if(lxb_actors[i].object && gate_read_local((unsigned char*)lxb_actors[i].object+LXW_OBJ_CONTROLLER,&own,8) && own==controller &&
+           gate_read_local((unsigned char*)lxb_actors[i].object+8,&id,8) && id==lxb_actors[i].runtime) return i+1;
+    }
+    return 0;
+}
 static void lxpt_observe(void *controller,void *destination,unsigned char base) {
     lxb_params_fn original=lxpt_original_override?lxpt_original_override:(lxb_params_fn)(void*)lxpt_page;
-    unsigned actor=0;
-    if(stats.active && boot_phase==3 && GetCurrentThreadId()==ui_thread && lxb_bound==LXB_ACTORS)
-        for(unsigned i=0;i<LXB_ACTORS && !actor;i++) {
-            void *own=NULL;uint64_t id=0;
-            if(lxb_actors[i].object && gate_read_local((unsigned char*)lxb_actors[i].object+LXW_OBJ_CONTROLLER,&own,8) && own==controller &&
-               gate_read_local((unsigned char*)lxb_actors[i].object+8,&id,8) && id==lxb_actors[i].runtime) actor=i+1;
-        }
+    const unsigned actor=stats.active && boot_phase==3 && GetCurrentThreadId()==ui_thread?lxb_fixture_controller(controller):0;
     if(!actor) {original(controller,destination,base);return;}
     lxpt_trace *trace=&lxpt_traces[actor-1];
     if(trace->tick!=stats.issued) {trace->tick=stats.issued;trace->count=0;}

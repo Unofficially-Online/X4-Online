@@ -61,9 +61,13 @@ RECIPE, RECIPE_KIND, RECIPE_VERSION = 'play-recipe.json', 'x4ls-play-recipe', 1
 # joints' wrapped target in MSVC's order (ik_wrap: the tick-15 gun gimbal targets, then the tick-28 bullet hits), a ship's
 # second body with Windows' creation-time mass properties (body1_mass), and the joints' sub-step in MSVC's order (ik_step:
 # not reached by the battle fixture's fighters, Windows' own arithmetic where turrets reach it).
+# Windows' defaults the Linux gate takes only when named (x4mods-14, 9 Nov; lx59a equal to W36p/W36o in every flight parameter
+# word, ticks 36..99): the navigation upkeep's draws keyed by actor (nav_rng, NAV_UPDT) and its first refresh (nav_initial_refresh);
+# without them the Linux fixture rebuilds a ship's flight parameters at other ticks and its speed limit parts at tick 99.
 MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_redirect_ticks=3',
                        "native_gate_fp_redirect_solver='redirect'", "native_gate_fp_redirect_drones='redirect'",
-                       'native_gate_ik_wrap=true', "native_gate_body1_mass='fallback'", 'native_gate_ik_step=true')
+                       'native_gate_ik_wrap=true', "native_gate_body1_mass='fallback'", 'native_gate_ik_step=true',
+                       'native_gate_nav_rng=true', 'native_gate_nav_initial_refresh=true')
 NL = chr(10)
 
 
