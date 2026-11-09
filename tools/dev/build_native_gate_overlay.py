@@ -539,7 +539,7 @@ def main():
     if args.interrupt_diag:
         args.ai_diag = True
     if args.radar_initial_refresh and not args.radar_rng:p.error('--radar-initial-refresh requires --radar-rng')
-    if args.radar_rng:args.radar_serial = True
+    if args.radar_rng and not args.gate_so:args.radar_serial = True  # the Linux gate: with --gravidar (its radar pass), below
     if args.radar_serial:
         if not args.serial_pathing:p.error('--radar-serial requires --serial-pathing')
         args.radar_diag = True
@@ -596,7 +596,7 @@ def main():
             p.error('--gate-so supports the snapshot boot with --mode clock or battle only')
         if args.mode == 'battle' and not args.snapshot_prebind:
             p.error('--gate-so --mode battle needs --snapshot-prebind (the Linux gate binds the snapshot fixture)')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from', 'tick_hz','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'flight_limits', 'body1_mass', 'body_step_diag', 'velocity_diag', 'impulse_diag', 'ik_diag', 'ik_step', 'ik_wrap', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init', 'nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_diag', 'attention_rng', 'attention_initial_refresh', 'shape_diag', 'shape_rng', 'shape_initial_refresh', 'shape_refresh',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from', 'tick_hz','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'flight_limits', 'body1_mass', 'body_step_diag', 'velocity_diag', 'impulse_diag', 'ik_diag', 'ik_step', 'ik_wrap', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init', 'nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_diag', 'attention_rng', 'attention_initial_refresh', 'shape_diag', 'shape_rng', 'shape_initial_refresh', 'shape_refresh', 'radar_rng', 'radar_initial_refresh',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
@@ -1140,6 +1140,12 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
                 config.write(f'X4LAN_CONFIG.native_gate_{key} = true\n')
             if args.gravidar_deadlines:
                 config.write('X4LAN_CONFIG.native_gate_gravidar_deadlines = true\n')
+            if args.gate_so and args.radar_rng:  # the fixture's radar units (linux/gate_gravidar.h)
+                config.write('X4LAN_CONFIG.native_gate_radar_rng = true\n')
+                if args.radar_initial_refresh:
+                    config.write('X4LAN_CONFIG.native_gate_radar_initial_refresh = true\n')
+    elif args.gate_so and (args.radar_rng or args.radar_initial_refresh):
+        p.error('--radar-rng and --radar-initial-refresh need --gravidar on the Linux gate')
     event_row_ticks = 20000 if args.gate_so else 600
     if args.event_rows is not None and (not args.event_order or not 0 <= args.event_rows <= event_row_ticks):
         p.error(f'--event-rows needs --event-order and 0..{event_row_ticks} ticks')

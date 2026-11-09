@@ -1056,6 +1056,8 @@ static int lua_read_cost(lua_State *L) {
 #define LX_BOOT_SPLINE_DIAG 8589934592ull     /* the spline hook's battle-fixture path and spline_state (gate_spline_join.h) */
 #define LX_BOOT_SPLINE_REFRESH 17179869184ull /* its fixture refresh (needs diag and agent_full) */
 #define LX_BOOT_GRAVIDAR 137438953472ull
+#define LX_BOOT_RADAR_RNG 274877906944ull     /* the fixture's radar units on their own words (gate_gravidar.h; needs the Gravidar) */
+#define LX_BOOT_RADAR_INITIAL 549755813888ull /* their times re-based at the prepare (needs the RNG one, as on Windows) */
 #define LX_BOOT_WORLD_IDENTITIES 70368744177664ull
 /* The attention hook (gate_attention.h): 2^28 attention_diag, 2^29 attention_rng, 2^30 its initial refresh, as on Windows
  * (the battle fixture's path, its rows and 'all', which needs the hook). */
@@ -1063,7 +1065,7 @@ static int lua_read_cost(lua_State *L) {
 /* The battle fixture's steering (gate_flight.h): 4 flight_diag, 8 flight_rng, 16 flight_full install it (Windows: options&28);
  * 2^31 avoidance_refresh and 2^32 steering_init are its settings. */
 #define LX_BOOT_FLIGHT (4ull|8ull|16ull|2147483648ull|4294967296ull)
-#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_PARAMS_INIT|LX_BOOT_PARAMS_DIAG|LX_BOOT_VELOCITY_DIAG|LX_BOOT_NAV|LX_BOOT_SHAPE|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
+#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_PARAMS_INIT|LX_BOOT_PARAMS_DIAG|LX_BOOT_VELOCITY_DIAG|LX_BOOT_NAV|LX_BOOT_SHAPE|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_RADAR_RNG|LX_BOOT_RADAR_INITIAL|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
 static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *hash,double options) {
     if(!isfinite(options) || options<0 || options>9007199254740991.0 || floor(options)!=options) return 10;
     if((uint64_t)options & ~LX_BOOT_OPTIONS) return LX_STOP_UNPORTED_OPTION;
@@ -1080,6 +1082,9 @@ static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned time
         if((boot_options&LX_BOOT_WORLD_IDENTITIES) && !world_identity_install()) {finish(71);result=71;}
         if(!result && (boot_options&1) && !path_install((unsigned)(boot_options&3))) {finish(21);result=21;}
         if(!result && (boot_options&LX_BOOT_GRAVIDAR) && !gravidar_install()) {finish(61);result=61;}
+        if(!result && (boot_options&(LX_BOOT_RADAR_RNG|LX_BOOT_RADAR_INITIAL)) && (!(boot_options&LX_BOOT_GRAVIDAR) ||
+           ((boot_options&LX_BOOT_RADAR_INITIAL) && !(boot_options&LX_BOOT_RADAR_RNG)))) {finish(61);result=61;} /* Windows' refusals */
+        lxg_seeded=(boot_options&LX_BOOT_RADAR_RNG)!=0;lxg_initial=(boot_options&LX_BOOT_RADAR_INITIAL)!=0;
         if(!result && (boot_options&LX_BOOT_ATTENTION) && !attention_install((boot_options&536870912ull)!=0,(boot_options&1073741824ull)!=0)) {finish(53);result=53;}
         if(!result && (boot_options&(LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG)) && !lsj_install()) {
             result=(boot_options&LX_BOOT_SPLINE_DIAG)?57:58;finish((unsigned)result); /* Windows: spline_install 57, the join 58 */

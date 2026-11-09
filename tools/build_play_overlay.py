@@ -67,16 +67,19 @@ RECIPE, RECIPE_KIND, RECIPE_VERSION = 'play-recipe.json', 'x4ls-play-recipe', 1
 # Likewise the attention path (attention_rng, attention_initial_refresh: actor_seed('ATTENTIO')) and the shape refresh
 # (shape_rng, shape_initial_refresh, shape_refresh 'view': due times aligned at the first call, keyed intervals), 5c3338b8:
 # lx63a's shape due times equal W36p/W36n's (0 of 1,728 apart; lx60a without them: all apart, the first refreshes on
-# other ticks near 150). These seven are Windows defaults already, so a Windows overlay leaves them out (it writes what
-# differs from the defaults); they are listed for the Linux side, whose bundle takes them as linux_gate_live.py flags
-# (--nav-rng --nav-initial-refresh --attention-rng --attention-initial-refresh --shape-rng --shape-initial-refresh
-# --shape-refresh view).
+# other ticks near 150). And the fixture's radar units (radar_rng, radar_initial_refresh: each unit's three times
+# re-based at prepare, actor_seed('RADARUNI'); 3137c09e, lx64a: every fixture's avoidance time equal to W36q's).
+# These nine are Windows defaults already, so a Windows overlay leaves them out (it writes what differs from the
+# defaults); they are listed for the Linux side, whose bundle takes them as linux_gate_live.py flags (--nav-rng
+# --nav-initial-refresh --attention-rng --attention-initial-refresh --shape-rng --shape-initial-refresh --shape-refresh
+# view --gravidar --radar-rng --radar-initial-refresh).
 MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_redirect_ticks=3',
                        "native_gate_fp_redirect_solver='redirect'", "native_gate_fp_redirect_drones='redirect'",
                        'native_gate_ik_wrap=true', "native_gate_body1_mass='fallback'", 'native_gate_ik_step=true',
                        'native_gate_nav_rng=true', 'native_gate_nav_initial_refresh=true',
                        'native_gate_attention_rng=true', 'native_gate_attention_initial_refresh=true',
-                       'native_gate_shape_rng=true', 'native_gate_shape_initial_refresh=true', "native_gate_shape_refresh='view'")
+                       'native_gate_shape_rng=true', 'native_gate_shape_initial_refresh=true', "native_gate_shape_refresh='view'",
+                       'native_gate_radar_rng=true', 'native_gate_radar_initial_refresh=true')
 NL = chr(10)
 
 

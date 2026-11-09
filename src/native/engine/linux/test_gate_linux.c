@@ -387,6 +387,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_battle.h"
 #include "test_gate_nav.h"
 #include "test_gate_shape.h"
+#include "test_gate_radar.h"
 /* The real entry bytes: the hook patch and its exact restoration, without running them. */
 static void test_world_install_elf(void) {
     reset_session();wt_reset_identities();
@@ -451,6 +452,7 @@ int main(int argc,char **argv) {
     test_battle_linux();
     test_nav_fixture_linux();
     test_shape_linux();
+    test_radar_fixture_linux();
     test_world_hook(); /* last on the synthetic image: it replaces the insert's bytes */
     if(argc>1) {
         /* The real executable's bytes: file pin, every site, the call, the patches. */

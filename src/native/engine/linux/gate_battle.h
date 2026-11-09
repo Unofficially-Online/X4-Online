@@ -250,6 +250,14 @@ static int lxb_prepare(void) {
     lxb_find_fn find=lxb_find();void *map=lxb_map();
     lxb_stage="prepare_identity";
     for(unsigned i=0;i<LXB_ACTORS;i++) if(!lxb_native_actor(i,find,map)) return 0;
+    /* The fixture's radar units (gate_gravidar.h, Windows snapshot_prepare): the times re-based once, the worker idle. */
+    if(lxg_initial) {
+        unsigned char *worker=NULL,*base=gate_tls_self();double time=NAN;
+        lxb_stage="radar_wait";lxb_stage_actor=0;
+        if(!gate_read_local(LX(LX_GRAVIDAR_WORKER_VA),&worker,8) || !worker || !gravidar_wait(worker,1000)) return 0;
+        if(base) memcpy(&time,gate_tls_time(base),8);
+        for(unsigned i=0;i<LXB_ACTORS;i++) {lxb_stage_actor=i+1;lxb_stage="radar_registration";if(!lxg_register(i+1,lxb_actors[i].runtime,time)) return 0;}
+    }
     for(unsigned i=0;i<LXB_ACTORS;i++) {
         lxb_actor *a=&lxb_actors[i];unsigned char *model=NULL;void *vtable=NULL;
         lxb_stage_actor=i+1;lxb_stage="prepare_steering";a->flight="disabled";
@@ -276,6 +284,14 @@ static unsigned lxb_fixture_ship(void *self) {
     if(lxb_bound!=LXB_ACTORS || !self) return 0;
     for(unsigned i=0;i<LXB_ACTORS;i++) if(lxb_actors[i].object==self) {
         uint64_t id=0;return gate_read_local((unsigned char*)self+8,&id,8) && id==lxb_actors[i].runtime?i+1:0;
+    }
+    return 0;
+}
+/* gate_gravidar.h's fixture radar units: the bound actor whose ship has this runtime ID (still), else 0. */
+static unsigned lxb_fixture_runtime(uint64_t runtime) {
+    if(lxb_bound!=LXB_ACTORS || !runtime) return 0;
+    for(unsigned i=0;i<LXB_ACTORS;i++) if(lxb_actors[i].runtime==runtime && lxb_actors[i].object) {
+        uint64_t id=0;return gate_read_local((unsigned char*)lxb_actors[i].object+8,&id,8) && id==runtime?i+1:0;
     }
     return 0;
 }

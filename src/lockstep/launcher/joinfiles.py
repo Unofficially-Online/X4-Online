@@ -26,7 +26,8 @@ NAME = re.compile(r'j\d{1,7}\.(?:xml\.gz|x4join)')
 HEX64 = re.compile(r'[0-9a-f]{64}')
 LINE_MAX = 512
 CHUNK = 1 << 20
-TIMEOUT_S = 60          # a stalled connection (either side) gives up after this long without progress
+REFUSE_DRAIN_S = 2.0    # a refusal waits this long at most for the client to close (a graceful close, not a reset)
+TIMEOUT_S = 60         # a stalled connection (either side) gives up after this long without progress
 CONNECTIONS_MAX = 8     # concurrent downloads the host serves
 NONCES_MAX = 4096
 
@@ -102,6 +103,15 @@ class FileService:
             self.refused.append((address[0], reason))
         try:
             conn.sendall(f'NO|{reason}\n'.encode('ascii'))
+            # Close gracefully: closing with the request still unread resets the connection, and on Windows the reset can
+            # overtake the answer (the client then sees WinError 10053, not the reason). Half-close, then read what is left
+            # until the client closes, for at most REFUSE_DRAIN_S.
+            conn.shutdown(socket.SHUT_WR)
+            deadline = time.monotonic() + REFUSE_DRAIN_S
+            while (left := deadline - time.monotonic()) > 0:
+                conn.settimeout(left)
+                if not conn.recv(4096):
+                    break
         except OSError:
             pass
 

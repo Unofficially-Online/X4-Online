@@ -601,6 +601,23 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   (actor 4's second record at 149, its first at 152, ...). The state still parts at 150 (actors 4, 5, 11), right
   after the tick-149 refreshes: the refresh's own result (the compound children's poses, the centre-of-mass shift
   through NotifyShapeChanged) is the next suspect; W36q (rows 90..200) will show the first field apart.
+  W36q (state every tick 90..200) against lx63a: the first state apart is tick 124, not 150 (W36m had no state rows
+  between 120 and 150): actor 5's linear velocity y, 1 ulp (c1886613 / c1886614), already in the velocity X4 hands
+  Jolt (record +0x40). Its FLIGHT rows: the steering slot's inputs part by a few ulps from tick 100 (actor 3 +0x068,
+  +0x084; actor 11 +0x070 at 107; actor 12 +0x074 at 114; actor 5 +0x094 at 121, +0x098 at 123), and the steering
+  model's avoidance time (Linux +0x78, Windows +0x88: the contact cache's time, compared at the avoidance query
+  0x142c980 with the radar unit's first time) differed by 0.1..0.4 s for every actor from the start. Windows re-bases
+  the fixture's radar units at its prepare (native_gate_radar_initial_refresh: the unit's three times (time - dt,
+  time - dt, time)) and applies them on actor_seed("RADARUNI", ...) (native_gate_radar_rng), ahead of key_all; the
+  Linux gate keyed them by key_all and kept the loaded times. Ported (linux/gate_gravidar.h, the registration in
+  gate_battle.h's prepare: the worker's lookup 0x10f0490 under its bucket lock, the unit's times at +0xb0, Windows +0xa8,
+  the unit's mutex 8 bytes longer; boot options 2^38/2^39 as on Windows; linux_gate_live --radar-rng
+  --radar-initial-refresh, written with --gravidar). lx64a: every fixture's avoidance time equal to W36q's. Still apart
+  at 124: what is left is in the steering update's own result. The params words +0x05c and +0x13c that differ are
+  padding (ASCII digits, a different value every run); the model words past +0x320 differ by layout (pointers on
+  Linux). The first real word apart is actor 11's model +0x1e8 (Linux +0x1d8, -0.912846, 10 ulps) written by the
+  update at tick 37 from equal inputs; the update writes the model's two vectors +0x1c0/+0x1d0 (Linux) with SSE
+  products such as ((a*b + c*d) + e*f) + v (0x13ea9a7), to be matched against Windows' 0xec7200 for the association.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

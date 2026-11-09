@@ -138,9 +138,74 @@ static void gravidar_defer(void *worker,unsigned char reset) {
     }
     ((gravidar_publish_fn)(void*)LX(LX_GRAVIDAR_PUBLISH_VA))(worker,reset);
 }
+/* The battle fixture's radar units (lockstep_gravidar.h's fixture path: native_gate_radar_rng, boot option 2^38, and
+ * _radar_initial_refresh, 2^39; Windows defaults). At the fixture's prepare (tick 1, gate_battle.h) each actor's
+ * ActiveGravidarUnit (the worker's lookup 0x10f0490, Windows 0x10b2dc0, under its bucket lock) gets its three times
+ * (+0xb0, Windows +0xa8: the unit's mutex at +0x18 is 8 bytes longer) set to (time - dt, time - dt, time) under the
+ * unit's lock; in a gated Gravidar frame the unit's apply runs on actor_seed("RADARUNI", tick, actor, 0, ordinal, 0)
+ * and gets the thread's word back, ahead of key_all's key (as on Windows, where the fixture takes its own path). The
+ * steering's avoidance query compares the unit's first time (+0xb0) with its model's (+0x78): lx63a against W36q, the
+ * fixture's contact-cache times differed by 0.1..0.4 s from the start (Linux kept the loaded times, Windows re-based
+ * them), and the steering slot's inputs parted by a few ulps from tick 100 (actor 5's velocity at 124). A unit that is
+ * not the registered one is a failure (stop 62), as on Windows. */
+#define LXG_UNIT_VTABLE (LX_GRAVIDAR_UNIT_SLOT_VA-0x40u) /* ActiveGravidarUnit's address point */
+#define LXG_UNIT_LOOKUP_VA 0x10f0490u                    /* AI::Gravidar's unit lookup (rdi worker, rsi runtime ID) */
+#define LXG_UNIT_LOCK 0x18u
+#define LXG_UNIT_TIMES 0xb0u
+#define LXG_BUCKETS 0x88u                                /* 256 X4 mutexes, 0x30 apart (Windows 0x28) */
+#define LXG_BUCKET_STRIDE 0x30u
+#define LXG_ACTORS 12u
+static int lxg_seeded,lxg_initial;
+static void *lxg_initialized[LXG_ACTORS];
+static uint64_t lxg_fixture_tick[LXG_ACTORS],lxg_fixture_calls[LXG_ACTORS],lxg_fixture_total,lxg_inits;
+static uint64_t lxg_initial_before[LXG_ACTORS][3];
+static gravidar_unit_fn lxg_native_override; /* tests */
+static unsigned lxb_fixture_runtime(uint64_t runtime); /* gate_battle.h: the bound actor with this runtime ID, else 0 */
+static unsigned lxg_fixture_unit(void *unit) {
+    uint64_t id=0;
+    return gate_read_local((unsigned char*)unit+8,&id,8) && id?lxb_fixture_runtime(id):0;
+}
+/* The prepare's registration (Windows gravidar_register): 1 when the unit's times are set (or were, for this unit). */
+static int lxg_register(unsigned actor,uint64_t runtime,double time) {
+    unsigned char *worker=NULL;
+    if(actor<1 || actor>LXG_ACTORS || !isfinite(time) || !gate_read_local(LX(LX_GRAVIDAR_WORKER_VA),&worker,8) || !worker) return 0;
+    lxg_lock(worker+LXG_READY_LOCK);const int ready=worker[LXG_READY]==1;lxg_unlock(worker+LXG_READY_LOCK);
+    if(!ready) return 0;
+    unsigned char *bucket=worker+LXG_BUCKETS+(runtime&255u)*LXG_BUCKET_STRIDE;int ok=0;
+    lxg_lock(bucket);
+    unsigned char *unit=((unsigned char *(*)(void *,uint64_t))(void*)LX(LXG_UNIT_LOOKUP_VA))(worker,runtime);
+    void *vtable=NULL;uint64_t id=0;
+    if(unit && gate_read_local(unit,&vtable,8) && vtable==(void*)LX(LXG_UNIT_VTABLE) && gate_read_local(unit+8,&id,8) && id==runtime) {
+        if(lxg_initialized[actor-1]) ok=lxg_initialized[actor-1]==unit;
+        else {
+            const double dt=gate_tick_dt(),times[3]={time-dt,time-dt,time};
+            lxg_lock(unit+LXG_UNIT_LOCK);
+            memcpy(lxg_initial_before[actor-1],unit+LXG_UNIT_TIMES,24);memcpy(unit+LXG_UNIT_TIMES,times,24);
+            lxg_unlock(unit+LXG_UNIT_LOCK);
+            lxg_initialized[actor-1]=unit;++lxg_inits;ok=1;
+        }
+    }
+    lxg_unlock(bucket);
+    return ok;
+}
+/* Windows gravidar_unit's fixture branch and gravidar_execute. */
+static void lxg_fixture_apply(gravidar_unit_fn native,void *unit,void *queue,void *result,unsigned actor) {
+    if(lxg_initial && lxg_initialized[actor-1]!=unit) {InterlockedIncrement64(&gravidar_failures);native(unit,queue,result);return;}
+    const unsigned i=actor-1;
+    if(lxg_fixture_tick[i]!=stats.issued) {lxg_fixture_tick[i]=stats.issued;lxg_fixture_calls[i]=0;}
+    ++lxg_fixture_calls[i];++lxg_fixture_total;
+    unsigned char *base=gate_tls_self();uint64_t *rng=base?gate_tls_rng(base):NULL;
+    if(!rng) {InterlockedIncrement64(&gravidar_failures);native(unit,queue,result);return;}
+    const uint64_t saved=*rng;
+    if(lxg_seeded) *rng=lockstep_seed(0x5241444152554e49ULL,stats.issued,actor,0,lxg_fixture_calls[i],0); /* actor_seed: the fixture's number */
+    native(unit,queue,result); /* X4's exceptions end the process: nothing to unwind */
+    if(lxg_seeded) *rng=saved;
+}
 /* Same key as Windows: tick and the unit's saved ID; the thread's word is given back. */
 static void gravidar_unit(void *unit,void *queue,void *result) {
-    const gravidar_unit_fn native=(gravidar_unit_fn)(void*)LX(LX_GRAVIDAR_UNIT_APPLY_VA);
+    const gravidar_unit_fn native=lxg_native_override?lxg_native_override:(gravidar_unit_fn)(void*)LX(LX_GRAVIDAR_UNIT_APPLY_VA);
+    const unsigned actor=(lxg_seeded || lxg_initial) && gravidar_in_frame && stats.active && boot_phase==3?lxg_fixture_unit(unit):0;
+    if(actor) {lxg_fixture_apply(native,unit,queue,result,actor);return;}
     if(!gravidar_key_all || !gravidar_in_frame || !stats.active || boot_phase!=3) {native(unit,queue,result);return;}
     uint64_t runtime=0,saved=0;unsigned klass=WORLD_KEY_NONE;unsigned char *base=gate_tls_self();
     if(!gate_read_local((unsigned char*)unit+8,&runtime,8) || !(saved=world_identity_key(runtime,&klass)) || !base) {

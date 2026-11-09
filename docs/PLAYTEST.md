@@ -118,8 +118,9 @@ within a few seconds. With a Linux PC in the session, build the host's overlay a
 `--mixed-platform` (Option B's strict float recomputes): without it Windows and Linux part at the first steering
 update. A Linux battle bundle (`tools/dev/linux_gate_live.py bundle`) also needs the Windows defaults its gate takes only
 when named: `--ik-wrap --ik-step --body1-mass fallback --nav-rng --nav-initial-refresh --attention-rng
---attention-initial-refresh --shape-rng --shape-initial-refresh --shape-refresh view` (9 Nov: equal to Windows at every
-compared tick through 120; a few ulps apart at tick 150, still being chased). Each PC writes its own
+--attention-initial-refresh --shape-rng --shape-initial-refresh --shape-refresh view --gravidar --radar-rng
+--radar-initial-refresh` (9 Nov: equal to Windows through tick 123; 1 ulp apart at tick 124, the steering update's
+floating-point order, still being chased). Each PC writes its own
 `errors.log`; the host's run folder also holds the relay's logs.
 
 ## Joining a running game (built 8 Nov; in lockstep through x4ls on one PC, 9 Nov)

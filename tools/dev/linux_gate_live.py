@@ -444,7 +444,7 @@ def bundle(args):
         command.append('--ik-wrap')
     if args.shape_refresh:
         command += ['--shape-refresh', args.shape_refresh]
-    for name in ('nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_rng', 'attention_initial_refresh', 'shape_rng', 'shape_initial_refresh'):
+    for name in ('nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_rng', 'attention_initial_refresh', 'shape_rng', 'shape_initial_refresh', 'radar_rng', 'radar_initial_refresh'):
         if getattr(args, name):
             command.append('--' + name.replace('_', '-'))
     if args.world_hash_shields:
@@ -1386,6 +1386,8 @@ def main(argv=None):
     b.add_argument('--nav-initial-refresh', action='store_true', help="the fixture's parameter deadline at time - dt at its first upkeep, as Windows (native_gate_nav_initial_refresh)")
     b.add_argument('--attention-rng', action='store_true', help="the fixture's attention timer draws from actor_seed('ATTENTIO', ...), as Windows (native_gate_attention_rng; ATTENTION rows too)")
     b.add_argument('--attention-initial-refresh', action='store_true', help="the fixture's attention due at time - dt at its first call, as Windows (native_gate_attention_initial_refresh)")
+    b.add_argument('--radar-rng', action='store_true', help="the fixture's radar units on actor_seed('RADARUNI', ...), as Windows (native_gate_radar_rng; needs --gravidar)")
+    b.add_argument('--radar-initial-refresh', action='store_true', help="the fixture's radar unit times re-based at the prepare, as Windows (native_gate_radar_initial_refresh)")
     b.add_argument('--shape-rng', action='store_true', help="the fixture's shape refresh on actor_seed('SHAPE_UP', ...), as Windows (native_gate_shape_rng; SHAPE rows too)")
     b.add_argument('--shape-initial-refresh', action='store_true', help="the fixture's shape due times at time - dt at the first call per holder, as Windows (native_gate_shape_initial_refresh)")
     b.add_argument('--shape-refresh', choices=('view',), help="shape refresh intervals from the player's ship on a keyed draw, due times aligned at the first call per object (native_gate_shape_refresh)")
