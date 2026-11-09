@@ -277,6 +277,66 @@ static int lua_actor(lua_State *L) {
     if(n<=0 || (size_t)n>=sizeof(out)) return lxb_unavailable(L,"overflow");
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
+/* gate.body(actor, which): Windows' body_state (lockstep_body.h) for a bound fixture ship's two physics records, the
+ * declared state of native_gate_strict_physics. The X4 record is as on Windows (owner +0, the X4 body +0x10 with its Jolt
+ * BodyID at +8, the scene +0x18, the shape holder +0x20 with its due time at +0x28, flags +0x38, pre +0x40, delta +0x60:
+ * the shape-changed path 0xeeac0a reads +0x10/+0x18/+0x39/+0x3a alike). The scene's PhysicsSystem is at +0x20; Jolt's
+ * no-lock BodyInterface starts with its lock interface pointer at PhysicsSystem+0x140 (Windows +0x1b8; JPH::
+ * PhysicsSystem::Init 0x1b1cc80 stores +0x120 there), whose +8 is the BodyManager (embedded at +0x10): its bodies
+ * (count +0, array +0x10), a Body's pose +0, motion properties +0x48, user data +0x50 (the record), +0x60 metadata
+ * and its BodyID +0x70 are Jolt's own layout. The ship's two record slots are Windows' +0x260/+0x268, fields there sit
+ * 8 lower on Linux from the hull on (+0x280 -> +0x278): the first slot whose record names this ship as its owner is
+ * taken, +0x258 before +0x260, once per ship, and every read is checked as on Windows. */
+#define LXB_BODY_SLOT_LOW 0x258u
+#define LXB_PHYS_LOCK_IFACE 0x140u
+static unsigned lxb_body_slot[LXB_ACTORS]; /* the first record slot, once found */
+static int lxb_record_owned(unsigned char *object,unsigned offset) {
+    unsigned char *record=NULL;void *owner=NULL;
+    return gate_read_local(object+offset,&record,8) && record && gate_read_local(record,&owner,8) && owner==object;
+}
+static int lxb_body_state(unsigned actor,unsigned char *object,unsigned which,char *out,size_t cap) {
+    if(actor<1 || actor>LXB_ACTORS || which>1 || cap<1024) return 0;
+    unsigned slot=lxb_body_slot[actor-1];
+    if(!slot) {
+        for(unsigned offset=LXB_BODY_SLOT_LOW;offset<=LXB_BODY_SLOT_LOW+8u && !slot;offset+=8u) if(lxb_record_owned(object,offset)) slot=offset;
+        if(!slot) return 0;
+        lxb_body_slot[actor-1]=slot;
+    }
+    unsigned char *record=NULL,*xbody,*scene,*system,*iface,*manager,*bodies,*body,*motion,*holder;
+    void *owner,*userdata;uint32_t id,actual_id,pose[8],mp[32],pre[8],delta[8],meta[8],flags;uint64_t count,due=0;
+    if(!gate_read_local(object+slot+which*8u,&record,8)) return 0;
+    if(!record) {snprintf(out,cap,"none");return 1;}
+    if(!gate_read_local(record,&owner,8) || owner!=object ||
+       !gate_read_local(record+0x10,&xbody,8) || !xbody || !gate_read_local(xbody+8,&id,4) || id==0xffffffffu ||
+       !gate_read_local(record+0x18,&scene,8) || !scene || !gate_read_local(scene+0x20,&system,8) || !system ||
+       !gate_read_local(system+LXB_PHYS_LOCK_IFACE,&iface,8) || !iface || !gate_read_local(iface+8,&manager,8) || !manager ||
+       !gate_read_local(manager,&count,8) || (id&0x7fffffu)>=count || count>0x800000u ||
+       !gate_read_local(manager+0x10,&bodies,8) || !bodies || !gate_read_local(bodies+(id&0x7fffffu)*8u,&body,8) || !body ||
+       ((uintptr_t)body&1u) || !gate_read_local(body+0x70,&actual_id,4) || actual_id!=id ||
+       !gate_read_local(body+0x50,&userdata,8) || userdata!=record ||
+       !gate_read_local(body+0x48,&motion,8) || !motion || !gate_read_local(body,pose,sizeof(pose)) ||
+       !gate_read_local(motion,mp,sizeof(mp)) || !gate_read_local(body+0x60,meta,sizeof(meta)) ||
+       !gate_read_local(record+0x40,pre,sizeof(pre)) || !gate_read_local(record+0x60,delta,sizeof(delta)) ||
+       !gate_read_local(record+0x38,&flags,4) || !gate_read_local(record+0x20,&holder,8) ||
+       (holder && !gate_read_local(holder+0x28,&due,8))) return 0;
+    int n=snprintf(out,cap,"flags=%08x shape_due=%016llx body_id=%08x pose=",flags,(unsigned long long)due,id);
+    n+=lxb_hex_words(out+n,cap-(size_t)n,pose,8);
+    n+=snprintf(out+n,cap-(size_t)n," motion=");n+=lxb_hex_words(out+n,cap-(size_t)n,mp,32);
+    n+=snprintf(out+n,cap-(size_t)n," pre=");n+=lxb_hex_words(out+n,cap-(size_t)n,pre,8);
+    n+=snprintf(out+n,cap-(size_t)n," delta=");n+=lxb_hex_words(out+n,cap-(size_t)n,delta,8);
+    meta[4]=0; /* the BodyID is process-local; its identity was checked above (Windows does the same) */
+    n+=snprintf(out+n,cap-(size_t)n," meta=");n+=lxb_hex_words(out+n,cap-(size_t)n,meta,8);
+    return n>0 && (size_t)n<cap;
+}
+static int lua_body(lua_State *L) {
+    double actor=p_lua_tonumber(L,1),which=p_lua_tonumber(L,2);char out[1024];
+    if(!stats.active || GetCurrentThreadId()!=ui_thread || lxb_bound!=LXB_ACTORS || !isfinite(actor) || actor<1 || actor>LXB_ACTORS ||
+       floor(actor)!=actor || !isfinite(which) || which<0 || which>1 || floor(which)!=which) {p_lua_pushnil(L);return 1;}
+    const lxb_actor *a=&lxb_actors[(unsigned)actor-1];uint64_t id=0;
+    if(!a->object || !gate_read_local((unsigned char*)a->object+8,&id,8) || id!=a->runtime ||
+       !lxb_body_state((unsigned)actor,a->object,(unsigned)which,out,sizeof(out))) {p_lua_pushnil(L);return 1;}
+    p_lua_pushlstring(L,out,strlen(out));return 1;
+}
 static int lua_snapshot_fixture(lua_State *L) {
     size_t length=0;const char *text=p_lua_tolstring(L,1,&length);
     p_lua_pushnumber(L,lxb_manifest(text,length));return 1;

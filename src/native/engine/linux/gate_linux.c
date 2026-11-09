@@ -1067,7 +1067,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(economy_load_rng_row);
     METHOD(navmesh_post_observe);METHOD(navmesh_post_observe_status);METHOD(navmesh_post_observe_row);
     METHOD(economy_watch_config);METHOD(economy_watch_capture);METHOD(economy_watch_status);
-    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(flight_faults);METHOD(flight);METHOD(avoidance);METHOD(agent);METHOD(ship);METHOD(spline);
+    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(flight_faults);METHOD(flight);METHOD(avoidance);METHOD(agent);METHOD(ship);METHOD(spline);METHOD(body);
     METHOD(actor);METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);METHOD(snapshot_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);

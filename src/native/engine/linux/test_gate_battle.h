@@ -178,6 +178,34 @@ static void test_battle_linux(void) {
     assert(!lxb_params_once(0,tbt_ships[1].controller,slots1) && !lxb_params_once(13,tbt_ships[1].controller,slots1) && tbt_params_calls==2);
     memcpy(LX(LX_BANK_WRITE_VA),&write_saved,4);
     lxb_params_override=NULL;lxb_params_enabled=0;memset(lxb_params_done,0,sizeof(lxb_params_done));lxb_params_calls=0;
+    /* gate.body: the ship's first owned record slot (+0x258), the record's X4 body and BodyID, its scene's PhysicsSystem
+     * (+0x20), the no-lock lock interface (+0x140) and its BodyManager (+8), the Jolt body; Windows' text; an empty
+     * second slot is none; a body whose user data is another record refuses. */
+    {
+        static unsigned char rec[0x80],xb[0x10],scn[0x30],sys[0x200],lock[0x10],mgr[0x18],motion_words[0x80],holder_b[0x30];
+        static unsigned char jbody[0x80] __attribute__((aligned(16)));static void *body_slots[4];
+        memset(rec,0,sizeof(rec));memset(jbody,0,sizeof(jbody));memset(body_slots,0,sizeof(body_slots));
+        void *p=tbt_ships[0].object;memcpy(rec,&p,8);
+        p=xb;memcpy(rec+0x10,&p,8);const uint32_t bid=0x01000002u;memcpy(xb+8,&bid,4);
+        p=scn;memcpy(rec+0x18,&p,8);p=holder_b;memcpy(rec+0x20,&p,8);const double due=12.5;memcpy(holder_b+0x28,&due,8);
+        const uint32_t record_flags=0x11u;memcpy(rec+0x38,&record_flags,4);
+        for(unsigned w=0;w<8;w++) {const uint32_t a=0x100u+w,b=0x200u+w,c=0x300u+w,d=0x400u+w;memcpy(rec+0x40+4*w,&a,4);memcpy(rec+0x60+4*w,&b,4);
+                                   memcpy(jbody+4*w,&c,4);memcpy(jbody+0x60+4*w,&d,4);}
+        for(unsigned w=0;w<32;w++) {const uint32_t m=0x500u+w;memcpy(motion_words+4*w,&m,4);}
+        p=sys;memcpy(scn+0x20,&p,8);p=lock;memcpy(sys+LXB_PHYS_LOCK_IFACE,&p,8);p=mgr;memcpy(lock+8,&p,8);
+        const uint64_t body_count=4;memcpy(mgr,&body_count,8);p=body_slots;memcpy(mgr+0x10,&p,8);body_slots[2]=jbody;
+        p=motion_words;memcpy(jbody+0x48,&p,8);p=rec;memcpy(jbody+0x50,&p,8);memcpy(jbody+0x70,&bid,4);
+        p=rec;memcpy(tbt_ships[0].object+LXB_BODY_SLOT_LOW,&p,8);
+        memset(lxb_body_slot,0,sizeof(lxb_body_slot));
+        tbt_args[1]=1;tbt_args[2]=0;tbt_nil=0;assert(lua_body(NULL)==1 && !tbt_nil && lxb_body_slot[0]==LXB_BODY_SLOT_LOW);
+        assert(!strncmp(tbt_out,"flags=00000011 shape_due=4029000000000000 body_id=01000002 pose=0000030000000301",80));
+        assert(strstr(tbt_out," motion=0000050000000501") && strstr(tbt_out," pre=0000010000000101") && strstr(tbt_out," delta=0000020000000201") &&
+               strstr(tbt_out," meta=00000400000004010000040200000403000000000000040500000406"));
+        tbt_args[2]=1;tbt_nil=0;assert(lua_body(NULL)==1 && !tbt_nil && !strcmp(tbt_out,"none"));
+        void *other=xb;memcpy(jbody+0x50,&other,8);tbt_args[2]=0;tbt_nil=0;assert(lua_body(NULL)==1 && tbt_nil);
+        tbt_args[1]=13;tbt_nil=0;assert(lua_body(NULL)==1 && tbt_nil);
+        memset(tbt_ships[0].object+LXB_BODY_SLOT_LOW,0,8);memset(lxb_body_slot,0,sizeof(lxb_body_slot));
+    }
     /* Restore. */
     lxf_installed=lxf_initial=lxf_seeded=0;memset(lxf_samples,0,sizeof(lxf_samples));
     memset(lxb_actors,0,sizeof(lxb_actors));lxb_configured=lxb_bound=lxb_prepared=lxb_enrolled=0;lxb_failures=0;

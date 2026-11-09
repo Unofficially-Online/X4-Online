@@ -258,7 +258,7 @@ def bundle(args):
     if args.battle:
         command.append('--snapshot-prebind')
     for name in ('actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state', 'flight_rng', 'flight_full',
-                 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init'):
+                 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics'):
         if getattr(args, name):
             command.append('--' + name.replace('_', '-'))
     if args.world_rolling_slices is not None:
@@ -1327,7 +1327,8 @@ def main(argv=None):
                       ('spline-diag', "the spline hook's fixture path and spline state (gate_spline_join.h)"),
                       ('spline-refresh', "the fixture's spline obstacles refreshed, full updates (needs --spline-diag, --agent-full)"),
                       ('spline-state', "the fixture's spline state in the digest (needs --spline-diag)"),
-                      ('params-init', "each fixture ship's flight parameters built once at its first sample (native_gate_params_init)")):
+                      ('params-init', "each fixture ship's flight parameters built once at its first sample (native_gate_params_init)"),
+                      ('strict-physics', "the fixture ships' two physics bodies in the digest, Windows' STATE_ROW (needs --strict-state)")):
         b.add_argument('--' + name, action='store_true', help=why)
     b.add_argument('--actor-rng-rows', action='store_true', help='one ACTOR_RNG_ROW per keyed scope that drew (diagnostic)')
     b.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the mass traffic pass joined at the gate tick (native_gate_mass_traffic)')

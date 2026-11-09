@@ -584,7 +584,7 @@ def main():
         allowed.add('travel_determinism')
         # The battle fixture on Linux (linux/gate_battle.h, gate_flight.h): the snapshot's twelve, their state row, steering.
         allowed.update(('snapshot_prebind', 'actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state',
-                        'flight_diag', 'flight_rng', 'flight_full', 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init'))
+                        'flight_diag', 'flight_rng', 'flight_full', 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics'))
         allowed.add('path_transform_observe')
         allowed.update(('world_motion_watch', 'world_motion_window', 'economy_watch', 'economy_watch_window', 'navmesh_post_observe'))
         allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile', 'status_stride'))
