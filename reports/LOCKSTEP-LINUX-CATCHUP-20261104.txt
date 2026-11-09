@@ -431,6 +431,19 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   Linux processes (the relay's first digest split, tick 2, is body1 only). The second body's shape is built
   asynchronously: Windows still has the placeholder at tick 2, Linux already the built shape, at a process-dependent
   point. Pose, velocity and inverse mass agree on both bodies through tick 13.
+  The cause of the tick-14 split was the tick rate. A Windows bisection (W36a shape_rng/shape_initial_refresh off,
+  W36b body_pose off, W36c physics_scenes off) left W35 unchanged in every section, and the steering update's FLIGHT
+  rows (Windows' blocks, now also captured by the Linux gate, 42512395) showed dt 1/30 on Windows and 1/60 on Linux:
+  the session defaults step at native_gate_tick_hz = 30, the Linux bundles never set it and the Linux runner's relay
+  ran at its default 60. The fixture stands still through tick 13; the first steering update's dt-squared ramp gave
+  Linux a quarter of the step. linux_gate_live.py and the overlay builder now take --tick-hz (66603cb5); a Linux
+  client of a Windows session must carry the session's rate.
+  At 30 Hz (lx38a, every W35 section): orders and fleet equal 792/792; raw equal on 438 rows (positions equal on
+  every row through tick 20); the residue is one ulp in the first steering update's velocity (0x3dec4705 against
+  ...04 at tick 14), and its input is the Agent's parameter block at +0x340: four floats one ulp apart (Windows
+  59.375 is 0x426d8001, Linux the exact 0x426d8000) and 88.3139 the other way: a rounding-order difference in the
+  flight-parameter computation, to find. body1 is unchanged at 30 Hz (the unit sphere on Windows, the hull on Linux,
+  process-dependent): not a rate effect.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at
