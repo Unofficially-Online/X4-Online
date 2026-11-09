@@ -34,8 +34,9 @@
    "win": "9fc550",
    "kind": "fn_paired",
    "lin": "1dd19d0",
-   "status": "candidate",
-   "evidence": "linux_pair_calls: call gaps (3 parents)"
+   "status": "matched",
+   "evidence": "read: Universe -> +0x230/+0x238 -> the player's object (fallback 3d196d8 = 3db6c00); call gaps 3 parents",
+   "what": "player controller getter"
   },
   {
    "module": "pilot_inputs",
@@ -113,7 +114,7 @@
    "kind": "data",
    "lin": "3d8d9e0",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_inputs",
@@ -121,7 +122,7 @@
    "kind": "data",
    "lin": "3d8da64",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_inputs",
@@ -129,31 +130,34 @@
    "kind": "data",
    "lin": "3d8daa8",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_inputs",
    "win": "2f4b829",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8daa9",
+   "status": "matched",
+   "evidence": "read: d9cc30/165d860 test 2f4b7e0, 2f4b7e4, 2f4b829 = 3d8da60, 3d8da64, 3d8daa9 and clear it: the input bank delta +e42280 one byte past the bank",
+   "what": "flight control requested"
   },
   {
    "module": "pilot_inputs",
    "win": "38f0728",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3e5b29e",
+   "status": "candidate",
+   "evidence": "one paired user (7e8bc0/124f720): the four trigger bytes 38f0728..72b are tested in order 728, 729, 72a, 72b on Windows and 3e5b29e, 29d, 29c, 29b on Linux (the Linux bytes run downwards)",
+   "what": "native trigger bytes 38f0728..72b"
   },
   {
    "module": "pilot_inputs",
    "win": "3d196f0",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "-",
+   "status": "matched",
+   "evidence": "read: Windows passes &3d196f0 to 9fc550 (its +0x208 is Universe 3d198f8); the Linux getter 1dd19d0 takes no argument and reads Universe 3db6948 itself: the port calls it without one",
+   "what": "the controller getter's object (not needed on Linux)"
   },
   {
    "module": "pilot_inputs",
@@ -161,7 +165,7 @@
    "kind": "data",
    "lin": "3daa860",
    "status": "candidate",
-   "evidence": "aligned global votes 860"
+   "evidence": "aligned global votes 857"
   },
   {
    "module": "pilot_inputs",
@@ -191,9 +195,19 @@
    "module": "pilot_native",
    "win": "54ee80",
    "kind": "fn_paired",
-   "lin": "177fa40",
-   "status": "candidate",
-   "evidence": "linux_pair_calls: vtable"
+   "lin": "177f900",
+   "status": "matched",
+   "evidence": "read: slot 5 = Linux slot 5 (the interface declares its destructor last: d = 10), the thunk 177f9e0 (-0x30) jumps here; IsA(0x49) walk over +0x70 via vtable +0x11f0, macro getter 148b280, macro +0xb84/+0xb80 (Windows +0xb74/+0xb70); the camera test is a call on Linux (1e07020)",
+   "what": "Engine cockpit factor (Engine secondary vtable offset 48, slot 5)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "6093e0",
+   "kind": "fn_paired",
+   "lin": "1113360",
+   "status": "matched",
+   "evidence": "read: slot 1041 = Linux 1059; on Linux it tests its own flag and tail-jumps into Weapon's 11132d0 (Windows inlines a copy), so 609440 and 81bba3 are one Linux call site, 1113339",
+   "what": "MissileLauncher::vfunc1041"
   },
   {
    "module": "pilot_native",
@@ -202,6 +216,42 @@
    "lin": "1393520",
    "status": "candidate",
    "evidence": "linux_pair_calls: string:player_squad_attack_target"
+  },
+  {
+   "module": "pilot_native",
+   "win": "7d4d40",
+   "kind": "fn_paired",
+   "lin": "129bad0",
+   "status": "matched",
+   "evidence": "read: Ship slot 836 = Linux 854 (+18; ShipSmall/Station differing slots line up), Universe 3db6948 -> camera +0x3e8 (Windows +0x3d0) -> mode +0x880 (+0x868), an external camera returns false",
+   "what": "Ship::vfunc836 (XShapeFilter)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "81bb50",
+   "kind": "fn_paired",
+   "lin": "11132d0",
+   "status": "matched",
+   "evidence": "read: Weapon vtable slot 1041 is Linux slot 1059 (+18 from slot 983 on: overloads ordered differently; the slots where MissileLauncher and Weapon differ line up in order); the same tests (owner +0x318/+0x308 vcall, +0x68, byte flags 2f4b6da/38f0a54/2f4b828 = 3d8e250/3e59ee8/3d8daa8) and the floating view call 1d6b1c0 at 1113339",
+   "what": "Weapon::vfunc1041 (manual gun control)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "97c140",
+   "kind": "fn_paired",
+   "lin": "1926cc0",
+   "status": "matched",
+   "evidence": "read: the camera field +0x788 (Linux +0x798) in a profiler scope; called from the view block of d924d0/16666b0 at the same place",
+   "what": "camera FOV factor"
+  },
+  {
+   "module": "pilot_native",
+   "win": "9fbf50",
+   "kind": "fn_paired",
+   "lin": "1d6b1c0",
+   "status": "matched",
+   "evidence": "read: Universe 3db6948 -> camera +0x3e8 (Windows +0x3d0) -> mode +0x880 (+0x868), viewed object +0x780 (+0x770), player object Universe+0x238 (+0x230, 1dd81c0 on Linux); called by Weapon::vfunc1041 on both builds",
+   "what": "floating view"
   },
   {
    "module": "pilot_native",
@@ -220,6 +270,15 @@
    "status": "candidate",
    "evidence": "input-bank fields 2/2 (J 1.00, next 0.50), size 1120/4880 (inlined callees?)",
    "what": "input-bank user (2 fields)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d924d0",
+   "kind": "fn_paired",
+   "lin": "16666b0",
+   "status": "matched",
+   "evidence": "read: the constants (1e-27, nan, -0.9999d, 20, 1e-4), d8e5b0 called 4 times = 1663740 4 times, the view block (Universe 3db6948 -> camera +0x3e8 (Windows +0x3d0) -> mode +0x880 (+0x868), then the FOV factor 1926cc0); block key 2/2 fields, next 0.50",
+   "what": "PlayerController coefficients"
   },
   {
    "module": "pilot_native",
@@ -314,14 +373,6 @@
   },
   {
    "module": "pilot_native",
-   "win": "6093e0",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_native",
    "win": "70eb10",
    "kind": "fn_open",
    "lin": null,
@@ -347,38 +398,6 @@
   {
    "module": "pilot_native",
    "win": "71c640",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_native",
-   "win": "7d4d40",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_native",
-   "win": "81bb50",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_native",
-   "win": "97c140",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_native",
-   "win": "9fbf50",
    "kind": "fn_open",
    "lin": null,
    "status": "open",
@@ -443,14 +462,6 @@
   {
    "module": "pilot_native",
    "win": "d8b790",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_native",
-   "win": "d924d0",
    "kind": "fn_open",
    "lin": null,
    "status": "open",
@@ -590,7 +601,7 @@
    "kind": "data",
    "lin": "3d8d9a0",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -598,7 +609,7 @@
    "kind": "data",
    "lin": "3d8d9a8",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -606,7 +617,7 @@
    "kind": "data",
    "lin": "3d8d9d0",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -614,7 +625,7 @@
    "kind": "data",
    "lin": "3d8d9d8",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -622,7 +633,7 @@
    "kind": "data",
    "lin": "3d8d9dc",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -630,7 +641,7 @@
    "kind": "data",
    "lin": "3d8d9f0",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -638,7 +649,7 @@
    "kind": "data",
    "lin": "3d8d9f8",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -646,7 +657,7 @@
    "kind": "data",
    "lin": "3d8da00",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -654,7 +665,7 @@
    "kind": "data",
    "lin": "3d8da08",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -662,7 +673,7 @@
    "kind": "data",
    "lin": "3d8da10",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -670,7 +681,7 @@
    "kind": "data",
    "lin": "3d8da14",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -678,7 +689,7 @@
    "kind": "data",
    "lin": "3d8da50",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -686,7 +697,7 @@
    "kind": "data",
    "lin": "3d8da58",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -694,7 +705,7 @@
    "kind": "data",
    "lin": "3d8da7a",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -702,7 +713,7 @@
    "kind": "data",
    "lin": "3d8da7b",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -710,7 +721,7 @@
    "kind": "data",
    "lin": "3d8da7d",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
@@ -718,23 +729,25 @@
    "kind": "data",
    "lin": "3d8da80",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_native",
    "win": "2f4b9bf",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e050",
+   "status": "matched",
+   "evidence": "read: vfunc33 d97e80 tests it at d98484 (cmp byte, r15b = 0), its twin 1672370 at 16737a0 (cmp byte, 0); 3 of 3 users vote +e42691 (not next to autoroll on Linux)",
+   "what": "option stop ship in menus"
   },
   {
    "module": "pilot_native",
    "win": "38f4c31",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3e5b298",
+   "status": "candidate",
+   "evidence": "instruction-form votes 3 of 3 paired users",
+   "what": "throttle lock (PNAT_THROTTLE_LOCK)"
   },
   {
    "module": "pilot_native",
@@ -766,15 +779,16 @@
    "kind": "data",
    "lin": "3db6948",
    "status": "candidate",
-   "evidence": "aligned global votes 188"
+   "evidence": "aligned global votes 185"
   },
   {
    "module": "pilot_native",
    "win": "6b661d0",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3e4cdc0",
+   "status": "candidate",
+   "evidence": "instruction-form votes 6 of 7; vfunc33 compares it on both builds (cmp byte)",
+   "what": "on a highway (NAV_PLAYER_HIGHWAY)"
   },
   {
    "module": "pilot_native",
@@ -782,7 +796,7 @@
    "kind": "data",
    "lin": "3daab80",
    "status": "candidate",
-   "evidence": "aligned global votes 54"
+   "evidence": "aligned global votes 53"
   },
   {
    "module": "pilot_native",
@@ -798,7 +812,7 @@
    "kind": "data",
    "lin": "3daaaf8",
    "status": "candidate",
-   "evidence": "aligned global votes 33"
+   "evidence": "aligned global votes 32"
   },
   {
    "module": "pilot_native",
@@ -838,103 +852,115 @@
    "kind": "data",
    "lin": "3d8d9b8",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_stock",
    "win": "2f4b9be",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e02b",
+   "status": "matched",
+   "evidence": "read: SetAutoRoll and GetAutoRollState write/read it; 6 of 6 paired users vote +e4266d",
+   "what": "option autoroll"
   },
   {
    "module": "pilot_stock",
    "win": "2f4b9c0",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e02c",
+   "status": "matched",
+   "evidence": "read: option_aim_assist, two ints at +0 and +4 (GetAimAssistState reads 2f4b9c4 then 2f4b9c0, Linux 3d8e030 then 3d8e02c: one delta, +e4266c, for the 8 bytes)",
+   "what": "option aim assist"
   },
   {
    "module": "pilot_stock",
    "win": "2f4b9c1",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e02d",
+   "status": "candidate",
+   "evidence": "read: option_aim_assist, two ints at +0 and +4 (GetAimAssistState reads 2f4b9c4 then 2f4b9c0, Linux 3d8e030 then 3d8e02c: one delta, +e4266c, for the 8 bytes)",
+   "what": "option aim assist"
   },
   {
    "module": "pilot_stock",
    "win": "2f4b9c2",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e02e",
+   "status": "candidate",
+   "evidence": "read: option_aim_assist, two ints at +0 and +4 (GetAimAssistState reads 2f4b9c4 then 2f4b9c0, Linux 3d8e030 then 3d8e02c: one delta, +e4266c, for the 8 bytes)",
+   "what": "option aim assist"
   },
   {
    "module": "pilot_stock",
    "win": "2f4b9c3",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e02f",
+   "status": "candidate",
+   "evidence": "read: option_aim_assist, two ints at +0 and +4 (GetAimAssistState reads 2f4b9c4 then 2f4b9c0, Linux 3d8e030 then 3d8e02c: one delta, +e4266c, for the 8 bytes)",
+   "what": "option aim assist"
   },
   {
    "module": "pilot_stock",
    "win": "2f4b9c4",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e030",
+   "status": "matched",
+   "evidence": "read: option_aim_assist, two ints at +0 and +4 (GetAimAssistState reads 2f4b9c4 then 2f4b9c0, Linux 3d8e030 then 3d8e02c: one delta, +e4266c, for the 8 bytes)",
+   "what": "option aim assist"
   },
   {
    "module": "pilot_stock",
    "win": "2f4b9c5",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e031",
+   "status": "candidate",
+   "evidence": "read: option_aim_assist, two ints at +0 and +4 (GetAimAssistState reads 2f4b9c4 then 2f4b9c0, Linux 3d8e030 then 3d8e02c: one delta, +e4266c, for the 8 bytes)",
+   "what": "option aim assist"
   },
   {
    "module": "pilot_stock",
    "win": "2f4b9c6",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e032",
+   "status": "candidate",
+   "evidence": "read: option_aim_assist, two ints at +0 and +4 (GetAimAssistState reads 2f4b9c4 then 2f4b9c0, Linux 3d8e030 then 3d8e02c: one delta, +e4266c, for the 8 bytes)",
+   "what": "option aim assist"
   },
   {
    "module": "pilot_stock",
    "win": "2f4b9c7",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e033",
+   "status": "candidate",
+   "evidence": "read: option_aim_assist, two ints at +0 and +4 (GetAimAssistState reads 2f4b9c4 then 2f4b9c0, Linux 3d8e030 then 3d8e02c: one delta, +e4266c, for the 8 bytes)",
+   "what": "option aim assist"
   },
   {
    "module": "pilot_stock",
    "win": "2f4b9cc",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3d8e02a",
+   "status": "matched",
+   "evidence": "read: GetCollisionAvoidanceState; 2 of 2 users",
+   "what": "option collision avoidance"
   },
   {
    "module": "pilot_stock",
    "win": "38f52d7",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3defa61",
+   "status": "matched",
+   "evidence": "read: the settings loader 121df00/fc90b0 writes it after \"toggleboost2\" (Linux out of line at fcb310, back to fca6e0 after the name at fca6c4); 2 users vote +4fa78a",
+   "what": "option toggle boost"
   },
   {
    "module": "pilot_stock",
    "win": "38f52d8",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3df81a9",
+   "status": "matched",
+   "evidence": "read: SetForceShootingAtCursorOption; the loader writes it after \"forceshootatcursor\" (fcabac, back to fc9688 after fc966c)",
+   "what": "option force shooting at cursor"
   },
   {
    "module": "pilot_stock",
@@ -1128,7 +1154,7 @@
    "kind": "data",
    "lin": "3d8d9e4",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_slots",
@@ -1136,7 +1162,7 @@
    "kind": "data",
    "lin": "3d8da60",
    "status": "candidate",
-   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (17 members)"
   },
   {
    "module": "pilot_slots",
@@ -1150,9 +1176,10 @@
    "module": "pilot_slots",
    "win": "395cdb0",
    "kind": "data",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "3e35e9c",
+   "status": "candidate",
+   "evidence": "instruction-form votes 7 of 7 paired users",
+   "what": "pilot control position (PSLOT_PILOT_POSITION)"
   },
   {
    "module": "pilot_present",
@@ -1278,81 +1305,91 @@
    "module": "pilot_stock_view",
    "win": "54efb5",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside 54ef49"
+   "lin": "177f9c0",
+   "status": "matched",
+   "evidence": "read: call 1e07020 (camera external: Universe 3db6948 -> camera +0x3e8 (Windows +0x3d0) -> mode +0x880 (+0x868) != 0), test al, jne 177f9ac: on Linux a call to re-point, not a jump block",
+   "what": "Engine camera test"
   },
   {
    "module": "pilot_stock_view",
    "win": "54efd6",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside 54ef49"
+   "lin": "177f9c9",
+   "status": "matched",
+   "evidence": "read: macro +0xb80 (Windows +0xb70)",
+   "what": "Engine cockpit factor multiply"
   },
   {
    "module": "pilot_stock_view",
    "win": "54efdf",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside 54ef49"
+   "lin": "177f9ac",
+   "status": "matched",
+   "evidence": "read: the external camera path of 177f9c0",
+   "what": "Engine after the factor"
   },
   {
    "module": "pilot_stock_view",
    "win": "609440",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside 6093e0"
+   "lin": "1113339",
+   "status": "matched",
+   "evidence": "read: the same Linux call site as 81bba3 (1113360 tail-jumps into 11132d0)",
+   "what": "MissileLauncher::vfunc1041 floating view call"
   },
   {
    "module": "pilot_stock_view",
    "win": "7d4d7a",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside 7d4d40"
+   "lin": "129bb21",
+   "status": "matched",
+   "evidence": "read: the mode test both paths reach (129bb15 reads the camera; 129baf8 jumps here when the ship is the camera's object)",
+   "what": "Ship::vfunc836 camera mode test"
   },
   {
    "module": "pilot_stock_view",
    "win": "7d4d93",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside 7d4d40"
+   "lin": "129bb2b",
+   "status": "matched",
+   "evidence": "read",
+   "what": "Ship::vfunc836 cockpit continuation"
   },
   {
    "module": "pilot_stock_view",
    "win": "7d4eb5",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside 7d4d40"
+   "lin": "129bafa",
+   "status": "matched",
+   "evidence": "read",
+   "what": "Ship::vfunc836 returns false"
   },
   {
    "module": "pilot_stock_view",
    "win": "81bba3",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside 81bb50"
+   "lin": "1113339",
+   "status": "matched",
+   "evidence": "read: call 1d6b1c0",
+   "what": "Weapon::vfunc1041 floating view call"
   },
   {
    "module": "pilot_stock_view",
    "win": "d93052",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside d924d0"
+   "lin": "1666d0a",
+   "status": "matched",
+   "evidence": "read: GCC keeps two copies: 1666d0a (mode test 1666d2a, non-cockpit 1666f50, FOV call 1666d58) and 1666e5c (mode test 1666e87, cockpit 1666d46, otherwise 1666d77)",
+   "what": "view block (coefficients): [Universe] test"
   },
   {
    "module": "pilot_stock_view",
    "win": "d93087",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside d924d0"
+   "lin": "1666d77",
+   "status": "matched",
+   "evidence": "read: after the scale (the second copy's non-cockpit path jumps here); the first copy's non-cockpit path continues at 1666f50",
+   "what": "view block continuation"
   },
   {
    "module": "pilot_camera",
@@ -1373,10 +1410,11 @@
   {
    "module": "pilot_camera",
    "win": "9faad0",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "kind": "fn_paired",
+   "lin": "1d7dc10",
+   "status": "matched",
+   "evidence": "read: SetPlayerCameraTargetView c03b30 and IsPlayerCameraTargetViewPossible c030e0 tail-jump to it after an inlined Find (rdi component, esi force, edx check_only 0/1, ecx 1); 4 paired callees agree",
+   "what": "camera target view worker"
   },
   {
    "module": "pilot_camera",
@@ -1413,7 +1451,7 @@
  ],
  "coverage": {
   "sites": 174,
-  "placed": 71,
-  "matched": 8
+  "placed": 107,
+  "matched": 36
  }
 }

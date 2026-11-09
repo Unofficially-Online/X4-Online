@@ -128,19 +128,102 @@ def place_in_blocks(blocks, targets, slack=0):
     return out
 
 
+def dtor_slots(rtti):
+    """{(class, offset): d} for the vtable pairs with one more Linux slot than Windows slots (GCC's two destructors
+    where MSVC has one): d is the destructor's Windows slot; Windows slot i is Linux slot i + (i > d). The primary
+    vtable declares the destructor first (d = 0); an interface's secondary vtable can declare it last (Engine at
+    offset 48: 11 slots, d = 10, so slot 5 stays slot 5, not 6). Siblings (the same offset and slot count, at least
+    half the slots shared) differ in the destructor on both builds: the Windows slots where they differ, mapped by d,
+    plus d + 1 must be Linux slots where they differ (a subset: MSVC folds identical functions, so two classes' equal
+    overrides can share one Windows address and differ on Linux). A sibling votes when exactly one d fits. A row
+    without a decisive vote (best twice the runner-up) takes its (offset, slot count) group's decision; otherwise the
+    row keeps the range of the d that fit any
+    sibling: {(class, offset): (lo, hi)}, lo == hi when decided, (0, 0) for rows without siblings. lin_slot maps a
+    slot through it (slots inside an undecided range stay open)."""
+    rows = []
+    for cls, rs in rtti.items():
+        for r in rs:
+            ws = [int(x, 16) for x in r['win_slots']]
+            ls = [int(x, 16) for x in r.get('lin_slots', [])]
+            if len(ls) == len(ws) + 1 and ws:
+                rows.append((cls, r['offset'], ws, ls))
+    groups = {}
+    for row in rows:
+        groups.setdefault((row[1], len(row[2])), []).append(row)
+    own, seen, fits = {}, set(), {}
+    for group in groups.values():
+        for cls, off, ws, ls in group:
+            votes = {}
+            for c2, _, ws2, ls2 in group:
+                if c2 == cls or sum(1 for a, b in zip(ws, ws2) if a == b) < len(ws) // 2:
+                    continue
+                seen.add((cls, off))
+                wd = {i for i in range(len(ws)) if ws[i] != ws2[i]}
+                ld = {i for i in range(len(ls)) if ls[i] != ls2[i]}
+                fit = [d for d in wd if {i + (1 if i > d else 0) for i in wd} | {d + 1} <= ld]
+                fits.setdefault((cls, off), set()).update(fit)
+                if len(fit) == 1:
+                    votes[fit[0]] = votes.get(fit[0], 0) + 1
+            ranked = sorted(votes.items(), key=lambda kv: -kv[1])
+            if ranked and (len(ranked) == 1 or ranked[0][1] >= 2 * ranked[1][1]):
+                own[(cls, off)] = ranked[0][0]
+    decided = {}
+    for key, group in groups.items():
+        ds = {}
+        for cls, off, _, _ in group:
+            if (cls, off) in own:
+                ds[own[(cls, off)]] = ds.get(own[(cls, off)], 0) + 1
+        ranked = sorted(ds.items(), key=lambda kv: -kv[1])
+        if ranked and (len(ranked) == 1 or ranked[0][1] >= 2 * ranked[1][1]):
+            decided[key] = ranked[0][0]
+    out = {}
+    for cls, off, ws, _ in rows:
+        if (cls, off) in own:
+            d = own[(cls, off)]
+        elif (off, len(ws)) in decided:
+            d = decided[(off, len(ws))]
+        elif (cls, off) not in seen:
+            d = 0
+        else:
+            f = fits.get((cls, off)) or {0, len(ws) - 1}
+            out[(cls, off)] = (min(f), max(f))
+            continue
+        out[(cls, off)] = (d, d)
+    return out
+
+
+def lin_slot(i, rng):
+    """The Linux slot of Windows slot i under a dtor_slots range; None inside an undecided range."""
+    lo, hi = rng
+    if i <= lo:   # below the destructor, or the destructor itself (GCC's first, D1, takes its place)
+        return i
+    if i > hi:
+        return i + 1
+    return None
+
+
 def place_vtables(rtti, targets):
+    """An address inside a paired vtable maps to its slot on Linux: i + (i > d) with the destructor slot d of
+    dtor_slots; vtables whose slot counts differ by more than one (overloads ordered differently: Weapon has 1047
+    Windows and 1065 Linux slots, +1 up to slot 573 and +18 from 983) are left open, as are ambiguous ones."""
+    dpos = dtor_slots(rtti)
     slots = {}
     for cls, rows in rtti.items():
         for r in rows:
             wv, lv = int(r['win_vtable'], 16), int(r['lin_vtable'], 16)
-            slots[wv] = (cls, r['offset'], wv, lv, len(r['win_slots']))
+            slots[wv] = (cls, r['offset'], wv, lv, len(r['win_slots']), len(r.get('lin_slots', [])))
     out = {}
     for t in targets:
         hit = [v for v in slots.values() if v[2] <= t < v[2] + 8 * v[4]]
         if hit:
-            cls, off, wv, lv, n = hit[0]
+            cls, off, wv, lv, n, nl = hit[0]
             k = (t - wv) // 8
-            out[t] = {'class': cls, 'offset': off, 'slot': k, 'placed': lv + 8 * (k + (1 if k >= 1 else 0))}
+            if k == 0:   # the vtable itself (class identity by vptr): slot 0 on both builds
+                j = 0
+            else:
+                j = lin_slot(k, dpos[(cls, off)]) if nl == n + 1 and (cls, off) in dpos else None
+            if j is not None:
+                out[t] = {'class': cls, 'offset': off, 'slot': k, 'placed': lv + 8 * j}
     return out
 
 

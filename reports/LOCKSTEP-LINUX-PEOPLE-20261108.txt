@@ -168,6 +168,46 @@ pilot_foot and its bodies/slots, player_settings_per_slot, guidance_local, rende
   The bank key generalizes: every module that keeps a data block laid out alike on both builds (linux_pair_data.py
   blocks: 33 found) can place its users the same way.
 
+3j. THE VIEW SITES AND THE DESTRUCTOR SLOT (9 November)
+  The bank key over every block (tools/dev/linux_people/block_key.py: a Windows function's references into the 34
+  blocks mapped to Linux, Jaccard against each Linux function's references into the same blocks, a clear lead
+  required; held out on the known pairs 57 right, 1 wrong, 182 without a lead) placed d924d0 -> 16666b0 (2 of 2
+  fields). Most open sites reference no block, so the rest of this round was reading, along the camera:
+    - d924d0 PlayerController coefficients -> 16666b0: the constants agree (1e-27, nan, -0.9999d, 20, 1e-4), d8e5b0 is
+      called 4 times where 1663740 is. Its view block (d93052..d93087) is there twice: GCC copied it (1666d0a with the
+      mode test 1666d2a, and 1666e5c with 1666e87); 97c140, the FOV factor, is 1926cc0 (the camera's +0x788/+0x798).
+    - The camera fields shift: Universe+0x3d0 -> +0x3e8 (the camera), its mode +0x868 -> +0x880, its viewed object
+      +0x770 -> +0x780, Universe+0x230 -> +0x238 (the player's object). Linux keeps two checks out of line that MSVC
+      inlines everywhere: 1e07020 "camera external" (20 callers) and 1dd81c0 "player's object" (31 callers).
+    - 9fbf50 floating view -> 1d6b1c0; 9faad0 camera target view worker -> 1d7dc10 (both FFI exports,
+      SetPlayerCameraTargetView c03b30 and IsPlayerCameraTargetViewPossible c030e0, tail-jump to it after an inlined
+      Find; on Linux check_only is the third argument, edx).
+    - Vtable slots deep in the large classes do not follow the +1 rule: Weapon has 1047 Windows and 1065 Linux slots
+      (overloads ordered differently: +1 up to slot 573, +18 from 983). The slots where two classes differ line up in
+      order on both builds (MissileLauncher/Weapon, ShipSmall/Station), which gives the local shift:
+      81bb50 Weapon::vfunc1041 -> 11132d0 (slot 1059), 6093e0 MissileLauncher::vfunc1041 -> 1113360 (it tail-jumps
+      into 11132d0 on Linux, so the two Windows calls of the floating view, 81bba3 and 609440, are one Linux call
+      site, 1113339), 7d4d40 Ship::vfunc836 -> 129bad0 (slot 854; the mode test 129bb21 is reached by both paths).
+    - 54ee80, Engine's secondary vtable (offset 48) slot 5 -> 177f900 through the thunk 177f9e0: that interface
+      declares its destructor last (slot 10), so slot 5 stays slot 5. Its camera test is a call on Linux (177f9c0 ->
+      1e07020): the Windows jump block becomes a call to re-point; the macro's cockpit factor is +0xb80 (+0xb70).
+  The destructor position also corrects the tools: linux_pair_calls.py's vtable anchors and linux_pair_data.py's
+  vtable placement assumed the destructor in slot 0. linux_pair_data.dtor_slots now finds it per vtable from its
+  siblings (the destructor differs between sibling classes on both builds; GCC's two show as two adjacent Linux
+  slots; MSVC's folded functions make the Windows differences a subset). 2742 vtables have it first, 118 last (the
+  offset 48 interface), 270 in slot 1 (an offset 56 interface whose slots 1 and 2 on Linux both rewrite the vptrs),
+  61 stay undecided (only the slots outside the candidate range are used). 10 anchors were one slot off (54ee80 ->
+  177fa40 among them; 75a670/75a700, shared by 96 and 100 vtables); the chain rerun (calls, neighbours, both trace
+  passes) gives 10131 pairs, 13 changed. Vtables whose slot counts differ by more than one place only slot 0.
+  The data sites, by the FFI exports that read or write them (the same names on both builds), the settings loader
+  (121df00/fc90b0: each option is written after its name) and instruction-form votes (the Linux globals a paired
+  user's twin uses in the same mnemonic and size): the options autoroll 2f4b9be -> 3d8e02b, stop ship in menus
+  2f4b9bf -> 3d8e050, aim assist 2f4b9c0..c7 -> 3d8e02c..33, collision avoidance 2f4b9cc -> 3d8e02a, toggle boost
+  38f52d7 -> 3defa61, force shooting at cursor 38f52d8 -> 3df81a9; flight requested 2f4b829 -> 3d8daa9 (the bank's
+  delta one byte past it); 3d196f0 is not needed on Linux (Windows passes it to the controller getter 9fc550, whose
+  twin 1dd19d0 takes no argument). Candidates by votes: 395cdb0, 38f4c31, 6b661d0, the trigger bytes 38f0728.
+  Minimal path: 107 of 174 placed, 36 matched; pilot_stock 16 of 16, pilot_stock_view 10 of 10.
+
 4b. NEXT (before lx32b)
   - 6d6d80 and 54ce90 by a reading of both builds (the getter is called by 62 Windows functions: placing it pins many
     sites), then the three predicates; the data words of pilot_inputs (0x2f4b7e4 control-deactivation count,

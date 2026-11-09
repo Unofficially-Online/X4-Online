@@ -28,6 +28,9 @@ FAIL = re.compile(r'NATIVE_GATE (?:ERROR (?!DEGRADED |DEFAULT_SKIPPED )|REFUSED)
 # (the console shows the first row of each kind per client). The relay's notices go to desyncs.log, never into the game.
 KIND = re.compile(r'NATIVE_GATE (ERROR \S+|REFUSED \S+|STOP .*?reason=\d+)|(Error while executing)')
 STOP_ANY = re.compile(r'NATIVE_GATE STOP .*?reason=(\d+)')
+# The probe's own refusal (a Lua error in native_gate_probe.lua) before the gate armed: that client never plays (hj11, 8 Nov:
+# a Linux-only key refused at boot, and the session waited out its --timeout of 25 minutes).
+PROBE_REFUSED = re.compile(r'NATIVE_GATE ERROR \[string "[^"]*native_gate_probe\.lua"\]:\d+: (.*)')
 PLAY_NOTICE = re.compile(r'NATIVE_GATE (DESYNC|RESYNC|CLOCK_SPLIT|STALL|DROP) ')
 PLAY_STALL_DROP_S = 15.0  # a client the others waited for this long is dropped (its gate stopped, it froze or it exited)
 
@@ -631,7 +634,7 @@ def monitor_play(o, run_dir, relay, clients, log):
     tick_hz, armed_at = o.tick_hz or overlay_tick_hz(o.overlay), None
     tails = {k: LogTail(profile.profile_dir(profile_id) / f'x4ls-c{k}.log') for k, profile_id, _ in clients}
     relay_tail = LogTail(run_dir / 'relay.log')
-    counts, seen, stopped, exited, over = {}, set(), {}, {}, False
+    counts, seen, stopped, exited, over, armed = {}, set(), {}, {}, False, set()
 
     def count(kind):
         counts[kind] = counts.get(kind, 0) + 1
@@ -683,6 +686,13 @@ def monitor_play(o, run_dir, relay, clients, log):
                             if (k, kind) not in seen:
                                 seen.add((k, kind))
                                 log(f'client {k}: {kind} (logged, the session runs on; every row in errors.log)')
+                        if 'NATIVE_GATE ARMED' in line:
+                            armed.add(k)
+                        refused = PROBE_REFUSED.search(line)
+                        if refused and k not in armed and k not in stopped:
+                            stopped[k] = 'refused'
+                            log(f'client {k}: the probe refused the overlay before its gate armed, so it cannot play: '
+                                f'{refused.group(1).strip()[:240]}')
                         stop = STOP_ANY.search(line)
                         if stop and k not in stopped:
                             stopped[k] = int(stop.group(1))

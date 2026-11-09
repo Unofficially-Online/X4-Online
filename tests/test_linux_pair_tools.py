@@ -58,5 +58,65 @@ class Traces(unittest.TestCase):
         self.assertEqual((lb[360], lb[1040], lb['frame']), ([0x166c6f0], [0x1d820b0], [0x166d020]))
 
 
+def vt(win, lin, wv=0x2000000, lv=0x3a00000, offset=0):
+    return {'offset': offset, 'win_vtable': '%x' % wv, 'lin_vtable': '%x' % lv,
+            'win_slots': ['%x' % a for a in win], 'lin_slots': ['%x' % a for a in lin]}
+
+
+class DestructorSlots(unittest.TestCase):
+    def test_interface_destructor_last_primary_first_and_folded_siblings(self):
+        import linux_pair_data as data
+        # an interface at offset 48 (Engine's): slot 1 is each class's own, slot 2 shared, slot 3 the destructor (GCC:
+        # two); the shared slot between them decides it (with the own slot next to the destructor both would fit)
+        iface = {f'C{k}': [vt([0x10, 0x20 + k, 0x11, 0x30 + k], [0x110, 0x120 + k, 0x111, 0x130 + k, 0x140 + k],
+                              0x2100000 + 0x100 * k, 0x3b00000 + 0x100 * k, offset=48)] for k in range(3)}
+        # primary vtables: the destructor first; C0 and C1 share a folded Windows override in slot 2 (MSVC's ICF)
+        prim = {'P0': [vt([0x50, 0x60, 0x70], [0x150, 0x151, 0x160, 0x170])],
+                'P1': [vt([0x51, 0x60, 0x70], [0x152, 0x153, 0x160, 0x171])],
+                'P2': [vt([0x52, 0x60, 0x72], [0x154, 0x155, 0x160, 0x172])]}
+        d = data.dtor_slots({**iface, **prim})
+        self.assertEqual(d[('C0', 48)], (3, 3))
+        self.assertEqual(d[('P0', 0)], (0, 0))
+        self.assertEqual([data.lin_slot(i, (3, 3)) for i in range(4)], [0, 1, 2, 3])
+        self.assertEqual([data.lin_slot(i, (0, 0)) for i in range(3)], [0, 2, 3])
+        self.assertEqual([data.lin_slot(i, (1, 3)) for i in range(5)], [0, 1, None, None, 5])
+        # an address in slot 2 of the interface stays slot 2 (the old +1 rule gave slot 3, the destructor)
+        placed = data.place_vtables(iface, [0x2100000 + 16])
+        self.assertEqual(placed[0x2100000 + 16]['placed'], 0x3b00000 + 16)
+
+    def test_slot_counts_far_apart_place_only_the_vtable_itself(self):
+        import linux_pair_data as data
+        rt = {'Big': [vt(list(range(0x100, 0x110)), list(range(0x200, 0x218)))]}   # 16 Windows, 24 Linux slots
+        placed = data.place_vtables(rt, [0x2000000, 0x2000000 + 8 * 9])
+        self.assertEqual(placed[0x2000000]['placed'], 0x3a00000)
+        self.assertNotIn(0x2000000 + 8 * 9, placed)
+
+
+class BlockKey(unittest.TestCase):
+    def test_mapped_block_fields_place_with_a_clear_lead_only(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/dev/linux_people'))
+        import block_key
+        delta = 0xE42280
+        base = 0x2f4b720
+        blocks = [(base, base + 0x100, delta, 8)]
+        g = [base + 0x10 * i for i in range(6)]
+        wg = {0x100000: ([], [], [(g[0], 'mov'), (g[1], 'mov'), (g[2], 'movss')]),   # the open function
+              0x100200: ([], [], [(g[3], 'mov'), (g[4], 'mov')]),
+              0x100400: ([], [], [(g[5], 'mov')])}
+        lg = {0x1600000: ([], [], [(g[0] + delta, 'mov'), (g[1] + delta, 'mov'), (g[2] + delta, 'movss')]),
+              0x1600200: ([], [], [(g[0] + delta, 'mov'), (g[3] + delta, 'mov')]),
+              0x1600400: ([], [], [(g[3] + delta, 'mov'), (g[4] + delta, 'mov')]),
+              0x1600500: ([], [], [(g[3] + delta, 'mov'), (g[4] + delta, 'mov')]),
+              0x1600600: ([], [], [])}
+        key = block_key.Key(wg, lg, {}, blocks)
+        got, mapped, rows = key.place(0x100000)
+        self.assertEqual((got, len(mapped)), (0x1600000, 3))
+        self.assertEqual(rows[0][:2], (1.0, 3))
+        # two Linux functions with the same fields: no lead, no placement
+        self.assertIsNone(key.place(0x100200)[0])
+        # one field is not enough
+        self.assertIsNone(key.place(0x100400)[0])
+
+
 if __name__ == '__main__':
     unittest.main()

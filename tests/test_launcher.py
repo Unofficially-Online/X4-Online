@@ -300,6 +300,51 @@ class Play(unittest.TestCase):
             self.assertTrue(any('the session is over' in s for s in said))
 
 
+class ProbeRefusedTests(unittest.TestCase):
+    def test_a_probe_refusal_before_arming_ends_the_session(self):
+        """hj11: a key the probe refuses at boot; the session ends (close_when_over) instead of waiting out --timeout."""
+        class Proc:
+            pid, returncode = 1, None
+
+            def poll(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, docs = Path(tmp) / 'run', Path(tmp) / 'docs'
+            run_dir.mkdir()
+            ids = profile.PROFILES[:2]
+            for i in ids:
+                (docs / str(i)).mkdir(parents=True)
+            clients = [(1, ids[0], Proc()), (2, ids[1], Proc())]
+            logs = {k: docs / str(i) / f'x4ls-c{k}.log' for k, i, _ in clients}
+            for path in logs.values():
+                path.write_text('')
+            (run_dir / 'relay.log').write_text('')
+            refusal = '[X4LAN] NATIVE_GATE ERROR [string "extensions/x4_lan_lab/ui/native_gate_probe.lua"]:5439: runtime ids callers refused mode=set'
+            script = [
+                lambda: logs[1].write_text(refusal + chr(10)),
+                # After its gate armed the same form is a frame error: logged, the client plays on.
+                lambda: logs[2].write_text('[X4LAN] NATIVE_GATE ARMED slot=p2' + chr(10) + refusal + chr(10)),
+                lambda: logs[2].write_text(logs[2].read_text() + '[X4LAN] NATIVE_GATE STOP tick=40 reason=1 restored=1' + chr(10)),
+            ]
+            said = []
+
+            def sleep(_):
+                self.assertTrue(script, 'monitor_play ran past the end')
+                script.pop(0)()
+            keep = session.time.sleep, profile.documents, session.tile
+            session.time.sleep, profile.documents, session.tile = sleep, (lambda: docs), (lambda *a: 2)
+            try:
+                o = session.Options(clients=2, overlay=Path(tmp), tick_hz=30, play=True, close_when_over=True)
+                result = session.monitor_play(o, run_dir, None, clients, said.append)
+            finally:
+                session.time.sleep, profile.documents, session.tile = keep
+            self.assertEqual(result['ended'], 'session over')
+            self.assertEqual(result['stopped'], {'client1': 'refused', 'client2': 1})
+            self.assertEqual(len([s for s in said if 'refused the overlay' in s]), 1)
+            self.assertTrue(any('runtime ids callers refused' in s for s in said))
+
+
 class Checkpoint(unittest.TestCase):
     class Done:  # a client process that has already exited
         def poll(self):

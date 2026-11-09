@@ -149,14 +149,20 @@ def anchors(args, wg, lg, wexp, lexp):
     for name in sorted(set(wexp) & set(lexp)):
         add(wexp[name], lexp[name], 'export:' + name)
     if args.rtti:
+        from linux_pair_data import dtor_slots, lin_slot
+        rtti = json.load(open(args.rtti))['classes']
+        dpos = dtor_slots(rtti)   # the destructor's slot: first in primary vtables, last in some interfaces'
         slots = {}
-        for cls, rows in json.load(open(args.rtti))['classes'].items():
+        for cls, rows in rtti.items():
             for r in rows:
                 ws, ls = r['win_slots'], r['lin_slots']
                 if len(ls) != len(ws) + 1:
                     continue
-                for i in range(1, len(ws)):
-                    slots.setdefault(int(ws[i], 16), set()).add(int(ls[i + 1], 16))
+                rng = dpos[(cls, r['offset'])]
+                for i in range(len(ws)):
+                    j = lin_slot(i, rng)
+                    if j is not None and not rng[0] <= i <= rng[1]:   # the destructor (MSVC's one, GCC's two) or undecided
+                        slots.setdefault(int(ws[i], 16), set()).add(int(ls[j], 16))
         for w, ls in slots.items():
             if len(ls) == 1:
                 add(w, next(iter(ls)), 'vtable')

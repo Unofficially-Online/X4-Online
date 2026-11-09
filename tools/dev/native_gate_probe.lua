@@ -6136,7 +6136,9 @@ local function mp_menu_test_step()
  end
 end
 SetScript('onUpdate',function()
- if not mp_menu.installed then pcall(mp_menu_install) elseif cfg.native_gate_mp_menu_test then pcall(mp_menu_test_step) end
+ -- the menu block's local; absent where the handler runs on its own (tests lift it out with stubs)
+ if not mp_menu then elseif not mp_menu.installed then pcall(mp_menu_install)
+ elseif cfg.native_gate_mp_menu_test then pcall(mp_menu_test_step) end
  -- Info lines raised at the start menu (refusals before the snapshot load) again once a game is on screen.
  local defaults=X4LAN_NATIVE_GATE_DEFAULTS
  if defaults and #defaults.pending>0 then defaults.flush_notices(not ffi.C.IsStartmenu()) end
