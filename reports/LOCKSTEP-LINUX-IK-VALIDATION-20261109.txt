@@ -1,0 +1,104 @@
+LINUX JOINT UPDATE: CLEANUP AND EXECUTION COVERAGE
+9 November 2026
+
+Result
+  The opt-in native_gate_ik_step correction installs and restores in two real Linux
+  game processes. This does not establish that it fixes the Windows/Linux combat
+  divergence. A separate execution-coverage run reached the scalar joint backend
+  on both peers and never reached the fixed-step backend containing this patch.
+  The option remains off by default; no mixed-platform preset was changed.
+
+Source and setup
+  Upstream: 539ca77. Tested native source: 955dde2.
+  Linux X4 9.00 SHA-256:
+    113f73d74570084f6ce18a659b365009eccf579fb66dbabb5dad2b1718045f20
+  Gate SHA-256:
+    28cd890011e6473e6a564f9514fbf5021fad52ade0812b436385c8fa5f45c684
+  Two native Linux processes on one machine, disposable profiles, a retained
+  development snapshot with RNG seed 2222222, 30 Hz, linux-core mixed-platform
+  simulation settings, battle fixture, joint and impulse diagnostics. The
+  snapshot is not the Windows W36 snapshot. No Windows game was run here.
+  The runner made the host filesystem and installed game read-only, with writable
+  mounts confined to each disposable case. It reported unchanged Steam process
+  identity and no remaining owned processes after each run.
+
+Patch lifecycle correction
+  A code swap can publish a jump and still report failure if restoring executable
+  page protection fails. The previous implementation lost cleanup ownership when
+  either installation failed, and could not retry a partially completed restore.
+  Each attempted site now keeps independent cleanup ownership until its original
+  bytes and RX protection are confirmed. Foreign bytes are never overwritten.
+  Unresolved cleanup refuses rearming and prevents a successful restoration claim.
+  Rearming allocates a fresh stub page; old pages stay executable because an engine
+  thread may still be inside them. This deliberately retains mappings until process
+  exit, including allocations from early failed installs.
+  Copied-ELF fault injection covers reported-failed successful writes, RX failures,
+  failed rollback, partial restoration, foreign bytes and fresh-page rearming.
+  These tests do not establish all possible engine-thread interleavings.
+
+Development checks
+  The Linux gate checker passed its copied-ELF checks, 207 Lua methods and
+  29 synthetic relay scenarios after the cleanup change. These are offline tests.
+  The initial full Python suite failed to import the new Linux binary-mapping
+  tests because the development requirements omitted pefile (and pyelftools).
+  The requirements now pin all three mapping dependencies, including capstone.
+  A fresh environment passed the six mapping tests, imports and pip check.
+  With the locally built wire-crypto library, configured Linux executable and
+  Zig compiler, the full suite ran 2,030 tests: 2,005 passed, 25 skipped, no test
+  errors or failures. The checker correctly exited 1 for those unaccepted skips.
+  Missing Windows/reference-game resources, schema configuration and a released
+  lane tool prevent full-suite acceptance; the skip list is retained in the log.
+
+Native comparison
+  control-300: correction off; candidate-300: correction on. Bundle settings differ
+  only in that option (and generated file identities).
+  Both pairs completed 300 ticks, reason=1, restored=1. Six sampled world hashes
+  matched within each pair. Each peer recorded 25,116 IKJOINT rows over ticks 2..300;
+  all rows matched within each pair and between control and candidate. The candidate
+  logged the correction installed on every tick and cleanup=00 after restoration.
+  The fixture was active: candidate peer 1 recorded 134 IMPULSE rows and thousands
+  of nonzero joint values, rates and targets. Equal outputs therefore warranted
+  checking which backend actually executed.
+
+Execution coverage
+  coverage-60 repeats the candidate configuration for 60 ticks with three explicit
+  marks in the existing native_gate_coverage diagnostic:
+    0x1565b00  joint-update entry
+    0x1565be8  fixed-step backend entry
+    0x156637a  advancing-time scalar backend
+  The Linux function reads mode byte 0x3db6b74. A zero value selects the scalar
+  backend; a nonzero value selects the fixed-step backend. The patched divisions
+  at 0x1565fd8 and 0x1566050 are only in the latter.
+  Both peers reported all three marks installed, none invalid/pinned/skipped,
+  no foreign traps and no failures. Entry and scalar body were first hit at tick 2;
+  the fixed-step entry was not hit during the marked window. Both peers completed
+  60 ticks with reason=1/restored=1, the coverage window closed, and IK cleanup=00.
+  This is direct evidence of the path taken in this fixture, not a claim about all
+  weapon types, settings or longer sessions. Coverage was not enabled in the two
+  300-tick runs, so their backend execution is not independently established.
+  Static follow-up found the mode byte in .bss and an initialization write of
+  0x0100 to the word at 0x3db6b74 (instruction 0x8a136f): its low byte is zero.
+  A scan of direct references found no later explicit writer enabling the flag,
+  but does not exclude indirect writes. The nearby "jpmotion" option writes other
+  bytes; it is not established as a switch for this backend. No flag was changed
+  for these tests, and no Windows default is inferred from this Linux code.
+
+Evidence limits and next step
+  Matching sampled world hashes do not cover every engine field: these runs still
+  report tens of thousands of unknown motion records. They are bounded Linux/Linux
+  simulation results, not player-control, hot-join or Windows/Linux acceptance.
+  Do not promote the IK correction based only on installed=1 or equal Linux peers.
+  Establish the backend selected on both platforms with the same snapshot/options,
+  then compare the first differing joint and bullet input. Investigate the scalar
+  path if both platforms use it; investigate mode selection if they differ. Preserve
+  the upstream tick-28 failures as unresolved evidence.
+
+Retained local evidence (not included in source distributions)
+  .local/native-ik/control/runs/control-300/
+  .local/native-ik/candidate/runs/candidate-300/
+  .local/native-ik/coverage/runs/coverage-60/
+  Each contains both raw engine logs and run-result.json; bundles retain manifests.
+  .local/resume-20261109/native-audit.json and coverage-audit.json contain log hashes
+  and compact results. Coverage raw log SHA-256:
+    peer 1: d8c3531fabad6229b5a7695647b1e41879a73de2e33b40753e4e93518014057a
+    peer 2: e2c4dcabe727c1553a99ede7c6ee0deb3d9128c409c7e2ced15f0370df636705

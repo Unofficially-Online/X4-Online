@@ -1,0 +1,44 @@
+LINUX PILOT CAPTURE: CALLING-CONVENTION CHECK
+9 November 2026; source baseline 539ca77
+
+Scope
+  Read-only follow-up to LOCKSTEP-LINUX-PEOPLE-20261108.txt. These are static
+  findings from the pinned Linux executable, not a working pilot-input port.
+  No native pilot methods, replay, packets or settings were enabled by this work.
+  Linux ELF SHA-256:
+    113f73d74570084f6ce18a659b365009eccf579fb66dbabb5dad2b1718045f20
+
+Capture call boundary
+  Controller getter: 0x1dd19d0, returns a pointer in RAX.
+  Channel getter: 0x1663740, takes that pointer in RDI and channel id in ESI;
+  returns a scalar float in XMM0. Candidate C signatures on Linux x86-64:
+    void *get_player_controller(void);
+    float get_input_channel(void *controller, unsigned int channel_id);
+  The native caller at 0x180df18 obtains the controller, then passes it to calls
+  at 0x180df42/70/90 with data-driven ids. This establishes the calling convention
+  independently of the Windows declaration.
+
+Channel and type checks
+  Linux has cases for all six ids used by Windows pilot_capture_native:
+    0x6c -> 0x1663999    0x6d -> 0x1663969    0x6e -> 0x166392a
+    0x6f -> 0x16638fa    0x70 -> 0x16638ca    0x71 -> 0x16638bd
+  This establishes handled ids, not identical axis meaning or sign. The examined
+  callers use data-driven ids; no direct six-axis call sequence was found.
+  PlayerController's primary Linux vtable is 0x3b7c208, offset-to-top zero,
+  RTTI name N1U16PlayerControllerE. Slots +0x50/+0xd0/+0x1c0 resolve to
+  0xd586b0/0xa863a0/0x1653f40. The getter's worker walks entity +0x200 and
+  uses the class test and projection slots; this is not a plain pointer load.
+
+Before implementation
+  Independently verify axis meaning and sign in an isolated input trace; preserve
+  finite-value checks and exact build pins. Boost/travel, trigger bytes, target
+  identities, control suppression and the player-slot stack remain separate
+  requirements. Six scalar channels cannot stand in for a complete pilot record.
+  A first capture probe must be read-only, explicit and default-off; it must not
+  silently send missing buttons or targets as zero. Full Linux joining still
+  needs the other people-stack modules documented in the earlier report.
+
+Evidence
+  Bounded disassembly and the address index are retained privately under
+  .local/resume-20261109/pilot-capture/. No game binary or disassembly is included
+  in this source report. No runtime acceptance is claimed.

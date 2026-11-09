@@ -162,6 +162,7 @@ static void lxai_restore(void);
 /* The joints' fixed-step update in the Windows order (gate_ik_step.h). */
 static void lxis_restore(void);
 static int lxis_check(void);
+static int lxis_cleanup_pending(void);
 static int lxis_installed;
 static int lxai_check(void);
 static int lxai_installed;
@@ -557,7 +558,7 @@ static void finish(unsigned reason) {
     lxvd_restore();
     lxai_restore();
     lxis_restore();
-    if(lxis_installed) stats.restored=0;
+    if(lxis_installed || lxis_cleanup_pending()) stats.restored=0;
     if(lxai_installed) stats.restored=0;
     if(lxvd_installed) stats.restored=0;
     if(lxbs_installed) stats.restored=0;
@@ -690,7 +691,11 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(lxbs_installed && !lxbs_check()) {finish(205);gate_original_once(frame,loading);return;} /* LXBS_STOP_REASON */
     if(lxvd_installed && (!lxvd_owned() || lxvd_failures)) {finish(44);gate_original_once(frame,loading);return;} /* Windows: 44 */
     if(lxai_installed && !lxai_check()) {finish(206);gate_original_once(frame,loading);return;} /* LXAI_STOP_REASON */
-    if(lxis_installed && !lxis_check()) {finish(208);gate_original_once(frame,loading);return;} /* LXIS_STOP_REASON */
+    if((lxis_installed && !lxis_check()) || (!lxis_installed && lxis_cleanup_pending())) {
+        finish(208);
+        gate_original_once(frame,loading);
+        return;
+    } /* LXIS_STOP_REASON */
     if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if((lxf_installed || lxf_ctor_installed) && (!lxf_owned() || lxf_failures)) {finish(55);gate_original_once(frame,loading);return;} /* flight, as Windows */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}

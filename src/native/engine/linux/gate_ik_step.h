@@ -7,8 +7,11 @@
  * 0x2c76dd0): the velocity (target - [+0x2c]) / dt, the acceleration (that - [+0x30]) / dt and the last partial step's
  * fraction. MSVC's fast floating point made each a multiplication by 50.0f (Windows 0x142cbed30, xmm14); 0.02f is
  * 0.0199999996, so x / 0.02f is x * 50.0000011 and rounds apart from x * 50.0f in a large share of the steps. The
- * weapons' gimbals (and the bullets that leave along them) then part between the platforms: W36k against lx51a, a
- * fixture ship's second bullet hit at tick 28 with its point 1e-4 and its direction 1e-5 apart.
+ * division is a candidate explanation for the different bullet trajectories in W36k against lx51a (a fixture
+ * ship's second hit at tick 28 had its point 1e-4 and direction 1e-5 apart). Installation alone does not establish
+ * that cause: the scalar backend bypasses these divisions. See reports/LOCKSTEP-LINUX-IK-VALIDATION-20261109.txt
+ * for a native fixture in which only that scalar backend ran. Keep this correction opt-in until a matched
+ * Windows/Linux comparison establishes both execution and its effect.
  *
  * Here the two runs that hold the divisions run in stubs on a page near the image with each divss by xmm1 (0.02f) a
  * mulss by 50.0f from the page:
@@ -32,7 +35,13 @@ static const unsigned char lxis_a_original[16]={0xf3,0x0f,0x5e,0xe9,0x0f,0x28,0x
 static const unsigned char lxis_c_original[19]={0xf3,0x0f,0x5c,0xe9,0x48,0x8b,0x03,0x48,0x8b,0x68,0x20,0xf3,0x0f,0x5c,0xc5,0xf3,0x0f,0x5e,0xc1};
 static unsigned char *lxis_page;
 static int lxis_installed,lxis_restored;
+/* A site remains our cleanup responsibility until its original bytes and RX
+ * protection are confirmed. This is separate from the fully armed state. */
+static int lxis_own_a,lxis_own_c;
+static int (*lxis_code_swap)(void *,unsigned __int128,unsigned __int128)=gate_code_swap128;
+static int (*lxis_code_close)(void *)=gate_code_close;
 static const char *lxis_stage="idle";
+static int lxis_cleanup_pending(void) {return lxis_own_a || lxis_own_c;}
 /* The rel32 at `at` of a buffer `out` whose code runs at `page`: relative to the end of those 4 bytes where they run. */
 static int lxis_rel(unsigned char *out,const unsigned char *page,unsigned char *at,const void *target) {
     const intptr_t d=(intptr_t)target-(intptr_t)(page+(at-out)+4);
@@ -90,26 +99,50 @@ static int lxis_swap(unsigned va,const unsigned char from[5],const unsigned char
     memcpy(&current,line,16);
     if(memcmp((unsigned char*)&current+at,from,5)) return 0;
     desired=current;memcpy((unsigned char*)&desired+at,to,5);
-    return gate_code_swap128(line,current,desired);
+    return lxis_code_swap(line,current,desired);
+}
+/* A failed swap can still have changed the bytes if restoring RX failed.
+ * Inspect the entry, restore only our jump, and independently confirm RX. */
+static void lxis_restore_site(unsigned va,unsigned stub,const unsigned char *original,int *owned) {
+    if(!*owned) return;
+    int state=lxis_site_state(va,stub,original);
+    if(state==1) {
+        unsigned char jump[5];
+        if(lxis_patch(jump,va,stub)) (void)lxis_swap(va,jump,original);
+        state=lxis_site_state(va,stub,original);
+    }
+    pthread_mutex_lock(&gate_code_lock);
+    const int closed=lxis_code_close(LX(va));
+    pthread_mutex_unlock(&gate_code_lock);
+    if(state==0 && closed) *owned=0;
 }
 static int lxis_install(void) {
-    if(!lxis_page) lxis_page=gate_near_page(LX(LXIS_A_VA));
+    /* Never reuse a page: an old thread can still be executing its stub. */
+    lxis_page=gate_near_page(LX(LXIS_A_VA));
     if(!lxis_page || mprotect(lxis_page,GATE_PAGE,PROT_READ|PROT_WRITE)) return 0;
     memset(lxis_page,0xcc,GATE_PAGE);
     if(!lxis_code(lxis_page,lxis_page) || mprotect(lxis_page,GATE_PAGE,PROT_READ|PROT_EXEC)) return 0;
     unsigned char a[5],c[5];
     if(!lxis_patch(a,LXIS_A_VA,LXIS_STUB_A) || !lxis_patch(c,LXIS_C_VA,LXIS_STUB_C)) return 0;
-    if(!lxis_swap(LXIS_A_VA,lxis_a_original,a)) return 0;
-    if(!lxis_swap(LXIS_C_VA,lxis_c_original,c)) {lxis_swap(LXIS_A_VA,a,lxis_a_original);return 0;}
+    lxis_own_a=1;
+    if(!lxis_swap(LXIS_A_VA,lxis_a_original,a)) goto failed;
+    lxis_own_c=1;
+    if(!lxis_swap(LXIS_C_VA,lxis_c_original,c)) goto failed;
     return 1;
+failed:
+    lxis_restore_site(LXIS_A_VA,LXIS_STUB_A,lxis_a_original,&lxis_own_a);
+    lxis_restore_site(LXIS_C_VA,LXIS_STUB_C,lxis_c_original,&lxis_own_c);
+    return 0;
 }
 /* Before the first admitted frame, on the MoveWorker. */
 static int lxis_arm(void) {
     if(lxis_installed) return stats.active;
+    if(lxis_cleanup_pending()) {lxis_stage="cleanup_pending";return 0;}
     if(!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) {lxis_stage="guard";return 0;}
     if(lxis_state()!=0) {lxis_stage="entry";return 0;}
     if(!lxis_pins()) {lxis_stage="pins";return 0;}
-    if(!lxis_install()) {lxis_stage="install";return 0;}
+    lxis_restored=0;
+    if(!lxis_install()) {lxis_stage=lxis_cleanup_pending()?"cleanup_pending":"install";return 0;}
     lxis_installed=1;lxis_restored=0;lxis_stage="armed";return 1;
 }
 static int lxis_check(void) {
@@ -118,15 +151,16 @@ static int lxis_check(void) {
     return 1;
 }
 static void lxis_restore(void) {
-    if(!lxis_installed) return;
-    unsigned char a[5],c[5];
-    if(lxis_state()!=1 || !lxis_patch(a,LXIS_A_VA,LXIS_STUB_A) || !lxis_patch(c,LXIS_C_VA,LXIS_STUB_C)) {lxis_stage="restore_foreign";return;}
-    const int ra=lxis_swap(LXIS_A_VA,a,lxis_a_original),rc=lxis_swap(LXIS_C_VA,c,lxis_c_original);
-    if(ra && rc) {lxis_installed=0;lxis_restored=1;lxis_stage="restored";} /* the page stays: a thread may still be inside a stub */
+    if(!lxis_installed && !lxis_cleanup_pending()) return;
+    lxis_restore_site(LXIS_A_VA,LXIS_STUB_A,lxis_a_original,&lxis_own_a);
+    lxis_restore_site(LXIS_C_VA,LXIS_STUB_C,lxis_c_original,&lxis_own_c);
+    lxis_installed=0;
+    if(lxis_cleanup_pending()) {lxis_restored=0;lxis_stage="cleanup_pending";}
+    else {lxis_restored=1;lxis_stage="restored";} /* old pages stay executable */
 }
 static int lxis_status(char *out,size_t size) {
-    const int n=snprintf(out,size,"tick=%llu installed=%d restored=%d state=%d pin=%d page=%d stage=%s",(unsigned long long)stats.issued,
-        lxis_installed,lxis_restored,lxis_state(),lxis_pins(),lxis_page_ok(),lxis_stage);
+    const int n=snprintf(out,size,"tick=%llu installed=%d restored=%d state=%d pin=%d page=%d stage=%s cleanup=%d%d",(unsigned long long)stats.issued,
+        lxis_installed,lxis_restored,lxis_state(),lxis_pins(),lxis_page_ok(),lxis_stage,lxis_own_a,lxis_own_c);
     return n>0 && (size_t)n<size?n:0;
 }
 static int lua_ik_step(lua_State *L) {p_lua_pushnumber(L,lxis_arm());return 1;}
