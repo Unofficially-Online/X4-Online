@@ -305,6 +305,30 @@ function K.session(p)
   env.X4LAN_UI_REPLAY_STOCK=stock
  end
  S.stock=stock
+ -- Missions per player: this client's mission menus list its own slot's missions (lockstep_mission_owners.h 'lists'). The
+ -- stock menus walk GetNumMissions() and GetMissionDetails(i): both answer the own slot's and nobody's (a client's own
+ -- guidance, a mission no accept made), by index among those. Presentation only: nothing here reaches the simulation.
+ if p.mpp and env.GetNumMissions and env.GetMissionDetails and gate.mpp_owner then
+  if not stock.GetNumMissions then stock.GetNumMissions,stock.GetMissionDetails=env.GetNumMissions,env.GetMissionDetails end
+  local map={}
+  local function own(id)
+   local ok,text=pcall(decimal,id)
+   if not ok then return true end
+   local owner=gate.mpp_owner(text)
+   return owner==0 or owner==p.own_slot
+  end
+  local function refresh()
+   map={}
+   for i=1,stock.GetNumMissions() do if own((stock.GetMissionDetails(i))) then map[#map+1]=i end end
+   return #map
+  end
+  env.GetNumMissions=function() return refresh() end
+  env.GetMissionDetails=function(i)
+   if not map[i] then refresh() end
+   if map[i] then return stock.GetMissionDetails(map[i]) end
+  end
+  S.own_missions=refresh
+ end
  local function is_slot_ship(id)
   local ok,text=pcall(decimal,id)
   return ok and p.slot_ships()[text]~=nil
@@ -475,13 +499,11 @@ function K.session(p)
    -- Missions per player (lockstep_mission_owners.h): slot k's call runs in slot k's scope on every client, and its accept
    -- (SignalObject(actor, 'accept', offer), the stock menus' form) claims the offer's cue tree for slot k first.
    local claimed=''
-   if slot~=1 then
-    if name=='SignalObject' and args[2]=='accept' and args[3]~=nil then
-     local okd,text=pcall(decimal,args[3])
-     claimed=' claim='..tostring(okd and gate.mpp_claim(slot,text)==1)
-    end
-    if gate.mpp_scope(slot)~=1 then gate.ui_replay_fail('mpp_scope');return false,'mpp_scope' end
+   if p.mpp and name=='SignalObject' and args[2]=='accept' and args[3]~=nil then   -- slot 1's too: its menus' lists
+    local okd,text=pcall(decimal,args[3])
+    claimed=' claim='..tostring(okd and gate.mpp_claim(slot,text)==1)
    end
+   if slot~=1 and gate.mpp_scope(slot)~=1 then gate.ui_replay_fail('mpp_scope');return false,'mpp_scope' end
    local ok,result=pcall(stock[name],unpack(args,1,n))
    if slot~=1 and gate.mpp_unscope(slot)~=1 then gate.ui_replay_fail('mpp_leave') end
    return ok,ok and name..'('..tostring(args[1])..','..tostring(args[2])..')'..claimed or tostring(result)

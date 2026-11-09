@@ -32,11 +32,11 @@
  *    +0x20, Windows +0x18), minus FloatState (0x1a491c0) on a word keyed by (tick, owner key) instead of the thread's;
  *    then 0xee986b with the interval. Before the first latch it takes the native path.
  * Rows: gate.shape(actor, which) in Windows' text. Stops as on Windows: 45 (the install refused), 46 (a failure of the
- * fixture path), 165 (the shape key table full); the per-tick check (the patches as ours, the pin) stops with 47. */
+ * fixture path), 165 (the shape key table full); the per-tick check (the patches as ours, the pin) stops with 211. */
 #define LXSH_STOP_INSTALL 45u
 #define LXSH_STOP_FAILURE 46u
 #define LXSH_STOP_KEYS 165u
-#define LXSH_STOP_CHECK 47u
+#define LXSH_STOP_CHECK 211u
 #define LXSH_UPDATE_VA 0xee9760u  /* Body_UpdateShape (Windows 0xbff80) */
 #define LXSH_RESUME_VA 0xee976du  /* after the entry's mov, test, je */
 #define LXSH_JE_VA 0xee9865u      /* je -> the distance path */

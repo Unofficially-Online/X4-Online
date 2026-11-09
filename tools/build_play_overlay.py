@@ -79,7 +79,8 @@ MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_red
                        'native_gate_nav_rng=true', 'native_gate_nav_initial_refresh=true',
                        'native_gate_attention_rng=true', 'native_gate_attention_initial_refresh=true',
                        'native_gate_shape_rng=true', 'native_gate_shape_initial_refresh=true', "native_gate_shape_refresh='view'",
-                       'native_gate_radar_rng=true', 'native_gate_radar_initial_refresh=true')
+                       'native_gate_radar_rng=true', 'native_gate_radar_initial_refresh=true',
+                       'native_gate_steer_roll=true')   # Linux-only like ik_wrap (abee54ed: the roll alignment in MSVC's order)
 NL = chr(10)
 
 

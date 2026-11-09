@@ -129,10 +129,13 @@ UI_REPLAY_MISSIONS_DEMO = {1: ((60, 'mis_fixture', 1), (120, 'briefing', 'offer'
                                (600, 'mis_none'), (660, 'mis_abort')),
                            2: ((60, 'mis_fixture', 1), (150, 'offer_accept'), (250, 'briefing', 'mission'), (400, 'mis_abort'),
                                (430, 'dialog_native', 1), (450, 'conv_start', 'fixture'), (630, 'mis_active'))}
-# Personal missions per player (--missions-per-player, lockstep_mission_owners.h): the same offer on both clients; slot 2
-# accepts it, so the mission is P_2's on every client (MD's player.entity in its rows), then aborts it. Slot 1 only makes it.
-UI_REPLAY_MPP_DEMO = {1: ((60, 'mis_fixture', 1),),
-                      2: ((60, 'mis_fixture', 1), (150, 'offer_accept'), (600, 'mis_abort'))}
+# Personal missions per player (--missions-per-player, lockstep_mission_owners.h): two offers on both clients; slot 1
+# accepts one and slot 2 the other, so each mission is its own player's on every client (MD's player.entity in its rows)
+# and each client lists and shows its own. Slot 2 then clears its active mission, sets it again and aborts the mission:
+# slot 1's active mission stays as it was through all of that.
+UI_REPLAY_MPP_DEMO = {1: ((60, 'mis_fixture', 1), (90, 'mis_fixture', 1), (150, 'offer_accept')),
+                      2: ((60, 'mis_fixture', 1), (90, 'mis_fixture', 1), (200, 'offer_accept'), (400, 'mis_none'), (450, 'mis_active'),
+                          (600, 'mis_abort'))}
 UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'target_slot': 'target', 'target_none': 'target',
                        'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_obj': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
                        'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons',

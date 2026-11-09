@@ -618,6 +618,13 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   Linux). The first real word apart is actor 11's model +0x1e8 (Linux +0x1d8, -0.912846, 10 ulps) written by the
   update at tick 37 from equal inputs; the update writes the model's two vectors +0x1c0/+0x1d0 (Linux) with SSE
   products such as ((a*b + c*d) + e*f) + v (0x13ea9a7), to be matched against Windows' 0xec7200 for the association.
+  Matched: that word is the roll command of the update's roll alignment (atan2f, a rotation, the angular command
+  through it). MSVC hoisted 1 / yaw limit and multiplies |x| and 2|x| by it (0xec8965, 0xec896c, 0xec89d3); GCC
+  divides (0x13eb964, 0x13ec604). native_gate_steer_roll (linux/gate_steer_roll.h, stop 210; the shape check's stop
+  is 211 now, 47 is Windows' bullet install) runs both in stubs as Windows computes them. lx65a: actor 11's roll
+  command at tick 38 equal to W36p's (bf69b048). The tick-124 chain is another word: the linear command's z (the
+  model's Windows +0x1d8, the forward speed) 2 ulps apart for actor 3 at tick 99 (42df5eb0 / 42df5eb2), then the slot
+  inputs +0x068/+0x084 at 100 and actor 5's velocity at 124; next.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

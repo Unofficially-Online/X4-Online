@@ -619,6 +619,8 @@ static const lx_site lx_sites[]={
     {"body_add_impulse",0x1a7fc90,0x30,"ec44503b5aab73848772bbd3cd72e770ad35ec077ea1bd78bba2642c99bbd178"},
     {"ik_step_block",0x1565fb0,0xc0,"dc6b7d7e6c1fb42a2694df394c9d89fa6574b6592787dff4c486e2ed66d93601"},
     {"ik_step_dt",0x2c76dd0,0x8,"4f5163b57f2e2c5276ec0ba17cb5eb4865417faf8c3590126592998fd1da3e42"},
+    {"steer_roll_a",0x13eb8b1,0xe3,"0bdc8f14cd0d224b0455dcb0203ccf26184c69977047d2f653d52a2f24caa498"}, /* the roll alignment (gate_steer_roll.h) */
+    {"steer_roll_b",0x13ec5f0,0x29,"2b8513bb2f50ea3f75c3b93d562530d1bdbae90e3d4a7c01ab10e1d603b0d2a9"},
     {"ik_wrap_tail",0x15661c0,0x60,"98e46a50b2cf8111eab6cda0ec549913e60a2356ce72f85cc33e6c00f7688f25"},
     {"body_defined_mass",0xed4cf0,0x8e,"f640dc2b2c63a1a363cc8f487544824b91ee72e7eadc3da0dcd7117084634874"},
     {"mining_search",0x1f47b20,0x6d0,"2793312d8762d21df2f389e8d00a52856fad88569264f6c63e0365e368a9ba07"},

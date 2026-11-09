@@ -119,7 +119,7 @@ within a few seconds. With a Linux PC in the session, build the host's overlay a
 update. A Linux battle bundle (`tools/dev/linux_gate_live.py bundle`) also needs the Windows defaults its gate takes only
 when named: `--ik-wrap --ik-step --body1-mass fallback --nav-rng --nav-initial-refresh --attention-rng
 --attention-initial-refresh --shape-rng --shape-initial-refresh --shape-refresh view --gravidar --radar-rng
---radar-initial-refresh` (9 Nov: equal to Windows through tick 123; 1 ulp apart at tick 124, the steering update's
+--radar-initial-refresh --steer-roll` (9 Nov: equal to Windows through tick 123; 1 ulp apart at tick 124, the steering update's
 floating-point order, still being chased). Each PC writes its own
 `errors.log`; the host's run folder also holds the relay's logs.
 
@@ -229,5 +229,7 @@ first mismatch.
   per-player story missions (in progress).
   - Personal missions per player, first form (9 Nov, on by default; `--set native_gate_missions_per_player=false`
     turns it off): a mission player 2 accepts is player 2's on every client. Its script sees player 2, their ship and their sector
-    (mpp1: 900 ticks, 0 desyncs). The mission list is still one per PC, so every client's HUD lists every player's
-    missions, and offers are still made around player 1.
+    (mpp1: 900 ticks, 0 desyncs).
+  - Each player has their own active mission, and each client's mission menus list its own player's missions (mpp2,
+    9 Nov: two players, a mission each, 900 ticks, 0 desyncs). Offers are still made around player 1, and rewards in
+    factions mode are not per player yet.

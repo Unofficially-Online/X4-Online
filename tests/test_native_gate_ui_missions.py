@@ -389,7 +389,7 @@ PROBE_MPP = PROBE_MISSIONS + (ROOT/'tools/dev/native_gate_join_core.lua').read_t
   gate.script_rng_status=function() return 'script_rng=armed' end
   gate.missions_per_player=function(on) mpp_calls[#mpp_calls+1]='arm:'..tostring(on);if MPP_REFUSE then return 0 end;return 1 end
   gate.mpp_status=function() return 'armed=1 owners=0' end
-  gate.mpp_state=function() return 'v1|2:1615a0' end
+  gate.mpp_state=function() return 'v2|2:1615a0|' end
   gate.mpp_restore=function(text) mpp_calls[#mpp_calls+1]='restore:'..tostring(text);return MPP_RESTORE_REFUSE and 0 or 1 end
 '''
 
@@ -407,16 +407,36 @@ class MissionsPerPlayerProbeTests(ProbeTests):
         self.assertTrue(any('MISSIONS_PER_PLAYER_ARMED slot=2 armed=1 owners=0' in line for line in c.values('logs')))
         lua = c.lua
         text = lua.eval('X4LAN_JOIN_CORE.state_text()')
-        self.assertIn('missions_per_player=v1|2:1615a0', text.splitlines())
-        lua.globals().MPP_TEXT = 'missions_per_player=v1|2:1615a0'
+        self.assertIn('missions_per_player=v2|2:1615a0|', text.splitlines())
+        lua.globals().MPP_TEXT = 'missions_per_player=v2|2:1615a0|'
         lua.execute("for name,p in pairs(X4LAN_JOIN_CORE.providers) do if name~='missions_per_player' then X4LAN_JOIN_CORE.providers[name]=nil end end;"
                     "X4LAN_JOIN_CORE.restore_text(MPP_TEXT)")
-        self.assertIn('restore:v1|2:1615a0', c.values('mpp_calls'))
+        self.assertIn('restore:v2|2:1615a0|', c.values('mpp_calls'))
         self.assertTrue(any('MISSIONS_PER_PLAYER_RESTORED' in line for line in c.values('logs')))
         lua.execute('MPP_RESTORE_REFUSE=true')
         ok, why = lua.eval('pcall(X4LAN_JOIN_CORE.restore_text,MPP_TEXT)')
         self.assertFalse(ok)                                      # a refused table stops the joiner, loudly
-        self.assertIn('missions per player refused the saver table v1|2:1615a0', why)
+        self.assertIn('missions per player refused the saver table v2|2:1615a0|', why)
+
+    def test_a_client_lists_its_own_missions(self):
+        # Missions 11 (slot 1's), 12 (slot 2's), 13 (nobody's: e.g. a client's own guidance) in X4's list; the menus' two
+        # readers answer the own slot's and nobody's, by index among those.
+        lists = PROBE_MPP + r'''
+          gate.mpp_owner=function(text) return ({['11']=1,['12']=2})[text] or 0 end
+          GetNumMissions=function() return 3 end
+          GetMissionDetails=function(i) if i>=1 and i<=3 then return 10+i,'mission '..(10+i) end end
+        '''
+        for slot, own in ((1, [11, 13]), (2, [12, 13])):
+            c = self.client(slot, prelude=lists, native_gate_missions_per_player=True, native_gate_script_rng='key')
+            self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+            lua = c.lua
+            self.assertEqual(lua.eval('GetNumMissions()'), 2)
+            self.assertEqual([lua.eval(f'(GetMissionDetails({i}))') for i in (1, 2)], own)
+            self.assertEqual(lua.eval('select(2,GetMissionDetails(2))'), 'mission 13')
+            self.assertIsNone(lua.eval('GetMissionDetails(3)'))
+            self.assertEqual(lua.eval('X4LAN_UI_REPLAY_STOCK.GetNumMissions()'), 3)   # the stock readers stay at hand
+        c = self.client(2, prelude=lists)                              # off: X4's list as it is
+        self.assertEqual(c.lua.eval('GetNumMissions()'), 3)
 
     def test_refusals_and_off(self):
         c = self.mpp(native_gate_ui_replay=['missions', 'conversation'])   # no events family
@@ -468,8 +488,9 @@ class BuilderTests(unittest.TestCase):
                            '--missions-per-player')
         self.assertIn('X4LAN_CONFIG.native_gate_missions_per_player = true', lines)
         script = next(line for line in lines if 'native_gate_ui_replay_script' in line)
-        self.assertEqual(script, "X4LAN_CONFIG.native_gate_ui_replay_script = {{{60,'mis_fixture',1}},"
-                                 "{{60,'mis_fixture',1},{150,'offer_accept'},{600,'mis_abort'}}}")
+        self.assertEqual(script, "X4LAN_CONFIG.native_gate_ui_replay_script = {{{60,'mis_fixture',1},{90,'mis_fixture',1},{150,'offer_accept'}},"
+                                 "{{60,'mis_fixture',1},{90,'mis_fixture',1},{200,'offer_accept'},{400,'mis_none'},{450,'mis_active'},"
+                                 "{600,'mis_abort'}}}")
         plain = self.lines('--ui-replay', 'events,missions', '--ui-guard', 'all', '--ui-replay-script', '--window', '40', '900')
         self.assertFalse(any('missions_per_player' in line for line in plain))
         self.assertIn("{180,'offer_accept'}", next(line for line in plain if 'native_gate_ui_replay_script' in line))

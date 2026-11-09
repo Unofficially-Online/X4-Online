@@ -391,3 +391,27 @@ refuses it, ui_missions_claim_taken:<name>). The M1 spec's mask is 19455; entrie
   Not yet: C2 (a mission manager per slot: today every client's HUD lists every slot's missions and the active-mission
   call is one per process), C3 (factions mode rewards), C4 (offers around each slot's player), C6 (notifications on the
   owner's screen only), conversations for slots 2+.
+
+11. THE ACTIVE MISSION AND THE MISSION LISTS PER PLAYER (9 Nov; the part of C2 a playtest needs, without a second manager)
+  [F, 9.00] The active mission is the manager's +0x78 (ID) and +0x80 (index in the missions vector +0x60, entries of
+  0x5d0). SetActiveMission 0x1b7010 -> 0x113b760 finds the entry, 0x113b920 writes both fields, raises the cue events 0x63c
+  (new) and 0x63d (old) and keeps a guidance timer on g_Ticker (manager +0x30, flag +0x8c; 0x113cbd0 refreshes it).
+  Built (lockstep_mission_owners.h 'active', 'lists'):
+  - The simulation's slot scope (pslot_enter/pslot_leave) exchanges +0x78/+0x80 with slot k's own active mission, the
+    index found again by ID each time. So slot k's replayed SetActiveMission, its accept (X4 makes a first mission the
+    active one) and its missions' MD frames act on slot k's active mission; the canonical one stays slot 1's on every client.
+  - Client k's presentation scope (pres_enter/pres_leave: its UI, FFI queries and HUD) shows slot k's and keeps nothing.
+  - Slot 1's accepts claim too (owner 1: no scope). gate.mpp_owner(id) answers a mission's owner; the UI replay core wraps
+    GetNumMissions and GetMissionDetails(i) so a client's menus list its own slot's missions and nobody's.
+  - The join state is "v2|claims|active missions".
+  Live, mpp2 (x4ls play, the default stack, 2 players coop, 900 ticks): two offers; client 1 accepts 1451386 at 190,
+    client 2 accepts 1452438 (0x162996) at 240. On BOTH clients: ACCEPTED and the 5 s TRACK rows carry 0x6c72a (P_1,
+    ship 0x6c725) for the first mission and 0x1615fb (P_2, ship 0x22bce) for the second; missions=2; owners=2 with equal
+    hashes; active=162996 for slot 2 while the canonical active mission stays 1451386 through slot 2's SetActiveMission(0)
+    at 440, its SetActiveMission at 490 and its abort at 640 (then active=0 for slot 2, active_gone=0: X4's own removal ran
+    in the scope). Client 2's presentation showed 0x162996 (shown=3334 scopes, 0 changed); client 1's none (slot 1 has no
+    scope). 0 desyncs, 0 errors. [F]
+  An earlier pass of the same plan (the fixture did not remove an accepted offer yet) had both slots accept one offer: the
+  second accept took the mission over, and its TRACK rows changed from P_1 to P_2 on both clients at the same game time.
+  Not covered: the guidance timer runs on the canonical active mission only [I]; the mission list filter is by the two Lua
+  readers the stock menus use (map, briefing, interact menu), an FFI reader by ID still answers any mission.

@@ -217,6 +217,7 @@ static int pres_enter(void) {
     /* The eye at slot k's seat (lockstep_pilot_eye.h): the player's own pose, live and published, with D applied. */
     peye_enter(p1,pres_view_at,bank,s,pres_parent_saved);
     InterlockedExchange(&pres_open,1);InterlockedIncrement64(&pres_scopes);
+    mpp_active_enter(pres_slot);   /* this client's own active mission on its HUD and in its menus */
     if(pres_settings_hook) pres_settings_hook(1);
     return 1;
 }
@@ -224,6 +225,7 @@ static void pres_leave(void) {
     pslot_slot *s=&pslots[pres_slot];unsigned char *p1=pslot_p1;unsigned n=0,p=0;
     if(!pres_open) return;
     if(pres_settings_hook) pres_settings_hook(0);
+    mpp_active_leave(pres_slot,0);
     peye_leave();
     if(!s->roomless) {
         size_t bank=(size_t)(pres_view_at-(p1+PRES_VIEW_CACHE));

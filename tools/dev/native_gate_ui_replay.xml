@@ -69,6 +69,7 @@
       <create_mission cue="$Mission" offercue="$Mission" name="'X4LAN test mission'" description="'X4LAN UI missions test'"
                       difficulty="level.easy" faction="faction.argon" type="missiontype.fight" reward="1000"/>
       <set_objective cue="$Mission" step="1" action="objective.flyto" object="$Location"/>
+      <remove_offer cue="$Mission"/>
       <debug_text text="'[X4LAN] UI_MISSIONS_MD_ACCEPTED offer=%s player=%s time=%s'.[event.param2, player.entity, player.age]"/>
      </actions>
      <cues>

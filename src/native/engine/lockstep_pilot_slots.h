@@ -386,6 +386,7 @@ static void pslot_set_routes(pslot_slot *s,int live) {
     for(unsigned i=0;i<3;i++)
         InterlockedExchangePointer(&s->vt.route[i],live?pslot_fn.original[i]:s->authority?pslot_fn.agent[i]:pslot_fn.player[i]);
 }
+static void mpp_active_enter(unsigned k);static void mpp_active_leave(unsigned k,int keep);   /* lockstep_mission_owners.h */
 static int pslot_enter(unsigned k) {
     pslot_slot *s=k>=2 && k<=PILOT_SLOTS?&pslots[k]:NULL;unsigned char *universe=NULL,*now=NULL;
     if(!s || !s->player || !s->length || pstk_scope_slot || pres_open || !pslot_frame_thread() || !vpl_reentry_clear(pnat_base) ||
@@ -407,6 +408,7 @@ static int pslot_enter(unsigned k) {
     if(pfslot_armed) {pslot_bank_hash=pfslot_bank_hash_live();pfslot_bank_exchange(k);}
     *(unsigned char *volatile*)(universe+VPS_SINGLETON)=s->player;
     pstk_scope_slot=k;InterlockedExchange(&pslot_in_scope,1);
+    mpp_active_enter(k);   /* slot k's active mission (lockstep_mission_owners.h) */
     if(s->controller) pslot_set_routes(s,1);
     InterlockedIncrement64(&s->scopes);
     return 1;
@@ -419,6 +421,7 @@ static int pslot_leave(unsigned k) {
     if(parent!=s->room || vector[0]!=(void*)&s->vector[0] || vector[1]!=(void*)&s->vector[s->post+1] || !vpl_reentry_clear(pnat_base)) ok=0;
     if(s->controller) {s->authority=pslot_global_part(s->controller);s->auth_parts=pslot_global_parts(s->controller);pslot_take_answers(s);
                        pslot_set_routes(s,0);}
+    mpp_active_leave(k,1);
     if(universe) *(unsigned char *volatile*)(universe+VPS_SINGLETON)=pslot_p1;
     if(pslot_exchange(s->store,s->length)<0) ok=0;
     if(pfslot_armed) {pfslot_bank_exchange(k);if(pfslot_bank_hash_live()!=pslot_bank_hash) ok=0;}   /* the canonical walking bank back */

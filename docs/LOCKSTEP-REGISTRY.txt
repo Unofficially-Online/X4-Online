@@ -285,7 +285,11 @@ Modules (define, owner):
                                 the stub page or the pins; whys entry_changed, page_changed, block_changed)
   209 LXIW_STOP_REASON          linux/gate_ik_wrap.h (native_gate_ik_wrap, Linux gate only: the joint wrap's tail or its
                                 pins; whys tail_changed, block_changed)
-  free: 109, 114-119, 122-129, 147-149, 210-255.
+  210 LXSR_STOP_REASON          linux/gate_steer_roll.h (native_gate_steer_roll, Linux gate only: the roll alignment's
+                                entries, the stub page or the pins; whys entry_changed, page_changed, block_changed)
+  211 LXSH_STOP_CHECK           linux/gate_shape.h (the shape refresh's entry, its je or the pin no longer ours; the
+                                Linux gate's 45/46/165 are Windows' shape and region camera codes)
+  free: 109, 114-119, 122-129, 147-149, 212-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

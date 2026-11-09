@@ -2888,7 +2888,7 @@ local function pilot_frame(s,tick)
  if cfg.native_gate_pilot_slots_registry and tick%600==0 and gate.pilot_slots_registry then
   log('PILOT_SLOTS_REGISTRY tick='..tick..' '..tostring(gate.pilot_slots_registry()))
  end
- if cfg.native_gate_missions_per_player and tick%600==0 and gate.mpp_status then log('MISSIONS_PER_PLAYER tick='..tick..' '..gate.mpp_status()) end
+ if cfg.native_gate_missions_per_player and tick%150==0 and gate.mpp_status then log('MISSIONS_PER_PLAYER tick='..tick..' '..gate.mpp_status()) end
  if pilot_view.stock and gate.pilot_present_diff then
   local diff=gate.pilot_present_diff()
   if diff then log('PILOT_PRESENT_DIFF tick='..tick..' '..diff) end
@@ -3717,9 +3717,16 @@ local function frame()
    assert(snapshot and gate.ik_wrap and gate.ik_wrap_status and gate.ik_wrap()==1,'ik wrap refused '..tostring(gate.ik_wrap_status and gate.ik_wrap_status()))
    log('IK_WRAP_ARMED')
   end
+  -- The steering's roll alignment in the Windows order (linux/gate_steer_roll.h): |x| * (1 / yaw limit) for |x| / limit.
+  -- Linux only.
+  if cfg.native_gate_steer_roll and gate.platform and gate.platform()=='linux' then
+   assert(snapshot and gate.steer_roll and gate.steer_roll_status and gate.steer_roll()==1,'steer roll refused '..tostring(gate.steer_roll_status and gate.steer_roll_status()))
+   log('STEER_ROLL_ARMED')
+  end
   -- Linux-only keys of the mixed-platform preset: on Windows only a note (its build is already that order).
   if not (gate.platform and gate.platform()=='linux') then
    if cfg.native_gate_ik_step then log('IK_STEP_NOOP windows: the joint step multiplies by 50.0f already') end
+   if cfg.native_gate_steer_roll then log('STEER_ROLL_NOOP windows: the roll alignment multiplies by the hoisted reciprocal already') end
    if cfg.native_gate_ik_wrap then log('IK_WRAP_NOOP windows: the joint wrap is (t2 + value) - pi already') end
    if cfg.native_gate_body1_mass then log('BODY1_MASS_NOOP windows: second bodies are created with an empty compound already') end
   end
@@ -5380,6 +5387,7 @@ local function frame()
   if cfg.native_gate_impulse_diag and gate.impulse_status then log('IMPULSE_STOP '..tostring(gate.impulse_status())) end
   if cfg.native_gate_ik_diag and gate.ik_status then log('IK_STOP '..tostring(gate.ik_status())) end
   if cfg.native_gate_ik_step and gate.ik_step_status then log('IK_STEP_STOP '..tostring(gate.ik_step_status())) end
+  if cfg.native_gate_steer_roll and gate.steer_roll_status then log('STEER_ROLL_STOP '..tostring(gate.steer_roll_status())) end
   if cfg.native_gate_ik_wrap and gate.ik_wrap_status then log('IK_WRAP_STOP '..tostring(gate.ik_wrap_status())) end
   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end
   if cfg.native_gate_attention_all then log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end
