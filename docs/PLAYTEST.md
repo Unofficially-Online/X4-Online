@@ -95,6 +95,91 @@ Nothing in this table ends the session for the clients that are still in it. In 
 X4 was killed at tick 2017; the relay reported the stall at 2031 and dropped it 15 s later, and client 1 played on to
 the end of the window in sync.
 
+## Start from the main menu (built 9 Nov; run with two X4 on one PC, not yet between two PCs)
+
+Every PC runs the same command with the same overlay (one without open slots) and snapshot; a playtest kit
+(`tools/make_playtest_kit.py`) has it as `PLAY.cmd`:
+
+```
+python tools/x4ls.py lobby --overlay .local/overlays/play-1 --snapshot <save> [--port 47000] [--bind <address>]
+```
+
+X4 opens in its main menu with a **Multiplayer** entry above Settings.
+
+1. One player chooses **Host a game**. The page shows the invite code and the launcher puts it on the clipboard
+   (this replaces what the clipboard held). Send it to the others.
+2. Each other player copies the code and chooses **Join a game (invite code from the clipboard)**. The page says
+   who has joined, or why the host refused (another kit, a wrong code, a full game).
+3. When every slot is taken, every game loads the snapshot at the same second, 30 s later. From here on it is the
+   session of "Start" and "Two PCs": the same relay, gate and overlay, the same logs in `.local/runs/<time>-lobbyN/`.
+
+- The others reach the host on UDP 47000 (the session) and TCP 47001 (the lobby). `--bind` names the host's
+  address the others reach (default: the PC's primary IPv4 address; a VPN address over the internet).
+- The session's end closes X4. Cancel on the page takes back a Host or a Join before the start.
+- X4 has to be started by this command. A start from Steam has no overlay and no launcher behind it.
+- Two windows on one PC: `--bind 127.0.0.1` for the host and `--lane 2` for the other.
+- lobby1 (9 Nov): two X4 on one PC, hosted and joined through the page's own requests (`--auto`, no mouse),
+  3642 ticks, 0 desyncs, 0 errors. Not run yet: a mouse click on the buttons, three players, two PCs.
+
+## A server everyone joins, and an installer (built 9 Nov)
+
+With a server nobody hosts and there is no invite code: a player installs, starts, and chooses **Multiplayer**,
+**Join**. The server needs Python and the kit's files, no X4.
+
+```
+python tools/make_playtest_kit.py --overlay .local/overlays/play-1 --snapshot <save> --out <kit>     --server <the server's IPv4 address> --python-embed <python-3.12.x-embed-amd64.zip from python.org>
+python tools/deploy_playtest_server.py --kit <kit> --ssh root@<the server>
+python tools/make_playtest_msi.py --kit <kit> --out <file.msi>
+```
+
+- **The kit** gets `server.json` (the address, the port and a new key) and a `PLAY.cmd` that starts
+  `x4ls lobby --server-file server.json`. With `--python-embed` it also holds its own Python, so a player's PC
+  needs X4 only. The address and the key are in the kit, not in this repository; keep the kit among the players.
+- **The server** (`x4ls serve`, docs/LAUNCHER.md) admits the launchers that prove the key and hold the same kit.
+  When as many players have joined as the overlay has slots, it starts the relay for their addresses and tells
+  every game the load second. One game at a time: a joiner is told when a game is running. It listens on UDP
+  47000 (the session) and TCP 47001 (the lobby and the logs).
+  `deploy_playtest_server.py` copies the kit's checkout, overlay and `server.json` over ssh and sets up a systemd
+  unit (`x4mp-lobby`) and the two ufw rules. Every new kit has a new key and is deployed again.
+- **The logs** of every player go to the server by themselves when their game is over: the launcher's run folder
+  (summary.json, errors.log, the game's log; no saves) as `runs/<time>-serve/players/<time>-playerK-<address>.zip`,
+  next to the game's relay.log, native-barrier.json and desync-status.json. A launcher that never got into a game
+  sends its folder to `runs/uploads/`. KIT.txt tells the players so.
+- **The installer** (`make_playtest_msi.py`, Windows with Python 3.12: it uses `msilib`) installs the kit for the
+  current user into `%LOCALAPPDATA%\X4 Multiplayer Playtest` with Desktop and Start menu shortcuts to `PLAY.cmd`.
+  No administrator rights, a progress bar and no pages; a newer installer replaces an older one. It is not signed,
+  so Windows may warn about an unknown publisher.
+- The player count is the overlay's (`build_play_overlay.py --players N`): the game starts when N have joined.
+
+### Play in Steam, then Multiplayer (built 9 Nov)
+
+Installed from such an installer, a player starts nothing of ours: **Play in Steam**, and X4's main menu has
+**Multiplayer**. Choosing **Join** there closes X4 and brings it back by itself in its multiplayer profile, joined.
+
+- The kit holds `steam-menu/` (the lobby page as a small X4 extension, `x4mp_playtest_menu`) and `helper.pyw`
+  (`lockstep/launcher/steamplay.py`). The installer starts the helper without a window and registers it to start
+  with Windows (HKCU `...\Run`); the Start menu entry starts it again when it was ended.
+- The helper copies the menu extension into X4's own `extensions` folder. No Egosoft file is touched, and nothing of
+  the player's profile, saves or settings is read or written. While it is there X4 counts as **modified**, as with
+  any extension ("Modified game detected", and X4 marks saves made meanwhile as modified). Removing the installer
+  stops the helper and takes the extension out again.
+- A Steam-started X4 runs the player's own profile, with X4's protected UI mode on and no log file. A session
+  cannot run there. The page reaches the helper through named pipes (`\\.\pipe\x4mp-playtest-state`, `-join`),
+  which X4's `loadfile` opens even in protected UI mode: the helper answers every open with the state, and which
+  pipe was opened is the request. On Join the helper answers "restart", the page calls `QuitGame`, and the helper
+  runs `x4ls lobby --server-file ... --auto join --show`: the disposable profile, the kit's overlay and snapshot.
+- Without the helper the page says so and what to start. A session that cannot start is shown in a message box;
+  `repo\.local\helper.log` and `helper-lobby.log` in the installed folder have the details.
+- The helper shows nothing when it starts. The installer starts it through Explorer and its Start menu entry:
+  what Windows Installer starts itself inherits its redirection guard, and an X4 started from there cannot follow
+  the folder links of its game view (File I/O Win32 error 448, then "Failed to initialize the start menu").
+- vps2 (9 Nov): an X4 with protected UI mode on and the menu extension as its only extension (a disposable profile
+  standing in for the player's own) asked the installed helper to join; X4 quit by itself, came back in the
+  multiplayer profile joined as player 1, a second X4 joined, and the 2-minute session ran through the server:
+  3642 ticks, 0 mismatches, both players' logs stored on the server. The page's Join was chosen by a test switch
+  (`lobby.auto`). Not run: a start from Steam itself in a player's own profile (AGENTS.md keeps our tests out of
+  it), and a mouse click on the page's buttons.
+
 ## Two PCs (built 8 Nov; run on one PC through its LAN address, not yet between two PCs)
 
 On the host PC (it runs the relay and slot 1), with UDP 47000 forwarded to it if the other PC is outside the LAN:
@@ -119,8 +204,8 @@ within a few seconds. With a Linux PC in the session, build the host's overlay a
 update. A Linux battle bundle (`tools/dev/linux_gate_live.py bundle`) also needs the Windows defaults its gate takes only
 when named: `--ik-wrap --ik-step --body1-mass fallback --nav-rng --nav-initial-refresh --attention-rng
 --attention-initial-refresh --shape-rng --shape-initial-refresh --shape-refresh view --gravidar --radar-rng
---radar-initial-refresh --steer-roll` (9 Nov: equal to Windows through tick 123; 1 ulp apart at tick 124, the steering update's
-floating-point order, still being chased). Each PC writes its own
+--radar-initial-refresh --steer-roll --avoid-angle --pursuit-speed` (9 Nov: equal to Windows through tick 132; a few ulps apart at tick 133,
+floating-point order in the steering behaviours, still being chased). Each PC writes its own
 `errors.log`; the host's run folder also holds the relay's logs.
 
 ## Joining a running game (built 8 Nov; in lockstep through x4ls on one PC, 9 Nov)
@@ -211,6 +296,13 @@ first mismatch.
     people stack is still being ported.
 - **Two people on one PC.** Keyboard and mouse go to the focused window only. Whether X4 reads a gamepad in an
   unfocused window is unverified.
+  - HUD markers and the radar (fixed 9 Nov). Your own ship is drawn about 100 ms ahead of the simulation so it answers
+    the controls at once. The HUD's brackets and lead marks were still placed for the simulated camera, so while you
+    steered they all slid off their targets in the same direction. They are now placed for the camera the picture is
+    drawn with (`native_gate_own_predict_hud`, a default). Player 2's radar showed player 1's surroundings, because
+    X4 attaches the radar to the player's ship once at load; each client now re-attaches its radar, crosshair and
+    weapon panel to its own ship 10 ticks into the session, after a respawn and after a hot join
+    (`native_gate_hud_ship_refresh`, a default). hud3: two clients, 900 ticks, 0 desyncs.
   - The cursor (fixed 9 Nov, the focus rule in `lockstep_pilot_stock.h`). X4 reads the PC's one cursor in the
     unfocused window too. When the cursor is in the other window, X4 sees it at this window's edge. Before the fix,
     that edge position steered this window's ship on every client (cursor steering), aimed its guns there, and turned
@@ -225,8 +317,10 @@ first mismatch.
   .local/runs/<time>/desync-status.json` shows one in the console.
 - **Up to 8 players.** The gate has 8 slots (`--players 2..8`), but natively it has only been run with 2 or 3.
   Stock piloting knows 4 cockpit ships, so slots 5..8 need a session with per-player starts (`x4ls new-session`).
-- **Not built yet:** an in-game lobby and join menu (the start choice and the join go through `x4ls`), and
-  per-player story missions (in progress).
+- **Lobby, first form:** the main-menu Multiplayer page starts a session whose players are all there at the start
+  (see "Start from the main menu"). A join into a running game still goes through `x4ls join`, and X4 has to be
+  started by `x4ls lobby`, not from Steam.
+- **Not built yet:** per-player story missions (in progress).
   - Personal missions per player, first form (9 Nov, on by default; `--set native_gate_missions_per_player=false`
     turns it off): a mission player 2 accepts is player 2's on every client. Its script sees player 2, their ship and their sector
     (mpp1: 900 ticks, 0 desyncs).

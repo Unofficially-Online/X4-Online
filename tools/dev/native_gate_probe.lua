@@ -299,6 +299,7 @@ local join_client,join_joiner,join_restored
 -- Diagnostic native_gate_pilot_dump_handover = N: slot k's ship, controller, agent and solver bytes (PILOT_DUMP rows) from H-1
 -- to H+N around a HANDOVER(k, H), on every client (the handover split, hj21: the joiner's own slot ship turned from H on).
 local pilot_handover_dump={}
+local hud_refresh_at={}   -- ticks at which every client raises the HUD's ship-changed event (pilot_view.hud_ship_changed)
 if cfg.native_gate_join then
  local j=cfg.native_gate_join==true and {} or cfg.native_gate_join
  assert(type(j)=='table' and wire3 and cfg.native_gate_lookahead~='adaptive' and not cfg.native_gate_wire_crypto and not cfg.native_gate_peer_window,
@@ -412,6 +413,9 @@ if cfg.native_gate_join then
  end
  if cfg.native_gate_join_mute_load_npcs then   -- a joiner's MD does not hear the load's NPC created events (npc_mute=)
   assert(gate.join_mute_load_npcs and gate.join_mute_load_npcs(1)==1,'join mute load npcs refused')
+ end
+ if cfg.native_gate_join_cue_ids then   -- a joiner's loaded MD cue instances at the session's runtime IDs (cue_ids=)
+  assert(gate.join_cue_ids and gate.join_cue_ids(1)==1,'join cue ids refused')
  end
  if cfg.native_gate_join_shoot_far then   -- SHOOT writes the session's last shot time where a load's reset left the joiner's far
   assert(gate.join_shoot_far and gate.join_shoot_far(1)==1,'join shoot far refused')
@@ -546,6 +550,7 @@ if cfg.native_gate_join then
      assert(gate.pilot_seat_live_pose and gate.pilot_seat_live_pose(1)==1,'pilot seat live pose refused')
     end
     assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
+    hud_refresh_at[h+10]=true   -- the joiner presents its slot from H: its HUD takes its ship (every client, the same tick)
     if cfg.native_gate_pilot_dump_handover then pilot_handover_dump.k,pilot_handover_dump.h=k,h end
     -- native_gate_nav_refresh_watch_handover = N: the watch's window to H-N..H+N, now that H is known
     if cfg.native_gate_nav_refresh_watch_handover and cfg.native_gate_nav_refresh_watch~=nil then
@@ -2456,6 +2461,7 @@ local function death_answer(name,slot,hand)
    id=(tostring(id):gsub('ULL$',''))
   end
   log(name:gsub('^X4LAN_PilotRespawn.','PILOT_RESPAWN_'):upper()..' slot='..slot..' accepted='..tostring(hand(slot,id)))
+  if pilot_view.hud_ship_changed then pilot_view.hud_ship_changed('respawn') end   -- the slot's new ship (MD answers on every client)
  end)
 end
 local function death_arm(delay,start,suit)
@@ -2700,6 +2706,11 @@ function pilot_view.arm_ui_replay(slot,window)
   local_mark=(cfg.native_gate_runtime_ids_local or guard or math.floor(mask/core.FAMILY.events)%2==1 or math.floor(mask/core.FAMILY.trade)%2==1) and gate.runtime_ids_probe or nil,present=present,
   min_hull=min_hull,slots=#cfg.native_gate_pilot_slots,slot_lua=tools.slot_lua,own_slot=slot,guard=guard,pss=pss,pss_spawn=pss_spawn,
   mpp=cfg.native_gate_missions_per_player==true,   -- slots 2+ capture the events and missions families, applied in their own scope
+  -- Generic mission offers for slots 2+ (lockstep_mission_owners.h 'offers'): first 15 s into the window, then every 3
+  -- minutes, the slots 3 s apart. native_gate_missions_per_player_offers = true (opt-in until its live run passes).
+  offers=cfg.native_gate_missions_per_player==true and cfg.native_gate_missions_per_player_offers==true and
+   pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);') and
+   {first=window[1]+450,every=5400,stagger=90,galaxy=function() return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID())) end} or nil,
   notify=function(text) ffi.C.ShowInfoLine(text,4) end,   -- every refusal of the families shows its info line (also without the guard)
   active_mission=missions_on and function() return (tostring(ffi.C.GetActiveMissionID()):gsub('ULL$','')) end or nil,
   menus=function() return type(Menus)=='table' and Menus or {} end}
@@ -2770,8 +2781,27 @@ function pilot_view.arm_ui_replay(slot,window)
  input_section('ui','ui',S.section())
  log('UI_REPLAY_ARMED slot='..slot..' families='..mask..' script='..tostring(plan and #plan or 0))
 end
+-- The player's ship as this client's HUD knows it (MD native_gate_ui_replay.xml HudShipChanged; native_gate_hud_ship_refresh,
+-- on by default with the presentation). Every client raises the same event at the same tick (the event is an MD one); each
+-- client's stock HUD then attaches its radar, crosshair and weapon panel to the ship of the player it presents.
+function pilot_view.hud_ship_changed(why)
+ if cfg.native_gate_hud_ship_refresh==false or not cfg.native_gate_pilot_present then return end
+ local raise=X4LAN_UI_REPLAY_STOCK and X4LAN_UI_REPLAY_STOCK.AddUITriggeredEvent or AddUITriggeredEvent
+ raise('X4LAN_Hud','ShipChanged',why)
+ log('HUD_SHIP_CHANGED why='..tostring(why))
+end
 local function pilot_frame(s,tick)
  if cfg.native_gate_pilot_block_orders then block_orders() end
+ -- ten ticks into the pilot window (every client presents its slot by then) and ten ticks after a hot join's handover
+ do
+  local w=cfg.native_gate_pilot_window
+  if type(w)=='table' and tick==w[1]+10 then pilot_view.hud_ship_changed('window') end
+  if hud_refresh_at[tick] then hud_refresh_at[tick]=nil;pilot_view.hud_ship_changed('handover') end
+  if not pilot_view.hud_listener and RegisterEvent then
+   pilot_view.hud_listener=true
+   RegisterEvent('teleportSucceeded',function() log('HUD_SHIP_CHANGED_LUA') end)
+  end
+ end
  if pilot_view.death then pilot_view.death_frame(tick) end
  -- Diagnostic native_gate_pilot_dump_tick: every slot's ship, controller, agent and solver bytes at that tick, read only, so
  -- that the session's and a joiner's can be compared offline (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 15).
@@ -2884,6 +2914,45 @@ local function pilot_frame(s,tick)
   local rows=pilot_view.own_predict_rows
   if rows>0 and tick%rows==0 then ticklog.write('OWN_PREDICT '..(row or ('tick='..tick..' refused='..tostring(why)))) end
   if tick%600==0 then ticklog.status('OWN_PREDICT_STATUS',tick,gate.own_predict_status) end
+  -- Diagnostic (native_gate_own_predict_hud_probe = true): where X4 projects another slot's ship on this client's screen
+  -- with the simulated camera and with the displayed one (gate.own_predict_hud), every 5 ticks. On a presenting client the
+  -- projection runs in its presentation scope, as its HUD's does.
+  if cfg.native_gate_own_predict_hud_probe and tick%5==0 and gate.own_predict_hud then
+   local own=tonumber(cfg.slot:sub(2))
+   local ship=gate.pilot_ship and gate.pilot_ship(own==1 and 2 or 1)
+   local other=ship and ffi.new('UniverseID',ship)
+   if not pilot_view.hud_probe_cdef then
+    pilot_view.hud_probe_cdef=true
+    pcall(ffi.cdef,'typedef struct {float x;float y;bool onScreen;} X4LAN_ScreenPos;X4LAN_ScreenPos GetComponentScreenPosition(const UniverseID componentid,const uint32_t iconsizeonscreen,const uint32_t iconsizeoffscreen);')
+   end
+   if other and pcall(function() return ffi.C.GetComponentScreenPosition end) then
+    local resumed=gate.pilot_present_resume and gate.pilot_present_resume()==1
+    local ok,text=pcall(function()
+     local a=ffi.C.GetComponentScreenPosition(other,32,32)
+     local on=gate.own_predict_hud(2)
+     local b=ffi.C.GetComponentScreenPosition(other,32,32)
+     gate.own_predict_hud(0)
+     return string.format('sim=%.2f,%.2f,%s shown=%.2f,%.2f,%s applied=%d d=%.2f,%.2f',a.x,a.y,tostring(a.onScreen),b.x,b.y,tostring(b.onScreen),on,b.x-a.x,b.y-a.y)
+    end)
+    if not ok then pcall(gate.own_predict_hud,0) end
+    if resumed then gate.pilot_present_pause() end
+    ticklog.write('OWN_PREDICT_HUD tick='..tick..' '..tostring(text)..' '..tostring(gate.own_predict_hud_status()))
+   end
+   -- ...and whether the stock target system's own projections run inside the display scope: its calls of
+   -- GetUIElementScreenPosition counted by the scope's state at the call (wrapped once per Lua state, diagnostic only).
+   if not X4LAN_HUD_PROBE and type(GetUIElementScreenPosition)=='function' and gate.own_predict_hud_open then
+    local stock=GetUIElementScreenPosition
+    X4LAN_HUD_PROBE={inside=0,outside=0}
+    GetUIElementScreenPosition=function(...)
+     local at=gate.own_predict_hud_open()==1 and 'inside' or 'outside'
+     X4LAN_HUD_PROBE[at]=X4LAN_HUD_PROBE[at]+1
+     return stock(...)
+    end
+   end
+   if X4LAN_HUD_PROBE and tick%150==0 then
+    ticklog.write('OWN_PREDICT_HUD_CALLS tick='..tick..' inside='..X4LAN_HUD_PROBE.inside..' outside='..X4LAN_HUD_PROBE.outside)
+   end
+  end
  end
  ticklog.status('PILOT_INPUTS',tick,gate.pilot_inputs_status,'pilot status unavailable')
  if pilot_view.stock and tick%600==0 and gate.pilot_stock_callers then
@@ -3028,6 +3097,7 @@ local function sample(tick)
     if trace and cfg.native_gate_ship_diag then log('SHIP id='..i..' '..tostring(gate.ship(i))) end
     if trace and cfg.native_gate_attention_diag then log('ATTENTION id='..i..' '..assert(gate.attention(i))) end
     if trace and cfg.native_gate_nav_diag then log('NAV id='..i..' '..tostring(gate.nav(i))) end
+    if trace and cfg.native_gate_probes_diag and gate.nav_probes then log('PROBES id='..i..' '..tostring(gate.nav_probes(i))) end
     if trace and cfg.native_gate_params_diag then
      for ordinal=1,assert(gate.params(i,0)) do log('PARAMS id='..i..' ordinal='..ordinal..' '..tostring(gate.params(i,ordinal))) end
     end
@@ -3730,10 +3800,24 @@ local function frame()
    assert(snapshot and gate.steer_roll and gate.steer_roll_status and gate.steer_roll()==1,'steer roll refused '..tostring(gate.steer_roll_status and gate.steer_roll_status()))
    log('STEER_ROLL_ARMED')
   end
+  -- The obstacle avoidance's angle scaling in the Windows order (linux/gate_avoid_angle.h): x * (1 / pi) for x / pi.
+  -- Linux only.
+  if cfg.native_gate_avoid_angle and gate.platform and gate.platform()=='linux' then
+   assert(snapshot and gate.avoid_angle and gate.avoid_angle_status and gate.avoid_angle()==1,'avoid angle refused '..tostring(gate.avoid_angle_status and gate.avoid_angle_status()))
+   log('AVOID_ANGLE_ARMED')
+  end
+  -- The pursuit behaviour's speed factor in the Windows order (linux/gate_pursuit_speed.h): 1 - (c + 1) * 0.53333336 for
+  -- ((c + 1) * -0.8) / 1.5 + 1. Linux only.
+  if cfg.native_gate_pursuit_speed and gate.platform and gate.platform()=='linux' then
+   assert(snapshot and gate.pursuit_speed and gate.pursuit_speed_status and gate.pursuit_speed()==1,'pursuit speed refused '..tostring(gate.pursuit_speed_status and gate.pursuit_speed_status()))
+   log('PURSUIT_SPEED_ARMED')
+  end
   -- Linux-only keys of the mixed-platform preset: on Windows only a note (its build is already that order).
   if not (gate.platform and gate.platform()=='linux') then
    if cfg.native_gate_ik_step then log('IK_STEP_NOOP windows: the joint step multiplies by 50.0f already') end
    if cfg.native_gate_steer_roll then log('STEER_ROLL_NOOP windows: the roll alignment multiplies by the hoisted reciprocal already') end
+   if cfg.native_gate_avoid_angle then log('AVOID_ANGLE_NOOP windows: the avoidance angles multiply by 1/pi and 2/pi already') end
+   if cfg.native_gate_pursuit_speed then log('PURSUIT_SPEED_NOOP windows: the speed factor multiplies by the folded 0.8/1.5 already') end
    if cfg.native_gate_ik_wrap then log('IK_WRAP_NOOP windows: the joint wrap is (t2 + value) - pi already') end
    if cfg.native_gate_body1_mass then log('BODY1_MASS_NOOP windows: second bodies are created with an empty compound already') end
   end
@@ -5065,6 +5149,17 @@ local function frame()
     assert(armed==1,'own predict refused: '..tostring(why))
     pilot_view.own_predict,pilot_view.own_predict_rows=mode,rows
     log('OWN_PREDICT_ARMED slot='..slot..' mode='..mode..' others='..tostring(others~=false)..' tau_ms='..tau..' horizon_cap='..cap..' rows='..rows)
+    -- The HUD on the displayed camera (lockstep_own_predict_hud.h; native_gate_own_predict_hud, on by default with
+    -- 'present'): X4's screen projections in slot 6 answer for the camera slot 10 draws with, so the target system's
+    -- brackets, lead marks and icons sit on their targets while the ship turns. The probe's own frame runs outside it.
+    local hud=own(cfg.native_gate_own_predict_hud)
+    if hud~=nil and hud~=false then
+     assert(hud==true and mode=='present' and gate.own_predict_hud_arm,'own predict hud refused: needs native_gate_own_predict = present')
+     local hud_armed,hud_why=gate.own_predict_hud_arm()
+     assert(hud_armed==1,'own predict hud refused: '..tostring(hud_why))
+     pilot_view.own_predict_hud=true
+     log('OWN_PREDICT_HUD_ARMED slot='..slot..' '..tostring(gate.own_predict_hud_status()))
+    end
    else
     for _,name in ipairs({'native_gate_own_predict_others','native_gate_own_predict_tau','native_gate_own_predict_horizon','native_gate_own_predict_rows'}) do
      assert(cfg.native_gate_own_predict~=nil or cfg[name]==nil,'own predict refused: '..name..' needs native_gate_own_predict')
@@ -5395,6 +5490,8 @@ local function frame()
   if cfg.native_gate_ik_diag and gate.ik_status then log('IK_STOP '..tostring(gate.ik_status())) end
   if cfg.native_gate_ik_step and gate.ik_step_status then log('IK_STEP_STOP '..tostring(gate.ik_step_status())) end
   if cfg.native_gate_steer_roll and gate.steer_roll_status then log('STEER_ROLL_STOP '..tostring(gate.steer_roll_status())) end
+  if cfg.native_gate_avoid_angle and gate.avoid_angle_status then log('AVOID_ANGLE_STOP '..tostring(gate.avoid_angle_status())) end
+  if cfg.native_gate_pursuit_speed and gate.pursuit_speed_status then log('PURSUIT_SPEED_STOP '..tostring(gate.pursuit_speed_status())) end
   if cfg.native_gate_ik_wrap and gate.ik_wrap_status then log('IK_WRAP_STOP '..tostring(gate.ik_wrap_status())) end
   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end
   if cfg.native_gate_attention_all then log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end
@@ -6289,12 +6386,17 @@ SetScript('onUpdate',function()
  -- A presenting client's UI slot runs as its slot's player; the probe reads and reports as the canonical one.
  if cfg.native_gate_draw_watch_frame and gate and gate.draw_watch_frame_end then gate.draw_watch_frame_end() end
  local paused=gate and gate.pilot_present_pause and gate.pilot_present_pause()
+ -- The HUD's display scope (lockstep_own_predict_hud.h) closes for the probe's frame like the presentation's: the gate's
+ -- modules read the simulated poses. It opens again below with this tick's own display pose.
+ local hud_scope=pilot_view and pilot_view.own_predict_hud and gate and gate.own_predict_hud
+ if hud_scope then hud_scope(0) end
  local probe_mark=(cfg.native_gate_runtime_ids_local or cfg.native_gate_view_ui) and gate and gate.runtime_ids_probe
  -- The UI replay and guard tell the probe's own calls of stock entries from a person's by this mark too.
  if not probe_mark and cfg.native_gate_ui_replay~=nil and cfg.native_gate_ui_replay~=false and gate then probe_mark=gate.runtime_ids_probe end
  if probe_mark then probe_mark(1) end
  local ok,error=pcall(frame)
  if probe_mark then probe_mark(0) end
+ if hud_scope then hud_scope(1) end
  if paused==1 then gate.pilot_present_resume() end
  if probe_started then probe_last_us=gate.qpc_us()-probe_started end
  if not ok then

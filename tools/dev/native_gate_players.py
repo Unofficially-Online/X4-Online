@@ -140,7 +140,7 @@ UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop':
                        'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_obj': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
                        'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons',
                        'flight_assist': 'flight', 'turret_mode': 'flight', 'turret_missile': 'flight', 'drones': 'flight', 'drone_mode': 'flight',
-                       'mis_fixture': 'missions', 'briefing': 'missions', 'briefing_stop': 'missions', 'briefing_button': 'missions',
+                       'mis_fixture': 'missions', 'gm_limit': 'missions', 'briefing': 'missions', 'briefing_stop': 'missions', 'briefing_button': 'missions',
                        'offer_accept': 'events', 'mis_active': 'missions', 'mis_none': 'missions', 'mis_abort': 'missions',
                        'conv_start': 'conversation', 'dialog': 'conversation', 'dialog_native': 'conversation',
                        'hire_talk': 'conversation', 'hire_confirm': 'conversation'}

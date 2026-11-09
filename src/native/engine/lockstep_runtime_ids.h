@@ -458,20 +458,21 @@ static void rid_scope(int open) {rid_scope_thread=open?GetCurrentThreadId():0;}
 #define RID_UI_ELEMENT_VT 0x2b6cc38u
 static int rid_ui_elements_on;
 static volatile LONG64 rid_ui_element_allocs,rid_ui_element_misses;
-static void *rid_setatt_object_native(void) {
+static void *rid_frame_register(uint32_t return_rva,int which) {
     CONTEXT c;RtlCaptureContext(&c);
-    const DWORD64 want=(DWORD64)(uintptr_t)(image+RID_SETATT_HANDLER_RET);
+    const DWORD64 want=(DWORD64)(uintptr_t)(image+return_rva);
     __try {
         for(unsigned depth=0;depth<RID_STACK;depth++) {
             DWORD64 base=0;PRUNTIME_FUNCTION f=RtlLookupFunctionEntry(c.Rip,&base,NULL);
             if(f) {PVOID data=NULL;DWORD64 establisher=0;RtlVirtualUnwind(UNW_FLAG_NHANDLER,base,c.Rip,f,&c,&data,&establisher,NULL);}
             else {DWORD64 next=0;if(!read_local((const void*)(uintptr_t)c.Rsp,&next,8)) return NULL;c.Rip=next;c.Rsp+=8;}   /* a leaf */
             if(!c.Rip) return NULL;
-            if(c.Rip==want) return (void*)(uintptr_t)c.Rsi;
+            if(c.Rip==want) return (void*)(uintptr_t)(which?c.R15:c.Rsi);
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {return NULL;}
     return NULL;
 }
+static void *rid_setatt_object_native(void) {return rid_frame_register(RID_SETATT_HANDLER_RET,0);}
 static void *(*rid_setatt_object)(void)=rid_setatt_object_native;   /* tests replace it */
 static int rid_ui_element_route(const uint32_t *frames,unsigned count) {
     if(!rid_ui_elements_on) return 0;

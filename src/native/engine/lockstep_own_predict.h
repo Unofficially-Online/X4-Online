@@ -560,10 +560,10 @@ static void opred_slot_frame(unsigned index,uint64_t tick) {
 }
 /* The displayed pose of a predicted slot at a display offset (steps from this tick, -1..1): the
  * shown pose moved at its last rates, the correction decayed by the offset. 0 without one. */
-static int opred_display_pose(unsigned slot,double offset,float out[12]) {
+static int opred_display_pose_of(unsigned slot,double offset,float out[12],uint64_t tick) {
     if(!opred_armed || slot<1 || slot>pilot_slot_count) return 0;
     const opred_slot *p=&opred_slots[slot-1];
-    if(!p->enabled || !p->ready || p->display_tick!=stats.issued) return 0;
+    if(!p->enabled || !p->ready || p->display_tick!=tick) return 0;
     if(!isfinite(offset) || offset==0.0) {memcpy(out,p->shown,sizeof(p->shown));return 1;}
     if(offset<-1.0) offset=-1.0;
     if(offset>1.0) offset=1.0;
@@ -574,29 +574,36 @@ static int opred_display_pose(unsigned slot,double offset,float out[12]) {
     predict_offset_apply(&moved,&c,&display);predict_floats(&display,out);
     return 1;
 }
+static int opred_display_pose(unsigned slot,double offset,float out[12]) {return opred_display_pose_of(slot,offset,out,stats.issued);}
 
 /* ---- slot 10 (present mode; MoveWorker, inside the render RNG split's wrapper) ---- */
 static __attribute__((unused)) int opred_owns(const void *object) {
     for(unsigned i=0;opred_open && i<PILOT_SLOTS;i++) if(opred_open_at[i] && opred_open_object[i]==object) return 1;
     return 0;
 }
-static int opred_present_enter(void) {
+/* hud = 0: slot 10's draw. hud = 1: the UI's projections in slot 6 (lockstep_own_predict_hud.h): the same swap at offset
+ * 0, and before this tick's opred_frame has run (the start of slot 6) the pose is the previous tick's display advanced by
+ * one step at its last rates (provisional: the block then holds this tick's simulated pose, which the predictor has not
+ * sampled yet, so there is nothing to compare it with; the pointer swap and its restore are checked as ever). */
+static uint64_t opred_hud_exact,opred_hud_provisional,opred_hud_stale,opred_hud_refused;
+static int opred_present_enter_as(int hud) {
     if(!opred_armed || (opred_mode!=OPRED_PRESENT && opred_mode!=OPRED_SWAP) || !stats.active) return 0;
     if(join_catching_up()) {++opred_present_catchup;return 0;}   /* a joiner before its handover draws the plain steps */
-    ++opred_present_calls;
-    if(opred_open) {InterlockedIncrement64(&opred_failures);opred_stage="present_nested";return 0;}
+    if(!hud) ++opred_present_calls;
+    if(opred_open) {InterlockedIncrement64(&opred_failures);opred_stage=hud?"hud_nested":"present_nested";return 0;}
     if(GetCurrentThreadId()!=ui_thread) {++opred_present_thread;return 0;}
-    double offset=opred_display_offset?opred_display_offset():0.0;
+    double offset=hud?0.0:opred_display_offset?opred_display_offset():0.0;
     unsigned opened=0;
     for(unsigned i=0;i<pilot_slot_count && i<PILOT_SLOTS;i++) {
         opred_slot *p=&opred_slots[i];const pilot_slot *s=&pilot_slots[i];
         opred_open_at[i]=NULL;
         if(!p->enabled || !p->ready || !p->object) continue;
-        if(p->display_tick!=stats.issued || s->object!=p->object) {++opred_present_stale;continue;}
+        const int provisional=hud && stats.issued && p->display_tick+1==stats.issued;
+        if((p->display_tick!=stats.issued && !provisional) || s->object!=p->object) {++*(hud?&opred_hud_stale:&opred_present_stale);continue;}
         unsigned char *parent=NULL,*block=NULL,*volatile *at=NULL;float now[16];
-        if(!opred_view(p->object,&parent,&at,&block,now) || parent!=p->parent) {++opred_present_refused;continue;}
-        if(!opred_same(now,p->sim_floats)) {
-            if(!p->prev_valid || !opred_same(now,p->prev_floats)) {++opred_present_refused;continue;}
+        if(!opred_view(p->object,&parent,&at,&block,now) || parent!=p->parent) {++*(hud?&opred_hud_refused:&opred_present_refused);continue;}
+        if(!provisional && !opred_same(now,p->sim_floats)) {
+            if(hud || !p->prev_valid || !opred_same(now,p->prev_floats)) {++*(hud?&opred_hud_refused:&opred_present_refused);continue;}
             ++opred_present_previous; /* a render-only frame on the other bank */
         }
         float *mine=opred_blocks[i],shown[12];
@@ -605,17 +612,21 @@ static int opred_present_enter(void) {
             memset(mine+OPRED_BLOCK_MIN/4,0,sizeof(opred_blocks[i])-OPRED_BLOCK_MIN);
         }
         if(opred_mode==OPRED_SWAP) for(unsigned r=0;r<4;r++) memcpy(shown+3*r,now+4*r,3*sizeof(float)); /* the block's own pose */
-        else if(!opred_display_pose(i+1,offset,shown)) {++opred_present_stale;continue;}
+        else if(provisional?!opred_display_pose_of(i+1,1.0,shown,stats.issued-1):!opred_display_pose(i+1,offset,shown)) {
+            ++*(hud?&opred_hud_stale:&opred_present_stale);continue;
+        }
         for(unsigned r=0;r<4;r++) memcpy(mine+4*r,shown+3*r,3*sizeof(float)); /* w lanes stay the engine's */
         int swapped=0;
         __try {swapped=InterlockedCompareExchangePointer((void*volatile*)at,(void*)mine,(void*)block)==(void*)block;}
         __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {swapped=0;}
         if(!swapped) {++opred_present_refused;continue;}
-        opred_open_at[i]=at;opred_open_saved[i]=block;opred_open_object[i]=p->object;++opened;++opred_present_applied;
+        opred_open_at[i]=at;opred_open_saved[i]=block;opred_open_object[i]=p->object;++opened;
+        if(!hud) ++opred_present_applied;else if(provisional) ++opred_hud_provisional;else ++opred_hud_exact;
     }
     opred_open=opened!=0;
     return opred_open;
 }
+static int opred_present_enter(void) {return opred_present_enter_as(0);}
 /* After the original (also on unwind): every swapped entry back unless the engine replaced it. */
 static void opred_present_leave(int entered) {
     if(!entered) return;

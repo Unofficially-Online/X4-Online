@@ -625,6 +625,21 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   command at tick 38 equal to W36p's (bf69b048). The tick-124 chain is another word: the linear command's z (the
   model's Windows +0x1d8, the forward speed) 2 ulps apart for actor 3 at tick 99 (42df5eb0 / 42df5eb2), then the slot
   inputs +0x068/+0x084 at 100 and actor 5's velocity at 124; next.
+  That word changes only while a behaviour's avoidance terms steer (Windows 0xecd490: obstacle avoidance 0xecb4d0,
+  separation 0xecbef0, the third term 0xecba20; Linux 0x13c9cf0, 0x13ca140, 0x13d6aa0, the same order). Separation is
+  the same arithmetic on both. The obstacle avoidance scales its two angles by 1/pi and 2/pi as folded constants on
+  Windows (0xecb8b7, 0xecb8c0) and divides by pi and pi/2 on Linux (0x13ca01d, 0x13ca024): native_gate_avoid_angle
+  (linux/gate_avoid_angle.h, stop 212) runs the Linux run with the products. lx66a: armed, but the tick-99 word is
+  unchanged, so that path is not the one taken there (the fix is from the code alone, no run exercises it yet). Open:
+  the third term (0xecba20 against 0x13d6aa0), not compared yet.
+  Ruled out with rows: the probe vectors (PROBES rows, native_gate_probes_diag on both gates: all zero in lx67a, the
+  obstacle term never fires here) and the contact lists (the Linux AVOIDANCE rows now carry the entries: order and
+  positions equal to W36q through tick 124). The word is the pursuit behaviour's speed command (Windows 0xed2510,
+  Linux 0x13d7ac0): factor(c) times the speed limit, c the cosine of the angle to the target, the factor the line
+  from 1 at c = -1 to 0.2 at c = 0.5. MSVC: 1 - (c + 1) * 0.53333336 (0.8 / 1.5 folded, 0xed2646); GCC: ((c + 1) *
+  -0.8) / 1.5 + 1 (0x13d7bd4). native_gate_pursuit_speed (linux/gate_pursuit_speed.h, stop 213) runs the Linux run as
+  one mulss by -0.53333336. lx69a: the tick-99 word equal to W36q's; the first state apart moves from tick 124 to
+  tick 133 (actor 4).
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

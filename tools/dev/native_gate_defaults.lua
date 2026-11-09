@@ -193,6 +193,8 @@ D.ON={
  {'native_gate_render_camera','extrapolate','native_gate_render_fps','the camera moves in the render-only frames'},
  {'native_gate_render_motion','extrapolate','native_gate_render_fps','moving objects drawn smoothed in the render-only frames'},
  {'native_gate_own_predict','present','native_gate_pilot_stock native_gate_render_rng_split','the own ship answers the controls at once (display only)'},
+ {'native_gate_own_predict_hud',true,'native_gate_own_predict=present','the HUD brackets and lead marks placed for the camera the picture is drawn with'},
+ {'native_gate_hud_ship_refresh',true,'native_gate_pilot_present native_gate_ui_replay','each client radar, crosshair and weapon panel on its own player ship'},
  {'native_gate_own_predict_rows',0,'native_gate_own_predict','no per-step OWN_PREDICT row (diagnostic); OWN_PREDICT_STATUS every 600 ticks stays'},
 }
 -- Why a '!' conflict won (added to the skip reason).
@@ -251,6 +253,7 @@ D.DIAGNOSTIC={
  {'native_gate_params_diag','PARAMS rows'},
  {'native_gate_nav_diag','NAV rows'},
  {'native_gate_velocity_diag','VELOCITY rows'},
+ {'native_gate_probes_diag','PROBES rows: the fixture ships obstacle probe vectors'},
  {'native_gate_impulse_diag','IMPULSE rows'},
  {'native_gate_ik_diag','IKJOINT rows'},
  {'native_gate_shape_diag','SHAPE rows'},
@@ -336,6 +339,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_attn_set','hot join: ATTN runs SetAttention where its write leaves the load per-level state, its attention events dropped (ATTN set)'},
  {'native_gate_join_bootev_session','hot join: the boot hold re-posts only the kept events whose source and class the session had due at T'},
  {'native_gate_join_mute_load_npcs','hot join: the joiner MD does not hear the NPC created events of its load before the admission'},
+ {'native_gate_join_cue_ids','hot join: the joiner loaded MD cue instances take the runtime IDs the join save names (missions, offers)'},
  {'native_gate_join_shoot_far','hot join: SHOOT also writes the session last shot time where the joiner gun was reset by its load (class A)'},
  {'native_gate_join_attn_states','hot join: with ATTN set, SetAttention at the admission for every object whose per-level state is apart there and settled on the session, its allocations on the load list'},
  {'native_gate_join_gravn_extra','hot join: GRAVN keeps the joiner zone groups the session adds later in the neighbour lists (GRAVN extra)'},
@@ -379,6 +383,8 @@ D.DIAGNOSTIC={
  {'native_gate_motion_watch_orders','motion watch orders'},
  {'native_gate_motion_watch_splines','motion watch splines'},
  {'native_gate_motion_watch_spline_every','motion watch: a spline row on every watched update'},
+ {'native_gate_missions_per_player_offers','generic mission offers around every player (opt-in until its live run; then a default)'},
+ {'native_gate_own_predict_hud_probe','own-ship prediction: a target projected with the simulated and the displayed camera (diagnostic rows)'},
  {'native_gate_pilot_slots_registry','personal missions C1: the slot players in the component registry (diagnostic)'},
  {'native_gate_motion_watch_zones','motion watch zones'},
  {'native_gate_wreck_watch','wreck watch'},
@@ -488,6 +494,8 @@ D.EXCLUDED={
  {'native_gate_ik_wrap','Linux gate only: a joint wrapped target as (t2 + value) - pi, the Windows order'},
  {'native_gate_ik_step','Linux gate only: the joints fixed-step divisions by 0.02 as Windows multiplications by 50'},
  {'native_gate_steer_roll','Linux gate only: the steering roll alignment divisions by the yaw limit as Windows multiplications by its reciprocal'},
+ {'native_gate_pursuit_speed','Linux gate only: the pursuit speed factor ((c+1) * -0.8) / 1.5 + 1 as Windows 1 - (c+1) * 0.53333336'},
+ {'native_gate_avoid_angle','Linux gate only: the obstacle avoidance angle divisions by pi and pi/2 as Windows multiplications by 1/pi and 2/pi'},
  {'native_gate_body_step_diag','Linux gate only: the fixture bodies before and after the Jolt step (diagnostic)'},
  {'native_gate_body1_mass','Linux gate only: a ship second body gets the empty-compound mass properties at creation (Windows value)'},
  {'native_gate_timer_resolution','timer experiment'},
@@ -542,7 +550,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[211]='shape refresh'}
+ [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[212]='avoid angle',[213]='pursuit speed',[211]='shape refresh'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

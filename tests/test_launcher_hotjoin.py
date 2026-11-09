@@ -316,7 +316,7 @@ class MixedPlatformTests(unittest.TestCase):
             for key in ("native_gate_fp_redirect='redirect'", "native_gate_fp_redirect_solver='redirect'",
                         "native_gate_fp_redirect_drones='redirect'", 'native_gate_fp_redirect_ticks=5', 'native_gate_nav_rng=true',
                         'native_gate_nav_initial_refresh=true', 'native_gate_attention_rng=true', 'native_gate_shape_initial_refresh=true',
-                        "native_gate_shape_refresh='view'", 'native_gate_radar_initial_refresh=true', 'native_gate_steer_roll=true'):
+                        "native_gate_shape_refresh='view'", 'native_gate_radar_initial_refresh=true', 'native_gate_steer_roll=true', 'native_gate_avoid_angle=true', 'native_gate_pursuit_speed=true'):
                 self.assertIn(key, sets)
             self.assertNotIn('native_gate_fp_redirect_ticks=3', sets)   # the builder's own value wins
             recipe = build_play_overlay.read_recipe(Path(d) / 'ov')

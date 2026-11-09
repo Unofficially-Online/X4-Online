@@ -130,6 +130,8 @@ static int lua_join_shoot_far(lua_State *L) {join_shoot_far_on=p_lua_tonumber(L,
 /* gate.join_bootev_session(on): the boot hold's kept events go back only where the session's EVQT names their source and class. */
 /* gate.join_mute_load_npcs(on): a joiner's MD does not hear event_npc_created between its load and its admission. */
 static int lua_join_mute_load_npcs(lua_State *L) {join_mute_load_npcs_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_cue_ids(on): a joiner's loaded MD cue instances take the IDs their save names (before gate.join_load). */
+static int lua_join_cue_ids(lua_State *L) {join_cue_ids_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 static int lua_join_bootev_session(lua_State *L) {join_bootev_session_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_gravn_extra(on): GRAVN keeps the joiner's extra zone groups in the neighbour lists it writes (default off). */
 static int lua_join_gravn_extra(lua_State *L) {join_gravn_extra_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}

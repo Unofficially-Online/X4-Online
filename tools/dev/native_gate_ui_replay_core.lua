@@ -560,8 +560,35 @@ function K.session(p)
   gate.ui_replay_fail('ui_lua_op')
   return false,'op'
  end
+ -- Generic mission offers per slot (lockstep_mission_owners.h 'offers'; MD native_gate_ui_replay.xml SlotOffers): every
+ -- client, at the same ticks (stateless: a joiner computes the same ticks), signals the galaxy inside slot k's scope with the
+ -- generation open, so X4's own selection runs for slot k's sector and player and what it makes is slot k's.
+ -- p.offers={first=tick,every=ticks,stagger=ticks,galaxy=function -> Lua ID}.
+ function S.slot_offers(tick)
+  local o=p.offers
+  if not (p.mpp and o and gate.mpp_generate) or tick<o.first then return end
+  for k=2,p.slots do
+   if (tick-o.first-(k-2)*o.stagger)%o.every==0 and tick>=o.first+(k-2)*o.stagger then
+    local done,before='no_scope',gate.ui_missions_state and gate.ui_missions_state() or '-'
+    if gate.mpp_scope(k)==1 then
+     S.replaying=true;gate.ui_replay_bypass(1)
+     local ok,why=pcall(function()
+      assert(gate.mpp_generate(k)==1,'generate refused')
+      stock.SignalObject(o.galaxy(),'x4lan_slot_offers',k)
+     end)
+     gate.mpp_generate(0)
+     gate.ui_replay_bypass(0);S.replaying=false
+     if gate.mpp_unscope(k)~=1 then gate.ui_replay_fail('mpp_leave') end
+     done=ok and 'signalled' or 'error:'..tostring(why)
+    end
+    log('MPP_OFFERS tick='..tick..' slot='..k..' '..done..' before=['..tostring(before)..'] after=['..
+     tostring(gate.ui_missions_state and gate.ui_missions_state() or '-')..'] '..tostring(gate.mpp_status()))
+   end
+  end
+ end
  -- Every client, the probe's frame of the tick, the events in slot order and call order.
  function S.apply(tick)
+  S.slot_offers(tick)
   local list=gate.ui_replay_lua(tick)
   if not list then return end
   S.replaying=true;gate.ui_replay_bypass(1)
@@ -709,7 +736,7 @@ end
 K.SCOPED={target_slot=true,target_none=true,guidance_slot=true,guidance_end=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={mis_fixture=true}
+K.CANONICAL={mis_fixture=true,gm_limit=true}
 K.FIXTURE_OFFER,K.FIXTURE_MISSION,K.FIXTURE_TEXTURE='X4LAN test offer','X4LAN test mission','x4lan_rt'   -- native_gate_ui_replay.xml
 -- What the scripted mission ops need of the stock UI's queries (C: ffi.C with the probe's declarations; env: the globals):
 -- an offer by its name (the briefing's and the map's lists), with its client, and a mission by its name.
@@ -817,6 +844,8 @@ function K.script(plan,start,tools)
   -- Missions and conversations (lockstep_ui_missions.h). mis_fixture: the test offer (MD native_gate_ui_replay.xml), canonical;
   -- the rest as the briefing menu, the map's mission list and the dialog call the stock entries.
   elseif op=='mis_fixture' then call=function() tools.env.AddUITriggeredEvent('X4LAN_UiMissions','Fixture',{location=tools.slot_lua(e[3] or 1)});return 'lua' end
+  -- Test only: the generic missions' limit per sector (MD GmLimit), canonical like mis_fixture.
+  elseif op=='gm_limit' then call=function() tools.env.AddUITriggeredEvent('X4LAN_UiMissions','GmLimit',e[3]);return 'lua' end
   elseif op=='offer_accept' or op=='offer_decline' then call=function()
     local offer,actor=tools.missions.find_offer(K.FIXTURE_OFFER)
     tools.env.SignalObject(actor,op=='offer_accept' and 'accept' or 'decline',tools.env.ConvertStringToLuaID(offer));return offer end

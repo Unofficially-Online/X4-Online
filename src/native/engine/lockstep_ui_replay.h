@@ -52,7 +52,7 @@
  *             an event that took on one client only shows at once, whatever it was.
  * Refused at capture (nothing ran anywhere, nothing diverged): counted and logged (UI_REPLAY_REFUSED). A
  * section or reference that fails, a hook lost, a fault in a replayed call: stop reason 164. */
-static int mpp_armed;   /* lockstep_mission_owners.h: slots 2+ apply the events family in their own scope when armed */
+static int mpp_armed;static void mpp_restore_hook(void);   /* lockstep_mission_owners.h: slots 2+ apply the events family in their own scope when armed */
 #define UIREP_STOP_REASON 164u
 #define UIREP_VERSION 1u
 #define UIREP_HEAD 4u
@@ -1180,6 +1180,7 @@ static void pss_restore(void);   /* lockstep_player_settings.h (through lockstep
 static void uirep_restore(void) {
     if(!uirep_armed) return;
     uirep_stopped=1;
+    mpp_restore_hook();
     uiguard_restore();
     uitrade_restore();
     pss_restore();

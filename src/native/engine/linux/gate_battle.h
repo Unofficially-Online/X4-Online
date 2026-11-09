@@ -304,6 +304,22 @@ static unsigned lxb_fixture_agent(void *self) {
     }
     return 0;
 }
+/* gate.nav_probes(actor): Windows' text (lockstep_gate.c lua_nav_probes): the 18 probe ranges (Agent+0x700, Windows
+ * +0x6e0), the read selector and both banks of 18 probe vectors (Agent+0x750, Windows +0x730), as the obstacle
+ * avoidance 0x13c9cf0 reads them. Read only. */
+static int lua_nav_probes(lua_State *L) {
+    const double actor=p_lua_tonumber(L,1);uint32_t ranges[18],banks[2][72];unsigned index=0;unsigned char *agent=NULL;
+    if(!accept_ui() || !stats.active || lxb_bound!=LXB_ACTORS || !isfinite(actor) || actor<1 || actor>LXB_ACTORS || floor(actor)!=actor ||
+       !(agent=lxb_actors[(unsigned)actor-1].agent) || !lxb_fixture_agent(agent) || !gate_read_local(LX(LX_BANK_READ_VA),&index,4) ||
+       !gate_read_local(agent+0x700,ranges,sizeof(ranges)) || !gate_read_local(agent+0x750,banks,sizeof(banks))) {p_lua_pushnil(L);return 1;}
+    char out[2048];int n=snprintf(out,sizeof(out),"tick=%llu read=%u ranges=",(unsigned long long)stats.issued,index);
+    for(unsigned i=0;i<18;i++) n+=snprintf(out+n,sizeof(out)-(size_t)n,"%08x",ranges[i]);
+    for(unsigned b=0;b<2;b++) {
+        n+=snprintf(out+n,sizeof(out)-(size_t)n," bank%u=",b);
+        for(unsigned i=0;i<72;i++) n+=snprintf(out+n,sizeof(out)-(size_t)n,"%08x",banks[b][i]);
+    }
+    p_lua_pushlstring(L,out,(size_t)n);return 1;
+}
 static int lxb_hex_words(char *out,size_t capacity,const uint32_t *words,unsigned count) {
     static const char digits[]="0123456789abcdef";
     if(capacity<(size_t)count*8u+1u) {if(capacity) out[0]=0;return 0;}

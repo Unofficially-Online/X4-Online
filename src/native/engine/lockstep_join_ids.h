@@ -150,11 +150,52 @@ __attribute__((unused)) static int join_ids_replay_end(void) {
     if(!ok) InterlockedIncrement64(&join_ids_replay_failures);
     memset(&join_ids_replay_list,0,sizeof(join_ids_replay_list));join_ids_replay_thread=0;return ok;
 }
+/* native_gate_join_cue_ids (hj29, 9 Nov; a join default): a loaded MD cue instance at the session's runtime ID. The save
+ * writes every cue instance's ID (<cue id="681196" ...>; a mission's ID is its cue's), but the cue import constructor
+ * 0x11121d0 (this, ?, node) makes the handler first (0x111224e -> 0xcaab00, whose AssignNewID returns to 0xcaab18) and reads
+ * the id later (0x1112ed4: 0x125360(node, 0x1fe, 0)), so on a joiner every loaded cue took the load list: hj29's mission
+ * 0x162568 on the session was 0x1dbc24c on the joiner, and whatever names a cue by ID (the UI replay's mission and offer
+ * references, accept arguments, the ownership table) missed. With the option, for that caller while the load list is
+ * active: the import's frame (return 0x1112253) by unwinding, its node (r15 = r8 from the entry on; the function's first
+ * 131 bytes pinned), the id by the engine's own reader, and the cue into that slot through join_ids_place (free, of its
+ * generation, below the session's next slot), else the load list as before. Cues the load itself instantiates
+ * (Cue_CreateInstance) keep the load list. Status cue_ids=on:placed:refused:no_id. */
+#define JOIN_IDS_CUE_HANDLER 0xcaab18u      /* AssignNewID returns here: the ScriptEventHandler constructor */
+#define JOIN_IDS_CUE_IMPORT 0x11121d0u      /* MD::Cue's import constructor */
+#define JOIN_IDS_CUE_IMPORT_RET 0x1112253u  /* its call of the handler constructor returns here */
+#define JOIN_IDS_INT_ATTRIBUTE 0x125360u    /* (node, key, fallback) -> the attribute as an integer */
+static int join_cue_ids_on;
+static volatile LONG64 join_cue_ids_placed,join_cue_ids_refused,join_cue_ids_noid;
+typedef uint32_t (*join_ids_int_fn)(void *node,uint32_t key,uint64_t fallback);
+#ifndef RID_OWN_PLATFORM
+static uint64_t join_cue_saved_native(void) {
+    void *node=rid_frame_register(JOIN_IDS_CUE_IMPORT_RET,1);
+    return node?((join_ids_int_fn)(void *)(image+JOIN_IDS_INT_ATTRIBUTE))(node,(uint32_t)JOIN_IDS_KEY,0):0;
+}
+#else
+static uint64_t join_cue_saved_native(void) {return 0;}   /* the Linux gate: its own sites (not yet) */
+#endif
+static uint64_t (*join_cue_saved)(void)=join_cue_saved_native;   /* tests replace it */
+static int join_cue_ids_pins(void) {
+    return hash_ok(image+JOIN_IDS_CUE_IMPORT,131,"84c25647e0e24d45d501acbbaee9422b070de8bed50e0b09be0147912f36baf0") &&
+           hash_ok(image+JOIN_IDS_INT_ATTRIBUTE,118,"9d4f0736b1ef1a4c1e70683284d9ff0c8158080c25f3a2c9048e0ae19e3fbdb5");
+}
+static uint64_t join_cue_assign(void *object) {
+    unsigned char *map=rid_map();const uint64_t saved=join_ids_placing;join_ids_placing=0;
+    if(map && saved) {
+        CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(map+0x10);EnterCriticalSection(lock);
+        const uint64_t id=join_ids_place(map,object,saved);
+        LeaveCriticalSection(lock);
+        if(id) {InterlockedIncrement64(&join_cue_ids_placed);return id;}
+    }
+    InterlockedIncrement64(saved?&join_cue_ids_refused:&join_cue_ids_noid);return join_ids_assign_load(object);
+}
 /* rid_assign, a shared allocation: as before, while the joiner loads its saved slot or the load list, or a replay's slot. */
 static created_assign_fn join_ids_route(created_assign_fn shared,uint32_t caller) {
     if(InterlockedCompareExchange(&join_ids_replay_on,0,0) && GetCurrentThreadId()==join_ids_replay_thread) return join_ids_assign_replay;
     if(join_ids_admit_load && join_ids_built) return join_ids_assign_load;   /* ATTN states at the admission (lockstep_join_world.h) */
     if(!InterlockedCompareExchange(&join_ids_active,0,0)) return shared;
+    if(join_cue_ids_on && caller==JOIN_IDS_CUE_HANDLER) {join_ids_placing=join_cue_saved();return join_cue_assign;}
     const unsigned kind=caller==JOIN_IDS_COMPONENT_A || caller==JOIN_IDS_COMPONENT_B?JOIN_IDS_COMPONENT:caller==JOIN_IDS_CONNECTION?JOIN_IDS_CONN:JOIN_IDS_NONE;
     if(kind && join_ids_pending.kind==kind) {join_ids_placing=join_ids_pending.saved;join_ids_pending.kind=JOIN_IDS_NONE;return join_ids_assign_pinned;}
     return join_ids_assign_load;
@@ -248,6 +289,7 @@ static int join_ids_arm(uint64_t next) {
     if(!created_installed || !world_identity_installed) return join_ids_fail("hooks");
     for(unsigned i=0;i<3;i++) if(!thunk || !thunk_slot_ready(join_ids_thunks[i])) return join_ids_fail("thunk");
     if(!join_ids_built && !join_ids_pins()) return join_ids_fail("pins");
+    if(join_cue_ids_on && !join_cue_ids_pins()) return join_ids_fail("cue_pins");
     unsigned char *map=rid_map();if(!map) return join_ids_fail("map");
     if(!join_ids_built) {
         if(*(void *volatile *)(map+RID_F_BLOCKS+RID_JOIN_BLOCK*8u)) return join_ids_fail("block");

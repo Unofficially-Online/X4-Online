@@ -27,6 +27,29 @@ static int lua_own_predict_frame(lua_State *L) {
     if(!strcmp(why,"-")) why="row";
     p_lua_pushnil(L);p_lua_pushlstring(L,why,strlen(why));return 2;
 }
+/* The HUD on the displayed camera (lockstep_own_predict_hud.h).
+ * gate.own_predict_hud_arm(): after gate.own_predict('present', ...); 1, or 0 and why.
+ * gate.own_predict_hud(0) before the probe's frame and gate.own_predict_hud(1) after it (the frame reads the simulated
+ *   state). (1) returns 1 when displayed poses are in place: only when armed and inside a UI entry that closes the scope.
+ *   (2) opens a scope of its own for the diagnostic rows (native_gate_own_predict_hud_probe), closed by (0).
+ * gate.own_predict_hud_status(). */
+static int lua_own_predict_hud_arm(lua_State *L) {
+    const int ok=accept_ui() && ophud_arm();
+    p_lua_pushnumber(L,ok);
+    if(ok) return 1;
+    p_lua_pushlstring(L,ophud_why,strlen(ophud_why));return 2;
+}
+static int lua_own_predict_hud(lua_State *L) {
+    const double on=p_lua_tonumber(L,1);int ok=0;
+    if(accept_ui() && (on==1.0 || on==2.0)) ok=ophud_enter_as(on==2.0);   /* 2: the diagnostic's own scope */
+    else if(accept_ui() && on==0.0) {if(ophud_open) ophud_leave();else ++ophud_unbalanced;ok=1;}
+    p_lua_pushnumber(L,ok);return 1;
+}
+static int lua_own_predict_hud_open(lua_State *L) {p_lua_pushnumber(L,ophud_open);return 1;}
+static int lua_own_predict_hud_status(lua_State *L) {
+    char out[512];int n=ophud_status(out,sizeof(out));
+    p_lua_pushlstring(L,out,(size_t)(n>0?n:0));return 1;
+}
 static int lua_own_predict_status(lua_State *L) {
     char out[16384];int n=accept_ui() && opred_armed?opred_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;

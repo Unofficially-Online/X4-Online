@@ -1115,7 +1115,7 @@ int main(int argc,char **argv) {
     if(argc==2) test_ui_guard_native_image(argv[1]);
     if(argc==2) test_ui_build_native_image(argv[1]);
     if(argc==2) test_ui_construct_native_image(argv[1]);
-    if(argc==2) test_ui_missions_native_image(argv[1]);
+    if(argc==2) {test_mission_owners_native_image(argv[1]);test_ui_missions_native_image(argv[1]);}
     if(argc==2) test_ui_trade_native_image(argv[1]);
     if(argc==2) test_ui_faction_native_image(argv[1]);
     if(argc==2) test_player_settings_native_image(argv[1]);

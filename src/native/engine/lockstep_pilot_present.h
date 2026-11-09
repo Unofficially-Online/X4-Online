@@ -306,8 +306,13 @@ static void pres_fault_stop(void) {
     pres_stop();
 }
 /* ---- entry points ---- */
+static int ophud_enter(void);static void ophud_leave(void);static int ophud_in_ui;   /* lockstep_own_predict_hud.h: the HUD on the displayed camera */
 static void pres_ui_move(void *self) {
-    if(!pres_enter()) {pres_fn.ui_move(self);return;}
+    ophud_in_ui=1;ophud_enter();   /* before the scope, as slot 10 orders them: the poses, the camera bank, then the presentation */
+    if(!pres_enter()) {
+        __try {pres_fn.ui_move(self);} __finally {ophud_leave();ophud_in_ui=0;}
+        return;
+    }
     InterlockedIncrement64(&pres_ui);
     __try {pres_fn.ui_move(self);pres_leave();pres_paused=0;}
     __except(pres_fault_filter(GetExceptionInformation(),"ui")) {
@@ -316,6 +321,7 @@ static void pres_ui_move(void *self) {
         CRITICAL_SECTION *lock=(CRITICAL_SECTION*)((unsigned char*)self+PRES_UI_LOCK);
         if(lock->OwningThread==(HANDLE)(uintptr_t)GetCurrentThreadId()) LeaveCriticalSection(lock);
     }
+    ophud_leave();ophud_in_ui=0;
 }
 static void pres_render_call(render_rng_fn original,void *self) {
     if(!pres_enter()) {original(self);return;}

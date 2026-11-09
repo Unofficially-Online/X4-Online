@@ -165,6 +165,12 @@ static void lxis_restore(void);
 static void lxiw_restore(void);
 /* The steering's roll alignment in the Windows order (gate_steer_roll.h). */
 static void lxsr_restore(void);
+static void lxav_restore(void); /* the avoidance angles in the Windows order (gate_avoid_angle.h) */
+static int lxav_check(void);
+static int lxav_installed;
+static void lxps_restore(void); /* the pursuit speed factor in the Windows order (gate_pursuit_speed.h) */
+static int lxps_check(void);
+static int lxps_installed;
 static int lxsr_check(void);
 static int lxsr_installed;
 /* Physics shape refresh: the fixture path and shape_refresh (gate_shape.h, included below). */
@@ -587,6 +593,10 @@ static void finish(unsigned reason) {
     if(lxsh_installed) stats.restored=0;
     lxsr_restore();
     if(lxsr_installed) stats.restored=0;
+    lxav_restore();
+    if(lxav_installed) stats.restored=0;
+    lxps_restore();
+    if(lxps_installed) stats.restored=0;
     if(lxis_installed) stats.restored=0;
     if(lxai_installed) stats.restored=0;
     if(lxvd_installed) stats.restored=0;
@@ -726,6 +736,8 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(lxiw_installed && !lxiw_check()) {finish(209);gate_original_once(frame,loading);return;} /* LXIW_STOP_REASON */
     if(lxsh_installed) {const unsigned why=lxsh_check();if(why) {finish(why);gate_original_once(frame,loading);return;}} /* 211, 165, 46 */
     if(lxsr_installed && !lxsr_check()) {finish(210);gate_original_once(frame,loading);return;} /* LXSR_STOP_REASON */
+    if(lxav_installed && !lxav_check()) {finish(212);gate_original_once(frame,loading);return;} /* LXAV_STOP_REASON */
+    if(lxps_installed && !lxps_check()) {finish(213);gate_original_once(frame,loading);return;} /* LXPS_STOP_REASON */
     if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if((lxf_installed || lxf_ctor_installed) && (!lxf_owned() || lxf_failures)) {finish(55);gate_original_once(frame,loading);return;} /* flight, as Windows */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
@@ -972,6 +984,8 @@ static int lua_start(lua_State *L) {
 #include "gate_ik_wrap.h"
 #include "gate_shape.h"
 #include "gate_steer_roll.h"
+#include "gate_avoid_angle.h"
+#include "gate_pursuit_speed.h"
 static int lua_flight_faults(lua_State *L) {
     char out[512];int n=accept_ui()?lxf_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
@@ -1017,14 +1031,22 @@ static int lua_ship(lua_State *L) {
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
 static int lua_avoidance(lua_State *L) {
-    double actor=p_lua_tonumber(L,1),phase=p_lua_tonumber(L,2);char out[160];
+    double actor=p_lua_tonumber(L,1),phase=p_lua_tonumber(L,2);static char out[32*0x100+160];
     if(!accept_ui() || !isfinite(actor) || actor<1 || actor>LXF_ACTORS || floor(actor)!=actor || !(phase==0 || phase==1)) {p_lua_pushnil(L);return 1;}
     const unsigned char *model=lxf_samples[(unsigned)actor-1].model;uint64_t time=0;uintptr_t span[2]={0,0};
     int n;
     if(!model || !gate_read_local(model+LXF_MODEL_AVOIDANCE_TIME,&time,8) || !gate_read_local(model+LXF_MODEL_AVOIDANCE_TIME+8,span,16) || span[1]<span[0])
         n=snprintf(out,sizeof(out),"phase=%u model=%s",(unsigned)phase,model?"unreadable":"none");
-    else n=snprintf(out,sizeof(out),"phase=%u time=%016llx count=%llu now=1",(unsigned)phase,(unsigned long long)time,
-                    (unsigned long long)((span[1]-span[0])/0x80));
+    else {
+        /* The contact list as it stands at the call (after the tick's update: Windows' phase 1), its entries as Windows
+         * prints them (0x80 bytes each: the contact's runtime ID, its relative position at +0x10, ...), at most 32. */
+        static uint32_t words[32][0x80/4];const unsigned count=(unsigned)((span[1]-span[0])/0x80),shown=count>32?32:count;
+        n=snprintf(out,sizeof(out),"phase=%u time=%016llx count=%u now=1",(unsigned)phase,(unsigned long long)time,count);
+        if(shown && gate_read_local((const void*)span[0],words,(size_t)shown*0x80)) {
+            n+=snprintf(out+n,sizeof(out)-(size_t)n," entries=");
+            for(unsigned j=0;j<shown;j++) for(unsigned k=0;k<0x80/4;k++) n+=snprintf(out+n,sizeof(out)-(size_t)n,"%08x",words[j][k]);
+        }
+    }
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
 static int lua_read_cost(lua_State *L) {
@@ -1205,7 +1227,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(actor);METHOD(params);METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);METHOD(snapshot_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
-    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(flight_limits);METHOD(flight_limits_status);METHOD(body1_mass);METHOD(body1_mass_status);METHOD(body1_mass_census);METHOD(body_step_diag);METHOD(body_step_status);METHOD(body_step);METHOD(velocity);METHOD(velocity_status);METHOD(impulse_diag);METHOD(impulse_status);METHOD(impulse);METHOD(ik_joints);METHOD(ik_status);METHOD(ik_step);METHOD(ik_step_status);METHOD(steer_roll);METHOD(steer_roll_status);METHOD(ik_wrap);METHOD(ik_wrap_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
+    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(flight_limits);METHOD(flight_limits_status);METHOD(body1_mass);METHOD(body1_mass_status);METHOD(body1_mass_census);METHOD(body_step_diag);METHOD(body_step_status);METHOD(body_step);METHOD(velocity);METHOD(velocity_status);METHOD(impulse_diag);METHOD(impulse_status);METHOD(impulse);METHOD(ik_joints);METHOD(ik_status);METHOD(ik_step);METHOD(ik_step_status);METHOD(nav_probes);METHOD(steer_roll);METHOD(steer_roll_status);METHOD(avoid_angle);METHOD(avoid_angle_status);METHOD(pursuit_speed);METHOD(pursuit_speed_status);METHOD(ik_wrap);METHOD(ik_wrap_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
     METHOD(build_rng);METHOD(build_rng_status);METHOD(build_rng_row);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);

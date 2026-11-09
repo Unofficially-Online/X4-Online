@@ -568,6 +568,9 @@ static void test_runtime_ids_native_image(const char *path) {
     image[0x3d5669u]^=1;assert(!rid_ui_element_pins());image[0x3d5669u]^=1;image[0x3d5740u]^=1;assert(!rid_ui_element_pins());image[0x3d5740u]^=1;
     /* lockstep_join_ids.h: the import's three sites and the ID import, the constructors' returns; one byte off refuses. */
     assert(join_ids_pins());
+    /* native_gate_join_cue_ids: the cue import up to its handler call (the node in r15), and the integer attribute reader */
+    assert(join_cue_ids_pins() && !memcmp(image+0x11121fcu,"\x4d\x8b\xf8",3) && image[0x111224eu]==0xe8);
+    image[0x11121fcu]^=1;assert(!join_cue_ids_pins());image[0x11121fcu]^=1;image[0x125360u]^=1;assert(!join_cue_ids_pins());image[0x125360u]^=1;
     {
         const unsigned tamper[]={0x8e3210,0x8e3205,0x8e573c,0x8e5765,0x8e5672,0x8e576a,0x3d242d,0x3d1dcd,0x9972ef,0x7a9b50,0xccff0};
         for(unsigned i=0;i<sizeof(tamper)/sizeof(*tamper);i++) {image[tamper[i]]^=1;assert(!join_ids_pins());image[tamper[i]]^=1;}

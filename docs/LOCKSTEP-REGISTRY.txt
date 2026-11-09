@@ -289,7 +289,11 @@ Modules (define, owner):
                                 entries, the stub page or the pins; whys entry_changed, page_changed, block_changed)
   211 LXSH_STOP_CHECK           linux/gate_shape.h (the shape refresh's entry, its je or the pin no longer ours; the
                                 Linux gate's 45/46/165 are Windows' shape and region camera codes)
-  free: 109, 114-119, 122-129, 147-149, 212-255.
+  212 LXAV_STOP_REASON          linux/gate_avoid_angle.h (native_gate_avoid_angle, Linux gate only: the avoidance run's
+                                entry, the stub page or the pin; whys entry_changed, page_changed, block_changed)
+  213 LXPS_STOP_REASON          linux/gate_pursuit_speed.h (native_gate_pursuit_speed, Linux gate only: the speed factor
+                                run's entry, the stub page or the pin; whys entry_changed, page_changed, block_changed)
+  free: 109, 114-119, 122-129, 147-149, 214-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

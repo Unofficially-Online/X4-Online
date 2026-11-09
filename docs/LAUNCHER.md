@@ -14,10 +14,38 @@ disposable profile.
 | `play --overlay DIR --snapshot FILE [--stall-drop 15] [--timeout 0]` | A session for people (docs/PLAYTEST.md): desyncs are silent (relay `--observe --keep-going`), error rows go to `errors.log` instead of ending the session, a client that stops or exits is dropped after `--stall-drop` seconds and the others play on; lookahead, tick rate and length come from the overlay (`tools/build_play_overlay.py`) |
 | `play ... --remote-slots K --bind IP --allow-from IP --port P` | The same with slot K on another PC: the relay listens on this PC's address, and the launcher prints the `join` line for the other PC (docs/PLAYTEST.md "Two PCs"); `--close-when-over` ends an unattended run with its session |
 | `join --relay HOST:PORT --token T --slot K --clients N --arm-at UTC --overlay DIR --snapshot FILE` | One client on this PC for slot K of that session (the same overlay and snapshot as the host), logged as `play` does |
+| `lobby --overlay DIR --snapshot FILE [--port 47000] [--bind IP] [--lane 1]` | This PC's X4 opens in its main menu with a **Multiplayer** entry (Host a game, Join a game). The same command on every PC; see "Lobby" below |
+| `lobby ... --server-file server.json` | The same with a kit's server: the page has **Join** only, the relay runs on the server, and the run folder is sent there when the game is over |
+| `serve --overlay DIR --server-file server.json [--bind 0.0.0.0] [--runs DIR]` | The server of such a kit (Linux or Windows, Python only): admits the launchers that prove the kit's key, starts the relay when the overlay's player count has joined, stores the players' logs, then takes the next players |
 | `session ... --checkpoint-at T` | Every client saves the world right after tick T (`clientK/save_001.xml.gz`); the session ends there (outcome `checkpointed`) |
 | `triage RUN [--steam-fix]` | Reruns a diverged session with diagnostic windows over the 300 ticks before its first mismatch and writes `RUN-triage.txt`; `--report-only RERUN` only reports |
 | `clean` | Stops processes and removes views left behind by a crashed session |
 | `steam-fix [--restore]` | See "Steam" below |
+
+## Lobby
+
+`x4ls lobby` is `play --remote-slots` and `join` without the command lines: who plays and when the snapshot loads
+is chosen in X4's main menu.
+
+- Every PC runs the same command with the same play overlay (one without open slots) and snapshot. X4 starts in
+  its start menu; the overlay is installed, but only `tools/dev/native_gate_lobby.lua` runs. It adds **Multiplayer**
+  above Settings.
+- **Host a game:** the launcher makes a token, listens on TCP `port + 1` and puts the invite code
+  `X4MP-<address>-<port>-<token>` on the clipboard (the page shows it too). `--bind` names the address the other PCs
+  reach; the default is this PC's primary IPv4 address.
+- **Join a game:** the launcher takes the invite code from the clipboard, connects to the host and proves the token
+  and that it holds the same overlay and snapshot. The host refuses another kit, a wrong code and a full game, and
+  the page says why.
+- When every slot is taken the host starts the relay for the joiners' addresses, picks the load second
+  (`--load-wait`, 30 s) and tells every launcher. Each one writes the session into its `config.lua` and its game runs
+  the overlay's files. From here on it is the session `play` and `join` make: the same relay, gate and overlay.
+- The session's end closes X4 (there is no way back into the lobby yet). A second X4 on the same PC takes `--lane 2`.
+- X4's UI Lua has no `io` library and refuses the Win32 calls of LuaJIT's `ffi` ("Access to FFI function ... is
+  restricted"), and `require` does not find extension files. `loadfile` works and reads a changed file again. So the
+  game sends its choice as a log row (`[X4LAN] LOBBY REQUEST HOST`), which the launcher follows, and reads the
+  launcher's answer from `extensions/x4_lan_lab/lobby/state.lua`. The launcher reads and writes the clipboard.
+- X4 has to be started by this command (`PLAY.cmd` in a playtest kit). A start from Steam has no overlay and no
+  launcher, so no Multiplayer entry.
 
 ## How a client is isolated
 

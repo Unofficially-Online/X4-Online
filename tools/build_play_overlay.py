@@ -80,7 +80,9 @@ MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_red
                        'native_gate_attention_rng=true', 'native_gate_attention_initial_refresh=true',
                        'native_gate_shape_rng=true', 'native_gate_shape_initial_refresh=true', "native_gate_shape_refresh='view'",
                        'native_gate_radar_rng=true', 'native_gate_radar_initial_refresh=true',
-                       'native_gate_steer_roll=true')   # Linux-only like ik_wrap (abee54ed: the roll alignment in MSVC's order)
+                       'native_gate_steer_roll=true',   # Linux-only like ik_wrap (abee54ed: the roll alignment in MSVC's order)
+                       'native_gate_avoid_angle=true',  # Linux-only (01133ea9: the avoidance's evasion angles by folded 1/pi, 2/pi)
+                       'native_gate_pursuit_speed=true')  # Linux-only (c1c0a23e: the pursuit's speed factor in MSVC's folded form)
 NL = chr(10)
 
 

@@ -309,6 +309,7 @@ static unsigned char pnat_assist_of(void *controller) {
     void **vtable=*(void***)controller;return ((unsigned char(*)(void*,unsigned char))vtable[49])(controller,0);
 }
 /* (5) Cursor and direct mouse steering with flight control for its body. */
+static void ophud_restore(void);   /* lockstep_own_predict_hud.h */
 static void pstk_cursor(void *controller);
 static void pnat_cursor(void *controller) {
     if(pnat_mode==PNAT_MODE_STOCK) {pstk_cursor(controller);return;}
@@ -930,6 +931,7 @@ static int pnat_pass(uint64_t tick,unsigned char *controller,pilot_refresh_fn re
 static void pnat_restore(void) {
     if(!pnat_armed) return;
     uirep_restore(); /* first: its adapter needs the seats */
+    ophud_restore(); /* the HUD's display scope and its UI entry, before the presentation's */
     pres_restore();  /* the presentation next: its scope needs the seats */
     pfslot_restore();/* the walking update's call site back */
     pfbody_restore();/* the slots' bodies off their rooms before the seats go */

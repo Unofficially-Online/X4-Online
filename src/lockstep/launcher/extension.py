@@ -48,6 +48,18 @@ def ui_xml(files):
             f'    <dependency name="ego_detailmonitor" />\n{rows}  </environment>\n</addon>\n')
 
 
+def config_text(overlay, slot, port, token, clients, profile_id=None, config_tail=''):
+    """ui/config.lua of client `slot`: the overlay's config.lua.append with its placeholders filled, then config_tail."""
+    config = (Path(overlay) / 'ui/config.lua.append').read_text()
+    for placeholder, value in zip(PLACEHOLDERS, (str(port), token, f'p{slot}', str(clients))):
+        config = config.replace(placeholder, value)
+    if '@X4LANE_' in config:
+        raise SystemExit('overlay config has an unknown @X4LANE_ placeholder')
+    if profile_id is not None:
+        config = re.sub(r'(X4LAN_CONFIG\.test_profile = )"\d+"', rf'\g<1>"{profile_id}"', config)
+    return 'X4LAN_CONFIG = {enabled = false}\n' + config + config_tail
+
+
 def compose(overlay, extensions, slot, port, token, clients, extra=None, config_tail='', profile_id=None):
     """Write <extensions>/x4_lan_lab for client `slot` (1-based).
 
@@ -67,16 +79,10 @@ def compose(overlay, extensions, slot, port, token, clients, extra=None, config_
     missing = [name for name in files if not (target / name).is_file()]
     if missing:
         raise SystemExit(f'overlay lists missing ui files: {missing}')
-    config = (overlay / 'ui/config.lua.append').read_text()
-    for placeholder, value in zip(PLACEHOLDERS, (str(port), token, f'p{slot}', str(clients))):
-        config = config.replace(placeholder, value)
-    if '@X4LANE_' in config:
-        raise SystemExit('overlay config has an unknown @X4LANE_ placeholder')
-    if profile_id is not None:
-        config = re.sub(r'(X4LAN_CONFIG\.test_profile = )"\d+"', rf'\g<1>"{profile_id}"', config)
+    config = config_text(overlay, slot, port, token, clients, profile_id=profile_id, config_tail=config_tail)
     for name, source in (extra or {}).items():
         shutil.copyfile(source, target / name)
     (target / 'content.xml').write_text(CONTENT)
     (target / 'ui.xml').write_text(ui_xml([*BASE_UI, *(extra or {}), *files]))
-    (target / 'ui/config.lua').write_text('X4LAN_CONFIG = {enabled = false}\n' + config + config_tail)
+    (target / 'ui/config.lua').write_text(config)
     return target

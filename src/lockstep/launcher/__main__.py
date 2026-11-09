@@ -102,6 +102,41 @@ def main(argv=None):
     j.add_argument('--steam-fix', action='store_true')
     j.add_argument('--same-pc', action='store_true', help='test: the host runs on this PC too (own state file, its X4 tolerated)')
 
+    sv = sub.add_parser('serve', help='the server of a kit made with make_playtest_kit.py --server: admits the players who '
+                                      'choose Join and runs the relay (no X4 needed; Linux or Windows)')
+    sv.add_argument('--overlay', type=Path, required=True, help="the kit's play overlay")
+    sv.add_argument('--server-file', type=Path, required=True, metavar='server.json', help="the kit's server.json (address, port, key)")
+    sv.add_argument('--bind', default='0.0.0.0', help='the address the lobby (TCP port + 1) and the relay (UDP port) listen on')
+    sv.add_argument('--load-wait', type=int, default=45, metavar='SECONDS', help='from the last player joining to the common load')
+    sv.add_argument('--stall-drop', type=float, default=15, metavar='SECONDS')
+    sv.add_argument('--idle-end', type=int, default=420, metavar='SECONDS', help='a game without a step for this long is over')
+    sv.add_argument('--runs', type=Path, help="where each game's relay files go (default: .local/runs)")
+    sv.add_argument('--games', type=int, default=0, help='test: end after this many games')
+
+    lb = sub.add_parser('lobby', help='open X4 in its main menu and choose there: Multiplayer, Host a game or Join a game '
+                                      '(every PC runs this with the same play overlay and snapshot)')
+    lb.add_argument('--overlay', type=Path, required=True, help='a play overlay without open slots (tools/build_play_overlay.py)')
+    lb.add_argument('--snapshot', type=Path, required=True, help='the save the overlay was built for')
+    lb.add_argument('--port', type=int, default=47000, help="the relay's UDP port on the host; the lobby listens on TCP port + 1")
+    lb.add_argument('--bind', default='', help="hosting: this PC's address the others reach (default: its primary IPv4 address)")
+    lb.add_argument('--lane', type=int, default=0,
+                    help='the local view and profile (default: the first free one, so a second start on one PC just works)')
+    lb.add_argument('--load-wait', type=int, default=30, metavar='SECONDS',
+                    help='from the last player joining to the common load (default 30)')
+    lb.add_argument('--lobby-timeout', type=int, default=0, metavar='SECONDS', help='give up in the menu after this long (default: never)')
+    lb.add_argument('--stall-drop', type=float, default=15, metavar='SECONDS')
+    lb.add_argument('--server-file', type=Path, metavar='server.json',
+                    help="a kit's server (make_playtest_kit.py --server): the page has Join only, x4ls serve runs the relay")
+    lb.add_argument('--show', action='store_true', help='test: the Multiplayer page opens by itself')
+    lb.add_argument('--auto', default='', metavar='host|join|CODE',
+                    help='test: host, join the server, or join with this invite code, without a click in the menu')
+    lb.add_argument('--size', default='1280x720')
+    lb.add_argument('--timeout', type=int, default=0)
+    lb.add_argument('--close-when-over', action='store_true')
+    lb.add_argument('--game', type=Path)
+    lb.add_argument('--lanes', type=Path)
+    lb.add_argument('--steam-fix', action='store_true')
+
     st = sub.add_parser('starts', help="the game's starts: which can be the session's (slot 1) and which a player's own")
     st.add_argument('--game', type=Path)
     st.add_argument('--all', action='store_true', help='also list the refused starts (tutorials, tests, Timelines)')
@@ -192,7 +227,23 @@ def main(argv=None):
             previous, pid = steam.fix(state / 'steam-fix.json')
             print(f'ActiveProcess pid {previous} -> {pid}; undo with: x4ls steam-fix --restore')
         return 0
+    if args.command == 'serve':
+        from . import serve
+        serve.run(serve.ServeOptions(overlay=args.overlay, server_file=args.server_file, bind=args.bind, load_wait=args.load_wait,
+                                     stall_drop=args.stall_drop, idle_end=args.idle_end, games=args.games,
+                                     **({'runs': args.runs} if args.runs else {})))
+        return 0
     width, height = (int(v) for v in args.size.lower().split('x'))
+    if args.command == 'lobby':
+        from . import lobby
+        result = lobby.run(lobby.LobbyOptions(overlay=args.overlay, snapshot=args.snapshot, port=args.port, bind=args.bind,
+                                              lane=args.lane, load_wait=args.load_wait, width=width, height=height,
+                                              game=args.game, lanes=args.lanes, steam_fix=args.steam_fix, timeout=args.timeout,
+                                              close_when_over=args.close_when_over, stall_drop=args.stall_drop,
+                                              lobby_timeout=args.lobby_timeout, auto=args.auto, show=args.show,
+                                              server_file=args.server_file))
+        print(json.dumps(result, indent=2))
+        return 0 if result['outcome'] in ('played', 'closed') else 1
     if args.command == 'join' and args.arm_at is None:
         from . import hotjoin
         if args.snapshot or args.clients:

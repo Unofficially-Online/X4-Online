@@ -219,6 +219,24 @@ pilot_foot and its bodies/slots, player_settings_per_slot, guidance_local, rende
   tail-calls its twin 165d860), vfunc36 d98de0 -> 1653840 (its one call d8dfe0 = 1653680).
   Minimal path: 119 of 174 placed, 50 matched; pilot_slots 16 of 26.
 
+3l. THE AGENT BASE, TAKE AND RELEASE CONTROL, THE INLINED CURSOR (9 November, afternoon)
+  The pairing data regenerated in .local/linux-pairs (rtti, calls: 9818 pairs before the neighbour and trace passes).
+  NavigationController has PlayerController's slot counts (71 and 79): its vfuncs 6, 7, 10 are Linux slots 13, 14, 17,
+  ea5a70/ea6280/ea66c0 -> 144a470/142a600/141d2c0; the two wrappers jump to 1449e30 (ea5a90, the transform) and 142a2d0
+  (ea6290), the tails of PlayerController's Agent branches too; the third reads the bank at +0x28 (+0x30) through the
+  pathing selector 3e4fea8 (38f4ee4). PlayerController vfunc49 d9bf70 -> 1653f40 (slot 56), which compares its vcall
+  +0x1c8 against vfunc50's twin 164cd40 (d9c020) and inlines it.
+  Take and release control: the ship vtables have 18 more Linux slots, 15 of them below slot 1074: Defensible 4ed040 ->
+  17a34f0 (slot 1089: calls Controllable's 18888a0 = 4500a0, then the Universe 3db6948 +0x238 and type 0x73), Ship
+  7e1f10 -> 12bafe0 (slot 1090: 186a490 = 450380). Both PlayerController constructors (d83ae0 from the Agent's, d83550
+  new) are inlined in 18888a0 (18889d9 and 1889000: the allocation of 0x19470 bytes): one pin over 18888a0 covers
+  them. Player vfunc906 70e580 -> 136c820 (slot 924, +18).
+  The cursor d88a10 is inlined in the controller update 166d020 (d95180): the outputs (bank +0x18..+0x20) are written at
+  166d342..166d36c or zeroed at 166d397, and both paths meet at 166d3ac, where a replay can write its values; the
+  Windows entry wrap and its trampoline (d88a22) have no Linux counterpart. By bank signature (candidates): the range
+  handler d87f70 -> 16582c0, the SPACE callback d88710 in 165ab80..165ad8b.
+  Minimal path: 135 of 174 placed, 64 matched.
+
 4b. NEXT (before lx32b)
   - 6d6d80 and 54ce90 by a reading of both builds (the getter is called by 62 Windows functions: placing it pins many
     sites), then the three predicates; the data words of pilot_inputs (0x2f4b7e4 control-deactivation count,

@@ -442,6 +442,12 @@ def bundle(args):
         command.append('--ik-step')
     if args.steer_roll:
         command.append('--steer-roll')
+    if args.avoid_angle:
+        command.append('--avoid-angle')
+    if args.pursuit_speed:
+        command.append('--pursuit-speed')
+    if args.probes_diag:
+        command.append('--probes-diag')
     if args.ik_wrap:
         command.append('--ik-wrap')
     if args.shape_refresh:
@@ -1394,6 +1400,9 @@ def main(argv=None):
     b.add_argument('--shape-initial-refresh', action='store_true', help="the fixture's shape due times at time - dt at the first call per holder, as Windows (native_gate_shape_initial_refresh)")
     b.add_argument('--shape-refresh', choices=('view',), help="shape refresh intervals from the player's ship on a keyed draw, due times aligned at the first call per object (native_gate_shape_refresh)")
     b.add_argument('--ik-wrap', action='store_true', help="a skeleton joint's wrapped target as (t2 + value) - pi, the Windows order (native_gate_ik_wrap)")
+    b.add_argument('--probes-diag', action='store_true', help='PROBES rows: the fixture ships obstacle probe vectors (native_gate_probes_diag)')
+    b.add_argument('--pursuit-speed', action='store_true', help="the pursuit behaviour's speed factor as Windows computes it (native_gate_pursuit_speed)")
+    b.add_argument('--avoid-angle', action='store_true', help="the obstacle avoidance's angle scaling as Windows computes it (native_gate_avoid_angle)")
     b.add_argument('--steer-roll', action='store_true', help="the steering roll alignment as Windows computes it (native_gate_steer_roll)")
     b.add_argument('--ik-step', action='store_true', help="the joints' fixed-step divisions by 0.02 as Windows' multiplications by 50 (native_gate_ik_step)")
     b.add_argument('--ik-diag', action='store_true', help='IKJOINT rows: the fixture ships\' and weapons\' skeleton joints (native_gate_ik_diag)')

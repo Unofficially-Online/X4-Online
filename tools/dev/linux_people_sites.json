@@ -442,25 +442,28 @@
    "module": "pilot_native",
    "win": "d87f70",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "16582c0",
+   "status": "candidate",
+   "evidence": "bank signature: steering +0x74..+0x7c (3d8da14..1c), key flags +0xda..+0xdd, the five timers +0xe0..+0x100, flight and autopilot gates; input object 3daaaf8 (+0xa012/+0xa013)",
+   "what": "range handler"
   },
   {
    "module": "pilot_native",
    "win": "d88710",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "165ab80",
+   "status": "candidate",
+   "evidence": "bank signature in 165ab80..165ad8b: zeroes +0x30/+0x38/+0x68/+0x70, the five timers = now + 0.5 (165ac26..165acc0), authority 1658d60 (165accf), 16538b0; the entry is not confirmed",
+   "what": "SPACE context callback"
   },
   {
    "module": "pilot_native",
    "win": "d88a10",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "166d3ac",
+   "status": "matched",
+   "evidence": "read: inlined on Linux in the controller update 166d020 (d95180): the live outputs are written at 166d342/166d35b/166d36c (bank +0x18..+0x20 = 3d8d9b8..c0), zeroed at 166d397/166d3a2, and both paths meet at 166d3ac: the replay writes there, there is no entry to wrap",
+   "what": "cursor steering (inlined)"
   },
   {
    "module": "pilot_native",
@@ -482,25 +485,28 @@
    "module": "pilot_native",
    "win": "d9bf70",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "1653f40",
+   "status": "matched",
+   "evidence": "read: PlayerController slot 49 = Linux slot 56; tests its argument, then vtable +0x1c8 (slot 57; Windows +0x190, slot 50) devirtualized against 164cd40",
+   "what": "PlayerController vfunc49 (assist)"
   },
   {
    "module": "pilot_native",
    "win": "ea5a70",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "144a470",
+   "status": "matched",
+   "evidence": "read: NavigationController vtable (71 Windows, 79 Linux slots, as PlayerController): Windows slot 6 = Linux slot 13; the wrapper clears the third argument and jumps to 1449e30 (Windows: call ea5a90)",
+   "what": "Agent base vfunc6 (transform)"
   },
   {
    "module": "pilot_native",
    "win": "ea5a90",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "1449e30",
+   "status": "matched",
+   "evidence": "read: the tail of PlayerController vfunc6's Agent branch (Windows d8b3ce call, Linux 1659291 jmp) and of the Agent wrapper 144a470",
+   "what": "GetTransformImpl"
   },
   {
    "module": "pilot_native",
@@ -562,33 +568,37 @@
    "module": "pilot_native",
    "win": "d88a22",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside d88a10"
+   "lin": "166d3ac",
+   "status": "matched",
+   "evidence": "read: the Windows trampoline's resume point inside d88a10; not needed on Linux, where d88a10 is inlined (see d88a10)",
+   "what": "cursor steering resume (not needed)"
   },
   {
    "module": "pilot_native",
    "win": "d9c020",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside d9bf70"
+   "lin": "164cd40",
+   "status": "matched",
+   "evidence": "read: PlayerController slot 50 = Linux slot 57, the target 1653f40 compares its vcall against; inlined there: highway 3e4cdc0, stop ship in menus 3d8e050, autopilot 3d8da58, flight 3d8daa8",
+   "what": "PlayerController vfunc50 (Agent mode)"
   },
   {
    "module": "pilot_native",
    "win": "ea6280",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside ea5a90"
+   "lin": "142a600",
+   "status": "matched",
+   "evidence": "read: NavigationController slot 7 = Linux slot 14; the wrapper jumps to 142a2d0 (Windows ea6290), also the tail of PlayerController vfunc7's Agent branch (165a2b8)",
+   "what": "Agent base vfunc7 (velocity)"
   },
   {
    "module": "pilot_native",
    "win": "ea66c0",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside ea6290"
+   "lin": "141d2c0",
+   "status": "matched",
+   "evidence": "read: NavigationController slot 10 = Linux slot 17; the bank at +0x28 (Windows +0x30), the pathing selector 3e4fea8 (Windows 38f4ee4), 0x1a0 a bank, +0x90",
+   "what": "Agent base vfunc10 (acceleration)"
   },
   {
    "module": "pilot_native",
@@ -1037,33 +1047,37 @@
    "module": "pilot_slots",
    "win": "4500a0",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "18888a0",
+   "status": "matched",
+   "evidence": "read: Controllable slot 1074 = Linux slot 1089, called first by 17a34f0; vcall +0x1fe0 (Windows +0x1f50), allocates 0x19470 bytes for the controller",
+   "what": "take control (Controllable)"
   },
   {
    "module": "pilot_slots",
    "win": "4ed040",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "17a34f0",
+   "status": "matched",
+   "evidence": "read: Defensible slot 1074 = Linux slot 1089 (+15 here; the ship vtables have 18 more Linux slots); calls 18888a0, then the Universe (3db6948 +0x238, none 3db6c00) and type 0x73 as Windows",
+   "what": "take control (Defensible)"
   },
   {
    "module": "pilot_slots",
    "win": "70e580",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "136c820",
+   "status": "matched",
+   "evidence": "read: Player slot 906 = Linux slot 924 (+18; neighbours 904..908 = 922..926, the trivial b38c0 = a37710 after it); returns 1 unless its argument is set, then the controlled objects",
+   "what": "Player vfunc906"
   },
   {
    "module": "pilot_slots",
    "win": "7e1f10",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "12bafe0",
+   "status": "matched",
+   "evidence": "read: Ship slot 1075 = Linux slot 1090 (Defensible's 17a3540 there); vcall +0x1fe0 devirtualized, calls 186a490 (Windows 450380), then the Universe and type 0x73",
+   "what": "release control (Ship)"
   },
   {
    "module": "pilot_slots",
@@ -1077,17 +1091,19 @@
    "module": "pilot_slots",
    "win": "d83550",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "1889000",
+   "status": "matched",
+   "evidence": "read: inlined on Linux in 18888a0 (the branch without one: 1889000, the same allocation and vtable words, +0x50 = 1)",
+   "what": "PlayerController, new (inlined)"
   },
   {
    "module": "pilot_slots",
    "win": "d83ae0",
    "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
+   "lin": "18889d9",
+   "status": "matched",
+   "evidence": "read: inlined on Linux in 18888a0 (the branch with the Agent's controller: allocation 1a448b0 of 0x19470, vtable words 3c586a8/3aad7d8, the copies from +0xa0..+0xd8); a pin covers 18888a0",
+   "what": "PlayerController from the Agent's (inlined)"
   },
   {
    "module": "pilot_slots",
@@ -1462,7 +1478,7 @@
  ],
  "coverage": {
   "sites": 174,
-  "placed": 119,
-  "matched": 50
+  "placed": 135,
+  "matched": 64
  }
 }

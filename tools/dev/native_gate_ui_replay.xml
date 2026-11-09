@@ -59,7 +59,7 @@
      <owner exact="faction.argon"/>
     </create_cue_actor>
     <create_offer cue="$Mission" actor="$Client" location="$Location" name="'X4LAN test offer'" description="'X4LAN UI missions test'"
-                  difficulty="level.easy" faction="faction.argon" type="missiontype.fight" reward="1000"/>
+                  difficulty="level.easy" faction="faction.argon" type="missiontype.fight" reward="1000Cr"/>
     <debug_text text="'[X4LAN] UI_MISSIONS_MD_OFFER cue=%s client=%s time=%s'.[$Mission, $Client, player.age]"/>
    </actions>
    <cues>
@@ -67,7 +67,7 @@
      <conditions><event_object_signalled object="$Client" param="'accept'"/></conditions>
      <actions>
       <create_mission cue="$Mission" offercue="$Mission" name="'X4LAN test mission'" description="'X4LAN UI missions test'"
-                      difficulty="level.easy" faction="faction.argon" type="missiontype.fight" reward="1000"/>
+                      difficulty="level.easy" faction="faction.argon" type="missiontype.fight" reward="1000Cr"/>
       <set_objective cue="$Mission" step="1" action="objective.flyto" object="$Location"/>
       <remove_offer cue="$Mission"/>
       <debug_text text="'[X4LAN] UI_MISSIONS_MD_ACCEPTED offer=%s player=%s time=%s'.[event.param2, player.entity, player.age]"/>
@@ -106,6 +106,40 @@
      </actions>
     </cue>
    </cues>
+  </cue>
+  <!-- Generic mission offers per slot (lockstep_mission_owners.h 'offers'): the probe signals the galaxy inside slot k's
+       scope at the same tick on every client; X4's own selection (GenericMissions.Manager.EvaluateSectorMissions) then
+       runs at once, in that scope, for the sector and the player of slot k. The row names the player it ran for. -->
+  <cue name="SlotOffers" instantiate="true">
+   <conditions><event_object_signalled object="player.galaxy" param="'x4lan_slot_offers'"/></conditions>
+   <actions>
+    <debug_text text="'[X4LAN] MPP_OFFERS_MD slot=%s player=%s sector=%s gms=%s limit=%s time=%s'.[event.param2, player.entity, player.sector, @md.GenericMissions.Manager.$MissionCues.count, @md.GenericMissions.Manager.$SectorLimit, player.age]"/>
+    <do_if value="player.sector and not @md.GenericMissions.Manager.$Disabled">
+     <signal_cue_instantly cue="md.GenericMissions.EvaluateSectorMissions"/>
+    </do_if>
+   </actions>
+  </cue>
+  <!-- The player's ship as each client's HUD knows it (native_gate_hud_ship_refresh, the probe's pilot_view.hud_ship_changed).
+       X4's HUD attaches the radar (monitors.lua: SetRadarRenderTarget2 walks up from the player to its ship), the crosshair
+       and the weapon panel to the player's ship once, when they are set up: at the load, before a client presents its own
+       slot's player. Client 2's radar then showed slot 1's ship (user report, 9 Nov). The stock event for "the player's
+       ship changed" makes both stock scripts set themselves up again; raised on every client at the same tick, each
+       client's UI handles it for the player it presents. -->
+  <cue name="HudShipChanged" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_Hud'" control="'ShipChanged'"/></conditions>
+   <actions>
+    <raise_lua_event name="'teleportSucceeded'"/>
+    <debug_text text="'[X4LAN] HUD_SHIP_CHANGED_MD why=%s time=%s'.[event.param3, player.age]"/>
+   </actions>
+  </cue>
+  <!-- Test only (script op gm_limit, in every client's plan at the same tick): the generic missions' limit per sector, so a
+       run in one sector can see a second player's generation make offers. -->
+  <cue name="GmLimit" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiMissions'" control="'GmLimit'"/></conditions>
+   <actions>
+    <set_value name="md.GenericMissions.Manager.$SectorLimit" exact="event.param3"/>
+    <debug_text text="'[X4LAN] MPP_GM_LIMIT limit=%s gms=%s time=%s'.[md.GenericMissions.Manager.$SectorLimit, @md.GenericMissions.Manager.$MissionCues.count, player.age]"/>
+   </actions>
   </cue>
   <!-- A replayed StartConversationFromMenu (reports/LOCKSTEP-UI-MISSIONS-20261101.txt section 9): X4 starts a menu conversation
        only as the result of a closing menu, so the call from the replay's frame was ignored (m1d, m1e). The replay raises this
