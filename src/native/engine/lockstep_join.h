@@ -3260,9 +3260,38 @@ static void join_bp_text(char *out,size_t cap) {
     for(unsigned i=0;i<join_bp_nchain && at+12<cap;i++) at+=(size_t)snprintf(out+at,cap-at,"%s%x",i?",":"",join_bp_chain[i]);
     if(!join_bp_nchain) snprintf(out,cap,"-");
 }
+/* native_gate_join_bootev_session (the T+2 class, ca10..ca12, 9 Nov; default off): the hold keeps every due event of a held class,
+ * the load's own with the session's. ca12 (T=733, relay --join-save-at): NPCCreatedEvent is held (the session had one due at T, an
+ * NPC made in step 733), so the joiner re-posted the 4,096 its load raised for every loaded NPC, and its MD checked
+ * NPC_State_Machines.Base 4,096 times at T+1 (the session once) and made no state machine there, where the session made one; the
+ * session's NPC start of T+2 (ENTER_init, EXIT_init, ChangeState_NPC_Ready: three IDs) then had no counterpart (the digest's rid
+ * part from 735). With the option a kept event goes back only when the session's EVQT names its source and class due at T (as ATTN
+ * set's drop); the others are destroyed unheard (bootev_session=on:dropped). */
+static int join_bootev_session_on;static uint32_t join_bootev_session_dropped;
+/* native_gate_join_mute_load_npcs (ca14/ca15, T=733 with the relay's --join-save-at; a join default: JOIN_DEFAULT_ON). A load raises an
+ * NPCCreatedEvent for every loaded NPC and MD hears them at once, in the load, past the boot hold (ca14's rows at the joiner's boot:
+ * NPC_State_Machines.Base checked 7,251 times and run once, for the NPC the session made in step T, whose event the session's MD
+ * hears at T+1; the new machine ran ENTER_base, NPC_Ready and Shutdown before the admission, which then dropped its queued
+ * Dispatch as unpaired; at T+1 the re-posted events found $StateMachine set, and the session's NPC start of T+2 had no
+ * counterpart). With the option a joiner's MD cues do not hear event_npc_created (keyword 1455) from the package's load to the
+ * admission (script_rng_cue_event skips the check); the held event of T, re-posted, starts the machine at T+1 as on the session.
+ * Egosoft's own note on that cue: the event should not fire for NPCs created by a load. Status npc_mute=on:skipped. */
+#define JOIN_NPC_CREATED_KEYWORD 1455
+static int join_mute_load_npcs_on;
+static int join_bootev_session_keep(unsigned char *source,unsigned char *event,double now) {
+    uintptr_t vt=0;uint64_t runtime=0;unsigned klass=0;
+    if(!event || !join_read(event,&vt,8) || !vt) return 0;
+    const uint64_t portable=source && join_read(source+8,&runtime,8) && runtime?join_key(runtime,&klass):0;
+    return portable && join_evqt_session_due(portable,(uint32_t)(vt-(uintptr_t)image),now);
+}
 /* After the admission: the kept events back to their sources at their times (the pass of T+1 delivers them). */
 static void join_bootev_repost(void) {
-    for(uint32_t i=0;i<join_bootev_n;i++) {join_evqt_post(join_bootev_items[i].source,join_bootev_items[i].event,join_bootev_items[i].time,0);++join_bootev_reposted;}
+    double now;memcpy(&now,&join_rx.t.gate.game,8);join_bootev_session_dropped=0;
+    for(uint32_t i=0;i<join_bootev_n;i++) {
+        if(join_bootev_session_on && !join_bootev_session_keep(join_bootev_items[i].source,join_bootev_items[i].event,now)) {
+            join_event_destroy(join_bootev_items[i].event);++join_bootev_session_dropped;continue;
+        }
+        join_evqt_post(join_bootev_items[i].source,join_bootev_items[i].event,join_bootev_items[i].time,0);++join_bootev_reposted;}
     free(join_bootev_items);join_bootev_items=NULL;join_bootev_n=join_bootev_cap=0;
 }
 #ifndef JOIN_OWN_PLATFORM
@@ -3390,6 +3419,7 @@ static int join_load(const char *path,const char *sha_hex,int mode) {
         return join_fail_rx(JOIN_WHY_CAPTURE,why);
     }
     if(join_watch.n) join_rw_load_prepare(&join_rx.t);   /* diagnostic: JOIN_REFWATCH in the load (lockstep_join_world.h) */
+    if(join_mute_load_npcs_on) InterlockedExchange(&script_rng_mute_keyword,JOIN_NPC_CREATED_KEYWORD);
     join_rx.loaded=1;return 1;
 }
 /* gate.join_lua(T, text) in frame T on an armed saver: the probe's providers' state, written with the package. */
@@ -3802,6 +3832,7 @@ static int (*join_admit_before_skip)(void);
 static int (*join_admit_passes)(uint64_t tick);
 static int join_admit(void) {
     if(!join_rx.loaded || join_rx.admitted) return 1;
+    InterlockedExchange(&script_rng_mute_keyword,0);   /* native_gate_join_mute_load_npcs: MD hears NPC events again */
     join_rx.admitted=1;join_jobinit_restore();join_bootev_restore();   /* Init and the boot event passes ran in the load (version 13) */
     InterlockedExchange(&join_parse_on,0);join_parse_restore();   /* the load is over: the parser native again */
     if(join_rx.created_failures || InterlockedCompareExchange64(&join_rx.mapped_saved,0,0)+InterlockedCompareExchange64(&join_rx.mapped_created,0,0)<
@@ -3859,7 +3890,7 @@ static int join_status(char *out,size_t cap) {
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
-        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu"
+        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
@@ -3899,7 +3930,8 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_attn_set_due[1],(unsigned long long)join_attn_set_refused,join_attn_states_on,
         (unsigned long long)join_attn_states_apart,(unsigned long long)join_attn_states_unsettled,(unsigned long long)join_attn_states_computed,
         (unsigned long long)join_attn_states_calls,(unsigned long long)join_attn_states_loaded,(unsigned long long)join_attn_states_drift,
-        join_shoot_far_on,(unsigned long long)join_shoot_far_written,
+        join_shoot_far_on,(unsigned long long)join_shoot_far_written,join_bootev_session_on,join_bootev_session_dropped,join_mute_load_npcs_on,
+        (long long)InterlockedCompareExchange64(&script_rng_muted,0,0),
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ALL],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PROBE],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PARAMS],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ACTOR],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_ACTOR],(unsigned long long)join_rx.keys_known,(unsigned long long)join_rx.keys_unarmed,

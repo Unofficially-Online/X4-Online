@@ -687,6 +687,8 @@ def main():
     join.add_argument('--join-savers', default='', metavar='S[,S...]', help='slots that save (default: every present slot)')
     join.add_argument('--join-lead', type=int, default=30, metavar='TICKS',
                       help='ticks between the save request reaching the clients and the save tick (default 30)')
+    join.add_argument('--join-save-at', type=int, default=0, metavar='TICK',
+                      help='DIAGNOSTIC (default off): the save tick no earlier than TICK, so a test join lands on a chosen T')
     join.add_argument('--join-handover-gap', type=int, default=60, metavar='TICKS',
                       help='announce the handover once the joiner is this close to the live tick (default 60)')
     join.add_argument('--join-handover-lead', type=int, default=8, metavar='TICKS',
@@ -778,7 +780,8 @@ def main():
                                   join_options={'lead': args.join_lead, 'handover_gap': args.join_handover_gap,
                                                 'handover_lead': args.join_handover_lead, 'max_pause': args.join_max_pause,
                                                 'catchup_limit': args.join_catchup_limit, 'joiner_timeout': args.join_joiner_timeout,
-                                                'savers': savers or None, 'observe': args.join_observe})
+                                                'savers': savers or None, 'observe': args.join_observe,
+                                                'save_at': args.join_save_at or None})
         except ValueError as error: p.error(f'--join: {error}')
         print(f'NATIVE_GATE RELAY JOIN absent={",".join(map(str, sorted(barrier.absent))) or "none"}'
               + (f' rejoin={",".join(map(str, sorted(barrier.rejoin))) or "none"} stall_drop_ms={args.stall_drop_ms:g}'

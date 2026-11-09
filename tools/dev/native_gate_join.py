@@ -1392,8 +1392,11 @@ class JoinCoordinator:
     placed, waiting for the save tick and the savers' SAVED records), saved (package known, the joiner boots),
     catching_up (the joiner replays), handover (H announced), joined, failed."""
     def __init__(self, barrier, slot, nonce, lead=30, handover_gap=60, handover_lead=8, max_pause=60.0, catchup_limit=300.0,
-                 joiner_timeout=900.0, savers=None, observe=False):
+                 joiner_timeout=900.0, savers=None, observe=False, save_at=None):
         self.b, self.slot, self.nonce = barrier, slot, nonce
+        # --join-save-at (diagnostic, default off): the save tick no earlier than this one, so a test lands on a chosen T
+        # (the T+2 class of 9 Nov: the session is the same run to run, T is not: the joiner's start moves it by 30 ticks).
+        self.save_at = save_at
         # --join-observe (diagnostic, default off): a joiner's declared digest that differs from the session's before H is
         # counted and noticed, not fatal, so the handover and what follows it can run while the join is not yet equal.
         # Game and real time stay exact. Every line of such a join says diagnostic=join_observe: it is never an acceptance.
@@ -1430,7 +1433,7 @@ class JoinCoordinator:
         """Place SAVE_AT in slot k's next stand-in blob; the save tick leaves room for the record to reach every
         client (permit P+1+k) and for its probe to arm the gate before step T ends."""
         placed = self.b.next_standin_tick()
-        self.save_tick = placed+1+self.b.lookahead+self.lead
+        self.save_tick = max(placed+1+self.b.lookahead+self.lead, self.save_at or 0)
         mask = sum(1 << (s-1) for s in self.savers)
         self.b.schedule(self.slot, encode_record(OP_SAVE_AT, self.slot, self.save_tick, mask=mask, nonce=int(self.nonce, 16)), placed)
         self.state, self.started = 'queued', now

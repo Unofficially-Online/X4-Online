@@ -1178,6 +1178,7 @@ int main(int argc,char **argv) {
     test_runtime_ids_local();
     test_join_ids();
     test_guidance_local();
+    test_runtime_ids_ui_elements();
     test_runtime_ids_rows();
     test_render_rng();
     test_relay_host();

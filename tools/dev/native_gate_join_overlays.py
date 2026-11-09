@@ -280,6 +280,9 @@ def ids_sets(sets):
 #   native_gate_join_warp          the pending warps' destinations, section 77 (j1-372/373: a gate transit due at T+1, its
 #                                  transform rebuilt from the save's angles (sin(pi)); on in every late J1 since and in w1z199,
 #                                  T=633: census 0 to 5940)
+#   native_gate_join_mute_load_npcs  the joiner's MD does not hear the NPC created events of its load before the admission
+#                                  (ca10..ca15, 9 Nov, T=733: the load started the state machine of the NPC the session
+#                                  made in step T, a tick early; ca15 with it: 7,251 checks muted, digest 0, to 5442)
 # Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
@@ -287,7 +290,8 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_hold_boot_events', 'native_gate_join_resv', 'native_gate_join_pcsv',
                    'native_gate_join_gravn_extra', 'native_gate_join_conn', 'native_gate_join_porders', 'native_gate_join_attn_set',
                    'native_gate_join_ares', 'native_gate_join_warp', 'native_gate_join_undk', 'native_gate_join_srcs',
-                   'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled')
+                   'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled',
+                   'native_gate_join_mute_load_npcs')
 
 
 def default_sets(sets):

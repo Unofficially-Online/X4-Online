@@ -1288,6 +1288,16 @@ class Relay(unittest.TestCase):
         net, save_tick = self.run_join(k=2)
         self.assert_joined(net, save_tick)
 
+    def test_join_save_at_sets_a_later_save_tick(self):
+        # --join-save-at (diagnostic): the save tick no earlier than the one asked for; the join still completes.
+        net, save_tick = self.run_join(save_at=95)
+        self.assertEqual(save_tick, 95)
+        self.assert_joined(net, save_tick)
+        # an earlier one than the lead allows changes nothing
+        net, save_tick = self.run_join(save_at=5)
+        self.assertGreater(save_tick, 5)
+        self.assert_joined(net, save_tick)
+
     def test_inputs_flow_after_the_handover(self):
         net, save_tick = self.run_join(rounds=0)
         for client in list(net.live.values())+[net.joiner]:

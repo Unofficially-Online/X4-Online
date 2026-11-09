@@ -31,7 +31,16 @@ static uintptr_t script_rng_event_run(unsigned source,script_rng_event_fn origin
     return result;
 }
 /* noinline keeps the TEB read out of the SEH funclet of the scope. */
+/* native_gate_join_mute_load_npcs (lockstep_join.h; the T+2 class, ca14): while a hot joiner is between its load and its admission,
+ * an MD cue does not hear the event keyword set here (event_npc_created, 1455): the check is skipped, the cue stays waiting. */
+static volatile LONG script_rng_mute_keyword;static volatile LONG64 script_rng_muted;
+static int script_rng_cue_muted(void *self) {
+    const LONG keyword=InterlockedCompareExchange(&script_rng_mute_keyword,0,0);uint32_t own=0;
+    if(!keyword || !self || !read_local((unsigned char*)self+0x18,&own,4) || own!=(uint32_t)keyword) return 0;
+    InterlockedIncrement64(&script_rng_muted);return 1;
+}
 static __attribute__((noinline)) uintptr_t script_rng_cue_event(void *self,void *a,void *b,void *c) {
+    if(script_rng_cue_muted(self)) return 0;
     return script_rng_event_run(SR_CUE,(script_rng_event_fn)(image+SCRIPT_RNG_CUE_HANDLER),interrupt_rng(),self,a,b,c);
 }
 static __attribute__((noinline)) uintptr_t script_rng_stack_event(void *self,void *a,void *b,void *c) {

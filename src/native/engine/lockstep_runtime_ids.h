@@ -442,6 +442,57 @@ static void rid_scope(int open) {rid_scope_thread=open?GetCurrentThreadId():0;}
 /* A client's guidance, what X4 runs for it in the simulation (native_gate_guidance_local, default off). */
 #include "lockstep_guidance_local.h"
 /* Which list a stack belongs to: the presentation scope, a view call, then the table, ui over view. */
+/* native_gate_runtime_ids_ui_elements (ca2/ca3, 9 Nov; default off, with runtime_ids_local): what a U::UIElement's own attention
+ * change makes takes local IDs. A hot joiner builds its UI and cockpit elements after its load and connects them at T+1 (ca2 JOIN_BP
+ * at InitPartAnimations: ConnectTo 0x3d5bb0 from the HoloMap code 0xe22b70/0xe203b2 under the animation sequences 0xd73060/
+ * 0xd73e00); ConnectTo calls SetAttention(level 1), whose handler (call [r10+0x15e8] at 0x3d5740) runs Positional::
+ * InitPartAnimations 0x755110 on the MoveWorker: two IDs per element (caller key dd7c7c80), on the shared list, where a session
+ * client made its own elements' at its start. ca3 (T=725): the joiner's view point levels at T+1 had 7 evaluations more, all
+ * U::UIElement (vtable 0x2b6cc38, no portable key: 6 at level 9, 1 at 11); ca2 (T=733) and hj23 (T=720): the digest's rid part
+ * from T+2. The site table cannot tell the element (the UI code sits above the recorded frames and varies), the object can: for
+ * an allocation whose stack holds SetAttention's handler return (0x3d5747), the stack is unwound (RtlVirtualUnwind) to that frame,
+ * whose rsi is SetAttention's object (mov rsi,rcx at 0x3d5669, kept to the call; pinned), and a U::UIElement there routes it UI.
+ * The elements themselves already take UI IDs (the site table's constructors); their animation units are no component the census
+ * or IDS reads. Status ui_elements=on:allocations:unwind_failures. */
+#define RID_SETATT_HANDLER_RET 0x3d5747u
+#define RID_UI_ELEMENT_VT 0x2b6cc38u
+static int rid_ui_elements_on;
+static volatile LONG64 rid_ui_element_allocs,rid_ui_element_misses;
+static void *rid_setatt_object_native(void) {
+    CONTEXT c;RtlCaptureContext(&c);
+    const DWORD64 want=(DWORD64)(uintptr_t)(image+RID_SETATT_HANDLER_RET);
+    __try {
+        for(unsigned depth=0;depth<RID_STACK;depth++) {
+            DWORD64 base=0;PRUNTIME_FUNCTION f=RtlLookupFunctionEntry(c.Rip,&base,NULL);
+            if(f) {PVOID data=NULL;DWORD64 establisher=0;RtlVirtualUnwind(UNW_FLAG_NHANDLER,base,c.Rip,f,&c,&data,&establisher,NULL);}
+            else {DWORD64 next=0;if(!read_local((const void*)(uintptr_t)c.Rsp,&next,8)) return NULL;c.Rip=next;c.Rsp+=8;}   /* a leaf */
+            if(!c.Rip) return NULL;
+            if(c.Rip==want) return (void*)(uintptr_t)c.Rsi;
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return NULL;}
+    return NULL;
+}
+static void *(*rid_setatt_object)(void)=rid_setatt_object_native;   /* tests replace it */
+static int rid_ui_element_route(const uint32_t *frames,unsigned count) {
+    if(!rid_ui_elements_on) return 0;
+    unsigned i=0;while(i<count && frames[i]!=RID_SETATT_HANDLER_RET) ++i;
+    if(i==count) return 0;
+    unsigned char *object=(unsigned char*)rid_setatt_object();uintptr_t vt=0;
+    if(!object || !read_local(object,&vt,8)) {InterlockedIncrement64(&rid_ui_element_misses);return 0;}
+    if(vt!=(uintptr_t)(image+RID_UI_ELEMENT_VT)) return 0;
+    InterlockedIncrement64(&rid_ui_element_allocs);return 1;
+}
+/* SetAttention's prologue up to the slot-703 call (view points rewrite that call) and its body from after it through the handler
+ * call: the object in rsi from 0x3d5669 to 0x3d5747. */
+static int rid_ui_element_pins(void) {
+    return hash_ok(image+0x3d5660u,29,"d293dd29f6dac300cc28273913ea1a5c041b86d1a810dd31bdc0edf76b96ae46") &&
+           hash_ok(image+0x3d5683u,196,"36e0df3a5311e974ebe9699bab5ea358ca2e147b95c814ffed22d91f35fed895");
+}
+static int rid_ui_elements_arm(void) {
+    if(!rid_local_on) {rid_stage="ui_elements_local";return 0;}
+    if(!rid_ui_element_pins()) {rid_stage="ui_elements_pins";return 0;}
+    rid_ui_elements_on=1;return 1;
+}
 static unsigned rid_route_of(const uint32_t *frames,unsigned count) {
     if(!InterlockedCompareExchange(&rid_local_on,0,0) || !rid_sealed) return RID_ROUTE_SHARED;
     if(InterlockedCompareExchange(&pres_open,0,0) && GetCurrentThreadId()==ui_thread) return RID_ROUTE_UI;
@@ -457,6 +508,7 @@ static unsigned rid_route_of(const uint32_t *frames,unsigned count) {
     }
     /* What the table calls shared but this client's guidance alone asked for (lockstep_guidance_local.h). */
     if(route==RID_ROUTE_SHARED && glocal_route_of(frames,count)) return RID_ROUTE_UI;
+    if(route==RID_ROUTE_SHARED && rid_ui_element_route(frames,count)) return RID_ROUTE_UI;   /* native_gate_runtime_ids_ui_elements */
     return route;
 }
 static created_assign_fn rid_assign_original(void) {return rid_assign_native?rid_assign_native:(created_assign_fn)(void *)(thunk+CREATED_THUNK);}

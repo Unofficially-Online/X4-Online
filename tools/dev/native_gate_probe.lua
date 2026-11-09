@@ -406,6 +406,13 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_attn_set then   -- ATTN runs SetAttention where its write leaves the load's per-level state (attn_set=)
   assert(gate.join_attn_set and gate.join_attn_set(1)==1,'join attn set refused')
  end
+ if cfg.native_gate_join_bootev_session then   -- the boot hold re-posts only the events the session had due at T (bootev_session=)
+  assert(cfg.native_gate_join_hold_boot_events,'native_gate_join_bootev_session needs native_gate_join_hold_boot_events')
+  assert(gate.join_bootev_session and gate.join_bootev_session(1)==1,'join bootev session refused')
+ end
+ if cfg.native_gate_join_mute_load_npcs then   -- a joiner's MD does not hear the load's NPC created events (npc_mute=)
+  assert(gate.join_mute_load_npcs and gate.join_mute_load_npcs(1)==1,'join mute load npcs refused')
+ end
  if cfg.native_gate_join_shoot_far then   -- SHOOT writes the session's last shot time where a load's reset left the joiner's far
   assert(gate.join_shoot_far and gate.join_shoot_far(1)==1,'join shoot far refused')
  end
@@ -5573,6 +5580,11 @@ local function frame()
     'runtime ids local refused '..tostring(gate.runtime_ids_status and gate.runtime_ids_status()))
    log('RUNTIME_IDS_LOCAL_ARMED '..tostring(gate.runtime_ids_status()))
   end
+  -- A U::UIElement's attention change (a joiner's UI built after its load, connected at T+1) takes local IDs too.
+  if cfg.native_gate_runtime_ids_ui_elements then
+   assert(cfg.native_gate_runtime_ids_local==true and gate.runtime_ids_ui_elements and gate.runtime_ids_ui_elements()==1,
+    'runtime ids ui elements refused '..tostring(gate.runtime_ids_status and gate.runtime_ids_status()))
+  end
   -- A client's guidance stays its own (lockstep_guidance_local.h): what X4 runs in the simulation for this client's
   -- guidance alone (md.Guidance's cues and what they make, the guidance route) takes IDs from the local list. Needs the
   -- local lists, the script RNG's MD frames and the MD listener frames. Default off; stop reason 130 (guidance_*).
@@ -5692,6 +5704,9 @@ local function frame()
  end
  if cfg.native_gate_runtime_ids~=nil then
   ticklog.status('RUNTIME_IDS',tick,gate.runtime_ids_status,'runtime ids status unavailable')
+  if cfg.native_gate_runtime_ids_ui_elements and gate.runtime_ids_ui_elements_status then
+   ticklog.status('RUNTIME_IDS_UI_ELEMENTS',tick,gate.runtime_ids_ui_elements_status,'runtime ids ui elements status unavailable')
+  end
   if cfg.native_gate_guidance_local then ticklog.status('GUIDANCE_LOCAL',tick,gate.guidance_local_status,'guidance local status unavailable') end
   if tick==1 then log('RUNTIME_IDS_MAP '..assert(gate.runtime_ids_map_row(),'runtime ids map unavailable')) end
   local every=cfg.native_gate_runtime_ids_caller_stride

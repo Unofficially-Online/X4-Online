@@ -3408,6 +3408,23 @@ static void test_join_attn_set(void) {
     join_attn_set_on=0;join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
     join_attn_flag=flag;join_set_attention=set;join_event_destroy=destroy;join_bootev_fn=pass;join_key=key;join_attn_post_swap=swap;
     join_evq_head_test=head;
+    /* mute_load_npcs: a cue whose event record's keyword is the muted one is skipped, others and the off state run */
+    {   static _Alignas(16) unsigned char cue[0x40];uint32_t kw=JOIN_NPC_CREATED_KEYWORD;memcpy(cue+0x18,&kw,4);
+        const LONG64 muted=script_rng_muted;
+        assert(!script_rng_cue_muted(cue));InterlockedExchange(&script_rng_mute_keyword,JOIN_NPC_CREATED_KEYWORD);
+        assert(script_rng_cue_muted(cue) && script_rng_muted==muted+1);kw=1286;memcpy(cue+0x18,&kw,4);
+        assert(!script_rng_cue_muted(cue) && !script_rng_cue_muted(NULL));InterlockedExchange(&script_rng_mute_keyword,0);}
+    /* bootev_session: a kept event goes back only where the session's EVQT names its source (runtime 0x81 -> 0x100081) and class
+     * due at T; another class, another source, or no source is destroyed. */
+    {   static join_evqt_rec evs[1];double now=10.0;memset(&join_rx,0,sizeof(join_rx));memcpy(&join_rx.t.gate.game,&now,8);
+        evs[0]=(join_evqt_rec){0x100081ull,JOIN_ATTN_ADJ_EVENT,0,0,0,0};memcpy(&evs[0].time,&now,8);join_rx.t.evqt=evs;join_rx.t.nevqt=1;
+        uint64_t (*key)(uint64_t,unsigned *)=join_key;join_key=tconn_key;
+        static _Alignas(16) unsigned char src81[0x40],src91[0x40],ev_adj[0x40],ev_other[0x40];
+        uint64_t r81=0x81ull,r91=0x91ull;memcpy(src81+8,&r81,8);memcpy(src91+8,&r91,8);
+        void *p=image+JOIN_ATTN_ADJ_EVENT;memcpy(ev_adj,&p,8);p=image+JOIN_ATTN_EVENT;memcpy(ev_other,&p,8);
+        assert(join_bootev_session_keep(src81,ev_adj,now) && !join_bootev_session_keep(src81,ev_other,now) &&
+               !join_bootev_session_keep(src91,ev_adj,now) && !join_bootev_session_keep(NULL,ev_adj,now));
+        join_key=key;join_rx.t.evqt=NULL;join_rx.t.nevqt=0;memset(&join_rx,0,sizeof(join_rx));}
     /* SHOOT's last shot time: equal, the save's four decimals of the session's (written always), far (a load's reset: shoot_far) */
     {   const double session=28.149667,saved=28.1497,reset=31.0;uint64_t a,b,c;memcpy(&a,&session,8);memcpy(&b,&saved,8);memcpy(&c,&reset,8);
         assert(join_shoot_time_kind(a,a)==0 && join_shoot_time_kind(b,a)==1 && join_shoot_time_kind(c,a)==2);}

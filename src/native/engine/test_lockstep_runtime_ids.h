@@ -480,6 +480,27 @@ static void test_runtime_ids_local(void) {
     printf("runtime IDs local lists/routing/no-recycle tests PASS\n");
 }
 /* native_gate_runtime_ids_rows: one row per tick with shared allocations, closed at the gate boundary. */
+/* native_gate_runtime_ids_ui_elements: an allocation under SetAttention's handler takes the UI list when that SetAttention's
+ * object is a U::UIElement; anything else, or a stack without that frame, stays where the table put it. */
+static unsigned char *test_rid_setatt;static unsigned test_rid_setatt_calls;
+static void *test_rid_setatt_object(void) {++test_rid_setatt_calls;return test_rid_setatt;}
+static void test_runtime_ids_ui_elements(void) {
+    void *(*finder)(void)=rid_setatt_object;rid_setatt_object=test_rid_setatt_object;
+    static _Alignas(16) unsigned char element[0x40],other[0x40];
+    uintptr_t vt=(uintptr_t)(image+RID_UI_ELEMENT_VT);memcpy(element,&vt,8);vt=(uintptr_t)(image+0x2b7feb8u);memcpy(other,&vt,8);
+    const uint32_t under[]={0x116922du,0x115e3bcu,0x1164552u,0x75529du,0x754fffu,0x7534b0u,RID_SETATT_HANDLER_RET,0x3d6fc2u};
+    const uint32_t elsewhere[]={0x116922du,0x115e3bcu,0x1164552u,0x75529du,0x754fffu};
+    const LONG64 allocs=rid_ui_element_allocs,misses=rid_ui_element_misses;
+    rid_ui_elements_on=0;test_rid_setatt=element;test_rid_setatt_calls=0;
+    assert(!rid_ui_element_route(under,8) && !test_rid_setatt_calls);                          /* off */
+    rid_ui_elements_on=1;
+    assert(!rid_ui_element_route(elsewhere,5) && !test_rid_setatt_calls);                      /* no SetAttention handler frame */
+    assert(rid_ui_element_route(under,8) && test_rid_setatt_calls==1 && rid_ui_element_allocs==allocs+1);
+    test_rid_setatt=other;assert(!rid_ui_element_route(under,8) && rid_ui_element_allocs==allocs+1);   /* a ship: shared */
+    test_rid_setatt=NULL;assert(!rid_ui_element_route(under,8) && rid_ui_element_misses==misses+1);    /* no frame found */
+    rid_ui_elements_on=0;rid_setatt_object=finder;
+    printf("runtime IDs UI elements: under SetAttention's handler a U::UIElement's allocation takes the UI list, others and other stacks stay PASS\n");
+}
 static void test_runtime_ids_rows(void) {
     const int saved_mode=rid_mode,saved_sealed=rid_sealed;char row[1024];
     rid_rows_on=0;rid_mode=RID_OBSERVE;rid_sealed=0;assert(!rid_rows_arm());
@@ -542,6 +563,9 @@ static void test_runtime_ids_native_image(const char *path) {
         *first^=1;assert(!rid_local_pins());*first^=1;*last^=1;assert(!rid_local_pins());*last^=1;
     }
     assert(rid_local_pins());
+    /* native_gate_runtime_ids_ui_elements: SetAttention's prologue and body around the handler call; one byte off refuses */
+    assert(rid_ui_element_pins() && !memcmp(image+0x3d5740u,"\x41\xff\x92\xe8\x15\x00\x00",7) && !memcmp(image+0x3d5669u,"\x48\x8b\xf1",3));
+    image[0x3d5669u]^=1;assert(!rid_ui_element_pins());image[0x3d5669u]^=1;image[0x3d5740u]^=1;assert(!rid_ui_element_pins());image[0x3d5740u]^=1;
     /* lockstep_join_ids.h: the import's three sites and the ID import, the constructors' returns; one byte off refuses. */
     assert(join_ids_pins());
     {

@@ -127,6 +127,10 @@ static int lua_join_attn_set(lua_State *L) {join_attn_set_on=p_lua_tonumber(L,1)
 static int lua_join_attn_states(lua_State *L) {join_attn_states_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shoot_far(on): SHOOT also writes the session's last shot time where the joiner's is far from it (a load's reset). */
 static int lua_join_shoot_far(lua_State *L) {join_shoot_far_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_bootev_session(on): the boot hold's kept events go back only where the session's EVQT names their source and class. */
+/* gate.join_mute_load_npcs(on): a joiner's MD does not hear event_npc_created between its load and its admission. */
+static int lua_join_mute_load_npcs(lua_State *L) {join_mute_load_npcs_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+static int lua_join_bootev_session(lua_State *L) {join_bootev_session_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_gravn_extra(on): GRAVN keeps the joiner's extra zone groups in the neighbour lists it writes (default off). */
 static int lua_join_gravn_extra(lua_State *L) {join_gravn_extra_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shgr(on): a joiner takes the session's containers' shield recharge groups (SHGR, default off). */
