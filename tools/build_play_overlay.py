@@ -51,6 +51,13 @@ def step(name, cmd):
 
 
 RECIPE, RECIPE_KIND, RECIPE_VERSION = 'play-recipe.json', 'x4ls-play-recipe', 1
+# A session with Windows and Linux PCs (--mixed-platform, on every PC's overlay or bundle): Option B's strict float
+# recomputes, so both platforms write the flight parameters, the solver's and the drones' words in one order
+# (W36g against lx38a, 8 Nov: Windows with these = Linux with these at tick 14; without them Windows keeps MSVC's
+# native bits and a mixed session parts at the first steering update). Not in the defaults until the people stack
+# runs on the Linux gate: a Windows-only session does not need them.
+MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_redirect_ticks=3',
+                       "native_gate_fp_redirect_solver='redirect'", "native_gate_fp_redirect_drones='redirect'")
 NL = chr(10)
 
 
@@ -100,6 +107,8 @@ def joiner_command(recipe, snapshot, gate_dll, out, package, package_sha, sessio
            '--join-package', str(package), '--join-package-sha', package_sha]
     if recipe['full_logs']:
         cmd.append('--full-logs')
+    if recipe.get('mixed_platform'):
+        cmd.append('--mixed-platform')
     if session:
         cmd += ['--session', str(session)]
     for item in recipe['set']:
@@ -167,6 +176,9 @@ def main(argv=None):
                    help="with --open: the join's mode (report: what the live join tests run; strict refuses diagnostic packages)")
     p.add_argument('--join-package', type=Path, help="the joiner's overlay: the saver's j<T>.x4join (--snapshot is the join save)")
     p.add_argument('--join-package-sha', help='the package SHA-256 the relay announced (NGJOINSTATE)')
+    p.add_argument('--mixed-platform', action='store_true',
+                   help='a session with Windows and Linux PCs: the strict float recomputes of Option B on every client '
+                        '(native_gate_fp_redirect, _solver, _drones); give it to every PC of the session')
     p.add_argument('--session', type=Path,
                    help='session.json (x4ls new-session; native_gate_session_start.py register): a session from any usable stock '
                         'start with per-player starts; --snapshot is its session save (a joiner: the join save)')
@@ -192,6 +204,9 @@ def main(argv=None):
     if args.coverage and args.coverage_from:
         coverage += ['--coverage-from', str(args.coverage_from)]
     join_base, sets = [], list(args.set)
+    if args.mixed_platform:
+        named = {t.replace(' ', '').split('=', 1)[0] for t in sets}
+        sets += [t for t in MIXED_PLATFORM_SETS if t.split('=', 1)[0] not in named]
     if opened:
         sys.path.insert(0, str(DEV))
         import native_gate_join_overlays as join_overlays
@@ -236,7 +251,7 @@ def main(argv=None):
               'players': args.players, 'mode': args.mode, 'minutes': args.minutes, 'full_logs': args.full_logs,
               'lua_block': args.lua_block, 'set': list(args.set), 'open': opened, 'join_mode': args.join_mode,
               'window': [WINDOW_START, end], 'gate_dll_sha': sha256(out / 'native/x4lan_gate_64.dll'),
-              'snapshot_sha': sha256(args.snapshot), 'session': session_data}
+              'snapshot_sha': sha256(args.snapshot), 'session': session_data, 'mixed_platform': args.mixed_platform}
     (out / RECIPE).write_text(json.dumps(recipe, indent=1, sort_keys=True) + NL, encoding='utf-8')
     sys.path.insert(0, str(DEV))
     import native_gate_scenarios

@@ -114,7 +114,9 @@ python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <save>    
 Smoke play-sR (8 Nov): the host relay on this PC's LAN address (port 47000) and the joiner on the same PC (`x4ls join ... --same-pc`, a
 test switch) played to the end in sync, with 0 errors and 0 drops. A VPN address (Tailscale, Hamachi, ZeroTier) works as
 `--bind` and `--allow-from` too, with no port forwarding. Both PCs load at the agreed UTC second, so their clocks must agree
-within a few seconds. Each PC writes its own
+within a few seconds. With a Linux PC in the session, build the host's overlay and every PC's overlay or bundle with
+`--mixed-platform` (Option B's strict float recomputes): without it Windows and Linux part at the first steering
+update. Each PC writes its own
 `errors.log`; the host's run folder also holds the relay's logs.
 
 ## Joining a running game (built 8 Nov; through x4ls up to the catch-up, the handover still refused)
@@ -188,7 +190,8 @@ first mismatch.
 - **Two PCs: built and run on one PC through the LAN address, not yet between two PCs.** See "Two PCs" above.
   - Intel against AMD is untested: their reciprocal instructions differ, and a desync there would be silent and
     logged.
-  - Windows against Linux differs in about 35 objects.
+  - Windows against Linux: with `--mixed-platform` on both, a battle lane agrees to tick 27 (8 Nov); the Linux
+    people stack is still being ported.
 - **Two people on one PC.** Keyboard and mouse go to the focused window only. Whether X4 reads a gamepad in an
   unfocused window is unverified.
 - **Desync recovery.** None: a session that differs stays different.

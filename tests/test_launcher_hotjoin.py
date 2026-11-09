@@ -293,6 +293,35 @@ class OpenRecipeTests(unittest.TestCase):
             self.assertIn(build_play_overlay.RECIPE, manifest)   # x4ls verifies every overlay file (hj1's first refusal)
 
 
+class MixedPlatformTests(unittest.TestCase):
+    def test_mixed_platform_adds_option_b_and_the_joiner_keeps_it(self):
+        """--mixed-platform: fp_redirect, its solver and drones on every client, recorded for a hot joiner's rebuild."""
+        calls = []
+        def fake_step(name, cmd):
+            calls.append((name, [str(c) for c in cmd]))
+            if name == 'players':
+                out = Path(cmd[cmd.index('--out') + 1])
+                (out / 'native').mkdir(parents=True)
+                (out / 'native/x4lan_gate_64.dll').write_bytes(b'gate')
+                (out / 'ui').mkdir()
+                (out / 'ui/config.lua.append').write_text('X4LAN_CONFIG.enabled = true\n')
+            return 'ok'
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(build_play_overlay, 'step', fake_step):
+            snap = Path(d) / 'save_009.xml.gz'
+            snap.write_bytes(b'save')
+            build_play_overlay.main(['--snapshot', str(snap), '--gate-dll', str(snap), '--out', str(Path(d) / 'ov'),
+                                     '--mixed-platform', '--set', 'native_gate_fp_redirect_ticks=5'])
+            players = dict(calls)['players']
+            sets = [players[i + 1] for i, a in enumerate(players) if a == '--set']
+            for key in ("native_gate_fp_redirect='redirect'", "native_gate_fp_redirect_solver='redirect'",
+                        "native_gate_fp_redirect_drones='redirect'", 'native_gate_fp_redirect_ticks=5'):
+                self.assertIn(key, sets)
+            self.assertNotIn('native_gate_fp_redirect_ticks=3', sets)   # the builder's own value wins
+            recipe = build_play_overlay.read_recipe(Path(d) / 'ov')
+            self.assertTrue(recipe['mixed_platform'])
+            self.assertIn('--mixed-platform', build_play_overlay.joiner_command(recipe, 's', 'g', 'o', 'p', 'b' * 64))
+
+
 class RecipeTests(unittest.TestCase):
     def test_open_slots(self):
         self.assertEqual(build_play_overlay.open_slots('', 4), [])
