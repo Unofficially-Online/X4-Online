@@ -452,6 +452,13 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   larger dest from the step before, not the block's own quotient). That step is 0x14811c0 (Windows 0x1406db200), the
   thrust and drag terms, where the two compilers built different expression trees (Linux x / a * b, Windows x * b * c /
   d, about 15 divisions each): the next port is that function in Windows' operation order on Linux.
+  Ported as flight_limits' second site (048f70de: the four words (r*in)*e and (sp*e)*(r*in) with r = 1/S, unit-tested
+  end to end on the executable's own bytes). lx41a: the thrust stub ran 53,235 times, the limits stub 82, and actor
+  1's +0x340 block is still bit-identical to the native run. So those words do not come out of these two steps
+  in the session as read here: either they are produced on another path (another function, or before arming), or
+  the steps' inputs (S, the input vector, the engine factors) already differ by an ulp. Next: capture the inputs
+  and outputs of the engine-parameter computation for the fixture ship on both executables, instead of reading
+  the order from disassembly. Both stubs stay default off.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at
