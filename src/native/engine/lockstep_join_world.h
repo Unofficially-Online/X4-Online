@@ -2327,17 +2327,43 @@ static int join_rule_swap(uint64_t expected,uint64_t value) {
 #define JOIN_AIM_SLOT 0x2b7fd68u       /* 0x2b7fcc0 + 0xa8 */
 #define JOIN_AIM_FN 0x7e72b0u
 #define JOIN_AIM_ROWS 1024u
-typedef struct {uint64_t tick;void *target,*weapon;uint32_t origin[3],aim[3],result,rot[12];} join_aim_row;   /* rot: the weapon frame's rows (origin+0x10..+0x3f) */
+/* hj15 (9 Nov): the origin differs at T+1 by 1.8 ms of travel while every end-of-step dump of the ship's navigation controller and
+ * pathing block agrees; so each row also takes the moment of the call: the calling thread and its TLS clock (TLS+0x300, the time
+ * 0x816d20 hands 0x3db8a0), the pathing selector 0x38f4ee4 and the weapon's ship's NavigationController (parent +0x70, controller
+ * +0x200) at that moment: the last refresh's time +0xc0, its selector +0xc8 and the cached pose's first row +0x60. */
+typedef struct {uint64_t tick;void *target,*weapon;uint32_t origin[3],aim[3],result,rot[12];
+                uint32_t thread,sel,cursor,navok;uint64_t now,refresh;uint32_t cache[4];uint32_t sel2,flags;} join_aim_row;   /* rot: the weapon frame's rows (origin+0x10..+0x3f) */
 static join_aim_row join_aim_rows[JOIN_AIM_ROWS];
 static volatile LONG join_aim_n;static volatile LONG64 join_aim_dropped;static int join_aim_installed;
 typedef unsigned char (*join_aim_fn)(void *,float *,float *,void *,void *,const float *,float,float,unsigned char,unsigned char,
                                      unsigned char,unsigned char,unsigned char);
+static void join_aim_moment(join_aim_row *w,void *weapon) {   /* before the original: what the origin was just computed from */
+    void **tls=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
+    unsigned char *ship=NULL,*nav=NULL;uintptr_t vt=0;
+    w->thread=GetCurrentThreadId();w->now=0;w->refresh=0;w->cursor=0;w->navok=0;memset(w->cache,0,sizeof(w->cache));w->flags=0;
+    if(tls && tls[0]) (void)join_read((unsigned char*)tls[0]+0x300,&w->now,8);
+    if(!join_read(image+0x38f4ee4u,&w->sel,4)) w->sel=~0u;
+    if(!join_read(image+0x2f4b6f4u,&w->sel2,4)) w->sel2=~0u;   /* g_PathingStateBufferIndex2: the written bank */
+    if(weapon && join_read((unsigned char*)weapon+0x70,&ship,8) && ship && join_read(ship+JOIN_CONTROLLER,&nav,8) && nav &&
+       join_read(nav,&vt,8) && vt==(uintptr_t)image+JOIN_NAV_VTABLE) {
+        w->navok=join_read(nav+0xc0,&w->refresh,8) && join_read(nav+0xc8,&w->cursor,4) && join_read(nav+0x60,w->cache,16);
+        /* GetTransformImpl's valid-cache path 0xea5c10 tests [nav+0x40] + Index2*0x1a0 + 0x190: bit0 that flag, bit1 the same at the
+         * read bank, bit2 [nav+0x40] is [nav+0x30], bit3 the block read */
+        unsigned char *pa=NULL,*pb=NULL,fw=0,fr=0;
+        if(join_read(nav+0x30,&pa,8) && join_read(nav+0x40,&pb,8) && pb && w->sel2<2u && w->sel<2u &&
+           join_read(pb+(size_t)w->sel2*0x1a0u+0x190u,&fw,1) && join_read(pb+(size_t)w->sel*0x1a0u+0x190u,&fr,1))
+            w->flags=(fw!=0)|((fr!=0)<<1)|((pa==pb)<<2)|8u;
+    }
+}
 static unsigned char join_aim_hook(void *ctl,float *aim,float *second,void *target,void *weapon,const float *origin,float a,float b,
                                    unsigned char c,unsigned char d,unsigned char e,unsigned char f,unsigned char g) {
+    join_aim_row moment;join_aim_moment(&moment,weapon);
     const unsigned char r=((join_aim_fn)(void *)(image+JOIN_AIM_FN))(ctl,aim,second,target,weapon,origin,a,b,c,d,e,f,g);
     const LONG k=InterlockedIncrement(&join_aim_n)-1;
     if(k<(LONG)JOIN_AIM_ROWS) {
         join_aim_row *w=&join_aim_rows[k];
+        w->thread=moment.thread;w->sel=moment.sel;w->cursor=moment.cursor;w->navok=moment.navok;
+        w->now=moment.now;w->refresh=moment.refresh;memcpy(w->cache,moment.cache,sizeof(w->cache));w->sel2=moment.sel2;w->flags=moment.flags;
         w->tick=stats.issued;w->target=target;w->weapon=weapon;w->result=r;
         if(!origin || !join_read(origin,w->origin,12)) memset(w->origin,0,12);
         if(!origin || !join_read((const unsigned char *)origin+0x10,w->rot,sizeof(w->rot))) memset(w->rot,0,sizeof(w->rot));
@@ -3482,7 +3508,9 @@ static void join_watch_dump(char side,uint64_t tick) {
                                  (unsigned long long)r->tick,(unsigned long long)join_watch_key(r->target),(unsigned long long)join_watch_key(r->weapon),
                                  r->origin[0],r->origin[1],r->origin[2],r->aim[0],r->aim[1],r->aim[2],r->result);
             for(unsigned q=0;q<12u;q++) at+=(size_t)snprintf(out+at,cap-at,"%s%08x",q?",":"",r->rot[q]);
-            at+=(size_t)snprintf(out+at,cap-at,"\r\n");
+            at+=(size_t)snprintf(out+at,cap-at," thread=%u now=%016llx sel=%u nav=%u refresh=%016llx cursor=%u cache=%08x,%08x,%08x,%08x sel2=%u flags=%x\r\n",
+                                 r->thread,(unsigned long long)r->now,r->sel,r->navok,(unsigned long long)r->refresh,r->cursor,
+                                 r->cache[0],r->cache[1],r->cache[2],r->cache[3],r->sel2,r->flags);
         }
         at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHAIM side=%c tick=%llu rows=%ld dropped=%lld installed=%d\r\n",side,
                              (unsigned long long)tick,(long)n,(long long)join_aim_dropped,join_aim_installed);
@@ -3735,7 +3763,7 @@ static int join_shoot_read(unsigned char *weapon,join_shoot_rec *r,unsigned char
        !join_read(ctl+JOIN_SHOOT_CFLAGS,c.cflags,2) || !join_read(ctl+JOIN_SHOOT_TOL,&c.tol,4)) return 1;
     for(unsigned k=0;k<5u;k++) if(!join_read(ctl+join_shoot_ctl_off[k],&c.ctl[k],8)) return 1;
     for(unsigned k=0;k<3u;k++) c.wflags[k]=c.wflags[k]!=0;
-    for(unsigned k=0;k<2u;k++) c.cflags[k]=c.cflags[k]!=0;
+    /* cflags raw: +0x84 is a bit set (the session's actor 5 guns: 0x47, hj15), not a bool; written back as read */
     c.has_ctl=1;*r=c;*ctlp=ctl;return 1;
 }
 /* The save's four decimals of a time: the joiner's loaded value within this of the session's exact one is the same time. */

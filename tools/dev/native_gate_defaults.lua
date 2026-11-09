@@ -296,6 +296,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_precise','hot join save at full precision'},
  {'native_gate_join_in_window','hot join save inside the pilot window, measured (diagnostic)'},
  {'native_gate_pilot_dump_tick','pilot slot ship, controller, agent and solver bytes at this tick (diagnostic)'},
+ {'native_gate_pilot_dump_handover','pilot slot ship, controller, agent and solver bytes from H-1 to H+N around a handover (diagnostic)'},
  {'native_gate_join_passes_admit','hot joiner: the synced passes, stand-ins and travel snapshot of T at its admission (diagnostic)'},
  {'native_gate_join_ids','hot joiner saved objects at the session runtime IDs'},
  {'native_gate_join_buildp','hot join build processor busy rows (diagnostic)'},

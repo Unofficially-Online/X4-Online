@@ -296,6 +296,9 @@ end
 -- an ABORT (reason dropped) in the slot's first missing row, after which it is neutral like an absent slot, and a later join
 -- hands it over again. The same list on every client and on a joiner; never slot 1, never an absent slot.
 local join_client,join_joiner,join_restored
+-- Diagnostic native_gate_pilot_dump_handover = N: slot k's ship, controller, agent and solver bytes (PILOT_DUMP rows) from H-1
+-- to H+N around a HANDOVER(k, H), on every client (the handover split, hj21: the joiner's own slot ship turned from H on).
+local pilot_handover_dump={}
 if cfg.native_gate_join then
  local j=cfg.native_gate_join==true and {} or cfg.native_gate_join
  assert(type(j)=='table' and wire3 and cfg.native_gate_lookahead~='adaptive' and not cfg.native_gate_wire_crypto and not cfg.native_gate_peer_window,
@@ -521,6 +524,7 @@ if cfg.native_gate_join then
    -- modules took the absent slots: gate.pilot_absent_state answers).
    if (absent[k] or rejoin[k]) and k<=PILOT_SLOTS_MAX and gate.pilot_absent_state and gate.pilot_absent_state() then
     assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
+    if cfg.native_gate_pilot_dump_handover then pilot_handover_dump.k,pilot_handover_dump.h=k,h end
    end
   end,
   abort=function(k)
@@ -2736,6 +2740,16 @@ local function pilot_frame(s,tick)
      local hex=gate.pilot_dump(slot,which,off)
      if hex then ticklog.write('PILOT_DUMP tick='..tick..' slot='..slot..' which='..which..' off='..off..' hex='..hex) end
     end
+   end
+  end
+ end
+ local hd=pilot_handover_dump
+ if hd.h and gate.pilot_dump and tick+1>=hd.h and tick<=hd.h+cfg.native_gate_pilot_dump_handover then
+  local sizes={0x800,0x800,0x1000,0x400}
+  for which=0,3 do
+   for off=0,sizes[which+1]-256,256 do
+    local hex=gate.pilot_dump(hd.k,which,off)
+    if hex then ticklog.write('PILOT_DUMP tick='..tick..' slot='..hd.k..' which='..which..' off='..off..' hex='..hex) end
    end
   end
  end
