@@ -3373,6 +3373,17 @@ static void join_watch_dump(char side,uint64_t tick) {
                         if((uintptr_t)pp>0x10000u && !((uintptr_t)pp&7u)) {at+=join_watch_hex(out+at,cap-at,pp,64);at+=join_watch_hex(out+at,cap-at,pp+64,64);}
                     }
                 }
+                {   /* hj12 (x4mods-28, 9 Nov): actor 5's guns aimed at T+1 from a pose 1.8 ms of travel apart. 0x3db8a0 walks the parents
+                     * through the movement controller, whose cached pose (+0x60..+0x9f, in mov= above) RefreshFromPathingState 0xea2a20
+                     * rebuilds from the pathing block [controller+0x30]: two 0x1a0-byte entries per selector (a time +0x150, flags
+                     * +0x159/+0x15a), the selector the word at 0x38f4ee4. sel: that word; pblk: the block's first 0x340 bytes. */
+                    unsigned char *pb=NULL;uint32_t sel=0;
+                    (void)join_read(image+0x38f4ee4u,&sel,4);
+                    at+=(size_t)snprintf(out+at,cap-at," sel=%x pblk=",sel);
+                    if(req && at+2u*0x340u+64u<cap && join_read(req+0x30,&pb,8) && (uintptr_t)pb>0x10000u && !((uintptr_t)pb&7u))
+                        for(uint32_t o=0;o<0x340u;o+=64u) at+=join_watch_hex(out+at,cap-at,pb+o,64);
+                    else at+=(size_t)snprintf(out+at,cap-at,"-");
+                }
                 {   /* j1-139..j1-147: actor 5's pathing step writes another command at 651 with every logged field equal before: its
                      * Agent and the controller's command and probe block, pointers raw (a nav or pilot controller only) */
                     unsigned char *ctl=req,*agent=NULL,*cmd=NULL;uintptr_t vt=0;
