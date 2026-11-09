@@ -32,12 +32,12 @@ static void test_body_step_linux(void) {
     unsigned char motion1_before[0x80],body0_before[0x80];memcpy(motion1_before,tbs_motion[1],0x80);memcpy(body0_before,tbs_body[0],0x80);
     assert(lxbs_update(tbs_system,dt,1,NULL,NULL)==7u && tbs_native_calls==1 && lxbs_updates==1 && lxbs_captured==2 && !lxbs_failures);
     const lxbs_sample *s0=&lxbs_samples[0][0],*s1=&lxbs_samples[0][1];
-    assert(s0->valid && s1->valid && s1->steps==1 && s1->dt==dt_bits && s1->collision==1);
+    assert(s0->valid && s1->valid && s1->steps==1 && s1->dt==dt_bits && s1->collision==1 && s1->seq[0] && s1->seq[0]<s1->seq[1]);
     assert(!memcmp(s1->motion[0],motion1_before,0x80) && !memcmp(s1->motion[1],tbs_motion[1],0x80) && s1->motion[1][0x10]!=motion1_before[0x10]);
     assert(!memcmp(s0->body[0],body0_before,0x80) && !memcmp(s0->body[1],tbs_body[0],0x80));
     assert(lxbs_update(tbs_other,dt,1,NULL,NULL)==7u && lxbs_captured==2 && s1->steps==1); /* another physics system */
     char text[2400];
-    assert(lxbs_text(1,1,text,sizeof(text))>0 && !strncmp(text,"steps=1 dt=3d088889 collision=1 body0=",38) && strstr(text," motion1="));
+    assert(lxbs_text(1,1,text,sizeof(text))>0 && !strncmp(text,"steps=1 dt=3d088889 collision=1 seq0=",37) && strstr(text," body0=") && strstr(text," motion1="));
     assert(lxbs_text(1,1,text,sizeof(text))>0 && !strncmp(text,"steps=0 ",8));
     assert(!lxbs_text(2,0,text,sizeof(text)) && !lxbs_text(1,2,text,sizeof(text)));
     lxbs_original_override=NULL;tbs_native_calls=0;

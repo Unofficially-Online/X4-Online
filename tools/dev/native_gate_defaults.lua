@@ -250,6 +250,8 @@ D.DIAGNOSTIC={
  {'native_gate_params_diag','PARAMS rows'},
  {'native_gate_nav_diag','NAV rows'},
  {'native_gate_velocity_diag','VELOCITY rows'},
+ {'native_gate_impulse_diag','IMPULSE rows'},
+ {'native_gate_ik_diag','IKJOINT rows'},
  {'native_gate_shape_diag','SHAPE rows'},
  {'native_gate_attention_diag','ATTENTION rows'},
  {'native_gate_damage_diag','damage trace'},
@@ -472,6 +474,7 @@ D.EXCLUDED={
  {'native_gate_nav_key','Linux gate only'},
  {'native_gate_warp_exit','Linux gate only: the gate exit sum in the Windows order (Windows is that order); a Linux default after a 0 W vs L census'},
  {'native_gate_flight_limits','Linux gate only: the engine parameters limit words with the hoisted reciprocal (Windows is that order)'},
+ {'native_gate_ik_step','Linux gate only: the joints fixed-step divisions by 0.02 as Windows multiplications by 50'},
  {'native_gate_body_step_diag','Linux gate only: the fixture bodies before and after the Jolt step (diagnostic)'},
  {'native_gate_body1_mass','Linux gate only: a ship second body gets the empty-compound mass properties at creation (Windows value)'},
  {'native_gate_timer_resolution','timer experiment'},
@@ -526,7 +529,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step'}
+ [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

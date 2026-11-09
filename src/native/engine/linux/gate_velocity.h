@@ -20,7 +20,7 @@
 #define LXVD_SLOTS 0x28u
 #define LXVD_MAX 32u
 typedef void (*lxvd_fn)(void *,const void *);
-typedef struct {uint64_t source,time;uint32_t input[8],before[8],after[8];} lxvd_record;
+typedef struct {uint64_t source,time,seq;uint32_t input[8],before[8],after[8],body[2][8];int bodies;} lxvd_record;
 typedef struct {uint64_t tick;unsigned count;lxvd_record records[LXVD_MAX];} lxvd_trace;
 static lxvd_trace lxvd_traces[LXB_ACTORS];
 static int lxvd_installed,lxvd_restored;
@@ -49,6 +49,9 @@ static void lxvd_move(void *self,const void *value) {
     unsigned char *tls=gate_tls_self();const double *now=tls?gate_tls_time(tls):NULL;
     if(!now || !gate_read_local(now,&r->time,8)) __atomic_add_fetch(&lxvd_failures,1,__ATOMIC_SEQ_CST);
     if(!gate_read_local(value,r->input,32) || !lxvd_state(self,r->before)) __atomic_add_fetch(&lxvd_failures,1,__ATOMIC_SEQ_CST);
+    /* Linux only, after Windows' fields: the order among the step captures, and both bodies' velocities now. */
+    r->seq=__atomic_add_fetch(&lx_phys_seq,1,__ATOMIC_SEQ_CST);
+    for(unsigned w=0;w<2;w++) {unsigned char *motion=NULL;if(lxbs_find(actor,w,&motion) && gate_read_local(motion,r->body[w],32)) r->bodies|=1<<w;}
     original(self,value);
     if(!lxvd_state(self,r->after)) __atomic_add_fetch(&lxvd_failures,1,__ATOMIC_SEQ_CST);
     lxvd_calls++;
@@ -83,12 +86,14 @@ static int lua_velocity(lua_State *L) {
     lxvd_trace *trace=&lxvd_traces[(unsigned)actor-1];unsigned count=trace->tick==stats.issued?trace->count:0;
     if(ordinal==0) {p_lua_pushnumber(L,count);return 1;}
     if(ordinal>count) {p_lua_pushnil(L);return 1;}
-    lxvd_record *r=&trace->records[(unsigned)ordinal-1];char out[512];
+    lxvd_record *r=&trace->records[(unsigned)ordinal-1];char out[768];
     int n=snprintf(out,sizeof(out),"tick=%llu source=%llx time=%016llx input=",(unsigned long long)trace->tick,
         (unsigned long long)r->source,(unsigned long long)r->time);
     n+=lxb_hex_words(out+n,sizeof(out)-(size_t)n,r->input,8);
     n+=snprintf(out+n,sizeof(out)-(size_t)n," before=");n+=lxb_hex_words(out+n,sizeof(out)-(size_t)n,r->before,8);
     n+=snprintf(out+n,sizeof(out)-(size_t)n," after=");n+=lxb_hex_words(out+n,sizeof(out)-(size_t)n,r->after,8);
+    n+=snprintf(out+n,sizeof(out)-(size_t)n," seq=%llu",(unsigned long long)r->seq);
+    for(unsigned w=0;w<2;w++) if(r->bodies&(1<<w)) {n+=snprintf(out+n,sizeof(out)-(size_t)n," body%u=",w);n+=lxb_hex_words(out+n,sizeof(out)-(size_t)n,r->body[w],8);}
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
 static int lua_velocity_status(lua_State *L) {

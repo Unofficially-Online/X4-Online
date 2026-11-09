@@ -44,7 +44,8 @@ static void test_nav_refresh_watch_native_image(const char *path) {
     assert(!nrw_arm(0,3) && !strcmp(nrw_stage,"window"));
     stats.issued=4;assert(!nrw_arm(1040,1060) && !strcmp(nrw_stage,"state"));stats.issued=0;
     assert(nrw_arm(1040,1060) && nrw_installed && nrw_state()==1 && nrw_owned() && nrw_check() && !strcmp(nrw_stage,"armed"));
-    assert(!nrw_arm(1040,1060)); /* once */
+    assert(nrw_arm(1040,1060) && !nrw_arm(1040,1061) && !nrw_arm(1039,1060)); /* again: the same window answers 1, another is refused */
+    assert(nrw_from==1040 && nrw_to==1060 && !strcmp(nrw_stage,"armed"));
     /* the view: the hook's pin and the 537-byte pins of the join and the world hash over the function pass */
     assert(nrw_pins() && image[NRW_ENTRY]==0xe9 && hash_ok(image+NRW_ENTRY,NRW_SIZE,NRW_SHA));
     {unsigned char viewed[8];assert(read_local(image+NRW_ENTRY-1,viewed,8) && !memcmp(viewed+1,nrw_original,5));}

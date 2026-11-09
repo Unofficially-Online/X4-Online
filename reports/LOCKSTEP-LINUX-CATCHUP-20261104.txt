@@ -514,6 +514,53 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   SetVelocity's conversion or in whatever computes its input. Next: the Windows velocity diag (lockstep_velocity.h,
   VELOCITY rows: SetVelocity's input, slot before and after) for actors 2 and 4 at ticks 26..29, and the same hook
   on Linux (the controller's secondary vtable slot, still to be found).
+  Found and ported: Linux SetVelocity is 0x141fe50, slot 15 of both NavigationController vtables (Windows numbering
+  + 7); its conversion is the same arithmetic in the same order on both executables ((c0 x + c1 y) + c2 z for both
+  vectors after the zone's velocity is subtracted). native_gate_velocity_diag on Linux (99131ee1, Windows' text).
+  W36j against lx49a: at tick 28 a fixture ship's two SetVelocity calls, both from the record copy-back (Windows
+  0xbf27d, Linux 0xee81f3: GetLinearAndAngularVelocity of the record's body into the controller), are, the first,
+  bit-identical, the second one word apart (actor 2 angular y, actor 4 linear z), the word the bodies keep.
+  With one sequence over the step captures and the velocity rows (0af0bdad; lx50a): both calls come before the Jolt
+  step, and before each X4 has changed body0's velocity (body1 still holds tick 27's until the pre-sync copies the
+  controller's into it). The three X4 body actions that tail-call the copy-back are AddTorque, AddImpulse at a point
+  and AddAngularImpulse (Linux 0x17e2e60, 0x17e2f10, 0x17e3000; on body0's record +0x258); both changes move linear
+  and angular velocity, so both are impulses at a point. native_gate_impulse_diag (Linux 6addd1cb on
+  BodyInterface::AddImpulse 0x1a7fc90; Windows 8346a18c on Body::AddImpulse 0x1405910, one row text) records the
+  impulse, the point, the pose, MotionProperties +0..+0x60 and the velocities after. lx51a, actor 2 at tick 28: #1
+  impulse b8d1b6d7 34a37861 324bed8d at point 3f7f3018 be754c60 41427618, #2 impulse b8d1b69b 343f315e b4cf7f70 at
+  3febb598 bf9858e4 41210d3b, both from 0x17e2f9c; the point is a small vector while the body is at (-394.6, 36000,
+  600), so Jolt's lever arm is about 36000 and these tiny impulses turn the ship. v += impulse * inverse mass
+  replayed from the rows gives Linux's words exactly; actor 4's linear z (Linux ba058ccd, Windows ba058cce) is 0.009
+  ulp from the rounding midpoint yet needs a Windows impulse z about 6e-5 more negative (relative) to round the other
+  way: with the same starting velocity and the same Jolt code, Windows' impulse #2 itself differs, by much more than
+  an ulp, which points at cancellation in X4's impulse computation (z about -6e-8 against x about -1e-4; the caller
+  near Linux 0x19472ed transforms a local point through a parent matrix and calls the AddImpulse virtual, +0x1c20).
+  Next: W36k (W36g + native_gate_impulse_diag, window 27..28) against lx51a, then that caller's inputs.
+  W36k against lx51a (9 impulses, all on body0): the first impulse of each tick bit-identical (impulse, point, pose,
+  motion, after); the second apart in its inputs, Jolt applying each side's inputs alike: actor 2 at tick 28 impulse z
+  -3.86501e-7 / -3.86495e-7 (212 ulps), point x 1.8415401 / 1.8414793, z 10.0655775 / 10.0657301; actor 4 likewise;
+  actors 3 (tick 27) and 6 (tick 28) already apart by the same order with the velocities still rounding equal. Windows
+  source 0x51b138, caller 0xd5360e: inside U::Bullet's functions (Move 0xd4f090, UpdateFlight 0xd4f240, BulletSetup
+  0xd50f30, SpawnImpactEffect 0xd519e0). The Linux twin 0x1946c80 takes the bullet, the ship it hits and the hit
+  frame; the impulse is the bullet's velocity relative to the zone (0x1dc9650), normalised (RSQRTSS, which
+  native_gate_exact_reciprocal rewrites, on by default) and scaled; the point the hit frame through the ship's parent
+  transform. So the second impulse is a bullet hit, and the bullet's own trajectory differs by about 1e-5 relative.
+  A fighter's bullet leaves along its gun's frame, built through the weapon's skeleton: its gimbal joints move toward
+  the aim at a limited rate (Windows 0xe1f840; the hot join's IKV walk). native_gate_ik_diag (aa54051b on the run
+  branch, 3c4faba6; Linux joints 0x668 bytes apart, from the skeleton destructor 0x135b235) gives every joint of each
+  fixture ship and its weapons per trace tick (IKJOINT rows). W36l (Windows, ticks 2..28): 6 idle joints per Argon
+  ship, 2 per gun; the gimbal's time word is the game time of its last update, and at tick 27 actor 2's w1 changed
+  value and target without its time (written on two paths), with a rate word that changes every tick. Next: lx52 (the
+  laptop was unreachable) against W36l, the first joint and tick apart against the first impulse apart.
+  Found offline (the joint update, Windows 0xe1f840 against Linux 0x1565b00, the same field offsets): the joint moves
+  in fixed 0.02 s sub-steps and divides three times by the step length (the velocity estimate (target - [+0x2c]) / dt,
+  the acceleration estimate (that - [+0x30]) / dt, the last partial step's fraction). MSVC built each as a
+  multiplication by 50.0f (no divss in the Windows function); GCC divides by 0.02f, which is 0.0199999996, so the
+  quotient is x * 50.0000011 and rounds apart from x * 50.0f in about 28% of the values. The rest of the function is
+  the same arithmetic (sqrt times a constant, the (1 - f) a + f b interpolation). native_gate_ik_step (9ff8ab6e, Linux
+  only, opt-in) runs the two runs that hold the divisions in stubs with mulss by 50.0f (the Windows order). Next:
+  lx52 (without it) and lx53 (with it) against W36l and W36g once the laptop answers; with lx53 equal, the key goes to
+  the mixed-platform preset.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

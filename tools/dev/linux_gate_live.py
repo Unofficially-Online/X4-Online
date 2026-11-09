@@ -434,6 +434,12 @@ def bundle(args):
         command.append('--body-step-diag')
     if args.velocity_diag:
         command.append('--velocity-diag')
+    if args.impulse_diag:
+        command.append('--impulse-diag')
+    if args.ik_diag:
+        command.append('--ik-diag')
+    if args.ik_step:
+        command.append('--ik-step')
     if args.world_hash_shields:
         command.append('--world-hash-shields')
     if args.mining_camera:
@@ -553,6 +559,9 @@ def bundle(args):
         'body1_mass',
         'body_step_diag',
         'velocity_diag',
+        'impulse_diag',
+        'ik_diag',
+        'ik_step',
         'world_hash_shields',
         'mining_camera',
         'mass_traffic',
@@ -1364,6 +1373,9 @@ def main(argv=None):
     b.add_argument('--warp-exit', action='store_true', help='the gate exit sum in the Windows order (native_gate_warp_exit)')
     b.add_argument('--body1-mass', choices=('fallback',), help="a ship's second body gets the empty compound's mass properties at creation (native_gate_body1_mass)")
     b.add_argument('--body-step-diag', action='store_true', help='BODY_STEP rows: the fixture bodies before and after the Jolt step (native_gate_body_step_diag)')
+    b.add_argument('--ik-step', action='store_true', help="the joints' fixed-step divisions by 0.02 as Windows' multiplications by 50 (native_gate_ik_step)")
+    b.add_argument('--ik-diag', action='store_true', help='IKJOINT rows: the fixture ships\' and weapons\' skeleton joints (native_gate_ik_diag)')
+    b.add_argument('--impulse-diag', action='store_true', help='IMPULSE rows: the impulses on fixture bodies (native_gate_impulse_diag)')
     b.add_argument('--velocity-diag', action='store_true', help="VELOCITY rows: the fixture controllers' SetVelocity calls, as Windows (native_gate_velocity_diag)")
     b.add_argument('--flight-limits', action='store_true', help="the engine parameters' limit words with Windows' hoisted reciprocal (native_gate_flight_limits)")
     b.add_argument('--world-hash-shields', action='store_true', help="census shields in canonical form (native_gate_world_hash_shields = "

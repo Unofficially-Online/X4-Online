@@ -2979,6 +2979,27 @@ local function sample(tick)
     if trace and cfg.native_gate_body_step_diag and gate.body_step then
      for which=0,1 do log('BODY_STEP id='..i..' which='..which..' tick='..tick..' '..tostring(gate.body_step(i,which))) end
     end
+    if trace and cfg.native_gate_impulse_diag and gate.impulse then
+     for ordinal=1,(gate.impulse(i,0) or 0) do log('IMPULSE id='..i..' ordinal='..ordinal..' '..tostring(gate.impulse(i,ordinal))) end
+    end
+    if trace and cfg.native_gate_ik_diag and gate.ik_joints then
+     -- IKJOINT rows (lockstep_ik_diag.h, linux/gate_ik_diag.h): the ship's and its weapons' skeleton joints, diagnostic.
+     local function ikrows(tag,id)
+      local text=gate.ik_joints(id)
+      if text==nil or text=='failed' or text:sub(1,7)=='refused' then
+       log('IKJOINT id='..i..' obj='..tag..' tick='..tick..' '..tostring(text or 'unavailable'));return
+      end
+      for g,k,v,t,r,tg in text:gmatch('(%d+),(%d+),(%x+),(%x+),(%x+),(%x+)') do
+       log('IKJOINT id='..i..' obj='..tag..' tick='..tick..' group='..g..' index='..k..' value='..v..' time='..t..' rate='..r..' target='..tg)
+      end
+     end
+     ikrows('ship',tonumber(object))
+     local slots=tonumber(ffi.C.GetNumUpgradeSlots(object,'','weapon')) or 0
+     for slot=1,math.min(slots,32) do
+      local wid=ffi.C.GetUpgradeSlotCurrentComponent(object,'weapon',slot)
+      if wid~=0 then ikrows('w'..slot,tonumber(wid)) end
+     end
+    end
     if trace and cfg.native_gate_shape_diag then
      for which=0,1 do log('SHAPE id='..i..' which='..which..' '..assert(gate.shape(i,which),'physics shape trace unavailable')) end
     end
@@ -3628,11 +3649,30 @@ local function frame()
     'body1 mass refused '..tostring(gate.body1_mass_status and gate.body1_mass_status()))
    log('BODY1_MASS_ARMED mode=fallback')
   end
+  -- The skeleton joints' fixed-step update in the Windows order (linux/gate_ik_step.h): the step's divisions by 0.02 as
+  -- multiplications by 50, as MSVC built them. Linux only; default off.
+  if cfg.native_gate_ik_step and gate.platform and gate.platform()=='linux' then
+   assert(snapshot and gate.ik_step and gate.ik_step_status and gate.ik_step()==1,'ik step refused '..tostring(gate.ik_step_status and gate.ik_step_status()))
+   log('IK_STEP_ARMED')
+  end
+  -- Linux-only keys of the mixed-platform preset: on Windows only a note (its build is already that order).
+  if not (gate.platform and gate.platform()=='linux') then
+   if cfg.native_gate_ik_step then log('IK_STEP_NOOP windows: the joint step multiplies by 50.0f already') end
+   if cfg.native_gate_body1_mass then log('BODY1_MASS_NOOP windows: second bodies are created with an empty compound already') end
+  end
   -- The fixture bodies just before and after Jolt's step (linux/gate_body_step.h): BODY_STEP rows. Linux only, diagnostic.
   if cfg.native_gate_body_step_diag and gate.platform and gate.platform()=='linux' then
    assert(snapshot and gate.body_step_diag and gate.body_step_status and gate.body_step_diag()==1,
     'body step diag refused '..tostring(gate.body_step_status and gate.body_step_status()))
    log('BODY_STEP_ARMED')
+  end
+  -- The impulses on fixture bodies (lockstep_impulse.h, linux/gate_impulse.h): IMPULSE rows in one text on both
+  -- platforms, diagnostic. Windows records inside the trace window (the whole session without one); Linux every tick.
+  if cfg.native_gate_impulse_diag then
+   local w=cfg.native_gate_trace_window
+   assert(snapshot and gate.impulse_diag and gate.impulse_status and gate.impulse_diag(w and w[1] or 1,w and w[2] or 1e9)==1,
+    'impulse diag refused '..tostring(gate.impulse_status and gate.impulse_status()))
+   log('IMPULSE_ARMED')
   end
   -- Object attention timer (0x6d1ff0) for every portable object, not only the
   -- fixture actors: the loading-time due is replaced by "due now" at the first
@@ -5271,6 +5311,9 @@ local function frame()
   if cfg.native_gate_flight_limits and gate.flight_limits_status then log('FLIGHT_LIMITS_STOP '..tostring(gate.flight_limits_status())) end
   if cfg.native_gate_body1_mass and gate.body1_mass_status then log('BODY1_MASS_STOP '..tostring(gate.body1_mass_status())) end
   if cfg.native_gate_body_step_diag and gate.body_step_status then log('BODY_STEP_STOP '..tostring(gate.body_step_status())) end
+  if cfg.native_gate_impulse_diag and gate.impulse_status then log('IMPULSE_STOP '..tostring(gate.impulse_status())) end
+  if cfg.native_gate_ik_diag and gate.ik_status then log('IK_STOP '..tostring(gate.ik_status())) end
+  if cfg.native_gate_ik_step and gate.ik_step_status then log('IK_STEP_STOP '..tostring(gate.ik_step_status())) end
   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end
   if cfg.native_gate_attention_all then log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end
   if cfg.native_gate_view_points then log('VIEW_POINTS_STOP '..tostring(gate.view_points_status())) end
@@ -5665,6 +5708,9 @@ local function frame()
  end
  if cfg.native_gate_body_step_diag and gate.body_step_status then
   ticklog.status('BODY_STEP',tick,gate.body_step_status,'body step status unavailable')
+ end
+ if cfg.native_gate_ik_step and gate.ik_step_status then
+  ticklog.status('IK_STEP',tick,gate.ik_step_status,'ik step status unavailable')
  end
  if cfg.native_gate_command_order then
   ticklog.status('COMMAND_ORDER',tick,gate.command_order_status,'command order status unavailable')
@@ -6206,6 +6252,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_flight_limits and gate.flight_limits_status then ticklog.try(function() log('FLIGHT_LIMITS_STOP '..tostring(gate.flight_limits_status())) end) end
    if cfg.native_gate_body1_mass and gate.body1_mass_status then ticklog.try(function() log('BODY1_MASS_STOP '..tostring(gate.body1_mass_status())) end) end
    if cfg.native_gate_body_step_diag and gate.body_step_status then ticklog.try(function() log('BODY_STEP_STOP '..tostring(gate.body_step_status())) end) end
+   if cfg.native_gate_impulse_diag and gate.impulse_status then ticklog.try(function() log('IMPULSE_STOP '..tostring(gate.impulse_status())) end) end
    if cfg.native_gate_path_transform_observe then
     ticklog.try(function()
      ticklog.write('PATH_TRANSFORM_OBSERVE_STOP '..tostring(gate.path_transform_observe_status()))

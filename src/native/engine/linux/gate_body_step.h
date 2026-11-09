@@ -24,8 +24,26 @@ static int lxbs_installed,lxbs_restored;
 static volatile int64_t lxbs_updates,lxbs_captured,lxbs_failures;
 static const char *lxbs_stage="idle";
 static lxbs_update_fn lxbs_original_override; /* tests */
-typedef struct {uint32_t steps,dt,collision;int valid;unsigned char body[2][0x80],motion[2][0x80];} lxbs_sample;
+typedef struct {uint32_t steps,dt,collision;int valid;uint64_t seq[2];unsigned char body[2][0x80],motion[2][0x80];} lxbs_sample;
 static lxbs_sample lxbs_samples[LXB_ACTORS][2];
+/* One order for the step captures here and the velocity rows (gate_velocity.h): every capture takes the next number. */
+static volatile uint64_t lx_phys_seq;
+/* A fixture ship's body and its motion properties, through its record (none when unbound or unreadable). */
+static unsigned char *lxbs_find(unsigned actor,unsigned which,unsigned char **motion_out) {
+    if(actor<1 || actor>LXB_ACTORS || which>1 || lxb_bound!=LXB_ACTORS) return NULL;
+    const lxb_actor *a=&lxb_actors[actor-1];unsigned slot=lxb_body_slot[actor-1];
+    unsigned char *record=NULL,*xbody=NULL,*scene=NULL,*system=NULL,*iface=NULL,*manager=NULL,*bodies=NULL,*body=NULL,*motion=NULL;
+    void *owner=NULL;uint32_t id=0;uint64_t count=0;
+    if(!a->object || !slot || !gate_read_local((unsigned char*)a->object+slot+which*8u,&record,8) || !record ||
+       !gate_read_local(record,&owner,8) || owner!=a->object || !gate_read_local(record+0x18,&scene,8) || !scene ||
+       !gate_read_local(scene+0x20,&system,8) || !system || !gate_read_local(record+0x10,&xbody,8) || !xbody ||
+       !gate_read_local(xbody+8,&id,4) || id==0xffffffffu || !gate_read_local(system+LXB_PHYS_LOCK_IFACE,&iface,8) || !iface ||
+       !gate_read_local(iface+8,&manager,8) || !manager || !gate_read_local(manager,&count,8) || (id&0x7fffffu)>=count || count>0x800000u ||
+       !gate_read_local(manager+0x10,&bodies,8) || !bodies || !gate_read_local(bodies+(id&0x7fffffu)*8u,&body,8) || !body ||
+       ((uintptr_t)body&1u) || !gate_read_local(body+0x48,&motion,8) || !motion) return NULL;
+    if(motion_out) *motion_out=motion;
+    return body;
+}
 /* One phase (0 before, 1 after) of every fixture ship body that belongs to this physics system. */
 static void lxbs_capture(void *system,unsigned phase,float dt,int collision) {
     if(lxb_bound!=LXB_ACTORS) return;
@@ -47,6 +65,7 @@ static void lxbs_capture(void *system,unsigned phase,float dt,int collision) {
                !gate_read_local(body,s->body[phase],0x80) || !gate_read_local(motion,s->motion[phase],0x80)) {
                 __atomic_add_fetch(&lxbs_failures,1,__ATOMIC_SEQ_CST);continue;
             }
+            s->seq[phase]=__atomic_add_fetch(&lx_phys_seq,1,__ATOMIC_SEQ_CST);
             if(phase==0) {s->valid=0;memcpy(&s->dt,&dt,4);s->collision=(uint32_t)collision;}
             else {s->valid=1;s->steps++;__atomic_add_fetch(&lxbs_captured,1,__ATOMIC_SEQ_CST);}
         }
@@ -126,7 +145,8 @@ static int lxbs_text(unsigned actor,unsigned which,char *out,size_t cap) {
     if(actor<1 || actor>LXB_ACTORS || which>1 || cap<2200) return 0;
     lxbs_sample *s=&lxbs_samples[actor-1][which];
     if(!s->valid) return 0;
-    int n=snprintf(out,cap,"steps=%u dt=%08x collision=%u",s->steps,s->dt,s->collision);
+    int n=snprintf(out,cap,"steps=%u dt=%08x collision=%u seq0=%llu seq1=%llu",s->steps,s->dt,s->collision,
+        (unsigned long long)s->seq[0],(unsigned long long)s->seq[1]);
     for(unsigned phase=0;phase<2;phase++) {
         uint32_t w[32];
         memcpy(w,s->body[phase],0x80);n+=snprintf(out+n,cap-(size_t)n," body%u=",phase);n+=lxb_hex_words(out+n,cap-(size_t)n,w,32);

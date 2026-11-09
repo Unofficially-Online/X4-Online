@@ -180,10 +180,12 @@ static int nrw_switch(int install) {
     if(install) InterlockedExchange(&nrw_any,0);
     return 0;
 }
-/* gate.nav_refresh_watch(from,to): UI thread, before the first admitted frame. */
+/* gate.nav_refresh_watch(from,to): UI thread, before the first admitted frame. Armed again with the same window (the
+ * probe's arming block runs twice, hj16 9 Nov: x4ls play refused at 0.00) it answers 1 and changes nothing; another window is
+ * refused. */
 static int nrw_arm(double from,double to) {
-    if(nrw_installed) return 0;
-    if(!isfinite(from) || !isfinite(to) || floor(from)!=from || floor(to)!=to || from<1 || to<from || to>1e9) {nrw_stage="window";return 0;}
+    if(!isfinite(from) || !isfinite(to) || floor(from)!=from || floor(to)!=to || from<1 || to<from || to>1e9) {if(!nrw_installed) nrw_stage="window";return 0;}
+    if(nrw_installed) return stats.active && (uint64_t)from==nrw_from && (uint64_t)to==nrw_to;
     if(!stats.active || stats.issued || (boot_mode && boot_phase) || GetCurrentThreadId()!=ui_thread) {nrw_stage="state";return 0;}
     if(!nrw_pins()) {nrw_stage="pins";return 0;}
     if(nrw_state()!=0) {nrw_stage="entry";return 0;}
