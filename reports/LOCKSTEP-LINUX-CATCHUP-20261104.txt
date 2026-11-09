@@ -467,6 +467,53 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   the current bank's velocity and angular words, the first turning step). For a mixed session fp_redirect, its
   solver and drones must be on, alike, on both platforms (the coordinator decides defaults or a mixed preset). Still
   open: tick 28 (W36h/lx43 FLIGHT rows), the Xenon body0 ulp, body1.
+  The coordinator's mixed preset (b0380f6f: build_play_overlay.py --mixed-platform, MIXED_PLATFORM_SETS) is
+  imported by linux_gate_live.py --mixed-platform (d16e9e49), so both sides carry the same keys.
+  Tick 28 (W36h against lx43, actors 2 and 4, ticks 25..28): the steering update is bit-identical on both (bank
+  before and after, limits, input, parameters; only pointers and the stored avoidance-query time differ in the
+  model), so the split arises after it, in the physics step or its copy back. Leading candidate: the formation
+  ships start to touch, and contacts use body1's inertia. Body shapes (the body text now names them, both
+  platforms: shape=TTSS/ttss:N): every fixture body is X4's decorated user shape (02/11) over a MutableCompoundShape
+  (01/08), body0 with 3 parts (Xenon 1), body1 with 31 (Xenon 2), equal on Windows (W36i) and Linux (lx46a) from
+  tick 2. So the compounds match, and body1's inertia differs anyway: Windows keeps the unit-sphere inertia of an
+  empty compound (its mass properties not recomputed when the parts arrive), Linux recomputes them from the parts
+  (in a thread-dependent order, hence its run-to-run spread). Next: where the parts are added and whether the
+  shape-changed notification updates the mass properties on each executable (Linux 0xeeac0a passes
+  updateMassProperties = !record[+0x39], which is 1 for body1).
+  Read further: every part-add path (Linux 0xefe1f1, 0x14746e0, 0x1995a51: a mesh shape added to the compound, then
+  BodyInterface::NotifyShapeChanged 0x1a84b20; Windows 0x1400c141d: the add 0x14140cb10, then NotifyShapeChanged
+  0x1414061e0) updates the mass properties only when record+0x3a is 0, and body1's is 1 on both: neither platform
+  recomputes body1's mass properties as parts arrive (Windows' per-tick shape refresh 0xbff80 never does). So
+  body1's inertia is whatever the compound held when the body was created (record constructor 0xee8830,
+  CalculateMassAndInertia): empty on Windows (the unit-sphere fallback at the ship's mass), already filled on Linux,
+  from parts added on loader threads (hence the spread between Linux processes). A loading-order effect, not
+  arithmetic: a fix has to make body1's mass properties a function of the session (for example computed once at a
+  fixed point in a canonical part order on every client), shared physics behaviour for both platforms.
+  The coordinator's decision: Windows' value (the empty compound's sphere fallback) on every client.
+  native_gate_body1_mass = 'fallback' (99986edd, Linux only, opt-in) hooks JPH::BodyManager::AllocateBody and gives
+  every dynamic body over X4's defined-mass shape and a mutable compound whose record has +0x3a = 1 the fallback
+  (2.5 * inverse mass on four lanes, the identity rotation) as it is created: the boot load, a hot joiner's load and
+  ships made in the session alike. lx47a: 26 bodies changed, none already the fallback; every fixture ship's body1
+  inertia words equal W36i's at tick 2, and Linux against Linux too (lx34a's split is gone). Left: padding words
+  (Body +0x7a..+0x7f, MotionProperties +0x7c, different even between Linux processes) and the Xenon body0 ulp.
+  lockstep_body_mass.h (92bd3375, shared, read only): a census of every such body against the fallback, logged as
+  BODY1_MASS_CENSUS under body_diag on both platforms. Correction: Jolt here (5.x layout) keeps the motion type at
+  Body +0x78 (+0x76 body type, +0x77 broadphase layer); both of a ship's bodies are dynamic, body0 in broadphase
+  layer 1 and body1 in layer 2; the second body is told apart by its record's +0x3a, not by the motion type.
+  Tick 28 is not body1's: lx47a against W36g still splits at (28, 2), (28, 4), (30, 6), the same words as before.
+  native_gate_body_step_diag (5ed1ae4d, Linux only, diagnostic) copies the fixture bodies around
+  PhysicsSystem::Update: in lx48a at ticks 27 and 28 force and torque are zero and the step leaves both velocities
+  as they were (it only moves the pose), so the tick-28 velocities (actor 2's angular x b758605c, Windows b7586058)
+  are written by X4 before the step. The writer: 0x17e25a0 (Windows 0x14051b5bb) takes the ship's velocity relative
+  to its zone (0x18a15f0, Windows 0x1403dc040; for a ship whose parent is the zone both just call the ship's own
+  GetLocalVelocity, Linux vtable +0x1498, Windows +0x1450) and sets it on both bodies with
+  BodyInterface::SetLinearAndAngularVelocity (Linux 0x1a7ec20, Windows 0x141406aa0, clamps only). GetLocalVelocity
+  reads the navigation controller's pathing-state slot (+0x40 linear, +0x50 angular), which
+  NavigationController::SetVelocity (Windows 0x140ea5790: the zone's transform and velocity, a subtraction, the
+  transposed rotation) writes. So the split sits between the steering output (equal) and that slot: in
+  SetVelocity's conversion or in whatever computes its input. Next: the Windows velocity diag (lockstep_velocity.h,
+  VELOCITY rows: SetVelocity's input, slot before and after) for actors 2 and 4 at ticks 26..29, and the same hook
+  on Linux (the controller's secondary vtable slot, still to be found).
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

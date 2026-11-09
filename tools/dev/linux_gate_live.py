@@ -428,6 +428,12 @@ def bundle(args):
         command.append('--warp-exit')
     if args.flight_limits:
         command.append('--flight-limits')
+    if args.body1_mass:
+        command += ['--body1-mass', args.body1_mass]
+    if args.body_step_diag:
+        command.append('--body-step-diag')
+    if args.velocity_diag:
+        command.append('--velocity-diag')
     if args.world_hash_shields:
         command.append('--world-hash-shields')
     if args.mining_camera:
@@ -544,6 +550,9 @@ def bundle(args):
         'warp_rng',
         'warp_exit',
         'flight_limits',
+        'body1_mass',
+        'body_step_diag',
+        'velocity_diag',
         'world_hash_shields',
         'mining_camera',
         'mass_traffic',
@@ -1353,6 +1362,9 @@ def main(argv=None):
     b.add_argument('--tempzone-order', action='store_true',
                    help='order tempzone requests after snapshot-tracked or inline pathing batches finish')
     b.add_argument('--warp-exit', action='store_true', help='the gate exit sum in the Windows order (native_gate_warp_exit)')
+    b.add_argument('--body1-mass', choices=('fallback',), help="a ship's second body gets the empty compound's mass properties at creation (native_gate_body1_mass)")
+    b.add_argument('--body-step-diag', action='store_true', help='BODY_STEP rows: the fixture bodies before and after the Jolt step (native_gate_body_step_diag)')
+    b.add_argument('--velocity-diag', action='store_true', help="VELOCITY rows: the fixture controllers' SetVelocity calls, as Windows (native_gate_velocity_diag)")
     b.add_argument('--flight-limits', action='store_true', help="the engine parameters' limit words with Windows' hoisted reciprocal (native_gate_flight_limits)")
     b.add_argument('--world-hash-shields', action='store_true', help="census shields in canonical form (native_gate_world_hash_shields = "
                    "'canonical', as the Windows default stack hashes them)")

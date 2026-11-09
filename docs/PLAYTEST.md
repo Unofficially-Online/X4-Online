@@ -152,7 +152,7 @@ both sides from T+1 to T+9, then parts at T+10 on one battle ship's decision: th
 first frame only: it is equal again at T+2. The lane tool's in-window joins compare the world census, not this
 digest, so they did not stop there.
 
-## Choosing the starts (built 8 Nov, not yet run through x4ls)
+## Choosing the starts (built 8 Nov; run through x4ls on one PC)
 
 `python tools/x4ls.py starts` lists the game's starts from this PC's own game files, read-only and unpacked into
 `.local/x4ls/gamedata`. For each it says whether it can be the session's start (slot 1, `session-base`) and
@@ -167,6 +167,14 @@ This captures the session save on the capture profile: X4's new game for the bas
 one hull per player start at its start position. It then registers the save and builds the play overlay. Each
 player's start kit (money, reputation, blueprints, research and map) is applied at the setup tick on every
 client. It ends by printing the `x4ls play` line.
+
+In coop every player shares the wallet and the reputation, so a player start whose kit brings its own inventory or
+reputation is refused until you leave those parts out, for example `--omit 2=inventory,reputation`.
+
+Smoke ns1/ns2 (8 Nov): `--base-start x4ep1_gamestart_discover --players 2 --mode coop --start 2=x4ep1_gamestart_fight
+--omit 2=inventory,reputation`. The capture took 2.5 minutes. Both clients then played the 2-minute window in sync
+(0 desyncs, 0 errors): slot 1 in the discover start's ship, slot 2 in its own fight hull at that start's position,
+with the fight start's money (added to the shared wallet) and blueprints applied at tick 20 on both.
 
 ## Ending
 

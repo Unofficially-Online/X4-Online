@@ -1848,6 +1848,40 @@ int main(int argc,char **argv) {
     }
     *(unsigned*)(body+0x70)=1;assert(!body_state(health_object,0,body_text));
     *(unsigned*)(body+0x70)=0;*(uint64_t*)manager=0;assert(!body_state(health_object,0,body_text));
+    { /* lockstep_body_mass.h: the manager behind the record, then the census over a planted manager: dynamic bodies
+       * (Body +0x78 = 2) over the defined-mass shape and a mutable compound whose record (+0x50) fixes the mass (+0x3a = 1),
+       * one with the fallback and one with a hull tensor; one whose mass follows its parts (+0x3a = 0: updated); a
+       * kinematic one; one over another inner shape; a free slot and an empty one. */
+        assert(body_mass_manager(sample_read,health_object,record,0x1b8u)==manager);
+        assert(!body_mass_manager(sample_read,image,record,0x1b8u));            /* another owner */
+        static unsigned char bm_body[5][0x80],bm_motion[5][0x80],bm_record[5][0x40],bm_shape[2][0x28],bm_inner[2][0x58],bm_manager[0x18];
+        memset(bm_body,0,sizeof(bm_body));memset(bm_motion,0,sizeof(bm_motion));memset(bm_record,0,sizeof(bm_record));
+        memset(bm_shape,0,sizeof(bm_shape));memset(bm_inner,0,sizeof(bm_inner));
+        void *bm_array[7]={bm_body[0],bm_body[1],bm_body[2],bm_body[3],bm_body[4],(void*)(uintptr_t)0x0000000000000203ULL,NULL};
+        *(uint64_t*)bm_manager=7;*(void**)(bm_manager+0x10)=bm_array;
+        for(unsigned s=0;s<2;s++) {bm_shape[s][0x18]=0x02;bm_shape[s][0x19]=0x11;*(void**)(bm_shape[s]+0x20)=bm_inner[s];bm_inner[s][0x18]=0x01;}
+        bm_inner[0][0x19]=0x08;bm_inner[1][0x19]=0x06;                      /* a mutable compound; something else */
+        const float inv_mass=1.0f/6.0f,lane=2.5f*inv_mass;uint32_t lane_bits;memcpy(&lane_bits,&lane,4);assert(lane_bits==0x3ed55556u);
+        const uint32_t fallback[8]={lane_bits,lane_bits,lane_bits,lane_bits,0,0,0,0x3f800000u};
+        const uint32_t hull[8]={0x39704e20u,0x39a5fc21u,0x3a2cadd6u,0x7f800000u,0x3f06b05fu,0x3ef1dde2u,0x3f06b1f0u,0x3ef1e2e4u};
+        for(unsigned b=0;b<5;b++) {
+            *(void**)(bm_body[b]+0x40)=bm_shape[b==3];*(void**)(bm_body[b]+0x48)=bm_motion[b];*(void**)(bm_body[b]+0x50)=bm_record[b];
+            bm_body[b][0x77]=b==2?2:1;bm_body[b][0x78]=b==2?1:2;                /* +0x77 is the broadphase layer, not the type */
+            bm_record[b][0x3a]=b==4?0:1;
+            memcpy(bm_motion[b]+0x20,b==1 || b==4?hull:fallback,32);memcpy(bm_motion[b]+0x58,&inv_mass,4);
+        }
+        body_mass_census_t census;char census_text[256];
+        assert(body_mass_census(sample_read,bm_manager,&census) && census.bodies==5 && census.dynamic==4 && census.seen==2 &&
+               census.fallback==1 && census.differ==1 && census.updated==1 && census.unreadable==0);
+        assert(body_mass_census_text(&census,census_text,sizeof(census_text))>0 &&
+               !strcmp(census_text,"bodies=5 dynamic=4 seen=2 fallback=1 differ=1 updated=1 unreadable=0"));
+        ((uint32_t*)(bm_motion[0]+0x30))[0]=0x80000000u;                     /* -0: not the identity's words */
+        assert(body_mass_census(sample_read,bm_manager,&census) && census.fallback==0 && census.differ==2);
+        *(void**)(bm_body[0]+0x50)=NULL;                                      /* no record: unreadable, not compared */
+        assert(body_mass_census(sample_read,bm_manager,&census) && census.seen==1 && census.unreadable==1);
+        *(uint64_t*)bm_manager=0x800001u;assert(!body_mass_census(sample_read,bm_manager,&census));
+        assert(!body_mass_census(sample_read,NULL,&census));
+    }
     shape_original_word=0x89485708245c8948ULL;shape_patched_word=0x89485700000000e9ULL;
     memcpy(image+SHAPE_ENTRY,&shape_original_word,8);assert(shape_swap(shape_original_word,shape_patched_word));
     assert(!shape_swap(shape_original_word,0));shape_installed=1;shape_restore();assert(shape_restored && !shape_installed);

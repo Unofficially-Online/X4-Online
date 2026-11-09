@@ -155,6 +155,10 @@ def main():
                    '(native_gate_warp_exit; Windows is that order)')
     p.add_argument('--flight-limits', action='store_true', help="the Linux gate: the engine parameters' limit words with the "
                    "hoisted reciprocal (native_gate_flight_limits; Windows is that order)")
+    p.add_argument('--body1-mass', choices=('fallback',), help="the Linux gate: a ship's second body gets the empty compound's "
+                   "mass properties at creation, Windows' value (native_gate_body1_mass)")
+    p.add_argument('--body-step-diag', action='store_true', help='the Linux gate: BODY_STEP rows, the fixture bodies before and '
+                   'after the Jolt step (native_gate_body_step_diag, diagnostic)')
     p.add_argument('--actor-rng-rows', action='store_true', help='the Linux gate: one ACTOR_RNG_ROW per keyed scope that drew '
                    '(native_gate_actor_rng_rows, diagnostic; needs --actor-rng-all)')
     p.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the Linux gate: the mass traffic pass joined at the gate tick '
@@ -582,7 +586,7 @@ def main():
             p.error('--gate-so supports the snapshot boot with --mode clock or battle only')
         if args.mode == 'battle' and not args.snapshot_prebind:
             p.error('--gate-so --mode battle needs --snapshot-prebind (the Linux gate binds the snapshot fixture)')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from', 'tick_hz','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'flight_limits', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from', 'tick_hz','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'flight_limits', 'body1_mass', 'body_step_diag', 'velocity_diag', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
@@ -894,6 +898,16 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--flight-limits needs --gate-so and the snapshot boot')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_flight_limits = true\n')
+    if args.body1_mass:
+        if not args.gate_so or not args.snapshot:
+            p.error('--body1-mass needs --gate-so and the snapshot boot')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write(f"X4LAN_CONFIG.native_gate_body1_mass = '{args.body1_mass}'"+chr(10))
+    if args.body_step_diag:
+        if not args.gate_so or not args.snapshot:
+            p.error('--body-step-diag needs --gate-so and the snapshot boot')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_body_step_diag = true'+chr(10))
     if args.mining_camera:
         if not args.gate_so or not args.snapshot:
             p.error('--mining-camera needs --gate-so and the snapshot boot')

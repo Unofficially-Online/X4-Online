@@ -276,6 +276,7 @@ static int pslot_vtable_is_copy(uintptr_t vtable);
 #include "lockstep_contact.h"
 #include "lockstep_velocity.h"
 #include "lockstep_body.h"
+#include "lockstep_body_mass.h"
 #include "lockstep_shape.h"
 #include "lockstep_bullet.h"
 #include "lockstep_bullet_cadence.h"
@@ -3572,6 +3573,21 @@ static int lua_body(lua_State *L) {
     if(!object || !read_local(object+8,&id,8) || id!=actor_ids[i] || !body_state(object,(unsigned)which,out)) {p_lua_pushnil(L);return 1;}
     p_lua_pushlstring(L,out,strlen(out));return 1;
 }
+/* gate.body1_mass_census(): lockstep_body_mass.h over the BodyManager behind the first bound ship's first record (all
+ * bodies, not only the fixture's); read only, a verify for the Linux gate's native_gate_body1_mass. */
+static int lua_body1_mass_census(lua_State *L) {
+    unsigned char *manager=NULL;body_mass_census_t census;char out[256];
+    if(!stats.active || GetCurrentThreadId()!=ui_thread) {p_lua_pushnil(L);return 1;}
+    for(unsigned actor=1;actor<=ACTOR_CAPACITY && !manager;actor++) {
+        unsigned char *object=actor_components[actor-1],*record=NULL;uint64_t id=0;
+        if(!actor_is_ship(actor) || !object || !read_local(object+8,&id,8) || id!=actor_ids[actor-1] ||
+           !sample_read(object+0x260,&record,8) || !record) continue;
+        manager=body_mass_manager(sample_read,object,record,0x1b8u);
+    }
+    if(!manager || !body_mass_census(sample_read,manager,&census)) {p_lua_pushnil(L);return 1;}
+    int n=body_mass_census_text(&census,out,sizeof(out));
+    p_lua_pushlstring(L,out,(size_t)n);return 1;
+}
 static int lua_shape(lua_State *L) {
     double actor=p_lua_tonumber(L,1),which=p_lua_tonumber(L,2);
     if(!shape_installed || GetCurrentThreadId()!=ui_thread || !isfinite(actor) || actor<1 || actor>ACTOR_CAPACITY || floor(actor)!=actor || (!actor_is_ship((unsigned)actor) && !(shape_docking && actor_is_dock((unsigned)actor))) ||
@@ -4493,7 +4509,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(creation_rng_config);METHOD(creation_rng_status);METHOD(creation_rng_row);METHOD(creation_rng_ack_status);
     METHOD(registry_creation_config);METHOD(registry_creation_status);METHOD(registry_creation_identity);METHOD(registry_creation_operation);
     METHOD(velocity);
-    METHOD(body);
+    METHOD(body);METHOD(body1_mass_census);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
     METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_refwatch);METHOD(join_refwatch_from);METHOD(join_refwatch_peek);METHOD(join_refwatch_at);METHOD(join_shape_at);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_buildp);METHOD(join_view_skip);METHOD(join_viewf_write);METHOD(join_viewf_bits);METHOD(join_pend);METHOD(join_viewl);METHOD(join_rcnt);METHOD(join_ecos);METHOD(join_shpw);METHOD(join_shpw_words);METHOD(join_trdn);METHOD(join_npca);METHOD(join_jobg);METHOD(join_jobw);METHOD(join_code);METHOD(join_engr);METHOD(join_shgr);METHOD(join_resv);METHOD(join_pcsv);METHOD(join_conn);METHOD(join_warp);METHOD(join_gravn_extra);METHOD(join_attn_set);METHOD(join_ares);METHOD(join_undk);METHOD(join_bp);METHOD(join_porders);METHOD(join_gravp_settled);METHOD(join_lstn);METHOD(join_fobj);METHOD(join_srcs);METHOD(join_agcb_nav);METHOD(join_rprt);METHOD(join_bnds);METHOD(join_omgs);METHOD(join_jobdump);METHOD(join_jobcnt_at);METHOD(join_unpaired);

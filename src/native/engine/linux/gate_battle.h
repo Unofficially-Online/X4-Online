@@ -435,6 +435,23 @@ static int lua_body(lua_State *L) {
        !lxb_body_state((unsigned)actor,a->object,(unsigned)which,out,sizeof(out))) {p_lua_pushnil(L);return 1;}
     p_lua_pushlstring(L,out,strlen(out));return 1;
 }
+/* gate.body1_mass_census(): lockstep_body_mass.h over the BodyManager behind the first bound ship's first record, as
+ * Windows (all bodies; read only), the verify for native_gate_body1_mass. */
+static int lua_body1_mass_census(lua_State *L) {
+    unsigned char *manager=NULL;body_mass_census_t census;char out[256];
+    if(!stats.active || GetCurrentThreadId()!=ui_thread || lxb_bound!=LXB_ACTORS) {p_lua_pushnil(L);return 1;}
+    for(unsigned actor=1;actor<=LXB_ACTORS && !manager;actor++) {
+        const lxb_actor *a=&lxb_actors[actor-1];unsigned char *record=NULL;uint64_t id=0;unsigned slot=lxb_body_slot[actor-1];
+        /* the first record's slot, as lxb_body_state finds it (the census may run before gate.body) */
+        for(unsigned offset=LXB_BODY_SLOT_LOW;!slot && a->object && offset<=LXB_BODY_SLOT_LOW+8u;offset+=8u) if(lxb_record_owned(a->object,offset)) slot=offset;
+        if(!a->object || !slot || !gate_read_local((unsigned char*)a->object+8,&id,8) || id!=a->runtime ||
+           !gate_read_local((unsigned char*)a->object+slot,&record,8) || !record) continue;
+        manager=body_mass_manager(gate_read_local,a->object,record,LXB_PHYS_LOCK_IFACE);
+    }
+    if(!manager || !body_mass_census(gate_read_local,manager,&census)) {p_lua_pushnil(L);return 1;}
+    int n=body_mass_census_text(&census,out,sizeof(out));
+    p_lua_pushlstring(L,out,(size_t)n);return 1;
+}
 static int lua_snapshot_fixture(lua_State *L) {
     size_t length=0;const char *text=p_lua_tolstring(L,1,&length);
     p_lua_pushnumber(L,lxb_manifest(text,length));return 1;

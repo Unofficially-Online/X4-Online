@@ -322,6 +322,56 @@ class MixedPlatformTests(unittest.TestCase):
             self.assertIn('--mixed-platform', build_play_overlay.joiner_command(recipe, 's', 'g', 'o', 'p', 'b' * 64))
 
 
+class SessionBindTests(unittest.TestCase):
+    def test_session_base_binds_the_session_saves_fixture(self):
+        """--session: the battle base takes the session save's checksum, fixture and watch list (ns1: without them the gate
+        bound snapshot 005's fixture and stopped at its first frame); a fixture other than the registered one is refused."""
+        sys.path.insert(0, str(Path(build_play_overlay.__file__).resolve().parent / 'dev'))
+        import native_gate_scenarios as scenarios
+        ids = [f'{0x16e8e5 + 19 * i:016x}' for i in range(12)]
+        lines = ['X4LAN_CONFIG.native_gate_snapshot_sha = "' + 'a' * 64 + '"',
+                 'X4LAN_CONFIG.native_gate_snapshot_fixture = {' + ','.join(repr(i) for i in ids) + '}',
+                 'X4LAN_CONFIG.native_gate_world_hash_watch = {' + ','.join(repr(i) for i in ids) + '}']
+        def fake_step(name, cmd):
+            cmd = [str(c) for c in cmd]
+            if name == 'check':
+                return 'ok'
+            out = Path(cmd[cmd.index('--out') + 1])
+            if name == 'base':
+                (out / 'ui').mkdir(parents=True)
+                (out / 'ui/config.lua.append').write_text(chr(10).join([
+                    'X4LAN_CONFIG.native_gate_snapshot_sha = "' + 'b' * 64 + '"',
+                    "X4LAN_CONFIG.native_gate_world_hash_watch = {'0000000000176b97'}",
+                    'X4LAN_CONFIG.native_gate_test = true']) + chr(10))
+            if name == 'players':
+                (out / 'native').mkdir(parents=True)
+                (out / 'native/x4lan_gate_64.dll').write_bytes(b'gate')
+                (out / 'ui').mkdir()
+                (out / 'ui/config.lua.append').write_text('X4LAN_CONFIG.enabled = true' + chr(10))
+            return 'ok'
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(build_play_overlay, 'step', fake_step), \
+                mock.patch.object(scenarios, 'snapshot_lines', lambda path: (lines, {'start': 'gs_x'})):
+            snap = Path(d) / 'session-save.xml.gz'
+            snap.write_bytes(b'save')
+            session_file = Path(d) / 'session.json'
+            data = {'players': 2, 'mode': 'coop', 'base_start': 'gs_x', 'fixture': ids,
+                    'snapshot': {'sha256': hashlib.sha256(b'save').hexdigest()}}
+            session_file.write_text(json.dumps(data))
+            args = ['--snapshot', str(snap), '--gate-dll', str(snap), '--players', '2', '--mode', 'coop', '--session', str(session_file)]
+            build_play_overlay.main(args + ['--out', str(Path(d) / 'ov')])
+            text = (Path(d) / 'ov.base/ui/config.lua.append').read_text()
+            for line in lines:
+                self.assertIn(line, text)
+            self.assertNotIn('b' * 64, text)
+            self.assertNotIn("{'0000000000176b97'}", text)
+            self.assertIn('native_gate_test = true', text)
+            self.assertTrue((Path(d) / 'ov.base/x4lane-manifest.json').is_file())
+            data['fixture'] = ids[::-1]
+            session_file.write_text(json.dumps(data))
+            with self.assertRaises(SystemExit):
+                build_play_overlay.main(args + ['--out', str(Path(d) / 'ov2')])
+
+
 class RecipeTests(unittest.TestCase):
     def test_open_slots(self):
         self.assertEqual(build_play_overlay.open_slots('', 4), [])

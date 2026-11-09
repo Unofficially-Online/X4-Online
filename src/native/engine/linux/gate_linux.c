@@ -151,6 +151,20 @@ static int wx_installed,wx_restored;
 static void fl_restore(void);
 static int fl_check(void);
 static void lxpt_restore(void); /* the battle fixture's params trace (gate_battle.h) */
+/* The second body's mass properties (gate_body_mass.h, included below). */
+static void lxbm_restore(void);
+/* The fixture bodies around Jolt's step (gate_body_step.h, diagnostic, included below). */
+static void lxbs_restore(void);
+/* The fixture controllers' SetVelocity calls (gate_velocity.h, boot option 524288, diagnostic). */
+static void lxvd_restore(void);
+static int lxvd_owned(void);
+static int lxvd_installed,lxvd_restored;
+static uint64_t lxvd_calls;
+static volatile int64_t lxvd_failures;
+static int lxbs_check(void);
+static int lxbs_installed;
+static int lxbm_check(void);
+static int lxbm_installed;
 static int fl_installed,fl_restored;
 /* The region object search's camera test (gate_mining_camera.h, included below). */
 static void lxmc_restore(void);
@@ -530,6 +544,12 @@ static void finish(unsigned reason) {
     fl_restore();
     if(fl_installed) stats.restored=0;
     lxpt_restore();
+    lxbm_restore();
+    lxbs_restore();
+    lxvd_restore();
+    if(lxvd_installed) stats.restored=0;
+    if(lxbs_installed) stats.restored=0;
+    if(lxbm_installed) stats.restored=0;
     lxmc_restore();
     if(lxmc_installed) stats.restored=0;
     lxf_restore();
@@ -654,6 +674,9 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(wr_installed && !wr_check()) {finish(143);gate_original_once(frame,loading);return;} /* WR_STOP_REASON */
     if(wx_installed && !wx_check()) {finish(146);gate_original_once(frame,loading);return;} /* WX_STOP_REASON */
     if(fl_installed && !fl_check()) {finish(189);gate_original_once(frame,loading);return;} /* FL_STOP_REASON */
+    if(lxbm_installed && !lxbm_check()) {finish(204);gate_original_once(frame,loading);return;} /* LXBM_STOP_REASON */
+    if(lxbs_installed && !lxbs_check()) {finish(205);gate_original_once(frame,loading);return;} /* LXBS_STOP_REASON */
+    if(lxvd_installed && (!lxvd_owned() || lxvd_failures)) {finish(44);gate_original_once(frame,loading);return;} /* Windows: 44 */
     if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if((lxf_installed || lxf_ctor_installed) && (!lxf_owned() || lxf_failures)) {finish(55);gate_original_once(frame,loading);return;} /* flight, as Windows */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
@@ -886,9 +909,13 @@ static int lua_start(lua_State *L) {
 #include "gate_warp_rng.h"
 #include "gate_warp_exit.h"
 #include "gate_flight_limits.h"
+#include "../lockstep_body_mass.h" /* the read-only census, shared with Windows */
+#include "gate_body_mass.h"
 #include "gate_mining_camera.h"
 #include "gate_flight.h"
 #include "gate_battle.h"
+#include "gate_body_step.h"
+#include "gate_velocity.h"
 static int lua_flight_faults(lua_State *L) {
     char out[512];int n=accept_ui()?lxf_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
@@ -965,6 +992,7 @@ static int lua_read_cost(lua_State *L) {
 #define LX_BOOT_SHIP_RNG 2048ull
 #define LX_BOOT_PARAMS_INIT 4096ull /* the battle fixture's flight parameters built once at the first sample (gate_battle.h) */
 #define LX_BOOT_PARAMS_DIAG 32768ull /* the builder's calls on fixture controllers traced (gate_battle.h, Windows params_diag) */
+#define LX_BOOT_VELOCITY_DIAG 524288ull /* the fixture controllers' SetVelocity calls traced (gate_velocity.h, Windows velocity_diag) */
 #define LX_BOOT_SPLINE_JOIN 34359738368ull
 #define LX_BOOT_SPLINE_DIAG 8589934592ull     /* the spline hook's battle-fixture path and spline_state (gate_spline_join.h) */
 #define LX_BOOT_SPLINE_REFRESH 17179869184ull /* its fixture refresh (needs diag and agent_full) */
@@ -975,7 +1003,7 @@ static int lua_read_cost(lua_State *L) {
 /* The battle fixture's steering (gate_flight.h): 4 flight_diag, 8 flight_rng, 16 flight_full install it (Windows: options&28);
  * 2^31 avoidance_refresh and 2^32 steering_init are its settings. */
 #define LX_BOOT_FLIGHT (4ull|8ull|16ull|2147483648ull|4294967296ull)
-#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_PARAMS_INIT|LX_BOOT_PARAMS_DIAG|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
+#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_PARAMS_INIT|LX_BOOT_PARAMS_DIAG|LX_BOOT_VELOCITY_DIAG|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
 static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *hash,double options) {
     if(!isfinite(options) || options<0 || options>9007199254740991.0 || floor(options)!=options) return 10;
     if((uint64_t)options & ~LX_BOOT_OPTIONS) return LX_STOP_UNPORTED_OPTION;
@@ -1002,6 +1030,7 @@ static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned time
         laa_agent_full=(boot_options&LX_BOOT_AGENT_FULL)!=0;
         if(!result && (boot_options&LX_BOOT_PARAMS_INIT)) {if(!lxb_params_pinned()) {finish(35);result=35;} else lxb_params_enabled=1;} /* Windows: 35, the pin */
         if(!result && (boot_options&LX_BOOT_PARAMS_DIAG) && !lxpt_install()) {finish(39);result=39;} /* Windows: 39 */
+        if(!result && (boot_options&LX_BOOT_VELOCITY_DIAG) && !lxvd_install()) {finish(43);result=43;} /* Windows: 43 */
         if(!result && (boot_options&28) && !lxf_install((boot_options&8)!=0,(boot_options&16)!=0,(boot_options&2147483648ull)!=0,
                                                      (boot_options&4294967296ull)!=0)) {finish(28);result=28;}
     }
@@ -1040,6 +1069,7 @@ static int lua_poll(lua_State *L) {
     NUMBER("world_hash_scans",world_hash_scans);NUMBER("world_hash_failures",world_hash_failures);
     NUMBER("params_calls",lxb_params_calls);
     NUMBER("params_trace_calls",lxpt_calls);NUMBER("params_restored",lxpt_restored);NUMBER("params_trace_failures",lxpt_failures);
+    NUMBER("velocity_calls",lxvd_calls);NUMBER("velocity_restored",lxvd_restored);NUMBER("velocity_failures",lxvd_failures);
     /* The probe's stop lines for the battle fixture (Windows' poll fields, from the Linux modules). */
     NUMBER("snapshot_bound",lxb_bound);NUMBER("snapshot_prepared",lxb_prepared);NUMBER("snapshot_enrolled",lxb_enrolled);
     NUMBER("snapshot_failures",lxb_failures);
@@ -1096,7 +1126,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(actor);METHOD(params);METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);METHOD(snapshot_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
-    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(flight_limits);METHOD(flight_limits_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
+    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(flight_limits);METHOD(flight_limits_status);METHOD(body1_mass);METHOD(body1_mass_status);METHOD(body1_mass_census);METHOD(body_step_diag);METHOD(body_step_status);METHOD(body_step);METHOD(velocity);METHOD(velocity_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
     METHOD(build_rng);METHOD(build_rng_status);METHOD(build_rng_row);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);

@@ -611,6 +611,11 @@ static const lx_site lx_sites[]={
     {"flight_limits_block",0x148d812,0x125,"ce57d1e551ae7ed42a7d15b25d61df1219c4c30de4648ff3b06e21f857ed9c6c"},
     /* gate_flight_limits.h: the thrust words' inputs, sum and words, 0x1481274..0x14813dc. */
     {"flight_thrust_block",0x1481274,0x169,"428540eafba90b0f5b303cfce6de0c438fb1969383b169ef2614f2c376f2d97c"},
+    /* gate_body_mass.h: JPH::BodyManager::AllocateBody's head, and XPhys::XDefinedMassShape::GetMassProperties. */
+    {"body_allocate",0x1a969d0,0x30,"5310a4438336ae1f8a354e1813c6b2d74fb0749d3177cad2cfd806f01fcf6407"},
+    {"physics_update",0x1b1ce30,0x30,"3ac40c8da74d559187f9bea519425f0f8932cd8f501b2ec70463e2da02134eb9"},
+    {"nav_set_velocity",0x141fe50,0x40,"9039dc81f5cd4579a91a949cb1137110ea5d37d71f480a78de4af518736793a7"},
+    {"body_defined_mass",0xed4cf0,0x8e,"f640dc2b2c63a1a363cc8f487544824b91ee72e7eadc3da0dcd7117084634874"},
     {"mining_search",0x1f47b20,0x6d0,"2793312d8762d21df2f389e8d00a52856fad88569264f6c63e0365e368a9ba07"},
     {"rid_ui_create_instance",0xb08820,0x280,"668801b166713825545657c8f611638dc1d2d0fedd503458e50f692d235a2f63"},
     {"rid_ui_controller_move",0xa758a0,0x25f0,"e28098824694f1b812c0c0ad5889df11d7feec884245cb8d7e5851d22f5e46e0"},

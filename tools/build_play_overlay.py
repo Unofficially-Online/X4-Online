@@ -23,6 +23,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -114,6 +115,25 @@ def joiner_command(recipe, snapshot, gate_dll, out, package, package_sha, sessio
     for item in recipe['set']:
         cmd += ['--set', item]
     return cmd
+
+
+def bind_session_save(base, snapshot, session_data):
+    """--session: the base overlay bound to the session save itself, its checksum, its fixture (the twelve ships the capture
+    spawned) and the census watch list (native_gate_session_start.py rebase). The battle base binds snapshot 005's fixture by
+    default, so a session from another start stopped at its first frame (ns1, 8 Nov: stop 74, SNAPSHOT_BOUNDARY bind_actor)."""
+    sys.path.insert(0, str(DEV))
+    import native_gate_scenarios as scenarios
+    lines, header = scenarios.snapshot_lines(snapshot)
+    if header['start'] != session_data.get('base_start'):
+        raise SystemExit(f"--session: the save's start {header['start']} is not the session's {session_data.get('base_start')}")
+    fixture = re.findall(r"'([0-9a-f]{16})'", next(line for line in lines if '.native_gate_snapshot_fixture ' in line))
+    if fixture != session_data.get('fixture'):
+        raise SystemExit("--session: the save's fixture is not the registered one (session.json fixture)")
+    config = base / 'ui/config.lua.append'
+    keys = tuple(f'X4LAN_CONFIG.{key} ' for key in scenarios.SNAPSHOT_KEYS)
+    kept = [line for line in config.read_text(encoding='utf-8').splitlines() if not line.startswith(keys)]
+    config.write_text(NL.join(kept + lines) + NL, encoding='utf-8')
+    scenarios.write_manifest(base)
 
 
 def check_joiner(out, package, sha, save, players, join_mode):
@@ -226,6 +246,8 @@ def main(argv=None):
         sets = join_overlays.default_sets(join_overlays.ids_sets(join_overlays.refresh_sets(join_overlays.precise_sets(sets))))
     step('base', [DEV / 'build_native_gate_overlay.py', '--mode', 'battle', '--gate-dll', args.gate_dll.resolve(),
                   '--snapshot', args.snapshot.resolve(), '--session-clients', *join_base, '--out', base, *coverage])
+    if session_data and not args.join_package:   # a joiner's base boots the join save (its package carries the session's state)
+        bind_session_save(base, args.snapshot, session_data)
     cmd = [DEV / 'native_gate_players.py', 'overlay', '--base', base, '--out', out, '--gate-dll', args.gate_dll.resolve(),
            '--probe', DEV / 'native_gate_probe.lua', '--players', str(args.players), '--mode', args.mode, '--source', 'stock',
            '--defaults-only', '--set', f'native_gate_pilot_window={{{WINDOW_START},{end}}}']   # --defaults-only takes no --window

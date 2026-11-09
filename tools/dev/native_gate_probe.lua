@@ -2883,6 +2883,11 @@ local function sample(tick)
    if extra then log('DOCK_EXTRA_SHAPE id='..actor..' which='..which..' '..extra) end
   end end
  end
+ -- Every second body's mass properties against the empty compound's fallback (lockstep_body_mass.h, read only): the
+ -- verify for native_gate_body1_mass, on both platforms. A walk over all bodies, so ticks 1, 2 and every 300th only.
+ if cfg.native_gate_body_diag and gate.body1_mass_census and (tick<=2 or tick%300==0) then
+  log('BODY1_MASS_CENSUS tick='..tick..' '..tostring(gate.body1_mass_census()))
+ end
  for i=1,12 do
   local object=assert(actors[i],'missing battle actor')
   if cfg.native_gate_world_identities and not world_actors[i] then
@@ -2970,6 +2975,9 @@ local function sample(tick)
     end
     if trace and cfg.native_gate_body_diag then
      for which=0,1 do log('BODY id='..i..' which='..which..' tick='..tick..' '..body(which)) end
+    end
+    if trace and cfg.native_gate_body_step_diag and gate.body_step then
+     for which=0,1 do log('BODY_STEP id='..i..' which='..which..' tick='..tick..' '..tostring(gate.body_step(i,which))) end
     end
     if trace and cfg.native_gate_shape_diag then
      for which=0,1 do log('SHAPE id='..i..' which='..which..' '..assert(gate.shape(i,which),'physics shape trace unavailable')) end
@@ -3611,6 +3619,20 @@ local function frame()
   if cfg.native_gate_flight_limits and gate.platform and gate.platform()=='linux' then
    assert(cfg.native_gate_flight_limits==true and snapshot and gate.flight_limits and gate.flight_limits_status and gate.flight_limits()==1,'flight limits refused')
    log('FLIGHT_LIMITS_ARMED')
+  end
+  -- A ship's second body (linux/gate_body_mass.h): its mass properties come from the parts its compound holds when the
+  -- body is created; Windows creates it before they arrive (the empty compound's sphere fallback), Linux often after.
+  -- 'fallback' gives every such body Windows' value at creation, before the snapshot load. Linux only; default off.
+  if cfg.native_gate_body1_mass and gate.platform and gate.platform()=='linux' then
+   assert(cfg.native_gate_body1_mass=='fallback' and snapshot and gate.body1_mass and gate.body1_mass_status and gate.body1_mass('fallback')==1,
+    'body1 mass refused '..tostring(gate.body1_mass_status and gate.body1_mass_status()))
+   log('BODY1_MASS_ARMED mode=fallback')
+  end
+  -- The fixture bodies just before and after Jolt's step (linux/gate_body_step.h): BODY_STEP rows. Linux only, diagnostic.
+  if cfg.native_gate_body_step_diag and gate.platform and gate.platform()=='linux' then
+   assert(snapshot and gate.body_step_diag and gate.body_step_status and gate.body_step_diag()==1,
+    'body step diag refused '..tostring(gate.body_step_status and gate.body_step_status()))
+   log('BODY_STEP_ARMED')
   end
   -- Object attention timer (0x6d1ff0) for every portable object, not only the
   -- fixture actors: the loading-time due is replaced by "due now" at the first
@@ -5247,6 +5269,8 @@ local function frame()
   if cfg.native_gate_tempzone_order then log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end
   if cfg.native_gate_warp_exit and gate.warp_exit_status then log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end
   if cfg.native_gate_flight_limits and gate.flight_limits_status then log('FLIGHT_LIMITS_STOP '..tostring(gate.flight_limits_status())) end
+  if cfg.native_gate_body1_mass and gate.body1_mass_status then log('BODY1_MASS_STOP '..tostring(gate.body1_mass_status())) end
+  if cfg.native_gate_body_step_diag and gate.body_step_status then log('BODY_STEP_STOP '..tostring(gate.body_step_status())) end
   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end
   if cfg.native_gate_attention_all then log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end
   if cfg.native_gate_view_points then log('VIEW_POINTS_STOP '..tostring(gate.view_points_status())) end
@@ -5635,6 +5659,12 @@ local function frame()
  end
  if cfg.native_gate_flight_limits and gate.flight_limits_status then
   ticklog.status('FLIGHT_LIMITS',tick,gate.flight_limits_status,'flight limits status unavailable')
+ end
+ if cfg.native_gate_body1_mass and gate.body1_mass_status then
+  ticklog.status('BODY1_MASS',tick,gate.body1_mass_status,'body1 mass status unavailable')
+ end
+ if cfg.native_gate_body_step_diag and gate.body_step_status then
+  ticklog.status('BODY_STEP',tick,gate.body_step_status,'body step status unavailable')
  end
  if cfg.native_gate_command_order then
   ticklog.status('COMMAND_ORDER',tick,gate.command_order_status,'command order status unavailable')
@@ -6172,6 +6202,8 @@ SetScript('onUpdate',function()
    if cfg.native_gate_tempzone_order then ticklog.try(function() log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end) end
    if cfg.native_gate_warp_exit and gate.warp_exit_status then ticklog.try(function() log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end) end
    if cfg.native_gate_flight_limits and gate.flight_limits_status then ticklog.try(function() log('FLIGHT_LIMITS_STOP '..tostring(gate.flight_limits_status())) end) end
+   if cfg.native_gate_body1_mass and gate.body1_mass_status then ticklog.try(function() log('BODY1_MASS_STOP '..tostring(gate.body1_mass_status())) end) end
+   if cfg.native_gate_body_step_diag and gate.body_step_status then ticklog.try(function() log('BODY_STEP_STOP '..tostring(gate.body_step_status())) end) end
    if cfg.native_gate_path_transform_observe then
     ticklog.try(function()
      ticklog.write('PATH_TRANSFORM_OBSERVE_STOP '..tostring(gate.path_transform_observe_status()))

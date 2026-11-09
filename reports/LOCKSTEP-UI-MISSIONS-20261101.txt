@@ -189,7 +189,8 @@ refuses it, ui_missions_claim_taken:<name>). The M1 spec's mask is 19455; entrie
      the same slot, refuse (stop) a nested frame of another slot's tree; (iii) P_k as an MD value: MD stores player.entity
      as a runtime ID ($Player = player.entity) and resolves it with Find(map, id, 4) later: P_k needs a runtime ID in the
      registry, the same on every client (today P_k is built by the factory and never connected [F lockstep_pilot_slots.h];
-     whether it is registered is unknown [I]); (iv) events on P_k: listeners such as event_object_changed_sector
+     registered: reg1, 8 Nov, x4ls play with 2 players, gate.pilot_slots_registry every 600 ticks: P_2 has runtime ID 1615fa
+     on both clients and Find(map, id, 4) answers P_2 itself at 600..3600 on both [F]); (iv) events on P_k: listeners such as event_object_changed_sector
      object="player.entity" registered in scope k bind to P_k, which nothing moves in the component tree: slot k's sector
      changes must be posted on P_k by our seat code [I].
   C2 Per slot managers. A mission manager per slot (0x3d0 bytes, ctor 0x1137710) and a conversation manager per slot,

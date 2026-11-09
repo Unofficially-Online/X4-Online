@@ -373,6 +373,9 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_warp_rng.h"
 #include "test_gate_warp_exit.h"
 #include "test_gate_flight_limits.h"
+#include "test_gate_body_mass.h"
+#include "test_gate_body_step.h"
+#include "test_gate_velocity.h"
 #include "test_gate_mining_camera.h"
 #include "test_gate_runtime_ids_local.h"
 #include "test_gate_shield_canonical.h"
@@ -428,6 +431,9 @@ int main(int argc,char **argv) {
     test_warp_rng_linux();
     test_warp_exit_linux();
     test_flight_limits_linux();
+    test_body_mass_linux();
+    test_body_step_linux();
+    test_velocity_linux();
     test_mining_camera_linux();
     test_runtime_ids_local_linux();
     test_shield_canonical_linux();
@@ -464,6 +470,9 @@ int main(int argc,char **argv) {
         test_warp_rng_elf();
         test_warp_exit_elf();
         test_flight_limits_elf();
+        test_body_mass_elf();
+        test_body_step_elf();
+        test_velocity_elf();
         test_mining_camera_elf();
         test_runtime_ids_local_elf();
         test_shield_canonical_elf();
