@@ -3578,6 +3578,13 @@ local function frame()
    assert(cfg.native_gate_warp_exit==true and snapshot and gate.warp_exit and gate.warp_exit_status and gate.warp_exit()==1,'warp exit refused')
    log('WARP_EXIT_ARMED')
   end
+  -- The flight limits (linux/gate_flight_limits.h): the engine parameters end a ship's limits with x / m per word;
+  -- MSVC computes x * (1 / m) (1 ulp apart). The Linux gate runs that block with the reciprocal; Windows is that
+  -- order, so a Windows client has nothing to arm. Default off.
+  if cfg.native_gate_flight_limits and gate.platform and gate.platform()=='linux' then
+   assert(cfg.native_gate_flight_limits==true and snapshot and gate.flight_limits and gate.flight_limits_status and gate.flight_limits()==1,'flight limits refused')
+   log('FLIGHT_LIMITS_ARMED')
+  end
   -- Object attention timer (0x6d1ff0) for every portable object, not only the
   -- fixture actors: the loading-time due is replaced by "due now" at the first
   -- admitted call per portable ID, and every call draws its next due from a
@@ -5212,6 +5219,7 @@ local function frame()
   if cfg.native_gate_transition_rows then log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end
   if cfg.native_gate_tempzone_order then log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end
   if cfg.native_gate_warp_exit and gate.warp_exit_status then log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end
+  if cfg.native_gate_flight_limits and gate.flight_limits_status then log('FLIGHT_LIMITS_STOP '..tostring(gate.flight_limits_status())) end
   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end
   if cfg.native_gate_attention_all then log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end
   if cfg.native_gate_view_points then log('VIEW_POINTS_STOP '..tostring(gate.view_points_status())) end
@@ -5597,6 +5605,9 @@ local function frame()
  end
  if cfg.native_gate_warp_exit and gate.warp_exit_status then
   ticklog.status('WARP_EXIT',tick,gate.warp_exit_status,'warp exit status unavailable')
+ end
+ if cfg.native_gate_flight_limits and gate.flight_limits_status then
+  ticklog.status('FLIGHT_LIMITS',tick,gate.flight_limits_status,'flight limits status unavailable')
  end
  if cfg.native_gate_command_order then
   ticklog.status('COMMAND_ORDER',tick,gate.command_order_status,'command order status unavailable')
@@ -6031,6 +6042,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_transition_rows then ticklog.try(function() log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end) end
    if cfg.native_gate_tempzone_order then ticklog.try(function() log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end) end
    if cfg.native_gate_warp_exit and gate.warp_exit_status then ticklog.try(function() log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end) end
+   if cfg.native_gate_flight_limits and gate.flight_limits_status then ticklog.try(function() log('FLIGHT_LIMITS_STOP '..tostring(gate.flight_limits_status())) end) end
    if cfg.native_gate_path_transform_observe then
     ticklog.try(function()
      ticklog.write('PATH_TRANSFORM_OBSERVE_STOP '..tostring(gate.path_transform_observe_status()))

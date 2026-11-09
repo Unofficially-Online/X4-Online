@@ -395,6 +395,8 @@ def bundle(args):
         command += ['--warp-rng', args.warp_rng]
     if args.warp_exit:
         command.append('--warp-exit')
+    if args.flight_limits:
+        command.append('--flight-limits')
     if args.world_hash_shields:
         command.append('--world-hash-shields')
     if args.mining_camera:
@@ -510,6 +512,7 @@ def bundle(args):
         'tempzone_order',
         'warp_rng',
         'warp_exit',
+        'flight_limits',
         'world_hash_shields',
         'mining_camera',
         'mass_traffic',
@@ -1315,6 +1318,7 @@ def main(argv=None):
     b.add_argument('--tempzone-order', action='store_true',
                    help='order tempzone requests after snapshot-tracked or inline pathing batches finish')
     b.add_argument('--warp-exit', action='store_true', help='the gate exit sum in the Windows order (native_gate_warp_exit)')
+    b.add_argument('--flight-limits', action='store_true', help="the engine parameters' limit words with Windows' hoisted reciprocal (native_gate_flight_limits)")
     b.add_argument('--world-hash-shields', action='store_true', help="census shields in canonical form (native_gate_world_hash_shields = "
                    "'canonical', as the Windows default stack hashes them)")
     b.add_argument('--mining-camera', action='store_true', help="the region object search's camera test from the player's ship "

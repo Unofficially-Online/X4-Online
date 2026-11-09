@@ -468,6 +468,7 @@ D.EXCLUDED={
  {'native_gate_travel_determinism','alternative to travel_snapshot (mutually exclusive)'},
  {'native_gate_nav_key','Linux gate only'},
  {'native_gate_warp_exit','Linux gate only: the gate exit sum in the Windows order (Windows is that order); a Linux default after a 0 W vs L census'},
+ {'native_gate_flight_limits','Linux gate only: the engine parameters limit words with the hoisted reciprocal (Windows is that order)'},
  {'native_gate_timer_resolution','timer experiment'},
  {'native_gate_tick_pace','unset = paced (false unpaces)'},
  {'native_gate_world_timing_fields','no reader in the probe (obsolete key)'},
@@ -520,7 +521,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch'}
+ [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

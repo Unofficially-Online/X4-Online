@@ -153,6 +153,8 @@
 /* The gate exit sum in the Windows order (gate_warp_exit.h). */
 #define LX_WX_ENTRY_VA 0x1615324u            /* the poster's movss xmm0,[rdx+0x268]: the first of the exit sum (Windows 0x5ceb27..0x5ceb9d) */
 #define LX_WX_RETURN_VA 0x1615353u           /* the instruction after the sum (movss xmm1,[rbp-0x1c8]) */
+#define LX_FL_ENTRY_VA 0x148d812u            /* the flight limits' block: movss xmm3,[rip+...] (Windows 0x1406dcceb..0x1406dcdcf) */
+#define LX_FL_RETURN_VA 0x148d05eu           /* the block's final jmp target */
 /* The region object search's camera test from the player's ship (gate_mining_camera.h; lockstep_region_camera.h mining). */
 #define LX_MC_FUNC_VA 0x1f47b20u             /* the search (Windows 0x7884a0): rdi sector, rsi position, rdx frame, the object in rax */
 #define LX_MC_SITE_VA 0x1f47f40u             /* its camera block, entered only from 0x1f47b9e (the player's cluster is the region's) */
@@ -603,6 +605,8 @@ static const lx_site lx_sites[]={
     {"warp_frame_call",0x1615817,0x55,"6e5b13caa6d9d2bd929c9152e64dbf1b4e89125bd790404135eec06fa88c685a"},
     {"warp_gtrt",0x18a0090,0x3e0,"8489683612cc942bd00c117405c4b2ba6e02307198a653f05b574d2e62b08ccd"},
     {"warp_exit_sum",0x16152fc,0x57,"8796bf36163293c7d9ba764f473ccdd9b81cf114c9db8bdbc791f6884fa36436"},
+    /* gate_flight_limits.h: the engine parameters' seven limit words, 0x148d812..0x148d936 (its final jmp included). */
+    {"flight_limits_block",0x148d812,0x125,"ce57d1e551ae7ed42a7d15b25d61df1219c4c30de4648ff3b06e21f857ed9c6c"},
     {"mining_search",0x1f47b20,0x6d0,"2793312d8762d21df2f389e8d00a52856fad88569264f6c63e0365e368a9ba07"},
     {"rid_ui_create_instance",0xb08820,0x280,"668801b166713825545657c8f611638dc1d2d0fedd503458e50f692d235a2f63"},
     {"rid_ui_controller_move",0xa758a0,0x25f0,"e28098824694f1b812c0c0ad5889df11d7feec884245cb8d7e5851d22f5e46e0"},

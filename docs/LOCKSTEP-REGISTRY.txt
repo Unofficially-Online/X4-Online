@@ -249,6 +249,8 @@ Modules (define, owner):
   188 CPLAY_STOP_REASON         lockstep_character_play.h (native_gate_character_play: a body animation start loads its character and
                                 motion first and draws on a keyed word; whys slot_changed, object_changed, block_changed,
                                 sync_timeout, sync_queue, loader, asset_entry, word, exception)
+  189 FL_STOP_REASON            linux/gate_flight_limits.h (native_gate_flight_limits, Linux gate only: the engine
+                                parameters' limit words with Windows' hoisted reciprocal; whys entry_changed, block_changed)
   190 ADAPT_STOP_PLAN           lockstep_adaptive.h (protocol 5)
   191 ADAPT_STOP_SOURCE         lockstep_adaptive.h
   192 ADAPT_STOP_QUIET          lockstep_adaptive.h

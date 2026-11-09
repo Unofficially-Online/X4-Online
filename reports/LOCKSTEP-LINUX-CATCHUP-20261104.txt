@@ -444,6 +444,14 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   59.375 is 0x426d8001, Linux the exact 0x426d8000) and 88.3139 the other way: a rounding-order difference in the
   flight-parameter computation, to find. body1 is unchanged at 30 Hz (the unit sphere on Windows, the hull on Linux,
   process-dependent): not a rate effect.
+  The limits' last step (58ddda15, native_gate_flight_limits, Linux only, default off): the engine parameters
+  (Windows 0x1406dc610, Linux 0x148cb50) end with seven words max(dest, max(k, |v|) / m); MSVC computes x * (1/m) with
+  one reciprocal, GCC divides each word. The Linux block 0x148d812..0x148d936 now runs in Windows' order (a stub,
+  unit-tested end to end on the executable's own bytes: GCC's and MSVC's bits). It is not the fixture's residue: lx40a
+  (lx38 + flight_limits) leaves actor 1's limits bit-identical (the stub ran 82 times; the fixture's words are the
+  larger dest from the step before, not the block's own quotient). That step is 0x14811c0 (Windows 0x1406db200), the
+  thrust and drag terms, where the two compilers built different expression trees (Linux x / a * b, Windows x * b * c /
+  d, about 15 divisions each): the next port is that function in Windows' operation order on Linux.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

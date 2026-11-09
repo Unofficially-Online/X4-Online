@@ -147,6 +147,10 @@ static int wr_installed,wr_restored;
 static void wx_restore(void);
 static int wx_check(void);
 static int wx_installed,wx_restored;
+/* The flight limits in the Windows order (gate_flight_limits.h, included below). */
+static void fl_restore(void);
+static int fl_check(void);
+static int fl_installed,fl_restored;
 /* The region object search's camera test (gate_mining_camera.h, included below). */
 static void lxmc_restore(void);
 static int lxmc_check(void);
@@ -522,6 +526,8 @@ static void finish(unsigned reason) {
     if(wr_installed) stats.restored=0;
     wx_restore();
     if(wx_installed) stats.restored=0;
+    fl_restore();
+    if(fl_installed) stats.restored=0;
     lxmc_restore();
     if(lxmc_installed) stats.restored=0;
     lxf_restore();
@@ -645,6 +651,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(tz_installed && !tz_check()) {finish(144);gate_original_once(frame,loading);return;} /* TZ_STOP_REASON */
     if(wr_installed && !wr_check()) {finish(143);gate_original_once(frame,loading);return;} /* WR_STOP_REASON */
     if(wx_installed && !wx_check()) {finish(146);gate_original_once(frame,loading);return;} /* WX_STOP_REASON */
+    if(fl_installed && !fl_check()) {finish(189);gate_original_once(frame,loading);return;} /* FL_STOP_REASON */
     if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if((lxf_installed || lxf_ctor_installed) && (!lxf_owned() || lxf_failures)) {finish(55);gate_original_once(frame,loading);return;} /* flight, as Windows */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
@@ -876,6 +883,7 @@ static int lua_start(lua_State *L) {
 #include "gate_tempzone_order.h"
 #include "gate_warp_rng.h"
 #include "gate_warp_exit.h"
+#include "gate_flight_limits.h"
 #include "gate_mining_camera.h"
 #include "gate_flight.h"
 #include "gate_battle.h"
@@ -1083,7 +1091,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(actor);METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);METHOD(snapshot_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
-    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
+    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(flight_limits);METHOD(flight_limits_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
     METHOD(build_rng);METHOD(build_rng_status);METHOD(build_rng_row);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
