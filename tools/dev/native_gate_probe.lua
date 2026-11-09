@@ -3941,9 +3941,13 @@ local function frame()
   -- 1..N, one int3 per entry until it first runs (Option B evidence). Run it with few other modules. Default off.
   if cfg.native_gate_coverage then
    local ticks=cfg.native_gate_coverage
+   -- native_gate_coverage_from = T (the Linux gate only): the marks go in at tick T instead of tick 1.
+   local from=cfg.native_gate_coverage_from
+   assert(from==nil or (type(from)=='number' and from>=1 and from<=ticks and from%1==0 and gate.platform and gate.platform()=='linux'),
+    'coverage from needs the Linux gate and 1..ticks')
    assert(type(ticks)=='number' and ticks>=1 and ticks<=6000 and ticks%1==0 and gate.coverage and gate.coverage_frame and gate.coverage_status and
-    gate.coverage_row and gate.coverage(ticks)==1,'coverage refused '..tostring(gate.coverage_status and gate.coverage_status()))
-   log('COVERAGE_ARMED ticks='..ticks..' '..tostring(gate.coverage_status()))
+    gate.coverage_row and (from and gate.coverage(ticks,from) or gate.coverage(ticks))==1,'coverage refused '..tostring(gate.coverage_status and gate.coverage_status()))
+   log('COVERAGE_ARMED ticks='..ticks..(from and ' from='..from or '')..' '..tostring(gate.coverage_status()))
   end
   -- Linux-only diagnostic: the candidate live getter can have engine side effects.
   if cfg.native_gate_path_transform_observe then

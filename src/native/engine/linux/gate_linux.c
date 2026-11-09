@@ -894,6 +894,23 @@ static int lua_flight(lua_State *L) {
         (unsigned long long)s->rng_after,(unsigned long long)s->init_generation);
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
+/* native_gate_agent_diag / ship_diag trace rows (logged, not hashed): the fixture paths' keyed calls this tick. */
+static int lua_agent(lua_State *L) {
+    double actor=p_lua_tonumber(L,1);char out[160];
+    if(!accept_ui() || !isfinite(actor) || actor<1 || actor>12 || floor(actor)!=actor) {p_lua_pushnil(L);return 1;}
+    const unsigned i=(unsigned)actor-1;
+    int n=snprintf(out,sizeof(out),"tick=%llu calls=%llu seeded=%d full=%d",(unsigned long long)laa_fixture_agent_tick[i],
+        (unsigned long long)laa_fixture_agent_calls[i],laa_agent_seeded,laa_agent_full);
+    p_lua_pushlstring(L,out,(size_t)n);return 1;
+}
+static int lua_ship(lua_State *L) {
+    double actor=p_lua_tonumber(L,1);char out[160];
+    if(!accept_ui() || !isfinite(actor) || actor<1 || actor>12 || floor(actor)!=actor) {p_lua_pushnil(L);return 1;}
+    const unsigned i=(unsigned)actor-1;
+    int n=snprintf(out,sizeof(out),"tick=%llu calls=%llu seeded=%d",(unsigned long long)laa_fixture_ship_tick[i],
+        (unsigned long long)laa_fixture_ship_calls[i],laa_ship_seeded);
+    p_lua_pushlstring(L,out,(size_t)n);return 1;
+}
 static int lua_avoidance(lua_State *L) {
     double actor=p_lua_tonumber(L,1),phase=p_lua_tonumber(L,2);char out[160];
     if(!accept_ui() || !isfinite(actor) || actor<1 || actor>LXF_ACTORS || floor(actor)!=actor || !(phase==0 || phase==1)) {p_lua_pushnil(L);return 1;}
@@ -920,8 +937,13 @@ static int lua_read_cost(lua_State *L) {
  * 256: the agent update hook (native_gate_agent_rng) and 2048: the ship Move hook (native_gate_ship_rng), both for
  * actor_rng_all (gate_actor_all.h); 2^46: world identities (native_gate_world_identities). */
 #define LX_BOOT_AGENT_RNG 256ull
+#define LX_BOOT_AGENT_FULL 512ull /* the battle fixture's Agents get full updates (gate_actor_all.h's fixture path) */
+#define LX_BOOT_AGENT_DIAG 128ull /* the agent hook without keying (Windows agent_diag; its rows are not ported) */
+#define LX_BOOT_SHIP_DIAG 1024ull /* the ship Move hook without keying (Windows ship_diag) */
 #define LX_BOOT_SHIP_RNG 2048ull
 #define LX_BOOT_SPLINE_JOIN 34359738368ull
+#define LX_BOOT_SPLINE_DIAG 8589934592ull     /* the spline hook's battle-fixture path and spline_state (gate_spline_join.h) */
+#define LX_BOOT_SPLINE_REFRESH 17179869184ull /* its fixture refresh (needs diag and agent_full) */
 #define LX_BOOT_GRAVIDAR 137438953472ull
 #define LX_BOOT_WORLD_IDENTITIES 70368744177664ull
 /* The attention hook (gate_attention.h): attention_rng or its initial refresh. Only 'all' is ported, which needs either. */
@@ -929,7 +951,7 @@ static int lua_read_cost(lua_State *L) {
 /* The battle fixture's steering (gate_flight.h): 4 flight_diag, 8 flight_rng, 16 flight_full install it (Windows: options&28);
  * 2^31 avoidance_refresh and 2^32 steering_init are its settings. */
 #define LX_BOOT_FLIGHT (4ull|8ull|16ull|2147483648ull|4294967296ull)
-#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_AGENT_RNG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
+#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
 static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *hash,double options) {
     if(!isfinite(options) || options<0 || options>9007199254740991.0 || floor(options)!=options) return 10;
     if((uint64_t)options & ~LX_BOOT_OPTIONS) return LX_STOP_UNPORTED_OPTION;
@@ -947,9 +969,13 @@ static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned time
         if(!result && (boot_options&1) && !path_install((unsigned)(boot_options&3))) {finish(21);result=21;}
         if(!result && (boot_options&LX_BOOT_GRAVIDAR) && !gravidar_install()) {finish(61);result=61;}
         if(!result && (boot_options&LX_BOOT_ATTENTION) && !attention_install()) {finish(53);result=53;}
-        if(!result && (boot_options&LX_BOOT_SPLINE_JOIN) && !lsj_install()) {finish(58);result=58;}
-        if(!result && (boot_options&LX_BOOT_SHIP_RNG) && !laa_ship_install()) {finish(161);result=161;}
-        if(!result && (boot_options&LX_BOOT_AGENT_RNG) && !laa_agent_install()) {finish(161);result=161;}
+        if(!result && (boot_options&(LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG)) && !lsj_install()) {
+            result=(boot_options&LX_BOOT_SPLINE_DIAG)?57:58;finish((unsigned)result); /* Windows: spline_install 57, the join 58 */
+        }
+        if(!result && (boot_options&(LX_BOOT_SHIP_RNG|LX_BOOT_SHIP_DIAG)) && !laa_ship_install()) {finish(161);result=161;}
+        if(!result && (boot_options&(LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_DIAG)) && !laa_agent_install()) {finish(161);result=161;}
+        laa_ship_seeded=(boot_options&LX_BOOT_SHIP_RNG)!=0;laa_agent_seeded=(boot_options&LX_BOOT_AGENT_RNG)!=0;
+        laa_agent_full=(boot_options&LX_BOOT_AGENT_FULL)!=0;
         if(!result && (boot_options&28) && !lxf_install((boot_options&8)!=0,(boot_options&16)!=0,(boot_options&2147483648ull)!=0,
                                                      (boot_options&4294967296ull)!=0)) {finish(28);result=28;}
     }
@@ -1017,7 +1043,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(economy_load_rng_row);
     METHOD(navmesh_post_observe);METHOD(navmesh_post_observe_status);METHOD(navmesh_post_observe_row);
     METHOD(economy_watch_config);METHOD(economy_watch_capture);METHOD(economy_watch_status);
-    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(flight_faults);METHOD(flight);METHOD(avoidance);
+    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(flight_faults);METHOD(flight);METHOD(avoidance);METHOD(agent);METHOD(ship);METHOD(spline);
     METHOD(actor);METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);METHOD(snapshot_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);

@@ -154,6 +154,23 @@ static int lxb_enroll(unsigned actor,uint64_t runtime) {
     if(!a->enrolled) {a->enrolled=1;++lxb_enrolled;}
     return 1;
 }
+/* gate_actor_all.h's fixture paths: which bound actor this ship or Agent is (its ship's runtime ID unchanged), else 0. */
+static unsigned lxb_fixture_ship(void *self) {
+    if(lxb_bound!=LXB_ACTORS || !self) return 0;
+    for(unsigned i=0;i<LXB_ACTORS;i++) if(lxb_actors[i].object==self) {
+        uint64_t id=0;return gate_read_local((unsigned char*)self+8,&id,8) && id==lxb_actors[i].runtime?i+1:0;
+    }
+    return 0;
+}
+static unsigned lxb_fixture_agent(void *self) {
+    if(lxb_bound!=LXB_ACTORS || !self) return 0;
+    for(unsigned i=0;i<LXB_ACTORS;i++) if(lxb_actors[i].agent==self) {
+        void *ship=NULL;uint64_t id=0;
+        return gate_read_local((unsigned char*)self+LXW_AGENT_OWNER,&ship,8) && ship==lxb_actors[i].object &&
+               gate_read_local((unsigned char*)ship+8,&id,8) && id==lxb_actors[i].runtime?i+1:0;
+    }
+    return 0;
+}
 static int lxb_hex_words(char *out,size_t capacity,const uint32_t *words,unsigned count) {
     static const char digits[]="0123456789abcdef";
     if(capacity<(size_t)count*8u+1u) {if(capacity) out[0]=0;return 0;}
@@ -217,6 +234,15 @@ static int lua_actor(lua_State *L) {
         int m=lxb_steering(index_actor,slots-LXW_AGENT_SLOTS,out+n,sizeof(out)-(size_t)n);
         if(m<0) return lxb_unavailable(L,"steering_model_read");
         n+=m;
+    }
+    if(lsj_diag) { /* Windows: with the spline hook installed (spline_diag), the model's spline state or none */
+        unsigned char *agent=slots-LXW_AGENT_SLOTS;void *model=NULL,*model_vtable=NULL;uint32_t values[4];
+        if(!gate_read_local(agent+LXF_AGENT_MODEL,&model,8)) return lxb_unavailable(L,"spline_model_read");
+        if(model && !gate_read_local(model,&model_vtable,8)) return lxb_unavailable(L,"spline_type_read");
+        if(model && model_vtable==(void*)LX(LX_SPLINE_VTABLE)) {
+            if(!lsj_state(model,agent,values)) return lxb_unavailable(L,"spline_state");
+            n+=snprintf(out+n,sizeof(out)-(size_t)n,";spline_state=%08x%08x%08x%08x",values[0],values[1],values[2],values[3]);
+        } else n+=snprintf(out+n,sizeof(out)-(size_t)n,";spline_state=none");
     }
     uint64_t refresh_time;unsigned refresh_index;
     memcpy(&refresh_time,ctrl_data+LXW_NAV_TIME,8);memcpy(&refresh_index,ctrl_data+LXW_NAV_TIME+8,4);

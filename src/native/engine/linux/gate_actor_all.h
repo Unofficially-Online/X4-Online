@@ -61,14 +61,56 @@ static volatile int64_t laa_failures;
 static const char *laa_stage="idle";
 typedef void (*laa_ship_fn)(void *);
 typedef void (*laa_agent_fn)(void *,void *,float,double,unsigned char);
+/* The battle fixture's ships and Agents (gate_battle.h) take Windows' fixture paths (lockstep_ship.h, lockstep_agent.h):
+ * each on its own stream, actor_seed("SHIP_MOV"/"AGENT_RN", tick, actor, 0, call ordinal, 0) with the actor number as
+ * the identity, the native word restored after, nested ships/Agents continuing it (the depths); native_gate_agent_full
+ * (boot option 512) gives the fixture's Agent full updates. Every other ship and Agent takes the all-ship path. */
+static unsigned lxb_fixture_ship(void *self);   /* gate_battle.h: the actor 1..12, else 0 */
+static unsigned lxb_fixture_agent(void *self);
+static int laa_agent_full,laa_agent_seeded,laa_ship_seeded; /* boot options 512, 256 (128 hooks it unkeyed), 2048 (1024 likewise) */
+static uint64_t laa_fixture_ship_tick[12],laa_fixture_ship_calls[12],laa_fixture_agent_tick[12],laa_fixture_agent_calls[12];
+static uint64_t laa_fixture_ships,laa_fixture_agents;
+static uint64_t *laa_fixture_rng_override; /* tests */
+static void laa_fixture_ship_execute(laa_ship_fn original,void *self,unsigned actor) {
+    const unsigned i=actor-1;
+    if(laa_fixture_ship_tick[i]!=stats.issued) {laa_fixture_ship_tick[i]=stats.issued;laa_fixture_ship_calls[i]=0;}
+    ++laa_fixture_ship_calls[i];++laa_fixture_ships;
+    uint64_t *rng=laa_fixture_rng_override?laa_fixture_rng_override:actor_all_tls_rng(),saved=rng?*rng:0;
+    const int keyed=laa_ship_seeded && rng;
+    ++actor_all_ship_depth;
+    if(keyed) *rng=lockstep_seed(0x534849505f4d4f56ULL,stats.issued,actor,0,laa_fixture_ship_calls[i],0);
+    original(self);
+    --actor_all_ship_depth;
+    if(keyed) *rng=saved;
+}
+static void laa_fixture_agent_execute(laa_agent_fn original,void *self,void *commands,float dt,double time,unsigned char cheap,unsigned actor) {
+    const unsigned i=actor-1;
+    if(laa_fixture_agent_tick[i]!=stats.issued) {laa_fixture_agent_tick[i]=stats.issued;laa_fixture_agent_calls[i]=0;}
+    ++laa_fixture_agent_calls[i];__atomic_add_fetch(&laa_fixture_agents,1,__ATOMIC_SEQ_CST);
+    uint64_t *rng=laa_fixture_rng_override?laa_fixture_rng_override:actor_all_tls_rng(),saved=rng?*rng:0;
+    const int keyed=laa_agent_seeded && rng;
+    ++actor_all_agent_depth;
+    if(keyed) *rng=lockstep_seed(0x4147454e545f524eULL,stats.issued,actor,0,laa_fixture_agent_calls[i],0);
+    original(self,commands,dt,time,laa_agent_full?0:cheap);
+    --actor_all_agent_depth;
+    if(keyed) *rng=saved;
+}
+static laa_ship_fn laa_ship_original_override;   /* tests */
+static laa_agent_fn laa_agent_original_override;
 static void laa_ship_move(void *self) {
-    laa_ship_fn original=(laa_ship_fn)(void*)LX(LX_SHIP_MOVE_VA);
-    if(stats.active && boot_phase==3 && GetCurrentThreadId()==ui_thread && actor_all_on()) actor_all_ship_execute(original,self,actor_all_tls_rng());
+    laa_ship_fn original=laa_ship_original_override?laa_ship_original_override:(laa_ship_fn)(void*)LX(LX_SHIP_MOVE_VA);
+    const int gated=stats.active && boot_phase==3 && GetCurrentThreadId()==ui_thread;
+    const unsigned actor=gated?lxb_fixture_ship(self):0;
+    if(actor) laa_fixture_ship_execute(original,self,actor);
+    else if(gated && actor_all_on()) actor_all_ship_execute(original,self,actor_all_tls_rng());
     else original(self);
 }
 static void laa_agent_update(void *self,void *commands,float dt,double time,unsigned char cheap) {
-    laa_agent_fn original=(laa_agent_fn)(void*)LX(LX_AGENT_UPDATE_VA);
-    if(stats.active && boot_phase==3 && actor_all_on()) actor_all_agent_execute(original,self,commands,dt,time,cheap,actor_all_tls_rng());
+    laa_agent_fn original=laa_agent_original_override?laa_agent_original_override:(laa_agent_fn)(void*)LX(LX_AGENT_UPDATE_VA);
+    const int gated=stats.active && boot_phase==3;
+    const unsigned actor=gated?lxb_fixture_agent(self):0;
+    if(actor) laa_fixture_agent_execute(original,self,commands,dt,time,cheap,actor);
+    else if(gated && actor_all_on()) actor_all_agent_execute(original,self,commands,dt,time,cheap,actor_all_tls_rng());
     else original(self,commands,dt,time,cheap);
 }
 static const lx_site *laa_site(const char *name) {

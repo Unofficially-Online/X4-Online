@@ -202,6 +202,7 @@ def main():
     p.add_argument('--fp-redirect-drones', choices=('shadow', 'redirect'), help='FR30: the drone factors of get_attackstrength in Windows\' order on both executables (needs --fp-redirect)')
     p.add_argument('--coverage', type=int, metavar='TICKS', help='the Linux gate: which listed functions run in ticks 1..TICKS (diagnostic; needs --coverage-list)')
     p.add_argument('--coverage-list', type=Path, help='the function list (virtual addresses, one per line), copied next to the gate as coverage.txt')
+    p.add_argument('--coverage-from', type=int, metavar='TICK', help='--coverage marks the list at tick TICK instead of tick 1 (1..TICKS)')
     p.add_argument('--loadout-order-rows', type=int, nargs=2, metavar=('FROM', 'TO'), help='LOADOUT_ROWs in this tick window, at most 600 ticks (needs --loadout-order and --world-identities)')
     p.add_argument('--runtime-id-callers', action='store_true', help='the Linux gate: the table of who allocates runtime IDs, RUNTIME_IDS_CALLER rows (needs --runtime-ids)')
     p.add_argument('--runtime-ids-local', action='store_true', help='the Linux gate: what only the view asks for takes runtime IDs from its own lists (native_gate_runtime_ids_local; needs --runtime-ids and --created-identities)')
@@ -577,13 +578,13 @@ def main():
             p.error('--gate-so supports the snapshot boot with --mode clock or battle only')
         if args.mode == 'battle' and not args.snapshot_prebind:
             p.error('--gate-so --mode battle needs --snapshot-prebind (the Linux gate binds the snapshot fixture)')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
         # The battle fixture on Linux (linux/gate_battle.h, gate_flight.h): the snapshot's twelve, their state row, steering.
         allowed.update(('snapshot_prebind', 'actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state',
-                        'flight_diag', 'flight_rng', 'flight_full', 'avoidance_refresh', 'steering_init'))
+                        'flight_diag', 'flight_rng', 'flight_full', 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state'))
         allowed.add('path_transform_observe')
         allowed.update(('world_motion_watch', 'world_motion_window', 'economy_watch', 'economy_watch_window', 'navmesh_post_observe'))
         allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile', 'status_stride'))
@@ -1021,13 +1022,17 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
                 config.write(f"X4LAN_CONFIG.native_gate_fp_redirect_solver = '{args.fp_redirect_solver}'\n")
             if args.fp_redirect_drones:
                 config.write(f"X4LAN_CONFIG.native_gate_fp_redirect_drones = '{args.fp_redirect_drones}'\n")
-    if args.coverage or args.coverage_list:
+    if args.coverage or args.coverage_list or args.coverage_from is not None:
         if not args.gate_so or not args.coverage or not args.coverage_list or not 1 <= args.coverage <= 6000 or not args.coverage_list.is_file():
             p.error('--coverage needs --gate-so, 1..6000 ticks and an existing --coverage-list')
+        if args.coverage_from is not None and not 1 <= args.coverage_from <= args.coverage:
+            p.error('--coverage-from needs 1..--coverage')
         (args.out / 'native').mkdir(parents=True, exist_ok=True)
         shutil.copyfile(args.coverage_list, args.out / 'native' / 'coverage.txt')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write(f'X4LAN_CONFIG.native_gate_coverage = {args.coverage}\n')
+            if args.coverage_from is not None:
+                config.write(f'X4LAN_CONFIG.native_gate_coverage_from = {args.coverage_from}\n')
     if args.loadout_order_rows and not args.loadout_order:
         p.error('--loadout-order-rows needs --loadout-order')
     if args.loadout_order:

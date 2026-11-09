@@ -11,6 +11,14 @@ static double tbt_result;static void tbt_numres(lua_State *L,double n) {(void)L;
 static const char *tbt_text_arg;static const char *tbt_tolstring(lua_State *L,int index,size_t *length) {
     (void)L;(void)index;if(length) *length=tbt_text_arg?strlen(tbt_text_arg):0;return tbt_text_arg;
 }
+static uint64_t *tbt_word,tbt_seen;static unsigned char tbt_cheap;
+static void tbt_ship_native(void *self) {(void)self;tbt_seen=*tbt_word;*tbt_word^=0x77u;}
+static void tbt_agent_native(void *self,void *commands,float dt,double time,unsigned char cheap) {
+    (void)self;(void)commands;(void)dt;(void)time;tbt_seen=*tbt_word;tbt_cheap=cheap;*tbt_word^=0x77u;
+}
+static void tbt_spline_native(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
+    (void)self;(void)slot;(void)dt;(void)time;(void)player;tbt_cheap=cheap;
+}
 static float tbt_percent_value;static double tbt_percent_time;static void *tbt_percent_object;
 static float tbt_percent(void *object,double time) {tbt_percent_object=object;tbt_percent_time=time;return tbt_percent_value;}
 typedef struct {
@@ -115,6 +123,39 @@ static void test_battle_linux(void) {
     tbt_args[1]=0x9000;tbt_args[2]=1;tbt_args[3]=1;tbt_nil=0;assert(lua_actor(NULL)==1 && !tbt_nil && tbt_percent_object==tbt_ships[0].object && strstr(tbt_out,";shield="));
     boot_phase=2;tbt_nil=0;assert(lua_actor(NULL)==2 && tbt_nil);boot_phase=3; /* only in the session */
     lxb_time_override=NULL;lxb_percent_override=NULL;lxb_pin_skip=0;
+    /* gate_actor_all.h's fixture paths: a bound actor's ship Move and Agent update on Windows' keyed streams (actor
+     * number, call ordinal), the word restored, full Agent updates; another ship or Agent is no fixture. */
+    uint64_t fixture_word=0x5151515151515151ULL;laa_fixture_rng_override=&fixture_word;
+    laa_ship_original_override=tbt_ship_native;laa_agent_original_override=tbt_agent_native;laa_ship_seeded=laa_agent_seeded=1;laa_agent_full=1;
+    memset(laa_fixture_ship_calls,0,sizeof(laa_fixture_ship_calls));memset(laa_fixture_agent_calls,0,sizeof(laa_fixture_agent_calls));
+    stats.issued=40;assert(lxb_fixture_ship(tbt_ships[4].object)==5 && lxb_fixture_agent(tbt_ships[4].agent)==5 && !lxb_fixture_ship(tbt_ships[4].agent));
+    tbt_word=&fixture_word;laa_ship_move(tbt_ships[4].object);
+    assert(tbt_seen==lockstep_seed(0x534849505f4d4f56ULL,40,5,0,1,0) && fixture_word==0x5151515151515151ULL);
+    laa_ship_move(tbt_ships[4].object);assert(tbt_seen==lockstep_seed(0x534849505f4d4f56ULL,40,5,0,2,0));
+    laa_agent_update(tbt_ships[4].agent,NULL,0.033f,10.0,1);
+    assert(tbt_seen==lockstep_seed(0x4147454e545f524eULL,40,5,0,1,0) && tbt_cheap==0 && fixture_word==0x5151515151515151ULL);
+    laa_agent_seeded=0;laa_agent_full=0;laa_agent_update(tbt_ships[4].agent,NULL,0.033f,10.0,1);
+    assert(tbt_seen==0x5151515151515151ULL && tbt_cheap==1); /* diag only: native word, cheap as given */
+    const uint64_t moved_id=0x9999;memcpy(tbt_ships[4].object+8,&moved_id,8);assert(!lxb_fixture_ship(tbt_ships[4].object) && !lxb_fixture_agent(tbt_ships[4].agent));
+    const uint64_t back_id=0x9004;memcpy(tbt_ships[4].object+8,&back_id,8);
+    laa_fixture_rng_override=NULL;laa_ship_original_override=NULL;laa_agent_original_override=NULL;laa_ship_seeded=laa_agent_seeded=laa_agent_full=0;tbt_word=NULL;
+    /* gate_spline_join.h's fixture path: a fixture Agent's spline model refreshes (+0x148 stale) and updates fully; its
+     * state (+0x110) joins gate.actor's row; another model of no fixture stays native. */
+    static unsigned char spline[0x600] __attribute__((aligned(16)));memset(spline,0,sizeof(spline));
+    void *sp=LX(LX_SPLINE_VTABLE);memcpy(spline,&sp,8);sp=tbt_ships[2].agent;memcpy(spline+LSJ_MODEL_AGENT,&sp,8);
+    const float state_values[4]={1.5f,-2.25f,0.125f,8.0f};memcpy(spline+LSJ_MODEL_STATE,state_values,16);
+    void *steering_model;memcpy(&steering_model,tbt_ships[2].agent+LXF_AGENT_MODEL,8);sp=spline;memcpy(tbt_ships[2].agent+LXF_AGENT_MODEL,&sp,8);
+    lsj_diag=1;lsj_refresh=1;lsj_original_override=tbt_spline_native;const int64_t calls_before=lsj_fixture_calls;
+    lsj_update(spline,NULL,0.033f,10.0,1,0);
+    double stale;memcpy(&stale,spline+LSJ_MODEL_AVOIDANCE_TIME,8);assert(stale==-1.0 && tbt_cheap==0 && lsj_fixture_calls==calls_before+1);
+    uint32_t got[4];assert(lsj_state(spline,tbt_ships[2].agent,got) && !memcmp(got,state_values,16) && !lsj_state(spline,tbt_ships[3].agent,got));
+    tbt_args[1]=0x9002;tbt_args[2]=3;tbt_args[3]=0;lxb_actors[2].enrolled=1;tbt_nil=0;assert(lua_actor(NULL)==1 && !tbt_nil);
+    assert(strstr(tbt_out,";spline_state=3fc00000c01000003e00000041000000;nav_refresh="));
+    memcpy(spline+LSJ_MODEL_AGENT,&tbt_ships[11].object,8); /* no fixture's Agent: native */
+    memset(spline+LSJ_MODEL_AVOIDANCE_TIME,0,8);lsj_update(spline,NULL,0.033f,10.0,1,0);memcpy(&stale,spline+LSJ_MODEL_AVOIDANCE_TIME,8);
+    assert(stale==0 && tbt_cheap==1);
+    memcpy(tbt_ships[2].agent+LXF_AGENT_MODEL,&steering_model,8);lxb_actors[2].enrolled=0;
+    lsj_diag=lsj_refresh=0;lsj_original_override=NULL;
     /* Restore. */
     lxf_installed=lxf_initial=lxf_seeded=0;memset(lxf_samples,0,sizeof(lxf_samples));
     memset(lxb_actors,0,sizeof(lxb_actors));lxb_configured=lxb_bound=lxb_prepared=lxb_enrolled=0;lxb_failures=0;

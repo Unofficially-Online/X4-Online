@@ -48,18 +48,35 @@ static int cov_load(void) {
     static char text[COV_MAX*20];size_t n=fread(text,1,sizeof(text),f);const int whole=feof(f);fclose(f);
     return whole && cov_load_text(text,n);
 }
+/* Linux only: the marks go in at the start of tick lx_cov_from (default 1) instead of tick 1, so a window late in a
+ * session (after the player's inputs begin) counts the functions first run from then on; the ticks in the rows stay
+ * absolute. The window still ends after tick N (the armed tick count), so from <= N. */
+static unsigned lx_cov_from=1;
+static void lx_cov_frame(uint64_t tick) {
+    if(lx_cov_from==1) {cov_frame(tick);return;} /* the shared window */
+    if(!cov_armed || cov_done) return;
+    if(tick>=lx_cov_from && !cov_open) cov_mark();
+    if(tick>cov_ticks) cov_unmark();
+}
+/* gate.coverage(N[, from]): a missing from (0) is tick 1. */
 static int lua_coverage(lua_State *L) {
     double ticks=p_lua_tonumber(L,1);int ok=isfinite(ticks) && ticks>=1 && ticks<=6000 && floor(ticks)==ticks;
+    double from=p_lua_tonumber(L,2);if(from==0) from=1;
+    if(ok && !(isfinite(from) && from>=1 && from<=ticks && floor(from)==from)) {cov_stage="from";ok=0;}
+    if(ok && cov_armed && (unsigned)from!=lx_cov_from) ok=0;
     if(ok && !cov_armed && !cov_count && !cov_load()) {cov_stage="list";ok=0;}
-    p_lua_pushnumber(L,ok && cov_arm((unsigned)ticks));return 1;
+    ok=ok && cov_arm((unsigned)ticks);
+    if(ok) lx_cov_from=(unsigned)from;
+    p_lua_pushnumber(L,ok);return 1;
 }
 static int lua_coverage_frame(lua_State *L) {
     double tick=p_lua_tonumber(L,1);
-    if(accept_ui() && isfinite(tick) && tick>=1 && floor(tick)==tick) cov_frame((uint64_t)tick);
+    if(accept_ui() && isfinite(tick) && tick>=1 && floor(tick)==tick) lx_cov_frame((uint64_t)tick);
     p_lua_pushnumber(L,1);return 1;
 }
 static int lua_coverage_status(lua_State *L) {
-    char out[384];int n=accept_ui()?cov_status(out,sizeof(out)):0;
+    char out[400];int n=accept_ui()?cov_status(out,sizeof(out)):0;
+    if(n && lx_cov_from!=1) {const int m=snprintf(out+n,sizeof(out)-(size_t)n," from=%u",lx_cov_from);n=m>0 && (size_t)m<sizeof(out)-(size_t)n?n+m:0;}
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_coverage_row(lua_State *L) {

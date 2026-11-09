@@ -380,6 +380,7 @@ D.DIAGNOSTIC={
  {'native_gate_step_chain','step chain trace'},
  {'native_gate_trace_window','trace window'},
  {'native_gate_coverage','code coverage'},
+ {'native_gate_coverage_from','code coverage start'},
  {'native_gate_thread_rng_census','thread RNG census'},
  {'native_gate_camera_probe','camera probe rows'},
  {'native_gate_view_points_mask','masks view points for measurement'},

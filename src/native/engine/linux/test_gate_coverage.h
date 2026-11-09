@@ -28,5 +28,17 @@ static void test_coverage_linux(void) {
     char status[384]; /* invalid=2: 0x10, and the 0x12 of the refused line */
     assert(cov_status(status,sizeof(status)) && strstr(status,"armed=1 ticks=3 listed=4 invalid=2 marked=3 skipped=1 hits=2 foreign=0 failures=0 stage=done"));
     cov_unmark();cov_armed=0;cov_count=0;memset(cov_table,0,sizeof(cov_table));
+    /* The Linux late window: marks at tick 3 (lx_cov_from), nothing before, ticks absolute in the rows. */
+    cov_marked=cov_skipped=cov_invalid=cov_open=cov_done=0;cov_hits=cov_foreign=cov_failures=0;cov_row_cursor=cov_row_site=0;
+    snprintf(list,sizeof(list),"%x\n%x\n",base,base+0x40);
+    assert(cov_load_text(list,strlen(list)) && cov_count==2);
+    stats.issued=0;boot_phase=0;assert(cov_arm(5));lx_cov_from=3;boot_phase=3;
+    stats.issued=1;lx_cov_frame(1);stats.issued=2;lx_cov_frame(2);
+    assert(!cov_open && !cov_marked && *LX(base)==0xb8 && ((fn)(void*)LX(base))()==11 && !cov_hits);
+    stats.issued=3;lx_cov_frame(3);
+    assert(cov_open && cov_marked==2 && *LX(base)==0xcc && ((fn)(void*)LX(base))()==11 && cov_hits==1);
+    stats.issued=6;lx_cov_frame(6);
+    assert(cov_done && *LX(base+0x40)==0xb8 && cov_row(0,row,sizeof(row)) && strstr(row,"tick=3") && !cov_row(1,row,sizeof(row)));
+    cov_armed=0;cov_count=0;lx_cov_from=1;memset(cov_table,0,sizeof(cov_table));
     printf("coverage PASS\n");
 }

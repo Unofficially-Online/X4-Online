@@ -258,7 +258,7 @@ def bundle(args):
     if args.battle:
         command.append('--snapshot-prebind')
     for name in ('actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state', 'flight_rng', 'flight_full',
-                 'avoidance_refresh', 'steering_init'):
+                 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state'):
         if getattr(args, name):
             command.append('--' + name.replace('_', '-'))
     if args.world_rolling_slices is not None:
@@ -349,6 +349,8 @@ def bundle(args):
             command += ['--fp-redirect-watch', *args.fp_redirect_watch]
     if args.coverage:
         command += ['--coverage', str(args.coverage), '--coverage-list', str(args.coverage_list)]
+        if args.coverage_from is not None:
+            command += ['--coverage-from', str(args.coverage_from)]
     if args.loadout_order_rows:
         command += ['--loadout-order-rows', *(str(t) for t in args.loadout_order_rows)]
     if args.gravidar_wide:
@@ -492,6 +494,7 @@ def bundle(args):
         'fp_redirect_ticks',
         'fp_redirect_solver',
         'coverage',
+        'coverage_from',
         'gravidar_wide',
         'spawn_rng',
         'weapon_fire_rng',
@@ -1283,6 +1286,7 @@ def main(argv=None):
     b.add_argument('--fp-redirect-drones', choices=('shadow', 'redirect'), help='FR30: the drone factors of get_attackstrength in Windows\' order (needs --fp-redirect)')
     b.add_argument('--coverage', type=int, metavar='TICKS', help='which listed functions run in ticks 1..TICKS (diagnostic)')
     b.add_argument('--coverage-list', type=Path, help='the Linux function list for --coverage (fp_inventory.py --coverage-lists)')
+    b.add_argument('--coverage-from', type=int, metavar='TICK', help='--coverage marks the list at tick TICK instead of tick 1')
     b.add_argument('--attention-all', action='store_true', help="every portable object's attention timer keyed by (tick, ID), its first due at the first admitted call")
     b.add_argument('--loadout-order-rows', type=int, nargs=2, metavar=('FROM', 'TO'), help='LOADOUT_ROWs in this tick window (at most 600 ticks)')
     b.add_argument('--path-transform-observe', type=int, nargs=2, metavar=('FIRST', 'LAST'),
@@ -1318,7 +1322,11 @@ def main(argv=None):
                       ('flight-rng', "each fixture steering update on its keyed word (gate_flight.h)"),
                       ('flight-full', 'full steering updates for the fixture (no cheap updates)'),
                       ('avoidance-refresh', "the fixture's avoidance geometry rebuilt every steering update (needs --flight-full)"),
-                      ('steering-init', "the steering constructor's two angles keyed per fixture model (needs --flight-rng)")):
+                      ('steering-init', "the steering constructor's two angles keyed per fixture model (needs --flight-rng)"),
+                      ('agent-full', "full pathing-Agent updates for the fixture (native_gate_agent_full)"),
+                      ('spline-diag', "the spline hook's fixture path and spline state (gate_spline_join.h)"),
+                      ('spline-refresh', "the fixture's spline obstacles refreshed, full updates (needs --spline-diag, --agent-full)"),
+                      ('spline-state', "the fixture's spline state in the digest (needs --spline-diag)")):
         b.add_argument('--' + name, action='store_true', help=why)
     b.add_argument('--actor-rng-rows', action='store_true', help='one ACTOR_RNG_ROW per keyed scope that drew (diagnostic)')
     b.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the mass traffic pass joined at the gate tick (native_gate_mass_traffic)')

@@ -69,13 +69,43 @@ static int lsj_join(void *model,unsigned timeout,int *waited) {
     }
     return 1;
 }
+/* The battle fixture's spline models (Windows spline_observe, boot options 2^33 spline_diag and 2^34 spline_refresh):
+ * the model's Agent +0x8 (Windows +0x10) is a fixture's (gate_battle.h) and holds it (+0xf30): with refresh the
+ * obstacle publication time +0x148 (Windows +0x108; the update's avoidance query 0x13693a3 takes it, with the vector
+ * +0x130, Windows +0xf0) goes stale and the update is a full one. The spline state (Windows +0xd0, four floats) is
+ * +0x110 (the update's float stores, as Windows' at +0xd0). The model fields from +0xd0 on sit 0x40 above Windows'. */
+#define LSJ_MODEL_AGENT 0x8u
+#define LSJ_MODEL_STATE 0x110u
+#define LSJ_MODEL_AVOIDANCE_TIME 0x148u
+static unsigned lxb_fixture_agent(void *self); /* gate_battle.h */
+static int lsj_diag,lsj_refresh;
+static volatile int64_t lsj_fixture_calls,lsj_refreshes;
+static lsj_update_fn lsj_original_override; /* tests */
+static int lsj_state(void *model,void *agent,uint32_t values[4]) {
+    void *vtable=NULL,*owner=NULL;
+    if(!read_local(model,&vtable,8) || vtable!=(void*)LX(LX_SPLINE_VTABLE) || !read_local((unsigned char*)model+LSJ_MODEL_AGENT,&owner,8) ||
+       owner!=agent || !read_local((unsigned char*)model+LSJ_MODEL_STATE,values,16)) return 0;
+    for(unsigned i=0;i<4;i++) {float f;memcpy(&f,values+i,4);if(!isfinite(f)) return 0;}
+    return 1;
+}
 static void lsj_update(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
-    lsj_update_fn original=(lsj_update_fn)(void*)LX(LX_SPLINE_UPDATE_VA);
-    if(lsj_all && stats.active && boot_phase==3) {
+    lsj_update_fn original=lsj_original_override?lsj_original_override:(lsj_update_fn)(void*)LX(LX_SPLINE_UPDATE_VA);
+    const int gated=stats.active && boot_phase==3;
+    if(lsj_all && gated) {
         int waited=0;
         if(!lsj_join(self,LSJ_TIMEOUT,&waited)) InterlockedIncrement64(&lsj_failures);
     }
     InterlockedIncrement64(&lsj_calls);
+    void *agent=NULL;
+    if(gated && lsj_diag && read_local((unsigned char*)self+LSJ_MODEL_AGENT,&agent,8) && lxb_fixture_agent(agent)) {
+        void *model=NULL;
+        if(!read_local((unsigned char*)agent+0xf30u,&model,8) || model!=self) InterlockedIncrement64(&lsj_failures);
+        else {
+            InterlockedIncrement64(&lsj_fixture_calls);
+            if(lsj_refresh) {const double stale=-1.0;memcpy((unsigned char*)self+LSJ_MODEL_AVOIDANCE_TIME,&stale,8);InterlockedIncrement64(&lsj_refreshes);}
+            original(self,slot,dt,time,lsj_refresh?0:cheap,player);return;
+        }
+    }
     original(self,slot,dt,time,cheap,player);
 }
 static const lx_site *lsj_site(const char *name) {
@@ -90,10 +120,12 @@ static int lsj_pins(void) {
            gate_read_local(LX(LX_SPLINE_SLOT_VA),&slot,8) && (slot==LX(LX_SPLINE_UPDATE_VA) || slot==(void*)lsj_update);
 }
 static void *lsj_slot(void) {void *value=NULL;return gate_read_local(LX(LX_SPLINE_SLOT_VA),&value,8)?value:NULL;}
-/* Boot option 2^35, at boot (before the load): the slot swap; needs serial pathing. */
+/* Boot options 2^33 (spline_diag), 2^35 (spline_join), at boot (before the load): the slot swap; needs serial pathing. */
 static int lsj_install(void) {
     if(lsj_installed) return 1;
     if(!(boot_options&1)) {lsj_stage="needs";return 0;}
+    lsj_diag=(boot_options&8589934592ull)!=0;lsj_refresh=(boot_options&17179869184ull)!=0;
+    if(lsj_refresh && (!lsj_diag || !(boot_options&512ull))) {lsj_stage="needs";return 0;} /* Windows: refresh needs diag and agent_full */
     if(!lsj_pins() || lsj_slot()!=LX(LX_SPLINE_UPDATE_VA)) {lsj_stage="pins";return 0;}
     lsj_calls=lsj_joins=lsj_waits=lsj_timeouts=lsj_failures=0;lsj_restored=0;lsj_all=0;
     if(!gate_data_swap64(LX(LX_SPLINE_SLOT_VA),(uint64_t)(uintptr_t)LX(LX_SPLINE_UPDATE_VA),(uint64_t)(uintptr_t)lsj_update)) {lsj_stage="cas";return 0;}
@@ -122,6 +154,13 @@ static int lsj_status(char *out,size_t capacity) {
     return n>0 && (size_t)n<capacity?n:0;
 }
 static int lua_spline_join_all(lua_State *L) {p_lua_pushnumber(L,lsj_arm_all());return 1;}
+/* native_gate_spline_diag's trace row (logged, not hashed). */
+static int lua_spline(lua_State *L) {
+    double actor=p_lua_tonumber(L,1);char out[160];
+    if(!accept_ui() || !lsj_installed || !isfinite(actor) || actor<1 || actor>12 || floor(actor)!=actor) {p_lua_pushnil(L);return 1;}
+    int n=snprintf(out,sizeof(out),"fixture_calls=%lld refreshes=%lld refresh=%d",(long long)lsj_fixture_calls,(long long)lsj_refreshes,lsj_refresh);
+    p_lua_pushlstring(L,out,(size_t)n);return 1;
+}
 static int lua_spline_join_all_status(lua_State *L) {
     char out[384];int n=accept_ui()?lsj_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
