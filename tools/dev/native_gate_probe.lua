@@ -1206,6 +1206,30 @@ if pause_test then
   'native_gate_pause_test must be {slot=pK, pause=T0, unpause=T1} with 1 < T0 < T1')
  pcall(ffi.cdef,'bool IsGamePaused(void);')
 end
+-- Map test (diagnostic; native_gate_map_test = {slot='pK', open=T1, close=T2}): client K opens X4's map at T1 as its
+-- map key does (OpenMenu('MapMenu', {0, 0, true})) and closes it at T2 (the menu's onCloseElement('close')): the SPACE
+-- context edge for input traces (reports/LOCKSTEP-LINUX-PEOPLE-20261108.txt).
+local map_test=cfg.native_gate_map_test
+if map_test then
+ assert(type(map_test)=='table' and type(map_test.slot)=='string' and type(map_test.open)=='number' and
+  type(map_test.close)=='number' and 1<map_test.open and map_test.open<map_test.close,
+  'native_gate_map_test must be {slot=pK, open=T1, close=T2} with 1 < T1 < T2')
+end
+local function map_check(tick)
+ if not map_test or cfg.slot~=map_test.slot or (tick~=map_test.open and tick~=map_test.close) then return end
+ local ok,why
+ if tick==map_test.open then
+  ok,why=pcall(OpenMenu,'MapMenu',{0,0,true},nil)
+ else
+  ok,why=pcall(function()
+   for _,m in ipairs(Menus or {}) do
+    if type(m)=='table' and m.name=='MapMenu' and type(m.onCloseElement)=='function' then return m.onCloseElement('close') end
+   end
+   error('no MapMenu')
+  end)
+ end
+ ticklog.write('MAP_TEST tick='..tick..' '..(tick==map_test.open and 'open' or 'close')..' ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
+end
 local function pause_check(tick)
  if not pause_test then return end
  local p,u=pause_test.pause,pause_test.unpause
@@ -1237,6 +1261,7 @@ local function ui_guard_tick(tick)
  if cfg.native_gate_ui_lua and tick%(cfg.native_gate_status_stride or 60)==0 then ticklog.write('UI_LUA tick='..tick..' '..ui_lua_status()) end
  ui_write_check(tick)
  pause_check(tick)
+ map_check(tick)
  ui_globals_census(tick)
 end
 ticklog.ui_guard=ui_guard_tick
@@ -1694,7 +1719,9 @@ local function drain_gravidar_watch(final)
   for _=1,8192 do
    local row=gate.coverage_row(row_cursors.coverage)
    if not row then break end
-   log('COVERAGE_ROW '..row);row_cursors.coverage=row_cursors.coverage+1
+   -- written at once: the rows all come at the window's end, and a held tick that is not written (status stride)
+   -- would drop them (trace-w7: 1322 hits, no row in the log)
+   ticklog.write('COVERAGE_ROW '..row);row_cursors.coverage=row_cursors.coverage+1
   end
  end
  if cfg.native_gate_step_trace then -- the Linear step's entry and exit for watched ships (native_gate_step_trace)
@@ -3948,10 +3975,10 @@ local function frame()
   -- 1..N, one int3 per entry until it first runs (Option B evidence). Run it with few other modules. Default off.
   if cfg.native_gate_coverage then
    local ticks=cfg.native_gate_coverage
-   -- native_gate_coverage_from = T (the Linux gate only): the marks go in at tick T instead of tick 1.
+   -- native_gate_coverage_from = T (both gates): the marks go in at tick T instead of tick 1.
    local from=cfg.native_gate_coverage_from
-   assert(from==nil or (type(from)=='number' and from>=1 and from<=ticks and from%1==0 and gate.platform and gate.platform()=='linux'),
-    'coverage from needs the Linux gate and 1..ticks')
+   assert(from==nil or (type(from)=='number' and from>=1 and from<=ticks and from%1==0),
+    'coverage from needs 1..ticks')
    assert(type(ticks)=='number' and ticks>=1 and ticks<=6000 and ticks%1==0 and gate.coverage and gate.coverage_frame and gate.coverage_status and
     gate.coverage_row and (from and gate.coverage(ticks,from) or gate.coverage(ticks))==1,'coverage refused '..tostring(gate.coverage_status and gate.coverage_status()))
    log('COVERAGE_ARMED ticks='..ticks..(from and ' from='..from or '')..' '..tostring(gate.coverage_status()))
@@ -5977,7 +6004,109 @@ local function frame()
  ticklog.close() -- a written tick is emitted; lines between frames (UI events) are written at once
  if profile then profile.mark('log');profile.finish(tick) end
 end
+-- In-session multiplayer menu (x4ls play; native_gate_mp_menu, default on in a session): a "Multiplayer session" entry
+-- in X4's options menu (Escape) opens a page with this client's slot, the tick, the session state, the relay and a Leave
+-- button (an orderly gate stop: the relay drops this client after its stall bound and the others play on; X4 keeps
+-- running alone). X4's own options code draws it: the menu's row function (menu.displayOption) adds the entry before
+-- Settings on the main page, and the page is drawn through the menu's page function on the stock "multiplayer" page
+-- definition (Egosoft's network page, hidden without its network engine) with that page's rows replaced by these (X4's
+-- UI has no debug library, so the menu's local option table is out of reach). No stock file is changed. Installed from
+-- onUpdate once the options menu is registered; anything missing is one MP_MENU_REFUSED row and the menu stays as it was.
+local mp_menu={installed=false,tries=0,left=false}
+local function mp_menu_state()
+ local ok,s=pcall(gate.poll)
+ if not ok or type(s)~='table' then s={} end
+ return s
+end
+local function mp_menu_line(k)
+ local s=mp_menu_state()
+ local slot=tonumber(tostring(cfg.slot or ''):match('%d+')) or 0
+ local hz=tonumber(cfg.native_gate_tick_hz) or 60
+ local tick=tonumber(s.issued) or 0
+ if k==1 then return 'You are player '..slot..' of '..tostring(clients or '?') end
+ if k==2 then
+  local seconds=math.floor(tick/hz)
+  return string.format('Step %d (game time %d:%02d)',tick,math.floor(seconds/60),seconds%60)
+ end
+ if k==3 then
+  if mp_menu.left then return 'You left the session: this game now runs alone' end
+  if s.active==1 or s.active==true then return 'In the session: every step is shared with the other players' end
+  return 'Not in the session (it ended or stopped; see the log)'
+ end
+ if k==4 then return 'Relay '..tostring(cfg.native_gate_relay_host or cfg.host or '127.0.0.1')..':'..tostring(cfg.port or '?') end
+ return 'Desyncs are not shown in game; the host logs them (desyncs.log)'
+end
+local function mp_menu_leave()
+ if mp_menu.left then return end
+ local s=mp_menu_state()
+ if not (s.active==1 or s.active==true) then return end
+ mp_menu.left=true
+ local ok,stopped=pcall(gate.stop)
+ log('MP_MENU_LEAVE stopped='..tostring(ok and stopped)..' tick='..tostring(s.issued))
+ if X4LAN_NATIVE_GATE_DEFAULTS then pcall(X4LAN_NATIVE_GATE_DEFAULTS.notice,'you left the session; this game runs on alone') end
+end
+local function mp_menu_install()
+ if mp_menu.installed or mp_menu.tries>=1800 or cfg.native_gate_mp_menu==false then return end
+ mp_menu.tries=mp_menu.tries+1
+ if type(Menus)~='table' then return end
+ local options
+ for _,m in ipairs(Menus) do if type(m)=='table' and m.name=='OptionsMenu' then options=m end end
+ if not options then return end
+ mp_menu.tries=1800   -- one attempt once the menu is there
+ if type(options.displayOption)~='function' or type(options.displayOptions)~='function' or type(options.submenuHandler)~='function' then
+  log('MP_MENU_REFUSED why=no_menu_functions');return
+ end
+ local page={}
+ for k=1,5 do page[#page+1]={id='header',name=function() return mp_menu_line(k) end} end
+ page[#page+1]={id='line'}
+ page[#page+1]={id='x4lan_mp_leave',name='Leave the session',value='Leave',valuetype='button',
+  mouseOverText='Stop taking part: the others play on without you, this game runs on alone',
+  callback=function() mp_menu_leave() end,
+  selectable=function() local s=mp_menu_state() return not mp_menu.left and (s.active==1 or s.active==true) end}
+ local entry={id='x4lan_mp',name='Multiplayer session',submenu='x4lan_mp',mouseOverText='This lockstep session: players, state, leave'}
+ local row,draw,handle=options.displayOption,options.displayOptions,options.submenuHandler
+ options.displayOption=function(ftable,option,...)
+  if mp_menu.drawing then   -- the stock page's rows: ours instead, once
+   if not mp_menu.drawn then mp_menu.drawn=true;for _,r in ipairs(page) do row(ftable,r,...) end end
+   return
+  end
+  if options.currentOption=='main' and not options.isStartmenu and type(option)=='table' and option.id=='settings' then row(ftable,entry,...) end
+  return row(ftable,option,...)
+ end
+ options.displayOptions=function(parameter,...)
+  if parameter~='x4lan_mp' then return draw(parameter,...) end
+  mp_menu.drawing,mp_menu.drawn=true,false
+  local ok,why=pcall(draw,'multiplayer',...)
+  mp_menu.drawing=false
+  options.currentOption='x4lan_mp'   -- a refresh draws this page again
+  if not ok then log('MP_MENU_DRAW_ERROR '..tostring(why)) end
+ end
+ options.submenuHandler=function(parameter,...)
+  if parameter=='x4lan_mp' then return options.displayOptions('x4lan_mp') end
+  return handle(parameter,...)
+ end
+ mp_menu.installed=true
+ log('MP_MENU_INSTALLED rows='..#page)
+end
+-- Menu test (diagnostic; native_gate_mp_menu_test = {slot='pK', tick=T}): client K opens the page at step T as the Escape
+-- key would (OpenMenu with the page as its parameter) and logs the page shown 30 steps later.
+local function mp_menu_test_step()
+ local t=cfg.native_gate_mp_menu_test
+ if not (type(t)=='table' and mp_menu.installed and cfg.slot==t.slot) or mp_menu.test_done then return end
+ local tick=tonumber(mp_menu_state().issued) or 0
+ if not mp_menu.test_opened and tick>=(tonumber(t.tick) or math.huge) then
+  mp_menu.test_opened=tick
+  local ok,why=pcall(OpenMenu,'OptionsMenu','x4lan_mp',nil,true)
+  log('MP_MENU_TEST tick='..tick..' open ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
+ elseif mp_menu.test_opened and tick>=mp_menu.test_opened+30 then
+  mp_menu.test_done=true
+  local current
+  for _,m in ipairs(Menus or {}) do if type(m)=='table' and m.name=='OptionsMenu' then current=m.currentOption end end
+  log('MP_MENU_TEST tick='..tick..' page='..tostring(current)..' line1='..mp_menu_line(1)..' line3='..mp_menu_line(3))
+ end
+end
 SetScript('onUpdate',function()
+ if not mp_menu.installed then pcall(mp_menu_install) elseif cfg.native_gate_mp_menu_test then pcall(mp_menu_test_step) end
  -- Info lines raised at the start menu (refusals before the snapshot load) again once a game is on screen.
  local defaults=X4LAN_NATIVE_GATE_DEFAULTS
  if defaults and #defaults.pending>0 then defaults.flush_notices(not ffi.C.IsStartmenu()) end

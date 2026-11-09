@@ -181,6 +181,15 @@ def client_tail(arm_at=None, checkpoint_at=None, relay_host=None):
     return tail
 
 
+def remote_config(host, port, token, slot, clients, arm_at):
+    '''The session a client on another PC joins, for a launcher without x4ls join (the native Linux runner):
+    {"config": the lines to append to the same play overlay's config, plus the same values as fields}.'''
+    lines = (f'X4LAN_CONFIG.port = {port}\nX4LAN_CONFIG.token = "{token}"\nX4LAN_CONFIG.slot = "p{slot}"\n'
+             f'X4LAN_CONFIG.native_gate_clients = {clients}\n' + client_tail(arm_at, relay_host=host))
+    return {'relay_host': host, 'port': port, 'token': token, 'slot': f'p{slot}', 'clients': clients, 'arm_at': arm_at,
+            'config': lines}
+
+
 def join_command(o, host, port, token, slot, arm_at):
     """The x4ls join line the host prints for a remote slot (arm_at None: an open slot's hot join)."""
     if arm_at is None:
@@ -353,6 +362,11 @@ def run(o: Options, log=print):
         for k in remote:
             log(f'slot {k} plays on another PC; there, within {o.join_wait} s, with the same overlay and snapshot:\n  '
                 + join_command(o, o.public_host or o.bind, port, token, k, arm_at))
+            # The same session for a launcher without x4ls join (the native Linux runner): run/join-slotK.json.
+            join_file = run_dir / f'join-slot{k}.json'
+            join_file.write_text(json.dumps(remote_config(o.public_host or o.bind, port, token, k, o.clients, arm_at), indent=2)
+                                 + '\n')
+            log(f'  the same for another launcher: {join_file}')
         if opened:
             from . import hotjoin, joinfiles
             files = joinfiles.FileService(token, o.bind, port, allow=o.allow_from, slots=opened).start()

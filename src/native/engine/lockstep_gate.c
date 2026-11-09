@@ -442,6 +442,29 @@ static int st_sg_swap(void *expected,void *value) {
 /* Function coverage (lockstep_coverage.h; diagnostic, Option B evidence E1): int3 marks taken by a first
  * vectored handler, the list coverage.txt next to this DLL (image RVAs), the marked pages r-w-x for the window. */
 static int cov_page_open(uintptr_t address);
+/* COV_ENTRY_FOREIGN on Windows: the entry's first 16 bytes differ from X4.exe on disk (any hook's patch, whatever its
+ * form). The file is opened once for the marking (on the MoveWorker, at the window's first tick). */
+static HANDLE cov_file=INVALID_HANDLE_VALUE;
+static int win_cov_entry_foreign(uintptr_t address) {
+    if(cov_file==INVALID_HANDLE_VALUE) {
+        WCHAR path[32768];DWORD n=GetModuleFileNameW(NULL,path,32768);
+        if(!n || n>=32768) return 1;
+        cov_file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+        if(cov_file==INVALID_HANDLE_VALUE) return 1;
+    }
+    const IMAGE_NT_HEADERS64 *nt=(const IMAGE_NT_HEADERS64*)(image+((const IMAGE_DOS_HEADER*)image)->e_lfanew);
+    const IMAGE_SECTION_HEADER *sec=IMAGE_FIRST_SECTION(nt);
+    const uint32_t rva=(uint32_t)(address-(uintptr_t)image);
+    for(unsigned i=0;i<nt->FileHeader.NumberOfSections;i++) {
+        if(rva<sec[i].VirtualAddress || rva+16u>sec[i].VirtualAddress+sec[i].SizeOfRawData) continue;
+        OVERLAPPED at;memset(&at,0,sizeof(at));at.Offset=rva-sec[i].VirtualAddress+sec[i].PointerToRawData;
+        unsigned char disk[16];DWORD got=0;
+        if(!ReadFile(cov_file,disk,sizeof(disk),&got,&at) || got!=sizeof(disk)) return 1;
+        return memcmp(disk,(const void*)address,sizeof(disk))!=0;
+    }
+    return 1;
+}
+#define COV_ENTRY_FOREIGN(address) win_cov_entry_foreign(address)
 #include "lockstep_coverage.h"
 #define COV_PAGES 2048u
 static uintptr_t cov_pages[COV_PAGES];
@@ -506,11 +529,11 @@ static int cov_load(void) {
 #include "lockstep_body_pose.h"
 static int fp_patch_overlaps(const void *source,size_t bytes) {
     return xrcp_overlaps(source,bytes) || pmath_overlaps(source,bytes) || spo_overlaps(source,bytes) || nrw_overlaps(source,bytes) || scw_overlaps(source,bytes) || pdec_overlaps(source,bytes) || pbud_overlaps(source,bytes) || ptf_overlaps(source,bytes) || bpose_overlaps(source,bytes) ||
-        stc_overlaps(source,bytes) || fr_len_overlaps(source,bytes);
+        stc_overlaps(source,bytes) || fr_len_overlaps(source,bytes) || cov_overlaps(source,bytes);
 }
 static void fp_patch_view(const void *source,void *copy,size_t bytes) {
     xrcp_unpatch_copy(source,copy,bytes);pmath_unpatch_copy(source,copy,bytes);spo_unpatch_copy(source,copy,bytes);nrw_unpatch_copy(source,copy,bytes);scw_unpatch_copy(source,copy,bytes);pdec_unpatch_copy(source,copy,bytes);pbud_unpatch_copy(source,copy,bytes);ptf_unpatch_copy(source,copy,bytes);bpose_unpatch_copy(source,copy,bytes);
-    stc_unpatch_copy(source,copy,bytes);fr_len_unpatch_copy(source,copy,bytes);
+    stc_unpatch_copy(source,copy,bytes);fr_len_unpatch_copy(source,copy,bytes);cov_unpatch_copy(source,copy,bytes);
 }
 static void close_connection(void) {
     peer_close();
@@ -2173,14 +2196,32 @@ static int lua_step_trace_row(lua_State *L) {
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=st_row((uint64_t)index,out,sizeof(out));
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
+/* The marks go in at the start of tick win_cov_from (default 1) instead of tick 1, as on the Linux gate
+ * (linux/gate_coverage.h lx_cov_from): after the modules that hook function entries when the pilot window opens (the
+ * stock path at its window start: the Windows input trace's trace-w5 stopped there with 155 when marks were already
+ * out), so those entries start with their jmp and are skipped. Ticks in the rows stay absolute; the window still ends
+ * after tick N, so from <= N. */
+static unsigned win_cov_from=1;
+static void win_cov_frame(uint64_t tick) {
+    if(win_cov_from==1) {cov_frame(tick);return;} /* the shared window */
+    if(!cov_armed || cov_done) return;
+    if(tick>=win_cov_from && !cov_open) cov_mark();
+    if(tick>cov_ticks) cov_unmark();
+}
+/* gate.coverage(N[, from]): a missing from (0) is tick 1. */
 static int lua_coverage(lua_State *L) {
     double ticks=p_lua_tonumber(L,1);int ok=isfinite(ticks) && ticks>=1 && ticks<=6000 && floor(ticks)==ticks;
+    double from=p_lua_tonumber(L,2);if(from==0) from=1;
+    if(ok && !(isfinite(from) && from>=1 && from<=ticks && floor(from)==from)) {cov_stage="from";ok=0;}
+    if(ok && cov_armed && (unsigned)from!=win_cov_from) ok=0;
     if(ok && !cov_armed && !cov_count && !cov_load()) {cov_stage="list";ok=0;}
-    p_lua_pushnumber(L,ok && cov_arm((unsigned)ticks));return 1;
+    ok=ok && cov_arm((unsigned)ticks);
+    if(ok) win_cov_from=(unsigned)from;
+    p_lua_pushnumber(L,ok);return 1;
 }
 static int lua_coverage_frame(lua_State *L) {
     double tick=p_lua_tonumber(L,1);
-    if(accept_ui() && isfinite(tick) && tick>=1 && floor(tick)==tick) cov_frame((uint64_t)tick);
+    if(accept_ui() && isfinite(tick) && tick>=1 && floor(tick)==tick) win_cov_frame((uint64_t)tick);
     p_lua_pushnumber(L,1);return 1;
 }
 static int lua_coverage_status(lua_State *L) {

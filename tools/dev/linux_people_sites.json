@@ -1,0 +1,1419 @@
+{
+ "schema": "x4-lockstep-linux-people-sites-v1",
+ "note": "The people stack's Windows sites (lockstep_pilot_*.h, UI replay/guard, render display) and their Linux counterparts, filled module by module (tools/dev/linux_pair_calls.py, linux_pair_candidates.py, then a reading of both functions). status: matched (paired by the tools and read), candidate (tool evidence, not yet read), open.",
+ "sites": [
+  {
+   "module": "pilot_inputs",
+   "win": "ced70",
+   "kind": "fn_paired",
+   "lin": "a68df0",
+   "status": "matched",
+   "evidence": "lockstep_linux_known_pairs.json",
+   "what": "component find"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "175a00",
+   "kind": "fn_paired",
+   "lin": "bc6690",
+   "status": "matched",
+   "evidence": "same-name export",
+   "what": "ActivatePlayerControls"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "179760",
+   "kind": "fn_paired",
+   "lin": "bc6dd0",
+   "status": "matched",
+   "evidence": "same-name export",
+   "what": "DeactivatePlayerControls"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "9fc550",
+   "kind": "fn_paired",
+   "lin": "1dd19d0",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: call gaps (3 parents)"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "b09880",
+   "kind": "fn_paired",
+   "lin": "a45680",
+   "status": "matched",
+   "evidence": "same-name export",
+   "what": "IsFlightAssistActive"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "d8e5b0",
+   "kind": "fn_paired",
+   "lin": "1663740",
+   "status": "candidate",
+   "evidence": "batch: votes 2, fields 0.27, size ratio 0.95"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "d9cc30",
+   "kind": "fn_paired",
+   "lin": "165d860",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: call gaps (2 parents)"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "1252850",
+   "kind": "fn_paired",
+   "lin": "104f220",
+   "status": "candidate",
+   "evidence": "batch: votes 3, fields 0.5, size ratio 1.12",
+   "what": "context request removal"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "d8d9d0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": "",
+   "what": "controls release path"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "d8dd50",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": "",
+   "what": "controller authority predicate"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "ea7600",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": "",
+   "what": "boost active (controller, time)"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "ea7650",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": "",
+   "what": "travel mode active (controller)"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "2f4b760",
+   "kind": "data",
+   "lin": "3d8d9e0",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "2f4b7e4",
+   "kind": "data",
+   "lin": "3d8da64",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "2f4b828",
+   "kind": "data",
+   "lin": "3d8daa8",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "2f4b829",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "38f0728",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "3d196f0",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "6cf1500",
+   "kind": "data",
+   "lin": "3daa860",
+   "status": "candidate",
+   "evidence": "aligned global votes 860"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "6cf2210",
+   "kind": "data",
+   "lin": "3dbafd0",
+   "status": "candidate",
+   "evidence": "aligned global votes 4"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "2c39488",
+   "kind": "rdata",
+   "lin": "3b7c208",
+   "status": "candidate",
+   "evidence": "vtable U::PlayerController slot 0"
+  },
+  {
+   "module": "pilot_native",
+   "win": "3dde10",
+   "kind": "fn_paired",
+   "lin": "18a2900",
+   "status": "candidate",
+   "evidence": "batch: votes 78, fields 0.33, size ratio 0.88"
+  },
+  {
+   "module": "pilot_native",
+   "win": "54ee80",
+   "kind": "fn_paired",
+   "lin": "177fa40",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: vtable"
+  },
+  {
+   "module": "pilot_native",
+   "win": "71bac0",
+   "kind": "fn_paired",
+   "lin": "1393520",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: string:player_squad_attack_target"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d86c80",
+   "kind": "fn_paired",
+   "lin": "166c2f0",
+   "status": "matched",
+   "evidence": "input-bank fields 4/4 (J 1.00, block +0xE42280), size 1072/1024, call-graph votes 3: two independent evidences, read",
+   "what": "stock control handler (states/ranges)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d898c0",
+   "kind": "fn_paired",
+   "lin": "1d95a30",
+   "status": "candidate",
+   "evidence": "input-bank fields 2/2 (J 1.00, next 0.50), size 1120/4880 (inlined callees?)",
+   "what": "input-bank user (2 fields)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d95180",
+   "kind": "fn_paired",
+   "lin": "166d020",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: string:Control schemes configuration file libraries/controlschemes."
+  },
+  {
+   "module": "pilot_native",
+   "win": "d97b50",
+   "kind": "fn_paired",
+   "lin": "165bd50",
+   "status": "candidate",
+   "evidence": "traces trace-w8/lx32b: both first run at stop, fields 0.57 (rivals 0.33/0.20)",
+   "what": "stop handler"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d97e80",
+   "kind": "fn_paired",
+   "lin": "1672370",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: string:stickyfullthrottle"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d9c250",
+   "kind": "fn_paired",
+   "lin": "165ab80",
+   "status": "matched",
+   "evidence": "input-bank fields 10 of 14 (J 0.71, next 0.59), size 832/736, call-graph votes 3: two independent evidences, read",
+   "what": "Flight Stopped, the SPACE edge"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d9c590",
+   "kind": "fn_paired",
+   "lin": "165d050",
+   "status": "candidate",
+   "evidence": "input-bank fields 4 of 5 (J 0.80, next 0.50), size 912/416",
+   "what": "Flight Started, the SPACE edge"
+  },
+  {
+   "module": "pilot_native",
+   "win": "ea6290",
+   "kind": "fn_paired",
+   "lin": "1429ef0",
+   "status": "candidate",
+   "evidence": "batch: votes 2, fields 0.53, size ratio 0.82"
+  },
+  {
+   "module": "pilot_native",
+   "win": "1265960",
+   "kind": "fn_paired",
+   "lin": "10300c0",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: call gaps (2 parents)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "dd030",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "dd080",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "ddb60",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "55aeb0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "6093e0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "70eb10",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "70ec00",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "719750",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "71c640",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "7d4d40",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "81bb50",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "97c140",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "9fbf50",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d870b0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d87f70",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d88710",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d88a10",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d88fe0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d8a680",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d8b3e0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d8b790",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d924d0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d93440",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "d9bf70",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "ea5a70",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "ea5a90",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "1250170",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "1251fe0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "1252320",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "1255cd0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "1255dd0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "1255ee0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "7e8e60",
+   "kind": "in_paired_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 7e8bc0 (paired 124f720)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d88a22",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside d88a10"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d9c020",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside d9bf70"
+  },
+  {
+   "module": "pilot_native",
+   "win": "ea6280",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside ea5a90"
+  },
+  {
+   "module": "pilot_native",
+   "win": "ea66c0",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside ea6290"
+  },
+  {
+   "module": "pilot_native",
+   "win": "14e0180",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 14e0080"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b720",
+   "kind": "data",
+   "lin": "3d8d9a0",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b728",
+   "kind": "data",
+   "lin": "3d8d9a8",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b750",
+   "kind": "data",
+   "lin": "3d8d9d0",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b758",
+   "kind": "data",
+   "lin": "3d8d9d8",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b75c",
+   "kind": "data",
+   "lin": "3d8d9dc",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b770",
+   "kind": "data",
+   "lin": "3d8d9f0",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b778",
+   "kind": "data",
+   "lin": "3d8d9f8",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b780",
+   "kind": "data",
+   "lin": "3d8da00",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b788",
+   "kind": "data",
+   "lin": "3d8da08",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b790",
+   "kind": "data",
+   "lin": "3d8da10",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b794",
+   "kind": "data",
+   "lin": "3d8da14",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b7d0",
+   "kind": "data",
+   "lin": "3d8da50",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b7d8",
+   "kind": "data",
+   "lin": "3d8da58",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b7fa",
+   "kind": "data",
+   "lin": "3d8da7a",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b7fb",
+   "kind": "data",
+   "lin": "3d8da7b",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b7fd",
+   "kind": "data",
+   "lin": "3d8da7d",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b800",
+   "kind": "data",
+   "lin": "3d8da80",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2f4b9bf",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "38f4c31",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "38f4db5",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "38f4db6",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "3d196d8",
+   "kind": "data",
+   "lin": "3db6c00",
+   "status": "candidate",
+   "evidence": "aligned global votes 156"
+  },
+  {
+   "module": "pilot_native",
+   "win": "3d198f8",
+   "kind": "data",
+   "lin": "3db6948",
+   "status": "candidate",
+   "evidence": "aligned global votes 188"
+  },
+  {
+   "module": "pilot_native",
+   "win": "6b661d0",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "6cf1520",
+   "kind": "data",
+   "lin": "3daab80",
+   "status": "candidate",
+   "evidence": "aligned global votes 54"
+  },
+  {
+   "module": "pilot_native",
+   "win": "6cf1538",
+   "kind": "data",
+   "lin": "3db83c8",
+   "status": "candidate",
+   "evidence": "aligned global votes 24"
+  },
+  {
+   "module": "pilot_native",
+   "win": "6cf1560",
+   "kind": "data",
+   "lin": "3daaaf8",
+   "status": "candidate",
+   "evidence": "aligned global votes 33"
+  },
+  {
+   "module": "pilot_native",
+   "win": "2a6c098",
+   "kind": "rdata",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_native",
+   "win": "2cbe7e8",
+   "kind": "rdata",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "7e8650",
+   "kind": "fn_paired",
+   "lin": "12576d0",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: vtable"
+  },
+  {
+   "module": "pilot_stock",
+   "win": "af1db0",
+   "kind": "fn_paired",
+   "lin": "a9bb30",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: string:dialog5"
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b738",
+   "kind": "data",
+   "lin": "3d8d9b8",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b9be",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b9c0",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b9c1",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b9c2",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b9c3",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b9c4",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b9c5",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b9c6",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b9c7",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2f4b9cc",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "38f52d7",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "38f52d8",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_stock",
+   "win": "2b7d1a8",
+   "kind": "rdata",
+   "lin": "3b2fc38",
+   "status": "candidate",
+   "evidence": "vtable U::PlayerShootController slot 0"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "450380",
+   "kind": "fn_paired",
+   "lin": "141fe50",
+   "status": "candidate",
+   "evidence": "batch: votes 2, fields 0.33, size ratio 0.54"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "55b150",
+   "kind": "fn_paired",
+   "lin": "169af50",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: call gaps (2 parents)"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d84c20",
+   "kind": "fn_paired",
+   "lin": "165b070",
+   "status": "matched",
+   "evidence": "input-bank fields 10/10 (J 1.00), size 1840/1488, call-graph votes 2: two independent evidences, read",
+   "what": "slot input setup (10 bank fields)"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d8dfe0",
+   "kind": "fn_paired",
+   "lin": "1653680",
+   "status": "candidate",
+   "evidence": "input-bank fields 2/2 (J 1.00, next 0.25), size 1024/448",
+   "what": "input-bank user (2 fields)"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d98e50",
+   "kind": "fn_paired",
+   "lin": "1670b30",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: string:HighwayConfigurationList::GetHighwayEnteredEffect(): configu"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "4500a0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_slots",
+   "win": "4ed040",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_slots",
+   "win": "70e580",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_slots",
+   "win": "7e1f10",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_slots",
+   "win": "9f7860",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d83550",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d83ae0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d98de0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d9cdb0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_slots",
+   "win": "9fe2a9",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 9fdef0"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "9fe2d7",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 9fdef0"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d8a6a3",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside d8a680"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d8a6ee",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside d8a680"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d8b400",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside d8b3e0"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d8b45a",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside d8b3e0"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d8b7a7",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside d8b790"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d8b7e4",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside d8b790"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "2f4b764",
+   "kind": "data",
+   "lin": "3d8d9e4",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "2f4b7e0",
+   "kind": "data",
+   "lin": "3d8da60",
+   "status": "candidate",
+   "evidence": "block 2f4b720..2f4b828 delta +e42280 (16 members)"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "38f4de8",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_slots",
+   "win": "395cdb0",
+   "kind": "data",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_present",
+   "win": "1a4f90",
+   "kind": "fn_paired",
+   "lin": "bdf230",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: export:GetPlayerZoneID"
+  },
+  {
+   "module": "pilot_present",
+   "win": "1e9bd0",
+   "kind": "fn_paired",
+   "lin": "c2d060",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: export:GetPlayerControlledShipID"
+  },
+  {
+   "module": "pilot_present",
+   "win": "717ed0",
+   "kind": "fn_paired",
+   "lin": "1379aa0",
+   "status": "candidate",
+   "evidence": "batch: votes 4, fields 0.27, size ratio 0.67"
+  },
+  {
+   "module": "pilot_present",
+   "win": "8e8450",
+   "kind": "fn_paired",
+   "lin": "1192820",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: string:Camera anchor %s is an orphaned component"
+  },
+  {
+   "module": "pilot_present",
+   "win": "b05e30",
+   "kind": "fn_paired",
+   "lin": "a44e40",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: export:GetPlayerOccupiedShipID"
+  },
+  {
+   "module": "pilot_present",
+   "win": "b3bad0",
+   "kind": "fn_paired",
+   "lin": "a77e90",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: vtable"
+  },
+  {
+   "module": "pilot_present",
+   "win": "3d91e0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_present",
+   "win": "75d110",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_present",
+   "win": "979ce0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_present",
+   "win": "d81ec0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_present",
+   "win": "9fe55a",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 9fdef0"
+  },
+  {
+   "module": "pilot_present",
+   "win": "9fe573",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 9fdef0"
+  },
+  {
+   "module": "pilot_present",
+   "win": "9fe5d0",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 9fdef0"
+  },
+  {
+   "module": "pilot_present",
+   "win": "38f4ee0",
+   "kind": "data",
+   "lin": "3e77430",
+   "status": "candidate",
+   "evidence": "aligned global votes 3"
+  },
+  {
+   "module": "pilot_present",
+   "win": "2bc07d8",
+   "kind": "rdata",
+   "lin": "3ab4988",
+   "status": "candidate",
+   "evidence": "vtable UI::CUIController slot 1"
+  },
+  {
+   "module": "pilot_stock_view",
+   "win": "54efb5",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 54ef49"
+  },
+  {
+   "module": "pilot_stock_view",
+   "win": "54efd6",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 54ef49"
+  },
+  {
+   "module": "pilot_stock_view",
+   "win": "54efdf",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 54ef49"
+  },
+  {
+   "module": "pilot_stock_view",
+   "win": "609440",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 6093e0"
+  },
+  {
+   "module": "pilot_stock_view",
+   "win": "7d4d7a",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 7d4d40"
+  },
+  {
+   "module": "pilot_stock_view",
+   "win": "7d4d93",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 7d4d40"
+  },
+  {
+   "module": "pilot_stock_view",
+   "win": "7d4eb5",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 7d4d40"
+  },
+  {
+   "module": "pilot_stock_view",
+   "win": "81bba3",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside 81bb50"
+  },
+  {
+   "module": "pilot_stock_view",
+   "win": "d93052",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside d924d0"
+  },
+  {
+   "module": "pilot_stock_view",
+   "win": "d93087",
+   "kind": "in_open_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside d924d0"
+  },
+  {
+   "module": "pilot_camera",
+   "win": "1b3750",
+   "kind": "fn_paired",
+   "lin": "c030e0",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: export:IsPlayerCameraTargetViewPossible"
+  },
+  {
+   "module": "pilot_camera",
+   "win": "1b9230",
+   "kind": "fn_paired",
+   "lin": "c03b30",
+   "status": "candidate",
+   "evidence": "linux_pair_calls: export:SetPlayerCameraTargetView"
+  },
+  {
+   "module": "pilot_camera",
+   "win": "9faad0",
+   "kind": "fn_open",
+   "lin": null,
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "module": "pilot_camera",
+   "win": "afd280",
+   "kind": "in_paired_fn",
+   "lin": null,
+   "status": "open",
+   "evidence": "inside afd1f0 (paired a419a0)"
+  },
+  {
+   "module": "pilot_eye",
+   "win": "2c3eec0",
+   "kind": "rdata",
+   "lin": "3b5ec68",
+   "status": "candidate",
+   "evidence": "vtable U::FirstPersonController slot 0"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "6d6d80",
+   "lin": "147f900",
+   "what": "first component of category 2 (entity +0xa8 buckets from 2, class mask byte, ComponentFilterByClass); the boost/travel predicates' first step",
+   "status": "matched",
+   "evidence": "read: same walk (+0xa8, count +0x20, starts at bucket 2 = +0x40), the mask byte, result through the second argument; 14e8760 starts at bucket 4, 14bbb00 is a has-class test"
+  },
+  {
+   "module": "pilot_inputs",
+   "win": "54ce90",
+   "lin": null,
+   "what": "boost active (component +0x2e0 boost time, 4bb560 duration)",
+   "status": "open",
+   "evidence": "no Linux function up to 200 bytes reads +0x2e0 as a double with a call: inlined or another offset"
+  }
+ ],
+ "coverage": {
+  "sites": 174,
+  "placed": 71,
+  "matched": 8
+ }
+}

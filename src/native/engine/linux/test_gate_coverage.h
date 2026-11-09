@@ -17,6 +17,14 @@ static void test_coverage_linux(void) {
     assert(cov_marked==3 && cov_skipped==1 && *LX(base)==0xcc && *LX(base+0x40)==0xcc && *LX(base+0xc0)==0xe9 && !strcmp(cov_stage,"marked"));
     assert(((fn)(void*)LX(base))()==11 && *LX(base)==0xb8 && cov_hits==1);
     assert(((fn)(void*)LX(base))()==11 && cov_hits==1); /* once only */
+    {   /* The integrity checks' view: a code read over marks still out sees the saved bytes; a mark already hit, or an
+         * entry another hook owns, is no mark (lockstep_coverage.h cov_overlaps / cov_unpatch_copy). */
+        unsigned char view[0x50];memcpy(view,LX(base+0x40),sizeof(view));
+        assert(view[0]==0xcc && view[0x40]==0xcc && cov_overlaps(LX(base+0x40),sizeof(view)));
+        cov_unpatch_copy(LX(base+0x40),view,sizeof(view));
+        assert(view[0]==0xb8 && view[0x40]==0xb8 && view[1]==22 && *LX(base+0x40)==0xcc);   /* the code itself stays marked */
+        assert(!cov_overlaps(LX(base),6) && !cov_overlaps(LX(base+0xc0),5) && !cov_overlaps(LX(base+0x41),0x3f));
+    }
     stats.issued=2;cov_frame(2);
     assert(((fn)(void*)LX(base+0x40))()==22 && cov_hits==2);
     char row[128];assert(!cov_row(0,row,sizeof(row))); /* no rows before the window ends */

@@ -153,6 +153,9 @@ def main(argv=None):
     p.add_argument('--players', type=int, default=2, help='2..8')
     p.add_argument('--mode', choices=('coop', 'factions'), default='coop')
     p.add_argument('--minutes', type=float, default=40, help='length of the pilot window (default 40)')
+    p.add_argument('--coverage', type=int, metavar='TICKS', help='diagnostic: the listed functions that run in ticks 1..TICKS')
+    p.add_argument('--coverage-list', type=Path, help='with --coverage: X4.exe image RVAs, one per line')
+    p.add_argument('--coverage-from', type=int, metavar='TICK', help='with --coverage: mark at tick TICK instead of tick 1')
     p.add_argument('--full-logs', action='store_true', help='keep the per-object world pages (no play mode; ~120 MB per capture)')
     p.add_argument('--lua-block', default=','.join(PLAY_LUA_BLOCK), metavar='NAMES',
                    help='Lua globals the Lua guard refuses during the session (default: %(default)s; empty: none)')
@@ -185,6 +188,9 @@ def main(argv=None):
         if path.exists():
             raise SystemExit(f'exists: {path} (overlays are frozen; pick a new --out)')
     end = window_end(args.minutes)
+    coverage = ['--coverage', str(args.coverage), '--coverage-list', args.coverage_list.resolve()] if args.coverage else []
+    if args.coverage and args.coverage_from:
+        coverage += ['--coverage-from', str(args.coverage_from)]
     join_base, sets = [], list(args.set)
     if opened:
         sys.path.insert(0, str(DEV))
@@ -204,12 +210,16 @@ def main(argv=None):
             sets = sets + ['native_gate_world_hash_join=true']
         sets = join_overlays.default_sets(join_overlays.ids_sets(join_overlays.refresh_sets(join_overlays.precise_sets(sets))))
     step('base', [DEV / 'build_native_gate_overlay.py', '--mode', 'battle', '--gate-dll', args.gate_dll.resolve(),
-                  '--snapshot', args.snapshot.resolve(), '--session-clients', *join_base, '--out', base])
+                  '--snapshot', args.snapshot.resolve(), '--session-clients', *join_base, '--out', base, *coverage])
     cmd = [DEV / 'native_gate_players.py', 'overlay', '--base', base, '--out', out, '--gate-dll', args.gate_dll.resolve(),
            '--probe', DEV / 'native_gate_probe.lua', '--players', str(args.players), '--mode', args.mode, '--source', 'stock',
            '--defaults-only', '--set', f'native_gate_pilot_window={{{WINDOW_START},{end}}}']   # --defaults-only takes no --window
     if not args.full_logs:
         cmd += ['--set', 'native_gate_play_mode=true']
+    # Other players' ships drawn between the last two steps (smoke play-sE: 0 desyncs). The defaults' 'extrapolate'
+    # draws them ahead, and the map then shows their icons flicking between the guessed and the true place (user, 8 Nov).
+    if not any(item.startswith('native_gate_render_motion=') for item in args.set):
+        cmd += ['--set', "native_gate_render_motion='interpolate'"]
     block = [name for name in args.lua_block.split(',') if name.strip()]
     if block:
         cmd += ['--set', "native_gate_ui_lua='block'",

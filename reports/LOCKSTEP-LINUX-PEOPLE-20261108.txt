@@ -1,0 +1,178 @@
+LOCKSTEP LINUX PEOPLE STACK (the players' modules on the Linux gate)
+Started 8 November 2026 after the cancelled playtest (no Linux client). Split with x4mods-e7: the simulation keys and
+the defaults mechanism are e7's (reports/LOCKSTEP-LINUX-CATCHUP-20261104.txt, "A LINUX PLAYER IN A WINDOWS SESSION");
+the people stack is this report's: player_identity, pilot_slots .. pilot_death_suit, hit_claims, ui_replay, ui_guard,
+pilot_foot and its bodies/slots, player_settings_per_slot, guidance_local, render_fps/camera/motion, own_predict.
+
+1. SIZE
+  The Windows people stack (src/native/engine/lockstep_pilot_*.h, lockstep_ui_replay*.h, lockstep_ui_guard*.h,
+  lockstep_render_*.h, lockstep_own_predict.h) pins about 600 distinct X4.exe addresses: functions, call sites, data
+  words, vtables. Largest: ui_replay 88, pilot_native 101, pilot_slots 45, pilot_foot 41, pilot_fire 35, pilot_stock
+  30, pilot_present 26, pilot_inputs 22, render_display 20, and the UI guard's table (288 exports by name: the same
+  names exist on Linux).
+  The Linux X4 (ELF, GCC 14.2) keeps no names for X4's own code: of 28644 defined dynamic symbols none is in
+  namespace U. Named on both: the 2378/11360 plain C exports (the Lua FFI API; 2024 same names) and RTTI class names.
+
+2. TOOLS (offline, read both binaries; tests/test_linux_pair_tools.py)
+  tools/dev/linux_pair_rtti.py   vtables by RTTI class name and offset: 2958 classes, 3542 vtables. Linux slot =
+                                 Windows slot + 1 after the destructor (GCC's two): 14 of the 19 known function pairs
+                                 that sit in paired vtables are exactly one slot later (the 5 others are MSVC-folded
+                                 stubs); 3182 of 3542 Linux vtables have exactly one slot more.
+  tools/dev/linux_pair_calls.py  function ranges (.pdata; .eh_frame_hdr and the FDEs), a capstone sweep (calls, string
+                                 references, references to writable globals), anchors (known pairs, same-name exports,
+                                 unique vtable slots, strings one function references on each side), then votes: a
+                                 one-call gap between aligned calls pairs only when two paired parents agree; identical
+                                 paired-callee or paired-global signatures. 9965 pairs.
+                                 Held out against tools/dev/lockstep_linux_known_pairs.json: 19 of 68 found, 19 right,
+                                 0 wrong. (Single-parent gaps were wrong 3 of 3: MSVC and GCC inline differently.)
+  tools/dev/linux_pair_candidates.py  leads for one unpaired function: votes from paired callers and callees, sizes,
+                                 and the share of struct field offsets ([reg + 0x..]) the two bodies use.
+  tools/dev/linux_people_sites.json  the people stack's Windows sites with their Linux counterparts and evidence.
+
+3. PILOT CORE (lockstep_pilot_inputs.h), 12 functions: 7 placed
+  9fc550 controller getter -> 1dd19d0 (3 paired parents); d8e5b0 input value by index -> 1663740 (2 paired callers,
+  size 4712/4464, 30 of 112 field offsets shared); d9cc30 controls refresh -> 165d860 (2 parents); b09880
+  IsFlightAssistActive, 179760/175a00 De/ActivatePlayerControls (exports); ced70 find (known).
+  Open: ea7600 boost, ea7650 travel, d8dd50 authority, d8d9d0, 1252850. The first three are 64..96-byte predicates
+  over the controller's entity (+0x28): travel = component(entity) +0x340 != 0, boost = 54ce90(component, time),
+  authority = two globals, virtual slot 49, a global byte and entity +0xd1. In the one paired caller (d95180 ->
+  166d020) GCC leaves no separate call for them: most likely inlined. The Linux gate can then reimplement them from
+  their fields, once the component getter 6d6d80 (entity +0xa8 list walk) and 54ce90 are placed and the offsets
+  checked on Linux.
+
+3b. THE COMPONENT GETTER 6d6d80 (called by 62 Windows functions; the three predicates' first step)
+  Not a plain getter: a typed lookup. entity +0xa8 is a component container (count +0x20, a vector of 32-byte buckets
+  at +0x8/+0x10, the walk starts at bucket 2); each candidate passes a class-mask byte (global 0x6cf3250 against the
+  component's class index +0x68) and a static predicate object, U::ComponentFilterByClass at 0x31bc5f0 (its vtable
+  call +0x18); the first match is written to the out parameter. On Linux the same shape (rdi +0xa8, then +0x20) starts
+  three functions: 147f900 (352 bytes) and 14e8760 (368) read a mask byte (0x3daae50), 14bbb00 (272) calls a filter
+  object (0x3ed1840, vtable +0x18): instances of one template for different component classes, GCC splitting what
+  MSVC keeps in one body. Which is the travel/boost component's: the class id each filter object gets in its static
+  initializer (Windows: the writer of 0x31bc5f0's fields; Linux: of 0x3ed1840's), next.
+  Resolved by a reading: 6d6d80 -> 147f900 (the same walk from bucket 2, the mask byte, the out parameter); 14e8760
+  starts at bucket 4 (another category), 14bbb00 is a bool "has a component of class 0x54" test.
+  54ce90 (boost: component +0x2e0 double, 4bb560 duration): no Linux function of up to 200 bytes reads +0x2e0 as a
+  double and calls: inlined into its callers or at another offset; next through 147f900's Linux callers.
+  The offsets agree where seen so far (+0xa8, +0x20, 32-byte buckets): a sign that the component layout is shared.
+
+3c. INLINING: THE LINUX GATE REIMPLEMENTS SMALL HELPERS
+  147f900 (the getter) has one Linux caller (cc5ec0, 101104 bytes) against 62 Windows callers: GCC inlined the lookup
+  nearly everywhere, and with it the 64..96-byte predicates (boost ea7600, travel ea7650, authority d8dd50). No Lua
+  export reports boost or travel state (both builds export CanStartTravelMode, GetBoostEnergyPercentage, IsSetaActive,
+  IsFlightAssistActive, IsAutoPilotActive, IsPlayerControllingShip, GetPlayerControlledShipID). So the Linux pilot
+  capture reimplements them from fields, as the Windows gate already does for other engine logic: the bucket walk
+  (+0xa8, count +0x20, 32-byte buckets from 2, the class mask byte, the filter object), travel +0x340, boost +0x2e0
+  with the duration from 4bb560. Each field offset is confirmed on Linux by a reading of an inlined site before use
+  (cc5ec0 holds the getter's only out-of-line call; the inlined copies are found by the +0xa8 walk from bucket 2).
+
+3d. THE MINIMAL PATH, AUTOMATIC PASSES (8 November, later)
+  Minimal path = what the default stack needs for a Linux player flying its own ship: pilot_inputs, pilot_native
+  (dispatchers, cursor, SPACE), pilot_stock, pilot_slots, pilot_present, pilot_stock_view, pilot_camera, pilot_eye.
+  174 distinct sites (tools/dev/linux_people/coverage.py, code constants of 0x40000 and more in an X4.exe section).
+  Placed 64 (tools/dev/linux_people_sites.json): inputs 15/23, native 29/79, stock 4/16, slots 5/26, present 8/15,
+  stock_view 0/10, camera 2/4, eye 1/1. Methods and their held-out precision:
+    - functions: anchors + votes (19/19), neighbour extension (linux_pair_neighbors.py: a pair's next/previous
+      functions, sizes within 2x, 30% of field offsets shared; +299 pairs, 0 wrong held out), batch candidates
+      (2+ votes, 25% fields, sizes within 2x, no close rival: 6, among them 1252850 -> 104f220, 717ed0 -> 1379aa0);
+    - globals: aligned votes (5/5), blocks (4/4; the input bank 2f4b720..828 at +0xE42280);
+    - vtables: RTTI (PlayerController, PlayerShootController, FirstPersonController, CUIController).
+  The automatic passes plateau here: most open sites are functions of the input module with no paired neighbour
+  (GCC moved its runs) and patch points inside open functions. The rest needs a reading per site, or runtime traces on
+  the Linux machine (which functions run when a control id is dispatched, a menu opens, the map opens), which would
+  place the dispatchers and SPACE handlers directly.
+
+3e. CONTROL IDS ARE THE SAME ON BOTH BUILDS; THE HANDLER REGISTRATION IS NOT
+  The stock record carries X4 control ids (kind, id, value). Both builds have the same 447 input names
+  (INPUT_STATE/ACTION/RANGE_*), and their name tables ({name pointer, value} pairs of 16 bytes: Windows one copy per
+  translation unit, e.g. 0x2468200 (408 states and actions) and 0x246a960 (39 ranges); Linux one, 0x3b263c0 and
+  0x3b26140) give every name the same value: 447 of 447. A Windows player's stock record means the same on Linux,
+  so the wire needs no translation.
+  The registration differs: Windows 71b6c0 registers handler 71bac0 for ids 0xa9 (NEXT_TARGET_ACTION), 0xaa, 0xd5,
+  ... with one call each (0x1255610(table +0x63e0, id, handler)); on Linux no function loads that id sequence, no
+  data array holds it (u16/u32/strides 8..48), and the ids appear together only as the cases of 1393520 (10272 bytes,
+  163 calls: case 0xa9 calls 1c91aa0(0xa9)): the handler's switch, perhaps 71bac0 with its callees inlined (71bac0 is
+  2944 bytes, 70 calls; 8 of 73 field offsets shared: not conclusive). The other stock handlers are a 1072-byte
+  function (d86c80) and two thunks of 31 and 33 bytes (d870b0, d87f70).
+
+3f. LINUX INPUT COVERAGE (x4mods-e7's run lx32b, 8 November)
+  Two Linux clients (lx28 clock stack), native_gate_coverage 1300 from tick 300 over 8192 listed functions
+  (tools/dev/linux_people/coverage-input.json; xdotool XTEST into client 1's Xvfb, the X4 window focused). Client 1
+  ran 1630 listed functions, client 2 1302 (a strict subset); 1009 first runs in the idle stretch 300..359; 328 ran on
+  the input client only: w 15, q 4, a 4, r 4, f 2, Tab 16, mouse 5, BackSpace 16, map open 238, map close 14,
+  shift+1 10 (s, e, d: 0, the first key of each axis took them). 17 entries inside pinned gate ranges were left
+  unmarked (an int3 there stopped lx32a with reason 136; the Linux gate now skips pinned ranges, b1688473).
+  Matching the open Windows functions against the 328 input-only functions by field offsets and size
+  (tools/dev/linux_people/cov_match.py) gives 11 clear leaders, but none has call-graph support (0 votes each) and
+  two claim one Linux function: leads, not placements. Missing for a decision: which input each Windows function
+  answers (a Windows trace of the same script: the Windows gate's coverage is the same core; the input would have to
+  reach a windowed X4 without taking the user's desktop focus), and the "both" functions (a Windows function of the
+  idle frames has its twin among the 1302, not the 328).
+
+4. NEXT (revised after lx32b)
+  - A Windows trace of the same events, for event buckets on both sides. X4.exe takes keyboard and mouse through
+    raw input (imports RegisterRawInputDevices/GetRawInputData, DirectInput8Create, GetAsyncKeyState; no SendInput):
+    a posted WM_KEYDOWN would not fly the ship, and real input would need a second desktop session (x4mods-e7). The
+    stock path itself does not need the keyboard: native_gate_pilot_stock_script takes an event list {{tick, kind,
+    id, value}, ...} in admitted ticks and runs it through X4's own dispatchers (the same handlers the Linux keys
+    reached). Plan: the Linux script's events as control ids (the names are equal on both builds, report 3e:
+    accelerate/decelerate states, roll and strafe, boost, stop, travel), a probe hook that opens and closes the map at
+    two ticks (as native_gate_mp_menu_test opens the options page), native_gate_coverage over the Windows twins of the
+    8192-entry list (tick 1 marking is enough: the input functions first run at their event either way), in a lane.
+    Then a function pairs when both sides first run in the same event bucket and the field offsets and size agree,
+    with the call graph as the tie-breaker. The cursor path (d88a10) has no scripted input: it stays for a reading.
+
+3g. THE WINDOWS TRACE (8 November evening): BLOCKED BY THE GATE'S OWN CODE CHECKS
+  Built: build_native_gate_overlay/build_play_overlay --coverage for the Windows gate, native_gate_map_test, the
+  stock event script (tools/dev/linux_people/stock-events.lua), tools/dev/linux_pair_traces.py (event buckets on
+  both sides, pairs by shared fields with a clear lead; tests in test_linux_pair_tools.py).
+  Four lane runs (trace-w1 .. w4, defaults stack) stopped at tick 0..1: the coverage int3 of a listed function that
+  has not run yet breaks every check that reads its bytes later. In turn: the world hash's nav layout pins (the table
+  in lockstep_world_hash.h), the 8-byte prefixes it checks at 0xea4c00/0xe85360, nav_player's head of
+  PlayerController::vfunc33 0xd97e80 (stop 95), the region camera's check (stop 165). Excluding everything the 42
+  per-tick checks pin (tools/dev/linux_people/cov_exclude.py) keeps only 29 of the 57 open targets and still misses
+  checks of other forms (165). So the Windows gate needs what the Linux gate got (b1688473), in its own form: code
+  reads of the integrity checks overlay the original bytes under coverage marks (as tsnap_unpatched_hash does for the
+  travel snapshot's byte), or coverage skips a registry of checked ranges. Until then the Windows trace waits.
+
+3h. THE WINDOWS TRACE WORKS (trace-w8, 8 November late)
+  Three gate/probe fixes made the Windows trace of lx32b's events possible:
+    - coverage-aware integrity reads (ee2319db): fp_patch_overlaps/view also hand the checks the saved byte under
+      marks still out (cov_overlaps / cov_unpatch_copy over a sorted index); Linux test extended, WSL check PASS;
+    - native_gate_coverage_from on Windows (gate.coverage(N, from), win_cov_frame as lx_cov_frame): marks at tick 60,
+      after the stock path installs its entries at its window start (trace-w5 stopped there with 155);
+    - COV_ENTRY_FOREIGN (Windows: the entry's first 16 bytes against X4.exe on disk): entries another hook owns in any
+      form are skipped (trace-w6 lost the stock path's native patches, 155 native_patch_lost);
+    - the probe writes COVERAGE_ROW at once (held ticks of the status stride dropped all 1322 rows in trace-w7).
+  trace-w8: stock events on slot 1 and the map hook, in sync to 1842, 0 errors, 4489 marked, 81 skipped, 1322 ran.
+  Windows/Linux first runs per event: accelerate 21/33, roll left 14/18, strafe 10/6 and 10/4, boost 11/21, stop
+  9/30, map open 92/255, map close 21/17, travel 3/13. tools/dev/linux_pair_traces.py pairs within each event (fields
+  >= 0.3, 0.1 ahead of both rivals, sizes within 2x): 15 pairs (e.g. the stop handler d97b50 -> 165bd50, fields 0.57),
+  the frame work with stricter bounds (0.5, 0.2 ahead) 9 more. Minimal path now 65 of 174.
+  Why no more: the open minimal-path functions are mostly the ones the people stack itself hooks on Windows (their
+  entries are skipped or excluded there), while Linux runs them unhooked. For each, the Windows role is known from our
+  own headers and the Linux trace narrows it to the functions that first ran at that role's event: a reading per site
+  against a short list (tools/dev/linux_people/cov_match.py's ranking within the event).
+
+3i. THE INPUT BANK AS A KEY (8 November late)
+  The trace's event short lists (tools/dev/linux_people/role_shortlists.py) failed a cross-check: the hooked Windows
+  functions write fields of the input bank (2f4b720..828), which sits at +0xE42280 on Linux (3d), and no short-listed
+  Linux function touched any of the expected fields. Searched the other way round (every Linux function by the shifted
+  bank fields it references, Jaccard against the Windows function's set), the bank places them directly:
+    d86c80 stock control handler -> 166c2f0  fields 4/4, size 1072/1024, call-graph votes 3   matched
+    d84c20 slot input setup      -> 165b070  fields 10/10, size 1840/1488, votes 2           matched
+    d9c250 Flight Stopped        -> 165ab80  fields 10 of 14 (J 0.71, next 0.59), votes 3    matched
+    d9c590 Flight Started        -> 165d050  4 of 5 (J 0.80, next 0.50)                      candidate
+    d8dfe0, d898c0               -> 1653680, 1d95a30 (2/2 each; d898c0 4.4x larger)          candidates
+  The small predicates that read the same two bank fields (d8a680, d8b3e0, d8b790, d8dd50) tie on 16666b0/165d700/
+  1658d60 and stay open (most likely inlined, 3c). Minimal path: 71 of 174 placed, 8 matched.
+  The bank key generalizes: every module that keeps a data block laid out alike on both builds (linux_pair_data.py
+  blocks: 33 found) can place its users the same way.
+
+4b. NEXT (before lx32b)
+  - 6d6d80 and 54ce90 by a reading of both builds (the getter is called by 62 Windows functions: placing it pins many
+    sites), then the three predicates; the data words of pilot_inputs (0x2f4b7e4 control-deactivation count,
+    0x2f4b760 throttle, 0x38f0728 triggers, 0x3d196f0 controller registry, 0x6cf2210, 0x6cf1500) through the paired
+    functions that reference them.
+  - Then pilot_slots, pilot_stock, pilot_present (the Linux player's own controls and view), then the UI families.
+  - Every port lands as linux/gate_pilot*.h with its tests, one line each in the shared Linux files, and a live check
+    against the matching Windows run (as e7 does for the simulation keys).

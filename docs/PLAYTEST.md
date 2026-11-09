@@ -67,6 +67,16 @@ python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <the same 
   pauses the same way. In smoke play-sB, with the refusal, the same `Pause()` left the game running and the session
   in sync.
 
+**The Multiplayer session page:** Escape, then "Multiplayer session" (above Settings).
+
+- It shows which player you are, the step and game time, whether you are still in the session, and the relay.
+- Leave takes you out cleanly: the others play on after 15 s, and your game runs on alone.
+- Live check 8 Nov (smoke play-sF): the page opened and drew in X4, with no Lua errors and the session in sync.
+
+**Other players' ships** are drawn between the last two steps, about 33 ms behind (`render_motion`
+'interpolate'). The default 'extrapolate' draws them ahead, and the map then shows their icons flicking back and
+forth.
+
 **Avoid:**
 
 - SETA (time acceleration) and the Pause key. Both are untested under the gate.

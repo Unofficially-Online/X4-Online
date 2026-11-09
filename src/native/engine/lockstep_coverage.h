@@ -17,6 +17,12 @@
 #define COV_BASE 0u /* listed addresses are image RVAs; Linux lists virtual addresses (COV_BASE 0x400000) */
 #endif
 #define COV_TABLE 16384u
+/* Platform, optional: 1 when another hook already owns the entry in a form the first-byte test below does not see (a
+ * patch that is not a jmp, or one that starts later in the first bytes). Windows compares the entry with the
+ * executable file (trace-w6: the stock path's native patches were lost to a mark, stop 155 native_patch_lost). */
+#ifndef COV_ENTRY_FOREIGN
+#define COV_ENTRY_FOREIGN(address) 0
+#endif
 typedef struct {uintptr_t address;volatile LONG64 tick;unsigned char saved;volatile LONG state;} cov_site_t; /* state 0 off, 1 marked, 2 ran, 3 restored */
 static cov_site_t cov_sites[COV_MAX];
 static unsigned cov_table[COV_TABLE]; /* site index + 1, open addressing on the address */
@@ -65,14 +71,56 @@ static int cov_trap(uintptr_t address) {
     return *(volatile unsigned char*)address!=0xcc;
 }
 static int cov_install_handler(void); /* platform */
+/* The integrity checks' view of marked code (Windows: lockstep_gate.c fp_patch_overlaps / fp_patch_view, the path
+ * hash_ok, read_local and sample_read take for the FP patches): a code read over a listed function whose mark is still
+ * out sees the saved byte, so a module that pins code holding a listed function keeps passing until the function first
+ * runs (and after, when the byte is back). Without it the Windows input trace stopped at tick 0..1 four times (the
+ * world hash's nav pins, nav_player stop 95, the region camera stop 165: reports/LOCKSTEP-LINUX-PEOPLE-20261108.txt
+ * 3g); the Linux gate skips pinned ranges instead (gate_coverage.h). Sorted by address in cov_mark, before any mark
+ * goes out; read on any thread. */
+static unsigned cov_sorted[COV_MAX],cov_sorted_count;
+static int cov_sorted_cmp(const void *a,const void *b) {
+    const uintptr_t x=cov_sites[*(const unsigned*)a].address,y=cov_sites[*(const unsigned*)b].address;
+    return x<y?-1:x>y;
+}
+static void cov_sort(void) {
+    for(unsigned i=0;i<cov_count;i++) cov_sorted[i]=i;
+    qsort(cov_sorted,cov_count,sizeof(*cov_sorted),cov_sorted_cmp);
+    cov_sorted_count=cov_count;
+}
+static inline unsigned cov_lower(uintptr_t address) {
+    unsigned lo=0,hi=cov_sorted_count;
+    while(lo<hi) {const unsigned mid=(lo+hi)/2;if(cov_sites[cov_sorted[mid]].address<address) lo=mid+1;else hi=mid;}
+    return lo;
+}
+static inline int cov_overlaps(const void *source,size_t bytes) {
+    if(!cov_open || cov_done || !cov_sorted_count || !source) return 0;
+    const uintptr_t lo=(uintptr_t)source,hi=lo+bytes;
+    for(unsigned k=cov_lower(lo);k<cov_sorted_count;k++) {
+        cov_site_t *s=&cov_sites[cov_sorted[k]];
+        if(s->address>=hi) break;
+        if(InterlockedCompareExchange(&s->state,1,1)==1) return 1;
+    }
+    return 0;
+}
+static inline void cov_unpatch_copy(const void *source,void *copy,size_t bytes) {
+    if(!cov_open || cov_done || !cov_sorted_count || !source) return;
+    const uintptr_t lo=(uintptr_t)source,hi=lo+bytes;
+    for(unsigned k=cov_lower(lo);k<cov_sorted_count;k++) {
+        cov_site_t *s=&cov_sites[cov_sorted[k]];
+        if(s->address>=hi) break;
+        if(InterlockedCompareExchange(&s->state,1,1)==1) ((unsigned char*)copy)[s->address-lo]=s->saved;
+    }
+}
 /* At the start of tick 1, on the MoveWorker. */
 static void cov_mark(void) {
     if(!cov_armed || cov_open || cov_done) return;
+    cov_sort();
     cov_open=1;
     if(!cov_install_handler()) {cov_stage="handler";InterlockedIncrement64(&cov_failures);return;}
     for(unsigned i=0;i<cov_count;i++) {
         cov_site_t *s=&cov_sites[i];const unsigned char first=*(volatile unsigned char*)s->address;
-        if(first==0xe9 || first==0xcc) {++cov_skipped;continue;}
+        if(first==0xe9 || first==0xcc || COV_ENTRY_FOREIGN(s->address)) {++cov_skipped;continue;}
         if(!cov_page_open(s->address)) {InterlockedIncrement64(&cov_failures);continue;}
         s->saved=first;InterlockedExchange(&s->state,1);
         cov_code_write(s->address,0xcc);

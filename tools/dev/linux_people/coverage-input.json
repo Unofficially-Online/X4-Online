@@ -1,0 +1,16 @@
+[
+ {"tick": 360, "keys": ["w"], "hold_ms": 800, "what": "accelerate"},
+ {"tick": 420, "keys": ["s"], "hold_ms": 400, "what": "decelerate"},
+ {"tick": 480, "keys": ["q"], "hold_ms": 500, "what": "roll left"},
+ {"tick": 540, "keys": ["e"], "hold_ms": 500, "what": "roll right"},
+ {"tick": 600, "keys": ["a"], "hold_ms": 500, "what": "strafe left"},
+ {"tick": 660, "keys": ["d"], "hold_ms": 500, "what": "strafe right"},
+ {"tick": 720, "keys": ["r"], "hold_ms": 400, "what": "strafe up"},
+ {"tick": 780, "keys": ["f"], "hold_ms": 400, "what": "strafe down"},
+ {"tick": 840, "keys": ["Tab"], "hold_ms": 800, "what": "boost"},
+ {"tick": 920, "mouse": [150, 0], "back_ms": 300, "what": "cursor steering: move right, then back"},
+ {"tick": 980, "keys": ["BackSpace"], "what": "stop ship"},
+ {"tick": 1040, "keys": ["m"], "what": "map open (SPACE context edge)"},
+ {"tick": 1100, "keys": ["m"], "what": "map close"},
+ {"tick": 1160, "keys": ["shift+1"], "what": "travel mode"}
+]

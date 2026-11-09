@@ -225,6 +225,13 @@ class Play(unittest.TestCase):
         self.assertNotIn('relay_host', session.client_tail(1700000000))
         with self.assertRaises(SystemExit):
             session.client_tail(relay_host='relay.example')
+        remote = session.remote_config('203.0.113.9', 47000, 'b' * 32, 2, 2, 1700000000)
+        self.assertEqual({k: remote[k] for k in ('relay_host', 'port', 'slot', 'clients', 'arm_at')},
+                         {'relay_host': '203.0.113.9', 'port': 47000, 'slot': 'p2', 'clients': 2, 'arm_at': 1700000000})
+        for expected in ('X4LAN_CONFIG.port = 47000\n', 'X4LAN_CONFIG.token = "' + 'b' * 32 + '"\n', 'X4LAN_CONFIG.slot = "p2"\n',
+                         'X4LAN_CONFIG.native_gate_clients = 2\n', 'native_gate_arm_at = 1700000000\n',
+                         "native_gate_relay_host = '203.0.113.9'\n"):
+            self.assertIn(expected, remote['config'])
         line = session.join_command(o, '203.0.113.9', 47000, 'b' * 32, 2, 1700000000)
         self.assertIn('join --relay 203.0.113.9:47000 --token ' + 'b' * 32 + ' --slot 2 --clients 2 --arm-at 1700000000', line)
         for bad in (dict(port=0), dict(bind='127.0.0.1'), dict(allow_from=()), dict(remote_slots=(1,)), dict(public_host='x')):

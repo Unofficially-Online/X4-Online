@@ -202,8 +202,8 @@ def main():
     p.add_argument('--fp-redirect-ticks', type=int, default=3, help='ticks 1..N of the FP_REDIRECT_ROWs (default 3, at most 600)')
     p.add_argument('--fp-redirect-solver', choices=('shadow', 'redirect'), help='FR27: the GetSafePos solver on one portable implementation (needs --fp-redirect)')
     p.add_argument('--fp-redirect-drones', choices=('shadow', 'redirect'), help='FR30: the drone factors of get_attackstrength in Windows\' order on both executables (needs --fp-redirect)')
-    p.add_argument('--coverage', type=int, metavar='TICKS', help='the Linux gate: which listed functions run in ticks 1..TICKS (diagnostic; needs --coverage-list)')
-    p.add_argument('--coverage-list', type=Path, help='the function list (virtual addresses, one per line), copied next to the gate as coverage.txt')
+    p.add_argument('--coverage', type=int, metavar='TICKS', help='which listed functions run in ticks 1..TICKS (diagnostic; needs --coverage-list)')
+    p.add_argument('--coverage-list', type=Path, help='the function list (Linux virtual addresses or X4.exe image RVAs, one per line), copied next to the gate as coverage.txt')
     p.add_argument('--coverage-from', type=int, metavar='TICK', help='--coverage marks the list at tick TICK instead of tick 1 (1..TICKS)')
     p.add_argument('--tick-hz', type=int, choices=(60, 40, 30, 20),
                    help='native_gate_tick_hz: simulation steps per second (the relay needs the same --tick-hz; the session defaults use 30)')
@@ -1035,8 +1035,10 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write(f'X4LAN_CONFIG.native_gate_tick_hz = {args.tick_hz}'+chr(10))
     if args.coverage or args.coverage_list or args.coverage_from is not None:
-        if not args.gate_so or not args.coverage or not args.coverage_list or not 1 <= args.coverage <= 6000 or not args.coverage_list.is_file():
-            p.error('--coverage needs --gate-so, 1..6000 ticks and an existing --coverage-list')
+        # Both gates: the list is Linux virtual addresses for --gate-so, X4.exe image RVAs for --gate-dll.
+        if not (args.gate_so or args.gate_dll) or not args.coverage or not args.coverage_list or not 1 <= args.coverage <= 6000 \
+                or not args.coverage_list.is_file():
+            p.error('--coverage needs --gate-so or --gate-dll, 1..6000 ticks and an existing --coverage-list')
         if args.coverage_from is not None and not 1 <= args.coverage_from <= args.coverage:
             p.error('--coverage-from needs 1..--coverage')
         (args.out / 'native').mkdir(parents=True, exist_ok=True)
