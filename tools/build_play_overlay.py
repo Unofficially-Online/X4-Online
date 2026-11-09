@@ -253,6 +253,11 @@ def main(argv=None):
         # the handover (hj21..hj26: apart from H-1); hj27 with it: equal through the handover and 2,080 ticks after, 0 desyncs.
         if not any(t.replace(' ', '').startswith('native_gate_pilot_first_stores=') for t in sets):
             sets = sets + ['native_gate_pilot_first_stores=true']
+        # SHOOT also writes the session's last shot time where the joiner's load reset it (native_gate_join_shoot_far,
+        # x4mods-28): the weapon load delivers an AmmoChangedEvent that sets an engaging gun's last shot to the load clock, so
+        # the joiner's gun held fire (hj24, T=681: apart from 686); ca1 with it at T=677: equal to the end, 0 desyncs.
+        if not any(t.replace(' ', '').startswith('native_gate_join_shoot_far=') for t in sets):
+            sets = sets + ['native_gate_join_shoot_far=true']
         sets = join_overlays.default_sets(join_overlays.ids_sets(join_overlays.refresh_sets(join_overlays.precise_sets(sets))))
     step('base', [DEV / 'build_native_gate_overlay.py', '--mode', 'battle', '--gate-dll', args.gate_dll.resolve(),
                   '--snapshot', args.snapshot.resolve(), '--session-clients', *join_base, '--out', base, *coverage])

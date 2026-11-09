@@ -125,6 +125,8 @@ static int lua_join_attn_set(lua_State *L) {join_attn_set_on=p_lua_tonumber(L,1)
 /* gate.join_attn_states(on): with attn_set, the saver marks the records whose per-level state agrees on the session and the joiner
  * runs the native change at the admission for each marked object whose state is apart, at any level (attn_states=). */
 static int lua_join_attn_states(lua_State *L) {join_attn_states_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_shoot_far(on): SHOOT also writes the session's last shot time where the joiner's is far from it (a load's reset). */
+static int lua_join_shoot_far(lua_State *L) {join_shoot_far_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_gravn_extra(on): GRAVN keeps the joiner's extra zone groups in the neighbour lists it writes (default off). */
 static int lua_join_gravn_extra(lua_State *L) {join_gravn_extra_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shgr(on): a joiner takes the session's containers' shield recharge groups (SHGR, default off). */

@@ -285,7 +285,7 @@ class OpenRecipeTests(unittest.TestCase):
             self.assertEqual(base[base.index('--join') + 1], 'report')
             sets = [players[i + 1] for i, a in enumerate(players) if a == '--set']
             for key in ('native_gate_join_in_window=true', 'native_gate_world_hash_join=true', 'native_gate_join_ids=true', 'native_gate_join_precise=true',
-                        'native_gate_join_lstn=true', 'native_gate_render_motion=false', 'native_gate_pilot_first_stores=true'):
+                        'native_gate_join_lstn=true', 'native_gate_render_motion=false', 'native_gate_pilot_first_stores=true', 'native_gate_join_shoot_far=true'):
                 self.assertIn(key, sets)
             recipe = build_play_overlay.read_recipe(Path(d) / 'ov')
             self.assertEqual((recipe['open'], recipe['players'], recipe['set']), ([3], 3, ['native_gate_render_motion=false']))

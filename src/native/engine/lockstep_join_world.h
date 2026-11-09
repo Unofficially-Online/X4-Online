@@ -3781,6 +3781,16 @@ static int join_save_exact(uint64_t bits) {
     if(snprintf(text,sizeof(text),"%.4f",v)<=0) return 0;
     return strtod(text,NULL)==v;
 }
+/* native_gate_join_shoot_far (class A, 9 Nov; default off): a weapon whose last shot time at the admission is not the save's four
+ * decimals of the session's gets the session's too. hj16..hj18 and hj24 (T 668..684, the host's guns engaging, controller +0x84
+ * 0x147): the weapon load delivers an AmmoChangedEvent at once (0x812bbd -> 0x814ec9 -> 0x99a4ed -> 0x99c5b0 -> slot 490
+ * 0x81b4f0), whose reset sets the last shot time from the load's clock (+0x310 = now less the macro's +0x70), the controller's
+ * +0x38 (slot 26), the clip +0x350 and the macro's effect group (0xd75ba0); the load's own lastshottime read repairs the time,
+ * but for an engaging gun it is the reset's again at the admission, so SHOOT counted it far and left it: the joiner's gun held
+ * fire (hj24: the session's Weapon 674 -> 997 -> 998 -> Zone 930 projectile at 685, none on the joiner). The joiner has not
+ * stepped at the admission: the session's time is the gun's. 0 equal, 1 the save's four decimals (always written), 2 far. */
+static int join_shoot_far_on;static uint64_t join_shoot_far_written;
+static int join_shoot_time_kind(uint64_t own,uint64_t want) {return own==want?0:join_save_rounded(own,want)?1:2;}
 /* SHOOT's records whose controller the joiner lacked at the admission (diagnostic: present after T+1, after T+2). */
 static struct {uint64_t runtime;uint32_t ctl_vt;} *join_shoot_late;
 static uint32_t join_shoot_nlate,join_shoot_latecap;
@@ -7332,14 +7342,17 @@ static int join_admit_grav(const join_tables *s,const join_tables *mine) {
             else if(join_poke((uintptr_t)pose,s->viewp[i].pose,0x40)) ++join_rx.viewp_written;
         }
     }
+    join_shoot_far_written=0;
     for(uint32_t i=0;s->version>=13 && i<s->nshoot;i++) {   /* version 13: the weapons' shot state and their controllers' */
         const join_shoot_rec *r=&s->shoot[i];join_shoot_rec own;
         const uint64_t runtime=join_runtime_of(mine,r->portable);
         unsigned char *weapon=join_object(runtime),*ctl=NULL;
         if(!weapon || !join_shoot_read(weapon,&own,&ctl)) {++join_rx.shoot_missing;continue;}
-        if(own.lastshot!=r->lastshot) {   /* the same shot's time, the save's four decimals of it */
-            if(join_save_rounded(own.lastshot,r->lastshot)) {if(join_poke((uintptr_t)(weapon+JOIN_SHOOT_LASTSHOT),&r->lastshot,8)) ++join_rx.shoot_time;}
-            else ++join_rx.shoot_far;
+        const int time_kind=join_shoot_time_kind(own.lastshot,r->lastshot);   /* the same shot's time, the save's four decimals of it */
+        if(time_kind==1) {if(join_poke((uintptr_t)(weapon+JOIN_SHOOT_LASTSHOT),&r->lastshot,8)) ++join_rx.shoot_time;}
+        else if(time_kind==2) {
+            ++join_rx.shoot_far;
+            if(join_shoot_far_on && join_poke((uintptr_t)(weapon+JOIN_SHOOT_LASTSHOT),&r->lastshot,8)) ++join_shoot_far_written;
         }
         if(!r->has_ctl) continue;
         if(!ctl) {

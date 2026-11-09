@@ -406,6 +406,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_attn_set then   -- ATTN runs SetAttention where its write leaves the load's per-level state (attn_set=)
   assert(gate.join_attn_set and gate.join_attn_set(1)==1,'join attn set refused')
  end
+ if cfg.native_gate_join_shoot_far then   -- SHOOT writes the session's last shot time where a load's reset left the joiner's far
+  assert(gate.join_shoot_far and gate.join_shoot_far(1)==1,'join shoot far refused')
+ end
  if cfg.native_gate_join_attn_states then   -- with attn_set: every per-level state ATTN leaves apart, at any level (attn_states=)
   assert(cfg.native_gate_join_attn_set,'native_gate_join_attn_states needs native_gate_join_attn_set')
   assert(gate.join_attn_states and gate.join_attn_states(1)==1,'join attn states refused')

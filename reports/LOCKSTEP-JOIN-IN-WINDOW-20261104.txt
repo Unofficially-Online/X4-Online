@@ -1293,3 +1293,52 @@ Next: the in-window watch run again with NAVT; then the slot ships' controllers 
   no new plan, model_ext unchanged), and both banks come out apart: the NavigationController's re-expression of its banks into
   the new zone, from equal inputs. x4mods-28's J1 0x9d2ec (no zone change) parts at its first turning update after a new plan,
   ulps in rotation with equal watched inputs: the same symptom on another path.
+
+58. THE PLAYTEST HOT JOIN IN LOCKSTEP END TO END: THE LATE SEAT'S AUTHORITY, THE ENGAGING GUNS (hj22 .. hj27, ca1; 9 November)
+Setting: x4ls play --clients 2 --open 2 on the battle snapshot (save_009), the pilot window 40..5440, slot 2 absent, a joiner
+started at session tick 600..647 (x4ls join --same-pc), join_observe (the digest compared, mismatches counted, not fatal).
+Lanes b1/b2 with x4mods-67's agreement; branch contrib/ferrite-aim-time.
+- The catch-up was bit-exact for T=652, 705, 718, 726, 740 (hj18..hj27); the first digest mismatch sat at H-1, the late
+  seat's tick (hj22 T=718 H=3384, hj25 T=718 H=3493, hj26 T=740 H=3428), then a desync at H.
+- The handover split was slot 2's authority answer (pslot_global_part: autopilot, flight control, assist, highway, read in
+  scope 2 from slot 2's store): 0 on the session, 1 on the joiner from the seat on (s2=1/0/.. against 1/1/..). Outside its scope
+  a slot's routes 6/7/10 go by it: 1 is the Agent base (ea5a70: GetTransformImpl and its lazy RefreshFromPathingState), 0 the
+  PlayerController branch. So the joiner's PlayerController refreshed from the pathing bank every tick (stamp +0xc0 advancing,
+  cursor alternating, the pose one step behind: joiner(t+1) == session(t) at +0x60, H-1..H+4) while the session's stamp stayed
+  at the seat's time. Route 7/10 hits per update: 3.2/0.7 on the session, 15.5/8.6 on the joiner. Before the seat both sides
+  refreshed the slot ship's NavigationController alike (NAV_REFRESH rows for runtime ID 0x22bce: one main-thread stack,
+  bit-equal stamps, cursors equal by role).
+- Cause 1: a seat's store starts as the slot's first store, SIM copied from the client's own canonical block at its first
+  seat (pslot_store_init). Present slots take it in the take's seat pass on every session client; an absent slot's first seat
+  is its late one, where a joiner copies its own canonical block (its load and catch-up), and the saver carried the stores of
+  seated slots only. Fix native_gate_pilot_first_stores (d9c3be01, 52411e1f): every client takes an absent slot's first store
+  in pslot_seat_all; the saver carries every slot's first store (pilot_state first<k>=, pointers as portable IDs); the joiner
+  keeps the session's (a respawn there now starts from it too). hj26: carried (first2= in the package, its flight control 1),
+  the split unchanged: the parts were 6 against 4 (flight control 1 against 0) from the first scope exit after the seat, and
+  the joiner replayed no SPACE edge (stock space=2/0).
+- Cause 2: the take's bank reset d84c20 (pinned whole) sets the slot's flight control from this client's own input object,
+  flight = [[0x6cf1560]+0xce0] != 0 (0xd84d9c..0xd84da9), and reads it on (the autopilot target, d8ddb0, the environment
+  d8dfe0): set on a session client, not on the joiner. Fix 4493f2dc (same option): that byte holds the store's flight control
+  for the take and comes back after it (first_stores=on:absent:held).
+- hj27 (T=726, H=3364): joined digest_mismatches=0, played to 5442, first_desync none, 0 errors, 0 drops; slot 2 s2=1/0 parts 6
+  on both sides, the joiner's flag held once. x4mods-67's hj28 (the plain playtest flow, first_stores an --open default) clean
+  to 5434.
+- Class A (T 668..684, the host's guns engaging, controller +0x84 0x147; hj24 at T=681: digest parts sample and rid from 686,
+  the session's Weapon 674 -> 997 -> 998 -> Zone 930 projectile at 685 absent on the joiner). The weapon load delivers an
+  AmmoChangedEvent at once (0x812bbd -> 0x814ec9 -> 0x99a4ed -> 0x99c5b0 -> slot 490 0x81b4f0); the reset sets the last shot
+  time from the load's clock (+0x310 = now less the macro's +0x70), the controller's +0x38 (slot 26), the clip +0x350 and the
+  macro's effect group (0xd75ba0). For an engaging gun the time at the admission is the reset's, which SHOOT counted far
+  (not the save's four decimals) and left. Fix native_gate_join_shoot_far (6d09220c): SHOOT writes the session's time there
+  too. ca1 (the joiner at session tick 604 exactly, placed 645, T=677): shoot_far=1:2, joined digest_mismatches=0, played to
+  5442 without a desync. Choosing T: the joiner at an exact session tick (relay.log has every tick), T ~= that tick + 73.
+- Not needed: native_gate_pilot_seat_live_pose (851c6ed1, the take past the ship's view caches) and native_gate_join_attn_states
+  (2e6d7199, the per-level attention states at the admission: nothing apart in hj24..hj27); both stay off.
+- Noted: AmmoChangedEvent has one builder, Weapon::vfunc984 (0x814ea8), and slot 490 one caller (AmmoChangedEvent vfunc2
+  0x9d2384). vfunc984's callers include the UI's SetWeaponArmed and SetTurretGroupArmed: a UI arm or disarm resets the gun
+  live, after the admission, where shoot_far does not reach; the UI replay carries those actions.
+- Open: hj23 (T=720) differed from T+2 in the runtime ID part alone (world and the other parts equal to 760): in step T+1 the
+  joiner made two extra IDs (caller key dd7c7c80: ConnectTo 0x3d5bb0 -> SetAttention(level 1) -> Positional::vfunc701 ->
+  vfunc854 -> InitPartAnimations 0x755110 -> SequenceControlUnit), a pair the session made at 719. Not seen at T=677..740 since.
+- Diagnostics added: native_gate_pilot_dump_handover = N (3af77c10), native_gate_nav_refresh_watch_owner (91cc4788: one runtime
+  ID's controller, with its stack; a portable ID never matches) and native_gate_nav_refresh_watch_handover = N (4546b4dc: the
+  window H-N..H+N set at the handover); the slot status s<k>= ends with the predicate's parts and the first store's hash.

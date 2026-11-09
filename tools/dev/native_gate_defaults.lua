@@ -333,6 +333,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_undk','hot join: the session undocking behaviours written at the admission (UNDK)'},
  {'native_gate_join_ares','hot join: the session Agent result banks written at the admission (ARES)'},
  {'native_gate_join_attn_set','hot join: ATTN runs SetAttention where its write leaves the load per-level state, its attention events dropped (ATTN set)'},
+ {'native_gate_join_shoot_far','hot join: SHOOT also writes the session last shot time where the joiner gun was reset by its load (class A)'},
  {'native_gate_join_attn_states','hot join: with ATTN set, SetAttention at the admission for every object whose per-level state is apart there and settled on the session, its allocations on the load list'},
  {'native_gate_join_gravn_extra','hot join: GRAVN keeps the joiner zone groups the session adds later in the neighbour lists (GRAVN extra)'},
  {'native_gate_join_shgr','hot join: a joiner takes the session shield recharge groups of docked ships its load restamps (SHGR)'},

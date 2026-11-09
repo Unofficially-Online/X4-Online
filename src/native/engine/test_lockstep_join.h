@@ -3408,6 +3408,9 @@ static void test_join_attn_set(void) {
     join_attn_set_on=0;join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
     join_attn_flag=flag;join_set_attention=set;join_event_destroy=destroy;join_bootev_fn=pass;join_key=key;join_attn_post_swap=swap;
     join_evq_head_test=head;
+    /* SHOOT's last shot time: equal, the save's four decimals of the session's (written always), far (a load's reset: shoot_far) */
+    {   const double session=28.149667,saved=28.1497,reset=31.0;uint64_t a,b,c;memcpy(&a,&session,8);memcpy(&b,&saved,8);memcpy(&c,&reset,8);
+        assert(join_shoot_time_kind(a,a)==0 && join_shoot_time_kind(b,a)==1 && join_shoot_time_kind(c,a)==2);}
     printf("join ATTN set: the native change where a write at or over 6 leaves the states apart, its posts destroyed through the swapped sites, the events it queued dropped (the session's kept); ATTN states at any level, settled, on the load list PASS\n");
 }
 /* ARES: the capture takes both result banks by role through the read selector, the first qword's runtime ID as a portable ID
