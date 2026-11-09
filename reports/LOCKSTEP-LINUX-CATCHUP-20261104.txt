@@ -582,6 +582,25 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   parameter word equal to W36p (36..75) and W36o (96..99), where lx58a had 468 rows apart; state rows equal to W36m
   through 120 apart from the Xenon body0 ulp. Left in the flight rows: the steering input's +0x078 (an angle near 1)
   3..10 ulps apart on 8 rows (actors 4, 10, 11), the outputs equal; it was in lx58a too.
+  lx60a (the lx59 bundle at 300 ticks) against W36m (state every tick to 60, then every 30): equal through 120, apart
+  at 150 (actors 4, 5, 11, a few ulps in position). Every fixture body's shape due time (BODY rows, shape_due) was
+  apart from the first row on: Windows re-bases them (native_gate_shape_initial_refresh per holder, and the region
+  camera's shape_refresh 'view': the first call per owner key at the thread's time, then the interval
+  clamp((d - size) / size, 0.5, 5) - FloatState(SHAPEDUE(tick, key), 0.1) from the latched view point, W36 one point,
+  near for all), Linux kept its loading-time values; all fall in 12.02..12.15 s, the first refreshes at 145..152.
+  Ported (linux/gate_shape.h): Body_UpdateShape is 0xee9760 with Windows' 0xc2c00 and 0xc2810 inlined; its entry
+  goes to a wrapper (the fixture path: boot options 1048576/2097152/4194304, SHAPE_UP words, the first-call re-base,
+  SHAPE rows, stops 45/46; then shape_refresh's alignment) and the je into its distance path (0xee9865) to Windows'
+  interval rule (the player object's ship as the point, as rc_shape_latch without view points; GetTransformRelativeTo,
+  exact square roots, the bounds through the shape's vtable +0x20, Linux's FloatState on the keyed word; stops 165,
+  47). The pin ends before the preload's exact-reciprocal window 0xee9d26 (lx62 was refused there). Also ported: the
+  fixture attention path (attention_rng/_initial_refresh/_diag, actor_seed("ATTENTIO"); Linux had sent the fixture
+  through 'all'; lx61a: 3600 calls, 12 initial refreshes). linux_gate_live --shape-rng --shape-initial-refresh
+  --shape-refresh view --attention-rng --attention-initial-refresh. lx63a (all of it, 300 ticks): every shape due time
+  equal to W36p (960 rows) and W36n (768 rows), where lx60a had all of them apart; the refreshes run on Windows' ticks
+  (actor 4's second record at 149, its first at 152, ...). The state still parts at 150 (actors 4, 5, 11), right
+  after the tick-149 refreshes: the refresh's own result (the compound children's poses, the centre-of-mass shift
+  through NotifyShapeChanged) is the next suspect; W36q (rows 90..200) will show the first field apart.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

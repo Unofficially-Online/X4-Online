@@ -45,7 +45,9 @@
   <!-- Missions and conversations (native_gate_ui_replay missions, conversation; reports/LOCKSTEP-UI-MISSIONS-20261101.txt):
        a test offer whose client is a cue actor, made from the probe's frame at the same tick on every client (script op
        mis_fixture, in every client's plan). Slot 1's accept, briefing, active mission, abort and talk then arrive here on
-       every client at the same game time; slot 2's nowhere. Rows only: every client's own log. -->
+       every client at the same game time; slot 2's nowhere, unless missions per player is on (lockstep_mission_owners.h):
+       then slot 2's accept makes the mission slot 2's, and player.entity in the accepted and the track rows is P_2 on every
+       client. Rows only: every client's own log. -->
   <cue name="MissionFixture" instantiate="true" namespace="this">
    <conditions><event_ui_triggered screen="'X4LAN_UiMissions'" control="'Fixture'"/></conditions>
    <actions>
@@ -67,8 +69,17 @@
       <create_mission cue="$Mission" offercue="$Mission" name="'X4LAN test mission'" description="'X4LAN UI missions test'"
                       difficulty="level.easy" faction="faction.argon" type="missiontype.fight" reward="1000"/>
       <set_objective cue="$Mission" step="1" action="objective.flyto" object="$Location"/>
-      <debug_text text="'[X4LAN] UI_MISSIONS_MD_ACCEPTED offer=%s time=%s'.[event.param2, player.age]"/>
+      <debug_text text="'[X4LAN] UI_MISSIONS_MD_ACCEPTED offer=%s player=%s time=%s'.[event.param2, player.entity, player.age]"/>
      </actions>
+     <cues>
+      <!-- The mission's own checks every 5 s: whose player, ship and sector its frames see. -->
+      <cue name="FixtureTrack" instantiate="true" checkinterval="5s">
+       <conditions><check_value value="true"/></conditions>
+       <actions>
+        <debug_text text="'[X4LAN] UI_MISSIONS_MD_TRACK player=%s ship=%s sector=%s time=%s'.[player.entity, player.occupiedship, player.sector, player.age]"/>
+       </actions>
+      </cue>
+     </cues>
     </cue>
     <cue name="FixtureDecline" instantiate="true">
      <conditions><event_object_signalled object="$Client" param="'decline'"/></conditions>

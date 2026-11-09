@@ -116,7 +116,10 @@ test switch) played to the end in sync, with 0 errors and 0 drops. A VPN address
 `--bind` and `--allow-from` too, with no port forwarding. Both PCs load at the agreed UTC second, so their clocks must agree
 within a few seconds. With a Linux PC in the session, build the host's overlay and every PC's overlay or bundle with
 `--mixed-platform` (Option B's strict float recomputes): without it Windows and Linux part at the first steering
-update. Each PC writes its own
+update. A Linux battle bundle (`tools/dev/linux_gate_live.py bundle`) also needs the Windows defaults its gate takes only
+when named: `--ik-wrap --ik-step --body1-mass fallback --nav-rng --nav-initial-refresh --attention-rng
+--attention-initial-refresh --shape-rng --shape-initial-refresh --shape-refresh view` (9 Nov: equal to Windows at every
+compared tick through 120; a few ulps apart at tick 150, still being chased). Each PC writes its own
 `errors.log`; the host's run folder also holds the relay's logs.
 
 ## Joining a running game (built 8 Nov; in lockstep through x4ls on one PC, 9 Nov)
@@ -207,6 +210,12 @@ first mismatch.
     people stack is still being ported.
 - **Two people on one PC.** Keyboard and mouse go to the focused window only. Whether X4 reads a gamepad in an
   unfocused window is unverified.
+  - The cursor (fixed 9 Nov, the focus rule in `lockstep_pilot_stock.h`). X4 reads the PC's one cursor in the
+    unfocused window too. When the cursor is in the other window, X4 sees it at this window's edge. Before the fix,
+    that edge position steered this window's ship on every client (cursor steering), aimed its guns there, and turned
+    its camera. Now a window without the focus records neutral cursor steering and no aim, and skips the camera and
+    menu inputs that would engage. A release always passes, so nothing stays held. The client's stock status counts
+    each drop in `unfocused_drops=cursor/aim/local`.
 - **Desync recovery.** None: a session that differs stays different.
   - Hot join: `x4ls play --open` with `x4ls join` (no `--arm-at`) stays in lockstep in hj27/hj28, but a join timed
     at an engaging gun can still part (see "Joining a running game"). Rejoin after a drop exists in lane runs only.
@@ -217,3 +226,7 @@ first mismatch.
   Stock piloting knows 4 cockpit ships, so slots 5..8 need a session with per-player starts (`x4ls new-session`).
 - **Not built yet:** an in-game lobby and join menu (the start choice and the join go through `x4ls`), and
   per-player story missions (in progress).
+  - Personal missions per player, first form (9 Nov, default off: `--set native_gate_missions_per_player=true`, coop):
+    a mission player 2 accepts is player 2's on every client. Its script sees player 2, their ship and their sector
+    (mpp1: 900 ticks, 0 desyncs). The mission list is still one per PC, so every client's HUD lists every player's
+    missions, and offers are still made around player 1.

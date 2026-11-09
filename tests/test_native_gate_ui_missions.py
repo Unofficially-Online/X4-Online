@@ -412,6 +412,23 @@ class BuilderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.lines('--ui-replay', 'travel,missions', '--ui-guard', 'all', '--ui-replay-script', '--window', '40', '900')
 
+    def test_missions_per_player(self):
+        # lockstep_mission_owners.h: the option, slot 2's accept plan (slot 1 only makes the offer), and its refusals.
+        lines = self.lines('--ui-replay', 'events,missions', '--ui-guard', 'all', '--ui-replay-script', '--window', '40', '900',
+                           '--missions-per-player')
+        self.assertIn('X4LAN_CONFIG.native_gate_missions_per_player = true', lines)
+        script = next(line for line in lines if 'native_gate_ui_replay_script' in line)
+        self.assertEqual(script, "X4LAN_CONFIG.native_gate_ui_replay_script = {{{60,'mis_fixture',1}},"
+                                 "{{60,'mis_fixture',1},{150,'offer_accept'},{600,'mis_abort'}}}")
+        plain = self.lines('--ui-replay', 'events,missions', '--ui-guard', 'all', '--ui-replay-script', '--window', '40', '900')
+        self.assertFalse(any('missions_per_player' in line for line in plain))
+        self.assertIn("{180,'offer_accept'}", next(line for line in plain if 'native_gate_ui_replay_script' in line))
+        for extra in (('--ui-replay', 'missions', '--ui-guard', 'all', '--missions-per-player'),
+                      ('--ui-replay', '--ui-guard', 'all', '--missions-per-player'), ('--missions-per-player',)):
+            with self.subTest(extra), self.assertRaises(ValueError) as caught:
+                self.lines(*extra)
+            self.assertIn('--missions-per-player', str(caught.exception))
+
     def test_the_overlay_brings_the_md_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)/'base'
@@ -430,7 +447,7 @@ class FixtureTests(unittest.TestCase):
         doc = ET.parse(ROOT/'tools/dev/native_gate_ui_replay.xml')
         names = [c.get('name') for c in doc.iter('cue')]
         for name in ('MissionFixture', 'FixtureAccept', 'FixtureDecline', 'FixtureAborted', 'FixtureBriefingStarted', 'FixtureBriefingCancelled',
-                     'FixtureBriefingButton', 'Talk', 'TalkSection', 'TalkFinished', 'Own', 'GuardEvent', 'MinHull', 'ConversationStart'):
+                     'FixtureBriefingButton', 'FixtureTrack', 'Talk', 'TalkSection', 'TalkFinished', 'Own', 'GuardEvent', 'MinHull', 'ConversationStart'):
             self.assertIn(name, names)
 
     @unittest.skipUnless(os.environ.get('X4LAN_MD_XSD') == '1', 'the stock md.xsd takes about two minutes to compile: X4LAN_MD_XSD=1')

@@ -388,6 +388,19 @@ static int lxb_record_owned(unsigned char *object,unsigned offset) {
     unsigned char *record=NULL;void *owner=NULL;
     return gate_read_local(object+offset,&record,8) && record && gate_read_local(record,&owner,8) && owner==object;
 }
+/* gate_shape.h's fixture path: which bound actor this body record belongs to (its owner the actor's ship, the ship's
+ * runtime ID unchanged, the record in the first (which 0) or second (1) body slot), else 0. */
+static unsigned lxb_fixture_record(void *record,unsigned *which) {
+    void *owner=NULL;
+    if(lxb_bound!=LXB_ACTORS || !record || !gate_read_local(record,&owner,8) || !owner) return 0;
+    const unsigned actor=lxb_fixture_ship(owner);
+    if(!actor) return 0;
+    unsigned slot=lxb_body_slot[actor-1];
+    for(unsigned offset=LXB_BODY_SLOT_LOW;!slot && offset<=LXB_BODY_SLOT_LOW+8u;offset+=8u) if(lxb_record_owned(owner,offset)) slot=offset;
+    if(!slot) return 0;
+    for(unsigned w=0;w<2;w++) {void *r=NULL;if(gate_read_local((unsigned char*)owner+slot+w*8u,&r,8) && r==record) {*which=w;return actor;}}
+    return 0;
+}
 static int lxb_body_state(unsigned actor,unsigned char *object,unsigned which,char *out,size_t cap) {
     if(actor<1 || actor>LXB_ACTORS || which>1 || cap<1024) return 0;
     unsigned slot=lxb_body_slot[actor-1];

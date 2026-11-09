@@ -168,15 +168,24 @@ static int lxmc_status(char *out,size_t size) {
         lxmc_pins(),lxmc_stage);
     return n>0 && (size_t)n<size?n:0;
 }
+/* The groups of the Linux gate: mining (here) and shape_refresh (gate_shape.h). */
+static int lxsh_rc_arm(void);
+static void lxsh_latch(void);
+static int lxsh_rc_status(char *out,size_t size);
+static int lxsh_rc_armed;
 static int lua_region_camera(lua_State *L) {
     size_t length=0;const char *group=p_lua_tolstring(L,1,&length);
-    p_lua_pushnumber(L,group && length==6 && !memcmp(group,"mining",6) && lxmc_arm());return 1;
+    const int ok=group && ((length==6 && !memcmp(group,"mining",6) && lxmc_arm()) || (length==13 && !memcmp(group,"shape_refresh",13) && lxsh_rc_arm()));
+    p_lua_pushnumber(L,ok);return 1;
 }
 static int lua_region_camera_frame(lua_State *L) {
-    (void)L;int ok=accept_ui() && lxmc_installed;if(ok) lxmc_latch();
+    (void)L;int ok=accept_ui() && (lxmc_installed || lxsh_rc_armed);
+    if(ok && lxmc_installed) lxmc_latch();
+    if(ok && lxsh_rc_armed) lxsh_latch();
     p_lua_pushnumber(L,ok);return 1;
 }
 static int lua_region_camera_status(lua_State *L) {
-    char out[384];int n=accept_ui()?lxmc_status(out,sizeof(out)):0;
+    char out[768];int n=accept_ui()?lxmc_status(out,sizeof(out)):0;
+    if(n && lxsh_rc_armed) {out[n++]=' ';const int k=lxsh_rc_status(out+n,sizeof(out)-(size_t)n);n=k?n+k:n-1;}
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }

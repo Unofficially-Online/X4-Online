@@ -119,7 +119,19 @@ typedef struct script_rng_frame {
     uint64_t tick,key,parent_key,saved,seed,ordinal;
     script_rng_identity id;unsigned source,state,depth,seeded,why;
     uintptr_t exec;uint64_t pc_begin,pc_end,range_begin,range_end; /* option 4 */
+    unsigned mpp_slot; /* lockstep_mission_owners.h: this MD frame entered slot k's scope (left at its end) */
 } script_rng_frame;
+/* Personal missions per player (lockstep_mission_owners.h, native_gate_missions_per_player): an MD frame of a cue tree a
+ * slot owns runs in that slot's scope. Windows only; the Linux gate has no pilot slots. */
+#ifndef SCRIPT_RNG_OWN_PLATFORM
+static unsigned mpp_frame_enter(void *cue);
+static void mpp_frame_leave(unsigned slot);
+#define SCRIPT_RNG_MPP_ENTER(object) mpp_frame_enter(object)
+#define SCRIPT_RNG_MPP_LEAVE(slot) mpp_frame_leave(slot)
+#else
+#define SCRIPT_RNG_MPP_ENTER(object) 0u
+#define SCRIPT_RNG_MPP_LEAVE(slot) ((void)(slot))
+#endif
 typedef struct {uint64_t owner,stream;uint32_t count,epoch;} script_rng_slot;
 typedef struct {uintptr_t definition,module;uint64_t hash;char name[64];} script_rng_name;
 typedef struct {
@@ -391,11 +403,14 @@ static int script_rng_enter(script_rng_frame *f,unsigned source,void *object,voi
     }
     f->saved=*rng;
     if(f->owner==f && script_rng_mode==SCRIPT_RNG_KEY) {*rng=f->key;f->seeded=1;}
-    f->seed=*rng;script_rng_current=f;SetLastError(error);script_rng_spent(start);return 1;
+    f->seed=*rng;script_rng_current=f;
+    f->mpp_slot=source>=SR_CUE?SCRIPT_RNG_MPP_ENTER(object):0u;
+    SetLastError(error);script_rng_spent(start);return 1;
 }
 /* Always restores the caller's word for a seeded frame, including unwinding. */
 static void script_rng_leave(script_rng_frame *f,int entered,uint64_t *rng,int abnormal) {
     if(!entered) return;
+    if(f->mpp_slot) {DWORD error=GetLastError();SCRIPT_RNG_MPP_LEAVE(f->mpp_slot);f->mpp_slot=0;SetLastError(error);}
     uint64_t start=script_rng_tsc(),exit=*rng;
     if(script_rng_current!=f) InterlockedIncrement64(&script_rng_failures);
     if(f->seeded) {*rng=f->saved;++script_rng_restores;}

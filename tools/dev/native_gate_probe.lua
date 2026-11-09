@@ -2692,9 +2692,28 @@ function pilot_view.arm_ui_replay(slot,window)
   fleet=cfg.native_gate_ui_replay_fleet,fleet_tick=window[1]-4,saved_lua=tools.saved_lua,queue_of=queue_of,
   local_mark=(cfg.native_gate_runtime_ids_local or guard or math.floor(mask/core.FAMILY.events)%2==1 or math.floor(mask/core.FAMILY.trade)%2==1) and gate.runtime_ids_probe or nil,present=present,
   min_hull=min_hull,slots=#cfg.native_gate_pilot_slots,slot_lua=tools.slot_lua,own_slot=slot,guard=guard,pss=pss,pss_spawn=pss_spawn,
+  mpp=cfg.native_gate_missions_per_player==true,   -- slots 2+ capture the events and missions families, applied in their own scope
   notify=function(text) ffi.C.ShowInfoLine(text,4) end,   -- every refusal of the families shows its info line (also without the guard)
   active_mission=missions_on and function() return (tostring(ffi.C.GetActiveMissionID()):gsub('ULL$','')) end or nil,
   menus=function() return type(Menus)=='table' and Menus or {} end}
+ -- Personal missions per player (lockstep_mission_owners.h; native_gate_missions_per_player = true, default off): slots 2+
+ -- capture the events and missions families, every client applies slot k's calls in slot k's scope, an accept claims the
+ -- offer's cue tree for slot k and the tree's MD frames run in that scope (coop first; the report's model (c), C1 + C5).
+ if cfg.native_gate_missions_per_player~=nil and cfg.native_gate_missions_per_player~=false then
+  assert(cfg.native_gate_missions_per_player==true and math.floor(mask/core.FAMILY.events)%2==1 and math.floor(mask/core.FAMILY.missions)%2==1 and
+   cfg.native_gate_script_rng and (cfg.native_gate_script_rng_mask or 3)%4>=2 and gate.missions_per_player and gate.missions_per_player(1)==1,
+   'missions per player refused: needs native_gate_ui_replay with the events and missions families, native_gate_script_rng with its MD '..
+   'scopes (its frames carry the mission scope) and the pilot slots')
+  log('MISSIONS_PER_PLAYER_ARMED slot='..slot..' '..tostring(gate.mpp_status()))
+  -- Hot join: the claims at T ride the package; the joiner takes them before its first tick (lockstep_mission_owners.h).
+  if X4LAN_JOIN_CORE and gate.mpp_state then
+   X4LAN_JOIN_CORE.provide('missions_per_player',function() return assert(gate.mpp_state(),'missions per player: the table does not fit the join state') end,
+    function(text)
+     assert(gate.mpp_restore(text)==1,'join: missions per player refused the saver table '..tostring(text):sub(1,120))
+     log('MISSIONS_PER_PLAYER_RESTORED '..tostring(gate.mpp_status()))
+    end)
+  end
+ end
  -- The build and assets families (native_gate_ui_build_core.lua, lockstep_ui_build.h; default off): claims on the guard's
  -- hooks, one batch per frame, money inside the stock commit scopes; slots 2+ only in coop (identity plan mode).
  if math.floor(mask/core.FAMILY.build)%2==1 or math.floor(mask/core.FAMILY.assets)%2==1 then
@@ -2869,6 +2888,7 @@ local function pilot_frame(s,tick)
  if cfg.native_gate_pilot_slots_registry and tick%600==0 and gate.pilot_slots_registry then
   log('PILOT_SLOTS_REGISTRY tick='..tick..' '..tostring(gate.pilot_slots_registry()))
  end
+ if cfg.native_gate_missions_per_player and tick%600==0 and gate.mpp_status then log('MISSIONS_PER_PLAYER tick='..tick..' '..gate.mpp_status()) end
  if pilot_view.stock and gate.pilot_present_diff then
   local diff=gate.pilot_present_diff()
   if diff then log('PILOT_PRESENT_DIFF tick='..tick..' '..diff) end
@@ -3898,7 +3918,9 @@ local function frame()
   -- and refreshes each object once at the install so due times set while loading do not count.
   -- Needs view points and a pass join. Default off.
   if cfg.native_gate_shape_refresh then
-   assert(cfg.native_gate_shape_refresh=='view' and cfg.native_gate_view_points and
+   -- The Linux gate has this group without view points yet (linux/gate_shape.h): it latches the player object's
+   -- ship, as rc_shape_latch does when no view point is latched (Windows' census latches that ship as its one point).
+   assert(cfg.native_gate_shape_refresh=='view' and (cfg.native_gate_view_points or gate.platform and gate.platform()=='linux') and
     (cfg.native_gate_mass_traffic or cfg.native_gate_region_pass) and gate.region_camera and
     gate.region_camera_frame and gate.region_camera_status and gate.region_camera('shape_refresh')==1,
     'shape refresh refused '..tostring(gate.region_camera_status and gate.region_camera_status()))
@@ -5273,6 +5295,7 @@ local function frame()
   if cfg.native_gate_radar_diag then log('RADAR_STOP calls='..s.radar_calls..' restored='..s.radar_restored..' failures='..s.radar_failures) end
   if cfg.native_gate_interrupt_rng then log('INTERRUPT_SEEDS count='..s.interrupt_seeds) end
   if cfg.native_gate_interrupt_diag then log('INTERRUPT_STOP calls='..s.interrupt_calls..' restored='..s.interrupt_restored..' failures='..s.interrupt_failures) end
+  if cfg.native_gate_missions_per_player and gate.mpp_status then log('MISSIONS_PER_PLAYER_STOP '..gate.mpp_status()) end
   if cfg.native_gate_interrupt_diag then log('INTERRUPT_STEP_STOP calls='..s.interrupt_step_calls..' restored='..s.interrupt_step_restored..' failures='..s.interrupt_failures) end
   if cfg.native_gate_interrupt_diag and gate.interrupt_faults then log('INTERRUPT_FAULTS_STOP '..tostring(gate.interrupt_faults())) end
   if gate.observer_status then log('OBSERVERS_STOP '..tostring(gate.observer_status())) end

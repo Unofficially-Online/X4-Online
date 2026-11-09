@@ -52,6 +52,7 @@
  *             an event that took on one client only shows at once, whatever it was.
  * Refused at capture (nothing ran anywhere, nothing diverged): counted and logged (UI_REPLAY_REFUSED). A
  * section or reference that fails, a hook lost, a fault in a replayed call: stop reason 164. */
+static int mpp_armed;   /* lockstep_mission_owners.h: slots 2+ apply the events family in their own scope when armed */
 #define UIREP_STOP_REASON 164u
 #define UIREP_VERSION 1u
 #define UIREP_HEAD 4u
@@ -681,7 +682,7 @@ static int uirep_event_ok(unsigned slot,unsigned op,const unsigned char *data,un
         if(!(uirep_families&UIREP_FAMILY_QUEUE) || !n) {*why="ui_queue";return 0;}
         return 1;
     case UIREP_OP_LUA_GLOBAL:   /* slot 1 only: MD's player.entity is slot 1's player */
-        if(!(uirep_families&UIREP_FAMILY_EVENTS) || slot!=1 || n<2 || !data[0] || data[0]>UIREP_LUA_GLOBALS) {*why="ui_events";return 0;}
+        if(!(uirep_families&UIREP_FAMILY_EVENTS) || (slot!=1 && !mpp_armed) || n<2 || !data[0] || data[0]>UIREP_LUA_GLOBALS) {*why="ui_events";return 0;}
         return 1;
     case UITRADE_OP_LUA:case UITRADE_OP_FFI: return uitrade_event_ok(slot,op,data,n,why);
     case UIREP_OP_CALL: {
@@ -1245,6 +1246,7 @@ static int uirep_status(char *out,size_t capacity) {
 #include "lockstep_ui_build.h"
 /* Missions and conversations of slot 1 (families missions, conversation; captured in the guard's hook). */
 #include "lockstep_ui_missions.h"
+#include "lockstep_mission_owners.h"   /* personal missions per player: slot k's calls and owned cue trees in slot k's scope */
 /* The trade family of the replay (native_gate_ui_replay lists trade, default off). */
 #include "lockstep_ui_trade.h"
 /* The faction family: the player faction's settings for every slot (claims on the guard's hooks; uses the trade scope). */

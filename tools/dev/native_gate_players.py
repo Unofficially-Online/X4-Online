@@ -129,6 +129,10 @@ UI_REPLAY_MISSIONS_DEMO = {1: ((60, 'mis_fixture', 1), (120, 'briefing', 'offer'
                                (600, 'mis_none'), (660, 'mis_abort')),
                            2: ((60, 'mis_fixture', 1), (150, 'offer_accept'), (250, 'briefing', 'mission'), (400, 'mis_abort'),
                                (430, 'dialog_native', 1), (450, 'conv_start', 'fixture'), (630, 'mis_active'))}
+# Personal missions per player (--missions-per-player, lockstep_mission_owners.h): the same offer on both clients; slot 2
+# accepts it, so the mission is P_2's on every client (MD's player.entity in its rows), then aborts it. Slot 1 only makes it.
+UI_REPLAY_MPP_DEMO = {1: ((60, 'mis_fixture', 1),),
+                      2: ((60, 'mis_fixture', 1), (150, 'offer_accept'), (600, 'mis_abort'))}
 UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'target_slot': 'target', 'target_none': 'target',
                        'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_obj': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
                        'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons',
@@ -363,8 +367,10 @@ def plan_of(args):
 def ui_replay_lines(args):
     """The UI replay block: families, the script without people, the test fleet (a `player` ship with a pilot)."""
     if args.ui_replay is None:
-        if args.ui_replay_script or args.ui_replay_fleet or args.ui_replay_dock or args.ui_replay_min_hull is not None or args.ui_guard:
-            raise ValueError('--ui-replay-script, --ui-replay-fleet, --ui-replay-dock, --ui-replay-min-hull and --ui-guard need --ui-replay')
+        if (args.ui_replay_script or args.ui_replay_fleet or args.ui_replay_dock or args.ui_replay_min_hull is not None or args.ui_guard
+                or args.missions_per_player):
+            raise ValueError('--ui-replay-script, --ui-replay-fleet, --ui-replay-dock, --ui-replay-min-hull, --ui-guard and '
+                             '--missions-per-player need --ui-replay')
         return []
     if args.source != 'stock' or not args.present:
         raise ValueError('--ui-replay needs --source stock --present')
@@ -406,6 +412,11 @@ def ui_replay_lines(args):
     for family in ('missions', 'conversation'):
         if family in names and not (args.ui_guard == 'all' or family in (args.ui_guard or '').split(',')):
             raise ValueError(f'--ui-replay {family} needs --ui-guard all or with the {family} group')
+    if args.missions_per_player:
+        # Slots 2..N's accepted missions in their own scope (lockstep_mission_owners.h): the events and missions families carry them.
+        if args.ui_replay == 'all' or not {'events', 'missions'} <= set(names):
+            raise ValueError('--missions-per-player needs --ui-replay with the events and missions families (named)')
+        lines.append('X4LAN_CONFIG.native_gate_missions_per_player = true')
     if args.ui_replay_min_hull is not None:
         lines.append(f'X4LAN_CONFIG.native_gate_ui_replay_min_hull = {args.ui_replay_min_hull}')
     if args.ui_replay_fleet:
@@ -424,7 +435,8 @@ def ui_replay_lines(args):
         talk = explicit and ('missions' in families or 'conversation' in families)
         if talk and (flight or missiles or 'travel' in families or 'target' in families):
             raise ValueError('--ui-replay-script: missions and conversation run on their own plan (with events)')
-        demo = UI_REPLAY_FLIGHT_DEMO if flight else UI_REPLAY_MISSILE_DEMO if missiles else UI_REPLAY_MISSIONS_DEMO if talk else UI_REPLAY_DEMO
+        demo = (UI_REPLAY_FLIGHT_DEMO if flight else UI_REPLAY_MISSILE_DEMO if missiles else
+                (UI_REPLAY_MPP_DEMO if args.missions_per_player else UI_REPLAY_MISSIONS_DEMO) if talk else UI_REPLAY_DEMO)
         plans = []
         for client in range(1, args.players + 1):
             plan = [row for row in demo[1 if client == 1 else 2] if UI_REPLAY_OP_FAMILY[row[1]] in families]
@@ -632,7 +644,7 @@ BUILDER_KEYS = tuple(k for k in session_defaults.ON_KEYS if k.startswith('native
     'native_gate_player_identity', 'native_gate_own_predict', 'native_gate_own_predict_rows', 'native_gate_player_settings_per_slot')
 DEFAULTS_ONLY_FLAGS = ('present', 'death', 'respawn', 'death_suit', 'foot', 'foot_bodies', 'foot_slots', 'hit_claims', 'ui_replay', 'ui_guard',
                        'guidance_local', 'stock_script', 'crash_note', 'ui_replay_script', 'ui_replay_fleet', 'ui_replay_dock',
-                       'ui_replay_min_hull', 'fire_slots')
+                       'ui_replay_min_hull', 'fire_slots', 'missions_per_player')
 
 
 def config_block(args):
@@ -966,6 +978,9 @@ def build_parser():
                         help='stock UI actions as events of the slot: all (no value) or a comma list of ' + ', '.join(UI_REPLAY_FAMILIES) + ' '
                              '(lockstep_ui_replay.h, stop reason 164); needs --source stock --present and runtime IDs')
     common.add_argument('--ui-replay-script', action='store_true', help='--ui-replay without people: a fixed plan through the stock entries')
+    common.add_argument('--missions-per-player', action='store_true',
+                        help='--ui-replay with events and missions: slots 2..N accept missions as their own players, every client runs the '
+                             "mission's MD in the slot's scope (lockstep_mission_owners.h, coop first); with --ui-replay-script slot 2 accepts")
     common.add_argument('--ui-guard', nargs='?', const='all', default=None, metavar='GROUPS',
                         help='with --ui-replay: refuse every other world-changing stock UI entry point in the local phases (lockstep_ui_guard.h): '
                              'all (no value) or a comma list of ' + ', '.join(UI_GUARD_GROUPS))

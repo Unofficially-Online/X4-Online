@@ -476,6 +476,7 @@ static const lx_site lx_sites[]={
     {"id_remove",0xee3850,0x130,"4fc7c9013593aec0f7422271f58328ccc7099d2a1b7a7dc70f558123fde9b34c"},
     {"id_assign",0xeed870,0x240,"42f20383fa7c638d9536fcece3d03e5528e2db1b550cf15992b80bf0d1be7096"},
     {"nav_move_head",0x144a9e0,0x4c,"c31682e8f4977e36adad798bb52c33a5d6af349cddda5872e1963bb3dd41a0e1"},
+    {"shape_update",0xee9760,0x5c6,"7d56f5bdf2fe0863bb19a002bfa0d08a89bfe98ecc49539a79b503f0ce9648ed"}, /* Body_UpdateShape (gate_shape.h), up to the preload's exact-reciprocal window 0xee9d26 */
     {"nav_params_block",0x144aa5d,0x4f,"59b4ad045f415d2a254af73447551b1783fc40b6b047776499cc2a9c214a8a08"},
     {"nav_probe_block",0x144ad0e,0x60,"3a76cc5c1712d543ae670bb7fdcef1072adefa6d8882edf64c4421f4a5c79b75"},
     {"nav_params_far",0x144b2f0,0x32,"ee2c1a62167795ceb5ff176f468bdf1ae8d73f0301f16cd3df547b6eb2baf3eb"},

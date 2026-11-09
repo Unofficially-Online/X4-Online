@@ -442,7 +442,9 @@ def bundle(args):
         command.append('--ik-step')
     if args.ik_wrap:
         command.append('--ik-wrap')
-    for name in ('nav_diag', 'nav_rng', 'nav_initial_refresh'):
+    if args.shape_refresh:
+        command += ['--shape-refresh', args.shape_refresh]
+    for name in ('nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_rng', 'attention_initial_refresh', 'shape_rng', 'shape_initial_refresh'):
         if getattr(args, name):
             command.append('--' + name.replace('_', '-'))
     if args.world_hash_shields:
@@ -1382,6 +1384,11 @@ def main(argv=None):
     b.add_argument('--nav-diag', action='store_true', help="NAV rows: the battle fixture's navigation upkeep, Windows' nav module (native_gate_nav_diag)")
     b.add_argument('--nav-rng', action='store_true', help="the fixture's upkeep draws from actor_seed('NAV_UPDT', ...), as Windows (native_gate_nav_rng; NAV rows too)")
     b.add_argument('--nav-initial-refresh', action='store_true', help="the fixture's parameter deadline at time - dt at its first upkeep, as Windows (native_gate_nav_initial_refresh)")
+    b.add_argument('--attention-rng', action='store_true', help="the fixture's attention timer draws from actor_seed('ATTENTIO', ...), as Windows (native_gate_attention_rng; ATTENTION rows too)")
+    b.add_argument('--attention-initial-refresh', action='store_true', help="the fixture's attention due at time - dt at its first call, as Windows (native_gate_attention_initial_refresh)")
+    b.add_argument('--shape-rng', action='store_true', help="the fixture's shape refresh on actor_seed('SHAPE_UP', ...), as Windows (native_gate_shape_rng; SHAPE rows too)")
+    b.add_argument('--shape-initial-refresh', action='store_true', help="the fixture's shape due times at time - dt at the first call per holder, as Windows (native_gate_shape_initial_refresh)")
+    b.add_argument('--shape-refresh', choices=('view',), help="shape refresh intervals from the player's ship on a keyed draw, due times aligned at the first call per object (native_gate_shape_refresh)")
     b.add_argument('--ik-wrap', action='store_true', help="a skeleton joint's wrapped target as (t2 + value) - pi, the Windows order (native_gate_ik_wrap)")
     b.add_argument('--ik-step', action='store_true', help="the joints' fixed-step divisions by 0.02 as Windows' multiplications by 50 (native_gate_ik_step)")
     b.add_argument('--ik-diag', action='store_true', help='IKJOINT rows: the fixture ships\' and weapons\' skeleton joints (native_gate_ik_diag)')

@@ -1098,6 +1098,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_nav_refresh_watch.h"
 #include "test_lockstep_impulse.h"
 #include "test_lockstep_ik_diag.h"
+#include "test_lockstep_mission_owners.h"
 #include "test_lockstep_spline_calc_watch.h"
 #include "test_lockstep_step_chain.h"
 #include "test_lockstep_path_transforms.h"
@@ -1228,6 +1229,7 @@ int main(int argc,char **argv) {
     test_nav_refresh_watch();
     test_impulse_diag();
     test_ik_diag();
+    test_mission_owners();
     test_spline_calc_watch();
     test_spline_phase();
     test_exact_reciprocal();

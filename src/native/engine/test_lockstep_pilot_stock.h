@@ -231,6 +231,13 @@ static void test_pilot_stock(void) {
     assert(!test_pstk_call_count && pstk_build.count==4);
     pnat_refused=0;pnat_dispatch_action(map,0x130);pnat_dispatch_state(map,0x18,1);assert(!test_pstk_call_count && pnat_refused==2);
     pnat_dispatch_action(map,0xa9);assert(test_pstk_count('l')==1 && pstk_build.count==4);
+    /* The focus rule: without the focus an engaging presentation id does not run (two windows on one PC share the cursor),
+     * a release does; nothing is recorded either way. */
+    {   const LONG64 dropped=pstk_local_unfocused,ranges=pstk_local_ranges;pstk_focus_forced=-1;
+        pnat_dispatch_action(map,0xa9);pnat_dispatch_range(map,0x1d,0.5f);
+        assert(test_pstk_count('l')==1 && pstk_local_unfocused==dropped+2 && pstk_local_ranges==ranges && pstk_build.count==4);
+        pnat_dispatch_range(map,0x1d,0.0f);assert(pstk_local_ranges==ranges+1 && pstk_local_unfocused==dropped+2 && pstk_build.count==4);
+        pstk_focus_forced=1;}
     /* Local keys name themselves. Scripted local input queues a presentation id (never a replay or refused id, never off
      * the frame thread) and the pass runs it as this client's own key, through the local path, recording nothing. */
     {   const pstk_local_key *last=&pstk_local_keys[(pstk_local_key_count-1)%PSTK_LOCAL_KEYS];
@@ -256,6 +263,12 @@ static void test_pilot_stock(void) {
         pstk_local_key_count=saved_count;}
     /* Cursor: the stock body inside a flight window (local active, replayed off), outputs kept, zero to d95180. */
     test_pstk_call_count=0;pnat_cursor(controller);
+    {   /* The focus rule: without the focus the record's cursor is neutral (X4 reads the one cursor at this window's edge). */
+        const LONG64 dropped=pstk_cursor_unfocused;pstk_focus_forced=-1;
+        pnat_cursor(controller);
+        assert(pstk_cursor_live_set && pstk_cursor_live[0]==0.0f && pstk_cursor_live[1]==0.0f && pstk_cursor_live[2]==0.0f &&
+               pstk_cursor_unfocused==dropped+1 && *PNAT_F32(0x2f4b738)==0.0f);
+        pstk_focus_forced=1;test_pstk_call_count=0;pnat_cursor(controller);assert(pstk_cursor_unfocused==dropped+1);}
     assert(test_pstk_calls[0].what=='C' && test_pstk_calls[0].flight==1 && !*flight && pstk_cursor_live[0]==0.25f && pstk_cursor_live_set &&
            *PNAT_F32(0x2f4b738)==0.0f && *PNAT_F32(0x2f4b73c)==0.0f);
     /* Scripted input joins the same record; foreign or refused ids are not injected. */
@@ -277,6 +290,10 @@ static void test_pilot_stock(void) {
         assert(pstk_aim_sample(aim,&steer) && aim[0]==1.0f && aim[1]==2.0f && aim[2]==3.0f && !steer);
         void *ship=test_pnat_ship;float some=5.0f;memcpy(test_pnat_player+0x6c80,&some,4);memcpy(test_pnat_player+0x6c88,&ship,8); /* the own ship */
         assert(pstk_aim_sample(aim,&steer) && aim[2]==3.0f);
+        /* The focus rule: no aim without the focus (neutral, not a failed sample). */
+        const LONG64 dropped=pstk_aim_unfocused;pstk_focus_forced=-1;
+        assert(pstk_aim_take(aim,&steer)==-1 && pstk_aim_unfocused==dropped+1);pstk_focus_forced=1;
+        assert(pstk_aim_take(aim,&steer)==1 && pstk_aim_unfocused==dropped+1);
         memset(test_pnat_player+0x6c60,0,0x40);}
     assert(pstk_capture(8,again,&length2,&why) && length2==length && !memcmp(again,rec,length) && !pstk_build.count); /* idempotent per tick */
     pstk_record r;int decoded=pstk_decode(rec,length,&r);

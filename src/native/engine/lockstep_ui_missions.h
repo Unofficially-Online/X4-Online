@@ -33,6 +33,11 @@
  * Nothing here runs without the families: the arming claims the entries in the guard (uiguard_claim, dispatch by entry,
  * docs/LOCKSTEP-REGISTRY.txt section 3); the guard's hook then asks uimis_guard first, which answers 0 (refuse as before)
  * for every call it does not capture. */
+/* Personal missions per player (lockstep_mission_owners.h, after this file): slots 2+ capture and apply the missions family
+ * inside their own scope when it is armed; conversations stay slot 1's (one conversation manager per process). */
+static int mpp_armed;
+static int mpp_call_enter(unsigned k);
+static int mpp_call_leave(unsigned k);
 #define UIMIS_OP_MISSION UIREP_OP_MISSION
 #define UIMIS_OP_CONVERSATION UIREP_OP_CONVERSATION
 #define UIMIS_FAMILIES (UIREP_FAMILY_MISSIONS|UIREP_FAMILY_CONVERSATION)
@@ -138,7 +143,8 @@ static uint64_t uiguard_arg(const uint64_t *frame,unsigned i);
 static int uimis_guard(const char *name,int lua,const uint64_t *frame,uint64_t *ret) {
     unsigned char data[UIREP_EVENT_MAX];unsigned n=0;
     *ret=0;
-    if(!uirep_armed || !uimis_armed || !(uirep_families&UIMIS_FAMILIES) || pstk_capture_slot!=1) return 0;   /* slots 2+: refused */
+    if(!uirep_armed || !uimis_armed || !(uirep_families&UIMIS_FAMILIES)) return 0;
+    if(pstk_capture_slot!=1 && (lua || !mpp_armed)) return 0;   /* slots 2+: refused, but missions per player's own missions calls */
     if(lua) {
         unsigned k=(uirep_families&UIREP_FAMILY_CONVERSATION)?uimis_conv_kind_of(name):0;
         if(!k) return 0;
@@ -202,7 +208,7 @@ static unsigned uimis_mission_length(const unsigned char *data,unsigned n) {
 }
 static int uimis_event_ok(unsigned slot,unsigned op,const unsigned char *data,unsigned n,const char **why) {
     if(op==UIMIS_OP_MISSION) {
-        if(!(uirep_families&UIREP_FAMILY_MISSIONS) || slot!=1 || uimis_mission_length(data,n)!=n) {*why="ui_missions";return 0;}
+        if(!(uirep_families&UIREP_FAMILY_MISSIONS) || (slot!=1 && !mpp_armed) || uimis_mission_length(data,n)!=n) {*why="ui_missions";return 0;}
         return 1;
     }
     if(op==UIMIS_OP_CONVERSATION) {
@@ -217,7 +223,7 @@ static int uimis_event_ok(unsigned slot,unsigned op,const unsigned char *data,un
 static int uimis_run(unsigned slot,const unsigned char *data,unsigned n,char *what,size_t capacity) {
     uint64_t id=0;int resolved=1;
     snprintf(what,capacity,"refused");
-    if(slot!=1 || !(uirep_families&UIREP_FAMILY_MISSIONS) || uimis_mission_length(data,n)!=n) {snprintf(what,capacity,"decode");return -1;}
+    if((slot!=1 && !mpp_armed) || !(uirep_families&UIREP_FAMILY_MISSIONS) || uimis_mission_length(data,n)!=n) {snprintf(what,capacity,"decode");return -1;}
     unsigned k=data[0];
     int none=k==UIMIS_ACTIVE && !memcmp(data+1,"\0\0\0\0\0\0\0\0\0\0\0\0",UIMIS_REF);
     if(!none) resolved=uimis_resolve(data+1,&id);
@@ -228,7 +234,10 @@ static int uimis_run(unsigned slot,const unsigned char *data,unsigned n,char *wh
     if(k==UIMIS_BRIEFING_START) {
         unsigned at=1u+UIMIS_REF;a2=data[at];memcpy(texture,data+at+2,data[at+1]);texture[data[at+1]]=0;a1=(uint64_t)(uintptr_t)texture;
     } else if(k==UIMIS_BRIEFING_STOP) a1=data[1u+UIMIS_REF];
+    /* Slot k's call in slot k's scope (missions per player, C5): MD's player is P_k in what it reaches. */
+    if(slot!=1 && !mpp_call_enter(slot)) {snprintf(what,capacity,"mpp_scope");return -1;}
     result=uimis_fn[k](id,a1,a2);
+    if(slot!=1 && !mpp_call_leave(slot)) {snprintf(what,capacity,"mpp_leave");return -1;}
     InterlockedIncrement64(&uimis_applied);
     if(k==UIMIS_ACTIVE) snprintf(what,capacity,"%s(%llu)=%u",uimis_exports[k].name,(unsigned long long)id,(unsigned)(result&0xffu));
     else if(k==UIMIS_BRIEFING_START) snprintf(what,capacity,"%s(%llu,%s,%u)",uimis_exports[k].name,(unsigned long long)id,texture,(unsigned)a2);

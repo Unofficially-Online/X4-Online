@@ -355,7 +355,7 @@ function K.session(p)
       log('UI_REPLAY_LOCAL what='..name..' args='..args..' why=ui_only')
       return stock[name](...)
      end
-     if p.own_slot~=1 then return refuse(name,'slot',args) end
+     if p.own_slot~=1 and not p.mpp then return refuse(name,'slot',args) end   -- missions per player: every slot's own
      local hex,why=K.encode_call({...},select('#',...),ctx)
      if not hex then return refuse(name,why,args) end
      if gate.ui_replay_push(K.OP_LUA_GLOBAL,byte_hex(id)..hex)==1 then S.captured=S.captured+1
@@ -466,18 +466,29 @@ function K.session(p)
   end
   if op==K.OP_LUA_GLOBAL then
    local name=K.GLOBALS[tonumber(hex:sub(1,2),16) or 0]
-   if slot~=1 or not name or not stock[name] then gate.ui_replay_fail('ui_lua_op');return false,'op' end
+   if (slot~=1 and not p.mpp) or not name or not stock[name] then gate.ui_replay_fail('ui_lua_op');return false,'op' end
    local args,n=K.decode_call(hex:sub(3),ctx)
    if not args then
     if n=='mismatch' then gate.ui_replay_fail('ui_ref_mismatch') elseif n~='gone' then gate.ui_replay_fail('ui_lua_decode') end
     return false,n
    end
+   -- Missions per player (lockstep_mission_owners.h): slot k's call runs in slot k's scope on every client, and its accept
+   -- (SignalObject(actor, 'accept', offer), the stock menus' form) claims the offer's cue tree for slot k first.
+   local claimed=''
+   if slot~=1 then
+    if name=='SignalObject' and args[2]=='accept' and args[3]~=nil then
+     local okd,text=pcall(decimal,args[3])
+     claimed=' claim='..tostring(okd and gate.mpp_claim(slot,text)==1)
+    end
+    if gate.mpp_scope(slot)~=1 then gate.ui_replay_fail('mpp_scope');return false,'mpp_scope' end
+   end
    local ok,result=pcall(stock[name],unpack(args,1,n))
-   return ok,ok and name..'('..tostring(args[1])..','..tostring(args[2])..')' or tostring(result)
+   if slot~=1 and gate.mpp_unscope(slot)~=1 then gate.ui_replay_fail('mpp_leave') end
+   return ok,ok and name..'('..tostring(args[1])..','..tostring(args[2])..')'..claimed or tostring(result)
   end
   -- Missions (op 0x48): the export, natively, with its cue resolved there first (gone: nothing, the same everywhere).
   if op==K.OP_MISSION then
-   if slot~=1 then gate.ui_replay_fail('ui_lua_op');return false,'op' end
+   if slot~=1 and not p.mpp then gate.ui_replay_fail('ui_lua_op');return false,'op' end   -- slot k's: in its scope, natively
    local ok,what=gate.ui_missions_run(slot,hex)
    return ok==1,what
   end

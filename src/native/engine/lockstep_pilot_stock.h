@@ -122,10 +122,12 @@ static float pstk_cursor_replay[3];
 static uint64_t pstk_cursor_tick,pstk_capture_start,pstk_first_apply,pstk_frame_tick,pstk_frame_hash,pstk_settings;
 static unsigned pstk_frame_events,pstk_flight,pstk_flight_known;
 static volatile LONG64 pstk_recorded,pstk_dropped,pstk_replayed,pstk_records,pstk_staged_count,pstk_space_local,pstk_space_replayed,
-    pstk_cursor_calls,pstk_injected,pstk_overflows,pstk_max_events,pstk_unfocused;
+    pstk_cursor_calls,pstk_injected,pstk_overflows,pstk_max_events,pstk_unfocused,
+    pstk_cursor_unfocused,pstk_aim_unfocused,pstk_local_unfocused; /* the focus rule's drops: cursor frames, aim samples, local ids */
 /* Aim: the replayed sample of this tick, the vtable slot, counters. */
 static int pfire_armed;       /* lockstep_pilot_fire.h */
 static int pstk_focused(void);
+static int pstk_aim_take(float aim[3],unsigned char *steer);   /* the focus rule's aim */
 /* The trigger of the record applied at each slot's last tick (native_gate_pilot_fire). */
 static uint64_t pstk_fire_tick[PILOT_SLOTS];
 static unsigned char pstk_fire_on[PILOT_SLOTS],pstk_fire2_on[PILOT_SLOTS];
@@ -373,8 +375,9 @@ static int pstk_capture(uint64_t tick,unsigned char out[PSTK_BYTES_MAX],unsigned
     int own_dead=pstk_capture_slot>=1 && pstk_capture_slot<=PILOT_SLOTS && pilot_slots[pstk_capture_slot-1].dead;
     if(pfire_armed && (pnat_fire_buttons()&1) && pstk_focused()) pstk_build.flags|=PSTK_FLAG_FIRE;
     if(pstk_fire2_held()) pstk_build.flags|=PSTK_FLAG_FIRE2;
-    if(pstk_capture_slot==1 && !own_dead && pstk_aim_sample(pstk_build.aim,&pstk_build.steer)) {pstk_build.flags|=PSTK_FLAG_AIM;InterlockedIncrement64(&pstk_aim_samples);}
-    else {memset(pstk_build.aim,0,sizeof(pstk_build.aim));pstk_build.steer=0;if(pstk_capture_slot==1 && !own_dead) InterlockedIncrement64(&pstk_aim_sample_failures);}
+    const int aim=pstk_capture_slot==1 && !own_dead?pstk_aim_take(pstk_build.aim,&pstk_build.steer):0;
+    if(aim>0) {pstk_build.flags|=PSTK_FLAG_AIM;InterlockedIncrement64(&pstk_aim_samples);}
+    else {memset(pstk_build.aim,0,sizeof(pstk_build.aim));pstk_build.steer=0;if(!aim && pstk_capture_slot==1 && !own_dead) InterlockedIncrement64(&pstk_aim_sample_failures);}
     if(!own_dead && pview_sample(&pstk_build.view,&pstk_build.fov,&pstk_build.target)) pstk_build.flags|=PSTK_FLAG_VIEW;
     else {pstk_build.view=0;pstk_build.fov=0.0f;pstk_build.target=0;}
     *length=pstk_encode(&pstk_build,out);
@@ -476,6 +479,15 @@ static int pstk_focused(void) {
     if(window) GetWindowThreadProcessId(window,&owner);
     return owner==GetCurrentProcessId();
 }
+/* Two windows on one PC share one cursor: X4 reads it in the window without the focus too, outside that window and so at
+ * its edge when the cursor is in the other one. Its cursor steering (d88a10) then turned that client's ship on every client
+ * and its camera pick aimed the guns there (9 Nov, two clients on one PC). Without the focus the record carries the neutral
+ * cursor and no aim (pstk_cursor, pstk_aim_take), and an engaging presentation id does not run (pstk_dispatch). */
+/* Slot 1's aim of this frame for the record: 1 sampled, 0 not readable, -1 no focus (neutral: straight ahead). */
+static int pstk_aim_take(float aim[3],unsigned char *steer) {
+    if(!pstk_focused()) {InterlockedIncrement64(&pstk_aim_unfocused);return -1;}
+    return pstk_aim_sample(aim,steer);
+}
 static int pstk_is_fire(unsigned kind,int id) {
     if(kind==PSTK_STATE) return id==0x18 || id==0x19 || id==0x30 || id==0x31;
     return kind==PSTK_RANGE && id>=0x11 && id<=0x14;
@@ -524,12 +536,15 @@ static void pstk_local_run(unsigned kind,unsigned char *map,int id,uint32_t valu
 /* Mouselook with slot 1 walking (lockstep_pilot_foot.h): the camera's handlers here, the walking one in the replay. */
 static void pstk_dispatch_split(unsigned char *map,int id,uint32_t value) {
     if(!pfoot_split_now()) {   /* seated, nobody walking: a presentation id as before */
+        if(pstk_engages(PSTK_RANGE,value) && !pstk_focused()) {InterlockedIncrement64(&pstk_local_unfocused);return;}
         pstk_local_note(PSTK_RANGE,id,0);
         if(pres_slot && pilot_slots[pres_slot-1].dead && !pres_has_seat()) {InterlockedIncrement64(&pstk_dropped);return;}
         pstk_local_run(PSTK_RANGE,map,id,value);
         return;
     }
-    {   int presented=pres_local_enter();
+    if(pstk_engages(PSTK_RANGE,value) && !pstk_focused()) InterlockedIncrement64(&pstk_local_unfocused);   /* the camera's part: focus rule */
+    else {
+        int presented=pres_local_enter();
         pnat_node *upper=NULL,*n=pnat_first((pnat_node*)(map+0x40*PSTK_RANGE),id,&upper);
         InterlockedIncrement(&uirep_dispatch_depth);
         while(n && n!=upper) {pnat_node *next=pnat_next(n);if(n->handler!=pfoot_handler_ptrs[1]) pstk_call(n->handler,PSTK_RANGE,id,value);n=next;}
@@ -548,6 +563,7 @@ static void pstk_dispatch(unsigned kind,unsigned char *map,int id,uint32_t value
     if(pfoot_armed && pnat_is_live() && pfoot_id(kind,id)==PFOOT_SPLIT_ID) {pstk_dispatch_split(map,id,value);return;}
     unsigned verdict=pnat_is_live()?pstk_verdict_slot(kind,id,pstk_capturing?pstk_capture_slot:1):PSTK_LOCAL;
     if(verdict==PSTK_LOCAL) {
+        if(pstk_engages(kind,value) && !pstk_focused()) {InterlockedIncrement64(&pstk_local_unfocused);return;}   /* focus rule, a release runs */
         pstk_local_note(kind,id,0);
         /* A presenting client whose slot is dead and not in a suit has no player to act as: X4's singleton is slot 1's. */
         if(pres_slot && pilot_slots[pres_slot-1].dead && !pres_has_seat()) {InterlockedIncrement64(&pstk_dropped);return;}
@@ -643,7 +659,13 @@ static void pstk_cursor(void *controller) {
     __try {pnat_fn.cursor_original(controller);} __finally {if(window) *flight=was;}
     volatile float *out=PNAT_F32(0x2f4b738);
     /* The local device is read in the canonical update only (the slot scopes run on stored banks). */
-    if(pstk_capturing && !scope) {for(unsigned i=0;i<3;i++) pstk_cursor_live[i]=out[i];pstk_cursor_live_set=1;}
+    /* ...with the focus only: without it the record's cursor is neutral (the focus rule, pstk_aim_take). */
+    if(pstk_capturing && !scope) {
+        const int focused=pstk_focused();
+        for(unsigned i=0;i<3;i++) pstk_cursor_live[i]=focused?out[i]:0.0f;
+        pstk_cursor_live_set=1;
+        if(!focused) InterlockedIncrement64(&pstk_cursor_unfocused);
+    }
     int replay;const float *source;
     if(scope>=2) {
         const pstk_slot_frame *f=&pstk_slot_frames[scope-1];
@@ -874,7 +896,8 @@ static int pstk_status(char *out,size_t capacity) {
     char keys[PSTK_LOCAL_KEYS*32+2];pstk_local_keys_text(keys,sizeof(keys));
     int n=snprintf(out,capacity," stock=%s slot=%u slots=%x flight=%u/%u capture_start=%llu first_apply=%llu recorded=%lld dropped=%lld "
         "replayed=%lld records=%lld staged=%lld space=%lld/%lld cursor=%lld injected=%lld unfocused=%lld overflows=%lld max_events=%lld settings=%016llx "
-        "aim=%d/%lld/%lld/%lld/%lld/%lld/%lld local_keys=%s local_ranges=%lld local_pressed=%lld releases=%lld/%lld",
+        "aim=%d/%lld/%lld/%lld/%lld/%lld/%lld local_keys=%s local_ranges=%lld local_pressed=%lld releases=%lld/%lld "
+        "unfocused_drops=%lld/%lld/%lld",
         pstk_capturing?"capture":"replay",pstk_capturing?pstk_capture_slot:pstk_slot,pstk_slot_mask,pstk_flight,pstk_flight_known,
         (unsigned long long)pstk_capture_start,
         (unsigned long long)pstk_first_apply,(long long)pstk_recorded,(long long)pstk_dropped,(long long)pstk_replayed,(long long)pstk_records,
@@ -882,7 +905,8 @@ static int pstk_status(char *out,size_t capacity) {
         (long long)pstk_injected,(long long)pstk_unfocused,(long long)pstk_overflows,(long long)pstk_max_events,(unsigned long long)pstk_settings,
         pstk_aim_installed,(long long)pstk_aim_calls,(long long)pstk_aim_replaced,(long long)pstk_aim_neutral,(long long)pstk_aim_samples,
         (long long)pstk_aim_sample_failures,(long long)pstk_aim_foreign,keys,(long long)pstk_local_ranges,(long long)pstk_local_pressed,
-        (long long)pstk_releases,(long long)pstk_released_events);
+        (long long)pstk_releases,(long long)pstk_released_events,(long long)pstk_cursor_unfocused,(long long)pstk_aim_unfocused,
+        (long long)pstk_local_unfocused);
     if(n<=0 || (size_t)n>=capacity) return 0;
     int more=pview_status(out+n,capacity-(size_t)n);
     if(!more) return 0;

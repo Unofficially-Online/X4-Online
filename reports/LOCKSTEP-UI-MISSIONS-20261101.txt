@@ -370,3 +370,23 @@ refuses it, ui_missions_claim_taken:<name>). The M1 spec's mask is 19455; entrie
   cue does not list (refused, named in the log); every client shows slot 1's conversation on its screen (MD's player is slot
   1's on every client), slot 2's clicks in it are refused with the info line.
 
+10. MISSIONS PER PLAYER v0 (9 Nov; C1 (i)(ii) and C5, coop first; native_gate_missions_per_player, default off)
+  Built (lockstep_mission_owners.h): slots 2..N capture the events and missions families; every client applies slot k's
+  replayed call inside slot k's scope (pslot_enter: the player singleton is P_k). An accept by slot k
+  (SignalObject(actor, 'accept', offer)) claims the offer cue by runtime ID. Every MD frame whose cue is a claimed cue
+  or one of its descendants (the parent chain at +0x158, nearest owner first) enters its owner's scope at the script
+  RNG's MD frame scope (lockstep_script_rng.h) and leaves it at the frame's end. Not the root instance (+0x170): a library
+  mission's root instance can be the manager that made every offer. A frame inside another slot's scope is counted
+  (conflicts=), not moved. The table rides the hot join package as the probe's 'missions_per_player' state.
+  Tests: test_lockstep_mission_owners.h (cue owners, table, frame rule, call scope, join state); the Python builder
+  (native_gate_players.py --missions-per-player: slot 2 accepts in the scripted plan); the MD fixture logs player.entity
+  on accept and a 5 s track row.
+  Live, mpp1 (9 Nov, x4ls play on one PC, 2 players coop, 900 ticks, DLL build-mpp1): offer at tick 100 on both, client 2
+    accepts at 190. On BOTH clients: UI_MISSIONS_MD_ACCEPTED player=0x1615fb at 13.5163 (PILOT_SLOTS_REGISTRY 2:1615fb:
+    P_2) and UI_MISSIONS_MD_TRACK player=0x1615fb ship=0x22bce (slot 2's ship) at 13.5497, 18.5497, ... 33.5497; abort at
+    640, ABORTED at 28.5163 on both; MISSIONS_PER_PLAYER at 600 and at stop equal on both (owners=1 hash=8b289f1c60c34c6e,
+    frames=8 entered=5 inside=3 conflicts=0 refused=0 calls=2). After the session's stop the track row is slot 1's player
+    again (the scopes are gone). Run summary: 0 desyncs, 0 errors, 0 drops. [F]
+  Not yet: C2 (a mission manager per slot: today every client's HUD lists every slot's missions and the active-mission
+  call is one per process), C3 (factions mode rewards), C4 (offers around each slot's player), C6 (notifications on the
+  owner's screen only), conversations for slots 2+.
