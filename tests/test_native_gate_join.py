@@ -1378,6 +1378,56 @@ class Relay(unittest.TestCase):
         self.assertTrue(j.failure.startswith('pause_too_long'), j.failure)
         self.assertIsNone(net.relay.failed)
 
+    def test_the_stall_drop_waits_for_a_joiner_in_its_handover(self):
+        # hj14 (9 Nov): the handover paused everyone for the joiner (an expected 71 s on one PC) and the stall drop (15 s)
+        # dropped it. A joiner in its handover that still reports progress is waited for up to max_pause; one that stopped
+        # reporting, another slot, or a joiner not in its handover is dropped as before.
+        r = join.JoinBarrier(TOKEN, absent=(3,), ticks=600, hold_seconds=0, relative_real=True, clients=3, lookahead=0, tick_hz=HZ,
+                             join_options={'max_pause': 60.0}, stall_report_ms=500, stall_drop_ms=1000)
+        class Joiner:
+            slot, state, max_pause, progress = 3, 'handover', 60.0, [(100.0, 150)]
+        r.join = Joiner()
+        self.assertTrue(r.handover_waits(3, 100.5, 20.0))          # progressing, 20 s into the pause: waited for
+        self.assertFalse(r.handover_waits(3, 100.5, 61.0))         # past max_pause
+        self.assertFalse(r.handover_waits(3, 101.5, 20.0))         # no report for longer than the stall drop
+        self.assertFalse(r.handover_waits(2, 100.5, 20.0))         # a session client
+        r.join.state = 'catching_up'
+        self.assertFalse(r.handover_waits(3, 100.5, 20.0))
+        r.join = None
+        self.assertFalse(r.handover_waits(3, 100.5, 20.0))
+
+    def test_a_joiner_in_a_slow_step_is_waited_for_up_to_the_max_pause(self):
+        # hj12: the joiner's first steps took about 20 s (its T+1 capture logged every world page), so no progress was measured
+        # when the catch-up limit passed and the relay failed it on an infinite pause. It now waits up to max_pause for a rate.
+        def stalled(net, seconds):
+            net.request()
+            while net.relay.join.state == 'queued':
+                net.round()
+            for _ in range(20):
+                net.round()
+            net.boot_joiner()
+            net.round(joiner_steps=1)                       # the catch-up's first report
+            for _ in range(round(seconds*HZ)):
+                net.round(joiner_steps=0)                   # one slow step: the same tick reported again and again
+            return net.relay.join
+        net = Network(ticks=3000, catchup_limit=0.5, max_pause=3.0, handover_gap=5)
+        for _ in range(40):
+            net.round()
+        j = stalled(net, 2.0)                               # past the limit, within limit + max pause
+        self.assertEqual(j.state, 'catching_up', j.failure)
+        for _ in range(300):
+            net.round(joiner_steps=8)                       # going again, faster than the session
+            if j.state != 'catching_up':
+                break
+        self.assertIn(j.state, ('handover', 'joined'), j.failure)
+        net = Network(ticks=3000, catchup_limit=0.5, max_pause=3.0, handover_gap=5)
+        for _ in range(40):
+            net.round()
+        j = stalled(net, 4.0)                               # never again: failed once limit + max pause are over
+        self.assertEqual(j.state, 'failed')
+        self.assertTrue(j.failure.startswith('pause_too_long:no_progress_gap_'), j.failure)
+        self.assertIsNone(net.relay.failed)
+
     def test_a_joiner_no_faster_than_the_session_is_handed_over_after_the_catchup_limit(self):
         # The limit counts from the catch-up's first report: 5 s is longer than the coordinator's 64-report progress window
         # (about 2 s at 30 Hz), which it was once measured from, so such a joiner was never handed over (rj2, rj3).

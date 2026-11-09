@@ -119,7 +119,7 @@ within a few seconds. With a Linux PC in the session, build the host's overlay a
 update. Each PC writes its own
 `errors.log`; the host's run folder also holds the relay's logs.
 
-## Joining a running game (built 8 Nov; through x4ls up to the catch-up, the handover still refused)
+## Joining a running game (built 8 Nov; runs through x4ls on one PC, the joiner then drifts apart)
 
 A slot can stay empty at the start and be taken later by a player on any PC the relay allows. Only the joiner
 loads; the others play on.
@@ -143,14 +143,18 @@ The joiner has 900 s from the save to report in (the relay's `--join-joiner-time
 of its own clients only, so slot 1's PC must be one of the savers. With `--open` the relay hands over after 20 s
 of catch-up and may pause everyone for up to 180 s while the joiner closes the gap.
 
-Status (8 Nov, one PC, hj1..hj8). These steps run: the request, the save at the next join tick, the 192 MB
-download (verified), the joiner's overlay and its checks, the load, the resume into the open pilot window and the
-catch-up. The relay then refuses the join on its digest check. hj7 parted at T+1 on one census row the join save
-leaves out (an object still in the map at T, gone at T+1); the package now carries it. hj8: the digest is equal on
-both sides from T+1 to T+9, then parts at T+10 on one battle ship's decision: the session's ship reacts to an event
-(a new object from an enemy ship) that the joiner's does not get. The RNG word that differs at T+1 is the joiner's
-first frame only: it is equal again at T+2. The lane tool's in-window joins compare the world census, not this
-digest, so they did not stop there.
+Status (9 Nov, one PC, hj14b). The whole join runs: the request, the save at the next join tick, the 176 MB
+download (verified), the joiner's overlay and its checks, the load, the resume into the open pilot window, the
+catch-up, the handover and the joined player to the end of the window (0 errors, 0 drops). On one PC the joiner
+is no faster than the session, so the handover pauses everyone for about as long as the joiner took to load
+(hj14b: 74 s); a faster joiner PC pauses less.
+
+Desyncs: the joiner's world differs from the session's within a few ticks of the join (hj7..hj14b: from 1 to
+about 600 ticks after T, then one step apart, for example one ship's shot), and stays different. As for a play
+session's own desyncs, the join is not refused for that: the relay hands over all the same (`--join-observe`)
+and counts the mismatches (`desyncs.log`, the relay's `joined ... digest_mismatches=N` line). So a player can
+join a running game, but what they see may drift from the host's. Joining at the start (`x4ls join --arm-at`, "Two
+PCs") has no such drift.
 
 ## Choosing the starts (built 8 Nov; run through x4ls on one PC)
 
@@ -204,8 +208,9 @@ first mismatch.
 - **Two people on one PC.** Keyboard and mouse go to the focused window only. Whether X4 reads a gamepad in an
   unfocused window is unverified.
 - **Desync recovery.** None: a session that differs stays different.
-  - Hot join: `x4ls play --open` with `x4ls join` (no `--arm-at`) runs up to the catch-up, but the relay refuses
-    the handover at T+10 (see "Joining a running game"). Rejoin after a drop exists in lane runs only.
+  - Hot join: `x4ls play --open` with `x4ls join` (no `--arm-at`) runs to the end, but the joiner's world drifts
+    from the host's within a few ticks of the join (see "Joining a running game"). Rejoin after a drop exists in
+    lane runs only.
   - After a late join a few large ships still differ (reports/LOCKSTEP-HOTJOIN-20261101.txt).
 - **Desync indicator in game.** None, so that desyncs stay silent. `tools/dev/native_gate_desync_watch.py --status
   .local/runs/<time>/desync-status.json` shows one in the console.

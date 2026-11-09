@@ -49,6 +49,15 @@
   },
   {
    "module": "pilot_inputs",
+   "win": "d8dd50",
+   "kind": "fn_paired",
+   "lin": "1658d60",
+   "status": "matched",
+   "evidence": "read: 3d8da58, 3d8daa8 (bank +e42280), vcall +0x1c0 (Windows +0x188), highway 3e4cdc0, ship +0x20 (Windows +0x28) -> +0xd1, inverted; the same branches",
+   "what": "controller authority predicate"
+  },
+  {
+   "module": "pilot_inputs",
    "win": "d8e5b0",
    "kind": "fn_paired",
    "lin": "1663740",
@@ -80,15 +89,6 @@
    "status": "open",
    "evidence": "",
    "what": "controls release path"
-  },
-  {
-   "module": "pilot_inputs",
-   "win": "d8dd50",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": "",
-   "what": "controller authority predicate"
   },
   {
    "module": "pilot_inputs",
@@ -273,6 +273,33 @@
   },
   {
    "module": "pilot_native",
+   "win": "d8a680",
+   "kind": "fn_paired",
+   "lin": "1659010",
+   "status": "matched",
+   "evidence": "read: PlayerController vtable: Windows slot 6 = Linux slot 13 (+7 in this stretch: vfunc33 d97e80 = slot 40, d98e50 = 41); calls 1658d60 first, then [rbx+0x2a0/0x2a8] as Windows d8a715",
+   "what": "PlayerController vfunc6 (transform)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d8b3e0",
+   "kind": "fn_paired",
+   "lin": "165a190",
+   "status": "matched",
+   "evidence": "read: PlayerController vtable: Windows slot 7 = Linux slot 14 (+7 in this stretch: vfunc33 d97e80 = slot 40, d98e50 = 41); calls 1658d60 first, then [rbx+0x2e0/0x2e8] as Windows d8b46f",
+   "what": "PlayerController vfunc7 (velocity)"
+  },
+  {
+   "module": "pilot_native",
+   "win": "d8b790",
+   "kind": "fn_paired",
+   "lin": "165a910",
+   "status": "matched",
+   "evidence": "read: PlayerController vtable: Windows slot 10 = Linux slot 17 (+7 in this stretch: vfunc33 d97e80 = slot 40, d98e50 = 41); calls 1658d60 first, then comisd against 0 as Windows d8b7f8",
+   "what": "PlayerController vfunc10 (acceleration)"
+  },
+  {
+   "module": "pilot_native",
    "win": "d924d0",
    "kind": "fn_paired",
    "lin": "16666b0",
@@ -438,30 +465,6 @@
   {
    "module": "pilot_native",
    "win": "d88fe0",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_native",
-   "win": "d8a680",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_native",
-   "win": "d8b3e0",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_native",
-   "win": "d8b790",
    "kind": "fn_open",
    "lin": null,
    "status": "open",
@@ -786,8 +789,8 @@
    "win": "6b661d0",
    "kind": "data",
    "lin": "3e4cdc0",
-   "status": "candidate",
-   "evidence": "instruction-form votes 6 of 7; vfunc33 compares it on both builds (cmp byte)",
+   "status": "matched",
+   "evidence": "read: the authority predicate 1658d60 tests it where d8dd50 tests 6b661d0; instruction-form votes 6 of 7",
    "what": "on a highway (NAV_PLAYER_HIGHWAY)"
   },
   {
@@ -1000,9 +1003,18 @@
    "win": "d8dfe0",
    "kind": "fn_paired",
    "lin": "1653680",
-   "status": "candidate",
-   "evidence": "input-bank fields 2/2 (J 1.00, next 0.25), size 1024/448",
-   "what": "input-bank user (2 fields)"
+   "status": "matched",
+   "evidence": "read: the one call of d98de0 and of its twin 1653840; bank fields 2/2 (block key)",
+   "what": "called by vfunc36"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d98de0",
+   "kind": "fn_paired",
+   "lin": "1653840",
+   "status": "matched",
+   "evidence": "read: PlayerController vtable: Windows slot 36 = Linux slot 43 (+7: vfunc33 d97e80 = 40, d98e50 = 41); 112 bytes each, the one call d8dfe0 = 1653680",
+   "what": "PlayerController vfunc36 (control change)"
   },
   {
    "module": "pilot_slots",
@@ -1011,6 +1023,15 @@
    "lin": "1670b30",
    "status": "candidate",
    "evidence": "linux_pair_calls: string:HighwayConfigurationList::GetHighwayEnteredEffect(): configu"
+  },
+  {
+   "module": "pilot_slots",
+   "win": "d9cdb0",
+   "kind": "fn_paired",
+   "lin": "165dc20",
+   "status": "matched",
+   "evidence": "read: PlayerController vtable: Windows slot 35 = Linux slot 42 (+7: vfunc33 d97e80 = 40, d98e50 = 41); Windows inlines the refresh d9cc30 after the owner change, Linux tail-calls its twin 165d860 (edi 1) after 1438b30",
+   "what": "PlayerController vfunc35 (owner)"
   },
   {
    "module": "pilot_slots",
@@ -1070,22 +1091,6 @@
   },
   {
    "module": "pilot_slots",
-   "win": "d98de0",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_slots",
-   "win": "d9cdb0",
-   "kind": "fn_open",
-   "lin": null,
-   "status": "open",
-   "evidence": ""
-  },
-  {
-   "module": "pilot_slots",
    "win": "9fe2a9",
    "kind": "in_open_fn",
    "lin": null,
@@ -1104,49 +1109,55 @@
    "module": "pilot_slots",
    "win": "d8a6a3",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside d8a680"
+   "lin": "165902f",
+   "status": "matched",
+   "evidence": "read: the authority test MSVC inlines (2f4b7d8, 2f4b828, vfunc +0x188, highway 6b661d0, ship +0x28 -> +0xd1) is a call of 1658d60 on Linux at 165902f (jne 1659270)",
+   "what": "vfunc6 authority test (global part)"
   },
   {
    "module": "pilot_slots",
    "win": "d8a6ee",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside d8a680"
+   "lin": "165902f",
+   "status": "matched",
+   "evidence": "read: inside 1658d60 on Linux: the same call site 165902f",
+   "what": "vfunc6 authority test (+0xd1 part)"
   },
   {
    "module": "pilot_slots",
    "win": "d8b400",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside d8b3e0"
+   "lin": "165a1aa",
+   "status": "matched",
+   "evidence": "read: the authority test MSVC inlines (2f4b7d8, 2f4b828, vfunc +0x188, highway 6b661d0, ship +0x28 -> +0xd1) is a call of 1658d60 on Linux at 165a1aa (jne 165a2a0)",
+   "what": "vfunc7 authority test (global part)"
   },
   {
    "module": "pilot_slots",
    "win": "d8b45a",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside d8b3e0"
+   "lin": "165a1aa",
+   "status": "matched",
+   "evidence": "read: the same call site 165a1aa",
+   "what": "vfunc7 authority test (+0xd1 part)"
   },
   {
    "module": "pilot_slots",
    "win": "d8b7a7",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside d8b790"
+   "lin": "165a927",
+   "status": "matched",
+   "evidence": "read: the authority test MSVC inlines (2f4b7d8, 2f4b828, vfunc +0x188, highway 6b661d0, ship +0x28 -> +0xd1) is a call of 1658d60 on Linux at 165a927 (jne 165a998)",
+   "what": "vfunc10 authority test (global part)"
   },
   {
    "module": "pilot_slots",
    "win": "d8b7e4",
    "kind": "in_open_fn",
-   "lin": null,
-   "status": "open",
-   "evidence": "inside d8b790"
+   "lin": "165a927",
+   "status": "matched",
+   "evidence": "read: the same call site 165a927",
+   "what": "vfunc10 authority test (+0xd1 part)"
   },
   {
    "module": "pilot_slots",
@@ -1451,7 +1462,7 @@
  ],
  "coverage": {
   "sites": 174,
-  "placed": 107,
-  "matched": 36
+  "placed": 119,
+  "matched": 50
  }
 }

@@ -163,7 +163,7 @@ def relay_command(o, port, token, run):
     if o.open_slots:
         from . import hotjoin
         savers = [k for k in range(1, o.clients + 1) if k not in o.open_slots and k not in o.remote_slots]
-        cmd += hotjoin.relay_join_args(sorted(o.open_slots), savers, given=o.relay_args)
+        cmd += hotjoin.relay_join_args(sorted(o.open_slots), savers, given=o.relay_args, observe=o.play)
     return cmd + list(o.relay_args)
 
 

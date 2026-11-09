@@ -1552,7 +1552,12 @@ class JoinCoordinator:
             return
         pause = handover_pause(max(gap, 0), lead, self.b.tick_hz, rate) if rate else math.inf
         if gap > self.handover_gap and pause > self.max_pause:
-            self.fail(f'pause_too_long:gap_{gap}_rate_{rate:.1f}', now)
+            # The catch-up does not pause the session, so a pause estimate that is too long first lets it go on, up to
+            # --join-max-pause past the limit: a joiner in a slow step reports no progress (hj12, 8 Nov: its T+1 capture logged
+            # every world page, about 20 s), and its rate stays low for a while after it (the reports keep the stalled ones).
+            if waited < self.catchup_limit+self.max_pause:
+                return
+            self.fail(f'pause_too_long:no_progress_gap_{gap}' if not rate else f'pause_too_long:gap_{gap}_rate_{rate:.1f}', now)
             return
         placed = self.b.next_standin_tick()
         self.handover = placed+lead
@@ -1765,10 +1770,19 @@ class JoinBarrier(_barrier_base()):
             return []
         out, dropped = [], False
         for s in missing:
-            if self.droppable(s):
+            if self.droppable(s) and not self.handover_waits(s, now, waited):
                 out += self.drop(s, tick, now, waited)
                 dropped = True
         return out+self.advance(now) if dropped else []
+
+    def handover_waits(self, slot, now, waited):
+        """The joiner in its handover is the slot everyone pauses for: it is waited for up to --join-max-pause (the pause the
+        coordinator agreed to) while it still reports progress, not the stall drop's time (hj14, 9 Nov: x4ls dropped it 15 s
+        into an expected 71 s pause). One that stops reporting is dropped as any other."""
+        j = self.join
+        if not j or j.slot != slot or j.state != 'handover' or not j.progress:
+            return False
+        return now-j.progress[-1][0] < self.stall_drop and waited < j.max_pause
 
     def drop(self, slot, tick, now, waited):
         """Slot's rows are stand-ins from tick, the first it did not report; that row carries ABORT(slot, dropped)."""

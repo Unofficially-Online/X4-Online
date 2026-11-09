@@ -208,6 +208,17 @@ pilot_foot and its bodies/slots, player_settings_per_slot, guidance_local, rende
   twin 1dd19d0 takes no argument). Candidates by votes: 395cdb0, 38f4c31, 6b661d0, the trigger bytes 38f0728.
   Minimal path: 107 of 174 placed, 36 matched; pilot_stock 16 of 16, pilot_stock_view 10 of 10.
 
+3k. THE CONTROLLER AUTHORITY TEST (9 November)
+  MSVC inlines d8dd50, the controller authority predicate (2f4b7d8, 2f4b828, vfunc +0x188, the highway byte 6b661d0,
+  the ship at +0x28 -> +0xd1), into PlayerController's vfuncs 6, 7 and 10; GCC keeps it a function, 1658d60 (3d8da58,
+  3d8daa8, vcall +0x1c0, 3e4cdc0, the ship at +0x20), and calls it. The PlayerController vtable has 71 Windows and 79
+  Linux slots: +7 in this stretch (vfunc33 d97e80 is Linux slot 40, d98e50 41, and 1658d60's callers sit at 13, 14,
+  17). So vfunc6/7/10 -> 1659010/165a190/165a910 (each continues as its Windows twin: +0x2a0, +0x2e0, comisd against
+  0), and each Windows pair of patch points (the global part, then the +0xd1 part) is one Linux call site: 165902f,
+  165a1aa, 165a927. vfunc35 d9cdb0 -> 165dc20 (Windows inlines the refresh d9cc30 after the owner change, Linux
+  tail-calls its twin 165d860), vfunc36 d98de0 -> 1653840 (its one call d8dfe0 = 1653680).
+  Minimal path: 119 of 174 placed, 50 matched; pilot_slots 16 of 26.
+
 4b. NEXT (before lx32b)
   - 6d6d80 and 54ce90 by a reading of both builds (the getter is called by 62 Windows functions: placing it pins many
     sites), then the three predicates; the data words of pilot_inputs (0x2f4b7e4 control-deactivation count,

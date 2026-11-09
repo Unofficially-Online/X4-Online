@@ -52,12 +52,16 @@ def join_tools():
 JOIN_TIMING = (('--join-catchup-limit', '20'), ('--join-max-pause', '180'))
 
 
-def relay_join_args(open_slots, savers, given=()):
-    """The relay arguments of a session with hot-joinable slots."""
+def relay_join_args(open_slots, savers, given=(), observe=False):
+    """The relay arguments of a session with hot-joinable slots. observe (x4ls play: the session's desyncs are logged, not
+    fatal): a joiner whose digest differs during its catch-up is handed over all the same, the mismatches counted and logged
+    (relay --join-observe; hj8..hj13, 8-9 Nov: the joiner equal for 1 to 9 ticks, then one step apart)."""
     args = ['--join', '--absent', ','.join(map(str, open_slots)), '--join-savers', ','.join(map(str, savers))]
     for key, value in JOIN_TIMING:
         if key not in given:
             args += [key, value]
+    if observe and '--join-observe' not in given:
+        args.append('--join-observe')
     return args
 
 

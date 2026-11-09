@@ -411,7 +411,9 @@ class RelayTests(unittest.TestCase):
         self.assertIn('--bind 192.0.2.5 --allow-from 192.0.2.7,192.0.2.5', cmd)
         local = session.Options(clients=2, overlay=Path('ov'), snapshot=Path('s.xml.gz'), tick_hz=30, lookahead=1, play=True, open_slots=(2,))
         cmd = ' '.join(session.relay_command(local, 47000, TOKEN, Path('run')))
-        self.assertIn('--join --absent 2 --join-savers 1 --join-catchup-limit 20 --join-max-pause 180', cmd)
+        self.assertIn('--join --absent 2 --join-savers 1 --join-catchup-limit 20 --join-max-pause 180 --join-observe', cmd)
+        lane = session.Options(clients=2, overlay=Path('ov'), snapshot=Path('s.xml.gz'), tick_hz=30, lookahead=1, play=False, open_slots=(2,))
+        self.assertNotIn('--join-observe', session.relay_command(lane, 47000, TOKEN, Path('run')))   # play only: its desyncs are logged
         own = session.Options(clients=2, overlay=Path('ov'), snapshot=Path('s.xml.gz'), tick_hz=30, lookahead=1, play=True, open_slots=(2,),
                               relay_args=['--join-max-pause', '30'])
         cmd2 = session.relay_command(own, 47000, TOKEN, Path('run'))
