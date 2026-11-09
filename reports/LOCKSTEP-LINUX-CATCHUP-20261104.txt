@@ -405,6 +405,48 @@ A LINUX PLAYER IN A WINDOWS SESSION (user decision 8 November: the native Linux 
   loud refusal for what is missing (native_gate_defaults on the Linux gate), then the simulation fixes in D.ON's
   arming order, measured each against the matching Windows run, then the people stack (pilot replay first).
 
+THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows; lx29..lx33 = Linux, same snapshot)
+  Ported: the battle fixture (linux/gate_battle.h: the twelve ships' bind at the boot admission, the tick-1
+  preparation, the enrollment, gate.actor's row, the shield refresh), the steering module (gate_flight.h: keyed
+  updates, full updates, avoidance refresh, keyed initial angles), the fixture's ship Move and Agent update on
+  Windows' keyed streams with full Agent updates (gate_actor_all.h), the spline fixture path and its refresh
+  (gate_spline_join.h), and params_init (33555052: the flight-parameter builder 0x14378c0, Windows 0xea1e80, once
+  per ship at its first sample). The Linux STATE line carries 24 of W35's fields per actor (position, rotation,
+  hull, shield, raw hull bits and the current/previous banks); the body, order, fleet and spline-state fields are
+  not ported yet.
+  Result: all 24 fields equal for all 12 actors through tick 13 (144/144 rows), on both Linux clients, unchanged
+  by agent_full, ship/Agent keying, spline refresh and params_init. Tick 14 is actor 1's first steering update (its
+  model switches from spline to steering at tick 13 on both, with equal keyed angles): the current bank's velocity
+  is 0x3dec4705 (0.1154) on Windows and 0x3cf1ab8e (0.0295, about a quarter) on Linux; at tick 15 Linux has
+  0x3dec4704, one ulp from Windows' tick-14 value, and Linux's tick-15 position is Windows' tick-14 position bit
+  for bit. The Linux ship's first thrust tick integrates about a quarter of Windows'. Systematic: both Linux
+  clients agree on all 299 ticks. Physics keys Linux does not run yet: shape_rng/shape_initial_refresh, body_pose,
+  physics_scenes/view_scenes (Windows bisection W36a..c requested).
+  The bodies (2a5a2153, gate.body on Linux: the X4 record and the Jolt body read as on Windows, the PhysicsSystem's
+  no-lock lock interface at +0x140 instead of +0x1b8, the ship's record slots found by their owner; lx34a): body0
+  equals W35 on every tick for the six Argon ships; the six Xenon ships differ by 1 ulp in Jolt's inertia rotation
+  quaternion (motion word 13) from tick 2. body1 (the second record's body) is on Windows a unit sphere of the ship's
+  mass (inverse inertia 0.4167 = 1/(0.4*6*1^2) isotropic, identity rotation, inverse mass 1/6; Xenon 0.3842 at
+  mass 6.508) and on Linux the hull's own anisotropic tensor, which for four Argon ships even differs between the two
+  Linux processes (the relay's first digest split, tick 2, is body1 only). The second body's shape is built
+  asynchronously: Windows still has the placeholder at tick 2, Linux already the built shape, at a process-dependent
+  point. Pose, velocity and inverse mass agree on both bodies through tick 13.
+
+FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
+  native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at
+  tick T instead of tick 1, so a window that starts after an idle stretch counts only first runs from then on; rows
+  keep absolute ticks. The shared lockstep_coverage.h is unchanged (T = 1 runs its cov_frame).
+  lx32a (the lx28 clock stack, --coverage 1300 --coverage-from 300, an 8192-entry list of candidate functions) stopped
+  both clients at tick 300 with reason 136: an int3 on the engine RNG listener's entry, whose pinned bytes the module
+  re-checks every tick. The Linux coverage now never marks an entry inside a pinned site range (17 of the list;
+  "pinned" in its status). lx32b: 1500/1500 on both clients, no world-hash split. Keys and a mouse move went into
+  client 1 only, through XTEST into its own X display, timed by the client's logged tick (key down at the target
+  tick - 1, every event within 1 tick). Client 1 ran 1630 listed functions, client 2 1302, client 2's set a strict
+  subset; the idle stretch 300..359 had 1009 first runs on each. The 328 functions only the input client ran, by the
+  window they first ran in: accelerate 15, decelerate 0, roll 4+0, strafe 4+0+4+2, boost 16, mouse 5, stop 16, map
+  open 238, map close 14, travel mode 10. (Evidence for the pilot input port: X4's own input path on Linux, without
+  the gate's pilot replay, which Linux does not have yet.)
+
 NEXT
   1. (done: actor_rng_all, player_timer, tempzone_order, warp_rng on Linux; Linux vs Linux 0 through 6000, lx13.)
   2. (done: W23 against lx13, identical through 1800.) The platform residue: the 1-ulp z of the ship's position relative
