@@ -153,6 +153,7 @@ __attribute__((unused)) static int join_ids_replay_end(void) {
 /* rid_assign, a shared allocation: as before, while the joiner loads its saved slot or the load list, or a replay's slot. */
 static created_assign_fn join_ids_route(created_assign_fn shared,uint32_t caller) {
     if(InterlockedCompareExchange(&join_ids_replay_on,0,0) && GetCurrentThreadId()==join_ids_replay_thread) return join_ids_assign_replay;
+    if(join_ids_admit_load && join_ids_built) return join_ids_assign_load;   /* ATTN states at the admission (lockstep_join_world.h) */
     if(!InterlockedCompareExchange(&join_ids_active,0,0)) return shared;
     const unsigned kind=caller==JOIN_IDS_COMPONENT_A || caller==JOIN_IDS_COMPONENT_B?JOIN_IDS_COMPONENT:caller==JOIN_IDS_CONNECTION?JOIN_IDS_CONN:JOIN_IDS_NONE;
     if(kind && join_ids_pending.kind==kind) {join_ids_placing=join_ids_pending.saved;join_ids_pending.kind=JOIN_IDS_NONE;return join_ids_assign_pinned;}

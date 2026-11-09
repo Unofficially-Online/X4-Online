@@ -440,6 +440,8 @@ def bundle(args):
         command.append('--ik-diag')
     if args.ik_step:
         command.append('--ik-step')
+    if args.ik_wrap:
+        command.append('--ik-wrap')
     if args.world_hash_shields:
         command.append('--world-hash-shields')
     if args.mining_camera:
@@ -562,6 +564,7 @@ def bundle(args):
         'impulse_diag',
         'ik_diag',
         'ik_step',
+        'ik_wrap',
         'world_hash_shields',
         'mining_camera',
         'mass_traffic',
@@ -1373,6 +1376,7 @@ def main(argv=None):
     b.add_argument('--warp-exit', action='store_true', help='the gate exit sum in the Windows order (native_gate_warp_exit)')
     b.add_argument('--body1-mass', choices=('fallback',), help="a ship's second body gets the empty compound's mass properties at creation (native_gate_body1_mass)")
     b.add_argument('--body-step-diag', action='store_true', help='BODY_STEP rows: the fixture bodies before and after the Jolt step (native_gate_body_step_diag)')
+    b.add_argument('--ik-wrap', action='store_true', help="a skeleton joint's wrapped target as (t2 + value) - pi, the Windows order (native_gate_ik_wrap)")
     b.add_argument('--ik-step', action='store_true', help="the joints' fixed-step divisions by 0.02 as Windows' multiplications by 50 (native_gate_ik_step)")
     b.add_argument('--ik-diag', action='store_true', help='IKJOINT rows: the fixture ships\' and weapons\' skeleton joints (native_gate_ik_diag)')
     b.add_argument('--impulse-diag', action='store_true', help='IMPULSE rows: the impulses on fixture bodies (native_gate_impulse_diag)')

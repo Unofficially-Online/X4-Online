@@ -287,6 +287,8 @@ D.DIAGNOSTIC={
  {'native_gate_join_shape_refresh','hot join: every client refreshes the fixture body shapes at T+2'},
  {'native_gate_join_jobdump','hot join job raw rows (diagnostic)'},
  {'native_gate_nav_refresh_watch','nav refresh rows: which thread refreshes a navigation controller first after a bank flip (diagnostic)'},
+ {'native_gate_nav_refresh_watch_owner','nav refresh rows only for the controller of this runtime ID, each with its stack (diagnostic)'},
+ {'native_gate_nav_refresh_watch_handover','nav refresh rows from H-N to H+N around a hot join handover, the window set once H is known (diagnostic)'},
  {'native_gate_spline_calc_watch','spline calc rows: when the spline route calculator runs relative to the gated frames (diagnostic)'},
  {'native_gate_spline_phase','the spline route calculator at the frame phase points only (before the pathing pass, after its join)'},
  {'native_gate_safe_pos_dump','safe pos dump rows: the GetSafePos solver calls in a tick window, every box as given (diagnostic)'},
@@ -296,6 +298,8 @@ D.DIAGNOSTIC={
  {'native_gate_join_precise','hot join save at full precision'},
  {'native_gate_join_in_window','hot join save inside the pilot window, measured (diagnostic)'},
  {'native_gate_pilot_dump_tick','pilot slot ship, controller, agent and solver bytes at this tick (diagnostic)'},
+ {'native_gate_pilot_first_stores','pilot slots: an absent slot first store from the canonical block at the take, every first store carried to a hot joiner'},
+ {'native_gate_pilot_seat_live_pose','a late seat (hot join handover, H-1) reads the slot ship pose live on every client, past its view caches'},
  {'native_gate_pilot_dump_handover','pilot slot ship, controller, agent and solver bytes from H-1 to H+N around a handover (diagnostic)'},
  {'native_gate_join_passes_admit','hot joiner: the synced passes, stand-ins and travel snapshot of T at its admission (diagnostic)'},
  {'native_gate_join_ids','hot joiner saved objects at the session runtime IDs'},
@@ -329,6 +333,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_undk','hot join: the session undocking behaviours written at the admission (UNDK)'},
  {'native_gate_join_ares','hot join: the session Agent result banks written at the admission (ARES)'},
  {'native_gate_join_attn_set','hot join: ATTN runs SetAttention where its write leaves the load per-level state, its attention events dropped (ATTN set)'},
+ {'native_gate_join_attn_states','hot join: with ATTN set, SetAttention at the admission for every object whose per-level state is apart there and settled on the session, its allocations on the load list'},
  {'native_gate_join_gravn_extra','hot join: GRAVN keeps the joiner zone groups the session adds later in the neighbour lists (GRAVN extra)'},
  {'native_gate_join_shgr','hot join: a joiner takes the session shield recharge groups of docked ships its load restamps (SHGR)'},
  {'native_gate_join_ecos','hot join: a joiner takes the session economy schedules of stations and ships (ECOS)'},
@@ -475,6 +480,7 @@ D.EXCLUDED={
  {'native_gate_nav_key','Linux gate only'},
  {'native_gate_warp_exit','Linux gate only: the gate exit sum in the Windows order (Windows is that order); a Linux default after a 0 W vs L census'},
  {'native_gate_flight_limits','Linux gate only: the engine parameters limit words with the hoisted reciprocal (Windows is that order)'},
+ {'native_gate_ik_wrap','Linux gate only: a joint wrapped target as (t2 + value) - pi, the Windows order'},
  {'native_gate_ik_step','Linux gate only: the joints fixed-step divisions by 0.02 as Windows multiplications by 50'},
  {'native_gate_body_step_diag','Linux gate only: the fixture bodies before and after the Jolt step (diagnostic)'},
  {'native_gate_body1_mass','Linux gate only: a ship second body gets the empty-compound mass properties at creation (Windows value)'},
@@ -530,7 +536,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step'}
+ [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

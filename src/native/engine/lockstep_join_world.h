@@ -77,6 +77,9 @@
 #define JOIN_WORLD_ROWS 2u                /* sampled rows per kind (health, pose, ...) at the admission */
 #define JOIN_ATTENTION 0x1ecu              /* the attention level (SetAttention 0x3d5660) */
 #define JOIN_ATTENTION_DUE 0x2e0u          /* the attention timer's due (0x6d1ff0, an Object's) */
+#define JOIN_ATTN_OWN 0xd1u                /* SetAttention(level 1) computes the level (vfunc 0x15f8) when this byte is set */
+static int join_attn_states_on;            /* native_gate_join_attn_states (ATTN set, below) */
+static int join_attn_settled(unsigned char *object,uint32_t level);
 #define JOIN_NAV_REFRESH 0xc0u             /* the last refresh's game time (RefreshFromPathingState 0xea2a20) */
 #define JOIN_NAV_CURSOR 0xc8u              /* the read selector at the last refresh (0, 1; 2 none) */
 #define JOIN_NAV_PARAMS_DUE 0xd0u          /* the parameter refresh due and its enable +0xd8 (lockstep_nav_cadence.h) */
@@ -5863,6 +5866,7 @@ static int join_capture_world(join_tables *t,double now) {
             if(!join_read(object+JOIN_ATTENTION,&a.level,4) || ((classes&4u) && !join_read(object+JOIN_ATTENTION_DUE,&a.due,8)))
                 return join_note("attention,id=%llx",(unsigned long long)id->portable);
             if(classes&4u) a.flags|=JOIN_ATTN_DUE;
+            if(join_attn_states_on && join_attn_settled(object,a.level)) a.flags|=JOIN_ATTN_SETTLED;
             if(!JOIN_PUSH(t->attn,t->nattn,acap,a)) return join_note("memory");
         }
         if(classes&1u) {
@@ -6199,19 +6203,54 @@ static void join_set_attention_native(unsigned char *object,uint32_t level) {((v
 static unsigned char (*join_attn_flag)(unsigned char *,uint32_t,int)=join_attn_flag_native;   /* tests replace them */
 static void (*join_set_attention)(unsigned char *,uint32_t)=join_set_attention_native;
 static uint64_t join_attn_events_drop(int count_only,uint64_t *kept);   /* lockstep_join.h */
-/* After ATTN wrote the session's level (was: the joiner's): the native change where the states differ, its posts destroyed; 1 called. */
-static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level) {
-    if(!join_attn_set_on || level==1u || (was<JOIN_ATTN_VISIBLE && level<JOIN_ATTN_VISIBLE)) return 0;   /* 1: SetAttention computes its own */
-    if(join_attn_flag(object,level,0)==join_attn_flag(object,level,1)) return 0;
+/* ATTN states (opt-in native_gate_join_attn_states, with attn_set; hj23, 9 Nov). SetAttention's early out also needs the per-level
+ * state: vfunc 689 (for the level held) equal to vfunc 688 (for the level asked). Component's pair answers 0 below 7, but a Ship's
+ * holds a byte (+0xaf8), which the load sets for the load's level. hj23 (T=720): the session's digest and world equal at T+1 to 760
+ * but for the runtime ID part from T+2: in step T+1 the joiner's first SetAttention of one object (from ConnectTo 0x3d5bb0, level 1)
+ * found the states apart and ran the handler, Positional::InitPartAnimations 0x755110 making its animation units (two IDs, caller
+ * dd7c7c80) that the session made at 719, before its save. With the option the saver marks each record whose state agrees on the
+ * session (JOIN_ATTN_SETTLED), and the joiner runs the native change at the admission for every marked object whose state is apart,
+ * at any level: its posts destroyed through attn_set's swapped sites, the due events it queued dropped with attn_set's, and its
+ * shared allocations on the joiner's load list (join_ids_admit_load), so the session's next ID stays where it is. Level 1 with
+ * +0xd1 set only where vfunc 0x15f8 (ComputeAttention) answers 1 too, so the call never moves the level. */
+#define JOIN_ATTN_COMPUTE_SLOT (0x15f8u/8u)
+static uint64_t join_attn_states_apart,join_attn_states_unsettled,join_attn_states_computed,join_attn_states_calls,join_attn_states_loaded,
+    join_attn_states_drift;
+static uint32_t join_attn_compute_native(unsigned char *object) {
+    void **vt=*(void ***)object;return ((uint32_t (*)(void *))vt[JOIN_ATTN_COMPUTE_SLOT])(object);
+}
+static uint32_t (*join_attn_compute)(unsigned char *)=join_attn_compute_native;   /* tests replace it */
+static int join_attn_settled(unsigned char *object,uint32_t level) {return join_attn_flag(object,level,0)==join_attn_flag(object,level,1);}
+/* After ATTN wrote the session's level (was: the joiner's): the native change where the states differ, its posts destroyed. 0 none,
+ * 1 attn_set's (a write at or over 6), 2 attn_states' (flags: the session's record). */
+static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level,uint32_t flags) {
+    if(!join_attn_set_on) return 0;
+    const int visible=was!=level && level!=1u && (was>=JOIN_ATTN_VISIBLE || level>=JOIN_ATTN_VISIBLE);   /* 1: SetAttention computes its own */
+    if(!visible && !join_attn_states_on) return 0;
+    if(join_attn_settled(object,level)) return 0;
+    if(!visible) {
+        ++join_attn_states_apart;
+        if(!(flags&JOIN_ATTN_SETTLED)) {++join_attn_states_unsettled;return 0;}   /* apart on the session too: left as it is */
+        unsigned char own=0;
+        if(level==1u && (!join_read(object+JOIN_ATTN_OWN,&own,1) || (own && join_attn_compute(object)!=1u))) {++join_attn_states_computed;return 0;}
+    }
     if(!InterlockedCompareExchange(&join_attn_post_on,0,0)) {
         if(!join_attn_post_swap(1)) {++join_attn_set_refused;return 0;}
         InterlockedExchange(&join_attn_post_on,1);
     }
-    join_set_attention(object,level);++join_attn_set_calls;return 1;
+    if(visible) {join_set_attention(object,level);++join_attn_set_calls;return 1;}
+    const unsigned long long before=RID_JOIN_ALLOCS;
+    join_ids_admit_load=1;join_set_attention(object,level);join_ids_admit_load=0;
+    join_attn_states_loaded+=RID_JOIN_ALLOCS-before;
+    uint32_t now=level;
+    if(join_read(object+JOIN_ATTENTION,&now,4) && now!=level) {memcpy(object+JOIN_ATTENTION,&level,4);++join_attn_states_drift;}
+    ++join_attn_states_calls;return 2;
 }
 static int join_admit_attn(const join_tables *s,const join_tables *mine) {
     unsigned rows=0,samples=0;join_attn_high=0;join_attn_high_n=0;
     join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
+    join_attn_states_apart=join_attn_states_unsettled=join_attn_states_computed=join_attn_states_calls=join_attn_states_loaded=0;
+    join_attn_states_drift=0;unsigned state_rows=0;
     InterlockedExchange64(&join_attn_set_posted,0);
     if(join_attn_set_on) join_attn_set_due[0]=join_attn_events_drop(1,NULL);
     for(uint32_t i=0;i<s->nattn;i++) {
@@ -6238,12 +6277,16 @@ static int join_admit_attn(const join_tables *s,const join_tables *mine) {
             }
         }
         if((a->flags&JOIN_ATTN_DUE) && due!=a->due) {memcpy(object+JOIN_ATTENTION_DUE,&a->due,8);++join_rx.attn_due_fixed;}
-        if(level!=a->level) (void)join_attn_reconcile(object,level,a->level);
+        if((level!=a->level || join_attn_states_on) && join_attn_reconcile(object,level,a->level,a->flags)==2 && state_rows<JOIN_WORLD_ROWS &&
+           join_rx.nrows<JOIN_ROWS) {
+            ++state_rows;snprintf(join_rx.rows[join_rx.nrows++],sizeof(join_rx.rows[0]),"attn_state side=joiner id=%016llx level=%u/%u vtable=%llx",
+                                  (unsigned long long)a->portable,level,a->level,(unsigned long long)(vtable-(uintptr_t)image));
+        }
         ++join_rx.attn_applied;
     }
     if(join_attn_set_on) {
         if(InterlockedCompareExchange(&join_attn_post_on,0,0)) {(void)join_attn_post_swap(0);InterlockedExchange(&join_attn_post_on,0);}
-        if(join_attn_set_calls) join_attn_set_dropped=join_attn_events_drop(0,&join_attn_set_kept);
+        if(join_attn_set_calls || join_attn_states_calls) join_attn_set_dropped=join_attn_events_drop(0,&join_attn_set_kept);
         join_attn_set_due[1]=join_attn_events_drop(1,NULL);
     }
     return 1;

@@ -119,7 +119,7 @@ within a few seconds. With a Linux PC in the session, build the host's overlay a
 update. Each PC writes its own
 `errors.log`; the host's run folder also holds the relay's logs.
 
-## Joining a running game (built 8 Nov; runs through x4ls on one PC, the joiner then drifts apart)
+## Joining a running game (built 8 Nov; in lockstep through x4ls on one PC, 9 Nov)
 
 A slot can stay empty at the start and be taken later by a player on any PC the relay allows. Only the joiner
 loads; the others play on.
@@ -143,18 +143,18 @@ The joiner has 900 s from the save to report in (the relay's `--join-joiner-time
 of its own clients only, so slot 1's PC must be one of the savers. With `--open` the relay hands over after 20 s
 of catch-up and may pause everyone for up to 180 s while the joiner closes the gap.
 
-Status (9 Nov, one PC, hj14b). The whole join runs: the request, the save at the next join tick, the 176 MB
-download (verified), the joiner's overlay and its checks, the load, the resume into the open pilot window, the
-catch-up, the handover and the joined player to the end of the window (0 errors, 0 drops). On one PC the joiner
-is no faster than the session, so the handover pauses everyone for about as long as the joiner took to load
-(hj14b: 74 s); a faster joiner PC pauses less.
+Status (9 Nov, one PC). The whole join runs: the request, the save at the next join tick, the 176 MB download
+(verified), the joiner's overlay and its checks, the load, the resume into the open pilot window, the catch-up,
+the handover and the joined player to the end of the window. hj27 (x4mods-28) and hj28 (the plain playtest flow
+above): the joiner equal to the session through the catch-up and the handover, then about 2,000 ticks of play after
+it with 0 desyncs, 0 errors and 0 drops. On one PC the joiner is no faster than the session, so the handover pauses
+everyone for about as long as the joiner took to load (hj28: 75 s); a faster joiner PC pauses less.
 
-Desyncs: the joiner's world differs from the session's within a few ticks of the join (hj7..hj14b: from 1 to
-about 600 ticks after T, then one step apart, for example one ship's shot), and stays different. As for a play
-session's own desyncs, the join is not refused for that: the relay hands over all the same (`--join-observe`)
-and counts the mismatches (`desyncs.log`, the relay's `joined ... digest_mismatches=N` line). So a player can
-join a running game, but what they see may drift from the host's. Joining at the start (`x4ls join --arm-at`, "Two
-PCs") has no such drift.
+Still open: a join whose save tick falls while a fixture gun is engaging (hj24: T between 668 and 684 in the battle
+fixture) or right after some part animations start (hj23) can part within a few ticks; x4mods-28 is closing those.
+A join is never refused for it: as for a play session's own desyncs, the relay hands over all the same
+(`--join-observe`), counts the mismatches (the relay's `joined ... digest_mismatches=N` line) and the session's
+desyncs go to `desyncs.log`.
 
 ## Choosing the starts (built 8 Nov; run through x4ls on one PC)
 
@@ -208,9 +208,8 @@ first mismatch.
 - **Two people on one PC.** Keyboard and mouse go to the focused window only. Whether X4 reads a gamepad in an
   unfocused window is unverified.
 - **Desync recovery.** None: a session that differs stays different.
-  - Hot join: `x4ls play --open` with `x4ls join` (no `--arm-at`) runs to the end, but the joiner's world drifts
-    from the host's within a few ticks of the join (see "Joining a running game"). Rejoin after a drop exists in
-    lane runs only.
+  - Hot join: `x4ls play --open` with `x4ls join` (no `--arm-at`) stays in lockstep in hj27/hj28, but a join timed
+    at an engaging gun can still part (see "Joining a running game"). Rejoin after a drop exists in lane runs only.
   - After a late join a few large ships still differ (reports/LOCKSTEP-HOTJOIN-20261101.txt).
 - **Desync indicator in game.** None, so that desyncs stay silent. `tools/dev/native_gate_desync_watch.py --status
   .local/runs/<time>/desync-status.json` shows one in the console.

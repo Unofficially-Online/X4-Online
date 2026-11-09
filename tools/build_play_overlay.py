@@ -57,8 +57,13 @@ RECIPE, RECIPE_KIND, RECIPE_VERSION = 'play-recipe.json', 'x4ls-play-recipe', 1
 # (W36g against lx38a, 8 Nov: Windows with these = Linux with these at tick 14; without them Windows keeps MSVC's
 # native bits and a mixed session parts at the first steering update). Not in the defaults until the people stack
 # runs on the Linux gate: a Windows-only session does not need them.
+# Linux-only, logged no-ops on Windows (x4mods-e7, 9 Nov; lx54a/lx55a equal to W36g ticks 1..30 with them): the skeleton
+# joints' wrapped target in MSVC's order (ik_wrap: the tick-15 gun gimbal targets, then the tick-28 bullet hits), a ship's
+# second body with Windows' creation-time mass properties (body1_mass), and the joints' sub-step in MSVC's order (ik_step:
+# not reached by the battle fixture's fighters, Windows' own arithmetic where turrets reach it).
 MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_redirect_ticks=3',
-                       "native_gate_fp_redirect_solver='redirect'", "native_gate_fp_redirect_drones='redirect'")
+                       "native_gate_fp_redirect_solver='redirect'", "native_gate_fp_redirect_drones='redirect'",
+                       'native_gate_ik_wrap=true', "native_gate_body1_mass='fallback'", 'native_gate_ik_step=true')
 NL = chr(10)
 
 
@@ -243,6 +248,11 @@ def main(argv=None):
         # stride capture (hj1: digest apart at 1289, hj3 at T+3 with the default stride 1800; hj2 with it: equal to the end).
         if not any(t.replace(' ', '').startswith('native_gate_world_hash_join=') for t in sets):
             sets = sets + ['native_gate_world_hash_join=true']
+        # Every slot's first store from the take, carried to a joiner (native_gate_pilot_first_stores, x4mods-28): an absent
+        # slot seated late took the joiner's own canonical flight state, so its ship went down the other authority branch from
+        # the handover (hj21..hj26: apart from H-1); hj27 with it: equal through the handover and 2,080 ticks after, 0 desyncs.
+        if not any(t.replace(' ', '').startswith('native_gate_pilot_first_stores=') for t in sets):
+            sets = sets + ['native_gate_pilot_first_stores=true']
         sets = join_overlays.default_sets(join_overlays.ids_sets(join_overlays.refresh_sets(join_overlays.precise_sets(sets))))
     step('base', [DEV / 'build_native_gate_overlay.py', '--mode', 'battle', '--gate-dll', args.gate_dll.resolve(),
                   '--snapshot', args.snapshot.resolve(), '--session-clients', *join_base, '--out', base, *coverage])

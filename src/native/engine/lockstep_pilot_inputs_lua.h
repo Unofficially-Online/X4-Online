@@ -25,6 +25,22 @@ static int lua_pilot_handover(lua_State *L) {
         isfinite(tick) && floor(tick)==tick && tick>0 && pilot_handover_apply((unsigned)slot,(uint64_t)tick,stats.issued));
     return 1;
 }
+/* gate.pilot_seat_live_pose(on) (native_gate_pilot_seat_live_pose): a late seat clears the slot ship's view parents around its
+ * take, so every client reads the live pose (pslot_seat_live). Armed by every client before the HANDOVER it applies to. */
+/* gate.pilot_first_stores(on) (native_gate_pilot_first_stores): an absent slot's first store at the take, every first store
+ * in the join package, a joiner keeping the session's (lockstep_pilot_slots.h). Every client, before the take. */
+static int lua_pilot_first_stores(lua_State *L) {
+    double on=p_lua_tonumber(L,1);const int ok=on==0.0 || on==1.0;   /* the probe's config block, before the UI frames (as join_attn_set) */
+    if(ok) pslot_first_stores=(int)on;
+    p_lua_pushnumber(L,ok);return 1;
+}
+static int lua_pilot_seat_live_pose(lua_State *L) {
+    double on=p_lua_tonumber(L,1);
+    const int ok=accept_ui() && (on==0.0 || on==1.0);
+    if(ok) pslot_seat_live_pose=(int)on;
+    p_lua_pushnumber(L,ok);
+    return 1;
+}
 static int lua_pilot_abort(lua_State *L) {
     double slot=p_lua_tonumber(L,1);
     p_lua_pushnumber(L,accept_ui() && stats.active && isfinite(slot) && floor(slot)==slot && slot>=2 && slot<=PILOT_SLOTS &&

@@ -400,8 +400,15 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_ares then   -- ARES writes the session's Agent result banks at the admission (ares=)
   assert(gate.join_ares and gate.join_ares(1)==1,'join ares refused')
  end
+ if cfg.native_gate_pilot_first_stores then   -- every slot's first store from the take's canonical block, carried to a joiner
+  assert(gate.pilot_first_stores and gate.pilot_first_stores(1)==1,'pilot first stores refused')
+ end
  if cfg.native_gate_join_attn_set then   -- ATTN runs SetAttention where its write leaves the load's per-level state (attn_set=)
   assert(gate.join_attn_set and gate.join_attn_set(1)==1,'join attn set refused')
+ end
+ if cfg.native_gate_join_attn_states then   -- with attn_set: every per-level state ATTN leaves apart, at any level (attn_states=)
+  assert(cfg.native_gate_join_attn_set,'native_gate_join_attn_states needs native_gate_join_attn_set')
+  assert(gate.join_attn_states and gate.join_attn_states(1)==1,'join attn states refused')
  end
  if cfg.native_gate_join_gravn_extra then   -- GRAVN keeps the joiner's extra zone groups in the neighbour lists it writes
   assert(gate.join_gravn_extra and gate.join_gravn_extra(1)==1,'join gravn extra refused')
@@ -523,8 +530,18 @@ if cfg.native_gate_join then
    -- Every client, the same tick: slot k's ship is enrolled at H, its records required from H+delay (when the pilot
    -- modules took the absent slots: gate.pilot_absent_state answers).
    if (absent[k] or rejoin[k]) and k<=PILOT_SLOTS_MAX and gate.pilot_absent_state and gate.pilot_absent_state() then
+    -- native_gate_pilot_seat_live_pose: the late seat at H-1 reads the ship's live pose on every client, not a view cache
+    -- only the session clients hold (hj22). Armed here, before the handover, the same way on every client.
+    if cfg.native_gate_pilot_seat_live_pose then
+     assert(gate.pilot_seat_live_pose and gate.pilot_seat_live_pose(1)==1,'pilot seat live pose refused')
+    end
     assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
     if cfg.native_gate_pilot_dump_handover then pilot_handover_dump.k,pilot_handover_dump.h=k,h end
+    -- native_gate_nav_refresh_watch_handover = N: the watch's window to H-N..H+N, now that H is known
+    if cfg.native_gate_nav_refresh_watch_handover and cfg.native_gate_nav_refresh_watch~=nil then
+     local w=cfg.native_gate_nav_refresh_watch_handover
+     assert(gate.nav_refresh_watch_window and gate.nav_refresh_watch_window(math.max(1,h-w),h+w)==1,'nav refresh watch window refused')
+    end
    end
   end,
   abort=function(k)
@@ -3330,6 +3347,9 @@ local function frame()
   -- after a bank flip, its time, whether its stamp held) in the crash notes (diagnostic; counts and records only).
   if cfg.native_gate_nav_refresh_watch~=nil then
    local w=cfg.native_gate_nav_refresh_watch
+   if cfg.native_gate_nav_refresh_watch_owner then   -- the rows for this runtime ID's controller only, with the stack
+    assert(gate.nav_refresh_watch_owner and gate.nav_refresh_watch_owner(cfg.native_gate_nav_refresh_watch_owner)==1,'nav refresh watch owner refused')
+   end
    assert(type(w)=='table' and #w==2 and gate.nav_refresh_watch and gate.nav_refresh_watch(w[1],w[2])==1,
     'nav refresh watch refused '..tostring(gate.nav_refresh_watch_status and gate.nav_refresh_watch_status()))
    log('NAV_REFRESH_WATCH_ARMED '..tostring(gate.nav_refresh_watch_status()))
@@ -3669,9 +3689,15 @@ local function frame()
    assert(snapshot and gate.ik_step and gate.ik_step_status and gate.ik_step()==1,'ik step refused '..tostring(gate.ik_step_status and gate.ik_step_status()))
    log('IK_STEP_ARMED')
   end
+  -- A joint's wrapped target in the Windows order (linux/gate_ik_wrap.h): (t2 + value) - pi. Linux only; default off.
+  if cfg.native_gate_ik_wrap and gate.platform and gate.platform()=='linux' then
+   assert(snapshot and gate.ik_wrap and gate.ik_wrap_status and gate.ik_wrap()==1,'ik wrap refused '..tostring(gate.ik_wrap_status and gate.ik_wrap_status()))
+   log('IK_WRAP_ARMED')
+  end
   -- Linux-only keys of the mixed-platform preset: on Windows only a note (its build is already that order).
   if not (gate.platform and gate.platform()=='linux') then
    if cfg.native_gate_ik_step then log('IK_STEP_NOOP windows: the joint step multiplies by 50.0f already') end
+   if cfg.native_gate_ik_wrap then log('IK_WRAP_NOOP windows: the joint wrap is (t2 + value) - pi already') end
    if cfg.native_gate_body1_mass then log('BODY1_MASS_NOOP windows: second bodies are created with an empty compound already') end
   end
   -- The fixture bodies just before and after Jolt's step (linux/gate_body_step.h): BODY_STEP rows. Linux only, diagnostic.
@@ -5328,6 +5354,7 @@ local function frame()
   if cfg.native_gate_impulse_diag and gate.impulse_status then log('IMPULSE_STOP '..tostring(gate.impulse_status())) end
   if cfg.native_gate_ik_diag and gate.ik_status then log('IK_STOP '..tostring(gate.ik_status())) end
   if cfg.native_gate_ik_step and gate.ik_step_status then log('IK_STEP_STOP '..tostring(gate.ik_step_status())) end
+  if cfg.native_gate_ik_wrap and gate.ik_wrap_status then log('IK_WRAP_STOP '..tostring(gate.ik_wrap_status())) end
   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end
   if cfg.native_gate_attention_all then log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end
   if cfg.native_gate_view_points then log('VIEW_POINTS_STOP '..tostring(gate.view_points_status())) end
@@ -5725,6 +5752,9 @@ local function frame()
  end
  if cfg.native_gate_ik_step and gate.ik_step_status then
   ticklog.status('IK_STEP',tick,gate.ik_step_status,'ik step status unavailable')
+ end
+ if cfg.native_gate_ik_wrap and gate.ik_wrap_status then
+  ticklog.status('IK_WRAP',tick,gate.ik_wrap_status,'ik wrap status unavailable')
  end
  if cfg.native_gate_command_order then
   ticklog.status('COMMAND_ORDER',tick,gate.command_order_status,'command order status unavailable')

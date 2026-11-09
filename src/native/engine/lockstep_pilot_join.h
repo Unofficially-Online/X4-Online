@@ -368,6 +368,13 @@ static int pjoin_tables_state(char *out,size_t capacity,uint64_t t) {
         n+=snprintf(out+n,capacity-(size_t)n,"|store%u=",k);
         if(n<=0 || (size_t)n>=capacity || (n=pjoin_hex_put(out,capacity,n,portable,pslots[k].length))<0) return 0;
     }
+    for(unsigned k=2;pslot_first_stores && n>0 && (size_t)n<capacity && k<=PILOT_SLOTS;k++) {   /* native_gate_pilot_first_stores */
+        if(!(pslot_mask>>(k-1)&1u) || !pslots[k].first_length || pslots[k].first_length>VPL_BLOCK_MAX) continue;
+        static unsigned char portable[VPL_BLOCK_MAX];memcpy(portable,pslots[k].first,pslots[k].first_length);
+        if(!pjoin_store_pointers(portable,pslots[k].first_length,1)) return 0;
+        n+=snprintf(out+n,capacity-(size_t)n,"|first%u=",k);
+        if(n<=0 || (size_t)n>=capacity || (n=pjoin_hex_put(out,capacity,n,portable,pslots[k].first_length))<0) return 0;
+    }
     if(n>0 && (size_t)n<capacity && (n=pjoin_m5_put(out,capacity,n,t))<0) return 0;   /* R5 */
     return n>0 && (size_t)n<capacity?n:0;
 }
@@ -384,11 +391,12 @@ __attribute__((unused)) static int pjoin_hex_get(const char *hex,size_t chars,un
 /* A joiner (R3, R4): the text back into staging; applied by pjoin_tables_apply once the seats exist. 1 parsed, every blob
  * present once with its exact size; 0 refused (pjoin_resume_why). */
 static uint64_t pjoin_tables_t;
-static unsigned char pjoin_store_rx[PILOT_SLOTS+1][VPL_BLOCK_MAX];
-static unsigned pjoin_store_rx_len[PILOT_SLOTS+1];
+static unsigned char pjoin_store_rx[PILOT_SLOTS+1][VPL_BLOCK_MAX],pjoin_first_rx[PILOT_SLOTS+1][VPL_BLOCK_MAX];
+static unsigned pjoin_store_rx_len[PILOT_SLOTS+1],pjoin_first_rx_len[PILOT_SLOTS+1];
 static int pjoin_tables_parse(const char *text) {
     unsigned long long t=0;int used=0,r5=0;unsigned seen=0;
-    memset(pjoin_store_rx_len,0,sizeof(pjoin_store_rx_len));memset(pjoin_pstk_ring,0,sizeof(pjoin_pstk_ring));memset(pjoin_pilot_ring,0,sizeof(pjoin_pilot_ring));
+    memset(pjoin_store_rx_len,0,sizeof(pjoin_store_rx_len));memset(pjoin_first_rx_len,0,sizeof(pjoin_first_rx_len));
+    memset(pjoin_pstk_ring,0,sizeof(pjoin_pstk_ring));memset(pjoin_pilot_ring,0,sizeof(pjoin_pilot_ring));
     pjoin_m5_reset();
     if(!text || sscanf(text,"v1/t%llx%n",&t,&used)!=1) {pjoin_resume_why="state_head";return 0;}
     text+=used;
@@ -413,6 +421,11 @@ static int pjoin_tables_parse(const char *text) {
                !pjoin_pilot_ring[i].present) {pjoin_resume_why="state_ring";return 0;}
         } else if((r5=pjoin_m5_get(name,(size_t)(eq-name),value,(size_t)(end-value)))>=0) {
             if(!r5) return 0;
+        } else if(!strncmp(name,"first",5)) {   /* native_gate_pilot_first_stores: a slot's first store */
+            unsigned k=0;
+            if(sscanf(name,"first%u=",&k)!=1 || k<2 || k>PILOT_SLOTS || pjoin_first_rx_len[k] || (end-value)%2 || (size_t)(end-value)/2>VPL_BLOCK_MAX ||
+               !(end-value) || !pjoin_hex_get(value,(size_t)(end-value),pjoin_first_rx[k],(size_t)(end-value)/2)) {pjoin_resume_why="state_first";return 0;}
+            pjoin_first_rx_len[k]=(unsigned)(end-value)/2;
         } else {
             unsigned k=0;
             if(sscanf(name,"store%u=",&k)!=1 || k<2 || k>PILOT_SLOTS || pjoin_store_rx_len[k] || (end-value)%2 || (size_t)(end-value)/2>VPL_BLOCK_MAX ||
@@ -460,6 +473,15 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
         }
         pjoin_seat_unpack(k);pjoin_pk_unpack(k);pjoin_pctl_unpack(k);
         if(pslots[k].length!=pjoin_store_rx_len[k]) {pjoin_resume_why="store_length";return 0;}
+    }
+    /* The session's first stores (native_gate_pilot_first_stores), absent slots' too: a late seat or a respawn here starts
+     * from the block every session client took, not from this client's canonical one. */
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) {
+        if(!pjoin_first_rx_len[k]) continue;
+        if(!(pslot_mask>>(k-1)&1u)) {pjoin_resume_why="first_slot";return 0;}
+        memcpy(pslots[k].first,pjoin_first_rx[k],pjoin_first_rx_len[k]);
+        if(!pjoin_store_pointers(pslots[k].first,pjoin_first_rx_len[k],0)) {pjoin_resume_why="first_pointer";return 0;}
+        pslots[k].first_length=pjoin_first_rx_len[k];
     }
     /* The slots' frame hook as the session's take made it: pslot_seat_all installs it for every armed session, seated
      * slots or not, so a joiner whose session had no other present slot (pjoin_rx_mask 0, hj1) needs it too (hook_lost). */

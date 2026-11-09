@@ -3319,9 +3319,15 @@ static void twarp_build(unsigned side,unsigned char fill) {
  * for the calls (slot 80's join_boot_events destroys what they post); every due event the calls queued (absent from the snapshot
  * before them) swapped for a stand-in and destroyed unless the session's EVQT names that source and class due at T. */
 static unsigned char tattn_state[2],tattn_need[2];static unsigned tattn_calls,tattn_level,tattn_destroyed,tattn_swaps,tattn_swap_ok;
-static _Alignas(16) unsigned char tattn_obj[2][0x40],tattn_q[0x40],tattn_node[3][0x40],tattn_ev[3][0x40],tattn_sched[0x40],tattn_snode[0x40];
+static _Alignas(16) unsigned char tattn_obj[2][0x200],tattn_q[0x40],tattn_node[3][0x40],tattn_ev[3][0x40],tattn_sched[0x40],tattn_snode[0x40];
 static unsigned char tattn_flag(unsigned char *object,uint32_t level,int need) {(void)level;const unsigned k=object==tattn_obj[1];return need?tattn_need[k]:tattn_state[k];}
-static void tattn_set(unsigned char *object,uint32_t level) {(void)object;++tattn_calls;tattn_level=level;}
+static unsigned tattn_load_seen;static uint32_t tattn_compute_level,tattn_drift;
+static void tattn_set(unsigned char *object,uint32_t level) {
+    ++tattn_calls;tattn_level=level;tattn_load_seen=(unsigned)join_ids_admit_load;
+    if(join_ids_admit_load) join_ids_list.allocs+=2;            /* the animation units, on the load list */
+    if(tattn_drift) memcpy(object+JOIN_ATTENTION,&tattn_drift,4);   /* a call that left another level */
+}
+static uint32_t tattn_compute(unsigned char *object) {(void)object;return tattn_compute_level;}
 static void tattn_destroy(unsigned char *ev) {(void)ev;++tattn_destroyed;}
 static int tattn_swap(int on) {++tattn_swaps;return on?(int)tattn_swap_ok:1;}
 static void test_join_attn_set(void) {
@@ -3331,17 +3337,45 @@ static void test_join_attn_set(void) {
     join_attn_flag=tattn_flag;join_set_attention=tattn_set;join_event_destroy=tattn_destroy;join_bootev_fn=tj_bootev;join_key=tconn_key;
     join_attn_post_swap=tattn_swap;
     tattn_state[0]=0;tattn_need[0]=1;tattn_state[1]=tattn_need[1]=1;tattn_calls=tattn_swaps=0;join_attn_set_calls=join_attn_set_refused=0;
-    join_attn_set_on=0;assert(!join_attn_reconcile(tattn_obj[0],6,7) && !tattn_calls);              /* off */
+    join_attn_set_on=0;assert(!join_attn_reconcile(tattn_obj[0],6,7,0) && !tattn_calls);              /* off */
     join_attn_set_on=1;
-    assert(!join_attn_reconcile(tattn_obj[0],2,3) && !join_attn_reconcile(tattn_obj[0],2,5));      /* below 6: the direct write stays */
-    assert(!join_attn_reconcile(tattn_obj[0],7,1));                                               /* 1: SetAttention computes its own */
-    assert(!join_attn_reconcile(tattn_obj[1],6,7) && !tattn_swaps);                               /* the states agree */
-    tattn_swap_ok=0;assert(!join_attn_reconcile(tattn_obj[0],6,7) && !tattn_calls && join_attn_set_refused==1 && !join_attn_post_on);
-    tattn_swap_ok=1;assert(join_attn_reconcile(tattn_obj[0],6,7) && tattn_calls==1 && tattn_level==7 && join_attn_set_calls==1 && join_attn_post_on);
-    assert(join_attn_reconcile(tattn_obj[0],6,7) && tattn_calls==2 && tattn_swaps==2);           /* swapped once for the pass */
+    assert(!join_attn_reconcile(tattn_obj[0],2,3,0) && !join_attn_reconcile(tattn_obj[0],2,5,0));      /* below 6: the direct write stays */
+    assert(!join_attn_reconcile(tattn_obj[0],7,1,0));                                               /* 1: SetAttention computes its own */
+    assert(!join_attn_reconcile(tattn_obj[1],6,7,0) && !tattn_swaps);                               /* the states agree */
+    tattn_swap_ok=0;assert(!join_attn_reconcile(tattn_obj[0],6,7,0) && !tattn_calls && join_attn_set_refused==1 && !join_attn_post_on);
+    tattn_swap_ok=1;assert(join_attn_reconcile(tattn_obj[0],6,7,0) && tattn_calls==1 && tattn_level==7 && join_attn_set_calls==1 && join_attn_post_on);
+    assert(join_attn_reconcile(tattn_obj[0],6,7,0) && tattn_calls==2 && tattn_swaps==2);           /* swapped once for the pass */
     /* a post through the swapped sites: destroyed, counted; the boot passes untouched */
     {uint64_t calls=(uint64_t)join_bootev_calls;tattn_destroyed=0;InterlockedExchange64(&join_attn_set_posted,0);
      join_boot_events(tattn_obj[0],tattn_ev[0]);assert(tattn_destroyed==1 && join_attn_set_posted==1 && (uint64_t)join_bootev_calls==calls);}
+    InterlockedExchange(&join_attn_post_on,0);
+    /* ATTN states: with attn_states, a state ATTN left or wrote apart below 6 (or at equal levels) gets the native call when the
+     * session's record is settled; level 1 with its own attention only where ComputeAttention answers 1; the call's allocations on
+     * the load list; a call that leaves another level is written back. */
+    {   uint32_t (*compute)(unsigned char *)=join_attn_compute;join_attn_compute=tattn_compute;
+        const uint64_t allocs=join_ids_list.allocs;const unsigned calls=tattn_calls;uint32_t at;
+        join_attn_states_apart=join_attn_states_unsettled=join_attn_states_computed=join_attn_states_calls=join_attn_states_loaded=0;
+        join_attn_states_drift=0;tattn_drift=0;
+        at=3;memcpy(tattn_obj[0]+JOIN_ATTENTION,&at,4);
+        assert(!join_attn_reconcile(tattn_obj[0],3,3,JOIN_ATTN_SETTLED) && tattn_calls==calls);           /* attn_states off */
+        join_attn_states_on=1;
+        assert(!join_attn_reconcile(tattn_obj[1],3,3,JOIN_ATTN_SETTLED) && !join_attn_states_apart);     /* the states agree */
+        assert(!join_attn_reconcile(tattn_obj[0],3,3,0) && join_attn_states_apart==1 && join_attn_states_unsettled==1);   /* apart there too */
+        assert(join_attn_reconcile(tattn_obj[0],2,3,JOIN_ATTN_SETTLED)==2 && tattn_calls==calls+1 && tattn_level==3 && tattn_load_seen==1 &&
+               !join_ids_admit_load && join_attn_states_calls==1 && join_attn_states_loaded==2 && join_attn_set_refused==1);
+        at=1;memcpy(tattn_obj[0]+JOIN_ATTENTION,&at,4);tattn_obj[0][JOIN_ATTN_OWN]=1;tattn_compute_level=4;
+        assert(!join_attn_reconcile(tattn_obj[0],1,1,JOIN_ATTN_SETTLED) && join_attn_states_computed==1);   /* it would move to 4 */
+        tattn_compute_level=1;assert(join_attn_reconcile(tattn_obj[0],1,1,JOIN_ATTN_SETTLED)==2 && tattn_level==1);
+        tattn_obj[0][JOIN_ATTN_OWN]=0;tattn_compute_level=4;
+        assert(join_attn_reconcile(tattn_obj[0],1,1,JOIN_ATTN_SETTLED)==2 && tattn_level==1);            /* no own attention: 1 is the level */
+        at=3;memcpy(tattn_obj[0]+JOIN_ATTENTION,&at,4);tattn_drift=5;
+        assert(join_attn_reconcile(tattn_obj[0],2,3,JOIN_ATTN_SETTLED)==2 && join_attn_states_drift==1);
+        memcpy(&at,tattn_obj[0]+JOIN_ATTENTION,4);assert(at==3);tattn_drift=0;
+        at=7;memcpy(tattn_obj[0]+JOIN_ATTENTION,&at,4);
+        assert(join_attn_reconcile(tattn_obj[0],7,7,JOIN_ATTN_SETTLED)==2 && join_attn_set_calls==2);    /* equal at 7: the states path */
+        assert(join_attn_states_apart==7 && join_attn_states_calls==5 && join_attn_states_loaded==10 && tattn_calls==calls+5);
+        join_attn_states_on=0;join_ids_list.allocs=allocs;join_attn_compute=compute;memset(tattn_obj,0,sizeof(tattn_obj));
+    }
     InterlockedExchange(&join_attn_post_on,0);
     /* the schedule: one source (runtime 0x81); before the calls its tree holds the UpdateEngineParametersEvent (node 1) alone, after
      * them also a ChangedAttentionEvent (node 0) and a ChangedAdjacentZoneAttentionEvent (node 2), all due at T; the session's EVQT
@@ -3369,12 +3403,12 @@ static void test_join_attn_set(void) {
     {void *e1,*e2;memcpy(&e1,tattn_node[1]+0x28,8);memcpy(&e2,tattn_node[2]+0x28,8);assert(e1==tattn_ev[1] && e2==tattn_ev[2]);}
     assert(join_attn_events_drop(1,NULL)==2 && !join_attn_events_drop(0,&kept));   /* nothing new: nothing dropped */
     {char status[8192];join_attn_set_dropped=1;join_attn_set_kept=1;join_attn_set_due[0]=join_attn_set_due[1]=5;
-     assert(join_status(status,sizeof(status)) && strstr(status," attn_set=1:2:1:1:1:5:5 attn_set_refused=1 "));}
+     assert(join_status(status,sizeof(status)) && strstr(status," attn_set=1:2:1:1:1:5:5 attn_set_refused=1 attn_states=0:7:1:1:5:10:1 "));}
     join_rx.t.evqt=NULL;join_rx.t.nevqt=0;memset(&join_rx,0,sizeof(join_rx));InterlockedExchange64(&join_attn_set_posted,0);
     join_attn_set_on=0;join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
     join_attn_flag=flag;join_set_attention=set;join_event_destroy=destroy;join_bootev_fn=pass;join_key=key;join_attn_post_swap=swap;
     join_evq_head_test=head;
-    printf("join ATTN set: the native change where a write at or over 6 leaves the states apart, its posts destroyed through the swapped sites, the events it queued dropped (the session's kept) PASS\n");
+    printf("join ATTN set: the native change where a write at or over 6 leaves the states apart, its posts destroyed through the swapped sites, the events it queued dropped (the session's kept); ATTN states at any level, settled, on the load list PASS\n");
 }
 /* ARES: the capture takes both result banks by role through the read selector, the first qword's runtime ID as a portable ID
  * (0 in the bank, a flag when it has none); the write maps it back and puts each role into the joiner's bank of that role. */

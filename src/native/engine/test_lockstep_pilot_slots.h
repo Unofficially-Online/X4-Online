@@ -238,12 +238,16 @@ static void *test_pslot3_controller_of(void *key) {
     if(i<0) return test_pnat_controller;
     memcpy(&c,test_pslot3_ship[i]+0x200,8);return c;
 }
+static void *test_pslot3_view_at_take[2][2];   /* the ship's view parents (+0xe0, +0x160) as its take saw them */
 static void test_pslot3_take(void *ship) {
     int i=test_pslot3_of(test_pslot_singleton());
     assert(i>=0 && ship==test_pslot3_ship[i] && pstk_scope_slot==(unsigned)i+2);
+    memcpy(&test_pslot3_view_at_take[i][0],test_pslot3_ship[i]+0xe0,8);memcpy(&test_pslot3_view_at_take[i][1],test_pslot3_ship[i]+0x160,8);
     void *vt=pnat_base+PSLOT_VTABLE,*s=ship,*c=test_pslot3_c[i];memset(c,0,0x400);
     memcpy(test_pslot3_c[i],&vt,8);memcpy(test_pslot3_c[i]+0x28,&s,8);memcpy(test_pslot3_ship[i]+0x200,&c,8);
-    *PNAT_U8(0x2f4b750)=(unsigned char)(0x60+i);*PNAT_U8(PNAT_FLIGHT)=0;
+    *PNAT_U8(0x2f4b750)=(unsigned char)(0x60+i);
+    {unsigned char *in=NULL;memcpy(&in,pnat_base+PSLOT_TAKE_INPUT,8);   /* d84c20: flight control from the input object's flag */
+     *PNAT_U8(PNAT_FLIGHT)=in?(unsigned char)(in[PSLOT_TAKE_FLIGHT_FLAG]!=0):0u;}
 }
 static void test_pslot3_release(void *ship) {
     int i=test_pslot3_of(test_pslot_singleton());
@@ -537,10 +541,51 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
     test_pslot_reset();test_pslot3_made=0;for(unsigned i=0;i<2;i++) memset(test_pslot3_ship[i]+0x200,0,8);
     pilot_slots[2].resolved=1;pilot_slots[2].object=test_pslot3_ship[1];pilot_slots[2].player=0;pilot_slots[2].dead=0;
     for(unsigned i=0;i<PILOT_SLOTS;i++) pilot_from[i]=pilot_until[i]=pilot_enroll[i]=UINT64_MAX;
+    /* native_gate_pilot_seat_live_pose: the late seat (slot 3) takes with its ship's view parents cleared and gets them back;
+     * slot 2's seat at take-1 keeps its own. */
+    void *views[2][2]={{(void*)0x1110,(void*)0x2220},{(void*)0x3330,(void*)0x4440}};
+    for(unsigned i=0;i<2;i++) {memcpy(test_pslot3_ship[i]+0xe0,&views[i][0],8);memcpy(test_pslot3_ship[i]+0x160,&views[i][1],8);}
+    memset(test_pslot3_view_at_take,0xcc,sizeof(test_pslot3_view_at_take));
+    pslot_seat_live_pose=1;const LONG64 live_seats=pslot_seat_live_seats,live_cleared=pslot_seat_live_cleared;
+    /* native_gate_pilot_first_stores: the absent slot 3's first store at the take's seat pass, from the canonical block then;
+     * its late seat keeps it though the canonical block changed since. */
+    pslot_first_stores=1;const LONG64 firsts=pslot_first_absent,flags=pslot_take_flags;pslots[3].first_length=0;
+    /* and the take's flight control from the store: this client's input flag 0 (a joiner in its catch-up), the canonical
+     * block's flight control 1 at the take (the session's slot 1 flying), so every seat's take sees 1 */
+    static unsigned char test_take_input[0x1000];memset(test_take_input,0,sizeof(test_take_input));
+    {unsigned char *in=test_take_input;memcpy(pnat_base+PSLOT_TAKE_INPUT,&in,8);}
+    const unsigned char flight_was=*PNAT_U8(PNAT_FLIGHT);*PNAT_U8(PNAT_FLIGHT)=1;
+    unsigned flight_at=0;
+    for(unsigned i=0,n=0;i<VPL_REGION_COUNT;i++) {
+        const vpl_region *g=&vpl_regions[i];
+        if(g->base!=VPL_BASE_IMAGE || !(PSLOT_CLASSES>>g->cls&1u)) continue;
+        if(g->offset==PNAT_FLIGHT) flight_at=n;
+        n+=g->size;
+    }
+    unsigned sim_at=0,sim_offset=0;
+    for(unsigned i=0,n=0;i<VPL_REGION_COUNT && !sim_offset;i++) {
+        const vpl_region *g=&vpl_regions[i];
+        if(g->base!=VPL_BASE_IMAGE || !(PSLOT_CLASSES>>g->cls&1u)) continue;
+        if(g->cls==VPL_SIM && !g->pointer && g->offset!=0x2f4b7e0u && g->offset!=0x2f4b829u) {sim_at=n;sim_offset=g->offset;}
+        n+=g->size;
+    }
+    assert(sim_offset);const unsigned char sim_was=pnat_base[sim_offset];
     assert(pilot_handover_apply(3,take+1,take-3) && pslot_arm_using(7));
     assert(pslot_pass(take-2) && test_pslot3_made==1 && !pslots[3].player);
     assert(pslot_pass(take-1) && pslots[2].seated && pslots[3].player==test_pslot3_p[1] && !pslots[3].seated);
+    assert(pslots[3].first_length && pslots[3].first[sim_at]==sim_was && pslot_first_absent==firsts+1);
+    pnat_base[sim_offset]=(unsigned char)(sim_was^0x5a);
     pslot_update_tick=take-1;assert(pslot_pass(take) && pslots[3].seated && !strcmp(pslot_stage,"live"));
+    assert(test_pslot3_view_at_take[0][0]==views[0][0] && test_pslot3_view_at_take[0][1]==views[0][1] &&
+           !test_pslot3_view_at_take[1][0] && !test_pslot3_view_at_take[1][1]);
+    {   void *v0=NULL,*v1=NULL;memcpy(&v0,test_pslot3_ship[1]+0xe0,8);memcpy(&v1,test_pslot3_ship[1]+0x160,8);
+        assert(v0==views[1][0] && v1==views[1][1] && pslot_seat_live_seats==live_seats+1 && pslot_seat_live_cleared==live_cleared+2);
+        char row[1024];assert(pslot_status(row,sizeof(row)) && strstr(row," seat_live=1:") && strstr(row," first_stores=1:"));}
+    assert(pslots[3].first[sim_at]==sim_was);pnat_base[sim_offset]=sim_was;pslot_first_stores=0;
+    assert(pslots[2].store[flight_at]==1 && pslots[3].store[flight_at]==1 && !test_take_input[PSLOT_TAKE_FLIGHT_FLAG] &&
+           pslot_take_flags==flags+2);   /* both takes held the flag at 1 and gave the 0 back */
+    *PNAT_U8(PNAT_FLIGHT)=flight_was;memset(pnat_base+PSLOT_TAKE_INPUT,0,8);
+    pslot_seat_live_pose=0;for(unsigned i=0;i<2;i++) {memset(test_pslot3_ship[i]+0xe0,0,8);memset(test_pslot3_ship[i]+0x160,0,8);}
     assert(pslot_release_all() && !pslots[2].seated && !pslots[3].seated);
     pilot_absent=0;for(unsigned i=0;i<PILOT_SLOTS;i++) pilot_from[i]=pilot_until[i]=pilot_enroll[i]=0;pilot_absent_skips=0;
     memset(&pilot_slots[2],0,sizeof(pilot_slots[2]));memset(pstk_ring,0,sizeof(pstk_ring));memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));
@@ -548,7 +593,7 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
     vps_create=test_pslot_factory;pnat_fn.controller=test_pslot_controller_of;
     printf("pilot stock slots: an absent slot (hot join) neutral and unseated until its handover, built at H-2, seated at H-1, "
            "its records required from H+delay, a missing record of a present slot still 155, the abort and the package state, a "
-           "rejoinable slot dropped (keys released), rejoined and dropped again PASS\n");
+           "rejoinable slot dropped (keys released), rejoined and dropped again, the late seat past its ship's view caches PASS\n");
 }
 static void test_pilot_slots(void) {
     pstk_focus_forced=1;

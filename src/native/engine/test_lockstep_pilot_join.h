@@ -49,8 +49,11 @@ static void test_pilot_join_tables(void) {
     for(unsigned i=0;i<layout;i++) pslots[2].store[i]=(unsigned char)(i*7+1);
     memset(pslots[2].store+zone,0,8);
     pslots[2].throttle=0.5f;pslots[2].assist[0]=1;pslots[2].authority=1;
+    /* native_gate_pilot_first_stores: the first store travels too (first2=), pointers as portable IDs like the store's */
+    pslot_first_stores=1;for(unsigned i=0;i<layout;i++) pslots[2].first[i]=(unsigned char)(i*3+2);
+    memset(pslots[2].first+zone,0,8);pslots[2].first_length=layout;
     const int n=pjoin_tables_state(text,sizeof(text),40);
-    assert(n>0 && !strncmp(text,"v1/t28|stock=",13) && strstr(text,"|store2=01080f16"));
+    assert(n>0 && !strncmp(text,"v1/t28|stock=",13) && strstr(text,"|store2=01080f16") && strstr(text,"|first2=0205080b"));
     /* Clear what the text carries, read it back, unpack. */
     memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));memset(pstk_held_states,0,sizeof(pstk_held_states));memset(pstk_fire_on,0,sizeof(pstk_fire_on));
     memset(pstk_fire_tick,0,sizeof(pstk_fire_tick));memset(pview_target_replay,0,sizeof(pview_target_replay));pstk_flight=0;pstk_flight_known=0;pstk_frame_tick=0;
@@ -64,6 +67,10 @@ static void test_pilot_join_tables(void) {
     assert(pstk_fire_on[1]==1 && pstk_fire_tick[1]==39 && pview_target_replay[1]==0x77 && pstk_flight==1 && pstk_flight_known==1 && pstk_frame_tick==40);
     assert(pslots[2].throttle==0.5f && pslots[2].assist[0]==1 && pslots[2].authority==1 && pslots[2].length==layout);
     assert(pjoin_store_rx_len[2]==layout && !memcmp(pjoin_store_rx[2],pslots[2].store,layout));
+    assert(pjoin_first_rx_len[2]==layout && !memcmp(pjoin_first_rx[2],pslots[2].first,layout));
+    pslot_first_stores=0;pslots[2].first_length=0;
+    {const int m=pjoin_tables_state(text,sizeof(text),40);assert(m>0 && !strstr(text,"|first2="));}   /* off: not carried */
+    assert(pjoin_tables_parse(text) && !pjoin_first_rx_len[2]);
     /* A zone pointer travels as a portable ID: one without a readable runtime ID refuses the state (never a raw address). */
     {   static unsigned char bad_zone[16];uint64_t pointer=(uint64_t)(uintptr_t)bad_zone;memcpy(pslots[2].store+zone,&pointer,8);
         assert(!pjoin_tables_state(text,sizeof(text),40));memset(pslots[2].store+zone,0,8);}

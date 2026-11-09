@@ -379,6 +379,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_impulse.h"
 #include "test_gate_ik_diag.h"
 #include "test_gate_ik_step.h"
+#include "test_gate_ik_wrap.h"
 #include "test_gate_mining_camera.h"
 #include "test_gate_runtime_ids_local.h"
 #include "test_gate_shield_canonical.h"
@@ -440,6 +441,7 @@ int main(int argc,char **argv) {
     test_impulse_linux();
     test_ik_diag_linux();
     test_ik_step_linux();
+    test_ik_wrap_linux();
     test_mining_camera_linux();
     test_runtime_ids_local_linux();
     test_shield_canonical_linux();
@@ -481,6 +483,7 @@ int main(int argc,char **argv) {
         test_velocity_elf();
         test_impulse_elf();
         test_ik_step_elf();
+        test_ik_wrap_elf();
         test_mining_camera_elf();
         test_runtime_ids_local_elf();
         test_shield_canonical_elf();

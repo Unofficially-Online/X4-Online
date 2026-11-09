@@ -18,16 +18,22 @@ static void test_nav_refresh_watch(void) {
     nrw_read_before(NULL,1,1,38.6,&b);assert(!b.ok && !b.refresh);
     /* the row: both times as bits, '-' without the thread's time, won */
     char row[320];nrw_read_before(nav,1,1,38.6,&b);
-    int n=nrw_row(row,sizeof(row),1049,0,0x5ca2b3,&b,0);assert(n>0);
+    int n=nrw_row(row,sizeof(row),1049,0,0x5ca2b3,&b,0,"");assert(n>0 && !strstr(row," frames="));
     char want[200];uint64_t sb,nb;memcpy(&sb,&b.stamp,8);memcpy(&nb,&b.now,8);
     snprintf(want,sizeof(want),"ui=0 caller=5ca2b3 nav=0000000000a1b2c3 sel=1 cursor_before=0 t_before=%016llx now=%016llx won=0",(unsigned long long)sb,(unsigned long long)nb);
     assert(strstr(row,"[X4LAN] NATIVE_GATE NAV_REFRESH tick=1049 thread=") && strstr(row,want) && row[n-2]=='\r' && row[n-1]=='\n');
-    b.have_now=0;n=nrw_row(row,sizeof(row),7,1,0,&b,1);assert(n>0 && strstr(row," now=- won=1"));
+    b.have_now=0;n=nrw_row(row,sizeof(row),7,1,0,&b,1,"");assert(n>0 && strstr(row," now=- won=1"));
+    {char frames[NRW_FRAMES*12+4];nrw_frames(frames,sizeof(frames));assert(strlen(frames)<sizeof(frames));   /* runs; the test binary's frames are not X4's */
+     char wide[512];assert(nrw_row(wide,sizeof(wide),7,1,0,&b,1,"ea5a90,3df3f0")>0 && strstr(wide," won=1 frames=ea5a90,3df3f0\r\n"));}
     /* the sink at the tick check's flush */
     nrw_sink=tnrw_sink;tnrw_length=0;nrw_append(row,n);assert(nrw_rows==1 && !tnrw_length);nrw_flush();assert(tnrw_length==(size_t)n && !nrw_used);
     nrw_flush();assert(tnrw_length==(size_t)n);
     nrw_sink=NULL;free(nrw_buffer);nrw_buffer=NULL;nrw_used=nrw_capacity=0;nrw_rows=0;
-    {char out[400];assert(nrw_status(out,sizeof(out))>0 && strstr(out,"installed=0 restored=0 stage=idle window=0:0"));}
+    {char out[400];assert(nrw_status(out,sizeof(out))>0 && strstr(out,"installed=0 restored=0 stage=idle window=0:0 owner=0 "));}
+    /* another window: only for an installed watch, the same checks as the arming's */
+    assert(!nrw_window(10,20) && !nrw_from && !nrw_to);
+    nrw_installed=1;assert(!nrw_window(0,5) && !nrw_window(9,8) && !nrw_window(1.5,4) && nrw_window(3489,3497) && nrw_from==3489 && nrw_to==3497);
+    nrw_installed=0;nrw_from=nrw_to=0;
     printf("nav refresh watch: the refresh prediction (stamp, cursor, unordered time, no TLS), the row (times as bits, won), the sink PASS\n");
 }
 static void test_nav_refresh_watch_native_image(const char *path) {

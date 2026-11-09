@@ -176,6 +176,9 @@ static volatile LONG rid_local_on,rid_probe_frame;
 static volatile DWORD rid_scope_thread; /* the thread in a client-only view call, 0 none */
 static int rid_local_built;
 static rid_local_t rid_local[RID_ROUTES],rid_local_now[RID_ROUTES];
+/* native_gate_join_attn_states: this thread's shared allocations take the joiner's load list (join_ids_route) during the admission's
+ * native SetAttention calls, so the per-level state they rebuild (animation units) leaves the session's next ID where it is. */
+static __thread int join_ids_admit_load __attribute__((unused));
 #ifndef RID_OWN_PLATFORM
 /* lockstep_join_ids.h (native_gate_join_ids): a hot joiner's load list, block 29, and the route of its load's shared allocations. */
 #define RID_JOIN_BLOCK 29u

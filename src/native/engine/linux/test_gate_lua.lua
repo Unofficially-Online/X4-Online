@@ -25,7 +25,7 @@ local core={'sha256','start','boot','load_requested','report','poll','stop','fra
  'weapon_fire_rng','weapon_fire_rng_status','engine_refresh_rng','engine_refresh_rng_status','spline_join_all','spline_join_all_status',
  'mass_traffic','mass_traffic_status','region_pass','region_pass_status','pass_stride','actor_rng_all','actor_rng_all_status','actor_rng_rows','actor_rng_row',
  'player_timer','player_timer_status','tempzone_order','tempzone_order_status','tempzone_order_row','warp_rng','warp_rng_status','warp_rng_row',
- 'warp_exit','warp_exit_status','flight_limits','flight_limits_status','body1_mass','body1_mass_status','body1_mass_census','body_step_diag','body_step_status','body_step','velocity','velocity_status','impulse_diag','impulse_status','impulse','ik_joints','ik_status','ik_step','ik_step_status','region_camera','region_camera_frame','region_camera_status','runtime_ids_local','runtime_ids_probe'}
+ 'warp_exit','warp_exit_status','flight_limits','flight_limits_status','body1_mass','body1_mass_status','body1_mass_census','body_step_diag','body_step_status','body_step','velocity','velocity_status','impulse_diag','impulse_status','impulse','ik_joints','ik_status','ik_step','ik_step_status','ik_wrap','ik_wrap_status','region_camera','region_camera_frame','region_camera_status','runtime_ids_local','runtime_ids_probe'}
 local count=0
 for _,name in ipairs(core) do assert(type(gate[name])=='function','missing gate.'..name) end
 for _ in pairs(gate) do count=count+1 end
