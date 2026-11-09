@@ -258,7 +258,7 @@ def bundle(args):
     if args.battle:
         command.append('--snapshot-prebind')
     for name in ('actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state', 'flight_rng', 'flight_full',
-                 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics'):
+                 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics', 'body_diag'):
         if getattr(args, name):
             command.append('--' + name.replace('_', '-'))
     if args.world_rolling_slices is not None:
@@ -351,6 +351,8 @@ def bundle(args):
         command += ['--coverage', str(args.coverage), '--coverage-list', str(args.coverage_list)]
         if args.coverage_from is not None:
             command += ['--coverage-from', str(args.coverage_from)]
+    if args.tick_hz is not None:
+        command += ['--tick-hz', str(args.tick_hz)]
     if args.loadout_order_rows:
         command += ['--loadout-order-rows', *(str(t) for t in args.loadout_order_rows)]
     if args.gravidar_wide:
@@ -558,6 +560,7 @@ def bundle(args):
     manifest['created_rows'] = bool(args.created_rows)
     manifest['snapshot_seed'] = world_seed
     manifest['preset'] = args.preset
+    manifest['tick_hz'] = args.tick_hz or 60  # the clients' native_gate_tick_hz; the relay runs with the same
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     (out / MARKER).write_text('Disposable Linux lockstep test bundle.\n', encoding='utf-8')
     print(f'bundle {out}: {len(files)} files, gate {manifest["gate_so_sha256"][:16]}, snapshot {snapshot_sha[:16]}, commit {commit[:8]}')
@@ -1104,6 +1107,7 @@ def run(args):
         if not external:
             relay = launch('relay', [sys.executable, str(root / 'native_gate_relay.py'), '--port', str(port), '--token', token,
                                      '--ticks', str(ticks), '--report', str(run_dir / 'relay.json'), '--relative-real', '--observe',
+                                     '--tick-hz', str(manifest.get('tick_hz', 60)),
                                      '--clients', str(clients)], as_user=True)
             deadline = time.monotonic() + 10
             while 'NATIVE_GATE RELAY READY' not in bounded_tail(run_dir / 'relay.log'):
@@ -1287,6 +1291,8 @@ def main(argv=None):
     b.add_argument('--coverage', type=int, metavar='TICKS', help='which listed functions run in ticks 1..TICKS (diagnostic)')
     b.add_argument('--coverage-list', type=Path, help='the Linux function list for --coverage (fp_inventory.py --coverage-lists)')
     b.add_argument('--coverage-from', type=int, metavar='TICK', help='--coverage marks the list at tick TICK instead of tick 1')
+    b.add_argument('--tick-hz', type=int, choices=(60, 40, 30, 20),
+                   help="the clients' native_gate_tick_hz and the relay's --tick-hz (default 60; the session defaults and W35 use 30)")
     b.add_argument('--attention-all', action='store_true', help="every portable object's attention timer keyed by (tick, ID), its first due at the first admitted call")
     b.add_argument('--loadout-order-rows', type=int, nargs=2, metavar=('FROM', 'TO'), help='LOADOUT_ROWs in this tick window (at most 600 ticks)')
     b.add_argument('--path-transform-observe', type=int, nargs=2, metavar=('FIRST', 'LAST'),
@@ -1328,7 +1334,8 @@ def main(argv=None):
                       ('spline-refresh', "the fixture's spline obstacles refreshed, full updates (needs --spline-diag, --agent-full)"),
                       ('spline-state', "the fixture's spline state in the digest (needs --spline-diag)"),
                       ('params-init', "each fixture ship's flight parameters built once at its first sample (native_gate_params_init)"),
-                      ('strict-physics', "the fixture ships' two physics bodies in the digest, Windows' STATE_ROW (needs --strict-state)")):
+                      ('strict-physics', "the fixture ships' two physics bodies in the digest, Windows' STATE_ROW (needs --strict-state)"),
+                      ('body-diag', "BODY rows: the fixture ships' raw physics body state each traced tick (diagnostic)")):
         b.add_argument('--' + name, action='store_true', help=why)
     b.add_argument('--actor-rng-rows', action='store_true', help='one ACTOR_RNG_ROW per keyed scope that drew (diagnostic)')
     b.add_argument('--mass-traffic', choices=('sync', 'observe'), help='the mass traffic pass joined at the gate tick (native_gate_mass_traffic)')

@@ -886,12 +886,24 @@ static int lua_flight_faults(lua_State *L) {
 /* native_gate_flight_diag's trace rows (logged, not hashed): the fixture sample's keyed calls (gate.flight), the model's
  * current avoidance time and obstacle count (gate.avoidance; Windows keeps copies before and after each update). */
 static int lua_flight(lua_State *L) {
-    double actor=p_lua_tonumber(L,1);char out[256];
+    double actor=p_lua_tonumber(L,1);static char out[8192];
     if(!accept_ui() || !isfinite(actor) || actor<1 || actor>LXF_ACTORS || floor(actor)!=actor) {p_lua_pushnil(L);return 1;}
     const lxf_sample *s=&lxf_samples[(unsigned)actor-1];
-    int n=snprintf(out,sizeof(out),"model=%s tick=%llu calls=%llu rng_before=%016llx rng_after=%016llx init_generation=%llu",
-        s->model?"steering":"none",(unsigned long long)s->tick,(unsigned long long)s->calls,(unsigned long long)s->rng_before,
-        (unsigned long long)s->rng_after,(unsigned long long)s->init_generation);
+    /* Windows' FLIGHT row order (lockstep_gate.c lua_flight); the model block is Linux's 0x3b0 bytes (fields 0x10 lower). */
+    int n=snprintf(out,sizeof(out),"tick=%llu calls=%llu cheap=%llu applied_cheap=%llu dt=%08x rng_before=%016llx rng_after=%016llx before=",
+        (unsigned long long)s->tick,(unsigned long long)s->calls,(unsigned long long)s->cheap,(unsigned long long)s->applied_cheap,s->dt,
+        (unsigned long long)s->rng_before,(unsigned long long)s->rng_after);
+#define WORDS(a,count) do {for(unsigned w=0;w<(count) && n>0 && (size_t)n<sizeof(out);w++) n+=snprintf(out+n,sizeof(out)-(size_t)n,"%08x",(a)[w]);} while(0)
+    WORDS(s->before,24u);n+=snprintf(out+n,sizeof(out)-(size_t)n," after=");WORDS(s->after,24u);
+    n+=snprintf(out+n,sizeof(out)-(size_t)n," behaviour=0 model=");WORDS(s->model_before,LXF_MODEL_BYTES/4u);
+    n+=snprintf(out+n,sizeof(out)-(size_t)n," limits=");WORDS(s->agent_limits,0x60u/4u);
+    n+=snprintf(out+n,sizeof(out)-(size_t)n," input=");WORDS(s->slot_before,0x1a0u/4u);
+    n+=snprintf(out+n,sizeof(out)-(size_t)n," params=");WORDS(s->params_before,0x1a0u/4u);
+#undef WORDS
+    n+=snprintf(out+n,sizeof(out)-(size_t)n," time=%016llx tls_time=%016llx flags=%u/%u kind=%s init_generation=%llu",
+        (unsigned long long)s->time_bits,(unsigned long long)s->tls_time,s->last_cheap,s->last_player,s->model?"steering":"none",
+        (unsigned long long)s->init_generation);
+    if(n<=0 || (size_t)n>=sizeof(out)) {p_lua_pushnil(L);return 1;}
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }
 /* native_gate_agent_diag / ship_diag trace rows (logged, not hashed): the fixture paths' keyed calls this tick. */

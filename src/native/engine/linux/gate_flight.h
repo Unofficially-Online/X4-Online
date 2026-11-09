@@ -33,9 +33,19 @@
 #define LXF_ACTORS 12u
 #define LXF_STUB 160u
 typedef void (*lxf_update_fn)(void *,void *,float,double,unsigned char,unsigned char);
+/* Windows' FLIGHT row blocks (lockstep_flight.h flight_sample), captured on the fixture path for comparison: the update's
+ * dt and time, the slot before and after (24 words, then 0x1a0 bytes of input), the model (0x3b0 bytes: Linux fields
+ * sit 0x10 lower, so Windows' 0x3a0 block ends at +0x390 here; the vtable and the Agent pointer zeroed as Windows
+ * zeroes its pointer words), the Agent's limits and parameters at +0x340 (0x60 and 0x1a0 bytes, Windows' offsets: the
+ * Agent's buffers +0/+0x1a0/+0x340 sit before the first shifted field +0x700) and the thread's game time. */
+#define LXF_MODEL_BYTES 0x3b0u
+#define LXF_AGENT_LIMITS 0x340u
 typedef struct {
     void *model,*agent,*initialized_model,*object;
     uint64_t runtime,tick,calls,init_generation,rng_before,rng_after;
+    uint64_t cheap,applied_cheap,time_bits,tls_time;
+    uint32_t dt,last_cheap,last_player,before[24],after[24];
+    uint32_t model_before[LXF_MODEL_BYTES/4],agent_limits[0x60/4],slot_before[0x1a0/4],params_before[0x1a0/4];
 } lxf_sample;
 static lxf_sample lxf_samples[LXF_ACTORS];
 static int lxf_installed,lxf_restored,lxf_seeded,lxf_full,lxf_refresh,lxf_initial,lxf_ctor_installed;
@@ -94,14 +104,26 @@ static void lxf_update(void *self,void *slot,float dt,double time,unsigned char 
     lxf_update_fn original=lxf_original_override?lxf_original_override:(lxf_update_fn)(void*)LX(LXF_UPDATE_VA);
     unsigned actor=0;lxf_sample *s=stats.active && boot_phase==3?lxf_sample_for(self,&actor):NULL;
     if(!s) {original(self,slot,dt,time,cheap,player);return;}
-    if(s->tick!=stats.issued) {s->tick=stats.issued;s->calls=0;}
-    ++s->calls;
+    if(s->tick!=stats.issued) {s->tick=stats.issued;s->calls=s->cheap=s->applied_cheap=0;}
+    ++s->calls;s->cheap+=cheap!=0;s->applied_cheap+=!lxf_full && cheap!=0;
+    /* The diagnostic blocks (read only; a failed read leaves zeros). */
+    memcpy(&s->dt,&dt,4);memcpy(&s->time_bits,&time,8);s->last_cheap=cheap;s->last_player=player;
+    if(!gate_read_local(slot,s->before,sizeof(s->before))) memset(s->before,0,sizeof(s->before));
+    if(!gate_read_local(slot,s->slot_before,sizeof(s->slot_before))) memset(s->slot_before,0,sizeof(s->slot_before));
+    if(!gate_read_local(self,s->model_before,sizeof(s->model_before))) memset(s->model_before,0,sizeof(s->model_before));
+    memset(s->model_before,0,16);memset((unsigned char*)s->model_before+0x60,0,0x10); /* vtable, Agent; the behaviour pointers (Windows +0x70) */
+    if(!s->agent || !gate_read_local((unsigned char*)s->agent+LXF_AGENT_LIMITS,s->agent_limits,sizeof(s->agent_limits)) ||
+       !gate_read_local((unsigned char*)s->agent+LXF_AGENT_LIMITS,s->params_before,sizeof(s->params_before))) {
+        memset(s->agent_limits,0,sizeof(s->agent_limits));memset(s->params_before,0,sizeof(s->params_before));
+    }
+    {unsigned char *base=gate_tls_self();const double *t=base?gate_tls_time(base):NULL;s->tls_time=0;if(t) memcpy(&s->tls_time,t,8);}
     uint64_t *rng=lxf_test_rng?lxf_test_rng:gate_tls_rng(gate_tls_self()),saved=rng?*rng:0;
     const int keyed=lxf_seeded && rng!=NULL;
     if(keyed) *rng=lxf_seed(stats.issued,actor,s->calls);
     s->rng_before=rng?*rng:0;
     if(lxf_refresh) {const double stale=-1.0;memcpy((unsigned char*)self+LXF_MODEL_AVOIDANCE_TIME,&stale,8);++lxf_refreshes;}
     original(self,slot,dt,time,lxf_full?0:cheap,player);
+    if(!gate_read_local(slot,s->after,sizeof(s->after))) memset(s->after,0,sizeof(s->after));
     s->rng_after=rng?*rng:0;
     if(keyed) *rng=saved;
     ++lxf_calls;

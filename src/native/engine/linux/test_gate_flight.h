@@ -41,6 +41,13 @@ static void test_flight_linux(void) {
     lxf_update(model,agent,0.033f,10.0,1,0);
     assert(tfl_original_calls==1 && tfl_seen_rng==lxf_seed(77,3,1) && tfl_seen_cheap==0 && word==0x1111222233334444ULL);
     double stale;memcpy(&stale,model+LXF_MODEL_AVOIDANCE_TIME,8);assert(stale==-1.0);
+    /* Windows' FLIGHT blocks: dt and time bits, the slot (here the Agent's first words), the model with its vtable and
+     * Agent zeroed, the Agent's +0x340 block, cheap counted. */
+    {const lxf_sample *fs=&lxf_samples[2];const float fdt=0.033f;const double ft=10.0;uint32_t dt_bits;uint64_t t_bits;
+     memcpy(&dt_bits,&fdt,4);memcpy(&t_bits,&ft,8);
+     assert(fs->dt==dt_bits && fs->time_bits==t_bits && fs->cheap==1 && fs->last_cheap==1 && !memcmp(fs->before,agent,sizeof(fs->before)) &&
+            !memcmp(fs->params_before,agent+LXF_AGENT_LIMITS,sizeof(fs->params_before)) && !fs->model_before[0] && !fs->model_before[2] &&
+            !memcmp((const unsigned char*)fs->model_before+0x80,model+0x80,0x100));} /* +0x78: refreshed after the capture */
     lxf_update(model,agent,0.033f,10.0,1,0);assert(tfl_seen_rng==lxf_seed(77,3,2)); /* the call ordinal */
     stats.issued=78;lxf_update(model,agent,0.033f,10.0,1,0);assert(tfl_seen_rng==lxf_seed(78,3,1));
     /* Another model of the same Agent is not the fixture's: native word, cheap as given. */
