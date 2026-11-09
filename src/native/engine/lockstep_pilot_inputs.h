@@ -23,34 +23,12 @@
  * 155) flies slot 1 (and with lockstep_pilot_slots.h, stop reason 161, slots
  * 2..N) with X4's own path from its recorded dispatch stream; a stock slot then
  * has no pilot record and no Steering substitution. */
-#define PILOT_RECORD_BYTES 28u
-#define PILOT_RECORD_VERSION 1u
-#define PILOT_SLOTS 8u
-#define PILOT_TICK_MAX 8388607u /* a window's last tick, CREATED_TICK_LIMIT: 77 hours at 30 ticks a second */
-#define PILOT_RING 64u
-#define PILOT_LOCAL_RING 32u
-#define PILOT_DELAY_MIN 2u
-#define PILOT_DELAY_MAX 30u
-#define PILOT_SUPPRESS_LEAD 3u
+#include "lockstep_pilot_record.h"
 #define PILOT_DOMAIN 0x50494c4f54315631ULL
-#define PILOT_MODE_ASSIST 1u
-#define PILOT_MODE_BOOST 2u
-#define PILOT_MODE_TRAVEL 4u
-#define PILOT_MODE_TARGET_UNMAPPED 8u
-#define PILOT_MODE_REQUESTS 16u /* q0..q5 are the occupied ship's native requests as fractions of its Agent limits */
-#define PILOT_MODE_KNOWN 31u
-#define PILOT_SOURCE_SCRIPT 1u
-#define PILOT_SOURCE_WIRE 2u
 /* Agent+340 flight limits as the Steering clamp reads them (floats): forward
  * +24, reverse lower bound +2c, x +30, y +34, angular axis1 +38, axis0 +3c,
  * axis2 +40. Read as eight floats from Agent+364. */
 #define PILOT_LIMITS 0x364u
-typedef struct {
-    unsigned char mode,buttons;
-    uint16_t capture16;
-    int16_t q[7]; /* Q15: x y z pitch yaw roll, then throttle */
-    uint64_t target;
-} pilot_record;
 typedef struct {
     uint64_t saved,runtime;
     unsigned char *object,*agent,*solver;
@@ -245,67 +223,7 @@ static unsigned uirep_families;
 static volatile LONG uirep_ui_depth,uirep_dispatch_depth;  /* inside slot 6 / the slot 4 dispatch of presentation ids */
 static int uirep_pass(uint64_t tick);static int uirep_frame(uint64_t tick,const char **why);static void uirep_restore(void);static const char *uirep_why;
 
-/* Record v1, 28 bytes, little endian:
- *   0 version 1 | 1 mode bits (assist, boost, travel, target unmapped,
- *   native requests: q0..q5 are the occupied ship's own velocity requests as
- *   fractions of its Agent limits, which pilot_target maps back) |
- *   2..3 low 16 bits of the capture tick | 4..17 seven int16 Q15 values:
- *   x y z pitch yaw roll (processed input channels 6c..71) and throttle |
- *   18 buttons (low nibble: native trigger bytes 38f0728..72b) | 19 zero |
- *   20..27 saved ID of the soft target, 0 if none or not a saved object.
- * -32768 is not a valid Q15 value. Every client decodes the same integers. */
-static int16_t pilot_quantize(float value) {
-    if(value>1.0f) value=1.0f;
-    if(value<-1.0f) value=-1.0f;
-    return (int16_t)lrintf(value*32767.0f);
-}
-static float pilot_axis(int16_t q) {return (float)q/32767.0f;}
-static void pilot_encode(const pilot_record *r,unsigned char out[PILOT_RECORD_BYTES]) {
-    memset(out,0,PILOT_RECORD_BYTES);out[0]=PILOT_RECORD_VERSION;out[1]=r->mode;
-    out[2]=(unsigned char)r->capture16;out[3]=(unsigned char)(r->capture16>>8);
-    for(unsigned i=0;i<7;i++) {uint16_t v=(uint16_t)r->q[i];out[4+2*i]=(unsigned char)v;out[5+2*i]=(unsigned char)(v>>8);}
-    out[18]=r->buttons;
-    for(unsigned i=0;i<8;i++) out[20+i]=(unsigned char)(r->target>>(8*i));
-}
-static int pilot_decode(const unsigned char in[PILOT_RECORD_BYTES],pilot_record *r) {
-    if(in[0]!=PILOT_RECORD_VERSION || (in[1]&~PILOT_MODE_KNOWN) || (in[18]&0xf0) || in[19]) return 0;
-    memset(r,0,sizeof(*r));r->mode=in[1];r->buttons=in[18];r->capture16=(uint16_t)(in[2]|in[3]<<8);
-    for(unsigned i=0;i<7;i++) {
-        r->q[i]=(int16_t)(uint16_t)(in[4+2*i]|in[5+2*i]<<8);
-        if(r->q[i]==INT16_MIN) return 0;
-    }
-    for(unsigned i=0;i<8;i++) r->target|=(uint64_t)in[20+i]<<(8*i);
-    return !(r->target && (r->mode&PILOT_MODE_TARGET_UNMAPPED));
-}
-static void pilot_hex(const unsigned char *in,unsigned size,char *out) {
-    static const char digits[]="0123456789abcdef";
-    for(unsigned i=0;i<size;i++) {out[2*i]=digits[in[i]>>4];out[2*i+1]=digits[in[i]&15];}
-    out[2*size]=0;
-}
-static int pilot_unhex(const char *text,size_t length,unsigned char out[PILOT_RECORD_BYTES]) {
-    if(!text || length!=2*PILOT_RECORD_BYTES) return 0;
-    for(unsigned i=0;i<2*PILOT_RECORD_BYTES;i++) {
-        char c=text[i];unsigned d=c>='0' && c<='9'?(unsigned)(c-'0'):c>='a' && c<='f'?(unsigned)(c-'a'+10):16;
-        if(d>15) return 0;
-        if(i&1) out[i/2]=(unsigned char)(out[i/2]|d);else out[i/2]=(unsigned char)(d<<4);
-    }
-    return 1;
-}
-/* Deterministic test plan from (slot, tick) only: 120-tick segments of full
- * forward, forward with half yaw, half forward with half pitch, strafe with half
- * roll, then explicit neutral. Odd slots turn one way, even slots the other. */
-static void pilot_script(unsigned slot,uint64_t tick,uint64_t start,pilot_record *r) {
-    memset(r,0,sizeof(*r));r->mode=PILOT_MODE_ASSIST;r->capture16=(uint16_t)tick;
-    int16_t full=(slot&1)?32767:-32767,half=(slot&1)?16384:-16384;
-    switch(tick<start?4u:(unsigned)((tick-start)/120%5)) {
-    case 0:r->q[2]=32767;break;
-    case 1:r->q[2]=32767;r->q[4]=half;break;
-    case 2:r->q[2]=16384;r->q[3]=half;break;
-    case 3:r->q[0]=full;r->q[5]=half;break;
-    default:break;
-    }
-    r->q[6]=r->q[2];
-}
+/* Pure record/codec/script helpers live in lockstep_pilot_record.h. */
 static int pilot_limits_valid(const float l[8]) {
     for(unsigned i=0;i<8;i++) if(i!=1 && !isfinite(l[i])) return 0; /* +368 is not a limit the clamp reads. */
     return l[0]>=0 && l[3]>=0 && l[4]>=0 && l[5]>=0 && l[6]>=0 && l[7]>=0;
@@ -324,34 +242,6 @@ static float pilot_target(const pilot_record *r,const float l[8],unsigned group,
     float z=pilot_axis(r->q[2]);
     if(r->mode&(PILOT_MODE_BOOST|PILOT_MODE_TRAVEL)) {z=1.0f;if(forced) *forced=1;}
     return z>=0?z*l[0]:z*fabsf(l[2]);
-}
-static int pilot_parse_manifest(const char *text,uint64_t saved[PILOT_SLOTS],unsigned *count) {
-    unsigned n=0;size_t at=0;
-    if(!text) return 0;
-    for(;;) {
-        uint64_t value=0;
-        for(unsigned i=0;i<16;i++) {
-            char c=text[at+i];unsigned d=c>='0' && c<='9'?(unsigned)(c-'0'):c>='a' && c<='f'?(unsigned)(c-'a'+10):16;
-            if(d>15) return 0;value=(value<<4)|d;
-        }
-        if(!value || n>=PILOT_SLOTS) return 0;
-        for(unsigned j=0;j<n;j++) if(saved[j]==value) return 0;
-        saved[n++]=value;at+=16;
-        if(!text[at]) break;
-        if(text[at]!=',') return 0;
-        ++at;
-    }
-    *count=n;return 1;
-}
-static int pilot_config_valid(unsigned count,unsigned source,unsigned delay,uint64_t start,uint64_t stop,unsigned suppress) {
-    if(!count || count>PILOT_SLOTS || suppress>1 || stop<start || stop>PILOT_TICK_MAX || start<PILOT_SUPPRESS_LEAD+2) return 0;
-    if(source==PILOT_SOURCE_SCRIPT) return delay==0;
-    return source==PILOT_SOURCE_WIRE && delay>=PILOT_DELAY_MIN && delay<=PILOT_DELAY_MAX && start>delay;
-}
-/* A wire record captured at c arrives with the permit for c+1+k (protocol 4
- * window k, 0 for protocol 3) and must be staged before its apply tick c+delay. */
-static int pilot_delay_covers(unsigned source,unsigned delay,unsigned lookahead) {
-    return source!=PILOT_SOURCE_WIRE || delay>=PILOT_DELAY_MIN+lookahead;
 }
 static int pilot_arm(const char *manifest,unsigned source,unsigned delay,uint64_t start,uint64_t stop,unsigned suppress) {
     uint64_t saved[PILOT_SLOTS];unsigned count=0;

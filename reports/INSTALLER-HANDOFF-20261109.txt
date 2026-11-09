@@ -1,0 +1,51 @@
+Astra source handoff for Silver - 9 November 2026
+
+This branch is a review snapshot, not an installer or a replacement for main.
+It contains the completed local source work through f7145e2; the unfinished
+flight-command-dispatch observer is excluded. Preserve the default-off state
+of the numerical corrections and native input observers.
+
+Useful integration candidates
+- An isolated Windows-under-Proton developer runner and coordinated external
+  relay options for the Linux runner. This enabled same-PC comparisons of
+  the real Linux and Windows executables with disposable profiles.
+- Linux processed-input/state/range diagnostics, including observed nonzero
+  human controls. These do not implement networked player replay.
+- A tested, inactive Linux pilot-record receiver and shared wire codec. Native
+  steering application deliberately returns NOT_IMPLEMENTED.
+- Opt-in parity experiments, ownership/cleanup checks and retained reports.
+  The latest candidate matches through tick 60 in the bounded fixture, but
+  the extended comparison still diverges at tick 98. No desync fix is claimed.
+
+Installer guidance
+- The owner's short responsiveness test was visually playable with 120 rolling
+  census slices and status stride 60. The earlier full census every 60 ticks
+  caused periodic pauses of approximately 0.42 seconds. A rolling census is
+  diagnostic sampling across different ticks, not an atomic universe proof.
+- Do not enable the experimental SIGTRAP input/IK observers in a normal player
+  installer. Their lifecycle/coverage limitations are documented in the reports.
+- This branch does not establish a complete native Linux player client or a
+  successful remote Windows/Linux human playtest.
+
+Upstream overlap discovered immediately before handoff
+Main was fetched at 0970044b9ae1893b623fbaf23672bc168b54eff4. It now includes
+9567f0b (Linux navigation upkeep), 433ddf2 (radar) and 22cc0fd (roll order).
+Review these before importing this branch: navigation RNG implementations
+already overlap, and local STOCK_RANGE_STOP_REASON 210 conflicts with main's
+LXSR_STOP_REASON 210. Other stop reasons and Lua methods also need reconciliation.
+Do not overwrite main's modules wholesale or merge this snapshot unreviewed.
+The next mixed native test must use the reconciled upstream fixes rather than
+repeat the older baseline blindly. Ferrite/Silver retains integration ownership.
+
+Evidence limits
+Prior native comparisons, copied-image tests and independent audits are described
+in the accompanying reports. The latest broad source run reported 2107 tests,
+zero failures/errors and 23 refused skips, exiting 1. Its concurrent next-probe
+edits make that broad run provisional, not exact-snapshot acceptance. Missing
+stock reference files, the released lane tool and a Windows-host-only check
+remain outstanding. The frozen handoff source passed 134 focused tests with no
+skips: Proton/Linux harness, observers, probe admission, cleanup, defaults and
+registry. These offline checks do not establish installer or gameplay readiness.
+
+Raw saves, private logs/configurations, local toolchains and game binaries are
+not included. No public release or package is created by this handoff.

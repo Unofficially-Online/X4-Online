@@ -267,6 +267,8 @@ class CreationTraceTests(unittest.TestCase):
     def test_production_abort_drains_closure_once_and_preserves_original_error(self):
         source=(ROOT/'tools/dev/native_gate_probe.lua').read_text();start=source.index("SetScript('onUpdate',function()")
         abort=source[start:source.index(chr(10)+'end)'+chr(10),start)+5]
+        # The abort closure shares the real cursor table and observer stop helpers.
+        cursor_context=source[source.index('local row_cursors={'):source.index('row_cursors.navmesh_post = 0')]
         for failure in ('action','once','permanent'):
             with self.subTest(failure=failure):
                 lua=LuaRuntime(unpack_returned_tuples=True);lua.execute((ROOT/'tools/dev/native_creation_trace.lua').read_text())
@@ -288,7 +290,7 @@ class CreationTraceTests(unittest.TestCase):
                   frame=function()if done then return end;creation_trace(false);error('original action failed')end
                   SetScript=function(name,handler)assert(name=='onUpdate');callback=handler end
                 ''')
-                lua.execute(abort);lua.execute('callback();callback()');logs=list(lua.globals().logs.values())
+                lua.execute(cursor_context+'\n'+abort);lua.execute('callback();callback()');logs=list(lua.globals().logs.values())
                 self.assertEqual(lua.globals().stops,1)
                 errors=[row for row in logs if row.startswith('ERROR ')];self.assertEqual(len(errors),1)
                 self.assertIn('original action failed' if failure=='action' else 'creation trace changed',errors[0])

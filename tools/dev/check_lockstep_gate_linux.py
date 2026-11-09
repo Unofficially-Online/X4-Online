@@ -9,11 +9,12 @@ Steps, all under .local/linux-gate/<compiler>/:
   2. test_gate_linux: white-box tests on a synthetic fake image; with --x4 also on
      an image loaded (read only) from the Linux executable: file pin, every site
      pin, the FrameTick call, the patches and their byte-exact restoration.
-  3. test_gate_lua.lua: the production module through a real LuaJIT package.loadlib.
-  4. Engine scenarios: N emulated peers (test_gate_engine: X4 main loop + MoveWorker
+  3. test_stock_trap_interleaving: synthetic SIGTRAP transitions with live threads.
+  4. test_gate_lua.lua: the production module through a real LuaJIT package.loadlib.
+  5. Engine scenarios: N emulated peers (test_gate_engine: X4 main loop + MoveWorker
      threads, the real tools/dev/native_gate_probe.lua in LuaJIT, the gate test module
      on a fake image) against tools/dev/native_gate_relay.py over loopback.
-  5. With x86_64-w64-mingw32-gcc: the Windows branch of lockstep_tls.h compiles.
+  6. With x86_64-w64-mingw32-gcc: the Windows branch of lockstep_tls.h compiles.
 These are synthetic peers, not native X4 runs.
 """
 import argparse
@@ -680,6 +681,23 @@ def main():
                          env=env).stdout
     print(out, end='')
     report['unit'] = 'pass' + (' with executable image' if args.x4 else ' (synthetic image only)')
+    for name in ('test_flight_boundary', 'test_lockstep_flight_boundary_format'):
+        executable = build / name
+        run(cc + FLAGS + ['-O2', ENGINE / f'{name}.c', '-o', executable])
+        run([executable])
+    report['flight_boundary'] = 'pass (fake layouts and bounded text, no game)'
+    pilot_receiver = build / 'test_gate_pilot_receiver'
+    run(cc + FLAGS + ['-O2', LINUX / 'test_gate_pilot_receiver.c', '-pthread', '-lm', '-o', pilot_receiver])
+    out = subprocess.run([str(pilot_receiver)], check=True, capture_output=True, text=True, timeout=30).stdout
+    print(out, end='')
+    report['pilot_receiver'] = 'pass (record staging and immutable snapshots; steering inactive)'
+    # Exercise real SIGTRAP delivery and threads parked in the unchanged tail.
+    # The test uses only private synthetic code pages, never an X4 process.
+    trap_interleaving = build / 'test_stock_trap_interleaving'
+    run(cc + FLAGS + ['-O2', '-pthread', LINUX / 'test_stock_trap_interleaving.c', '-o', trap_interleaving])
+    out = subprocess.run([str(trap_interleaving)], check=True, capture_output=True, text=True, timeout=30).stdout
+    print(out, end='')
+    report['stock_trap_interleaving'] = 'pass (synthetic code pages)'
     if args.x4:
         # The preload patches a copied ELF mapped at its expected addresses;
         # this test never starts the game or executes any X4 instructions.

@@ -1,5 +1,5 @@
 /* native_gate_body1_mass = 'fallback' (Linux gate only, default off): a ship's second physics body gets, as it is created,
- * the mass properties of an empty compound, Windows' value. Included by gate_linux.c only.
+ * the mass properties of an empty compound. Included by gate_linux.c only.
  *
  * A ship's two physics records (gate_battle.h's gate.body) hold X4's XPhys::XDefinedMassShape (vtable 0x3c606b8; Jolt
  * type 2 subtype 0x11) over a Jolt MutableCompoundShape (type 1 subtype 8); the second body (dynamic, object layer 3)
@@ -10,9 +10,8 @@
  * zero inertia goes to MotionProperties::SetMassProperties, whose decomposition fails and which falls back to a sphere
  * of radius 1: inverse inertia 2.5 * inverse mass on all four lanes, the identity rotation. Later parts never update it
  * (the parts' NotifyShapeChanged passes updateMassProperties only when record+0x3a is 0, and it is 1 for this body, on
- * both executables). On Windows the body is created before its parts arrive: every fixture ship's second body has the
- * fallback (W35..W36i). On Linux the loader threads have often added parts already: the hull's own tensor, summed in a
- * thread-dependent order (it differs even between Linux processes).
+ * both executables). W35..W36i observed the fallback on Windows, but a later mixed capture found populated Windows
+ * compounds too. Loader timing can produce the hull tensor in thread-dependent order on either platform.
  *
  * Here AllocateBody's first 14 bytes (push r14; push r13; mov r13,rdi; push r12; push rbp; mov rbp,rsi; push rbx: whole
  * instructions, nothing RIP-relative) become jmp [rip] -> lxbm_allocate in one aligned 16-byte compare-exchange (bytes
@@ -22,9 +21,9 @@
  * = 1 (set at 0xee88b7, before the allocation) gets the fallback; the first body (+0x3a = 0: Jolt updates its mass as
  * the parts arrive) is only counted (updated): MotionProperties +0x20..+0x2c = 2.5f * mInvMass (+0x58), +0x30..+0x3c =
  * (0, 0, 0, 1). That covers the snapshot load, a hot joiner's load and ships made in the session alike. Counted: the
- * bodies seen, those that already had the fallback (created empty, as on Windows) and those changed. Pin body_allocate
+ * bodies seen, those that already had the fallback (created empty, as in W35..W36i) and those changed. Pin body_allocate
  * (AllocateBody's head) and the shape's GetMassProperties (body_defined_mass); armed before the snapshot load on the
- * MoveWorker; the per-tick check (stop reason 204) and the restore are this file's. Windows needs nothing. */
+ * MoveWorker; the per-tick check (stop reason 204) and the restore are this file's. Windows has a separate opt-in hook. */
 #define LXBM_STOP_REASON 204u
 #define LXBM_ALLOCATE_VA 0x1a969d0u
 #define LXBM_DEFINED_MASS_VTABLE 0x3c606b8u

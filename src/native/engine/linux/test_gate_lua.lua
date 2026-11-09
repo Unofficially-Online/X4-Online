@@ -6,6 +6,9 @@ local path=assert(arg[1],'module path required')
 local open=assert(package.loadlib(path,'luaopen_x4lan_gate'))
 local gate=assert(open(),'module did not resolve the Lua ABI')
 local core={'sha256','start','boot','load_requested','report','poll','stop','frame_timing','qpc_us','tick_rate','wire','propose',
+ 'pilot_capture_probe_arm','pilot_capture_probe_read','stock_state_observer','stock_state_observer_status','stock_state_observer_row',
+ 'stock_range_observer','stock_range_observer_status','stock_range_observer_row','nav_rng_fixture','nav_rng_fixture_status',
+ 'ik_target_observer','ik_target_bind','ik_target_status','ik_target_row','ik_target_order','ik_target_order_status','flight_boundary',
  'world_motion_config','world_motion_capture','world_motion_row','world_motion_status',
  'economy_watch_config','economy_watch_capture','economy_watch_status',
  'economy_load_rng','economy_load_rng_status','economy_load_rng_row',
@@ -34,6 +37,14 @@ for _,name in ipairs({'world_trace','thread_rng','boot_rng_anchor','pilot_inputs
  assert(gate[name]==nil,'unported method present: '..name)
 end
 assert(gate.platform()=='linux')
+assert(gate.pilot_capture_probe_arm()==0, 'pilot diagnostic needs a verified active session')
+assert(gate.pilot_capture_probe_read()==nil, 'pilot diagnostic must be explicitly armed')
+assert(gate.stock_state_observer()==0 and gate.stock_range_observer()==0, 'stock observers need a verified active session')
+assert(gate.ik_target_observer(10,30)==0 and gate.ik_target_bind(1,0,1)==0,
+ 'IK target observation needs a verified active session')
+assert(gate.ik_target_order()==0, 'IK target correction needs a verified active session')
+assert(gate.ik_target_row(0)==nil and gate.flight_boundary(1)==nil,
+ 'unobserved IK and flight boundaries must not fabricate samples')
 assert(gate.travel_determinism()==0,'ordered jobs must refuse outside a verified session')
 assert(gate.build_rng()==0,'build RNG must refuse outside a verified session')
 assert(gate.event_rng('key')==0 and gate.event_rng('observe', 1, 2)==0 and gate.event_rng('invalid')==0,

@@ -109,39 +109,376 @@ static const char *pmath_stage="idle";
 /* ---- other threads frozen: no heap, no loader lock, no BCrypt between freeze and thaw ---- */
 #define PMATH_MAX_THREADS 4096u
 typedef LONG (NTAPI *pmath_next_thread_fn)(HANDLE,HANDLE,ACCESS_MASK,ULONG,ULONG,PHANDLE);
+#ifdef WBM_TEST
+static pmath_next_thread_fn pmath_test_next;
+static DWORD (WINAPI *pmath_test_thread_id)(HANDLE);
+static DWORD (WINAPI *pmath_test_suspend)(HANDLE);
+static DWORD (WINAPI *pmath_test_wait)(HANDLE, DWORD);
+static DWORD (WINAPI *pmath_test_resume)(HANDLE);
+static BOOL (WINAPI *pmath_test_close)(HANDLE);
+#endif
 static HANDLE pmath_frozen[PMATH_MAX_THREADS];
 static DWORD pmath_frozen_ids[PMATH_MAX_THREADS];
 static unsigned pmath_frozen_count;
-static void pmath_thaw(void) {
-    for(unsigned i=0;i<pmath_frozen_count;i++) {ResumeThread(pmath_frozen[i]);CloseHandle(pmath_frozen[i]);}
-    pmath_frozen_count=0;
+typedef struct {
+    HANDLE handle;
+    int needs_resume;
+} pmath_pending_thread;
+/* At most all suspended threads plus the old and newly returned enumeration handles. */
+static pmath_pending_thread pmath_pending[PMATH_MAX_THREADS + 2u];
+static unsigned pmath_pending_count;
+static volatile LONG pmath_release_uncertain, pmath_pending_resumes, pmath_pending_closes;
+static SRWLOCK pmath_freeze_lock = SRWLOCK_INIT;
+
+/* Diagnostic snapshot for the latest freeze attempt. Updated under the freeze
+ * lock and read atomically by status; no I/O or allocation occurs while frozen. */
+enum {
+    PMATH_FREEZE_IDLE, PMATH_FREEZE_ACTIVE, PMATH_FREEZE_OK, PMATH_FREEZE_PENDING,
+    PMATH_FREEZE_NTDLL, PMATH_FREEZE_CURSOR_CLOSE, PMATH_FREEZE_THREAD_ID,
+    PMATH_FREEZE_CAPACITY, PMATH_FREEZE_SUSPEND, PMATH_FREEZE_ENUM, PMATH_FREEZE_PASS_LIMIT
+};
+enum { PMATH_RELEASE_NONE, PMATH_RELEASE_RESUME, PMATH_RELEASE_CLOSE };
+static volatile LONG pmath_freeze_diag_stage, pmath_freeze_diag_ntstatus, pmath_freeze_diag_winerror;
+static volatile LONG pmath_freeze_diag_thread, pmath_freeze_diag_pass, pmath_freeze_diag_seen, pmath_freeze_diag_suspended;
+static volatile LONG pmath_freeze_diag_wait, pmath_freeze_diag_wait_error, pmath_freeze_diag_exited;
+/* The attempt flag is accessed only under pmath_freeze_lock. A switch failure
+ * remains held across later attempts; release diagnostics describe the latest release. */
+static int pmath_freeze_diag_retain_failure;
+static volatile LONG pmath_freeze_diag_held;
+static volatile LONG pmath_release_diag_stage, pmath_release_diag_winerror, pmath_release_diag_wait, pmath_release_diag_wait_error;
+static volatile LONG pmath_release_diag_thread;
+
+static const char *pmath_freeze_diag_name(LONG stage) {
+    switch (stage) {
+        case PMATH_FREEZE_IDLE: return "idle";
+        case PMATH_FREEZE_ACTIVE: return "active";
+        case PMATH_FREEZE_OK: return "ok";
+        case PMATH_FREEZE_PENDING: return "pending";
+        case PMATH_FREEZE_NTDLL: return "ntdll";
+        case PMATH_FREEZE_CURSOR_CLOSE: return "cursor_close";
+        case PMATH_FREEZE_THREAD_ID: return "thread_id";
+        case PMATH_FREEZE_CAPACITY: return "capacity";
+        case PMATH_FREEZE_SUSPEND: return "suspend";
+        case PMATH_FREEZE_ENUM: return "enumerate";
+        case PMATH_FREEZE_PASS_LIMIT: return "pass_limit";
+        default: return "unknown";
+    }
 }
+static const char *pmath_release_diag_name(LONG stage) {
+    switch (stage) {
+        case PMATH_RELEASE_NONE: return "none";
+        case PMATH_RELEASE_RESUME: return "resume";
+        case PMATH_RELEASE_CLOSE: return "close";
+        default: return "unknown";
+    }
+}
+static void pmath_freeze_diag_reset(void) {
+    if (InterlockedCompareExchange(&pmath_freeze_diag_held, 0, 0)) return;
+    InterlockedExchange(&pmath_freeze_diag_stage, PMATH_FREEZE_ACTIVE);
+    InterlockedExchange(&pmath_freeze_diag_ntstatus, 0);
+    InterlockedExchange(&pmath_freeze_diag_winerror, 0);
+    InterlockedExchange(&pmath_freeze_diag_thread, 0);
+    InterlockedExchange(&pmath_freeze_diag_pass, 0);
+    InterlockedExchange(&pmath_freeze_diag_seen, 0);
+    InterlockedExchange(&pmath_freeze_diag_suspended, 0);
+    InterlockedExchange(&pmath_freeze_diag_wait, 0);
+    InterlockedExchange(&pmath_freeze_diag_wait_error, 0);
+    InterlockedExchange(&pmath_freeze_diag_exited, 0);
+    InterlockedExchange(&pmath_release_diag_stage, PMATH_RELEASE_NONE);
+    InterlockedExchange(&pmath_release_diag_winerror, 0);
+    InterlockedExchange(&pmath_release_diag_wait, 0);
+    InterlockedExchange(&pmath_release_diag_wait_error, 0);
+    InterlockedExchange(&pmath_release_diag_thread, 0);
+}
+static void pmath_freeze_diag_fail(LONG stage, LONG status, DWORD error, DWORD thread) {
+    if (InterlockedCompareExchange(&pmath_freeze_diag_held, 0, 0)) return;
+    InterlockedExchange(&pmath_freeze_diag_ntstatus, status);
+    InterlockedExchange(&pmath_freeze_diag_winerror, (LONG)error);
+    InterlockedExchange(&pmath_freeze_diag_thread, (LONG)thread);
+    InterlockedExchange(&pmath_freeze_diag_stage, stage);
+    if (pmath_freeze_diag_retain_failure)
+        InterlockedExchange(&pmath_freeze_diag_held, 1);
+}
+
+static DWORD pmath_resume_handle(HANDLE handle) {
+#ifdef WBM_TEST
+    if (pmath_test_resume) {
+        return pmath_test_resume(handle);
+    }
+#endif
+    return ResumeThread(handle);
+}
+
+static BOOL pmath_close_handle(HANDLE handle) {
+#ifdef WBM_TEST
+    if (pmath_test_close) {
+        return pmath_test_close(handle);
+    }
+#endif
+    return CloseHandle(handle);
+}
+
+/* 1 only when the suspension and handle are both settled. An exited thread no
+ * longer needs resuming; a live or unknown thread retains its handle for retry. */
+static int pmath_release_one(pmath_pending_thread *pending) {
+    if (pending->needs_resume) {
+        if (pmath_resume_handle(pending->handle) == (DWORD)-1) {
+            DWORD error = GetLastError();
+            DWORD wait = WaitForSingleObject(pending->handle, 0);
+            DWORD wait_error = wait == WAIT_FAILED ? GetLastError() : 0;
+            if (wait != WAIT_OBJECT_0) {
+                DWORD prior_error = GetLastError();
+                DWORD thread = GetThreadId(pending->handle);
+                SetLastError(prior_error);
+                InterlockedExchange(&pmath_release_diag_winerror, (LONG)error);
+                InterlockedExchange(&pmath_release_diag_thread, (LONG)thread);
+                InterlockedExchange(&pmath_release_diag_wait, (LONG)wait);
+                InterlockedExchange(&pmath_release_diag_wait_error, (LONG)wait_error);
+                InterlockedExchange(&pmath_release_diag_stage, PMATH_RELEASE_RESUME);
+                return 0;
+            }
+        }
+        pending->needs_resume = 0;
+    }
+    if (!pmath_close_handle(pending->handle)) {
+        DWORD error = GetLastError();
+        DWORD thread = GetThreadId(pending->handle);
+        SetLastError(error);
+        InterlockedExchange(&pmath_release_diag_winerror, (LONG)error);
+        InterlockedExchange(&pmath_release_diag_thread, (LONG)thread);
+        InterlockedExchange(&pmath_release_diag_wait, 0);
+        InterlockedExchange(&pmath_release_diag_wait_error, 0);
+        InterlockedExchange(&pmath_release_diag_stage, PMATH_RELEASE_CLOSE);
+        return 0;
+    }
+    return 1;
+}
+
+static void pmath_publish_pending(void) {
+    LONG resumes = 0, closes = 0;
+    for (unsigned i = 0; i < pmath_pending_count; i++) {
+        if (pmath_pending[i].needs_resume) {
+            ++resumes;
+        } else {
+            ++closes;
+        }
+    }
+    InterlockedExchange(&pmath_pending_resumes, resumes);
+    InterlockedExchange(&pmath_pending_closes, closes);
+}
+
+static void pmath_retain(HANDLE handle, int needs_resume) {
+    /* The bound follows from the active frozen set and at most two cursor handles. */
+    if (pmath_pending_count < PMATH_MAX_THREADS + 2u) {
+        pmath_pending[pmath_pending_count++] = (pmath_pending_thread){handle, needs_resume};
+    } else {
+        InterlockedExchange(&pmath_release_uncertain, 2); /* Never claim cleanup after loss. */
+    }
+    if (InterlockedCompareExchange(&pmath_release_uncertain, 0, 0) != 2) {
+        InterlockedExchange(&pmath_release_uncertain, 1);
+    }
+    pmath_publish_pending();
+}
+
+static void pmath_release_or_retain(HANDLE handle, int needs_resume) {
+    pmath_pending_thread pending = {handle, needs_resume};
+    if (!pmath_release_one(&pending)) {
+        pmath_retain(pending.handle, pending.needs_resume);
+    }
+}
+
+/* Called only under pmath_freeze_lock, before opening any further thread handles. */
+static int pmath_retry_pending_locked(void) {
+    unsigned kept = 0;
+    for (unsigned i = 0; i < pmath_pending_count; i++) {
+        pmath_pending_thread pending = pmath_pending[i];
+        if (!pmath_release_one(&pending)) {
+            pmath_pending[kept++] = pending;
+        }
+    }
+    pmath_pending_count = kept;
+    pmath_publish_pending();
+    if (InterlockedCompareExchange(&pmath_release_uncertain, 0, 0) != 2) {
+        InterlockedExchange(&pmath_release_uncertain, kept ? 1 : 0);
+    }
+    return !InterlockedCompareExchange(&pmath_release_uncertain, 0, 0);
+}
+
+static int pmath_cleanup_clear(void) {
+    return !InterlockedCompareExchange(&pmath_release_uncertain, 0, 0);
+}
+
+/* Never block behind a freeze owner while retrying from a lock wait. */
+static int pmath_retry_pending(void) {
+    if (!TryAcquireSRWLockExclusive(&pmath_freeze_lock)) {
+        return 0;
+    }
+    int clear = pmath_retry_pending_locked();
+    ReleaseSRWLockExclusive(&pmath_freeze_lock);
+    return clear;
+}
+
+static int pmath_thaw(void) {
+    for (unsigned i = 0; i < pmath_frozen_count; i++) {
+        pmath_release_or_retain(pmath_frozen[i], 1);
+    }
+    pmath_frozen_count = 0;
+    int clear = pmath_cleanup_clear();
+    ReleaseSRWLockExclusive(&pmath_freeze_lock);
+    return clear;
+}
+
 static int pmath_is_frozen(DWORD id) {
-    for(unsigned i=0;i<pmath_frozen_count;i++) if(pmath_frozen_ids[i]==id) return 1;
+    for (unsigned i = 0; i < pmath_frozen_count; i++) {
+        if (pmath_frozen_ids[i] == id) {
+            return 1;
+        }
+    }
     return 0;
 }
+
 /* Suspend every other thread of the process; passes repeat until one finds no thread it
- * had not suspended yet (threads created meanwhile). 0 leaves nothing suspended. */
-static int pmath_freeze(void) {
+ * had not suspended yet (threads created meanwhile). Failure retains unresolved handles. */
+static int pmath_freeze_attempt(int retain_failure) {
     static pmath_next_thread_fn next;
-    if(!next) next=(pmath_next_thread_fn)(void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"NtGetNextThread");
-    if(!next) return 0;
-    DWORD self=GetCurrentThreadId();pmath_frozen_count=0;
-    for(unsigned pass=0;pass<16;pass++) {
-        HANDLE cursor=NULL,found;int kept=0;unsigned added=0;
-        while(next(GetCurrentProcess(),cursor,THREAD_SUSPEND_RESUME|THREAD_GET_CONTEXT|THREAD_SET_CONTEXT|THREAD_QUERY_INFORMATION,0,0,&found)>=0) {
-            if(cursor && !kept) CloseHandle(cursor);
-            cursor=found;kept=0;
-            DWORD id=GetThreadId(found);
-            if(!id || id==self || pmath_is_frozen(id)) continue;
-            if(pmath_frozen_count>=PMATH_MAX_THREADS) {CloseHandle(cursor);pmath_thaw();return 0;}
-            if(SuspendThread(found)==(DWORD)-1) continue; /* exiting */
-            pmath_frozen[pmath_frozen_count]=found;pmath_frozen_ids[pmath_frozen_count++]=id;kept=1;++added;
-        }
-        if(cursor && !kept) CloseHandle(cursor);
-        if(!added) {if(pmath_frozen_count>pmath_frozen_max) pmath_frozen_max=pmath_frozen_count;return 1;}
+    AcquireSRWLockExclusive(&pmath_freeze_lock);
+    pmath_freeze_diag_retain_failure = retain_failure;
+    pmath_freeze_diag_reset();
+    if (!pmath_retry_pending_locked()) {
+        pmath_freeze_diag_fail(PMATH_FREEZE_PENDING, 0,
+                               (DWORD)InterlockedCompareExchange(&pmath_release_diag_winerror, 0, 0),
+                               (DWORD)InterlockedCompareExchange(&pmath_release_diag_thread, 0, 0));
+        ReleaseSRWLockExclusive(&pmath_freeze_lock);
+        return 0;
     }
-    pmath_thaw();return 0;
+    if (!next) {
+        next = (pmath_next_thread_fn)(void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtGetNextThread");
+    }
+    if (!next) {
+        DWORD error = GetLastError();
+        pmath_freeze_diag_fail(PMATH_FREEZE_NTDLL, 0, error, 0);
+        ReleaseSRWLockExclusive(&pmath_freeze_lock);
+        return 0;
+    }
+#ifdef WBM_TEST
+    pmath_next_thread_fn enumerate = pmath_test_next ? pmath_test_next : next;
+#else
+    pmath_next_thread_fn enumerate = next;
+#endif
+    DWORD self = GetCurrentThreadId();
+    pmath_frozen_count = 0;
+    for (unsigned pass = 0; pass < 16; pass++) {
+        if (!InterlockedCompareExchange(&pmath_freeze_diag_held, 0, 0))
+            InterlockedExchange(&pmath_freeze_diag_pass, (LONG)(pass + 1));
+        HANDLE cursor = NULL, found;
+        int kept = 0;
+        unsigned added = 0;
+        LONG status;
+        while ((status = enumerate(GetCurrentProcess(), cursor,
+                                   THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT |
+                                       THREAD_QUERY_INFORMATION | SYNCHRONIZE,
+                                   0, 0, &found)) >= 0) {
+            if (!InterlockedCompareExchange(&pmath_freeze_diag_held, 0, 0))
+                InterlockedIncrement(&pmath_freeze_diag_seen);
+            if (cursor && !kept) {
+                pmath_release_or_retain(cursor, 0);
+                if (!pmath_cleanup_clear()) {
+                    pmath_freeze_diag_fail(PMATH_FREEZE_CURSOR_CLOSE, 0,
+                                           (DWORD)InterlockedCompareExchange(&pmath_release_diag_winerror, 0, 0),
+                                           (DWORD)InterlockedCompareExchange(&pmath_release_diag_thread, 0, 0));
+                    pmath_release_or_retain(found, 0);
+                    pmath_thaw();
+                    return 0;
+                }
+            }
+            cursor = found;
+            kept = 0;
+#ifdef WBM_TEST
+            DWORD id = pmath_test_thread_id ? pmath_test_thread_id(found) : GetThreadId(found);
+#else
+            DWORD id = GetThreadId(found);
+#endif
+            if (!id) {
+                DWORD error = GetLastError();
+                pmath_freeze_diag_fail(PMATH_FREEZE_THREAD_ID, 0, error, 0);
+                pmath_release_or_retain(cursor, 0);
+                pmath_thaw();
+                return 0;
+            }
+            if (id == self || pmath_is_frozen(id)) {
+                continue;
+            }
+            if (pmath_frozen_count >= PMATH_MAX_THREADS) {
+                pmath_freeze_diag_fail(PMATH_FREEZE_CAPACITY, 0, 0, id);
+                pmath_release_or_retain(cursor, 0);
+                pmath_thaw();
+                return 0;
+            }
+#ifdef WBM_TEST
+            DWORD suspended = pmath_test_suspend ? pmath_test_suspend(found) : SuspendThread(found);
+#else
+            DWORD suspended = SuspendThread(found);
+#endif
+            if (suspended == (DWORD)-1) {
+                DWORD error = GetLastError();
+#ifdef WBM_TEST
+                DWORD wait = pmath_test_wait ? pmath_test_wait(found, 0) : WaitForSingleObject(found, 0);
+#else
+                DWORD wait = WaitForSingleObject(found, 0);
+#endif
+                DWORD wait_error = wait == WAIT_FAILED ? GetLastError() : 0;
+                if (!InterlockedCompareExchange(&pmath_freeze_diag_held, 0, 0)) {
+                    InterlockedExchange(&pmath_freeze_diag_wait, (LONG)wait);
+                    InterlockedExchange(&pmath_freeze_diag_wait_error, (LONG)wait_error);
+                }
+                if (wait == WAIT_OBJECT_0) {
+                    /* Retain the cursor until enumeration advances; this thread cannot run again. */
+                    if (!InterlockedCompareExchange(&pmath_freeze_diag_held, 0, 0))
+                        InterlockedIncrement(&pmath_freeze_diag_exited);
+                    continue;
+                }
+                pmath_freeze_diag_fail(PMATH_FREEZE_SUSPEND, 0, error, id);
+                pmath_release_or_retain(cursor, 0);
+                pmath_thaw();
+                return 0;
+            }
+            if (!InterlockedCompareExchange(&pmath_freeze_diag_held, 0, 0))
+                InterlockedIncrement(&pmath_freeze_diag_suspended);
+            pmath_frozen[pmath_frozen_count] = found;
+            pmath_frozen_ids[pmath_frozen_count++] = id;
+            kept = 1;
+            ++added;
+        }
+        if (cursor && !kept) {
+            pmath_release_or_retain(cursor, 0);
+            if (!pmath_cleanup_clear()) {
+                pmath_freeze_diag_fail(PMATH_FREEZE_CURSOR_CLOSE, 0,
+                                       (DWORD)InterlockedCompareExchange(&pmath_release_diag_winerror, 0, 0),
+                                       (DWORD)InterlockedCompareExchange(&pmath_release_diag_thread, 0, 0));
+                pmath_thaw();
+                return 0;
+            }
+        }
+        if ((unsigned long)status != 0x8000001au) { /* STATUS_NO_MORE_ENTRIES */
+            pmath_freeze_diag_fail(PMATH_FREEZE_ENUM, status, 0, 0);
+            pmath_thaw();
+            return 0;
+        }
+        if (!added) {
+            if (pmath_frozen_count > pmath_frozen_max) {
+                pmath_frozen_max = pmath_frozen_count;
+            }
+            if (!InterlockedCompareExchange(&pmath_freeze_diag_held, 0, 0))
+                InterlockedExchange(&pmath_freeze_diag_stage, PMATH_FREEZE_OK);
+            return 1;
+        }
+    }
+    pmath_freeze_diag_fail(PMATH_FREEZE_PASS_LIMIT, 0, 0, 0);
+    pmath_thaw();
+    return 0;
+}
+static int pmath_freeze(void) {
+    return pmath_freeze_attempt(0);
 }
 /* 1 when no frozen thread stands inside any [entry+1, entry+5). */
 static int pmath_windows_clear(void) {
@@ -260,7 +597,8 @@ static int pmath_switch(int install) {
 static int pmath_switch_once(int install) {
     for(unsigned attempt=0;attempt<200;attempt++) {
         ++pmath_attempts;
-        if(!pmath_freeze()) return 0;
+        int frozen=pmath_freeze_attempt(1);
+        if(!frozen) return 0;
         if(!pmath_windows_clear()) {pmath_thaw();++pmath_busy;Sleep(1);continue;}
         unsigned done=0;int ok=1;
         for(;done<PMATH_COUNT;done++) {
@@ -289,6 +627,7 @@ static int pmath_arm(void) {
     if(!pmath_page || !pmath_write_page() || !pmath_page_ok()) {pmath_stage="page";return 0;}
     int flag=-1;if(read_local(image+PMATH_FMA3_FLAG,&flag,4)) pmath_fma3=flag;
     pmath_failures=0;pmath_restored=0;
+    InterlockedExchange(&pmath_freeze_diag_held, 0);
     int r=pmath_switch(1);
     if(r!=1) {pmath_stage=r<0?"stuck":"busy";if(r<0) InterlockedIncrement64(&pmath_failures);return 0;}
     pmath_installed=1;pmath_stage="armed";return 1;
@@ -312,8 +651,27 @@ static void pmath_restore(void) {
     else pmath_stage=r<0?"restore_stuck":"restore_busy";
 }
 static int pmath_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity,"installed=%d sites=%u fma3=%d kat=%016llx restored=%d stage=%s attempts=%u busy=%u threads=%u failures=%lld",
+    int n=snprintf(out,capacity,"installed=%d sites=%u fma3=%d kat=%016llx restored=%d stage=%s attempts=%u busy=%u threads=%u failures=%lld pending_resume=%ld pending_close=%ld release_uncertain=%ld freeze=%s freeze_held=%ld freeze_nt=%08lx freeze_win=%lu freeze_tid=%lu freeze_pass=%lu freeze_seen=%lu freeze_suspended=%lu freeze_wait=%08lx freeze_wait_win=%lu freeze_exited=%lu release_step=%s release_win=%lu release_tid=%lu release_wait=%08lx release_wait_win=%lu",
         pmath_installed,(unsigned)PMATH_COUNT,pmath_fma3,(unsigned long long)pmath_kat_value,pmath_restored,pmath_stage,
-        pmath_attempts,pmath_busy,pmath_frozen_max,(long long)pmath_failures);
+        pmath_attempts,pmath_busy,pmath_frozen_max,(long long)pmath_failures,
+        (long)InterlockedCompareExchange(&pmath_pending_resumes,0,0),
+        (long)InterlockedCompareExchange(&pmath_pending_closes,0,0),
+        (long)InterlockedCompareExchange(&pmath_release_uncertain,0,0),
+        pmath_freeze_diag_name(InterlockedCompareExchange(&pmath_freeze_diag_stage,0,0)),
+        (long)InterlockedCompareExchange(&pmath_freeze_diag_held,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_freeze_diag_ntstatus,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_freeze_diag_winerror,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_freeze_diag_thread,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_freeze_diag_pass,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_freeze_diag_seen,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_freeze_diag_suspended,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_freeze_diag_wait,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_freeze_diag_wait_error,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_freeze_diag_exited,0,0),
+        pmath_release_diag_name(InterlockedCompareExchange(&pmath_release_diag_stage,0,0)),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_release_diag_winerror,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_release_diag_thread,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_release_diag_wait,0,0),
+        (unsigned long)(DWORD)InterlockedCompareExchange(&pmath_release_diag_wait_error,0,0));
     return n>0 && (size_t)n<capacity?n:0;
 }

@@ -7,6 +7,8 @@
 #define FLIGHT_UPDATE 0xec7200u
 #define FLIGHT_OBSTACLES 64u
 #define FLIGHT_CTOR 0xec40c0u
+#include "lockstep_flight_boundary.h"
+static const flight_boundary_layout flight_boundary_windows_layout = FLIGHT_BOUNDARY_WINDOWS_LAYOUT;
 typedef void (*flight_fn)(void *,void *,float,double,unsigned char,unsigned char);
 typedef struct {
     void *model, *agent;
@@ -36,6 +38,7 @@ typedef struct {
      * slot's offset from the Agent (+0xad0 + 0x1a0 x the bank this update writes). */
     uint64_t seq_in,seq_out,slot_rel;
     uint32_t thread,bank_read,bank_write;
+    flight_boundary_sample boundary;
 } flight_sample;
 static flight_sample flight_samples[ACTOR_CAPACITY];
 static int flight_installed, flight_restored, flight_seeded, flight_full, flight_avoidance_refresh, flight_initial;
@@ -263,7 +266,17 @@ static void flight_update(void *self,void *slot,float dt,double time,unsigned ch
     sample->slot_rel=(uint64_t)((unsigned char*)slot-(unsigned char*)sample->agent);
     sample->bank_read=sample->bank_write=0xffffffffu;
     (void)read_local(image+0x38f4ee4u,&sample->bank_read,4);(void)read_local(image+0x2f4b6f4u,&sample->bank_write,4);
+    {
+        DWORD error = GetLastError();
+        flight_boundary_begin(read_local, &flight_boundary_windows_layout, sample->agent, &sample->boundary);
+        SetLastError(error);
+    }
     flight_execute(original,sample,actor,rng,self,slot,dt,time,cheap,player);
+    {
+        DWORD error = GetLastError();
+        flight_boundary_end(read_local, &flight_boundary_windows_layout, self, sample->agent, &sample->boundary);
+        SetLastError(error);
+    }
     sample->seq_out=(uint64_t)InterlockedIncrement64(&flight_steer_seq);
     if(!flight_read_avoidance(sample,self,1)) flight_fault(FLIGHT_FAULT_AVOIDANCE_AFTER,actor,0,0);
     memcpy(sample->after,slot,sizeof(sample->after));

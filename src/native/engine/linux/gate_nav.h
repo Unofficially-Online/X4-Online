@@ -43,6 +43,17 @@ static const lxv_site_t lxv_sites[4]={
     {LX_NAV_PROBE_NEAR_VA,2,{0x77,0x2e},{0x66,0x90}},
     {LX_NAV_PROBE_FAR_VA,6,{0x0f,0x86,0x48,0x08,0,0},{0x90,0xe9,0x48,0x08,0,0}}};
 static int lxv_slots_installed;
+/* Only the twelve prebound fixture controllers use Windows' NAV_UPDT stream. */
+#define NAV_FIXTURE_ACTORS 12u
+#define NAV_FIXTURE_DOMAIN 0x4e41565f55504454ULL
+typedef struct {
+    uint64_t tick;
+    uint64_t calls;
+} nav_fixture_actor;
+static nav_fixture_actor nav_fixture_actors[NAV_FIXTURE_ACTORS];
+static int nav_fixture_rng_armed;
+static uint64_t nav_fixture_keyed, nav_fixture_bad_time, nav_fixture_missing_rng, nav_fixture_bad_binding;
+static int lxb_nav_fixture(void *controller); /* gate_battle.h */
 /* The nav key: per-tick ordinals by ship (an open table cleared by epoch), tallies. */
 #define LXK_DOMAIN 0x4c584e41564b4559ULL /* "LXNAVKEY" */
 #define LXK_ORDINALS 4096u
@@ -62,8 +73,49 @@ static uint32_t lxk_ordinal(uint64_t id) {
     return 0; /* full: the caller keeps the natural word */
 }
 typedef void (*lxv_move_fn)(void *,double);
+#ifdef GATE_TLS_TEST
+static lxv_move_fn nav_fixture_native_override;
+#endif
+static lxv_move_fn lxv_native(void) {
+#ifdef GATE_TLS_TEST
+    if (nav_fixture_native_override) return nav_fixture_native_override;
+#endif
+    return (lxv_move_fn)(void*)LX(LX_NAV_MOVE_VA);
+}
+static int nav_cadence_arm(int mode);
+/* Every finite fixture call gets its own ordinal, including calls without draws. */
+static void nav_fixture_execute(lxv_move_fn native, void *controller, double time, unsigned actor, uint64_t *rng) {
+    if (!isfinite(time)) {
+        ++nav_fixture_bad_time;
+        InterlockedIncrement64(&nav_cadence_failures);
+        native(controller, time);
+        return;
+    }
+    nav_fixture_actor *actor_state = &nav_fixture_actors[actor - 1];
+    if (actor_state->tick != stats.issued) {
+        actor_state->tick = stats.issued;
+        actor_state->calls = 0;
+    }
+    if (actor_state->calls == UINT64_MAX) {
+        InterlockedIncrement64(&nav_cadence_failures);
+        native(controller, time);
+        return;
+    }
+    uint64_t ordinal = ++actor_state->calls;
+    if (!rng) {
+        ++nav_fixture_missing_rng;
+        InterlockedIncrement64(&nav_cadence_failures);
+        native(controller, time);
+        return;
+    }
+    uint64_t saved_rng = *rng;
+    *rng = lockstep_seed(NAV_FIXTURE_DOMAIN, stats.issued, actor, 0, ordinal, 0);
+    ++nav_fixture_keyed;
+    native(controller, time); /* An unhandled native exception terminates the Linux process. */
+    *rng = saved_rng;
+}
 static void lxk_move(void *self,double time) {
-    lxv_move_fn native=(lxv_move_fn)(void*)LX(LX_NAV_MOVE_VA);
+    lxv_move_fn native=lxv_native();
     unsigned char *ship=NULL;uint64_t runtime=0,key=0;unsigned klass=WORLD_KEY_NONE;
     ++lxk_calls;
     if(read_local((unsigned char*)self+NAV_F_OWNER,&ship,8) && ship && read_local(ship+8,&runtime,8) && runtime) key=world_identity_key(runtime,&klass);
@@ -79,14 +131,24 @@ static __attribute__((noinline)) void lxv_move(void *self,double time) {
     if(InterlockedCompareExchange(&nav_cadence_active,0,0) && stats.active && boot_phase==3 && GetCurrentThreadId()==ui_thread) {
         if(nav_probe_armed) nav_probe_apply(self,time);
         if(nav_params_armed) nav_params_apply(self,time);
+        if (nav_fixture_rng_armed) {
+            int actor = lxb_nav_fixture(self);
+            if (actor < 0) {
+                ++nav_fixture_bad_binding;
+                InterlockedIncrement64(&nav_cadence_failures);
+            } else if (actor > 0) {
+                nav_fixture_execute(lxv_native(), self, time, (unsigned)actor, gate_tls_rng(gate_tls_self()));
+                return;
+            }
+        }
         if(lxk_armed) {lxk_move(self,time);return;}
     }
-    ((lxv_move_fn)(void*)LX(LX_NAV_MOVE_VA))(self,time);
+    lxv_native()(self,time);
 }
 /* With the cadence hook, before the first admitted frame; a rerun is accepted. */
 static int lxk_arm(void) {
     if(lxk_armed) return nav_cadence_installed;
-    if(!nav_cadence_installed || !stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread || !world_identity_installed) return 0;
+    if(nav_fixture_rng_armed || !nav_cadence_installed || !stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread || !world_identity_installed) return 0;
     lxk_calls=lxk_keyed=lxk_unmapped=lxk_full=0;lxk_epoch_tick=UINT64_MAX;lxk_armed=1;return 1;
 }
 static int lxv_site_is(const lxv_site_t *s,const unsigned char *bytes) {return !memcmp(LX(s->va),bytes,s->size);}
@@ -128,6 +190,7 @@ static int nav_cadence_arm(int mode) {
 /* A foreign value keeps the patch marked, and the stats unrestored. */
 static void nav_cadence_restore(void) {
     InterlockedExchange(&nav_cadence_active,0);
+    nav_fixture_rng_armed = 0;
     if(!nav_cadence_installed) return;
     int all=1;
     if(nav_cadence_patched) {
@@ -136,6 +199,21 @@ static void nav_cadence_restore(void) {
     }
     if(lxv_slots_installed) {if(lxv_slots_swap((void*)lxv_move,LX(LX_NAV_MOVE_VA))) lxv_slots_installed=0;else all=0;}
     if(all) {nav_cadence_restored=1;nav_cadence_installed=0;}
+}
+/* No cadence option is needed: observe installs the same vtable hook without
+ * changing the game's distance branches. Must run before the load is requested. */
+static int nav_fixture_arm(void) {
+    if (nav_fixture_rng_armed) return stats.active && nav_cadence_installed;
+    if (lxk_armed || !stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId() != ui_thread ||
+        !world_identity_installed || !path_installed || !(path_options & 1)) return 0;
+    if (!nav_cadence_installed && !nav_cadence_arm(NAV_CADENCE_OBSERVE)) return 0;
+    memset(nav_fixture_actors, 0, sizeof(nav_fixture_actors));
+    nav_fixture_keyed = 0;
+    nav_fixture_bad_time = 0;
+    nav_fixture_missing_rng = 0;
+    nav_fixture_bad_binding = 0;
+    nav_fixture_rng_armed = 1;
+    return 1;
 }
 static int nav_cadence_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"mode=%s armed=%ld installed=%d restored=%d stage=%s failures=%lld "
@@ -166,3 +244,18 @@ static int lua_nav_cadence_watch(lua_State *L) {p_lua_pushnumber(L,1);return 1;}
 static int lua_nav_probe_init(lua_State *L) {p_lua_pushnumber(L,nav_probe_arm());return 1;}
 static int lua_nav_params_init(lua_State *L) {p_lua_pushnumber(L,nav_params_arm());return 1;}
 static int lua_nav_key(lua_State *L) {p_lua_pushnumber(L,lxk_arm());return 1;}
+static int lua_nav_rng_fixture(lua_State *L) {
+    p_lua_pushnumber(L, nav_fixture_arm());
+    return 1;
+}
+static int lua_nav_rng_fixture_status(lua_State *L) {
+    char out[240];
+    int length = accept_ui() ? snprintf(out, sizeof(out),
+        "armed=%d keyed=%llu bad_time=%llu missing_rng=%llu bad_binding=%llu failures=%lld scope=fixture",
+        nav_fixture_rng_armed, (unsigned long long)nav_fixture_keyed, (unsigned long long)nav_fixture_bad_time,
+        (unsigned long long)nav_fixture_missing_rng, (unsigned long long)nav_fixture_bad_binding,
+        (long long)nav_cadence_failures) : 0;
+    if (length > 0 && (size_t)length < sizeof(out)) p_lua_pushlstring(L, out, (size_t)length);
+    else p_lua_pushnil(L);
+    return 1;
+}

@@ -411,7 +411,7 @@ static int fs_folder_ok(const char *folder) {
 /* Arm (UI thread = MoveWorker, admitted session): records this thread's kernel TID and thread block. A
  * finished request may be followed by another one for a later tick. */
 static int fork_save_arm(uint64_t tick,const char *name,const char *folder,unsigned budget_ms,unsigned watchdog_s) {
-    if(!stats.active || (boot_mode && boot_phase!=3) || GetCurrentThreadId()!=ui_thread || fs.state==FS_ARMED || fs.state==FS_RUNNING) return 0;
+    if(stock_trap_installed || !stats.active || (boot_mode && boot_phase!=3) || GetCurrentThreadId()!=ui_thread || fs.state==FS_ARMED || fs.state==FS_RUNNING) return 0;
     unsigned char *tls=gate_tls_self();
     if(!gate_tls_worker(tls) || tick<=stats.issued || !fs_name_ok(name) || !fs_folder_ok(folder) ||
        budget_ms<1 || budget_ms>2000 || watchdog_s<2 || watchdog_s>3600) return 0;

@@ -37,6 +37,10 @@ def main():
     # The relay's wire crypto (tools/dev/native_gate_crypto.py loads it through ctypes).
     subprocess.run(common+['-shared', str(source/'lockstep_wire_crypto_lib.c'), '-o', str(out/'x4mp_wire_crypto.dll')], check=True)
     if args.test:
+        for name in ('test_flight_boundary', 'test_lockstep_flight_boundary_format'):
+            executable = out / f'{name}.exe'
+            subprocess.run(common + [str(source / f'{name}.c'), '-o', str(executable)], check=True)
+            subprocess.run([str(executable)], check=True)
         # Monocypher's own test suite and vectors, then our known answers, layouts and fail-closed cases.
         subprocess.run(common+[str(MONOCYPHER/'tests/test.c'), str(MONOCYPHER/'tests/utils.c'),
                               '-o', str(out/'test_monocypher.exe')], check=True)
@@ -50,6 +54,10 @@ def main():
                               '-o', str(out/'test_gate.exe')], check=True)
         gate_env=dict(os.environ,X4LAN_XRCP_EXPORT=str(out/'xrcp-export.bin')) if args.native_image else None
         subprocess.run([str(out/'test_gate.exe')]+([str(args.native_image.resolve())] if args.native_image else []), check=True,env=gate_env)
+        # The creation-time body mass hook has its own focused lifecycle, fault and unwind tests.
+        subprocess.run(common+[str(source/'test_lockstep_body_mass_win.c'), '-lbcrypt', '-lws2_32',
+                              '-o', str(out/'test_body_mass_win.exe')], check=True)
+        subprocess.run([str(out/'test_body_mass_win.exe')], check=True)
         if args.native_image:
             try:
                 import capstone  # noqa: F401  (the trampoline proof decodes with capstone)

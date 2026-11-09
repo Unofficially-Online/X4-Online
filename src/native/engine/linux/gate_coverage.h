@@ -70,6 +70,15 @@ static void lx_cov_frame(uint64_t tick) {
 }
 /* gate.coverage(N[, from]): a missing from (0) is tick 1. */
 static int lua_coverage(lua_State *L) {
+    pthread_mutex_lock(&stock_state_lifecycle_lock);
+    if (stock_trap_installed || stock_state_installed || stock_state_cleanup_uncertain ||
+        stock_range_installed || stock_range_cleanup_uncertain ||
+        __atomic_load_n(&stock_range_stopping, __ATOMIC_ACQUIRE) ||
+        __atomic_load_n(&stock_state_stopping, __ATOMIC_ACQUIRE)) {
+        pthread_mutex_unlock(&stock_state_lifecycle_lock);
+        p_lua_pushnumber(L, 0);
+        return 1;
+    }
     double ticks=p_lua_tonumber(L,1);int ok=isfinite(ticks) && ticks>=1 && ticks<=6000 && floor(ticks)==ticks;
     double from=p_lua_tonumber(L,2);if(from==0) from=1;
     if(ok && !(isfinite(from) && from>=1 && from<=ticks && floor(from)==from)) {cov_stage="from";ok=0;}
@@ -77,6 +86,7 @@ static int lua_coverage(lua_State *L) {
     if(ok && !cov_armed && !cov_count && !cov_load()) {cov_stage="list";ok=0;}
     ok=ok && cov_arm((unsigned)ticks);
     if(ok) lx_cov_from=(unsigned)from;
+    pthread_mutex_unlock(&stock_state_lifecycle_lock);
     p_lua_pushnumber(L,ok);return 1;
 }
 static int lua_coverage_frame(lua_State *L) {

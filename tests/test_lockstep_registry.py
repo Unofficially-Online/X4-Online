@@ -10,7 +10,8 @@ REGISTRY = (ROOT/'docs/LOCKSTEP-REGISTRY.txt').read_text(encoding='utf-8')
 NOT_REASONS = {'PSLOT_STOP_WAIT', 'PFIRE_STOP', 'PNAT_STOP_IN_MENU', 'PNAT_FULL_STOP'}   # a count and flags, not stop reasons
 # Another define for an owner's code: the Linux gate's ports, the lookahead's drop (the protocol 5 number).
 ALIASES = {'LMT_STOP_REASON': 'MT_STOP_REASON', 'LXMC_STOP_REASON': 'RC_MINING_STOP', 'LOOKAHEAD_STOP_DROPPED': 'ADAPT_STOP_DROPPED',
-           'LINUX_EVENT_RNG_STOP_REASON': 'EVENT_RNG_STOP_REASON', 'LINUX_BUILD_RNG_STOP_REASON': 'BRNG_STOP_REASON'}
+           'LINUX_EVENT_RNG_STOP_REASON': 'EVENT_RNG_STOP_REASON', 'LINUX_BUILD_RNG_STOP_REASON': 'BRNG_STOP_REASON',
+           'WBM_STOP_REASON': 'LXBM_STOP_REASON'}
 CORE_PORTS = {'CREATED_STOP_REASON': 96, 'LSJ_STOP_REASON': 58}   # module defines that carry a core code (96 world created, 58 spline)
 
 
@@ -29,15 +30,27 @@ def stop_defines():
     return found
 
 
+def stop_reason_conflicts(found):
+    by_value = {}
+    for name, places in found.items():
+        value = next(iter(places))[0]
+        by_value.setdefault(value, set()).add(ALIASES.get(name, name))
+    return {value: names for value, names in by_value.items() if len(names) > 1}
+
+
 class StopReasonTests(unittest.TestCase):
     def test_every_module_stop_reason_is_unique(self):
-        by_value = {}
-        for name, places in stop_defines().items():
-            self.assertEqual(len({v for v, _ in places}), 1, name)   # one value wherever it is defined
-            value = next(iter(places))[0]
-            by_value.setdefault(value, set()).add(ALIASES.get(name, name))
-        shared = {value: names for value, names in by_value.items() if len(names) > 1}
-        self.assertEqual(shared, {})
+        found = stop_defines()
+        for name, places in found.items():
+            self.assertEqual(len({value for value, _ in places}), 1, name)
+        self.assertEqual(stop_reason_conflicts(found), {})
+
+    def test_body_mass_alias_is_limited_to_the_two_platform_owners(self):
+        found = stop_defines()
+        self.assertEqual(found['LXBM_STOP_REASON'], {(204, 'gate_body_mass.h')})
+        self.assertEqual(found['WBM_STOP_REASON'], {(204, 'lockstep_body_mass_win.h')})
+        found['UNRELATED_STOP_REASON'] = {(204, 'unrelated.h')}
+        self.assertEqual(stop_reason_conflicts(found)[204], {'LXBM_STOP_REASON', 'UNRELATED_STOP_REASON'})
 
     def test_every_module_stop_reason_is_registered(self):
         for name, places in stop_defines().items():

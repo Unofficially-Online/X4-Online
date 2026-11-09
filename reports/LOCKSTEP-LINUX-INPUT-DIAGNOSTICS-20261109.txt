@@ -1,0 +1,220 @@
+LINUX INPUT DIAGNOSTICS: PILOT CHANNELS AND PARTIAL STOCK OBSERVERS
+9 November 2026
+
+Scope
+  The historical multi-byte STATE detour and first RANGE design must not
+  be enabled in further game runs. Their aligned code swaps did not establish
+  safety for a thread already executing between displaced instructions. The
+  idle run below does not test that interleaving. A separate diagnostic patch
+  mechanism now uses one changed entry byte and an explicit lifetime ownership
+  contract, described below. Idle, addressed synthetic input and subsequent
+  human input have now been observed. The human confirmed visible movement
+  and understandable controls, but also reported recurring pauses. These are
+  local controls; multiplayer input capture/replay remains unvalidated.
+
+  These default-off Linux diagnostics observe input; they do not transmit,
+  suppress or replay it. They are not a complete stock v3 input implementation
+  or evidence of native Linux player readiness. See
+  LOCKSTEP-LINUX-PILOT-CAPTURE-ABI-20261109.txt for the original static ABI
+  analysis, including unresolved channel meanings and signs. Both paths are
+  pinned to Linux ELF SHA-256
+  113f73d74570084f6ce18a659b365009eccf579fb66dbabb5dad2b1718045f20.
+
+Pilot channel diagnostic
+  The SysV getter at ELF VA 0x1dd19d0 returns a controller; the getter at
+  0x1663740 takes controller in RDI and channel id in ESI, returning float in
+  XMM0. Six raw finite values for ids 0x6c through 0x71 are returned together
+  as diagnostic text. This does not establish axes, signs, buttons, targets,
+  player-slot identity, control suppression or cross-platform equivalence.
+
+  Lua opt-in: native_gate_pilot_capture_probe. On the first admitted tick after
+  UI-thread adoption, pilot_capture_probe_arm() returns success and reason;
+  pilot_capture_probe_read() returns text or nil and a refusal reason. The
+  implementation requires an active session and matching UI thread, checks
+  the whole executable hash and pinned function bytes, and verifies the
+  controller's expected vtable. It refuses invalid/nonfinite samples or
+  insufficient output capacity without publishing a partial sample. STOP
+  synchronizes with arm/read and disarms the probe. It does not write the
+  controller or produce pilot wire records.
+
+  A native Linux two-peer 60-tick idle run recorded 120 channel samples before
+  the later lifecycle correction. The final input-final-60 run also completed
+  60 ticks on both peers with the corrected lifecycle: 60 samples per peer,
+  each containing six positive-zero values. Both stopped with reason 1 and
+  restored=1; their relay digests agreed. Idle sampling does not validate
+  moving controls or axis semantics. Offline copied-ELF and
+  injectable-getter tests cover pin, thread, controller, finite-value and
+  all-or-none refusals, plus STOP racing arm and read.
+
+Partial STATE observer
+  Lua opt-in: native_gate_stock_state_observer. It exposes
+  stock_state_observer(), stock_state_observer_status() and
+  stock_state_observer_row(index). The probe reports status and drains bounded
+  rows. Coverage and this observer cannot be armed together.
+
+  Only the out-of-line dispatcher at ELF VA 0x1050fa0 is observed. At entry,
+  RDI is the InputMapping aggregate, ESI the state id and DL the raw state;
+  the displaced MOV/TEST execute once before continuation at 0x1050fa7.
+  A thread/map match checks the UI owner and the input singleton's map at
+  owner + 0x63f0. It does not prove event phase, tick ownership or player slot.
+  last_issued is the last issued gate tick, not a proven apply tick. Action and
+  range dispatches and other possible paths remain outside this observer.
+
+  Arming requires the pinned executable and site, active UI session, compatible
+  XSAVE state and exclusive patch ownership. The detour preserves registers,
+  flags, red zone and supported enabled extended state; it bounds reentry and
+  rows. STOP marks the lifecycle before synchronization and restores only an
+  owned patch; uncertain original bytes or RX protection are reported as
+  cleanup_uncertain. Rows have a fixed 256-entry capacity with overflow
+  accounting. Reservation precedes publication and an in-flight callback may
+  finish after STOP: a missing row can become available later and a final
+  drain does not guarantee completeness.
+
+  Synthetic and copied-ELF tests exercise ownership, original execution,
+  register/vector preservation, partial context, overflow/reentry, coverage
+  exclusion, STOP during installation and failed protection/restore paths.
+  Extended vector tests depend on host CPU support. In input-final-60, each
+  real Linux peer reported 60 installed/armed statuses without cleanup
+  uncertainty, overflow or reentry. No STATE event was recorded during this
+  idle run. This exercises installation and cleanup in X4, not nonzero input,
+  event decoding or complete dispatch coverage. The frozen Lua emits no final
+  observer status or drain: aggregate restored=1 confirms the gate's cleanup
+  result, not callback quiescence or publication of every reserved row.
+
+Final idle-run provenance
+  Independent audit matched all 39 bundle files and all 593 retained source
+  hashes. Both staged gate binaries have SHA-256
+  a3e1b221286839f028fd9d23573e2a21c12b77a794b38d4fbc47187d20f2d5a0.
+  Retained cleanup reports no owned survivors. Known FIND_ORDER unmapped=14
+  and CREATED_IDENTITIES macro_unknown=1 coverage gaps remain in the raw logs.
+  This is bounded Linux/Linux diagnostic validation, not player readiness.
+
+Revised diagnostic trap mechanism and partial RANGE observer
+  Both observers now require native_gate_stock_trap_exclusive=true. This is
+  an explicit, diagnostic-only contract for a disposable process: SIGTRAP and
+  both entry sites remain exclusively owned for process lifetime. A debugger,
+  competing patch writer, later SIGTRAP masking or handler replacement is
+  incompatible. Admission checks the existing default signal disposition and
+  observable thread masks/tracer status. Coverage and fork-save are excluded.
+
+  Only the first byte changes to INT3; the remaining original instructions
+  stay intact for a thread already executing inside the old entry sequence.
+  The handler redirects only a fully prepared, permanently published site.
+  STOP restores its owned entry byte and disables new logging; the handler
+  and prepared continuation remain available for late traps until process
+  exit. Unrelated traps retain the default fatal disposition. A foreign
+  breakpoint later placed at an already published site cannot be distinguished
+  from a late owned trap; this is why lifetime exclusivity is required.
+
+  Registered PRIVATE_EXPEDITED_SYNC_CORE barriers serialize sibling cores
+  after patch writes. The transition still assumes x86-64 coherent single-byte
+  code modification; the tests do not prove safety on every processor or
+  complete capture while a core has already fetched the original instruction.
+
+  The additional RANGE observer covers one inline path at ELF VA 0xcecbd0.
+  R12 points to the record (id +0x1c, float value +0x20); RBP carries the input
+  owner. It preserves and executes the original MOV instructions once before
+  continuing at 0xcecbda. Its 256-row diagnostic buffer records finite raw
+  values, partial context, overflow and invalid-read counts. It neither sends
+  nor replays input, and last_issued remains a sampling label, not an apply tick.
+
+  Root's independent combined C/copied-ELF check passed; the four Lua contract
+  tests passed. The real LuaJIT API inventory initially rejected the three new
+  methods (217 versus 214); its updated explicit inventory now passes with
+  217 methods. A separate synthetic
+  real-SIGTRAP experiment covers a thread parked at the second instruction
+  during install and restore, plus a trap completed after entry restoration.
+  These are offline checks, not a nonzero-input result.
+
+  The subsequent trap-idle-60 native run completed 60 ticks on each Linux peer
+  with matching relay digests. Each peer recorded 60 armed statuses for STATE
+  and RANGE, zero events, and final installed=0/restored=1/cleanup_uncertain=0
+  for both. The primary raw-log audit verified all 39 bundle hashes and both
+  STOP records, with no owned process left afterward. The staged gate SHA-256
+  was f36d93985116d6be303197cfab90886ef0538da7efc21822f84ea3e2077370a0.
+  This validates idle installation and cleanup in X4 on this machine; it does
+  not validate moving controls, complete event capture, or input replay.
+
+Nonzero input observations
+  The synthetic-window-input-classified-600 run used addressed X11 key events
+  in a window verified against the owned process, executable hash and private
+  HOME. W and S were each pressed for 0.25 seconds, with releases between them.
+  Client 1 recorded channel 0x6d=1 at ticks 26..33 and -1 at ticks 50..57;
+  its STATE observer retained four press/release rows for ids 8 and 9. Client 2
+  recorded only zero pilot values and no STATE or RANGE events. Both retained
+  600 six-channel samples and stopped with restored=1; relay digests matched.
+  This alone does not prove ship motion or complete input decoding. The earlier
+  synthetic-window-input-600 attempt was cancelled before delivering any event
+  because its private controller misclassified an existing DEGRADED diagnostic
+  as fatal. That failed attempt remains retained.
+
+  In human-input-3600, the owner used the marked client-1 cockpit and reported
+  that movement and controls worked as expected. Both clients retained every
+  pilot sample from 1 through 3600, with six finite values each. Client 1 had
+  nonzero values on all six channels, 10 STATE rows and 87 RANGE rows. Client 2
+  had zero pilot values throughout, no STATE rows, and four zero-valued RANGE
+  rows. These limited observations do not assign stable meanings to every
+  channel or prove every input dispatch was observed.
+
+  The final observer counts match the retained row counts. Both observers on
+  both peers report installed=0, restored=1, cleanup_uncertain=0, overflow=0
+  and reentry=0; RANGE additionally reports invalid=0. Both peers completed
+  3600 ticks, reason=1/restored=1, with unchanged Steam process identity and
+  no owned survivors. The observer's general in-flight publication limitation
+  still applies; this is not a complete input-path coverage claim.
+
+  Input is still local and not replayed to the reference peer. The relay first
+  differs at tick 1564 and the full-world comparison at tick 1620. Those raw
+  failures are preserved, but a deliberately different input stream cannot
+  establish a deterministic replay failure.
+
+Reported pauses and measured diagnostic cost
+  This human run used the earlier full WORLD_IMPORTED_2 census at tick 1 and
+  every 60 ticks, at a nominal 30 Hz. It did not enable the existing distributed
+  census. In relay intervals for ticks 120..3599, all 58 census boundaries take
+  406.079..445.069 ms (median 419.931 ms). The other 3422 intervals have median
+  33.059 ms, p99 45.413 ms and maximum 147.988 ms. Every interval over 200 ms is
+  on a census boundary; three non-boundary intervals exceed 100 ms.
+
+  This closely matches the previously measured full-census cost documented in
+  LOCKSTEP-LINUX-PERFORMANCE-20261108.txt. The responsiveness improvements were
+  not removed from the code: this diagnostic bundle selected the synchronous
+  capture mode. It was an unsuitable default for the owner's control check.
+  This run has no per-stage profile, so the intervals do not isolate precise
+  CPU subcosts or exclude unrelated stalls. Relay pacing is not rendered FPS.
+
+  A subsequent 1200-tick responsiveness run reused the exact same gate binary
+  and bundle files, changing only the configuration to 120 rolling slices,
+  status stride 60 and enabled probe profiling. Both peers completed/restored,
+  all 1200 rolling states matched, and the runner reported no evidence errors
+  or owned survivors. The owner reported visually playable fluidity.
+
+  For its 1080 relay intervals at ticks 120..1199, median/p99/maximum were
+  33.158/43.451/100.880 ms. Four intervals exceeded 50 ms, one exceeded 100 ms.
+  The 18 former census boundaries had median 37.239 ms and maximum 43.451 ms;
+  none exceeded 50 ms. The recurring 0.42-second pauses did not recur in this
+  shorter capture. The isolated 100.880 ms interval remains explicit.
+
+  This is a responsiveness configuration, not a replacement claim for atomic
+  whole-world validation: rolling samples are taken on different ticks and
+  status thinning retains fewer intermediate diagnostic rows. The two runs
+  also differ in duration and human inputs. Complete instantaneous captures
+  remain useful for the separate short cross-platform divergence investigation.
+
+Private evidence, relative to this worktree
+  .local/proton-20261109/linux-pilot-capture-60/runs/ - idle run artifacts
+  .local/proton-20261109/native-capture-final-check.log - offline capture checks
+  .local/proton-20261109/native-stock-abi/ - static observer site inventory
+  .local/proton-20261109/stock-state-check-final.log - offline gate checks
+  .local/proton-20261109/linux-input-final-60/runs/input-final-60/ - final idle run
+  .local/proton-20261109/linux-input-final-60/input-final-independent-audit.json
+  .local/proton-20261109/nav-rng-candidate.json - frozen source inventory
+  .local/proton-20261109/linux-input-trap-60/primary-independent-idle-audit.json
+  .local/proton-20261109/stock-trap-interleaving-root.log - synthetic transitions
+  .local/proton-20261109/linux-input-trap-60/runs/synthetic-window-input-classified-600/root-input-audit.json
+  .local/proton-20261109/linux-input-trap-60/runs/human-input-3600/root-input-audit.json
+  .local/proton-20261109/linux-input-trap-60/runs/human-input-3600/private-performance-audit.json
+  .local/proton-20261109/linux-input-rolling-120/manifest.json - config-only derivation
+  .local/proton-20261109/linux-input-rolling-120/runs/rolling-responsiveness-1200/owner-observation.json
+  The observer-plan.txt in that evidence directory is a historical static
+  design note; its 'not implemented' status predates the current diagnostic.

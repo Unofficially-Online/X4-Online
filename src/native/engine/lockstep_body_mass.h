@@ -1,5 +1,5 @@
-/* Second bodies' mass properties, read only: a census to verify the value the Linux gate's native_gate_body1_mass
- * (linux/gate_body_mass.h) gives these bodies as they are created. Shared by both gates; it reads, never writes.
+/* Second bodies' mass properties, read only: a census to verify the value native_gate_body1_mass gives these bodies
+ * as they are created. Shared by both gates; this census reads, never writes.
  *
  * A ship's two physics bodies are dynamic (Jolt's EMotionType at Body +0x78 = 2; +0x76 is the body type, +0x77 the
  * broadphase layer) and their shape is X4's defined-mass shape (a Jolt decorated shape, type 2 subtype 0x11, Shape
@@ -11,6 +11,7 @@
  * x y z w = 0 0 0 1). Bit-exact words, not float equality. The lane is computed as 2.5f * mInvMass, which matched
  * Windows' real words for the seven fixture ships (W36i, tick 2); should a census ever show differ > 0, first check
  * whether that body's words are another rounding of the same sphere (1 / (0.4 * m), say) before suspecting a race.
+ * The 2026-11-09 mixed capture found detailed, non-fallback inertia on Windows too; W36i was not a general guarantee.
  *
  * The census walks every body of a Jolt BodyManager (mBodies: size at +0, elements at +0x10; a free slot holds an odd
  * value) and counts the bodies, the dynamic ones, the fixed-mass bodies of that shape (seen) and, of those, the ones

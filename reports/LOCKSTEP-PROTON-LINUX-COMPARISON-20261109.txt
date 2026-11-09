@@ -1,0 +1,510 @@
+Native Linux and Windows-under-Proton comparison, 2026-11-09
+==========================================================
+
+Windows X4 runs under Proton in the isolated developer harness. Two actual
+game processes, one native Linux and one Windows, loaded the same snapshot
+and completed 60 relay-controlled ticks. Their state diverged. This is a
+working cross-binary test setup, not a passing multiplayer or player-control
+test, and it does not replace testing a separate Windows machine.
+
+Pinned inputs
+-------------
+X4 9.00 (611726), Steam build 23660954:
+  Linux SHA-256:
+    113f73d74570084f6ce18a659b365009eccf579fb66dbabb5dad2b1718045f20
+  Windows SHA-256:
+    19750a6563889a970f434b5566eb396c6b2dc29ff814bd3e336f838176ad6891
+  Windows depot 392163, manifest 7091123868222547143.
+  Proton 10.0-4b.
+  Snapshot SHA-256:
+    bca270722a7bf26bb9986f2c30da1ca460b1d04b5617884bbc4cae55e6b90f03
+  World seed 2222222; twelve fixture actors, in the same manifest order.
+
+The experimental configuration uses 30 Hz, WORLD_IMPORTED_2 captures at
+ticks 1 and 60, and explicit simulation features rather than player defaults.
+Mining-camera handling is omitted on BOTH peers. Windows-specific prerequisite
+flags and portable arithmetic wrappers are retained in the installed configs.
+Identical flag names alone do not establish identical native behavior.
+
+Retained attempts
+-----------------
+Private evidence root: .local/proton-20261109/
+
+1. mixed-first-60: Windows refused before loading because its radar-serial
+   feature also requires ai_diag and radar_diag. The failed run is retained.
+2. mixed-second-60: after adding those Windows prerequisites, both games
+   completed 60 ticks with STOP reason 1 and restored=1. The relay reported
+   divergence from tick 1. World roots differed in timing at tick 1 and in
+   timing plus motion at tick 60. Object detail rows were disabled; that
+   attempt does not establish which individual objects differed.
+3. mixed-rows-60: same configuration with object detail rows enabled on both
+   sides. Both games again stopped cleanly at tick 60. Independent streaming
+   validation checked both complete captures, recomputed their roots and
+   timing preimages, and found zero parser errors:
+
+              Inventory  Topology  Health  Motion  Timing
+   tick 1     equal      0         0       0       12
+   tick 60    equal      0         0       1       11
+
+   Every timing difference is nav.parameters_due on a fixture actor.
+   Example saved ID 0000000000175310, Linux versus Windows:
+     tick 1:  9.00753464301427  versus 8.797353168328602
+     tick 60: 10.975694195429478 versus 10.260485831896458
+   The single motion difference at tick 60 is 00000000001754f6, whose
+   navigation deadline already differed at tick 1. This establishes the
+   order of sampled differences, not their cause.
+
+   Exact fields, identities, hashes and coverage:
+     mixed-rows-60/all-frame-differences.json
+   Original per-peer logs/configs:
+     mixed-rows-60/comparison/client1/ (native Linux)
+     mixed-rows-60/comparison/client2/ (Windows under Proton)
+   Lifecycle and relay evidence:
+     mixed-rows-60/orchestrator.json
+     mixed-rows-60/proton/result.json
+     linux-60-world-rows/runs/mixed-rows-60/run-result.json
+     mixed-rows-60/relay.json
+
+The second orchestrator initially waited for the persistent relay to exit.
+Its recorded failure after authenticated relay cleanup is retained separately
+from the genuine state divergence. The third orchestrator exits once both
+client runners complete and then stops its own relay.
+
+Coverage and interpretation
+---------------------------
+The captures contain 519363 objects at tick 1 and 519540 at tick 60. Motion
+coverage remains unknown for 32611 and 32643 objects respectively, equally
+on both peers. Equal captured roots therefore do not prove all engine state
+is covered. Native input capture/replay, full player controls, a dedicated
+server deployment, and remote Windows networking are outside this acceptance.
+
+Source inspection identifies an actionable parity gap: Windows has a separate
+fixture navigation RNG scope, NAV_UPDT, while the Linux cadence wrapper lacks
+that scope. The current test did not enable native_gate_nav_rng. The existing
+Linux nav_key uses a different domain and key tuple and is not a substitute.
+The subsequent fixture-scope implementation and native result are below.
+
+Fixture navigation follow-up
+----------------------------
+The Linux cadence hook now offers an opt-in fixture navigation RNG scope.
+It uses the exact Windows NAV_UPDT tuple: tick, fixture actor number, zero,
+one-based per-actor call ordinal, zero. It restores the incoming thread RNG
+after each call, including nested scopes. Identity checks require the bound
+owner, runtime identity and reverse controller pointer. Invalid time or RNG
+increments the navigation failure counter; as on Windows, the original call
+still executes and the next gate check stops. Nonfixture scopes are unchanged.
+
+The Lua probe routes native_gate_nav_rng to the explicit Linux API rather
+than pretending the Windows boot bit is implemented. Other unsupported boot
+bits still refuse. The builder accepts this option only with the twelve-actor
+snapshot fixture, serial pathing and world identities. Linux nav_key and this
+fixture scope are mutually exclusive; no default is enabled.
+
+Independent seed vectors, nesting/restoration and refusal tests pass. The
+primary review also ran 52 focused Python/Lua tests with no skips, rebuilt
+the Linux gate and ran copied-ELF, Lua bridge and C unit checks. The new
+fixture test is included in the normal C test entry point. A separate source
+review found no blocker within this limited scope.
+
+mixed-nav-rng-60 repeats the same snapshot and configuration with nav_rng
+enabled on both peers. Both actual games completed 60 ticks, reason 1,
+restored=1, with no owned survivors. The Linux diagnostic confirms twelve
+keyed fixture navigation calls at tick 1 and no navigation failure.
+
+Independent complete object validation now gives:
+  tick 1: all four WORLD_IMPORTED_2 roots equal.
+  tick 60: topology, health and timing equal; one motion difference,
+           saved ID 00000000001754f6. No parser errors.
+The earlier twelve/eleven timing differences are absent in these captures.
+The relay still reports divergence, first at tick 2, so this is NOT a passing
+mixed-platform run.
+
+The retained fixture STATE rows explain the tick-2 digest split completely.
+Tick 1 has no actor STATE rows: BATTLE_FIXTURE_PENDING_1 plus WORLD1 reproduces
+the equal relay digests. All 59 detailed frames, ticks 2 through 60, validate.
+At tick 2 all twelve actors differ in body1 inverse inertia and inertia
+rotation. For actor 1, inverse_inertia.x is Linux 3ed55556 (0.4166666865)
+against Windows 397056d1 (0.0002292053). Linux applied the explicit sphere
+fallback; Windows reported BODY1_MASS_NOOP and retained the hull-derived
+values. Earlier Windows runs happened to use the fallback naturally; that
+observation is not a reliable cross-platform policy.
+
+Actors 7 through 12 also differ in body0 inertia_rotation.y by one float ULP:
+Linux 3a0d3ab7, Windows 3a0d3ab6. Every other canonical field agrees at tick 2.
+Reconstructed STATE plus held WORLD1 matches each peer's exact relay digest.
+This identifies the captured differences, not when they first arose or which
+caused the later world motion difference. Both remain open; no hash field is
+removed. Evidence: mixed-nav-rng-60/state-row-first-difference.json, retained
+raw-line evidence and state-row-analysis-files.sha256.
+Evidence: mixed-nav-rng-60/world-comparison.json and comparison/client1/2;
+source/binary inventory: nav-rng-candidate.json. Production Linux gate SHA-256:
+  a3e1b221286839f028fd9d23573e2a21c12b77a794b38d4fbc47187d20f2d5a0
+
+Mass calculation investigation
+------------------------------
+The Windows creation-time body1 fallback is now implemented as an explicit,
+default-off option. It applies the same policy as the existing Linux option:
+only the second, fixed-mass physics body of the identified defined-mass shape
+receives the sphere fallback. Body0 keeps its calculated inertia. This is an
+experimental parity policy; it changes physics values, not digest coverage.
+
+Independent synthetic tests under Proton found an unwind defect in the first
+Windows trampoline. RtlVirtualUnwind interpreted its RIP-indirect continuation
+jump as an epilogue. The revised trampoline uses the volatile R11 register and
+passes the retained unwind cases. No X4 process was started by these tests.
+The original failure and a direct comparison of both jump forms are retained.
+
+The tests also exercise arm/STOP ordering, partial writes, failed protection
+or cache restoration, and unresolved suspended-thread handles. Failed resume
+and close operations retain their obligations for retry. A live thread that
+cannot be resumed prevents a clean-restoration claim. Bounded lock acquisition
+avoids waiting indefinitely for a suspended lock owner. The final focused
+test executable, SHA-256
+  49cdb6b1c320dc02da8d16ae74322869079608184cf0c8af72d02eb215be9e75,
+passed under Proton with no remaining owned processes. That evidence precedes
+the formatting-only follow-up and does not establish live mass parity.
+
+Two existing FPENV activation limitations remain outside this correction:
+failed hook installation does not roll back worker MXCSR values already
+changed, and exceeding the thread-record capacity can leave changed threads
+without a saved previous value. Do not interpret the focused lifecycle tests
+as proof that every independent gate feature has complete rollback.
+
+For body0, a copied-image experiment executes the pinned Linux and Windows
+mass routines on identical inputs without running either game entry point.
+The first localized difference is the association of the Jacobi theta
+calculation: Windows computes (0.5 / a) * h, Linux computes (0.5 * h) / a.
+For one identical operand pair this produces adjacent float values.
+
+Changing only that instruction order in the private Windows image removes
+all quaternion and physical inverse-inertia-lane differences in the retained
+1,001-case corpus. Full motion-property byte differences drop from 301 to 3.
+The three residual cases differ only in the fourth inverse-inertia SIMD lane;
+they remain reported. Its relevance to all downstream consumers has not been
+established. Linux outputs are unchanged. The primary audit independently
+checked all 62 artifact hashes and parsed the raw before/after records.
+
+This is a numerical reproduction and a candidate correction, not evidence
+that the live fixture or ongoing universe is synchronized. Private evidence:
+  mass-numeric/root-independent-theta-audit.json
+  mass-numeric/theta-order-residual-audit.json
+  mass-numeric/theta-order-final-sha256.json
+  body-mass-unit-prefix/body-mass-tests-d13cbc1-result.json
+  body-mass-unit-prefix/body-mass-tests-thaw-stop-result.json
+
+The runtime instruction-order patch subsequently passed source review after
+two reader/activation races were corrected. Public ownership checks serialize
+with activation and STOP, including the boot-frame path. A real pthread test
+exercises both successful and failed thaw before state publication. Nine
+focused C/Lua/builder tests pass independently. The integrated Windows gate
+test (including the pinned PE) and focused body-mass tests pass under Proton.
+Their first invocation failed because the new private test directory lacked
+the existing suite's export subdirectory. Creating that owned directory made
+the same executable pass; the earlier assertion and receipt remain retained.
+
+The first live attempt, mixed-mass-corrected-60, did not reach comparison.
+Windows refused portable-math activation before loading the snapshot, because
+the shared thread-freeze helper returned failure. The recorded diagnostic was
+stage=busy, attempts=1, busy=0, threads=0, with no unresolved resume/close
+obligation. It does not identify the exact failing Win32 operation. Neither
+new mass correction was activated. The orchestrator cancelled the Linux peer,
+and both owned runtimes were cleaned up. This is an invalid comparison, not
+a new desync result or successful mass-parity evidence. Specific freeze
+refusal diagnostics are the next step; no safety condition is relaxed.
+
+Private receipts:
+  body-mass-unit-prefix/integrated-mass-tests-result.json (first assertion)
+  body-mass-unit-prefix/integrated-mass-tests-ready-result.json (same EXEs pass)
+  windows-mass-build-final/receipt.json (source and executable hashes)
+  mixed-mass-candidate.json (split Linux reference / Windows candidate)
+  mixed-mass-corrected-60/orchestrator.json
+  mixed-mass-corrected-60/proton/result.json
+
+Live mass-parity result and remaining divergence
+------------------------------------------------
+The follow-up mixed-mass-freeze-diag-60 again refused before loading. Added
+diagnostics identify SuspendThread error 5 after 21 successful suspensions.
+All suspended-thread obligations were released. That capture did not record
+the failed thread's wait state and cannot prove whether it had already exited.
+
+The freeze helper now distinguishes a permanently terminated thread from a
+live or unknown thread. After a failed suspension, only WAIT_OBJECT_0 on the
+same thread handle allows enumeration to continue. The cursor remains open
+until enumeration advances; close failures still retain cleanup obligations.
+WAIT_TIMEOUT and WAIT_FAILED still refuse. This is not a blanket exception
+for access-denied errors or for Wine threads. Upstream Proton's Wine source
+also returns access denied for non-running threads, while a signaled thread
+object means termination:
+  https://github.com/ValveSoftware/wine/blob/proton_10.0/server/thread.c
+That branch source is explanatory evidence, not an identity check of the
+installed Wine binary.
+
+Focused tests cover the exited-handle cursor, live/unknown refusals, retained
+failure diagnostics, and unresolved resume/close obligations. The focused
+test and complete Windows gate test both pass under the isolated Proton
+prefix at source 92ddc86. Their executable SHA-256 values are:
+  focused: 541ad82380dd00b43d65e3bb6ab37d0873a023288d2289bca9b57a01ce0bcee1
+  gate:    9d9070e2d6b8ec109c8c53ab412527f68e6d20a59b768f5fd36dc5aa6ba1c494
+The gate test reads the pinned X4.exe; these tests do not execute its entry.
+
+The subsequent mixed-mass-exited-thread-60 completed both real games through
+60 ticks, with reason=1 and restored=1 on both peers. Windows activated both
+mass corrections before loading. Portable math recorded 34 suspended threads
+and four skipped observations of proven exited threads across two passes;
+the observation count need not represent four distinct threads. Final status
+shows no pending thread handles, uncertain writes, or unrestored mass patch.
+Both runners cleaned up their owned processes, and Linux reports the Steam
+client identity unchanged.
+
+Independent parsing of all 59 fixture frames, ticks 2 through 60, and both
+complete WORLD captures reproduces every relay digest without parser errors:
+  - All twelve fixture rows agree through tick 26.
+  - The recorded inverse inertia, inertia rotation and inverse mass words
+    agree for both bodies of every fixture actor in every recorded frame
+    (11,328 compared mass words).
+  - The first remaining difference is actor 6 at tick 27: angular velocity X
+    and its retained previous value are Linux 3ae0e6f0 versus Windows 3ae0e6ef,
+    one float ULP apart. Both bodies reflect the same difference.
+  - WORLD tick 1 agrees in every captured domain. At tick 60, topology,
+    health and timing still agree; motion differs for saved ID 1754f6 only.
+
+The relay first mismatch moved from tick 2 to tick 27. The run still FAILS
+agreement. This is bounded evidence that the two observed mass differences
+were removed, not proof of synchronized ongoing gameplay. Unknown motion
+coverage remains 32,611 objects at tick 1 and 32,643 at tick 60. No digest
+fields or numerical tolerances were weakened. The next investigation must
+locate the computation producing the angular-velocity difference.
+
+Private evidence:
+  mixed-mass-freeze-diag-60/root-freeze-refusal-audit.json
+  freeze-refusal-source/source.json
+  windows-mass-exited-thread-build/receipt.json
+  body-mass-unit-prefix/exited-thread-tests-result.json
+  mixed-mass-exited-thread-candidate.json
+  mixed-mass-exited-thread-60/root-mass-parity-audit.json
+  mixed-mass-exited-thread-60/root-mass-fields-and-cleanup.json
+  mixed-mass-exited-thread-60/comparison/client1/ and client2/
+
+Observed upstream impulse path
+------------------------------
+The existing default-off Linux impulse observer now records the return address
+of the pinned body-0 impulse helper. It checks the complete 240-byte helper,
+the exact inner return at 0x17e2f9c, its own noninline callback frame and the
+outer address's executable range. This is one known stack layout, not a
+frame-chain walk. Unrecognized sources, failed reads and rejected layouts
+remain explicit. No additional code-entry hook or physics correction is added.
+
+Source df79d04 was reviewed and integrated as 47cd431. Focused copied-ELF
+tests pass with both Zig and GCC at O2, including the actual helper path,
+exactly one original callback, failed reads, wrong source/frame, full-helper
+tampering and maximum status counters. The emitted GCC callback frame and
+helper pin were independently inspected. The synthetic caller in those
+tests is not a live engine observation.
+
+The native candidate retains the prior GCC build family. Its module SHA-256 is
+284742d7367b4c892b9f1f789e2540e872ca88c7b224130d904b14e585b086cf.
+The initial Zig module check rejected its ld-linux-x86-64.so.2 dependency;
+that failure is retained, and the generic allow-list was not relaxed. Its
+separate focused test subsequently passed. The native candidate's successful
+module check reports libc only, with maximum GLIBC version 2.38. This local
+development build is not a portability claim for older Linux distributions.
+
+mixed-impulse-caller-60 completed both real games at 60/reason=1/restored=1,
+with no owned survivors and unchanged Linux Steam identity. Windows uses the
+same frozen overlay as mixed-mass-exited-thread-60. Linux retains that run's
+configuration and Lua files, replacing the module with the stated candidate;
+the module also includes the previously reviewed, disabled input diagnostics.
+
+All 56 observed Linux impulse calls identify helper caller 0x19473e7. The
+final status reports 56 known callers and zero unknown, failed or rejected
+caller reads. The existing impulse inputs and before/after body values are
+byte-identical to the preceding capture on both platforms when the newly
+appended Linux caller fields are removed. The existing Windows caller is
+0xd5360e. This records a concrete upstream path without establishing why its
+inputs differ.
+
+At tick 27, actor 6's first impulse has identical pre-call pose and motion
+values on both platforms. Its incoming impulse Z is Linux b4961b5c versus
+Windows b4961a49; point X is 3f713333 versus 3f712f33 and point Y is 3f21a5a5
+versus 3f21a5a4. The resulting angular velocity X reproduces the observed
+3ae0e6f0 versus 3ae0e6ef difference. The complete fixture/world audit again
+reconstructs every relay digest without errors; agreement still FAILS first
+at tick 27. The investigation now includes the earlier weapon-joint target
+calculation, whose rounded target first differs at tick 15 in the retained
+capture. The ordering of these observations alone does not prove causality.
+
+Private evidence:
+  linux-impulse-caller-gcc-build/receipt.json
+  linux-impulse-caller-build/initial-validation-failure.json
+  linux-60-impulse-caller/manifest.json
+  mixed-impulse-caller-60/root-comparison-audit.json
+  mixed-impulse-caller-60/root-impulse-observer-audit.json
+
+Observed scalar weapon-target arithmetic
+----------------------------------------
+The default-off Linux IK target observer now captures the scalar angular
+normalizer's real entry operands and terminal result before its original
+store. It uses two single-byte traps with permanent dispatch identities,
+explicit fixture bindings and bounded rows. It does not change arithmetic.
+Source e46e0f5 and the Lua integration 92ad769 were independently reviewed.
+Root built the committed source with GCC and checked seven focused native
+unit cases, the shared trap contract and impulse regression. The production
+module SHA-256 is
+32f5df3c45bb492796051e180599b392138b481079d2a76403523b201234a2ca.
+The copied-code and machine-state tests are offline evidence, not a claim
+that every register, thread or event has been covered in the live game.
+
+mixed-ik-target-60 retained the frozen Windows overlay and enabled Linux
+observation only for actor 6, weapon 1, ticks 10..30. Both peers completed
+60 ticks with reason=1/restored=1 and no owned survivors. Steam identity
+remained unchanged. All 59 fixture frames and both WORLD captures reproduce
+the relay without evidence errors. The first digest mismatch remains tick 27.
+
+The observer captured 34 rows for two bound joints, one callback per sampled
+joint/tick. Every row had its corresponding Linux and Windows frame sample.
+All 34 observed native results match both the Linux arithmetic model and the
+Linux frame's stored target. Final pending, overflow, reentry, failed reads,
+unmatched entries, late completion and foreign-thread counts are zero. The
+3832 unbound observations and 7314 outside-window observations remain explicit;
+this is not an all-object observation or proof that no other path ran.
+
+At tick 15, joint 0's actual incoming values were:
+  requested angle       3c4ce12f
+  entry/terminal value  3ab1ed6b
+  normalized operand N  4049c67f
+  pi                    40490fdb
+  MXCSR                 00001fbf
+The native order (N-pi)+current gives 3c4ce1ad, exactly the observed Linux
+result. Applying Windows' order (N+current)-pi to these actual Linux operands
+gives 3c4ce200, exactly the Windows frame target. The input and terminal
+current value agree. This replaces the earlier constructed-operand example
+with measured Linux inputs; Windows' incoming operands are still unobserved.
+
+Across all 34 rows, this Windows-order counterfactual matches 29 Windows
+targets and differs on five later samples, at ticks 19, 23 and 25..27 for
+joint 0. Those differences are retained. Once trajectories have diverged,
+reusing Linux operands does not reproduce the Windows execution history.
+The result supports a bounded correction experiment but does not establish
+that this operation is the only desync source or that changing it fixes the
+subsequent impulse. No arithmetic correction was active in this capture.
+
+Private evidence:
+  linux-ik-target-gcc-build/receipt.json
+  linux-60-ik-target/manifest.json
+  mixed-ik-target-60/root-ik-target-audit.json
+  mixed-ik-target-60/root-world-fixture-audit.json
+  mixed-ik-target-60/proton/result.json
+  linux-60-ik-target/runs/mixed-ik-target-60/run-result.json
+  ik-target-order/root-baseline-audit.json
+
+Scalar angular-target correction: short native comparison
+---------------------------------------------------------
+The default-off Linux arithmetic-order candidate at 8cf1323 was independently
+built with GCC. Nine focused copied-code/lifecycle cases, the operand-observer
+regression and the shared trap contract passed. The final module SHA-256 is
+c81a3e663b6d2f11a13f9a5e53e756f2a94c54a19374bcb7c390625ec154afe8.
+The Lua integration passed 20 focused tests. Earlier failed test attempts
+remain retained; a red-zone canary outside the ABI-defined range was corrected
+in the test harness, without changing production code to satisfy that fixture.
+
+The isolated mixed-ik-target-order-60 run changes the native scalar angular
+target calculation from (N-pi)+current to (N+current)-pi. Original scratch
+register results and upper SIMD lanes are preserved. Unsupported FP control
+modes retain original arithmetic and latch an error. The correction is enabled
+before loading the same snapshot; the Windows overlay remains unchanged.
+The previous bounded operand observer is disabled in this run.
+
+Both clients completed 60 ticks with reason=1/restored=1. The relay agrees on
+all simulated steps 1..60 plus the initial tick-0 digest. Independent reconstruction of all 59 fixture frames and WORLD
+captures at ticks 1 and 60 found no field, object inventory or digest mismatch.
+All 4956 retained joint rows and all 56 physical impulse rows per peer agree
+exactly, without tolerances or masking. The Windows joint and impulse history
+is identical to the previous unmodified Windows history. The prior comparison
+had 2427 differing joint rows, 41 differing impulses and relay divergence from
+tick 27. This provides live evidence that the correction removes that bounded
+failure, rather than merely predicting a matching value from selected inputs.
+
+Final Linux status records 5607 calls, all corrected, with unsupported, active,
+late and failure counters zero; owned code bytes were restored. Both owned
+process sets were empty after cleanup, and Steam process identity was unchanged.
+These observations do not prove quiescence: a delayed trap can latch an error
+after the recorded STOP. That lifecycle limit remains open, and the candidate
+is not accepted for production. WORLD still reports 32611 then 32643 objects
+with unknown motion coverage; equality of captured fields does not establish
+complete universe determinism. This is a same-PC Linux/Windows-under-Proton
+comparison without network player-input replay, not a Windows-host playtest.
+
+The private field auditor rejects malformed, truncated and duplicate rows;
+29 synthetic regressions passed. Parse validity, cross-platform equality and
+Windows baseline invariance are separate verdicts. Exit code zero alone is
+not an agreement verdict.
+
+Private evidence:
+  linux-ik-target-order-gcc-build/receipt.json
+  linux-60-ik-target-order/manifest.json
+  mixed-ik-target-order-60/root-world-fixture-audit.json
+  mixed-ik-target-order-60/root-ik-order-fields.json
+  mixed-ik-target-order-60/proton/result.json
+  linux-60-ik-target-order/runs/mixed-ik-target-order-60/run-result.json
+  ik-target-order/audit-schema-receipt.json
+  mixed-ik-target-order-60/independent-bounded-review.json
+
+
+Extended comparison and remaining failure
+----------------------------------------
+The same frozen Linux bundle and Windows overlay were then run for 600 ticks,
+changing only the relay duration and runner expectations. Both peers reached
+STOP600/reason1/restored1, and owned process cleanup remained complete. The
+Linux correction recorded 60307 corrected calls with zero reported unsupported,
+active, late or failed calls; the late-trap limitation above still applies.
+
+This extended run FAILS agreement from tick 98. All 599 fixture frames and
+11 WORLD captures were independently reconstructed without parser errors.
+The first fixture difference is actor 1's linear Z velocity: Linux 41641c50
+versus Windows 41641c51, a one-ULP difference reproduced in both physics
+bodies. Other recorded fields in that first fixture comparison agree. WORLD
+motion first differs at tick 120; topology, health, timing and object inventory
+agree throughout the 11 captures. At tick 600, five watched objects differ in
+motion; unknown-motion coverage has grown to 33324 on each peer.
+
+The extended capture contains 50144 joint rows and 195 impulse rows per peer,
+with no missing counterpart keys. There are 2106 differing joint rows, first
+at tick 117, and eight differing physical impulse rows, first at tick 411.
+These later differences do not establish the origin of tick 98. Existing
+flight traces are being examined to locate the earliest differing input.
+
+For the overlapping first 60 ticks, the Windows joint and impulse history is
+still identical to the short corrected run. The auditor's Windows baseline
+status is "changed" because the longer run has additional keys; there are no
+differences for keys shared with that short capture. No whole-run baseline
+invariance is claimed across different durations.
+
+Private evidence:
+  ik-target-order/600-plan.json
+  mixed-ik-target-order-600/root-world-fixture-audit.json
+  mixed-ik-target-order-600/root-ik-order-fields.json
+  mixed-ik-target-order-600/proton/result.json
+  linux-60-ik-target-order/runs/mixed-ik-target-order-600/run-result.json
+
+Harness and validation
+----------------------
+tools/dev/proton_gate_live.py creates a fresh private prefix, game view,
+profile and overlay beneath .local. Its bubblewrap namespace makes the host
+filesystem read-only except for the owned run. It verifies the Windows image,
+overlay manifest and snapshot, uses a common relay and absolute arm time, and
+requires the expected STOP slot/tick/reason/restoration. Cleanup authenticates
+owned processes by UID, start identity and exact prefix; it never restarts
+Steam. Local clean STOP does not imply agreement with the other peer.
+
+tools/dev/linux_gate_live.py supports a specified external relay and common
+arm time. Its local-only result must be combined with the other peer and
+relay evidence. Original games, normal profiles and Workshop files are not
+written by these runs. Retained receipts report no owned survivors.
+
+Windows synthetic gate and wire-crypto tests also pass under Proton. The
+gate test additionally reads and verifies the pinned PE image; that unit
+test does not launch X4. One negative test formerly assumed address 0x10000
+was unreadable, which Wine disproved. It now allocates an owned PAGE_NOACCESS
+page and tests refusal against that page. This changes the test fixture only.
+Evidence: prefix-smoke-2/windows-tests-native-image-result.json and
+windows-tests/before-fixture-readability/receipt.json.

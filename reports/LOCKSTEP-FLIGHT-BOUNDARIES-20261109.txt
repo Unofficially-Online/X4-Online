@@ -1,0 +1,80 @@
+LINUX / WINDOWS STEERING BOUNDARY COMPARISON
+9 November 2026
+
+Result
+  The 120-tick comparison reproduces the remaining physical-state mismatch at
+  tick 98. It does not establish cross-platform determinism. New read-only
+  snapshots narrow the investigation to earlier movement requests: actor 1's
+  linear command first differs at tick 93, its rounded request target first
+  differs at tick 96, and its physical velocity first differs at tick 98.
+  This ordering is evidence for further investigation, not proof of causality.
+
+Diagnostic change
+  Existing Steering wrappers now sample the model's three-lane linear/angular
+  commands after the original update, plus the solver's request groups before
+  and after it. They retain raw rounded/scaled targets, gains and dirty flags.
+  Every read has validity bits; failed or unstable-pointer reads are invalid
+  rather than interchangeable with numerical zero. No allocating engine getter
+  is called. Raw pointers are not exported. The original update runs once;
+  Linux errno and Windows last-error are preserved across the new reads.
+
+  These are last-call snapshots, not all invocations or actual call arguments.
+  Pointer rechecks do not prove atomic/coherent state, lifetime or ABA safety.
+  The existing serial fixture path and frame-boundary reads limit this evidence.
+  The diagnostic does not add a numerical correction or replay player inputs.
+
+Observed sequence
+  Actor 4, tick 75: angular command Z differs, bfa8da45 versus bfa8da41
+  (Linux versus Windows); the corresponding scaled request differs too. The
+  rounded angular target remains equal. Tick 76 retains that difference in the
+  before snapshot; the after snapshot agrees again.
+
+  Actor 1, tick 93: linear command Z is 4286e47e versus 4286e47c, approximately
+  67.4462738 versus 67.4462585. The scaled request differs identically. At tick
+  96 the rounded target becomes approximately 101.0487 versus 101.0486. The
+  first physical-state difference remains the one-ULP velocity mismatch at 98.
+  At tick 98 the sampled request boundaries themselves agree again.
+
+  All 1,428 captured STATE rows per platform, ticks 2 through 120 for twelve
+  actors, are byte-identical to the corresponding prefix of the earlier
+  600-tick run. This bounds the observed diagnostic effect to those fields;
+  it is not proof that every engine behavior was unaffected.
+
+Coverage and validation limits
+  Both peers have 1,284 unique boundary keys: ticks 14 through 120, twelve
+  actors each. The full strict audit remains INCOMPLETE_OR_INVALID_SAMPLES:
+  each peer also has 144 unavailable rows without tick identity and twelve
+  tick-14 rows whose before snapshot has no solver yet. These rows remain in
+  the retained logs and are not silently filtered into a passing result.
+  All validity bits are satisfied individually for ticks 15 through 120.
+
+  Fixture/world receipt reconstruction agrees with the relay: divergence at
+  98. Captured world topology, health, timing and inventory agree at 1, 60 and
+  120. Motion agrees at 1 and 60; actor 1's saved identity differs at 120.
+  Unknown motion coverage remains 32,758 objects per peer at tick 120.
+
+  Both games reported STOP120, reason1, restored1. Owned-process cleanup was
+  empty and the existing Steam process was unchanged. The earlier scalar IK
+  correction remains active in this experiment; its late-trap quiescence limit
+  remains unproven. This was one PC with native Linux and Windows under Proton,
+  not a second physical Windows PC or a complete multiplayer-player test.
+
+Offline checks
+  Pure layout and formatter tests, 222 Lua probe tests, Linux copied-image gate
+  tests and Windows gate tests passed. The first combined Linux test failed
+  because its fixture omitted startup lifecycle calls after an unused STOP.
+  The test-only correction mirrors production startup and keeps the installed
+  one-shot refusal. The original failed receipt is retained.
+
+  The strict parser rejects invalid flags, missing/duplicate rows, duplicate
+  fields, invalid widths/numbers, additional unavailable rows and empty tick
+  windows. Its success status means readable, complete samples in its declared
+  scope; equality and simulation acceptance are separate questions.
+
+Provenance
+  Diagnostic source: a3fec0f, 28f7433; test corrections: 650fc97, 49f4530.
+  Frozen run: .local/proton-20261109/mixed-flight-boundary-120/.
+  Root audits: root-boundary-audit.json, root-selected-onsets.json and
+  root-world-fixture-audit.json. Independent source/installed-file/row review:
+  independent-boundary-review.json. Source-level investigation of the command
+  producer is still open. No correction to its arithmetic is claimed here.

@@ -96,6 +96,9 @@ def replay_plan(path):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--mass-jacobi-order', action='store_true',
+                   help='opt-in Windows mass Jacobi multiply-then-divide theta order; '
+                        'snapshot boot only; Linux reports its existing native order')
     gate = p.add_mutually_exclusive_group(required=True)
     gate.add_argument('--gate-dll', type=Path, help='Windows gate x4lan_gate_64.dll')
     gate.add_argument('--gate-so', type=Path, help='Linux gate core x4lan_gate.so (src/native/engine/linux): snapshot clock runs, '
@@ -155,8 +158,8 @@ def main():
                    '(native_gate_warp_exit; Windows is that order)')
     p.add_argument('--flight-limits', action='store_true', help="the Linux gate: the engine parameters' limit words with the "
                    "hoisted reciprocal (native_gate_flight_limits; Windows is that order)")
-    p.add_argument('--body1-mass', choices=('fallback',), help="the Linux gate: a ship's second body gets the empty compound's "
-                   "mass properties at creation, Windows' value (native_gate_body1_mass)")
+    p.add_argument('--body1-mass', choices=('fallback',), help="normalize a ship second body to the empty compound mass properties at creation "
+                   "on either gate (native_gate_body1_mass)")
     p.add_argument('--ik-step', action='store_true', help="the Linux gate: the skeleton joints' fixed-step divisions by 0.02 as "
                    "Windows' multiplications by 50 (native_gate_ik_step)")
     p.add_argument('--ik-diag', action='store_true', help='the Linux gate: IKJOINT rows, the fixture ships\' and weapons\' skeleton '
@@ -351,6 +354,8 @@ def main():
                         'fixtures are always bare (the default stack needs the battle snapshot and the Windows modules)')
     p.add_argument('--out', type=Path, required=True)
     args = p.parse_args()
+    if args.mass_jacobi_order and not args.snapshot:
+        p.error('--mass-jacobi-order requires the snapshot boot')
     if args.session_clients and (args.command_test or args.player_probe or args.docking_state or args.docking_shape_rng):
         p.error('--session-clients excludes the two-player command, player and docking fixtures')
     if args.player_probe:
@@ -586,8 +591,7 @@ def main():
             p.error('--travel-determinism needs --gate-so, a snapshot, --world-identities, '
                     '--serial-pathing and path determinism bit 2')
     if args.gate_so:
-        # The Linux gate core owns fixed dt itself (snapshot boot) and has no fixture modules yet;
-        # world identities and the world hash are ported (src/native/engine/linux/gate_world.h).
+        # Linux owns fixed dt and the explicitly ported snapshot/fixture modules.
         if not args.snapshot or args.mode not in ('clock', 'battle'):
             p.error('--gate-so supports the snapshot boot with --mode clock or battle only')
         if args.mode == 'battle' and not args.snapshot_prebind:
@@ -600,11 +604,20 @@ def main():
         allowed.update(('snapshot_prebind', 'actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state',
                         'flight_diag', 'flight_rng', 'flight_full', 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics', 'body_diag', 'params_diag'))
         allowed.add('path_transform_observe')
+        allowed.add('nav_rng')
+        allowed.add('mass_jacobi_order')
         allowed.update(('world_motion_watch', 'world_motion_window', 'economy_watch', 'economy_watch_window', 'navmesh_post_observe'))
         allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile', 'status_stride'))
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
             p.error('not ported to the Linux gate: ' + ', '.join('--' + k.replace('_', '-') for k in unported))
+        if args.nav_rng:
+            if not (args.snapshot_prebind and fixture and len(fixture) == 12
+                    and args.serial_pathing and args.world_identities):
+                p.error('--nav-rng on Linux requires --snapshot-prebind with twelve fixture actors, '
+                        '--serial-pathing and --world-identities')
+            if args.nav_key:
+                p.error('--nav-rng and --nav-key use different navigation RNG streams; choose one')
         if args.params_diag and args.fp_redirect:
             p.error('--params-diag and --fp-redirect both hook the Linux flight-parameter refresh entry (0x14378c0): use one')
     if not args.snapshot and not args.fixedtick_dll:
@@ -708,6 +721,8 @@ X4LAN_CONFIG.token = "@X4LANE_TOKEN@"
 X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
 ''' % args.mode)
     with (args.out / 'ui/config.lua.append').open('a') as config:
+        if args.mass_jacobi_order:
+            config.write('X4LAN_CONFIG.native_gate_mass_jacobi_order = true\n')
         if args.navmesh_post_observe is not None:
             config.write('X4LAN_CONFIG.native_gate_navmesh_post_observe = {%d,%d}\n' % tuple(args.navmesh_post_observe))
         if args.economy_watch is not None:
@@ -905,8 +920,8 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_flight_limits = true\n')
     if args.body1_mass:
-        if not args.gate_so or not args.snapshot:
-            p.error('--body1-mass needs --gate-so and the snapshot boot')
+        if not args.snapshot:
+            p.error('--body1-mass needs the snapshot boot')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write(f"X4LAN_CONFIG.native_gate_body1_mass = '{args.body1_mass}'"+chr(10))
     if args.ik_step:
@@ -1308,7 +1323,8 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             config.write('X4LAN_CONFIG.native_gate_params_diag = true\n')
     if nav:
         with (args.out/'ui/config.lua.append').open('a') as config:
-            config.write('X4LAN_CONFIG.native_gate_nav_diag = true\n')
+            if not args.gate_so:
+                config.write('X4LAN_CONFIG.native_gate_nav_diag = true\n')
             if args.nav_rng:
                 config.write('X4LAN_CONFIG.native_gate_nav_rng = true\n')
             if args.nav_initial_refresh:

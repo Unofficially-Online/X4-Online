@@ -292,6 +292,27 @@ class TableTests(unittest.TestCase):
         values, rep = defaults.apply(defaults.parse(SESSION))
         self.assertFalse(set(rep['applied']) & set(defaults.DIAGNOSTIC_KEYS))
 
+    def test_experimental_platform_keys_are_classified_by_behavior(self):
+        for key in ('native_gate_ik_target_observer', 'native_gate_pilot_capture_probe',
+                    'native_gate_stock_range_observer', 'native_gate_stock_state_observer'):
+            self.assertIn(key, defaults.DIAGNOSTIC_KEYS)
+        for key in ('native_gate_ik_target_order', 'native_gate_mass_jacobi_order',
+                    'native_gate_stock_trap_exclusive'):
+            self.assertIn(key, defaults.EXCLUDED_KEYS)
+        values, report = defaults.apply(defaults.parse(SESSION))
+        self.assertFalse(set(report['applied']) & set(defaults.DIAGNOSTIC_KEYS + defaults.EXCLUDED_KEYS))
+        for key in ('native_gate_ik_target_order', 'native_gate_mass_jacobi_order',
+                    'native_gate_stock_trap_exclusive'):
+            self.assertNotIn(key, values)
+
+        # Classification records behavior; an explicitly requested experiment
+        # or observer keeps its value and remains subject to probe validation.
+        for key in ('native_gate_ik_target_order', 'native_gate_ik_target_observer'):
+            explicit = defaults.parse(SESSION)
+            explicit[key] = 'true'
+            configured, _ = defaults.apply(explicit)
+            self.assertEqual(configured[key], 'true')
+
     def test_the_people_config_is_covered(self):
         """Every key of Play42P is a default with Play42P's value, a diagnostic, a fixture, a tuning key or the session."""
         play = defaults.parse(PLAY42P)
@@ -691,6 +712,32 @@ X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@
             self.assertIn('DEFAULTS_OFF', printed.getvalue())
             self.assertEqual((out/'ui.xml.files').read_text().split()[0], 'ui/native_gate_defaults.lua')
             self.assertTrue((out/'ui/config.lua.append').read_text().startswith('X4LAN_CONFIG.native_gate_defaults = false  -- a fixed-tick boot'))
+
+    def test_windows_body1_fallback_requires_snapshot_and_is_emitted_only_when_requested(self):
+        builder = load('build_native_gate_overlay_body_mass', 'tools/dev/build_native_gate_overlay.py')
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            dll = root / 'gate.dll'
+            dll.write_bytes(b'dll')
+            snapshot = root / 'save.xml.gz'
+            snapshot.write_bytes(b'owned snapshot')
+            for enabled in (False, True):
+                out = root / ('enabled' if enabled else 'default')
+                argv = ['build', '--gate-dll', str(dll), '--snapshot', str(snapshot),
+                        '--mode', 'clock', '--out', str(out)]
+                if enabled:
+                    argv += ['--body1-mass', 'fallback']
+                with mock.patch('sys.argv', argv), contextlib.redirect_stdout(io.StringIO()):
+                    builder.main()
+                config = (out / 'ui/config.lua.append').read_text()
+                self.assertEqual("X4LAN_CONFIG.native_gate_body1_mass = 'fallback'" in config, enabled)
+            fixed = root / 'fixed.dll'
+            fixed.write_bytes(b'dll')
+            argv = ['build', '--gate-dll', str(dll), '--fixedtick-dll', str(fixed),
+                    '--mode', 'clock', '--out', str(root / 'missing-snapshot'), '--body1-mass', 'fallback']
+            with mock.patch('sys.argv', argv), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    builder.main()
 
 
 if __name__ == '__main__':

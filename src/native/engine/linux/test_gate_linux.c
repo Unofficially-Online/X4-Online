@@ -379,6 +379,11 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_impulse.h"
 #include "test_gate_ik_diag.h"
 #include "test_gate_ik_step.h"
+#include "test_gate_pilot_capture.h"
+#include "test_gate_stock_state_observer.h"
+#include "test_gate_stock_range_observer.h"
+#include "test_gate_stock_trap.h"
+#include "test_gate_nav_fixture_rng.h"
 #include "test_gate_mining_camera.h"
 #include "test_gate_runtime_ids_local.h"
 #include "test_gate_shield_canonical.h"
@@ -397,8 +402,79 @@ static void test_world_install_elf(void) {
     assert(world_identity_restored && !memcmp(entry,original,16) && !memcmp(clear,original_clear,16));
     printf("world identity patch on the executable image PASS\n");
 }
+/* Coverage keeps its SIGTRAP handler installed. Exercise the incompatible
+ * exclusive stock contract in fresh child processes in the combined suite. */
+static void test_stock_observer_isolated(void (*test)(void)) {
+    pid_t child = fork();
+    assert(child >= 0);
+    if (!child) {
+        struct sigaction action = {0};
+        action.sa_handler = SIG_DFL;
+        sigemptyset(&action.sa_mask);
+        assert(!sigaction(SIGTRAP, &action, NULL));
+        test();
+        _exit(0);
+    }
+    int status = 0;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+#include "test_gate_ik_target_observer.h"
+#include "test_gate_ik_target_order.h"
 int main(int argc,char **argv) {
     setvbuf(stdout,NULL,_IONBF,0);
+    if (argc == 3 && !strcmp(argv[2], "--ik-target-order-only")) {
+        reset_session();
+        elf_image(argv[1]);
+        gate_env.exe = argv[1];
+        gate_env.file = 1;
+        test_ik_target_order_elf();
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[2], "--ik-target-only")) {
+        reset_session();
+        elf_image(argv[1]);
+        gate_env.exe = argv[1];
+        gate_env.file = 1;
+        test_ik_target_observer_elf();
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[2], "--impulse-only")) {
+        reset_session();
+        elf_image(argv[1]);
+        gate_env.exe = argv[1];
+        gate_env.file = 1;
+        test_impulse_linux();
+        test_impulse_elf();
+        test_impulse_caller_guards_elf();
+        test_impulse_caller_stack_elf();
+        return 0;
+    }
+    if(argc==2 && !strcmp(argv[1],"--nav-rng-only")) {
+        test_nav_fixture_rng();
+        return 0;
+    }
+    if(argc==3 && !strcmp(argv[2],"--stock-trap-contract-only")) {
+        reset_session();elf_image(argv[1]);gate_env.exe=argv[1];gate_env.file=1;
+        test_stock_trap_contract();
+        return 0;
+    }
+    if(argc==3 && !strcmp(argv[2],"--stock-range-only")) {
+        reset_session();elf_image(argv[1]);gate_env.exe=argv[1];gate_env.file=1;
+        test_stock_range_observer_elf();
+        return 0;
+    }
+    if(argc==3 && !strcmp(argv[2],"--stock-state-only")) {
+        reset_session();elf_image(argv[1]);gate_env.exe=argv[1];gate_env.file=1;
+        test_stock_state_observer_elf();
+        return 0;
+    }
+    if(argc==3 && !strcmp(argv[2],"--pilot-capture-only")) {
+        reset_session();elf_image(argv[1]);gate_env.exe=argv[1];gate_env.file=1;
+        test_pilot_capture_elf();
+        return 0;
+    }
+    test_nav_fixture_rng();
     test_fetch();test_fetch_region_cost();
     test_sha256();test_relay_host();test_compat();test_code_swap();test_near_page();
     synth_image();test_verify_stages();test_dt();test_frame_gate();test_frame_gate_failures();
@@ -480,7 +556,14 @@ int main(int argc,char **argv) {
         test_body_step_elf();
         test_velocity_elf();
         test_impulse_elf();
+        test_impulse_caller_guards_elf();
+        test_impulse_caller_stack_elf();
         test_ik_step_elf();
+        test_pilot_capture_elf();
+        test_stock_observer_isolated(test_stock_state_observer_elf);
+        test_stock_observer_isolated(test_stock_range_observer_elf);
+        test_ik_target_observer_elf();
+        test_ik_target_order_elf();
         test_mining_camera_elf();
         test_runtime_ids_local_elf();
         test_shield_canonical_elf();

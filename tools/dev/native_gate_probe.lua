@@ -116,6 +116,72 @@ end
 assert(cfg.native_gate_wire_crypto==nil or (type(cfg.native_gate_wire_crypto)=='string' and wire3),
  'native_gate_wire_crypto needs the protocol 3 input wire (native_gate_clients) and a credential string')
 assert(cfg.native_gate_hash=='clock' or cfg.native_gate_hash=='battle','invalid gate hash scope')
+assert(cfg.native_gate_nav_rng==nil or type(cfg.native_gate_nav_rng)=='boolean',
+ 'native_gate_nav_rng must be a boolean')
+assert(cfg.native_gate_mass_jacobi_order==nil or type(cfg.native_gate_mass_jacobi_order)=='boolean',
+ 'native_gate_mass_jacobi_order must be a boolean')
+assert(cfg.native_gate_ik_target_order==nil or type(cfg.native_gate_ik_target_order)=='boolean',
+ 'native_gate_ik_target_order must be a boolean')
+assert(not cfg.native_gate_ik_target_order or cfg.native_gate_snapshot_sha,
+ 'IK target order requires snapshot boot')
+assert(not cfg.native_gate_ik_target_order or cfg.native_gate_stock_trap_exclusive == true,
+ 'IK target order requires native_gate_stock_trap_exclusive=true')
+assert(not cfg.native_gate_ik_target_order or not (cfg.native_gate_ik_target_observer or cfg.native_gate_ik_step or
+ cfg.native_gate_coverage or cfg.native_gate_fork_save),
+ 'IK target order excludes IK target observer, IK step, coverage and fork save')
+assert(not cfg.native_gate_mass_jacobi_order or cfg.native_gate_snapshot_sha,
+ 'mass Jacobi order requires the snapshot boot')
+assert(cfg.native_gate_pilot_capture_probe==nil or type(cfg.native_gate_pilot_capture_probe)=='boolean',
+ 'native_gate_pilot_capture_probe must be a boolean')
+assert(cfg.native_gate_stock_state_observer==nil or type(cfg.native_gate_stock_state_observer)=='boolean',
+ 'native_gate_stock_state_observer must be a boolean')
+assert(cfg.native_gate_stock_range_observer==nil or type(cfg.native_gate_stock_range_observer)=='boolean',
+ 'native_gate_stock_range_observer must be a boolean')
+-- Diagnostic-only contract: the disposable process must retain exclusive
+-- SIGTRAP and site ownership, without a debugger, for its entire lifetime.
+assert(not (cfg.native_gate_stock_state_observer or cfg.native_gate_stock_range_observer) or
+ cfg.native_gate_stock_trap_exclusive==true,
+ 'stock observers require native_gate_stock_trap_exclusive=true')
+assert(not cfg.native_gate_stock_range_observer or not cfg.native_gate_coverage,
+ 'range observer and coverage cannot be combined')
+assert(not (cfg.native_gate_stock_range_observer or cfg.native_gate_stock_state_observer) or not cfg.native_gate_fork_save,
+ 'stock observers and fork save cannot be combined')
+assert(not cfg.native_gate_stock_state_observer or not cfg.native_gate_coverage,
+ 'stock state observation cannot share code pages with coverage breakpoints')
+-- Diagnostic only: SIGTRAP and the pinned sites belong to this process for its lifetime.
+do
+ local spec = cfg.native_gate_ik_target_observer
+ assert(spec == nil or spec == false or type(spec) == 'table', 'native_gate_ik_target_observer must be a table or false')
+ if spec then
+  local function integer(value, minimum, maximum)
+   return type(value) == 'number' and value % 1 == 0 and value >= minimum and value <= maximum
+  end
+  assert(integer(spec.first, 1, 4294967295) and integer(spec.last, 1, 4294967295) and
+   spec.last >= spec.first and spec.last - spec.first < 60, 'invalid IK target observer window')
+  assert(cfg.native_gate_stock_trap_exclusive == true, 'IK target observer requires native_gate_stock_trap_exclusive=true')
+  assert(not cfg.native_gate_coverage and not cfg.native_gate_fork_save and not cfg.native_gate_ik_step,
+   'IK target observer excludes coverage, fork save and IK step')
+  assert(cfg.native_gate_hash == 'battle' and cfg.native_gate_snapshot_sha and cfg.native_gate_world_identities == true and
+   type(cfg.native_gate_snapshot_fixture) == 'table' and #cfg.native_gate_snapshot_fixture == 12,
+   'IK target observer requires world identities and the twelve-actor snapshot fixture')
+  assert(type(spec.objects) == 'table' and #spec.objects > 0 and #spec.objects <= 396,
+   'IK target observer requires explicit fixture objects')
+  local object_count = 0
+  for key in pairs(spec.objects) do
+   assert(integer(key, 1, #spec.objects), 'IK target observer objects must be a contiguous list')
+   object_count = object_count + 1
+  end
+  assert(object_count == #spec.objects, 'IK target observer objects must be a contiguous list')
+  local seen = {}
+  for _, object in ipairs(spec.objects) do
+   assert(type(object) == 'table' and integer(object.actor, 1, 12) and integer(object.weapon_slot, 0, 32),
+    'invalid IK target observer fixture object')
+   local key = object.actor .. ':' .. object.weapon_slot
+   assert(not seen[key], 'duplicate IK target observer fixture object')
+   seen[key] = true
+  end
+ end
+end
 assert(cfg.native_gate_battle_engage==nil or cfg.native_gate_battle_engage==false,'native_gate_battle_engage accepts only false')
 -- Opt-in census scenario fixtures (docs/LOCKSTEP-SCENARIOS.txt): MD events at fixed gated
 -- ticks, identical on every client. native_gate_missions.xml / native_gate_highway.xml.
@@ -1573,6 +1639,134 @@ local camera_perturb=false -- this client perturbs its camera (native_gate_camer
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
 local nav_cadence_cursor=0
 local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,character_play=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,vplayer_map=0,vplayer_spike='',event_rng=0,build_rng=0,economy_load_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,ui_exports=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+row_cursors.stop_stock_observers = function()
+ -- A refused/partial native arm can leave diagnostic evidence; failed API or
+ -- platform admission cannot. Only attempted installations get final reads.
+ -- Rows can publish after STOP, so these bounded final reads are not a
+ -- quiescence guarantee and a missing row must not be treated as complete.
+ if row_cursors.stock_state_observer_attempted then ticklog.try(function()
+  log('STOCK_STATE_OBSERVER_STOP '..tostring(gate.stock_state_observer_status()))
+  for _=1,256 do
+   local row=gate.stock_state_observer_row(row_cursors.stock_state_observer or 0)
+   if not row then break end
+   ticklog.write('STOCK_STATE_ROW '..row)
+   row_cursors.stock_state_observer=(row_cursors.stock_state_observer or 0)+1
+  end
+ end) end
+ if row_cursors.stock_range_observer_attempted then ticklog.try(function()
+  log('STOCK_RANGE_OBSERVER_STOP '..tostring(gate.stock_range_observer_status()))
+  for _=1,256 do
+   local row=gate.stock_range_observer_row(row_cursors.stock_range_observer or 0)
+   if not row then break end
+   ticklog.write('STOCK_RANGE_ROW '..row)
+   row_cursors.stock_range_observer=(row_cursors.stock_range_observer or 0)+1
+  end
+ end) end
+
+end
+-- Keep observer state on row_cursors: frame() is at LuaJIT's upvalue limit.
+do
+ local spec = cfg.native_gate_ik_target_observer
+ local next_row, bound = 0, false
+ function row_cursors.ik_target_arm()
+  if not spec then return end
+  assert(gate.platform and gate.platform() == 'linux' and gate.ik_target_observer and
+   gate.ik_target_bind and gate.ik_target_status and gate.ik_target_row,
+   'Linux IK target observer is unavailable')
+  -- A UI reload can arrive after the gate stopped; retain its final evidence.
+  local session = assert(gate.poll(), 'IK target session unavailable')
+  if session.active == 0 then return end
+  -- Same-window re-entry asks native code to verify its existing ownership;
+  -- it never resets rows or silently transfers the owning UI thread.
+  assert(gate.ik_target_observer(spec.first, spec.last) == 1, 'Linux IK target observer refused')
+  ticklog.write('IK_TARGET_ARMED '..assert(gate.ik_target_status(), 'IK target status unavailable'))
+ end
+ function row_cursors.ik_target_frame(tick)
+  if not spec then return end
+  if not bound then
+   if ready then
+    assert(tick < spec.first, 'IK target fixture was enrolled too late')
+    for _, object in ipairs(spec.objects) do
+     local ship = assert(actors[object.actor], 'IK target fixture actor unavailable')
+     local runtime = ship
+     if object.weapon_slot ~= 0 then
+      local count = tonumber(ffi.C.GetNumUpgradeSlots(ship, '', 'weapon')) or 0
+      assert(object.weapon_slot <= count, 'IK target fixture weapon slot unavailable')
+      runtime = ffi.C.GetUpgradeSlotCurrentComponent(ship, 'weapon', object.weapon_slot)
+     end
+     assert(runtime and tonumber(runtime) ~= 0, 'IK target fixture object unavailable')
+     assert(gate.ik_target_bind(object.actor, object.weapon_slot, tonumber(runtime)) == 1,
+      'IK target fixture bind refused')
+    end
+    bound = true
+    ticklog.write('IK_TARGET_BOUND '..assert(gate.ik_target_status(), 'IK target status unavailable'))
+   else
+    assert(tick < spec.first, 'IK target fixture was not enrolled before the window')
+   end
+  end
+  ticklog.status('IK_TARGET', tick, gate.ik_target_status, 'IK target status unavailable')
+  row_cursors.ik_target_drain(512)
+ end
+ function row_cursors.ik_target_drain(limit)
+  -- A reserved row may publish later; retry it instead of skipping it.
+  for _ = 1, limit do
+   if next_row >= 4096 then return end
+   local row = gate.ik_target_row(next_row)
+   if row == nil then return end
+   assert(type(row) == 'string', 'IK target row unavailable')
+   -- native_result_before_store is the operand before the physical store,
+   -- not a corrected value or proof that the store has completed.
+   ticklog.write('IK_TARGET_ROW '..row)
+   next_row = next_row + 1
+  end
+ end
+ function row_cursors.ik_target_stop()
+  if not spec then return end
+  ticklog.try(function()
+   ticklog.write('IK_TARGET_STOP '..tostring(gate.ik_target_status()))
+   row_cursors.ik_target_drain(4096)
+   -- A callback can publish after STOP; this bounded drain is not quiescence.
+  end)
+ end
+end
+-- Global scalar angular-target correction; independent of fixture diagnostics.
+do
+ function row_cursors.ik_target_order_arm()
+  if not cfg.native_gate_ik_target_order then return end
+  -- Use the same platform selection as the gate loader: the Windows gate has
+  -- no platform export, while Linux must confirm its own native API.
+  if package.config:sub(1, 1) == '\\' then
+   log('IK_TARGET_ORDER_NOOP windows: original angular target uses the Windows operation order')
+   return
+  end
+  assert(gate.platform and gate.platform() == 'linux', 'IK target order platform unavailable')
+  assert(cfg.native_gate_world_identities == true and type(cfg.native_gate_snapshot_fixture) == 'table' and
+   #cfg.native_gate_snapshot_fixture == 12,
+   'Linux IK target order requires world identities and the twelve-actor snapshot fixture')
+  assert(type(gate.ik_target_order) == 'function' and type(gate.ik_target_order_status) == 'function',
+   'Linux IK target order is unavailable')
+  local session = assert(gate.poll(), 'IK target order session unavailable')
+  if session.active == 0 then return end
+  -- Native re-entry verifies the existing owned installation on UI reload.
+  assert(gate.ik_target_order() == 1, 'Linux IK target order refused')
+  ticklog.write('IK_TARGET_ORDER_ARMED '..assert(gate.ik_target_order_status(), 'IK target order status unavailable'))
+ end
+ function row_cursors.ik_target_order_frame(tick)
+  if cfg.native_gate_ik_target_order and package.config:sub(1, 1) ~= '\\' and
+   gate.platform and gate.platform() == 'linux' then
+   ticklog.status('IK_TARGET_ORDER', tick, gate.ik_target_order_status, 'IK target order status unavailable')
+  end
+ end
+ function row_cursors.ik_target_order_stop()
+  if cfg.native_gate_ik_target_order and package.config:sub(1, 1) ~= '\\' and
+   gate.platform and gate.platform() == 'linux' then
+   ticklog.try(function()
+    local status = gate.ik_target_order_status and gate.ik_target_order_status() or 'unavailable'
+    ticklog.write('IK_TARGET_ORDER_STOP '..status)
+   end)
+  end
+ end
+end
 row_cursors.navmesh_post = 0
 row_cursors.drain_navmesh_post = function(can_resolve)
   while row_cursors.navmesh_post < 8192 do
@@ -2973,6 +3167,9 @@ local function sample(tick)
     if profile then profile.part('actor',since) end
     if trace and cfg.native_gate_flight_diag then
      log('FLIGHT id='..i..' '..tostring(gate.flight(i)))
+     if gate.flight_boundary then
+      log('FLIGHT_BOUNDARY id='..i..' '..tostring(gate.flight_boundary(i)))
+     end
      for phase=0,1 do log('AVOIDANCE id='..i..' '..assert(gate.avoidance(i,phase))) end
     end
     if trace and cfg.native_gate_ai_diag then log('AI id='..i..' '..tostring(gate.ai(i))) end
@@ -3173,6 +3370,14 @@ local function frame()
     +(cfg.native_gate_npc_deadline and 562949953421312 or 0)
     +(cfg.native_gate_registry_md_trace and 2251799813685248 or 0)
     +(cfg.native_gate_player_request_observer and 4503599627370496 or 0)
+  if cfg.native_gate_nav_rng and gate.platform and gate.platform()=='linux' then
+   -- Linux shares its navigation hook with the cadence module. Its explicit
+   -- fixture API arms below; unsupported Windows boot options still refuse.
+   assert(snapshot and type(cfg.native_gate_snapshot_fixture)=='table' and
+    #cfg.native_gate_snapshot_fixture==12 and not cfg.native_gate_nav_key and
+    gate.nav_rng_fixture and gate.nav_rng_fixture_status,'Linux fixture navigation RNG is unavailable')
+   options=options-131072
+  end
   if diagnostic then assert(options==70377334178981 and snapshot and cfg.native_gate_world_trace_early and cfg.native_gate_world_queue_trace,'diagnostic passive observer contract') end
   -- Before start/boot; a reloaded UI repeats the identical configuration.
   if wire3 and not (gate.wire and gate.wire(3,clients)==1) then ticklog.refuse('wire=3 clients='..clients);done=true;return end
@@ -3363,6 +3568,18 @@ local function frame()
    assert((mode=='default' or mode=='observe') and gate.fp_env and gate.fp_env_status and gate.fp_env(mode)==1,
     'fp env refused '..tostring(gate.fp_env_status and gate.fp_env_status()))
    log('FP_ENV_ARMED '..tostring(gate.fp_env_status()))
+  end
+  -- Windows Jacobi theta uses Linux's multiply-then-divide order. Default off;
+  -- install before LoadGame, including loading-UI reloads. Linux already has it.
+  if cfg.native_gate_mass_jacobi_order then
+   assert(snapshot,'mass Jacobi order requires the snapshot boot')
+   if gate.platform and gate.platform()=='linux' then
+    log('MASS_JACOBI_ORDER_NOOP linux: native theta order is (0.5*h)/a')
+   else
+    assert(gate.mass_jacobi_order and gate.mass_jacobi_order_status and gate.mass_jacobi_order()==1,
+     'mass Jacobi order refused '..tostring(gate.mass_jacobi_order_status and gate.mass_jacobi_order_status()))
+    log('MASS_JACOBI_ORDER_ARMED '..tostring(gate.mass_jacobi_order_status()))
+   end
   end
   -- The saved-value readers (0x14c3090/0x14c2bd0) to the portable decimal reader:
   -- same syntax, correctly rounded, the bits the Linux preload gives. Before the load.
@@ -3568,6 +3785,12 @@ local function frame()
     log('NAV_PLAYER_ARMED')
    end
   end
+  if cfg.native_gate_nav_rng and gate.platform and gate.platform()=='linux' then
+   -- Use the same NAV_UPDT tuple as Windows for the twelve manifest actors.
+   -- This is separate from the Linux-only portable-ID nav_key experiment.
+   assert(gate.nav_rng_fixture()==1,'Linux fixture navigation RNG refused')
+   log('NAV_FIXTURE_RNG_ARMED')
+  end
   assert(not cfg.native_gate_nav_probe_init or cfg.native_gate_nav_cadence,'nav probe init needs native_gate_nav_cadence')
   assert(not cfg.native_gate_nav_player or cfg.native_gate_nav_cadence,'nav player needs native_gate_nav_cadence')
   assert(not cfg.native_gate_nav_params_init or cfg.native_gate_nav_cadence,'nav params init needs native_gate_nav_cadence')
@@ -3655,10 +3878,9 @@ local function frame()
    assert(cfg.native_gate_flight_limits==true and snapshot and gate.flight_limits and gate.flight_limits_status and gate.flight_limits()==1,'flight limits refused')
    log('FLIGHT_LIMITS_ARMED')
   end
-  -- A ship's second body (linux/gate_body_mass.h): its mass properties come from the parts its compound holds when the
-  -- body is created; Windows creates it before they arrive (the empty compound's sphere fallback), Linux often after.
-  -- 'fallback' gives every such body Windows' value at creation, before the snapshot load. Linux only; default off.
-  if cfg.native_gate_body1_mass and gate.platform and gate.platform()=='linux' then
+  -- Creation-time compound contents vary on both platforms. The opt-in fallback normalizes the second body's
+  -- inertia before the snapshot load while retaining all body fields in the digest. Default off.
+  if cfg.native_gate_body1_mass then
    assert(cfg.native_gate_body1_mass=='fallback' and snapshot and gate.body1_mass and gate.body1_mass_status and gate.body1_mass('fallback')==1,
     'body1 mass refused '..tostring(gate.body1_mass_status and gate.body1_mass_status()))
    log('BODY1_MASS_ARMED mode=fallback')
@@ -3672,7 +3894,6 @@ local function frame()
   -- Linux-only keys of the mixed-platform preset: on Windows only a note (its build is already that order).
   if not (gate.platform and gate.platform()=='linux') then
    if cfg.native_gate_ik_step then log('IK_STEP_NOOP windows: the joint step multiplies by 50.0f already') end
-   if cfg.native_gate_body1_mass then log('BODY1_MASS_NOOP windows: second bodies are created with an empty compound already') end
   end
   -- The fixture bodies just before and after Jolt's step (linux/gate_body_step.h): BODY_STEP rows. Linux only, diagnostic.
   if cfg.native_gate_body_step_diag and gate.platform and gate.platform()=='linux' then
@@ -4732,6 +4953,8 @@ local function frame()
    assert(snapshot and #cfg.native_gate_snapshot_fixture==12,'invalid snapshot fixture manifest')
    assert(gate.snapshot_fixture(table.concat(cfg.native_gate_snapshot_fixture,','))==1,'snapshot fixture manifest refused')
   end
+  row_cursors.ik_target_arm()
+  row_cursors.ik_target_order_arm()
   if cfg.native_gate_world_trace_early then
    assert(snapshot and gate.world_trace_config(table.concat(cfg.native_gate_world_hash_watch,','),cfg.native_gate_world_trace_ticks)==1,'early world trace manifest refused')
    if cfg.native_gate_world_queue_trace then assert(gate.world_queue_trace_config()==1,'world queue trace configuration refused') end
@@ -5200,6 +5423,9 @@ local function frame()
   -- Every piloting module's why at once, before any other stop row can fail (w1foot: stop 185 without its why).
   if gate.pilot_why then pcall(function() local why=gate.pilot_why();if why then log('PILOT_STOP_WHY '..why) end end) end
   ticklog.stopped(s.reason)
+  row_cursors.stop_stock_observers()
+  row_cursors.ik_target_stop()
+  row_cursors.ik_target_order_stop()
   if cfg.native_gate_navmesh_post_observe then
     row_cursors.stop_navmesh_post(s.boot_phase >= 3, false)
   end
@@ -5314,6 +5540,9 @@ local function frame()
   if cfg.native_gate_world_nav_stride then log('WORLD_NAV_STOP '..tostring(gate.world_nav_status())) end
   if cfg.native_gate_cutscene_ready then log('CUTSCENE_READY_STOP '..tostring(gate.cutscene_ready_status())) end
   if cfg.native_gate_nav_cadence then log('NAV_CADENCE_STOP '..tostring(gate.nav_cadence_status())) end
+  if cfg.native_gate_nav_rng and gate.nav_rng_fixture_status then
+   log('NAV_FIXTURE_RNG_STOP '..tostring(gate.nav_rng_fixture_status()))
+  end
   if cfg.native_gate_nav_player then log('NAV_PLAYER_STOP '..tostring(gate.nav_player_status())) end
   if cfg.native_gate_command_order then log('COMMAND_ORDER_STOP '..tostring(gate.command_order_status())) end
   if cfg.native_gate_ship_sound_rng then log('SHIP_SOUND_RNG_STOP '..tostring(gate.ship_sound_rng_status())) end
@@ -5345,6 +5574,9 @@ local function frame()
    for i=0,255 do local row=gate.sample_profile_row(i);if not row then break end;log('SAMPLE_PROFILE_ROW '..row) end
   end
   if cfg.native_gate_exact_reciprocal then log('EXACT_RECIPROCAL_STOP '..tostring(gate.exact_reciprocal_status())) end
+  if cfg.native_gate_mass_jacobi_order and not (gate.platform and gate.platform()=='linux') and gate.mass_jacobi_order_status then
+   log('MASS_JACOBI_ORDER_STOP '..tostring(gate.mass_jacobi_order_status()))
+  end
   if cfg.native_gate_fp_env then log('FP_ENV_STOP '..tostring(gate.fp_env_status())) end
   if cfg.native_gate_decimal then log('DECIMAL_STOP '..tostring(gate.decimal_status())) end
   if cfg.native_gate_motion_watch then log('MOTION_WATCH_STOP '..tostring(gate.motion_watch_status())) end
@@ -5551,6 +5783,8 @@ local function frame()
   X4LAN_JOIN_CORE.log_unpaired(gate,log)
  end
  ticklog.ui_events.tick=tick
+ row_cursors.ik_target_frame(tick)
+ row_cursors.ik_target_order_frame(tick)
  if (tonumber(s.registry_count) or 0)>0 then
   local count=0
   for slot,handle,macro,owner in s.registry_manifest:gmatch('(%d+)/([0-9a-f]+)/([a-z0-9_]+)/([a-z0-9_]+)') do
@@ -5656,6 +5890,61 @@ local function frame()
  if cfg.native_gate_motion_watch then assert(gate.motion_watch_frame(tick)==1,'motion watch frame failed') end
  if cfg.native_gate_wreck_watch then assert(gate.wreck_watch_frame(tick)==1,'wreck watch frame failed') end
  if cfg.native_gate_coverage then gate.coverage_frame(tick) end
+ if cfg.native_gate_pilot_capture_probe then
+  -- Observe processed Linux input channels after the loaded UI thread is adopted.
+  -- These diagnostic samples never become pilot records or network inputs.
+  if not row_cursors.pilot_capture_probe_armed then
+   assert(gate.platform and gate.platform()=='linux' and gate.pilot_capture_probe_arm and gate.pilot_capture_probe_read,
+    'Linux pilot capture diagnostic is unavailable')
+   local armed,reason=gate.pilot_capture_probe_arm()
+   assert(armed==1,'Linux pilot capture diagnostic refused: '..tostring(reason))
+   row_cursors.pilot_capture_probe_armed=true
+  end
+  local sample,reason=gate.pilot_capture_probe_read()
+  ticklog.write('PILOT_CAPTURE_PROBE tick='..tick..' '..(sample or ('unavailable='..tostring(reason))))
+ end
+ if cfg.native_gate_stock_state_observer then
+  -- Partial Linux state-event observation only. These rows neither suppress nor
+  -- replay input and must never be presented as complete pilot wire records.
+  if not row_cursors.stock_state_observer_armed then
+   assert(gate.platform and gate.platform()=='linux' and gate.stock_state_observer and
+    gate.stock_state_observer_status and gate.stock_state_observer_row,
+    'Linux stock state observer is unavailable')
+   row_cursors.stock_state_observer_attempted=true
+   assert(gate.stock_state_observer()==1,'Linux stock state observer refused')
+   row_cursors.stock_state_observer_armed=true
+   row_cursors.stock_state_observer=0
+  end
+  ticklog.status('STOCK_STATE_OBSERVER',tick,gate.stock_state_observer_status,
+   'stock state observer status unavailable')
+  for _=1,512 do
+   local row=gate.stock_state_observer_row(row_cursors.stock_state_observer)
+   if not row then break end
+   ticklog.write('STOCK_STATE_ROW '..row)
+   row_cursors.stock_state_observer=row_cursors.stock_state_observer+1
+  end
+ end
+ if cfg.native_gate_stock_range_observer then
+  -- Partial Linux range-event observation only. These rows neither suppress nor
+  -- replay input and must never be presented as complete pilot wire records.
+  if not row_cursors.stock_range_observer_armed then
+   assert(gate.platform and gate.platform()=='linux' and gate.stock_range_observer and
+    gate.stock_range_observer_status and gate.stock_range_observer_row,
+    'Linux stock range observer is unavailable')
+   row_cursors.stock_range_observer_attempted=true
+   assert(gate.stock_range_observer()==1,'Linux stock range observer refused')
+   row_cursors.stock_range_observer_armed=true
+   row_cursors.stock_range_observer=0
+  end
+  ticklog.status('STOCK_RANGE_OBSERVER',tick,gate.stock_range_observer_status,
+   'stock range observer status unavailable')
+  for _=1,512 do
+   local row=gate.stock_range_observer_row(row_cursors.stock_range_observer)
+   if not row then break end
+   ticklog.write('STOCK_RANGE_ROW '..row)
+   row_cursors.stock_range_observer=row_cursors.stock_range_observer+1
+  end
+ end
  if cfg.native_gate_physics_trace~=nil then
   ticklog.status('PHYSICS_TRACE',tick,gate.physics_trace_status,'physics trace status unavailable')
  end
@@ -5831,6 +6120,9 @@ local function frame()
  if cfg.native_gate_speak_timer then ticklog.status('SPEAK_TIMER',tick,gate.speak_timer_status,'speak timer status unavailable') end
  if cfg.native_gate_speech_clock then ticklog.status('SPEECH_CLOCK',tick,gate.speech_clock_status,'speech clock status unavailable') end
  if cfg.native_gate_world_nav_stride then ticklog.status('WORLD_NAV',tick,gate.world_nav_status,'world nav hash status unavailable') end
+ if cfg.native_gate_nav_rng and gate.platform and gate.platform()=='linux' then
+  ticklog.status('NAV_FIXTURE_RNG',tick,gate.nav_rng_fixture_status,'fixture nav RNG status unavailable')
+ end
  if cfg.native_gate_nav_cadence then
   ticklog.status('NAV_CADENCE',tick,gate.nav_cadence_status,'nav cadence status unavailable')
   -- Fixture controller state changes (enables, deadlines, attention, body, zone scene).
@@ -6255,6 +6547,9 @@ SetScript('onUpdate',function()
    if cfg.native_gate_bullet_cadence then ticklog.try(function() log('BULLET_CADENCE_STOP '..tostring(gate.bullet_cadence_status())) end) end
    if cfg.native_gate_speak_timer then ticklog.try(function() log('SPEAK_TIMER_STOP '..tostring(gate.speak_timer_status())) end) end
    if cfg.native_gate_nav_cadence then ticklog.try(function() log('NAV_CADENCE_STOP '..tostring(gate.nav_cadence_status())) end) end
+   if cfg.native_gate_nav_rng and gate.nav_rng_fixture_status then
+    ticklog.try(function() log('NAV_FIXTURE_RNG_STOP '..tostring(gate.nav_rng_fixture_status())) end)
+   end
    if cfg.native_gate_nav_player then ticklog.try(function() log('NAV_PLAYER_STOP '..tostring(gate.nav_player_status())) end) end
    if cfg.native_gate_command_order then ticklog.try(function() log('COMMAND_ORDER_STOP '..tostring(gate.command_order_status())) end) end
    if cfg.native_gate_ship_sound_rng then ticklog.try(function() log('SHIP_SOUND_RNG_STOP '..tostring(gate.ship_sound_rng_status())) end) end
@@ -6297,6 +6592,9 @@ SetScript('onUpdate',function()
     for i=0,255 do local row=gate.sample_profile_row(i);if not row then break end;log('SAMPLE_PROFILE_ROW '..row) end
    end) end
    if cfg.native_gate_exact_reciprocal then ticklog.try(function() log('EXACT_RECIPROCAL_STOP '..tostring(gate.exact_reciprocal_status())) end) end
+   if cfg.native_gate_mass_jacobi_order and not (gate.platform and gate.platform()=='linux') and gate.mass_jacobi_order_status then
+    ticklog.try(function() log('MASS_JACOBI_ORDER_STOP '..tostring(gate.mass_jacobi_order_status())) end)
+   end
    if cfg.native_gate_fp_env then ticklog.try(function() log('FP_ENV_STOP '..tostring(gate.fp_env_status())) end) end
    if cfg.native_gate_decimal then ticklog.try(function() log('DECIMAL_STOP '..tostring(gate.decimal_status())) end) end
    if cfg.native_gate_event_rng then ticklog.try(function() log('EVENT_RNG_STOP '..tostring(gate.event_rng_status())) end) end
@@ -6311,6 +6609,9 @@ SetScript('onUpdate',function()
    if cfg.native_gate_fp_redirect then ticklog.try(function() log('FP_REDIRECT_STOP '..tostring(gate.fp_redirect_status())) end) end
    if cfg.native_gate_fp_attack_capture then ticklog.try(function() log('FP_ATTACK_STOP '..tostring(gate.fp_attack_status())) end) end
    if cfg.native_gate_coverage then ticklog.try(function() log('COVERAGE_STOP '..tostring(gate.coverage_status())) end) end
+   row_cursors.stop_stock_observers()
+   row_cursors.ik_target_stop()
+   row_cursors.ik_target_order_stop()
    if cfg.native_gate_order_canon then ticklog.try(function() log('ORDER_CANON_STOP '..tostring(gate.order_canon_status())) end) end
    if cfg.native_gate_pick_order then ticklog.try(function() log('PICK_ORDER_STOP '..tostring(gate.pick_order_status())) end) end
    if cfg.native_gate_macro_arena then ticklog.try(function() log('MACRO_ARENA_STOP '..tostring(gate.macro_arena_status())) end) end

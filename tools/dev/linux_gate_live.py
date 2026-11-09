@@ -44,6 +44,7 @@ import argparse
 import ctypes
 import gzip
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -254,6 +255,11 @@ def bundle(args):
         raise SystemExit('--status-stride must be between 1 and 3600')
     if args.created_rows and not args.created_identities:
         raise SystemExit('--created-rows requires --created-identities')
+    if args.nav_rng:
+        if not args.battle or not args.serial_pathing:
+            raise SystemExit('--nav-rng requires --battle and --serial-pathing (twelve snapshot fixture actors)')
+        if args.nav_key:
+            raise SystemExit('--nav-rng and --nav-key use different navigation RNG streams; choose one')
     if args.economy_watch is not None or args.economy_watch_window is not None:
         from economy_watch_config import validate_configuration
         try:
@@ -394,6 +400,8 @@ def bundle(args):
         command.append('--nav-params-init')
     if args.nav_key:
         command.append('--nav-key')
+    if args.nav_rng:
+        command.append('--nav-rng')
     if args.nav_probe_init:
         command.append('--nav-probe-init')
     if args.created_identities:
@@ -533,6 +541,7 @@ def bundle(args):
         'loadout_order_rows',
         'attention_all',
         'nav_key',
+        'nav_rng',
         'step_trace',
         'step_trace_ticks',
         'step_chain',
@@ -896,9 +905,10 @@ WIRE_CRYPTO_TOKEN = '@X4LANE_WIRE_CRYPTO@'
 CREDENTIAL = re.compile(r'x4c1:[0-9a-f]{64}:[0-9a-f]{64}')
 
 
-def case_config(text, port, token, slot, clients, credential=None):
+def case_config(text, port, token, slot, clients, credential=None, relay_host=None, arm_at=None):
     """A client's config.lua: the session's port, token, slot and size; with wire crypto (bundle --wire-crypto) the slot's
     credential (native_gate_crypto.py credential for this token and slot; a secret, never logged)."""
+    relay_host, arm_at = remote_session_options(relay_host, arm_at, external=True)
     wants = WIRE_CRYPTO_TOKEN in text
     if wants and not credential:
         raise RuntimeError(f'the bundle has wire crypto: slot {slot} needs a credential (run --wire-crypto-credentials)')
@@ -908,7 +918,31 @@ def case_config(text, port, token, slot, clients, credential=None):
         raise RuntimeError(f'slot {slot}: not a wire crypto credential (x4c1:<64 hex>:<64 hex>)')
     text = (text.replace('@X4LANE_PORT@', str(port)).replace('@X4LANE_TOKEN@', token)
             .replace('@X4LANE_SLOT@', f'p{slot}').replace('@X4LANE_CLIENTS@', str(clients)))
-    return text.replace(WIRE_CRYPTO_TOKEN, credential or '')
+    text = text.replace(WIRE_CRYPTO_TOKEN, credential or '')
+    if relay_host is not None or arm_at is not None:
+        text += '\n'
+        if relay_host is not None:
+            text += f"X4LAN_CONFIG.native_gate_relay_host = '{relay_host}'\n"
+        if arm_at is not None:
+            text += f'X4LAN_CONFIG.native_gate_arm_at = {arm_at}\n'
+    return text
+
+
+def remote_session_options(host, arm_at, external, now=None):
+    """Validate remote settings before inserting them into private Lua config."""
+    if (host is not None or arm_at is not None) and not external:
+        raise ValueError('--relay-host and --arm-at require an external relay')
+    if host is not None:
+        if not isinstance(host, str):
+            raise ValueError('--relay-host must be a dotted IPv4 address')
+        try:
+            host = str(ipaddress.IPv4Address(host))
+        except ipaddress.AddressValueError:
+            raise ValueError('--relay-host must be a dotted IPv4 address') from None
+    if arm_at is not None:
+        if type(arm_at) is not int or arm_at <= 0 or arm_at <= (time.time() if now is None else now):
+            raise ValueError('--arm-at must be a future integer UTC second')
+    return host, arm_at
 
 
 def load_credentials(path):
@@ -922,7 +956,8 @@ def load_credentials(path):
     return {int(k): v for k, v in data.items()}
 
 
-def stage_case(root, run, slot, game, userhome, port, token, clients=2, credential=None, snapshot=True):
+def stage_case(root, run, slot, game, userhome, port, token, clients=2, credential=None, snapshot=True,
+               relay_host=None, arm_at=None):
     """One private instance: HOME, profile 45841 (autosave off), snapshot, extensions."""
     case = run / f'case{slot}'
     profile = case / 'home/.config/EgoSoft/X4/45841'
@@ -953,7 +988,7 @@ def stage_case(root, run, slot, game, userhome, port, token, clients=2, credenti
     lab = case / 'extensions/x4_lan_lab'
     shutil.copytree(root / 'extension/x4_lan_lab', lab)
     config = lab / 'ui/config.lua'
-    config.write_text(case_config(config.read_text(), port, token, slot, clients, credential))
+    config.write_text(case_config(config.read_text(), port, token, slot, clients, credential, relay_host, arm_at))
     if credential:
         config.chmod(0o600)
     ids = sorted(p.name for p in (case / 'extensions').iterdir())
@@ -1061,6 +1096,12 @@ def run(args):
     external = args.relay_port is not None
     if external != bool(args.relay_token) or external != bool(args.local_slots):
         raise SystemExit('--relay-port, --relay-token and --local-slots go together')
+    try:
+        relay_host, arm_at = remote_session_options(args.relay_host, args.arm_at, external)
+    except ValueError as error:
+        raise SystemExit(f'REFUSED: {error}') from None
+    if external and relay_host is None:
+        relay_host = '127.0.0.1'
     if external and (not 1024 <= args.relay_port <= 65535 or not re.fullmatch(r'[0-9a-f]{32}', args.relay_token)):
         raise SystemExit('--relay-port must be 1024..65535 and --relay-token 32 lowercase hex')
     local = sorted({int(part) for part in args.local_slots.split(',')}) if external else list(range(1, clients + 1))
@@ -1121,7 +1162,8 @@ def run(args):
         credentials = load_credentials(args.wire_crypto_credentials)
         if any(slot not in credentials for slot in local):
             raise SystemExit(f'--wire-crypto-credentials lacks a credential for slots {[s for s in local if s not in credentials]}')
-    by_slot = {slot: stage_case(root, run_dir, slot, game, steam_home, port, token, clients, credentials.get(slot)) for slot in local}
+    by_slot = {slot: stage_case(root, run_dir, slot, game, steam_home, port, token, clients, credentials.get(slot),
+                                relay_host=relay_host, arm_at=arm_at) for slot in local}
     cases = [by_slot[slot] for slot in local]
     for path in [run_dir, *run_dir.rglob('*')]:
         if os.geteuid() == 0 and not path.is_symlink():
@@ -1129,7 +1171,8 @@ def run(args):
     result = {'name': name, 'ticks': ticks, 'port': port, 'memory_available_gib': round(memory, 1), 'discard_layer': discard,
               'manifest_commit': manifest['commit'], 'gate_so_sha256': manifest['gate_so_sha256'], 'steam_before': steam,
               'portable_math_sha256': manifest.get('portable_math_sha256'), 'seed_rng': manifest.get('seed_rng'), 'launch_order': order,
-              'external_relay': external, 'local_slots': local, 'snapshot_seed': world_seed}
+              'external_relay': external, 'relay_host': relay_host if external else None, 'arm_at': arm_at,
+              'local_slots': local, 'snapshot_seed': world_seed}
     procs, starts, logs = [], {}, []
     cancelled = []
     # bwrap binds each private lock over this path, and cannot create it in the read-only view.
@@ -1356,6 +1399,8 @@ def main(argv=None):
     b.add_argument('--nav-cadence', choices=('far', 'observe'), help='nav refresh intervals no longer depend on the camera distance')
     b.add_argument('--nav-params-init', action='store_true', help='parameter deadlines reset at the first call')
     b.add_argument('--nav-key', action='store_true', help="the nav refresh's draws keyed per ship (tick, portable ID, ordinal, time)")
+    b.add_argument('--nav-rng', action='store_true',
+                   help="isolate the twelve snapshot fixture actors' navigation RNG as on Windows (requires --battle and --serial-pathing)")
     b.add_argument('--nav-probe-init', action='store_true', help='obstacle-probe deadlines reset at the first call')
     b.add_argument('--created-identities', action='store_true', help='portable IDs and census rows for components made after the load')
     b.add_argument('--created-rows', action='store_true', help='retain individual creation records for diagnosis (requires --created-identities)')
@@ -1451,9 +1496,11 @@ def main(argv=None):
     r.add_argument('--steam-home', type=Path, help='the directory whose .steam belongs to the running Steam client (default ~USER; snap Steam: ~USER/snap/steam/common)')
     r.add_argument('--shm', type=Path, help="bind this directory over /dev/shm for X4 (a confined Steam client's shared memory, e.g. /dev/shm/snap.steam)")
     r.add_argument('--preflight', action='store_true', help='only check the host requirements and the bundle; start nothing')
-    r.add_argument('--relay-port', type=int, help='mixed session: use the relay already listening on 127.0.0.1:PORT of this host '
-                   '(e.g. one serving Windows clients too) instead of starting one; needs --relay-token and --local-slots')
+    r.add_argument('--relay-port', type=int, help='use an external relay instead of starting one; '
+                   'needs --relay-token and --local-slots')
     r.add_argument('--relay-token', help='the token of that relay (32 hex)')
+    r.add_argument('--relay-host', help='external relay dotted IPv4 address (default 127.0.0.1)')
+    r.add_argument('--arm-at', type=int, metavar='UTC_SECOND', help='external session: agreed future UTC second to load')
     r.add_argument('--local-slots', metavar='2', help='mixed session: the slots this host runs (the others join from elsewhere)')
     r.add_argument('--wire-crypto-credentials', type=Path, metavar='FILE',
                    help='a bundle built with --wire-crypto: JSON {"<slot>": "x4c1:...", ...} (native_gate_crypto.py credential for '

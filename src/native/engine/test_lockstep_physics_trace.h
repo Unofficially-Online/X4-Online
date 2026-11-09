@@ -234,9 +234,17 @@ static void test_physics_trace(void) {
     /* Evicted rows say so. */
     LONG64 saved_rows=ptrace_step_rows;ptrace_step_rows=PTRACE_STEP_RING+5;
     assert(ptrace_row(PTRACE_ROW_STEP,0,0,text,sizeof(text)) && strstr(text,"evicted=1"));ptrace_step_rows=saved_rows;
-    /* A read fault fails the step closed. */
-    test_pt_client_init(&b,runtimes_b,ids_a,order_b);{unsigned char *bad=(unsigned char*)(uintptr_t)0x10000;memcpy(b.bodies[1].body+0x48,&bad,8);}
-    assert(!ptrace_begin(b.system) && ptrace_failures==1 && !ptrace_check());ptrace_failures=0;
+    /* A read fault fails the step closed. Own an inaccessible page: a fixed
+     * address such as 0x10000 can be readable under Wine. */
+    {
+        unsigned char *unreadable_page = VirtualAlloc(NULL, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
+        assert(unreadable_page);
+        test_pt_client_init(&b, runtimes_b, ids_a, order_b);
+        memcpy(b.bodies[1].body + 0x48, &unreadable_page, sizeof(unreadable_page));
+        assert(!ptrace_begin(b.system) && ptrace_failures==1 && !ptrace_check());
+        assert(VirtualFree(unreadable_page, 0, MEM_RELEASE));
+        ptrace_failures = 0;
+    }
     uint64_t huge=PTRACE_BODIES+1;memcpy(b.system+0x680,&huge,8);assert(!ptrace_begin(b.system) && !strcmp(ptrace_stage,"list_capacity"));ptrace_failures=0;
     char status[512];assert(ptrace_status(status,sizeof(status)) && strstr(status,"installed=1 rows=30 ") && strstr(status," foreign=1 stray=1 "));
     ptrace_installed=0;

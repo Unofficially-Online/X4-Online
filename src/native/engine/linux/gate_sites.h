@@ -616,6 +616,8 @@ static const lx_site lx_sites[]={
     {"physics_update",0x1b1ce30,0x30,"3ac40c8da74d559187f9bea519425f0f8932cd8f501b2ec70463e2da02134eb9"},
     {"nav_set_velocity",0x141fe50,0x40,"9039dc81f5cd4579a91a949cb1137110ea5d37d71f480a78de4af518736793a7"},
     {"body_add_impulse",0x1a7fc90,0x30,"ec44503b5aab73848772bbd3cd72e770ad35ec077ea1bd78bba2642c99bbd178"},
+    /* gate_impulse.h: complete body-0 impulse helper, including fallback/tail paths and alignment padding. */
+    {"body_impulse_helper",0x17e2f10,0xf0,"0fb770fa6a70b44eb2deeb32927e075c98b25b7fa990ae4832a4c85a473ba138"},
     {"ik_step_block",0x1565fb0,0xc0,"dc6b7d7e6c1fb42a2694df394c9d89fa6574b6592787dff4c486e2ed66d93601"},
     {"ik_step_dt",0x2c76dd0,0x8,"4f5163b57f2e2c5276ec0ba17cb5eb4865417faf8c3590126592998fd1da3e42"},
     {"body_defined_mass",0xed4cf0,0x8e,"f640dc2b2c63a1a363cc8f487544824b91ee72e7eadc3da0dcd7117084634874"},

@@ -136,6 +136,12 @@ failed:
 }
 /* Before the first admitted frame, on the MoveWorker. */
 static int lxis_arm(void) {
+    if (__atomic_load_n(&stock_trap_ik_entry_ready, __ATOMIC_ACQUIRE) ||
+        __atomic_load_n(&stock_trap_ik_terminal_ready, __ATOMIC_ACQUIRE) ||
+        __atomic_load_n(&stock_trap_ik_order_ready, __ATOMIC_ACQUIRE)) {
+        lxis_stage = "ik_target_trap";
+        return 0;
+    }
     if(lxis_installed) return stats.active;
     if(lxis_cleanup_pending()) {lxis_stage="cleanup_pending";return 0;}
     if(!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) {lxis_stage="guard";return 0;}

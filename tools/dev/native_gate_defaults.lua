@@ -205,6 +205,10 @@ D.FAMILIES={'travel','target','orders','autopilot','dock','weapons','missiles','
 D.FAMILY_NEEDS={missiles='native_gate_pilot_fire',missions='guard:missions',conversation='guard:conversation',build='guard',assets='guard',faction='guard'}
 -- Diagnostics and measurement: off by default (they only log, capture, trace, profile, watch or measure). {'key','why'}.
 D.DIAGNOSTIC={
+ {'native_gate_ik_target_observer','Linux bounded read-only IK target observation, not an arithmetic correction'},
+ {'native_gate_pilot_capture_probe','Linux processed input observation only, not pilot records or replay'},
+ {'native_gate_stock_range_observer','Linux partial stock range event observation, not full input replay'},
+ {'native_gate_stock_state_observer','Linux partial stock state event observation, not full input replay'},
  {'native_gate_navmesh_post_observe','Linux navmesh post attempts during startup and a bounded live tick window'},
  {'native_gate_economy_watch','Linux saved-station deadline observation'},
  {'native_gate_economy_watch_window','Inclusive station deadline observation window'},
@@ -415,6 +419,9 @@ D.DIAGNOSTIC={
 }
 -- Neither a feature default nor a diagnostic: fixtures, experiments, alternatives and cross-platform keys. {'key','why'}.
 D.EXCLUDED={
+ {'native_gate_ik_target_order','Linux experimental global scalar IK arithmetic change, default off; late trap quiescence unproven'},
+ {'native_gate_mass_jacobi_order','Windows experimental Jacobi arithmetic change, default off; Linux already uses that order'},
+ {'native_gate_stock_trap_exclusive','explicit process-lifetime exclusive SIGTRAP ownership consent, never enabled by defaults'},
  {'native_gate_ui_exports','generic UI write guard (lockstep_ui_exports.h): opt-in beside native_gate_ui_guard (tools/build_soak_overlay.py --ui-guard)'},
  {'native_gate_ui_exports_block','generic UI write guard: the exports it refuses'},
  {'native_gate_ui_relay','generic UI write guard: exports relayed through the ffi section (--ui-relay)'},
@@ -477,7 +484,7 @@ D.EXCLUDED={
  {'native_gate_flight_limits','Linux gate only: the engine parameters limit words with the hoisted reciprocal (Windows is that order)'},
  {'native_gate_ik_step','Linux gate only: the joints fixed-step divisions by 0.02 as Windows multiplications by 50'},
  {'native_gate_body_step_diag','Linux gate only: the fixture bodies before and after the Jolt step (diagnostic)'},
- {'native_gate_body1_mass','Linux gate only: a ship second body gets the empty-compound mass properties at creation (Windows value)'},
+ {'native_gate_body1_mass','both gates: normalize a ship second body to empty-compound mass properties at creation'},
  {'native_gate_timer_resolution','timer experiment'},
  {'native_gate_tick_pace','unset = paced (false unpaces)'},
  {'native_gate_world_timing_fields','no reader in the probe (obsolete key)'},

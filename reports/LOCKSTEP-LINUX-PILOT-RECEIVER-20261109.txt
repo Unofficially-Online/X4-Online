@@ -1,0 +1,71 @@
+LINUX PILOT RECORD RECEIVER: INACTIVE PREPARATION BACKEND
+9 November 2026
+
+What changed
+  Windows and Linux now share the record-v1 codec, record type, constants,
+  deterministic test input generator and configuration validators in
+  lockstep_pilot_record.h. These ten pure helpers were extracted from the
+  existing Windows implementation without changing the wire format. Windows
+  staging, lifecycle, player authority and native request substitution remain
+  in lockstep_pilot_inputs.h.
+
+  The internal Linux receiver accepts the same 28-byte records. It validates
+  slots and capture ticks, unwraps the capture counter, stages delayed inputs,
+  detects duplicate/conflicting records and compares known own-slot echoes.
+  All seven Q15 values, known mode bits, buttons and saved target identity are
+  retained exactly. Recognizing a field does not implement its game behavior.
+
+  One mutex protects staging, publication and STOP. A frame is constructed
+  completely before publication; consumers receive a value copy rather than a
+  pointer into mutable storage. Missing data leaves the previous frame intact,
+  and a consumer must request its exact tick. No partial frame or absent-player
+  replacement input is synthesized. The scope is all-present, non-stock slots.
+
+Admission and limits
+  Known contradictions between an own-slot record and its local expectation
+  latch failure in either arrival order. Further staging, configuration,
+  publication and frame reads refuse. STOP retains the failure; there is no
+  object reset or session rearm. A new session needs a new receiver object.
+
+  A frame can be published before a local expectation is supplied. That is not
+  proof of a validated own echo. A later failure cannot revoke a value copy
+  already returned to a consumer. Runtime integration must establish capture,
+  echo validation, session identity and authority before applying any input.
+
+  No Lua API, network callback, native hook or control suppression is connected
+  to this backend. apply() always returns APPLY_NOT_IMPLEMENTED, and both status
+  and frame snapshots report steering_active=0. It cannot make the native Linux
+  client playable in a multiplayer session by itself. UI/camera authority,
+  stock controls, absent/rejoin/death behavior and actual steering remain open.
+
+Validation
+  The contributor and project root independently built and ran the focused C
+  tests. They cover fixed Windows wire vectors, malformed data, tick wrap,
+  staging conflicts, delayed/missing frames, both own-echo arrival orders,
+  immutable copies, STOP and a coordinated threaded handoff. This handoff test
+  does not exhaust possible thread schedules or validate engine concurrency.
+
+  A differential oracle retains the original Windows source at 30bc0f2 and
+  compares it with the extracted helpers and receiver: 10,000 codec/mutation
+  cases, 157,440 configuration cases, 1,024 delay cases, 4,000 quantization
+  cases, 2,793 staging operations, 399 frames and 8,000 script cases passed.
+  The later own-echo failure latch deliberately covers an arrival ordering
+  that the existing Windows caller prevents by capturing first.
+
+  The focused receiver test is registered in check_lockstep_gate_linux.py;
+  assertions remain active even when an optimized compiler defines NDEBUG.
+  The integrated Windows DLL and gate test executable compiled with Zig 0.15.2.
+  That Windows gate test then passed under the isolated Proton prefix, reading
+  the pinned Windows executable as data without executing its game entry.
+  Its cleanup receipt lists no surviving owned process or prefix process.
+  These are offline data-path checks. They do not prove native player replay,
+  synchronization of an entire universe or operation on a second Windows PC.
+  Sanitizer validation was not completed: the available GCC installation
+  could not link its required libasan runtime. The failed build is retained.
+
+Private evidence
+  Candidate source: db8322a and 90e1e00, integrated as 5b5fb55 and 910ba74.
+  Root validation: .local/proton-20261109/pilot-receiver-root-validation/.
+  Independent source review: pilot-receiver-review-90e1e00.json in that private
+  evidence parent. No normal game profile, saved game or Workshop setting was
+  changed by this work.

@@ -273,8 +273,8 @@ Modules (define, owner):
   201 ECONOMY_RNG_STOP_REASON   Linux economy load RNG detour
   202 PATH_TRANSFORM_OBSERVER_STOP_REASON Linux path-transform observer
   203 NAVMESH_POST_STOP_REASON Linux NavMesh producer-post observer (ownership/pin failure)
-  204 LXBM_STOP_REASON          linux/gate_body_mass.h (native_gate_body1_mass, Linux gate only: AllocateBody's entry, its
-                                pins, or a body's motion properties unreadable; whys entry_changed, block_changed, motion)
+  204 LXBM_STOP_REASON WBM_STOP_REASON linux/gate_body_mass.h and lockstep_body_mass_win.h (native_gate_body1_mass, both platforms: allocation entry/pins,
+                                or a body's motion properties unreadable; Windows fallback shares this reason)
   205 LXBS_STOP_REASON          linux/gate_body_step.h (native_gate_body_step_diag, Linux gate only, diagnostic:
                                 PhysicsSystem::Update's entry or its pins; whys entry_changed, block_changed)
   206 LXAI_STOP_REASON          linux/gate_impulse.h (native_gate_impulse_diag, Linux gate only, diagnostic:
@@ -283,7 +283,16 @@ Modules (define, owner):
                                 entry or its page no longer ours, or a capture failed; whys site_changed, failures)
   208 LXIS_STOP_REASON          linux/gate_ik_step.h (native_gate_ik_step, Linux gate only: the joint step's entries,
                                 the stub page or the pins; whys entry_changed, page_changed, block_changed)
-  free: 109, 114-119, 122-129, 147-149, 209-255.
+  209 STOCK_STATE_STOP_REASON   linux/gate_linux.c (native_gate_stock_state_observer, diagnostic observer failure)
+  210 STOCK_RANGE_STOP_REASON   linux/gate_linux.c (native_gate_stock_range_observer, diagnostic observer failure)
+  211 MASS_JACOBI_ORDER_STOP_REASON lockstep_mass_jacobi_order.h (native_gate_mass_jacobi_order,
+                                Windows only: theta instruction block no longer owned, a partial write,
+                                or failed page-protection recovery; all four inverse-inertia lanes retained)
+  212 IK_TARGET_STOP_REASON      linux/gate_linux.c (native_gate_ik_target_observer, diagnostic only:
+                                angular-target entry/terminal trap, full function/constants or replay ownership)
+  213 IK_TARGET_ORDER_STOP_REASON linux/gate_linux.c (native_gate_ik_target_order, Linux only:
+                                terminal trap/full function/constants ownership or unsupported MXCSR controls)
+  free: 109, 114-119, 122-129, 147-149, 214-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

@@ -1,14 +1,88 @@
 import gzip
+import contextlib
 import importlib.util
+import io
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('snapshot_fixture_builder',ROOT/'tools/dev/build_native_gate_overlay.py')
 builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
 spec=importlib.util.spec_from_file_location('snapshot_fixture_validator',ROOT/'tools/dev/validate_native_gate.py')
 validator=importlib.util.module_from_spec(spec);spec.loader.exec_module(validator)
+
+
+class FixtureNavRngOverlayTests(unittest.TestCase):
+    """Build real overlay configs without compiling or loading native code."""
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.snapshot = self.root / 'save.xml.gz'
+        self.snapshot.write_bytes(gzip.compress(SnapshotFixtureTests().fixture().encode()))
+        self.gate = self.root / 'gate.bin'
+        self.gate.write_bytes(b'fake native gate')
+        self.builds = 0
+
+    def build(self, *extra, linux=True, fixture=True):
+        self.builds += 1
+        self.output = self.root / f'overlay{self.builds}'
+        args = ['overlay', '--gate-so' if linux else '--gate-dll', str(self.gate),
+                '--snapshot', str(self.snapshot), '--out', str(self.output)]
+        if fixture:
+            args += ['--mode', 'battle', '--snapshot-prebind', '--serial-pathing', '--world-identities']
+        with mock.patch.object(sys, 'argv', [*args, *extra]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            builder.main()
+        return (self.output / 'ui/config.lua.append').read_text()
+
+    def test_linux_fixture_rng_is_opt_in_without_implicit_nav_diag_or_cadence(self):
+        baseline = self.build()
+        self.assertNotIn('native_gate_nav_rng', baseline)
+        config = self.build('--nav-rng')
+        self.assertIn('native_gate_nav_rng = true', config)
+        self.assertIn('native_gate_snapshot_fixture = {', config)
+        self.assertNotIn('native_gate_nav_diag', config)
+        self.assertNotIn('native_gate_nav_initial_refresh', config)
+        self.assertNotIn('native_gate_nav_cadence', config)
+        config = self.build('--nav-rng', '--nav-cadence', 'far', '--nav-params-init')
+        self.assertIn("native_gate_nav_cadence = 'far'", config)
+        self.assertIn('native_gate_nav_params_init = true', config)
+
+    def test_windows_nav_rng_keeps_legacy_diagnostic_companion(self):
+        config = self.build('--nav-rng', linux=False)
+        self.assertIn('native_gate_nav_rng = true', config)
+        self.assertIn('native_gate_nav_diag = true', config)
+
+    def test_linux_nav_rng_refuses_missing_prerequisites_before_output(self):
+        cases = (
+            ('--mode', 'clock', '--world-identities', '--serial-pathing'),
+            ('--mode', 'battle', '--snapshot-prebind', '--world-identities'),
+            ('--mode', 'battle', '--snapshot-prebind', '--serial-pathing'),
+        )
+        for options in cases:
+            with self.subTest(options=options), self.assertRaises(SystemExit):
+                self.build('--nav-rng', *options, fixture=False)
+            self.assertFalse(self.output.exists())
+
+    def test_linux_nav_rng_refuses_key_conflict_and_unported_companions(self):
+        for flag in ('--nav-key', '--nav-diag', '--nav-initial-refresh'):
+            with self.subTest(flag=flag), self.assertRaises(SystemExit):
+                self.build('--nav-rng', flag)
+            self.assertFalse(self.output.exists())
+
+    def test_linux_nav_rng_requires_twelve_valid_snapshot_actors(self):
+        xml = SnapshotFixtureTests().fixture()
+        for before, after in (('<value type="component" value="[0xc]"/>', ''),
+                              ('value="[0xc]"', 'value="[0xb]"'),
+                              ('class="navigation"', 'class="docking"')):
+            self.snapshot.write_bytes(gzip.compress(xml.replace(before, after, 1).encode()))
+            with self.subTest(change=before), self.assertRaises(SystemExit):
+                self.build('--nav-rng')
+            self.assertFalse(self.output.exists())
 
 
 class SnapshotFixtureTests(unittest.TestCase):

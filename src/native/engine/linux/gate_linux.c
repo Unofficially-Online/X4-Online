@@ -164,6 +164,35 @@ static void lxis_restore(void);
 static int lxis_check(void);
 static int lxis_cleanup_pending(void);
 static int lxis_installed;
+static void linux_pilot_capture_disarm(void);
+static void linux_pilot_capture_begin(void);
+static void stock_state_restore(void);
+static int stock_state_check(void);
+static void stock_state_begin(void);
+static int stock_state_installed,stock_state_restored,stock_state_cleanup_uncertain;
+static int stock_state_stopping;
+static pthread_mutex_t stock_state_lifecycle_lock=PTHREAD_MUTEX_INITIALIZER;
+static uint64_t stock_state_last_issued;
+#define STOCK_STATE_STOP_REASON 209u
+#define STOCK_RANGE_STOP_REASON 210u
+static void stock_range_restore(void);
+static int stock_range_check(void);
+static void stock_range_begin(void);
+static int stock_range_installed, stock_range_restored, stock_range_cleanup_uncertain;
+static int stock_range_stopping;
+/* Default-off scalar IK target observer; its trap identities live forever. */
+#define IK_TARGET_STOP_REASON 212u
+static int ik_target_installed, ik_target_restored, ik_target_cleanup, ik_target_stopping;
+static void ik_target_restore(void);
+static int ik_target_check(void);
+static void ik_target_begin(void);
+/* Separate default-off arithmetic-order candidate, permanently exclusive with the observer. */
+#define IK_TARGET_ORDER_STOP_REASON 213u
+static int ik_target_order_installed, ik_target_order_restored, ik_target_order_cleanup, ik_target_order_stopping;
+static int ik_target_order_failure(void);
+static int ik_target_order_check(void);
+static void ik_target_order_restore(void);
+static void ik_target_order_begin(void);
 static int lxai_check(void);
 static int lxai_installed;
 static int lxvd_owned(void);
@@ -239,6 +268,8 @@ static void nav_cadence_restore(void);
 static int nav_cadence_owned(void);
 static int nav_cadence_installed;
 static volatile int64_t nav_cadence_failures;
+static int nav_fixture_rng_armed;
+static int lxb_nav_fixture_ready(void);
 /* Created identities (gate_world_created.h, included below). */
 static void created_stop(void);
 static void created_restore(void);
@@ -487,7 +518,7 @@ static int accept_ui(void) {
     if(boot_mode && boot_phase==3 && !boot_adopted && stats.issued && thread!=main_thread) {
         unsigned char *base=gate_tls_self();
         if(gate_tls_worker(base)) {
-            ui_thread=thread;boot_adopted=1;
+            __atomic_store_n(&ui_thread,thread,__ATOMIC_RELEASE);boot_adopted=1;
             __atomic_store_n(&ui_tls,base,__ATOMIC_SEQ_CST);__atomic_store_n(&ui_tls_tick,stats.issued,__ATOMIC_SEQ_CST);
             return 1;
         }
@@ -506,12 +537,26 @@ static int gate_sites_owned(void) {
            world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && lxt_inline_owned() && path_transform_observer_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned();
 }
 static void finish(unsigned reason) {
-    cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
+    if (reason == 1u && ik_target_order_failure()) reason = IK_TARGET_ORDER_STOP_REASON;
+    __atomic_store_n(&stock_state_stopping,1,__ATOMIC_RELEASE);
+    __atomic_store_n(&stock_range_stopping,1,__ATOMIC_RELEASE);
+    __atomic_store_n(&ik_target_stopping,1,__ATOMIC_RELEASE);
+    __atomic_store_n(&ik_target_order_stopping,1,__ATOMIC_RELEASE);
+    linux_pilot_capture_disarm();
+    stock_state_restore();
+    stock_range_restore();
+    ik_target_restore();
+    ik_target_order_restore();
+    cov_unmark(); /* coverage and stock observer cannot be armed together */
+    if (reason == 1u && ik_target_order_failure()) reason = IK_TARGET_ORDER_STOP_REASON;
     stats.reason=reason;
     created_stop(); /* No created identity is recorded once STOP has begun. */
     fork_save_stop(); /* never kills a running child: its own watchdog ends it */
     InterlockedExchange(&stats.active,0);
     if(installed) {stats.restored=call_swap(call_patched,call_original);if(stats.restored) installed=0;}
+    if(stock_state_installed || stock_state_cleanup_uncertain || stock_range_installed || stock_range_cleanup_uncertain) stats.restored=0;
+    if (ik_target_installed || ik_target_cleanup) stats.restored = 0;
+    if (ik_target_order_installed || ik_target_order_cleanup) stats.restored = 0;
     /* From the UI thread, let the main thread leave FrameTick first (best effort). */
     if(dt_installed && main_thread && GetCurrentThreadId()!=main_thread) wait_parked(500);
     restore_dt();
@@ -678,6 +723,10 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(wfire_installed && !wfire_check()) {finish(132);gate_original_once(frame,loading);return;} /* WFIRE_STOP_REASON */
     if(erng_installed && !erng_check()) {finish(136);gate_original_once(frame,loading);return;} /* ERNG_STOP_REASON */
     if(economy_rng_installed && !economy_rng_check()) {finish(ECONOMY_RNG_STOP_REASON);gate_original_once(frame,loading);return;}
+    if(__atomic_load_n(&stock_state_installed,__ATOMIC_ACQUIRE) && !stock_state_check()) {finish(STOCK_STATE_STOP_REASON);gate_original_once(frame,loading);return;}
+    if(__atomic_load_n(&stock_range_installed,__ATOMIC_ACQUIRE) && !stock_range_check()) {finish(STOCK_RANGE_STOP_REASON);gate_original_once(frame,loading);return;}
+    if (!ik_target_check()) {finish(IK_TARGET_STOP_REASON);gate_original_once(frame,loading);return;}
+    if (!ik_target_order_check()) {finish(IK_TARGET_ORDER_STOP_REASON);gate_original_once(frame,loading);return;}
     if(linux_build_rng_installed && !linux_build_rng_check()) {finish(152);gate_original_once(frame,loading);return;}
     if(lsj_installed && !lsj_check()) {finish(58);gate_original_once(frame,loading);return;} /* LSJ_STOP_REASON */
     if(lmt_installed && !lmt_check()) {finish(100);gate_original_once(frame,loading);return;} /* LMT_STOP_REASON */
@@ -739,7 +788,12 @@ static void gate_tick(void *frame,unsigned char loading) {
         if(boot_hold_armed && !boot_hold_admit()) {InterlockedIncrement64(&boot_hold_failures);finish(86);gate_original_once(frame,loading);return;}
         if(gdl_armed && !gdl_admit()) {InterlockedIncrement64(&gdl_failures);finish(121);gate_original_once(frame,loading);return;}
         /* The battle fixture's twelve, all or none (Windows snapshot_bind, stop 74). */
-        if(lxb_configured && !lxb_bind()) {__atomic_add_fetch(&lxb_failures,1,__ATOMIC_SEQ_CST);finish(74);gate_original_once(frame,loading);return;}
+        if ((lxb_configured && !lxb_bind()) || (nav_fixture_rng_armed && !lxb_nav_fixture_ready())) {
+            __atomic_add_fetch(&lxb_failures, 1, __ATOMIC_SEQ_CST);
+            finish(74);
+            gate_original_once(frame, loading);
+            return;
+        }
     }
     if(thread!=main_thread||loading||!table||table_loading(table)) {finish(2);gate_original_once(frame,loading);return;}
     if(!gate_sites_owned()) {finish(3);gate_original_once(frame,loading);return;}
@@ -782,6 +836,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(reason) finish(reason);
     else {
         previous_game=stats.game;++stats.issued;
+        __atomic_store_n(&stock_state_last_issued,stats.issued,__ATOMIC_RELEASE);
         navmesh_post_publish((unsigned)boot_phase,stats.issued);
         if(seed_frames && !path_installed) seed_frame(); /* else after the release, as on Windows (gate_path.h) */
     }
@@ -868,8 +923,13 @@ static int start_gate(unsigned slot,unsigned port,const char *token,unsigned tim
     int32_t rel=(int32_t)distance;memcpy((unsigned char*)&call_patched+(LX_CALL_VA+1-LX_CALL_WINDOW),&rel,4);
     memset(&stats,0,sizeof(stats));stats.slot=slot;strcpy(secret,token);strcpy(digest,initial_digest);lookahead_reset();
     strcpy(initial_state_digest,initial_digest);remote_port=port;
-    ui_thread=GetCurrentThreadId();__atomic_store_n(&ui_tls,gate_tls_self(),__ATOMIC_SEQ_CST);
+    __atomic_store_n(&ui_thread,GetCurrentThreadId(),__ATOMIC_RELEASE);__atomic_store_n(&ui_tls,gate_tls_self(),__ATOMIC_SEQ_CST);
     gate_fetch_install();
+    linux_pilot_capture_begin();
+    stock_state_begin();
+    stock_range_begin();
+    ik_target_begin();
+    ik_target_order_begin();
     timeout_ms=timeout;stats.active=1;used=1;
     boot_mode=boot;boot_started=GetTickCount64();
     if(!call_swap(call_original,call_patched)) {finish(20);return 20;}
@@ -901,6 +961,7 @@ static int lua_start(lua_State *L) {
 #include "gate_attention.h"
 #include "gate_step_trace.h"
 #include "gate_fp_redirect.h"
+#include "gate_stock_trap.h"
 #include "gate_coverage.h"
 #include "gate_nav.h"
 #include "gate_region.h"
@@ -938,12 +999,58 @@ static int lua_start(lua_State *L) {
 #include "gate_impulse.h"
 #include "gate_ik_diag.h"
 #include "gate_ik_step.h"
+#include "gate_pilot_capture.h"
+#include "gate_stock_state_observer.h"
+#include "gate_stock_range_observer.h"
+#include "gate_ik_target_observer.h"
+#include "gate_ik_target_order.h"
+
+static int lua_pilot_capture_probe_arm(lua_State *L) {
+    int on_ui_thread = accept_ui();
+    int armed = on_ui_thread && linux_pilot_capture_arm();
+    const char *reason = on_ui_thread ? linux_pilot_capture_get_reason() : "thread";
+    p_lua_pushnumber(L, armed);
+    p_lua_pushlstring(L, reason, strlen(reason));
+    return 2;
+}
+
+static int lua_pilot_capture_probe_read(lua_State *L) {
+    char output[320];
+    int on_ui_thread = accept_ui();
+    int length = on_ui_thread ? linux_pilot_capture_read(output, sizeof(output)) : 0;
+    const char *reason = on_ui_thread ? linux_pilot_capture_get_reason() : "thread";
+    if (length) {
+        p_lua_pushlstring(L, output, (size_t)length);
+        return 1;
+    }
+    p_lua_pushnil(L);
+    p_lua_pushlstring(L, reason, strlen(reason));
+    return 2;
+}
 static int lua_flight_faults(lua_State *L) {
     char out[512];int n=accept_ui()?lxf_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* native_gate_flight_diag's trace rows (logged, not hashed): the fixture sample's keyed calls (gate.flight), the model's
  * current avoidance time and obstacle count (gate.avoidance; Windows keeps copies before and after each update). */
+#include "../lockstep_flight_boundary_format.h"
+static int lua_flight_boundary(lua_State *L) {
+    double actor = p_lua_tonumber(L, 1);
+    char output[4096];
+    if (!accept_ui() || !isfinite(actor) || actor < 1 || actor > LXF_ACTORS || floor(actor) != actor) {
+        p_lua_pushnil(L);
+        return 1;
+    }
+    const lxf_sample *sample = &lxf_samples[(unsigned)actor - 1];
+    int length = sample->calls ? flight_boundary_format(&sample->boundary, sample->tick, sample->calls,
+                                                        output, sizeof(output)) : 0;
+    if (length) {
+        p_lua_pushlstring(L, output, (size_t)length);
+    } else {
+        p_lua_pushnil(L);
+    }
+    return 1;
+}
 static int lua_flight(lua_State *L) {
     double actor=p_lua_tonumber(L,1);static char out[8192];
     if(!accept_ui() || !isfinite(actor) || actor<1 || actor>LXF_ACTORS || floor(actor)!=actor) {p_lua_pushnil(L);return 1;}
@@ -1140,11 +1247,17 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(sha256);METHOD(start);METHOD(boot);METHOD(load_requested);METHOD(report);METHOD(poll);METHOD(stop);
     METHOD(frame_timing);METHOD(qpc_us);METHOD(tick_rate);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(peer_links);METHOD(peer_status);METHOD(wire_crypto);METHOD(wire_crypto_status);
     METHOD(platform);METHOD(verify_stage);
+    METHOD(pilot_capture_probe_arm);METHOD(pilot_capture_probe_read);
+    METHOD(stock_state_observer);METHOD(stock_state_observer_status);METHOD(stock_state_observer_row);
+    METHOD(stock_range_observer);METHOD(stock_range_observer_status);METHOD(stock_range_observer_row);
+    METHOD(ik_target_observer);METHOD(ik_target_bind);METHOD(ik_target_status);METHOD(ik_target_row);
+    METHOD(ik_target_order);METHOD(ik_target_order_status);
+    METHOD(nav_rng_fixture);METHOD(nav_rng_fixture_status);
     METHOD(world_motion_config);METHOD(world_motion_capture);METHOD(world_motion_row);METHOD(world_motion_status);
     METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(economy_load_rng_row);
     METHOD(navmesh_post_observe);METHOD(navmesh_post_observe_status);METHOD(navmesh_post_observe_row);
     METHOD(economy_watch_config);METHOD(economy_watch_capture);METHOD(economy_watch_status);
-    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(flight_faults);METHOD(flight);METHOD(avoidance);METHOD(agent);METHOD(ship);METHOD(spline);METHOD(body);
+    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(flight_faults);METHOD(flight);METHOD(flight_boundary);METHOD(avoidance);METHOD(agent);METHOD(ship);METHOD(spline);METHOD(body);
     METHOD(actor);METHOD(params);METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);METHOD(snapshot_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
@@ -1172,6 +1285,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
  * file pin (synthetic image); sites NULL keeps the real pins (image from the ELF). */
 GATE_EXPORT int x4gate_test_setup(unsigned char *fake,const char *exe,tick_fn frame_tick,const lx_site *sites,unsigned count,unsigned park_ms) {
     if(used || !fake || !frame_tick) return 0;
+    linux_pilot_capture_begin();
     image=fake;gate_env.exe=exe;gate_env.file=exe!=NULL;gate_env.maps=0;gate_env.pin=0;
     gate_frame_tick=frame_tick;gate_park_ms=park_ms;
     if(sites) {gate_sites=sites;gate_site_count=count;}

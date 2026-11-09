@@ -24,7 +24,7 @@ static void test_portable_math(void) {
     DWORD old,ignored;assert(VirtualProtect(pmath_page,0x1000,PAGE_READWRITE,&old));pmath_page[7*PMATH_STUB+9]^=1;
     assert(!pmath_owned() && !pmath_check() && !strcmp(pmath_stage,"site_changed"));
     pmath_page[7*PMATH_STUB+9]^=1;assert(VirtualProtect(pmath_page,0x1000,PAGE_EXECUTE_READ,&ignored));pmath_failures=0;
-    char out[320];assert(pmath_status(out,sizeof(out))>0 && strstr(out,"installed=1 sites=29 "));
+    char out[768];assert(pmath_status(out,sizeof(out))>0 && strstr(out,"installed=1 sites=29 "));
     pmath_restore();assert(!pmath_installed && pmath_restored && !strcmp(pmath_stage,"restored"));
     for(unsigned i=0;i<PMATH_COUNT;i++) assert(pmath_state(i)==0 && !memcmp(image+pmath_sites[i].rva,prologue,5));
     /* A thread standing inside a 5-byte window blocks the switch; nothing is written. */

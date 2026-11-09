@@ -274,6 +274,34 @@ static unsigned lxb_fixture_ship(void *self) {
     }
     return 0;
 }
+/* 1..12 for a bound fixture controller, 0 for other controllers, -1 if a
+ * fixture owner's identity or reverse controller pointer has changed. */
+static int lxb_nav_fixture(void *controller) {
+    void *owner = NULL;
+    void *reverse = NULL;
+    uint64_t runtime = 0;
+    if (lxb_bound != LXB_ACTORS || !controller) return 0;
+    (void)gate_read_local((unsigned char *)controller + LXW_NAV_OWNER, &owner, sizeof(owner));
+    for (unsigned i = 0; i < LXB_ACTORS; ++i) {
+        if (!lxb_actors[i].object || lxb_actors[i].object != owner) continue;
+        if (!gate_read_local((unsigned char *)owner + 8, &runtime, sizeof(runtime)) || runtime != lxb_actors[i].runtime ||
+            !gate_read_local((unsigned char *)owner + LXW_OBJ_CONTROLLER, &reverse, sizeof(reverse)) || reverse != controller) {
+            return -1;
+        }
+        return (int)i + 1;
+    }
+    /* A fixture may still point at this controller after its owner pointer
+     * becomes unreadable or changes. Do not silently treat it as nonfixture. */
+    for (unsigned i = 0; i < LXB_ACTORS; ++i) {
+        if (lxb_actors[i].object &&
+            gate_read_local((unsigned char *)lxb_actors[i].object + LXW_OBJ_CONTROLLER, &reverse, sizeof(reverse)) &&
+            reverse == controller) return -1;
+    }
+    return 0;
+}
+static int lxb_nav_fixture_ready(void) {
+    return lxb_configured && lxb_bound == LXB_ACTORS;
+}
 static unsigned lxb_fixture_agent(void *self) {
     if(lxb_bound!=LXB_ACTORS || !self) return 0;
     for(unsigned i=0;i<LXB_ACTORS;i++) if(lxb_actors[i].agent==self) {

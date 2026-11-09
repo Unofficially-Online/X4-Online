@@ -40,6 +40,13 @@ static void test_flight_linux(void) {
     stats.active=1;boot_phase=3;stats.issued=77;tfl_original_calls=0;
     lxf_update(model,agent,0.033f,10.0,1,0);
     assert(tfl_original_calls==1 && tfl_seen_rng==lxf_seed(77,3,1) && tfl_seen_cheap==0 && word==0x1111222233334444ULL);
+    /* Read-only boundary capture preserves that same original/keyed path and
+     * explicitly records an absent solver; this fixture leaves Agent+fa0 null. */
+    assert(lxf_samples[2].boundary.command_valid==3 && lxf_samples[2].boundary.request[0].valid==7 &&
+           lxf_samples[2].boundary.request[1].valid==7 && lxf_samples[2].boundary.solver_same_valid &&
+           lxf_samples[2].boundary.solver_same &&
+           !memcmp(lxf_samples[2].boundary.command_after[0],model+0x1c0,12) &&
+           !memcmp(lxf_samples[2].boundary.command_after[1],model+0x1d0,12));
     double stale;memcpy(&stale,model+LXF_MODEL_AVOIDANCE_TIME,8);assert(stale==-1.0);
     /* Windows' FLIGHT blocks: dt and time bits, the slot (here the Agent's first words), the model with its vtable and
      * Agent zeroed, the Agent's +0x340 block, cheap counted. */

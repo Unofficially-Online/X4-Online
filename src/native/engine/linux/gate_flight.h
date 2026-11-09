@@ -40,12 +40,15 @@ typedef void (*lxf_update_fn)(void *,void *,float,double,unsigned char,unsigned 
  * Agent's buffers +0/+0x1a0/+0x340 sit before the first shifted field +0x700) and the thread's game time. */
 #define LXF_MODEL_BYTES 0x3b0u
 #define LXF_AGENT_LIMITS 0x340u
+#include "../lockstep_flight_boundary.h"
+static const flight_boundary_layout lxf_boundary_layout = FLIGHT_BOUNDARY_LINUX_LAYOUT;
 typedef struct {
     void *model,*agent,*initialized_model,*object;
     uint64_t runtime,tick,calls,init_generation,rng_before,rng_after;
     uint64_t cheap,applied_cheap,time_bits,tls_time;
     uint32_t dt,last_cheap,last_player,before[24],after[24];
     uint32_t model_before[LXF_MODEL_BYTES/4],agent_limits[0x60/4],slot_before[0x1a0/4],params_before[0x1a0/4];
+    flight_boundary_sample boundary;
 } lxf_sample;
 static lxf_sample lxf_samples[LXF_ACTORS];
 static int lxf_installed,lxf_restored,lxf_seeded,lxf_full,lxf_refresh,lxf_initial,lxf_ctor_installed;
@@ -117,12 +120,22 @@ static void lxf_update(void *self,void *slot,float dt,double time,unsigned char 
         memset(s->agent_limits,0,sizeof(s->agent_limits));memset(s->params_before,0,sizeof(s->params_before));
     }
     {unsigned char *base=gate_tls_self();const double *t=base?gate_tls_time(base):NULL;s->tls_time=0;if(t) memcpy(&s->tls_time,t,8);}
+    {
+        int error = errno;
+        flight_boundary_begin(gate_read_local, &lxf_boundary_layout, s->agent, &s->boundary);
+        errno = error;
+    }
     uint64_t *rng=lxf_test_rng?lxf_test_rng:gate_tls_rng(gate_tls_self()),saved=rng?*rng:0;
     const int keyed=lxf_seeded && rng!=NULL;
     if(keyed) *rng=lxf_seed(stats.issued,actor,s->calls);
     s->rng_before=rng?*rng:0;
     if(lxf_refresh) {const double stale=-1.0;memcpy((unsigned char*)self+LXF_MODEL_AVOIDANCE_TIME,&stale,8);++lxf_refreshes;}
     original(self,slot,dt,time,lxf_full?0:cheap,player);
+    {
+        int error = errno;
+        flight_boundary_end(gate_read_local, &lxf_boundary_layout, self, s->agent, &s->boundary);
+        errno = error;
+    }
     if(!gate_read_local(slot,s->after,sizeof(s->after))) memset(s->after,0,sizeof(s->after));
     s->rng_after=rng?*rng:0;
     if(keyed) *rng=saved;

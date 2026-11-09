@@ -76,6 +76,8 @@ class LoadAcknowledgements(unittest.TestCase):
         source=(base.ROOT/'tools/dev/native_gate_probe.lua').read_text()
         setup=source[source.index('  local registry_activate,rng_activate'):source.index('  if rng_activate then rng_activate() end')+len('  if rng_activate then rng_activate() end')]
         start=source.index("SetScript('onUpdate',function()");abort=source[start:source.index(chr(10)+'end)'+chr(10),start)+5]
+        # The abort closure shares the real cursor table and observer stop helpers.
+        cursor_context=source[source.index('local row_cursors={'):source.index('row_cursors.navmesh_post = 0')]
         lua=LuaRuntime();lua.execute('''
           ticklog={flush=function() end,notice=function() end,try=function(fn,...) return pcall(fn,...) end};pilot_view={}
           cfg={native_gate_registry_creation_schema=1,native_gate_creation_rng_schema=1,native_gate_player_observer=true}
@@ -89,7 +91,7 @@ class LoadAcknowledgements(unittest.TestCase):
           SetScript=function(_,callback)update=callback end
         ''')
         lua.execute('frame=function()if done then return end;'+setup+' end')
-        lua.execute(abort);lua.execute('update();update()')
+        lua.execute(cursor_context+'\n'+abort);lua.execute('update();update()')
         rows=list(lua.globals().logs.values())
         self.assertEqual(lua.globals().stops,1)
         self.assertEqual(rows.count('REGISTRY_DRAIN'),1);self.assertEqual(rows.count('RNG_DRAIN'),1)
