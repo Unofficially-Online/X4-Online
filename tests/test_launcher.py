@@ -111,6 +111,23 @@ class Unstage(unittest.TestCase):
             self.assertFalse(profile.unstage(pid, root=tmp))
 
 
+class UnstageEveryClient(unittest.TestCase):
+    def test_run_unstages_each_client_in_its_collect_loop(self):
+        """A merge once moved the call into the hot join branch: plain sessions left save_009 in b1/b2 (8 Nov)."""
+        import inspect
+        src = inspect.getsource(session.run)
+        lines = src.splitlines()
+        start = next(i for i, l in enumerate(lines) if l.strip() == 'for k, profile_id, _ in clients:'
+                     and 'profile.collect(' in lines[i + 1])
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        body = []
+        for l in lines[start + 1:]:
+            if l.strip() and len(l) - len(l.lstrip()) <= indent:
+                break
+            body.append(l)
+        self.assertTrue(any('profile.unstage(profile_id)' in l for l in body), body)
+
+
 class Views(unittest.TestCase):
     def test_view_links_game_and_removal_never_enters_links(self):
         with tempfile.TemporaryDirectory() as tmp:

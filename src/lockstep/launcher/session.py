@@ -405,10 +405,10 @@ def run(o: Options, log=print):
         time.sleep(2)
         for k, profile_id, _ in clients:
             profile.collect(profile_id, f'x4ls-c{k}.log', run_dir / f'client{k}')
+            profile.unstage(profile_id)  # every client's: the lane tool shares these profiles (not only hot joins')
         if save_dirs:
             from . import hotjoin
             hotjoin.remove_join_files(save_dirs)
-            profile.unstage(profile_id)  # the lane tool shares these profiles
         if not o.keep_views:
             for view in state['views']:
                 game.remove_view(view)
