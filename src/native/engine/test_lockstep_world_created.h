@@ -269,11 +269,12 @@ static void test_created_capture_image(void) {
     assert(world_hash_capture_with(2,1,test_created_find) && world_hash_created_count==2 && world_hash_changes==1 && world_hash_alive==2);
     ship_row=world_hash_item_at(world_hash_changed[0]);assert(ship_row->saved==a && !ship_row->flags && !ship_row->type);
     assert(strstr(world_hash_summary,"objects=3 present=2 changed=1 ") && strstr(world_hash_summary," created=2 "));
-    /* Hot join GONE (lockstep_join.h): the session's rows whose object is gone (the ship); a joiner whose rows come from the living
-     * objects (the saved sector, the created zone) and those has the session's world state at the same tick. */
+    /* Hot join GONE (lockstep_join.h): every saved row of the session (the sector, alive: a save can leave out what the map still
+     * holds, hj7) and the created rows whose object is gone (the ship; the living zone's row travels in IDS), sorted; a joiner
+     * whose rows come from the living objects keeps its own and adds the ship's: the session's world state at the same tick. */
     {
         join_tables gt;memset(&gt,0,sizeof(gt));
-        assert(join_capture_gone(&gt,test_created_find,test_created_map) && gt.ngone==1 && gt.gone[0].portable==a);
+        assert(join_capture_gone(&gt,test_created_find,test_created_map) && gt.ngone==2 && gt.gone[0].portable==0x77 && gt.gone[1].portable==a);
         char session[sizeof(world_hash_state)];memcpy(session,world_hash_state,sizeof(session));
         VirtualFree(world_hash_created,0,MEM_RELEASE);VirtualFree(world_hash_items,0,MEM_RELEASE);VirtualFree(world_hash_changed,0,MEM_RELEASE);
         world_hash_items=NULL;world_hash_created=NULL;world_hash_changed=NULL;world_hash_count=world_hash_created_count=0;world_hash_scans=0;world_hash_tick=0;
@@ -287,7 +288,7 @@ static void test_created_capture_image(void) {
         AcquireSRWLockExclusive(&created_lock);assert(created_live_add(101,z,1));ReleaseSRWLockExclusive(&created_lock);
         join_rx.loaded=1;join_rx.t.version=13;join_rx.t.gone=gt.gone;join_rx.t.ngone=gt.ngone;
         assert(world_hash_capture_with(2,1,test_created_find) && world_hash_created_count==2 && world_hash_alive==2 && !strcmp(world_hash_state,session));
-        assert(strstr(world_hash_summary,"objects=3 present=2 ") && world_hash_gone_added==1 && !world_hash_gone_dupes);
+        assert(strstr(world_hash_summary,"objects=3 present=2 ") && world_hash_gone_added==1 && world_hash_gone_dupes==1);
         /* Rows the joiner has itself (the saved sector, the created zone) stay its own: the same state, counted. */
         VirtualFree(world_hash_created,0,MEM_RELEASE);VirtualFree(world_hash_items,0,MEM_RELEASE);VirtualFree(world_hash_changed,0,MEM_RELEASE);
         world_hash_items=NULL;world_hash_created=NULL;world_hash_changed=NULL;world_hash_count=world_hash_created_count=0;world_hash_scans=0;world_hash_tick=0;

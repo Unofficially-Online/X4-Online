@@ -143,13 +143,14 @@ The joiner has 900 s from the save to report in (the relay's `--join-joiner-time
 of its own clients only, so slot 1's PC must be one of the savers. With `--open` the relay hands over after 20 s
 of catch-up and may pause everyone for up to 180 s while the joiner closes the gap.
 
-Status (8 Nov, one PC, hj1..hj6). These steps run: the request, the save at the next join tick, the 192 MB
+Status (8 Nov, one PC, hj1..hj8). These steps run: the request, the save at the next join tick, the 192 MB
 download (verified), the joiner's overlay and its checks, the load, the resume into the open pilot window and the
-catch-up. The relay then refuses the join on its digest check within a few ticks of T. At T+1 the world is equal on
-both sides (same world hash, state rows, ships and inputs); only the simulation's own RNG word differs. The lane
-tool's in-window joins show the same word apart at T+1 (w1z199) and a world census equal for 5900 ticks after it.
-They pass only because their replay runs with `--observe`. Next: carry or key what moves that word on the joiner's
-first step (its AI wait checks with no context mapping, 64 to 71 of them, draw from the shared stream).
+catch-up. The relay then refuses the join on its digest check. hj7 parted at T+1 on one census row the join save
+leaves out (an object still in the map at T, gone at T+1); the package now carries it. hj8: the digest is equal on
+both sides from T+1 to T+9, then parts at T+10 on one battle ship's decision: the session's ship reacts to an event
+(a new object from an enemy ship) that the joiner's does not get. The RNG word that differs at T+1 is the joiner's
+first frame only: it is equal again at T+2. The lane tool's in-window joins compare the world census, not this
+digest, so they did not stop there.
 
 ## Choosing the starts (built 8 Nov, not yet run through x4ls)
 
@@ -196,7 +197,7 @@ first mismatch.
   unfocused window is unverified.
 - **Desync recovery.** None: a session that differs stays different.
   - Hot join: `x4ls play --open` with `x4ls join` (no `--arm-at`) runs up to the catch-up, but the relay refuses
-    the handover on the T+1 RNG word (see "Joining a running game"). Rejoin after a drop exists in lane runs only.
+    the handover at T+10 (see "Joining a running game"). Rejoin after a drop exists in lane runs only.
   - After a late join a few large ships still differ (reports/LOCKSTEP-HOTJOIN-20261101.txt).
 - **Desync indicator in game.** None, so that desyncs stay silent. `tools/dev/native_gate_desync_watch.py --status
   .local/runs/<time>/desync-status.json` shows one in the console.

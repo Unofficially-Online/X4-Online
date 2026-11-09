@@ -1238,15 +1238,18 @@ static int join_capture_ids(join_tables *t) {
 static int join_gone_cmp(const void *a,const void *b) {
     const uint64_t x=((const join_gone_rec*)a)->portable,y=((const join_gone_rec*)b)->portable;return x<y?-1:x>y;
 }
-/* Every census row without an object at T: j1-118's savers wrote 95,166, most of them connections, which the census reads as
- * absent on both sides and a joiner imports (its own rows stay, world_hash_init); a row of an object the map still holds but a
- * joiner does not import is carried as well. */
+/* Every saved (snapshot) row at T, whether its object is gone or not, and every created row whose object is gone: a joiner adds
+ * an absent row for each it lacks and keeps its own rows (world_hash_init counts them as dupes). j1-118's savers wrote 95,166
+ * rows without an object, most of them connections. Saved rows of objects the map still holds are carried too, because the
+ * save can leave such an object out: hj7 (8 Nov), a Kha'ak character (saved 535215) still in the map at T, not in the join save
+ * and gone at T+1, so the joiner was one row short and the world state of the declared digest parted at T+1 with every common
+ * object equal. A living created object's row travels in IDS (pad 1, join_row_keys) instead. */
 static int join_capture_gone(join_tables *t,world_hash_find_fn find,void *map) {
     if(!world_hash_items || !map) return 1;   /* no census on this session: nothing to carry */
     uint32_t cap=0;
     for(unsigned i=0;i<world_hash_count+world_hash_created_count;i++) {
         const world_hash_item *item=world_hash_item_at(i);
-        if(item->runtime && find(map,item->runtime,4)) continue;
+        if((item->saved>>63) && item->runtime && find(map,item->runtime,4)) continue;
         const join_gone_rec r={item->saved};if(!JOIN_PUSH(t->gone,t->ngone,cap,r)) return 0;
     }
     if(t->ngone) qsort(t->gone,t->ngone,sizeof(*t->gone),join_gone_cmp);

@@ -311,26 +311,39 @@ static int world_hash_init(void) {
     if(!world_identities || world_identity_count<=0 || world_identity_count>WORLD_IDENTITY_CAPACITY/2 ||
        !hash_ok(image+0xced70,32,"de126e38d2532250fc386f851f355cdb4812bf6b4507ace0549728e27505f268") || !dock_state_pins()) return 0;
     unsigned count=(unsigned)world_identity_count;
-    /* A hot joiner's rows come from the join save, the living objects only; the session also keeps rows for the snapshot and
-     * created objects gone since, which the package carries (GONE, lockstep_join.h join_capture_gone): runtime 0, absent. */
-    const uint64_t *gone=NULL;const uint32_t ngone=join_gone_keys(&gone);unsigned gone_saved=0,gone_created=0;
-    for(uint32_t i=0;i<ngone;i++) {if(gone[i]>>63) ++gone_created;else ++gone_saved;}
+    /* A hot joiner's rows come from the join save, the living objects it holds only; the session also keeps rows for the snapshot
+     * and created objects gone since, and for objects the save left out, which the package carries (GONE, lockstep_join.h
+     * join_capture_gone): runtime 0, absent. */
+    const uint64_t *gone=NULL;const uint32_t ngone=join_gone_keys(&gone);unsigned gone_created=0;
+    for(uint32_t i=0;i<ngone;i++) if(gone[i]>>63) ++gone_created;
     world_hash_gone_added=world_hash_gone_dupes=0;
-    world_hash_items=VirtualAlloc(NULL,sizeof(*world_hash_items)*(count+gone_saved),MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
-    world_hash_changed=VirtualAlloc(NULL,sizeof(*world_hash_changed)*(count+gone_saved+WORLD_HASH_CREATED_MAX),MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
-    if(!world_hash_items || !world_hash_changed) return 0;
+    world_hash_items=VirtualAlloc(NULL,sizeof(*world_hash_items)*count,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+    if(!world_hash_items) return 0;
     for(unsigned i=0;i<WORLD_IDENTITY_CAPACITY;i++) if(world_identities[i].runtime) {
         if(world_hash_count==count) return 0;
         world_hash_items[world_hash_count++]=(world_hash_item){.runtime=world_identities[i].runtime,.saved=world_identities[i].saved};
     }
     if(world_hash_count!=count) return 0;
     qsort(world_hash_items,count,sizeof(*world_hash_items),world_hash_compare);
-    /* A row the joiner has itself stays its own (rows of the session's objects only; a saver leaves out what the map still holds). */
+    /* A row the joiner has itself stays its own (GONE carries every saved row of the session, most of them the joiner's too);
+     * the table grows by the rows it lacks only. */
+    unsigned missing=0;
     for(uint32_t i=0;i<ngone;i++) if(!(gone[i]>>63)) {
         const world_hash_item key={.saved=gone[i]};
-        if(bsearch(&key,world_hash_items,count,sizeof(*world_hash_items),world_hash_compare)) {++world_hash_gone_dupes;continue;}
-        world_hash_items[world_hash_count++]=(world_hash_item){.runtime=0,.saved=gone[i]};++world_hash_gone_added;
+        if(bsearch(&key,world_hash_items,count,sizeof(*world_hash_items),world_hash_compare)) ++world_hash_gone_dupes;else ++missing;
     }
+    if(missing) {
+        world_hash_item *grown=VirtualAlloc(NULL,sizeof(*grown)*(count+missing),MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+        if(!grown) return 0;
+        memcpy(grown,world_hash_items,sizeof(*grown)*count);VirtualFree(world_hash_items,0,MEM_RELEASE);world_hash_items=grown;
+        for(uint32_t i=0;i<ngone;i++) if(!(gone[i]>>63)) {
+            const world_hash_item key={.saved=gone[i]};
+            if(bsearch(&key,world_hash_items,count,sizeof(*world_hash_items),world_hash_compare)) continue;
+            world_hash_items[world_hash_count++]=(world_hash_item){.runtime=0,.saved=gone[i]};++world_hash_gone_added;
+        }
+    }
+    world_hash_changed=VirtualAlloc(NULL,sizeof(*world_hash_changed)*(world_hash_count+WORLD_HASH_CREATED_MAX),MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+    if(!world_hash_changed) return 0;
     world_hash_stage="gone_rows";
     if(gone_created && !created_enabled()) return 0;
     count=world_hash_count;
