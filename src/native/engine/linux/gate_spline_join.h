@@ -157,7 +157,8 @@ static int lua_spline_join_all(lua_State *L) {p_lua_pushnumber(L,lsj_arm_all());
 /* native_gate_spline_diag's trace row (logged, not hashed). */
 static int lua_spline(lua_State *L) {
     double actor=p_lua_tonumber(L,1);char out[160];
-    if(!accept_ui() || !lsj_installed || !isfinite(actor) || actor<1 || actor>12 || floor(actor)!=actor) {p_lua_pushnil(L);return 1;}
+    /* As Windows: still readable after the restore (the probe's final SPLINE rows come after the stop). */
+    if(!accept_ui() || (!lsj_installed && !lsj_restored) || !isfinite(actor) || actor<1 || actor>12 || floor(actor)!=actor) {p_lua_pushnil(L);return 1;}
     int n=snprintf(out,sizeof(out),"fixture_calls=%lld refreshes=%lld refresh=%d",(long long)lsj_fixture_calls,(long long)lsj_refreshes,lsj_refresh);
     p_lua_pushlstring(L,out,(size_t)n);return 1;
 }

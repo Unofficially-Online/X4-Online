@@ -38,6 +38,29 @@ static lxb_find_fn lxb_find_override; /* tests */
 static void *lxb_map_override;
 typedef float (*lxb_percent_fn)(void *,double);
 static lxb_percent_fn lxb_percent_override; /* tests */
+/* The flight parameters built once per fixture ship at its first gate.actor (native_gate_params_init, boot bit 4096;
+ * Windows params_once in lua_actor). The builder 0x14378c0 (Windows 0xea1e80, pinned whole: params_build) is the one
+ * NavigationController::OnUpdateEngineParameters (0x14382f0) refreshes the slot with: controller, the Agent (+0x38;
+ * Windows +0x40) plus the write selector (LX_BANK_WRITE_VA) times 0x1a0, base 0 (the call at 0x1438408, inside
+ * erng_listener_tail). Without it a ship flies its first ticks on the parameters it was saved with. Stop 36 when an
+ * actor refuses (Windows' stop), 35 when the pin does. */
+#define LXB_PARAMS_BUILD_VA 0x14378c0u
+typedef void (*lxb_params_fn)(void *controller,void *destination,unsigned char base);
+static int lxb_params_enabled;
+static unsigned lxb_params_done[LXB_ACTORS],lxb_params_calls;
+static lxb_params_fn lxb_params_override; /* tests */
+static int lxb_params_pinned(void) {const lx_site *s=site_named("params_build");return s && site_ok(s);}
+static int lxb_params_once(unsigned actor,unsigned char *controller,const unsigned char *slots) {
+    if(actor<1 || actor>LXB_ACTORS || !controller || !slots) return 0;
+    if(lxb_params_done[actor-1]) return 1;
+    unsigned char *agent=NULL;unsigned index=2;
+    if(!gate_read_local(controller+LXW_NAV_AGENT,&agent,8) || !agent || agent!=slots-LXW_AGENT_SLOTS ||
+       agent!=lxb_actors[actor-1].agent) return 0;
+    if(!gate_read_local(LX(LX_BANK_WRITE_VA),&index,4) || index>1) return 0;
+    lxb_params_fn build=lxb_params_override?lxb_params_override:(lxb_params_fn)(void*)LX(LXB_PARAMS_BUILD_VA);
+    build(controller,agent+index*LXB_BANK_STRIDE,0);
+    lxb_params_done[actor-1]=1;++lxb_params_calls;return 1;
+}
 static const double *lxb_time_override;     /* tests: the UI thread's game time */
 static uint64_t lxb_shield_refresh_calls,lxb_shield_refresh_failures;
 static int lxb_pin_skip; /* tests on the synthetic image */
@@ -211,6 +234,10 @@ static int lua_actor(lua_State *L) {
     memcpy(&slots,ctrl_data+LXW_NAV_SLOTS,8);
     if(!slots) return lxb_unavailable(L,"state_read");
     const unsigned index_actor=isfinite(actor) && actor>=1 && actor<=LXB_ACTORS && floor(actor)==actor?(unsigned)actor:0;
+    if(index_actor && lxb_params_enabled && !lxb_params_done[index_actor-1] &&
+       (!lxb_configured || !lxb_params_once(index_actor,controller,slots))) {
+        finish(36);return lxb_unavailable(L,"parameter_initialization");
+    }
     if(index_actor && lxf_installed) (void)lxf_register(index_actor,object,(uint64_t)number,slots-LXW_AGENT_SLOTS);
     unsigned index=2;
     if(!gate_read_local(LX(LX_BANK_READ_VA),&index,4) || index>1) return lxb_unavailable(L,"state_index");

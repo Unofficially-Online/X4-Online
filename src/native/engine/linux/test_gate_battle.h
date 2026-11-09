@@ -19,6 +19,10 @@ static void tbt_agent_native(void *self,void *commands,float dt,double time,unsi
 static void tbt_spline_native(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
     (void)self;(void)slot;(void)dt;(void)time;(void)player;tbt_cheap=cheap;
 }
+static void *tbt_params_controller,*tbt_params_destination;static unsigned tbt_params_base,tbt_params_calls;
+static void tbt_params(void *controller,void *destination,unsigned char base) {
+    tbt_params_controller=controller;tbt_params_destination=destination;tbt_params_base=base;++tbt_params_calls;
+}
 static float tbt_percent_value;static double tbt_percent_time;static void *tbt_percent_object;
 static float tbt_percent(void *object,double time) {tbt_percent_object=object;tbt_percent_time=time;return tbt_percent_value;}
 typedef struct {
@@ -156,6 +160,24 @@ static void test_battle_linux(void) {
     assert(stale==0 && tbt_cheap==1);
     memcpy(tbt_ships[2].agent+LXF_AGENT_MODEL,&steering_model,8);lxb_actors[2].enrolled=0;
     lsj_diag=lsj_refresh=0;lsj_original_override=NULL;
+    /* params_init: a bound ship's flight parameters built once, at its first gate.actor, into its Agent's write bank
+     * (LX_BANK_WRITE_VA's index times 0x1a0) with base 0; an Agent other than the bound one, or a selector out of
+     * range, refuses. */
+    {const uintptr_t page=(uintptr_t)LX(LX_BANK_WRITE_VA)&~(uintptr_t)(GATE_PAGE-1);assert(!mprotect((void*)page,GATE_PAGE,PROT_READ|PROT_WRITE));}
+    uint32_t write_saved;memcpy(&write_saved,LX(LX_BANK_WRITE_VA),4);const uint32_t one=1,two=2;memcpy(LX(LX_BANK_WRITE_VA),&one,4);
+    lxb_params_override=tbt_params;memset(lxb_params_done,0,sizeof(lxb_params_done));lxb_params_calls=0;lxb_params_enabled=1;tbt_params_calls=0;
+    tbt_args[1]=0x9000;tbt_args[2]=1;tbt_args[3]=0;tbt_nil=0;assert(lua_actor(NULL)==1 && !tbt_nil);
+    assert(tbt_params_calls==1 && lxb_params_calls==1 && tbt_params_controller==tbt_ships[0].controller &&
+           tbt_params_destination==tbt_ships[0].agent+LXB_BANK_STRIDE && tbt_params_base==0);
+    assert(lua_actor(NULL)==1 && !tbt_nil && tbt_params_calls==1); /* once */
+    const unsigned char *slots1=tbt_ships[1].agent+LXW_AGENT_SLOTS;void *agent_kept;memcpy(&agent_kept,tbt_ships[1].controller+LXW_NAV_AGENT,8);
+    void *wrong=tbt_ships[2].agent;memcpy(tbt_ships[1].controller+LXW_NAV_AGENT,&wrong,8);
+    assert(!lxb_params_once(2,tbt_ships[1].controller,slots1));memcpy(tbt_ships[1].controller+LXW_NAV_AGENT,&agent_kept,8);
+    memcpy(LX(LX_BANK_WRITE_VA),&two,4);assert(!lxb_params_once(2,tbt_ships[1].controller,slots1));
+    memcpy(LX(LX_BANK_WRITE_VA),&zero,4);assert(lxb_params_once(2,tbt_ships[1].controller,slots1) && tbt_params_destination==tbt_ships[1].agent);
+    assert(!lxb_params_once(0,tbt_ships[1].controller,slots1) && !lxb_params_once(13,tbt_ships[1].controller,slots1) && tbt_params_calls==2);
+    memcpy(LX(LX_BANK_WRITE_VA),&write_saved,4);
+    lxb_params_override=NULL;lxb_params_enabled=0;memset(lxb_params_done,0,sizeof(lxb_params_done));lxb_params_calls=0;
     /* Restore. */
     lxf_installed=lxf_initial=lxf_seeded=0;memset(lxf_samples,0,sizeof(lxf_samples));
     memset(lxb_actors,0,sizeof(lxb_actors));lxb_configured=lxb_bound=lxb_prepared=lxb_enrolled=0;lxb_failures=0;
@@ -168,7 +190,13 @@ static void test_battle_linux(void) {
 }
 /* The real executable: GetShieldPercent's pin, its holder (group+0x58) and its call of the read. */
 static void test_battle_elf(void) {
-    assert(lxb_shield_pinned());
+    assert(lxb_shield_pinned() && lxb_params_pinned());
+    /* The listener refreshes the slot with the builder: controller, [controller+0x38] + selector*0x1a0, base 0. */
+    static const unsigned char refresh[]={0x8b,0x05,0x5e,0x5e,0x95,0x02,0x48,0x8d,0x14,0x40,0x48,0x8d,0x34,0x90,0x31,0xd2,
+                                          0x48,0xc1,0xe6,0x05,0x48,0x03,0x77,0x38,0xe8};
+    assert(!memcmp(LX(0x14383f0),refresh,sizeof(refresh)));
+    int32_t to;memcpy(&to,LX(0x1438409),4);assert(0x143840du+(uint32_t)to==LXB_PARAMS_BUILD_VA);
+    assert(0x14383f6u+0x2955e5eu==LX_BANK_WRITE_VA && LXW_NAV_AGENT==0x38u);
     static const unsigned char add[]={0x48,0x83,0xc7,0x58},call=0xe8;
     assert(!memcmp(LX(0x17d7bdb),add,4) && *LX(0x17d7be4)==call);
     int32_t rel;memcpy(&rel,LX(0x17d7be5),4);assert(0x17d7be9u+(uint32_t)rel==0x1293330u); /* the read (gate_world.h's shield_recharge) */

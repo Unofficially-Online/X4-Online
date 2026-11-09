@@ -941,6 +941,7 @@ static int lua_read_cost(lua_State *L) {
 #define LX_BOOT_AGENT_DIAG 128ull /* the agent hook without keying (Windows agent_diag; its rows are not ported) */
 #define LX_BOOT_SHIP_DIAG 1024ull /* the ship Move hook without keying (Windows ship_diag) */
 #define LX_BOOT_SHIP_RNG 2048ull
+#define LX_BOOT_PARAMS_INIT 4096ull /* the battle fixture's flight parameters built once at the first sample (gate_battle.h) */
 #define LX_BOOT_SPLINE_JOIN 34359738368ull
 #define LX_BOOT_SPLINE_DIAG 8589934592ull     /* the spline hook's battle-fixture path and spline_state (gate_spline_join.h) */
 #define LX_BOOT_SPLINE_REFRESH 17179869184ull /* its fixture refresh (needs diag and agent_full) */
@@ -951,7 +952,7 @@ static int lua_read_cost(lua_State *L) {
 /* The battle fixture's steering (gate_flight.h): 4 flight_diag, 8 flight_rng, 16 flight_full install it (Windows: options&28);
  * 2^31 avoidance_refresh and 2^32 steering_init are its settings. */
 #define LX_BOOT_FLIGHT (4ull|8ull|16ull|2147483648ull|4294967296ull)
-#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
+#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_PARAMS_INIT|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
 static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *hash,double options) {
     if(!isfinite(options) || options<0 || options>9007199254740991.0 || floor(options)!=options) return 10;
     if((uint64_t)options & ~LX_BOOT_OPTIONS) return LX_STOP_UNPORTED_OPTION;
@@ -976,6 +977,7 @@ static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned time
         if(!result && (boot_options&(LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_DIAG)) && !laa_agent_install()) {finish(161);result=161;}
         laa_ship_seeded=(boot_options&LX_BOOT_SHIP_RNG)!=0;laa_agent_seeded=(boot_options&LX_BOOT_AGENT_RNG)!=0;
         laa_agent_full=(boot_options&LX_BOOT_AGENT_FULL)!=0;
+        if(!result && (boot_options&LX_BOOT_PARAMS_INIT)) {if(!lxb_params_pinned()) {finish(35);result=35;} else lxb_params_enabled=1;} /* Windows: 35, the pin */
         if(!result && (boot_options&28) && !lxf_install((boot_options&8)!=0,(boot_options&16)!=0,(boot_options&2147483648ull)!=0,
                                                      (boot_options&4294967296ull)!=0)) {finish(28);result=28;}
     }
@@ -1012,7 +1014,29 @@ static int lua_poll(lua_State *L) {
     NUMBER("world_identity_late",world_identity_late);NUMBER("world_identity_failures",world_identity_failures);
     NUMBER("world_identity_restored",world_identity_restored);
     NUMBER("world_hash_scans",world_hash_scans);NUMBER("world_hash_failures",world_hash_failures);
+    NUMBER("params_calls",lxb_params_calls);
+    /* The probe's stop lines for the battle fixture (Windows' poll fields, from the Linux modules). */
+    NUMBER("snapshot_bound",lxb_bound);NUMBER("snapshot_prepared",lxb_prepared);NUMBER("snapshot_enrolled",lxb_enrolled);
+    NUMBER("snapshot_failures",lxb_failures);
+    NUMBER("flight_calls",lxf_calls);NUMBER("flight_restored",lxf_restored);NUMBER("flight_failures",lxf_failures);
+    NUMBER("flight_refreshes",lxf_refreshes);NUMBER("flight_inits",lxf_inits);NUMBER("flight_ctor_calls",lxf_ctor_calls);
+    NUMBER("flight_ctor_restored",lxf_restored && !lxf_ctor_installed);NUMBER("flight_registration_inits",lxf_registration_inits);
+    NUMBER("shield_refresh_calls",lxb_shield_refresh_calls);NUMBER("shield_refresh_failures",lxb_shield_refresh_failures);
+    NUMBER("spline_calls",lsj_fixture_calls);NUMBER("spline_failures",lsj_failures);NUMBER("spline_restored",lsj_restored);
+    NUMBER("spline_refreshes",lsj_refreshes);NUMBER("spline_joins",lsj_joins);NUMBER("spline_waits",lsj_waits);
+    NUMBER("spline_timeouts",lsj_timeouts);
+    NUMBER("agent_calls",laa_fixture_agents);NUMBER("agent_restored",laa_restored);NUMBER("agent_failures",laa_failures);
+    NUMBER("ship_calls",laa_fixture_ships);NUMBER("ship_restored",laa_restored);NUMBER("ship_failures",laa_failures);
 #undef NUMBER
+    {
+        char text[256];int n=snprintf(text,sizeof(text),"stage=%s actor=%u bound_tick=%llu prepared_tick=%llu",lxb_stage,lxb_stage_actor,
+            (unsigned long long)lxb_bound_tick,(unsigned long long)lxb_prepared_tick);
+        if(n>0 && (size_t)n<sizeof(text)) {p_lua_pushlstring(L,text,(size_t)n);p_lua_setfield(L,-2,"snapshot_boundary");}
+        n=0;text[0]=0;
+        for(unsigned i=0;i<LXB_ACTORS && n>=0 && (size_t)n<sizeof(text);i++)
+            n+=snprintf(text+n,sizeof(text)-(size_t)n,"%s%u/%llu",i?",":"",i+1,(unsigned long long)lxf_samples[i].init_generation);
+        if(n>=0 && (size_t)n<sizeof(text)) {p_lua_pushlstring(L,text,(size_t)n);p_lua_setfield(L,-2,"flight_init_totals");}
+    }
     p_lua_pushlstring(L,"linux",5);p_lua_setfield(L,-2,"platform");
     /* Observation only: the calling UI thread's own RNG word (MoveWorker). */
     uint64_t *rng=gate_tls_rng(gate_tls_self());
