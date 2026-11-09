@@ -30,8 +30,12 @@ static void test_coverage_linux(void) {
     cov_unmark();cov_armed=0;cov_count=0;memset(cov_table,0,sizeof(cov_table));
     /* The Linux late window: marks at tick 3 (lx_cov_from), nothing before, ticks absolute in the rows. */
     cov_marked=cov_skipped=cov_invalid=cov_open=cov_done=0;cov_hits=cov_foreign=cov_failures=0;cov_row_cursor=cov_row_site=0;
-    snprintf(list,sizeof(list),"%x\n%x\n",base,base+0x40);
-    assert(cov_load_text(list,strlen(list)) && cov_count==2);
+    /* An entry inside a pinned site range (the engine RNG listener's head, re-checked every tick) is never marked. */
+    unsigned head=0;while(head<gate_site_count && strcmp(gate_sites[head].name,"erng_listener_head")) head++;
+    assert(head<gate_site_count);
+    const unsigned pinned_before=lx_cov_pinned;cov_invalid=0;
+    snprintf(list,sizeof(list),"%x\n%x\n%x\n",base,base+0x40,gate_sites[head].va+4);
+    assert(cov_load_text(list,strlen(list)) && cov_count==2 && cov_invalid==1 && lx_cov_pinned==pinned_before+1);
     stats.issued=0;boot_phase=0;assert(cov_arm(5));lx_cov_from=3;boot_phase=3;
     stats.issued=1;lx_cov_frame(1);stats.issued=2;lx_cov_frame(2);
     assert(!cov_open && !cov_marked && *LX(base)==0xb8 && ((fn)(void*)LX(base))()==11 && !cov_hits);

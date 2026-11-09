@@ -9,7 +9,17 @@ static struct sigaction cov_prior;
 static int cov_handler_installed;
 #define COV_BASE LX_IMAGE_BASE
 #include "lockstep_coverage.h"
-static int cov_in_text(uintptr_t address) {return address>=(uintptr_t)LX(LX_TEXT_VA) && address<(uintptr_t)LX(LX_TEXT_END_VA);}
+/* An entry inside a pinned site range (gate_sites, the start's verified bytes) is never marked: modules re-check their
+ * pins every tick (the engine RNG's listener head, stop 136) and would see the int3. It counts as invalid, and as
+ * pinned in the status. */
+static unsigned lx_cov_pinned;
+static int cov_in_text(uintptr_t address) {
+    if(!(address>=(uintptr_t)LX(LX_TEXT_VA) && address<(uintptr_t)LX(LX_TEXT_END_VA))) return 0;
+    const uint64_t va=(uint64_t)(address-(uintptr_t)image)+LX_IMAGE_BASE;
+    for(unsigned i=0;i<gate_site_count;i++)
+        if(va>=gate_sites[i].va && va<(uint64_t)gate_sites[i].va+gate_sites[i].length) {++lx_cov_pinned;return 0;}
+    return 1;
+}
 static void cov_flush(uintptr_t address) {(void)address;} /* x86 instruction fetch is coherent with stores */
 static int cov_page_open(uintptr_t address) {
     const uintptr_t page=address&~(uintptr_t)(GATE_PAGE-1);
@@ -76,7 +86,7 @@ static int lua_coverage_frame(lua_State *L) {
 }
 static int lua_coverage_status(lua_State *L) {
     char out[400];int n=accept_ui()?cov_status(out,sizeof(out)):0;
-    if(n && lx_cov_from!=1) {const int m=snprintf(out+n,sizeof(out)-(size_t)n," from=%u",lx_cov_from);n=m>0 && (size_t)m<sizeof(out)-(size_t)n?n+m:0;}
+    if(n) {const int m=snprintf(out+n,sizeof(out)-(size_t)n," pinned=%u from=%u",lx_cov_pinned,lx_cov_from);n=m>0 && (size_t)m<sizeof(out)-(size_t)n?n+m:0;}
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_coverage_row(lua_State *L) {
