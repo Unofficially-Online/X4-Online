@@ -381,6 +381,56 @@ class ProbeTests(unittest.TestCase):
         self.assertFalse(any('UI_MISSIONS' in line for line in c.values('logs')))
 
 
+# Personal missions per player (lockstep_mission_owners.h) on the mocked gate, with the real join core: its arming after the
+# UI replay, its join state line on a saver and its restore on a joiner.
+PROBE_MPP = PROBE_MISSIONS + (ROOT/'tools/dev/native_gate_join_core.lua').read_text(encoding='utf-8') + r'''
+  mpp_calls={}
+  gate.script_rng=function() return 1 end;gate.script_rng_own_entries=function() end
+  gate.script_rng_status=function() return 'script_rng=armed' end
+  gate.missions_per_player=function(on) mpp_calls[#mpp_calls+1]='arm:'..tostring(on);if MPP_REFUSE then return 0 end;return 1 end
+  gate.mpp_status=function() return 'armed=1 owners=0' end
+  gate.mpp_state=function() return 'v1|2:1615a0' end
+  gate.mpp_restore=function(text) mpp_calls[#mpp_calls+1]='restore:'..tostring(text);return MPP_RESTORE_REFUSE and 0 or 1 end
+'''
+
+
+class MissionsPerPlayerProbeTests(ProbeTests):
+    def mpp(self, prelude=PROBE_MPP, **extra):
+        cfg = dict(native_gate_missions_per_player=True, native_gate_script_rng='key')
+        cfg.update(extra)
+        return self.client(2, prelude=prelude, **cfg)
+
+    def test_it_arms_and_its_table_rides_the_join_state(self):
+        c = self.mpp()
+        self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+        self.assertIn('arm:1', c.values('mpp_calls'))
+        self.assertTrue(any('MISSIONS_PER_PLAYER_ARMED slot=2 armed=1 owners=0' in line for line in c.values('logs')))
+        lua = c.lua
+        text = lua.eval('X4LAN_JOIN_CORE.state_text()')
+        self.assertIn('missions_per_player=v1|2:1615a0', text.splitlines())
+        lua.globals().MPP_TEXT = 'missions_per_player=v1|2:1615a0'
+        lua.execute("for name,p in pairs(X4LAN_JOIN_CORE.providers) do if name~='missions_per_player' then X4LAN_JOIN_CORE.providers[name]=nil end end;"
+                    "X4LAN_JOIN_CORE.restore_text(MPP_TEXT)")
+        self.assertIn('restore:v1|2:1615a0', c.values('mpp_calls'))
+        self.assertTrue(any('MISSIONS_PER_PLAYER_RESTORED' in line for line in c.values('logs')))
+        lua.execute('MPP_RESTORE_REFUSE=true')
+        ok, why = lua.eval('pcall(X4LAN_JOIN_CORE.restore_text,MPP_TEXT)')
+        self.assertFalse(ok)                                      # a refused table stops the joiner, loudly
+        self.assertIn('missions per player refused the saver table v1|2:1615a0', why)
+
+    def test_refusals_and_off(self):
+        c = self.mpp(native_gate_ui_replay=['missions', 'conversation'])   # no events family
+        self.assertTrue(any('missions per player refused' in line for line in c.errors()), c.values('logs')[-3:])
+        c = self.mpp(native_gate_script_rng=None)
+        self.assertTrue(any('missions per player refused' in line for line in c.errors()), c.values('logs')[-3:])
+        c = self.mpp(prelude=PROBE_MPP + 'MPP_REFUSE=true')
+        self.assertTrue(any('missions per player refused' in line for line in c.errors()), c.values('logs')[-3:])
+        c = self.mpp(native_gate_missions_per_player=False)       # the builder's explicit off (BUILDER_KEYS)
+        self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+        self.assertEqual(c.values('mpp_calls'), [])
+        self.assertFalse(any('missions_per_player=' in line for line in c.lua.eval('X4LAN_JOIN_CORE.state_text()').splitlines()))
+
+
 class OptionTests(unittest.TestCase):
     def test_rules(self):
         base = uirep.stock_config(native_gate_ui_replay="{'events','missions','conversation'}", native_gate_ui_guard="'all'")

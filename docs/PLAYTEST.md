@@ -226,7 +226,7 @@ first mismatch.
   Stock piloting knows 4 cockpit ships, so slots 5..8 need a session with per-player starts (`x4ls new-session`).
 - **Not built yet:** an in-game lobby and join menu (the start choice and the join go through `x4ls`), and
   per-player story missions (in progress).
-  - Personal missions per player, first form (9 Nov, default off: `--set native_gate_missions_per_player=true`, coop):
-    a mission player 2 accepts is player 2's on every client. Its script sees player 2, their ship and their sector
+  - Personal missions per player, first form (9 Nov, on by default; `--set native_gate_missions_per_player=false`
+    turns it off): a mission player 2 accepts is player 2's on every client. Its script sees player 2, their ship and their sector
     (mpp1: 900 ticks, 0 desyncs). The mission list is still one per PC, so every client's HUD lists every player's
     missions, and offers are still made around player 1.

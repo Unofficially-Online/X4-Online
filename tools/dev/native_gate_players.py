@@ -641,7 +641,8 @@ def pilot_lines(args, plan):
 # run leaves off but the session defaults would turn on is written as an explicit false (the overlay runs what was built).
 BUILDER_KEYS = tuple(k for k in session_defaults.ON_KEYS if k.startswith('native_gate_pilot_')) + (
     'native_gate_hit_claims', 'native_gate_crash_note', 'native_gate_ui_replay', 'native_gate_ui_guard', 'native_gate_guidance_local',
-    'native_gate_player_identity', 'native_gate_own_predict', 'native_gate_own_predict_rows', 'native_gate_player_settings_per_slot')
+    'native_gate_player_identity', 'native_gate_own_predict', 'native_gate_own_predict_rows', 'native_gate_player_settings_per_slot',
+    'native_gate_missions_per_player')
 DEFAULTS_ONLY_FLAGS = ('present', 'death', 'respawn', 'death_suit', 'foot', 'foot_bodies', 'foot_slots', 'hit_claims', 'ui_replay', 'ui_guard',
                        'guidance_local', 'stock_script', 'crash_note', 'ui_replay_script', 'ui_replay_fleet', 'ui_replay_dock',
                        'ui_replay_min_hull', 'fire_slots', 'missions_per_player')
@@ -980,7 +981,8 @@ def build_parser():
     common.add_argument('--ui-replay-script', action='store_true', help='--ui-replay without people: a fixed plan through the stock entries')
     common.add_argument('--missions-per-player', action='store_true',
                         help='--ui-replay with events and missions: slots 2..N accept missions as their own players, every client runs the '
-                             "mission's MD in the slot's scope (lockstep_mission_owners.h, coop first); with --ui-replay-script slot 2 accepts")
+                             "mission's MD in the slot's scope (lockstep_mission_owners.h; on by default in play sessions, a builder run "
+                             "without this flag writes it off); with --ui-replay-script slot 2 accepts")
     common.add_argument('--ui-guard', nargs='?', const='all', default=None, metavar='GROUPS',
                         help='with --ui-replay: refuse every other world-changing stock UI entry point in the local phases (lockstep_ui_guard.h): '
                              'all (no value) or a comma list of ' + ', '.join(UI_GUARD_GROUPS))

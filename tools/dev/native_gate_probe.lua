@@ -2696,7 +2696,7 @@ function pilot_view.arm_ui_replay(slot,window)
   notify=function(text) ffi.C.ShowInfoLine(text,4) end,   -- every refusal of the families shows its info line (also without the guard)
   active_mission=missions_on and function() return (tostring(ffi.C.GetActiveMissionID()):gsub('ULL$','')) end or nil,
   menus=function() return type(Menus)=='table' and Menus or {} end}
- -- Personal missions per player (lockstep_mission_owners.h; native_gate_missions_per_player = true, default off): slots 2+
+ -- Personal missions per player (lockstep_mission_owners.h; native_gate_missions_per_player, on by default): slots 2+
  -- capture the events and missions families, every client applies slot k's calls in slot k's scope, an accept claims the
  -- offer's cue tree for slot k and the tree's MD frames run in that scope (coop first; the report's model (c), C1 + C5).
  if cfg.native_gate_missions_per_player~=nil and cfg.native_gate_missions_per_player~=false then

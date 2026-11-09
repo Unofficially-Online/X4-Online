@@ -1,6 +1,7 @@
-/* Personal missions per player, coop first (reports/LOCKSTEP-UI-MISSIONS-20261101.txt section 4: C1 (i)(ii) and C5),
- * DEFAULT OFF (native_gate_missions_per_player = true; needs the pilot slots, the UI replay's missions and events families
- * and native_gate_script_rng with its MD bit, whose scopes see every MD frame and its cue).
+/* Personal missions per player (reports/LOCKSTEP-UI-MISSIONS-20261101.txt section 4: C1 (i)(ii) and C5), ON BY DEFAULT
+ * in sessions (native_gate_missions_per_player, tools/dev/native_gate_defaults.lua; false turns it off). Needs the pilot
+ * slots, the UI replay's missions and events families and native_gate_script_rng with its MD bit, whose scopes see every
+ * MD frame and its cue.
  *
  * Model (c) for slots 2..N in its first form: offers stay the session's (the generic missions manager offers around slot
  * 1's player), and whoever accepts one owns it.

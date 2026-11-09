@@ -315,11 +315,11 @@ class TableTests(unittest.TestCase):
                                         'native_gate_render_camera', 'native_gate_render_motion', 'native_gate_own_predict',
                                         'native_gate_own_predict_rows', 'native_gate_player_identity', 'native_gate_pilot_foot_bodies',
                                         'native_gate_pilot_foot_slots', 'native_gate_nav_mesh', 'native_gate_character_play', 'native_gate_speech_clock',
-                                        'native_gate_ui_lazy']) if 'native_gate_player_identity' not in play else
+                                        'native_gate_ui_lazy', 'native_gate_missions_per_player']) if 'native_gate_player_identity' not in play else
                          sorted(['native_gate_ui_guard', 'native_gate_pilot_foot', 'native_gate_player_settings_per_slot', 'native_gate_render_fps',
                                  'native_gate_render_camera', 'native_gate_render_motion', 'native_gate_own_predict', 'native_gate_own_predict_rows',
                                  'native_gate_pilot_foot_bodies', 'native_gate_pilot_foot_slots', 'native_gate_nav_mesh', 'native_gate_character_play', 'native_gate_speech_clock',
-                                 'native_gate_ui_lazy']))
+                                 'native_gate_ui_lazy', 'native_gate_missions_per_player']))
 
 
 class ApplyTests(unittest.TestCase):
@@ -539,7 +539,7 @@ class ProbeTests(unittest.TestCase):
         lua.execute('update()')
         logs = items(lua.globals().logs)
         self.assertFalse(any('CONFIG_REFUSED' in l for l in logs), logs[-3:])
-        self.assertTrue(any(l.endswith('DEFAULTS version=1 applied=172 explicit=0 off=0 skipped=4') for l in logs))
+        self.assertTrue(any(l.endswith('DEFAULTS version=1 applied=173 explicit=0 off=0 skipped=4') for l in logs))
         for row in ('RENDER_FRAMES_ARMED fps=60', 'RENDER_CAMERA_ARMED mode=extrapolate', 'TICK_RATE_ARMED hz=30', 'PLAYER_IDENTITY BOUND slot=p1 mode=coop slots=2'):
             self.assertTrue(any(row in l for l in logs), row)
         # The stack joins the boot digest; the refused boot is loud: an ERROR row and an info line with the reason.
