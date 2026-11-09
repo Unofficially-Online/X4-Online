@@ -2,3 +2,7 @@
 lupa==2.8
 # Test only: the independent reference of the wire crypto tests (tests/test_native_gate_crypto.py).
 cryptography==44.0.0
+# Offline binary-mapping tools and their synthetic tests (tests/test_linux_pair_tools.py).
+capstone==5.0.6
+pefile==2024.8.26
+pyelftools==0.32

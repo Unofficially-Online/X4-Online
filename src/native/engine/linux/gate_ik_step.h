@@ -7,8 +7,11 @@
  * 0x2c76dd0): the velocity (target - [+0x2c]) / dt, the acceleration (that - [+0x30]) / dt and the last partial step's
  * fraction. MSVC's fast floating point made each a multiplication by 50.0f (Windows 0x142cbed30, xmm14); 0.02f is
  * 0.0199999996, so x / 0.02f is x * 50.0000011 and rounds apart from x * 50.0f in a large share of the steps. The
- * weapons' gimbals (and the bullets that leave along them) then part between the platforms: W36k against lx51a, a
- * fixture ship's second bullet hit at tick 28 with its point 1e-4 and its direction 1e-5 apart.
+ * division is a candidate explanation for the different bullet trajectories in W36k against lx51a (a fixture
+ * ship's second hit at tick 28 had its point 1e-4 and direction 1e-5 apart). Installation alone does not establish
+ * that cause: the scalar backend bypasses these divisions. See reports/LOCKSTEP-LINUX-IK-VALIDATION-20261109.txt
+ * for a native fixture in which only that scalar backend ran. Keep this correction opt-in until a matched
+ * Windows/Linux comparison establishes both execution and its effect.
  *
  * Here the two runs that hold the divisions run in stubs on a page near the image with each divss by xmm1 (0.02f) a
  * mulss by 50.0f from the page:
