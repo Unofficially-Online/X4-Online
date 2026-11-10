@@ -311,6 +311,7 @@ D.DIAGNOSTIC={
  {'native_gate_pilot_first_stores','pilot slots: an absent slot first store from the canonical block at the take, every first store carried to a hot joiner'},
  {'native_gate_pilot_seat_live_pose','a late seat (hot join handover, H-1) reads the slot ship pose live on every client, past its view caches'},
  {'native_gate_pilot_dump_handover','pilot slot ship, controller, agent and solver bytes from H-1 to H+N around a handover (diagnostic)'},
+ {'native_gate_pilot_spawn_rows','each slot ship spawn time bits with its PILOT_SHIPS row (diagnostic)'},
  {'native_gate_join_passes_admit','hot joiner: the synced passes, stand-ins and travel snapshot of T at its admission (diagnostic)'},
  {'native_gate_join_ids','hot joiner saved objects at the session runtime IDs'},
  {'native_gate_join_buildp','hot join build processor busy rows (diagnostic)'},

@@ -2512,12 +2512,19 @@ static void join_gate_fields(join_tables *t,uint64_t tick) {
  * forgets the fixture holders it has seen at the boundary after T+1 (shape_initialized), so at step T+2 every fixture holder
  * on every client refreshes from the same poses with the keyed draw (shape_initial), and their due times run together after.
  * The session learns T from the SAVE_AT record (every client of the session, saver or not), the joiner from its package.
- * Other bodies keep the native refresh path (region camera alignment at each client's start): not covered here. */
+ * Other bodies: the region camera's table of aligned objects is forgotten at the same boundary (join_shape_reset). */
 static uint64_t join_shape_at;static int join_shape_joiner;static uint32_t join_shape_resets;
 static void join_shape_reset(uint64_t completed) {
     unsigned held=0;
     for(unsigned a=0;a<ACTOR_CAPACITY;a++) for(unsigned w=0;w<SHAPE_RECORDS;w++) if(shape_initialized[a][w].holder) ++held;
     memset(shape_initialized,0,sizeof(shape_initialized));++join_shape_resets;
+    /* Every other body as well (hjr1, 10 Nov). The region camera's shape_refresh group lets each object's first refresh after
+     * its client's start come at once and the later ones at the keyed interval, so a joiner's due times ran from its load and
+     * the session's from its start: a ship rebuilt inside the old one's wreck was moved out of it at the ship's next refresh,
+     * tick 1344 on the session and 1599 on the joiner (its load at 698 plus the same 30 s). With the table of seen objects
+     * forgotten here, on every client at the same boundary, the next refresh call of every body is a first one again: all
+     * refresh at step T+2 from the same poses and their due times run together after. */
+    memset((void *)rc_shape_keys,0,sizeof(rc_shape_keys));
     char row[160];const int n=snprintf(row,sizeof(row),"[X4LAN] NATIVE_GATE JOIN_SHAPE_RESET tick=%llu forgotten=%u resets=%u joiner=%d\r\n",
                                        (unsigned long long)completed,held,join_shape_resets,join_shape_joiner);
     if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);

@@ -2291,6 +2291,31 @@ local function pilot_ship_rows(tick)
  end
  local text=table.concat(rows,',')
  log('PILOT_SHIPS tick='..tick..' '..text)
+ -- Diagnostic (native_gate_pilot_spawn_rows = true; not in the digest): each slot ship's spawn time, the double at Object +0x6e0
+ -- (its bits, little endian as stored). X4 keeps a ship out of collisions for 30 s after it (hjr1).
+ if type(cfg.native_gate_pilot_spawn_rows)=='number' and tick==cfg.native_gate_pilot_spawn_rows and gate.pilot_dump then
+  -- a number: at that tick every slot's ship (+0..+0x1fff) and controller (+0..+0x7ff) as PILOT_FULL rows, to compare two clients
+  for slot=1,#cfg.native_gate_pilot_slots do
+   for which,size in pairs({[0]=0x2000,[1]=0x800}) do
+    for off=0,size-256,256 do
+     local hex=gate.pilot_dump(slot,which,off)
+     if hex then ticklog.write('PILOT_FULL tick='..tick..' slot='..slot..' which='..which..' off='..off..' hex='..hex) end
+    end
+   end
+  end
+ end
+ if cfg.native_gate_pilot_spawn_rows==true and gate.pilot_dump then
+  local spawn={}
+  for slot=1,#cfg.native_gate_pilot_slots do
+   local hex=gate.pilot_dump(slot,0,0x600)
+   spawn[#spawn+1]=slot..'/'..(hex and hex:sub(0xe0*2+1,0xe0*2+16) or '-')
+  end
+  log('PILOT_SPAWN tick='..tick..' '..table.concat(spawn,','))
+  for slot=1,#cfg.native_gate_pilot_slots do   -- and its controller's words +0x400..+0x5ff (the collision bookkeeping of 0xf03e40)
+   local lo,hi=gate.pilot_dump(slot,1,0x400),gate.pilot_dump(slot,1,0x500)
+   if lo and hi then log('PILOT_CTRL tick='..tick..' slot='..slot..' hex='..lo..hi) end
+  end
+ end
  return 'PILOT_SHIPS_1:'..text
 end
 -- Sandbox order block (native_gate_pilot_block_orders): orders, travel/SETA

@@ -292,7 +292,13 @@ default; plain2: 1841 ticks of two-client play, 0 desyncs).
 A join after a respawn (hjr1, 10 Nov): a player whose ship was destroyed and rebuilt before someone joins no longer
 makes that join fail. The joiner takes the rebuilt ship for that slot and was in step for 650 ticks after its join;
 then the rebuilt ship was pushed about 29 m once, at tick 1344 on the host and near 1600 on the joiner, and the
-session counted desyncs from there. What pushes it is not found yet.
+session counted desyncs from there. The cause is found (10 Nov, five runs): X4 ignores a collision while either
+object is less than 30 s old. The rebuilt ship lies inside the loot the old ship dropped; on the host it is moved
+out 30 s after it was built, on the joiner 30 s after the joiner's load, because a save keeps no spawn time for
+loot containers and a load treats them as new. The join has to carry each object's spawn time; not built yet. It
+is not about respawns: any collision with loot in the 30 s after a join can differ. Since 10 Nov every client also
+restarts the collision shape refresh of every body at a join (it did so for the reference ships only), so those
+refreshes come at the same ticks on the joiner.
 
 Still open: a join whose save tick falls while a fixture gun is engaging (hj24: T between 668 and 684 in the battle
 fixture) can part within a few ticks; a sweep of join ticks is next.

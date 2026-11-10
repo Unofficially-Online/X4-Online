@@ -1793,6 +1793,11 @@ static void test_join_world(void) {
         }
         assert(fixed==2);
     }
+    {   /* the join boundary's shape reset forgets the fixture holders and the region camera's aligned objects (every body) */
+        const uint32_t before=join_shape_resets;
+        rc_shape_keys[5]=0x1234;shape_initialized[0][0].holder=(void*)1;
+        join_shape_reset(700);assert(!rc_shape_keys[5] && !shape_initialized[0][0].holder && join_shape_resets==before+1u);
+    }
     {   /* a fix across 7 is counted and listed (status attn_high=), one below is not; the list keeps the first JOIN_ATTN_HIGH_IDS */
         char text[JOIN_ATTN_HIGH_IDS*40+8],status[8192];
         join_attn_high_text(text,sizeof(text));assert(!strcmp(text,"-"));
