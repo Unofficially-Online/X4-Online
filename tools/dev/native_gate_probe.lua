@@ -4620,6 +4620,13 @@ local function frame()
     'speak timer refused '..tostring(gate.speak_timer_status and gate.speak_timer_status()))
    log('SPEAK_TIMER_ARMED')
   end
+  -- Spoken lines per client (lockstep_speech_local.h; a session default, Windows gate): this client starts no voice sound while
+  -- it replays a hot join's past or flies in another sector than slot 1 (X4 speaks for slot 1). Shares the speak timer's pin.
+  if cfg.native_gate_speech_local and gate.speech_local then
+   assert(cfg.native_gate_speech_local==true and cfg.native_gate_speak_timer and gate.speech_local_frame and gate.speech_local_status and
+    gate.speech_local()==1,'speech local refused '..tostring(gate.speech_local_status and gate.speech_local_status()))
+   log('SPEECH_LOCAL_ARMED')
+  end
   -- The unpaused clock that times speech lines starts the session at one value on every client
   -- (lockstep_speech_clock.h), stop reason 196.
   if cfg.native_gate_speech_clock then
@@ -6072,6 +6079,10 @@ local function frame()
   if tick%600==0 then ticklog.status('CUTSCENE_READY',tick,gate.cutscene_ready_status,'cutscene ready status unavailable') end
  end
  if cfg.native_gate_speak_timer then ticklog.status('SPEAK_TIMER',tick,gate.speak_timer_status,'speak timer status unavailable') end
+ if cfg.native_gate_speech_local and gate.speech_local then
+  gate.speech_local_frame()   -- every step: mute or not for the lines of the coming steps (canonical state, the probe's frame)
+  ticklog.status('SPEECH_LOCAL',tick,gate.speech_local_status,'speech local status unavailable')
+ end
  if cfg.native_gate_speech_clock then ticklog.status('SPEECH_CLOCK',tick,gate.speech_clock_status,'speech clock status unavailable') end
  if cfg.native_gate_world_nav_stride then ticklog.status('WORLD_NAV',tick,gate.world_nav_status,'world nav hash status unavailable') end
  if cfg.native_gate_nav_cadence then

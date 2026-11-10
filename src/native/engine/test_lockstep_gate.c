@@ -62,6 +62,7 @@
 #include "test_lockstep_pilot_inputs.h"
 #include "test_lockstep_pilot_native.h"
 #include "test_lockstep_pilot_aim.h"
+#include "test_lockstep_speech_local.h"
 #include "test_lockstep_pilot_stock.h"
 #include "test_lockstep_pilot_slots.h"
 #include "test_lockstep_pilot_eye.h"
@@ -1233,6 +1234,7 @@ int main(int argc,char **argv) {
     test_ik_diag();
     test_mission_owners();
     test_pilot_aim();
+    test_speech_local();
     test_spline_calc_watch();
     test_spline_phase();
     test_exact_reciprocal();

@@ -263,7 +263,24 @@ Status (9 Nov, one PC). The whole join runs: the request, the save at the next j
 the handover and the joined player to the end of the window. hj27 (x4mods-28) and hj28 (the plain playtest flow
 above): the joiner equal to the session through the catch-up and the handover, then about 2,000 ticks of play after
 it with 0 desyncs, 0 errors and 0 drops. On one PC the joiner is no faster than the session, so the handover pauses
-everyone for about as long as the joiner took to load (hj28: 75 s); a faster joiner PC pauses less.
+everyone for about as long as the joiner took to load (hj28: 75 s); a faster joiner PC pauses less. Since 10 Nov a
+joiner replays without the 30-per-second hold. Measured with two X4 on one PC: a simulation step costs about 25 ms
+there, so the replay ran at 35 steps a second and the pause was 62 s instead of 70 to 77 s. The hold was not the
+limit on that PC; a joiner on its own PC should gain more, which is not measured yet.
+
+What a joiner sees and hears (10 Nov, after a player's report of a flashing screen and of the host's combat chatter
+on the joiner):
+- While it replays the time since its save (about as long as its load took) its window shows the host's cockpit,
+  moving through the session's past. Its own ship has no pilot seat before the handover, so its own view starts
+  there. A proper "joining" screen is not built.
+- Spoken lines are silent on a client while it replays, and on a client whose ship is in another sector than the
+  host's (`native_gate_speech_local`, a default, Windows). X4 starts comm chatter for the one player it knows, the
+  host, and every PC played it. Next to the host a client hears what the host hears. Other sounds of the replay
+  (engines, guns near the host) still play. Seen live (hjs4): the joiner silent for the 2,818 steps of its replay and
+  the 1,895 steps it then flew in the Terran sector; the host never.
+- The flashing: after a join into another sector every other frame was drawn without that sector's background
+  (planet, stars). The join set each object's attention level without telling the renderer's two copies. Fixed;
+  frame bursts of the joiner's window alternated before and are steady now.
 
 Missions across a join (hj32, 9 Nov night): a mission accepted before the join keeps the session's ID on the joiner
 (`native_gate_join_cue_ids`, a join default: the join package's CUEI section gives every saved cue its live ID), and a
@@ -341,10 +358,13 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
   - Object IDs: fixed. The joiner raised the far sector to the session's attention level after its ID counter was set
     and handed out 9,119 IDs the session never did; it now takes them from its own list (hjs1: the ID rows equal from
     the first tick after the join).
-  - Still differing after such a join: one of the twelve reference ships near the host was in flight at the join and
-    stops early on the joiner (hjs4); a full shield's timestamp on another differs until that shield next changes;
-    and about a second after the handover the session spawns one NPC ship the joiner does not (hjs1). The session
-    counts these as desyncs. All three are in the join code and in work.
+  - The reference ships: fixed (10 Nov). A ship in an evasive spiral at the join stopped early on the joiner, and a
+    full shield's timestamp differed. hjs4 now: all twelve equal at every sampled tick from the join to tick 5400.
+  - Still differing after such a join (hjs4, 10 Nov midday, four runs alike): the world census is equal at the
+    join, at tick 1800 and at 3600, which is after the handover; the per-tick report differs from 51 ticks after the
+    join in one part only, the navigation mesh receipt (the joiner built 17 meshes where the session built 25); and
+    at tick 5400 one of the census' four parts differs. The session counts these as desyncs. In the join code, in
+    work.
   - The standard playtest session (every player next to the host) joins clean with the same build.
 - Money in coop: the wallet is shared, and every slot's kit is applied when the session starts. So that the host
   does not begin with the money of every start on offer, an open slot's start money is taken out again right after

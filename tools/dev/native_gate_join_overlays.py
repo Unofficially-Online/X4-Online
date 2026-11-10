@@ -283,6 +283,9 @@ def ids_sets(sets):
 #   native_gate_join_mute_load_npcs  the joiner's MD does not hear the NPC created events of its load before the admission
 #                                  (ca10..ca15, 9 Nov, T=733: the load started the state machine of the NPC the session
 #                                  made in step T, a tick early; ca15 with it: 7,251 checks muted, digest 0, to 5442)
+#   native_gate_join_viewl         the joiner runs the live and player view handlers where its flags differ from the
+#                                  session's (VIEWL). No gain on capture-005; on a new-session save (hjs4v, x4mods-b8) a
+#                                  ship on its dock path read 0 where the session's read 1 and its yaw parted at T+1
 #   native_gate_join_body_make     the physics bodies a session's BODY record names and the joiner's object lacks: their
 #                                  IDs take the joiner's view list when X4 makes them (hjs1b/c, a new-session save: 2 IDs
 #                                  at T+1 for the open slot's hull)
@@ -298,7 +301,7 @@ def ids_sets(sets):
 #                                  number as the ID and was wrong: hj31). hj32, 9 Nov, T=701, a mission accepted before the
 #                                  join: digest 0 at the handover, the joiner's active mission reads the session's ID, an
 #                                  accept after the handover applied on both sides, equal owners to 5440, 0 desyncs.
-# Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
+# Off by default: SHPW and specdrop (negative), PEND (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
                    'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code', 'native_gate_join_omgs',
@@ -307,7 +310,7 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_ares', 'native_gate_join_warp', 'native_gate_join_undk', 'native_gate_join_srcs',
                    'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled',
                    'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids',
-                   'native_gate_join_grav_dead', 'native_gate_join_body_make')
+                   'native_gate_join_grav_dead', 'native_gate_join_body_make', 'native_gate_join_viewl')
 
 
 def default_sets(sets):

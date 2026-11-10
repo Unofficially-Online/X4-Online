@@ -1784,6 +1784,15 @@ static void test_join_world(void) {
            join_rx.nav_field[JOIN_NAVF_PENDING]==1);
     assert(join_rx.attn_applied==7 && join_rx.attn_level_fixed==2 && join_rx.attn_due_fixed==1 && !join_rx.attn_missing && !join_rx.attn_shape);
     assert(!join_attn_high && !join_attn_high_n);   /* the fixes 2>5 and 2>3 lie below 7 */
+    {   /* a fixed level reaches both view caches (what the renderer reads); an object whose level was right keeps its own */
+        unsigned fixed=0;
+        for(unsigned i=0;i<TW_OBJECTS;i++) {
+            uint32_t live=0,view[2]={0,0};memcpy(&live,tw_joiner.object[i]+JOIN_ATTENTION,4);
+            memcpy(&view[0],tw_joiner.object[i]+JOIN_ATTN_VIEW,4);memcpy(&view[1],tw_joiner.object[i]+JOIN_ATTN_VIEW+JOIN_ATTN_VIEW_STRIDE,4);
+            if(view[0] || view[1]) {assert(view[0]==live && view[1]==live);++fixed;}
+        }
+        assert(fixed==2);
+    }
     {   /* a fix across 7 is counted and listed (status attn_high=), one below is not; the list keeps the first JOIN_ATTN_HIGH_IDS */
         char text[JOIN_ATTN_HIGH_IDS*40+8],status[8192];
         join_attn_high_text(text,sizeof(text));assert(!strcmp(text,"-"));

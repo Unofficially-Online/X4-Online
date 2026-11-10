@@ -78,6 +78,8 @@
 #define JOIN_ATTENTION 0x1ecu              /* the attention level (SetAttention 0x3d5660) */
 #define JOIN_ATTENTION_DUE 0x2e0u          /* the attention timer's due (0x6d1ff0, an Object's) */
 #define JOIN_ATTN_OWN 0xd1u                /* SetAttention(level 1) computes the level (vfunc 0x15f8) when this byte is set */
+#define JOIN_ATTN_VIEW 0x118u              /* the level the renderer reads: view cache [A] +0x38, A = 0, 1 (+0x80); PropagateCacheFlags 0x3d49f0 */
+#define JOIN_ATTN_VIEW_STRIDE 0x80u
 static int join_attn_states_on;            /* native_gate_join_attn_states (ATTN set, below) */
 static int join_attn_settled(unsigned char *object,uint32_t level);
 #define JOIN_NAV_REFRESH 0xc0u             /* the last refresh's game time (RefreshFromPathingState 0xea2a20) */
@@ -736,6 +738,10 @@ static const join_steer_class join_steer_classes[]={
     {0x2c4db70u,5,{{0x10,2,0},{0x20,0x40,1},{0x60,0x18,0},{0x80,4,0},{0x88,8,0}}},  /* DogfightBehaviour2 (0x90: Dogfight1's, +0x80 a draw +-1, +0x88 its creation time) */
     {0x2c4dcf0u,4,{{0x10,2,0},{0x18,4,0},{0x20,0x18,0},{0x38,1,0}}},              /* CrazyIvanBehaviour (0x50: its time, two drawn times, a drawn direction) */
     {0x2c4d1c8u,3,{{0x10,2,0},{0x20,0x40,1},{0x60,10,0}}},                         /* EvasiveRandomSteeringBehaviour (0x70: EvasiveSimple's) */
+    /* EvasiveSpiralSteeringBehaviour (0x48, the factory 0xec6b14, base constructor 0xed8550): its start time +0x18 and three
+     * doubles, three floats and a byte to +0x44. hjs4w (x4mods-b8, a new-session save, ship 0x16ece7): the joiner's has the
+     * load's time and other parameters, and is gone at T+2 where the session's still flies its spiral. */
+    {0x2c4d048u,4,{{0x10,2,0},{0x18,0x20,0},{0x38,0xc,0},{0x44,4,0}}},
     {0x2c4f0c0u,3,{{0x10,2,0},{0x20,0x10,1},{0x30,4,0}}},                          /* ParallelPathSteeringBehaviour (0x40: a drawn offset) */
     {0x2c4ed00u,5,{{0x10,2,0},{0x18,4,0},{0x20,0x10,0},{0x30,0x10,1},{0x40,1,0}}}, /* FrontalCapitalCombatSteeringBehaviour (0x50: a drawn time) */
     {0x2c4e6c0u,3,{{0x10,2,0},{0x18,8,0},{0x20,0x40,1}}}};                         /* MiningBehaviour (0x60: a drawn sign) */
@@ -6299,6 +6305,14 @@ static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level
     if(join_read(object+JOIN_ATTENTION,&now,4) && now!=level) {memcpy(object+JOIN_ATTENTION,&level,4);++join_attn_states_drift;}
     ++join_attn_states_calls;return 2;
 }
+/* The level ATTN wrote, for the renderer too. SetAttention marks the level changed in both view caches (0x3d56f1, 0x3d56f8: bit
+ * 0x40 of +0x11c and +0x19c) and the publish copies it into the bank it writes (0x3d49f0); ATTN's own write of +0x1ec marks
+ * nothing, so a bank kept the load's level. Seen 10 Nov (hjs4, a joiner at the Terran start, its sector held high by the session
+ * and low by the load): after the handover the cluster's background (planet, stars) drawn in every other frame only, by the
+ * bank the frame read. Display state: no simulation code reads a view cache. */
+static void join_attn_publish(unsigned char *object,uint32_t level) {
+    for(unsigned bank=0;bank<2;bank++) memcpy(object+JOIN_ATTN_VIEW+bank*JOIN_ATTN_VIEW_STRIDE,&level,4);
+}
 static int join_admit_attn(const join_tables *s,const join_tables *mine) {
     unsigned rows=0,samples=0;join_attn_high=0;join_attn_high_n=0;
     join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=join_attn_set_loaded=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
@@ -6335,6 +6349,7 @@ static int join_admit_attn(const join_tables *s,const join_tables *mine) {
             ++state_rows;snprintf(join_rx.rows[join_rx.nrows++],sizeof(join_rx.rows[0]),"attn_state side=joiner id=%016llx level=%u/%u vtable=%llx",
                                   (unsigned long long)a->portable,level,a->level,(unsigned long long)(vtable-(uintptr_t)image));
         }
+        if(level!=a->level) join_attn_publish(object,a->level);
         ++join_rx.attn_applied;
     }
     if(join_attn_set_on) {

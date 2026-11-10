@@ -113,6 +113,7 @@ D.ON={
  {'native_gate_fp_env','default','','MXCSR 0x1f80 on every X4 thread'},
  {'native_gate_cutscene_ready',true,'native_gate_serial_pathing','cutscene readiness at the join'},
  {'native_gate_speak_timer',true,'','speak timers on game time'},
+ {'native_gate_speech_local',true,'native_gate_speak_timer','spoken lines only on the clients they are about: none while a joiner replays, none away from slot 1 sector'},
  {'native_gate_speech_clock',true,'','the unpaused clock that times speech lines starts the session at one value on every client'},
  {'native_gate_fast_reads',true,'','small reads by a guarded copy (same values, faster)'},
  {'native_gate_tick_hz',30,'','30 simulation steps per second (the relay runs --tick-hz 30)'},

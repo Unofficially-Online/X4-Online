@@ -289,6 +289,7 @@ STEER_CLASSES = {0x2c4edc0: ((0x10, 2, 0), (0x18, 1, 0)),                       
                  0x2c4db70: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 0x18, 0), (0x80, 4, 0), (0x88, 8, 0)),   # DogfightBehaviour2
                  0x2c4dcf0: ((0x10, 2, 0), (0x18, 4, 0), (0x20, 0x18, 0), (0x38, 1, 0)),           # CrazyIvanBehaviour
                  0x2c4d1c8: ((0x10, 2, 0), (0x20, 0x40, 1), (0x60, 10, 0)),                        # EvasiveRandomSteeringBehaviour
+                 0x2c4d048: ((0x10, 2, 0), (0x18, 0x20, 0), (0x38, 0xc, 0), (0x44, 4, 0)),          # EvasiveSpiralSteeringBehaviour
                  0x2c4f0c0: ((0x10, 2, 0), (0x20, 0x10, 1), (0x30, 4, 0)),                         # ParallelPathSteeringBehaviour
                  0x2c4ed00: ((0x10, 2, 0), (0x18, 4, 0), (0x20, 0x10, 0), (0x30, 0x10, 1), (0x40, 1, 0)),   # FrontalCapitalCombat...
                  0x2c4e6c0: ((0x10, 2, 0), (0x18, 8, 0), (0x20, 0x40, 1))}                         # MiningBehaviour

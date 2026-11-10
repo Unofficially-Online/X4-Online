@@ -36,6 +36,13 @@
 #define SPEAK_TIMER_BLOCK 0x561340u
 #define SPEAK_TIMER_BLOCK_SIZE 0x6c6u
 #define SPEAK_TIMER_BLOCK_SHA "8c135b9a88e8627b0735963bead8048abf0b530deff6c98621d04367a2a9d478"
+/* The second site in the same pinned block, lockstep_speech_local.h's (native_gate_speech_local): whether a line's voice sound
+ * starts at all. 0x561637 cmp byte [rsi+0x60], 0 / 0x56163b je 0x561644 (the sound start) / mov eax, ebx / jmp 0x56179e (handle
+ * 0): the speak data's own mute byte. The je as two nops: no line starts a sound on this client. With the timer site patched
+ * a line with and without a handle take the same way, so the simulation cannot tell. Either value passes the block pin. */
+#define SPEAK_MUTE_SITE 0x56163bu
+#define SPEAK_MUTE_ORIGINAL 0x0774u /* je rel8 +7 (little endian 74 07) */
+#define SPEAK_MUTE_PATCHED 0x9090u
 static int speak_timer_installed,speak_timer_restored,speak_timer_patched;
 static volatile LONG64 speak_timer_failures;
 static const char *speak_timer_stage="idle";
@@ -45,6 +52,9 @@ static int speak_timer_block_ok(void) {
     memcpy(&site,copy+(SPEAK_TIMER_SITE-SPEAK_TIMER_BLOCK),2);
     if(site!=SPEAK_TIMER_ORIGINAL && site!=SPEAK_TIMER_PATCHED) return 0;
     site=SPEAK_TIMER_ORIGINAL;memcpy(copy+(SPEAK_TIMER_SITE-SPEAK_TIMER_BLOCK),&site,2);
+    memcpy(&site,copy+(SPEAK_MUTE_SITE-SPEAK_TIMER_BLOCK),2);
+    if(site!=SPEAK_MUTE_ORIGINAL && site!=SPEAK_MUTE_PATCHED) return 0;
+    site=SPEAK_MUTE_ORIGINAL;memcpy(copy+(SPEAK_MUTE_SITE-SPEAK_TIMER_BLOCK),&site,2);
     return hash_ok(copy,sizeof(copy),SPEAK_TIMER_BLOCK_SHA);
 }
 static int speak_timer_pins(void) {
@@ -56,12 +66,14 @@ static int speak_timer_pins(void) {
         hash_ok(image+0x1263650u,0xc3u,"f7cf46737b50cff9608a6a90e7fb2c4a68f92cf75da5d95c5ece5863be8ff04e");
 }
 static uint16_t speak_timer_site(void) {uint16_t v=0;read_local(image+SPEAK_TIMER_SITE,&v,2);return v;}
-static int speak_timer_swap(uint16_t expected,uint16_t value) {
-    DWORD old,ignored;if(!VirtualProtect(image+SPEAK_TIMER_SITE,2,PAGE_EXECUTE_READWRITE,&old)) return 0;
-    uint16_t actual=(uint16_t)InterlockedCompareExchange16((volatile SHORT*)(image+SPEAK_TIMER_SITE),(SHORT)value,(SHORT)expected);
-    VirtualProtect(image+SPEAK_TIMER_SITE,2,old,&ignored);FlushInstructionCache(GetCurrentProcess(),image+SPEAK_TIMER_SITE,2);
+static int speak_site_swap(uint32_t at,uint16_t expected,uint16_t value) {
+    DWORD old,ignored;if(!VirtualProtect(image+at,2,PAGE_EXECUTE_READWRITE,&old)) return 0;
+    uint16_t actual=(uint16_t)InterlockedCompareExchange16((volatile SHORT*)(image+at),(SHORT)value,(SHORT)expected);
+    VirtualProtect(image+at,2,old,&ignored);FlushInstructionCache(GetCurrentProcess(),image+at,2);
     return actual==expected;
 }
+static int speak_timer_swap(uint16_t expected,uint16_t value) {return speak_site_swap(SPEAK_TIMER_SITE,expected,value);}
+static uint16_t speak_mute_site(void) {uint16_t v=0;read_local(image+SPEAK_MUTE_SITE,&v,2);return v;}
 static int speak_timer_arm(void) {
     if(speak_timer_installed) return stats.active!=0; /* Identical rerun after a loading-UI reload. */
     if(!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;

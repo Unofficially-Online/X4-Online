@@ -1567,3 +1567,51 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
 - Tests: native tests pass (the visible branch on the load list; a pending object's two records routed once, another
   object's and a repeated one left shared; the pin). Real game: hjs1 .. hjs1d above. Not yet rerun on the capture-005
   fixture with these two changes.
+
+63. NEW-SESSION SAVES, SECOND ROUND: A SAMPLED ROW'S SHIELD WORD, THE LIVE-VIEW FLAG, THE EVASIVE SPIRAL (hjs1e .. hjs4e; 10 Nov)
+
+- After section 62 the runtime ID part is equal through the catch-up of a new-session join. What the next runs showed
+  (x4mods-b8's fixtures: hjs1 = base start plus one fight start in cluster_47; hjs4 = four starts, three far hulls, the
+  joiner in slot 4's Terran start):
+- The sample part, hjs1d: one STATE row, fixture actor 9, from T+1 to 839, in one word: its shield group's changed
+  time, 7.06 on the session and 0 on the joiner. HEALTH captures a shield as the census hashes it (lockstep_state.h
+  shield_full_at: a full shield reads value = max, time = 0) and the joiner writes that; the session's group keeps its
+  stored time (its load clock, never touched) and gate.actor printed the stored fields. It needs a fixture actor with
+  a full, untouched shield at T before the session's first census; capture-005's fighting ships never had one.
+  Fix (0b02615c): with canonical shields armed gate.actor reads the shield through the canonical reading at the
+  thread's game time, both reads (the session calls it with refresh=1, whose second read after the native refresh
+  undid a first attempt, hjs1e). The Linux twin (linux/gate_battle.h) changed alike. hjs1f: the twelve STATE rows equal
+  from T+1.
+- The live-view flag, hjs4w/hjs4v: a ship object's +0x3c8 (set by its ObjectEnteredLiveView handler, read by
+  IsInLiveView 0x6d5900) is 1 on the session and 0 on the joiner for a ship in the far sector (0x6d8cd on its dock
+  path: its behaviour, Agent, command and pathing blocks equal at T+1). VIEWL (section 61 of the package, opt-in until
+  now: no gain on capture-005) carries it; with it (viewl=1:81:0:0:0:0) fixture actor 3's yaw at T+1 is equal (9.5e-7
+  apart without). native_gate_join_viewl is in JOIN_DEFAULT_ON now.
+- The evasive spiral, hjs4/hjs4w/hjs4e: fixture actor 3 (0x16ece7) flies on to (-635, 101466, 1696) on the session and
+  stops at (-560, 100915, 1228) by 720 on the joiner. Its steering model's active behaviour is a
+  U::Path::EvasiveSpiralSteeringBehaviour (0x2c4d048; 0x48 bytes, the factory 0xec6b14, base constructor 0xed8550):
+  start time +0x18, three doubles to +0x37, three floats +0x38..+0x43, a byte +0x44. STEER did not carry the class
+  ("steer side=session ... why=other ... behaviours=2c4d048/2c4edc0"): the joiner's has its load's time and other
+  parameters, is gone at T+2, and the joiner alone delivers ArrivedAtWaypointEvent for the ship at 689. The class is in
+  join_steer_classes and native_gate_join.py's STEER_CLASSES now (ranges +0x10 2, +0x18 0x20, +0x38 0xc, +0x44 4).
+  Not yet rerun on hjs4 (it needs the Python table on the relay's side too).
+- Read and not the cause: a DockPathBehaviour (0x2c4d850; 0xd0 bytes, the factory 0xec6034, the same base constructor
+  0xed2a10 as UNDK's UndockPathBehaviour; +0x38 and +0x98 are padding the constructor never writes) is fresh on the
+  joiner at the admission and byte-equal to the session's from T+1.
+- Open on these saves:
+    T+1 census, timing domain (hjs1g, T=690): one object, a ShipExtraSmall, nav.refresh_time and nav.refresh_relation;
+      equal again at the 1800 census. The world part of the digest differs for those 1,109 ticks.
+    The far sector's wharf (hjs4e, delivered events 688..752): the joiner alone delivers 11 + 3
+      U::TriggerAnimationEvent at T+1 and T+2 (due at its load time: slot 1's ship and the kit ships) and 2,599
+      U::UpdateGravidarAccessEvent; two docking bays of the dock area 0x1da1e (01da28, 01da29, each with a created
+      ShipSmall) get their AnimationTickedEvent at 749 on the joiner (one common time, 2 s after its load) and at 736
+      and 742 on the session. The load starts animations over that the session finished long ago.
+    After the handover (hjs1d: 3369 = H+29; hjs1g/hjs1h: H+5): both sides create eight ShipExtraSmall in zone 0xba3 at
+      H+4 (the same created keys), the session then makes more components for them (the weapon path 3d2431, 7429dc,
+      5152f2, 812932 and part animation units), the digest parts for good, and at the 3600 census exactly those eight
+      differ, in motion only (hjs1h: common 14,708, differing 8).
+- Tests: native tests pass. capture-005 regression of the three changes together (ca48, T=690): viewl=1:27:0:0:0:0,
+  steer=10:10, joined at 3277 with digest_mismatches=0, no desync to 5440, the radar post rows equal from 690 to 5441.
+  The Linux gate check (WSL, gcc, the whole of check_lockstep_gate_linux.py with the scenarios) passes on this tree. Tools: census pages in play mode need
+  --set "native_gate_world_pages_window={first,last}" (world_detail_rows alone prints nothing); event rows are only
+  written inside native_gate_trace_window.
