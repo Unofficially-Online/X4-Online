@@ -283,6 +283,9 @@ def ids_sets(sets):
 #   native_gate_join_mute_load_npcs  the joiner's MD does not hear the NPC created events of its load before the admission
 #                                  (ca10..ca15, 9 Nov, T=733: the load started the state machine of the NPC the session
 #                                  made in step T, a tick early; ca15 with it: 7,251 checks muted, digest 0, to 5442)
+#   native_gate_join_grav_dead     the joiner's radar lists keep the contacts destroyed shortly before T, as the session's do
+#                                  until each unit's next scan removes them and posts has_scanned (ca33, T=690: 13 units of
+#                                  one dead contact, the joiner's timer posts 71 ticks early, the rid split at 1289)
 #   native_gate_join_hold_fire     the joiner's weapons make no shot between the load and the admission (ca21, 9 Nov, T=722:
 #                                  two guns shot in the load, 30 bullets against 28, a round off each clip, the reloads on
 #                                  another cycle from 727; ca22b..ca27 with it: 2 shots held, the shots and bullets of every
@@ -300,7 +303,8 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_gravn_extra', 'native_gate_join_conn', 'native_gate_join_porders', 'native_gate_join_attn_set',
                    'native_gate_join_ares', 'native_gate_join_warp', 'native_gate_join_undk', 'native_gate_join_srcs',
                    'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled',
-                   'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids')
+                   'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids',
+                   'native_gate_join_grav_dead')
 
 
 def default_sets(sets):

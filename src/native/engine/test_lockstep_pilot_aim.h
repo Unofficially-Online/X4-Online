@@ -41,6 +41,7 @@ static void test_pilot_aim(void) {
     memset(pfire_slots,0,sizeof(pfire_slots));pilot_slot_count=2;pilot_slots[0].object=test_paim_ship;pilot_slots[1].object=test_paim_ship;
     pfire_slots[0].leased=1;pfire_slots[0].count=1;pfire_slots[0].guns[0].controller=c1;
     pfire_slots[1].leased=1;pfire_slots[1].count=2;pfire_slots[1].guns[0].controller=c1+8;pfire_slots[1].guns[1].controller=c2;
+    pfire_slots[0].guns[0].object=c3+0x10;pfire_slots[1].guns[0].object=c3+0x20;pfire_slots[1].guns[1].object=c3+0x30;   /* the guns: any address */
     ui_thread=GetCurrentThreadId();stats.issued=50;paim_armed=1;
     pstk_slot_frame *f=&pstk_slot_frames[1];memset(f,0,sizeof(*f));
     f->tick=50;f->r.flags=PSTK_FLAG_AIM;memcpy(f->r.aim,point,12);f->r.steer=1u|PAIM_STEER_MANUAL;
@@ -84,27 +85,35 @@ static void test_pilot_aim(void) {
         paim_armed=0;assert(!paim_manual_get(c2));paim_armed=1;
         assert(paim_manual_get(c2)==1 && paim_manual_answers==answers+3);
         paim_manual_original=saved_manual;f->r.steer=1u|PAIM_STEER_MANUAL;}
-    /* The aim assist: no manual bit, the assist bit and a target of the slot: slot 17 answers the target for the slot's
-     * leased controllers, and X4's own aim runs with it. No target, the slot's own ship, a manual aim, the assist not
-     * armed: none, X4's answer. */
-    {   const LONG64 assisted=paim_assisted,missed=paim_assist_missed,answers=paim_target_answers;const int assist=paim_assist_on;
-        const paim_target_fn saved_target=paim_target_original;void *out=(void*)1;
+    /* The aim assist: no manual bit, the assist bit and a target of the slot: slot 15 says yes, and X4's own aim runs with
+     * slot 17 answering the target for that one call. No target, the slot's own ship, a manual aim, the assist not armed:
+     * no, and X4's answer without a target. Outside the aim call slot 17 answers none. */
+    {   const LONG64 assisted=paim_assisted,missed=paim_assist_missed,answers=paim_target_answers,rest=paim_rest;
+        const int assist=paim_assist_on;const paim_target_fn saved_target=paim_target_original;void *out=(void*)1;
+        const paim_manual_fn saved_manual=paim_manual_original;
         paim_original=test_paim_original_asks;paim_target_original=test_paim_no_target;paim_target_override=test_paim_target;
+        paim_manual_original=test_paim_not_manual;
         paim_assist_on=1;f->r.steer=PAIM_STEER_ASSIST;test_paim_target_value=test_paim_target_object;test_paim_seen_target=NULL;
-        paim_target_get(c2,&out,NULL);assert(out==(void*)test_paim_target_object && paim_target_answers==answers+1);
+        paim_range_override=-1;                                                                     /* out of the gun's range: no */
+        {const LONG64 out_of_range=paim_out_of_range;assert(!paim_manual_get(c2) && !TEST_PAIM_CALL(c2) && paim_out_of_range==out_of_range+2);}
+        assert(paim_rest==rest+1 && !test_paim_seen_target);
+        paim_range_override=1;
+        assert(paim_manual_get(c2)==1);
+        paim_target_get(c2,&out,NULL);assert(!out && paim_target_answers==answers);                  /* outside the aim call */
         assert(TEST_PAIM_CALL(c2)==1 && test_paim_seen_target==(void*)test_paim_target_object && paim_assisted==assisted+1);
-        test_paim_target_value=NULL;assert(!TEST_PAIM_CALL(c2) && !test_paim_seen_target && paim_assist_missed==missed+1);
-        test_paim_target_value=test_paim_ship;out=(void*)1;paim_target_get(c2,&out,NULL);assert(!out);   /* its own ship */
+        assert(paim_target_answers==answers+1 && !paim_target_for && !paim_target);
+        out=(void*)1;paim_target_get(c2,&out,NULL);assert(!out);                                     /* after it: none again */
+        test_paim_target_value=NULL;test_paim_seen_target=(void*)1;                                  /* no target */
+        assert(!paim_manual_get(c2) && !TEST_PAIM_CALL(c2) && !test_paim_seen_target && paim_rest==rest+2);
+        test_paim_target_value=test_paim_ship;assert(!paim_manual_get(c2) && !TEST_PAIM_CALL(c2) && paim_rest==rest+3);   /* its own ship */
         test_paim_target_value=test_paim_target_object;
-        out=(void*)1;paim_target_get(c3,&out,NULL);assert(!out);                                          /* no lease of ours */
-        f->tick=49;out=(void*)1;paim_target_get(c2,&out,NULL);assert(!out);f->tick=50;                    /* another tick's record */
-        paim_assist_on=0;out=(void*)1;paim_target_get(c2,&out,NULL);assert(!out);paim_assist_on=1;        /* the assist not armed */
-        ui_thread=saved_thread+1;out=(void*)1;paim_target_get(c2,&out,NULL);assert(!out);ui_thread=GetCurrentThreadId();
-        f->r.steer=PAIM_STEER_ASSIST|PAIM_STEER_MANUAL;out=(void*)1;paim_target_get(c2,&out,NULL);assert(!out);   /* manual first */
-        test_paim_seen_target=NULL;
-        assert(TEST_PAIM_CALL(c2)==1 && !test_paim_seen_target && first[0]==13.0f && paim_assisted==assisted+1);
+        paim_assist_on=0;assert(!paim_manual_get(c2) && !TEST_PAIM_CALL(c2) && paim_rest==rest+4);paim_assist_on=1;   /* not armed */
+        f->tick=49;assert(!paim_manual_get(c2));f->tick=50;                                           /* another tick's record */
+        f->r.steer=PAIM_STEER_ASSIST|PAIM_STEER_MANUAL;test_paim_seen_target=NULL;                    /* manual first */
+        assert(paim_manual_get(c2)==1 && TEST_PAIM_CALL(c2)==1 && !test_paim_seen_target && first[0]==13.0f && paim_assisted==assisted+1);
+        assert(paim_assist_missed==missed);
         paim_original=test_paim_original;paim_target_original=saved_target;paim_target_override=NULL;paim_assist_on=assist;
-        f->r.steer=1u|PAIM_STEER_MANUAL;}
+        paim_manual_original=saved_manual;f->r.steer=1u|PAIM_STEER_MANUAL;paim_range_override=0;}
     /* The record: a slot's aim is accepted only while this is armed; the steering byte carries the manual bit. */
     {   pstk_record r;memset(&r,0,sizeof(r));r.flags=PSTK_FLAG_AIM;r.steer=1u|PAIM_STEER_MANUAL;memcpy(r.aim,point,12);r.capture16=7;
         unsigned char bytes[PSTK_BYTES_MAX];pstk_record back;const unsigned n=pstk_encode(&r,bytes);

@@ -325,6 +325,10 @@ static void test_join_golden(void) {
     gravs[3].portable=1;assert(!join_grav_shape(grav,2,gravc,3,gravs,4));gravs[3].portable=0;
     {join_gravs_rec two[5];memcpy(two,gravs,sizeof(gravs));two[4]=gravs[3];assert(!join_grav_shape(grav,2,gravc,3,two,5));}   /* twice */
     gravc[1].flags=0;assert(!join_grav_shape(grav,2,gravc,3,gravs,3));gravc[1].flags=JOIN_GRAVC_UNMAPPED;   /* a contact 0 without its flag */
+    gravc[1].flags=JOIN_GRAVC_DEAD;assert(!join_grav_shape(grav,2,gravc,3,gravs,3));                      /* a dead contact without its ID */
+    gravc[1].contact=0xdead;assert(join_grav_shape(grav,2,gravc,3,gravs,3));                              /* a dead contact: its runtime ID */
+    gravc[1].flags=JOIN_GRAVC_DEAD|JOIN_GRAVC_UNMAPPED;assert(!join_grav_shape(grav,2,gravc,3,gravs,3));  /* both flags */
+    gravc[1].flags=4;assert(!join_grav_shape(grav,2,gravc,3,gravs,3));gravc[1].contact=0;gravc[1].flags=JOIN_GRAVC_UNMAPPED;
     assert(!join_grav_shape(grav,2,gravc,2,gravs,3));                                                     /* a counted contact missing */
     grav[1].count[0]=1;assert(!join_grav_shape(grav,2,gravc,3,gravs,3));grav[1].count[0]=0;               /* contacts on a passive unit */
     grav[1].portable=0x2004;assert(!join_grav_shape(grav,2,gravc,3,gravs,3));grav[1].portable=0x2005;     /* one owner twice */
@@ -2437,7 +2441,7 @@ static void test_join_world(void) {
                 }
                 /* Version 11, the radar (j1-32: the joiner's units new, 262 of 2,638 passive units at T+1): a synthetic AI::Gravidar per side
                  * with the engine's layout (a bucket tree holding the ship's active unit, another the weapon's passive one; the active
-                 * sources; one field sector). The session's unit has contacts (the cargo bay, the module, one without a portable ID; a
+                 * sources; one field sector). The session's unit has contacts (the cargo bay, the module, one destroyed (0xdead, no component); a
                  * second list with the turret), its factor and times; the joiner's is new, the passive one missing. The capture keys
                  * everything by portable ID; the admission writes the times, rebuilds both lists in the joiner's runtime IDs, sorted,
                  * makes the passive unit through the engine (a stub here), writes the sources and the sector's deadline. */
@@ -2532,8 +2536,8 @@ static void test_join_world(void) {
                         for(unsigned i=0;i<0x40;i++) assert(!a->unit[i]);
                         for(unsigned i=0x68;i<0xa8;i++) assert(!a->unit[i]);
                         assert(p->portable==0x2002 && p->kind==JOIN_GRAV_PASSIVE_VT && !p->flags && !p->count[0] && join_cap.grav_passive==1);
-                        uint32_t unmapped=0;for(unsigned i=0;i<3;i++) unmapped+=f.gravc[i].flags==JOIN_GRAVC_UNMAPPED;
-                        assert(unmapped==1 && f.gravc[3].list==1 && f.gravc[3].contact==0x2004);
+                        uint32_t dead=0;for(unsigned i=0;i<3;i++) dead+=f.gravc[i].flags==JOIN_GRAVC_DEAD && f.gravc[i].contact==0xdead;   /* its runtime ID */
+                        assert(dead==1 && join_cap.grav_dead==1 && f.gravc[3].list==1 && f.gravc[3].contact==0x2004);
                         assert(f.gravs[0].kind==JOIN_GRAVS_PENDING && f.gravs[0].portable==0x2003 && f.gravs[1].kind==JOIN_GRAVS_SECTOR &&
                                f.gravs[1].portable==tw_portable[TW_FULL] && f.gravs[1].value==0x4029000000000000ull && !f.gravs[1].flags);
                     }
@@ -2542,20 +2546,23 @@ static void test_join_world(void) {
                     /* The joiner: its unit new, the passive one missing, no sources; the admission (report mode: the other sections' counts
                      * are not this test's) makes it the session's. */
                     tj_grav_world=&tw_joiner;tj_grav_units[0]=gunit[1];tj_grav_units[1]=gpass[1];tj_grav_made=0;
+                    /* native_gate_join_grav_dead: the destroyed contact stays in the joiner's list (no component of its own either) */
+                    join_grav_dead_on=1;
                     join_grav_worker_test=gw[1];join_t1_reset();tw_admit(&tw_joiner,&f,JOIN_REPORT);assert(join_admit_world());
-                    assert(join_rx.grav_applied==2 && join_rx.grav_created==1 && join_rx.grav_contacts==3 && join_rx.grav_unmapped==1 &&
+                    join_grav_dead_on=0;
+                    assert(join_rx.grav_applied==2 && join_rx.grav_created==1 && join_rx.grav_contacts==4 && !join_rx.grav_unmapped && join_rx.grav_dead==1 &&
                            join_rx.grav_buffers==2 && !join_rx.grav_missing && !join_rx.grav_kind && !join_rx.grav_shape);
                     {
-                        float factor;double times[3];uintptr_t v[3];uint64_t want[2]={tw_joiner.runtime[TW_CARGO],tw_joiner.runtime[TW_MODULE]};
+                        float factor;double times[3];uintptr_t v[3];uint64_t want[3]={tw_joiner.runtime[TW_CARGO],tw_joiner.runtime[TW_MODULE],0xdead};
                         memcpy(&factor,gunit[1]+0x44,4);memcpy(times,gunit[1]+0xa8,24);assert(factor==0.5f && times[0]==25.0 && times[1]==25.7 && times[2]==22.5);
-                        qsort(want,2,8,join_u64_cmp);
-                        memcpy(v,gunit[1]+0x68,24);assert(v[1]-v[0]==16 && !memcmp((void *)v[0],want,16));
+                        qsort(want,3,8,join_u64_cmp);
+                        memcpy(v,gunit[1]+0x68,24);assert(v[1]-v[0]==24 && !memcmp((void *)v[0],want,24));
                         memcpy(v,gunit[1]+0x80,24);assert(v[1]-v[0]==8 && *(uint64_t *)v[0]==tw_joiner.runtime[TW_TURRET]);
                         memcpy(&factor,gpass[1]+0x44,4);assert(tj_grav_made==1 && factor==0.25f);
                         memcpy(v,gw[1]+0x48,24);assert(v[1]-v[0]==8 && *(unsigned char **)v[0]==tw_joiner.object[TW_CARGO]);
                         double deadline;memcpy(&deadline,sector[1]+0x448,8);assert(deadline==12.5 && join_rx.gravs_sectors==1 && join_rx.gravs_lists==2);
                     }
-                    {char status[4096];assert(join_status(status,sizeof(status)) && strstr(status," grav=2:2:0:0:0:3:1:2:1 gravs=2:0:1:2"));}
+                    {char status[4096];assert(join_status(status,sizeof(status)) && strstr(status," grav=2:2:0:0:0:4:0:2:1 gravs=2:0:1:2") && strstr(status," grav_dead=0:1:1"));}
                     /* GRAVP: the ship's current pose now the session's; its other view's pose (the session has none) left, counted */
                     assert(!memcmp(gpose[1],gpose[0],0x40) && join_rx.gravp_fixed==1 && join_rx.gravp_extra==1 && !join_rx.gravp_equal &&
                            !join_rx.gravp_missing && !join_rx.gravp_absent);
@@ -3000,6 +3007,7 @@ static void test_join_gravp_restore(void) {
     tgravp_pos(tgravp_want[0],-108792.4f,3759.1f,-105166.9f);tgravp_pos(tgravp_want[1],-133114.0f,-1960.9f,-137241.0f);
     free(join_gravp_set);join_gravp_set=calloc(2,sizeof(*join_gravp_set));join_gravp_nset=2;join_gravp_setcap=2;
     for(unsigned k=0;k<2;k++) {join_gravp_set[k].runtime=0x91ull+k;join_gravp_set[k].pose=tgravp_want[k];join_gravp_set[k].parent=tgravp_parent;}
+    join_gravp_set_heads();assert(join_gravp_set[0].head==0 && join_gravp_set[1].head==1);
     join_gravp_restored=join_gravp_checked=join_gravp_gone=join_gravp_moved=join_gravp_moved_pose=0;join_view_skip=0;
     memset(join_gravp_first,0,sizeof(join_gravp_first));
     /* entry 0 still holds the session's pose (the admission's): left, not yet seen */
@@ -3021,9 +3029,42 @@ static void test_join_gravp_restore(void) {
     join_gravp_restore();assert(join_gravp_moved_pose==1 && join_gravp_restored==3);   /* dropped entries stay dropped */
     {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," gravp_moved=0 gravp_moved_pose=1 gravp_first=1:0:0:0:1 "));}
     free(join_gravp_set);join_gravp_set=NULL;join_gravp_nset=join_gravp_setcap=0;
+    /* ca34..ca36: one object, both views, each twice (GRAVP's entry and VIEWP's), built out of order. The load publishes view 1
+     * at T+1 and view 0 at T+2 (both mended, once each, through whichever entry comes first); the engine then publishes view 1
+     * anew at T+2 (left: the slot drops, and its second entry mends nothing); a publication seen after T+2 is left and counted. */
+    {
+        static _Alignas(16) unsigned char pose1[0x40];unsigned char *parent=tgravp_parent,*p1=pose1,eng0[0x40],eng1[0x40],late[0x40];
+        memcpy(tgravp_obj[0]+JOIN_VIEW_SLOTS+0x80u,&parent,8);memcpy(tgravp_obj[0]+JOIN_VIEW_SLOTS+0x80u+JOIN_VIEW_POSE,&p1,8);
+        join_gravp_set=calloc(5,sizeof(*join_gravp_set));join_gravp_nset=5;join_gravp_setcap=5;
+        const uint32_t slot[5]={1,0,0,1,0};const uint64_t rt[5]={0x91,0x91,0x92,0x91,0x91};
+        for(unsigned k=0;k<5;k++) {join_gravp_set[k].runtime=rt[k];join_gravp_set[k].slot=slot[k];join_gravp_set[k].pose=tgravp_want[rt[k]-0x91];join_gravp_set[k].parent=tgravp_parent;}
+        join_gravp_set_heads();
+        for(unsigned k=0;k<4;k++) assert(join_gravp_set[k].runtime==0x91 && join_gravp_set[k].slot==k/2u && join_gravp_set[k].head==(k/2u)*2u);
+        assert(join_gravp_set[4].runtime==0x92 && join_gravp_set[4].head==4);
+        memcpy(tgravp_pose[0],tgravp_want[0],0x40);memcpy(pose1,tgravp_want[0],0x40);memcpy(tgravp_pose[1],tgravp_want[1],0x40);
+        join_gravp_restored=join_gravp_checked=join_gravp_moved_pose=join_gravp_late=0;memset(join_gravp_first,0,sizeof(join_gravp_first));
+        join_gravp_step=1;tgravp_pos(pose1,-108000.0f,3759.1f,-105166.9f);                      /* T+1: the load's, into view 1 */
+        join_gravp_restore();assert(join_gravp_restored==1 && !memcmp(pose1,tgravp_want[0],0x40) && join_gravp_set[2].seen && !join_gravp_set[0].seen);
+        join_gravp_restore();assert(join_gravp_restored==1 && join_gravp_checked==10);          /* nothing new: all five looked at, twice */
+        join_gravp_step=2;tgravp_pos(tgravp_pose[0],-108001.0f,3759.1f,-105166.9f);             /* T+2: the load's, into view 0 */
+        tgravp_pos(pose1,-101000.0f,1755.0f,-105166.9f);memcpy(eng1,pose1,0x40);               /* and the engine's own in view 1 */
+        join_gravp_restore();
+        assert(join_gravp_restored==2 && !memcmp(tgravp_pose[0],tgravp_want[0],0x40) && join_gravp_set[0].seen && !join_gravp_set[0].dropped &&
+               join_gravp_moved_pose==1 && join_gravp_set[2].dropped && !memcmp(pose1,eng1,0x40));
+        join_gravp_step=3;tgravp_pos(tgravp_pose[0],-101000.5f,1755.8f,-105166.9f);memcpy(eng0,tgravp_pose[0],0x40);   /* T+3: view 0 anew */
+        tgravp_pose[1][0]^=1;memcpy(late,tgravp_pose[1],0x40);                                  /* and the other object's first */
+        join_gravp_restore();
+        assert(join_gravp_restored==2 && join_gravp_moved_pose==1 && join_gravp_late==2 && !memcmp(tgravp_pose[0],eng0,0x40) && !memcmp(pose1,eng1,0x40) &&
+               !memcmp(tgravp_pose[1],late,0x40) && join_gravp_first[2]==2 && !join_gravp_first[0]);
+        join_gravp_restore();assert(join_gravp_late==2 && join_gravp_restored==2);              /* left for good */
+        {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," gravp_late=2"));}
+        join_gravp_step=0;join_gravp_late=0;
+        free(join_gravp_set);join_gravp_set=NULL;join_gravp_nset=join_gravp_setcap=0;
+        memset(tgravp_obj[0]+JOIN_VIEW_SLOTS+0x80u,0,0x30);
+    }
     join_gravp_restored=join_gravp_checked=join_gravp_gone=join_gravp_moved=join_gravp_moved_pose=0;
     join_world_find=find;join_world_map=map;
-    printf("join GRAVP restore: the session's pose left, the load's first publication mended however far, a later new one dropped for good PASS\n");
+    printf("join GRAVP restore: the session's pose left, the load's first publication mended however far, a later new one dropped for good, one state for a slot's entries, nothing mended after T+2 PASS\n");
 }
 /* FOBJ (j1-399): a region field's spawned-object list the load left empty takes the session's objects in order (the capture writes
  * them back the same); an equal list is left, another one counted as a conflict, a region not found as missing. */

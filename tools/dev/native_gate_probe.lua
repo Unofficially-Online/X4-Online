@@ -414,6 +414,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_hold_fire then   -- a joiner's weapons make no shot between the load and the admission (hold_fire=)
   assert(gate.join_hold_fire and gate.join_hold_fire(1)==1,'join hold fire refused')
  end
+ if cfg.native_gate_join_grav_dead then   -- a joiner's radar lists keep the session's destroyed contacts until the next scan (grav_dead=)
+  assert(gate.join_grav_dead and gate.join_grav_dead(1)==1,'join grav dead refused')
+ end
  if cfg.native_gate_join_mute_load_npcs then   -- a joiner's MD does not hear the load's NPC created events (npc_mute=)
   assert(gate.join_mute_load_npcs and gate.join_mute_load_npcs(1)==1,'join mute load npcs refused')
  end

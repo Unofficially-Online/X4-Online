@@ -1495,6 +1495,9 @@ static int join_grav_vector(const unsigned char *at,uintptr_t *begin,uint64_t *n
        (v[1]-v[0])/8u>JOIN_GRAV_CONTACTS_MAX) return 0;
     *begin=v[0];*n=(v[1]-v[0])/8u;return 1;
 }
+/* native_gate_join_grav_dead (ca33): the joiner's radar lists keep the session's destroyed contacts (GRAVC's JOIN_GRAVC_DEAD)
+ * for the next scan to remove. Status grav_dead=on:captured:written. */
+static int join_grav_dead_on;
 static uint64_t join_grav_ids[JOIN_GRAV_CONTACTS_MAX];
 static uint32_t join_grav_ccap;
 /* One list of a unit into GRAVC (the session's order) and its count. 0: unreadable (counted, the record keeps what was read). */
@@ -1505,7 +1508,8 @@ static int join_grav_list(join_tables *t,join_grav_rec *r,unsigned list,const un
     for(uint64_t i=0;i<n;i++) {
         unsigned klass;join_gravc_rec c;memset(&c,0,sizeof(c));
         c.portable=r->portable;c.list=list;c.index=(uint32_t)i;c.contact=join_grav_ids[i]?join_key(join_grav_ids[i],&klass):0;
-        if(!c.contact) c.flags=JOIN_GRAVC_UNMAPPED;
+        if(!c.contact && join_grav_ids[i] && !join_object(join_grav_ids[i])) {c.contact=join_grav_ids[i];c.flags=JOIN_GRAVC_DEAD;++join_cap.grav_dead;}
+        else if(!c.contact) c.flags=JOIN_GRAVC_UNMAPPED;
         if(!JOIN_PUSH(t->gravc,t->ngravc,join_grav_ccap,c)) return 0;
     }
     r->count[list]=(uint32_t)n;return 1;
@@ -1586,8 +1590,23 @@ static uint64_t join_runtime_of(const join_tables *mine,uint64_t portable);   /*
  * settled poses, so no distance tells a jump from a stale settled pose: dropping those over 10 km parted the posts at 641]. So
  * the first publication after the admission that differs from the session's pose is the load's (own0, mended); any later one
  * that is neither the session's pose nor own0 is the engine's own, and the entry drops for good (status gravp_moved_pose;
- * gravp_first= the first publications' distances from the session's pose: < 1 m, < 100 m, < 1 km, < 10 km, more). */
-typedef struct {uint64_t runtime;uint32_t slot,dropped;const unsigned char *pose;unsigned char *parent;unsigned char own0[0x40];int seen,extra;} join_gravp_settled;
+ * gravp_first= the first publications' distances from the session's pose: < 1 m, < 100 m, < 1 km, < 10 km, more).
+ * ca34..ca36 (T=690; JOIN_WATCH, JOIN_WATCHPCF and the raw words of ships 0x7301e, 0x73098, 0x86842, 0x867c4, all of attention
+ * 2): after its load a component holds +0x1e0 0x19 and +0x1e8 (0x12, 0x17) and is 0 in both after T+1. BuildCache 0x3d4d0f
+ * publishes 0x7301e and 0x73098 once, at T+1 (flags 0x19, the view that was current at the load, its word 0x40059), and
+ * 0x86842 and 0x867c4 at T+1 and again into the other view at T+2 (flags 0x1b: their zone's due flags of the load last a
+ * frame longer). The session publishes none of them there. At 699 = T+9 four objects were made in zone 0x6ba: +0x1e0 0x18 on
+ * 0x7301e on both sides, BuildCache republished it in one view at 699 and the other at 700 (flags 0x18), 6.7 km from its
+ * settled pose of tick 7. The joiner's restore put the settled pose back into both views: one view as its entry's first
+ * publication, the other, mended once at T+1, through its second entry (an object has an entry per slot from GRAVP and
+ * another from VIEWP, each with its own state). From 701 the session's radar had the ship at its place and the joiner's 6.7
+ * km off (17 units added it on the session only, one dropped it). ca35, a first try with one state per object (one
+ * publication the load's, the next the engine's): right for 0x7301e, wrong for 0x86842 and 0x867c4, whose second view of
+ * T+2 stayed live (2.5 km from the session's; their units and 0x73098, 0x8cff3 dropped each other on the joiner alone).
+ * So: the load's publications are those of T+1 and T+2 (JOIN_GRAVP_LOAD_STEPS; j1-90 already: "the load's publication
+ * falls within T+1 and T+2"), one per view at most; the state is the (object, slot)'s, shared by its entries (head); and a
+ * publication seen at a later boundary is the engine's own, left and counted (status gravp_late=). */
+typedef struct {uint64_t runtime;uint32_t slot,dropped;const unsigned char *pose;unsigned char *parent;unsigned char own0[0x40];int seen,extra;uint32_t head;} join_gravp_settled;
 static join_gravp_settled *join_gravp_set;static uint32_t join_gravp_nset,join_gravp_setcap;
 static uint64_t join_gravp_restored,join_gravp_checked,join_gravp_gone,join_gravp_moved,join_gravp_moved_pose;
 static uint64_t join_gravp_first[5];
@@ -1611,8 +1630,19 @@ static float join_gravp_dist(const unsigned char *own,const unsigned char *want)
  * the whole window (JOIN_GRAVP_SETTLED_STEPS; the caller sets join_gravp_step to the boundary's step after T). */
 #define JOIN_GRAVP_SETTLED_KEEP 6u
 #define JOIN_GRAVP_SETTLED_STEPS 1u
+#define JOIN_GRAVP_LOAD_STEPS 2u   /* the load publishes at T+1 and T+2; later publications are the engine's own */
 static uint32_t join_gravp_step;   /* the restore's boundary: steps after T (0: tests, every entry) */
+static uint64_t join_gravp_late;   /* status gravp_late=: views published anew at T+3 .. T+10, left */
 static int join_gravp_settled_on;
+static int join_gravp_set_cmp(const void *a,const void *b) {
+    const join_gravp_settled *x=a,*y=b;
+    return x->runtime<y->runtime?-1:x->runtime>y->runtime?1:x->slot<y->slot?-1:x->slot>y->slot;
+}
+/* The set by (object, slot), each entry's head the first one of its object and slot (the holder of seen, own0 and dropped). */
+static void join_gravp_set_heads(void) {
+    if(join_gravp_nset>1u) qsort(join_gravp_set,join_gravp_nset,sizeof(*join_gravp_set),join_gravp_set_cmp);
+    for(uint32_t i=0;i<join_gravp_nset;i++) join_gravp_set[i].head=i && join_gravp_set[i-1u].runtime==join_gravp_set[i].runtime && join_gravp_set[i-1u].slot==join_gravp_set[i].slot?join_gravp_set[i-1u].head:i;
+}
 static int join_gravp_attention_below(const join_tables *s,uint64_t portable,uint32_t keep) {
     uint32_t lo=0,hi=s->nviewf;
     while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(s->viewf[mid].portable<portable) lo=mid+1u;else hi=mid;}
@@ -1631,15 +1661,15 @@ static uint64_t join_gravp_settled_extra;   /* status gravp_settled=on:entries b
 static void join_gravp_settled_build(const join_tables *s,const join_tables *mine) {
     const uint32_t cur=join_view_index();
     free(join_gravp_set);join_gravp_set=NULL;join_gravp_nset=join_gravp_setcap=0;join_gravp_restored=join_gravp_checked=join_gravp_gone=join_gravp_moved=0;
-    join_gravp_moved_pose=0;memset(join_gravp_first,0,sizeof(join_gravp_first));join_gravp_settled_extra=0;
+    join_gravp_moved_pose=join_gravp_late=0;memset(join_gravp_first,0,sizeof(join_gravp_first));join_gravp_settled_extra=0;
     for(uint32_t i=0;i<s->ngravp;i++) {
         const join_gravp_rec *a=&s->gravp[i];
         if(!(a->flags&JOIN_GRAVP_PRESENT) || a->rel>1u) continue;
         const int low=join_gravp_low_attention(s,a->portable);
         if(!low && !(join_gravp_settled_on && join_gravp_views_equal(s,i) && join_gravp_attention_below(s,a->portable,JOIN_GRAVP_SETTLED_KEEP))) continue;
         const uint64_t runtime=join_runtime_of(mine,a->portable);
-        join_gravp_settled e={runtime,cur^a->rel,0u,a->pose,NULL,{0},0,!low};
-        if(runtime && !JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) return;
+        join_gravp_settled e={runtime,cur^a->rel,0u,a->pose,NULL,{0},0,!low,0u};
+        if(runtime && !JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) {join_gravp_set_heads();return;}
         if(runtime && !low) ++join_gravp_settled_extra;
     }
     for(uint32_t i=0;i<s->nviewp;i++) {   /* VIEWP: the other zone-held objects' settled poses, both slots */
@@ -1648,10 +1678,11 @@ static void join_gravp_settled_build(const join_tables *s,const join_tables *min
         const uint64_t runtime=join_runtime_of(mine,s->viewp[i].portable);
         if(runtime && !low) join_gravp_settled_extra+=2u;
         for(uint32_t v=0;v<2u && runtime;v++) {
-            join_gravp_settled e={runtime,v,0u,s->viewp[i].pose,NULL,{0},0,!low};
-            if(!JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) return;
+            join_gravp_settled e={runtime,v,0u,s->viewp[i].pose,NULL,{0},0,!low,0u};
+            if(!JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) {join_gravp_set_heads();return;}
         }
     }
+    join_gravp_set_heads();
 }
 /* native_gate_join_view_skip (diagnostic, a joiner): leave view-bank writes of the admission out. 1 VIEWF (both views' flags and
  * attention, written only with native_gate_join_viewf_write), 2 VIEWK, 4 the GRAVP/VIEWP pose restores after T+1, 8 GRAVD (the cached parent in both views). The lockstep
@@ -1682,21 +1713,23 @@ static void join_gravp_settled_parents(void) {
 static void join_gravp_restore(void) {
     if(join_view_skip&4u) return;
     for(uint32_t i=0;i<join_gravp_nset;i++) {
-        if(join_gravp_set[i].dropped || (join_gravp_set[i].extra && join_gravp_step>JOIN_GRAVP_SETTLED_STEPS)) continue;
-        unsigned char *object=join_object(join_gravp_set[i].runtime);const unsigned char *want=join_gravp_set[i].pose;
+        join_gravp_settled *e=&join_gravp_set[i],*h=&join_gravp_set[e->head];   /* h: the state of the object's slot */
+        if(h->dropped || (e->extra && join_gravp_step>JOIN_GRAVP_SETTLED_STEPS)) continue;
+        unsigned char *object=join_object(e->runtime);const unsigned char *want=e->pose;
         if(!object) {++join_gravp_gone;continue;}
         unsigned char *parent=NULL;
-        if(!join_read(object+JOIN_VIEW_SLOTS+(size_t)join_gravp_set[i].slot*0x80u,&parent,8)) continue;
-        if(parent!=join_gravp_set[i].parent) {join_gravp_set[i].dropped=1;++join_gravp_moved;continue;}   /* republished by the engine */
+        if(!join_read(object+JOIN_VIEW_SLOTS+(size_t)e->slot*0x80u,&parent,8)) continue;
+        if(parent!=e->parent) {h->dropped=1;++join_gravp_moved;continue;}   /* republished by the engine */
         unsigned char *pose=NULL,own[0x40];
-        if(!join_read(object+JOIN_VIEW_SLOTS+(size_t)join_gravp_set[i].slot*0x80u+JOIN_VIEW_POSE,&pose,8) || !pose || !join_read(pose,own,sizeof(own))) continue;
+        if(!join_read(object+JOIN_VIEW_SLOTS+(size_t)e->slot*0x80u+JOIN_VIEW_POSE,&pose,8) || !pose || !join_read(pose,own,sizeof(own))) continue;
         ++join_gravp_checked;
         if(!memcmp(own,want,sizeof(own))) continue;   /* the session's pose */
-        if(!join_gravp_set[i].seen) {   /* the first publication since the admission: the load's */
+        if(join_gravp_step>JOIN_GRAVP_LOAD_STEPS) {h->dropped=1;++join_gravp_late;continue;}   /* after the load's frames: the engine's own */
+        if(!h->seen) {   /* the slot's first publication since the admission: the load's */
             const float d=join_gravp_dist(own,want);
             ++join_gravp_first[d<1.0f?0:d<100.0f?1:d<1000.0f?2:d<10000.0f?3:4];
-            memcpy(join_gravp_set[i].own0,own,sizeof(own));join_gravp_set[i].seen=1;
-        } else if(memcmp(own,join_gravp_set[i].own0,sizeof(own))) {join_gravp_set[i].dropped=1;++join_gravp_moved_pose;continue;}   /* the engine's own */
+            memcpy(h->own0,own,sizeof(own));h->seen=1;
+        } else if(memcmp(own,h->own0,sizeof(own))) {h->dropped=1;++join_gravp_moved_pose;continue;}   /* the engine's own */
         if(join_poke((uintptr_t)pose,want,0x40)) ++join_gravp_restored;
     }
 }
@@ -5373,7 +5406,7 @@ static void join_capture_evq_census(double now) {
 }
 static void join_capture_grav(join_tables *t) {
     unsigned char *w=join_grav_worker();uint32_t scap=0;
-    join_grav_cap_units=join_grav_ccap=0;join_cap.grav_unmapped=join_cap.grav_fault=join_cap.grav_passive=0;
+    join_grav_cap_units=join_grav_ccap=0;join_cap.grav_unmapped=join_cap.grav_fault=join_cap.grav_passive=join_cap.grav_dead=0;
     free(join_gravp_objects);join_gravp_objects=NULL;join_gravp_nobjects=join_gravp_ocap=0;
     if(!w) {++join_cap.grav_fault;return;}
     for(unsigned b=0;b<JOIN_GRAV_BUCKETS;b++) {
@@ -5448,7 +5481,7 @@ static int join_grav_shape(const join_grav_rec *g,uint32_t ng,const join_gravc_r
             for(uint32_t k=0;k<r->count[l];k++,at++) {
                 if(at>=nc) return 0;
                 const join_gravc_rec *x=&c[at];
-                if(x->portable!=r->portable || x->list!=l || x->index!=k || (x->flags&~1u) || x->reserved || !x->contact!=!!(x->flags&JOIN_GRAVC_UNMAPPED)) return 0;
+                if(x->portable!=r->portable || x->list!=l || x->index!=k || (x->flags&~3u) || x->flags==3u || x->reserved || !x->contact!=!!(x->flags&JOIN_GRAVC_UNMAPPED)) return 0;
             }
         }
     }
@@ -7212,8 +7245,15 @@ static int join_admit_grav(const join_tables *s,const join_tables *mine) {
                 if(l<2) list=unit+0x68+l*0x18;
                 else if(!join_read(unit+0x98+(l-2)*8u,&list,8)) list=NULL;
                 for(uint32_t q=0;q<r->count[l];q++,k++) {
-                    uint64_t id=c[k].contact?join_runtime_of(mine,c[k].contact):0;
-                    if(!id || !join_object(id)) {++join_rx.grav_unmapped;continue;}
+                    uint64_t id;
+                    if(c[k].flags&JOIN_GRAVC_DEAD) {   /* a destroyed contact the next scan removes: its ID, no component here either */
+                        id=c[k].contact;
+                        if(!join_grav_dead_on || join_object(id)) {++join_rx.grav_unmapped;continue;}
+                        ++join_rx.grav_dead;
+                    } else {
+                        id=c[k].contact?join_runtime_of(mine,c[k].contact):0;
+                        if(!id || !join_object(id)) {++join_rx.grav_unmapped;continue;}
+                    }
                     join_grav_out[n++]=id;
                 }
                 if(!list) {if(n) bad=1;continue;}

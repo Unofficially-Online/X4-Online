@@ -652,6 +652,7 @@ class Overlays(unittest.TestCase):
             self.assertIn('native_gate_join_hold_boot_events', overlays.JOIN_DEFAULT_ON)   # j1-323..326: 635 without it
             self.assertIn('native_gate_join_resv', overlays.JOIN_DEFAULT_ON)   # w1z156, j1-337: the 1049/1860 split gone
             self.assertIn('native_gate_join_mute_load_npcs', overlays.JOIN_DEFAULT_ON)   # ca15: the T+2 NPC split at T=733 gone
+            self.assertIn('native_gate_join_grav_dead', overlays.JOIN_DEFAULT_ON)   # ca33/ca34: the dead contact's has_scanned posts at T=690
             self.assertIn('native_gate_join_hold_fire', overlays.JOIN_DEFAULT_ON)   # ca22b..ca27: the load's shots at T=722 held
             self.assertIn('native_gate_join_cue_ids', overlays.JOIN_DEFAULT_ON)   # hj32: CUEI (ordinal -> live ID); missions equal after a join
             for name in ('native_gate_join_porders', 'native_gate_join_attn_set', 'native_gate_join_ares', 'native_gate_join_warp'):   # w1z198/w1z199, j1-384, j1-373

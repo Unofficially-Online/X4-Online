@@ -395,6 +395,12 @@ _Static_assert(sizeof(join_solver_rec)==103288 && sizeof(join_bullet_rec)==1088,
  *        +0xa8..+0xc7 (last scan, next due, last has_scanned post, +0xc0, the flags +0xc4).
  * GRAVC  the contacts, (owner, list, index) in the session's order (its runtime IDs): the contact's portable ID, 0 with
  *        JOIN_GRAVC_UNMAPPED. The joiner writes each list in its own runtime IDs, sorted as the engine keeps them.
+ *        JOIN_GRAVC_DEAD (ca33, T=690): a contact that no longer is a component, its runtime ID as the contact. A unit keeps a
+ *        destroyed contact until its next scan (about every 50 ticks), whose apply 0x10acd70 then counts it as removed and
+ *        posts GravidarHasScannedEvent (+0xb8 = the scan's time). A joiner that left it out posted nothing, so its 10 s timer
+ *        post ran ahead of the session's (13 units of contact 0x164689 at 694, 704, 715; their has_scanned handlers 71 ticks
+ *        early from 1287, the first digest split at 1289). With native_gate_join_grav_dead the joiner writes that ID into the
+ *        list when it is no component of its own either (runtime IDs are allocated alike, lockstep_runtime_ids.h).
  * GRAVS  the worker's active sources (kind 0: +0x48 pending, 1: +0x60 current; components, in order; portable 0 with
  *        JOIN_GRAVS_UNMAPPED) and every field sector's factor-pass deadline (kind 2: the sector of the worker's list +0x68b8 whose
  *        +0x442 is set, value its +0x448 bits; JOIN_GRAVS_SEEN: native_gate_gravidar_deadlines had admitted its first Move, so the
@@ -405,7 +411,7 @@ _Static_assert(sizeof(join_solver_rec)==103288 && sizeof(join_bullet_rec)==1088,
 #define JOIN_GRAV_BYTES 0xc8u
 #define JOIN_GRAV_LISTS 4u
 enum {JOIN_GRAV_ACTIVE=1u,JOIN_GRAV_UNCARRIED=2u};
-enum {JOIN_GRAVC_UNMAPPED=1u};
+enum {JOIN_GRAVC_UNMAPPED=1u,JOIN_GRAVC_DEAD=2u};
 enum {JOIN_GRAVS_PENDING=0u,JOIN_GRAVS_CURRENT=1u,JOIN_GRAVS_SECTOR=2u,JOIN_GRAVS_CURSOR=3u};
 enum {JOIN_GRAVS_UNMAPPED=1u,JOIN_GRAVS_SEEN=2u};
 typedef struct {uint64_t portable;uint32_t kind,flags;uint32_t count[JOIN_GRAV_LISTS];unsigned char unit[JOIN_GRAV_BYTES];} join_grav_rec;
@@ -784,7 +790,7 @@ static struct {
     uint32_t solver_mapped;                                                    /* version 12: solver qwords that were addresses of this process */
     uint32_t gravq_global,gravq_busy;                                          /* GRAVQ: entries in the event queue at T (not carried), worker not idle */
     uint32_t evq_sources,evq_events,evq_due,evq_fault;char evq_top[640];        /* census: sources with timed events at T, events, due by T+1, top classes */
-    uint32_t grav_unmapped,grav_fault,grav_passive;                          /* GRAV capture: units without a portable owner, faults, passive units */
+    uint32_t grav_unmapped,grav_fault,grav_passive,grav_dead;                          /* GRAV capture: units without a portable owner, faults, passive units */
     uint32_t bullet_blocks;uint64_t bullet_live,bullet_unkeyed;               /* BULLET's registry walk: blocks, live components, bullets keyed by runtime ID */
 } join_cap;
 /* ---- joiner side state ---- */
@@ -824,7 +830,7 @@ static struct {
     uint64_t solver_applied,solver_fixed,solver_created,solver_missing,solver_shape,solver_kind,solver_heap;
     /* version 11 (join_admit_grav): units applied, written (fixed), not found, another kind, shape (a list that does not fit, no worker),
      * contacts written, contacts without a joiner object, lists rebuilt in a new buffer; sources (lists written, entries missing), sectors */
-    uint64_t grav_applied,grav_fixed,grav_missing,grav_kind,grav_shape,grav_contacts,grav_unmapped,grav_buffers,gravs_lists,gravs_missing,gravs_sectors,
+    uint64_t grav_dead,grav_applied,grav_fixed,grav_missing,grav_kind,grav_shape,grav_contacts,grav_unmapped,grav_buffers,gravs_lists,gravs_missing,gravs_sectors,
              grav_created,gravs_cursor,
              /* version 12 (join_admit_splm): applied, fixed, missing, kind, shape (a joiner route not empty, a list that does not fit),
               * other (a record the saver could not carry or requests pending at T), allocations failed, entries rebuilt */
@@ -2495,7 +2501,7 @@ static void join_gate_fields(join_tables *t,uint64_t tick) {
     t->gate.cid=join_cid_get();
     t->gate.unpaused=join_unpaused_get();
 }
-#define JOIN_GRAVP_RESTORE_TICKS 10u   /* the boundaries after T+1 .. T+10 */
+#define JOIN_GRAVP_RESTORE_TICKS 10u   /* the boundaries after T+1 .. T+10 (mended at T+1 and T+2, JOIN_GRAVP_LOAD_STEPS; counted after) */
 /* native_gate_join_shape_refresh (session and joiner, default off; report 1.18, j1-243 .. j1-249): a body's Jolt compound holds
  * its parts' poses as of its last shape refresh (XPhys::Body_UpdateShape 0xbff80 -> 0xc2c00), and the refresh comes at a due
  * time per shape holder (record +0x20, due +0x28; lockstep_shape.h). The session's due times run on from long before T; the
@@ -4018,7 +4024,7 @@ static int join_status(char *out,size_t cap) {
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
-        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u"
+        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
@@ -4063,6 +4069,7 @@ static int join_status(char *out,size_t cap) {
         (long long)InterlockedCompareExchange64(&join_cue_ids_placed,0,0),(long long)InterlockedCompareExchange64(&join_cue_ids_refused,0,0),
         (long long)InterlockedCompareExchange64(&join_cue_ids_noid,0,0),join_cuei_cap,join_cuei_seen,join_cuei_other,join_rx.t.ncuei,(long)InterlockedCompareExchange(&join_cuei_bp_state,0,0),
         join_hold_fire_on,(long long)InterlockedCompareExchange64(&wfire_held,0,0),join_bootev_released,
+        join_grav_dead_on,join_cap.grav_dead,(unsigned long long)join_rx.grav_dead,(unsigned long long)join_gravp_late,
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ALL],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PROBE],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PARAMS],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ACTOR],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_ACTOR],(unsigned long long)join_rx.keys_known,(unsigned long long)join_rx.keys_unarmed,

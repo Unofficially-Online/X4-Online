@@ -328,6 +328,7 @@ GRAV_BYTES, GRAV_LISTS = 0xc8, 4
 GRAV_ACTIVE_VT, GRAV_PASSIVE_VT = 0x2c67610, 0x2c67660
 GRAV_ACTIVE, GRAV_UNCARRIED = 1, 2
 GRAVC_UNMAPPED = 1
+GRAVC_DEAD = 2      # a destroyed contact the unit still lists: the contact is its runtime ID
 GRAVS_PENDING, GRAVS_CURRENT, GRAVS_SECTOR, GRAVS_CURSOR = 0, 1, 2, 3
 GRAVS_UNMAPPED, GRAVS_SEEN = 1, 2
 GRAV = struct.Struct('<QII4I%ds' % GRAV_BYTES)
@@ -656,7 +657,7 @@ def grav_shape(grav, gravc, gravs):
                 if at >= len(gravc):
                     return False
                 owner, li, index, contact, cflags, reserved = gravc[at]
-                if owner != portable or li != lst or index != k or cflags & ~1 or reserved or (not contact) != bool(cflags & GRAVC_UNMAPPED):
+                if owner != portable or li != lst or index != k or cflags & ~3 or cflags == 3 or reserved or (not contact) != bool(cflags & GRAVC_UNMAPPED):
                     return False
                 at += 1
     if at != len(gravc):

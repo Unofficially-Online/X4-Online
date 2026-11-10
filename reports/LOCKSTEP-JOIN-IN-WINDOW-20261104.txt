@@ -1433,3 +1433,55 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
   JOIN_WATCHREFS rows land in x4lan-crash.txt, and the watch slows a joiner enough to miss its handover in a 3 minute
   window.
 
+
+60. THE JOIN STEP T=690: THE RADAR'S DEAD CONTACTS, THE POSE RESTORE'S TWO STEPS (ca31 .. ca37; 9 November, night)
+
+- The sweep over the join save's step went on after T=722 and T=745 (section 59). T=690: joined with 1,743 digest
+  mismatches, the first at 1289 in the runtime ID part alone, the census equal at 1800, 3600 and 5400; a desync at 3419.
+  ca32 (script RNG rows 1284..1372, the detail decoded: keyword << 32 mixed with the saved ID, lockstep_mix inverted):
+  the joiner runs event_gravidar_has_scanned handlers (keyword 1286) at 1287 that the session runs at 1358, for nine
+  sources. ca33 (native_gate_gravidar_posts, GRAVIDAR_POST_ROW joined by tick and unit; .local/try/gravdiff.py):
+  two causes, both from T on.
+- The dead contact. 13 radar units of the session hold contact 0x164689, no component any more (destroyed shortly
+  before T; a unit scans about every 50 ticks). Their scans of 694, 704 and 715 drop it, and the apply 0x10acd70 posts
+  GravidarHasScannedEvent for a removed contact and sets the unit's last post time. GRAVC carried such a contact as
+  unmapped (24 records in j690.x4join) and the joiner left it out: no change at its scans, no post, and its 10 s timer
+  post (the unit's +0xb8) ran ahead of the session's from then on.
+  Fix (7412b6d5, native_gate_join_grav_dead, in JOIN_DEFAULT_ON): GRAVC marks a contact that is no component
+  (JOIN_GRAVC_DEAD, the contact its runtime ID; the shape checks of the gate and of native_gate_join.py take the flag),
+  and the joiner writes that ID into the list when it is no component of its own either (runtime IDs are allocated
+  alike). Status grav_dead=on:captured:written.
+  ca34 (T=690, the fix): grav_dead=1:0:24 on the joiner (24 captured on the session), digest_mismatches=0 at the
+  handover, played to 5440, no desync, 0 errors.
+- The pose restore. Ship 0x7301e (attention 2, in a low-attention fight in zone 0x6ba): the session's radar reads its
+  settled pose of tick 7 until 698 and its live one, 6.7 km away, from 701; 17 units add it there and one drops it. The
+  joiner's radar kept the pose of tick 7 through the run. ca34 and ca36 (JOIN_WATCH, JOIN_WATCHPCF and the raw words
+  +0x1e0, +0x1e8 of 0x7301e, 0x73098, 0x86842, 0x867c4):
+    session  699: four objects are made in the zone (children 55 -> 59); +0x1e0 0x18 on 0x7301e; BuildCache 0x3d4d0f
+             republishes it in one view at 699 and in the other at 700 (PropagateCacheFlags flags 0x18).
+    joiner   after the load every one of the four holds +0x1e0 0x19 (+0x1e8 0x12 or 0x17) and the view current at the
+             load has the word 0x40059; all of it is 0 / 0x10058 after T+1. 691 = T+1: all four published once
+             (flags 0x19; 0x86842 and 0x867c4 0x1b). 692 = T+2: 0x86842 and 0x867c4 published again, into the other
+             view (0x1b: their zone's due flags of the load last a frame longer). Nothing more until 699 and 700,
+             where 0x7301e is published as on the session.
+  The restore (T+1 .. T+10; the notes on j1-89, j1-157 and w1z177 in lockstep_join_world.h) mended the load's publications and then put the settled pose back over
+  the engine's own of 699 and 700 as well: every entry held its own "first publication is the load's" state, an object
+  has an entry per view from GRAVP and a second one from VIEWP, so the view mended at T+1 was mended again through its
+  second entry, and the other view as a first.
+  ca35 (a first try: one state per object, one publication the load's): 0x7301e right, but 0x86842 and 0x867c4 kept
+  the live pose of their T+2 publication (2.5 km from the session's settled one); they and 0x73098, 0x8cff3 dropped
+  each other on the joiner alone at 699..719 and found each other again from 1800.
+  Fix: the load publishes at T+1 and T+2 and nowhere else (JOIN_GRAVP_LOAD_STEPS; j1-90 had measured the same: 27 views
+  more in T+3 .. T+10, the census unchanged), so only those two boundaries mend; the state is the (object, view)'s,
+  shared by its entries; a view found published anew at T+3 .. T+10 is left and counted (status gravp_late=).
+  ca37 (T=690, both fixes, on 6bc0adec with the guns' aim a default): grav_dead=1:0:24, gravp_restore=10019 of 54,156
+  entries, gravp_first=98:124:910:7596:1291, gravp_moved=10, gravp_late=10; joined digest_mismatches=0 at the handover
+  3296, played to 5440, first_desync none, 0 errors, 0 drops; the radar post rows equal on both sides from 690 to 5441
+  (0 differing ticks; ca33 12, ca34 5); the census equal at 1800, 3600 and 5400 (present 432,945, 435,889, 436,533).
+- Clean join steps so far with one present client: 690, 722, 745 (and 701 with the mission fixture, x4mods hj32).
+  Open in the sweep: 710, 715, 730, 750, 760, 775, 790, and a T inside a player's aimed burst
+  (native_gate_pilot_aim_script).
+- Tools of the day: .local/try/gravdiff.py SESSION_LOG JOINER_LOG [FROM] (the one-sided GRAVIDAR_POST_ROW rows),
+  .local/try/watchrows.py (JOIN_WATCH levels 0 and 1 and JOIN_WATCHPCF from x4lan-crash.txt; +0x1e0 and +0x1e8 are in
+  the JOIN_WATCHRAW dump at those offsets). A watch on four objects over 14 steps moves a joiner's handover from 3300
+  to 4514 in a 3 minute window; one object stays near 3413.

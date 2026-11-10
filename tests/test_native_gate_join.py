@@ -985,6 +985,9 @@ class Package(unittest.TestCase):
         # Shape faults.
         g, c, z = expected[join.SEC_GRAV], expected[join.SEC_GRAVC], expected[join.SEC_GRAVS]
         self.assertTrue(join.grav_shape(g, c, z))
+        self.assertTrue(join.grav_shape(g, [c[0], c[1][:3]+(0xdead, join.GRAVC_DEAD, 0), c[2]], z))   # a destroyed contact: its runtime ID
+        for flags, contact in ((join.GRAVC_DEAD, 0), (3, 0xdead), (4, 0xdead)):
+            self.assertFalse(join.grav_shape(g, [c[0], c[1][:3]+(contact, flags, 0), c[2]], z))
         for bad in ((g, c[:2], z), (g, [c[0], c[1][:4]+(0, 0), c[2]], z), ([g[0], passive[:3]+(1,)+passive[4:]], c, z),
                     ([g[0], g[0]], c, z), (g, c, [z[0][:4]+(join.GRAVS_SEEN, 0), z[1], z[2]]),
                     (g, c, [z[0], z[1], z[2][:2]+(join.GRAVS_PENDING, 0)+z[2][4:]]), (g, c, [z[0], z[1][:1]+(5,)+z[1][2:], z[2]]),
