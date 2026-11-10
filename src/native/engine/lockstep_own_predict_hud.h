@@ -19,7 +19,10 @@
  * On a presenting client (slots 2..N) the calls sit in pres_ui_move, around its presentation scope in the order slot 10
  * uses (the poses, the bank, the scope). On a client without a presentation (slot 1) this module holds the UI entry
  * (vtable entry PRES_UI_ENTRY) itself. Render-only frames run no slot 6: between two steps the markers stay where the
- * step put them (at most one step of camera motion, not the whole lead).
+ * step put them while the picture moves on. So the poses here are not the step's own but the display's at the mean
+ * offset slot 10 drew with during the last step (opred_hud_offset: with one render-only frame per step, a quarter step):
+ * the markers are then off by half the spread of the frames' offsets at most, to both sides, not by a whole step of
+ * camera motion in every render-only frame (user report after the first form: better, still lagging).
  * Nothing here is read by the simulation: the same swaps as slot 10's, under the same checks (a nested entry or a failed
  * restore stops the gate, 184). */
 static int ophud_armed,ophud_open,ophud_presented,ophud_followed,ophud_ui_installed,ophud_restored;
@@ -73,8 +76,8 @@ static void ophud_restore(void) {
 }
 static int ophud_status(char *out,size_t cap) {
     return snprintf(out,cap,"armed=%d why=%s open=%d entry=%d restored=%d ui_calls=%llu enters=%llu applied=%llu exact=%llu provisional=%llu "
-        "stale=%llu refused=%llu nested=%llu unbalanced=%llu forced=%llu outside=%llu",ophud_armed,ophud_why,ophud_open,ophud_ui_installed,ophud_restored,
+        "stale=%llu refused=%llu nested=%llu unbalanced=%llu forced=%llu outside=%llu offset=%.3f",ophud_armed,ophud_why,ophud_open,ophud_ui_installed,ophud_restored,
         (unsigned long long)ophud_ui_calls,(unsigned long long)ophud_enters,(unsigned long long)ophud_applied,(unsigned long long)opred_hud_exact,
         (unsigned long long)opred_hud_provisional,(unsigned long long)opred_hud_stale,(unsigned long long)opred_hud_refused,
-        (unsigned long long)ophud_nested,(unsigned long long)ophud_unbalanced,(unsigned long long)ophud_forced,(unsigned long long)ophud_outside);
+        (unsigned long long)ophud_nested,(unsigned long long)ophud_unbalanced,(unsigned long long)ophud_forced,(unsigned long long)ophud_outside,opred_hud_offset());
 }

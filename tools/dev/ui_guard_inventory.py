@@ -60,7 +60,12 @@ for part in (
     # The docked menu's Get Up (menu_docked.lua buttonGetUp): X4 posts a GetUpEvent to the player. Refused like the rest;
     # native_gate_pilot_foot claims it for slot 1 (lockstep_pilot_foot_guard.h: the GET_UP key in the stock record).
     _ffi('flight', 'GetUp'),
-    _lua('flight', 'RequestSofttargetLock RemoveSofttargetLockRequest PerformAction RaisePlayerInteractionEvent'),
+    # Not here any more: RequestSofttargetLock and RemoveSofttargetLockRequest (targetsystem.lua: the target system keeps its
+    # soft target while the player steers hard at a small ship). Both only write the UI controller's own lock manager
+    # (*0x6cf2788 + 0x78: the requesters' names and the locked flag of its current soft target entry); every reader of that
+    # object is UI code. The soft target itself changes through SetSofttarget, which the target family replays. Refused,
+    # the lock never engaged and the HUD asked again every frame (a playtest of 9 Nov: 102 refusals and their info lines).
+    _lua('flight', 'PerformAction RaisePlayerInteractionEvent'),
     # P1, commanding ships.
     _ffi('orders', '''CreateOrder CreateOrder3 EnableOrder AdjustOrder RemoveOrder RemoveOrder2 ResetOrder
         EnablePlannedDefaultOrder RemovePlannedDefaultOrder CreateDeployToStationOrder''', ORDERS | QUEUE),

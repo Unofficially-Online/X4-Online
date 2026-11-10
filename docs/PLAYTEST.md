@@ -303,6 +303,13 @@ first mismatch.
     X4 attaches the radar to the player's ship once at load; each client now re-attaches its radar, crosshair and
     weapon panel to its own ship 10 ticks into the session, after a respawn and after a hot join
     (`native_gate_hud_ship_refresh`, a default). hud3: two clients, 900 ticks, 0 desyncs.
+  - Markers, second pass, and target lock (9 Nov, after a played session). The picture is not drawn at the predicted
+    pose itself: with other ships drawn between the last two steps, every frame is drawn up to one step behind it
+    (the step's frame at -1, the frame between two steps at about -0.5). The markers now aim at the mean of the
+    offsets the last step's frames were drawn with (hud5: -0.75 on both clients), so they are off by a quarter step
+    at most. The stock HUD's soft-target lock (it keeps your target while you steer hard at a small ship) was refused
+    102 times in that session with an info line each few seconds; it only touches the UI's own target manager and
+    now runs. The HUD's own encyclopedia entries (AddKnownItem) are still not shared, but no longer print an info line.
   - The cursor (fixed 9 Nov, the focus rule in `lockstep_pilot_stock.h`). X4 reads the PC's one cursor in the
     unfocused window too. When the cursor is in the other window, X4 sees it at this window's edge. Before the fix,
     that edge position steered this window's ship on every client (cursor steering), aimed its guns there, and turned

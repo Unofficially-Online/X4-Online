@@ -678,7 +678,7 @@ function K.session(p)
     if verdict=='ui_only' then log('UI_GUARD_PASSED tick='..at..' op='..name..' group='..group..named..' why=ui_only')
     else
      log('UI_GUARD_REFUSED tick='..at..' op='..name..' group='..group..named)
-     last=name
+     if not K.GUARD_QUIET[name] then last=name end
     end
    end
    if last and p.notify and (not notice_at or tick-notice_at>=K.GUARD_NOTICE_TICKS) then
@@ -737,6 +737,9 @@ K.SCOPED={target_slot=true,target_none=true,guidance_slot=true,guidance_end=true
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
 K.CANONICAL={mis_fixture=true,gm_limit=true}
+-- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
+-- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
+K.GUARD_QUIET={AddKnownItem=true}
 K.FIXTURE_OFFER,K.FIXTURE_MISSION,K.FIXTURE_TEXTURE='X4LAN test offer','X4LAN test mission','x4lan_rt'   -- native_gate_ui_replay.xml
 -- What the scripted mission ops need of the stock UI's queries (C: ffi.C with the probe's declarations; env: the globals):
 -- an offer by its name (the briefing's and the map's lists), with its client, and a mission by its name.

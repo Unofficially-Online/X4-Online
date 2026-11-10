@@ -560,13 +560,13 @@ static void opred_slot_frame(unsigned index,uint64_t tick) {
 }
 /* The displayed pose of a predicted slot at a display offset (steps from this tick, -1..1): the
  * shown pose moved at its last rates, the correction decayed by the offset. 0 without one. */
-static int opred_display_pose_of(unsigned slot,double offset,float out[12],uint64_t tick) {
+static int opred_display_pose_of(unsigned slot,double offset,float out[12],uint64_t tick,double limit) {
     if(!opred_armed || slot<1 || slot>pilot_slot_count) return 0;
     const opred_slot *p=&opred_slots[slot-1];
     if(!p->enabled || !p->ready || p->display_tick!=tick) return 0;
     if(!isfinite(offset) || offset==0.0) {memcpy(out,p->shown,sizeof(p->shown));return 1;}
     if(offset<-1.0) offset=-1.0;
-    if(offset>1.0) offset=1.0;
+    if(offset>limit) offset=limit;
     predict_pose moved=p->end,display;predict_offset c=p->correction;
     predict_advance(&moved,p->end_rates,offset*PREDICT_DT);
     double lambda=opred_tau_ms?exp(-1000.0*offset*PREDICT_DT/(double)opred_tau_ms):(offset>0?0.0:1.0);
@@ -574,7 +574,25 @@ static int opred_display_pose_of(unsigned slot,double offset,float out[12],uint6
     predict_offset_apply(&moved,&c,&display);predict_floats(&display,out);
     return 1;
 }
-static int opred_display_pose(unsigned slot,double offset,float out[12]) {return opred_display_pose_of(slot,offset,out,stats.issued);}
+static int opred_display_pose(unsigned slot,double offset,float out[12]) {return opred_display_pose_of(slot,offset,out,stats.issued,1.0);}
+/* The display offsets slot 10 drew with during the last step (the step frame's and each render-only frame's), as their
+ * mean: where the HUD's projections aim (lockstep_own_predict_hud.h). Slot 6 runs once per step, slot 10 once per frame,
+ * and the offsets are not around 0: with native_gate_render_motion = 'interpolate' (the play default) every frame draws
+ * step N-1 advanced, so the step frame is at -1 and a render-only frame at about -0.5 (rdisp_sample). Markers placed for
+ * offset 0 were then a whole step of camera motion ahead of the step frame's picture (hud4: the mean read 0 because only
+ * 0..1 was counted; the user: better, still lagging). Placed for the mean they are off by half the spread at most. */
+static uint64_t opred_offset_tick;static double opred_offset_sum,opred_offset_mean;static unsigned opred_offset_count;
+static void opred_offset_note(double offset) {
+    if(opred_offset_tick!=stats.issued) {
+        if(opred_offset_count) opred_offset_mean=0.5*opred_offset_mean+0.5*(opred_offset_sum/(double)opred_offset_count);
+        opred_offset_tick=stats.issued;opred_offset_sum=0.0;opred_offset_count=0;
+    }
+    if(isfinite(offset) && offset>=-1.0 && offset<=1.0) {opred_offset_sum+=offset;++opred_offset_count;}
+}
+static double opred_hud_offset(void) {
+    const double mean=opred_offset_mean;
+    return !isfinite(mean)?0.0:mean<-1.0?-1.0:mean>1.0?1.0:mean;
+}
 
 /* ---- slot 10 (present mode; MoveWorker, inside the render RNG split's wrapper) ---- */
 static __attribute__((unused)) int opred_owns(const void *object) {
@@ -592,7 +610,8 @@ static int opred_present_enter_as(int hud) {
     if(!hud) ++opred_present_calls;
     if(opred_open) {InterlockedIncrement64(&opred_failures);opred_stage=hud?"hud_nested":"present_nested";return 0;}
     if(GetCurrentThreadId()!=ui_thread) {++opred_present_thread;return 0;}
-    double offset=hud?0.0:opred_display_offset?opred_display_offset():0.0;
+    double offset=hud?opred_hud_offset():opred_display_offset?opred_display_offset():0.0;
+    if(!hud) opred_offset_note(offset);
     unsigned opened=0;
     for(unsigned i=0;i<pilot_slot_count && i<PILOT_SLOTS;i++) {
         opred_slot *p=&opred_slots[i];const pilot_slot *s=&pilot_slots[i];
@@ -612,7 +631,7 @@ static int opred_present_enter_as(int hud) {
             memset(mine+OPRED_BLOCK_MIN/4,0,sizeof(opred_blocks[i])-OPRED_BLOCK_MIN);
         }
         if(opred_mode==OPRED_SWAP) for(unsigned r=0;r<4;r++) memcpy(shown+3*r,now+4*r,3*sizeof(float)); /* the block's own pose */
-        else if(provisional?!opred_display_pose_of(i+1,1.0,shown,stats.issued-1):!opred_display_pose(i+1,offset,shown)) {
+        else if(provisional?!opred_display_pose_of(i+1,1.0+offset,shown,stats.issued-1,2.0):!opred_display_pose(i+1,offset,shown)) {
             ++*(hud?&opred_hud_stale:&opred_present_stale);continue;
         }
         for(unsigned r=0;r<4;r++) memcpy(mine+4*r,shown+3*r,3*sizeof(float)); /* w lanes stay the engine's */
