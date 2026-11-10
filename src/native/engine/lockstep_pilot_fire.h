@@ -52,7 +52,8 @@
  * the slot's stock record. X4's own PlayerShootController is on such a ship's guns (the seat, each
  * handoff, weapon mode updates): those run from replayed records, in the same tick on every client,
  * so it is taken back like the simulation's. Mindless means gimbals at rest: the guns shoot straight
- * ahead, not at the replayed aim; the stock fire and aim path per slot is a later step.
+ * ahead, not at the replayed aim, unless lockstep_pilot_aim.h is armed (native_gate_pilot_aim: each slot's manual aim
+ * answered for its leased controllers).
  * The magazine is refilled lazily: 0x81db10(gun, now) writes the last shot time (+0x310) and the
  * magazine (+0x350) once the reload time has passed, from the HUD's FFI readers (GetPrimaryWeapon,
  * GetSecondaryWeapon, GetWeaponDetails*) as well as from the simulation, and with --present each client's

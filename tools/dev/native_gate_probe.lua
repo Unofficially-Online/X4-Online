@@ -2990,6 +2990,32 @@ local function pilot_frame(s,tick)
  if pilot_view.fire then
   receipt=receipt..'|'..assert(gate.pilot_fire_frame(),'pilot fire receipt unavailable')
   if tick%600==0 then ticklog.status('PILOT_FIRE_STATUS',tick,gate.pilot_fire_status) end
+  if pilot_view.aim and tick%600==0 then ticklog.status('PILOT_AIM_STATUS',tick,gate.pilot_aim_status) end
+  -- Runs without people (native_gate_pilot_aim_script = {{from,to,x,y,z,fire,mode},...}): this client's own record carries
+  -- an aim between the two ticks, with the trigger when fire: a manual aim at that point of its ship's frame (x mirrored
+  -- for even slots) or, with mode 'assist', the aim assist on its slot's target.
+  local scripts=pilot_view.aim and cfg.native_gate_pilot_aim_script
+  if type(scripts)=='table' and type(scripts[1])~='table' then scripts={scripts} end
+  for _,script in ipairs(type(scripts)=='table' and scripts or {}) do
+   if tick==script[1] or tick==script[2] then
+    local on=tick==script[1] and (script[7]=='assist' and 2 or 1) or 0
+    local ok=gate.pilot_aim_script(on,(tonumber(cfg.slot:sub(2))%2==0 and -1 or 1)*(script[3] or 0),script[4] or 0,script[5] or 1000,script[6] and 1 or 0)
+    log('PILOT_AIM_SCRIPT tick='..tick..' on='..on..' ok='..tostring(ok)..' '..tostring(gate.pilot_aim_status()))
+   end
+   -- ...and what the guns did with it: every slot ship's weapon skeleton joints (gate.ik_joints: the gimbal's value and
+   -- target words) every 30 ticks from 30 before the scripted aim to 90 after it. Read only; the same rows on every client.
+   if gate.ik_joints and tick%30==0 and tick>=script[1]-30 and tick<=script[2]+90 then
+    for s=1,#cfg.native_gate_pilot_slots do
+     local ship=gate.pilot_ship(s)
+     local object=ship and ffi.new('UniverseID',ship)
+     local slots=object and tonumber(ffi.C.GetNumUpgradeSlots(object,'','weapon')) or 0
+     for w=1,math.min(slots,8) do
+      local wid=ffi.C.GetUpgradeSlotCurrentComponent(object,'weapon',w)
+      if wid~=0 then ticklog.write('PILOT_AIM_JOINTS tick='..tick..' slot='..s..' weapon='..w..' '..tostring(gate.ik_joints(tonumber(wid)))) end
+     end
+    end
+   end
+  end
   -- Sampled: the declared receipt and the guns it read, to name a difference without a rerun.
   if tick%60==0 then
    log('PILOT_RECEIPT tick='..tick..' '..receipt)
@@ -5285,6 +5311,15 @@ local function frame()
      gate.pilot_fire and gate.pilot_fire_frame and gate.pilot_fire(fire,X4LAN_PILOT_FIRE_MASK(cfg.native_gate_pilot_fire_slots,fire,#cfg.native_gate_pilot_slots))==1,'pilot fire refused')
     pilot_view.fire=fire
     log('PILOT_FIRE_ARMED mode='..fire)
+    -- Gun aim per player (lockstep_pilot_aim.h; native_gate_pilot_aim, on by default with 'record'): every slot's own
+    -- client records where its player aims, every client turns that slot's guns there. Every client or none.
+    if cfg.native_gate_pilot_aim then
+     assert(fire=='record' and gate.pilot_aim and gate.pilot_aim_status,'pilot aim refused: needs native_gate_pilot_fire = record')
+     local aim_armed,aim_why=gate.pilot_aim(1,cfg.native_gate_pilot_aim_assist and 1 or 0)   -- the aim assist on the slot target as well
+     assert(aim_armed==1,'pilot aim refused: '..tostring(aim_why))
+     pilot_view.aim=true
+     log('PILOT_AIM_ARMED '..tostring(gate.pilot_aim_status()))
+    end
    end
   end
   -- Native hit claims belong to pilot slots (owners, records): refused without them.

@@ -128,6 +128,12 @@ static volatile LONG64 pstk_recorded,pstk_dropped,pstk_replayed,pstk_records,pst
 static int pfire_armed;       /* lockstep_pilot_fire.h */
 static int pstk_focused(void);
 static int pstk_aim_take(float aim[3],unsigned char *steer);   /* the focus rule's aim */
+/* Gun aim per player (lockstep_pilot_aim.h): every stock slot's record carries its aim; byte 28 bit 1 = manual aim,
+ * bit 2 = the aim assist on the slot's target. */
+#define PAIM_STEER_MANUAL 2u
+#define PAIM_STEER_ASSIST 4u
+static int paim_armed,paim_script_fire;   /* the second: a scripted primary trigger for runs without people */
+static int paim_take(unsigned slot,float aim[3],unsigned char *steer);
 /* The trigger of the record applied at each slot's last tick (native_gate_pilot_fire). */
 static uint64_t pstk_fire_tick[PILOT_SLOTS];
 static unsigned char pstk_fire_on[PILOT_SLOTS],pstk_fire2_on[PILOT_SLOTS];
@@ -237,7 +243,7 @@ static int pstk_slot_record_ok(const pstk_record *r,unsigned slot) {
         if(r->events[i].kind==PSTK_SPACE && slot>=2 && r->events[i].id!=8) return 0;   /* FIRST_PERSON: slot 1's only */
         if(r->events[i].kind!=PSTK_SPACE && pstk_verdict_slot(r->events[i].kind,r->events[i].id,slot)!=PSTK_REPLAY) return 0;
     }
-    return slot<2 || !(r->flags&PSTK_FLAG_AIM);
+    return slot<2 || !(r->flags&PSTK_FLAG_AIM) || paim_armed;   /* slots 2..N aim with lockstep_pilot_aim.h only */
 }
 /* The stock handlers a replayed id may reach (anything else registered under a
  * replay id fails closed); production pointers are image+RVA (pnat_use_image). */
@@ -288,7 +294,7 @@ static int pstk_decode(const unsigned char *in,unsigned length,pstk_record *r) {
         memcpy(&r->aim[i],&v,4);
         if(!isfinite(r->aim[i]) || (!(r->flags&PSTK_FLAG_AIM) && v)) return 0;
     }
-    if(r->steer>1 || (!(r->flags&PSTK_FLAG_AIM) && r->steer)) return 0;
+    if(r->steer>(1u|PAIM_STEER_MANUAL|PAIM_STEER_ASSIST) || (!(r->flags&PSTK_FLAG_AIM) && r->steer)) return 0;
     for(unsigned i=0;i<r->count;i++) {
         const unsigned char *e=in+PSTK_HEAD+PSTK_EVENT*i;uint16_t head=(uint16_t)(e[0]|e[1]<<8);uint32_t v=0;
         for(unsigned b=0;b<4;b++) v|=(uint32_t)e[2+b]<<(8*b);
@@ -370,14 +376,16 @@ static int pstk_capture(uint64_t tick,unsigned char out[PSTK_BYTES_MAX],unsigned
     pstk_build.capture16=(uint16_t)tick;pstk_build.flags=pstk_local_active==1?PSTK_FLAG_ACTIVE:0;
     if(pstk_cursor_live_set) {pstk_build.flags|=PSTK_FLAG_CURSOR;memcpy(pstk_build.cursor,pstk_cursor_live,sizeof(pstk_cursor_live));}
     else memset(pstk_build.cursor,0,sizeof(pstk_build.cursor));
-    /* The aim is slot 1's only (the local crosshair is the canonical player's; slots 2..N have no player guns yet).
-     * A dead slot has no aim and no view to record: its records are consumed and ignored. */
+    /* The aim is slot 1's only (the local crosshair is the canonical player's) unless lockstep_pilot_aim.h is armed: then
+     * every slot's own client records its aim. A dead slot has no aim and no view to record: its records are consumed
+     * and ignored. */
     int own_dead=pstk_capture_slot>=1 && pstk_capture_slot<=PILOT_SLOTS && pilot_slots[pstk_capture_slot-1].dead;
-    if(pfire_armed && (pnat_fire_buttons()&1) && pstk_focused()) pstk_build.flags|=PSTK_FLAG_FIRE;
+    if(pfire_armed && (((pnat_fire_buttons()&1) && pstk_focused()) || paim_script_fire)) pstk_build.flags|=PSTK_FLAG_FIRE;
     if(pstk_fire2_held()) pstk_build.flags|=PSTK_FLAG_FIRE2;
-    const int aim=pstk_capture_slot==1 && !own_dead?pstk_aim_take(pstk_build.aim,&pstk_build.steer):0;
+    const int aims=(pstk_capture_slot==1 || paim_armed) && !own_dead;
+    const int aim=aims?paim_take(pstk_capture_slot,pstk_build.aim,&pstk_build.steer):0;
     if(aim>0) {pstk_build.flags|=PSTK_FLAG_AIM;InterlockedIncrement64(&pstk_aim_samples);}
-    else {memset(pstk_build.aim,0,sizeof(pstk_build.aim));pstk_build.steer=0;if(!aim && pstk_capture_slot==1 && !own_dead) InterlockedIncrement64(&pstk_aim_sample_failures);}
+    else {memset(pstk_build.aim,0,sizeof(pstk_build.aim));pstk_build.steer=0;if(!aim && aims) InterlockedIncrement64(&pstk_aim_sample_failures);}
     if(!own_dead && pview_sample(&pstk_build.view,&pstk_build.fov,&pstk_build.target)) pstk_build.flags|=PSTK_FLAG_VIEW;
     else {pstk_build.view=0;pstk_build.fov=0.0f;pstk_build.target=0;}
     *length=pstk_encode(&pstk_build,out);
@@ -700,7 +708,7 @@ static unsigned char pstk_aim(void *controller,float *first,float *second,void *
         return pstk_fn.aim(controller,first,second,space,weapon,transform,a7,a8,a9,a10,a11,a12,a13);
     }
     float p[3]={0.0f,0.0f,PSTK_AIM_NEUTRAL},t[16],q[4]={0.0f,0.0f,0.0f,0.0f},valid=1.0f,saved_distance=0.0f;unsigned char steer=0;
-    if(pstk_aim_tick && pstk_aim_tick==stats.issued && pstk_aim_valid_replay) {memcpy(p,pstk_aim_replay,sizeof(p));steer=pstk_aim_steer_replay;}
+    if(pstk_aim_tick && pstk_aim_tick==stats.issued && pstk_aim_valid_replay) {memcpy(p,pstk_aim_replay,sizeof(p));steer=pstk_aim_steer_replay&1u;}
     else InterlockedIncrement64(&pstk_aim_neutral);
     pstk_identity(t);pstk_fn.transform(ship,t,zone,0);pstk_apply(t,p,q);
     unsigned char saved_point[16],saved_picked[8],saved_steer=input[0x9053];

@@ -106,7 +106,7 @@ static void test_pstk_codec(void) {
     memset(&r,0,sizeof(r));r.flags=PSTK_FLAG_AIM;r.aim[0]=1.5f;r.aim[1]=-2.0f;r.aim[2]=3.0f;r.steer=1;
     n=pstk_encode(&r,b);assert(n==PSTK_HEAD && b[1]==PSTK_FLAG_AIM && b[28]==1);
     assert(pstk_decode(b,n,&d) && d.aim[0]==1.5f && d.aim[1]==-2.0f && d.aim[2]==3.0f && d.steer==1 && !d.count);
-    memcpy(c,b,n);c[28]=2;assert(!pstk_decode(c,n,&d));
+    memcpy(c,b,n);c[28]=8;assert(!pstk_decode(c,n,&d));   /* bits 1 and 2: lockstep_pilot_aim.h */
     memcpy(c,b,n);c[16]=0;c[17]=0;c[18]=0xc0;c[19]=0x7f;assert(!pstk_decode(c,n,&d));  /* aim NaN */
     /* Verdicts: the replay, refuse and local sets are disjoint per kind. */
     for(unsigned k=0;k<3;k++) for(int id=0;id<512;id++) {
@@ -294,6 +294,14 @@ static void test_pilot_stock(void) {
         const LONG64 dropped=pstk_aim_unfocused;pstk_focus_forced=-1;
         assert(pstk_aim_take(aim,&steer)==-1 && pstk_aim_unfocused==dropped+1);pstk_focus_forced=1;
         assert(pstk_aim_take(aim,&steer)==1 && pstk_aim_unfocused==dropped+1);
+        /* Armed gun aim (lockstep_pilot_aim.h): slot 1's sample with X4's manual aim predicate as bit 1 of the steering byte. */
+        {   const int armed=paim_armed;const LONG64 samples=paim_samples;paim_armed=1;paim_manual_override=test_paim_manual;
+            test_paim_manual_value=1;steer=0;paim_assist_override=-1;assert(paim_take(1,aim,&steer)==1 && steer==PAIM_STEER_MANUAL && aim[2]==3.0f);
+            test_paim_manual_value=0;steer=0;assert(paim_take(1,aim,&steer)==1 && !steer && paim_samples==samples+2);
+            paim_assist_override=1;steer=0;assert(paim_take(1,aim,&steer)==1 && steer==PAIM_STEER_ASSIST);paim_assist_override=-1;
+            pstk_focus_forced=-1;assert(paim_take(1,aim,&steer)==-1);pstk_focus_forced=1;
+            paim_armed=0;assert(paim_take(1,aim,&steer)==1 && !steer && paim_samples==samples+3 && !paim_take(2,aim,&steer));
+            paim_armed=armed;paim_manual_override=NULL;paim_assist_override=0;}
         memset(test_pnat_player+0x6c60,0,0x40);}
     assert(pstk_capture(8,again,&length2,&why) && length2==length && !memcmp(again,rec,length) && !pstk_build.count); /* idempotent per tick */
     pstk_record r;int decoded=pstk_decode(rec,length,&r);

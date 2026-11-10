@@ -3863,6 +3863,7 @@ static int lua_world_watch(lua_State *L) {
 #include "lockstep_player_settings_lua.h"   /* native_gate_player_settings_per_slot */
 #include "lockstep_pilot_predict_lua.h"
 #include "lockstep_own_predict_hud.h"
+#include "lockstep_pilot_aim.h"         /* gun aim per player: each slot's manual aim on its leased guns (native_gate_pilot_aim) */
 #include "lockstep_own_predict_lua.h"
 #include "lockstep_virtual_players_lua.h"
 #include "lockstep_hit_native_lua.h"
@@ -4599,7 +4600,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(pilot_predict);METHOD(pilot_predict_frame);METHOD(pilot_predict_status);METHOD(pilot_predict_raw);
     METHOD(own_predict);METHOD(own_predict_hud);METHOD(own_predict_hud_arm);METHOD(own_predict_hud_open);METHOD(own_predict_hud_status);METHOD(own_predict_frame);METHOD(own_predict_status);
     METHOD(hit_claims);METHOD(hit_claims_admit);METHOD(hit_claims_resolve);METHOD(hit_claims_proposal);METHOD(hit_claims_status);
-    METHOD(input_mux);METHOD(input_split);METHOD(pilot_fire);METHOD(pilot_fire_frame);METHOD(pilot_fire_guns);METHOD(pilot_fire_status);
+    METHOD(input_mux);METHOD(input_split);METHOD(pilot_fire);METHOD(pilot_aim);METHOD(pilot_aim_script);METHOD(pilot_aim_status);METHOD(pilot_fire_frame);METHOD(pilot_fire_guns);METHOD(pilot_fire_status);
     METHOD(ship_reserve);METHOD(ship_bind);METHOD(ship_status);METHOD(ship_raw_motion);
     METHOD(registry_md);METHOD(registry_update);METHOD(registry_origin);METHOD(registry_origin_identity);
     METHOD(creation_trace_config);METHOD(creation_trace_status);METHOD(creation_trace_row);

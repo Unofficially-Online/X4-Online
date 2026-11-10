@@ -61,6 +61,7 @@
 #include "test_lockstep_wreck_watch.h"
 #include "test_lockstep_pilot_inputs.h"
 #include "test_lockstep_pilot_native.h"
+#include "test_lockstep_pilot_aim.h"
 #include "test_lockstep_pilot_stock.h"
 #include "test_lockstep_pilot_slots.h"
 #include "test_lockstep_pilot_eye.h"
@@ -1115,7 +1116,7 @@ int main(int argc,char **argv) {
     if(argc==2) test_ui_guard_native_image(argv[1]);
     if(argc==2) test_ui_build_native_image(argv[1]);
     if(argc==2) test_ui_construct_native_image(argv[1]);
-    if(argc==2) {test_mission_owners_native_image(argv[1]);test_ui_missions_native_image(argv[1]);}
+    if(argc==2) {test_mission_owners_native_image(argv[1]);test_pilot_aim_native_image(argv[1]);test_ui_missions_native_image(argv[1]);}
     if(argc==2) test_ui_trade_native_image(argv[1]);
     if(argc==2) test_ui_faction_native_image(argv[1]);
     if(argc==2) test_player_settings_native_image(argv[1]);
@@ -1231,6 +1232,7 @@ int main(int argc,char **argv) {
     test_impulse_diag();
     test_ik_diag();
     test_mission_owners();
+    test_pilot_aim();
     test_spline_calc_watch();
     test_spline_phase();
     test_exact_reciprocal();

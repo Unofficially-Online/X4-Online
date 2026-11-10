@@ -294,6 +294,21 @@ The run folder `.local/runs/<time>/`:
 `python tools/x4ls.py triage .local/runs/<time>` reruns a diverged session with diagnostic windows before its
 first mismatch.
 
+## Guns follow each player's cursor (built 9 Nov)
+
+Each player's guns shot straight ahead, whatever the cursor pointed at: the multiplayer fire path gave the guns a
+trigger but no aim. Now every player's own PC records where that player aims, and every PC turns that player's
+gimballed guns there in the same tick (`native_gate_pilot_aim`, a default). It is X4's own manual aim: it needs mouse
+steering, as in single player, and a gun turns as far as its mount allows.
+
+- aim1 (two X4 on one PC, 900 ticks, a scripted aim for both players): the guns' mounts turned to the aim on both PCs
+  with the same readings every 30 ticks, and back to rest when the aim ended; 0 desyncs, 0 errors. The second window had
+  the focus, and its player's guns followed the real cursor there on both PCs.
+- Not yet: without mouse steering X4 turns the guns to your selected target (aim assist). That part is built but was
+  not shown working (the test's ships were out of gun range), so it is off unless the session sets
+  `native_gate_pilot_aim_assist = true`. Fixed guns and turrets are as before.
+- Host and joiners need the same kit: the input records changed.
+
 ## Not yet
 
 - **Two PCs: built and run on one PC through the LAN address, not yet between two PCs.** See "Two PCs" above.
