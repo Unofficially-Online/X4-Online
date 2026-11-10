@@ -478,10 +478,18 @@ static int rid_ui_element_route(const uint32_t *frames,unsigned count) {
     if(!rid_ui_elements_on) return 0;
     unsigned i=0;while(i<count && frames[i]!=RID_SETATT_HANDLER_RET) ++i;
     if(i==count) return 0;
-    unsigned char *object=(unsigned char*)rid_setatt_object();uintptr_t vt=0;
+    unsigned char *object=(unsigned char*)rid_setatt_object();uintptr_t vt=0;uint64_t id=0;
     if(!object || !read_local(object,&vt,8)) {InterlockedIncrement64(&rid_ui_element_misses);return 0;}
-    if(vt!=(uintptr_t)(image+RID_UI_ELEMENT_VT)) return 0;
-    InterlockedIncrement64(&rid_ui_element_allocs);return 1;
+    /* ca18 (T=722): the same for any object whose own ID is a local one. Six U::EffectObjects (vtable 0x2c39778, view IDs) made
+     * at T+1 on the joiner by an ActivateEffectEvent (0x9a2192 -> EffectObjectCreator 0xd777e9): two of them with part animations,
+     * four shared IDs the session did not make there, the digest's rid part from T+2. The owner's list is the route. */
+    unsigned route=vt==(uintptr_t)(image+RID_UI_ELEMENT_VT)?RID_ROUTE_UI:0u;
+    if(!route && read_local(object+8,&id,8) && ((uint32_t)id&0x1ffffffu)) {
+        const uint32_t block=(((uint32_t)id&0x1ffffffu)-1u)>>20;
+        route=block==RID_LOCAL_UI_BLOCK?RID_ROUTE_UI:block==RID_LOCAL_VIEW_BLOCK?RID_ROUTE_VIEW:0u;
+    }
+    if(route) InterlockedIncrement64(&rid_ui_element_allocs);
+    return (int)route;
 }
 /* SetAttention's prologue up to the slot-703 call (view points rewrite that call) and its body from after it through the handler
  * call: the object in rsi from 0x3d5669 to 0x3d5747. */
@@ -509,7 +517,7 @@ static unsigned rid_route_of(const uint32_t *frames,unsigned count) {
     }
     /* What the table calls shared but this client's guidance alone asked for (lockstep_guidance_local.h). */
     if(route==RID_ROUTE_SHARED && glocal_route_of(frames,count)) return RID_ROUTE_UI;
-    if(route==RID_ROUTE_SHARED && rid_ui_element_route(frames,count)) return RID_ROUTE_UI;   /* native_gate_runtime_ids_ui_elements */
+    if(route==RID_ROUTE_SHARED) {const int own=rid_ui_element_route(frames,count);if(own) return (unsigned)own;}   /* native_gate_runtime_ids_ui_elements */
     return route;
 }
 static created_assign_fn rid_assign_original(void) {return rid_assign_native?rid_assign_native:(created_assign_fn)(void *)(thunk+CREATED_THUNK);}

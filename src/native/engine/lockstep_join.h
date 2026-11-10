@@ -167,7 +167,7 @@
 enum {JOIN_SEC_GATE=1,JOIN_SEC_IDS,JOIN_SEC_WAKE,JOIN_SEC_WAKEVEC,JOIN_SEC_MDHEAP,JOIN_SEC_MODULES,JOIN_SEC_CTX,JOIN_SEC_LUA,
       JOIN_SEC_HEALTH,JOIN_SEC_POSE,JOIN_SEC_SHIELD,JOIN_SEC_NAV,JOIN_SEC_ATTN,JOIN_SEC_KEYS,JOIN_SEC_PATH,JOIN_SEC_REGION,JOIN_SEC_FLIGHT,JOIN_SEC_SPLINE,
       JOIN_SEC_AGENT,JOIN_SEC_ROUTE,JOIN_SEC_PARAM,JOIN_SEC_DOCK,JOIN_SEC_STEER,JOIN_SEC_STEERPT,JOIN_SEC_SOLVER,JOIN_SEC_BULLET,
-      JOIN_SEC_GRAV,JOIN_SEC_GRAVC,JOIN_SEC_GRAVS,JOIN_SEC_SPLM,JOIN_SEC_SPLME,JOIN_SEC_SPLMSEG,JOIN_SEC_GRAVN,JOIN_SEC_GRAVP,JOIN_SEC_GRAVQ,JOIN_SEC_JOBE,JOIN_SEC_EVQT,JOIN_SEC_GRAVD,JOIN_SEC_VIEWK,JOIN_SEC_VIEWKC,JOIN_SEC_VIEWF,JOIN_SEC_VIEWP,JOIN_SEC_SHOOT,JOIN_SEC_ATTK,JOIN_SEC_LIVEF,JOIN_SEC_SPEC,JOIN_SEC_NAVC,JOIN_SEC_JOBS,JOIN_SEC_GONE,JOIN_SEC_BODY,JOIN_SEC_BUPD,JOIN_SEC_LDC,JOIN_SEC_NAVT,JOIN_SEC_NMESH,JOIN_SEC_NOCT,JOIN_SEC_AGTT,JOIN_SEC_AGCB,JOIN_SEC_PBNK,JOIN_SEC_PEND,JOIN_SEC_GRAVB,JOIN_SEC_VIEWL,JOIN_SEC_IKV,JOIN_SEC_RCNT,JOIN_SEC_ECOS,JOIN_SEC_SHPW,JOIN_SEC_TRDN,JOIN_SEC_NPCA,JOIN_SEC_JOBG,JOIN_SEC_CODE,JOIN_SEC_ENGR,JOIN_SEC_SHGR,JOIN_SEC_BNDS,JOIN_SEC_OMGS,JOIN_SEC_RESV,JOIN_SEC_PCSV,JOIN_SEC_CONN,JOIN_SEC_WARP,JOIN_SEC_ARES,JOIN_SEC_LSTN,JOIN_SEC_UNDK,JOIN_SEC_SRCS,JOIN_SEC_FOBJ};
+      JOIN_SEC_GRAV,JOIN_SEC_GRAVC,JOIN_SEC_GRAVS,JOIN_SEC_SPLM,JOIN_SEC_SPLME,JOIN_SEC_SPLMSEG,JOIN_SEC_GRAVN,JOIN_SEC_GRAVP,JOIN_SEC_GRAVQ,JOIN_SEC_JOBE,JOIN_SEC_EVQT,JOIN_SEC_GRAVD,JOIN_SEC_VIEWK,JOIN_SEC_VIEWKC,JOIN_SEC_VIEWF,JOIN_SEC_VIEWP,JOIN_SEC_SHOOT,JOIN_SEC_ATTK,JOIN_SEC_LIVEF,JOIN_SEC_SPEC,JOIN_SEC_NAVC,JOIN_SEC_JOBS,JOIN_SEC_GONE,JOIN_SEC_BODY,JOIN_SEC_BUPD,JOIN_SEC_LDC,JOIN_SEC_NAVT,JOIN_SEC_NMESH,JOIN_SEC_NOCT,JOIN_SEC_AGTT,JOIN_SEC_AGCB,JOIN_SEC_PBNK,JOIN_SEC_PEND,JOIN_SEC_GRAVB,JOIN_SEC_VIEWL,JOIN_SEC_IKV,JOIN_SEC_RCNT,JOIN_SEC_ECOS,JOIN_SEC_SHPW,JOIN_SEC_TRDN,JOIN_SEC_NPCA,JOIN_SEC_JOBG,JOIN_SEC_CODE,JOIN_SEC_ENGR,JOIN_SEC_SHGR,JOIN_SEC_BNDS,JOIN_SEC_OMGS,JOIN_SEC_RESV,JOIN_SEC_PCSV,JOIN_SEC_CONN,JOIN_SEC_WARP,JOIN_SEC_ARES,JOIN_SEC_LSTN,JOIN_SEC_UNDK,JOIN_SEC_SRCS,JOIN_SEC_FOBJ,JOIN_SEC_CUEI};
 /* Package versions: 1 (sections GATE..LUA), 2 (and the world side table HEALTH, POSE: lockstep_join_world.h), 3 (and SHIELD,
  * NAV, ATTN, KEYS: the shield groups' other census fields, flying ships' navigation state, every object's attention level and
  * due, the gate's first-call key tables; J1 j1-12, report 1.7), 4 (and PATH, REGION: the pathing manager's agent batches and
@@ -184,7 +184,7 @@ enum {JOIN_SEC_GATE=1,JOIN_SEC_IDS,JOIN_SEC_WAKE,JOIN_SEC_WAKEVEC,JOIN_SEC_MDHEA
  * the Gravidar zone groups' neighbour lists, which X4 builds when a zone is added: j1-37).
  * A version 11, 10, 9, 8, 7, 6, 5, 4, 3, 2 or 1 package is still read; a strict joiner refuses it (package_v11 ... package_v1). */
 #define JOIN_PACKAGE_VERSION 13u
-#define JOIN_SECTIONS(version) ((version)>=13?82u:(version)>=12?35u:(version)>=11?29u:(version)>=10?26u:(version)>=9?24u:(version)>=8?22u:(version)>=7?20u:(version)>=6?19u:(version)>=5?18u:(version)>=4?16u:(version)>=3?14u:\
+#define JOIN_SECTIONS(version) ((version)>=13?83u:(version)>=12?35u:(version)>=11?29u:(version)>=10?26u:(version)>=9?24u:(version)>=8?22u:(version)>=7?20u:(version)>=6?19u:(version)>=5?18u:(version)>=4?16u:(version)>=3?14u:\
                                 (version)>=2?10u:8u)
 /* FAILED/ABORT reasons, shared with native_gate_join.py REASONS and native_gate_join_core.lua. */
 enum {JOIN_WHY_NONE,JOIN_WHY_NOT_ARMED,JOIN_WHY_NOT_POSSIBLE,JOIN_WHY_SAVE_FAILED,JOIN_WHY_FILE_MISSING,JOIN_WHY_CAPTURE,
@@ -701,6 +701,14 @@ typedef struct {uint64_t owner,script,source;uint32_t kind,index,flags,reserved;
  * ID, the field's index in its +0x288 vector, the place, the object as a portable (flags 1: it had none, object 0). Sorted by
  * (region, field, index). */
 typedef struct {uint64_t region,object;uint32_t field,index,flags,reserved;} join_fobj_rec;
+/* CUEI (v13, section 83; hj31, 9 Nov): every MD cue the saver's save numbered, its save ordinal and its live runtime ID. The cue
+ * save writer 0x111a260 does not write a cue's runtime ID: it looks the cue up (cue +0xb0, type 0x5c) in the script value table
+ * at 0x31be0c0 (a tree: root +8, leftmost +0x20, size +0x28; node parent +0, left +8, right +0x10, type +0x20, pointer +0x28,
+ * ordinal +0x30) and writes that ordinal (<cue id="690475" ...> for a mission whose runtime ID was 1451369). The table keeps its
+ * entries after the save (maintained by 0xcbd6be..0xcbdeae), so the saver reads it at the boundary; a joiner places each
+ * loaded cue at the runtime ID its ordinal maps to (lockstep_join_ids.h, native_gate_join_cue_ids). Sorted by ordinal, each
+ * once. */
+typedef struct {uint64_t runtime;uint32_t ordinal,reserved;} join_cuei_rec;
 /* PCSV (v13, section 75): every PlayerController's own motion solver (the controller+0x3b0 .. +0x1930f, built by 0xd47ac0 like an
  * Agent's), by the ship's portable ID, in SOLVER's record (kind PSLOT_VTABLE; lockstep_join_world.h). */
 /* OMGS (v13, section 73): each steering ship's two OmegaSwitched controllers (Agent+0xf80's +0xa0c8 and +0x16398), the object
@@ -712,7 +720,7 @@ typedef struct {uint64_t portable;uint32_t which,pad;unsigned char data[JOIN_OMG
 _Static_assert(sizeof(join_splm_rec)==1264 && sizeof(join_splme_rec)==192 && sizeof(join_gravn_rec)==32 && sizeof(join_gravp_rec)==80 &&
                sizeof(join_gravq_rec)==48 && sizeof(join_jobe_rec)==128 && sizeof(join_evqt_rec)==32 &&
                sizeof(join_gravd_rec)==24 && sizeof(join_viewk_rec)==24 && sizeof(join_viewkc_rec)==24 &&
-               sizeof(join_viewf_rec)==24 && sizeof(join_viewp_rec)==72 && sizeof(join_shoot_rec)==104 && sizeof(join_attk_rec)==48 && sizeof(join_livef_rec)==16 && sizeof(join_spec_rec)==40 && sizeof(join_navc_rec)==104 && sizeof(join_jobs_rec)==24 && sizeof(join_gone_rec)==8 && sizeof(join_body_rec)==208 && sizeof(join_bupd_rec)==16 && sizeof(join_ldc_rec)==128 && sizeof(join_navt_rec)==128 && sizeof(join_nmesh_rec)==8 && sizeof(join_noct_rec)==40 && sizeof(join_agtt_rec)==32 && sizeof(join_agcb_rec)==1032 && sizeof(join_pbnk_rec)==376 && sizeof(join_pend_rec)==16 && sizeof(join_gravb_rec)==24 && sizeof(join_viewl_rec)==16 && sizeof(join_ikv_rec)==40 && sizeof(join_rcnt_rec)==16 && sizeof(join_ecos_rec)==24 && sizeof(join_shpw_rec)==56 && sizeof(join_trdn_rec)==16 && sizeof(join_npca_rec)==64 && sizeof(join_jobg_rec)==16 && sizeof(join_code_rec)==8 && sizeof(join_engr_rec)==24 && sizeof(join_shgr_rec)==40 && sizeof(join_bnds_rec)==216 && sizeof(join_omgs_rec)==8776 && sizeof(join_resv_rec)==144 && sizeof(join_conn_rec)==32 && sizeof(join_warp_rec)==88 && sizeof(join_ares_rec)==224 && sizeof(join_lstn_rec)==40 && sizeof(join_undk_rec)==224 && sizeof(join_srcs_rec)==40 && sizeof(join_fobj_rec)==32,
+               sizeof(join_viewf_rec)==24 && sizeof(join_viewp_rec)==72 && sizeof(join_shoot_rec)==104 && sizeof(join_attk_rec)==48 && sizeof(join_livef_rec)==16 && sizeof(join_spec_rec)==40 && sizeof(join_navc_rec)==104 && sizeof(join_jobs_rec)==24 && sizeof(join_gone_rec)==8 && sizeof(join_body_rec)==208 && sizeof(join_bupd_rec)==16 && sizeof(join_ldc_rec)==128 && sizeof(join_navt_rec)==128 && sizeof(join_nmesh_rec)==8 && sizeof(join_noct_rec)==40 && sizeof(join_agtt_rec)==32 && sizeof(join_agcb_rec)==1032 && sizeof(join_pbnk_rec)==376 && sizeof(join_pend_rec)==16 && sizeof(join_gravb_rec)==24 && sizeof(join_viewl_rec)==16 && sizeof(join_ikv_rec)==40 && sizeof(join_rcnt_rec)==16 && sizeof(join_ecos_rec)==24 && sizeof(join_shpw_rec)==56 && sizeof(join_trdn_rec)==16 && sizeof(join_npca_rec)==64 && sizeof(join_jobg_rec)==16 && sizeof(join_code_rec)==8 && sizeof(join_engr_rec)==24 && sizeof(join_shgr_rec)==40 && sizeof(join_bnds_rec)==216 && sizeof(join_omgs_rec)==8776 && sizeof(join_resv_rec)==144 && sizeof(join_conn_rec)==32 && sizeof(join_warp_rec)==88 && sizeof(join_ares_rec)==224 && sizeof(join_lstn_rec)==40 && sizeof(join_undk_rec)==224 && sizeof(join_srcs_rec)==40 && sizeof(join_fobj_rec)==32 && sizeof(join_cuei_rec)==16,
                "join v12 record layout (native_gate_join.py)");
 typedef struct {
     uint64_t tick,game,real;uint32_t wire_version,clients,lookahead,tick_hz,slot,md_seq;uint64_t rid_next,created_generation;
@@ -744,7 +752,7 @@ typedef struct {
     join_solver_rec *solver;uint32_t nsolver;join_bullet_rec *bullet;uint32_t nbullet; /* version 10 */
     join_grav_rec *grav;uint32_t ngrav;join_gravc_rec *gravc;uint32_t ngravc;join_gravs_rec *gravs;uint32_t ngravs;   /* version 11 */
     join_splm_rec *splm;uint32_t nsplm;join_splme_rec *splme;uint32_t nsplme;join_spline_rec *splmseg;uint32_t nsplmseg;   /* version 12 */
-    join_gravn_rec *gravn;uint32_t ngravn;join_gravp_rec *gravp;uint32_t ngravp;join_gravq_rec *gravq;uint32_t ngravq;join_jobe_rec *jobe;uint32_t njobe;join_evqt_rec *evqt;uint32_t nevqt;join_gravd_rec *gravd;uint32_t ngravd;join_viewk_rec *viewk;uint32_t nviewk;join_viewkc_rec *viewkc;uint32_t nviewkc;join_viewf_rec *viewf;uint32_t nviewf;join_viewp_rec *viewp;uint32_t nviewp;join_shoot_rec *shoot;uint32_t nshoot;join_attk_rec *attk;uint32_t nattk;join_livef_rec *livef;uint32_t nlivef;join_spec_rec *spec;uint32_t nspec;join_navc_rec *navc;uint32_t nnavc;join_jobs_rec *jobs;uint32_t njobs;join_gone_rec *gone;uint32_t ngone;join_body_rec *body;uint32_t nbody;join_bupd_rec *bupd;uint32_t nbupd;join_ldc_rec *ldc;uint32_t nldc;join_navt_rec *navt;uint32_t nnavt;join_nmesh_rec *nmesh;uint32_t nnmesh;join_noct_rec *noct;uint32_t nnoct;join_agtt_rec *agtt;uint32_t nagtt;join_agcb_rec *agcb;uint32_t nagcb;join_pbnk_rec *pbnk;uint32_t npbnk;join_pend_rec *pend;uint32_t npend;join_gravb_rec *gravb;uint32_t ngravb;join_viewl_rec *viewl;uint32_t nviewl;join_ikv_rec *ikv;uint32_t nikv;join_rcnt_rec *rcnt;uint32_t nrcnt;join_ecos_rec *ecos;uint32_t necos;join_shpw_rec *shpw;uint32_t nshpw;join_trdn_rec *trdn;uint32_t ntrdn;join_npca_rec *npca;uint32_t nnpca;join_jobg_rec *jobg;uint32_t njobg;join_code_rec *code;uint32_t ncode;join_engr_rec *engr;uint32_t nengr;join_shgr_rec *shgr;uint32_t nshgr;join_bnds_rec *bnds;uint32_t nbnds;join_omgs_rec *omgs;uint32_t nomgs;join_resv_rec *resv;uint32_t nresv;join_solver_rec *pcsv;uint32_t npcsv;join_conn_rec *conn;uint32_t nconn;join_warp_rec *warp;uint32_t nwarp;join_ares_rec *ares;uint32_t nares;join_lstn_rec *lstn;uint32_t nlstn;join_undk_rec *undk;uint32_t nundk;join_srcs_rec *srcs;uint32_t nsrcs;join_fobj_rec *fobj;uint32_t nfobj;
+    join_gravn_rec *gravn;uint32_t ngravn;join_gravp_rec *gravp;uint32_t ngravp;join_gravq_rec *gravq;uint32_t ngravq;join_jobe_rec *jobe;uint32_t njobe;join_evqt_rec *evqt;uint32_t nevqt;join_gravd_rec *gravd;uint32_t ngravd;join_viewk_rec *viewk;uint32_t nviewk;join_viewkc_rec *viewkc;uint32_t nviewkc;join_viewf_rec *viewf;uint32_t nviewf;join_viewp_rec *viewp;uint32_t nviewp;join_shoot_rec *shoot;uint32_t nshoot;join_attk_rec *attk;uint32_t nattk;join_livef_rec *livef;uint32_t nlivef;join_spec_rec *spec;uint32_t nspec;join_navc_rec *navc;uint32_t nnavc;join_jobs_rec *jobs;uint32_t njobs;join_gone_rec *gone;uint32_t ngone;join_body_rec *body;uint32_t nbody;join_bupd_rec *bupd;uint32_t nbupd;join_ldc_rec *ldc;uint32_t nldc;join_navt_rec *navt;uint32_t nnavt;join_nmesh_rec *nmesh;uint32_t nnmesh;join_noct_rec *noct;uint32_t nnoct;join_agtt_rec *agtt;uint32_t nagtt;join_agcb_rec *agcb;uint32_t nagcb;join_pbnk_rec *pbnk;uint32_t npbnk;join_pend_rec *pend;uint32_t npend;join_gravb_rec *gravb;uint32_t ngravb;join_viewl_rec *viewl;uint32_t nviewl;join_ikv_rec *ikv;uint32_t nikv;join_rcnt_rec *rcnt;uint32_t nrcnt;join_ecos_rec *ecos;uint32_t necos;join_shpw_rec *shpw;uint32_t nshpw;join_trdn_rec *trdn;uint32_t ntrdn;join_npca_rec *npca;uint32_t nnpca;join_jobg_rec *jobg;uint32_t njobg;join_code_rec *code;uint32_t ncode;join_engr_rec *engr;uint32_t nengr;join_shgr_rec *shgr;uint32_t nshgr;join_bnds_rec *bnds;uint32_t nbnds;join_omgs_rec *omgs;uint32_t nomgs;join_resv_rec *resv;uint32_t nresv;join_solver_rec *pcsv;uint32_t npcsv;join_conn_rec *conn;uint32_t nconn;join_warp_rec *warp;uint32_t nwarp;join_ares_rec *ares;uint32_t nares;join_lstn_rec *lstn;uint32_t nlstn;join_undk_rec *undk;uint32_t nundk;join_srcs_rec *srcs;uint32_t nsrcs;join_fobj_rec *fobj;uint32_t nfobj;join_cuei_rec *cuei;uint32_t ncuei;
     unsigned char save_sha[32];uint64_t save_bytes;uint32_t flags,version;
 } join_tables;
 /* The engine as the module sees it; tests build a synthetic one. */
@@ -887,7 +895,7 @@ static int join_grow(void **items,uint32_t *count,uint32_t *cap,size_t size) {
 static void join_tables_free(join_tables *t) {
     free(t->ctx);free(t->wake);free(t->vec);free(t->md);free(t->ids);free(t->modules);free(t->lua);free(t->health);free(t->pose);
     free(t->shield);free(t->nav);free(t->attn);free(t->keys);free(t->path);free(t->region);free(t->flight);free(t->spline);free(t->agent);
-    free(t->route);free(t->param);free(t->dock);free(t->steer);free(t->steerpt);free(t->solver);free(t->bullet);free(t->grav);free(t->gravc);free(t->gravs);free(t->splm);free(t->splme);free(t->splmseg);free(t->gravn);free(t->gravp);free(t->gravq);free(t->jobe);free(t->evqt);free(t->gravd);free(t->viewk);free(t->viewkc);free(t->viewf);free(t->viewp);free(t->shoot);free(t->attk);free(t->livef);free(t->spec);free(t->navc);free(t->jobs);free(t->gone);free(t->body);free(t->bupd);free(t->ldc);free(t->navt);free(t->nmesh);free(t->noct);free(t->agtt);free(t->agcb);free(t->pbnk);free(t->pend);free(t->gravb);free(t->viewl);free(t->ikv);free(t->rcnt);free(t->ecos);free(t->shpw);free(t->trdn);free(t->npca);free(t->jobg);free(t->code);free(t->engr);free(t->shgr);free(t->bnds);free(t->omgs);free(t->resv);free(t->pcsv);free(t->conn);free(t->warp);free(t->ares);free(t->lstn);free(t->undk);free(t->srcs);free(t->fobj);memset(t,0,sizeof(*t));
+    free(t->route);free(t->param);free(t->dock);free(t->steer);free(t->steerpt);free(t->solver);free(t->bullet);free(t->grav);free(t->gravc);free(t->gravs);free(t->splm);free(t->splme);free(t->splmseg);free(t->gravn);free(t->gravp);free(t->gravq);free(t->jobe);free(t->evqt);free(t->gravd);free(t->viewk);free(t->viewkc);free(t->viewf);free(t->viewp);free(t->shoot);free(t->attk);free(t->livef);free(t->spec);free(t->navc);free(t->jobs);free(t->gone);free(t->body);free(t->bupd);free(t->ldc);free(t->navt);free(t->nmesh);free(t->noct);free(t->agtt);free(t->agcb);free(t->pbnk);free(t->pend);free(t->gravb);free(t->viewl);free(t->ikv);free(t->rcnt);free(t->ecos);free(t->shpw);free(t->trdn);free(t->npca);free(t->jobg);free(t->code);free(t->engr);free(t->shgr);free(t->bnds);free(t->omgs);free(t->resv);free(t->pcsv);free(t->conn);free(t->warp);free(t->ares);free(t->lstn);free(t->undk);free(t->srcs);free(t->fobj);free(t->cuei);memset(t,0,sizeof(*t));
 }
 static uint64_t join_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static double join_double(uint64_t b) {double v;memcpy(&v,&b,8);return v;}
@@ -1537,6 +1545,7 @@ static int join_package_build(join_tables *t,join_buf *b) {
     join_section(b,JOIN_SEC_UNDK,t->nundk,t->undk,(uint64_t)t->nundk*sizeof(*t->undk));
     join_section(b,JOIN_SEC_SRCS,t->nsrcs,t->srcs,(uint64_t)t->nsrcs*sizeof(*t->srcs));
     join_section(b,JOIN_SEC_FOBJ,t->nfobj,t->fobj,(uint64_t)t->nfobj*sizeof(*t->fobj));
+    join_section(b,JOIN_SEC_CUEI,t->ncuei,t->cuei,(uint64_t)t->ncuei*sizeof(*t->cuei));
     unsigned char sha[32];if(!b->failed) {lockstep_sha256(b->data,b->size,sha);join_put(b,sha,32);}
     return !b->failed;
 }
@@ -1552,9 +1561,9 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     uint32_t version,count,slot,flags;uint64_t tick,game,real,reserved;*why="package_magic";
     memcpy(&version,data+8,4);memcpy(&count,data+12,4);memcpy(&tick,data+16,8);memcpy(&game,data+24,8);memcpy(&real,data+32,8);
     memcpy(&slot,data+80,4);memcpy(&flags,data+84,4);memcpy(&reserved,data+88,8);
-    if(memcmp(data,"X4MPJN01",8) || version<1 || version>JOIN_PACKAGE_VERSION || reserved || count>82) return 0;
+    if(memcmp(data,"X4MPJN01",8) || version<1 || version>JOIN_PACKAGE_VERSION || reserved || count>83) return 0;
     memcpy(t->save_sha,data+40,32);memcpy(&t->save_bytes,data+72,8);t->flags=flags;t->version=version;
-    const uint32_t last=version>=13?JOIN_SEC_FOBJ:version>=12?JOIN_SEC_GRAVQ:version>=11?JOIN_SEC_GRAVS:version>=10?JOIN_SEC_BULLET:version>=9?JOIN_SEC_STEERPT:version>=8?JOIN_SEC_DOCK:version>=7?JOIN_SEC_ROUTE:version>=6?JOIN_SEC_AGENT:version>=5?JOIN_SEC_SPLINE:version>=4?JOIN_SEC_REGION:version>=3?JOIN_SEC_KEYS:
+    const uint32_t last=version>=13?JOIN_SEC_CUEI:version>=12?JOIN_SEC_GRAVQ:version>=11?JOIN_SEC_GRAVS:version>=10?JOIN_SEC_BULLET:version>=9?JOIN_SEC_STEERPT:version>=8?JOIN_SEC_DOCK:version>=7?JOIN_SEC_ROUTE:version>=6?JOIN_SEC_AGENT:version>=5?JOIN_SEC_SPLINE:version>=4?JOIN_SEC_REGION:version>=3?JOIN_SEC_KEYS:
                         version>=2?JOIN_SEC_POSE:JOIN_SEC_LUA;
     size_t at=96,end=size-32;unsigned __int128 seen=0;   /* 128 bits: section kinds reach 64 (version 13, ECOS) */
     for(uint32_t s=0;s<count;s++) {
@@ -1574,7 +1583,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
                                      sizeof(join_splm_rec),sizeof(join_splme_rec),sizeof(join_spline_rec),sizeof(join_gravn_rec),
                                      sizeof(join_gravp_rec),sizeof(join_gravq_rec),
                                      sizeof(join_jobe_rec),sizeof(join_evqt_rec),sizeof(join_gravd_rec),sizeof(join_viewk_rec),
-                                     sizeof(join_viewkc_rec),sizeof(join_viewf_rec),sizeof(join_viewp_rec),sizeof(join_shoot_rec),sizeof(join_attk_rec),sizeof(join_livef_rec),sizeof(join_spec_rec),sizeof(join_navc_rec),sizeof(join_jobs_rec),sizeof(join_gone_rec),sizeof(join_body_rec),sizeof(join_bupd_rec),sizeof(join_ldc_rec),sizeof(join_navt_rec),sizeof(join_nmesh_rec),sizeof(join_noct_rec),sizeof(join_agtt_rec),sizeof(join_agcb_rec),sizeof(join_pbnk_rec),sizeof(join_pend_rec),sizeof(join_gravb_rec),sizeof(join_viewl_rec),sizeof(join_ikv_rec),sizeof(join_rcnt_rec),sizeof(join_ecos_rec),sizeof(join_shpw_rec),sizeof(join_trdn_rec),sizeof(join_npca_rec),sizeof(join_jobg_rec),sizeof(join_code_rec),sizeof(join_engr_rec),sizeof(join_shgr_rec),sizeof(join_bnds_rec),sizeof(join_omgs_rec),sizeof(join_resv_rec),sizeof(join_solver_rec),sizeof(join_conn_rec),sizeof(join_warp_rec),sizeof(join_ares_rec),sizeof(join_lstn_rec),sizeof(join_undk_rec),sizeof(join_srcs_rec),sizeof(join_fobj_rec)};
+                                     sizeof(join_viewkc_rec),sizeof(join_viewf_rec),sizeof(join_viewp_rec),sizeof(join_shoot_rec),sizeof(join_attk_rec),sizeof(join_livef_rec),sizeof(join_spec_rec),sizeof(join_navc_rec),sizeof(join_jobs_rec),sizeof(join_gone_rec),sizeof(join_body_rec),sizeof(join_bupd_rec),sizeof(join_ldc_rec),sizeof(join_navt_rec),sizeof(join_nmesh_rec),sizeof(join_noct_rec),sizeof(join_agtt_rec),sizeof(join_agcb_rec),sizeof(join_pbnk_rec),sizeof(join_pend_rec),sizeof(join_gravb_rec),sizeof(join_viewl_rec),sizeof(join_ikv_rec),sizeof(join_rcnt_rec),sizeof(join_ecos_rec),sizeof(join_shpw_rec),sizeof(join_trdn_rec),sizeof(join_npca_rec),sizeof(join_jobg_rec),sizeof(join_code_rec),sizeof(join_engr_rec),sizeof(join_shgr_rec),sizeof(join_bnds_rec),sizeof(join_omgs_rec),sizeof(join_resv_rec),sizeof(join_solver_rec),sizeof(join_conn_rec),sizeof(join_warp_rec),sizeof(join_ares_rec),sizeof(join_lstn_rec),sizeof(join_undk_rec),sizeof(join_srcs_rec),sizeof(join_fobj_rec),sizeof(join_cuei_rec)};
         *why="section_shape";
         if(kind==JOIN_SEC_MODULES || kind==JOIN_SEC_LUA) {
             uint32_t lines=0;for(uint64_t i=0;i<bytes;i++) {if(payload[i]=='\n') ++lines;else if(payload[i]<32 || payload[i]>126) return 0;}
@@ -1667,6 +1676,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
             else if(kind==JOIN_SEC_UNDK) {t->undk=copy;t->nundk=n;}
             else if(kind==JOIN_SEC_SRCS) {t->srcs=copy;t->nsrcs=n;}
             else if(kind==JOIN_SEC_FOBJ) {t->fobj=copy;t->nfobj=n;}
+            else if(kind==JOIN_SEC_CUEI) {t->cuei=copy;t->ncuei=n;}
             else {t->ctx=copy;t->nctx=n;}
         }
         at+=48+(size_t)bytes;
@@ -1683,7 +1693,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     if(version>=10 && ((seen>>JOIN_SEC_SOLVER&3u)!=3u)) return 0;                               /* v10: SOLVER, BULLET */
     if(version>=11 && ((seen>>JOIN_SEC_GRAV&7u)!=7u)) return 0;                                 /* v11: GRAV, GRAVC, GRAVS */
     if(version>=12 && ((seen>>JOIN_SEC_SPLM&63u)!=63u)) return 0;                               /* v12: SPLM .. GRAVQ */
-    if(version>=13 && ((seen>>JOIN_SEC_JOBE&140737488355327ull)!=140737488355327ull)) return 0;     /* v13: JOBE .. FOBJ */
+    if(version>=13 && ((seen>>JOIN_SEC_JOBE&281474976710655ull)!=281474976710655ull)) return 0;     /* v13: JOBE .. CUEI */
     *why="world_order";   /* the world records sorted by portable ID, each once (the admission's identity lookups rely on it) */
     for(uint32_t i=1;i<t->nhealth;i++) if(t->health[i].portable<=t->health[i-1].portable) return 0;
     for(uint32_t i=1;i<t->npose;i++) if(t->pose[i].portable<=t->pose[i-1].portable) return 0;
@@ -1878,6 +1888,10 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
                         (p->script<a->script || (p->script==a->script && p->index<a->index)))));
         if(!a->kind || a->kind>3u || !a->owner || (a->flags&~1u) || a->reserved || !(a->flags&1u)!=!!a->source || !after)
             {*why="srcs_shape";return 0;}
+    }
+    if(version>=13) for(uint32_t i=0;i<t->ncuei;i++) {   /* CUEI: by ordinal, each once, a runtime ID each */
+        const join_cuei_rec *a=&t->cuei[i];
+        if(!a->runtime || a->reserved || (i && t->cuei[i-1].ordinal>=a->ordinal)) {*why="cuei_shape";return 0;}
     }
     if(version>=13) for(uint32_t i=0;i<t->nfobj;i++) {   /* FOBJ: by (region, field, index), each once, the object 0 exactly when unmapped */
         const join_fobj_rec *a=&t->fobj[i];
@@ -2367,6 +2381,85 @@ static int join_arm(uint64_t tick,unsigned slot_k,unsigned mask,const char *fold
     if(!join_pins_baseline()) {join_fail_cap(JOIN_WHY_CAPTURE,"memory");return 1;}   /* refused at once, loudly (JOIN_RESULT) */
     return 1;
 }
+/* CUEI's capture, after the save (which numbers what it writes): the table's cue entries, by ordinal. */
+#define JOIN_CUEI_TABLE 0x31be0c0u
+#define JOIN_CUEI_TYPE 0x5cu
+#define JOIN_CUEI_POINTER 0xb0u   /* the table's pointer is the cue's +0xb0 */
+static unsigned char *join_cuei_table_test;   /* tests: a synthetic header */
+static uint32_t join_cuei_seen,join_cuei_other,join_cuei_cap;
+static int join_cuei_cmp(const void *a,const void *b) {
+    const uint32_t x=((const join_cuei_rec *)a)->ordinal,y=((const join_cuei_rec *)b)->ordinal;return x<y?-1:x>y;
+}
+static int join_capture_cuei(join_tables *t) {
+    unsigned char *header=join_cuei_table_test?join_cuei_table_test:image+JOIN_CUEI_TABLE,*node=NULL;uint64_t size=0;uint32_t cap=0;
+    join_cuei_seen=join_cuei_other=0;
+    if(!join_read(header+0x28,&size,8) || !size || size>16000000u || !join_read(header+0x20,&node,8)) return 1;
+    for(uint64_t i=0;i<size && node && node!=header;i++,node=join_evq_next(node)) {
+        uint32_t type=0,ordinal=0;unsigned char *p=NULL;uintptr_t vt=0;uint64_t runtime=0;
+        ++join_cuei_seen;
+        if(!join_read(node+0x20,&type,4) || type!=JOIN_CUEI_TYPE || !join_read(node+0x28,&p,8) || !p || !join_read(node+0x30,&ordinal,4) ||
+           !join_read(p-JOIN_CUEI_POINTER,&vt,8) || vt!=(uintptr_t)image+JOIN_CUE_VTABLE || !join_read(p-JOIN_CUEI_POINTER+8,&runtime,8) || !runtime)
+            {++join_cuei_other;continue;}
+        const join_cuei_rec r={runtime,ordinal,0};
+        if(!JOIN_PUSH(t->cuei,t->ncuei,cap,r)) return 0;
+    }
+    if(t->ncuei>1) {
+        qsort(t->cuei,t->ncuei,sizeof(*t->cuei),join_cuei_cmp);
+        uint32_t out=1;
+        for(uint32_t i=1;i<t->ncuei;i++) if(t->cuei[i].ordinal!=t->cuei[out-1].ordinal) t->cuei[out++]=t->cuei[i];
+        t->ncuei=out;
+    }
+    return 1;
+}
+/* ca20: after the save the table is empty. GameClass::Save builds it at 0x9f14d3 (0xcbd6a0), the writers fill it, and
+ * 0xcbdc30 clears it at the save's end (its two calls 0x9f1ff8 and 0x9f22fe, nothing else calls it). So the capture runs at
+ * that function's entry: one int3 there, armed for the join save alone (the saving thread, with native_gate_join_cue_ids);
+ * the handler puts the byte back, reads the table and resumes at the entry. The byte is back before the save returns. */
+#define JOIN_CUEI_CLEAR 0xcbdc30u
+static const unsigned char join_cuei_clear_bytes[8]={0x4c,0x8b,0xdc,0x53,0x48,0x83,0xec,0x60};
+static volatile LONG join_cuei_bp_state;   /* 0 idle, 1 armed, 2 hit, 3 refused */
+static join_cuei_rec *join_cuei_pending;static uint32_t join_cuei_npending;
+#ifndef JOIN_OWN_PLATFORM
+static LONG CALLBACK join_cuei_bp_handler(EXCEPTION_POINTERS *e) {
+    unsigned char *at=(unsigned char *)e->ExceptionRecord->ExceptionAddress;
+    if(e->ExceptionRecord->ExceptionCode!=EXCEPTION_BREAKPOINT || at!=image+JOIN_CUEI_CLEAR) return EXCEPTION_CONTINUE_SEARCH;
+    if(InterlockedCompareExchange(&join_cuei_bp_state,2,1)!=1) {
+        if(InterlockedCompareExchange(&join_cuei_bp_state,2,2)==2) {e->ContextRecord->Rip=(DWORD64)(uintptr_t)at;return EXCEPTION_CONTINUE_EXECUTION;}
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    DWORD old,ignored;
+    if(VirtualProtect(at,1,PAGE_EXECUTE_READWRITE,&old)) {*at=join_cuei_clear_bytes[0];VirtualProtect(at,1,old,&ignored);}
+    FlushInstructionCache(GetCurrentProcess(),at,1);
+    join_tables t;memset(&t,0,sizeof(t));
+    if(join_capture_cuei(&t)) {join_cuei_pending=t.cuei;join_cuei_npending=t.ncuei;} else free(t.cuei);
+    e->ContextRecord->Rip=(DWORD64)(uintptr_t)at;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+static void join_cuei_bp_arm(void) {
+    static PVOID handler;unsigned char *at=image+JOIN_CUEI_CLEAR;DWORD old,ignored;
+    free(join_cuei_pending);join_cuei_pending=NULL;join_cuei_npending=0;
+    if(!join_cue_ids_on) {InterlockedExchange(&join_cuei_bp_state,0);return;}
+    if(memcmp(at,join_cuei_clear_bytes,sizeof(join_cuei_clear_bytes)) || (!handler && !(handler=AddVectoredExceptionHandler(1,join_cuei_bp_handler))) ||
+       !VirtualProtect(at,1,PAGE_EXECUTE_READWRITE,&old)) {InterlockedExchange(&join_cuei_bp_state,3);return;}
+    InterlockedExchange(&join_cuei_bp_state,1);*at=0xcc;VirtualProtect(at,1,old,&ignored);FlushInstructionCache(GetCurrentProcess(),at,1);
+}
+/* After the save: the byte back if the save never reached its end's clear. */
+static void join_cuei_bp_disarm(void) {
+    unsigned char *at=image+JOIN_CUEI_CLEAR;DWORD old,ignored;
+    if(InterlockedCompareExchange(&join_cuei_bp_state,0,1)==1 && VirtualProtect(at,1,PAGE_EXECUTE_READWRITE,&old)) {
+        *at=join_cuei_clear_bytes[0];VirtualProtect(at,1,old,&ignored);FlushInstructionCache(GetCurrentProcess(),at,1);
+    }
+}
+#else
+static void join_cuei_bp_arm(void) {}
+static void join_cuei_bp_disarm(void) {}
+#endif
+/* The joiner: the session's runtime ID of the loaded cue the save numbered ordinal; 0 unknown. */
+static uint64_t join_cuei_runtime(uint32_t ordinal) {
+    uint32_t lo=0,hi=join_rx.t.ncuei;
+    while(lo<hi) {const uint32_t mid=lo+(hi-lo)/2;if(join_rx.t.cuei[mid].ordinal<ordinal) lo=mid+1;else hi=mid;}
+    return lo<join_rx.t.ncuei && join_rx.t.cuei[lo].ordinal==ordinal?join_rx.t.cuei[lo].runtime:0;
+}
 /* After step T (main thread, the MoveWorker joined): save, capture, write the package. Never stops the session. */
 /* Which part of the table capture refused, with how far it got (j1-5 live: 'tables' alone named nothing), then the
  * failing record (join_fault): 'tables:<part>:<site>:<ctx>/<wake>/<vec>/<md>,<record and check>'. */
@@ -2456,7 +2549,9 @@ static void join_boundary(uint64_t completed) {
         {join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"mpjoin_folder");return;}
     if(*(volatile unsigned char *)(image+JOIN_SAVE_MODIFIED)) {*(volatile unsigned char *)(image+JOIN_SAVE_MODIFIED)=0;join_cap.modified_cleared=1;}
     char file[48],title[48];snprintf(file,sizeof(file),"mpjoin\\%s",join_cap.name);snprintf(title,sizeof(title),"MP join %llu",(unsigned long long)completed);
+    join_cuei_bp_arm();
     int saved=join_save_with_worker_tls(file,title);
+    join_cuei_bp_disarm();
     QueryPerformanceCounter(&t1);join_cap.save_us=(uint64_t)((t1.QuadPart-t0.QuadPart)*1000000/f.QuadPart);
     if(!saved) {join_tables_free(&t);join_fail_cap(JOIN_WHY_SAVE_FAILED,"engine_save");return;}
     int found=0;
@@ -2471,6 +2566,8 @@ static void join_boundary(uint64_t completed) {
         if(!join_capture_tables(&e,&t)) {join_tables_free(&t);join_fail_cap(JOIN_WHY_CAPTURE,join_tables_why);return;}
     }
     if(!join_capture_ids(&t)) {join_tables_free(&t);join_fail_cap(JOIN_WHY_CAPTURE,"identities");return;}
+    t.cuei=join_cuei_pending;t.ncuei=join_cuei_npending;join_cuei_pending=NULL;join_cuei_npending=0;   /* read inside the save (CUEI) */
+    join_cuei_cap=t.ncuei;
     if(!join_capture_gone(&t,(world_hash_find_fn)(image+0xced70),*(void **)(image+0x6cf1500))) {join_tables_free(&t);join_fail_cap(JOIN_WHY_CAPTURE,"gone");return;}
     join_capture_fixture(&t,(snapshot_find_fn)(image+0xced70),*(void **)(image+0x6cf1500));
     /* The world side table: what the save rounds or omits in the census health and motion domains (lockstep_join_world.h). */
@@ -3278,20 +3375,49 @@ static int join_bootev_session_on;static uint32_t join_bootev_session_dropped;
  * Egosoft's own note on that cue: the event should not fire for NPCs created by a load. Status npc_mute=on:skipped. */
 #define JOIN_NPC_CREATED_KEYWORD 1455
 static int join_mute_load_npcs_on;
+/* native_gate_join_hold_fire (ca21, 9 Nov): a joiner's weapons make no shot between the package's load and the admission
+ * (wfire_hold, lockstep_weapon_fire.h; needs native_gate_weapon_fire_rng, whose slot 998 entries it acts in). The joiner has
+ * not stepped at the admission, so a shot of its loading frames is one the session never made: its bullet stays in the world
+ * and its round is off the clip. The held shot's time is still the weapon's last shot time (the loop over the shots due
+ * needs it); SHOOT puts the session's there at the admission. Windows only. Status hold_fire=on:held shots. */
+static int join_hold_fire_on;
 static int join_bootev_session_keep(unsigned char *source,unsigned char *event,double now) {
     uintptr_t vt=0;uint64_t runtime=0;unsigned klass=0;
     if(!event || !join_read(event,&vt,8) || !vt) return 0;
     const uint64_t portable=source && join_read(source+8,&runtime,8) && runtime?join_key(runtime,&klass):0;
     return portable && join_evqt_session_due(portable,(uint32_t)(vt-(uintptr_t)image),now);
 }
+/* A kept event's first reference on its source. PostEvent 0x99a3f0 on its timed path stores the source's handle (slot 0x11a8:
+ * the control block at the component's +0x38, count +8, state +0xc) at event +0x10 and takes a reference (0x99a52a..0x99a54a),
+ * whatever the event held there; the event's destructor gives one back. A kept event was posted once by the load, so posting
+ * it again left the load's reference for good: the source kept one more than the session's and, once killed, was never
+ * deleted (ca26..ca28, T=722: the three computers of a corvette killed in step T, each with its kill event kept and posted
+ * again; count 2 against 1 after T+1, the session's deleted at T+2, the joiner's alive at 5400. The family of j1-179's
+ * escape pods and RCNT). The handle to give back after the repost, NULL when there is none or when its state is 3 (the source
+ * being destroyed: PostEvent deletes the event instead, 0x99a432, and the destructor gives the reference back). The offsets are
+ * the Windows build's: a platform with its own join sites (JOIN_OWN_PLATFORM) releases nothing until its layout is read. */
+#define JOIN_EVENT_CONTEXT 0x10u
+static uint32_t join_bootev_released;
+static unsigned char *join_bootev_first_reference(unsigned char *event) {
+#ifdef JOIN_OWN_PLATFORM
+    (void)event;return NULL;
+#else
+    unsigned char *held=NULL;uint32_t state=0;
+    if(!event || !join_read(event+JOIN_EVENT_CONTEXT,&held,8) || !held || !join_read(held+0xc,&state,4) || state==3u) return NULL;
+    return held;
+#endif
+}
 /* After the admission: the kept events back to their sources at their times (the pass of T+1 delivers them). */
 static void join_bootev_repost(void) {
-    double now;memcpy(&now,&join_rx.t.gate.game,8);join_bootev_session_dropped=0;
+    double now;memcpy(&now,&join_rx.t.gate.game,8);join_bootev_session_dropped=0;join_bootev_released=0;
     for(uint32_t i=0;i<join_bootev_n;i++) {
         if(join_bootev_session_on && !join_bootev_session_keep(join_bootev_items[i].source,join_bootev_items[i].event,now)) {
             join_event_destroy(join_bootev_items[i].event);++join_bootev_session_dropped;continue;
         }
-        join_evqt_post(join_bootev_items[i].source,join_bootev_items[i].event,join_bootev_items[i].time,0);++join_bootev_reposted;}
+        unsigned char *held=join_bootev_first_reference(join_bootev_items[i].event);
+        join_evqt_post(join_bootev_items[i].source,join_bootev_items[i].event,join_bootev_items[i].time,0);++join_bootev_reposted;
+        if(held) {InterlockedDecrement((volatile LONG *)(held+8));++join_bootev_released;}   /* the repost holds its own now */
+    }
     free(join_bootev_items);join_bootev_items=NULL;join_bootev_n=join_bootev_cap=0;
 }
 #ifndef JOIN_OWN_PLATFORM
@@ -3420,6 +3546,7 @@ static int join_load(const char *path,const char *sha_hex,int mode) {
     }
     if(join_watch.n) join_rw_load_prepare(&join_rx.t);   /* diagnostic: JOIN_REFWATCH in the load (lockstep_join_world.h) */
     if(join_mute_load_npcs_on) InterlockedExchange(&script_rng_mute_keyword,JOIN_NPC_CREATED_KEYWORD);
+    if(join_hold_fire_on) InterlockedExchange(&wfire_hold,1);
     join_rx.loaded=1;return 1;
 }
 /* gate.join_lua(T, text) in frame T on an armed saver: the probe's providers' state, written with the package. */
@@ -3833,6 +3960,7 @@ static int (*join_admit_passes)(uint64_t tick);
 static int join_admit(void) {
     if(!join_rx.loaded || join_rx.admitted) return 1;
     InterlockedExchange(&script_rng_mute_keyword,0);   /* native_gate_join_mute_load_npcs: MD hears NPC events again */
+    InterlockedExchange(&wfire_hold,0);   /* native_gate_join_hold_fire: the weapons shoot again, from T+1 on */
     join_rx.admitted=1;join_jobinit_restore();join_bootev_restore();   /* Init and the boot event passes ran in the load (version 13) */
     InterlockedExchange(&join_parse_on,0);join_parse_restore();   /* the load is over: the parser native again */
     if(join_rx.created_failures || InterlockedCompareExchange64(&join_rx.mapped_saved,0,0)+InterlockedCompareExchange64(&join_rx.mapped_created,0,0)<
@@ -3890,7 +4018,7 @@ static int join_status(char *out,size_t cap) {
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
-        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld"
+        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
@@ -3933,7 +4061,8 @@ static int join_status(char *out,size_t cap) {
         join_shoot_far_on,(unsigned long long)join_shoot_far_written,join_bootev_session_on,join_bootev_session_dropped,join_mute_load_npcs_on,
         (long long)InterlockedCompareExchange64(&script_rng_muted,0,0),join_cue_ids_on,
         (long long)InterlockedCompareExchange64(&join_cue_ids_placed,0,0),(long long)InterlockedCompareExchange64(&join_cue_ids_refused,0,0),
-        (long long)InterlockedCompareExchange64(&join_cue_ids_noid,0,0),
+        (long long)InterlockedCompareExchange64(&join_cue_ids_noid,0,0),join_cuei_cap,join_cuei_seen,join_cuei_other,join_rx.t.ncuei,(long)InterlockedCompareExchange(&join_cuei_bp_state,0,0),
+        join_hold_fire_on,(long long)InterlockedCompareExchange64(&wfire_held,0,0),join_bootev_released,
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ALL],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PROBE],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PARAMS],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ACTOR],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_ACTOR],(unsigned long long)join_rx.keys_known,(unsigned long long)join_rx.keys_unarmed,

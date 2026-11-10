@@ -150,8 +150,10 @@ __attribute__((unused)) static int join_ids_replay_end(void) {
     if(!ok) InterlockedIncrement64(&join_ids_replay_failures);
     memset(&join_ids_replay_list,0,sizeof(join_ids_replay_list));join_ids_replay_thread=0;return ok;
 }
-/* native_gate_join_cue_ids (hj29, 9 Nov; a join default): a loaded MD cue instance at the session's runtime ID. The save
- * writes every cue instance's ID (<cue id="681196" ...>; a mission's ID is its cue's), but the cue import constructor
+/* native_gate_join_cue_ids (hj29, hj31, 9 Nov; off until its mission join passes): a loaded MD cue instance at the session's
+ * runtime ID. A cue's id in the save is the save's own ordinal, not its runtime ID (hj31: the first build placed cues at
+ * ordinals and broke the join); the package's CUEI section maps each ordinal to the cue's live runtime ID on the saver
+ * (lockstep_join.h), and the placement below takes that. A mission's ID is its cue's, but the cue import constructor
  * 0x11121d0 (this, ?, node) makes the handler first (0x111224e -> 0xcaab00, whose AssignNewID returns to 0xcaab18) and reads
  * the id later (0x1112ed4: 0x125360(node, 0x1fe, 0)), so on a joiner every loaded cue took the load list: hj29's mission
  * 0x162568 on the session was 0x1dbc24c on the joiner, and whatever names a cue by ID (the UI replay's mission and offer
@@ -165,6 +167,7 @@ __attribute__((unused)) static int join_ids_replay_end(void) {
 #define JOIN_IDS_CUE_IMPORT_RET 0x1112253u  /* its call of the handler constructor returns here */
 #define JOIN_IDS_INT_ATTRIBUTE 0x125360u    /* (node, key, fallback) -> the attribute as an integer */
 static int join_cue_ids_on;
+static uint64_t join_cuei_runtime(uint32_t ordinal);   /* lockstep_join.h: CUEI, the session's runtime ID of a save ordinal */
 static volatile LONG64 join_cue_ids_placed,join_cue_ids_refused,join_cue_ids_noid;
 typedef uint32_t (*join_ids_int_fn)(void *node,uint32_t key,uint64_t fallback);
 #ifndef RID_OWN_PLATFORM
@@ -195,7 +198,7 @@ static created_assign_fn join_ids_route(created_assign_fn shared,uint32_t caller
     if(InterlockedCompareExchange(&join_ids_replay_on,0,0) && GetCurrentThreadId()==join_ids_replay_thread) return join_ids_assign_replay;
     if(join_ids_admit_load && join_ids_built) return join_ids_assign_load;   /* ATTN states at the admission (lockstep_join_world.h) */
     if(!InterlockedCompareExchange(&join_ids_active,0,0)) return shared;
-    if(join_cue_ids_on && caller==JOIN_IDS_CUE_HANDLER) {join_ids_placing=join_cue_saved();return join_cue_assign;}
+    if(join_cue_ids_on && caller==JOIN_IDS_CUE_HANDLER) {join_ids_placing=join_cuei_runtime((uint32_t)join_cue_saved());return join_cue_assign;}
     const unsigned kind=caller==JOIN_IDS_COMPONENT_A || caller==JOIN_IDS_COMPONENT_B?JOIN_IDS_COMPONENT:caller==JOIN_IDS_CONNECTION?JOIN_IDS_CONN:JOIN_IDS_NONE;
     if(kind && join_ids_pending.kind==kind) {join_ids_placing=join_ids_pending.saved;join_ids_pending.kind=JOIN_IDS_NONE;return join_ids_assign_pinned;}
     return join_ids_assign_load;

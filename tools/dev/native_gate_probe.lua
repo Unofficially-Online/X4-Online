@@ -411,6 +411,9 @@ if cfg.native_gate_join then
   assert(cfg.native_gate_join_hold_boot_events,'native_gate_join_bootev_session needs native_gate_join_hold_boot_events')
   assert(gate.join_bootev_session and gate.join_bootev_session(1)==1,'join bootev session refused')
  end
+ if cfg.native_gate_join_hold_fire then   -- a joiner's weapons make no shot between the load and the admission (hold_fire=)
+  assert(gate.join_hold_fire and gate.join_hold_fire(1)==1,'join hold fire refused')
+ end
  if cfg.native_gate_join_mute_load_npcs then   -- a joiner's MD does not hear the load's NPC created events (npc_mute=)
   assert(gate.join_mute_load_npcs and gate.join_mute_load_npcs(1)==1,'join mute load npcs refused')
  end

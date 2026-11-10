@@ -495,8 +495,12 @@ static void test_runtime_ids_ui_elements(void) {
     assert(!rid_ui_element_route(under,8) && !test_rid_setatt_calls);                          /* off */
     rid_ui_elements_on=1;
     assert(!rid_ui_element_route(elsewhere,5) && !test_rid_setatt_calls);                      /* no SetAttention handler frame */
-    assert(rid_ui_element_route(under,8) && test_rid_setatt_calls==1 && rid_ui_element_allocs==allocs+1);
+    assert(rid_ui_element_route(under,8)==RID_ROUTE_UI && test_rid_setatt_calls==1 && rid_ui_element_allocs==allocs+1);
     test_rid_setatt=other;assert(!rid_ui_element_route(under,8) && rid_ui_element_allocs==allocs+1);   /* a ship: shared */
+    {uint64_t id=RID_LOCAL_VIEW_BLOCK*0x100000ull+5u;memcpy(other+8,&id,8);                        /* an effect: its view ID's list */
+     assert(rid_ui_element_route(under,8)==RID_ROUTE_VIEW && rid_ui_element_allocs==allocs+2);
+     id=RID_LOCAL_UI_BLOCK*0x100000ull+7u;memcpy(other+8,&id,8);assert(rid_ui_element_route(under,8)==RID_ROUTE_UI);
+     id=0x162568u;memcpy(other+8,&id,8);assert(!rid_ui_element_route(under,8));memset(other+8,0,8);}                /* a shared ID: shared */
     test_rid_setatt=NULL;assert(!rid_ui_element_route(under,8) && rid_ui_element_misses==misses+1);    /* no frame found */
     rid_ui_elements_on=0;rid_setatt_object=finder;
     printf("runtime IDs UI elements: under SetAttention's handler a U::UIElement's allocation takes the UI list, others and other stacks stay PASS\n");

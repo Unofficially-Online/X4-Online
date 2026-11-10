@@ -239,8 +239,15 @@ above): the joiner equal to the session through the catch-up and the handover, t
 it with 0 desyncs, 0 errors and 0 drops. On one PC the joiner is no faster than the session, so the handover pauses
 everyone for about as long as the joiner took to load (hj28: 75 s); a faster joiner PC pauses less.
 
+Missions across a join (hj32, 9 Nov night): a mission accepted before the join keeps the session's ID on the joiner
+(`native_gate_join_cue_ids`, a join default: the join package's CUEI section gives every saved cue its live ID), and a
+player's accept after the handover applies on every PC with equal mission owners; played to tick 5440, 0 desyncs, 0
+errors. The package has one more section for it, so the host and the joiner need the same build of the kit. A UI
+element made after the load (part animations) takes client-local IDs (`native_gate_runtime_ids_ui_elements`, a session
+default; plain2: 1841 ticks of two-client play, 0 desyncs).
+
 Still open: a join whose save tick falls while a fixture gun is engaging (hj24: T between 668 and 684 in the battle
-fixture) or right after some part animations start (hj23) can part within a few ticks; x4mods-28 is closing those.
+fixture) can part within a few ticks; a sweep of join ticks is next.
 A join is never refused for it: as for a play session's own desyncs, the relay hands over all the same
 (`--join-observe`), counts the mismatches (the relay's `joined ... digest_mismatches=N` line) and the session's
 desyncs go to `desyncs.log`.

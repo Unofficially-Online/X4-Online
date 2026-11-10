@@ -27,7 +27,7 @@ static uint64_t test_jids_insert(void *mapv,void *object,uint32_t slot,void *ref
 /* The native AssignNewID's contract: the ID at object+8, nothing meaningful in rax. */
 static uint64_t test_jids_assign_void(void *object) {(void)test_rid_assign_stub(object);return 0xdeadbeefull;}
 #define TEST_JIDS_SAVED 0x30000u
-static uint64_t test_jids_cue_saved(void) {return 0x162568u;}
+static uint64_t test_jids_cue_saved(void) {return 690475u;}   /* the save's ordinal: CUEI maps it to the runtime ID */
 static void test_join_ids(void) {
     void *saved_map=*(void**)(image+RID_MAP);uint32_t saved_active=stats.active;DWORD saved_ui=ui_thread;int saved_created=created_installed;
     test_rid_process s=test_rid_new(),j=test_rid_new();uint64_t old[8];
@@ -139,7 +139,9 @@ static void test_join_ids(void) {
             join_cue_ids_on=1;join_ids_placing=0;
             assert(join_ids_route(rid_assign_original(),JOIN_IDS_CUE_HANDLER)==rid_assign_original() && !join_ids_placing);   /* not loading */
             InterlockedExchange(&join_ids_active,1);
+            {static join_cuei_rec map[1]={{0x162568ull,690475u,0}};join_rx.t.cuei=map;join_rx.t.ncuei=1;}
             assert(join_ids_route(rid_assign_original(),JOIN_IDS_CUE_HANDLER)==join_cue_assign && join_ids_placing==0x162568u);
+            join_rx.t.cuei=NULL;join_rx.t.ncuei=0;
             join_ids_placing=0;join_cue_ids_on=0;
             assert(join_ids_route(rid_assign_original(),JOIN_IDS_CUE_HANDLER)==join_ids_assign_load && !join_ids_placing);        /* off: the load list */
             InterlockedExchange(&join_ids_active,0);join_cue_saved=saved_fn;

@@ -1342,3 +1342,94 @@ Lanes b1/b2 with x4mods-67's agreement; branch contrib/ferrite-aim-time.
 - Diagnostics added: native_gate_pilot_dump_handover = N (3af77c10), native_gate_nav_refresh_watch_owner (91cc4788: one runtime
   ID's controller, with its stack; a portable ID never matches) and native_gate_nav_refresh_watch_handover = N (4546b4dc: the
   window H-N..H+N set at the handover); the slot status s<k>= ends with the predicate's parts and the first store's hash.
+
+59. THE JOIN SAVE'S STEP CHOSEN: THE LOAD'S NPC EVENTS, THE CUE ORDINALS, THE EFFECTS' PART ANIMATIONS, THE LOAD'S SHOTS
+    (ca5 .. ca22; 9 November, afternoon and evening)
+Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/ferrite-aim-time. Every run: x4ls play --clients 2
+--open 2 and x4ls join --same-pc, join_observe, played to 5442.
+- Choosing T (b52f56b8): the relay takes --join-save-at TICK (x4ls play ... -- --join-save-at 733) and holds the join save for
+  that step; without it T moves by about 30 steps with the joiner's start. The session is deterministic from its snapshot,
+  so one T shows one case again and again.
+- The T+2 class (T=733; ca13: first mismatch 735). In the joiner's loading frames MD heard event_npc_created for NPCs the load
+  made: NPC_State_Machines.Base checked 7,251 times and ran once, for the NPC the session made in step T (its event is heard
+  at T+1 there); that machine ran ENTER_base, NPC_Ready and Shutdown before the admission, and at T+2 the session's three
+  cue instances (caller keys 434baed4 ENTER_init, 36d3072d EXIT_init, ccd6b335 ChangeState_NPC_Ready) had no counterpart.
+  Fix native_gate_join_mute_load_npcs (543ca3d1, a join default): from the package's load to the admission a joiner's cues do
+  not hear keyword 1455 (script_rng_cue_event skips the check); the held event of T, posted again, starts the machine at T+1.
+  ca15, ca16 (T=733): digest_mismatches=0, no desync, 0 errors. Not a fix: native_gate_join_bootev_session (3d7bbc7f; the
+  (source, class) key is too coarse), opt-in.
+- The cue IDs (x4mods' hj29/hj31 mission fixture: mission 0x162568 on the session, 0x1dbc24c on the joiner). The save's
+  <cue id="N"> is not a runtime ID: the cue save writer 0x111a260 looks the cue up (cue +0xb0, type 0x5c) in the script
+  value table at 0x31be0c0 and writes its ordinal there (a tree: root +8, leftmost +0x20, size +0x28; node parent +0, left +8,
+  right +0x10, type +0x20, pointer +0x28, ordinal +0x30). GameClass::Save 0x9f0dd0 builds the table at 0x9f14d3 (0xcbd6a0) and
+  clears it at the save's end (0xcbdc30, called from 0x9f1ff8 and 0x9f22fe only). So: section 83 CUEI (85d2ac13; package
+  version 13, 83 sections) carries (ordinal, runtime ID) for every numbered cue; the saver reads the table inside its join
+  save, at a one-shot int3 on 0xcbdc30's first byte armed around the save (ba4a3c50; reading after the save found it empty,
+  ca20); the joiner's cue import (0x11121d0; the handler constructor's AssignNewID returns to 0xcaab18, the import's frame by
+  its return 0x1112253, the node in r15, the id by 0x125360(node, 0x1fe, 0)) places the cue at the runtime ID its ordinal
+  maps to (native_gate_join_cue_ids, both sides). ca21: captured 692,504 of 930,707 table entries (238,203 of other
+  types), placed 692,504, refused 0, 62,370 cues without an id, no errors. The first form (68ddd049, 6df943f1: the id
+  read as a runtime ID) was wrong and was a default for one commit; x4mods' hj31 showed it, 6294fc68 took it out. NOT a
+  default: its test is the mission fixture, which this flow does not have.
+- The effects' part animations (T=722; ca17: first mismatch 724, the runtime ID part alone). In step T+1 the joiner made
+  four IDs under caller key dd7c7c80 (SetAttention 0x3d5660 -> the handler at +0x15e8 -> InitPartAnimations) that the
+  session did not: the objects were EffectObjects (vtable 0x2c39778) whose own IDs sit in the UI block (31) or the view
+  block (30), local to a client. Fix native_gate_runtime_ids_ui_elements (c0b73d72, 63e6f7e8; opt-in still): a shared
+  allocation under the SetAttention handler whose object (rsi of the frame returning to 0x3d5747, by unwinding) has its own ID
+  in block 31 or 30 takes that block. ca20, ca21: rows 723..726 equal on both sides, the first mismatch moved to 728.
+- The load's shots (T=722; ca21: first mismatch 728, runtime IDs; step 727 made four projectiles on the session (caller key
+  380a47e0: Weapon 674 -> 997 -> 998 -> Zone 930), three on the joiner). The joiner's loading frames run the weapons: the
+  slot-998 entry counted 2 shots before the admission (WEAPON_FIRE_RNG native=2), BULLET_CADENCE had 30 bullets against the
+  session's 28 from T+1 on, and SHOOT wrote two far last shot times (shoot_far=1:2). The fire loop 0x817d20, after a shot,
+  writes the last shot time (+0x310) and takes a round off the clip (+0x350; 0 reloads from the macro's +0x24, and the wait is
+  the reload's instead of the shot interval's, 0x81dc10); shoot_far repairs the time only. Shots per step, session against
+  joiner: 727 4/3, 730 4/3, 742 0/1, 745 1/2, 755 3/2, 758 4/3: two guns on another reload cycle.
+  Fix native_gate_join_hold_fire: from the package's load to the admission the slot-998 entries answer -1.0 without the
+  shot (the engine's own "no shot": the loop skips the shot's events for a result <= -0.9999 at 0x818193 and the time,
+  clip and reload after the loop at 0x8182f4). Needs native_gate_weapon_fire_rng (its entries). U::Weapon and U::Turret
+  only: the missile and bomb launchers' own slot 998 are not held. Windows only (the Linux weapon's +0x310 is not placed).
+  The first form (ca22) left the weapon alone and never ended the load: Weapon::vfunc674 fires in a loop while the next
+  shot time (0x81dfd0: the last shot time +0x310 and the interval, the reload's with an empty clip) is not past the
+  frame's (0x813437..0x813467), so the joiner's main thread stayed in 0x817d20 (found by sampling its thread: rip and
+  the stack's return addresses, .local/try/hangstack.py). The second form writes the held shot's time (the fifth
+  argument, the fire procedure's xmm12) as the last shot time, as the loop's end does for a made shot (0x818327); SHOOT
+  then writes the session's time at the admission (shoot_far for a far one).
+  f31b0505 (in JOIN_DEFAULT_ON). ca22b, ca23, ca25..ca27 (T=722): hold_fire=1:2 (two shots held), step 727 equal, the shots
+  and bullets of every sampled step equal to 5400, the per-tick digest equal 723..1799.
+- Open: the crew of a ship killed in step T (T=722; ca22b..ca27: first mismatch 1800, the first stride census after the
+  join; three more rows present on the joiner at 1800, 3600 and 5400). Not the cue IDs (ca23 without them: the same
+  census hashes) and not the shield counter (WORLD_HASH_SHIELDS canonical= counts rewrites: 84,609 on the session, whose
+  first captures rewrote its shields, 500 on the joiner, whose loaded ones were canonical already). ca26 (the per-object
+  rows on; hj23's set file had native_gate_world_detail_rows=false, and native_gate_world_pages_window alone logs nothing
+  then): census_compare.py at 1800 names the Xenon corvette CGT-937's computers 0x730d9, 0x730e4, 0x730e5 (pilot, defence,
+  engineer). The corvette 0x730d4 takes its KillEvent in step 722 (EVENT_RNG_ROW tick=722, 36 draws) and stays as a wreck
+  on both sides (its own kill at +1800 s); the join save holds each computer's <event event="kill" time="31.1163..">.
+  ca27 (EVENT_ROW 722..1322): both sides deliver the three KillEvents at 723, slots 0..2; nothing else reaches them. At
+  723 both have them detached (parent 0); the session deletes them before 1800, the joiner never. Component vfunc8
+  (0x3e5730, the KillEvent's handler) runs the kill 0x3e5240 with the destroy flag and then slot 0x1258; components are
+  reference counted (+0x40, state +0x44), so the joiner holds one more reference than the session (the family of j1-179:
+  the escape pod, and j1-193's "the pods' Computers still live on the joiner").
+  ca28 (JOIN_WATCHREFS on the three and their cockpit): after T+1 each computer's count is 1 on the session and 2 on the
+  joiner; the session deletes them in step T+2 (missing from 724), the joiner's stay at count 1.
+  Cause: the boot event hold's repost. PostEvent 0x99a3f0 on its timed path stores the source's handle (slot 0x11a8: the
+  control block at the component's +0x38) at event +0x10 and takes a reference (0x99a52a..0x99a54a) whatever the event
+  held there; the event's destructor gives one back (RemoveEvents 0x99a870 only calls it). A kept event was posted once by
+  the load, so join_bootev_repost's second post left the load's reference for good: one per reposted event (6,842 in
+  ca26), harmless until the source dies. Fix: the repost gives the first reference back (join_bootev_first_reference; not
+  with no handle, and not for a source in state 3, whose event PostEvent deletes instead); status bootev_released=.
+  ca30 (T=722, the fix, hold_fire a default, cue_ids off): bootev_released=6842, joined digest_mismatches=0 at the
+  handover 3413, played to 5442, first_desync none, 0 errors, 0 drops; the census equal at 1800, 3600 and 5400 (present
+  432,945, 435,864 and 436,519 on both). RCNT stays: its counts are the load's own extra references on created docked
+  ships (j1-191), taken before the repost.
+- For the Linux gate (read, not built): the fire loop 0x1d698b0 calls the shot (slot +0x1fc0) at 0x1d69a75 with the shot's
+  time in xmm0 and tests the result against the same -0.9999 (0x2e25ce0); after the loop it writes that time to the
+  weapon's +0x300 (Windows +0x310) and takes the round from +0x340 (Windows +0x350), 0x1d69c86..0x1d69cbb. A Linux hold is
+  the same two steps with those offsets. The repost's release is Windows only too (join_bootev_first_reference answers
+  none under JOIN_OWN_PLATFORM): the event's handle offset and the control block's layout are not read on Linux yet.
+- Still opt-in: native_gate_runtime_ids_ui_elements (on in every run from ca20 on, one present client each; a session
+  with two present clients has not run it) and native_gate_join_cue_ids (CUEI; its test is the mission fixture).
+- Tools of the day: .local/try/hangstack.py (a hung X4's busiest thread: rip and the stack's X4.exe return addresses);
+  census_compare.py needs the per-object rows (no native_gate_world_detail_rows=false in the set file); JOIN_WATCH and
+  JOIN_WATCHREFS rows land in x4lan-crash.txt, and the watch slows a joiner enough to miss its handover in a 3 minute
+  window.
+

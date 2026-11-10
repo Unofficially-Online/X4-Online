@@ -44,6 +44,23 @@ static uint64_t wfire_keyed,wfire_native,wfire_unmapped,wfire_tick=UINT64_MAX,wf
 static volatile LONG64 wfire_failures;
 static const char *wfire_stage="idle";
 static struct {uint64_t key,tick,count;} wfire_ordinals[WFIRE_ORDINALS];
+/* wfire_hold (native_gate_join_hold_fire, lockstep_join.h): while set, a shot is not made. A joiner's loading frames run
+ * the weapons before the admission; a gun that was firing at the join save's step is ready at once there (the load's
+ * AmmoChangedEvent reset, slot 490) and shot: a bullet the session never had and a round off the gun's clip (+0x350), so
+ * the gun reloaded at another time than the session's (ca21, T=722: 2 shots in the load, bullets 30 against 28 at T+1, the
+ * session's shots at 727 and 730 missing on the joiner, the joiner's at 742 and 745). WFIRE_NO_SHOT is the engine's own
+ * answer for a shot that was not made: the fire loop 0x817d20 skips the shot's events for a result <= -0.9999 (0x818193) and,
+ * after the loop, the last shot time, the clip and the reload (0x8182f4).
+ * The held shot still writes its time (the fifth argument, the fire procedure's xmm12) as the weapon's last shot time
+ * (+0x310), as the loop's end does for a made shot (0x818327): Weapon::vfunc674 fires in a loop while the next shot time
+ * (0x81dfd0: the last shot time and the interval) is not past the frame's (0x813437..0x813467), so a held shot that left the
+ * time alone never ended it (ca22: the joiner's main thread in 0x817d20 for good, the load never over). SHOOT writes the
+ * session's time at the admission (native_gate_join_shoot_far for a far one). Windows only: the Linux weapon's field is
+ * not placed yet, its shots stay native. */
+#define WFIRE_NO_SHOT (-1.0)
+#define WFIRE_LASTSHOT 0x310u
+static volatile LONG wfire_hold;
+static volatile LONG64 wfire_held;
 static uint64_t wfire_ordinal(uint64_t key) {
     unsigned h=(unsigned)lockstep_mix(key)&(WFIRE_ORDINALS-1u);
     for(unsigned n=0;n<64;n++,h=(h+1)&(WFIRE_ORDINALS-1u)) {
@@ -75,6 +92,9 @@ static double wfire_run(wfire_fn original,uint64_t *rng,void *weapon,void *a2,vo
 static double wfire_shot(void *weapon,void *a2,void *a3,uint64_t shot,uint64_t a5,uint64_t a6,uint64_t a7,uint64_t a8,uint64_t a9,
                          uint64_t a10,uint64_t a11,uint64_t a12) {
     wfire_fn original=(wfire_fn)(void *)(image+WFIRE_FN);
+    if(InterlockedCompareExchange(&wfire_hold,0,0)) {
+        *(uint64_t*)((unsigned char*)weapon+WFIRE_LASTSHOT)=a5;InterlockedIncrement64(&wfire_held);return WFIRE_NO_SHOT;
+    }
     if(!(stats.active && boot_phase==3 && GetCurrentThreadId()==ui_thread)) {++wfire_native;return original(weapon,a2,a3,shot,a5,a6,a7,a8,a9,a10,a11,a12);}
     void **tls=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
     uint64_t *rng=tls && tls[0]?(uint64_t*)((unsigned char*)tls[0]+0x318):NULL;

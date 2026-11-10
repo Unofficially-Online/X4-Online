@@ -15,7 +15,7 @@ static void test_weapon_fire(void) {
     world_identities=VirtualAlloc(NULL,sizeof(*world_identities)*WORLD_IDENTITY_CAPACITY,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
     assert(world_identities);world_identity_count=0;world_identity_sealed=0;
     assert(world_identity_record(0x7171,0x176c5f) && world_identity_record(0x7272,0x176c5e));
-    static unsigned char weapon[0x40];memset(weapon,0,sizeof(weapon));*(uint64_t*)(weapon+8)=0x7171;
+    static unsigned char weapon[0x320];memset(weapon,0,sizeof(weapon));*(uint64_t*)(weapon+8)=0x7171;
     uint64_t word=0x1111;test_wf_word=&word;
     memset(wfire_ordinals,0,sizeof(wfire_ordinals));wfire_keyed=wfire_unmapped=wfire_frame_keyed=wfire_table_full=0;wfire_tick=UINT64_MAX;
     /* A keyed shot: seeded from (tick, key, shot, ordinal, klass), all twelve arguments forwarded, the word restored. */
@@ -37,6 +37,14 @@ static void test_weapon_fire(void) {
     /* Unmapped weapon or no word: native, counted, the word untouched by us. */
     *(uint64_t*)(weapon+8)=0x9898;word=0x4444;wfire_run(test_wf_original,&word,weapon,0,0,0,0,0,0,0,0,0,0,0);
     assert(test_wf_seen==0x4444 && word==(0x4444^0x5555) && wfire_unmapped==1);
+    /* Held (a joiner before its admission): no shot, the engine's own answer, counted; the shot's time (the fifth argument)
+     * becomes the last shot time, so Weapon::vfunc674's loop over the shots due ends. */
+    {const uint64_t calls=test_wf_calls;
+     InterlockedExchange(&wfire_hold,1);
+     assert(wfire_shot(weapon,0,0,0,0x4010000000000000ULL,0,0,0,0,0,0,0)==WFIRE_NO_SHOT && *(uint64_t*)(weapon+WFIRE_LASTSHOT)==0x4010000000000000ULL);
+     assert(wfire_shot(weapon,0,0,1,0x4014000000000000ULL,0,0,0,0,0,0,0)==WFIRE_NO_SHOT && *(uint64_t*)(weapon+WFIRE_LASTSHOT)==0x4014000000000000ULL);
+     assert(test_wf_calls==calls && wfire_held==2 && *(uint64_t*)(weapon+8)==0x9898);
+     InterlockedExchange(&wfire_hold,0);wfire_held=0;*(uint64_t*)(weapon+WFIRE_LASTSHOT)=0;}
     /* Arming refusals on the zero image. */
     stats.active=1;boot_mode=1;boot_phase=0;stats.issued=0;ui_thread=GetCurrentThreadId();wfire_installed=0;
     world_identity_installed=0;assert(!wfire_arm() && !strcmp(wfire_stage,"needs"));world_identity_installed=1;
