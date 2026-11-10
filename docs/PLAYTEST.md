@@ -364,7 +364,10 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
     join, at tick 1800 and at 3600, which is after the handover; the per-tick report differs from 51 ticks after the
     join in one part only, the navigation mesh receipt (the joiner built 17 meshes where the session built 25); and
     at tick 5400 one of the census' four parts differs. The session counts these as desyncs. In the join code, in
-    work.
+    work. The cause of the mesh difference is found: two animations near the joiner's start were running at the
+    join; the session had started them 12 and 6 ticks before it, the joiner's load starts their clocks anew, so
+    their end, and the mesh rebuild that follows it, comes 13 and 7 ticks later on the joiner. The join does not
+    carry an animation's start time yet.
   - The standard playtest session (every player next to the host) joins clean with the same build.
 - Money in coop: the wallet is shared, and every slot's kit is applied when the session starts. So that the host
   does not begin with the money of every start on offer, an open slot's start money is taken out again right after
