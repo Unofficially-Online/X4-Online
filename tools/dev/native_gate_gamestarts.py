@@ -24,7 +24,9 @@ a per-player start they are either rebuilt (class c parts) or refused.
 Ship only (world=True; x4ls new-session --omit K=world): a class b start whose every part this reader knows may give
 slot k its player-level parts alone - the ship with its loadout at the start's place, the money and the rest of the
 kit - while its world-level parts (its plot, stations, faction relations) are left out and listed in the spec. The
-session's world is then the base start's; the player has that start's ship and place, not its story.
+session's world is then the base start's; the player has that start's ship and place, not its story. A start whose
+player begins docked or on foot at a station gets its ship in open space near the start's zone (place 'near': the
+capture puts it at a safe position there, once; the save is the truth afterwards).
 
     python tools/dev/native_gate_gamestarts.py catalog --libraries <gamelibs root> --scripts <gamescripts root>
     python tools/dev/native_gate_gamestarts.py template x4ep1_gamestart_fight --libraries ... --scripts ...
@@ -73,6 +75,7 @@ SPACESUIT = re.compile(r'_spacesuit_')
 #               (the capture), because pilot slots need saved IDs fixed before the load
 APPLIES = {'factions': {'reputation'}, 'coop': {'blueprints', 'research', 'known'}}
 OMITTABLE = ('blueprints', 'inventory', 'known', 'reputation', 'research')
+NEAR_KINDS = ('docked', 'on_foot')   # ship-only: the player's ship goes into open space near the start's zone
 SAME_START_OFFSET = 300   # metres along x between hulls of slots that take the same start
 
 
@@ -562,7 +565,8 @@ def per_player_refusal(rec, klass=None, world=False):
     if klass == 'b' and rec['unknown']:
         return f"start {rec['id']}: parts this reader does not know: " + '; '.join(rec['unknown'])
     loc = rec['player'].get('location', {})
-    if loc.get('kind') != 'space':
+    near = world and loc.get('kind') in NEAR_KINDS and bool(loc.get('zone'))   # its ship in space near the start's zone
+    if loc.get('kind') != 'space' and not near:
         return f"start {rec['id']}: player starts {loc.get('kind', 'without a location')} (slot ships start in space)"
     if 'ship' not in rec['player']:
         return f"start {rec['id']}: no player ship"
@@ -649,7 +653,8 @@ def template(catalog, sid, world=False):
                      'ammunition': dict(sorted(ship['ammunition'].items())), 'software': sorted(ship['software']),
                      'thrusters': list(ship['thrusters'])},
             'place': {'zone': loc.get('zone') or None, 'sector': zone_sector(loc['zone']) if loc.get('zone') else loc['sector'],
-                      'x': x, 'y': y, 'z': z, 'yaw': yaw - 360 if yaw > 180 else yaw},
+                      'x': x, 'y': y, 'z': z, 'yaw': yaw - 360 if yaw > 180 else yaw,
+                      **({'near': True} if loc.get('kind') in NEAR_KINDS else {})},
             'world_omitted': list(rec['world']) if classify(rec)[0] == 'b' else [],
             'money': p.get('money', 0), 'inventory': dict(sorted(p.get('inventory', {}).items())),
             'blueprints': sorted(set(p.get('blueprints', []))), 'research': sorted(set(p.get('research', []))),

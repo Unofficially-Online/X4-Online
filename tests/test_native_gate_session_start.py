@@ -305,7 +305,17 @@ class SpecTests(unittest.TestCase):
             self.assertIn('is class b', gamestarts.per_player_refusal(rec))
             self.assertIsNone(gamestarts.per_player_refusal(rec, world=True))
             self.assertIn('is class -', gamestarts.per_player_refusal(c.record('lesson_start'), world=True))      # refused stays refused
-            self.assertIn('on_foot', gamestarts.per_player_refusal(c.record('station_start'), world=True))        # no place in space
+            self.assertIn('is class b', gamestarts.per_player_refusal(c.record('station_start')))                 # not without the word
+            self.assertIsNone(gamestarts.per_player_refusal(c.record('station_start'), world=True))               # its ship near its zone
+            near = gamestarts.template(c, 'station_start', world=True)
+            self.assertEqual(near['place'], {'zone': 'zone001_cluster_92_sector001_macro', 'sector': 'cluster_92_sector001_macro',
+                                             'x': 0, 'y': 0, 'z': 0, 'yaw': 0, 'near': True})
+            near_spec = session_start.build_spec(c, 'war_start', 2, 'coop', {2: 'station_start'}, {2: 'world'})
+            self.assertTrue(near_spec['slots']['2']['hull']['near'])
+            near_ship = ET.fromstring(session_start.hulls_md(near_spec).split('-->', 1)[1]).find('.//create_ship')
+            self.assertEqual(near_ship.get('zone'), '$zone')
+            self.assertIsNone(near_ship.find('position'))
+            self.assertEqual(near_ship.find('safepos').attrib, {'value': 'position.[0m, 0m, 0m]', 'min': '3km', 'max': '8km'})
             row = next(r for r in c.rows() if r['id'] == 'delta_start')
             self.assertTrue(row['per_player'] and row['ship_only'] is None)
             tpl = gamestarts.template(c, 'delta_start', world=True)

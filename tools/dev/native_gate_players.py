@@ -205,14 +205,19 @@ COVERED_SECTORS = 2   # without the census keys below: slot 1's sector and the f
 def covered_sectors(args):
     """The sectors a run covers, from its --set keys: native_gate_view_scenes (a physics scene per sector, up to eight)
     with native_gate_viewpoint_standins=N (traffic and highway parameters for N sectors) cover N, anything else the
-    region camera's two. Keys in the base overlay are not seen here."""
+    region camera's two. Keys in the base overlay are not seen here; with --defaults-only the session defaults count
+    (both keys are defaults there: eight sectors)."""
     sets = {}
     for text in getattr(args, 'set', None) or []:
         m = re.fullmatch(r'(native_gate_[a-z0-9_]+)=(.+)', text)
         if m:
             sets[m[1]] = m[2].strip()
-    standins = sets.get('native_gate_viewpoint_standins')
-    if sets.get('native_gate_view_scenes') == 'true' and standins in ('3', '4', '5', '6', '7', '8'):
+    # --defaults-only (a people session: tools/dev/native_gate_defaults.lua is the run): the defaults arm a physics scene per
+    # sector and eight view point stand-ins, unless a --set turns one off (ns4, 10 Nov: a four-start session was refused).
+    defaults = getattr(args, 'defaults_only', False)
+    scenes = sets.get('native_gate_view_scenes', 'true' if defaults else None)
+    standins = sets.get('native_gate_viewpoint_standins', '8' if defaults else None)
+    if scenes == 'true' and standins in ('3', '4', '5', '6', '7', '8'):
         return int(standins)
     return COVERED_SECTORS
 

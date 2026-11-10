@@ -46,6 +46,7 @@ SPEC_FORMAT = 'X4LAN_SESSION_START_SPEC_1'
 SESSION_FORMAT = 'X4LAN_SESSION_1'
 HULLS_MD = 'x4lan_session_hulls.xml'
 HULLS_SCRIPT, HULLS_CUE = 'X4LAN_SessionHulls', 'Create'
+NEAR_MIN, NEAR_MAX = '3km', '8km'   # a 'near' hull's safe position around its zone's origin
 HULL_SEED = 5100            # + slot: fixed create_ship seeds (one capture; the save is the truth afterwards)
 MAX_PLAYERS = 8             # the pilot modules drive at most eight slot ships (PILOT_SLOTS)
 NAME = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
@@ -128,6 +129,8 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None):
         place = tpl['place']
         hull = dict(tpl['ship'], zone=place['zone'], sector=place['sector'], x=place['x'] + n * gamestarts.SAME_START_OFFSET,
                     y=place['y'], z=place['z'], yaw=place['yaw'], seed=HULL_SEED + k)
+        if place.get('near'):   # a start that begins docked or on foot: a safe position near its zone, found by the capture
+            hull['near'] = True
         _check_hull(hull, k)
         slots[str(k)] = {'gamestart': tpl['gamestart'], 'class': tpl['class'], 'kit': kit, 'hull': hull,
                          'offset_x': n * gamestarts.SAME_START_OFFSET, 'presentation': tpl['presentation'],
@@ -206,7 +209,10 @@ def hulls_md(spec):
         ET.SubElement(ship, 'owner', {'exact': 'faction.player', 'overridenpc': 'true'})
         ET.SubElement(ship, 'loadout', {'loadout': '$loadout'})
         ET.SubElement(ET.SubElement(ship, 'pilot'), 'select', {'faction': 'faction.argon', 'tags': 'tag.aipilot'})
-        ET.SubElement(ship, 'position', {'x': f"{hull['x']}m", 'y': f"{hull['y']}m", 'z': f"{hull['z']}m"})
+        if hull.get('near'):   # in open space near the start's station (the capture's one search; the save keeps the place)
+            ET.SubElement(ship, 'safepos', {'value': f"position.[{hull['x']}m, {hull['y']}m, {hull['z']}m]", 'min': NEAR_MIN, 'max': NEAR_MAX})
+        else:
+            ET.SubElement(ship, 'position', {'x': f"{hull['x']}m", 'y': f"{hull['y']}m", 'z': f"{hull['z']}m"})
         ET.SubElement(ship, 'rotation', {'yaw': f"{hull['yaw']}deg", 'pitch': '0deg', 'roll': '0deg'})
         made = ET.SubElement(actions, 'do_if', {'value': '@$ship.isoperational'})
         ET.SubElement(made, 'create_order', {'object': '$ship', 'id': "'Wait'", 'default': 'true'})
@@ -338,7 +344,7 @@ def register(spec, snapshot):
             if got is None:
                 raise SessionError(f'slot {key}: hull {saved} not in the save')
             want = {'macro': hull['macro'], 'owner': 'player', 'sector': hull['sector']}
-            if hull['zone']:   # a sector position lands in whatever zone X4 has or makes there
+            if hull['zone'] and not hull.get('near'):   # a sector or safe position lands in whatever zone X4 has or makes there
                 want['zone'] = hull['zone']
             bad = {k: (got[k], v) for k, v in want.items() if got[k] != v}
             if bad or not (got['class'] or '').startswith('ship_'):

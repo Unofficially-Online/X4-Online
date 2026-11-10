@@ -53,9 +53,10 @@ static int pjoin_state(char *out,size_t capacity) {
     }
     return n>0 && (size_t)n<capacity?n:0;
 }
+static unsigned pjoin_ships_adopted;   /* lockstep_pilot_join_modules.h: slot ships a joiner took from the session */
 static int pjoin_status_text(char *out,size_t capacity) {
-    return snprintf(out,capacity," join_park=%llu/%llu parks=%lld bodies=%x parked=%d adopted=%x",(unsigned long long)pjoin_park_tick,
-                    (unsigned long long)pjoin_last_park,(long long)pjoin_parks,pfbody_mask,pfbody_parked,pjoin_adopted);
+    return snprintf(out,capacity," join_park=%llu/%llu parks=%lld bodies=%x parked=%d adopted=%x adopted_ships=%u",(unsigned long long)pjoin_park_tick,
+                    (unsigned long long)pjoin_last_park,(long long)pjoin_parks,pfbody_mask,pfbody_parked,pjoin_adopted,pjoin_ships_adopted);
 }
 
 /* ---- the joiner's side (W3 R1, R2; reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt section 8) ---- */
@@ -310,6 +311,7 @@ static void pjoin_m5_reset(void);
 static int pjoin_m5_get(const char *name,size_t length,const char *value,size_t chars);
 static int pjoin_m5_complete(uint64_t t);
 static int pjoin_m5_check(void);
+static int pjoin_m5_adopt_ships(void);
 static void pjoin_m5_apply(void);
 /* A seat's store holds X4's control banks (pslot_store_init: the image-base regions of PSLOT_CLASSES, in table order); a region
  * marked pointer (environment_zone: the zone d95180 compares) is a process address, which travels as the zone's portable ID
@@ -461,6 +463,7 @@ static int pjoin_resume(uint64_t tick,unsigned char *controller) {
     if(pjoin_tables_t!=base || tick!=base+1) {pjoin_resume_why="state_tick";return 0;}
     if(pjoin_rx_slots!=pslot_mask) {pjoin_resume_why="slot_mask";return 0;}
     if(!pjoin_m5_check()) return 0;   /* R5's refusals, before anything changes */
+    if(!pjoin_m5_adopt_ships()) return 0;   /* a slot whose ship was built after the load: the session's, before R1 seats in it */
     join_code_hold(1);   /* the session made what follows before T: its codes are in the counter already */
     /* R1 */
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {

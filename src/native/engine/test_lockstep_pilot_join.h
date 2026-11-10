@@ -92,6 +92,10 @@ static void test_pilot_join_tables(void) {
 /* R5 (lockstep_pilot_join_modules.h): the per-slot modules' state at T round-trips through 'pilot_state' (the UI replay's
  * staged sections and the hit claims after T only, the order aliases, the death records, the consumed keys); the checks
  * refuse by name, before anything changes, what is not carried yet. */
+/* The joiner's object lookup: one ship at one runtime ID (the slot-ship carry). */
+static unsigned char *test_pjoin_ship;
+static uint64_t test_pjoin_ship_id;
+static void *test_pjoin_find(void *map,uint64_t runtime,unsigned kind) {(void)map;(void)kind;return test_pjoin_ship && runtime==test_pjoin_ship_id?test_pjoin_ship:NULL;}
 static void test_pilot_join_modules(void) {
     static char text[1u<<18];static pfire_missile_slot missiles[PILOT_SLOTS];
     const int saved_death=pdeath_armed,saved_ui=uirep_armed,saved_foot_slots=pfslot_armed;
@@ -122,6 +126,28 @@ static void test_pilot_join_modules(void) {
     assert(pdeath_slots[1].deaths==2 && pdeath_slots[1].respawns==2 && pdeath_held[0][5]==1 && pdeath_released==1);
     assert(hit_stage_count[44%HIT_RING]==2 && hit_stage_ring[44%HIT_RING][0].slot==2 && hit_stage_ring[44%HIT_RING][1].slot==3 && !hit_stage_count[39%HIT_RING]);
     assert(hit_consumed_count==2 && hit_consumed[0]==0x1111 && hit_consumed[1]==0x2222);
+    /* A slot whose ship on the session is not the one this client resolved (a respawn before T): the joiner takes the
+     * session's runtime ID when a live object has it, and refuses when none has. */
+    {   static _Alignas(16) unsigned char ship[0x400];const uint64_t new_id=0x2220000123ull;
+        const unsigned count=pilot_slot_count;pilot_slot saved_slots[2]={pilot_slots[0],pilot_slots[1]};
+        const pilot_find_fn find=pdeath_find;void *map=pdeath_map;const unsigned before=pjoin_ships_adopted;
+        memset(ship,0,sizeof(ship));memcpy(ship+8,&new_id,8);
+        pilot_slot_count=2;memset(pilot_slots,0,2*sizeof(*pilot_slots));
+        pilot_slots[0].runtime=0x111;pilot_slots[1].runtime=new_id;                    /* the session: slot 2 in the new ship */
+        assert(pjoin_tables_state(text,sizeof(text),40)>0 && pjoin_tables_parse(text));
+        pilot_slots[1].runtime=0x333;pilot_slots[1].saved=0x16e8e5;                    /* the joiner: its config's ship */
+        test_pjoin_ship=ship;test_pjoin_ship_id=new_id;pdeath_find=test_pjoin_find;pdeath_map=ship;
+        pjoin_resume_why="-";
+        assert(pjoin_m5_check() && pjoin_ship_adopt==2u && pilot_slots[1].runtime==0x333);       /* the check changes nothing */
+        assert(pjoin_m5_adopt_ships() && pilot_slots[1].runtime==new_id && pilot_slots[1].renewed && pilot_slots[1].reversed &&
+               pilot_slots[1].resolved && pilot_slots[1].object==ship && pilot_slots[1].saved==0x16e8e5 && !pjoin_ship_adopt);
+        assert(pjoin_ships_adopted==before+1 && pilot_slots[0].runtime==0x111 && !pilot_slots[0].renewed);
+        pilot_slots[1].runtime=0x333;pilot_slots[1].renewed=0;test_pjoin_ship=NULL;             /* no live object has the ID */
+        assert(!pjoin_m5_check() && !strcmp(pjoin_resume_why,"slot_ship_missing") && pilot_slots[1].runtime==0x333);
+        {char status[256];assert(pjoin_status_text(status,sizeof(status))>0 && strstr(status,"adopted_ships="));}
+        pdeath_find=find;pdeath_map=map;pilot_slot_count=count;pilot_slots[0]=saved_slots[0];pilot_slots[1]=saved_slots[1];
+        pjoin_ship_adopt=0;pjoin_resume_why="-";
+        assert(pjoin_tables_state(text,sizeof(text),40)>0);}
     /* Refused before anything changes: a slot dead at T, a module armed on one side only, missiles shooting at T. */
     pdeath_slots[1].state=PDEATH_DEAD;
     assert(pjoin_tables_state(text,sizeof(text),40)>0 && pjoin_tables_parse(text) && !pjoin_m5_check() && !strcmp(pjoin_resume_why,"death_at_T"));

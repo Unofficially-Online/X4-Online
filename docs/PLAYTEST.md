@@ -295,9 +295,15 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
   the same start is asked.
 - Ship-only starts (`x4ls starts`: `player-start=ship-only`, chosen with `--omit K=world`): the player gets that
   start's ship with its loadout, its place and its money, not its story. The session's world is the host's start.
-  With the stock game that makes four starts a player can take: discover (Argon scout), fight (Paranid fighter),
-  split2 (Split fighter) and terran1 (Terran fighter). Starts that begin docked or on foot, or whose ship this reader
-  cannot build, are not offered.
+  With the stock game that makes seven starts a player can take: discover (Argon scout), fight (Paranid fighter),
+  split2 (Split fighter), terran1 (Terran fighter), trade (Teladi scout, 200,000 Cr), intro and tutorial (Argon
+  fighters). A start that begins docked or on foot (trade, intro, tutorial) gets its ship in open space 3 to 8 km from
+  that start's station. Starts without a ship of their own, in a spacesuit, or whose loadout this reader cannot build
+  are not offered.
+- ns4 (10 Nov): a session with discover, fight, split2 and terran1 was captured in 3 minutes; the three extra ships
+  stood in Paranid, Split and Terran space, and the overlay lists them as open starts. ns5: the same with trade,
+  intro and tutorial, their ships placed near those starts' stations. Starts in more than two sectors need nothing
+  extra: the session defaults cover eight sectors. Neither session has been played yet.
 - State (hjs1, 10 Nov, two X4 on one PC: base discover, the open slot the fight start in another sector, a join at
   tick 717): the join runs to the end (the joiner loads, catches up, takes the slot at tick 3495, both play to 5440,
   0 errors) and the simulation is in step (random state and both ships equal on every sampled tick), but the two

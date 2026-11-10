@@ -17,10 +17,15 @@
  * own lease at T+1 found every slot gun with its MindlessShootController, installs 0); a gun that is gone or whose
  * controller is not a Mindless refuses. Without the carried lease the joiner leased anew at T+1, and a gun firing then
  * would have waited on the joiner only.
+ * A slot ship other than the window's (a respawn before T; 10 Nov: before, refused as slot_respawned): the session's slot
+ * points at a ship built after the load, which the joiner's own resolve (the config's saved ID) cannot find. The joiner's
+ * objects sit at the session's runtime IDs (native_gate_join_ids, the created identities), so the joiner takes the session's
+ * ID for that slot as the death module's seat does on a session client (runtime, reversed, renewed) and resolves it, before
+ * R1 rebuilds the slot's player in it. Refused when no live object has that ID (slot_ship_missing) or it does not resolve
+ * (slot_ship_unresolved). Status adopted_ships=.
  * Refused (stop 91, join_resume=<why>), not carried yet: a slot dead, stranded, in its suit or respawning at T
- * (death_at_T); a slot ship other than the window's (slot_respawned: a respawn before T); missiles shooting at T
- * (missiles_at_T); a gun the simulation holds at T (fire_foreign); slot 1 or a slot k on foot at T (foot_at_T); a module
- * armed on one side only (modules_armed). */
+ * (death_at_T); missiles shooting at T (missiles_at_T); a gun the simulation holds at T (fire_foreign); slot 1 or a slot k
+ * on foot at T (foot_at_T); a module armed on one side only (modules_armed). */
 #define PJOIN_M5_VERSION 1u
 typedef struct {uint32_t leased,count,empty;int32_t group;uint64_t runtime[PFIRE_GUNS];unsigned char flag[PFIRE_GUNS],foreign[PFIRE_GUNS];} pjoin_fire_tx;
 typedef struct {
@@ -43,6 +48,8 @@ static hit_staged pjoin_hit_ring[HIT_RING][HIT_STAGED_MAX];
 static uint64_t pjoin_hit_consumed[HIT_CONSUMED_CAP];
 static unsigned pjoin_hit_consumed_count;
 static int pjoin_m5_refuse(const char *why) {pjoin_resume_why=why;return 0;}
+static unsigned pjoin_ship_adopt;   /* bit i: slot i+1's ship on the session is not the one this client resolved */
+static unsigned pjoin_ships_adopted;
 static unsigned pjoin_m5_armed(void) {
     return (pdeath_armed?1u:0u)|(pfire_armed?2u:0u)|(pfoot_armed?4u:0u)|(pfslot_armed?8u:0u)|(uirep_armed?16u:0u)|(hitn_armed?32u:0u);
 }
@@ -146,7 +153,14 @@ static int pjoin_m5_check(void) {
         const pdeath_slot *d=&m->death[i];
         if(d->state!=PDEATH_ALIVE || d->lost || d->in_suit || d->suit_tick) return pjoin_m5_refuse("death_at_T");
     }
-    for(unsigned i=0;i<pilot_slot_count && i<PILOT_SLOTS;i++) if(m->runtime[i]!=pilot_slots[i].runtime) return pjoin_m5_refuse("slot_respawned");
+    pjoin_ship_adopt=0;
+    for(unsigned i=0;i<pilot_slot_count && i<PILOT_SLOTS;i++) {   /* a ship built after the load: the session's ID must be a live object here */
+        unsigned char *object=NULL;uint64_t id=0;
+        if(m->runtime[i]==pilot_slots[i].runtime) continue;
+        if(!m->runtime[i] || !pdeath_find || !(object=pdeath_find(pdeath_map,m->runtime[i],4)) || !read_local(object+8,&id,8) || id!=m->runtime[i])
+            return pjoin_m5_refuse("slot_ship_missing");
+        pjoin_ship_adopt|=1u<<i;
+    }
     if(m->missiles) return pjoin_m5_refuse("missiles_at_T");
     if(m->foot_state!=PFOOT_SEATED || m->walking) return pjoin_m5_refuse("foot_at_T");
     memset(pjoin_fire_rx,0,sizeof(pjoin_fire_rx));
@@ -164,6 +178,19 @@ static int pjoin_m5_check(void) {
     }
     for(unsigned i=0;i<HIT_RING;i++)
         if(pjoin_hit_count[i] && hit_stage_tick[i]==pjoin_hit_tick[i] && pjoin_hit_count[i]+hit_stage_count[i]>HIT_STAGED_MAX) return pjoin_m5_refuse("hit_ring");
+    return 1;
+}
+/* The joiner, after the checks and before R1: each slot whose ship is not the window's takes the session's (header). */
+static int pjoin_m5_adopt_ships(void) {
+    const pjoin_m5 *m=&pjoin_m5_rx;
+    for(unsigned i=0;i<pilot_slot_count && i<PILOT_SLOTS;i++) {
+        pilot_slot *s=&pilot_slots[i];
+        if(!(pjoin_ship_adopt>>i&1u)) continue;
+        s->runtime=m->runtime[i];s->reversed=1;s->renewed=1;s->dead=0;s->seen=0;
+        if(!pilot_resolve(s,pdeath_find,pdeath_map,pdeath_player)) return pjoin_m5_refuse("slot_ship_unresolved");
+        ++pjoin_ships_adopted;
+    }
+    pjoin_ship_adopt=0;
     return 1;
 }
 /* The joiner, after R4: the checked state in. The hit claims staged after T go first in their apply tick (the session staged

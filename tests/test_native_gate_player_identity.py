@@ -820,6 +820,18 @@ class PlayersBuilderTests(unittest.TestCase):
         by_slot = {s['target']: s['sector'] for s in args.start}
         self.assertEqual(by_slot, {2: 'cluster_01_sector001_macro', 3: identity.STOCK_SECTOR, 4: identity.STOCK_SECTOR})
 
+    def test_the_session_defaults_cover_eight_sectors(self):
+        # --defaults-only: the defaults arm a scene per sector and eight stand-ins (ns4: a four-start session was refused).
+        import argparse
+        def covered(sets, defaults):
+            return players.covered_sectors(argparse.Namespace(set=sets, defaults_only=defaults))
+        self.assertEqual(covered([], True), 8)
+        self.assertEqual(covered([], False), 2)
+        self.assertEqual(covered(['native_gate_view_scenes=false'], True), 2)
+        self.assertEqual(covered(['native_gate_viewpoint_standins=4'], True), 4)
+        self.assertEqual(covered(['native_gate_viewpoint_standins=2'], True), 2)
+        self.assertEqual(covered(['native_gate_view_scenes=true', 'native_gate_viewpoint_standins=3'], False), 3)
+
     def test_a_third_sector_is_refused_by_name_or_warned_with_the_flag(self):
         third = ['--source', 'stock', '--start', '2=cluster_01_sector001_macro@0,30000,0', '--start', '3=cluster_13_sector001_macro@0,30000,0']
         with self.assertRaises(ValueError) as refused:
