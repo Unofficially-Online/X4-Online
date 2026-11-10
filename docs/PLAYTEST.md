@@ -292,13 +292,15 @@ default; plain2: 1841 ticks of two-client play, 0 desyncs).
 A join after a respawn (hjr1, 10 Nov): a player whose ship was destroyed and rebuilt before someone joins no longer
 makes that join fail. The joiner takes the rebuilt ship for that slot and was in step for 650 ticks after its join;
 then the rebuilt ship was pushed about 29 m once, at tick 1344 on the host and near 1600 on the joiner, and the
-session counted desyncs from there. The cause is found (10 Nov, five runs): X4 ignores a collision while either
-object is less than 30 s old. The rebuilt ship lies inside the loot the old ship dropped; on the host it is moved
-out 30 s after it was built, on the joiner 30 s after the joiner's load, because a save keeps no spawn time for
-loot containers and a load treats them as new. The join has to carry each object's spawn time; not built yet. It
-is not about respawns: any collision with loot in the 30 s after a join can differ. Since 10 Nov every client also
-restarts the collision shape refresh of every body at a join (it did so for the reference ships only), so those
-refreshes come at the same ticks on the joiner.
+session counted desyncs from there. Fixed (10 Nov): the rebuilt ship was built at the start position, inside the
+ship it replaced, which is still there when a ship is lost without exploding. X4 lets two bodies lie in each other
+for 30 s from the moment a body is made and then pushes them apart; a joiner's bodies are made at its load, so its
+push came later. Each rebuilt ship now stands 1 km above the one before, clear of the old one. hjr1 with it (join
+save at tick 687): 0 mismatches in the joiner's replay, no desync to the end of the run, 0 errors. Two things
+remain: the 30 s itself still counts from the load on a joiner, for any two bodies that lie in each other at a
+join; and a join whose save is taken near tick 710 on this test still differs from tick 1011, a separate case in
+the join code. Since 10 Nov every client also restarts the collision shape refresh of every body at a join (it did
+so for the reference ships only), so those refreshes come at the same ticks on the joiner.
 
 Still open: a join whose save tick falls while a fixture gun is engaging (hj24: T between 668 and 684 in the battle
 fixture) can part within a few ticks; a sweep of join ticks is next.

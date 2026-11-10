@@ -2534,8 +2534,12 @@ local function death_frame(tick)
    elseif kind=='create' then
     local pose=assert(death.poses[slot],'pilot respawn: no start pose for slot '..slot)
     death.built[slot]=(death.built[slot] or 0)+1
+    -- Each rebuild stands 1 km higher than the one before (the n-th at the start pose + n km up): the ship it replaces, or its
+    -- wreck, may still be at the start pose, and X4 lets two bodies lie in each other for 30 s from a body's making before it
+    -- pushes them apart. A joiner's bodies are made at its load, so that push came at another tick there (hjr1, 10 Nov:
+    -- 1344 on the session, 30 s after the load on the joiner). The count is the window's state, the same on every client.
     AddUITriggeredEvent('X4LAN_PilotRespawn','Respawn',{slotname=tostring(slot),seed=7000+100*slot+death.built[slot],
-     x=pose.x,y=pose.y,z=pose.z,yaw=pose.yaw,pitch=pose.pitch,roll=pose.roll})
+     x=pose.x,y=pose.y+1000*death.built[slot],z=pose.z,yaw=pose.yaw,pitch=pose.pitch,roll=pose.roll})
    elseif kind=='live' and tostring(cfg.slot)=='p'..slot then
     -- The new ship starts from nothing held: the aim script sends its axes and its stop again.
     stock_aim_state.stopped=false;stock_aim_state.axes[1]=0;stock_aim_state.axes[2]=0

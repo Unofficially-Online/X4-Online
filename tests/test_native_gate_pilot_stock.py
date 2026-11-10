@@ -391,6 +391,9 @@ class StockProbeTests(unittest.TestCase):
         lua.execute("death_events='create:1'")
         client.tick(WINDOW[0]+3, inputs)
         self.assertEqual(lua.eval('ui_events[4].param.seed'), 7102)
+        # each rebuild 1 km above the one before, so it never lies in the ship it replaces
+        self.assertEqual(lua.eval('ui_events[4].param.y-ui_events[3].param.y'), 1000)
+        self.assertEqual(lua.eval('ui_events[4].param.x'), 1)
         # The MD answer goes to the gate as a decimal string.
         lua.execute("registered['X4LAN_PilotRespawn.Ship1'](nil,12345)")
         self.assertIn('death_ship:1/12345', client.values('calls'))
