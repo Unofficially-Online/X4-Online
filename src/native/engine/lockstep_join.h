@@ -2525,6 +2525,9 @@ static void join_shape_reset(uint64_t completed) {
      * forgotten here, on every client at the same boundary, the next refresh call of every body is a first one again: all
      * refresh at step T+2 from the same poses and their due times run together after. */
     memset((void *)rc_shape_keys,0,sizeof(rc_shape_keys));
+    /* And every zone's mass traffic is made anew in the next step (lockstep_traffic_rows.h tp_rebuild_mark): its members are
+     * in no save, so the joiner's were its own. */
+    InterlockedExchange64(&tp_rebuild_tick,(LONG64)completed+1);
     char row[160];const int n=snprintf(row,sizeof(row),"[X4LAN] NATIVE_GATE JOIN_SHAPE_RESET tick=%llu forgotten=%u resets=%u joiner=%d\r\n",
                                        (unsigned long long)completed,held,join_shape_resets,join_shape_joiner);
     if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);

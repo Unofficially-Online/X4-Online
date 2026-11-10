@@ -156,10 +156,29 @@ static void tp_pass(void *network,void *zone) {
     }
     if(any) tq_note(network,0x10eu,&tp_grown);
 }
+/* A join's traffic restart (lockstep_join.h join_shape_reset sets tp_rebuild_tick on every client at the boundary after T+1).
+ * A zone's traffic members are not in a save: the session's have run since its start, a joiner makes its own at its load,
+ * and nothing shows it until a player is near and tracked members become ShipExtraSmall (hjs1, 10 Nov: five ticks after the
+ * handover the pass queued nine members with IDs 2142.. on the session and eight with 2169.. on the joiner). X4 has its own
+ * restart: a traffic object with the byte +0x28c set (0x831319 sets it) is switched off and on again by the next traffic
+ * update (0x831a3e / 0x831aa3: 0x8aae20 then 0x8aacb0, which clears it), its lane network built anew. In the Zone::Move of
+ * that one tick every active traffic object (+0x1d0) of every network gets the byte, so the synced pass after that frame
+ * rebuilds them all, on every client from the same world and the same keyed draws. Zone::Move holds g_MassTrafficLock here
+ * and the pass is joined. Status rebuild=tick:objects:networks. */
+static volatile LONG64 tp_rebuild_tick,tp_rebuilt,tp_rebuild_networks;
+static void tp_rebuild_mark(unsigned char *network) {
+    unsigned char *objects[128];const unsigned n=tq_objects(network,objects,128);unsigned any=0;
+    for(unsigned i=0;i<n;i++) {
+        unsigned char on=0;
+        if(read_local(objects[i]+0x1d0,&on,1) && on) {*(volatile unsigned char *)(objects[i]+0x28c)=1;InterlockedIncrement64(&tp_rebuilt);any=1;}
+    }
+    if(any) InterlockedIncrement64(&tp_rebuild_networks);
+}
 /* 0x834ca9: every Zone::Move of a zone with a network; growth since the last count is from outside Zone::Move;
  * then the native check and, when it passes, the pass. */
 static char tq_check(void *network,void *zone) {
     InterlockedIncrement64(&rc_stub_calls[TQ_CHECK_CALL]);
+    {const LONG64 at=InterlockedCompareExchange64(&tp_rebuild_tick,0,0);if(at && stats.issued==(uint64_t)at) tp_rebuild_mark(network);}
     tq_note(network,0x10du,&tq_outside_count);
     const char ready=(tq_check_native?tq_check_native:(tq_check_fn)(void *)(image+rc_calls[TQ_CHECK_CALL].target))(network);
     if(ready && (rc_installed_groups&(1u<<RC_TRAFFIC_PASS))) tp_pass(network,zone);
@@ -246,10 +265,11 @@ static unsigned tp_hook_stub_bytes(unsigned char *p) {
 }
 static void tp_status(char *out,size_t capacity) {
     if(tp_mode==TP_OFF) {snprintf(out,capacity,"off");return;}
-    snprintf(out,capacity,"%s,zones:%llu,calls:%llu,late:%llu/%llu,early:%llu/%llu,place:%llu/%llu/%llu,filter:%llu/%llu/%llu,draw_skip:%llu,relative:%llu,grown:%llu",
+    snprintf(out,capacity,"%s,zones:%llu,calls:%llu,late:%llu/%llu,early:%llu/%llu,place:%llu/%llu/%llu,filter:%llu/%llu/%llu,draw_skip:%llu,relative:%llu,grown:%llu,rebuild:%lld/%lld/%lld",
         tp_mode==TP_VIEW?"view":"observe",(unsigned long long)tp_zones,(unsigned long long)tp_calls,
         (unsigned long long)tp_late[1],(unsigned long long)tp_late[0],(unsigned long long)tp_early[1],(unsigned long long)tp_early[0],
         (unsigned long long)tp_place[1],(unsigned long long)tp_place[0],(unsigned long long)tp_place_skipped,
         (unsigned long long)tp_filter[1],(unsigned long long)tp_filter[0],(unsigned long long)tp_filter_skipped,
-        (unsigned long long)tp_draw_skipped,(unsigned long long)tp_relative,(unsigned long long)tp_grown);
+        (unsigned long long)tp_draw_skipped,(unsigned long long)tp_relative,(unsigned long long)tp_grown,
+        (long long)tp_rebuild_tick,(long long)tp_rebuilt,(long long)tp_rebuild_networks);
 }

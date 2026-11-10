@@ -377,6 +377,13 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
     their end, and the mesh rebuild that follows it, comes 13 and 7 ticks later on the joiner. The join does not
     carry an animation's start time yet.
   - The standard playtest session (every player next to the host) joins clean with the same build.
+  - Traffic near stations (hjs1, the fight start, 10 Nov): X4's background traffic is in no save, so a joiner made its
+    own at its load. It showed when the joined player's ship was near a station: a few ticks after the handover traffic
+    ships became real objects, nine on the session and eight on the joiner. Since 10 Nov every client restarts every
+    zone's traffic in the same tick at a join, with X4's own rebuild. With it the same ships appear on both sides and
+    the per-tick comparison stayed equal for 240 ticks after the handover (it parted after six before). Not finished:
+    at the next world check eight of those small ships still differ in their motion. Seen by players: traffic near
+    every player starts again when someone joins.
 - Money in coop: the wallet is shared, and every slot's kit is applied when the session starts. So that the host
   does not begin with the money of every start on offer, an open slot's start money is taken out again right after
   the start and paid in when that slot's player joins (`native_gate_join_start_money`, a default). hjs4 (10 Nov, the

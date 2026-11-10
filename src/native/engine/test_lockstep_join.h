@@ -1797,6 +1797,15 @@ static void test_join_world(void) {
         const uint32_t before=join_shape_resets;
         rc_shape_keys[5]=0x1234;shape_initialized[0][0].holder=(void*)1;
         join_shape_reset(700);assert(!rc_shape_keys[5] && !shape_initialized[0][0].holder && join_shape_resets==before+1u);
+        /* ... and asks for the traffic restart in the next step: active traffic objects get X4's own rebuild byte, others not */
+        assert(tp_rebuild_tick==701);
+        static unsigned char net[0x380],on[0x300],off[0x300],second[0x300];unsigned char *list[2]={off,second};
+        memset(net,0,sizeof(net));memset(on,0,sizeof(on));memset(off,0,sizeof(off));memset(second,0,sizeof(second));
+        *(unsigned char **)(net+0x40)=on;*(uint64_t *)(net+0x368)=0;*(uint64_t *)(net+0x370)=2;*(unsigned char ***)(net+0x48)=list;
+        on[0x1d0]=1;second[0x1d0]=1;
+        const LONG64 was=tp_rebuilt,nets=tp_rebuild_networks;
+        tp_rebuild_mark(net);assert(on[0x28c]==1 && second[0x28c]==1 && !off[0x28c] && tp_rebuilt==was+2 && tp_rebuild_networks==nets+1);
+        tp_rebuild_tick=0;
     }
     {   /* a fix across 7 is counted and listed (status attn_high=), one below is not; the list keeps the first JOIN_ATTN_HIGH_IDS */
         char text[JOIN_ATTN_HIGH_IDS*40+8],status[8192];
