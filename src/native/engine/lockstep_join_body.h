@@ -63,14 +63,28 @@ static int join_body_sort(join_tables *t) {
         return join_note("body_duplicate,id=%llx",(unsigned long long)t->body[i].portable);
     join_body_cap=t->nbody;return 1;
 }
+/* native_gate_join_body_make (hjs1b/hjs1c, 10 Nov; a new-session save, the open slot's hull in a sector the joiner's load holds
+ * low): the session's record names a body the joiner's object does not have. X4 makes an object's two XPhys records from its
+ * Move (U::Destructible::vfunc904 0x51bb90) once its own test and its zone's scene allow, on the joiner in step T+1: two IDs
+ * on the shared route (callers c0039,b8601,51b85f,51bc31|51bc65 under Ship::vfunc674) that the session took long before, its
+ * next ID 2 ahead for good and the runtime ID part apart from T+1 with every later step's allocations equal (status body=
+ * ...:missing 2). Calling the maker at the admission makes nothing (hjs1c: body_make=1:0:0, the test or the scene not there
+ * yet), so the admission only names the object and the allocator routes those two IDs when X4 makes the bodies
+ * (lockstep_runtime_ids.h rid_body_route). The body's state then is X4's own from the object's transform, not the session's:
+ * counted missing as before. Status body_make=on:objects:routed:misses. */
+static int join_body_make_on;
+static uint64_t join_body_named;
+static void join_body_make(unsigned char *object) {
+    if(join_body_make_on && object && rid_body_add(object)) ++join_body_named;
+}
 /* Admission: the session's body states on the joiner's bodies. */
 static void join_admit_body(const join_tables *s,const join_tables *mine) {
-    unsigned rows=0;
+    unsigned rows=0;join_body_named=0;rid_body_clear();
     for(uint32_t i=0;i<s->nbody;i++) {
         const join_body_rec *r=&s->body[i];unsigned char *object=join_object(join_runtime_of(mine,r->portable));
         unsigned char *record,*body,*motion;
         if(!object || !join_body_locate(object,r->which,&record,&body,&motion)) {
-            ++join_body_missing;
+            ++join_body_missing;join_body_make(object);
             join_world_row(&rows,"body side=session id=%016llx which=%u why=missing",(unsigned long long)r->portable,r->which);
             continue;
         }

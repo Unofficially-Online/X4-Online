@@ -283,6 +283,9 @@ def ids_sets(sets):
 #   native_gate_join_mute_load_npcs  the joiner's MD does not hear the NPC created events of its load before the admission
 #                                  (ca10..ca15, 9 Nov, T=733: the load started the state machine of the NPC the session
 #                                  made in step T, a tick early; ca15 with it: 7,251 checks muted, digest 0, to 5442)
+#   native_gate_join_body_make     the physics bodies a session's BODY record names and the joiner's object lacks: their
+#                                  IDs take the joiner's view list when X4 makes them (hjs1b/c, a new-session save: 2 IDs
+#                                  at T+1 for the open slot's hull)
 #   native_gate_join_grav_dead     the joiner's radar lists keep the contacts destroyed shortly before T, as the session's do
 #                                  until each unit's next scan removes them and posts has_scanned (ca33, T=690: 13 units of
 #                                  one dead contact, the joiner's timer posts 71 ticks early, the rid split at 1289)
@@ -304,7 +307,7 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_ares', 'native_gate_join_warp', 'native_gate_join_undk', 'native_gate_join_srcs',
                    'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled',
                    'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids',
-                   'native_gate_join_grav_dead')
+                   'native_gate_join_grav_dead', 'native_gate_join_body_make')
 
 
 def default_sets(sets):

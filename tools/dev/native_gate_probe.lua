@@ -415,6 +415,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_hold_fire then   -- a joiner's weapons make no shot between the load and the admission (hold_fire=)
   assert(gate.join_hold_fire and gate.join_hold_fire(1)==1,'join hold fire refused')
  end
+ if cfg.native_gate_join_body_make then   -- the IDs of the physics bodies a joiner lacks at its admission go off the shared route (body_make=)
+  assert(gate.join_body_make and gate.join_body_make(1)==1,'join body make refused')
+ end
  if cfg.native_gate_join_grav_dead then   -- a joiner's radar lists keep the session's destroyed contacts until the next scan (grav_dead=)
   assert(gate.join_grav_dead and gate.join_grav_dead(1)==1,'join grav dead refused')
  end

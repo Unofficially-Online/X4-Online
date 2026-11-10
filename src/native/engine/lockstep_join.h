@@ -2022,6 +2022,7 @@ static const join_pin join_pin_table[]={
     {0xea2a20,537,"d301bea94b279ddce92ced403bafdd17a90ed2eb83c5cc5944cf2ae600fc4a4f"},   /* RefreshFromPathingState */
     {0xeac170,123,"8487d9a8922f92b790f68759933ac3011a10746f828a634ffc5fcb68ab24bd36"},   /* WaitAndSwapBuffers */
     {0x3d5660,0x64,"8e948a0788bbacca91415cb51e228e73bc416c608d2398b07f05312fb19b56eb"},  /* SetAttention */
+    {0x51bb90,0xef,"9c81bb958eb4ae13a5ad69aa480e66d39e99c922f0eca66398578a42d0802546"},  /* Destructible::vfunc904: the two XPhys records' maker calls (rid_body_route's frames) */
     {0x6d1ff8,180,"740c43de64e569c5d869023ebc90074b6a2d97e07590404c989698f488111b2e"},   /* the attention timer */
     /* Version 4 (j1-14, report 1.8): PATH's pathing manager as its own code keeps it: Run's wake (semaphores +0x18/+0x10), the
      * pass time +0x200 and the skip flag +0x208 it tests and clears; the load reset that sets the flag; CreateAgent's append to
@@ -4024,7 +4025,7 @@ static int join_status(char *out,size_t cap) {
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
-        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu"
+        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
@@ -4069,7 +4070,9 @@ static int join_status(char *out,size_t cap) {
         (long long)InterlockedCompareExchange64(&join_cue_ids_placed,0,0),(long long)InterlockedCompareExchange64(&join_cue_ids_refused,0,0),
         (long long)InterlockedCompareExchange64(&join_cue_ids_noid,0,0),join_cuei_cap,join_cuei_seen,join_cuei_other,join_rx.t.ncuei,(long)InterlockedCompareExchange(&join_cuei_bp_state,0,0),
         join_hold_fire_on,(long long)InterlockedCompareExchange64(&wfire_held,0,0),join_bootev_released,
-        join_grav_dead_on,join_cap.grav_dead,(unsigned long long)join_rx.grav_dead,(unsigned long long)join_gravp_late,
+        join_grav_dead_on,join_cap.grav_dead,(unsigned long long)join_rx.grav_dead,(unsigned long long)join_gravp_late,(unsigned long long)join_attn_set_loaded,
+        join_body_make_on,(unsigned long long)join_body_named,(long long)InterlockedCompareExchange64(&rid_body_routed,0,0),
+        (long long)InterlockedCompareExchange64(&rid_body_misses,0,0),
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ALL],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PROBE],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PARAMS],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ACTOR],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_ACTOR],(unsigned long long)join_rx.keys_known,(unsigned long long)join_rx.keys_unarmed,

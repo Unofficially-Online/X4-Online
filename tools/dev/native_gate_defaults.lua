@@ -343,6 +343,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_ares','hot join: the session Agent result banks written at the admission (ARES)'},
  {'native_gate_join_attn_set','hot join: ATTN runs SetAttention where its write leaves the load per-level state, its attention events dropped (ATTN set)'},
  {'native_gate_join_bootev_session','hot join: the boot hold re-posts only the kept events whose source and class the session had due at T'},
+ {'native_gate_join_body_make','hot join: the IDs of physics bodies the session has and the joiner lacks at its admission go off the shared route when X4 makes them (BODY make)'},
  {'native_gate_join_grav_dead','hot join: the joiner radar lists keep the contacts destroyed before the join until the next scan (GRAVC dead)'},
  {'native_gate_join_hold_fire','hot join: the joiner weapons make no shot between the load and the admission (needs native_gate_weapon_fire_rng)'},
  {'native_gate_join_mute_load_npcs','hot join: the joiner MD does not hear the NPC created events of its load before the admission'},

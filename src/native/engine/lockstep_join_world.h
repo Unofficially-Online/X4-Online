@@ -6233,7 +6233,7 @@ static void join_attn_high_text(char *out,size_t cap) {
 static int join_attn_set_on;
 static volatile LONG join_attn_post_on;   /* join_boot_events: a swapped PostEvent site's call (the event destroyed) */
 static volatile LONG64 join_attn_set_posted;
-static uint64_t join_attn_set_calls,join_attn_set_dropped,join_attn_set_kept,join_attn_set_due[2],join_attn_set_refused;
+static uint64_t join_attn_set_calls,join_attn_set_dropped,join_attn_set_kept,join_attn_set_due[2],join_attn_set_refused,join_attn_set_loaded;
 static void join_event_destroy_native(unsigned char *ev) {((void (*)(void *,int))(*(void ***)ev)[0])(ev,1);}
 static void (*join_event_destroy)(unsigned char *)=join_event_destroy_native;   /* tests replace it */
 static int join_attn_post_swap_native(int on);   /* lockstep_join.h: SetAttention's PostEvent sites to the thunk and back */
@@ -6281,8 +6281,18 @@ static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level
         if(!join_attn_post_swap(1)) {++join_attn_set_refused;return 0;}
         InterlockedExchange(&join_attn_post_on,1);
     }
-    if(visible) {join_set_attention(object,level);++join_attn_set_calls;return 1;}
     const unsigned long long before=RID_JOIN_ALLOCS;
+    if(visible) {
+        /* hjs1 (x4mods-b8, 10 Nov; a new-session save, the open slot's start in another sector the session holds at high
+         * attention from its first tick, the joiner's load low): three such calls (a sector and its zones) ran
+         * Positional::InitPartAnimations and InitTextureAnimations for everything inside, 9,119 U::Animation::
+         * SequenceControlUnit IDs on the shared route after join_admit_rid had set the session's next one: the runtime ID
+         * part apart from T+1 for good with the world in step. The session made those units in its own first tick; here
+         * they go on the load list as the states' ones below (status attn_set_loaded=). */
+        join_ids_admit_load=1;join_set_attention(object,level);join_ids_admit_load=0;
+        join_attn_set_loaded+=RID_JOIN_ALLOCS-before;
+        ++join_attn_set_calls;return 1;
+    }
     join_ids_admit_load=1;join_set_attention(object,level);join_ids_admit_load=0;
     join_attn_states_loaded+=RID_JOIN_ALLOCS-before;
     uint32_t now=level;
@@ -6291,7 +6301,7 @@ static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level
 }
 static int join_admit_attn(const join_tables *s,const join_tables *mine) {
     unsigned rows=0,samples=0;join_attn_high=0;join_attn_high_n=0;
-    join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
+    join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=join_attn_set_loaded=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
     join_attn_states_apart=join_attn_states_unsettled=join_attn_states_computed=join_attn_states_calls=join_attn_states_loaded=0;
     join_attn_states_drift=0;unsigned state_rows=0;
     InterlockedExchange64(&join_attn_set_posted,0);

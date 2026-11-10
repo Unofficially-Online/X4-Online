@@ -2871,6 +2871,8 @@ static void test_join_world(void) {
 }
 /* BODY: the Jolt body behind an XPhys record (lockstep_join_body.h), on owned memory: the chain body_state reads, a moving and a
  * static body, the checks that refuse, and a read record round trip. */
+static void *tbody_owner_object;
+static void *tbody_owner(uint32_t ret) {(void)ret;return tbody_owner_object;}
 static void test_join_body(void) {
     static unsigned char object[0x300],record[0x80],xbody[0x10],scene[0x28],system_[0x1c0],iface[0x10],manager[0x18],body[0x78],motion[0x80];
     static unsigned char *bodies[4];
@@ -2895,6 +2897,24 @@ static void test_join_body(void) {
     count=2;memcpy(manager,&count,8);assert(!join_body_locate(object,0,&r,&b,&m));count=4;memcpy(manager,&count,8);
     id=0xffffffffu;memcpy(xbody+8,&id,4);assert(!join_body_locate(object,0,&r,&b,&m));id=2;memcpy(xbody+8,&id,4);
     assert(join_body_locate(object,0,&r,&b,&m));
+    /* join_body_make: off, nothing named; on, the object is pending and each of its two records' IDs takes the view route once,
+     * by the frame's rdi; another object's, a record made again and a frame without its register stay shared */
+    {   void *(*owner)(uint32_t)=rid_body_owner;rid_body_owner=tbody_owner;rid_body_clear();join_body_named=0;
+        InterlockedExchange64(&rid_body_routed,0);InterlockedExchange64(&rid_body_misses,0);
+        const uint32_t fa[3]={0xc0039u,RID_BODY_RET_A,0x7cc8f2u},fb[3]={0xc0039u,RID_BODY_RET_B,0x7cc8f2u},other[2]={0xc0039u,0x7cc8f2u};
+        tbody_owner_object=object;
+        join_body_make_on=0;join_body_make(object);assert(!join_body_named && !rid_body_pending_n && !rid_body_route(fa,3));
+        join_body_make_on=1;join_body_make(NULL);join_body_make(object);join_body_make(object);assert(join_body_named==2 && rid_body_pending_n==1);
+        assert(!rid_body_route(other,2));                                              /* no maker frame */
+        tbody_owner_object=record;assert(!rid_body_route(fa,3) && rid_body_pending_n==1);   /* another object's body */
+        tbody_owner_object=NULL;assert(!rid_body_route(fa,3) && rid_body_misses==1);        /* the frame not found */
+        tbody_owner_object=object;
+        assert(rid_body_route(fa,3)==(int)RID_ROUTE_VIEW && rid_body_routed==1 && rid_body_pending_n==1 && !rid_body_route(fa,3));   /* once */
+        assert(rid_body_route(fb,3)==(int)RID_ROUTE_VIEW && rid_body_routed==2 && !rid_body_pending_n && !rid_body_route(fb,3));     /* both: done */
+        {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," body_make=1:2:2:1"));}
+        join_body_make_on=0;join_body_named=0;rid_body_clear();rid_body_owner=owner;
+        InterlockedExchange64(&rid_body_routed,0);InterlockedExchange64(&rid_body_misses,0);
+    }
     /* Records sort by (portable, which), a duplicate refuses. */
     join_tables t;memset(&t,0,sizeof(t));uint32_t cap=0;
     join_body_rec a=rec,c=rec;a.portable=0x3001;c.which=1;
@@ -2908,7 +2928,7 @@ static void test_join_body(void) {
         assert(join_jobs_ships(state,JOIN_JOBS_WAITING)==3u && !join_jobs_ships(state,JOIN_JOBS_ACTIVE));
         v[1]=(uintptr_t)ships+4u;memcpy(state+JOIN_JOBS_ACTIVE,v,16);assert(join_jobs_ships(state,JOIN_JOBS_ACTIVE)==0xffffu);
     }
-    printf("hot join BODY: the Jolt body behind a record, moving and static, refusals, order; JOBS ship vectors PASS\n");
+    printf("hot join BODY: the Jolt body behind a record, moving and static, refusals, order, a missing body's two IDs routed once; JOBS ship vectors PASS\n");
 }
 /* RESV (lockstep_join_world.h): a zone's reservation tree walked in order as 0x835aa9 .. 0x835aef takes it, a count that does not
  * match refused; the capture's records by the zone's and the owner's portable IDs and the index; the admission writes the
@@ -3393,8 +3413,11 @@ static void test_join_attn_set(void) {
     assert(!join_attn_reconcile(tattn_obj[0],7,1,0));                                               /* 1: SetAttention computes its own */
     assert(!join_attn_reconcile(tattn_obj[1],6,7,0) && !tattn_swaps);                               /* the states agree */
     tattn_swap_ok=0;assert(!join_attn_reconcile(tattn_obj[0],6,7,0) && !tattn_calls && join_attn_set_refused==1 && !join_attn_post_on);
+    join_attn_set_loaded=0;const uint64_t tattn_allocs0=join_ids_list.allocs;
     tattn_swap_ok=1;assert(join_attn_reconcile(tattn_obj[0],6,7,0) && tattn_calls==1 && tattn_level==7 && join_attn_set_calls==1 && join_attn_post_on);
-    assert(join_attn_reconcile(tattn_obj[0],6,7,0) && tattn_calls==2 && tattn_swaps==2);           /* swapped once for the pass */
+    assert(tattn_load_seen==1 && !join_ids_admit_load && join_attn_set_loaded==2);                  /* hjs1: its units on the load list */
+    assert(join_attn_reconcile(tattn_obj[0],6,7,0) && tattn_calls==2 && tattn_swaps==2 && join_attn_set_loaded==4);   /* swapped once for the pass */
+    join_ids_list.allocs=tattn_allocs0;                                                              /* the stub's counts, for the tests after */
     /* a post through the swapped sites: destroyed, counted; the boot passes untouched */
     {uint64_t calls=(uint64_t)join_bootev_calls;tattn_destroyed=0;InterlockedExchange64(&join_attn_set_posted,0);
      join_boot_events(tattn_obj[0],tattn_ev[0]);assert(tattn_destroyed==1 && join_attn_set_posted==1 && (uint64_t)join_bootev_calls==calls);}

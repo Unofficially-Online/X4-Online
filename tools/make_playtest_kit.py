@@ -150,7 +150,8 @@ def server_text(commit, recipe, server, snapshot_name, dll_sha):
            '   game as it is now and joins it (2 to 4 minutes; the others have two short pauses meanwhile).',
            '   Joining needs player 1 in the game: their PC hands the game over to the joiner through the server',
            '   (about 190 MB up from their line). When player 1 has left, nobody can join that game any more.',
-           '   In coop the shared wallet holds the money of every start on offer from the first minute.',
+           '   In coop the blueprints, research and known map of every start on offer are shared from the first minute;',
+           "   a start's money joins the shared wallet when its player has joined.",
            ] if recipe.get('open') else
           ['Play (installed with the installer)',
            '1. Press Play in Steam. X4\'s main menu has Multiplayer ("Modified game detected": OK).',

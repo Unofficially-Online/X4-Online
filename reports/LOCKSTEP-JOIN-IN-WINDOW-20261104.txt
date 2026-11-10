@@ -1485,3 +1485,85 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
   .local/try/watchrows.py (JOIN_WATCH levels 0 and 1 and JOIN_WATCHPCF from x4lan-crash.txt; +0x1e0 and +0x1e8 are in
   the JOIN_WATCHRAW dump at those offsets). A watch on four objects over 14 steps moves a joiner's handover from 3300
   to 4514 in a 3 minute window; one object stays near 3413.
+
+61. T=710: FOUR FIGHTERS' TARGET INVALID FOUR TICKS APART, 4,500 TICKS AFTER A CLEAN JOIN (OPEN; ca38 .. ca42; 10 Nov)
+
+- T=710 (the sweep's next step, on 6ade3d82 and again on the published cf41701c): joined with digest_mismatches=0 at the
+  handover, the radar post rows equal from 710 to 5441, then digest mismatches at 5261..5267 and 5279..5294 and the census
+  of 5400 apart (first_desync 5261). The same tick in four runs: it is not a race.
+- What differs (ca38: script RNG rows and trace of 5255..5300, the detail decoded with x4-re/md_keywords.csv; ca40:
+  native_gate_event_rows=24 from 5244, with native_gate_trace_window moved onto the window, without which the rows are
+  recorded but never written):
+    joiner   5257: U::TargetInvalidEvent (0x2ba9120, keyword 1340 event_object_target_invalid) delivered to the ships
+             0x6f09f, 0x6f119, 0x6f12d, 0x6f141, due 182.3163 = the time of tick 5257; their pilots handle it inside
+             fight.attack.object.fighter.
+    session  5261: the same event for 0x6f12d alone (due = tick 5261), handled in order.fight.attack.object; 5262: the
+             other three get U::AIOrderCancelledEvent (0x2ba7168) and their TargetInvalidEvent (due = tick 5262), handled
+             in order.fight.escort. The joiner's order cancels follow at 5263.
+  No other delivered event of 5244..5268 differs (no kill among them). The runtime ID rows part at 5260 (the session
+  makes 5 AI script contexts there, the joiner at 5261): that is the digest's first sight of it.
+- Where the event comes from: the flight controller's pathing code builds it at 0xe8dd2e .. 0xe8df6e (and 0xe8f52b,
+  0xe90120; the spline model at 0xeb7986, 0xebd119) inside a loop over 0x90-byte entries and queues it as a kind-3
+  record {source, event, time} with the pathing manager's time (*0x6cf21c8 +0x200). So the four agents find their target
+  invalid at tick 5257 on the joiner and at 5261 / 5262 on the session, each side at its own tick, with every delivered
+  event before it equal.
+- The four ships at T, T+1 and T+2 (ca42: JOIN_WATCHRAW of the object, the movement controller, the Agent and its command
+  block on both sides; .local/try/rawdiff.py, bank-mirrored words left out). What stays different after T+2:
+    Agent +0xac0 (= command block +0x3e0, the obstacle probes' due time; enable +0x3e8 is 0 on both): 7.58 .. 7.99 on the
+      session (its own load at 7.083 plus a draw), 31.40 .. 31.72 on the joiner (its load at 30.75 plus another draw);
+    Agent +0x6c0..+0x6d0: an empty vector with a buffer on the session, null on the joiner (three ships);
+    Agent +0x5e2 of 0x6f12d alone, the wing's leader: 1 on the session, 0 on the joiner. +0x4e0 is a fourth flight
+      parameter block (0xeac615 copies the creation's parameters into it through the slot copy 0xe84970 right after the
+      Agent's constructor 0xe85360); PARAM carries the read and write slots and the own copy +0x340, not this one;
+    the ship's +0xa10/+0xa14/+0xa18 (the lazy cargo stamp and SHPW's fields, known) and the movement controller's +0x18
+      (a local ID) and +0xc8 (a parity that alternates each step).
+  The Agent's times +0xf34/+0xf40 (AGTT) and its result banks (ARES) are equal.
+- Not known yet: which of these, or what outside the dumped blocks (the order in which the pathing manager updates
+  low-attention agents is a candidate: the joiner's four post in one tick, the session's over two), moves the check by
+  four ticks. Next: a refwatch on 0x6f12d's Agent +0x5e0 around 5250 to see whether anything reads it; the creation
+  parameters carried as a fourth PARAM slot if so; else the entries' loop at 0xe8d8a6 read for its condition.
+- Not usable any more: overlays built before the tree moved to cf41701c with x4ls from the newer tree (the joiner's
+  probe is the tree's and refuses the older DLL: "pilot aim refused"). The sweep's overlay is ca-watch41 (the published
+  DLL 18ffb215 copied to .local/try/dll-cf41701c).
+
+62. A JOIN INTO A NEW-SESSION SAVE: THE ADMISSION'S ATTENTION RAISE AND A HULL WITHOUT BODIES (hjs1 .. hjs1d; 10 November)
+
+- The case (x4mods-b8's hjs1, for the starts a joiner may pick): a session made by x4ls new-session, base start plus slot
+  2's own start (a fight hull in cluster_47, its kit applied at the setup tick), slot 2 open. The first join into it:
+  the whole flow runs, the world rows equal, and the digest apart on every tick from T+1 in the runtime ID part alone,
+  the joiner's next ID 9,119 ahead of the session's.
+- Cause 1, the visible attention raise. ATTN set (section 57) runs the native SetAttention at the admission where ATTN's
+  write leaves the per-level state apart. Its states branch (below level 6, hj23) already runs it with the joiner's load
+  list open (join_ids_admit_load). Its visible branch (a write at or over 6) ran it bare. On the capture-005 fixture
+  that is one call (attn_set=1:1:1). Here the session holds the open slot's sector at high attention from its first
+  tick and the joiner's load has it low: three calls (the sector and two zones, attn_set=1:3:2195:13) run
+  Positional::InitPartAnimations 0x755110 and InitTextureAnimations for everything inside, 9,119
+  U::Animation::SequenceControlUnit IDs (0x116922d under 0x115e3bc, 0x1164552) on the shared route after join_admit_rid
+  had set the session's next one. The session made those units in its own first tick.
+  Fix: the visible branch opens the load list as the states branch does; status attn_set_loaded=.
+  hjs1 on it: attn_set_loaded=9119, next equal at T+1; a second cause left, next 2 ahead from T+1.
+- Cause 2, a hull without physics bodies. RUNTIME_IDS_ROW at T+1: two allocations more on the joiner, callers
+  c0039,b8601,51b85f,51bc31|51bc65 under Ship::vfunc674: U::Destructible::vfunc904 0x51bb90 makes an object's two XPhys
+  records (+0x260, +0x268) through 0x51b730 when they are missing, its own test (vtable +0x1b50) passes and its zone
+  gives a scene (vtable +0x1d78). The admission says the same: body=26:4:24:20:20:2:0, two of the session's 32 BODY
+  records without a body on the joiner; of the session's 16 BODY objects only the open slot's hull 0x170c20 lies in the
+  sector the load holds low. Every later step's allocations are equal on both sides.
+  hjs1b: native_gate_join_attn_states changes nothing here (attn_states=1:0:0, nothing apart). hjs1c, a first form that
+  called 0x51bb90 at the admission: body_make=1:0:0, it makes nothing there (the test or the scene is not there before
+  the hull's first Move).
+  Fix (native_gate_join_body_make, in JOIN_DEFAULT_ON): the admission names an object whose BODY record finds no body;
+  the allocator (lockstep_runtime_ids.h rid_body_route) sends an allocation whose stack holds one of the maker's two
+  returns (0x51bc31, 0x51bc65), unwound to that frame for the object in rdi, to the joiner's view list, once per record.
+  0x51bb90 is pinned with the join's other functions. Status body_make=on:named:routed:misses.
+- hjs1d (both fixes, T=694): attn_set_loaded=9119, body_make=1:2:2:0; the runtime ID rows of 695 .. 3368 equal on both
+  sides (hjs1: none); joined at 3340 with digest_mismatches=118 (hjs1: 2,682, every tick).
+- Open on this save:
+    the sample part differs from T+1 (every tick of the logged 695 .. 760; 118 ticks by the relay's count): the hull's
+      body is X4's own from the object's transform when its Move makes it at T+1, not the session's state (BODY writes
+      only bodies that exist at the admission);
+    3369, 29 ticks after the handover: the session alone makes an object (callers 3d2431,7429dc,5152f2,812932 and
+      InitPartAnimations' dd7c7c80 x6, texture animations 159b6222, script contexts): 43 allocations against 24, and the
+      digest apart from 3370 to the end. Not read yet.
+- Tests: native tests pass (the visible branch on the load list; a pending object's two records routed once, another
+  object's and a repeated one left shared; the pin). Real game: hjs1 .. hjs1d above. Not yet rerun on the capture-005
+  fixture with these two changes.

@@ -467,7 +467,7 @@ static void *rid_frame_register(uint32_t return_rva,int which) {
             if(f) {PVOID data=NULL;DWORD64 establisher=0;RtlVirtualUnwind(UNW_FLAG_NHANDLER,base,c.Rip,f,&c,&data,&establisher,NULL);}
             else {DWORD64 next=0;if(!read_local((const void*)(uintptr_t)c.Rsp,&next,8)) return NULL;c.Rip=next;c.Rsp+=8;}   /* a leaf */
             if(!c.Rip) return NULL;
-            if(c.Rip==want) return (void*)(uintptr_t)(which?c.R15:c.Rsi);
+            if(c.Rip==want) return (void*)(uintptr_t)(which==2?c.Rdi:which?c.R15:c.Rsi);
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {return NULL;}
     return NULL;
@@ -490,6 +490,47 @@ static int rid_ui_element_route(const uint32_t *frames,unsigned count) {
     }
     if(route) InterlockedIncrement64(&rid_ui_element_allocs);
     return (int)route;
+}
+/* native_gate_join_body_make (lockstep_join_body.h; hjs1c, 10 Nov): a joiner's object whose physics bodies the session has and
+ * its own load left out makes them in its first Move after the admission: U::Destructible::vfunc904 0x51bb90 calls the maker
+ * 0x51b730 once per XPhys record (+0x260 returning to 0x51bc31, +0x268 to 0x51bc65; the object in rdi), one ID each. The
+ * session took those IDs when it made the bodies, so on the joiner they go to its view list: the admission names the
+ * objects (rid_body_pending), an allocation whose stack holds one of the two returns is unwound to that frame for its rdi,
+ * and a pending object's record takes the route once. Status body_make=on:objects:routed:misses. */
+#define RID_BODY_RET_A 0x51bc31u
+#define RID_BODY_RET_B 0x51bc65u
+#define RID_BODY_PENDING 64u
+static void *volatile rid_body_pending[RID_BODY_PENDING];static volatile LONG rid_body_mask[RID_BODY_PENDING],rid_body_pending_n;
+static volatile LONG64 rid_body_routed,rid_body_misses;
+static void *rid_body_owner_native(uint32_t ret) {return rid_frame_register(ret,2);}
+static void *(*rid_body_owner)(uint32_t)=rid_body_owner_native;   /* tests replace it */
+static int rid_body_add(void *object) {   /* 1 pending now (or already), 0 full */
+    for(unsigned k=0;k<RID_BODY_PENDING;k++) if(rid_body_pending[k]==object) return 1;
+    for(unsigned k=0;k<RID_BODY_PENDING;k++) if(!rid_body_pending[k]) {
+        InterlockedExchange(&rid_body_mask[k],0);rid_body_pending[k]=object;InterlockedIncrement(&rid_body_pending_n);return 1;
+    }
+    return 0;
+}
+static void rid_body_clear(void) {
+    for(unsigned k=0;k<RID_BODY_PENDING;k++) {rid_body_pending[k]=NULL;InterlockedExchange(&rid_body_mask[k],0);}
+    InterlockedExchange(&rid_body_pending_n,0);
+}
+static int rid_body_route(const uint32_t *frames,unsigned count) {
+    if(!InterlockedCompareExchange(&rid_body_pending_n,0,0)) return 0;
+    for(unsigned i=0;i<count;i++) {
+        if(frames[i]!=RID_BODY_RET_A && frames[i]!=RID_BODY_RET_B) continue;
+        void *owner=rid_body_owner(frames[i]);const LONG bit=frames[i]==RID_BODY_RET_A?1:2;
+        if(!owner) {InterlockedIncrement64(&rid_body_misses);return 0;}
+        for(unsigned k=0;k<RID_BODY_PENDING;k++) {
+            if(rid_body_pending[k]!=owner) continue;
+            const LONG before=InterlockedOr(&rid_body_mask[k],bit);
+            if(before&bit) return 0;                       /* that record once: a body made again later is the session's too */
+            if((before|bit)==3) {rid_body_pending[k]=NULL;InterlockedDecrement(&rid_body_pending_n);}
+            InterlockedIncrement64(&rid_body_routed);return (int)RID_ROUTE_VIEW;
+        }
+        return 0;
+    }
+    return 0;
 }
 /* SetAttention's prologue up to the slot-703 call (view points rewrite that call) and its body from after it through the handler
  * call: the object in rsi from 0x3d5669 to 0x3d5747. */
@@ -518,6 +559,7 @@ static unsigned rid_route_of(const uint32_t *frames,unsigned count) {
     /* What the table calls shared but this client's guidance alone asked for (lockstep_guidance_local.h). */
     if(route==RID_ROUTE_SHARED && glocal_route_of(frames,count)) return RID_ROUTE_UI;
     if(route==RID_ROUTE_SHARED) {const int own=rid_ui_element_route(frames,count);if(own) return (unsigned)own;}   /* native_gate_runtime_ids_ui_elements */
+    if(route==RID_ROUTE_SHARED) {const int own=rid_body_route(frames,count);if(own) return (unsigned)own;}         /* native_gate_join_body_make */
     return route;
 }
 static created_assign_fn rid_assign_original(void) {return rid_assign_native?rid_assign_native:(created_assign_fn)(void *)(thunk+CREATED_THUNK);}
