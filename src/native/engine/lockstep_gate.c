@@ -2636,8 +2636,9 @@ static int lua_region_camera_effect_row(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_region_camera_policy_rows(lua_State *L) {
-    double ticks=p_lua_tonumber(L,1);
-    p_lua_pushnumber(L,isfinite(ticks) && ticks>=1 && ticks<=600 && floor(ticks)==ticks && rc_pick_rows_arm((unsigned)ticks));return 1;
+    double ticks=p_lua_tonumber(L,1),from=p_lua_tonumber(L,2);   /* from: optional (nil reads 0) */
+    p_lua_pushnumber(L,isfinite(ticks) && ticks>=1 && ticks<=600 && floor(ticks)==ticks && isfinite(from) && from>=0 && from<9007199254740992.0 &&
+                       floor(from)==from && rc_pick_rows_arm((unsigned)ticks,(uint64_t)from));return 1;
 }
 static int lua_region_camera_policy_row(lua_State *L) {
     double index=p_lua_tonumber(L,1);char out[192];

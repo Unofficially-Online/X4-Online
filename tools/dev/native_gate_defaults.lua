@@ -279,6 +279,7 @@ D.DIAGNOSTIC={
  {'native_gate_traffic_rows','traffic rows'},
  {'native_gate_view_rows','view point rows'},
  {'native_gate_viewpoint_policy_rows','view point policy rows'},
+ {'native_gate_viewpoint_policy_rows_from','view point policy rows: the first tick of the window (default 1)'},
  {'native_gate_highway_rows','highway rows'},
  {'native_gate_highway_rows_from','highway rows start'},
  {'native_gate_highway_trace','highway fixture pose trace'},

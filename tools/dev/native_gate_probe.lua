@@ -4189,8 +4189,10 @@ local function frame()
    local ticks=cfg.native_gate_viewpoint_policy_rows
    assert((cfg.native_gate_viewpoint_policy or cfg.native_gate_mining_camera or cfg.native_gate_xs_camera) and type(ticks)=='number' and
     ticks>=1 and ticks<=600 and ticks==math.floor(ticks) and
-    gate.region_camera_policy_rows and gate.region_camera_policy_row and gate.region_camera_policy_rows(ticks)==1,'viewpoint policy rows refused')
-   log('VIEWPOINT_POLICY_ROWS_ARMED ticks='..ticks)
+    gate.region_camera_policy_rows and gate.region_camera_policy_row and
+    gate.region_camera_policy_rows(ticks,cfg.native_gate_viewpoint_policy_rows_from or 0)==1,'viewpoint policy rows refused')
+   -- native_gate_viewpoint_policy_rows_from = F: the rows of ticks F..F+N instead of 1..N (a joiner's handover)
+   log('VIEWPOINT_POLICY_ROWS_ARMED ticks='..ticks..' from='..tostring(cfg.native_gate_viewpoint_policy_rows_from or 0))
   end
   -- Highway parameter rows (diagnostic): Highway::vfunc674's camera offset and its spline parameter,
   -- UniverseFrameUpdate's parameter; one HIGHWAY_PARAM_ROW per call for ticks from..from+N-1. The calls
