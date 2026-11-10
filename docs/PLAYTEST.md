@@ -180,6 +180,32 @@ Installed from such an installer, a player starts nothing of ours: **Play in Ste
   (`lobby.auto`). Not run: a start from Steam itself in a player's own profile (AGENTS.md keeps our tests out of
   it), and a mouse click on the page's buttons.
 
+### A game you can join while it runs, with a start of your choice (built 10 Nov; not run in X4 yet)
+
+A kit whose overlay has open slots (`build_play_overlay.py --open`, `x4ls new-session --start K=... --open K,...`)
+makes the server's game a drop-in one: nobody waits for a full house.
+
+- **The first player** chooses **Start the game** on the Multiplayer page. They get the slot that is not open
+  (slot 1, the session's base start) and load the snapshot as in any game. The server starts the relay with the
+  join arguments (`hotjoin.relay_join_args`, slot 1 saves the joins).
+- **Everyone after that** sees one row per open start on the page (`hotjoin.open_starts` of the recipe; a taken
+  start says so) and picks one. X4 restarts and the helper runs `x4ls join --server-file server.json --slot K`:
+  the server admits the PC and names the session, and the rest is the hot join of "Joining a running game" against
+  the server's relay. Only the joiner loads; the others have a short pause at the save and at the hand-over.
+- **The join files** (`j<T>.x4join`, `j<T>.xml.gz`, about 190 MB) are written by player 1's X4. The server follows
+  its relay's log; at the `saved` notice it asks player 1's launcher, which stays connected for this, and the
+  launcher uploads the two files. The server checks them against the announced hashes and serves them on TCP
+  `port` with `joinfiles.FileService`, where the joiner's `x4ls join` fetches them as it would from a host's PC.
+  The upload takes as long as player 1's line needs for 190 MB, and every second of it is 30 ticks the joiner has
+  to catch up; the relay gives a joiner 900 s from the save to its first report.
+- A late joiner's address is not known when the relay starts: the server writes it into the relay's
+  `--allow-file`, which the relay reads again when a datagram comes from an unknown address.
+- **Limits of this first form:** player 1 has the fixed base start. Joining needs player 1 in the game (it is the
+  only saver; whether a client that joined can save for the next one is not tested), and the page says so when
+  player 1 has left. A slot whose ship is in another sector than player 1's still splits the runtime ID counter
+  (the hot-join work has the fix in progress): do not hand out a kit with far starts before that.
+- The server also listens on TCP `port` for this (`deploy_playtest_server.py` opens it).
+
 ## Two PCs (built 8 Nov; run on one PC through its LAN address, not yet between two PCs)
 
 On the host PC (it runs the relay and slot 1), with UDP 47000 forwarded to it if the other PC is outside the LAN:
@@ -311,6 +337,9 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
   is known (the far sector around the open slot's ship is raised to the session's attention level after the joiner's
   ID counter was set) and is being fixed in the join code. A session whose open slots start next to the host is
   not affected.
+- Known limit: every slot's kit is applied when the session starts, also for slots nobody has taken yet. In coop
+  the wallet is shared, so the money of every start on offer is in it from the first minute (the trade start alone
+  brings 200,000 Cr), not when its player joins.
 - Not built: picking any start at join time without the host having prepared it, and joining from the game's
   Multiplayer page (that page starts a game only when every player is there).
 

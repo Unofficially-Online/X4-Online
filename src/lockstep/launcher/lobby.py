@@ -118,10 +118,22 @@ def lua_string(text):
     return "'" + text + "'"
 
 
+def lua_value(value):
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, dict):
+        return '{' + ', '.join(f'{k} = {lua_value(v)}' for k, v in value.items() if re.fullmatch(r'[A-Za-z_]\w*', str(k))) + '}'
+    if isinstance(value, (list, tuple)):
+        return '{' + ', '.join(lua_value(v) for v in value) + '}'
+    return lua_string(value)
+
+
 def state_text(stamp, phase, lines, **fields):
     """lobby/state.lua: a Lua file that returns what the page shows (the game reads it with loadfile)."""
     rows = [f'stamp = {int(stamp)}', f'phase = {lua_string(phase)}']
-    rows += [f'{k} = {v if isinstance(v, int) else lua_string(v)}' for k, v in fields.items() if v is not None]
+    rows += [f'{k} = {lua_value(v)}' for k, v in fields.items() if v is not None]
     rows.append('lines = {' + ', '.join(lua_string(t) for t in lines) + '}')
     return 'return {' + ', '.join(rows) + '}\n'
 
@@ -295,6 +307,7 @@ class Lines:
 
 
 UPLOAD_LIMIT = 300 * 1024 * 1024   # one launcher's packed logs
+JOIN_FILE_LIMIT = 300 * 1024 * 1024   # one join file (the save is about 190 MB)
 
 
 def pack_logs(run_dir, archive):
@@ -306,36 +319,111 @@ def pack_logs(run_dir, archive):
     return Path(archive).stat().st_size
 
 
-def send_logs(server, kit, run_dir, game, slot, log=print):
-    """After the game: this launcher's run folder goes to the kit's server (x4ls serve keeps it with the game's relay files)."""
+def send_file(server, kit, path, game, slot, name=None):
+    """One file to the kit's server (x4ls serve): a launcher's packed logs, or with `name` a join file (j<T>.x4join,
+    j<T>.xml.gz) a saver hands over for a joiner. Returns the name the server stored it under."""
     address, port, key = server
-    archive = Path(run_dir).parent / (Path(run_dir).name + '.zip')
-    size = pack_logs(run_dir, archive)
+    size = Path(path).stat().st_size
     with socket.create_connection((address, port + 1), timeout=10) as sock:
         sock.settimeout(120)
         lines = Lines(sock)
         nonce = str((lines.wait(10) or {}).get('nonce', ''))
-        send(sock, {'upload': {'game': game or '', 'slot': int(slot or 0), 'size': size}, 'kit': kit,
-                    'proof': key_proof(key, nonce, kit)})
+        send(sock, {'upload': {'game': game or '', 'slot': int(slot or 0), 'size': size, **({'file': name} if name else {})},
+                    'kit': kit, 'proof': key_proof(key, nonce, kit)})
         answer = lines.wait(10)
         if not isinstance(answer, dict) or not answer.get('ok'):
-            raise OSError('the server did not take the logs: ' + str((answer or {}).get('why', 'no answer')))
-        with archive.open('rb') as f:
+            raise OSError('the server did not take the file: ' + str((answer or {}).get('why', 'no answer')))
+        with Path(path).open('rb') as f:
             while True:
                 chunk = f.read(65536)
                 if not chunk:
                     break
                 sock.sendall(chunk)
-        answer = lines.wait(120)
+        answer = lines.wait(300)
         if not isinstance(answer, dict) or not answer.get('ok'):
-            raise OSError('the server did not confirm the logs')
-    archive.unlink()
-    log(f'lobby: logs sent to the server ({size // 1024} KiB, {answer.get("stored")})')
+            raise OSError('the server did not confirm the file')
     return answer.get('stored')
 
 
-def receive_upload(sock, first, size, path, log):
-    """The server's side of send_logs, in its own thread: `size` bytes into `path`."""
+def send_logs(server, kit, run_dir, game, slot, log=print):
+    """After the game: this launcher's run folder goes to the kit's server (x4ls serve keeps it with the game's relay files)."""
+    archive = Path(run_dir).parent / (Path(run_dir).name + '.zip')
+    size = pack_logs(run_dir, archive)
+    stored = send_file(server, kit, archive, game, slot)
+    archive.unlink()
+    log(f'lobby: logs sent to the server ({size // 1024} KiB, {stored})')
+    return stored
+
+
+def ask_server(server, kit, what):
+    """One question to the kit's server: 'status' (is a game running, who is there, which starts are free) or 'join'
+    (admit this PC to the running game: the answer's 'running' has the session's salt). The answer, or None."""
+    address, port, key = server
+    try:
+        with socket.create_connection((address, port + 1), timeout=6) as sock:
+            sock.settimeout(6)
+            lines = Lines(sock)
+            nonce = str((lines.wait(6) or {}).get('nonce', ''))
+            send(sock, {'kit': kit, 'proof': key_proof(key, nonce, kit), **({'status': True} if what == 'status' else {'late': True})})
+            return lines.wait(6)
+    except OSError:
+        return None
+
+
+def join_running(overlay, server_file, slot=None, start=None, log=print, **options):
+    """x4ls join --server-file: join the game that runs on the kit's server in an open slot (by number or by start).
+    The server admits this PC and names the session; the rest is hotjoin.hot_join against the server's relay, and the
+    run folder goes to the server at the end, as after any game."""
+    from . import hotjoin
+    overlay = Path(overlay).resolve()   # hot_join builds the joiner's overlay from the checkout's folder, not from here
+    recipe = json.loads((Path(overlay) / 'play-recipe.json').read_text(encoding='utf-8'))
+    kit, server = kit_id(overlay, recipe.get('snapshot_sha')), read_server_file(server_file)
+    answer = ask_server(server, kit, 'late')
+    if not isinstance(answer, dict):
+        raise SystemExit(f'the server at {server[0]}:{server[1] + 1} does not answer')
+    if not answer.get('ok') or not isinstance(answer.get('running'), dict):
+        raise SystemExit('the server refused: ' + str(answer.get('why', 'no game is running')))
+    salt = str(answer['running']['salt'])
+    o = hotjoin.HotJoinOptions(relay=f'{server[0]}:{server[1]}', token=session_token(server[2], salt), slot=slot, start=start,
+                               overlay=Path(overlay), offer_wait=780, **options)
+    before = set(o.runs.glob('*-hotjoin*')) if o.runs.is_dir() else set()
+    try:
+        return hotjoin.hot_join(o, log)
+    finally:
+        for folder in sorted(set(o.runs.glob('*-hotjoin*')) - before):
+            try:
+                send_logs(server, kit, folder, salt, o.slot or 0, log)
+            except Exception as error:   # the game is over either way; the folder stays here
+                log(f'lobby: logs not sent to the server ({error}); they are in {folder}')
+
+
+def hand_over_joins(lines, server, kit, save_dir, game, slot, log=print, wait_s=90):
+    """A saver's launcher during a drop-in game (its own thread): the server names a join the relay had this slot save
+    ({'send_join': {'tick': T}}), and the two files X4 wrote for it go to the server, which serves them to the joiner.
+    Ends when the server closes the connection."""
+    while not lines.closed:
+        for message in lines.poll():
+            wanted = message.get('send_join') if isinstance(message, dict) else None
+            if not isinstance(wanted, dict):
+                continue
+            try:
+                tick = int(wanted.get('tick', 0))
+                files = [Path(save_dir) / 'mpjoin' / f'j{tick}.x4join', Path(save_dir) / 'mpjoin' / f'j{tick}.xml.gz']
+                deadline = time.time() + wait_s
+                while not all(p.is_file() for p in files) and time.time() < deadline:
+                    time.sleep(0.5)
+                started = time.time()
+                for path in files:
+                    send_file(server, kit, path, game, slot, name=path.name)
+                log(f'lobby: join files of tick {tick} handed to the server ({sum(p.stat().st_size for p in files) >> 20} MB '
+                    f'in {time.time() - started:.0f} s)')
+            except (OSError, ValueError) as error:
+                log(f'lobby: join files not handed over: {error}')
+        time.sleep(0.3)
+
+
+def receive_upload(sock, first, size, path, log, done=None):
+    """The server's side of send_file, in its own thread: `size` bytes into `path`; then done(path)."""
     part = path.with_name(path.name + '.part')
     try:
         sock.settimeout(60)
@@ -353,7 +441,9 @@ def receive_upload(sock, first, size, path, log):
                     raise OSError(f'the connection closed after {got} of {size} bytes')
         os.replace(part, path)
         send(sock, {'ok': True, 'stored': path.name})
-        log(f'lobby: logs stored: {path} ({size // 1024} KiB)')
+        log(f'lobby: {"join file" if done else "logs"} stored: {path} ({size // 1024} KiB)')
+        if done:
+            done(path)
     except OSError as error:
         log(f'lobby: logs for {path.name} not stored: {error}')
         part.unlink(missing_ok=True)
@@ -372,6 +462,10 @@ class Host:
         self.slots = range(1 if key else 2, clients + 1)
         self.busy = None   # a server whose game is running: what every joiner is told
         self.upload_dir = None   # a server: game id -> the folder a launcher's logs go to (x4ls serve sets it)
+        self.join_dir = None     # a drop-in server: game id -> the folder a saver's join files go to, or None
+        self.join_done = None    # ... and what is called with each stored join file
+        self.status = None       # a server: () -> what a launcher's 'status' question is answered with
+        self.running = None      # a drop-in server while its game runs: (address) -> the 'running' answer for a late joiner
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server.bind((address, port + 1))
@@ -405,6 +499,8 @@ class Host:
             return 'the invite code is not this game\'s'
         if hello.get('kit') != self.kit:
             return 'the overlay or the snapshot differs from the host\'s (copy the host\'s kit again)'
+        if hello.get('ignore_full'):
+            return None
         if self.busy:
             return self.busy
         if not [k for k in self.slots if k not in self.players]:
@@ -434,6 +530,9 @@ class Host:
                 self.pending.remove(entry)
                 if self.key and isinstance(hello, dict) and 'upload' in hello:   # a launcher's logs after its game
                     self.take_upload(lines, ip, nonce, hello)
+                    break
+                if self.key and isinstance(hello, dict) and ('status' in hello or 'late' in hello):
+                    self.answer_question(lines, ip, nonce, hello)
                     break
                 why = self.refusal(hello, nonce)
                 try:
@@ -468,6 +567,23 @@ class Host:
                     lines.closed = True
         return len(self.players) == len(self.slots)
 
+    def answer_question(self, lines, ip, nonce, hello):
+        """'status' (anyone with the key and the kit) or 'late' (a player for the running game): one answer, then closed."""
+        why = self.refusal({**hello, 'ignore_full': True}, nonce)
+        try:
+            if why and why not in (self.busy, 'the game is full'):
+                send(lines.sock, {'ok': False, 'why': why})
+            elif 'status' in hello:
+                send(lines.sock, {'ok': True, 'status': self.status() if self.status else {}})
+            elif not self.running:
+                send(lines.sock, {'ok': False, 'why': 'no game is running on the server that can be joined'})
+            else:
+                send(lines.sock, {'ok': True, 'running': self.running(ip)})
+                self.log(f'lobby: {ip} admitted to the running game')
+        except OSError:
+            pass
+        lines.sock.close()
+
     def take_upload(self, lines, ip, nonce, hello):
         meta = hello['upload'] if isinstance(hello['upload'], dict) else {}
         try:
@@ -478,8 +594,13 @@ class Host:
         why = None
         if not hmac.compare_digest(str(hello.get('proof', '')), key_proof(self.key, nonce, str(hello.get('kit', '')))):
             why = 'this build is not the one the server runs (another key)'
-        elif not self.upload_dir or not 0 < size <= UPLOAD_LIMIT or not 0 <= slot <= 8:
+        join_file = str(meta.get('file', ''))
+        if not why and not join_file and (not self.upload_dir or not 0 < size <= UPLOAD_LIMIT or not 0 <= slot <= 8):
             why = 'the logs are not taken (too large, or this server keeps none)'
+        if not why and join_file:   # a saver's join file: only while a drop-in game runs, only the two names of a join
+            folder = self.join_dir(game) if self.join_dir else None
+            if not folder or not re.fullmatch(r'j[0-9]{1,7}[.](?:xml[.]gz|x4join)', join_file) or not 0 < size <= JOIN_FILE_LIMIT:
+                why = 'no join file is expected here'
         if why:
             try:
                 send(lines.sock, {'ok': False, 'why': why})
@@ -488,16 +609,23 @@ class Host:
             lines.sock.close()
             self.log(f'lobby: logs from {ip} refused: {why}')
             return
+        if join_file:
+            threading.Thread(target=receive_upload, daemon=True,
+                             args=(lines.sock, lines.buffer, size, Path(folder) / join_file, self.log, self.join_done)).start()
+            return
         name = f'{time.strftime("%Y%m%d-%H%M%S")}-player{slot}-{ip.replace(".", "_")}-{secrets.token_hex(2)}.zip'
         threading.Thread(target=receive_upload, args=(lines.sock, lines.buffer, size, Path(self.upload_dir(game)) / name, self.log),
                          daemon=True).start()
 
-    def start(self, arm_at, salt=None):
-        """Tell every player the load second (and, on a server, the salt of the session's token); their addresses."""
+    def start(self, arm_at, salt=None, drop_in=False):
+        """Tell every player the load second (and, on a server, the salt of the session's token); their addresses.
+        drop_in: the game takes more players while it runs, and these launchers stay connected as its savers."""
         for slot, (lines, _) in self.players.items():
             start = {'host': self.address, 'port': self.port, 'arm_at': arm_at, 'slot': slot}
             if salt:
                 start['salt'] = salt
+            if drop_in:
+                start['drop_in'] = True
             try:
                 send(lines.sock, {'start': start})
             except OSError:
@@ -557,7 +685,7 @@ def free_lane(state, lanes, log=print):
 def run(o: LobbyOptions, log=print):
     recipe = json.loads((Path(o.overlay) / 'play-recipe.json').read_text(encoding='utf-8'))
     clients = int(recipe['players'])
-    if recipe.get('open'):
+    if recipe.get('open') and not o.server_file:   # with a server the open slots are joined while the game runs
         raise SystemExit('x4ls lobby takes an overlay without open slots (every player is there at the start)')
     if not 0 <= o.lane <= len(profile.PROFILES):
         raise SystemExit(f'--lane must be 1..{len(profile.PROFILES)} (0: the first free one)')
@@ -599,6 +727,7 @@ def run(o: LobbyOptions, log=print):
     proc = relay = relay_log = host = peer = None
     result = {'outcome': 'failed'}
     game_id, slot = '', 0   # a server's game: the salt of its token (the server files this launcher's logs under it)
+    drop_in = False         # ... and whether it takes more players while it runs
     try:
         game.create_view(install, view)
         target, files = install_lobby(o.overlay, view / 'extensions', clients, profile_id, o.show, bool(server))
@@ -690,6 +819,12 @@ def run(o: LobbyOptions, log=print):
                     show('idle', *idle, f'Could not reach {"the server" if server else "the host"} at {address}:{port + 1} ({error}).')
                     log(f'lobby: could not join {address}:{port + 1}: {error}')
                     continue
+                if isinstance(answer, dict) and answer.get('ok') and 'running' in answer:
+                    sock.close()   # this X4 is in the menu for a common load; a running game is joined by x4ls join
+                    show('idle', *idle, 'A game is running on the server. Close X4 and join it with its start picker',
+                         '(Play in Steam, Multiplayer) or with x4ls join --server-file.')
+                    log('lobby: a game is running on the server (join it with x4ls join --server-file)')
+                    continue
                 if not isinstance(answer, dict) or not answer.get('ok'):
                     sock.close()
                     why = str(answer.get('why', 'no reason given')) if isinstance(answer, dict) else 'no reason given'
@@ -724,6 +859,7 @@ def run(o: LobbyOptions, log=print):
                     start = message.get('start') if isinstance(message, dict) else None
                     if start and server:   # the relay is the server's; the token comes from the kit's key and this salt
                         game_id = str(start['salt'])
+                        drop_in = bool(start.get('drop_in'))
                         chosen = (int(start['slot']), session_token(server[2], str(start['salt'])), server[1],
                                   int(start['arm_at']), server[0])
                     elif start:
@@ -736,7 +872,10 @@ def run(o: LobbyOptions, log=print):
                     show('idle', *idle, 'The host closed the game.')
                     log('lobby: the host closed the game')
         slot, token, port, arm_at, relay_host = chosen
-        if peer:
+        if peer and drop_in:   # the server asks this launcher for the join files its X4 saves; the connection stays
+            threading.Thread(target=hand_over_joins, daemon=True,
+                             args=(peer[0], server, kit, profile.profile_dir(profile_id) / 'save', game_id, slot, log)).start()
+        elif peer:
             peer[0].sock.close()
         text = session_config(o.overlay, files, slot, port, token, clients, profile_id, arm_at, relay_host)
         write_atomic(target / 'ui/config.lua', text)

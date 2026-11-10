@@ -6,7 +6,8 @@ server.json (not the snapshot, not X4) and Python 3.10 or newer. This tool copie
   <dir>/kits/<name>/{repo,overlay,server.json}   the kit's server files (<dir>/current points at them)
   <dir>/runs/                                    each game's relay files and the players' logs
   /etc/systemd/system/<service>.service          python3 repo/tools/x4ls.py serve ..., as --user, restarted if it ends
-  ufw: UDP <port> (the session) and TCP <port + 1> (the lobby and the logs), when ufw is there
+  ufw: UDP <port> (the session), TCP <port + 1> (the lobby and the logs) and TCP <port> (the join files of a drop-in
+       game), when ufw is there
 
 A kit has its own key and its own overlay, so every new kit is deployed again; players of an older kit are then
 refused with the reason. The restart ends a game that is running.
@@ -51,6 +52,7 @@ systemctl restart {service}
 if command -v ufw >/dev/null 2>&1; then
   ufw allow {port}/udp comment 'x4 lockstep relay' >/dev/null
   ufw allow {tcp}/tcp comment 'x4 lockstep lobby' >/dev/null
+  ufw allow {port}/tcp comment 'x4 lockstep join files' >/dev/null
 fi
 sleep 2
 systemctl is-active {service}

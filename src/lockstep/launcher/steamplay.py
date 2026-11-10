@@ -141,6 +141,15 @@ def ask(prefix, name, timeout=3):
             time.sleep(0.1)
 
 
+def start_label(start, sector):
+    """A start as the page names it: the gamestart's id without its prefix, and where it is."""
+    name = str(start or 'the session start')
+    for prefix in ('x4ep1_gamestart_', 'x4_gamestart_', 'gamestart_'):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    return name.replace('_', ' ') + (f' ({sector})' if sector else '')
+
+
 def x4_running():
     out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq X4.exe', '/FO', 'CSV', '/NH'], capture_output=True, text=True,
                          creationflags=HIDDEN)
@@ -148,12 +157,14 @@ def x4_running():
 
 
 class Helper:
-    def __init__(self, kit, snapshot, prefix=PIPE, log=None, start=None, running=x4_running):
+    def __init__(self, kit, snapshot, prefix=PIPE, log=None, start=None, running=x4_running, status=None):
         self.kit, self.snapshot, self.prefix = Path(kit), snapshot, prefix
         self.recipe = json.loads((self.kit / 'overlay' / 'play-recipe.json').read_text(encoding='utf-8'))
         self.lock = threading.Lock()
         self.stamp, self.phase, self.lines = 0, 'idle', ()
-        self.wanted = self.stopping = False
+        self.wanted = self.stopping = False   # wanted: True (the common load) or the open slot to join the running game in
+        self.status = status or self.ask_status   # () -> the server's status, or None when it does not answer
+        self.server = None                        # ... as last answered
         self.log_file = self.kit / 'repo' / '.local' / 'helper.log'
         self.log = log or self.write_log
         self.start, self.running = start or self.start_lobby, running
@@ -167,47 +178,85 @@ class Helper:
         except OSError:
             pass
 
-    def show(self, phase, *lines):
+    def ask_status(self):
+        from . import lobby as _lobby
+        server_file = self.kit / 'server.json'
+        if not server_file.is_file():
+            return None
+        if not hasattr(self, 'kit_id'):
+            self.kit_id = _lobby.kit_id(self.kit / 'overlay', self.recipe.get('snapshot_sha'))
+            self.server_address = _lobby.read_server_file(server_file)
+        answer = _lobby.ask_server(self.server_address, self.kit_id, 'status')
+        return answer.get('status') if isinstance(answer, dict) and answer.get('ok') else None
+
+    def idle_view(self):
+        """What the page shows while nothing is asked: (lines, fields) from the session and the server's last status."""
         players = f'{self.recipe["players"]} players, {self.recipe.get("mode", "coop")}, {self.recipe.get("minutes", "?"):g} minutes'
+        restart = 'X4 closes and starts again in its multiplayer profile.'
+        s = self.server
+        if not s or not s.get('drop_in'):   # every player is there at the start (or the server does not answer)
+            return (players, 'Join closes X4 and starts it again in its multiplayer profile, already joined.'), {}
+        starts = [{'slot': int(row['slot']), 'taken': bool(row.get('taken')),
+                   'label': start_label(row.get('start'), row.get('sector'))} for row in s.get('starts', [])]
+        if not s.get('running'):
+            base = start_label(s.get('base'), None)
+            return ((players, 'No game is running. Start one: you play ' + base + ', the others join you with a start of their choice.',
+                     restart), {'game': 'none', 'join_label': 'Start the game'})
+        free = sum(1 for row in starts if not row['taken'])
+        lines = (players, f'A game is running with {s.get("here", "?")} of {s.get("clients", "?")} players. Choose your start:', restart)
+        if not s.get('joinable'):
+            lines = (players, 'A game is running, but its first player has left: nobody can join it any more.',
+                     'A new game can start when it is over.')
+        elif not free:
+            lines = (players, 'A game is running and every start is taken.', '')
+        return lines, {'game': 'running', 'joinable': bool(s.get('joinable')), 'starts': starts}
+
+    def show(self, phase, *lines, **fields):
         if phase == 'idle' and not lines:
-            lines = (players, 'Join closes X4 and starts it again in its multiplayer profile, already joined.')
+            lines, fields = self.idle_view()
         with self.lock:
-            self.stamp, self.phase, self.lines = self.stamp + 1, phase, lines
+            if (phase, lines, fields) != (self.phase, self.lines, getattr(self, 'fields', None)):
+                self.stamp, self.phase, self.lines, self.fields = self.stamp + 1, phase, lines, fields
 
     def answer(self, name):
         """A pipe was opened: `name` is the request. Never waits: X4's menu reads this in its frame."""
-        if name == 'join' and not self.stopping:
+        slot = int(name[4:]) if name.startswith('join') and name[4:].isdigit() else None
+        if (name == 'join' or slot) and not self.stopping:
             with self.lock:
                 if self.phase == 'idle':
-                    self.wanted = True
-                    self.stamp, self.phase = self.stamp + 1, 'restart'
+                    self.wanted = slot or True
+                    self.stamp, self.phase, self.fields = self.stamp + 1, 'restart', {}
                     self.lines = ('X4 closes now and comes back in a moment, in its multiplayer profile.',
+                                  'It loads the running game as it is now and joins it.' if slot else
                                   'It joins by itself; the game loads when every player is here.')
         elif name == 'stop':
             self.stopping = True
         with self.lock:
-            return lobby.state_text(self.stamp, self.phase, self.lines)
+            return lobby.state_text(self.stamp, self.phase, self.lines, **getattr(self, 'fields', {}))
 
     def python(self):
         own = self.kit / 'python' / 'python.exe'
         return own if own.is_file() else Path(sys.executable).with_name('python.exe')
 
-    def start_lobby(self):
-        """X4 in the disposable profile with the join already chosen, as PLAY.cmd would start it; its exit code."""
+    def start_lobby(self, slot=None):
+        """X4 in the disposable profile with the join already chosen, as PLAY.cmd would start it; its exit code. With an
+        open slot: x4ls join --server-file, the hot join of the game that runs on the server."""
         base = [str(self.python()), 'repo/tools/x4ls.py']
         check = subprocess.run([*base, 'doctor'], cwd=self.kit, capture_output=True, text=True, creationflags=HIDDEN)
         if check.returncode:
             return check.returncode, (check.stdout + check.stderr).strip()
         out = self.log_file.with_name('helper-lobby.log')
         out.parent.mkdir(parents=True, exist_ok=True)
+        command = ([*base, 'join', '--overlay', 'overlay', '--server-file', 'server.json', '--slot', str(slot), '--close-when-over']
+                   if slot else
+                   [*base, 'lobby', '--overlay', 'overlay', '--snapshot', self.snapshot,
+                    '--server-file', 'server.json', '--auto', 'join', '--show', '--close-when-over'])
         with out.open('w', encoding='utf-8', errors='replace') as f:
-            code = subprocess.run([*base, 'lobby', '--overlay', 'overlay', '--snapshot', self.snapshot,
-                                   '--server-file', 'server.json', '--auto', 'join', '--show', '--close-when-over'],
-                                  cwd=self.kit, stdout=f, stderr=subprocess.STDOUT, creationflags=HIDDEN).returncode
+            code = subprocess.run(command, cwd=self.kit, stdout=f, stderr=subprocess.STDOUT, creationflags=HIDDEN).returncode
         return code, out.read_text(encoding='utf-8', errors='replace').strip()
 
-    def session(self):
-        self.log('join asked for: waiting for X4 to close')
+    def session(self, slot=None):
+        self.log(('join of the running game in slot %d' % slot if slot else 'join') + ' asked for: waiting for X4 to close')
         end = time.time() + 90
         while self.running() and time.time() < end:
             time.sleep(0.5)
@@ -217,7 +266,7 @@ class Helper:
             return
         self.show('playing', 'A multiplayer session runs in X4\'s multiplayer profile.',
                   'Close that window first if you want to play alone.')
-        code, text = self.start()
+        code, text = self.start(slot) if slot else self.start()
         self.log(f'the session ended with code {code}')
         if code:
             self.log(text[-3000:])
@@ -226,13 +275,24 @@ class Helper:
         self.show('idle')
 
     def run(self):
-        pipes = Pipes(self.prefix, ('state', 'join', 'stop'), self.answer)
+        pipes = Pipes(self.prefix, ('state', 'join', 'stop', *(f'join{k}' for k in range(2, 9))), self.answer)
         self.log(f'helper ready (pid {os.getpid()}, kit {self.kit})')
+        asked = 0.0
         try:
             while not self.stopping:
                 if self.wanted:
-                    self.wanted = False
-                    self.session()
+                    wanted, self.wanted = self.wanted, False
+                    self.session(None if wanted is True else wanted)
+                    asked = 0.0
+                elif time.time() - asked > 3:   # the server's state for the page: a game running, the free starts
+                    asked = time.time()
+                    try:
+                        self.server = self.status()
+                    except Exception as error:   # the page still works without it
+                        self.server = None
+                        self.log(f'the server status could not be read: {error}')
+                    if self.phase == 'idle' and not self.wanted:
+                        self.show('idle')
                 time.sleep(0.2)
         finally:
             pipes.close()

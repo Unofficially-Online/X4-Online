@@ -73,12 +73,25 @@ local function start_session()
  note('SESSION slot='..tostring(cfg.slot)..' clients='..tostring(cfg.native_gate_clients)..' arm_at='..tostring(cfg.native_gate_arm_at))
  run_files()
 end
-local function install(options)
+-- The page's rows, made again for every draw: with a server whose game runs (state.game=='running', from the helper)
+-- there is one row per open start, and choosing one joins the running game in that slot.
+local function page_rows()
  local rows={}
  for k=1,6 do rows[#rows+1]={id='header',name=function() return line(k) end} end
  rows[#rows+1]={id='line'}
- if L.server then   -- the kit names a server (x4ls serve): nobody hosts, there is no code, Join is the one choice
-  rows[#rows+1]={id='x4lan_lobby_join',name='Join the game',value='Join',valuetype='button',
+ local starts=L.server and lobby.state.game=='running' and type(lobby.state.starts)=='table' and lobby.state.starts or nil
+ if starts then
+  for _,start in ipairs(starts) do
+   local slot,label=tonumber(start.slot),tostring(start.label or start.start or '')
+   if slot then
+    rows[#rows+1]={id='x4lan_lobby_start'..slot,name='Join as '..label,value=start.taken and 'Taken' or 'Join',valuetype='button',
+     mouseOverText='Join the running game with this start: X4 loads the game as it is now',
+     callback=function() request('JOIN'..slot) end,
+     selectable=function() return phase()=='idle' and not start.taken and lobby.state.joinable~=false end}
+   end
+  end
+ elseif L.server then   -- the kit names a server (x4ls serve): nobody hosts, there is no code, Join is the one choice
+  rows[#rows+1]={id='x4lan_lobby_join',name=lobby.state.join_label or 'Join the game',value='Join',valuetype='button',
    mouseOverText='Join the server; the game loads when every player is here',
    callback=function() request('JOIN') end,selectable=function() return phase()=='idle' end}
  else
@@ -95,11 +108,15 @@ local function install(options)
  rows[#rows+1]={id='x4lan_lobby_cancel',name='Cancel',value='Cancel',valuetype='button',
   callback=function() request('CANCEL') end,
   selectable=function() local p=phase() return p=='hosting' or p=='joined' or p=='joining' end}
+ return rows
+end
+local function install(options)
+ local rows=page_rows()
  local entry={id='x4lan_lobby',name='Multiplayer',submenu='x4lan_lobby',mouseOverText='Host or join a lockstep session'}
  local row,draw,handle=options.displayOption,options.displayOptions,options.submenuHandler
  options.displayOption=function(ftable,option,...)
   if lobby.drawing then   -- the stock page's rows: ours instead, once
-   if not lobby.drawn then lobby.drawn=true;for _,r in ipairs(rows) do row(ftable,r,...) end end
+   if not lobby.drawn then lobby.drawn=true;for _,r in ipairs(page_rows()) do row(ftable,r,...) end end
    return
   end
   if options.currentOption=='main' and options.isStartmenu and type(option)=='table' and option.id=='settings' then row(ftable,entry,...) end

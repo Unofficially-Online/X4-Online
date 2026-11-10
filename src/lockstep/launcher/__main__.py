@@ -82,6 +82,8 @@ def main(argv=None):
     j = sub.add_parser('join', help='play one slot of a session whose relay runs on another PC (the line x4ls play printed): '
                                     'with --arm-at a slot that loads with the others, without it an open slot (hot join)')
     j.add_argument('--relay', metavar='HOST:PORT')
+    j.add_argument('--server-file', type=Path, metavar='server.json',
+                   help="hot join the game on a kit's server (x4ls serve) instead of --relay and --token")
     j.add_argument('--token')
     j.add_argument('--slot', type=int)
     j.add_argument('--start', metavar='GAMESTART',
@@ -255,6 +257,17 @@ def main(argv=None):
             raise SystemExit(f'{args.overlay}: not a play overlay with a recipe')
         print(hotjoin.starts_text(recipe))
         return 0
+    if args.command == 'join' and args.server_file:
+        from . import lobby
+        if (args.slot is None) == (args.start is None):
+            raise SystemExit('x4ls join --server-file needs one of --slot K or --start GAMESTART')
+        result = lobby.join_running(args.overlay, args.server_file, slot=args.slot, start=args.start, wait=args.wait,
+                                    width=width, height=height, game=args.game, lanes=args.lanes, startup=args.startup,
+                                    steam_fix=args.steam_fix, timeout=args.timeout, close_when_over=args.close_when_over,
+                                    same_pc=args.same_pc,
+                                    **({'state': session.ROOT / '.local/x4ls-join'} if args.same_pc else {}))
+        print(json.dumps(result, indent=2))
+        return 0 if result['outcome'] == 'played' else 1
     if args.command == 'join' and (not args.relay or not args.token or (args.slot is None) == (args.start is None)):
         raise SystemExit('x4ls join needs --relay, --token and one of --slot K or --start GAMESTART (x4ls join --overlay DIR --starts lists them)')
     if args.command == 'join' and args.start and args.arm_at is not None:

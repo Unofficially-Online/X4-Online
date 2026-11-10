@@ -287,8 +287,6 @@ def build(overlay, snapshot, out, port=PORT, root=ROOT, server=None, python_embe
     if python_embed:
         add_python(Path(python_embed), out / 'python')
     opened = [int(k) for k in recipe.get('open') or []]
-    if server and opened:
-        raise SystemExit('--server takes an overlay without open slots (every player is there at the start)')
     for name, text in cmd_files(recipe['players'], port, opened, snapshot.name, bool(server)).items():
         (out / name).write_bytes(text.encode('ascii'))
     if server:   # the address and a new key, in the kit only: neither is part of the repository

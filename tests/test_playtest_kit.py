@@ -109,9 +109,11 @@ class Kit(unittest.TestCase):
         other = kit.build(self.overlay, self.snapshot, self.base / 'kit-b', server=('203.0.113.7', 47010))
         self.assertNotEqual(json.loads((self.base / 'kit-b' / 'server.json').read_text())['key'], server['key'])   # a key per kit
         self.assertEqual(other['server'], '203.0.113.7:47010')
+        # open slots with a server: a drop-in game (the first player starts it, the others join it while it runs)
         fake_overlay(self.base / 'ov-open', players=3, opened=(3,))
-        with self.assertRaises(SystemExit):
-            kit.build(self.base / 'ov-open', self.snapshot, self.base / 'kit-c', server=('203.0.113.7', 47010))
+        opened = kit.build(self.base / 'ov-open', self.snapshot, self.base / 'kit-c', server=('203.0.113.7', 47010))
+        self.assertEqual(opened['open'], [3])
+        self.assertTrue((self.base / 'kit-c' / 'PLAY.cmd').is_file() and (self.base / 'kit-c' / 'helper.pyw').is_file())
 
     def test_refusals(self):
         fake_overlay(self.overlay)

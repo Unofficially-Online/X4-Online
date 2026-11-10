@@ -603,6 +603,9 @@ def main():
     p.add_argument('--bind', default='127.0.0.1')
     p.add_argument('--allow-from', default='', metavar='IP[,IP...]',
                    help='required for a non-loopback --bind: only datagrams from these IPv4 source addresses are read')
+    p.add_argument('--allow-file', type=Path, metavar='FILE',
+                   help='with --allow-from: more allowed source addresses, one per line, read again whenever the file changes '
+                        '(x4ls serve adds the address of a player who joins the running game)')
     p.add_argument('--port', type=int, required=True)
     p.add_argument('--token', required=True)
     p.add_argument('--ticks', type=int, default=120)
@@ -714,6 +717,23 @@ def main():
             for address in allowed | {args.bind}: socket.inet_aton(address)
         except OSError: p.error('--bind and --allow-from need dotted IPv4 addresses')
         if not allowed: p.error('a non-loopback --bind needs --allow-from')
+    allow_file_seen = [None, 0.0]   # the file's change time as last read, and when it was last looked at
+
+    def allow_more(now):
+        """--allow-file: an unknown source address may have been added since the relay started. At most twice a second."""
+        if not args.allow_file or not allowed or now - allow_file_seen[1] < 0.5: return
+        allow_file_seen[1] = now
+        try:
+            stamp = args.allow_file.stat().st_mtime_ns
+            if stamp == allow_file_seen[0]: return
+            allow_file_seen[0] = stamp
+            for line in args.allow_file.read_text(encoding='ascii', errors='replace').split():
+                try: socket.inet_aton(line)
+                except OSError: continue
+                if line.count('.') == 3 and line not in allowed:
+                    allowed.add(line)
+                    print(f'NATIVE_GATE RELAY ALLOW address={line}', flush=True)
+        except OSError: return
     if not 2 <= args.clients <= CLIENTS_MAX: p.error('--clients must be 2..8')
     if not 0 <= args.lookahead <= LOOKAHEAD_MAX: p.error('--lookahead must be 0..8')
     if args.lookahead and args.live_inputs: p.error('--live-inputs needs protocol 2; --lookahead needs protocol 4')
@@ -871,7 +891,8 @@ def main():
                 data = None
                 if delay and wait > 0: time.sleep(min(wait, 0.001))
             if data is not None and allowed and address[0] not in allowed:
-                data = None
+                allow_more(time.perf_counter())
+                if address[0] not in allowed: data = None
             replies = poll(time.perf_counter()) if poll else []
             if delay:
                 if data is not None:

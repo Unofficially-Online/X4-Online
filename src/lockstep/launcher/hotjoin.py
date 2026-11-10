@@ -161,6 +161,8 @@ class HotJoinOptions:
     wait: int = 600     # seconds for the session to save the join (it saves at its next join tick)
     nonce: str | None = None   # resume a join asked for before (default: the last one of this slot and relay, if recorded)
     start: str | None = None   # x4ls join --start: the gamestart the joiner chose (slot None: found by it)
+    offer_wait: int | None = None   # seconds to wait for the join files to be offered (default joinfiles.OFFER_WAIT_S;
+                                    # a server gets them from the saver's PC first: x4ls join --server-file)
     width: int = 1280
     height: int = 720
     game: Path | None = None
@@ -227,7 +229,7 @@ def previous_nonce(runs, slot, relay, max_age_s=900):
     return None
 
 
-def fetch_files(host, port, token, slot, state, folder, log=print):
+def fetch_files(host, port, token, slot, state, folder, log=print, offer_wait_s=None):
     """The join package and save of a saved join into folder, verified: (save, package, the package's save SHA-256)."""
     join = join_tools()
     tick, folder = state['tick'], Path(folder)
@@ -239,7 +241,8 @@ def fetch_files(host, port, token, slot, state, folder, log=print):
             shown[name] = step
             log(f'download {name}: {got >> 20} of {size >> 20} MB')
     package = folder / f'j{tick}.x4join'
-    joinfiles.fetch(host, port, token, slot, package.name, package, expect_sha=state['package_sha'], progress=progress)
+    more = {'offer_wait_s': offer_wait_s} if offer_wait_s else {}
+    joinfiles.fetch(host, port, token, slot, package.name, package, expect_sha=state['package_sha'], progress=progress, **more)
     try:
         loaded = join.read_package(package.read_bytes())
     except join.JoinError as error:
@@ -247,7 +250,7 @@ def fetch_files(host, port, token, slot, state, folder, log=print):
     if loaded['sha'] != state['package_sha'] or loaded['sections']['gate']['tick'] != tick:
         raise SystemExit('the join package is not the one the relay announced')
     save = folder / f'j{tick}.xml.gz'
-    joinfiles.fetch(host, port, token, slot, save.name, save, expect_sha=loaded['header']['save_sha'], progress=progress)
+    joinfiles.fetch(host, port, token, slot, save.name, save, expect_sha=loaded['header']['save_sha'], progress=progress, **more)
     return save, package, loaded
 
 
@@ -257,6 +260,8 @@ def build_joiner_overlay(host_overlay, save, package, package_sha, out, log=prin
     recipe = tools.read_recipe(host_overlay)
     if recipe is None or not recipe['open']:
         raise SystemExit(f'{host_overlay}: not a hot-joinable play overlay (build it with tools/build_play_overlay.py --open K)')
+    host_overlay = Path(host_overlay).resolve()   # build_play_overlay.py runs from the checkout: a relative --overlay is the caller's
+    save, package, out = Path(save).resolve(), Path(package).resolve(), Path(out).resolve()
     dll = Path(host_overlay) / 'native/x4lan_gate_64.dll'
     if tools.sha256(dll) != recipe['gate_dll_sha']:
         raise SystemExit(f'{dll}: not the gate the overlay was built with')
@@ -322,7 +327,7 @@ def hot_join(o, log=print):
     (folder / 'join').mkdir(parents=True)
     state['relay'] = o.relay
     (folder / 'join/state.json').write_text(json.dumps(state, indent=1) + '\n')
-    save, package, loaded = fetch_files(host, port, o.token, o.slot, state, folder / 'join', log)
+    save, package, loaded = fetch_files(host, port, o.token, o.slot, state, folder / 'join', log, o.offer_wait)
     log(f"join: T={state['tick']} saver={state['saver']} save {save.stat().st_size >> 20} MB, package "
         f"{package.stat().st_size >> 20} MB, verified")
     overlay, recipe = build_joiner_overlay(o.overlay, save, package, state['package_sha'], folder / 'overlay', log)

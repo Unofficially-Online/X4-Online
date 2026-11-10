@@ -17,6 +17,7 @@ disposable profile.
 | `lobby --overlay DIR --snapshot FILE [--port 47000] [--bind IP] [--lane 1]` | This PC's X4 opens in its main menu with a **Multiplayer** entry (Host a game, Join a game). The same command on every PC; see "Lobby" below |
 | `lobby ... --server-file server.json` | The same with a kit's server: the page has **Join** only, the relay runs on the server, and the run folder is sent there when the game is over |
 | `serve --overlay DIR --server-file server.json [--bind 0.0.0.0] [--runs DIR]` | The server of such a kit (Linux or Windows, Python only): admits the launchers that prove the kit's key, starts the relay when the overlay's player count has joined, stores the players' logs, then takes the next players |
+| `join --server-file server.json --overlay DIR --slot K \| --start GAMESTART` | Join the game that runs on a kit's server in an open slot (a drop-in game: `serve` with an overlay that has open slots); the server admits this PC and hands out the saver's join files |
 | `session ... --checkpoint-at T` | Every client saves the world right after tick T (`clientK/save_001.xml.gz`); the session ends there (outcome `checkpointed`) |
 | `triage RUN [--steam-fix]` | Reruns a diverged session with diagnostic windows over the 300 ticks before its first mismatch and writes `RUN-triage.txt`; `--report-only RERUN` only reports |
 | `clean` | Stops processes and removes views left behind by a crashed session |
