@@ -198,6 +198,7 @@ D.ON={
  {'native_gate_render_motion','extrapolate','native_gate_render_fps','moving objects drawn smoothed in the render-only frames'},
  {'native_gate_own_predict','present','native_gate_pilot_stock native_gate_render_rng_split','the own ship answers the controls at once (display only)'},
  {'native_gate_own_predict_hud',true,'native_gate_own_predict=present','the HUD brackets and lead marks placed for the camera the picture is drawn with'},
+ {'native_gate_join_start_money',true,'native_gate_ui_replay','in coop an open slot start money reaches the shared wallet when its player joins'},
  {'native_gate_hud_ship_refresh',true,'native_gate_pilot_present native_gate_ui_replay','each client radar, crosshair and weapon panel on its own player ship'},
  {'native_gate_own_predict_rows',0,'native_gate_own_predict','no per-step OWN_PREDICT row (diagnostic); OWN_PREDICT_STATUS every 600 ticks stays'},
 }

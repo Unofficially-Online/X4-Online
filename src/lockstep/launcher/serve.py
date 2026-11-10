@@ -52,6 +52,15 @@ def idle_seconds(status_file, seen, now):
     return now - seen[1]
 
 
+def session_done(status_file):
+    """True once the relay has released the session's last step. The relay goes on serving after that and does not
+    end by itself (x4ls play ends it when its clients stopped), so the server ends the game on this."""
+    try:
+        return bool(json.loads(Path(status_file).read_text()).get('done'))
+    except (OSError, ValueError):
+        return False
+
+
 class RelayLog:
     """The relay's lines as it writes them: its log file, read on from where the last read ended."""
     def __init__(self, path):
@@ -221,6 +230,12 @@ def run(o: ServeOptions, log=print):
                         time.sleep(0.5 if not joins else 0.2)
                         if idle_seconds(run_dir / 'desync-status.json', seen, time.time()) > o.idle_end:
                             ended = f'no step for {o.idle_end} s'
+                            break
+                        if session_done(run_dir / 'desync-status.json'):
+                            ended = 'the session is over'
+                            for _ in range(20):   # the launchers close their games and send their logs to this game's folder
+                                admissions.poll()
+                                time.sleep(0.5)
                             break
                 finally:
                     if relay.poll() is None:

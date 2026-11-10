@@ -278,6 +278,18 @@ class Server(unittest.TestCase):
             self.assertEqual([p.parent.parent for p in (tmp / 'server').rglob('*.zip')], [tmp / 'server'] * 2)
             self.assertFalse((run.parent / (run.name + '.zip')).exists())   # the packed copy goes once it is sent
 
+    def test_the_server_ends_a_game_when_the_relay_says_done(self):
+        from lockstep.launcher import serve
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / 'desync-status.json'
+            self.assertFalse(serve.session_done(status))                       # no file yet
+            status.write_text('{"tick": 5439, "done": false}')
+            self.assertFalse(serve.session_done(status))
+            status.write_text('{"tick": 5440, "done": true}')
+            self.assertTrue(serve.session_done(status))
+            status.write_text('{"tick": 54')                                   # caught half-written
+            self.assertFalse(serve.session_done(status))
+
     def test_server_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'server.json'

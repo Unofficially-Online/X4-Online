@@ -121,6 +121,13 @@ class Server(unittest.TestCase):
         # a late joiner is admitted: it learns the salt, and its address may send to the relay
         answer = lobby.ask_server(self.server, 'kit-1', 'late')
         self.assertEqual(answer['running']['salt'], SALT)
+        # a second "Start the game" while the game runs is told that it runs (the launcher's page then says so)
+        again = socket.create_connection(('127.0.0.1', self.port + 1), timeout=5)
+        again.settimeout(5)
+        lines = lobby.Lines(again)
+        lobby.send(again, {'kit': 'kit-1', 'proof': lobby.key_proof(KEY, lines.wait(5)['nonce'], 'kit-1')})
+        self.assertEqual(lines.wait(5)['running']['salt'], SALT)
+        again.close()
         self.joins.admit('203.0.113.9')
         self.assertEqual((run_dir / 'allow.txt').read_text().split(), ['203.0.113.9'])   # 127.0.0.1 was allowed from the start
         self.assertIn('203.0.113.9', self.joins.service.allow)

@@ -132,6 +132,37 @@
     <debug_text text="'[X4LAN] HUD_SHIP_CHANGED_MD why=%s time=%s'.[event.param3, player.age]"/>
    </actions>
   </cue>
+  <!-- An open slot's start money in coop (native_gate_join_start_money, the probe's pilot_view.join_money). The identity plan
+       applies every slot's kit at the setup tick, also for slots nobody has taken yet, and in coop the wallet is shared: the
+       host would start with the money of every start on offer. So each open slot's kit money is taken out of the wallet again
+       right after the setup (hold = 1, kept here per slot) and put back ten ticks after that slot's handover (hold = 0), on
+       every client at the same tick. The table is in the save: a later joiner's world knows what is still held, and a slot
+       whose money was given back is not paid twice. Credits arrive whole (below 2^24: exact). -->
+  <cue name="JoinMoneyState">
+   <actions>
+    <set_value name="$held" exact="table[]"/>
+   </actions>
+  </cue>
+  <cue name="JoinMoney" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_Hud'" control="'JoinMoney'"/></conditions>
+   <actions>
+    <set_value name="$a" exact="event.param3"/>
+    <set_value name="$key" exact="'$s' + $a.$slotname"/>
+    <set_value name="$before" exact="player.money"/>
+    <do_if value="$a.$hold == 1 and not @JoinMoneyState.$held.{$key} and $a.$credits gt 0 and $a.$credits lt 16777216">
+     <set_value name="$amount" exact="$a.$credits * 1Cr"/>
+     <do_if value="player.money ge $amount">
+      <reward_player money="-$amount"/>
+      <set_value name="JoinMoneyState.$held.{$key}" exact="$amount"/>
+     </do_if>
+    </do_if>
+    <do_elseif value="$a.$hold == 0 and @JoinMoneyState.$held.{$key}">
+     <reward_player money="JoinMoneyState.$held.{$key}"/>
+     <remove_value name="JoinMoneyState.$held.{$key}"/>
+    </do_elseif>
+    <debug_text text="'[X4LAN] JOIN_MONEY slot=%s hold=%s credits=%s before=%s after=%s held=%s time=%s'.[$a.$slotname, $a.$hold, $a.$credits, ($before / 1Cr)L, (player.money / 1Cr)L, JoinMoneyState.$held.keys.count, player.age]"/>
+   </actions>
+  </cue>
   <!-- Test only (script op gm_limit, in every client's plan at the same tick): the generic missions' limit per sector, so a
        run in one sector can see a second player's generation make offers. -->
   <cue name="GmLimit" instantiate="true">

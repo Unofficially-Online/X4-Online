@@ -531,7 +531,8 @@ class Host:
                 if self.key and isinstance(hello, dict) and 'upload' in hello:   # a launcher's logs after its game
                     self.take_upload(lines, ip, nonce, hello)
                     break
-                if self.key and isinstance(hello, dict) and ('status' in hello or 'late' in hello):
+                # a question; or, while a drop-in game runs, anyone who comes: the game is joined, not started again
+                if self.key and isinstance(hello, dict) and ('status' in hello or 'late' in hello or self.running):
                     self.answer_question(lines, ip, nonce, hello)
                     break
                 why = self.refusal(hello, nonce)
@@ -898,6 +899,9 @@ def run(o: LobbyOptions, log=print):
         time.sleep(2)
         profile.collect(profile_id, f'x4ls-c{o.lane}.log', run_dir / f'client{o.lane}')
         profile.unstage(profile_id)
+        if drop_in:   # the join saves this game's X4 wrote for joiners (about 200 MB each) are the server's now
+            from . import hotjoin
+            hotjoin.remove_join_files({o.lane: profile.profile_dir(profile_id) / 'save'})
         game.remove_view(view)
         state_file.unlink(missing_ok=True)
         if o.steam_fix and (o.state / 'steam-fix.json').exists():

@@ -300,6 +300,7 @@ local join_client,join_joiner,join_restored
 -- to H+N around a HANDOVER(k, H), on every client (the handover split, hj21: the joiner's own slot ship turned from H on).
 local pilot_handover_dump={}
 local hud_refresh_at={}   -- ticks at which every client raises the HUD's ship-changed event (pilot_view.hud_ship_changed)
+local join_money_at={}    -- tick -> slot whose held start money goes back to the coop wallet (pilot_view.join_money)
 if cfg.native_gate_join then
  local j=cfg.native_gate_join==true and {} or cfg.native_gate_join
  assert(type(j)=='table' and wire3 and cfg.native_gate_lookahead~='adaptive' and not cfg.native_gate_wire_crypto and not cfg.native_gate_peer_window,
@@ -557,6 +558,7 @@ if cfg.native_gate_join then
     end
     assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
     hud_refresh_at[h+10]=true   -- the joiner presents its slot from H: its HUD takes its ship (every client, the same tick)
+    join_money_at[h+10]=k       -- ...and in coop its start's money reaches the shared wallet now (pilot_view.join_money)
     if cfg.native_gate_pilot_dump_handover then pilot_handover_dump.k,pilot_handover_dump.h=k,h end
     -- native_gate_nav_refresh_watch_handover = N: the watch's window to H-N..H+N, now that H is known
     if cfg.native_gate_nav_refresh_watch_handover and cfg.native_gate_nav_refresh_watch~=nil then
@@ -2796,8 +2798,29 @@ function pilot_view.hud_ship_changed(why)
  raise('X4LAN_Hud','ShipChanged',why)
  log('HUD_SHIP_CHANGED why='..tostring(why))
 end
+-- An open slot's start money in coop (MD native_gate_ui_replay.xml JoinMoney; native_gate_join_start_money, on by default).
+-- Every client raises the same event at the same tick: hold = 1 for every open slot five ticks into the pilot window (the
+-- identity plan's setup has put every kit's money into the shared wallet by then), hold = 0 ten ticks after a slot's handover.
+-- A joiner starts after the first and is there for its own second; what is held is MD state, in the save.
+function pilot_view.join_money(slot,hold,why)
+ local plan=cfg.native_gate_player_identity_plan
+ if cfg.native_gate_join_start_money==false or type(plan)~='table' or plan.mode~='coop' or type(plan.kits)~='table' then return end
+ local credits=0
+ for _,kit in ipairs(plan.kits) do if kit.slot==slot and type(kit.money)=='number' then credits=kit.money end end
+ if credits<=0 then return end
+ local raise=X4LAN_UI_REPLAY_STOCK and X4LAN_UI_REPLAY_STOCK.AddUITriggeredEvent or AddUITriggeredEvent
+ raise('X4LAN_Hud','JoinMoney',{slotname=tostring(slot),hold=hold,credits=credits})
+ log('JOIN_MONEY slot='..slot..' hold='..hold..' credits='..credits..' why='..tostring(why))
+end
 local function pilot_frame(s,tick)
  if cfg.native_gate_pilot_block_orders then block_orders() end
+ do
+  local w,join=cfg.native_gate_pilot_window,cfg.native_gate_join
+  if type(w)=='table' and tick==w[1]+5 and type(join)=='table' and type(join.absent)=='table' then
+   for _,k in ipairs(join.absent) do pilot_view.join_money(k,1,'open') end
+  end
+  if join_money_at[tick] then local k=join_money_at[tick];join_money_at[tick]=nil;pilot_view.join_money(k,0,'handover') end
+ end
  -- ten ticks into the pilot window (every client presents its slot by then) and ten ticks after a hot join's handover
  do
   local w=cfg.native_gate_pilot_window

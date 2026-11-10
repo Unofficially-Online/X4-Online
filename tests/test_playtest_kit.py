@@ -114,6 +114,11 @@ class Kit(unittest.TestCase):
         opened = kit.build(self.base / 'ov-open', self.snapshot, self.base / 'kit-c', server=('203.0.113.7', 47010))
         self.assertEqual(opened['open'], [3])
         self.assertTrue((self.base / 'kit-c' / 'PLAY.cmd').is_file() and (self.base / 'kit-c' / 'helper.pyw').is_file())
+        text = (self.base / 'kit-c' / 'KIT.txt').read_text()
+        self.assertIn('"Start the game"', text)
+        self.assertIn('the page lists the starts that are still free', text)
+        self.assertIn('TCP 47010 (the join files)', text)
+        self.assertNotIn('players have joined, every game loads', text)
 
     def test_refusals(self):
         fake_overlay(self.overlay)

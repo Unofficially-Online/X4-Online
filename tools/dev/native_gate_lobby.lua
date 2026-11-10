@@ -199,6 +199,12 @@ local function update()
  end
  -- lobby.auto (a test switch of the Steam menu page): Join is chosen by itself once, as if it had been clicked
  if L.auto=='join' and not lobby.autoed and s.phase=='idle' then lobby.autoed=true;request('JOIN') end
+ -- lobby.auto=='start': the first free start of the running game is chosen by itself once
+ if L.auto=='start' and not lobby.autoed and s.phase=='idle' and s.game=='running' and s.joinable and type(s.starts)=='table' then
+  for _,start in ipairs(s.starts) do
+   if not start.taken and tonumber(start.slot) then lobby.autoed=true;request('JOIN'..tonumber(start.slot));break end
+  end
+ end
  local o=lobby.options
  if o and o.currentOption=='x4lan_lobby' and type(o.refresh)=='function' then pcall(o.refresh) end
 end

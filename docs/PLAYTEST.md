@@ -272,6 +272,11 @@ errors. The package has one more section for it, so the host and the joiner need
 element made after the load (part animations) takes client-local IDs (`native_gate_runtime_ids_ui_elements`, a session
 default; plain2: 1841 ticks of two-client play, 0 desyncs).
 
+A join after a respawn (hjr1, 10 Nov): a player whose ship was destroyed and rebuilt before someone joins no longer
+makes that join fail. The joiner takes the rebuilt ship for that slot and was in step for 650 ticks after its join;
+then the rebuilt ship was pushed about 29 m once, at tick 1344 on the host and near 1600 on the joiner, and the
+session counted desyncs from there. What pushes it is not found yet.
+
 Still open: a join whose save tick falls while a fixture gun is engaging (hj24: T between 668 and 684 in the battle
 fixture) can part within a few ticks; a sweep of join ticks is next.
 A join is never refused for it: as for a play session's own desyncs, the relay hands over all the same
@@ -337,9 +342,13 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
   is known (the far sector around the open slot's ship is raised to the session's attention level after the joiner's
   ID counter was set) and is being fixed in the join code. A session whose open slots start next to the host is
   not affected.
-- Known limit: every slot's kit is applied when the session starts, also for slots nobody has taken yet. In coop
-  the wallet is shared, so the money of every start on offer is in it from the first minute (the trade start alone
-  brings 200,000 Cr), not when its player joins.
+- Money in coop: the wallet is shared, and every slot's kit is applied when the session starts. So that the host
+  does not begin with the money of every start on offer, an open slot's start money is taken out again right after
+  the start and paid in when that slot's player joins (`native_gate_join_start_money`, a default). hjs4 (10 Nov, the
+  four-start session, the joiner asking for the Terran start by name and getting slot 4): the wallet went from
+  30,000 to 5,000 Cr five ticks into the session and to 20,000 Cr ten ticks after the joiner's handover, at the same
+  game time on both PCs; all four ships stood equal on both at ticks 1200 and 3600; 0 errors. Blueprints, research
+  and the known map of an open slot's start are there from the session's start.
 - Not built: picking any start at join time without the host having prepared it, and joining from the game's
   Multiplayer page (that page starts a game only when every player is there).
 
