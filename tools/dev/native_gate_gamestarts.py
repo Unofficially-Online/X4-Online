@@ -16,10 +16,15 @@ by what it touches and put into one class (reports/LOCKSTEP-STARTS-20261101.txt)
   -  refused               not a playable stock start here (tutorials, Timelines scenarios, debug and test starts,
                            the station designer, another galaxy)
 
-A start is never applied in part: a per-player start whose class is b or refused, or whose parts this code does not
-know, is refused at session setup, naming the start and the parts that block it. MD effects of a start ran only for
-the session base (new-game MD keys on player.module, which is the base start on every client); for a per-player
-start they are either rebuilt (class c parts) or refused.
+A start is never applied in part without saying so: a per-player start whose class is b or refused, or whose parts
+this code does not know, is refused at session setup, naming the start and the parts that block it. MD effects of a
+start ran only for the session base (new-game MD keys on player.module, which is the base start on every client); for
+a per-player start they are either rebuilt (class c parts) or refused.
+
+Ship only (world=True; x4ls new-session --omit K=world): a class b start whose every part this reader knows may give
+slot k its player-level parts alone - the ship with its loadout at the start's place, the money and the rest of the
+kit - while its world-level parts (its plot, stations, faction relations) are left out and listed in the spec. The
+session's world is then the base start's; the player has that start's ship and place, not its story.
 
     python tools/dev/native_gate_gamestarts.py catalog --libraries <gamelibs root> --scripts <gamescripts root>
     python tools/dev/native_gate_gamestarts.py template x4ep1_gamestart_fight --libraries ... --scripts ...
@@ -546,12 +551,16 @@ def classify(rec):
     return 'a', []
 
 
-def per_player_refusal(rec, klass=None):
-    """None when slot k may take this start in a shared session; else the reason (start id and blocking parts)."""
+def per_player_refusal(rec, klass=None, world=False):
+    """None when slot k may take this start in a shared session; else the reason (start id and blocking parts).
+    world: the ship-only form (module text): a class b start's world-level parts are left out by the caller's own word,
+    and a place may be a sector position instead of a zone."""
     klass = klass or classify(rec)[0]
     reasons = classify(rec)[1]
-    if klass in ('b', '-'):
+    if klass == '-' or (klass == 'b' and not world):
         return f"start {rec['id']} is class {klass}: " + '; '.join(reasons)
+    if klass == 'b' and rec['unknown']:
+        return f"start {rec['id']}: parts this reader does not know: " + '; '.join(rec['unknown'])
     loc = rec['player'].get('location', {})
     if loc.get('kind') != 'space':
         return f"start {rec['id']}: player starts {loc.get('kind', 'without a location')} (slot ships start in space)"
@@ -559,8 +568,8 @@ def per_player_refusal(rec, klass=None):
         return f"start {rec['id']}: no player ship"
     if SPACESUIT.search(rec['player']['ship']['macro'] or ''):
         return f"start {rec['id']}: the player starts in a spacesuit (slot ships are ships)"
-    if not loc.get('zone'):
-        return f"start {rec['id']}: location without a zone"
+    if not loc.get('zone') and not (world and loc.get('sector') and loc.get('position')):
+        return f"start {rec['id']}: location without a zone" + (' or a sector position' if world else '')
     return None
 
 
@@ -606,7 +615,8 @@ class Catalog:
         for sid, rec in sorted(self.records.items()):
             klass, reasons = classify(rec)
             out.append({'id': sid, 'class': klass, 'reasons': reasons, 'base': session_base_refusal(rec),
-                        'per_player': per_player_refusal(rec, klass), 'player': rec['player'], 'rebuild': rec['rebuild'],
+                        'per_player': per_player_refusal(rec, klass), 'ship_only': per_player_refusal(rec, klass, world=True),
+                        'player': rec['player'], 'rebuild': rec['rebuild'],
                         'presentation': rec['presentation']})
         return out
 
@@ -619,10 +629,11 @@ def zone_sector(zone):
     return m[1]
 
 
-def template(catalog, sid):
-    """The resolved per-player start of a class a/c start (values only; refuses everything else)."""
+def template(catalog, sid, world=False):
+    """The resolved per-player start of a class a/c start (values only; refuses everything else). world: the ship-only
+    form of a class b start; the world-level parts it leaves out are listed in 'world_omitted'."""
     rec = catalog.record(sid)
-    why = per_player_refusal(rec)
+    why = per_player_refusal(rec, world=world)
     if why:
         raise CatalogError(why)
     p = rec['player']
@@ -637,8 +648,9 @@ def template(catalog, sid):
             'ship': {'macro': ship['macro'], 'equipment': [dict(e) for e in ship['equipment']],
                      'ammunition': dict(sorted(ship['ammunition'].items())), 'software': sorted(ship['software']),
                      'thrusters': list(ship['thrusters'])},
-            'place': {'zone': loc['zone'], 'sector': zone_sector(loc['zone']), 'x': x, 'y': y, 'z': z,
-                      'yaw': yaw - 360 if yaw > 180 else yaw},
+            'place': {'zone': loc.get('zone') or None, 'sector': zone_sector(loc['zone']) if loc.get('zone') else loc['sector'],
+                      'x': x, 'y': y, 'z': z, 'yaw': yaw - 360 if yaw > 180 else yaw},
+            'world_omitted': list(rec['world']) if classify(rec)[0] == 'b' else [],
             'money': p.get('money', 0), 'inventory': dict(sorted(p.get('inventory', {}).items())),
             'blueprints': sorted(set(p.get('blueprints', []))), 'research': sorted(set(p.get('research', []))),
             'reputation': dict(sorted(p.get('reputation', {}).items())),

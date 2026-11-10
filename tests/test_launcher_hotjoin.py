@@ -374,6 +374,82 @@ class SessionBindTests(unittest.TestCase):
                 build_play_overlay.main(args + ['--out', str(Path(d) / 'ov2')])
 
 
+    def test_a_session_joiners_base_takes_the_sessions_fixture_and_keeps_the_join_saves_checksum(self):
+        """--session with --join-package: the joiner's base boots the join save, but its fixture and watch list are the
+        session's own, not snapshot 005's (hjs1, 10 Nov: the joiner overlay was refused for the fixture's saved IDs)."""
+        ids = [f'{0x16e8e5 + 19 * i:016x}' for i in range(12)]
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d) / 'ov.base'
+            (base / 'ui').mkdir(parents=True)
+            (base / 'ui/config.lua.append').write_text(chr(10).join([
+                'X4LAN_CONFIG.native_gate_snapshot_sha = "' + 'b' * 64 + '"',
+                "X4LAN_CONFIG.native_gate_snapshot_fixture = {'0000000000176a13','0000000000176a74'}",
+                "X4LAN_CONFIG.native_gate_world_hash_watch = {'0000000000176b97'}",
+                'X4LAN_CONFIG.native_gate_test = true']) + chr(10))
+            build_play_overlay.bind_session_joiner(base, {'fixture': ids, 'player_ship': '00000000000ae8fa'})
+            text = (base / 'ui/config.lua.append').read_text()
+            self.assertIn('native_gate_snapshot_sha = "' + 'b' * 64 + '"', text)        # the join save's own
+            self.assertIn('native_gate_snapshot_fixture = {' + ','.join(repr(i) for i in ids) + '}', text)
+            self.assertIn('native_gate_world_hash_watch = {' + ','.join(repr(i) for i in ids + ['00000000000ae8fa']) + '}', text)
+            self.assertNotIn('0000000000176a13', text)
+            self.assertNotIn('0000000000176b97', text)
+            self.assertIn('native_gate_test = true', text)
+            self.assertTrue((base / 'x4lane-manifest.json').is_file())
+            for bad in ({'fixture': [], 'player_ship': '00000000000ae8fa'}, {'fixture': ids}, {'fixture': ['x'], 'player_ship': 'y'}):
+                with self.assertRaises(SystemExit):
+                    build_play_overlay.bind_session_joiner(base, bad)
+
+
+class StartChoiceTests(unittest.TestCase):
+    """x4ls join --start: the open slot that plays the start the joiner names (the session's per-player starts)."""
+    RECIPE = {'open': [2, 3, 4, 5], 'players': 5,
+              'session': {'base_start': 'gs_base', 'player_sector': 'cluster_1_sector001_macro',
+                          'slots': {'2': {'gamestart': 'gs_fight', 'sector': 'cluster_47_sector001_macro'},
+                                    '4': {'gamestart': 'gs_split', 'sector': 'cluster_421_sector001_macro'},
+                                    '5': {'gamestart': 'gs_fight', 'sector': 'cluster_47_sector001_macro'}}}}
+
+    def test_open_slots_and_their_starts(self):
+        rows = hotjoin.open_starts(self.RECIPE)
+        self.assertEqual(rows, [(2, 'gs_fight', 'cluster_47_sector001_macro', True), (3, 'gs_base', 'cluster_1_sector001_macro', False),
+                                (4, 'gs_split', 'cluster_421_sector001_macro', True), (5, 'gs_fight', 'cluster_47_sector001_macro', True)])
+        text = hotjoin.starts_text(self.RECIPE)
+        self.assertIn('slot 3: gs_base in cluster_1_sector001_macro (with the host)', text)
+        self.assertIn('slot 4: gs_split in cluster_421_sector001_macro', text)
+        self.assertEqual(hotjoin.slots_for_start(self.RECIPE, 'gs_fight'), [2, 5])
+        self.assertEqual(hotjoin.slots_for_start(self.RECIPE, 'gs_base'), [3])
+        with self.assertRaises(SystemExit) as caught:
+            hotjoin.slots_for_start(self.RECIPE, 'gs_trade')
+        self.assertIn('no open slot of this session plays gs_trade', str(caught.exception))
+        self.assertIn('slot 2: gs_fight', str(caught.exception))
+        plain = {'open': [2], 'players': 2, 'session': None}      # an overlay without a session: every slot with the host
+        self.assertEqual(hotjoin.open_starts(plain), [(2, 'the session start', None, False)])
+        self.assertIn('no open slots', hotjoin.starts_text({'open': [], 'players': 2}))
+
+    def test_a_taken_slot_moves_on_to_the_next_one_with_the_same_start(self):
+        asked = []
+        def fake_request(host, port, token, slot, wait, log, nonce=None):
+            asked.append(slot)
+            if slot == 2:
+                raise SystemExit('the relay refused the join: slot_not_absent')
+            raise KeyboardInterrupt   # slot 5 answered: stop the test here, before any file is fetched
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(hotjoin, 'request', fake_request), \
+                mock.patch.object(hotjoin, 'recipe_tools', lambda: mock.Mock(read_recipe=lambda overlay: self.RECIPE)), \
+                mock.patch.object(session, 'x4_running', lambda: False):
+            o = hotjoin.HotJoinOptions(relay='127.0.0.1:47010', token='0' * 32, slot=None, start='gs_fight', overlay=Path(d),
+                                       runs=Path(d) / 'runs', state=Path(d) / 'state')
+            with self.assertRaises(KeyboardInterrupt):
+                hotjoin.hot_join(o, log=lambda *a: None)
+            self.assertEqual(asked, [2, 5])
+            asked.clear()
+            def all_taken(host, port, token, slot, wait, log, nonce=None):
+                asked.append(slot)
+                raise SystemExit('the relay refused the join: slot_not_absent')
+            with mock.patch.object(hotjoin, 'request', all_taken), self.assertRaises(SystemExit) as caught:
+                hotjoin.hot_join(o, log=lambda *a: None)
+            self.assertEqual(asked, [2, 5])
+            self.assertIn('every open slot that plays gs_fight is taken', str(caught.exception))
+
+
 class RecipeTests(unittest.TestCase):
     def test_open_slots(self):
         self.assertEqual(build_play_overlay.open_slots('', 4), [])

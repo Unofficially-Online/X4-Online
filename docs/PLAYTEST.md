@@ -276,6 +276,38 @@ Smoke ns1/ns2 (8 Nov): `--base-start x4ep1_gamestart_discover --players 2 --mode
 (0 desyncs, 0 errors): slot 1 in the discover start's ship, slot 2 in its own fight hull at that start's position,
 with the fight start's money (added to the shared wallet) and blueprints applied at tick 20 on both.
 
+### A joiner picks a start (built 10 Nov; not in lockstep yet)
+
+A player who joins a running game takes one of the session's open slots, and each open slot plays the start the host
+gave it when the session was made. So the host decides which starts are on offer, and a joiner picks one of those
+that are still free:
+
+```
+python tools/x4ls.py new-session --base-start x4ep1_gamestart_discover --players 4 --mode coop \
+    --start 2=x4ep1_gamestart_fight --start 3=x4ep1_gamestart_split2 --start 4=x4ep1_gamestart_terran1 \
+    --omit 2=inventory,reputation --omit 3=world,inventory,reputation --omit 4=world,inventory,reputation \
+    --open 2,3,4 --gate-dll <x4lan_gate_64.dll> --out .local/sessions/four
+python tools/x4ls.py join --overlay <copy of the overlay> --starts          # the open slots and their starts
+python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of the overlay> --start x4ep1_gamestart_terran1
+```
+
+- `--start` takes the first free open slot that plays that start; when another player has it, the next slot with
+  the same start is asked.
+- Ship-only starts (`x4ls starts`: `player-start=ship-only`, chosen with `--omit K=world`): the player gets that
+  start's ship with its loadout, its place and its money, not its story. The session's world is the host's start.
+  With the stock game that makes four starts a player can take: discover (Argon scout), fight (Paranid fighter),
+  split2 (Split fighter) and terran1 (Terran fighter). Starts that begin docked or on foot, or whose ship this reader
+  cannot build, are not offered.
+- State (hjs1, 10 Nov, two X4 on one PC: base discover, the open slot the fight start in another sector, a join at
+  tick 717): the join runs to the end (the joiner loads, catches up, takes the slot at tick 3495, both play to 5440,
+  0 errors) and the simulation is in step (random state and both ships equal on every sampled tick), but the two
+  PCs hand out object IDs 9,119 apart from the first tick, so the session counts every tick as differing. The cause
+  is known (the far sector around the open slot's ship is raised to the session's attention level after the joiner's
+  ID counter was set) and is being fixed in the join code. A session whose open slots start next to the host is
+  not affected.
+- Not built: picking any start at join time without the host having prepared it, and joining from the game's
+  Multiplayer page (that page starts a game only when every player is there).
+
 ## Ending
 
 - The session ends by itself at the end of the pilot window.

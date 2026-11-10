@@ -119,15 +119,48 @@ def remove_join_files(save_dirs):
 
 
 # ---- the joiner ----
+def open_starts(recipe):
+    """The open slots of a play overlay and the start each one plays: [(slot, gamestart, sector or None, own)], in slot
+    order. A session made by x4ls new-session names a start per slot (--start K=GAMESTART: that start's hull at its place,
+    its kit); a slot without one, and every slot of an overlay without a session, starts with the session itself (own False)."""
+    session = recipe.get('session') or {}
+    slots = session.get('slots') or {}
+    rows = []
+    for k in sorted(recipe['open']):
+        own = slots.get(str(k))
+        rows.append((k, own['gamestart'], own.get('sector'), True) if own else
+                    (k, session.get('base_start') or 'the session start', session.get('player_sector'), False))
+    return rows
+
+
+def starts_text(recipe):
+    """What x4ls join --starts prints."""
+    rows = open_starts(recipe)
+    if not rows:
+        return 'this overlay has no open slots (tools/build_play_overlay.py --open, x4ls new-session --open)'
+    return '\n'.join(f"slot {k}: {start}" + (f' in {sector}' if sector else '') + ('' if own else ' (with the host)')
+                     for k, start, sector, own in rows)
+
+
+def slots_for_start(recipe, start):
+    """The open slots that play `start` (x4ls join --start), in slot order; SystemExit naming the choices when none does."""
+    rows = open_starts(recipe)
+    found = [k for k, name, _, _ in rows if name == start]
+    if not found:
+        raise SystemExit(f'no open slot of this session plays {start}; its open slots:\n{starts_text(recipe)}')
+    return found
+
+
 @dataclass
 class HotJoinOptions:
     """x4ls join without --arm-at: join slot `slot` of a running session (x4ls play --open) at `relay`."""
     relay: str          # HOST:PORT of the session's relay; its join file service listens on the same port number (TCP)
     token: str
-    slot: int
+    slot: int | None    # None: the first free open slot that plays `start`
     overlay: Path       # a copy of the host's play overlay (its play-recipe.json and gate DLL)
     wait: int = 600     # seconds for the session to save the join (it saves at its next join tick)
     nonce: str | None = None   # resume a join asked for before (default: the last one of this slot and relay, if recorded)
+    start: str | None = None   # x4ls join --start: the gamestart the joiner chose (slot None: found by it)
     width: int = 1280
     height: int = 720
     game: Path | None = None
@@ -255,19 +288,38 @@ def hot_join(o, log=print):
     if not re.fullmatch(r'[0-9a-f]{32}', o.token):
         raise SystemExit('--token must be the 32 hex digits the host printed')
     recipe = recipe_tools().read_recipe(o.overlay)
-    if recipe is None or o.slot not in recipe['open']:
+    if recipe is None:
+        raise SystemExit(f'{o.overlay}: not a play overlay with a recipe (tools/build_play_overlay.py)')
+    if o.slot is None:   # --start: the slots that play it, the first one the relay still holds open
+        candidates = slots_for_start(recipe, o.start)
+    elif o.slot not in recipe['open']:
         raise SystemExit(f'{o.overlay}: slot {o.slot} is not an open slot of this overlay (build_play_overlay.py --open)')
+    else:
+        candidates = [o.slot]
     if (o.state / 'session.json').exists():
         raise SystemExit('a previous session is still recorded; run x4ls clean first')
     if session.x4_running() and not o.same_pc:
         raise SystemExit('X4 is running; close it first')
-    folder = o.runs / (time.strftime('%Y%m%d-%H%M%S') + f'-hotjoin{o.slot}')
-    nonce = o.nonce or previous_nonce(o.runs, o.slot, o.relay)
-    (folder / 'join').mkdir(parents=True)
     port = int(port)
-    if nonce:
-        log(f'join: resuming the join of nonce {nonce}')
-    state = request(host, port, o.token, o.slot, o.wait, log, nonce=nonce)
+    state = None
+    for index, slot in enumerate(candidates):
+        nonce = o.nonce or previous_nonce(o.runs, slot, o.relay)
+        if nonce:
+            log(f'join: resuming the join of nonce {nonce}')
+        try:
+            state = request(host, port, o.token, slot, o.wait, log, nonce=nonce)
+        except SystemExit as error:   # a slot another player took: the next one with the same start
+            if 'slot_not_absent' not in str(error) or index + 1 == len(candidates):
+                raise SystemExit(f'{error}' + (f' (every open slot that plays {o.start} is taken)'
+                                               if o.slot is None and 'slot_not_absent' in str(error) else '')) from None
+            log(f'join: slot {slot} is taken; trying slot {candidates[index + 1]}')
+            continue
+        o.slot = slot
+        break
+    if o.start:
+        log(f'join: slot {o.slot} plays {o.start}')
+    folder = o.runs / (time.strftime('%Y%m%d-%H%M%S') + f'-hotjoin{o.slot}')
+    (folder / 'join').mkdir(parents=True)
     state['relay'] = o.relay
     (folder / 'join/state.json').write_text(json.dumps(state, indent=1) + '\n')
     save, package, loaded = fetch_files(host, port, o.token, o.slot, state, folder / 'join', log)

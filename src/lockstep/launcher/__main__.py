@@ -81,9 +81,12 @@ def main(argv=None):
 
     j = sub.add_parser('join', help='play one slot of a session whose relay runs on another PC (the line x4ls play printed): '
                                     'with --arm-at a slot that loads with the others, without it an open slot (hot join)')
-    j.add_argument('--relay', required=True, metavar='HOST:PORT')
-    j.add_argument('--token', required=True)
-    j.add_argument('--slot', type=int, required=True)
+    j.add_argument('--relay', metavar='HOST:PORT')
+    j.add_argument('--token')
+    j.add_argument('--slot', type=int)
+    j.add_argument('--start', metavar='GAMESTART',
+                   help='hot join: take an open slot that plays this start instead of naming a slot (see --starts)')
+    j.add_argument('--starts', action='store_true', help='list the open slots of --overlay with the start each one plays, and stop')
     j.add_argument('--clients', type=int, help='with --arm-at: the session\'s slots (a hot join reads them from the overlay)')
     j.add_argument('--arm-at', type=int, metavar='UTC_SECOND',
                    help='the UTC second the session loads at (a --remote-slots slot); without it: a hot join of an --open slot')
@@ -148,7 +151,8 @@ def main(argv=None):
     ns.add_argument('--start', action='append', default=[], metavar='K=GAMESTART',
                     help="slot K's own start (x4ls starts: player-start=yes); other slots start with slot 1")
     ns.add_argument('--omit', action='append', default=[], metavar='K=PART[,PART]',
-                    help="kit parts slot K's start leaves out (money, reputation, blueprints, research, map)")
+                    help="parts slot K's start leaves out (inventory, reputation, blueprints, research, known; world: only "
+                         "that start's ship, place and kit, for a start x4ls starts lists as player-start=ship-only)")
     ns.add_argument('--gate-dll', type=Path, required=True)
     ns.add_argument('--out', type=Path, required=True, help='new session folder (spec, save, session.json, overlay)')
     ns.add_argument('--minutes', type=float, default=40)
@@ -244,11 +248,23 @@ def main(argv=None):
                                               server_file=args.server_file))
         print(json.dumps(result, indent=2))
         return 0 if result['outcome'] in ('played', 'closed') else 1
+    if args.command == 'join' and args.starts:
+        from . import hotjoin
+        recipe = hotjoin.recipe_tools().read_recipe(args.overlay)
+        if recipe is None:
+            raise SystemExit(f'{args.overlay}: not a play overlay with a recipe')
+        print(hotjoin.starts_text(recipe))
+        return 0
+    if args.command == 'join' and (not args.relay or not args.token or (args.slot is None) == (args.start is None)):
+        raise SystemExit('x4ls join needs --relay, --token and one of --slot K or --start GAMESTART (x4ls join --overlay DIR --starts lists them)')
+    if args.command == 'join' and args.start and args.arm_at is not None:
+        raise SystemExit('x4ls join --start is for a hot join (no --arm-at)')
     if args.command == 'join' and args.arm_at is None:
         from . import hotjoin
         if args.snapshot or args.clients:
             raise SystemExit('a hot join (no --arm-at) takes no --snapshot or --clients: the join save and the slots come from the session')
-        result = hotjoin.hot_join(hotjoin.HotJoinOptions(relay=args.relay, token=args.token, slot=args.slot, overlay=args.overlay,
+        result = hotjoin.hot_join(hotjoin.HotJoinOptions(relay=args.relay, token=args.token, slot=args.slot, start=args.start,
+                                                         overlay=args.overlay,
                                                          wait=args.wait, nonce=args.nonce, width=width, height=height, game=args.game,
                                                          lanes=args.lanes, startup=args.startup, steam_fix=args.steam_fix,
                                                          timeout=args.timeout, close_when_over=args.close_when_over,

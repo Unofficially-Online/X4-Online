@@ -286,6 +286,53 @@ class SpecTests(unittest.TestCase):
                     session_start.build_spec(*call)
                 self.assertIn(text, str(caught.exception))
 
+    def test_ship_only_takes_a_class_b_starts_ship_place_and_kit_when_the_world_parts_are_omitted_by_name(self):
+        # --omit K=world: the player gets the start's ship, place and kit; its world-level parts are listed, not applied.
+        delta = ''' <gamestart id="delta_start" group="1">
+  <location galaxy="xu_ep2_universe_macro" sector="cluster_98_sector001_macro"><position x="38140" y="40" z="114620"/><rotation yaw="6.4"/></location>
+  <player macro="character_tst_macro" money="5000"><ship macro="ship_tst_s_fighter_02_a_macro">
+   <loadout><macros><engine macro="engine_tst_macro" path="../con_engine_01"/></macros></loadout></ship></player>
+  <universe><god enabled="false"/></universe>
+ </gamestart>
+ <!-- PLACEHOLDER_TST -->'''
+        with tempfile.TemporaryDirectory() as d:
+            libraries, scripts = stock_tree(d)
+            path = libraries / 'base/libraries/gamestarts.xml'
+            path.write_text(path.read_text(encoding='utf-8').replace(' <!-- PLACEHOLDER_TST -->', delta), encoding='utf-8')
+            c = gamestarts.Catalog(libraries, scripts)
+            rec = c.record('delta_start')
+            self.assertEqual(gamestarts.classify(rec)[0], 'b')
+            self.assertIn('is class b', gamestarts.per_player_refusal(rec))
+            self.assertIsNone(gamestarts.per_player_refusal(rec, world=True))
+            self.assertIn('is class -', gamestarts.per_player_refusal(c.record('lesson_start'), world=True))      # refused stays refused
+            self.assertIn('on_foot', gamestarts.per_player_refusal(c.record('station_start'), world=True))        # no place in space
+            row = next(r for r in c.rows() if r['id'] == 'delta_start')
+            self.assertTrue(row['per_player'] and row['ship_only'] is None)
+            tpl = gamestarts.template(c, 'delta_start', world=True)
+            self.assertEqual(tpl['place'], {'zone': None, 'sector': 'cluster_98_sector001_macro', 'x': 38140, 'y': 40, 'z': 114620, 'yaw': 6})
+            self.assertTrue(tpl['world_omitted'])
+            self.assertEqual(gamestarts.template(c, 'alpha_start')['world_omitted'], [])
+            with self.assertRaises(session_start.SessionError) as caught:
+                session_start.build_spec(c, 'war_start', 2, 'coop', {2: 'delta_start'})
+            self.assertIn('is class b', str(caught.exception))
+            self.assertIn('add --omit 2=world', str(caught.exception))
+            spec = session_start.build_spec(c, 'war_start', 3, 'coop', {2: 'delta_start', 3: 'alpha_start'},
+                                            {2: 'world', 3: 'inventory,reputation'})
+            slot = spec['slots']['2']
+            self.assertEqual((slot['class'], slot['hull']['zone'], slot['hull']['sector'], slot['hull']['x']),
+                             ('b', None, 'cluster_98_sector001_macro', 38140))
+            self.assertEqual(slot['world_omitted'], tpl['world_omitted'])
+            self.assertEqual(slot['kit'], {'slot': 2, 'gamestart': 'delta_start', 'money': 5000, 'omitted': []})   # 'world' is no kit part
+            self.assertEqual(spec['slots']['3']['world_omitted'], [])
+            md = ET.fromstring(session_start.hulls_md(spec).split('-->', 1)[1])
+            actions = md.find('.//actions')
+            sector = actions.find('find_sector')
+            self.assertEqual(sector.attrib, {'name': '$zone', 'macro': 'macro.cluster_98_sector001_macro'})
+            ships = actions.findall('.//create_ship')
+            self.assertEqual([s.get('sector') for s in ships], ['$zone', None])     # slot 2 by its sector, slot 3 by its zone
+            self.assertEqual([s.get('zone') for s in ships], [None, '$zone'])
+            self.assertEqual(ships[0].find('position').attrib, {'x': '38140m', 'y': '40m', 'z': '114620m'})
+
     def test_hull_md_creates_the_stock_loadout_at_the_start_and_answers_the_capture(self):
         with tempfile.TemporaryDirectory() as d:
             c = catalog_in(d)

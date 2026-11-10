@@ -76,7 +76,9 @@ def slot_values(texts, what):
 
 def _check_hull(hull, slot):
     for key in ('macro', 'zone', 'sector'):
-        if not NAME.fullmatch(hull[key]):
+        if hull[key] is None and key == 'zone':   # a ship-only start placed by its sector position
+            continue
+        if not NAME.fullmatch(hull[key] or ''):
             raise SessionError(f'slot {slot}: unsafe {key} {hull[key]!r}')
     for e in hull['equipment']:
         if e['kind'] not in ('engine', 'weapon', 'shield', 'turret') or not NAME.fullmatch(e['macro'] or '') or \
@@ -111,11 +113,16 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None):
             raise SessionError(f'--omit {k}: slot {k} has no per-player start')
     slots, used = {}, {}
     for k in sorted(starts):
+        parts = list(omit.get(k, ()))
+        world = 'world' in parts   # --omit K=world: the ship-only form (native_gate_gamestarts.py module text)
         try:
-            tpl = gamestarts.template(catalog, starts[k])
-            kit = gamestarts.slot_kit(tpl, mode, k, omit.get(k, ()))
+            tpl = gamestarts.template(catalog, starts[k], world=world)
+            kit = gamestarts.slot_kit(tpl, mode, k, [p for p in parts if p != 'world'])
         except gamestarts.CatalogError as error:
-            raise SessionError(f'slot {k}: {error}') from None
+            hint = ''
+            if not world and not gamestarts.per_player_refusal(catalog.record(starts[k]), world=True):
+                hint = f' (its ship, place and kit alone, without its world parts: add --omit {k}=world)'
+            raise SessionError(f'slot {k}: {error}{hint}') from None
         n = used.get(tpl['gamestart'], 0)
         used[tpl['gamestart']] = n + 1
         place = tpl['place']
@@ -124,7 +131,7 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None):
         _check_hull(hull, k)
         slots[str(k)] = {'gamestart': tpl['gamestart'], 'class': tpl['class'], 'kit': kit, 'hull': hull,
                          'offset_x': n * gamestarts.SAME_START_OFFSET, 'presentation': tpl['presentation'],
-                         'inventory_not_applied': tpl['inventory']}
+                         'inventory_not_applied': tpl['inventory'], 'world_omitted': tpl['world_omitted']}
     # The kits must pass the identity plan's own rules (the same ones Lua applies on every client).
     ships = [f'{i:016x}' for i in range(1, players + 1)]
     try:
@@ -186,10 +193,16 @@ def hulls_md(spec):
             for macro in hull['thrusters']:
                 ET.SubElement(virtual, 'thruster', {'macro': macro})
         ET.SubElement(actions, 'set_value', {'name': '$ship', 'exact': 'null'})
-        ET.SubElement(actions, 'find_zone', {'name': '$zone', 'macro': f"macro.{hull['zone']}"})
-        found = ET.SubElement(actions, 'do_if', {'value': '@$zone.isclass.zone'})
-        ship = ET.SubElement(found, 'create_ship', {'name': '$ship', 'macro': f"macro.{hull['macro']}", 'zone': '$zone',
-                                                    'seed': str(int(hull['seed']))})
+        if hull['zone']:
+            ET.SubElement(actions, 'find_zone', {'name': '$zone', 'macro': f"macro.{hull['zone']}"})
+            found = ET.SubElement(actions, 'do_if', {'value': '@$zone.isclass.zone'})
+            ship = ET.SubElement(found, 'create_ship', {'name': '$ship', 'macro': f"macro.{hull['macro']}", 'zone': '$zone',
+                                                        'seed': str(int(hull['seed']))})
+        else:   # a ship-only start with a sector position: the position is the sector's
+            ET.SubElement(actions, 'find_sector', {'name': '$zone', 'macro': f"macro.{hull['sector']}"})
+            found = ET.SubElement(actions, 'do_if', {'value': '@$zone.isclass.sector'})
+            ship = ET.SubElement(found, 'create_ship', {'name': '$ship', 'macro': f"macro.{hull['macro']}", 'sector': '$zone',
+                                                        'seed': str(int(hull['seed']))})
         ET.SubElement(ship, 'owner', {'exact': 'faction.player', 'overridenpc': 'true'})
         ET.SubElement(ship, 'loadout', {'loadout': '$loadout'})
         ET.SubElement(ET.SubElement(ship, 'pilot'), 'select', {'faction': 'faction.argon', 'tags': 'tag.aipilot'})
@@ -203,7 +216,7 @@ def hulls_md(spec):
                                                    "$ship.sector.macro.id, $ship.owner.id]"})
         failed = ET.SubElement(actions, 'do_else')
         ET.SubElement(failed, 'set_value', {'name': '$failed', 'exact': f"$failed + ' {key}'"})
-        ET.SubElement(failed, 'debug_text', {'text': f"'[X4LAN] SESSION_HULL_FAILED slot={key} zone={hull['zone']} found=%s'.[@$zone.isclass.zone]"})
+        ET.SubElement(failed, 'debug_text', {'text': f"'[X4LAN] SESSION_HULL_FAILED slot={key} place={hull['zone'] or hull['sector']} found=%s'.[@$zone.exists]"})
     ET.SubElement(actions, 'debug_text', {'text': "'[X4LAN] SESSION_HULLS created=%s failed=%s'.[$ships.count, $failed]"})
     ET.SubElement(actions, 'raise_lua_event', {'name': f"'{HULLS_SCRIPT}.Ready'", 'param': "if $failed == '' then $ships.count else -1"})
     ET.indent(root, ' ')
@@ -324,7 +337,9 @@ def register(spec, snapshot):
             hull, got = spec['slots'][key]['hull'], found.get(saved)
             if got is None:
                 raise SessionError(f'slot {key}: hull {saved} not in the save')
-            want = {'macro': hull['macro'], 'owner': 'player', 'zone': hull['zone'], 'sector': hull['sector']}
+            want = {'macro': hull['macro'], 'owner': 'player', 'sector': hull['sector']}
+            if hull['zone']:   # a sector position lands in whatever zone X4 has or makes there
+                want['zone'] = hull['zone']
             bad = {k: (got[k], v) for k, v in want.items() if got[k] != v}
             if bad or not (got['class'] or '').startswith('ship_'):
                 raise SessionError(f'slot {key}: hull {saved} differs from the spec (got, want): {bad or got["class"]}')
@@ -336,6 +351,7 @@ def register(spec, snapshot):
             'seed': header.get('seed'), 'build': header.get('build'), 'player_ship': header['player']['ship'],
             'player_macro': header['player']['macro'], 'player_sector': header['player']['sector'], 'fixture': fixture,
             'hulls': hulls, 'slots': {k: {'gamestart': v['gamestart'], 'class': v['class'], 'sector': v['hull']['sector'],
+                                          'ship': v['hull']['macro'], 'world_omitted': v.get('world_omitted', []),
                                           'kit': v['kit']} for k, v in spec['slots'].items()},
             'spec_sha256': hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()}
 

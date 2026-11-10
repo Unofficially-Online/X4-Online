@@ -39,13 +39,14 @@ def catalog(game_dir=None, cache=None, log=print):
 
 
 def starts(game_dir=None, cache=None, show_all=False, log=print):
-    """The stock starts: which one can be the session base (slot 1) and which a player's own start (slots 2..N)."""
+    """The stock starts: which one can be the session base (slot 1) and which a player's own start (slots 2..N).
+    player-start=ship-only: with --omit K=world the player gets that start's ship, place and kit, not its story."""
     rows = [r for r in catalog(game_dir, cache, log).rows() if show_all or r['class'] != '-']
     for r in rows:
         pl = r['player']
         loc = pl.get('location', {})
         base = 'yes' if not r['base'] else 'no'
-        own = 'yes' if not r['per_player'] and r['class'] in ('a', 'c') else 'no'
+        own = 'yes' if not r['per_player'] and r['class'] in ('a', 'c') else 'ship-only' if not r['ship_only'] else 'no'
         log(f"{r['id']:34} class={r['class']} session-base={base} player-start={own} "
             f"sector={loc.get('sector') or loc.get('zone') or '-'} ship={pl.get('ship', {}).get('macro', '-')} money={pl.get('money', '-')}")
         for reason in r['reasons'] + ([f"player start refused: {r['per_player']}"] if r['per_player'] and r['class'] in ('a', 'c') else []):
@@ -87,7 +88,8 @@ def new_session(o, log=print):
     (out / 'spec.json').write_text(json.dumps(spec, indent=1, sort_keys=True) + '\n', encoding='utf-8')
     for k, slot in sorted(spec['slots'].items(), key=lambda kv: int(kv[0])):
         log(f"slot {k}: start {slot['gamestart']} (class {slot['class']}) in {slot['hull']['sector']}, kit "
-            + ', '.join(sorted(slot['kit'])))
+            + ', '.join(sorted(slot['kit']))
+            + (f"; left out (ship only): {'; '.join(slot['world_omitted'])}"[:400] if slot.get('world_omitted') else ''))
     capture = session_start.build_capture(spec, None, out / 'capture-overlay')
     save = out / 'session-save.xml.gz'
     outcome = session.capture_snapshot(save, o.base_start, o.game, o.lanes, o.timeout, log=log, steam_fix=o.steam_fix,
