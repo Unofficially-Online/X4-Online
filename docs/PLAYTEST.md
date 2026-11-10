@@ -335,13 +335,17 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
   stood in Paranid, Split and Terran space, and the overlay lists them as open starts. ns5: the same with trade,
   intro and tutorial, their ships placed near those starts' stations. Starts in more than two sectors need nothing
   extra: the session defaults cover eight sectors. Neither session has been played yet.
-- State (hjs1, 10 Nov, two X4 on one PC: base discover, the open slot the fight start in another sector, a join at
-  tick 717): the join runs to the end (the joiner loads, catches up, takes the slot at tick 3495, both play to 5440,
-  0 errors) and the simulation is in step (random state and both ships equal on every sampled tick), but the two
-  PCs hand out object IDs 9,119 apart from the first tick, so the session counts every tick as differing. The cause
-  is known (the far sector around the open slot's ship is raised to the session's attention level after the joiner's
-  ID counter was set) and is being fixed in the join code. A session whose open slots start next to the host is
-  not affected.
+- State (10 Nov, two X4 on one PC). The join itself always runs to the end: the joiner loads, catches up, takes
+  the slot of the start it asked for, both play on, 0 errors, and every player's ship is at the same place on both
+  PCs. It is not in lockstep yet for a start in another sector than the host's:
+  - Object IDs: fixed. The joiner raised the far sector to the session's attention level after its ID counter was set
+    and handed out 9,119 IDs the session never did; it now takes them from its own list (hjs1: the ID rows equal from
+    the first tick after the join).
+  - Still differing after such a join: one of the twelve reference ships near the host was in flight at the join and
+    stops early on the joiner (hjs4); a full shield's timestamp on another differs until that shield next changes;
+    and about a second after the handover the session spawns one NPC ship the joiner does not (hjs1). The session
+    counts these as desyncs. All three are in the join code and in work.
+  - The standard playtest session (every player next to the host) joins clean with the same build.
 - Money in coop: the wallet is shared, and every slot's kit is applied when the session starts. So that the host
   does not begin with the money of every start on offer, an open slot's start money is taken out again right after
   the start and paid in when that slot's player joins (`native_gate_join_start_money`, a default). hjs4 (10 Nov, the
