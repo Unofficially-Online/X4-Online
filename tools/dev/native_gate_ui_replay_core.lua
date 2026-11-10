@@ -736,7 +736,7 @@ end
 K.SCOPED={target_slot=true,target_none=true,guidance_slot=true,guidance_end=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={mis_fixture=true,gm_limit=true}
+K.CANONICAL={mis_fixture=true,gm_limit=true,slot_kill=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -849,6 +849,8 @@ function K.script(plan,start,tools)
   elseif op=='mis_fixture' then call=function() tools.env.AddUITriggeredEvent('X4LAN_UiMissions','Fixture',{location=tools.slot_lua(e[3] or 1)});return 'lua' end
   -- Test only: the generic missions' limit per sector (MD GmLimit), canonical like mis_fixture.
   elseif op=='gm_limit' then call=function() tools.env.AddUITriggeredEvent('X4LAN_UiMissions','GmLimit',e[3]);return 'lua' end
+  -- Test only: slot e[3]'s ship loses its hull (native_gate_pilot_respawn.xml Kill), in every present client's plan at the same tick.
+  elseif op=='slot_kill' then call=function() tools.env.AddUITriggeredEvent('X4LAN_PilotRespawn','Kill',{slotname=tostring(e[3]),object=tools.slot_lua(e[3])});return 'lua' end
   elseif op=='offer_accept' or op=='offer_decline' then call=function()
     local offer,actor=tools.missions.find_offer(K.FIXTURE_OFFER)
     tools.env.SignalObject(actor,op=='offer_accept' and 'accept' or 'decline',tools.env.ConvertStringToLuaID(offer));return offer end

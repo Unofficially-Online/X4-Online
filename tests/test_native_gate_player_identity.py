@@ -948,7 +948,10 @@ class PlayersBuilderTests(unittest.TestCase):
         root = ET.fromstring(text)
         self.assertEqual(root.get('name'), 'X4LAN_PilotRespawn')
         controls = [cue.find('conditions/event_ui_triggered').get('control') for cue in root.find('cues') if cue.find('conditions') is not None]
-        self.assertEqual(controls, ["'Note'", "'Suit'", "'Respawn'"])
+        self.assertEqual(controls, ["'Note'", "'Kill'", "'Suit'", "'Respawn'"])   # Kill: the test op slot_kill (a hull at zero)
+        kill = [c for c in root.find('cues') if c.get('name') == 'Kill'][0]
+        self.assertEqual(kill.find('.//set_object_hull').attrib, {'object': '$ship', 'exact': '0'})
+        self.assertIsNone(kill.find('.//destroy_object'))   # the hull's own path (the eject), not a script kill
         creates = root.findall('.//create_ship')
         self.assertEqual([c.get('name') for c in creates], ['$suit', '$ship', '$ship'])
         self.assertEqual(creates[0].get('macro'), 'player.entity.spacesuitmacro')   # stock's way to an entity's suit

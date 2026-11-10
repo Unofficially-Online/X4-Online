@@ -33,6 +33,24 @@
     </do_else>
    </actions>
   </cue>
+  <!-- Test only (script op slot_kill, in every present client's plan at the same tick): a slot's ship loses its hull, so
+       the death module sees what a lost fight leaves (the eject for slot 1, the seat's end for slots 2..N) and the respawn
+       follows. For runs without people, e.g. a hot join after a respawn. -->
+  <cue name="Kill" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_PilotRespawn'" control="'Kill'"/></conditions>
+   <actions>
+    <set_value name="$a" exact="event.param3"/>
+    <set_value name="$ship" exact="$a.$object"/>
+    <do_if value="@$ship.isoperational and $ship.isclass.ship">
+     <debug_text text="'[X4LAN] PILOT_RESPAWN_KILL slot=%s macro=%s hull=%s time=%s'.[$a.$slotname, $ship.macro.id, $ship.hullpercentage, player.age]"/>
+     <set_object_shield object="$ship" exact="0"/>
+     <set_object_hull object="$ship" exact="0"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] PILOT_RESPAWN_KILL slot=%s refused=ship_missing'.[$a.$slotname]"/>
+    </do_else>
+   </actions>
+  </cue>
   <cue name="Suit" instantiate="true">
    <conditions><event_ui_triggered screen="'X4LAN_PilotRespawn'" control="'Suit'"/></conditions>
    <actions>

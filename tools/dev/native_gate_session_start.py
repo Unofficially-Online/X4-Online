@@ -112,7 +112,7 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None):
     for k in omit:
         if k not in starts:
             raise SessionError(f'--omit {k}: slot {k} has no per-player start')
-    slots, used = {}, {}
+    slots, used = {}, {base_start: 1}   # slot 1's own ship stands at the base start's place: a slot with the same start goes beside it
     for k in sorted(starts):
         parts = list(omit.get(k, ()))
         world = 'world' in parts   # --omit K=world: the ship-only form (native_gate_gamestarts.py module text)

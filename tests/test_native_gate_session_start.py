@@ -275,6 +275,8 @@ class SpecTests(unittest.TestCase):
             self.assertEqual([spec['slots'][k]['hull']['seed'] for k in ('2', '3', '4')], [5102, 5103, 5104])
             self.assertEqual(spec['slots']['2']['inventory_not_applied'], {'inv_tst': 2})
             self.assertEqual(spec['slots']['4']['kit'], {'slot': 4, 'gamestart': 'beta_start', 'money': 9000, 'omitted': []})
+            same = session_start.build_spec(c, 'beta_start', 3, 'coop', {2: 'beta_start', 3: 'beta_start'})   # the base's own start: beside slot 1
+            self.assertEqual([same['slots'][k]['hull']['x'] for k in ('2', '3')], [300, 600])
             refusals = [((c, 'station_start', 2, 'coop', {}), 'session base refused'),
                         ((c, 'war_start', 2, 'coop', {2: 'station_start'}), 'slot 2: start station_start is class b'),
                         ((c, 'war_start', 2, 'coop', {1: 'beta_start'}), 'slot 1 plays the session base start war_start'),
