@@ -415,3 +415,27 @@ refuses it, ui_missions_claim_taken:<name>). The M1 spec's mask is 19455; entrie
   second accept took the mission over, and its TRACK rows changed from P_1 to P_2 on both clients at the same game time.
   Not covered: the guidance timer runs on the canonical active mission only [I]; the mission list filter is by the two Lua
   readers the stock menus use (map, briefing, interact menu), an FFI reader by ID still answers any mission.
+
+12. OFFERS PER PLAYER (9 Nov; C4, native_gate_missions_per_player_offers, a session default)
+  [F] GenericMissions.Manager generates around "the player": at the game's start, on player.entity's sector change and
+  every ten minutes it signals EvaluateSectorMissions, which reads player.sector, finds stations there, and signals
+  SelectMission per offer; SelectMission's sub-cue signals the chosen GM_*.GenerateGenericMission in a later frame.
+  [F] MD::Cue's instance constructor is 0x1111a40 (this, the static cue, the parent instance). Two of its four callers
+  pass no parent and append to the static cue's +0x1a8 list: 0x111c472 (in Cue_CheckConditions 0x111c290) and 0x111cc68
+  make the ROOT instances; 0x111dc84 and 0x1114ba1 make nested ones. A frame's cue is the STATIC cue while an
+  instantiating cue's conditions pass and its actions run, so the frame rule alone never sees a new instance.
+  Built: every client, at the same ticks (15 s into the pilot window, then every 3 minutes, slots 3 s apart; stateless, so a
+  joiner computes the same ticks), signals the galaxy inside slot k's call scope with gate.mpp_generate(k) open; our MD
+  cue SlotOffers signals md.GenericMissions.EvaluateSectorMissions instantly, so the selection runs for slot k's sector
+  and P_k. mpp_create_hook on the two root calls claims every root instance made while slot k's own work runs (the
+  generation, or a frame of a cue slot k owns on the MD stack: mpp_depth), unless it is already slot k's through its
+  parents. So the selection cues are slot k's, their later frames run in slot k's scope, and the generic missions they
+  instantiate there are slot k's too: an offer's distance and sector checks follow P_k. A full table drops the claims
+  of cues that are gone. A cue is addressed md.<script>.<cue> (md.GenericMissions.EvaluateSectorMissions): mpp4 named it
+  through its parent cue, MD logged a failed lookup and nothing was generated.
+  Live, mpp5 (x4ls play, 2 players coop in one sector, 2400 ticks; test knob gm_limit raises the sector limit from 7 to
+    40 so a second generation in the same sector has room): MPP_OFFERS_MD slot=2 player=P_2 at tick 490; 14 root
+    instances claimed in the call, offers 28 -> 36 between ticks 516 and 589 on BOTH clients at the same ticks; owners=16
+    with equal hashes; 39 frames entered slot 2's scope; 0 desyncs, 0 errors. [F]
+  Not covered: players in different sectors were not run live (the fixture has both in Argon Prime); a slot's sector
+  change is picked up at the next 3-minute tick, not at once; factions mode rewards (C3).

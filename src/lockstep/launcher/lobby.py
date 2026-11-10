@@ -590,7 +590,7 @@ def run(o: LobbyOptions, log=print):
     view, profile_id = lanes / f'c{o.lane}', profile.PROFILES[o.lane - 1]
     kit = kit_id(o.overlay, recipe.get('snapshot_sha'))
     server = read_server_file(o.server_file) if o.server_file else None   # (address, port, key)
-    play = session.Options(clients=clients, overlay=o.overlay, snapshot=o.snapshot, ticks=last + 3, tick_hz=tick_hz,
+    play = session.Options(clients=clients, overlay=o.overlay, snapshot=o.snapshot, ticks=last + session.PLAY_TAIL_TICKS, tick_hz=tick_hz,
                            lookahead=lookahead, timeout=o.timeout, width=o.width, height=o.height, play=True,
                            stall_drop_ms=1000 * o.stall_drop, close_when_over=o.close_when_over, port=o.port)
     o.state.mkdir(parents=True, exist_ok=True)

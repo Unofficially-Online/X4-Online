@@ -55,7 +55,7 @@ def main(argv=None):
     pl.add_argument('--clients', type=int, default=2)
     pl.add_argument('--overlay', type=Path, required=True, help='built play overlay (tools/build_play_overlay.py)')
     pl.add_argument('--snapshot', type=Path, required=True, help='native .xml.gz save the overlay was built for')
-    pl.add_argument('--ticks', type=int, help="relay ticks (default: the overlay's pilot window end + 3)")
+    pl.add_argument('--ticks', type=int, help="relay ticks (default: the overlay's pilot window end + 1, the tick the controls go back)")
     pl.add_argument('--stall-drop', type=float, default=session.PLAY_STALL_DROP_S, metavar='SECONDS',
                     help='drop a client the others waited for this long (its gate stopped, it froze or it exited)')
     pl.add_argument('--timeout', type=int, default=0, help='seconds (default 0: none; the session ends with its window)')
@@ -270,7 +270,7 @@ def main(argv=None):
         return 0 if result['outcome'] == 'played' else 1
     if args.command == 'play':
         lookahead, tick_hz, last = session.play_settings(args.overlay, args.clients)
-        ticks = args.ticks or (last + 3 if last else None)
+        ticks = args.ticks or (last + session.PLAY_TAIL_TICKS if last else None)
         if not ticks:
             raise SystemExit('the overlay has no pilot window: pass --ticks')
         if not lookahead:

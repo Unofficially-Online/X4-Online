@@ -75,7 +75,7 @@ def run(o: ServeOptions, log=print):
             run_dir.mkdir(parents=True)
             games[salt] = run_dir
             play = session.Options(clients=clients, overlay=o.overlay, snapshot=Path('snapshot'),   # a snapshot session
-                                   ticks=last + 3, tick_hz=tick_hz, lookahead=lookahead, play=True,
+                                   ticks=last + session.PLAY_TAIL_TICKS, tick_hz=tick_hz, lookahead=lookahead, play=True,
                                    stall_drop_ms=1000 * o.stall_drop, port=port,
                                    remote_slots=tuple(range(1, clients + 1)), bind=o.bind, allow_from=addresses)
             with (run_dir / 'relay.log').open('w') as relay_log:

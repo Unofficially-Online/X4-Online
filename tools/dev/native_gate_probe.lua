@@ -2707,8 +2707,8 @@ function pilot_view.arm_ui_replay(slot,window)
   min_hull=min_hull,slots=#cfg.native_gate_pilot_slots,slot_lua=tools.slot_lua,own_slot=slot,guard=guard,pss=pss,pss_spawn=pss_spawn,
   mpp=cfg.native_gate_missions_per_player==true,   -- slots 2+ capture the events and missions families, applied in their own scope
   -- Generic mission offers for slots 2+ (lockstep_mission_owners.h 'offers'): first 15 s into the window, then every 3
-  -- minutes, the slots 3 s apart. native_gate_missions_per_player_offers = true (opt-in until its live run passes).
-  offers=cfg.native_gate_missions_per_player==true and cfg.native_gate_missions_per_player_offers==true and
+  -- minutes, the slots 3 s apart. native_gate_missions_per_player_offers = false leaves the offers to slot 1's sector.
+  offers=cfg.native_gate_missions_per_player==true and cfg.native_gate_missions_per_player_offers~=false and
    pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);') and
    {first=window[1]+450,every=5400,stagger=90,galaxy=function() return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID())) end} or nil,
   notify=function(text) ffi.C.ShowInfoLine(text,4) end,   -- every refusal of the families shows its info line (also without the guard)

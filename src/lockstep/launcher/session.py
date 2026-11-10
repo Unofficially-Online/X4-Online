@@ -31,6 +31,11 @@ STOP_ANY = re.compile(r'NATIVE_GATE STOP .*?reason=(\d+)')
 # The probe's own refusal (a Lua error in native_gate_probe.lua) before the gate armed: that client never plays (hj11, 8 Nov:
 # a Linux-only key refused at boot, and the session waited out its --timeout of 25 minutes).
 PROBE_REFUSED = re.compile(r'NATIVE_GATE ERROR \[string "[^"]*native_gate_probe\.lua"\]:\d+: (.*)')
+# A play session ends one tick after its pilot window: at window end + 1 every client hands its controls back to X4
+# (pilot_controls_release), and from then on each window plays on alone, so later ticks are not the same world any more.
+# It used to run to end + 3: with a person holding the controls the last two ticks then differed and the summary said
+# desync for a game that had been in sync for its whole played window (9 Nov: window 40..3640, equal through 3641).
+PLAY_TAIL_TICKS = 1
 PLAY_NOTICE = re.compile(r'NATIVE_GATE (DESYNC|RESYNC|CLOCK_SPLIT|STALL|DROP) ')
 PLAY_STALL_DROP_S = 15.0  # a client the others waited for this long is dropped (its gate stopped, it froze or it exited)
 

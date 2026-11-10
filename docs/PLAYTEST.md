@@ -325,5 +325,8 @@ first mismatch.
     turns it off): a mission player 2 accepts is player 2's on every client. Its script sees player 2, their ship and their sector
     (mpp1: 900 ticks, 0 desyncs).
   - Each player has their own active mission, and each client's mission menus list its own player's missions (mpp2,
-    9 Nov: two players, a mission each, 900 ticks, 0 desyncs). Offers are still made around player 1, and rewards in
-    factions mode are not per player yet.
+    9 Nov: two players, a mission each, 900 ticks, 0 desyncs).
+  - Generic mission offers are made around every player, not only player 1: about every 3 minutes X4's own offer
+    selection runs for each further player's sector, and the offers it makes follow that player (mpp5, 9 Nov: player
+    2's selection made 8 offers on both clients, 2400 ticks, 0 desyncs). Rewards in factions mode are not per player
+    yet.
