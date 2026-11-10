@@ -306,9 +306,10 @@ steering, as in single player, and a gun turns as far as its mount allows.
   the focus, and its player's guns followed the real cursor there on both PCs.
 - Aim assist: without X4's manual aim (no mouse steering) and with X4's aim assist option on, a player's guns track
   that player's selected target while it is in the gun's range (`native_gate_pilot_aim_assist`, a default). It is X4's
-  own aim on a target, lead included. aim2 (no range limit yet): the guns turned to the mounts' limits toward the
-  target for the assist's ticks on both PCs and back; aim3 (with X4's range limit): the target was 13.8 km away
-  against a reach of 10.1 km and the guns stayed at rest. A target inside the range was not run with the limit in place.
+  own aim on a target, lead included. aim3 (with X4's range limit): the target was 13.8 km away against a reach of
+  10.1 km and the guns stayed at rest. aim4 (the two players flew to each other first, 1700 ticks): with the target
+  1.9 km away the guns turned to it and tracked it for the 800 ticks of the assist, the same readings on both PCs;
+  0 desyncs, 0 errors.
 - Not yet: the mounts follow the aim point only, not the target's speed, so fast crossing targets may be tracked a
   little late; fixed guns and turrets are as before.
 - Host and joiners need the same kit: the input records changed.

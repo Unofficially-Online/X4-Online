@@ -70,8 +70,13 @@
  *     nose) for the assist's ticks and back to rest after them; the guns fired as before; joints equal on both clients.
  *   aim3 (with the range gate, the assist a session default): the target was 13,823 m away against a reach of 10,080 m,
  *     the gate refused 588 times on both clients and the guns stayed at rest through the assist; the manual part as in
- *     aim1. So a target in range was not run with the gate in place: that case is aim2's aim behind a gate that aim3
- *     shows answering.
+ *     aim1.
+ *   aim4 (the same build, 1700 ticks: both slots fly to each other by autopilot from tick 100, target each other at
+ *     440, the assist bit and the trigger from 700 to 1500): the target 1,932 m away against the reach of 10,080 m at
+ *     tick 1200; X4's aim answered true 3188 times, 0 false, 0 refusals by the gate, the same counts on both clients.
+ *     Slot 1's guns: from rest to -0.1333 rad on one joint (inside the mount's limit, moving by a few 1e-6 rad per
+ *     reading: tracking) and the limit on the other, at rest again by 1560; slot 2's at a limit. 124 joint rows equal
+ *     on both clients.
  * Stop: the vtable entries go back (paim_restore, with the other pilot hooks). Status: gate.pilot_aim_status.
  * Runs without people: gate.pilot_aim_script(1,x,y,z,fire) makes this client's own record carry that point (its ship's
  * frame) as a manual aim, with the primary trigger when fire is 1, whatever the focus; (2,...) carries the assist bit
