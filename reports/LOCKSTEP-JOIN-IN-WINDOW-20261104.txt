@@ -1896,3 +1896,43 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
   say, the level written back when the call leaves another, off / up to 9 / within one side of 9 / to level 1 unchanged).
   The Linux gate check passes (the option is Windows-side: the Linux gate has no ATTN set). The real run is X4 9.00 on
   Windows, two instances on one PC, play mode.
+68. A BULLET AGAINST A COMPOUND AS THE LOAD BUILT IT: THE SHAPES OF STEP T+1 (hj8i at T=678; 11 November)
+- Found by the save tick 678 on ns8, slot 2: the census of 679 apart in the health and motion roots and every tick a mismatch
+  from 679. One bullet (start 28.527046, the same segment on both sides to 1e-5) missed fixture ship 16fcd9 on the session and
+  hit it on the joiner in step 679 (fraction 0.677); a shield group 1955 against 1932.
+- What did not help, each in a real run: forgetting the session's shape holders at the boundary after T or after T-1; holding
+  the part animation sequences the joiner's first republication restarts (parts 1, 22 and 23 of the ship restarted there, and
+  with the hold they no longer did: the sequences equal at 679, the hit unchanged); both together.
+- Why: the order inside a frame (U::UniverseFrameUpdate 0x9fdef0). The Move passes (0x9f9da0), in which the bullets are cast,
+  come first; XPhys::Scene::Step 0xba600 for the two scenes after them (per body: the owner's velocities into the body, then
+  Body_UpdateShape 0xbff80, which moves the compound's children to their parts' poses once the holder's due time +0x28 has
+  passed, then Jolt's update); the view cache publication last. So the casts of step T+1 see each compound as the scene step
+  of T left it: on the session from that body's last refresh, up to five seconds old; on the joiner as its load built it
+  (BODY's note already says so from the mass properties: the parts stood elsewhere). Whatever the scene step of T+1 does comes
+  after those casts, and the casts of T+2 see what it did: the joiner's first refresh against the session's old one again.
+  BODY carries the body's own pose and motion, so that was equal.
+- Fix (native_gate_join_shape_hold, with native_gate_join_shape_refresh; in the join defaults; session and joiner):
+    session, the boundary after T-1   the holders and the aligned objects forgotten: the scene step of T refreshes every body;
+    session, the boundary after T     every holder's due time to T's time plus one and a half ticks: no refresh in step T+1;
+    joiner, the admission             Body_UpdateShape(record, force) for every body of the scenes (the body manager's slots,
+                                      body +0x50 the record, its owner and holder), the thread's game time at T's, the
+                                      object marked as seen, the same due time; before BODY writes the motion properties;
+    both, the boundary after T+1      the reset of native_gate_join_shape_refresh as before: all refresh in step T+2.
+  Status shape_hold=on:calls:forced:held; crash note JOIN_SHAPE_HOLD.
+- Real run (ns8, slot 2, the save forced to 678, the option set by hand, with the physics trace of 677..681): the session
+  forgot 24 holders at 677 and held 176 of 179 bodies at 678; the joiner refreshed 159 and held 169 of 172, its thread time at
+  the admission already T's; joined at 3326 with digest_mismatches=0; the digest parts of 679..683 and the census of 679, 1800,
+  3600 and 5400 equal; the ship's body state before and after Jolt's update and its compound's three children equal at 679,
+  680 and 681.
+- Second save tick, the options from the join defaults (no --set; also the first join with native_gate_join_attn_leave from
+  the defaults): the save forced to 679, shape_hold=1:1:159:169, the session held 176 of 179 bodies at 679, the joiner
+  refreshed 159 and held 169 of 172; joined at 3337 with digest_mismatches=0, the census of 680, 1800, 3600 and 5400 equal.
+- What the physics trace of that run also shows, none of it new with the option and none in the census (not fixed here):
+    17136d   28 children on the session, 1 on the joiner: the ship of section 67's other direction (the load at attention 8,
+             the session at 9; ATTN writes 9 directly). Level 9 also decides the compound, so a bullet against that ship can
+             part the worlds: the native call for the way up is the next item.
+    39 bodies of stations (139ab .. 77ce4)   the same children in another order (sub-shape indices differ, the shapes do not).
+    139c7, 63cd0   two station bodies whose pose in the scene differs by some 100 km between the sides, static, far away.
+- Tests: native tests pass (the hold over a synthetic scene with a free slot and a body without a holder, the joiner's
+  forced calls at T's thread time, the session's boundaries after T-1, T and T+1, off unchanged). The real run is X4 9.00 on
+  Windows, two instances on one PC, play mode.

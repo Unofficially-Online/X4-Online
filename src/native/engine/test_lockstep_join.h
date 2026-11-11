@@ -1691,6 +1691,11 @@ static void tj_route_push(void *vector,const void *point) {
     }
     memcpy(dst+JOIN_ROUTE_SUBPOINT,&sub,8);v[1]+=JOIN_AGENT_WAYPOINT;
 }
+static unsigned tshape_calls;static double tshape_time;static unsigned char *tshape_last,*tshape_tls_block,tshape_none[0x60];
+static unsigned char *tshape_tls(void) {return tshape_tls_block;}
+static void tshape_update(unsigned char *record,unsigned char force) {
+    assert(force==1);++tshape_calls;tshape_last=record;memcpy(&tshape_time,tshape_tls_block+0x300,8);
+}
 static void test_join_world(void) {
     join_find_fn find=join_world_find;int (*ids)(join_tables *)=join_world_ids;unsigned classes=world_class_count;
     join_route_clear_fn route_clear=join_route_clear;join_route_push_fn route_push=join_route_push;
@@ -1801,6 +1806,38 @@ static void test_join_world(void) {
         const uint32_t before=join_shape_resets;
         rc_shape_keys[5]=0x1234;shape_initialized[0][0].holder=(void*)1;
         join_shape_reset(700);assert(!rc_shape_keys[5] && !shape_initialized[0][0].holder && join_shape_resets==before+1u);
+        {   static _Alignas(16) unsigned char scene[0x60],frame[0x10],system[0x40],body[3][0x80],record[3][0x40],owner[3][0x10],holder[2][0x40],tls[0x400];
+            static unsigned char *list[4];
+            memset(scene,0,sizeof(scene));memset(system,0,sizeof(system));memset(body,0,sizeof(body));memset(record,0,sizeof(record));
+            memset(owner,0,sizeof(owner));memset(holder,0,sizeof(holder));memset(tls,0,sizeof(tls));
+            unsigned char *p;uint64_t four=4;
+            p=system;memcpy(scene+0x20,&p,8);p=frame;memcpy(scene+0x40,&p,8);memcpy(system+0x10,&four,8);p=(unsigned char *)list;memcpy(system+0x20,&p,8);
+            list[0]=body[0];list[1]=(unsigned char *)(uintptr_t)0x11;list[2]=body[1];list[3]=body[2];   /* slot 1: a free-list entry */
+            for(unsigned k=0;k<3;k++) {p=record[k];memcpy(body[k]+0x50,&p,8);p=owner[k];memcpy(record[k],&p,8);}
+            p=holder[0];memcpy(record[0]+0x20,&p,8);p=holder[1];memcpy(record[1]+0x20,&p,8);                 /* body 2: no holder */
+            void (*update)(unsigned char *,unsigned char)=join_shape_update;unsigned char *(*tlsf)(void)=join_shape_tls;
+            join_shape_update=tshape_update;join_shape_tls=tshape_tls;tshape_tls_block=tls;tshape_calls=0;tshape_time=0;
+            join_shape_scene_test[0]=scene;join_shape_scene_test[1]=join_shape_scene_test[2]=tshape_none;
+            const uint64_t forced=join_shape_hold_forced,held=join_shape_hold_held;double before_time=5.0,due;memcpy(tls+0x300,&before_time,8);
+            join_shape_hold(800,40.0,0);                                             /* a session client: the due times alone */
+            assert(!tshape_calls && join_shape_hold_forced==forced && join_shape_hold_held==held+2u);
+            memcpy(&due,holder[0]+0x28,8);assert(due==40.0+1.5*gate_tick_dt());memcpy(&due,holder[1]+0x28,8);assert(due==40.0+1.5*gate_tick_dt());
+            join_shape_hold(900,50.0,1);                                             /* a joiner: each compound at T's time, then held */
+            assert(tshape_calls==2 && tshape_time==50.0 && tshape_last==record[1] && join_shape_hold_forced==forced+2u && join_shape_hold_held==held+4u);
+            memcpy(&due,holder[1]+0x28,8);assert(due==50.0+1.5*gate_tick_dt());memcpy(&due,tls+0x300,8);assert(due==5.0);   /* the thread's time back */
+            /* the session's boundaries: after T-1 forgotten, after T held, after T+1 the reset; off: neither */
+            {const uint64_t at=join_shape_at;const int joiner=join_shape_joiner,on=join_shape_hold_on;const uint64_t calls=join_shape_hold_calls;
+             const LONG64 mark=InterlockedCompareExchange64(&tp_rebuild_tick,0,0);const uint32_t resets=join_shape_resets;
+             join_shape_joiner=0;join_shape_at=1000;join_shape_hold_on=0;rc_shape_keys[5]=0x1234;
+             join_boundary(999);join_boundary(1000);assert(rc_shape_keys[5] && join_shape_hold_calls==calls);
+             join_shape_at=1000;join_shape_hold_on=1;join_boundary(998);assert(rc_shape_keys[5]);
+             join_boundary(999);assert(!rc_shape_keys[5] && join_shape_hold_calls==calls && join_shape_resets==resets);
+             rc_shape_keys[5]=0x1234;join_boundary(1000);assert(rc_shape_keys[5] && join_shape_hold_calls==calls+1u && tshape_calls==2);
+             join_boundary(1001);assert(!rc_shape_keys[5] && join_shape_resets==resets+1u && !join_shape_at);
+             join_shape_at=at;join_shape_joiner=joiner;join_shape_hold_on=on;InterlockedExchange64(&tp_rebuild_tick,mark);}
+            {char status[8192];join_shape_hold_on=1;assert(join_status(status,sizeof(status)) && strstr(status," shape_hold=1:"));join_shape_hold_on=0;}
+            join_shape_update=update;join_shape_tls=tlsf;memset(join_shape_scene_test,0,sizeof(join_shape_scene_test));
+        }
         /* ... and asks for the traffic restart in the next step: active traffic objects get X4's own rebuild byte, others not */
         assert(tp_rebuild_tick==701);
         static unsigned char net[0x380],on[0x300],off[0x300],second[0x300];unsigned char *list[2]={off,second};

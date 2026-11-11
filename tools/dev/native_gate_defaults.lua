@@ -364,6 +364,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_mute_load_npcs','hot join: the joiner MD does not hear the NPC created events of its load before the admission'},
  {'native_gate_join_cue_ids','hot join: the joiner loaded MD cue instances take the runtime IDs the join save names (missions, offers)'},
  {'native_gate_join_shoot_far','hot join: SHOOT also writes the session last shot time where the joiner gun was reset by its load (class A)'},
+ {'native_gate_join_shape_hold','hot join: every physics compound refreshed from the poses of the join step on every client and held for one step'},
  {'native_gate_join_attn_leave','hot join: with ATTN set, a level written down from 9 or more is made by SetAttention from the load level (the nav helper released as on the session)'},
  {'native_gate_join_attn_states','hot join: with ATTN set, SetAttention at the admission for every object whose per-level state is apart there and settled on the session, its allocations on the load list'},
  {'native_gate_join_gravn_extra','hot join: GRAVN keeps the joiner zone groups the session adds later in the neighbour lists (GRAVN extra)'},

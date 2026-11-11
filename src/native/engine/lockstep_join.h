@@ -2551,17 +2551,94 @@ static void join_gate_fields(join_tables *t,uint64_t tick) {
  * The session learns T from the SAVE_AT record (every client of the session, saver or not), the joiner from its package.
  * Other bodies: the region camera's table of aligned objects is forgotten at the same boundary (join_shape_reset). */
 static uint64_t join_shape_at;static int join_shape_joiner;static uint32_t join_shape_resets;
-static void join_shape_reset(uint64_t completed) {
+/* native_gate_join_shape_hold (session and joiner, in the join defaults; hj8i at T=678, 11 Nov). In a frame the bullets are
+ * cast in the Move passes (0x9f9da0) before XPhys::Scene::Step 0xba600 refreshes any compound, so the casts of step T+1 see
+ * each body's children as the scene step of T left them: on the session from that body's last refresh, up to five seconds
+ * old, on the joiner as its load built the compound (BODY's own note: the mass properties show the parts stood elsewhere).
+ * A bullet of 679 missed fixture ship 16fcd9 on the session and hit it on the joiner. Forgetting the holders at the boundary
+ * after T (tried) acts in the scene step of T+1, after those casts; the joiner's first refresh comes there too, and both
+ * sides' refresh at T+2 leaves the casts of T+2 apart the same way. With this option:
+ *   session, the boundary after T-1   the holders and the aligned objects are forgotten (join_shape_forget): the scene step
+ *                                     of T refreshes every body from the poses of T;
+ *   session, the boundary after T     every holder's due time +0x28 goes to T's time plus one and a half ticks: nothing
+ *                                     refreshes in the scene step of T+1;
+ *   joiner, the admission             Body_UpdateShape(record, force) for every body of the scenes, with the thread's game
+ *                                     time at T's (the package's), the object's key marked as seen, the same due time;
+ *   both, the boundary after T+1      the reset below, as before: every body refreshes in the scene step of T+2.
+ * So the casts of T+1 and of T+2 see compounds made from the poses of T on every client. A session client that learns T
+ * after the boundary of T-1 does the hold alone (as before the option for step T+1). Crash note JOIN_SHAPE_HOLD tick=
+ * joiner= force= bodies= forced= held= plain= (plain: a body without a record, an owner or a holder) seen= (objects newly
+ * marked) now= tls= (the joiner's thread time before the calls); status shape_hold=on:calls:forced:held. Real run, the save
+ * forced to 678: the session held 176 of 179 bodies, the joiner refreshed 159 and held 169 of 172 with its thread time
+ * already at T's; joined with digest_mismatches=0 where every run before parted at 679, the census of 679, 1800, 3600 and
+ * 5400 equal, the ship's body and its compound's children equal at 679..681 (physics trace). */
+#define JOIN_SHAPE_UPDATE 0xbff80u
+static const uint32_t join_shape_scenes[3]={0x38f0748u,0x38f0740u,0x38f0738u};
+static int join_shape_hold_on;
+static uint64_t join_shape_hold_calls,join_shape_hold_forced,join_shape_hold_held;
+static void join_shape_update_native(unsigned char *record,unsigned char force) {
+    ((void (*)(void *,unsigned char))(void *)(image+JOIN_SHAPE_UPDATE))(record,force);
+}
+static void (*join_shape_update)(unsigned char *,unsigned char)=join_shape_update_native;   /* tests replace them */
+static unsigned char *(*join_shape_tls)(void)=join_tls_block;
+static unsigned char *join_shape_scene_test[3];
+static unsigned join_shape_forget(void) {
     unsigned held=0;
     for(unsigned a=0;a<ACTOR_CAPACITY;a++) for(unsigned w=0;w<SHAPE_RECORDS;w++) if(shape_initialized[a][w].holder) ++held;
-    memset(shape_initialized,0,sizeof(shape_initialized));++join_shape_resets;
+    memset(shape_initialized,0,sizeof(shape_initialized));
+    memset((void *)rc_shape_keys,0,sizeof(rc_shape_keys));   /* every other body as well (join_shape_reset) */
+    return held;
+}
+static void join_shape_hold(uint64_t completed,double now,int force) {
+    const double due=now+1.5*gate_tick_dt();uint64_t bodies=0,forced=0,held=0,plain=0,seen=0;
+    unsigned char *tls=force?join_shape_tls():NULL;double saved=0;
+    if(tls) {memcpy(&saved,tls+0x300,8);memcpy(tls+0x300,&now,8);}
+    for(unsigned s=0;s<3;s++) {
+        unsigned char *scene=join_shape_scene_test[s],*system=NULL,*frame=NULL,**list=NULL;uint64_t slots=0;
+        if(!scene && !join_read(image+join_shape_scenes[s],&scene,8)) continue;
+        if(!scene || !join_read(scene+0x20,&system,8) || !system || !join_read(system+0x10,&slots,8) || slots>0x800000u ||
+           !join_read(system+0x20,&list,8) || !list) continue;
+        (void)join_read(scene+0x40,&frame,8);
+        for(uint64_t i=0;i<slots;i++) {
+            unsigned char *body=NULL,*record=NULL,*owner=NULL,*holder=NULL;
+            if(!join_read(list+i,&body,8) || !body || ((uintptr_t)body&1u)) continue;
+            ++bodies;
+            if(!join_read(body+0x50,&record,8) || !record || !join_read(record,&owner,8) || !owner ||
+               !join_read(record+0x20,&holder,8) || !holder) {++plain;continue;}
+            if(force && frame) {   /* as the scene step's loop: a scene with its frame, a record with its owner */
+                uint64_t runtime=0;unsigned klass=0;
+                join_shape_update(record,1);++forced;
+                if(join_read(owner+8,&runtime,8) && runtime) {
+                    const uint64_t key=world_identity_key(runtime,&klass);
+                    if(key && rc_shape_key_first(key)>0) ++seen;
+                }
+                if(!join_read(record+0x20,&holder,8) || !holder) continue;
+            }
+            memcpy(holder+0x28,&due,8);++held;
+        }
+    }
+    uint64_t was=0;if(tls) {memcpy(&was,&saved,8);memcpy(tls+0x300,&saved,8);}
+    ++join_shape_hold_calls;join_shape_hold_forced+=forced;join_shape_hold_held+=held;
+    uint64_t bits;memcpy(&bits,&now,8);
+    char row[280];const int n=snprintf(row,sizeof(row),"[X4LAN] NATIVE_GATE JOIN_SHAPE_HOLD tick=%llu joiner=%d force=%d bodies=%llu forced=%llu "
+        "held=%llu plain=%llu seen=%llu now=%016llx tls=%016llx\r\n",(unsigned long long)completed,join_shape_joiner,force,
+        (unsigned long long)bodies,(unsigned long long)forced,(unsigned long long)held,(unsigned long long)plain,(unsigned long long)seen,
+        (unsigned long long)bits,(unsigned long long)was);
+    if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);
+}
+/* The joiner's admission (lockstep_join_world.h, before BODY writes the session's motion properties). */
+static void join_shape_hold_admit(const join_tables *s) {
+    if(!join_shape_hold_on) return;
+    double now;memcpy(&now,&s->gate.game,8);join_shape_hold(s->gate.tick,now,1);
+}
+static void join_shape_reset(uint64_t completed) {
+    const unsigned held=join_shape_forget();++join_shape_resets;
     /* Every other body as well (hjr1, 10 Nov). The region camera's shape_refresh group lets each object's first refresh after
      * its client's start come at once and the later ones at the keyed interval, so a joiner's due times ran from its load and
      * the session's from its start: a ship rebuilt inside the old one's wreck was moved out of it at the ship's next refresh,
      * tick 1344 on the session and 1599 on the joiner (its load at 698 plus the same 30 s). With the table of seen objects
      * forgotten here, on every client at the same boundary, the next refresh call of every body is a first one again: all
      * refresh at step T+2 from the same poses and their due times run together after. */
-    memset((void *)rc_shape_keys,0,sizeof(rc_shape_keys));
     /* And every zone's mass traffic is made anew in the next step (lockstep_traffic_rows.h tp_rebuild_mark): its members are
      * in no save, so the joiner's were its own. */
     InterlockedExchange64(&tp_rebuild_tick,(LONG64)completed+1);
@@ -2570,6 +2647,14 @@ static void join_shape_reset(uint64_t completed) {
     if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);
 }
 static void join_boundary(uint64_t completed) {
+    if(join_shape_hold_on && !join_shape_joiner && join_shape_at) {   /* a session client: step T refreshes all, step T+1 none */
+        if(completed+1u==join_shape_at) {
+            const unsigned held=join_shape_forget();
+            char row[160];const int n=snprintf(row,sizeof(row),"[X4LAN] NATIVE_GATE JOIN_SHAPE_RESET tick=%llu forgotten=%u resets=%u joiner=0 early=1\r\n",
+                                               (unsigned long long)completed,held,join_shape_resets);
+            if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);
+        } else if(completed==join_shape_at) join_shape_hold(completed,stats.game,0);
+    }
     if(join_shape_joiner && join_rx.based && completed==join_rx.t.gate.tick+1) join_shape_reset(completed);
     else if(join_shape_at && completed==join_shape_at+1) {join_shape_reset(completed);join_shape_at=0;}
     join_t1_probe(completed,stats.game);   /* both sides: the linear models after step T+1 (lockstep_join_world.h) */
@@ -4088,7 +4173,7 @@ static int join_status(char *out,size_t cap) {
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
-        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_leave=%d:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anis_why=%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u bullets=%llu:%llu:%llu:%llu:%llu:%llu bullet_hold=%d:%lld keep_stamps=%d:%llu:%u:%llu:%llu:%llu:%llu:%lld:%lld rcnt_held=%llu:%llu"
+        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_leave=%d:%llu:%llu:%llu shape_hold=%d:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anis_why=%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u bullets=%llu:%llu:%llu:%llu:%llu:%llu bullet_hold=%d:%lld keep_stamps=%d:%llu:%u:%llu:%llu:%llu:%llu:%lld:%lld rcnt_held=%llu:%llu"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
@@ -4129,6 +4214,7 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_attn_states_apart,(unsigned long long)join_attn_states_unsettled,(unsigned long long)join_attn_states_computed,
         (unsigned long long)join_attn_states_calls,(unsigned long long)join_attn_states_loaded,(unsigned long long)join_attn_states_drift,
         join_attn_leave_on,(unsigned long long)join_attn_leave_calls,(unsigned long long)join_attn_leave_loaded,(unsigned long long)join_attn_leave_drift,
+        join_shape_hold_on,(unsigned long long)join_shape_hold_calls,(unsigned long long)join_shape_hold_forced,(unsigned long long)join_shape_hold_held,
         join_shoot_far_on,(unsigned long long)join_shoot_far_written,join_bootev_session_on,join_bootev_session_dropped,join_mute_load_npcs_on,
         (long long)InterlockedCompareExchange64(&script_rng_muted,0,0),join_cue_ids_on,
         (long long)InterlockedCompareExchange64(&join_cue_ids_placed,0,0),(long long)InterlockedCompareExchange64(&join_cue_ids_refused,0,0),

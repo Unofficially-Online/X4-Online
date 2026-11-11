@@ -8226,6 +8226,7 @@ static int join_ks_under_spec(const join_tables *s,unsigned char *object,double 
     }
     return 0;
 }
+static void join_shape_hold_admit(const join_tables *s);   /* lockstep_join.h */
 static void join_admit_keep_stamps(const join_tables *s,const join_tables *mine) {
     join_ks_n=0;join_ks_listed=join_ks_pending=join_ks_spec=join_ks_missing=join_ks_over=0;
     InterlockedExchange64(&join_ks_tick,0);InterlockedExchange64(&join_ks_seen,0);InterlockedExchange64(&join_ks_kept,0);
@@ -8463,6 +8464,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_specdrop(s,&mine);   /* the load's one-shot view cache specifications, after SPEC and VIEWK (opt-in) */
     if(s->version>=13) join_admit_pend(s,&mine);   /* the pending view cache flags (opt-in) */
     if(s->version>=13) join_admit_keep_stamps(s,&mine);   /* the stamps the first step's republication must not write */
+    if(s->version>=13) join_shape_hold_admit(s);   /* every compound from the poses of T (experiment), before BODY's motion properties */
     if(s->version>=13) join_admit_ldc(s,&mine);    /* the drift controllers, before the bodies they set */
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
     if(s->version>=13) for(uint32_t i=0;i<s->nbupd;i++) {   /* BUPD: the session's last build updates */

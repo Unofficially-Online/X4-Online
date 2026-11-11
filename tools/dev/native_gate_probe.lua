@@ -444,6 +444,10 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_shoot_far then   -- SHOOT writes the session's last shot time where a load's reset left the joiner's far
   assert(gate.join_shoot_far and gate.join_shoot_far(1)==1,'join shoot far refused')
  end
+ if cfg.native_gate_join_shape_hold then   -- every compound from the poses of T on every client through T+1 (shape_hold=)
+  assert(cfg.native_gate_join_shape_refresh,'native_gate_join_shape_hold needs native_gate_join_shape_refresh')
+  assert(gate.join_shape_hold and gate.join_shape_hold(1)==1,'join shape hold refused')
+ end
  if cfg.native_gate_join_attn_leave then   -- with attn_set: a level written down from 9 or more goes through SetAttention (attn_leave=)
   assert(cfg.native_gate_join_attn_set,'native_gate_join_attn_leave needs native_gate_join_attn_set')
   assert(gate.join_attn_leave and gate.join_attn_leave(1)==1,'join attn leave refused')
