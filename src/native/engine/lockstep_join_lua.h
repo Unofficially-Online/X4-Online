@@ -132,6 +132,9 @@ static int lua_join_attn_states(lua_State *L) {join_attn_states_on=p_lua_tonumbe
 /* gate.join_attn_leave(on): with attn_set, a level ATTN writes down from 9 or more to less than 9 is made by SetAttention from
  * the load's level, so the class handler releases what level 9 holds (the interior nav helper; attn_leave=). */
 static int lua_join_attn_leave(lua_State *L) {join_attn_leave_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_attn_arrive(on): with attn_set, a level ATTN writes up from less than 9 to 9 or more is made by SetAttention from
+ * the load's level (the compound and the nav helper of level 9; attn_arrive=). */
+static int lua_join_attn_arrive(lua_State *L) {join_attn_arrive_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shape_hold(on): session and joiner: every compound refreshed from the poses of T (the session in step T,
  * the joiner at its admission) and held through step T+1 (lockstep_join.h). */
 static int lua_join_shape_hold(lua_State *L) {join_shape_hold_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}

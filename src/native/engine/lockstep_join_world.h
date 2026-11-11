@@ -6665,18 +6665,31 @@ static int join_attn_settled(unsigned char *object,uint32_t level) {return join_
  * level) runs the handler from that level, with attn_set's care for its posts, due events and allocations. The load's own
  * request is still in the cache's priority sets: its build runs at the joiner's first join, is left out of the fold as a helper
  * the session knows (NMESH catch-up, once per term) and is not published, 0x108c800 looks for the ID in the wanted set first.
- * The other direction (the load lower than 9, the session at 9 or more: 17136d and three of its parts in every ns8 join) stays a
- * direct write: no case yet, and the native call would ask for a helper whose NavHelperGeneratedEvent the session handled long
- * before T. Status attn_leave=on:calls:loaded:drift (loaded: the calls' shared allocations, on the load list; drift: a call that
+ * The other direction (the load lower than 9, the session at 9 or more) is ATTN arrive, below.
+ * Status attn_leave=on:calls:loaded:drift (loaded: the calls' shared allocations, on the load list; drift: a call that
  * left another level, written back). */
 #define JOIN_ATTN_NEAR 9u
 static int join_attn_leave_on;
 static uint64_t join_attn_leave_calls,join_attn_leave_loaded,join_attn_leave_drift;
+/* ATTN arrive (native_gate_join_attn_arrive, with attn_set, in the join defaults; hj8i at T=678 with the physics trace, 11 Nov): the other
+ * direction. Fixture ship 17136d and three of its parts come up at 8 in every ns8 joiner's load where the session holds 9:
+ * after the direct write the ship's compound has 1 child on the joiner and 28 on the session (PHYSICS_CHILD rows of 679..681),
+ * so level 9 decides what a bullet can hit as well, and the joiner lacks the interior nav helper the session has. With the
+ * option a level ATTN writes up from less than 9 to 9 or more is made by the native call from the load's level, as leave
+ * does on the way down. The handler asks for the nav helper: its build at one of the joiner's first joins is a catch-up of
+ * a helper the session knows (NMESH), as the load's own requests are. Status attn_arrive=on:calls:loaded:drift.
+ * Real run, the save forced to 680: three calls (17136d, 17138d, 1713a0; their parts follow through X4's propagation, the
+ * levels ATTN had to write 41 -> 7), the ship's compound 28 children on both sides at 681..683, its helper built at the
+ * joiner's second join, digest 0 at the handover, the census of 681, 1800, 3600 and 5400 equal. */
+static int join_attn_arrive_on;
+static uint64_t join_attn_arrive_calls,join_attn_arrive_loaded,join_attn_arrive_drift;
 /* After ATTN wrote the session's level (was: the joiner's): the native change where the states differ, its posts destroyed. 0 none,
- * 1 attn_set's (a write at or over 6), 2 attn_states' (flags: the session's record), 3 attn_leave's (down from 9 or more). */
+ * 1 attn_set's (a write at or over 6), 2 attn_states' (flags: the session's record), 3 attn_leave's (down from 9 or more),
+ * 4 attn_arrive's (up to 9 or more). */
 static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level,uint32_t flags) {
     if(!join_attn_set_on) return 0;
-    const int leave=join_attn_leave_on && was>=JOIN_ATTN_NEAR && level<JOIN_ATTN_NEAR && level!=1u;
+    const int arrive=join_attn_arrive_on && was<JOIN_ATTN_NEAR && level>=JOIN_ATTN_NEAR;
+    const int leave=arrive || (join_attn_leave_on && was>=JOIN_ATTN_NEAR && level<JOIN_ATTN_NEAR && level!=1u);   /* either way across 9 */
     const int visible=was!=level && level!=1u && (was>=JOIN_ATTN_VISIBLE || level>=JOIN_ATTN_VISIBLE);   /* 1: SetAttention computes its own */
     if(!leave && !visible && !join_attn_states_on) return 0;
     if(!leave && join_attn_settled(object,level)) return 0;
@@ -6694,10 +6707,12 @@ static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level
     if(leave) {   /* the handler from the load's level: SetAttention reads the level it leaves from +0x1ec */
         memcpy(object+JOIN_ATTENTION,&was,4);
         join_ids_admit_load=1;join_set_attention(object,level);join_ids_admit_load=0;
-        join_attn_leave_loaded+=RID_JOIN_ALLOCS-before;
+        *(arrive?&join_attn_arrive_loaded:&join_attn_leave_loaded)+=RID_JOIN_ALLOCS-before;
         uint32_t now=was;
-        if(!join_read(object+JOIN_ATTENTION,&now,4) || now!=level) {memcpy(object+JOIN_ATTENTION,&level,4);++join_attn_leave_drift;}
-        ++join_attn_leave_calls;return 3;
+        if(!join_read(object+JOIN_ATTENTION,&now,4) || now!=level) {
+            memcpy(object+JOIN_ATTENTION,&level,4);++*(arrive?&join_attn_arrive_drift:&join_attn_leave_drift);
+        }
+        ++*(arrive?&join_attn_arrive_calls:&join_attn_leave_calls);return arrive?4:3;
     }
     if(visible) {
         /* hjs1 (x4mods-b8, 10 Nov; a new-session save, the open slot's start in another sector the session holds at high
@@ -6729,6 +6744,7 @@ static int join_admit_attn(const join_tables *s,const join_tables *mine) {
     join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=join_attn_set_loaded=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
     join_attn_states_apart=join_attn_states_unsettled=join_attn_states_computed=join_attn_states_calls=join_attn_states_loaded=0;
     join_attn_states_drift=0;unsigned state_rows=0;join_attn_leave_calls=join_attn_leave_loaded=join_attn_leave_drift=0;
+    join_attn_arrive_calls=join_attn_arrive_loaded=join_attn_arrive_drift=0;
     InterlockedExchange64(&join_attn_set_posted,0);
     if(join_attn_set_on) join_attn_set_due[0]=join_attn_events_drop(1,NULL);
     for(uint32_t i=0;i<s->nattn;i++) {
@@ -6765,7 +6781,8 @@ static int join_admit_attn(const join_tables *s,const join_tables *mine) {
     }
     if(join_attn_set_on) {
         if(InterlockedCompareExchange(&join_attn_post_on,0,0)) {(void)join_attn_post_swap(0);InterlockedExchange(&join_attn_post_on,0);}
-        if(join_attn_set_calls || join_attn_states_calls || join_attn_leave_calls) join_attn_set_dropped=join_attn_events_drop(0,&join_attn_set_kept);
+        if(join_attn_set_calls || join_attn_states_calls || join_attn_leave_calls || join_attn_arrive_calls)
+            join_attn_set_dropped=join_attn_events_drop(0,&join_attn_set_kept);
         join_attn_set_due[1]=join_attn_events_drop(1,NULL);
     }
     return 1;

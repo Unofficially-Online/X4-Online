@@ -386,6 +386,49 @@ static void pslot_set_routes(pslot_slot *s,int live) {
     for(unsigned i=0;i<3;i++)
         InterlockedExchangePointer(&s->vt.route[i],live?pslot_fn.original[i]:s->authority?pslot_fn.agent[i]:pslot_fn.player[i]);
 }
+/* ---- the ship's side of the seat, inside the scope (native_gate_pilot_slots_post) ----
+ * X4 asks a ship for its pilot from the ship's side: Controllable::GetPilot (0x44f940; the script property pilot, Lua
+ * GetControlEntity, ship vtable slot 1071) reads the ship's own post table, a vector at +0x418 of 16-byte entries by post
+ * index (post+0x1b0) with the entity at +8: first the pilot post (PSLOT_POST), then the aipilot post (0x38f4d00, the
+ * hull's NPC). GetControlEntity (0x44d680) takes an entry when the entity is class 0x2c, its own vector +0x308 names
+ * this ship at that index and its vfunc 0x1c50(1) says yes. A stock player's ship holds the player in the pilot post's
+ * entry. The seat here gives P_k only its own half (pslot_seat_player), so ship k answered its NPC, or nobody, and
+ * aiscripts/move.autopilot.xml's `$ship.pilot != player.entity` refused every player 2..N with "You are not piloting
+ * this ship" (the user's report of 11 Nov; live aif2: in slot 2's scope pilot = the NPC).
+ * Here, inside slot k's scope only, ship k's pilot-post entry holds P_k: written at the scope's entry when slot k sits
+ * at its controls (seated, not walking, its controller there: a slot on foot keeps P_k's vector, lockstep_pilot_foot_
+ * slots.h) and the entry is empty; put back at the leave when the cell is still that ship's and still holds P_k (a ship
+ * that died inside the scope or a table that moved: counted, nothing written). Outside every scope the table is as X4
+ * left it: saves, the join package, destruction and the hull's NPC see no change. */
+#define PSLOT_POSTS 0x418u
+static int pslot_post_on;
+static unsigned char *volatile *pslot_post_cell[PILOT_SLOTS+1];
+static unsigned char *pslot_post_saved[PILOT_SLOTS+1];
+static volatile LONG64 pslot_post_swaps,pslot_post_same,pslot_post_taken,pslot_post_unreadable,pslot_post_lost;
+static unsigned char *volatile *pslot_post_cell_of(const pslot_slot *s) {
+    unsigned char *table=NULL,*end=NULL;uint64_t runtime=0;
+    if(!s->ship || !read_local(s->ship+8,&runtime,8) || runtime!=s->runtime) return NULL;
+    if(!read_local(s->ship+PSLOT_POSTS,&table,8) || !read_local(s->ship+PSLOT_POSTS+8,&end,8) || !table || end<table ||
+       (size_t)(end-table)<16u*((size_t)s->post+1u)) return NULL;
+    return (unsigned char *volatile*)(table+16u*(size_t)s->post+8u);
+}
+static void pslot_post_enter(unsigned k,pslot_slot *s) {
+    unsigned char *now=NULL;
+    pslot_post_cell[k]=NULL;
+    if(!pslot_post_on || !s->seated || s->walking || !s->controller) return;
+    unsigned char *volatile *cell=pslot_post_cell_of(s);
+    if(!cell || !read_local((const void*)cell,&now,8)) {InterlockedIncrement64(&pslot_post_unreadable);return;}
+    if(now==s->player) {InterlockedIncrement64(&pslot_post_same);return;}
+    if(now) {InterlockedIncrement64(&pslot_post_taken);return;}   /* somebody X4 put there: theirs */
+    pslot_post_saved[k]=now;*cell=s->player;pslot_post_cell[k]=cell;InterlockedIncrement64(&pslot_post_swaps);
+}
+static void pslot_post_leave(unsigned k,pslot_slot *s) {
+    unsigned char *volatile *cell=pslot_post_cell[k];unsigned char *now=NULL;
+    if(!cell) return;
+    pslot_post_cell[k]=NULL;
+    if(pslot_post_cell_of(s)!=cell || !read_local((const void*)cell,&now,8) || now!=s->player) {InterlockedIncrement64(&pslot_post_lost);return;}
+    *cell=pslot_post_saved[k];
+}
 static void mpp_active_enter(unsigned k);static void mpp_active_leave(unsigned k,int keep);   /* lockstep_mission_owners.h */
 static int pslot_enter(unsigned k) {
     pslot_slot *s=k>=2 && k<=PILOT_SLOTS?&pslots[k]:NULL;unsigned char *universe=NULL,*now=NULL;
@@ -408,6 +451,7 @@ static int pslot_enter(unsigned k) {
     if(pfslot_armed) {pslot_bank_hash=pfslot_bank_hash_live();pfslot_bank_exchange(k);}
     *(unsigned char *volatile*)(universe+VPS_SINGLETON)=s->player;
     pstk_scope_slot=k;InterlockedExchange(&pslot_in_scope,1);
+    pslot_post_enter(k,s); /* ship k's pilot post answers P_k inside the scope */
     mpp_active_enter(k);   /* slot k's active mission (lockstep_mission_owners.h) */
     if(s->controller) pslot_set_routes(s,1);
     InterlockedIncrement64(&s->scopes);
@@ -421,6 +465,7 @@ static int pslot_leave(unsigned k) {
     if(parent!=s->room || vector[0]!=(void*)&s->vector[0] || vector[1]!=(void*)&s->vector[s->post+1] || !vpl_reentry_clear(pnat_base)) ok=0;
     if(s->controller) {s->authority=pslot_global_part(s->controller);s->auth_parts=pslot_global_parts(s->controller);pslot_take_answers(s);
                        pslot_set_routes(s,0);}
+    pslot_post_leave(k,s);
     mpp_active_leave(k,1);
     if(universe) *(unsigned char *volatile*)(universe+VPS_SINGLETON)=pslot_p1;
     if(pslot_exchange(s->store,s->length)<0) ok=0;
@@ -600,7 +645,9 @@ static void pslot_seat_player(pslot_slot *s) {
     memcpy(s->player+0x308,vector,sizeof(vector));
     *(unsigned char *volatile*)(s->player+0x70)=s->room;
 }
+static void (*pslot_unplace)(unsigned char *player);   /* lockstep_pilot_foot_body.h: a parked body's mark off with its seat */
 static void pslot_unseat_player(pslot_slot *s) {
+    if(pslot_unplace) pslot_unplace(s->player);
     if(pview_slot_player==s->player) pview_slot_player=NULL;
     *(unsigned char *volatile*)(s->player+0x70)=NULL;
     memcpy(s->player+0x308,s->saved_vector,sizeof(s->saved_vector));
@@ -938,11 +985,12 @@ __attribute__((unused)) static void *vpl_slot_ship(unsigned k) {return k>=2 && k
 __attribute__((unused)) static void *vpl_slot_controller(unsigned k) {return k>=2 && k<=PILOT_SLOTS && pslots[k].seated?pslots[k].controller:NULL;}
 static int pslot_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity," slots=%s slots_why=%s slots_mask=%x hook=%d updates=%lld/%lld routes=%lld/%lld/%lld canonical_gone=%lld"
-        " seat_live=%d:%lld:%lld first_stores=%d:%lld:%lld",
+        " seat_live=%d:%lld:%lld first_stores=%d:%lld:%lld post=%d:%lld:%lld:%lld:%lld:%lld",
         pslot_stage,pslot_why,pslot_mask,pslot_hook_installed,(long long)pslot_updates,(long long)pslot_hook_calls,(long long)pslot_route_hits[0],
         (long long)pslot_route_hits[1],(long long)pslot_route_hits[2],(long long)pslot_canonical_gone,
         pslot_seat_live_pose,(long long)pslot_seat_live_seats,(long long)pslot_seat_live_cleared,pslot_first_stores,(long long)pslot_first_absent,
-        (long long)pslot_take_flags);
+        (long long)pslot_take_flags,pslot_post_on,(long long)pslot_post_swaps,(long long)pslot_post_same,(long long)pslot_post_taken,
+        (long long)pslot_post_unreadable,(long long)pslot_post_lost);
     for(unsigned k=2;n>0 && (size_t)n<capacity && k<=PILOT_SLOTS;k++) {
         pslot_slot *s=&pslots[k];
         if(!(pslot_mask>>(k-1)&1u)) continue;

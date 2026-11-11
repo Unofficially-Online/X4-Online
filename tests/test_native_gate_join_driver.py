@@ -662,6 +662,7 @@ class Overlays(unittest.TestCase):
             self.assertIn('native_gate_join_keep_stamps', overlays.JOIN_DEFAULT_ON)    # hj8i: the XS ship's nav stamp at T=685
             self.assertIn('native_gate_join_attn_leave', overlays.JOIN_DEFAULT_ON)     # hj8i: the ship loaded at attention 9 at T=696
             self.assertIn('native_gate_join_shape_hold', overlays.JOIN_DEFAULT_ON)     # hj8i: the bullet of 679 at T=678 (compound children)
+            self.assertIn('native_gate_join_attn_arrive', overlays.JOIN_DEFAULT_ON)    # hj8i: the ship loaded below attention 9 (1 child against 28)
             self.assertIn('native_gate_join_cue_ids', overlays.JOIN_DEFAULT_ON)   # hj32: CUEI (ordinal -> live ID); missions equal after a join
             for name in ('native_gate_join_porders', 'native_gate_join_attn_set', 'native_gate_join_ares', 'native_gate_join_warp'):   # w1z198/w1z199, j1-384, j1-373
                 self.assertIn(name, overlays.JOIN_DEFAULT_ON)

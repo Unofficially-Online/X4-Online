@@ -22,6 +22,10 @@
 --            trader's Confirm, the research menu's start and cancel and the terraforming menu's start and abort are one
 --            event each; they change the player faction's library, research and money: every slot in coop, slot 1 in
 --            factions mode.
+--   deals    a station's ware reservations have a Cancel button (Helper.buttonCancelTrade, the station configuration's
+--            own): CancelPlayerInvolvedTradeDeal(container, deal, false). A deal's ID is this client's own, so the
+--            event names the deal by what every client sees of it: the container, the ship that reserved, the ware, the
+--            amount and the direction; the apply finds that reservation in its own list and cancels it (gone: skipped).
 --   drop     the inventory menu's Drop is an FFI export (DropInventory): the native half claims it in the UI guard's hook
 --            and makes the kind 3 event there (lockstep_ui_inventory.h); the apply checks the amounts and calls the
 --            export for the slot's player inside its scope.
@@ -55,8 +59,8 @@ local K=X4LAN_UI_INVENTORY_CORE
 local function pack(...) return {n=select('#',...),...} end   -- LuaJIT without the 5.2 extensions has no table.pack
 K.FAMILY=524288   -- lockstep_pilot_inputs.h UIREP_FAMILY_INVENTORY
 K.OP=0x90         -- lockstep_ui_replay.h UIINV_OP: one click of this family
-K.KIND={craft=1,trade=2,drop=3,purchase=4,research=5,research_cancel=6,terraform=7,terraform_abort=8,trade_part=9,known=10}   -- the event's first byte
-K.KIND_NAME={'craft','trade','drop','purchase','research','research_cancel','terraform','terraform_abort','trade_part','known'}   -- (UIINV_KINDS; 3 is captured natively)
+K.KIND={craft=1,trade=2,drop=3,purchase=4,research=5,research_cancel=6,terraform=7,terraform_abort=8,trade_part=9,known=10,cancel_deal=11}   -- the event's first byte
+K.KIND_NAME={'craft','trade','drop','purchase','research','research_cancel','terraform','terraform_abort','trade_part','known','cancel_deal'}   -- (UIINV_KINDS; 3 is captured natively)
 K.KNOWN_MAX=5000         -- encyclopedia entries one client sends in a session
 -- A trade of many different wares does not fit one event: the wares beyond the first K.TRADE_WARES travel ahead in
 -- trade_part events, which change nothing: every client keeps them for the slot until the trade event that names their
@@ -71,14 +75,17 @@ K.SCOPES={
  BlueprintOrLicenceTraderMenu={buttonConfirm='purchase'},   -- blueprints or licences from a faction representative
  ResearchMenu={buttonStartResearch='research',buttonCancelResearch='research_cancel'},
  TerraformingMenu={buttonStartProject='terraform',buttonAbortProject='terraform_abort'},
+ StationConfigurationMenu={buttonCancelTrade='cancel_deal'},   -- a ware reservation's Cancel
 }
+-- The same for functions of the stock Helper table (the station overview and the map call its Cancel).
+K.HELPER_SCOPES={buttonCancelTrade='cancel_deal'}
 -- These change what X4 keeps for the player faction alone (the blueprint library, licences, research, terraforming): in
 -- factions mode slots 2+ are refused before the click runs.
-K.PLAYER_FACTION={purchase=true,research=true,research_cancel=true,terraform=true,terraform_abort=true}
+K.PLAYER_FACTION={purchase=true,research=true,research_cancel=true,terraform=true,terraform_abort=true,cancel_deal=true}
 -- The FFI exports the native half records inside a scope, with their arguments (lockstep_ui_inventory.h uiinv_calls: I a
--- UniverseID, s a string, q an int64).
+-- UniverseID, s a string, q an int64, Q a 64-bit ID that is no component (kept as its decimal text), b a bool).
 K.FFI={AddPlayerMoney='q',LearnBlueprint='s',StartResearch='sI',ClearProductionItems='I',StartTerraformingProject='Is',
- AbortActiveTerraformingProject='I'}
+ AbortActiveTerraformingProject='I',CancelPlayerInvolvedTradeDeal='IQb'}
 -- The Lua globals a scope records instead of running (the globals are exchanged for the length of the stock function and
 -- put back). Outside a scope they are whoever's they were: the UI guard refuses the inventory ones in a local phase, the
 -- trade family takes the money ones. SetNPCBlackboard: the trader menu's SetNPCBlackboard(trader, '$TradeDone', true).
@@ -185,7 +192,8 @@ function K.session(p)
     local call={n=#spec+1,name}
     for i=1,#spec do
      local kind,text=spec:sub(i,i),fields[i+1]
-     if kind=='I' then call[i+1]=env.ConvertStringTo64Bit(text) elseif kind=='q' then call[i+1]=tonumber(text) else call[i+1]=text end
+     if kind=='I' then call[i+1]=env.ConvertStringTo64Bit(text) elseif kind=='q' then call[i+1]=tonumber(text)
+     elseif kind=='b' then call[i+1]=text=='1' else call[i+1]=text end
     end
     calls[#calls+1]=call
    else log('UI_INVENTORY_EXPORT_ROW_IGNORED row='..tostring(name)) end
@@ -275,7 +283,38 @@ function K.session(p)
    end
   end
  end
- local finish={craft=finish_craft,trade=finish_trade,purchase=finish_purchase,research=finish_export('research','StartResearch'),
+ -- A container's ware reservations as every client sees them: the reserving ship, the ware, the amount, the direction,
+ -- and this client's own ID of the deal (decimal text). Supply reservations are not the player's to cancel.
+ local function decimal(id) return (tostring(id):gsub('U?LL$','')) end
+ local function reservations(container)
+  local out={}
+  local n=tonumber(C.GetNumContainerWareReservations2(container,false,false,true)) or 0
+  if n<1 then return out end
+  local buf=p.ffi.new('WareReservationInfo2[?]',n)
+  n=tonumber(C.GetContainerWareReservations2(buf,n,container,false,false,true)) or 0
+  for i=0,n-1 do
+   if not buf[i].issupply then
+    out[#out+1]={reserver=decimal(buf[i].reserverid),ware=p.ffi.string(buf[i].ware),amount=tonumber(buf[i].amount),
+     buy=buf[i].isbuyreservation==true,deal=decimal(buf[i].tradedealid)}
+   end
+  end
+  return out
+ end
+ local function finish_cancel_deal(calls)
+  for _,call in ipairs(calls) do
+   if call[1]=='CancelPlayerInvolvedTradeDeal' and call[4]==false then
+    local container,deal=call[2],call[3]
+    for _,r in ipairs(reservations(container)) do
+     if r.deal==deal then
+      return push('cancel_deal',{container,env.ConvertStringTo64Bit(r.reserver),r.ware,r.amount,r.buy},5,
+       'cancel deal '..r.ware..' x'..tostring(r.amount))
+     end
+    end
+    return refuse('cancel trade deal','deal_gone')
+   end
+  end
+ end
+ local finish={cancel_deal=finish_cancel_deal,craft=finish_craft,trade=finish_trade,purchase=finish_purchase,research=finish_export('research','StartResearch'),
   research_cancel=finish_export('research_cancel','ClearProductionItems'),terraform=finish_export('terraform','StartTerraformingProject'),
   terraform_abort=finish_export('terraform_abort','AbortActiveTerraformingProject')}
  -- Before a trader click runs: what this family cannot share yet is refused whole (the stock function does not run).
@@ -332,6 +371,21 @@ function K.session(p)
     log('UI_INVENTORY_SCOPES menu='..menu.name..' functions='..count)
    end
   end
+  local helper=env.Helper
+  if type(helper)=='table' and not S.wrapped.Helper then
+   S.wrapped.Helper=true
+   local count=0
+   helper.x4lan_inventory_stock=helper.x4lan_inventory_stock or {}
+   for name,kind in pairs(K.HELPER_SCOPES) do
+    local orig=helper.x4lan_inventory_stock[name] or helper[name]
+    if type(orig)=='function' then
+     helper.x4lan_inventory_stock[name]=orig
+     helper[name]=function(...) return S.with_scope(nil,kind,'Helper.'..name,orig,...) end
+     count=count+1
+    end
+   end
+   log('UI_INVENTORY_SCOPES menu=Helper functions='..count)
+  end
  end
  -- ---- apply ----
  -- fn inside slot's scope (slot 1: the canonical player as it is): ok, what. A scope that cannot be entered or left stops
@@ -381,12 +435,15 @@ function K.session(p)
    if player then
     local _,now=pcall(stock.GetInventory,player)
     local given=0
-    for i=1,#wares,2 do
-     local missing=wares[i+1]-have(now,wares[i])
-     if missing>0 then stock.AddInventory(player,wares[i],missing);given=given+1 end
-    end
+    local ok,err=pcall(function()
+     for i=1,#wares,2 do
+      local missing=wares[i+1]-have(now,wares[i])
+      if missing>0 then stock.AddInventory(player,wares[i],missing);given=given+1 end
+     end
+    end)
     pending[slot]=nil
-    log('UI_INVENTORY_JOIN_GIVEN tick='..S.tick..' slot='..slot..' wares='..(#wares/2)..' given='..given)
+    log('UI_INVENTORY_JOIN_GIVEN tick='..S.tick..' slot='..slot..' wares='..(#wares/2)..' given='..given..(ok and '' or ' error='..tostring(err)))
+    if not ok and p.loud then p.loud('UI_INVENTORY_JOIN_FAILED','slot='..slot..' error='..tostring(err)) end
    else left=true end
   end
   if not left then pending=nil end
@@ -576,7 +633,26 @@ function K.session(p)
   S.known_applied=S.known_applied+1
   return true,args[1]..'/'..args[2]
  end
- local run={run_craft,run_trade,run_drop,run_purchase,run_research,run_research_cancel,run_terraform,run_terraform_abort,run_trade_part,run_known}
+ -- A cancelled trade deal: the reservation every client finds under the same description (the first one, in X4's order).
+ local function run_cancel_deal(slot,args,n)
+  local container,reserver,ware,amount,buy=args[1],args[2],args[3],args[4],args[5]
+  if n~=5 or container==nil or reserver==nil or type(ware)~='string' or not whole(amount,0,4294967295) or type(buy)~='boolean' then
+   return false,'arguments'
+  end
+  return player_faction(slot,function()
+   if not owned(container) then return false,'not_owner' end
+   local who=decimal(type(reserver)=='cdata' and reserver or env.ConvertIDTo64Bit(reserver))
+   for _,r in ipairs(reservations(container)) do
+    if r.reserver==who and r.ware==ware and r.amount==amount and r.buy==buy then
+     local done=C.CancelPlayerInvolvedTradeDeal(container,env.ConvertStringTo64Bit(r.deal),false)
+     return done==true,(done==true and '' or 'x4_refused:')..ware..' x'..tostring(amount)
+    end
+   end
+   return false,'deal_gone'
+  end)
+ end
+ local run={run_craft,run_trade,run_drop,run_purchase,run_research,run_research_cancel,run_terraform,run_terraform_abort,run_trade_part,run_known,
+  run_cancel_deal}
  local QUIET_KIND={[10]=true}   -- applied without a row of its own (hundreds in a session); the status counts them
  R.ops[K.OP]=function(slot,hex,tick)
   S.join_give()   -- a joiner's catch-up comes before any event of the family
@@ -628,8 +704,11 @@ end
 --                                     negative: RemoveCargo; answers what X4 answered (this client only)
 --   {tick,'vcargo_mode',slot,on}      the trade menu's open (true) or close (false) for slot's ship: SetVirtualCargoMode, the
 --                                     trade family's event
+--   {tick,'inv_join_state',slots} / {tick,'inv_join_give',text}  test only, canonical (every client's plan, the same tick):
+--                                     the saver's join state as it would ride a package, and a joiner's catch-up from
+--                                     such a text (what the slots' players lack of it is added, on every client alike)
 K.SCRIPT_OPS={inv_craft=true,inv_trade=true,inv_drop=true,inv_blueprints=true,inv_research=true,inv_research_cancel=true,vcargo=true,
- vcargo_mode=true}
+ vcargo_mode=true,inv_join_state=true,inv_join_give=true}
 function K.script_call(e,tools)
  local op=e[2]
  if op=='inv_craft' then return function(S)
@@ -652,6 +731,13 @@ function K.script_call(e,tools)
     tools.env.SetNPCBlackboard(trader,K.TRADE_DONE,true)
    end)
    return 'trade wares='..(#e[5]/2)..' money='..tostring(e[4]) end
+ end
+ if op=='inv_join_state' then return function(S)
+   return 'state='..assert(S.inventory,'ui replay script: the inventory family is off').join_state(e[3]) end
+ end
+ if op=='inv_join_give' then return function(S)
+   assert(S.inventory,'ui replay script: the inventory family is off').join_restore(e[3])
+   return 'restored '..tostring(e[3]) end
  end
  if op=='vcargo_mode' then return function()
    if e[4] then tools.env.SetVirtualCargoMode(tools.slot_lua(e[3]),true,-1) else tools.env.SetVirtualCargoMode(tools.slot_lua(e[3]),false) end

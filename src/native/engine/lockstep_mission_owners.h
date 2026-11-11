@@ -49,8 +49,11 @@
  *          slot k, once, and runs as slot k's with everything below it. Not an instance of it: in an instance a name
  *          that points at a cue of a branch not started yet is the static cue's, and the signal goes nowhere (st1, 11
  *          Nov: "Signalled cue md.GS_Terran1.Ch1_2_Wingmate_Orders has no corresponding listeners").
- * Not yet: factions mode's rewards (C3),
- * per slot offers (C4), slot k's notifications on slot k's screen only (C6) and conversations (one manager per process).
+ *  faction a mission scope of slot k (a frame of an owned cue, a replayed call) runs with g_PlayerFaction = slot k's
+ *          faction, the owner of its ship (lockstep_ui_trade.h), and puts X4's back when it leaves (C3): in factions
+ *          mode reward_player, player.money and faction.player inside slot k's mission are x4lan_playerk's, and a start's
+ *          story moves its own player's relations. Coop: the same faction, nothing changes. Not the piloting scopes.
+ * Not yet: conversations of slots 2..N (one conversation manager per process).
  * Hot join: the table at T rides the package as the probe's 'missions_per_player' state (mpp_state on the saver,
  * mpp_restore on the joiner before its first tick), in table order, so the joiner's frames and hash follow the same claims. */
 #define MPP_OWNERS 512u
@@ -209,10 +212,36 @@ static int mpp_generate(unsigned k) {
     if(!mpp_armed || k<2 || k>PILOT_SLOTS || pstk_scope_slot!=k) return 0;
     mpp_generating=k;InterlockedIncrement64(&mpp_generations);return 1;
 }
+/* ---- the mission's faction (C3) ---- */
+static void *uitrade_slot_faction(unsigned slot);static void *volatile *uitrade_player_faction(void);   /* lockstep_ui_trade.h, behind this file */
+static void *mpp_faction_of_native(unsigned k) {return uitrade_slot_faction(k);}
+static void *volatile *mpp_faction_cell_native(void) {return pnat_base?uitrade_player_faction():NULL;}
+static void *(*mpp_faction_of)(unsigned)=mpp_faction_of_native;                 /* tests replace them */
+static void *volatile *(*mpp_faction_cell)(void)=mpp_faction_cell_native;
+static void *mpp_faction_saved,*mpp_faction_put;static unsigned mpp_faction_open;
+static volatile LONG64 mpp_faction_swaps,mpp_faction_same,mpp_faction_changed;
+/* A mission scope of slot k opens: the player faction becomes slot k's. 1: this call opened it (its mpp_faction_leave
+ * closes it); 0: nothing to do, or a mission scope further out holds it already. */
+static int mpp_faction_enter(unsigned k) {
+    void *volatile *cell=mpp_faction_cell();
+    if(mpp_faction_open || !cell) return 0;
+    void *faction=mpp_faction_of(k),*now=*cell;
+    if(!faction || !now) return 0;
+    if(faction==now) {InterlockedIncrement64(&mpp_faction_same);return 0;}
+    mpp_faction_saved=now;mpp_faction_put=faction;*cell=faction;mpp_faction_open=k;InterlockedIncrement64(&mpp_faction_swaps);return 1;
+}
+/* ...and closes: X4's own player faction again (a change inside the scope is counted and not kept). */
+static void mpp_faction_leave(unsigned k) {
+    void *volatile *cell=mpp_faction_cell();
+    if(!k || mpp_faction_open!=k || !cell) return;
+    if(*cell!=mpp_faction_put) InterlockedIncrement64(&mpp_faction_changed);
+    *cell=mpp_faction_saved;mpp_faction_open=0;mpp_faction_saved=mpp_faction_put=NULL;
+}
 /* The script RNG's MD scope (lockstep_script_rng.h script_rng_enter). The answer goes back to mpp_frame_leave: the slot
  * whose scope this frame entered (low byte, 0 none) and MPP_FRAME_OWNED when the frame is one of the open scope's slot's
  * own (counted in mpp_depth until it leaves). */
 #define MPP_FRAME_OWNED 0x100u
+#define MPP_FRAME_FACTION 0x200u   /* this frame opened its slot's faction (a mission frame inside a piloting scope does too) */
 /* gate.mpp_story(k, path): the static cue with this path is slot k's from its next frame on (inside slot k's call scope,
  * one cue per ask). gate.mpp_story(0): the ask is over; 1 when its cue was claimed (or nothing was asked), 0 when no
  * frame of that cue came or the cue was somebody's already. */
@@ -244,25 +273,73 @@ static unsigned mpp_frame_enter(void *cue) {
     if(k<2) return 0;   /* nobody's, or slot 1's: the canonical player as it is */
     InterlockedIncrement64(&mpp_frames);
     /* The lines an owned frame starts are its owner's (lockstep_speech_local.h): client k hears them, the others do not. */
-    if(scope==k) {InterlockedIncrement64(&mpp_inside);++mpp_depth;spl_owner_enter(k);return MPP_FRAME_OWNED;}
+    if(scope==k) {InterlockedIncrement64(&mpp_inside);++mpp_depth;spl_owner_enter(k);return MPP_FRAME_OWNED|(mpp_faction_enter(k)?MPP_FRAME_FACTION:0u);}
     if(scope) {InterlockedIncrement64(&mpp_conflicts);return 0;}
     if(!pslots[k].player || !pslot_scope_begin(k,&pslots[k],"mission")) {InterlockedIncrement64(&mpp_refused);return 0;}
-    InterlockedIncrement64(&mpp_entered);++mpp_depth;spl_owner_enter(k);return k|MPP_FRAME_OWNED;
+    InterlockedIncrement64(&mpp_entered);++mpp_depth;spl_owner_enter(k);return k|MPP_FRAME_OWNED|(mpp_faction_enter(k)?MPP_FRAME_FACTION:0u);
 }
 static void mpp_frame_leave(unsigned code) {
     if(code&MPP_FRAME_OWNED) spl_owner_leave();
     if((code&MPP_FRAME_OWNED) && mpp_depth) --mpp_depth;
+    if(code&MPP_FRAME_FACTION) mpp_faction_leave(mpp_faction_open);
     if((code&0xffu) && !pslot_leave(code&0xffu)) InterlockedIncrement64(&mpp_leave_failed);
+}
+/* ---- AI frames of a slot's own entities (native_gate_missions_per_player_ai_frames, a session default) ----
+ * X4 runs a few AI scripts on "the player": on the player entity itself and on its children, above all the ship computer,
+ * which runs move.autopilot. Such a script asks for the player by name (player.entity, player.computer, player.age,
+ * player.activemissionwaypoint, stop_player_autopilot). The start of slot k's autopilot is replayed inside slot k's scope
+ * and the script's first slice runs there, but every later frame came from the AI update outside any scope, where the
+ * player is slot 1's: move.autopilot's own check `$ship.pilot != player.entity` at its label start (reached again after a
+ * guidance update or an invalid target) then failed with "You are not piloting this ship" for a player who was (the user's
+ * report of 11 Nov, client 2 on the Terran cadet story), and its stop_player_autopilot at the end stopped slot 1's.
+ * The rule: an AI frame (an execution, a range, an event's conditions and actions, a call stack's event) whose script
+ * context's entity (AIScriptContext +0x120) is slot k's player P_k or a component whose parent (+0x70) is P_k, k >= 2,
+ * runs in slot k's scope with slot k's faction. Inside slot k's scope already (the replayed start, slot k's flight tick):
+ * as it is. Inside another slot's scope: as it is, counted. Unlike an owned MD frame it is not an owned mission frame:
+ * mpp_depth and the speech owner stay as they are (what the script shows and says goes to every client as before).
+ * A scope that cannot open now (no store yet, a presentation scope, inside X4's controller update) is not asked for:
+ * the frame runs as before and is counted, on every client alike. */
+#define MPP_AI_ENTITY 0x120u   /* AI::AIScriptContext: the entity that runs the script */
+#define MPP_AI_PARENT 0x70u    /* a component's parent */
+static int mpp_ai_on;
+static volatile LONG64 mpp_ai_frames,mpp_ai_entered,mpp_ai_inside,mpp_ai_conflicts,mpp_ai_refused;
+/* The slot (2..N) whose player is this AI script context's entity or that entity's parent; 0 none. */
+static unsigned mpp_ai_slot_of(uintptr_t context) {
+    uintptr_t vtable=0,entity=0,parent=0;unsigned k=2;
+    while(k<=PILOT_SLOTS && !pslots[k].player) k++;
+    if(k>PILOT_SLOTS || !context) return 0;   /* no slot 2..N has a player: nothing is read */
+    if(!script_rng_read((const void*)context,&vtable,8) || vtable!=(uintptr_t)(image+SCRIPT_RNG_AI_VT) ||
+       !script_rng_read((const void*)(context+MPP_AI_ENTITY),&entity,8) || !entity) return 0;
+    for(unsigned i=k;i<=PILOT_SLOTS;i++) if(pslots[i].player && (uintptr_t)pslots[i].player==entity) return i;
+    if(!script_rng_read((const void*)(entity+MPP_AI_PARENT),&parent,8) || !parent) return 0;
+    for(unsigned i=k;i<=PILOT_SLOTS;i++) if(pslots[i].player && (uintptr_t)pslots[i].player==parent) return i;
+    return 0;
+}
+/* The script RNG's AI scope (lockstep_script_rng.h script_rng_enter); the answer goes back to mpp_frame_leave. */
+static unsigned mpp_ai_frame_enter(uintptr_t context) {
+    if(!mpp_armed || !mpp_ai_on) return 0;
+    const unsigned k=mpp_ai_slot_of(context);
+    if(k<2) return 0;
+    InterlockedIncrement64(&mpp_ai_frames);
+    const unsigned scope=pstk_scope_slot;
+    if(scope==k) {InterlockedIncrement64(&mpp_ai_inside);return mpp_faction_enter(k)?MPP_FRAME_FACTION:0u;}
+    if(scope) {InterlockedIncrement64(&mpp_ai_conflicts);return 0;}
+    if(!pslots[k].length || pres_open || !vpl_reentry_clear(pnat_base) || !pslot_scope_begin(k,&pslots[k],"ai_frame")) {
+        InterlockedIncrement64(&mpp_ai_refused);return 0;
+    }
+    InterlockedIncrement64(&mpp_ai_entered);return k|(mpp_faction_enter(k)?MPP_FRAME_FACTION:0u);
 }
 /* A replayed call of slot k (C5): 1 = inside slot k's scope now (mpp_call_leave after the call), 0 = refused. */
 static int mpp_call_enter(unsigned k) {
     if(!mpp_armed || k<2 || k>PILOT_SLOTS || !pslots[k].player || pstk_scope_slot || !pslot_scope_begin(k,&pslots[k],"mission_call")) {
         InterlockedIncrement64(&mpp_call_refused);return 0;
     }
+    mpp_faction_enter(k);
     InterlockedIncrement64(&mpp_calls);return 1;
 }
 static int mpp_call_leave(unsigned k) {
     mpp_generating=0;mpp_depth=0;mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;
+    mpp_faction_leave(k);   /* the call's own; a frame's inside it closed with that frame */
     if(pstk_scope_slot!=k || !pslot_leave(k)) {InterlockedIncrement64(&mpp_leave_failed);return 0;}
     return 1;
 }
@@ -362,16 +439,19 @@ static int mpp_arm(void) {
     if(stats.issued) return 0;   /* before the first tick, as every module the probe arms */
     if(!mpp_hook_install()) return 0;
     mpp_count=0;memset(mpp_active,0,sizeof(mpp_active));mpp_active_open=0;mpp_depth=0;mpp_generating=0;
-    mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;mpp_armed=1;return 1;
+    mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;
+    mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;mpp_armed=1;return 1;
 }
 static int mpp_status(char *out,size_t cap) {
     return snprintf(out,cap,"armed=%d owners=%u hash=%016llx claims=%lld gone=%lld full=%lld frames=%lld entered=%lld inside=%lld "
         "conflicts=%lld refused=%lld calls=%lld call_refused=%lld leave_failed=%lld active=%llx/%llx/%llx swaps=%lld active_gone=%lld "
-        "shown=%lld/%lld/%llx generations=%lld generated=%lld/%lld pruned=%lld depth=%u hook=%d/%s story=%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
+        "shown=%lld/%lld/%llx generations=%lld generated=%lld/%lld pruned=%lld depth=%u hook=%d/%s faction=%lld/%lld/%lld story=%lld/%lld "
+        "ai=%d/%lld/%lld/%lld/%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
         (long long)mpp_claims,(long long)mpp_claim_gone,(long long)mpp_full,(long long)mpp_frames,(long long)mpp_entered,(long long)mpp_inside,
         (long long)mpp_conflicts,(long long)mpp_refused,(long long)mpp_calls,(long long)mpp_call_refused,(long long)mpp_leave_failed,
         (unsigned long long)mpp_active[2],(unsigned long long)mpp_active[3],(unsigned long long)mpp_active[4],(long long)mpp_active_swaps,
         (long long)mpp_active_gone,(long long)mpp_active_shown,(long long)mpp_active_shown_changed,(unsigned long long)mpp_active_shown_id,(long long)mpp_generations,(long long)mpp_generated,
         (long long)mpp_created,(long long)mpp_pruned,mpp_depth,mpp_site_installed[0]+mpp_site_installed[1],mpp_hook_why,
-        (long long)mpp_story_asked,(long long)mpp_story_claimed);
+        (long long)mpp_faction_swaps,(long long)mpp_faction_same,(long long)mpp_faction_changed,(long long)mpp_story_asked,(long long)mpp_story_claimed,
+        mpp_ai_on,(long long)mpp_ai_frames,(long long)mpp_ai_entered,(long long)mpp_ai_inside,(long long)mpp_ai_conflicts,(long long)mpp_ai_refused);
 }

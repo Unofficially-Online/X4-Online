@@ -93,7 +93,31 @@
       <cue name="FixtureTrack" instantiate="true" checkinterval="5s">
        <conditions><check_value value="true"/></conditions>
        <actions>
-        <debug_text text="'[X4LAN] UI_MISSIONS_MD_TRACK player=%s ship=%s sector=%s time=%s'.[player.entity, player.occupiedship, player.sector, player.age]"/>
+        <debug_text text="'[X4LAN] UI_MISSIONS_MD_TRACK player=%s ship=%s sector=%s time=%s pilot=%s ispilot=%s computer=%s'.[player.entity, player.occupiedship, player.sector, player.age, @player.occupiedship.pilot, @player.occupiedship.pilot == player.entity, player.computer]"/>
+       </actions>
+      </cue>
+      <!-- The mission's listeners on its player's place: the owner's own moves (slots 2..N: lockstep_slot_place_events.h). -->
+      <cue name="FixtureSector" instantiate="true">
+       <conditions><event_object_changed_sector object="player.entity"/></conditions>
+       <actions>
+        <debug_text text="'[X4LAN] UI_MISSIONS_MD_PLACE kind=sector on=%s new=%s old=%s player=%s time=%s'.[event.object, event.param, event.param2, player.entity, player.age]"/>
+       </actions>
+      </cue>
+      <cue name="FixtureZone" instantiate="true">
+       <conditions><event_object_changed_zone object="player.entity"/></conditions>
+       <actions>
+        <debug_text text="'[X4LAN] UI_MISSIONS_MD_PLACE kind=zone on=%s new=%s old=%s player=%s time=%s'.[event.object, event.param, event.param2, player.entity, player.age]"/>
+       </actions>
+      </cue>
+      <!-- The mission ends at its player's first zone change and pays: whose money moves (coop: the shared wallet;
+           factions mode: the owner's own faction, once mission frames run with its faction). -->
+      <cue name="FixtureReward">
+       <conditions><event_object_changed_zone object="player.entity"/></conditions>
+       <actions>
+        <set_value name="$Before" exact="player.money"/>
+        <reward_player money="1000Cr"/>
+        <debug_text text="'[X4LAN] UI_MISSIONS_MD_REWARD player=%s faction=%s money=%s->%s time=%s'.[player.entity, faction.player, $Before, player.money, player.age]"/>
+        <remove_mission cue="$Mission" type="completed"/>
        </actions>
       </cue>
      </cues>

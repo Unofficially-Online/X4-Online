@@ -68,7 +68,8 @@ Lua-run (the probe's frame of capture tick + delay, slot order, call order).
   0x90        inventory                            one click of a stock button (kind 1 craft, 2 trader wares, 3 dropped
                                                    wares: DropInventory, claimed in lockstep_ui_inventory.h; 4 blueprints
                                                    or licences bought, 5/6 research, 7/8 terraforming, 9 wares sent
-                                                   ahead of a large trade, 10 an encyclopedia entry;
+                                                   ahead of a large trade, 10 an encyclopedia entry, 11 a cancelled
+                                                   trade deal;
               (native_gate_ui_inventory_core.lua)  then the codec's arguments), run whole in the slot's scope
   free: 0x06-0x3f, 0x4a-0x4f, 0x51-0x57, 0x5b-0x8f, 0x91-0xff (0x60-0x9f and native 0x08-0x2f are reserved per
   package of the player actions' division: package 4, this family, holds 0x90-0x9f and 0x28-0x2f).
@@ -100,9 +101,10 @@ Two ways a replay family takes a guard entry over:
              foot          GetUp (native_gate_pilot_foot, lockstep_pilot_foot_guard.h; not a family: the GET_UP key in the
                            stock record of slot 1; with native_gate_pilot_foot_slots also of slot k on client k, consumed
                            in slot k's scope by lockstep_pilot_foot_slots.h)
-             inventory     7 FFI entries (lockstep_ui_inventory.h uiinv_claim_decide): DropInventory, the inventory
+             inventory     8 FFI entries (lockstep_ui_inventory.h uiinv_claim_decide): DropInventory, the inventory
                            menu's Drop as a kind 3 event of op 0x90; AddPlayerMoney LearnBlueprint StartResearch
-                           ClearProductionItems StartTerraformingProject AbortActiveTerraformingProject, recorded
+                           ClearProductionItems StartTerraformingProject AbortActiveTerraformingProject
+                           CancelPlayerInvolvedTradeDeal, recorded
                            while a click's scope is open (gate.ui_inventory_scope) and left to the guard otherwise
   Not a claim, no bit, no op: native_gate_player_settings_per_slot (lockstep_player_settings.h, default off) changes how the
   faction family runs its eight entity claims in factions mode (slot k's own values; section 5 has its patched entries).

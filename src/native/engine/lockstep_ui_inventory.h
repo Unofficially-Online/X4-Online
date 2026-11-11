@@ -11,7 +11,8 @@
  *             amount pairs), the menu gets true and X4's function does not run here. The Lua half checks the amounts
  *             against the slot's inventory at the apply and calls the export for the slot's player inside its scope.
  *   recorder  the exports the stock buttons of the Lua half's scopes call (uiinv_calls: AddPlayerMoney, LearnBlueprint,
- *             StartResearch, ClearProductionItems, the terraforming start and abort; all void). While a scope is open on
+ *             StartResearch, ClearProductionItems, the terraforming start and abort, all void; and
+ *             CancelPlayerInvolvedTradeDeal, whose check-only form the guard passes as a query). While a scope is open on
  *             this client (gate.ui_inventory_scope(1), the UI thread) a call does not run: it is a row of the record,
  *             "name<tab>argument...<newline>" (a UniverseID and an int64 in decimal, a string as it is), which the scope's
  *             end (gate.ui_inventory_scope(0)) hands to Lua; the click's event carries it. With no scope open the claim
@@ -27,11 +28,15 @@
 #define UIINV_TAG_STRING 4u
 typedef struct {const char *ware;int32_t amount;} uiinv_ware_amount;   /* the stock UIWareAmount (16 bytes) */
 _Static_assert(sizeof(uiinv_ware_amount)==16,"UIWareAmount");
-/* The recorded exports and their arguments (native_gate_ui_inventory_core.lua K.FFI): I a UniverseID, s a string, q an int64. */
-#define UIINV_CALLS 6u
+/* The recorded exports and their arguments (native_gate_ui_inventory_core.lua K.FFI): I a UniverseID, s a string, q an int64,
+ * Q a 64-bit ID that is no component (a trade deal's: this client's own, the Lua half makes it portable), b a bool. */
+#define UIINV_CALLS 7u
 static const struct {const char *name,*spec;} uiinv_calls[UIINV_CALLS]={
     {"AddPlayerMoney","q"},{"LearnBlueprint","s"},{"StartResearch","sI"},{"ClearProductionItems","I"},
-    {"StartTerraformingProject","Is"},{"AbortActiveTerraformingProject","I"}};
+    {"StartTerraformingProject","Is"},{"AbortActiveTerraformingProject","I"},{"CancelPlayerInvolvedTradeDeal","IQb"}};
+/* What the menu is answered while a call is recorded: nothing for the void ones, "done" for the cancelled deal (the menu
+ * then hides the row until its next refresh, as after X4's own true). */
+static const unsigned char uiinv_call_answer[UIINV_CALLS]={0,0,0,0,0,0,1};
 #define UIINV_RECORD_MAX 2048u
 static unsigned uiinv_drop_index=UINT_MAX,uiinv_call_index[UIINV_CALLS];
 static int uiinv_armed,uiinv_scope_open,uiinv_record_lost;
@@ -73,7 +78,8 @@ static int uiinv_record_call(unsigned c,const uint64_t *frame) {
         if((size_t)n+24u>=sizeof(row)) return 0;
         switch(uiinv_calls[c].spec[i]) {
         case 'q': more=snprintf(row+n,sizeof(row)-(size_t)n,"\t%lld",(long long)(int64_t)v);break;
-        case 'I': more=snprintf(row+n,sizeof(row)-(size_t)n,"\t%llu",(unsigned long long)v);break;
+        case 'I':case 'Q': more=snprintf(row+n,sizeof(row)-(size_t)n,"\t%llu",(unsigned long long)v);break;
+        case 'b': more=snprintf(row+n,sizeof(row)-(size_t)n,"\t%u",(unsigned)(v&0xffu)?1u:0u);break;
         default:
             if(!v || !uifac_cstr((const char*)(uintptr_t)v,text,&length) || !length || length>UIINV_WARE_MAX) return 0;
             for(unsigned k=0;k<length;k++) if((unsigned char)text[k]<0x20) return 0;   /* a tab or a newline would break the rows */
@@ -106,8 +112,8 @@ static int uiinv_claim_decide(unsigned index,const uint64_t *frame,uint64_t *ret
     for(unsigned c=0;c<UIINV_CALLS;c++) {
         if(index!=uiinv_call_index[c]) continue;
         if(!uiinv_scope_open || GetCurrentThreadId()!=ui_thread) return 0;   /* no click of this family: the guard's own rule */
-        if(uiinv_record_call(c,frame)) InterlockedIncrement64(&uiinv_recorded);else uiinv_record_lost=1;
-        return 1;                                                           /* void exports: nothing runs here */
+        if(uiinv_record_call(c,frame)) {InterlockedIncrement64(&uiinv_recorded);*ret=uiinv_call_answer[c];} else uiinv_record_lost=1;
+        return 1;                                                           /* nothing runs here */
     }
     if(index!=uiinv_drop_index) return 0;
     unsigned char data[UIREP_EVENT_MAX];const char *why="not_capturing";unsigned n=0;

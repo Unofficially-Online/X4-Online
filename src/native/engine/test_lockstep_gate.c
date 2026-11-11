@@ -1101,6 +1101,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_impulse.h"
 #include "test_lockstep_ik_diag.h"
 #include "test_lockstep_mission_owners.h"
+#include "test_lockstep_md_presentation.h"
 #include "test_lockstep_spline_calc_watch.h"
 #include "test_lockstep_step_chain.h"
 #include "test_lockstep_path_transforms.h"
@@ -1117,6 +1118,7 @@ int main(int argc,char **argv) {
     if(argc==2) test_ui_guard_native_image(argv[1]);
     if(argc==2) test_ui_build_native_image(argv[1]);
     if(argc==2) test_ui_construct_native_image(argv[1]);
+    if(argc==2) test_md_presentation_native_image(argv[1]);
     if(argc==2) {test_mission_owners_native_image(argv[1]);test_pilot_aim_native_image(argv[1]);test_ui_missions_native_image(argv[1]);}
     if(argc==2) test_ui_trade_native_image(argv[1]);
     if(argc==2) test_ui_faction_native_image(argv[1]);
@@ -1233,6 +1235,8 @@ int main(int argc,char **argv) {
     test_impulse_diag();
     test_ik_diag();
     test_mission_owners();
+    test_md_presentation();
+    test_md_menu_state();
     test_pilot_aim();
     test_speech_local();
     test_spline_calc_watch();
@@ -1276,6 +1280,7 @@ int main(int argc,char **argv) {
     test_pilot_native_controls();
     test_pilot_stock();
     test_pilot_slots();
+    test_pilot_slots_post();
     test_pilot_join_players();
     test_pilot_join_tables();
     test_pilot_join_modules();

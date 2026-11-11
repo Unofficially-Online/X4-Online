@@ -1936,3 +1936,25 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
 - Tests: native tests pass (the hold over a synthetic scene with a free slot and a body without a holder, the joiner's
   forced calls at T's thread time, the session's boundaries after T-1, T and T+1, off unchanged). The real run is X4 9.00 on
   Windows, two instances on one PC, play mode.
+69. THE WAY UP TO ATTENTION 9: THE COMPOUND AND THE NAV HELPER A LOWER LOAD LACKS (hj8i at T=680; 11 November)
+- Section 68's physics trace named it: fixture ship 17136d (and 17138d, 1713a0) comes up at attention 8 in every ns8 joiner's
+  load where the session holds 9; ATTN wrote 9 directly, and the ship's compound then had 1 child on the joiner against 28 on
+  the session, at every step. No census reads compound children and no bullet had met that ship, so every run so far was
+  equal; it is the mirror of section 67 (the load higher than the session), where the visible part was the nav helper.
+- Fix (native_gate_join_attn_arrive, with attn_set; in the join defaults): a level ATTN writes up from less than 9 to 9 or
+  more is made by the native call from the load's level, exactly as attn_leave does on the way down: the load's level back
+  into +0x1ec, SetAttention(object, the session's level), its posts to the boot event hold's slot, the due events it queued
+  dropped unless the session's EVQT holds them, its shared allocations on the load list. The handler asks AI::NavMeshCache
+  for the interior helper; its build at one of the joiner's first joins is a catch-up of a helper the session knows and
+  stays out of the fold, as the load's own builds do. Status attn_arrive=on:calls:loaded:drift.
+- Real run (ns8, slot 2, the save forced to 680, the option set by hand, with the physics trace of 681..683):
+  attn_arrive=1:3:0:0 (the three ships; their parts follow through X4's own propagation: the levels ATTN had to write went
+  from 41 to 7); 17136d's compound with the same children on both sides at 681, 682 and 683 (29 child rows each at 683,
+  where the joiner had 1 child before); the joiner's nav builds 681 (one) and 682 (twelve, the three ships among them), all
+  left out of its fold, every build after 700 the same on both sides (15 rows); joined at 3367 with digest_mismatches=0; the
+  census of 681, 1800, 3600 and 5400 equal. attn_leave and shape_hold came from the defaults in that run.
+- Not run yet: a join with this option from the defaults (the same code, the overlay list alone differs).
+- Still apart in that trace, as in section 68 and not from this: 38 station bodies with their children in another order, and
+  the two static station bodies whose scene pose differs.
+- Tests: native tests pass (the arrive path on synthetic memory next to leave's: the call from the load's level, its own
+  counters, off / above 9 / below 9 unchanged). The real run is X4 9.00 on Windows, two instances on one PC, play mode.

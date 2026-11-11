@@ -268,8 +268,6 @@ def _kits(plan, P, n):
         rows = r.get('reputation', [])
         if not isinstance(rows, list) or len(rows) > KIT_ITEMS:
             raise Refused('kit_reputation')
-        if rows and not factions:
-            raise Refused('kit_reputation_mode')   # coop: one reputation set, the session base start's
         reputation = []
         for row in rows:
             _keys(row, KIT_REPUTATION_KEYS, 'kit_reputation')
@@ -368,8 +366,9 @@ def steps(P, plan_digest=None):
         add('kit', slot, f"gamestart={k['gamestart']} faction={faction} omitted={'+'.join(k['omitted']) or '-'}")
         add('wallet', slot, f"wallet={faction} op={'set' if factions else 'add'} money={k['money']}")
         out[-1].update(mega=k['money'] // MONEY_PART, units=k['money'] % MONEY_PART)   # MD values, as the Lua core's
+        # Factions: slot k's faction takes the start's value. Coop: the shared faction only ever gains (reputation_raise).
         for r in k['reputation']:
-            add('reputation', slot, f"faction={faction} other={r['faction']} value={r['value']}")
+            add('reputation' if factions else 'reputation_raise', slot, f"faction={faction} other={r['faction']} value={r['value']}")
         for w in k['blueprints']:
             add('blueprint', slot, f'ware={w}')
         for w in k['research']:

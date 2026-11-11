@@ -258,12 +258,27 @@ static int pfoot_space_foreign(unsigned char active) {
     if(pfoot_k1_held) {pfoot_k1_held=0;InterlockedIncrement64(&pfoot_k1_ignored);return 1;}
     return 0;
 }
-/* Every live pass on a client of slot 2..N: both context sets as this client's own slot wants them. */
+/* Every live pass on a client of slot 2..N: both context sets as this client's own slot wants them.
+ * The walking set and X4's count 0x38f4e80 (PFOOT_COUNTER): d81d20 requests FIRST_PERSON only while that count is zero, and
+ * the count holds one for a seated player (70dc50 adds it when the player sits, 70e0f0 takes it back when it stands), next to
+ * the conversation's and the menus'. On a client of slot k that one is the canonical player's seat, slot 1's: with it the
+ * request never came while slot 1 sat, and a person on client k who stood up could not walk (the user's session of 11 Nov:
+ * slot 2 up for 850 ticks, k1=0/0, no walking id in any of its records). So while this client's own slot walks and the
+ * canonical player sits, the refresh sees the count without that one; everything else in it (a menu, a conversation on
+ * this client) still withdraws the set. */
+static int pfslot_canon_seated(void);   /* lockstep_pilot_foot_slots.h: X4's own player holds a control position */
+static volatile LONG64 pfoot_k1_unseated;
 static void pfoot_k1_reconcile(void) {
     if(!pfoot_k1() || !pnat_base) return;
     unsigned char flight=*(volatile unsigned char*)(pnat_base+0x2f4b829u),walking=*(volatile unsigned char*)(pnat_base+PFOOT_FP_REQUESTED);
     pnat_fn.refresh((char)pfoot_own_seated());
-    if(pfoot_fp_refresh) pfoot_fp_refresh((char)pfoot_own_walking());
+    if(pfoot_fp_refresh) {
+        const char walks=(char)pfoot_own_walking();volatile uint32_t *count=(volatile uint32_t*)(pnat_base+PFOOT_COUNTER);
+        const uint32_t was=*count;const int seat=walks && was && pfslot_canon_seated();
+        if(seat) {*count=was-1u;InterlockedIncrement64(&pfoot_k1_unseated);}
+        pfoot_fp_refresh(walks);
+        if(seat) *count=was;
+    }
     if(*(volatile unsigned char*)(pnat_base+0x2f4b829u)!=flight || *(volatile unsigned char*)(pnat_base+PFOOT_FP_REQUESTED)!=walking)
         InterlockedIncrement64(&pfoot_k1_fixed);
 }
@@ -509,8 +524,10 @@ static int pfoot_status(char *out,size_t capacity) {
         (long long)pfoot_split_local,(long long)pfoot_split_recorded,(long long)pfoot_split_replayed,(long long)pfoot_getups_claimed,(long long)pfoot_getups_replayed,
         (long long)pfoot_walk_passes,(long long)pfoot_adopted,(long long)pfoot_kept_seated,(long long)pfoot_refused_pick,(long long)pfoot_aim_off_seat,pfoot_restored);
     if(n>0 && (size_t)n<capacity)
-        n+=snprintf(out+n,capacity-(size_t)n," foot_entries=%u/%lld k1=%lld/%lld foot_clock=%lld",pfoot_entries,(long long)pfoot_entries_late,
-            (long long)pfoot_k1_ignored,(long long)pfoot_k1_fixed,(long long)pfoot_clock_calls);
+        n+=snprintf(out+n,capacity-(size_t)n," foot_entries=%u/%lld k1=%lld/%lld foot_clock=%lld k1_fp=%d/%u/%lld",pfoot_entries,(long long)pfoot_entries_late,
+            (long long)pfoot_k1_ignored,(long long)pfoot_k1_fixed,(long long)pfoot_clock_calls,
+            pnat_base?(int)*(volatile unsigned char*)(pnat_base+PFOOT_FP_REQUESTED):-1,pnat_base?*(volatile uint32_t*)(pnat_base+PFOOT_COUNTER):0u,
+            (long long)pfoot_k1_unseated);   /* this client's FIRST_PERSON request, X4's count, passes that left the canonical seat out */
     if(n>0 && (size_t)n<capacity && pfoot_armed && (pfoot_state!=PFOOT_SEATED || pfoot_on)) {
         int d=pfoot_diag(out+n,capacity-(size_t)n);if(d>0) n+=d;
     }

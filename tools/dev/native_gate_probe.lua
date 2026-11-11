@@ -448,6 +448,10 @@ if cfg.native_gate_join then
   assert(cfg.native_gate_join_shape_refresh,'native_gate_join_shape_hold needs native_gate_join_shape_refresh')
   assert(gate.join_shape_hold and gate.join_shape_hold(1)==1,'join shape hold refused')
  end
+ if cfg.native_gate_join_attn_arrive then   -- with attn_set: a level written up to 9 or more goes through SetAttention (attn_arrive=)
+  assert(cfg.native_gate_join_attn_set,'native_gate_join_attn_arrive needs native_gate_join_attn_set')
+  assert(gate.join_attn_arrive and gate.join_attn_arrive(1)==1,'join attn arrive refused')
+ end
  if cfg.native_gate_join_attn_leave then   -- with attn_set: a level written down from 9 or more goes through SetAttention (attn_leave=)
   assert(cfg.native_gate_join_attn_set,'native_gate_join_attn_leave needs native_gate_join_attn_set')
   assert(gate.join_attn_leave and gate.join_attn_leave(1)==1,'join attn leave refused')
@@ -2792,7 +2796,19 @@ function pilot_view.arm_ui_replay(slot,window)
    cfg.native_gate_script_rng and (cfg.native_gate_script_rng_mask or 3)%4>=2 and gate.missions_per_player and gate.missions_per_player(1)==1,
    'missions per player refused: needs native_gate_ui_replay with the events and missions families, native_gate_script_rng with its MD '..
    'scopes (its frames carry the mission scope) and the pilot slots')
+  -- The AI scripts X4 runs on a slot's own player and ship computer (the autopilot) run in that slot's scope
+  -- (lockstep_mission_owners.h mpp_ai_frame_enter; native_gate_missions_per_player_ai_frames, a session default).
+  if cfg.native_gate_missions_per_player_ai_frames~=nil and cfg.native_gate_missions_per_player_ai_frames~=false then
+   assert(cfg.native_gate_missions_per_player_ai_frames==true and gate.mpp_ai_frames and gate.mpp_ai_frames(1)==1,
+    'native_gate_missions_per_player_ai_frames must be true and needs a gate that has it')
+  end
   log('MISSIONS_PER_PLAYER_ARMED slot='..slot..' '..tostring(gate.mpp_status()))
+  -- What an owned cue shows (help texts, notifications, a menu, the cockpit tint, a fade, music, an achievement) runs on its
+  -- owner's client only (lockstep_md_presentation.h); a gate without it shows them on every client as before.
+  if gate.md_presentation then
+   assert(gate.md_presentation(1)==1,'owner presentation refused: '..tostring(gate.md_presentation_status()))
+   log('OWNER_PRESENTATION_ARMED slot='..slot..' '..tostring(gate.md_presentation_status()))
+  end
   -- Hot join: the claims at T ride the package; the joiner takes them before its first tick (lockstep_mission_owners.h).
   if X4LAN_JOIN_CORE and gate.mpp_state then
    X4LAN_JOIN_CORE.provide('missions_per_player',function() return assert(gate.mpp_state(),'missions per player: the table does not fit the join state') end,
@@ -2812,7 +2828,13 @@ function pilot_view.arm_ui_replay(slot,window)
     'void AddPlayerMoney(int64_t money);','void LearnBlueprint(const char* wareid);','void StartResearch(const char* wareid, UniverseID researchmoduleid);',
     'void ClearProductionItems(UniverseID productionmoduleid);','bool CanStartTerraformingProject(UniverseID clusterid, const char* projectid);',
     'void StartTerraformingProject(UniverseID clusterid, const char* projectid);','bool CanAbortActiveTerraformingProject(UniverseID clusterid);',
-    'void AbortActiveTerraformingProject(UniverseID clusterid);'}) do pcall(ffi.cdef,line) end
+    'void AbortActiveTerraformingProject(UniverseID clusterid);',
+    'typedef struct { UniverseID reserverid; const char* ware; uint32_t amount; bool isbuyreservation; double eta; TradeID tradedealid; '..
+     'MissionID missionid; bool isvirtual; bool issupply; } WareReservationInfo2;',
+    'uint32_t GetNumContainerWareReservations2(UniverseID containerid, bool includevirtual, bool includemission, bool includesupply);',
+    'uint32_t GetContainerWareReservations2(WareReservationInfo2* result, uint32_t resultlen, UniverseID containerid, bool includevirtual, '..
+     'bool includemission, bool includesupply);',
+    'bool CancelPlayerInvolvedTradeDeal(UniverseID containerid, TradeID tradeid, bool checkonly);'}) do pcall(ffi.cdef,line) end
   -- The menu's Drop (the FFI export DropInventory) is captured in the UI guard's hook: without the guard it stays refused
   -- by nobody and local, so the family asks for the guard.
   assert(guard,'ui inventory refused: needs native_gate_ui_guard')
@@ -2823,7 +2845,8 @@ function pilot_view.arm_ui_replay(slot,window)
   local factions=type(plan_cfg)=='table' and plan_cfg.mode~=nil and plan_cfg.mode~='coop'
   S.inventory=icore.session{gate=gate,C=ffi.C,ffi=ffi,env=_G,log=ticklog.write,replay=S,own_slot=slot,factions=factions,
    trade=math.floor(mask/core.FAMILY.trade)%2==1,mpp=cfg.native_gate_missions_per_player==true,
-   notify=function(text) ffi.C.ShowInfoLine(text,4) end,menus=function() return type(Menus)=='table' and Menus or {} end}
+   notify=function(text) ffi.C.ShowInfoLine(text,4) end,menus=function() return type(Menus)=='table' and Menus or {} end,
+   loud=function(kind,text) ticklog.loud(kind,text,'another player\'s inventory could not be brought over at the join') end}
   log('UI_INVENTORY_ARMED slot='..slot..' factions='..tostring(factions)..' mpp='..tostring(cfg.native_gate_missions_per_player==true))
   -- Hot join: the gate's own player entities of slots 2..N are in no save; what each holds at T rides the package and
   -- the joiner gives it to its own new entities before any event of the family runs.
@@ -3141,6 +3164,7 @@ local function pilot_frame(s,tick)
   log('PILOT_SLOTS_REGISTRY tick='..tick..' '..tostring(gate.pilot_slots_registry()))
  end
  if cfg.native_gate_missions_per_player and tick%150==0 and gate.mpp_status then log('MISSIONS_PER_PLAYER tick='..tick..' '..gate.mpp_status()) end
+ if cfg.native_gate_missions_per_player and tick%600==0 and gate.md_presentation_status then log('OWNER_PRESENTATION tick='..tick..' '..gate.md_presentation_status()) end
  if pilot_view.stock and gate.pilot_present_diff then
   local diff=gate.pilot_present_diff()
   if diff then log('PILOT_PRESENT_DIFF tick='..tick..' '..diff) end
@@ -4776,6 +4800,15 @@ local function frame()
     gate.speech_local()==1,'speech local refused '..tostring(gate.speech_local_status and gate.speech_local_status()))
    log('SPEECH_LOCAL_ARMED')
   end
+  -- MD must not read this client's own screen (lockstep_md_presentation.h, the menu state): player.isinfullscreenmenu
+  -- answers false on every client while the session runs. A map open on one client made a stock script queue a crew use case
+  -- there and start it on the other: runtime IDs apart from then on (a person's session, 11 Nov). Every session, no key.
+  -- Here, after the gate's start (it finds the image) and before the first tick: armed before the start it crashed both
+  -- clients of the first run (the status read the site through an image that was not found yet).
+  if gate.md_menu_state then
+   assert(gate.md_menu_state(1)==1,'md menu state refused '..tostring(gate.md_menu_state_status()))
+   log('MD_MENU_STATE_ARMED '..tostring(gate.md_menu_state_status()))
+  end
   -- The unpaused clock that times speech lines starts the session at one value on every client
   -- (lockstep_speech_clock.h), stop reason 196.
   if cfg.native_gate_speech_clock then
@@ -5275,6 +5308,13 @@ local function frame()
    -- list adds slots 2..N, each with its own player and PlayerController in a slot scope
    -- (lockstep_pilot_slots.h, stop reason 161). A stock slot's client captures (capture source
    -- 'stock', X4's own input, no device); every other client samples its own slot with the device.
+   -- Inside slot k's scope ship k answers P_k as its pilot (lockstep_pilot_slots.h pslot_post_enter; the autopilot's
+   -- own check `$ship.pilot != player.entity`); native_gate_pilot_slots_post, a session default.
+   if cfg.native_gate_pilot_slots_post~=nil and cfg.native_gate_pilot_slots_post~=false then
+    assert(cfg.native_gate_pilot_slots_post==true and cfg.native_gate_pilot_stock_slots~=nil and gate.pilot_slots_post and gate.pilot_slots_post(1)==1,
+     'pilot slots post refused: native_gate_pilot_slots_post must be true and needs native_gate_pilot_stock_slots')
+    log('PILOT_SLOTS_POST_ARMED slot='..slot)
+   end
    if cfg.native_gate_pilot_stock~=nil then
     local capture_source=own(cfg.native_gate_pilot_capture_source)
     local capture=capture_source=='stock'

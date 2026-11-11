@@ -158,6 +158,22 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
         float x;memcpy(&x,test_pfslot_fpc+0x100,4);assert(x==5.0f);}
     /* The dock's connection was the target (the ship had none): X4's order, 455f90 first. A second GET_UP is the sit-down. */
     assert(pfslot_own_walking() && pfoot_own_walking() && !pfoot_own_seated() && !pfslot_claim_ok(2) && pfslot_any_walking());
+    /* K1 on the walking slot's own client: X4's first-person count holds one for the canonical player's seat, which is not
+     * this client's; anything more (a menu, a conversation) still withdraws; a standing canonical player's count is others'. */
+    {   void (*refresh)(char)=pfoot_fp_refresh;const int armed=pfoot_armed;const unsigned char contexts=region[0x2f4b829u];
+        int none,seat,was;memcpy(&none,region+PFSLOT_POSITION_NONE,4);memcpy(&was,p1+PFSLOT_POSITION,4);seat=none+1;
+        const LONG64 unseated=pfoot_k1_unseated,k1_fixed=pfoot_k1_fixed,k1_ignored=pfoot_k1_ignored;
+        pfoot_fp_refresh=test_pfoot_fp_refresh;pfoot_armed=1;memcpy(p1+PFSLOT_POSITION,&seat,4);assert(pfslot_canon_seated());
+        *(uint32_t*)(region+PFOOT_COUNTER)=1;region[PFOOT_FP_REQUESTED]=0;
+        pfoot_k1_reconcile();assert(region[PFOOT_FP_REQUESTED]==1 && *(uint32_t*)(region+PFOOT_COUNTER)==1 && pfoot_k1_unseated==unseated+1);
+        *(uint32_t*)(region+PFOOT_COUNTER)=2;pfoot_k1_reconcile();assert(!region[PFOOT_FP_REQUESTED] && *(uint32_t*)(region+PFOOT_COUNTER)==2);
+        memcpy(p1+PFSLOT_POSITION,&none,4);assert(!pfslot_canon_seated());
+        *(uint32_t*)(region+PFOOT_COUNTER)=1;pfoot_k1_reconcile();assert(!region[PFOOT_FP_REQUESTED] && pfoot_k1_unseated==unseated+2);
+        *(uint32_t*)(region+PFOOT_COUNTER)=0;pfoot_k1_reconcile();assert(region[PFOOT_FP_REQUESTED]==1 && pfoot_k1_unseated==unseated+2);
+        {char out[4096];assert(pfoot_status(out,sizeof(out))>0 && strstr(out," k1_fp=1/0/"));}
+        region[PFOOT_FP_REQUESTED]=0;region[0x2f4b829u]=contexts;memcpy(p1+PFSLOT_POSITION,&was,4);pfoot_armed=armed;pfoot_fp_refresh=refresh;
+        InterlockedExchange64(&pfoot_k1_fixed,k1_fixed);InterlockedExchange64(&pfoot_k1_ignored,k1_ignored);   /* the foot test's own counts */
+    }
     /* Slot 2's walking key into slot 2's bank only (d7d3b0 in its scope); X4's update at 9fe604 for the singleton's FPC,
      * then slot 2's in its scope (singleton P_2, its bank). */
     {   pnat_node *states=(pnat_node*)(input+0x63e0+0x40);test_pnat_insert((unsigned char*)states,0x1a,(void*)test_pfslot_forward);

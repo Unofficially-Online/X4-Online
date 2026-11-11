@@ -243,7 +243,7 @@ static void test_ui_guard(void) {
       uirep_families=UIREP_FAMILY_INVENTORY;uiguard_armed=0;assert(!uiinv_arm() && !strcmp(uiinv_why,"needs_ui_guard"));
       uiguard_armed=1;assert(uiinv_arm() && uiinv_armed && uiinv_drop_index==drop && uiguard_claimed[drop] && uiguard_claim_by[drop]==uiinv_claim_decide);
       assert(uiinv_arm() && uiguard_claim_by[drop]==uiinv_claim_decide);                              /* a rerun keeps it */
-      assert(uiinv_status(text,sizeof(text))>0 && strstr(text,"ui_inventory=armed claims=7 drops=0/0"));
+      assert(uiinv_status(text,sizeof(text))>0 && strstr(text,"ui_inventory=armed claims=8 drops=0/0"));
       {uint64_t ret=7,frame[12]={0};assert(!uiinv_claim_decide(drop+1,frame,&ret) && ret==0);}     /* not its entry */
       /* the recorder: with no scope open the claim declines (the guard's rule); in a scope a call is a row and does not run */
       {uint64_t ret=7,frame[12]={0};const unsigned money=uiinv_call_index[0],research=uiinv_call_index[2];int lost=1;
@@ -264,6 +264,10 @@ static void test_ui_guard(void) {
        uiinv_record_length=0;uiinv_record[0]=0;frame[4]=77;frame[3]=(uint64_t)(uintptr_t)"project_y";
        assert(uiinv_record_call(4,frame) && !strcmp(uiinv_record,"StartTerraformingProject\t77\tproject_y\n"));
        frame[4]=78;assert(uiinv_record_call(5,frame) && strstr(uiinv_record,"\nAbortActiveTerraformingProject\t78\n"));
+       /* a cancelled trade deal: the container, the deal's own ID as it is, the flag; the menu is answered true */
+       {const unsigned before=uiinv_record_length;frame[4]=4711;frame[3]=0xfffffffffffffff0ull;frame[2]=0;
+        assert(uiinv_record_call(6,frame) && !strcmp(uiinv_record+before,"CancelPlayerInvolvedTradeDeal\t4711\t18446744073709551600\t0\n"));
+        assert(uiinv_call_answer[6]==1 && !uiinv_call_answer[0] && !strcmp(uiinv_calls[6].spec,"IQb"));}
        {unsigned rows=2;while(uiinv_record_call(5,frame)) ++rows;assert(rows>20 && uiinv_record_length<UIINV_RECORD_MAX);}   /* full: refused, never overrun */
        uiinv_record_length=0;uiinv_record[0]=0;ui_thread=t;pstk_capturing=cap;}
       uiguard_unclaim(NULL);assert(uiguard_claim(drop,pfoot_claim_decide) && !uiinv_arm() && !strcmp(uiinv_why,"ui_inventory_claim_taken:DropInventory") && !uiinv_armed);

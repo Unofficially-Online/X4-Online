@@ -418,6 +418,26 @@ class MissionsPerPlayerProbeTests(ProbeTests):
         self.assertFalse(ok)                                      # a refused table stops the joiner, loudly
         self.assertIn('missions per player refused the saver table v2|2:1615a0|', why)
 
+    def test_what_an_owned_cue_shows_is_armed_with_it(self):
+        # lockstep_md_presentation.h (help texts, notifications, menus, music of an owned cue on its owner's client only):
+        # armed right after missions per player when the gate has it; a refusal stops the arming; an older gate goes without.
+        shows = PROBE_MPP + r'''
+          gate.md_presentation=function(on) mpp_calls[#mpp_calls+1]='presentation:'..tostring(on);return MDP_REFUSE and 0 or 1 end
+          gate.md_presentation_status=function() return 'armed=1 installed=11/11 ran=0 skipped=0 why=-' end
+        '''
+        c = self.mpp(prelude=shows)
+        self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+        calls = c.values('mpp_calls')
+        self.assertLess(calls.index('arm:1'), calls.index('presentation:1'))
+        self.assertTrue(any('OWNER_PRESENTATION_ARMED slot=2 armed=1 installed=11/11' in line for line in c.values('logs')))
+        c = self.mpp(prelude=shows + 'MDP_REFUSE=true')
+        self.assertTrue(any('owner presentation refused: armed=1 installed=11/11' in line for line in c.errors()), c.values('logs')[-3:])
+        c = self.mpp()   # a gate without it
+        self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+        self.assertFalse(any('OWNER_PRESENTATION' in line for line in c.values('logs')))
+        c = self.mpp(prelude=shows, native_gate_missions_per_player=False)
+        self.assertFalse(any(call.startswith('presentation') for call in c.values('mpp_calls')))
+
     def test_a_client_lists_its_own_missions(self):
         # Missions 11 (slot 1's), 12 (slot 2's), 13 (nobody's: e.g. a client's own guidance) in X4's list; the menus' two
         # readers answer the own slot's and nobody's, by index among those.

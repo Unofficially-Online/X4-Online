@@ -217,9 +217,8 @@ class CatalogTests(unittest.TestCase):
             with self.assertRaises(gamestarts.CatalogError) as caught:
                 gamestarts.slot_kit(t, 'factions', 2)
             self.assertIn('parts blueprints, known, research cannot be applied for slot 2 in factions mode', str(caught.exception))
-            with self.assertRaises(gamestarts.CatalogError) as caught:
-                gamestarts.slot_kit(t, 'coop', 3)
-            self.assertIn('parts reputation cannot be applied', str(caught.exception))
+            # Coop takes a start's reputation too (the shared faction only gains: reputation_raise in the identity plan).
+            self.assertEqual(gamestarts.slot_kit(t, 'coop', 3)['reputation'], [{'faction': 'argon', 'value': 3200}, {'faction': 'split', 'value': -32000}])
             # The start's inventory goes to the slot's own player in both modes, unless it is left out by name.
             self.assertEqual(gamestarts.slot_kit(t, 'coop', 3, ['reputation'])['inventory'], [{'ware': 'inv_tst', 'amount': 2}])
             self.assertEqual(gamestarts.slot_kit(t, 'factions', 2, ['research', 'blueprints', 'known'])['inventory'], [{'ware': 'inv_tst', 'amount': 2}])
@@ -287,7 +286,6 @@ class SpecTests(unittest.TestCase):
             refusals = [((c, 'station_start', 2, 'coop', {}), 'session base refused'),
                         ((c, 'war_start', 2, 'coop', {2: 'station_start'}), 'slot 2: start station_start is class b'),
                         ((c, 'war_start', 2, 'coop', {1: 'beta_start'}), 'slot 1 plays the session base start war_start'),
-                        ((c, 'war_start', 2, 'coop', {2: 'alpha_start'}), 'parts reputation cannot be applied'),
                         ((c, 'war_start', 9, 'coop', {}), '2..8 players'),
                         ((c, 'war_start', 2, 'coop', {}, {2: 'inventory'}), 'slot 2 has no per-player start')]
             for call, text in refusals:
@@ -509,6 +507,24 @@ class StoryTests(unittest.TestCase):
             with self.assertRaises(session_start.SessionError):
                 session_start.story_slots({'2': {'story': story}, '3': {'story': story}})
 
+    def test_a_hull_without_a_pilot_by_name(self):
+        # A stock start's own ship has no NPC pilot; a session hull has one by default (it holds the Wait order). --unpiloted K
+        # makes slot K's hull without: no pilot and no order in the generated MD.
+        with tempfile.TemporaryDirectory() as d:
+            c = catalog_in(d)
+            args = (c, 'war_start', 3, 'coop', {2: 'alpha_start', 3: 'alpha_start'}, {2: 'inventory,reputation', 3: 'inventory,reputation'})
+            spec = session_start.build_spec(*args, unpiloted=[3])
+            self.assertNotIn('pilot', spec['slots']['2']['hull'])
+            self.assertIs(spec['slots']['3']['hull']['pilot'], False)
+            md = ET.fromstring(session_start.hulls_md(spec).split('-->', 1)[1])
+            ships = md.findall('.//create_ship')
+            self.assertEqual([s.find('pilot') is not None for s in ships], [True, False])
+            self.assertEqual(len(md.findall(".//create_order")), 1)
+            self.assertEqual(len(md.findall(".//append_to_list[@name='$ships']")), 2)   # both hulls are still counted
+            with self.assertRaises(session_start.SessionError) as caught:
+                session_start.build_spec(c, 'war_start', 2, 'coop', {}, unpiloted=[2])
+            self.assertIn('slot 2 has no per-player start', str(caught.exception))
+
     def test_the_patch_and_the_begin_script(self):
         base = {'extension': 'base', 'file': 'gs_station.xml', 'script': 'GS_Station', 'cue': 'Start'}
         dlc = {'extension': 'ego_dlc_terran', 'file': 'gs_terran1.xml', 'script': 'GS_Terran1', 'cue': 'Start'}
@@ -694,6 +710,35 @@ class RegisterTests(unittest.TestCase):
         path.write_text(json.dumps(session))
         return path, session
 
+    def test_kits_are_made_again_without_a_capture(self):
+        """A session registered with the inventory left out gets it: the same save, the same hulls, a new kit."""
+        path, session = self.write_session()
+        self.assertEqual(session['slots']['2']['kit']['omitted'], ['inventory', 'reputation'])
+        again = session_start.rekit(session_start.session_of(path), self.catalog, ['inventory'])
+        kit = again['slots']['2']['kit']
+        self.assertEqual((kit['inventory'], kit['omitted'], kit['money']), ([{'ware': 'inv_tst', 'amount': 2}], ['reputation'], 7000))
+        self.assertEqual((again['snapshot'], again['hulls']), (session['snapshot'], session['hulls']))
+        self.assertNotIn('inventory', session['slots']['2']['kit'])            # the given session is not changed
+        plan = identity.build_plan(2, 'coop', ships=['00000000000ae79c', '000000000000b000'], occupied_ship='00000000000ae79c', kits=[kit])
+        self.assertTrue(identity.canonical(identity.validate(plan)).endswith(':omit=reputation:inv=inv_tst/2'))
+        self.assertEqual(session_start.rekit(again, self.catalog, ['inventory']), again)   # again: nothing more to do
+        with self.assertRaises(session_start.SessionError) as caught:
+            session_start.rekit(session, self.catalog, ['ship'])
+        self.assertIn('unknown parts', str(caught.exception))
+        # Reputation applies in coop now: a session made with it left out and a kit made with it are different kits.
+        with self.assertRaises(session_start.SessionError) as caught:
+            session_start.rekit(session, self.catalog, ['reputation'])
+        self.assertIn('another kit than the session holds', str(caught.exception))
+        other = json.loads(json.dumps(session))
+        other['slots']['2']['kit']['money'] = 1
+        with self.assertRaises(session_start.SessionError) as caught:
+            session_start.rekit(other, self.catalog, ['inventory'])
+        self.assertIn('another kit than the session holds', str(caught.exception))
+        out = self.root / 'again.json'
+        self.assertEqual(session_start.main(['kits', '--libraries', str(self.catalog.libraries), '--scripts', str(self.catalog.scripts), '--session', str(path),
+                                             '--out', str(out)]), 0)
+        self.assertEqual(json.loads(out.read_text())['slots']['2']['kit']['inventory'], [{'ware': 'inv_tst', 'amount': 2}])
+
     def test_rebase_and_players_overlay_take_the_session_save_and_its_kits(self):
         path, session = self.write_session()
         sha = session['snapshot']['sha256']
@@ -798,7 +843,8 @@ class KitPlanTests(unittest.TestCase):
                 identity.build_plan(2, 'coop', kits=[KIT_C]), identity.build_plan(3, 'coop', kits=[KIT_C, dict(KIT_C, slot=3, known={'sectors': ['cluster_01_sector001_macro'], 'shipyards': False})]),
                 identity.build_plan(2, 'coop', kits=[{'slot': 2, 'gamestart': 'beta_start', 'money': 0}]),
                 identity.build_plan(2, 'coop', kits=[dict(KIT_C, omitted=['reputation'], inventory=KIT_INVENTORY)]),
-                identity.build_plan(2, 'factions', kits=[dict(KIT_F, omitted=['blueprints', 'known', 'research'], inventory=KIT_INVENTORY)])]
+                identity.build_plan(2, 'factions', kits=[dict(KIT_F, omitted=['blueprints', 'known', 'research'], inventory=KIT_INVENTORY)]),
+                identity.build_plan(2, 'coop', kits=[dict(KIT_C, omitted=['inventory'], reputation=KIT_F['reputation'])])]   # coop takes a start's reputation
 
     def test_lua_and_python_agree_on_kit_text_digest_and_steps(self):
         lua, K = lua_core()
@@ -817,6 +863,21 @@ class KitPlanTests(unittest.TestCase):
         self.assertEqual(identity.validate(self.plans()[6])['kits'][0]['inventory'], KIT_INVENTORY)
         # A plan without kits keeps its earlier text and digest.
         self.assertNotIn('kits', identity.canonical(identity.validate(identity.build_plan(2, 'coop'))))
+
+    def test_coop_takes_a_starts_reputation_as_a_raise_of_the_shared_faction(self):
+        P = identity.validate(identity.build_plan(2, 'coop', kits=[dict(KIT_C, omitted=['inventory'], reputation=KIT_F['reputation'])]))
+        heads = [s['head'] for s in identity.steps(P) if s['step'].startswith('reputation')]
+        self.assertEqual(['step=reputation_raise ' in h for h in heads], [True, True], heads)   # never the factions mode's set
+        self.assertTrue(heads[0].endswith('faction=player other=argon value=3200') and heads[1].endswith('faction=player other=split value=-32000'), heads)
+        self.assertIn(':rep=argon/3200+split/-32000:', identity.canonical(P))
+        factions = identity.validate(identity.build_plan(2, 'factions', kits=[KIT_F]))
+        self.assertEqual({s['step'] for s in identity.steps(factions) if s['step'].startswith('reputation')}, {'reputation'})
+        # the MD half: its own branch, the shared faction, both directions, only upward
+        md = (ROOT/'tools/dev/native_gate_player_identity.xml').read_text(encoding='utf-8')
+        branch = md[md.index("$a.$step == 'reputation_raise'"):md.index("$a.$step == 'reputation'\"")]
+        self.assertIn('exact="faction.player"', branch)
+        self.assertEqual(branch.count('<set_faction_relation'), 2)
+        self.assertEqual(branch.count('lt $a.$value - 0.000001'), 4)      # each direction guarded, and the readback of both
 
     def test_kit_steps_follow_the_relations_in_slot_order(self):
         P = identity.validate(identity.build_plan(2, 'factions', kits=[KIT_F]))
@@ -854,7 +915,7 @@ class KitPlanTests(unittest.TestCase):
                (two(f, KIT_F, KIT_F), 'kit_duplicate'), (kit(identity.build_plan(3, 'factions', occupied_ship='0000000000176ad5'), slot=2), 'kit_player_slot'),
                (kit(f, gamestart='Bad_Start'), 'kit_gamestart'), (kit(f, gamestart=None), 'kit_gamestart'), (kit(f, money=-1), 'kit_money'),
                (kit(f, money=10 ** 12 + 1), 'kit_money'), (kit(f, money=True), 'kit_money'),
-               (kit(f, reputation={'faction': 'argon'}), 'kit_reputation'), (kit(c, reputation=[{'faction': 'argon', 'value': 1}], omitted=['inventory']), 'kit_reputation_mode'),
+               (kit(f, reputation={'faction': 'argon'}), 'kit_reputation'),
                (kit(f, reputation=[{'faction': 'player', 'value': 1}]), 'kit_faction'), (kit(f, reputation=[{'faction': 'x4lan_player3', 'value': 1}]), 'kit_faction'),
                (kit(f, reputation=[{'faction': 'argon', 'value': 1000001}]), 'kit_value'),
                (kit(f, reputation=[{'faction': 'split', 'value': 1}, {'faction': 'argon', 'value': 1}]), 'kit_order'),

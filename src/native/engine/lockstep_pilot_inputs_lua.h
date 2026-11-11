@@ -34,6 +34,13 @@ static int lua_pilot_first_stores(lua_State *L) {
     if(ok) pslot_first_stores=(int)on;
     p_lua_pushnumber(L,ok);return 1;
 }
+/* gate.pilot_slots_post(on) (native_gate_pilot_slots_post): inside slot k's scope ship k's pilot post holds P_k, so the
+ * ship answers its player as its pilot (lockstep_pilot_slots.h). Every client, in the probe's config block. */
+static int lua_pilot_slots_post(lua_State *L) {
+    double on=p_lua_tonumber(L,1);const int ok=(on==0.0 || on==1.0) && !stats.issued;
+    if(ok) pslot_post_on=(int)on;
+    p_lua_pushnumber(L,ok);return 1;
+}
 static int lua_pilot_seat_live_pose(lua_State *L) {
     double on=p_lua_tonumber(L,1);
     const int ok=accept_ui() && (on==0.0 || on==1.0);

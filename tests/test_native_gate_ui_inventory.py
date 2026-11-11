@@ -116,6 +116,26 @@ WORLD = r'''
   export('AddPlayerMoney',function(cents) MONEY[WALLET]=MONEY[WALLET]+tonumber(cents)/100 end)
   export('LearnBlueprint',function(ware) learned[#learned+1]=ware end)
   export('StartResearch');export('ClearProductionItems');export('StartTerraformingProject');export('AbortActiveTerraformingProject')
+  -- a station's ware reservations: {reserver, ware, amount, buy, deal, supply}; the deal IDs are this client's own (DEAL_BASE)
+  pcall(ffi.cdef,[[typedef uint64_t UniverseID;typedef uint64_t TradeID;typedef uint64_t MissionID;
+    typedef struct { UniverseID reserverid; const char* ware; uint32_t amount; bool isbuyreservation; double eta; TradeID tradedealid;
+      MissionID missionid; bool isvirtual; bool issupply; } WareReservationInfo2;]])
+  RESERVATIONS={{100,'ore',40,true,1,false},{200,'ore',40,true,2,false},{200,'energycells',5,false,3,false},{200,'water',9,true,4,true}}
+  DEAL_BASE=7000;cancelled={};held={}
+  C.GetNumContainerWareReservations2=function(container) return dec(container)=='500' and #RESERVATIONS or 0 end
+  C.GetContainerWareReservations2=function(buf,n,container)
+    if dec(container)~='500' then return 0 end
+    for i,r in ipairs(RESERVATIONS) do
+      held[i]=r[2]
+      buf[i-1].reserverid=r[1];buf[i-1].ware=held[i];buf[i-1].amount=r[3];buf[i-1].isbuyreservation=r[4];buf[i-1].tradedealid=DEAL_BASE+r[5];buf[i-1].issupply=r[6]
+    end
+    return #RESERVATIONS end
+  C.CancelPlayerInvolvedTradeDeal=function(container,deal,checkonly)
+    local id=tonumber(deal)
+    if recording then recording[#recording+1]='CancelPlayerInvolvedTradeDeal\t'..dec(container)..'\t'..string.format('%d',id)..'\t'..(checkonly and 1 or 0)..'\n';return true end
+    cancelled[#cancelled+1]=dec(container)..':'..string.format('%d',id-DEAL_BASE)
+    return CANCEL_ANSWER~=false end
+  env.Helper={buttonCancelTrade=function(menu,container,deal) if C.CancelPlayerInvolvedTradeDeal(container,deal,false) then DIRTY=tostring(deal) end end}
   C.CanStartTerraformingProject=function() return CAN_START~=false end
   C.CanAbortActiveTerraformingProject=function() return CAN_ABORT~=false end
   known_items={}
@@ -143,6 +163,7 @@ WORLD = r'''
        end end},
     {name='ResearchMenu',buttonStartResearch=function(tech) C.StartResearch(tech,500ULL) end,
        buttonCancelResearch=function(tech) C.ClearProductionItems(500ULL) end},
+    {name='StationConfigurationMenu',buttonCancelTrade=function(deal) return C.CancelPlayerInvolvedTradeDeal(500ULL,deal,false) end},
     {name='TerraformingMenu',buttonStartProject=function(project) C.StartTerraformingProject(600ULL,project) end,
        buttonAbortProject=function() C.AbortActiveTerraformingProject(600ULL) end},
   }
@@ -331,7 +352,7 @@ class CraftTests(unittest.TestCase):
         lua.execute("other=menu('OtherMenu').buttonInventoryCraft;inv_session(1);S.frame(41);first=menu('PlayerInfoMenu').buttonInventoryCraft;S.frame(42)")
         self.assertTrue(lua.eval("menu('OtherMenu').buttonInventoryCraft==other"))
         self.assertTrue(lua.eval("menu('PlayerInfoMenu').buttonInventoryCraft==first"))
-        self.assertEqual(sum('UI_INVENTORY_SCOPES menu=' in row for row in values(g.logs)), 5)
+        self.assertEqual(sum('UI_INVENTORY_SCOPES menu=' in row for row in values(g.logs)), 7)
 
 
 class TradeTests(unittest.TestCase):
@@ -491,6 +512,51 @@ class ReadTests(unittest.TestCase):
         self.assertIn('craft:ran:gadget=2', apply(lua, g, 2, events, own=1))
 
 
+class DealTests(unittest.TestCase):
+    """A station's ware reservation cancelled: the deal's ID is each client's own, the event names what both see."""
+    def test_the_cancel_button_is_one_event_that_names_the_reservation(self):
+        lua, g = client()
+        events = click(lua, g, 2, "env.Helper.buttonCancelTrade(nil,500ULL,7002ULL)")
+        self.assertEqual([(op, hex_[:2]) for op, hex_ in events], [(0x90, '0b')])
+        self.assertEqual((values(g.cancelled), g.DIRTY), ([], '7002ULL'))          # nothing ran; the menu was answered true
+        self.assertTrue(any('UI_INVENTORY_CAPTURED kind=cancel_deal what=cancel deal ore x40' in row for row in values(g.logs)))
+        # every client finds the reservation under its own ID: the second ore row (ship 200), not the first (ship 100)
+        for own, base in ((1, 7000), (2, 91000)):
+            lua.execute(f"DEAL_BASE={base};cancelled={{}}")
+            receipt = apply(lua, g, 2, events, own=own)
+            self.assertEqual(values(g.cancelled), ['500:2'])
+            self.assertIn('|UIINV_1:2:cancel_deal:ran:ore x40', receipt)
+
+    def test_the_station_configurations_own_button_too(self):
+        lua, g = client()
+        events = click(lua, g, 1, "menu('StationConfigurationMenu').buttonCancelTrade(7003ULL)")
+        self.assertEqual(len(events), 1)
+        apply(lua, g, 1, events)
+        self.assertEqual(values(g.cancelled), ['500:3'])
+
+    def test_a_reservation_that_is_gone_a_foreign_station_and_x4s_refusal(self):
+        lua, g = client()
+        events = click(lua, g, 1, "env.Helper.buttonCancelTrade(nil,500ULL,7002ULL)")
+        lua.execute("SAVED=RESERVATIONS;RESERVATIONS={RESERVATIONS[1]}")
+        self.assertIn('cancel_deal:skipped:deal_gone', apply(lua, g, 1, events))
+        lua.execute("RESERVATIONS=SAVED;CANCEL_ANSWER=false")
+        self.assertIn('cancel_deal:skipped:x4_refused:ore x40', apply(lua, g, 1, events))
+        lua.execute("CANCEL_ANSWER=nil;cancelled={};pushed={};logs={}")
+        self.assertEqual(click(lua, g, 1, "env.Helper.buttonCancelTrade(nil,500ULL,7999ULL)"), [])   # a deal this client does not list
+        self.assertTrue(any('why=deal_gone' in row for row in values(g.logs)))
+        lua.execute('''K=X4LAN_UI_REPLAY_CORE;ctx={ref=function(u) return gate.ui_replay_ref((tostring(u):gsub('ULL$',''))) end}
+          E='0b'..assert(K.encode_call({300ULL,200ULL,'ore',40,true},5,ctx))''')
+        self.assertIn('cancel_deal:skipped:not_owner', apply(lua, g, 1, [(0x90, g.E)]))
+        self.assertEqual(values(g.cancelled), [])
+
+    def test_a_supply_reservation_is_not_offered_and_factions_mode_keeps_it_for_slot_1(self):
+        lua, g = client()
+        self.assertEqual(click(lua, g, 1, "env.Helper.buttonCancelTrade(nil,500ULL,7004ULL)"), [])   # the supply row
+        lua2, g2 = client(factions=True)
+        self.assertEqual(click(lua2, g2, 2, "env.Helper.buttonCancelTrade(nil,500ULL,7002ULL)", factions=True, trade=True), [])
+        self.assertTrue(any('Helper.buttonCancelTrade why=factions' in row for row in values(g2.logs)))
+
+
 class SliderTests(unittest.TestCase):
     """The trade menu's sliders: virtual cargo and ammunition calls answer at once on the client that asks."""
     def test_a_virtual_call_runs_here_with_the_guard_bypassed_and_answers(self):
@@ -597,6 +663,24 @@ class JoinTests(unittest.TestCase):
         lua.execute("inv_session(3);I.join_restore('');INV.p2={scrap=1};I.join_restore('2:scrap*4')")
         self.assertEqual((amounts(g, 'p2'), values(g.stock_calls)), ({'scrap': 4}, ['add:p2:scrap:3']))
 
+    def test_a_failing_catch_up_is_a_row_and_does_not_break_the_frame(self):
+        lua, g = client()
+        lua.execute("inv_session(3);env.X4LAN_UI_INVENTORY_STOCK.AddInventory=function() error('refused entity') end;"
+                    "OK=pcall(I.join_restore,'2:chip*2');S.frame(41)")
+        self.assertTrue(g.OK)
+        self.assertTrue(any('UI_INVENTORY_JOIN_GIVEN' in row and 'error=' in row for row in values(g.logs)))
+
+    def test_the_test_ops_show_the_state_and_run_the_catch_up_on_every_client(self):
+        lua, g = client()
+        lua.execute('''INV.p2={scrap=4};tools={gate=gate,C=C,env=env,own_slot=1}
+          plan=X4LAN_UI_REPLAY_CORE.script({{5,'inv_join_state',2},{6,'inv_join_give','2:chip*2,scrap*6'},{7,'inv_join_state',2}},40,tools)
+          inv_session(1,{script=plan});S.frame(45);S.frame(46);S.frame(47)''')
+        rows = [row for row in values(g.logs) if 'UI_REPLAY_SCRIPT' in row]
+        self.assertIn('state=2:scrap*4', rows[0])
+        self.assertIn('state=2:chip*2,scrap*6', rows[2])
+        self.assertEqual(values(g.pushed), [])
+        self.assertTrue(lua.eval('X4LAN_UI_REPLAY_CORE.CANONICAL.inv_join_give and X4LAN_UI_REPLAY_CORE.CANONICAL.inv_join_state'))
+
     def test_the_probe_registers_the_join_state(self):
         probe = (DEV/'native_gate_probe.lua').read_text(encoding='utf-8')
         self.assertIn("X4LAN_JOIN_CORE.provide('inventory',function() return S.inventory.join_state(#cfg.native_gate_pilot_slots) end,", probe)
@@ -696,7 +780,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(len(native), int(re.search(r'#define UIINV_CALLS (\d+)u', INVENTORY_H).group(1)))
         probe = (DEV/'native_gate_probe.lua').read_text(encoding='utf-8')
         for name in native:
-            self.assertRegex(probe, r"'void %s\(" % name)
+            self.assertRegex(probe, r"'(void|bool) %s\(" % name)
 
 
 class DropTests(unittest.TestCase):

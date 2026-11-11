@@ -9,7 +9,30 @@ static unsigned char *tmo_cue(unsigned char *at,uintptr_t vt,uint64_t id,const v
 }
 static unsigned char *test_mpp_live;static uint64_t test_mpp_live_id;
 static void *test_mpp_find(void *map,uint64_t id,unsigned flags) {(void)map;(void)flags;return id==test_mpp_live_id?test_mpp_live:NULL;}
+/* The mission's faction (C3): slot k's faction while its outermost mission scope is open, X4's own again behind it. */
+static void *test_mpp_cell_value,*test_mpp_factions[PILOT_SLOTS+1];
+static void *volatile *test_mpp_cell(void) {return (void*volatile*)&test_mpp_cell_value;}
+static void *test_mpp_faction_of(unsigned k) {return k<=PILOT_SLOTS?test_mpp_factions[k]:NULL;}
+static void test_mission_faction(void) {
+    static int player_faction,pool2,pool3,other;
+    void *(*const of)(unsigned)=mpp_faction_of;void *volatile *(*const cell)(void)=mpp_faction_cell;
+    mpp_faction_of=test_mpp_faction_of;mpp_faction_cell=test_mpp_cell;
+    mpp_faction_open=0;mpp_faction_saved=mpp_faction_put=NULL;mpp_faction_swaps=mpp_faction_same=mpp_faction_changed=0;
+    test_mpp_cell_value=&player_faction;test_mpp_factions[2]=&pool2;test_mpp_factions[3]=&pool3;test_mpp_factions[4]=&player_faction;test_mpp_factions[5]=NULL;
+    assert(mpp_faction_enter(2) && test_mpp_cell_value==&pool2 && mpp_faction_open==2 && mpp_faction_swaps==1);
+    assert(!mpp_faction_enter(3) && !mpp_faction_enter(2) && test_mpp_cell_value==&pool2 && mpp_faction_open==2);   /* one at a time: the open one stays */
+    mpp_faction_leave(3);assert(test_mpp_cell_value==&pool2 && mpp_faction_open==2);              /* not its scope */
+    mpp_faction_leave(2);assert(test_mpp_cell_value==&player_faction && !mpp_faction_open && !mpp_faction_changed);
+    mpp_faction_leave(2);assert(test_mpp_cell_value==&player_faction);                             /* nothing open */
+    assert(!mpp_faction_enter(4) && test_mpp_cell_value==&player_faction && !mpp_faction_open && mpp_faction_same==1);   /* coop: the same faction */
+    assert(!mpp_faction_enter(5) && test_mpp_cell_value==&player_faction && !mpp_faction_open);       /* no ship, no faction: as it was */
+    assert(mpp_faction_enter(3));test_mpp_cell_value=&other;                                               /* something wrote the cell inside */
+    mpp_faction_leave(3);assert(test_mpp_cell_value==&player_faction && mpp_faction_changed==1 && mpp_faction_swaps==2);
+    test_mpp_cell_value=NULL;assert(!mpp_faction_enter(2) && !test_mpp_cell_value && !mpp_faction_open);   /* no player faction yet */
+    mpp_faction_of=of;mpp_faction_cell=cell;mpp_faction_swaps=mpp_faction_same=mpp_faction_changed=0;
+}
 static void test_mission_owners(void) {
+    test_mission_faction();
     _Alignas(16) static unsigned char cues[8][0x200];
     const uintptr_t vt=(uintptr_t)image+SCRIPT_RNG_CUE_VT;
     unsigned char *script=tmo_cue(cues[0],vt,0x10,NULL),*mission=tmo_cue(cues[1],vt,0x1615a0,script),
@@ -39,6 +62,33 @@ static void test_mission_owners(void) {
     pstk_scope_slot=3;assert(!mpp_frame_enter(mission) && mpp_conflicts==1);       /* another slot's scope */
     pstk_scope_slot=0;pslots[2].player=NULL;assert(!mpp_frame_enter(sub) && mpp_refused==1 && mpp_frames==3 && !mpp_entered);
     assert(!mpp_frame_enter(notcue) && mpp_frames==3);
+    /* AI frames of a slot's own entities: the player itself, a child of it (the ship computer); others as they were */
+    {   _Alignas(16) static unsigned char contexts[4][0x200],entities[2][0x100],players[2][0x100];
+        const uintptr_t avt=(uintptr_t)image+SCRIPT_RNG_AI_VT,cvt=(uintptr_t)image+SCRIPT_RNG_CUE_VT;const unsigned length=pslots[2].length;
+        uintptr_t v;
+        v=(uintptr_t)players[0];memcpy(entities[0]+MPP_AI_PARENT,&v,8);     /* slot 2's computer */
+        v=(uintptr_t)players[1];memcpy(entities[1]+MPP_AI_PARENT,&v,8);     /* somebody else's (slot 1's) */
+        memcpy(contexts[0],&avt,8);v=(uintptr_t)entities[0];memcpy(contexts[0]+MPP_AI_ENTITY,&v,8);
+        memcpy(contexts[1],&avt,8);v=(uintptr_t)players[0];memcpy(contexts[1]+MPP_AI_ENTITY,&v,8);
+        memcpy(contexts[2],&avt,8);v=(uintptr_t)entities[1];memcpy(contexts[2]+MPP_AI_ENTITY,&v,8);
+        memcpy(contexts[3],&cvt,8);v=(uintptr_t)entities[0];memcpy(contexts[3]+MPP_AI_ENTITY,&v,8);   /* not an AI context */
+        mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;
+        mpp_ai_on=1;assert(!mpp_ai_slot_of((uintptr_t)contexts[0]) && !mpp_ai_frame_enter((uintptr_t)contexts[0]) && !mpp_ai_frames);   /* no slot has a player */
+        pslots[2].player=players[0];
+        assert(mpp_ai_slot_of((uintptr_t)contexts[0])==2 && mpp_ai_slot_of((uintptr_t)contexts[1])==2);
+        assert(!mpp_ai_slot_of((uintptr_t)contexts[2]) && !mpp_ai_slot_of((uintptr_t)contexts[3]) && !mpp_ai_slot_of(0));
+        mpp_ai_on=0;assert(!mpp_ai_frame_enter((uintptr_t)contexts[0]) && !mpp_ai_frames);                    /* switched off */
+        mpp_ai_on=1;mpp_armed=0;assert(!mpp_ai_frame_enter((uintptr_t)contexts[0]) && !mpp_ai_frames);mpp_armed=1;   /* not armed */
+        {const unsigned depth=mpp_depth;
+         pstk_scope_slot=2;{unsigned c=mpp_ai_frame_enter((uintptr_t)contexts[0]);assert(!c && mpp_ai_inside==1 && mpp_depth==depth);mpp_frame_leave(c);}   /* inside its scope: not an owned frame */
+         pstk_scope_slot=3;assert(!mpp_ai_frame_enter((uintptr_t)contexts[1]) && mpp_ai_conflicts==1);            /* another slot's scope */
+         pstk_scope_slot=0;pslots[2].length=0;                                                                    /* no store to enter: as before, counted */
+         assert(!mpp_ai_frame_enter((uintptr_t)contexts[0]) && mpp_ai_refused==1 && !mpp_ai_entered && !pstk_scope_slot && mpp_depth==depth);}
+        assert(!mpp_ai_frame_enter((uintptr_t)contexts[2]) && mpp_ai_frames==3);                               /* slot 1's computer */
+        {char text[1024];assert(mpp_status(text,sizeof(text))>0 && strstr(text," ai=1/3/0/1/1/1"));}
+        pslots[2].length=length;pslots[2].player=NULL;mpp_ai_on=0;
+        mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;
+    }
     /* the calls' scope */
     mpp_calls=mpp_call_refused=0;
     assert(!mpp_call_enter(2) && mpp_call_refused==1);                             /* no player */

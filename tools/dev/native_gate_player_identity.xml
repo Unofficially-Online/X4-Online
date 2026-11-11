@@ -281,6 +281,37 @@
       </do_else>
      </do_else>
     </do_elseif>
+    <do_elseif value="$a.$step == 'reputation_raise'">
+     <!-- coop only: the one shared faction toward one NPC faction, both directions, never lowered: a start's relation
+          applies where it is better than what the team has (the base start's, or an earlier slot's start). -->
+     <set_value name="$f" exact="faction.player"/>
+     <set_value name="$o" exact="@State.$byId.{'$' + $a.$other}"/>
+     <do_if value="$a.$faction != 'player' or typeof $o != datatype.faction or @State.$isPool.{'$' + $a.$other} or $o == faction.player">
+      <set_value name="$result" exact="'refused_faction_invalid'"/>
+     </do_if>
+     <do_elseif value="$a.$value lt -1 or $a.$value gt 1">
+      <set_value name="$result" exact="'refused_relation_invalid'"/>
+     </do_elseif>
+     <do_else>
+      <set_value name="$was" exact="$f.relationto.{$o}"/>
+      <set_value name="$wasback" exact="$o.relationto.{$f}"/>
+      <set_value name="$result" exact="'unchanged'"/>
+      <do_if value="$was lt $a.$value - 0.000001">
+       <set_faction_relation faction="$f" otherfaction="$o" value="$a.$value"/>
+       <set_value name="$result" exact="'applied'"/>
+      </do_if>
+      <do_if value="$wasback lt $a.$value - 0.000001">
+       <set_faction_relation faction="$o" otherfaction="$f" value="$a.$value"/>
+       <set_value name="$result" exact="'applied'"/>
+      </do_if>
+      <set_value name="$ab" exact="$f.relationto.{$o}"/>
+      <set_value name="$ba" exact="$o.relationto.{$f}"/>
+      <set_value name="$detail" exact="'ab=%s ba=%s was=%s/%s'.[$ab, $ba, $was, $wasback]"/>
+      <do_if value="$ab lt $a.$value - 0.000001 or $ba lt $a.$value - 0.000001">
+       <set_value name="$result" exact="'refused_relation_readback'"/>
+      </do_if>
+     </do_else>
+    </do_elseif>
     <do_elseif value="$a.$step == 'reputation'">
      <!-- factions only: slot k's faction toward one NPC faction, both directions (after the mirror). -->
      <set_value name="$f" exact="@State.$byId.{'$' + $a.$faction}"/>

@@ -294,6 +294,12 @@ static int pfslot_any_walking(void) {
     return 0;
 }
 /* This client's own slot walks (K1: its FIRST_PERSON contexts, lockstep_pilot_foot.h). */
+/* X4's own player holds a control position (it sits): its seat is one of X4's first-person count (lockstep_pilot_foot.h K1). */
+static int pfslot_canon_seated(void) {
+    int position=0,none=0;
+    if(!pslot_p1 || !pnat_base || !read_local(pslot_p1+PFSLOT_POSITION,&position,4) || !read_local(pnat_base+PFSLOT_POSITION_NONE,&none,4)) return 0;
+    return position!=none;
+}
 static int pfslot_own_walking(void) {
     unsigned k=pstk_capture_slot;
     return pfslot_armed && pstk_capturing && k>=2 && k<=PILOT_SLOTS && pfslots[k].walking;

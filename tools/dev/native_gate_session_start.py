@@ -97,14 +97,20 @@ def _check_hull(hull, slot):
             raise SessionError(f'slot {slot}: hull {axis} {hull[axis]!r} out of range')
 
 
-def build_spec(catalog, base_start, players, mode, starts, omit=None, story=()):
+def build_spec(catalog, base_start, players, mode, starts, omit=None, story=(), unpiloted=()):
     """The session-start spec: base start S for slot 1 and a resolved per-player start (kit + hull) per slot.
-    story: slots that ask for their start's story by name (a start in gamestarts.STORY_DEFAULT has it without asking)."""
+    story: slots that ask for their start's story by name (a start in gamestarts.STORY_DEFAULT has it without asking).
+    unpiloted: slots whose hull is made without an NPC pilot, as a stock start's own ship is (a person who got up from
+    the seat found a pilot sitting in it, 11 Nov; in test until a run has shown the seat code takes a ship without one)."""
     omit = {k: [p for p in v.split(',') if p] if isinstance(v, str) else list(v) for k, v in (omit or {}).items()}
     story = set(story or ())
     for k in sorted(story):
         if k not in starts:
             raise SessionError(f'--story {k}: slot {k} has no per-player start')
+    unpiloted = set(unpiloted or ())
+    for k in sorted(unpiloted):
+        if k not in starts:
+            raise SessionError(f'--unpiloted {k}: slot {k} has no per-player start (its ship is a fixture ship with its own pilot)')
     if mode not in identity.MODES:
         raise SessionError(f'mode {mode!r}')
     if not 2 <= players <= MAX_PLAYERS:
@@ -140,6 +146,8 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None, story=()):
                     y=place['y'], z=place['z'], yaw=place['yaw'], seed=HULL_SEED + k)
         if place.get('near'):   # a start that begins docked or on foot: a safe position near its zone, found by the capture
             hull['near'] = True
+        if k in unpiloted:
+            hull['pilot'] = False
         _check_hull(hull, k)
         # The start's own story (its gs_*.xml Start cue) runs for this slot, as this slot's player, unless --omit K=story
         # or another player already has that start's story: the stock scripts keep one story's state per start (the
@@ -326,14 +334,16 @@ def hulls_md(spec):
                                                         'seed': str(int(hull['seed']))})
         ET.SubElement(ship, 'owner', {'exact': 'faction.player', 'overridenpc': 'true'})
         ET.SubElement(ship, 'loadout', {'loadout': '$loadout'})
-        ET.SubElement(ET.SubElement(ship, 'pilot'), 'select', {'faction': 'faction.argon', 'tags': 'tag.aipilot'})
+        if hull.get('pilot', True):   # an NPC pilot holds the Wait order; an unpiloted hull just lies there, as a parked ship does
+            ET.SubElement(ET.SubElement(ship, 'pilot'), 'select', {'faction': 'faction.argon', 'tags': 'tag.aipilot'})
         if hull.get('near'):   # in open space near the start's station (the capture's one search; the save keeps the place)
             ET.SubElement(ship, 'safepos', {'value': f"position.[{hull['x']}m, {hull['y']}m, {hull['z']}m]", 'min': NEAR_MIN, 'max': NEAR_MAX})
         else:
             ET.SubElement(ship, 'position', {'x': f"{hull['x']}m", 'y': f"{hull['y']}m", 'z': f"{hull['z']}m"})
         ET.SubElement(ship, 'rotation', {'yaw': f"{hull['yaw']}deg", 'pitch': '0deg', 'roll': '0deg'})
         made = ET.SubElement(actions, 'do_if', {'value': '@$ship.isoperational'})
-        ET.SubElement(made, 'create_order', {'object': '$ship', 'id': "'Wait'", 'default': 'true'})
+        if hull.get('pilot', True):
+            ET.SubElement(made, 'create_order', {'object': '$ship', 'id': "'Wait'", 'default': 'true'})
         ET.SubElement(made, 'append_to_list', {'name': '$ships', 'exact': '$ship'})
         ET.SubElement(made, 'debug_text', {'text': f"'[X4LAN] SESSION_HULL slot={key} gamestart={slot['gamestart']} "
                                                    "macro=%s zone=%s sector=%s owner=%s'.[$ship.macro.id, $ship.zone.macro.id, "
@@ -495,6 +505,31 @@ def session_of(path):
     return s
 
 
+def rekit(session, catalog, apply):
+    """The session with every slot's kit made again from the catalog, the parts in `apply` no longer left out (a kit is
+    applied by the identity plan at every start of the session, not by the save: the save and its hulls stay as they are).
+    The use: a session registered when a start's inventory could not be given (it had to be omitted by name) gets it."""
+    unknown = sorted(set(apply) - set(gamestarts.OMITTABLE))
+    if unknown:
+        raise SessionError(f'kits: unknown parts {unknown} (parts: {", ".join(gamestarts.OMITTABLE)})')
+    out = json.loads(json.dumps(session))
+    for key in sorted(out['slots'], key=int):
+        slot = out['slots'][key]
+        old = slot['kit']
+        omit = [part for part in old.get('omitted', []) if part not in apply]
+        try:
+            tpl = gamestarts.template(catalog, slot['gamestart'], world=slot.get('class') == 'b')
+            kit = gamestarts.slot_kit(tpl, out['mode'], int(key), omit)
+        except gamestarts.CatalogError as error:
+            raise SessionError(f'slot {key}: {error}') from None
+        same = {k: v for k, v in kit.items() if k not in ('omitted', 'inventory')}
+        if same != {k: v for k, v in old.items() if k not in ('omitted', 'inventory')}:
+            raise SessionError(f"slot {key}: the catalog gives start {slot['gamestart']} another kit than the session holds "
+                               '(another game version or other extensions): build the session again')
+        slot['kit'] = kit
+    return out
+
+
 def rebase(session, base, out):
     """A full-stack overlay bound to the session save (checksum, fixture, watch list)."""
     snapshot = Path(session['snapshot']['path'])
@@ -521,6 +556,7 @@ def main(argv=None):
                    ', '.join(gamestarts.OMITTABLE) + ')')
     s.add_argument('--story', default='', metavar='K[,K...]',
                    help="slots whose start's own story script runs for that slot's player (a class b start taken with --omit K=world)")
+    s.add_argument('--unpiloted', default='', metavar='K[,K...]', help='slots whose start ship is made without an NPC pilot (in test)')
     s.add_argument('--out', required=True)
     c = sub.add_parser('capture-overlay', help='the capture overlay of a spec (one disposable lane run)')
     c.add_argument('--spec', required=True)
@@ -531,6 +567,12 @@ def main(argv=None):
     r.add_argument('--spec', required=True)
     r.add_argument('--snapshot', required=True)
     r.add_argument('--out', required=True)
+    k = sub.add_parser('kits', help="make a registered session's kits again from the catalog (no capture: the save stays)")
+    gamestarts.add_roots(k)
+    k.add_argument('--session', required=True)
+    k.add_argument('--apply', default='inventory', metavar='PART[,PART]',
+                   help='parts the kits no longer leave out (default inventory: every player gets its start\'s wares)')
+    k.add_argument('--out', required=True, help='the new session.json')
     b = sub.add_parser('rebase', help='bind a full-stack overlay to the session save')
     b.add_argument('--session', required=True)
     b.add_argument('--base', required=True)
@@ -541,7 +583,8 @@ def main(argv=None):
             catalog = gamestarts.Catalog(*gamestarts.roots(args))
             starts = slot_values(args.start, '--start')
             spec = build_spec(catalog, args.base_start, args.players, args.mode, starts, slot_values(args.omit, '--omit'),
-                              story=[int(k) for k in args.story.split(',') if k.strip()])
+                              story=[int(k) for k in args.story.split(',') if k.strip()],
+                              unpiloted=[int(k) for k in args.unpiloted.split(',') if k.strip()])
             out = write_new(args.out, json.dumps(spec, indent=1, sort_keys=True) + '\n')
             print(f'spec {out}: base {spec["base_start"]} (class {spec["base_class"]}), {spec["players"]} players, {spec["mode"]}')
             for key, slot in sorted(spec['slots'].items(), key=lambda kv: int(kv[0])):
@@ -561,6 +604,15 @@ def main(argv=None):
             print(f"session {out}: {session['base_start']} sha256 {session['snapshot']['sha256']} player ship {session['player_ship']} "
                   f"in {session['player_sector']}, hulls {session['hulls'] or '-'}")
             print(f'next: python tools/dev/native_gate_session_start.py rebase --session {out} --base <full-stack overlay> --out <dir>')
+        elif args.command == 'kits':
+            session = rekit(session_of(args.session), gamestarts.Catalog(*gamestarts.roots(args)),
+                            [part.strip() for part in args.apply.split(',') if part.strip()])
+            out = write_new(args.out, json.dumps(session, indent=1, sort_keys=True) + '\n')
+            print(f'session {out}: the kits of {len(session["slots"])} slots made again; the save is the same')
+            for key, slot in sorted(session['slots'].items(), key=lambda kv: int(kv[0])):
+                kit = slot['kit']
+                wares = ', '.join(f"{i['amount']} {i['ware']}" for i in kit.get('inventory', [])) or '-'
+                print(f"  slot {key}: {slot['gamestart']} inventory {wares}; omitted {','.join(kit['omitted']) or '-'}")
         else:
             session = session_of(args.session)
             out = rebase(session, args.base, args.out)

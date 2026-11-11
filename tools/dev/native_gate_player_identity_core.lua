@@ -191,7 +191,6 @@ function K.kits(plan,P,n)
   local rows=r.reputation==nil and {} or r.reputation
   local ok,count=pcall(list,rows,'kit_reputation')
   if not ok or count>K.KIT_ITEMS then refuse('kit_reputation') end
-  if count>0 and not factions then refuse('kit_reputation_mode') end   -- coop: one reputation set, the base start's
   local reputation,names={},{}
   for j=1,count do
    local row=rows[j]
@@ -324,8 +323,9 @@ function K.steps(P,digest)
   s=add({step='wallet',slot=k.slot,faction=faction,op=factions and 'set' or 'add',mega=math.floor(k.money/K.MONEY_PART),
    units=k.money%K.MONEY_PART})
   head(s,string.format('wallet=%s op=%s money=%d',faction,s.op,k.money))
+  -- Factions: slot k's faction takes the start's value. Coop: the shared faction only ever gains (reputation_raise).
   for _,r in ipairs(k.reputation) do
-   s=add({step='reputation',slot=k.slot,faction=faction,other=r.faction,value=r.value/K.VALUE_SCALE})
+   s=add({step=factions and 'reputation' or 'reputation_raise',slot=k.slot,faction=faction,other=r.faction,value=r.value/K.VALUE_SCALE})
    head(s,string.format('faction=%s other=%s value=%d',faction,r.faction,r.value))
   end
   for _,w in ipairs(k.blueprints) do s=add({step='blueprint',slot=k.slot,ware=w});head(s,'ware='..w) end

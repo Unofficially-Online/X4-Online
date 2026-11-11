@@ -362,6 +362,8 @@ static unsigned test_pfbody_calls,test_pfbody_mode,test_pfbody_removed,test_pfbo
 static unsigned char *test_pfbody_singleton;
 static void *test_pfbody_target;
 static int32_t test_pfbody_hold_seen;
+static unsigned test_pfbody_marked;
+static void test_pfbody_mark(void *component,unsigned char flag) {++test_pfbody_marked;((unsigned char*)component)[PFBODY_PLACED]=flag;}
 static void test_pfbody_connect(void *component,const void *filter,void *target,void *extra) {
     ++test_pfbody_calls;test_pfbody_singleton=test_pslot_singleton();test_pfbody_target=target;
     assert(component==test_pslot_p2 && filter==test_pfbody_filter_object && !extra);
@@ -580,7 +582,7 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
            !test_pslot3_view_at_take[1][0] && !test_pslot3_view_at_take[1][1]);
     {   void *v0=NULL,*v1=NULL;memcpy(&v0,test_pslot3_ship[1]+0xe0,8);memcpy(&v1,test_pslot3_ship[1]+0x160,8);
         assert(v0==views[1][0] && v1==views[1][1] && pslot_seat_live_seats==live_seats+1 && pslot_seat_live_cleared==live_cleared+2);
-        char row[1024];assert(pslot_status(row,sizeof(row)) && strstr(row," seat_live=1:") && strstr(row," first_stores=1:"));}
+        char row[1024];assert(pslot_status(row,sizeof(row)) && strstr(row," seat_live=1:") && strstr(row," first_stores=1:") && strstr(row," post=0:0:0:0:0:0"));}
     assert(pslots[3].first[sim_at]==sim_was);pnat_base[sim_offset]=sim_was;pslot_first_stores=0;
     assert(pslots[2].store[flight_at]==1 && pslots[3].store[flight_at]==1 && !test_take_input[PSLOT_TAKE_FLIGHT_FLAG] &&
            pslot_take_flags==flags+2);   /* both takes held the flag at 1 and gave the 0 back */
@@ -594,6 +596,50 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
     printf("pilot stock slots: an absent slot (hot join) neutral and unseated until its handover, built at H-2, seated at H-1, "
            "its records required from H+delay, a missing record of a present slot still 155, the abort and the package state, a "
            "rejoinable slot dropped (keys released), rejoined and dropped again, the late seat past its ship's view caches PASS\n");
+}
+/* The ship's side of the seat inside the scope (pslot_post_enter / pslot_post_leave) on a stand-in ship with a post
+ * table: the entry written and put back; nothing when switched off, not seated, walking or without a controller; an
+ * entry X4 filled is left; a short or missing table and another ship ID are unreadable; a table that moved, a ship that
+ * is gone and an entry somebody changed inside the scope are lost, nothing written. */
+static void test_pilot_slots_post(void) {
+    static pslot_slot slot;_Alignas(16) static unsigned char ship[0x500],player[0x100],other[0x100],controller[0x40];
+    static unsigned char *table[2*8],*moved[2*8];
+    pslot_slot *s=&slot;const int on=pslot_post_on;unsigned char **p;
+    memset(s,0,sizeof(*s));memset(ship,0,sizeof(ship));memset(table,0,sizeof(table));memset(moved,0,sizeof(moved));
+    *(uint64_t*)(ship+8)=0x22bce;p=table;memcpy(ship+PSLOT_POSTS,&p,8);p=table+2*8;memcpy(ship+PSLOT_POSTS+8,&p,8);
+    s->player=player;s->ship=ship;s->runtime=0x22bce;s->post=5;s->seated=1;s->controller=controller;
+    pslot_post_swaps=pslot_post_same=pslot_post_taken=pslot_post_unreadable=pslot_post_lost=0;
+    unsigned char **cell=&table[2*5+1];
+    assert((unsigned char**)pslot_post_cell_of(s)==cell);
+    /* off, not seated, walking, no controller: untouched */
+    pslot_post_on=0;pslot_post_enter(2,s);assert(!*cell && !pslot_post_cell[2]);
+    pslot_post_on=1;s->seated=0;pslot_post_enter(2,s);assert(!*cell);s->seated=1;
+    s->walking=1;pslot_post_enter(2,s);assert(!*cell);s->walking=0;
+    s->controller=NULL;pslot_post_enter(2,s);assert(!*cell && !pslot_post_swaps && !pslot_post_unreadable);s->controller=controller;
+    /* the seat: written at the entry, back at the leave; the other entries never */
+    table[2*4+1]=other;
+    pslot_post_enter(2,s);assert(*cell==player && pslot_post_swaps==1 && table[2*4+1]==other && !table[2*5]);
+    pslot_post_leave(2,s);assert(!*cell && !pslot_post_cell[2] && !pslot_post_lost);
+    pslot_post_leave(2,s);assert(!*cell && !pslot_post_lost);                                   /* nothing open: nothing */
+    /* an entry X4 filled: theirs; P_k there already: left there */
+    *cell=other;pslot_post_enter(2,s);assert(*cell==other && pslot_post_taken==1);pslot_post_leave(2,s);assert(*cell==other);
+    *cell=player;pslot_post_enter(2,s);assert(pslot_post_same==1);pslot_post_leave(2,s);assert(*cell==player);*cell=NULL;
+    /* unreadable: a table too short for the post, no table, another ship under the pointer */
+    p=table+2*5;memcpy(ship+PSLOT_POSTS+8,&p,8);pslot_post_enter(2,s);assert(!*cell && pslot_post_unreadable==1);
+    p=NULL;memcpy(ship+PSLOT_POSTS,&p,8);pslot_post_enter(2,s);assert(pslot_post_unreadable==2);
+    p=table;memcpy(ship+PSLOT_POSTS,&p,8);p=table+2*8;memcpy(ship+PSLOT_POSTS+8,&p,8);
+    *(uint64_t*)(ship+8)=0x22bcf;pslot_post_enter(2,s);assert(!*cell && pslot_post_unreadable==3);*(uint64_t*)(ship+8)=0x22bce;
+    /* lost inside the scope: the table moved, the ship gone, somebody else in the entry */
+    pslot_post_enter(2,s);assert(*cell==player);p=moved;memcpy(ship+PSLOT_POSTS,&p,8);p=moved+2*8;memcpy(ship+PSLOT_POSTS+8,&p,8);
+    pslot_post_leave(2,s);assert(pslot_post_lost==1 && *cell==player && !moved[2*5+1]);*cell=NULL;
+    p=table;memcpy(ship+PSLOT_POSTS,&p,8);p=table+2*8;memcpy(ship+PSLOT_POSTS+8,&p,8);
+    pslot_post_enter(2,s);*(uint64_t*)(ship+8)=0;pslot_post_leave(2,s);assert(pslot_post_lost==2 && *cell==player);*cell=NULL;*(uint64_t*)(ship+8)=0x22bce;
+    pslot_post_enter(2,s);*cell=other;pslot_post_leave(2,s);assert(pslot_post_lost==3 && *cell==other);*cell=NULL;
+    assert(pslot_post_swaps==4);
+    {char row[1024];pslot_stage=pslot_stage?pslot_stage:"off";assert(pslot_status(row,sizeof(row)) && strstr(row," post=1:4:1:1:3:3"));}
+    pslot_post_on=on;pslot_post_cell[2]=NULL;
+    pslot_post_swaps=pslot_post_same=pslot_post_taken=pslot_post_unreadable=pslot_post_lost=0;
+    printf("pilot slots post: the pilot post's entry inside the scope (written, put back, off, unseated, walking, taken, unreadable, lost) PASS\n");
 }
 static void test_pilot_slots(void) {
     pstk_focus_forced=1;
@@ -1033,6 +1079,24 @@ static void test_pilot_slots(void) {
         assert(!pfbody_pass(21,1) && !strcmp(pfbody_why,"body_moved") && pfoot_failed && !strcmp(pfoot_why,"body_moved"));
         memcpy(p2+0x70,&room,8);pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";
         assert(pfbody_disconnect_slot(2) && !pfbody_mask && pslot_release(2));memset(p2+0x70,0,8);
+        /* A park keeps the body's place for the scripts: marked 'in the universe' as its room is (X4's parent change had
+         * cleared it), the seat's end takes the mark off; a room outside the universe and a plain take-off mark nothing. */
+        {   const LONG64 marks=pfbody_marks,unmarks=pfbody_unmarks;unsigned char *r=room;const unsigned char was=r[PFBODY_PLACED];
+            pfbody_mark=test_pfbody_mark;pslot_unplace=pfbody_unplace;test_pfbody_marked=0;
+            r[PFBODY_PLACED]=1;p2[PFBODY_PLACED]=0;
+            assert(pslot_seat(2) && pfbody_connect_slot(2) && pfbody_disconnect_slot_as(2,1) && !pfbody_mask && *(void**)(p2+0x70)==room);
+            assert(p2[PFBODY_PLACED]==1 && pfbody_marks==marks+1 && test_pfbody_marked==1);
+            assert(pslot_release(2) && !p2[PFBODY_PLACED] && pfbody_unmarks==unmarks+1 && test_pfbody_marked==2);memset(p2+0x70,0,8);
+            r[PFBODY_PLACED]=0;
+            assert(pslot_seat(2) && pfbody_connect_slot(2) && pfbody_disconnect_slot_as(2,1) && !p2[PFBODY_PLACED] && pfbody_marks==marks+1);
+            assert(pslot_release(2) && pfbody_unmarks==unmarks+1);memset(p2+0x70,0,8);
+            r[PFBODY_PLACED]=1;
+            assert(pslot_seat(2) && pfbody_connect_slot(2) && pfbody_disconnect_slot(2) && !p2[PFBODY_PLACED] && pfbody_marks==marks+1);
+            assert(pslot_release(2));memset(p2+0x70,0,8);
+            {char out[2048];assert(pfbody_status(out,sizeof(out)) && strstr(out," placed="));}
+            r[PFBODY_PLACED]=was;pfbody_mark=NULL;pslot_unplace=NULL;
+            InterlockedExchange64(&pfbody_marks,marks);InterlockedExchange64(&pfbody_unmarks,unmarks);
+        }
         /* A connect that lands elsewhere: off again, the upward pointer back, stop; a fault: stop, the pointer back. */
         assert(pslot_seat(2));test_pfbody_mode=1;test_pfbody_calls=0;
         assert(!pfbody_connect_slot(2) && !strcmp(pfbody_why,"body_connect") && test_pfbody_calls==2 && !test_pfbody_target && *(void**)(p2+0x70)==room &&

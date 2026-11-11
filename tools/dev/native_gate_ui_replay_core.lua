@@ -764,7 +764,7 @@ end
 K.SCOPED={target_slot=true,target_none=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={mis_fixture=true,gm_limit=true,slot_kill=true,launch_stock=true,inv_seed=true,inv_look=true}
+K.CANONICAL={mis_fixture=true,gm_limit=true,slot_kill=true,launch_stock=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}

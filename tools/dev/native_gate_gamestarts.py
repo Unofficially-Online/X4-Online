@@ -71,14 +71,16 @@ MODULE_TEST = re.compile(r"player\.module\s*==\s*'([a-z0-9_]+)'")
 SPACESUIT = re.compile(r'_spacesuit_')
 # Where each player-level part of a start can go for slot k >= 2 (slot 1 plays the session base start, the save).
 #   money       factions: slot k's own account (set); coop: added to the one shared wallet
-#   reputation  factions: slot k's faction (after the mirror); coop: one reputation set (the base start's) -> omit
+#   reputation  factions: slot k's faction (after the mirror); coop: the one shared faction takes the better of what it
+#               has and what the start gives, per faction (a team with a Terran cadet is friendly with Terran and
+#               keeps the base start's friends; nobody's start makes the team worse off)
 #   blueprints, research, known (map uncover)
 #               coop: the one player library and map; factions: X4 keeps them for the player faction only -> omit
 #   inventory   both modes: slot k's own player entity P_k (MD does not reach it; the probe adds the wares inside slot
 #               k's scope, native_gate_probe.lua pilot_view.kit_inventory; needs missions per player, the scope's owner)
 #   ship, place a hull with the start's macro and loadout, created at its start position in the session save
 #               (the capture), because pilot slots need saved IDs fixed before the load
-APPLIES = {'factions': {'reputation', 'inventory'}, 'coop': {'blueprints', 'research', 'known', 'inventory'}}
+APPLIES = {'factions': {'reputation', 'inventory'}, 'coop': {'blueprints', 'research', 'known', 'inventory', 'reputation'}}
 OMITTABLE = ('blueprints', 'inventory', 'known', 'reputation', 'research')
 NEAR_KINDS = ('docked', 'on_foot')   # ship-only: the player's ship goes into open space near the start's zone
 SAME_START_OFFSET = 300   # metres along x between hulls of slots that take the same start

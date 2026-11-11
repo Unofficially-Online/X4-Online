@@ -214,6 +214,7 @@ apply tick every client checks the click against the world of that tick and then
 | Confirm of the blueprint or licence trader | everything bought and the price, after the money check | player faction (coop: every slot; factions: slot 1) |
 | Research: start, cancel | `StartResearch` / `ClearProductionItems` on a module of the player's | as above |
 | Terraforming: start, abort | X4's own `Can...` check, then the call | as above |
+| Cancel on a station's ware reservation | the reservation both clients see (ship, ware, amount, direction) is found again and cancelled | as above |
 
 A start's own inventory (kit part `inventory`) is added to the player who took the start: eight ticks into the
 session, or twelve ticks after the hand-over for a player who joins. On a client of slots 2..N the menus read
@@ -233,7 +234,7 @@ parts that change nothing by themselves and runs whole with its last event).
 
 No stock menu of X4 9.00 calls `ClearTradeQueue`, `MakeRepairPriority`, `ToggleFactionTradeRestriction`,
 `SetNPCSkill` or `AddUnits` (the UI Lua has no caller), so there is nothing to share there; the guard keeps
-refusing them. Still open: `CancelPlayerInvolvedTradeDeal` (its trade ID is a runtime ID),
+refusing them. Still open:
 `CreateNPCFromPerson` (a crew member made pilot of a
 ship without one: it needs `SetEntityToPost` of the fleet entries in the same click), ship building and crew for
 slots 2..N in factions mode, and the paint mod list of the ship configuration on clients 2..N (the native reader
@@ -264,7 +265,17 @@ planning copy differed from the other's for some 2,300 ticks until its close, an
 3640 with 0 digest mismatches. Not run: a person's own hand on a slider, and the real menu from open to
 Confirm.
 
-Not run in the real game yet: the trader, the blueprint and licence trader, research, terraforming, the mods of
-slots 2..N, a start's inventory, a trade in parts, the shared encyclopedia entries (mocked tests and the C tests
+A start's inventory. Every stock start gives its player the spacesuit's repair laser and the object scanner
+through the start's inventory (the intro start also five limpet mines and the demolition tool); with the part
+left out of every kit, as it had to be, players 2..N had neither. Run inv4 (11 Nov, two X4, the ns8 session with
+its kits made again by `native_gate_session_start.py kits`, the published DLL build-st32): at tick 44 slot 2 held
+no repair laser and slot 1 one (the save's); `KIT_INVENTORY tick=48 slot=2 why=window wares=2 applied=1` on both
+clients; at tick 100 slot 2 held one laser and one scanner on both and client 2's own menu read showed them;
+0 digest mismatches to the end (tick 3640). Not run: the same for a player who joins (twelve ticks after the
+hand-over).
+
+Not run in the real game yet: the trader, the blueprint and licence trader, research, terraforming, a cancelled
+trade deal, the mods of
+slots 2..N, a trade in parts, the shared encyclopedia entries (mocked tests and the C tests
 only), and any of it across a hot join (the inventories' ride in the join data is mocked-test only too: it needs
 three X4, one more than this PC runs).

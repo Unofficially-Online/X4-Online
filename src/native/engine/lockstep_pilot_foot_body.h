@@ -98,6 +98,26 @@ static int pfslot_any_walking(void);static int pfslot_getup_due(uint64_t tick); 
 static const unsigned char pfbody_kill_bytes[8]={0xff,0x90,0x08,0x14,0x00,0x00,0x84,0xc0};   /* the call, then test al,al */
 static unsigned char pfbody_kill_patched[5];
 static int pfbody_kill_installed;
+/* A parked body keeps its place for the scripts (the user's session of 11 Nov: slot 2 off its seat, its story's cue
+ * ApproachObject_Success_V4 logged "Property lookup failed: $ApproachObject.distanceto" on both clients, $ApproachObject =
+ * player.entity = P_2 in slot 2's scope, and the mission went on without the ship having moved). MD's distanceto for a
+ * component (the component evaluator 0xcedeb0, case at 0xcf2409) first asks 3d9620: the component's byte +0xd1, 'in the
+ * universe'. U::Component's parent change 3d7010 sets it from the new parent's (3d9460, down the component's own
+ * children) and clears it for no parent: a body in its room has it, and the park (every body off the tree while anyone
+ * is up, and around a join save) cleared it with the seat's upward pointer put back by a write. So for as long as
+ * anyone walked, no slot's player had a place a script could take a distance from, the walker's own included. Now the
+ * park marks P_k again with X4's own setter when its room is in the universe, and the seat's end (the upward pointer
+ * gone) takes the mark off. A body that is not parked is X4's own business as before. Status placed=marks/unmarks. */
+#define PFBODY_PLACED 0xd1u                 /* Component: in the universe (3d9620 reads it, 3d9460 sets it) */
+#define PFBODY_MARK 0x3d9460u               /* (component, flag): the byte, down its children */
+typedef void (*pfbody_mark_fn)(void *,unsigned char);
+static pfbody_mark_fn pfbody_mark;          /* the image's at the arming, a test's */
+static volatile LONG64 pfbody_marks,pfbody_unmarks;
+static void pfbody_unplace(unsigned char *player) {
+    unsigned char in=0;
+    if(!pfbody_mark || !player || !read_local(player+PFBODY_PLACED,&in,1) || !in) return;
+    pfbody_mark(player,0);InterlockedIncrement64(&pfbody_unmarks);
+}
 static volatile LONG64 pfbody_kill_off,pfbody_kill_spared,pfbody_kill_late;
 static const struct {unsigned rva,size;const char *sha;} pfbody_pin_table[]={
     {0x3d8420u,0x89,"46a8f865b44c4e326737a70cfdf828bd65324779303b13ecaf81990f6290f7af"},    /* ConnectTo by filter; no target: off */
@@ -105,7 +125,8 @@ static const struct {unsigned rva,size;const char *sha;} pfbody_pin_table[]={
     {0x3d8240u,0x144,"f087638cc9205c49f677a4ecc81c01a6cd2921be07abe28a06933ebea8752e65"},   /* off the parent (0x15: no kill of its own) */
     {0x3d7010u,0x9d2,"bab31fa2e3f80a0c1d887471c08552b31f8d2c71fdd54c9166a987fe04d520b2"},   /* parent change: unheld and parentless -> 'removed' */
     {0x702f40u,0xaf2,"640162bec27d8b862203290b22a1738885db92be92bf6366752a3535f8a47045"},   /* Player::vfunc 0x1380: no camera -> 71a560 */
-    {0x71a560u,0x668,"d3c3b97836592d28fd8172139f60804933003eabc690025ca0b3447845674e41"}};  /* the Player's camera, made X4's */
+    {0x71a560u,0x668,"d3c3b97836592d28fd8172139f60804933003eabc690025ca0b3447845674e41"},   /* the Player's camera, made X4's */
+    {PFBODY_MARK,0x1ae,"5754e5297dee0c7dfece3833ca2a26e2e592e2703831c0e3f3c2369c33961671"}};  /* 'in the universe', down the children */
 static int pfbody_fail(const char *why) {
     pfbody_stage="failed";if(!strcmp(pfbody_why,"-")) pfbody_why=why;
     pfbody_failed=1;pfoot_failed=1;pfoot_why=pfbody_why;return 0;   /* stop reason 185 */
@@ -160,20 +181,28 @@ static int pfbody_connect_slot(unsigned k) {
     pfbody_mask|=1u<<(k-1);InterlockedIncrement64(&pfbody_connects);
     return 1;
 }
-/* P_k off its room again, in its scope; the seat's upward pointer back for its release. */
-static int pfbody_disconnect_slot(unsigned k) {
+/* P_k off its room again, in its scope; the seat's upward pointer back for its release. place: the seat goes on (a
+ * park), so P_k keeps the mark of its room (above). */
+static int pfbody_disconnect_slot_as(unsigned k,int place) {
     pslot_slot *s=&pslots[k];int fault=0;
     if(!(pfbody_mask>>(k-1)&1u)) return 1;
     if(!pslot_enter(k)) return pfbody_fail("body_scope");
     const char *why=pfbody_call(s,NULL,&fault);
     unsigned char *parent=pfbody_parent(s);
-    if(!fault && !parent) {*(unsigned char *volatile*)(s->player+0x70)=s->room;pfbody_mask&=~(1u<<(k-1));InterlockedIncrement64(&pfbody_disconnects);}
+    if(!fault && !parent) {
+        unsigned char in=0;
+        *(unsigned char *volatile*)(s->player+0x70)=s->room;pfbody_mask&=~(1u<<(k-1));InterlockedIncrement64(&pfbody_disconnects);
+        if(place && !why && pfbody_mark && s->room && read_local(s->room+PFBODY_PLACED,&in,1) && in) {
+            pfbody_mark(s->player,1);InterlockedIncrement64(&pfbody_marks);
+        }
+    }
     int left=pslot_leave(k);
     if(fault) return pfbody_fail("body_disconnect_fault");
     if(why) return pfbody_fail(why);
     if(parent) return pfbody_fail("body_disconnect");
     return left?1:pfbody_fail("body_leave");
 }
+static int pfbody_disconnect_slot(unsigned k) {return pfbody_disconnect_slot_as(k,0);}
 /* A seat a body sits at: slot k alive and seated in its own ship's cockpit room, not walking (a dead slot, one in its
  * suit, a stranded one and a roomless seat have none). */
 static int pfbody_seat_ok(unsigned k) {
@@ -300,7 +329,7 @@ static int pfbody_guard(uint64_t tick) {
     if(pfbody_someone_up(tick) || join_save) {
         pfbody_seated_since=0;memset(pfbody_back,0,sizeof(pfbody_back));
         if(!pfbody_mask) return 1;
-        for(unsigned k=2;k<=PILOT_SLOTS;k++) if(!pfbody_disconnect_slot(k)) return 0;
+        for(unsigned k=2;k<=PILOT_SLOTS;k++) if(!pfbody_disconnect_slot_as(k,1)) return 0;   /* parked: the seats go on */
         if(!pfbody_parked) InterlockedIncrement64(&pfbody_parks);
         pfbody_parked=1;pfbody_stage="parked";return 1;
     }
@@ -371,13 +400,14 @@ static int pfbody_arm(void) {
         if(!pnat_base || !read_local(pnat_base+PFBODY_FILTER,&vtable,8) || vtable!=(const void*)(pnat_base+PFBODY_FILTER_VTABLE))
             return pstk_arm_refuse("bodies_filter");
         pfbody_connect=(pfbody_connect_fn)(image+PFBODY_CONNECT);pfbody_filter=pnat_base+PFBODY_FILTER;
+        pfbody_mark=(pfbody_mark_fn)(image+PFBODY_MARK);pslot_unplace=pfbody_unplace;
     }
     return pfbody_arm_using();
 }
 static int pfbody_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld",
+    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld placed=%lld/%lld",
         pfbody_stage,pfbody_why,pfbody_mask,(long long)pfbody_connects,(long long)pfbody_disconnects,(long long)pfbody_checks,(long long)pfbody_parks,
         (long long)pfbody_unparks,(long long)pfbody_returns,pfbody_kill_installed,(long long)pfbody_kill_off,(long long)pfbody_kill_spared,(long long)pfbody_kill_late,(long long)pfbody_roomless,
-        (long long)pfbody_held);
+        (long long)pfbody_held,(long long)pfbody_marks,(long long)pfbody_unmarks);
     return n>0 && (size_t)n<capacity?n:0;
 }

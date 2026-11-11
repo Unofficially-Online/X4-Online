@@ -169,6 +169,9 @@ def main(argv=None):
     ns.add_argument('--story', default='', metavar='K[,K...]',
                     help="slots whose start's own story (its missions) runs for that slot's player; for a start x4ls starts lists "
                          'as player-start=ship+story, taken with --omit K=world. First form, in test')
+    ns.add_argument('--unpiloted', default='', metavar='K[,K...]',
+                    help="slots whose start ship is made without an NPC pilot, as a stock start's own ship is (in test: with one, a "
+                         'pilot sits in the seat when the player gets up)')
     ns.add_argument('--gate-dll', type=Path, required=True)
     ns.add_argument('--out', type=Path, required=True, help='new session folder (spec, save, session.json, overlay)')
     ns.add_argument('--minutes', type=float, default=40)
@@ -223,6 +226,7 @@ def main(argv=None):
             base_start=args.base_start, players=args.players, mode=args.mode, out=args.out, gate_dll=args.gate_dll,
             starts=slots(args.start, '--start'), omit=slots(args.omit, '--omit'), minutes=args.minutes, open=args.open,
             story=tuple(int(k) for k in args.story.split(',') if k.strip()),
+            unpiloted=tuple(int(k) for k in args.unpiloted.split(',') if k.strip()),
             sets=args.set, game=args.game, lanes=args.lanes, timeout=args.timeout, steam_fix=args.steam_fix))
         print(json.dumps(result, indent=2))
         return 0

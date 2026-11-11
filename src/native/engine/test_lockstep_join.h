@@ -3765,6 +3765,18 @@ static void test_join_attn_set(void) {
             assert(!join_attn_reconcile(tattn_obj[1],8,9,0) && !join_attn_reconcile(tattn_obj[1],10,9,0) && !join_attn_reconcile(tattn_obj[1],8,7,0) &&
                    !join_attn_reconcile(tattn_obj[1],9,1,0) && tattn_calls==c0+2);
             {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," attn_leave=1:2:4:1 "));}
+            /* ATTN arrive: up from less than 9 to 9 or more, the same call from the load's level; off: as before */
+            {   const unsigned c1=tattn_calls;join_attn_arrive_calls=join_attn_arrive_loaded=join_attn_arrive_drift=0;
+                at=9;memcpy(tattn_obj[1]+JOIN_ATTENTION,&at,4);tattn_drift=9;
+                assert(!join_attn_reconcile(tattn_obj[1],8,9,0) && tattn_calls==c1);
+                join_attn_arrive_on=1;
+                assert(join_attn_reconcile(tattn_obj[1],8,9,0)==4 && tattn_calls==c1+1 && tattn_level==9 && tattn_was==8 && join_attn_arrive_calls==1 &&
+                       join_attn_arrive_loaded==2 && !join_attn_arrive_drift && join_attn_leave_calls==2);
+                assert(join_attn_reconcile(tattn_obj[1],9,8,0)==3 && join_attn_leave_calls==3 && join_attn_arrive_calls==1);   /* leave is its own */
+                assert(!join_attn_reconcile(tattn_obj[1],9,10,0) && !join_attn_reconcile(tattn_obj[1],7,8,0) && tattn_calls==c1+2);
+                {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," attn_arrive=1:1:2:0 "));}
+                tattn_drift=0;join_attn_arrive_on=0;join_attn_arrive_calls=join_attn_arrive_loaded=join_attn_arrive_drift=0;
+            }
             join_attn_leave_on=0;join_attn_leave_calls=join_attn_leave_loaded=join_attn_leave_drift=0;
         }
         join_attn_states_on=0;join_ids_list.allocs=allocs;join_attn_compute=compute;memset(tattn_obj,0,sizeof(tattn_obj));

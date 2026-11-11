@@ -366,12 +366,20 @@ one hull per player start at its start position. It then registers the save and 
 player's start kit (money, reputation, blueprints, research and map) is applied at the setup tick on every
 client. It ends by printing the `x4ls play` line.
 
-In coop every player shares the wallet and the reputation, so a player start whose kit brings its own reputation is
-refused until you leave that part out, for example `--omit 2=reputation`. A start's inventory is the player's own in
+In coop every player shares the wallet and the reputation. A player start's own reputation is merged into the shared
+one, upward only: for each faction the team takes the better of what it has and what the start gives. A team with a
+Terran cadet is friendly with the Terrans and keeps the base start's friends; nobody's start makes the team worse off
+(11 Nov: before this the start's reputation had to be left out, and a Terran cadet on an Argon base start saw the
+Terrans as hostile). `--omit 2=reputation` still leaves it out by name. A start's inventory is the player's own in
 both modes: every player has an inventory of their own, and the start's wares are added to it eight ticks into the
 session, or twelve ticks after the hand-over for a player who joins later (a `KIT_INVENTORY` row on every client).
-`--omit 2=inventory` still leaves it out. Sessions built before 11 Nov left the inventory out by name and stay as they
-are until they are built again. Not run in the real game yet (11 Nov): only the mocked tests.
+`--omit 2=inventory` still leaves it out. Every stock start's inventory holds the spacesuit's repair laser and the
+object scanner, so without it players 2 and up have neither. A session built before 11 Nov left the inventory out
+by name; `python tools/dev/native_gate_session_start.py kits --session session.json --out session-inv.json` (with
+`--libraries` and `--scripts` as for `spec`) makes its kits again from the game data without a new capture: the
+save and its hulls stay, only the kits the plan applies at every start change. Run inv4 (11 Nov, two clients):
+player 2 had no repair laser at tick 44 and one laser and one scanner after the step at tick 48, on both clients,
+in sync to the end. Not run: the same for a player who joins later.
 
 Smoke ns1/ns2 (8 Nov): `--base-start x4ep1_gamestart_discover --players 2 --mode coop --start 2=x4ep1_gamestart_fight
 --omit 2=inventory,reputation`. The capture took 2.5 minutes. Both clients then played the 2-minute window in sync
@@ -484,6 +492,29 @@ The run folder `.local/runs/<time>/`:
 `python tools/x4ls.py triage .local/runs/<time>` reruns a diverged session with diagnostic windows before its
 first mismatch.
 
+## Things to try with two people: your own inventory and the trade menu (built 11 Nov)
+
+Scripted runs cover crafting, dropping, the start inventory and the slider's calls. These need a person's hands;
+each line says what should happen. A menu does not show a change at once: the click travels to every client first
+(a few steps), so reopen the page when a number looks old.
+
+- Player info, inventory: each player sees their own items. Player 2 has a repair laser and an object scanner
+  (new sessions only; in the suit the repair laser works).
+- Craft something (for example a first aid kit from bandages, a needle and a sedative): the parts go and the
+  product appears in your own inventory, not in the other player's.
+- Drop an item from the inventory page: a crate appears next to your ship on both screens.
+- Dock at a station, map, the station, Trade: move an amount slider, confirm. Before 11 Nov the slider did not
+  move in a session.
+- On a station, talk to a trader and buy or sell inventory items: your own items and the shared money change, on
+  both screens. A trade of many different items at once works too.
+- A faction representative: buy a licence or a blueprint. The player headquarters: start a research.
+- Ship configuration at an equipment dock: install an equipment mod as player 2 (the parts come from player 2's
+  inventory).
+- The Pause key, F5 and F9: an info line "no pause, save or load in a session", and the game runs on.
+
+If something else happens, send the run folder and say which line it was. Every refused action is one row in
+`errors.log` (`UI_INVENTORY_REFUSED`, `UI_GUARD_REFUSED`, `PILOT_NATIVE_REFUSED`).
+
 ## Guns follow each player's cursor (built 9 Nov)
 
 Each player's guns shot straight ahead, whatever the cursor pointed at: the multiplayer fire path gave the guns a
@@ -563,8 +594,36 @@ steering, as in single player, and a gun turns as far as its mount allows.
   ship reached the satellite, at the same game time on both clients; 0 desyncs, world checks equal at every check.
   Not shown yet: a slot that joins a running session, any start but the Terran cadet, a person playing it through.
   What the cadet chain still needs for a player 2..N after the first parts: leaving the ship in a spacesuit and the
-  repair laser, long-range scan (the scan's charge runs in a per-frame update only player 1 has), and help texts,
-  notifications and music of a story on its owner's screen only (they show on every client today).
+  repair laser, and long-range scan (the scan's charge runs in a per-frame update only player 1 has).
+- **After a person's session with that story (11 Nov, the same evening): what was fixed, with three scripted runs** (two
+  X4 on one PC, discover as the session's start, slot 2 on the Terran cadet start with its story, 3640 ticks each; slot
+  2 gets up from its seat, walks forward and sits down again; scripted input, not a person's keys):
+  - A map open on one client no longer splits the session. Stock scripts ask whether a full-screen menu is open, and
+    each PC gave its own answer: one client queued a crew scene the other started. While a session runs, scripts now
+    get "no menu open" on every client. Side effect: a hint or an ambient line that waits for a menu to close can come
+    while a map is open. (All three runs armed it; that the split is gone needs a person with a map open.)
+  - Help texts, notifications, a menu a cue opens, the cockpit tint, a screen fade, music and achievements of a cue
+    that belongs to one player (a mission they accepted, their start's story) run on that player's client only. In the
+    runs client 1 skipped one such action of player 2's story (its music) and client 2 ran it; runtime IDs and world
+    checks stayed equal.
+  - Coop relations: a player's start can only raise the shared relations, not lower them. With discover as the
+    session's start and a Terran cadet in slot 2, Terran went from hostile to friendly on both clients.
+  - A player 2..N who gets up can walk: their client asks for the walking controls although X4 counts only player
+    1's seat. The scripted run shows the request on client 2 and none on client 1; the keys of a person are the proof
+    still owed.
+  - A player's body that is parked while they walk keeps its place for the scripts: the cadet story stayed in its
+    part while player 2 walked, and the script error about a distance to the player did not come back.
+  - Autopilot and "is this player the pilot" for players 2..N: inside a player's own scripts their ship now answers
+    that this player is its pilot (before: the hull's computer pilot, so the autopilot refused with "you are not
+    piloting this ship"). Run by its author: player 2's autopilot flew 40 km to a station and stopped on both clients.
+    In the get-up run the answer went back to the hull's own pilot while player 2 walked and returned at the sit-down.
+  - **Known from these runs:** moving the mouse while a player 2..N walks makes the clients disagree about that
+    player's walking record until they sit down (454 ticks in one run; the world checks and runtime IDs stayed equal
+    and the session went on). `x4ls new-session --unpiloted K` (a hull without the computer pilot who otherwise
+    appears in the seat when the player gets up) does not work yet: the session stops at its start (reason 161, the
+    slot's ship is not resolved without a pilot).
+  - Still open from that session: the spacesuit terminal, long-range scan for players 2..N, the mission counter on
+    another client's HUD counting a mission that is not theirs.
 - **Not built yet:** stories other scripts run for the whole game (the HQ, faction plots) per player; they stay the
   session's (player 1's).
   - Personal missions per player, first form (9 Nov, on by default; `--set native_gate_missions_per_player=false`

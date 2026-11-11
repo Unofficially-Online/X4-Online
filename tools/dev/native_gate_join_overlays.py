@@ -321,6 +321,11 @@ def ids_sets(sets):
 #                                  (hj8i, 11 Nov, ns8, T=678: a bullet of 679 missed a fixture ship on the session and hit
 #                                  it on the joiner, whose compound stood as its load built it; a mismatch from 679 for
 #                                  good). With it: digest 0 at the handover, the census of 679, 1800, 3600, 5400 equal
+#   native_gate_join_attn_arrive   a level ATTN writes up to 9 or more is made by SetAttention from the load's level, the
+#                                  mirror of attn_leave (hj8i, 11 Nov, ns8, the physics trace at T=678: a fixture ship the
+#                                  load holds at 8 and the session at 9 had 1 compound child on the joiner against 28, in
+#                                  every join so far; no census reads it). With it at T=680: 3 calls, 28 children on both
+#                                  sides, digest 0 at the handover, the census of 681, 1800, 3600, 5400 equal
 #   native_gate_join_cue_ids       the joiner's loaded MD cue instances take the session's runtime IDs: the package's CUEI
 #                                  section 83 maps the save's cue ordinal to the live ID (the first form read the save's
 #                                  number as the ID and was wrong: hj31). hj32, 9 Nov, T=701, a mission accepted before the
@@ -337,7 +342,8 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids',
                    'native_gate_join_grav_dead', 'native_gate_join_body_make', 'native_gate_join_viewl',
                    'native_gate_join_anis', 'native_gate_join_anis_state', 'native_gate_join_hold_bullets',
-                   'native_gate_join_keep_stamps', 'native_gate_join_attn_leave', 'native_gate_join_shape_hold')
+                   'native_gate_join_keep_stamps', 'native_gate_join_attn_leave', 'native_gate_join_shape_hold',
+                   'native_gate_join_attn_arrive')
 
 
 def default_sets(sets):

@@ -108,11 +108,11 @@ static int uitrade_event_ok(unsigned slot,unsigned op,const unsigned char *data,
 /* The inventory family (tools/dev/native_gate_ui_inventory_core.lua, all Lua): one click of a stock inventory button as one
  * Lua-run event of the slot, its kind (1 craft, 2 an NPC trader's wares, 3 dropped wares, 4 blueprints or licences bought,
  * 5/6 research started or cancelled, 7/8 a terraforming project started or aborted, 9 wares sent ahead of a large trade, 10 an
- * encyclopedia entry) and then the codec's arguments. It runs on every
+ * encyclopedia entry, 11 a trade deal with a station of the player's cancelled) and then the codec's arguments. It runs on every
  * client inside the slot's scope, where X4's "the player" is the slot's own player entity and so the inventory its own:
  * slots 2..N need missions per player armed, whose call scope it is (lockstep_mission_owners.h mpp_call_enter). */
 #define UIINV_OP_CLICK 0x90u
-#define UIINV_KINDS 10u   /* native_gate_ui_inventory_core.lua K.KIND; 3: the menu's Drop, captured natively (lockstep_ui_inventory.h) */
+#define UIINV_KINDS 11u   /* native_gate_ui_inventory_core.lua K.KIND; 3: the menu's Drop, captured natively (lockstep_ui_inventory.h) */
 static int uitrade_pass(uint64_t tick);
 static void uitrade_restore(void);
 static const char *uitrade_why_text;
@@ -1356,6 +1356,7 @@ static int uirep_status(char *out,size_t capacity) {
 /* Missions and conversations of slot 1 (families missions, conversation; captured in the guard's hook). */
 #include "lockstep_ui_missions.h"
 #include "lockstep_mission_owners.h"   /* personal missions per player: slot k's calls and owned cue trees in slot k's scope */
+#include "lockstep_md_presentation.h"   /* what an owned cue shows (help, notifications, menus, music): on its owner's client only */
 /* The trade family of the replay (native_gate_ui_replay lists trade, default off). */
 #include "lockstep_ui_trade.h"
 /* The faction family: the player faction's settings for every slot (claims on the guard's hooks; uses the trade scope). */
