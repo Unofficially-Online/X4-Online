@@ -23,11 +23,13 @@ K.REPUTATION={mirror=true,keep=true}
 local PLAN_KEYS={version=true,mode=true,tick=true,occupied=true,reputation=true,slots=true,relations=true,starts=true,kits=true}
 -- Per-player starts (kits): the player-level parts of slot k's stock start (native_gate_gamestarts.py resolves
 -- them at session setup; reports/LOCKSTEP-STARTS-20261101.txt).
-local KIT_KEYS={slot=true,gamestart=true,money=true,reputation=true,blueprints=true,research=true,known=true,omitted=true}
+local KIT_KEYS={slot=true,gamestart=true,money=true,reputation=true,blueprints=true,research=true,known=true,omitted=true,inventory=true}
+local KIT_INVENTORY_KEYS={ware=true,amount=true}
 local KIT_REPUTATION_KEYS={faction=true,value=true}
 local KIT_KNOWN_KEYS={sectors=true,faction=true,shipyards=true}
 K.KIT_PARTS={blueprints=true,inventory=true,known=true,reputation=true,research=true}
 K.KIT_ITEMS=64
+K.KIT_AMOUNT_MAX=1000000   -- pieces of one inventory ware in a kit
 K.MONEY_MAX=1000000000000   -- credits
 K.MONEY_PART=1000000        -- the wallet step's MD parts: mega=floor(money/1e6) <= 1e6, units=money%1e6 (both < 2^24)
 K.VALUE_SCALE=1000000       -- reputation values travel as integer millionths
@@ -224,10 +226,23 @@ function K.kits(plan,P,n)
    omit[j]=omitted[j]
   end
   if not ascending(omit) then refuse('kit_omitted') end
-  local given={blueprints=#blueprints>0,research=#research>0,reputation=#reputation>0,known=known~=nil}
+  -- The start's inventory: wares for slot k's own player entity, both modes (the probe adds them inside slot k's scope).
+  local stock=r.inventory==nil and {} or r.inventory
+  local oki,ni=pcall(list,stock,'kit_inventory')
+  if not oki or ni>K.KIT_ITEMS then refuse('kit_inventory') end
+  local inventory,inventory_wares={},{}
+  for j=1,ni do
+   local row=stock[j]
+   keys(row,KIT_INVENTORY_KEYS,'kit_inventory')
+   if not ident(row.ware) then refuse('kit_ware') end
+   if not integer(row.amount,1,K.KIT_AMOUNT_MAX) then refuse('kit_amount') end
+   inventory[j]={ware=row.ware,amount=row.amount};inventory_wares[j]=row.ware
+  end
+  if not ascending(inventory_wares) then refuse('kit_order') end
+  local given={blueprints=#blueprints>0,research=#research>0,reputation=#reputation>0,known=known~=nil,inventory=#inventory>0}
   for _,o in ipairs(omit) do if given[o] then refuse('kit_omitted_conflict') end end
   out[#out+1]={slot=r.slot,gamestart=r.gamestart,money=r.money,reputation=reputation,blueprints=blueprints,research=research,
-   known=known,omitted=omit}
+   known=known,omitted=omit,inventory=inventory}
  end
  table.sort(out,function(a,b) return a.slot<b.slot end)
  return out
@@ -264,8 +279,10 @@ function K.kit_label(k)
  for _,r in ipairs(k.reputation) do rep[#rep+1]=string.format('%s/%d',r.faction,r.value) end
  local known='-'
  if k.known then known=string.format('%s/%d/%s',k.known.faction or '-',k.known.shipyards and 1 or 0,table.concat(k.known.sectors,'+')) end
+ local inv={}
+ for _,i in ipairs(k.inventory or {}) do inv[#inv+1]=string.format('%s/%d',i.ware,i.amount) end
  return string.format('%d:%s:money=%d:rep=%s:bp=%s:rs=%s:known=%s:omit=%s',k.slot,k.gamestart,k.money,joined(rep),joined(k.blueprints),
-  joined(k.research),known,joined(k.omitted))
+  joined(k.research),known,joined(k.omitted))..(#inv>0 and ':inv='..table.concat(inv,'+') or '')   -- kits without one keep their text
 end
 local function value_text(v) return v==0 and '0' or tostring(v) end
 -- Ordered setup steps. Each carries its machine-neutral head for the PLAYER_IDENTITY_APPLIED line;

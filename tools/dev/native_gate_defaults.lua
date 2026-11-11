@@ -217,8 +217,9 @@ D.CONFLICTS={
 -- The UI replay families (lockstep_pilot_inputs.h UIREP_FAMILY_*, docs/LOCKSTEP-REGISTRY.txt), in bit order, with what
 -- each needs beyond the replay itself: a key that must be on, or a guard group.
 D.FAMILIES={'travel','target','orders','autopilot','dock','weapons','missiles','queue','events','flight','trade','missions','build',
- 'assets','conversation','faction'}
-D.FAMILY_NEEDS={missiles='native_gate_pilot_fire',missions='guard:missions',conversation='guard:conversation',build='guard',assets='guard',faction='guard'}
+ 'assets','conversation','faction','inventory'}
+D.FAMILY_NEEDS={missiles='native_gate_pilot_fire',missions='guard:missions',conversation='guard:conversation',build='guard',assets='guard',faction='guard',
+ inventory='guard'}
 -- Diagnostics and measurement: off by default (they only log, capture, trace, profile, watch or measure). {'key','why'}.
 D.DIAGNOSTIC={
  {'native_gate_navmesh_post_observe','Linux navmesh post attempts during startup and a bounded live tick window'},
@@ -363,6 +364,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_mute_load_npcs','hot join: the joiner MD does not hear the NPC created events of its load before the admission'},
  {'native_gate_join_cue_ids','hot join: the joiner loaded MD cue instances take the runtime IDs the join save names (missions, offers)'},
  {'native_gate_join_shoot_far','hot join: SHOOT also writes the session last shot time where the joiner gun was reset by its load (class A)'},
+ {'native_gate_join_attn_leave','hot join: with ATTN set, a level written down from 9 or more is made by SetAttention from the load level (the nav helper released as on the session)'},
  {'native_gate_join_attn_states','hot join: with ATTN set, SetAttention at the admission for every object whose per-level state is apart there and settled on the session, its allocations on the load list'},
  {'native_gate_join_gravn_extra','hot join: GRAVN keeps the joiner zone groups the session adds later in the neighbour lists (GRAVN extra)'},
  {'native_gate_join_shgr','hot join: a joiner takes the session shield recharge groups of docked ships its load restamps (SHGR)'},
@@ -554,7 +556,7 @@ D.TUNING={
 }
 -- The keys a session config supplies itself (no default).
 D.SESSION={'native_gate_test','native_gate_clients','native_gate_player_identity_plan','native_gate_relay_host','native_gate_arm_timeout_ms',
- 'native_gate_arm_at',
+ 'native_gate_arm_at','native_gate_story',
  'native_gate_input_priority','native_gate_defaults'}
 -- Stop reasons the probe names in its info line (docs/LOCKSTEP-REGISTRY.txt, section 4; tests check them).
 D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or loading at start',[3]='load or state mismatch',

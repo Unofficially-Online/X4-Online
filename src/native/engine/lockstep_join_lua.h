@@ -129,6 +129,9 @@ static int lua_join_attn_set(lua_State *L) {join_attn_set_on=p_lua_tonumber(L,1)
 /* gate.join_attn_states(on): with attn_set, the saver marks the records whose per-level state agrees on the session and the joiner
  * runs the native change at the admission for each marked object whose state is apart, at any level (attn_states=). */
 static int lua_join_attn_states(lua_State *L) {join_attn_states_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_attn_leave(on): with attn_set, a level ATTN writes down from 9 or more to less than 9 is made by SetAttention from
+ * the load's level, so the class handler releases what level 9 holds (the interior nav helper; attn_leave=). */
+static int lua_join_attn_leave(lua_State *L) {join_attn_leave_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shoot_far(on): SHOOT also writes the session's last shot time where the joiner's is far from it (a load's reset). */
 static int lua_join_shoot_far(lua_State *L) {join_shoot_far_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_bootev_session(on): the boot hold's kept events go back only where the session's EVQT names their source and class. */

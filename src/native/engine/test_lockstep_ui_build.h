@@ -153,6 +153,15 @@ static void tub_take_queue(void) {
 }
 /* One client's apply of the wire's parts of slot `slot`: every record stepped, Lua records answered ok; the run's rows. */
 static char tub_rows[4096];
+/* Stand-ins for slot k's own scope (uibuild_own_enter/leave): what was entered and left, with the mod calls made by then. */
+static char tub_own_log[64];static int tub_own_fail;
+static int tub_own_enter(unsigned k) {
+    if(tub_own_fail==1) return 0;
+    tub_cat(tub_own_log,sizeof(tub_own_log),"e%u:%u;",k,(unsigned)tub_calls[tub_claim("InstallShipMod")]);return 1;
+}
+static int tub_own_leave(unsigned k) {
+    tub_cat(tub_own_log,sizeof(tub_own_log),"l%u:%u;",k,(unsigned)tub_calls[tub_claim("InstallShipMod")]);return tub_own_fail!=2;
+}
 static int tub_apply(unsigned slot,uint64_t tick,unsigned *lua_ids,unsigned *lua_count) {
     tub_rows[0]=0;if(lua_count) *lua_count=0;
     InterlockedExchange(&uirep_replaying,1);uirep_ui_depth=0;
@@ -339,6 +348,18 @@ static void test_ui_build(void) {
     assert(uibuild_flush("test"));tub_take_queue();memset(uibuild_rx_slot,0,sizeof(uibuild_rx_slot));tub_reset_counts();
     assert(tub_apply(2,507,NULL,NULL)==1 && !tub_calls[tub_claim("InstallShipMod")] && strstr(tub_rows,"InstallShipMod skipped=inventory"));
     memset(uibuild_rx_slot,0,sizeof(uibuild_rx_slot));tub_reset_counts();assert(tub_apply(1,508,NULL,NULL)==1 && tub_calls[tub_claim("InstallShipMod")]==1);
+    /* With missions per player slot 2's inventory mods are its own: applied inside slot 2's scope (entered before X4's
+     * function, left after it); slot 1's run without one; a scope that cannot be entered or left stops the replay. */
+    {const int m=mpp_armed;const LONG64 scopes=uibuild_own_scopes;mpp_armed=1;uibuild_own_enter=tub_own_enter;uibuild_own_leave=tub_own_leave;
+     tub_own_log[0]=0;tub_own_fail=0;
+     memset(uibuild_rx_slot,0,sizeof(uibuild_rx_slot));tub_reset_counts();assert(tub_apply(2,509,NULL,NULL)==1 && tub_calls[tub_claim("InstallShipMod")]==1);
+     assert(!strcmp(tub_own_log,"e2:0;l2:1;") && uibuild_own_scopes==scopes+1);                        /* the call ran between them */
+     tub_own_log[0]=0;memset(uibuild_rx_slot,0,sizeof(uibuild_rx_slot));tub_reset_counts();assert(tub_apply(1,510,NULL,NULL)==1 && !tub_own_log[0]);
+     tub_own_fail=1;memset(uibuild_rx_slot,0,sizeof(uibuild_rx_slot));tub_reset_counts();
+     assert(tub_apply(2,511,NULL,NULL)<0 && strstr(tub_rows,"stop:ui_build_inventory_scope") && !tub_calls[tub_claim("InstallShipMod")]);
+     tub_own_fail=2;tub_own_log[0]=0;memset(uibuild_rx_slot,0,sizeof(uibuild_rx_slot));tub_reset_counts();
+     assert(tub_apply(2,512,NULL,NULL)<0 && strstr(tub_rows,"stop:ui_build_inventory_scope") && tub_calls[tub_claim("InstallShipMod")]==1);
+     tub_own_fail=0;mpp_armed=m;uibuild_own_enter=NULL;uibuild_own_leave=NULL;}
     uibuild_factions=1;pstk_capture_slot=2;tub_capture_phase(1);
     ((tub_dismantle_fn)tub_entry("RemoveBuildStorage"))(0x7001);assert(!uibuild_open_records);
     {const char *why="";static const unsigned char name[2]={4,5};assert(!uibuild_add_lua(3,name,2,0,&why) && !strcmp(why,"factions"));}

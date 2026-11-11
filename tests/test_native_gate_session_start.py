@@ -216,10 +216,13 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(t['presentation'], ['cutscene', 'info', 'player encyclopedia', 'player theme'])
             with self.assertRaises(gamestarts.CatalogError) as caught:
                 gamestarts.slot_kit(t, 'factions', 2)
-            self.assertIn('parts blueprints, inventory, known, research cannot be applied for slot 2 in factions mode', str(caught.exception))
+            self.assertIn('parts blueprints, known, research cannot be applied for slot 2 in factions mode', str(caught.exception))
             with self.assertRaises(gamestarts.CatalogError) as caught:
                 gamestarts.slot_kit(t, 'coop', 3)
-            self.assertIn('parts inventory, reputation', str(caught.exception))
+            self.assertIn('parts reputation cannot be applied', str(caught.exception))
+            # The start's inventory goes to the slot's own player in both modes, unless it is left out by name.
+            self.assertEqual(gamestarts.slot_kit(t, 'coop', 3, ['reputation'])['inventory'], [{'ware': 'inv_tst', 'amount': 2}])
+            self.assertEqual(gamestarts.slot_kit(t, 'factions', 2, ['research', 'blueprints', 'known'])['inventory'], [{'ware': 'inv_tst', 'amount': 2}])
             kit = gamestarts.slot_kit(t, 'factions', 2, ['research', 'blueprints', 'known', 'inventory'])
             self.assertEqual(kit, {'slot': 2, 'gamestart': 'alpha_start', 'money': 7000, 'omitted': ['blueprints', 'inventory', 'known', 'research'],
                                    'reputation': [{'faction': 'argon', 'value': 3200}, {'faction': 'split', 'value': -32000}]})
@@ -274,13 +277,17 @@ class SpecTests(unittest.TestCase):
             self.assertEqual([spec['slots'][k]['hull']['x'] for k in ('2', '3', '4')], [10, 310, 0])
             self.assertEqual([spec['slots'][k]['hull']['seed'] for k in ('2', '3', '4')], [5102, 5103, 5104])
             self.assertEqual(spec['slots']['2']['inventory_not_applied'], {'inv_tst': 2})
+            self.assertNotIn('inventory', spec['slots']['2']['kit'])
+            kept = session_start.build_spec(c, 'war_start', 2, 'coop', {2: 'alpha_start'}, {2: 'reputation'})
+            self.assertEqual(kept['slots']['2']['kit']['inventory'], [{'ware': 'inv_tst', 'amount': 2}])   # applied: the kit carries it
+            self.assertEqual(kept['slots']['2']['inventory_not_applied'], {})
             self.assertEqual(spec['slots']['4']['kit'], {'slot': 4, 'gamestart': 'beta_start', 'money': 9000, 'omitted': []})
             same = session_start.build_spec(c, 'beta_start', 3, 'coop', {2: 'beta_start', 3: 'beta_start'})   # the base's own start: beside slot 1
             self.assertEqual([same['slots'][k]['hull']['x'] for k in ('2', '3')], [300, 600])
             refusals = [((c, 'station_start', 2, 'coop', {}), 'session base refused'),
                         ((c, 'war_start', 2, 'coop', {2: 'station_start'}), 'slot 2: start station_start is class b'),
                         ((c, 'war_start', 2, 'coop', {1: 'beta_start'}), 'slot 1 plays the session base start war_start'),
-                        ((c, 'war_start', 2, 'coop', {2: 'alpha_start'}), 'parts inventory, reputation'),
+                        ((c, 'war_start', 2, 'coop', {2: 'alpha_start'}), 'parts reputation cannot be applied'),
                         ((c, 'war_start', 9, 'coop', {}), '2..8 players'),
                         ((c, 'war_start', 2, 'coop', {}, {2: 'inventory'}), 'slot 2 has no per-player start')]
             for call, text in refusals:
@@ -429,6 +436,127 @@ CAPTURE_HARNESS = '''
   SaveGame=function(slot) saved=slot end
   AddUITriggeredEvent=function(screen,control,param) raised[#raised+1]=screen..'/'..control..(param and param.count and ('#'..param.count) or '') end
 '''
+
+
+# A start script of the stock shape: one root cue Start, gated on the start (module=) and on another cue's signal.
+GS_STATION_STORY = '''<mdscript name="GS_Station"><cues><cue name="Start" module="station_start" namespace="this">
+<conditions><event_cue_completed cue="md.Setup_Gamestarts.Station_Shared"/></conditions>
+<actions><create_ship name="$s" macro="macro.x_macro" zone="player.zone"/></actions></cue></cues></mdscript>'''
+
+
+def story_catalog(directory, extension='base'):
+    libraries, scripts = stock_tree(directory)
+    (scripts / 'base/md/gs_station.xml').unlink()
+    (scripts / extension / 'md').mkdir(parents=True, exist_ok=True)
+    (scripts / extension / 'md/gs_station.xml').write_text(GS_STATION_STORY, encoding='utf-8')
+    return gamestarts.Catalog(libraries, scripts)
+
+
+class StoryTests(unittest.TestCase):
+    """A start's story for the player who took that start (slots 2..N): the catalogue's entry, the spec, the generated
+    patch and MD. Synthetic data, text only: that X4 applies the patch and runs the instance in the slot's scope is a
+    matter of a live run."""
+
+    def test_the_catalogue_names_a_start_script_of_the_stock_shape_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            c = catalog_in(d)
+            self.assertIsNone(c.story('station_start'))   # its Start cue has no signal to replace
+            self.assertIsNone(c.story('beta_start'))      # no script
+            self.assertIsNone(gamestarts.template(c, 'station_start', world=True)['story'])
+        with tempfile.TemporaryDirectory() as d:
+            c = story_catalog(d)
+            story = {'extension': 'base', 'file': 'gs_station.xml', 'script': 'GS_Station', 'cue': 'Start'}
+            self.assertEqual(c.story('station_start'), story)
+            self.assertEqual(gamestarts.template(c, 'station_start', world=True)['story'], story)
+            self.assertIsNone(gamestarts.template(c, 'alpha_start')['story'])   # class c: its script is rebuilt, not run
+
+    def test_the_spec_gives_the_story_to_one_slot_and_omit_leaves_it_out(self):
+        with tempfile.TemporaryDirectory() as d:
+            c = story_catalog(d, 'ego_dlc_split')
+            story = {'extension': 'ego_dlc_split', 'file': 'gs_station.xml', 'script': 'GS_Station', 'cue': 'Start'}
+            both = ({2: 'station_start', 3: 'station_start'}, {2: 'world', 3: 'world'})
+            spec = session_start.build_spec(c, 'war_start', 3, 'coop', *both, story=[2])
+            self.assertEqual(spec['slots']['2']['story'], story)
+            self.assertIsNone(spec['slots']['3']['story'])
+            self.assertEqual(session_start.story_slots(spec['slots']), {2: story})
+            # Not asked for and not a start whose story a live run has shown (gamestarts.STORY_DEFAULT): the ship only.
+            quiet = session_start.build_spec(c, 'war_start', 3, 'coop', *both)
+            self.assertEqual(session_start.story_slots(quiet['slots']), {})
+            shown_in = session_start.gamestarts   # the module the spec reads (this file loads its own copy)
+            old = shown_in.STORY_DEFAULT
+            shown_in.STORY_DEFAULT = frozenset({'station_start'})
+            try:   # ...a shown start has it by default: the first slot with it, and --omit K=story leaves it out
+                shown = session_start.build_spec(c, 'war_start', 3, 'coop', *both)
+                self.assertEqual(session_start.story_slots(shown['slots']), {2: story})
+                off = session_start.build_spec(c, 'war_start', 2, 'coop', {2: 'station_start'}, {2: 'world,story'})
+                self.assertEqual(session_start.story_slots(off['slots']), {})
+            finally:
+                shown_in.STORY_DEFAULT = old
+            for args, text in ((((c, 'war_start', 3, 'coop', *both), dict(story=[3])), 'another player has the story of station_start'),
+                               (((c, 'war_start', 2, 'coop', {2: 'station_start'}, {2: 'world,story'}), dict(story=[2])), 'left out by --omit'),
+                               (((c, 'war_start', 2, 'coop', {2: 'beta_start'}), dict(story=[2])), 'has no story script'),
+                               (((c, 'war_start', 2, 'coop', {}), dict(story=[2])), 'slot 2 has no per-player start')):
+                with self.subTest(text=text), self.assertRaises(session_start.SessionError) as caught:
+                    session_start.build_spec(*args[0], **args[1])
+                self.assertIn(text, str(caught.exception))
+            self.assertEqual(session_start.story_slots(None), {})
+            # An older session.json has no story field: no story.
+            self.assertEqual(session_start.story_slots({'2': {'gamestart': 'station_start'}}), {})
+            for bad in ({'extension': 'not_stock', **{k: story[k] for k in ('file', 'script', 'cue')}}, dict(story, file='../x.xml'),
+                        dict(story, script="A' or '"), dict(story, cue=''), dict(story, more=1), 'GS_Station'):
+                with self.subTest(bad=bad), self.assertRaises(session_start.SessionError):
+                    session_start.story_slots({'2': {'story': bad}})
+            with self.assertRaises(session_start.SessionError):
+                session_start.story_slots({'2': {'story': story}, '3': {'story': story}})
+
+    def test_the_patch_and_the_begin_script(self):
+        base = {'extension': 'base', 'file': 'gs_station.xml', 'script': 'GS_Station', 'cue': 'Start'}
+        dlc = {'extension': 'ego_dlc_terran', 'file': 'gs_terran1.xml', 'script': 'GS_Terran1', 'cue': 'Start'}
+        files = session_start.story_files({2: dlc, 4: base})
+        # A patch of another extension's file lies under extensions/<that extension>/ of ours; a base file at its own path.
+        self.assertEqual(sorted(files), ['extensions/ego_dlc_terran/md/gs_terran1.xml', 'md/gs_station.xml', 'md/x4lan_story.xml'])
+        self.assertEqual(session_start.story_files({}), {})
+        diff = ET.fromstring(files['md/gs_station.xml'].split('-->', 1)[1])
+        sel = "/mdscript/cues/cue[@name='Start']"
+        # No module, its own signal, nothing else: the cue stays the static cue X4 wrote (an instance of it loses the
+        # signals to cues of branches that have not started: the first live run).
+        self.assertEqual([(e.tag, e.get('sel'), e.get('type')) for e in diff],
+                         [('remove', sel + '/@module', None), ('replace', sel + '/conditions', None)])
+        self.assertNotIn('instantiate', files['md/gs_station.xml'])
+        self.assertEqual([c.tag for c in diff[1].find('conditions')], ['event_cue_signalled'])
+        self.assertEqual(diff[1].find('conditions')[0].attrib, {})   # its own signal, nobody else's
+        md = ET.fromstring(files['md/x4lan_story.xml'].split('-->', 1)[1])
+        cue = md.find('cues/cue')
+        self.assertEqual((md.get('name'), cue.get('name'), cue.get('instantiate')), ('X4LAN_Story', 'Begin', 'true'))
+        self.assertEqual(cue.find('conditions/event_object_signalled').attrib, {'object': 'player.galaxy', 'param': "'x4lan_story'"})
+        branches = {e.get('value'): e for e in cue.find('actions') if e.tag == 'do_elseif'}
+        self.assertEqual(sorted(branches), ['$slot == 2', '$slot == 4'])
+        self.assertEqual(branches['$slot == 2'].find('signal_cue_instantly').get('cue'), 'md.GS_Terran1.Start')
+        self.assertEqual(branches['$slot == 4'].find('signal_cue_instantly').get('cue'), 'md.GS_Station.Start')
+        # Once per slot: the list is asked before any branch and filled in the branch.
+        tags = [e.tag for e in cue.find('actions')]
+        self.assertEqual(tags, ['set_value', 'do_if', 'do_if', 'do_elseif', 'do_elseif', 'do_else'])
+        self.assertEqual(cue.find('actions')[2].get('value'), 'md.$X4LAN_StoryBegun.indexof.{$slot}')
+        self.assertEqual(branches['$slot == 2'][0].attrib, {'name': 'md.$X4LAN_StoryBegun', 'exact': '$slot'})
+
+    def test_the_capture_overlay_and_the_session_carry_the_story(self):
+        with tempfile.TemporaryDirectory() as d:
+            c = story_catalog(d, 'ego_dlc_split')
+            spec = session_start.build_spec(c, 'war_start', 2, 'coop', {2: 'station_start'}, {2: 'world'}, story=[2])
+            dll = Path(d) / 'fixed.dll'
+            dll.write_bytes(b'fixed')
+            out = session_start.build_capture(spec, dll, Path(d) / 'cap')
+            manifest = json.loads((out / 'x4lane-manifest.json').read_text())
+            for name, text in session_start.story_files(session_start.story_slots(spec['slots'])).items():
+                self.assertEqual((out / name).read_text(encoding='utf-8'), text)
+                self.assertEqual(manifest[name], hashlib.sha256((out / name).read_bytes()).hexdigest())
+            self.assertTrue((out / 'extensions/ego_dlc_split/md/gs_station.xml').is_file())
+            with self.assertRaises(session_start.SessionError):   # never over a file of the overlay
+                session_start.write_story_files(out, session_start.story_slots(spec['slots']))
+            plain = session_start.build_spec(c, 'war_start', 2, 'coop', {2: 'station_start'}, {2: 'world'})
+            out = session_start.build_capture(plain, dll, Path(d) / 'cap2')
+            self.assertFalse((out / 'md/x4lan_story.xml').exists())
+            self.assertFalse((out / 'extensions').exists())
 
 
 class CaptureScriptTests(unittest.TestCase):
@@ -647,6 +775,7 @@ class RegisterTests(unittest.TestCase):
 
 KIT_F = {'slot': 2, 'gamestart': 'alpha_start', 'money': 7000, 'reputation': [{'faction': 'argon', 'value': 3200}, {'faction': 'split', 'value': -32000}],
          'omitted': ['blueprints', 'inventory', 'known', 'research']}
+KIT_INVENTORY = [{'ware': 'inv_tst', 'amount': 2}, {'ware': 'weapon_tst_laser', 'amount': 1}]   # a start's wares for the slot's own player
 KIT_C = {'slot': 2, 'gamestart': 'alpha_start', 'money': 7000, 'blueprints': ['module_tst_a', 'module_tst_b'], 'research': ['research_tst'],
          'known': {'sectors': ['cluster_90_sector001_macro', 'cluster_97_sector001_macro'], 'faction': 'argon', 'shipyards': True},
          'omitted': ['inventory', 'reputation']}
@@ -667,7 +796,9 @@ class KitPlanTests(unittest.TestCase):
     def plans(self):
         return [identity.build_plan(2, 'factions', kits=[KIT_F]), identity.build_plan(3, 'factions', kits=[dict(KIT_F, slot=3), dict(KIT_F, slot=2, reputation=[])]),
                 identity.build_plan(2, 'coop', kits=[KIT_C]), identity.build_plan(3, 'coop', kits=[KIT_C, dict(KIT_C, slot=3, known={'sectors': ['cluster_01_sector001_macro'], 'shipyards': False})]),
-                identity.build_plan(2, 'coop', kits=[{'slot': 2, 'gamestart': 'beta_start', 'money': 0}])]
+                identity.build_plan(2, 'coop', kits=[{'slot': 2, 'gamestart': 'beta_start', 'money': 0}]),
+                identity.build_plan(2, 'coop', kits=[dict(KIT_C, omitted=['reputation'], inventory=KIT_INVENTORY)]),
+                identity.build_plan(2, 'factions', kits=[dict(KIT_F, omitted=['blueprints', 'known', 'research'], inventory=KIT_INVENTORY)])]
 
     def test_lua_and_python_agree_on_kit_text_digest_and_steps(self):
         lua, K = lua_core()
@@ -679,6 +810,11 @@ class KitPlanTests(unittest.TestCase):
                 self.assertEqual(K.canonical(LP), identity.canonical(P))
                 steps = K.steps(LP, identity.digest(P))
                 self.assertEqual([steps[i].head for i in range(1, len(steps) + 1)], [s['head'] for s in identity.steps(P)])
+        # A kit's inventory is part of the text (and so of the digest); a kit without one keeps its earlier text.
+        with_inventory = identity.canonical(identity.validate(self.plans()[5]))
+        self.assertTrue(with_inventory.endswith(':omit=reputation:inv=inv_tst/2+weapon_tst_laser/1'), with_inventory[-80:])
+        self.assertNotIn(':inv=', identity.canonical(identity.validate(self.plans()[2])))
+        self.assertEqual(identity.validate(self.plans()[6])['kits'][0]['inventory'], KIT_INVENTORY)
         # A plan without kits keeps its earlier text and digest.
         self.assertNotIn('kits', identity.canonical(identity.validate(identity.build_plan(2, 'coop'))))
 
@@ -732,7 +868,18 @@ class KitPlanTests(unittest.TestCase):
                (kit(c, known={'sectors': ['cluster_01_sector001_macro'], 'shipyards': True, 'faction': 'player'}), 'kit_faction'),
                (kit(c, known={'sectors': ['cluster_01_sector001_macro'], 'shipyards': True, 'pos': 1}), 'key_unknown'),
                (kit(c, omitted=['reputation', 'inventory']), 'kit_omitted'), (kit(c, omitted=['ship']), 'kit_omitted'),
-               (kit(c, omitted=['blueprints', 'inventory', 'reputation']), 'kit_omitted_conflict')]
+               (kit(c, omitted=['blueprints', 'inventory', 'reputation']), 'kit_omitted_conflict'),
+               (kit(c, inventory=KIT_INVENTORY), 'kit_omitted_conflict'),                        # given and named as left out
+               (kit(c, omitted=['reputation'], inventory={'ware': 'inv_tst'}), 'kit_inventory'),
+               (kit(c, omitted=['reputation'], inventory=[{'ware': 'inv_tst'}]), 'kit_amount'),
+               (kit(c, omitted=['reputation'], inventory=[{'ware': 'inv_tst', 'amount': 1, 'x': 1}]), 'key_unknown'),
+               (kit(c, omitted=['reputation'], inventory=[{'ware': 'Inv', 'amount': 1}]), 'kit_ware'),
+               (kit(c, omitted=['reputation'], inventory=[{'ware': 'inv_tst', 'amount': 0}]), 'kit_amount'),
+               (kit(c, omitted=['reputation'], inventory=[{'amount': 2}]), 'kit_ware'),
+               (kit(c, omitted=['reputation'], inventory=[{'ware': 'inv_tst', 'amount': 1000001}]), 'kit_amount'),
+               (kit(c, omitted=['reputation'], inventory=[{'ware': 'inv_b', 'amount': 1}, {'ware': 'inv_a', 'amount': 1}]), 'kit_order'),
+               (kit(c, omitted=['reputation'], inventory=[{'ware': 'inv_a', 'amount': 1}, {'ware': 'inv_a', 'amount': 1}]), 'kit_order'),
+               (kit(c, omitted=['reputation'], inventory=[{'ware': 'inv_%02d' % i, 'amount': 1} for i in range(65)]), 'kit_inventory')]
         for plan, reason in bad:
             with self.subTest(reason=reason):
                 with self.assertRaises(identity.Refused) as caught:

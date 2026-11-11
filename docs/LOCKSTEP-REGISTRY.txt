@@ -35,6 +35,9 @@ ui_guard_inventory.py (covered bits), native_gate_ui_build_core.lua K.FAMILY.
   16384  conversation  lockstep_ui_missions.h         Lua wrappers (8 globals) + guard claims   slot 1
   32768  faction       lockstep_ui_faction.h          guard claims (33 FFI exports)             every (own faction's rules;
                                                                                                   player entity: player's slot)
+  524288 inventory     native_gate_ui_inventory_core.lua   Lua scopes around the stock craft and       every (in the slot's own scope:
+                       + lockstep_ui_inventory.h           trader buttons, one event per click;        each player's own inventory)
+                                                           guard claim (DropInventory)
   free: none in 16 bits. 32768 is the last bit the guard table's 'covered' field (unsigned short) holds: a
   family that needs a 'covered' bit must widen that field (gen_ui_guard_table.py, uiguard_entry); a family
   that only claims guard entries can take 65536 and up once uirep_families' users accept it.
@@ -62,7 +65,13 @@ Lua-run (the probe's frame of capture tick + delay, slot order, call order).
   0x58        trade (lockstep_ui_trade.h)          trade Lua global (number + codec)
   0x59        trade                                hooked trade FFI setter (hook + arguments)
   0x5a        faction (lockstep_ui_faction.h)      one part of a claimed call's record (seq, index, count, bytes)
-  free: 0x06-0x3f, 0x4a-0x4f, 0x51-0x57, 0x5b-0xff.
+  0x90        inventory                            one click of a stock button (kind 1 craft, 2 trader wares, 3 dropped
+                                                   wares: DropInventory, claimed in lockstep_ui_inventory.h; 4 blueprints
+                                                   or licences bought, 5/6 research, 7/8 terraforming, 9 wares sent
+                                                   ahead of a large trade, 10 an encyclopedia entry;
+              (native_gate_ui_inventory_core.lua)  then the codec's arguments), run whole in the slot's scope
+  free: 0x06-0x3f, 0x4a-0x4f, 0x51-0x57, 0x5b-0x8f, 0x91-0xff (0x60-0x9f and native 0x08-0x2f are reserved per
+  package of the player actions' division: package 4, this family, holds 0x90-0x9f and 0x28-0x2f).
 
 3. UI GUARD CLAIMS (lockstep_ui_guard.h uiguard_claim / uiguard_unclaim)
 Two ways a replay family takes a guard entry over:
@@ -91,6 +100,10 @@ Two ways a replay family takes a guard entry over:
              foot          GetUp (native_gate_pilot_foot, lockstep_pilot_foot_guard.h; not a family: the GET_UP key in the
                            stock record of slot 1; with native_gate_pilot_foot_slots also of slot k on client k, consumed
                            in slot k's scope by lockstep_pilot_foot_slots.h)
+             inventory     7 FFI entries (lockstep_ui_inventory.h uiinv_claim_decide): DropInventory, the inventory
+                           menu's Drop as a kind 3 event of op 0x90; AddPlayerMoney LearnBlueprint StartResearch
+                           ClearProductionItems StartTerraformingProject AbortActiveTerraformingProject, recorded
+                           while a click's scope is open (gate.ui_inventory_scope) and left to the guard otherwise
   Not a claim, no bit, no op: native_gate_player_settings_per_slot (lockstep_player_settings.h, default off) changes how the
   faction family runs its eight entity claims in factions mode (slot k's own values; section 5 has its patched entries).
 
@@ -134,6 +147,8 @@ Core (lockstep_gate.c; the Linux gate uses the same numbers where ported):
   37/38 weapon RNG        39/40 parameter trace
   41/42 nav               43/44 velocity
   45/46 shape             47/48 bullet
+  (the Linux gate's ports of these under their own defines, linux/gate_nav.h and linux/gate_shape.h:
+  41 LXN_INSTALL_STOP, 42 LXN_STOP_REASON, 45 LXSH_STOP_INSTALL, 46 LXSH_STOP_FAILURE)
   49/50 death             51/52 mass
   53/54 attention         55 flight
   56 local proposal differs / packet too long / nonzero permit
@@ -207,7 +222,7 @@ Modules (define, owner):
                                 build, assets, missions, conversation, faction; the why names the module);
                                 lockstep_player_settings.h (whys player_settings_install, _hook_lost,
                                 _restore, _scope, _scope_open, _present)
-  165 RC_STOP_REASON            lockstep_region_camera.h (was 130)
+  165 RC_STOP_REASON            lockstep_region_camera.h (was 130); on the Linux gate's shape refresh LXSH_STOP_KEYS
   166 RC_MINING_STOP            lockstep_region_camera.h (group mining); on the Linux gate LXMC_STOP_REASON,
                                 linux/gate_mining_camera.h (whys entry_changed, block_changed)
   167 RC_XS_STOP                lockstep_region_camera.h (group xs)

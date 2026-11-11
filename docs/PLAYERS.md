@@ -195,3 +195,76 @@ random sum. Live trade runs moved the slot's wallet exactly as planned on both c
 (5,000,000 -> 4,900,000 -> 4,925,000 cents). Missions (offers, briefings, accept, abort) replay
 the same way (`native_gate_ui_replay`). What stays open is the generic relay's money globals
 (`TransferPlayerMoneyTo` and the like): they still move the `player` wallet, not slot K's.
+
+### Each player's own inventory (family `inventory`, 11 November 2026)
+
+Every slot has its own player entity, and with it its own inventory. X4's inventory functions take "the
+player" from the universe's player singleton, and slot k's scope makes slot k's entity that singleton on every
+client. The family `inventory` (`tools/dev/native_gate_ui_inventory_core.lua`, native part
+`src/native/engine/lockstep_ui_inventory.h`; on in the session defaults, it needs the UI guard and, for slots
+2..N, missions per player) turns each click on these stock buttons into one event of the client's slot. At the
+apply tick every client checks the click against the world of that tick and then runs it whole, or not at all.
+
+| Stock button | What runs at the apply | Where |
+|---|---|---|
+| Craft (inventory page, crafting bench) | resources out, product in, after X4's own resource check | the slot's scope |
+| Confirm of an NPC trader or a lockbox | the price, then the wares each way; trader's stock, player's stock and money checked first | wares in the slot's scope, money in the slot's faction scope |
+| Drop (inventory page) | X4's `DropInventory` for the slot's player, amounts checked first | the slot's scope |
+| Install / dismantle an equipment mod | the build family's record, now also for slots 2..N | the slot's scope |
+| Confirm of the blueprint or licence trader | everything bought and the price, after the money check | player faction (coop: every slot; factions: slot 1) |
+| Research: start, cancel | `StartResearch` / `ClearProductionItems` on a module of the player's | as above |
+| Terraforming: start, abort | X4's own `Can...` check, then the call | as above |
+
+A start's own inventory (kit part `inventory`) is added to the player who took the start: eight ticks into the
+session, or twelve ticks after the hand-over for a player who joins. On a client of slots 2..N the menus read
+that slot's own inventory (the presentation scope keeps slot 1's entity, so the two Lua readers answer per
+slot there). An encyclopedia entry a menu or the HUD adds for what a player has seen (`AddKnownItem`) is sent once
+and added on every client: one library, whoever saw it.
+
+A player who joins a running session gets the others' inventories with the join data: the player entities of slots
+2..N are the gate's own and in no save, so what each holds at the save tick rides the join package and the joiner
+gives it to its own new entities before any inventory event runs.
+
+Refused with an info line, nothing happens anywhere: the PAUSE, QUICKSAVE and QUICKLOAD keys and the save and
+load menu keys while a session is live; a trader click in factions mode without the trade family; the
+blueprint, licence, research and terraforming buttons for slots 2..N in factions mode (X4 keeps those for the
+player faction alone); a trade of more than 60 different wares in one click (a trade of up to 60 goes out in
+parts that change nothing by themselves and runs whole with its last event).
+
+No stock menu of X4 9.00 calls `ClearTradeQueue`, `MakeRepairPriority`, `ToggleFactionTradeRestriction`,
+`SetNPCSkill` or `AddUnits` (the UI Lua has no caller), so there is nothing to share there; the guard keeps
+refusing them. Still open: `CancelPlayerInvolvedTradeDeal` (its trade ID is a runtime ID),
+`CreateNPCFromPerson` (a crew member made pilot of a
+ship without one: it needs `SetEntityToPost` of the fleet entries in the same click), ship building and crew for
+slots 2..N in factions mode, and the paint mod list of the ship configuration on clients 2..N (the native reader
+`GetInventoryPaintMods` answers slot 1's there; the equipment mods use the Lua reader and are per slot).
+
+Evidence. Run inv1 (11 Nov, two X4 on one PC, slots 1 and 2 of the ns8 session, scripted clicks through the
+same capture a person's click takes): the two player entities were 432020 and 1447949 on both clients; seeds
+into each reached only that player; slot 2's craft of two first aid kits ran on both clients, slot 1's craft
+without the resources was skipped on both and its next one ran; each client's Drop was captured in the guard's
+hook and ran for its own player on both; the amounts read at the end were equal on both clients; 0 digest
+mismatches to tick 900. The same run showed the two faults fixed afterwards: the PAUSE key stopped the pressing
+client's gate (reason 3) and with it the session, and client 2's own menu read answered slot 1's inventory.
+
+Run inv2 (11 Nov, the same two clients, the fixes in): the same steps gave the same amounts; client 2's own menu
+read answered slot 2's inventory (3 bandages after the seed, where inv1 had shown slot 1's 1); real key presses of
+Pause, F5 and F9 into each game window arrived as the input actions PAUSE, QUICKSAVE and QUICKLOAD and were refused
+on that client (six `PILOT_NATIVE_REFUSED` rows), no save file appeared in either profile, and the session ran to
+its end at tick 7240 with 0 digest mismatches and 0 drops.
+
+The trade menu's amount sliders. A slider of the map's trade menu plans on the ship's virtual cargo: it calls
+`AddCargo` / `RemoveCargo` with the fourth argument true (`AddAmmo` / `RemoveAmmo` with the fifth) and computes
+with the answer. The guard refused those like every cargo change of a menu, a refused Lua function answers
+nothing, and the slider's handler then failed on the missing number, so a person could not set a trade amount.
+The family runs the virtual calls, and the craft button's room check, at once on the asking client. Run inv3
+(11 Nov, two X4): after the trade menu's open (`SetVirtualCargoMode`, the trade family's event) a virtual
+`AddCargo` of 5 and of 7 answered 5 and 7, one of 100000 answered the 536 that still fitted; each client's
+planning copy differed from the other's for some 2,300 ticks until its close, and the session ended at tick
+3640 with 0 digest mismatches. Not run: a person's own hand on a slider, and the real menu from open to
+Confirm.
+
+Not run in the real game yet: the trader, the blueprint and licence trader, research, terraforming, the mods of
+slots 2..N, a start's inventory, a trade in parts, the shared encyclopedia entries (mocked tests and the C tests
+only), and any of it across a hot join (the inventories' ride in the join data is mocked-test only too: it needs
+three X4, one more than this PC runs).

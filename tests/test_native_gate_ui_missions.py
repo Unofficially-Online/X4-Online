@@ -91,7 +91,7 @@ class FamilyTests(unittest.TestCase):
         mask, why = lua.eval("X4LAN_UI_REPLAY_CORE.families({'mission'})")
         self.assertIsNone(mask)
         mask, why = lua.eval("X4LAN_UI_REPLAY_CORE.families(1)")
-        self.assertTrue(why.endswith('missions, build, assets, conversation, faction'))
+        self.assertTrue(why.endswith('missions, build, assets, conversation, faction, inventory'))
 
     def test_the_mirrors_agree(self):
         lua, g = uirep.client()
@@ -437,6 +437,68 @@ class MissionsPerPlayerProbeTests(ProbeTests):
             self.assertEqual(lua.eval('X4LAN_UI_REPLAY_STOCK.GetNumMissions()'), 3)   # the stock readers stay at hand
         c = self.client(2, prelude=lists)                              # off: X4's list as it is
         self.assertEqual(c.lua.eval('GetNumMissions()'), 3)
+
+    def test_a_start_story_begins_in_its_slots_scope_once(self):
+        # native_gate_story (the session overlay's line): 60 ticks into the pilot window every client names the start
+        # script's cue to the gate and signals the galaxy inside slot 2's scope with the generation open; MD
+        # (x4lan_story.xml, generated) signals that cue and the gate claims it there. Mocked gate: the order of the calls
+        # and the row, not the game.
+        story = PROBE_MPP + r'''
+          story_calls={}
+          gate.mpp_scope=function(k) story_calls[#story_calls+1]='scope:'..k;return STORY_NO_SCOPE and 0 or 1 end
+          gate.mpp_unscope=function(k) story_calls[#story_calls+1]='unscope:'..k;return 1 end
+          gate.mpp_generate=function(k) story_calls[#story_calls+1]='generate:'..k;return 1 end
+          gate.mpp_story=function(k,path) story_calls[#story_calls+1]='story:'..k..(path and ':'..path or '');return STORY_UNCLAIMED and k==0 and 0 or 1 end
+          gate.ui_replay_bypass=function(on) story_calls[#story_calls+1]='bypass:'..on end
+          SignalObject=function(object,name,value) story_calls[#story_calls+1]='signal:'..tostring(name)..':'..tostring(value) end
+          require('ffi').C.GetPlayerGalaxyID=function() return 77 end
+        '''
+        start = self.stock.WINDOW[0]
+        cfg = dict(native_gate_story={2: 'GS_Terran1.Start'}, native_gate_missions_per_player_offers=False, native_gate_script_rng='key',
+                   native_gate_missions_per_player=True)
+
+        def run(clients, first, last, inputs=None):
+            inputs = inputs or ['', '']
+            for tick in range(first, last + 1):
+                inputs = [c.tick(tick, inputs) for c in clients]
+            return inputs
+
+        clients = [self.client(1, prelude=story, **cfg), self.client(2, prelude=story, **cfg)]
+        inputs = run(clients, 1, start + 59)
+        for c in clients:
+            self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+            self.assertFalse(any(call.startswith('signal:x4lan_story') for call in c.values('story_calls')))
+        inputs = run(clients, start + 60, start + 62, inputs)
+        for c in clients:   # every client, the same tick, whoever's story it is
+            self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+            calls = [call for call in c.values('story_calls') if not call.startswith('bypass')]
+            at = calls.index('signal:x4lan_story:2')
+            self.assertEqual(calls[at - 3:at + 4], ['scope:2', 'generate:2', 'story:2:GS_Terran1.Start', 'signal:x4lan_story:2', 'story:0',
+                                                    'generate:0', 'unscope:2'])
+            self.assertEqual(calls.count('signal:x4lan_story:2'), 1)
+            self.assertTrue(any(f'MPP_STORY tick={start + 60} slot=2 why=window signalled' in line for line in c.values('logs')))
+        # A slot whose scope cannot be entered: nothing is signalled, the row says so.
+        clients = [self.client(k, prelude=story + 'STORY_NO_SCOPE=true', **cfg) for k in (1, 2)]
+        run(clients, 1, start + 60)
+        for c in clients:
+            self.assertFalse(any(call.startswith('signal:x4lan_story') for call in c.values('story_calls')))
+            self.assertTrue(any('MPP_STORY' in line and 'no_scope' in line for line in c.values('logs')))
+        # The cue's frame did not come (the patch is not loaded, another name): the row says so, on every client alike.
+        clients = [self.client(k, prelude=story + 'STORY_UNCLAIMED=true', **cfg) for k in (1, 2)]
+        run(clients, 1, start + 60)
+        for c in clients:
+            self.assertTrue(any('MPP_STORY' in line and ' not_claimed ' in line for line in c.values('logs')))
+        # A gate without the story call (an older DLL): refused by name, nothing signalled.
+        clients = [self.client(k, prelude=story + 'gate.mpp_story=nil', **cfg) for k in (1, 2)]
+        run(clients, 1, start + 60)
+        for c in clients:
+            self.assertFalse(any(call.startswith('signal:x4lan_story') for call in c.values('story_calls')))
+            self.assertTrue(any('MPP_STORY' in line and 'gate_without_story' in line for line in c.values('logs')))
+        # No story line: nothing.
+        clients = [self.client(k, prelude=story, **dict(cfg, native_gate_story=None)) for k in (1, 2)]
+        run(clients, 1, start + 60)
+        for c in clients:
+            self.assertFalse(any('MPP_STORY' in line for line in c.values('logs')))
 
     def test_refusals_and_off(self):
         c = self.mpp(native_gate_ui_replay=['missions', 'conversation'])   # no events family

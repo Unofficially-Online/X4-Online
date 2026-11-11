@@ -119,6 +119,13 @@ static void test_pstk_codec(void) {
     assert(pstk_verdict(PSTK_STATE,0x11)==PSTK_REPLAY && pstk_verdict(PSTK_ACTION,0x12f)==PSTK_REPLAY && pstk_verdict(PSTK_RANGE,4)==PSTK_REPLAY);
     assert(pstk_verdict(PSTK_STATE,0x5b)==PSTK_REFUSE && pstk_verdict(PSTK_ACTION,0xb3)==PSTK_REFUSE && pstk_verdict(PSTK_RANGE,0x11)==PSTK_REFUSE);
     assert(pstk_verdict(PSTK_ACTION,0xa9)==PSTK_LOCAL && pstk_verdict(PSTK_RANGE,0x1d)==PSTK_LOCAL && pstk_verdict(PSTK_STATE,0x82)==PSTK_LOCAL);
+    /* The session keys (pause, quick save, quick load, the save and load menus): refused for every slot, and named. */
+    {static const int keys[]={0x75,0x82,0x83,0xa0,0xa1};static const char *const names[]={"PAUSE","QUICKSAVE","QUICKLOAD","SAVEGAMEMENU","LOADGAMEMENU"};
+     for(unsigned i=0;i<5;i++) {
+        assert(pstk_verdict(PSTK_ACTION,keys[i])==PSTK_REFUSE && pstk_verdict_slot(PSTK_ACTION,keys[i],1)==PSTK_REFUSE && pstk_verdict_slot(PSTK_ACTION,keys[i],2)==PSTK_REFUSE);
+        assert(!strcmp(pnat_name(PNAT_ACTION,(unsigned)keys[i]),names[i]) && pnat_blocked(PNAT_ACTION,keys[i]));
+        assert(pstk_verdict(PSTK_STATE,keys[i])!=PSTK_REFUSE || keys[i]==0x5b);   /* the action ids only */
+     }}
     /* Every pnat refused id stays out of the replay set. */
     for(unsigned i=0;i<PNAT_BLOCKED_COUNT;i++) {
         const pnat_id *b2=&pnat_blocked_ids[i];

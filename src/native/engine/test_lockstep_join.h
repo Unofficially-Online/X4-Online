@@ -1963,7 +1963,7 @@ static void test_join_world(void) {
         /* The step of T+1 (JOIN_STATUS t1=): the admission listed the model it wrote; the joiner's step then restarted the leg after
          * a SetState (+0x6d) with another target, the probe counts each; a later tick probes nothing and disarms. */
         {
-            const double now=28.216333333333;char status[3584];
+            const double now=28.216333333333;char status[8192];
             join_t1_arm(633);assert(join_t1.armed && join_t1.listed==1);
             memcpy(model[1]+0x88,&now,8);memcpy(model[1]+0x80,&now,8);model[1][0x6d]=1;model[1][0x20]^=1;
             join_t1_probe(633,now);assert(join_t1.armed && !join_t1.probed);   /* T itself: not yet */
@@ -2102,7 +2102,7 @@ static void test_join_world(void) {
              memcpy(&f70,tw_joiner.agent+JOIN_ROUTE_F70,4);
              assert(a==tw_joiner.runtime[TW_MODULE] && c==tw_joiner.runtime[TW_CARGO] && word==tw_joiner.runtime[TW_CARGO] && tw_joiner.agent[0xf5c]==1 &&
                     tw_joiner.agent[0xf7b]==1 && f70==3 && !join_rx.flight_word);}
-            {char status[3584];assert(join_status(status,sizeof(status)) && strstr(status," route=1:1:1:0:0:0:0 param=1:0:0:0:0:0:0:0:0 dock=0:0:0:0:0 steer=0:0:0:0:0:0:0:0:0 t1="));}
+            {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," route=1:1:1:0:0:0:0 param=1:0:0:0:0:0:0:0:0 dock=0:0:0:0:0 steer=0:0:0:0:0:0:0:0:0 t1="));}
             /* Again: the vectors equal, nothing rebuilt or written. */
             tw_admit(&tw_joiner,&f,JOIN_STRICT);
             assert(join_admit_world() && join_rx.route_applied==1 && !join_rx.route_rebuilt && !join_rx.route_fixed && tj_route_clears==2 &&
@@ -2190,7 +2190,7 @@ static void test_join_world(void) {
             {float turn;memcpy(&turn,tw_joiner.agent+JOIN_PARAM_OWN+JOIN_PARAM_TURN,4);assert(turn==0.5f);}
             {int row=0;for(unsigned i=0;i<join_rx.nrows;i++) row|=strstr(join_rx.rows[i],"param side=session id=0000000000002001 why=unmapped flags=2")!=NULL;assert(row);
              row=0;for(unsigned i=0;i<join_rx.nrows;i++) row|=strstr(join_rx.rows[i],"param side=joiner id=0000000000002001 why=values first=read+0:")!=NULL;assert(row);}
-            {char status[3584];assert(join_status(status,sizeof(status)) && strstr(status," param=1:1:0:0:1:1:1:1:1 dock=0:0:0:0:0 steer=0:0:0:0:0:0:0:0:0 t1="));}
+            {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," param=1:1:0:0:1:1:1:1:1 dock=0:0:0:0:0 steer=0:0:0:0:0:0:0:0:0 t1="));}
             /* Again: nothing differs (the unmapped ID counted again, the joiner's kept); strict refuses the unmapped ID. */
             tw_admit(&tw_joiner,&f,JOIN_REPORT);assert(join_admit_world() && join_rx.param_applied==1 && !join_rx.param_fixed && join_rx.param_unmapped==1);
             tw_admit(&tw_joiner,&f,JOIN_STRICT);assert(!join_admit_world() && !strcmp(join_rx.detail,"world:param_unmapped"));
@@ -2279,7 +2279,7 @@ static void test_join_world(void) {
             {uintptr_t v[3];memcpy(v,model[1]+JOIN_STEER_PATH,24);
              assert(v[1]==v[0]+JOIN_AGENT_WAYPOINT && v[0]==(uintptr_t)tj_route_pool[0] && !memcmp((void *)(v[0]+0x10),&tw_joiner.runtime[TW_CARGO],8) &&
                     !memcmp((void *)(v[0]+0x20),pt+0x20,0x48));}
-            {char status[3584];assert(join_status(status,sizeof(status)) && strstr(status," steer=1:1:0:0:0:0:0:0:1 t1="));}
+            {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," steer=1:1:0:0:0:0:0:0:1 t1="));}
             /* Again: every carried byte equal, nothing written or rebuilt. */
             tw_admit(&tw_joiner,&f,JOIN_STRICT);
             assert(join_admit_world() && join_rx.steer_applied==1 && !join_rx.steer_fixed && !join_rx.steer_rebuilt && tj_route_clears==1);
@@ -2360,7 +2360,7 @@ static void test_join_world(void) {
                     else if(i==0x6a00) assert(*(uintptr_t *)(so[1]+i)==(uintptr_t)image+0x2c1f0f8);
                     else assert(!memcmp(so[1]+i,so[0]+i,8));
                 }
-                {char status[3584];assert(join_status(status,sizeof(status)) && strstr(status," solver=1:1:1:0:0:0"));}
+                {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," solver=1:1:1:0:0:0"));}
                 /* The rows of T+1 name the model's wanted velocities, its avoidance cache and the solver's clock. */
                 {
                     assert(join_t1x.n==1 && join_t1x.runtime[0]==tw_joiner.runtime[TW_SHIP]);
@@ -2384,7 +2384,7 @@ static void test_join_world(void) {
                     TJ_FLIGHT_CAPTURE(h);uint64_t q,own[2];
                     memcpy(&q,h.solver[0].data+0x81c8,8);assert(q==JOIN_SOLVER_HEAP && join_cap.solver_mapped==1);
                     memcpy(&q,h.solver[0].data+0x81d0,8);assert(q==pair);
-                    {char status[3584];assert(join_status(status,sizeof(status)) && strstr(status," solver_mapped=1"));}
+                    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," solver_mapped=1"));}
                     memcpy(own,so[1]+0x81c8,16);
                     join_t1_reset();tw_tables_reset(1);tw_admit(&tw_joiner,&h,JOIN_STRICT);assert(join_admit_world() && join_rx.solver_heap==1);
                     memcpy(&q,so[1]+0x81c8,8);assert(q==own[0]);memcpy(&q,so[1]+0x81d0,8);assert(q==pair);
@@ -2459,7 +2459,7 @@ static void test_join_world(void) {
                     {uint64_t q;memcpy(&q,b1->bullet+0x10,8);assert(q==0x20);}
                     assert(b2->zone==(0x7777u|JOIN_BULLET_ZONE_RUNTIME) && b2->position==7 && !b2->index);
                     assert(join_cap.bullet_blocks==1 && join_cap.bullet_live==4 && join_cap.bullet_unkeyed==1 && !join_cap.bullet_fault);
-                    {char status[3584];assert(join_status(status,sizeof(status)) && strstr(status," bullet_walk=1:4:1"));}
+                    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," bullet_walk=1:4:1"));}
                     {join_buf b={0};join_tables r10;const char *why;assert(join_package_build(&f,&b) && join_package_parse(b.data,b.size,&r10,&why) &&
                      r10.nbullet==3 && !memcmp(r10.bullet,f.bullet,3*sizeof(*f.bullet)));join_tables_free(&r10);free(b.data);}
                     join_tables_free(&f);join_t1_reset();
@@ -2591,11 +2591,11 @@ static void test_join_world(void) {
                         memcpy(v,gw[1]+0x48,24);assert(v[1]-v[0]==8 && *(unsigned char **)v[0]==tw_joiner.object[TW_CARGO]);
                         double deadline;memcpy(&deadline,sector[1]+0x448,8);assert(deadline==12.5 && join_rx.gravs_sectors==1 && join_rx.gravs_lists==2);
                     }
-                    {char status[4096];assert(join_status(status,sizeof(status)) && strstr(status," grav=2:2:0:0:0:4:0:2:1 gravs=2:0:1:2") && strstr(status," grav_dead=0:1:1"));}
+                    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," grav=2:2:0:0:0:4:0:2:1 gravs=2:0:1:2") && strstr(status," grav_dead=0:1:1"));}
                     /* GRAVP: the ship's current pose now the session's; its other view's pose (the session has none) left, counted */
                     assert(!memcmp(gpose[1],gpose[0],0x40) && join_rx.gravp_fixed==1 && join_rx.gravp_extra==1 && !join_rx.gravp_equal &&
                            !join_rx.gravp_missing && !join_rx.gravp_absent);
-                    {char status[4096];assert(join_status(status,sizeof(status)) && strstr(status," gravp=1:0:0:0:1"));}
+                    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," gravp=1:0:0:0:1"));}
                     {   /* GRAVQ: the post appended to the joiner's empty list (its runtime ID, this process's vtable), the other node counted */
                         uint64_t *n=(uint64_t *)(uintptr_t)qsent[1][0],*e,size;
                         assert(n!=qsent[1] && qsent[1][1]==(uintptr_t)n && n[0]==(uintptr_t)qsent[1] && n[1]==(uintptr_t)qsent[1] && n[2]==3 &&
@@ -2604,7 +2604,7 @@ static void test_join_world(void) {
                         assert(size==1 && e && e[0]==(uintptr_t)image+JOIN_GRAVQ_EVENT_VT && !e[1] && !e[2]);
                         assert(join_rx.gravq_posted==1 && join_rx.gravq_other==1 && !join_rx.gravq_unmapped && !join_rx.gravq_busy &&
                                !join_rx.gravq_alloc && !join_rx.gravq_had);
-                        char status[4096];assert(join_status(status,sizeof(status)) && strstr(status," gravq=1:0:1:0:0:0 gravq_cap="));
+                        char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," gravq=1:0:1:0:0:0 gravq_cap="));
                     }
                     {   /* the joiner's groups now each other's neighbours, in its own indices */
                         uintptr_t v[3];
@@ -2721,7 +2721,7 @@ static void test_join_world(void) {
                     assert(tj_evqt_posts==2 && join_rx.evqt_posted==2 && !join_rx.evqt_missing && !join_rx.evqt_other && !join_rx.evqt_alloc);
                     assert(tj_evqt_post_src[0]==ship[1] && tj_evqt_post_ev[0][0]==(uintptr_t)image+0x2ac17b8u && tj_evqt_post_t[0]==31.5 &&
                            !tj_evqt_post_ev[0][1] && !tj_evqt_post_ev[0][2] && tj_evqt_post_ev[1][0]==(uintptr_t)image+0x2baf650u && tj_evqt_post_t[1]==30.25);
-                    {char status[4096];assert(join_status(status,sizeof(status)) && strstr(status," evqt=1:2:0:0:0 "));}
+                    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," evqt=1:2:0:0:0 "));}
                     join_flight_alloc=alloc;join_evqt_remove=rm;join_evqt_post=post;join_evqt_type=type;join_evq_head_test=NULL;
                     for(unsigned side=0;side<2;side++) memcpy(ship[side]+0x20,&keep[side],8);
                     join_tables_free(&f);join_t1_reset();
@@ -2750,7 +2750,7 @@ static void test_join_world(void) {
                     double t;memcpy(&t,eng[1]+0x10,8);
                     assert(t==23.25 && join_rx.jobe_applied==1 && !join_rx.jobe_missing && join_rx.jobe_prev_last==0xbff0000000000000ull && !join_rx.jobe_prev_len &&
                            tj_jobe_n==20 && !memcmp(tj_jobe_text,"argon_scout_patrol_s",20) && tj_jobe_at==eng[1]+0x18);
-                    {char status[4096];assert(join_status(status,sizeof(status)) && strstr(status," jobe=1:0:bff0000000000000:0:257 "));}
+                    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," jobe=1:0:bff0000000000000:0:257 "));}
                     join_jobe_engine_test=NULL;join_t1_reset();tw_admit(&tw_joiner,&f,JOIN_REPORT);assert(join_admit_world() && join_rx.jobe_missing==1);
                     join_jobe_assign=assign;join_jobe_switch_test=NULL;join_tables_free(&f);join_t1_reset();
                 }
@@ -2814,7 +2814,7 @@ static void test_join_world(void) {
                         memcpy(v,m+JOIN_SPLM_EMB0+0x10,24);assert(v[1]-v[0]==2*JOIN_FLIGHT_SEGMENT && !memcmp((void *)v[0],eseg,2*JOIN_FLIGHT_SEGMENT));
                         assert(m[0x300]==sm[0][0x300] && m[0xc4]==sm[0][0xc4] && !m[0x210] && *(unsigned char **)(m+JOIN_FLIGHT_OWNER)==tw_joiner.agent);
                     }
-                    {char status[4096];assert(join_status(status,sizeof(status)) && strstr(status," splm=1:1:0:0:0:0:0:2"));}
+                    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," splm=1:1:0:0:0:0:0:2"));}
                     /* a joiner route not empty: refused for that model (shape), strict stops */
                     join_t1_reset();tw_admit(&tw_joiner,&f,JOIN_REPORT);assert(join_admit_world() && join_rx.splm_shape==1 && !join_rx.splm_applied);
                     tw_admit(&tw_joiner,&f,JOIN_STRICT);assert(!join_admit_world() && !strcmp(join_rx.detail,"world:splm_shape"));
@@ -3656,9 +3656,9 @@ static void twarp_build(unsigned side,unsigned char fill) {
 static unsigned char tattn_state[2],tattn_need[2];static unsigned tattn_calls,tattn_level,tattn_destroyed,tattn_swaps,tattn_swap_ok;
 static _Alignas(16) unsigned char tattn_obj[2][0x200],tattn_q[0x40],tattn_node[3][0x40],tattn_ev[3][0x40],tattn_sched[0x40],tattn_snode[0x40];
 static unsigned char tattn_flag(unsigned char *object,uint32_t level,int need) {(void)level;const unsigned k=object==tattn_obj[1];return need?tattn_need[k]:tattn_state[k];}
-static unsigned tattn_load_seen;static uint32_t tattn_compute_level,tattn_drift;
+static unsigned tattn_load_seen;static uint32_t tattn_compute_level,tattn_drift,tattn_was;
 static void tattn_set(unsigned char *object,uint32_t level) {
-    ++tattn_calls;tattn_level=level;tattn_load_seen=(unsigned)join_ids_admit_load;
+    ++tattn_calls;tattn_level=level;tattn_load_seen=(unsigned)join_ids_admit_load;memcpy(&tattn_was,object+JOIN_ATTENTION,4);
     if(join_ids_admit_load) join_ids_list.allocs+=2;            /* the animation units, on the load list */
     if(tattn_drift) memcpy(object+JOIN_ATTENTION,&tattn_drift,4);   /* a call that left another level */
 }
@@ -3712,6 +3712,24 @@ static void test_join_attn_set(void) {
         at=7;memcpy(tattn_obj[0]+JOIN_ATTENTION,&at,4);
         assert(join_attn_reconcile(tattn_obj[0],7,7,JOIN_ATTN_SETTLED)==2 && join_attn_set_calls==2);    /* equal at 7: the states path */
         assert(join_attn_states_apart==7 && join_attn_states_calls==5 && join_attn_states_loaded==10 && tattn_calls==calls+5);
+        /* ATTN leave: down from 9 or more to less than 9 (not to 1) the native call runs from the load's level, whatever the
+         * states say (object 1's agree); off, up to 9, or within one side of 9: as before */
+        {   const unsigned c0=tattn_calls;const uint64_t set_calls=join_attn_set_calls;
+            join_attn_states_on=0;join_attn_leave_calls=join_attn_leave_loaded=join_attn_leave_drift=0;tattn_was=0;
+            at=8;memcpy(tattn_obj[1]+JOIN_ATTENTION,&at,4);
+            assert(!join_attn_reconcile(tattn_obj[1],9,8,0) && tattn_calls==c0);                              /* off: the states agree */
+            join_attn_leave_on=1;
+            assert(join_attn_reconcile(tattn_obj[1],9,8,0)==3 && tattn_calls==c0+1 && tattn_level==8 && tattn_was==9 && tattn_load_seen==1 &&
+                   !join_ids_admit_load && join_attn_leave_calls==1 && join_attn_leave_loaded==2 && join_attn_set_calls==set_calls);
+            memcpy(&at,tattn_obj[1]+JOIN_ATTENTION,4);assert(at==8 && join_attn_leave_drift==1);            /* the fake call writes no level: written back */
+            at=8;memcpy(tattn_obj[1]+JOIN_ATTENTION,&at,4);tattn_drift=8;
+            assert(join_attn_reconcile(tattn_obj[1],10,8,0)==3 && tattn_was==10 && join_attn_leave_drift==1 && join_attn_leave_calls==2);
+            tattn_drift=0;
+            assert(!join_attn_reconcile(tattn_obj[1],8,9,0) && !join_attn_reconcile(tattn_obj[1],10,9,0) && !join_attn_reconcile(tattn_obj[1],8,7,0) &&
+                   !join_attn_reconcile(tattn_obj[1],9,1,0) && tattn_calls==c0+2);
+            {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," attn_leave=1:2:4:1 "));}
+            join_attn_leave_on=0;join_attn_leave_calls=join_attn_leave_loaded=join_attn_leave_drift=0;
+        }
         join_attn_states_on=0;join_ids_list.allocs=allocs;join_attn_compute=compute;memset(tattn_obj,0,sizeof(tattn_obj));
     }
     InterlockedExchange(&join_attn_post_on,0);

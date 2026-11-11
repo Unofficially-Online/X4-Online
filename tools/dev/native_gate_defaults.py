@@ -57,6 +57,7 @@ def load(path=LUA):
 # first in ui.xml.files (the adapters read X4LAN_CONFIG while loading), the adapters and cores before the probe, the MD.
 UI_FILES = ('ui/native_gate_defaults.lua', 'ui/native_gate_inputs_core.lua', 'ui/native_gate_player_identity_core.lua',
             'ui/native_gate_player_identity.lua', 'ui/native_gate_ui_replay_core.lua', 'ui/native_gate_ui_build_core.lua',
+            'ui/native_gate_ui_inventory_core.lua',
             'ui/native_gate_fleet.lua', 'ui/native_gate_orders.lua')
 MD_FILES = ('md/native_gate_battle.xml', 'md/native_gate_player_identity.xml', 'md/native_gate_ui_replay.xml',
             'md/native_gate_pilot_respawn.xml')

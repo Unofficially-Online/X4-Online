@@ -20,8 +20,11 @@
  *             plot); a PayBuildPlotSize right behind ExtendBuildPlot runs only if that answered true at the apply, and
  *             with the plot's size and centre read at the apply (the menu read them before the extension ran).
  *   slots     coop: every slot (the player faction's wallet and ships are shared). Factions mode: slot 1 only (slot k's
- *             faction account and ownership are not adapted yet). Mods from the inventory: slot 1 only (the canonical
- *             apply would take slot 1's player's inventory). Refused at capture (nothing ran anywhere, a row and the
+ *             faction account and ownership are not adapted yet). Mods from the inventory: X4 takes the mod's parts
+ *             from "the player" (the eleven mod exports read the universe's player singleton), so slot k's record
+ *             runs inside slot k's scope (lockstep_mission_owners.h mpp_call_enter, missions per player's call scope:
+ *             the singleton is slot k's own player, the parts its own inventory's); without missions per player
+ *             slot 1 only. Refused at capture (nothing ran anywhere, a row and the
  *             info line); a batch that breaks the rule anyway is skipped record by record by every client alike.
  *   wire      batch = version | record count | records; record = kind ('N' a claimed call, 'L' a Lua record) | id |
  *             flags (1: runs only if the record before answered nonzero) | length u16 | payload. Strings are kept once
@@ -393,10 +396,18 @@ static int uibuild_encode(const uibuild_claim *c,const uint64_t *frame,uibuild_w
     }
     return !w->why;
 }
+/* A claim that takes from or gives to the player's inventory (a paint mod only when its argument says so). */
+static int uibuild_inventory_claim(const uibuild_claim *c,uint64_t arg) {
+    return c->slots==UIBUILD_SLOTS_INVENTORY || (c->slots==UIBUILD_SLOTS_INVENTORY_ARG && (arg&0xffu));
+}
+/* Slot k's own scope around such a record (missions per player's; a test's stand-ins). */
+static int mpp_call_enter(unsigned k);static int mpp_call_leave(unsigned k);
+static int (*uibuild_own_enter)(unsigned k),(*uibuild_own_leave)(unsigned k);
+static volatile LONG64 uibuild_own_scopes;
 static int uibuild_slot_refusal(const uibuild_claim *c,unsigned slot,uint64_t arg,const char **why) {
     /* factions mode, slots 2+: only the construction claims, and only with the trade family's faction scope */
     if(slot>=2 && uibuild_factions && !(uibuild_claim_scoped(c) && uitrade_wanted())) {*why="factions";return 1;}
-    if(slot>=2 && (c->slots==UIBUILD_SLOTS_INVENTORY || (c->slots==UIBUILD_SLOTS_INVENTORY_ARG && (arg&0xffu)))) {*why="inventory";return 1;}
+    if(slot>=2 && uibuild_inventory_claim(c,arg) && !mpp_armed) {*why="inventory";return 1;}   /* no scope of its own for the slot */
     return 0;
 }
 /* Appends a whole record to the open batch, flushing it first when the record does not fit: 0 = refused. */
@@ -832,12 +843,20 @@ static int uibuild_step(unsigned slot,uint64_t tick,char *what,size_t capacity,u
         uibuild_fn.plot_size((void*)(uintptr_t)a[1],a[0]);uibuild_fn.plot_center((void*)(uintptr_t)a[2],a[0]);
     }
     void *entry=plan?NULL:uibuild_entry_of(id);uint64_t result=0;int fault=0,plan_ran=0;const char *plan_skip=NULL;
+    /* An inventory mod of slots 2+: X4's "the player" is the slot's own for the call. A scope that cannot be entered stops
+     * the replay: the record never runs on slot 1's inventory on some clients. */
+    const int own=slot>=2 && uibuild_inventory_claim(c,c->slots==UIBUILD_SLOTS_INVENTORY_ARG?a[c->arg]:0);
+    if(own) {
+        if(!(uibuild_own_enter?uibuild_own_enter:mpp_call_enter)(slot)) {if(scoped) uitrade_scope_leave();*why="ui_build_inventory_scope";return -1;}
+        InterlockedIncrement64(&uibuild_own_scopes);
+    }
     __try {
         if(plan) result=uicons_apply(slot,a[0],&plan_skip,&plan_ran);   /* X4's commit path with the carried plan */
         else if(strchr(c->spec,'f')) {float v;memcpy(&v,&bits,4);((uibuild_float1_fn)entry)(a[0],v);}
         else result=((uibuild_call_fn)entry)(a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11]);
     }
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    if(own && !(uibuild_own_leave?uibuild_own_leave:mpp_call_leave)(slot) && !fault) {*why="ui_build_inventory_scope";return -1;}
     if(scoped && !uitrade_scope_leave() && !fault) {*why="ui_trade_scope";return -1;}
     if(fault) {*why="ui_fault";return -1;}
     if(plan && !plan_ran) {

@@ -101,6 +101,10 @@ enum {PNAT_ACTION=0,PNAT_STATE=1,PNAT_RANGE=2,PNAT_KINDS=3};
 typedef struct {unsigned char kind;unsigned short id;const char *name;} pnat_id;
 /* Refused while live (every handler of the id). */
 static const pnat_id pnat_blocked_ids[]={
+    /* One client must not pause, save or load: live inv1 (11 Nov), the PAUSE key stopped the pressing client's gate at once
+     * (reason 3) and the session stood still for everyone, since a client that was there from the start is not droppable. */
+    {PNAT_ACTION,0x75,"PAUSE"},{PNAT_ACTION,0x82,"QUICKSAVE"},{PNAT_ACTION,0x83,"QUICKLOAD"},{PNAT_ACTION,0xa0,"SAVEGAMEMENU"},
+    {PNAT_ACTION,0xa1,"LOADGAMEMENU"},
     {PNAT_ACTION,0x12f,"TOGGLE_TRAVEL_MODE"},{PNAT_ACTION,0xe1,"TOGGLE_SETA_MODE"},{PNAT_ACTION,0x130,"TOGGLE_SCAN_MODE"},
     {PNAT_ACTION,0x131,"TOGGLE_LONGRANGE_SCAN_MODE"},{PNAT_ACTION,0xb3,"TOGGLE_AUTOPILOT"},{PNAT_ACTION,0xdd,"TOGGLE_FLIGHT_ASSIST"},
     {PNAT_ACTION,0x13f,"TOGGLE_GUIDANCE"},{PNAT_ACTION,0xaf,"DOCK_ACTION"},{PNAT_ACTION,0xd3,"UNDOCK"},{PNAT_ACTION,0x115,"GET_UP"},

@@ -35,15 +35,32 @@ static void test_speech_local(void) {
     pslots[2].seated=1;pslots[2].walking=1;assert(spl_frame()==1 && spl_unknown==2);pslots[2].walking=0;
     assert(spl_frame()==0);
     *(unsigned char **)(ship2+0x70)=sector_b;stats.slot=1;assert(spl_frame()==0);stats.slot=2;assert(spl_frame()==1);
+    /* An owned MD frame (lockstep_mission_owners.h's frame rule): slot 2's line plays on client 2 while the frame runs, wherever
+     * slot 1 is, and the step's answer is back at its end; a nested frame changes nothing; another slot's frame and a
+     * catch-up do not play; slot 1 and nobody are no owners. */
+    {const uint64_t toggles=spl_toggles;
+     spl_owner_enter(2);assert(!spl_muted && speak_mute_site()==SPEAK_MUTE_ORIGINAL && spl_owner_depth==1 && spl_owner_played==1);
+     spl_owner_enter(2);spl_owner_leave();assert(!spl_muted && spl_owner_depth==1);
+     spl_owner_leave();assert(spl_muted==1 && speak_mute_site()==SPEAK_MUTE_PATCHED && !spl_owner_depth && spl_toggles==toggles+2);
+     spl_owner_leave();assert(spl_muted==1 && !spl_owner_depth);   /* an unpaired leave */
+     spl_owner_enter(3);assert(spl_muted==1 && spl_owner_muted==1 && spl_toggles==toggles+2);spl_owner_leave();
+     test_spl_catching=1;spl_owner_enter(2);assert(spl_muted==1 && spl_owner_muted==2);spl_owner_leave();test_spl_catching=0;
+     spl_owner_enter(1);spl_owner_enter(0);spl_owner_enter(PILOT_SLOTS+1);assert(!spl_owner_depth && spl_owner_frames==3);
+     /* Slot 1's client plays by default and does not play slot 2's line. */
+     stats.slot=1;assert(spl_frame()==0 && speak_mute_site()==SPEAK_MUTE_ORIGINAL);
+     spl_owner_enter(2);assert(spl_muted==1 && speak_mute_site()==SPEAK_MUTE_PATCHED);spl_owner_leave();
+     assert(!spl_muted && speak_mute_site()==SPEAK_MUTE_ORIGINAL);
+     stats.slot=2;assert(spl_frame()==1);
+     assert(spl_status((char[320]){0},320)>0);}
     /* A site that holds neither value: the speak timer's failure; nothing else moves. */
     {const uint16_t foreign=0xcccc;memcpy(image+SPEAK_MUTE_SITE,&foreign,2);*(unsigned char **)(ship2+0x70)=sector_a;speak_timer_failures=0;
      assert(spl_frame()==1 && speak_timer_failures==1 && !strcmp(speak_timer_stage,"mute_site") && speak_mute_site()==foreign);
      const uint16_t patched=SPEAK_MUTE_PATCHED;memcpy(image+SPEAK_MUTE_SITE,&patched,2);speak_timer_failures=0;*(unsigned char **)(ship2+0x70)=sector_b;}
-    char status[256];assert(spl_status(status,sizeof(status))>0 && strstr(status,"armed=1 muted=1 site=9090 "));
+    char status[320];assert(spl_status(status,sizeof(status))>0 && strstr(status,"armed=1 muted=1 site=9090 "));
     /* Stop puts the je back. */
     spl_restore();assert(!spl_armed && !spl_muted && speak_mute_site()==SPEAK_MUTE_ORIGINAL && !spl_frame());
     memset(image+SPEAK_MUTE_SITE,0,2);
     spl_catching_up=join_catching_up;speak_timer_installed=speak_timer_patched=0;speak_timer_failures=0;speak_timer_stage="idle";spl_stage="idle";
     pslots[2]=saved;pslot_p1=saved_p1;stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;stats.slot=saved_slot;
-    printf("speech local decision, site CAS, arm, failure and restore tests PASS\n");
+    printf("speech local decision, owned frames, site CAS, arm, failure and restore tests PASS\n");
 }

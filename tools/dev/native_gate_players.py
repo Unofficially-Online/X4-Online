@@ -94,9 +94,9 @@ RESPAWN_MD = 'md/native_gate_pilot_respawn.xml'   # native_gate_pilot_respawn: X
 POOL_LIBRARY = session_start.POOL_LIBRARY
 ORDERS_FILES = ('ui/native_gate_player_orders_core.lua', 'ui/native_gate_player_orders.lua')
 MUX_FILES = ('ui/native_gate_inputs_core.lua',)   # protocol 3 input multiplexer (pilot, orders, hit claims)
-UI_REPLAY_FILES = ('ui/native_gate_ui_replay_core.lua', 'ui/native_gate_ui_build_core.lua')
+UI_REPLAY_FILES = ('ui/native_gate_ui_replay_core.lua', 'ui/native_gate_ui_build_core.lua', 'ui/native_gate_ui_inventory_core.lua')
 UI_REPLAY_FAMILIES = ('travel', 'target', 'orders', 'autopilot', 'dock', 'weapons', 'missiles', 'queue', 'events', 'flight', 'trade', 'missions', 'build',
-                      'assets', 'conversation', 'faction')
+                      'assets', 'conversation', 'faction', 'inventory')
 UI_GUARD_GROUPS = ('flight', 'orders', 'fleet', 'trade', 'faction', 'assets', 'build', 'conflict', 'missions', 'events', 'conversation',
                    'session', 'cheat', 'editor')   # lockstep_ui_guard.h
 UI_REPLAY_FLIGHT = ('autopilot', 'dock', 'weapons')
@@ -139,7 +139,8 @@ UI_REPLAY_MPP_DEMO = {1: ((60, 'mis_fixture', 1), (90, 'mis_fixture', 1), (150, 
 UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'target_slot': 'target', 'target_none': 'target',
                        'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_obj': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
                        'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons',
-                       'flight_assist': 'flight', 'turret_mode': 'flight', 'turret_missile': 'flight', 'drones': 'flight', 'drone_mode': 'flight',
+                       'flight_assist': 'flight', 'turret_mode': 'flight', 'turret_missile': 'flight', 'drones': 'flight', 'drone_mode': 'flight', 'launch': 'flight', 'launch_stock': 'flight', 'turrets_mode': 'flight', 'turrets_armed': 'flight', 'drones_armed': 'flight',
+                       'drop_cargo': 'flight',
                        'mis_fixture': 'missions', 'gm_limit': 'missions', 'slot_kill': 'events', 'briefing': 'missions', 'briefing_stop': 'missions', 'briefing_button': 'missions',
                        'offer_accept': 'events', 'mis_active': 'missions', 'mis_none': 'missions', 'mis_abort': 'missions',
                        'conv_start': 'conversation', 'dialog': 'conversation', 'dialog_native': 'conversation',
@@ -762,6 +763,10 @@ def build_overlay(args):
     if 'ui/native_gate_probe.lua' not in files or not config.is_file() or not (base/'native/x4lan_gate_64.dll').is_file():
         raise ValueError('base is not a native gate overlay (probe, config or gate DLL missing)')
     lines, plan, orders = config_block(args)
+    # A session's start stories (native_gate_session_start.py story_files): slot k's start script runs for slot k.
+    stories = session_start.story_slots((getattr(args, 'session_data', None) or {}).get('slots'))
+    if stories:
+        lines.append('X4LAN_CONFIG.native_gate_story = {' + ','.join(f"[{k}]='{s['script']}.{s['cue']}'" for k, s in stories.items()) + '}')
     stripped = strip_own(config.read_text())
     # A session base (native_gate_test, slot, port, token) runs the session defaults (native_gate_defaults.lua): its checks
     # read the effective base, and the overlay writes only the lines that differ from the defaults.
@@ -808,6 +813,7 @@ def build_overlay(args):
     if 'X4LAN_NATIVE_PLAYER_IDENTITY' not in probe.read_text(encoding='utf-8'):
         raise ValueError(f'{probe} has no player identity hook; pass --probe tools/dev/native_gate_probe.lua')
     shutil.copytree(base, out, ignore=shutil.ignore_patterns('x4lane-manifest.json'))
+    session_start.write_story_files(out, stories)
     if args.gate_dll:
         shutil.copy2(args.gate_dll, out/'native/x4lan_gate_64.dll')
     if args.probe:

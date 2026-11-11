@@ -329,3 +329,43 @@ Builds on reports/LOCKSTEP-UI-REPLAY-20261030.txt (the replay, its local phases,
       args=TopLevelMenu/; the /f columns follow each person's toggles on both clients 3 ticks later; no refusal of the five flight
       entries. Send: every UI_GUARD_REFUSED and UI_REPLAY_REFUSED row (their args name each screen/control: candidates for the
       UI-only list, which needs the MD check of 7a, or for the events family's canonical path), UI_GUARD_STATUS, UI_REPLAY_SLOTS.
+
+8. DEPLOYABLES AND A NAMED SHIP'S SETTINGS IN THE FLIGHT FAMILY (11 November; branch contrib/ferrite-ship-systems)
+  Why: a played session (the Terran cadet start) stopped at its "replace the satellite" step: UI_GUARD_REFUSED op=LaunchSatellite.
+  Static reading of the pinned X4.exe (direct calls three deep; virtual calls not followed) [F unless marked]:
+8a The five launches. Each export (ship, macro name) looks up the ship (class 0x23) and the macro (lower-cased name, 0xa2f0d0)
+  and calls its own core with the thread's game time (TLS +0x300):
+    LaunchSatellite 0x2237a0 -> 0x4e94f0     LaunchNavBeacon 0x2232a0 -> 0x4ea370     LaunchResourceProbe 0x223520 -> 0x4eaa30
+    LaunchMine 0x223030 -> 0x4e9ba0          LaunchLaserTower 0x222db0 -> 0x4eb0f0
+  A core (0x4e94f0 read in full): the macro's count in the ship's stock (+0x510, a map by macro) must be above 0; the ship's zone
+  (class 0x6d ancestor); the launch pose from the ship (0x4e7e50); the object through its factory call (0x863300 and siblings ->
+  ComponentFactory::Create 0x8e0250); a statistic when the ship is the singleton's own (0x9f9250, 0x12f810); one unit off the
+  stock (0x4e1e30); the launch itself (0x4e77c0); events posted at the thread's time (0x99a3f0).
+  RNG: the create draws from the thread's word in two places: a constructor (0x6bb620, one inline draw: the object's seed at
+  +0x4d0) and 0x3cf0f0 (a loop at 0x3cf286 through 0x14ddc90). No other draw three calls deep.
+  [I] At the apply (uirep_frame_run: the simulation thread, slot order, a slot scope for slots 2..N) those draws take the
+  simulation's word at the same point of the tick on every client, and the object a shared runtime ID (no local route is open:
+  no presentation scope, no dispatch depth, no listed call site above the factory). In scope k the statistic counts for slot k's
+  ship on every client alike.
+8b The deploy keys stay refused. DEPLOY_SATELLITE .. DEPLOY_LASERTOWER go 71bac0 -> 0x73ff50 / 0x740290 / 0x7405d0 / 0x740910 /
+  0x740c50, which reach the same cores but draw once more on the way (0x14eed60 below 0x14e8ec0); REPEAT_*DEPLOYMENT go through
+  0x4ec8c0 (callers 0x73f730, 0x73fa40, 0x73fcd0). Not read further.
+8c A named ship's settings. No draw three calls deep in any of: SetWeaponArmed, SetAmmoOfWeapon, SetTurretGroupMode2,
+  SetTurretGroupArmed, SetAllTurretModes, SetAllTurretsArmed, SetAllMissileTurretModes, SetAllMissileTurretsArmed,
+  SetAllNonMissileTurretModes, SetAllNonMissileTurretsArmed, SetDroneMode, SetDroneTypeArmed, SetAllDronesArmed, ActivateObject,
+  SelfDestructComponent, DropCargo. Each names its object (no singleton). Callers [F scripts]: the docked menu and the map's
+  loadout rows (weapons, turret groups with (context, path, group), drones), the interact menu (a deployable switched on or
+  off, destroyed), the map (cargo dropped).
+8d Built: 21 generic calls (op 5) under the flight bit, hook numbers 29..49, at the exports' entries with the guard table's
+  prefixes and pins; the inventory covers them (the regenerated table changes only their covered field). New argument kind 'i':
+  a component or 0 (a turret group's context). Script ops for runs without people: launch (kind, macro), turrets_mode,
+  turrets_armed, drones_armed, drop_cargo, and the canonical fixture launch_stock (MD cue Stock: add_ammo to a slot ship, row
+  UI_REPLAY_STOCK ... has=).
+  Limits: any player may name any ship that has an identity (the menus offer their own; no owner check at the apply, as for
+  the weapon family). A menu that launches more in one frame than a section holds spreads over the following ticks.
+  Still refused in group flight: SetAllowedWeaponSystems (a struct array), DropInventory, TeleportPlayerTo,
+  TransportPlayerToTarget, PerformCompSlotPlayerAction, StartControlPanelHack, TriggerCompSlotAnimation, the docking bay
+  reservations, the cover faction pair, PerformAction, RaisePlayerInteractionEvent.
+8e Verified: build_native_gate.py --test with the pinned image (the pins and prefixes, a whole install, capture, refusals, the
+  wire, the apply in slot 2's scope and canonical for slot 1, on stand-ins); tests/test_native_gate_ui_guard.py with a fresh
+  table. Mocked: the live results follow in 8f.

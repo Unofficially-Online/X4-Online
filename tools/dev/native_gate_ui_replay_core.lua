@@ -8,9 +8,9 @@ X4LAN_UI_REPLAY_CORE={}
 local K=X4LAN_UI_REPLAY_CORE
 local ffi=require('ffi')
 K.FAMILY={travel=1,target=2,orders=4,autopilot=8,dock=16,weapons=32,missiles=64,queue=128,events=256,flight=512,
- trade=1024,missions=2048,build=4096,assets=8192,conversation=16384,faction=32768}   -- docs/LOCKSTEP-REGISTRY.txt; trade: X4LAN_UI_TRADE below (lockstep_ui_trade.h);
+ trade=1024,missions=2048,build=4096,assets=8192,conversation=16384,faction=32768,inventory=524288}   -- docs/LOCKSTEP-REGISTRY.txt; trade: X4LAN_UI_TRADE below (lockstep_ui_trade.h);
  -- build, assets: native_gate_ui_build_core.lua (lockstep_ui_build.h); missions, conversation: lockstep_ui_missions.h;
- -- faction: X4LAN_UI_FACTION below (lockstep_ui_faction.h)
+ -- faction: X4LAN_UI_FACTION below (lockstep_ui_faction.h); inventory: native_gate_ui_inventory_core.lua
 K.ALL=63   -- true: the families of the first runs; missiles (pilot fire, target), queue, events and flight are listed by name
 K.OP_ORDERS_CLEAR,K.OP_ORDERS_CLEAR2,K.OP_LUA_CALL=0x41,0x42,0x43
 K.OP_QUEUE,K.OP_QUEUE_PARAM,K.OP_QUEUE_LIST=0x44,0x45,0x46   -- the queue editor (lockstep_ui_replay.h)
@@ -49,7 +49,7 @@ local DEPTH_MAX,ITEMS_MAX,STRING_MAX=4,32,64
 -- true = every family; a list names them. Returns the mask, or nil and the reason.
 function K.families(value)
  if value==true then return K.ALL end
- if type(value)~='table' or #value==0 then return nil,'native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction' end
+ if type(value)~='table' or #value==0 then return nil,'native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction, inventory' end
  local mask=0
  for _,name in ipairs(value) do
   local bit=K.FAMILY[name]
@@ -586,6 +586,34 @@ function K.session(p)
    end
   end
  end
+ -- A start's story for slot k (native_gate_story = {[k]='<Script>.<Cue>'}; MD x4lan_story.xml Begin, generated per
+ -- session): every client, the same tick, names the start script's static cue to the gate and signals the galaxy inside
+ -- slot k's scope with the generation open; the MD signals that cue at once, the gate claims it for slot k at its first
+ -- frame (gate.mpp_story) and everything below it and every root instance it makes is slot k's.
+ function S.slot_story(tick,k,why)
+  local galaxy=p.galaxy or (p.offers and p.offers.galaxy)
+  local path=type(p.story)=='table' and p.story[k] or nil
+  local done,before='no_scope',gate.ui_missions_state and gate.ui_missions_state() or '-'
+  if type(path)~='string' then done='no_story'
+  elseif not (p.mpp and galaxy and gate.mpp_generate) then done='no_missions_per_player'
+  elseif not gate.mpp_story then done='gate_without_story'
+  elseif gate.mpp_scope(k)==1 then
+   S.replaying=true;gate.ui_replay_bypass(1)
+   local ok,why_not=pcall(function()
+    assert(gate.mpp_generate(k)==1,'generate refused')
+    assert(gate.mpp_story(k,path)==1,'story refused')
+    stock.SignalObject(galaxy(),'x4lan_story',k)
+   end)
+   local claimed=gate.mpp_story(0)==1
+   gate.mpp_generate(0)
+   gate.ui_replay_bypass(0);S.replaying=false
+   if gate.mpp_unscope(k)~=1 then gate.ui_replay_fail('mpp_leave') end
+   done=not ok and 'error:'..tostring(why_not) or claimed and 'signalled' or 'not_claimed'
+  end
+  log('MPP_STORY tick='..tick..' slot='..k..' why='..tostring(why)..' '..done..' before=['..tostring(before)..'] after=['..
+   tostring(gate.ui_missions_state and gate.ui_missions_state() or '-')..'] '..tostring(gate.mpp_status and gate.mpp_status() or '-'))
+  return done
+ end
  -- Every client, the probe's frame of the tick, the events in slot order and call order.
  function S.apply(tick)
   S.slot_offers(tick)
@@ -733,10 +761,10 @@ end
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
 -- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
-K.SCOPED={target_slot=true,target_none=true,guidance_slot=true,guidance_end=true}
+K.SCOPED={target_slot=true,target_none=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={mis_fixture=true,gm_limit=true,slot_kill=true}
+K.CANONICAL={mis_fixture=true,gm_limit=true,slot_kill=true,launch_stock=true,inv_seed=true,inv_look=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -843,6 +871,20 @@ function K.script(plan,start,tools)
   elseif op=='turret_missile' then call=function() tools.C.CycleTurretMissile(e[3]);return 'ffi' end
   elseif op=='drones' then call=function() tools.C.ToggleDrones(e[3]);return 'ffi' end
   elseif op=='drone_mode' then call=function() tools.C.CycleNextDroneMode(e[3]);return 'ffi' end
+  -- Deployables as the ship interact menu launches them: kind (satellite, navbeacon, probe, mine, lasertower), macro name,
+  -- from this client's own slot ship.
+  elseif op=='launch' then call=function()
+    local fn=({satellite='LaunchSatellite',navbeacon='LaunchNavBeacon',probe='LaunchResourceProbe',mine='LaunchMine',lasertower='LaunchLaserTower'})[e[3]]
+    if not fn then error('launch kind '..tostring(e[3])) end
+    tools.C[fn](tools.slot_id(tools.own_slot),e[4]);return 'ffi' end
+  -- A ship's settings as the docked menu and the map set them, on this client's own slot ship; cargo dropped as the map does.
+  elseif op=='turrets_mode' then call=function() tools.C.SetAllTurretModes(tools.slot_id(tools.own_slot),e[3]);return 'ffi' end
+  elseif op=='turrets_armed' then call=function() tools.C.SetAllTurretsArmed(tools.slot_id(tools.own_slot),e[3] and true or false);return 'ffi' end
+  elseif op=='drones_armed' then call=function() tools.C.SetAllDronesArmed(tools.slot_id(tools.own_slot),e[3] and true or false);return 'ffi' end
+  elseif op=='drop_cargo' then call=function() return tostring(tools.C.DropCargo(tools.slot_id(tools.own_slot),e[3],e[4])) end
+  -- Test only (MD Stock, canonical: in every client's plan at the same tick): a slot's ship gets deployables to launch.
+  elseif op=='launch_stock' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Stock',{ship=tools.slot_lua(e[3]),macro=e[4],amount=e[5] or 1});return 'lua' end
   elseif op=='comm' then call=function() return tools.env.StartConversationFromMenu('default',tools.slot_lua(e[3])) end
   -- Missions and conversations (lockstep_ui_missions.h). mis_fixture: the test offer (MD native_gate_ui_replay.xml), canonical;
   -- the rest as the briefing menu, the map's mission list and the dialog call the stock entries.
@@ -902,8 +944,30 @@ function K.script(plan,start,tools)
      end
     end
     error('ui replay script: no hire menu open') end
+  -- A player's own inventory (each slot's player entity holds one; slot k's is reached in slot k's scope).
+  -- {tick,'inv_seed',slot,ware,amount}: test fixture, canonical: that slot's player gets the wares inside the slot's scope,
+  -- the same on every client; answers the player entity it reached and the amount before->after.
+  -- {tick,'inv_look',slot,ware}: canonical, read only: the slot's amount as its scope reads it.
+  -- {tick,'inv_read',ware}: this client's own amount as its menus read it (the presentation scope).
+  elseif op=='inv_seed' or op=='inv_look' then call=function()
+    local k=e[3]
+    if k~=1 and tools.gate.mpp_scope(k)~=1 then error('ui replay script: no scope for slot '..tostring(k)) end
+    local function amount() local item=(tools.env.GetPlayerInventory() or {})[e[4]];return item and item.amount or 0 end
+    local ok,result=pcall(function()
+      local _,who=pcall(function() return tostring(tools.C.GetPlayerID()) end)
+      local before=amount()
+      if op=='inv_seed' then tools.env.AddInventory(nil,e[4],e[5]) end
+      return 'slot='..tostring(k)..' player='..tostring(who)..' '..tostring(e[4])..'='..tostring(before)..(op=='inv_seed' and '->'..tostring(amount()) or '') end)
+    if k~=1 and tools.gate.mpp_unscope(k)~=1 then error('ui replay script: the scope of slot '..tostring(k)..' did not close') end
+    if not ok then error(result) end
+    return result end
+  elseif op=='inv_read' then call=function()
+    local _,who=pcall(function() return tostring(tools.C.GetPlayerID()) end)
+    local item=(tools.env.GetPlayerInventory() or {})[e[3]]
+    return 'player='..tostring(who)..' '..tostring(e[3])..'='..tostring(item and item.amount or 0) end
   elseif X4LAN_UI_TRADE and X4LAN_UI_TRADE.SCRIPT_OPS[op] then call=X4LAN_UI_TRADE.script_call(e,tools)   -- the trade family's ops
   elseif X4LAN_UI_FACTION and X4LAN_UI_FACTION.SCRIPT_OPS[op] then call=X4LAN_UI_FACTION.script_call(e,tools)   -- the faction family's ops
+  elseif X4LAN_UI_INVENTORY_CORE and X4LAN_UI_INVENTORY_CORE.SCRIPT_OPS[op] then call=X4LAN_UI_INVENTORY_CORE.script_call(e,tools)   -- the inventory family's
   else error('unknown ui replay script op '..tostring(op)) end
   by[at]=by[at] or {};by[at][#by[at]+1]={op=op,call=call,scoped=K.SCOPED[op] or nil,canonical=K.CANONICAL[op] or nil}
  end

@@ -42,6 +42,13 @@
  *          then run in slot k's scope like an accepted mission's, and the offer is not removed because slot 1 is
  *          elsewhere. The same rule gives an accepted mission's helper cues to its owner. Whoever accepts an offer takes it
  *          over (the nearest owner is the accepted offer cue). A full table drops the claims of cues that are gone.
+ *  story   a start's story for the player who took that start (native_gate_story; tools/dev/native_gate_session_start.py
+ *          story_files). The start script's root cue is a STATIC cue and runs as X4 wrote it; only its condition is the
+ *          session's own signal. gate.mpp_story(k, "<Script>.<Cue>"), inside slot k's call scope, names it: the next MD
+ *          frame of the cue with that path (the script RNG's cue identity, FNV-1a of the static path) claims the cue for
+ *          slot k, once, and runs as slot k's with everything below it. Not an instance of it: in an instance a name
+ *          that points at a cue of a branch not started yet is the static cue's, and the signal goes nowhere (st1, 11
+ *          Nov: "Signalled cue md.GS_Terran1.Ch1_2_Wingmate_Orders has no corresponding listeners").
  * Not yet: factions mode's rewards (C3),
  * per slot offers (C4), slot k's notifications on slot k's screen only (C6) and conversations (one manager per process).
  * Hot join: the table at T rides the package as the probe's 'missions_per_player' state (mpp_state on the saver,
@@ -59,6 +66,10 @@ static volatile LONG64 mpp_claims,mpp_claim_gone,mpp_full,mpp_frames,mpp_entered
                        mpp_leave_failed,mpp_calls,mpp_call_refused,mpp_generations,mpp_generated,mpp_pruned,mpp_created;
 static unsigned mpp_depth;        /* frames of the open scope's slot's own cues on the MD stack now */
 static unsigned mpp_generating;   /* the slot whose generic offers are being generated now (inside its scope), else 0 */
+static unsigned mpp_story_slot;   /* the slot whose start story is being begun now (inside its scope), else 0 */
+static uint64_t mpp_story_key;    /* ...and the path key of the static cue that begins it */
+static int mpp_story_missed;      /* the last ask claimed nothing (yet) */
+static volatile LONG64 mpp_story_asked,mpp_story_claimed;
 
 static unsigned mpp_owner_of(uint64_t cue_id) {
     for(unsigned i=0;i<mpp_count;i++) if(mpp_owners[i].cue==cue_id) return mpp_owners[i].slot;
@@ -202,19 +213,44 @@ static int mpp_generate(unsigned k) {
  * whose scope this frame entered (low byte, 0 none) and MPP_FRAME_OWNED when the frame is one of the open scope's slot's
  * own (counted in mpp_depth until it leaves). */
 #define MPP_FRAME_OWNED 0x100u
+/* gate.mpp_story(k, path): the static cue with this path is slot k's from its next frame on (inside slot k's call scope,
+ * one cue per ask). gate.mpp_story(0): the ask is over; 1 when its cue was claimed (or nothing was asked), 0 when no
+ * frame of that cue came or the cue was somebody's already. */
+static int mpp_story(unsigned k,const char *path) {
+    if(!k) {const int claimed=!mpp_story_missed;mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;return claimed;}
+    const size_t n=path?strlen(path):0;
+    if(!mpp_armed || k<2 || k>PILOT_SLOTS || pstk_scope_slot!=k || !n || n>=CUE_PATH_TEXT) return 0;
+    for(size_t i=0;i<n;i++) {
+        const char c=path[i];
+        if(!((c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_' || c=='.')) return 0;   /* as cue_encode leaves it */
+    }
+    mpp_story_key=cue_fnv(CUE_FNV_BASIS,path,n);mpp_story_slot=k;mpp_story_missed=1;InterlockedIncrement64(&mpp_story_asked);return 1;
+}
+/* The frame that answers an ask: this frame's cue has the asked path (script_rng_current is this frame, its identity the
+ * static cue's path key) and is nobody's yet. */
+static void mpp_story_frame(void *cue,unsigned scope) {
+    uint64_t id=0;uintptr_t vt=0;
+    if(scope!=mpp_story_slot || !script_rng_current || script_rng_current->id.owner!=mpp_story_key) return;
+    if(!cue || !sample_read(cue,&vt,8) || vt!=(uintptr_t)(image+SCRIPT_RNG_CUE_VT) || !sample_read((unsigned char*)cue+MPP_CUE_ID,&id,8) || !id) return;
+    if(!mpp_owner_of(id) && mpp_claim_id(mpp_story_slot,id)) {mpp_story_missed=0;InterlockedIncrement64(&mpp_story_claimed);}
+    mpp_story_slot=0;mpp_story_key=0;
+}
 static unsigned mpp_frame_enter(void *cue) {
     if(!mpp_armed) return 0;
     const unsigned scope=pstk_scope_slot;
+    if(mpp_story_slot) mpp_story_frame(cue,scope);
     if(!mpp_count) return 0;
     const unsigned k=mpp_slot_of(cue);
     if(k<2) return 0;   /* nobody's, or slot 1's: the canonical player as it is */
     InterlockedIncrement64(&mpp_frames);
-    if(scope==k) {InterlockedIncrement64(&mpp_inside);++mpp_depth;return MPP_FRAME_OWNED;}
+    /* The lines an owned frame starts are its owner's (lockstep_speech_local.h): client k hears them, the others do not. */
+    if(scope==k) {InterlockedIncrement64(&mpp_inside);++mpp_depth;spl_owner_enter(k);return MPP_FRAME_OWNED;}
     if(scope) {InterlockedIncrement64(&mpp_conflicts);return 0;}
     if(!pslots[k].player || !pslot_scope_begin(k,&pslots[k],"mission")) {InterlockedIncrement64(&mpp_refused);return 0;}
-    InterlockedIncrement64(&mpp_entered);++mpp_depth;return k|MPP_FRAME_OWNED;
+    InterlockedIncrement64(&mpp_entered);++mpp_depth;spl_owner_enter(k);return k|MPP_FRAME_OWNED;
 }
 static void mpp_frame_leave(unsigned code) {
+    if(code&MPP_FRAME_OWNED) spl_owner_leave();
     if((code&MPP_FRAME_OWNED) && mpp_depth) --mpp_depth;
     if((code&0xffu) && !pslot_leave(code&0xffu)) InterlockedIncrement64(&mpp_leave_failed);
 }
@@ -226,7 +262,7 @@ static int mpp_call_enter(unsigned k) {
     InterlockedIncrement64(&mpp_calls);return 1;
 }
 static int mpp_call_leave(unsigned k) {
-    mpp_generating=0;mpp_depth=0;
+    mpp_generating=0;mpp_depth=0;mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;
     if(pstk_scope_slot!=k || !pslot_leave(k)) {InterlockedIncrement64(&mpp_leave_failed);return 0;}
     return 1;
 }
@@ -325,15 +361,17 @@ static int mpp_arm(void) {
     if(mpp_armed) return 1;
     if(stats.issued) return 0;   /* before the first tick, as every module the probe arms */
     if(!mpp_hook_install()) return 0;
-    mpp_count=0;memset(mpp_active,0,sizeof(mpp_active));mpp_active_open=0;mpp_depth=0;mpp_generating=0;mpp_armed=1;return 1;
+    mpp_count=0;memset(mpp_active,0,sizeof(mpp_active));mpp_active_open=0;mpp_depth=0;mpp_generating=0;
+    mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;mpp_armed=1;return 1;
 }
 static int mpp_status(char *out,size_t cap) {
     return snprintf(out,cap,"armed=%d owners=%u hash=%016llx claims=%lld gone=%lld full=%lld frames=%lld entered=%lld inside=%lld "
         "conflicts=%lld refused=%lld calls=%lld call_refused=%lld leave_failed=%lld active=%llx/%llx/%llx swaps=%lld active_gone=%lld "
-        "shown=%lld/%lld/%llx generations=%lld generated=%lld/%lld pruned=%lld depth=%u hook=%d/%s",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
+        "shown=%lld/%lld/%llx generations=%lld generated=%lld/%lld pruned=%lld depth=%u hook=%d/%s story=%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
         (long long)mpp_claims,(long long)mpp_claim_gone,(long long)mpp_full,(long long)mpp_frames,(long long)mpp_entered,(long long)mpp_inside,
         (long long)mpp_conflicts,(long long)mpp_refused,(long long)mpp_calls,(long long)mpp_call_refused,(long long)mpp_leave_failed,
         (unsigned long long)mpp_active[2],(unsigned long long)mpp_active[3],(unsigned long long)mpp_active[4],(long long)mpp_active_swaps,
         (long long)mpp_active_gone,(long long)mpp_active_shown,(long long)mpp_active_shown_changed,(unsigned long long)mpp_active_shown_id,(long long)mpp_generations,(long long)mpp_generated,
-        (long long)mpp_created,(long long)mpp_pruned,mpp_depth,mpp_site_installed[0]+mpp_site_installed[1],mpp_hook_why);
+        (long long)mpp_created,(long long)mpp_pruned,mpp_depth,mpp_site_installed[0]+mpp_site_installed[1],mpp_hook_why,
+        (long long)mpp_story_asked,(long long)mpp_story_claimed);
 }

@@ -279,7 +279,7 @@ class TableTests(unittest.TestCase):
 
     def test_every_probe_key_is_classified(self):
         files = ('native_gate_crypto', 'native_gate_inputs_core', 'native_gate_relay', 'native_gate_tour', 'native_gate_ui_build_core',
-                 'native_gate_ui_replay_core', 'native_gate_join_core', 'native_gate_ffi_relay_core')   # file names the probe mentions, not keys
+                 'native_gate_ui_replay_core', 'native_gate_join_core', 'native_gate_ffi_relay_core', 'native_gate_ui_inventory_core')   # file names the probe mentions, not keys
         keys = set(re.findall(r'native_gate_[a-z0-9_]+', PROBE)) - set(files)
         known = set(defaults.ON_KEYS) | set(defaults.DIAGNOSTIC_KEYS) | set(defaults.EXCLUDED_KEYS) | set(defaults.TUNING_KEYS) | set(defaults.TABLE['session'])
         self.assertEqual(sorted(keys - known), [])
@@ -521,7 +521,7 @@ SESSION_LUA = ("{native_gate_test=true,test_profile='45841',slot='p1',port=12345
                "native_gate_player_identity_plan={mode='coop',occupied='player',reputation='mirror',slots={{faction='player',ship='00000000000ae79c'},"
                "{faction='player',ship='000000000007a8fe'}},tick=20,version=1}%s}")
 UI_FILES = ('native_gate_defaults.lua', 'native_gate_inputs_core.lua', 'native_gate_player_identity_core.lua', 'native_gate_player_identity.lua',
-            'native_gate_ui_replay_core.lua', 'native_gate_ui_build_core.lua')
+            'native_gate_ui_replay_core.lua', 'native_gate_ui_build_core.lua', 'native_gate_ui_inventory_core.lua')
 
 
 class ProbeTests(unittest.TestCase):

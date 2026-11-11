@@ -165,7 +165,10 @@ def main(argv=None):
                     help="slot K's own start (x4ls starts: player-start=yes); other slots start with slot 1")
     ns.add_argument('--omit', action='append', default=[], metavar='K=PART[,PART]',
                     help="parts slot K's start leaves out (inventory, reputation, blueprints, research, known; world: only "
-                         "that start's ship, place and kit, for a start x4ls starts lists as player-start=ship-only)")
+                         "that start's ship, place and kit, for a start x4ls starts lists as player-start=ship-only or ship+story)")
+    ns.add_argument('--story', default='', metavar='K[,K...]',
+                    help="slots whose start's own story (its missions) runs for that slot's player; for a start x4ls starts lists "
+                         'as player-start=ship+story, taken with --omit K=world. First form, in test')
     ns.add_argument('--gate-dll', type=Path, required=True)
     ns.add_argument('--out', type=Path, required=True, help='new session folder (spec, save, session.json, overlay)')
     ns.add_argument('--minutes', type=float, default=40)
@@ -219,6 +222,7 @@ def main(argv=None):
         result = newsession.new_session(newsession.NewSessionOptions(
             base_start=args.base_start, players=args.players, mode=args.mode, out=args.out, gate_dll=args.gate_dll,
             starts=slots(args.start, '--start'), omit=slots(args.omit, '--omit'), minutes=args.minutes, open=args.open,
+            story=tuple(int(k) for k in args.story.split(',') if k.strip()),
             sets=args.set, game=args.game, lanes=args.lanes, timeout=args.timeout, steam_fix=args.steam_fix))
         print(json.dumps(result, indent=2))
         return 0

@@ -42,6 +42,22 @@
     </do_else>
    </actions>
   </cue>
+  <!-- Test only (script op launch_stock, in every client's plan at the same tick): deployables into a slot ship's stock, so
+       a scripted run can launch them (the flight family's Launch* calls). has= is what the ship then holds. -->
+  <cue name="Stock" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'Stock'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$ship"/>
+    <do_if value="@$ship.isoperational and $ship.isclass.ship">
+     <set_value name="$macro" exact="macro.{event.param3.$macro}"/>
+     <add_ammo object="$ship" macro="$macro" amount="event.param3.$amount"/>
+     <debug_text text="'[X4LAN] UI_REPLAY_STOCK ship=%s macro=%s amount=%s has=%s time=%s'.[$ship.idcode, event.param3.$macro, event.param3.$amount, $ship.ammostorage.{$macro}.count, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_REPLAY_STOCK_REFUSED time=%s'.[player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
   <!-- Missions and conversations (native_gate_ui_replay missions, conversation; reports/LOCKSTEP-UI-MISSIONS-20261101.txt):
        a test offer whose client is a cue actor, made from the probe's frame at the same tick on every client (script op
        mis_fixture, in every client's plan). Slot 1's accept, briefing, active mission, abort and talk then arrive here on

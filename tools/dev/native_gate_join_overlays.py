@@ -310,6 +310,12 @@ def ids_sets(sets):
 #                                  XS ship's nav.refresh_time T against T+1 at the census of T+1, every tick a mismatch to
 #                                  the next census; the old "one timing-only item"). With it: 5 controllers held, census
 #                                  686 and the stamp hashes of 686..688 equal, the digest equal to the 1800 census
+#   native_gate_join_attn_leave    a level ATTN writes down from 9 or more is made by SetAttention from the load's level
+#                                  (hj8i, 11 Nov, ns8, T=696, the kit's join through the VPS and x4mods-b8's two runs: a
+#                                  fixture ship came up at attention 9 in the load where the session held 8, kept the
+#                                  interior nav helper the session had released, and the session alone built it at 700:
+#                                  the digest's nav mesh part apart from 701). With it: 1 call, the helper built at 700
+#                                  on both sides, digest 0 at the handover, the census of 697, 1800, 3600, 5400 equal
 #   native_gate_join_cue_ids       the joiner's loaded MD cue instances take the session's runtime IDs: the package's CUEI
 #                                  section 83 maps the save's cue ordinal to the live ID (the first form read the save's
 #                                  number as the ID and was wrong: hj31). hj32, 9 Nov, T=701, a mission accepted before the
@@ -326,7 +332,7 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids',
                    'native_gate_join_grav_dead', 'native_gate_join_body_make', 'native_gate_join_viewl',
                    'native_gate_join_anis', 'native_gate_join_anis_state', 'native_gate_join_hold_bullets',
-                   'native_gate_join_keep_stamps')
+                   'native_gate_join_keep_stamps', 'native_gate_join_attn_leave')
 
 
 def default_sets(sets):

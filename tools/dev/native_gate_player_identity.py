@@ -31,7 +31,9 @@ RELATION_KEYS = {'a', 'b', 'relation'}
 START_KEYS = {'object', 'sector', 'x', 'y', 'z', 'yaw'}
 # Per-player starts (kits): the player-level parts of slot k's stock start, applied at the setup tick
 # (tools/dev/native_gate_gamestarts.py resolves them; reports/LOCKSTEP-STARTS-20261101.txt).
-KIT_KEYS = {'slot', 'gamestart', 'money', 'reputation', 'blueprints', 'research', 'known', 'omitted'}
+KIT_KEYS = {'slot', 'gamestart', 'money', 'reputation', 'blueprints', 'research', 'known', 'omitted', 'inventory'}
+KIT_INVENTORY_KEYS = {'ware', 'amount'}
+KIT_AMOUNT_MAX = 1_000_000   # pieces of one inventory ware in a kit
 KIT_REPUTATION_KEYS = {'faction', 'value'}
 KIT_KNOWN_KEYS = {'sectors', 'faction', 'shipyards'}
 KIT_PARTS = ('blueprints', 'inventory', 'known', 'reputation', 'research')   # what a kit may leave out, by name
@@ -221,6 +223,25 @@ def _wares(r, key, factions):
     return list(wares)
 
 
+def _inventory(r):
+    """A kit's inventory: the wares the start gives its player, each once, ascending. They go to slot k's own player
+    entity in both modes (the probe adds them inside slot k's scope, native_gate_probe.lua pilot_view.kit_inventory)."""
+    rows = r.get('inventory', [])
+    if not isinstance(rows, list) or len(rows) > KIT_ITEMS:
+        raise Refused('kit_inventory')
+    out = []
+    for row in rows:
+        _keys(row, KIT_INVENTORY_KEYS, 'kit_inventory')
+        if not _ident(row.get('ware')):
+            raise Refused('kit_ware')
+        if not _int(row.get('amount'), 1, KIT_AMOUNT_MAX):
+            raise Refused('kit_amount')
+        out.append({'ware': row['ware'], 'amount': row['amount']})
+    if not _ascending([row['ware'] for row in out]):
+        raise Refused('kit_order')
+    return out
+
+
 def _kits(plan, P, n):
     """Per-player starts: slot k (2..n) takes the player-level parts of its own stock start; slot 1 plays the
     session base start (the save). Factions: money on slot k's own account, reputation of slot k's faction.
@@ -277,11 +298,12 @@ def _kits(plan, P, n):
         if (not isinstance(omitted, list) or not all(isinstance(o, str) and o in KIT_PARTS for o in omitted)
                 or not _ascending(omitted)):
             raise Refused('kit_omitted')
-        given = {'blueprints': blueprints, 'research': research, 'reputation': reputation, 'known': known}
+        inventory = _inventory(r)
+        given = {'blueprints': blueprints, 'research': research, 'reputation': reputation, 'known': known, 'inventory': inventory}
         if any(given.get(o) for o in omitted):
             raise Refused('kit_omitted_conflict')
         out.append({'slot': slot, 'gamestart': r['gamestart'], 'money': r['money'], 'reputation': reputation,
-                    'blueprints': blueprints, 'research': research, 'known': known, 'omitted': list(omitted)})
+                    'blueprints': blueprints, 'research': research, 'known': known, 'omitted': list(omitted), 'inventory': inventory})
     out.sort(key=lambda k: k['slot'])
     return out
 
@@ -303,7 +325,8 @@ def _kit_label(k):
     known = k['known']
     known = f"{known['faction'] or '-'}/{1 if known['shipyards'] else 0}/{'+'.join(known['sectors'])}" if known else '-'
     return (f"{k['slot']}:{k['gamestart']}:money={k['money']}:rep={rep}:bp={'+'.join(k['blueprints']) or '-'}"
-            f":rs={'+'.join(k['research']) or '-'}:known={known}:omit={'+'.join(k['omitted']) or '-'}")
+            f":rs={'+'.join(k['research']) or '-'}:known={known}:omit={'+'.join(k['omitted']) or '-'}"
+            + (':inv=' + '+'.join(f"{i['ware']}/{i['amount']}" for i in k['inventory']) if k['inventory'] else ''))   # kits without one keep their text
 
 
 def canonical(P):

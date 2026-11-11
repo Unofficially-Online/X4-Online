@@ -494,7 +494,7 @@ def pilot_foot_slots_rules(config_text, enabled):
 
 
 UI_REPLAY_FAMILIES = ('travel', 'target', 'orders', 'autopilot', 'dock', 'weapons', 'missiles', 'queue', 'events', 'flight', 'trade', 'missions', 'build',
-                      'assets', 'conversation', 'faction')
+                      'assets', 'conversation', 'faction', 'inventory')
 UI_GUARD_GROUPS = ('flight', 'orders', 'fleet', 'trade', 'faction', 'assets', 'build', 'conflict', 'missions', 'events', 'conversation',
                    'session', 'cheat', 'editor')   # lockstep_ui_guard.h, in its order
 

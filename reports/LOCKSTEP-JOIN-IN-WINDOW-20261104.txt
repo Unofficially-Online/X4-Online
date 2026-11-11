@@ -1857,3 +1857,42 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
   carries each agent's +0xf7b.
 - Tests: native tests pass (test_join_rcnt_kept: synthetic memory, two objects with a kept event each, the session's table
   holding the class for one of them). The real runs are X4 9.00 on Windows, two instances on one PC, play mode.
+67. A SHIP THAT CAME UP ONE ATTENTION LEVEL HIGHER: THE NAV HELPER OF LEVEL 9 (ns8 at T=696; 11 November)
+- Found by the playtest kit's join through the VPS (save at 696) and again in two runs of x4mods-b8 on one PC (ns8, slot 2,
+  builds st27 and st28): the join admitted, the census of 697 equal, then the per-tick digest apart from 701 for good in its nav
+  mesh part alone (sample, pilot, identity, runtime ID, input and world equal), every later census equal.
+- The rows (NAV_MESH_ROW, both logs of the st28 run): the session builds the interior nav helper of fixture ship 16fcd9 at tick
+  3, again at 700 and at 1557; the joiner builds eleven fixture helpers at 697 (its load's requests, left out of its fold as
+  helpers the session knows), 16fcd9 among them, nothing at 700, and 1557 as the session. The joiner's status at the admission:
+  attn_high=55 with 16fcd9:9>8 and thirteen of its parts 9>8: the ship came up at attention 9 in the joiner's load where the
+  session held 8. The package's ATTN record of the ship: level 8, the attention timer due at 30.3416 s, which is tick 699.
+- What level 9 is (static, X4.exe 9.00): SetAttention 0x3d5660 hands the level it leaves (+0x1ec) and the new one to the class
+  handler (vfunc 0x15e8; Positional 0x753480, Ship 0x7d5270). Going up to 9 or more, an object that owns its nav context asks
+  AI::NavMeshCache for its interior helper (0x75b3d0 -> 0x1087df0: the ID into the wanted set +0x330; the cache answers with the
+  helper its map +0xd0 holds and queues a build only when it holds none). Going down from 9 or more it releases the helper
+  (vfunc 0x1be8 -> 0x1088050: out of the wanted set and the map). A Ship also registers and unregisters itself with two more
+  owners at that boundary (0x10b2820 / 0x10b2d60) and removes some children on the way down (0x7d76f0). The build's publish
+  0x108c800 looks for the ID in the wanted set first: a build of a released ID is published nowhere and posts no event.
+  The per-level state (vfunc 688/689) is the same at 8 and at 9, so neither attn_set nor attn_states saw the two apart.
+- So: the session's ship had gone down to 8 before T (helper released) and was due back up at 699. The joiner's load made it at
+  9 and asked for the helper; ATTN wrote 8 into +0x1ec directly, the helper stayed wanted, was built and published at 697 (with
+  its NavHelperGeneratedEvent, which the session did not have); at 699 both sides went 8 -> 9 and asked: the session built at
+  700, the joiner's cache answered with the helper it had.
+- Fix (native_gate_join_attn_leave, with attn_set; in the join defaults): a level ATTN writes down from 9 or more to less than
+  9 (not to 1) is made by the native call instead: the load's level goes back into +0x1ec and SetAttention(object, the
+  session's level) runs the handler from it, under attn_set's care (its two PostEvent sites to the boot event hold's slot, the
+  due events it queued dropped unless the session's EVQT holds them, its shared allocations on the load list). The load's own
+  request is still in the cache's priority sets: its build runs at one of the joiner's first joins, is left out of the fold as
+  before and is not published. Status attn_leave=on:calls:loaded:drift.
+- Real run (ns8, slot 2, the save forced to 696, the option set by hand, the DLL of this commit): attn_leave=1:1:0:0 (the one
+  call is the ship's; its parts follow through X4's own propagation, attn_high 55 -> 42), the joiner's builds 697 (three), 698
+  (eight, 16fcd9 among them) and 700 (16fcd9, as the session), then 1347, 1557, 2296 on both; joined at 3411 with
+  digest_mismatches=0; the digest parts of 697..702 equal; the census of 697, 1800, 3600 and 5400 equal in all four roots.
+- Not done: the other direction. A load that comes up below 9 where the session holds 9 or more (17136d and three of its parts,
+  8>9, in every ns8 join so far) keeps the direct write: the joiner then lacks the helper the session has until the object
+  next crosses the boundary. No run shows a difference from it; the native call there would ask for a helper whose
+  NavHelperGeneratedEvent the session handled long before T, so it wants its own look first.
+- Tests: native tests pass (the leave path on synthetic memory: the call from the load's level whatever the per-level states
+  say, the level written back when the call leaves another, off / up to 9 / within one side of 9 / to level 1 unchanged).
+  The Linux gate check passes (the option is Windows-side: the Linux gate has no ATTN set). The real run is X4 9.00 on
+  Windows, two instances on one PC, play mode.

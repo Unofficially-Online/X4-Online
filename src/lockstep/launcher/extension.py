@@ -18,10 +18,19 @@ EXTENSION_ID = 'x4_lan_lab'
 BASE = Path(__file__).resolve().parents[1] / 'base'  # sha256.lua, player faction data, x4lan_net DLL
 BASE_UI = ['ui/sha256.lua']
 PLACEHOLDERS = ('@X4LANE_PORT@', '@X4LANE_TOKEN@', '@X4LANE_SLOT@', '@X4LANE_CLIENTS@')
-CONTENT = ('<?xml version="1.0" encoding="utf-8"?>\n'
-           '<content id="x4_lan_lab" name="X4 lockstep client" description="Disposable lockstep test client" '
-           'author="X4 lockstep" version="100" date="2026-11-01" save="false">\n'
-           '  <dependency version="900" />\n</content>\n')
+CONTENT_HEAD = ('<?xml version="1.0" encoding="utf-8"?>\n'
+                '<content id="x4_lan_lab" name="X4 lockstep client" description="Disposable lockstep test client" '
+                'author="X4 lockstep" version="100" date="2026-11-01" save="false">\n'
+                '  <dependency version="900" />\n')
+CONTENT = CONTENT_HEAD + '</content>\n'
+# A session with start stories (tools/dev/native_gate_session_start.py story_files: md/x4lan_story.xml and patches of the
+# stock extensions' start scripts under extensions/<extension>/) loads after those extensions. optional: only the order.
+STORY_MD = 'md/x4lan_story.xml'
+CONTENT_STORY = (CONTENT_HEAD
+                 + ''.join(f'  <dependency id="{name}" version="100" optional="true" />\n' for name in
+                           ('ego_dlc_split', 'ego_dlc_terran', 'ego_dlc_pirate', 'ego_dlc_boron', 'ego_dlc_timelines',
+                            'ego_dlc_mini_01', 'ego_dlc_mini_02'))
+                 + '</content>\n')
 
 
 def verify_overlay(overlay):
@@ -82,7 +91,7 @@ def compose(overlay, extensions, slot, port, token, clients, extra=None, config_
     config = config_text(overlay, slot, port, token, clients, profile_id=profile_id, config_tail=config_tail)
     for name, source in (extra or {}).items():
         shutil.copyfile(source, target / name)
-    (target / 'content.xml').write_text(CONTENT)
+    (target / 'content.xml').write_text(CONTENT_STORY if (overlay / STORY_MD).is_file() else CONTENT)
     (target / 'ui.xml').write_text(ui_xml([*BASE_UI, *(extra or {}), *files]))
     (target / 'ui/config.lua').write_text(config)
     return target

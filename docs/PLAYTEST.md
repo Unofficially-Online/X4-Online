@@ -55,13 +55,20 @@ python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <the same 
 - station construction
 - faction and player settings
 - walking on foot
+- your own inventory (11 Nov): every player has one; crafting and dropping items ran with two clients. Built the
+  same way but not run in the real game yet: an NPC trader's wares, the blueprint and licence trader, research,
+  terraforming, equipment mods for players 2 and up, the inventory your start brings (docs/PLAYERS.md has the
+  table and the runs)
 
 **Refused:** any other menu action that would change the world on one client only.
 
 - X4 shows an info line ("... refused" or "... is off during a lockstep session") and nothing happens.
 - Each refusal is one row in `errors.log`.
 - Pausing and saving are refused this way. The options menu and the ship configuration menu then open without
-  pausing.
+  pausing. Since 11 Nov the Pause key, F5 (quick save) and F9 (quick load) are refused too ("no pause, save or
+  load in a session"): in run inv1 the Pause key, which does not go through `Pause()`, stopped the pressing
+  client and the session stood still for everyone; in run inv2 all three keys were refused on both clients and
+  the session ran to its end in sync.
 - Why they are refused: X4's `Pause()` stops the gate on that client at once. In smoke play-sA (8 Nov), client 2
   paused at tick 900 and stopped with reason 3; the relay dropped it after 15 s and client 1 played on. A save
   pauses the same way. In smoke play-sB, with the refusal, the same `Pause()` left the game running and the session
@@ -79,7 +86,7 @@ forth.
 
 **Avoid:**
 
-- SETA (time acceleration) and the Pause key. Both are untested under the gate.
+- SETA (time acceleration): untested under the gate. (The Pause key is refused since 11 Nov, see above.)
 
 ## When something goes wrong
 
@@ -359,8 +366,12 @@ one hull per player start at its start position. It then registers the save and 
 player's start kit (money, reputation, blueprints, research and map) is applied at the setup tick on every
 client. It ends by printing the `x4ls play` line.
 
-In coop every player shares the wallet and the reputation, so a player start whose kit brings its own inventory or
-reputation is refused until you leave those parts out, for example `--omit 2=inventory,reputation`.
+In coop every player shares the wallet and the reputation, so a player start whose kit brings its own reputation is
+refused until you leave that part out, for example `--omit 2=reputation`. A start's inventory is the player's own in
+both modes: every player has an inventory of their own, and the start's wares are added to it eight ticks into the
+session, or twelve ticks after the hand-over for a player who joins later (a `KIT_INVENTORY` row on every client).
+`--omit 2=inventory` still leaves it out. Sessions built before 11 Nov left the inventory out by name and stay as they
+are until they are built again. Not run in the real game yet (11 Nov): only the mocked tests.
 
 Smoke ns1/ns2 (8 Nov): `--base-start x4ep1_gamestart_discover --players 2 --mode coop --start 2=x4ep1_gamestart_fight
 --omit 2=inventory,reputation`. The capture took 2.5 minutes. Both clients then played the 2-minute window in sync
@@ -384,7 +395,7 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
 
 - `--start` takes the first free open slot that plays that start; when another player has it, the next slot with
   the same start is asked.
-- Ship-only starts (`x4ls starts`: `player-start=ship-only`, chosen with `--omit K=world`): the player gets that
+- Ship-only starts (`x4ls starts`: `player-start=ship-only` or `ship+story`, chosen with `--omit K=world`): the player gets that
   start's ship with its loadout, its place and its money, not its story. The session's world is the host's start.
   With the stock game that makes seven starts a player can take: discover (Argon scout), fight (Paranid fighter),
   split2 (Split fighter), terran1 (Terran fighter), trade (Teladi scout, 200,000 Cr), intro and tutorial (Argon
@@ -539,8 +550,23 @@ steering, as in single player, and a gun turns as far as its mount allows.
   built.
 - **A story start as the session's own start:** the Terran cadet start can be captured since 11 Nov (X4 allows no save
   while the wingmate's first line plays; the capture waits for it). Its mission chain belongs to player 1. First hand-on
-  play: the step "replace the satellite" is blocked, deploying a satellite is refused (not a shared action yet).
-- **Not built yet:** per-player story missions (in progress).
+  play: the step "replace the satellite" was blocked, deploying a satellite was refused; deployables are shared since
+  11 Nov (the ship menu's and the map's deploy entries; the deploy keys stay refused).
+- **A start's story for the player who took that start, first form (11 Nov, by name):** until now only player 1 had a
+  start's story; a player in slots 2..N who took, say, the Terran cadet start got its ship and place and none of its
+  missions. `x4ls new-session ... --start K=<start> --omit K=world --story K` gives slot K the start's own script
+  (`x4ls starts`: `player-start=ship+story`): X4's script runs unchanged as that player, 60 ticks into the session (30
+  ticks after the join for a slot that joins). One story per start and session (the first slot with that start).
+  Run on 11 Nov (two X4 on one PC, discover as the session's start, slot 2 on the Terran cadet start, 3 minutes, the
+  same result twice): the cadet mission began for player 2 on both clients, was player 2's active mission and listed on
+  client 2 only, the wingmate's lines were spoken on client 2 only, and it went from part 1 to part 2 when player 2's
+  ship reached the satellite, at the same game time on both clients; 0 desyncs, world checks equal at every check.
+  Not shown yet: a slot that joins a running session, any start but the Terran cadet, a person playing it through.
+  What the cadet chain still needs for a player 2..N after the first parts: leaving the ship in a spacesuit and the
+  repair laser, long-range scan (the scan's charge runs in a per-frame update only player 1 has), and help texts,
+  notifications and music of a story on its owner's screen only (they show on every client today).
+- **Not built yet:** stories other scripts run for the whole game (the HQ, faction plots) per player; they stay the
+  session's (player 1's).
   - Personal missions per player, first form (9 Nov, on by default; `--set native_gate_missions_per_player=false`
     turns it off): a mission player 2 accepts is player 2's on every client. Its script sees player 2, their ship and their sector
     (mpp1: 900 ticks, 0 desyncs).

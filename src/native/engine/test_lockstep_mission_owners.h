@@ -114,6 +114,33 @@ static void test_mission_owners(void) {
         /* an instance already linked under an owned tree needs no claim of its own */
         {const unsigned count=mpp_count;code=mpp_frame_enter(roots[0]);mpp_created_root(child);
          assert(mpp_count==count && !mpp_owner_of(0x77710) && mpp_slot_of(child)==2);mpp_frame_leave(code);}
+        /* A start's story: gate.mpp_story(k, path) inside slot k's scope; the next frame of the cue with that path (the script
+         * RNG's cue identity of the frame) claims it for slot k, once; another cue's frame, another scope and an owned cue
+         * do not answer; the call's end drops an ask nobody answered. */
+        {   script_rng_frame frame,*const current_was=script_rng_current;memset(&frame,0,sizeof(frame));
+            const uint64_t key=cue_fnv(CUE_FNV_BASIS,"GS_Terran1.Start",16);
+            assert(!mpp_story(1,"GS_Terran1.Start") && !mpp_story(2,"") && !mpp_story(2,NULL) && !mpp_story(2,"a b") && !mpp_story(2,"a%20b"));
+            pstk_scope_slot=3;assert(!mpp_story(2,"GS_Terran1.Start"));pstk_scope_slot=2;
+            assert(mpp_story(0,NULL)==1);                                          /* nothing asked: nothing lost */
+            assert(mpp_story(2,"GS_Terran1.Start") && mpp_story_slot==2 && mpp_story_key==key && mpp_story_asked==1);
+            script_rng_current=&frame;frame.id.owner=key^1u;
+            {unsigned c=mpp_frame_enter(roots[3]);assert(!c && !mpp_owner_of(0x77703) && mpp_story_slot==2);mpp_frame_leave(c);}   /* another cue */
+            frame.id.owner=key;pstk_scope_slot=3;
+            {unsigned c=mpp_frame_enter(roots[3]);assert(!c && !mpp_owner_of(0x77703) && mpp_story_slot==2);mpp_frame_leave(c);}   /* another scope */
+            pstk_scope_slot=2;script_rng_current=NULL;
+            {unsigned c=mpp_frame_enter(roots[3]);assert(!c && mpp_story_slot==2);mpp_frame_leave(c);}                          /* no frame identity */
+            script_rng_current=&frame;
+            {unsigned c=mpp_frame_enter(roots[3]);                                  /* the cue: claimed, and this very frame is slot 2's */
+             assert(c==MPP_FRAME_OWNED && mpp_owner_of(0x77703)==2 && !mpp_story_slot && mpp_story_claimed==1 && mpp_depth==1);mpp_frame_leave(c);}
+            assert(mpp_story(0,NULL)==1);                                          /* answered */
+            assert(mpp_story(2,"GS_Terran1.Start"));
+            {unsigned c=mpp_frame_enter(roots[2]);assert(mpp_owner_of(0x77702)==3 && !mpp_story_slot && mpp_story_claimed==1);mpp_frame_leave(c);}  /* slot 3's stays slot 3's */
+            assert(mpp_story(0,NULL)==0);                                          /* ...and the ask claimed nothing */
+            assert(mpp_story(2,"X.Y") && mpp_story(0,NULL)==0 && !mpp_story_slot);  /* no frame of that cue came */
+            assert(mpp_story(0,NULL)==1);
+            script_rng_current=current_was;mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;mpp_story_asked=mpp_story_claimed=0;
+            for(unsigned i=0;i<mpp_count;i++) if(mpp_owners[i].cue==0x77703) {mpp_owners[i]=mpp_owners[--mpp_count];break;}
+        }
         /* another slot's scope with slot 2's generation left open (a call that failed): nothing */
         mpp_generating=2;pstk_scope_slot=3;mpp_created_root(roots[3]);assert(!mpp_owner_of(0x77703));
         pstk_scope_slot=0;mpp_created_root(roots[3]);assert(!mpp_owner_of(0x77703));

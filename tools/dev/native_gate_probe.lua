@@ -301,6 +301,8 @@ local join_client,join_joiner,join_restored
 local pilot_handover_dump={}
 local hud_refresh_at={}   -- ticks at which every client raises the HUD's ship-changed event (pilot_view.hud_ship_changed)
 local join_money_at={}    -- tick -> slot whose held start money goes back to the coop wallet (pilot_view.join_money)
+local story_at={}         -- tick -> slot whose start story begins (pilot_view.story): 30 ticks after its handover
+local kit_inventory_at={} -- tick -> slot whose start inventory goes to its own player (pilot_view.kit_inventory): 12 ticks after its handover
 if cfg.native_gate_join then
  local j=cfg.native_gate_join==true and {} or cfg.native_gate_join
  assert(type(j)=='table' and wire3 and cfg.native_gate_lookahead~='adaptive' and not cfg.native_gate_wire_crypto and not cfg.native_gate_peer_window,
@@ -442,6 +444,10 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_shoot_far then   -- SHOOT writes the session's last shot time where a load's reset left the joiner's far
   assert(gate.join_shoot_far and gate.join_shoot_far(1)==1,'join shoot far refused')
  end
+ if cfg.native_gate_join_attn_leave then   -- with attn_set: a level written down from 9 or more goes through SetAttention (attn_leave=)
+  assert(cfg.native_gate_join_attn_set,'native_gate_join_attn_leave needs native_gate_join_attn_set')
+  assert(gate.join_attn_leave and gate.join_attn_leave(1)==1,'join attn leave refused')
+ end
  if cfg.native_gate_join_attn_states then   -- with attn_set: every per-level state ATTN leaves apart, at any level (attn_states=)
   assert(cfg.native_gate_join_attn_set,'native_gate_join_attn_states needs native_gate_join_attn_set')
   assert(gate.join_attn_states and gate.join_attn_states(1)==1,'join attn states refused')
@@ -574,6 +580,8 @@ if cfg.native_gate_join then
     assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
     hud_refresh_at[h+10]=true   -- the joiner presents its slot from H: its HUD takes its ship (every client, the same tick)
     join_money_at[h+10]=k       -- ...and in coop its start's money reaches the shared wallet now (pilot_view.join_money)
+    kit_inventory_at[h+12]=k    -- ...and its start's inventory its own player (pilot_view.kit_inventory)
+    if type(cfg.native_gate_story)=='table' and cfg.native_gate_story[k] then story_at[h+30]=k end   -- ...and its start's story begins
     if cfg.native_gate_pilot_dump_handover then pilot_handover_dump.k,pilot_handover_dump.h=k,h end
     -- native_gate_nav_refresh_watch_handover = N: the watch's window to H-N..H+N, now that H is known
     if cfg.native_gate_nav_refresh_watch_handover and cfg.native_gate_nav_refresh_watch~=nil then
@@ -2638,6 +2646,10 @@ function pilot_view.arm_ui_replay(slot,window)
    'bool RemoveOrder(UniverseID,size_t,bool,bool);','void SetGuidance(UniverseID,UIPosRot);','void EndGuidance(void);',
    'void ShowInfoLine(const char*,uint32_t);','void ToggleFlightAssist(void);','void AddPlayerMoney(int64_t);',
    'void CycleTurretMode(size_t);','void CycleTurretMissile(size_t);','void ToggleDrones(uint32_t);','void CycleNextDroneMode(uint32_t);',
+   'void LaunchSatellite(UniverseID,const char*);','void LaunchNavBeacon(UniverseID,const char*);','void LaunchResourceProbe(UniverseID,const char*);',
+   'void LaunchMine(UniverseID,const char*);','void LaunchLaserTower(UniverseID,const char*);',
+   'void SetAllTurretModes(UniverseID,const char*);','void SetAllTurretsArmed(UniverseID,bool);','void SetAllDronesArmed(UniverseID,bool);',
+   'bool DropCargo(UniverseID,const char*,uint32_t);',
    -- missions (lockstep_ui_missions.h): the stock menus declare them with MissionID, the same 64-bit value
    'void AbortMission(uint64_t);','bool SetActiveMission(uint64_t);','void StartBriefing(uint64_t,const char*,bool);','void StopBriefing(uint64_t,bool);',
    'void MissionBriefingInteractButtonClicked(uint64_t);','uint64_t GetActiveMissionID(void);','uint32_t GetNumCurrentMissionOffers(bool);',
@@ -2717,7 +2729,7 @@ function pilot_view.arm_ui_replay(slot,window)
   end
   return out
  end
- local tools={gate=gate,C=ffi.C,env=_G,own_slot=slot,
+ local tools={gate=gate,C=ffi.C,ffi=ffi,env=_G,own_slot=slot,
   slot_id=function(s) return ffi.new('UniverseID',(assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved'))) end,  -- one value: assert returns its message too
   slot_lua=function(s) return ConvertStringToLuaID(string.format('%.0f',(assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved')))) end,
   saved_id=function(saved) return ConvertStringTo64Bit((assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved'))) end,
@@ -2763,6 +2775,8 @@ function pilot_view.arm_ui_replay(slot,window)
   offers=cfg.native_gate_missions_per_player==true and cfg.native_gate_missions_per_player_offers~=false and
    pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);') and
    {first=window[1]+450,every=5400,stagger=90,galaxy=function() return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID())) end} or nil,
+  galaxy=pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);') and function() return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID())) end or nil,
+  story=cfg.native_gate_story,   -- {[k]='<Script>.<Cue>'}: the start script's cue that begins slot k's story (S.slot_story)
   notify=function(text) ffi.C.ShowInfoLine(text,4) end,   -- every refusal of the families shows its info line (also without the guard)
   active_mission=missions_on and function() return (tostring(ffi.C.GetActiveMissionID()):gsub('ULL$','')) end or nil,
   menus=function() return type(Menus)=='table' and Menus or {} end}
@@ -2782,6 +2796,36 @@ function pilot_view.arm_ui_replay(slot,window)
      assert(gate.mpp_restore(text)==1,'join: missions per player refused the saver table '..tostring(text):sub(1,120))
      log('MISSIONS_PER_PLAYER_RESTORED '..tostring(gate.mpp_status()))
     end)
+  end
+ end
+ -- The inventory family (native_gate_ui_inventory_core.lua): a player's own inventory, the stock craft and trader buttons as
+ -- one event of the slot each, run on every client inside that slot's scope (slots 2+: missions per player gives the scope).
+ if math.floor(mask/core.FAMILY.inventory)%2==1 then
+  local icore=assert(X4LAN_UI_INVENTORY_CORE,'ui inventory refused: core missing (ui/native_gate_ui_inventory_core.lua)')
+  for _,line in ipairs({'UniverseID GetPlayerOccupiedShipID(void);','UniverseID GetPlayerID(void);',
+    'typedef struct { const char* wareid; int32_t amount; } UIWareAmount;',
+    'bool DropInventory(UniverseID entityid, const char* lockboxid, UIWareAmount* wares, uint32_t numwares);',
+    'void AddPlayerMoney(int64_t money);','void LearnBlueprint(const char* wareid);','void StartResearch(const char* wareid, UniverseID researchmoduleid);',
+    'void ClearProductionItems(UniverseID productionmoduleid);','bool CanStartTerraformingProject(UniverseID clusterid, const char* projectid);',
+    'void StartTerraformingProject(UniverseID clusterid, const char* projectid);','bool CanAbortActiveTerraformingProject(UniverseID clusterid);',
+    'void AbortActiveTerraformingProject(UniverseID clusterid);'}) do pcall(ffi.cdef,line) end
+  -- The menu's Drop (the FFI export DropInventory) is captured in the UI guard's hook: without the guard it stays refused
+  -- by nobody and local, so the family asks for the guard.
+  assert(guard,'ui inventory refused: needs native_gate_ui_guard')
+  assert(gate.ui_inventory,'ui inventory refused: gate without ui_inventory')
+  local claimed,claim_why=gate.ui_inventory()
+  assert(claimed==1,'ui inventory refused: '..tostring(claim_why))
+  local plan_cfg=cfg.native_gate_player_identity_plan
+  local factions=type(plan_cfg)=='table' and plan_cfg.mode~=nil and plan_cfg.mode~='coop'
+  S.inventory=icore.session{gate=gate,C=ffi.C,ffi=ffi,env=_G,log=ticklog.write,replay=S,own_slot=slot,factions=factions,
+   trade=math.floor(mask/core.FAMILY.trade)%2==1,mpp=cfg.native_gate_missions_per_player==true,
+   notify=function(text) ffi.C.ShowInfoLine(text,4) end,menus=function() return type(Menus)=='table' and Menus or {} end}
+  log('UI_INVENTORY_ARMED slot='..slot..' factions='..tostring(factions)..' mpp='..tostring(cfg.native_gate_missions_per_player==true))
+  -- Hot join: the gate's own player entities of slots 2..N are in no save; what each holds at T rides the package and
+  -- the joiner gives it to its own new entities before any event of the family runs.
+  if X4LAN_JOIN_CORE then
+   X4LAN_JOIN_CORE.provide('inventory',function() return S.inventory.join_state(#cfg.native_gate_pilot_slots) end,
+    function(text) S.inventory.join_restore(text) end)
   end
  end
  -- The build and assets families (native_gate_ui_build_core.lua, lockstep_ui_build.h; default off): claims on the guard's
@@ -2856,14 +2900,66 @@ function pilot_view.join_money(slot,hold,why)
  raise('X4LAN_Hud','JoinMoney',{slotname=tostring(slot),hold=hold,credits=credits})
  log('JOIN_MONEY slot='..slot..' hold='..hold..' credits='..credits..' why='..tostring(why))
 end
+-- A start's inventory for the player who took that start (the identity plan's kit.inventory, written by the session start
+-- tool unless the part is left out by name). Every client, the same tick: eight ticks into the pilot window for a slot that
+-- is there from the start, twelve ticks after its handover for a slot that joins. The wares go to slot k's own player
+-- entity: X4's AddInventory takes "the player" from the universe's player singleton, which is slot k's player inside slot
+-- k's scope (missions per player's call scope, gate.mpp_scope). Without that scope nothing is added and the row says so.
+function pilot_view.kit_inventory(tick,slot,why)
+ local plan=cfg.native_gate_player_identity_plan
+ if type(plan)~='table' or type(plan.kits)~='table' then return end
+ local kit
+ for _,k in ipairs(plan.kits) do if k.slot==slot then kit=k end end
+ if not kit or type(kit.inventory)~='table' or #kit.inventory==0 then return end
+ local head='KIT_INVENTORY tick='..tick..' slot='..slot..' why='..tostring(why)..' wares='..#kit.inventory
+ if not (gate.mpp_scope and gate.mpp_scope(slot)==1) then
+  ticklog.loud('KIT_INVENTORY_REFUSED',head..' refused=no_scope','start inventory of player '..slot..' could not be given (no scope of its own)')
+  return
+ end
+ local rows={}
+ local ok,err=pcall(function()
+  for _,item in ipairs(kit.inventory) do AddInventory(nil,item.ware,item.amount) end
+  local now=GetPlayerInventory() or {}
+  for _,item in ipairs(kit.inventory) do rows[#rows+1]=item.ware..'='..tostring(now[item.ware] and now[item.ware].amount or 0) end
+ end)
+ assert(gate.mpp_unscope(slot)==1,'kit inventory: the scope of slot '..slot..' did not close')
+ log(head..' applied='..(ok and 1 or 0)..' now='..table.concat(rows,',')..(ok and '' or ' error='..tostring(err)))
+end
+-- A start's story for the player who took that start (native_gate_story = {[k]='<Script>.<Cue>'}, written by the session
+-- overlay for every slot 2..N whose start has a story; the session start tool's story_files). Every client,
+-- the same tick: 60 ticks into the pilot window for a slot that is there from the start, 30 ticks after its handover for
+-- a slot that joins. The start script's cue gets its signal in slot k's scope and the gate claims it for slot k there
+-- (lockstep_mission_owners.h 'story'), so the story's player is slot k's player on every client.
+function pilot_view.story(tick,slot,why)
+ local S=pilot_view.ui_replay
+ if not (S and S.slot_story) then log('MPP_STORY tick='..tick..' slot='..slot..' why='..tostring(why)..' refused=no_ui_replay');return end
+ S.slot_story(tick,slot,why)
+end
 local function pilot_frame(s,tick)
  if cfg.native_gate_pilot_block_orders then block_orders() end
+ do
+  local w,stories,join=cfg.native_gate_pilot_window,cfg.native_gate_story,cfg.native_gate_join
+  if type(stories)=='table' then
+   if type(w)=='table' and tick==w[1]+60 then
+    local open={}
+    for _,k in ipairs(type(join)=='table' and type(join.absent)=='table' and join.absent or {}) do open[k]=true end
+    for k=2,PILOT_SLOTS_MAX do if stories[k] and not open[k] then pilot_view.story(tick,k,'window') end end
+   end
+   if story_at[tick] then local k=story_at[tick];story_at[tick]=nil;pilot_view.story(tick,k,'handover') end
+  end
+ end
  do
   local w,join=cfg.native_gate_pilot_window,cfg.native_gate_join
   if type(w)=='table' and tick==w[1]+5 and type(join)=='table' and type(join.absent)=='table' then
    for _,k in ipairs(join.absent) do pilot_view.join_money(k,1,'open') end
   end
   if join_money_at[tick] then local k=join_money_at[tick];join_money_at[tick]=nil;pilot_view.join_money(k,0,'handover') end
+  if type(w)=='table' and tick==w[1]+8 then
+   local open={}
+   for _,k in ipairs(type(join)=='table' and type(join.absent)=='table' and join.absent or {}) do open[k]=true end
+   for k=2,PILOT_SLOTS_MAX do if not open[k] then pilot_view.kit_inventory(tick,k,'window') end end
+  end
+  if kit_inventory_at[tick] then local k=kit_inventory_at[tick];kit_inventory_at[tick]=nil;pilot_view.kit_inventory(tick,k,'handover') end
  end
  -- ten ticks into the pilot window (every client presents its slot by then) and ten ticks after a hot join's handover
  do
@@ -2961,7 +3057,10 @@ local function pilot_frame(s,tick)
   local refusals=gate.pilot_native_refusals()
   for item in (refusals or ''):gmatch('[^,]+') do
    local at,kind,id,name,value=item:match('^(%d+):(%a+):(0x%x+):([%w_?]+):(%-?%d+)$')
+   -- Pause, quick save, quick load and the save and load menus are no part of a session: their own line.
+   local session_key=name=='PAUSE' or name=='QUICKSAVE' or name=='QUICKLOAD' or name=='SAVEGAMEMENU' or name=='LOADGAMEMENU'
    ticklog.loud_every('PILOT_NATIVE_REFUSED','tick='..tostring(at)..' kind='..tostring(kind)..' id='..tostring(id)..' input='..tostring(name)..' value='..tostring(value),
+    session_key and 'Multiplayer: no pause, save or load in a session - nothing happened' or
     'flight input '..tostring(name)..' is not shared yet - nothing happened',tonumber(at),90)
   end
  end

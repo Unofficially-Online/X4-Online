@@ -44,7 +44,8 @@ static int lua_ui_replay_push(lua_State *L) {
     int queue=(op==UIREP_OP_QUEUE_PARAM || op==UIREP_OP_QUEUE_LIST) && (uirep_families&UIREP_FAMILY_QUEUE);
     int events=op==UIREP_OP_LUA_GLOBAL && (uirep_families&UIREP_FAMILY_EVENTS) && (pstk_capture_slot==1 || mpp_armed);   /* slot 1, every slot with missions per player */
     int trade=op==UITRADE_OP_LUA && (uirep_families&UIREP_FAMILY_TRADE);   /* any slot: its own faction pays */
-    if(!accept_ui() || !uirep_armed || (op!=UIREP_OP_LUA_CALL && !queue && !events && !trade)) {p_lua_pushnumber(L,0);return 1;}
+    int inventory=op==UIINV_OP_CLICK && (uirep_families&UIREP_FAMILY_INVENTORY) && (pstk_capture_slot==1 || mpp_armed);   /* a slot's own scope */
+    if(!accept_ui() || !uirep_armed || (op!=UIREP_OP_LUA_CALL && !queue && !events && !trade && !inventory)) {p_lua_pushnumber(L,0);return 1;}
     if(length>2*UIREP_EVENT_MAX) {uirep_note_refusal(uirep_op_name((unsigned)op),"too_long");p_lua_pushnumber(L,0);return 1;}
     if(!pstk_unhex(text,length,data,sizeof(data),&n)) {uirep_note_refusal(uirep_op_name((unsigned)op),"encoding");p_lua_pushnumber(L,0);return 1;}
     p_lua_pushnumber(L,uirep_push((unsigned)op,data,n));return 1;

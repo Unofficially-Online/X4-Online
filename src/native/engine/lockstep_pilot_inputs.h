@@ -102,7 +102,8 @@ enum {UIREP_FAMILY_TRAVEL=1,UIREP_FAMILY_TARGET=2,UIREP_FAMILY_ORDERS=4,UIREP_FA
     UIREP_FAMILY_BUILD=4096,UIREP_FAMILY_ASSETS=8192,   /* lockstep_ui_build.h */
     UIREP_FAMILY_CONVERSATION=16384,                    /* lockstep_ui_missions.h */
     UIREP_FAMILY_FACTION=32768,                         /* lockstep_ui_faction.h (the last bit the guard's 16-bit 'covered' holds) */
-    UIREP_FAMILIES=1023|1024|2048|4096|8192|16384|32768};  /* the implemented ones (bits and ops: docs/LOCKSTEP-REGISTRY.txt) */
+    UIREP_FAMILY_INVENTORY=524288,                      /* native_gate_ui_inventory_core.lua: Lua-run, op UIINV_OP_CLICK (no 'covered' bit) */
+    UIREP_FAMILIES=1023|1024|2048|4096|8192|16384|32768|524288};  /* the implemented ones (bits and ops: docs/LOCKSTEP-REGISTRY.txt) */
 /* Absent slots (hot join: lockstep_join.h, reports/LOCKSTEP-HOTJOIN-20261101.txt section 8). A slot the session config
  * names absent (native_gate_join.absent, the relay's --absent; never slot 1) has nobody at it: its rows are the relay's
  * stand-ins, which carry no record. Until its handover it is neutral on every client: no record is required or accepted,
