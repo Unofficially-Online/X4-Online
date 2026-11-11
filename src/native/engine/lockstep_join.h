@@ -722,7 +722,7 @@ typedef struct {uint64_t runtime;uint32_t ordinal,reserved;} join_cuei_rec;
  * keys of the first JOIN_ANIS_KEYS stages (a stage's +0x00, a hash of its name: the same in every process; 0 past the queue),
  * the key of the unit's state (unit +0x28 -> +0x00) and of the state it enters next (+0x30), 0 without one; pending: the
  * listeners waiting in the unit (ANIL). Sorted by (portable, part), each once. */
-#define JOIN_ANIS_KEYS 4u
+#define JOIN_ANIS_KEYS 8u
 typedef struct {uint64_t portable;uint32_t part;uint16_t stages;uint8_t flags,pending;uint32_t first,sig;uint64_t start,w70,w78,w80,keys[JOIN_ANIS_KEYS],state,next;} join_anis_rec;
 /* ANIL (v13, section 85): a listener waiting in a sequence's unit (unit +0x40..+0x48; lockstep_join_world.h): the object, the
  * part, its place in the unit's list, its class (the vtable's RVA; 0 unread), its flag byte (+0x20) and the component it names
@@ -739,7 +739,7 @@ typedef struct {uint64_t portable;uint32_t which,pad;unsigned char data[JOIN_OMG
 _Static_assert(sizeof(join_splm_rec)==1264 && sizeof(join_splme_rec)==192 && sizeof(join_gravn_rec)==32 && sizeof(join_gravp_rec)==80 &&
                sizeof(join_gravq_rec)==48 && sizeof(join_jobe_rec)==128 && sizeof(join_evqt_rec)==32 &&
                sizeof(join_gravd_rec)==24 && sizeof(join_viewk_rec)==24 && sizeof(join_viewkc_rec)==24 &&
-               sizeof(join_viewf_rec)==24 && sizeof(join_viewp_rec)==72 && sizeof(join_shoot_rec)==104 && sizeof(join_attk_rec)==48 && sizeof(join_livef_rec)==16 && sizeof(join_spec_rec)==40 && sizeof(join_navc_rec)==104 && sizeof(join_jobs_rec)==24 && sizeof(join_gone_rec)==8 && sizeof(join_body_rec)==208 && sizeof(join_bupd_rec)==16 && sizeof(join_ldc_rec)==128 && sizeof(join_navt_rec)==128 && sizeof(join_nmesh_rec)==8 && sizeof(join_noct_rec)==40 && sizeof(join_agtt_rec)==32 && sizeof(join_agcb_rec)==1032 && sizeof(join_pbnk_rec)==376 && sizeof(join_pend_rec)==16 && sizeof(join_gravb_rec)==24 && sizeof(join_viewl_rec)==16 && sizeof(join_ikv_rec)==40 && sizeof(join_rcnt_rec)==16 && sizeof(join_ecos_rec)==24 && sizeof(join_shpw_rec)==56 && sizeof(join_trdn_rec)==16 && sizeof(join_npca_rec)==64 && sizeof(join_jobg_rec)==16 && sizeof(join_code_rec)==8 && sizeof(join_engr_rec)==24 && sizeof(join_shgr_rec)==40 && sizeof(join_bnds_rec)==216 && sizeof(join_omgs_rec)==8776 && sizeof(join_resv_rec)==144 && sizeof(join_conn_rec)==32 && sizeof(join_warp_rec)==88 && sizeof(join_ares_rec)==224 && sizeof(join_lstn_rec)==40 && sizeof(join_undk_rec)==224 && sizeof(join_srcs_rec)==40 && sizeof(join_fobj_rec)==32 && sizeof(join_cuei_rec)==16 && sizeof(join_anis_rec)==104 && sizeof(join_anil_rec)==32,
+               sizeof(join_viewf_rec)==24 && sizeof(join_viewp_rec)==72 && sizeof(join_shoot_rec)==104 && sizeof(join_attk_rec)==48 && sizeof(join_livef_rec)==16 && sizeof(join_spec_rec)==40 && sizeof(join_navc_rec)==104 && sizeof(join_jobs_rec)==24 && sizeof(join_gone_rec)==8 && sizeof(join_body_rec)==208 && sizeof(join_bupd_rec)==16 && sizeof(join_ldc_rec)==128 && sizeof(join_navt_rec)==128 && sizeof(join_nmesh_rec)==8 && sizeof(join_noct_rec)==40 && sizeof(join_agtt_rec)==32 && sizeof(join_agcb_rec)==1032 && sizeof(join_pbnk_rec)==376 && sizeof(join_pend_rec)==16 && sizeof(join_gravb_rec)==24 && sizeof(join_viewl_rec)==16 && sizeof(join_ikv_rec)==40 && sizeof(join_rcnt_rec)==16 && sizeof(join_ecos_rec)==24 && sizeof(join_shpw_rec)==56 && sizeof(join_trdn_rec)==16 && sizeof(join_npca_rec)==64 && sizeof(join_jobg_rec)==16 && sizeof(join_code_rec)==8 && sizeof(join_engr_rec)==24 && sizeof(join_shgr_rec)==40 && sizeof(join_bnds_rec)==216 && sizeof(join_omgs_rec)==8776 && sizeof(join_resv_rec)==144 && sizeof(join_conn_rec)==32 && sizeof(join_warp_rec)==88 && sizeof(join_ares_rec)==224 && sizeof(join_lstn_rec)==40 && sizeof(join_undk_rec)==224 && sizeof(join_srcs_rec)==40 && sizeof(join_fobj_rec)==32 && sizeof(join_cuei_rec)==16 && sizeof(join_anis_rec)==136 && sizeof(join_anil_rec)==32,
                "join v12 record layout (native_gate_join.py)");
 typedef struct {
     uint64_t tick,game,real;uint32_t wire_version,clients,lookahead,tick_hz,slot,md_seq;uint64_t rid_next,created_generation;
@@ -2051,6 +2051,7 @@ static const join_pin join_pin_table[]={
     {0x3d5660,0x64,"8e948a0788bbacca91415cb51e228e73bc416c608d2398b07f05312fb19b56eb"},  /* SetAttention */
     {0x116a1f0,0xf5,"e094b23d8f4910001c2f058a997727102fb6823fe38a8ae39c9e7fee07883ea8"},  /* SequenceControlUnit: a state entered (join_anis_restate) */
     {0x999ef0,0xa8,"c2763f6b67b945333fd182b132c6bccc7f0fb9189298ea9179369e85b4d94d66"},   /* a listener off its source's events (the same) */
+    {0xcb8c0,0x65,"b2f9352e8770022e5f4f53684e661cddb5b653ecf1ef4987d5d94d27acc1dee9"},    /* a pointer appended to a small vector (a sequence's queue; join_anis_restate) */
     {0x116a4e0,0x3a,"7abac26436d7c1538f1882d1732961c72bf80361e7536c4ec1d98e4d702dd252"},  /* SequenceControlUnit vtable +0x58: a waiting listener added (ANIL) */
     {0x116e130,0x5c,"2f107538017d7aff9be0d11b6d249ff22070cd63b60339ce1eb2ca5455f19d41"},  /* CockpitStateListener's constructor (ANIL) */
     {0x116e5e0,0x5c,"69da7f3e0449a84b115dc6b8351f61f3e486e825df606b0a2b42d32b63612630"},  /* DockingBayFenceStateListener's constructor (ANIL) */
@@ -4067,7 +4068,7 @@ static int join_status(char *out,size_t cap) {
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
-        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u"
+        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anis_why=%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
@@ -4121,6 +4122,8 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_anis_kind[4],join_anis_refused,
         join_anis_state_on,(unsigned long long)join_anis_restated,(unsigned long long)join_anis_requeued,(unsigned long long)join_anis_unplaced,
         (unsigned long long)join_anis_drift,(unsigned long long)join_anis_ids,
+        (unsigned long long)join_anis_why[0],(unsigned long long)join_anis_why[1],(unsigned long long)join_anis_why[2],(unsigned long long)join_anis_why[3],
+        (unsigned long long)join_anis_why[4],
         (unsigned long long)join_anil_made,(unsigned long long)join_anil_equal,(unsigned long long)join_anil_unknown,(unsigned long long)join_anil_conflict,join_cap.anil,
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ALL],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PROBE],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PARAMS],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ACTOR],

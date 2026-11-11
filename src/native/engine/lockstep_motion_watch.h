@@ -144,7 +144,8 @@ typedef struct {uint64_t tick,saved;int attention;uint32_t ctrl_vt,model_vt,inde
     uint64_t wings[8];
     uint32_t spline_count[2],spline_segments,spline_core,spline_requests,spline_obstacles;uint64_t spline_obstacle_time;unsigned char spline_progress[16];
     uint32_t flight_obstacles;uint64_t flight_avoid_time;unsigned char flight_angles[8];
-    uint32_t flight_contacts_n;unsigned char flight_contacts[4][0x80];uint32_t flight_contact_fnv_n,flight_contact_fnv[64];} motion_watch_row_t;
+    uint32_t flight_contacts_n;unsigned char flight_contacts[4][0x80];uint32_t flight_contact_fnv_n,flight_contact_fnv[64];
+    uint32_t slotx[2];} motion_watch_row_t;   /* slotx: each pathing slot's +0x60..+0x19f (the digest's slotx=, of the current one) */
 #define MOTION_PATHING_INDEX2 0x2f4b6f4u /* g_PathingStateBufferIndex2 */
 /* Flight parameter fields of one 0x1a0 slot: +0x24, +0x190..+0x193, +0x194, +0x198. */
 static int motion_fp_fields(const unsigned char *slot,unsigned char out[16]) {
@@ -465,6 +466,12 @@ static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t
     r->flags|=player?(1|8192):1;
     if(read_local(image+MOTION_WATCH_INDEX,&r->index,4) && read_local(ctrl+0x30,&slots,8) && slots &&
        read_local(slots,r->slot[0],0x60) && read_local(slots+0x1a0,r->slot[1],0x60)) r->flags|=2;
+    /* hjs4j (10 Nov): a Steering ship's cur= parted in one step with every group of the digest equal before; cur= is the slot's
+     * first 0x60 bytes, the rest of the 0x1a0 (velocities, accelerations, the step's own working values) had no row. */
+    if(r->flags&2u) for(unsigned k=0;k<2u;k++) {
+        unsigned char rest[0x140];
+        r->slotx[k]=read_local(slots+0x1a0u*k+0x60u,rest,sizeof(rest))?motion_fnv(MOTION_FNV_BASIS,rest,sizeof(rest)):0u;
+    }
     if(read_local(ctrl+0x60,r->cache,0x40)) r->flags|=4;
     if(!read_local(ctrl+0x40,&agent,8) || !agent || !read_local(agent+0xef0,&back,8) || back!=object) return 1;
     if(agent_out) *agent_out=agent;
@@ -610,10 +617,11 @@ static int motion_watch_digest(uint64_t index,char *out,size_t cap) {
     uint32_t flight=r->model_vt==MOTION_FLIGHT_VTABLE?
         motion_fnv(motion_fnv(motion_fnv(basis,&r->flight_obstacles,4),&r->flight_avoid_time,8),r->flight_angles,8):0;
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx attention=%d ctrl=%08x model=%08x flags=%u parent=%s cur=%08x prev=%08x cache=%08x "
-        "target=%08x path=%08x model_ext=%08x agent=%08x leader=%08x fp=%08x dock=%08x segments=%08x spline=%08x requests=%08x obstacles=%08x flight=%08x",
+        "target=%08x path=%08x model_ext=%08x agent=%08x leader=%08x fp=%08x dock=%08x segments=%08x spline=%08x requests=%08x obstacles=%08x flight=%08x "
+        "slotx=%08x",
         (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,r->attention,r->ctrl_vt,r->model_vt,r->flags,parent,
         motion_fnv(basis,r->slot[now],0x60),motion_fnv(basis,r->slot[now^1u],0x60),motion_fnv(basis,r->cache,0x40),target,path,model,agent,leader,
-        motion_fnv(basis,r->fp,48),motion_fnv(basis,r->dock,strlen(r->dock)),segments,core,requests,obstacles,flight);
+        motion_fnv(basis,r->fp,48),motion_fnv(basis,r->dock,strlen(r->dock)),segments,core,requests,obstacles,flight,r->slotx[now]);
     return n>0 && (size_t)n<cap?n:0;
 }
 /* Order rows, DEFAULT OFF (native_gate_motion_watch_orders, needs the watch):

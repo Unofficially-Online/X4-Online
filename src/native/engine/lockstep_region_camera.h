@@ -1059,15 +1059,18 @@ static void rc_zone_test(void *component,float *out,void *camera) {
     if(rc_pick_rows_ticks && camera) rc_pick_note_pos(0x103u,component,RC_OBJ_R12,two,out);
 }
 typedef void (*rc_activate_fn)(void *);
+static uint64_t tp_thread_word(void);static void tp_build_dump(unsigned char *traffic); /* lockstep_traffic_rows.h */
 static rc_activate_fn rc_activate_native; /* tests only: replaces 0x8aacb0 */
 /* A traffic object switched on (diagnostic): +0x1d0 before and after, +0x228. */
 static void rc_activate(unsigned call,uint32_t site,unsigned char *traffic) {
     InterlockedIncrement64(&rc_stub_calls[call]);
     unsigned before=traffic?*(volatile unsigned char *)(traffic+0x1d0):0;
     (rc_activate_native?rc_activate_native:(rc_activate_fn)(void *)(image+rc_calls[call].target))(traffic);
-    if(rc_pick_rows_ticks && traffic)
+    if(rc_pick_rows_ticks && traffic) {
         rc_pick_note_ab(site,traffic,RC_OBJ_R12_TRAFFIC,rc_object_two(traffic,RC_OBJ_R12_TRAFFIC),before,
                         *(volatile unsigned char *)(traffic+0x1d0),*(volatile unsigned char *)(traffic+0x228));
+        if(!before && *(volatile unsigned char *)(traffic+0x1d0)) tp_build_dump(traffic);   /* switched on just now ('view' only) */
+    }
 }
 static void rc_activate_pass(void *traffic) {rc_activate(RC_ACTIVATE_CALL,0x105u,traffic);}
 static void rc_activate_update_a(void *traffic) {rc_activate(RC_ACTIVATE_CALL+1,0x106u,traffic);}
@@ -1080,7 +1083,8 @@ static void *rc_collect(void *traffic,void **vector) {
     void *result=(rc_collect_native?rc_collect_native:(rc_collect_fn)(void *)(image+rc_calls[RC_COLLECT_CALL].target))(traffic,vector);
     if(rc_pick_rows_ticks && traffic && vector) {
         uint64_t count=vector[1]>=vector[0]?((uintptr_t)vector[1]-(uintptr_t)vector[0])/8:0;
-        rc_pick_note_ab(0x108u,traffic,RC_OBJ_R12_TRAFFIC,rc_object_two(traffic,RC_OBJ_R12_TRAFFIC),(uint32_t)count,0,0);
+        const uint64_t word=tp_thread_word();   /* b= pend= the thread's RNG word before this build */
+        rc_pick_note_ab(0x108u,traffic,RC_OBJ_R12_TRAFFIC,rc_object_two(traffic,RC_OBJ_R12_TRAFFIC),(uint32_t)count,(uint32_t)word,(uint32_t)(word>>32));
     }
     return result;
 }

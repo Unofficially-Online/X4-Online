@@ -453,11 +453,11 @@ def golden_v13():
             join.SEC_SRCS: [(0x2001, 0x7d7d6d0f, 0x2002, 1, 0, 0, 0)],
             join.SEC_FOBJ: [(0x2001, 0x2002, 42, 0, 0, 0)],
             join.SEC_CUEI: [(0x162569, 690475, 0)],
-            join.SEC_ANIS: [(0x2001, 3, 1, 1, 0, 2, 0x12345678, 0x40857c0000000000, 0, 0xbff0000000000000, 0xbff0000000000000, 0x1111, 0, 0, 0, 0x1111, 0x2222)],
+            join.SEC_ANIS: [(0x2001, 3, 1, 1, 0, 2, 0x12345678, 0x40857c0000000000, 0, 0xbff0000000000000, 0xbff0000000000000, 0x1111, 0, 0, 0, 0, 0, 0, 0, 0x1111, 0x2222)],
             join.SEC_ANIL: [(0x2001, 3, 0, 1, 0, 0x2c78290, 0, 0x2003)]}
 
 
-GOLDEN_SHA = '42fc97034c66e3247041a4959d22619bec608cb67f1f19c15a76ce3dd864019e'
+GOLDEN_SHA = '1342d2e10d82e8cb99d84a86c458b3008f65277fd2371af1b34efbe5aa80c5aa'
 GOLDEN_SHA_V12 = '67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef'   # a version 12 package (before JOBE)
 GOLDEN_SHA_V11 = 'f0874152607c013ff72febfbf675b20f64b391fb5a9d431795bd302fc0964e7f'   # a version 11 package (before SPLM..GRAVP)
 GOLDEN_SHA_V10 = '1a324e00b49dbc814f757c26ad28741675b7d8e0b9df120c63d52594724e27bd'   # a version 10 package (before GRAV, GRAVC, GRAVS)

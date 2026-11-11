@@ -290,6 +290,20 @@ class Server(unittest.TestCase):
             status.write_text('{"tick": 54')                                   # caught half-written
             self.assertFalse(serve.session_done(status))
 
+    def test_a_game_everyone_left_is_over_soon(self):
+        from lockstep.launcher import serve
+        o = serve.ServeOptions(overlay=Path('.'), server_file=Path('.'))
+
+        class Joins:
+            taken = {}
+        self.assertEqual(serve.idle_limit(o, None, None), 420)          # loading: nothing has stepped yet
+        self.assertEqual(serve.idle_limit(o, 0, Joins), 420)
+        self.assertEqual(serve.idle_limit(o, 900, None), 60)            # it stepped and stopped: the players are gone
+        Joins.taken = {2: 'joined'}
+        self.assertEqual(serve.idle_limit(o, 900, Joins), 60)
+        Joins.taken = {2: 'joined', 3: 'catching_up'}                   # a joiner is brought in: the relay pauses everyone
+        self.assertEqual(serve.idle_limit(o, 900, Joins), 240)
+
     def test_server_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'server.json'

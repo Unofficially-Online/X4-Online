@@ -2651,7 +2651,9 @@ static join_rw_peek_t join_rw_peek[4];
  * matter. The watch stays armed for it past native_gate_join_watch_span: from n-1 to n-1+JOIN_RW_AT_STEPS each boundary refreshes the
  * watched objects, re-arms every 10 steps and prints the new rows, without the JOIN_WATCH dumps [w1z74/75: with the default span of 2
  * the watch ended at T+2 and the fields never armed]. */
-#define JOIN_RW_AT_STEPS 600u
+/* 2,400 steps (hjs4k, 10 Nov: a ship's position parts somewhere in 3,594..4,180 from run to run; a field written twice a step
+ * fills 4,800 of the 16,384 rows) */
+#define JOIN_RW_AT_STEPS 2400u
 static uint64_t join_rw_at;
 static int join_rw_peek_add(const char *text,size_t length) {   /* 1 set, 0 refused */
     static const char *const regs[16]={"rax","rbx","rcx","rdx","rsi","rdi","rbp","rsp","r8","r9","r10","r11","r12","r13","r14","r15"};
@@ -3473,6 +3475,24 @@ static void join_watch_dump(char side,uint64_t tick) {
                         for(uint32_t o=0;o<JOIN_WATCH_RAW_BEH;o+=64u) at+=join_watch_hex(out+at,cap-at,beh+o,64);
                     } else if(mvt) at+=(size_t)snprintf(out+at,cap-at,"-m%x",mvt>=(uintptr_t)image?(uint32_t)(mvt-(uintptr_t)image):0u);   /* another model */
                     else at+=(size_t)snprintf(out+at,cap-at,"-");
+                    /* mdl=: the Steering model's own 0x3a0 bytes; solv=: the Agent's motion solver (+0xf80) as the FNV-1a 32 of each 0x400
+                     * bytes, its pointers made relative first (join_solver_fill). hj8b (10 Nov): a Steering ship's pathing state parts in
+                     * one step with both slots and every row of the motion watch equal before; this is the state the step keeps besides.
+                     * The solver's constructor leaves 24,126 bytes unset, so some chunks differ between two processes for good: read
+                     * the chunks that change from equal to different. */
+                    at+=(size_t)snprintf(out+at,cap-at," mdl=");
+                    if(model && mvt==(uintptr_t)image+JOIN_STEER_VTABLE && at+0x3a0u*2u+64u<cap)
+                        for(uint32_t o=0;o<0x3a0u;o+=64u) at+=join_watch_hex(out+at,cap-at,model+o,0x3a0u-o<64u?0x3a0u-o:64u);
+                    else at+=(size_t)snprintf(out+at,cap-at,"-");
+                    at+=(size_t)snprintf(out+at,cap-at," solv=");
+                    {unsigned char *solver=NULL;join_solver_rec *sr=&join_solver_scratch;
+                     if(agent && join_read(agent+JOIN_AGENT_SOLVER,&solver,8) && solver && at+1024u<cap && (memset(sr,0,offsetof(join_solver_rec,data)),join_solver_fill(sr,solver)))
+                         for(uint32_t o=0;o<JOIN_SOLVER_BYTES;o+=0x400u) {
+                             uint32_t h=2166136261u;const uint32_t n=JOIN_SOLVER_BYTES-o<0x400u?JOIN_SOLVER_BYTES-o:0x400u;
+                             for(uint32_t k=0;k<n;k++) h=(h^sr->data[o+k])*16777619u;
+                             at+=(size_t)snprintf(out+at,cap-at,"%08x",h);
+                         }
+                     else at+=(size_t)snprintf(out+at,cap-at,"-");}
                 }
                 at+=(size_t)snprintf(out+at,cap-at,"\r\n");
                 if(at+ln+4<cap) {memcpy(out+at,line,ln);at+=ln;at+=(size_t)snprintf(out+at,cap-at,"\r\n");}
@@ -4255,15 +4275,19 @@ static void join_capture_anis(join_tables *t) {
  * the landing gear's queue at its last stage.
  * With the option the admission gives a unit whose state, next state or queue differs the session's: the state through X4's two
  * calls as its import (their IDs on the load list), then the queue's stages by key from the sequence's template (at most
- * JOIN_ANIS_KEYS, into the storage the sequence has), the next state, bit 2 of the flags and the times as above. And where the
+ * JOIN_ANIS_KEYS = 8, the queue emptied and filled through X4's own append 0xcb8c0, which grows it past the four inline
+ * places: x4mods-b8's eight-start join at T=732 had 28 queues of five stages), the next state, bit 2 of the flags and the
+ * times as above. A unit without a state on both sides takes the queue alone. And where the
  * session's unit has listeners waiting and the joiner's none, it makes them (ANIL, section 85: class, flag, the component by
  * portable ID; the two classes whose constructor is (this, component, flag): Cockpit 0x116e130 and DockingBayFence 0x116e5e0)
- * and puts them into the unit as X4 does. Status anis_state=on:restated:requeued:unplaced:drift:ids (unplaced: a state or stage
- * key the joiner's unit lacks, a queue longer than carried; drift: the unit left the state at once)
+ * and puts them into the unit as X4 does. Status anis_state=on:restated:requeued:unplaced:drift:ids (drift: the unit left the
+ * state at once) anis_why=long:nostate:state:next:stage (the unplaced by reason: a queue longer than carried, a session unit
+ * without a state where the joiner's has one, a state, a next state or a stage key the joiner's unit lacks)
  * anil=made:equal:unknown:conflict anil_cap=N (unknown: another class or a component the joiner lacks; conflict: other
  * listeners on the joiner). */
 #define JOIN_ANIS_STATE_SET 0x116a1f0u
 #define JOIN_ANIS_LISTENERS_OFF 0x999ef0u
+#define JOIN_ANIS_QUEUE_PUSH 0xcb8c0u
 #define JOIN_ANIL_PUSH 0x116a4e0u
 #define JOIN_ANIL_COCKPIT_VT 0x2c78290u
 #define JOIN_ANIL_COCKPIT_CTOR 0x116e130u
@@ -4271,12 +4295,16 @@ static void join_capture_anis(join_tables *t) {
 #define JOIN_ANIL_FENCE_CTOR 0x116e5e0u
 #define JOIN_ANIL_SIZE 0x28u
 static int join_anis_state_on;
-static uint64_t join_anis_restated,join_anis_requeued,join_anis_unplaced,join_anis_drift,join_anis_ids,join_anil_made,join_anil_equal,join_anil_unknown,join_anil_conflict;
+static uint64_t join_anis_restated,join_anis_requeued,join_anis_unplaced,join_anis_drift,join_anis_ids,join_anis_why[5],join_anil_made,join_anil_equal,join_anil_unknown,join_anil_conflict;
 static void join_anis_set_native(unsigned char *owner,unsigned char *unit,unsigned char *state) {
     ((void (*)(void *,void *))(void *)(image+JOIN_ANIS_LISTENERS_OFF))(owner,unit+0x10);
     ((void (*)(void *,void *,int))(void *)(image+JOIN_ANIS_STATE_SET))(unit,state,1);
 }
 static void (*join_anis_set)(unsigned char *,unsigned char *,unsigned char *)=join_anis_set_native;   /* tests replace it */
+static void join_anis_push_native(unsigned char *seq,uintptr_t stage) {
+    ((void (*)(void *,void *))(void *)(image+JOIN_ANIS_QUEUE_PUSH))(seq+0x10,&stage);
+}
+static void (*join_anis_push)(unsigned char *,uintptr_t)=join_anis_push_native;   /* tests replace it */
 static void *join_fobj_alloc_native(size_t n);   /* below (FOBJ): SMem::Allocate */
 static int join_anil_make_native(unsigned char *unit,uint32_t cls,unsigned char *target,unsigned flag) {
     const uint32_t ctor=cls==JOIN_ANIL_COCKPIT_VT?JOIN_ANIL_COCKPIT_CTOR:JOIN_ANIL_FENCE_CTOR;
@@ -4314,20 +4342,21 @@ static void join_anis_write_times(unsigned char *seq,const join_anis_rec *r) {
 }
 /* The session's state, next state and queue on a unit of the joiner's; 0: it cannot take them (nothing written). */
 static int join_anis_restate(unsigned char *owner,unsigned char *seq,unsigned char *unit,const join_anis_rec *own,const join_anis_rec *r) {
-    unsigned char *state=NULL,*next=NULL,*now=NULL;uintptr_t stage[JOIN_ANIS_KEYS],data=0;uint64_t cap=0;
-    if(!owner || r->stages>JOIN_ANIS_KEYS || !r->state || !(state=join_anis_state_of(unit,r->state)) || (r->next && !(next=join_anis_state_of(unit,r->next)))) return 0;
-    for(unsigned i=0;i<r->stages;i++) if(!(stage[i]=join_anis_stage_of(seq,r->keys[i]))) return 0;
-    if(own->state!=r->state) {
+    unsigned char *state=NULL,*next=NULL,*now=NULL;uintptr_t stage[JOIN_ANIS_KEYS];
+    if(!owner || r->stages>JOIN_ANIS_KEYS) {++join_anis_why[0];return 0;}
+    if(!r->state && own->state) {++join_anis_why[1];return 0;}
+    if(r->state && !(state=join_anis_state_of(unit,r->state))) {++join_anis_why[2];return 0;}
+    if(r->next && !(next=join_anis_state_of(unit,r->next))) {++join_anis_why[3];return 0;}
+    for(unsigned i=0;i<r->stages;i++) if(!(stage[i]=join_anis_stage_of(seq,r->keys[i]))) {++join_anis_why[4];return 0;}
+    if(state && own->state!=r->state) {
         const unsigned long long before=RID_JOIN_ALLOCS;
         join_ids_admit_load=1;join_anis_set(owner,unit,state);join_ids_admit_load=0;
         join_anis_ids+=RID_JOIN_ALLOCS-before;++join_anis_restated;
         if(!join_read(unit+0x28,&now,8) || now!=state) ++join_anis_drift;
     }
-    if(!join_read(seq+0x30,&cap,8) || cap<r->stages || (cap!=4u && (!join_read(seq+0x10,&data,8) || !data))) return 1;   /* the state is set; the queue stays X4's */
-    if(cap==4u) data=(uintptr_t)(seq+0x10);
-    for(unsigned i=0;i<r->stages;i++) (void)join_poke(data+8u*i,&stage[i],8);
-    {const uint64_t count=r->stages;unsigned char flags=0;
-     (void)join_poke((uintptr_t)(seq+0x38),&count,8);
+    {const uint64_t none=0;unsigned char flags=0;   /* the queue emptied (as 0x1165930 empties a finished one) and filled in the session's order */
+     (void)join_poke((uintptr_t)(seq+0x38),&none,8);
+     for(unsigned i=0;i<r->stages;i++) join_anis_push(seq,stage[i]);
      if(join_read(seq+0x88,&flags,1)) {flags=(unsigned char)((flags&~4u)|(r->flags&4u));(void)join_poke((uintptr_t)(seq+0x88),&flags,1);}}
     (void)join_poke((uintptr_t)(unit+0x30),&next,8);
     join_anis_write_times(seq,r);
@@ -4386,6 +4415,7 @@ static void join_anis_admit_one(void *ctx,uint32_t part,unsigned char *seq) {
 static void join_admit_anis(const join_tables *s,const join_tables *mine) {
     join_anis_admit_ctx c={s,mine,0,NULL,0,0};
     join_anis_apart=join_anis_written=join_anis_equal=join_anis_missing=join_anis_shape=join_anis_absent=0;memset(join_anis_kind,0,sizeof(join_anis_kind));
+    memset(join_anis_why,0,sizeof(join_anis_why));
     join_anis_restated=join_anis_requeued=join_anis_unplaced=join_anis_drift=join_anis_ids=join_anil_made=join_anil_equal=join_anil_unknown=join_anil_conflict=0;
     join_anis_refused[0]='-';join_anis_refused[1]=0;
     for(uint32_t i=0;i<mine->nids;i++) {

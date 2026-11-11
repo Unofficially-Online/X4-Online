@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "42fc97034c66e3247041a4959d22619bec608cb67f1f19c15a76ce3dd864019e"   /* version 13 (JOBE .. ANIL; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "1342d2e10d82e8cb99d84a86c458b3008f65277fd2371af1b34efbe5aa80c5aa"   /* version 13 (JOBE .. ANIL; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -1809,6 +1809,8 @@ static void test_join_world(void) {
         on[0x1d0]=1;second[0x1d0]=1;
         const LONG64 was=tp_rebuilt,nets=tp_rebuild_networks;
         tp_rebuild_mark(net);assert(on[0x28c]==1 && second[0x28c]==1 && !off[0x28c] && tp_rebuilt==was+2 && tp_rebuild_networks==nets+1);
+        /* ... and every one's camera step starts over (the 0.2 s phase), switched on or not */
+        {double t[3];memcpy(&t[0],on+TP_CAMERA_STEP,8);memcpy(&t[1],off+TP_CAMERA_STEP,8);memcpy(&t[2],second+TP_CAMERA_STEP,8);assert(t[0]==-1.0 && t[1]==-1.0 && t[2]==-1.0);}
         tp_rebuild_tick=0;
     }
     {   /* a fix across 7 is counted and listed (status attn_high=), one below is not; the list keeps the first JOIN_ATTN_HIGH_IDS */
@@ -3183,6 +3185,11 @@ static int tanis_make(unsigned char *unit,uint32_t cls,unsigned char *target,uns
     (void)cls;++tanis_made;tanis_made_unit=unit;tanis_made_target=target;tanis_made_flag=flag;return 1;
 }
 static uint64_t tanis_key(uint64_t runtime,unsigned *klass) {*klass=WORLD_KEY_SAVED;return runtime+0x1000u;}
+static void tanis_push(unsigned char *seq,uintptr_t stage) {   /* X4's append on a sequence's queue: here always the storage it has (4 inline or the heap's) */
+    uint64_t cap=0,count=0;unsigned char *data=seq+0x10;memcpy(&cap,seq+0x30,8);memcpy(&count,seq+0x38,8);
+    if(cap!=4u) memcpy(&data,seq+0x10,8);
+    assert(count<cap);memcpy(data+8u*count,&stage,8);++count;memcpy(seq+0x38,&count,8);
+}
 static void test_join_anis(void) {
     join_find_fn find=join_world_find;void *map=join_world_map;
     join_world_find=tanis_find;join_world_map=tanis_obj;
@@ -3232,6 +3239,7 @@ static void test_join_anis(void) {
     /* native_gate_join_anis_state: sequence 0's unit to the session's state 0xa2 with the queue [0xa2, 0xa0] from 70 and the next
      * state 0xa1; the state through X4's calls (here a stand-in that sets +0x28), the queue written inline; a listener made */
     {   void (*set)(unsigned char *,unsigned char *,unsigned char *)=join_anis_set;int (*make)(unsigned char *,uint32_t,unsigned char *,unsigned)=join_anil_make;
+        void (*push)(unsigned char *,uintptr_t)=join_anis_push;join_anis_push=tanis_push;
         uint64_t (*key)(uint64_t,unsigned *)=join_key;const uint64_t allocs=join_ids_list.allocs;
         join_anis_set=tanis_set;join_anil_make=tanis_make;join_key=tanis_key;
         static uintptr_t states[2];states[0]=(uintptr_t)&ustate[0];states[1]=(uintptr_t)&ustate[1];
@@ -3251,7 +3259,7 @@ static void test_join_anis(void) {
                 q1==(uintptr_t)stage[0] && count==2 && start==70.0 && seq[0][0x88]==5);
          assert(join_anis_restated==1 && join_anis_requeued==2 && !join_anis_drift && !join_anis_unplaced && join_anis_ids==3);   /* sequence 2: its queue written again, no state call */
          assert(tanis_made==1 && tanis_made_unit==unit[0] && tanis_made_target==tanis_obj[1] && tanis_made_flag==1 && join_anil_made==1 && join_anil_unknown==1);}
-        {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," anis_state=1:1:2:0:0:3 anil=1:0:1:0 anil_cap="));}
+        {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," anis_state=1:1:2:0:0:3 anis_why=0:0:0:0:0 anil=1:0:1:0 anil_cap="));}
         /* the capture reads the unit back as the session's record: the queue's keys, the states, a waiting listener */
         {void *p=tanis_listener;uintptr_t vt=(uintptr_t)image+JOIN_ANIL_COCKPIT_VT;uint64_t target=0xd1u;memcpy(tanis_listener,&vt,8);memcpy(tanis_listener+0x18,&target,8);
          tanis_listener[0x20]=1;tanis_pending[0]=(uintptr_t)p;p=&tanis_pending[0];memcpy(unit[0]+0x40,&p,8);p=&tanis_pending[1];memcpy(unit[0]+0x48,&p,8);}
@@ -3264,9 +3272,12 @@ static void test_join_anis(void) {
         {join_tables t3;memset(&t3,0,sizeof(t3));t3.ids=ids;t3.nids=2;join_capture_anis(&t3);g[0].sig=t3.anis[0].sig;g[0].first=t3.anis[0].first;free(t3.anis);free(t3.anil);}
         tanis_sets=tanis_made=0;join_admit_anis(&s,&mine);assert(!tanis_sets && !tanis_made && join_anil_equal==1 && join_anis_equal==1 && !join_anis_restated);
         /* a state the joiner's unit lacks: unplaced, nothing written */
-        g[0].state=0xafu;join_admit_anis(&s,&mine);assert(!tanis_sets && join_anis_unplaced==1);
+        g[0].state=0xafu;join_admit_anis(&s,&mine);assert(!tanis_sets && join_anis_unplaced==1 && join_anis_why[2]==1);
         s.anil=NULL;s.nanil=0;
-        join_anis_state_on=0;join_anis_set=set;join_anil_make=make;join_key=key;join_ids_list.allocs=allocs;
+        /* a queue longer than the record carries: left, by its reason */
+        g[0].state=0xa2u;g[0].stages=JOIN_ANIS_KEYS+1u;join_admit_anis(&s,&mine);assert(join_anis_unplaced==1 && join_anis_why[0]==1 && !join_anis_why[2]);
+        {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," anis_why=1:0:0:0:0 "));}
+        join_anis_state_on=0;join_anis_set=set;join_anil_make=make;join_anis_push=push;join_key=key;join_ids_list.allocs=allocs;
     }
     /* a unit that does not point back at its sequence: no sequence (the session's record is absent here) */
     {void *p=seq[1];memcpy(unit[0]+8,&p,8);join_admit_anis(&s,&mine);assert(!join_anis_equal && join_anis_shape==1 && join_anis_absent==1);

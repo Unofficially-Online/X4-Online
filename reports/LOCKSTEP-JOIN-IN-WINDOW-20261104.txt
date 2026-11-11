@@ -1661,6 +1661,15 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
   and DockingBayFence 0x2c7a628, 0x28 bytes, constructor (this, component, flag) 0x116e130 / 0x116e5e0) through the unit's
   vtable +0x58 (0x116a4e0). Activation, CockpitActivation, StoreShip, RetrieveShip and DockDoor are counted (anil unknown).
   Five more join pins.
+- Queues of more than four stages (x4mods-b8's eight-start session ns8, a join at T=732 and T=705 on the fight start: the
+  first per-tick mismatch at 784 both times, T=687 equal). The joiner's status named it: anis_state=1:5:30:28:0:0, 28
+  unplaced, anis_shape 6b437/8/1:...>5:...: object 0x6b437's parts with one stage on the joiner and five on the session. The
+  record carried four keys and the admission wrote into the storage the sequence had (four inline places). Now eight keys
+  (join_anis_rec 136 bytes), and the queue is emptied and filled through X4's own append 0xcb8c0 (one more pin), which
+  grows it; a unit without a state on both sides takes the queue alone; anis_why=long:nostate:state:next:stage counts the
+  unplaced by reason. ns8, slot 3, the join save forced to 705 (--join-save-at): anis_state=1:5:58:0:0:0, anis_why all 0,
+  every digest part equal 706..900 (the mismatch of 784 gone); the first mismatch is the 1800 census, another matter (ships
+  of that session's battle apart in motion during the catch-up; open).
 - Runs (x4mods-b8's hjs4 fixture from this tree, the real game, two X4 on one PC):
     hjs4a, ANIS alone, first form: the navmesh part equal 688..760, key 01da1e regenerated 733 735 737 739 741 743 743 745
       on both sides; first digest mismatch 968 (was 738). anis=1:8848:8848:617:0:3088:30, the session's anis_cap=12583.
@@ -1675,13 +1684,43 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
       desync to 5440, 0 errors, the census of 691, 1800, 3600 and 5400 equal in all four roots; anis=1:141:141:646:0:1:0
       (the session's anis_cap=812), anis_state=1:0:25:0:0:0, anil=0.
   Both options are in JOIN_DEFAULT_ON.
-- Open on hjs4 after the handover:
-    The rid part differs for 4 to 8 ticks somewhere in 4539..4551 in four of five runs (not in hjs4h): the Terran fighter
-      0x6da76's ArrivedAtWaypointEvent comes at another tick on one side (4527 on the joiner in hjs4g, before 4525 on the
-      session), the carrier dock 0x6d86f's three TriggerAnimationEvents 4 ticks apart after it (4547 against 4551). In
-      hjs4h every event of 3950..4552 with a mapped source is equal on both sides (77,394 rows each).
-    The 5400 census: two objects differ, in motion only: the fighters 0x6da76 (MFG-855) and 0x6da8d (SGD-739), formation
-      members in slot 4's zone. So it is those two ships' flight after the handover; not read further yet.
+- Open on hjs4 after the handover: two Terran fighters' flight (0x6da76 MFG-855 and its wingman 0x6da8d SGD-739, in slot
+  4's zone, on their way to dock at the carrier).
+    What shows: the rid part differs for 4 to 17 ticks somewhere in 4532..4551 (the fighter's ArrivedAtWaypointEvent and the
+      carrier dock 0x6d86f's three TriggerAnimationEvents come a few ticks apart) and the 5400 census differs in those two
+      ships' motion only. Never in the catch-up; one run (hjs4h) had no rid difference before 5400.
+    Where it starts (the Windows motion watch, MOTION_DIGEST per tick; hjs4j..hjs4p): 0x6da76 takes the Steering model at
+      3593 on both sides, and at one tick its pathing state parts by 0.0003 m: 3594, 3956 (twice), 4180 (three times) or
+      4219 in seven runs with handovers 3289..3650. The write watch (JOIN_REFWATCH on both pathing slots and the cached
+      pose, 2,400 steps now): at that tick the Agent update copies the same x into the write slot on both sides (0xe8fa6a)
+      and the Steering step 0xec7200 then writes another (0xec9306: 435f7e31 against 435f7e4f); no other writer.
+    Equal up to that tick on both sides: both slots whole (cur=, prev=, the new slotx= for +0x60..+0x19f), the cached
+      pose, target, path, the model's plan (+0x70..+0xe0), the agent's speed fields, the 47 avoidance contacts by hash, the
+      constructor's two angles, the pathing pass's order, stamps and walk (PATH_DETERMINISM), every event with a mapped
+      source in 3950..4552 (one run).
+    Not the cause: render-only frames (native_gate_render_fps=false and own_predict=false on both sides: parted at 3956);
+      the step's own view cache query (0x3dde10 at 0xec7cfe / 0xec7e1b; x4mods-b8 routed both through the pathing walk in
+      f7573d84: 0 calls on either side in a whole run, the fighter never takes that branch); the animation units.
+    The same signature in the catch-up (x4mods-b8's eight-start session ns8, the join save at 705): the squad leader 0xa2ce0
+      (a medium ship with five escorts in a created zone) gets a new Steering model and solver at 1542 on both sides and
+      parts at 1664, 1592 or 1580 in three runs (slotx= one tick before cur= in the last), not before 2817 in two more; its
+      escorts follow one tick later. With the join save at 1400 it stays equal until a new target differs at 1719. Both
+      ships that part first are formation leaders with wingmen under the Steering model.
+    Read on that leader (JOIN_WATCHRAW every step 1401..1680, new fields mdl= the model's 0x3a0 bytes and solv= a hash per
+      0x400 bytes of the solver): Agent, controller, command block and object never become different; the model differs
+      only in bytes its constructor 0xec40c0 leaves unset (+0x118, +0x1c8, +0x274..+0x27f, +0x328, +0x348 and the high halves
+      of +0xb0, +0x340, +0x380: padding before 16-byte members); a new solver differs in every chunk (unset bytes all over).
+    Tried and not it: every new solver zeroed at its allocation on both sides (an experiment build, an int3 behind
+      0xe96023 whose handler cleared the 0x18f60 bytes; 32 and 31 solvers zeroed): one run equal to the end with every
+      census equal, one run parted at 1580. The switch is not in the tree.
+    Not read yet: what a leader's update reads of its wingmen while the batch jobs run in parallel (the travel snapshot's
+      audit covered the wingmen's reads of the leader, +0xf7b); the cached-parent loads x4mods-b8 found in the mass traffic
+      (`[bank*0x80 + object + 0xe0]`, the view cache a client fills for what it draws): 98 of them in 40 functions of the
+      pathing code 0xe80000..0xf30000, the Agent update (0xe8f47c, 0xe8fe68), the obstacle publisher 0xeaf660 and
+      RefreshFromPathingState 0xea2c40 among them.
+    A side finding: with a census every 60 ticks (native_gate_world_hash_stride=60) the session's census has one row more
+      than the joiner's from T+1 on (525045 against 525044; all four roots differ, the pages are equal): a created object
+      an earlier census saw that was gone at T. Not with the default stride. Open, small.
 - Read and left:
     A looping sequence (the unit's next state its own) whose stage is over is restarted by whoever evaluates it next,
       at that moment (0x1165ee0 -> 0x1169f40 -> 0x1165930): a kit ship's parts 1, 22 and 23 keep the session's 18.53 /

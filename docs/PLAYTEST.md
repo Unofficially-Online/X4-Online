@@ -180,7 +180,7 @@ Installed from such an installer, a player starts nothing of ours: **Play in Ste
   (`lobby.auto`). Not run: a start from Steam itself in a player's own profile (AGENTS.md keeps our tests out of
   it), and a mouse click on the page's buttons.
 
-### A game you can join while it runs, with a start of your choice (built 10 Nov; not run in X4 yet)
+### A game you can join while it runs, with a start of your choice (built 10 Nov; run on one PC)
 
 A kit whose overlay has open slots (`build_play_overlay.py --open`, `x4ls new-session --start K=... --open K,...`)
 makes the server's game a drop-in one: nobody waits for a full house.
@@ -205,6 +205,25 @@ makes the server's game a drop-in one: nobody waits for a full house.
   player 1 has left. A slot whose ship is in another sector than player 1's still splits the runtime ID counter
   (the hot-join work has the fix in progress): do not hand out a kit with far starts before that.
 - The server also listens on TCP `port` for this (`deploy_playtest_server.py` opens it).
+- **The page in the launcher's X4 too.** `x4ls lobby --server-file` (PLAY.cmd, and the installer's Start menu entry
+  "... (second window)" = `second.pyw`, for a second player on one PC, which Steam does not start) asks the server's
+  status and shows the same rows. A pick closes that X4 and runs the join (`--same-pc` when another X4 runs here).
+- **Far starts are marked.** The server's status names every open start with its sector; one in another sector than
+  player 1's is shown as "far, experimental": it joins and plays, and the server counts desyncs after such a join.
+- **When a game ends.** The relay does not end by itself: the server ends a game when the relay reports its last
+  step, when a game that has stepped stops for 60 s (everyone left; 240 s while a joiner is brought in), or when
+  nothing steps for `--idle-end` (420 s) after the start. Then it takes the next "Start the game".
+- **Live, 10 Nov, two X4 on one PC with a local server:**
+  - drop2 (capture-005, slot 2 open, `x4ls join --server-file`): save 702, hand-over 3315, catch-up 89.7 s,
+    0 digest mismatches, to 5440 in sync.
+  - drop3 (the same through the Steam-menu page of an X4 with protected UI mode, its helper and the pipe): save
+    697, hand-over 3346, 0 mismatches, to 5440 in sync.
+  - drop5 (the eight-start session ns8, the launcher's page in a second window picks slot 2, the start in the
+    host's sector): save 679, hand-over 3472 with a pause of about 59 s, catch-up 82.9 s, 0 mismatches, to 5440
+    in sync.
+  - Not run: a join over a real uplink through a server on another machine, a join at an arbitrary tick, the far
+    starts through this path (x4mods-b8's hj8: slot 3 joins and plays, the report differs from 52 ticks after the
+    save), a mouse click on the rows (test switches `lobby.auto`, `--auto start@TICK`).
 
 ## Two PCs (built 8 Nov; run on one PC through its LAN address, not yet between two PCs)
 
@@ -384,6 +403,22 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
     the per-tick comparison stayed equal for 240 ticks after the handover (it parted after six before). Not finished:
     at the next world check eight of those small ships still differ in their motion. Seen by players: traffic near
     every player starts again when someone joins.
+    State 11 Nov, after eight more runs of the same join: still open. Found and fixed: each zone's traffic has a
+    0.2 s step whose phase the session kept from its start and the joiner had from its load (two ticks apart); it is
+    put back at the restart and now falls on the same ticks. Not fixed: when the joined player's zone switches its
+    traffic on (a few ticks after the handover, the same tick on both PCs, from the same eight docks and the same
+    random state), the session builds 942 traffic lanes and the joiner 909: the first 431 are equal, the rest
+    connect other waypoints inside the stations. The ships that then fly them differ, and one small ship more appears
+    on the joiner; the comparison parts five ticks after the handover or at the next world check. Ruled out by runs:
+    the published view caches the lane build reads directly (parents and transforms from the simulation instead
+    changed nothing). Open: where the two PCs' station waypoints or their pairing come from. Diagnostic rows for it:
+    `native_gate_viewpoint_policy_rows` sites 113, 116, 117 (the lanes a switch-on built).
+  - Eight slots (11 Nov): a far start on the eight-slot session (slot 3, the fight start) also joins and plays, but a
+    squad of ships near that start flies apart during the catch-up, at another tick each run; the same start on the
+    two-slot session is clean to the handover. In work in the join code's session; the lead is the formation code,
+    which converts a wingman's position between two zones through the published view caches about 173,000 times a
+    session (`native_gate_path_transforms = 'observe'` rows the calls where cache and simulation disagree, `'all'`
+    answers them from the simulation; both new, the default is unchanged until a run has shown it).
 - Money in coop: the wallet is shared, and every slot's kit is applied when the session starts. So that the host
   does not begin with the money of every start on offer, an open slot's start money is taken out again right after
   the start and paid in when that slot's player joins (`native_gate_join_start_money`, a default). hjs4 (10 Nov, the

@@ -64,7 +64,7 @@ static void test_ptf_walk(float *m,void *velocity,void **from,void **to) {
     m[5]+=1000.0f;
 }
 static void test_ptf_counts_reset(void) {
-    ptf_dock_agents=0;
+    ptf_dock_agents=ptf_siblings=0;
     memset((void*)ptf_site_calls,0,sizeof(ptf_site_calls));
     ptf_outside=ptf_trivial=ptf_spaces=ptf_diverted=ptf_objects=ptf_nav=ptf_not_ancestor=ptf_differs=ptf_failures=ptf_rows=ptf_dropped=ptf_tick_rows=0;
 }
@@ -126,6 +126,31 @@ static void test_path_transforms(void) {
     test_ptf_native_value=101.0f;m[0]=1.0f;
     assert(PTF_CALL(2,zone,sector,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_differs==1 && ptf_rows==rows+1); /* equal: no row */
     ptf_mode=PTF_SIM;
+    /* 'all': a span of spaces is composed too, and b beside a goes through their common live parent (the sector): a's chain
+     * into the matrix, b's into an identity, the first in the second's frame. The stand-in adds 100 to x per chain, so the
+     * position is the caller's again and both chains were composed. An Agent's object on a chain: native. 'observe' rows the
+     * sibling calls that differ from the cache's result. 'sim' leaves both cases native (asserted above). */
+    {   const LONG64 spaces0=ptf_spaces,diverted0=ptf_diverted,na0=ptf_not_ancestor,nav0=ptf_nav,differs0=ptf_differs,rows0=ptf_rows;
+        unsigned gtr0=test_ptf_gtr_calls;
+        ptf_mode=PTF_ALL;m[0]=1.0f;
+        assert(PTF_CALL(2,zone,sector,0,PATH_THREAD_PASS)==m && m[0]==101.0f && ptf_spaces==spaces0 && ptf_diverted==diverted0+1 && test_ptf_gtr_calls==gtr0+1);
+        m[0]=1.0f;m[1]=2.0f;m[2]=3.0f;gtr0=test_ptf_gtr_calls;
+        assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==m && test_ptf_gtr_calls==gtr0+2 && ptf_siblings==1 && ptf_not_ancestor==na0);
+        assert(m[0]==1.0f && m[1]==2.0f && m[2]==3.0f && m[4]==1.0f && m[9]==1.0f && m[14]==1.0f && test_ptf_gtr_b==sector);
+        assert(PTF_CALL(PTF_SITE_FORMATION,part,other,0,PATH_THREAD_PASS)==m && ptf_siblings==2);   /* a's chain holds the wreck: composed */
+        test_ptf_native_value=7.0f;
+        assert(PTF_CALL(PTF_SITE_FORMATION,ship,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_nav==nav0+1 && ptf_siblings==2);
+        assert(PTF_CALL(PTF_SITE_FORMATION,other,ship,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_nav==nav0+2);
+        static test_ptf_component alone;memset(&alone,0,sizeof(alone));alone.vtable=test_ptf_vt_space;   /* no common parent */
+        assert(PTF_CALL(PTF_SITE_FORMATION,zone,(unsigned char*)&alone,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_not_ancestor==na0+1);
+        ptf_mode=PTF_OBSERVE;m[0]=1.0f;test_ptf_native_value=3.0f;LONG64 r0=ptf_rows;
+        assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && m[0]==3.0f && ptf_differs==differs0+1 && ptf_rows==r0+1 && ptf_siblings==2);
+        assert(ptf_row_text((uint64_t)r0,out,sizeof(out))>0 && strstr(out,"site=formation mode=observe") && strstr(out,"differs=1 sim=0000803f") && strstr(out," native=00004040"));
+        test_ptf_native_value=1.0f;m[0]=1.0f;assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_differs==differs0+1 && ptf_rows==r0+1);
+        ptf_mode=PTF_SIM;(void)rows0;
+        InterlockedExchange64(&ptf_site_calls[PTF_SITE_FORMATION],InterlockedCompareExchange64(&ptf_site_calls[PTF_SITE_FORMATION],0,0)-7);
+        InterlockedExchange64(&ptf_site_calls[2],InterlockedCompareExchange64(&ptf_site_calls[2],0,0)-1);
+    }
     /* The per-tick cap, reset by the tick check; failures fail it. */
     ptf_tick_rows=PTF_ROWS_PER_TICK;rows=ptf_rows;assert(PTF_CALL(1,wreck,zone,0,PATH_THREAD_PASS)==m && ptf_rows==rows && ptf_dropped==1);
     ptf_installed=0;assert(!ptf_check() && !ptf_tick_rows);ptf_failures=0;assert(ptf_check());
@@ -179,7 +204,7 @@ static void test_path_transforms(void) {
     /* Rows evicted from the ring say so. */
     ptf_rows=PTF_RING+5;assert(ptf_row_text(2,out,sizeof(out))>0 && !strcmp(out,"index=2 evicted=1"));ptf_rows=rows+1;
     assert(ptf_status(out,sizeof(out))>0 && strstr(out,"mode=sim installed=0 ") && strstr(out," spaces=1 diverted=") && strstr(out," time=4054900000000000 sites=walk:1,walk_end:") &&
-           strstr(out,"point_space:5,agent_space:0,formation:4,dock_point:7,dock_frame:1") && strstr(out," dock_agents=1 time="));
+           strstr(out,"point_space:5,agent_space:0,formation:4,dock_point:7,dock_frame:1") && strstr(out," dock_agents=1 siblings=2 time="));
     assert(!ptf_status(out,40));
     #undef PTF_CALL
     InterlockedExchange(&ptf_active,0);ptf_mode=PTF_OFF;ptf_ring=saved_ring;ptf_stage="idle";test_ptf_counts_reset();ptf_last_time=0;

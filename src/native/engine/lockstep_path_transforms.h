@@ -58,6 +58,18 @@
  * 'observe' as well, so 'observe' compares the dock sites' whole result with the cache's. dock_agents= counts the
  * dock calls whose chain holds an Agent's object. Every call of a dock site inside the row window is a row with its
  * outcome.
+ * 'all' (10 Nov, an experiment for far-sector joins; 'sim' stays the default until a session has shown it): two more
+ * cases leave the published caches. (1) A span of spaces and parts only is composed like the others: a client that never
+ * drew a zone has no cached parents for its objects (lockstep_traffic_rows.h, the lane build), so "static, the same on
+ * every client either way" does not hold there. (2) b is not above a: 0x3dde10 with flag 0 then lists b's cached parents,
+ * composes a's chain up to the first of them and applies the inverse of b's chain from there. That is the formation site's
+ * usual case (a wingman's slot from its leader's zone into its own; an ns8 session: formation:173409 calls,
+ * not_ancestor=173838, all native) and both far-join cases still open are a formation leader that parts with its escorts a
+ * tick behind. Here: the first live parent of b (+0x70) that is also above a is the common ancestor c; a's chain up to c is
+ * composed into the matrix, b's into an identity, and the result is the first in the second's frame (position: the
+ * difference turned by b's rows; rows: a's times b's transposed). An object with a NavigationController on either chain:
+ * native (nav=). siblings= counts the composed calls. 'observe' computes this case too, keeps the native result and rows
+ * the calls that differ, so one run shows whether the cache and the simulation disagree where a ship parts.
  * Not covered: the velocity variant 0x3df3f0 (0xe8a214, 0xe8a40c; the target path passes no velocity) and the
  * walk's own choice of stops and common ancestor (0xf231e0, 0x3d8f90), which read the published view's cached
  * parents (the result in b's frame does not depend on it while cached and live parents agree).
@@ -90,7 +102,7 @@
 #define PTF_RING 4096u
 #define PTF_ROWS_PER_TICK 256u
 #define PTF_STOP_REASON 180u     /* 179 fp redirect */
-enum {PTF_OFF,PTF_SIM,PTF_OBSERVE};
+enum {PTF_OFF,PTF_SIM,PTF_OBSERVE,PTF_ALL};
 static const struct {uint32_t site;const char *name;} ptf_sites[PTF_SITES]={
     {0xe8a221u,"walk"},{0xe8a416u,"walk_end"},{0xe8d5eau,"point_space"},{0xe94842u,"agent_space"},{0xe9a713u,"formation"},
     {0xec7cfeu,"dock_point"},{0xec7e1bu,"dock_frame"}};
@@ -110,7 +122,7 @@ typedef char (*ptf_class_fn)(void *,int);
 typedef void (*ptf_walk_fn)(float *,void *,void **,void **);
 static ptf_walk_fn ptf_walk_native; /* tests only: replaces 0xe8a110 */
 static _Thread_local unsigned ptf_dock_depth; /* this thread is inside a dock site's walk */
-static volatile LONG64 ptf_dock_agents;
+static volatile LONG64 ptf_dock_agents,ptf_siblings;
 static ptf_hier_fn ptf_hier_native; /* tests only: replaces 0x3dde10 */
 static ptf_gtr_fn ptf_gtr_native;   /* tests only: replaces 0x3db8a0 */
 static unsigned char *ptf_test_tls; /* tests only: the calling thread's TLS block */
@@ -224,6 +236,49 @@ static void *ptf_dock_core(unsigned site,void *a,float *out,void *b,uint64_t fla
     if(object) ptf_row(site,a,b,object,ctrl_vt,time,sim,NULL,0,0);
     return out;
 }
+/* b is not above a ('all', 'observe'): through the common live ancestor, see the head. */
+static void *ptf_sibling_core(unsigned site,unsigned char *a,float *out,unsigned char *b,uint64_t flag,ptf_hier_fn native,ptf_gtr_fn gtr,
+                              const unsigned char *manager,unsigned *outcome) {
+    unsigned char *above[PTF_DEPTH],*c=NULL,*link=a;unsigned n=0;
+    for(;link && n<PTF_DEPTH;n++) {above[n]=link;unsigned char *parent=NULL;if(!read_local(link+PTF_PARENT,&parent,8)) break;link=parent;}
+    link=b;
+    for(unsigned depth=0;link && depth<PTF_DEPTH && !c;depth++) {
+        for(unsigned i=0;i<n;i++) if(above[i]==link) {c=link;break;}
+        unsigned char *parent=NULL;if(c || !read_local(link+PTF_PARENT,&parent,8)) break;
+        link=parent;
+    }
+    unsigned char *oa=NULL,*ob=NULL;uint32_t va=0,vb=0;
+    const int ca=!c?0:a==c?1:ptf_chain(a,c,&oa,&va),cb=!c?0:b==c?1:ptf_chain(b,c,&ob,&vb);
+    if(ca<0 || cb<0) {*outcome=PTF_OUT_NAV;InterlockedIncrement64(&ptf_nav);return native(a,out,b,flag);}
+    if(!ca || !cb) {*outcome=PTF_OUT_NOT_ANCESTOR;InterlockedIncrement64(&ptf_not_ancestor);return native(a,out,b,flag);}
+    double time=0;
+    if(!manager || !read_local(manager+PTF_PASS_TIME,&time,8) || !isfinite(time)) {
+        *outcome=PTF_OUT_FAILURE;ptf_stage="pass_time";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);
+    }
+    static const float identity[16]={0,0,0,0, 1,0,0,0, 0,1,0,0, 0,0,1,0};
+    __declspec(align(16)) float ta[16],tb[16],sim[16];memcpy(ta,out,sizeof(ta));memcpy(tb,identity,sizeof(tb));
+    int ok=1;
+    __try {if(a!=c) gtr(a,ta,time,c,0);if(b!=c) gtr(b,tb,time,c,0);} __except(EXCEPTION_EXECUTE_HANDLER) {ok=0;}
+    if(!ok) {*outcome=PTF_OUT_FAILURE;ptf_stage="compose";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);}
+    const float d[3]={ta[0]-tb[0],ta[1]-tb[1],ta[2]-tb[2]};
+    for(unsigned j=0;j<3;j++) sim[j]=d[0]*tb[4+4*j]+d[1]*tb[5+4*j]+d[2]*tb[6+4*j];
+    sim[3]=ta[3];
+    for(unsigned i=0;i<3;i++) {
+        for(unsigned j=0;j<3;j++) sim[4+4*i+j]=ta[4+4*i]*tb[4+4*j]+ta[5+4*i]*tb[5+4*j]+ta[6+4*i]*tb[6+4*j];
+        sim[7+4*i]=ta[7+4*i];
+    }
+    ptf_last_time=time;
+    const unsigned char *object=oa?oa:ob;const uint32_t ctrl_vt=oa?va:vb;
+    if(ptf_mode==PTF_OBSERVE) {
+        *outcome=PTF_OUT_OBSERVE;void *result=native(a,out,b,flag);
+        const int differs=memcmp(sim,out,sizeof(sim))!=0;
+        if(differs) {InterlockedIncrement64(&ptf_differs);ptf_row(site,a,b,object,ctrl_vt,time,sim,out,1,0);}
+        return result;
+    }
+    *outcome=PTF_OUT_DIVERTED;InterlockedIncrement64(&ptf_diverted);InterlockedIncrement64(&ptf_siblings);
+    memcpy(out,sim,sizeof(sim));
+    return out;
+}
 /* One call of a site: cls the thread's path_thread_class, tls its TLS block, manager the PathingManager. */
 static void *ptf_call_core(unsigned site,void *a,float *out,void *b,uint64_t flag,unsigned cls,const unsigned char *tls,
                            ptf_hier_fn native,ptf_gtr_fn gtr,const unsigned char *manager,unsigned *outcome) {
@@ -239,8 +294,11 @@ static void *ptf_call_core(unsigned site,void *a,float *out,void *b,uint64_t fla
         return ptf_dock_core(site,a,out,b,flag,native,object,ctrl_vt,chain<0,manager,outcome);
     if(site>=PTF_SITE_DOCK) {*outcome=PTF_OUT_NOT_ANCESTOR;InterlockedIncrement64(&ptf_not_ancestor);return native(a,out,b,flag);}
     if(chain<0) {*outcome=PTF_OUT_NAV;InterlockedIncrement64(&ptf_nav);return native(a,out,b,flag);}
-    if(!chain) {*outcome=PTF_OUT_NOT_ANCESTOR;InterlockedIncrement64(&ptf_not_ancestor);return native(a,out,b,flag);}
-    /* Spaces only (zones, sectors, parts): static, the same on every client either way; stock bits stay. */
+    if(!chain) {
+        if(ptf_mode==PTF_SIM || nested) {*outcome=PTF_OUT_NOT_ANCESTOR;InterlockedIncrement64(&ptf_not_ancestor);return native(a,out,b,flag);}
+        return ptf_sibling_core(site,a,out,b,flag,native,gtr,manager,outcome);
+    }
+    /* Spaces only (zones, sectors, parts): 'sim' keeps stock's bits there ('all' composes them too, see the head). */
     if(!object && ptf_mode==PTF_SIM && !nested) {*outcome=PTF_OUT_SPACES;InterlockedIncrement64(&ptf_spaces);return native(a,out,b,flag);}
     double time=0;
     if(!manager || !read_local(manager+PTF_PASS_TIME,&time,8) || !isfinite(time)) {
@@ -378,7 +436,7 @@ static void ptf_restore(void) {
 /* gate.path_transforms(mode): the UI thread, before the first admitted frame, with the serial pathing join. */
 static int ptf_arm(int mode) {
     if(ptf_installed) return stats.active && mode==ptf_mode; /* an identical rerun after a loading-UI reload */
-    if((mode!=PTF_SIM && mode!=PTF_OBSERVE) || !stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId()!=ui_thread ||
+    if((mode!=PTF_SIM && mode!=PTF_OBSERVE && mode!=PTF_ALL) || !stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId()!=ui_thread ||
        !path_installed || !(path_options&1)) {ptf_stage="state";return 0;}
     for(unsigned i=0;i<PTF_SITES;i++) if(ptf_site_state(i)!=0) {ptf_stage="sites";return 0;}
     if(!ptf_pinned()) {ptf_stage="pins";return 0;}
@@ -434,10 +492,10 @@ static int ptf_row_text(uint64_t index,char *out,size_t cap) {
 static int ptf_status(char *out,size_t cap) {
     uint64_t time;memcpy(&time,&ptf_last_time,8);
     int n=snprintf(out,cap,"mode=%s installed=%d restored=%d stage=%s outside=%lld trivial=%lld spaces=%lld diverted=%lld objects=%lld nav=%lld "
-        "not_ancestor=%lld differs=%lld rows=%lld dropped=%lld failures=%lld dock_agents=%lld time=%016llx sites=",
-        ptf_mode==PTF_SIM?"sim":ptf_mode==PTF_OBSERVE?"observe":"off",ptf_installed,ptf_restored,ptf_stage,(long long)ptf_outside,(long long)ptf_trivial,(long long)ptf_spaces,
+        "not_ancestor=%lld differs=%lld rows=%lld dropped=%lld failures=%lld dock_agents=%lld siblings=%lld time=%016llx sites=",
+        ptf_mode==PTF_SIM?"sim":ptf_mode==PTF_OBSERVE?"observe":ptf_mode==PTF_ALL?"all":"off",ptf_installed,ptf_restored,ptf_stage,(long long)ptf_outside,(long long)ptf_trivial,(long long)ptf_spaces,
         (long long)ptf_diverted,(long long)ptf_objects,(long long)ptf_nav,(long long)ptf_not_ancestor,(long long)ptf_differs,(long long)ptf_rows,
-        (long long)ptf_dropped,(long long)ptf_failures,(long long)ptf_dock_agents,(unsigned long long)time);
+        (long long)ptf_dropped,(long long)ptf_failures,(long long)ptf_dock_agents,(long long)ptf_siblings,(unsigned long long)time);
     if(n<0 || (size_t)n>=cap) return 0;
     for(unsigned i=0;i<PTF_SITES;i++) {
         int m=snprintf(out+n,cap-(size_t)n,"%s%s:%lld",i?",":"",ptf_sites[i].name,(long long)InterlockedCompareExchange64(&ptf_site_calls[i],0,0));

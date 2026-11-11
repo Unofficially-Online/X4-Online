@@ -115,7 +115,10 @@ def main(argv=None):
     sv.add_argument('--load-wait', type=int, default=45, metavar='SECONDS', help='from the last player joining to the common load')
     sv.add_argument('--stall-drop', type=float, default=15, metavar='SECONDS')
     sv.add_argument('--idle-end', type=int, default=420, metavar='SECONDS', help='a game without a step for this long is over')
+    sv.add_argument('--idle-left', type=int, default=60, metavar='SECONDS',
+                    help='the same once the game has stepped: every player has left (default 60)')
     sv.add_argument('--runs', type=Path, help="where each game's relay files go (default: .local/runs)")
+    sv.add_argument('--keep-joins', action='store_true', help="keep each game's join files (default: deleted when the game is over)")
     sv.add_argument('--games', type=int, default=0, help='test: end after this many games')
 
     lb = sub.add_parser('lobby', help='open X4 in its main menu and choose there: Multiplayer, Host a game or Join a game '
@@ -237,7 +240,7 @@ def main(argv=None):
     if args.command == 'serve':
         from . import serve
         serve.run(serve.ServeOptions(overlay=args.overlay, server_file=args.server_file, bind=args.bind, load_wait=args.load_wait,
-                                     stall_drop=args.stall_drop, idle_end=args.idle_end, games=args.games,
+                                     stall_drop=args.stall_drop, idle_end=args.idle_end, idle_left=args.idle_left, keep_joins=args.keep_joins, games=args.games,
                                      **({'runs': args.runs} if args.runs else {})))
         return 0
     width, height = (int(v) for v in args.size.lower().split('x'))

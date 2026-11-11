@@ -1955,7 +1955,7 @@ static int lua_path_budget_status(lua_State *L) {
 /* gate.path_transforms('sim'|'observe'): native_gate_path_transforms, lockstep_path_transforms.h. */
 static int lua_path_transforms(lua_State *L) {
     const char *mode=p_lua_tolstring(L,1,NULL);
-    int m=mode && !strcmp(mode,"sim")?PTF_SIM:mode && !strcmp(mode,"observe")?PTF_OBSERVE:PTF_OFF;
+    int m=mode && !strcmp(mode,"sim")?PTF_SIM:mode && !strcmp(mode,"observe")?PTF_OBSERVE:mode && !strcmp(mode,"all")?PTF_ALL:PTF_OFF;
     double from=p_lua_tonumber(L,2),to=p_lua_tonumber(L,3);int window=1; /* (mode, from, to): the formation row window */
     if(isfinite(from) && isfinite(to) && to>0) window=from>=1 && to>=from && to<9007199254740992.0 && floor(from)==from && floor(to)==to &&
         ptf_window((uint64_t)from,(uint64_t)to);
