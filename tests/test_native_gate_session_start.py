@@ -455,6 +455,21 @@ class CaptureScriptTests(unittest.TestCase):
         self.assertIn('NATIVE_SNAPSHOT HULLS_READY count=2', logs)
         self.assertLess(logs.index('HULLS_READY'), logs.index('SAVE_REQUEST'))
 
+    def test_the_save_waits_while_x4_allows_none(self):
+        # The Terran cadet start: its wingmate speaks from second 6 and X4 allows no save until the line is over.
+        lua = self.capture()
+        g = lua.globals()
+        lua.execute('IsSavingPossible=function() return false end;update();update();now=20;update()')
+        self.assertIsNone(g.saved)
+        self.assertEqual(sum('NATIVE_SNAPSHOT SAVE_WAIT' in line for line in g.logs.values()), 1)
+        lua.execute('IsSavingPossible=function() return true end;update()')
+        self.assertEqual(g.saved, 'save_009')
+        # ...and not for ever: 180 s of game time, then the capture stops loudly.
+        lua = self.capture()
+        lua.execute('IsSavingPossible=function() return false end;update();update();now=191;update()')
+        self.assertIsNone(lua.globals().saved)
+        self.assertTrue(any('ERROR' in line and 'native saving unavailable' in line for line in lua.globals().logs.values()))
+
     def test_a_failed_or_missing_hull_stops_the_capture_loudly(self):
         lua = self.capture('X4LAN_CONFIG.native_gate_snapshot_hulls=2')
         lua.execute("update();callbacks['X4LAN_SessionHulls.Ready'](nil,-1);update();update()")

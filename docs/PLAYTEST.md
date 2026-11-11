@@ -440,7 +440,8 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
     read what another agent's job writes in the same pass. Cure, a session default since 11 Nov: the jobs run one
     after another in a fixed order (`native_gate_travel_determinism`). With it five runs of five were equal at every
     world check (every 300 ticks to tick 5400), and a far join was equal from the join to the handover. Cost on one
-    PC with two X4: about 1 ms more per pathing pass. Ruled out on the way, by counts in a run: the published
+    PC with two X4: about 1 ms more per pathing pass. A fifteen-minute run of the same session without a join (two
+    X4 on one PC, 11 Nov) was equal at all 16 world checks to tick 27,000, with 0 errors. Ruled out on the way, by counts in a run: the published
     parents that pathing walks (0 of 2.3 million differ from the live ones), and the formation code's transforms
     between two zones (`native_gate_path_transforms = 'observe'` compares them, `'all'` answers them from the
     simulation; the default stays `'sim'`).
@@ -532,6 +533,13 @@ steering, as in single player, and a gun turns as far as its mount allows.
 - **Lobby, first form:** the main-menu Multiplayer page starts a session whose players are all there at the start
   (see "Start from the main menu"). A join into a running game still goes through `x4ls join`, and X4 has to be
   started by `x4ls lobby`, not from Steam.
+- **Do not resize or maximise an X4 window during a session.** X4 reloads its UI on a resize; the session's script then
+  starts again in the middle of the session, is refused and that client stops (11 Nov, twice). `x4ls play --borderless`
+  starts the clients of this PC in X4's borderless window, which cannot be resized. Picking up after a UI reload is not
+  built.
+- **A story start as the session's own start:** the Terran cadet start can be captured since 11 Nov (X4 allows no save
+  while the wingmate's first line plays; the capture waits for it). Its mission chain belongs to player 1. First hand-on
+  play: the step "replace the satellite" is blocked, deploying a satellite is refused (not a shared action yet).
 - **Not built yet:** per-player story missions (in progress).
   - Personal missions per player, first form (9 Nov, on by default; `--set native_gate_missions_per_player=false`
     turns it off): a mission player 2 accepts is player 2's on every client. Its script sees player 2, their ship and their sector

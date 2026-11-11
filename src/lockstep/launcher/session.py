@@ -58,6 +58,7 @@ class Options:
     state: Path = ROOT / '.local/x4ls'
     keep_views: bool = False
     fast: bool = False  # render-only settings down, no frame cap, no sound (profile.FAST)
+    borderless: bool = False  # X4's borderless window instead of a sizable one (no tiling: the windows stay where X4 puts them)
     startup: int = 70  # seconds budgeted per client to reach the start menu; snapshot clients then arm together
     steam_fix: bool = False  # re-register Steam's pid before each client (see steam.py); restored at the end
     checkpoint_at: int | None = None  # every client saves save_001 after this tick; the session ends there
@@ -410,7 +411,8 @@ def run(o: Options, log=print):
             installed = run_dir / f'client{k}' / 'installed'  # the census tools read the installed config here
             installed.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(target / 'ui/config.lua', installed / 'x4_lan_lab-config.lua')
-            profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot, fast=o.fast)
+            profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot, fast=o.fast,
+                            borderless=o.borderless)
             if o.steam_fix:
                 steam.fix(o.state / 'steam-fix.json')  # Steam can reset it once a client connects
             proc = subprocess.Popen(client_command(view, profile_id, k, seed), cwd=view, env=steam.client_environment())
@@ -692,7 +694,7 @@ def monitor_play(o, run_dir, relay, clients, log):
                     line = progress(run_dir, tick_hz, armed_at)
                     if line:
                         log(line + (f", {counts['error']} error row(s) in errors.log" if counts.get('error') else ''))
-                if not tiled and time.time() - started > 20:
+                if not tiled and not o.borderless and time.time() - started > 20:
                     tiled = tile([proc.pid for _, _, proc in clients], o.width, o.height) == len(clients)
                 for k, _, proc in clients:
                     for line in tails[k].lines():

@@ -95,6 +95,12 @@ class Profiles(unittest.TestCase):
                 self.assertIn(key, config)
             self.assertEqual((path / 'save' / profile.SNAPSHOT_SLOT).read_bytes(), b'snapshot')
             self.assertIn('id="x4_lan_lab" enabled="true"', (path / 'content.xml').read_text())
+            self.assertIn('<borderless>false', config)
+            # x4ls play --borderless: X4's borderless window (a resize of a sizable one reloads X4's UI in the session)
+            path = profile.prepare(45850, ['x4_lan_lab'], 2560, 1440, snap, root=tmp, borderless=True)
+            config = (path / 'config.xml').read_text()
+            for key in ('<fullscreen>false', '<borderless>true', '<res_width>2560', '<res_height>1440'):
+                self.assertIn(key, config)
 
 
 class Unstage(unittest.TestCase):

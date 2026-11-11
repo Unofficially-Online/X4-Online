@@ -62,6 +62,9 @@ def main(argv=None):
     pl.add_argument('--close-when-over', action='store_true',
                     help='close the X4 windows and collect once the session is over (unattended runs)')
     pl.add_argument('--size', default='1280x720', help='client window size, WIDTHxHEIGHT')
+    pl.add_argument('--borderless', action='store_true',
+                    help="X4's borderless window at --size for every client of this PC (it cannot be resized; a resize reloads "
+                         "X4's UI). The windows lie on top of each other: Alt+Tab between them")
     pl.add_argument('--game', type=Path)
     pl.add_argument('--lanes', type=Path, help='where client views go (default <game drive>:\\x4ls-lanes)')
     pl.add_argument('--startup', type=int, default=70, help='seconds budgeted per client to reach the start menu')
@@ -317,7 +320,7 @@ def main(argv=None):
                                   lookahead=lookahead, timeout=args.timeout, width=width, height=height, game=args.game,
                                   lanes=args.lanes, startup=args.startup, steam_fix=args.steam_fix, play=True,
                                   stall_drop_ms=1000 * args.stall_drop if lookahead else 0, relay_args=args.relay_args,
-                                  close_when_over=args.close_when_over,
+                                  close_when_over=args.close_when_over, borderless=args.borderless,
                                   remote_slots=tuple(int(v) for v in args.remote_slots.split(',') if v.strip()),
                                   bind=args.bind, allow_from=tuple(a for a in args.allow_from.split(',') if a.strip()),
                                   port=args.port, join_wait=args.join_wait, public_host=args.public_host,
