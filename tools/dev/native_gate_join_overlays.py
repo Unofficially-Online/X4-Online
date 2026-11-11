@@ -300,6 +300,11 @@ def ids_sets(sets):
 #                                  two guns shot in the load, 30 bullets against 28, a round off each clip, the reloads on
 #                                  another cycle from 727; ca22b..ca27 with it: 2 shots held, the shots and bullets of every
 #                                  step equal to 5400, the first mismatch from 728 to the 1800 census, another cause)
+#   native_gate_join_hold_bullets  the joiner's bullets do not move between the load and the admission (hj8i, 11 Nov, ns8,
+#                                  T=676, the playtest kit's join through the VPS: a laser bullet hit in the load, its kill
+#                                  went through the kept boot events and was delivered at T+1 before the bullets moved: 49
+#                                  bullets against 50, a ship's shield 690 against 667. With it: 46 moves held, the bullets
+#                                  of T+1 and the census of T+1 equal, the digest equal to the 1800 census, another cause)
 #   native_gate_join_cue_ids       the joiner's loaded MD cue instances take the session's runtime IDs: the package's CUEI
 #                                  section 83 maps the save's cue ordinal to the live ID (the first form read the save's
 #                                  number as the ID and was wrong: hj31). hj32, 9 Nov, T=701, a mission accepted before the
@@ -315,7 +320,7 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled',
                    'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids',
                    'native_gate_join_grav_dead', 'native_gate_join_body_make', 'native_gate_join_viewl',
-                   'native_gate_join_anis', 'native_gate_join_anis_state')
+                   'native_gate_join_anis', 'native_gate_join_anis_state', 'native_gate_join_hold_bullets')
 
 
 def default_sets(sets):

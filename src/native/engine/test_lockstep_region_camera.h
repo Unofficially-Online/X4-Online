@@ -1132,6 +1132,8 @@ static void test_tp_traffic(void *network,void *zone,void *view) {
 static void test_tp_place(void *a,void *b,void *c,void *d) {(void)a;(void)b;(void)c;(void)d;++test_tp_places;}
 static void *test_tp_filter(void *a,void *b,double c,double d,double e,void *f) {(void)b;(void)c;(void)d;(void)e;(void)f;++test_tp_filters;return a;}
 static void test_tp_draw(uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f,uint64_t g,uint64_t h) {(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;(void)h;++test_tp_draws;}
+static int test_rc_lane_docks;
+static char test_rc_lane_dock(void *t,void *a,void *dock,void *b,void *c,void *d) {(void)t;(void)a;(void)b;(void)c;(void)d;++test_rc_lane_docks;return dock?1:0;}
 static void *test_tp_relative(void *a,float *out,void *b,unsigned char flag) {(void)a;(void)b;(void)flag;++test_tp_natives;out[0]=-1;return out;}
 static __declspec(align(16)) unsigned char test_tp_a[0x100],test_tp_b[0x100];
 static void test_tp_gtr(void *self,float *out,double time,void *ancestor,unsigned char flag) {
@@ -1191,6 +1193,11 @@ static void test_rc_traffic_pass(void) {
     }
     assert(tp_late[1]==2 && tp_late[0]==2 && tq_late_count==2 && tp_early[1]==2 && tp_early[0]==2 && tq_early_count==2);
     assert(tp_place[1]==2 && tp_place[0]==2 && tp_place_skipped==4 && tp_filter[1]==1 && tp_filter[0]==1 && tp_filter_skipped==2 && tp_draw_skipped==2);
+    /* The lane build's per-dock call: passed through and counted (rows only inside a row window). */
+    {   const LONG64 calls=rc_stub_calls[RC_LANE_DOCK_CALL];rc_lane_dock_native=test_rc_lane_dock;test_rc_lane_docks=0;
+        assert(rc_lane_dock(network,NULL,member,NULL,NULL,NULL)==1 && rc_lane_dock(network,NULL,NULL,NULL,NULL,NULL)==0);
+        assert(test_rc_lane_docks==2 && rc_stub_calls[RC_LANE_DOCK_CALL]==calls+2);rc_lane_dock_native=NULL;
+    }
     /* The relative transform: ours from the simulation in the common cluster, a's frame in b's; else native. */
     float out[16];tp_thread=0;assert(tp_relative_a(test_tp_a,out,test_tp_b,0)==out && out[0]==-1 && test_tp_natives==1);
     tp_thread=GetCurrentThreadId();assert(tp_relative_b(test_tp_a,out,test_tp_b,0)==out && test_tp_natives==1 && tp_relative==1);

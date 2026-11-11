@@ -129,6 +129,7 @@ local function install(options)
   lobby.drawing=false
   options.currentOption='x4lan_lobby'   -- a refresh draws this page again
   if not ok then note('DRAW_ERROR '..tostring(why)) end
+  note('PAGE phase='..tostring(lobby.state.phase))   -- the page was drawn (opened, or refreshed for a new state)
  end
  options.submenuHandler=function(parameter,...)
   if parameter=='x4lan_lobby' then return options.displayOptions('x4lan_lobby') end
@@ -150,6 +151,15 @@ local function try_install()
   note('MENU_REFUSED why=no_menu_functions');return
  end
  install(options)
+ -- X4's "Modified game detected" notice at the start menu: in the launcher's X4 this is the disposable multiplayer
+ -- profile, where it says nothing new and costs a click at every start. In a Steam-started X4 (PIPE) it is the player's
+ -- own game and the notice is theirs to read: left alone.
+ if not PIPE and options.contextMenuMode=='modified' then
+  if type(__CORE_DETAILMONITOR_USERQUESTION)=='table' then __CORE_DETAILMONITOR_USERQUESTION['modified']=true end
+  local ok=type(options.closeContextMenu)=='function' and pcall(options.closeContextMenu)
+  options.contextMenuMode=nil
+  note('MODIFIED_NOTICE closed='..tostring(ok))
+ end
 end
 local polls,read_failed,misses=0,false,0
 local function state_chunk()

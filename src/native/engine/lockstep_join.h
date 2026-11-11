@@ -3431,6 +3431,9 @@ static int join_mute_load_npcs_on;
  * and its round is off the clip. The held shot's time is still the weapon's last shot time (the loop over the shots due
  * needs it); SHOOT puts the session's there at the admission. Windows only. Status hold_fire=on:held shots. */
 static int join_hold_fire_on;
+/* native_gate_join_hold_bullets (hj8i, 11 Nov): a joiner's bullets do not move between the package's load and the admission
+ * (bullet_hold, lockstep_bullet.h). Status bullet_hold=on:held moves. Windows only (the bullet module). */
+static int join_hold_bullets_on;
 static int join_bootev_session_keep(unsigned char *source,unsigned char *event,double now) {
     uintptr_t vt=0;uint64_t runtime=0;unsigned klass=0;
     if(!event || !join_read(event,&vt,8) || !vt) return 0;
@@ -3597,6 +3600,7 @@ static int join_load(const char *path,const char *sha_hex,int mode) {
     if(join_watch.n) join_rw_load_prepare(&join_rx.t);   /* diagnostic: JOIN_REFWATCH in the load (lockstep_join_world.h) */
     if(join_mute_load_npcs_on) InterlockedExchange(&script_rng_mute_keyword,JOIN_NPC_CREATED_KEYWORD);
     if(join_hold_fire_on) InterlockedExchange(&wfire_hold,1);
+    if(join_hold_bullets_on) InterlockedExchange(&bullet_hold,1);
     join_rx.loaded=1;return 1;
 }
 /* gate.join_lua(T, text) in frame T on an armed saver: the probe's providers' state, written with the package. */
@@ -4011,6 +4015,7 @@ static int join_admit(void) {
     if(!join_rx.loaded || join_rx.admitted) return 1;
     InterlockedExchange(&script_rng_mute_keyword,0);   /* native_gate_join_mute_load_npcs: MD hears NPC events again */
     InterlockedExchange(&wfire_hold,0);   /* native_gate_join_hold_fire: the weapons shoot again, from T+1 on */
+    InterlockedExchange(&bullet_hold,0);  /* native_gate_join_hold_bullets: the bullets fly again, from T+1 on */
     join_rx.admitted=1;join_jobinit_restore();join_bootev_restore();   /* Init and the boot event passes ran in the load (version 13) */
     InterlockedExchange(&join_parse_on,0);join_parse_restore();   /* the load is over: the parser native again */
     if(join_rx.created_failures || InterlockedCompareExchange64(&join_rx.mapped_saved,0,0)+InterlockedCompareExchange64(&join_rx.mapped_created,0,0)<
@@ -4068,7 +4073,7 @@ static int join_status(char *out,size_t cap) {
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
-        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anis_why=%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u"
+        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anis_why=%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u bullets=%llu:%llu:%llu:%llu:%llu:%llu bullet_hold=%d:%lld"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
@@ -4125,6 +4130,9 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_anis_why[0],(unsigned long long)join_anis_why[1],(unsigned long long)join_anis_why[2],(unsigned long long)join_anis_why[3],
         (unsigned long long)join_anis_why[4],
         (unsigned long long)join_anil_made,(unsigned long long)join_anil_equal,(unsigned long long)join_anil_unknown,(unsigned long long)join_anil_conflict,join_cap.anil,
+        (unsigned long long)join_bul_session,(unsigned long long)join_bul_own,(unsigned long long)join_bul_paired,(unsigned long long)join_bul_missing,
+        (unsigned long long)join_bul_extra,(unsigned long long)join_bul_apart,
+        join_hold_bullets_on,(long long)InterlockedCompareExchange64(&bullet_held,0,0),
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ALL],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PROBE],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PARAMS],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ACTOR],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_ACTOR],(unsigned long long)join_rx.keys_known,(unsigned long long)join_rx.keys_unarmed,

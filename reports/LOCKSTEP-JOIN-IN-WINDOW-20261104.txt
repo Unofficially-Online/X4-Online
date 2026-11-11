@@ -1738,3 +1738,49 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
   rows in the join watch (a watched object's sequences: queue, state, next state, waiting listeners, times);
   .local scripts are not in the tree. A play-mode host refuses native_gate_runtime_ids_callers (runtime IDs mode=set):
   native_gate_runtime_ids_rows alone works there.
+
+65. A BULLET THAT HITS IN THE JOINER'S LOAD (the playtest kit's join through the VPS; hj8i, 11 November)
+- Reported by the playtest kit: ns8 (eight slots), slot 2, the lobby flow through the real VPS, the save landing at T=676:
+  "digest_mismatch first=677", 4,480 mismatches to the handover. A second join there (T=685) differed in another way (the
+  open timing item below), three joins on localhost (T=679, 686, 686) did not. It is the save's step, not the machine: the
+  same join on 127.0.0.1 with the save forced to 676 (-- --join-save-at 676) gives the same package (portable digest
+  d6fe3764e551274f...) and the same mismatch from 677.
+- What differs at 677 (census pages, 525,005 rows): three objects, the ShipSmall 16fcec (health and motion) and its two
+  weapons 16fcf8, 16fcfa (health: they sit under the ship's shield group). The ship's shield is 667 on the session and 690
+  on the joiner. BULLET_CADENCE at 677: the session moves 50 bullets and tests 46, the joiner 49 and 45; from 678 on the
+  counts are equal.
+- Not lost by the save or the load: BULLET's census has 46 bullets at T and a new check at the admission pairs all 46 with
+  the joiner's own (bullets=46:46:46:0:0:46; a kept save of T=686 also holds each of its package's 27).
+- Execution watches from step 677 on (the bullet's Move 0xd4f090, its destructor 0xd4e2c0, Kill 0x3e51b0, the event cancel
+  0x99aa90; the event rows): both sides move the bullets in the same order (runtime ID order: a zone's update 0x748120
+  walks its two child containers +0xa8 and +0xa0 and calls each child's slot +0x1510). The session moves the laser bullets
+  1653ee and 1653ef (twins of one ship's two guns), both hit the ship 6973b (16fcec) and are killed. The joiner moves 1653ee,
+  which hits and is killed, and never moves 1653ef: step 677's event pass had delivered a KillEvent (0x2baad90) to it, due
+  at T's game time, and its destructor runs at the step's end. The session has no such event.
+- Cause: a joiner's loading frames run the zones before the admission (the reason for native_gate_join_hold_fire), and a
+  zone's update moves its bullets. 1653ef hit in the load and posted its kill for the load's time. KillEvent is a class the
+  session had due at T, so the boot event hold (native_gate_join_hold_boot_events) kept that event and posted it again
+  after the admission; step T+1 delivered it before the bullets moved. The session's hit of that bullet at T+1 never
+  happened on the joiner.
+- Fix native_gate_join_hold_bullets (a join default, JOIN_DEFAULT_ON): between the package's load and the admission the
+  bullet module's Move wrapper returns at once (bullet_hold, lockstep_bullet.h; status bullet_hold=on:held). A held bullet
+  keeps the state the save gave it, which is the session's at T. Windows only, as the bullet module. Real run, the same
+  join with the save forced to 676: bullet_hold=1:46 (one loading frame, 46 bullets), step 677 50/46 on both sides, the
+  census of 677 equal in all four roots, the relay's digest equal from 677 to the 1800 census. The 1800 census then
+  differs in the motion and timing roots (class and health equal): another cause, later than this one (section 64's
+  leaders are in this session).
+- New diagnostic: the bullet pairing at the admission (status bullets=session:own:paired:missing:extra:apart, a
+  JOIN_BULLET line in the crash note per bullet missing, extra or apart, the flight's words +0x260.. first). "apart"
+  counts every pair because the transform cache words and the byte +0xd0 differ after a load; it names bullets, it does
+  not judge them.
+- Open, the kit's second join (T=685, reproduced on localhost with the save forced to 685, portable digest
+  035aa9f50a3a6402...): bullets and the sampled ships equal, one object apart at 686 in the timing root alone, the created
+  ShipExtraSmall 800280e26769bfc5 (zone 0x830, made at 28.397 s): nav.refresh_time T on the session (relation 1), T+1 on
+  the joiner (relation 0). PATH_DETERMINISM: order, walk and stamp hashes equal at 686; at 687 the stamp hashes differ
+  (the joiner has one more agent already current and one fewer stamped), at 688 they are equal again. The digest's world
+  part is the last census, so the relay counts every tick to the 1800 census as a mismatch and a play session reports a
+  desync at the handover: it is the "one timing-only item" of the earlier runs (w1z120..w1z123; section 63's open list),
+  and it is not cosmetic for a playtest.
+- Tests: native tests pass (the hold in test_bullet_cadence: synthetic, the wrapper returns before X4's Move and counts);
+  460 Python tests of the join, defaults, probe and launcher suites pass. The real runs above are X4 9.00 on Windows, two
+  instances on one PC, play mode.

@@ -351,6 +351,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_body_make','hot join: the IDs of physics bodies the session has and the joiner lacks at its admission go off the shared route when X4 makes them (BODY make)'},
  {'native_gate_join_grav_dead','hot join: the joiner radar lists keep the contacts destroyed before the join until the next scan (GRAVC dead)'},
  {'native_gate_join_hold_fire','hot join: the joiner weapons make no shot between the load and the admission (needs native_gate_weapon_fire_rng)'},
+ {'native_gate_join_hold_bullets','hot join: the joiner bullets do not move between the load and the admission (needs native_gate_bullet_rng or native_gate_bullet_diag)'},
  {'native_gate_join_mute_load_npcs','hot join: the joiner MD does not hear the NPC created events of its load before the admission'},
  {'native_gate_join_cue_ids','hot join: the joiner loaded MD cue instances take the runtime IDs the join save names (missions, offers)'},
  {'native_gate_join_shoot_far','hot join: SHOOT also writes the session last shot time where the joiner gun was reset by its load (class A)'},

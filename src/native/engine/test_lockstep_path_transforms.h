@@ -64,7 +64,7 @@ static void test_ptf_walk(float *m,void *velocity,void **from,void **to) {
     m[5]+=1000.0f;
 }
 static void test_ptf_counts_reset(void) {
-    ptf_dock_agents=ptf_siblings=0;
+    ptf_dock_agents=ptf_siblings=ptf_parent_calls=ptf_parent_differs=0;
     memset((void*)ptf_site_calls,0,sizeof(ptf_site_calls));
     ptf_outside=ptf_trivial=ptf_spaces=ptf_diverted=ptf_objects=ptf_nav=ptf_not_ancestor=ptf_differs=ptf_failures=ptf_rows=ptf_dropped=ptf_tick_rows=0;
 }
@@ -147,6 +147,18 @@ static void test_path_transforms(void) {
         assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && m[0]==3.0f && ptf_differs==differs0+1 && ptf_rows==r0+1 && ptf_siblings==2);
         assert(ptf_row_text((uint64_t)r0,out,sizeof(out))>0 && strstr(out,"site=formation mode=observe") && strstr(out,"differs=1 sim=0000803f") && strstr(out," native=00004040"));
         test_ptf_native_value=1.0f;m[0]=1.0f;assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_differs==differs0+1 && ptf_rows==r0+1);
+        /* 'observe' counts the calls whose chains have a published parent other than the live one (bank 1 here: +0x160).
+         * The stand-in components have none published, so every chain with a parent differs until it is published. */
+        {   static const uint32_t bank=1;ptf_test_bank=&bank;const LONG64 calls0=ptf_parent_calls,parents0=ptf_parent_differs;
+            _Static_assert(offsetof(test_ptf_component,pad2)<=0xe0 && sizeof(test_ptf_component)>=0x168,"room for the published parents");
+            assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_parent_calls==calls0+1 && ptf_parent_differs==parents0+1);
+            memcpy((unsigned char*)zone+0x160,&sector,8);memcpy((unsigned char*)other+0x160,&sector,8);   /* published as live */
+            assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_parent_calls==calls0+2 && ptf_parent_differs==parents0+1);
+            memcpy((unsigned char*)zone+0xe0,&other,8);   /* the other bank is not read */
+            assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_parent_differs==parents0+1);
+            memset((unsigned char*)zone+0xe0,0,8);memset((unsigned char*)zone+0x160,0,8);memset((unsigned char*)other+0x160,0,8);ptf_test_bank=NULL;
+            InterlockedExchange64(&ptf_site_calls[PTF_SITE_FORMATION],InterlockedCompareExchange64(&ptf_site_calls[PTF_SITE_FORMATION],0,0)-3);
+        }
         ptf_mode=PTF_SIM;(void)rows0;
         InterlockedExchange64(&ptf_site_calls[PTF_SITE_FORMATION],InterlockedCompareExchange64(&ptf_site_calls[PTF_SITE_FORMATION],0,0)-7);
         InterlockedExchange64(&ptf_site_calls[2],InterlockedCompareExchange64(&ptf_site_calls[2],0,0)-1);
@@ -204,7 +216,7 @@ static void test_path_transforms(void) {
     /* Rows evicted from the ring say so. */
     ptf_rows=PTF_RING+5;assert(ptf_row_text(2,out,sizeof(out))>0 && !strcmp(out,"index=2 evicted=1"));ptf_rows=rows+1;
     assert(ptf_status(out,sizeof(out))>0 && strstr(out,"mode=sim installed=0 ") && strstr(out," spaces=1 diverted=") && strstr(out," time=4054900000000000 sites=walk:1,walk_end:") &&
-           strstr(out,"point_space:5,agent_space:0,formation:4,dock_point:7,dock_frame:1") && strstr(out," dock_agents=1 siblings=2 time="));
+           strstr(out,"point_space:5,agent_space:0,formation:4,dock_point:7,dock_frame:1") && strstr(out," dock_agents=1 siblings=2 parents="));
     assert(!ptf_status(out,40));
     #undef PTF_CALL
     InterlockedExchange(&ptf_active,0);ptf_mode=PTF_OFF;ptf_ring=saved_ring;ptf_stage="idle";test_ptf_counts_reset();ptf_last_time=0;

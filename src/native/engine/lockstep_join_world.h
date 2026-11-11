@@ -8084,6 +8084,53 @@ static void join_admit_viewk(const join_tables *s,const join_tables *mine) {
         if(vf!=r->vflags) {(void)join_poke((uintptr_t)(block+JOIN_VIEW_FLAGS),&r->vflags,4);++join_rx.viewk_flags;}
     }
 }
+/* BULLET at the admission (diagnostic: the joiner writes nothing). The joiner's own bullets after its load against the session's
+ * census, paired by macro and start time (+0x278; the save writes it with 17 digits), the shooter first where both sides name one.
+ * Status bullets=session:own:paired:missing:extra:apart (apart: a pair with a word apart outside pointers and the runtime ID +8);
+ * a JOIN_BULLET line in the crash note per bullet missing, extra or apart (at most JOIN_BULLET_LINES). vps3 (the kit's join through
+ * the VPS, ns8, T=676): the session moved 50 bullets in step T+1, the joiner 49, and a ship's shield parted there. */
+#define JOIN_BULLET_LINES 48u
+static uint64_t join_bul_session,join_bul_own,join_bul_paired,join_bul_missing,join_bul_extra,join_bul_apart;
+static void join_bullet_line(unsigned *lines,const char *side,const char *why,const join_bullet_rec *r,const char *more) {
+    char out[640];uint64_t start=0,last=0,next=0,w118=0,id=0;uint32_t xyz[3]={0,0,0};
+    if(*lines>=JOIN_BULLET_LINES) return;
+    ++*lines;
+    memcpy(&id,r->bullet+8,8);memcpy(&start,r->bullet+0x278,8);memcpy(&last,r->bullet+0x268,8);memcpy(&next,r->bullet+0x270,8);
+    memcpy(&w118,r->bullet+0x118,8);memcpy(xyz,r->bullet+0x150,12);
+    int n=snprintf(out,sizeof(out),"[X4LAN] NATIVE_GATE JOIN_BULLET side=%s why=%s id=%llx macro=%.40s start=%016llx last=%016llx next=%016llx zone=%016llx"
+                   " shooter=%016llx slot=%u flags=%x w118=%016llx at=%08x:%08x:%08x%s%s\r\n",side,why,(unsigned long long)id,r->macro,
+                   (unsigned long long)start,(unsigned long long)last,(unsigned long long)next,(unsigned long long)r->zone,(unsigned long long)r->shooter,
+                   r->position,r->flags,(unsigned long long)w118,xyz[0],xyz[1],xyz[2],more?" ":"",more?more:"");
+    if(n>0) crash_note_write(out,n<(int)sizeof(out)?n:(int)sizeof(out)-1);
+}
+static int join_bullet_same(const join_bullet_rec *a,const join_bullet_rec *b,int shooter) {
+    return !memcmp(a->bullet+0x278,b->bullet+0x278,8) && !memcmp(a->macro,b->macro,JOIN_BULLET_MACRO) && (!shooter || a->shooter==b->shooter);
+}
+static void join_admit_bullets(const join_tables *s) {
+    join_tables own;uint32_t cap=0;unsigned lines=0;unsigned char *used=NULL;memset(&own,0,sizeof(own));
+    join_bul_session=s->nbullet;join_bul_own=join_bul_paired=join_bul_missing=join_bul_extra=join_bul_apart=0;
+    join_capture_bullets(&own,&cap);join_bul_own=own.nbullet;
+    if(own.nbullet && (!(used=calloc(own.nbullet,1)) || (uint64_t)s->nbullet*own.nbullet>(1u<<24))) {free(used);free(own.bullet);return;}
+    for(uint32_t i=0;i<s->nbullet;i++) {
+        const join_bullet_rec *a=&s->bullet[i];uint32_t j=own.nbullet;
+        for(int shooter=1;shooter>=0 && j==own.nbullet;shooter--)
+            for(j=0;j<own.nbullet;j++) if(!used[j] && join_bullet_same(a,&own.bullet[j],shooter)) break;
+        if(j==own.nbullet) {++join_bul_missing;join_bullet_line(&lines,"session","missing",a,NULL);continue;}
+        used[j]=1;++join_bul_paired;
+        {   const join_bullet_rec *b=&own.bullet[j];char text[360]="words=";size_t at=6;unsigned words=0;
+            for(unsigned pass=0;pass<2;pass++) for(unsigned o=0;o<JOIN_BULLET_BYTES;o+=8) {   /* the flight's words (+0x260..) first, then the rest */
+                if((o>=0x260u)!=(pass==0)) continue;
+                uint64_t x,y;memcpy(&x,a->bullet+o,8);memcpy(&y,b->bullet+o,8);
+                if(x==y || o==8u || (x>=(1ull<<32) && x<(1ull<<47) && y>=(1ull<<32) && y<(1ull<<47))) continue;
+                if(++words<=8u && at+48<sizeof(text)) at+=(size_t)snprintf(text+at,sizeof(text)-at,"%s+%x:%llx/%llx",words>1?",":"",o,(unsigned long long)x,(unsigned long long)y);
+            }
+            if(a->shooter!=b->shooter || a->zone!=b->zone) {++words;if(at+60<sizeof(text)) at+=(size_t)snprintf(text+at,sizeof(text)-at,",owner:%llx/%llx",(unsigned long long)b->zone,(unsigned long long)b->shooter);}
+            if(words) {++join_bul_apart;join_bullet_line(&lines,"both","apart",a,text);}
+        }
+    }
+    for(uint32_t j=0;j<own.nbullet;j++) if(!used[j]) {++join_bul_extra;join_bullet_line(&lines,"joiner","extra",&own.bullet[j],NULL);}
+    free(used);free(own.bullet);
+}
 static int join_admit_world(void) {
     const join_tables *s=&join_rx.t;int strict=join_rx.mode==JOIN_STRICT;unsigned hrows=0,prows=0;
     if(s->version<2) return 1;   /* a version 1 package carries no world table (a strict joiner refused it at the load) */
@@ -8168,6 +8215,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_viewl(s,&mine);   /* the live and player view flags (opt-in) */
     if(s->version>=13) join_admit_ikv(s,&mine);     /* the skeletons' IK joints (the weapons' gimbals) */
     if(s->version>=13) join_admit_anis(s,&mine);    /* the part animation sequences: start times, unit states, waiting listeners (written: opt-in) */
+    if(s->version>=10) join_admit_bullets(s);       /* the bullets in flight: the joiner's against the census (diagnostic) */
     if(s->version>=13) join_admit_ecos(s,&mine);    /* the economy schedules (opt-in) */
     if(s->version>=13) join_admit_shpw(s,&mine);    /* the ships' words a load leaves at defaults (opt-in) */
     if(s->version>=13) join_admit_trdn(s,&mine);    /* the containers' next trade offer update (opt-in) */
