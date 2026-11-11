@@ -2047,6 +2047,10 @@ static const join_pin join_pin_table[]={
      * points hook through a pointer) and the attention timer's due +0x2e0 (past its first 8 bytes: lockstep_attention.h patches
      * them with a jump and a nop). */
     {0xea2a20,537,"d301bea94b279ddce92ced403bafdd17a90ed2eb83c5cc5944cf2ae600fc4a4f"},   /* RefreshFromPathingState */
+    /* native_gate_join_keep_stamps: the republication (its three transform queries), the cache walk that calls it, the query */
+    {0x3d46b0,0x3cc,"84f77bb26750e1f20ccb53d4bc8863a9aa18119da21e6d1648e4659fdedc7784"},   /* PropagateCacheFlags */
+    {0x3d4a80,0x6ff,"c8bd534299f639285476f5738e8674a4e14dec04d8004b792eadfa11d92ec91c"},   /* BuildCache */
+    {0xea5a90,0x7e9,"1d90a6295a8658de5d2ba9cf75b16d37cb74bfcc5f9a517eec08202c3f4dcfd4"},   /* GetTransformImpl */
     {0xeac170,123,"8487d9a8922f92b790f68759933ac3011a10746f828a634ffc5fcb68ab24bd36"},   /* WaitAndSwapBuffers */
     {0x3d5660,0x64,"8e948a0788bbacca91415cb51e228e73bc416c608d2398b07f05312fb19b56eb"},  /* SetAttention */
     {0x116a1f0,0xf5,"e094b23d8f4910001c2f058a997727102fb6823fe38a8ae39c9e7fee07883ea8"},  /* SequenceControlUnit: a state entered (join_anis_restate) */
@@ -4073,7 +4077,7 @@ static int join_status(char *out,size_t cap) {
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
-        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anis_why=%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u bullets=%llu:%llu:%llu:%llu:%llu:%llu bullet_hold=%d:%lld"
+        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anis_why=%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u bullets=%llu:%llu:%llu:%llu:%llu:%llu bullet_hold=%d:%lld keep_stamps=%d:%llu:%u:%llu:%llu:%llu:%llu:%lld:%lld"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
@@ -4133,6 +4137,9 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_bul_session,(unsigned long long)join_bul_own,(unsigned long long)join_bul_paired,(unsigned long long)join_bul_missing,
         (unsigned long long)join_bul_extra,(unsigned long long)join_bul_apart,
         join_hold_bullets_on,(long long)InterlockedCompareExchange64(&bullet_held,0,0),
+        join_ks_on,(unsigned long long)join_ks_listed,join_ks_n,(unsigned long long)join_ks_pending,(unsigned long long)join_ks_spec,
+        (unsigned long long)join_ks_missing,(unsigned long long)join_ks_over,
+        (long long)InterlockedCompareExchange64(&join_ks_seen,0,0),(long long)InterlockedCompareExchange64(&join_ks_kept,0,0),
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ALL],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PROBE],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PARAMS],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ACTOR],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_ACTOR],(unsigned long long)join_rx.keys_known,(unsigned long long)join_rx.keys_unarmed,

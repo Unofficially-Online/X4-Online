@@ -65,7 +65,12 @@ D.ON={
  {'native_gate_world_hash_schema','WORLD_IMPORTED_2','native_gate_world_hash_stride','census with the enriched navigation fields'},
  {'native_gate_world_hash_shields','canonical','native_gate_world_hash_stride','census shields in canonical form'},
  {'native_gate_path_determinism',3,'native_gate_serial_pathing','navigation stamps and pathing budget fixed'},
- {'native_gate_travel_snapshot',true,'native_gate_serial_pathing native_gate_path_determinism','wingmen read a per-pass travel snapshot'},
+ -- Pathing batch jobs inline on the pathing thread, in batch order (lockstep_travel_determinism.h), since 11 Nov. The parallel
+ -- jobs with a travel snapshot (native_gate_travel_snapshot, the default before) freeze one read between agents; another one
+ -- is left: on the eight-slot session a corvette and its five escorts near a far start parted between two clients that had
+ -- loaded the same save, at another tick each run (two runs of two), and stayed equal in three runs of three with the jobs
+ -- inline. The pass took 7.5 ms instead of 6.3 ms there (two X4 on one PC).
+ {'native_gate_travel_determinism',true,'native_gate_serial_pathing native_gate_path_determinism','pathing batch jobs inline in batch order'},
  {'native_gate_path_budget',100,'native_gate_serial_pathing','pathing round robin by count, not by clock'},
  {'native_gate_path_transforms','sim','native_gate_serial_pathing','pathing reads simulation transforms, not view caches'},
  {'native_gate_body_pose','sim','','new physics bodies take simulation poses'},
@@ -98,7 +103,9 @@ D.ON={
  {'native_gate_player_timer',true,'','player timers on game time'},
  {'native_gate_ship_sound_rng','split','','ship sounds on their own RNG word'},
  {'native_gate_warp_rng',true,'native_gate_world_identities','warp draws keyed'},
- {'native_gate_tempzone_order','order','native_gate_world_identities native_gate_serial_pathing native_gate_travel_snapshot','temporary zones in a fixed order'},
+ -- With the inline jobs too (complete command-list splices either way): a hot join needs the temporary zones' portable order
+ -- (hjs1, 11 Nov, without it: 17 objects more on the joiner at the first step after the join).
+ {'native_gate_tempzone_order','order','native_gate_world_identities native_gate_serial_pathing native_gate_travel_determinism','temporary zones in a fixed order'},
  {'native_gate_build_rng',true,'native_gate_world_identities','build storage reschedules keyed'},
  {'native_gate_economy_load_rng',true,'native_gate_world_identities','economy schedule keyed at the load'},
  {'native_gate_loadout_order','canonical','','restock wishes in macro-id order'},
@@ -352,6 +359,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_grav_dead','hot join: the joiner radar lists keep the contacts destroyed before the join until the next scan (GRAVC dead)'},
  {'native_gate_join_hold_fire','hot join: the joiner weapons make no shot between the load and the admission (needs native_gate_weapon_fire_rng)'},
  {'native_gate_join_hold_bullets','hot join: the joiner bullets do not move between the load and the admission (needs native_gate_bullet_rng or native_gate_bullet_diag)'},
+ {'native_gate_join_keep_stamps','hot join: the republication of the joiner first step leaves the navigation stamps the session did not write'},
  {'native_gate_join_mute_load_npcs','hot join: the joiner MD does not hear the NPC created events of its load before the admission'},
  {'native_gate_join_cue_ids','hot join: the joiner loaded MD cue instances take the runtime IDs the join save names (missions, offers)'},
  {'native_gate_join_shoot_far','hot join: SHOOT also writes the session last shot time where the joiner gun was reset by its load (class A)'},
@@ -500,7 +508,7 @@ D.EXCLUDED={
  {'native_gate_ai_rng','excluded by the keyed script RNG'},
  {'native_gate_interrupt_rng','excluded by the keyed script RNG'},
  {'native_gate_boot_rng_anchor','boot RNG anchor experiment'},
- {'native_gate_travel_determinism','alternative to travel_snapshot (mutually exclusive)'},
+ {'native_gate_travel_snapshot','parallel pathing jobs with a per-pass travel snapshot: the alternative to the default native_gate_travel_determinism (mutually exclusive)'},
  {'native_gate_nav_key','Linux gate only'},
  {'native_gate_warp_exit','Linux gate only: the gate exit sum in the Windows order (Windows is that order); a Linux default after a 0 W vs L census'},
  {'native_gate_flight_limits','Linux gate only: the engine parameters limit words with the hoisted reciprocal (Windows is that order)'},

@@ -305,6 +305,11 @@ def ids_sets(sets):
 #                                  went through the kept boot events and was delivered at T+1 before the bullets moved: 49
 #                                  bullets against 50, a ship's shield 690 against 667. With it: 46 moves held, the bullets
 #                                  of T+1 and the census of T+1 equal, the digest equal to the 1800 census, another cause)
+#   native_gate_join_keep_stamps   the republication of the joiner's first step leaves the navigation stamps the session did
+#                                  not write (hj8i, 11 Nov, ns8, T=685, the kit's second join through the VPS: one created
+#                                  XS ship's nav.refresh_time T against T+1 at the census of T+1, every tick a mismatch to
+#                                  the next census; the old "one timing-only item"). With it: 5 controllers held, census
+#                                  686 and the stamp hashes of 686..688 equal, the digest equal to the 1800 census
 #   native_gate_join_cue_ids       the joiner's loaded MD cue instances take the session's runtime IDs: the package's CUEI
 #                                  section 83 maps the save's cue ordinal to the live ID (the first form read the save's
 #                                  number as the ID and was wrong: hj31). hj32, 9 Nov, T=701, a mission accepted before the
@@ -320,7 +325,8 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled',
                    'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids',
                    'native_gate_join_grav_dead', 'native_gate_join_body_make', 'native_gate_join_viewl',
-                   'native_gate_join_anis', 'native_gate_join_anis_state', 'native_gate_join_hold_bullets')
+                   'native_gate_join_anis', 'native_gate_join_anis_state', 'native_gate_join_hold_bullets',
+                   'native_gate_join_keep_stamps')
 
 
 def default_sets(sets):

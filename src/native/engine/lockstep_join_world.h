@@ -2428,12 +2428,58 @@ static void join_rule_restore(void) {
     if(join_aim_installed && join_aim_swap((uint64_t)(uintptr_t)join_aim_hook,(uint64_t)(uintptr_t)(image+JOIN_AIM_FN))) join_aim_installed=0;
     if(join_rule_installed && join_rule_swap((uint64_t)(uintptr_t)join_rule_hook,(uint64_t)(uintptr_t)(image+JOIN_RULE_FN))) join_rule_installed=0;
 }
+/* native_gate_join_keep_stamps (hj8i, 11 Nov; the playtest kit's join through the VPS at T=685, report 65): the navigation stamps
+ * a joiner's first-step republication must not write.
+ * A NavigationController's stamp (+0xc0 the game time, +0xc8 the pathing bank) is written by RefreshFromPathingState 0xea2a20 only
+ * while the thread's game time is past it and the read bank differs from the cursor. The gate's walk
+ * (lockstep_path_determinism.h) stamps every batched Agent with the step's own time, so a later transform query in that step
+ * changes nothing. An Agent the simulation refreshed natively during step T (NAV's relation 0: 231 of 10,029 at T=685) is
+ * current at the walk of T+1 and left alone by it, and the first transform query of step T+1 stamps it natively.
+ * A load leaves every component pending (+0x1e0 0x19 and a one-shot cache specification, PEND and specdrop above), so the
+ * joiner's first BuildCache 0x3d4a80 republishes everything: PropagateCacheFlags 0x3d46b0 asks each object for its transform
+ * (its slot +0x1440, three calls) and so stamps every such Agent at T+1. The session republishes only what it has pending. One
+ * Agent in that state that the session does not touch at T+1 parts in the census' timing root (the created ShipExtraSmall
+ * 800280e26769bfc5: T against T+1), and the digest's world part then differs until the next census.
+ * The hold: at the admission, every NAV record with relation 0 whose object the session has neither pending (PEND) nor under a
+ * due cache specification of an ancestor (SPEC, read as BuildCache reads its stack: join_ks_under_spec) is listed by its controller. In step T+1 alone the hook on
+ * PropagateCacheFlags' call sites (JOIN_WATCHPCF's, lockstep_join.h) sets a listed controller's cursor to the read bank around
+ * the engine's call and puts it back after it: the refresh inside the republication's queries finds the stamp current and
+ * writes nothing, posts nothing; the transforms it returns are the same (GetTransformImpl 0xea5a90 reads the bank by the global
+ * selector, never by the cursor). A ship the simulation moves or asks in that step is stamped by that call, as on the session.
+ * Status keep_stamps=on:listed:held set:pending:spec:missing:over:seen:kept (seen: the set's republications in T+1; kept: the
+ * ones whose cursor was held). Windows only (the call sites). */
+#define JOIN_KS_MAX 1024u
+#define JOIN_KS_CURSOR 0xc8u
+#define JOIN_KS_SELECTOR 0x38f4ee4u   /* g_PathingStateBufferIndex (JOIN_READ_SELECTOR, PATH_DET_READ_BANK) */
+static int join_ks_on;
+static unsigned char *join_ks_controller[JOIN_KS_MAX];static uint32_t join_ks_n;
+static volatile LONG64 join_ks_tick,join_ks_seen,join_ks_kept;   /* the step the hold acts in (T+1; 0 none) */
+static uint64_t join_ks_listed,join_ks_pending,join_ks_spec,join_ks_missing,join_ks_over;
+static int join_ks_has(const unsigned char *controller) {
+    uint32_t lo=0,hi=join_ks_n;
+    while(lo<hi) {const uint32_t mid=lo+(hi-lo)/2u;if(join_ks_controller[mid]<controller) lo=mid+1u;else hi=mid;}
+    return lo<join_ks_n && join_ks_controller[lo]==controller;
+}
 static volatile LONG64 join_pcf_calls,join_pcf_dropped;
 static void join_pcf_native(void *object,uint32_t view,const uint32_t *flags) {
     ((void (*)(void *,uint32_t,const uint32_t *))(void *)(image+JOIN_PCF_FN))(object,view,flags);
 }
+static void (*join_pcf_call)(void *,uint32_t,const uint32_t *)=join_pcf_native;   /* tests replace it */
 static __attribute__((noinline)) void join_pcf_hook(void *object,uint32_t view,const uint32_t *flags) {
     InterlockedIncrement64(&join_pcf_calls);
+    if(object && join_ks_n && (uint64_t)InterlockedCompareExchange64(&join_ks_tick,0,0)==stats.issued) {   /* native_gate_join_keep_stamps: step T+1 alone */
+        unsigned char *c=NULL;
+        if(join_read((unsigned char *)object+JOIN_CONTROLLER,&c,8) && c && join_ks_has(c)) {
+            const uint32_t bank=*(volatile uint32_t *)(image+JOIN_KS_SELECTOR);uint32_t cursor=0;
+            InterlockedIncrement64(&join_ks_seen);
+            if(bank<=1u && join_read(c+JOIN_KS_CURSOR,&cursor,4) && cursor!=bank) {
+                *(volatile uint32_t *)(c+JOIN_KS_CURSOR)=bank;
+                join_pcf_call(object,view,flags);
+                if(*(volatile uint32_t *)(c+JOIN_KS_CURSOR)==bank) *(volatile uint32_t *)(c+JOIN_KS_CURSOR)=cursor;
+                InterlockedIncrement64(&join_ks_kept);return;
+            }
+        }
+    }
     if(flags && (*flags&8u)) {
         for(unsigned i=0;i<join_watch.n && i<JOIN_WATCH_MAX;i++) {
             if(!object || join_watch.object[i]!=(unsigned char *)object) continue;
@@ -2444,7 +2490,7 @@ static __attribute__((noinline)) void join_pcf_hook(void *object,uint32_t view,c
             break;
         }
     }
-    join_pcf_native(object,view,flags);
+    join_pcf_call(object,view,flags);
 }
 /* JOIN_RPRT (diagnostic, native_gate_join_rprt with native_gate_join_watch; in-window report 57, w1z226): the destroyer 99d18's
  * controller cache parts by 1..2 ulps at its zone change 3135 with every watched input equal through 3134. At a zone change the
@@ -8084,6 +8130,76 @@ static void join_admit_viewk(const join_tables *s,const join_tables *mine) {
         if(vf!=r->vflags) {(void)join_poke((uintptr_t)(block+JOIN_VIEW_FLAGS),&r->vflags,4);++join_rx.viewk_flags;}
     }
 }
+/* native_gate_join_keep_stamps: the set (above join_pcf_hook), built at the admission after NAV wrote the session's stamps. */
+static int join_pcf_install(void);   /* lockstep_join.h */
+static int join_ks_ptr_cmp(const void *a,const void *b) {
+    const uintptr_t x=(uintptr_t)*(unsigned char *const *)a,y=(uintptr_t)*(unsigned char *const *)b;return x<y?-1:x>y;
+}
+static int join_ks_session_pending(const join_tables *s,uint64_t portable) {
+    uint32_t lo=0,hi=s->npend;
+    while(lo<hi) {const uint32_t mid=lo+(hi-lo)/2u;if(s->pend[mid].portable<portable) lo=mid+1u;else hi=mid;}
+    return lo<s->npend && s->pend[lo].portable==portable && s->pend[lo].word;
+}
+/* The first of a component's session SPEC records (sorted by portable ID, then kind); nspec: none. */
+static uint32_t join_ks_session_spec(const join_tables *s,uint64_t portable) {
+    uint32_t lo=0,hi=s->nspec;
+    while(lo<hi) {const uint32_t mid=lo+(hi-lo)/2u;if(s->spec[mid].portable<portable) lo=mid+1u;else hi=mid;}
+    return lo<s->nspec && s->spec[lo].portable==portable?lo:s->nspec;
+}
+/* Whether a component is of a class: its slot +0x11e8, as BuildCache asks it (0x3d4c48). 1, 0, -1 not readable. */
+#define JOIN_KS_ISA 0x11e8u
+#define JOIN_KS_ANY 0x79u   /* a specification for every class: never stopped (0x3d4c3d) */
+static int join_ks_isa_native(unsigned char *object,uint32_t klass) {return join_watch_call(object,JOIN_KS_ISA,(int)klass,1);}
+static int (*join_ks_isa)(unsigned char *,uint32_t)=join_ks_isa_native;   /* tests replace it */
+/* Whether the session's BuildCache of step T+1 hands the object flags of an ancestor's cache specification, as 0x3d4a80 does:
+ * every list from the root down to the parent is on its stack; an entry (flags +4, class +8, interval +0x10, last +0x18) is due
+ * when the step's time is at or past last + interval; an entry for a class goes down until an ancestor is of that class, whose
+ * children are the last to get it (it marks the entry at its own BuildCache, 0x3d4c63). So an entry of the ancestor A reaches
+ * the object when no ancestor from A down to the object's grandparent is of the entry's class. An ancestor without a portable
+ * ID has no record; a class question that cannot be asked counts as "not of that class" (the entry reaches: no hold).
+ * up[0] the parent .. up[n-1] the root. */
+static int join_ks_under_spec(const join_tables *s,unsigned char *object,double step_time) {
+    unsigned char *up[24];unsigned n=0;
+    for(unsigned char *at=object;n<24u;) {
+        unsigned char *parent=NULL;
+        if(!join_read(at+JOIN_PARENT,&parent,8) || !parent) break;
+        up[n++]=parent;at=parent;
+    }
+    for(unsigned k=0;k<n;k++) {
+        uint64_t runtime=0;unsigned klass=0;
+        if(!join_read(up[k]+8,&runtime,8) || !runtime) continue;
+        const uint64_t portable=join_key(runtime,&klass);
+        if(!portable) continue;
+        for(uint32_t i=join_ks_session_spec(s,portable);i<s->nspec && s->spec[i].portable==portable;i++) {
+            const join_spec_rec *e=&s->spec[i];double interval,last;int stopped=0;
+            memcpy(&interval,&e->interval,8);memcpy(&last,&e->last,8);
+            if(!e->flags || !(step_time>=last+interval)) continue;
+            if(e->klass!=JOIN_KS_ANY) for(unsigned m=1;m<=k && !stopped;m++) stopped=join_ks_isa(up[m],e->klass)==1;
+            if(!stopped) return 1;
+        }
+    }
+    return 0;
+}
+static void join_admit_keep_stamps(const join_tables *s,const join_tables *mine) {
+    join_ks_n=0;join_ks_listed=join_ks_pending=join_ks_spec=join_ks_missing=join_ks_over=0;
+    InterlockedExchange64(&join_ks_tick,0);InterlockedExchange64(&join_ks_seen,0);InterlockedExchange64(&join_ks_kept,0);
+    if(!join_ks_on || s->version<13) return;
+    double step_time;memcpy(&step_time,&s->gate.game,8);step_time+=1.0/(double)(s->gate.tick_hz?s->gate.tick_hz:60u);   /* step T+1's game time */
+    for(uint32_t i=0;i<s->nnav;i++) {
+        const join_nav_rec *r=&s->nav[i];unsigned char *c=NULL;uintptr_t vt=0;
+        if(r->relation!=0u) continue;   /* stamped by the gate's walk of T: the walk of T+1 stamps it again */
+        ++join_ks_listed;
+        if(join_ks_session_pending(s,r->portable)) {++join_ks_pending;continue;}   /* the session republishes it in T+1 itself */
+        unsigned char *object=join_object(join_runtime_of(mine,r->portable));
+        if(!object || !join_read(object+JOIN_CONTROLLER,&c,8) || !c || !join_read(c,&vt,8) || vt!=(uintptr_t)image+JOIN_NAV_VTABLE) {++join_ks_missing;continue;}
+        if(join_ks_under_spec(s,object,step_time)) {++join_ks_spec;continue;}   /* the session republishes it in T+1 itself */
+        if(join_ks_n>=JOIN_KS_MAX) {++join_ks_over;continue;}
+        join_ks_controller[join_ks_n++]=c;
+    }
+    if(join_ks_n>1u) qsort(join_ks_controller,join_ks_n,sizeof(join_ks_controller[0]),join_ks_ptr_cmp);
+    if(join_ks_n && join_pcf_install()) InterlockedExchange64(&join_ks_tick,(LONG64)(s->gate.tick+1u));
+    else join_ks_n=0;
+}
 /* BULLET at the admission (diagnostic: the joiner writes nothing). The joiner's own bullets after its load against the session's
  * census, paired by macro and start time (+0x278; the save writes it with 17 digits), the shooter first where both sides name one.
  * Status bullets=session:own:paired:missing:extra:apart (apart: a pair with a word apart outside pointers and the runtime ID +8);
@@ -8300,6 +8416,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_pbnk(s,&mine);   /* the pilot slot ships' pathing state banks */
     if(s->version>=13) join_admit_specdrop(s,&mine);   /* the load's one-shot view cache specifications, after SPEC and VIEWK (opt-in) */
     if(s->version>=13) join_admit_pend(s,&mine);   /* the pending view cache flags (opt-in) */
+    if(s->version>=13) join_admit_keep_stamps(s,&mine);   /* the stamps the first step's republication must not write */
     if(s->version>=13) join_admit_ldc(s,&mine);    /* the drift controllers, before the bodies they set */
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
     if(s->version>=13) for(uint32_t i=0;i<s->nbupd;i++) {   /* BUPD: the session's last build updates */

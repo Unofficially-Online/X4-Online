@@ -416,7 +416,7 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
     the session, 338 on the joiner), and that station is still under construction in the session's save (45 planned
     modules, 44 built). So it is state of a station being built that the two PCs do not share after a join, not
     traffic as such; stations that are complete are equal. Open: which state. Diagnostic rows for it:
-    `native_gate_viewpoint_policy_rows` sites 113, 116, 117 (the lanes a switch-on built) and 119 (per dock).
+    `native_gate_viewpoint_policy_rows` sites 113, 116, 117 (the lanes a switch-on built).
   - Eight slots (11 Nov): a far start on the eight-slot session (slot 3, the fight start) also joins and plays, but a
     squad of ships near that start flies apart during the catch-up, at another tick each run; the same start on the
     two-slot session is clean to the handover. In work in the join code's session; the lead is the formation code,

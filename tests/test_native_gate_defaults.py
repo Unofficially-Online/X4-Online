@@ -315,11 +315,11 @@ class TableTests(unittest.TestCase):
                                         'native_gate_render_camera', 'native_gate_render_motion', 'native_gate_own_predict',
                                         'native_gate_own_predict_rows', 'native_gate_player_identity', 'native_gate_pilot_foot_bodies',
                                         'native_gate_pilot_foot_slots', 'native_gate_nav_mesh', 'native_gate_character_play', 'native_gate_speech_clock',
-                                        'native_gate_ui_lazy', 'native_gate_missions_per_player', 'native_gate_own_predict_hud', 'native_gate_hud_ship_refresh', 'native_gate_missions_per_player_offers', 'native_gate_runtime_ids_ui_elements', 'native_gate_pilot_aim', 'native_gate_pilot_aim_assist', 'native_gate_join_start_money', 'native_gate_speech_local']) if 'native_gate_player_identity' not in play else
+                                        'native_gate_ui_lazy', 'native_gate_missions_per_player', 'native_gate_own_predict_hud', 'native_gate_hud_ship_refresh', 'native_gate_missions_per_player_offers', 'native_gate_runtime_ids_ui_elements', 'native_gate_pilot_aim', 'native_gate_pilot_aim_assist', 'native_gate_join_start_money', 'native_gate_speech_local', 'native_gate_travel_determinism']) if 'native_gate_player_identity' not in play else
                          sorted(['native_gate_ui_guard', 'native_gate_pilot_foot', 'native_gate_player_settings_per_slot', 'native_gate_render_fps',
                                  'native_gate_render_camera', 'native_gate_render_motion', 'native_gate_own_predict', 'native_gate_own_predict_rows',
                                  'native_gate_pilot_foot_bodies', 'native_gate_pilot_foot_slots', 'native_gate_nav_mesh', 'native_gate_character_play', 'native_gate_speech_clock',
-                                 'native_gate_ui_lazy', 'native_gate_missions_per_player', 'native_gate_own_predict_hud', 'native_gate_hud_ship_refresh', 'native_gate_missions_per_player_offers', 'native_gate_runtime_ids_ui_elements', 'native_gate_pilot_aim', 'native_gate_pilot_aim_assist', 'native_gate_join_start_money', 'native_gate_speech_local']))
+                                 'native_gate_ui_lazy', 'native_gate_missions_per_player', 'native_gate_own_predict_hud', 'native_gate_hud_ship_refresh', 'native_gate_missions_per_player_offers', 'native_gate_runtime_ids_ui_elements', 'native_gate_pilot_aim', 'native_gate_pilot_aim_assist', 'native_gate_join_start_money', 'native_gate_speech_local', 'native_gate_travel_determinism']))
 
 
 class ApplyTests(unittest.TestCase):

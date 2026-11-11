@@ -424,6 +424,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_hold_bullets then   -- a joiner's bullets do not move between the load and the admission (bullet_hold=)
   assert(gate.join_hold_bullets and gate.join_hold_bullets(1)==1,'join hold bullets refused')
  end
+ if cfg.native_gate_join_keep_stamps then   -- a joiner's first-step republication leaves the nav stamps the session did not write (keep_stamps=)
+  assert(gate.join_keep_stamps and gate.join_keep_stamps(1)==1,'join keep stamps refused')
+ end
  if cfg.native_gate_join_body_make then   -- the IDs of the physics bodies a joiner lacks at its admission go off the shared route (body_make=)
   assert(gate.join_body_make and gate.join_body_make(1)==1,'join body make refused')
  end

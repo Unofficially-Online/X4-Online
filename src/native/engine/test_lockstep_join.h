@@ -3190,6 +3190,84 @@ static void tanis_push(unsigned char *seq,uintptr_t stage) {   /* X4's append on
     if(cap!=4u) memcpy(&data,seq+0x10,8);
     assert(count<cap);memcpy(data+8u*count,&stage,8);++count;memcpy(seq+0x38,&count,8);
 }
+/* native_gate_join_keep_stamps: the hook's hold (synthetic memory; X4's PropagateCacheFlags replaced by a stand-in that records
+ * the cursor it sees and may write a stamp of its own) and the two session lookups. */
+static unsigned char *tks_controller;static uint32_t tks_seen_cursor,tks_calls,tks_write;
+static void tks_call(void *object,uint32_t view,const uint32_t *flags) {
+    (void)object;(void)view;(void)flags;++tks_calls;
+    memcpy(&tks_seen_cursor,tks_controller+JOIN_KS_CURSOR,4);
+    if(tks_write!=~0u) memcpy(tks_controller+JOIN_KS_CURSOR,&tks_write,4);   /* the engine stamped it after all (another call inside) */
+}
+static unsigned char *tks_class_of[2];static uint32_t tks_class[2];
+static int tks_isa(unsigned char *object,uint32_t klass) {for(unsigned k=0;k<2;k++) if(tks_class_of[k]==object) return tks_class[k]==klass;return 0;}
+static uint64_t tks_key(uint64_t runtime,unsigned *klass) {*klass=WORLD_KEY_SAVED;return runtime;}
+static void test_join_keep_stamps(void) {
+    _Alignas(16) static unsigned char object[2][0x300],controller[2][0x100];
+    void (*call)(void *,uint32_t,const uint32_t *)=join_pcf_call;unsigned char *prior=image;const uint64_t issued=stats.issued;
+    unsigned char *fake=VirtualAlloc(NULL,0x3900000,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);assert(fake);   /* the read selector's place in a synthetic image */
+    const uint32_t flags=8u;uint32_t cursor;
+    memset(object,0,sizeof(object));memset(controller,0,sizeof(controller));
+    for(unsigned k=0;k<2;k++) {void *p=controller[k];memcpy(object[k]+JOIN_CONTROLLER,&p,8);}
+    image=fake;join_pcf_call=tks_call;tks_controller=controller[0];tks_write=~0u;tks_calls=0;
+    {const uint32_t bank=1u;memcpy(image+JOIN_KS_SELECTOR,&bank,4);}
+    join_ks_controller[0]=controller[0];join_ks_n=1;InterlockedExchange64(&join_ks_tick,686);InterlockedExchange64(&join_ks_seen,0);InterlockedExchange64(&join_ks_kept,0);
+    /* in step T+1 a listed controller whose cursor is the other bank: the engine's call sees the read bank, the cursor comes back */
+    stats.issued=686;cursor=0u;memcpy(controller[0]+JOIN_KS_CURSOR,&cursor,4);
+    join_pcf_hook(object[0],0,&flags);memcpy(&cursor,controller[0]+JOIN_KS_CURSOR,4);
+    assert(tks_calls==1 && tks_seen_cursor==1u && cursor==0u && join_ks_seen==1 && join_ks_kept==1);
+    /* its cursor already the read bank: nothing to hold */
+    cursor=1u;memcpy(controller[0]+JOIN_KS_CURSOR,&cursor,4);
+    join_pcf_hook(object[0],0,&flags);memcpy(&cursor,controller[0]+JOIN_KS_CURSOR,4);
+    assert(tks_calls==2 && tks_seen_cursor==1u && cursor==1u && join_ks_seen==2 && join_ks_kept==1);
+    /* a controller that is not listed, and the cursor value 2 (never refreshed) of a listed one */
+    tks_controller=controller[1];cursor=0u;memcpy(controller[1]+JOIN_KS_CURSOR,&cursor,4);
+    join_pcf_hook(object[1],0,&flags);assert(tks_calls==3 && tks_seen_cursor==0u && join_ks_seen==2);
+    tks_controller=controller[0];cursor=2u;memcpy(controller[0]+JOIN_KS_CURSOR,&cursor,4);
+    join_pcf_hook(object[0],0,&flags);memcpy(&cursor,controller[0]+JOIN_KS_CURSOR,4);
+    assert(tks_calls==4 && tks_seen_cursor==1u && cursor==2u && join_ks_kept==2);
+    /* the engine wrote another cursor inside the call: left as written */
+    cursor=0u;memcpy(controller[0]+JOIN_KS_CURSOR,&cursor,4);tks_write=0u;
+    join_pcf_hook(object[0],0,&flags);memcpy(&cursor,controller[0]+JOIN_KS_CURSOR,4);assert(cursor==0u && join_ks_kept==3);
+    tks_write=7u;join_pcf_hook(object[0],0,&flags);memcpy(&cursor,controller[0]+JOIN_KS_CURSOR,4);assert(cursor==7u);tks_write=~0u;
+    /* any other step: the plain call */
+    stats.issued=687;cursor=0u;memcpy(controller[0]+JOIN_KS_CURSOR,&cursor,4);
+    join_pcf_hook(object[0],0,&flags);assert(tks_seen_cursor==0u && join_ks_seen==5);
+    /* no object, an object without a controller */
+    stats.issued=686;{const LONG64 seen=join_ks_seen;const uint32_t calls=tks_calls;void *none=NULL;
+     join_pcf_hook(NULL,0,&flags);memcpy(object[1]+JOIN_CONTROLLER,&none,8);join_pcf_hook(object[1],0,&flags);
+     assert(tks_calls==calls+2u && join_ks_seen==seen);}
+    /* the session's PEND and SPEC lookups (sorted by portable ID) */
+    {join_tables s;memset(&s,0,sizeof(s));
+     join_pend_rec pend[3]={{0x10u,0x19u,0},{0x20u,0u,0},{0x30u,4u,0}};join_spec_rec spec[3];memset(spec,0,sizeof(spec));
+     spec[0].portable=0x10u;spec[0].kind=2u;spec[1].portable=0x10u;spec[1].kind=7u;spec[2].portable=0x40u;spec[2].kind=7u;
+     s.pend=pend;s.npend=3;s.spec=spec;s.nspec=3;
+     assert(join_ks_session_pending(&s,0x10u) && !join_ks_session_pending(&s,0x20u) && join_ks_session_pending(&s,0x30u) && !join_ks_session_pending(&s,0x25u));
+     assert(join_ks_session_spec(&s,0x10u)==0u && join_ks_session_spec(&s,0x40u)==2u && join_ks_session_spec(&s,0x20u)==3u && join_ks_session_spec(&s,0x50u)==3u);}
+    /* the specification rule on a chain ship < zone < sector < galaxy (runtime ID = portable ID through the stand-in key):
+     * a galaxy entry for the sector's class stops at the sector (its children, the zones, are the last to get it); an entry for
+     * every class reaches all; an entry on the parent reaches whatever the parent's class; one that is not due reaches nothing */
+    {_Alignas(16) static unsigned char chain[4][0x80];join_tables s;join_spec_rec spec[2];const double none=-0.5,t=30.0,later=40.0;
+     uint64_t (*key)(uint64_t,unsigned *)=join_key;int (*isa)(unsigned char *,uint32_t)=join_ks_isa;
+     memset(chain,0,sizeof(chain));memset(&s,0,sizeof(s));memset(spec,0,sizeof(spec));join_key=tks_key;join_ks_isa=tks_isa;
+     for(unsigned k=0;k<4;k++) {const uint64_t runtime=0x100u+k;void *parent=k<3?chain[k+1]:NULL;memcpy(chain[k]+8,&runtime,8);memcpy(chain[k]+JOIN_PARENT,&parent,8);}
+     tks_class_of[0]=chain[2];tks_class[0]=0x58u;tks_class_of[1]=chain[1];tks_class[1]=0x6du;   /* the sector is of class 0x58, the zone of 0x6d */
+     s.spec=spec;s.nspec=1;spec[0].portable=0x103u;spec[0].kind=1u;spec[0].flags=0x6bu;spec[0].klass=0x58u;memcpy(&spec[0].last,&t,8);
+     assert(!join_ks_under_spec(&s,chain[0],30.03));                /* the galaxy's entry stopped at the sector: not the ship */
+     assert(join_ks_under_spec(&s,chain[1],30.03));                 /* the zone, a child of the sector, still gets it */
+     spec[0].klass=JOIN_KS_ANY;assert(join_ks_under_spec(&s,chain[0],30.03));   /* an entry for every class reaches the ship */
+     spec[0].klass=0x77u;assert(join_ks_under_spec(&s,chain[0],30.03));          /* a class nobody on the way is of */
+     spec[0].klass=0x58u;memcpy(&spec[0].last,&later,8);assert(!join_ks_under_spec(&s,chain[1],30.03));   /* not due */
+     memcpy(&spec[0].last,&t,8);memcpy(&spec[0].interval,&none,8);spec[0].flags=0u;assert(!join_ks_under_spec(&s,chain[1],30.03));   /* no flags */
+     spec[0].flags=2u;spec[0].portable=0x101u;spec[0].klass=0x6du;assert(join_ks_under_spec(&s,chain[0],30.03));   /* the parent's own entry, the parent of its class */
+     spec[0].portable=0x102u;assert(join_ks_under_spec(&s,chain[0],30.03));    /* the sector's entry for zones: the zone's children are the last to get it */
+     tks_class_of[0]=chain[2];tks_class[0]=0x6du;spec[0].portable=0x103u;      /* now part < ship < zone < sector, the sector's entry for zones */
+     assert(!join_ks_under_spec(&s,chain[0],30.03) && join_ks_under_spec(&s,chain[1],30.03));   /* the ship gets it, its part does not */
+     s.nspec=0;assert(!join_ks_under_spec(&s,chain[0],30.03));
+     join_key=key;join_ks_isa=isa;}
+    join_ks_n=0;InterlockedExchange64(&join_ks_tick,0);InterlockedExchange64(&join_ks_seen,0);InterlockedExchange64(&join_ks_kept,0);
+    join_pcf_call=call;image=prior;stats.issued=issued;assert(VirtualFree(fake,0,MEM_RELEASE));
+    puts("join keep stamps: the republication's hold in step T+1 and the session lookups PASS (synthetic)");
+}
 static void test_join_anis(void) {
     join_find_fn find=join_world_find;void *map=join_world_map;
     join_world_find=tanis_find;join_world_map=tanis_obj;
@@ -3931,5 +4009,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_anis();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();test_join_rprt();
+    test_join_keep_stamps();test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_anis();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();test_join_rprt();
 }

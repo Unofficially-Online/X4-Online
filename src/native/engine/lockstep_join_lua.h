@@ -137,6 +137,8 @@ static int lua_join_shoot_far(lua_State *L) {join_shoot_far_on=p_lua_tonumber(L,
 static int lua_join_hold_fire(lua_State *L) {join_hold_fire_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_hold_bullets(on): a joiner's bullets do not move between its load and its admission (before gate.join_load). */
 static int lua_join_hold_bullets(lua_State *L) {join_hold_bullets_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_keep_stamps(on): a joiner's first-step republication leaves the navigation stamps the session did not write (before gate.join_load). */
+static int lua_join_keep_stamps(lua_State *L) {join_ks_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_body_make(on): the IDs of the physics bodies a joiner lacks at its admission take its view list when X4 makes them (before gate.join_load). */
 static int lua_join_body_make(lua_State *L) {join_body_make_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_grav_dead(on): a joiner's radar lists keep the session's destroyed contacts until the next scan (before gate.join_load). */

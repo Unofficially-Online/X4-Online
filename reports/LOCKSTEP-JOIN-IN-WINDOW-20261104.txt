@@ -1773,7 +1773,7 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
   JOIN_BULLET line in the crash note per bullet missing, extra or apart, the flight's words +0x260.. first). "apart"
   counts every pair because the transform cache words and the byte +0xd0 differ after a load; it names bullets, it does
   not judge them.
-- Open, the kit's second join (T=685, reproduced on localhost with the save forced to 685, portable digest
+- The kit's second join (T=685, reproduced on localhost with the save forced to 685, portable digest
   035aa9f50a3a6402...): bullets and the sampled ships equal, one object apart at 686 in the timing root alone, the created
   ShipExtraSmall 800280e26769bfc5 (zone 0x830, made at 28.397 s): nav.refresh_time T on the session (relation 1), T+1 on
   the joiner (relation 0). PATH_DETERMINISM: order, walk and stamp hashes equal at 686; at 687 the stamp hashes differ
@@ -1781,6 +1781,38 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
   part is the last census, so the relay counts every tick to the 1800 census as a mismatch and a play session reports a
   desync at the handover: it is the "one timing-only item" of the earlier runs (w1z120..w1z123; section 63's open list),
   and it is not cosmetic for a playtest.
-- Tests: native tests pass (the hold in test_bullet_cadence: synthetic, the wrapper returns before X4's Move and counts);
-  460 Python tests of the join, defaults, probe and launcher suites pass. The real runs above are X4 9.00 on Windows, two
-  instances on one PC, play mode.
+- Its mechanism (a write watch on the controller's +0xc0/+0xc8 and execution watches on the two callers of
+  RefreshFromPathingState 0xea2a20): the refresh writes only while the thread's game time is past the stamp and the read
+  bank differs from the cursor. The gate's walk stamps with the step's own time, so later queries of that step write
+  nothing: at T all 10,029 stamps hold T, 9,798 from the walk (relation 1 at the capture, which follows the bank flip) and
+  231 written natively during the step (relation 0). The walk of T+1 finds those 231 current and leaves them; the first
+  transform query of step T+1 stamps them natively. 230 are asked every step on both sides. The 231st is this ship: the
+  session asked it in step T and not in T+1 (its next write is the walk of T+2), the joiner asks it in T+1, chain
+  0xea2aae <- GetTransformImpl 0xea5af5 <- 0xea5a84 <- 0x746207 <- PropagateCacheFlags 0x3d4906 <- BuildCache 0x3d4d0f:
+  the load's republication of every component (sections 24 and 25: PEND alone is overwritten by the load's one-shot cache
+  specification in the same frame, and without the republication the joiner's views keep the load's state).
+- Fix native_gate_join_keep_stamps (a join default): the republication stays, its queries write no stamp where the session's
+  step T+1 writes none. At the admission the controllers of NAV's relation 0 records are listed unless the session has the
+  object pending (PEND) or a due cache specification of an ancestor reaches it, read as BuildCache 0x3d4a80 reads its stack
+  (an entry is due at last + interval; one for a class goes down until an ancestor is of that class, slot +0x11e8, whose
+  children are the last to get it; class 0x79 never stops). In step T+1 alone the hook on PropagateCacheFlags' call sites
+  sets a listed controller's cursor to the read bank around the engine's call and puts it back. The session's SPEC at
+  T=685: the galaxy's kind 1 for class 0x58, three sectors' kind 2 for class 0x6d, five zones' kind 3 for every class (the
+  high-attention zones and the fight zone), 4,717 one-shot kind 7. Real run, the save forced to 685:
+  keep_stamps=1:231:5:2:224:0:0:5:5 (231 listed candidates, 5 held, 2 pending, 224 under a specification; 5 seen and 5
+  held in step 686), census 686 equal in all four roots, stamp hashes equal at 686, 687 and 688, the relay's digest equal
+  from 686 to the 1800 census, pins ok. A first form that left out everything under any specification listed nothing (the
+  galaxy root holds a permanent one) and changed nothing. Pinned for it: PropagateCacheFlags, BuildCache, GetTransformImpl.
+- Not a join matter after all (x4mods-b8's control, 11 Nov): ns8 with slots 1 and 3 present from the start and no join parts
+  too, in the motion root, first at the census of 3000 with a census every 300 ticks: the corvette a2ce0 and its fighters
+  a2d0a, a2d22, a2d33, a2d44, a2d5c in tempzone 0x38123, section 64's squad. The census differences at 1800 after both
+  joins above are of that kind (motion and timing roots, per-tick equal). path_transforms=observe on a join run (save 705):
+  the published parent against the live one on every link, 2,285,353 calls on the session and 2,098,063 on the joiner, 0
+  differing; that run did not part at all, a repeat without observe parted before 1800.
+- Open, general: an Agent refreshed natively in step N is skipped by the walk of N+1 and is then open to whatever transform
+  query a client makes in N+1 (a camera, a UI read): its stamp, and the transition events the refresh posts, can come a
+  step apart between two clients without any join.
+- Tests: native tests pass (the hold in test_bullet_cadence: synthetic, the wrapper returns before X4's Move and counts;
+  test_join_keep_stamps: synthetic memory, PropagateCacheFlags and the class question replaced by stand-ins, the hold's
+  cases and the specification rule on a four-level chain); 460 Python tests of the join, defaults, probe and launcher
+  suites pass. The real runs above are X4 9.00 on Windows, two instances on one PC, play mode.
