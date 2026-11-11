@@ -317,6 +317,8 @@ D.DIAGNOSTIC={
  {'native_gate_join_ids','hot joiner saved objects at the session runtime IDs'},
  {'native_gate_join_buildp','hot join build processor busy rows (diagnostic)'},
  {'native_gate_join_view_skip','hot join view-bank writes a joiner leaves out (diagnostic)'},
+ {'native_gate_join_anis_state','hot join: the animation units of a joiner take the state, queue and waiting listeners of the session (ANIS, ANIL)'},
+ {'native_gate_join_anis','hot join: the part animation sequences of a joiner take the start times of the session (ANIS)'},
  {'native_gate_join_viewl','hot join: a joiner runs the live and player view handlers where its flags differ (VIEWL)'},
  {'native_gate_join_shpw','hot join: a joiner takes the session ship words a load leaves at defaults (SHPW)'},
  {'native_gate_join_shpw_words','hot join experiment: the SHPW words the admission writes (bit k = word k)'},

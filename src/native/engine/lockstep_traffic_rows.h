@@ -237,6 +237,7 @@ static void tp_place_at(void *ship,void *pos,void *posrot,void *parent,unsigned 
     InterlockedIncrement64(&rc_stub_calls[call]);const int ours=tp_ours();
     if(tp_skip(ours)) {InterlockedIncrement64(&tp_place_skipped);return;}
     InterlockedIncrement64(&tp_place[ours]);
+    if(rc_pick_rows_ticks && ship && pos) rc_pick_note_pos(0x10fu,ship,RC_OBJ_R12,ours,(const float *)pos);   /* policy rows: the ship and where */
     (tp_place_native?tp_place_native:(tp_place_fn)tp_target(call))(ship,pos,posrot,parent);
 }
 static void tp_place_a(void *ship,void *pos,void *posrot,void *parent) {tp_place_at(ship,pos,posrot,parent,TP_PLACE_CALL);}

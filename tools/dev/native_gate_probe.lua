@@ -325,6 +325,12 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_viewf_write then   -- diagnostic: the joiner writes the session's VIEWF words (off: a joiner's window flips after its STOP)
   assert(gate.join_viewf_write and gate.join_viewf_write(1)==1,'join viewf write refused')
  end
+ if cfg.native_gate_join_anis_state then   -- a joiner's animation units take the session's state, queue and waiting listeners (anis_state=, anil=)
+  assert(gate.join_anis_state and gate.join_anis_state(1)==1,'join anis state refused')
+ end
+ if cfg.native_gate_join_anis then   -- a joiner's part animation sequences take the session's start times (ANIS; anis=)
+  assert(gate.join_anis and gate.join_anis(1)==1,'join anis refused')
+ end
  if cfg.native_gate_join_viewl then   -- a joiner runs the view handlers where its live/player view flags differ (VIEWL)
   assert(gate.join_viewl and gate.join_viewl(1)==1,'join viewl refused')
  end

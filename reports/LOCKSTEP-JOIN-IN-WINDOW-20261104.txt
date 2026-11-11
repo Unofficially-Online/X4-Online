@@ -1615,3 +1615,87 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
   The Linux gate check (WSL, gcc, the whole of check_lockstep_gate_linux.py with the scenarios) passes on this tree. Tools: census pages in play mode need
   --set "native_gate_world_pages_window={first,last}" (world_detail_rows alone prints nothing); event rows are only
   written inside native_gate_trace_window.
+
+64. NEW-SESSION SAVES, THIRD ROUND: THE PART ANIMATION SEQUENCES AND THEIR UNITS (ANIS, ANIL; hjs4a .. hjs4g, 10 Nov)
+
+- x4mods-b8's finding on its four-start fixture hjs4 (T=687, the joiner in the Terran start): every digest part equal from
+  T+1 but the navmesh part from 738. Two docking bays of the far wharf (0x1da28, 0x1da29) get U::AnimationTickedEvent at 736
+  and 742 on the session and at 749 on the joiner, and the dock area's nav mesh (key 01da1e) is regenerated one tick after
+  each.
+- What X4 keeps (read in the image). An object's container (+0x208) holds an array (+0x00 begin, +0x08 end) of 0x90-byte
+  sequences, one per animated part (Positional::InitPartAnimations 0x755110 -> 0x1164460): +0x08 the start time of the first
+  queued stage, +0x10 a small vector of stage pointers (inline when +0x30 == 4, count +0x38), +0x48 the template, +0x50 its
+  U::Animation::SequenceControlUnit (0x58 bytes, vtable 0x2c80090), +0x60/+0x68 a cache, +0x70 a pointer cleared with the
+  start, +0x78/+0x80 an offset and a limit, +0x88 flags. A stage is a 0x100-byte entry of the template's array (+0x28..+0x30):
+  +0x00 its key, +0xa0 its length. The unit is a state machine: +0x08 the sequence, +0x10 an EventListener base with its own
+  runtime ID, +0x28 the state, +0x30 the state to enter next, +0x38 the list of its states, +0x40..+0x48 the listeners
+  waiting for a state. A key is the 64-bit FNV-1 hash of the name (seed 0x811c9dc5, prime 0x1000193, as the unit's import
+  0x1169500 hashes a save's attribute): cockpit_closed a2a89eb622c1a86f, cockpit_open 81acd31dc6f636fb, landinggears_active
+  2529a68f7e2d712f, landinggears_activating f983fcf5321f91a3.
+  0x116a1f0(unit, state, restart) enters a state: 0x1165930 queues the state's stage (dropping finished stages; an empty or
+  finished queue starts now), 0x1169a90 schedules AnimationTickedEvent at now + the remaining time (0x1165dd0) for the
+  listeners waiting for that state, 0x116a060 registers the unit for the events of the state's transitions. A sequence whose
+  stages are over is advanced by whoever evaluates it next (0x1165ee0 -> the unit's vtable +0x30 0x1169f40).
+- What a load does. The save has, per part, a time and the names of the queue (<part time="29.23" sequence="landinggears_
+  activating landinggears_active"/>), and the object's future events. The joiner's units did not come out as the session's:
+  the start of most sequences is the load's time (first form of ANIS: 8,848 of 12,553 apart, 11,875 once a stage's length was
+  taken out of the queue's identity), and a ship docking at T (the Terran fighter MGJ-203, 0x6daff, landing on the carrier's
+  dock area 0x6d861; its save holds triggeranimation open_cockpit and docked at 38.197 s = tick 934) has its four cockpit
+  parts open already (cockpit_open against cockpit_closed), its ten landing gear parts at the last stage of their queue, and
+  no CockpitStateListener waiting in its cockpit unit. Ship::vfunc1147 (0x7dd4e9) makes that listener with the trigger event
+  it posts; the save keeps the event and not the listener. On the session the trigger of 934 opens the cockpit, the listener
+  gets AnimationTickedEvent at 966 and its handler (0x116e230) asks for the nav rebuild of the ship and of its dock area
+  (0x75b440): NAV_MESH_ROW 967 regenerate 6daff and a second 968 regenerate 6d861 on the session only.
+- ANIS (package section 84; native_gate_join_anis): per made sequence with a SequenceControlUnit (the unit's +0x08 points
+  back) the start, +0x78, +0x80, the count of stages, the keys of the first four, a signature of all keys, the unit's state
+  and next state keys, the count of waiting listeners. The admission writes the three words and clears +0x70 and the cache
+  where the joiner's queue is the same. Two things the first runs taught: a stage's length is 1.0 from its constructor
+  (0x1161966) until U::Animation::AnimationFile::vfunc2 (0x1163fe0, 0x1163510) loads the file and writes (end - start
+  frame) / 30, so it differed between the sides for 3,057 sequences and is no identity; and +0x70 is a heap pointer of the
+  saver's, never written.
+- The units' state (native_gate_join_anis_state) and ANIL (section 85): where the state, the next state or the queue
+  differs the admission sets the session's, the state as the unit's import does (0x999ef0(owner, unit +0x10), then
+  0x116a1f0 with restart; their IDs on the load list), then the queue's stages by key into the storage the sequence has, the
+  next state and bit 2 of the flags. Where the session's unit has listeners waiting and the joiner's none it makes them:
+  ANIL carries class, flag and the component (+0x18) as a portable ID; two of the seven classes are made (Cockpit 0x2c78290
+  and DockingBayFence 0x2c7a628, 0x28 bytes, constructor (this, component, flag) 0x116e130 / 0x116e5e0) through the unit's
+  vtable +0x58 (0x116a4e0). Activation, CockpitActivation, StoreShip, RetrieveShip and DockDoor are counted (anil unknown).
+  Five more join pins.
+- Runs (x4mods-b8's hjs4 fixture from this tree, the real game, two X4 on one PC):
+    hjs4a, ANIS alone, first form: the navmesh part equal 688..760, key 01da1e regenerated 733 735 737 739 741 743 743 745
+      on both sides; first digest mismatch 968 (was 738). anis=1:8848:8848:617:0:3088:30, the session's anis_cap=12583.
+    hjs4b: the kinds of the 3,088 other queues: 24 another count, 7 another first key, 3,057 the same stage of another
+      length; 14 units in another state.
+    hjs4d, with the unit state step: every digest part equal 688..972, the nav rows of 967/968 on both sides, the relay's
+      "joined tick=3953 digest_mismatches=0 first_digest_mismatch=-". anis=1:11875:11875:621:0:31:30,
+      anis_state=1:14:57:0:0:0 (14 states set, 57 queues written), anil=1:1:0:0.
+    hjs4e, hjs4g, hjs4h (handover 4364, 3898, 3552): the catch-up without a digest mismatch each time.
+    hjs4i, the final build with the join defaults only: the same (joined 3426, no mismatch; parts equal 688..1000).
+    ca49, the capture-005 regression at T=690 (the recipe of section 63's ca48): joined 3427 without a digest mismatch, no
+      desync to 5440, 0 errors, the census of 691, 1800, 3600 and 5400 equal in all four roots; anis=1:141:141:646:0:1:0
+      (the session's anis_cap=812), anis_state=1:0:25:0:0:0, anil=0.
+  Both options are in JOIN_DEFAULT_ON.
+- Open on hjs4 after the handover:
+    The rid part differs for 4 to 8 ticks somewhere in 4539..4551 in four of five runs (not in hjs4h): the Terran fighter
+      0x6da76's ArrivedAtWaypointEvent comes at another tick on one side (4527 on the joiner in hjs4g, before 4525 on the
+      session), the carrier dock 0x6d86f's three TriggerAnimationEvents 4 ticks apart after it (4547 against 4551). In
+      hjs4h every event of 3950..4552 with a mapped source is equal on both sides (77,394 rows each).
+    The 5400 census: two objects differ, in motion only: the fighters 0x6da76 (MFG-855) and 0x6da8d (SGD-739), formation
+      members in slot 4's zone. So it is those two ships' flight after the handover; not read further yet.
+- Read and left:
+    A looping sequence (the unit's next state its own) whose stage is over is restarted by whoever evaluates it next,
+      at that moment (0x1165ee0 -> 0x1169f40 -> 0x1165930): a kit ship's parts 1, 22 and 23 keep the session's 18.53 /
+      20.30 s on the session and take 29.997 s (T+1) on the joiner, which draws them. That is the same between any two
+      clients with other cameras, no join matter; whether a stage appended to such a queue (it begins where the running
+      one ends) can move a scripted event is not shown.
+    The joiner alone delivers 11 + 3 TriggerAnimationEvents at T+1 and T+2 (slot 1's ship and the kit ships), 2,599
+      events of class 0x2baf880 and 8 NavHelperGeneratedEvents; none of them changed a watched unit's state.
+    Five listener classes are not made (anil unknown): none waited at T in these runs.
+    A package section for the objects' spawn times (+0x6e0) was written for x4mods-b8's respawn fixture and taken out
+      again: the field is equal on both sides (13,245 of 13,245); that case was a ship rebuilt inside its old hull.
+- Tests: native tests pass (test_join_anis: synthetic memory, X4's two calls and the listener maker replaced by stand-ins);
+  the Python package mirror with the same golden (v13: 85 sections); join and defaults suites pass; the Linux gate check
+  (WSL, gcc, check_lockstep_gate_linux.py with its scenarios) passes on this tree. Tools: JOIN_WATCHSEQ
+  rows in the join watch (a watched object's sequences: queue, state, next state, waiting listeners, times);
+  .local scripts are not in the tree. A play-mode host refuses native_gate_runtime_ids_callers (runtime IDs mode=set):
+  native_gate_runtime_ids_rows alone works there.

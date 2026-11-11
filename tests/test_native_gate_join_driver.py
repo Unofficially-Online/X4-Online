@@ -653,6 +653,8 @@ class Overlays(unittest.TestCase):
             self.assertIn('native_gate_join_resv', overlays.JOIN_DEFAULT_ON)   # w1z156, j1-337: the 1049/1860 split gone
             self.assertIn('native_gate_join_mute_load_npcs', overlays.JOIN_DEFAULT_ON)   # ca15: the T+2 NPC split at T=733 gone
             self.assertIn('native_gate_join_viewl', overlays.JOIN_DEFAULT_ON)   # hjs4v: a docking ship's live-view flag, its T+1 row
+            self.assertIn('native_gate_join_anis', overlays.JOIN_DEFAULT_ON)         # hjs4a: the far wharf's bays, the nav mesh receipt
+            self.assertIn('native_gate_join_anis_state', overlays.JOIN_DEFAULT_ON)   # hjs4d: a ship docking at T (unit state, queue, listener)
             self.assertIn('native_gate_join_body_make', overlays.JOIN_DEFAULT_ON)   # hjs1c: the 2 IDs of T+1 on a new-session save
             self.assertIn('native_gate_join_grav_dead', overlays.JOIN_DEFAULT_ON)   # ca33/ca34: the dead contact's has_scanned posts at T=690
             self.assertIn('native_gate_join_hold_fire', overlays.JOIN_DEFAULT_ON)   # ca22b..ca27: the load's shots at T=722 held

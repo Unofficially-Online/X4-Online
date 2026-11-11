@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "014fe839e7f76f46320899f5f0fc7ca3194cf507e7ff1d7d141498d2b328b424"   /* version 13 (JOBE .. CUEI; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "42fc97034c66e3247041a4959d22619bec608cb67f1f19c15a76ce3dd864019e"   /* version 13 (JOBE .. ANIL; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -474,6 +474,10 @@ static void test_join_golden(void) {
     srcs[0].kind=1;t.srcs=srcs;t.nsrcs=1;
     static join_fobj_rec fobj[1];memset(fobj,0,sizeof(fobj));fobj[0].region=0x2001ull;fobj[0].object=0x2002ull;fobj[0].field=42;t.fobj=fobj;t.nfobj=1;
     static join_cuei_rec cuei[1];memset(cuei,0,sizeof(cuei));cuei[0].runtime=0x162569ull;cuei[0].ordinal=690475u;t.cuei=cuei;t.ncuei=1;
+    static join_anis_rec anis[1];memset(anis,0,sizeof(anis));anis[0].portable=0x2001ull;anis[0].part=3;anis[0].stages=1;anis[0].flags=1;anis[0].first=2;
+    anis[0].sig=0x12345678u;anis[0].start=0x40857c0000000000ull;anis[0].w78=anis[0].w80=0xbff0000000000000ull;anis[0].keys[0]=anis[0].state=0x1111ull;anis[0].next=0x2222ull;t.anis=anis;t.nanis=1;
+    static join_anil_rec anil[1];memset(anil,0,sizeof(anil));anil[0].portable=0x2001ull;anil[0].part=3;anil[0].flag=1;anil[0].cls=0x2c78290u;anil[0].target=0x2003ull;
+    t.anil=anil;t.nanil=1;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -529,7 +533,7 @@ static void test_join_golden(void) {
            r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)) &&
            r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)) &&
            r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)) && r.nares==1 && !memcmp(r.ares,ares,sizeof(ares)) && r.nlstn==1 && !memcmp(r.lstn,lstn,sizeof(lstn)) && r.nundk==1 && !memcmp(r.undk,undk,sizeof(undk)) && r.nsrcs==1 && !memcmp(r.srcs,srcs,sizeof(srcs)) && r.nfobj==1 && !memcmp(r.fobj,fobj,sizeof(fobj)) &&
-           r.ncuei==1 && !memcmp(r.cuei,cuei,sizeof(cuei)));
+           r.ncuei==1 && !memcmp(r.cuei,cuei,sizeof(cuei)) && r.nanis==1 && !memcmp(r.anis,anis,sizeof(anis)) && r.nanil==1 && !memcmp(r.anil,anil,sizeof(anil)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -563,7 +567,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec)+48+sizeof(join_lstn_rec)+48+sizeof(join_undk_rec)+48+sizeof(join_srcs_rec)+48+sizeof(join_fobj_rec)+48+sizeof(join_cuei_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec)+48+sizeof(join_lstn_rec)+48+sizeof(join_undk_rec)+48+sizeof(join_srcs_rec)+48+sizeof(join_fobj_rec)+48+sizeof(join_cuei_rec)+48+sizeof(join_anis_rec)+48+sizeof(join_anil_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -3166,6 +3170,113 @@ static void test_join_fobj(void) {
     join_fobj_on=0;join_world_find=find;join_world_map=map;join_key=key;join_fobj_alloc=alloc;join_fobj_region_vt=0;
     printf("join FOBJ: an empty region field list takes the session's objects in order, an equal one left, others counted PASS\n");
 }
+/* ANIS: a made sequence with its unit is a record (its queue by template index and length); the admission counts a sequence whose
+ * words differ and, armed, writes the session's start and clears the cache; another queue is left; a unit that does not point
+ * back is no sequence. Synthetic memory. */
+static unsigned char tanis_obj[2][0x300];
+static void *tanis_find(void *map,uint64_t runtime,unsigned mode) {(void)map;(void)mode;return runtime>=0xd0u && runtime<0xd2u?tanis_obj[runtime-0xd0u]:NULL;}
+static unsigned tanis_sets,tanis_load_seen,tanis_made,tanis_made_flag;static unsigned char *tanis_made_unit,*tanis_made_target,tanis_listener[0x28];static uintptr_t tanis_pending[2];
+static void tanis_set(unsigned char *owner,unsigned char *unit,unsigned char *state) {   /* X4's state entry: +0x28 set, one stage queued, three IDs taken */
+    (void)owner;++tanis_sets;tanis_load_seen+=(unsigned)join_ids_admit_load;memcpy(unit+0x28,&state,8);join_ids_list.allocs+=3;
+}
+static int tanis_make(unsigned char *unit,uint32_t cls,unsigned char *target,unsigned flag) {
+    (void)cls;++tanis_made;tanis_made_unit=unit;tanis_made_target=target;tanis_made_flag=flag;return 1;
+}
+static uint64_t tanis_key(uint64_t runtime,unsigned *klass) {*klass=WORLD_KEY_SAVED;return runtime+0x1000u;}
+static void test_join_anis(void) {
+    join_find_fn find=join_world_find;void *map=join_world_map;
+    join_world_find=tanis_find;join_world_map=tanis_obj;
+    _Alignas(16) static unsigned char seq[3][JOIN_ANIS_SEQ],unit[3][0x58],tmpl[0x40],stage[3][0x100],container[0x60];static uintptr_t heap[8];
+    memset(tanis_obj,0,sizeof(tanis_obj));memset(seq,0,sizeof(seq));memset(unit,0,sizeof(unit));memset(tmpl,0,sizeof(tmpl));memset(stage,0,sizeof(stage));
+    memset(container,0,sizeof(container));
+    for(unsigned k=0;k<2;k++) {uint64_t runtime=0xd0u+k;memcpy(tanis_obj[k]+8,&runtime,8);}
+    {void *p=container;memcpy(tanis_obj[0]+JOIN_ANIS_CONTAINER,&p,8);p=seq[0];memcpy(container,&p,8);p=seq[0]+3*JOIN_ANIS_SEQ;memcpy(container+8,&p,8);}
+    {void *p=stage[0];memcpy(tmpl+0x28,&p,8);p=stage[0]+sizeof(stage);memcpy(tmpl+0x30,&p,8);}
+    {const float len[3]={2.0f,5.0f,1.5f};for(unsigned k=0;k<3;k++) {uint64_t key=0xa0u+k;memcpy(stage[k]+0xa0,&len[k],4);memcpy(stage[k],&key,8);}}
+    static uint64_t ustate[2]={0xa1u,0xa2u};
+    const double none=-1.0;
+    for(unsigned k=0;k<3;k++) {
+        void *p=image+JOIN_ANIS_UNIT_VT;memcpy(unit[k],&p,8);p=seq[k];memcpy(unit[k]+8,&p,8);
+        p=tmpl;memcpy(seq[k]+0x48,&p,8);p=unit[k];memcpy(seq[k]+0x50,&p,8);p=&ustate[k?1:0];memcpy(unit[k]+0x28,&p,8);
+        memcpy(seq[k]+0x68,&none,8);memcpy(seq[k]+0x78,&none,8);memcpy(seq[k]+0x80,&none,8);seq[k][0x88]=1;
+    }
+    {uint64_t cap=4,count=1;void *p=stage[1];double start=100.0,cached=99.0;   /* sequence 0: one inline stage, a cache, a pointer at +0x70 */
+     memcpy(seq[0]+0x30,&cap,8);memcpy(seq[0]+0x38,&count,8);memcpy(seq[0]+0x10,&p,8);memcpy(seq[0]+0x08,&start,8);memcpy(seq[0]+0x68,&cached,8);memcpy(seq[0]+0x60,&p,8);
+     memcpy(seq[0]+0x70,&p,8);}
+    seq[1][0x88]=0;   /* sequence 1: not made */
+    {uint64_t cap=8,count=2;void *p=heap;double start=50.0;heap[0]=(uintptr_t)stage[0];heap[1]=(uintptr_t)stage[2];   /* sequence 2: two stages on the heap */
+     memcpy(seq[2]+0x30,&cap,8);memcpy(seq[2]+0x38,&count,8);memcpy(seq[2]+0x10,&p,8);memcpy(seq[2]+0x08,&start,8);}
+    static join_id_rec ids[2];memset(ids,0,sizeof(ids));for(unsigned k=0;k<2;k++) {ids[k].runtime=0xd0u+k;ids[k].portable=0x10d0u+k;}
+    join_tables t;memset(&t,0,sizeof(t));t.ids=ids;t.nids=2;join_capture_anis(&t);
+    assert(t.nanis==2 && t.anis[0].portable==0x10d0u && t.anis[0].part==0 && t.anis[0].stages==1 && t.anis[0].first==1 && t.anis[0].flags==1 &&
+           t.anis[1].part==2 && t.anis[1].stages==2 && t.anis[1].first==0 && t.anis[0].sig!=t.anis[1].sig);
+    {double start;memcpy(&start,&t.anis[0].start,8);assert(start==100.0 && t.anis[0].w78==0xbff0000000000000ull && t.anis[0].w70==1 && !t.anis[1].w70);}
+    assert(t.anis[0].keys[0]==0xa1u && !t.anis[0].keys[1] && t.anis[0].state==0xa1u && t.anis[1].keys[0]==0xa0u && t.anis[1].keys[1]==0xa2u && t.anis[1].state==0xa2u &&
+           !t.anis[0].next && !t.anis[0].pending && !t.nanil);
+    assert(join_anis_cmp(&t.anis[0],&t.anis[1])<0);   /* the records' order is the package's */
+    /* the session's records: sequence 0 started at 80, sequence 2 with another queue */
+    static join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));mine.ids=ids;mine.nids=2;
+    static join_anis_rec g[2];memcpy(g,t.anis,sizeof(g));free(t.anis);
+    {double start=80.0;memcpy(&g[0].start,&start,8);g[0].first=9;}g[1].sig^=1u;g[1].start=1;   /* another first index alone is the same queue */
+    s.anis=g;s.nanis=2;
+    join_anis_on=0;join_admit_anis(&s,&mine);
+    {double start;memcpy(&start,seq[0]+0x08,8);assert(join_anis_apart==1 && !join_anis_written && join_anis_shape==1 && !join_anis_equal && !join_anis_missing && !join_anis_absent && start==100.0);}
+    assert(strstr(join_anis_refused,"10d0/2/2:a0>2:a0") && join_anis_kind[2]==1 && join_anis_kind[3]==1 && !join_anis_kind[0] && !join_anis_kind[1] && !join_anis_kind[4]);
+    join_anis_on=1;join_admit_anis(&s,&mine);
+    {double start,cached,two;uint64_t w70;memcpy(&start,seq[0]+0x08,8);memcpy(&cached,seq[0]+0x68,8);memcpy(&w70,seq[0]+0x70,8);memcpy(&two,seq[2]+0x08,8);
+     assert(join_anis_apart==1 && join_anis_written==1 && join_anis_shape==1 && start==80.0 && cached==-1.0 && !w70 && two==50.0);}   /* the saver's pointer is not written */
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," anis=1:1:1:0:0:1:0 anis_cap=") && strstr(status," anis_kinds=0:0:1:1:0 "));}
+    join_admit_anis(&s,&mine);assert(join_anis_equal==1 && !join_anis_apart && !join_anis_written && join_anis_shape==1);   /* again: equal */
+    g[0].state=0xa9u;g[1].keys[0]=0xa7u;join_admit_anis(&s,&mine);assert(join_anis_kind[4]==1 && join_anis_kind[1]==1 && join_anis_equal==1);   /* another state, another first key */
+    g[0].state=0xa1u;g[1].keys[0]=0xa0u;
+    /* native_gate_join_anis_state: sequence 0's unit to the session's state 0xa2 with the queue [0xa2, 0xa0] from 70 and the next
+     * state 0xa1; the state through X4's calls (here a stand-in that sets +0x28), the queue written inline; a listener made */
+    {   void (*set)(unsigned char *,unsigned char *,unsigned char *)=join_anis_set;int (*make)(unsigned char *,uint32_t,unsigned char *,unsigned)=join_anil_make;
+        uint64_t (*key)(uint64_t,unsigned *)=join_key;const uint64_t allocs=join_ids_list.allocs;
+        join_anis_set=tanis_set;join_anil_make=tanis_make;join_key=tanis_key;
+        static uintptr_t states[2];states[0]=(uintptr_t)&ustate[0];states[1]=(uintptr_t)&ustate[1];
+        static uintptr_t statevec[2];statevec[0]=(uintptr_t)&states[0];statevec[1]=(uintptr_t)&states[2];
+        {void *p=statevec;for(unsigned k=0;k<3;k++) memcpy(unit[k]+0x38,&p,8);}
+        {double start=70.0;memcpy(&g[0].start,&start,8);}g[0].state=0xa2u;g[0].next=0xa1u;g[0].stages=2;g[0].keys[0]=0xa2u;g[0].keys[1]=0xa0u;g[0].sig^=5u;g[0].pending=1;
+        g[0].flags=5;
+        static join_anil_rec gl[2];memset(gl,0,sizeof(gl));gl[0].portable=0x10d0u;gl[0].part=0;gl[0].cls=JOIN_ANIL_COCKPIT_VT;gl[0].flag=1;gl[0].target=0x10d1u;
+        gl[1]=gl[0];gl[1].place=1;gl[1].cls=0x2c7ca08u;   /* a class this does not make */
+        s.anil=gl;s.nanil=2;tanis_sets=tanis_made=0;
+        join_anis_state_on=0;join_admit_anis(&s,&mine);
+        assert(!tanis_sets && !tanis_made && join_anis_shape==2 && join_anil_conflict==1 && !join_anis_restated);   /* off: counted, nothing set */
+        join_anis_state_on=1;join_admit_anis(&s,&mine);
+        {uintptr_t st=0,nx=0,q0=0,q1=0;uint64_t count=0;double start;
+         memcpy(&st,unit[0]+0x28,8);memcpy(&nx,unit[0]+0x30,8);memcpy(&q0,seq[0]+0x10,8);memcpy(&q1,seq[0]+0x18,8);memcpy(&count,seq[0]+0x38,8);memcpy(&start,seq[0]+0x08,8);
+         assert(tanis_sets==1 && tanis_load_seen==1 && !join_ids_admit_load && st==(uintptr_t)&ustate[1] && nx==(uintptr_t)&ustate[0] && q0==(uintptr_t)stage[2] &&
+                q1==(uintptr_t)stage[0] && count==2 && start==70.0 && seq[0][0x88]==5);
+         assert(join_anis_restated==1 && join_anis_requeued==2 && !join_anis_drift && !join_anis_unplaced && join_anis_ids==3);   /* sequence 2: its queue written again, no state call */
+         assert(tanis_made==1 && tanis_made_unit==unit[0] && tanis_made_target==tanis_obj[1] && tanis_made_flag==1 && join_anil_made==1 && join_anil_unknown==1);}
+        {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," anis_state=1:1:2:0:0:3 anil=1:0:1:0 anil_cap="));}
+        /* the capture reads the unit back as the session's record: the queue's keys, the states, a waiting listener */
+        {void *p=tanis_listener;uintptr_t vt=(uintptr_t)image+JOIN_ANIL_COCKPIT_VT;uint64_t target=0xd1u;memcpy(tanis_listener,&vt,8);memcpy(tanis_listener+0x18,&target,8);
+         tanis_listener[0x20]=1;tanis_pending[0]=(uintptr_t)p;p=&tanis_pending[0];memcpy(unit[0]+0x40,&p,8);p=&tanis_pending[1];memcpy(unit[0]+0x48,&p,8);}
+        {join_tables t2;memset(&t2,0,sizeof(t2));t2.ids=ids;t2.nids=2;join_capture_anis(&t2);
+         assert(t2.nanis==2 && t2.anis[0].stages==2 && t2.anis[0].keys[0]==0xa2u && t2.anis[0].keys[1]==0xa0u && t2.anis[0].state==0xa2u && t2.anis[0].next==0xa1u &&
+                t2.anis[0].pending==1 && t2.nanil==1 && t2.anil[0].portable==0x10d0u && !t2.anil[0].part && !t2.anil[0].place && t2.anil[0].cls==JOIN_ANIL_COCKPIT_VT &&
+                t2.anil[0].flag==1 && t2.anil[0].target==0x10d1u);
+         free(t2.anis);free(t2.anil);}
+        s.nanil=1;g[0].sig=0;   /* equal listeners now; the queue's signature is the capture's business: recompute through a capture */
+        {join_tables t3;memset(&t3,0,sizeof(t3));t3.ids=ids;t3.nids=2;join_capture_anis(&t3);g[0].sig=t3.anis[0].sig;g[0].first=t3.anis[0].first;free(t3.anis);free(t3.anil);}
+        tanis_sets=tanis_made=0;join_admit_anis(&s,&mine);assert(!tanis_sets && !tanis_made && join_anil_equal==1 && join_anis_equal==1 && !join_anis_restated);
+        /* a state the joiner's unit lacks: unplaced, nothing written */
+        g[0].state=0xafu;join_admit_anis(&s,&mine);assert(!tanis_sets && join_anis_unplaced==1);
+        s.anil=NULL;s.nanil=0;
+        join_anis_state_on=0;join_anis_set=set;join_anil_make=make;join_key=key;join_ids_list.allocs=allocs;
+    }
+    /* a unit that does not point back at its sequence: no sequence (the session's record is absent here) */
+    {void *p=seq[1];memcpy(unit[0]+8,&p,8);join_admit_anis(&s,&mine);assert(!join_anis_equal && join_anis_shape==1 && join_anis_absent==1);
+     p=seq[0];memcpy(unit[0]+8,&p,8);}
+    /* a sequence the session has no record for: missing; an array of another size: left */
+    s.nanis=1;g[0].portable=0x10d9u;join_admit_anis(&s,&mine);assert(join_anis_missing==2 && join_anis_absent==1);
+    {void *p=seq[0]+3*JOIN_ANIS_SEQ-8;memcpy(container+8,&p,8);join_admit_anis(&s,&mine);assert(!join_anis_missing && join_anis_absent==1);}
+    join_anis_on=0;join_world_find=find;join_world_map=map;
+    printf("join ANIS: a made sequence's queue and start captured; the session's start written where the queue is the same, others counted PASS\n");
+}
 /* LSTN (j1-386): a source's listener vector for one event type, keyed listeners (here components) put into the session's order in
  * the slots they hold; a key the joiner lacks orders the common ones (partial); a key twice leaves the vector. */
 static unsigned char tlstn_obj[5][0x40],tlstn_table[16],tlstn_entries[2][0x28];static unsigned char *tlstn_vec[8];
@@ -3809,5 +3920,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();test_join_rprt();
+    test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_anis();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();test_join_rprt();
 }

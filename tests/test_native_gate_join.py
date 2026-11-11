@@ -452,10 +452,12 @@ def golden_v13():
             join.SEC_UNDK: [(0x2001, 0x2002, 0, 0, bytes(range(0x10, 0x18)) + bytes(8) + bytes(range(0x20, 0xd8)))],
             join.SEC_SRCS: [(0x2001, 0x7d7d6d0f, 0x2002, 1, 0, 0, 0)],
             join.SEC_FOBJ: [(0x2001, 0x2002, 42, 0, 0, 0)],
-            join.SEC_CUEI: [(0x162569, 690475, 0)]}
+            join.SEC_CUEI: [(0x162569, 690475, 0)],
+            join.SEC_ANIS: [(0x2001, 3, 1, 1, 0, 2, 0x12345678, 0x40857c0000000000, 0, 0xbff0000000000000, 0xbff0000000000000, 0x1111, 0, 0, 0, 0x1111, 0x2222)],
+            join.SEC_ANIL: [(0x2001, 3, 0, 1, 0, 0x2c78290, 0, 0x2003)]}
 
 
-GOLDEN_SHA = '014fe839e7f76f46320899f5f0fc7ca3194cf507e7ff1d7d141498d2b328b424'
+GOLDEN_SHA = '42fc97034c66e3247041a4959d22619bec608cb67f1f19c15a76ce3dd864019e'
 GOLDEN_SHA_V12 = '67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef'   # a version 12 package (before JOBE)
 GOLDEN_SHA_V11 = 'f0874152607c013ff72febfbf675b20f64b391fb5a9d431795bd302fc0964e7f'   # a version 11 package (before SPLM..GRAVP)
 GOLDEN_SHA_V10 = '1a324e00b49dbc814f757c26ad28741675b7d8e0b9df120c63d52594724e27bd'   # a version 10 package (before GRAV, GRAVC, GRAVS)
@@ -481,7 +483,7 @@ class Package(unittest.TestCase):
                                        'spline': 2, 'agent': 2, 'route': 3, 'param': 2, 'dock': 1, 'steer': 1, 'steerpt': 1, 'solver': 1,
                                        'bullet': 2, 'grav': 2, 'gravc': 3, 'gravs': 4, 'splm': 1, 'splme': 1,
                                        'splmseg': 4, 'gravn': 3, 'gravp': 3, 'gravq': 3, 'jobe': 1, 'evqt': 3, 'gravd': 2,
-                                       'viewk': 2, 'viewkc': 2, 'viewf': 2, 'viewp': 1, 'shoot': 1, 'attk': 1, 'livef': 1, 'spec': 2, 'navc': 1, 'jobs': 1, 'gone': 2, 'body': 1, 'bupd': 2, 'ldc': 1, 'navt': 1, 'nmesh': 4, 'noct': 4, 'agtt': 2, 'agcb': 1, 'pbnk': 1, 'pend': 2, 'gravb': 2, 'viewl': 2, 'ikv': 2, 'rcnt': 1, 'ecos': 1, 'shpw': 1, 'trdn': 1, 'npca': 1, 'jobg': 1, 'code': 1, 'engr': 1, 'shgr': 1, 'bnds': 1, 'omgs': 1, 'resv': 1, 'pcsv': 1, 'conn': 1, 'warp': 1, 'ares': 1, 'lstn': 1, 'undk': 1, 'srcs': 1, 'fobj': 1, 'cuei': 1})
+                                       'viewk': 2, 'viewkc': 2, 'viewf': 2, 'viewp': 1, 'shoot': 1, 'attk': 1, 'livef': 1, 'spec': 2, 'navc': 1, 'jobs': 1, 'gone': 2, 'body': 1, 'bupd': 2, 'ldc': 1, 'navt': 1, 'nmesh': 4, 'noct': 4, 'agtt': 2, 'agcb': 1, 'pbnk': 1, 'pend': 2, 'gravb': 2, 'viewl': 2, 'ikv': 2, 'rcnt': 1, 'ecos': 1, 'shpw': 1, 'trdn': 1, 'npca': 1, 'jobg': 1, 'code': 1, 'engr': 1, 'shgr': 1, 'bnds': 1, 'omgs': 1, 'resv': 1, 'pcsv': 1, 'conn': 1, 'warp': 1, 'ares': 1, 'lstn': 1, 'undk': 1, 'srcs': 1, 'fobj': 1, 'cuei': 1, 'anis': 1, 'anil': 1})
         self.assertEqual(s['version'], 13)
         self.assertEqual(s['save_sha'], bytes(range(32)).hex())
         # The MD heap enters the portable digest in pop order (time, then seq) and without its seq.
@@ -1053,7 +1055,7 @@ class Package(unittest.TestCase):
         # Version 13 (report 1.17): JOBE after GRAVQ, in the digest whole; the reader refuses its shape faults and a version 12 header
         # with it.
         v13 = join.read_package(golden())
-        self.assertEqual((v13['sha'], v13['header']['version'], v13['header']['sections']), (GOLDEN_SHA, 13, 83))
+        self.assertEqual((v13['sha'], v13['header']['version'], v13['header']['sections']), (GOLDEN_SHA, 13, 85))
         self.assertEqual(join.portable_text(v13['sections']).splitlines()[-1].split('|')[:2], ['JOBE', '1'])   # EVQT: not in the digest
         other = dict(v13['sections']);other['evqt'] = []
         self.assertEqual(join.portable_digest(other), join.portable_digest(v13['sections']))

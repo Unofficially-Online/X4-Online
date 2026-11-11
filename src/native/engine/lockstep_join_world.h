@@ -3178,6 +3178,7 @@ static size_t join_recyf_dump(char *out,size_t cap,char side,uint64_t tick,uint6
     at+=(size_t)snprintf(out+at,cap-at,"\r\n");
     return at<cap?at:cap;
 }
+static int join_anis_read(unsigned char *seq,join_anis_rec *r);   /* below (ANIS) */
 static void join_watch_dump(char side,uint64_t tick) {
     if(!join_watch.n) return;
     {size_t cap=1u<<20;char *o=malloc(cap);if(o) {const size_t at=join_rstore_dump(o,cap,side,tick);if(at) crash_note_write(o,(int)at);free(o);}}
@@ -3500,6 +3501,24 @@ static void join_watch_dump(char side,uint64_t tick) {
                             }
                         }
                     }
+                }
+                {   /* JOIN_WATCHSEQ: the level's made part animation sequences as ANIS reads them (below), at most 48: the part, the
+                     * queue (count, first stage's template index and key, signature), the unit's state key and its pending
+                     * trigger sources (unit +0x40..+0x48), the start time and +0x70, +0x78, +0x80. */
+                    unsigned char *a208=NULL;uintptr_t sv[2]={0,0};unsigned shown=0;
+                    if(join_read(level+0x208,&a208,8) && a208 && join_read(a208,sv,16) && sv[1]>=sv[0] && (sv[1]-sv[0])%0x90u==0 && (sv[1]-sv[0])/0x90u<=4096u)
+                        for(uintptr_t q=sv[0];q<sv[1] && shown<48u && at+400u<cap;q+=0x90u) {
+                            join_anis_rec r;uintptr_t unit=0,pv[2]={0,0};double start,w78,w80;
+                            memset(&r,0,sizeof(r));
+                            if(!join_anis_read((unsigned char *)q,&r)) continue;
+                            if(!join_read((unsigned char *)q+0x50,&unit,8) || !unit || !join_read((unsigned char *)unit+0x40,pv,16) || pv[1]<pv[0]) pv[0]=pv[1]=0;
+                            memcpy(&start,&r.start,8);memcpy(&w78,&r.w78,8);memcpy(&w80,&r.w80,8);
+                            at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHSEQ side=%c tick=%llu id=%llx level=%x part=%u stages=%u first=%u key=%llx sig=%x "
+                                                 "state=%llx next=%llx pending=%u start=%.17g w70=%llx w78=%.9g w80=%.9g flags=%x\r\n",
+                                                 side,(unsigned long long)tick,(unsigned long long)join_watch.portable[i],rva,(unsigned)((q-sv[0])/0x90u),r.stages,r.first,
+                                                 (unsigned long long)r.keys[0],r.sig,(unsigned long long)r.state,(unsigned long long)r.next,(unsigned)((pv[1]-pv[0])/8u),start,(unsigned long long)r.w70,w78,w80,r.flags);
+                            ++shown;
+                        }
                 }
             }
             if(rva==JOIN_GRAV_SECTOR_VT) break;
@@ -4106,6 +4125,275 @@ static void join_admit_ikv(const join_tables *s,const join_tables *mine) {
                                  (unsigned)(vt-(uintptr_t)image),join_ikv_why,(unsigned long long)join_ikv_seen);
         }
     }
+}
+/* ANIS (v13, section 84; hjs4, 10 Nov): the part animation sequences. An object's container (+0x208) holds an array of 0x90-byte
+ * sequences (+0x00 begin, +0x08 end), one per animated part, indexed by the part template's +0xe2 (Positional::InitPartAnimations
+ * 0x755110 -> 0x1164460): +0x08 the start time of the first queued stage (double), +0x10 a small vector of stage pointers (inline
+ * when +0x30 == 4, the count +0x38; a stage is a 0x100-byte entry of the template's (+0x48) array +0x28..+0x30, its length a float
+ * at +0xa0), +0x50 its U::Animation::SequenceControlUnit (vtable 0x2c80090, the unit's +0x08 points back), +0x60/+0x68 a cache
+ * (stage, time; -1.0: none), +0x70 a pointer the code that sets the start clears with it (0x1165930, the constructor), +0x78/+0x80
+ * an offset and a limit, +0x88 flags (bit 0: made). A stage's and a state's +0x00 is a key, a hash of its name.
+ * A save keeps the unit's state and no time. A load's unit (constructor 0x11691e0 -> 0x116a1f0 -> 0x1165930) queues the state's
+ * stage with the start at the load's time (less a phase drawn from the owner's ID for a state with +0x29), so a sequence the
+ * session started before T runs from another time on the joiner and what is computed from it comes at another tick: the
+ * TriggerAnimationEvent handler 0x1169a90 posts U::AnimationTickedEvent at now + the remaining time 0x1165dd0 (x4mods-b8's hjs4:
+ * two docking bays of the far wharf, 736 and 742 on the session, 749 on the joiner, the nav mesh of their dock area regenerated
+ * one tick after each: the navmesh part of the digest apart from 738).
+ * ANIS carries, per made sequence with a unit, the start, +0x78, +0x80 and what identifies its queue (the count, the first
+ * stage's key, a signature of every stage's key; a stage's length +0xa0 is filled when its animation data is there and differed
+ * between the sides for 3,057 sequences of hjs4a, so it is no part of the identity). The admission compares every sequence of
+ * the joiner's with the session's record; with native_gate_join_anis it writes the three words and clears +0x70 and the cache
+ * where the queue is the same. Another queue is counted and left (anis_shape lists the first few). Status
+ * anis=on:apart:written:equal:missing:shape:absent (apart: same queue, other words; missing: no record for a sequence of the
+ * joiner's; absent: records without a sequence here) anis_cap=N anis_kinds=count:key:index:rest:state (another queue by its
+ * first difference: the count of stages, the first stage's key, a later stage's; then the same queue with another first index;
+ * and the sequences whose unit is in another state) anis_shape=portable/part/own count:own key>session count:session key,... */
+#define JOIN_ANIS_CONTAINER 0x208u
+#define JOIN_ANIS_SEQ 0x90u
+#define JOIN_ANIS_UNIT_VT 0x2c80090u
+#define JOIN_ANIS_PARTS 4096u
+#define JOIN_ANIS_STAGES 64u
+#define JOIN_ANIS_LISTENERS 16u
+static int join_anis_on;
+static uint64_t join_anis_apart,join_anis_written,join_anis_equal,join_anis_missing,join_anis_shape,join_anis_absent,join_anis_kind[5];
+static char join_anis_refused[448]="-";
+/* A made sequence with its unit as a record (portable and part are the caller's); 0: not one, or a shape this does not know.
+ * *unit_out: its unit. */
+static int join_anis_read_unit(unsigned char *seq,join_anis_rec *r,unsigned char **unit_out) {
+    unsigned char raw[JOIN_ANIS_SEQ];uintptr_t tmpl=0,unit=0,data=0,vt=0,back=0,tb=0,te=0,stages[JOIN_ANIS_STAGES];uint64_t cap=0,count=0;
+    if(!join_read(seq,raw,sizeof(raw)) || !(raw[0x88]&1u)) return 0;
+    memcpy(&tmpl,raw+0x48,8);memcpy(&unit,raw+0x50,8);memcpy(&cap,raw+0x30,8);memcpy(&count,raw+0x38,8);
+    if(!tmpl || !unit || count>JOIN_ANIS_STAGES || (cap==4u && count>4u)) return 0;
+    if(!join_read((void *)unit,&vt,8) || vt!=(uintptr_t)image+JOIN_ANIS_UNIT_VT || !join_read((unsigned char *)unit+8,&back,8) || back!=(uintptr_t)seq) return 0;
+    if(count && cap==4u) memcpy(stages,raw+0x10,(size_t)count*8u);
+    else if(count) {memcpy(&data,raw+0x10,8);if(!data || !join_read((void *)data,stages,(size_t)count*8u)) return 0;}
+    if(!join_read((unsigned char *)tmpl+0x28,&tb,8) || !join_read((unsigned char *)tmpl+0x30,&te,8)) return 0;
+    uint32_t sig=0x811c9dc5u;r->first=UINT32_MAX;memset(r->keys,0,sizeof(r->keys));
+    for(uint64_t i=0;i<count;i++) {
+        uint32_t index=UINT32_MAX;uint64_t key=0;
+        if(stages[i]>=tb && stages[i]<te && !((stages[i]-tb)&0xffu)) index=(uint32_t)((stages[i]-tb)>>8);
+        if(!stages[i] || !join_read((void *)stages[i],&key,8)) return 0;
+        if(!i) r->first=index;
+        if(i<JOIN_ANIS_KEYS) r->keys[i]=key;
+        sig=(sig^(uint32_t)key)*0x01000193u;sig=(sig^(uint32_t)(key>>32))*0x01000193u;
+    }
+    r->stages=(uint16_t)count;r->flags=raw[0x88];r->sig=sig;r->state=r->next=0;r->pending=0;
+    {uintptr_t state=0,pv[2]={0,0};
+     if(join_read((unsigned char *)unit+0x28,&state,8) && state) (void)join_read((void *)state,&r->state,8);
+     state=0;if(join_read((unsigned char *)unit+0x30,&state,8) && state) (void)join_read((void *)state,&r->next,8);
+     if(join_read((unsigned char *)unit+0x40,pv,16) && pv[1]>=pv[0]) r->pending=(uint8_t)((pv[1]-pv[0])/8u>255u?255u:(pv[1]-pv[0])/8u);}
+    memcpy(&r->start,raw+0x08,8);memcpy(&r->w70,raw+0x70,8);r->w70=r->w70!=0;memcpy(&r->w78,raw+0x78,8);memcpy(&r->w80,raw+0x80,8);
+    if(unit_out) *unit_out=(unsigned char *)unit;
+    return 1;
+}
+static int join_anis_read(unsigned char *seq,join_anis_rec *r) {return join_anis_read_unit(seq,r,NULL);}
+typedef void (*join_anis_visit)(void *ctx,uint32_t part,unsigned char *seq);
+/* Every sequence of an object's array; 0: it has none, -1: an array this does not know. */
+static int join_anis_walk(unsigned char *object,join_anis_visit visit,void *ctx) {
+    uintptr_t container=0,v[2]={0,0};
+    if(!object || !join_read(object+JOIN_ANIS_CONTAINER,&container,8) || !container) return 0;
+    if(!join_read((void *)container,v,16) || v[1]<v[0] || (v[1]-v[0])%JOIN_ANIS_SEQ || (v[1]-v[0])/JOIN_ANIS_SEQ>JOIN_ANIS_PARTS) return -1;
+    for(uintptr_t s=v[0];s<v[1];s+=JOIN_ANIS_SEQ) visit(ctx,(uint32_t)((s-v[0])/JOIN_ANIS_SEQ),(unsigned char *)s);
+    return v[1]>v[0];
+}
+typedef struct {join_tables *t;uint32_t *cap,*lcap;uint64_t portable;int full;} join_anis_capture_ctx;
+static void join_anis_capture_one(void *ctx,uint32_t part,unsigned char *seq) {
+    join_anis_capture_ctx *c=(join_anis_capture_ctx *)ctx;join_anis_rec r;unsigned char *unit=NULL;uintptr_t pv[2]={0,0};
+    if(c->full) return;
+    memset(&r,0,sizeof(r));
+    if(!join_anis_read_unit(seq,&r,&unit)) return;
+    r.portable=c->portable;r.part=part;
+    if(!JOIN_PUSH(c->t->anis,c->t->nanis,*c->cap,r)) {c->full=1;return;}
+    /* ANIL: the listeners waiting in the unit (+0x40..+0x48), in order */
+    if(!r.pending || !join_read(unit+0x40,pv,16) || pv[1]<pv[0]) return;
+    for(uintptr_t p=pv[0];p<pv[1] && (p-pv[0])/8u<JOIN_ANIS_LISTENERS;p+=8) {
+        uintptr_t listener=0,vt=0;uint64_t target=0;unsigned klass=0;join_anil_rec l;memset(&l,0,sizeof(l));
+        l.portable=c->portable;l.part=part;l.place=(uint16_t)((p-pv[0])/8u);
+        if(join_read((void *)p,&listener,8) && listener && join_read((void *)listener,&vt,8) && vt>=(uintptr_t)image && vt-(uintptr_t)image<JOIN_FLIGHT_IMAGE) {
+            l.cls=(uint32_t)(vt-(uintptr_t)image);
+            if(join_read((unsigned char *)listener+0x18,&target,8) && target) l.target=join_key(target,&klass);
+            (void)join_read((unsigned char *)listener+0x20,&l.flag,1);
+        }
+        if(!JOIN_PUSH(c->t->anil,c->t->nanil,*c->lcap,l)) {c->full=1;return;}
+    }
+}
+static int join_anis_cmp(const void *a,const void *b) {
+    const join_anis_rec *x=(const join_anis_rec *)a,*y=(const join_anis_rec *)b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    return x->part<y->part?-1:x->part>y->part;
+}
+static int join_anil_cmp(const void *a,const void *b) {
+    const join_anil_rec *x=(const join_anil_rec *)a,*y=(const join_anil_rec *)b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    if(x->part!=y->part) return x->part<y->part?-1:1;
+    return x->place<y->place?-1:x->place>y->place;
+}
+static void join_capture_anis(join_tables *t) {
+    uint32_t cap=0,lcap=0;join_anis_capture_ctx c={t,&cap,&lcap,0,0};
+    for(uint32_t i=0;i<t->nids && !c.full;i++) {
+        if(!t->ids[i].portable) continue;
+        c.portable=t->ids[i].portable;
+        (void)join_anis_walk(join_object(t->ids[i].runtime),join_anis_capture_one,&c);
+    }
+    if(t->nanis>1) qsort(t->anis,t->nanis,sizeof(*t->anis),join_anis_cmp);
+    if(t->nanil>1) qsort(t->anil,t->nanil,sizeof(*t->anil),join_anil_cmp);
+}
+/* native_gate_join_anis_state (the second step; hjs4b, 10 Nov): a unit is a state machine. +0x28 its state (a state's +0x00 its
+ * key, the hash of its name), +0x30 the state to enter next, +0x38 the list of its states, +0x40..+0x48 the listeners waiting
+ * for a state (U::Animation::*StateListener, 0x28 bytes: an EventListener with its own runtime ID, +0x18 a component's ID, +0x20 a
+ * flag; put there through the unit's vtable +0x58, 0x116a4e0). 0x116a1f0(unit, state, restart) enters a state: it queues the
+ * state's stage (restart: the queue emptied, the start now), schedules U::AnimationTickedEvent for the listeners waiting for it
+ * (0x1169a90) and registers the unit for the events of the state's transitions (0x116a060). The unit's import of a save
+ * (vtable +0x10, 0x1169500) is 0x999ef0(owner, unit +0x10), which takes the unit off the owner's events, and that call with
+ * restart; the +0x30 state it sets directly.
+ * A ship docking at T: its save says cockpit_closed for the four cockpit parts, landinggears_activating landinggears_active from
+ * 29.23 s for ten parts, and holds the events of the docking's end (triggeranimation open_cockpit and docked at 38.197 s). The
+ * session's cockpit unit has a CockpitStateListener waiting (Ship::vfunc1147 0x7dd4e9 makes one with the event it posts): when
+ * the trigger of tick 934 opens the cockpit the listener gets AnimationTickedEvent at 966 and asks for the nav rebuild of the ship
+ * and of its dock area (0x116e230 -> 0x75b440): NAV_MESH_ROW 967/968 on the session only (hjs4a: the first digest mismatch,
+ * 968). The joiner's load makes no listener, has the cockpit open at T (cockpit_open; the load treats the ship as docked) and
+ * the landing gear's queue at its last stage.
+ * With the option the admission gives a unit whose state, next state or queue differs the session's: the state through X4's two
+ * calls as its import (their IDs on the load list), then the queue's stages by key from the sequence's template (at most
+ * JOIN_ANIS_KEYS, into the storage the sequence has), the next state, bit 2 of the flags and the times as above. And where the
+ * session's unit has listeners waiting and the joiner's none, it makes them (ANIL, section 85: class, flag, the component by
+ * portable ID; the two classes whose constructor is (this, component, flag): Cockpit 0x116e130 and DockingBayFence 0x116e5e0)
+ * and puts them into the unit as X4 does. Status anis_state=on:restated:requeued:unplaced:drift:ids (unplaced: a state or stage
+ * key the joiner's unit lacks, a queue longer than carried; drift: the unit left the state at once)
+ * anil=made:equal:unknown:conflict anil_cap=N (unknown: another class or a component the joiner lacks; conflict: other
+ * listeners on the joiner). */
+#define JOIN_ANIS_STATE_SET 0x116a1f0u
+#define JOIN_ANIS_LISTENERS_OFF 0x999ef0u
+#define JOIN_ANIL_PUSH 0x116a4e0u
+#define JOIN_ANIL_COCKPIT_VT 0x2c78290u
+#define JOIN_ANIL_COCKPIT_CTOR 0x116e130u
+#define JOIN_ANIL_FENCE_VT 0x2c7a628u
+#define JOIN_ANIL_FENCE_CTOR 0x116e5e0u
+#define JOIN_ANIL_SIZE 0x28u
+static int join_anis_state_on;
+static uint64_t join_anis_restated,join_anis_requeued,join_anis_unplaced,join_anis_drift,join_anis_ids,join_anil_made,join_anil_equal,join_anil_unknown,join_anil_conflict;
+static void join_anis_set_native(unsigned char *owner,unsigned char *unit,unsigned char *state) {
+    ((void (*)(void *,void *))(void *)(image+JOIN_ANIS_LISTENERS_OFF))(owner,unit+0x10);
+    ((void (*)(void *,void *,int))(void *)(image+JOIN_ANIS_STATE_SET))(unit,state,1);
+}
+static void (*join_anis_set)(unsigned char *,unsigned char *,unsigned char *)=join_anis_set_native;   /* tests replace it */
+static void *join_fobj_alloc_native(size_t n);   /* below (FOBJ): SMem::Allocate */
+static int join_anil_make_native(unsigned char *unit,uint32_t cls,unsigned char *target,unsigned flag) {
+    const uint32_t ctor=cls==JOIN_ANIL_COCKPIT_VT?JOIN_ANIL_COCKPIT_CTOR:JOIN_ANIL_FENCE_CTOR;
+    void *listener=join_fobj_alloc_native(JOIN_ANIL_SIZE);
+    if(!listener) return 0;
+    ((void *(*)(void *,void *,unsigned char))(void *)(image+ctor))(listener,target,(unsigned char)flag);
+    ((unsigned char (*)(void *,void *))(void *)(image+JOIN_ANIL_PUSH))(unit,listener);
+    return 1;
+}
+static int (*join_anil_make)(unsigned char *,uint32_t,unsigned char *,unsigned)=join_anil_make_native;   /* tests replace it */
+/* A state of the unit's by its key; NULL: none. */
+static unsigned char *join_anis_state_of(unsigned char *unit,uint64_t key) {
+    uintptr_t list=0,v[2]={0,0};
+    if(!key || !join_read(unit+0x38,&list,8) || !list || !join_read((void *)list,v,16) || v[1]<v[0] || (v[1]-v[0])/8u>1024u) return NULL;
+    for(uintptr_t p=v[0];p<v[1];p+=8) {
+        uintptr_t s=0;uint64_t k=0;
+        if(join_read((void *)p,&s,8) && s && join_read((void *)s,&k,8) && k==key) return (unsigned char *)s;
+    }
+    return NULL;
+}
+/* A stage of the sequence's template by its key; 0: none. */
+static uintptr_t join_anis_stage_of(unsigned char *seq,uint64_t key) {
+    uintptr_t tmpl=0,tb=0,te=0;
+    if(!key || !join_read(seq+0x48,&tmpl,8) || !tmpl || !join_read((unsigned char *)tmpl+0x28,&tb,8) || !join_read((unsigned char *)tmpl+0x30,&te,8) ||
+       te<tb || ((te-tb)&0xffu) || (te-tb)>>8>4096u) return 0;
+    for(uintptr_t s=tb;s<te;s+=0x100u) {uint64_t k=0;if(join_read((void *)s,&k,8) && k==key) return s;}
+    return 0;
+}
+/* The session's start and limits on a sequence, the cache and +0x70 cleared (as 0x1165930 leaves them). */
+static void join_anis_write_times(unsigned char *seq,const join_anis_rec *r) {
+    static const uint64_t none=0xbff0000000000000ull,zero=0;
+    (void)join_poke((uintptr_t)(seq+0x08),&r->start,8);(void)join_poke((uintptr_t)(seq+0x70),&zero,8);
+    (void)join_poke((uintptr_t)(seq+0x78),&r->w78,8);(void)join_poke((uintptr_t)(seq+0x80),&r->w80,8);
+    (void)join_poke((uintptr_t)(seq+0x68),&none,8);
+}
+/* The session's state, next state and queue on a unit of the joiner's; 0: it cannot take them (nothing written). */
+static int join_anis_restate(unsigned char *owner,unsigned char *seq,unsigned char *unit,const join_anis_rec *own,const join_anis_rec *r) {
+    unsigned char *state=NULL,*next=NULL,*now=NULL;uintptr_t stage[JOIN_ANIS_KEYS],data=0;uint64_t cap=0;
+    if(!owner || r->stages>JOIN_ANIS_KEYS || !r->state || !(state=join_anis_state_of(unit,r->state)) || (r->next && !(next=join_anis_state_of(unit,r->next)))) return 0;
+    for(unsigned i=0;i<r->stages;i++) if(!(stage[i]=join_anis_stage_of(seq,r->keys[i]))) return 0;
+    if(own->state!=r->state) {
+        const unsigned long long before=RID_JOIN_ALLOCS;
+        join_ids_admit_load=1;join_anis_set(owner,unit,state);join_ids_admit_load=0;
+        join_anis_ids+=RID_JOIN_ALLOCS-before;++join_anis_restated;
+        if(!join_read(unit+0x28,&now,8) || now!=state) ++join_anis_drift;
+    }
+    if(!join_read(seq+0x30,&cap,8) || cap<r->stages || (cap!=4u && (!join_read(seq+0x10,&data,8) || !data))) return 1;   /* the state is set; the queue stays X4's */
+    if(cap==4u) data=(uintptr_t)(seq+0x10);
+    for(unsigned i=0;i<r->stages;i++) (void)join_poke(data+8u*i,&stage[i],8);
+    {const uint64_t count=r->stages;unsigned char flags=0;
+     (void)join_poke((uintptr_t)(seq+0x38),&count,8);
+     if(join_read(seq+0x88,&flags,1)) {flags=(unsigned char)((flags&~4u)|(r->flags&4u));(void)join_poke((uintptr_t)(seq+0x88),&flags,1);}}
+    (void)join_poke((uintptr_t)(unit+0x30),&next,8);
+    join_anis_write_times(seq,r);
+    ++join_anis_requeued;
+    return 1;
+}
+typedef struct {const join_tables *s,*mine;uint64_t portable;unsigned char *object;size_t at;uint64_t matched;} join_anis_admit_ctx;
+/* The session's waiting listeners on a unit that has none. */
+static void join_anil_admit(const join_anis_admit_ctx *c,uint32_t part,unsigned char *unit,unsigned own_pending,const join_anis_rec *r) {
+    if(!r->pending && !own_pending) return;
+    if(own_pending==r->pending) {join_anil_equal+=own_pending;return;}
+    if(own_pending || !join_anis_state_on) {++join_anil_conflict;return;}
+    join_anil_rec key;memset(&key,0,sizeof(key));key.portable=c->portable;key.part=part;
+    uint32_t lo=0,hi=c->s->nanil;
+    while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(join_anil_cmp(&c->s->anil[mid],&key)<0) lo=mid+1u;else hi=mid;}
+    for(;lo<c->s->nanil && c->s->anil[lo].portable==c->portable && c->s->anil[lo].part==part;lo++) {
+        const join_anil_rec *l=&c->s->anil[lo];
+        unsigned char *target=l->target?join_object(join_runtime_of(c->mine,l->target)):NULL;
+        if((l->cls!=JOIN_ANIL_COCKPIT_VT && l->cls!=JOIN_ANIL_FENCE_VT) || !target) {++join_anil_unknown;continue;}
+        const unsigned long long before=RID_JOIN_ALLOCS;
+        join_ids_admit_load=1;const int made=join_anil_make(unit,l->cls,target,l->flag);join_ids_admit_load=0;
+        join_anis_ids+=RID_JOIN_ALLOCS-before;
+        if(made) ++join_anil_made;else ++join_anil_unknown;
+    }
+}
+static void join_anis_admit_one(void *ctx,uint32_t part,unsigned char *seq) {
+    join_anis_admit_ctx *c=(join_anis_admit_ctx *)ctx;join_anis_rec own,key;uint32_t lo=0,hi=c->s->nanis;unsigned char *unit=NULL;
+    memset(&own,0,sizeof(own));memset(&key,0,sizeof(key));key.portable=c->portable;key.part=part;
+    if(!join_anis_read_unit(seq,&own,&unit)) return;
+    while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(join_anis_cmp(&c->s->anis[mid],&key)<0) lo=mid+1u;else hi=mid;}
+    if(lo>=c->s->nanis || join_anis_cmp(&c->s->anis[lo],&key)) {++join_anis_missing;return;}
+    const join_anis_rec *r=&c->s->anis[lo];++c->matched;
+    const int other_state=own.state!=r->state || own.next!=r->next;
+    const int other_queue=own.stages!=r->stages || own.keys[0]!=r->keys[0] || own.sig!=r->sig;
+    if(other_state) ++join_anis_kind[4];
+    if(other_queue) {
+        ++join_anis_kind[own.stages!=r->stages?0:own.keys[0]!=r->keys[0]?1:2];
+        if(++join_anis_shape<=6u && c->at+72u<sizeof(join_anis_refused))
+            c->at+=(size_t)snprintf(join_anis_refused+c->at,sizeof(join_anis_refused)-c->at,"%s%llx/%u/%u:%llx>%u:%llx",c->at?",":"",
+                                    (unsigned long long)c->portable,part,own.stages,(unsigned long long)own.keys[0],r->stages,(unsigned long long)r->keys[0]);
+    }
+    int placed=0;
+    if(other_state || other_queue) {
+        placed=join_anis_state_on && join_anis_restate(c->object,seq,unit,&own,r);
+        if(join_anis_state_on && !placed) ++join_anis_unplaced;
+    }
+    join_anil_admit(c,part,unit,own.pending,r);
+    if(placed || other_queue) return;
+    if(own.first!=r->first) ++join_anis_kind[3];
+    if(own.start==r->start && own.w78==r->w78 && own.w80==r->w80) {++join_anis_equal;return;}
+    ++join_anis_apart;
+    if(!join_anis_on) return;
+    join_anis_write_times(seq,r);
+    ++join_anis_written;
+}
+static void join_admit_anis(const join_tables *s,const join_tables *mine) {
+    join_anis_admit_ctx c={s,mine,0,NULL,0,0};
+    join_anis_apart=join_anis_written=join_anis_equal=join_anis_missing=join_anis_shape=join_anis_absent=0;memset(join_anis_kind,0,sizeof(join_anis_kind));
+    join_anis_restated=join_anis_requeued=join_anis_unplaced=join_anis_drift=join_anis_ids=join_anil_made=join_anil_equal=join_anil_unknown=join_anil_conflict=0;
+    join_anis_refused[0]='-';join_anis_refused[1]=0;
+    for(uint32_t i=0;i<mine->nids;i++) {
+        if(!mine->ids[i].portable) continue;
+        c.portable=mine->ids[i].portable;c.object=join_object(mine->ids[i].runtime);
+        (void)join_anis_walk(c.object,join_anis_admit_one,&c);
+    }
+    join_anis_absent=s->nanis>c.matched?s->nanis-c.matched:0;
 }
 /* RCNT (v13, section 63; the admission opt-in, native_gate_join_rcnt): the reference counts of the session's created ships and bays.
  * j1-184: a ship the session created and docked holds two more references (+0x40) on the joiner than on the session, from the load
@@ -6030,6 +6318,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_gravb(t);           /* version 13 */
     join_capture_viewl(t);           /* version 13 */
     join_capture_ikv(t);             /* version 13 */
+    join_capture_anis(t);            /* version 13 */
     join_capture_rcnt(t);            /* version 13 */
     join_capture_ecos(t);            /* version 13 */
     join_capture_shpw(t);            /* version 13 */
@@ -7848,6 +8137,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_gravb(s,&mine);   /* the radar's mapped bounds */
     if(s->version>=13) join_admit_viewl(s,&mine);   /* the live and player view flags (opt-in) */
     if(s->version>=13) join_admit_ikv(s,&mine);     /* the skeletons' IK joints (the weapons' gimbals) */
+    if(s->version>=13) join_admit_anis(s,&mine);    /* the part animation sequences: start times, unit states, waiting listeners (written: opt-in) */
     if(s->version>=13) join_admit_ecos(s,&mine);    /* the economy schedules (opt-in) */
     if(s->version>=13) join_admit_shpw(s,&mine);    /* the ships' words a load leaves at defaults (opt-in) */
     if(s->version>=13) join_admit_trdn(s,&mine);    /* the containers' next trade offer update (opt-in) */

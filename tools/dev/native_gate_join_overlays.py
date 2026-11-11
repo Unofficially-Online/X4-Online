@@ -283,6 +283,10 @@ def ids_sets(sets):
 #   native_gate_join_mute_load_npcs  the joiner's MD does not hear the NPC created events of its load before the admission
 #                                  (ca10..ca15, 9 Nov, T=733: the load started the state machine of the NPC the session
 #                                  made in step T, a tick early; ca15 with it: 7,251 checks muted, digest 0, to 5442)
+#   native_gate_join_anis_state    the joiner's animation units take the session's state, next state and queue of stages
+#                                  and the listeners waiting in them (ANIS, ANIL section 85; hjs4b: a ship docking at T)
+#   native_gate_join_anis          the joiner's part animation sequences take the session's start times where the queue
+#                                  of stages is the same (ANIS, package section 84; hjs4: the far wharf's docking bays)
 #   native_gate_join_viewl         the joiner runs the live and player view handlers where its flags differ from the
 #                                  session's (VIEWL). No gain on capture-005; on a new-session save (hjs4v, x4mods-b8) a
 #                                  ship on its dock path read 0 where the session's read 1 and its yaw parted at T+1
@@ -310,7 +314,8 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_ares', 'native_gate_join_warp', 'native_gate_join_undk', 'native_gate_join_srcs',
                    'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled',
                    'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids',
-                   'native_gate_join_grav_dead', 'native_gate_join_body_make', 'native_gate_join_viewl')
+                   'native_gate_join_grav_dead', 'native_gate_join_body_make', 'native_gate_join_viewl',
+                   'native_gate_join_anis', 'native_gate_join_anis_state')
 
 
 def default_sets(sets):

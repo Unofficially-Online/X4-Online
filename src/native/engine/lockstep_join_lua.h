@@ -61,6 +61,10 @@ static int lua_join_ids(lua_State *L) {join_ids_on=p_lua_tonumber(L,1)!=0.0;p_lu
 static int lua_join_buildp(lua_State *L) {join_buildp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_viewf_write(on): the joiner writes the session's VIEWF words (lockstep_join_world.h; diagnostic, default off). */
 static int lua_join_viewf_write(lua_State *L) {join_viewf_write=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_anis_state(on): a joiner's animation units take the session's state, queue and waiting listeners (ANIS, ANIL). */
+static int lua_join_anis_state(lua_State *L) {join_anis_state_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_anis(on): a joiner's part animation sequences take the session's start times (ANIS; before gate.join_load). */
+static int lua_join_anis(lua_State *L) {join_anis_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_viewl(on): a joiner runs the view handlers where its live/player view flags differ (VIEWL; default off). */
 static int lua_join_viewl(lua_State *L) {join_viewl_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_rcnt(on): a joiner lowers the created ships' and bays' reference counts to the session's (RCNT; experiment, default off). */
