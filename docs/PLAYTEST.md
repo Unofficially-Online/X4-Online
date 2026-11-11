@@ -223,7 +223,23 @@ makes the server's game a drop-in one: nobody waits for a full house.
     in sync.
   - Not run: a join over a real uplink through a server on another machine, a join at an arbitrary tick, the far
     starts through this path (x4mods-b8's hj8: slot 3 joins and plays, the report differs from 52 ticks after the
-    save), a mouse click on the rows (test switches `lobby.auto`, `--auto start@TICK`).
+    save).
+  - Through a server on another machine (11 Nov, the VPS, two X4 on one PC, ns8 slot 2): the saver's upload of the
+    207 MB took 19 to 20 s; from the save to the joiner's first step about 125 s. vps3 (save 676) and t1 (save 685)
+    joined with digest mismatches from T+1: a bullet hit in the joiner's loading frames and one small ship's
+    navigation timer; both were the save tick, not the server, and are fixed (X4-Online 0a41004c). vps4 (save 673,
+    build-st26) joined with 0 mismatches, but its pause of 127 s was longer than the 120 s a client waited for the
+    relay: player 1's gate stopped with "relay timeout" as the joiner arrived. vps5 (save 667, build-st27: clients
+    wait 240 s; `x4ls serve` gives the relay `--join-catchup-limit 120` and a `--join-max-pause` 25 s under the
+    clients' wait, at most 170): joined at 7336 after a pause of 118 s with 0 mismatches, then 60 s of play together
+    to step 9002, desync false. On one PC the joiner did not gain during its catch-up (27.8 steps a second against
+    the session's 30); on two PCs it has not been measured.
+  - Open: a join saved at tick 680 parts about 100 ticks later (in work); the far starts.
+  - click2 (11 Nov, real mouse input injected into a lobby-form X4, no test switches): the page's button takes one
+    click ("Start the game" -> `LOBBY REQUEST JOIN` -> joined -> the overlay's files ran). A main-menu row took two
+    clicks, the Multiplayer row and X4's own Settings row alike: the first selects the row, the second opens it.
+    X4's "Modified game detected" notice is closed by the page in the launcher's X4 (the disposable profile); in a
+    Steam-started X4 it is the player's own game and the notice is left alone.
 
 ## Two PCs (built 8 Nov; run on one PC through its LAN address, not yet between two PCs)
 

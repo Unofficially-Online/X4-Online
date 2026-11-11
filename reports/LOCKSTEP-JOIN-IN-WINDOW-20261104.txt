@@ -1816,3 +1816,44 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
   test_join_keep_stamps: synthetic memory, PropagateCacheFlags and the class question replaced by stand-ins, the hold's
   cases and the specification rule on a four-level chain); 460 Python tests of the join, defaults, probe and launcher
   suites pass. The real runs above are X4 9.00 on Windows, two instances on one PC, play mode.
+
+66. A TARGET GONE FIVE STEPS EARLY: THE KEPT BOOT EVENTS' REFERENCES AND RCNT (hj8i at T=680; 11 November)
+- Found by trying one more save tick in the playtest kit's range (its flow lands the save at 667..686): ns8, slot 2, the save
+  forced to 680, on 49873583 and again on the published 915b71c5 with the inline pathing jobs (build-st26): the census of 681
+  equal in all four roots, then the per-tick digest apart from 784 in its runtime ID part alone (sample, pilot, input and world
+  equal: the joiner makes 6 shared IDs in step 784, the session 3, equal again by 790), the same tick in every run.
+- The delivered events of 682..790 on both sides (native_gate_event_rows; effect objects with local IDs left out): one event
+  differs, U::TargetInvalidEvent (0x2ba9120) for the ShipSmall 0x73808 (attention 2, zone 0x44e), at 778 on the joiner and at 783
+  on the session. Every kill event is on both sides at the same tick, among them the created XS ships 800280e26769bfc5 at 772
+  and 800293a8451469ac at 777.
+- Where the event comes from (function 0xe8d850, called from the Agent update at 0xe8fd17 on a full update, every fifth pass
+  for this agent on both sides in the same phase): for each 0x90-byte entry of the Agent's queue +0x6a8..+0x6b0 the target ID
+  +0x10 is looked up in the registry (0xced70, mode 4); it counts as found while the control block's state +0x44 is 2 and a
+  reference can be taken on +0x40. Not found: 0xe8dedf builds the event. Found: the target's view word is tested for 0x10000
+  ([target + 0x11c + view index x 0x80], 0xe8d92e), clear: 0xe8ddf0 builds the event too. An execution watch on those four
+  places for that Agent: the session reaches 0xe8dedf at 783, the joiner had reached it at 778; neither takes the view word's
+  branch. (That branch, and the same test at 0xe943a6 and 0xee799f, is a read of per-client view cache state in the pass; no
+  run shows it firing. It is noted, not fixed.)
+- So the killed target was still in the registry at the session's pass of 778 and gone on the joiner, which fits a reference
+  count one lower on the joiner (the counts themselves were not read; the fix below acting on 228 objects and the equal run
+  are the evidence). Why it would be lower: at T=680 the session had two U::UpdateGravidarAccessEvents (0x2baf880) due, which makes that class one
+  the boot event hold keeps (native_gate_join_hold_boot_events), and the joiner's load posts one for every object: 15,998 kept
+  events (33 at T=676 and T=685, where that class was not due and the boot pass delivered them before the admission). A kept
+  event still owns the reference the load's PostEvent took on its source. RCNT (native_gate_join_rcnt), which lowers a created
+  object's count to the session's where the load left it 1..4 higher, read that reference as part of the load's surplus and
+  took it away; after the admission the repost and the first-reference release cancel, and when step T+1 had delivered the
+  event its destructor gave the reference back once more: one below the session's from then on. Such an object, once killed,
+  is deleted at the kill, where the session's lives until its last holder lets go.
+- Fix (no option, part of RCNT): join_admit_rcnt compares the session's count with the own one less the first references of
+  the kept boot events on that object for which the session has no counterpart (the event's class not due for that source at
+  T: join_bootev_session_keep). Status rcnt_held=objects:references. Real run, the save forced to 680: rcnt_held=228:228,
+  rcnt=1:631:3015:5:0, the event of 0x73808 at 783 on both sides, the 470 event rows of 776..790 equal, joined with
+  digest_mismatches=0, the census of 681, 1800, 3600 and 5400 equal in all four roots.
+- The session defaults moved while this was found (x4mods-b8, 915b71c5 and e0b58ad1): pathing batch jobs inline in batch order
+  (native_gate_travel_determinism) in place of the travel snapshot, after five of five runs without a join stayed equal with it
+  and two of two parted without; the temporary zone order tied to it; a client's permit wait of up to 300 s. With them the near
+  joins at 676 and 685 run their three minutes with digest_mismatches=0 and every census equal, and the kit's joins through the
+  VPS at 667 and 673 are equal as well. The join needs nothing new for the inline mode: PATH restores the batch order and ROUTE
+  carries each agent's +0xf7b.
+- Tests: native tests pass (test_join_rcnt_kept: synthetic memory, two objects with a kept event each, the session's table
+  holding the class for one of them). The real runs are X4 9.00 on Windows, two instances on one PC, play mode.

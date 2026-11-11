@@ -3198,6 +3198,48 @@ static void tks_call(void *object,uint32_t view,const uint32_t *flags) {
     memcpy(&tks_seen_cursor,tks_controller+JOIN_KS_CURSOR,4);
     if(tks_write!=~0u) memcpy(tks_controller+JOIN_KS_CURSOR,&tks_write,4);   /* the engine stamped it after all (another call inside) */
 }
+static void *trc_find(void *map,uint64_t runtime,unsigned mode) {
+    (void)mode;return runtime>=0x200u && runtime<0x202u?(unsigned char *)map+(runtime-0x200u)*0x100u:NULL;
+}
+static uint64_t trc_key(uint64_t runtime,unsigned *klass) {*klass=WORLD_KEY_CREATED;return 0x8000000000000000ull|runtime;}
+/* RCNT with kept boot events (synthetic memory): an object whose count holds the reference of a kept event the session has no
+ * counterpart of is lowered to the session's count plus that reference; one whose kept event the session has too is lowered as
+ * before. */
+static void test_join_rcnt_kept(void) {
+    _Alignas(16) static unsigned char obj[2][0x100],ev[2][0x40];
+    join_find_fn find=join_world_find;void *map=join_world_map;uint64_t (*key)(uint64_t,unsigned *)=join_key;
+    join_tables s,mine;join_rcnt_rec rc[2];join_id_rec ids[2];join_evqt_rec q[1];join_bootev_item items[2];
+    join_bootev_item *prior_items=join_bootev_items;const uint32_t prior_n=join_bootev_n;const int on=join_rcnt_on;
+    const join_tables rx=join_rx.t;const double now=30.0;
+    memset(obj,0,sizeof(obj));memset(ev,0,sizeof(ev));memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));memset(rc,0,sizeof(rc));memset(ids,0,sizeof(ids));
+    memset(q,0,sizeof(q));
+    join_world_find=trc_find;join_world_map=obj;join_key=trc_key;
+    for(unsigned k=0;k<2;k++) {
+        const uint64_t runtime=0x200u+k;const uint32_t count=k?6u:5u,state=2u;void *held=obj[k]+0x38;
+        const uintptr_t v=(uintptr_t)image+0x1000u,evt=(uintptr_t)image+0x2baf880u;   /* an object's vtable in the image; an event class */
+        memcpy(obj[k],&v,8);memcpy(obj[k]+8,&runtime,8);memcpy(obj[k]+0x40,&count,4);memcpy(obj[k]+0x44,&state,4);
+        memcpy(ev[k],&evt,8);memcpy(ev[k]+JOIN_EVENT_CONTEXT,&held,8);
+        ids[k].runtime=runtime;ids[k].portable=0x8000000000000200ull+k;rc[k].portable=ids[k].portable;rc[k].count=3u;
+        items[k].source=obj[k];items[k].event=ev[k];items[k].time=now;
+    }
+    /* the session has the class due for the second object alone */
+    q[0].portable=rc[1].portable;q[0].cls=0x2baf880u;memcpy(&q[0].time,&now,8);
+    join_rx.t.evqt=q;join_rx.t.nevqt=1;
+    s.rcnt=rc;s.nrcnt=2;memcpy(&s.gate.game,&now,8);mine.ids=ids;mine.nids=2;
+    join_bootev_items=items;join_bootev_n=2;join_rcnt_on=1;
+    assert(join_rcnt_kept_refs(obj[0],now)==1u && join_rcnt_kept_refs(obj[1],now)==0u);
+    join_admit_rcnt(&s,&mine);
+    {uint32_t a,b;memcpy(&a,obj[0]+0x40,4);memcpy(&b,obj[1]+0x40,4);
+     /* first: 5 with one unpaired kept reference -> 4 against 3 -> lowered by 1 to 4 (3 once the event has gone);
+      * second: 6 with a paired one -> lowered by 3 to 3 */
+     assert(a==4u && b==3u && join_rcnt_lowered==2 && join_rcnt_held_objects==1 && join_rcnt_held_refs==1);}
+    /* without kept events: the plain rule */
+    {const uint32_t count=5u;memcpy(obj[0]+0x40,&count,4);join_bootev_n=0;join_admit_rcnt(&s,&mine);
+     uint32_t a;memcpy(&a,obj[0]+0x40,4);assert(a==3u && !join_rcnt_held_objects);}
+    join_bootev_items=prior_items;join_bootev_n=prior_n;join_rcnt_on=on;join_rx.t=rx;
+    join_world_find=find;join_world_map=map;join_key=key;
+    puts("join RCNT: the kept boot events' references PASS (synthetic)");
+}
 static unsigned char *tks_class_of[2];static uint32_t tks_class[2];
 static int tks_isa(unsigned char *object,uint32_t klass) {for(unsigned k=0;k<2;k++) if(tks_class_of[k]==object) return tks_class[k]==klass;return 0;}
 static uint64_t tks_key(uint64_t runtime,unsigned *klass) {*klass=WORLD_KEY_SAVED;return runtime;}
@@ -4009,5 +4051,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_keep_stamps();test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_anis();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();test_join_rprt();
+    test_join_keep_stamps();test_join_rcnt_kept();test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_anis();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();test_join_rprt();
 }

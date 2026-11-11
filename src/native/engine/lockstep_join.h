@@ -3464,6 +3464,17 @@ static unsigned char *join_bootev_first_reference(unsigned char *event) {
     return held;
 #endif
 }
+/* RCNT's question (join_admit_rcnt, lockstep_join_world.h): how many kept boot events hold a first reference on this object
+ * that the session's count does not contain, i.e. whose class the session has not due for this source at T. */
+static uint32_t join_rcnt_kept_refs(unsigned char *object,double now) {
+    uint32_t n=0;
+    for(uint32_t i=0;i<join_bootev_n;i++) {
+        if(join_bootev_items[i].source!=object) continue;
+        const unsigned char *held=join_bootev_first_reference(join_bootev_items[i].event);
+        if(held && held+8==object+0x40 && !join_bootev_session_keep(object,join_bootev_items[i].event,now)) ++n;
+    }
+    return n;
+}
 /* After the admission: the kept events back to their sources at their times (the pass of T+1 delivers them). */
 static void join_bootev_repost(void) {
     double now;memcpy(&now,&join_rx.t.gate.game,8);join_bootev_session_dropped=0;join_bootev_released=0;
@@ -4077,7 +4088,7 @@ static int join_status(char *out,size_t cap) {
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
-        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anis_why=%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u bullets=%llu:%llu:%llu:%llu:%llu:%llu bullet_hold=%d:%lld keep_stamps=%d:%llu:%u:%llu:%llu:%llu:%llu:%lld:%lld"
+        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anis_why=%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u bullets=%llu:%llu:%llu:%llu:%llu:%llu bullet_hold=%d:%lld keep_stamps=%d:%llu:%u:%llu:%llu:%llu:%llu:%lld:%lld rcnt_held=%llu:%llu"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
@@ -4140,6 +4151,7 @@ static int join_status(char *out,size_t cap) {
         join_ks_on,(unsigned long long)join_ks_listed,join_ks_n,(unsigned long long)join_ks_pending,(unsigned long long)join_ks_spec,
         (unsigned long long)join_ks_missing,(unsigned long long)join_ks_over,
         (long long)InterlockedCompareExchange64(&join_ks_seen,0,0),(long long)InterlockedCompareExchange64(&join_ks_kept,0,0),
+        (unsigned long long)join_rcnt_held_objects,(unsigned long long)join_rcnt_held_refs,
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ALL],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PROBE],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PARAMS],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ACTOR],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_ACTOR],(unsigned long long)join_rx.keys_known,(unsigned long long)join_rx.keys_unarmed,

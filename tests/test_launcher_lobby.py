@@ -4,6 +4,7 @@ loadfile calls in a temporary folder, no io library and no ffi, as in X4). No X4
 import hashlib
 import json
 import os
+import re
 import socket
 import sys
 import tempfile
@@ -303,6 +304,13 @@ class Server(unittest.TestCase):
         self.assertEqual(serve.idle_limit(o, 900, Joins), 60)
         Joins.taken = {2: 'joined', 3: 'catching_up'}                   # a joiner is brought in: the relay pauses everyone
         self.assertEqual(serve.idle_limit(o, 900, Joins), 240)
+
+    def test_a_joins_pause_stays_under_the_clients_wait(self):
+        from lockstep.launcher import serve, session
+        wait = int(re.search(r'native_gate_arm_timeout_ms = (\d+)', session.client_tail(0)).group(1)) // 1000
+        self.assertEqual(serve.join_pause_limit(), max(30, min(170, wait - 25)))
+        self.assertLess(serve.join_pause_limit(), wait)
+        self.assertEqual(serve.join_pause_limit(60), 60)
 
     def test_server_file(self):
         with tempfile.TemporaryDirectory() as tmp:

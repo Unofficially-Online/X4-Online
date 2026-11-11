@@ -5702,14 +5702,29 @@ static void join_admit_shpw(const join_tables *s,const join_tables *mine) {
         if(changed) ++join_shpw_written; else ++join_shpw_equal;
     }
 }
+/* The kept boot events' references (hj8i, 11 Nov, ns8 at T=680). While the boot event hold keeps an event (native_gate_join_
+ * hold_boot_events: the classes the session had due at T), the event still owns the reference the load's PostEvent took on its
+ * source, and the count read here contains it. For a kept event the session has no counterpart of (its class not due for that
+ * source at T) that reference is not a load surplus: the event gives it back when the pass of T+1 has delivered it. Lowered to
+ * the session's count with it inside, the object ended one below the session's. At T=680 UpdateGravidarAccessEvent was a class
+ * the session had due (2 of them), so the joiner kept its load's 15,998 of that class: the created XS ship 800293a8451469ac,
+ * killed at 777 on both sides, was deleted at once on the joiner and a few steps later on the session, and the fighter 0x73808
+ * found its target gone at 778 against 783 (U::TargetInvalidEvent, the digest's ID part from 784). The count compared with
+ * the session's is therefore the own one less those references (join_rcnt_kept_refs, lockstep_join.h). Status rcnt_held=
+ * objects:references. */
+static uint32_t join_rcnt_kept_refs(unsigned char *object,double now);   /* lockstep_join.h, behind the boot event hold */
+static uint64_t join_rcnt_held_objects,join_rcnt_held_refs;
 static void join_admit_rcnt(const join_tables *s,const join_tables *mine) {
-    join_rcnt_lowered=join_rcnt_equal=join_rcnt_kept=join_rcnt_missing=0;
+    join_rcnt_lowered=join_rcnt_equal=join_rcnt_kept=join_rcnt_missing=0;join_rcnt_held_objects=join_rcnt_held_refs=0;
     if(!join_rcnt_on) return;
+    double now;memcpy(&now,&s->gate.game,8);
     for(uint32_t i=0;i<s->nrcnt;i++) {
         const join_rcnt_rec *r=&s->rcnt[i];unsigned char *o=NULL;
         for(uint32_t k=0;k<mine->nids && !o;k++) if(mine->ids[k].portable==r->portable) o=join_object(mine->ids[k].runtime);
         uint32_t own=0;
         if(!join_rcnt_type(o) || !join_read(o+0x40,&own,4)) {++join_rcnt_missing;continue;}
+        {const uint32_t held=join_rcnt_kept_refs(o,now);   /* a kept boot event's reference goes with its event, not here */
+         if(held) {++join_rcnt_held_objects;join_rcnt_held_refs+=held;own=own>held?own-held:0u;}}
         if(own==r->count) {++join_rcnt_equal;continue;}
         if(own<r->count || own-r->count>4u) {++join_rcnt_kept;continue;}
         InterlockedExchangeAdd((volatile LONG *)(o+0x40),-(LONG)(own-r->count));

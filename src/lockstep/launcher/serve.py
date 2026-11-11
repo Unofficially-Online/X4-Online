@@ -39,6 +39,12 @@ class ServeOptions:
     idle_end: int = 420        # a game whose relay releases no step for this long is over (the load takes 2 to 3 minutes)
     idle_left: int = 60        # ... once it has stepped: every player has left (a join's pause may take up to 240 s)
     keep_joins: bool = False   # keep each game's join files in its folder (they are deleted when the game is over)
+    # A join's pause for everyone must stay under the time a client waits for the relay (the gate stops with "relay
+    # timeout" after that; vps4, 11 Nov: a pause of 127 s against a wait of 120 s ended player 1's session as the joiner
+    # arrived). So the joiner catches up longer while the others play, and a join whose pause would still be too long
+    # fails instead. 0: 25 s less than the wait this checkout gives its clients (session.client_tail), at most 170.
+    join_max_pause: int = 0
+    join_catchup: int = 120
     runs: Path = session.ROOT / '.local/runs'
     games: int = 0             # test: end after this many games (0: serve until stopped)
 
@@ -61,6 +67,14 @@ def idle_limit(o, step, joins):
         return o.idle_end
     joining = joins and any(state in ('requested', 'queued', 'saved', 'catching_up', 'handover') for state in joins.taken.values())
     return max(o.idle_left, 240) if joining else o.idle_left
+
+
+def join_pause_limit(given=0):
+    """The relay's --join-max-pause: `given`, or what the clients' wait for the relay allows."""
+    if given:
+        return given
+    wait = re.search(r'native_gate_arm_timeout_ms = (\d+)', session.client_tail(0))
+    return max(30, min(170, (int(wait.group(1)) if wait else 120000) // 1000 - 25))
 
 
 def session_done(status_file):
@@ -233,7 +247,9 @@ def run(o: ServeOptions, log=print):
             joins = None
             if open_slots:
                 joins = DropIn(admissions, run_dir, token, o.bind, port, open_slots, addresses, log)
-                command += ['--allow-file', str(joins.allow_file), *hotjoin.relay_join_args(open_slots, present, observe=True)]
+                command += ['--allow-file', str(joins.allow_file),
+                            *hotjoin.relay_join_args(open_slots, present, given=('--join-max-pause', '--join-catchup-limit'), observe=True),
+                            '--join-max-pause', str(join_pause_limit(o.join_max_pause)), '--join-catchup-limit', str(o.join_catchup)]
             with (run_dir / 'relay.log').open('w') as relay_log:
                 relay = subprocess.Popen(command, cwd=session.ROOT, stdout=relay_log, stderr=subprocess.STDOUT)
                 log(f'serve: game {played + 1}: players from {", ".join(addresses)}, loads at {arm_at}, relay pid {relay.pid}, {run_dir}')
