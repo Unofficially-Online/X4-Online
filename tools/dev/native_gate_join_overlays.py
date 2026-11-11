@@ -499,7 +499,7 @@ def main(argv=None):
     common.add_argument('--out', required=True, type=Path)
     common.add_argument('--probe', type=Path, default=DEV/'native_gate_probe.lua')
     common.add_argument('--arm-timeout-ms', type=int, default=120000,
-                        help='native_gate_arm_timeout_ms (1000..120000, default 120000): every client waits this long for a permit, '
+                        help='native_gate_arm_timeout_ms (1000..300000, default 120000): every client waits this long for a permit, '
                              'so the save pause at T and the final pause at H must stay below it')
     common.add_argument('--set', action='append', metavar='native_gate_KEY=LUA_VALUE',
                         help='census keys for native_gate_players.py (repeatable); give the joiner the same keys as the savers')
@@ -524,8 +524,8 @@ def main(argv=None):
     j.add_argument('--rejoin', default='', help="with --save/--package: the session's rejoinable slots (a handoff names them itself)")
     j.add_argument('--join-mode', choices=('strict', 'report'), default='strict')
     args = p.parse_args(argv)
-    if not 1000 <= args.arm_timeout_ms <= 120000:
-        p.error('--arm-timeout-ms must be 1000..120000 (native_gate_arm_timeout_ms)')
+    if not 1000 <= args.arm_timeout_ms <= 300000:
+        p.error('--arm-timeout-ms must be 1000..300000 (native_gate_arm_timeout_ms)')
     args.gate_dll, args.out, args.probe = args.gate_dll.resolve(), args.out.resolve(), args.probe.resolve()
     try:
         if args.command == 'savers':

@@ -417,12 +417,17 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
     modules, 44 built). So it is state of a station being built that the two PCs do not share after a join, not
     traffic as such; stations that are complete are equal. Open: which state. Diagnostic rows for it:
     `native_gate_viewpoint_policy_rows` sites 113, 116, 117 (the lanes a switch-on built).
-  - Eight slots (11 Nov): a far start on the eight-slot session (slot 3, the fight start) also joins and plays, but a
-    squad of ships near that start flies apart during the catch-up, at another tick each run; the same start on the
-    two-slot session is clean to the handover. In work in the join code's session; the lead is the formation code,
-    which converts a wingman's position between two zones through the published view caches about 173,000 times a
-    session (`native_gate_path_transforms = 'observe'` rows the calls where cache and simulation disagree, `'all'`
-    answers them from the simulation; both new, the default is unchanged until a run has shown it).
+  - Eight slots (11 Nov): a far start on the eight-slot session (slot 3, the fight start) also joins and plays. A
+    squad of ships near that start (a corvette and five fighters) flew apart between the two PCs at another tick
+    each run. That was not the join: the same session with both players present from the start and no join at all
+    did it too (two runs of two). Cause: X4 updates its pathing agents in parallel jobs, and one agent's update can
+    read what another agent's job writes in the same pass. Cure, a session default since 11 Nov: the jobs run one
+    after another in a fixed order (`native_gate_travel_determinism`). With it five runs of five were equal at every
+    world check (every 300 ticks to tick 5400), and a far join was equal from the join to the handover. Cost on one
+    PC with two X4: about 1 ms more per pathing pass. Ruled out on the way, by counts in a run: the published
+    parents that pathing walks (0 of 2.3 million differ from the live ones), and the formation code's transforms
+    between two zones (`native_gate_path_transforms = 'observe'` compares them, `'all'` answers them from the
+    simulation; the default stays `'sim'`).
 - Money in coop: the wallet is shared, and every slot's kit is applied when the session starts. So that the host
   does not begin with the money of every start on offer, an open slot's start money is taken out again right after
   the start and paid in when that slot's player joins (`native_gate_join_start_money`, a default). hjs4 (10 Nov, the

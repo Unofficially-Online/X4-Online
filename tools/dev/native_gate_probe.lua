@@ -3467,10 +3467,13 @@ local function frame()
    if not (gate.render_display_rows and gate.render_display_rows()==1) then ticklog.refuse('render_display_rows');done=true;return end
   end
   local start=snapshot and gate.boot or gate.start
-  -- native_gate_arm_timeout_ms (default 60000, 1000..120000): how long a client waits for a permit, also for its peers
-  -- to finish loading (a mixed Windows/Linux session loads at very different speeds).
+  -- native_gate_arm_timeout_ms (default 60000, 1000..300000): how long a client waits for a permit, also for its peers
+  -- to finish loading (a mixed Windows/Linux session loads at very different speeds) and through a hot join's pause: the
+  -- relay may pause everyone up to its --join-max-pause (x4ls: 180 s) while a joiner closes the gap, so the wait must be
+  -- longer than that. With the old limit of 120000 a join through a real server whose pause was 127 s stopped the session
+  -- (reason 7, 11 Nov), though the join itself was equal.
   local wait_ms=cfg.native_gate_arm_timeout_ms or 60000
-  assert(type(wait_ms)=='number' and wait_ms%1==0 and wait_ms>=1000 and wait_ms<=120000,'native_gate_arm_timeout_ms must be 1000..120000')
+  assert(type(wait_ms)=='number' and wait_ms%1==0 and wait_ms>=1000 and wait_ms<=300000,'native_gate_arm_timeout_ms must be 1000..300000')
   local code=start(tonumber(cfg.slot:sub(2)),cfg.port,cfg.token,wait_ms,digest,options)
   if code~=0 then ticklog.refuse('code='..code..(gate.verify_stage and ' stage='..tostring(gate.verify_stage()) or ''),X4LAN_NATIVE_GATE_DEFAULTS and X4LAN_NATIVE_GATE_DEFAULTS.STOP_REASONS[code]);done=true;return end
   native_owned=true

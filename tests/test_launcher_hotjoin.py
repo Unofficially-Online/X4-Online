@@ -157,9 +157,7 @@ class PortTests(unittest.TestCase):
         with mock.patch.object(session.socket, 'socket', Fake):
             port = session.free_udp_port('127.0.0.1')
         self.assertEqual(len(picks), 2)
-        self.assertNotEqual(port, busy)
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as t:
-            t.bind(('127.0.0.1', port))
+        self.assertNotEqual(port, busy)   # (not bound again here: another process may take a free port at any time)
         self.assertIsInstance(session.free_udp_port(), int)
 
 

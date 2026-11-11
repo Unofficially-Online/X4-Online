@@ -617,7 +617,7 @@ class Overlays(unittest.TestCase):
             # Refusals: an existing output, absent slots that are not the last ones, a changed package, a missing handoff.
             self.assertIn('exists', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'savers'))
             self.assertIn('last slots', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'x', '--absent', '2'))
-            self.assertIn('arm-timeout', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'y', '--arm-timeout-ms', '200000'))
+            self.assertIn('arm-timeout', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'y', '--arm-timeout-ms', '300001'))
             (folder/'j640.x4join').write_bytes(data[:-1]+b'\0')
             self.assertIn('package', self.refused('joiner', '--gate-dll', dll, '--handoff', root/'handoff.json', '--out', root/'z',
                                                   '--join-mode', 'report'))

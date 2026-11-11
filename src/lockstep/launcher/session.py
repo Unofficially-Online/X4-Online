@@ -190,7 +190,8 @@ IPV4 = re.compile(r'(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|
 
 def client_tail(arm_at=None, checkpoint_at=None, relay_host=None):
     """The config lines x4ls adds to every client: arm timing, a checkpoint, a relay on another PC."""
-    tail = 'X4LAN_CONFIG.native_gate_arm_timeout_ms = 120000\n'  # slack for different load times
+    # slack for different load times, and longer than a hot join's longest pause (hotjoin.JOIN_TIMING: 180 s)
+    tail = 'X4LAN_CONFIG.native_gate_arm_timeout_ms = 240000\n'
     if arm_at:
         tail += f'X4LAN_CONFIG.native_gate_arm_at = {arm_at}\n'
     if checkpoint_at:

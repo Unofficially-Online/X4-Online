@@ -1366,7 +1366,7 @@ static int enable_path_experiment(unsigned options) {
     path_options=options;path_installed=1;return 1;
 }
 static int start_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *initial_digest,int boot) {
-    if(used||slot<1||slot>wire_clients||(wire_lookahead && wire_version!=3)||(wcg.armed && wire_version!=3)||!peer_config_ok()||(wire_adaptive && peer_on())||port<1024||port>65535||timeout<1000||timeout>120000||!valid_hex(token,32)||!valid_hex(initial_digest,64)) return 10;
+    if(used||slot<1||slot>wire_clients||(wire_lookahead && wire_version!=3)||(wcg.armed && wire_version!=3)||!peer_config_ok()||(wire_adaptive && peer_on())||port<1024||port>65535||timeout<1000||timeout>300000||!valid_hex(token,32)||!valid_hex(initial_digest,64)) return 10;
     if(!verify()) return 11;
     if(!boot && (*(unsigned short*)(image+0xfa3302)!=0x9066||*(double*)(image+0x6adfc60)!=gate_tick_dt())) return 12;
     void *table=*(void**)(image+TABLE_RVA);if(!table||(!boot && *(int*)((unsigned char*)table+0x130))) return 13;
