@@ -53,7 +53,18 @@ static void test_ptf_gtr(void *a,float *m,double time,void *b,unsigned char flag
     if(test_ptf_gtr_fault) {m[0]=-1.0f;*(volatile int*)(uintptr_t)8=1;}
     m[0]+=100.0f;
 }
+/* X4's walk for a chain without an Agent: one call of its end site (site 1); the second row stands for an Agent's pose. */
+static unsigned test_ptf_walks,test_ptf_walk_fault;static void *test_ptf_walk_from,*test_ptf_walk_to;
+static const unsigned char *test_ptf_walk_tls,*test_ptf_walk_manager;static unsigned char *test_ptf_walk_page;
+static void test_ptf_walk(float *m,void *velocity,void **from,void **to) {
+    assert(!velocity && ptf_dock_depth==1);++test_ptf_walks;test_ptf_walk_from=*from;test_ptf_walk_to=*to;
+    if(test_ptf_walk_fault) *(volatile int*)(uintptr_t)8=1;
+    if(test_ptf_walk_page) ((ptf_hier_fn)(void*)(test_ptf_walk_page+0x10u))(*from,m,*to,0);
+    else ptf_call_using(1,*from,m,*to,0,PATH_THREAD_PASS,test_ptf_walk_tls,test_ptf_native,test_ptf_gtr,test_ptf_walk_manager);
+    m[5]+=1000.0f;
+}
 static void test_ptf_counts_reset(void) {
+    ptf_dock_agents=0;
     memset((void*)ptf_site_calls,0,sizeof(ptf_site_calls));
     ptf_outside=ptf_trivial=ptf_spaces=ptf_diverted=ptf_objects=ptf_nav=ptf_not_ancestor=ptf_differs=ptf_failures=ptf_rows=ptf_dropped=ptf_tick_rows=0;
 }
@@ -131,12 +142,44 @@ static void test_path_transforms(void) {
     assert(ptf_row_text((uint64_t)rows+3,out,sizeof(out))>0 && strstr(out," outcome=diverted") && ptf_row_text((uint64_t)rows+2,out,sizeof(out))>0 && !strstr(out,"outcome="));
     assert(PTF_CALL(2,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_rows==rows+4);
     stats.issued=2471;assert(PTF_CALL(PTF_SITE_FORMATION,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 && ptf_rows==rows+4);stats.issued=2468;
+    /* The steering step's dock sites run X4's walk; inside it the walk's sites divert spans of spaces and parts too (outside
+     * they keep stock's bits there). A chain with an Agent's object is walked as well (dock_agents). Every call in the window
+     * is a row. Not an ancestor, another thread: native, no walk. A faulting walk: native, a failure. */
+    {   const LONG64 spaces0=ptf_spaces,diverted0=ptf_diverted,rows0=ptf_rows,walk_end0=ptf_site_calls[1],failures0=ptf_failures,na0=ptf_not_ancestor;
+        const unsigned gtr0=test_ptf_gtr_calls;
+        ptf_walk_native=test_ptf_walk;test_ptf_walk_tls=tls;test_ptf_walk_manager=manager;test_ptf_walks=0;
+        m[0]=1.0f;m[5]=0.0f;assert(PTF_CALL(PTF_SITE_DOCK,zone,sector,0,PATH_THREAD_PASS)==m && m[0]==101.0f && m[5]==1000.0f);
+        assert(test_ptf_walks==1 && test_ptf_walk_from==zone && test_ptf_walk_to==sector && test_ptf_gtr_a==zone && test_ptf_gtr_b==sector && !ptf_dock_depth);
+        assert(ptf_spaces==spaces0 && ptf_diverted==diverted0+2 && test_ptf_gtr_calls==gtr0+1 && ptf_rows==rows0+1 && !ptf_dock_agents);
+        assert(ptf_row_text((uint64_t)rows0,out,sizeof(out))>0 && strstr(out,"site=dock_point ") && strstr(out," outcome=diverted chain="));
+        assert(PTF_CALL(PTF_SITE_DOCK+1,part,sector,0,PATH_THREAD_PASS)==m && ptf_diverted==diverted0+4 && ptf_rows==rows0+4); /* its object: the end site's row, the dock's, the window's */
+        assert(ptf_row_text((uint64_t)rows0+3,out,sizeof(out))>0 && strstr(out,"site=dock_frame ") && strstr(out," outcome=diverted"));
+        test_ptf_native_value=7.0f;m[5]=0.0f;
+        assert(PTF_CALL(PTF_SITE_DOCK,ship,zone,0,PATH_THREAD_PASS)==m && m[5]==1000.0f && test_ptf_walks==3 && ptf_dock_agents==1);
+        assert(ptf_row_text((uint64_t)ptf_rows-1,out,sizeof(out))>0 && strstr(out,"site=dock_point ") && strstr(out," outcome=diverted"));
+        assert(PTF_CALL(PTF_SITE_DOCK,ship,other,0,PATH_THREAD_PASS)==(void*)0x77 && PTF_CALL(PTF_SITE_DOCK,zone,other,0,PATH_THREAD_PASS)==(void*)0x77 &&
+               ptf_not_ancestor==na0+2 && test_ptf_walks==3);
+        assert(PTF_CALL(PTF_SITE_DOCK,zone,sector,0,PATH_THREAD_MOVEWORKER)==(void*)0x77 && test_ptf_walks==3);
+        test_ptf_walk_fault=1;m[0]=9.0f;test_ptf_native_value=6.0f;
+        assert(PTF_CALL(PTF_SITE_DOCK,zone,sector,0,PATH_THREAD_PASS)==(void*)0x77 && m[0]==6.0f && ptf_failures==failures0+1 && !strcmp(ptf_stage,"dock_walk") && !ptf_dock_depth);
+        test_ptf_walk_fault=0;ptf_failures=failures0;
+        /* 'observe': the walk's result against the cache's, the native result kept; the walk's own sites compose all the same. */
+        {   const LONG64 differs0=ptf_differs;const unsigned gtr1=test_ptf_gtr_calls;
+            ptf_mode=PTF_OBSERVE;test_ptf_native_value=3.0f;m[0]=1.0f;
+            assert(PTF_CALL(PTF_SITE_DOCK,zone,sector,0,PATH_THREAD_PASS)==(void*)0x77 && m[0]==3.0f && ptf_differs==differs0+1 && test_ptf_gtr_calls==gtr1+1);
+            assert(ptf_row_text((uint64_t)ptf_rows-2,out,sizeof(out))>0 && strstr(out,"site=dock_point mode=observe") && strstr(out,"differs=1 sim=0000ca42") && strstr(out," native=00004040"));
+            ptf_mode=PTF_SIM;
+        }
+        assert(InterlockedCompareExchange64(&ptf_site_calls[PTF_SITE_DOCK],0,0)==7 && InterlockedCompareExchange64(&ptf_site_calls[PTF_SITE_DOCK+1],0,0)==1 &&
+               ptf_site_calls[1]==walk_end0+4);
+        InterlockedExchange64(&ptf_site_calls[1],walk_end0);ptf_walk_native=NULL;
+    }
     ptf_installed=1;assert(!ptf_window(1,2) && ptf_window(2460,2470));ptf_installed=0;ptf_window_from=ptf_window_to=0;
     rows=ptf_rows-1;
     /* Rows evicted from the ring say so. */
     ptf_rows=PTF_RING+5;assert(ptf_row_text(2,out,sizeof(out))>0 && !strcmp(out,"index=2 evicted=1"));ptf_rows=rows+1;
     assert(ptf_status(out,sizeof(out))>0 && strstr(out,"mode=sim installed=0 ") && strstr(out," spaces=1 diverted=") && strstr(out," time=4054900000000000 sites=walk:1,walk_end:") &&
-           strstr(out,"point_space:5,agent_space:0,formation:4"));
+           strstr(out,"point_space:5,agent_space:0,formation:4,dock_point:7,dock_frame:1") && strstr(out," dock_agents=1 time="));
     assert(!ptf_status(out,40));
     #undef PTF_CALL
     InterlockedExchange(&ptf_active,0);ptf_mode=PTF_OFF;ptf_ring=saved_ring;ptf_stage="idle";test_ptf_counts_reset();ptf_last_time=0;
@@ -159,7 +202,7 @@ static void test_path_transforms_native_image(const char *path) {
     image[0xeac06f+4]^=1;assert(!ptf_arm(PTF_SIM) && !strcmp(ptf_stage,"pins"));image[0xeac06f+4]^=1;
     image[ptf_sites[2].site+1]^=1;assert(!ptf_arm(PTF_SIM) && !strcmp(ptf_stage,"sites"));image[ptf_sites[2].site+1]^=1;
     assert(!ptf_installed && !ptf_done);
-    /* Armed: the five calls go to the stubs, other readers see the file's bytes. */
+    /* Armed: the seven calls go to the stubs, other readers see the file's bytes. */
     assert(ptf_arm(PTF_SIM) && ptf_installed && ptf_done==(1u<<PTF_SITES)-1 && ptf_owned() && ptf_check() && !strcmp(ptf_stage,"armed"));
     assert(ptf_arm(PTF_SIM) && !ptf_arm(PTF_OBSERVE)); /* a reloaded UI state: only the same mode */
     for(unsigned i=0;i<PTF_SITES;i++) {
@@ -167,6 +210,10 @@ static void test_path_transforms_native_image(const char *path) {
         assert(image+ptf_sites[i].site+5+d==ptf_page+0x10u*i);
     }
     assert(memcmp(image+PTF_WALK,walk,sizeof(walk)) && hash_ok(image+PTF_WALK,PTF_WALK_SIZE,PTF_WALK_SHA) && ptf_pinned());
+    /* The dock sites lie in the steering step, which the join, the request and the solver pin whole: still the file's bytes. */
+    assert(ptf_sites[PTF_SITE_DOCK].site>0xec7200u && ptf_sites[PTF_SITE_DOCK+1].site<0xec7200u+10109u &&
+           hash_ok(image+0xec7200u,10109,"bff420d07fb655ff195560b395af5decc0ab5b2ecf9691481e578eb3282eb796"));
+    {int32_t d;memcpy(&d,image+0xec7cffu,4);assert(image+0xec7d03u+d==ptf_page+0x10u*PTF_SITE_DOCK);}
     {unsigned char view[PTF_WALK_SIZE];assert(read_local(image+PTF_WALK,view,sizeof(view)) && !memcmp(view,walk,sizeof(view)));}
     {unsigned char view[0x18];assert(read_local(image+0xe8d5dc,view,sizeof(view)) && !memcmp(view,point,sizeof(view)));}
     /* FR20's pt_obj stub cannot take 0xe8d5ea while this is in. */
@@ -178,18 +225,21 @@ static void test_path_transforms_native_image(const char *path) {
     const double pass=82.25;memcpy(manager+PTF_PASS_TIME,&pass,8);
     unsigned char *saved_manager;memcpy(&saved_manager,image+PTF_MANAGER,8);{unsigned char *mp=manager;memcpy(image+PTF_MANAGER,&mp,8);}
     ptf_test_tls=tls;ptf_hier_native=test_ptf_native;ptf_gtr_native=NULL;
+    ptf_walk_native=test_ptf_walk;test_ptf_walk_page=ptf_page; /* the dock stubs: the walk stand-in calls the end site's stub */
     stats.active=1;boot_phase=3;stats.issued=2468;ui_thread=GetCurrentThreadId()+1;main_thread=GetCurrentThreadId()+2;path_pass_open=1;
     unsigned char *wreck=(unsigned char*)&test_ptf_parts[2],*zone=(unsigned char*)&test_ptf_parts[1],*part=(unsigned char*)&test_ptf_parts[4];
     for(unsigned i=0;i<PTF_SITES;i++) {
         ptf_hier_fn stub=(ptf_hier_fn)(void*)(ptf_page+0x10u*i);
         __declspec(align(16)) float m[16]={1,2,3,0, 1,0,0,0, 0,1,0,0, 0,0,1,0};test_ptf_locals=0;test_ptf_seen_time=0;
         assert(stub(wreck,m,zone,0)==m && test_ptf_locals==1 && test_ptf_seen_time==pass);
-        assert(m[0]==31.0f && m[1]==62.0f && m[2]==93.0f && m[4]==1.0f && m[9]==1.0f && m[14]==1.0f);
+        assert(m[0]==31.0f && m[1]==62.0f && m[2]==93.0f && m[4]==1.0f && m[9]==1.0f && m[14]==1.0f && m[5]==(i>=PTF_SITE_DOCK?1000.0f:0.0f));
         float n[16]={0,0,0,0, 1,0,0,0, 0,1,0,0, 0,0,1,0};test_ptf_locals=0;
         assert(stub(part,n,zone,0)==n && test_ptf_locals==2 && n[0]==80.0f && n[1]==160.0f && n[2]==240.0f);
         assert(InterlockedCompareExchange64(&ptf_site_calls[i],0,0)==2);
     }
-    assert(ptf_diverted==2*PTF_SITES && ptf_objects==2*PTF_SITES && !ptf_failures);
+    /* Each dock call also made one call of the end site inside its walk. */
+    assert(ptf_diverted==2*PTF_SITES+4 && ptf_objects==2*PTF_SITES+4 && !ptf_failures && ptf_site_calls[1]==6 && !ptf_dock_agents);
+    ptf_walk_native=NULL;test_ptf_walk_page=NULL;
     /* The MoveWorker gets the native call. */
     ui_thread=GetCurrentThreadId();{float m[16]={0};test_ptf_native_value=4.0f;
         assert(((ptf_hier_fn)(void*)(ptf_page+0x10u))(wreck,m,zone,0)==(void*)0x77 && m[0]==4.0f && ptf_outside==1);}
@@ -208,5 +258,5 @@ static void test_path_transforms_native_image(const char *path) {
     stats.active=saved_active;stats.issued=saved_issued;ui_thread=saved_ui;main_thread=saved_main;boot_mode=saved_boot;boot_phase=saved_phase;
     path_installed=saved_path;path_options=saved_options;path_pass_open=saved_open;
     assert(VirtualFree(image,0,MEM_RELEASE));image=prior;
-    puts("path transforms on X4.exe: pins, five swaps, view, step chain excluded, each stub runs GetTransformRelativeTo at the pass time; tamper, restore PASS");
+    puts("path transforms on X4.exe: pins, seven swaps (five pathing, two dock), view, step chain excluded, each stub runs GetTransformRelativeTo at the pass time; tamper, restore PASS");
 }

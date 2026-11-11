@@ -1962,7 +1962,7 @@ static int lua_path_transforms(lua_State *L) {
     p_lua_pushnumber(L,m!=PTF_OFF && window && ptf_arm(m));return 1;
 }
 static int lua_path_transforms_status(lua_State *L) {
-    char out[512];int n=accept_ui()?ptf_status(out,sizeof(out)):0;
+    char out[768];int n=accept_ui()?ptf_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_path_transforms_row(lua_State *L) {
