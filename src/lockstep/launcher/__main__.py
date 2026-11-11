@@ -133,8 +133,9 @@ def main(argv=None):
     lb.add_argument('--server-file', type=Path, metavar='server.json',
                     help="a kit's server (make_playtest_kit.py --server): the page has Join only, x4ls serve runs the relay")
     lb.add_argument('--show', action='store_true', help='test: the Multiplayer page opens by itself')
-    lb.add_argument('--auto', default='', metavar='host|join|CODE',
-                    help='test: host, join the server, or join with this invite code, without a click in the menu')
+    lb.add_argument('--auto', default='', metavar='host|join|start|CODE',
+                    help='test: host, join the server, take the first free start of its running game, or join with this '
+                         'invite code, without a click in the menu')
     lb.add_argument('--size', default='1280x720')
     lb.add_argument('--timeout', type=int, default=0)
     lb.add_argument('--close-when-over', action='store_true')

@@ -106,10 +106,23 @@ class JoinOptions:
     same_pc: bool = False  # test: the host's X4 runs on this PC too (no "X4 is running" refusal; own state file)
 
 
-def free_udp_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.bind(('127.0.0.1', 0))
-        return s.getsockname()[1]
+def free_udp_port(tcp_bind=None):
+    """A free UDP port for the relay. With tcp_bind the number is also free for TCP on that address: the join file
+    service listens on the relay's number, and Windows keeps TCP ranges of its own that a UDP pick can land in (the
+    service's bind then failed with WinError 10013 after the relay had started)."""
+    for _ in range(64):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.bind(('127.0.0.1', 0))
+            port = s.getsockname()[1]
+        if tcp_bind is None:
+            return port
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as t:
+                t.bind((tcp_bind, port))
+            return port
+        except OSError:
+            continue
+    raise SystemExit('no port is free for both the relay (UDP) and the join files (TCP); name one with --port')
 
 
 def x4_running():
@@ -352,7 +365,7 @@ def run(o: Options, log=print):
     run_dir = o.runs / time.strftime('%Y%m%d-%H%M%S')
     run_dir.mkdir(parents=True)
     local = [k for k in range(1, o.clients + 1) if k not in remote and k not in opened]
-    port, token = o.port or free_udp_port(), secrets.token_hex(16)
+    port, token = o.port or free_udp_port(o.bind if opened else None), secrets.token_hex(16)
     state = {'run': str(run_dir), 'views': [], 'pids': [], 'relay_pid': None}
     save_state(o, state)
     clients, relay, relay_log, files, save_dirs = [], None, None, None, {}

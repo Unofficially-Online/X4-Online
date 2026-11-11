@@ -116,6 +116,11 @@ def build(kit, out, name=NAME, version=None):
         msilib.add_data(db, 'Shortcut', [
             ('HelperMenu', 'ProgramMenuFolder', short, install.component, '[INSTALLDIR]python' + chr(92) + 'pythonw.exe',
              '"[INSTALLDIR]helper.pyw"', 'Start the multiplayer helper (then press Play in Steam)', None, None, None, 1, 'INSTALLDIR')])
+        if (kit / 'second.pyw').is_file():   # a second player on the same PC (Steam starts only one X4)
+            msilib.add_data(db, 'Shortcut', [
+                ('SecondMenu', 'ProgramMenuFolder', 'X4MPSEC|' + name + ' (second window)', install.component,
+                 '[INSTALLDIR]python' + chr(92) + 'pythonw.exe', '"[INSTALLDIR]second.pyw"',
+                 'One more X4 on this PC for the multiplayer session', None, None, None, 1, 'INSTALLDIR')])
     else:
         msilib.add_data(db, 'Shortcut', [
             (key, folder, short, install.component, '[INSTALLDIR]PLAY.cmd', None, "Start X4 with the Multiplayer entry in its main menu",

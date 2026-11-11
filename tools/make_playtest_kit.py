@@ -150,6 +150,9 @@ def server_text(commit, recipe, server, snapshot_name, dll_sha):
            '   game as it is now and joins it (2 to 4 minutes; the others have two short pauses meanwhile).',
            '   Joining needs player 1 in the game: their PC hands the game over to the joiner through the server',
            '   (about 190 MB up from their line). When player 1 has left, nobody can join that game any more.',
+           '   A start marked "far, experimental" is in another sector than player 1: it plays, but the server',
+           '   counts desyncs after such a join. The start without that mark is the normal join.',
+           '   A second player on the same PC: Start menu, "X4 Multiplayer Playtest (second window)".',
            '   In coop the blueprints, research and known map of every start on offer are shared from the first minute;',
            "   a start's money joins the shared wallet when its player has joined.",
            ] if recipe.get('open') else
@@ -260,6 +263,19 @@ sys.exit(steamplay.main(KIT, '@SNAPSHOT@'))
 '''
 
 
+SECOND = '''"""One more X4 on this PC for the multiplayer session (Steam starts only one). Run without a window (pythonw)."""
+import sys
+from pathlib import Path
+
+KIT = Path(__file__).resolve().parent
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(KIT / 'repo' / 'src'))
+from lockstep.launcher import steamplay  # noqa: E402
+
+sys.exit(steamplay.second(KIT, '@SNAPSHOT@'))
+'''
+
+
 def parse_server(text, port=PORT):
     """'ADDRESS' or 'ADDRESS:PORT' (an IPv4 address: the gate takes no host names) -> (address, port)."""
     m = re.fullmatch(r'((?:%s.){3}%s)(?::(%s))?' % ((r'%sd{1,3}' % BS,) * 2 + (r'%sd{1,5}' % BS,)), text.strip())
@@ -309,6 +325,7 @@ def build(overlay, snapshot, out, port=PORT, root=ROOT, server=None, python_embe
         from lockstep.launcher import steamplay
         steamplay.write_menu(out / 'steam-menu')
         (out / 'helper.pyw').write_text(HELPER.replace('@SNAPSHOT@', 'snapshot/' + snapshot.name), encoding='utf-8')
+        (out / 'second.pyw').write_text(SECOND.replace('@SNAPSHOT@', 'snapshot/' + snapshot.name), encoding='utf-8')
         (out / 'server.json').write_text(json.dumps({'host': server[0], 'port': port, 'key': secrets.token_hex(32)}, indent=1) + '\n')
         text = server_text(commit, recipe, server, snapshot.name, sha256(dlls[0]))
     else:

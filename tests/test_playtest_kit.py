@@ -88,7 +88,8 @@ class Kit(unittest.TestCase):
         manifest = kit.build(self.overlay, self.snapshot, out, server=kit.parse_server('203.0.113.7:47010'))
         self.assertEqual((manifest['server'], manifest['port']), ('203.0.113.7:47010', 47010))
         self.assertEqual(sorted(p.name for p in out.iterdir() if p.is_file()),
-                         ['KIT.txt', 'PLAY.cmd', 'VERIFY.cmd', 'helper.pyw', 'kit-manifest.json', 'server.json'])
+                         ['KIT.txt', 'PLAY.cmd', 'VERIFY.cmd', 'helper.pyw', 'kit-manifest.json', 'second.pyw', 'server.json'])
+        compile((out / 'second.pyw').read_text(), 'second.pyw', 'exec')
         # Play in Steam: the helper's start file and the menu extension it puts into X4
         self.assertIn("steamplay.main(KIT, 'snapshot/save_009.xml.gz')", (out / 'helper.pyw').read_text())
         compile((out / 'helper.pyw').read_text(), 'helper.pyw', 'exec')

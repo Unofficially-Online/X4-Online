@@ -931,6 +931,17 @@ static void test_pilot_slots(void) {
     test_pslot_call_count=0;test_pslot_route(test_pslot_c2,6);assert(test_pslot_calls[0].what=='p');
     {unsigned char a=pnat_authority(test_pslot_c2);assert(a==0);test_pslot_ship2[0xd1]=0;a=pnat_authority(test_pslot_c2);assert(a==1);test_pslot_ship2[0xd1]=1;}
     char text[4096];assert(pstk_frame_text(text,sizeof(text)) && !strncmp(text,"PSTOCK_1:11:1:",14) && strstr(text,"|S2:2:") && !strcmp(text+strlen(text)-2,":1"));
+    {   /* Eight slots with every part of the receipt armed: longer than the 320 bytes gate.pilot_stock_frame once had,
+         * inside its buffer now, also with the largest numbers. */
+        const unsigned stock_mask=pstk_slot_mask,slot_mask=pslot_mask,dead=pdeath_dead;const int foot=pfoot_armed,fslot=pfslot_armed,death=pdeath_armed;
+        const uint64_t tick=pstk_frame_tick;const unsigned events=pstk_frame_events,flight0=pstk_flight;char wide[PSTK_FRAME_TEXT];
+        pstk_slot_mask=0xffu;pslot_mask=0xffu;pfoot_armed=1;pfslot_armed=1;pdeath_armed=1;pdeath_dead=0xfeu;
+        int n=pstk_frame_text(wide,sizeof(wide));assert(n>320 && n<640 && strstr(wide,"|S8:") && strstr(wide,"|W8:") && !strcmp(wide+n-4,"|Dfe"));
+        pstk_frame_tick=~0ull;pstk_frame_events=~0u;pstk_flight=~0u;
+        n=pstk_frame_text(wide,sizeof(wide));assert(n>320 && n<(int)PSTK_FRAME_TEXT-200);
+        pstk_frame_tick=tick;pstk_frame_events=events;pstk_flight=flight0;
+        pstk_slot_mask=stock_mask;pslot_mask=slot_mask;pfoot_armed=foot;pfslot_armed=fslot;pdeath_armed=death;pdeath_dead=dead;
+    }
     {   unsigned char c=0,f=0;float fov=0;uint64_t target=0;assert(pview_of(2,&c,&f,&fov,&target) && c==1 && fov==0.5f);}
     assert(pnat_status(text,sizeof(text)) && strstr(text," present=presenting present_why=- present_slot=2 ") && strstr(text," camera_mode=0 asks=176ad5/176ad5/5ca00 hud=1/2 "));
     assert(pnat_status(text,sizeof(text)) && strstr(text," stock=capture slot=2 slots=3 ") && strstr(text," slots=live slots_why=- slots_mask=2 hook=1 ") &&

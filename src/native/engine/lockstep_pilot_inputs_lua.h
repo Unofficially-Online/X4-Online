@@ -448,6 +448,6 @@ static int lua_pilot_stock_local(lua_State *L) {
 /* gate.pilot_stock_frame(): PSTOCK_1:tick:events:record hash:flight:settings for the digest,
  * then |Sk:events:record hash:flight for every stock slot k of 2..N. */
 static int lua_pilot_stock_frame(lua_State *L) {
-    char out[320];int n=accept_ui() && pnat_armed && pnat_mode==PNAT_MODE_STOCK?pstk_frame_text(out,sizeof(out)):0;
+    char out[PSTK_FRAME_TEXT];int n=accept_ui() && pnat_armed && pnat_mode==PNAT_MODE_STOCK?pstk_frame_text(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }

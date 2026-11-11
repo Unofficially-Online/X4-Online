@@ -866,7 +866,10 @@ static int pstk_slot_replay(unsigned k,double now) {
 }
 static int hyb_slot_private(unsigned slot); /* lockstep_hybrid.h: an owner's ship belongs to its sector's state */
 /* The declared-state receipt of this tick: applied record, flight state, settings. With hybrid sectors
- * (native_gate_hybrid) an owning slot's flight state is its sector's, not shared: 'h' instead. */
+ * (native_gate_hybrid) an owning slot's flight state is its sector's, not shared: 'h' instead.
+ * PSTK_FRAME_TEXT holds it for PILOT_SLOTS slots with every part armed (about 400 bytes with eight slots; a 320 byte
+ * buffer held six slots and stopped an eight-slot session at its first step). */
+#define PSTK_FRAME_TEXT 1024u
 static int pstk_frame_text(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"PSTOCK_1:%llu:%u:%016llx:%u:%016llx",(unsigned long long)pstk_frame_tick,pstk_frame_events,
         (unsigned long long)pstk_frame_hash,pstk_flight,(unsigned long long)pstk_settings);

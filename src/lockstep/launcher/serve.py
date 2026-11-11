@@ -175,15 +175,24 @@ def run(o: ServeOptions, log=print):
         + f', lobby on TCP {o.bind}:{port + 1}, relay on UDP {o.bind}:{port}')
     played, games = 0, {}   # games: a game's id (the salt of its token) -> its folder
     live = {'salt': None, 'joins': None}
+    host_sector = (recipe.get('session') or {}).get('player_sector')
 
     def status():
         """What a launcher's page shows before anyone clicks: is a game running, who is there, which starts are free."""
         joins = live['joins']
         taken = dict(joins.taken) if joins else {}
-        return {'running': live['salt'] is not None, 'clients': clients, 'here': len(admissions.players) + len(taken),
+        tick = 0
+        if joins:
+            try:
+                tick = int(json.loads((joins.run_dir / 'desync-status.json').read_text()).get('tick') or 0)
+            except (OSError, ValueError, TypeError):
+                pass
+        return {'running': live['salt'] is not None, 'clients': clients, 'here': len(admissions.players) + len(taken), 'tick': tick,
                 'drop_in': bool(open_slots), 'joinable': bool(joins and admissions.players),   # the savers' launchers are connected
                 'base': (recipe.get('session') or {}).get('base_start') or '',
-                'starts': [{'slot': k, 'start': name, 'sector': sector or '', 'taken': k in taken} for k, name, sector, _ in starts]}
+                'starts': [{'slot': k, 'start': name, 'sector': sector or '', 'taken': k in taken,
+                            'near': not own or not host_sector or sector == host_sector}   # a far start: another sector than the host's
+                           for k, name, sector, own in starts]}
 
     def running(address):
         live['joins'].admit(address)
