@@ -831,7 +831,8 @@ static int pnat_check(unsigned char *controller,const uint32_t *counter,const un
         if(pfoot_armed && !dead) {
             int foot=pfoot_check(stats.issued,controller,&pnat_controller,pnat_ship,pnat_flight_seen,pstk_flight);
             if(foot<0) return pnat_fail(pfoot_why);
-            if(foot>0) {
+            if(foot==2 && !pveh_adopt(stats.issued,controller)) return pnat_fail(pveh_why);   /* another vehicle: slot 1's ship now */
+            if(foot==1) {
                 if(!read_local(pnat_base+PNAT_INPUT,&input,8) || input!=pnat_input) return pnat_fail("stock_controller_changed");
                 return 1;
             }

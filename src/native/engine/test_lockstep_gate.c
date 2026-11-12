@@ -1088,6 +1088,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_supply_rows.h"
 #include "test_lockstep_ui_lazy.h"
 #include "test_lockstep_ui_exports.h"
+#include "test_lockstep_ui_compslot.h"
 #include "test_lockstep_supply_wants.h"
 #include "test_lockstep_loadout_order.h"
 #include "test_lockstep_order_canon.h"
@@ -1102,6 +1103,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_ik_diag.h"
 #include "test_lockstep_mission_owners.h"
 #include "test_lockstep_md_presentation.h"
+#include "test_lockstep_view_cameras.h"
 #include "test_lockstep_spline_calc_watch.h"
 #include "test_lockstep_step_chain.h"
 #include "test_lockstep_path_transforms.h"
@@ -1119,6 +1121,7 @@ int main(int argc,char **argv) {
     if(argc==2) test_ui_build_native_image(argv[1]);
     if(argc==2) test_ui_construct_native_image(argv[1]);
     if(argc==2) test_md_presentation_native_image(argv[1]);
+    if(argc==2) test_view_cameras_native_image(argv[1]);
     if(argc==2) {test_mission_owners_native_image(argv[1]);test_pilot_aim_native_image(argv[1]);test_ui_missions_native_image(argv[1]);}
     if(argc==2) test_ui_trade_native_image(argv[1]);
     if(argc==2) test_ui_faction_native_image(argv[1]);
@@ -1237,6 +1240,7 @@ int main(int argc,char **argv) {
     test_mission_owners();
     test_md_presentation();
     test_md_menu_state();
+    test_view_cameras();
     test_pilot_aim();
     test_speech_local();
     test_spline_calc_watch();
@@ -1253,6 +1257,7 @@ int main(int argc,char **argv) {
     test_supply_rows();
     test_ui_lazy();
     test_ui_exports();
+    test_ui_compslot();
     test_supply_wants();
     test_loadout_order();
     test_fp_redirect();

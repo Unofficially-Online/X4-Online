@@ -139,6 +139,7 @@ D.ON={
  {'native_gate_view_points','players','','the players ships are the view points on every client'},
  {'native_gate_view_points_source','ship','native_gate_view_points','view points at the ships'},
  {'native_gate_view_triggers','block','native_gate_view_points','camera triggers blocked in the simulation'},
+ {'native_gate_view_cameras',true,'native_gate_view_points native_gate_view_triggers','cameras of simulation cutscenes are viewers on every client: a comm call films its speaker'},
  {'native_gate_view_ui','block','native_gate_view_points native_gate_runtime_ids_local','UI view queries blocked in the simulation'},
  {'native_gate_mass_traffic','sync','','mass traffic joined at the gate'},
  {'native_gate_region_pass','sync','','region passes joined at the gate'},
@@ -458,6 +459,7 @@ D.DIAGNOSTIC={
 }
 -- Neither a feature default nor a diagnostic: fixtures, experiments, alternatives and cross-platform keys. {'key','why'}.
 D.EXCLUDED={
+ {'native_gate_ui_compslot','the interact menu on foot: PerformCompSlotPlayerAction captured and replayed by the action class (lockstep_ui_compslot.h); opt-in until its classes are handled'},
  {'native_gate_ui_exports','generic UI write guard (lockstep_ui_exports.h): opt-in beside native_gate_ui_guard (tools/build_soak_overlay.py --ui-guard)'},
  {'native_gate_ui_exports_block','generic UI write guard: the exports it refuses'},
  {'native_gate_ui_relay','generic UI write guard: exports relayed through the ffi section (--ui-relay)'},

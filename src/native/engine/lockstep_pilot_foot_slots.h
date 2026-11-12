@@ -84,7 +84,7 @@ typedef struct {
     unsigned char bank[PFOOT_BANK_SIZE];                  /* slot k's walking bank while no scope of it is open */
     unsigned char *fpc;
     int walking;
-    uint64_t stood_tick,frame_hash;
+    uint64_t stood_tick,frame_hash,frame_bank,frame_pose;   /* the receipt's hash; its two halves for the status (fw=) */
     unsigned char frame_state;
     volatile LONG64 getups,kept,stood,sat,ignored,updates,placed,unplaced,lost;
 } pfslot_slot;
@@ -368,14 +368,18 @@ static void pfslot_frame(void) {
     if(!pfslot_armed || !pnat_fn.time(&now)) return;
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         pfslot_slot *f=&pfslots[k];
-        f->frame_state=(unsigned char)f->walking;f->frame_hash=0;
+        f->frame_state=(unsigned char)f->walking;f->frame_hash=0;f->frame_bank=f->frame_pose=0;
         if(!f->walking) continue;
         uint64_t h=PFSLOT_DOMAIN+k;
         for(unsigned i=0;i<PFOOT_BANK_SIZE;i++) if(pfslot_bank_byte(i)) {h^=f->bank[i];h*=0x100000001b3ULL;}
+        f->frame_bank=h;   /* the bank alone: which half parts when a receipt does (gu3: W2 apart under a person's mouse look) */
         __attribute__((aligned(16))) float pose[16];memset(pose,0,sizeof(pose));
         __try {pfslot_fn.pose(f->fpc,pose,now,1);}
         __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {memset(pose,0xff,sizeof(pose));}
         for(unsigned i=0;i<16;i++) if((i&3)!=3) {uint32_t v;memcpy(&v,&pose[i],4);for(unsigned b=0;b<4;b++) {h^=(unsigned char)(v>>(8*b));h*=0x100000001b3ULL;}}
+        {uint64_t p=PFSLOT_DOMAIN^0x706f7365ULL;
+         for(unsigned i=0;i<16;i++) if((i&3)!=3) {uint32_t v;memcpy(&v,&pose[i],4);for(unsigned b=0;b<4;b++) {p^=(unsigned char)(v>>(8*b));p*=0x100000001b3ULL;}}
+         f->frame_pose=p;}
         f->frame_hash=h|1u;
     }
 }
@@ -447,6 +451,11 @@ static int pfslot_status(char *out,size_t capacity) {
             (long long)f->stood,(long long)f->sat,(long long)f->ignored,(long long)f->updates,(long long)f->placed,(long long)f->unplaced,(long long)f->lost);
         if(more<0) return 0;
         n+=more;
+        if(f->walking && (size_t)n<capacity) {   /* the last receipt's halves: the bank, the FPC's pose */
+            more=snprintf(out+n,capacity-(size_t)n," fw%u=%016llx/%016llx",k,(unsigned long long)f->frame_bank,(unsigned long long)f->frame_pose);
+            if(more<0) return 0;
+            n+=more;
+        }
     }
     return n>0 && (size_t)n<capacity?n:0;
 }

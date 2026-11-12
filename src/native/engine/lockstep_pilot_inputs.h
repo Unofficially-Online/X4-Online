@@ -88,6 +88,11 @@ static int pres_failed;           /* a presentation invariant failed (lockstep_p
 static volatile LONG pres_open;   /* its scope is open: a slot scope refuses (lockstep_pilot_slots.h) */
 /* Ship death (lockstep_pilot_death.h, stop reason 163): armed, failed, bit s-1 = slot s has no ship, this pass's lookup. */
 static int pdeath_armed,pdeath_failed;
+/* lockstep_pilot_death.h, slot 1's vehicle changes that are no death (a spacesuit through an airlock, the seat after it) */
+static int pveh_adopt_ok(uint64_t tick,const unsigned char *ship_now);
+static int pveh_adopt(uint64_t tick,unsigned char *controller);
+static void pveh_allow(uint64_t tick);
+static const char *pveh_why;
 static unsigned pdeath_dead;
 static pilot_find_fn pdeath_find;
 static void *pdeath_map;

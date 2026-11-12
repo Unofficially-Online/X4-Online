@@ -609,7 +609,8 @@ static void test_ui_replay(void) {
     uirep_fns stubs=uirep_fn;
     uirep_fn.ui_move=NULL;uirep_fn.start=uirep_fn.stop=NULL;memset(uirep_fn.forward,0,sizeof(uirep_fn.forward));
     assert(uirep_install() && uirep_installed && !uirep_restored && uirep_intact());
-    for(unsigned i=0;i<UIREP_HOOKS;i++) assert(region[uirep_hooks[i].rva]==0xe9);
+    for(unsigned i=0;i<UIREP_HOOKS;i++) assert(uirep_hook_used(i)?region[uirep_hooks[i].rva]==0xe9:   /* the compslot hooks only when armed */
+                                               !memcmp(region+uirep_hooks[i].rva,uirep_hooks[i].bytes,uirep_hooks[i].prefix));
     assert(region[uirep_sites[0].rva]==0xe9 && region[uirep_sites[1].rva]==0xe9);
     assert(((uirep_sites[0].rva+4)&~15u)==(uirep_sites[0].rva&~15u) && ((uirep_sites[1].rva+4)&~15u)==(uirep_sites[1].rva&~15u));
     /* A hook's whole chain: X4's entry -> the near page -> our wrapper -> the trampoline -> behind the prefix. */
@@ -739,12 +740,13 @@ static void test_ui_replay_native_image(const char *path) {
      assert(image[0x1feab9u]==0xe8);memcpy(&rel,image+0x1feabau,4);assert(0x1feabeu+rel==0x1fe9d0u);}
     /* Every patch on the real bytes, one CAS each, and back. */
     uirep_families=UIREP_FAMILIES;uirep_armed=1;uirep_fn=(uirep_fns){0};uirep_page=NULL;uirep_installed=0;uirep_stopped=0;
+    const int compslot_on=uics_on;uics_on=1;   /* the action containers' perform hooks as well (lockstep_ui_compslot.h) */
     assert(uirep_install() && uirep_intact());
     for(unsigned i=0;i<UIREP_HOOKS;i++) assert(image[uirep_hooks[i].rva]==0xe9);
     /* The site's resume points: the block ends the report names. */
     {static const unsigned char after_clear[]={0x4d,0x85,0xed},after_set[]={0x80,0x3d};
      assert(!memcmp(image+uirep_sites[UIREP_S_TARGET_CLEAR].resume,after_clear,3) && !memcmp(image+uirep_sites[UIREP_S_TARGET_SET].resume,after_set,2));}
-    uirep_uninstall();assert(!uirep_installed && uirep_restored);
+    uirep_uninstall();assert(!uirep_installed && uirep_restored);uics_on=compslot_on;
     uirep_pins_checked=0;assert(uirep_pins());
     image[0x3e73f0u+3]^=1;uirep_pins_checked=0;assert(!uirep_pins() && pin_failed_rva==0x3e73f0u);image[0x3e73f0u+3]^=1;uirep_pins_checked=0;
     image[UIREP_MD_SET_RETURN-4]^=1;assert(!uirep_pins() && pin_failed_rva==UIREP_MD_SET_FN);image[UIREP_MD_SET_RETURN-4]^=1;uirep_pins_checked=0;

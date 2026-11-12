@@ -2676,6 +2676,15 @@ function pilot_view.arm_ui_replay(slot,window)
   guard=groups
   log('UI_GUARD_ARMED slot='..slot..' groups='..groups..' entries='..tostring(entries))
  end
+ -- Component slot player actions (lockstep_ui_compslot.h, native_gate_ui_compslot, default off): the interact menu's action
+ -- call claimed from the guard, captured and replayed by the action's class; a class nobody may use yet stays refused.
+ if cfg.native_gate_ui_compslot then
+  assert(guard,'ui compslot refused: needs native_gate_ui_guard')
+  assert(gate.ui_compslot,'ui compslot refused: gate without ui_compslot')
+  local ok,why=gate.ui_compslot()
+  assert(ok==1,'ui compslot refused: '..tostring(why))
+  log('UI_COMPSLOT_ARMED slot='..slot)
+ end
  -- Missions and conversations of slot 1 (lockstep_ui_missions.h): the guard's hook captures them, so the guard with the
  -- groups missions and conversation comes first; gate.ui_missions checks that and its pins (fail closed otherwise).
  local missions_on=math.floor(mask/core.FAMILY.missions)%2==1 or math.floor(mask/core.FAMILY.conversation)%2==1
@@ -4098,6 +4107,16 @@ local function frame()
     local trig=cfg.native_gate_view_triggers
     assert((trig=='block' or trig=='observe') and gate.view_points_triggers and gate.view_points_triggers(trig)==1,'view triggers refused')
     log('VIEW_TRIGGERS_ARMED mode='..trig)
+   end
+   -- The simulation's own cutscene cameras as viewers (lockstep_view_cameras.h): the ship a comm call's camera is
+   -- anchored in gets the attention a camera gives it natively, on every client alike, so the speaker is there to film
+   -- (a person's session of 11 Nov: the monitor of a story call showed a bare hull).
+   -- A session default since its runs of 11 Nov (the speaker's face on both clients' monitors, 0 mismatches). A gate
+   -- without it (Linux until its port) runs as before: the monitor films a bare hull there.
+   if cfg.native_gate_view_cameras and gate.view_cameras then
+    assert(cfg.native_gate_view_cameras==true and mode=='players' and cfg.native_gate_view_triggers=='block' and
+     gate.view_cameras(1)==1,'view cameras refused '..tostring(gate.view_cameras_status and gate.view_cameras_status()))
+    log('VIEW_CAMERAS_ARMED '..tostring(gate.view_cameras_status()))
    end
    -- Evaluations this client's own UI asks for (a presentation scope, slots 6 and 10, the
    -- dispatch of presentation ids, a client-only view call; not the probe's frame) and every
@@ -6038,6 +6057,7 @@ local function frame()
   if gate.view_points_frame(tick)~=1 then error('view points frame failed '..tostring(gate.view_points_status()),0) end
   if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.frame(tick) end
   ticklog.status('VIEW_POINTS',tick,gate.view_points_status,'view points status unavailable')
+  if cfg.native_gate_view_cameras and gate.view_cameras_status then ticklog.status('VIEW_CAMERAS',tick,gate.view_cameras_status,'view cameras status unavailable') end
   if cfg.native_gate_view_rows then
    for _=1,8192 do
     local row=gate.view_points_row(row_cursors.view)

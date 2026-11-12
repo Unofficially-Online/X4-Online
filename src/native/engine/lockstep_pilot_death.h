@@ -267,6 +267,56 @@ static int pdeath_seat(unsigned k,unsigned char *controller) {
     pdeath_event("live",k);
     return 1;
 }
+/* ---- slot 1's vehicle changes that are no death (package 1; lockstep_ui_compslot.h allows them) ----
+ * X4's own player leaves its ship through an airlock: U::CycleAirlockAction, the room's AirlockCycledEvent handler
+ * 0x773340 and the eject 0x70efd0 build a spacesuit and Player::TeleportTo puts the player into it, on every client in
+ * the same step once the action is replayed. The player then has a PlayerController on another ship than slot 1's, which
+ * the walking pass took for a stop (foot_controller). With an applied airlock action behind it (pveh_allow, a window of
+ * PVEH_WINDOW ticks: the action is a timed one) the pass adopts the suit as slot 1's ship, as the respawn adopts a new
+ * ship: the slot's runtime ID renewed and resolved, the controller and ship latched, the guns given up. Flight control
+ * comes as at a sit-down: X4's context edge on slot 1's client, recorded and replayed.
+ * The way back: the suit docks at a ship (the dock family), X4 teleports the player in and kills the suit ('removed',
+ * 0x7052f0). A suit of slot 1 that is gone while the player lives is that, not a death: the slot has no ship (as after a
+ * loss on foot), walks, and the next seat X4 gives its player is adopted. Events suit1 / seat1 / left1 in
+ * PILOT_DEATH's frame; status vehicle=adopts/lefts/in_suit. Slots 2..N: not yet (their player is not X4's own). */
+#define PVEH_WINDOW 1800u
+#define PVEH_SUIT_VTABLE 0x2b789b0u            /* U::SpaceSuit */
+static uint64_t pveh_allow_until,pveh_adopts,pveh_lefts;
+static int pveh_in_suit;
+static const char *pveh_why="-";
+static void pveh_allow(uint64_t tick) {pveh_allow_until=tick+PVEH_WINDOW;}
+/* Another ship than slot 1's holds X4's player: expected when the slot has no ship, or inside the window of an applied
+ * action. */
+static int pveh_adopt_ok(uint64_t tick,const unsigned char *ship_now) {
+    if(!pdeath_armed) return 0;
+    return !ship_now || (pveh_allow_until && tick<=pveh_allow_until);
+}
+static int pveh_adopt(uint64_t tick,unsigned char *controller) {
+    pilot_slot *s=&pilot_slots[0];pdeath_slot *d=&pdeath_slots[0];unsigned char *ship=NULL;uint64_t id=0;void *vtable=NULL;
+    (void)tick;
+    if(!controller || !read_local(controller+0x28,&ship,8) || !ship || !read_local(ship+8,&id,8) || !id) {pveh_why="vehicle_controller";return 0;}
+    if(pfire_armed) {(void)pfire_end(s,&pfire_slots[0],1);memset(&pfire_slots[0],0,sizeof(pfire_slots[0]));}
+    s->runtime=id;s->reversed=1;s->renewed=1;s->dead=0;s->seen=0;
+    if(!pilot_resolve(s,pdeath_find,pdeath_map,pdeath_player) || s->object!=ship) {pveh_why="vehicle_unresolved";return 0;}
+    pnat_controller=controller;pnat_ship=ship;
+    d->lost=0;d->state=PDEATH_ALIVE;
+    pveh_in_suit=read_local(ship,&vtable,8) && pnat_base && vtable==(void*)(pnat_base+PVEH_SUIT_VTABLE);
+    pveh_allow_until=0;++pveh_adopts;pdeath_event(pveh_in_suit?"suit1":"seat1",1);
+    return 1;
+}
+/* Slot 1's suit is gone and the player lives: it went with the player's teleport into a ship. 1: handled here. */
+static int pveh_left(pilot_slot *s,pdeath_slot *d,uint64_t tick) {
+    unsigned char life=1;
+    if(!pveh_in_suit || s->dead || d->lost || !pdeath_dying(s)) return 0;
+    if(!pdeath_player || !read_local((const unsigned char *)pdeath_player+PDEATH_LIFECYCLE,&life,1) || life) return 0;   /* the player goes too: a death */
+    pveh_in_suit=0;++pveh_lefts;
+    if(pfire_armed) {(void)pfire_end(s,&pfire_slots[0],1);memset(&pfire_slots[0],0,sizeof(pfire_slots[0]));}
+    d->lost=1;d->ship=0;   /* no ship until X4 seats its player again (pveh_adopt_ok: any seat) */
+    pnat_ship=NULL;pnat_controller=NULL;
+    if(pfoot_armed) {pfoot_state=PFOOT_WALKING;pfoot_transition_tick=tick;}
+    pdeath_event("left1",1);
+    return 1;
+}
 /* First thing in a pass, before the pieces that rely on the slot ships. */
 static int pdeath_pass(uint64_t tick,unsigned char *controller) {
     uint64_t take=pilot_start-PILOT_SUPPRESS_LEAD;
@@ -280,6 +330,7 @@ static int pdeath_pass(uint64_t tick,unsigned char *controller) {
          * the seat (161 absent_ship_lost). */
         if(!pilot_slot_enrolled(k,tick) || (pilot_slot_absent(k) && !pslots[k].seated && !pilot_slots[k-1].dead)) continue;
         pilot_slot *s=&pilot_slots[k-1];pdeath_slot *d=&pdeath_slots[k-1];
+        if(k==1 && pveh_left(s,d,tick)) continue;       /* its spacesuit went with a teleport into a ship: no death */
         if(!s->dead && !d->lost && pdeath_dying(s)) {   /* who is aboard decides (header) */
             if(pdeath_off_seat(k,controller)?!pdeath_lose(k,tick):!pdeath_die(k,tick)) return 0;
         }
@@ -339,5 +390,7 @@ static int pdeath_status(char *out,size_t capacity) {
         n+=more;losses+=d->losses;
     }
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," losses=%u",losses);   /* ships lost while off the seat */
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," vehicle=%llu/%llu/%d",(unsigned long long)pveh_adopts,
+                                              (unsigned long long)pveh_lefts,pveh_in_suit);   /* slot 1: adopted vehicles, suits left, in a suit */
     return n>0 && (size_t)n<capacity?n:0;
 }

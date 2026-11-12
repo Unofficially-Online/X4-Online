@@ -38,7 +38,9 @@
  *   mouselook  ranges 7/8 while this client's FIRST_PERSON context is on or slot 1 walks (the
  *              replayed state): locally every handler but d7d5c0 runs (the camera); slot 1's client
  *              records the value and the replay runs d7d5c0 only. Otherwise as before (local).
- *   interact   0x78 refused for every slot (the pick is this client's; not replayed yet).
+ *   interact   0x78 refused for every slot (the pick is this client's), unless native_gate_ui_compslot is armed: then
+ *              the click is this client's own (local, as 0x17 is): 8c2830 only talks to the UI, and the action the
+ *              menu ends in (PerformCompSlotPlayerAction) is captured or refused by lockstep_ui_compslot.h.
  *   context    the vector entry d7d6c0 is swapped for pfoot_context: this client's own edge runs
  *              the input side only (+0x9063) and slot 1's client records it (SPACE kind, id 0xd);
  *              the replay runs d7d6c0 itself and puts this client's +0x9063 back.
@@ -97,11 +99,12 @@ static volatile LONG64 pfoot_edges_local,pfoot_edges_recorded,pfoot_edges_replay
 static uint64_t pfoot_frame_hash;
 static unsigned char pfoot_frame_flag;
 
+static int uics_hooks_wanted(void);   /* lockstep_ui_compslot.h: armed */
 /* Which of this module's ids (0: none). */
 static unsigned pfoot_id(unsigned kind,int id) {
     if(kind==1u) {   /* PSTK_STATE */
         if((id>=0x1a && id<=0x24) || id==0x57) return PFOOT_WALK_ID;
-        if(id==(int)PFOOT_PICK_CLICK) return PFOOT_REFUSE_ID;
+        if(id==(int)PFOOT_PICK_CLICK) return uics_hooks_wanted()?PFOOT_NONE:PFOOT_REFUSE_ID;
     }
     if(kind==2u) {   /* PSTK_RANGE */
         if(id>=0xd && id<=0x10) return PFOOT_WALK_ID;
@@ -357,8 +360,15 @@ static int pfoot_check(uint64_t tick,unsigned char *controller,unsigned char **p
         InterlockedIncrement64(&pfoot_walk_passes);pfoot_stage="walking";
         return 1;
     }
-    /* A PlayerController again: slot 1 sat down in its own ship (adopted) or something else (stop). */
-    if(!read_local(controller+0x28,&ship,8) || !ship || ship!=pnat_ship_now) {pfoot_fail("foot_controller");return -1;}
+    /* A PlayerController again: slot 1 sat down in its own ship (adopted), X4 put its player into another vehicle where one
+     * is expected (2: the spacesuit of an airlock, a seat after the suit or after its ship was lost; the caller adopts it,
+     * lockstep_pilot_death.h pveh_adopt), or something else (stop). */
+    if(!read_local(controller+0x28,&ship,8) || !ship) {pfoot_fail("foot_controller");return -1;}
+    if(ship!=pnat_ship_now) {
+        if(!pveh_adopt_ok(tick,pnat_ship_now)) {pfoot_fail("foot_controller");return -1;}
+        pfoot_state=PFOOT_SEATED;pfoot_transition_tick=tick;pfoot_stage="seated";
+        return 2;
+    }
     *pnat_controller_io=controller;pfoot_state=PFOOT_SEATED;pfoot_transition_tick=tick;pfoot_stage="seated";
     InterlockedIncrement64(&pfoot_adopted);
     return 0;

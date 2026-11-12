@@ -624,6 +624,20 @@ steering, as in single player, and a gun turns as far as its mount allows.
     slot's ship is not resolved without a pilot).
   - Still open from that session: the spacesuit terminal, long-range scan for players 2..N, the mission counter on
     another client's HUD counting a mission that is not theirs.
+- **A person's second session the same evening (20 game minutes, player 2 on the cadet story, 0 mismatches, no errors):**
+  the story ran parts 1 to 6 for player 2 and stops at part 6, which needs the player to leave the ship in a spacesuit
+  (not built for players 2..N yet). Found there:
+  - **The comm monitor of a story call showed a bare hull instead of the speaker.** Fixed, a session default on the
+    Windows gate: the camera of a call the simulation itself starts now counts as a viewer on every client, so the
+    speaker's ship has its interior and the speaker is there to film. Two scripted runs (two X4, the wingmate's two calls,
+    screenshots of both windows): her face in her cockpit on the monitor, on both clients, 0 mismatches, world checks and
+    runtime IDs equal. A Linux client still films the hull (the port is owed), and a player who joins while a call runs
+    does not get that call's picture.
+  - Known and open: the call's monitor and subtitles also appear on the other players' screens (the voice does not);
+    "Autopilot Activated" is shown on every screen when one player engages theirs; with the autopilot engaged the ship
+    does not answer the stick as it does in the stock game; the computer pilot still takes the seat when a player gets
+    up, the start's relation changes are announced one by one, and the cockpit HUD stays while walking (all three are
+    built and wait for their runs).
 - **Not built yet:** stories other scripts run for the whole game (the HQ, faction plots) per player; they stay the
   session's (player 1's).
   - Personal missions per player, first form (9 Nov, on by default; `--set native_gate_missions_per_player=false`

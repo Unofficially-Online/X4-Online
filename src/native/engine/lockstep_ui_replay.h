@@ -102,6 +102,14 @@ enum {UIREP_OP_ACTIVITY_START=1,UIREP_OP_ACTIVITY_STOP=2,UIREP_OP_TARGET_SET=3,U
  * (native_gate_ui_replay_core.lua K.GLOBALS: AddUITriggeredEvent, SignalObject). */
 #define UIREP_LUA_GLOBALS 2u
 /* The trade family (lockstep_ui_trade.h, included at the end): its two Lua-run ops, its section rule and its part of a pass. */
+/* Component slot player actions (lockstep_ui_compslot.h, included at the end): one native op, its section rule and its
+ * apply; the two perform hooks' wrappers for the table below. */
+#define UICS_OP 0x08u
+static int uics_event_ok(unsigned slot,unsigned op,const unsigned char *data,unsigned n,const char **why);
+static int uics_run(unsigned slot,const unsigned char *data,const char **why);
+static int uics_status(char *out,size_t capacity);
+static unsigned char uics_perform_single(void *container,unsigned index);
+static unsigned char uics_perform_multi(void *container,unsigned index);
 #define UITRADE_OP_LUA 0x58u
 #define UITRADE_OP_FFI 0x59u
 static int uitrade_event_ok(unsigned slot,unsigned op,const unsigned char *data,unsigned n,const char **why);
@@ -123,7 +131,8 @@ enum {UIREP_H_UI=0,UIREP_H_START,UIREP_H_STOP,UIREP_H_CLEAR,UIREP_H_CLEAR2,UIREP
     UIREP_H_FASSIST,UIREP_H_TURRET_MODE,UIREP_H_TURRET_MISSILE,UIREP_H_DRONES,UIREP_H_DRONE_MODE,
     UIREP_H_LAUNCH_LASERTOWER,UIREP_H_LAUNCH_MINE,UIREP_H_LAUNCH_NAVBEACON,UIREP_H_LAUNCH_PROBE,UIREP_H_LAUNCH_SATELLITE,
     UIREP_H_WEAPON_ARMED,UIREP_H_WEAPON_AMMO,UIREP_H_TGROUP_MODE,UIREP_H_TGROUP_ARMED,UIREP_H_TURRETS_MODE,UIREP_H_TURRETS_ARMED,UIREP_H_MTURRETS_MODE,UIREP_H_MTURRETS_ARMED,
-    UIREP_H_NTURRETS_MODE,UIREP_H_NTURRETS_ARMED,UIREP_H_DRONE_SET_MODE,UIREP_H_DRONE_TYPE_ARMED,UIREP_H_DRONES_ARMED,UIREP_H_ACTIVATE,UIREP_H_SELF_DESTRUCT,UIREP_H_DROP_CARGO,UIREP_HOOKS};
+    UIREP_H_NTURRETS_MODE,UIREP_H_NTURRETS_ARMED,UIREP_H_DRONE_SET_MODE,UIREP_H_DRONE_TYPE_ARMED,UIREP_H_DRONES_ARMED,UIREP_H_ACTIVATE,UIREP_H_SELF_DESTRUCT,UIREP_H_DROP_CARGO,
+    UIREP_H_CS_SINGLE,UIREP_H_CS_MULTI,UIREP_HOOKS};
 #define UIREP_ARGS 8u
 #define UIREP_STRING_MAX 48u
 #define UIREP_AUTOPILOT 0x2f4b7d8u        /* the input bank's autopilot target (SIM, per slot) */
@@ -305,6 +314,10 @@ static const struct {const char *name;unsigned rva,prefix,family;unsigned char b
     {"ActivateObject",0x175930u,5,UIREP_FAMILY_FLIGHT,UIREP_ENTRY5,(void*)uirep_call_activate,0xc4,"03b9261b41e88429f25fcaccf557322733c3f91f0be54cf880ab02f4aee06dd7"},
     {"SelfDestructComponent",0x1b6f70u,5,UIREP_FAMILY_FLIGHT,{0x48,0x89,0x5c,0x24,0x10},(void*)uirep_call_self_destruct,0x97,"b0efb2eca9222111ea7f02503ea2e297b1f97e9f0ce9d41819882de0c8c69b29"},
     {"DropCargo",0x1df990u,5,UIREP_FAMILY_FLIGHT,UIREP_ENTRY5,(void*)uirep_call_drop_cargo,0x200,"7815910f72151e103062f91fddbf11393bde25af84f66b10911ec6d0e63e43c7"},
+    /* the action containers' perform (lockstep_ui_compslot.h): installed while that module is armed (uirep_hook_used), they
+     * pass outside its calls */
+    {"SingleActionPerform",0x3508e0u,5,0,UIREP_ENTRY5,(void*)uics_perform_single,0x5d,"3a48fd72ded5585551dcaa1396bc9c0400b3e5083bb99ce7b370a70b75c104fc"},
+    {"MultiActionPerform",0x350d60u,5,0,UIREP_ENTRY5,(void*)uics_perform_multi,0x63,"1cec820bfc25fb70dd61961933c29c1bd980e08778606aae86042857f04fb741"},
 };
 /* The generic calls: argument spec (P the player, C a component pointer, I a UniverseID, b a byte, w a word, V a
  * pointer to 16 bytes, s a string, k the check-only flag: set, the call is a query and passes; - passed through as 0),
@@ -471,6 +484,7 @@ static const char *uirep_op_name(unsigned op) {
     case UIREP_OP_LUA_GLOBAL:return "lua_global";
     case UIREP_OP_MISSION:return "mission";
     case UIREP_OP_CONVERSATION:return "conversation";
+    case UICS_OP:return "compslot";
     case UITRADE_OP_LUA:return "trade_lua";
     case UITRADE_OP_FFI:return "trade_ffi";
     case UIINV_OP_CLICK:return "inventory_click";
@@ -780,6 +794,7 @@ static int uirep_event_ok(unsigned slot,unsigned op,const unsigned char *data,un
     case UIREP_OP_LUA_GLOBAL:   /* slot 1 only: MD's player.entity is slot 1's player */
         if(!(uirep_families&UIREP_FAMILY_EVENTS) || (slot!=1 && !mpp_armed) || n<2 || !data[0] || data[0]>UIREP_LUA_GLOBALS) {*why="ui_events";return 0;}
         return 1;
+    case UICS_OP:return uics_event_ok(slot,op,data,n,why);   /* lockstep_ui_compslot.h */
     case UITRADE_OP_LUA:case UITRADE_OP_FFI: return uitrade_event_ok(slot,op,data,n,why);
     case UIINV_OP_CLICK:
         if(!(uirep_families&UIREP_FAMILY_INVENTORY) || (slot!=1 && !mpp_armed) || n<2 || !data[0] || data[0]>UIINV_KINDS) {*why="ui_inventory";return 0;}
@@ -915,6 +930,9 @@ static int uirep_run_native(unsigned slot,unsigned op,const unsigned char *data,
         uirep_forward(data[0],a);InterlockedIncrement64(&uirep_calls_applied);
         break;
     }
+    case UICS_OP:
+        if(!uics_run(slot,data,why)) return 0;
+        break;
     default:break;
     }
     InterlockedIncrement64(&uirep_applied_native);return 1;
@@ -1175,7 +1193,11 @@ static unsigned char *uirep_alloc_page(void) {
         }
     return NULL;
 }
-static int uirep_hook_used(unsigned i) {return !uirep_hooks[i].family || (uirep_families&uirep_hooks[i].family);}
+static int uics_hooks_wanted(void);   /* lockstep_ui_compslot.h: its two perform hooks only while it is armed */
+static int uirep_hook_used(unsigned i) {
+    if(i==UIREP_H_CS_SINGLE || i==UIREP_H_CS_MULTI) return uics_hooks_wanted();
+    return !uirep_hooks[i].family || (uirep_families&uirep_hooks[i].family);
+}
 static unsigned char *uirep_stride(unsigned i) {return uirep_page+UIREP_STRIDE*i;}
 static unsigned char *uirep_site_stride(unsigned i) {return uirep_page+UIREP_STRIDE*(UIREP_HOOKS+i);}
 /* mov rcx,rbx; [mov rdx,r13;] mov rax,stub; call rax; jmp [rip] resume: the frame is X4's, aligned, with its shadow
@@ -1346,10 +1368,12 @@ static int uirep_status(char *out,size_t capacity) {
         n+=snprintf(out+n,capacity-(size_t)n," target_ui=%lld/%lld target_md=%lld target_route=%s route_faults=%lld",(long long)uirep_target_ui,
             (long long)uirep_target_ui_refused,(long long)uirep_target_md,route,(long long)uirep_route_faults);
     }
+    if(n>0 && (size_t)n<capacity) n+=uics_status(out+n,capacity-(size_t)n);   /* lockstep_ui_compslot.h */
     return n>0 && (size_t)n<capacity?n:0;
 }
 /* The UI guard: containment for what no armed family replays yet (native_gate_ui_guard, default off). */
 #include "lockstep_ui_guard.h"
+#include "lockstep_ui_compslot.h"        /* component slot player actions by class (native_gate_ui_compslot) */
 #include "lockstep_pilot_foot_guard.h"   /* slot 1 on foot: the docked menu's GetUp claimed (lockstep_pilot_foot.h) */
 /* The build and assets families: claims on the guard's hooks (native_gate_ui_replay lists build/assets, default off). */
 #include "lockstep_ui_build.h"
