@@ -192,7 +192,8 @@ refuses it, ui_missions_claim_taken:<name>). The M1 spec's mask is 19455; entrie
      registered: reg1, 8 Nov, x4ls play with 2 players, gate.pilot_slots_registry every 600 ticks: P_2 has runtime ID 1615fa
      on both clients and Find(map, id, 4) answers P_2 itself at 600..3600 on both [F]); (iv) events on P_k: listeners such as event_object_changed_sector
      object="player.entity" registered in scope k bind to P_k, which nothing moves in the component tree: slot k's sector
-     changes must be posted on P_k by our seat code [I].
+     changes must be posted on P_k by our seat code [I]. WRONG for a seated slot (11 Nov, section 13): X4 posts changed
+     zone on a seated P_k itself.
   C2 Per slot managers. A mission manager per slot (0x3d0 bytes, ctor 0x1137710) and a conversation manager per slot,
      their pointers (0x6cf1658, 0x38ee230) swapped with the slot scope (MD's create_offer/create_mission/start_conversation
      inside slot k's frames land in slot k's) and with client k's presentation scope (client k's HUD, map, briefing and
@@ -439,3 +440,31 @@ refuses it, ui_missions_claim_taken:<name>). The M1 spec's mask is 19455; entrie
     with equal hashes; 39 frames entered slot 2's scope; 0 desyncs, 0 errors. [F]
   Not covered: players in different sectors were not run live (the fixture has both in Argon Prime); a slot's sector
   change is picked up at the next 3-minute tick, not at once; factions mode rewards (C3).
+
+13. THE PLAYER'S PLACE EVENTS AND THE MISSION'S FACTION FOR SLOT K (11 Nov; three two-client runs, x4ls play, snapshot 005)
+  Fixture (tools/dev/native_gate_ui_replay.xml, under FixtureAccept): FixtureSector and FixtureZone listen for
+  event_object_changed_sector / _zone on player.entity (row UI_MISSIONS_MD_PLACE kind= on= new= old= player=); FixtureReward
+  ends the mission at its player's first zone change with reward_player 1000Cr (row UI_MISSIONS_MD_REWARD player= faction=
+  money=before->after). Plan of every run: two offers, client 1 accepts one (tick 190), client 2 the other (240), both slots
+  fly in travel mode from 340 / 360.
+13a The place events exist [F]. C1 iv expected that nothing posts on P_k. A module that posted X4's own events on P_k once
+  per tick (spe1, immediate post) made slot 2's mission hear every zone change twice at the same game time (two instances
+  of FixtureZone per event); with the post made due-now for the event pump (spe2) the two came one tick apart (56.1497 and
+  56.183, 88.0163 and 88.0497, 105.816 and 105.85): the first of each pair was not the module's. Control without the
+  module (spe3): slot 2's mission logged each change once, at 56.1497, 88.0163 and 105.816, on=P_2 player=P_2 on both
+  clients; slot 1's as always (45.7163, 62.283, 75.883, 92.683, 100.45). So X4 posts U::ChangedZoneEvent on a seated slot's
+  player itself (the place change code 0x6cdab0 posts on the moving object and on the components it holds), the listener
+  an owned cue registered on player.entity hears it, and its frame runs in slot k's scope. The module was dropped.
+  The direct listeners of zone events at tick 300: 13 on P_1, 7 on P_2 (spe2): stock cues register on P_k too when they
+  register inside a scope of slot k.
+  Not shown by a run: a sector change (the run stays in one sector; the same code posts it), a slot on foot, a slot
+  after a respawn. changed_object, changed_room, destroyed and the inventory events on P_k: not looked at.
+13b The mission's faction (C3; lockstep_mission_owners.h 'faction') [F]. A mission scope of slot k runs with
+  g_PlayerFaction = slot k's faction. spe2 (coop): slot 1's mission paid money 1000000->1100000 at 45.7163, slot 2's
+  1100000->1200000 at 56.1497: the shared wallet, as coop means it. spe3 (factions mode): slot 1's mission paid faction
+  "Val Selton" 1000000->1100000; slot 2's paid faction "Player" (its pool faction) 0->100000 at 56.1497; the trade
+  family's receipt UITRADE_1:1100000,100000 from tick 1472 on both clients; MISSIONS_PER_PLAYER faction=25/0/0 (swaps /
+  the same faction / changed inside) at tick 3000. So reward_player, player.money and faction.player are read at the
+  action and follow the mission's owner. All three runs: 3300 ticks, 0 desyncs, 0 errors.
+13c The launches' missing row (UI guard report section 8): in spe1 each slot ship launched one satellite; UI_REPLAY_STOCK
+  has= 10 and 14 before, 9 and 13 after, the same on both clients.

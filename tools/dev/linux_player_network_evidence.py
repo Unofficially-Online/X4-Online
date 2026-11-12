@@ -44,24 +44,39 @@ def decode_record(text, tick, held, *, scripted_throttle=False):
     return held
 
 
-def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode, *, frame_count, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False):
+def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode, *, frame_count, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False, session_frames=0, startup=None):
     result = parse_recurring_physics_evidence(lines, stderr_lines, returncode,
                                                frame_count=frame_count, input_mode='network', allow_camera=allow_camera and str(slot) == '2', allow_throttle=allow_throttle,
-                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None)
+                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None, session_frames=session_frames, startup=startup)
     errors = result['errors']
+    from linux_player_startup_phases import startup_phases
+    try:
+        phase = startup_phases(startup)
+    except ValueError as error:
+        errors.append(str(error))
+        result['pass'] = False
+        return result
+    if phase['version']:
+        result['startup_phases'] = startup
+        result['startup_phase_tuple'] = phase
+        result['preapply_frames'] = [frame for frame in result['frames'] if frame['tick'] < phase['apply']]
+        result['frames'] = [frame for frame in result['frames'] if frame['tick'] >= phase['apply']]
+        if [frame['tick'] for frame in result['preapply_frames']] != [37, 38, 39]:
+            errors.append('common startup requires all three distinct pre-apply frames')
     if type(allow_presentation) is not bool:
         errors.append('invalid presentation admission')
     markers = [line[line.index('LINUX_PRESENTATION_PROBE') :].strip()
                for line in engine_lines if 'LINUX_PRESENTATION_PROBE' in line]
-    expected_markers = [f'LINUX_PRESENTATION_PROBE tick=7 slot={slot}'] if allow_presentation else []
+    expected_markers = [f'LINUX_PRESENTATION_PROBE tick={phase["presentation_probe"]} slot={slot}'] if allow_presentation else []
     if markers != expected_markers:
         errors.append('presentation Lua marker missing, malformed, duplicated or disabled')
     records = {1: [], 2: []}
-    if type(frame_count) is not int or not 2 <= frame_count <= 600:
+    maximum = (session_frames if type(session_frames) is int else 0) if session_frames else 600
+    if type(frame_count) is not int or not 2 <= frame_count <= maximum:
         result.update(slot=slot, slot_records={'1': [], '2': []}, **{'pass': False})
         return result
     for line in engine_lines:
-        if is_fatal_gate_message(line) or 'PLAYER_CONTROL_RECURRING_FATAL' in line:
+        if is_fatal_gate_message(line) or 'PLAYER_CONTROL_RECURRING_FATAL' in line or 'PLAYER_PHASES_FATAL' in line:
             errors.append('fatal engine record: ' + line.strip()[:300])
     if slot not in (1, 2) or type(slot) is not int:
         errors.append('slot must be 1 or 2')
@@ -110,7 +125,7 @@ def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode
             records[1].append(record)
         except ValueError as error:
             errors.append(f'frame {tick}: {error}')
-    if p1_ticks != list(range(5, 5 + frame_count)):
+    if p1_ticks != list(range(phase['apply'], phase['apply'] + frame_count)):
         errors.append('P1 records missing, duplicated, outside window or reordered')
     if held:
         errors.append('P1 final keys held')
@@ -125,7 +140,7 @@ def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode
             errors.append('malformed keyboard capture')
             continue
         captures.append((int(match[1]), match[2]))
-    expected_ticks = list(range(3, 3 + frame_count))
+    expected_ticks = list(range(phase['capture'], phase['capture'] + frame_count))
     if [tick for tick, _ in captures] != expected_ticks:
         errors.append('capture records missing, duplicated, outside window or reordered')
     if slot in (1, 2) and len(records[slot]) == frame_count and len(captures) == frame_count:
@@ -173,11 +188,11 @@ def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode
     return result
 
 
-def collect_network_physics_evidence(trace, retained, engine, output, returncode, *, frame_count, stderr, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False):
+def collect_network_physics_evidence(trace, retained, engine, output, returncode, *, frame_count, stderr, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False, session_frames=0, startup=None):
     """Retain raw trace before parsing; include the complete generic failure checks."""
     base = collect_recurring_physics_evidence(trace, retained, engine, output, returncode,
                                              frame_count=frame_count, stderr=stderr, input_mode='network', allow_camera=allow_camera and str(slot) == '2', allow_throttle=allow_throttle,
-                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None)
+                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None, session_frames=session_frames, startup=startup)
     try:
         if 'log_sha256' not in base:
             raise OSError('trace retention or parsing failed')
@@ -185,7 +200,7 @@ def collect_network_physics_evidence(trace, retained, engine, output, returncode
         worker = Path(stderr).read_text(encoding='utf-8').splitlines(keepends=True)
         engine_lines = Path(engine).read_text(encoding='utf-8').splitlines(keepends=True)
         result = parse_network_physics_evidence(lines, worker, engine_lines, returncode,
-                                                frame_count=frame_count, slot=slot, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, allow_presentation=allow_presentation)
+                                                frame_count=frame_count, slot=slot, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, allow_presentation=allow_presentation, session_frames=session_frames, startup=startup)
         for error in base['errors']:
             if error not in result['errors']:
                 result['errors'].append(error)

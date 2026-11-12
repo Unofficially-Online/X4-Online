@@ -16,7 +16,10 @@ assert(not (cfg.native_gate_player_identity_block_orders and cfg.native_gate_pla
  'the identity order block excludes the player orders UI capture (both wrap the order menus)')
 local P,why=K.validate(cfg.native_gate_player_identity_plan)
 assert(P,'invalid player identity plan: '..tostring(why))
+local shared=cfg.native_gate_shared_identity_t40
+assert(shared==nil or K.shared_t40(P,shared), 'shared T40 identity plan refused')
 local canonical=K.canonical(P)
+local function receipt(value) return shared and (value..':shared_t40:'..shared[3]) or value end
 local ffi=require('ffi');local C=ffi.C
 if not pcall(ffi.typeof,'UniverseID') then ffi.cdef('typedef uint64_t UniverseID;') end
 local function cdef(name,def) if not pcall(function() return C[name] end) then pcall(ffi.cdef,def) end end
@@ -25,6 +28,7 @@ cdef('GetAllFactions','uint32_t GetAllFactions(const char** result, uint32_t res
 cdef('GetNumAllFactionShips','uint32_t GetNumAllFactionShips(const char* factionid);')
 cdef('GetAllFactionShips','uint32_t GetAllFactionShips(UniverseID* result, uint32_t resultlen, const char* factionid);')
 cdef('IsComponentOperational','bool IsComponentOperational(UniverseID componentid);')
+if shared then cdef('GetPlayerOccupiedShipID','UniverseID GetPlayerOccupiedShipID(void);') end
 local function log(text) DebugError('[X4LAN] '..text) end
 local gate,digest,steps
 local start_objects={}   -- start index -> runtime ID (decimal string), checked at the fold tick
@@ -231,8 +235,12 @@ X4LAN_NATIVE_PLAYER_IDENTITY={
   end
   last_tick=tick
   block_orders()
-  if tick<P.tick then return 'PIDENT_1:'..digest..':pending' end
+  if tick<P.tick then return receipt('PIDENT_1:'..digest..':pending') end
   if tick==P.tick then
+   if shared then
+    local occupied=decimal(C.GetPlayerOccupiedShipID())
+    assert(gate.saved_identity(occupied)==shared[1], 'shared T40 occupied ship mismatch')
+   end
    local found=resolve_saved(tick)
    for k,row in ipairs(P.slots) do if row.ship then ships[k]=found[row.ship] end end
    for i,r in ipairs(P.starts) do start_objects[i]=found[r.object] end
@@ -240,10 +248,10 @@ X4LAN_NATIVE_PLAYER_IDENTITY={
    setup_done=true
    local saved={};for k,row in ipairs(P.slots) do saved[k]=k..'/'..(row.ship or 'create') end
    log(string.format('PLAYER_IDENTITY SETUP tick=%d steps=%d slots=%s',tick,#steps,table.concat(saved,',')))
-   return 'PIDENT_1:'..digest..':setup:'..table.concat(saved,',')
+   return receipt('PIDENT_1:'..digest..':setup:'..table.concat(saved,','))
   end
   assert(setup_done,'player identity setup tick '..P.tick..' was not admitted')
-  if tick<P.tick+K.FOLD_LAG then return 'PIDENT_1:'..digest..':applying' end
+  if tick<P.tick+K.FOLD_LAG then return receipt('PIDENT_1:'..digest..':applying') end
   if not ready then
    local text,reason=K.results(steps,inbox)
    assert(text,'player identity MD results: '..tostring(reason))
@@ -263,7 +271,7 @@ X4LAN_NATIVE_PLAYER_IDENTITY={
   local rows=slot_rows()
   if rows~=state_rows or tick%600==0 then log('PLAYER_IDENTITY_STATE tick='..tick..' '..rows) end
   state_rows=rows
-  return 'PIDENT_1:'..digest..':'..md_text..':'..rows
+  return receipt('PIDENT_1:'..digest..':'..md_text..':'..rows)
  end,
  -- Slot ship runtime ID (decimal string) once known; for other adapters and tests.
  ship=function(k) return ships[k] end,

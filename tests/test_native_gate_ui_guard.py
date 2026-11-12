@@ -84,9 +84,22 @@ class TableTests(unittest.TestCase):
         # The flight family: below ToggleFlightAssist (its export starts RIP-relative), at the HUD's button exports.
         flight = {name: int(rva, 16) for name, rva, fam in hooks if fam == 'UIREP_FAMILY_FLIGHT'}
         self.assertEqual(flight, {'FlightAssistToggle': 0x710d50, 'CycleTurretMode': 0xb01ff0, 'CycleTurretMissile': 0xb01ed0,
-                                  'ToggleDrones': 0xb0b390, 'CycleNextDroneMode': 0xb01e70})
+                                  'ToggleDrones': 0xb0b390, 'CycleNextDroneMode': 0xb01e70,
+                                  'LaunchLaserTower': 0x222db0, 'LaunchMine': 0x223030, 'LaunchNavBeacon': 0x2232a0,
+                                  'LaunchResourceProbe': 0x223520, 'LaunchSatellite': 0x2237a0,
+                                  'SetWeaponArmed': 0x1ba6d0, 'SetAmmoOfWeapon': 0x1b70c0, 'SetTurretGroupMode2': 0x224920,
+                                  'SetTurretGroupArmed': 0x2246b0, 'SetAllTurretModes': 0x224220, 'SetAllTurretsArmed': 0x2243a0,
+                                  'SetAllMissileTurretModes': 0x223b60, 'SetAllMissileTurretsArmed': 0x223c40,
+                                  'SetAllNonMissileTurretModes': 0x223cd0, 'SetAllNonMissileTurretsArmed': 0x223e90,
+                                  'SetDroneMode': 0x2244c0, 'SetDroneTypeArmed': 0x2245e0, 'SetAllDronesArmed': 0x223aa0,
+                                  'ActivateObject': 0x175930, 'SelfDestructComponent': 0x1b6f70, 'DropCargo': 0x1df990})
         covered = {name for (kind, name), (_, _, cov) in inv.INVENTORY.items() if cov & inv.FLIGHT}
-        self.assertEqual(covered, {'ToggleFlightAssist', 'CycleTurretMode', 'CycleTurretMissile', 'ToggleDrones', 'CycleNextDroneMode'})
+        self.assertEqual(covered, {'ToggleFlightAssist', 'CycleTurretMode', 'CycleTurretMissile', 'ToggleDrones', 'CycleNextDroneMode',
+                                   'LaunchMine', 'LaunchNavBeacon', 'LaunchResourceProbe', 'LaunchSatellite', 'LaunchLaserTower',
+                                   'SetWeaponArmed', 'SetAmmoOfWeapon', 'SetTurretGroupMode2', 'SetTurretGroupArmed', 'SetAllTurretModes',
+                                   'SetAllTurretsArmed', 'SetAllMissileTurretModes', 'SetAllMissileTurretsArmed',
+                                   'SetAllNonMissileTurretModes', 'SetAllNonMissileTurretsArmed', 'SetDroneMode', 'SetDroneTypeArmed',
+                                   'SetAllDronesArmed', 'ActivateObject', 'SelfDestructComponent', 'DropCargo'})
 
     def test_the_ui_only_events_agree_in_every_mirror(self):
         native = re.search(r'uiguard_ui_only\[\]=\{(.*?)\};', GUARD_H, re.S).group(1)
@@ -270,22 +283,42 @@ class GuardLogTests(unittest.TestCase):
           env.SetComponentName=function(id,name) stock_calls[#stock_calls+1]='SetComponentName:'..tostring(ids[id])..'/'..name end
           env.GetComponentData=function(id,key) return 'Old' end
           env.StartConversationFromMenu=function(c,actor) stock_calls[#stock_calls+1]='StartConversationFromMenu:'..c..'/'..tostring(ids[actor]) end
-          tools={gate=gate,C=C,env=env,own_slot=1,slot_lua=function(s) return make_id(tostring(1000+s)) end}
+          tools={gate=gate,C=C,env=env,own_slot=1,slot_lua=function(s) return make_id(tostring(1000+s)) end,slot_id=function(s) return 7000+s end}
           C.CycleTurretMode=function(n) stock_calls[#stock_calls+1]='CycleTurretMode:'..n end
           C.CycleTurretMissile=function(n) stock_calls[#stock_calls+1]='CycleTurretMissile:'..n end
           C.ToggleDrones=function(n) stock_calls[#stock_calls+1]='ToggleDrones:'..n end
           C.CycleNextDroneMode=function(n) stock_calls[#stock_calls+1]='CycleNextDroneMode:'..n end
+          for _,name in ipairs({'LaunchSatellite','LaunchNavBeacon','LaunchResourceProbe','LaunchMine','LaunchLaserTower'}) do
+            C[name]=function(ship,macro) stock_calls[#stock_calls+1]=name..':'..tostring(ship)..'/'..macro end
+          end
+          C.SetAllTurretModes=function(ship,mode) stock_calls[#stock_calls+1]='SetAllTurretModes:'..tostring(ship)..'/'..mode end
+          C.SetAllTurretsArmed=function(ship,arm) stock_calls[#stock_calls+1]='SetAllTurretsArmed:'..tostring(ship)..'/'..tostring(arm) end
+          C.SetAllDronesArmed=function(ship,arm) stock_calls[#stock_calls+1]='SetAllDronesArmed:'..tostring(ship)..'/'..tostring(arm) end
+          C.DropCargo=function(ship,ware,n) stock_calls[#stock_calls+1]='DropCargo:'..tostring(ship)..'/'..ware..'/'..n;return true end
           plan={{0,'money',1000},{1,'rename',1,'Guarded'},{2,'ui_event','Probe',7},{3,'signal',2,'x4lan'},{4,'flight_assist'},{5,'comm',2},
-            {6,'ui_raw','TopLevelMenu',''},{7,'turret_mode',2},{8,'turret_missile',1},{9,'drones',3},{10,'drone_mode',1}}
+            {6,'ui_raw','TopLevelMenu',''},{7,'turret_mode',2},{8,'turret_missile',1},{9,'drones',3},{10,'drone_mode',1},
+            {11,'launch','satellite','eq_arg_satellite_01_macro'},{12,'launch','navbeacon','nb'},{13,'launch','probe','rp'},{14,'launch','mine','mn'},
+            {15,'launch','lasertower','lt'},{16,'launch_stock',2,'eq_arg_satellite_01_macro',3},
+            {17,'turrets_mode','defend'},{18,'turrets_armed',false},{19,'drones_armed',true},{20,'drop_cargo','energycells',5}}
           marks={}
           S=new_session({mask=1,script=X4LAN_UI_REPLAY_CORE.script(plan,40,tools),local_mark=function(on) marks[#marks+1]=on end})
-          for t=40,51 do S.frame(t) end
+          local stock_event=env.AddUITriggeredEvent
+          env.AddUITriggeredEvent=function(screen,control,v)
+            if control=='Stock' then stock_calls[#stock_calls+1]='Stock:'..tostring(ids[v.ship])..'/'..v.macro..'/'..v.amount;return end
+            return stock_event(screen,control,v)
+          end
+          for t=40,61 do S.frame(t) end
         ''')
         self.assertEqual(uirep.values(g.stock_calls), ['AddPlayerMoney:1000', 'SetComponentName:1001/Guarded', 'AddUITriggeredEvent:X4LAN_UiGuard/Probe/7',
                                                        'SignalObject:1002/x4lan', 'ToggleFlightAssist', 'StartConversationFromMenu:default/1002',
                                                        'AddUITriggeredEvent:TopLevelMenu//nil', 'CycleTurretMode:2', 'CycleTurretMissile:1',
-                                                       'ToggleDrones:3', 'CycleNextDroneMode:1'])
-        self.assertEqual(uirep.values(g.marks), [0, 1] * 11)    # each as a person's click: outside the probe's frame
+                                                       'ToggleDrones:3', 'CycleNextDroneMode:1',
+                                                       'LaunchSatellite:7001/eq_arg_satellite_01_macro', 'LaunchNavBeacon:7001/nb',
+                                                       'LaunchResourceProbe:7001/rp', 'LaunchMine:7001/mn', 'LaunchLaserTower:7001/lt',
+                                                       'Stock:1002/eq_arg_satellite_01_macro/3',
+                                                       'SetAllTurretModes:7001/defend', 'SetAllTurretsArmed:7001/false',
+                                                       'SetAllDronesArmed:7001/true', 'DropCargo:7001/energycells/5'])
+        self.assertEqual(uirep.values(g.marks), [0, 1] * 20)    # the stock fixture is canonical: the probe's own frame, no mark    # each as a person's click: outside the probe's frame
         logs = uirep.values(g.logs)
         self.assertTrue(any('UI_REPLAY_SCRIPT tick=40 op=money ok=true result=5000->5000' in l for l in logs))
         self.assertTrue(any('UI_REPLAY_SCRIPT tick=41 op=rename ok=true result=Old->Old' in l for l in logs))

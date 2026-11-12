@@ -203,6 +203,78 @@ static void test_ui_guard(void) {
      s[6]=UIREP_LUA_GLOBALS+1;assert(!uirep_section_ok(1,s,sizeof(s),&c16,&why));s[6]=0;assert(!uirep_section_ok(1,s,sizeof(s),&c16,&why));s[6]=1;
      uirep_families=UIREP_FAMILY_ORDERS;assert(!uirep_section_ok(1,s,sizeof(s),&c16,&why) && !strcmp(why,"ui_events"));
      uirep_families=f;}
+    /* The inventory family's op: its family armed, a known kind with arguments; slots 2..N only with their own scope
+     * (missions per player). The bit is one of the implemented families and no other family's. */
+    {unsigned f=uirep_families;int m=mpp_armed;uint16_t c16=0;const char *why="";unsigned char s[]={UIREP_VERSION,1,0,1,UIINV_OP_CLICK,2,1,0};
+     assert((UIREP_FAMILIES&UIREP_FAMILY_INVENTORY) && !(UIREP_FAMILY_INVENTORY&0xffffu) && !strcmp(uirep_op_name(UIINV_OP_CLICK),"inventory_click"));
+     uirep_families=UIREP_FAMILY_INVENTORY;mpp_armed=0;assert(uirep_section_ok(1,s,sizeof(s),&c16,&why));
+     assert(!uirep_section_ok(2,s,sizeof(s),&c16,&why) && !strcmp(why,"ui_inventory"));
+     mpp_armed=1;assert(uirep_section_ok(2,s,sizeof(s),&c16,&why));
+     s[6]=UIINV_KINDS;assert(uirep_section_ok(2,s,sizeof(s),&c16,&why));
+     s[6]=UIINV_KINDS+1;assert(!uirep_section_ok(1,s,sizeof(s),&c16,&why));s[6]=0;assert(!uirep_section_ok(1,s,sizeof(s),&c16,&why));s[6]=1;
+     {unsigned char one[]={UIREP_VERSION,1,0,1,UIINV_OP_CLICK,1,1};assert(!uirep_section_ok(1,one,sizeof(one),&c16,&why) && !strcmp(why,"ui_inventory"));}
+     uirep_families=UIREP_FAMILY_EVENTS;assert(!uirep_section_ok(1,s,sizeof(s),&c16,&why) && !strcmp(why,"ui_inventory"));
+     uirep_families=f;mpp_armed=m;}
+    /* The inventory menu's Drop (lockstep_ui_inventory.h): DropInventory's arguments in the Lua codec's bytes (count; nil or the
+     * lockbox; ware, amount as a double), what does not fit an event refused, and the claim on the guard's entry. */
+    {unsigned char out[UIREP_EVENT_MAX];const char *why="";uiinv_ware_amount w[UIINV_DROP_WARES+1];
+     static const unsigned char want[]={UIINV_KIND_DROP,5,0, 4,5,'s','c','r','a','p', 3,0,0,0,0,0,0,0,0x40, 4,4,'c','h','i','p', 3,0,0,0,0,0,0,0xf0,0x3f};
+     for(unsigned i=0;i<UIINV_DROP_WARES+1;i++) {w[i].ware="inv_a_ware_with_a_long_name";w[i].amount=1;}
+     w[0].ware="scrap";w[0].amount=2;w[1].ware="chip";
+     unsigned n=uiinv_drop_event(NULL,w,2,out,&why);assert(n==sizeof(want) && !memcmp(out,want,n));
+     n=uiinv_drop_event("box",w,1,out,&why);assert(n==2+5+7+9 && out[1]==3 && out[2]==UIINV_TAG_STRING && out[3]==3 && !memcmp(out+4,"box",3));
+     assert(!uiinv_drop_event(NULL,w,0,out,&why) && !strcmp(why,"wares") && !uiinv_drop_event(NULL,NULL,1,out,&why));
+     assert(!uiinv_drop_event(NULL,w,UIINV_DROP_WARES+1,out,&why) && !strcmp(why,"wares"));
+     assert(!uiinv_drop_event(NULL,w,UIINV_DROP_WARES,out,&why) && !strcmp(why,"too_long"));        /* more than an event holds */
+     assert(!uiinv_drop_event("",w,1,out,&why) && !strcmp(why,"lockbox"));
+     w[1].amount=0;assert(!uiinv_drop_event(NULL,w,2,out,&why) && !strcmp(why,"amount"));w[1].amount=1;
+     w[1].ware=NULL;assert(!uiinv_drop_event(NULL,w,2,out,&why) && !strcmp(why,"ware"));
+     w[1].ware="";assert(!uiinv_drop_event(NULL,w,2,out,&why) && !strcmp(why,"ware"));w[1].ware="chip";
+     /* a kind 3 event passes the section rule */
+     {unsigned f=uirep_families;uint16_t c16=0;unsigned char s[UIREP_HEAD+2+sizeof(want)]={UIREP_VERSION,1,0,1,UIINV_OP_CLICK,(unsigned char)sizeof(want)};
+      memcpy(s+UIREP_HEAD+2,want,sizeof(want));uirep_families=UIREP_FAMILY_INVENTORY;assert(uirep_section_ok(1,s,sizeof(s),&c16,&why));uirep_families=f;}
+     /* the arming: the family, the guard, the entry (free, then another family's) */
+     /* (on the generated table: the stand-in table of this test has no DropInventory) */
+     {unsigned f=uirep_families;int ra=uirep_armed,ga=uiguard_armed;unsigned drop=UINT_MAX;char text[160];
+      const uiguard_entry *stand_tab=uiguard_tab;unsigned stand_count=uiguard_count;uiguard_tab=saved_tab;uiguard_count=saved_count;
+      for(unsigned i=0;i<uiguard_count;i++) if(uiguard_tab[i].kind==UIGUARD_FFI && !strcmp(uiguard_tab[i].name,"DropInventory")) drop=i;
+      assert(drop!=UINT_MAX);uiguard_unclaim(NULL);
+      uirep_armed=1;uirep_families=UIREP_FAMILY_EVENTS;uiguard_armed=1;assert(!uiinv_arm() && !strcmp(uiinv_why,"needs_family"));
+      uirep_families=UIREP_FAMILY_INVENTORY;uiguard_armed=0;assert(!uiinv_arm() && !strcmp(uiinv_why,"needs_ui_guard"));
+      uiguard_armed=1;assert(uiinv_arm() && uiinv_armed && uiinv_drop_index==drop && uiguard_claimed[drop] && uiguard_claim_by[drop]==uiinv_claim_decide);
+      assert(uiinv_arm() && uiguard_claim_by[drop]==uiinv_claim_decide);                              /* a rerun keeps it */
+      assert(uiinv_status(text,sizeof(text))>0 && strstr(text,"ui_inventory=armed claims=8 drops=0/0"));
+      {uint64_t ret=7,frame[12]={0};assert(!uiinv_claim_decide(drop+1,frame,&ret) && ret==0);}     /* not its entry */
+      /* the recorder: with no scope open the claim declines (the guard's rule); in a scope a call is a row and does not run */
+      {uint64_t ret=7,frame[12]={0};const unsigned money=uiinv_call_index[0],research=uiinv_call_index[2];int lost=1;
+       assert(money!=UINT_MAX && research!=UINT_MAX && uiguard_claim_by[money]==uiinv_claim_decide && uiguard_claim_by[research]==uiinv_claim_decide);
+       frame[4]=(uint64_t)-1250000ll;assert(!uiinv_claim_decide(money,frame,&ret));                 /* no scope */
+       const DWORD t=ui_thread;const int cap=pstk_capturing;
+       ui_thread=GetCurrentThreadId();pstk_capturing=0;assert(!uiinv_scope_begin());                /* not capturing */
+       pstk_capturing=1;
+       {const LONG live=InterlockedExchange(&pnat_live,0);assert(!uiinv_scope_begin());InterlockedExchange(&pnat_live,1);   /* not live; live */
+        assert(uiinv_scope_begin() && uiinv_claim_decide(money,frame,&ret) && ret==0);
+        frame[4]=(uint64_t)(uintptr_t)"research_x";frame[3]=4242;assert(uiinv_claim_decide(research,frame,&ret));
+        assert(!strcmp(uiinv_scope_end(&lost),"AddPlayerMoney\t-1250000\nStartResearch\tresearch_x\t4242\n") && !lost && !uiinv_scope_open);
+        assert(uiinv_scope_begin());frame[4]=(uint64_t)(uintptr_t)"bad\tname";assert(uiinv_claim_decide(uiinv_call_index[1],frame,&ret));
+        uiinv_scope_end(&lost);assert(lost);                                                      /* a string the rows cannot carry */
+        assert(uiinv_scope_begin());frame[4]=0;assert(uiinv_claim_decide(uiinv_call_index[1],frame,&ret));uiinv_scope_end(&lost);assert(lost);
+        InterlockedExchange(&pnat_live,live);}
+       /* the row writer itself, whatever the session state */
+       uiinv_record_length=0;uiinv_record[0]=0;frame[4]=77;frame[3]=(uint64_t)(uintptr_t)"project_y";
+       assert(uiinv_record_call(4,frame) && !strcmp(uiinv_record,"StartTerraformingProject\t77\tproject_y\n"));
+       frame[4]=78;assert(uiinv_record_call(5,frame) && strstr(uiinv_record,"\nAbortActiveTerraformingProject\t78\n"));
+       /* a cancelled trade deal: the container, the deal's own ID as it is, the flag; the menu is answered true */
+       {const unsigned before=uiinv_record_length;frame[4]=4711;frame[3]=0xfffffffffffffff0ull;frame[2]=0;
+        assert(uiinv_record_call(6,frame) && !strcmp(uiinv_record+before,"CancelPlayerInvolvedTradeDeal\t4711\t18446744073709551600\t0\n"));
+        assert(uiinv_call_answer[6]==1 && !uiinv_call_answer[0] && !strcmp(uiinv_calls[6].spec,"IQb"));}
+       {unsigned rows=2;while(uiinv_record_call(5,frame)) ++rows;assert(rows>20 && uiinv_record_length<UIINV_RECORD_MAX);}   /* full: refused, never overrun */
+       uiinv_record_length=0;uiinv_record[0]=0;ui_thread=t;pstk_capturing=cap;}
+      uiguard_unclaim(NULL);assert(uiguard_claim(drop,pfoot_claim_decide) && !uiinv_arm() && !strcmp(uiinv_why,"ui_inventory_claim_taken:DropInventory") && !uiinv_armed);
+      uiguard_unclaim(NULL);assert(uiguard_claim(uiinv_entry_of("StartResearch"),pfoot_claim_decide) && !uiinv_arm() &&
+          !strcmp(uiinv_why,"ui_inventory_claim_taken:StartResearch") && !uiguard_claimed[drop]);     /* nothing stays claimed */
+      uiguard_tab=stand_tab;uiguard_count=stand_count;assert(!uiinv_arm() && !strcmp(uiinv_why,"ui_inventory_guard_entry:DropInventory"));     /* a table without the entry */
+      uiguard_unclaim(NULL);uiinv_armed=0;uiinv_drop_index=UINT_MAX;uirep_families=f;uirep_armed=ra;uiguard_armed=ga;}}
     /* The generated table: shapes the code relies on, and the entries the replay hooks itself are covered by that family. */
     for(unsigned i=0;i<UIGUARD_ENTRIES;i++) {
         const uiguard_entry *e=&uiguard_table[i];

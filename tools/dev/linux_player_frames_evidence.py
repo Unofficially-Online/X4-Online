@@ -60,7 +60,7 @@ THROTTLE_MEMBER = re.compile(r'throttle_member=(before|applied|updated) tick=(\d
                              r'object=([0-9a-f]+) field328=([0-9a-f]{8}) '
                              r'field2f0=([0-9a-f]{8}) field2f4=([0-9a-f]{2})')
 STAGE = re.compile(r'stage=(entered|before_singleton|after_singleton|before_take|after_take) '
-                   r'tick=5 thread=(\d+)')
+                   r'tick=(\d+) thread=(\d+)')
 FIRST_INPUT = re.compile(r'input=(press|release) id=2 state=([01]) keys=([01]{4}) digital=(' + NUMBER + ')')
 READY = re.compile(r'physics=ready generation=(\d+) main_parked=1')
 
@@ -87,7 +87,7 @@ def input_policy(tick):
     return 0, '0000', 'none'
 
 
-def parse_worker_evidence(lines, frame_count):
+def parse_worker_evidence(lines, frame_count, *, first_tick=5, final_tick=None):
     errors, events = [], []
     worker = re.compile(r'X4LAN PLAYER_CONTROL_RECURRING_WORKER tick=([1-9]\d{0,19}) '
                         r'tail=1 event=(enter|release)\n')
@@ -95,9 +95,9 @@ def parse_worker_evidence(lines, frame_count):
                             r'readiness_only=0 bank_writes=1 context_writes=unverified reference_calls=1 '
                             r'other_threads_excluded=0 tail=1\n')
     for line in lines:
-        if is_fatal_gate_message(line) or 'PLAYER_CONTROL_RECURRING_FATAL' in line:
+        if is_fatal_gate_message(line) or 'PLAYER_CONTROL_RECURRING_FATAL' in line or 'PLAYER_PHASES_FATAL' in line:
             errors.append('fatal worker record: ' + line.strip()[:300])
-        if 'PLAYER_CONTROL_RECURRING' not in line or 'PLAYER_CONTROL_RECURRING_FATAL' in line:
+        if 'PLAYER_CONTROL_RECURRING' not in line or 'PLAYER_CONTROL_RECURRING_FATAL' in line or 'PLAYER_PHASES_FATAL' in line:
             continue
         match = worker.fullmatch(line)
         if match:
@@ -108,20 +108,22 @@ def parse_worker_evidence(lines, frame_count):
             events.append(('complete', int(match[1])))
             continue
         errors.append('malformed recurring worker record')
-    expected = [(event, tick) for tick in range(5, 4 + frame_count)
+    final_tick = final_tick if final_tick is not None else 4 + frame_count
+    expected = [(event, tick) for tick in range(first_tick, final_tick)
                 for event in ('enter', 'release', 'complete')]
-    expected.append(('enter', 4 + frame_count))
+    expected.append(('enter', final_tick))
     if events != expected:
         errors.append('recurring worker events are missing, duplicated or out of order')
     return {'pass': not errors, 'events': events, 'errors': errors}
 
 
-def parse_frame(lines, tick, baseline, previous_time, previous_digital, input_mode="scripted", allow_throttle=False, throttle_start_tick=5):
+def parse_frame(lines, tick, baseline, previous_time, previous_digital, input_mode="scripted", allow_throttle=False, throttle_start_tick=5, *, take_tick=5, apply_tick=5):
     errors, events, snapshots, samples, bodies, inputs, upkeep = [], [], {}, [], [], [], []
     stage_threads = []
     before_update = after_update = update = None
     throttle_rows, pending_throttle = [], None
-    first = tick == 5
+    first = tick == take_tick
+    preapply = tick < apply_tick
     for line in lines:
         if not line.endswith('\n') or not line.startswith(PREFIX):
             errors.append('unexpected or incomplete frame record')
@@ -192,7 +194,9 @@ def parse_frame(lines, tick, baseline, previous_time, previous_digital, input_mo
         match = STAGE.fullmatch(text)
         if match:
             events.append(match[1])
-            stage_threads.append(int(match[2]))
+            if int(match[2]) != take_tick or tick != take_tick:
+                errors.append('lifecycle stage outside the explicit Take epoch')
+            stage_threads.append(int(match[3]))
             continue
         match = NETWORK_INPUT.fullmatch(text) if input_mode == 'network' else None
         if match:
@@ -257,6 +261,12 @@ def parse_frame(lines, tick, baseline, previous_time, previous_digital, input_mo
             except ValueError as error:
                 errors.append('invalid body observation: ' + str(error))
             continue
+        if text == 'physics=take_no_update version=1' and preapply and first:
+            events.append('take_no_update')
+            continue
+        if text == f'physics=preapply generation={tick} update=0' and preapply and not first:
+            events.append('preapply')
+            continue
         match = READY.fullmatch(text)
         if match:
             if int(match[1]) != tick:
@@ -278,7 +288,13 @@ def parse_frame(lines, tick, baseline, previous_time, previous_digital, input_mo
     if pending_throttle is not None and len(pending_throttle['members']) != pending_throttle['member_count']:
         errors.append('missing throttle member records')
     expected_events = (FIRST_EVENTS if first else REPEATED_EVENTS) + COMMON_EVENTS
-    if input_mode == 'network':
+    if preapply:
+        expected_events = ((FIRST_EVENTS[:8] + ['take_no_update', 'physics_canonical'])
+                           if first else []) + COMMON_EVENTS
+        if not first:
+            expected_events.insert(expected_events.index('ready'), 'preapply')
+            expected_events.remove('ready')
+    elif input_mode == 'network':
         expected_events = [event for event in expected_events if event not in ('input_press', 'input_release')]
         offset = expected_events.index('before_update')
         expected_events[offset:offset] = ['network_before', 'network_applied']
@@ -306,10 +322,12 @@ def parse_frame(lines, tick, baseline, previous_time, previous_digital, input_mo
                     (first and (press['digital'] != 0 or release['digital'] != -1)) or
                     (not first and (previous_digital is None or press['digital'] != previous_digital))):
                 errors.append('input policy or digital carry mismatch')
-    if (not before_update or not update or update['input'] != expected_update or
+    if not preapply and (not before_update or not update or update['input'] != expected_update or
             not math.isfinite(update['time']) or after_update != before_update['now'] or
             update['time'] != before_update['now']):
         errors.append('native update late time write or input mismatch')
+    if preapply and (before_update or after_update is not None or update or inputs):
+        errors.append('controller Update or input before the common apply epoch')
     if update:
         for stage in ('before', 'after'):
             times = [sample['time'] for sample in samples if sample['stage'] == stage]
@@ -338,7 +356,7 @@ def parse_frame(lines, tick, baseline, previous_time, previous_digital, input_mo
     return frame, errors, worker_thread
 
 
-def validate_frame_state(frame, initial, canonical, taken, baseline_bodies, anchor=None):
+def validate_frame_state(frame, initial, canonical, taken, baseline_bodies, anchor=None, *, take_tick=5, apply_tick=5):
     errors = []
     tick, snapshots, bodies = frame['tick'], frame['snapshots'], frame['bodies']
     initial_bank = bytes.fromhex(initial['bank'])
@@ -346,7 +364,7 @@ def validate_frame_state(frame, initial, canonical, taken, baseline_bodies, anch
         changed = sum(a != b for a, b in zip(initial_bank, bytes.fromhex(snapshot['bank'])))
         if changed != int(snapshot['changed']):
             errors.append('snapshot changed byte count mismatch: ' + label)
-    if tick == 5:
+    if tick == take_tick:
         equal = ('bank', 'zone', 'animation_a', 'animation_b', *CONTEXT_FIELDS)
         if (initial['changed'] != '0' or canonical['changed'] != '0' or not int(initial['zone'], 16) or
                 any(initial[key] != canonical[key] for key in equal) or
@@ -357,10 +375,10 @@ def validate_frame_state(frame, initial, canonical, taken, baseline_bodies, anch
                 canonical['vtable'] == taken['vtable']):
             errors.append('first-frame controller/private vtable mismatch')
         updated = snapshots.get('physics_updated')
-        if not updated or updated['controller'] != taken['controller'] or updated['vtable'] != taken['vtable']:
+        if tick >= apply_tick and (not updated or updated['controller'] != taken['controller'] or updated['vtable'] != taken['vtable']):
             errors.append('first-frame controller changed after take')
     brackets = [('physics_upkeep_before', 'physics_upkeep_after'), ('physics_end', 'physics_sampled')]
-    if tick != 5:
+    if tick >= apply_tick and tick != take_tick:
         brackets.insert(0, ('physics_update_before', 'physics_update_after'))
     for first, second in brackets:
         left, right = snapshots.get(first), snapshots.get(second)
@@ -398,8 +416,15 @@ def validate_frame_state(frame, initial, canonical, taken, baseline_bodies, anch
     return errors
 
 
-def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_count, input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None):
+def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_count, input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None, session_frames=0, startup=None):
     errors, frames, blocks = [], [], []
+    from linux_player_startup_phases import startup_phases
+    try:
+        phase = startup_phases(startup)
+        if phase['version'] and (not session_frames or input_mode != 'network' or allow_throttle or allow_camera):
+            raise ValueError('common startup requires a finite neutral-diagnostic network session')
+    except ValueError as error:
+        return {'pass': False, 'errors': [str(error)], 'frames': []}
     if (input_mode not in ('scripted', 'network') or type(allow_throttle) is not bool or
             (allow_throttle and input_mode != 'network') or
             type(throttle_start_tick) is not int or throttle_start_tick not in (5, 6) or
@@ -407,6 +432,14 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
         return {'pass': False, 'errors': ['invalid input_mode'], 'frames': [], 'movement_proven': False,
                 'restored': False, 'resumed': False, 'other_threads_excluded': False}
     maximum = 600 if input_mode == 'network' else 180
+    if session_frames:
+        from linux_ui_session_budget import session_budget
+        try:
+            if input_mode != 'network' or session_budget(session_frames)['frames'] != frame_count:
+                raise ValueError('session physics budget mismatch')
+            maximum = session_frames
+        except ValueError as error:
+            return {'pass':False,'errors':[str(error)],'frames':[]}
     if type(frame_count) is not int or not 2 <= frame_count <= maximum:
         return {'pass': False, 'errors': [f'frame_count must be an integer from 2 through {maximum}'], 'frames': [],
                 'movement_proven': False, 'restored': False, 'resumed': False, 'other_threads_excluded': False}
@@ -415,20 +448,20 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
         if input_mode != 'network' or frame_count < 4 or type(presentation_slot) is not int or presentation_slot not in (1, 2):
             return {'pass': False, 'errors': ['invalid presentation admission'], 'frames': [], 'movement_proven': False,
                     'restored': False, 'resumed': False, 'other_threads_excluded': False}
-        presentation = validate_presentation_rows(lines, presentation_slot)
+        presentation = validate_presentation_rows(lines, presentation_slot, tick=phase['presentation_probe'])
         errors.extend(presentation['errors'])
         if presentation['pass']:
             first_index = presentation['indices'][0]
             previous = lines[first_index - 1] if first_index else ''
-            frame_begin = PREFIX + 'physics=frame tick=7 event=begin\n'
-            frame_end = PREFIX + 'physics=frame tick=7 event=end\n'
+            frame_begin = PREFIX + f'physics=frame tick={phase["presentation_probe"]} event=begin\n'
+            frame_end = PREFIX + f'physics=frame tick={phase["presentation_probe"]} event=end\n'
             in_frame = frame_begin in lines[:first_index] and frame_end in lines[presentation['indices'][-1] + 1:]
             if not in_frame or not previous.startswith(PREFIX + 'physics=upkeep stage=leave '):
                 errors.append('presentation outside tick 7 upkeep/end boundary')
             else:
                 indices = set(presentation['indices'])
                 lines = [line for index, line in enumerate(lines) if index not in indices]
-    policy = verify_context_policy(lines, allow_camera=allow_camera)
+    policy = verify_context_policy(lines, allow_camera=allow_camera, first_tick=phase['take'])
     errors.extend(policy['errors'])
     lines = policy['lines']
     current_tick, current_lines, saw_final = None, [], False
@@ -514,7 +547,7 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
         errors.append('unterminated frame')
     if not saw_final or returncode != 223:
         errors.append('missing final discard result or process exit 223')
-    if [tick for tick, _ in blocks] != list(range(5, 5 + frame_count)):
+    if [tick for tick, _ in blocks] != list(range(phase['take'], phase['apply'] + frame_count)):
         errors.append('frame generations are missing, duplicated or out of order')
 
     baseline = {}
@@ -523,12 +556,13 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
     previous_time = previous_digital = None
     for tick, records in blocks:
         try:
-            frame, frame_errors, thread = parse_frame(records, tick, baseline, previous_time, previous_digital, input_mode, allow_throttle, throttle_start_tick)
+            frame, frame_errors, thread = parse_frame(records, tick, baseline, previous_time, previous_digital, input_mode, allow_throttle, throttle_start_tick,
+                                                       take_tick=phase['take'], apply_tick=phase['apply'])
         except (ValueError, OverflowError) as error:
             frame = {'tick': tick, 'events': [], 'snapshots': {}, 'inputs': [], 'update': None,
                      'samples': [], 'bodies': [], 'upkeep': [], 'body_comparisons': []}
             frame_errors, thread = ['malformed numeric field: ' + str(error)[:160]], None
-        if tick == 5:
+        if tick == phase['take']:
             initial = frame['snapshots'].get('initial')
             canonical = frame['snapshots'].get('physics_canonical')
             taken = frame['snapshots'].get('taken')
@@ -536,14 +570,15 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
         for label, snapshot in frame['snapshots'].items():
             snapshot['context_policy'] = policy['snapshots'].get((tick, label))
         if initial and canonical and taken:
-            frame_errors.extend(validate_frame_state(frame, initial, canonical, taken, baseline_bodies, active_anchor))
+            frame_errors.extend(validate_frame_state(frame, initial, canonical, taken, baseline_bodies, active_anchor,
+                                                     take_tick=phase['take'], apply_tick=phase['apply']))
         else:
             frame_errors.append('missing first-frame baseline')
         if active_anchor and tick == 6 and initial and (initial['nodes'] != '13' or hashlib.sha256(bytes.fromhex(initial['payloads'])).hexdigest() != active_anchor['selected_hash']):
             frame_errors.append('camera proof does not match initial selected contexts')
         if active_anchor and tick == 6 and (not frame['bodies'] or frame['bodies'][0]['ship'] != int(active_anchor['target'], 16) or frame['bodies'][0]['runtime'] != active_anchor['runtime'] or not canonical or canonical['controller'] != active_anchor['controller']):
             frame_errors.append('camera anchor target or controller identity mismatch')
-        if tick == 5 and len(frame['bodies']) == 4:
+        if tick == phase['take'] and len(frame['bodies']) == 4:
             baseline_bodies = frame['bodies'][:2]
         if frame['update']:
             previous_time = frame['update']['now']
@@ -552,7 +587,8 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
         frame['errors'] = frame_errors
         errors.extend(f'frame {tick}: {error}' for error in frame_errors)
         frames.append(frame)
-    worker = parse_worker_evidence(stderr_lines, frame_count)
+    worker = parse_worker_evidence(stderr_lines, frame_count, first_tick=phase['take'],
+                                   final_tick=phase['apply'] + frame_count - 1)
     errors.extend(worker['errors'])
     return {'pass': not errors, 'returncode': returncode, 'frame_count': frame_count,
             'frames': frames, 'worker': worker, 'errors': errors, 'presentation': presentation, 'context_policy': {
@@ -561,7 +597,7 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
 
 
 def collect_recurring_physics_evidence(trace, retained, engine, output, returncode, *, frame_count, stderr,
-                                       input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None):
+                                       input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None, session_frames=0, startup=None):
     """Retain all trace bytes before parsing; failures never produce a pass."""
     errors = []
     trace_limit = NETWORK_MAX_TRACE_BYTES if input_mode == 'network' else MAX_TRACE_BYTES
@@ -588,10 +624,10 @@ def collect_recurring_physics_evidence(trace, retained, engine, output, returnco
         with Path(stderr).open(encoding='utf-8', errors='strict') as worker_file:
             worker_lines = worker_file.readlines()
         evidence = parse_recurring_physics_evidence(b''.join(chunks).decode('utf-8').splitlines(keepends=True),
-                                                    worker_lines, returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot)
+                                                    worker_lines, returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot, session_frames=session_frames, startup=startup)
         evidence['log_sha256'] = digest.hexdigest()
     except (OSError, UnicodeError) as error:
-        evidence = parse_recurring_physics_evidence([], [], returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot)
+        evidence = parse_recurring_physics_evidence([], [], returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot, session_frames=session_frames, startup=startup)
         errors.append('native trace or worker evidence unavailable/invalid: ' + str(error))
     for source in (engine, output, stderr):
         try:

@@ -42,6 +42,39 @@
  * most 600 ticks): every call of the formation site (GetTargetPositionForWingMan) in it is a row too, whatever
  * happens to it (outcome=outside|trivial|nav|not_ancestor|spaces|failure|observe|diverted), with the result
  * matrix as sim= and the image return addresses above the hook as chain= (up to eight RVAs).
+ * The steering step's dock sites (10 Nov, hjs4 after a far-sector join: fighter 0x6da76 parted from the session by 0.0003 m
+ * in one tick, at another tick each run, with every input of its model equal; found by the hot-join session's write
+ * watch): the Steering model's step 0xec7200 has a branch for a ship that flies to a dock (agent +0xf5c and +0xac8, a
+ * time gate at model +0x378). It looks the dock object up (0x86fc70, class 0x4d) and asks 0x3dde10 twice for its
+ * transform in the frame of a second component (0xec7cfe: the dock's position, compared with a range; 0xec7e1b: its
+ * frame for the approach), flag 0, the matrix set to the identity first (0x97010). The same published-cache read as
+ * above; hjs4's dock is a bay of a carrier, so the chain holds a flying ship (its cached pose is the last one this
+ * client published for drawing) and animated parts. Sites dock_point and dock_frame: on a batch job in a joined pass,
+ * with b a live ancestor of a, the call becomes X4's own hierarchy walk 0xe8a110(matrix, no velocity, &a, &b), the
+ * conversion the pathing code uses for a path point: up to each object with an Agent through that Agent's pathing
+ * read bank (0xeadc70, read-only, the pass does not write the banks), the spans between through the walk's two
+ * calls of 0x3dde10, which are sites of this module. Inside a dock site's walk (a thread-local depth) those two
+ * divert spans of spaces and parts too (their cached and own transforms need not agree here) and always compose, in
+ * 'observe' as well, so 'observe' compares the dock sites' whole result with the cache's. dock_agents= counts the
+ * dock calls whose chain holds an Agent's object. Every call of a dock site inside the row window is a row with its
+ * outcome.
+ * 'all' (10 Nov, an experiment for far-sector joins; 'sim' stays the default until a session has shown it): two more
+ * cases leave the published caches. (1) A span of spaces and parts only is composed like the others: a client that never
+ * drew a zone has no cached parents for its objects (lockstep_traffic_rows.h, the lane build), so "static, the same on
+ * every client either way" does not hold there. (2) b is not above a: 0x3dde10 with flag 0 then lists b's cached parents,
+ * composes a's chain up to the first of them and applies the inverse of b's chain from there. That is the formation site's
+ * usual case (a wingman's slot from its leader's zone into its own; an ns8 session: formation:173409 calls,
+ * not_ancestor=173838, all native) and both far-join cases still open are a formation leader that parts with its escorts a
+ * tick behind. Here: the first live parent of b (+0x70) that is also above a is the common ancestor c; a's chain up to c is
+ * composed into the matrix, b's into an identity, and the result is the first in the second's frame (position: the
+ * difference turned by b's rows; rows: a's times b's transposed). An object with a NavigationController on either chain:
+ * native (nav=). siblings= counts the composed calls. 'observe' computes this case too, keeps the native result and rows
+ * the calls that differ, so one run shows whether the cache and the simulation disagree where a ship parts.
+ * 'observe' also measures the hierarchy itself (parents=calls/differing in the status): for every call of a site on a pass
+ * job it walks a's and b's chains and compares each link's published parent (link + 0xe0 + bank * 0x80, the bank the thread
+ * reads: 0x38f4eb4) with the live one (+0x70). The pathing code walks published parents inline in 98 places (four in
+ * GetTargetPositionForWingMan before this site's call); whether those can differ from the live parents on a client, e.g.
+ * for a zone it never drew, was a guess: this counts it, per client.
  * Not covered: the velocity variant 0x3df3f0 (0xe8a214, 0xe8a40c; the target path passes no velocity) and the
  * walk's own choice of stops and common ancestor (0xf231e0, 0x3d8f90), which read the published view's cached
  * parents (the result in b's frame does not depend on it while cached and live parents agree).
@@ -69,15 +102,20 @@
 #define PTF_CLASS_SLOT 0x11e8u   /* IsOfClass(int) */
 #define PTF_CLASS_OBJECT 0x49    /* the class 0xf231e0 stops at: an object with a controller */
 #define PTF_DEPTH 32u
-#define PTF_SITES 5u
+#define PTF_SITES 7u
+#define PTF_SITE_DOCK 5u         /* 5, 6: the steering step's dock sites; spans of spaces and parts are diverted too */
 #define PTF_RING 4096u
 #define PTF_ROWS_PER_TICK 256u
 #define PTF_STOP_REASON 180u     /* 179 fp redirect */
-enum {PTF_OFF,PTF_SIM,PTF_OBSERVE};
+enum {PTF_OFF,PTF_SIM,PTF_OBSERVE,PTF_ALL};
 static const struct {uint32_t site;const char *name;} ptf_sites[PTF_SITES]={
-    {0xe8a221u,"walk"},{0xe8a416u,"walk_end"},{0xe8d5eau,"point_space"},{0xe94842u,"agent_space"},{0xe9a713u,"formation"}};
-/* The calls' argument setup (xor r9d,r9d .. call), and the pass time's store and read. */
-static const struct {uint32_t rva,size;const char *sha;} ptf_pins[5]={
+    {0xe8a221u,"walk"},{0xe8a416u,"walk_end"},{0xe8d5eau,"point_space"},{0xe94842u,"agent_space"},{0xe9a713u,"formation"},
+    {0xec7cfeu,"dock_point"},{0xec7e1bu,"dock_frame"}};
+/* The calls' argument setup (xor r9d,r9d .. call), and the pass time's store and read; the two dock sites'
+ * (xor r9d,r9d; mov r8,[rbp-0x60]; lea rdx,[rbp+0x90 | 0xd0]; mov rcx,[rbp-0x80]; call). */
+static const struct {uint32_t rva,size;const char *sha;} ptf_pins[7]={
+    {0xec7cecu,0x17u,"91dd7f0f0ee28de47dab983b64ffdbafb0085cfd4822d01b0ce5888de99d23c8"},
+    {0xec7e09u,0x17u,"782801d67c931ef7d5976d0135282bd91004f06f7a8731d9ad607f913b5cf93f"},
     {0xe8d5dcu,0x18u,"75692118a89a6db8b99b2dde7b3e44499d4fb01baac1fec01485a98156f982c7"},
     {0xe94835u,0x12u,"2334ab86dcfba3ce89d82a2440c24251b4d80934b58ad03e252e19db98235df2"},
     {0xe9a707u,0x11u,"a40eb0b04de0975e01a194ad850b2575735d9d111075af12d982af36ceac4c88"},
@@ -86,6 +124,26 @@ static const struct {uint32_t rva,size;const char *sha;} ptf_pins[5]={
 typedef void *(*ptf_hier_fn)(void *,float *,void *,uint64_t);
 typedef void (*ptf_gtr_fn)(void *,float *,double,void *,unsigned char);
 typedef char (*ptf_class_fn)(void *,int);
+typedef void (*ptf_walk_fn)(float *,void *,void **,void **);
+static ptf_walk_fn ptf_walk_native; /* tests only: replaces 0xe8a110 */
+static _Thread_local unsigned ptf_dock_depth; /* this thread is inside a dock site's walk */
+static volatile LONG64 ptf_dock_agents,ptf_siblings,ptf_parent_calls,ptf_parent_differs;
+#define PTF_PUBLISHED_BANK 0x38f4eb4u /* the bank index a thread without a view reads */
+#define PTF_PUBLISHED_PARENT 0xe0u    /* + bank * 0x80: the published parent */
+static const uint32_t *ptf_test_bank; /* tests only: the bank index */
+/* 1 when a link of x's live chain has another published parent than its live one. */
+static int ptf_published_differs(const unsigned char *x) {
+    uint32_t bank=0;
+    if(ptf_test_bank) bank=*ptf_test_bank;else if(!read_local(image+PTF_PUBLISHED_BANK,&bank,4)) return 0;
+    if(bank>1u) return 0;
+    for(unsigned depth=0;x && depth<PTF_DEPTH;depth++) {
+        unsigned char *live=NULL,*published=NULL;
+        if(!read_local(x+PTF_PARENT,&live,8) || !read_local(x+PTF_PUBLISHED_PARENT+0x80u*bank,&published,8)) return 0;
+        if(live!=published) return 1;
+        x=live;
+    }
+    return 0;
+}
 static ptf_hier_fn ptf_hier_native; /* tests only: replaces 0x3dde10 */
 static ptf_gtr_fn ptf_gtr_native;   /* tests only: replaces 0x3db8a0 */
 static unsigned char *ptf_test_tls; /* tests only: the calling thread's TLS block */
@@ -160,6 +218,88 @@ static void ptf_row(unsigned site,const unsigned char *a,const unsigned char *b,
     if(native) memcpy(r->native,native,sizeof(r->native));else memset(r->native,0,sizeof(r->native));
     InterlockedExchange64(&r->ready,index+1);
 }
+/* b is a live ancestor of a within PTF_DEPTH links. */
+static int ptf_is_ancestor(const unsigned char *a,const unsigned char *b) {
+    const unsigned char *link=a;
+    for(unsigned depth=0;depth<PTF_DEPTH && link;depth++) {
+        if(link==b) return 1;
+        unsigned char *parent=NULL;
+        if(!read_local(link+PTF_PARENT,&parent,8)) return 0;
+        link=parent;
+    }
+    return 0;
+}
+/* A dock site's call, the chain known to reach b (agent: it holds an Agent's object): X4's hierarchy walk. */
+static void *ptf_dock_core(unsigned site,void *a,float *out,void *b,uint64_t flag,ptf_hier_fn native,const unsigned char *object,uint32_t ctrl_vt,
+                           int agent,const unsigned char *manager,unsigned *outcome) {
+    double time=0;
+    if(!manager || !read_local(manager+PTF_PASS_TIME,&time,8) || !isfinite(time)) {
+        *outcome=PTF_OUT_FAILURE;ptf_stage="pass_time";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);
+    }
+    __declspec(align(16)) float sim[16];memcpy(sim,out,sizeof(sim));
+    void *from=a,*to=b;int ok=1;const ptf_walk_fn walk=ptf_walk_native?ptf_walk_native:(ptf_walk_fn)(void*)(image+PTF_WALK);
+    ++ptf_dock_depth;
+    __try {walk(sim,NULL,&from,&to);} __except(EXCEPTION_EXECUTE_HANDLER) {ok=0;}
+    --ptf_dock_depth;
+    if(!ok) {*outcome=PTF_OUT_FAILURE;ptf_stage="dock_walk";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);}
+    ptf_last_time=time;
+    if(agent) InterlockedIncrement64(&ptf_dock_agents);
+    if(object) InterlockedIncrement64(&ptf_objects);
+    if(ptf_mode==PTF_OBSERVE) {
+        *outcome=PTF_OUT_OBSERVE;void *result=native(a,out,b,flag);
+        const int differs=memcmp(sim,out,sizeof(sim))!=0;
+        if(differs) InterlockedIncrement64(&ptf_differs);
+        if(object || agent || differs) ptf_row(site,a,b,object,ctrl_vt,time,sim,out,differs,0);
+        return result;
+    }
+    *outcome=PTF_OUT_DIVERTED;InterlockedIncrement64(&ptf_diverted);
+    memcpy(out,sim,sizeof(sim));
+    if(object) ptf_row(site,a,b,object,ctrl_vt,time,sim,NULL,0,0);
+    return out;
+}
+/* b is not above a ('all', 'observe'): through the common live ancestor, see the head. */
+static void *ptf_sibling_core(unsigned site,unsigned char *a,float *out,unsigned char *b,uint64_t flag,ptf_hier_fn native,ptf_gtr_fn gtr,
+                              const unsigned char *manager,unsigned *outcome) {
+    unsigned char *above[PTF_DEPTH],*c=NULL,*link=a;unsigned n=0;
+    for(;link && n<PTF_DEPTH;n++) {above[n]=link;unsigned char *parent=NULL;if(!read_local(link+PTF_PARENT,&parent,8)) break;link=parent;}
+    link=b;
+    for(unsigned depth=0;link && depth<PTF_DEPTH && !c;depth++) {
+        for(unsigned i=0;i<n;i++) if(above[i]==link) {c=link;break;}
+        unsigned char *parent=NULL;if(c || !read_local(link+PTF_PARENT,&parent,8)) break;
+        link=parent;
+    }
+    unsigned char *oa=NULL,*ob=NULL;uint32_t va=0,vb=0;
+    const int ca=!c?0:a==c?1:ptf_chain(a,c,&oa,&va),cb=!c?0:b==c?1:ptf_chain(b,c,&ob,&vb);
+    if(ca<0 || cb<0) {*outcome=PTF_OUT_NAV;InterlockedIncrement64(&ptf_nav);return native(a,out,b,flag);}
+    if(!ca || !cb) {*outcome=PTF_OUT_NOT_ANCESTOR;InterlockedIncrement64(&ptf_not_ancestor);return native(a,out,b,flag);}
+    double time=0;
+    if(!manager || !read_local(manager+PTF_PASS_TIME,&time,8) || !isfinite(time)) {
+        *outcome=PTF_OUT_FAILURE;ptf_stage="pass_time";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);
+    }
+    static const float identity[16]={0,0,0,0, 1,0,0,0, 0,1,0,0, 0,0,1,0};
+    __declspec(align(16)) float ta[16],tb[16],sim[16];memcpy(ta,out,sizeof(ta));memcpy(tb,identity,sizeof(tb));
+    int ok=1;
+    __try {if(a!=c) gtr(a,ta,time,c,0);if(b!=c) gtr(b,tb,time,c,0);} __except(EXCEPTION_EXECUTE_HANDLER) {ok=0;}
+    if(!ok) {*outcome=PTF_OUT_FAILURE;ptf_stage="compose";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);}
+    const float d[3]={ta[0]-tb[0],ta[1]-tb[1],ta[2]-tb[2]};
+    for(unsigned j=0;j<3;j++) sim[j]=d[0]*tb[4+4*j]+d[1]*tb[5+4*j]+d[2]*tb[6+4*j];
+    sim[3]=ta[3];
+    for(unsigned i=0;i<3;i++) {
+        for(unsigned j=0;j<3;j++) sim[4+4*i+j]=ta[4+4*i]*tb[4+4*j]+ta[5+4*i]*tb[5+4*j]+ta[6+4*i]*tb[6+4*j];
+        sim[7+4*i]=ta[7+4*i];
+    }
+    ptf_last_time=time;
+    const unsigned char *object=oa?oa:ob;const uint32_t ctrl_vt=oa?va:vb;
+    if(ptf_mode==PTF_OBSERVE) {
+        *outcome=PTF_OUT_OBSERVE;void *result=native(a,out,b,flag);
+        const int differs=memcmp(sim,out,sizeof(sim))!=0;
+        if(differs) {InterlockedIncrement64(&ptf_differs);ptf_row(site,a,b,object,ctrl_vt,time,sim,out,1,0);}
+        return result;
+    }
+    *outcome=PTF_OUT_DIVERTED;InterlockedIncrement64(&ptf_diverted);InterlockedIncrement64(&ptf_siblings);
+    memcpy(out,sim,sizeof(sim));
+    return out;
+}
 /* One call of a site: cls the thread's path_thread_class, tls its TLS block, manager the PathingManager. */
 static void *ptf_call_core(unsigned site,void *a,float *out,void *b,uint64_t flag,unsigned cls,const unsigned char *tls,
                            ptf_hier_fn native,ptf_gtr_fn gtr,const unsigned char *manager,unsigned *outcome) {
@@ -170,10 +310,21 @@ static void *ptf_call_core(unsigned site,void *a,float *out,void *b,uint64_t fla
     if((flag&0xff) || !a || !b || a==b || !out) {*outcome=PTF_OUT_TRIVIAL;InterlockedIncrement64(&ptf_trivial);return native(a,out,b,flag);}
     unsigned char *object;uint32_t ctrl_vt;
     const int chain=ptf_chain(a,b,&object,&ctrl_vt);
+    const unsigned nested=ptf_dock_depth; /* a call of the walk's sites from inside a dock site's walk */
+    if(ptf_mode==PTF_OBSERVE && !nested) {
+        InterlockedIncrement64(&ptf_parent_calls);
+        if(ptf_published_differs(a) || ptf_published_differs(b)) InterlockedIncrement64(&ptf_parent_differs);
+    }
+    if(site>=PTF_SITE_DOCK && chain && (chain>0 || ptf_is_ancestor(a,b)))
+        return ptf_dock_core(site,a,out,b,flag,native,object,ctrl_vt,chain<0,manager,outcome);
+    if(site>=PTF_SITE_DOCK) {*outcome=PTF_OUT_NOT_ANCESTOR;InterlockedIncrement64(&ptf_not_ancestor);return native(a,out,b,flag);}
     if(chain<0) {*outcome=PTF_OUT_NAV;InterlockedIncrement64(&ptf_nav);return native(a,out,b,flag);}
-    if(!chain) {*outcome=PTF_OUT_NOT_ANCESTOR;InterlockedIncrement64(&ptf_not_ancestor);return native(a,out,b,flag);}
-    /* Spaces only (zones, sectors, parts): static, the same on every client either way; stock bits stay. */
-    if(!object && ptf_mode==PTF_SIM) {*outcome=PTF_OUT_SPACES;InterlockedIncrement64(&ptf_spaces);return native(a,out,b,flag);}
+    if(!chain) {
+        if(ptf_mode==PTF_SIM || nested) {*outcome=PTF_OUT_NOT_ANCESTOR;InterlockedIncrement64(&ptf_not_ancestor);return native(a,out,b,flag);}
+        return ptf_sibling_core(site,a,out,b,flag,native,gtr,manager,outcome);
+    }
+    /* Spaces only (zones, sectors, parts): 'sim' keeps stock's bits there ('all' composes them too, see the head). */
+    if(!object && ptf_mode==PTF_SIM && !nested) {*outcome=PTF_OUT_SPACES;InterlockedIncrement64(&ptf_spaces);return native(a,out,b,flag);}
     double time=0;
     if(!manager || !read_local(manager+PTF_PASS_TIME,&time,8) || !isfinite(time)) {
         *outcome=PTF_OUT_FAILURE;ptf_stage="pass_time";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);
@@ -184,7 +335,7 @@ static void *ptf_call_core(unsigned site,void *a,float *out,void *b,uint64_t fla
     if(!ok) {*outcome=PTF_OUT_FAILURE;ptf_stage="compose";InterlockedIncrement64(&ptf_failures);return native(a,out,b,flag);}
     ptf_last_time=time;
     if(object) InterlockedIncrement64(&ptf_objects);
-    if(ptf_mode==PTF_OBSERVE) {
+    if(ptf_mode==PTF_OBSERVE && !nested) {
         *outcome=PTF_OUT_OBSERVE;void *result=native(a,out,b,flag);
         const int differs=memcmp(sim,out,sizeof(sim))!=0;
         if(differs) InterlockedIncrement64(&ptf_differs);
@@ -201,7 +352,7 @@ static void *ptf_call_using(unsigned site,void *a,float *out,void *b,uint64_t fl
     InterlockedIncrement64(&ptf_site_calls[site]);
     unsigned outcome=PTF_OUT_OUTSIDE;
     void *result=ptf_call_core(site,a,out,b,flag,cls,tls,native,gtr,manager,&outcome);
-    if(site==PTF_SITE_FORMATION && ptf_window_to && stats.issued>=ptf_window_from && stats.issued<=ptf_window_to && out) {
+    if((site==PTF_SITE_FORMATION || site>=PTF_SITE_DOCK) && ptf_window_to && stats.issued>=ptf_window_from && stats.issued<=ptf_window_to && out) {
         __declspec(align(16)) float m[16];memcpy(m,out,sizeof(m));
         uint32_t chain[16];memset(chain,0xff,sizeof(chain));void *frames[24];USHORT n=RtlCaptureStackBackTrace(1,24,frames,NULL);unsigned k=0;
         for(USHORT j=0;j<n && k<8;j++) {const unsigned char *f=frames[j];if(f>=image && f<image+0x6fa9000) chain[k++]=(uint32_t)(f-image);}
@@ -226,10 +377,13 @@ static void *ptf_hook1(void *a,float *out,void *b,uint64_t flag) {return ptf_cal
 static void *ptf_hook2(void *a,float *out,void *b,uint64_t flag) {return ptf_call(2,a,out,b,flag);}
 static void *ptf_hook3(void *a,float *out,void *b,uint64_t flag) {return ptf_call(3,a,out,b,flag);}
 static void *ptf_hook4(void *a,float *out,void *b,uint64_t flag) {return ptf_call(4,a,out,b,flag);}
+static void *ptf_hook5(void *a,float *out,void *b,uint64_t flag) {return ptf_call(5,a,out,b,flag);}
+static void *ptf_hook6(void *a,float *out,void *b,uint64_t flag) {return ptf_call(6,a,out,b,flag);}
 static void *ptf_hook(unsigned i) {
     switch(i) {case 0: return (void*)ptf_hook0;case 1: return (void*)ptf_hook1;case 2: return (void*)ptf_hook2;case 3: return (void*)ptf_hook3;
-    default: return (void*)ptf_hook4;}
+    case 4: return (void*)ptf_hook4;case 5: return (void*)ptf_hook5;default: return (void*)ptf_hook6;}
 }
+_Static_assert(PTF_SITES==7u,"one hook per site");
 /* Stub i at page+0x10*i: jmp [rip] -> its hook (the caller's return address stays the X4 site's). */
 static void ptf_write_code(unsigned char *p) {
     memset(p,0xcc,0x10u*PTF_SITES);
@@ -307,7 +461,7 @@ static void ptf_restore(void) {
 /* gate.path_transforms(mode): the UI thread, before the first admitted frame, with the serial pathing join. */
 static int ptf_arm(int mode) {
     if(ptf_installed) return stats.active && mode==ptf_mode; /* an identical rerun after a loading-UI reload */
-    if((mode!=PTF_SIM && mode!=PTF_OBSERVE) || !stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId()!=ui_thread ||
+    if((mode!=PTF_SIM && mode!=PTF_OBSERVE && mode!=PTF_ALL) || !stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId()!=ui_thread ||
        !path_installed || !(path_options&1)) {ptf_stage="state";return 0;}
     for(unsigned i=0;i<PTF_SITES;i++) if(ptf_site_state(i)!=0) {ptf_stage="sites";return 0;}
     if(!ptf_pinned()) {ptf_stage="pins";return 0;}
@@ -363,10 +517,10 @@ static int ptf_row_text(uint64_t index,char *out,size_t cap) {
 static int ptf_status(char *out,size_t cap) {
     uint64_t time;memcpy(&time,&ptf_last_time,8);
     int n=snprintf(out,cap,"mode=%s installed=%d restored=%d stage=%s outside=%lld trivial=%lld spaces=%lld diverted=%lld objects=%lld nav=%lld "
-        "not_ancestor=%lld differs=%lld rows=%lld dropped=%lld failures=%lld time=%016llx sites=",
-        ptf_mode==PTF_SIM?"sim":ptf_mode==PTF_OBSERVE?"observe":"off",ptf_installed,ptf_restored,ptf_stage,(long long)ptf_outside,(long long)ptf_trivial,(long long)ptf_spaces,
+        "not_ancestor=%lld differs=%lld rows=%lld dropped=%lld failures=%lld dock_agents=%lld siblings=%lld parents=%lld/%lld time=%016llx sites=",
+        ptf_mode==PTF_SIM?"sim":ptf_mode==PTF_OBSERVE?"observe":ptf_mode==PTF_ALL?"all":"off",ptf_installed,ptf_restored,ptf_stage,(long long)ptf_outside,(long long)ptf_trivial,(long long)ptf_spaces,
         (long long)ptf_diverted,(long long)ptf_objects,(long long)ptf_nav,(long long)ptf_not_ancestor,(long long)ptf_differs,(long long)ptf_rows,
-        (long long)ptf_dropped,(long long)ptf_failures,(unsigned long long)time);
+        (long long)ptf_dropped,(long long)ptf_failures,(long long)ptf_dock_agents,(long long)ptf_siblings,(long long)ptf_parent_calls,(long long)ptf_parent_differs,(unsigned long long)time);
     if(n<0 || (size_t)n>=cap) return 0;
     for(unsigned i=0;i<PTF_SITES;i++) {
         int m=snprintf(out+n,cap-(size_t)n,"%s%s:%lld",i?",":"",ptf_sites[i].name,(long long)InterlockedCompareExchange64(&ptf_site_calls[i],0,0));

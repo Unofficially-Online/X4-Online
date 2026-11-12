@@ -721,6 +721,7 @@ typedef struct {uint64_t tick,key,runtime;uint32_t site,a,b,pend;unsigned char t
 static rc_pick_row_t rc_pick_ring[RC_PICK_ROWS];
 static volatile LONG64 rc_pick_rows;
 static unsigned rc_pick_rows_ticks;
+static uint64_t rc_pick_rows_from;   /* 0: rows for ticks 1..ticks; else for from..from+ticks (a window late in a run, a joiner's handover) */
 static uint64_t rc_updates,rc_native_frames,rc_viewpoint_id,rc_viewpoint_key,rc_tick=UINT64_MAX,rc_install_tick,rc_install_waits;
 static volatile LONG64 rc_stub_calls[RC_CALLS];
 static volatile LONG64 rc_context_skipped; /* SetParent's context call with a stand-in and no live camera */
@@ -1000,7 +1001,7 @@ static int rc_object_k(void *object,unsigned kind) {
 static void *rc_k_cluster_of(unsigned k) {return k==1?rc_vp2_cluster:k<VIEW_MAX?rc_k_cluster[k]:NULL;}
 /* A policy row (diagnostic) for an object the policy decided on. */
 static void rc_pick_note_full(uint32_t site,void *object,unsigned kind,int two,const float *pos,const uint32_t *ab) {
-    if(!rc_pick_rows_ticks || stats.issued>rc_pick_rows_ticks) return;
+    if(!rc_pick_rows_ticks || stats.issued<rc_pick_rows_from || stats.issued>rc_pick_rows_from+rc_pick_rows_ticks) return;
     rc_pick_row_t r;memset(&r,0,sizeof(r));r.tick=stats.issued;r.site=site;r.two=(unsigned char)two;
     if(pos) {r.has_pos=1;memcpy(r.pos,pos,12);}
     if(ab) {r.has_ab=1;r.a=ab[0];r.b=ab[1];r.pend=ab[2];}
@@ -1058,15 +1059,18 @@ static void rc_zone_test(void *component,float *out,void *camera) {
     if(rc_pick_rows_ticks && camera) rc_pick_note_pos(0x103u,component,RC_OBJ_R12,two,out);
 }
 typedef void (*rc_activate_fn)(void *);
+static uint64_t tp_thread_word(void);static void tp_build_dump(unsigned char *traffic); /* lockstep_traffic_rows.h */
 static rc_activate_fn rc_activate_native; /* tests only: replaces 0x8aacb0 */
 /* A traffic object switched on (diagnostic): +0x1d0 before and after, +0x228. */
 static void rc_activate(unsigned call,uint32_t site,unsigned char *traffic) {
     InterlockedIncrement64(&rc_stub_calls[call]);
     unsigned before=traffic?*(volatile unsigned char *)(traffic+0x1d0):0;
     (rc_activate_native?rc_activate_native:(rc_activate_fn)(void *)(image+rc_calls[call].target))(traffic);
-    if(rc_pick_rows_ticks && traffic)
+    if(rc_pick_rows_ticks && traffic) {
         rc_pick_note_ab(site,traffic,RC_OBJ_R12_TRAFFIC,rc_object_two(traffic,RC_OBJ_R12_TRAFFIC),before,
                         *(volatile unsigned char *)(traffic+0x1d0),*(volatile unsigned char *)(traffic+0x228));
+        if(!before && *(volatile unsigned char *)(traffic+0x1d0)) tp_build_dump(traffic);   /* switched on just now ('view' only) */
+    }
 }
 static void rc_activate_pass(void *traffic) {rc_activate(RC_ACTIVATE_CALL,0x105u,traffic);}
 static void rc_activate_update_a(void *traffic) {rc_activate(RC_ACTIVATE_CALL+1,0x106u,traffic);}
@@ -1079,7 +1083,8 @@ static void *rc_collect(void *traffic,void **vector) {
     void *result=(rc_collect_native?rc_collect_native:(rc_collect_fn)(void *)(image+rc_calls[RC_COLLECT_CALL].target))(traffic,vector);
     if(rc_pick_rows_ticks && traffic && vector) {
         uint64_t count=vector[1]>=vector[0]?((uintptr_t)vector[1]-(uintptr_t)vector[0])/8:0;
-        rc_pick_note_ab(0x108u,traffic,RC_OBJ_R12_TRAFFIC,rc_object_two(traffic,RC_OBJ_R12_TRAFFIC),(uint32_t)count,0,0);
+        const uint64_t word=tp_thread_word();   /* b= pend= the thread's RNG word before this build */
+        rc_pick_note_ab(0x108u,traffic,RC_OBJ_R12_TRAFFIC,rc_object_two(traffic,RC_OBJ_R12_TRAFFIC),(uint32_t)count,(uint32_t)word,(uint32_t)(word>>32));
     }
     return result;
 }
@@ -1498,12 +1503,13 @@ static int rc_pick_row(uint64_t index,char *out,size_t cap) {
     if(n>0 && r->has_ab && (size_t)n<cap) n+=snprintf(out+n,cap-(size_t)n," a=%u b=%u pend=%u",r->a,r->b,r->pend);
     return n>0 && (size_t)n<cap?n:0;
 }
-/* Before the first admitted frame, with the policy armed: rows for ticks 1..ticks. */
-static int rc_pick_rows_arm(unsigned ticks) {
-    if(rc_pick_rows_ticks) return stats.active && rc_pick_rows_ticks==ticks;
-    if(!(rc_policy || (rc_armed_groups&((1u<<RC_MINING)|(1u<<RC_XS)))) || !stats.active || !boot_mode || boot_phase || stats.issued ||
+/* Before the first admitted frame, with the policy armed: rows for ticks 1..ticks, or with from > 0 for from..from+ticks
+ * (then also on a joiner, whose first frame is not tick 1). */
+static int rc_pick_rows_arm(unsigned ticks,uint64_t from) {
+    if(rc_pick_rows_ticks) return stats.active && rc_pick_rows_ticks==ticks && rc_pick_rows_from==from;
+    if(!(rc_policy || (rc_armed_groups&((1u<<RC_MINING)|(1u<<RC_XS)))) || !stats.active || !boot_mode || boot_phase || (!from && stats.issued) ||
        GetCurrentThreadId()!=ui_thread || !ticks || ticks>600) return 0;
-    rc_pick_rows=0;rc_pick_rows_ticks=ticks;return 1;
+    rc_pick_rows=0;rc_pick_rows_ticks=ticks;rc_pick_rows_from=from;return 1;
 }
 /* Reached from a policy thunk: the value the site's load would read, for the object's viewpoint. */
 static void *rc_pick(void *object,uint64_t site) {
@@ -1849,7 +1855,7 @@ static int rc_arm(int group) {
         rc_next=0;rc_updates=rc_native_frames=rc_viewpoint_id=rc_viewpoint_key=rc_install_tick=rc_install_waits=0;rc_tick=UINT64_MAX;rc_failures=0;rc_restored=0;
         rc_view_zone=rc_view_sector=NULL;for(unsigned i=0;i<RC_CALLS;i++) rc_stub_calls[i]=0;rc_installed_groups=0;rc_effect_rows=0;
         rc_next2=0;rc_vp2_zone=rc_vp2_sector=NULL;rc_vp2_id=rc_vp2_key=rc_vp2_updates=0;rc_context_skipped=0;
-        rc_view_sector58=rc_vp2_cluster=NULL;rc_picks=rc_picks_two=rc_alternations=0;rc_pick_rows=0;rc_pick_rows_ticks=0;
+        rc_view_sector58=rc_vp2_cluster=NULL;rc_picks=rc_picks_two=rc_alternations=0;rc_pick_rows=0;rc_pick_rows_ticks=0;rc_pick_rows_from=0;
         for(unsigned i=0;i<RC_SITES;i++) rc_site_picks[i]=0;
         InterlockedExchange(&rc_shape_count,-1);rc_shape_aligned=rc_shape_unmapped=rc_shape_near=rc_shape_far=rc_shape_native=0;
         rc_mining_calls=rc_mining_near_count=rc_mining_foreign=rc_xs_near=rc_xs_far=rc_xs_targets=rc_probe_crystal_far=0;rc_stop=RC_STOP_REASON;

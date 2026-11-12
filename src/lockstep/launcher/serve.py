@@ -37,6 +37,14 @@ class ServeOptions:
     load_wait: int = 45        # seconds from the last player's arrival to the common load
     stall_drop: float = 15
     idle_end: int = 420        # a game whose relay releases no step for this long is over (the load takes 2 to 3 minutes)
+    idle_left: int = 60        # ... once it has stepped: every player has left (a join's pause may take up to 240 s)
+    keep_joins: bool = False   # keep each game's join files in its folder (they are deleted when the game is over)
+    # A join's pause for everyone must stay under the time a client waits for the relay (the gate stops with "relay
+    # timeout" after that; vps4, 11 Nov: a pause of 127 s against a wait of 120 s ended player 1's session as the joiner
+    # arrived). So the joiner catches up longer while the others play, and a join whose pause would still be too long
+    # fails instead. 0: 25 s less than the wait this checkout gives its clients (session.client_tail), at most 170.
+    join_max_pause: int = 0
+    join_catchup: int = 120
     runs: Path = session.ROOT / '.local/runs'
     games: int = 0             # test: end after this many games (0: serve until stopped)
 
@@ -50,6 +58,23 @@ def idle_seconds(status_file, seen, now):
     if step != seen[0]:
         seen[:] = step, now
     return now - seen[1]
+
+
+def idle_limit(o, step, joins):
+    """How long a game may go without a step before it counts as over. Before its first step it is loading; after it,
+    a game without steps has lost its players, unless a joiner is being brought in (the relay pauses everyone for that)."""
+    if not step or step <= 0:
+        return o.idle_end
+    joining = joins and any(state in ('requested', 'queued', 'saved', 'catching_up', 'handover') for state in joins.taken.values())
+    return max(o.idle_left, 240) if joining else o.idle_left
+
+
+def join_pause_limit(given=0):
+    """The relay's --join-max-pause: `given`, or what the clients' wait for the relay allows."""
+    if given:
+        return given
+    wait = re.search(r'native_gate_arm_timeout_ms = (\d+)', session.client_tail(0))
+    return max(30, min(170, (int(wait.group(1)) if wait else 120000) // 1000 - 25))
 
 
 def session_done(status_file):
@@ -151,8 +176,12 @@ class DropIn:
         except (OSError, ValueError, join.JoinError) as error:
             self.log(f'serve: join slot {slot}: the saver\'s files are not served ({error})')
 
-    def close(self):
+    def close(self, keep=False):
+        """The game is over: stop serving, and drop the join files (about 200 MB per join) unless they are to be kept."""
         self.service.close()
+        if not keep:
+            for path in (self.run_dir / 'join').glob('j*.*'):
+                path.unlink(missing_ok=True)
 
 
 def run(o: ServeOptions, log=print):
@@ -175,15 +204,24 @@ def run(o: ServeOptions, log=print):
         + f', lobby on TCP {o.bind}:{port + 1}, relay on UDP {o.bind}:{port}')
     played, games = 0, {}   # games: a game's id (the salt of its token) -> its folder
     live = {'salt': None, 'joins': None}
+    host_sector = (recipe.get('session') or {}).get('player_sector')
 
     def status():
         """What a launcher's page shows before anyone clicks: is a game running, who is there, which starts are free."""
         joins = live['joins']
         taken = dict(joins.taken) if joins else {}
-        return {'running': live['salt'] is not None, 'clients': clients, 'here': len(admissions.players) + len(taken),
+        tick = 0
+        if joins:
+            try:
+                tick = int(json.loads((joins.run_dir / 'desync-status.json').read_text()).get('tick') or 0)
+            except (OSError, ValueError, TypeError):
+                pass
+        return {'running': live['salt'] is not None, 'clients': clients, 'here': len(admissions.players) + len(taken), 'tick': tick,
                 'drop_in': bool(open_slots), 'joinable': bool(joins and admissions.players),   # the savers' launchers are connected
                 'base': (recipe.get('session') or {}).get('base_start') or '',
-                'starts': [{'slot': k, 'start': name, 'sector': sector or '', 'taken': k in taken} for k, name, sector, _ in starts]}
+                'starts': [{'slot': k, 'start': name, 'sector': sector or '', 'taken': k in taken,
+                            'near': not own or not host_sector or sector == host_sector}   # a far start: another sector than the host's
+                           for k, name, sector, own in starts]}
 
     def running(address):
         live['joins'].admit(address)
@@ -209,7 +247,9 @@ def run(o: ServeOptions, log=print):
             joins = None
             if open_slots:
                 joins = DropIn(admissions, run_dir, token, o.bind, port, open_slots, addresses, log)
-                command += ['--allow-file', str(joins.allow_file), *hotjoin.relay_join_args(open_slots, present, observe=True)]
+                command += ['--allow-file', str(joins.allow_file),
+                            *hotjoin.relay_join_args(open_slots, present, given=('--join-max-pause', '--join-catchup-limit'), observe=True),
+                            '--join-max-pause', str(join_pause_limit(o.join_max_pause)), '--join-catchup-limit', str(o.join_catchup)]
             with (run_dir / 'relay.log').open('w') as relay_log:
                 relay = subprocess.Popen(command, cwd=session.ROOT, stdout=relay_log, stderr=subprocess.STDOUT)
                 log(f'serve: game {played + 1}: players from {", ".join(addresses)}, loads at {arm_at}, relay pid {relay.pid}, {run_dir}')
@@ -228,8 +268,9 @@ def run(o: ServeOptions, log=print):
                         if joins:
                             joins.poll()
                         time.sleep(0.5 if not joins else 0.2)
-                        if idle_seconds(run_dir / 'desync-status.json', seen, time.time()) > o.idle_end:
-                            ended = f'no step for {o.idle_end} s'
+                        idle, limit = idle_seconds(run_dir / 'desync-status.json', seen, time.time()), idle_limit(o, seen[0], joins)
+                        if idle > limit:
+                            ended = f'no step for {limit} s'
                             break
                         if session_done(run_dir / 'desync-status.json'):
                             ended = 'the session is over'
@@ -242,7 +283,7 @@ def run(o: ServeOptions, log=print):
                         relay.kill()
                         relay.wait(10)
                     if joins:
-                        joins.close()
+                        joins.close(keep=o.keep_joins)
             live.update(salt=None, joins=None)
             admissions.busy = admissions.running = admissions.join_dir = admissions.join_done = None
             admissions.release()

@@ -79,8 +79,17 @@ static void bullet_execute(weapon_fn original,bullet_identity *s,bullet_event *e
         SetLastError(error);
     }
 }
+/* bullet_hold (native_gate_join_hold_bullets, lockstep_join.h): while set, a bullet does not move. A joiner's loading frames run
+ * the zones before the admission, and a zone's update moves its bullets (0x748650/0x748710 -> vfunc +0x1510): a bullet in flight
+ * at the join save's step flies and tests there, in a world the admission has not written yet. hj8i (11 Nov, ns8, T=676): the
+ * laser bullet 1653ef hit in the load and posted its kill for the load's time; the kept boot events put it back after the
+ * admission, so step T+1 delivered it before the bullets moved: the joiner moved 49 bullets against the session's 50 and the
+ * session's hit of that bullet at T+1 (a ship's shield) never happened there. A held bullet keeps the state the save gave it,
+ * which is the session's at T. Needs this module's wrapper (native_gate_bullet_rng or native_gate_bullet_diag). */
+static volatile LONG bullet_hold;static volatile LONG64 bullet_held;
 static void bullet_move(void *self) {
     weapon_fn original=(weapon_fn)(image+BULLET_MOVE);
+    if(InterlockedCompareExchange(&bullet_hold,0,0)) {InterlockedIncrement64(&bullet_held);return;}
     if(!stats.active || boot_phase!=3 || GetCurrentThreadId()!=ui_thread) {original(self);return;}
     bullet_identity *s=bullet_find(self,0);uint64_t id;
     bullet_cadence_sample cadence;bullet_cadence_enter(self,&cadence);

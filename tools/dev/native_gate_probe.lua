@@ -305,6 +305,8 @@ local join_client,join_joiner,join_restored
 local pilot_handover_dump={}
 local hud_refresh_at={}   -- ticks at which every client raises the HUD's ship-changed event (pilot_view.hud_ship_changed)
 local join_money_at={}    -- tick -> slot whose held start money goes back to the coop wallet (pilot_view.join_money)
+local story_at={}         -- tick -> slot whose start story begins (pilot_view.story): 30 ticks after its handover
+local kit_inventory_at={} -- tick -> slot whose start inventory goes to its own player (pilot_view.kit_inventory): 12 ticks after its handover
 if cfg.native_gate_join then
  local j=cfg.native_gate_join==true and {} or cfg.native_gate_join
  assert(type(j)=='table' and wire3 and cfg.native_gate_lookahead~='adaptive' and not cfg.native_gate_wire_crypto and not cfg.native_gate_peer_window,
@@ -328,6 +330,12 @@ if cfg.native_gate_join then
  end
  if cfg.native_gate_join_viewf_write then   -- diagnostic: the joiner writes the session's VIEWF words (off: a joiner's window flips after its STOP)
   assert(gate.join_viewf_write and gate.join_viewf_write(1)==1,'join viewf write refused')
+ end
+ if cfg.native_gate_join_anis_state then   -- a joiner's animation units take the session's state, queue and waiting listeners (anis_state=, anil=)
+  assert(gate.join_anis_state and gate.join_anis_state(1)==1,'join anis state refused')
+ end
+ if cfg.native_gate_join_anis then   -- a joiner's part animation sequences take the session's start times (ANIS; anis=)
+  assert(gate.join_anis and gate.join_anis(1)==1,'join anis refused')
  end
  if cfg.native_gate_join_viewl then   -- a joiner runs the view handlers where its live/player view flags differ (VIEWL)
   assert(gate.join_viewl and gate.join_viewl(1)==1,'join viewl refused')
@@ -419,6 +427,12 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_hold_fire then   -- a joiner's weapons make no shot between the load and the admission (hold_fire=)
   assert(gate.join_hold_fire and gate.join_hold_fire(1)==1,'join hold fire refused')
  end
+ if cfg.native_gate_join_hold_bullets then   -- a joiner's bullets do not move between the load and the admission (bullet_hold=)
+  assert(gate.join_hold_bullets and gate.join_hold_bullets(1)==1,'join hold bullets refused')
+ end
+ if cfg.native_gate_join_keep_stamps then   -- a joiner's first-step republication leaves the nav stamps the session did not write (keep_stamps=)
+  assert(gate.join_keep_stamps and gate.join_keep_stamps(1)==1,'join keep stamps refused')
+ end
  if cfg.native_gate_join_body_make then   -- the IDs of the physics bodies a joiner lacks at its admission go off the shared route (body_make=)
   assert(gate.join_body_make and gate.join_body_make(1)==1,'join body make refused')
  end
@@ -433,6 +447,18 @@ if cfg.native_gate_join then
  end
  if cfg.native_gate_join_shoot_far then   -- SHOOT writes the session's last shot time where a load's reset left the joiner's far
   assert(gate.join_shoot_far and gate.join_shoot_far(1)==1,'join shoot far refused')
+ end
+ if cfg.native_gate_join_shape_hold then   -- every compound from the poses of T on every client through T+1 (shape_hold=)
+  assert(cfg.native_gate_join_shape_refresh,'native_gate_join_shape_hold needs native_gate_join_shape_refresh')
+  assert(gate.join_shape_hold and gate.join_shape_hold(1)==1,'join shape hold refused')
+ end
+ if cfg.native_gate_join_attn_arrive then   -- with attn_set: a level written up to 9 or more goes through SetAttention (attn_arrive=)
+  assert(cfg.native_gate_join_attn_set,'native_gate_join_attn_arrive needs native_gate_join_attn_set')
+  assert(gate.join_attn_arrive and gate.join_attn_arrive(1)==1,'join attn arrive refused')
+ end
+ if cfg.native_gate_join_attn_leave then   -- with attn_set: a level written down from 9 or more goes through SetAttention (attn_leave=)
+  assert(cfg.native_gate_join_attn_set,'native_gate_join_attn_leave needs native_gate_join_attn_set')
+  assert(gate.join_attn_leave and gate.join_attn_leave(1)==1,'join attn leave refused')
  end
  if cfg.native_gate_join_attn_states then   -- with attn_set: every per-level state ATTN leaves apart, at any level (attn_states=)
   assert(cfg.native_gate_join_attn_set,'native_gate_join_attn_states needs native_gate_join_attn_set')
@@ -566,6 +592,8 @@ if cfg.native_gate_join then
     assert(gate.pilot_handover(k,h)==1,'pilot handover refused k='..k..' H='..h..' '..tostring(gate.pilot_why and gate.pilot_why()))
     hud_refresh_at[h+10]=true   -- the joiner presents its slot from H: its HUD takes its ship (every client, the same tick)
     join_money_at[h+10]=k       -- ...and in coop its start's money reaches the shared wallet now (pilot_view.join_money)
+    kit_inventory_at[h+12]=k    -- ...and its start's inventory its own player (pilot_view.kit_inventory)
+    if type(cfg.native_gate_story)=='table' and cfg.native_gate_story[k] then story_at[h+30]=k end   -- ...and its start's story begins
     if cfg.native_gate_pilot_dump_handover then pilot_handover_dump.k,pilot_handover_dump.h=k,h end
     -- native_gate_nav_refresh_watch_handover = N: the watch's window to H-N..H+N, now that H is known
     if cfg.native_gate_nav_refresh_watch_handover and cfg.native_gate_nav_refresh_watch~=nil then
@@ -2373,6 +2401,21 @@ local function pilot_ship_rows(tick)
    if ffi.C.IsComponentOperational(object) then
     local p=ffi.C.GetObjectPositionInSector(object)
     if pilot_view.death_last then pilot_view.death_last[slot]={x=p.x,y=p.y,z=p.z,yaw=math.deg(p.yaw),pitch=math.deg(p.pitch),roll=math.deg(p.roll)} end
+    -- A slot in its own spacesuit (lockstep_pilot_death.h pvehk_*): how far its home ship is, for its way home. From the
+    -- positions this row declares, in every client's frame of this tick; another sector or no ship: none (-1).
+    local home=gate.pilot_death_home and gate.pilot_death_home(slot)
+    if home then
+     local meters,h=-1,ffi.new('UniverseID',home)
+     if ffi.C.IsComponentOperational(h) then
+      local a=GetComponentData(ConvertStringToLuaID(tostring(runtime)),'sectorid')
+      local b=GetComponentData(ConvertStringToLuaID(tostring(home)),'sectorid')
+      if a and b and tostring(ConvertIDTo64Bit(a))==tostring(ConvertIDTo64Bit(b)) then
+       local q=ffi.C.GetObjectPositionInSector(h)
+       meters=math.sqrt((p.x-q.x)^2+(p.y-q.y)^2+(p.z-q.z)^2)
+      end
+     end
+     gate.pilot_death_range(slot,meters)
+    end
     local hull,shield=GetComponentData(ConvertStringToLuaID(tostring(runtime)),'hullpercent','shieldpercent')
     assert(type(hull)=='number' and type(shield)=='number','pilot ship health sample missing')
     row=row..string.format('/%.9g/%.9g/%.9g/%.9g/%.9g/%.9g/%.17g/%.17g',p.x,p.y,p.z,p.yaw,p.pitch,p.roll,hull,shield)
@@ -2382,6 +2425,31 @@ local function pilot_ship_rows(tick)
  end
  local text=table.concat(rows,',')
  log('PILOT_SHIPS tick='..tick..' '..text)
+ -- Diagnostic (native_gate_pilot_spawn_rows = true; not in the digest): each slot ship's spawn time, the double at Object +0x6e0
+ -- (its bits, little endian as stored). X4 keeps a ship out of collisions for 30 s after it (hjr1).
+ if type(cfg.native_gate_pilot_spawn_rows)=='number' and tick==cfg.native_gate_pilot_spawn_rows and gate.pilot_dump then
+  -- a number: at that tick every slot's ship (+0..+0x1fff) and controller (+0..+0x7ff) as PILOT_FULL rows, to compare two clients
+  for slot=1,#cfg.native_gate_pilot_slots do
+   for which,size in pairs({[0]=0x2000,[1]=0x800}) do
+    for off=0,size-256,256 do
+     local hex=gate.pilot_dump(slot,which,off)
+     if hex then ticklog.write('PILOT_FULL tick='..tick..' slot='..slot..' which='..which..' off='..off..' hex='..hex) end
+    end
+   end
+  end
+ end
+ if cfg.native_gate_pilot_spawn_rows==true and gate.pilot_dump then
+  local spawn={}
+  for slot=1,#cfg.native_gate_pilot_slots do
+   local hex=gate.pilot_dump(slot,0,0x600)
+   spawn[#spawn+1]=slot..'/'..(hex and hex:sub(0xe0*2+1,0xe0*2+16) or '-')
+  end
+  log('PILOT_SPAWN tick='..tick..' '..table.concat(spawn,','))
+  for slot=1,#cfg.native_gate_pilot_slots do   -- and its controller's words +0x400..+0x5ff (the collision bookkeeping of 0xf03e40)
+   local lo,hi=gate.pilot_dump(slot,1,0x400),gate.pilot_dump(slot,1,0x500)
+   if lo and hi then log('PILOT_CTRL tick='..tick..' slot='..slot..' hex='..lo..hi) end
+  end
+ end
  return 'PILOT_SHIPS_1:'..text
 end
 -- Sandbox order block (native_gate_pilot_block_orders): orders, travel/SETA
@@ -2576,10 +2644,12 @@ local function death_arm(delay,start,suit)
 end
 -- A slot's spacesuit, as X4's eject builds its own player's: up from where the ship died, its pose kept.
 local DEATH_SUIT_UP=100
-local function death_suit(slot)
+-- ship: the living ship the slot leaves through its airlock (its sector is the suit's; a dead ship's is the noted one).
+local function death_suit(slot,ship)
  local last=assert(pilot_view.death_last[slot],'pilot death: no last pose for slot '..slot)
  death.suits[slot]=(death.suits[slot] or 0)+1
  AddUITriggeredEvent('X4LAN_PilotRespawn','Suit',{slotname=tostring(slot),seed=8000+100*slot+death.suits[slot],
+  object=ship and ConvertStringToLuaID(tostring(ship)) or nil,
   x=last.x,y=last.y+DEATH_SUIT_UP,z=last.z,yaw=last.yaw,pitch=last.pitch,roll=last.roll})
 end
 local function death_note(slot)
@@ -2597,11 +2667,18 @@ local function death_frame(tick)
   for kind,slot in events:gmatch('(%a+):(%d+)') do
    slot=tonumber(slot)
    if kind=='suit' then death_suit(slot)
+   elseif kind=='out' then death_suit(slot,gate.pilot_ship(slot))   -- through the airlock (lockstep_pilot_death.h pvehk_*): a suit at its ship
+   elseif kind=='suited' or kind=='home' then
+    if pilot_view.hud_ship_changed then pilot_view.hud_ship_changed(kind) end   -- the slot's ship changed with no MD answer at this tick
    elseif kind=='create' then
     local pose=assert(death.poses[slot],'pilot respawn: no start pose for slot '..slot)
     death.built[slot]=(death.built[slot] or 0)+1
+    -- Each rebuild stands 1 km higher than the one before (the n-th at the start pose + n km up): the ship it replaces, or its
+    -- wreck, may still be at the start pose, and X4 lets two bodies lie in each other for 30 s from a body's making before it
+    -- pushes them apart. A joiner's bodies are made at its load, so that push came at another tick there (hjr1, 10 Nov:
+    -- 1344 on the session, 30 s after the load on the joiner). The count is the window's state, the same on every client.
     AddUITriggeredEvent('X4LAN_PilotRespawn','Respawn',{slotname=tostring(slot),seed=7000+100*slot+death.built[slot],
-     x=pose.x,y=pose.y,z=pose.z,yaw=pose.yaw,pitch=pose.pitch,roll=pose.roll})
+     x=pose.x,y=pose.y+1000*death.built[slot],z=pose.z,yaw=pose.yaw,pitch=pose.pitch,roll=pose.roll})
    elseif kind=='live' and tostring(cfg.slot)=='p'..slot then
     -- The new ship starts from nothing held: the aim script sends its axes and its stop again.
     stock_aim_state.stopped=false;stock_aim_state.axes[1]=0;stock_aim_state.axes[2]=0
@@ -2688,6 +2765,10 @@ function pilot_view.arm_ui_replay(slot,window)
    'bool RemoveOrder(UniverseID,size_t,bool,bool);','void SetGuidance(UniverseID,UIPosRot);','void EndGuidance(void);',
    'void ShowInfoLine(const char*,uint32_t);','void ToggleFlightAssist(void);','void AddPlayerMoney(int64_t);',
    'void CycleTurretMode(size_t);','void CycleTurretMissile(size_t);','void ToggleDrones(uint32_t);','void CycleNextDroneMode(uint32_t);',
+   'void LaunchSatellite(UniverseID,const char*);','void LaunchNavBeacon(UniverseID,const char*);','void LaunchResourceProbe(UniverseID,const char*);',
+   'void LaunchMine(UniverseID,const char*);','void LaunchLaserTower(UniverseID,const char*);',
+   'void SetAllTurretModes(UniverseID,const char*);','void SetAllTurretsArmed(UniverseID,bool);','void SetAllDronesArmed(UniverseID,bool);',
+   'bool DropCargo(UniverseID,const char*,uint32_t);',
    -- missions (lockstep_ui_missions.h): the stock menus declare them with MissionID, the same 64-bit value
    'void AbortMission(uint64_t);','bool SetActiveMission(uint64_t);','void StartBriefing(uint64_t,const char*,bool);','void StopBriefing(uint64_t,bool);',
    'void MissionBriefingInteractButtonClicked(uint64_t);','uint64_t GetActiveMissionID(void);','uint32_t GetNumCurrentMissionOffers(bool);',
@@ -2705,6 +2786,25 @@ function pilot_view.arm_ui_replay(slot,window)
   assert(ok==1,'ui guard refused: '..tostring(entries))
   guard=groups
   log('UI_GUARD_ARMED slot='..slot..' groups='..groups..' entries='..tostring(entries))
+ end
+ -- Component slot player actions (lockstep_ui_compslot.h, native_gate_ui_compslot, a session default since the seat click
+ -- and the transporter terminal ran live, 12 Nov): the interact menu's action call and the target system's instant action
+ -- claimed from the guard, captured and replayed by the action's class; a class nobody may use yet stays refused.
+ if cfg.native_gate_ui_compslot then
+  assert(guard,'ui compslot refused: needs native_gate_ui_guard')
+  assert(gate.ui_compslot,'ui compslot refused: gate without ui_compslot')
+  local ok,why=gate.ui_compslot()
+  assert(ok==1,'ui compslot refused: '..tostring(why))
+  log('UI_COMPSLOT_ARMED slot='..slot)
+ end
+ -- UI reloads held while the session is live (lockstep_ui_reload_hold.h, native_gate_ui_reload_hold, a session
+ -- default): a window resize, a UI scale change or a controller-mode switch no longer ends this client's probe; X4 reloads
+ -- in its first frame after the session. Its state is in UI_REPLAY_STATUS (reload_hold=).
+ if cfg.native_gate_ui_reload_hold then
+  assert(gate.ui_reload_hold,'ui reload hold refused: gate without ui_reload_hold')
+  local ok,why=gate.ui_reload_hold()
+  assert(ok==1,'ui reload hold refused: '..tostring(why))
+  log('UI_RELOAD_HOLD_ARMED slot='..slot)
  end
  -- Missions and conversations of slot 1 (lockstep_ui_missions.h): the guard's hook captures them, so the guard with the
  -- groups missions and conversation comes first; gate.ui_missions checks that and its pins (fail closed otherwise).
@@ -2767,7 +2867,7 @@ function pilot_view.arm_ui_replay(slot,window)
   end
   return out
  end
- local tools={gate=gate,C=ffi.C,env=_G,own_slot=slot,
+ local tools={gate=gate,C=ffi.C,ffi=ffi,env=_G,own_slot=slot,
   slot_id=function(s) return ffi.new('UniverseID',(assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved'))) end,  -- one value: assert returns its message too
   slot_lua=function(s) return ConvertStringToLuaID(string.format('%.0f',(assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved')))) end,
   saved_id=function(saved) return ConvertStringTo64Bit((assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved'))) end,
@@ -2813,6 +2913,8 @@ function pilot_view.arm_ui_replay(slot,window)
   offers=cfg.native_gate_missions_per_player==true and cfg.native_gate_missions_per_player_offers~=false and
    pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);') and
    {first=window[1]+450,every=5400,stagger=90,galaxy=function() return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID())) end} or nil,
+  galaxy=pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);') and function() return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID())) end or nil,
+  story=cfg.native_gate_story,   -- {[k]='<Script>.<Cue>'}: the start script's cue that begins slot k's story (S.slot_story)
   notify=function(text) ffi.C.ShowInfoLine(text,4) end,   -- every refusal of the families shows its info line (also without the guard)
   active_mission=missions_on and function() return (tostring(ffi.C.GetActiveMissionID()):gsub('ULL$','')) end or nil,
   menus=function() return type(Menus)=='table' and Menus or {} end}
@@ -2824,7 +2926,19 @@ function pilot_view.arm_ui_replay(slot,window)
    cfg.native_gate_script_rng and (cfg.native_gate_script_rng_mask or 3)%4>=2 and gate.missions_per_player and gate.missions_per_player(1)==1,
    'missions per player refused: needs native_gate_ui_replay with the events and missions families, native_gate_script_rng with its MD '..
    'scopes (its frames carry the mission scope) and the pilot slots')
+  -- The AI scripts X4 runs on a slot's own player and ship computer (the autopilot) run in that slot's scope
+  -- (lockstep_mission_owners.h mpp_ai_frame_enter; native_gate_missions_per_player_ai_frames, a session default).
+  if cfg.native_gate_missions_per_player_ai_frames~=nil and cfg.native_gate_missions_per_player_ai_frames~=false then
+   assert(cfg.native_gate_missions_per_player_ai_frames==true and gate.mpp_ai_frames and gate.mpp_ai_frames(1)==1,
+    'native_gate_missions_per_player_ai_frames must be true and needs a gate that has it')
+  end
   log('MISSIONS_PER_PLAYER_ARMED slot='..slot..' '..tostring(gate.mpp_status()))
+  -- What an owned cue shows (help texts, notifications, a menu, the cockpit tint, a fade, music, an achievement) runs on its
+  -- owner's client only (lockstep_md_presentation.h); a gate without it shows them on every client as before.
+  if gate.md_presentation then
+   assert(gate.md_presentation(1)==1,'owner presentation refused: '..tostring(gate.md_presentation_status()))
+   log('OWNER_PRESENTATION_ARMED slot='..slot..' '..tostring(gate.md_presentation_status()))
+  end
   -- Hot join: the claims at T ride the package; the joiner takes them before its first tick (lockstep_mission_owners.h).
   if X4LAN_JOIN_CORE and gate.mpp_state then
    X4LAN_JOIN_CORE.provide('missions_per_player',function() return assert(gate.mpp_state(),'missions per player: the table does not fit the join state') end,
@@ -2832,6 +2946,43 @@ function pilot_view.arm_ui_replay(slot,window)
      assert(gate.mpp_restore(text)==1,'join: missions per player refused the saver table '..tostring(text):sub(1,120))
      log('MISSIONS_PER_PLAYER_RESTORED '..tostring(gate.mpp_status()))
     end)
+  end
+ end
+ -- The inventory family (native_gate_ui_inventory_core.lua): a player's own inventory, the stock craft and trader buttons as
+ -- one event of the slot each, run on every client inside that slot's scope (slots 2+: missions per player gives the scope).
+ if math.floor(mask/core.FAMILY.inventory)%2==1 then
+  local icore=assert(X4LAN_UI_INVENTORY_CORE,'ui inventory refused: core missing (ui/native_gate_ui_inventory_core.lua)')
+  for _,line in ipairs({'UniverseID GetPlayerOccupiedShipID(void);','UniverseID GetPlayerID(void);',
+    'typedef struct { const char* wareid; int32_t amount; } UIWareAmount;',
+    'bool DropInventory(UniverseID entityid, const char* lockboxid, UIWareAmount* wares, uint32_t numwares);',
+    'void AddPlayerMoney(int64_t money);','void LearnBlueprint(const char* wareid);','void StartResearch(const char* wareid, UniverseID researchmoduleid);',
+    'void ClearProductionItems(UniverseID productionmoduleid);','bool CanStartTerraformingProject(UniverseID clusterid, const char* projectid);',
+    'void StartTerraformingProject(UniverseID clusterid, const char* projectid);','bool CanAbortActiveTerraformingProject(UniverseID clusterid);',
+    'void AbortActiveTerraformingProject(UniverseID clusterid);',
+    'typedef struct { UniverseID reserverid; const char* ware; uint32_t amount; bool isbuyreservation; double eta; TradeID tradedealid; '..
+     'MissionID missionid; bool isvirtual; bool issupply; } WareReservationInfo2;',
+    'uint32_t GetNumContainerWareReservations2(UniverseID containerid, bool includevirtual, bool includemission, bool includesupply);',
+    'uint32_t GetContainerWareReservations2(WareReservationInfo2* result, uint32_t resultlen, UniverseID containerid, bool includevirtual, '..
+     'bool includemission, bool includesupply);',
+    'bool CancelPlayerInvolvedTradeDeal(UniverseID containerid, TradeID tradeid, bool checkonly);'}) do pcall(ffi.cdef,line) end
+  -- The menu's Drop (the FFI export DropInventory) is captured in the UI guard's hook: without the guard it stays refused
+  -- by nobody and local, so the family asks for the guard.
+  assert(guard,'ui inventory refused: needs native_gate_ui_guard')
+  assert(gate.ui_inventory,'ui inventory refused: gate without ui_inventory')
+  local claimed,claim_why=gate.ui_inventory()
+  assert(claimed==1,'ui inventory refused: '..tostring(claim_why))
+  local plan_cfg=cfg.native_gate_player_identity_plan
+  local factions=type(plan_cfg)=='table' and plan_cfg.mode~=nil and plan_cfg.mode~='coop'
+  S.inventory=icore.session{gate=gate,C=ffi.C,ffi=ffi,env=_G,log=ticklog.write,replay=S,own_slot=slot,factions=factions,
+   trade=math.floor(mask/core.FAMILY.trade)%2==1,mpp=cfg.native_gate_missions_per_player==true,
+   notify=function(text) ffi.C.ShowInfoLine(text,4) end,menus=function() return type(Menus)=='table' and Menus or {} end,
+   loud=function(kind,text) ticklog.loud(kind,text,'another player\'s inventory could not be brought over at the join') end}
+  log('UI_INVENTORY_ARMED slot='..slot..' factions='..tostring(factions)..' mpp='..tostring(cfg.native_gate_missions_per_player==true))
+  -- Hot join: the gate's own player entities of slots 2..N are in no save; what each holds at T rides the package and
+  -- the joiner gives it to its own new entities before any event of the family runs.
+  if X4LAN_JOIN_CORE then
+   X4LAN_JOIN_CORE.provide('inventory',function() return S.inventory.join_state(#cfg.native_gate_pilot_slots) end,
+    function(text) S.inventory.join_restore(text) end)
   end
  end
  -- The build and assets families (native_gate_ui_build_core.lua, lockstep_ui_build.h; default off): claims on the guard's
@@ -2906,14 +3057,66 @@ function pilot_view.join_money(slot,hold,why)
  raise('X4LAN_Hud','JoinMoney',{slotname=tostring(slot),hold=hold,credits=credits})
  log('JOIN_MONEY slot='..slot..' hold='..hold..' credits='..credits..' why='..tostring(why))
 end
+-- A start's inventory for the player who took that start (the identity plan's kit.inventory, written by the session start
+-- tool unless the part is left out by name). Every client, the same tick: eight ticks into the pilot window for a slot that
+-- is there from the start, twelve ticks after its handover for a slot that joins. The wares go to slot k's own player
+-- entity: X4's AddInventory takes "the player" from the universe's player singleton, which is slot k's player inside slot
+-- k's scope (missions per player's call scope, gate.mpp_scope). Without that scope nothing is added and the row says so.
+function pilot_view.kit_inventory(tick,slot,why)
+ local plan=cfg.native_gate_player_identity_plan
+ if type(plan)~='table' or type(plan.kits)~='table' then return end
+ local kit
+ for _,k in ipairs(plan.kits) do if k.slot==slot then kit=k end end
+ if not kit or type(kit.inventory)~='table' or #kit.inventory==0 then return end
+ local head='KIT_INVENTORY tick='..tick..' slot='..slot..' why='..tostring(why)..' wares='..#kit.inventory
+ if not (gate.mpp_scope and gate.mpp_scope(slot)==1) then
+  ticklog.loud('KIT_INVENTORY_REFUSED',head..' refused=no_scope','start inventory of player '..slot..' could not be given (no scope of its own)')
+  return
+ end
+ local rows={}
+ local ok,err=pcall(function()
+  for _,item in ipairs(kit.inventory) do AddInventory(nil,item.ware,item.amount) end
+  local now=GetPlayerInventory() or {}
+  for _,item in ipairs(kit.inventory) do rows[#rows+1]=item.ware..'='..tostring(now[item.ware] and now[item.ware].amount or 0) end
+ end)
+ assert(gate.mpp_unscope(slot)==1,'kit inventory: the scope of slot '..slot..' did not close')
+ log(head..' applied='..(ok and 1 or 0)..' now='..table.concat(rows,',')..(ok and '' or ' error='..tostring(err)))
+end
+-- A start's story for the player who took that start (native_gate_story = {[k]='<Script>.<Cue>'}, written by the session
+-- overlay for every slot 2..N whose start has a story; the session start tool's story_files). Every client,
+-- the same tick: 60 ticks into the pilot window for a slot that is there from the start, 30 ticks after its handover for
+-- a slot that joins. The start script's cue gets its signal in slot k's scope and the gate claims it for slot k there
+-- (lockstep_mission_owners.h 'story'), so the story's player is slot k's player on every client.
+function pilot_view.story(tick,slot,why)
+ local S=pilot_view.ui_replay
+ if not (S and S.slot_story) then log('MPP_STORY tick='..tick..' slot='..slot..' why='..tostring(why)..' refused=no_ui_replay');return end
+ S.slot_story(tick,slot,why)
+end
 local function pilot_frame(s,tick)
  if cfg.native_gate_pilot_block_orders then block_orders() end
+ do
+  local w,stories,join=cfg.native_gate_pilot_window,cfg.native_gate_story,cfg.native_gate_join
+  if type(stories)=='table' then
+   if type(w)=='table' and tick==w[1]+60 then
+    local open={}
+    for _,k in ipairs(type(join)=='table' and type(join.absent)=='table' and join.absent or {}) do open[k]=true end
+    for k=2,PILOT_SLOTS_MAX do if stories[k] and not open[k] then pilot_view.story(tick,k,'window') end end
+   end
+   if story_at[tick] then local k=story_at[tick];story_at[tick]=nil;pilot_view.story(tick,k,'handover') end
+  end
+ end
  do
   local w,join=cfg.native_gate_pilot_window,cfg.native_gate_join
   if type(w)=='table' and tick==w[1]+5 and type(join)=='table' and type(join.absent)=='table' then
    for _,k in ipairs(join.absent) do pilot_view.join_money(k,1,'open') end
   end
   if join_money_at[tick] then local k=join_money_at[tick];join_money_at[tick]=nil;pilot_view.join_money(k,0,'handover') end
+  if type(w)=='table' and tick==w[1]+8 then
+   local open={}
+   for _,k in ipairs(type(join)=='table' and type(join.absent)=='table' and join.absent or {}) do open[k]=true end
+   for k=2,PILOT_SLOTS_MAX do if not open[k] then pilot_view.kit_inventory(tick,k,'window') end end
+  end
+  if kit_inventory_at[tick] then local k=kit_inventory_at[tick];kit_inventory_at[tick]=nil;pilot_view.kit_inventory(tick,k,'handover') end
  end
  -- ten ticks into the pilot window (every client presents its slot by then) and ten ticks after a hot join's handover
  do
@@ -3011,7 +3214,10 @@ local function pilot_frame(s,tick)
   local refusals=gate.pilot_native_refusals()
   for item in (refusals or ''):gmatch('[^,]+') do
    local at,kind,id,name,value=item:match('^(%d+):(%a+):(0x%x+):([%w_?]+):(%-?%d+)$')
+   -- Pause, quick save, quick load and the save and load menus are no part of a session: their own line.
+   local session_key=name=='PAUSE' or name=='QUICKSAVE' or name=='QUICKLOAD' or name=='SAVEGAMEMENU' or name=='LOADGAMEMENU'
    ticklog.loud_every('PILOT_NATIVE_REFUSED','tick='..tostring(at)..' kind='..tostring(kind)..' id='..tostring(id)..' input='..tostring(name)..' value='..tostring(value),
+    session_key and 'Multiplayer: no pause, save or load in a session - nothing happened' or
     'flight input '..tostring(name)..' is not shared yet - nothing happened',tonumber(at),90)
   end
  end
@@ -3088,6 +3294,7 @@ local function pilot_frame(s,tick)
   log('PILOT_SLOTS_REGISTRY tick='..tick..' '..tostring(gate.pilot_slots_registry()))
  end
  if cfg.native_gate_missions_per_player and tick%150==0 and gate.mpp_status then log('MISSIONS_PER_PLAYER tick='..tick..' '..gate.mpp_status()) end
+ if cfg.native_gate_missions_per_player and tick%600==0 and gate.md_presentation_status then log('OWNER_PRESENTATION tick='..tick..' '..gate.md_presentation_status()) end
  if pilot_view.stock and gate.pilot_present_diff then
   local diff=gate.pilot_present_diff()
   if diff then log('PILOT_PRESENT_DIFF tick='..tick..' '..diff) end
@@ -3517,10 +3724,13 @@ local function frame()
    if not (gate.render_display_rows and gate.render_display_rows()==1) then ticklog.refuse('render_display_rows');done=true;return end
   end
   local start=snapshot and gate.boot or gate.start
-  -- native_gate_arm_timeout_ms (default 60000, 1000..120000): how long a client waits for a permit, also for its peers
-  -- to finish loading (a mixed Windows/Linux session loads at very different speeds).
+  -- native_gate_arm_timeout_ms (default 60000, 1000..300000): how long a client waits for a permit, also for its peers
+  -- to finish loading (a mixed Windows/Linux session loads at very different speeds) and through a hot join's pause: the
+  -- relay may pause everyone up to its --join-max-pause (x4ls: 180 s) while a joiner closes the gap, so the wait must be
+  -- longer than that. With the old limit of 120000 a join through a real server whose pause was 127 s stopped the session
+  -- (reason 7, 11 Nov), though the join itself was equal.
   local wait_ms=cfg.native_gate_arm_timeout_ms or 60000
-  assert(type(wait_ms)=='number' and wait_ms%1==0 and wait_ms>=1000 and wait_ms<=120000,'native_gate_arm_timeout_ms must be 1000..120000')
+  assert(type(wait_ms)=='number' and wait_ms%1==0 and wait_ms>=1000 and wait_ms<=300000,'native_gate_arm_timeout_ms must be 1000..300000')
   local code=start(tonumber(cfg.slot:sub(2)),cfg.port,cfg.token,wait_ms,digest,options)
   if code~=0 then ticklog.refuse('code='..code..(gate.verify_stage and ' stage='..tostring(gate.verify_stage()) or ''),X4LAN_NATIVE_GATE_DEFAULTS and X4LAN_NATIVE_GATE_DEFAULTS.STOP_REASONS[code]);done=true;return end
   native_owned=true
@@ -3697,7 +3907,7 @@ local function frame()
   -- join. Default off.
   if cfg.native_gate_path_transforms then
    local mode,window=cfg.native_gate_path_transforms,cfg.native_gate_path_transforms_rows -- window: {first, last tick}, every formation call a row
-   assert((mode=='sim' or mode=='observe') and snapshot and cfg.native_gate_serial_pathing and gate.path_transforms and
+   assert((mode=='sim' or mode=='observe' or mode=='all') and snapshot and cfg.native_gate_serial_pathing and gate.path_transforms and
     gate.path_transforms_status and gate.path_transforms_row and
     (window and gate.path_transforms(mode,window[1],window[2]) or not window and gate.path_transforms(mode))==1,
     'path transforms refused '..tostring(gate.path_transforms_status and gate.path_transforms_status()))
@@ -4029,6 +4239,16 @@ local function frame()
     assert((trig=='block' or trig=='observe') and gate.view_points_triggers and gate.view_points_triggers(trig)==1,'view triggers refused')
     log('VIEW_TRIGGERS_ARMED mode='..trig)
    end
+   -- The simulation's own cutscene cameras as viewers (lockstep_view_cameras.h): the ship a comm call's camera is
+   -- anchored in gets the attention a camera gives it natively, on every client alike, so the speaker is there to film
+   -- (a person's session of 11 Nov: the monitor of a story call showed a bare hull).
+   -- A session default since its runs of 11 Nov (the speaker's face on both clients' monitors, 0 mismatches). A gate
+   -- without it (Linux until its port) runs as before: the monitor films a bare hull there.
+   if cfg.native_gate_view_cameras and gate.view_cameras then
+    assert(cfg.native_gate_view_cameras==true and mode=='players' and cfg.native_gate_view_triggers=='block' and
+     gate.view_cameras(1)==1,'view cameras refused '..tostring(gate.view_cameras_status and gate.view_cameras_status()))
+    log('VIEW_CAMERAS_ARMED '..tostring(gate.view_cameras_status()))
+   end
    -- Evaluations this client's own UI asks for (a presentation scope, slots 6 and 10, the
    -- dispatch of presentation ids, a client-only view call; not the probe's frame) and every
    -- evaluation a camera event asks for (Camera 0x97dff0 on the stack: a camera anchored,
@@ -4261,8 +4481,10 @@ local function frame()
    local ticks=cfg.native_gate_viewpoint_policy_rows
    assert((cfg.native_gate_viewpoint_policy or cfg.native_gate_mining_camera or cfg.native_gate_xs_camera) and type(ticks)=='number' and
     ticks>=1 and ticks<=600 and ticks==math.floor(ticks) and
-    gate.region_camera_policy_rows and gate.region_camera_policy_row and gate.region_camera_policy_rows(ticks)==1,'viewpoint policy rows refused')
-   log('VIEWPOINT_POLICY_ROWS_ARMED ticks='..ticks)
+    gate.region_camera_policy_rows and gate.region_camera_policy_row and
+    gate.region_camera_policy_rows(ticks,cfg.native_gate_viewpoint_policy_rows_from or 0)==1,'viewpoint policy rows refused')
+   -- native_gate_viewpoint_policy_rows_from = F: the rows of ticks F..F+N instead of 1..N (a joiner's handover)
+   log('VIEWPOINT_POLICY_ROWS_ARMED ticks='..ticks..' from='..tostring(cfg.native_gate_viewpoint_policy_rows_from or 0))
   end
   -- Highway parameter rows (diagnostic): Highway::vfunc674's camera offset and its spline parameter,
   -- UniverseFrameUpdate's parameter; one HIGHWAY_PARAM_ROW per call for ticks from..from+N-1. The calls
@@ -4720,6 +4942,22 @@ local function frame()
    assert(cfg.native_gate_speak_timer==true and snapshot and gate.speak_timer and gate.speak_timer_status and gate.speak_timer()==1,
     'speak timer refused '..tostring(gate.speak_timer_status and gate.speak_timer_status()))
    log('SPEAK_TIMER_ARMED')
+  end
+  -- Spoken lines per client (lockstep_speech_local.h; a session default, Windows gate): this client starts no voice sound while
+  -- it replays a hot join's past or flies in another sector than slot 1 (X4 speaks for slot 1). Shares the speak timer's pin.
+  if cfg.native_gate_speech_local and gate.speech_local then
+   assert(cfg.native_gate_speech_local==true and cfg.native_gate_speak_timer and gate.speech_local_frame and gate.speech_local_status and
+    gate.speech_local()==1,'speech local refused '..tostring(gate.speech_local_status and gate.speech_local_status()))
+   log('SPEECH_LOCAL_ARMED')
+  end
+  -- MD must not read this client's own screen (lockstep_md_presentation.h, the menu state): player.isinfullscreenmenu
+  -- answers false on every client while the session runs. A map open on one client made a stock script queue a crew use case
+  -- there and start it on the other: runtime IDs apart from then on (a person's session, 11 Nov). Every session, no key.
+  -- Here, after the gate's start (it finds the image) and before the first tick: armed before the start it crashed both
+  -- clients of the first run (the status read the site through an image that was not found yet).
+  if gate.md_menu_state then
+   assert(gate.md_menu_state(1)==1,'md menu state refused '..tostring(gate.md_menu_state_status()))
+   log('MD_MENU_STATE_ARMED '..tostring(gate.md_menu_state_status()))
   end
   -- The unpaused clock that times speech lines starts the session at one value on every client
   -- (lockstep_speech_clock.h), stop reason 196.
@@ -5220,6 +5458,13 @@ local function frame()
    -- list adds slots 2..N, each with its own player and PlayerController in a slot scope
    -- (lockstep_pilot_slots.h, stop reason 161). A stock slot's client captures (capture source
    -- 'stock', X4's own input, no device); every other client samples its own slot with the device.
+   -- Inside slot k's scope ship k answers P_k as its pilot (lockstep_pilot_slots.h pslot_post_enter; the autopilot's
+   -- own check `$ship.pilot != player.entity`); native_gate_pilot_slots_post, a session default.
+   if cfg.native_gate_pilot_slots_post~=nil and cfg.native_gate_pilot_slots_post~=false then
+    assert(cfg.native_gate_pilot_slots_post==true and cfg.native_gate_pilot_stock_slots~=nil and gate.pilot_slots_post and gate.pilot_slots_post(1)==1,
+     'pilot slots post refused: native_gate_pilot_slots_post must be true and needs native_gate_pilot_stock_slots')
+    log('PILOT_SLOTS_POST_ARMED slot='..slot)
+   end
    if cfg.native_gate_pilot_stock~=nil then
     local capture_source=own(cfg.native_gate_pilot_capture_source)
     local capture=capture_source=='stock'
@@ -5283,6 +5528,11 @@ local function frame()
     assert(cfg.native_gate_pilot_stock==true and cfg.native_gate_pilot_stock_slots~=nil,'pilot present refused: needs stock slots')
     assert(not own(cfg.native_gate_pilot_camera_follow) and not cfg.native_gate_camera_anchor,'pilot present refused: excludes camera follow and anchor')
     assert(gate.pilot_present,'pilot present refused: gate without pilot_present')
+    -- A walking slot shows no controlled ship on its own client: no cockpit HUD, no radar (lockstep_pilot_present.h).
+    if cfg.native_gate_pilot_present_walk_hud~=nil and cfg.native_gate_pilot_present_walk_hud~=false then
+     assert(cfg.native_gate_pilot_present_walk_hud==true and gate.pilot_present_walk_hud and gate.pilot_present_walk_hud(1)==1,
+      'native_gate_pilot_present_walk_hud must be true and needs a gate that has it')
+    end
     local armed,why=gate.pilot_present(cfg.native_gate_pilot_present==true and 1 or 0)
     assert(armed==1,'pilot present refused: '..tostring(why))
     log('PILOT_PRESENT_ARMED slot='..slot..' mode='..tostring(cfg.native_gate_pilot_present))
@@ -5385,6 +5635,13 @@ local function frame()
     log('PILOT_FOOT_SLOTS_ARMED slot='..slot)
    end
    if cfg.native_gate_ui_replay~=nil and cfg.native_gate_ui_replay~=false then pilot_view.arm_ui_replay(slot,window) end
+   -- Long-range scan for every player (lockstep_scan_long.h): the scan mode for players 2..N, the charge on the secondary
+   -- trigger while the mode is on, the send at its release; every client, at the slot's replay of the tick. A gate
+   -- without it runs as before (nobody can charge a scan in a session).
+   if cfg.native_gate_scan_long and gate.scan_long then
+    assert(cfg.native_gate_scan_long==true and gate.scan_long(1)==1,'scan long refused '..tostring(gate.scan_long_status and gate.scan_long_status()))
+    log('SCAN_LONG_ARMED '..tostring(gate.scan_long_status()))
+   end
    -- Camera follow: this client watches its own slot ship through the stock
    -- target view unless that ship is the occupied one. Differing cameras need
    -- the render RNG split (slot 10 draws stay off the simulation word).
@@ -5928,8 +6185,8 @@ local function frame()
    end
    log('PLAYER_CONTROL_BANK_CENSUS tick='..tick..' '..assert(gate.player_control_bank_census()))
   end
-  if cfg.native_gate_player_seat_preflight and tick >= 2 then
-   if tick == 2 then
+  if cfg.native_gate_player_seat_preflight and tick >= (cfg.native_gate_linux_startup_phases == 'v1-t40' and 35 or 2) then
+   if tick == (cfg.native_gate_linux_startup_phases == 'v1-t40' and 35 or 2) then
     assert(gate.player_seat_preflight_request() == 1, 'player seat preflight request refused')
    end
    log('PLAYER_SEAT_PREFLIGHT tick='..tick..' '..assert(gate.player_seat_preflight()))
@@ -6032,6 +6289,8 @@ local function frame()
   if gate.view_points_frame(tick)~=1 then error('view points frame failed '..tostring(gate.view_points_status()),0) end
   if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.frame(tick) end
   ticklog.status('VIEW_POINTS',tick,gate.view_points_status,'view points status unavailable')
+  if cfg.native_gate_view_cameras and gate.view_cameras_status then ticklog.status('VIEW_CAMERAS',tick,gate.view_cameras_status,'view cameras status unavailable') end
+  if cfg.native_gate_scan_long and gate.scan_long_status then ticklog.status('SCAN_LONG',tick,gate.scan_long_status,'scan long status unavailable') end
   if cfg.native_gate_view_rows then
    for _=1,8192 do
     local row=gate.view_points_row(row_cursors.view)
@@ -6262,6 +6521,10 @@ local function frame()
   if tick%600==0 then ticklog.status('CUTSCENE_READY',tick,gate.cutscene_ready_status,'cutscene ready status unavailable') end
  end
  if cfg.native_gate_speak_timer then ticklog.status('SPEAK_TIMER',tick,gate.speak_timer_status,'speak timer status unavailable') end
+ if cfg.native_gate_speech_local and gate.speech_local then
+  gate.speech_local_frame()   -- every step: mute or not for the lines of the coming steps (canonical state, the probe's frame)
+  ticklog.status('SPEECH_LOCAL',tick,gate.speech_local_status,'speech local status unavailable')
+ end
  if cfg.native_gate_speech_clock then ticklog.status('SPEECH_CLOCK',tick,gate.speech_clock_status,'speech clock status unavailable') end
  if cfg.native_gate_world_nav_stride then ticklog.status('WORLD_NAV',tick,gate.world_nav_status,'world nav hash status unavailable') end
  if cfg.native_gate_nav_cadence then

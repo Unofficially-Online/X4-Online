@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A start's standings are in place from the start, as a stock start's are: quietly.
+     tools/dev/native_gate_player_identity.xml applies a player's start standings at the session's first ticks (and at a
+     hot join). Stock X4 gives a start its relations in the game start itself; set at run time, the stock scripts took
+     them for reputation earned in play and answered with their notices, a promotion ceremony and a discount notice
+     (a playtest report of 11 Nov: too many faction relation notices at the start).
+     While md.$X4LAN_QuietRelations is set (only inside that script's relation steps) a discount or commission
+     that the new standing unlocks is added without its notice and logbook line.
+     Our own lines only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+<diff>
+ <add sel="/mdscript/cues/cue[@name='Init']/cues/cue[@name='PlayerDiscountCommission']/conditions">
+  <check_value value="not @md.$X4LAN_QuietRelations"/>
+ </add>
+</diff>

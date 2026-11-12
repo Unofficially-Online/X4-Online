@@ -64,7 +64,22 @@ static void player_physics_discard_begin(void);
 static _Noreturn void player_physics_discard_finish(void);
 static void player_physics_frames_begin(uint64_t generation);
 static void player_physics_frames_finish(uint64_t generation, unsigned final);
+static void player_ui_camera_refill_tail(uint64_t generation) { (void)generation; }
 #include "gate_player_control_boundary.h"
+
+static unsigned ancestry_stage;
+static void player_view_ancestry_before(uint64_t generation) {
+    assert(player_recurring_physics_entered() && generation >= 5 && ancestry_stage == 0);
+    ancestry_stage = 1;
+}
+static void player_view_ancestry_after(uint64_t generation) {
+    assert(player_recurring_physics_entered() && generation >= 5 && ancestry_stage == 2);
+    ancestry_stage = 0;
+}
+static void player_view_ancestry_close(uint64_t generation) {
+    assert(player_recurring_physics_entered() && generation == 7 && ancestry_stage == 0);
+    ancestry_stage = 3;
+}
 
 static void player_physics_discard_begin(void) {
     assert(player_recurring_physics_entered());
@@ -112,12 +127,13 @@ static void player_physics_frames_finish(uint64_t generation, unsigned final) {
 }
 
 static void player_physics_network_begin(uint64_t generation) {
-    assert(player_recurring_physics == 3);
+    assert(player_recurring_physics == 3 && ancestry_stage == 1);
     player_physics_frames_begin(generation);
+    ancestry_stage = 2;
 }
 
 static void player_physics_network_finish(uint64_t generation, unsigned final) {
-    assert(player_recurring_physics == 3);
+    assert(player_recurring_physics == 3 && ancestry_stage == (final ? 3u : 0u));
     player_physics_frames_finish(generation, final);
 }
 
@@ -152,6 +168,7 @@ static void run_case(int which) {
     unsetenv("X4_DEV_PLAYER_LIFECYCLE");
     unsetenv("X4_DEV_PLAYER_PHYSICS");
     unsetenv("X4LAN_PLAYER_CONTROL_RECURRING_TAIL");
+    unsetenv("X4_DEV_UI_SESSION_FRAMES");
     if (which == 0) {
         assert(player_control_boundary_before_frame() == 0);
         worker_once(); _exit(0);
@@ -189,6 +206,15 @@ static void run_case(int which) {
         setenv("X4LAN_PLAYER_CONTROL_RECURRING_END", which == 33 ? "604" : "605", 1);
         (void)player_control_boundary_before_frame();
         assert(which == 33 && player_recurring_end == 604 && player_recurring_physics == 3);
+        _exit(0);
+    }
+    if (which >= 35 && which <= 39) {
+        setenv("X4_DEV_UI_SESSION_FRAMES", which == 37 ? "18001" : "18000", 1);
+        setenv("X4LAN_PLAYER_CONTROL_RECURRING_END", which == 36 ? "18003" : "18004", 1);
+        if (which == 38) unsetenv("X4LAN_PLAYER_CONTROL_RECURRING_TAIL");
+        if (which == 39) setenv("X4_DEV_PLAYER_PHYSICS", "bounded-frames-discard", 1);
+        (void)player_control_boundary_before_frame();
+        assert(which == 35 && player_recurring_end == 18004 && player_session_budget.last_capture == 18002);
         _exit(0);
     }
     if (which == 3) setenv("X4_DEV_PLAYER_LIFECYCLE", "take-release-input-discard", 1);
@@ -308,5 +334,10 @@ int main(void) {
     scenario(32, 222, "reason=physics_requires_bounded_tail");
     scenario(33, 0, NULL);
     scenario(34, 222, "reason=physics_requires_bounded_tail");
+    scenario(35, 0, NULL);
+    scenario(36, 222, "reason=session_config_mismatch");
+    scenario(37, 222, "reason=invalid_session_budget");
+    scenario(38, 222, "reason=session_config_mismatch");
+    scenario(39, 222, "reason=session_config_mismatch");
     puts("recurring boundary adapter: ok");
 }

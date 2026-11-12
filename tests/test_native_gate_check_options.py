@@ -737,6 +737,9 @@ class TempzoneOrderOptionTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(self.failures(BASE+self.NEEDS+self.TSNAP+'X4LAN_CONFIG.native_gate_tempzone_order = %s\n' % value), [])
                 self.assertEqual(len(self.failures(BASE+self.NEEDS+'X4LAN_CONFIG.native_gate_tempzone_order = %s\n' % value)), 1)
+                # ... or the inline jobs (the session default since 11 Nov)
+                self.assertEqual(self.failures(BASE+self.NEEDS+'X4LAN_CONFIG.native_gate_travel_determinism = true\n'
+                                               'X4LAN_CONFIG.native_gate_tempzone_order = %s\n' % value), [])
         self.assertEqual(self.failures(BASE+self.NEEDS+"X4LAN_CONFIG.native_gate_tempzone_order = 'observe'\n"), [])
         self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_tempzone_order = 'observe'\n")), 1)
         self.assertEqual(len(self.failures(BASE+'X4LAN_CONFIG.native_gate_world_identities = true\n'+

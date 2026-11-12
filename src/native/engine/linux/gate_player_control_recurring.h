@@ -16,7 +16,9 @@
  * observed while a generation is armed are fatal. The busy flag also refuses
  * a new arm while the preceding worker hook is finishing. The caller must not
  * use this diagnostic as player-state admission or proof of reader exclusion. */
+#include "gate_player_startup_phases.h"
 #include "frame_worker_recurring.h"
+#include "player_ui_session_budget.h"
 #include "gate_player_recurring_receipt.h"
 #include "gate_player_recurring_pause.h"
 #include "gate_player_control_worker_tail.h"
@@ -32,6 +34,7 @@ static _Atomic unsigned player_recurring_mode;
 static uint64_t player_recurring_end;
 static unsigned player_recurring_tail;
 static unsigned player_recurring_physics;
+static player_ui_session_budget player_session_budget;
 static void player_physics_network_begin(uint64_t generation);
 static void player_physics_network_finish(uint64_t generation, unsigned final);
 static _Thread_local fwrr_token player_recurring_tail_token;
@@ -78,7 +81,7 @@ static int player_recurring_physics_entered(void) {
         GetCurrentThreadId() == stock_observer_worker_thread &&
         atomic_load_explicit(&player_recurring_worker_busy, memory_order_acquire) == 1 &&
         token.owner == &player_recurring_rendezvous && token.worker_thread == GetCurrentThreadId() &&
-        token.generation >= FWRR_FIRST_GENERATION && token.generation <= player_recurring_end &&
+        token.generation >= player_startup()->take && token.generation <= player_recurring_end &&
         fwrr_generation(state) == token.generation &&
         (state & FWRR_FLAGS) == (FWRR_ARMED | FWRR_MAIN_PARKED | FWRR_WORKER_ARRIVED | FWRR_ENTERED);
 }
@@ -117,6 +120,10 @@ static unsigned player_recurring_configure(void) {
     const char *setting = getenv("X4LAN_PLAYER_CONTROL_RECURRING");
     const char *tail_setting = getenv("X4LAN_PLAYER_CONTROL_RECURRING_TAIL");
     const char *physics_setting = getenv("X4_DEV_PLAYER_PHYSICS");
+    const char *session_text = getenv("X4_DEV_UI_SESSION_FRAMES");
+    const player_startup_phases *phase = player_startup();
+    if (session_text && !player_ui_session_parse_phased(session_text, phase, &player_session_budget))
+        player_recurring_fatal("invalid_session_budget");
     if (physics_setting && *physics_setting && strcmp(physics_setting, "single-frame-discard") &&
         strcmp(physics_setting, "bounded-frames-discard") &&
         strcmp(physics_setting, "network-frames-discard"))
@@ -124,6 +131,7 @@ static unsigned player_recurring_configure(void) {
     if (tail_setting && *tail_setting && strcmp(tail_setting, "1"))
         player_recurring_fatal("invalid_tail_mode");
     if (!setting || !*setting) {
+        if (session_text) player_recurring_fatal("session_requires_recurring");
         if (physics_setting && *physics_setting) player_recurring_fatal("physics_requires_recurring");
         if (tail_setting && *tail_setting) player_recurring_fatal("tail_requires_recurring");
         atomic_store_explicit(&player_recurring_mode, 1, memory_order_release);
@@ -136,27 +144,34 @@ static unsigned player_recurring_configure(void) {
         player_recurring_fatal("one_shot_conflict");
     uint64_t end = PLAYER_RECURRING_DEFAULT_END;
     const char *end_text = getenv("X4LAN_PLAYER_CONTROL_RECURRING_END");
+    uint64_t maximum_end = session_text ? player_session_budget.recurring_end : PLAYER_RECURRING_MAX_END;
     if (end_text) {
         if (!*end_text) player_recurring_fatal("invalid_end");
         end = 0;
         for (const char *p = end_text; *p; ++p) {
-            if (*p < '0' || *p > '9' || end > PLAYER_RECURRING_MAX_END / 10)
+            if (*p < '0' || *p > '9' || end > maximum_end / 10)
                 player_recurring_fatal("invalid_end");
             end = end * 10 + (unsigned)(*p - '0');
-            if (end > PLAYER_RECURRING_MAX_END) player_recurring_fatal("invalid_end");
+            if (end > maximum_end) player_recurring_fatal("invalid_end");
         }
-        if (end < FWRR_FIRST_GENERATION) player_recurring_fatal("invalid_end");
+        if (end < player_startup()->take) player_recurring_fatal("invalid_end");
     }
     player_recurring_tail = tail_setting && *tail_setting;
     player_recurring_physics = !physics_setting || !*physics_setting ? 0 :
         !strcmp(physics_setting, "single-frame-discard") ? 1 :
         !strcmp(physics_setting, "bounded-frames-discard") ? 2 : 3;
-    if (player_recurring_physics == 1 && (!player_recurring_tail || end != FWRR_FIRST_GENERATION))
+    if (phase->version && !session_text) player_recurring_fatal("phases_require_session");
+    if (session_text && (player_recurring_physics != 3 || !player_recurring_tail ||
+                         !end_text || end != player_session_budget.recurring_end))
+        player_recurring_fatal("session_config_mismatch");
+    if (player_recurring_physics == 1 && (!player_recurring_tail || end != player_startup()->take))
         player_recurring_fatal("physics_requires_single_tail");
     if (player_recurring_physics >= 2 &&
-        (!player_recurring_tail || end <= FWRR_FIRST_GENERATION || end > (player_recurring_physics == 3 ? 604u : 184u)))
+        (!player_recurring_tail || end <= player_startup()->take || end > (session_text ? player_session_budget.recurring_end :
+                 player_recurring_physics == 3 ? 604u : 184u)))
         player_recurring_fatal("physics_requires_bounded_tail");
     player_recurring_end = end;
+    atomic_store_explicit(&player_recurring_worker_last, phase->take - 1, memory_order_relaxed);
     atomic_store_explicit(&player_recurring_mode, 2, memory_order_release);
     return 2;
 }
@@ -173,6 +188,7 @@ static void player_recurring_wait(uint64_t generation, unsigned long long starte
     nanosleep(&pause, NULL);
 }
 /* Return 2 only for this call's arm; 0 means no recurring park this frame. */
+static void player_ui_camera_refill_tail(uint64_t generation);
 static void player_recurring_tail_callback(void *semaphore, unsigned count);
 static int player_recurring_before_frame(void) {
     unsigned mode = player_recurring_configure();
@@ -182,7 +198,7 @@ static int player_recurring_before_frame(void) {
     if (!stats.active) return 0;
     uint64_t generation = stats.issued;
     atomic_store_explicit(&player_recurring_main_tick, generation, memory_order_release);
-    if (generation < FWRR_FIRST_GENERATION) return 0;
+    if (generation < player_startup()->take) return 0;
     if (generation > player_recurring_end) {
         uint64_t completed = atomic_load_explicit(&player_recurring_rendezvous.state,
                                                    memory_order_acquire);
@@ -210,10 +226,11 @@ static int player_recurring_before_frame(void) {
         atomic_load_explicit(&player_recurring_worker_busy, memory_order_acquire) ||
         atomic_load_explicit(&player_recurring_worker_last, memory_order_acquire) != generation - 1)
         player_recurring_fatal("arm_admission");
-    if (generation == FWRR_FIRST_GENERATION &&
-        !fwrr_initialize(&player_recurring_rendezvous, main_thread, stock_observer_worker_thread))
+    if (generation == player_startup()->take &&
+        !fwrr_initialize_at(&player_recurring_rendezvous, main_thread, stock_observer_worker_thread,
+                            player_startup()->take))
         player_recurring_fatal("registration");
-    if (generation == FWRR_FIRST_GENERATION && player_recurring_tail &&
+    if (generation == player_startup()->take && player_recurring_tail &&
         !player_tail_install(&player_tail_resident, player_recurring_tail_callback))
         player_recurring_fatal("tail_install");
     if (fwrr_arm(&player_recurring_rendezvous, generation, GetCurrentThreadId()) != FWRR_OK)
@@ -258,12 +275,13 @@ static void player_recurring_tail_callback(void *semaphore, unsigned count) {
         semaphore != LX(UINT64_C(0x3daab20)) || count != 1 ||
         !atomic_load_explicit(&player_recurring_worker_busy, memory_order_acquire) ||
         token.owner != &player_recurring_rendezvous || token.worker_thread != GetCurrentThreadId() ||
-        generation < FWRR_FIRST_GENERATION || generation > player_recurring_end ||
+        generation < player_startup()->take || generation > player_recurring_end ||
         fwrr_generation(state) != generation ||
         (state & (FWRR_ENTERED | FWRR_RELEASED | FWRR_MAIN_AUTHORIZED | FWRR_POISONED)) != FWRR_ENTERED ||
         atomic_load_explicit(&player_recurring_worker_last, memory_order_acquire) != generation - 1)
         player_recurring_fatal("tail_admission");
     if (player_recurring_physics) {
+        player_ui_camera_refill_tail(generation);
         if ((state & FWRR_FLAGS) !=
             (FWRR_ARMED | FWRR_MAIN_PARKED | FWRR_WORKER_ARRIVED | FWRR_ENTERED))
             player_recurring_fatal("physics_tail_admission");
@@ -273,6 +291,7 @@ static void player_recurring_tail_callback(void *semaphore, unsigned count) {
             player_physics_discard_finish();
         }
         if (player_recurring_physics == 3) {
+            if (generation == player_recurring_end) player_view_ancestry_close(generation);
             player_physics_network_finish(generation, generation == player_recurring_end);
         } else {
             player_physics_frames_finish(generation, generation == player_recurring_end);
@@ -293,7 +312,7 @@ static int player_recurring_after_join(void) {
     uint64_t state = atomic_load_explicit(&player_recurring_rendezvous.state, memory_order_acquire);
     if (!state) {
         if (atomic_load_explicit(&player_recurring_main_tick, memory_order_acquire) >=
-            FWRR_FIRST_GENERATION) player_recurring_fatal("worker_before_arm");
+            player_startup()->take) player_recurring_fatal("worker_before_arm");
         return 1; /* before the bounded window */
     }
     unsigned idle = 0;
@@ -301,7 +320,7 @@ static int player_recurring_after_join(void) {
                                                   memory_order_acq_rel, memory_order_acquire))
         player_recurring_fatal("worker_reentry");
     uint64_t generation = fwrr_generation(state);
-    if (!factory_probe_joined_boundary() || generation < FWRR_FIRST_GENERATION ||
+    if (!factory_probe_joined_boundary() || generation < player_startup()->take ||
         generation > player_recurring_end ||
         atomic_load_explicit(&player_recurring_worker_last, memory_order_acquire) != generation - 1 ||
         fwrr_worker_arrive(&player_recurring_rendezvous, generation, GetCurrentThreadId()) != FWRR_OK)
@@ -330,7 +349,9 @@ static int player_recurring_after_join(void) {
             if (player_recurring_physics == 1) {
                 player_physics_discard_begin();
             } else if (player_recurring_physics == 3) {
+                player_view_ancestry_before(generation);
                 player_physics_network_begin(generation);
+                player_view_ancestry_after(generation);
             } else {
                 player_physics_frames_begin(generation);
             }

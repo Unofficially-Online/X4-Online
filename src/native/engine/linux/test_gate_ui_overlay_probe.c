@@ -99,6 +99,7 @@ static void test_live_pose_scope_receipt(void) {
         close(output[0]);
         assert(dup2(output[1], STDERR_FILENO) == STDERR_FILENO);
         close(output[1]);
+        ui_overlay_multi_count = 160;
         ui_live_pose_api.finish = synthetic_scope_finish;
         ui_live_pose_api.scope_result = synthetic_scope_result;
         ui_live_pose_close();
@@ -220,6 +221,58 @@ static void test_coupled_transaction(native_ui_overlay_probe *probe, float *orig
             assert(ui_correction_move_closed(2));
             assert(ui_correction_bank_moves[0] == 1 && ui_correction_bank_moves[1] == 1);
             assert(presentation_fork.request.bank == 0);
+
+            /* GameRender uses another resident scratch block and restores the
+             * same selected slot without invoking the Lua pause path. */
+            assert(player_ui_overlay_init(&probe->lifecycle, &probe->lifecycle.ops,
+                                          probe->lifecycle.owner_tid, probe->object));
+            probe->applies = probe->restores = probe->final_restore = 0;
+            synthetic_selected_bank = 0;
+            assert(ui_overlay_capture_move_bank(probe));
+            ui_correction_move_begin();
+            ui_game_render_active = 1;
+            assert(player_ui_overlay_enter(&probe->lifecycle, probe->object));
+            memcpy(&value, (void *)slot, 8);
+            assert(value == (uintptr_t)ui_render_correction_scratch[0] &&
+                   value != (uintptr_t)ui_correction_scratch[0] &&
+                   ui_render_correction_scratch[0][0] == 5);
+            probe->final_restore = 1;
+            assert(player_ui_overlay_return(&probe->lifecycle, probe->object));
+            memcpy(&value, (void *)slot, 8);
+            assert(value == (uintptr_t)original && synthetic_scope == PLAYER_LIVE_POSE_OUTSIDE);
+            assert(ui_render_correction_applies == 1 && presentation_fork.request.bank == 0);
+            ui_game_render_active = 0;
+
+            /* Session mappings are distinct and remain unique across both scopes. */
+            assert(player_ui_session_parse("180", &player_session_budget));
+            assert(ui_correction_allocate_session());
+            assert(!ui_correction_allocate_session());
+            ui_move_correction_applies = ui_render_correction_applies = 0;
+            assert(player_ui_overlay_init(&probe->lifecycle, &probe->lifecycle.ops,
+                                          probe->lifecycle.owner_tid, probe->object));
+            probe->applies = probe->restores = probe->final_restore = 0;
+            assert(ui_overlay_capture_move_bank(probe));
+            ui_correction_move_begin();
+            assert(player_ui_overlay_enter(&probe->lifecycle, probe->object));
+            memcpy(&value, (void *)slot, 8);
+            assert(value == (uintptr_t)ui_session_move_scratch[0] &&
+                   value != (uintptr_t)ui_correction_scratch[0]);
+            probe->final_restore = 1;
+            assert(player_ui_overlay_return(&probe->lifecycle, probe->object));
+            assert(player_ui_overlay_init(&probe->lifecycle, &probe->lifecycle.ops,
+                                          probe->lifecycle.owner_tid, probe->object));
+            probe->applies = probe->restores = probe->final_restore = 0;
+            assert(ui_overlay_capture_move_bank(probe));
+            ui_correction_move_begin();
+            ui_game_render_active = 1;
+            assert(player_ui_overlay_enter(&probe->lifecycle, probe->object));
+            memcpy(&value, (void *)slot, 8);
+            assert(value == (uintptr_t)ui_session_render_scratch[0] &&
+                   value != (uintptr_t)ui_session_move_scratch[0]);
+            probe->final_restore = 1;
+            assert(player_ui_overlay_return(&probe->lifecycle, probe->object));
+            memcpy(&value, (void *)slot, 8);
+            assert(value == (uintptr_t)original && presentation_fork.request.bank == 0);
             _exit(0);
         }
         close(diagnostic_pipe[1]);
@@ -310,6 +363,19 @@ static void test_frames(native_ui_overlay_probe *probe, unsigned count) {
                 expect_exit_223(inflight);
             }
             player_ui_overlay_main_interlock();
+            if (index == 0) {
+                pid_t missing_render = fork();
+                assert(missing_render >= 0);
+                if (!missing_render) {
+                    ui_game_render_enabled = 1;
+                    ui_game_render_progress = synthetic_progress;
+                    atomic_store(&ui_game_render_closed, 0);
+                    atomic_store(&player_recurring_main_tick, 9);
+                    player_ui_overlay_main_interlock();
+                    _exit(1);
+                }
+                expect_exit_223(missing_render);
+            }
         }
         assert(!ui_overlay_generation_matches(count, 9 + count, 9 + count));
         _exit(0);
@@ -345,14 +411,35 @@ static int synthetic_live_pose_tick(uint64_t generation) {
 static void test_live_pose_first_generation(void) {
     ui_live_pose_enabled = 1;
     ui_live_pose_api.tick = synthetic_live_pose_tick;
+    ui_live_pose_generation = 9;
     assert(ui_live_pose_advance(0, 9) && live_pose_tick_calls == 0);
-    assert(!ui_live_pose_advance(0, 10) && live_pose_tick_calls == 0);
+    assert(ui_live_pose_advance(0, 10) && live_pose_tick_calls == 1);
     assert(ui_live_pose_advance(1, 10) && live_pose_tick_calls == 1);
     assert(!ui_live_pose_advance(1, 11) && live_pose_tick_calls == 2);
     ui_live_pose_enabled = 0;
 }
 
 int main(void) {
+    ui_overlay_multi_count = 160;
+    assert(ui_overlay_full_window_selected());
+    ui_overlay_multi_count = 8;
+    assert(!ui_overlay_full_window_selected());
+    assert(player_ui_session_parse("900", &player_session_budget));
+    assert(!ui_overlay_full_window_selected());
+    ui_overlay_multi_count = 160;
+    assert(!ui_overlay_full_window_selected());
+    ui_overlay_multi_count = 890;
+    assert(ui_overlay_full_window_selected());
+    ++ui_overlay_multi_count;
+    assert(!ui_overlay_full_window_selected());
+    player_session_budget = (player_ui_session_budget){0};
+    ui_overlay_multi_count = 0;
+    assert(ui_game_render_sequence(1, 0, 9, 9, 0x1234, 0));
+    assert(ui_game_render_sequence(160, 159, 168, 168, 0x1234, 0x1234));
+    assert(!ui_game_render_sequence(1, 1, 9, 9, 0x1234, 0x1234)); /* duplicate */
+    assert(!ui_game_render_sequence(2, 0, 10, 10, 0x1234, 0x1234)); /* missing */
+    assert(!ui_game_render_sequence(1, 0, 9, 9, 0x5678, 0x1234));
+    assert(!ui_game_render_sequence(1, 0, 9, 10, 0x1234, 0x1234));
     test_live_pose_first_generation();
     test_live_pose_scope_receipt();
     ui_seat_query_identity first_identity = {0}, second_identity = {0};
@@ -457,6 +544,20 @@ int main(void) {
     assert(player_ui_overlay_return(&probe->lifecycle, probe->object));
     assert(synthetic_occupied() == 11 && probe->restored == 11);
     assert(player_ui_overlay_frame_interlock(&probe->lifecycle));
+    /* Missing refill at an eligible worker tail must terminate this disposable run. */
+    ui_camera_refill_enabled = 0;
+    player_ui_camera_refill_tail(player_startup()->presentation_first + 1);
+    ui_camera_refill_enabled = 1;
+    ui_overlay_multi_count = 160;
+    ui_camera_refill_last_tick = 0;
+    child = fork();
+    assert(child >= 0);
+    if (!child) {
+        player_ui_camera_refill_tail(player_startup()->presentation_first + 1);
+        _exit(1);
+    }
+    expect_exit_223(child);
+    ui_camera_refill_enabled = 0;
     puts("UI overlay one-callback integration PASS");
     return 0;
 }

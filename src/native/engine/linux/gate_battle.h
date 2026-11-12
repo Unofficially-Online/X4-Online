@@ -377,10 +377,16 @@ static int lua_actor(lua_State *L) {
     n+=snprintf(out+n,sizeof(out)-(size_t)n,";cache=");
     n+=lxb_hex_words(out+n,sizeof(out)-(size_t)n,cache,16);
     uint64_t hull_bits;memcpy(&hull_bits,&hull,8);char shield[192];
-    int shield_ok=lxw_shield_state(object,shield,NULL);
+    /* With canonical shields the sampled row reads a shield as the census does (Windows lockstep_gate.c, the same row). */
+    double shield_now=0;const double *shield_at=NULL;
+    {
+        const double *time=!shield_canonical?NULL:lxb_time_override?lxb_time_override:gate_tls_time(gate_tls_self());
+        if(time) {memcpy(&shield_now,time,8);if(isfinite(shield_now)) shield_at=&shield_now;}
+    }
+    int shield_ok=lxw_shield_state(object,shield,shield_at);
     if(refresh!=0) {
         if(refresh!=1 || !boot_mode || boot_phase!=3 || !index_actor || !shield_ok || !lxb_shield_refresh(object) ||
-           !(shield_ok=lxw_shield_state(object,shield,NULL))) {++lxb_shield_refresh_failures;return lxb_unavailable(L,"shield_refresh");}
+           !(shield_ok=lxw_shield_state(object,shield,shield_at))) {++lxb_shield_refresh_failures;return lxb_unavailable(L,"shield_refresh");}
     }
     n+=snprintf(out+n,sizeof(out)-(size_t)n,";hull_bits=%016llx;shield=%s",(unsigned long long)hull_bits,shield_ok?shield:"unavailable");
     if(lxf_initial && index_actor) {

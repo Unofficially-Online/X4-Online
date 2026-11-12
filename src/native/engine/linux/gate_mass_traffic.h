@@ -219,7 +219,22 @@ static int lmt_join(uint64_t tick) {
     int worker=lmt_worker_parked();
     if(lmt_unhold(&lmt_traffic)+lmt_unhold(&lmt_region)) ++lmt_stride_skips;
     if(!lmt_join_pass(&lmt_traffic,tick,worker) || !lmt_join_pass(&lmt_region,tick,worker)) return 0;
-    if(lmt_stride>1 && worker && (tick+1)%lmt_stride) {lmt_hold(&lmt_traffic);lmt_hold(&lmt_region);}
+    return 1;
+}
+/* Main thread, after quiet-point observers and before the next FrameTick.
+ * A stride-held parked byte is zero even though its task is asleep. Setting it
+ * during join would make the subsequent fork checks mistake a skipped pass for
+ * a running thread. Keep the real parked state until those checks finish. */
+static int lmt_prepare_next(uint64_t tick) {
+    if (!__atomic_load_n(&lmt_active, __ATOMIC_SEQ_CST) ||
+        lmt_stride <= 1 || !( (tick + 1) % lmt_stride)) return 1;
+    int needed = (lmt_traffic.mode == LMT_SYNC && lmt_task(&lmt_traffic)) ||
+                 (lmt_region.mode == LMT_SYNC && lmt_task(&lmt_region));
+    if (needed && !lmt_worker_parked()) return lmt_fail("stride_worker_not_parked");
+    if (lmt_worker_parked()) {
+        lmt_hold(&lmt_traffic);
+        lmt_hold(&lmt_region);
+    }
     return 1;
 }
 static int lmt_owned(void) {

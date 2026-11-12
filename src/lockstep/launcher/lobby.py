@@ -283,7 +283,7 @@ class Lines:
                 if len(self.buffer) > 65536:
                     self.closed = True
                     break
-        except OSError:
+        except (OSError, ValueError):   # ValueError: the socket was closed on this side
             self.closed = True
         while b'\n' in self.buffer:
             line, self.buffer = self.buffer.split(b'\n', 1)
@@ -353,6 +353,42 @@ def send_logs(server, kit, run_dir, game, slot, log=print):
     archive.unlink()
     log(f'lobby: logs sent to the server ({size // 1024} KiB, {stored})')
     return stored
+
+
+def start_label(start, sector, near=True):
+    """A start as the page names it: the gamestart's id without its prefix, where it is, and whether it is far from the host."""
+    name = str(start or 'the session start')
+    for prefix in ('x4ep1_gamestart_', 'x4_gamestart_', 'gamestart_'):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    place = str(sector or '')
+    macro = re.fullmatch(r'cluster_(\d+)_sector(\d+)_macro', place)   # the session names sectors by their macro
+    if macro:
+        place = f'cluster {int(macro.group(1))}' + (f' sector {int(macro.group(2))}' if int(macro.group(2)) > 1 else '')
+    return name.replace('_', ' ') + (f' ({place})' if place else '') + ('' if near else ' - far, experimental')
+
+
+def picker_view(recipe, status, restart):
+    """What the page shows while nothing is asked, from the session and the server's status: (lines, state fields).
+    `restart`: the line that says what X4 does after a choice (it differs between a Steam-started X4 and the lobby's)."""
+    players = f'{recipe["players"]} players, {recipe.get("mode", "coop")}, {recipe.get("minutes", "?"):g} minutes'
+    s = status
+    if not s or not s.get('drop_in'):   # every player is there at the start (or the server does not answer)
+        return None, {}
+    starts = [{'slot': int(row['slot']), 'taken': bool(row.get('taken')),
+               'label': start_label(row.get('start'), row.get('sector'), row.get('near', True))} for row in s.get('starts', [])]
+    if not s.get('running'):
+        base = start_label(s.get('base'), None)
+        return ((players, 'No game is running. Start one: you play ' + base + ', the others join you with a start of their choice.',
+                 restart), {'game': 'none', 'join_label': 'Start the game'})
+    free = sum(1 for row in starts if not row['taken'])
+    lines = (players, f'A game is running with {s.get("here", "?")} of {s.get("clients", "?")} players. Choose your start:', restart)
+    if not s.get('joinable'):
+        lines = (players, 'A game is running, but its first player has left: nobody can join it any more.',
+                 'A new game can start when it is over.')
+    elif not free:
+        lines = (players, 'A game is running and every start is taken.', '')
+    return lines, {'game': 'running', 'joinable': bool(s.get('joinable')), 'starts': starts}
 
 
 def ask_server(server, kit, what):
@@ -684,6 +720,19 @@ def free_lane(state, lanes, log=print):
 
 
 def run(o: LobbyOptions, log=print):
+    """x4ls lobby. With a server whose game runs, the page lists the open starts; a pick ends this X4 (it was in the
+    menu for a common load) and joins the running game in that slot, as x4ls join --server-file does."""
+    result = lobby_run(o, log)
+    if result.get('outcome') != 'late':
+        return result
+    time.sleep(1)
+    same_pc = session.x4_running()   # another player's X4 on this PC (a second window)
+    return join_running(o.overlay, o.server_file, slot=int(result['slot']), log=log, width=o.width, height=o.height, game=o.game,
+                        lanes=o.lanes, steam_fix=o.steam_fix, timeout=o.timeout, close_when_over=o.close_when_over,
+                        same_pc=same_pc, **({'state': session.ROOT / '.local/x4ls-join'} if same_pc else {}))
+
+
+def lobby_run(o: LobbyOptions, log=print):
     recipe = json.loads((Path(o.overlay) / 'play-recipe.json').read_text(encoding='utf-8'))
     clients = int(recipe['players'])
     if recipe.get('open') and not o.server_file:   # with a server the open slots are joined while the game runs
@@ -759,6 +808,7 @@ def run(o: LobbyOptions, log=print):
         game_log = profile.profile_dir(profile_id) / f'x4ls-c{o.lane}.log'
         requests, started, chosen = Request(game_log), time.time(), None   # chosen: (slot, token, port, arm_at, relay_host)
         note, typed = '', True   # typed: the choice came from the menu (the clipboard is the player's to use)
+        asked, status = 0.0, None  # a server's state for the page: a game running, the free starts
         while chosen is None:
             time.sleep(0.2)
             if proc.poll() is not None:
@@ -768,7 +818,26 @@ def run(o: LobbyOptions, log=print):
                 result = {'outcome': 'failed', 'ended': f'nobody chose within {o.lobby_timeout} s'}
                 return result
             text, typed = requests.poll(), True
-            if o.auto and not text and not host and not peer:
+            if server and not peer and time.time() - asked > (1 if o.auto.startswith('start') else 3):
+                asked, status = time.time(), (ask_server(server, kit, 'status') or {}).get('status')
+                lines, fields = picker_view(recipe, status, 'X4 closes and comes back with the running game.'
+                                            if status and status.get('running') else 'The game then loads in this window.')
+                if lines:
+                    show('idle', *lines, **fields)
+            late = re.fullmatch(r'JOIN([2-8])', text or '') if server else None
+            if (not late and o.auto.startswith('start') and status and status.get('running') and status.get('joinable')
+                    and int(status.get('tick') or 0) >= int(o.auto.partition('@')[2] or 0)):
+                free = [row['slot'] for row in status.get('starts', []) if not row.get('taken')]
+                late = re.fullmatch(r'JOIN([2-8])', f'JOIN{free[0]}') if free else None
+            if late and not peer:   # a start of the running game: this X4 closes, the join starts it again with the game
+                show('joining', 'X4 closes now and comes back in a moment.', 'It loads the running game as it is now and joins it.')
+                log(f'lobby: slot {late.group(1)} of the running game was chosen')
+                time.sleep(2)
+                result = {'outcome': 'late', 'slot': int(late.group(1)), 'ended': 'a start of the running game was chosen'}
+                return result
+            if o.auto.startswith('start'):
+                text = None
+            if o.auto and not o.auto.startswith('start') and not text and not host and not peer:
                 text, typed = ('HOST' if o.auto == 'host' else 'JOIN' if o.auto == 'join' else 'JOIN ' + o.auto), False
                 o.auto = ''
                 log(f'lobby: --auto {text.split()[0].lower()}')

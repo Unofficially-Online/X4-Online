@@ -36,7 +36,7 @@ typedef struct stock_keyboard_identity_sample {
     float cursor[3];
 } stock_keyboard_identity_sample;
 typedef struct lua_State {
-    double numbers[8];
+    double numbers[9];
     const char *strings[8];
     double result;
     int nil;
@@ -397,6 +397,45 @@ static void test_request_independent_mode(void) {
     assert(strstr(state.text, "mode=independent_keyboard_probe"));
 }
 
+static void test_request_session_budget(void) {
+    lua_State state;
+    request_arguments(&state);
+    state.numbers[7] = 1;
+    setenv("X4_DEV_PLAYER_PHYSICS", "network-frames-discard", 1);
+    setenv("X4_DEV_UI_SESSION_FRAMES", "18000", 1);
+    state.numbers[2] = 18001;
+    lua_stock_keyboard_replay_request(&state);
+    assert(state.result == 0 && !keyboard_probe_requested);
+    state.numbers[2] = 18002;
+    state.numbers[7] = 0;
+    lua_stock_keyboard_replay_request(&state);
+    assert(state.result == 0 && !keyboard_probe_requested);
+    state.numbers[7] = 1;
+    lua_stock_keyboard_replay_request(&state);
+    assert(state.result == 1 && keyboard_probe_queue.config.last_capture == 18002);
+}
+
+static void test_request_common_phases(void) {
+    lua_State state;
+    request_arguments(&state);
+    state.numbers[7] = 1;
+    state.numbers[2] = 937;
+    setenv("X4_DEV_PLAYER_PHYSICS", "network-frames-discard", 1);
+    setenv("X4_DEV_UI_SESSION_FRAMES", "900", 1);
+    setenv("X4LAN_PLAYER_CONTROL_RECURRING", "1", 1);
+    setenv("X4LAN_PLAYER_CONTROL_RECURRING_TAIL", "1", 1);
+    setenv("X4LAN_PLAYER_CONTROL_RECURRING_END", "939", 1);
+    setenv("X4_DEV_PLAYER_PHASES", "v1-t40", 1);
+
+    lua_stock_keyboard_replay_request(&state);
+    assert(state.result == 0 && !keyboard_probe_requested);
+    state.numbers[8] = 1;
+    lua_stock_keyboard_replay_request(&state);
+    assert(state.result == 1);
+    assert(keyboard_probe_queue.config.first_capture == 38);
+    assert(keyboard_probe_queue.config.last_capture == 937);
+}
+
 static unsigned encode_foreign(unsigned char *bytes, unsigned slot, int empty) {
     stock_input_record record = {0};
     record.capture16 = 3;
@@ -693,6 +732,8 @@ int main(int argc, char **argv) {
         {"bad_readback", test_bad_readback},
         {"request_default", test_request_default},
         {"request_independent", test_request_independent_mode},
+        {"request_session", test_request_session_budget},
+        {"request_common_phases", test_request_common_phases},
         {"independent_slot1", test_independent_dispatch_slot1},
         {"independent_slot2", test_independent_dispatch_slot2},
         {"independent_empty", test_independent_empty_p2},

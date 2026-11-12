@@ -73,7 +73,7 @@ static inline int player_ui_seat_sample(player_ui_seat_read read, void *context,
     return 1;
 }
 
-static inline int player_ui_seat_format(char *buffer, size_t size, const char *stage, const char *role,
+static inline int player_ui_seat_format_at(char *buffer, size_t size, uint64_t tick, const char *stage, const char *role,
                                         uintptr_t ship, uintptr_t room, unsigned bank,
                                         const player_ui_seat_pose *pose) {
     if (!buffer || !stage || !role || !pose || bank > 1) return 0;
@@ -82,13 +82,18 @@ static inline int player_ui_seat_format(char *buffer, size_t size, const char *s
         snprintf(words + i * 8, 9, "%08x", pose->words[i]);
         snprintf(raw + i * 8, 9, "%08x", pose->raw_words[i]);
     }
-    int count = snprintf(buffer, size, "X4 UI SEAT_POSE v=1 tick=9 stage=%s role=%s status=observed "
+    int count = snprintf(buffer, size, "X4 UI SEAT_POSE v=1 tick=%llu stage=%s role=%s status=observed "
         "actor=%llx ship=%llx room=%llx parent=%llx controller=%llx vtable=%llx bank=%u view=1 position=%u "
-        "candidate=%llx finite=%d rigid=%d words=%s raw=%s\n", stage, role,
+        "candidate=%llx finite=%d rigid=%d words=%s raw=%s\n", (unsigned long long)tick, stage, role,
         (unsigned long long)pose->actor, (unsigned long long)ship, (unsigned long long)room,
         (unsigned long long)pose->parent, (unsigned long long)pose->controller, (unsigned long long)pose->vtable,
         bank, pose->position, (unsigned long long)pose->pose, pose->pose ? pose->finite : -1,
         pose->pose ? pose->rigid : -1, pose->pose ? words : "-", pose->pose ? raw : "-");
     return count > 0 && (size_t)count < size ? count : 0;
+}
+static inline int player_ui_seat_format(char *buffer, size_t size, const char *stage, const char *role,
+                                        uintptr_t ship, uintptr_t room, unsigned bank,
+                                        const player_ui_seat_pose *pose) {
+    return player_ui_seat_format_at(buffer, size, 9, stage, role, ship, room, bank, pose);
 }
 #endif

@@ -156,10 +156,36 @@ static void tp_pass(void *network,void *zone) {
     }
     if(any) tq_note(network,0x10eu,&tp_grown);
 }
+/* A join's traffic restart (lockstep_join.h join_shape_reset sets tp_rebuild_tick on every client at the boundary after T+1).
+ * A zone's traffic members are not in a save: the session's have run since its start, a joiner makes its own at its load,
+ * and nothing shows it until a player is near and tracked members become ShipExtraSmall (hjs1, 10 Nov: five ticks after the
+ * handover the pass queued nine members with IDs 2142.. on the session and eight with 2169.. on the joiner). X4 has its own
+ * restart: a traffic object with the byte +0x28c set (0x831319 sets it) is switched off and on again by the next traffic
+ * update (0x831a3e / 0x831aa3: 0x8aae20 then 0x8aacb0, which clears it), its lane network built anew. In the Zone::Move of
+ * that one tick every active traffic object (+0x1d0) of every network gets the byte, so the synced pass after that frame
+ * rebuilds them all, on every client from the same world and the same keyed draws. Zone::Move holds g_MassTrafficLock here
+ * and the pass is joined. Status rebuild=tick:objects:networks. */
+static volatile LONG64 tp_rebuild_tick,tp_rebuilt,tp_rebuild_networks;
+/* The same tick also puts every traffic object's camera step back to its first: 0x8ab1e0 runs it when the pass's time has
+ * passed the last one (+0x248) by 0.2 s and a new object starts at -1.0. The restart keeps that time, so the session's
+ * objects kept the phase of their first switch-on and a joiner's had its own: hjs1 (10 Nov), the host's zone, every eight
+ * ticks from 3250 on the session and from 3252 on the joiner; with this the steps fall on the same ticks. Active or not:
+ * an object switched on later starts from -1.0 too. */
+#define TP_CAMERA_STEP 0x248u
+static void tp_rebuild_mark(unsigned char *network) {
+    unsigned char *objects[128];const unsigned n=tq_objects(network,objects,128);unsigned any=0;
+    for(unsigned i=0;i<n;i++) {
+        unsigned char on=0;const double first=-1.0;
+        memcpy(objects[i]+TP_CAMERA_STEP,&first,8);
+        if(read_local(objects[i]+0x1d0,&on,1) && on) {*(volatile unsigned char *)(objects[i]+0x28c)=1;InterlockedIncrement64(&tp_rebuilt);any=1;}
+    }
+    if(any) InterlockedIncrement64(&tp_rebuild_networks);
+}
 /* 0x834ca9: every Zone::Move of a zone with a network; growth since the last count is from outside Zone::Move;
  * then the native check and, when it passes, the pass. */
 static char tq_check(void *network,void *zone) {
     InterlockedIncrement64(&rc_stub_calls[TQ_CHECK_CALL]);
+    {const LONG64 at=InterlockedCompareExchange64(&tp_rebuild_tick,0,0);if(at && stats.issued==(uint64_t)at) tp_rebuild_mark(network);}
     tq_note(network,0x10du,&tq_outside_count);
     const char ready=(tq_check_native?tq_check_native:(tq_check_fn)(void *)(image+rc_calls[TQ_CHECK_CALL].target))(network);
     if(ready && (rc_installed_groups&(1u<<RC_TRAFFIC_PASS))) tp_pass(network,zone);
@@ -193,6 +219,42 @@ static unsigned tq_early_stub_bytes(unsigned char *p) {
     memcpy(p+n,&yes,8);n+=8;memcpy(p+n,jump,sizeof(jump));n+=sizeof(jump);memcpy(p+n,&no,8);n+=8;return n;
 }
 static void *tp_target(unsigned call) {return image+rc_calls[call].target;}
+/* What a switch-on built (policy rows, diagnostic, in 'view'; written by rc_activate for an object that went from off to on):
+ * site 113 the thread's RNG word (TLS+0x318) when the native switch-on returns, a= its low half, b= its high half;
+ * site 117 a= the number of lanes (+0x230..+0x238, pointers), b= the number of member entries (+0x268..+0x270, 0x28 bytes
+ * each), pend= the low half of +0x160; site 116 one row per lane: pos= its start (+0x10), a= its ordinal, b= a fold of its
+ * end (+0x20, three floats), pend= the dword at +0x110 (float bits: 15, 20, 40, 100 seen).
+ * Why: after a far-sector join the zone of the joined player's start switches its traffic on in the same tick on both
+ * sides, from the same eight docks and the same RNG word, and the session builds 942 lanes where the joiner builds 909
+ * (hjs1, the fight start, five runs 10/11 Nov; the first 431 lanes equal, the rest connect other waypoint pairs inside
+ * the stations); the camera step right after then spawns the lanes' members with 604 against 654 draws, and one XS ship
+ * more appears on the joiner. Tried without effect, and taken out again: the build's eleven inline loads of a cached
+ * parent (object + 0xe0 + bank * 0x80) read as the live parent, its three calls of 0x3dde10 answered from the simulation,
+ * and the thread marked as one with a view (TLS+0x314) for the build; with them the build's transform calls were the same
+ * 482 on both sides and the lanes were still 942 and 909. So the difference is not in the published view caches the build
+ * reads directly; open: where a station's waypoints or their pairing come from. */
+static uint64_t tp_thread_word(void) {
+    void **tls=*(void***)((unsigned char*)NtCurrentTeb()+0x58);uint64_t word=0;
+    if(tls && tls[0]) memcpy(&word,(unsigned char*)tls[0]+0x318,8);
+    return word;
+}
+static void tp_build_dump(unsigned char *traffic) {
+    if(tp_mode!=TP_VIEW) return;
+    const uint64_t word=tp_thread_word();const uint32_t at[3]={(uint32_t)word,(uint32_t)(word>>32),0};
+    rc_pick_note_full(0x113u,traffic,RC_OBJ_R12_TRAFFIC,1,NULL,at);
+    unsigned char **lanes=NULL,**end=NULL,*m0=NULL,*m1=NULL;uint64_t tree=0;
+    if(!read_local(traffic+0x230,&lanes,8) || !read_local(traffic+0x238,&end,8) || !lanes || end<lanes || (size_t)(end-lanes)>4096u) return;
+    (void)read_local(traffic+0x268,&m0,8);(void)read_local(traffic+0x270,&m1,8);(void)read_local(traffic+0x160,&tree,8);
+    const uint32_t n=(uint32_t)(end-lanes),head[3]={n,m1>=m0?(uint32_t)((m1-m0)/0x28):0xffffffffu,(uint32_t)tree};
+    rc_pick_note_full(0x117u,traffic,RC_OBJ_R12_TRAFFIC,1,NULL,head);
+    for(uint32_t i=0;i<n && i<1200u;i++) {
+        unsigned char *lane=NULL;float a[4],b[4];uint32_t d=0,w[3];
+        if(!read_local(lanes+i,&lane,8) || !lane || !read_local(lane+0x10,a,16) || !read_local(lane+0x20,b,16)) continue;
+        (void)read_local(lane+0x110,&d,4);memcpy(w,b,12);
+        const uint32_t ab[3]={i,w[0]^(w[1]*0x9e3779b1u)^(w[2]*0x85ebca6bu),d};
+        rc_pick_note_full(0x116u,traffic,RC_OBJ_R12_TRAFFIC,1,a,ab);
+    }
+}
 /* 0x3dde10(a, out, b, flag): a's transform in b's frame. Ours: from the simulation, both in a's cluster at the thread's time. */
 static void *tp_relative_at(void *a,float *out,void *b,unsigned char flag,unsigned call) {
     InterlockedIncrement64(&rc_stub_calls[call]);
@@ -218,6 +280,7 @@ static void tp_place_at(void *ship,void *pos,void *posrot,void *parent,unsigned 
     InterlockedIncrement64(&rc_stub_calls[call]);const int ours=tp_ours();
     if(tp_skip(ours)) {InterlockedIncrement64(&tp_place_skipped);return;}
     InterlockedIncrement64(&tp_place[ours]);
+    if(rc_pick_rows_ticks && ship && pos) rc_pick_note_pos(0x10fu,ship,RC_OBJ_R12,ours,(const float *)pos);   /* policy rows: the ship and where */
     (tp_place_native?tp_place_native:(tp_place_fn)tp_target(call))(ship,pos,posrot,parent);
 }
 static void tp_place_a(void *ship,void *pos,void *posrot,void *parent) {tp_place_at(ship,pos,posrot,parent,TP_PLACE_CALL);}
@@ -246,10 +309,11 @@ static unsigned tp_hook_stub_bytes(unsigned char *p) {
 }
 static void tp_status(char *out,size_t capacity) {
     if(tp_mode==TP_OFF) {snprintf(out,capacity,"off");return;}
-    snprintf(out,capacity,"%s,zones:%llu,calls:%llu,late:%llu/%llu,early:%llu/%llu,place:%llu/%llu/%llu,filter:%llu/%llu/%llu,draw_skip:%llu,relative:%llu,grown:%llu",
+    snprintf(out,capacity,"%s,zones:%llu,calls:%llu,late:%llu/%llu,early:%llu/%llu,place:%llu/%llu/%llu,filter:%llu/%llu/%llu,draw_skip:%llu,relative:%llu,grown:%llu,rebuild:%lld/%lld/%lld",
         tp_mode==TP_VIEW?"view":"observe",(unsigned long long)tp_zones,(unsigned long long)tp_calls,
         (unsigned long long)tp_late[1],(unsigned long long)tp_late[0],(unsigned long long)tp_early[1],(unsigned long long)tp_early[0],
         (unsigned long long)tp_place[1],(unsigned long long)tp_place[0],(unsigned long long)tp_place_skipped,
         (unsigned long long)tp_filter[1],(unsigned long long)tp_filter[0],(unsigned long long)tp_filter_skipped,
-        (unsigned long long)tp_draw_skipped,(unsigned long long)tp_relative,(unsigned long long)tp_grown);
+        (unsigned long long)tp_draw_skipped,(unsigned long long)tp_relative,(unsigned long long)tp_grown,
+        (long long)tp_rebuild_tick,(long long)tp_rebuilt,(long long)tp_rebuild_networks);
 }

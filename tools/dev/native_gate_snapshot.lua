@@ -19,7 +19,7 @@ local hulls=cfg.native_gate_snapshot_hulls
 assert(hulls==nil or (type(hulls)=='number' and hulls%1==0 and hulls>=1 and hulls<=15),'invalid snapshot hull count')
 local fixed=cfg.native_gate_snapshot_fixed~=false and assert(package.loadlib('./extensions/x4_lan_lab/native/x4lan_fixedtick_64.dll','luaopen_x4lan_fixedtick'))() or nil
 local owner,spawned,ready,refreshed,saving,done,inspecting,nearby
-local hulls_raised,hulls_count
+local hulls_raised,hulls_count,save_wait
 local function log(s) DebugError('[X4LAN] NATIVE_SNAPSHOT '..s) end
 RegisterEvent('X4LAN_SessionHulls.Ready',function(_,count) hulls_count=tonumber(count) or -1 end)
 RegisterEvent('X4LAN_NativeGate.Ready',function(_,count)
@@ -63,7 +63,13 @@ local function frame()
  if not refreshed then C.ReloadSaveList();refreshed=true;return end
  if not C.IsSaveListLoadingComplete() then return end
  for _,entry in pairs(GetSaveList({save_009=true}) or {}) do assert(entry.filename~='save_009','snapshot slot occupied') end
- assert(IsSavingPossible(false),'native saving unavailable')
+ -- A story start can open with talk during which X4 refuses a save (the Terran cadet's wingmate speaks from second 6):
+ -- wait for it to end, at most 180 s of game time.
+ if not IsSavingPossible(false) then
+  if not save_wait then save_wait=time;log('SAVE_WAIT time='..string.format('%.17g',time)) end
+  assert(time<save_wait+180,'native saving unavailable')
+  return
+ end
  if not C.IsGamePaused() then Pause() end
  saving=true;log('SAVE_REQUEST time='..string.format('%.17g',time))
  SaveGame('save_009','Native lockstep disposable starting fixture')

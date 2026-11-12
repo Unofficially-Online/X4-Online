@@ -19,6 +19,24 @@ static int lua_ui_guard(lua_State *L) {
     if(ok) {unsigned n=0;for(unsigned i=0;i<uiguard_count;i++) n+=uiguard_selected(&uiguard_tab[i]);p_lua_pushnumber(L,n);return 2;}
     p_lua_pushlstring(L,uiguard_arm_why,strlen(uiguard_arm_why));return 2;
 }
+/* gate.ui_compslot(): the interact menu's PerformCompSlotPlayerAction captured and replayed by the action's class
+ * (lockstep_ui_compslot.h). After gate.ui_guard, before the first admitted tick. 1, or 0 and the reason. */
+static int lua_ui_compslot(lua_State *L) {
+    uirep_refuse("arguments");
+    uics_lua_number=(double(*)(void*,int))p_lua_tonumber;   /* PerformAction's arguments (the instant action's claim) */
+    const int ok=accept_ui() && !stats.issued && uics_arm();
+    p_lua_pushnumber(L,ok);
+    if(ok) return 1;
+    p_lua_pushlstring(L,uirep_arm_why,strlen(uirep_arm_why));return 2;
+}
+/* gate.ui_reload_hold(): X4's UI reloads wait for the session's end (lockstep_ui_reload_hold.h). After gate.pilot_stock,
+ * before the first admitted tick. 1, or 0 and the reason. */
+static int lua_ui_reload_hold(lua_State *L) {
+    const int ok=accept_ui() && uirh_arm();
+    p_lua_pushnumber(L,ok);
+    if(ok) return 1;
+    p_lua_pushlstring(L,uirh_why,strlen(uirh_why));return 2;
+}
 static int lua_ui_guard_status(lua_State *L) {
     static char out[4096];int n=accept_ui() && uiguard_armed?uiguard_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;

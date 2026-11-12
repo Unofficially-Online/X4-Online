@@ -50,6 +50,29 @@ class Extension(unittest.TestCase):
             for leftover in ('x4lane-manifest.json', 'ui.xml.files', 'ui/config.lua.append'):
                 self.assertFalse((target / leftover).exists())
 
+    def test_an_overlay_with_start_stories_loads_after_the_stock_extensions(self):
+        # A session's start stories (x4ls new-session --story K) patch stock extensions' start scripts: X4 applies a patch
+        # of an extension that is loaded before ours. Any other overlay keeps the plain header (no loading order changes).
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            write_overlay(tmp / 'plain')
+            plain = extension.compose(tmp / 'plain', tmp / 'a', 1, 50123, 'a' * 32, 2)
+            self.assertNotIn('ego_dlc_', (plain / 'content.xml').read_text())
+            write_overlay(tmp / 'story')
+            files = {'md/x4lan_story.xml': '<mdscript name="X4LAN_Story"/>', 'extensions/ego_dlc_terran/md/gs_terran1.xml': '<diff/>'}
+            manifest = json.loads((tmp / 'story/x4lane-manifest.json').read_text())
+            for name, text in files.items():
+                (tmp / 'story' / name).parent.mkdir(parents=True, exist_ok=True)
+                (tmp / 'story' / name).write_text(text)
+                manifest[name] = hashlib.sha256(text.encode()).hexdigest()
+            (tmp / 'story/x4lane-manifest.json').write_text(json.dumps(manifest))
+            story = extension.compose(tmp / 'story', tmp / 'b', 1, 50123, 'a' * 32, 2)
+            content = (story / 'content.xml').read_text()
+            for name in ('ego_dlc_split', 'ego_dlc_terran', 'ego_dlc_pirate', 'ego_dlc_boron', 'ego_dlc_timelines', 'ego_dlc_mini_01',
+                         'ego_dlc_mini_02'):
+                self.assertIn(f'<dependency id="{name}" version="100" optional="true" />', content)
+            self.assertEqual((story / 'extensions/ego_dlc_terran/md/gs_terran1.xml').read_text(), '<diff/>')   # the patch travels
+
     def test_capture_overlay_without_fixedtick_gets_autostart_first(self):
         sys.path.insert(0, str(ROOT / 'tools/dev'))
         from native_gate_scenarios import build_capture_overlay
@@ -95,6 +118,12 @@ class Profiles(unittest.TestCase):
                 self.assertIn(key, config)
             self.assertEqual((path / 'save' / profile.SNAPSHOT_SLOT).read_bytes(), b'snapshot')
             self.assertIn('id="x4_lan_lab" enabled="true"', (path / 'content.xml').read_text())
+            self.assertIn('<borderless>false', config)
+            # x4ls play --borderless: X4's borderless window (a resize of a sizable one reloads X4's UI in the session)
+            path = profile.prepare(45850, ['x4_lan_lab'], 2560, 1440, snap, root=tmp, borderless=True)
+            config = (path / 'config.xml').read_text()
+            for key in ('<fullscreen>false', '<borderless>true', '<res_width>2560', '<res_height>1440'):
+                self.assertIn(key, config)
 
 
 class Unstage(unittest.TestCase):

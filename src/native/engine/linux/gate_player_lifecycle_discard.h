@@ -251,13 +251,16 @@ static void player_physics_complete_take(uintptr_t controller);
 static void lifecycle_discard_begin(unsigned boundary_state, int isolate, int physics) {
     lifecycle_discard_open_log();
     if (physics == 2) {
-        lifecycle_discard_write("X4LAN LIFECYCLE_DISCARD physics=frame tick=5 event=begin\n");
+        char frame[128];
+        snprintf(frame, sizeof frame, "X4LAN LIFECYCLE_DISCARD physics=frame tick=%llu event=begin\n",
+                 (unsigned long long)stats.issued);
+        lifecycle_discard_write(frame);
     }
     lifecycle_discard_stage("entered");
     /* FWR_MAIN_PARKED (4) and FWR_ENTERED (16), no RELEASED (32) or POISONED (128). */
     lifecycle_discard_require((boundary_state & (4u | 16u | 32u | 128u)) == (4u | 16u) &&
-        stats.issued == 5 && factory_probe_joined_boundary() && player_seat_preflight_retained() &&
-        factory_probe_release_tick > 5 && lifecycle_discard_pins(), "admission");
+        stats.issued == player_startup()->take && factory_probe_joined_boundary() && player_seat_preflight_retained() &&
+        factory_probe_release_tick > player_startup()->take && lifecycle_discard_pins(), "admission");
     uintptr_t player = factory_probe_state.player2;
     uintptr_t canonical = factory_probe_player1;
     lifecycle_discard_require(factory_probe_singleton(canonical) &&

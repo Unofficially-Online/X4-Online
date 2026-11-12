@@ -50,11 +50,16 @@ for part in (
     _ffi('flight', 'SetDefensibleActiveWeaponGroup SetWeaponGroup SetWeaponMode', WEAPONS),
     # The own ship's toggles the flight family replays in slot k's scope: each acts on the singleton's ship.
     _ffi('flight', 'ToggleFlightAssist CycleTurretMode CycleTurretMissile ToggleDrones CycleNextDroneMode', FLIGHT),
-    _ffi('flight', '''SetWeaponArmed SetTurretGroupMode2 SetTurretGroupArmed
-        SetAllTurretModes SetAllTurretsArmed SetAllMissileTurretModes SetAllMissileTurretsArmed SetAllNonMissileTurretModes
-        SetAllNonMissileTurretsArmed SetAllowedWeaponSystems SetAmmoOfWeapon SetDroneMode
-        SetDroneTypeArmed SetAllDronesArmed LaunchMine LaunchNavBeacon LaunchResourceProbe LaunchSatellite LaunchLaserTower
-        DropCargo DropInventory ActivateObject SelfDestructComponent TeleportPlayerTo TransportPlayerToTarget
+    # Deployables from the ship interact menu and the map's deploy tables (ship, macro name): the flight family replays
+    # them at their entries (lockstep_ui_replay.h). The deploy keys stay refused (pstk_refuse_actions).
+    _ffi('flight', 'LaunchMine LaunchNavBeacon LaunchResourceProbe LaunchSatellite LaunchLaserTower', FLIGHT),
+    # A named ship's weapon, turret and drone settings (docked menu, map), a deployable switched or destroyed (interact
+    # menu), cargo dropped (map): the flight family replays them at their entries.
+    _ffi('flight', '''SetWeaponArmed SetAmmoOfWeapon SetTurretGroupMode2 SetTurretGroupArmed SetAllTurretModes SetAllTurretsArmed
+        SetAllMissileTurretModes SetAllMissileTurretsArmed SetAllNonMissileTurretModes SetAllNonMissileTurretsArmed SetDroneMode
+        SetDroneTypeArmed SetAllDronesArmed ActivateObject SelfDestructComponent DropCargo''', FLIGHT),
+    _ffi('flight', '''SetAllowedWeaponSystems
+        DropInventory TeleportPlayerTo TransportPlayerToTarget
         PerformCompSlotPlayerAction StartControlPanelHack TriggerCompSlotAnimation SetDockingBayReservation
         RemoveDockingBayReservation SetObjectCoverFaction SetPlayerLastCoverFaction'''),
     # The docked menu's Get Up (menu_docked.lua buttonGetUp): X4 posts a GetUpEvent to the player. Refused like the rest;

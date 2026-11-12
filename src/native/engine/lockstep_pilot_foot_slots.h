@@ -84,7 +84,7 @@ typedef struct {
     unsigned char bank[PFOOT_BANK_SIZE];                  /* slot k's walking bank while no scope of it is open */
     unsigned char *fpc;
     int walking;
-    uint64_t stood_tick,frame_hash;
+    uint64_t stood_tick,frame_hash,frame_bank,frame_pose;   /* the receipt's hash; its two halves for the status (fw=) */
     unsigned char frame_state;
     volatile LONG64 getups,kept,stood,sat,ignored,updates,placed,unplaced,lost;
 } pfslot_slot;
@@ -192,8 +192,21 @@ static int pfslot_sit_down(unsigned k) {
     if(pslot_controller_has(s->ship,PSLOT_CONTROLLER_CLASS,NULL)!=0) {InterlockedIncrement64(&f->ignored);return 1;}   /* the ship is held */
     if(!read_local(pnat_base+PSLOT_PILOT_POSITION,&position,4) || !position) return pfslot_fail("slot_pilot_position");
     memcpy(s->player+PFSLOT_POSITION,&position,4);
+    /* The take's bank reset (d84c20) starts the new controller's flight control from THIS client's input object
+     * (lockstep_pilot_slots.h pslot_seat_ship): the sitting player's own client has it off (it walks), another client
+     * has its own flight on. For the take the byte is the slot's own flight control (the store's, in this scope: off
+     * since its stand-up; its SPACE edge follows in its record), then this client's again. */
+    volatile unsigned char *flag_at=NULL;unsigned char flag_was=0;int flag_held=0;
+    {   unsigned char *object=NULL;
+        if(read_local(pnat_base+PSLOT_TAKE_INPUT,&object,8) && object && read_local(object+PSLOT_TAKE_FLIGHT_FLAG,&flag_was,1)) {
+            const unsigned char want=*PNAT_U8(PNAT_FLIGHT)?1u:0u;
+            flag_at=object+PSLOT_TAKE_FLIGHT_FLAG;
+            if((flag_was!=0)!=(want!=0)) {*flag_at=want;flag_held=1;InterlockedIncrement64(&pslot_take_flags);}
+        }
+    }
     __try {((void(*)(void*))take)(s->ship);controller=pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY);}
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    if(flag_held) *flag_at=flag_was;
     if(fault) return pfslot_fail("slot_take_fault");
     if(!controller || !read_local(controller,&cvt,8) || cvt!=(void*)(pnat_base+PSLOT_VTABLE) || !read_local((unsigned char*)controller+0x28,&back,8) ||
        back!=s->ship || pslot_controller_has(s->ship,0,controller)!=1) return pfslot_fail("slot_take_controller");
@@ -294,6 +307,12 @@ static int pfslot_any_walking(void) {
     return 0;
 }
 /* This client's own slot walks (K1: its FIRST_PERSON contexts, lockstep_pilot_foot.h). */
+/* X4's own player holds a control position (it sits): its seat is one of X4's first-person count (lockstep_pilot_foot.h K1). */
+static int pfslot_canon_seated(void) {
+    int position=0,none=0;
+    if(!pslot_p1 || !pnat_base || !read_local(pslot_p1+PFSLOT_POSITION,&position,4) || !read_local(pnat_base+PFSLOT_POSITION_NONE,&none,4)) return 0;
+    return position!=none;
+}
 static int pfslot_own_walking(void) {
     unsigned k=pstk_capture_slot;
     return pfslot_armed && pstk_capturing && k>=2 && k<=PILOT_SLOTS && pfslots[k].walking;
@@ -362,14 +381,18 @@ static void pfslot_frame(void) {
     if(!pfslot_armed || !pnat_fn.time(&now)) return;
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         pfslot_slot *f=&pfslots[k];
-        f->frame_state=(unsigned char)f->walking;f->frame_hash=0;
+        f->frame_state=(unsigned char)f->walking;f->frame_hash=0;f->frame_bank=f->frame_pose=0;
         if(!f->walking) continue;
         uint64_t h=PFSLOT_DOMAIN+k;
         for(unsigned i=0;i<PFOOT_BANK_SIZE;i++) if(pfslot_bank_byte(i)) {h^=f->bank[i];h*=0x100000001b3ULL;}
+        f->frame_bank=h;   /* the bank alone: which half parts when a receipt does (gu3: W2 apart under a person's mouse look) */
         __attribute__((aligned(16))) float pose[16];memset(pose,0,sizeof(pose));
         __try {pfslot_fn.pose(f->fpc,pose,now,1);}
         __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {memset(pose,0xff,sizeof(pose));}
         for(unsigned i=0;i<16;i++) if((i&3)!=3) {uint32_t v;memcpy(&v,&pose[i],4);for(unsigned b=0;b<4;b++) {h^=(unsigned char)(v>>(8*b));h*=0x100000001b3ULL;}}
+        {uint64_t p=PFSLOT_DOMAIN^0x706f7365ULL;
+         for(unsigned i=0;i<16;i++) if((i&3)!=3) {uint32_t v;memcpy(&v,&pose[i],4);for(unsigned b=0;b<4;b++) {p^=(unsigned char)(v>>(8*b));p*=0x100000001b3ULL;}}
+         f->frame_pose=p;}
         f->frame_hash=h|1u;
     }
 }
@@ -441,6 +464,11 @@ static int pfslot_status(char *out,size_t capacity) {
             (long long)f->stood,(long long)f->sat,(long long)f->ignored,(long long)f->updates,(long long)f->placed,(long long)f->unplaced,(long long)f->lost);
         if(more<0) return 0;
         n+=more;
+        if(f->walking && (size_t)n<capacity) {   /* the last receipt's halves: the bank, the FPC's pose */
+            more=snprintf(out+n,capacity-(size_t)n," fw%u=%016llx/%016llx",k,(unsigned long long)f->frame_bank,(unsigned long long)f->frame_pose);
+            if(more<0) return 0;
+            n+=more;
+        }
     }
     return n>0 && (size_t)n<capacity?n:0;
 }

@@ -435,6 +435,77 @@ static void test_ui_replay(void) {
             test_uirep_player[UIREP_PLAYER_ASSIST]=1;assert(uirep_frame_text(text,sizeof(text)) && strstr(text,",0/0/f1.001"));
             uirep_families=UIREP_FAMILY_TRAVEL;assert(uirep_frame_text(text,sizeof(text)) && !strstr(text,"/f"));
             memcpy(pilot_slots,saved_slots,sizeof(saved_slots));test_uirep_p1[UIREP_PLAYER_ASSIST]=0;test_uirep_player[UIREP_PLAYER_ASSIST]=0;
+            /* Deployables (the flight family): the launching ship as a reference, the macro's name. Captured in the UI,
+             * nothing runs here; a ship without an identity or a name too long is refused; on the wire, staged, applied in
+             * slot 2's scope with the ship resolved and the name as sent; refused on the wire without the family. */
+            {   static const char *const macros[5]={"eq_arg_satellite_01_macro","eq_arg_satellite_02_macro","eq_arg_resourceprobe_01_macro",
+                    "weapon_gen_mine_01_macro","ship_gen_xs_lasertower_01_a_macro"};
+                for(unsigned i=UIREP_H_LAUNCH_LASERTOWER;i<=UIREP_H_LAUNCH_SATELLITE;i++) uirep_fn.forward[i]=test_uirep_call_str_fwd;
+                uirep_families=UIREP_FAMILY_FLIGHT;uirep_queue_head=uirep_queue_count=0;test_uirep_call_count=0;
+                assert(uirep_call_launch_satellite(0x7001,(uint64_t)(uintptr_t)macros[0],0,0,0,0,0,0)==55 && test_uirep_count('K')==1);   /* outside: X4's own */
+                uirep_ui_depth=1;test_uirep_call_count=0;
+                assert(uirep_call_launch_satellite(0x7001,(uint64_t)(uintptr_t)macros[0],0,0,0,0,0,0)==1 &&
+                       uirep_call_launch_navbeacon(0x7001,(uint64_t)(uintptr_t)macros[1],0,0,0,0,0,0)==1 &&
+                       uirep_call_launch_probe(0x7001,(uint64_t)(uintptr_t)macros[2],0,0,0,0,0,0)==1 &&
+                       uirep_call_launch_mine(0x7001,(uint64_t)(uintptr_t)macros[3],0,0,0,0,0,0)==1);
+                assert(!test_uirep_call_count && uirep_queue_count==4);
+                {LONG64 refused=uirep_refused;static char longname[UIREP_STRING_MAX+2];memset(longname,'m',sizeof(longname)-1);
+                 assert(!uirep_call_launch_satellite(0x9999,(uint64_t)(uintptr_t)macros[0],0,0,0,0,0,0) && uirep_refused==refused+1);
+                 assert(!uirep_call_launch_mine(0x7001,(uint64_t)(uintptr_t)longname,0,0,0,0,0,0) && uirep_refused==refused+2);
+                 assert(!uirep_call_launch_lasertower(0x7001,0,0,0,0,0,0,0) && uirep_refused==refused+3 && uirep_queue_count==4);
+                 char text[512];assert(uirep_refusals_text(text,sizeof(text)) && strstr(text,"LaunchSatellite:unmapped") && strstr(text,"LaunchMine:string") &&
+                                       strstr(text,"LaunchLaserTower:string"));}
+                uirep_ui_depth=0;
+                length=uirep_take(340,UIREP_SECTION_MAX,section);assert(length && section[3]==4 && !uirep_queue_count);
+                {uint16_t c16=0;const char *w="";assert(uirep_section_ok(2,section,length,&c16,&w));
+                 uirep_families=UIREP_FAMILY_WEAPONS;assert(!uirep_section_ok(2,section,length,&c16,&w) && !strcmp(w,"ui_call"));uirep_families=UIREP_FAMILY_FLIGHT;}
+                assert(uirep_stage(2,section,length,341,&why));
+                {LONG64 applied=uirep_calls_applied;test_uirep_call_string[0]=0;
+                 assert(uirep_frame(343,&why) && uirep_calls_applied==applied+4 && test_uirep_count('K')==4);}
+                for(unsigned i=0;i<test_uirep_call_count;i++) if(test_uirep_calls[i].what=='K') assert(test_uirep_calls[i].scope==2 && test_uirep_calls[i].b==0x7001);
+                assert(!strcmp(test_uirep_call_string,macros[3]) && test_uirep_call_args[0]==0x7001);
+                /* A laser tower from slot 1: canonical, no scope. */
+                uirep_ui_depth=1;stats.slot=1;assert(uirep_call_launch_lasertower(0x7001,(uint64_t)(uintptr_t)macros[4],0,0,0,0,0,0)==1);uirep_ui_depth=0;
+                length=uirep_take(350,UIREP_SECTION_MAX,section);assert(uirep_stage(1,section,length,351,&why));test_uirep_call_count=0;
+                assert(uirep_frame(353,&why) && test_uirep_count('K')==1 && !test_uirep_calls[0].scope && !test_uirep_count('{') && !strcmp(test_uirep_call_string,macros[4]));
+                stats.slot=2;
+                for(unsigned i=UIREP_H_LAUNCH_LASERTOWER;i<=UIREP_H_LAUNCH_SATELLITE;i++) uirep_fn.forward[i]=test_uirep_call_fwd;
+            }
+            /* A named ship's settings (the flight family): ids, bools, strings, a word, and the turret group's context, a
+             * component or 0 ('i'): 0 travels as 0, a component as a reference, one without an identity is refused. */
+            {   uirep_families=UIREP_FAMILY_FLIGHT;uirep_queue_head=uirep_queue_count=0;test_uirep_call_count=0;uirep_ui_depth=1;
+                assert(uirep_call_weapon_armed(0x7001,1,0,0,0,0,0,0)==1 && uirep_call_turrets_mode(0x7001,(uint64_t)(uintptr_t)"defend",0,0,0,0,0,0)==1 &&
+                       uirep_call_tgroup_armed(0x7001,0,(uint64_t)(uintptr_t)"..",(uint64_t)(uintptr_t)"group_front",1,0,0,0)==1 &&
+                       uirep_call_tgroup_mode(0x7001,0x7001,(uint64_t)(uintptr_t)"..",(uint64_t)(uintptr_t)"group_back",(uint64_t)(uintptr_t)"attackenemies",0,0,0)==1 &&
+                       uirep_call_drop_cargo(0x7001,(uint64_t)(uintptr_t)"energycells",0x01020304,0,0,0,0,0)==1);
+                assert(!test_uirep_call_count && uirep_queue_count==5);
+                {LONG64 refused=uirep_refused;
+                 assert(!uirep_call_tgroup_armed(0x7001,0x9999,(uint64_t)(uintptr_t)"..",(uint64_t)(uintptr_t)"g",1,0,0,0) && uirep_refused==refused+1);
+                 assert(!uirep_call_self_destruct(0x9999,0,0,0,0,0,0,0) && uirep_refused==refused+2 && uirep_queue_count==5);
+                 char text[512];assert(uirep_refusals_text(text,sizeof(text)) && strstr(text,"SetTurretGroupArmed:unmapped") && strstr(text,"SelfDestructComponent:unmapped"));}
+                uirep_ui_depth=0;
+                length=uirep_take(360,UIREP_SECTION_MAX,section);assert(length && section[3]==5 && !uirep_queue_count);
+                {uint16_t c16=0;const char *w="";assert(uirep_section_ok(2,section,length,&c16,&w));
+                 unsigned char bad[UIREP_SECTION_MAX];memcpy(bad,section,length);bad[5]-=1;assert(!uirep_section_ok(2,bad,length,&c16,&w) && !strcmp(w,"ui_call"));}
+                assert(uirep_stage(2,section,length,361,&why));
+                {LONG64 applied=uirep_calls_applied;test_uirep_call_count=0;
+                 assert(uirep_frame(363,&why) && uirep_calls_applied==applied+5 && test_uirep_count('K')==5);}
+                {unsigned j=0;static const uint64_t second[5]={1,0,0,0x7001,0};   /* weapon_armed's bool; tgroup_armed's context 0; tgroup_mode's context */
+                 for(unsigned i=0;i<test_uirep_call_count;i++) if(test_uirep_calls[i].what=='K') {assert(test_uirep_calls[i].scope==2 && test_uirep_calls[i].b==0x7001);++j;}
+                 assert(j==5);(void)second;}
+                /* the last call was the drop: container, ware, amount */
+                assert(test_uirep_call_args[0]==0x7001 && !strcmp((const char*)(uintptr_t)test_uirep_call_args[1],"energycells") && test_uirep_call_args[2]==0x01020304);
+                /* the group mode alone: its context arrives as the component, its three strings in their places */
+                uirep_ui_depth=1;assert(uirep_call_tgroup_mode(0x7001,0x7001,(uint64_t)(uintptr_t)"p",(uint64_t)(uintptr_t)"g",(uint64_t)(uintptr_t)"m",0,0,0)==1);uirep_ui_depth=0;
+                length=uirep_take(370,UIREP_SECTION_MAX,section);assert(uirep_stage(2,section,length,371,&why));test_uirep_call_count=0;
+                assert(uirep_frame(373,&why) && test_uirep_count('K')==1 && test_uirep_call_args[0]==0x7001 && test_uirep_call_args[1]==0x7001 &&
+                       !strcmp((const char*)(uintptr_t)test_uirep_call_args[2],"p") && !strcmp((const char*)(uintptr_t)test_uirep_call_args[3],"g") &&
+                       !strcmp((const char*)(uintptr_t)test_uirep_call_args[4],"m"));
+                /* and with no context: 0 */
+                uirep_ui_depth=1;assert(uirep_call_tgroup_armed(0x7001,0,(uint64_t)(uintptr_t)"p",(uint64_t)(uintptr_t)"g",1,0,0,0)==1);uirep_ui_depth=0;
+                length=uirep_take(380,UIREP_SECTION_MAX,section);assert(uirep_stage(2,section,length,381,&why));test_uirep_call_count=0;
+                assert(uirep_frame(383,&why) && test_uirep_count('K')==1 && test_uirep_call_args[0]==0x7001 && !test_uirep_call_args[1] && test_uirep_call_args[4]==1);
+            }
             uirep_families=UIREP_FAMILIES&~UIREP_FAMILY_FLIGHT;test_uirep_call_count=0;
         }
         /* The stock record: dock and weapon keys replayed, the autopilot key run here, all off without their family. */
@@ -538,7 +609,8 @@ static void test_ui_replay(void) {
     uirep_fns stubs=uirep_fn;
     uirep_fn.ui_move=NULL;uirep_fn.start=uirep_fn.stop=NULL;memset(uirep_fn.forward,0,sizeof(uirep_fn.forward));
     assert(uirep_install() && uirep_installed && !uirep_restored && uirep_intact());
-    for(unsigned i=0;i<UIREP_HOOKS;i++) assert(region[uirep_hooks[i].rva]==0xe9);
+    for(unsigned i=0;i<UIREP_HOOKS;i++) assert(uirep_hook_used(i)?region[uirep_hooks[i].rva]==0xe9:   /* the compslot hooks only when armed */
+                                               !memcmp(region+uirep_hooks[i].rva,uirep_hooks[i].bytes,uirep_hooks[i].prefix));
     assert(region[uirep_sites[0].rva]==0xe9 && region[uirep_sites[1].rva]==0xe9);
     assert(((uirep_sites[0].rva+4)&~15u)==(uirep_sites[0].rva&~15u) && ((uirep_sites[1].rva+4)&~15u)==(uirep_sites[1].rva&~15u));
     /* A hook's whole chain: X4's entry -> the near page -> our wrapper -> the trampoline -> behind the prefix. */
@@ -668,12 +740,13 @@ static void test_ui_replay_native_image(const char *path) {
      assert(image[0x1feab9u]==0xe8);memcpy(&rel,image+0x1feabau,4);assert(0x1feabeu+rel==0x1fe9d0u);}
     /* Every patch on the real bytes, one CAS each, and back. */
     uirep_families=UIREP_FAMILIES;uirep_armed=1;uirep_fn=(uirep_fns){0};uirep_page=NULL;uirep_installed=0;uirep_stopped=0;
+    const int compslot_on=uics_on;uics_on=1;   /* the action containers' perform hooks as well (lockstep_ui_compslot.h) */
     assert(uirep_install() && uirep_intact());
     for(unsigned i=0;i<UIREP_HOOKS;i++) assert(image[uirep_hooks[i].rva]==0xe9);
     /* The site's resume points: the block ends the report names. */
     {static const unsigned char after_clear[]={0x4d,0x85,0xed},after_set[]={0x80,0x3d};
      assert(!memcmp(image+uirep_sites[UIREP_S_TARGET_CLEAR].resume,after_clear,3) && !memcmp(image+uirep_sites[UIREP_S_TARGET_SET].resume,after_set,2));}
-    uirep_uninstall();assert(!uirep_installed && uirep_restored);
+    uirep_uninstall();assert(!uirep_installed && uirep_restored);uics_on=compslot_on;
     uirep_pins_checked=0;assert(uirep_pins());
     image[0x3e73f0u+3]^=1;uirep_pins_checked=0;assert(!uirep_pins() && pin_failed_rva==0x3e73f0u);image[0x3e73f0u+3]^=1;uirep_pins_checked=0;
     image[UIREP_MD_SET_RETURN-4]^=1;assert(!uirep_pins() && pin_failed_rva==UIREP_MD_SET_FN);image[UIREP_MD_SET_RETURN-4]^=1;uirep_pins_checked=0;

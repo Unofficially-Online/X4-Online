@@ -141,13 +141,7 @@ def ask(prefix, name, timeout=3):
             time.sleep(0.1)
 
 
-def start_label(start, sector):
-    """A start as the page names it: the gamestart's id without its prefix, and where it is."""
-    name = str(start or 'the session start')
-    for prefix in ('x4ep1_gamestart_', 'x4_gamestart_', 'gamestart_'):
-        if name.startswith(prefix):
-            name = name[len(prefix):]
-    return name.replace('_', ' ') + (f' ({sector})' if sector else '')
+start_label = lobby.start_label
 
 
 def x4_running():
@@ -192,24 +186,10 @@ class Helper:
     def idle_view(self):
         """What the page shows while nothing is asked: (lines, fields) from the session and the server's last status."""
         players = f'{self.recipe["players"]} players, {self.recipe.get("mode", "coop")}, {self.recipe.get("minutes", "?"):g} minutes'
-        restart = 'X4 closes and starts again in its multiplayer profile.'
-        s = self.server
-        if not s or not s.get('drop_in'):   # every player is there at the start (or the server does not answer)
+        lines, fields = lobby.picker_view(self.recipe, self.server, 'X4 closes and starts again in its multiplayer profile.')
+        if not lines:   # every player is there at the start (or the server does not answer)
             return (players, 'Join closes X4 and starts it again in its multiplayer profile, already joined.'), {}
-        starts = [{'slot': int(row['slot']), 'taken': bool(row.get('taken')),
-                   'label': start_label(row.get('start'), row.get('sector'))} for row in s.get('starts', [])]
-        if not s.get('running'):
-            base = start_label(s.get('base'), None)
-            return ((players, 'No game is running. Start one: you play ' + base + ', the others join you with a start of their choice.',
-                     restart), {'game': 'none', 'join_label': 'Start the game'})
-        free = sum(1 for row in starts if not row['taken'])
-        lines = (players, f'A game is running with {s.get("here", "?")} of {s.get("clients", "?")} players. Choose your start:', restart)
-        if not s.get('joinable'):
-            lines = (players, 'A game is running, but its first player has left: nobody can join it any more.',
-                     'A new game can start when it is over.')
-        elif not free:
-            lines = (players, 'A game is running and every start is taken.', '')
-        return lines, {'game': 'running', 'joinable': bool(s.get('joinable')), 'starts': starts}
+        return lines, fields
 
     def show(self, phase, *lines, **fields):
         if phase == 'idle' and not lines:
@@ -321,6 +301,30 @@ def stop(prefix=PIPE, wait=15):
             return True
         time.sleep(0.3)
     return False
+
+
+def second(kit, snapshot):
+    """second.pyw of a kit: one more X4 on this PC for the multiplayer session, without Steam (which starts only one).
+    It opens in the disposable profile on the Multiplayer page: Start the game, or the starts of the running game."""
+    kit = Path(kit)
+    own = kit / 'python' / 'python.exe'
+    base = [str(own if own.is_file() else Path(sys.executable).with_name('python.exe')), 'repo/tools/x4ls.py']
+    check = subprocess.run([*base, 'doctor'], cwd=kit, capture_output=True, text=True, creationflags=HIDDEN)
+    if check.returncode:
+        say('X4 cannot be started for the playtest:\n\n' + (check.stdout + check.stderr).strip()[-1200:], error=True)
+        return 1
+    out = kit / 'repo' / '.local' / f'second-{os.getpid()}.log'
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open('w', encoding='utf-8', errors='replace') as f:
+        code = subprocess.run([*base, 'lobby', '--overlay', 'overlay', '--snapshot', snapshot, '--server-file', 'server.json',
+                               '--show', '--close-when-over'], cwd=kit, stdout=f, stderr=subprocess.STDOUT,
+                              creationflags=HIDDEN).returncode
+    if code:
+        say('The second window did not start, or ended with a problem.\n\n'
+            + out.read_text(encoding='utf-8', errors='replace').strip()[-1200:], error=True)
+    else:
+        out.unlink(missing_ok=True)
+    return code
 
 
 def redirection_guarded():

@@ -51,6 +51,14 @@ static void test_speak_timer_native_image(const char *path) {
     assert(!memcmp(image+0x5617c9,"\x83\x7e\x14\x00\x75\x72",6) && 0x5617cdu+2u+image[0x5617ce]==0x561841u);
     assert(!memcmp(image+0x5617cf,"\x83\x7e\x10\x00\x75\x65",6) && 0x5617d3u+2u+image[0x5617d4]==0x56183au);
     assert(!memcmp(image+0x56183a,"\xc7\x46\x10\x04\x00\x00\x00",7));
+    /* The second site (lockstep_speech_local.h): the speak data's mute byte, the je to the sound start, else handle 0 (ebx is 0
+     * from 0x5613ad on) and the jump to the handle's store. As two nops no line starts a sound; the block pin takes either. */
+    assert(!memcmp(image+0x561637,"\x80\x7e\x60\x00\x74\x07\x8b\xc3\xe9",9) && speak_mute_site()==SPEAK_MUTE_ORIGINAL);
+    {int32_t rel;memcpy(&rel,image+0x561640,4);assert(0x561644u+(uint32_t)rel==0x56179eu && !memcmp(image+0x56179e,"\x89\x46\x14",3));}
+    assert(!memcmp(image+0x5613ad,"\x33\xdb",2));
+    assert(speak_site_swap(SPEAK_MUTE_SITE,SPEAK_MUTE_ORIGINAL,SPEAK_MUTE_PATCHED) && speak_timer_pins());
+    image[SPEAK_MUTE_SITE]^=1;assert(!speak_timer_pins());image[SPEAK_MUTE_SITE]^=1;
+    assert(speak_site_swap(SPEAK_MUTE_SITE,SPEAK_MUTE_PATCHED,SPEAK_MUTE_ORIGINAL) && speak_timer_pins());
     /* The words the speech modules replace do not count; anything else in the pinned code refuses. */
     const unsigned others[]={0x561330,0x563e80,0x563fb0,0x562590};
     for(unsigned i=0;i<sizeof(others)/sizeof(*others);i++) {image[others[i]]^=1;assert(speak_timer_pins());image[others[i]]^=1;}

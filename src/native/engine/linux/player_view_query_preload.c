@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include "../lockstep_sha256.h"
 #include "player_view_query_preload.h"
+#include "player_ui_session_budget.h"
 #include "player_live_pose_preload.h"
 #define EXPORT __attribute__((visibility("default")))
 #define PVQ_PAGE 4096u
@@ -27,6 +28,8 @@ static const char image_sha[] = "113f73d74570084f6ce18a659b365009eccf579fb66dbab
 static const char function_sha[] = "c4ae051dfa320a46f8049b7e35f5f686c7f4455e98f33ce52b13c2cbe0c134d3";
 static const uint64_t original_word = UINT64_C(0x4803371b01158b48);
 static player_view_query_info information;
+static player_ui_session_budget preload_session_budget;
+static player_startup_phases preload_startup = {0, 2, 2, 4, 5, 3, 5, 7, 8, 9};
 static _Atomic uint32_t owner_tid;
 static uint32_t worker_tid;
 static uint64_t current_tick;
@@ -64,6 +67,39 @@ static void ui_overlay_abort(void) {
     static const char message[] = "X4 UI OVERLAY FATAL preload_boundary\n";
     (void)write(2, message, sizeof message - 1);
     _exit(223);
+}
+/* GameRender is a separate VBI slot; its lease remains disarmed by default. */
+static _Atomic unsigned game_render_installed, game_render_binding;
+static uint32_t game_render_tid;
+static unsigned game_render_remaining;
+static player_ui_overlay_callback game_render_enter, game_render_leave;
+static void (*game_render_original)(void *);
+static _Thread_local unsigned game_render_depth;
+static _Thread_local unsigned camera_refill_depth;
+static unsigned camera_refill_completed;
+static void game_render_dispatch(void *object) {
+    int before = errno;
+    unsigned state = atomic_load_explicit(&game_render_binding, memory_order_acquire);
+    if (state == 2) ui_overlay_abort();
+    if (state == 1) {
+        unsigned expected = 1;
+        if (current_thread() != game_render_tid || game_render_depth || ui_depth[0] || ui_depth[1] ||
+            !atomic_compare_exchange_strong_explicit(&game_render_binding, &expected, 2,
+                                                    memory_order_acq_rel, memory_order_acquire))
+            ui_overlay_abort();
+        ++game_render_depth;
+        errno = before;
+        player_ui_escape_guard_call(game_render_original, object, game_render_enter, game_render_leave);
+        int after = errno;
+        --game_render_depth;
+        if (!game_render_remaining) ui_overlay_abort();
+        --game_render_remaining;
+        atomic_store_explicit(&game_render_binding, game_render_remaining ? 1 : 3, memory_order_release);
+        errno = after;
+        return;
+    }
+    errno = before;
+    game_render_original(object);
 }
 static void (*ui_original[2])(void *);
 static const uintptr_t ui_slots[2] = { 0x3ab4988u, 0x3ab4990u };
@@ -314,13 +350,44 @@ EXPORT int x4mp_view_query_ui_bind_eight(uint32_t tid, uintptr_t object,
 EXPORT int x4mp_view_query_ui_bind_count(uint32_t tid, uintptr_t object,
                                          player_ui_overlay_callback enter, player_ui_overlay_callback leave,
                                          unsigned count) {
-    if (count != 8 && count != 160) return 0;
+    if (count != 8 && count != 160 &&
+        (!preload_session_budget.frames || count != preload_session_budget.presentation_count)) return 0;
+    if (preload_session_budget.frames && count != preload_session_budget.presentation_count) return 0;
     return ui_overlay_bind(tid, object, enter, leave, count);
 }
 EXPORT unsigned x4mp_view_query_ui_overlay_progress(void) {
     return atomic_load_explicit(&ui_overlay_binding, memory_order_acquire);
 }
 
+EXPORT unsigned x4mp_view_query_game_render_info(player_game_render_info *out) {
+    if (!out || !atomic_load_explicit(&game_render_installed, memory_order_acquire)) return 0;
+    *out = (player_game_render_info){0x3ab1280u, 0xfb0180u, (uintptr_t)game_render_dispatch,
+                                     (uintptr_t)&game_render_original, 1};
+    return 1;
+}
+EXPORT int x4mp_view_query_game_render_bind(uint32_t tid, player_ui_overlay_callback enter,
+                                             player_ui_overlay_callback leave) {
+    if (!atomic_load_explicit(&game_render_installed, memory_order_acquire) || !tid || !enter || !leave ||
+        current_thread() != tid || tid != atomic_load_explicit(&owner_tid, memory_order_acquire) ||
+        ui_depth[0] != 1 || ui_depth[1] || game_render_depth || atomic_load(&game_render_binding) ||
+        !player_ui_escape_guard_prepare()) return 0;
+    game_render_tid = tid;
+    game_render_remaining = preload_session_budget.frames ? preload_session_budget.presentation_count : 160;
+    game_render_enter = enter;
+    game_render_leave = leave;
+    /* Prepared inside tick 8's ordinary Move; tick 9 explicitly activates it. */
+    atomic_store_explicit(&game_render_binding, 4, memory_order_release);
+    return 1;
+}
+EXPORT int x4mp_view_query_game_render_activate(void) {
+    unsigned expected = 4;
+    return current_thread() == game_render_tid && ui_depth[0] == 1 && !ui_depth[1] &&
+        !game_render_depth && atomic_compare_exchange_strong_explicit(&game_render_binding, &expected, 1,
+                                                                       memory_order_acq_rel, memory_order_acquire);
+}
+EXPORT unsigned x4mp_view_query_game_render_progress(void) {
+    return atomic_load_explicit(&game_render_binding, memory_order_acquire);
+}
 EXPORT unsigned x4mp_view_query_ui_info(player_ui_callback_snapshot *out) {
     if (!out || !atomic_load_explicit(&ui_installed, memory_order_acquire)) return 0;
     memset(out, 0, sizeof *out);
@@ -479,6 +546,7 @@ static int register_entry_frame(uintptr_t start) {
 }
 
 #include "player_live_pose_preload_impl.h"
+#include "player_camera_refill_preload_impl.h"
 
 /* The two slots share a RELRO page. All pins are checked before changing
  * protection; a failure is terminal in the pre-main disposable process. */
@@ -488,6 +556,8 @@ static int ui_code_matches(uintptr_t address, size_t length, const char *sha) {
     lockstep_sha256((const void *)address, length, digest);
     return digest_matches(digest, sha);
 }
+
+#include "player_view_ancestry_preload_impl.h"
 
 static int install_ui_slot_pair(uintptr_t first, uintptr_t second,
                                 const uintptr_t expected_slots[2],
@@ -523,11 +593,50 @@ static int install_ui_callbacks(void) {
     return 1;
 }
 
+static int install_game_render(void) {
+    const uintptr_t slot = 0x3ab1280u, original = 0xfb0180u;
+    uintptr_t page = slot & ~(uintptr_t)(PVQ_PAGE - 1);
+    if (!single_thread() || !ui_code_matches(original, 0x70,
+            "fa4b6b5d88d285cb39eb2160f8382cb54b1b2b4e2578a5d9613c8fc0a4c9b59b") ||
+        !has_permissions(slot, "r--p") || __atomic_load_n((uintptr_t *)slot, __ATOMIC_SEQ_CST) != original)
+        return 0;
+    game_render_original = (void (*)(void *))original;
+    if (mprotect((void *)page, PVQ_PAGE, PROT_READ | PROT_WRITE)) return 0;
+    uintptr_t expected = original;
+    if (!__atomic_compare_exchange_n((uintptr_t *)slot, &expected, (uintptr_t)game_render_dispatch,
+                                      0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) return 0;
+    if (mprotect((void *)page, PVQ_PAGE, PROT_READ) || !has_permissions(slot, "r--p")) return 0;
+    atomic_store_explicit(&game_render_installed, 1, memory_order_release);
+    return 1;
+}
+
+static int session_preload_config(const player_ui_session_budget *budget, const char *ui,
+                                  const char *render, const char *live, const char *query,
+                                  const char *correction, const char *single, const char *eight,
+                                  const char *legacy) {
+    if (!budget || !budget->frames) return 1;
+    if (single || eight || legacy) return 0;
+    if (!render && !live && !query && !correction) return 1; /* host */
+    return ui && !strcmp(ui, "1") && render && !strcmp(render, "1") &&
+        live && !strcmp(live, "1") && query && !strcmp(query, "1") &&
+        correction && !strcmp(correction, "1");
+}
+
 #ifndef PLAYER_VIEW_QUERY_TEST
 __attribute__((constructor)) static void player_view_query_install(void) {
     const char *enabled = getenv("X4MP_VIEW_QUERY_OBSERVER");
+    const char *session_text = getenv("X4_DEV_UI_SESSION_FRAMES");
+    if (!player_startup_phases_parse(getenv("X4_DEV_PLAYER_PHASES"), &preload_startup) ||
+        (preload_startup.version && !session_text) ||
+        (session_text && !player_ui_session_parse_phased(session_text, &preload_startup, &preload_session_budget))) refuse();
+    if (!session_preload_config(&preload_session_budget, getenv("X4MP_UI_CALLBACK_OBSERVER"),
+            getenv("X4_DEV_UI_RENDER_LEASE"), getenv("X4_DEV_UI_LIVE_POSE_OBSERVER"),
+            getenv("X4_DEV_UI_SEAT_QUERY"), getenv("X4_DEV_UI_SEAT_CORRECTION"),
+            getenv("X4_DEV_UI_OVERLAY"), getenv("X4_DEV_UI_OVERLAY_EIGHT"),
+            getenv("X4_DEV_UI_OVERLAY_160"))) refuse();
     if (!enabled) {
-        if (getenv("X4MP_UI_CALLBACK_OBSERVER") || getenv("X4_DEV_UI_LIVE_POSE_OBSERVER")) refuse();
+        if (getenv("X4_DEV_VIEW_ANCESTRY") || getenv("X4MP_UI_CALLBACK_OBSERVER") || getenv("X4_DEV_UI_LIVE_POSE_OBSERVER") ||
+            getenv("X4_DEV_UI_RENDER_LEASE")) refuse();
         return;
     }
     if (strcmp(enabled, "1") || !image_matches() || sysconf(_SC_PAGESIZE) != PVQ_PAGE ||
@@ -538,11 +647,21 @@ __attribute__((constructor)) static void player_view_query_install(void) {
     if (!digest_matches(digest, function_sha)) refuse();
     const char *ui_enabled = getenv("X4MP_UI_CALLBACK_OBSERVER");
     if (ui_enabled && (strcmp(ui_enabled, "1") || !install_ui_callbacks())) refuse();
+    const char *render_lease = getenv("X4_DEV_UI_RENDER_LEASE");
+    if (render_lease && (strcmp(render_lease, "1") || !ui_enabled ||
+        !getenv("X4_DEV_UI_SEAT_CORRECTION") || strcmp(getenv("X4_DEV_UI_SEAT_CORRECTION"), "1") ||
+        !install_game_render())) refuse();
     const char *live_pose = getenv("X4_DEV_UI_LIVE_POSE_OBSERVER");
     if (live_pose && (strcmp(live_pose, "1") || !ui_enabled ||
         !getenv("X4_DEV_UI_SEAT_QUERY") || strcmp(getenv("X4_DEV_UI_SEAT_QUERY"), "1") ||
-        !getenv("X4_DEV_UI_OVERLAY_160") || strcmp(getenv("X4_DEV_UI_OVERLAY_160"), "1") ||
-        !install_live_pose())) refuse();
+        (preload_session_budget.frames ? getenv("X4_DEV_UI_OVERLAY_160") != NULL :
+         (!getenv("X4_DEV_UI_OVERLAY_160") || strcmp(getenv("X4_DEV_UI_OVERLAY_160"), "1"))) ||
+        (preload_session_budget.frames && !render_lease) || !install_live_pose())) refuse();
+    const char *ancestry = getenv("X4_DEV_VIEW_ANCESTRY");
+    if (ancestry && (strcmp(ancestry, "1") || !view_ancestry_install())) refuse();
+    const char *camera_refill = getenv("X4_DEV_UI_CAMERA_REFILL");
+    if (camera_refill && (strcmp(camera_refill, "1") || !render_lease || !live_pose ||
+        !getenv("X4_DEV_UI_SEAT_CORRECTION") || !install_camera_refill())) refuse();
     unsigned char *page = allocate_near();
     if (!page) refuse();
     memset(page, 0xcc, PVQ_PAGE);

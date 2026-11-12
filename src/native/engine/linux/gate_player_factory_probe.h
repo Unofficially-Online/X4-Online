@@ -17,6 +17,7 @@
  * Ownership clean does not undo IDs, RNG, contexts, rendering or deferred
  * deletion. P2 is never read after its owned result reference is released.
  */
+#include "gate_player_startup_phases.h"
 #include "player_factory_probe.h"
 #include "player_reference_probe.h"
 #include "player_factory_preload_pin.h"
@@ -150,7 +151,7 @@ static int factory_probe_joined_boundary(void) {
 }
 
 static int factory_probe_worker_boundary(void) {
-    return stats.issued == 2 && factory_probe_joined_boundary() &&
+    return stats.issued == player_startup()->factory && factory_probe_joined_boundary() &&
         factory_probe_patch_owned && !factory_probe_code_permission_pending &&
         !factory_probe_thunk_permission_pending && factory_probe_word(factory_probe_patched_word);
 }
@@ -445,11 +446,12 @@ static int factory_probe_admit(void) {
         return factory_probe_word(factory_probe_patched_word) &&
             !factory_probe_code_permission_pending && !atomic_load(&factory_probe_wrapper_failure);
     }
+    if (stats.issued < player_startup()->factory) return 1;
     static const lx_site initializer = {"Player-initializer", 0x1daf300, 2423,
         "8666b05926e5ea778188ecfefa0c3e51566d0944b1879d262e036d15ba6eebef"};
     static const lx_site release_call = {"Player-old-reference-release", FACTORY_PROBE_CALL_VA, 5,
         "f5a4aa95f01be3d973cdf61134d138e25f429499441c700827bbb27b25d64d4b"};
-    if (stats.issued != 2 || !stats.active || !factory_probe_main_boundary()) {
+    if (stats.issued != player_startup()->factory || !stats.active || !factory_probe_main_boundary()) {
         return factory_probe_fail("install_boundary");
     }
     if (!stock_observer_install_tick || !atomic_load(&sko_session.active) ||
@@ -560,9 +562,10 @@ static int factory_probe_after_join(void) {
         }
         return factory_probe_state.phase == PLAYER_FACTORY_FINISHED;
     }
-    if (stats.issued < 2) {
+    if (stats.issued < player_startup()->factory) {
         return 1;
     }
+    if (stats.issued != player_startup()->factory) return factory_probe_fail("factory_tick_missed");
     if (factory_probe_inflight || !factory_probe_worker_boundary() || !factory_probe_helpers()) {
         return factory_probe_fail("worker_boundary");
     }
@@ -676,7 +679,8 @@ static int factory_probe_clean(void) {
 static int lua_factory_probe_request(lua_State *L) {
     double release_tick = p_lua_tonumber(L, 1);
     int valid = accept_ui() && stats.active && stats.issued == 1 && boot_phase == 3 &&
-        isfinite(release_tick) && (release_tick == 0 ||
+        isfinite(release_tick) && (!player_startup()->version || release_tick > player_startup()->take) &&
+        (release_tick == 0 ||
             (release_tick >= 4 && release_tick <= 36000 && release_tick == floor(release_tick))) &&
         path_installed && stock_observer_wanted() && atomic_load(&stock_observer_requested) &&
         GetCurrentThreadId() == stock_observer_worker_thread && ui_thread == stock_observer_worker_thread &&

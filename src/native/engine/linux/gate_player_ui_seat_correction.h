@@ -9,6 +9,36 @@
  * concurrent readers or establish the lifetime of the P1 controller. */
 #define UI_CORRECTION_CAPACITY (160u * (PLAYER_UI_OVERLAY_MAX_UPDATES + 1u))
 static _Alignas(16) float ui_correction_scratch[UI_CORRECTION_CAPACITY][16];
+static _Alignas(16) float ui_render_correction_scratch[160][16];
+static _Alignas(16) float ui_refill_correction_scratch[160][16];
+static unsigned ui_move_correction_applies, ui_render_correction_applies, ui_refill_correction_applies;
+static float (*ui_session_move_scratch)[16], (*ui_session_render_scratch)[16], (*ui_session_refill_scratch)[16];
+static int ui_correction_allocate_session(void) {
+    size_t count = player_session_budget.presentation_count;
+    if (!count || count > 17990 || ui_session_move_scratch || ui_session_render_scratch) return 0;
+    size_t move_size = count * (PLAYER_UI_OVERLAY_MAX_UPDATES + 1u) * sizeof *ui_session_move_scratch;
+    size_t render_size = count * sizeof *ui_session_render_scratch;
+    void *move = mmap(NULL, move_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (move == MAP_FAILED) return 0;
+    void *render = mmap(NULL, render_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (render == MAP_FAILED) {
+        (void)munmap(move, move_size);
+        return 0;
+    }
+    if (ui_camera_refill_enabled) {
+        void *refill = mmap(NULL, render_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (refill == MAP_FAILED) {
+            (void)munmap(move, move_size);
+            (void)munmap(render, render_size);
+            return 0;
+        }
+        ui_session_refill_scratch = refill;
+    }
+    /* Both mappings remain resident until this disposable process exits. */
+    ui_session_move_scratch = move;
+    ui_session_render_scratch = render;
+    return 1;
+}
 static _Alignas(16) float ui_correction_delta[16];
 static player_ui_published_pose_lease ui_correction_lease;
 static player_live_correction_api ui_correction_api;
@@ -180,7 +210,18 @@ static void ui_correction_move_begin(void) {
     memset(ui_correction_move_source, 0, sizeof ui_correction_move_source);
 }
 static int ui_correction_apply(native_ui_overlay_probe *probe) {
-    if (ui_correction_applies >= UI_CORRECTION_CAPACITY) return 0;
+    unsigned moves = player_session_budget.frames ? player_session_budget.presentation_count : 160u;
+    unsigned move_capacity = moves * (PLAYER_UI_OVERLAY_MAX_UPDATES + 1u);
+    if ((!ui_game_render_active && !ui_camera_refill_active && ui_move_correction_applies >= move_capacity) ||
+        (ui_game_render_active && ui_render_correction_applies >= moves) ||
+        (ui_camera_refill_active && ui_refill_correction_applies >= moves)) return 0;
+    float (*move_scratch)[16] = player_session_budget.frames ? ui_session_move_scratch : ui_correction_scratch;
+    float (*render_scratch)[16] = player_session_budget.frames ? ui_session_render_scratch : ui_render_correction_scratch;
+    float (*refill_scratch)[16] = player_session_budget.frames ? ui_session_refill_scratch : ui_refill_correction_scratch;
+    if (!move_scratch || !render_scratch || (ui_camera_refill_active && !refill_scratch)) return 0;
+    float *scratch = ui_camera_refill_active ? refill_scratch[ui_refill_correction_applies] :
+                     ui_game_render_active ? render_scratch[ui_render_correction_applies] :
+                                             move_scratch[ui_move_correction_applies];
     memset(&ui_correction_lease, 0, sizeof ui_correction_lease);
     const player_ui_published_pose_ops operations = {
         probe, ui_correction_owner, ui_correction_read, ui_correction_exchange
@@ -202,7 +243,7 @@ static int ui_correction_apply(native_ui_overlay_probe *probe) {
                memcmp(raw, ui_correction_move_source, sizeof raw)) return 0;
     if (!player_ui_published_pose_begin(&ui_correction_lease, &operations,
                                         presentation_fork.request.player1, bank,
-                                        ui_correction_scratch[ui_correction_applies], ui_correction_delta)) return 0;
+                                        scratch, ui_correction_delta)) return 0;
     if (ui_correction_lease.slot != slot || ui_correction_lease.original != original ||
         !ui_correction_read(NULL, original, checked, sizeof checked) || memcmp(raw, checked, sizeof raw)) return 0;
     if (!ui_correction_applies) {
@@ -210,12 +251,15 @@ static int ui_correction_apply(native_ui_overlay_probe *probe) {
         ui_correction_first_original = original;
         char source[129], corrected[129];
         ui_live_pose_hex(raw, source);
-        ui_live_pose_hex((const unsigned char *)ui_correction_scratch[0], corrected);
-        dprintf(2, "X4 UI SEAT_CORRECTION v=1 stage=published tick=9 slot=%llx original=%llx scratch=%llx raw=%s corrected=%s\n",
-                (unsigned long long)slot, (unsigned long long)original,
-                (unsigned long long)(uintptr_t)ui_correction_scratch[0], source, corrected);
+        ui_live_pose_hex((const unsigned char *)scratch, corrected);
+        dprintf(2, "X4 UI SEAT_CORRECTION v=1 stage=published tick=%llu slot=%llx original=%llx scratch=%llx raw=%s corrected=%s\n",
+                (unsigned long long)stats.issued, (unsigned long long)slot, (unsigned long long)original,
+                (unsigned long long)(uintptr_t)scratch, source, corrected);
     }
     ++ui_correction_applies;
+    if (ui_camera_refill_active) ++ui_refill_correction_applies;
+    else if (ui_game_render_active) ++ui_render_correction_applies;
+    else ++ui_move_correction_applies;
     return 1;
 }
 static int ui_correction_restore(void) {
@@ -230,8 +274,8 @@ static int ui_correction_restore(void) {
     if (!ui_correction_restores) {
         if (ui_correction_first_slot != ui_correction_move_slot ||
             observed != ui_correction_first_original) return 0;
-        dprintf(2, "X4 UI SEAT_CORRECTION v=1 stage=published_restore tick=9 slot=%llx original=%llx observed=%llx\n",
-                (unsigned long long)ui_correction_first_slot, (unsigned long long)ui_correction_first_original,
+        dprintf(2, "X4 UI SEAT_CORRECTION v=1 stage=published_restore tick=%llu slot=%llx original=%llx observed=%llx\n",
+                (unsigned long long)stats.issued, (unsigned long long)ui_correction_first_slot, (unsigned long long)ui_correction_first_original,
                 (unsigned long long)observed);
     }
     ++ui_correction_restores;
@@ -253,10 +297,10 @@ static int ui_correction_move_closed(unsigned ordinal) {
         dprintf(2, "X4 UI SEAT_BANK v=1 stage=sample tick=%llu bank=%u slot=%llx original=%llx restored=%llx\n",
                 (unsigned long long)stats.issued, bank, (unsigned long long)ui_correction_move_slot,
                 (unsigned long long)ui_correction_move_original, (unsigned long long)observed);
-    if (ordinal == 160) {
-        if (ui_correction_bank_moves[0] + ui_correction_bank_moves[1] != 160) return 0;
-        dprintf(2, "X4 UI SEAT_BANK v=1 stage=close bank0=%u bank1=%u moves=160\n",
-                ui_correction_bank_moves[0], ui_correction_bank_moves[1]);
+    if (ordinal == ui_overlay_multi_count) {
+        if (ui_correction_bank_moves[0] + ui_correction_bank_moves[1] != ui_overlay_multi_count) return 0;
+        dprintf(2, "X4 UI SEAT_BANK v=1 stage=close bank0=%u bank1=%u moves=%u\n",
+                ui_correction_bank_moves[0], ui_correction_bank_moves[1], ui_overlay_multi_count);
     }
     return 1;
 }
@@ -282,8 +326,8 @@ static void ui_correction_prepare(void) {
         ui_overlay_die("seat_correction_configure");
     char delta[129];
     ui_live_pose_hex((const unsigned char *)ui_correction_delta, delta);
-    dprintf(2, "X4 UI SEAT_CORRECTION v=1 stage=ready tick=9 target=%llx delta=%s stack_low=%llx stack_high=%llx\n",
-            (unsigned long long)ui_live_pose_target, delta, (unsigned long long)ui_correction_stack_low,
+    dprintf(2, "X4 UI SEAT_CORRECTION v=1 stage=ready tick=%llu target=%llx delta=%s stack_low=%llx stack_high=%llx\n",
+            (unsigned long long)stats.issued, (unsigned long long)ui_live_pose_target, delta, (unsigned long long)ui_correction_stack_low,
             (unsigned long long)ui_correction_stack_high);
 }
 static void ui_correction_close(void) {
@@ -304,8 +348,8 @@ static void ui_correction_close(void) {
                 (unsigned long long)row->ordinal, (unsigned long long)row->last_move,
                 (unsigned long long)row->caller, (unsigned long long)row->time_bits, raw, corrected);
     }
-    dprintf(2, "X4 UI SEAT_CORRECTION v=1 stage=close tick=168 applies=%u restores=%u calls=%llu rows=%u published_restored=1 state=outside\n",
-            ui_correction_applies, ui_correction_restores, (unsigned long long)ui_correction_result.calls,
+    dprintf(2, "X4 UI SEAT_CORRECTION v=1 stage=close tick=%u applies=%u restores=%u calls=%llu rows=%u published_restored=1 state=outside\n",
+            (unsigned)player_startup()->presentation_arm + ui_overlay_multi_count, ui_correction_applies, ui_correction_restores, (unsigned long long)ui_correction_result.calls,
             ui_correction_result.count);
 }
 #endif

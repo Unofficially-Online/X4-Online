@@ -78,6 +78,8 @@
 #define JOIN_ATTENTION 0x1ecu              /* the attention level (SetAttention 0x3d5660) */
 #define JOIN_ATTENTION_DUE 0x2e0u          /* the attention timer's due (0x6d1ff0, an Object's) */
 #define JOIN_ATTN_OWN 0xd1u                /* SetAttention(level 1) computes the level (vfunc 0x15f8) when this byte is set */
+#define JOIN_ATTN_VIEW 0x118u              /* the level the renderer reads: view cache [A] +0x38, A = 0, 1 (+0x80); PropagateCacheFlags 0x3d49f0 */
+#define JOIN_ATTN_VIEW_STRIDE 0x80u
 static int join_attn_states_on;            /* native_gate_join_attn_states (ATTN set, below) */
 static int join_attn_settled(unsigned char *object,uint32_t level);
 #define JOIN_NAV_REFRESH 0xc0u             /* the last refresh's game time (RefreshFromPathingState 0xea2a20) */
@@ -736,6 +738,10 @@ static const join_steer_class join_steer_classes[]={
     {0x2c4db70u,5,{{0x10,2,0},{0x20,0x40,1},{0x60,0x18,0},{0x80,4,0},{0x88,8,0}}},  /* DogfightBehaviour2 (0x90: Dogfight1's, +0x80 a draw +-1, +0x88 its creation time) */
     {0x2c4dcf0u,4,{{0x10,2,0},{0x18,4,0},{0x20,0x18,0},{0x38,1,0}}},              /* CrazyIvanBehaviour (0x50: its time, two drawn times, a drawn direction) */
     {0x2c4d1c8u,3,{{0x10,2,0},{0x20,0x40,1},{0x60,10,0}}},                         /* EvasiveRandomSteeringBehaviour (0x70: EvasiveSimple's) */
+    /* EvasiveSpiralSteeringBehaviour (0x48, the factory 0xec6b14, base constructor 0xed8550): its start time +0x18 and three
+     * doubles, three floats and a byte to +0x44. hjs4w (x4mods-b8, a new-session save, ship 0x16ece7): the joiner's has the
+     * load's time and other parameters, and is gone at T+2 where the session's still flies its spiral. */
+    {0x2c4d048u,4,{{0x10,2,0},{0x18,0x20,0},{0x38,0xc,0},{0x44,4,0}}},
     {0x2c4f0c0u,3,{{0x10,2,0},{0x20,0x10,1},{0x30,4,0}}},                          /* ParallelPathSteeringBehaviour (0x40: a drawn offset) */
     {0x2c4ed00u,5,{{0x10,2,0},{0x18,4,0},{0x20,0x10,0},{0x30,0x10,1},{0x40,1,0}}}, /* FrontalCapitalCombatSteeringBehaviour (0x50: a drawn time) */
     {0x2c4e6c0u,3,{{0x10,2,0},{0x18,8,0},{0x20,0x40,1}}}};                         /* MiningBehaviour (0x60: a drawn sign) */
@@ -2422,12 +2428,58 @@ static void join_rule_restore(void) {
     if(join_aim_installed && join_aim_swap((uint64_t)(uintptr_t)join_aim_hook,(uint64_t)(uintptr_t)(image+JOIN_AIM_FN))) join_aim_installed=0;
     if(join_rule_installed && join_rule_swap((uint64_t)(uintptr_t)join_rule_hook,(uint64_t)(uintptr_t)(image+JOIN_RULE_FN))) join_rule_installed=0;
 }
+/* native_gate_join_keep_stamps (hj8i, 11 Nov; the playtest kit's join through the VPS at T=685, report 65): the navigation stamps
+ * a joiner's first-step republication must not write.
+ * A NavigationController's stamp (+0xc0 the game time, +0xc8 the pathing bank) is written by RefreshFromPathingState 0xea2a20 only
+ * while the thread's game time is past it and the read bank differs from the cursor. The gate's walk
+ * (lockstep_path_determinism.h) stamps every batched Agent with the step's own time, so a later transform query in that step
+ * changes nothing. An Agent the simulation refreshed natively during step T (NAV's relation 0: 231 of 10,029 at T=685) is
+ * current at the walk of T+1 and left alone by it, and the first transform query of step T+1 stamps it natively.
+ * A load leaves every component pending (+0x1e0 0x19 and a one-shot cache specification, PEND and specdrop above), so the
+ * joiner's first BuildCache 0x3d4a80 republishes everything: PropagateCacheFlags 0x3d46b0 asks each object for its transform
+ * (its slot +0x1440, three calls) and so stamps every such Agent at T+1. The session republishes only what it has pending. One
+ * Agent in that state that the session does not touch at T+1 parts in the census' timing root (the created ShipExtraSmall
+ * 800280e26769bfc5: T against T+1), and the digest's world part then differs until the next census.
+ * The hold: at the admission, every NAV record with relation 0 whose object the session has neither pending (PEND) nor under a
+ * due cache specification of an ancestor (SPEC, read as BuildCache reads its stack: join_ks_under_spec) is listed by its controller. In step T+1 alone the hook on
+ * PropagateCacheFlags' call sites (JOIN_WATCHPCF's, lockstep_join.h) sets a listed controller's cursor to the read bank around
+ * the engine's call and puts it back after it: the refresh inside the republication's queries finds the stamp current and
+ * writes nothing, posts nothing; the transforms it returns are the same (GetTransformImpl 0xea5a90 reads the bank by the global
+ * selector, never by the cursor). A ship the simulation moves or asks in that step is stamped by that call, as on the session.
+ * Status keep_stamps=on:listed:held set:pending:spec:missing:over:seen:kept (seen: the set's republications in T+1; kept: the
+ * ones whose cursor was held). Windows only (the call sites). */
+#define JOIN_KS_MAX 1024u
+#define JOIN_KS_CURSOR 0xc8u
+#define JOIN_KS_SELECTOR 0x38f4ee4u   /* g_PathingStateBufferIndex (JOIN_READ_SELECTOR, PATH_DET_READ_BANK) */
+static int join_ks_on;
+static unsigned char *join_ks_controller[JOIN_KS_MAX];static uint32_t join_ks_n;
+static volatile LONG64 join_ks_tick,join_ks_seen,join_ks_kept;   /* the step the hold acts in (T+1; 0 none) */
+static uint64_t join_ks_listed,join_ks_pending,join_ks_spec,join_ks_missing,join_ks_over;
+static int join_ks_has(const unsigned char *controller) {
+    uint32_t lo=0,hi=join_ks_n;
+    while(lo<hi) {const uint32_t mid=lo+(hi-lo)/2u;if(join_ks_controller[mid]<controller) lo=mid+1u;else hi=mid;}
+    return lo<join_ks_n && join_ks_controller[lo]==controller;
+}
 static volatile LONG64 join_pcf_calls,join_pcf_dropped;
 static void join_pcf_native(void *object,uint32_t view,const uint32_t *flags) {
     ((void (*)(void *,uint32_t,const uint32_t *))(void *)(image+JOIN_PCF_FN))(object,view,flags);
 }
+static void (*join_pcf_call)(void *,uint32_t,const uint32_t *)=join_pcf_native;   /* tests replace it */
 static __attribute__((noinline)) void join_pcf_hook(void *object,uint32_t view,const uint32_t *flags) {
     InterlockedIncrement64(&join_pcf_calls);
+    if(object && join_ks_n && (uint64_t)InterlockedCompareExchange64(&join_ks_tick,0,0)==stats.issued) {   /* native_gate_join_keep_stamps: step T+1 alone */
+        unsigned char *c=NULL;
+        if(join_read((unsigned char *)object+JOIN_CONTROLLER,&c,8) && c && join_ks_has(c)) {
+            const uint32_t bank=*(volatile uint32_t *)(image+JOIN_KS_SELECTOR);uint32_t cursor=0;
+            InterlockedIncrement64(&join_ks_seen);
+            if(bank<=1u && join_read(c+JOIN_KS_CURSOR,&cursor,4) && cursor!=bank) {
+                *(volatile uint32_t *)(c+JOIN_KS_CURSOR)=bank;
+                join_pcf_call(object,view,flags);
+                if(*(volatile uint32_t *)(c+JOIN_KS_CURSOR)==bank) *(volatile uint32_t *)(c+JOIN_KS_CURSOR)=cursor;
+                InterlockedIncrement64(&join_ks_kept);return;
+            }
+        }
+    }
     if(flags && (*flags&8u)) {
         for(unsigned i=0;i<join_watch.n && i<JOIN_WATCH_MAX;i++) {
             if(!object || join_watch.object[i]!=(unsigned char *)object) continue;
@@ -2438,7 +2490,7 @@ static __attribute__((noinline)) void join_pcf_hook(void *object,uint32_t view,c
             break;
         }
     }
-    join_pcf_native(object,view,flags);
+    join_pcf_call(object,view,flags);
 }
 /* JOIN_RPRT (diagnostic, native_gate_join_rprt with native_gate_join_watch; in-window report 57, w1z226): the destroyer 99d18's
  * controller cache parts by 1..2 ulps at its zone change 3135 with every watched input equal through 3134. At a zone change the
@@ -2645,7 +2697,9 @@ static join_rw_peek_t join_rw_peek[4];
  * matter. The watch stays armed for it past native_gate_join_watch_span: from n-1 to n-1+JOIN_RW_AT_STEPS each boundary refreshes the
  * watched objects, re-arms every 10 steps and prints the new rows, without the JOIN_WATCH dumps [w1z74/75: with the default span of 2
  * the watch ended at T+2 and the fields never armed]. */
-#define JOIN_RW_AT_STEPS 600u
+/* 2,400 steps (hjs4k, 10 Nov: a ship's position parts somewhere in 3,594..4,180 from run to run; a field written twice a step
+ * fills 4,800 of the 16,384 rows) */
+#define JOIN_RW_AT_STEPS 2400u
 static uint64_t join_rw_at;
 static int join_rw_peek_add(const char *text,size_t length) {   /* 1 set, 0 refused */
     static const char *const regs[16]={"rax","rbx","rcx","rdx","rsi","rdi","rbp","rsp","r8","r9","r10","r11","r12","r13","r14","r15"};
@@ -3172,6 +3226,7 @@ static size_t join_recyf_dump(char *out,size_t cap,char side,uint64_t tick,uint6
     at+=(size_t)snprintf(out+at,cap-at,"\r\n");
     return at<cap?at:cap;
 }
+static int join_anis_read(unsigned char *seq,join_anis_rec *r);   /* below (ANIS) */
 static void join_watch_dump(char side,uint64_t tick) {
     if(!join_watch.n) return;
     {size_t cap=1u<<20;char *o=malloc(cap);if(o) {const size_t at=join_rstore_dump(o,cap,side,tick);if(at) crash_note_write(o,(int)at);free(o);}}
@@ -3466,6 +3521,24 @@ static void join_watch_dump(char side,uint64_t tick) {
                         for(uint32_t o=0;o<JOIN_WATCH_RAW_BEH;o+=64u) at+=join_watch_hex(out+at,cap-at,beh+o,64);
                     } else if(mvt) at+=(size_t)snprintf(out+at,cap-at,"-m%x",mvt>=(uintptr_t)image?(uint32_t)(mvt-(uintptr_t)image):0u);   /* another model */
                     else at+=(size_t)snprintf(out+at,cap-at,"-");
+                    /* mdl=: the Steering model's own 0x3a0 bytes; solv=: the Agent's motion solver (+0xf80) as the FNV-1a 32 of each 0x400
+                     * bytes, its pointers made relative first (join_solver_fill). hj8b (10 Nov): a Steering ship's pathing state parts in
+                     * one step with both slots and every row of the motion watch equal before; this is the state the step keeps besides.
+                     * The solver's constructor leaves 24,126 bytes unset, so some chunks differ between two processes for good: read
+                     * the chunks that change from equal to different. */
+                    at+=(size_t)snprintf(out+at,cap-at," mdl=");
+                    if(model && mvt==(uintptr_t)image+JOIN_STEER_VTABLE && at+0x3a0u*2u+64u<cap)
+                        for(uint32_t o=0;o<0x3a0u;o+=64u) at+=join_watch_hex(out+at,cap-at,model+o,0x3a0u-o<64u?0x3a0u-o:64u);
+                    else at+=(size_t)snprintf(out+at,cap-at,"-");
+                    at+=(size_t)snprintf(out+at,cap-at," solv=");
+                    {unsigned char *solver=NULL;join_solver_rec *sr=&join_solver_scratch;
+                     if(agent && join_read(agent+JOIN_AGENT_SOLVER,&solver,8) && solver && at+1024u<cap && (memset(sr,0,offsetof(join_solver_rec,data)),join_solver_fill(sr,solver)))
+                         for(uint32_t o=0;o<JOIN_SOLVER_BYTES;o+=0x400u) {
+                             uint32_t h=2166136261u;const uint32_t n=JOIN_SOLVER_BYTES-o<0x400u?JOIN_SOLVER_BYTES-o:0x400u;
+                             for(uint32_t k=0;k<n;k++) h=(h^sr->data[o+k])*16777619u;
+                             at+=(size_t)snprintf(out+at,cap-at,"%08x",h);
+                         }
+                     else at+=(size_t)snprintf(out+at,cap-at,"-");}
                 }
                 at+=(size_t)snprintf(out+at,cap-at,"\r\n");
                 if(at+ln+4<cap) {memcpy(out+at,line,ln);at+=ln;at+=(size_t)snprintf(out+at,cap-at,"\r\n");}
@@ -3494,6 +3567,24 @@ static void join_watch_dump(char side,uint64_t tick) {
                             }
                         }
                     }
+                }
+                {   /* JOIN_WATCHSEQ: the level's made part animation sequences as ANIS reads them (below), at most 48: the part, the
+                     * queue (count, first stage's template index and key, signature), the unit's state key and its pending
+                     * trigger sources (unit +0x40..+0x48), the start time and +0x70, +0x78, +0x80. */
+                    unsigned char *a208=NULL;uintptr_t sv[2]={0,0};unsigned shown=0;
+                    if(join_read(level+0x208,&a208,8) && a208 && join_read(a208,sv,16) && sv[1]>=sv[0] && (sv[1]-sv[0])%0x90u==0 && (sv[1]-sv[0])/0x90u<=4096u)
+                        for(uintptr_t q=sv[0];q<sv[1] && shown<48u && at+400u<cap;q+=0x90u) {
+                            join_anis_rec r;uintptr_t unit=0,pv[2]={0,0};double start,w78,w80;
+                            memset(&r,0,sizeof(r));
+                            if(!join_anis_read((unsigned char *)q,&r)) continue;
+                            if(!join_read((unsigned char *)q+0x50,&unit,8) || !unit || !join_read((unsigned char *)unit+0x40,pv,16) || pv[1]<pv[0]) pv[0]=pv[1]=0;
+                            memcpy(&start,&r.start,8);memcpy(&w78,&r.w78,8);memcpy(&w80,&r.w80,8);
+                            at+=(size_t)snprintf(out+at,cap-at,"[X4LAN] NATIVE_GATE JOIN_WATCHSEQ side=%c tick=%llu id=%llx level=%x part=%u stages=%u first=%u key=%llx sig=%x "
+                                                 "state=%llx next=%llx pending=%u start=%.17g w70=%llx w78=%.9g w80=%.9g flags=%x\r\n",
+                                                 side,(unsigned long long)tick,(unsigned long long)join_watch.portable[i],rva,(unsigned)((q-sv[0])/0x90u),r.stages,r.first,
+                                                 (unsigned long long)r.keys[0],r.sig,(unsigned long long)r.state,(unsigned long long)r.next,(unsigned)((pv[1]-pv[0])/8u),start,(unsigned long long)r.w70,w78,w80,r.flags);
+                            ++shown;
+                        }
                 }
             }
             if(rva==JOIN_GRAV_SECTOR_VT) break;
@@ -4100,6 +4191,285 @@ static void join_admit_ikv(const join_tables *s,const join_tables *mine) {
                                  (unsigned)(vt-(uintptr_t)image),join_ikv_why,(unsigned long long)join_ikv_seen);
         }
     }
+}
+/* ANIS (v13, section 84; hjs4, 10 Nov): the part animation sequences. An object's container (+0x208) holds an array of 0x90-byte
+ * sequences (+0x00 begin, +0x08 end), one per animated part, indexed by the part template's +0xe2 (Positional::InitPartAnimations
+ * 0x755110 -> 0x1164460): +0x08 the start time of the first queued stage (double), +0x10 a small vector of stage pointers (inline
+ * when +0x30 == 4, the count +0x38; a stage is a 0x100-byte entry of the template's (+0x48) array +0x28..+0x30, its length a float
+ * at +0xa0), +0x50 its U::Animation::SequenceControlUnit (vtable 0x2c80090, the unit's +0x08 points back), +0x60/+0x68 a cache
+ * (stage, time; -1.0: none), +0x70 a pointer the code that sets the start clears with it (0x1165930, the constructor), +0x78/+0x80
+ * an offset and a limit, +0x88 flags (bit 0: made). A stage's and a state's +0x00 is a key, a hash of its name.
+ * A save keeps the unit's state and no time. A load's unit (constructor 0x11691e0 -> 0x116a1f0 -> 0x1165930) queues the state's
+ * stage with the start at the load's time (less a phase drawn from the owner's ID for a state with +0x29), so a sequence the
+ * session started before T runs from another time on the joiner and what is computed from it comes at another tick: the
+ * TriggerAnimationEvent handler 0x1169a90 posts U::AnimationTickedEvent at now + the remaining time 0x1165dd0 (x4mods-b8's hjs4:
+ * two docking bays of the far wharf, 736 and 742 on the session, 749 on the joiner, the nav mesh of their dock area regenerated
+ * one tick after each: the navmesh part of the digest apart from 738).
+ * ANIS carries, per made sequence with a unit, the start, +0x78, +0x80 and what identifies its queue (the count, the first
+ * stage's key, a signature of every stage's key; a stage's length +0xa0 is filled when its animation data is there and differed
+ * between the sides for 3,057 sequences of hjs4a, so it is no part of the identity). The admission compares every sequence of
+ * the joiner's with the session's record; with native_gate_join_anis it writes the three words and clears +0x70 and the cache
+ * where the queue is the same. Another queue is counted and left (anis_shape lists the first few). Status
+ * anis=on:apart:written:equal:missing:shape:absent (apart: same queue, other words; missing: no record for a sequence of the
+ * joiner's; absent: records without a sequence here) anis_cap=N anis_kinds=count:key:index:rest:state (another queue by its
+ * first difference: the count of stages, the first stage's key, a later stage's; then the same queue with another first index;
+ * and the sequences whose unit is in another state) anis_shape=portable/part/own count:own key>session count:session key,... */
+#define JOIN_ANIS_CONTAINER 0x208u
+#define JOIN_ANIS_SEQ 0x90u
+#define JOIN_ANIS_UNIT_VT 0x2c80090u
+#define JOIN_ANIS_PARTS 4096u
+#define JOIN_ANIS_STAGES 64u
+#define JOIN_ANIS_LISTENERS 16u
+static int join_anis_on;
+static uint64_t join_anis_apart,join_anis_written,join_anis_equal,join_anis_missing,join_anis_shape,join_anis_absent,join_anis_kind[5];
+static char join_anis_refused[448]="-";
+/* A made sequence with its unit as a record (portable and part are the caller's); 0: not one, or a shape this does not know.
+ * *unit_out: its unit. */
+static int join_anis_read_unit(unsigned char *seq,join_anis_rec *r,unsigned char **unit_out) {
+    unsigned char raw[JOIN_ANIS_SEQ];uintptr_t tmpl=0,unit=0,data=0,vt=0,back=0,tb=0,te=0,stages[JOIN_ANIS_STAGES];uint64_t cap=0,count=0;
+    if(!join_read(seq,raw,sizeof(raw)) || !(raw[0x88]&1u)) return 0;
+    memcpy(&tmpl,raw+0x48,8);memcpy(&unit,raw+0x50,8);memcpy(&cap,raw+0x30,8);memcpy(&count,raw+0x38,8);
+    if(!tmpl || !unit || count>JOIN_ANIS_STAGES || (cap==4u && count>4u)) return 0;
+    if(!join_read((void *)unit,&vt,8) || vt!=(uintptr_t)image+JOIN_ANIS_UNIT_VT || !join_read((unsigned char *)unit+8,&back,8) || back!=(uintptr_t)seq) return 0;
+    if(count && cap==4u) memcpy(stages,raw+0x10,(size_t)count*8u);
+    else if(count) {memcpy(&data,raw+0x10,8);if(!data || !join_read((void *)data,stages,(size_t)count*8u)) return 0;}
+    if(!join_read((unsigned char *)tmpl+0x28,&tb,8) || !join_read((unsigned char *)tmpl+0x30,&te,8)) return 0;
+    uint32_t sig=0x811c9dc5u;r->first=UINT32_MAX;memset(r->keys,0,sizeof(r->keys));
+    for(uint64_t i=0;i<count;i++) {
+        uint32_t index=UINT32_MAX;uint64_t key=0;
+        if(stages[i]>=tb && stages[i]<te && !((stages[i]-tb)&0xffu)) index=(uint32_t)((stages[i]-tb)>>8);
+        if(!stages[i] || !join_read((void *)stages[i],&key,8)) return 0;
+        if(!i) r->first=index;
+        if(i<JOIN_ANIS_KEYS) r->keys[i]=key;
+        sig=(sig^(uint32_t)key)*0x01000193u;sig=(sig^(uint32_t)(key>>32))*0x01000193u;
+    }
+    r->stages=(uint16_t)count;r->flags=raw[0x88];r->sig=sig;r->state=r->next=0;r->pending=0;
+    {uintptr_t state=0,pv[2]={0,0};
+     if(join_read((unsigned char *)unit+0x28,&state,8) && state) (void)join_read((void *)state,&r->state,8);
+     state=0;if(join_read((unsigned char *)unit+0x30,&state,8) && state) (void)join_read((void *)state,&r->next,8);
+     if(join_read((unsigned char *)unit+0x40,pv,16) && pv[1]>=pv[0]) r->pending=(uint8_t)((pv[1]-pv[0])/8u>255u?255u:(pv[1]-pv[0])/8u);}
+    memcpy(&r->start,raw+0x08,8);memcpy(&r->w70,raw+0x70,8);r->w70=r->w70!=0;memcpy(&r->w78,raw+0x78,8);memcpy(&r->w80,raw+0x80,8);
+    if(unit_out) *unit_out=(unsigned char *)unit;
+    return 1;
+}
+static int join_anis_read(unsigned char *seq,join_anis_rec *r) {return join_anis_read_unit(seq,r,NULL);}
+typedef void (*join_anis_visit)(void *ctx,uint32_t part,unsigned char *seq);
+/* Every sequence of an object's array; 0: it has none, -1: an array this does not know. */
+static int join_anis_walk(unsigned char *object,join_anis_visit visit,void *ctx) {
+    uintptr_t container=0,v[2]={0,0};
+    if(!object || !join_read(object+JOIN_ANIS_CONTAINER,&container,8) || !container) return 0;
+    if(!join_read((void *)container,v,16) || v[1]<v[0] || (v[1]-v[0])%JOIN_ANIS_SEQ || (v[1]-v[0])/JOIN_ANIS_SEQ>JOIN_ANIS_PARTS) return -1;
+    for(uintptr_t s=v[0];s<v[1];s+=JOIN_ANIS_SEQ) visit(ctx,(uint32_t)((s-v[0])/JOIN_ANIS_SEQ),(unsigned char *)s);
+    return v[1]>v[0];
+}
+typedef struct {join_tables *t;uint32_t *cap,*lcap;uint64_t portable;int full;} join_anis_capture_ctx;
+static void join_anis_capture_one(void *ctx,uint32_t part,unsigned char *seq) {
+    join_anis_capture_ctx *c=(join_anis_capture_ctx *)ctx;join_anis_rec r;unsigned char *unit=NULL;uintptr_t pv[2]={0,0};
+    if(c->full) return;
+    memset(&r,0,sizeof(r));
+    if(!join_anis_read_unit(seq,&r,&unit)) return;
+    r.portable=c->portable;r.part=part;
+    if(!JOIN_PUSH(c->t->anis,c->t->nanis,*c->cap,r)) {c->full=1;return;}
+    /* ANIL: the listeners waiting in the unit (+0x40..+0x48), in order */
+    if(!r.pending || !join_read(unit+0x40,pv,16) || pv[1]<pv[0]) return;
+    for(uintptr_t p=pv[0];p<pv[1] && (p-pv[0])/8u<JOIN_ANIS_LISTENERS;p+=8) {
+        uintptr_t listener=0,vt=0;uint64_t target=0;unsigned klass=0;join_anil_rec l;memset(&l,0,sizeof(l));
+        l.portable=c->portable;l.part=part;l.place=(uint16_t)((p-pv[0])/8u);
+        if(join_read((void *)p,&listener,8) && listener && join_read((void *)listener,&vt,8) && vt>=(uintptr_t)image && vt-(uintptr_t)image<JOIN_FLIGHT_IMAGE) {
+            l.cls=(uint32_t)(vt-(uintptr_t)image);
+            if(join_read((unsigned char *)listener+0x18,&target,8) && target) l.target=join_key(target,&klass);
+            (void)join_read((unsigned char *)listener+0x20,&l.flag,1);
+        }
+        if(!JOIN_PUSH(c->t->anil,c->t->nanil,*c->lcap,l)) {c->full=1;return;}
+    }
+}
+static int join_anis_cmp(const void *a,const void *b) {
+    const join_anis_rec *x=(const join_anis_rec *)a,*y=(const join_anis_rec *)b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    return x->part<y->part?-1:x->part>y->part;
+}
+static int join_anil_cmp(const void *a,const void *b) {
+    const join_anil_rec *x=(const join_anil_rec *)a,*y=(const join_anil_rec *)b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    if(x->part!=y->part) return x->part<y->part?-1:1;
+    return x->place<y->place?-1:x->place>y->place;
+}
+static void join_capture_anis(join_tables *t) {
+    uint32_t cap=0,lcap=0;join_anis_capture_ctx c={t,&cap,&lcap,0,0};
+    for(uint32_t i=0;i<t->nids && !c.full;i++) {
+        if(!t->ids[i].portable) continue;
+        c.portable=t->ids[i].portable;
+        (void)join_anis_walk(join_object(t->ids[i].runtime),join_anis_capture_one,&c);
+    }
+    if(t->nanis>1) qsort(t->anis,t->nanis,sizeof(*t->anis),join_anis_cmp);
+    if(t->nanil>1) qsort(t->anil,t->nanil,sizeof(*t->anil),join_anil_cmp);
+}
+/* native_gate_join_anis_state (the second step; hjs4b, 10 Nov): a unit is a state machine. +0x28 its state (a state's +0x00 its
+ * key, the hash of its name), +0x30 the state to enter next, +0x38 the list of its states, +0x40..+0x48 the listeners waiting
+ * for a state (U::Animation::*StateListener, 0x28 bytes: an EventListener with its own runtime ID, +0x18 a component's ID, +0x20 a
+ * flag; put there through the unit's vtable +0x58, 0x116a4e0). 0x116a1f0(unit, state, restart) enters a state: it queues the
+ * state's stage (restart: the queue emptied, the start now), schedules U::AnimationTickedEvent for the listeners waiting for it
+ * (0x1169a90) and registers the unit for the events of the state's transitions (0x116a060). The unit's import of a save
+ * (vtable +0x10, 0x1169500) is 0x999ef0(owner, unit +0x10), which takes the unit off the owner's events, and that call with
+ * restart; the +0x30 state it sets directly.
+ * A ship docking at T: its save says cockpit_closed for the four cockpit parts, landinggears_activating landinggears_active from
+ * 29.23 s for ten parts, and holds the events of the docking's end (triggeranimation open_cockpit and docked at 38.197 s). The
+ * session's cockpit unit has a CockpitStateListener waiting (Ship::vfunc1147 0x7dd4e9 makes one with the event it posts): when
+ * the trigger of tick 934 opens the cockpit the listener gets AnimationTickedEvent at 966 and asks for the nav rebuild of the ship
+ * and of its dock area (0x116e230 -> 0x75b440): NAV_MESH_ROW 967/968 on the session only (hjs4a: the first digest mismatch,
+ * 968). The joiner's load makes no listener, has the cockpit open at T (cockpit_open; the load treats the ship as docked) and
+ * the landing gear's queue at its last stage.
+ * With the option the admission gives a unit whose state, next state or queue differs the session's: the state through X4's two
+ * calls as its import (their IDs on the load list), then the queue's stages by key from the sequence's template (at most
+ * JOIN_ANIS_KEYS = 8, the queue emptied and filled through X4's own append 0xcb8c0, which grows it past the four inline
+ * places: x4mods-b8's eight-start join at T=732 had 28 queues of five stages), the next state, bit 2 of the flags and the
+ * times as above. A unit without a state on both sides takes the queue alone. And where the
+ * session's unit has listeners waiting and the joiner's none, it makes them (ANIL, section 85: class, flag, the component by
+ * portable ID; the two classes whose constructor is (this, component, flag): Cockpit 0x116e130 and DockingBayFence 0x116e5e0)
+ * and puts them into the unit as X4 does. Status anis_state=on:restated:requeued:unplaced:drift:ids (drift: the unit left the
+ * state at once) anis_why=long:nostate:state:next:stage (the unplaced by reason: a queue longer than carried, a session unit
+ * without a state where the joiner's has one, a state, a next state or a stage key the joiner's unit lacks)
+ * anil=made:equal:unknown:conflict anil_cap=N (unknown: another class or a component the joiner lacks; conflict: other
+ * listeners on the joiner). */
+#define JOIN_ANIS_STATE_SET 0x116a1f0u
+#define JOIN_ANIS_LISTENERS_OFF 0x999ef0u
+#define JOIN_ANIS_QUEUE_PUSH 0xcb8c0u
+#define JOIN_ANIL_PUSH 0x116a4e0u
+#define JOIN_ANIL_COCKPIT_VT 0x2c78290u
+#define JOIN_ANIL_COCKPIT_CTOR 0x116e130u
+#define JOIN_ANIL_FENCE_VT 0x2c7a628u
+#define JOIN_ANIL_FENCE_CTOR 0x116e5e0u
+#define JOIN_ANIL_SIZE 0x28u
+static int join_anis_state_on;
+static uint64_t join_anis_restated,join_anis_requeued,join_anis_unplaced,join_anis_drift,join_anis_ids,join_anis_why[5],join_anil_made,join_anil_equal,join_anil_unknown,join_anil_conflict;
+static void join_anis_set_native(unsigned char *owner,unsigned char *unit,unsigned char *state) {
+    ((void (*)(void *,void *))(void *)(image+JOIN_ANIS_LISTENERS_OFF))(owner,unit+0x10);
+    ((void (*)(void *,void *,int))(void *)(image+JOIN_ANIS_STATE_SET))(unit,state,1);
+}
+static void (*join_anis_set)(unsigned char *,unsigned char *,unsigned char *)=join_anis_set_native;   /* tests replace it */
+static void join_anis_push_native(unsigned char *seq,uintptr_t stage) {
+    ((void (*)(void *,void *))(void *)(image+JOIN_ANIS_QUEUE_PUSH))(seq+0x10,&stage);
+}
+static void (*join_anis_push)(unsigned char *,uintptr_t)=join_anis_push_native;   /* tests replace it */
+static void *join_fobj_alloc_native(size_t n);   /* below (FOBJ): SMem::Allocate */
+static int join_anil_make_native(unsigned char *unit,uint32_t cls,unsigned char *target,unsigned flag) {
+    const uint32_t ctor=cls==JOIN_ANIL_COCKPIT_VT?JOIN_ANIL_COCKPIT_CTOR:JOIN_ANIL_FENCE_CTOR;
+    void *listener=join_fobj_alloc_native(JOIN_ANIL_SIZE);
+    if(!listener) return 0;
+    ((void *(*)(void *,void *,unsigned char))(void *)(image+ctor))(listener,target,(unsigned char)flag);
+    ((unsigned char (*)(void *,void *))(void *)(image+JOIN_ANIL_PUSH))(unit,listener);
+    return 1;
+}
+static int (*join_anil_make)(unsigned char *,uint32_t,unsigned char *,unsigned)=join_anil_make_native;   /* tests replace it */
+/* A state of the unit's by its key; NULL: none. */
+static unsigned char *join_anis_state_of(unsigned char *unit,uint64_t key) {
+    uintptr_t list=0,v[2]={0,0};
+    if(!key || !join_read(unit+0x38,&list,8) || !list || !join_read((void *)list,v,16) || v[1]<v[0] || (v[1]-v[0])/8u>1024u) return NULL;
+    for(uintptr_t p=v[0];p<v[1];p+=8) {
+        uintptr_t s=0;uint64_t k=0;
+        if(join_read((void *)p,&s,8) && s && join_read((void *)s,&k,8) && k==key) return (unsigned char *)s;
+    }
+    return NULL;
+}
+/* A stage of the sequence's template by its key; 0: none. */
+static uintptr_t join_anis_stage_of(unsigned char *seq,uint64_t key) {
+    uintptr_t tmpl=0,tb=0,te=0;
+    if(!key || !join_read(seq+0x48,&tmpl,8) || !tmpl || !join_read((unsigned char *)tmpl+0x28,&tb,8) || !join_read((unsigned char *)tmpl+0x30,&te,8) ||
+       te<tb || ((te-tb)&0xffu) || (te-tb)>>8>4096u) return 0;
+    for(uintptr_t s=tb;s<te;s+=0x100u) {uint64_t k=0;if(join_read((void *)s,&k,8) && k==key) return s;}
+    return 0;
+}
+/* The session's start and limits on a sequence, the cache and +0x70 cleared (as 0x1165930 leaves them). */
+static void join_anis_write_times(unsigned char *seq,const join_anis_rec *r) {
+    static const uint64_t none=0xbff0000000000000ull,zero=0;
+    (void)join_poke((uintptr_t)(seq+0x08),&r->start,8);(void)join_poke((uintptr_t)(seq+0x70),&zero,8);
+    (void)join_poke((uintptr_t)(seq+0x78),&r->w78,8);(void)join_poke((uintptr_t)(seq+0x80),&r->w80,8);
+    (void)join_poke((uintptr_t)(seq+0x68),&none,8);
+}
+/* The session's state, next state and queue on a unit of the joiner's; 0: it cannot take them (nothing written). */
+static int join_anis_restate(unsigned char *owner,unsigned char *seq,unsigned char *unit,const join_anis_rec *own,const join_anis_rec *r) {
+    unsigned char *state=NULL,*next=NULL,*now=NULL;uintptr_t stage[JOIN_ANIS_KEYS];
+    if(!owner || r->stages>JOIN_ANIS_KEYS) {++join_anis_why[0];return 0;}
+    if(!r->state && own->state) {++join_anis_why[1];return 0;}
+    if(r->state && !(state=join_anis_state_of(unit,r->state))) {++join_anis_why[2];return 0;}
+    if(r->next && !(next=join_anis_state_of(unit,r->next))) {++join_anis_why[3];return 0;}
+    for(unsigned i=0;i<r->stages;i++) if(!(stage[i]=join_anis_stage_of(seq,r->keys[i]))) {++join_anis_why[4];return 0;}
+    if(state && own->state!=r->state) {
+        const unsigned long long before=RID_JOIN_ALLOCS;
+        join_ids_admit_load=1;join_anis_set(owner,unit,state);join_ids_admit_load=0;
+        join_anis_ids+=RID_JOIN_ALLOCS-before;++join_anis_restated;
+        if(!join_read(unit+0x28,&now,8) || now!=state) ++join_anis_drift;
+    }
+    {const uint64_t none=0;unsigned char flags=0;   /* the queue emptied (as 0x1165930 empties a finished one) and filled in the session's order */
+     (void)join_poke((uintptr_t)(seq+0x38),&none,8);
+     for(unsigned i=0;i<r->stages;i++) join_anis_push(seq,stage[i]);
+     if(join_read(seq+0x88,&flags,1)) {flags=(unsigned char)((flags&~4u)|(r->flags&4u));(void)join_poke((uintptr_t)(seq+0x88),&flags,1);}}
+    (void)join_poke((uintptr_t)(unit+0x30),&next,8);
+    join_anis_write_times(seq,r);
+    ++join_anis_requeued;
+    return 1;
+}
+typedef struct {const join_tables *s,*mine;uint64_t portable;unsigned char *object;size_t at;uint64_t matched;} join_anis_admit_ctx;
+/* The session's waiting listeners on a unit that has none. */
+static void join_anil_admit(const join_anis_admit_ctx *c,uint32_t part,unsigned char *unit,unsigned own_pending,const join_anis_rec *r) {
+    if(!r->pending && !own_pending) return;
+    if(own_pending==r->pending) {join_anil_equal+=own_pending;return;}
+    if(own_pending || !join_anis_state_on) {++join_anil_conflict;return;}
+    join_anil_rec key;memset(&key,0,sizeof(key));key.portable=c->portable;key.part=part;
+    uint32_t lo=0,hi=c->s->nanil;
+    while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(join_anil_cmp(&c->s->anil[mid],&key)<0) lo=mid+1u;else hi=mid;}
+    for(;lo<c->s->nanil && c->s->anil[lo].portable==c->portable && c->s->anil[lo].part==part;lo++) {
+        const join_anil_rec *l=&c->s->anil[lo];
+        unsigned char *target=l->target?join_object(join_runtime_of(c->mine,l->target)):NULL;
+        if((l->cls!=JOIN_ANIL_COCKPIT_VT && l->cls!=JOIN_ANIL_FENCE_VT) || !target) {++join_anil_unknown;continue;}
+        const unsigned long long before=RID_JOIN_ALLOCS;
+        join_ids_admit_load=1;const int made=join_anil_make(unit,l->cls,target,l->flag);join_ids_admit_load=0;
+        join_anis_ids+=RID_JOIN_ALLOCS-before;
+        if(made) ++join_anil_made;else ++join_anil_unknown;
+    }
+}
+static void join_anis_admit_one(void *ctx,uint32_t part,unsigned char *seq) {
+    join_anis_admit_ctx *c=(join_anis_admit_ctx *)ctx;join_anis_rec own,key;uint32_t lo=0,hi=c->s->nanis;unsigned char *unit=NULL;
+    memset(&own,0,sizeof(own));memset(&key,0,sizeof(key));key.portable=c->portable;key.part=part;
+    if(!join_anis_read_unit(seq,&own,&unit)) return;
+    while(lo<hi) {uint32_t mid=lo+(hi-lo)/2u;if(join_anis_cmp(&c->s->anis[mid],&key)<0) lo=mid+1u;else hi=mid;}
+    if(lo>=c->s->nanis || join_anis_cmp(&c->s->anis[lo],&key)) {++join_anis_missing;return;}
+    const join_anis_rec *r=&c->s->anis[lo];++c->matched;
+    const int other_state=own.state!=r->state || own.next!=r->next;
+    const int other_queue=own.stages!=r->stages || own.keys[0]!=r->keys[0] || own.sig!=r->sig;
+    if(other_state) ++join_anis_kind[4];
+    if(other_queue) {
+        ++join_anis_kind[own.stages!=r->stages?0:own.keys[0]!=r->keys[0]?1:2];
+        if(++join_anis_shape<=6u && c->at+72u<sizeof(join_anis_refused))
+            c->at+=(size_t)snprintf(join_anis_refused+c->at,sizeof(join_anis_refused)-c->at,"%s%llx/%u/%u:%llx>%u:%llx",c->at?",":"",
+                                    (unsigned long long)c->portable,part,own.stages,(unsigned long long)own.keys[0],r->stages,(unsigned long long)r->keys[0]);
+    }
+    int placed=0;
+    if(other_state || other_queue) {
+        placed=join_anis_state_on && join_anis_restate(c->object,seq,unit,&own,r);
+        if(join_anis_state_on && !placed) ++join_anis_unplaced;
+    }
+    join_anil_admit(c,part,unit,own.pending,r);
+    if(placed || other_queue) return;
+    if(own.first!=r->first) ++join_anis_kind[3];
+    if(own.start==r->start && own.w78==r->w78 && own.w80==r->w80) {++join_anis_equal;return;}
+    ++join_anis_apart;
+    if(!join_anis_on) return;
+    join_anis_write_times(seq,r);
+    ++join_anis_written;
+}
+static void join_admit_anis(const join_tables *s,const join_tables *mine) {
+    join_anis_admit_ctx c={s,mine,0,NULL,0,0};
+    join_anis_apart=join_anis_written=join_anis_equal=join_anis_missing=join_anis_shape=join_anis_absent=0;memset(join_anis_kind,0,sizeof(join_anis_kind));
+    memset(join_anis_why,0,sizeof(join_anis_why));
+    join_anis_restated=join_anis_requeued=join_anis_unplaced=join_anis_drift=join_anis_ids=join_anil_made=join_anil_equal=join_anil_unknown=join_anil_conflict=0;
+    join_anis_refused[0]='-';join_anis_refused[1]=0;
+    for(uint32_t i=0;i<mine->nids;i++) {
+        if(!mine->ids[i].portable) continue;
+        c.portable=mine->ids[i].portable;c.object=join_object(mine->ids[i].runtime);
+        (void)join_anis_walk(c.object,join_anis_admit_one,&c);
+    }
+    join_anis_absent=s->nanis>c.matched?s->nanis-c.matched:0;
 }
 /* RCNT (v13, section 63; the admission opt-in, native_gate_join_rcnt): the reference counts of the session's created ships and bays.
  * j1-184: a ship the session created and docked holds two more references (+0x40) on the joiner than on the session, from the load
@@ -5332,14 +5702,29 @@ static void join_admit_shpw(const join_tables *s,const join_tables *mine) {
         if(changed) ++join_shpw_written; else ++join_shpw_equal;
     }
 }
+/* The kept boot events' references (hj8i, 11 Nov, ns8 at T=680). While the boot event hold keeps an event (native_gate_join_
+ * hold_boot_events: the classes the session had due at T), the event still owns the reference the load's PostEvent took on its
+ * source, and the count read here contains it. For a kept event the session has no counterpart of (its class not due for that
+ * source at T) that reference is not a load surplus: the event gives it back when the pass of T+1 has delivered it. Lowered to
+ * the session's count with it inside, the object ended one below the session's. At T=680 UpdateGravidarAccessEvent was a class
+ * the session had due (2 of them), so the joiner kept its load's 15,998 of that class: the created XS ship 800293a8451469ac,
+ * killed at 777 on both sides, was deleted at once on the joiner and a few steps later on the session, and the fighter 0x73808
+ * found its target gone at 778 against 783 (U::TargetInvalidEvent, the digest's ID part from 784). The count compared with
+ * the session's is therefore the own one less those references (join_rcnt_kept_refs, lockstep_join.h). Status rcnt_held=
+ * objects:references. */
+static uint32_t join_rcnt_kept_refs(unsigned char *object,double now);   /* lockstep_join.h, behind the boot event hold */
+static uint64_t join_rcnt_held_objects,join_rcnt_held_refs;
 static void join_admit_rcnt(const join_tables *s,const join_tables *mine) {
-    join_rcnt_lowered=join_rcnt_equal=join_rcnt_kept=join_rcnt_missing=0;
+    join_rcnt_lowered=join_rcnt_equal=join_rcnt_kept=join_rcnt_missing=0;join_rcnt_held_objects=join_rcnt_held_refs=0;
     if(!join_rcnt_on) return;
+    double now;memcpy(&now,&s->gate.game,8);
     for(uint32_t i=0;i<s->nrcnt;i++) {
         const join_rcnt_rec *r=&s->rcnt[i];unsigned char *o=NULL;
         for(uint32_t k=0;k<mine->nids && !o;k++) if(mine->ids[k].portable==r->portable) o=join_object(mine->ids[k].runtime);
         uint32_t own=0;
         if(!join_rcnt_type(o) || !join_read(o+0x40,&own,4)) {++join_rcnt_missing;continue;}
+        {const uint32_t held=join_rcnt_kept_refs(o,now);   /* a kept boot event's reference goes with its event, not here */
+         if(held) {++join_rcnt_held_objects;join_rcnt_held_refs+=held;own=own>held?own-held:0u;}}
         if(own==r->count) {++join_rcnt_equal;continue;}
         if(own<r->count || own-r->count>4u) {++join_rcnt_kept;continue;}
         InterlockedExchangeAdd((volatile LONG *)(o+0x40),-(LONG)(own-r->count));
@@ -6024,6 +6409,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_gravb(t);           /* version 13 */
     join_capture_viewl(t);           /* version 13 */
     join_capture_ikv(t);             /* version 13 */
+    join_capture_anis(t);            /* version 13 */
     join_capture_rcnt(t);            /* version 13 */
     join_capture_ecos(t);            /* version 13 */
     join_capture_shpw(t);            /* version 13 */
@@ -6264,14 +6650,50 @@ static uint32_t join_attn_compute_native(unsigned char *object) {
 }
 static uint32_t (*join_attn_compute)(unsigned char *)=join_attn_compute_native;   /* tests replace it */
 static int join_attn_settled(unsigned char *object,uint32_t level) {return join_attn_flag(object,level,0)==join_attn_flag(object,level,1);}
+/* ATTN leave (opt-in native_gate_join_attn_leave, with attn_set; x4mods-b8's and the kit's joins at T=696 on ns8, 11 Nov). Level 9
+ * is a level of its own for the class handlers (vfunc 0x15e8: Positional 0x753480, Ship 0x7d5270): on the way up to it an object
+ * asks AI::NavMeshCache for its interior nav helper (0x75b3d0 -> 0x1087df0, which builds only when the cache holds none), on the
+ * way down from it the helper is released (vfunc 0x1be8 -> 0x1088050: out of the wanted set +0x330 and the map +0xd0), and a Ship
+ * registers and unregisters itself with two more owners (0x10b2820 / 0x10b2d60, 0x7d76f0). The per-level state (vfunc 688/689) is
+ * the same at 8 and at 9, so neither attn_set nor attn_states sees a difference. The fixture ship 16fcd9 was at 8 on the session
+ * at T (its helper released long before, its attention timer due at 30.3416 s, tick 699) and came up at 9 in the joiner's load
+ * (attn_high 16fcd9:9>8 with thirteen of its parts): the load asked for the helper, the direct write of 8 left it wanted, the
+ * joiner built and published it at 697, and at 699 the timer's 8 -> 9 asked again on both sides: the session built it at 700
+ * (NAV_MESH_ROW tick=700, its eighteenth build) and the joiner's cache answered with the one it had. The nav mesh part of the
+ * digest apart from 701 for good, everything else equal. With the option a level ATTN writes down from 9 or more to less than 9
+ * (not to 1) is made by the native call instead: the level the load gave goes back into +0x1ec, SetAttention(object, session's
+ * level) runs the handler from that level, with attn_set's care for its posts, due events and allocations. The load's own
+ * request is still in the cache's priority sets: its build runs at the joiner's first join, is left out of the fold as a helper
+ * the session knows (NMESH catch-up, once per term) and is not published, 0x108c800 looks for the ID in the wanted set first.
+ * The other direction (the load lower than 9, the session at 9 or more) is ATTN arrive, below.
+ * Status attn_leave=on:calls:loaded:drift (loaded: the calls' shared allocations, on the load list; drift: a call that
+ * left another level, written back). */
+#define JOIN_ATTN_NEAR 9u
+static int join_attn_leave_on;
+static uint64_t join_attn_leave_calls,join_attn_leave_loaded,join_attn_leave_drift;
+/* ATTN arrive (native_gate_join_attn_arrive, with attn_set, in the join defaults; hj8i at T=678 with the physics trace, 11 Nov): the other
+ * direction. Fixture ship 17136d and three of its parts come up at 8 in every ns8 joiner's load where the session holds 9:
+ * after the direct write the ship's compound has 1 child on the joiner and 28 on the session (PHYSICS_CHILD rows of 679..681),
+ * so level 9 decides what a bullet can hit as well, and the joiner lacks the interior nav helper the session has. With the
+ * option a level ATTN writes up from less than 9 to 9 or more is made by the native call from the load's level, as leave
+ * does on the way down. The handler asks for the nav helper: its build at one of the joiner's first joins is a catch-up of
+ * a helper the session knows (NMESH), as the load's own requests are. Status attn_arrive=on:calls:loaded:drift.
+ * Real run, the save forced to 680: three calls (17136d, 17138d, 1713a0; their parts follow through X4's propagation, the
+ * levels ATTN had to write 41 -> 7), the ship's compound 28 children on both sides at 681..683, its helper built at the
+ * joiner's second join, digest 0 at the handover, the census of 681, 1800, 3600 and 5400 equal. */
+static int join_attn_arrive_on;
+static uint64_t join_attn_arrive_calls,join_attn_arrive_loaded,join_attn_arrive_drift;
 /* After ATTN wrote the session's level (was: the joiner's): the native change where the states differ, its posts destroyed. 0 none,
- * 1 attn_set's (a write at or over 6), 2 attn_states' (flags: the session's record). */
+ * 1 attn_set's (a write at or over 6), 2 attn_states' (flags: the session's record), 3 attn_leave's (down from 9 or more),
+ * 4 attn_arrive's (up to 9 or more). */
 static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level,uint32_t flags) {
     if(!join_attn_set_on) return 0;
+    const int arrive=join_attn_arrive_on && was<JOIN_ATTN_NEAR && level>=JOIN_ATTN_NEAR;
+    const int leave=arrive || (join_attn_leave_on && was>=JOIN_ATTN_NEAR && level<JOIN_ATTN_NEAR && level!=1u);   /* either way across 9 */
     const int visible=was!=level && level!=1u && (was>=JOIN_ATTN_VISIBLE || level>=JOIN_ATTN_VISIBLE);   /* 1: SetAttention computes its own */
-    if(!visible && !join_attn_states_on) return 0;
-    if(join_attn_settled(object,level)) return 0;
-    if(!visible) {
+    if(!leave && !visible && !join_attn_states_on) return 0;
+    if(!leave && join_attn_settled(object,level)) return 0;
+    if(!leave && !visible) {
         ++join_attn_states_apart;
         if(!(flags&JOIN_ATTN_SETTLED)) {++join_attn_states_unsettled;return 0;}   /* apart on the session too: left as it is */
         unsigned char own=0;
@@ -6282,6 +6704,16 @@ static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level
         InterlockedExchange(&join_attn_post_on,1);
     }
     const unsigned long long before=RID_JOIN_ALLOCS;
+    if(leave) {   /* the handler from the load's level: SetAttention reads the level it leaves from +0x1ec */
+        memcpy(object+JOIN_ATTENTION,&was,4);
+        join_ids_admit_load=1;join_set_attention(object,level);join_ids_admit_load=0;
+        *(arrive?&join_attn_arrive_loaded:&join_attn_leave_loaded)+=RID_JOIN_ALLOCS-before;
+        uint32_t now=was;
+        if(!join_read(object+JOIN_ATTENTION,&now,4) || now!=level) {
+            memcpy(object+JOIN_ATTENTION,&level,4);++*(arrive?&join_attn_arrive_drift:&join_attn_leave_drift);
+        }
+        ++*(arrive?&join_attn_arrive_calls:&join_attn_leave_calls);return arrive?4:3;
+    }
     if(visible) {
         /* hjs1 (x4mods-b8, 10 Nov; a new-session save, the open slot's start in another sector the session holds at high
          * attention from its first tick, the joiner's load low): three such calls (a sector and its zones) ran
@@ -6299,11 +6731,20 @@ static int join_attn_reconcile(unsigned char *object,uint32_t was,uint32_t level
     if(join_read(object+JOIN_ATTENTION,&now,4) && now!=level) {memcpy(object+JOIN_ATTENTION,&level,4);++join_attn_states_drift;}
     ++join_attn_states_calls;return 2;
 }
+/* The level ATTN wrote, for the renderer too. SetAttention marks the level changed in both view caches (0x3d56f1, 0x3d56f8: bit
+ * 0x40 of +0x11c and +0x19c) and the publish copies it into the bank it writes (0x3d49f0); ATTN's own write of +0x1ec marks
+ * nothing, so a bank kept the load's level. Seen 10 Nov (hjs4, a joiner at the Terran start, its sector held high by the session
+ * and low by the load): after the handover the cluster's background (planet, stars) drawn in every other frame only, by the
+ * bank the frame read. Display state: no simulation code reads a view cache. */
+static void join_attn_publish(unsigned char *object,uint32_t level) {
+    for(unsigned bank=0;bank<2;bank++) memcpy(object+JOIN_ATTN_VIEW+bank*JOIN_ATTN_VIEW_STRIDE,&level,4);
+}
 static int join_admit_attn(const join_tables *s,const join_tables *mine) {
     unsigned rows=0,samples=0;join_attn_high=0;join_attn_high_n=0;
     join_attn_set_calls=join_attn_set_dropped=join_attn_set_kept=join_attn_set_refused=join_attn_set_loaded=0;join_attn_set_due[0]=join_attn_set_due[1]=0;
     join_attn_states_apart=join_attn_states_unsettled=join_attn_states_computed=join_attn_states_calls=join_attn_states_loaded=0;
-    join_attn_states_drift=0;unsigned state_rows=0;
+    join_attn_states_drift=0;unsigned state_rows=0;join_attn_leave_calls=join_attn_leave_loaded=join_attn_leave_drift=0;
+    join_attn_arrive_calls=join_attn_arrive_loaded=join_attn_arrive_drift=0;
     InterlockedExchange64(&join_attn_set_posted,0);
     if(join_attn_set_on) join_attn_set_due[0]=join_attn_events_drop(1,NULL);
     for(uint32_t i=0;i<s->nattn;i++) {
@@ -6335,11 +6776,13 @@ static int join_admit_attn(const join_tables *s,const join_tables *mine) {
             ++state_rows;snprintf(join_rx.rows[join_rx.nrows++],sizeof(join_rx.rows[0]),"attn_state side=joiner id=%016llx level=%u/%u vtable=%llx",
                                   (unsigned long long)a->portable,level,a->level,(unsigned long long)(vtable-(uintptr_t)image));
         }
+        if(level!=a->level) join_attn_publish(object,a->level);
         ++join_rx.attn_applied;
     }
     if(join_attn_set_on) {
         if(InterlockedCompareExchange(&join_attn_post_on,0,0)) {(void)join_attn_post_swap(0);InterlockedExchange(&join_attn_post_on,0);}
-        if(join_attn_set_calls || join_attn_states_calls) join_attn_set_dropped=join_attn_events_drop(0,&join_attn_set_kept);
+        if(join_attn_set_calls || join_attn_states_calls || join_attn_leave_calls || join_attn_arrive_calls)
+            join_attn_set_dropped=join_attn_events_drop(0,&join_attn_set_kept);
         join_attn_set_due[1]=join_attn_events_drop(1,NULL);
     }
     return 1;
@@ -7750,6 +8193,124 @@ static void join_admit_viewk(const join_tables *s,const join_tables *mine) {
         if(vf!=r->vflags) {(void)join_poke((uintptr_t)(block+JOIN_VIEW_FLAGS),&r->vflags,4);++join_rx.viewk_flags;}
     }
 }
+/* native_gate_join_keep_stamps: the set (above join_pcf_hook), built at the admission after NAV wrote the session's stamps. */
+static int join_pcf_install(void);   /* lockstep_join.h */
+static int join_ks_ptr_cmp(const void *a,const void *b) {
+    const uintptr_t x=(uintptr_t)*(unsigned char *const *)a,y=(uintptr_t)*(unsigned char *const *)b;return x<y?-1:x>y;
+}
+static int join_ks_session_pending(const join_tables *s,uint64_t portable) {
+    uint32_t lo=0,hi=s->npend;
+    while(lo<hi) {const uint32_t mid=lo+(hi-lo)/2u;if(s->pend[mid].portable<portable) lo=mid+1u;else hi=mid;}
+    return lo<s->npend && s->pend[lo].portable==portable && s->pend[lo].word;
+}
+/* The first of a component's session SPEC records (sorted by portable ID, then kind); nspec: none. */
+static uint32_t join_ks_session_spec(const join_tables *s,uint64_t portable) {
+    uint32_t lo=0,hi=s->nspec;
+    while(lo<hi) {const uint32_t mid=lo+(hi-lo)/2u;if(s->spec[mid].portable<portable) lo=mid+1u;else hi=mid;}
+    return lo<s->nspec && s->spec[lo].portable==portable?lo:s->nspec;
+}
+/* Whether a component is of a class: its slot +0x11e8, as BuildCache asks it (0x3d4c48). 1, 0, -1 not readable. */
+#define JOIN_KS_ISA 0x11e8u
+#define JOIN_KS_ANY 0x79u   /* a specification for every class: never stopped (0x3d4c3d) */
+static int join_ks_isa_native(unsigned char *object,uint32_t klass) {return join_watch_call(object,JOIN_KS_ISA,(int)klass,1);}
+static int (*join_ks_isa)(unsigned char *,uint32_t)=join_ks_isa_native;   /* tests replace it */
+/* Whether the session's BuildCache of step T+1 hands the object flags of an ancestor's cache specification, as 0x3d4a80 does:
+ * every list from the root down to the parent is on its stack; an entry (flags +4, class +8, interval +0x10, last +0x18) is due
+ * when the step's time is at or past last + interval; an entry for a class goes down until an ancestor is of that class, whose
+ * children are the last to get it (it marks the entry at its own BuildCache, 0x3d4c63). So an entry of the ancestor A reaches
+ * the object when no ancestor from A down to the object's grandparent is of the entry's class. An ancestor without a portable
+ * ID has no record; a class question that cannot be asked counts as "not of that class" (the entry reaches: no hold).
+ * up[0] the parent .. up[n-1] the root. */
+static int join_ks_under_spec(const join_tables *s,unsigned char *object,double step_time) {
+    unsigned char *up[24];unsigned n=0;
+    for(unsigned char *at=object;n<24u;) {
+        unsigned char *parent=NULL;
+        if(!join_read(at+JOIN_PARENT,&parent,8) || !parent) break;
+        up[n++]=parent;at=parent;
+    }
+    for(unsigned k=0;k<n;k++) {
+        uint64_t runtime=0;unsigned klass=0;
+        if(!join_read(up[k]+8,&runtime,8) || !runtime) continue;
+        const uint64_t portable=join_key(runtime,&klass);
+        if(!portable) continue;
+        for(uint32_t i=join_ks_session_spec(s,portable);i<s->nspec && s->spec[i].portable==portable;i++) {
+            const join_spec_rec *e=&s->spec[i];double interval,last;int stopped=0;
+            memcpy(&interval,&e->interval,8);memcpy(&last,&e->last,8);
+            if(!e->flags || !(step_time>=last+interval)) continue;
+            if(e->klass!=JOIN_KS_ANY) for(unsigned m=1;m<=k && !stopped;m++) stopped=join_ks_isa(up[m],e->klass)==1;
+            if(!stopped) return 1;
+        }
+    }
+    return 0;
+}
+static void join_shape_hold_admit(const join_tables *s);   /* lockstep_join.h */
+static void join_admit_keep_stamps(const join_tables *s,const join_tables *mine) {
+    join_ks_n=0;join_ks_listed=join_ks_pending=join_ks_spec=join_ks_missing=join_ks_over=0;
+    InterlockedExchange64(&join_ks_tick,0);InterlockedExchange64(&join_ks_seen,0);InterlockedExchange64(&join_ks_kept,0);
+    if(!join_ks_on || s->version<13) return;
+    double step_time;memcpy(&step_time,&s->gate.game,8);step_time+=1.0/(double)(s->gate.tick_hz?s->gate.tick_hz:60u);   /* step T+1's game time */
+    for(uint32_t i=0;i<s->nnav;i++) {
+        const join_nav_rec *r=&s->nav[i];unsigned char *c=NULL;uintptr_t vt=0;
+        if(r->relation!=0u) continue;   /* stamped by the gate's walk of T: the walk of T+1 stamps it again */
+        ++join_ks_listed;
+        if(join_ks_session_pending(s,r->portable)) {++join_ks_pending;continue;}   /* the session republishes it in T+1 itself */
+        unsigned char *object=join_object(join_runtime_of(mine,r->portable));
+        if(!object || !join_read(object+JOIN_CONTROLLER,&c,8) || !c || !join_read(c,&vt,8) || vt!=(uintptr_t)image+JOIN_NAV_VTABLE) {++join_ks_missing;continue;}
+        if(join_ks_under_spec(s,object,step_time)) {++join_ks_spec;continue;}   /* the session republishes it in T+1 itself */
+        if(join_ks_n>=JOIN_KS_MAX) {++join_ks_over;continue;}
+        join_ks_controller[join_ks_n++]=c;
+    }
+    if(join_ks_n>1u) qsort(join_ks_controller,join_ks_n,sizeof(join_ks_controller[0]),join_ks_ptr_cmp);
+    if(join_ks_n && join_pcf_install()) InterlockedExchange64(&join_ks_tick,(LONG64)(s->gate.tick+1u));
+    else join_ks_n=0;
+}
+/* BULLET at the admission (diagnostic: the joiner writes nothing). The joiner's own bullets after its load against the session's
+ * census, paired by macro and start time (+0x278; the save writes it with 17 digits), the shooter first where both sides name one.
+ * Status bullets=session:own:paired:missing:extra:apart (apart: a pair with a word apart outside pointers and the runtime ID +8);
+ * a JOIN_BULLET line in the crash note per bullet missing, extra or apart (at most JOIN_BULLET_LINES). vps3 (the kit's join through
+ * the VPS, ns8, T=676): the session moved 50 bullets in step T+1, the joiner 49, and a ship's shield parted there. */
+#define JOIN_BULLET_LINES 48u
+static uint64_t join_bul_session,join_bul_own,join_bul_paired,join_bul_missing,join_bul_extra,join_bul_apart;
+static void join_bullet_line(unsigned *lines,const char *side,const char *why,const join_bullet_rec *r,const char *more) {
+    char out[640];uint64_t start=0,last=0,next=0,w118=0,id=0;uint32_t xyz[3]={0,0,0};
+    if(*lines>=JOIN_BULLET_LINES) return;
+    ++*lines;
+    memcpy(&id,r->bullet+8,8);memcpy(&start,r->bullet+0x278,8);memcpy(&last,r->bullet+0x268,8);memcpy(&next,r->bullet+0x270,8);
+    memcpy(&w118,r->bullet+0x118,8);memcpy(xyz,r->bullet+0x150,12);
+    int n=snprintf(out,sizeof(out),"[X4LAN] NATIVE_GATE JOIN_BULLET side=%s why=%s id=%llx macro=%.40s start=%016llx last=%016llx next=%016llx zone=%016llx"
+                   " shooter=%016llx slot=%u flags=%x w118=%016llx at=%08x:%08x:%08x%s%s\r\n",side,why,(unsigned long long)id,r->macro,
+                   (unsigned long long)start,(unsigned long long)last,(unsigned long long)next,(unsigned long long)r->zone,(unsigned long long)r->shooter,
+                   r->position,r->flags,(unsigned long long)w118,xyz[0],xyz[1],xyz[2],more?" ":"",more?more:"");
+    if(n>0) crash_note_write(out,n<(int)sizeof(out)?n:(int)sizeof(out)-1);
+}
+static int join_bullet_same(const join_bullet_rec *a,const join_bullet_rec *b,int shooter) {
+    return !memcmp(a->bullet+0x278,b->bullet+0x278,8) && !memcmp(a->macro,b->macro,JOIN_BULLET_MACRO) && (!shooter || a->shooter==b->shooter);
+}
+static void join_admit_bullets(const join_tables *s) {
+    join_tables own;uint32_t cap=0;unsigned lines=0;unsigned char *used=NULL;memset(&own,0,sizeof(own));
+    join_bul_session=s->nbullet;join_bul_own=join_bul_paired=join_bul_missing=join_bul_extra=join_bul_apart=0;
+    join_capture_bullets(&own,&cap);join_bul_own=own.nbullet;
+    if(own.nbullet && (!(used=calloc(own.nbullet,1)) || (uint64_t)s->nbullet*own.nbullet>(1u<<24))) {free(used);free(own.bullet);return;}
+    for(uint32_t i=0;i<s->nbullet;i++) {
+        const join_bullet_rec *a=&s->bullet[i];uint32_t j=own.nbullet;
+        for(int shooter=1;shooter>=0 && j==own.nbullet;shooter--)
+            for(j=0;j<own.nbullet;j++) if(!used[j] && join_bullet_same(a,&own.bullet[j],shooter)) break;
+        if(j==own.nbullet) {++join_bul_missing;join_bullet_line(&lines,"session","missing",a,NULL);continue;}
+        used[j]=1;++join_bul_paired;
+        {   const join_bullet_rec *b=&own.bullet[j];char text[360]="words=";size_t at=6;unsigned words=0;
+            for(unsigned pass=0;pass<2;pass++) for(unsigned o=0;o<JOIN_BULLET_BYTES;o+=8) {   /* the flight's words (+0x260..) first, then the rest */
+                if((o>=0x260u)!=(pass==0)) continue;
+                uint64_t x,y;memcpy(&x,a->bullet+o,8);memcpy(&y,b->bullet+o,8);
+                if(x==y || o==8u || (x>=(1ull<<32) && x<(1ull<<47) && y>=(1ull<<32) && y<(1ull<<47))) continue;
+                if(++words<=8u && at+48<sizeof(text)) at+=(size_t)snprintf(text+at,sizeof(text)-at,"%s+%x:%llx/%llx",words>1?",":"",o,(unsigned long long)x,(unsigned long long)y);
+            }
+            if(a->shooter!=b->shooter || a->zone!=b->zone) {++words;if(at+60<sizeof(text)) at+=(size_t)snprintf(text+at,sizeof(text)-at,",owner:%llx/%llx",(unsigned long long)b->zone,(unsigned long long)b->shooter);}
+            if(words) {++join_bul_apart;join_bullet_line(&lines,"both","apart",a,text);}
+        }
+    }
+    for(uint32_t j=0;j<own.nbullet;j++) if(!used[j]) {++join_bul_extra;join_bullet_line(&lines,"joiner","extra",&own.bullet[j],NULL);}
+    free(used);free(own.bullet);
+}
 static int join_admit_world(void) {
     const join_tables *s=&join_rx.t;int strict=join_rx.mode==JOIN_STRICT;unsigned hrows=0,prows=0;
     if(s->version<2) return 1;   /* a version 1 package carries no world table (a strict joiner refused it at the load) */
@@ -7833,6 +8394,8 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_gravb(s,&mine);   /* the radar's mapped bounds */
     if(s->version>=13) join_admit_viewl(s,&mine);   /* the live and player view flags (opt-in) */
     if(s->version>=13) join_admit_ikv(s,&mine);     /* the skeletons' IK joints (the weapons' gimbals) */
+    if(s->version>=13) join_admit_anis(s,&mine);    /* the part animation sequences: start times, unit states, waiting listeners (written: opt-in) */
+    if(s->version>=10) join_admit_bullets(s);       /* the bullets in flight: the joiner's against the census (diagnostic) */
     if(s->version>=13) join_admit_ecos(s,&mine);    /* the economy schedules (opt-in) */
     if(s->version>=13) join_admit_shpw(s,&mine);    /* the ships' words a load leaves at defaults (opt-in) */
     if(s->version>=13) join_admit_trdn(s,&mine);    /* the containers' next trade offer update (opt-in) */
@@ -7917,6 +8480,8 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_pbnk(s,&mine);   /* the pilot slot ships' pathing state banks */
     if(s->version>=13) join_admit_specdrop(s,&mine);   /* the load's one-shot view cache specifications, after SPEC and VIEWK (opt-in) */
     if(s->version>=13) join_admit_pend(s,&mine);   /* the pending view cache flags (opt-in) */
+    if(s->version>=13) join_admit_keep_stamps(s,&mine);   /* the stamps the first step's republication must not write */
+    if(s->version>=13) join_shape_hold_admit(s);   /* every compound from the poses of T (experiment), before BODY's motion properties */
     if(s->version>=13) join_admit_ldc(s,&mine);    /* the drift controllers, before the bodies they set */
     if(s->version>=13) join_admit_body(s,&mine);   /* last: the bodies of the objects as admitted */
     if(s->version>=13) for(uint32_t i=0;i<s->nbupd;i++) {   /* BUPD: the session's last build updates */

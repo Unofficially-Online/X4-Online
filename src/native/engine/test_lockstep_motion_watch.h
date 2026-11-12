@@ -326,7 +326,7 @@ static void test_motion_zone(void) {
     /* Digests: one line per row; equal rows give equal digests, a pose byte moves cur only. */
     char d1[512],d2[512];assert(motion_watch_digest(0,d1,sizeof(d1))>0);
     assert(strstr(d1,"index=0 tick=17494 saved=00000000000a1885 attention=6 ctrl=02c3fdc0 model=ffffffff flags=2560 parent=0000000000059a26/0/0/ffffffff cur="));
-    assert(strstr(d1," fp=") && strstr(d1," dock=") && !strstr(d1," dock=811c9dc5") && strlen(d1)<380);
+    assert(strstr(d1," fp=") && strstr(d1," dock=") && !strstr(d1," dock=811c9dc5") && strlen(d1)<400);   /* with slotx= */
     assert(strstr(d1," segments=00000000 spline=00000000 requests=00000000 obstacles=00000000 flight=00000000")); /* no spline or Steering model: the groups are 0 */
     ring[1]=ring[0];ring[1].slot[0][7]^=1;motion_watch_rows=2;assert(motion_watch_digest(1,d2,sizeof(d2))>0);
     char *c1=strstr(d1," cur="),*c2=strstr(d2," cur=");assert(c1 && c2 && strncmp(c1,c2,13) && !strcmp(strstr(d1," prev="),strstr(d2," prev=")));

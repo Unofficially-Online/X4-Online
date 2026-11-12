@@ -494,7 +494,7 @@ def pilot_foot_slots_rules(config_text, enabled):
 
 
 UI_REPLAY_FAMILIES = ('travel', 'target', 'orders', 'autopilot', 'dock', 'weapons', 'missiles', 'queue', 'events', 'flight', 'trade', 'missions', 'build',
-                      'assets', 'conversation', 'faction')
+                      'assets', 'conversation', 'faction', 'inventory')
 UI_GUARD_GROUPS = ('flight', 'orders', 'fleet', 'trade', 'faction', 'assets', 'build', 'conflict', 'missions', 'events', 'conversation',
                    'session', 'cheat', 'editor')   # lockstep_ui_guard.h, in its order
 
@@ -795,9 +795,10 @@ def probe_rules(config_text, enabled):
         if not re.search(r'X4LAN_CONFIG\.native_gate_snapshot_sha\s*=', config_text):
             failures.append(dict(rule='native_gate_command_order needs the snapshot boot', bits=['native_gate_snapshot_sha']))
     for value in re.findall(r'X4LAN_CONFIG\.native_gate_tempzone_order\s*=\s*([^\s;]+)', config_text):
-        if value.strip('\'"') in ('true', 'order') and 'native_gate_travel_snapshot' not in enabled:
-            failures.append(dict(rule='native_gate_tempzone_order order needs native_gate_travel_snapshot (the late-splice join)',
-                                 bits=['native_gate_travel_snapshot']))
+        if value.strip('\'"') in ('true', 'order') and not ({'native_gate_travel_snapshot', 'native_gate_travel_determinism'} & set(enabled)):
+            failures.append(dict(rule='native_gate_tempzone_order order needs native_gate_travel_snapshot or native_gate_travel_determinism '
+                                      '(complete pathing command-list splices)',
+                                 bits=['native_gate_travel_snapshot', 'native_gate_travel_determinism']))
     for value in re.findall(r'X4LAN_CONFIG\.native_gate_gravidar_wide\s*=\s*([^\s;]+)', config_text):
         missing = [name for name in ('native_gate_radar_serial', 'native_gate_world_identities') if name not in enabled]
         if value.strip('\'"') == 'sort' and missing:

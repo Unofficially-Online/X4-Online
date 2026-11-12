@@ -66,19 +66,24 @@ static inline fwrr_result fwrr_fail(frame_worker_recurring *r, fwrr_failure why)
                                                    memory_order_release, memory_order_relaxed);
     return FWRR_FAILED;
 }
-static inline int fwrr_initialize(frame_worker_recurring *r, uint64_t main_thread,
-                                  uint64_t worker_thread) {
-    if (!r || !main_thread || !worker_thread || main_thread == worker_thread) return 0;
+static inline int fwrr_initialize_at(frame_worker_recurring *r, uint64_t main_thread,
+                                     uint64_t worker_thread, uint64_t first_generation) {
+    if (!r || !main_thread || !worker_thread || main_thread == worker_thread ||
+        first_generation < FWRR_FIRST_GENERATION || first_generation > FWRR_MAX_GENERATION) return 0;
     uint64_t empty = 0;
     if (!atomic_compare_exchange_strong_explicit(&r->state, &empty, FWRR_INITIALIZING,
                                                   memory_order_acq_rel, memory_order_acquire)) return 0;
     r->main_thread = main_thread;
     r->worker_thread = worker_thread;
-    /* Generation 4 is an internal completed predecessor, not an armed tick. */
+    /* The predecessor is internal and is not an armed engine tick. */
     uint64_t initializing = FWRR_INITIALIZING;
     return atomic_compare_exchange_strong_explicit(
-        &r->state, &initializing, fwrr_pack(4, FWRR_RELEASED | FWRR_MAIN_AUTHORIZED),
+        &r->state, &initializing, fwrr_pack(first_generation - 1, FWRR_RELEASED | FWRR_MAIN_AUTHORIZED),
         memory_order_release, memory_order_acquire);
+}
+static inline int fwrr_initialize(frame_worker_recurring *r, uint64_t main_thread,
+                                  uint64_t worker_thread) {
+    return fwrr_initialize_at(r, main_thread, worker_thread, FWRR_FIRST_GENERATION);
 }
 static inline int fwrr_check(frame_worker_recurring *r, uint64_t state, uint64_t generation,
                              uint64_t thread, int worker) {

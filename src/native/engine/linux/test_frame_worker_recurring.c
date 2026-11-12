@@ -163,4 +163,11 @@ static void failures(void) {
     assert(fwrr_arm(&r, FWRR_MAX_GENERATION, MAIN_THREAD) == FWRR_FAILED);
     assert(atomic_load(&r.failure) == FWRR_BAD_GENERATION);
 }
-int main(void) { failures(); real_threads(); puts("recurring main/worker rendezvous: ok"); }
+int main(void) {
+    frame_worker_recurring shifted = FRAME_WORKER_RECURRING_INIT;
+    assert(!fwrr_initialize_at(&shifted, MAIN_THREAD, WORKER_THREAD, 4));
+    assert(fwrr_initialize_at(&shifted, MAIN_THREAD, WORKER_THREAD, 37));
+    assert(fwrr_generation(atomic_load(&shifted.state)) == 36);
+    assert(fwrr_arm(&shifted, 37, MAIN_THREAD) == FWRR_OK);
+    failures(); real_threads(); puts("recurring main/worker rendezvous: ok");
+}

@@ -239,6 +239,41 @@ static inline int player_ui_overlay_count_provider(const player_view_query_api *
     return 1;
 }
 
+typedef int (*player_game_render_bind_fn)(uint32_t, player_ui_overlay_callback,
+                                          player_ui_overlay_callback);
+static inline int player_game_render_provider(const player_view_query_api *provider,
+                                               player_game_render_bind_fn *bind,
+                                               int (**activate)(void),
+                                               player_ui_overlay_progress_fn *progress) {
+    Dl_info module;
+    player_game_render_info info = {0};
+    if (!provider || !bind || !activate || !progress || !dladdr((void *)provider->finish, &module) || !module.dli_fbase)
+        return 0;
+    void *info_symbol = dlsym(RTLD_DEFAULT, "x4mp_view_query_game_render_info");
+    void *bind_symbol = dlsym(RTLD_DEFAULT, "x4mp_view_query_game_render_bind");
+    void *progress_symbol = dlsym(RTLD_DEFAULT, "x4mp_view_query_game_render_progress");
+    void *activate_symbol = dlsym(RTLD_DEFAULT, "x4mp_view_query_game_render_activate");
+    if (!player_view_pin_same_module((uintptr_t)info_symbol, module.dli_fbase, "r-xp") ||
+        !player_view_pin_same_module((uintptr_t)bind_symbol, module.dli_fbase, "r-xp") ||
+        !player_view_pin_same_module((uintptr_t)progress_symbol, module.dli_fbase, "r-xp") ||
+        !player_view_pin_same_module((uintptr_t)activate_symbol, module.dli_fbase, "r-xp") ||
+        ((unsigned (*)(player_game_render_info *))info_symbol)(&info) != 1 || info.installed != 1 ||
+        info.slot != (uintptr_t)LX(0x3ab1280u) || info.original != 0xfb0180u ||
+        !player_view_pin_permissions(info.slot, sizeof(uintptr_t), "r--p", 0) ||
+        !player_view_pin_same_module(info.replacement, module.dli_fbase, "r-xp") ||
+        !player_view_pin_same_module(info.original_slot, module.dli_fbase, "rw-p")) return 0;
+    uintptr_t actual = 0, target = 0;
+    if (!gate_read_local((void *)info.slot, &actual, sizeof actual) || actual != info.replacement ||
+        !gate_read_local((void *)info.original_slot, &target, sizeof target) || target != info.original ||
+        !player_view_pin_permissions((uintptr_t)LX(0xfb0180u), 0x70, "r-xp", 0) ||
+        !hash_ok((const void *)LX(0xfb0180u), 0x70,
+                 "fa4b6b5d88d285cb39eb2160f8382cb54b1b2b4e2578a5d9613c8fc0a4c9b59b")) return 0;
+    *bind = (player_game_render_bind_fn)bind_symbol;
+    *activate = (int (*)(void))activate_symbol;
+    *progress = (player_ui_overlay_progress_fn)progress_symbol;
+    return 1;
+}
+
 static int player_view_query_occupied_pin(const char *expected_sha256, uint64_t expected_size) {
     if (!player_view_pin_digest_string(expected_sha256) || !expected_size) return 0;
     unsigned char digest[32];

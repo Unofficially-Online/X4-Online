@@ -617,7 +617,7 @@ class Overlays(unittest.TestCase):
             # Refusals: an existing output, absent slots that are not the last ones, a changed package, a missing handoff.
             self.assertIn('exists', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'savers'))
             self.assertIn('last slots', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'x', '--absent', '2'))
-            self.assertIn('arm-timeout', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'y', '--arm-timeout-ms', '200000'))
+            self.assertIn('arm-timeout', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'y', '--arm-timeout-ms', '300001'))
             (folder/'j640.x4join').write_bytes(data[:-1]+b'\0')
             self.assertIn('package', self.refused('joiner', '--gate-dll', dll, '--handoff', root/'handoff.json', '--out', root/'z',
                                                   '--join-mode', 'report'))
@@ -652,9 +652,17 @@ class Overlays(unittest.TestCase):
             self.assertIn('native_gate_join_hold_boot_events', overlays.JOIN_DEFAULT_ON)   # j1-323..326: 635 without it
             self.assertIn('native_gate_join_resv', overlays.JOIN_DEFAULT_ON)   # w1z156, j1-337: the 1049/1860 split gone
             self.assertIn('native_gate_join_mute_load_npcs', overlays.JOIN_DEFAULT_ON)   # ca15: the T+2 NPC split at T=733 gone
+            self.assertIn('native_gate_join_viewl', overlays.JOIN_DEFAULT_ON)   # hjs4v: a docking ship's live-view flag, its T+1 row
+            self.assertIn('native_gate_join_anis', overlays.JOIN_DEFAULT_ON)         # hjs4a: the far wharf's bays, the nav mesh receipt
+            self.assertIn('native_gate_join_anis_state', overlays.JOIN_DEFAULT_ON)   # hjs4d: a ship docking at T (unit state, queue, listener)
             self.assertIn('native_gate_join_body_make', overlays.JOIN_DEFAULT_ON)   # hjs1c: the 2 IDs of T+1 on a new-session save
             self.assertIn('native_gate_join_grav_dead', overlays.JOIN_DEFAULT_ON)   # ca33/ca34: the dead contact's has_scanned posts at T=690
             self.assertIn('native_gate_join_hold_fire', overlays.JOIN_DEFAULT_ON)   # ca22b..ca27: the load's shots at T=722 held
+            self.assertIn('native_gate_join_hold_bullets', overlays.JOIN_DEFAULT_ON)   # hj8i: the bullet that hit in the load at T=676
+            self.assertIn('native_gate_join_keep_stamps', overlays.JOIN_DEFAULT_ON)    # hj8i: the XS ship's nav stamp at T=685
+            self.assertIn('native_gate_join_attn_leave', overlays.JOIN_DEFAULT_ON)     # hj8i: the ship loaded at attention 9 at T=696
+            self.assertIn('native_gate_join_shape_hold', overlays.JOIN_DEFAULT_ON)     # hj8i: the bullet of 679 at T=678 (compound children)
+            self.assertIn('native_gate_join_attn_arrive', overlays.JOIN_DEFAULT_ON)    # hj8i: the ship loaded below attention 9 (1 child against 28)
             self.assertIn('native_gate_join_cue_ids', overlays.JOIN_DEFAULT_ON)   # hj32: CUEI (ordinal -> live ID); missions equal after a join
             for name in ('native_gate_join_porders', 'native_gate_join_attn_set', 'native_gate_join_ares', 'native_gate_join_warp'):   # w1z198/w1z199, j1-384, j1-373
                 self.assertIn(name, overlays.JOIN_DEFAULT_ON)

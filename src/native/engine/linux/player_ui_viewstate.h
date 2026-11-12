@@ -58,7 +58,7 @@ static inline int player_ui_viewstate_sample(player_ui_viewstate_read_fn read, v
     *out = sample;
     return 1;
 }
-static inline int player_ui_viewstate_format(char *out, size_t capacity, const char *stage,
+static inline int player_ui_viewstate_format_at(char *out, size_t capacity, uint64_t tick, const char *stage,
                                                uintptr_t manager, uintptr_t presenter,
                                                uintptr_t controller, uintptr_t universe,
                                                const player_ui_viewstate *sample) {
@@ -71,13 +71,19 @@ static inline int player_ui_viewstate_format(char *out, size_t capacity, const c
         plan_hex[2 * i + 1] = hex[sample->plan[i] & 15];
     }
     plan_hex[2 * sample->plan_length] = 0;
-    int length = snprintf(out, capacity, "X4 UI VIEWSTATE v=1 tick=9 stage=%s status=observed "
+    int length = snprintf(out, capacity, "X4 UI VIEWSTATE v=1 tick=%llu stage=%s status=observed "
         "manager=%llx presenter=%llx controller=%llx universe=%llx selector=%u first=%u plan_len=%zu plan=%s "
         "camera_candidate=%llx camera_mode=%u external_target=%llx target_id=%llu\n",
-        stage, (unsigned long long)manager, (unsigned long long)presenter, (unsigned long long)controller,
+        (unsigned long long)tick, stage, (unsigned long long)manager, (unsigned long long)presenter, (unsigned long long)controller,
         (unsigned long long)universe, sample->selector, (unsigned)sample->first_person, sample->plan_length,
         sample->plan_length ? plan_hex : "-", (unsigned long long)sample->camera, sample->camera_mode,
         (unsigned long long)sample->target, (unsigned long long)sample->target_id);
     return length > 0 && (size_t)length < capacity ? length : 0;
+}
+static inline int player_ui_viewstate_format(char *out, size_t capacity, const char *stage,
+                                              uintptr_t manager, uintptr_t presenter,
+                                              uintptr_t controller, uintptr_t universe,
+                                              const player_ui_viewstate *sample) {
+    return player_ui_viewstate_format_at(out, capacity, 9, stage, manager, presenter, controller, universe, sample);
 }
 #endif

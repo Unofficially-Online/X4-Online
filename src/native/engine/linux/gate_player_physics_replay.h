@@ -75,7 +75,7 @@ static void player_physics_scripted_input(void *context) {
  * admitted slot-40 call. Any failed step discards the process. */
 static void player_physics_replay_begin_with_input(uint64_t generation,
                                                    void (*update_input)(void *), void *context) {
-    lifecycle_discard_require(player_recurring_physics_entered() && generation > FWRR_FIRST_GENERATION &&
+    lifecycle_discard_require(player_recurring_physics_entered() && generation >= player_startup()->apply &&
         generation == stats.issued && player_recurring_tail_token.generation == generation &&
         generation == player_physics_replay_last + 1 && update_input &&
         atomic_load_explicit(&player_physics_ready, memory_order_acquire) == 1 &&

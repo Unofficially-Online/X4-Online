@@ -61,6 +61,10 @@ static int lua_join_ids(lua_State *L) {join_ids_on=p_lua_tonumber(L,1)!=0.0;p_lu
 static int lua_join_buildp(lua_State *L) {join_buildp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_viewf_write(on): the joiner writes the session's VIEWF words (lockstep_join_world.h; diagnostic, default off). */
 static int lua_join_viewf_write(lua_State *L) {join_viewf_write=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_anis_state(on): a joiner's animation units take the session's state, queue and waiting listeners (ANIS, ANIL). */
+static int lua_join_anis_state(lua_State *L) {join_anis_state_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_anis(on): a joiner's part animation sequences take the session's start times (ANIS; before gate.join_load). */
+static int lua_join_anis(lua_State *L) {join_anis_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_viewl(on): a joiner runs the view handlers where its live/player view flags differ (VIEWL; default off). */
 static int lua_join_viewl(lua_State *L) {join_viewl_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_rcnt(on): a joiner lowers the created ships' and bays' reference counts to the session's (RCNT; experiment, default off). */
@@ -125,12 +129,25 @@ static int lua_join_attn_set(lua_State *L) {join_attn_set_on=p_lua_tonumber(L,1)
 /* gate.join_attn_states(on): with attn_set, the saver marks the records whose per-level state agrees on the session and the joiner
  * runs the native change at the admission for each marked object whose state is apart, at any level (attn_states=). */
 static int lua_join_attn_states(lua_State *L) {join_attn_states_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_attn_leave(on): with attn_set, a level ATTN writes down from 9 or more to less than 9 is made by SetAttention from
+ * the load's level, so the class handler releases what level 9 holds (the interior nav helper; attn_leave=). */
+static int lua_join_attn_leave(lua_State *L) {join_attn_leave_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_attn_arrive(on): with attn_set, a level ATTN writes up from less than 9 to 9 or more is made by SetAttention from
+ * the load's level (the compound and the nav helper of level 9; attn_arrive=). */
+static int lua_join_attn_arrive(lua_State *L) {join_attn_arrive_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_shape_hold(on): session and joiner: every compound refreshed from the poses of T (the session in step T,
+ * the joiner at its admission) and held through step T+1 (lockstep_join.h). */
+static int lua_join_shape_hold(lua_State *L) {join_shape_hold_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_shoot_far(on): SHOOT also writes the session's last shot time where the joiner's is far from it (a load's reset). */
 static int lua_join_shoot_far(lua_State *L) {join_shoot_far_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_bootev_session(on): the boot hold's kept events go back only where the session's EVQT names their source and class. */
 /* gate.join_mute_load_npcs(on): a joiner's MD does not hear event_npc_created between its load and its admission. */
 /* gate.join_hold_fire(on): a joiner's weapons make no shot between its load and its admission (before gate.join_load). */
 static int lua_join_hold_fire(lua_State *L) {join_hold_fire_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_hold_bullets(on): a joiner's bullets do not move between its load and its admission (before gate.join_load). */
+static int lua_join_hold_bullets(lua_State *L) {join_hold_bullets_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_keep_stamps(on): a joiner's first-step republication leaves the navigation stamps the session did not write (before gate.join_load). */
+static int lua_join_keep_stamps(lua_State *L) {join_ks_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_body_make(on): the IDs of the physics bodies a joiner lacks at its admission take its view list when X4 makes them (before gate.join_load). */
 static int lua_join_body_make(lua_State *L) {join_body_make_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_grav_dead(on): a joiner's radar lists keep the session's destroyed contacts until the next scan (before gate.join_load). */

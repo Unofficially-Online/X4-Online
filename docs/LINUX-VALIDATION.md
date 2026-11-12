@@ -6,6 +6,36 @@ It does not provide the Windows launcher's player input, UI replay or hot-join
 feature set. A passing run is not evidence of Windows/Linux interoperability or
 of a session between different PCs.
 
+## Native player-control progress, 12 November 2026
+
+The development branch now contains a disposable native Linux player-control
+path. It is still being developed for participation in a Windows-hosted session.
+
+- The latest two-instance test used the common Windows/Linux startup schedule
+  and explicit shared ship identities. Both Linux instances completed 900 real
+  controller updates, ticks 40–939. Their input streams, 3,600 body-state rows
+  and 939 rolling world-digest rows matched. Earlier Take and preparation steps
+  are recorded separately and are not counted as controller updates.
+- Synthetic keyboard input moved and turned the guest ship. Captured images
+  show its cockpit, radar and speed display after the game's startup fade;
+  the exterior now follows the rotation. The camera-refill path completed 889
+  checked leases alongside 890 UI and render callbacks. These receipts prove
+  scoped actor-pointer restoration, not exclusion of every asynchronous reader.
+- The common-startup test exposed a stride-ordering bug: a deliberately skipped
+  background pass looked active to the fork check. Joining passes now precedes
+  the check; suppression of the next pass follows it. The corrected native run
+  passed without relaxing the quiet-state checks.
+- A default-off SDL focus adapter samples the actual game window on the main
+  thread and publishes a generation-tagged result for input replay. Its
+  failure, stale-sample and window-identity checks have synthetic coverage;
+  it has not yet been enabled in a native input test.
+
+These tests intentionally terminate their isolated processes. They do not prove
+normal return to gameplay, a sustained human session, or Windows/Linux control
+compatibility. Windows view, mouse-aim and firing metadata still need complete
+native Linux consumers. Unsupported records remain rejected. The finite-session
+and shared-identity options are developer tools, not a playable client release.
+
 ## Requirements
 
 - The pinned Linux X4 9.00 executable and its installed game data.

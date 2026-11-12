@@ -414,7 +414,7 @@ class SessionTests(unittest.TestCase):
                                 'UI_REPLAY_SCRIPT tick=42 op=target_none ok=true result=nil scope=1',
                                 'UI_REPLAY_SCRIPT tick=43 op=target_slot ok=true result=false scope=0',
                                 'UI_REPLAY_SCRIPT tick=50 op=target_slot ok=true result=false scope=0'])
-        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'guidance_slot': True, 'guidance_end': True})
+        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'guidance_slot': True, 'guidance_end': True, 'inv_read': True, 'inv_drop': True})
 
     def test_the_guidance_ops_set_and_end_it_where_the_maps_click_runs(self):
         """play39p-long: client 2's map set guidance on slot 1's ship (SetGuidance) inside its presentation scope; the ops do
@@ -754,9 +754,9 @@ class OptionTests(unittest.TestCase):
         for value in ('true', "{'travel'}", "{'target','orders'}", "{'orders','queue'}", "{'travel','flight'}"):
             self.assertEqual(failures(stock_config(native_gate_ui_replay=value)), [], value)
         for rule, override in (
-                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction', dict(native_gate_ui_replay='1')),
-                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction', dict(native_gate_ui_replay="{'seta'}")),
-                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction', dict(native_gate_ui_replay="{'travel','travel'}")),
+                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction, inventory', dict(native_gate_ui_replay='1')),
+                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction, inventory', dict(native_gate_ui_replay="{'seta'}")),
+                ('native_gate_ui_replay must be true or a list of travel, target, orders, autopilot, dock, weapons, missiles, queue, events, flight, trade, missions, build, assets, conversation, faction, inventory', dict(native_gate_ui_replay="{'travel','travel'}")),
                 ("native_gate_ui_replay needs native_gate_pilot_stock_slots = 'all'", dict(native_gate_ui_replay='true', native_gate_pilot_stock_slots=None)),
                 ("native_gate_ui_replay needs native_gate_pilot_stock_slots = 'all'", dict(native_gate_ui_replay='true', native_gate_pilot_stock=None)),
                 ('native_gate_ui_replay needs native_gate_pilot_present', dict(native_gate_ui_replay='true', native_gate_pilot_present=None)),

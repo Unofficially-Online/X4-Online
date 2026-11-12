@@ -277,6 +277,10 @@ def main():
                    help='Linux-only read-only P1 reference inspection; requires observer and serial pathing')
     p.add_argument('--stock-keyboard-replay-probe', action='store_true',
                    help='Linux-only two-client single-ship keyboard proof; requires observer, not independent player controls')
+    p.add_argument('--player-startup-phases', choices=('v1-t40',))
+    p.add_argument('--player-ui-session-frames', type=int, default=0)
+    p.add_argument('--player-ui-camera-refill', action='store_true')
+    p.add_argument('--player-ui-render-lease', action='store_true')
     p.add_argument('--player-ui-seat-correction', action='store_true')
     p.add_argument('--player-ui-live-pose-observer', action='store_true')
     p.add_argument('--player-ui-seat-query-probe', action='store_true')
@@ -409,6 +413,11 @@ def main():
                         'fixtures are always bare (the default stack needs the battle snapshot and the Windows modules)')
     p.add_argument('--out', type=Path, required=True)
     args = p.parse_args()
+    from linux_ui_session_budget import budget_from_options, expected_callbacks, resolve_session_options
+    try:
+        args = argparse.Namespace(**resolve_session_options(vars(args), cli=True))
+    except ValueError as error:
+        p.error(str(error))
     if args.runtime_id_caller_stride is not None and (not 1 <= args.runtime_id_caller_stride <= 3600 or
             not args.runtime_id_callers or not args.runtime_ids):
         p.error('--runtime-id-caller-stride requires --runtime-id-callers, --runtime-ids and 1..3600')
@@ -446,14 +455,18 @@ def main():
         p.error('--player-factory-probe requires Linux, a snapshot, --stock-keyboard-observer and --serial-pathing')
     if args.player_presentation_probe and args.independent_keyboard_frames < 4:
         p.error('--player-presentation-probe requires at least 4 independent keyboard frames')
+    if args.player_ui_render_lease and not args.player_ui_seat_correction:
+        p.error('render lease requires explicit seat correction and its full overlay160 chain')
+    if args.player_ui_camera_refill and not args.player_ui_render_lease:
+        p.error('camera refill requires the explicit render lease and correction chain')
     if args.player_ui_seat_correction and not args.player_ui_live_pose_observer:
         p.error('seat correction requires explicit live observer, seat query and UI overlay160')
     if args.player_ui_live_pose_observer and (not args.player_ui_seat_query_probe or
-            not args.player_ui_overlay_probe or args.player_ui_overlay_callbacks != 160):
+            not args.player_ui_overlay_probe or args.player_ui_overlay_callbacks != expected_callbacks(vars(args))):
         p.error('live-pose observer requires explicit seat query and UI overlay160')
-    if args.player_ui_seat_query_probe and (not args.player_ui_overlay_probe or args.player_ui_overlay_callbacks != 160):
+    if args.player_ui_seat_query_probe and (not args.player_ui_overlay_probe or args.player_ui_overlay_callbacks != expected_callbacks(vars(args))):
         p.error('seat-query requires explicit UI overlay160')
-    if args.player_ui_plan_kick_probe and (not args.player_ui_overlay_probe or args.player_ui_overlay_callbacks != 160):
+    if args.player_ui_plan_kick_probe and (not args.player_ui_overlay_probe or args.player_ui_overlay_callbacks != expected_callbacks(vars(args))):
         p.error('plan-kick requires explicit UI overlay160')
     if args.player_ui_overlay_callbacks != 1 and (not args.player_ui_overlay_probe or
             args.independent_keyboard_frames < args.player_ui_overlay_callbacks + 5):
@@ -473,12 +486,14 @@ def main():
     if args.player_external_camera_probe and args.independent_keyboard_frames < 3:
         p.error('--player-external-camera-probe requires at least 3 independent keyboard frames')
     if args.independent_keyboard_frames != 0:
-        if not (2 <= args.independent_keyboard_frames <= 600 and args.gate_so and args.snapshot and
+        if not (2 <= args.independent_keyboard_frames <= (900 if args.player_ui_session_frames else 600) and args.gate_so and args.snapshot and
                 args.stock_keyboard_observer and args.serial_pathing and args.player_factory_probe and
                 args.stock_keyboard_replay_probe):
             p.error('independent keyboard frames require 2..600, Linux snapshot, observer, serial pathing, factory and replay')
-        if args.stock_keyboard_replay_last_capture != args.independent_keyboard_frames + 2:
-            p.error('independent keyboard last capture must equal frames+2 (last apply frames+4)')
+        capture_end = (budget_from_options(vars(args)) or {}).get(
+            'last_capture', args.independent_keyboard_frames + 2)
+        if args.stock_keyboard_replay_last_capture != capture_end:
+            p.error('independent keyboard last capture differs from its explicit startup budget')
     if args.player_factory_probe and any((args.player_reference_probe, args.stock_keyboard_replay_probe and not args.independent_keyboard_frames,
             args.player_probe, args.player_orders, args.command_test, args.command_replay,
             args.docking_state, args.docking_shape_rng, args.docking_shape_refresh)):
@@ -772,7 +787,7 @@ def main():
         allowed.add('path_transform_observe')
         allowed.add('mass_jacobi_order')
         allowed.update(('player_control_boundary_probe', 'player_control_bank_probe', 'player_seat_preflight', 'player_control_bank_census', 'stock_keyboard_observer', 'player_reference_probe', 'player_factory_probe', 'player_factory_retain_until', 'stock_keyboard_replay_probe',
-                        'stock_keyboard_replay_last_capture', 'independent_keyboard_frames', 'player_external_camera_probe', 'player_presentation_probe', 'player_view_query_observer', 'ui_callback_observer', 'player_presentation_fork_probe', 'player_ui_overlay_probe', 'player_ui_overlay_callbacks', 'player_ui_plan_kick_probe', 'player_ui_seat_query_probe', 'player_ui_live_pose_observer', 'player_ui_seat_correction'))
+                        'stock_keyboard_replay_last_capture', 'independent_keyboard_frames', 'player_external_camera_probe', 'player_presentation_probe', 'player_view_query_observer', 'ui_callback_observer', 'player_presentation_fork_probe', 'player_ui_overlay_probe', 'player_ui_overlay_callbacks', 'player_ui_plan_kick_probe', 'player_ui_seat_query_probe', 'player_ui_live_pose_observer', 'player_ui_seat_correction', 'player_ui_render_lease', 'player_ui_camera_refill', 'player_ui_session_frames', 'player_startup_phases'))
         allowed.update(('world_motion_watch', 'world_motion_window', 'economy_watch', 'economy_watch_window', 'navmesh_post_observe'))
         allowed.update(('world_log_mode', 'world_rolling_slices', 'world_rolling_leaf_ticks', 'world_rolling_raw_ids', 'probe_profile', 'status_stride'))
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
@@ -901,6 +916,14 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             config.write(f'X4LAN_CONFIG.native_gate_player_factory_retain_until = {args.player_factory_retain_until}\n')
         if args.player_reference_probe:
             config.write('X4LAN_CONFIG.native_gate_player_reference_probe = true\n')
+        if args.player_startup_phases:
+            config.write(f'X4LAN_CONFIG.native_gate_linux_startup_phases = {args.player_startup_phases!r}\n')
+        if args.player_ui_session_frames:
+            config.write(f'X4LAN_CONFIG.native_gate_linux_ui_session_frames = {args.player_ui_session_frames}\n')
+        if args.player_ui_camera_refill:
+            config.write('X4LAN_CONFIG.native_gate_linux_ui_camera_refill = true\n')
+        if args.player_ui_render_lease:
+            config.write('X4LAN_CONFIG.native_gate_linux_ui_render_lease = true\n')
         if args.player_ui_seat_correction:
             config.write('X4LAN_CONFIG.native_gate_linux_ui_seat_correction = true\n')
         if args.player_ui_live_pose_observer:

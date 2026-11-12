@@ -1,5 +1,6 @@
 """Strict receipts for the explicit guest-only plan-handler/RNG diagnostic."""
 import hashlib
+from linux_ui_session_budget import budget_from_overlay
 import re
 
 from linux_player_presentation_evidence import validate_presentation_rows
@@ -9,6 +10,13 @@ def parse_plan_kick_evidence(stderr_lines, trace_lines, slot, enabled, overlay):
     result = {'pass': False, 'enabled': enabled and slot == 2, 'performed': False,
               'errors': [], 'readiness_proven': False, 'safe_resume_proven': False}
     errors = result['errors']
+    try:
+        budget = budget_from_overlay(overlay)
+    except ValueError as error:
+        errors.append(str(error))
+        budget = {'callbacks':160, 'last':168}
+    callback_count, last_tick = budget['callbacks'], budget['last']
+    first_tick = budget.get('first', 9)
     if type(enabled) is not bool or type(slot) is not int or slot not in (1, 2):
         errors.append('invalid plan-kick activation or slot')
         return result
@@ -26,7 +34,7 @@ def parse_plan_kick_evidence(stderr_lines, trace_lines, slot, enabled, overlay):
     observations = []
     for (index, line), stage, first, plan in zip(rows[:3], ('before', 'opposite', 'restored'),
                                                (0, 1, 0), ('cockpit', 'firstperson', 'cockpit')):
-        grammar = (f'X4 UI PLAN KICK v=1 stage={stage} tick=9 ' +
+        grammar = (f'X4 UI PLAN KICK v=1 stage={stage} tick={first_tick} ' +
                    ' '.join(key+'='+pointer for key in ('manager', 'presenter', 'controller')) +
                    f' selector=1 first={first} plan_len={len(plan)} plan={plan.encode().hex()} ' +
                    r'rng=([0-9a-f]{16}) contexts='+number+r' context_hash=([0-9a-f]{64}) ' +
@@ -49,7 +57,7 @@ def parse_plan_kick_evidence(stderr_lines, trace_lines, slot, enabled, overlay):
         if values['contexts'] > 0xffffffff or values['camera_mode'] > 0xffffffff:
             errors.append('plan-kick unsigned32 field outside native range')
         observations.append(values)
-    final = re.fullmatch(r'X4 UI PLAN KICK v=1 stage=result tick=9 success=1 '
+    final = re.fullmatch(f'X4 UI PLAN KICK v=1 stage=result tick={first_tick} success=1 '
                          r'rng_before=([0-9a-f]{16}) rng_after=([0-9a-f]{16}) '
                          r'rng_restored=([0-9a-f]{16}) context_changed=([01]) camera_changed=([01])\n', rows[3][1])
     result['observations'] = observations
@@ -66,23 +74,23 @@ def parse_plan_kick_evidence(stderr_lines, trace_lines, slot, enabled, overlay):
     if camera_changed != int(any(before[key] != restored[key] for key in
                                  ('camera_candidate', 'camera_mode', 'external_target', 'target_id'))):
         errors.append('plan-kick camera delta flag mismatch')
-    presentation = validate_presentation_rows(trace_lines, slot)
+    presentation = validate_presentation_rows(trace_lines, slot, tick=first_tick - 2)
     identity = presentation.get('ui_plan', {})
     if not presentation['pass'] or any(row[key] != identity.get(key) for row in observations
                                        for key in ('manager', 'presenter', 'controller')):
         errors.append('plan-kick identity differs from accepted presentation')
-    if overlay.get('pass') is not True or overlay.get('callback_count') != 160:
-        errors.append('plan-kick requires accepted overlay160 evidence')
+    if overlay.get('pass') is not True or overlay.get('callback_count') != callback_count:
+        errors.append('plan-kick requires accepted bounded overlay evidence')
     fork_rows = [i for i, line in enumerate(stderr_lines) if line.startswith('X4 PRESENTATION FORK RESULT ')]
     if len(fork_rows) != 1 or not fork_rows[0] < rows[0][0]:
         errors.append('plan-kick must follow the accepted native child fork')
     first_frames = [i for i, line in enumerate(stderr_lines)
-                    if line.startswith('X4 UI OVERLAY FRAME v=3 tick=9 ordinal=1 count=160 ')]
+                    if line.startswith(f'X4 UI OVERLAY FRAME v=3 tick={first_tick} ordinal=1 count={callback_count} ')]
     if len(first_frames) != 1 or not rows[-1][0] < first_frames[0]:
         errors.append('plan-kick must finish before first overlay frame')
     view_positions, viewstates = {}, {}
     for stage in ('during', 'after'):
-        marker = f'X4 UI VIEWSTATE v=1 tick=9 stage={stage} '
+        marker = f'X4 UI VIEWSTATE v=1 tick={first_tick} stage={stage} '
         matching = [(i, line) for i, line in enumerate(stderr_lines) if marker in line]
         view_grammar = (marker + 'status=observed ' +
                         ' '.join(key+'='+pointer for key in ('manager', 'presenter', 'controller', 'universe')) +

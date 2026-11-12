@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "gate_player_startup_phases.h"
 #define FWRR_FIRST_GENERATION UINT64_C(5)
 #define PCB_VALUE_BYTES 16
 static _Atomic unsigned player_physics_ready = 1, stock_observer_input_depth;
@@ -91,6 +92,25 @@ static void run_success(void) {
     }
     assert(motion_count==35 && body_count==35 && snapshots==70);
 }
+static void run_common_first_update(void) {
+    assert(setenv("X4_DEV_PLAYER_PHASES", "v1-t40", 1) == 0);
+    assert(setenv("X4_DEV_UI_SESSION_FRAMES", "900", 1) == 0);
+    assert(setenv("X4LAN_PLAYER_CONTROL_RECURRING", "1", 1) == 0);
+    assert(setenv("X4LAN_PLAYER_CONTROL_RECURRING_TAIL", "1", 1) == 0);
+    assert(setenv("X4LAN_PLAYER_CONTROL_RECURRING_END", "939", 1) == 0);
+    assert(setenv("X4_DEV_PLAYER_PHYSICS", "network-frames-discard", 1) == 0);
+    factory_probe_state.player2 = 2;
+    memset(live_bank, 0x5a, sizeof live_bank);
+    memset(player_physics_bank, 0x21, sizeof player_physics_bank);
+    player_physics_replay_last = 39;
+    stats.issued = 40;
+    player_recurring_tail_token.generation = 40;
+    player_physics_replay_begin(40);
+    assert(update_count == 1 && singleton == 1 && !scoped);
+    assert(live_bank[0] == 0x5a && player_physics_bank[0] == 0x22);
+    assert(!context_scope_open && player_physics_replay_last == 40);
+}
+
 static void refuse_case(int which) {
     factory_probe_state.player2=2;stats.issued=6;player_recurring_tail_token.generation=6;
     if(which==1) keys[0]=1;
@@ -102,6 +122,11 @@ static void refuse_case(int which) {
     player_physics_replay_begin(stats.issued); _exit(1);
 }
 int main(void) {
+    pid_t mixed = fork();
+    assert(mixed >= 0);
+    if (!mixed) { run_common_first_update(); _exit(0); }
+    int mixed_status;
+    assert(waitpid(mixed, &mixed_status, 0) == mixed && WIFEXITED(mixed_status) && WEXITSTATUS(mixed_status) == 0);
     for(int i=1;i<=6;i++){pid_t p=fork();assert(p>=0);if(!p)refuse_case(i);int status;assert(waitpid(p,&status,0)==p&&WIFEXITED(status)&&WEXITSTATUS(status)==222);}
     run_success();puts("player physics replay scripted scopes and refusal: ok");
 }

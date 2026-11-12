@@ -35,6 +35,8 @@ typedef struct {
     pilot_record record;
     unsigned resolved,driving,player,reversed;
     unsigned seen,dead,renewed;  /* resolved once; no ship now; a ship built after a death (lockstep_pilot_death.h) */
+    unsigned bare;               /* a stock slot's hull without a flight of its own when first resolved (no NPC pilot) */
+    const char *why,*bare_why;   /* where the last resolve stopped ("-": resolved); what the bare hull lacked */
     unsigned char *found;        /* this pass's registry answer for the runtime ID */
     volatile LONG64 applied[2];
 } pilot_slot;
@@ -66,6 +68,11 @@ static int pres_failed;           /* a presentation invariant failed (lockstep_p
 static volatile LONG pres_open;   /* its scope is open: a slot scope refuses (lockstep_pilot_slots.h) */
 /* Ship death (lockstep_pilot_death.h, stop reason 163): armed, failed, bit s-1 = slot s has no ship, this pass's lookup. */
 static int pdeath_armed,pdeath_failed;
+/* lockstep_pilot_death.h, slot 1's vehicle changes that are no death (a spacesuit through an airlock, the seat after it) */
+static int pveh_adopt_ok(uint64_t tick,const unsigned char *ship_now);
+static int pveh_adopt(uint64_t tick,unsigned char *controller);
+static void pveh_allow(uint64_t tick);
+static const char *pveh_why;
 static unsigned pdeath_dead;
 static pilot_find_fn pdeath_find;
 static void *pdeath_map;
@@ -80,7 +87,8 @@ enum {UIREP_FAMILY_TRAVEL=1,UIREP_FAMILY_TARGET=2,UIREP_FAMILY_ORDERS=4,UIREP_FA
     UIREP_FAMILY_BUILD=4096,UIREP_FAMILY_ASSETS=8192,   /* lockstep_ui_build.h */
     UIREP_FAMILY_CONVERSATION=16384,                    /* lockstep_ui_missions.h */
     UIREP_FAMILY_FACTION=32768,                         /* lockstep_ui_faction.h (the last bit the guard's 16-bit 'covered' holds) */
-    UIREP_FAMILIES=1023|1024|2048|4096|8192|16384|32768};  /* the implemented ones (bits and ops: docs/LOCKSTEP-REGISTRY.txt) */
+    UIREP_FAMILY_INVENTORY=524288,                      /* native_gate_ui_inventory_core.lua: Lua-run, op UIINV_OP_CLICK (no 'covered' bit) */
+    UIREP_FAMILIES=1023|1024|2048|4096|8192|16384|32768|524288};  /* the implemented ones (bits and ops: docs/LOCKSTEP-REGISTRY.txt) */
 /* Absent slots (hot join: lockstep_join.h, reports/LOCKSTEP-HOTJOIN-20261101.txt section 8). A slot the session config
  * names absent (native_gate_join.absent, the relay's --absent; never slot 1) has nobody at it: its rows are the relay's
  * stand-ins, which carry no record. Until its handover it is neutral on every client: no record is required or accepted,
@@ -272,22 +280,43 @@ static uint64_t pilot_reverse(uint64_t saved) {
     ReleaseSRWLockShared(&world_identity_lock);
     return matches==1?runtime:0;
 }
+static volatile LONG64 pilot_bare;   /* stock slots resolved without a controller (hulls without an NPC pilot) */
+/* Where a slot's resolve stopped, for the status (slots status: resolve=slot:why). */
+static int pilot_resolve_stop(pilot_slot *s,const char *why) {s->why=why;return 0;}
 static int pilot_resolve(pilot_slot *s,pilot_find_fn find,void *map,const void *player_object) {
     unsigned char *object,*controller=NULL,*agent=NULL,*solver=NULL;void *back=NULL;uint64_t id=0;
-    s->object=s->agent=s->solver=NULL;s->resolved=s->player=0;s->found=NULL;
-    if(s->dead) return 0;                                                /* the slot has no ship: its ID stays for the row */
+    s->object=s->agent=s->solver=NULL;s->resolved=s->player=0;s->found=NULL;s->why="-";
+    if(s->dead) return pilot_resolve_stop(s,"dead");                       /* the slot has no ship: its ID stays for the row */
     if(!s->reversed) {s->runtime=pilot_reverse(s->saved);s->reversed=1;} /* Identities are complete after load. */
-    if(!s->runtime || !find || !map) return 0;
+    if(!s->runtime) return pilot_resolve_stop(s,"no_runtime");
+    if(!find || !map) return pilot_resolve_stop(s,"no_registry");
     object=find(map,s->runtime,4);
     s->found=object;
     if(object && s->renewed) { /* Built after a death: no saved identity and, until the seat, no controller. */
-        if(!read_local(object+8,&id,8) || id!=s->runtime) return 0;
+        if(!read_local(object+8,&id,8) || id!=s->runtime) return pilot_resolve_stop(s,"renewed_id");
         s->object=object;s->resolved=1;s->seen=1;s->player=player_object && object==player_object;return 1;
     }
-    if(!object || !read_local(object+8,&id,8) || id!=s->runtime || world_identity_lookup(id)!=s->saved ||
-       !read_local(object+0x200,&controller,8) || !controller || !read_local(controller+0x28,&back,8) || back!=object ||
-       !read_local(controller+0x40,&agent,8) || !agent || !read_local(agent+0xef0,&back,8) || back!=object ||
-       !read_local(agent+0xf80,&solver,8)) return 0;
+    if(!object) return pilot_resolve_stop(s,"not_found");
+    if(!read_local(object+8,&id,8) || id!=s->runtime) return pilot_resolve_stop(s,"id");
+    if(world_identity_lookup(id)!=s->saved) return pilot_resolve_stop(s,"identity");
+    /* The hull's own flight: its controller (+0x200), that controller's Agent and the Agent's solver. */
+    const char *why=NULL;
+    if(!read_local(object+0x200,&controller,8)) why="controller_unreadable";
+    else if(!controller) why="no_controller";
+    else if(!read_local(controller+0x28,&back,8) || back!=object) why="controller_back";
+    else if(!read_local(controller+0x40,&agent,8) || !agent) why="no_agent";
+    else if(!read_local(agent+0xef0,&back,8) || back!=object) why="agent_back";
+    else if(!read_local(agent+0xf80,&solver,8)) why="solver";
+    /* A hull without a pilot (a stock start's own ship; the session tool makes the players' hulls so, so that no NPC
+     * takes the seat when a person gets up) has no flight of its own to find: no controller, or one without an Agent
+     * for this ship, until the slot's seat makes its PlayerController. A stock slot needs neither (as a ship built after
+     * a death): a stock slot whose hull has its saved identity but not that chain at its first resolve is resolved by
+     * the identity alone, and stays so. A hull that had the chain and lost it stays unresolved, as before. */
+    if(s->bare || (why && !s->seen && s>=pilot_slots && s<pilot_slots+PILOT_SLOTS && (pilot_stock_slots>>(unsigned)(s-pilot_slots)&1u))) {
+        if(!s->bare) {s->bare=1;s->bare_why=why;InterlockedIncrement64(&pilot_bare);}
+        s->object=object;s->resolved=1;s->seen=1;s->player=player_object && object==player_object;return 1;
+    }
+    if(why) return pilot_resolve_stop(s,why);
     s->object=object;s->agent=agent;s->solver=solver;s->resolved=1;s->seen=1;s->player=player_object && object==player_object;
     return 1;
 }

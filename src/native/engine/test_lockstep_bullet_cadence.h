@@ -91,6 +91,10 @@ static void test_bullet_cadence(void) {
     memset(image+BULLET_CADENCE_SITE,0,2);for(unsigned i=0;i<2;i++) memset(image+bullet_entries[i],0,8);
     bullet_installed=saved_bullet;test_bc_reset();
     stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;stats.reason=saved_reason;stats.restored=0;
+    /* bullet_hold (a joiner between its load and its admission): the wrapper returns before X4's Move, counted (synthetic: no engine function is behind it here) */
+    {unsigned char held_bullet[16]={0};const LONG64 before=bullet_held;
+     InterlockedExchange(&bullet_hold,1);bullet_move(held_bullet);bullet_move(held_bullet);assert(bullet_held==before+2);
+     InterlockedExchange(&bullet_hold,0);bullet_held=before;}
     printf("bullet cadence counters/arming/CAS/check/finish/status tests PASS\n");
 }
 static void test_bullet_cadence_native_image(const char *path) {

@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "stock_keyboard_replay.h"
+#include "player_ui_session_budget.h"
+#include "gate_player_startup_phases.h"
 
 static keyboard_replay keyboard_probe_queue;
 static unsigned keyboard_probe_requested;
@@ -241,7 +243,7 @@ static int keyboard_probe_apply_slot(void *context, uint64_t generation, unsigne
     if (saved_ship != SEAT_PREFLIGHT_TARGET_SAVED ||
         !player_seat_preflight_resolve(NULL, saved_ship, &target, &runtime) ||
         target != expected->target || runtime != expected->runtime ||
-        (generation != 5 && (!player_physics_identity() || !player_target_hold_resident.target_owned ||
+        (generation != player_startup()->take && (!player_physics_identity() || !player_target_hold_resident.target_owned ||
             player_target_hold_resident.identity.target != target ||
             player_target_hold_resident.identity.target_runtime != runtime))) {
         return keyboard_probe_fail("independent_target_identity");
@@ -267,14 +269,14 @@ static int keyboard_probe_independent_after_path_join(uint64_t generation) {
         !player_recurring_physics_entered() || !keyboard_probe_worker() ||
         strcmp(keyboard_probe_problem, "active") || atomic_load(&stock_observer_input_depth) ||
         atomic_load(&sko_session.wrapper_depth) || !stock_observer_slot_valid() || !sko_validate(1) ||
-        !keyboard_probe_identity() || (generation != 5 && !player_physics_identity())) {
+        !keyboard_probe_identity() || (generation != player_startup()->take && !player_physics_identity())) {
         return keyboard_probe_fail("independent_replay_boundary");
     }
     keyboard_probe_independent_target target = {0};
     if (keyboard_probe_queue.config.saved_ship_ids[1] != SEAT_PREFLIGHT_TARGET_SAVED ||
         !player_target_hold_pins() || !player_seat_preflight_resolve(NULL, SEAT_PREFLIGHT_TARGET_SAVED, &target.target, &target.runtime) ||
         !target.target || !target.runtime ||
-        (generation != 5 && (!player_target_hold_resident.target_owned ||
+        (generation != player_startup()->take && (!player_target_hold_resident.target_owned ||
             player_target_hold_resident.identity.target != target.target ||
             player_target_hold_resident.identity.target_runtime != target.runtime))) {
         return keyboard_probe_fail("independent_target_admission");
@@ -360,20 +362,26 @@ static int lua_stock_keyboard_replay_request(lua_State *L) {
     double delay = p_lua_tonumber(L, 3);
     double ahead = p_lua_tonumber(L, 4);
     double independent = p_lua_tonumber(L, 7);
+    double phase_version = p_lua_tonumber(L, 8);
     const char *physics_mode = getenv("X4_DEV_PLAYER_PHYSICS");
     size_t first_length = 0;
     size_t second_length = 0;
     const char *first = p_lua_tolstring(L, 5, &first_length);
     const char *second = p_lua_tolstring(L, 6, &second_length);
     keyboard_replay_config config = {0};
-    int valid = !keyboard_probe_requested && !keyboard_probe_queue.initialized &&
+    const char *session_text = getenv("X4_DEV_UI_SESSION_FRAMES");
+    player_ui_session_budget requested_session = {0};
+    int session_valid = !session_text || player_ui_session_parse_phased(session_text, player_startup(), &requested_session);
+    int valid = session_valid && !keyboard_probe_requested && !keyboard_probe_queue.initialized &&
         stock_observer_wanted() && accept_ui() && wire_version == 3 && wire_clients == 2 &&
         slot == stats.slot && ahead == wire_lookahead && path_installed &&
         stats.active && stats.issued == 1 && gate_tls_worker(gate_tls_self()) &&
         GetCurrentThreadId() == stock_observer_worker_thread &&
         (slot == 1 || slot == 2) && (independent == 0 || independent == 1) &&
+        phase_version == (independent ? player_startup()->version : 0) &&
         (!independent || (physics_mode && !strcmp(physics_mode, "network-frames-discard") &&
-                          delay == 2 && ahead == 0)) && isfinite(last) && floor(last) == last && last >= 3 &&
+                          delay == 2 && ahead == 0)) &&
+        (!session_text || (independent && last == requested_session.last_capture)) && isfinite(last) && floor(last) == last && last >= 3 &&
         last < LINUX_STOCK_TICK_MAX - 30 && isfinite(delay) && floor(delay) == delay &&
         delay >= 2 && delay <= 30 && isfinite(ahead) && floor(ahead) == ahead && ahead >= 0 && ahead <= 28 &&
         keyboard_probe_hex_id(first, first_length, &config.saved_ship_ids[0]) &&
@@ -383,7 +391,7 @@ static int lua_stock_keyboard_replay_request(lua_State *L) {
         config.own_slot = (unsigned)slot;
         config.independent_players = (unsigned)independent;
         config.scripted_throttle = independent && player_throttle_enabled();
-        config.first_capture = 3;
+        config.first_capture = independent ? player_startup()->capture : 3;
         config.last_capture = (uint64_t)last;
         config.delay = (unsigned)delay;
         config.lookahead = (unsigned)ahead;

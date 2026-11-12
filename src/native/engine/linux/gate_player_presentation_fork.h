@@ -1,6 +1,8 @@
 #ifndef X4_GATE_PLAYER_PRESENTATION_FORK_H
 #define X4_GATE_PLAYER_PRESENTATION_FORK_H
 
+#include "gate_player_startup_phases.h"
+
 /* One disposable child, requested on the admitted worker and executed by the
  * main-frame quiet boundary. The parent never overlays the live player. */
 #include "player_presentation_fork_probe.h"
@@ -315,7 +317,7 @@ static int lua_player_presentation_fork_arm(lua_State *state) {
     uintptr_t p1_room = 0;
     long worker_tid = syscall(SYS_gettid);
     if (atomic_load(&presentation_fork_state) ||
-        !accept_ui() || !stats.active || stats.issued != 7 || boot_phase != 3 ||
+        !accept_ui() || !stats.active || (uint64_t)stats.issued != player_startup()->presentation_probe || boot_phase != 3 ||
         (stats.slot != 1 && stats.slot != 2) || wire_clients != 2 || !keyboard_probe_requested ||
         keyboard_probe_queue.config.independent_players != 1 || player_recurring_physics != 3 ||
         atomic_load_explicit(&player_physics_ready, memory_order_acquire) != 1 ||
@@ -370,7 +372,8 @@ static void player_presentation_fork_frame(uint64_t completed) {
     const char *reason = "frame";
     presentation_fork_result result = {0};
     int success = 0;
-    if (completed != 7 || GetCurrentThreadId() != main_thread || fs.state != FS_OFF ||
+    if (!player_startup_is_presentation_probe_tick(player_startup(), completed) ||
+        GetCurrentThreadId() != main_thread || fs.state != FS_OFF ||
         atomic_load_explicit(&presentation_fork_reservation, memory_order_acquire) != 1) goto finish;
     uint64_t (*occupied)(void) = NULL;
     reason = "pins";
@@ -438,7 +441,7 @@ finish:
 }
 
 static int lua_player_presentation_fork_result(lua_State *state) {
-    if (!accept_ui() || !stats.active || stats.issued != 8 ||
+    if (!accept_ui() || !stats.active || (uint64_t)stats.issued != player_startup()->presentation_arm ||
         !stock_observer_worker_boundary() || !gate_tls_worker(gate_tls_self()) ||
         syscall(SYS_gettid) != presentation_fork.worker_tid || !player_physics_identity() ||
         atomic_load_explicit(&presentation_fork_state, memory_order_acquire) != 2 ||

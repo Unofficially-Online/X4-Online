@@ -592,14 +592,14 @@ static int player_seat_preflight_retained(void) {
 static int player_seat_preflight_boundary(void *context) {
     (void)context;
     uintptr_t fresh_owner = 0;
-    return player_seat_preflight_requested && stats.issued == SEAT_PREFLIGHT_CAPTURE_TICK &&
+    return player_seat_preflight_requested && stats.issued == player_startup()->seat_preflight &&
            factory_probe_joined_boundary() && read_local(LX(SKO_OWNER_VA), &fresh_owner, 8) &&
            fresh_owner && fresh_owner == player_seat_preflight_input_owner &&
            fresh_owner == sko_session.owner && player_seat_preflight_retained() &&
            !factory_probe_patch_owned && !factory_probe_code_permission_pending &&
            !factory_probe_thunk_permission_pending && !atomic_load(&factory_probe_scope) &&
            !atomic_load(&factory_probe_wrapper_depth) &&
-           factory_probe_release_tick > SEAT_PREFLIGHT_CAPTURE_TICK;
+           factory_probe_release_tick > player_startup()->seat_preflight;
 }
 
 static uintptr_t player_seat_preflight_address(void *context, unsigned va) {
@@ -670,7 +670,7 @@ static int player_seat_preflight_after_join(void) {
     if (player_seat_preflight_attempted) {
         return player_seat_preflight_snapshot.complete;
     }
-    if (stats.issued < SEAT_PREFLIGHT_CAPTURE_TICK) {
+    if (stats.issued < player_startup()->seat_preflight) {
         return 1;
     }
     player_seat_preflight_attempted = 1;
@@ -691,10 +691,10 @@ static int player_seat_preflight_after_join(void) {
 
 static int lua_player_seat_preflight_request(lua_State *state) {
     uintptr_t fresh_owner = 0;
-    int accepted = accept_ui() && stats.active && stats.issued == 2 &&
+    int accepted = accept_ui() && stats.active && stats.issued == player_startup()->seat_request &&
                    !player_seat_preflight_requested && !player_seat_preflight_attempted &&
                    stock_observer_worker_boundary() && player_seat_preflight_retained() &&
-                   factory_probe_release_tick > SEAT_PREFLIGHT_CAPTURE_TICK &&
+                   factory_probe_release_tick > player_startup()->seat_preflight &&
                    read_local(LX(SKO_OWNER_VA), &fresh_owner, 8) && fresh_owner &&
                    fresh_owner == sko_session.owner;
     if (accepted) {

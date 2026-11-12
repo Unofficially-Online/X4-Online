@@ -283,6 +283,13 @@ def ids_sets(sets):
 #   native_gate_join_mute_load_npcs  the joiner's MD does not hear the NPC created events of its load before the admission
 #                                  (ca10..ca15, 9 Nov, T=733: the load started the state machine of the NPC the session
 #                                  made in step T, a tick early; ca15 with it: 7,251 checks muted, digest 0, to 5442)
+#   native_gate_join_anis_state    the joiner's animation units take the session's state, next state and queue of stages
+#                                  and the listeners waiting in them (ANIS, ANIL section 85; hjs4b: a ship docking at T)
+#   native_gate_join_anis          the joiner's part animation sequences take the session's start times where the queue
+#                                  of stages is the same (ANIS, package section 84; hjs4: the far wharf's docking bays)
+#   native_gate_join_viewl         the joiner runs the live and player view handlers where its flags differ from the
+#                                  session's (VIEWL). No gain on capture-005; on a new-session save (hjs4v, x4mods-b8) a
+#                                  ship on its dock path read 0 where the session's read 1 and its yaw parted at T+1
 #   native_gate_join_body_make     the physics bodies a session's BODY record names and the joiner's object lacks: their
 #                                  IDs take the joiner's view list when X4 makes them (hjs1b/c, a new-session save: 2 IDs
 #                                  at T+1 for the open slot's hull)
@@ -293,12 +300,38 @@ def ids_sets(sets):
 #                                  two guns shot in the load, 30 bullets against 28, a round off each clip, the reloads on
 #                                  another cycle from 727; ca22b..ca27 with it: 2 shots held, the shots and bullets of every
 #                                  step equal to 5400, the first mismatch from 728 to the 1800 census, another cause)
+#   native_gate_join_hold_bullets  the joiner's bullets do not move between the load and the admission (hj8i, 11 Nov, ns8,
+#                                  T=676, the playtest kit's join through the VPS: a laser bullet hit in the load, its kill
+#                                  went through the kept boot events and was delivered at T+1 before the bullets moved: 49
+#                                  bullets against 50, a ship's shield 690 against 667. With it: 46 moves held, the bullets
+#                                  of T+1 and the census of T+1 equal, the digest equal to the 1800 census, another cause)
+#   native_gate_join_keep_stamps   the republication of the joiner's first step leaves the navigation stamps the session did
+#                                  not write (hj8i, 11 Nov, ns8, T=685, the kit's second join through the VPS: one created
+#                                  XS ship's nav.refresh_time T against T+1 at the census of T+1, every tick a mismatch to
+#                                  the next census; the old "one timing-only item"). With it: 5 controllers held, census
+#                                  686 and the stamp hashes of 686..688 equal, the digest equal to the 1800 census
+#   native_gate_join_attn_leave    a level ATTN writes down from 9 or more is made by SetAttention from the load's level
+#                                  (hj8i, 11 Nov, ns8, T=696, the kit's join through the VPS and x4mods-b8's two runs: a
+#                                  fixture ship came up at attention 9 in the load where the session held 8, kept the
+#                                  interior nav helper the session had released, and the session alone built it at 700:
+#                                  the digest's nav mesh part apart from 701). With it: 1 call, the helper built at 700
+#                                  on both sides, digest 0 at the handover, the census of 697, 1800, 3600, 5400 equal
+#   native_gate_join_shape_hold    every physics compound made from the poses of T on every client through step T+1: the
+#                                  session refreshes all in step T, the joiner at its admission, nothing refreshes in T+1
+#                                  (hj8i, 11 Nov, ns8, T=678: a bullet of 679 missed a fixture ship on the session and hit
+#                                  it on the joiner, whose compound stood as its load built it; a mismatch from 679 for
+#                                  good). With it: digest 0 at the handover, the census of 679, 1800, 3600, 5400 equal
+#   native_gate_join_attn_arrive   a level ATTN writes up to 9 or more is made by SetAttention from the load's level, the
+#                                  mirror of attn_leave (hj8i, 11 Nov, ns8, the physics trace at T=678: a fixture ship the
+#                                  load holds at 8 and the session at 9 had 1 compound child on the joiner against 28, in
+#                                  every join so far; no census reads it). With it at T=680: 3 calls, 28 children on both
+#                                  sides, digest 0 at the handover, the census of 681, 1800, 3600, 5400 equal
 #   native_gate_join_cue_ids       the joiner's loaded MD cue instances take the session's runtime IDs: the package's CUEI
 #                                  section 83 maps the save's cue ordinal to the live ID (the first form read the save's
 #                                  number as the ID and was wrong: hj31). hj32, 9 Nov, T=701, a mission accepted before the
 #                                  join: digest 0 at the handover, the joiner's active mission reads the session's ID, an
 #                                  accept after the handover applied on both sides, equal owners to 5440, 0 desyncs.
-# Off by default: SHPW and specdrop (negative), PEND and VIEWL (no gain measured).
+# Off by default: SHPW and specdrop (negative), PEND (no gain measured).
 JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gate_join_passes_admit', 'native_gate_join_pctl',
                    'native_gate_join_ecos', 'native_gate_join_jobg', 'native_gate_join_engr',
                    'native_gate_join_shape_refresh', 'native_gate_join_bnds', 'native_gate_join_code', 'native_gate_join_omgs',
@@ -307,7 +340,10 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_ares', 'native_gate_join_warp', 'native_gate_join_undk', 'native_gate_join_srcs',
                    'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled',
                    'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids',
-                   'native_gate_join_grav_dead', 'native_gate_join_body_make')
+                   'native_gate_join_grav_dead', 'native_gate_join_body_make', 'native_gate_join_viewl',
+                   'native_gate_join_anis', 'native_gate_join_anis_state', 'native_gate_join_hold_bullets',
+                   'native_gate_join_keep_stamps', 'native_gate_join_attn_leave', 'native_gate_join_shape_hold',
+                   'native_gate_join_attn_arrive')
 
 
 def default_sets(sets):
@@ -480,7 +516,7 @@ def main(argv=None):
     common.add_argument('--out', required=True, type=Path)
     common.add_argument('--probe', type=Path, default=DEV/'native_gate_probe.lua')
     common.add_argument('--arm-timeout-ms', type=int, default=120000,
-                        help='native_gate_arm_timeout_ms (1000..120000, default 120000): every client waits this long for a permit, '
+                        help='native_gate_arm_timeout_ms (1000..300000, default 120000): every client waits this long for a permit, '
                              'so the save pause at T and the final pause at H must stay below it')
     common.add_argument('--set', action='append', metavar='native_gate_KEY=LUA_VALUE',
                         help='census keys for native_gate_players.py (repeatable); give the joiner the same keys as the savers')
@@ -505,8 +541,8 @@ def main(argv=None):
     j.add_argument('--rejoin', default='', help="with --save/--package: the session's rejoinable slots (a handoff names them itself)")
     j.add_argument('--join-mode', choices=('strict', 'report'), default='strict')
     args = p.parse_args(argv)
-    if not 1000 <= args.arm_timeout_ms <= 120000:
-        p.error('--arm-timeout-ms must be 1000..120000 (native_gate_arm_timeout_ms)')
+    if not 1000 <= args.arm_timeout_ms <= 300000:
+        p.error('--arm-timeout-ms must be 1000..300000 (native_gate_arm_timeout_ms)')
     args.gate_dll, args.out, args.probe = args.gate_dll.resolve(), args.out.resolve(), args.probe.resolve()
     try:
         if args.command == 'savers':

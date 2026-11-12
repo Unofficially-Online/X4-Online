@@ -1,6 +1,8 @@
 #ifndef X4_GATE_PLAYER_VIEW_QUERY_H
 #define X4_GATE_PLAYER_VIEW_QUERY_H
 
+#include "gate_player_startup_phases.h"
+
 /* The preload observes a stock getter without changing its result. This
  * adapter supplies the authenticated UI thread and marks our own Lua work,
  * which must not be mistaken for an ordinary game-UI call. */
@@ -103,7 +105,7 @@ static int lua_player_view_query_observe(lua_State *state) {
         view_query_refuse("observe_repeat", 0);
     } else {
         view_query_attempted = 1;
-        if (stats.issued != 7) {
+        if ((uint64_t)stats.issued != player_startup()->presentation_probe) {
             view_query_refuse("observe_tick", 0);
         } else {
             uint32_t failed_bit = view_query_admission_failure();

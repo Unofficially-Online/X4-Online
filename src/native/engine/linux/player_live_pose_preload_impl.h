@@ -2,6 +2,7 @@
 #define X4_PLAYER_LIVE_POSE_PRELOAD_IMPL_H
 
 #include <sys/uio.h>
+#include <execinfo.h>
 #include "player_ui_live_correction.h"
 
 #define LIVE_POSE_ENTRY UINT64_C(0x1628f20)
@@ -22,6 +23,36 @@ static uintptr_t live_pose_target;
 static uint64_t live_pose_last_move;
 static _Thread_local unsigned live_pose_depth;
 static uintptr_t (*live_pose_original)(void *, void *, unsigned, double);
+
+/* The live observer is already opt-in. Keep one bounded native stack for
+ * each known caller/scope/callback combination so camera updates outside the
+ * presentation lease can be located without changing their return values. */
+static unsigned live_pose_stack_recorded[PLAYER_LIVE_POSE_SCOPE_COUNT][4];
+static void live_pose_record_stack(uintptr_t caller, unsigned scope) {
+    unsigned caller_bit = caller == UINT64_C(0x1314317) ? 1u :
+                          caller == UINT64_C(0x1314407) ? 2u : 0u;
+    unsigned phase = game_render_depth ? 3u : ui_depth[0] ? 1u : ui_depth[1] ? 2u : 0u;
+    if (!caller_bit || scope >= PLAYER_LIVE_POSE_SCOPE_COUNT ||
+        (live_pose_stack_recorded[scope][phase] & caller_bit)) return;
+    live_pose_stack_recorded[scope][phase] |= caller_bit;
+    void *frames[16];
+    int count = backtrace(frames, 16);
+    char record[768];
+    int used = snprintf(record, sizeof record,
+        "X4 UI LIVE_STACK v=1 tick=%llu scope=%u phase=%u caller=%llx count=%d addresses=",
+        (unsigned long long)live_pose_last_move, scope, phase,
+        (unsigned long long)caller, count);
+    if (used < 0 || (size_t)used >= sizeof record) return;
+    for (int index = 0; index < count; ++index) {
+        int written = snprintf(record + used, sizeof record - (size_t)used, "%s%llx",
+            index ? "," : "", (unsigned long long)(uintptr_t)frames[index]);
+        if (written < 0 || (size_t)written >= sizeof record - (size_t)used) return;
+        used += written;
+    }
+    if ((size_t)used + 1 >= sizeof record) return;
+    record[used++] = '\n';
+    (void)write(STDERR_FILENO, record, (size_t)used);
+}
 
 static _Noreturn void live_correction_fatal(const char *message, size_t size) {
     (void)write(STDERR_FILENO, message, size);
@@ -109,11 +140,21 @@ __attribute__((noinline)) static uintptr_t live_pose_dispatch(void *self, void *
     sample.after_valid = live_pose_copy(sample.after, output);
     if (live_correction_enabled && scope == PLAYER_LIVE_POSE_OPEN) {
         unsigned char corrected[64], checked[64];
-        if (ui_depth[0] != 1 || ui_depth[1] || !sample.after_valid ||
+        if (!((ui_depth[0] == 1 && !ui_depth[1] && !game_render_depth) ||
+              (game_render_depth == 1 && !ui_depth[0]) ||
+              (camera_refill_depth == 1 && !ui_depth[0] && !ui_depth[1] && !game_render_depth)) || !sample.after_valid ||
             !player_ui_live_correction(caller, (uintptr_t)output, live_correction_stack_low,
                                        live_correction_stack_high, mode & 255u, time,
-                                       live_correction_delta, sample.after, corrected))
+                                       live_correction_delta, sample.after, corrected)) {
+            char diagnostic[320];
+            int length = snprintf(diagnostic, sizeof diagnostic,
+                "X4 UI SEAT_CORRECTION REFUSAL stage=output_guard caller=%llx mode=%u move=%u ui_render=%u game_render=%u output=%llx stack_low=%llx stack_high=%llx after_valid=%u\n",
+                (unsigned long long)caller, mode & 255u, ui_depth[0], ui_depth[1], game_render_depth,
+                (unsigned long long)(uintptr_t)output, (unsigned long long)live_correction_stack_low,
+                (unsigned long long)live_correction_stack_high, sample.after_valid);
+            if (length > 0 && (size_t)length < sizeof diagnostic) (void)write(2, diagnostic, (size_t)length);
             LIVE_CORRECTION_FATAL("X4 UI SEAT_CORRECTION FATAL reason=output_guard\n");
+        }
         struct iovec local = {corrected, sizeof corrected};
         struct iovec remote = {output, sizeof corrected};
         if (syscall(SYS_process_vm_writev, (long)syscall(SYS_getpid), &local, 1UL,
@@ -144,6 +185,7 @@ __attribute__((noinline)) static uintptr_t live_pose_dispatch(void *self, void *
     } else {
         ++live_pose_capture.overflow;
     }
+    live_pose_record_stack(caller, scope);
     errno = result_errno;
     return result;
 }
@@ -160,22 +202,26 @@ EXPORT int x4mp_live_pose_bind(uint32_t tid, uintptr_t secondary_controller) {
         live_pose_owner || atomic_load_explicit(&live_pose_active, memory_order_acquire)) return 0;
     live_pose_owner = tid;
     live_pose_target = secondary_controller;
-    live_pose_last_move = 9;
+    live_pose_last_move = preload_startup.presentation_first;
     atomic_store_explicit(&live_pose_active, 1, memory_order_release);
     return 1;
 }
 EXPORT int x4mp_live_pose_tick(uint64_t generation) {
     if (!atomic_load_explicit(&live_pose_active, memory_order_acquire) ||
         current_thread() != live_pose_owner || live_pose_depth ||
-        generation != live_pose_last_move + 1 || generation > 168) return 0;
+        generation != live_pose_last_move + 1 ||
+        generation > (preload_session_budget.frames ? preload_session_budget.presentation_last : 168u)) return 0;
     live_pose_last_move = generation;
     return 1;
 }
 EXPORT int x4mp_live_pose_finish(player_live_pose_snapshot *out) {
     if (!out || !live_pose_owner || current_thread() != live_pose_owner ||
         !atomic_load_explicit(&live_pose_active, memory_order_acquire) ||
-        live_pose_last_move != 168 || live_pose_depth ||
-        live_pose_scopes.state != PLAYER_LIVE_POSE_OUTSIDE || live_pose_scopes.closes != 160 ||
+        live_pose_last_move != (preload_session_budget.frames ? preload_session_budget.presentation_last : 168u) ||
+        live_pose_depth ||
+        live_pose_scopes.state != PLAYER_LIVE_POSE_OUTSIDE ||
+        live_pose_scopes.closes != (preload_session_budget.frames ? 2u * preload_session_budget.presentation_count + camera_refill_completed :
+                                    atomic_load(&game_render_installed) ? 320u + camera_refill_completed : 160u) ||
         live_pose_scopes.opens != live_pose_scopes.closes + live_pose_scopes.pauses ||
         live_pose_capture.started != live_pose_capture.returned ||
         live_pose_capture.nested) return 0;
@@ -190,7 +236,9 @@ EXPORT int x4mp_live_pose_finish(player_live_pose_snapshot *out) {
 static int live_pose_scope_owner(void) {
     return atomic_load_explicit(&live_pose_active, memory_order_acquire) &&
         current_thread() == live_pose_owner && !live_pose_depth &&
-        ui_depth[0] == 1 && !ui_depth[1];
+        ((ui_depth[0] == 1 && !ui_depth[1] && !game_render_depth) ||
+         (game_render_depth == 1 && !ui_depth[0] && !ui_depth[1] && !camera_refill_depth) ||
+         (camera_refill_depth == 1 && !ui_depth[0] && !ui_depth[1] && !game_render_depth));
 }
 EXPORT int x4mp_live_pose_scope_begin(unsigned next) {
     if (!live_pose_scope_owner()) return 0;
@@ -241,6 +289,9 @@ EXPORT int x4mp_live_correction_result(player_live_correction_snapshot *out) {
 }
 
 static int install_live_pose(void) {
+    /* Resolve the unwinder before the game starts its worker threads. */
+    void *warmup[2];
+    (void)backtrace(warmup, 2);
     if (!single_thread() || !is_rx(LIVE_POSE_ENTRY) || !is_rx(LIVE_POSE_ENTRY + 0x95) ||
         memcmp((const void *)LIVE_POSE_ENTRY, &(uint64_t){LIVE_POSE_WORD}, 8)) return 0;
     unsigned char digest[32];

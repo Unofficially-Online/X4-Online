@@ -62,6 +62,9 @@ def main(argv=None):
     pl.add_argument('--close-when-over', action='store_true',
                     help='close the X4 windows and collect once the session is over (unattended runs)')
     pl.add_argument('--size', default='1280x720', help='client window size, WIDTHxHEIGHT')
+    pl.add_argument('--borderless', action='store_true',
+                    help="X4's borderless window at --size for every client of this PC (it cannot be resized; a resize reloads "
+                         "X4's UI). The windows lie on top of each other: Alt+Tab between them")
     pl.add_argument('--game', type=Path)
     pl.add_argument('--lanes', type=Path, help='where client views go (default <game drive>:\\x4ls-lanes)')
     pl.add_argument('--startup', type=int, default=70, help='seconds budgeted per client to reach the start menu')
@@ -115,7 +118,14 @@ def main(argv=None):
     sv.add_argument('--load-wait', type=int, default=45, metavar='SECONDS', help='from the last player joining to the common load')
     sv.add_argument('--stall-drop', type=float, default=15, metavar='SECONDS')
     sv.add_argument('--idle-end', type=int, default=420, metavar='SECONDS', help='a game without a step for this long is over')
+    sv.add_argument('--idle-left', type=int, default=60, metavar='SECONDS',
+                    help='the same once the game has stepped: every player has left (default 60)')
     sv.add_argument('--runs', type=Path, help="where each game's relay files go (default: .local/runs)")
+    sv.add_argument('--join-max-pause', type=int, default=0, metavar='SECONDS',
+                    help="the longest pause a join may cost everyone (default: 25 s less than the clients' wait for the relay, at most 170)")
+    sv.add_argument('--join-catchup', type=int, default=120, metavar='SECONDS',
+                    help='how long a joiner catches up while the others play before the pause is placed (default 120)')
+    sv.add_argument('--keep-joins', action='store_true', help="keep each game's join files (default: deleted when the game is over)")
     sv.add_argument('--games', type=int, default=0, help='test: end after this many games')
 
     lb = sub.add_parser('lobby', help='open X4 in its main menu and choose there: Multiplayer, Host a game or Join a game '
@@ -133,8 +143,9 @@ def main(argv=None):
     lb.add_argument('--server-file', type=Path, metavar='server.json',
                     help="a kit's server (make_playtest_kit.py --server): the page has Join only, x4ls serve runs the relay")
     lb.add_argument('--show', action='store_true', help='test: the Multiplayer page opens by itself')
-    lb.add_argument('--auto', default='', metavar='host|join|CODE',
-                    help='test: host, join the server, or join with this invite code, without a click in the menu')
+    lb.add_argument('--auto', default='', metavar='host|join|start|CODE',
+                    help='test: host, join the server, take the first free start of its running game, or join with this '
+                         'invite code, without a click in the menu')
     lb.add_argument('--size', default='1280x720')
     lb.add_argument('--timeout', type=int, default=0)
     lb.add_argument('--close-when-over', action='store_true')
@@ -154,7 +165,14 @@ def main(argv=None):
                     help="slot K's own start (x4ls starts: player-start=yes); other slots start with slot 1")
     ns.add_argument('--omit', action='append', default=[], metavar='K=PART[,PART]',
                     help="parts slot K's start leaves out (inventory, reputation, blueprints, research, known; world: only "
-                         "that start's ship, place and kit, for a start x4ls starts lists as player-start=ship-only)")
+                         "that start's ship, place and kit, for a start x4ls starts lists as player-start=ship-only or ship+story)")
+    ns.add_argument('--story', default='', metavar='K[,K...]',
+                    help="slots whose start's own story (its missions) runs for that slot's player; for a start x4ls starts lists "
+                         'as player-start=ship+story, taken with --omit K=world. First form, in test')
+    ns.add_argument('--piloted', default='', metavar='K[,K...]',
+                    help="slots whose start ship keeps an NPC pilot. The default is none, as a stock start's own ship: with one, "
+                         'that pilot appears in the seat when the player gets up')
+    ns.add_argument('--unpiloted', default='', metavar='K[,K...]', help='the default for every slot now; accepted for older scripts')
     ns.add_argument('--gate-dll', type=Path, required=True)
     ns.add_argument('--out', type=Path, required=True, help='new session folder (spec, save, session.json, overlay)')
     ns.add_argument('--minutes', type=float, default=40)
@@ -208,6 +226,9 @@ def main(argv=None):
         result = newsession.new_session(newsession.NewSessionOptions(
             base_start=args.base_start, players=args.players, mode=args.mode, out=args.out, gate_dll=args.gate_dll,
             starts=slots(args.start, '--start'), omit=slots(args.omit, '--omit'), minutes=args.minutes, open=args.open,
+            story=tuple(int(k) for k in args.story.split(',') if k.strip()),
+            unpiloted=tuple(int(k) for k in args.unpiloted.split(',') if k.strip()),
+            piloted=tuple(int(k) for k in args.piloted.split(',') if k.strip()),
             sets=args.set, game=args.game, lanes=args.lanes, timeout=args.timeout, steam_fix=args.steam_fix))
         print(json.dumps(result, indent=2))
         return 0
@@ -236,7 +257,8 @@ def main(argv=None):
     if args.command == 'serve':
         from . import serve
         serve.run(serve.ServeOptions(overlay=args.overlay, server_file=args.server_file, bind=args.bind, load_wait=args.load_wait,
-                                     stall_drop=args.stall_drop, idle_end=args.idle_end, games=args.games,
+                                     stall_drop=args.stall_drop, idle_end=args.idle_end, idle_left=args.idle_left, keep_joins=args.keep_joins, join_max_pause=args.join_max_pause,
+                                     join_catchup=args.join_catchup, games=args.games,
                                      **({'runs': args.runs} if args.runs else {})))
         return 0
     width, height = (int(v) for v in args.size.lower().split('x'))
@@ -308,7 +330,7 @@ def main(argv=None):
                                   lookahead=lookahead, timeout=args.timeout, width=width, height=height, game=args.game,
                                   lanes=args.lanes, startup=args.startup, steam_fix=args.steam_fix, play=True,
                                   stall_drop_ms=1000 * args.stall_drop if lookahead else 0, relay_args=args.relay_args,
-                                  close_when_over=args.close_when_over,
+                                  close_when_over=args.close_when_over, borderless=args.borderless,
                                   remote_slots=tuple(int(v) for v in args.remote_slots.split(',') if v.strip()),
                                   bind=args.bind, allow_from=tuple(a for a in args.allow_from.split(',') if a.strip()),
                                   port=args.port, join_wait=args.join_wait, public_host=args.public_host,

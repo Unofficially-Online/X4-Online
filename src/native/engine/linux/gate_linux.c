@@ -157,6 +157,7 @@ static int lsj_installed,lsj_restored;
 static void lmt_restore(void);
 static int lmt_check(void);
 static int lmt_join(uint64_t tick);
+static int lmt_prepare_next(uint64_t tick);
 static int lmt_installed,lmt_restored;
 /* Per-ship RNG keys for every portable ship (gate_actor_all.h, included below). */
 static void laa_restore(void);
@@ -758,6 +759,7 @@ static void seed_frame(void) {
     if(!base || !stats.completed || tick!=stats.completed || !gate_tls_worker(base)) {++seed_skips;return;}
     *gate_tls_rng(base)=lockstep_seed(LX_SEED_DOMAIN,stats.issued,0,0,0,0);++rng_seeds;
 }
+#include "gate_player_stock_focus.h"
 static void gate_tick(void *frame,unsigned char loading) {
     player_ui_overlay_main_interlock();
     if(!stats.active) {gate_original_once(frame,loading);return;}
@@ -862,6 +864,9 @@ static void gate_tick(void *frame,unsigned char loading) {
     actor_all_frame(stats.completed); /* fold the frame's all-ship actor RNG tallies (default off) */
     player_presentation_fork_frame(stats.completed);
     fork_save_frame(stats.completed); /* default off; never stops the session */
+    /* Fork checks inspect genuinely parked passes. Apply the next frame's
+     * stride suppression only after those checks, before releasing its worker. */
+    if(lmt_installed && !lmt_prepare_next(stats.completed)) {finish(100);gate_original_once(frame,loading);return;}
     static char packet[GATE_STATE_MAX],reply[GATE_PERMIT_MAX];uint64_t gamebits,realbits;
     memcpy(&gamebits,&stats.game,8);memcpy(&realbits,&stats.real,8);
     int length=wire_lookahead?
@@ -897,6 +902,9 @@ static void gate_tick(void *frame,unsigned char loading) {
     QueryPerformanceCounter(&ft_permit);
     ft_wait=ft_us(ft_begin,ft_permit);
     if(stats.active) gate_pace_wait(); /* native_gate_tick_hz: real time, after the report left */
+    if(stats.active && !player_stock_focus_capture(stats.issued)) {
+        player_stock_focus_fatal();
+    }
     QueryPerformanceCounter(&ft_permit);
     gate_original_once(frame,loading);
     QueryPerformanceCounter(&ft_end);
@@ -953,7 +961,7 @@ static int pin_module(void) {
     return dlopen(info.dli_fname,RTLD_NOW|RTLD_NOLOAD|RTLD_NODELETE)!=NULL;
 }
 static int start_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *initial_digest,int boot) {
-    if(used||slot<1||slot>wire_clients||(wire_lookahead && wire_version!=3)||(wcg.armed && wire_version!=3)||!peer_config_ok()||port<1024||port>65535||timeout<1000||timeout>120000||!valid_hex(token,32)||!valid_hex(initial_digest,64)) return 10;
+    if(used||slot<1||slot>wire_clients||(wire_lookahead && wire_version!=3)||(wcg.armed && wire_version!=3)||!peer_config_ok()||port<1024||port>65535||timeout<1000||timeout>300000||!valid_hex(token,32)||!valid_hex(initial_digest,64)) return 10;
     if(!verify()) return 11;
     if(*(volatile unsigned char*)LX(LX_MOVIE_FLAG_VA)) return boot?27:12;
     /* start: another owner fixed dt (the x4mp-agent fixed60 pattern); boot: the
@@ -1016,6 +1024,7 @@ static int lua_start(lua_State *L) {
 #include "gate_stock_keyboard_replay.h"
 #include "gate_player_camera_probe.h"
 #include "gate_player_view_query.h"
+#include "gate_player_view_ancestry.h"
 #include "gate_player_presentation_probe.h"
 #include "gate_world_created.h"
 #include "gate_world_motion_watch.h"

@@ -42,6 +42,22 @@
     </do_else>
    </actions>
   </cue>
+  <!-- Test only (script op launch_stock, in every client's plan at the same tick): deployables into a slot ship's stock, so
+       a scripted run can launch them (the flight family's Launch* calls). has= is what the ship then holds. -->
+  <cue name="Stock" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'Stock'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$ship"/>
+    <do_if value="@$ship.isoperational and $ship.isclass.ship">
+     <set_value name="$macro" exact="macro.{event.param3.$macro}"/>
+     <add_ammo object="$ship" macro="$macro" amount="event.param3.$amount"/>
+     <debug_text text="'[X4LAN] UI_REPLAY_STOCK ship=%s macro=%s amount=%s has=%s time=%s'.[$ship.idcode, event.param3.$macro, event.param3.$amount, $ship.ammostorage.{$macro}.count, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_REPLAY_STOCK_REFUSED time=%s'.[player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
   <!-- Missions and conversations (native_gate_ui_replay missions, conversation; reports/LOCKSTEP-UI-MISSIONS-20261101.txt):
        a test offer whose client is a cue actor, made from the probe's frame at the same tick on every client (script op
        mis_fixture, in every client's plan). Slot 1's accept, briefing, active mission, abort and talk then arrive here on
@@ -77,7 +93,31 @@
       <cue name="FixtureTrack" instantiate="true" checkinterval="5s">
        <conditions><check_value value="true"/></conditions>
        <actions>
-        <debug_text text="'[X4LAN] UI_MISSIONS_MD_TRACK player=%s ship=%s sector=%s time=%s'.[player.entity, player.occupiedship, player.sector, player.age]"/>
+        <debug_text text="'[X4LAN] UI_MISSIONS_MD_TRACK player=%s ship=%s sector=%s time=%s pilot=%s ispilot=%s computer=%s'.[player.entity, player.occupiedship, player.sector, player.age, @player.occupiedship.pilot, @player.occupiedship.pilot == player.entity, player.computer]"/>
+       </actions>
+      </cue>
+      <!-- The mission's listeners on its player's place: the owner's own moves (slots 2..N: lockstep_slot_place_events.h). -->
+      <cue name="FixtureSector" instantiate="true">
+       <conditions><event_object_changed_sector object="player.entity"/></conditions>
+       <actions>
+        <debug_text text="'[X4LAN] UI_MISSIONS_MD_PLACE kind=sector on=%s new=%s old=%s player=%s time=%s'.[event.object, event.param, event.param2, player.entity, player.age]"/>
+       </actions>
+      </cue>
+      <cue name="FixtureZone" instantiate="true">
+       <conditions><event_object_changed_zone object="player.entity"/></conditions>
+       <actions>
+        <debug_text text="'[X4LAN] UI_MISSIONS_MD_PLACE kind=zone on=%s new=%s old=%s player=%s time=%s'.[event.object, event.param, event.param2, player.entity, player.age]"/>
+       </actions>
+      </cue>
+      <!-- The mission ends at its player's first zone change and pays: whose money moves (coop: the shared wallet;
+           factions mode: the owner's own faction, once mission frames run with its faction). -->
+      <cue name="FixtureReward">
+       <conditions><event_object_changed_zone object="player.entity"/></conditions>
+       <actions>
+        <set_value name="$Before" exact="player.money"/>
+        <reward_player money="1000Cr"/>
+        <debug_text text="'[X4LAN] UI_MISSIONS_MD_REWARD player=%s faction=%s money=%s->%s time=%s'.[player.entity, faction.player, $Before, player.money, player.age]"/>
+        <remove_mission cue="$Mission" type="completed"/>
        </actions>
       </cue>
      </cues>

@@ -279,8 +279,16 @@ class TableTests(unittest.TestCase):
 
     def test_every_probe_key_is_classified(self):
         files = ('native_gate_crypto', 'native_gate_inputs_core', 'native_gate_relay', 'native_gate_tour', 'native_gate_ui_build_core',
-                 'native_gate_ui_replay_core', 'native_gate_join_core', 'native_gate_ffi_relay_core')   # file names the probe mentions, not keys
-        keys = set(re.findall(r'native_gate_[a-z0-9_]+', PROBE)) - set(files)
+                 'native_gate_ui_replay_core', 'native_gate_join_core', 'native_gate_ffi_relay_core',
+                 'native_gate_ui_inventory_core', 'native_gate_linux', 'native_gate_linux_keyboard',
+                 'native_gate_overlay', 'native_gate_probe')  # module names, not configuration keys
+        # Include Linux launcher options translated to preload settings.
+        consumers = '\n'.join((
+            PROBE,
+            (DEV / 'native_gate_linux_keyboard.lua').read_text(encoding='utf-8'),
+            (DEV / 'linux_gate_live.py').read_text(encoding='utf-8'),
+        ))
+        keys = set(re.findall(r'native_gate_[a-z0-9_]+', consumers)) - set(files)
         known = set(defaults.ON_KEYS) | set(defaults.DIAGNOSTIC_KEYS) | set(defaults.EXCLUDED_KEYS) | set(defaults.TUNING_KEYS) | set(defaults.TABLE['session'])
         self.assertEqual(sorted(keys - known), [])
         self.assertEqual(sorted(known - keys), ['native_gate_world_timing_fields'])   # Play42P sets it, nothing reads it
@@ -315,11 +323,11 @@ class TableTests(unittest.TestCase):
                                         'native_gate_render_camera', 'native_gate_render_motion', 'native_gate_own_predict',
                                         'native_gate_own_predict_rows', 'native_gate_player_identity', 'native_gate_pilot_foot_bodies',
                                         'native_gate_pilot_foot_slots', 'native_gate_nav_mesh', 'native_gate_character_play', 'native_gate_speech_clock',
-                                        'native_gate_ui_lazy', 'native_gate_missions_per_player', 'native_gate_own_predict_hud', 'native_gate_hud_ship_refresh', 'native_gate_missions_per_player_offers', 'native_gate_runtime_ids_ui_elements', 'native_gate_pilot_aim', 'native_gate_pilot_aim_assist', 'native_gate_join_start_money']) if 'native_gate_player_identity' not in play else
+                                        'native_gate_ui_lazy', 'native_gate_missions_per_player', 'native_gate_missions_per_player_ai_frames', 'native_gate_pilot_present_walk_hud', 'native_gate_pilot_slots_post', 'native_gate_ui_reload_hold', 'native_gate_ui_compslot', 'native_gate_view_cameras', 'native_gate_own_predict_hud', 'native_gate_hud_ship_refresh', 'native_gate_missions_per_player_offers', 'native_gate_runtime_ids_ui_elements', 'native_gate_pilot_aim', 'native_gate_pilot_aim_assist', 'native_gate_join_start_money', 'native_gate_speech_local', 'native_gate_travel_determinism']) if 'native_gate_player_identity' not in play else
                          sorted(['native_gate_ui_guard', 'native_gate_pilot_foot', 'native_gate_player_settings_per_slot', 'native_gate_render_fps',
                                  'native_gate_render_camera', 'native_gate_render_motion', 'native_gate_own_predict', 'native_gate_own_predict_rows',
                                  'native_gate_pilot_foot_bodies', 'native_gate_pilot_foot_slots', 'native_gate_nav_mesh', 'native_gate_character_play', 'native_gate_speech_clock',
-                                 'native_gate_ui_lazy', 'native_gate_missions_per_player', 'native_gate_own_predict_hud', 'native_gate_hud_ship_refresh', 'native_gate_missions_per_player_offers', 'native_gate_runtime_ids_ui_elements', 'native_gate_pilot_aim', 'native_gate_pilot_aim_assist', 'native_gate_join_start_money']))
+                                 'native_gate_ui_lazy', 'native_gate_missions_per_player', 'native_gate_missions_per_player_ai_frames', 'native_gate_pilot_present_walk_hud', 'native_gate_pilot_slots_post', 'native_gate_ui_reload_hold', 'native_gate_ui_compslot', 'native_gate_view_cameras', 'native_gate_own_predict_hud', 'native_gate_hud_ship_refresh', 'native_gate_missions_per_player_offers', 'native_gate_runtime_ids_ui_elements', 'native_gate_pilot_aim', 'native_gate_pilot_aim_assist', 'native_gate_join_start_money', 'native_gate_speech_local', 'native_gate_travel_determinism']))
 
 
 class ApplyTests(unittest.TestCase):
@@ -521,7 +529,7 @@ SESSION_LUA = ("{native_gate_test=true,test_profile='45841',slot='p1',port=12345
                "native_gate_player_identity_plan={mode='coop',occupied='player',reputation='mirror',slots={{faction='player',ship='00000000000ae79c'},"
                "{faction='player',ship='000000000007a8fe'}},tick=20,version=1}%s}")
 UI_FILES = ('native_gate_defaults.lua', 'native_gate_inputs_core.lua', 'native_gate_player_identity_core.lua', 'native_gate_player_identity.lua',
-            'native_gate_ui_replay_core.lua', 'native_gate_ui_build_core.lua')
+            'native_gate_ui_replay_core.lua', 'native_gate_ui_build_core.lua', 'native_gate_ui_inventory_core.lua')
 
 
 class ProbeTests(unittest.TestCase):
@@ -539,7 +547,7 @@ class ProbeTests(unittest.TestCase):
         lua.execute('update()')
         logs = items(lua.globals().logs)
         self.assertFalse(any('CONFIG_REFUSED' in l for l in logs), logs[-3:])
-        self.assertTrue(any(l.endswith('DEFAULTS version=1 applied=180 explicit=0 off=0 skipped=4') for l in logs))
+        self.assertTrue(any(l.endswith('DEFAULTS version=1 applied=187 explicit=0 off=0 skipped=4') for l in logs))
         for row in ('RENDER_FRAMES_ARMED fps=60', 'RENDER_CAMERA_ARMED mode=extrapolate', 'TICK_RATE_ARMED hz=30', 'PLAYER_IDENTITY BOUND slot=p1 mode=coop slots=2'):
             self.assertTrue(any(row in l for l in logs), row)
         # The stack joins the boot digest; the refused boot is loud: an ERROR row and an info line with the reason.
@@ -654,8 +662,9 @@ X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@
             files = (out/'ui.xml.files').read_text().split()
             self.assertEqual(files[0], 'ui/native_gate_defaults.lua')
             self.assertEqual(files[-1], 'ui/native_gate_probe.lua')
-            for name in defaults.UI_FILES + defaults.MD_FILES:
+            for name in defaults.UI_FILES + defaults.MD_FILES + tuple(defaults.MD_PATCHES):
                 self.assertTrue((out/name).is_file(), name)
+            self.assertIn('<diff>', (out/'md/playerreputation.xml').read_text(encoding='utf-8'))
             self.assertEqual(options.check(text)[1], [])
             self.assertIn('SESSION DEFAULTS: 3 lines written', notes)
             # The flags the defaults set are refused with --defaults-only.

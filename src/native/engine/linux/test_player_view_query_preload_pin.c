@@ -11,8 +11,23 @@ static _Alignas(4096) unsigned char fake_page[4096];
 static unsigned char fake_site[0x53], fake_original[0x53], fake_trampoline[26], fake_frame[48], fake_fde[16];
 static uintptr_t original_slot;
 static uintptr_t fake_ui_slots[2], fake_ui_originals[2];
+static uintptr_t fake_render_slot, fake_render_original;
+static unsigned char fake_render_code[0x70];
+static int bad_render_hash, bad_render_module, bad_render_info;
 static int bad_ui_permissions, bad_ui_module, bad_ui_version;
 static int missing_eight_symbol, foreign_eight_symbol, missing_count_symbol;
+static void fixture_game_render(void) {}
+static unsigned fixture_game_render_info(player_game_render_info *out) {
+    *out = (player_game_render_info){(uintptr_t)&fake_render_slot, 0xfb0180u,
+        (uintptr_t)fixture_game_render, (uintptr_t)&fake_render_original, 1};
+    if (bad_render_info == 2) out->installed = 2;
+    return bad_render_info == 1 ? 0 : 1;
+}
+static int fixture_game_render_bind(uint32_t tid, player_ui_overlay_callback enter,
+                                    player_ui_overlay_callback leave) {
+    (void)tid; (void)enter; (void)leave; return 1;
+}
+static int fixture_game_render_activate(void) { return 1; }
 static void fixture_ui_move(void) {}
 static void fixture_ui_render(void) {}
 static unsigned fixture_ui_info(player_ui_callback_snapshot *out) {
@@ -65,6 +80,10 @@ static void *fake_dlsym(void *handle,const char *name) {
     if (!strcmp(name,"x4mp_view_query_phase")) return (void *)fixture_phase;
     if (!strcmp(name,"x4mp_view_query_snapshot")) return (void *)fixture_snapshot;
     if (!strcmp(name,"x4mp_view_query_finish")) return (void *)fixture_finish;
+    if (!strcmp(name,"x4mp_view_query_game_render_info")) return (void *)fixture_game_render_info;
+    if (!strcmp(name,"x4mp_view_query_game_render_bind")) return (void *)fixture_game_render_bind;
+    if (!strcmp(name,"x4mp_view_query_game_render_activate")) return (void *)fixture_game_render_activate;
+    if (!strcmp(name,"x4mp_view_query_game_render_progress")) return (void *)fixture_overlay_progress;
     if (!strcmp(name,"x4mp_view_query_ui_info")) return (void *)fixture_ui_info;
     if (!strcmp(name,"x4mp_view_query_ui_callbacks")) return (void *)fixture_ui_snapshot;
     if (!strcmp(name,"x4mp_view_query_ui_finish")) return (void *)fixture_ui_finish;
@@ -78,6 +97,7 @@ static int fake_dladdr(const void *address,Dl_info *out) {
     (void)address;memset(out,0,sizeof *out);out->dli_fname="/tmp/libx4mp_player_view_query.so";
     out->dli_fbase=(bad_module && address==(void *)fixture_phase) ||
         (bad_ui_module && address==(void *)fixture_ui_render) ||
+        (bad_render_module && address==(void *)fixture_game_render) ||
         (foreign_eight_symbol && address==(void *)fixture_overlay_progress) ? (void *)2 : (void *)1;
     return 1;
 }
@@ -87,6 +107,8 @@ static int gate_maps_find(uintptr_t address,char permissions[5],char *path,size_
     if ((address >= (uintptr_t)fake_frame && address < (uintptr_t)fake_frame+sizeof fake_frame) ||
         (address >= (uintptr_t)&original_slot && address < (uintptr_t)&original_slot+sizeof original_slot)) access="rw-p";
     if (address >= (uintptr_t)fake_fde && address < (uintptr_t)fake_fde+sizeof fake_fde) access="r--p";
+    if (address >= (uintptr_t)&fake_render_original && address < (uintptr_t)(&fake_render_original + 1)) access="rw-p";
+    if (address >= (uintptr_t)&fake_render_slot && address < (uintptr_t)(&fake_render_slot + 1)) access="r--p";
     if (address >= (uintptr_t)fake_ui_originals && address < (uintptr_t)(fake_ui_originals + 2)) access="rw-p";
     if (address >= (uintptr_t)fake_ui_slots && address < (uintptr_t)(fake_ui_slots + 2))
         access = bad_ui_permissions ? "rw-p" : "r--p";
@@ -99,11 +121,15 @@ static int gate_file_sha256(const char *path,unsigned long long size,unsigned ch
 }
 static void hex32(const unsigned char digest[32],char *out) { (void)digest;strcpy(out,sha); }
 static int hash_ok(const void *data,size_t size,const char *hash) {
-    (void)hash;return size==sizeof fake_original && !memcmp(data,fake_original,size);
+    (void)hash;
+    if (data == fake_render_code && size == sizeof fake_render_code) return !bad_render_hash;
+    return size==sizeof fake_original && !memcmp(data,fake_original,size);
 }
 #define LX(a) ((void *)(uintptr_t)((a)==0xa44e40 ? (uintptr_t)fake_site : \
     (a)==0x3ab4988 ? (uintptr_t)&fake_ui_slots[0] : \
-    (a)==0x3ab4990 ? (uintptr_t)&fake_ui_slots[1] : (a)))
+    (a)==0x3ab4990 ? (uintptr_t)&fake_ui_slots[1] : \
+    (a)==0x3ab1280 ? (uintptr_t)&fake_render_slot : \
+    (a)==0xfb0180 ? (uintptr_t)fake_render_code : (a)))
 #define dlsym fake_dlsym
 #define dladdr fake_dladdr
 #define dlopen fake_dlopen
@@ -139,6 +165,9 @@ static void setup(void) {
         .original_trampoline_size=26,.entry_frame_size=48,.page_size=4096};
     bad_permissions=bad_module=bad_digest=bad_unwind=0;
     bad_ui_permissions=bad_ui_module=bad_ui_version=0;
+    bad_render_hash=bad_render_module=bad_render_info=0;
+    fake_render_original=0xfb0180u;
+    fake_render_slot=(uintptr_t)fixture_game_render;
     fake_ui_originals[0]=0xa77e90; fake_ui_originals[1]=0xa60520;
     fake_ui_slots[0]=(uintptr_t)fixture_ui_move;
     fake_ui_slots[1]=(uintptr_t)fixture_ui_render;
@@ -149,6 +178,22 @@ int main(void) {
     assert(api.configure && api.phase && api.snapshot && api.finish);
     player_ui_callback_api ui_api;
     assert(player_ui_callback_provider(&api, &ui_api));
+    player_game_render_bind_fn render_bind;
+    int (*render_activate)(void);
+    player_ui_overlay_progress_fn render_progress;
+    assert(player_game_render_provider(&api, &render_bind, &render_activate, &render_progress));
+    assert(render_bind == fixture_game_render_bind && render_activate == fixture_game_render_activate);
+    fake_render_slot ^= 1; assert(!player_game_render_provider(&api, &render_bind, &render_activate, &render_progress));
+    fake_render_slot ^= 1;
+    fake_render_original ^= 1; assert(!player_game_render_provider(&api, &render_bind, &render_activate, &render_progress));
+    fake_render_original ^= 1;
+    bad_render_hash = 1; assert(!player_game_render_provider(&api, &render_bind, &render_activate, &render_progress));
+    bad_render_hash = 0;
+    bad_render_module = 1; assert(!player_game_render_provider(&api, &render_bind, &render_activate, &render_progress));
+    bad_render_module = 0;
+    bad_render_info = 1; assert(!player_game_render_provider(&api, &render_bind, &render_activate, &render_progress));
+    bad_render_info = 2; assert(!player_game_render_provider(&api, &render_bind, &render_activate, &render_progress));
+    bad_render_info = 0;
     player_ui_overlay_bind_eight_fn eight_bind;
     player_ui_overlay_progress_fn progress;
     assert(player_ui_overlay_eight_provider(&api, &eight_bind, &progress));

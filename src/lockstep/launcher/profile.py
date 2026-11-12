@@ -34,10 +34,11 @@ FAST = {'gfxquality': 0, 'shaderquality': 0, 'shadows': 0, 'softshadows': 'false
         'pom': 'off', 'envmapprobes': 'low', 'frameratelimit': 'false', 'presentmode': 'immediate', 'nosound': 'true'}
 
 
-def config_xml(width, height, fast=False):
+def config_xml(width, height, fast=False, borderless=False):
+    """borderless: X4's borderless window (it fills the screen and cannot be resized: a resize reloads X4's UI)."""
     extra = ''.join(f'<{k}>{v}</{k}>' for k, v in FAST.items()) if fast else ''
     return ('<?xml version="1.0"?><root><autosave>false</autosave><uisafemode>false</uisafemode>'
-            f'<fullscreen>false</fullscreen><borderless>false</borderless><res_width>{width}</res_width>'
+            f'<fullscreen>false</fullscreen><borderless>{"true" if borderless else "false"}</borderless><res_width>{width}</res_width>'
             f'<res_height>{height}</res_height><antialiasing>0</antialiasing><vsync>false</vsync>{extra}</root>\n')
 
 
@@ -46,13 +47,13 @@ def content_xml(extension_ids):
     return f'<?xml version="1.0"?><content>{rows}</content>\n'
 
 
-def prepare(profile, extension_ids, width=1280, height=720, snapshot=None, root=None, fast=False):
+def prepare(profile, extension_ids, width=1280, height=720, snapshot=None, root=None, fast=False, borderless=False):
     """Fresh profile: windowed config, autosave and protected UI off, optional snapshot."""
     path = profile_dir(profile, root)
     if path.exists():
         shutil.rmtree(path)
     (path / 'save').mkdir(parents=True)
-    (path / 'config.xml').write_text(config_xml(width, height, fast))
+    (path / 'config.xml').write_text(config_xml(width, height, fast, borderless))
     (path / 'content.xml').write_text(content_xml(extension_ids))
     if snapshot:
         shutil.copyfile(snapshot, path / 'save' / SNAPSHOT_SLOT)

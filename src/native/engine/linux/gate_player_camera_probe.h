@@ -89,7 +89,7 @@ static int lua_player_external_camera_probe(lua_State *state) {
         reason = "already_attempted";
         goto finish;
     }
-    if (!accept_ui() || !stats.active || stats.issued != 6 || boot_phase != 3 ||
+    if (!accept_ui() || !stats.active || stats.issued != player_startup()->apply + 1 || boot_phase != 3 ||
         stats.slot != 2 || wire_clients != 2 || !keyboard_probe_requested ||
         keyboard_probe_queue.config.independent_players != 1 || player_recurring_physics != 3 ||
         atomic_load_explicit(&player_physics_ready, memory_order_acquire) != 1 ||
@@ -150,9 +150,9 @@ static int lua_player_external_camera_probe(lua_State *state) {
     uint64_t rng_before = *rng;
     char message[1024];
     snprintf(message, sizeof message,
-        "X4LAN CAMERA stage=before tick=6 pins=1 saved=%016llx target=%llx runtime=%llu current=%llu "
+        "X4LAN CAMERA stage=before tick=%llu pins=1 saved=%016llx target=%llx runtime=%llu current=%llu "
         "bank=%s contexts=%u/%u context_hash=%s rng=%016llx ids=%llu/%u/%u\n",
-        (unsigned long long)target.saved, (unsigned long long)target.target,
+        (unsigned long long)stats.issued, (unsigned long long)target.saved, (unsigned long long)target.target,
         (unsigned long long)target.runtime, (unsigned long long)before, bank_before_hash,
         context_before.node_count, context_before.target_present, context_before_hash,
         (unsigned long long)rng_before,
@@ -209,10 +209,10 @@ static int lua_player_external_camera_probe(lua_State *state) {
     lockstep_sha256(context_after.payloads, sizeof context_after.payloads, bank_digest);
     hex32(bank_digest, context_after_hash);
     snprintf(message, sizeof message,
-        "X4LAN CAMERA stage=after tick=6 possible=%u set=%u current=%llu match=%u "
+        "X4LAN CAMERA stage=after tick=%llu possible=%u set=%u current=%llu match=%u "
         "bank=%s bank_changed=%u contexts=%u/%u context_hash=%s context_changed=%u rng=%016llx restored=%016llx "
         "ids=%llu/%u/%u\n",
-        possible != 0, possible != 0, (unsigned long long)current, current == target.runtime,
+        (unsigned long long)stats.issued, possible != 0, possible != 0, (unsigned long long)current, current == target.runtime,
         bank_after_hash, memcmp(bank_before, bank_after, sizeof bank_before) != 0,
         context_after.node_count, context_after.target_present, context_after_hash,
         context_before.node_count != context_after.node_count ||
@@ -240,8 +240,8 @@ finish:
         lockstep_sha256(player_camera_anchor.payloads, sizeof player_camera_anchor.payloads, digest);
         hex32(digest, digest_hex);
         snprintf(receipt, sizeof receipt,
-            "X4LAN CONTEXT_ANCHOR v=1 tick=6 owner=%llx manager=%llx target=%llx controller=%llx digest=%s\n",
-            (unsigned long long)player_camera_anchor.owner, (unsigned long long)player_camera_anchor.manager,
+            "X4LAN CONTEXT_ANCHOR v=1 tick=%llu owner=%llx manager=%llx target=%llx controller=%llx digest=%s\n",
+            (unsigned long long)stats.issued, (unsigned long long)player_camera_anchor.owner, (unsigned long long)player_camera_anchor.manager,
             (unsigned long long)player_camera_anchor.ship, (unsigned long long)player_camera_anchor.controller,
             digest_hex);
         lifecycle_discard_write(receipt);

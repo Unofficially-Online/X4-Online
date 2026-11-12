@@ -4,6 +4,13 @@ X4LAN_LINUX_KEYBOARD = {}
 
 function X4LAN_LINUX_KEYBOARD.create(gate, config, register_section, ffi, log)
     local settings = config.native_gate_stock_keyboard_replay_probe
+    local phase_setting = config.native_gate_linux_startup_phases
+    assert(phase_setting == nil or phase_setting == 'v1-t40', 'invalid Linux startup phases')
+    local phase_version = phase_setting and 1 or 0
+    local first_capture = phase_version == 1 and 38 or 3
+    local presentation_tick = phase_version == 1 and 42 or 7
+    local arm_tick = phase_version == 1 and 43 or 8
+    local first_overlay_tick = phase_version == 1 and 44 or 9
     assert(type(settings) == 'table', 'Linux keyboard probe settings missing')
     assert(config.native_gate_stock_keyboard_observer == true and gate.platform() == 'linux',
         'Linux keyboard replay requires the native observer')
@@ -11,6 +18,7 @@ function X4LAN_LINUX_KEYBOARD.create(gate, config, register_section, ffi, log)
     assert(settings.independent_players == nil or type(settings.independent_players) == 'boolean',
         'independent_players must be boolean')
     local independent = settings.independent_players == true
+    assert(phase_version == 0 or independent, 'common startup phases require independent controls')
     local camera_setting = config.native_gate_linux_external_camera_probe
     assert(camera_setting == nil or type(camera_setting) == 'boolean',
         'external camera probe must be boolean')
@@ -26,21 +34,37 @@ function X4LAN_LINUX_KEYBOARD.create(gate, config, register_section, ffi, log)
         type(gate.player_presentation_fork_arm) == 'function' and
         type(gate.player_presentation_fork_result) == 'function'),
         'presentation fork requires independent presentation, native methods and no fork-save')
+    local session_frames = config.native_gate_linux_ui_session_frames
+    if session_frames == nil then session_frames = 0 end
+    assert(type(session_frames) == 'number' and session_frames == math.floor(session_frames) and
+        (session_frames == 0 or (session_frames >= 180 and session_frames <= 900)),
+        'session frames must be 0 or 180..900')
+    assert(phase_version == 0 or session_frames > 0,
+        'common startup phases require an explicit finite session')
+    local expected_callbacks = session_frames > 0 and session_frames - 10 or 160
     local overlay_setting = config.native_gate_linux_ui_overlay_probe
     assert(overlay_setting == nil or type(overlay_setting) == 'boolean', 'UI overlay probe must be boolean')
     local ui_overlay = overlay_setting == true
     local overlay_callbacks = config.native_gate_linux_ui_overlay_callbacks
     if overlay_callbacks == nil then overlay_callbacks = 1 end
-    assert(type(overlay_callbacks) == 'number' and (overlay_callbacks == 1 or overlay_callbacks == 8 or overlay_callbacks == 160) and
+    local legacy_callbacks = session_frames == 0 and
+        (overlay_callbacks == 1 or overlay_callbacks == 8 or overlay_callbacks == 160)
+    local session_callbacks = session_frames > 0 and overlay_callbacks == expected_callbacks
+    assert(type(overlay_callbacks) == 'number' and (legacy_callbacks or session_callbacks) and
         (overlay_callbacks == 1 or ui_overlay), 'UI overlay callbacks require 1 or explicit enabled 8/160')
     local correction_setting = config.native_gate_linux_ui_seat_correction
     assert(correction_setting == nil or type(correction_setting) == 'boolean',
         'seat correction must be boolean')
-    assert(correction_setting ~= true or (ui_overlay and overlay_callbacks == 160 and
+    assert(correction_setting ~= true or (ui_overlay and overlay_callbacks == expected_callbacks and
         config.native_gate_linux_ui_seat_query_probe == true and
         config.native_gate_linux_ui_live_pose_observer == true),
         'seat correction requires explicit live observer, seat query and UI overlay160')
-    local overlay_result_tick = 9 + overlay_callbacks
+    local refill = config.native_gate_linux_ui_camera_refill
+    assert(refill == nil or type(refill) == 'boolean', 'camera refill must be boolean')
+    assert(refill ~= true or (config.native_gate_linux_ui_render_lease == true and
+        correction_setting == true and ui_overlay and overlay_callbacks == expected_callbacks),
+        'camera refill requires the full render lease and correction chain')
+    local overlay_result_tick = first_overlay_tick + overlay_callbacks
     local view_query_setting = config.native_gate_linux_view_query_observer
     assert(view_query_setting == nil or type(view_query_setting) == 'boolean',
         'view query observer must be boolean')
@@ -78,6 +102,8 @@ function X4LAN_LINUX_KEYBOARD.create(gate, config, register_section, ffi, log)
     local last_capture = settings.last_capture
     assert(type(last_capture) == 'number' and last_capture % 1 == 0 and last_capture >= 3,
         'invalid keyboard capture window')
+    assert(phase_version == 0 or last_capture == first_capture + session_frames - 1,
+        'common startup capture window differs from the finite frame budget')
     assert(not external_camera or last_capture >= 5,
         'external camera probe requires a window through tick seven')
     assert(not presentation or last_capture >= 6,
@@ -115,7 +141,7 @@ function X4LAN_LINUX_KEYBOARD.create(gate, config, register_section, ffi, log)
             local accepted
             if independent then
                 accepted = gate.stock_keyboard_replay_request(slot, last_capture, delay, lookahead,
-                    canonical_saved, neutral_ship, 1)
+                    canonical_saved, neutral_ship, 1, phase_version)
             else
                 accepted = gate.stock_keyboard_replay_request(slot, last_capture, delay, lookahead,
                     canonical_saved, neutral_ship)
@@ -136,7 +162,7 @@ function X4LAN_LINUX_KEYBOARD.create(gate, config, register_section, ffi, log)
                     return 'linux_keyboard='..count
                 end,
                 proposal = function(capture_tick)
-                    if capture_tick < 3 or capture_tick > last_capture then
+                    if capture_tick < first_capture or capture_tick > last_capture then
                         return nil
                     end
                     local record = assert(gate.stock_keyboard_replay_capture(),
@@ -148,7 +174,7 @@ function X4LAN_LINUX_KEYBOARD.create(gate, config, register_section, ffi, log)
             started = true
             local target = independent and (' p2='..neutral_ship..' mode=independent') or (' neutral='..neutral_ship)
             log('LINUX_KEYBOARD_ARMED slot='..slot..' canonical='..canonical_saved..
-                target..' first=3 last='..last_capture..' delay='..delay)
+                target..' first='..first_capture..' last='..last_capture..' delay='..delay)
         end
         assert(ffi.C.GetPlayerOccupiedShipID() == canonical_runtime,
             'canonical keyboard ship changed')
@@ -164,42 +190,42 @@ function X4LAN_LINUX_KEYBOARD.create(gate, config, register_section, ffi, log)
         -- This disposable experiment changes only client 2's view. The
         -- canonical simulation player stays P1, as it does in the input path.
         -- The native method authenticates its phase and retained target again.
-        if external_camera and slot == 2 and tick == 6 then
+        if external_camera and slot == 2 and tick == presentation_tick - 1 then
             assert(not camera_attempted, 'external camera probe cannot be retried')
             camera_attempted = true
             assert(gate.player_external_camera_probe() == 1,
                 'external camera probe refused; see native camera evidence')
-            log('LINUX_EXTERNAL_CAMERA tick=6 slot=2 target='..neutral_ship)
+            log('LINUX_EXTERNAL_CAMERA tick='..tick..' slot=2 target='..neutral_ship)
         end
-        if view_queries and tick == 7 then
+        if view_queries and tick == presentation_tick then
             assert(not view_query_attempted, 'view query observer cannot be retried')
             view_query_attempted = true
             assert(gate.player_view_query_observe() == 1,
                 'view query observer refused; see native evidence')
-            log('LINUX_VIEW_QUERY_ARMED tick=7 slot='..slot)
+            log('LINUX_VIEW_QUERY_ARMED tick='..tick..' slot='..slot)
         end
-        if presentation and tick == 7 then
+        if presentation and tick == presentation_tick then
             assert(not presentation_attempted, 'presentation probe cannot be retried')
             presentation_attempted = true
             assert(gate.player_presentation_probe() == 1,
                 'presentation probe refused; see native presentation evidence')
-            log('LINUX_PRESENTATION_PROBE tick=7 slot='..slot)
+            log('LINUX_PRESENTATION_PROBE tick='..tick..' slot='..slot)
         end
-        if presentation_fork and tick == 7 then
+        if presentation_fork and tick == presentation_tick then
             assert(presentation_attempted and not fork_armed, 'presentation fork arm out of order')
             assert(gate.player_presentation_fork_arm() == 1, 'presentation fork arm refused')
             fork_armed = true
-            log('LINUX_PRESENTATION_FORK_ARMED tick=7 slot='..slot)
+            log('LINUX_PRESENTATION_FORK_ARMED tick='..tick..' slot='..slot)
         end
-        if presentation_fork and tick == 8 then
+        if presentation_fork and tick == arm_tick then
             assert(fork_armed and not fork_finished, 'presentation fork result out of order')
             local receipt = assert(gate.player_presentation_fork_result(), 'presentation fork result refused')
             fork_finished = true
-            log('LINUX_PRESENTATION_FORK_RESULT tick=8 slot='..slot..' '..receipt)
+            log('LINUX_PRESENTATION_FORK_RESULT tick='..tick..' slot='..slot..' '..receipt)
             if ui_overlay and slot == 2 then
                 assert(not overlay_armed and gate.player_ui_overlay_arm() == 1, 'UI overlay arm refused')
                 overlay_armed = true
-                log('LINUX_UI_OVERLAY_ARMED tick=8 slot=2')
+                log('LINUX_UI_OVERLAY_ARMED tick='..tick..' slot=2')
             end
         end
         if ui_overlay and slot == 2 and tick == overlay_result_tick then

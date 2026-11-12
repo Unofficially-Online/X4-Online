@@ -58,6 +58,7 @@ class Options:
     state: Path = ROOT / '.local/x4ls'
     keep_views: bool = False
     fast: bool = False  # render-only settings down, no frame cap, no sound (profile.FAST)
+    borderless: bool = False  # X4's borderless window instead of a sizable one (no tiling: the windows stay where X4 puts them)
     startup: int = 70  # seconds budgeted per client to reach the start menu; snapshot clients then arm together
     steam_fix: bool = False  # re-register Steam's pid before each client (see steam.py); restored at the end
     checkpoint_at: int | None = None  # every client saves save_001 after this tick; the session ends there
@@ -106,10 +107,23 @@ class JoinOptions:
     same_pc: bool = False  # test: the host's X4 runs on this PC too (no "X4 is running" refusal; own state file)
 
 
-def free_udp_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.bind(('127.0.0.1', 0))
-        return s.getsockname()[1]
+def free_udp_port(tcp_bind=None):
+    """A free UDP port for the relay. With tcp_bind the number is also free for TCP on that address: the join file
+    service listens on the relay's number, and Windows keeps TCP ranges of its own that a UDP pick can land in (the
+    service's bind then failed with WinError 10013 after the relay had started)."""
+    for _ in range(64):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.bind(('127.0.0.1', 0))
+            port = s.getsockname()[1]
+        if tcp_bind is None:
+            return port
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as t:
+                t.bind((tcp_bind, port))
+            return port
+        except OSError:
+            continue
+    raise SystemExit('no port is free for both the relay (UDP) and the join files (TCP); name one with --port')
 
 
 def x4_running():
@@ -177,7 +191,8 @@ IPV4 = re.compile(r'(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|
 
 def client_tail(arm_at=None, checkpoint_at=None, relay_host=None):
     """The config lines x4ls adds to every client: arm timing, a checkpoint, a relay on another PC."""
-    tail = 'X4LAN_CONFIG.native_gate_arm_timeout_ms = 120000\n'  # slack for different load times
+    # slack for different load times, and longer than a hot join's longest pause (hotjoin.JOIN_TIMING: 180 s)
+    tail = 'X4LAN_CONFIG.native_gate_arm_timeout_ms = 240000\n'
     if arm_at:
         tail += f'X4LAN_CONFIG.native_gate_arm_at = {arm_at}\n'
     if checkpoint_at:
@@ -352,7 +367,7 @@ def run(o: Options, log=print):
     run_dir = o.runs / time.strftime('%Y%m%d-%H%M%S')
     run_dir.mkdir(parents=True)
     local = [k for k in range(1, o.clients + 1) if k not in remote and k not in opened]
-    port, token = o.port or free_udp_port(), secrets.token_hex(16)
+    port, token = o.port or free_udp_port(o.bind if opened else None), secrets.token_hex(16)
     state = {'run': str(run_dir), 'views': [], 'pids': [], 'relay_pid': None}
     save_state(o, state)
     clients, relay, relay_log, files, save_dirs = [], None, None, None, {}
@@ -396,7 +411,8 @@ def run(o: Options, log=print):
             installed = run_dir / f'client{k}' / 'installed'  # the census tools read the installed config here
             installed.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(target / 'ui/config.lua', installed / 'x4_lan_lab-config.lua')
-            profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot, fast=o.fast)
+            profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot, fast=o.fast,
+                            borderless=o.borderless)
             if o.steam_fix:
                 steam.fix(o.state / 'steam-fix.json')  # Steam can reset it once a client connects
             proc = subprocess.Popen(client_command(view, profile_id, k, seed), cwd=view, env=steam.client_environment())
@@ -678,7 +694,7 @@ def monitor_play(o, run_dir, relay, clients, log):
                     line = progress(run_dir, tick_hz, armed_at)
                     if line:
                         log(line + (f", {counts['error']} error row(s) in errors.log" if counts.get('error') else ''))
-                if not tiled and time.time() - started > 20:
+                if not tiled and not o.borderless and time.time() - started > 20:
                     tiled = tile([proc.pid for _, _, proc in clients], o.width, o.height) == len(clients)
                 for k, _, proc in clients:
                     for line in tails[k].lines():

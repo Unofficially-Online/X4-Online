@@ -1,5 +1,6 @@
 """Bounded coupled seat correction evidence, never persistent UI acceptance."""
 import hashlib
+from linux_ui_session_budget import budget_from_overlay
 import math
 import re
 import struct
@@ -85,11 +86,18 @@ def output_matches(raw, delta, corrected):
                 for i in (12, 28, 44, 60)))
 
 
-def parse_ui_seat_correction_evidence(lines, slot, enabled, overlay, fork, query, legacy, scope):
+def parse_ui_seat_correction_evidence(lines, slot, enabled, overlay, fork, query, legacy, scope, render=None):
     result = {'pass': False, 'enabled': enabled and slot == 2, 'errors': [],
               'correction_observed': False, 'readiness_proven': False,
               'safe_resume_proven': False, 'reader_exclusion_proven': False}
     errors = result['errors']
+    try:
+        budget = budget_from_overlay(overlay)
+    except ValueError as error:
+        errors.append(str(error))
+        budget = {'callbacks':160, 'last':168}
+    callback_count, last_tick = budget['callbacks'], budget['last']
+    first_tick = budget.get('first', 9)
     rows = [(i, line) for i, line in enumerate(lines) if 'X4 UI SEAT_CORRECTION' in line]
     result['raw_native_receipts'] = [line for _, line in rows]
     if type(enabled) is not bool or type(slot) is not int or slot not in (1, 2):
@@ -100,21 +108,21 @@ def parse_ui_seat_correction_evidence(lines, slot, enabled, overlay, fork, query
             errors.append('unexpected disabled or host seat correction receipts')
         result['pass'] = not errors
         return result
-    proofs = (overlay, fork, query, legacy, scope)
-    if any(proof.get('pass') is not True for proof in proofs) or overlay.get('callback_count') != 160:
-        errors.append('correction requires accepted overlay160/fork/query/live/scope evidence')
+    proofs = (overlay, fork, query, legacy, scope) + ((render,) if render is not None else ())
+    if any(proof.get('pass') is not True for proof in proofs) or overlay.get('callback_count') != callback_count:
+        errors.append('correction requires accepted bounded overlay/fork/query/live/scope evidence')
     if not 5 <= len(rows) <= 6 or any(len(line) >= 1024 or not line.endswith('\n') for _, line in rows):
         errors.append('missing, duplicate, oversized or truncated correction receipts')
         return result
-    ready = re.fullmatch('X4 UI SEAT_CORRECTION v=1 stage=ready tick=9 target='+POINTER+
+    ready = re.fullmatch(f'X4 UI SEAT_CORRECTION v=1 stage=ready tick={first_tick} target='+POINTER+
                          ' delta='+HEX_POSE+' stack_low='+POINTER+' stack_high='+POINTER+r'\n', rows[0][1])
-    close = re.fullmatch('X4 UI SEAT_CORRECTION v=1 stage=close tick=168 applies='+NUMBER+
+    close = re.fullmatch(f'X4 UI SEAT_CORRECTION v=1 stage=close tick={last_tick} applies='+NUMBER+
                          ' restores='+NUMBER+' calls='+NUMBER+' rows='+NUMBER+
                          r' published_restored=1 state=outside\n', rows[-1][1])
-    published = re.fullmatch('X4 UI SEAT_CORRECTION v=1 stage=published tick=9 slot='+POINTER+
+    published = re.fullmatch(f'X4 UI SEAT_CORRECTION v=1 stage=published tick={first_tick} slot='+POINTER+
                              ' original='+POINTER+' scratch='+POINTER+' raw='+HEX_POSE+
                              ' corrected='+HEX_POSE+r'\n', rows[1][1])
-    restored = re.fullmatch('X4 UI SEAT_CORRECTION v=1 stage=published_restore tick=9 slot='+POINTER+
+    restored = re.fullmatch(f'X4 UI SEAT_CORRECTION v=1 stage=published_restore tick={first_tick} slot='+POINTER+
                             ' original='+POINTER+' observed='+POINTER+r'\n', rows[2][1])
     if not ready or not published or not restored or not close:
         errors.append('invalid correction ready/terminal grammar, generation or restored state')
@@ -128,11 +136,17 @@ def parse_ui_seat_correction_evidence(lines, slot, enabled, overlay, fork, query
             not 0x10000 <= low < high <= 0x0000800000000000 or high-low < 64):
         errors.append('correction target or authenticated stack range invalid')
     frames = overlay.get('frames', [])
+    render_count = 0
+    if render is not None:
+        if render.get('pass') is not True or render.get('lease_count') != callback_count:
+            errors.append('correction render mode requires accepted GameRender leases')
+        render_count = render.get('lease_count', 0)
+    refill_count = render.get('camera_refill_count', 0) if render else 0
     if (counts['applies'] > 0xffffffff or counts['restores'] > 0xffffffff or
             not 1 <= counts['calls'] <= 0xffffffffffffffff or
             counts['calls'] != scope.get('counts', {}).get('open') or
-            counts['applies'] != sum(frame.get('applies', -1) for frame in frames) or
-            counts['restores'] != sum(frame.get('restores', -1) for frame in frames) or
+            counts['applies'] != sum(frame.get('applies', -1) for frame in frames) + render_count + refill_count or
+            counts['restores'] != sum(frame.get('restores', -1) for frame in frames) + render_count + refill_count or
             counts['applies'] != counts['restores'] or
             counts['rows'] != min(counts['calls'], 2) or len(rows)-4 != counts['rows']):
         errors.append('correction counters disagree with first-two samples, open calls or overlay transitions')
@@ -193,9 +207,14 @@ def parse_ui_seat_correction_evidence(lines, slot, enabled, overlay, fork, query
         samples.append(sample)
         seconds = struct.unpack('<d', int(time, 16).to_bytes(8, 'little'))[0]
         passive = open_samples[index] if index < len(open_samples) else {}
-        if (not 9 <= sample['last_move'] <= 168 or not math.isfinite(seconds) or seconds < 0 or
+        phase_valid = passive.get('move') == 1 and passive.get('render') == 0
+        if render is not None:
+            # The outer GameRender depth is authenticated by the provider but
+            # is not encoded in the legacy UI callback depth fields.
+            phase_valid = phase_valid or passive.get('move') == 0
+        if (not first_tick <= sample['last_move'] <= last_tick or not math.isfinite(seconds) or seconds < 0 or
                 any(sample[key] != passive.get(key) for key in ('ordinal', 'last_move', 'caller', 'time_bits')) or
-                passive.get('mode') != 1 or passive.get('move') != 1 or passive.get('render') != 0 or
+                passive.get('mode') != 1 or not phase_valid or
                 passive.get('after_valid') != 1 or raw != passive.get('after')):
             errors.append('correction sample contradicts first open raw-stock call or native mode/time bounds')
         try:
@@ -206,12 +225,14 @@ def parse_ui_seat_correction_evidence(lines, slot, enabled, overlay, fork, query
     result['samples'] = samples
     def positions(prefix):
         return [i for i, line in enumerate(lines) if line.startswith(prefix)]
-    bind = positions('X4 UI LIVE_POSE v=1 stage=bind tick=9 ')
-    during = positions('X4 UI SEAT_POSE v=1 tick=9 stage=during role=p1 ')
-    during_view = positions('X4 UI VIEWSTATE v=1 tick=9 stage=during ')
-    after = positions('X4 UI SEAT_POSE v=1 tick=9 stage=after role=p1 ')
-    scope_close = positions('X4 UI POSE_SCOPE v=1 stage=close tick=168 ')
-    final_frame = positions('X4 UI OVERLAY FRAME v=3 tick=168 ordinal=160 count=160 ')
+    bind = positions(f'X4 UI LIVE_POSE v=1 stage=bind tick={first_tick} ')
+    during = positions(f'X4 UI SEAT_POSE v=1 tick={first_tick} stage=during role=p1 ')
+    during_view = positions(f'X4 UI VIEWSTATE v=1 tick={first_tick} stage=during ')
+    after = positions(f'X4 UI SEAT_POSE v=1 tick={first_tick} stage=after role=p1 ')
+    scope_close = positions(f'X4 UI POSE_SCOPE v=1 stage=close tick={last_tick} ')
+    final_frame = positions(f'X4 UI OVERLAY FRAME v=3 tick={last_tick} ordinal={callback_count} count={callback_count} ')
+    if render is not None:
+        final_frame = [i for i, line in enumerate(lines) if line == render.get('observation_close_receipt', render.get('close_receipt'))]
     if (any(len(values) != 1 for values in (bind, during, during_view, after, scope_close, final_frame)) or
             not bind[0] < rows[0][0] < rows[1][0] < during[0] < during_view[0] < rows[2][0] < after[0] or
             not scope_close[0] < rows[3][0] <= rows[-1][0] < final_frame[0]):
@@ -225,7 +246,7 @@ def parse_ui_seat_correction_evidence(lines, slot, enabled, overlay, fork, query
     return result
 
 
-def collect_ui_seat_correction_evidence(profile, stderr, slot, enabled, overlay, fork, query, legacy, scope):
+def collect_ui_seat_correction_evidence(profile, stderr, slot, enabled, overlay, fork, query, legacy, scope, render=None):
     paths = {'engine_sha256': profile/'engine-output.log', 'stderr_sha256': stderr,
              'native_fd_sha256': profile/'controller-lifecycle.log'}
     hashes, lines, errors = {}, [], []
@@ -238,11 +259,12 @@ def collect_ui_seat_correction_evidence(profile, stderr, slot, enabled, overlay,
         except (OSError, UnicodeError) as error:
             if (enabled and slot == 2) or key == 'stderr_sha256':
                 errors.append('correction input unavailable: '+str(error))
-    result = parse_ui_seat_correction_evidence(lines, slot, enabled, overlay, fork, query, legacy, scope)
+    result = parse_ui_seat_correction_evidence(lines, slot, enabled, overlay, fork, query, legacy, scope, render)
     result.update(hashes)
+    proofs = (overlay, fork, query, legacy, scope) + ((render,) if render is not None else ())
     if enabled and slot == 2:
         for key in paths:
-            if key not in hashes or any(proof.get(key) != hashes[key] for proof in (overlay, fork, query, legacy, scope)):
+            if key not in hashes or any(proof.get(key) != hashes[key] for proof in proofs):
                 errors.append('correction proof refers to different or missing '+key)
     result['errors'].extend(errors)
     if errors:

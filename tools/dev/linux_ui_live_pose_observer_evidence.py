@@ -4,6 +4,7 @@ The entry forwarder remains resident through process discard. A valid closed
 capture is not object lifetime/ABA protection, reader exclusion or UI readiness.
 """
 import hashlib
+from linux_ui_session_budget import budget_from_overlay
 import re
 
 NUMBER = r'(0|[1-9][0-9]{0,19})'
@@ -12,7 +13,7 @@ PHASES = ('move', 'render', 'both', 'other')
 MODES = ('mode0', 'mode1', 'mode_other')
 
 
-def parse_ui_live_pose_observer_evidence(stderr_lines, slot, enabled, overlay, fork, query):
+def parse_ui_live_pose_observer_evidence(stderr_lines, slot, enabled, overlay, fork, query, render=None):
     result = {
         'pass': False,
         'enabled': enabled and slot == 2,
@@ -26,6 +27,13 @@ def parse_ui_live_pose_observer_evidence(stderr_lines, slot, enabled, overlay, f
         'foreign_calls': 'unobserved',
     }
     errors = result['errors']
+    try:
+        budget = budget_from_overlay(overlay)
+    except ValueError as error:
+        errors.append(str(error))
+        budget = {'callbacks':160, 'last':168}
+    callback_count, last_tick = budget['callbacks'], budget['last']
+    first_tick = budget.get('first', 9)
     rows = [(i, line) for i, line in enumerate(stderr_lines) if 'X4 UI LIVE_POSE' in line]
     result['raw_native_receipts'] = [line for _, line in rows]
     activation = [(i, line) for i, line in enumerate(stderr_lines) if 'X4 LIVE POSE PRELOAD' in line]
@@ -43,7 +51,7 @@ def parse_ui_live_pose_observer_evidence(stderr_lines, slot, enabled, overlay, f
     if not 2 <= len(rows) <= 34 or any(len(line) >= 1024 or not line.endswith('\n') for _, line in rows):
         errors.append('missing, duplicate, truncated or oversized live-pose receipts')
         return result
-    bind = re.fullmatch(r'X4 UI LIVE_POSE v=1 stage=bind tick=9 target='+POINTER+
+    bind = re.fullmatch(f'X4 UI LIVE_POSE v=1 stage=bind tick={first_tick} target='+POINTER+
                         r' lifetime=pointer_only\n', rows[0][1])
     if not bind:
         errors.append('invalid live-pose bind grammar')
@@ -55,7 +63,7 @@ def parse_ui_live_pose_observer_evidence(stderr_lines, slot, enabled, overlay, f
     if len(activation) != 1 or not activation[0][0] < rows[0][0]:
         errors.append('live-pose preload activation must precede bind')
     names = ('started', 'returned', 'nested', 'rows', 'omitted', *PHASES, *MODES)
-    close = re.fullmatch(r'X4 UI LIVE_POSE v=1 stage=close tick=168 '+
+    close = re.fullmatch(rf'X4 UI LIVE_POSE v=1 stage=close tick={last_tick} '+
                          ' '.join(key+'='+NUMBER for key in names)+
                          r' foreign=unobserved closed=1 lifetime=pointer_only\n', rows[-1][1])
     if not close:
@@ -74,7 +82,7 @@ def parse_ui_live_pose_observer_evidence(stderr_lines, slot, enabled, overlay, f
         errors.append('live-pose started/returned/sample/omitted or phase/mode accounting mismatch')
     samples = []
     observed = {key: 0 for key in (*PHASES, *MODES)}
-    last_move = 9
+    last_move = first_tick
     for index, (_, line) in enumerate(rows[1:-1]):
         sample = re.fullmatch(r'X4 UI LIVE_POSE v=1 stage=sample index='+NUMBER+
                               ' last_move='+NUMBER+' caller='+POINTER+r' time=([0-9a-f]{16}) mode='+NUMBER+
@@ -89,7 +97,7 @@ def parse_ui_live_pose_observer_evidence(stderr_lines, slot, enabled, overlay, f
         for key in keys[:-2]:
             if key != 'time_bits':
                 values[key] = int(values[key], 16 if key == 'caller' else 10)
-        if (values['index'] != index or not last_move <= values['last_move'] <= 168 or
+        if (values['index'] != index or not last_move <= values['last_move'] <= last_tick or
                 values['mode'] > 255 or values['move'] > 0xffffffff or values['render'] > 0xffffffff or
                 not 0x10000 <= values['caller'] <= 0x00007fffffffffff):
             errors.append('live-pose sample index, generation, mode, depth or caller outside native bounds')
@@ -107,17 +115,22 @@ def parse_ui_live_pose_observer_evidence(stderr_lines, slot, enabled, overlay, f
                 sum(totals[key]-observed[key] for key in group) != totals['omitted']):
             errors.append('live-pose retained samples contradict aggregate phase/mode counts')
     if (overlay.get('pass') is not True or type(overlay.get('callback_count')) is not int or
-            overlay.get('callback_count') != 160 or fork.get('pass') is not True or query.get('pass') is not True or
+            overlay.get('callback_count') != callback_count or fork.get('pass') is not True or query.get('pass') is not True or
             query.get('attempt_complete') is not True):
-        errors.append('live-pose requires accepted overlay160, fork and completed seat-query evidence')
+        errors.append('live-pose requires accepted bounded overlay, fork and completed seat-query evidence')
     query_rows = query.get('raw_native_receipts', [])
     completed = [i for i, line in enumerate(stderr_lines) if len(query_rows) == 3 and line == query_rows[-1]]
     during = [i for i, line in enumerate(stderr_lines)
-              if line.startswith('X4 UI SEAT_POSE v=1 tick=9 stage=during role=p1 ')]
+              if line.startswith(f'X4 UI SEAT_POSE v=1 tick={first_tick} stage=during role=p1 ')]
     overlay_frames = [line for line in overlay.get('raw_native_receipts', [])
                       if line.startswith('X4 UI OVERLAY FRAME ')]
-    previous = [i for i, line in enumerate(stderr_lines) if len(overlay_frames) == 160 and line == overlay_frames[-2]]
-    final = [i for i, line in enumerate(stderr_lines) if len(overlay_frames) == 160 and line == overlay_frames[-1]]
+    previous = [i for i, line in enumerate(stderr_lines) if len(overlay_frames) == callback_count and line == overlay_frames[-2]]
+    final = [i for i, line in enumerate(stderr_lines) if len(overlay_frames) == callback_count and line == overlay_frames[-1]]
+    if render is not None:
+        if render.get('pass') is not True or render.get('lease_count') != callback_count:
+            errors.append('live-pose render mode requires accepted GameRender leases')
+        previous = [i for i, line in enumerate(stderr_lines) if line == render.get('final_frame_receipt')]
+        final = [i for i, line in enumerate(stderr_lines) if line == render.get('observation_close_receipt', render.get('close_receipt'))]
     if (len(completed) != 1 or len(during) != 1 or len(previous) != 1 or len(final) != 1 or
             not completed[0] < rows[0][0] < during[0] or
             not previous[0] < rows[1][0] <= rows[-1][0] < final[0]):
@@ -137,7 +150,7 @@ def parse_ui_live_pose_observer_evidence(stderr_lines, slot, enabled, overlay, f
     return result
 
 
-def collect_ui_live_pose_observer_evidence(profile, stderr, slot, enabled, overlay, fork, query):
+def collect_ui_live_pose_observer_evidence(profile, stderr, slot, enabled, overlay, fork, query, render=None):
     paths = {
         'engine_sha256': profile/'engine-output.log',
         'stderr_sha256': stderr,
@@ -153,11 +166,12 @@ def collect_ui_live_pose_observer_evidence(profile, stderr, slot, enabled, overl
         except (OSError, UnicodeError) as error:
             if (enabled and slot == 2) or key == 'stderr_sha256':
                 errors.append('live-pose input unavailable: '+str(error))
-    result = parse_ui_live_pose_observer_evidence(lines, slot, enabled, overlay, fork, query)
+    result = parse_ui_live_pose_observer_evidence(lines, slot, enabled, overlay, fork, query, render)
     result.update(hashes)
+    proofs = (overlay, fork, query) + ((render,) if render is not None else ())
     if enabled and slot == 2:
         for key in paths:
-            if key not in hashes or any(proof.get(key) != hashes[key] for proof in (overlay, fork, query)):
+            if key not in hashes or any(proof.get(key) != hashes[key] for proof in proofs):
                 errors.append('live-pose proof refers to different or missing '+key)
     result['errors'].extend(errors)
     if errors:

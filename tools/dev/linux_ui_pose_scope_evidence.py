@@ -4,6 +4,7 @@ Representatives are existing calls, identified by their global 1-based ordinal.
 They are not extra invocations or complete per-call scope/renderer coverage.
 """
 import hashlib
+from linux_ui_session_budget import budget_from_overlay
 import re
 
 from linux_ui_live_pose_observer_evidence import NUMBER, POINTER, PHASES, MODES
@@ -13,7 +14,7 @@ SAMPLE_FIELDS = ('last_move', 'caller', 'time_bits', 'mode', 'move', 'render',
                  'before_valid', 'after_valid', 'before', 'after')
 
 
-def parse_ui_pose_scope_evidence(stderr_lines, slot, enabled, legacy, overlay):
+def parse_ui_pose_scope_evidence(stderr_lines, slot, enabled, legacy, overlay, render=None):
     result = {
         'pass': False,
         'enabled': enabled and slot == 2,
@@ -24,6 +25,13 @@ def parse_ui_pose_scope_evidence(stderr_lines, slot, enabled, legacy, overlay):
         'reader_exclusion_proven': False,
     }
     errors = result['errors']
+    try:
+        budget = budget_from_overlay(overlay)
+    except ValueError as error:
+        errors.append(str(error))
+        budget = {'callbacks':160, 'last':168}
+    callback_count, last_tick = budget['callbacks'], budget['last']
+    first_tick = budget.get('first', 9)
     rows = [(i, line) for i, line in enumerate(stderr_lines) if 'X4 UI POSE_SCOPE' in line]
     result['raw_native_receipts'] = [line for _, line in rows]
     if type(enabled) is not bool or type(slot) is not int or slot not in (1, 2):
@@ -38,7 +46,7 @@ def parse_ui_pose_scope_evidence(stderr_lines, slot, enabled, legacy, overlay):
         errors.append('missing, duplicate, truncated or oversized pose-scope receipts')
         return result
     close_fields = (*SCOPES, 'opens', 'pauses', 'closes')
-    close = re.fullmatch(r'X4 UI POSE_SCOPE v=1 stage=close tick=168 '+
+    close = re.fullmatch(fr'X4 UI POSE_SCOPE v=1 stage=close tick={last_tick} '+
                          ' '.join(key+'='+NUMBER for key in close_fields)+r' state=outside\n', rows[-1][1])
     if not close:
         errors.append('invalid pose-scope terminal grammar, generation or final state')
@@ -50,14 +58,20 @@ def parse_ui_pose_scope_evidence(stderr_lines, slot, enabled, legacy, overlay):
     totals = legacy.get('counts', {})
     frames = overlay.get('frames', [])
     if (legacy.get('pass') is not True or overlay.get('pass') is not True or
-            overlay.get('callback_count') != 160 or len(frames) != 160):
+            overlay.get('callback_count') != callback_count or len(frames) != callback_count):
         errors.append('pose-scope requires accepted legacy observer and overlay160 evidence')
     if sum(counts[key] for key in SCOPES) != totals.get('started'):
         errors.append('pose-scope call counts do not equal legacy started calls')
-    if (counts['closes'] != 160 or counts['opens'] != counts['closes'] + counts['pauses'] or
+    render_count = 0
+    if render is not None:
+        if render.get('pass') is not True or render.get('lease_count') != callback_count:
+            errors.append('pose-scope render mode requires accepted GameRender leases')
+        render_count = render.get('lease_count', 0)
+    refill_count = render.get('camera_refill_count', 0) if render else 0
+    if (counts['closes'] != callback_count + render_count + refill_count or counts['opens'] != counts['closes'] + counts['pauses'] or
             counts['pauses'] != sum(frame.get('updates', -1) for frame in frames) or
-            counts['opens'] != sum(frame.get('applies', -1) for frame in frames) or
-            counts['pauses'] + counts['closes'] != sum(frame.get('restores', -1) for frame in frames)):
+            counts['opens'] != sum(frame.get('applies', -1) for frame in frames) + render_count + refill_count or
+            counts['pauses'] + counts['closes'] != sum(frame.get('restores', -1) for frame in frames) + render_count + refill_count):
         errors.append('pose-scope transitions do not match balanced overlay apply/pause/return receipts')
     representatives = []
     for _, line in rows[:-1]:
@@ -74,7 +88,7 @@ def parse_ui_pose_scope_evidence(stderr_lines, slot, enabled, legacy, overlay):
             if key not in ('scope', 'time_bits', 'before', 'after'):
                 sample[key] = int(sample[key], 16 if key == 'caller' else 10)
         if (not 1 <= sample['ordinal'] <= totals.get('started', 0) or
-                not 9 <= sample['last_move'] <= 168 or sample['mode'] > 255 or
+                not first_tick <= sample['last_move'] <= last_tick or sample['mode'] > 255 or
                 max(sample['move'], sample['render']) > 0xffffffff or
                 not 0x10000 <= sample['caller'] <= 0x00007fffffffffff):
             errors.append('pose-scope representative ordinal or native field bounds invalid')
@@ -132,7 +146,9 @@ def parse_ui_pose_scope_evidence(stderr_lines, slot, enabled, legacy, overlay):
     legacy_rows = legacy.get('raw_native_receipts', [])
     legacy_close = [i for i, line in enumerate(stderr_lines) if legacy_rows and line == legacy_rows[-1]]
     overlay_rows = overlay.get('raw_native_receipts', [])
-    last_frame = [i for i, line in enumerate(stderr_lines) if len(overlay_rows) == 161 and line == overlay_rows[-2]]
+    last_frame = [i for i, line in enumerate(stderr_lines) if len(overlay_rows) == callback_count+1 and line == overlay_rows[-2]]
+    if render is not None:
+        last_frame = [i for i, line in enumerate(stderr_lines) if line == render.get('observation_close_receipt', render.get('close_receipt'))]
     if (len(legacy_close) != 1 or len(last_frame) != 1 or
             not legacy_close[0] < rows[0][0] <= rows[-1][0] < last_frame[0]):
         errors.append('pose-scope receipts must follow legacy close and precede final overlay frame')
@@ -153,7 +169,7 @@ def parse_ui_pose_scope_evidence(stderr_lines, slot, enabled, legacy, overlay):
     return result
 
 
-def collect_ui_pose_scope_evidence(profile, stderr, slot, enabled, legacy, overlay):
+def collect_ui_pose_scope_evidence(profile, stderr, slot, enabled, legacy, overlay, render=None):
     paths = {'engine_sha256': profile/'engine-output.log', 'stderr_sha256': stderr,
              'native_fd_sha256': profile/'controller-lifecycle.log'}
     hashes, lines, errors = {}, [], []
@@ -166,11 +182,12 @@ def collect_ui_pose_scope_evidence(profile, stderr, slot, enabled, legacy, overl
         except (OSError, UnicodeError) as error:
             if (enabled and slot == 2) or key == 'stderr_sha256':
                 errors.append('pose-scope input unavailable: '+str(error))
-    result = parse_ui_pose_scope_evidence(lines, slot, enabled, legacy, overlay)
+    result = parse_ui_pose_scope_evidence(lines, slot, enabled, legacy, overlay, render)
     result.update(hashes)
+    proofs = (legacy, overlay) + ((render,) if render is not None else ())
     if enabled and slot == 2:
         for key in paths:
-            if key not in hashes or any(proof.get(key) != hashes[key] for proof in (legacy, overlay)):
+            if key not in hashes or any(proof.get(key) != hashes[key] for proof in proofs):
                 errors.append('pose-scope proof refers to different or missing '+key)
     result['errors'].extend(errors)
     if errors:

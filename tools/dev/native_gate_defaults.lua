@@ -65,7 +65,12 @@ D.ON={
  {'native_gate_world_hash_schema','WORLD_IMPORTED_2','native_gate_world_hash_stride','census with the enriched navigation fields'},
  {'native_gate_world_hash_shields','canonical','native_gate_world_hash_stride','census shields in canonical form'},
  {'native_gate_path_determinism',3,'native_gate_serial_pathing','navigation stamps and pathing budget fixed'},
- {'native_gate_travel_snapshot',true,'native_gate_serial_pathing native_gate_path_determinism','wingmen read a per-pass travel snapshot'},
+ -- Pathing batch jobs inline on the pathing thread, in batch order (lockstep_travel_determinism.h), since 11 Nov. The parallel
+ -- jobs with a travel snapshot (native_gate_travel_snapshot, the default before) freeze one read between agents; another one
+ -- is left: on the eight-slot session a corvette and its five escorts near a far start parted between two clients that had
+ -- loaded the same save, at another tick each run (two runs of two), and stayed equal in three runs of three with the jobs
+ -- inline. The pass took 7.5 ms instead of 6.3 ms there (two X4 on one PC).
+ {'native_gate_travel_determinism',true,'native_gate_serial_pathing native_gate_path_determinism','pathing batch jobs inline in batch order'},
  {'native_gate_path_budget',100,'native_gate_serial_pathing','pathing round robin by count, not by clock'},
  {'native_gate_path_transforms','sim','native_gate_serial_pathing','pathing reads simulation transforms, not view caches'},
  {'native_gate_body_pose','sim','','new physics bodies take simulation poses'},
@@ -98,7 +103,9 @@ D.ON={
  {'native_gate_player_timer',true,'','player timers on game time'},
  {'native_gate_ship_sound_rng','split','','ship sounds on their own RNG word'},
  {'native_gate_warp_rng',true,'native_gate_world_identities','warp draws keyed'},
- {'native_gate_tempzone_order','order','native_gate_world_identities native_gate_serial_pathing native_gate_travel_snapshot','temporary zones in a fixed order'},
+ -- With the inline jobs too (complete command-list splices either way): a hot join needs the temporary zones' portable order
+ -- (hjs1, 11 Nov, without it: 17 objects more on the joiner at the first step after the join).
+ {'native_gate_tempzone_order','order','native_gate_world_identities native_gate_serial_pathing native_gate_travel_determinism','temporary zones in a fixed order'},
  {'native_gate_build_rng',true,'native_gate_world_identities','build storage reschedules keyed'},
  {'native_gate_economy_load_rng',true,'native_gate_world_identities','economy schedule keyed at the load'},
  {'native_gate_loadout_order','canonical','','restock wishes in macro-id order'},
@@ -113,6 +120,7 @@ D.ON={
  {'native_gate_fp_env','default','','MXCSR 0x1f80 on every X4 thread'},
  {'native_gate_cutscene_ready',true,'native_gate_serial_pathing','cutscene readiness at the join'},
  {'native_gate_speak_timer',true,'','speak timers on game time'},
+ {'native_gate_speech_local',true,'native_gate_speak_timer','spoken lines only on the clients they are about: none while a joiner replays, none away from slot 1 sector'},
  {'native_gate_speech_clock',true,'','the unpaused clock that times speech lines starts the session at one value on every client'},
  {'native_gate_fast_reads',true,'','small reads by a guarded copy (same values, faster)'},
  {'native_gate_tick_hz',30,'','30 simulation steps per second (the relay runs --tick-hz 30)'},
@@ -131,6 +139,7 @@ D.ON={
  {'native_gate_view_points','players','','the players ships are the view points on every client'},
  {'native_gate_view_points_source','ship','native_gate_view_points','view points at the ships'},
  {'native_gate_view_triggers','block','native_gate_view_points','camera triggers blocked in the simulation'},
+ {'native_gate_view_cameras',true,'native_gate_view_points native_gate_view_triggers','cameras of simulation cutscenes are viewers on every client: a comm call films its speaker'},
  {'native_gate_view_ui','block','native_gate_view_points native_gate_runtime_ids_local','UI view queries blocked in the simulation'},
  {'native_gate_mass_traffic','sync','','mass traffic joined at the gate'},
  {'native_gate_region_pass','sync','','region passes joined at the gate'},
@@ -192,6 +201,11 @@ D.ON={
  {'native_gate_player_settings_per_slot',true,'native_gate_ui_replay~faction','each slot its own faction settings'},
  {'native_gate_missions_per_player',true,'native_gate_ui_replay~events native_gate_ui_replay~missions native_gate_script_rng native_gate_pilot_stock_slots','a mission slot k accepts runs as slot k player on every client (personal missions, first form)'},
  {'native_gate_missions_per_player_offers',true,'native_gate_missions_per_player','generic mission offers around every player, not only player 1'},
+ {'native_gate_pilot_present_walk_hud',true,'native_gate_pilot_present native_gate_pilot_foot_slots','no cockpit HUD and no radar on a player 2+ own screen while that player walks'},
+ {'native_gate_pilot_slots_post',true,'native_gate_pilot_stock_slots','a player 2+ own ship answers that player as its pilot while the game runs as that player (the autopilot check)'},
+ {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer run as that player'},
+ {'native_gate_ui_reload_hold',true,'native_gate_ui_guard','a window resize, a UI scale change or a controller-mode switch no longer ends a player session: X4 reloads its UI after the session'},
+ {'native_gate_ui_compslot',true,'native_gate_ui_guard native_gate_pilot_foot_slots','on foot a click works: the pilot seat (sit down) and the transporter terminal (its menu, Use Spacesuit) for every player'},
  {'native_gate_guidance_local',true,'native_gate_pilot_present native_gate_runtime_ids_local native_gate_script_rng native_gate_md_timed_rng','a client own guidance takes local runtime IDs'},
  {'native_gate_render_fps',60,'native_gate_lookahead native_gate_tick_hz native_gate_snapshot_sha native_gate_serial_pathing native_gate_radar_serial native_gate_render_rng_split native_gate_mass_traffic=sync native_gate_region_pass=sync native_gate_runtime_ids_local','render-only frames between the steps, up to 60 per second'},
  {'native_gate_render_camera','extrapolate','native_gate_render_fps','the camera moves in the render-only frames'},
@@ -209,8 +223,9 @@ D.CONFLICTS={
 -- The UI replay families (lockstep_pilot_inputs.h UIREP_FAMILY_*, docs/LOCKSTEP-REGISTRY.txt), in bit order, with what
 -- each needs beyond the replay itself: a key that must be on, or a guard group.
 D.FAMILIES={'travel','target','orders','autopilot','dock','weapons','missiles','queue','events','flight','trade','missions','build',
- 'assets','conversation','faction'}
-D.FAMILY_NEEDS={missiles='native_gate_pilot_fire',missions='guard:missions',conversation='guard:conversation',build='guard',assets='guard',faction='guard'}
+ 'assets','conversation','faction','inventory'}
+D.FAMILY_NEEDS={missiles='native_gate_pilot_fire',missions='guard:missions',conversation='guard:conversation',build='guard',assets='guard',faction='guard',
+ inventory='guard'}
 -- Diagnostics and measurement: off by default (they only log, capture, trace, profile, watch or measure). {'key','why'}.
 D.DIAGNOSTIC={
  {'native_gate_navmesh_post_observe','Linux navmesh post attempts during startup and a bounded live tick window'},
@@ -278,6 +293,7 @@ D.DIAGNOSTIC={
  {'native_gate_traffic_rows','traffic rows'},
  {'native_gate_view_rows','view point rows'},
  {'native_gate_viewpoint_policy_rows','view point policy rows'},
+ {'native_gate_viewpoint_policy_rows_from','view point policy rows: the first tick of the window (default 1)'},
  {'native_gate_highway_rows','highway rows'},
  {'native_gate_highway_rows_from','highway rows start'},
  {'native_gate_highway_trace','highway fixture pose trace'},
@@ -310,10 +326,13 @@ D.DIAGNOSTIC={
  {'native_gate_pilot_first_stores','pilot slots: an absent slot first store from the canonical block at the take, every first store carried to a hot joiner'},
  {'native_gate_pilot_seat_live_pose','a late seat (hot join handover, H-1) reads the slot ship pose live on every client, past its view caches'},
  {'native_gate_pilot_dump_handover','pilot slot ship, controller, agent and solver bytes from H-1 to H+N around a handover (diagnostic)'},
+ {'native_gate_pilot_spawn_rows','each slot ship spawn time bits with its PILOT_SHIPS row (diagnostic)'},
  {'native_gate_join_passes_admit','hot joiner: the synced passes, stand-ins and travel snapshot of T at its admission (diagnostic)'},
  {'native_gate_join_ids','hot joiner saved objects at the session runtime IDs'},
  {'native_gate_join_buildp','hot join build processor busy rows (diagnostic)'},
  {'native_gate_join_view_skip','hot join view-bank writes a joiner leaves out (diagnostic)'},
+ {'native_gate_join_anis_state','hot join: the animation units of a joiner take the state, queue and waiting listeners of the session (ANIS, ANIL)'},
+ {'native_gate_join_anis','hot join: the part animation sequences of a joiner take the start times of the session (ANIS)'},
  {'native_gate_join_viewl','hot join: a joiner runs the live and player view handlers where its flags differ (VIEWL)'},
  {'native_gate_join_shpw','hot join: a joiner takes the session ship words a load leaves at defaults (SHPW)'},
  {'native_gate_join_shpw_words','hot join experiment: the SHPW words the admission writes (bit k = word k)'},
@@ -346,9 +365,14 @@ D.DIAGNOSTIC={
  {'native_gate_join_body_make','hot join: the IDs of physics bodies the session has and the joiner lacks at its admission go off the shared route when X4 makes them (BODY make)'},
  {'native_gate_join_grav_dead','hot join: the joiner radar lists keep the contacts destroyed before the join until the next scan (GRAVC dead)'},
  {'native_gate_join_hold_fire','hot join: the joiner weapons make no shot between the load and the admission (needs native_gate_weapon_fire_rng)'},
+ {'native_gate_join_hold_bullets','hot join: the joiner bullets do not move between the load and the admission (needs native_gate_bullet_rng or native_gate_bullet_diag)'},
+ {'native_gate_join_keep_stamps','hot join: the republication of the joiner first step leaves the navigation stamps the session did not write'},
  {'native_gate_join_mute_load_npcs','hot join: the joiner MD does not hear the NPC created events of its load before the admission'},
  {'native_gate_join_cue_ids','hot join: the joiner loaded MD cue instances take the runtime IDs the join save names (missions, offers)'},
  {'native_gate_join_shoot_far','hot join: SHOOT also writes the session last shot time where the joiner gun was reset by its load (class A)'},
+ {'native_gate_join_shape_hold','hot join: every physics compound refreshed from the poses of the join step on every client and held for one step'},
+ {'native_gate_join_attn_arrive','hot join: with ATTN set, a level written up to 9 or more is made by SetAttention from the load level (the compound and nav helper of level 9)'},
+ {'native_gate_join_attn_leave','hot join: with ATTN set, a level written down from 9 or more is made by SetAttention from the load level (the nav helper released as on the session)'},
  {'native_gate_join_attn_states','hot join: with ATTN set, SetAttention at the admission for every object whose per-level state is apart there and settled on the session, its allocations on the load list'},
  {'native_gate_join_gravn_extra','hot join: GRAVN keeps the joiner zone groups the session adds later in the neighbour lists (GRAVN extra)'},
  {'native_gate_join_shgr','hot join: a joiner takes the session shield recharge groups of docked ships its load restamps (SHGR)'},
@@ -441,12 +465,22 @@ D.DIAGNOSTIC={
 }
 -- Neither a feature default nor a diagnostic: fixtures, experiments, alternatives and cross-platform keys. {'key','why'}.
 D.EXCLUDED={
+ {'native_gate_linux_ui_camera_refill','explicit disposable guest camera refill lease; never a session default'},
+ {'native_gate_shared_identity_t40','opt-in disposable common identity setup, never a session default'},
+ {'native_gate_linux_ui_session_frames','explicit finite disposable session budget; never a session default'},
+ {'native_gate_linux_external_camera_probe','disposable Linux camera experiment; never a session default'},
+ {'native_gate_linux_presentation_fork_probe','disposable Linux presentation identity experiment; never a session default'},
+ {'native_gate_linux_presentation_probe','read-only Linux presentation diagnostic; never a session default'},
+ {'native_gate_linux_ui_callback_observer','Linux callback diagnostic; never a session default'},
+ {'native_gate_linux_ui_render_lease','disposable guest GameRender lease; never a session default'},
+ {'native_gate_linux_startup_phases','experimental common startup epoch; never a session default'},
  {'native_gate_linux_ui_seat_correction','disposable coupled Move seat correction; never a session default'},
  {'native_gate_linux_ui_live_pose_observer','disposable guest pose-entry observation; resident forwarder, never a session default'},
  {'native_gate_linux_ui_seat_query_probe','disposable parent-worker stock seat query; may allocate cache, never a session default'},
  {'native_gate_linux_ui_plan_kick_probe','disposable guest plan handler and TLS RNG diagnostic; never a session default'},
  {'native_gate_linux_ui_overlay_callbacks','disposable bounded guest UI callback count; never a session default'},
  {'native_gate_linux_ui_overlay_probe','disposable Linux experiment: bounded guest UI callbacks, never a session default'},
+ {'native_gate_scan_long','long-range scan for every player (the mode for players 2+, charge on the secondary trigger, send at its release): built 11 Nov, first run owed; a session default after it'},
  {'native_gate_ui_exports','generic UI write guard (lockstep_ui_exports.h): opt-in beside native_gate_ui_guard (tools/build_soak_overlay.py --ui-guard)'},
  {'native_gate_ui_exports_block','generic UI write guard: the exports it refuses'},
  {'native_gate_ui_relay','generic UI write guard: exports relayed through the ffi section (--ui-relay)'},
@@ -503,7 +537,7 @@ D.EXCLUDED={
  {'native_gate_ai_rng','excluded by the keyed script RNG'},
  {'native_gate_interrupt_rng','excluded by the keyed script RNG'},
  {'native_gate_boot_rng_anchor','boot RNG anchor experiment'},
- {'native_gate_travel_determinism','alternative to travel_snapshot (mutually exclusive)'},
+ {'native_gate_travel_snapshot','parallel pathing jobs with a per-pass travel snapshot: the alternative to the default native_gate_travel_determinism (mutually exclusive)'},
  {'native_gate_nav_key','Linux gate only'},
  {'native_gate_warp_exit','Linux gate only: the gate exit sum in the Windows order (Windows is that order); a Linux default after a 0 W vs L census'},
  {'native_gate_flight_limits','Linux gate only: the engine parameters limit words with the hoisted reciprocal (Windows is that order)'},
@@ -559,7 +593,7 @@ D.TUNING={
 }
 -- The keys a session config supplies itself (no default).
 D.SESSION={'native_gate_test','native_gate_clients','native_gate_player_identity_plan','native_gate_relay_host','native_gate_arm_timeout_ms',
- 'native_gate_arm_at',
+ 'native_gate_arm_at','native_gate_story',
  'native_gate_input_priority','native_gate_defaults'}
 -- Stop reasons the probe names in its info line (docs/LOCKSTEP-REGISTRY.txt, section 4; tests check them).
 D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or loading at start',[3]='load or state mismatch',

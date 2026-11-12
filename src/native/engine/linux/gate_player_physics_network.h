@@ -11,6 +11,7 @@
  * is implied, and all native storage remains resident until process exit. */
 static int keyboard_probe_independent_after_path_join(uint64_t generation);
 static int keyboard_probe_independent_neutral(void);
+static int keyboard_probe_after_path_join(void);
 static uint64_t player_network_last = 4;
 static unsigned player_network_held;
 static unsigned player_network_busy;
@@ -134,7 +135,7 @@ static void player_physics_network_apply_p2(uint64_t generation, const stock_inp
     }
     player_network_busy = 1;
     player_network_input input = {generation, record};
-    if (generation == FWRR_FIRST_GENERATION) {
+    if (!player_startup()->version && generation == player_startup()->take) {
         player_physics_begin_with_input(1, player_network_update_input, &input);
     } else {
         player_physics_replay_begin_with_input(generation, player_network_update_input, &input);
@@ -146,8 +147,33 @@ static void player_physics_network_apply_p2(uint64_t generation, const stock_inp
 static void player_physics_network_begin(uint64_t generation) {
     if (player_recurring_physics != 3 || !player_recurring_physics_entered())
         player_recurring_fatal("network_frame_admission");
-    if (generation > FWRR_FIRST_GENERATION) {
+    const player_startup_phases *phase = player_startup();
+    if (phase->version && generation == phase->take) {
+        /* Take and publish the private controller, but do not Update or
+         * publish either player's input before the common apply epoch. */
+        player_physics_prepare_with_input(1, NULL, NULL, 1);
+        player_physics_replay_last = phase->apply - 1;
+        player_network_last = phase->apply - 1;
+        return;
+    }
+    if (generation > phase->take) {
         player_physics_frame_record(generation, "begin");
+    }
+    if (phase->version && generation < phase->apply) {
+        lifecycle_discard_require(player_physics_identity() && !player_physics_upkeep_busy &&
+            player_physics_upkeep_calls == 1 && keyboard_probe_after_path_join(), "physics_preapply_admission");
+        player_context_adapter_outside(generation, PLAYER_CONTEXT_FRAME_BEGIN);
+        player_physics_upkeep_calls = 0;
+        player_context_adapter_scope_begin(generation);
+        player_physics_motion("before");
+        player_physics_observe_body("before");
+        player_context_adapter_scope_end(generation);
+        char message[160];
+        snprintf(message, sizeof message,
+                 "X4LAN LIFECYCLE_DISCARD physics=preapply generation=%llu update=0\n",
+                 (unsigned long long)generation);
+        lifecycle_discard_write(message);
+        return;
     }
     if (!keyboard_probe_independent_after_path_join(generation) || player_network_last != generation ||
         player_network_busy || !player_physics_identity()) {
@@ -156,6 +182,13 @@ static void player_physics_network_begin(uint64_t generation) {
 }
 
 static void player_physics_network_finish(uint64_t generation, unsigned final) {
+    const player_startup_phases *phase = player_startup();
+    if (phase->version && generation < phase->apply) {
+        lifecycle_discard_require(!final && !player_network_busy && player_physics_identity(),
+                                  "network_preapply_tail");
+        player_physics_frames_finish(generation, 0);
+        return;
+    }
     lifecycle_discard_require(player_network_last == generation && !player_network_busy,
                               "network_tail_sequence");
     if (final) {

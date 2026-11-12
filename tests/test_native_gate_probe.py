@@ -2290,7 +2290,7 @@ class SnapshotProbeTests(unittest.TestCase):
           gate.region_camera=function(m) return 1 end
           gate.region_camera_frame=function(t) return 1 end
           gate.region_camera_status=function() return 'mode=view policy=sector' end
-          gate.region_camera_policy_rows=function(t,...) assert(select('#',...)==0);armed[#armed+1]=t;return 1 end
+          gate.region_camera_policy_rows=function(t,from,...) assert(select('#',...)==0 and from==0);armed[#armed+1]=t;return 1 end
           local rows={'index=0 tick=1 site=7 two=1 key=0000000000000000 runtime=777 mover=1','index=1 tick=1 site=102 two=0 key=0000000000000000 runtime=888 mover=0'}
           gate.region_camera_policy_row=function(i) return rows[i+1] end
         """)

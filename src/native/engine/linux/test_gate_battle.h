@@ -115,6 +115,9 @@ static void test_battle_linux(void) {
     assert(!strncmp(tbt_out,expect,strlen(expect)));
     assert(strstr(tbt_out,";previous=200000002000000120000002") && strstr(tbt_out,";hull_bits=40934a0000000000;shield=") &&
            strstr(tbt_out,";steering=1:") && strstr(tbt_out,";nav_refresh=4041000000000000:3"));
+    /* with canonical shields the row reads the shield at the thread's game time (a ship without a group: none either way) */
+    {const double at=5.0;shield_canonical=1;lxb_time_override=&at;tbt_nil=0;assert(lua_actor(NULL)==1 && !tbt_nil && strstr(tbt_out,";shield=none"));
+     lxb_time_override=NULL;shield_canonical=0;}
     tbt_args[1]=0x9002;tbt_args[2]=3;tbt_nil=0;assert(lua_actor(NULL)==2 && tbt_nil); /* not enrolled */
     /* The refresh: GetShieldPercent at the UI thread's game time, its percent in range (the pin: test_battle_elf). */
     const double now=123.25;lxb_time_override=&now;lxb_percent_override=tbt_percent;tbt_percent_value=50.0f;tbt_percent_time=0;lxb_pin_skip=1;

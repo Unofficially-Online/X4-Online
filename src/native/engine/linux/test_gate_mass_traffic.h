@@ -36,10 +36,19 @@ static void test_mass_traffic_linux(void) {
     lmt_traffic.mode=LMT_OBSERVE;tmt_traffic_task[LX_MT_TRAFFIC_PARKED]=0;
     assert(lmt_join(13) && lmt_traffic.busy==2 && lmt_traffic.joins==2);
     lmt_traffic.mode=LMT_SYNC;tmt_traffic_task[LX_MT_TRAFFIC_PARKED]=1;
-    /* Stride 2: after tick 14 (tick 15 is off the stride) both parked bytes are held at 0, the next join gives them back. */
-    lmt_stride=2;assert(lmt_join(14) && !tmt_traffic_task[LX_MT_TRAFFIC_PARKED] && !tmt_region_task[LX_MT_REGION_PARKED]);
+    /* Quiet-point observers must see real parked bytes, including even ticks.
+     * Only the later preparation suppresses the off-stride next frame. */
+    lmt_stride=2;assert(lmt_join(14));
+    assert(tmt_traffic_task[LX_MT_TRAFFIC_PARKED] && tmt_region_task[LX_MT_REGION_PARKED]);
+    assert(!lmt_traffic.held && !lmt_region.held);
+    assert(lmt_prepare_next(14) && !tmt_traffic_task[LX_MT_TRAFFIC_PARKED] && !tmt_region_task[LX_MT_REGION_PARKED]);
     assert(lmt_traffic.held && lmt_region.held);
     assert(lmt_join(15) && tmt_traffic_task[LX_MT_TRAFFIC_PARKED]==1 && lmt_stride_skips==1 && !lmt_traffic.held);
+    assert(lmt_prepare_next(15) && tmt_traffic_task[LX_MT_TRAFFIC_PARKED]);
+    lmt_worker_wakes=lmt_worker_waits;
+    assert(!lmt_prepare_next(16) && !strcmp(lmt_stage,"stride_worker_not_parked"));
+    assert(tmt_traffic_task[LX_MT_TRAFFIC_PARKED] && !lmt_traffic.held);
+    ++lmt_worker_waits;lmt_failures=0;
     lmt_stride=1;
     /* A pass that never parks fails closed. */
     tmt_region_task[LX_MT_REGION_PARKED]=0;unsigned saved=lmt_region.timeout_ms;lmt_region.timeout_ms=30;

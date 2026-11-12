@@ -4,6 +4,7 @@ This validates one two-ship attempt, not read-only behavior, pose installation,
 rendered camera selection, gameplay readiness or safe resumption.
 """
 import hashlib
+from linux_ui_session_budget import budget_from_overlay
 import re
 
 from linux_ui_seat_pose_evidence import collect_ui_seat_pose_evidence, pose_flags
@@ -17,6 +18,13 @@ def parse_ui_seat_query_evidence(stderr_lines, slot, enabled, overlay, fork, sea
               'attempt_complete': False, 'readiness_proven': False, 'read_only_proven': False,
               'pose_installation_proven': False, 'safe_resume_proven': False}
     errors = result['errors']
+    try:
+        budget = budget_from_overlay(overlay)
+    except ValueError as error:
+        errors.append(str(error))
+        budget = {'callbacks':160, 'last':168}
+    callback_count, last_tick = budget['callbacks'], budget['last']
+    first_tick = budget.get('first', 9)
     rows = [(i, line) for i, line in enumerate(stderr_lines) if 'X4 UI SEAT_QUERY' in line]
     result['raw_native_receipts'] = [line for _, line in rows]
     if type(enabled) is not bool or type(slot) is not int or slot not in (1, 2):
@@ -31,15 +39,15 @@ def parse_ui_seat_query_evidence(stderr_lines, slot, enabled, overlay, fork, sea
         errors.append('missing, duplicate, truncated or oversized seat-query receipts')
         return result
     if (overlay.get('pass') is not True or type(overlay.get('callback_count')) is not int or
-            overlay.get('callback_count') != 160 or fork.get('pass') is not True):
-        errors.append('seat-query requires accepted overlay160 and fork proofs')
+            overlay.get('callback_count') != callback_count or fork.get('pass') is not True):
+        errors.append('seat-query requires accepted bounded overlay and fork proofs')
     baseline = {sample['role']: sample for sample in seats.get('samples', [])
                 if sample['stage'] == 'before' and sample['observed']}
     if seats.get('pass') is not True or set(baseline) != {'p1', 'p2'}:
         errors.append('seat-query before-census identity binding unavailable')
     observations = []
     for (_, line), role in zip(rows[:2], ('p1', 'p2')):
-        grammar = (f'X4 UI SEAT_QUERY v=1 tick=9 role={role} return=1 '+
+        grammar = (f'X4 UI SEAT_QUERY v=1 tick={first_tick} role={role} return=1 '+
                    ' '.join(key+'='+POINTER for key in ('actor', 'ship', 'room'))+
                    ' position='+NUMBER+r' bank=([01]) rng_before=([0-9a-f]{16}) '+
                    r'rng_after=([0-9a-f]{16}) rng_restored=([0-9a-f]{16}) contexts_before='+NUMBER+
@@ -73,11 +81,11 @@ def parse_ui_seat_query_evidence(stderr_lines, slot, enabled, overlay, fork, sea
         sample['context_changed'] = (sample['contexts_before'], sample['hash_before']) != (
             sample['contexts_after'], sample['hash_after'])
         observations.append(sample)
-    complete = 'X4 UI SEAT_QUERY v=1 tick=9 stage=complete calls=2 p1_holds_released=1\n'
+    complete = f'X4 UI SEAT_QUERY v=1 tick={first_tick} stage=complete calls=2 p1_holds_released=1\n'
     if rows[-1][1] != complete:
         errors.append('seat-query completion, call count or hold release invalid')
     before_view = [(i, line) for i, line in enumerate(stderr_lines)
-                   if line.startswith('X4 UI VIEWSTATE v=1 tick=9 stage=before ')]
+                   if line.startswith(f'X4 UI VIEWSTATE v=1 tick={first_tick} stage=before ')]
     before_p2 = seats.get('raw_native_receipts', [])[1:2]
     during_p1 = seats.get('raw_native_receipts', [])[2:3]
     prior = [i for i, line in enumerate(stderr_lines) if before_p2 and line == before_p2[0]]

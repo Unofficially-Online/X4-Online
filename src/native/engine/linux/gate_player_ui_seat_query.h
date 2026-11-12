@@ -140,10 +140,10 @@ static int ui_seat_query_one(void *context, unsigned index) {
         snprintf(raw + 8 * i, 9, "%08x", result.raw[i]);
         snprintf(words + 8 * i, 9, "%08x", result.normalized[i]);
     }
-    dprintf(2, "X4 UI SEAT_QUERY v=1 tick=9 role=%s return=%u actor=%llx ship=%llx room=%llx "
+    dprintf(2, "X4 UI SEAT_QUERY v=1 tick=%llu role=%s return=%u actor=%llx ship=%llx room=%llx "
         "position=%u bank=%u rng_before=%016llx rng_after=%016llx rng_restored=%016llx "
         "contexts_before=%u hash_before=%s contexts_after=%u hash_after=%s finite=%d rigid=%d raw=%s words=%s\n",
-        index ? "p2" : "p1", (unsigned)returned, (unsigned long long)before.actor,
+        (unsigned long long)stats.issued, index ? "p2" : "p1", (unsigned)returned, (unsigned long long)before.actor,
         (unsigned long long)before.ship, (unsigned long long)before.room, before.position,
         ui_overlay_expected_bank(&ui_overlay_probe), (unsigned long long)rng_before, (unsigned long long)rng_after,
         (unsigned long long)*rng, context_before.count, context_before.hash, context_after.count,
@@ -160,12 +160,13 @@ static void ui_seat_query_once(void) {
     if (!ui_seat_query_enabled) return;
     unsigned char *tls = gate_tls_self();
     uint64_t *rng = tls ? gate_tls_rng(tls) : NULL;
-    if (ui_seat_query_attempted++ || stats.issued != 9 || ui_overlay_multi_count != 160 ||
+    if (ui_seat_query_attempted++ || stats.issued != player_startup()->presentation_first || !ui_overlay_full_window_selected() ||
         !rng || !ui_seat_query_environment(rng) || !player_target_hold_pins() || !site_ok(&seat))
         ui_overlay_die("seat_query_admission");
     const player_ui_seat_query_ops operations = {rng, ui_seat_query_p1_reference, ui_seat_query_one};
     if (!player_ui_seat_query_run(&operations)) ui_overlay_die("seat_query_sequence");
     ui_seat_query_complete = 1;
-    dprintf(2, "X4 UI SEAT_QUERY v=1 tick=9 stage=complete calls=2 p1_holds_released=1\n");
+    dprintf(2, "X4 UI SEAT_QUERY v=1 tick=%llu stage=complete calls=2 p1_holds_released=1\n",
+            (unsigned long long)stats.issued);
 }
 #endif

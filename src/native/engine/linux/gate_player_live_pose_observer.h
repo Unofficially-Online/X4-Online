@@ -10,6 +10,7 @@ static player_live_pose_api ui_live_pose_api;
 static player_live_pose_snapshot ui_live_pose_result;
 static player_live_pose_scope_snapshot ui_live_pose_scope_result;
 static uintptr_t ui_live_pose_target;
+static uint64_t ui_live_pose_generation;
 
 static int ui_live_pose_mark_begin(unsigned state) {
     return !ui_live_pose_enabled || (ui_live_pose_api.scope_begin && ui_live_pose_api.scope_begin(state));
@@ -19,9 +20,13 @@ static int ui_live_pose_mark(unsigned state) {
 }
 
 static int ui_live_pose_advance(unsigned completed, uint64_t generation) {
+    (void)completed;
     if (!ui_live_pose_enabled) return 1;
-    if (!completed) return generation == 9;
-    return ui_live_pose_api.tick && ui_live_pose_api.tick(generation);
+    if (generation == ui_live_pose_generation) return 1;
+    if (generation != ui_live_pose_generation + 1 || !ui_live_pose_api.tick ||
+        !ui_live_pose_api.tick(generation)) return 0;
+    ui_live_pose_generation = generation;
+    return 1;
 }
 
 static void ui_live_pose_bind(void) {
@@ -44,8 +49,9 @@ static void ui_live_pose_bind(void) {
         tid <= 0 || (unsigned long)tid > UINT32_MAX ||
         !ui_live_pose_api.bind((uint32_t)tid, sample.controller)) ui_overlay_die("live_pose_bind");
     ui_live_pose_target = sample.controller;
-    dprintf(2, "X4 UI LIVE_POSE v=1 stage=bind tick=9 target=%llx lifetime=pointer_only\n",
-            (unsigned long long)ui_live_pose_target);
+    ui_live_pose_generation = stats.issued;
+    dprintf(2, "X4 UI LIVE_POSE v=1 stage=bind tick=%llu target=%llx lifetime=pointer_only\n",
+            (unsigned long long)stats.issued, (unsigned long long)ui_live_pose_target);
 }
 
 static void ui_live_pose_hex(const unsigned char *bytes, char output[129]) {
@@ -77,17 +83,17 @@ static void ui_live_pose_close(void) {
                 (unsigned long long)row->time_bits, row->mode, row->move_depth, row->render_depth,
                 row->before_valid, row->after_valid, before, after);
     }
-    dprintf(2, "X4 UI LIVE_POSE v=1 stage=close tick=168 started=%llu returned=%llu nested=%llu "
+    dprintf(2, "X4 UI LIVE_POSE v=1 stage=close tick=%u started=%llu returned=%llu nested=%llu "
             "rows=%u omitted=%llu move=%llu render=%llu both=%llu other=%llu mode0=%llu mode1=%llu "
             "mode_other=%llu foreign=unobserved closed=1 lifetime=pointer_only\n",
-            (unsigned long long)ui_live_pose_result.started, (unsigned long long)ui_live_pose_result.returned,
+            (unsigned)player_startup()->presentation_arm + ui_overlay_multi_count, (unsigned long long)ui_live_pose_result.started, (unsigned long long)ui_live_pose_result.returned,
             (unsigned long long)ui_live_pose_result.nested, ui_live_pose_result.count,
             (unsigned long long)ui_live_pose_result.overflow, (unsigned long long)ui_live_pose_result.phase_move,
             (unsigned long long)ui_live_pose_result.phase_render, (unsigned long long)ui_live_pose_result.phase_both,
             (unsigned long long)ui_live_pose_result.phase_other, (unsigned long long)ui_live_pose_result.mode_zero,
             (unsigned long long)ui_live_pose_result.mode_one, (unsigned long long)ui_live_pose_result.mode_other);
     if (!ui_live_pose_api.scope_result(&ui_live_pose_scope_result) ||
-        ui_live_pose_scope_result.state != PLAYER_LIVE_POSE_OUTSIDE || ui_live_pose_scope_result.closes != 160 ||
+        ui_live_pose_scope_result.state != PLAYER_LIVE_POSE_OUTSIDE || ui_live_pose_scope_result.closes != ui_overlay_multi_count * (ui_game_render_enabled ? 2u : 1u) + ui_camera_refill_closed ||
         ui_live_pose_scope_result.opens != ui_live_pose_scope_result.closes + ui_live_pose_scope_result.pauses ||
         ui_live_pose_scope_result.counts[PLAYER_LIVE_POSE_OUTSIDE] +
             ui_live_pose_scope_result.counts[PLAYER_LIVE_POSE_OPEN] +
@@ -114,9 +120,9 @@ static void ui_live_pose_close(void) {
                     row->move_depth, row->render_depth, row->before_valid, row->after_valid, before, after);
         }
     }
-    dprintf(2, "X4 UI POSE_SCOPE v=1 stage=close tick=168 outside=%llu open=%llu paused=%llu changing=%llu "
+    dprintf(2, "X4 UI POSE_SCOPE v=1 stage=close tick=%u outside=%llu open=%llu paused=%llu changing=%llu "
             "opens=%llu pauses=%llu closes=%llu state=outside\n",
-            (unsigned long long)ui_live_pose_scope_result.counts[PLAYER_LIVE_POSE_OUTSIDE],
+            (unsigned)player_startup()->presentation_arm + ui_overlay_multi_count, (unsigned long long)ui_live_pose_scope_result.counts[PLAYER_LIVE_POSE_OUTSIDE],
             (unsigned long long)ui_live_pose_scope_result.counts[PLAYER_LIVE_POSE_OPEN],
             (unsigned long long)ui_live_pose_scope_result.counts[PLAYER_LIVE_POSE_PAUSED],
             (unsigned long long)ui_live_pose_scope_result.counts[PLAYER_LIVE_POSE_CHANGING],

@@ -59,6 +59,9 @@ import subprocess
 import sys
 import time
 
+import linux_view_ancestry_bundle as ancestry_bundle
+import linux_ui_camera_refill_bundle as camera_refill_bundle
+import linux_shared_identity_bundle as shared_identity_bundle
 from linux_gate_evidence import is_fatal_gate_message, validate_evidence
 from linux_player_physics_evidence import collect_physics_evidence
 try:
@@ -83,6 +86,12 @@ except ModuleNotFoundError as error:
         raise
     collect_camera_evidence = None
 
+from linux_ui_session_budget import (
+    budget_from_options, budget_from_overlay, expected_callbacks, resolve_session_options,
+)
+
+from linux_player_startup_phases import phases_from_options, startup_phases
+
 EXE_SHA = '113f73d74570084f6ce18a659b365009eccf579fb66dbabb5dad2b1718045f20'
 MARKER = '.x4mp-linux-gate-live'
 SLOT_SAVE = 'save_009.xml.gz'
@@ -90,6 +99,8 @@ PORTABLE_MATH = 'libx4mp_portable_math.so'
 PLAYER_LIFETIME = 'libx4mp_player_lifetime.so'
 PLAYER_VIEW_QUERY = 'libx4mp_player_view_query.so'
 VIEW_QUERY_SOURCES = (
+    'src/native/engine/linux/player_ui_session_budget.h',
+    'src/native/engine/linux/player_startup_phases.h',
     'src/native/engine/linux/player_view_query_preload.c',
     'src/native/engine/linux/player_view_query_preload.h',
     'src/native/engine/linux/player_live_pose_preload.h',
@@ -335,7 +346,11 @@ def validate_control_boundary_probe(observer, serial_pathing, ticks, conflicts):
 
 def validate_independent_keyboard(options, ticks):
     frames = options.get('independent_keyboard_frames', 0)
-    if type(frames) is not int or (frames != 0 and not 2 <= frames <= 600):
+    session = budget_from_options(options)
+    maximum = session['frames'] if session else 600
+    if session and frames != session['frames']:
+        raise SystemExit('session and independent frame budgets differ')
+    if type(frames) is not int or (frames != 0 and not 2 <= frames <= maximum):
         raise SystemExit('--independent-keyboard-frames must be 0 or 2..600')
     if not frames:
         return 0
@@ -343,7 +358,8 @@ def validate_independent_keyboard(options, ticks):
                 'stock_keyboard_observer', 'serial_pathing')
     if (not all(options.get(key) for key in required) or
             not (options.get('player_lifetime_preload') or options.get('player_lifetime_sha256')) or
-            options.get('clients', 2) != 2 or ticks <= 4 + frames):
+            options.get('clients', 2) != 2 or
+            ticks <= (session['recurring_end'] if session else 4 + frames)):
         raise SystemExit('independent keyboard frames require replay, factory, observer, serial pathing, lifetime preload, two clients and ticks > 4+frames')
     if any(options.get(key) for key in ('player_control_boundary_probe', 'player_control_bank_probe',
                                       'player_control_bank_census', 'player_reference_probe', 'player_seat_preflight')):
@@ -380,6 +396,8 @@ def validate_view_query_observer(options, frames):
 
 
 UI_OVERLAY_SOURCES = (
+    'src/native/engine/linux/player_ui_session_budget.h',
+    'src/native/engine/linux/player_startup_phases.h',
     'src/native/engine/linux/gate_player_ui_overlay_probe.h',
     'src/native/engine/linux/player_ui_published_pose.h',
     'src/native/engine/linux/player_ui_seat_transform.h',
@@ -411,7 +429,7 @@ def validate_plan_kick(options):
         raise SystemExit('player_ui_plan_kick_probe must be a boolean')
     if enabled and (options.get('player_ui_overlay_probe') is not True or
                     type(options.get('player_ui_overlay_callbacks')) is not int or
-                    options['player_ui_overlay_callbacks'] != 160):
+                    options['player_ui_overlay_callbacks'] != expected_callbacks(options)):
         raise SystemExit('plan-kick requires explicit UI overlay160')
     return enabled
 
@@ -446,7 +464,7 @@ def validate_seat_query(options):
         raise SystemExit('player_ui_seat_query_probe must be a boolean')
     if enabled and (options.get('player_ui_overlay_probe') is not True or
                     type(options.get('player_ui_overlay_callbacks')) is not int or
-                    options['player_ui_overlay_callbacks'] != 160):
+                    options['player_ui_overlay_callbacks'] != expected_callbacks(options)):
         raise SystemExit('seat-query requires explicit UI overlay160')
     return enabled
 
@@ -485,7 +503,7 @@ def validate_live_pose_observer(options):
     if enabled and (options.get('player_ui_seat_query_probe') is not True or
                     options.get('player_ui_overlay_probe') is not True or
                     type(options.get('player_ui_overlay_callbacks')) is not int or
-                    options['player_ui_overlay_callbacks'] != 160):
+                    options['player_ui_overlay_callbacks'] != expected_callbacks(options)):
         raise SystemExit('live-pose observer requires explicit seat query and UI overlay160')
     return enabled
 
@@ -543,6 +561,83 @@ def seat_correction_environment(enabled, slot):
     return {'X4_DEV_UI_SEAT_CORRECTION': '1'} if enabled and slot == 2 else {}
 
 
+RENDER_LEASE_SOURCES = (
+    'src/native/engine/linux/gate_player_ui_overlay_probe.h',
+    'src/native/engine/linux/gate_player_ui_seat_correction.h',
+    'src/native/engine/linux/gate_player_live_pose_observer.h',
+    'src/native/engine/linux/player_live_pose_preload_impl.h',
+    'src/native/engine/linux/player_view_query_preload.c',
+    'src/native/engine/linux/player_view_query_preload.h',
+    'src/native/engine/linux/player_view_query_preload_pin.h',
+    'tools/dev/linux_ui_render_lease_evidence.py',
+)
+
+
+SESSION_SOURCES = (
+    'src/native/engine/linux/gate_player_startup_phases.h',
+    'src/native/engine/linux/player_startup_phases.h',
+    'tools/dev/linux_player_startup_phases.py',
+    'src/native/engine/linux/player_ui_session_budget.h',
+    'src/native/engine/linux/gate_player_control_recurring.h',
+    'src/native/engine/linux/gate_stock_keyboard_replay.h',
+    'tools/dev/linux_ui_session_budget.py',
+    'tools/dev/linux_ui_session_evidence.py',
+)
+
+
+def session_sources(repo):
+    sources = [repo/name for name in SESSION_SOURCES]
+    if not all(path.is_file() for path in sources):
+        raise SystemExit('session mode requires all frozen budget sources')
+    return sources
+
+
+def enforce_session_disk_budget(run_dir, limit):
+    used = sum(path.stat().st_size for path in run_dir.rglob('*')
+               if path.is_file() and not path.is_symlink())
+    if used > limit:
+        raise RuntimeError('session disk budget exceeded; owned processes stopped')
+
+
+def validate_session_config(config, frames, startup=None):
+    assignments = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_ui_session_frames\s*=\s*(.*?)\s*$', config)
+    if assignments != ([str(frames)] if frames else []):
+        raise SystemExit('session config does not match frozen frame budget')
+    values = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_startup_phases\s*=\s*(.*?)\s*$', config)
+    if values != ([repr(startup)] if startup else []):
+        raise SystemExit('startup phase config does not match its frozen option')
+
+
+def render_lease_sources(repo):
+    sources = [repo/name for name in RENDER_LEASE_SOURCES]
+    if not all(path.is_file() for path in sources):
+        raise SystemExit('render lease requires all frozen source files')
+    return sources
+
+
+def validate_render_lease(options, *, frozen=False):
+    enabled = options.get('player_ui_render_lease', False)
+    if type(enabled) is not bool:
+        raise SystemExit('player_ui_render_lease must be a boolean')
+    if enabled and not validate_seat_correction(options, frozen=frozen):
+        raise SystemExit('render lease requires explicit seat correction and its full overlay160 chain')
+    if frozen:
+        version = options.get('player_ui_render_lease_evidence_version')
+        if (enabled and (type(version) is not int or version != 1)) or (not enabled and version is not None):
+            raise SystemExit('render lease requires frozen evidence version 1 when enabled')
+    return enabled
+
+
+def validate_render_lease_config(config, enabled):
+    values = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_ui_render_lease\s*=\s*(.*?)\s*$', config)
+    if values != (['true'] if enabled else []):
+        raise SystemExit('render lease config does not match frozen option')
+
+
+def render_lease_environment(enabled, slot):
+    return {'X4_DEV_UI_RENDER_LEASE': '1'} if enabled and slot == 2 else {}
+
+
 def live_pose_observer_sources(repo):
     sources = [repo / name for name in LIVE_POSE_SOURCES]
     if not all(path.is_file() for path in sources):
@@ -561,6 +656,7 @@ def live_pose_observer_environment(enabled, slot):
 
 
 def validate_ui_overlay(options, frames):
+    validate_render_lease(options)
     validate_seat_correction(options)
     validate_plan_kick(options)
     validate_seat_query(options)
@@ -569,7 +665,9 @@ def validate_ui_overlay(options, frames):
     if type(enabled) is not bool:
         raise SystemExit('player_ui_overlay_probe must be a boolean')
     callbacks = options.get('player_ui_overlay_callbacks', 1)
-    if type(callbacks) is not int or callbacks not in (1, 8, 160) or (callbacks != 1 and not enabled):
+    session = budget_from_options(options)
+    allowed = (session['callbacks'],) if session else (1, 8, 160)
+    if type(callbacks) is not int or callbacks not in allowed or (callbacks != 1 and not enabled):
         raise SystemExit('UI overlay callbacks must be 1, 8 or 160; multiple callbacks require the explicit probe')
     if callbacks != 1 and frames < callbacks + 5:
         raise SystemExit('UI overlay callback count requires independent frames >= count+5')
@@ -597,17 +695,37 @@ def validate_ui_overlay_config(config, enabled, callbacks=1):
         raise SystemExit('UI overlay callback config does not match frozen option')
 
 
-def ui_overlay_environment(enabled, slot, callbacks=1):
+def ui_overlay_environment(enabled, slot, callbacks=1, session_frames=0, startup=None):
+    if session_frames:
+        from linux_ui_session_budget import session_budget
+        budget = session_budget(session_frames, startup)
+        if callbacks != budget['callbacks']:
+            raise ValueError('session environment callback budget mismatch')
+        environment = {'X4_DEV_UI_SESSION_FRAMES': str(budget['frames'])}
+        if startup:
+            environment['X4_DEV_PLAYER_PHASES'] = startup
+        return environment
     key = {1: 'X4_DEV_UI_OVERLAY', 8: 'X4_DEV_UI_OVERLAY_EIGHT', 160: 'X4_DEV_UI_OVERLAY_160'}[callbacks]
     return {key: '1'} if enabled and slot == 2 else {}
 
 
-def parse_ui_overlay_evidence(engine_lines, stderr_lines, trace_lines, slot, enabled, fork, callbacks=1):
+def parse_ui_overlay_evidence(engine_lines, stderr_lines, trace_lines, slot, enabled, fork, callbacks=1, session_frames=0, startup=None):
     result = {'pass': False, 'errors': [], 'enabled': enabled and slot == 2,
               'readiness_proven': False, 'exclusion_proven': False, 'safe_resume_proven': False}
     errors = result['errors']
+    allowed_callbacks = (1,8,160)
+    phase = startup_phases(startup)
+    first_tick = phase['presentation_first']
+    if session_frames:
+        from linux_ui_session_budget import session_budget
+        try:
+            allowed_callbacks = (session_budget(session_frames, startup)['callbacks'],)
+            result['session_frames'] = session_frames
+            result['startup_phases'] = startup
+        except ValueError as error:
+            errors.append(str(error))
     if (type(slot) is not int or slot not in (1, 2) or type(enabled) is not bool or
-            type(callbacks) is not int or callbacks not in (1, 8, 160) or (callbacks != 1 and not enabled)):
+            type(callbacks) is not int or callbacks not in allowed_callbacks or (callbacks != 1 and not enabled)):
         errors.append('invalid UI overlay slot or activation boolean')
         return result
     markers = [(i, line) for i, line in enumerate(engine_lines) if 'UI_OVERLAY' in line]
@@ -624,7 +742,7 @@ def parse_ui_overlay_evidence(engine_lines, stderr_lines, trace_lines, slot, ena
         errors.append('missing, duplicate, truncated or oversized UI overlay receipts')
         return result
     prefix = r'.*?\[X4LAN\] NATIVE_GATE '
-    if not re.fullmatch(prefix + r'LINUX_UI_OVERLAY_ARMED tick=8 slot=2\n', markers[0][1]):
+    if not re.fullmatch(prefix + rf'LINUX_UI_OVERLAY_ARMED tick={phase["presentation_arm"]} slot=2\n', markers[0][1]):
         errors.append('invalid UI overlay arm')
     number, pointer = r'(0|[1-9][0-9]{0,19})', r'([1-9a-f][0-9a-f]{0,15})'
     measurements = ('updates', 'applies', 'restores', 'before', 'overlay', 'paused', 'resumed', 'restored')
@@ -641,20 +759,20 @@ def parse_ui_overlay_evidence(engine_lines, stderr_lines, trace_lines, slot, ena
             errors.append('native and engine UI overlay receipts differ')
         observations = [match.groups()[1:]]
     else:
-        summary = f'v=3 status=pass first=9 last={8+callbacks} count={callbacks}'
-        if (not re.fullmatch(prefix + f'LINUX_UI_OVERLAY_RESULT tick={9+callbacks} slot=2 '+summary+r'\n', markers[1][1]) or
+        summary = f'v=3 status=pass first={first_tick} last={first_tick+callbacks-1} count={callbacks}'
+        if (not re.fullmatch(prefix + f'LINUX_UI_OVERLAY_RESULT tick={first_tick+callbacks} slot=2 '+summary+r'\n', markers[1][1]) or
                 native[-1] != 'X4 UI OVERLAY RESULT '+summary+'\n'):
             errors.append('invalid bounded UI overlay summary')
         observations = []
         for ordinal, line in enumerate(native[:-1], 1):
-            frame = (f'X4 UI OVERLAY FRAME v=3 tick={8+ordinal} ordinal={ordinal} count={callbacks} ' + body + r'\n')
+            frame = (f'X4 UI OVERLAY FRAME v=3 tick={first_tick+ordinal-1} ordinal={ordinal} count={callbacks} ' + body + r'\n')
             match = re.fullmatch(frame, line)
             if not match:
                 errors.append('missing, reordered or malformed UI overlay frame')
             else:
                 observations.append(match.groups())
     from linux_player_presentation_evidence import validate_presentation_rows
-    presentation = validate_presentation_rows(trace_lines, slot)
+    presentation = validate_presentation_rows(trace_lines, slot, tick=phase['presentation_probe'])
     proof = fork.get('measurements', {})
     proof_valid = (fork.get('pass') is True and
                    all(key in proof for key in ('p1_ship', 'p2_ship', 'p1', 'p2', 'room')))
@@ -690,14 +808,14 @@ def parse_ui_overlay_evidence(engine_lines, stderr_lines, trace_lines, slot, ena
     first_ui = next((i for i, line in enumerate(stderr_lines) if 'X4 UI OVERLAY' in line), -1)
     if len(native_prior) != 1 or not native_prior[0] < first_ui:
         errors.append('native child fork result must occur exactly once before UI evidence')
-    result['callback_tick'] = 9
+    result['callback_tick'] = first_tick
     result['callback_count'] = callbacks
     result['limitations'] = ['bounded native-guarded Move callbacks only; no persistent UI, reader exclusion or gameplay acceptance']
     result['pass'] = not errors
     return result
 
 
-def collect_ui_overlay_evidence(profile, stderr, slot, enabled, fork, callbacks=1):
+def collect_ui_overlay_evidence(profile, stderr, slot, enabled, fork, callbacks=1, session_frames=0, startup=None):
     paths = {'engine_sha256': profile / 'engine-output.log', 'stderr_sha256': stderr}
     if enabled and slot == 2:
         paths['native_fd_sha256'] = profile / 'controller-lifecycle.log'
@@ -710,7 +828,7 @@ def collect_ui_overlay_evidence(profile, stderr, slot, enabled, fork, callbacks=
             lines[key] = []
             errors.append('UI overlay file unavailable: ' + str(error))
     result = parse_ui_overlay_evidence(lines['engine_sha256'], lines['stderr_sha256'],
-                                     lines.get('native_fd_sha256', []), slot, enabled, fork, callbacks)
+                                     lines.get('native_fd_sha256', []), slot, enabled, fork, callbacks, session_frames, startup)
     result.update(hashes)
     if errors:
         result['errors'].extend(errors)
@@ -762,7 +880,7 @@ def collect_preload_evidence(result, local, games, run_dir, manifest, *, view_qu
     if fork_enabled or 'player_presentation_fork_probe' in manifest:
         for slot, (_, profile) in zip(local, games):
             stderr = run_dir / f'game{slot}-stderr.log' if recurring else run_dir / f'game{slot}-stdout.log'
-            fork = collect_presentation_fork_evidence(profile, stderr, slot, fork_enabled)
+            fork = collect_presentation_fork_evidence(profile, stderr, slot, fork_enabled, manifest.get('player_startup_phases'))
             if fork_enabled:
                 result.setdefault('presentation_fork_evidence', {})[str(slot)] = fork
             if not fork['pass']:
@@ -773,7 +891,8 @@ def collect_preload_evidence(result, local, games, run_dir, manifest, *, view_qu
             stderr = run_dir / f'game{slot}-stderr.log' if recurring else run_dir / f'game{slot}-stdout.log'
             fork = result.get('presentation_fork_evidence', {}).get(str(slot), {})
             evidence = collect_ui_overlay_evidence(profile, stderr, slot, ui_overlay_enabled, fork,
-                                                   manifest.get('player_ui_overlay_callbacks', 1))
+                                                   manifest.get('player_ui_overlay_callbacks', 1), manifest.get('player_ui_session_frames', 0),
+                                                   manifest.get('player_startup_phases'))
             if ui_overlay_enabled:
                 result.setdefault('ui_overlay_evidence', {})[str(slot)] = evidence
             if not evidence['pass']:
@@ -802,6 +921,7 @@ def collect_preload_evidence(result, local, games, run_dir, manifest, *, view_qu
             if not evidence['pass']:
                 overlay_errors.append(f'client {slot}: invalid seat-query evidence: {evidence["errors"]}')
     live_pose_enabled = validate_live_pose_observer(manifest)
+    camera_refill_enabled = camera_refill_bundle.validate_options(manifest)
     if live_pose_enabled or 'player_ui_live_pose_observer' in manifest:
         validate_live_pose_evidence_contract(manifest)
         from linux_ui_live_pose_observer_evidence import collect_ui_live_pose_observer_evidence
@@ -811,13 +931,39 @@ def collect_preload_evidence(result, local, games, run_dir, manifest, *, view_qu
             overlay = result.get('ui_overlay_evidence', {}).get(str(slot), {})
             fork = result.get('presentation_fork_evidence', {}).get(str(slot), {})
             query = result.get('ui_seat_query_evidence', {}).get(str(slot), {})
+            render_enabled = validate_render_lease(manifest, frozen=True)
+            render = None
+            if render_enabled or 'player_ui_render_lease' in manifest:
+                from linux_ui_render_lease_evidence import collect_ui_render_lease_evidence
+                callback = {}
+                if render_enabled and slot == 2:
+                    try:
+                        callback = parse_ui_callback_evidence(
+                            (profile/'engine-output.log').read_text(errors='strict').splitlines(),
+                            stderr.read_text(errors='strict').splitlines(),
+                            (profile/'controller-lifecycle.log').read_text(errors='strict').splitlines(keepends=True),
+                            slot, physics_frames, manifest.get('player_ui_session_frames',0),
+                            manifest.get('player_startup_phases'))
+                        callback.update(engine_sha256=sha(profile/'engine-output.log'),
+                                        stderr_sha256=sha(stderr),
+                                        native_fd_sha256=sha(profile/'controller-lifecycle.log'))
+                    except (OSError, UnicodeError):
+                        callback = {'pass': False, 'errors': ['render callback inputs unreadable']}
+                render_evidence = collect_ui_render_lease_evidence(
+                    profile, stderr, slot, render_enabled, overlay, fork, query, callback, camera_refill_enabled)
+                if render_enabled:
+                    result.setdefault('ui_render_lease_evidence', {})[str(slot)] = render_evidence
+                    if slot == 2:
+                        render = render_evidence
+                if not render_evidence['pass']:
+                    overlay_errors.append(f'client {slot}: invalid render lease evidence: {render_evidence["errors"]}')
             evidence = collect_ui_live_pose_observer_evidence(profile, stderr, slot, live_pose_enabled,
-                                                               overlay, fork, query)
+                                                               overlay, fork, query, render)
             if live_pose_enabled:
                 result.setdefault('ui_live_pose_observer_evidence', {})[str(slot)] = evidence
             if not evidence['pass']:
                 overlay_errors.append(f'client {slot}: invalid live-pose observation: {evidence["errors"]}')
-            scope = collect_ui_pose_scope_evidence(profile, stderr, slot, live_pose_enabled, evidence, overlay)
+            scope = collect_ui_pose_scope_evidence(profile, stderr, slot, live_pose_enabled, evidence, overlay, render)
             if live_pose_enabled:
                 result.setdefault('ui_pose_scope_evidence', {})[str(slot)] = scope
             if not scope['pass']:
@@ -825,11 +971,18 @@ def collect_preload_evidence(result, local, games, run_dir, manifest, *, view_qu
             from linux_ui_seat_correction_evidence import collect_ui_seat_correction_evidence
             correction_enabled = validate_seat_correction(manifest, frozen=True)
             correction = collect_ui_seat_correction_evidence(
-                profile, stderr, slot, correction_enabled, overlay, fork, query, evidence, scope)
+                profile, stderr, slot, correction_enabled, overlay, fork, query, evidence, scope, render)
             if correction_enabled:
                 result.setdefault('ui_seat_correction_evidence', {})[str(slot)] = correction
             if not correction['pass']:
                 overlay_errors.append(f'client {slot}: invalid seat correction evidence: {correction["errors"]}')
+            if camera_refill_enabled or 'player_ui_camera_refill' in manifest:
+                from linux_ui_camera_refill_evidence import collect_camera_refill_evidence
+                refill = collect_camera_refill_evidence(
+                    profile, stderr, slot, camera_refill_enabled, overlay, fork, query, render or {})
+                result.setdefault('ui_camera_refill_evidence', {})[str(slot)] = refill
+                if not refill['pass']:
+                    overlay_errors.append(f'client {slot}: invalid camera refill evidence: {refill["errors"]}')
     if 'ui_callback_observer' in manifest and not ui_callback_enabled:
         for slot, (_, profile) in zip(local, games):
             engine_text = (profile / 'engine-output.log').read_text(errors='strict')
@@ -849,14 +1002,16 @@ def collect_preload_evidence(result, local, games, run_dir, manifest, *, view_qu
             result['player_view_query_receipts'][str(slot)] = receipts
             if not validate_view_query_receipts(receipts):
                 view_errors.append(f'client {slot}: missing, repeated or refused view query observer activation')
-            evidence = collect_view_query_evidence(profile / 'engine-output.log', slot, physics_frames)
+            evidence = collect_view_query_evidence(profile / 'engine-output.log', slot, physics_frames, manifest.get('player_ui_session_frames',0),
+                            manifest.get('player_startup_phases'))
             result['player_view_query_evidence'][str(slot)] = evidence
             if ui_callback_enabled:
                 try:
                     engine_lines = (profile / 'engine-output.log').read_text(errors='strict').splitlines()
                     stderr_lines = (run_dir / f'game{slot}-stderr.log').read_text(errors='strict').splitlines()
                     presentation_lines = (profile / 'controller-lifecycle.log').read_text(errors='strict').splitlines(keepends=True)
-                    callback = parse_ui_callback_evidence(engine_lines, stderr_lines, presentation_lines, slot, physics_frames)
+                    callback = parse_ui_callback_evidence(engine_lines, stderr_lines, presentation_lines, slot, physics_frames, manifest.get('player_ui_session_frames',0),
+                            manifest.get('player_startup_phases'))
                 except (OSError, UnicodeError):
                     callback = {'pass': False, 'errors': ['callback evidence files unreadable']}
                 result.setdefault('ui_callback_evidence', {})[str(slot)] = callback
@@ -879,7 +1034,7 @@ def collect_preload_evidence(result, local, games, run_dir, manifest, *, view_qu
         raise ValueError('; '.join(fork_errors + overlay_errors))
 
 
-def collect_presentation_fork_evidence(profile, stderr, slot, enabled):
+def collect_presentation_fork_evidence(profile, stderr, slot, enabled, startup=None):
     # Read streams independently: an absent/truncated trace must not hide stderr refusal.
     paths = {'engine_sha256': profile / 'engine-output.log', 'stderr_sha256': stderr}
     if enabled:
@@ -902,15 +1057,16 @@ def collect_presentation_fork_evidence(profile, stderr, slot, enabled):
         unexpected = native or any('PRESENTATION_FORK' in line for line in engine_lines)
         return {'pass': not unexpected, 'enabled': False,
                 'errors': ['unexpected presentation fork evidence while disabled'] if unexpected else []}
-    result = parse_presentation_fork_evidence(engine_lines, stderr_lines, lines['native_fd_sha256'], slot)
+    result = parse_presentation_fork_evidence(engine_lines, stderr_lines, lines['native_fd_sha256'], slot, startup)
     result.update(hashes)
     return result
 
 
-def parse_presentation_fork_evidence(engine_lines, stderr_lines, trace_lines, slot):
+def parse_presentation_fork_evidence(engine_lines, stderr_lines, trace_lines, slot, startup=None):
     """Bind the child's measured roundtrip to the existing parent identities."""
     result = {'pass': False, 'errors': [], 'readiness_proven': False, 'safe_resume_proven': False}
     errors = result['errors']
+    phase = startup_phases(startup)
     if type(slot) is not int or slot not in (1, 2):
         errors.append('invalid presentation fork slot')
         return result
@@ -923,7 +1079,7 @@ def parse_presentation_fork_evidence(engine_lines, stderr_lines, trace_lines, sl
         errors.append('missing, duplicate, truncated or oversized presentation fork receipts')
         return result
     prefix = r'.*?\[X4LAN\] NATIVE_GATE '
-    if not re.fullmatch(prefix + rf'LINUX_PRESENTATION_FORK_ARMED tick=7 slot={slot}\n', markers[0][1]):
+    if not re.fullmatch(prefix + rf'LINUX_PRESENTATION_FORK_ARMED tick={phase["presentation_probe"]} slot={slot}\n', markers[0][1]):
         errors.append('invalid presentation fork arm')
     pointer, number = r'([1-9a-f][0-9a-f]{0,15})', r'(0|[1-9][0-9]{0,19})'
     payload = (r'v=1 status=pass parent_unchanged=1 child_reaped=1 lease_held=0 '
@@ -931,7 +1087,7 @@ def parse_presentation_fork_evidence(engine_lines, stderr_lines, trace_lines, sl
                + ' '.join(name + '=' + number for name in ('p1_ship', 'p2_ship', 'before', 'overlay', 'restored'))
                + ' live=' + pointer + ' cached=' + pointer + ' refs=' + number + ',' + number + ',' + number
                + ' marker=' + number + ',' + number + r' release_attempts=1')
-    match = re.fullmatch(prefix + rf'LINUX_PRESENTATION_FORK_RESULT tick=8 slot={slot} (' + payload + r')\n', markers[1][1])
+    match = re.fullmatch(prefix + rf'LINUX_PRESENTATION_FORK_RESULT tick={phase["presentation_arm"]} slot={slot} (' + payload + r')\n', markers[1][1])
     if not match:
         errors.append('invalid presentation fork result grammar or success state')
         return result
@@ -947,7 +1103,7 @@ def parse_presentation_fork_evidence(engine_lines, stderr_lines, trace_lines, sl
     if any(value > 0xffffffffffffffff for value in parsed.values()):
         errors.append('presentation fork field outside native uint64 range')
     from linux_player_presentation_evidence import validate_presentation_rows
-    presentation = validate_presentation_rows(trace_lines, slot)
+    presentation = validate_presentation_rows(trace_lines, slot, tick=phase['presentation_probe'])
     if not presentation['pass']:
         errors.append('missing or invalid authenticated presentation identities')
     else:
@@ -982,7 +1138,7 @@ def parse_presentation_fork_evidence(engine_lines, stderr_lines, trace_lines, sl
             parsed['refs_after'] != parsed['refs_before'] or parsed['marker_before'] != 2 or parsed['marker_after'] != 2):
         errors.append('presentation fork reference or marker imbalance')
     prior = [i for i, line in enumerate(engine_lines)
-             if re.fullmatch(prefix + rf'LINUX_PRESENTATION_PROBE tick=7 slot={slot}\n', line)]
+             if re.fullmatch(prefix + rf'LINUX_PRESENTATION_PROBE tick={phase["presentation_probe"]} slot={slot}\n', line)]
     if len(prior) != 1 or not prior[0] < markers[0][0] < markers[1][0]:
         errors.append('presentation probe, fork arm and result ordering invalid')
     result['limitations'] = ['child-only measured getter roundtrip; no UI handler, reader exclusion or gameplay acceptance']
@@ -1006,16 +1162,26 @@ def validate_ui_callback_config(config, enabled):
         raise SystemExit('UI callback config does not match its frozen option')
 
 
-def parse_ui_callback_evidence(engine_lines, stderr_lines, presentation_lines, slot, frames):
+def parse_ui_callback_evidence(engine_lines, stderr_lines, presentation_lines, slot, frames, session_frames=0, startup=None):
     """Validate one drained callback epoch; this does not establish exclusion."""
     errors = []
-    if type(slot) is not int or slot not in (1, 2) or type(frames) is not int or not 5 <= frames <= 600:
+    phase = startup_phases(startup)
+    final_tick = phase['apply'] + frames - 1
+    maximum = session_frames or 600
+    if session_frames:
+        try:
+            budget = budget_from_options({'player_ui_session_frames': session_frames, 'player_startup_phases': startup})
+            if budget['frames'] != frames:
+                raise ValueError('session callback budget mismatch')
+        except ValueError as error:
+            return {'pass': False, 'errors': [str(error)]}
+    if type(slot) is not int or slot not in (1, 2) or type(frames) is not int or not 5 <= frames <= maximum:
         return {'pass': False, 'errors': ['invalid callback evidence parameters']}
     prefix = 'LINUX_UI_CALLBACK_'
     rows = [line[line.index(prefix):].rstrip('\n') for line in engine_lines if prefix in line]
-    close = f'LINUX_UI_CALLBACK_CLOSE tick={frames + 3} slot={slot}'
+    close = f'LINUX_UI_CALLBACK_CLOSE tick={final_tick - 1} slot={slot}'
     counters = r'[0-9]{1,20}(?:/[0-9]{1,20}){8}'
-    pattern = (rf'LINUX_UI_CALLBACK_RESULT tick={frames + 4} slot={slot} '
+    pattern = (rf'LINUX_UI_CALLBACK_RESULT tick={final_tick} slot={slot} '
                r'(v=1 owner=([1-9][0-9]{0,9}) object=([1-9a-f][0-9a-f]{0,15}) '
                rf'move=({counters}) render=({counters}))')
     match = re.fullmatch(pattern, rows[1]) if len(rows) == 2 else None
@@ -1037,12 +1203,12 @@ def parse_ui_callback_evidence(engine_lines, stderr_lines, presentation_lines, s
             errors.append('unbalanced, foreign, nested, changed or empty callback scope')
         parsed.append(values)
     from linux_player_presentation_evidence import validate_presentation_rows
-    presentation = validate_presentation_rows(presentation_lines, slot)
+    presentation = validate_presentation_rows(presentation_lines, slot, tick=phase['presentation_probe'])
     if not presentation['pass'] or int(obj, 16) != presentation.get('ui_plan', {}).get('presenter', -9) + 8:
         errors.append('callback object does not match authenticated presentation owner')
     arm = [index for index, line in enumerate(engine_lines) if 'LINUX_VIEW_QUERY_ARMED' in line]
     arm_rows = [engine_lines[index].split('LINUX_VIEW_QUERY_ARMED', 1)[1].rstrip('\n') for index in arm]
-    if arm_rows != [f' tick=7 slot={slot}']:
+    if arm_rows != [f' tick={phase["presentation_probe"]} slot={slot}']:
         errors.append('callback arm tick or slot invalid')
     close_index = [index for index, line in enumerate(engine_lines) if 'LINUX_UI_CALLBACK_CLOSE' in line]
     result_index = [index for index, line in enumerate(engine_lines) if 'LINUX_UI_CALLBACK_RESULT' in line]
@@ -1110,20 +1276,31 @@ def validate_view_query_receipts(receipts):
     return receipts == ['X4 VIEW QUERY PRELOAD ACTIVE version=1']
 
 
-def parse_view_query_evidence(lines, slot, frames):
+def parse_view_query_evidence(lines, slot, frames, session_frames=0, startup=None):
     """Validate the frozen observer report, without treating queries as readiness."""
     errors, rows = [], []
     result = {'pass': False, 'errors': errors, 'rows': rows, 'raw_markers': [],
               'observation_complete': False, 'readiness_proven': False,
               'row_scope': 'outside_marked_frame'}
-    if type(slot) is not int or slot not in (1, 2) or type(frames) is not int or not 4 <= frames <= 600:
+    phase = startup_phases(startup)
+    final_tick = phase['apply'] + frames - 1
+    maximum = session_frames or 600
+    if session_frames:
+        try:
+            budget = budget_from_options({'player_ui_session_frames': session_frames, 'player_startup_phases': startup})
+            if budget['frames'] != frames:
+                raise ValueError('session view-query budget mismatch')
+        except ValueError as error:
+            errors.append(str(error))
+            return result
+    if type(slot) is not int or slot not in (1, 2) or type(frames) is not int or not 4 <= frames <= maximum:
         errors.append('invalid view query slot or frame window')
         return result
     markers = [line for line in lines if 'LINUX_VIEW_QUERY' in line]
     result['raw_markers'] = markers
     prefix = r'.*?\[X4LAN\] NATIVE_GATE '
-    armed = re.compile(prefix + r'LINUX_VIEW_QUERY_ARMED tick=7 slot=' + str(slot) + r'\n')
-    report = re.compile(prefix + r'LINUX_VIEW_QUERY_RESULT tick=' + str(4 + frames) +
+    armed = re.compile(prefix + rf'LINUX_VIEW_QUERY_ARMED tick={phase["presentation_probe"]} slot=' + str(slot) + r'\n')
+    report = re.compile(prefix + r'LINUX_VIEW_QUERY_RESULT tick=' + str(final_tick) +
         r' slot=' + str(slot) + r' v=1 finished=1 ui_calls=([0-9]{1,20}) worker_calls=([0-9]{1,20}) '
         r'other_calls=([0-9]{1,20}) probe_calls=([0-9]{1,20}) overflow=([0-9]{1,20}) rows=([0-9]{1,2}) data=([^\n]*)\n')
     if (len(markers) != 2 or any(len(line) > 16640 or line.count('LINUX_VIEW_QUERY') != 1 for line in markers) or
@@ -1146,7 +1323,7 @@ def parse_view_query_evidence(lines, slot, frames):
         errors.append('view query row count mismatch')
         return result
     grammar = re.compile(r'([0-9a-f]{1,16})/([0-9]{1,20})/([0-9]{1,20})/([0-9]{1,20})/([0-9]{1,20})/([01])/0')
-    seen, previous_first = set(), 7
+    seen, previous_first = set(), phase['presentation_probe']
     for entry in entries:
         match = grammar.fullmatch(entry)
         if not match:
@@ -1156,7 +1333,7 @@ def parse_view_query_evidence(lines, slot, frames):
         value, first, last, count, in_image = map(int, match.groups()[1:])
         key = (caller, value, in_image)
         if (not caller or max(value, first, last, count) > (1 << 64) - 1 or not count or
-                not 7 <= first <= last <= 4 + frames or first < previous_first or key in seen or
+                not phase['presentation_probe'] <= first <= last <= final_tick or first < previous_first or key in seen or
                 in_image != int(0x656000 <= caller < 0x2c730a9)):
             errors.append('invalid view query row identity, range, count or order')
         seen.add(key)
@@ -1180,7 +1357,7 @@ def parse_view_query_evidence(lines, slot, frames):
     return result
 
 
-def collect_view_query_evidence(engine, slot, frames):
+def collect_view_query_evidence(engine, slot, frames, session_frames=0, startup=None):
     # Read linewise and keep only the two bounded receipts, never the world dump.
     try:
         markers = []
@@ -1191,7 +1368,7 @@ def collect_view_query_evidence(engine, slot, frames):
                         return {'pass': False, 'errors': ['oversized or repeated view query receipt'],
                                 'rows': [], 'observation_complete': False, 'readiness_proven': False}
                     markers.append(line)
-        result = parse_view_query_evidence(markers, slot, frames)
+        result = parse_view_query_evidence(markers, slot, frames, session_frames, startup)
         result['engine_sha256'] = sha(Path(engine))
         return result
     except (OSError, UnicodeError) as error:
@@ -1320,7 +1497,8 @@ def validate_network_physics(manifest, physics, frames, ticks):
         raise SystemExit('independent keyboard mode requires a nonzero frozen frame count')
     if network_frames and (not physics or frames != network_frames or
             manifest.get('independent_keyboard_mode') != 'independent_keyboard' or
-            manifest.get('stock_keyboard_replay_last_capture') != network_frames + 2):
+            manifest.get('stock_keyboard_replay_last_capture') !=
+            (budget_from_options(manifest) or {}).get('last_capture', network_frames + 2)):
         raise SystemExit('independent keyboard bundle requires matching --controller-physics-discard --controller-physics-frames and frozen capture window')
     return bool(network_frames)
 
@@ -1329,8 +1507,12 @@ def physics_environment_mode(frames, network=False):
     return 'network-frames-discard' if network else ('bounded-frames-discard' if frames > 1 else 'single-frame-discard')
 
 
-def collect_network_client(arguments, stderr, frames, slot, camera=False, throttle=False, throttle_start_tick=5, presentation=False):
+def collect_network_client(arguments, stderr, frames, slot, camera=False, throttle=False, throttle_start_tick=5, presentation=False, session_frames=0, startup=None):
     kwargs = {'allow_camera': True} if camera else {}
+    if session_frames:
+        kwargs['session_frames'] = session_frames
+    if startup:
+        kwargs['startup'] = startup
     if presentation:
         kwargs['allow_presentation'] = True
     if throttle:
@@ -1348,6 +1530,25 @@ def add_camera_evidence(physics_result, run_dir, profiles):
     camera_result = collect_camera_evidence(run_dir, profiles)
     physics_result['camera_probe_result'] = camera_result
     physics_result['pass'] = physics_result['pass'] and camera_result['pass']
+
+
+def ancestry_expected_identity(client, stderr):
+    """Use independently validated network, presentation and body receipts."""
+    from linux_player_network_evidence import SLOT1
+    if client.get('pass') is not True:
+        raise ValueError('ancestry requires accepted network physics evidence')
+    presentation = client.get('presentation') or {}
+    frames = client.get('frames') or []
+    if presentation.get('pass') is not True or not frames or not frames[0].get('bodies'):
+        raise ValueError('ancestry requires accepted presentation and retained-body evidence')
+    saved = {int(match[3], 16) for line in stderr.read_text().splitlines(keepends=True)
+             if (match := SLOT1.fullmatch(line))}
+    if len(saved) != 1 or not next(iter(saved)):
+        raise ValueError('missing independent P1 saved identity')
+    body = frames[0]['bodies'][0]
+    return {'p2': body['ship'], 'p1_runtime': presentation['occupied_runtime'],
+            'p2_runtime': body['runtime'], 'p1_saved': next(iter(saved)),
+            'p2_saved': 0x175310}
 
 
 def network_peer_errors(clients, frames, throttle=False):
@@ -1396,17 +1597,21 @@ def validate_recurring_readiness(manifest, ticks, end):
         raise SystemExit('recurring readiness conflicts with control-boundary and control-bank probes')
 
 
-def physics_window_end(enabled, frame_count, requested_end, ticks, *, network=False):
-    maximum = 600 if network else 180
+def physics_window_end(enabled, frame_count, requested_end, ticks, *, network=False, session_frames=0, startup=None):
+    if session_frames:
+        from linux_ui_session_budget import session_budget
+        if not network or session_budget(session_frames, startup)['frames'] != frame_count:
+            raise SystemExit('session physics budget mismatch')
+    maximum = session_frames or (600 if network else 180)
     if type(frame_count) is not int or not 1 <= frame_count <= maximum:
         raise SystemExit(f'--controller-physics-frames must be 1..{maximum} for this mode')
     if not enabled:
         if frame_count != 1:
             raise SystemExit('--controller-physics-frames requires --controller-physics-discard')
         return requested_end
-    expected = 4 + frame_count
+    expected = startup_phases(startup)['apply'] + frame_count - 1
     if requested_end is not None and requested_end != expected:
-        raise SystemExit('--controller-recurring-end must equal 4 + --controller-physics-frames')
+        raise SystemExit('--controller-recurring-end differs from the selected startup/frame budget')
     if ticks <= expected:
         raise SystemExit('physics frames require effective --ticks >= end+1')
     return expected
@@ -1758,6 +1963,12 @@ def lifecycle_discard_wait(returncodes, traces, *, network=False):
 
 
 def bundle(args):
+    try:
+        args = argparse.Namespace(**resolve_session_options(vars(args), cli=True))
+        camera_refill_enabled = camera_refill_bundle.validate_options(vars(args))
+        shared_identity_enabled = shared_identity_bundle.validate_options(vars(args))
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     repo = Path(__file__).resolve().parents[2]
     caller_stride = args.runtime_id_caller_stride
     if caller_stride is not None and (not 1 <= caller_stride <= 3600 or
@@ -1769,14 +1980,22 @@ def bundle(args):
     validate_external_camera(vars(args), independent_frames)
     presentation_enabled = validate_presentation_probe(vars(args), independent_frames)
     view_query_enabled = validate_view_query_observer(vars(args), independent_frames)
+    ancestry_enabled = ancestry_bundle.validate_options(vars(args), bool(independent_frames))
+    if ancestry_enabled and not presentation_enabled:
+        raise SystemExit('VIEW ancestry requires presentation identity evidence')
     ui_overlay_enabled = validate_ui_overlay(vars(args), independent_frames)
     overlay_sources = ui_overlay_sources(repo) if ui_overlay_enabled else []
+    if args.player_ui_session_frames:
+        overlay_sources.extend(session_sources(repo))
     plan_kick_enabled = validate_plan_kick(vars(args))
     if plan_kick_enabled:
         overlay_sources.extend(plan_kick_sources(repo))
     seat_query_enabled = validate_seat_query(vars(args))
     if seat_query_enabled:
         overlay_sources.extend(seat_query_sources(repo))
+    render_lease_enabled = validate_render_lease(vars(args))
+    if render_lease_enabled:
+        overlay_sources.extend(render_lease_sources(repo))
     seat_correction_enabled = validate_seat_correction(vars(args))
     if seat_correction_enabled:
         overlay_sources.extend(seat_correction_sources(repo))
@@ -1827,7 +2046,8 @@ def bundle(args):
         # Linux overlays are bare and expose no lookahead option: unset means 0
         # in the probe. Leave lookahead + 2 ticks to drain delayed captures.
         lookahead = 0
-        replay_last_capture = independent_frames + 2 if independent_frames else args.ticks - (lookahead + 2)
+        replay_last_capture = ((budget_from_options(vars(args)) or {}).get('last_capture', independent_frames + 2)
+                               if independent_frames else args.ticks - (lookahead + 2))
         if replay_last_capture < 3:
             raise SystemExit('--stock-keyboard-replay-probe requires at least 5 ticks')
     if args.ticks < 1 or args.stride < 1:
@@ -1917,10 +2137,14 @@ def bundle(args):
         command += ['--independent-keyboard-frames', str(independent_frames)]
     if view_query_enabled:
         command.append('--player-view-query-observer')
-    if ui_overlay_enabled:
+    if args.player_ui_session_frames:
+        command += ['--player-ui-session-frames', str(args.player_ui_session_frames)]
+    elif ui_overlay_enabled:
         command.append('--player-ui-overlay-probe')
         if args.player_ui_overlay_callbacks != 1:
             command += ['--player-ui-overlay-callbacks', str(args.player_ui_overlay_callbacks)]
+    if args.player_startup_phases:
+        command += ['--player-startup-phases', args.player_startup_phases]
     if plan_kick_enabled:
         command.append('--player-ui-plan-kick-probe')
     if seat_query_enabled:
@@ -1929,6 +2153,10 @@ def bundle(args):
         command.append('--player-ui-live-pose-observer')
     if seat_correction_enabled:
         command.append('--player-ui-seat-correction')
+    if camera_refill_enabled:
+        command.append('--player-ui-camera-refill')
+    if render_lease_enabled:
+        command.append('--player-ui-render-lease')
     if fork_enabled:
         command.append('--player-presentation-fork-probe')
     if ui_callback_enabled:
@@ -2113,6 +2341,8 @@ def bundle(args):
     for saved in args.fp_attack_watch or []:
         command += ['--fp-attack-watch', saved]
     subprocess.run(command, check=True)
+    overlay, shared_identity_metadata = shared_identity_bundle.prepare_overlay(
+        repo, overlay, work / 'shared-identity-overlay', vars(args))
     extension = out / 'extension/x4_lan_lab'
     compose_extension_template(overlay, extension, args.extension_base)
     if view_query_enabled:
@@ -2143,6 +2373,9 @@ def bundle(args):
     validate_seat_query_config(config, seat_query_enabled)
     validate_live_pose_observer_config(config, live_pose_enabled)
     validate_seat_correction_config(config, seat_correction_enabled)
+    validate_render_lease_config(config, render_lease_enabled)
+    camera_refill_bundle.validate_config(config, camera_refill_enabled)
+    validate_session_config(config, args.player_ui_session_frames, args.player_startup_phases)
     leaf_assignment = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_world_rolling_leaf_ticks\s*=\s*(.*?)\s*$', config)
     expected_leaf = [] if args.world_rolling_leaf_ticks is None else [
         '{%d,%d}' % tuple(args.world_rolling_leaf_ticks)]
@@ -2177,6 +2410,10 @@ def bundle(args):
     shutil.copy2(Path(__file__).with_name('linux_ui_live_pose_observer_evidence.py'), out / 'linux_ui_live_pose_observer_evidence.py')
     shutil.copy2(Path(__file__).with_name('linux_ui_pose_scope_evidence.py'), out / 'linux_ui_pose_scope_evidence.py')
     shutil.copy2(Path(__file__).with_name('linux_ui_seat_correction_evidence.py'), out / 'linux_ui_seat_correction_evidence.py')
+    shutil.copy2(Path(__file__).with_name('linux_ui_render_lease_evidence.py'), out / 'linux_ui_render_lease_evidence.py')
+    shutil.copy2(Path(__file__).with_name('linux_player_startup_phases.py'), out / 'linux_player_startup_phases.py')
+    shutil.copy2(Path(__file__).with_name('linux_ui_session_budget.py'), out / 'linux_ui_session_budget.py')
+    shutil.copy2(Path(__file__).with_name('linux_ui_session_evidence.py'), out / 'linux_ui_session_evidence.py')
     shutil.copy2(Path(__file__).with_name('linux_gate_evidence.py'), out / 'linux_gate_evidence.py')
     shutil.copy2(Path(__file__).with_name('linux_player_physics_evidence.py'), out / 'linux_player_physics_evidence.py')
     frames_helper = Path(__file__).with_name('linux_player_frames_evidence.py')
@@ -2249,6 +2486,16 @@ def bundle(args):
                         repo / 'tools/dev/native_gate_probe.lua', repo / 'tools/dev/build_native_gate_overlay.py',
                         repo / 'tools/dev/linux_gate_live.py')
         freeze_source_receipts(repo, out, leaf_sources)
+    if shared_identity_enabled:
+        freeze_source_receipts(repo, out, shared_identity_bundle.sources(repo))
+    for helper in shared_identity_bundle.BUNDLE_HELPERS:
+        shutil.copy2(repo / 'tools/dev' / helper, out / helper)
+    freeze_source_receipts(repo, out, camera_refill_bundle.source_paths(repo))
+    for helper in camera_refill_bundle.HELPERS:
+        shutil.copy2(repo / 'tools/dev' / helper, out / helper)
+    freeze_source_receipts(repo, out, ancestry_bundle.source_paths(repo))
+    for helper in ('linux_view_ancestry_bundle.py', 'linux_view_ancestry_evidence.py'):
+        shutil.copy2(repo / 'tools/dev' / helper, out / helper)
     shutil.rmtree(work)
     commit = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
     files = {p.relative_to(out).as_posix(): sha(p) for p in sorted(out.rglob('*')) if p.is_file()}
@@ -2358,12 +2605,21 @@ def bundle(args):
         'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'),
         'player_lifetime_sha256': files.get(f'player_lifetime/{PLAYER_LIFETIME}'),
         'player_view_query_observer': view_query_enabled,
+        'view_query_source_version': camera_refill_bundle.SOURCE_VERSION,
+        'view_ancestry_observer': ancestry_enabled,
+        'player_ui_camera_refill': camera_refill_enabled,
+        'player_ui_camera_refill_evidence_version': 1 if camera_refill_enabled else None,
         'ui_callback_observer': ui_callback_enabled,
         'player_presentation_fork_probe': fork_enabled,
         'player_ui_plan_kick_probe': plan_kick_enabled,
         'player_ui_seat_query_probe': seat_query_enabled,
         'player_ui_live_pose_observer': live_pose_enabled,
         'player_ui_seat_correction': seat_correction_enabled,
+        'player_ui_render_lease': render_lease_enabled,
+        'player_ui_session_frames': args.player_ui_session_frames,
+        'player_startup_phases': args.player_startup_phases,
+        'session_disk_limit': (budget_from_options(vars(args)) or {}).get('disk_limit'),
+        'player_ui_render_lease_evidence_version': 1 if render_lease_enabled else None,
         'player_ui_seat_correction_evidence_version': 1 if seat_correction_enabled else None,
         'player_ui_live_pose_observer_evidence_version': 2 if live_pose_enabled else None,
         'player_ui_overlay_probe': ui_overlay_enabled,
@@ -2404,6 +2660,8 @@ def bundle(args):
     manifest['preset'] = args.preset
     manifest['tick_hz'] = args.tick_hz or 60  # the clients' native_gate_tick_hz; the relay runs with the same
     manifest['mixed_platform'] = bool(args.mixed_platform)  # MIXED_PLATFORM_SETS applied (tools/build_play_overlay.py)
+    manifest.update(shared_identity_metadata)
+    shared_identity_bundle.validate_bundle(out, manifest)
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     (out / MARKER).write_text('Disposable Linux lockstep test bundle.\n', encoding='utf-8')
     print(f'bundle {out}: {len(files)} files, gate {manifest["gate_so_sha256"][:16]}, snapshot {snapshot_sha[:16]}, commit {commit[:8]}')
@@ -2883,6 +3141,10 @@ def run(args):
             or not (root / MARKER).is_file() or root.stat().st_uid not in (0, user.pw_uid)):
         raise SystemExit(f'{root} is not a staged live-test root under {userhome} with {MARKER}')
     manifest = json.loads((root / 'manifest.json').read_text())
+    try:
+        shared_identity_bundle.validate_bundle(root, manifest)
+    except (ValueError, OSError) as error:
+        raise SystemExit('shared identity bundle refused: ' + str(error)) from error
     ticks = manifest['ticks'] if args.ticks is None else args.ticks
     validate_rolling_leaf_ticks(manifest.get('world_rolling_leaf_ticks'), manifest.get('world_rolling_slices'), ticks)
     validate_rolling_raw_ids(manifest.get('world_rolling_raw_ids'), manifest.get('world_rolling_leaf_ticks'))
@@ -2890,7 +3152,27 @@ def run(args):
     physics = getattr(args, 'controller_physics_discard', False)
     physics_frames = getattr(args, 'controller_physics_frames', 1)
     network_physics = validate_network_physics(manifest, physics, physics_frames, ticks)
+    session = budget_from_options(manifest)
+    if session:
+        resolved = resolve_session_options(manifest)
+        if any(manifest.get(key) != resolved[key] for key in
+               ('independent_keyboard_frames','player_ui_overlay_probe','player_ui_overlay_callbacks')):
+            raise SystemExit('noncanonical frozen session budget')
+        if manifest.get('session_disk_limit') != session['disk_limit']:
+            raise SystemExit('session disk limit differs from frozen budget')
+        for source in SESSION_SOURCES:
+            receipt = 'source-receipts/'+source
+            if receipt not in manifest.get('files', {}) or not (root/receipt).is_file():
+                raise SystemExit('session mode requires all frozen budget receipts')
+        if shutil.disk_usage(root).free < session['disk_limit']+(512 << 20):
+            raise SystemExit('session mode requires its disk budget plus 512 MiB free reserve')
     view_query_enabled = validate_view_query_bundle(root, manifest, network_physics)
+    ancestry_enabled = camera_refill_bundle.validate_bundle(root, manifest, network_physics)
+    camera_refill_enabled = camera_refill_bundle.validate_options(manifest)
+    camera_refill_bundle.validate_config(
+        (root / 'extension/x4_lan_lab/ui/config.lua').read_text(), camera_refill_enabled)
+    if ancestry_enabled and manifest.get('player_presentation_probe') is not True:
+        raise SystemExit('VIEW ancestry requires presentation identity evidence')
     ui_overlay_enabled = validate_ui_overlay(manifest, manifest.get('independent_keyboard_frames', 0))
     if ui_overlay_enabled:
         if not network_physics:
@@ -2920,6 +3202,15 @@ def run(args):
     live_pose_enabled = validate_live_pose_observer(manifest)
     validate_live_pose_evidence_contract(manifest)
     seat_correction_enabled = validate_seat_correction(manifest, frozen=True)
+    render_lease_enabled = validate_render_lease(manifest, frozen=True)
+    if render_lease_enabled:
+        for source in RENDER_LEASE_SOURCES:
+            receipt = 'source-receipts/'+source
+            if receipt not in manifest.get('files', {}) or not (root/receipt).is_file():
+                raise SystemExit('render lease requires all frozen source receipts')
+        helper = 'linux_ui_render_lease_evidence.py'
+        if helper not in manifest.get('files', {}) or not (root/helper).is_file():
+            raise SystemExit('render lease requires its frozen evidence collector')
     if seat_correction_enabled:
         for source in SEAT_CORRECTION_SOURCES:
             receipt = 'source-receipts/' + source
@@ -2963,7 +3254,7 @@ def run(args):
     recurring_tail = getattr(args, 'controller_recurring_tail_readiness', False) or physics
     recurring = getattr(args, 'controller_recurring_readiness', False) or recurring_tail
     recurring_end = getattr(args, 'controller_recurring_end', None)
-    recurring_end = physics_window_end(physics, physics_frames, recurring_end, ticks, network=network_physics)
+    recurring_end = physics_window_end(physics, physics_frames, recurring_end, ticks, network=network_physics, session_frames=manifest.get('player_ui_session_frames',0), startup=manifest.get('player_startup_phases'))
     if recurring_end is not None and not recurring:
         raise SystemExit('--controller-recurring-end requires a recurring readiness mode')
     recurring_end = 30 if recurring_end is None else recurring_end
@@ -3032,6 +3323,9 @@ def run(args):
     validate_seat_query_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), seat_query_enabled)
     validate_live_pose_observer_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), live_pose_enabled)
     validate_seat_correction_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), seat_correction_enabled)
+    validate_render_lease_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), render_lease_enabled)
+    validate_session_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(),
+                            manifest.get('player_ui_session_frames', 0), manifest.get('player_startup_phases'))
     world_seed = snapshot_seed(root / 'snapshot' / SLOT_SAVE)
     if manifest.get('snapshot_seed', world_seed) != world_seed:
         raise SystemExit('bundle seed differs from its snapshot')
@@ -3150,6 +3444,16 @@ def run(args):
               'player_ui_seat_query_probe': seat_query_enabled,
               'player_ui_live_pose_observer': live_pose_enabled,
               'player_ui_seat_correction': seat_correction_enabled,
+              'player_ui_render_lease': render_lease_enabled,
+              'player_ui_camera_refill': camera_refill_enabled,
+              'player_ui_camera_refill_evidence_version': manifest.get('player_ui_camera_refill_evidence_version'),
+              'player_ui_session_frames': manifest.get('player_ui_session_frames',0),
+              'shared_identity_t40': manifest.get('shared_identity_t40', False),
+              'shared_identity_plan_sha256': manifest.get('shared_identity_plan_sha256'),
+              'player_startup_phases': manifest.get('player_startup_phases'),
+              'session_budget': session,
+              'session_disk_limit': manifest.get('session_disk_limit'),
+              'player_ui_render_lease_evidence_version': manifest.get('player_ui_render_lease_evidence_version'),
               'player_ui_seat_correction_evidence_version': manifest.get('player_ui_seat_correction_evidence_version'),
               'player_ui_live_pose_observer_evidence_version': manifest.get('player_ui_live_pose_observer_evidence_version'),
               'player_ui_overlay_probe': ui_overlay_enabled,
@@ -3253,12 +3557,16 @@ def run(args):
                                              manifest['player_view_query_size'])
                 if ui_callback_enabled:
                     env['X4MP_UI_CALLBACK_OBSERVER'] = '1'
+            env = ancestry_bundle.environment(env, ancestry_enabled)
+            env = camera_refill_bundle.environment(env, camera_refill_enabled, slot)
             env.update(presentation_fork_environment(fork_enabled))
-            env.update(ui_overlay_environment(ui_overlay_enabled, slot, manifest.get('player_ui_overlay_callbacks', 1)))
+            env.update(ui_overlay_environment(ui_overlay_enabled, slot, manifest.get('player_ui_overlay_callbacks', 1), manifest.get('player_ui_session_frames', 0),
+                                                   manifest.get('player_startup_phases')))
             env.update(plan_kick_environment(plan_kick_enabled, slot))
             env.update(seat_query_environment(seat_query_enabled, slot))
             env.update(live_pose_observer_environment(live_pose_enabled, slot))
             env.update(seat_correction_environment(seat_correction_enabled, slot))
+            env.update(render_lease_environment(render_lease_enabled, slot))
             if physics:
                 env['X4_DEV_PLAYER_PHYSICS'] = physics_environment_mode(physics_frames, network_physics)
                 env['X4_DEV_PLAYER_LIFECYCLE_LOG'] = str(profile / 'controller-lifecycle.log')
@@ -3292,6 +3600,8 @@ def run(args):
                 raise RuntimeError('timeout (loading or relay); see the client logs')
             if steam_identity(steam_home, user.pw_uid) != steam:
                 raise RuntimeError('Steam client identity changed')
+            if session:
+                enforce_session_disk_budget(run_dir, session['disk_limit'])
             for slot, watch, process_watch, error_watch, (proc, _) in zip(local, watches, process_watches, error_watches, games):
                 watch.poll()
                 process_watch.poll()
@@ -3379,7 +3689,7 @@ def run(args):
                             arguments, stderr, physics_frames, slot,
                             camera=camera_enabled, throttle=bool(throttle_environment),
                             throttle_start_tick=manifest.get('player_throttle_start_tick') or 5,
-                            presentation=presentation_enabled)
+                            presentation=presentation_enabled, session_frames=manifest.get('player_ui_session_frames',0), startup=manifest.get('player_startup_phases'))
                     else:
                         clients_evidence[str(slot)] = collect_physics_client(arguments, stderr, physics_frames)
                 else:
@@ -3405,6 +3715,26 @@ def run(args):
                     if camera_enabled:
                         profiles = {str(slot): profile for slot, (_, profile) in zip(local, games)}
                         add_camera_evidence(result['physics_discard'], run_dir, profiles)
+                    if ancestry_enabled:
+                        from linux_player_startup_phases import startup_phases
+                        phase = startup_phases(manifest.get('player_startup_phases'))
+                        last_tick = phase['apply'] + physics_frames - 1
+                        ancestry_results = {}
+                        for slot, (_, profile) in zip(local, games):
+                            stderr = run_dir / f'game{slot}-stderr.log'
+                            try:
+                                expected = ancestry_expected_identity(clients_evidence[str(slot)], stderr)
+                            except (ValueError, OSError, KeyError, TypeError):
+                                expected = {}
+                            proof = ancestry_bundle.collect(profile, stderr, slot, True, last_tick, expected)
+                            if proof.get('bind_tick') != phase['take']:
+                                proof.setdefault('errors', []).append('ancestry bind did not occur at Take')
+                                proof['pass'] = False
+                            ancestry_results[str(slot)] = proof
+                        result['physics_discard']['view_ancestry'] = ancestry_results
+                        result['physics_discard']['pass'] = (result['physics_discard']['pass'] and
+                            set(ancestry_results) == {'1', '2'} and
+                            all(proof['pass'] for proof in ancestry_results.values()))
         else:
             result.update(collect_run_evidence(run_dir, local, cases, ticks, manifest,
                                            writers_closed=not result.get('cleanup_errors') and not result['owned_processes_remaining']))
@@ -3441,6 +3771,22 @@ def run(args):
             result['pass'] = result['pass'] and result['recurring_readiness']['pass']
     except Exception as error:
         result['postprocessing_error'] = str(error)
+    if session:
+        try:
+            from linux_ui_session_evidence import compact_validated_result, rolling_world_summary
+            roots = {str(slot): rolling_world_summary(profile/'engine-output.log', session['recurring_end'])
+                     for slot, (_, profile) in zip(local, games)}
+            result['session_world_roots'] = roots
+            matched = (set(roots) == {'1','2'} and not any(proof['errors'] for proof in roots.values()) and
+                       roots['1']['sha256'] == roots['2']['sha256'])
+            result['session_raw_world_roots_match'] = matched
+            if not matched:
+                result.get('physics_discard', {})['pass'] = False
+                result.get('physics_discard', {}).setdefault('peer_errors', []).append('session rolling-root evidence missing or different')
+            compact_validated_result(result)
+        except Exception as error:
+            result['session_evidence_error'] = str(error)
+            result.get('physics_discard', {})['pass'] = False
     (run_dir / 'run-result.json').write_text(json.dumps(result, indent=2, default=str) + '\n')
     print('LINUX_GATE_LIVE ' + json.dumps({k: result.get(k) for k in ('name', 'pass', 'lifecycle_discard', 'physics_discard', 'recurring_readiness', 'error', 'postprocessing_error', 'stops', 'world_identity', 'world_capture_problems', 'portable_math_active', 'world_hash_ticks',
                                                                     'world_hash_first_difference', 'evidence_errors', 'steam_unchanged', 'x4_left')}))
@@ -3492,6 +3838,9 @@ def main(argv=None):
                    help='retain the diagnostic P2 result until this tick; requires the factory probe')
     b.add_argument('--ui-callback-observer', action='store_true',
                    help='bounded UI callback scope observation; requires view-query and presentation probes')
+    shared_identity_bundle.add_arguments(b)
+    b.add_argument('--view-ancestry-observer', action='store_true',
+                   help='bounded owner-thread VIEW ancestry sampling; requires presentation and view-query observers')
     b.add_argument('--player-view-query-observer', action='store_true',
                    help='default-off pre-main view query observer; requires independent >=4 frames and lifetime preload')
     b.add_argument('--player-lifetime-preload', action='store_true',
@@ -3507,6 +3856,14 @@ def main(argv=None):
                    help='default-off disposable STATE13 P2 throttle diagnostic; requires independent keyboard physics')
     throttle_modes.add_argument('--player-throttle-warm-probe', action='store_true',
                    help='disposable STATE13 probe after a neutral Update; requires at least 3 independent frames')
+    b.add_argument('--player-startup-phases', choices=('v1-t40',),
+                   help='explicit common startup tuple; requires finite session mode')
+    b.add_argument('--player-ui-session-frames', type=int, default=0, metavar='N',
+                   help='explicit finite disposable session, 180..900 frames; implies UI budget and excludes legacy overlay flags')
+    b.add_argument('--player-ui-camera-refill', action='store_true',
+                   help='default-off guest stock camera refill lease; requires full render/correction chain')
+    b.add_argument('--player-ui-render-lease', action='store_true',
+                   help='default-off bounded guest GameRender lease; requires explicit seat correction and overlay160')
     b.add_argument('--player-ui-seat-correction', action='store_true',
                    help='default-off coupled Move seat correction; requires explicit live observer, seat query and overlay160')
     b.add_argument('--player-ui-live-pose-observer', action='store_true',

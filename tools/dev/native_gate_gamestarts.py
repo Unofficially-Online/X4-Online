@@ -54,6 +54,10 @@ REFUSED_TAGS = {'tutorial': 'tutorial', 'nosave': 'no saving (tutorial/hub/desig
 # Observed, not in the libraries: starts that open with a fullscreen plot cutscene the snapshot capture cannot pass
 # (docs/LOCKSTEP-SCENARIOS.txt "OTHER PLAYER STARTS").
 CUTSCENE_STARTS = {'x4ep1_gamestart_boron1', 'x4ep1_gamestart_pirate1'}
+STORY_CUE = 'Start'   # every stock start script's root cue (md/gs_*.xml)
+# Starts whose story has been played by a slot 2..N in a live session: their story is on by default for the slot that takes
+# the start. Any other start's story is asked for by name (x4ls new-session --story K) until a run has shown it.
+STORY_DEFAULT = frozenset()
 # MD actions that only build cue structure or log; anything else in a start-keyed cue is an effect.
 MD_STRUCTURE = {'conditions', 'actions', 'cues', 'cue', 'library', 'delay', 'do_if', 'do_elseif', 'do_else', 'do_all',
                 'do_while', 'do_any', 'debug_text', 'set_value', 'remove_value', 'param', 'params', 'patch', 'check_value',
@@ -67,13 +71,16 @@ MODULE_TEST = re.compile(r"player\.module\s*==\s*'([a-z0-9_]+)'")
 SPACESUIT = re.compile(r'_spacesuit_')
 # Where each player-level part of a start can go for slot k >= 2 (slot 1 plays the session base start, the save).
 #   money       factions: slot k's own account (set); coop: added to the one shared wallet
-#   reputation  factions: slot k's faction (after the mirror); coop: one reputation set (the base start's) -> omit
+#   reputation  factions: slot k's faction (after the mirror); coop: the one shared faction takes the better of what it
+#               has and what the start gives, per faction (a team with a Terran cadet is friendly with Terran and
+#               keeps the base start's friends; nobody's start makes the team worse off)
 #   blueprints, research, known (map uncover)
 #               coop: the one player library and map; factions: X4 keeps them for the player faction only -> omit
-#   inventory   the player entity P_k of slot k is not reachable from MD (lockstep_pilot_slots.h) -> omit
+#   inventory   both modes: slot k's own player entity P_k (MD does not reach it; the probe adds the wares inside slot
+#               k's scope, native_gate_probe.lua pilot_view.kit_inventory; needs missions per player, the scope's owner)
 #   ship, place a hull with the start's macro and loadout, created at its start position in the session save
 #               (the capture), because pilot slots need saved IDs fixed before the load
-APPLIES = {'factions': {'reputation'}, 'coop': {'blueprints', 'research', 'known'}}
+APPLIES = {'factions': {'reputation', 'inventory'}, 'coop': {'blueprints', 'research', 'known', 'inventory', 'reputation'}}
 OMITTABLE = ('blueprints', 'inventory', 'known', 'reputation', 'research')
 NEAR_KINDS = ('docked', 'on_foot')   # ship-only: the player's ship goes into open space near the start's zone
 SAME_START_OFFSET = 300   # metres along x between hulls of slots that take the same start
@@ -382,7 +389,20 @@ def _keyed(root):
             continue
         seen.add((start, id(cue)))
         yield start, {'cue': _cue_path(parents, cue) or root.get('name'), 'how': how, 'effects': sorted(_effects(cue)),
-                      'uncover': _uncover(cue) if how == 'module' else None}
+                      'uncover': _uncover(cue) if how == 'module' else None,
+                      'script': root.get('name') if root.tag == 'mdscript' else None,
+                      'gate': _story_gate(cue) if how == 'module' and cue is not root else None}
+
+
+def _story_gate(cue):
+    """How a module cue starts: 'signal' when its conditions are one event_cue_signalled or event_cue_completed of
+    another cue (every stock start script's Start cue: md.Setup.GameStart or the extension's shared setup cue), which a
+    per-player story replaces by its own signal; None for anything else."""
+    conditions = cue.find('conditions')
+    events = [c for c in conditions if isinstance(c.tag, str)] if conditions is not None else []
+    if len(events) == 1 and events[0].tag in ('event_cue_signalled', 'event_cue_completed') and events[0].get('cue'):
+        return 'signal'
+    return None
 
 
 # ---------------------------------------------------------------- one start
@@ -614,13 +634,25 @@ class Catalog:
             raise CatalogError(f'unknown gamestart {sid!r}')
         return self.records[sid]
 
+    def story(self, sid):
+        """The start's own story script, or None: the one root cue 'Start' with module="<id>" of an MD file gs_*.xml
+        whose only condition is another cue's signal (every stock start has this shape). A per-player story
+        (native_gate_session_start.py story_files) runs an instance of that cue for the slot that took the start."""
+        own = [c for c in self.md.get(sid, ()) if c['how'] == 'module' and c['cue'] == STORY_CUE and c.get('script')
+               and c.get('gate') == 'signal' and re.fullmatch(r'[a-z0-9_]+/md/gs_[a-z0-9_]+\.xml', c['source'])
+               and re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', c['script'])]
+        if len(own) != 1:
+            return None
+        extension, _, name = own[0]['source'].split('/')
+        return {'extension': extension, 'file': name, 'script': own[0]['script'], 'cue': STORY_CUE}
+
     def rows(self):
         out = []
         for sid, rec in sorted(self.records.items()):
             klass, reasons = classify(rec)
             out.append({'id': sid, 'class': klass, 'reasons': reasons, 'base': session_base_refusal(rec),
                         'per_player': per_player_refusal(rec, klass), 'ship_only': per_player_refusal(rec, klass, world=True),
-                        'player': rec['player'], 'rebuild': rec['rebuild'],
+                        'player': rec['player'], 'rebuild': rec['rebuild'], 'story': self.story(sid) if klass == 'b' else None,
                         'presentation': rec['presentation']})
         return out
 
@@ -656,6 +688,7 @@ def template(catalog, sid, world=False):
                       'x': x, 'y': y, 'z': z, 'yaw': yaw - 360 if yaw > 180 else yaw,
                       **({'near': True} if loc.get('kind') in NEAR_KINDS else {})},
             'world_omitted': list(rec['world']) if classify(rec)[0] == 'b' else [],
+            'story': catalog.story(sid) if classify(rec)[0] == 'b' else None,
             'money': p.get('money', 0), 'inventory': dict(sorted(p.get('inventory', {}).items())),
             'blueprints': sorted(set(p.get('blueprints', []))), 'research': sorted(set(p.get('research', []))),
             'reputation': dict(sorted(p.get('reputation', {}).items())),
@@ -687,6 +720,8 @@ def slot_kit(tpl, mode, slot, omit=()):
     for part in ('blueprints', 'research'):
         if part in APPLIES[mode] and part not in omit and tpl[part]:
             kit[part] = sorted(tpl[part])
+    if 'inventory' not in omit and tpl['inventory']:
+        kit['inventory'] = [{'ware': ware, 'amount': int(amount)} for ware, amount in sorted(tpl['inventory'].items())]
     if 'known' in APPLIES[mode] and 'known' not in omit and tpl['known']:
         known = tpl['known']
         kit['known'] = {'sectors': list(known['sectors']), 'shipyards': bool(known['shipyards'])}

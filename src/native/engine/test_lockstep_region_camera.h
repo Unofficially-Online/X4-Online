@@ -425,7 +425,7 @@ static void test_region_camera(void) {
         assert(rc_pick(test_rcp_traffic,traffic_site)==rc_page+RC_SHADOW);memset(test_rcp_traffic+0x108,0,8);
         assert(rc_picks==7 && rc_picks_two==3 && rc_site_picks[manager_site]==3 && rc_site_picks[universe_site]==4 && rc_site_picks[traffic_site]==2 /* the two off picks too */);
         /* Policy rows: tick, site, choice, the object's runtime ID (a traffic object: its zone's), MoveWorker flag. */
-        assert(!rc_pick_rows_arm(5)); /* not before the first frame here: refused */
+        assert(!rc_pick_rows_arm(5,0)); /* not before the first frame here: refused */
         *(uint64_t*)(test_rcp_part_b+8)=0x777;*(uint64_t*)(test_rcp_zone_b+8)=0x888;rc_pick_rows_ticks=stats.issued;rc_pick_rows=0;
         assert(rc_pick(test_rcp_part_b,manager_site)==rc_page+RC_MANAGER2 && rc_pick(test_rcp_traffic,traffic_site)==rc_page+RC_SHADOW2);
         out=NULL;rc_camera_sector(NULL,&out,test_rcp_part_b);assert(rc_pick_rows==3);
@@ -433,6 +433,9 @@ static void test_region_camera(void) {
         assert(rc_pick_row(1,prow,sizeof(prow))>0 && strstr(prow," runtime=888 ") && rc_pick_row(2,prow,sizeof(prow))>0 && strstr(prow," site=101 two=1 "));
         assert(!rc_pick_row(3,prow,sizeof(prow)));
         rc_pick_rows_ticks=stats.issued-1;assert(rc_pick(test_rcp_part_b,manager_site) && rc_pick_rows==3); /* past the limit: none */
+        /* a window from a tick: none before it, rows inside it */
+        rc_pick_rows_ticks=2;rc_pick_rows_from=stats.issued+5;assert(rc_pick(test_rcp_part_b,manager_site) && rc_pick_rows==3);
+        rc_pick_rows_from=stats.issued-1;assert(rc_pick(test_rcp_part_b,manager_site) && rc_pick_rows==4);rc_pick_rows_from=0;
         rc_pick_rows=RC_PICK_ROWS+4;assert(rc_pick_row(1,prow,sizeof(prow))>0 && !strcmp(prow,"index=1 evicted=1"));
         /* View point 2's zone test and lane camera from the simulation's transforms at the thread's game time;
          * view point 1's through the original helpers; both logged with their vector (sites 0x103, 0x104). */

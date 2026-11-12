@@ -38,7 +38,9 @@
  *   mouselook  ranges 7/8 while this client's FIRST_PERSON context is on or slot 1 walks (the
  *              replayed state): locally every handler but d7d5c0 runs (the camera); slot 1's client
  *              records the value and the replay runs d7d5c0 only. Otherwise as before (local).
- *   interact   0x78 refused for every slot (the pick is this client's; not replayed yet).
+ *   interact   0x78 refused for every slot (the pick is this client's), unless native_gate_ui_compslot is armed: then
+ *              the click is this client's own (local, as 0x17 is): 8c2830 only talks to the UI, and the action the
+ *              menu ends in (PerformCompSlotPlayerAction) is captured or refused by lockstep_ui_compslot.h.
  *   context    the vector entry d7d6c0 is swapped for pfoot_context: this client's own edge runs
  *              the input side only (+0x9063) and slot 1's client records it (SPACE kind, id 0xd);
  *              the replay runs d7d6c0 itself and puts this client's +0x9063 back.
@@ -97,11 +99,12 @@ static volatile LONG64 pfoot_edges_local,pfoot_edges_recorded,pfoot_edges_replay
 static uint64_t pfoot_frame_hash;
 static unsigned char pfoot_frame_flag;
 
+static int uics_hooks_wanted(void);   /* lockstep_ui_compslot.h: armed */
 /* Which of this module's ids (0: none). */
 static unsigned pfoot_id(unsigned kind,int id) {
     if(kind==1u) {   /* PSTK_STATE */
         if((id>=0x1a && id<=0x24) || id==0x57) return PFOOT_WALK_ID;
-        if(id==(int)PFOOT_PICK_CLICK) return PFOOT_REFUSE_ID;
+        if(id==(int)PFOOT_PICK_CLICK) return uics_hooks_wanted()?PFOOT_NONE:PFOOT_REFUSE_ID;
     }
     if(kind==2u) {   /* PSTK_RANGE */
         if(id>=0xd && id<=0x10) return PFOOT_WALK_ID;
@@ -230,13 +233,36 @@ static void pfoot_note_replay(unsigned kind,unsigned id,uint64_t tick) {
  * slot wants (d9cc30 and d81d20 with its answers: X4's own request and withdraw). Client 1 is X4's own: unchanged. */
 static void *vpl_slot_controller(unsigned k);   /* lockstep_pilot_slots.h: slot k's PlayerController while seated */
 static void (*pfoot_fp_refresh)(char);          /* d81d20, or a test's */
-static int pfoot_k1_held;                       /* a foreign SPACE off edge was not recorded: nor its on edge */
-static volatile LONG64 pfoot_k1_ignored,pfoot_k1_fixed;
-static int pfoot_k1(void) {return pfoot_armed && pstk_capturing && pstk_capture_slot>=2 && pstk_capture_slot<=PILOT_SLOTS;}
-/* This client's own slot k (2..N) holds its ship's controls: seated (its ship, or a suit). A dead slot keeps them as
- * before this module (lockstep_pilot_death.h: its keys are dropped, the respawn's edge relies on them). */
+/* Other players' stand-ups and sit-downs (live 12 Nov, the input records of five runs). The same two X4 functions run on
+ * EVERY client for every slot: the stand-up 70e0f0 (d9cc30(0): the flight contexts withdrawn, then the controls' enabled
+ * byte 0x2f4b7e0 cleared at 70e48b) and the sit-down 70dc50 (the byte set at 70dff4, d9cc30(1)), for slot 1 outside any
+ * scope, for slot k inside scope k; the contexts and the byte are this process's. So:
+ *   - slot 2 stood up: client 1's SPACE context went off and client 1 recorded it as slot 1's (every run: `s1 08c000` three
+ *     ticks after slot 2's GET_UP): player 1's flight control was off on every client for as long as player 2 walked, and
+ *     came back with player 2's sit-down (`s1 08c001`), also while player 1 itself walked;
+ *   - slot 1 stood up: client 2's byte was cleared; this module's own refresh (d9cc30(1) with the byte clear takes the
+ *     withdrawing branch) then took client 2's flight contexts, the off edge passed as "a lock" and was recorded as slot
+ *     2's: player 2 had no ship keys at all (no SPACE, SHIP, FLIGHT context, no GET_UP) until it stood up another way.
+ * Now, on every client that has a slot once slots can walk: an edge inside another slot's scope is that slot's and is not
+ * recorded; on a client of slot 2..N an off edge outside any scope while it holds its controls and slot 1 is off its seat
+ * is slot 1's stand-up, an on edge outside any scope while it does not hold them is slot 1's sit-down. The edge that
+ * answers an unrecorded one is not recorded either (pfoot_k1_held: +1 an off edge is open, -1 an on edge). The pass puts
+ * the byte back for this client's own slot (set while it holds its controls and an off edge is open or slot 1 walks;
+ * cleared when an on edge is open and it does not hold them), then the contexts; an open edge that this client's slot
+ * meanwhile made true (it stood up, it sat down) is recorded then. k1=ignored/fixed, k1_en=<bytes put back>. */
+static int pfoot_k1_held;                       /* a foreign SPACE edge was not recorded (+1 off, -1 on): nor the edge answering it */
+static volatile LONG64 pfoot_k1_ignored,pfoot_k1_fixed,pfoot_k1_enabled,pfoot_k1_turned;
+static int pfslot_armed;                        /* lockstep_pilot_foot_slots.h */
+static unsigned pstk_scope_slot;                /* lockstep_pilot_stock.h: the slot whose scope is open, 0 none */
+static int pfoot_k1(void) {
+    return pfoot_armed && pstk_capturing && pstk_capture_slot>=1 && pstk_capture_slot<=PILOT_SLOTS && (pstk_capture_slot>=2 || pfslot_armed);
+}
+/* This client's own slot holds its ship's controls. Slot k (2..N): seated (its ship, or a suit); a dead slot keeps them
+ * as before this module (lockstep_pilot_death.h: its keys are dropped, the respawn's edge relies on them). Slot 1: X4's
+ * own player has its PlayerController (the pass's, never a scope's answer). */
 static int pfoot_own_seated(void) {
     unsigned k=pstk_capture_slot;
+    if(k==1) return pnat_controller!=NULL;
     if(k<2 || k>PILOT_SLOTS) return 0;
     return pilot_slots[k-1].dead || vpl_slot_controller(k)!=NULL;
 }
@@ -244,28 +270,159 @@ static int pfoot_own_seated(void) {
 static int pfoot_own_walking(void);
 static int pfslot_armed;static int pfslot_own_walking(void);
 /* pstk_space's refresh answer on this client (X4's: the canonical player has a controller). */
-static char pfoot_refresh_answer(char canonical) {return pfoot_k1()?(char)pfoot_own_seated():canonical;}
+static char pfoot_refresh_answer(char canonical) {return pfoot_k1() && pstk_capture_slot>=2?(char)pfoot_own_seated():canonical;}
 /* A SPACE edge on this client that is not to be recorded as its slot's (1), or one that is (0). */
 static int pfoot_space_foreign(unsigned char active) {
     if(!pfoot_k1()) return 0;
-    if(!active) {
-        uint32_t share=*(volatile uint32_t*)(pnat_base+0x2f4b7e4u);
-        if(pfoot_own_seated() && *(volatile unsigned char*)(pnat_base+PFOOT_CONTROLS_ENABLED) && !share) {
-            pfoot_k1_held=1;InterlockedIncrement64(&pfoot_k1_ignored);return 1;
-        }
-        pfoot_k1_held=0;return 0;   /* a menu, the map, a lock: this client's own, recorded */
+    const unsigned own=pstk_capture_slot,scope=pstk_scope_slot;int foreign=0;
+    /* The answer to an edge that was not recorded. */
+    if(active?pfoot_k1_held>0:pfoot_k1_held<0) {pfoot_k1_held=0;InterlockedIncrement64(&pfoot_k1_ignored);return 1;}
+    if(scope && scope!=own) foreign=1;   /* another slot's stand-up or sit-down, replayed in its scope */
+    else {
+        /* X4 tells of a context change at its next input poll, so the edge of another slot's stand-up or seat arrives
+         * outside every scope (live xt1, 12 Nov: client 1 recorded `08c001` at slot 2's sit-down with the scope rule
+         * alone). What tells them apart is who holds controls now: this client's own slot does (slot 1: X4's player has
+         * its PlayerController at this moment) and they are enabled without a menu: the off edge is not its own; it
+         * does not: the on edge is not its own. */
+        const uint32_t share=*(volatile uint32_t*)(pnat_base+0x2f4b7e4u);
+        const int holds=own>=2?pfoot_own_seated():(pnat_fn.controller && pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY)!=NULL);
+        if(!active) foreign=holds && !share && (*(volatile unsigned char*)(pnat_base+PFOOT_CONTROLS_ENABLED) || (own>=2 && !scope && pfoot_walking()));
+        else foreign=!scope && !holds;
     }
-    if(pfoot_k1_held) {pfoot_k1_held=0;InterlockedIncrement64(&pfoot_k1_ignored);return 1;}
+    if(foreign) {pfoot_k1_held=active?-1:1;InterlockedIncrement64(&pfoot_k1_ignored);return 1;}
+    pfoot_k1_held=0;return 0;   /* a menu, the map, a lock, its own stand-up or seat: this client's own, recorded */
+}
+/* Every live pass on a client of slot 2..N: both context sets as this client's own slot wants them.
+ * The walking set and X4's count 0x38f4e80 (PFOOT_COUNTER): d81d20 requests FIRST_PERSON only while that count is zero, and
+ * the count holds one for a seated player (70dc50 adds it when the player sits, 70e0f0 takes it back when it stands), next to
+ * the conversation's and the menus'. On a client of slot k that one is the canonical player's seat, slot 1's: with it the
+ * request never came while slot 1 sat, and a person on client k who stood up could not walk (the user's session of 11 Nov:
+ * slot 2 up for 850 ticks, k1=0/0, no walking id in any of its records). So while this client's own slot walks and the
+ * canonical player sits, the refresh sees the count without that one; everything else in it (a menu, a conversation on
+ * this client) still withdraws the set. */
+static int pfslot_canon_seated(void);   /* lockstep_pilot_foot_slots.h: X4's own player holds a control position */
+static volatile LONG64 pfoot_k1_unseated;
+/* The UI's half of the same. d7d6c0, the FIRST_PERSON context callback, tells this process's UI when X4's own player
+ * starts and stops walking [F]: 70ecf0 (on: COMM_ACTION and INFO_ACTION withdrawn, UI controller vfunc +0x178 = b3ccd0:
+ * its first-person flag +0x6f, the soft target manager activated) and 70ed50 (off: the two contexts back, vfunc +0x180
+ * = b3cd30). On a client of slot k that ran for slot 1's walk only (the replayed callback), never for its own slot's:
+ * the soft target manager stayed off while client k's player walked, so the target system chose nothing under the
+ * crosshair and the pilot's seat got no "Take Command of Ship" (a run with only slot 2 standing: no highlight; with
+ * slot 1 standing too: highlight). Every live pass the controller's flag is compared with this client's own slot and
+ * X4's own function for the missing edge runs: client local, UI and input contexts only. Pinned; else left to X4. */
+#define PFOOT_FP_UI_ON 0x70ecf0u
+#define PFOOT_FP_UI_ON_SIZE 0x5cu
+#define PFOOT_FP_UI_ON_SHA "b73bbad5c0fa74dd629c48048d0cf3b905d03b7bee3781e1506da882143c869e"
+#define PFOOT_FP_UI_OFF 0x70ed50u
+#define PFOOT_FP_UI_OFF_SIZE 0x181u
+#define PFOOT_FP_UI_OFF_SHA "842523e1e3d4c2f8c72ade4a317af695befcc0fb48616e7d63aab6f20856a236"
+#define PFOOT_UI_ROOT 0x6cf1520u        /* [[root]+0x3b8] -> the UI controller, as 70ecf0 finds it */
+#define PFOOT_UI_HOLDER 0x3b8u
+#define PFOOT_UI_FP_FLAG 0x6fu          /* the controller: first-person controls on */
+static void (*pfoot_fp_ui[2])(void);    /* [0] off 70ed50, [1] on 70ecf0; NULL: left to X4 (tests set their own) */
+/* The get-up key. X4 keeps one more context for its own player's seat: 0x47 (requester 6), asked for by 730f30 when the
+ * player takes a control position (716670, at 716753) and withdrawn when it stands up (716e20, at 7173c0); the GET_UP
+ * action is bound in it. On a client of slot k it followed slot 1's seat: with slot 1 on foot client k's Ctrl+D did
+ * nothing (live 12 Nov, two sessions: no 0x115 in slot 2's record after slot 1's stand-up, the context absent from client
+ * 2's set; with slot 1 seated the key both stands slot k up and sits it down). Every pass on a client of slot 2..N: the
+ * request is there exactly while this client's own slot has a seat (sitting, walking in its ship, or in its suit, whose
+ * GET_UP is the way home), through X4's own two calls. The set is read first: X4 logs a second request, and a blind
+ * withdrawal every pass would be noise. Pinned; else left to X4. k1_gu=<asked>/<withdrawn>/<unreadable>. */
+#define PFOOT_GETUP_CONTEXT 0x47u
+#define PFOOT_GETUP_REQUEST 0x730f30u
+#define PFOOT_GETUP_REQUEST_SIZE 0xb4u
+#define PFOOT_GETUP_REQUEST_SHA "a779d155c57a07c21652fe22a79373471d06542cf41b872d10e99ade1baa9328"
+#define PFOOT_CONTEXT_WITHDRAW 0x1252850u   /* (input object +0x10, context, requester) */
+#define PFOOT_CONTEXT_WITHDRAW_SIZE 241u
+#define PFOOT_CONTEXT_WITHDRAW_SHA "5fe3f1305271b133209201783f6adffe36e8ab1e64ccdd5eff7ecbbd9302d7f4"
+#define PFOOT_CONTEXT_SET 0x4c50u           /* the input object: its set of context requests (+8 root, +0x28 count) */
+#define PFOOT_CONTEXT_VALUE 0x1cu           /* a node: three links at +0, +8, +0x10; context and requester (dwords) here */
+#define PFOOT_CONTEXT_WALK 96u
+static void (*pfoot_getup_request)(void);               /* 730f30, or a test's; NULL: left to X4 */
+static void (*pfoot_context_withdraw)(void *,int,int);  /* 1252850 */
+static volatile LONG64 pfoot_k1_getup_asked,pfoot_k1_getup_withdrawn,pfoot_k1_getup_unreadable;
+static unsigned char *pfoot_input(void);
+static int vpl_slot_seated(unsigned k);   /* lockstep_pilot_slots.h: slot k has a seat (sitting or walking) */
+/* 1: the set holds (context, requester); 0: not; -1: unreadable or not the shape this reads. */
+static int pfoot_context_held(unsigned context,unsigned requester) {
+    unsigned char *input=pfoot_input(),*set=NULL,*root=NULL,*stack[PFOOT_CONTEXT_WALK],*seen[PFOOT_CONTEXT_WALK];unsigned top=0,count=0;uint64_t total=0;
+    if(!input) return -1;
+    set=input+PFOOT_CONTEXT_SET;
+    if(!read_local(set+0x28,&total,8) || total>PFOOT_CONTEXT_WALK) return -1;
+    if(!total) return 0;
+    if(!read_local(set+8,&root,8) || !root) return -1;
+    stack[top++]=root;
+    while(top) {
+        unsigned char *node=stack[--top],*link[3];uint32_t value[2];int again=0;
+        if(!node || node==set) continue;
+        for(unsigned i=0;i<count;i++) if(seen[i]==node) {again=1;break;}
+        if(again) continue;
+        if(count>=PFOOT_CONTEXT_WALK) return -1;
+        seen[count++]=node;
+        if(!read_local(node,link,sizeof(link)) || !read_local(node+PFOOT_CONTEXT_VALUE,value,sizeof(value))) return -1;
+        if(value[0]==context && value[1]==requester) return 1;
+        for(unsigned i=0;i<3;i++) if(link[i] && link[i]!=set && top<PFOOT_CONTEXT_WALK) stack[top++]=link[i];
+    }
     return 0;
 }
-/* Every live pass on a client of slot 2..N: both context sets as this client's own slot wants them. */
+static void pfoot_k1_getup(void) {
+    const unsigned k=pstk_capture_slot;unsigned char *input=pfoot_input();
+    if(!pfoot_getup_request || !pfoot_context_withdraw || !input || k<2 || k>PILOT_SLOTS) return;
+    const int want=vpl_slot_seated(k)!=0,held=pfoot_context_held(PFOOT_GETUP_CONTEXT,6u);int fault=0;
+    if(held<0) {InterlockedIncrement64(&pfoot_k1_getup_unreadable);return;}
+    if(want==held) return;
+    __try {if(want) pfoot_getup_request();else pfoot_context_withdraw(input+0x10,(int)PFOOT_GETUP_CONTEXT,6);}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    if(fault) {pfoot_getup_request=NULL;InterlockedIncrement64(&pfoot_k1_getup_unreadable);return;}
+    InterlockedIncrement64(want?&pfoot_k1_getup_asked:&pfoot_k1_getup_withdrawn);
+}
+static volatile LONG64 pfoot_k1_ui_fixed,pfoot_k1_ui_faults;
+static int pfoot_own_walking(void);
+static void pfoot_k1_ui(void) {
+    unsigned char *root=NULL,*holder=NULL,*controller=NULL,flag=0;
+    if(!pfoot_fp_ui[0] || !pfoot_fp_ui[1]) return;
+    if(!read_local(pnat_base+PFOOT_UI_ROOT,&root,8) || !root || !read_local(root+PFOOT_UI_HOLDER,&holder,8) || !holder ||
+       !read_local(holder,&controller,8) || !controller || !read_local(controller+PFOOT_UI_FP_FLAG,&flag,1)) return;
+    const int want=pfoot_own_walking()!=0;int fault=0;
+    if((flag!=0)==want) return;
+    __try {pfoot_fp_ui[want]();}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    if(fault) {InterlockedIncrement64(&pfoot_k1_ui_faults);pfoot_fp_ui[0]=pfoot_fp_ui[1]=NULL;return;}
+    InterlockedIncrement64(&pfoot_k1_ui_fixed);
+}
 static void pfoot_k1_reconcile(void) {
     if(!pfoot_k1() || !pnat_base) return;
     unsigned char flight=*(volatile unsigned char*)(pnat_base+0x2f4b829u),walking=*(volatile unsigned char*)(pnat_base+PFOOT_FP_REQUESTED);
-    pnat_fn.refresh((char)pfoot_own_seated());
-    if(pfoot_fp_refresh) pfoot_fp_refresh((char)pfoot_own_walking());
+    const int own=pfoot_own_seated();volatile unsigned char *enabled=(volatile unsigned char*)(pnat_base+PFOOT_CONTROLS_ENABLED);
+    /* An open edge this client's own slot made true meanwhile: its own now, recorded. */
+    if(pfoot_k1_held>0 && !own) {(void)pstk_record_event(PSTK_SPACE,8,0u);pfoot_k1_held=0;}
+    else if(pfoot_k1_held<0 && own) {(void)pstk_record_event(PSTK_SPACE,8,1u);pfoot_k1_held=0;}
+    /* The controls' enabled byte as this client's own slot has it (header above), before X4's refresh reads it. */
+    if(own && !*enabled && (pfoot_k1_held>0 || (pstk_capture_slot>=2 && pfoot_walking()))) {*enabled=1;InterlockedIncrement64(&pfoot_k1_enabled);}
+    else if(!own && *enabled && pfoot_k1_held<0) {*enabled=0;InterlockedIncrement64(&pfoot_k1_enabled);}
+    /* X4's "contexts requested" byte against an open edge: another slot's stand-up or seat ran with ITS byte (the scope's)
+     * and moved this process's contexts, so this client's byte still says what was before and X4's refresh would do
+     * nothing. With the byte turned, the refresh below asks for them (or withdraws them) through X4's own calls. */
+    {   volatile unsigned char *requested=(volatile unsigned char*)(pnat_base+0x2f4b829u);
+        if(pfoot_k1_held>0 && own && *requested) {*requested=0;InterlockedIncrement64(&pfoot_k1_turned);}
+        else if(pfoot_k1_held<0 && !own && !*requested) {*requested=1;InterlockedIncrement64(&pfoot_k1_turned);}
+    }
+    pnat_fn.refresh((char)own);
+    if(pstk_capture_slot<2) {   /* client 1: the walking contexts and the UI's half are X4's own player's, X4's business */
+        if(*(volatile unsigned char*)(pnat_base+0x2f4b829u)!=flight) InterlockedIncrement64(&pfoot_k1_fixed);
+        return;
+    }
+    if(pfoot_fp_refresh) {
+        const char walks=(char)pfoot_own_walking();volatile uint32_t *count=(volatile uint32_t*)(pnat_base+PFOOT_COUNTER);
+        const uint32_t was=*count;const int seat=walks && was && pfslot_canon_seated();
+        if(seat) {*count=was-1u;InterlockedIncrement64(&pfoot_k1_unseated);}
+        pfoot_fp_refresh(walks);
+        if(seat) *count=was;
+    }
     if(*(volatile unsigned char*)(pnat_base+0x2f4b829u)!=flight || *(volatile unsigned char*)(pnat_base+PFOOT_FP_REQUESTED)!=walking)
         InterlockedIncrement64(&pfoot_k1_fixed);
+    pfoot_k1_getup();
+    pfoot_k1_ui();
 }
 
 /* ---- the swap of the context vector entries (pnat's vector helpers) ----
@@ -291,13 +448,14 @@ static int pfoot_swap_all(unsigned char *input,void *from,void *to) {
     }
     return n;
 }
+static int pfoot_look_install(void);static int pfoot_look_uninstall(void);static int pfoot_look_intact(void);   /* K3, below */
 static int pfoot_install(void) {
     unsigned char *input=pfoot_input();
     if(pfoot_installed) return 1;
     if(!input || !pfoot_context_original || !pnat_vector_find(input,(void*)pfoot_context_original,NULL) ||
        pnat_vector_find(input,(void*)pfoot_context,NULL)) return 0;
     int n=pfoot_swap_all(input,(void*)pfoot_context_original,(void*)pfoot_context);
-    if(n<1) {(void)pfoot_swap_all(input,(void*)pfoot_context,(void*)pfoot_context_original);return 0;}
+    if(n<1 || !pfoot_look_install()) {(void)pfoot_swap_all(input,(void*)pfoot_context,(void*)pfoot_context_original);return 0;}
     pfoot_entries=(unsigned)n;pfoot_installed=1;pfoot_restored=0;
     pfoot_local_fp=input[PFOOT_INPUT_FLAG]?1:0;
     return 1;
@@ -309,14 +467,73 @@ static int pfoot_intact(void) {
     int more=pfoot_swap_all(input,(void*)pfoot_context_original,(void*)pfoot_context);
     if(more<0) return 0;
     if(more) {pfoot_entries+=(unsigned)more;InterlockedExchangeAdd64(&pfoot_entries_late,more);}
-    return pnat_vector_find(input,(void*)pfoot_context,NULL)>=1 && !pnat_vector_find(input,(void*)pfoot_context_original,NULL);
+    return pnat_vector_find(input,(void*)pfoot_context,NULL)>=1 && !pnat_vector_find(input,(void*)pfoot_context_original,NULL) && pfoot_look_intact();
 }
 static void pfoot_uninstall(void) {
     unsigned char *input=pfoot_input();
     if(!pfoot_installed) {pfoot_restored=1;return;}
-    if(input && pfoot_swap_all(input,(void*)pfoot_context,(void*)pfoot_context_original)>=0 && !pnat_vector_find(input,(void*)pfoot_context,NULL)) {
+    const int look=pfoot_look_uninstall();
+    if(input && pfoot_swap_all(input,(void*)pfoot_context,(void*)pfoot_context_original)>=0 && !pnat_vector_find(input,(void*)pfoot_context,NULL) && look) {
         pfoot_installed=0;pfoot_restored=1;
     } else pfoot_restored=0;
+}
+
+/* ---- mouse look without this process's device state (K3) ----
+ * What X4 does [F, pinned]: the look step d7f0c0 of the walking update d7f8d0 adds the bank's mouse look (0x38f4e48 yaw,
+ * 0x38f4e54 pitch; d7f8d0 consumes them) to the FirstPersonController's pose only when, besides simulation state (the
+ * bank's FIRST_PERSON flag, a player without a control position, the FPC's +0x2e0), four values of this PROCESS allow it
+ * (d7f2ed..d7f33e): the input object's +0x9053, its device at +0x64a0 answering vfunc +0x50, the byte at *0x6cf1578, and
+ * no [*0x6cf1568+8]+0x197. The bank is replayed and equal on every client; the device state is not. Live (x4mods-46's run
+ * 20261111-195028, a real mouse over client 2's window while slot 2 walked): fw2's bank half equal, its pose half apart
+ * from the first mouse look to the sit-down, 310 mismatching ticks.
+ * With the module live the four device tests are jumped over (d7f2ed: jmp d7f340, two bytes), so a replayed mouse look
+ * turns the walker on every client alike. What they decided moves to the capture: the walker's own client records a
+ * mouse look value only while its own four values allow it (pfoot_look_device, asked where the value is recorded), so on
+ * that client nothing changes. Status look=patched/held (values this client did not record for its device state). */
+#define PFOOT_LOOK_SITE 0xd7f2edu
+#define PFOOT_LOOK_ORIGINAL 0x8005f7226c0d8b48ULL   /* 48 8b 0d 6c 22 f7 05 | 80: mov rcx,[input]; cmp byte [rcx+0x9053],0 */
+#define PFOOT_LOOK_PATCHED 0x8005f7226c0d51ebULL    /* eb 51: jmp d7f340 (the FPC's own +0x2e0 test) */
+static unsigned char *pfoot_look_site;              /* the image's site, a test's; NULL: no patch (tests without one) */
+static int pfoot_look_patched;
+static volatile LONG64 pfoot_look_held;
+static int pfoot_look_swap(uint64_t expected,uint64_t value) {
+    DWORD old,ignored;
+    if(!pfoot_look_site || !VirtualProtect(pfoot_look_site,8,PAGE_EXECUTE_READWRITE,&old)) return 0;
+    uint64_t actual=(uint64_t)InterlockedCompareExchange64((volatile LONG64*)pfoot_look_site,(LONG64)value,(LONG64)expected);
+    VirtualProtect(pfoot_look_site,8,old,&ignored);FlushInstructionCache(GetCurrentProcess(),pfoot_look_site,8);
+    return actual==expected;
+}
+static int pfoot_look_install(void) {
+    if(!pfoot_look_site || pfoot_look_patched) return 1;
+    if(!pfoot_look_swap(PFOOT_LOOK_ORIGINAL,PFOOT_LOOK_PATCHED)) return 0;
+    pfoot_look_patched=1;return 1;
+}
+static int pfoot_look_uninstall(void) {
+    if(pfoot_look_patched && pfoot_look_swap(PFOOT_LOOK_PATCHED,PFOOT_LOOK_ORIGINAL)) pfoot_look_patched=0;
+    return !pfoot_look_patched;
+}
+static int pfoot_look_intact(void) {
+    uint64_t now=0;
+    return !pfoot_look_site || (pfoot_look_patched && read_local(pfoot_look_site,&now,8) && now==PFOOT_LOOK_PATCHED);
+}
+/* This process's four values as d7f2ed..d7f33e reads them: 1 = X4 would take a mouse look value now. */
+static int pfoot_look_device(void) {
+    unsigned char *input=pfoot_input(),*device=NULL,*flag_at=NULL,*holder=NULL,*inner=NULL;unsigned char on=0,flag=0,held=0;void **vtable=NULL;
+    volatile int ok=0;
+    if(!input || !read_local(input+0x9053,&on,1) || !on) return 0;
+    if(!read_local(input+0x64a0,&device,8) || !device || !read_local(device,&vtable,8) || !vtable) return 0;
+    __try {ok=((unsigned char(*)(void*))vtable[0x50/8])(device)!=0;}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {ok=0;}
+    if(!ok) return 0;
+    if(!read_local(pnat_base+0x6cf1578u,&flag_at,8) || !flag_at || !read_local(flag_at,&flag,1) || !flag) return 0;
+    if(!read_local(pnat_base+0x6cf1568u,&holder,8) || !holder) return 0;
+    if(read_local(holder+8,&inner,8) && inner && (!read_local(inner+0x197,&held,1) || held)) return 0;
+    return 1;
+}
+/* The capture of a mouse look value on the walker's own client: 0 = this client's device state would not take it. */
+static int pfoot_look_record(void) {
+    if(!pfoot_look_patched || pfoot_look_device()) return 1;
+    InterlockedIncrement64(&pfoot_look_held);return 0;
 }
 
 /* ---- the pass (pnat_check, stock mode): 1 a walking pass (the controller checks are done), 0 the
@@ -342,8 +559,15 @@ static int pfoot_check(uint64_t tick,unsigned char *controller,unsigned char **p
         InterlockedIncrement64(&pfoot_walk_passes);pfoot_stage="walking";
         return 1;
     }
-    /* A PlayerController again: slot 1 sat down in its own ship (adopted) or something else (stop). */
-    if(!read_local(controller+0x28,&ship,8) || !ship || ship!=pnat_ship_now) {pfoot_fail("foot_controller");return -1;}
+    /* A PlayerController again: slot 1 sat down in its own ship (adopted), X4 put its player into another vehicle where one
+     * is expected (2: the spacesuit of an airlock, a seat after the suit or after its ship was lost; the caller adopts it,
+     * lockstep_pilot_death.h pveh_adopt), or something else (stop). */
+    if(!read_local(controller+0x28,&ship,8) || !ship) {pfoot_fail("foot_controller");return -1;}
+    if(ship!=pnat_ship_now) {
+        if(!pveh_adopt_ok(tick,pnat_ship_now)) {pfoot_fail("foot_controller");return -1;}
+        pfoot_state=PFOOT_SEATED;pfoot_transition_tick=tick;pfoot_stage="seated";
+        return 2;
+    }
     *pnat_controller_io=controller;pfoot_state=PFOOT_SEATED;pfoot_transition_tick=tick;pfoot_stage="seated";
     InterlockedIncrement64(&pfoot_adopted);
     return 0;
@@ -372,6 +596,7 @@ static const struct {unsigned rva,size;const char *sha;} pfoot_pin_table[]={
     {0x9fc670u,0x71,"543cf545335045bfeaae3d2ff0613e2c38eba05eb8dcd6ab978177ab409c952e"},    /* the singleton's FirstPersonController (class 0x16) */
     {0xd81ce0u,0x1de,"af55f30ec7fe532266d7dbfaf7d8730a27803cbace6610a79846dca3360d1266"},   /* FPC contexts: withdraw d81ce0, refresh d81d20 (K1) */
     {0xe9f90u,0x39,"ae6892af6cb95a48d9756135fc891531d4f3aefceb69dc7b9f6d88a965f1cf19"},     /* the double-tap clock: real time under the time lock */
+    {0xd7f2a4u,0xf1,"af0a3d5cefeb02d700c33f541688e48b404463d5c4bf896e8c226a14b0022e80"},    /* the look step's mouse branch: its device tests (K3) */
 };
 #define PFOOT_PIN_COUNT (sizeof(pfoot_pin_table)/sizeof(*pfoot_pin_table))
 static int pfoot_pins(void) {
@@ -387,6 +612,14 @@ static void pfoot_use_image(void) {
     pfoot_context_original=(pfoot_context_fn)(image+PFOOT_CONTEXT_RVA);
     pfoot_handler_ptrs[0]=image+PFOOT_STATE_HANDLER;pfoot_handler_ptrs[1]=image+PFOOT_RANGE_HANDLER;pfoot_handler_ptrs[2]=image+PFOOT_ACTION_HANDLER;
     pfoot_fp_refresh=(void(*)(char))(image+PFOOT_FP_REFRESH_RVA);
+    if(hash_ok(image+PFOOT_FP_UI_ON,PFOOT_FP_UI_ON_SIZE,PFOOT_FP_UI_ON_SHA) && hash_ok(image+PFOOT_FP_UI_OFF,PFOOT_FP_UI_OFF_SIZE,PFOOT_FP_UI_OFF_SHA)) {
+        pfoot_fp_ui[0]=(void(*)(void))(image+PFOOT_FP_UI_OFF);pfoot_fp_ui[1]=(void(*)(void))(image+PFOOT_FP_UI_ON);
+    } else pfoot_fp_ui[0]=pfoot_fp_ui[1]=NULL;
+    if(hash_ok(image+PFOOT_GETUP_REQUEST,PFOOT_GETUP_REQUEST_SIZE,PFOOT_GETUP_REQUEST_SHA) &&
+       hash_ok(image+PFOOT_CONTEXT_WITHDRAW,PFOOT_CONTEXT_WITHDRAW_SIZE,PFOOT_CONTEXT_WITHDRAW_SHA)) {
+        pfoot_getup_request=(void(*)(void))(image+PFOOT_GETUP_REQUEST);pfoot_context_withdraw=(void(*)(void*,int,int))(image+PFOOT_CONTEXT_WITHDRAW);
+    } else {pfoot_getup_request=NULL;pfoot_context_withdraw=NULL;}
+    pfoot_look_site=image+PFOOT_LOOK_SITE;
     pfoot_time_lock=(CRITICAL_SECTION*)(image+PFOOT_TIME_LOCK);
 }
 /* Slots 2..N walk with native_gate_pilot_foot_slots (lockstep_pilot_foot_slots.h): client k then wants the walking
@@ -509,8 +742,14 @@ static int pfoot_status(char *out,size_t capacity) {
         (long long)pfoot_split_local,(long long)pfoot_split_recorded,(long long)pfoot_split_replayed,(long long)pfoot_getups_claimed,(long long)pfoot_getups_replayed,
         (long long)pfoot_walk_passes,(long long)pfoot_adopted,(long long)pfoot_kept_seated,(long long)pfoot_refused_pick,(long long)pfoot_aim_off_seat,pfoot_restored);
     if(n>0 && (size_t)n<capacity)
-        n+=snprintf(out+n,capacity-(size_t)n," foot_entries=%u/%lld k1=%lld/%lld foot_clock=%lld",pfoot_entries,(long long)pfoot_entries_late,
-            (long long)pfoot_k1_ignored,(long long)pfoot_k1_fixed,(long long)pfoot_clock_calls);
+        n+=snprintf(out+n,capacity-(size_t)n," foot_entries=%u/%lld k1=%lld/%lld foot_clock=%lld k1_fp=%d/%u/%lld",pfoot_entries,(long long)pfoot_entries_late,
+            (long long)pfoot_k1_ignored,(long long)pfoot_k1_fixed,(long long)pfoot_clock_calls,
+            pnat_base?(int)*(volatile unsigned char*)(pnat_base+PFOOT_FP_REQUESTED):-1,pnat_base?*(volatile uint32_t*)(pnat_base+PFOOT_COUNTER):0u,
+            (long long)pfoot_k1_unseated);   /* this client's FIRST_PERSON request, X4's count, passes that left the canonical seat out */
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," look=%d/%lld k1_ui=%d/%lld/%lld k1_en=%lld/%lld/%d k1_gu=%lld/%lld/%lld",pfoot_look_patched,(long long)pfoot_look_held,
+                                              pfoot_fp_ui[0] && pfoot_fp_ui[1],(long long)pfoot_k1_ui_fixed,(long long)pfoot_k1_ui_faults,
+                                              (long long)pfoot_k1_enabled,(long long)pfoot_k1_turned,pfoot_k1_held,
+                                              (long long)pfoot_k1_getup_asked,(long long)pfoot_k1_getup_withdrawn,(long long)pfoot_k1_getup_unreadable);
     if(n>0 && (size_t)n<capacity && pfoot_armed && (pfoot_state!=PFOOT_SEATED || pfoot_on)) {
         int d=pfoot_diag(out+n,capacity-(size_t)n);if(d>0) n+=d;
     }

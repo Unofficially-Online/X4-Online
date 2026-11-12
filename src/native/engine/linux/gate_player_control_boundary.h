@@ -37,6 +37,10 @@ static void player_control_boundary_wait(unsigned long long started, int worker)
     nanosleep(&pause, NULL);
 }
 
+/* The definitions follow the network and sealed-preload adapters. */
+static void player_view_ancestry_before(uint64_t generation);
+static void player_view_ancestry_after(uint64_t generation);
+static void player_view_ancestry_close(uint64_t generation);
 #include "gate_player_control_recurring.h"
 
 static int player_control_boundary_before_frame(void) {

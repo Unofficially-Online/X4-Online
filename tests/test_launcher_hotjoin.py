@@ -137,6 +137,30 @@ class FileServiceTests(unittest.TestCase):
             other.close()
 
 
+class PortTests(unittest.TestCase):
+    def test_a_port_free_for_udp_and_tcp(self):
+        """The join file service shares the relay's number: a UDP pick whose TCP side is taken (or kept by Windows,
+        WinError 10013) is skipped."""
+        taken = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        taken.bind(('127.0.0.1', 0))
+        self.addCleanup(taken.close)
+        busy, real, picks = taken.getsockname()[1], socket.socket, []
+
+        class Fake(real):
+            def bind(self, address):
+                if self.type == socket.SOCK_DGRAM and len(picks) < 2:
+                    picks.append(address)
+                    super().bind(('127.0.0.1', 0))
+                    self.getsockname = lambda: ('127.0.0.1', busy)   # the first two UDP picks: the busy number
+                    return
+                super().bind(address)
+        with mock.patch.object(session.socket, 'socket', Fake):
+            port = session.free_udp_port('127.0.0.1')
+        self.assertEqual(len(picks), 2)
+        self.assertNotEqual(port, busy)   # (not bound again here: another process may take a free port at any time)
+        self.assertIsInstance(session.free_udp_port(), int)
+
+
 class HostJoinsTests(unittest.TestCase):
     def test_saved_notice_offers_the_saver_files(self):
         with tempfile.TemporaryDirectory() as tmp:

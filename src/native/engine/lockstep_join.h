@@ -167,7 +167,7 @@
 enum {JOIN_SEC_GATE=1,JOIN_SEC_IDS,JOIN_SEC_WAKE,JOIN_SEC_WAKEVEC,JOIN_SEC_MDHEAP,JOIN_SEC_MODULES,JOIN_SEC_CTX,JOIN_SEC_LUA,
       JOIN_SEC_HEALTH,JOIN_SEC_POSE,JOIN_SEC_SHIELD,JOIN_SEC_NAV,JOIN_SEC_ATTN,JOIN_SEC_KEYS,JOIN_SEC_PATH,JOIN_SEC_REGION,JOIN_SEC_FLIGHT,JOIN_SEC_SPLINE,
       JOIN_SEC_AGENT,JOIN_SEC_ROUTE,JOIN_SEC_PARAM,JOIN_SEC_DOCK,JOIN_SEC_STEER,JOIN_SEC_STEERPT,JOIN_SEC_SOLVER,JOIN_SEC_BULLET,
-      JOIN_SEC_GRAV,JOIN_SEC_GRAVC,JOIN_SEC_GRAVS,JOIN_SEC_SPLM,JOIN_SEC_SPLME,JOIN_SEC_SPLMSEG,JOIN_SEC_GRAVN,JOIN_SEC_GRAVP,JOIN_SEC_GRAVQ,JOIN_SEC_JOBE,JOIN_SEC_EVQT,JOIN_SEC_GRAVD,JOIN_SEC_VIEWK,JOIN_SEC_VIEWKC,JOIN_SEC_VIEWF,JOIN_SEC_VIEWP,JOIN_SEC_SHOOT,JOIN_SEC_ATTK,JOIN_SEC_LIVEF,JOIN_SEC_SPEC,JOIN_SEC_NAVC,JOIN_SEC_JOBS,JOIN_SEC_GONE,JOIN_SEC_BODY,JOIN_SEC_BUPD,JOIN_SEC_LDC,JOIN_SEC_NAVT,JOIN_SEC_NMESH,JOIN_SEC_NOCT,JOIN_SEC_AGTT,JOIN_SEC_AGCB,JOIN_SEC_PBNK,JOIN_SEC_PEND,JOIN_SEC_GRAVB,JOIN_SEC_VIEWL,JOIN_SEC_IKV,JOIN_SEC_RCNT,JOIN_SEC_ECOS,JOIN_SEC_SHPW,JOIN_SEC_TRDN,JOIN_SEC_NPCA,JOIN_SEC_JOBG,JOIN_SEC_CODE,JOIN_SEC_ENGR,JOIN_SEC_SHGR,JOIN_SEC_BNDS,JOIN_SEC_OMGS,JOIN_SEC_RESV,JOIN_SEC_PCSV,JOIN_SEC_CONN,JOIN_SEC_WARP,JOIN_SEC_ARES,JOIN_SEC_LSTN,JOIN_SEC_UNDK,JOIN_SEC_SRCS,JOIN_SEC_FOBJ,JOIN_SEC_CUEI};
+      JOIN_SEC_GRAV,JOIN_SEC_GRAVC,JOIN_SEC_GRAVS,JOIN_SEC_SPLM,JOIN_SEC_SPLME,JOIN_SEC_SPLMSEG,JOIN_SEC_GRAVN,JOIN_SEC_GRAVP,JOIN_SEC_GRAVQ,JOIN_SEC_JOBE,JOIN_SEC_EVQT,JOIN_SEC_GRAVD,JOIN_SEC_VIEWK,JOIN_SEC_VIEWKC,JOIN_SEC_VIEWF,JOIN_SEC_VIEWP,JOIN_SEC_SHOOT,JOIN_SEC_ATTK,JOIN_SEC_LIVEF,JOIN_SEC_SPEC,JOIN_SEC_NAVC,JOIN_SEC_JOBS,JOIN_SEC_GONE,JOIN_SEC_BODY,JOIN_SEC_BUPD,JOIN_SEC_LDC,JOIN_SEC_NAVT,JOIN_SEC_NMESH,JOIN_SEC_NOCT,JOIN_SEC_AGTT,JOIN_SEC_AGCB,JOIN_SEC_PBNK,JOIN_SEC_PEND,JOIN_SEC_GRAVB,JOIN_SEC_VIEWL,JOIN_SEC_IKV,JOIN_SEC_RCNT,JOIN_SEC_ECOS,JOIN_SEC_SHPW,JOIN_SEC_TRDN,JOIN_SEC_NPCA,JOIN_SEC_JOBG,JOIN_SEC_CODE,JOIN_SEC_ENGR,JOIN_SEC_SHGR,JOIN_SEC_BNDS,JOIN_SEC_OMGS,JOIN_SEC_RESV,JOIN_SEC_PCSV,JOIN_SEC_CONN,JOIN_SEC_WARP,JOIN_SEC_ARES,JOIN_SEC_LSTN,JOIN_SEC_UNDK,JOIN_SEC_SRCS,JOIN_SEC_FOBJ,JOIN_SEC_CUEI,JOIN_SEC_ANIS,JOIN_SEC_ANIL};
 /* Package versions: 1 (sections GATE..LUA), 2 (and the world side table HEALTH, POSE: lockstep_join_world.h), 3 (and SHIELD,
  * NAV, ATTN, KEYS: the shield groups' other census fields, flying ships' navigation state, every object's attention level and
  * due, the gate's first-call key tables; J1 j1-12, report 1.7), 4 (and PATH, REGION: the pathing manager's agent batches and
@@ -184,7 +184,7 @@ enum {JOIN_SEC_GATE=1,JOIN_SEC_IDS,JOIN_SEC_WAKE,JOIN_SEC_WAKEVEC,JOIN_SEC_MDHEA
  * the Gravidar zone groups' neighbour lists, which X4 builds when a zone is added: j1-37).
  * A version 11, 10, 9, 8, 7, 6, 5, 4, 3, 2 or 1 package is still read; a strict joiner refuses it (package_v11 ... package_v1). */
 #define JOIN_PACKAGE_VERSION 13u
-#define JOIN_SECTIONS(version) ((version)>=13?83u:(version)>=12?35u:(version)>=11?29u:(version)>=10?26u:(version)>=9?24u:(version)>=8?22u:(version)>=7?20u:(version)>=6?19u:(version)>=5?18u:(version)>=4?16u:(version)>=3?14u:\
+#define JOIN_SECTIONS(version) ((version)>=13?85u:(version)>=12?35u:(version)>=11?29u:(version)>=10?26u:(version)>=9?24u:(version)>=8?22u:(version)>=7?20u:(version)>=6?19u:(version)>=5?18u:(version)>=4?16u:(version)>=3?14u:\
                                 (version)>=2?10u:8u)
 /* FAILED/ABORT reasons, shared with native_gate_join.py REASONS and native_gate_join_core.lua. */
 enum {JOIN_WHY_NONE,JOIN_WHY_NOT_ARMED,JOIN_WHY_NOT_POSSIBLE,JOIN_WHY_SAVE_FAILED,JOIN_WHY_FILE_MISSING,JOIN_WHY_CAPTURE,
@@ -715,6 +715,19 @@ typedef struct {uint64_t region,object;uint32_t field,index,flags,reserved;} joi
  * loaded cue at the runtime ID its ordinal maps to (lockstep_join_ids.h, native_gate_join_cue_ids). Sorted by ordinal, each
  * once. */
 typedef struct {uint64_t runtime;uint32_t ordinal,reserved;} join_cuei_rec;
+/* ANIS (v13, section 84; hjs4, 10 Nov): a part animation sequence of an object (lockstep_join_world.h join_capture_anis): the
+ * object's portable ID, the sequence's index in the object's array (the part's), its queue (the count of stages, the first one's
+ * index in the template's stage array or UINT32_MAX, a signature of every stage's key), its flags byte, the start time +0x08,
+ * whether +0x70 holds something (w70: 0 or 1; the word is a heap pointer of the saver's), +0x78, +0x80; then the first stage's key
+ * keys of the first JOIN_ANIS_KEYS stages (a stage's +0x00, a hash of its name: the same in every process; 0 past the queue),
+ * the key of the unit's state (unit +0x28 -> +0x00) and of the state it enters next (+0x30), 0 without one; pending: the
+ * listeners waiting in the unit (ANIL). Sorted by (portable, part), each once. */
+#define JOIN_ANIS_KEYS 8u
+typedef struct {uint64_t portable;uint32_t part;uint16_t stages;uint8_t flags,pending;uint32_t first,sig;uint64_t start,w70,w78,w80,keys[JOIN_ANIS_KEYS],state,next;} join_anis_rec;
+/* ANIL (v13, section 85): a listener waiting in a sequence's unit (unit +0x40..+0x48; lockstep_join_world.h): the object, the
+ * part, its place in the unit's list, its class (the vtable's RVA; 0 unread), its flag byte (+0x20) and the component it names
+ * (+0x18) as a portable ID (0: none or unmapped). Sorted by (portable, part, place), each once. */
+typedef struct {uint64_t portable;uint32_t part;uint16_t place;uint8_t flag,reserved;uint32_t cls,pad;uint64_t target;} join_anil_rec;
 /* PCSV (v13, section 75): every PlayerController's own motion solver (the controller+0x3b0 .. +0x1930f, built by 0xd47ac0 like an
  * Agent's), by the ship's portable ID, in SOLVER's record (kind PSLOT_VTABLE; lockstep_join_world.h). */
 /* OMGS (v13, section 73): each steering ship's two OmegaSwitched controllers (Agent+0xf80's +0xa0c8 and +0x16398), the object
@@ -726,7 +739,7 @@ typedef struct {uint64_t portable;uint32_t which,pad;unsigned char data[JOIN_OMG
 _Static_assert(sizeof(join_splm_rec)==1264 && sizeof(join_splme_rec)==192 && sizeof(join_gravn_rec)==32 && sizeof(join_gravp_rec)==80 &&
                sizeof(join_gravq_rec)==48 && sizeof(join_jobe_rec)==128 && sizeof(join_evqt_rec)==32 &&
                sizeof(join_gravd_rec)==24 && sizeof(join_viewk_rec)==24 && sizeof(join_viewkc_rec)==24 &&
-               sizeof(join_viewf_rec)==24 && sizeof(join_viewp_rec)==72 && sizeof(join_shoot_rec)==104 && sizeof(join_attk_rec)==48 && sizeof(join_livef_rec)==16 && sizeof(join_spec_rec)==40 && sizeof(join_navc_rec)==104 && sizeof(join_jobs_rec)==24 && sizeof(join_gone_rec)==8 && sizeof(join_body_rec)==208 && sizeof(join_bupd_rec)==16 && sizeof(join_ldc_rec)==128 && sizeof(join_navt_rec)==128 && sizeof(join_nmesh_rec)==8 && sizeof(join_noct_rec)==40 && sizeof(join_agtt_rec)==32 && sizeof(join_agcb_rec)==1032 && sizeof(join_pbnk_rec)==376 && sizeof(join_pend_rec)==16 && sizeof(join_gravb_rec)==24 && sizeof(join_viewl_rec)==16 && sizeof(join_ikv_rec)==40 && sizeof(join_rcnt_rec)==16 && sizeof(join_ecos_rec)==24 && sizeof(join_shpw_rec)==56 && sizeof(join_trdn_rec)==16 && sizeof(join_npca_rec)==64 && sizeof(join_jobg_rec)==16 && sizeof(join_code_rec)==8 && sizeof(join_engr_rec)==24 && sizeof(join_shgr_rec)==40 && sizeof(join_bnds_rec)==216 && sizeof(join_omgs_rec)==8776 && sizeof(join_resv_rec)==144 && sizeof(join_conn_rec)==32 && sizeof(join_warp_rec)==88 && sizeof(join_ares_rec)==224 && sizeof(join_lstn_rec)==40 && sizeof(join_undk_rec)==224 && sizeof(join_srcs_rec)==40 && sizeof(join_fobj_rec)==32 && sizeof(join_cuei_rec)==16,
+               sizeof(join_viewf_rec)==24 && sizeof(join_viewp_rec)==72 && sizeof(join_shoot_rec)==104 && sizeof(join_attk_rec)==48 && sizeof(join_livef_rec)==16 && sizeof(join_spec_rec)==40 && sizeof(join_navc_rec)==104 && sizeof(join_jobs_rec)==24 && sizeof(join_gone_rec)==8 && sizeof(join_body_rec)==208 && sizeof(join_bupd_rec)==16 && sizeof(join_ldc_rec)==128 && sizeof(join_navt_rec)==128 && sizeof(join_nmesh_rec)==8 && sizeof(join_noct_rec)==40 && sizeof(join_agtt_rec)==32 && sizeof(join_agcb_rec)==1032 && sizeof(join_pbnk_rec)==376 && sizeof(join_pend_rec)==16 && sizeof(join_gravb_rec)==24 && sizeof(join_viewl_rec)==16 && sizeof(join_ikv_rec)==40 && sizeof(join_rcnt_rec)==16 && sizeof(join_ecos_rec)==24 && sizeof(join_shpw_rec)==56 && sizeof(join_trdn_rec)==16 && sizeof(join_npca_rec)==64 && sizeof(join_jobg_rec)==16 && sizeof(join_code_rec)==8 && sizeof(join_engr_rec)==24 && sizeof(join_shgr_rec)==40 && sizeof(join_bnds_rec)==216 && sizeof(join_omgs_rec)==8776 && sizeof(join_resv_rec)==144 && sizeof(join_conn_rec)==32 && sizeof(join_warp_rec)==88 && sizeof(join_ares_rec)==224 && sizeof(join_lstn_rec)==40 && sizeof(join_undk_rec)==224 && sizeof(join_srcs_rec)==40 && sizeof(join_fobj_rec)==32 && sizeof(join_cuei_rec)==16 && sizeof(join_anis_rec)==136 && sizeof(join_anil_rec)==32,
                "join v12 record layout (native_gate_join.py)");
 typedef struct {
     uint64_t tick,game,real;uint32_t wire_version,clients,lookahead,tick_hz,slot,md_seq;uint64_t rid_next,created_generation;
@@ -758,7 +771,7 @@ typedef struct {
     join_solver_rec *solver;uint32_t nsolver;join_bullet_rec *bullet;uint32_t nbullet; /* version 10 */
     join_grav_rec *grav;uint32_t ngrav;join_gravc_rec *gravc;uint32_t ngravc;join_gravs_rec *gravs;uint32_t ngravs;   /* version 11 */
     join_splm_rec *splm;uint32_t nsplm;join_splme_rec *splme;uint32_t nsplme;join_spline_rec *splmseg;uint32_t nsplmseg;   /* version 12 */
-    join_gravn_rec *gravn;uint32_t ngravn;join_gravp_rec *gravp;uint32_t ngravp;join_gravq_rec *gravq;uint32_t ngravq;join_jobe_rec *jobe;uint32_t njobe;join_evqt_rec *evqt;uint32_t nevqt;join_gravd_rec *gravd;uint32_t ngravd;join_viewk_rec *viewk;uint32_t nviewk;join_viewkc_rec *viewkc;uint32_t nviewkc;join_viewf_rec *viewf;uint32_t nviewf;join_viewp_rec *viewp;uint32_t nviewp;join_shoot_rec *shoot;uint32_t nshoot;join_attk_rec *attk;uint32_t nattk;join_livef_rec *livef;uint32_t nlivef;join_spec_rec *spec;uint32_t nspec;join_navc_rec *navc;uint32_t nnavc;join_jobs_rec *jobs;uint32_t njobs;join_gone_rec *gone;uint32_t ngone;join_body_rec *body;uint32_t nbody;join_bupd_rec *bupd;uint32_t nbupd;join_ldc_rec *ldc;uint32_t nldc;join_navt_rec *navt;uint32_t nnavt;join_nmesh_rec *nmesh;uint32_t nnmesh;join_noct_rec *noct;uint32_t nnoct;join_agtt_rec *agtt;uint32_t nagtt;join_agcb_rec *agcb;uint32_t nagcb;join_pbnk_rec *pbnk;uint32_t npbnk;join_pend_rec *pend;uint32_t npend;join_gravb_rec *gravb;uint32_t ngravb;join_viewl_rec *viewl;uint32_t nviewl;join_ikv_rec *ikv;uint32_t nikv;join_rcnt_rec *rcnt;uint32_t nrcnt;join_ecos_rec *ecos;uint32_t necos;join_shpw_rec *shpw;uint32_t nshpw;join_trdn_rec *trdn;uint32_t ntrdn;join_npca_rec *npca;uint32_t nnpca;join_jobg_rec *jobg;uint32_t njobg;join_code_rec *code;uint32_t ncode;join_engr_rec *engr;uint32_t nengr;join_shgr_rec *shgr;uint32_t nshgr;join_bnds_rec *bnds;uint32_t nbnds;join_omgs_rec *omgs;uint32_t nomgs;join_resv_rec *resv;uint32_t nresv;join_solver_rec *pcsv;uint32_t npcsv;join_conn_rec *conn;uint32_t nconn;join_warp_rec *warp;uint32_t nwarp;join_ares_rec *ares;uint32_t nares;join_lstn_rec *lstn;uint32_t nlstn;join_undk_rec *undk;uint32_t nundk;join_srcs_rec *srcs;uint32_t nsrcs;join_fobj_rec *fobj;uint32_t nfobj;join_cuei_rec *cuei;uint32_t ncuei;
+    join_gravn_rec *gravn;uint32_t ngravn;join_gravp_rec *gravp;uint32_t ngravp;join_gravq_rec *gravq;uint32_t ngravq;join_jobe_rec *jobe;uint32_t njobe;join_evqt_rec *evqt;uint32_t nevqt;join_gravd_rec *gravd;uint32_t ngravd;join_viewk_rec *viewk;uint32_t nviewk;join_viewkc_rec *viewkc;uint32_t nviewkc;join_viewf_rec *viewf;uint32_t nviewf;join_viewp_rec *viewp;uint32_t nviewp;join_shoot_rec *shoot;uint32_t nshoot;join_attk_rec *attk;uint32_t nattk;join_livef_rec *livef;uint32_t nlivef;join_spec_rec *spec;uint32_t nspec;join_navc_rec *navc;uint32_t nnavc;join_jobs_rec *jobs;uint32_t njobs;join_gone_rec *gone;uint32_t ngone;join_body_rec *body;uint32_t nbody;join_bupd_rec *bupd;uint32_t nbupd;join_ldc_rec *ldc;uint32_t nldc;join_navt_rec *navt;uint32_t nnavt;join_nmesh_rec *nmesh;uint32_t nnmesh;join_noct_rec *noct;uint32_t nnoct;join_agtt_rec *agtt;uint32_t nagtt;join_agcb_rec *agcb;uint32_t nagcb;join_pbnk_rec *pbnk;uint32_t npbnk;join_pend_rec *pend;uint32_t npend;join_gravb_rec *gravb;uint32_t ngravb;join_viewl_rec *viewl;uint32_t nviewl;join_ikv_rec *ikv;uint32_t nikv;join_rcnt_rec *rcnt;uint32_t nrcnt;join_ecos_rec *ecos;uint32_t necos;join_shpw_rec *shpw;uint32_t nshpw;join_trdn_rec *trdn;uint32_t ntrdn;join_npca_rec *npca;uint32_t nnpca;join_jobg_rec *jobg;uint32_t njobg;join_code_rec *code;uint32_t ncode;join_engr_rec *engr;uint32_t nengr;join_shgr_rec *shgr;uint32_t nshgr;join_bnds_rec *bnds;uint32_t nbnds;join_omgs_rec *omgs;uint32_t nomgs;join_resv_rec *resv;uint32_t nresv;join_solver_rec *pcsv;uint32_t npcsv;join_conn_rec *conn;uint32_t nconn;join_warp_rec *warp;uint32_t nwarp;join_ares_rec *ares;uint32_t nares;join_lstn_rec *lstn;uint32_t nlstn;join_undk_rec *undk;uint32_t nundk;join_srcs_rec *srcs;uint32_t nsrcs;join_fobj_rec *fobj;uint32_t nfobj;join_cuei_rec *cuei;uint32_t ncuei;join_anis_rec *anis;uint32_t nanis;join_anil_rec *anil;uint32_t nanil;
     unsigned char save_sha[32];uint64_t save_bytes;uint32_t flags,version;
 } join_tables;
 /* The engine as the module sees it; tests build a synthetic one. */
@@ -785,7 +798,7 @@ static struct {
     int state,mode;unsigned why,slot_k,mask;uint64_t tick;char name[24];WCHAR folder[MAX_PATH];uintptr_t mw_tls;
     unsigned char package_sha[32],portable[16],save_sha[32];uint64_t save_bytes,package_bytes,save_us,capture_us;
     unsigned modified_cleared,possible;char detail[320];char *lua;size_t lua_len;uint32_t nlua;unsigned char fixture[12];
-    uint32_t health,pose,shield,nav,attn,keys,path,region,flight,spline,agent,route,param,dock,steer,steerpt,solver,bullet,grav,gravc,gravs,splm,splme,splmseg,gravn,gravp,gravq,jobe,evqt,gravd,viewk,viewkc,viewf,viewp,shoot,attk,livef,spec,navc,jobs,gone,body,bupd,ldc,navt,nmesh,noct,agtt,agcb,pbnk,pend,gravb,viewl,ikv,rcnt,ecos,shpw,trdn,npca,jobg,code,engr,shgr,bnds,omgs,resv,pcsv,conn,warp,ares,lstn,undk,srcs,fobj;   /* the world side table at the last capture */
+    uint32_t health,pose,shield,nav,attn,keys,path,region,flight,spline,agent,route,param,dock,steer,steerpt,solver,bullet,grav,gravc,gravs,splm,splme,splmseg,gravn,gravp,gravq,jobe,evqt,gravd,viewk,viewkc,viewf,viewp,shoot,attk,livef,spec,navc,jobs,gone,body,bupd,ldc,navt,nmesh,noct,agtt,agcb,pbnk,pend,gravb,viewl,ikv,rcnt,ecos,shpw,trdn,npca,jobg,code,engr,shgr,bnds,omgs,resv,pcsv,conn,warp,ares,lstn,undk,srcs,fobj,anis,anil;   /* the world side table at the last capture */
     uint32_t solver_over,bullet_fault;                                         /* dormant solvers past the cap, bullets not readable */
     uint32_t solver_mapped;                                                    /* version 12: solver qwords that were addresses of this process */
     uint32_t gravq_global,gravq_busy;                                          /* GRAVQ: entries in the event queue at T (not carried), worker not idle */
@@ -901,7 +914,7 @@ static int join_grow(void **items,uint32_t *count,uint32_t *cap,size_t size) {
 static void join_tables_free(join_tables *t) {
     free(t->ctx);free(t->wake);free(t->vec);free(t->md);free(t->ids);free(t->modules);free(t->lua);free(t->health);free(t->pose);
     free(t->shield);free(t->nav);free(t->attn);free(t->keys);free(t->path);free(t->region);free(t->flight);free(t->spline);free(t->agent);
-    free(t->route);free(t->param);free(t->dock);free(t->steer);free(t->steerpt);free(t->solver);free(t->bullet);free(t->grav);free(t->gravc);free(t->gravs);free(t->splm);free(t->splme);free(t->splmseg);free(t->gravn);free(t->gravp);free(t->gravq);free(t->jobe);free(t->evqt);free(t->gravd);free(t->viewk);free(t->viewkc);free(t->viewf);free(t->viewp);free(t->shoot);free(t->attk);free(t->livef);free(t->spec);free(t->navc);free(t->jobs);free(t->gone);free(t->body);free(t->bupd);free(t->ldc);free(t->navt);free(t->nmesh);free(t->noct);free(t->agtt);free(t->agcb);free(t->pbnk);free(t->pend);free(t->gravb);free(t->viewl);free(t->ikv);free(t->rcnt);free(t->ecos);free(t->shpw);free(t->trdn);free(t->npca);free(t->jobg);free(t->code);free(t->engr);free(t->shgr);free(t->bnds);free(t->omgs);free(t->resv);free(t->pcsv);free(t->conn);free(t->warp);free(t->ares);free(t->lstn);free(t->undk);free(t->srcs);free(t->fobj);free(t->cuei);memset(t,0,sizeof(*t));
+    free(t->route);free(t->param);free(t->dock);free(t->steer);free(t->steerpt);free(t->solver);free(t->bullet);free(t->grav);free(t->gravc);free(t->gravs);free(t->splm);free(t->splme);free(t->splmseg);free(t->gravn);free(t->gravp);free(t->gravq);free(t->jobe);free(t->evqt);free(t->gravd);free(t->viewk);free(t->viewkc);free(t->viewf);free(t->viewp);free(t->shoot);free(t->attk);free(t->livef);free(t->spec);free(t->navc);free(t->jobs);free(t->gone);free(t->body);free(t->bupd);free(t->ldc);free(t->navt);free(t->nmesh);free(t->noct);free(t->agtt);free(t->agcb);free(t->pbnk);free(t->pend);free(t->gravb);free(t->viewl);free(t->ikv);free(t->rcnt);free(t->ecos);free(t->shpw);free(t->trdn);free(t->npca);free(t->jobg);free(t->code);free(t->engr);free(t->shgr);free(t->bnds);free(t->omgs);free(t->resv);free(t->pcsv);free(t->conn);free(t->warp);free(t->ares);free(t->lstn);free(t->undk);free(t->srcs);free(t->fobj);free(t->cuei);free(t->anis);free(t->anil);memset(t,0,sizeof(*t));
 }
 static uint64_t join_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static double join_double(uint64_t b) {double v;memcpy(&v,&b,8);return v;}
@@ -1552,6 +1565,8 @@ static int join_package_build(join_tables *t,join_buf *b) {
     join_section(b,JOIN_SEC_SRCS,t->nsrcs,t->srcs,(uint64_t)t->nsrcs*sizeof(*t->srcs));
     join_section(b,JOIN_SEC_FOBJ,t->nfobj,t->fobj,(uint64_t)t->nfobj*sizeof(*t->fobj));
     join_section(b,JOIN_SEC_CUEI,t->ncuei,t->cuei,(uint64_t)t->ncuei*sizeof(*t->cuei));
+    join_section(b,JOIN_SEC_ANIS,t->nanis,t->anis,(uint64_t)t->nanis*sizeof(*t->anis));
+    join_section(b,JOIN_SEC_ANIL,t->nanil,t->anil,(uint64_t)t->nanil*sizeof(*t->anil));
     unsigned char sha[32];if(!b->failed) {lockstep_sha256(b->data,b->size,sha);join_put(b,sha,32);}
     return !b->failed;
 }
@@ -1567,9 +1582,9 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     uint32_t version,count,slot,flags;uint64_t tick,game,real,reserved;*why="package_magic";
     memcpy(&version,data+8,4);memcpy(&count,data+12,4);memcpy(&tick,data+16,8);memcpy(&game,data+24,8);memcpy(&real,data+32,8);
     memcpy(&slot,data+80,4);memcpy(&flags,data+84,4);memcpy(&reserved,data+88,8);
-    if(memcmp(data,"X4MPJN01",8) || version<1 || version>JOIN_PACKAGE_VERSION || reserved || count>83) return 0;
+    if(memcmp(data,"X4MPJN01",8) || version<1 || version>JOIN_PACKAGE_VERSION || reserved || count>85) return 0;
     memcpy(t->save_sha,data+40,32);memcpy(&t->save_bytes,data+72,8);t->flags=flags;t->version=version;
-    const uint32_t last=version>=13?JOIN_SEC_CUEI:version>=12?JOIN_SEC_GRAVQ:version>=11?JOIN_SEC_GRAVS:version>=10?JOIN_SEC_BULLET:version>=9?JOIN_SEC_STEERPT:version>=8?JOIN_SEC_DOCK:version>=7?JOIN_SEC_ROUTE:version>=6?JOIN_SEC_AGENT:version>=5?JOIN_SEC_SPLINE:version>=4?JOIN_SEC_REGION:version>=3?JOIN_SEC_KEYS:
+    const uint32_t last=version>=13?JOIN_SEC_ANIL:version>=12?JOIN_SEC_GRAVQ:version>=11?JOIN_SEC_GRAVS:version>=10?JOIN_SEC_BULLET:version>=9?JOIN_SEC_STEERPT:version>=8?JOIN_SEC_DOCK:version>=7?JOIN_SEC_ROUTE:version>=6?JOIN_SEC_AGENT:version>=5?JOIN_SEC_SPLINE:version>=4?JOIN_SEC_REGION:version>=3?JOIN_SEC_KEYS:
                         version>=2?JOIN_SEC_POSE:JOIN_SEC_LUA;
     size_t at=96,end=size-32;unsigned __int128 seen=0;   /* 128 bits: section kinds reach 64 (version 13, ECOS) */
     for(uint32_t s=0;s<count;s++) {
@@ -1589,7 +1604,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
                                      sizeof(join_splm_rec),sizeof(join_splme_rec),sizeof(join_spline_rec),sizeof(join_gravn_rec),
                                      sizeof(join_gravp_rec),sizeof(join_gravq_rec),
                                      sizeof(join_jobe_rec),sizeof(join_evqt_rec),sizeof(join_gravd_rec),sizeof(join_viewk_rec),
-                                     sizeof(join_viewkc_rec),sizeof(join_viewf_rec),sizeof(join_viewp_rec),sizeof(join_shoot_rec),sizeof(join_attk_rec),sizeof(join_livef_rec),sizeof(join_spec_rec),sizeof(join_navc_rec),sizeof(join_jobs_rec),sizeof(join_gone_rec),sizeof(join_body_rec),sizeof(join_bupd_rec),sizeof(join_ldc_rec),sizeof(join_navt_rec),sizeof(join_nmesh_rec),sizeof(join_noct_rec),sizeof(join_agtt_rec),sizeof(join_agcb_rec),sizeof(join_pbnk_rec),sizeof(join_pend_rec),sizeof(join_gravb_rec),sizeof(join_viewl_rec),sizeof(join_ikv_rec),sizeof(join_rcnt_rec),sizeof(join_ecos_rec),sizeof(join_shpw_rec),sizeof(join_trdn_rec),sizeof(join_npca_rec),sizeof(join_jobg_rec),sizeof(join_code_rec),sizeof(join_engr_rec),sizeof(join_shgr_rec),sizeof(join_bnds_rec),sizeof(join_omgs_rec),sizeof(join_resv_rec),sizeof(join_solver_rec),sizeof(join_conn_rec),sizeof(join_warp_rec),sizeof(join_ares_rec),sizeof(join_lstn_rec),sizeof(join_undk_rec),sizeof(join_srcs_rec),sizeof(join_fobj_rec),sizeof(join_cuei_rec)};
+                                     sizeof(join_viewkc_rec),sizeof(join_viewf_rec),sizeof(join_viewp_rec),sizeof(join_shoot_rec),sizeof(join_attk_rec),sizeof(join_livef_rec),sizeof(join_spec_rec),sizeof(join_navc_rec),sizeof(join_jobs_rec),sizeof(join_gone_rec),sizeof(join_body_rec),sizeof(join_bupd_rec),sizeof(join_ldc_rec),sizeof(join_navt_rec),sizeof(join_nmesh_rec),sizeof(join_noct_rec),sizeof(join_agtt_rec),sizeof(join_agcb_rec),sizeof(join_pbnk_rec),sizeof(join_pend_rec),sizeof(join_gravb_rec),sizeof(join_viewl_rec),sizeof(join_ikv_rec),sizeof(join_rcnt_rec),sizeof(join_ecos_rec),sizeof(join_shpw_rec),sizeof(join_trdn_rec),sizeof(join_npca_rec),sizeof(join_jobg_rec),sizeof(join_code_rec),sizeof(join_engr_rec),sizeof(join_shgr_rec),sizeof(join_bnds_rec),sizeof(join_omgs_rec),sizeof(join_resv_rec),sizeof(join_solver_rec),sizeof(join_conn_rec),sizeof(join_warp_rec),sizeof(join_ares_rec),sizeof(join_lstn_rec),sizeof(join_undk_rec),sizeof(join_srcs_rec),sizeof(join_fobj_rec),sizeof(join_cuei_rec),sizeof(join_anis_rec),sizeof(join_anil_rec)};
         *why="section_shape";
         if(kind==JOIN_SEC_MODULES || kind==JOIN_SEC_LUA) {
             uint32_t lines=0;for(uint64_t i=0;i<bytes;i++) {if(payload[i]=='\n') ++lines;else if(payload[i]<32 || payload[i]>126) return 0;}
@@ -1683,6 +1698,8 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
             else if(kind==JOIN_SEC_SRCS) {t->srcs=copy;t->nsrcs=n;}
             else if(kind==JOIN_SEC_FOBJ) {t->fobj=copy;t->nfobj=n;}
             else if(kind==JOIN_SEC_CUEI) {t->cuei=copy;t->ncuei=n;}
+            else if(kind==JOIN_SEC_ANIS) {t->anis=copy;t->nanis=n;}
+            else if(kind==JOIN_SEC_ANIL) {t->anil=copy;t->nanil=n;}
             else {t->ctx=copy;t->nctx=n;}
         }
         at+=48+(size_t)bytes;
@@ -1699,7 +1716,7 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
     if(version>=10 && ((seen>>JOIN_SEC_SOLVER&3u)!=3u)) return 0;                               /* v10: SOLVER, BULLET */
     if(version>=11 && ((seen>>JOIN_SEC_GRAV&7u)!=7u)) return 0;                                 /* v11: GRAV, GRAVC, GRAVS */
     if(version>=12 && ((seen>>JOIN_SEC_SPLM&63u)!=63u)) return 0;                               /* v12: SPLM .. GRAVQ */
-    if(version>=13 && ((seen>>JOIN_SEC_JOBE&281474976710655ull)!=281474976710655ull)) return 0;     /* v13: JOBE .. CUEI */
+    if(version>=13 && ((seen>>JOIN_SEC_JOBE&1125899906842623ull)!=1125899906842623ull)) return 0;     /* v13: JOBE .. ANIL */
     *why="world_order";   /* the world records sorted by portable ID, each once (the admission's identity lookups rely on it) */
     for(uint32_t i=1;i<t->nhealth;i++) if(t->health[i].portable<=t->health[i-1].portable) return 0;
     for(uint32_t i=1;i<t->npose;i++) if(t->pose[i].portable<=t->pose[i-1].portable) return 0;
@@ -1899,6 +1916,16 @@ static int join_package_parse(const unsigned char *data,size_t size,join_tables 
         const join_cuei_rec *a=&t->cuei[i];
         if(!a->runtime || a->reserved || (i && t->cuei[i-1].ordinal>=a->ordinal)) {*why="cuei_shape";return 0;}
     }
+    if(version>=13) for(uint32_t i=0;i<t->nanil;i++) {   /* ANIL: by (portable, part, place), each once */
+        const join_anil_rec *a=&t->anil[i],*p=i?&t->anil[i-1]:NULL;
+        if(!a->portable || a->reserved || a->pad || (p && (p->portable>a->portable || (p->portable==a->portable &&
+           (p->part>a->part || (p->part==a->part && p->place>=a->place)))))) {*why="anil_shape";return 0;}
+    }
+    if(version>=13) for(uint32_t i=0;i<t->nanis;i++) {   /* ANIS: by (portable, part), each once; no stage, no first index */
+        const join_anis_rec *a=&t->anis[i],*p=i?&t->anis[i-1]:NULL;
+        if(!a->portable || a->stages>64u || (!a->stages && a->first!=UINT32_MAX) || a->w70>1u ||
+           (p && (p->portable>a->portable || (p->portable==a->portable && p->part>=a->part)))) {*why="anis_shape";return 0;}
+    }
     if(version>=13) for(uint32_t i=0;i<t->nfobj;i++) {   /* FOBJ: by (region, field, index), each once, the object 0 exactly when unmapped */
         const join_fobj_rec *a=&t->fobj[i];
         if(!a->region || (a->flags&~1u) || a->reserved || !(a->flags&1u)!=!!a->object || (i && join_fobj_cmp(&t->fobj[i-1],a)>=0))
@@ -2020,8 +2047,18 @@ static const join_pin join_pin_table[]={
      * points hook through a pointer) and the attention timer's due +0x2e0 (past its first 8 bytes: lockstep_attention.h patches
      * them with a jump and a nop). */
     {0xea2a20,537,"d301bea94b279ddce92ced403bafdd17a90ed2eb83c5cc5944cf2ae600fc4a4f"},   /* RefreshFromPathingState */
+    /* native_gate_join_keep_stamps: the republication (its three transform queries), the cache walk that calls it, the query */
+    {0x3d46b0,0x3cc,"84f77bb26750e1f20ccb53d4bc8863a9aa18119da21e6d1648e4659fdedc7784"},   /* PropagateCacheFlags */
+    {0x3d4a80,0x6ff,"c8bd534299f639285476f5738e8674a4e14dec04d8004b792eadfa11d92ec91c"},   /* BuildCache */
+    {0xea5a90,0x7e9,"1d90a6295a8658de5d2ba9cf75b16d37cb74bfcc5f9a517eec08202c3f4dcfd4"},   /* GetTransformImpl */
     {0xeac170,123,"8487d9a8922f92b790f68759933ac3011a10746f828a634ffc5fcb68ab24bd36"},   /* WaitAndSwapBuffers */
     {0x3d5660,0x64,"8e948a0788bbacca91415cb51e228e73bc416c608d2398b07f05312fb19b56eb"},  /* SetAttention */
+    {0x116a1f0,0xf5,"e094b23d8f4910001c2f058a997727102fb6823fe38a8ae39c9e7fee07883ea8"},  /* SequenceControlUnit: a state entered (join_anis_restate) */
+    {0x999ef0,0xa8,"c2763f6b67b945333fd182b132c6bccc7f0fb9189298ea9179369e85b4d94d66"},   /* a listener off its source's events (the same) */
+    {0xcb8c0,0x65,"b2f9352e8770022e5f4f53684e661cddb5b653ecf1ef4987d5d94d27acc1dee9"},    /* a pointer appended to a small vector (a sequence's queue; join_anis_restate) */
+    {0x116a4e0,0x3a,"7abac26436d7c1538f1882d1732961c72bf80361e7536c4ec1d98e4d702dd252"},  /* SequenceControlUnit vtable +0x58: a waiting listener added (ANIL) */
+    {0x116e130,0x5c,"2f107538017d7aff9be0d11b6d249ff22070cd63b60339ce1eb2ca5455f19d41"},  /* CockpitStateListener's constructor (ANIL) */
+    {0x116e5e0,0x5c,"69da7f3e0449a84b115dc6b8351f61f3e486e825df606b0a2b42d32b63612630"},  /* DockingBayFenceStateListener's constructor (ANIL) */
     {0x51bb90,0xef,"9c81bb958eb4ae13a5ad69aa480e66d39e99c922f0eca66398578a42d0802546"},  /* Destructible::vfunc904: the two XPhys records' maker calls (rid_body_route's frames) */
     {0x6d1ff8,180,"740c43de64e569c5d869023ebc90074b6a2d97e07590404c989698f488111b2e"},   /* the attention timer */
     /* Version 4 (j1-14, report 1.8): PATH's pathing manager as its own code keeps it: Run's wake (semaphores +0x18/+0x10), the
@@ -2512,17 +2549,112 @@ static void join_gate_fields(join_tables *t,uint64_t tick) {
  * forgets the fixture holders it has seen at the boundary after T+1 (shape_initialized), so at step T+2 every fixture holder
  * on every client refreshes from the same poses with the keyed draw (shape_initial), and their due times run together after.
  * The session learns T from the SAVE_AT record (every client of the session, saver or not), the joiner from its package.
- * Other bodies keep the native refresh path (region camera alignment at each client's start): not covered here. */
+ * Other bodies: the region camera's table of aligned objects is forgotten at the same boundary (join_shape_reset). */
 static uint64_t join_shape_at;static int join_shape_joiner;static uint32_t join_shape_resets;
-static void join_shape_reset(uint64_t completed) {
+/* native_gate_join_shape_hold (session and joiner, in the join defaults; hj8i at T=678, 11 Nov). In a frame the bullets are
+ * cast in the Move passes (0x9f9da0) before XPhys::Scene::Step 0xba600 refreshes any compound, so the casts of step T+1 see
+ * each body's children as the scene step of T left them: on the session from that body's last refresh, up to five seconds
+ * old, on the joiner as its load built the compound (BODY's own note: the mass properties show the parts stood elsewhere).
+ * A bullet of 679 missed fixture ship 16fcd9 on the session and hit it on the joiner. Forgetting the holders at the boundary
+ * after T (tried) acts in the scene step of T+1, after those casts; the joiner's first refresh comes there too, and both
+ * sides' refresh at T+2 leaves the casts of T+2 apart the same way. With this option:
+ *   session, the boundary after T-1   the holders and the aligned objects are forgotten (join_shape_forget): the scene step
+ *                                     of T refreshes every body from the poses of T;
+ *   session, the boundary after T     every holder's due time +0x28 goes to T's time plus one and a half ticks: nothing
+ *                                     refreshes in the scene step of T+1;
+ *   joiner, the admission             Body_UpdateShape(record, force) for every body of the scenes, with the thread's game
+ *                                     time at T's (the package's), the object's key marked as seen, the same due time;
+ *   both, the boundary after T+1      the reset below, as before: every body refreshes in the scene step of T+2.
+ * So the casts of T+1 and of T+2 see compounds made from the poses of T on every client. A session client that learns T
+ * after the boundary of T-1 does the hold alone (as before the option for step T+1). Crash note JOIN_SHAPE_HOLD tick=
+ * joiner= force= bodies= forced= held= plain= (plain: a body without a record, an owner or a holder) seen= (objects newly
+ * marked) now= tls= (the joiner's thread time before the calls); status shape_hold=on:calls:forced:held. Real run, the save
+ * forced to 678: the session held 176 of 179 bodies, the joiner refreshed 159 and held 169 of 172 with its thread time
+ * already at T's; joined with digest_mismatches=0 where every run before parted at 679, the census of 679, 1800, 3600 and
+ * 5400 equal, the ship's body and its compound's children equal at 679..681 (physics trace). */
+#define JOIN_SHAPE_UPDATE 0xbff80u
+static const uint32_t join_shape_scenes[3]={0x38f0748u,0x38f0740u,0x38f0738u};
+static int join_shape_hold_on;
+static uint64_t join_shape_hold_calls,join_shape_hold_forced,join_shape_hold_held;
+static void join_shape_update_native(unsigned char *record,unsigned char force) {
+    ((void (*)(void *,unsigned char))(void *)(image+JOIN_SHAPE_UPDATE))(record,force);
+}
+static void (*join_shape_update)(unsigned char *,unsigned char)=join_shape_update_native;   /* tests replace them */
+static unsigned char *(*join_shape_tls)(void)=join_tls_block;
+static unsigned char *join_shape_scene_test[3];
+static unsigned join_shape_forget(void) {
     unsigned held=0;
     for(unsigned a=0;a<ACTOR_CAPACITY;a++) for(unsigned w=0;w<SHAPE_RECORDS;w++) if(shape_initialized[a][w].holder) ++held;
-    memset(shape_initialized,0,sizeof(shape_initialized));++join_shape_resets;
+    memset(shape_initialized,0,sizeof(shape_initialized));
+    memset((void *)rc_shape_keys,0,sizeof(rc_shape_keys));   /* every other body as well (join_shape_reset) */
+    return held;
+}
+static void join_shape_hold(uint64_t completed,double now,int force) {
+    const double due=now+1.5*gate_tick_dt();uint64_t bodies=0,forced=0,held=0,plain=0,seen=0;
+    unsigned char *tls=force?join_shape_tls():NULL;double saved=0;
+    if(tls) {memcpy(&saved,tls+0x300,8);memcpy(tls+0x300,&now,8);}
+    for(unsigned s=0;s<3;s++) {
+        unsigned char *scene=join_shape_scene_test[s],*system=NULL,*frame=NULL,**list=NULL;uint64_t slots=0;
+        if(!scene && !join_read(image+join_shape_scenes[s],&scene,8)) continue;
+        if(!scene || !join_read(scene+0x20,&system,8) || !system || !join_read(system+0x10,&slots,8) || slots>0x800000u ||
+           !join_read(system+0x20,&list,8) || !list) continue;
+        (void)join_read(scene+0x40,&frame,8);
+        for(uint64_t i=0;i<slots;i++) {
+            unsigned char *body=NULL,*record=NULL,*owner=NULL,*holder=NULL;
+            if(!join_read(list+i,&body,8) || !body || ((uintptr_t)body&1u)) continue;
+            ++bodies;
+            if(!join_read(body+0x50,&record,8) || !record || !join_read(record,&owner,8) || !owner ||
+               !join_read(record+0x20,&holder,8) || !holder) {++plain;continue;}
+            if(force && frame) {   /* as the scene step's loop: a scene with its frame, a record with its owner */
+                uint64_t runtime=0;unsigned klass=0;
+                join_shape_update(record,1);++forced;
+                if(join_read(owner+8,&runtime,8) && runtime) {
+                    const uint64_t key=world_identity_key(runtime,&klass);
+                    if(key && rc_shape_key_first(key)>0) ++seen;
+                }
+                if(!join_read(record+0x20,&holder,8) || !holder) continue;
+            }
+            memcpy(holder+0x28,&due,8);++held;
+        }
+    }
+    uint64_t was=0;if(tls) {memcpy(&was,&saved,8);memcpy(tls+0x300,&saved,8);}
+    ++join_shape_hold_calls;join_shape_hold_forced+=forced;join_shape_hold_held+=held;
+    uint64_t bits;memcpy(&bits,&now,8);
+    char row[280];const int n=snprintf(row,sizeof(row),"[X4LAN] NATIVE_GATE JOIN_SHAPE_HOLD tick=%llu joiner=%d force=%d bodies=%llu forced=%llu "
+        "held=%llu plain=%llu seen=%llu now=%016llx tls=%016llx\r\n",(unsigned long long)completed,join_shape_joiner,force,
+        (unsigned long long)bodies,(unsigned long long)forced,(unsigned long long)held,(unsigned long long)plain,(unsigned long long)seen,
+        (unsigned long long)bits,(unsigned long long)was);
+    if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);
+}
+/* The joiner's admission (lockstep_join_world.h, before BODY writes the session's motion properties). */
+static void join_shape_hold_admit(const join_tables *s) {
+    if(!join_shape_hold_on) return;
+    double now;memcpy(&now,&s->gate.game,8);join_shape_hold(s->gate.tick,now,1);
+}
+static void join_shape_reset(uint64_t completed) {
+    const unsigned held=join_shape_forget();++join_shape_resets;
+    /* Every other body as well (hjr1, 10 Nov). The region camera's shape_refresh group lets each object's first refresh after
+     * its client's start come at once and the later ones at the keyed interval, so a joiner's due times ran from its load and
+     * the session's from its start: a ship rebuilt inside the old one's wreck was moved out of it at the ship's next refresh,
+     * tick 1344 on the session and 1599 on the joiner (its load at 698 plus the same 30 s). With the table of seen objects
+     * forgotten here, on every client at the same boundary, the next refresh call of every body is a first one again: all
+     * refresh at step T+2 from the same poses and their due times run together after. */
+    /* And every zone's mass traffic is made anew in the next step (lockstep_traffic_rows.h tp_rebuild_mark): its members are
+     * in no save, so the joiner's were its own. */
+    InterlockedExchange64(&tp_rebuild_tick,(LONG64)completed+1);
     char row[160];const int n=snprintf(row,sizeof(row),"[X4LAN] NATIVE_GATE JOIN_SHAPE_RESET tick=%llu forgotten=%u resets=%u joiner=%d\r\n",
                                        (unsigned long long)completed,held,join_shape_resets,join_shape_joiner);
     if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);
 }
 static void join_boundary(uint64_t completed) {
+    if(join_shape_hold_on && !join_shape_joiner && join_shape_at) {   /* a session client: step T refreshes all, step T+1 none */
+        if(completed+1u==join_shape_at) {
+            const unsigned held=join_shape_forget();
+            char row[160];const int n=snprintf(row,sizeof(row),"[X4LAN] NATIVE_GATE JOIN_SHAPE_RESET tick=%llu forgotten=%u resets=%u joiner=0 early=1\r\n",
+                                               (unsigned long long)completed,held,join_shape_resets);
+            if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);
+        } else if(completed==join_shape_at) join_shape_hold(completed,stats.game,0);
+    }
     if(join_shape_joiner && join_rx.based && completed==join_rx.t.gate.tick+1) join_shape_reset(completed);
     else if(join_shape_at && completed==join_shape_at+1) {join_shape_reset(completed);join_shape_at=0;}
     join_t1_probe(completed,stats.game);   /* both sides: the linear models after step T+1 (lockstep_join_world.h) */
@@ -2586,7 +2718,7 @@ static void join_boundary(uint64_t completed) {
     join_cap.path=t.npath;join_cap.region=t.nregion;join_cap.flight=t.nflight;join_cap.spline=t.nspline;join_cap.agent=t.nagent;
     join_cap.route=t.nroute;join_cap.param=t.nparam;join_cap.dock=t.ndock;join_cap.steer=t.nsteer;join_cap.steerpt=t.nsteerpt;
     join_cap.solver=t.nsolver;join_cap.bullet=t.nbullet;join_cap.grav=t.ngrav;join_cap.gravc=t.ngravc;join_cap.gravs=t.ngravs;
-    join_cap.splm=t.nsplm;join_cap.splme=t.nsplme;join_cap.splmseg=t.nsplmseg;join_cap.gravn=t.ngravn;join_cap.gravp=t.ngravp;join_cap.gravq=t.ngravq;join_cap.jobe=t.njobe;join_cap.evqt=t.nevqt;join_cap.gravd=t.ngravd;join_cap.viewk=t.nviewk;join_cap.viewkc=t.nviewkc;join_cap.viewf=t.nviewf;join_cap.viewp=t.nviewp;join_cap.shoot=t.nshoot;join_cap.attk=t.nattk;join_cap.livef=t.nlivef;join_cap.spec=t.nspec;join_cap.navc=t.nnavc;join_cap.jobs=t.njobs;join_cap.gone=t.ngone;join_cap.body=t.nbody;join_cap.bupd=t.nbupd;join_cap.ldc=t.nldc;join_cap.navt=t.nnavt;join_cap.nmesh=t.nnmesh;join_cap.noct=t.nnoct;join_cap.agtt=t.nagtt;join_cap.agcb=t.nagcb;join_cap.pbnk=t.npbnk;join_cap.pend=t.npend;join_cap.gravb=t.ngravb;join_cap.viewl=t.nviewl;join_cap.ikv=t.nikv;join_cap.rcnt=t.nrcnt;join_cap.ecos=t.necos;join_cap.shpw=t.nshpw;join_cap.trdn=t.ntrdn;join_cap.npca=t.nnpca;join_cap.jobg=t.njobg;join_cap.code=t.ncode;join_cap.engr=t.nengr;join_cap.shgr=t.nshgr;join_cap.bnds=t.nbnds;join_cap.omgs=t.nomgs;join_cap.resv=t.nresv;join_cap.pcsv=t.npcsv;join_cap.conn=t.nconn;join_cap.warp=t.nwarp;join_cap.ares=t.nares;join_cap.lstn=t.nlstn;join_cap.undk=t.nundk;join_cap.srcs=t.nsrcs;join_cap.fobj=t.nfobj;
+    join_cap.splm=t.nsplm;join_cap.splme=t.nsplme;join_cap.splmseg=t.nsplmseg;join_cap.gravn=t.ngravn;join_cap.gravp=t.ngravp;join_cap.gravq=t.ngravq;join_cap.jobe=t.njobe;join_cap.evqt=t.nevqt;join_cap.gravd=t.ngravd;join_cap.viewk=t.nviewk;join_cap.viewkc=t.nviewkc;join_cap.viewf=t.nviewf;join_cap.viewp=t.nviewp;join_cap.shoot=t.nshoot;join_cap.attk=t.nattk;join_cap.livef=t.nlivef;join_cap.spec=t.nspec;join_cap.navc=t.nnavc;join_cap.jobs=t.njobs;join_cap.gone=t.ngone;join_cap.body=t.nbody;join_cap.bupd=t.nbupd;join_cap.ldc=t.nldc;join_cap.navt=t.nnavt;join_cap.nmesh=t.nnmesh;join_cap.noct=t.nnoct;join_cap.agtt=t.nagtt;join_cap.agcb=t.nagcb;join_cap.pbnk=t.npbnk;join_cap.pend=t.npend;join_cap.gravb=t.ngravb;join_cap.viewl=t.nviewl;join_cap.ikv=t.nikv;join_cap.rcnt=t.nrcnt;join_cap.ecos=t.necos;join_cap.shpw=t.nshpw;join_cap.trdn=t.ntrdn;join_cap.npca=t.nnpca;join_cap.jobg=t.njobg;join_cap.code=t.ncode;join_cap.engr=t.nengr;join_cap.shgr=t.nshgr;join_cap.bnds=t.nbnds;join_cap.omgs=t.nomgs;join_cap.resv=t.nresv;join_cap.pcsv=t.npcsv;join_cap.conn=t.nconn;join_cap.warp=t.nwarp;join_cap.ares=t.nares;join_cap.lstn=t.nlstn;join_cap.undk=t.nundk;join_cap.srcs=t.nsrcs;join_cap.fobj=t.nfobj;join_cap.anis=t.nanis;join_cap.anil=t.nanil;
     QueryPerformanceCounter(&t2);t.gate.save_us=join_cap.save_us;t.gate.capture_us=(uint64_t)((t2.QuadPart-t1.QuadPart)*1000000/f.QuadPart);
     join_buf b={0};
     if(!join_package_build(&t,&b)) {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"build");return;}
@@ -3388,6 +3520,9 @@ static int join_mute_load_npcs_on;
  * and its round is off the clip. The held shot's time is still the weapon's last shot time (the loop over the shots due
  * needs it); SHOOT puts the session's there at the admission. Windows only. Status hold_fire=on:held shots. */
 static int join_hold_fire_on;
+/* native_gate_join_hold_bullets (hj8i, 11 Nov): a joiner's bullets do not move between the package's load and the admission
+ * (bullet_hold, lockstep_bullet.h). Status bullet_hold=on:held moves. Windows only (the bullet module). */
+static int join_hold_bullets_on;
 static int join_bootev_session_keep(unsigned char *source,unsigned char *event,double now) {
     uintptr_t vt=0;uint64_t runtime=0;unsigned klass=0;
     if(!event || !join_read(event,&vt,8) || !vt) return 0;
@@ -3413,6 +3548,17 @@ static unsigned char *join_bootev_first_reference(unsigned char *event) {
     if(!event || !join_read(event+JOIN_EVENT_CONTEXT,&held,8) || !held || !join_read(held+0xc,&state,4) || state==3u) return NULL;
     return held;
 #endif
+}
+/* RCNT's question (join_admit_rcnt, lockstep_join_world.h): how many kept boot events hold a first reference on this object
+ * that the session's count does not contain, i.e. whose class the session has not due for this source at T. */
+static uint32_t join_rcnt_kept_refs(unsigned char *object,double now) {
+    uint32_t n=0;
+    for(uint32_t i=0;i<join_bootev_n;i++) {
+        if(join_bootev_items[i].source!=object) continue;
+        const unsigned char *held=join_bootev_first_reference(join_bootev_items[i].event);
+        if(held && held+8==object+0x40 && !join_bootev_session_keep(object,join_bootev_items[i].event,now)) ++n;
+    }
+    return n;
 }
 /* After the admission: the kept events back to their sources at their times (the pass of T+1 delivers them). */
 static void join_bootev_repost(void) {
@@ -3554,6 +3700,7 @@ static int join_load(const char *path,const char *sha_hex,int mode) {
     if(join_watch.n) join_rw_load_prepare(&join_rx.t);   /* diagnostic: JOIN_REFWATCH in the load (lockstep_join_world.h) */
     if(join_mute_load_npcs_on) InterlockedExchange(&script_rng_mute_keyword,JOIN_NPC_CREATED_KEYWORD);
     if(join_hold_fire_on) InterlockedExchange(&wfire_hold,1);
+    if(join_hold_bullets_on) InterlockedExchange(&bullet_hold,1);
     join_rx.loaded=1;return 1;
 }
 /* gate.join_lua(T, text) in frame T on an armed saver: the probe's providers' state, written with the package. */
@@ -3968,6 +4115,7 @@ static int join_admit(void) {
     if(!join_rx.loaded || join_rx.admitted) return 1;
     InterlockedExchange(&script_rng_mute_keyword,0);   /* native_gate_join_mute_load_npcs: MD hears NPC events again */
     InterlockedExchange(&wfire_hold,0);   /* native_gate_join_hold_fire: the weapons shoot again, from T+1 on */
+    InterlockedExchange(&bullet_hold,0);  /* native_gate_join_hold_bullets: the bullets fly again, from T+1 on */
     join_rx.admitted=1;join_jobinit_restore();join_bootev_restore();   /* Init and the boot event passes ran in the load (version 13) */
     InterlockedExchange(&join_parse_on,0);join_parse_restore();   /* the load is over: the parser native again */
     if(join_rx.created_failures || InterlockedCompareExchange64(&join_rx.mapped_saved,0,0)+InterlockedCompareExchange64(&join_rx.mapped_created,0,0)<
@@ -4025,7 +4173,7 @@ static int join_status(char *out,size_t cap) {
         " md_ambiguous=%llu md_activation_fixed=%llu md_activation_far=%llu md_diff=%llu:%llu:%llu:%llu unpaired_rows=%u clock_fixed=%llu"
         " clock_delta=%.9g rid_skipped=%llu rx_tick=%llu rx_save_sha=%s rx_why=%u rx_detail=%s failures=%lld pins=%s patched=%u:%s armed_kept=%u"
         " fixture=%s rx_fixture=%s world_cap=%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u/%u rx_version=%u health=%llu:%llu:%llu:%llu:%llu:%llu pose=%llu:%llu:%llu:%llu"
-        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld"
+        " shield=%llu:%llu:%llu:%llu:%llu:%llu nav=%llu:%llu:%llu:%llu:%llu nav_fields=%s attn=%llu:%llu:%llu:%llu:%llu attn_high=%llu:%s attn_set=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_set_refused=%llu attn_states=%d:%llu:%llu:%llu:%llu:%llu:%llu attn_leave=%d:%llu:%llu:%llu attn_arrive=%d:%llu:%llu:%llu shape_hold=%d:%llu:%llu:%llu shoot_far=%d:%llu bootev_session=%d:%u npc_mute=%d:%lld cue_ids=%d:%lld:%lld:%lld cuei=%u:%u:%u:%u:%ld hold_fire=%d:%lld bootev_released=%u grav_dead=%d:%u:%llu gravp_late=%llu attn_set_loaded=%llu body_make=%d:%llu:%lld:%lld anis=%d:%llu:%llu:%llu:%llu:%llu:%llu anis_cap=%u anis_kinds=%llu:%llu:%llu:%llu:%llu anis_shape=%s anis_state=%d:%llu:%llu:%llu:%llu:%llu anis_why=%llu:%llu:%llu:%llu:%llu anil=%llu:%llu:%llu:%llu anil_cap=%u bullets=%llu:%llu:%llu:%llu:%llu:%llu bullet_hold=%d:%lld keep_stamps=%d:%llu:%u:%llu:%llu:%llu:%llu:%lld:%lld rcnt_held=%llu:%llu"
         " keys=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu created_extra=%llu:%llu path=%llu:%llu:%llu:%llu:%llu:%llu:%llu"
         " region=%llu:%llu:%llu:%llu flight=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu agent=%llu:%llu:%llu:%llu:%llu agent_fields=%s"
         " route=%llu:%llu:%llu:%llu:%llu:%llu:%llu param=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu dock=%llu:%llu:%llu:%llu:%llu"
@@ -4065,6 +4213,9 @@ static int join_status(char *out,size_t cap) {
         (unsigned long long)join_attn_set_due[1],(unsigned long long)join_attn_set_refused,join_attn_states_on,
         (unsigned long long)join_attn_states_apart,(unsigned long long)join_attn_states_unsettled,(unsigned long long)join_attn_states_computed,
         (unsigned long long)join_attn_states_calls,(unsigned long long)join_attn_states_loaded,(unsigned long long)join_attn_states_drift,
+        join_attn_leave_on,(unsigned long long)join_attn_leave_calls,(unsigned long long)join_attn_leave_loaded,(unsigned long long)join_attn_leave_drift,
+        join_attn_arrive_on,(unsigned long long)join_attn_arrive_calls,(unsigned long long)join_attn_arrive_loaded,(unsigned long long)join_attn_arrive_drift,
+        join_shape_hold_on,(unsigned long long)join_shape_hold_calls,(unsigned long long)join_shape_hold_forced,(unsigned long long)join_shape_hold_held,
         join_shoot_far_on,(unsigned long long)join_shoot_far_written,join_bootev_session_on,join_bootev_session_dropped,join_mute_load_npcs_on,
         (long long)InterlockedCompareExchange64(&script_rng_muted,0,0),join_cue_ids_on,
         (long long)InterlockedCompareExchange64(&join_cue_ids_placed,0,0),(long long)InterlockedCompareExchange64(&join_cue_ids_refused,0,0),
@@ -4073,6 +4224,22 @@ static int join_status(char *out,size_t cap) {
         join_grav_dead_on,join_cap.grav_dead,(unsigned long long)join_rx.grav_dead,(unsigned long long)join_gravp_late,(unsigned long long)join_attn_set_loaded,
         join_body_make_on,(unsigned long long)join_body_named,(long long)InterlockedCompareExchange64(&rid_body_routed,0,0),
         (long long)InterlockedCompareExchange64(&rid_body_misses,0,0),
+        join_anis_on,(unsigned long long)join_anis_apart,(unsigned long long)join_anis_written,(unsigned long long)join_anis_equal,
+        (unsigned long long)join_anis_missing,(unsigned long long)join_anis_shape,(unsigned long long)join_anis_absent,join_cap.anis,
+        (unsigned long long)join_anis_kind[0],(unsigned long long)join_anis_kind[1],(unsigned long long)join_anis_kind[2],(unsigned long long)join_anis_kind[3],
+        (unsigned long long)join_anis_kind[4],join_anis_refused,
+        join_anis_state_on,(unsigned long long)join_anis_restated,(unsigned long long)join_anis_requeued,(unsigned long long)join_anis_unplaced,
+        (unsigned long long)join_anis_drift,(unsigned long long)join_anis_ids,
+        (unsigned long long)join_anis_why[0],(unsigned long long)join_anis_why[1],(unsigned long long)join_anis_why[2],(unsigned long long)join_anis_why[3],
+        (unsigned long long)join_anis_why[4],
+        (unsigned long long)join_anil_made,(unsigned long long)join_anil_equal,(unsigned long long)join_anil_unknown,(unsigned long long)join_anil_conflict,join_cap.anil,
+        (unsigned long long)join_bul_session,(unsigned long long)join_bul_own,(unsigned long long)join_bul_paired,(unsigned long long)join_bul_missing,
+        (unsigned long long)join_bul_extra,(unsigned long long)join_bul_apart,
+        join_hold_bullets_on,(long long)InterlockedCompareExchange64(&bullet_held,0,0),
+        join_ks_on,(unsigned long long)join_ks_listed,join_ks_n,(unsigned long long)join_ks_pending,(unsigned long long)join_ks_spec,
+        (unsigned long long)join_ks_missing,(unsigned long long)join_ks_over,
+        (long long)InterlockedCompareExchange64(&join_ks_seen,0,0),(long long)InterlockedCompareExchange64(&join_ks_kept,0,0),
+        (unsigned long long)join_rcnt_held_objects,(unsigned long long)join_rcnt_held_refs,
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ALL],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PROBE],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_PARAMS],(unsigned long long)join_rx.keys_applied[JOIN_KEYS_ATTENTION_ACTOR],
         (unsigned long long)join_rx.keys_applied[JOIN_KEYS_NAV_ACTOR],(unsigned long long)join_rx.keys_known,(unsigned long long)join_rx.keys_unarmed,

@@ -33,7 +33,7 @@ def selected_bytes(values):
     return b''.join(values[key] for key in ((8, 6), (15, 6), (16, 6))).hex()
 
 
-def verify_context_policy(lines, *, allow_camera=False):
+def verify_context_policy(lines, *, allow_camera=False, first_tick=5):
     """Return filtered lines and verified expectations keyed by (tick, snapshot).
 
     Legacy input is returned unchanged. For policy input, each snapshot carries
@@ -56,11 +56,11 @@ def verify_context_policy(lines, *, allow_camera=False):
             tick = int(begin[1])
         if line.startswith('X4LAN CAMERA'):
             camera_rows.append(line)
-        if first_body is None and tick == 5:
+        if first_body is None and tick == first_tick:
             body = re.search(r'physics=body stage=before index=0 ship=([0-9a-f]{1,16}) ', line)
             if body:
                 first_body = int(body[1], 16)
-        if tick == 5 and line.startswith(PREFIX + 'snapshot=physics_canonical '):
+        if tick == first_tick and line.startswith(PREFIX + 'snapshot=physics_canonical '):
             controller = re.search(r' controller=([0-9a-f]{1,16}) ', line)
             if controller:
                 canonical_controller = int(controller[1], 16)
@@ -83,7 +83,7 @@ def verify_context_policy(lines, *, allow_camera=False):
                 previous = lines[index - 1] if index else ''
                 following = lines[index + 1] if index + 1 < len(lines) else ''
                 if event == 'init':
-                    if (init_seen or state is not None or tick != 5 or boundary != 'ready' or next_epoch != 1 or
+                    if (init_seen or state is not None or tick != first_tick or boundary != 'ready' or next_epoch != 1 or
                         base_nodes != 13 or nodes != 13 or (59, 8) in values or
                         not following.startswith(PREFIX + 'snapshot=physics_canonical ')):
                         raise ValueError('invalid initial policy boundary or baseline')
@@ -116,7 +116,7 @@ def verify_context_policy(lines, *, allow_camera=False):
                     if base_nodes != len(base) or boundary not in ('begin', 'end'):
                         raise ValueError('transition baseline or boundary invalid')
                     if boundary == 'begin':
-                        if (tick == 5 or previous != PREFIX + f'physics=frame tick={tick} event=begin\n' or
+                        if (tick == first_tick or previous != PREFIX + f'physics=frame tick={tick} event=begin\n' or
                             not following.startswith(PREFIX + 'snapshot=physics_update_before ')):
                             raise ValueError('transition outside begin boundary')
                     elif (not previous.startswith(PREFIX + 'physics=upkeep stage=leave ') or

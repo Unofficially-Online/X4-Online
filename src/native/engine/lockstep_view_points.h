@@ -185,6 +185,7 @@ static void view_roll(void) {
 }
 static CRITICAL_SECTION view_lock;
 static int view_lock_ready;
+#include "lockstep_view_cameras.h"   /* the simulation's own cutscene cameras as viewers */
 /* Hybrid sectors (lockstep_hybrid.h, native_gate_hybrid, default off): which latched points count for an
  * object, which slots this client leaves out of the latch, where its own owned point is. */
 static int hyb_point_counts(unsigned i,const void *object);
@@ -208,6 +209,7 @@ static int view_evaluate(view_attention_fn native,void *object) {
         if(universe && read_local(universe+0x230,&p,8) && p) {points[0]=p;n=1;}
     }
     int best=0;unsigned counted=0;++view_depth;
+    if(vcam_shown) vcam_anchors();   /* the stand-in cameras' anchors, found again by their IDs */
     *slot=(uint64_t)(uintptr_t)(view_page+VIEW_PAGE_SHADOW);
     for(unsigned i=0;i<n;i++) {
         if(!hyb_point_counts(i,object)) continue;
@@ -306,6 +308,7 @@ static int view_trigger_apply(void *object,int index,int *result) {
     if(index<0) return 0;
     ++view_trigger_counts[index];
     if(view_trigger_mode!=VIEW_TRIGGER_BLOCK) return 0;
+    vcam_note(view_trigger_sites[index]);   /* a simulation cutscene's camera shot: a viewer from the next latch on */
     int current=0;if(!read_local((unsigned char*)object+0x1ec,&current,4)) {++view_unreadable;return 0;}
     ++view_trigger_blocked;*result=current;return 1;
 }
@@ -619,6 +622,7 @@ static int view_check(void) {
 }
 static void view_restore(void) {
     InterlockedExchange(&view_active,0);
+    vcam_stop();
     if(!view_installed) return;
     if(view_patched) {
         if(!view_remove_patches()) return;
@@ -776,6 +780,7 @@ static int view_frame_latch(uint64_t tick,int refresh) {
         }
         for(unsigned i=0;i<n;i++) view_refresh_chain(points[i]);
     }
+    vcam_latch(); /* cutscene camera shots noted or ended since the last latch */
     hyb_latch_check(); /* the H1 boundary: owners inside their sectors, nobody else in them */
     return 1;
 }

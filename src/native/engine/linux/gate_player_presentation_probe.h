@@ -1,6 +1,8 @@
 #ifndef X4_GATE_PLAYER_PRESENTATION_PROBE_H
 #define X4_GATE_PLAYER_PRESENTATION_PROBE_H
 
+#include "gate_player_startup_phases.h"
+
 /* Explicit one-shot tick-7 UI diagnostic; include after physics, keyboard and
  * camera headers. It never publishes P2. Native cached lookup temporarily owns
  * one reference; object holds and admitted phase remain the caller's duty. */
@@ -99,8 +101,8 @@ static int presentation_native_room_ok(void *unused, uintptr_t room) {
 static void presentation_native_row(const char *name, uint32_t bank, const presentation_probe_row *row) {
     char line[640];
     int n = snprintf(line, sizeof line,
-        "X4LAN PRESENTATION_PROBE v=1 stage=%s tick=7 slot=%u player=%llx parent=%llx vector=%llx,%llx,%llx position=%u bank=%u cache_parent=%llx live_called=%u live=%llx cached_called=%u cached=%llx omitted=%u refs=%u,%u,%u marker=%u,%u\n",
-        name, stats.slot, (unsigned long long)row->player, (unsigned long long)row->parent,
+        "X4LAN PRESENTATION_PROBE v=1 stage=%s tick=%llu slot=%u player=%llx parent=%llx vector=%llx,%llx,%llx position=%u bank=%u cache_parent=%llx live_called=%u live=%llx cached_called=%u cached=%llx omitted=%u refs=%u,%u,%u marker=%u,%u\n",
+        name, (unsigned long long)player_startup()->presentation_probe, stats.slot, (unsigned long long)row->player, (unsigned long long)row->parent,
         (unsigned long long)row->vector_begin, (unsigned long long)row->vector_end,
         (unsigned long long)row->vector_capacity, row->position, bank,
         (unsigned long long)row->cache_parent, row->live_called, (unsigned long long)row->live,
@@ -117,7 +119,7 @@ static int lua_player_presentation_probe(lua_State *state) {
         reason = "reentry";
         goto finish;
     }
-    if (!accept_ui() || !stats.active || stats.issued != 7 || boot_phase != 3 ||
+    if (!accept_ui() || !stats.active || (uint64_t)stats.issued != player_startup()->presentation_probe || boot_phase != 3 ||
         (stats.slot != 1 && stats.slot != 2) || wire_clients != 2 || !keyboard_probe_requested ||
         keyboard_probe_queue.config.independent_players != 1 || player_recurring_physics != 3 ||
         atomic_load_explicit(&player_physics_ready, memory_order_acquire) != 1 ||
@@ -175,19 +177,19 @@ static int lua_player_presentation_probe(lua_State *state) {
     }
     char message[320];
     snprintf(message, sizeof message,
-        "X4LAN PRESENTATION_PROBE v=1 stage=ui_plan tick=7 slot=%u manager=%llx presenter=%llx presenter_vtable=%llx controller=%llx controller_vtable=%llx flag=%u authenticated=1\n",
-        stats.slot, (unsigned long long)plan_before.manager, (unsigned long long)plan_before.presenter,
+        "X4LAN PRESENTATION_PROBE v=1 stage=ui_plan tick=%llu slot=%u manager=%llx presenter=%llx presenter_vtable=%llx controller=%llx controller_vtable=%llx flag=%u authenticated=1\n",
+        (unsigned long long)player_startup()->presentation_probe, stats.slot, (unsigned long long)plan_before.manager, (unsigned long long)plan_before.presenter,
         (unsigned long long)plan_before.presenter_vtable, (unsigned long long)plan_before.controller,
         (unsigned long long)plan_before.controller_vtable, (unsigned)plan_before.first_person);
     lifecycle_discard_write(message);
-    snprintf(message, sizeof message, "X4LAN PRESENTATION_PROBE v=1 stage=occupied tick=7 slot=%u runtime=%llu observational=1\n", stats.slot, (unsigned long long)occupied);
+    snprintf(message, sizeof message, "X4LAN PRESENTATION_PROBE v=1 stage=occupied tick=%llu slot=%u runtime=%llu observational=1\n", (unsigned long long)player_startup()->presentation_probe, stats.slot, (unsigned long long)occupied);
     lifecycle_discard_write(message);
     success = 1;
     reason = "ok";
 finish:
     {
         char message[192];
-        snprintf(message, sizeof message, "X4LAN PRESENTATION_PROBE v=1 stage=result tick=7 slot=%u success=%d reason=%s\n", stats.slot, success, reason);
+        snprintf(message, sizeof message, "X4LAN PRESENTATION_PROBE v=1 stage=result tick=%llu slot=%u success=%d reason=%s\n", (unsigned long long)player_startup()->presentation_probe, stats.slot, success, reason);
         if (lifecycle_discard_log >= 0) {
             lifecycle_discard_write(message);
         } else {

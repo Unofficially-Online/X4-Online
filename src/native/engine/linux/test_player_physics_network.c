@@ -7,6 +7,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "lockstep_stock_record.h"
+#include "player_startup_phases.h"
+static player_startup_phases fixture_phase = {0, 2, 2, 4, 5, 3, 5, 7, 8, 9};
+#define player_startup() (&fixture_phase)
 
 #define FWRR_FIRST_GENERATION 5
 static _Atomic unsigned player_physics_ready;
@@ -47,6 +50,20 @@ static void lifecycle_discard_read(uintptr_t address, void *out, size_t length) 
     else if (address == 0x3e5b298 && length == 1) memcpy(out, &throttle_ignored, 1);
     else if (address == 0x3e5b299 && length == 1) memcpy(out, &strafe_ignored, 1);
     else assert(0);
+}
+static uint64_t player_physics_replay_last = 5;
+static unsigned player_physics_upkeep_busy, player_physics_upkeep_calls, warm_capture_calls, prepare_calls;
+enum { PLAYER_CONTEXT_FRAME_BEGIN = 1 };
+static int keyboard_probe_after_path_join(void) { ++warm_capture_calls; return 1; }
+static void player_context_adapter_outside(uint64_t tick, int boundary) { assert(tick == stats.issued && boundary == 1); }
+static void player_context_adapter_scope_begin(uint64_t tick) { assert(tick == stats.issued); }
+static void player_context_adapter_scope_end(uint64_t tick) { assert(tick == stats.issued); }
+static void player_physics_motion(const char *stage) { assert(!strcmp(stage, "before")); }
+static void player_physics_observe_body(const char *stage) { assert(!strcmp(stage, "before")); }
+static void player_physics_prepare_with_input(unsigned framed, void (*callback)(void *), void *arg, int take_only) {
+    assert(framed == 1 && !callback && !arg && take_only && !atomic_load(&player_physics_ready));
+    ++prepare_calls;
+    atomic_store(&player_physics_ready, 1);
 }
 static void player_physics_begin_with_input(unsigned framed, void (*callback)(void *), void *arg) {
     assert(framed == 1 && !atomic_load(&player_physics_ready));
@@ -215,5 +232,25 @@ int main(void) {
     reset(); coordinated.count=0; tick(5);
     if (!setjmp(escape)) { tick(5); assert(0); }
     assert(!strcmp(failure,"network_record_admission") && update_calls==1);
+
+    reset();
+    assert(player_startup_phases_parse("v1-t40", &fixture_phase));
+    player_physics_upkeep_calls = 0;
+    prepare_calls = warm_capture_calls = 0;
+    coordinated.count = 0;
+    tick(37);
+    assert(prepare_calls == 1 && update_calls == 0 && player_network_last == 39);
+    player_physics_upkeep_calls = 1;
+    player_physics_network_finish(37, 0);
+    tick(38);
+    assert(warm_capture_calls == 1 && update_calls == 0 && player_physics_upkeep_calls == 0);
+    player_physics_upkeep_calls = 1;
+    player_physics_network_finish(38, 0);
+    tick(39);
+    assert(warm_capture_calls == 2 && update_calls == 0);
+    player_physics_upkeep_calls = 1;
+    player_physics_network_finish(39, 0);
+    tick(40);
+    assert(update_calls == 1 && replay_calls == 1 && player_network_last == 40);
     return 0;
 }

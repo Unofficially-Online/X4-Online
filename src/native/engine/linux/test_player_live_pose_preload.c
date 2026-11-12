@@ -189,5 +189,37 @@ int main(void) {
     assert(scopes.rows[PLAYER_LIVE_POSE_PAUSED][0].ordinal == 46);
     assert(scopes.state == PLAYER_LIVE_POSE_OUTSIDE);
     assert(!x4mp_live_pose_finish(&snapshot));
+
+    /* A 180-frame opt-in closes after 170 Move and 170 GameRender scopes. */
+    assert(player_ui_session_parse("180", &preload_session_budget));
+    memset(&live_pose_capture, 0, sizeof live_pose_capture);
+    memset(&live_pose_scopes, 0, sizeof live_pose_scopes);
+    live_pose_last_move = 9;
+    atomic_store(&live_pose_active, 1);
+    atomic_store(&game_render_installed, 1);
+    for (unsigned index = 0; index < 170; ++index) {
+        if (index) assert(x4mp_live_pose_tick(index + 9));
+        ui_depth[0] = 1;
+        assert(x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OPEN));
+        assert(x4mp_live_pose_scope(PLAYER_LIVE_POSE_OPEN));
+        assert(x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OUTSIDE));
+        assert(x4mp_live_pose_scope(PLAYER_LIVE_POSE_OUTSIDE));
+        ui_depth[0] = 0;
+        game_render_depth = 1;
+        assert(x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OPEN));
+        assert(x4mp_live_pose_scope(PLAYER_LIVE_POSE_OPEN));
+        assert(x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OUTSIDE));
+        assert(x4mp_live_pose_scope(PLAYER_LIVE_POSE_OUTSIDE));
+        game_render_depth = 0;
+        if (index < 169) assert(!x4mp_live_pose_finish(&snapshot));
+    }
+    assert(live_pose_last_move == 178 && live_pose_scopes.closes == 340);
+    assert(x4mp_live_pose_finish(&snapshot));
+    assert(player_ui_session_parse("18000", &preload_session_budget));
+    atomic_store(&live_pose_active, 1);
+    live_pose_last_move = 17997;
+    assert(x4mp_live_pose_tick(17998));
+    assert(!x4mp_live_pose_tick(17999));
+    atomic_store(&live_pose_active, 0);
     return 0;
 }

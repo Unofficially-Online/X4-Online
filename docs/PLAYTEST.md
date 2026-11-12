@@ -55,13 +55,20 @@ python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <the same 
 - station construction
 - faction and player settings
 - walking on foot
+- your own inventory (11 Nov): every player has one; crafting and dropping items ran with two clients. Built the
+  same way but not run in the real game yet: an NPC trader's wares, the blueprint and licence trader, research,
+  terraforming, equipment mods for players 2 and up, the inventory your start brings (docs/PLAYERS.md has the
+  table and the runs)
 
 **Refused:** any other menu action that would change the world on one client only.
 
 - X4 shows an info line ("... refused" or "... is off during a lockstep session") and nothing happens.
 - Each refusal is one row in `errors.log`.
 - Pausing and saving are refused this way. The options menu and the ship configuration menu then open without
-  pausing.
+  pausing. Since 11 Nov the Pause key, F5 (quick save) and F9 (quick load) are refused too ("no pause, save or
+  load in a session"): in run inv1 the Pause key, which does not go through `Pause()`, stopped the pressing
+  client and the session stood still for everyone; in run inv2 all three keys were refused on both clients and
+  the session ran to its end in sync.
 - Why they are refused: X4's `Pause()` stops the gate on that client at once. In smoke play-sA (8 Nov), client 2
   paused at tick 900 and stopped with reason 3; the relay dropped it after 15 s and client 1 played on. A save
   pauses the same way. In smoke play-sB, with the refusal, the same `Pause()` left the game running and the session
@@ -79,7 +86,7 @@ forth.
 
 **Avoid:**
 
-- SETA (time acceleration) and the Pause key. Both are untested under the gate.
+- SETA (time acceleration): untested under the gate. (The Pause key is refused since 11 Nov, see above.)
 
 ## When something goes wrong
 
@@ -180,7 +187,7 @@ Installed from such an installer, a player starts nothing of ours: **Play in Ste
   (`lobby.auto`). Not run: a start from Steam itself in a player's own profile (AGENTS.md keeps our tests out of
   it), and a mouse click on the page's buttons.
 
-### A game you can join while it runs, with a start of your choice (built 10 Nov; not run in X4 yet)
+### A game you can join while it runs, with a start of your choice (built 10 Nov; run on one PC)
 
 A kit whose overlay has open slots (`build_play_overlay.py --open`, `x4ls new-session --start K=... --open K,...`)
 makes the server's game a drop-in one: nobody waits for a full house.
@@ -205,6 +212,41 @@ makes the server's game a drop-in one: nobody waits for a full house.
   player 1 has left. A slot whose ship is in another sector than player 1's still splits the runtime ID counter
   (the hot-join work has the fix in progress): do not hand out a kit with far starts before that.
 - The server also listens on TCP `port` for this (`deploy_playtest_server.py` opens it).
+- **The page in the launcher's X4 too.** `x4ls lobby --server-file` (PLAY.cmd, and the installer's Start menu entry
+  "... (second window)" = `second.pyw`, for a second player on one PC, which Steam does not start) asks the server's
+  status and shows the same rows. A pick closes that X4 and runs the join (`--same-pc` when another X4 runs here).
+- **Far starts are marked.** The server's status names every open start with its sector; one in another sector than
+  player 1's is shown as "far, experimental": it joins and plays, and the server counts desyncs after such a join.
+- **When a game ends.** The relay does not end by itself: the server ends a game when the relay reports its last
+  step, when a game that has stepped stops for 60 s (everyone left; 240 s while a joiner is brought in), or when
+  nothing steps for `--idle-end` (420 s) after the start. Then it takes the next "Start the game".
+- **Live, 10 Nov, two X4 on one PC with a local server:**
+  - drop2 (capture-005, slot 2 open, `x4ls join --server-file`): save 702, hand-over 3315, catch-up 89.7 s,
+    0 digest mismatches, to 5440 in sync.
+  - drop3 (the same through the Steam-menu page of an X4 with protected UI mode, its helper and the pipe): save
+    697, hand-over 3346, 0 mismatches, to 5440 in sync.
+  - drop5 (the eight-start session ns8, the launcher's page in a second window picks slot 2, the start in the
+    host's sector): save 679, hand-over 3472 with a pause of about 59 s, catch-up 82.9 s, 0 mismatches, to 5440
+    in sync.
+  - Not run: a join over a real uplink through a server on another machine, a join at an arbitrary tick, the far
+    starts through this path (x4mods-b8's hj8: slot 3 joins and plays, the report differs from 52 ticks after the
+    save).
+  - Through a server on another machine (11 Nov, the VPS, two X4 on one PC, ns8 slot 2): the saver's upload of the
+    207 MB took 19 to 20 s; from the save to the joiner's first step about 125 s. vps3 (save 676) and t1 (save 685)
+    joined with digest mismatches from T+1: a bullet hit in the joiner's loading frames and one small ship's
+    navigation timer; both were the save tick, not the server, and are fixed (X4-Online 0a41004c). vps4 (save 673,
+    build-st26) joined with 0 mismatches, but its pause of 127 s was longer than the 120 s a client waited for the
+    relay: player 1's gate stopped with "relay timeout" as the joiner arrived. vps5 (save 667, build-st27: clients
+    wait 240 s; `x4ls serve` gives the relay `--join-catchup-limit 120` and a `--join-max-pause` 25 s under the
+    clients' wait, at most 170): joined at 7336 after a pause of 118 s with 0 mismatches, then 60 s of play together
+    to step 9002, desync false. On one PC the joiner did not gain during its catch-up (27.8 steps a second against
+    the session's 30); on two PCs it has not been measured.
+  - Open: a join saved at tick 680 parts about 100 ticks later (in work); the far starts.
+  - click2 (11 Nov, real mouse input injected into a lobby-form X4, no test switches): the page's button takes one
+    click ("Start the game" -> `LOBBY REQUEST JOIN` -> joined -> the overlay's files ran). A main-menu row took two
+    clicks, the Multiplayer row and X4's own Settings row alike: the first selects the row, the second opens it.
+    X4's "Modified game detected" notice is closed by the page in the launcher's X4 (the disposable profile); in a
+    Steam-started X4 it is the player's own game and the notice is left alone.
 
 ## Two PCs (built 8 Nov; run on one PC through its LAN address, not yet between two PCs)
 
@@ -263,7 +305,24 @@ Status (9 Nov, one PC). The whole join runs: the request, the save at the next j
 the handover and the joined player to the end of the window. hj27 (x4mods-28) and hj28 (the plain playtest flow
 above): the joiner equal to the session through the catch-up and the handover, then about 2,000 ticks of play after
 it with 0 desyncs, 0 errors and 0 drops. On one PC the joiner is no faster than the session, so the handover pauses
-everyone for about as long as the joiner took to load (hj28: 75 s); a faster joiner PC pauses less.
+everyone for about as long as the joiner took to load (hj28: 75 s); a faster joiner PC pauses less. Since 10 Nov a
+joiner replays without the 30-per-second hold. Measured with two X4 on one PC: a simulation step costs about 25 ms
+there, so the replay ran at 35 steps a second and the pause was 62 s instead of 70 to 77 s. The hold was not the
+limit on that PC; a joiner on its own PC should gain more, which is not measured yet.
+
+What a joiner sees and hears (10 Nov, after a player's report of a flashing screen and of the host's combat chatter
+on the joiner):
+- While it replays the time since its save (about as long as its load took) its window shows the host's cockpit,
+  moving through the session's past. Its own ship has no pilot seat before the handover, so its own view starts
+  there. A proper "joining" screen is not built.
+- Spoken lines are silent on a client while it replays, and on a client whose ship is in another sector than the
+  host's (`native_gate_speech_local`, a default, Windows). X4 starts comm chatter for the one player it knows, the
+  host, and every PC played it. Next to the host a client hears what the host hears. Other sounds of the replay
+  (engines, guns near the host) still play. Seen live (hjs4): the joiner silent for the 2,818 steps of its replay and
+  the 1,895 steps it then flew in the Terran sector; the host never.
+- The flashing: after a join into another sector every other frame was drawn without that sector's background
+  (planet, stars). The join set each object's attention level without telling the renderer's two copies. Fixed;
+  frame bursts of the joiner's window alternated before and are steady now.
 
 Missions across a join (hj32, 9 Nov night): a mission accepted before the join keeps the session's ID on the joiner
 (`native_gate_join_cue_ids`, a join default: the join package's CUEI section gives every saved cue its live ID), and a
@@ -275,7 +334,15 @@ default; plain2: 1841 ticks of two-client play, 0 desyncs).
 A join after a respawn (hjr1, 10 Nov): a player whose ship was destroyed and rebuilt before someone joins no longer
 makes that join fail. The joiner takes the rebuilt ship for that slot and was in step for 650 ticks after its join;
 then the rebuilt ship was pushed about 29 m once, at tick 1344 on the host and near 1600 on the joiner, and the
-session counted desyncs from there. What pushes it is not found yet.
+session counted desyncs from there. Fixed (10 Nov): the rebuilt ship was built at the start position, inside the
+ship it replaced, which is still there when a ship is lost without exploding. X4 lets two bodies lie in each other
+for 30 s from the moment a body is made and then pushes them apart; a joiner's bodies are made at its load, so its
+push came later. Each rebuilt ship now stands 1 km above the one before, clear of the old one. hjr1 with it (join
+save at tick 687): 0 mismatches in the joiner's replay, no desync to the end of the run, 0 errors. Two things
+remain: the 30 s itself still counts from the load on a joiner, for any two bodies that lie in each other at a
+join; and a join whose save is taken near tick 710 on this test still differs from tick 1011, a separate case in
+the join code. Since 10 Nov every client also restarts the collision shape refresh of every body at a join (it did
+so for the reference ships only), so those refreshes come at the same ticks on the joiner.
 
 Still open: a join whose save tick falls while a fixture gun is engaging (hj24: T between 668 and 684 in the battle
 fixture) can part within a few ticks; a sweep of join ticks is next.
@@ -299,8 +366,20 @@ one hull per player start at its start position. It then registers the save and 
 player's start kit (money, reputation, blueprints, research and map) is applied at the setup tick on every
 client. It ends by printing the `x4ls play` line.
 
-In coop every player shares the wallet and the reputation, so a player start whose kit brings its own inventory or
-reputation is refused until you leave those parts out, for example `--omit 2=inventory,reputation`.
+In coop every player shares the wallet and the reputation. A player start's own reputation is merged into the shared
+one, upward only: for each faction the team takes the better of what it has and what the start gives. A team with a
+Terran cadet is friendly with the Terrans and keeps the base start's friends; nobody's start makes the team worse off
+(11 Nov: before this the start's reputation had to be left out, and a Terran cadet on an Argon base start saw the
+Terrans as hostile). `--omit 2=reputation` still leaves it out by name. A start's inventory is the player's own in
+both modes: every player has an inventory of their own, and the start's wares are added to it eight ticks into the
+session, or twelve ticks after the hand-over for a player who joins later (a `KIT_INVENTORY` row on every client).
+`--omit 2=inventory` still leaves it out. Every stock start's inventory holds the spacesuit's repair laser and the
+object scanner, so without it players 2 and up have neither. A session built before 11 Nov left the inventory out
+by name; `python tools/dev/native_gate_session_start.py kits --session session.json --out session-inv.json` (with
+`--libraries` and `--scripts` as for `spec`) makes its kits again from the game data without a new capture: the
+save and its hulls stay, only the kits the plan applies at every start change. Run inv4 (11 Nov, two clients):
+player 2 had no repair laser at tick 44 and one laser and one scanner after the step at tick 48, on both clients,
+in sync to the end. Not run: the same for a player who joins later.
 
 Smoke ns1/ns2 (8 Nov): `--base-start x4ep1_gamestart_discover --players 2 --mode coop --start 2=x4ep1_gamestart_fight
 --omit 2=inventory,reputation`. The capture took 2.5 minutes. Both clients then played the 2-minute window in sync
@@ -324,7 +403,7 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
 
 - `--start` takes the first free open slot that plays that start; when another player has it, the next slot with
   the same start is asked.
-- Ship-only starts (`x4ls starts`: `player-start=ship-only`, chosen with `--omit K=world`): the player gets that
+- Ship-only starts (`x4ls starts`: `player-start=ship-only` or `ship+story`, chosen with `--omit K=world`): the player gets that
   start's ship with its loadout, its place and its money, not its story. The session's world is the host's start.
   With the stock game that makes seven starts a player can take: discover (Argon scout), fight (Paranid fighter),
   split2 (Split fighter), terran1 (Terran fighter), trade (Teladi scout, 200,000 Cr), intro and tutorial (Argon
@@ -341,11 +420,50 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
   - Object IDs: fixed. The joiner raised the far sector to the session's attention level after its ID counter was set
     and handed out 9,119 IDs the session never did; it now takes them from its own list (hjs1: the ID rows equal from
     the first tick after the join).
-  - Still differing after such a join: one of the twelve reference ships near the host was in flight at the join and
-    stops early on the joiner (hjs4); a full shield's timestamp on another differs until that shield next changes;
-    and about a second after the handover the session spawns one NPC ship the joiner does not (hjs1). The session
-    counts these as desyncs. All three are in the join code and in work.
+  - The reference ships: fixed (10 Nov). A ship in an evasive spiral at the join stopped early on the joiner, and a
+    full shield's timestamp differed. hjs4 now: all twelve equal at every sampled tick from the join to tick 5400.
+  - Still differing after such a join (hjs4, 10 Nov midday, four runs alike): the world census is equal at the
+    join, at tick 1800 and at 3600, which is after the handover; the per-tick report differs from 51 ticks after the
+    join in one part only, the navigation mesh receipt (the joiner built 17 meshes where the session built 25); and
+    at tick 5400 one of the census' four parts differs. The session counts these as desyncs. In the join code, in
+    work. The cause of the mesh difference is found: two animations near the joiner's start were running at the
+    join; the session had started them 12 and 6 ticks before it, the joiner's load starts their clocks anew, so
+    their end, and the mesh rebuild that follows it, comes 13 and 7 ticks later on the joiner. The join does not
+    carry an animation's start time yet.
   - The standard playtest session (every player next to the host) joins clean with the same build.
+  - Traffic near stations (hjs1, the fight start, 10 Nov): X4's background traffic is in no save, so a joiner made its
+    own at its load. It showed when the joined player's ship was near a station: a few ticks after the handover traffic
+    ships became real objects, nine on the session and eight on the joiner. Since 10 Nov every client restarts every
+    zone's traffic in the same tick at a join, with X4's own rebuild. With it the same ships appear on both sides and
+    the per-tick comparison stayed equal for 240 ticks after the handover (it parted after six before). Not finished:
+    at the next world check eight of those small ships still differ in their motion. Seen by players: traffic near
+    every player starts again when someone joins.
+    State 11 Nov, after eight more runs of the same join: still open. Found and fixed: each zone's traffic has a
+    0.2 s step whose phase the session kept from its start and the joiner had from its load (two ticks apart); it is
+    put back at the restart and now falls on the same ticks. Not fixed: when the joined player's zone switches its
+    traffic on (a few ticks after the handover, the same tick on both PCs, from the same eight docks and the same
+    random state), the session builds 942 traffic lanes and the joiner 909: the first 431 are equal, the rest
+    connect other waypoints inside the stations. The ships that then fly them differ, and one small ship more appears
+    on the joiner; the comparison parts five ticks after the handover or at the next world check. Ruled out by runs:
+    the published view caches the lane build reads directly (parents and transforms from the simulation instead
+    changed nothing). Narrowed down from the lane lists: the zone has six traffic sources (three stations and their
+    build storages); five build the same lanes on both PCs, all of the difference is in one station (371 lanes on
+    the session, 338 on the joiner), and that station is still under construction in the session's save (45 planned
+    modules, 44 built). So it is state of a station being built that the two PCs do not share after a join, not
+    traffic as such; stations that are complete are equal. Open: which state. Diagnostic rows for it:
+    `native_gate_viewpoint_policy_rows` sites 113, 116, 117 (the lanes a switch-on built).
+  - Eight slots (11 Nov): a far start on the eight-slot session (slot 3, the fight start) also joins and plays. A
+    squad of ships near that start (a corvette and five fighters) flew apart between the two PCs at another tick
+    each run. That was not the join: the same session with both players present from the start and no join at all
+    did it too (two runs of two). Cause: X4 updates its pathing agents in parallel jobs, and one agent's update can
+    read what another agent's job writes in the same pass. Cure, a session default since 11 Nov: the jobs run one
+    after another in a fixed order (`native_gate_travel_determinism`). With it five runs of five were equal at every
+    world check (every 300 ticks to tick 5400), and a far join was equal from the join to the handover. Cost on one
+    PC with two X4: about 1 ms more per pathing pass. A fifteen-minute run of the same session without a join (two
+    X4 on one PC, 11 Nov) was equal at all 16 world checks to tick 27,000, with 0 errors. Ruled out on the way, by counts in a run: the published
+    parents that pathing walks (0 of 2.3 million differ from the live ones), and the formation code's transforms
+    between two zones (`native_gate_path_transforms = 'observe'` compares them, `'all'` answers them from the
+    simulation; the default stays `'sim'`).
 - Money in coop: the wallet is shared, and every slot's kit is applied when the session starts. So that the host
   does not begin with the money of every start on offer, an open slot's start money is taken out again right after
   the start and paid in when that slot's player joins (`native_gate_join_start_money`, a default). hjs4 (10 Nov, the
@@ -373,6 +491,29 @@ The run folder `.local/runs/<time>/`:
 
 `python tools/x4ls.py triage .local/runs/<time>` reruns a diverged session with diagnostic windows before its
 first mismatch.
+
+## Things to try with two people: your own inventory and the trade menu (built 11 Nov)
+
+Scripted runs cover crafting, dropping, the start inventory and the slider's calls. These need a person's hands;
+each line says what should happen. A menu does not show a change at once: the click travels to every client first
+(a few steps), so reopen the page when a number looks old.
+
+- Player info, inventory: each player sees their own items. Player 2 has a repair laser and an object scanner
+  (new sessions only; in the suit the repair laser works).
+- Craft something (for example a first aid kit from bandages, a needle and a sedative): the parts go and the
+  product appears in your own inventory, not in the other player's.
+- Drop an item from the inventory page: a crate appears next to your ship on both screens.
+- Dock at a station, map, the station, Trade: move an amount slider, confirm. Before 11 Nov the slider did not
+  move in a session.
+- On a station, talk to a trader and buy or sell inventory items: your own items and the shared money change, on
+  both screens. A trade of many different items at once works too.
+- A faction representative: buy a licence or a blueprint. The player headquarters: start a research.
+- Ship configuration at an equipment dock: install an equipment mod as player 2 (the parts come from player 2's
+  inventory).
+- The Pause key, F5 and F9: an info line "no pause, save or load in a session", and the game runs on.
+
+If something else happens, send the run folder and say which line it was. Every refused action is one row in
+`errors.log` (`UI_INVENTORY_REFUSED`, `UI_GUARD_REFUSED`, `PILOT_NATIVE_REFUSED`).
 
 ## Guns follow each player's cursor (built 9 Nov)
 
@@ -434,7 +575,71 @@ steering, as in single player, and a gun turns as far as its mount allows.
 - **Lobby, first form:** the main-menu Multiplayer page starts a session whose players are all there at the start
   (see "Start from the main menu"). A join into a running game still goes through `x4ls join`, and X4 has to be
   started by `x4ls lobby`, not from Steam.
-- **Not built yet:** per-player story missions (in progress).
+- **Do not resize or maximise an X4 window during a session.** X4 reloads its UI on a resize; the session's script then
+  starts again in the middle of the session, is refused and that client stops (11 Nov, twice). `x4ls play --borderless`
+  starts the clients of this PC in X4's borderless window, which cannot be resized. Picking up after a UI reload is not
+  built.
+- **A story start as the session's own start:** the Terran cadet start can be captured since 11 Nov (X4 allows no save
+  while the wingmate's first line plays; the capture waits for it). Its mission chain belongs to player 1. First hand-on
+  play: the step "replace the satellite" was blocked, deploying a satellite was refused; deployables are shared since
+  11 Nov (the ship menu's and the map's deploy entries; the deploy keys stay refused).
+- **A start's story for the player who took that start, first form (11 Nov, by name):** until now only player 1 had a
+  start's story; a player in slots 2..N who took, say, the Terran cadet start got its ship and place and none of its
+  missions. `x4ls new-session ... --start K=<start> --omit K=world --story K` gives slot K the start's own script
+  (`x4ls starts`: `player-start=ship+story`): X4's script runs unchanged as that player, 60 ticks into the session (30
+  ticks after the join for a slot that joins). One story per start and session (the first slot with that start).
+  Run on 11 Nov (two X4 on one PC, discover as the session's start, slot 2 on the Terran cadet start, 3 minutes, the
+  same result twice): the cadet mission began for player 2 on both clients, was player 2's active mission and listed on
+  client 2 only, the wingmate's lines were spoken on client 2 only, and it went from part 1 to part 2 when player 2's
+  ship reached the satellite, at the same game time on both clients; 0 desyncs, world checks equal at every check.
+  Not shown yet: a slot that joins a running session, any start but the Terran cadet, a person playing it through.
+  What the cadet chain still needs for a player 2..N after the first parts: leaving the ship in a spacesuit and the
+  repair laser, and long-range scan (the scan's charge runs in a per-frame update only player 1 has).
+- **After a person's session with that story (11 Nov, the same evening): what was fixed, with three scripted runs** (two
+  X4 on one PC, discover as the session's start, slot 2 on the Terran cadet start with its story, 3640 ticks each; slot
+  2 gets up from its seat, walks forward and sits down again; scripted input, not a person's keys):
+  - A map open on one client no longer splits the session. Stock scripts ask whether a full-screen menu is open, and
+    each PC gave its own answer: one client queued a crew scene the other started. While a session runs, scripts now
+    get "no menu open" on every client. Side effect: a hint or an ambient line that waits for a menu to close can come
+    while a map is open. (All three runs armed it; that the split is gone needs a person with a map open.)
+  - Help texts, notifications, a menu a cue opens, the cockpit tint, a screen fade, music and achievements of a cue
+    that belongs to one player (a mission they accepted, their start's story) run on that player's client only. In the
+    runs client 1 skipped one such action of player 2's story (its music) and client 2 ran it; runtime IDs and world
+    checks stayed equal.
+  - Coop relations: a player's start can only raise the shared relations, not lower them. With discover as the
+    session's start and a Terran cadet in slot 2, Terran went from hostile to friendly on both clients.
+  - A player 2..N who gets up can walk: their client asks for the walking controls although X4 counts only player
+    1's seat. The scripted run shows the request on client 2 and none on client 1; the keys of a person are the proof
+    still owed.
+  - A player's body that is parked while they walk keeps its place for the scripts: the cadet story stayed in its
+    part while player 2 walked, and the script error about a distance to the player did not come back.
+  - Autopilot and "is this player the pilot" for players 2..N: inside a player's own scripts their ship now answers
+    that this player is its pilot (before: the hull's computer pilot, so the autopilot refused with "you are not
+    piloting this ship"). Run by its author: player 2's autopilot flew 40 km to a station and stopped on both clients.
+    In the get-up run the answer went back to the hull's own pilot while player 2 walked and returned at the sit-down.
+  - **Known from these runs:** moving the mouse while a player 2..N walks makes the clients disagree about that
+    player's walking record until they sit down (454 ticks in one run; the world checks and runtime IDs stayed equal
+    and the session went on). `x4ls new-session --unpiloted K` (a hull without the computer pilot who otherwise
+    appears in the seat when the player gets up) does not work yet: the session stops at its start (reason 161, the
+    slot's ship is not resolved without a pilot).
+  - Still open from that session: the spacesuit terminal, long-range scan for players 2..N, the mission counter on
+    another client's HUD counting a mission that is not theirs.
+- **A person's second session the same evening (20 game minutes, player 2 on the cadet story, 0 mismatches, no errors):**
+  the story ran parts 1 to 6 for player 2 and stops at part 6, which needs the player to leave the ship in a spacesuit
+  (not built for players 2..N yet). Found there:
+  - **The comm monitor of a story call showed a bare hull instead of the speaker.** Fixed, a session default on the
+    Windows gate: the camera of a call the simulation itself starts now counts as a viewer on every client, so the
+    speaker's ship has its interior and the speaker is there to film. Two scripted runs (two X4, the wingmate's two calls,
+    screenshots of both windows): her face in her cockpit on the monitor, on both clients, 0 mismatches, world checks and
+    runtime IDs equal. A Linux client still films the hull (the port is owed), and a player who joins while a call runs
+    does not get that call's picture.
+  - Known and open: the call's monitor and subtitles also appear on the other players' screens (the voice does not);
+    "Autopilot Activated" is shown on every screen when one player engages theirs; with the autopilot engaged the ship
+    does not answer the stick as it does in the stock game; the computer pilot still takes the seat when a player gets
+    up, the start's relation changes are announced one by one, and the cockpit HUD stays while walking (all three are
+    built and wait for their runs).
+- **Not built yet:** stories other scripts run for the whole game (the HQ, faction plots) per player; they stay the
+  session's (player 1's).
   - Personal missions per player, first form (9 Nov, on by default; `--set native_gate_missions_per_player=false`
     turns it off): a mission player 2 accepts is player 2's on every client. Its script sees player 2, their ship and their sector
     (mpp1: 900 ticks, 0 desyncs).

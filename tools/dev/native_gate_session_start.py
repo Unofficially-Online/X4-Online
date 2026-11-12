@@ -48,6 +48,10 @@ HULLS_MD = 'x4lan_session_hulls.xml'
 HULLS_SCRIPT, HULLS_CUE = 'X4LAN_SessionHulls', 'Create'
 NEAR_MIN, NEAR_MAX = '3km', '8km'   # a 'near' hull's safe position around its zone's origin
 HULL_SEED = 5100            # + slot: fixed create_ship seeds (one capture; the save is the truth afterwards)
+STORY_MD = 'x4lan_story.xml'
+STORY_SCRIPT, STORY_BEGIN, STORY_SIGNAL = 'X4LAN_Story', 'Begin', 'x4lan_story'
+STOCK_EXTENSIONS = ('ego_dlc_boron', 'ego_dlc_mini_01', 'ego_dlc_mini_02', 'ego_dlc_pirate', 'ego_dlc_split', 'ego_dlc_terran',
+                    'ego_dlc_timelines')   # gamedata.STOCK_EXTENSIONS: whose MD a story patch may address
 MAX_PLAYERS = 8             # the pilot modules drive at most eight slot ships (PILOT_SLOTS)
 NAME = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
 PATH = re.compile(r'(?:\.\./)?[A-Za-z0-9_]+')
@@ -93,9 +97,25 @@ def _check_hull(hull, slot):
             raise SessionError(f'slot {slot}: hull {axis} {hull[axis]!r} out of range')
 
 
-def build_spec(catalog, base_start, players, mode, starts, omit=None):
-    """The session-start spec: base start S for slot 1 and a resolved per-player start (kit + hull) per slot."""
+def build_spec(catalog, base_start, players, mode, starts, omit=None, story=(), unpiloted=(), piloted=()):
+    """The session-start spec: base start S for slot 1 and a resolved per-player start (kit + hull) per slot.
+    story: slots that ask for their start's story by name (a start in gamestarts.STORY_DEFAULT has it without asking).
+    A player's hull is made without an NPC pilot, as a stock start's own ship is: with one, a person who got up from the
+    seat saw that pilot appear in it (a playtest report of 11 Nov: no NPC should appear in the seat when the player gets up).
+    piloted: slots whose hull keeps an NPC pilot holding the Wait order (the form before; for tests of that form).
+    unpiloted: accepted for the sessions scripted before the default changed; it names what every hull now is."""
     omit = {k: [p for p in v.split(',') if p] if isinstance(v, str) else list(v) for k, v in (omit or {}).items()}
+    story = set(story or ())
+    for k in sorted(story):
+        if k not in starts:
+            raise SessionError(f'--story {k}: slot {k} has no per-player start')
+    unpiloted, piloted = set(unpiloted or ()), set(piloted or ())
+    for name, slots_named in (('--unpiloted', unpiloted), ('--piloted', piloted)):
+        for k in sorted(slots_named):
+            if k not in starts:
+                raise SessionError(f'{name} {k}: slot {k} has no per-player start (its ship is a fixture ship with its own pilot)')
+    if unpiloted & piloted:
+        raise SessionError(f'--piloted and --unpiloted both name slot {min(unpiloted & piloted)}')
     if mode not in identity.MODES:
         raise SessionError(f'mode {mode!r}')
     if not 2 <= players <= MAX_PLAYERS:
@@ -118,7 +138,7 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None):
         world = 'world' in parts   # --omit K=world: the ship-only form (native_gate_gamestarts.py module text)
         try:
             tpl = gamestarts.template(catalog, starts[k], world=world)
-            kit = gamestarts.slot_kit(tpl, mode, k, [p for p in parts if p != 'world'])
+            kit = gamestarts.slot_kit(tpl, mode, k, [p for p in parts if p not in ('world', 'story')])
         except gamestarts.CatalogError as error:
             hint = ''
             if not world and not gamestarts.per_player_refusal(catalog.record(starts[k]), world=True):
@@ -131,10 +151,26 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None):
                     y=place['y'], z=place['z'], yaw=place['yaw'], seed=HULL_SEED + k)
         if place.get('near'):   # a start that begins docked or on foot: a safe position near its zone, found by the capture
             hull['near'] = True
+        if k not in piloted:
+            hull['pilot'] = False
         _check_hull(hull, k)
+        # The start's own story (its gs_*.xml Start cue) runs for this slot, as this slot's player, unless --omit K=story
+        # or another player already has that start's story: the stock scripts keep one story's state per start (the
+        # base start's runs for slot 1 by X4's own module rule).
+        wanted = k in story or tpl['gamestart'] in gamestarts.STORY_DEFAULT
+        if k in story:
+            why = ('it is left out by --omit' if 'story' in parts else
+                   f"another player has the story of {tpl['gamestart']} (the stock script keeps one story per start)" if n else
+                   f"start {tpl['gamestart']} has no story script of the stock shape (or is not a class b start taken with "
+                   f'--omit {k}=world)' if not tpl.get('story') else None)
+            if why:
+                raise SessionError(f'--story {k}: {why}')
+        story_k = tpl.get('story') if wanted and 'story' not in parts and not n else None
+        if story_k:
+            _check_story(story_k, k)
         slots[str(k)] = {'gamestart': tpl['gamestart'], 'class': tpl['class'], 'kit': kit, 'hull': hull,
                          'offset_x': n * gamestarts.SAME_START_OFFSET, 'presentation': tpl['presentation'],
-                         'inventory_not_applied': tpl['inventory'], 'world_omitted': tpl['world_omitted']}
+                         'inventory_not_applied': tpl['inventory'] if 'inventory' in parts else {}, 'world_omitted': tpl['world_omitted'], 'story': story_k}
     # The kits must pass the identity plan's own rules (the same ones Lua applies on every client).
     ships = [f'{i:016x}' for i in range(1, players + 1)]
     try:
@@ -143,6 +179,101 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None):
         raise SessionError(str(error)) from None
     return {'format': SPEC_FORMAT, 'base_start': base_start, 'base_class': base_class, 'base_parts': base_parts,
             'players': players, 'mode': mode, 'slots': slots, 'catalog': catalog.sources}
+
+
+def _check_story(story, slot):
+    if not (isinstance(story, dict) and set(story) == {'extension', 'file', 'script', 'cue'}
+            and (story['extension'] == 'base' or story['extension'] in STOCK_EXTENSIONS)
+            and re.fullmatch(r'gs_[a-z0-9_]+\.xml', story['file'] or '') and NAME.fullmatch(story['script'] or '')
+            and NAME.fullmatch(story['cue'] or '')):
+        raise SessionError(f'slot {slot}: story {story!r} is no stock start script (extension, gs_*.xml, script, cue)')
+
+
+def story_slots(slots):
+    """{slot: story} of a spec's or a session's slots that run their start's story, in slot order."""
+    found = {int(k): v['story'] for k, v in (slots or {}).items() if v.get('story')}
+    for k, story in found.items():
+        _check_story(story, k)
+    scripts = [s['script'] for s in found.values()]
+    if len(set(scripts)) != len(scripts):
+        raise SessionError('two slots run the same start story: ' + ', '.join(sorted(scripts)))
+    return dict(sorted(found.items()))
+
+
+def story_patch(story):
+    """The diff patch of one stock start script for a per-player story (X4's own patch format for extensions; selectors
+    and our own lines only, generated on this PC and never in git). The script's root cue Start runs only when the GAME
+    was started with that start (module=) and waits for the game start's setup cue. Patched it has no module and waits
+    for its own signal (X4LAN_Story.Begin gives it in the slot's scope); nothing else changes: the cue stays static and
+    the gate claims it for slot k at that signal (lockstep_mission_owners.h 'story'). Not an instance per signal: inside
+    an instance a name of a cue in a branch that has not started yet is the static cue's, and the signal to it is lost
+    (the first live run, 11 Nov)."""
+    sel = f"/mdscript/cues/cue[@name='{story['cue']}']"
+    return ('<?xml version="1.0" encoding="utf-8"?>\n'
+            '<!-- Generated by tools/dev/native_gate_session_start.py for one session (overlay only, never in git). -->\n'
+            '<diff>\n'
+            f' <remove sel="{sel}/@module" />\n'
+            f' <replace sel="{sel}/conditions">\n'
+            '  <conditions>\n   <event_cue_signalled />\n  </conditions>\n'
+            ' </replace>\n'
+            '</diff>\n')
+
+
+def story_md(stories):
+    """The generated MD that begins slot k's story: the probe signals the galaxy inside slot k's scope at the same tick
+    on every client (native_gate_story; tools/dev/native_gate_ui_replay_core.lua slot_story), this cue signals the
+    start script's cue at once, so its first frame runs in that scope, where the gate claims it for slot k. A slot's
+    story begins once (md.$X4LAN_StoryBegun is in every save, a join save too)."""
+    root = ET.Element('mdscript', {'name': STORY_SCRIPT, 'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+                                   'xsi:noNamespaceSchemaLocation': 'md.xsd'})
+    cue = ET.SubElement(ET.SubElement(root, 'cues'), 'cue', {'name': STORY_BEGIN, 'instantiate': 'true'})
+    ET.SubElement(ET.SubElement(cue, 'conditions'), 'event_object_signalled',
+                  {'object': 'player.galaxy', 'param': f"'{STORY_SIGNAL}'"})
+    actions = ET.SubElement(cue, 'actions')
+    ET.SubElement(actions, 'set_value', {'name': '$slot', 'exact': 'event.param2'})
+    new = ET.SubElement(actions, 'do_if', {'value': 'not md.$X4LAN_StoryBegun?'})
+    ET.SubElement(new, 'set_value', {'name': 'md.$X4LAN_StoryBegun', 'exact': '[]'})
+    again = ET.SubElement(actions, 'do_if', {'value': 'md.$X4LAN_StoryBegun.indexof.{$slot}'})
+    ET.SubElement(again, 'debug_text', {'text': "'[X4LAN] STORY_MD slot=%s begun=before time=%s'.[$slot, player.age]"})
+    for k, story in sorted(stories.items()):
+        branch = ET.SubElement(actions, 'do_elseif', {'value': f'$slot == {int(k)}'})
+        ET.SubElement(branch, 'append_to_list', {'name': 'md.$X4LAN_StoryBegun', 'exact': '$slot'})
+        ET.SubElement(branch, 'debug_text', {'text': f"'[X4LAN] STORY_MD slot=%s script={story['script']} player=%s ship=%s sector=%s "
+                                                     "time=%s'.[$slot, player.entity, player.ship, player.sector, player.age]"})
+        ET.SubElement(branch, 'signal_cue_instantly', {'cue': f"md.{story['script']}.{story['cue']}"})
+    none = ET.SubElement(actions, 'do_else')
+    ET.SubElement(none, 'debug_text', {'text': "'[X4LAN] STORY_MD slot=%s begun=no_story time=%s'.[$slot, player.age]"})
+    ET.indent(root, ' ')
+    return ('<?xml version="1.0" encoding="utf-8"?>\n'
+            '<!-- Generated by tools/dev/native_gate_session_start.py for one session (overlay only, never in git). -->\n'
+            + ET.tostring(root, encoding='unicode') + '\n')
+
+
+def story_files(stories):
+    """{path inside the extension: text} of a session's stories: the patch of each start script (X4 reads a patch of
+    another extension's file under extensions/<that extension>/ of ours; a base file at its own path) and the MD that
+    begins them. The same files go into the capture overlay and every play overlay, so the session save is made with
+    them and every client loads it with them."""
+    if not stories:
+        return {}
+    files = {f'md/{STORY_MD}': story_md(stories)}
+    for story in stories.values():
+        where = '' if story['extension'] == 'base' else f"extensions/{story['extension']}/"
+        files[f"{where}md/{story['file']}"] = story_patch(story)
+    return files
+
+
+def write_story_files(out, stories):
+    """Write story_files into an overlay folder (refuses to replace a file); returns the paths written."""
+    written = []
+    for name, text in sorted(story_files(stories).items()):
+        path = Path(out) / name
+        if path.exists():
+            raise SessionError(f'{path} exists; a story file never replaces an overlay file')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding='utf-8')
+        written.append(name)
+    return written
 
 
 def load_json(path, fmt):
@@ -208,14 +339,16 @@ def hulls_md(spec):
                                                         'seed': str(int(hull['seed']))})
         ET.SubElement(ship, 'owner', {'exact': 'faction.player', 'overridenpc': 'true'})
         ET.SubElement(ship, 'loadout', {'loadout': '$loadout'})
-        ET.SubElement(ET.SubElement(ship, 'pilot'), 'select', {'faction': 'faction.argon', 'tags': 'tag.aipilot'})
+        if hull.get('pilot', True):   # an NPC pilot holds the Wait order; an unpiloted hull just lies there, as a parked ship does
+            ET.SubElement(ET.SubElement(ship, 'pilot'), 'select', {'faction': 'faction.argon', 'tags': 'tag.aipilot'})
         if hull.get('near'):   # in open space near the start's station (the capture's one search; the save keeps the place)
             ET.SubElement(ship, 'safepos', {'value': f"position.[{hull['x']}m, {hull['y']}m, {hull['z']}m]", 'min': NEAR_MIN, 'max': NEAR_MAX})
         else:
             ET.SubElement(ship, 'position', {'x': f"{hull['x']}m", 'y': f"{hull['y']}m", 'z': f"{hull['z']}m"})
         ET.SubElement(ship, 'rotation', {'yaw': f"{hull['yaw']}deg", 'pitch': '0deg', 'roll': '0deg'})
         made = ET.SubElement(actions, 'do_if', {'value': '@$ship.isoperational'})
-        ET.SubElement(made, 'create_order', {'object': '$ship', 'id': "'Wait'", 'default': 'true'})
+        if hull.get('pilot', True):
+            ET.SubElement(made, 'create_order', {'object': '$ship', 'id': "'Wait'", 'default': 'true'})
         ET.SubElement(made, 'append_to_list', {'name': '$ships', 'exact': '$ship'})
         ET.SubElement(made, 'debug_text', {'text': f"'[X4LAN] SESSION_HULL slot={key} gamestart={slot['gamestart']} "
                                                    "macro=%s zone=%s sector=%s owner=%s'.[$ship.macro.id, $ship.zone.macro.id, "
@@ -237,6 +370,8 @@ def build_capture(spec, fixedtick_dll, out):
     extra = [f'X4LAN_CONFIG.native_gate_snapshot_hulls = {hulls}'] if hulls else []
     out = scenarios.build_capture_overlay(spec['base_start'], fixedtick_dll, out, allowed={spec['base_start']},
                                           extra_md=extra_md, extra_config=extra)
+    if write_story_files(out, story_slots(spec['slots'])):   # the save is made with the patched start scripts
+        scenarios.write_manifest(out)
     if spec['mode'] == 'factions' and hulls:
         # The kits' wallet steps set x4lan_player<k>'s own account: the new game is made with the pool library that
         # gives the pool factions their accounts (a frozen base predates them), in case X4 creates them only then.
@@ -358,7 +493,7 @@ def register(spec, snapshot):
             'player_macro': header['player']['macro'], 'player_sector': header['player']['sector'], 'fixture': fixture,
             'hulls': hulls, 'slots': {k: {'gamestart': v['gamestart'], 'class': v['class'], 'sector': v['hull']['sector'],
                                           'ship': v['hull']['macro'], 'world_omitted': v.get('world_omitted', []),
-                                          'kit': v['kit']} for k, v in spec['slots'].items()},
+                                          'story': v.get('story'), 'kit': v['kit']} for k, v in spec['slots'].items()},
             'spec_sha256': hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()}
 
 
@@ -373,6 +508,31 @@ def session_of(path):
     if set(s['hulls']) != set(s['slots']):
         raise SessionError(f'{path}: every per-player start needs its hull')
     return s
+
+
+def rekit(session, catalog, apply):
+    """The session with every slot's kit made again from the catalog, the parts in `apply` no longer left out (a kit is
+    applied by the identity plan at every start of the session, not by the save: the save and its hulls stay as they are).
+    The use: a session registered when a start's inventory could not be given (it had to be omitted by name) gets it."""
+    unknown = sorted(set(apply) - set(gamestarts.OMITTABLE))
+    if unknown:
+        raise SessionError(f'kits: unknown parts {unknown} (parts: {", ".join(gamestarts.OMITTABLE)})')
+    out = json.loads(json.dumps(session))
+    for key in sorted(out['slots'], key=int):
+        slot = out['slots'][key]
+        old = slot['kit']
+        omit = [part for part in old.get('omitted', []) if part not in apply]
+        try:
+            tpl = gamestarts.template(catalog, slot['gamestart'], world=slot.get('class') == 'b')
+            kit = gamestarts.slot_kit(tpl, out['mode'], int(key), omit)
+        except gamestarts.CatalogError as error:
+            raise SessionError(f'slot {key}: {error}') from None
+        same = {k: v for k, v in kit.items() if k not in ('omitted', 'inventory')}
+        if same != {k: v for k, v in old.items() if k not in ('omitted', 'inventory')}:
+            raise SessionError(f"slot {key}: the catalog gives start {slot['gamestart']} another kit than the session holds "
+                               '(another game version or other extensions): build the session again')
+        slot['kit'] = kit
+    return out
 
 
 def rebase(session, base, out):
@@ -399,6 +559,11 @@ def main(argv=None):
     s.add_argument('--start', action='append', help='K=GAMESTART: slot K (2..N) takes this stock start')
     s.add_argument('--omit', action='append', help='K=PART,PART: parts of slot K\'s start that are not applied (' +
                    ', '.join(gamestarts.OMITTABLE) + ')')
+    s.add_argument('--story', default='', metavar='K[,K...]',
+                   help="slots whose start's own story script runs for that slot's player (a class b start taken with --omit K=world)")
+    s.add_argument('--piloted', default='', metavar='K[,K...]',
+                   help='slots whose start ship keeps an NPC pilot (the default is none: nobody appears in the seat when the player gets up)')
+    s.add_argument('--unpiloted', default='', metavar='K[,K...]', help='the default for every slot now; accepted for older scripts')
     s.add_argument('--out', required=True)
     c = sub.add_parser('capture-overlay', help='the capture overlay of a spec (one disposable lane run)')
     c.add_argument('--spec', required=True)
@@ -409,6 +574,12 @@ def main(argv=None):
     r.add_argument('--spec', required=True)
     r.add_argument('--snapshot', required=True)
     r.add_argument('--out', required=True)
+    k = sub.add_parser('kits', help="make a registered session's kits again from the catalog (no capture: the save stays)")
+    gamestarts.add_roots(k)
+    k.add_argument('--session', required=True)
+    k.add_argument('--apply', default='inventory', metavar='PART[,PART]',
+                   help='parts the kits no longer leave out (default inventory: every player gets its start\'s wares)')
+    k.add_argument('--out', required=True, help='the new session.json')
     b = sub.add_parser('rebase', help='bind a full-stack overlay to the session save')
     b.add_argument('--session', required=True)
     b.add_argument('--base', required=True)
@@ -418,7 +589,10 @@ def main(argv=None):
         if args.command == 'spec':
             catalog = gamestarts.Catalog(*gamestarts.roots(args))
             starts = slot_values(args.start, '--start')
-            spec = build_spec(catalog, args.base_start, args.players, args.mode, starts, slot_values(args.omit, '--omit'))
+            spec = build_spec(catalog, args.base_start, args.players, args.mode, starts, slot_values(args.omit, '--omit'),
+                              story=[int(k) for k in args.story.split(',') if k.strip()],
+                              unpiloted=[int(k) for k in args.unpiloted.split(',') if k.strip()],
+                              piloted=[int(k) for k in args.piloted.split(',') if k.strip()])
             out = write_new(args.out, json.dumps(spec, indent=1, sort_keys=True) + '\n')
             print(f'spec {out}: base {spec["base_start"]} (class {spec["base_class"]}), {spec["players"]} players, {spec["mode"]}')
             for key, slot in sorted(spec['slots'].items(), key=lambda kv: int(kv[0])):
@@ -438,6 +612,15 @@ def main(argv=None):
             print(f"session {out}: {session['base_start']} sha256 {session['snapshot']['sha256']} player ship {session['player_ship']} "
                   f"in {session['player_sector']}, hulls {session['hulls'] or '-'}")
             print(f'next: python tools/dev/native_gate_session_start.py rebase --session {out} --base <full-stack overlay> --out <dir>')
+        elif args.command == 'kits':
+            session = rekit(session_of(args.session), gamestarts.Catalog(*gamestarts.roots(args)),
+                            [part.strip() for part in args.apply.split(',') if part.strip()])
+            out = write_new(args.out, json.dumps(session, indent=1, sort_keys=True) + '\n')
+            print(f'session {out}: the kits of {len(session["slots"])} slots made again; the save is the same')
+            for key, slot in sorted(session['slots'].items(), key=lambda kv: int(kv[0])):
+                kit = slot['kit']
+                wares = ', '.join(f"{i['amount']} {i['ware']}" for i in kit.get('inventory', [])) or '-'
+                print(f"  slot {key}: {slot['gamestart']} inventory {wares}; omitted {','.join(kit['omitted']) or '-'}")
         else:
             session = session_of(args.session)
             out = rebase(session, args.base, args.out)

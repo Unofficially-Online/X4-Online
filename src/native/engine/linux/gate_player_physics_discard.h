@@ -317,17 +317,22 @@ static void player_physics_observe_body(const char *stage) {
 }
 
 /* Only an already authenticated generation-5 entered worker calls this. */
-static void player_physics_begin_with_input(unsigned framed, void (*update_input)(void *), void *context) {
+static void player_physics_prepare_with_input(unsigned framed, void (*update_input)(void *), void *context,
+                                              int take_only) {
     player_physics_worker = (uint64_t)GetCurrentThreadId();
     lifecycle_discard_begin(20, 1, framed ? 2 : 1);
-    if (update_input) {
-        update_input(context);
+    if (!take_only) {
+        if (update_input) {
+            update_input(context);
+        } else {
+            lifecycle_discard_input_press();
+            lifecycle_discard_update_once(1);
+            lifecycle_discard_input_release();
+        }
+        lifecycle_discard_snapshot("physics_updated", 0);
     } else {
-        lifecycle_discard_input_press();
-        lifecycle_discard_update_once(1);
-        lifecycle_discard_input_release();
+        lifecycle_discard_write("X4LAN LIFECYCLE_DISCARD physics=take_no_update version=1\n");
     }
-    lifecycle_discard_snapshot("physics_updated", 0);
     player_physics_zone = player_zone_resident.anchor;
     double now = 0;
     lifecycle_discard_read((uintptr_t)gate_tls_time(gate_tls_self()), &now, sizeof(now));
@@ -354,9 +359,16 @@ static void player_physics_begin_with_input(unsigned framed, void (*update_input
     player_physics_motion("before");
     player_physics_observe_body("before");
     player_context_adapter_scope_end(stats.issued);
-    lifecycle_discard_write("X4LAN LIFECYCLE_DISCARD physics=ready generation=5 main_parked=1\n");
+    char ready[160];
+    snprintf(ready, sizeof ready, "X4LAN LIFECYCLE_DISCARD physics=ready generation=%llu main_parked=1\n",
+             (unsigned long long)stats.issued);
+    lifecycle_discard_write(ready);
     atomic_store_explicit(&lxw_controller_normalize, player_physics_world_class, memory_order_release);
     atomic_store_explicit(&player_physics_ready, 1, memory_order_release);
+}
+
+static void player_physics_begin_with_input(unsigned framed, void (*update_input)(void *), void *context) {
+    player_physics_prepare_with_input(framed, update_input, context, 0);
 }
 
 static void player_physics_begin_mode(unsigned framed) {
@@ -396,7 +408,7 @@ static void player_physics_frame_record(uint64_t generation, const char *event) 
 }
 
 static void player_physics_frames_begin(uint64_t generation) {
-    if (generation == 5) {
+    if (generation == player_startup()->take) {
         player_physics_begin_mode(1);
     } else {
         player_physics_frame_record(generation, "begin");

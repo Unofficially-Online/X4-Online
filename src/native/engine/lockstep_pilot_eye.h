@@ -51,6 +51,7 @@
 #define PEYE_MOVEMENT 0x200u          /* Component: movement controller */
 #define PEYE_VIEW_BLOCK 0x28u         /* view cache [A]: the published local PosRot, NULL = identity */
 #define PEYE_POSITION 0x6ab8u         /* Player: control position */
+#define PEYE_POSITION_NONE 0x6d113d0u /* the control position of a player that stands (716e20) */
 #define PEYE_SAME_TRANSLATION 1e-4    /* m: a smaller D is the same seat */
 #define PEYE_SAME_ROTATION 1e-5
 #define PEYE_RIGID 1e-3               /* a seat's rows must be orthonormal to this */
@@ -166,6 +167,10 @@ static int peye_update(const pslot_slot *s) {
     if(!read_local(ship1+PSLOT_ROOM,&cockpit,8)) cockpit=NULL;
     if(room1!=ship1 && room1!=cockpit) return pfoot_armed?peye_update_seat(s,room1):peye_set("skip:slot1_seat",0);
     if(!read_local(p1+PEYE_POSITION,&pos1,4) || !read_local(s->player+PEYE_POSITION,&posk,4)) return peye_set("skip:position",0);
+    /* Slot 1 walks inside its own ship: its parent is still the cockpit room, but it holds no control position, so there is
+     * no seat of its own to compare with (716e20 writes the position none; a run of 12 Nov: slot 2 sat down while slot 1
+     * stood in its cockpit, skip:no_seat, client 2's eye left where it was). Slot k's seat alone, as for a station room. */
+    {int none=0;if(pfoot_armed && pnat_base && read_local(pnat_base+PEYE_POSITION_NONE,&none,4) && pos1==none) return peye_update_seat(s,room1);}
     memset(peye_key,0,sizeof(peye_key));
     uint64_t word=0,*rng=pres_rng_hold(&word);unsigned char found1=0,foundk=0;int fault=0;
     peye_identity(a);peye_identity(b);

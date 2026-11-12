@@ -2,6 +2,7 @@
 #define X4_GATE_PLAYER_CONTEXT_POLICY_ADAPTER_H
 
 #include "player_context_policy.h"
+#include "gate_player_startup_phases.h"
 
 /* One worker owns these copies; no native tree pointer is retained. */
 static player_context_policy player_context_adapter_policy;
@@ -111,7 +112,7 @@ static int player_context_adapter_inactive_single(void) {
 static void player_context_adapter_init(void) {
     const char *mode = getenv("X4_DEV_PLAYER_PHYSICS");
     lifecycle_discard_require(mode && (!strcmp(mode, "bounded-frames-discard") ||
-        !strcmp(mode, "network-frames-discard")) && stats.issued == 5 &&
+        !strcmp(mode, "network-frames-discard")) && stats.issued == player_startup()->take &&
         player_context_adapter_worker() && player_physics_identity() && sko_session.owner &&
         sko_session.owner <= UINTPTR_MAX - 0x10 && !player_context_adapter_policy.initialized && !lifecycle_context_policy_check &&
         !lifecycle_context_policy_owner && !lifecycle_context_policy_suffix, "context_policy_init_owner");
@@ -195,7 +196,7 @@ static void player_context_adapter_camera_rebase(const input_context_census_samp
         const input_context_census_entries *current) {
     lifecycle_discard_require(accept_ui() && stock_observer_worker_boundary() &&
         GetCurrentThreadId() == stock_observer_worker_thread && gate_tls_worker(gate_tls_self()) &&
-        stats.active && stats.issued == 6 && stats.slot == 2 && wire_clients == 2 && boot_phase == 3 &&
+        stats.active && stats.issued == player_startup()->apply + 1 && stats.slot == 2 && wire_clients == 2 && boot_phase == 3 &&
         atomic_load_explicit(&player_physics_ready, memory_order_acquire) == 1 && player_physics_identity() &&
         player_context_adapter_policy.initialized && !player_context_adapter_policy.failed,
         "context_policy_camera_owner");

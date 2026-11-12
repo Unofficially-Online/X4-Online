@@ -1567,3 +1567,394 @@ Lanes c1/c2 with x4mods' and the playtest fork's "lanes free"; branch contrib/fe
 - Tests: native tests pass (the visible branch on the load list; a pending object's two records routed once, another
   object's and a repeated one left shared; the pin). Real game: hjs1 .. hjs1d above. Not yet rerun on the capture-005
   fixture with these two changes.
+
+63. NEW-SESSION SAVES, SECOND ROUND: A SAMPLED ROW'S SHIELD WORD, THE LIVE-VIEW FLAG, THE EVASIVE SPIRAL (hjs1e .. hjs4e; 10 Nov)
+
+- After section 62 the runtime ID part is equal through the catch-up of a new-session join. What the next runs showed
+  (x4mods-b8's fixtures: hjs1 = base start plus one fight start in cluster_47; hjs4 = four starts, three far hulls, the
+  joiner in slot 4's Terran start):
+- The sample part, hjs1d: one STATE row, fixture actor 9, from T+1 to 839, in one word: its shield group's changed
+  time, 7.06 on the session and 0 on the joiner. HEALTH captures a shield as the census hashes it (lockstep_state.h
+  shield_full_at: a full shield reads value = max, time = 0) and the joiner writes that; the session's group keeps its
+  stored time (its load clock, never touched) and gate.actor printed the stored fields. It needs a fixture actor with
+  a full, untouched shield at T before the session's first census; capture-005's fighting ships never had one.
+  Fix (0b02615c): with canonical shields armed gate.actor reads the shield through the canonical reading at the
+  thread's game time, both reads (the session calls it with refresh=1, whose second read after the native refresh
+  undid a first attempt, hjs1e). The Linux twin (linux/gate_battle.h) changed alike. hjs1f: the twelve STATE rows equal
+  from T+1.
+- The live-view flag, hjs4w/hjs4v: a ship object's +0x3c8 (set by its ObjectEnteredLiveView handler, read by
+  IsInLiveView 0x6d5900) is 1 on the session and 0 on the joiner for a ship in the far sector (0x6d8cd on its dock
+  path: its behaviour, Agent, command and pathing blocks equal at T+1). VIEWL (section 61 of the package, opt-in until
+  now: no gain on capture-005) carries it; with it (viewl=1:81:0:0:0:0) fixture actor 3's yaw at T+1 is equal (9.5e-7
+  apart without). native_gate_join_viewl is in JOIN_DEFAULT_ON now.
+- The evasive spiral, hjs4/hjs4w/hjs4e: fixture actor 3 (0x16ece7) flies on to (-635, 101466, 1696) on the session and
+  stops at (-560, 100915, 1228) by 720 on the joiner. Its steering model's active behaviour is a
+  U::Path::EvasiveSpiralSteeringBehaviour (0x2c4d048; 0x48 bytes, the factory 0xec6b14, base constructor 0xed8550):
+  start time +0x18, three doubles to +0x37, three floats +0x38..+0x43, a byte +0x44. STEER did not carry the class
+  ("steer side=session ... why=other ... behaviours=2c4d048/2c4edc0"): the joiner's has its load's time and other
+  parameters, is gone at T+2, and the joiner alone delivers ArrivedAtWaypointEvent for the ship at 689. The class is in
+  join_steer_classes and native_gate_join.py's STEER_CLASSES now (ranges +0x10 2, +0x18 0x20, +0x38 0xc, +0x44 4).
+  Not yet rerun on hjs4 (it needs the Python table on the relay's side too).
+- Read and not the cause: a DockPathBehaviour (0x2c4d850; 0xd0 bytes, the factory 0xec6034, the same base constructor
+  0xed2a10 as UNDK's UndockPathBehaviour; +0x38 and +0x98 are padding the constructor never writes) is fresh on the
+  joiner at the admission and byte-equal to the session's from T+1.
+- Open on these saves:
+    T+1 census, timing domain (hjs1g, T=690): one object, a ShipExtraSmall, nav.refresh_time and nav.refresh_relation;
+      equal again at the 1800 census. The world part of the digest differs for those 1,109 ticks.
+    The far sector's wharf (hjs4e, delivered events 688..752): the joiner alone delivers 11 + 3
+      U::TriggerAnimationEvent at T+1 and T+2 (due at its load time: slot 1's ship and the kit ships) and 2,599
+      U::UpdateGravidarAccessEvent; two docking bays of the dock area 0x1da1e (01da28, 01da29, each with a created
+      ShipSmall) get their AnimationTickedEvent at 749 on the joiner (one common time, 2 s after its load) and at 736
+      and 742 on the session. The load starts animations over that the session finished long ago.
+    After the handover (hjs1d: 3369 = H+29; hjs1g/hjs1h: H+5): both sides create eight ShipExtraSmall in zone 0xba3 at
+      H+4 (the same created keys), the session then makes more components for them (the weapon path 3d2431, 7429dc,
+      5152f2, 812932 and part animation units), the digest parts for good, and at the 3600 census exactly those eight
+      differ, in motion only (hjs1h: common 14,708, differing 8).
+- Tests: native tests pass. capture-005 regression of the three changes together (ca48, T=690): viewl=1:27:0:0:0:0,
+  steer=10:10, joined at 3277 with digest_mismatches=0, no desync to 5440, the radar post rows equal from 690 to 5441.
+  The Linux gate check (WSL, gcc, the whole of check_lockstep_gate_linux.py with the scenarios) passes on this tree. Tools: census pages in play mode need
+  --set "native_gate_world_pages_window={first,last}" (world_detail_rows alone prints nothing); event rows are only
+  written inside native_gate_trace_window.
+
+64. NEW-SESSION SAVES, THIRD ROUND: THE PART ANIMATION SEQUENCES AND THEIR UNITS (ANIS, ANIL; hjs4a .. hjs4g, 10 Nov)
+
+- x4mods-b8's finding on its four-start fixture hjs4 (T=687, the joiner in the Terran start): every digest part equal from
+  T+1 but the navmesh part from 738. Two docking bays of the far wharf (0x1da28, 0x1da29) get U::AnimationTickedEvent at 736
+  and 742 on the session and at 749 on the joiner, and the dock area's nav mesh (key 01da1e) is regenerated one tick after
+  each.
+- What X4 keeps (read in the image). An object's container (+0x208) holds an array (+0x00 begin, +0x08 end) of 0x90-byte
+  sequences, one per animated part (Positional::InitPartAnimations 0x755110 -> 0x1164460): +0x08 the start time of the first
+  queued stage, +0x10 a small vector of stage pointers (inline when +0x30 == 4, count +0x38), +0x48 the template, +0x50 its
+  U::Animation::SequenceControlUnit (0x58 bytes, vtable 0x2c80090), +0x60/+0x68 a cache, +0x70 a pointer cleared with the
+  start, +0x78/+0x80 an offset and a limit, +0x88 flags. A stage is a 0x100-byte entry of the template's array (+0x28..+0x30):
+  +0x00 its key, +0xa0 its length. The unit is a state machine: +0x08 the sequence, +0x10 an EventListener base with its own
+  runtime ID, +0x28 the state, +0x30 the state to enter next, +0x38 the list of its states, +0x40..+0x48 the listeners
+  waiting for a state. A key is the 64-bit FNV-1 hash of the name (seed 0x811c9dc5, prime 0x1000193, as the unit's import
+  0x1169500 hashes a save's attribute): cockpit_closed a2a89eb622c1a86f, cockpit_open 81acd31dc6f636fb, landinggears_active
+  2529a68f7e2d712f, landinggears_activating f983fcf5321f91a3.
+  0x116a1f0(unit, state, restart) enters a state: 0x1165930 queues the state's stage (dropping finished stages; an empty or
+  finished queue starts now), 0x1169a90 schedules AnimationTickedEvent at now + the remaining time (0x1165dd0) for the
+  listeners waiting for that state, 0x116a060 registers the unit for the events of the state's transitions. A sequence whose
+  stages are over is advanced by whoever evaluates it next (0x1165ee0 -> the unit's vtable +0x30 0x1169f40).
+- What a load does. The save has, per part, a time and the names of the queue (<part time="29.23" sequence="landinggears_
+  activating landinggears_active"/>), and the object's future events. The joiner's units did not come out as the session's:
+  the start of most sequences is the load's time (first form of ANIS: 8,848 of 12,553 apart, 11,875 once a stage's length was
+  taken out of the queue's identity), and a ship docking at T (the Terran fighter MGJ-203, 0x6daff, landing on the carrier's
+  dock area 0x6d861; its save holds triggeranimation open_cockpit and docked at 38.197 s = tick 934) has its four cockpit
+  parts open already (cockpit_open against cockpit_closed), its ten landing gear parts at the last stage of their queue, and
+  no CockpitStateListener waiting in its cockpit unit. Ship::vfunc1147 (0x7dd4e9) makes that listener with the trigger event
+  it posts; the save keeps the event and not the listener. On the session the trigger of 934 opens the cockpit, the listener
+  gets AnimationTickedEvent at 966 and its handler (0x116e230) asks for the nav rebuild of the ship and of its dock area
+  (0x75b440): NAV_MESH_ROW 967 regenerate 6daff and a second 968 regenerate 6d861 on the session only.
+- ANIS (package section 84; native_gate_join_anis): per made sequence with a SequenceControlUnit (the unit's +0x08 points
+  back) the start, +0x78, +0x80, the count of stages, the keys of the first four, a signature of all keys, the unit's state
+  and next state keys, the count of waiting listeners. The admission writes the three words and clears +0x70 and the cache
+  where the joiner's queue is the same. Two things the first runs taught: a stage's length is 1.0 from its constructor
+  (0x1161966) until U::Animation::AnimationFile::vfunc2 (0x1163fe0, 0x1163510) loads the file and writes (end - start
+  frame) / 30, so it differed between the sides for 3,057 sequences and is no identity; and +0x70 is a heap pointer of the
+  saver's, never written.
+- The units' state (native_gate_join_anis_state) and ANIL (section 85): where the state, the next state or the queue
+  differs the admission sets the session's, the state as the unit's import does (0x999ef0(owner, unit +0x10), then
+  0x116a1f0 with restart; their IDs on the load list), then the queue's stages by key into the storage the sequence has, the
+  next state and bit 2 of the flags. Where the session's unit has listeners waiting and the joiner's none it makes them:
+  ANIL carries class, flag and the component (+0x18) as a portable ID; two of the seven classes are made (Cockpit 0x2c78290
+  and DockingBayFence 0x2c7a628, 0x28 bytes, constructor (this, component, flag) 0x116e130 / 0x116e5e0) through the unit's
+  vtable +0x58 (0x116a4e0). Activation, CockpitActivation, StoreShip, RetrieveShip and DockDoor are counted (anil unknown).
+  Five more join pins.
+- Queues of more than four stages (x4mods-b8's eight-start session ns8, a join at T=732 and T=705 on the fight start: the
+  first per-tick mismatch at 784 both times, T=687 equal). The joiner's status named it: anis_state=1:5:30:28:0:0, 28
+  unplaced, anis_shape 6b437/8/1:...>5:...: object 0x6b437's parts with one stage on the joiner and five on the session. The
+  record carried four keys and the admission wrote into the storage the sequence had (four inline places). Now eight keys
+  (join_anis_rec 136 bytes), and the queue is emptied and filled through X4's own append 0xcb8c0 (one more pin), which
+  grows it; a unit without a state on both sides takes the queue alone; anis_why=long:nostate:state:next:stage counts the
+  unplaced by reason. ns8, slot 3, the join save forced to 705 (--join-save-at): anis_state=1:5:58:0:0:0, anis_why all 0,
+  every digest part equal 706..900 (the mismatch of 784 gone); the first mismatch is the 1800 census, another matter (ships
+  of that session's battle apart in motion during the catch-up; open).
+- Runs (x4mods-b8's hjs4 fixture from this tree, the real game, two X4 on one PC):
+    hjs4a, ANIS alone, first form: the navmesh part equal 688..760, key 01da1e regenerated 733 735 737 739 741 743 743 745
+      on both sides; first digest mismatch 968 (was 738). anis=1:8848:8848:617:0:3088:30, the session's anis_cap=12583.
+    hjs4b: the kinds of the 3,088 other queues: 24 another count, 7 another first key, 3,057 the same stage of another
+      length; 14 units in another state.
+    hjs4d, with the unit state step: every digest part equal 688..972, the nav rows of 967/968 on both sides, the relay's
+      "joined tick=3953 digest_mismatches=0 first_digest_mismatch=-". anis=1:11875:11875:621:0:31:30,
+      anis_state=1:14:57:0:0:0 (14 states set, 57 queues written), anil=1:1:0:0.
+    hjs4e, hjs4g, hjs4h (handover 4364, 3898, 3552): the catch-up without a digest mismatch each time.
+    hjs4i, the final build with the join defaults only: the same (joined 3426, no mismatch; parts equal 688..1000).
+    ca49, the capture-005 regression at T=690 (the recipe of section 63's ca48): joined 3427 without a digest mismatch, no
+      desync to 5440, 0 errors, the census of 691, 1800, 3600 and 5400 equal in all four roots; anis=1:141:141:646:0:1:0
+      (the session's anis_cap=812), anis_state=1:0:25:0:0:0, anil=0.
+  Both options are in JOIN_DEFAULT_ON.
+- Open on hjs4 after the handover: two Terran fighters' flight (0x6da76 MFG-855 and its wingman 0x6da8d SGD-739, in slot
+  4's zone, on their way to dock at the carrier).
+    What shows: the rid part differs for 4 to 17 ticks somewhere in 4532..4551 (the fighter's ArrivedAtWaypointEvent and the
+      carrier dock 0x6d86f's three TriggerAnimationEvents come a few ticks apart) and the 5400 census differs in those two
+      ships' motion only. Never in the catch-up; one run (hjs4h) had no rid difference before 5400.
+    Where it starts (the Windows motion watch, MOTION_DIGEST per tick; hjs4j..hjs4p): 0x6da76 takes the Steering model at
+      3593 on both sides, and at one tick its pathing state parts by 0.0003 m: 3594, 3956 (twice), 4180 (three times) or
+      4219 in seven runs with handovers 3289..3650. The write watch (JOIN_REFWATCH on both pathing slots and the cached
+      pose, 2,400 steps now): at that tick the Agent update copies the same x into the write slot on both sides (0xe8fa6a)
+      and the Steering step 0xec7200 then writes another (0xec9306: 435f7e31 against 435f7e4f); no other writer.
+    Equal up to that tick on both sides: both slots whole (cur=, prev=, the new slotx= for +0x60..+0x19f), the cached
+      pose, target, path, the model's plan (+0x70..+0xe0), the agent's speed fields, the 47 avoidance contacts by hash, the
+      constructor's two angles, the pathing pass's order, stamps and walk (PATH_DETERMINISM), every event with a mapped
+      source in 3950..4552 (one run).
+    Not the cause: render-only frames (native_gate_render_fps=false and own_predict=false on both sides: parted at 3956);
+      the step's own view cache query (0x3dde10 at 0xec7cfe / 0xec7e1b; x4mods-b8 routed both through the pathing walk in
+      f7573d84: 0 calls on either side in a whole run, the fighter never takes that branch); the animation units.
+    The same signature in the catch-up (x4mods-b8's eight-start session ns8, the join save at 705): the squad leader 0xa2ce0
+      (a medium ship with five escorts in a created zone) gets a new Steering model and solver at 1542 on both sides and
+      parts at 1664, 1592 or 1580 in three runs (slotx= one tick before cur= in the last), not before 2817 in two more; its
+      escorts follow one tick later. With the join save at 1400 it stays equal until a new target differs at 1719. Both
+      ships that part first are formation leaders with wingmen under the Steering model.
+    Read on that leader (JOIN_WATCHRAW every step 1401..1680, new fields mdl= the model's 0x3a0 bytes and solv= a hash per
+      0x400 bytes of the solver): Agent, controller, command block and object never become different; the model differs
+      only in bytes its constructor 0xec40c0 leaves unset (+0x118, +0x1c8, +0x274..+0x27f, +0x328, +0x348 and the high halves
+      of +0xb0, +0x340, +0x380: padding before 16-byte members); a new solver differs in every chunk (unset bytes all over).
+    Tried and not it: every new solver zeroed at its allocation on both sides (an experiment build, an int3 behind
+      0xe96023 whose handler cleared the 0x18f60 bytes; 32 and 31 solvers zeroed): one run equal to the end with every
+      census equal, one run parted at 1580. The switch is not in the tree.
+    Not read yet: what a leader's update reads of its wingmen while the batch jobs run in parallel (the travel snapshot's
+      audit covered the wingmen's reads of the leader, +0xf7b); the cached-parent loads x4mods-b8 found in the mass traffic
+      (`[bank*0x80 + object + 0xe0]`, the view cache a client fills for what it draws): 98 of them in 40 functions of the
+      pathing code 0xe80000..0xf30000, the Agent update (0xe8f47c, 0xe8fe68), the obstacle publisher 0xeaf660 and
+      RefreshFromPathingState 0xea2c40 among them.
+    A side finding: with a census every 60 ticks (native_gate_world_hash_stride=60) the session's census has one row more
+      than the joiner's from T+1 on (525045 against 525044; all four roots differ, the pages are equal): a created object
+      an earlier census saw that was gone at T. Not with the default stride. Open, small.
+- Read and left:
+    A looping sequence (the unit's next state its own) whose stage is over is restarted by whoever evaluates it next,
+      at that moment (0x1165ee0 -> 0x1169f40 -> 0x1165930): a kit ship's parts 1, 22 and 23 keep the session's 18.53 /
+      20.30 s on the session and take 29.997 s (T+1) on the joiner, which draws them. That is the same between any two
+      clients with other cameras, no join matter; whether a stage appended to such a queue (it begins where the running
+      one ends) can move a scripted event is not shown.
+    The joiner alone delivers 11 + 3 TriggerAnimationEvents at T+1 and T+2 (slot 1's ship and the kit ships), 2,599
+      events of class 0x2baf880 and 8 NavHelperGeneratedEvents; none of them changed a watched unit's state.
+    Five listener classes are not made (anil unknown): none waited at T in these runs.
+    A package section for the objects' spawn times (+0x6e0) was written for x4mods-b8's respawn fixture and taken out
+      again: the field is equal on both sides (13,245 of 13,245); that case was a ship rebuilt inside its old hull.
+- Tests: native tests pass (test_join_anis: synthetic memory, X4's two calls and the listener maker replaced by stand-ins);
+  the Python package mirror with the same golden (v13: 85 sections); join and defaults suites pass; the Linux gate check
+  (WSL, gcc, check_lockstep_gate_linux.py with its scenarios) passes on this tree. Tools: JOIN_WATCHSEQ
+  rows in the join watch (a watched object's sequences: queue, state, next state, waiting listeners, times);
+  .local scripts are not in the tree. A play-mode host refuses native_gate_runtime_ids_callers (runtime IDs mode=set):
+  native_gate_runtime_ids_rows alone works there.
+
+65. A BULLET THAT HITS IN THE JOINER'S LOAD (the playtest kit's join through the VPS; hj8i, 11 November)
+- Reported by the playtest kit: ns8 (eight slots), slot 2, the lobby flow through the real VPS, the save landing at T=676:
+  "digest_mismatch first=677", 4,480 mismatches to the handover. A second join there (T=685) differed in another way (the
+  open timing item below), three joins on localhost (T=679, 686, 686) did not. It is the save's step, not the machine: the
+  same join on 127.0.0.1 with the save forced to 676 (-- --join-save-at 676) gives the same package (portable digest
+  d6fe3764e551274f...) and the same mismatch from 677.
+- What differs at 677 (census pages, 525,005 rows): three objects, the ShipSmall 16fcec (health and motion) and its two
+  weapons 16fcf8, 16fcfa (health: they sit under the ship's shield group). The ship's shield is 667 on the session and 690
+  on the joiner. BULLET_CADENCE at 677: the session moves 50 bullets and tests 46, the joiner 49 and 45; from 678 on the
+  counts are equal.
+- Not lost by the save or the load: BULLET's census has 46 bullets at T and a new check at the admission pairs all 46 with
+  the joiner's own (bullets=46:46:46:0:0:46; a kept save of T=686 also holds each of its package's 27).
+- Execution watches from step 677 on (the bullet's Move 0xd4f090, its destructor 0xd4e2c0, Kill 0x3e51b0, the event cancel
+  0x99aa90; the event rows): both sides move the bullets in the same order (runtime ID order: a zone's update 0x748120
+  walks its two child containers +0xa8 and +0xa0 and calls each child's slot +0x1510). The session moves the laser bullets
+  1653ee and 1653ef (twins of one ship's two guns), both hit the ship 6973b (16fcec) and are killed. The joiner moves 1653ee,
+  which hits and is killed, and never moves 1653ef: step 677's event pass had delivered a KillEvent (0x2baad90) to it, due
+  at T's game time, and its destructor runs at the step's end. The session has no such event.
+- Cause: a joiner's loading frames run the zones before the admission (the reason for native_gate_join_hold_fire), and a
+  zone's update moves its bullets. 1653ef hit in the load and posted its kill for the load's time. KillEvent is a class the
+  session had due at T, so the boot event hold (native_gate_join_hold_boot_events) kept that event and posted it again
+  after the admission; step T+1 delivered it before the bullets moved. The session's hit of that bullet at T+1 never
+  happened on the joiner.
+- Fix native_gate_join_hold_bullets (a join default, JOIN_DEFAULT_ON): between the package's load and the admission the
+  bullet module's Move wrapper returns at once (bullet_hold, lockstep_bullet.h; status bullet_hold=on:held). A held bullet
+  keeps the state the save gave it, which is the session's at T. Windows only, as the bullet module. Real run, the same
+  join with the save forced to 676: bullet_hold=1:46 (one loading frame, 46 bullets), step 677 50/46 on both sides, the
+  census of 677 equal in all four roots, the relay's digest equal from 677 to the 1800 census. The 1800 census then
+  differs in the motion and timing roots (class and health equal): another cause, later than this one (section 64's
+  leaders are in this session).
+- New diagnostic: the bullet pairing at the admission (status bullets=session:own:paired:missing:extra:apart, a
+  JOIN_BULLET line in the crash note per bullet missing, extra or apart, the flight's words +0x260.. first). "apart"
+  counts every pair because the transform cache words and the byte +0xd0 differ after a load; it names bullets, it does
+  not judge them.
+- The kit's second join (T=685, reproduced on localhost with the save forced to 685, portable digest
+  035aa9f50a3a6402...): bullets and the sampled ships equal, one object apart at 686 in the timing root alone, the created
+  ShipExtraSmall 800280e26769bfc5 (zone 0x830, made at 28.397 s): nav.refresh_time T on the session (relation 1), T+1 on
+  the joiner (relation 0). PATH_DETERMINISM: order, walk and stamp hashes equal at 686; at 687 the stamp hashes differ
+  (the joiner has one more agent already current and one fewer stamped), at 688 they are equal again. The digest's world
+  part is the last census, so the relay counts every tick to the 1800 census as a mismatch and a play session reports a
+  desync at the handover: it is the "one timing-only item" of the earlier runs (w1z120..w1z123; section 63's open list),
+  and it is not cosmetic for a playtest.
+- Its mechanism (a write watch on the controller's +0xc0/+0xc8 and execution watches on the two callers of
+  RefreshFromPathingState 0xea2a20): the refresh writes only while the thread's game time is past the stamp and the read
+  bank differs from the cursor. The gate's walk stamps with the step's own time, so later queries of that step write
+  nothing: at T all 10,029 stamps hold T, 9,798 from the walk (relation 1 at the capture, which follows the bank flip) and
+  231 written natively during the step (relation 0). The walk of T+1 finds those 231 current and leaves them; the first
+  transform query of step T+1 stamps them natively. 230 are asked every step on both sides. The 231st is this ship: the
+  session asked it in step T and not in T+1 (its next write is the walk of T+2), the joiner asks it in T+1, chain
+  0xea2aae <- GetTransformImpl 0xea5af5 <- 0xea5a84 <- 0x746207 <- PropagateCacheFlags 0x3d4906 <- BuildCache 0x3d4d0f:
+  the load's republication of every component (sections 24 and 25: PEND alone is overwritten by the load's one-shot cache
+  specification in the same frame, and without the republication the joiner's views keep the load's state).
+- Fix native_gate_join_keep_stamps (a join default): the republication stays, its queries write no stamp where the session's
+  step T+1 writes none. At the admission the controllers of NAV's relation 0 records are listed unless the session has the
+  object pending (PEND) or a due cache specification of an ancestor reaches it, read as BuildCache 0x3d4a80 reads its stack
+  (an entry is due at last + interval; one for a class goes down until an ancestor is of that class, slot +0x11e8, whose
+  children are the last to get it; class 0x79 never stops). In step T+1 alone the hook on PropagateCacheFlags' call sites
+  sets a listed controller's cursor to the read bank around the engine's call and puts it back. The session's SPEC at
+  T=685: the galaxy's kind 1 for class 0x58, three sectors' kind 2 for class 0x6d, five zones' kind 3 for every class (the
+  high-attention zones and the fight zone), 4,717 one-shot kind 7. Real run, the save forced to 685:
+  keep_stamps=1:231:5:2:224:0:0:5:5 (231 listed candidates, 5 held, 2 pending, 224 under a specification; 5 seen and 5
+  held in step 686), census 686 equal in all four roots, stamp hashes equal at 686, 687 and 688, the relay's digest equal
+  from 686 to the 1800 census, pins ok. A first form that left out everything under any specification listed nothing (the
+  galaxy root holds a permanent one) and changed nothing. Pinned for it: PropagateCacheFlags, BuildCache, GetTransformImpl.
+- Not a join matter after all (x4mods-b8's control, 11 Nov): ns8 with slots 1 and 3 present from the start and no join parts
+  too, in the motion root, first at the census of 3000 with a census every 300 ticks: the corvette a2ce0 and its fighters
+  a2d0a, a2d22, a2d33, a2d44, a2d5c in tempzone 0x38123, section 64's squad. The census differences at 1800 after both
+  joins above are of that kind (motion and timing roots, per-tick equal). path_transforms=observe on a join run (save 705):
+  the published parent against the live one on every link, 2,285,353 calls on the session and 2,098,063 on the joiner, 0
+  differing; that run did not part at all, a repeat without observe parted before 1800.
+- Open, general: an Agent refreshed natively in step N is skipped by the walk of N+1 and is then open to whatever transform
+  query a client makes in N+1 (a camera, a UI read): its stamp, and the transition events the refresh posts, can come a
+  step apart between two clients without any join.
+- Tests: native tests pass (the hold in test_bullet_cadence: synthetic, the wrapper returns before X4's Move and counts;
+  test_join_keep_stamps: synthetic memory, PropagateCacheFlags and the class question replaced by stand-ins, the hold's
+  cases and the specification rule on a four-level chain); 460 Python tests of the join, defaults, probe and launcher
+  suites pass. The real runs above are X4 9.00 on Windows, two instances on one PC, play mode.
+
+66. A TARGET GONE FIVE STEPS EARLY: THE KEPT BOOT EVENTS' REFERENCES AND RCNT (hj8i at T=680; 11 November)
+- Found by trying one more save tick in the playtest kit's range (its flow lands the save at 667..686): ns8, slot 2, the save
+  forced to 680, on 49873583 and again on the published 915b71c5 with the inline pathing jobs (build-st26): the census of 681
+  equal in all four roots, then the per-tick digest apart from 784 in its runtime ID part alone (sample, pilot, input and world
+  equal: the joiner makes 6 shared IDs in step 784, the session 3, equal again by 790), the same tick in every run.
+- The delivered events of 682..790 on both sides (native_gate_event_rows; effect objects with local IDs left out): one event
+  differs, U::TargetInvalidEvent (0x2ba9120) for the ShipSmall 0x73808 (attention 2, zone 0x44e), at 778 on the joiner and at 783
+  on the session. Every kill event is on both sides at the same tick, among them the created XS ships 800280e26769bfc5 at 772
+  and 800293a8451469ac at 777.
+- Where the event comes from (function 0xe8d850, called from the Agent update at 0xe8fd17 on a full update, every fifth pass
+  for this agent on both sides in the same phase): for each 0x90-byte entry of the Agent's queue +0x6a8..+0x6b0 the target ID
+  +0x10 is looked up in the registry (0xced70, mode 4); it counts as found while the control block's state +0x44 is 2 and a
+  reference can be taken on +0x40. Not found: 0xe8dedf builds the event. Found: the target's view word is tested for 0x10000
+  ([target + 0x11c + view index x 0x80], 0xe8d92e), clear: 0xe8ddf0 builds the event too. An execution watch on those four
+  places for that Agent: the session reaches 0xe8dedf at 783, the joiner had reached it at 778; neither takes the view word's
+  branch. (That branch, and the same test at 0xe943a6 and 0xee799f, is a read of per-client view cache state in the pass; no
+  run shows it firing. It is noted, not fixed.)
+- So the killed target was still in the registry at the session's pass of 778 and gone on the joiner, which fits a reference
+  count one lower on the joiner (the counts themselves were not read; the fix below acting on 228 objects and the equal run
+  are the evidence). Why it would be lower: at T=680 the session had two U::UpdateGravidarAccessEvents (0x2baf880) due, which makes that class one
+  the boot event hold keeps (native_gate_join_hold_boot_events), and the joiner's load posts one for every object: 15,998 kept
+  events (33 at T=676 and T=685, where that class was not due and the boot pass delivered them before the admission). A kept
+  event still owns the reference the load's PostEvent took on its source. RCNT (native_gate_join_rcnt), which lowers a created
+  object's count to the session's where the load left it 1..4 higher, read that reference as part of the load's surplus and
+  took it away; after the admission the repost and the first-reference release cancel, and when step T+1 had delivered the
+  event its destructor gave the reference back once more: one below the session's from then on. Such an object, once killed,
+  is deleted at the kill, where the session's lives until its last holder lets go.
+- Fix (no option, part of RCNT): join_admit_rcnt compares the session's count with the own one less the first references of
+  the kept boot events on that object for which the session has no counterpart (the event's class not due for that source at
+  T: join_bootev_session_keep). Status rcnt_held=objects:references. Real run, the save forced to 680: rcnt_held=228:228,
+  rcnt=1:631:3015:5:0, the event of 0x73808 at 783 on both sides, the 470 event rows of 776..790 equal, joined with
+  digest_mismatches=0, the census of 681, 1800, 3600 and 5400 equal in all four roots.
+- The session defaults moved while this was found (x4mods-b8, 915b71c5 and e0b58ad1): pathing batch jobs inline in batch order
+  (native_gate_travel_determinism) in place of the travel snapshot, after five of five runs without a join stayed equal with it
+  and two of two parted without; the temporary zone order tied to it; a client's permit wait of up to 300 s. With them the near
+  joins at 676 and 685 run their three minutes with digest_mismatches=0 and every census equal, and the kit's joins through the
+  VPS at 667 and 673 are equal as well. The join needs nothing new for the inline mode: PATH restores the batch order and ROUTE
+  carries each agent's +0xf7b.
+- Tests: native tests pass (test_join_rcnt_kept: synthetic memory, two objects with a kept event each, the session's table
+  holding the class for one of them). The real runs are X4 9.00 on Windows, two instances on one PC, play mode.
+67. A SHIP THAT CAME UP ONE ATTENTION LEVEL HIGHER: THE NAV HELPER OF LEVEL 9 (ns8 at T=696; 11 November)
+- Found by the playtest kit's join through the VPS (save at 696) and again in two runs of x4mods-b8 on one PC (ns8, slot 2,
+  builds st27 and st28): the join admitted, the census of 697 equal, then the per-tick digest apart from 701 for good in its nav
+  mesh part alone (sample, pilot, identity, runtime ID, input and world equal), every later census equal.
+- The rows (NAV_MESH_ROW, both logs of the st28 run): the session builds the interior nav helper of fixture ship 16fcd9 at tick
+  3, again at 700 and at 1557; the joiner builds eleven fixture helpers at 697 (its load's requests, left out of its fold as
+  helpers the session knows), 16fcd9 among them, nothing at 700, and 1557 as the session. The joiner's status at the admission:
+  attn_high=55 with 16fcd9:9>8 and thirteen of its parts 9>8: the ship came up at attention 9 in the joiner's load where the
+  session held 8. The package's ATTN record of the ship: level 8, the attention timer due at 30.3416 s, which is tick 699.
+- What level 9 is (static, X4.exe 9.00): SetAttention 0x3d5660 hands the level it leaves (+0x1ec) and the new one to the class
+  handler (vfunc 0x15e8; Positional 0x753480, Ship 0x7d5270). Going up to 9 or more, an object that owns its nav context asks
+  AI::NavMeshCache for its interior helper (0x75b3d0 -> 0x1087df0: the ID into the wanted set +0x330; the cache answers with the
+  helper its map +0xd0 holds and queues a build only when it holds none). Going down from 9 or more it releases the helper
+  (vfunc 0x1be8 -> 0x1088050: out of the wanted set and the map). A Ship also registers and unregisters itself with two more
+  owners at that boundary (0x10b2820 / 0x10b2d60) and removes some children on the way down (0x7d76f0). The build's publish
+  0x108c800 looks for the ID in the wanted set first: a build of a released ID is published nowhere and posts no event.
+  The per-level state (vfunc 688/689) is the same at 8 and at 9, so neither attn_set nor attn_states saw the two apart.
+- So: the session's ship had gone down to 8 before T (helper released) and was due back up at 699. The joiner's load made it at
+  9 and asked for the helper; ATTN wrote 8 into +0x1ec directly, the helper stayed wanted, was built and published at 697 (with
+  its NavHelperGeneratedEvent, which the session did not have); at 699 both sides went 8 -> 9 and asked: the session built at
+  700, the joiner's cache answered with the helper it had.
+- Fix (native_gate_join_attn_leave, with attn_set; in the join defaults): a level ATTN writes down from 9 or more to less than
+  9 (not to 1) is made by the native call instead: the load's level goes back into +0x1ec and SetAttention(object, the
+  session's level) runs the handler from it, under attn_set's care (its two PostEvent sites to the boot event hold's slot, the
+  due events it queued dropped unless the session's EVQT holds them, its shared allocations on the load list). The load's own
+  request is still in the cache's priority sets: its build runs at one of the joiner's first joins, is left out of the fold as
+  before and is not published. Status attn_leave=on:calls:loaded:drift.
+- Real run (ns8, slot 2, the save forced to 696, the option set by hand, the DLL of this commit): attn_leave=1:1:0:0 (the one
+  call is the ship's; its parts follow through X4's own propagation, attn_high 55 -> 42), the joiner's builds 697 (three), 698
+  (eight, 16fcd9 among them) and 700 (16fcd9, as the session), then 1347, 1557, 2296 on both; joined at 3411 with
+  digest_mismatches=0; the digest parts of 697..702 equal; the census of 697, 1800, 3600 and 5400 equal in all four roots.
+- Not done: the other direction. A load that comes up below 9 where the session holds 9 or more (17136d and three of its parts,
+  8>9, in every ns8 join so far) keeps the direct write: the joiner then lacks the helper the session has until the object
+  next crosses the boundary. No run shows a difference from it; the native call there would ask for a helper whose
+  NavHelperGeneratedEvent the session handled long before T, so it wants its own look first.
+- Tests: native tests pass (the leave path on synthetic memory: the call from the load's level whatever the per-level states
+  say, the level written back when the call leaves another, off / up to 9 / within one side of 9 / to level 1 unchanged).
+  The Linux gate check passes (the option is Windows-side: the Linux gate has no ATTN set). The real run is X4 9.00 on
+  Windows, two instances on one PC, play mode.
+68. A BULLET AGAINST A COMPOUND AS THE LOAD BUILT IT: THE SHAPES OF STEP T+1 (hj8i at T=678; 11 November)
+- Found by the save tick 678 on ns8, slot 2: the census of 679 apart in the health and motion roots and every tick a mismatch
+  from 679. One bullet (start 28.527046, the same segment on both sides to 1e-5) missed fixture ship 16fcd9 on the session and
+  hit it on the joiner in step 679 (fraction 0.677); a shield group 1955 against 1932.
+- What did not help, each in a real run: forgetting the session's shape holders at the boundary after T or after T-1; holding
+  the part animation sequences the joiner's first republication restarts (parts 1, 22 and 23 of the ship restarted there, and
+  with the hold they no longer did: the sequences equal at 679, the hit unchanged); both together.
+- Why: the order inside a frame (U::UniverseFrameUpdate 0x9fdef0). The Move passes (0x9f9da0), in which the bullets are cast,
+  come first; XPhys::Scene::Step 0xba600 for the two scenes after them (per body: the owner's velocities into the body, then
+  Body_UpdateShape 0xbff80, which moves the compound's children to their parts' poses once the holder's due time +0x28 has
+  passed, then Jolt's update); the view cache publication last. So the casts of step T+1 see each compound as the scene step
+  of T left it: on the session from that body's last refresh, up to five seconds old; on the joiner as its load built it
+  (BODY's note already says so from the mass properties: the parts stood elsewhere). Whatever the scene step of T+1 does comes
+  after those casts, and the casts of T+2 see what it did: the joiner's first refresh against the session's old one again.
+  BODY carries the body's own pose and motion, so that was equal.
+- Fix (native_gate_join_shape_hold, with native_gate_join_shape_refresh; in the join defaults; session and joiner):
+    session, the boundary after T-1   the holders and the aligned objects forgotten: the scene step of T refreshes every body;
+    session, the boundary after T     every holder's due time to T's time plus one and a half ticks: no refresh in step T+1;
+    joiner, the admission             Body_UpdateShape(record, force) for every body of the scenes (the body manager's slots,
+                                      body +0x50 the record, its owner and holder), the thread's game time at T's, the
+                                      object marked as seen, the same due time; before BODY writes the motion properties;
+    both, the boundary after T+1      the reset of native_gate_join_shape_refresh as before: all refresh in step T+2.
+  Status shape_hold=on:calls:forced:held; crash note JOIN_SHAPE_HOLD.
+- Real run (ns8, slot 2, the save forced to 678, the option set by hand, with the physics trace of 677..681): the session
+  forgot 24 holders at 677 and held 176 of 179 bodies at 678; the joiner refreshed 159 and held 169 of 172, its thread time at
+  the admission already T's; joined at 3326 with digest_mismatches=0; the digest parts of 679..683 and the census of 679, 1800,
+  3600 and 5400 equal; the ship's body state before and after Jolt's update and its compound's three children equal at 679,
+  680 and 681.
+- Second save tick, the options from the join defaults (no --set; also the first join with native_gate_join_attn_leave from
+  the defaults): the save forced to 679, shape_hold=1:1:159:169, the session held 176 of 179 bodies at 679, the joiner
+  refreshed 159 and held 169 of 172; joined at 3337 with digest_mismatches=0, the census of 680, 1800, 3600 and 5400 equal.
+- What the physics trace of that run also shows, none of it new with the option and none in the census (not fixed here):
+    17136d   28 children on the session, 1 on the joiner: the ship of section 67's other direction (the load at attention 8,
+             the session at 9; ATTN writes 9 directly). Level 9 also decides the compound, so a bullet against that ship can
+             part the worlds: the native call for the way up is the next item.
+    39 bodies of stations (139ab .. 77ce4)   the same children in another order (sub-shape indices differ, the shapes do not).
+    139c7, 63cd0   two station bodies whose pose in the scene differs by some 100 km between the sides, static, far away.
+- Tests: native tests pass (the hold over a synthetic scene with a free slot and a body without a holder, the joiner's
+  forced calls at T's thread time, the session's boundaries after T-1, T and T+1, off unchanged). The real run is X4 9.00 on
+  Windows, two instances on one PC, play mode.
+69. THE WAY UP TO ATTENTION 9: THE COMPOUND AND THE NAV HELPER A LOWER LOAD LACKS (hj8i at T=680; 11 November)
+- Section 68's physics trace named it: fixture ship 17136d (and 17138d, 1713a0) comes up at attention 8 in every ns8 joiner's
+  load where the session holds 9; ATTN wrote 9 directly, and the ship's compound then had 1 child on the joiner against 28 on
+  the session, at every step. No census reads compound children and no bullet had met that ship, so every run so far was
+  equal; it is the mirror of section 67 (the load higher than the session), where the visible part was the nav helper.
+- Fix (native_gate_join_attn_arrive, with attn_set; in the join defaults): a level ATTN writes up from less than 9 to 9 or
+  more is made by the native call from the load's level, exactly as attn_leave does on the way down: the load's level back
+  into +0x1ec, SetAttention(object, the session's level), its posts to the boot event hold's slot, the due events it queued
+  dropped unless the session's EVQT holds them, its shared allocations on the load list. The handler asks AI::NavMeshCache
+  for the interior helper; its build at one of the joiner's first joins is a catch-up of a helper the session knows and
+  stays out of the fold, as the load's own builds do. Status attn_arrive=on:calls:loaded:drift.
+- Real run (ns8, slot 2, the save forced to 680, the option set by hand, with the physics trace of 681..683):
+  attn_arrive=1:3:0:0 (the three ships; their parts follow through X4's own propagation: the levels ATTN had to write went
+  from 41 to 7); 17136d's compound with the same children on both sides at 681, 682 and 683 (29 child rows each at 683,
+  where the joiner had 1 child before); the joiner's nav builds 681 (one) and 682 (twelve, the three ships among them), all
+  left out of its fold, every build after 700 the same on both sides (15 rows); joined at 3367 with digest_mismatches=0; the
+  census of 681, 1800, 3600 and 5400 equal. attn_leave and shape_hold came from the defaults in that run.
+- Not run yet: a join with this option from the defaults (the same code, the overlay list alone differs).
+- Still apart in that trace, as in section 68 and not from this: 38 station bodies with their children in another order, and
+  the two static station bodies whose scene pose differs.
+- Tests: native tests pass (the arrive path on synthetic memory next to leave's: the call from the load's level, its own
+  counters, off / above 9 / below 9 unchanged). The real run is X4 9.00 on Windows, two instances on one PC, play mode.

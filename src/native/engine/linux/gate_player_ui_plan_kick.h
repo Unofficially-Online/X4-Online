@@ -79,10 +79,10 @@ static void ui_plan_kick_emit(void *context, const char *stage, const player_ui_
         plan[i * 2 + 1] = hex[sample->view.plan[i] & 15];
     }
     plan[sample->view.plan_length * 2] = 0;
-    dprintf(2, "X4 UI PLAN KICK v=1 stage=%s tick=9 manager=%llx presenter=%llx controller=%llx "
+    dprintf(2, "X4 UI PLAN KICK v=1 stage=%s tick=%llu manager=%llx presenter=%llx controller=%llx "
         "selector=%u first=%u plan_len=%zu plan=%s rng=%016llx contexts=%u context_hash=%s "
         "camera_candidate=%llx camera_mode=%u external_target=%llx target_id=%llu\n",
-        stage, (unsigned long long)sample->manager, (unsigned long long)sample->presenter,
+        stage, (unsigned long long)stats.issued, (unsigned long long)sample->manager, (unsigned long long)sample->presenter,
         (unsigned long long)sample->controller, sample->view.selector, (unsigned)sample->view.first_person,
         sample->view.plan_length, plan, (unsigned long long)sample->rng, sample->context_count,
         sample->context_hash, (unsigned long long)sample->view.camera, sample->view.camera_mode,
@@ -97,7 +97,7 @@ static int ui_plan_kick_trylock(uintptr_t presenter) {
 }
 static void ui_plan_kick_once(native_ui_overlay_probe *probe) {
     presentation_ui_plan plan = {0};
-    if (!ui_plan_kick_enabled || stats.issued != 9 || ui_overlay_multi_count != 160 ||
+    if (!ui_plan_kick_enabled || stats.issued != player_startup()->presentation_first || !ui_overlay_full_window_selected() ||
         !ui_overlay_viewstate_pinned || !ui_plan_kick_pins() ||
         !presentation_ui_plan_collect(&plan) || plan.presenter + 8 != probe->object ||
         !player_recurring_physics_entered() || !player_physics_identity() ||
@@ -117,9 +117,9 @@ static void ui_plan_kick_once(native_ui_overlay_probe *probe) {
     int camera_changed = samples[0].view.camera != samples[2].view.camera ||
         samples[0].view.camera_mode != samples[2].view.camera_mode ||
         samples[0].view.target != samples[2].view.target || samples[0].view.target_id != samples[2].view.target_id;
-    dprintf(2, "X4 UI PLAN KICK v=1 stage=result tick=9 success=1 rng_before=%016llx "
+    dprintf(2, "X4 UI PLAN KICK v=1 stage=result tick=%llu success=1 rng_before=%016llx "
         "rng_after=%016llx rng_restored=%016llx context_changed=%d camera_changed=%d\n",
-        (unsigned long long)samples[0].rng, (unsigned long long)samples[2].rng,
+        (unsigned long long)stats.issued, (unsigned long long)samples[0].rng, (unsigned long long)samples[2].rng,
         (unsigned long long)restored, !!context_changed, !!camera_changed);
 }
 #endif

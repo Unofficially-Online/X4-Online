@@ -2,25 +2,27 @@
 import re
 
 PREFIX = 'X4LAN PRESENTATION_PROBE v=1 '
-ROW = re.compile(r'stage=(p1|p2) tick=7 slot=([12]) player=([0-9a-f]{1,16}) parent=([0-9a-f]{1,16}) '
+ROW = re.compile(r'stage=(p1|p2) tick=(?:7|42) slot=([12]) player=([0-9a-f]{1,16}) parent=([0-9a-f]{1,16}) '
     r'vector=([0-9a-f]{1,16}),([0-9a-f]{1,16}),([0-9a-f]{1,16}) position=([0-9]{1,20}) bank=([01]) '
     r'cache_parent=([0-9a-f]{1,16}) live_called=([01]) live=([0-9a-f]{1,16}) '
     r'cached_called=([01]) cached=([0-9a-f]{1,16}) omitted=([01]) '
     r'refs=([0-9]{1,20}),([0-9]{1,20}),([0-9]{1,20}) marker=([0-9]{1,20}),([0-9]{1,20})\n')
-UI_PLAN = re.compile(r'stage=ui_plan tick=7 slot=([12]) manager=([0-9a-f]{1,16}) presenter=([0-9a-f]{1,16}) '
+UI_PLAN = re.compile(r'stage=ui_plan tick=(?:7|42) slot=([12]) manager=([0-9a-f]{1,16}) presenter=([0-9a-f]{1,16}) '
     r'presenter_vtable=([0-9a-f]{1,16}) controller=([0-9a-f]{1,16}) '
     r'controller_vtable=([0-9a-f]{1,16}) flag=([01]) authenticated=1\n')
-OCCUPIED = re.compile(r'stage=occupied tick=7 slot=([12]) runtime=([0-9]{1,20}) observational=1\n')
-RESULT = re.compile(r'stage=result tick=7 slot=([12]) success=1 reason=ok\n')
+OCCUPIED = re.compile(r'stage=occupied tick=(?:7|42) slot=([12]) runtime=([0-9]{1,20}) observational=1\n')
+RESULT = re.compile(r'stage=result tick=(?:7|42) slot=([12]) success=1 reason=ok\n')
 
 
-def validate_presentation_rows(lines, slot):
+def validate_presentation_rows(lines, slot, *, tick=7):
     """Validate exact rows before they can be removed from the frame stream."""
     errors = []
     matches = [(index, line) for index, line in enumerate(lines) if 'X4LAN PRESENTATION_PROBE' in line]
     if slot not in (1, 2) or len(matches) != 5:
         return {'pass': False, 'errors': ['presentation requires exactly five rows'], 'indices': []}
     indices = [item[0] for item in matches]
+    if tick not in (7, 42) or any(not re.search(r' tick=' + str(tick) + r' slot=', row) for _, row in matches):
+        errors.append('presentation rows do not match the explicit startup epoch')
     if indices != list(range(indices[0], indices[0] + 5)):
         errors.append('presentation rows are not contiguous')
     if any(not line.startswith(PREFIX) for _, line in matches):

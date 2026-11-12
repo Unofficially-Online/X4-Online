@@ -39,6 +39,16 @@ int x4mp_view_query_ui_bind_count(uint32_t tid, uintptr_t object,
                                   player_ui_overlay_callback enter, player_ui_overlay_callback leave,
                                   unsigned count);
 unsigned x4mp_view_query_ui_overlay_progress(void);
+typedef struct {
+    uintptr_t slot, original, replacement, original_slot;
+    uint32_t installed;
+} player_game_render_info;
+unsigned x4mp_view_query_game_render_info(player_game_render_info *out);
+int x4mp_view_query_game_render_bind(uint32_t tid, player_ui_overlay_callback enter,
+                                     player_ui_overlay_callback leave);
+int x4mp_view_query_game_render_activate(void);
+unsigned x4mp_view_query_game_render_progress(void);
+
 unsigned x4mp_view_query_info(player_view_query_info *out);
 int x4mp_view_query_configure(uint32_t ui_tid, uint32_t worker_tid);
 int x4mp_view_query_phase(uint64_t tick, unsigned probe);

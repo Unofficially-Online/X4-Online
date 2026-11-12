@@ -203,6 +203,8 @@ static void test_pres_local_action(int id) {assert(id==0xa9 && test_pres_in_scop
 static uint64_t test_pres_answer_ship;
 static unsigned test_pres_picks;
 static void test_pres_pick(void *player) {assert(player==test_pnat_player && test_pres_in_scope());++test_pres_picks;}
+static unsigned test_pres_clicks;
+static void test_pres_click(void *player) {assert(player==test_pnat_player && test_pres_in_scope());++test_pres_clicks;}
 static uint64_t test_pres_occupied(void) {return test_pres_answer_ship?test_pres_answer_ship:*(uint64_t*)(test_pslot_ship2+8);}
 static uint64_t test_pres_controlled(void) {return *(uint64_t*)(test_pslot_ship2+8);}
 static uint64_t test_pres_zone(void) {return 0x5ca00;}
@@ -362,6 +364,8 @@ static unsigned test_pfbody_calls,test_pfbody_mode,test_pfbody_removed,test_pfbo
 static unsigned char *test_pfbody_singleton;
 static void *test_pfbody_target;
 static int32_t test_pfbody_hold_seen;
+static unsigned test_pfbody_marked;
+static void test_pfbody_mark(void *component,unsigned char flag) {++test_pfbody_marked;((unsigned char*)component)[PFBODY_PLACED]=flag;}
 static void test_pfbody_connect(void *component,const void *filter,void *target,void *extra) {
     ++test_pfbody_calls;test_pfbody_singleton=test_pslot_singleton();test_pfbody_target=target;
     assert(component==test_pslot_p2 && filter==test_pfbody_filter_object && !extra);
@@ -580,7 +584,7 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
            !test_pslot3_view_at_take[1][0] && !test_pslot3_view_at_take[1][1]);
     {   void *v0=NULL,*v1=NULL;memcpy(&v0,test_pslot3_ship[1]+0xe0,8);memcpy(&v1,test_pslot3_ship[1]+0x160,8);
         assert(v0==views[1][0] && v1==views[1][1] && pslot_seat_live_seats==live_seats+1 && pslot_seat_live_cleared==live_cleared+2);
-        char row[1024];assert(pslot_status(row,sizeof(row)) && strstr(row," seat_live=1:") && strstr(row," first_stores=1:"));}
+        char row[1024];assert(pslot_status(row,sizeof(row)) && strstr(row," seat_live=1:") && strstr(row," first_stores=1:") && strstr(row," post=0:0:0:0:0:0"));}
     assert(pslots[3].first[sim_at]==sim_was);pnat_base[sim_offset]=sim_was;pslot_first_stores=0;
     assert(pslots[2].store[flight_at]==1 && pslots[3].store[flight_at]==1 && !test_take_input[PSLOT_TAKE_FLIGHT_FLAG] &&
            pslot_take_flags==flags+2);   /* both takes held the flag at 1 and gave the 0 back */
@@ -594,6 +598,53 @@ static void test_pilot_slots_absent(unsigned char *region,unsigned char *input,u
     printf("pilot stock slots: an absent slot (hot join) neutral and unseated until its handover, built at H-2, seated at H-1, "
            "its records required from H+delay, a missing record of a present slot still 155, the abort and the package state, a "
            "rejoinable slot dropped (keys released), rejoined and dropped again, the late seat past its ship's view caches PASS\n");
+}
+/* The ship's side of the seat inside the scope (pslot_post_enter / pslot_post_leave) on a stand-in ship with a post
+ * table: the entry written and put back; nothing when switched off, not seated, walking or without a controller; an
+ * entry X4 filled is left; a short or missing table and another ship ID are unreadable; a table that moved, a ship that
+ * is gone and an entry somebody changed inside the scope are lost, nothing written. */
+static unsigned test_pres_plan_calls,test_pres_plan_scoped;
+static void test_pres_plan_cockpit(void *presenter) {++test_pres_plan_calls;test_pres_plan_scoped+=pres_open!=0;((unsigned char*)presenter)[PRES_PLAN_FLAG]=0;}
+static void test_pres_plan_firstperson(void *presenter) {++test_pres_plan_calls;test_pres_plan_scoped+=pres_open!=0;((unsigned char*)presenter)[PRES_PLAN_FLAG]=1;}
+static void test_pilot_slots_post(void) {
+    static pslot_slot slot;_Alignas(16) static unsigned char ship[0x500],player[0x100],other[0x100],controller[0x40];
+    static unsigned char *table[2*8],*moved[2*8];
+    pslot_slot *s=&slot;const int on=pslot_post_on;unsigned char **p;
+    memset(s,0,sizeof(*s));memset(ship,0,sizeof(ship));memset(table,0,sizeof(table));memset(moved,0,sizeof(moved));
+    *(uint64_t*)(ship+8)=0x22bce;p=table;memcpy(ship+PSLOT_POSTS,&p,8);p=table+2*8;memcpy(ship+PSLOT_POSTS+8,&p,8);
+    s->player=player;s->ship=ship;s->runtime=0x22bce;s->post=5;s->seated=1;s->controller=controller;
+    pslot_post_swaps=pslot_post_same=pslot_post_taken=pslot_post_unreadable=pslot_post_lost=0;
+    unsigned char **cell=&table[2*5+1];
+    assert((unsigned char**)pslot_post_cell_of(s)==cell);
+    /* off, not seated, walking, no controller: untouched */
+    pslot_post_on=0;pslot_post_enter(2,s);assert(!*cell && !pslot_post_cell[2]);
+    pslot_post_on=1;s->seated=0;pslot_post_enter(2,s);assert(!*cell);s->seated=1;
+    s->walking=1;pslot_post_enter(2,s);assert(!*cell);s->walking=0;
+    s->controller=NULL;pslot_post_enter(2,s);assert(!*cell && !pslot_post_swaps && !pslot_post_unreadable);s->controller=controller;
+    /* the seat: written at the entry, back at the leave; the other entries never */
+    table[2*4+1]=other;
+    pslot_post_enter(2,s);assert(*cell==player && pslot_post_swaps==1 && table[2*4+1]==other && !table[2*5]);
+    pslot_post_leave(2,s);assert(!*cell && !pslot_post_cell[2] && !pslot_post_lost);
+    pslot_post_leave(2,s);assert(!*cell && !pslot_post_lost);                                   /* nothing open: nothing */
+    /* an entry X4 filled: theirs; P_k there already: left there */
+    *cell=other;pslot_post_enter(2,s);assert(*cell==other && pslot_post_taken==1);pslot_post_leave(2,s);assert(*cell==other);
+    *cell=player;pslot_post_enter(2,s);assert(pslot_post_same==1);pslot_post_leave(2,s);assert(*cell==player);*cell=NULL;
+    /* unreadable: a table too short for the post, no table, another ship under the pointer */
+    p=table+2*5;memcpy(ship+PSLOT_POSTS+8,&p,8);pslot_post_enter(2,s);assert(!*cell && pslot_post_unreadable==1);
+    p=NULL;memcpy(ship+PSLOT_POSTS,&p,8);pslot_post_enter(2,s);assert(pslot_post_unreadable==2);
+    p=table;memcpy(ship+PSLOT_POSTS,&p,8);p=table+2*8;memcpy(ship+PSLOT_POSTS+8,&p,8);
+    *(uint64_t*)(ship+8)=0x22bcf;pslot_post_enter(2,s);assert(!*cell && pslot_post_unreadable==3);*(uint64_t*)(ship+8)=0x22bce;
+    /* lost inside the scope: the table moved, the ship gone, somebody else in the entry */
+    pslot_post_enter(2,s);assert(*cell==player);p=moved;memcpy(ship+PSLOT_POSTS,&p,8);p=moved+2*8;memcpy(ship+PSLOT_POSTS+8,&p,8);
+    pslot_post_leave(2,s);assert(pslot_post_lost==1 && *cell==player && !moved[2*5+1]);*cell=NULL;
+    p=table;memcpy(ship+PSLOT_POSTS,&p,8);p=table+2*8;memcpy(ship+PSLOT_POSTS+8,&p,8);
+    pslot_post_enter(2,s);*(uint64_t*)(ship+8)=0;pslot_post_leave(2,s);assert(pslot_post_lost==2 && *cell==player);*cell=NULL;*(uint64_t*)(ship+8)=0x22bce;
+    pslot_post_enter(2,s);*cell=other;pslot_post_leave(2,s);assert(pslot_post_lost==3 && *cell==other);*cell=NULL;
+    assert(pslot_post_swaps==4);
+    {char row[1024];pslot_stage=pslot_stage?pslot_stage:"off";assert(pslot_status(row,sizeof(row)) && strstr(row," post=1:4:1:1:3:3"));}
+    pslot_post_on=on;pslot_post_cell[2]=NULL;
+    pslot_post_swaps=pslot_post_same=pslot_post_taken=pslot_post_unreadable=pslot_post_lost=0;
+    printf("pilot slots post: the pilot post's entry inside the scope (written, put back, off, unseated, walking, taken, unreadable, lost) PASS\n");
 }
 static void test_pilot_slots(void) {
     pstk_focus_forced=1;
@@ -674,7 +725,7 @@ static void test_pilot_slots(void) {
     pres_fns saved_pres=pres_fn;pres_armed=0;pres_active=0;pres_ui_installed=0;pres_refill_installed=0;pres_failed=0;pres_open=0;pres_paused=0;
     pres_scopes=pres_ui=pres_render=pres_local=pres_refills=pres_refused=pres_refused_player=pres_faults=pres_skipped=0;
     pres_camera=NULL;pres_rng_moved=0;pres_restored=1;pres_anchor_moved=0;pres_fault_detail[0]=0;
-    render_rng_installed=0;pres_fn=(pres_fns){test_pres_ui,test_pres_refill,test_pres_ui_anchors,test_pres_occupied,test_pres_controlled,test_pres_zone,test_pres_ancestor,test_pres_pick};
+    render_rng_installed=0;pres_fn=(pres_fns){test_pres_ui,test_pres_refill,test_pres_ui_anchors,test_pres_occupied,test_pres_controlled,test_pres_zone,test_pres_ancestor,test_pres_pick,test_pres_click};
     assert(!pres_arm_using(1) && !strcmp(pstk_arm_why,"present_without_render_split"));
     render_rng_installed=1;pres_fn.zone=NULL;assert(!pres_arm_using(1) && !strcmp(pstk_arm_why,"present_functions"));pres_fn.zone=test_pres_zone;
     assert(pres_arm_using(1) && pres_slot==2 && !strcmp(pres_stage,"armed") && !pres_active && pres_hud==1);
@@ -872,10 +923,88 @@ static void test_pilot_slots(void) {
         /* The camera pick in the scope, through its own call. */
         memcpy(&site,region+PRES_PICK_CALL+1,4);void (*pick)(void*)=(void(*)(void*))(region+PRES_PICK_CALL+5+site);
         assert((unsigned char*)pick==pslot_page+PRES_PICK_STUB);
-        pick(test_pnat_player);assert(test_pres_picks==1 && pres_picks==1 && !pres_open);}
+        pick(test_pnat_player);assert(test_pres_picks==1 && pres_picks==1 && !pres_open && !test_pres_clicks && !pres_clicks);
+        /* A click asked for its pick (the flag): the same scope runs it and clears the flag, so X4's own call
+         * after this one finds nothing to do; without the flag nothing more. */
+        *(uint32_t*)(region+PRES_CLICK_ASKED)=1;
+        pick(test_pnat_player);assert(test_pres_picks==2 && test_pres_clicks==1 && pres_clicks==1 && !pres_open && !*(uint32_t*)(region+PRES_CLICK_ASKED));
+        pick(test_pnat_player);assert(test_pres_picks==3 && test_pres_clicks==1 && pres_picks==3);test_pres_picks=1;InterlockedExchange64(&pres_picks,1);}
     /* No scope in the middle of a slot's: the slot's update refuses a presentation scope and vice versa. */
     assert(pslot_enter(2) && !pres_enter() && pslot_leave(2));
     assert(pres_enter() && !pslot_enter(2));pres_leave();
+    /* A walking slot controls nothing on its own client's screen: inside the scope the player's controlled-object vector
+     * is empty (the cockpit HUD and the radar go, as after X4's own stand-up); seated, or switched off, it is slot 2's.
+     * Outside the scope the canonical player's vector is as it was. */
+    {   void *seen[3],*before[3],*after[3];const int hud=pres_walk_hud,walking=pslots[2].walking;const LONG64 walks=pres_walk_scopes;
+        memcpy(before,p1+PRES_VECTOR,sizeof(before));
+        pres_walk_hud=1;pslots[2].walking=1;assert(pres_enter());memcpy(seen,p1+PRES_VECTOR,sizeof(seen));pres_leave();
+        assert(seen[0]==seen[1] && pres_walk_scopes==walks+1);
+        pslots[2].walking=0;assert(pres_enter());memcpy(seen,p1+PRES_VECTOR,sizeof(seen));pres_leave();
+        assert(seen[0]!=seen[1] && !memcmp(seen,pslots[2].player+PRES_VECTOR,sizeof(seen)) && pres_walk_scopes==walks+1);
+        pres_walk_hud=0;pslots[2].walking=1;assert(pres_enter());memcpy(seen,p1+PRES_VECTOR,sizeof(seen));pres_leave();
+        assert(seen[0]!=seen[1] && pres_walk_scopes==walks+1);
+        memcpy(after,p1+PRES_VECTOR,sizeof(after));assert(!memcmp(before,after,sizeof(before)));
+        {char row[4096];assert(pres_status(row,sizeof(row)) && strstr(row," walk_hud=0/"));}
+        pres_walk_hud=hud;pslots[2].walking=walking;pres_walk_scopes=walks;}
+    /* A walking slot's on-foot interaction state: inside the scope X4's player holds P_2's interactables list and its
+     * first-person controller P_2's floor words; outside both are slot 1's again, P_2's own untouched. Seated, without
+     * the slot's controller, or with another class of controller on the player: nothing. */
+    {   static _Alignas(16) unsigned char ctl1[0x400],ctl2[0x400];unsigned char list1[16],floor1[0x20],seen_list[16],seen_floor[0x20],*was=NULL;
+        const int walking=pslots[2].walking,farmed=pfslot_armed,fwalking=pfslots[2].walking;unsigned char *const ffpc=pfslots[2].fpc;
+        const LONG64 scopes=pres_foot_scopes,moved=pres_foot_moved;void *vt=(void*)peye_fpc_stock,*other=(void*)(region+0x10);unsigned char *p;
+        enum {LIST=0x6f00,FLOOR=0x380,FSIZE=PRES_FOOT_FLOOR_SIZE};   /* the list inside the tests' 0x7000-byte players */
+        memcpy(&was,p1+PEYE_MOVEMENT,8);memset(ctl1,0,sizeof(ctl1));memset(ctl2,0,sizeof(ctl2));memcpy(ctl1,&vt,8);memcpy(ctl2,&vt,8);
+        memset(ctl1+FLOOR,0x11,FSIZE);memset(ctl2+FLOOR,0x22,FSIZE);
+        memcpy(list1,p1+LIST,16);memset(p1+LIST,0x33,16);memset(pslots[2].player+LIST,0x44,16);
+        p=ctl1;memcpy(p1+PEYE_MOVEMENT,&p,8);memcpy(floor1,ctl1+FLOOR,sizeof(floor1));
+        pslots[2].walking=1;pfslot_armed=1;pfslots[2].walking=1;pfslots[2].fpc=ctl2;pres_foot_list_at=pres_foot_floor_at=0;
+        assert(pres_enter());assert(p1[LIST]==0x33 && ctl1[FLOOR]==0x11);pres_leave();                                           /* off: no offsets */
+        pres_foot_list_at=LIST;pres_foot_floor_at=FLOOR;
+        assert(pres_enter());memcpy(seen_list,p1+LIST,16);memcpy(seen_floor,ctl1+FLOOR,0x20);pres_leave();
+        assert(seen_list[0]==0x44 && seen_list[15]==0x44 && seen_floor[0]==0x22 && seen_floor[0x1f]==0x22 && pres_foot_scopes==scopes+1 && pres_foot_moved==moved);
+        assert(p1[LIST]==0x33 && p1[LIST+15]==0x33 && !memcmp(ctl1+FLOOR,floor1,0x20) && ctl2[FLOOR]==0x22 &&
+               pslots[2].player[LIST]==0x44 && ctl1[FLOOR-1]==0 && ctl1[FLOOR+FSIZE]==0);
+        pslots[2].walking=0;assert(pres_enter());assert(p1[LIST]==0x33 && ctl1[FLOOR]==0x11);pres_leave();     /* seated */
+        pslots[2].walking=1;pfslots[2].fpc=NULL;assert(pres_enter());assert(p1[LIST]==0x33);pres_leave();       /* no controller of the slot */
+        pfslots[2].fpc=ctl2;memcpy(ctl1,&other,8);assert(pres_enter());assert(p1[LIST]==0x33 && ctl1[FLOOR]==0x11);pres_leave();   /* another class */
+        assert(pres_foot_scopes==scopes+1);
+        {char row[4096];assert(pres_status(row,sizeof(row)) && strstr(row," foot="));}
+        memcpy(p1+PEYE_MOVEMENT,&was,8);memcpy(p1+LIST,list1,16);memset(pslots[2].player+LIST,0,16);pres_foot_list_at=pres_foot_floor_at=0;
+        pslots[2].walking=walking;pfslot_armed=farmed;pfslots[2].walking=fwalking;pfslots[2].fpc=ffpc;InterlockedExchange64(&pres_foot_scopes,scopes);}
+    /* The UI's game plan follows this client's own slot: X4's own handler for "on foot" runs inside the presentation
+     * scope when the slot walks and the byte says cockpit, the one for "sits" when it sits and the byte says on foot
+     * (also after another player's stand-up moved it); nothing while they agree, when switched off, or after a fault;
+     * the first byte goes back at the stop. */
+    {   static unsigned char manager[0x40],presenter[0x100];void *m=manager,*pp=presenter,*before=NULL;
+        void (*const fn0)(void*)=pres_plan_fn[0],(*const fn1)(void*)=pres_plan_fn[1];
+        const int hud=pres_walk_hud,walking=pslots[2].walking,state=pres_plan_state,first=pres_plan_first;
+        memcpy(&before,region+PRES_UI_MANAGER,8);memset(manager,0,sizeof(manager));memset(presenter,0,sizeof(presenter));
+        memcpy(manager+8,&pp,8);memcpy(region+PRES_UI_MANAGER,&m,8);
+        pres_plan_fn[0]=test_pres_plan_cockpit;pres_plan_fn[1]=test_pres_plan_firstperson;test_pres_plan_calls=test_pres_plan_scoped=0;
+        pres_plan_state=1;pres_plan_first=-1;pres_plan_changes=pres_plan_faults=pres_plan_unreadable=0;pres_walk_hud=1;
+        pslots[2].walking=0;pres_plan_follow(&pslots[2]);assert(!test_pres_plan_calls && !presenter[PRES_PLAN_FLAG]);        /* sits, cockpit: nothing */
+        pslots[2].walking=1;pres_plan_follow(&pslots[2]);
+        assert(test_pres_plan_calls==1 && test_pres_plan_scoped==1 && presenter[PRES_PLAN_FLAG]==1 && pres_plan_changes==1 && !pres_open && pres_plan_first==0);
+        pres_plan_follow(&pslots[2]);assert(test_pres_plan_calls==1);                                                         /* agrees: nothing */
+        presenter[PRES_PLAN_FLAG]=0;pres_plan_follow(&pslots[2]);assert(test_pres_plan_calls==2 && presenter[PRES_PLAN_FLAG]==1);   /* another player's sit-down moved it */
+        pslots[2].walking=0;pres_plan_follow(&pslots[2]);assert(test_pres_plan_calls==3 && !presenter[PRES_PLAN_FLAG] && pres_plan_changes==3);
+        pres_walk_hud=0;pslots[2].walking=1;pres_plan_follow(&pslots[2]);assert(test_pres_plan_calls==3);                     /* switched off */
+        pres_walk_hud=1;pres_plan_follow(&pslots[2]);assert(presenter[PRES_PLAN_FLAG]==1);
+        /* The plan told again while the byte agrees: twice, the second not before its tick; never against the byte. */
+        {   const unsigned calls=test_pres_plan_calls,scoped=test_pres_plan_scoped;pres_plan_kicked=0;pres_plan_kick_due=0;pres_plan_kicks=0;
+            presenter[PRES_PLAN_FLAG]=0;pres_plan_kick(&pslots[2],100);assert(test_pres_plan_calls==calls && !pres_plan_kicks);   /* walks, byte says cockpit: the follow's */
+            presenter[PRES_PLAN_FLAG]=1;pres_plan_kick(&pslots[2],100);
+            assert(test_pres_plan_calls==calls+2 && test_pres_plan_scoped==scoped+2 && pres_plan_kicks==1 && presenter[PRES_PLAN_FLAG]==1 && !pres_open);   /* the other plan, then its own */
+            pres_plan_kick(&pslots[2],100+PRES_PLAN_KICK_LATER-1);assert(test_pres_plan_calls==calls+2);
+            pres_plan_kick(&pslots[2],100+PRES_PLAN_KICK_LATER);assert(test_pres_plan_calls==calls+4 && pres_plan_kicks==2 && presenter[PRES_PLAN_FLAG]==1);
+            pres_plan_kick(&pslots[2],100000);assert(test_pres_plan_calls==calls+4);
+            test_pres_plan_calls=calls;test_pres_plan_scoped=scoped;pres_plan_kicks=0;}
+        pres_plan_home();assert(!presenter[PRES_PLAN_FLAG] && test_pres_plan_calls==5 && test_pres_plan_scoped==4 && pres_plan_first==-1);   /* the stop: as it was, unscoped */
+        {void *none=NULL;memcpy(manager+8,&none,8);}pres_plan_follow(&pslots[2]);assert(pres_plan_unreadable==1 && test_pres_plan_calls==5);
+        memcpy(manager+8,&pp,8);pres_plan_state=-1;pres_plan_follow(&pslots[2]);assert(test_pres_plan_calls==5);              /* left to X4 */
+        {char row[4096];assert(pres_status(row,sizeof(row)) && strstr(row," plan=-1/5/0/1"));}
+        memcpy(region+PRES_UI_MANAGER,&before,8);pres_plan_fn[0]=fn0;pres_plan_fn[1]=fn1;
+        pres_walk_hud=hud;pslots[2].walking=walking;pres_plan_state=state;pres_plan_first=first;pres_plan_changes=pres_plan_faults=pres_plan_unreadable=0;}
     /* A fault in a presentation entry point: the scope closed, presentation ended, the session stops naming it (162). */
     *contexts=0x31;test_pres_fault=1;ui_entry(test_pres_self);test_pres_fault=0;
     assert(pres_faults==1 && !pres_open && !pres_active && test_pslot_singleton()==p1 && pslot_hash()==canonical_before && pres_failed && pnat_failed &&
@@ -931,6 +1060,17 @@ static void test_pilot_slots(void) {
     test_pslot_call_count=0;test_pslot_route(test_pslot_c2,6);assert(test_pslot_calls[0].what=='p');
     {unsigned char a=pnat_authority(test_pslot_c2);assert(a==0);test_pslot_ship2[0xd1]=0;a=pnat_authority(test_pslot_c2);assert(a==1);test_pslot_ship2[0xd1]=1;}
     char text[4096];assert(pstk_frame_text(text,sizeof(text)) && !strncmp(text,"PSTOCK_1:11:1:",14) && strstr(text,"|S2:2:") && !strcmp(text+strlen(text)-2,":1"));
+    {   /* Eight slots with every part of the receipt armed: longer than the 320 bytes gate.pilot_stock_frame once had,
+         * inside its buffer now, also with the largest numbers. */
+        const unsigned stock_mask=pstk_slot_mask,slot_mask=pslot_mask,dead=pdeath_dead;const int foot=pfoot_armed,fslot=pfslot_armed,death=pdeath_armed;
+        const uint64_t tick=pstk_frame_tick;const unsigned events=pstk_frame_events,flight0=pstk_flight;char wide[PSTK_FRAME_TEXT];
+        pstk_slot_mask=0xffu;pslot_mask=0xffu;pfoot_armed=1;pfslot_armed=1;pdeath_armed=1;pdeath_dead=0xfeu;
+        int n=pstk_frame_text(wide,sizeof(wide));assert(n>320 && n<640 && strstr(wide,"|S8:") && strstr(wide,"|W8:") && !strcmp(wide+n-4,"|Dfe"));
+        pstk_frame_tick=~0ull;pstk_frame_events=~0u;pstk_flight=~0u;
+        n=pstk_frame_text(wide,sizeof(wide));assert(n>320 && n<(int)PSTK_FRAME_TEXT-200);
+        pstk_frame_tick=tick;pstk_frame_events=events;pstk_flight=flight0;
+        pstk_slot_mask=stock_mask;pslot_mask=slot_mask;pfoot_armed=foot;pfslot_armed=fslot;pdeath_armed=death;pdeath_dead=dead;
+    }
     {   unsigned char c=0,f=0;float fov=0;uint64_t target=0;assert(pview_of(2,&c,&f,&fov,&target) && c==1 && fov==0.5f);}
     assert(pnat_status(text,sizeof(text)) && strstr(text," present=presenting present_why=- present_slot=2 ") && strstr(text," camera_mode=0 asks=176ad5/176ad5/5ca00 hud=1/2 "));
     assert(pnat_status(text,sizeof(text)) && strstr(text," stock=capture slot=2 slots=3 ") && strstr(text," slots=live slots_why=- slots_mask=2 hook=1 ") &&
@@ -1022,6 +1162,24 @@ static void test_pilot_slots(void) {
         assert(!pfbody_pass(21,1) && !strcmp(pfbody_why,"body_moved") && pfoot_failed && !strcmp(pfoot_why,"body_moved"));
         memcpy(p2+0x70,&room,8);pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";
         assert(pfbody_disconnect_slot(2) && !pfbody_mask && pslot_release(2));memset(p2+0x70,0,8);
+        /* A park keeps the body's place for the scripts: marked 'in the universe' as its room is (X4's parent change had
+         * cleared it), the seat's end takes the mark off; a room outside the universe and a plain take-off mark nothing. */
+        {   const LONG64 marks=pfbody_marks,unmarks=pfbody_unmarks;unsigned char *r=room;const unsigned char was=r[PFBODY_PLACED];
+            pfbody_mark=test_pfbody_mark;pslot_unplace=pfbody_unplace;test_pfbody_marked=0;
+            r[PFBODY_PLACED]=1;p2[PFBODY_PLACED]=0;
+            assert(pslot_seat(2) && pfbody_connect_slot(2) && pfbody_disconnect_slot_as(2,1) && !pfbody_mask && *(void**)(p2+0x70)==room);
+            assert(p2[PFBODY_PLACED]==1 && pfbody_marks==marks+1 && test_pfbody_marked==1);
+            assert(pslot_release(2) && !p2[PFBODY_PLACED] && pfbody_unmarks==unmarks+1 && test_pfbody_marked==2);memset(p2+0x70,0,8);
+            r[PFBODY_PLACED]=0;
+            assert(pslot_seat(2) && pfbody_connect_slot(2) && pfbody_disconnect_slot_as(2,1) && !p2[PFBODY_PLACED] && pfbody_marks==marks+1);
+            assert(pslot_release(2) && pfbody_unmarks==unmarks+1);memset(p2+0x70,0,8);
+            r[PFBODY_PLACED]=1;
+            assert(pslot_seat(2) && pfbody_connect_slot(2) && pfbody_disconnect_slot(2) && !p2[PFBODY_PLACED] && pfbody_marks==marks+1);
+            assert(pslot_release(2));memset(p2+0x70,0,8);
+            {char out[2048];assert(pfbody_status(out,sizeof(out)) && strstr(out," placed="));}
+            r[PFBODY_PLACED]=was;pfbody_mark=NULL;pslot_unplace=NULL;
+            InterlockedExchange64(&pfbody_marks,marks);InterlockedExchange64(&pfbody_unmarks,unmarks);
+        }
         /* A connect that lands elsewhere: off again, the upward pointer back, stop; a fault: stop, the pointer back. */
         assert(pslot_seat(2));test_pfbody_mode=1;test_pfbody_calls=0;
         assert(!pfbody_connect_slot(2) && !strcmp(pfbody_why,"body_connect") && test_pfbody_calls==2 && !test_pfbody_target && *(void**)(p2+0x70)==room &&
@@ -1197,6 +1355,29 @@ static void test_pilot_slots(void) {
             probe.dead=0;probe.renewed=1;
             assert(pilot_resolve(&probe,(pilot_find_fn)test_pdeath_find,test_pdeath_ids,NULL) && probe.seen && probe.found==test_pslot_ship2 && probe.object==test_pslot_ship2);
             probe.runtime=0x9999;assert(!pilot_resolve(&probe,(pilot_find_fn)test_pdeath_find,test_pdeath_ids,NULL) && !probe.found && pdeath_dying(&probe));}
+        /* A hull without a pilot: no controller at +0x200. A stock slot resolves it by its identity alone, from its first
+         * pass on (and stays so once the seat's controller is there); another slot, or a hull that lost its controller, not. */
+        {   const pilot_slot kept=pilot_slots[1];const unsigned stock=pilot_stock_slots;const LONG64 bare=pilot_bare;
+            void *held=NULL,*none=NULL;memcpy(&held,test_pslot_ship2+0x200,8);memcpy(test_pslot_ship2+0x200,&none,8);
+            pilot_slot *b=&pilot_slots[1];memset(b,0,sizeof(*b));b->reversed=1;b->runtime=0x2002;b->saved=world_identity_lookup(0x2002);
+            pilot_stock_slots=1u;assert(!pilot_resolve(b,(pilot_find_fn)test_pdeath_find,test_pdeath_ids,NULL) && !b->bare && b->found==test_pslot_ship2 &&
+                   !strcmp(b->why,"no_controller"));                                                          /* not a stock slot */
+            pilot_stock_slots=3u;b->seen=1;assert(!pilot_resolve(b,(pilot_find_fn)test_pdeath_find,test_pdeath_ids,NULL) && !b->bare);                       /* it had one and lost it */
+            b->seen=0;assert(pilot_resolve(b,(pilot_find_fn)test_pdeath_find,test_pdeath_ids,NULL) && b->bare && b->resolved && b->seen &&
+                   b->object==test_pslot_ship2 && !b->agent && !b->solver && !b->player && pilot_bare==bare+1 && !strcmp(b->why,"-") &&
+                   !strcmp(b->bare_why,"no_controller"));
+            /* a controller that is not this hull's flight (no Agent of this ship behind it): the same */
+            {   static unsigned char other[0x80];void *o=other;pilot_slot was=*b;memset(other,0,sizeof(other));memset(b,0,sizeof(*b));
+                b->reversed=1;b->runtime=0x2002;b->saved=was.saved;memcpy(test_pslot_ship2+0x200,&o,8);
+                assert(pilot_resolve(b,(pilot_find_fn)test_pdeath_find,test_pdeath_ids,NULL) && b->bare && !strcmp(b->bare_why,"controller_back") && pilot_bare==bare+2);
+                {void *ship=test_pslot_ship2;memcpy(other+0x28,&ship,8);memset(b,0,sizeof(*b));b->reversed=1;b->runtime=0x2002;b->saved=was.saved;}
+                assert(pilot_resolve(b,(pilot_find_fn)test_pdeath_find,test_pdeath_ids,NULL) && b->bare && !strcmp(b->bare_why,"no_agent") && pilot_bare==bare+3);
+                memcpy(test_pslot_ship2+0x200,&none,8);*b=was;pilot_bare=bare+1;}
+            memcpy(test_pslot_ship2+0x200,&held,8);                                                                 /* the seat's controller arrives: still so */
+            assert(pilot_resolve(b,(pilot_find_fn)test_pdeath_find,test_pdeath_ids,NULL) && b->object==test_pslot_ship2 && !b->agent && pilot_bare==bare+1);
+            {pilot_slot probe;memset(&probe,0,sizeof(probe));probe.reversed=1;probe.runtime=0x2002;probe.saved=b->saved;memcpy(test_pslot_ship2+0x200,&none,8);
+             assert(!pilot_resolve(&probe,(pilot_find_fn)test_pdeath_find,test_pdeath_ids,NULL) && !probe.bare);memcpy(test_pslot_ship2+0x200,&held,8);}   /* not a slot of the table */
+            pilot_slots[1]=kept;pilot_stock_slots=stock;pilot_bare=bare;}
         {const char *events=pdeath_take_events();assert(events && !strcmp(events,"die:2"));}
         /* 37: X4's game over stays out of reach in the same way below; first the suit. Slot 2 dead again, now with a suit:
          * the seat on what MD built, no ship of the slot's, its records still ignored. */
@@ -1387,6 +1568,8 @@ static void test_pilot_slots_arming_order(const char *path) {
     /* Presentation on the real bytes: its pins with the boot hold installed, the refill call re-pointed and restored. */
     pres_armed=0;pres_pins_checked=0;render_rng_installed=1;pres_fns saved_pres=pres_fn;
     assert(pres_arm(1) && pres_armed && pres_slot==2 && pres_fn.ui_move==(void(*)(void*))(image+PRES_UI_MOVE));
+    /* The walking slot's interaction state comes on with the real image; its offsets lie beyond the tests' players. */
+    assert(pres_foot_list_at==PRES_FOOT_LIST && pres_foot_floor_at==PRES_FOOT_FLOOR);pres_foot_list_at=pres_foot_floor_at=0;
     assert(*(void**)(image+PRES_UI_ENTRY)==(void*)(image+PRES_UI_MOVE));
     /* The eye's X4 functions: the seat transform, the player's controller vtable and its pose slot. */
     assert(peye_seat==(peye_seat_fn)(image+PEYE_SEAT) && peye_fpc_pose==(peye_pose_fn)(image+PEYE_FPC_POSE) &&

@@ -1,5 +1,6 @@
 """Offline seat-pose observations; this does not gate physics or UI acceptance."""
 import hashlib
+from linux_ui_session_budget import budget_from_overlay
 import re
 import struct
 
@@ -35,8 +36,8 @@ def pose_flags(raw):
     return normalized, int(finite), int(rigid)
 
 
-def _viewstate(line, stage, identity):
-    prefix = f'X4 UI VIEWSTATE v=1 tick=9 stage={stage} '
+def _viewstate(line, stage, identity, first_tick=9):
+    prefix = f'X4 UI VIEWSTATE v=1 tick={first_tick} stage={stage} '
     if line == prefix+'status=unavailable\n':
         return True
     grammar = (prefix+'status=observed '+
@@ -60,6 +61,14 @@ def parse_ui_seat_pose_evidence(stderr_lines, trace_lines, slot, enabled, overla
               'observation_complete': False, 'pose_observation_complete': False,
               'readiness_proven': False, 'renderer_use_proven': False, 'safe_resume_proven': False}
     errors = result['errors']
+    try:
+        budget = budget_from_overlay(overlay)
+    except ValueError as error:
+        errors.append(str(error))
+        budget = {'callbacks':160, 'last':168}
+    callback_count, last_tick = budget['callbacks'], budget['last']
+    first_tick = budget.get('first', 9)
+    allowed_counts = (callback_count,) if overlay.get('session_frames') else (1, 8, 160)
     seats = [(i, line) for i, line in enumerate(stderr_lines) if 'X4 UI SEAT_POSE' in line]
     result['raw_native_receipts'] = [line for _, line in seats]
     if type(enabled) is not bool or type(slot) is not int or slot not in (1, 2):
@@ -75,10 +84,10 @@ def parse_ui_seat_pose_evidence(stderr_lines, trace_lines, slot, enabled, overla
         errors.append('missing, duplicate, truncated or oversized seat-pose rows')
         result['coverage'] = 'missing' if len(seats) < 6 else 'invalid'
         return result
-    presentation = validate_presentation_rows(trace_lines, slot)
+    presentation = validate_presentation_rows(trace_lines, slot, tick=first_tick - 2)
     if (not presentation['pass'] or overlay.get('pass') is not True or
             type(overlay.get('callback_count')) is not int or
-            overlay.get('callback_count') not in (1, 8, 160) or fork.get('pass') is not True):
+            overlay.get('callback_count') not in allowed_counts or fork.get('pass') is not True):
         errors.append('seat-pose requires accepted overlay, fork and presentation evidence')
     proof = fork.get('measurements', {})
     bindings = {}
@@ -107,7 +116,7 @@ def parse_ui_seat_pose_evidence(stderr_lines, trace_lines, slot, enabled, overla
         errors.append('seat-pose retained P2 ship pointer binding unavailable')
     samples = []
     for (index, line), (stage, role) in zip(seats, ((stage, role) for stage in STAGES for role in ROLES)):
-        prefix = f'X4 UI SEAT_POSE v=1 tick=9 stage={stage} role={role} '
+        prefix = f'X4 UI SEAT_POSE v=1 tick={first_tick} stage={stage} role={role} '
         sample = {'stage': stage, 'role': role, 'observed': False, 'pose_observed': False}
         samples.append(sample)
         if line == prefix+'status=unavailable\n':
@@ -158,7 +167,7 @@ def parse_ui_seat_pose_evidence(stderr_lines, trace_lines, slot, enabled, overla
         errors.append('seat-pose requires exactly three corresponding VIEWSTATE rows')
     else:
         for n, stage in enumerate(STAGES):
-            if (not _viewstate(views[n][1], stage, presentation.get('ui_plan', {})) or
+            if (not _viewstate(views[n][1], stage, presentation.get('ui_plan', {}), first_tick) or
                     not seats[2*n][0] < seats[2*n+1][0] < views[n][0] or
                     n < 2 and not views[n][0] < seats[2*n+2][0]):
                 errors.append('seat-pose pair is not before its corresponding VIEWSTATE boundary')
