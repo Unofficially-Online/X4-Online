@@ -507,13 +507,17 @@ class StoryTests(unittest.TestCase):
             with self.assertRaises(session_start.SessionError):
                 session_start.story_slots({'2': {'story': story}, '3': {'story': story}})
 
-    def test_a_hull_without_a_pilot_by_name(self):
-        # A stock start's own ship has no NPC pilot; a session hull has one by default (it holds the Wait order). --unpiloted K
-        # makes slot K's hull without: no pilot and no order in the generated MD.
+    def test_a_hull_has_no_pilot_unless_named(self):
+        # A stock start's own ship has no NPC pilot, and so has a session hull: no pilot and no order in the generated MD.
+        # --piloted K keeps slot K's NPC pilot with its Wait order (the form before); --unpiloted K is what every hull is.
         with tempfile.TemporaryDirectory() as d:
             c = catalog_in(d)
             args = (c, 'war_start', 3, 'coop', {2: 'alpha_start', 3: 'alpha_start'}, {2: 'inventory,reputation', 3: 'inventory,reputation'})
-            spec = session_start.build_spec(*args, unpiloted=[3])
+            plain = session_start.build_spec(*args)
+            self.assertEqual([plain['slots'][k]['hull']['pilot'] for k in '23'], [False, False])
+            self.assertEqual(ET.fromstring(session_start.hulls_md(plain).split('-->', 1)[1]).findall('.//create_ship/pilot'), [])
+            self.assertEqual(session_start.build_spec(*args, unpiloted=[2, 3]), plain)
+            spec = session_start.build_spec(*args, piloted=[2])
             self.assertNotIn('pilot', spec['slots']['2']['hull'])
             self.assertIs(spec['slots']['3']['hull']['pilot'], False)
             md = ET.fromstring(session_start.hulls_md(spec).split('-->', 1)[1])
@@ -521,9 +525,13 @@ class StoryTests(unittest.TestCase):
             self.assertEqual([s.find('pilot') is not None for s in ships], [True, False])
             self.assertEqual(len(md.findall(".//create_order")), 1)
             self.assertEqual(len(md.findall(".//append_to_list[@name='$ships']")), 2)   # both hulls are still counted
+            for name in ('unpiloted', 'piloted'):
+                with self.subTest(name=name), self.assertRaises(session_start.SessionError) as caught:
+                    session_start.build_spec(c, 'war_start', 2, 'coop', {}, **{name: [2]})
+                self.assertIn('slot 2 has no per-player start', str(caught.exception))
             with self.assertRaises(session_start.SessionError) as caught:
-                session_start.build_spec(c, 'war_start', 2, 'coop', {}, unpiloted=[2])
-            self.assertIn('slot 2 has no per-player start', str(caught.exception))
+                session_start.build_spec(*args, unpiloted=[2], piloted=[2])
+            self.assertIn('both name slot 2', str(caught.exception))
 
     def test_the_patch_and_the_begin_script(self):
         base = {'extension': 'base', 'file': 'gs_station.xml', 'script': 'GS_Station', 'cue': 'Start'}

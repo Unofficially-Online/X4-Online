@@ -108,7 +108,11 @@ Two ways a replay family takes a guard entry over:
                            op 0x08, allowed per action class and slot by uics_verdicts[]; package 3 adds its on-foot
                            classes to that table). While it is armed the on-foot click (input state 0x78) is the
                            client's own, as the interact menu's key is; a walking slot 2..N clicking a seat of its own
-                           ship gets its sit-down (GET_UP in its stock record, no op of this module)
+                           ship gets its sit-down (GET_UP in its stock record, no op of this module).
+                           Also the Lua entry PerformAction (the target system's instant action: the seat's "Take
+                           Command of Ship"; the transporter terminal runs X4's own, its menu is UI only) and
+                           TransportPlayerToTarget (the transporter menu: a zone target, "Use Spacesuit", of a walking
+                           slot 2..N is op 0x08 with the airlock's class on its own ship; anything else refused)
              inventory     8 FFI entries (lockstep_ui_inventory.h uiinv_claim_decide): DropInventory, the inventory
                            menu's Drop as a kind 3 event of op 0x90; AddPlayerMoney LearnBlueprint StartResearch
                            ClearProductionItems StartTerraformingProject AbortActiveTerraformingProject
@@ -131,6 +135,16 @@ function's entry, must agree with its owner first)
   Function-pointer hook: pres_settings_hook in lockstep_pilot_present.h (pres_enter / pres_leave), set by the same module.
   0x3508e0   U::SingleActionContainer's perform (one action)      lockstep_ui_compslot.h           UI replay entry hooks (rows of
   0x350d60   U::MultiActionContainer's perform (by index)         (native_gate_ui_compslot)        uirep_hooks[], armed only with it)
+  0xd7f2ed   the walking update's look step: four tests of the    lockstep_pilot_foot.h (K3;       two bytes, jmp 0xd7f340, while
+             process's device state before the bank's mouse look  native_gate_pilot_foot)         the module is live
+  0x9fe761   UniverseFrameUpdate: je over the UI reload when its  lockstep_ui_reload_hold.h       two bytes, je -> jmp, from the
+             flag 0x3d19908 is clear                              (native_gate_ui_reload_hold)     first live pass to the stop
+  0x9fe2a9   UniverseFrameUpdate: call 0x9fc550, the lookup of    lockstep_pilot_slots.h           call re-pointed (slots' near page
+             X4's own player's PlayerController before its        (stock slots 2..N)               +0xe0) with the 0x9fe2d7 one; it
+             update at 0x9fe2d7                                                                    answers X4's answer; nothing: the
+                                                                                                   slots' updates run there. Inside
+                                                                                                   lockstep_pilot_foot.h's pin
+                                                                                                   {0x9fe29d,0x3a}, checked at arming
 
 4. STOP REASONS (gate finish(reason); stats.reason, the probe's STOP line)
 Codes 1..99 belong to the gate core (lockstep_gate.c, linux/gate_linux.c);

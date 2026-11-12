@@ -141,7 +141,7 @@ UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop':
                        'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons',
                        'flight_assist': 'flight', 'turret_mode': 'flight', 'turret_missile': 'flight', 'drones': 'flight', 'drone_mode': 'flight', 'launch': 'flight', 'launch_stock': 'flight', 'turrets_mode': 'flight', 'turrets_armed': 'flight', 'drones_armed': 'flight',
                        'drop_cargo': 'flight',
-                       'mis_fixture': 'missions', 'gm_limit': 'missions', 'slot_kill': 'events', 'briefing': 'missions', 'briefing_stop': 'missions', 'briefing_button': 'missions',
+                       'mis_fixture': 'missions', 'gm_limit': 'missions', 'slot_kill': 'events', 'slot_airlock': 'events', 'ui_reload': 'events', 'briefing': 'missions', 'briefing_stop': 'missions', 'briefing_button': 'missions',
                        'offer_accept': 'events', 'mis_active': 'missions', 'mis_none': 'missions', 'mis_abort': 'missions',
                        'conv_start': 'conversation', 'dialog': 'conversation', 'dialog_native': 'conversation',
                        'hire_talk': 'conversation', 'hire_confirm': 'conversation'}
@@ -820,6 +820,9 @@ def build_overlay(args):
         shutil.copy2(args.probe, out/'ui/native_gate_probe.lua')
     added = list(MUX_FILES + IDENTITY_FILES)
     shutil.copy2(ROOT/'tools/dev/native_gate_player_identity.xml', out/'md/native_gate_player_identity.xml')
+    # A start's standings arrive quietly: two stock cues get one condition each (X4's own diff loading; our lines only).
+    for name, source in session_defaults.MD_PATCHES.items():
+        shutil.copy2(ROOT/'tools/dev'/source, out/name)
     if args.ui_replay is not None:
         added += UI_REPLAY_FILES
         if args.ui_replay_fleet or args.ui_replay_min_hull is not None or args.ui_guard or \

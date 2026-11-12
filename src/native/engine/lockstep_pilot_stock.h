@@ -155,6 +155,7 @@ static volatile LONG64 pstk_aim_calls,pstk_aim_replaced,pstk_aim_neutral,pstk_ai
 #include "lockstep_pilot_foot.h"   /* slot 1 on foot: its ids and the FIRST_PERSON edge (native_gate_pilot_foot) */
 /* Slots 2..N on foot (lockstep_pilot_foot_slots.h, native_gate_pilot_foot_slots). */
 static int pfslot_get_up(unsigned k,double now);static int pfslot_frame_text(char *out,size_t capacity);static int pfslot_status(char *out,size_t capacity);
+static int pvehk_home_key(unsigned k,unsigned id);   /* lockstep_pilot_death.h: in its suit, GET_UP and the dock keys ask for the way home */
 static const uint16_t pstk_replay_actions[]={0x7b,0x12f,0x131,0xe1,0xdd,0x105,0x148};
 static const uint16_t pstk_replay_states[]={2,3,4,5,6,7,8,9,0xd,0xe,0xf,0x10,0x11,0x12,0x13,0x5a,0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x50,0x85};
 static const uint16_t pstk_replay_ranges[]={1,2,3,4,5,6,0xa};
@@ -231,12 +232,16 @@ static unsigned pstk_verdict(unsigned kind,int id) {
  * then acts on the slot's ship, except the MD activities (travel, long range scan,
  * SETA: md/modes.xml listens on player.entity, which stays slot 1's for MD). */
 static const uint16_t pstk_slot_refused_actions[]={0x12f,0x131,0xe1};
+/* lockstep_scan_long.h (native_gate_scan_long): the long-range scan mode and its charge for every slot. */
+static int scl_armed;
+static int scl_frame_slot(unsigned k,double now);static int scl_mode_on(unsigned slot);static int scl_may_start(unsigned char *player);
 static unsigned pstk_verdict_slot(unsigned kind,int id,unsigned slot) {
     unsigned v=pstk_verdict(kind,id);
     /* Slots 2..N walk only with native_gate_pilot_foot_slots (lockstep_pilot_foot_slots.h: GET_UP is consumed there). */
     if(slot>=2 && v==PSTK_REPLAY && pfoot_armed && pfoot_id(kind,id) && !pfslot_armed) return PSTK_REFUSE;
     if(slot>=2 && v==PSTK_REPLAY && kind==PSTK_ACTION && pstk_listed(pstk_slot_refused_actions,PSTK_COUNT(pstk_slot_refused_actions),id) &&
-       !(id==0x12f && (uirep_families&UIREP_FAMILY_TRAVEL))) /* travel: the UI replay's adapter acts on the slot's player */
+       !(id==0x12f && (uirep_families&UIREP_FAMILY_TRAVEL)) && /* travel: the UI replay's adapter acts on the slot's player */
+       !(id==0x131 && scl_armed && (uirep_families&UIREP_FAMILY_TRAVEL)))   /* long-range scan: the same adapter, lockstep_scan_long.h */
         return PSTK_REFUSE;
     return v;
 }
@@ -563,6 +568,7 @@ static void pstk_dispatch_split(unsigned char *map,int id,uint32_t value) {
     InterlockedIncrement64(&pfoot_split_local);
     if(pstk_capturing && (pstk_capture_slot==1 || pfoot_own_walking())) {   /* slot 1's, or this client's own walking slot's */
         if(pstk_engages(PSTK_RANGE,value) && !pstk_focused()) {InterlockedIncrement64(&pstk_unfocused);return;}
+        if(pstk_engages(PSTK_RANGE,value) && !pfoot_look_record()) return;   /* K3: its own device state decides here, not in the update */
         if(pstk_record_event(PSTK_RANGE,(unsigned)id,value)) InterlockedIncrement64(&pfoot_split_recorded);
     }
 }
@@ -860,6 +866,7 @@ static int pstk_slot_replay(unsigned k,double now) {
     for(unsigned i=0;i<f->r.count;i++) {
         pstk_event *x=&f->r.events[i];
         if(x->kind==PSTK_SPACE) pstk_space_replay_slot(k,(unsigned char)x->value,now);
+        else if(x->kind==PSTK_ACTION && pvehk_home_key(k,x->id)) {}   /* in its suit: the way home, never X4's handler */
         else if(pfslot_armed && x->kind==PSTK_ACTION && x->id==PFOOT_GET_UP) {if(!pfslot_get_up(k,now)) return 0;}   /* never 71bac0 for P_k */
         else {pstk_replay_walk(map+0x40*x->kind,x->kind,x->id,x->value);pstk_hold(k,x);}
     }

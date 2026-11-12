@@ -34,6 +34,13 @@
  *                  through the near page);
  *     9fe5d0       the camera pick 717ed0 (crosshair, what is under the cursor): it writes
  *                  the player's DEVICE block from the camera and must not hit ship k itself.
+ *     9fe5ed       the click's pick 718d50, which X4 runs right after it in the frame after a mouse click asked for
+ *                  one (the flag 0x3d19b08, cleared at 9fe5e3): the records 8c2830 uses for a click in the world
+ *                  (+0x6c40, +0x6cc0: the seat, a console, a person). Outside the scope it ran as slot 1's player,
+ *                  in another ship: client k's clicks on foot found nothing (the user's session of 11 Nov 22:25:
+ *                  twenty clicks, no pick). Its call site straddles a 16-byte block (no atomic patch), so the
+ *                  frame pick's wrapper takes it over: flag set, it clears the flag and runs 718d50 in the same
+ *                  scope; X4's own test then finds the flag clear.
  *   a self-test at the start, in the scope, before any UI runs in it: X4's own
  *     GetPlayerOccupiedShipID and the view-cache ancestor lookup 0x3d91e0 must answer slot
  *     k's ship and room (identity_occupied, identity_view_parent: stop 162);
@@ -70,6 +77,9 @@
 #define PRES_PICK_CALL 0x9fe5d0u        /* UniverseFrameUpdate: call 0x717ed0 with the player */
 #define PRES_PICK 0x717ed0u
 #define PRES_PICK_STUB 0x60u            /* on the slots' near page, after the refill's stub */
+#define PRES_CLICK 0x718d50u            /* the click's pick (header, 9fe5ed) */
+#define PRES_CLICK_ASKED 0x3d19b08u     /* its request flag: a dword, set by a click, cleared by 9fe5e3 before the call */
+#define PRES_CLICK_SITE 0x9fe5d5u       /* the flag's test, its clear and the call, right after the frame pick's call */
 #define PRES_ATTENTION 0x1ecu           /* Component: attention */
 #define PRES_VIEW_ATTENTION 0x118u      /* Component: its published attention, +bank*0x80 */
 #define PRES_ROOM_ATTENTION 11
@@ -102,6 +112,7 @@ typedef struct {
     uint64_t (*zone)(void);
     void **(*ancestor)(void *,void **,int,char);
     void (*pick)(void *);
+    void (*click)(void *);
 } pres_fns;
 static pres_fns pres_fn;
 static const struct {unsigned rva,size;const char *sha;} pres_pin_table[]={
@@ -113,6 +124,8 @@ static const struct {unsigned rva,size;const char *sha;} pres_pin_table[]={
     {PRES_ZONE,105,"e30fedfabb28e3bb89c200b429c417cce27329e4d30db7e5cbf6406dd9bd1e0f"},
     {PRES_ANCESTOR,219,"a77acbafe216c2d105ceb10605dbdcdb13f50fe7862e09ec3944a601fe38a45a"},
     {PRES_PICK,3710,"46342dd30a7245bf93a0634836f03a0d9a106fe1b5ebef736f2002223375262d"},
+    {PRES_CLICK,2560,"e1d78c3b5fb4179e06eb0966678473ce0c87dd20de9a4f6a0c26e0f635673ea7"},
+    {PRES_CLICK_SITE,0x1d,"441a97d8dfea6a03bdc619a84af5d8000cc9086e78676d85435abce7e6385fb5"},
     {0x75d110,0x142,"5dda1ded31999c6c7984952e2fef76d8d458d3571186e2e78740e8a3f3180c57"},   /* the seat transform (lockstep_pilot_eye.h) */
     {0xd81ec0,0x46f,"b1214c17c25e0ce8060da52b5d4a69159dfd89d74975f6bffd3092ec5f77ae8c"},   /* FirstPersonController slot 6 */
     {0x9fe55a,0x32,"e1658b86f806df2d83e4129e52a4d59715d886d7bcc7ed7b686b420a94d709b3"}}; /* the refill loop */
@@ -134,9 +147,40 @@ static int pres_position_saved,pres_target_set;
 static void (*pres_settings_hook)(int enter);
 static uint64_t pres_local_target;
 static volatile LONG64 pres_targets;
+/* A walking slot on its own client's screen (native_gate_pilot_present_walk_hud). X4 draws the cockpit HUD and the radar
+ * while the player controls a ship (9f9250 / 55aeb0: the first entry of the player's controlled-object vector +0x308 is
+ * the ship above it). X4's own stand-up empties that; slot k's stand-up keeps P_k's vector (the seat's checks and the
+ * sit-down use it, lockstep_pilot_foot_slots.h), so client k kept the cockpit HUD and the radar while its player walked
+ * (a playtest report of 11 Nov: the radar stayed while the player walked). Inside the presentation scope only, a walking slot's
+ * player shows an empty vector: this client's screen, never the simulation. */
+static int pres_walk_hud;
+static volatile LONG64 pres_walk_scopes;
+/* ...and the UI's game plan. The radar, the target monitor, the crosshair and the info bars follow the UI event
+ * "gameplanchange" (cockpit / firstperson) and Lua's IsFirstPerson(), which is one byte of the UI manager's presenter
+ * ([[0x6cf18f8]+8]+0x6c). X4's presenter sets it and fires the event from two of its own handlers, 0xb3be20 (the player
+ * sits: 0) and 0xb3be90 (the player is on foot: 1), which X4 reaches from its own player's stand-up and sit-down. A
+ * slot's stand-up never runs those on its client, so with the empty vector alone the speed bar went but the radar and
+ * the target monitor stayed (the user's second session, 11 Nov), and slot 1's stand-up, replayed here, switched THIS
+ * client's HUD. Once per tick while presenting (pres_pass) the byte is compared with what this client's own slot does
+ * (walking or not) and, when it differs, X4's own handler for that state runs inside the presentation scope. Client
+ * local, UI only. The two handlers are pinned; without the pins, or after a fault, the game plan is left to X4. */
+#define PRES_UI_MANAGER 0x6cf18f8u
+#define PRES_PLAN_FLAG 0x6cu
+#define PRES_PLAN_COCKPIT 0xb3be20u
+#define PRES_PLAN_FIRSTPERSON 0xb3be90u
+#define PRES_PLAN_SIZE 0x6eu
+#define PRES_PLAN_COCKPIT_SHA "1510368a3704f153ee09042dbb68a600e919f3642f776895e5bf216529d59940"
+#define PRES_PLAN_FIRSTPERSON_SHA "01ddbd01d92235a1efc3e5dde7db325c5602d8579a4bae116cd82b51988f0aa9"
+static void (*pres_plan_fn[2])(void *);   /* [0] sits, [1] on foot (tests replace them) */
+static int pres_plan_state;               /* 0 not set up, 1 usable, -1 left to X4 (pins or a fault) */
+static int pres_plan_first=-1;            /* the byte before this module's first change (put back at the stop) */
+static volatile LONG64 pres_plan_changes,pres_plan_faults,pres_plan_unreadable,pres_plan_kicks;
+#define PRES_PLAN_KICKS 2u               /* the plan told again: at the start of presenting and once more a little later */
+#define PRES_PLAN_KICK_LATER 150u
+static unsigned pres_plan_kicked;static uint64_t pres_plan_kick_due;
 static unsigned char pres_site_patched[5],pres_pick_patched[5];
 static uint64_t pres_started_tick,pres_asked_ship,pres_asked_controlled,pres_asked_zone;
-static volatile LONG64 pres_scopes,pres_ui,pres_render,pres_local,pres_refills,pres_picks,pres_refused,pres_refused_player,pres_faults,pres_skipped,pres_anchor_moves,pres_rng_moved;
+static volatile LONG64 pres_scopes,pres_ui,pres_render,pres_local,pres_refills,pres_picks,pres_clicks,pres_refused,pres_refused_player,pres_faults,pres_skipped,pres_anchor_moves,pres_rng_moved;
 /* This client's own calls must not move the thread's simulation stream. */
 static uint64_t *pres_rng_hold(uint64_t *word) {
     uint64_t *rng=vps_rng_word?vps_rng_word():NULL;
@@ -146,6 +190,46 @@ static void pres_rng_back(uint64_t *rng,uint64_t word) {
     if(rng && *rng!=word) {InterlockedIncrement64(&pres_rng_moved);*rng=word;}
 }
 #include "lockstep_pilot_eye.h"
+/* A walking slot's on-foot interaction state. [F, 9.00] What a walking player can use is offered through UI messages whose
+ * actions test the player themselves. U::ActivateTransporterRoomAction (vtable 0x2b45a38: the terminal of a ship's
+ * transporter room, "Use Transporter Room", whose menu holds "Use Spacesuit") is possible (its vtable +8, 35d140) only if
+ *   - the frame pick is on its connection (the scope's pick already is slot k's);
+ *   - the player's first-person controller (9fc670: the chain at Player+0x200) stands in the picked component: its floor
+ *     words +0x380 component, +0x388 part, +0x390 the component's id (cd480 resolves it), +0x398 part;
+ *   - the player's list of interactables (Player+0x8a698: head, count; per ship its connections with a state, 73ad30 /
+ *     73aca0) has the connection in state 4;
+ *   - the player stands close to the part (3db8a0: the live chain, the scope's).
+ * The scope kept slot 1's controller and list on X4's player, both about slot 1's ship: on client k the terminal's action
+ * was never possible, the target system counted no displayed action, held the element inactive and never made it the soft
+ * target (a run of 12 Nov: the terminal was the crosshair message and targetable, no label, the click nothing; in the plain
+ * game the label and one click for the menu). While this client's slot walks, the scope puts P_k's list words on the
+ * player and P_k's floor words into the player's controller; slot 1's go back at the exit. They point into P_k's own state
+ * (X4's UI reads it): list words that changed in a scope are counted (foot=scopes/moved) and carried nowhere. */
+#define PRES_FOOT_LIST 0x8a698u         /* Player: the interactables list (head, count) */
+#define PRES_FOOT_LIST_SIZE 16u
+#define PRES_FOOT_FLOOR 0x380u          /* FirstPersonController: component, part, component id, part */
+#define PRES_FOOT_FLOOR_SIZE 0x20u
+static unsigned char pres_foot_list_saved[PRES_FOOT_LIST_SIZE],pres_foot_floor_saved[PRES_FOOT_FLOOR_SIZE],*pres_foot_ctl;
+static unsigned pres_foot_list_at,pres_foot_floor_at;   /* 0: off; the two offsets with the real image (pres_use_image), a test's own */
+static int pres_foot_open;
+static volatile LONG64 pres_foot_scopes,pres_foot_moved;
+static void pres_foot_enter(unsigned char *p1,const pslot_slot *s,unsigned k) {
+    unsigned char *fpc=s->walking?pfslot_walking_fpc(k):NULL,*ctl=NULL;void *vt=NULL;
+    pres_foot_open=0;
+    if(!pres_foot_list_at || !pres_foot_floor_at) return;
+    if(!fpc || !read_local(p1+PEYE_MOVEMENT,&ctl,8) || !ctl || ctl==fpc || !read_local(ctl,&vt,8) ||
+       (vt!=(void*)peye_fpc_stock && vt!=(void*)&peye_vt[1])) return;
+    memcpy(pres_foot_list_saved,p1+pres_foot_list_at,PRES_FOOT_LIST_SIZE);memcpy(p1+pres_foot_list_at,s->player+pres_foot_list_at,PRES_FOOT_LIST_SIZE);
+    memcpy(pres_foot_floor_saved,ctl+pres_foot_floor_at,PRES_FOOT_FLOOR_SIZE);memcpy(ctl+pres_foot_floor_at,fpc+pres_foot_floor_at,PRES_FOOT_FLOOR_SIZE);
+    pres_foot_ctl=ctl;pres_foot_open=1;InterlockedIncrement64(&pres_foot_scopes);
+}
+static void pres_foot_leave(unsigned char *p1,const pslot_slot *s) {
+    if(!pres_foot_open) return;
+    pres_foot_open=0;
+    if(memcmp(p1+pres_foot_list_at,s->player+pres_foot_list_at,PRES_FOOT_LIST_SIZE)) InterlockedIncrement64(&pres_foot_moved);
+    memcpy(p1+pres_foot_list_at,pres_foot_list_saved,PRES_FOOT_LIST_SIZE);
+    memcpy(pres_foot_ctl+pres_foot_floor_at,pres_foot_floor_saved,PRES_FOOT_FLOOR_SIZE);
+}
 static int pres_pins(void) {
     if(!pres_pins_checked) {
         int ok=!memcmp(image+PRES_REFILL_CALL,pres_refill_bytes,5);
@@ -165,10 +249,65 @@ static void pres_use_image(void) {
     pres_fn.occupied=(uint64_t(*)(void))(image+PRES_OCCUPIED);pres_fn.controlled=(uint64_t(*)(void))(image+PRES_CONTROLLED);
     pres_fn.zone=(uint64_t(*)(void))(image+PRES_ZONE);
     pres_fn.ancestor=(void**(*)(void*,void**,int,char))(image+PRES_ANCESTOR);
-    pres_fn.pick=(void(*)(void*))(image+PRES_PICK);
+    pres_fn.pick=(void(*)(void*))(image+PRES_PICK);pres_fn.click=(void(*)(void*))(image+PRES_CLICK);
+    pres_plan_fn[0]=(void(*)(void*))(image+PRES_PLAN_COCKPIT);pres_plan_fn[1]=(void(*)(void*))(image+PRES_PLAN_FIRSTPERSON);
+    pres_plan_state=hash_ok(image+PRES_PLAN_COCKPIT,PRES_PLAN_SIZE,PRES_PLAN_COCKPIT_SHA) &&
+                    hash_ok(image+PRES_PLAN_FIRSTPERSON,PRES_PLAN_SIZE,PRES_PLAN_FIRSTPERSON_SHA)?1:-1;
     peye_seat=(peye_seat_fn)(image+PEYE_SEAT);peye_fpc_pose=(peye_pose_fn)(image+PEYE_FPC_POSE);peye_fpc_stock=(void**)(image+PEYE_FPC_VTABLE);
+    pres_foot_list_at=PRES_FOOT_LIST;pres_foot_floor_at=PRES_FOOT_FLOOR;
 }
 /* ---- the presentation scope ---- */
+static int pres_enter(void);static void pres_leave(void);
+static unsigned char *pres_plan_presenter(unsigned char *flag) {
+    unsigned char *manager=NULL,*presenter=NULL;
+    if(!read_local(pnat_base+PRES_UI_MANAGER,&manager,8) || !manager || !read_local(manager+8,&presenter,8) || !presenter ||
+       !read_local(presenter+PRES_PLAN_FLAG,flag,1)) return NULL;
+    return presenter;
+}
+/* The UI's game plan becomes first person (1) or the cockpit (0) through X4's own handler; scoped: as this client's slot. */
+static void pres_plan_set(int firstperson,int scoped) {
+    unsigned char flag=0,*presenter;
+    if(pres_plan_state!=1 || !pres_plan_fn[0] || !pres_plan_fn[1]) return;
+    if(!(presenter=pres_plan_presenter(&flag))) {InterlockedIncrement64(&pres_plan_unreadable);return;}
+    if((flag!=0)==(firstperson!=0)) return;
+    if(scoped && !pres_enter()) return;   /* no scope now: the next tick asks again */
+    if(pres_plan_first<0) pres_plan_first=flag!=0;
+    int fault=0;uint64_t word=0,*rng=pres_rng_hold(&word);
+    __try {pres_plan_fn[firstperson!=0](presenter);}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    pres_rng_back(rng,word);
+    if(scoped) pres_leave();
+    if(fault) {InterlockedIncrement64(&pres_plan_faults);pres_plan_state=-1;return;}
+    InterlockedIncrement64(&pres_plan_changes);
+}
+/* Once per tick while presenting: this client's HUD is on foot exactly while its own slot walks. */
+static void pres_plan_follow(const pslot_slot *s) {
+    if(pres_walk_hud) pres_plan_set(s->seated && s->walking,1);
+}
+/* The plan this client's slot is in, told to the UI again although the byte agrees. X4 tells its UI when its own
+ * player's state changes; client k's slot is seated from the take without any change X4 saw as this client's, and the
+ * UI's radar stayed off until the first stand-up and sit-down (the user's session of 11 Nov 22:25, a scripted run's
+ * window the same night: speed bar and ticker, no radar; with it after a get-up and sit-down). X4's handlers tell the
+ * UI only a plan that changed (b3e420), so the other plan's handler runs first and then the slot's own: the two events a
+ * stand-up and sit-down give the UI, in one scope, with the byte as it was at the end. Twice: at the first pass that
+ * presents and PRES_PLAN_KICK_LATER ticks after it. */
+static void pres_plan_kick(const pslot_slot *s,uint64_t tick) {
+    unsigned char flag=0,*presenter;const int firstperson=s->seated && s->walking;
+    if(!pres_walk_hud || pres_plan_state!=1 || !pres_plan_fn[0] || !pres_plan_fn[1] || pres_plan_kicked>=PRES_PLAN_KICKS || tick<pres_plan_kick_due) return;
+    if(!(presenter=pres_plan_presenter(&flag)) || (flag!=0)!=(firstperson!=0)) return;   /* the follow's business first */
+    if(!pres_enter()) return;
+    int fault=0;uint64_t word=0,*rng=pres_rng_hold(&word);
+    __try {pres_plan_fn[firstperson==0](presenter);pres_plan_fn[firstperson!=0](presenter);}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    pres_rng_back(rng,word);pres_leave();
+    if(fault) {InterlockedIncrement64(&pres_plan_faults);pres_plan_state=-1;return;}
+    ++pres_plan_kicked;pres_plan_kick_due=tick+PRES_PLAN_KICK_LATER;InterlockedIncrement64(&pres_plan_kicks);
+}
+/* The end of presenting: the byte as it was before the first change, as X4's own player. */
+static void pres_plan_home(void) {
+    if(pres_plan_first>=0) pres_plan_set(pres_plan_first,0);
+    pres_plan_first=-1;pres_plan_kicked=0;pres_plan_kick_due=0;
+}
 static void pres_stop_presenting(const char *why) {
     pres_active=0;pres_stage="failed";
     if(!strcmp(pres_why,"-")) pres_why=why;
@@ -203,7 +342,11 @@ static int pres_enter(void) {
     if(pres_target_set) memcpy(p1+PRES_TARGET,&pres_local_target,8);
     /* The player's identity: upward pointers only, its children and the room's child list are as they were. */
     memcpy(&pres_position_saved,p1+PRES_POSITION,4);memcpy(p1+PRES_POSITION,s->player+PRES_POSITION,4);
-    memcpy(pres_vector_saved,p1+PRES_VECTOR,sizeof(pres_vector_saved));memcpy(p1+PRES_VECTOR,s->player+PRES_VECTOR,sizeof(pres_vector_saved));
+    memcpy(pres_vector_saved,p1+PRES_VECTOR,sizeof(pres_vector_saved));
+    if(pres_walk_hud && s->walking) {   /* on foot: it controls nothing (the cockpit HUD and the radar go) */
+        void *none[3]={&s->vector[0],&s->vector[0],&s->vector[0]};
+        memcpy(p1+PRES_VECTOR,none,sizeof(none));InterlockedIncrement64(&pres_walk_scopes);
+    } else memcpy(p1+PRES_VECTOR,s->player+PRES_VECTOR,sizeof(pres_vector_saved));
     pres_parent_saved=*(unsigned char *volatile*)(p1+PRES_PARENT);*(unsigned char *volatile*)(p1+PRES_PARENT)=s->room;
     pres_view_at=p1+PRES_VIEW_CACHE+bank*PRES_VIEW_STRIDE;
     pres_view_parent_saved=*(unsigned char *volatile*)pres_view_at;*(unsigned char *volatile*)pres_view_at=s->room;
@@ -216,6 +359,7 @@ static int pres_enter(void) {
     }
     /* The eye at slot k's seat (lockstep_pilot_eye.h): the player's own pose, live and published, with D applied. */
     peye_enter(p1,pres_view_at,bank,s,pres_parent_saved);
+    pres_foot_enter(p1,s,pres_slot);   /* a walking slot: its interactables and its floor (the terminal, header above) */
     InterlockedExchange(&pres_open,1);InterlockedIncrement64(&pres_scopes);
     mpp_active_enter(pres_slot);   /* this client's own active mission on its HUD and in its menus */
     if(pres_settings_hook) pres_settings_hook(1);
@@ -226,6 +370,7 @@ static void pres_leave(void) {
     if(!pres_open) return;
     if(pres_settings_hook) pres_settings_hook(0);
     mpp_active_leave(pres_slot,0);
+    pres_foot_leave(p1,s);
     peye_leave();
     if(!s->roomless) {
         size_t bank=(size_t)(pres_view_at-(p1+PRES_VIEW_CACHE));
@@ -340,10 +485,18 @@ static void pres_refill_call(void *camera) {
     __try {pres_fn.refill(camera);pres_leave();}
     __except(pres_fault_filter(GetExceptionInformation(),"refill")) {pres_fault_stop();}
 }
+/* The click's pick was asked for (header, 9fe5ed): taken over from X4's own call, in the scope that is open. */
+static void pres_click_take(void *player) {
+    uint32_t asked=0;
+    if(!pres_fn.click || !read_local(pnat_base+PRES_CLICK_ASKED,&asked,4) || !asked) return;
+    *(volatile uint32_t*)(pnat_base+PRES_CLICK_ASKED)=0;   /* as 9fe5e3 does before its call */
+    InterlockedIncrement64(&pres_clicks);
+    pres_fn.click(player);
+}
 static void pres_pick_call(void *player) {
     if(!pres_enter()) {pres_fn.pick(player);return;}
     InterlockedIncrement64(&pres_picks);
-    __try {pres_fn.pick(player);pres_leave();}
+    __try {pres_fn.pick(player);pres_click_take(player);pres_leave();}
     __except(pres_fault_filter(GetExceptionInformation(),"pick")) {pres_fault_stop();}
 }
 /* gate.pilot_present_pause / resume: the probe's own frame runs canonical inside slot 6. The resume answers 1 when
@@ -493,6 +646,7 @@ static void pres_anchor_home(void) {
 /* Everything back, as the canonical player, on the frame thread. */
 static void pres_stop(void) {
     if(pres_open) pres_leave();
+    pres_plan_home();
     pres_active=0;peye_on=0;
     pres_anchor_home();
     pres_camera=NULL;pres_target_set=0;pres_local_target=0;pview_slot_target=0;
@@ -524,6 +678,7 @@ static int pres_pass(uint64_t tick) {
         if(memcmp(pnat_base+PRES_PICK_CALL,pres_pick_patched,5)) return pres_fail("pick_site_lost");
         peye_update(&pslots[pres_slot]);
         if(!pres_anchor_check()) return pres_fail(pres_fault_text);
+        pres_plan_follow(&pslots[pres_slot]);pres_plan_kick(&pslots[pres_slot],tick);
         return 1;
     }
     if(tick==pilot_stop+1) pres_stop();
@@ -538,7 +693,7 @@ static int pres_arm_using(int hud) {
     if(stats.slot>=2 && !pres_slot) return pstk_arm_refuse("present_slot_not_stock");
     if(pres_slot && !pslot_armed) return pstk_arm_refuse("present_without_slots");
     if(pres_slot && !render_rng_installed) return pstk_arm_refuse("present_without_render_split");
-    if(pres_slot && (!pres_fn.ui_move || !pres_fn.refill || !pres_fn.anchors || !pres_fn.occupied || !pres_fn.controlled || !pres_fn.zone || !pres_fn.ancestor || !pres_fn.pick))
+    if(pres_slot && (!pres_fn.ui_move || !pres_fn.refill || !pres_fn.anchors || !pres_fn.occupied || !pres_fn.controlled || !pres_fn.zone || !pres_fn.ancestor || !pres_fn.pick || !pres_fn.click))
         return pstk_arm_refuse("present_functions");
     peye_reset();
     pres_failed=0;pres_active=0;pres_stage=pres_slot?"armed":"own_player";pres_why="-";pres_refused_region="-";pres_fault_detail[0]=0;pres_restored=1;pres_anchor_moved=0;
@@ -573,10 +728,11 @@ static int pres_status(char *out,size_t capacity) {
     int mode=-1;unsigned char *universe=NULL,*camera=NULL;
     if(read_local(pnat_base+VPL_UNIVERSE,&universe,8) && universe && read_local(universe+PRES_CAMERA,&camera,8) && camera) read_local(camera+PRES_MODE,&mode,4);
     int n=snprintf(out,capacity," present=%s present_why=%s present_slot=%u scopes=%lld ui=%lld render=%lld local=%lld refills=%lld picks=%lld skipped=%lld "
-        "refused=%lld/%lld/%s targets=%lld/%llx faults=%lld camera_mode=%d asks=%llx/%llx/%llx hud=%d/%lld rng_moved=%lld",pres_stage,pres_why,pres_slot,(long long)pres_scopes,(long long)pres_ui,
+        "refused=%lld/%lld/%s targets=%lld/%llx faults=%lld camera_mode=%d asks=%llx/%llx/%llx hud=%d/%lld rng_moved=%lld walk_hud=%d/%lld plan=%d/%lld/%lld/%lld/%lld clicks=%lld foot=%lld/%lld",pres_stage,pres_why,pres_slot,(long long)pres_scopes,(long long)pres_ui,
         (long long)pres_render,(long long)pres_local,(long long)pres_refills,(long long)pres_picks,(long long)pres_skipped,(long long)pres_refused,(long long)pres_refused_player,
         pres_refused_region,(long long)pres_targets,(unsigned long long)pres_local_target,(long long)pres_faults,mode,(unsigned long long)pres_asked_ship,(unsigned long long)pres_asked_controlled,(unsigned long long)pres_asked_zone,
-        pres_hud,(long long)pres_anchor_moves,(long long)pres_rng_moved);
+        pres_hud,(long long)pres_anchor_moves,(long long)pres_rng_moved,pres_walk_hud,(long long)pres_walk_scopes,
+        pres_plan_state,(long long)pres_plan_changes,(long long)pres_plan_faults,(long long)pres_plan_unreadable,(long long)pres_plan_kicks,(long long)pres_clicks,(long long)pres_foot_scopes,(long long)pres_foot_moved);
     if(n<=0 || (size_t)n>=capacity) return 0;
     int eye=peye_status(out+n,capacity-(size_t)n);
     if(!eye) return 0;

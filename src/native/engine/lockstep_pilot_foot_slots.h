@@ -192,8 +192,21 @@ static int pfslot_sit_down(unsigned k) {
     if(pslot_controller_has(s->ship,PSLOT_CONTROLLER_CLASS,NULL)!=0) {InterlockedIncrement64(&f->ignored);return 1;}   /* the ship is held */
     if(!read_local(pnat_base+PSLOT_PILOT_POSITION,&position,4) || !position) return pfslot_fail("slot_pilot_position");
     memcpy(s->player+PFSLOT_POSITION,&position,4);
+    /* The take's bank reset (d84c20) starts the new controller's flight control from THIS client's input object
+     * (lockstep_pilot_slots.h pslot_seat_ship): the sitting player's own client has it off (it walks), another client
+     * has its own flight on. For the take the byte is the slot's own flight control (the store's, in this scope: off
+     * since its stand-up; its SPACE edge follows in its record), then this client's again. */
+    volatile unsigned char *flag_at=NULL;unsigned char flag_was=0;int flag_held=0;
+    {   unsigned char *object=NULL;
+        if(read_local(pnat_base+PSLOT_TAKE_INPUT,&object,8) && object && read_local(object+PSLOT_TAKE_FLIGHT_FLAG,&flag_was,1)) {
+            const unsigned char want=*PNAT_U8(PNAT_FLIGHT)?1u:0u;
+            flag_at=object+PSLOT_TAKE_FLIGHT_FLAG;
+            if((flag_was!=0)!=(want!=0)) {*flag_at=want;flag_held=1;InterlockedIncrement64(&pslot_take_flags);}
+        }
+    }
     __try {((void(*)(void*))take)(s->ship);controller=pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY);}
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    if(flag_held) *flag_at=flag_was;
     if(fault) return pfslot_fail("slot_take_fault");
     if(!controller || !read_local(controller,&cvt,8) || cvt!=(void*)(pnat_base+PSLOT_VTABLE) || !read_local((unsigned char*)controller+0x28,&back,8) ||
        back!=s->ship || pslot_controller_has(s->ship,0,controller)!=1) return pfslot_fail("slot_take_controller");

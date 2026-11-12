@@ -37,7 +37,7 @@ static int lua_pilot_first_stores(lua_State *L) {
 /* gate.pilot_slots_post(on) (native_gate_pilot_slots_post): inside slot k's scope ship k's pilot post holds P_k, so the
  * ship answers its player as its pilot (lockstep_pilot_slots.h). Every client, in the probe's config block. */
 static int lua_pilot_slots_post(lua_State *L) {
-    double on=p_lua_tonumber(L,1);const int ok=(on==0.0 || on==1.0) && !stats.issued;
+    double on=p_lua_tonumber(L,1);const int ok=(on==0.0 || on==1.0) && (!stats.issued || pslot_post_on==(int)on);   /* asked again by a reloaded UI: the same answer */
     if(ok) pslot_post_on=(int)on;
     p_lua_pushnumber(L,ok);return 1;
 }
@@ -279,6 +279,13 @@ static int lua_pilot_present(lua_State *L) {
     if(ok) return 1;
     p_lua_pushlstring(L,pstk_arm_why,strlen(pstk_arm_why));return 2;
 }
+/* gate.pilot_present_walk_hud(on) (native_gate_pilot_present_walk_hud): this client's own slot shows no controlled ship
+ * while it walks, so the cockpit HUD and the radar go as after X4's own stand-up (lockstep_pilot_present.h). 1 = set. */
+static int lua_pilot_present_walk_hud(lua_State *L) {
+    double on=p_lua_tonumber(L,1);const int ok=accept_ui() && (on==0.0 || on==1.0);
+    if(ok) pres_walk_hud=(int)on;
+    p_lua_pushnumber(L,ok);return 1;
+}
 /* gate.cutscene_ready(): a cutscene is ready 2.0 s of game time after the first pass that sees it
  * (lockstep_cutscene_ready.h, stop reason 170). Before the first tick, with serial pathing. */
 static int lua_cutscene_ready(lua_State *L) {p_lua_pushnumber(L,accept_ui() && cr_arm());return 1;}
@@ -367,8 +374,30 @@ static int lua_pilot_death_suit(lua_State *L) {
     unsigned slot=0;uint64_t runtime=0;
     p_lua_pushnumber(L,lua_pilot_death_answer(L,&slot,&runtime) && pdeath_suit_ship(slot,runtime));return 1;
 }
+/* gate.pilot_death_home(slot): the runtime ID of the ship a slot in its own spacesuit left, or nil.
+ * gate.pilot_death_range(slot, meters): the probe's distance from that suit to that ship this tick (negative: none). */
+static int lua_pilot_death_home(lua_State *L) {
+    double slot=p_lua_tonumber(L,1);uint64_t home=0;
+    if(accept_ui() && pdeath_armed && isfinite(slot) && floor(slot)==slot && slot>=2 && slot<=PILOT_SLOTS) home=pvehk_home((unsigned)slot);
+    if(home && home<(1ULL<<53)) p_lua_pushnumber(L,(double)home);else p_lua_pushnil(L);
+    return 1;
+}
+static int lua_pilot_death_range(lua_State *L) {
+    double slot=p_lua_tonumber(L,1),meters=p_lua_tonumber(L,2);
+    p_lua_pushnumber(L,accept_ui() && pdeath_armed && isfinite(slot) && floor(slot)==slot && slot>=2 && slot<=PILOT_SLOTS &&
+                       pvehk_range((unsigned)slot,meters));
+    return 1;
+}
+/* gate.pilot_death_out(slot): test only (the plan op slot_airlock, in every client's plan at the same tick): a walking
+ * slot 2..N leaves its ship as its airlock action's apply makes it (pvehk_ask). */
+static int lua_pilot_death_out(lua_State *L) {
+    double slot=p_lua_tonumber(L,1);
+    p_lua_pushnumber(L,accept_ui() && pdeath_armed && isfinite(slot) && floor(slot)==slot && slot>=2 && slot<=PILOT_SLOTS &&
+                       pvehk_ask((unsigned)slot,stats.issued));
+    return 1;
+}
 static int lua_pilot_death_status(lua_State *L) {
-    char out[512];int n=accept_ui() && pdeath_armed?pdeath_status(out,sizeof(out)):0;
+    char out[1024];int n=accept_ui() && pdeath_armed?pdeath_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* gate.pilot_present_diff(): once after the start, what a player's presence set on a ship (PILOT_PRESENT_DIFF). */
@@ -434,7 +463,11 @@ static int lua_pilot_stock_inject(lua_State *L) {
         if(k==PSTK_RANGE) {float f=(float)value;memcpy(&bits,&f,4);}
         else if(value==0 || value==1) bits=(uint32_t)value;
         else bits=2;
-        ok=bits<=1 || k==PSTK_RANGE?pstk_inject(k,(unsigned)id,bits):0;
+        /* A fire state is no replay id: it is held as this client's own trigger holds it (pnat_fire_input) and goes out in
+         * the pilot record's buttons; here so that a plan can fire without a person. */
+        if(k==PSTK_STATE && bits<=1 && pstk_is_fire(k,(int)id)) {
+            if(pstk_capturing && pnat_is_live() && pfire_armed) {pnat_fire_input(k,(int)id,(int)bits);ok=1;}
+        } else ok=bits<=1 || k==PSTK_RANGE?pstk_inject(k,(unsigned)id,bits):0;
     }
     p_lua_pushnumber(L,ok);return 1;
 }

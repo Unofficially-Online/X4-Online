@@ -61,6 +61,10 @@ UI_FILES = ('ui/native_gate_defaults.lua', 'ui/native_gate_inputs_core.lua', 'ui
             'ui/native_gate_fleet.lua', 'ui/native_gate_orders.lua')
 MD_FILES = ('md/native_gate_battle.xml', 'md/native_gate_player_identity.xml', 'md/native_gate_ui_replay.xml',
             'md/native_gate_pilot_respawn.xml')
+# Patches of stock MD scripts (X4's own diff loading: the overlay's file has the stock file's name; our lines only):
+# a start's standings arrive quietly (native_gate_player_identity.xml's relation steps).
+MD_PATCHES = {'md/playerreputation.xml': 'native_gate_quiet_playerreputation.xml',
+              'md/notifications.xml': 'native_gate_quiet_notifications.xml'}
 
 TABLE = load()
 ON_KEYS = [e[0] for e in TABLE['on']]
@@ -76,6 +80,8 @@ def ship_files(out, ui_files):
     for name in UI_FILES + MD_FILES:
         (out/name).parent.mkdir(parents=True, exist_ok=True)
         (out/name).write_bytes((source/Path(name).name).read_bytes())
+    for name, patch in MD_PATCHES.items():
+        (out/name).write_bytes((source/patch).read_bytes())
     rest = [name for name in ui_files if name not in UI_FILES]
     return list(UI_FILES) + rest
 

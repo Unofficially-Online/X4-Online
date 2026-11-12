@@ -524,7 +524,7 @@ static uint64_t uirep_get_ref(const unsigned char *in,uint32_t *check) {
 /* ---- travel: the two functions every activity start and stop ends in ---- */
 static int uirep_activity_valid(unsigned slot,int activity,int stop) {
     if(activity==UIREP_ACTIVITY_TRAVEL) return 1;
-    if(slot>=2) return 0;                                  /* slots 2+: the adapter below has travel only */
+    if(slot>=2) return activity==2 && scl_armed;           /* slots 2+: the adapter below has travel, and the long-range scan with lockstep_scan_long.h */
     return activity>=(stop?0:1) && activity<=UIREP_ACTIVITY_MAX;
 }
 static void uirep_activity_capture(unsigned op,int activity,unsigned char flag) {
@@ -552,6 +552,12 @@ static void uirep_adapter_start(pslot_slot *s,int activity) {
     if(uirep_setter_depth) {InterlockedIncrement64(&uirep_scope_nested);return;}
     int current=0;memcpy(&current,s->player+UIREP_PLAYER_ACTIVITY,4);
     if(activity==current) return;
+    if(activity==2 && scl_armed) {   /* md/modes.xml's long-range scan: X4's own "can scan" test, then the activity */
+        if(!scl_may_start(s->player)) {InterlockedIncrement64(&uirep_unavailable);return;}
+        if(current) uirep_set_activity(s,0);
+        uirep_set_activity(s,activity);
+        InterlockedIncrement64(&uirep_scope_start);return;
+    }
     if(activity!=UIREP_ACTIVITY_TRAVEL) {InterlockedIncrement64(&uirep_scope_refused);return;}
     if(!uirep_fn.can_travel(s->ship) && !uirep_drive_active(s->ship)) {InterlockedIncrement64(&uirep_unavailable);return;}
     uint64_t id=0;
@@ -926,6 +932,10 @@ static int uirep_run_native(unsigned slot,unsigned op,const unsigned char *data,
             case 's': {unsigned len=data[at++];memcpy(strings[i],data+at,len);strings[i][len]=0;at+=len;a[i]=(uint64_t)(uintptr_t)strings[i];break;}
             default:a[i]=0;break;
             }
+        }
+        /* A slot in its own spacesuit (lockstep_pilot_death.h pvehk_*): its dock request is the way home, not X4's. */
+        if(slot>=2 && (data[0]==UIREP_H_QUICKDOCK || data[0]==UIREP_H_DOCKAT || data[0]==UIREP_H_DOCKREASON) && pvehk_home_key(slot,0xafu)) {
+            InterlockedIncrement64(&uirep_calls_applied);break;
         }
         uirep_forward(data[0],a);InterlockedIncrement64(&uirep_calls_applied);
         break;
@@ -1369,6 +1379,7 @@ static int uirep_status(char *out,size_t capacity) {
             (long long)uirep_target_ui_refused,(long long)uirep_target_md,route,(long long)uirep_route_faults);
     }
     if(n>0 && (size_t)n<capacity) n+=uics_status(out+n,capacity-(size_t)n);   /* lockstep_ui_compslot.h */
+    if(n>0 && (size_t)n<capacity && uirh_armed) n+=uirh_status(out+n,capacity-(size_t)n);   /* lockstep_ui_reload_hold.h */
     return n>0 && (size_t)n<capacity?n:0;
 }
 /* The UI guard: containment for what no armed family replays yet (native_gate_ui_guard, default off). */

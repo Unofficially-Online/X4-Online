@@ -201,8 +201,11 @@ D.ON={
  {'native_gate_player_settings_per_slot',true,'native_gate_ui_replay~faction','each slot its own faction settings'},
  {'native_gate_missions_per_player',true,'native_gate_ui_replay~events native_gate_ui_replay~missions native_gate_script_rng native_gate_pilot_stock_slots','a mission slot k accepts runs as slot k player on every client (personal missions, first form)'},
  {'native_gate_missions_per_player_offers',true,'native_gate_missions_per_player','generic mission offers around every player, not only player 1'},
+ {'native_gate_pilot_present_walk_hud',true,'native_gate_pilot_present native_gate_pilot_foot_slots','no cockpit HUD and no radar on a player 2+ own screen while that player walks'},
  {'native_gate_pilot_slots_post',true,'native_gate_pilot_stock_slots','a player 2+ own ship answers that player as its pilot while the game runs as that player (the autopilot check)'},
  {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer run as that player'},
+ {'native_gate_ui_reload_hold',true,'native_gate_ui_guard','a window resize, a UI scale change or a controller-mode switch no longer ends a player session: X4 reloads its UI after the session'},
+ {'native_gate_ui_compslot',true,'native_gate_ui_guard native_gate_pilot_foot_slots','on foot a click works: the pilot seat (sit down) and the transporter terminal (its menu, Use Spacesuit) for every player'},
  {'native_gate_guidance_local',true,'native_gate_pilot_present native_gate_runtime_ids_local native_gate_script_rng native_gate_md_timed_rng','a client own guidance takes local runtime IDs'},
  {'native_gate_render_fps',60,'native_gate_lookahead native_gate_tick_hz native_gate_snapshot_sha native_gate_serial_pathing native_gate_radar_serial native_gate_render_rng_split native_gate_mass_traffic=sync native_gate_region_pass=sync native_gate_runtime_ids_local','render-only frames between the steps, up to 60 per second'},
  {'native_gate_render_camera','extrapolate','native_gate_render_fps','the camera moves in the render-only frames'},
@@ -459,7 +462,7 @@ D.DIAGNOSTIC={
 }
 -- Neither a feature default nor a diagnostic: fixtures, experiments, alternatives and cross-platform keys. {'key','why'}.
 D.EXCLUDED={
- {'native_gate_ui_compslot','the interact menu on foot: PerformCompSlotPlayerAction captured and replayed by the action class (lockstep_ui_compslot.h); opt-in until its classes are handled'},
+ {'native_gate_scan_long','long-range scan for every player (the mode for players 2+, charge on the secondary trigger, send at its release): built 11 Nov, first run owed; a session default after it'},
  {'native_gate_ui_exports','generic UI write guard (lockstep_ui_exports.h): opt-in beside native_gate_ui_guard (tools/build_soak_overlay.py --ui-guard)'},
  {'native_gate_ui_exports_block','generic UI write guard: the exports it refuses'},
  {'native_gate_ui_relay','generic UI write guard: exports relayed through the ffi section (--ui-relay)'},

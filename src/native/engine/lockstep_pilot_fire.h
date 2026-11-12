@@ -307,7 +307,8 @@ static uint64_t pfire_slot_target(unsigned slot) {
 }
 static int pfire_missiles_tick(const pilot_slot *s,unsigned slot,uint64_t tick,int end) {
     pfire_missile_slot *m=&pfire_missiles[slot-1];
-    int want=!end && pstk_fire_tick[slot-1]==tick && pstk_fire2_on[slot-1];
+    /* In the long-range scan mode the secondary trigger charges the scan (lockstep_scan_long.h), as in the stock game. */
+    int want=!end && pstk_fire_tick[slot-1]==tick && pstk_fire2_on[slot-1] && !scl_mode_on(slot);
     uint64_t target=want?pfire_slot_target(slot):0;unsigned char *object=target?pfire_find(target):NULL;int32_t group=-2;
     read_local(s->object+PFIRE_ACTIVE2,&group,4);
     if(want && !object) ++pfire_missile_no_target;

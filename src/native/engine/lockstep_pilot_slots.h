@@ -317,6 +317,22 @@ static int pslot_exchange(unsigned char *store,unsigned length) {
     }
     return n==length?(int)n:-1;
 }
+/* Diagnostics: FNV of slot k's stored input bank 0x2f4b750..0x2f4b7a0 (floats: yaw, pitch, roll, the smoothed throttle,
+ * the strafe axes; no pointers), comparable between clients; 0 when the layout does not hold it in one region. */
+static uint32_t pslot_bank_fnv(const pslot_slot *s) {
+    unsigned n=0;
+    for(unsigned i=0;i<VPL_REGION_COUNT;i++) {
+        const vpl_region *r=&vpl_regions[i];
+        if(r->base!=VPL_BASE_IMAGE || !(PSLOT_CLASSES>>r->cls&1u)) continue;
+        if(r->offset<=0x2f4b750u && r->offset+r->size>=0x2f4b7a0u && n+r->size<=s->length) {
+            uint32_t h=2166136261u;const unsigned char *p=s->store+n+(0x2f4b750u-r->offset);
+            for(unsigned j=0;j<0x50u;j++) h=(h^p[j])*16777619u;
+            return h;
+        }
+        n+=r->size;
+    }
+    return 0;
+}
 static uint64_t pslot_hash(void) {
     uint64_t h=0xcbf29ce484222325ULL;
     for(unsigned i=0;i<VPL_REGION_COUNT;i++) {
@@ -593,14 +609,47 @@ static void pslot_update_slots(double now) {
     }
 }
 /* The call at 9fe2d7: the canonical update, then every seated slot in its scope. */
+static uint64_t pslot_hook_now,pslot_pass_now,pslot_pass_tick;   /* diagnostics: the update's clock by its two ways (bits), status upd= */
 static void pslot_update(void *controller,double now) {
     pslot_fn.update(controller,now);
+    memcpy(&pslot_hook_now,&now,8);
     InterlockedIncrement64(&pslot_hook_calls);
     if(!pslot_frame_thread() || pstk_scope_slot) {pslot_async("update_outside_frame");return;}
     pslot_update_tick=stats.issued;InterlockedIncrement64(&pslot_updates);
     pslot_update_slots(now);
 }
 
+/* X4's player without a PlayerController (slot 1 on foot, in a transition, dead): X4 skips its own update (9fe2b4), and
+ * with it the re-pointed call. The slots' updates then ran from the next pass (pslot_check), a frame late and at another
+ * place in the frame. That is not the same thing [live 12 Nov, runs 041953, 044015, 051310 and the diagnostic one after
+ * them: same clock (TLS +0x300, bit for bit on both clients), same smoothed throttle 1.0 in slot 2's store, yet from the
+ * tick slot 1 stood up slot 2's ship lost its thrust and coasted down, 120 m in the next 60 ticks on one client and 178 m on
+ * the other, first digest mismatch 8 ticks after the stand-up]: what d95180 hands to the ship is taken by the frame's
+ * movement right after 9fe2d7, and an update at the pass feeds a frame that has already used the old values, with the
+ * presenting client's frame order on top. So the lookup X4 makes just before (9fe2a9: call 9fc550, the same frame
+ * position, always executed) is re-pointed too: it answers what X4's lookup answers, and when that is nothing the slots'
+ * updates run right there with the frame's time, exactly where they run behind X4's own update otherwise. The pass's
+ * fallback stays for an image whose site is not this one (lookup=installed/updates-run-here). */
+#define PSLOT_LOOKUP_SITE 0x9fe2a9u         /* UniverseFrameUpdate: call 9fc550 (X4's own player's PlayerController) */
+#define PSLOT_LOOKUP_RVA 0x9fc550u
+#define PSLOT_LOOKUP_STUB 0xe0u             /* on the slots' near page, after the kill guard's (0xc0) */
+static unsigned char pslot_lookup_patched[5];
+static int pslot_lookup_installed;
+static volatile LONG64 pslot_lookup_empty;
+static int pres_site_install(unsigned site,unsigned target,unsigned stub_offset,void *wrapper,unsigned char patched[5]);   /* lockstep_pilot_present.h */
+static int pres_site_uninstall(unsigned site,unsigned target,const unsigned char patched[5]);
+static void *pslot_lookup(void *key) {
+    void *controller=pnat_fn.controller(key);
+    if(!controller && pslot_frame_thread() && !pstk_scope_slot) {
+        double now=0;
+        if(pnat_fn.time(&now)) {
+            pslot_update_tick=stats.issued;InterlockedIncrement64(&pslot_lookup_empty);
+            memcpy(&pslot_hook_now,&now,8);
+            pslot_update_slots(now);
+        }
+    }
+    return controller;
+}
 /* ---- the schedule (frame thread, path_release, inside pnat_pass) ---- */
 static int pslot_controller_has(unsigned char *ship,int cls,const void *which) {
     void *c=NULL;
@@ -674,6 +723,7 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
     memset(s->vector,0,sizeof(s->vector));s->post=(unsigned)index;s->vector[s->post]=ship;
     s->ship=ship;s->room=room;s->controller=NULL;s->runtime=0;read_local(ship+8,&s->runtime,8);
     /* The first seat's store: canonical SIM at the start. A later one (after a death) starts from the same. */
+    const int again=s->first_length!=0;   /* a seat after the first: a suit, the way home, a respawn */
     if(s->first_length) {memcpy(s->store,s->first,s->first_length);s->length=s->first_length;}
     else {
         if(!(s->length=pslot_store_init(s->store))) return pslot_fail("store");
@@ -683,7 +733,12 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
     if(!pslot_enter(k)) {pslot_unseat_player(s);return pslot_fail("seat_scope");}
     void *controller=NULL;int fault=0;
     volatile unsigned char *flag_at=NULL;unsigned char flag_was=0;int flag_held=0;
-    if(pslot_first_stores && !adopt) {   /* the take's flight control from the slot's store, not this client's input */
+    /* ...and at every seat after the first without the option. The clients' own input objects differ by design once a
+     * player can be on foot or in a menu while another one takes a seat (each client's contexts follow its own slot,
+     * lockstep_pilot_foot.h K1): a suit's seat, the way home and a sit-down gave the new controller this client's
+     * flight control, 1 on one client and 0 on another (live 12 Nov, run 044015: slot 2 sat down at 1044, its ship
+     * crept on client 2 only from 1050, controller slots 12/57 asked a different number of times). */
+    if((pslot_first_stores || again) && !adopt) {   /* the take's flight control from the slot's store, not this client's input */
         unsigned char *object=NULL;
         if(read_local(pnat_base+PSLOT_TAKE_INPUT,&object,8) && object && read_local(object+PSLOT_TAKE_FLIGHT_FLAG,&flag_was,1)) {
             const unsigned char want=*PNAT_U8(PNAT_FLIGHT)?1u:0u;
@@ -756,16 +811,25 @@ static int pslot_hook_install(void) {
     rel=(int32_t)((intptr_t)pslot_page-(intptr_t)(pnat_base+PSLOT_CALL_SITE+5));
     pslot_site_patched[0]=0xe8;memcpy(pslot_site_patched+1,&rel,4);
     if(!pview_cas(PSLOT_CALL_SITE,pslot_site_original,pslot_site_patched,5)) return 0;
-    pslot_hook_installed=1;return 1;
+    pslot_hook_installed=1;
+    /* The lookup before it (header above): where its site is this image's; else the pass's fallback as before. */
+    pslot_lookup_installed=pnat_fn.controller==(void*(*)(void*))(pnat_base+PSLOT_LOOKUP_RVA) &&
+        pres_site_install(PSLOT_LOOKUP_SITE,PSLOT_LOOKUP_RVA,PSLOT_LOOKUP_STUB,(void*)pslot_lookup,pslot_lookup_patched);
+    return 1;
 }
 static int pslot_hook_uninstall(void) {
     if(!pslot_hook_installed) return 1;
+    if(pslot_lookup_installed) {
+        if(!pres_site_uninstall(PSLOT_LOOKUP_SITE,PSLOT_LOOKUP_RVA,pslot_lookup_patched)) return 0;
+        pslot_lookup_installed=0;
+    }
     if(!pview_cas(PSLOT_CALL_SITE,pslot_site_patched,pslot_site_original,5)) return 0;
     pslot_hook_installed=0;return 1;
 }
 static int pslot_hook_intact(void) {
     unsigned char jump[14];
     if(!pslot_hook_installed || !pslot_page || memcmp(pnat_base+PSLOT_CALL_SITE,pslot_site_patched,5)) return 0;
+    if(pslot_lookup_installed && memcmp(pnat_base+PSLOT_LOOKUP_SITE,pslot_lookup_patched,5)) return 0;
     pview_abs_jump(jump,(void*)pslot_update);return !memcmp(pslot_page,jump,14);
 }
 static int pslot_seat_all(uint64_t take) {
@@ -892,6 +956,7 @@ static int pslot_check(uint64_t tick) {
         double now=0;
         if(!pilot_slots[0].dead && !pfoot_walking()) return pslot_fail("update_missing");   /* or walking (lockstep_pilot_foot.h) */
         if(!pnat_fn.time(&now)) return pslot_fail("update_time");
+        memcpy(&pslot_pass_now,&now,8);pslot_pass_tick=tick;
         pslot_update_slots(now);
     }
     if(!read_local(pnat_base+VPL_UNIVERSE,&universe,8) || !universe || !read_local(universe+VPS_SINGLETON,&now,8) || now!=pslot_p1)
@@ -935,7 +1000,7 @@ static int pslot_replay(uint64_t tick) {
         if(pstk_slot_frames[k-1].tick!=tick) return pslot_fail("replay_missing");
         if(!pslot_enter(k)) return pslot_fail("replay_scope");
         int replayed=0,left=0;
-        __try {replayed=pstk_slot_replay(k,now);} __finally {left=pslot_leave(k);}
+        __try {replayed=pstk_slot_replay(k,now);if(replayed && scl_armed) scl_frame_slot(k,now);} __finally {left=pslot_leave(k);}
         if(!left) return pslot_fail("replay_leave");
         if(!replayed) return pslot_fail("replay_refused");
         InterlockedIncrement64(&s->replays);
@@ -983,14 +1048,20 @@ static int pslot_stop_deferred(void) {
 __attribute__((unused)) static void *vpl_slot_player(unsigned k) {return k>=2 && k<=PILOT_SLOTS && pslots[k].seated?pslots[k].player:NULL;}
 __attribute__((unused)) static void *vpl_slot_ship(unsigned k) {return k>=2 && k<=PILOT_SLOTS && pslots[k].seated?pslots[k].ship:NULL;}
 __attribute__((unused)) static void *vpl_slot_controller(unsigned k) {return k>=2 && k<=PILOT_SLOTS && pslots[k].seated?pslots[k].controller:NULL;}
+__attribute__((unused)) static int vpl_slot_seated(unsigned k) {return k>=2 && k<=PILOT_SLOTS && pslots[k].seated;}
 static int pslot_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity," slots=%s slots_why=%s slots_mask=%x hook=%d updates=%lld/%lld routes=%lld/%lld/%lld canonical_gone=%lld"
-        " seat_live=%d:%lld:%lld first_stores=%d:%lld:%lld post=%d:%lld:%lld:%lld:%lld:%lld",
+        " seat_live=%d:%lld:%lld first_stores=%d:%lld:%lld post=%d:%lld:%lld:%lld:%lld:%lld bare=%lld",
         pslot_stage,pslot_why,pslot_mask,pslot_hook_installed,(long long)pslot_updates,(long long)pslot_hook_calls,(long long)pslot_route_hits[0],
         (long long)pslot_route_hits[1],(long long)pslot_route_hits[2],(long long)pslot_canonical_gone,
         pslot_seat_live_pose,(long long)pslot_seat_live_seats,(long long)pslot_seat_live_cleared,pslot_first_stores,(long long)pslot_first_absent,
         (long long)pslot_take_flags,pslot_post_on,(long long)pslot_post_swaps,(long long)pslot_post_same,(long long)pslot_post_taken,
-        (long long)pslot_post_unreadable,(long long)pslot_post_lost);
+        (long long)pslot_post_unreadable,(long long)pslot_post_lost,(long long)pilot_bare);
+    /* each slot's last resolve: "-" resolved, else where it stopped; behind a slash what a bare hull lacked */
+    for(unsigned i=0;n>0 && (size_t)n<capacity && i<pilot_slot_count && i<PILOT_SLOTS;i++)
+        n+=snprintf(out+n,capacity-(size_t)n,"%s%u:%s%s%s",i?",":" resolve=",i+1,pilot_slots[i].why?pilot_slots[i].why:"?",
+            pilot_slots[i].bare?"/":"",pilot_slots[i].bare?(pilot_slots[i].bare_why?pilot_slots[i].bare_why:"?"):"");
+    if(n<=0 || (size_t)n>=capacity) return 0;
     for(unsigned k=2;n>0 && (size_t)n<capacity && k<=PILOT_SLOTS;k++) {
         pslot_slot *s=&pslots[k];
         if(!(pslot_mask>>(k-1)&1u)) continue;
@@ -1001,7 +1072,15 @@ static int pslot_status(char *out,size_t capacity) {
             s->auth_parts,s->first_length?first:0u);
         if(more<0) return 0;
         n+=more;
+        {   uint32_t bits=0;memcpy(&bits,&s->throttle,4);   /* diagnostics: its smoothed throttle and its stored input bank */
+            more=n>0 && (size_t)n<capacity?snprintf(out+n,capacity-(size_t)n," u%u=%08x/%08x",k,bits,pslot_bank_fnv(s)):-1;
+            if(more<0) return 0;
+            n+=more;}
     }
+    {   int more=n>0 && (size_t)n<capacity?snprintf(out+n,capacity-(size_t)n," upd=%016llx/%016llx/%llu lookup=%d/%lld",(unsigned long long)pslot_hook_now,
+            (unsigned long long)pslot_pass_now,(unsigned long long)pslot_pass_tick,pslot_lookup_installed,(long long)pslot_lookup_empty):-1;
+        if(more<0) return 0;
+        n+=more;}
     for(unsigned i=0,first=1;n>0 && (size_t)n<capacity && i<PSLOT_VT_SLOTS;i++) {
         if(!pslot_getter_out[i]) continue;
         int more=snprintf(out+n,capacity-(size_t)n,"%s%u:%lld",first?" getters_out=":",",i,(long long)pslot_getter_out[i]);

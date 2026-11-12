@@ -118,6 +118,14 @@ static void pfbody_unplace(unsigned char *player) {
     if(!pfbody_mark || !player || !read_local(player+PFBODY_PLACED,&in,1) || !in) return;
     pfbody_mark(player,0);InterlockedIncrement64(&pfbody_unmarks);
 }
+/* A slot seated where no body sits (a spacesuit has no cockpit room): no connect ever gives P_k the byte, and MD's
+ * distance of the slot's player fails as it did for a parked body (live sx1, 11 Nov: $ApproachObject.distanceto, the
+ * slot in its own suit). The same mark, from the ship; the seat's end takes it off (pslot_unplace). */
+static void pfbody_place_seat(unsigned k) {
+    pslot_slot *s=k>=2 && k<=PILOT_SLOTS?&pslots[k]:NULL;unsigned char in=0;
+    if(!s || !pfbody_mark || !s->seated || !s->roomless || !s->player || !s->ship || !read_local(s->ship+PFBODY_PLACED,&in,1) || !in) return;
+    pfbody_mark(s->player,1);InterlockedIncrement64(&pfbody_marks);
+}
 static volatile LONG64 pfbody_kill_off,pfbody_kill_spared,pfbody_kill_late;
 static const struct {unsigned rva,size;const char *sha;} pfbody_pin_table[]={
     {0x3d8420u,0x89,"46a8f865b44c4e326737a70cfdf828bd65324779303b13ecaf81990f6290f7af"},    /* ConnectTo by filter; no target: off */

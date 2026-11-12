@@ -750,6 +750,7 @@ static unsigned pnat_vector_find(unsigned char *input,void *value,void ***where)
     for(void **p=begin;p<end;p++) if(read_local(p,&entry,8) && entry==value) {++found;if(where) *where=p;}
     return found;
 }
+#include "lockstep_ui_reload_hold.h"   /* UI reloads held while the session is live (native_gate_ui_reload_hold) */
 static void pnat_uninstall(void) {
     InterlockedExchange(&pnat_live,0);pnat_route_controller=NULL;
     int ok=1;
@@ -771,6 +772,7 @@ static void pnat_uninstall(void) {
     if(!pstk_aim_uninstall()) ok=0;
     if(!pview_uninstall()) ok=0;
     pfoot_uninstall();if(!pfoot_restored) ok=0;
+    if(!uirh_uninstall()) ok=0;   /* before X4 runs on: a held UI reload is X4's in its next frame */
     pnat_installed=!ok;pnat_restored=ok;
 }
 /* At start-2 on the MoveWorker, controls parked by our share: everything is
@@ -903,6 +905,7 @@ static int pnat_pass(uint64_t tick,unsigned char *controller,pilot_refresh_fn re
             return pnat_fail("stock_slot_not_occupied"); /* the stock slot must be the ship every client sits in */
         if(!pnat_install(controller)) return pnat_fail("native_install");
         if(pnat_mode==PNAT_MODE_STOCK && pfoot_armed && !pfoot_pass()) return pnat_fail(pfoot_why);   /* the FIRST_PERSON swap */
+        if(!uirh_pass(tick)) return pnat_fail(uirh_why);   /* live from here: UI reloads wait for the stop */
         if(pnat_mode==PNAT_MODE_STOCK) { /* parked: flight control 0 on every client; records from this tick on */
             pstk_flight=0;pstk_flight_known=1;pstk_capture_start=tick;pstk_first_apply=tick+pilot_delay;
         }
@@ -911,12 +914,14 @@ static int pnat_pass(uint64_t tick,unsigned char *controller,pilot_refresh_fn re
     }
     if(tick>take+1 && tick<=pilot_stop) {
         if(pnat_mode==PNAT_MODE_STOCK && pfoot_armed && !pfoot_pass()) return pnat_fail(pfoot_why);
+        if(!uirh_pass(tick)) return pnat_fail(uirh_why);
         if(!pnat_check(controller,counter,contexts)) return 0;
         if(pnat_mode==PNAT_MODE_STOCK) {
             const char *why="stock";
             if(!pstk_frame(tick,&why)) return pnat_fail(why);
             /* Bodies (lockstep_pilot_foot_body.h): off the tree before any get-up of this tick reaches X4 or a slot's scope. */
             if(pfbody_armed && !pfbody_guard(tick)) return pnat_fail(pfbody_why);
+            if(scl_armed && tick>=pstk_first_apply) {double scan_now=0;if(pnat_fn.time(&scan_now)) scl_frame_slot(1,scan_now);}   /* slot 1's scan */
             if((pstk_slot_mask&~1u) && tick>=pstk_first_apply && !pslot_replay(tick)) return pnat_fail(pfoot_failed?pfoot_why:pslot_why);
             if(pfslot_armed) pfslot_frame();   /* slots 2..N on foot: this tick's receipt part */
             if(uirep_armed && !uirep_frame(tick,&why)) return pnat_fail(why);
@@ -944,7 +949,7 @@ static void pnat_restore(void) {
     pfbody_restore();/* the slots' bodies off their rooms before the seats go */
     pslot_restore(); /* slots 2..N next: their seats use the authority patch */
     if(pdeath_armed) pdeath_restore();
-    if(pnat_installed || pstk_aim_installed || pview_installed || pfoot_installed) pnat_uninstall();
+    if(pnat_installed || pstk_aim_installed || pview_installed || pfoot_installed || uirh_patched) pnat_uninstall();
     if(pnat_installed) pnat_stage="restore_refused";
 }
 static int pnat_refusals_text(char *out,size_t capacity) {

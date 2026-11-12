@@ -97,20 +97,25 @@ def _check_hull(hull, slot):
             raise SessionError(f'slot {slot}: hull {axis} {hull[axis]!r} out of range')
 
 
-def build_spec(catalog, base_start, players, mode, starts, omit=None, story=(), unpiloted=()):
+def build_spec(catalog, base_start, players, mode, starts, omit=None, story=(), unpiloted=(), piloted=()):
     """The session-start spec: base start S for slot 1 and a resolved per-player start (kit + hull) per slot.
     story: slots that ask for their start's story by name (a start in gamestarts.STORY_DEFAULT has it without asking).
-    unpiloted: slots whose hull is made without an NPC pilot, as a stock start's own ship is (a person who got up from
-    the seat found a pilot sitting in it, 11 Nov; in test until a run has shown the seat code takes a ship without one)."""
+    A player's hull is made without an NPC pilot, as a stock start's own ship is: with one, a person who got up from the
+    seat saw that pilot appear in it (a playtest report of 11 Nov: no NPC should appear in the seat when the player gets up).
+    piloted: slots whose hull keeps an NPC pilot holding the Wait order (the form before; for tests of that form).
+    unpiloted: accepted for the sessions scripted before the default changed; it names what every hull now is."""
     omit = {k: [p for p in v.split(',') if p] if isinstance(v, str) else list(v) for k, v in (omit or {}).items()}
     story = set(story or ())
     for k in sorted(story):
         if k not in starts:
             raise SessionError(f'--story {k}: slot {k} has no per-player start')
-    unpiloted = set(unpiloted or ())
-    for k in sorted(unpiloted):
-        if k not in starts:
-            raise SessionError(f'--unpiloted {k}: slot {k} has no per-player start (its ship is a fixture ship with its own pilot)')
+    unpiloted, piloted = set(unpiloted or ()), set(piloted or ())
+    for name, slots_named in (('--unpiloted', unpiloted), ('--piloted', piloted)):
+        for k in sorted(slots_named):
+            if k not in starts:
+                raise SessionError(f'{name} {k}: slot {k} has no per-player start (its ship is a fixture ship with its own pilot)')
+    if unpiloted & piloted:
+        raise SessionError(f'--piloted and --unpiloted both name slot {min(unpiloted & piloted)}')
     if mode not in identity.MODES:
         raise SessionError(f'mode {mode!r}')
     if not 2 <= players <= MAX_PLAYERS:
@@ -146,7 +151,7 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None, story=(), 
                     y=place['y'], z=place['z'], yaw=place['yaw'], seed=HULL_SEED + k)
         if place.get('near'):   # a start that begins docked or on foot: a safe position near its zone, found by the capture
             hull['near'] = True
-        if k in unpiloted:
+        if k not in piloted:
             hull['pilot'] = False
         _check_hull(hull, k)
         # The start's own story (its gs_*.xml Start cue) runs for this slot, as this slot's player, unless --omit K=story
@@ -556,7 +561,9 @@ def main(argv=None):
                    ', '.join(gamestarts.OMITTABLE) + ')')
     s.add_argument('--story', default='', metavar='K[,K...]',
                    help="slots whose start's own story script runs for that slot's player (a class b start taken with --omit K=world)")
-    s.add_argument('--unpiloted', default='', metavar='K[,K...]', help='slots whose start ship is made without an NPC pilot (in test)')
+    s.add_argument('--piloted', default='', metavar='K[,K...]',
+                   help='slots whose start ship keeps an NPC pilot (the default is none: nobody appears in the seat when the player gets up)')
+    s.add_argument('--unpiloted', default='', metavar='K[,K...]', help='the default for every slot now; accepted for older scripts')
     s.add_argument('--out', required=True)
     c = sub.add_parser('capture-overlay', help='the capture overlay of a spec (one disposable lane run)')
     c.add_argument('--spec', required=True)
@@ -584,7 +591,8 @@ def main(argv=None):
             starts = slot_values(args.start, '--start')
             spec = build_spec(catalog, args.base_start, args.players, args.mode, starts, slot_values(args.omit, '--omit'),
                               story=[int(k) for k in args.story.split(',') if k.strip()],
-                              unpiloted=[int(k) for k in args.unpiloted.split(',') if k.strip()])
+                              unpiloted=[int(k) for k in args.unpiloted.split(',') if k.strip()],
+                              piloted=[int(k) for k in args.piloted.split(',') if k.strip()])
             out = write_new(args.out, json.dumps(spec, indent=1, sort_keys=True) + '\n')
             print(f'spec {out}: base {spec["base_start"]} (class {spec["base_class"]}), {spec["players"]} players, {spec["mode"]}')
             for key, slot in sorted(spec['slots'].items(), key=lambda kv: int(kv[0])):

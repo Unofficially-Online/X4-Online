@@ -2310,6 +2310,21 @@ local function pilot_ship_rows(tick)
    if ffi.C.IsComponentOperational(object) then
     local p=ffi.C.GetObjectPositionInSector(object)
     if pilot_view.death_last then pilot_view.death_last[slot]={x=p.x,y=p.y,z=p.z,yaw=math.deg(p.yaw),pitch=math.deg(p.pitch),roll=math.deg(p.roll)} end
+    -- A slot in its own spacesuit (lockstep_pilot_death.h pvehk_*): how far its home ship is, for its way home. From the
+    -- positions this row declares, in every client's frame of this tick; another sector or no ship: none (-1).
+    local home=gate.pilot_death_home and gate.pilot_death_home(slot)
+    if home then
+     local meters,h=-1,ffi.new('UniverseID',home)
+     if ffi.C.IsComponentOperational(h) then
+      local a=GetComponentData(ConvertStringToLuaID(tostring(runtime)),'sectorid')
+      local b=GetComponentData(ConvertStringToLuaID(tostring(home)),'sectorid')
+      if a and b and tostring(ConvertIDTo64Bit(a))==tostring(ConvertIDTo64Bit(b)) then
+       local q=ffi.C.GetObjectPositionInSector(h)
+       meters=math.sqrt((p.x-q.x)^2+(p.y-q.y)^2+(p.z-q.z)^2)
+      end
+     end
+     gate.pilot_death_range(slot,meters)
+    end
     local hull,shield=GetComponentData(ConvertStringToLuaID(tostring(runtime)),'hullpercent','shieldpercent')
     assert(type(hull)=='number' and type(shield)=='number','pilot ship health sample missing')
     row=row..string.format('/%.9g/%.9g/%.9g/%.9g/%.9g/%.9g/%.17g/%.17g',p.x,p.y,p.z,p.yaw,p.pitch,p.roll,hull,shield)
@@ -2538,10 +2553,12 @@ local function death_arm(delay,start,suit)
 end
 -- A slot's spacesuit, as X4's eject builds its own player's: up from where the ship died, its pose kept.
 local DEATH_SUIT_UP=100
-local function death_suit(slot)
+-- ship: the living ship the slot leaves through its airlock (its sector is the suit's; a dead ship's is the noted one).
+local function death_suit(slot,ship)
  local last=assert(pilot_view.death_last[slot],'pilot death: no last pose for slot '..slot)
  death.suits[slot]=(death.suits[slot] or 0)+1
  AddUITriggeredEvent('X4LAN_PilotRespawn','Suit',{slotname=tostring(slot),seed=8000+100*slot+death.suits[slot],
+  object=ship and ConvertStringToLuaID(tostring(ship)) or nil,
   x=last.x,y=last.y+DEATH_SUIT_UP,z=last.z,yaw=last.yaw,pitch=last.pitch,roll=last.roll})
 end
 local function death_note(slot)
@@ -2559,6 +2576,9 @@ local function death_frame(tick)
   for kind,slot in events:gmatch('(%a+):(%d+)') do
    slot=tonumber(slot)
    if kind=='suit' then death_suit(slot)
+   elseif kind=='out' then death_suit(slot,gate.pilot_ship(slot))   -- through the airlock (lockstep_pilot_death.h pvehk_*): a suit at its ship
+   elseif kind=='suited' or kind=='home' then
+    if pilot_view.hud_ship_changed then pilot_view.hud_ship_changed(kind) end   -- the slot's ship changed with no MD answer at this tick
    elseif kind=='create' then
     local pose=assert(death.poses[slot],'pilot respawn: no start pose for slot '..slot)
     death.built[slot]=(death.built[slot] or 0)+1
@@ -2676,14 +2696,24 @@ function pilot_view.arm_ui_replay(slot,window)
   guard=groups
   log('UI_GUARD_ARMED slot='..slot..' groups='..groups..' entries='..tostring(entries))
  end
- -- Component slot player actions (lockstep_ui_compslot.h, native_gate_ui_compslot, default off): the interact menu's action
- -- call claimed from the guard, captured and replayed by the action's class; a class nobody may use yet stays refused.
+ -- Component slot player actions (lockstep_ui_compslot.h, native_gate_ui_compslot, a session default since the seat click
+ -- and the transporter terminal ran live, 12 Nov): the interact menu's action call and the target system's instant action
+ -- claimed from the guard, captured and replayed by the action's class; a class nobody may use yet stays refused.
  if cfg.native_gate_ui_compslot then
   assert(guard,'ui compslot refused: needs native_gate_ui_guard')
   assert(gate.ui_compslot,'ui compslot refused: gate without ui_compslot')
   local ok,why=gate.ui_compslot()
   assert(ok==1,'ui compslot refused: '..tostring(why))
   log('UI_COMPSLOT_ARMED slot='..slot)
+ end
+ -- UI reloads held while the session is live (lockstep_ui_reload_hold.h, native_gate_ui_reload_hold, a session
+ -- default): a window resize, a UI scale change or a controller-mode switch no longer ends this client's probe; X4 reloads
+ -- in its first frame after the session. Its state is in UI_REPLAY_STATUS (reload_hold=).
+ if cfg.native_gate_ui_reload_hold then
+  assert(gate.ui_reload_hold,'ui reload hold refused: gate without ui_reload_hold')
+  local ok,why=gate.ui_reload_hold()
+  assert(ok==1,'ui reload hold refused: '..tostring(why))
+  log('UI_RELOAD_HOLD_ARMED slot='..slot)
  end
  -- Missions and conversations of slot 1 (lockstep_ui_missions.h): the guard's hook captures them, so the guard with the
  -- groups missions and conversation comes first; gate.ui_missions checks that and its pins (fail closed otherwise).
@@ -5397,6 +5427,11 @@ local function frame()
     assert(cfg.native_gate_pilot_stock==true and cfg.native_gate_pilot_stock_slots~=nil,'pilot present refused: needs stock slots')
     assert(not own(cfg.native_gate_pilot_camera_follow) and not cfg.native_gate_camera_anchor,'pilot present refused: excludes camera follow and anchor')
     assert(gate.pilot_present,'pilot present refused: gate without pilot_present')
+    -- A walking slot shows no controlled ship on its own client: no cockpit HUD, no radar (lockstep_pilot_present.h).
+    if cfg.native_gate_pilot_present_walk_hud~=nil and cfg.native_gate_pilot_present_walk_hud~=false then
+     assert(cfg.native_gate_pilot_present_walk_hud==true and gate.pilot_present_walk_hud and gate.pilot_present_walk_hud(1)==1,
+      'native_gate_pilot_present_walk_hud must be true and needs a gate that has it')
+    end
     local armed,why=gate.pilot_present(cfg.native_gate_pilot_present==true and 1 or 0)
     assert(armed==1,'pilot present refused: '..tostring(why))
     log('PILOT_PRESENT_ARMED slot='..slot..' mode='..tostring(cfg.native_gate_pilot_present))
@@ -5499,6 +5534,13 @@ local function frame()
     log('PILOT_FOOT_SLOTS_ARMED slot='..slot)
    end
    if cfg.native_gate_ui_replay~=nil and cfg.native_gate_ui_replay~=false then pilot_view.arm_ui_replay(slot,window) end
+   -- Long-range scan for every player (lockstep_scan_long.h): the scan mode for players 2..N, the charge on the secondary
+   -- trigger while the mode is on, the send at its release; every client, at the slot's replay of the tick. A gate
+   -- without it runs as before (nobody can charge a scan in a session).
+   if cfg.native_gate_scan_long and gate.scan_long then
+    assert(cfg.native_gate_scan_long==true and gate.scan_long(1)==1,'scan long refused '..tostring(gate.scan_long_status and gate.scan_long_status()))
+    log('SCAN_LONG_ARMED '..tostring(gate.scan_long_status()))
+   end
    -- Camera follow: this client watches its own slot ship through the stock
    -- target view unless that ship is the occupied one. Differing cameras need
    -- the render RNG split (slot 10 draws stay off the simulation word).
@@ -6058,6 +6100,7 @@ local function frame()
   if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.frame(tick) end
   ticklog.status('VIEW_POINTS',tick,gate.view_points_status,'view points status unavailable')
   if cfg.native_gate_view_cameras and gate.view_cameras_status then ticklog.status('VIEW_CAMERAS',tick,gate.view_cameras_status,'view cameras status unavailable') end
+  if cfg.native_gate_scan_long and gate.scan_long_status then ticklog.status('SCAN_LONG',tick,gate.scan_long_status,'scan long status unavailable') end
   if cfg.native_gate_view_rows then
    for _=1,8192 do
     local row=gate.view_points_row(row_cursors.view)

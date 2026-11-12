@@ -510,6 +510,42 @@ class MdScriptTests(unittest.TestCase):
         results = set(re.findall(r"'(refused_[a-z_]+|applied|unchanged)'", text))
         self.assertTrue({'applied', 'unchanged', 'refused_md_sequence', 'refused_occupied_ship', 'refused_pool_missing'} <= results)
 
+    def test_a_starts_standings_are_set_quietly(self):
+        # A stock start has its standings from the first frame. Set at run time they looked like reputation earned in
+        # play: the ticker, the promotion notices with a ceremony mission, a discount notice (the user, 11 Nov). Every
+        # reputation step brackets its relation changes with the stock ticker flag and our flag, which two stock cues
+        # are patched to respect; the coop step then gives the free licences the new standing holds.
+        root = ET.fromstring(MD.read_text(encoding='utf-8'))
+        steps = {b.get('value'): b for b in root.iter('do_elseif') if 'reputation' in b.get('value', '')}
+        self.assertEqual(sorted(steps), ["$a.$step == 'reputation'", "$a.$step == 'reputation_raise'"])
+        flags = ('md.$X4LAN_QuietRelations', 'md.Notifications.IllegalActivity.$updatingrelation')
+        for value, step in steps.items():
+            order = [(e.tag, e.get('name'), e.get('exact')) for e in step.iter() if e.tag in ('set_faction_relation', 'add_licence') or
+                     (e.tag == 'set_value' and e.get('name') in flags)]
+            names = [(tag, name, exact) for tag, name, exact in order if tag == 'set_value']
+            self.assertEqual(names, [('set_value', flags[0], 'true'), ('set_value', flags[1], 'true'),
+                                     ('set_value', flags[1], 'false'), ('set_value', flags[0], 'false')], value)
+            inside = order[order.index(names[1]) + 1:order.index(names[2])]
+            self.assertEqual([tag for tag, _, _ in inside][:2], ['set_faction_relation'] * 2, value)   # nothing changes outside the bracket
+            self.assertEqual(len([1 for tag, _, _ in order if tag in ('set_faction_relation', 'add_licence')]), len(inside), value)
+        raise_step = steps["$a.$step == 'reputation_raise'"]
+        licence = raise_step.find('.//add_licence')
+        self.assertEqual(licence.get('licence'), '$lic')
+        text = ET.tostring(raise_step, encoding='unicode')
+        self.assertIn('not faction.player.haslicence.{$lic} and faction.player.canholdlicence.{$lic} and $lic.price == 0', text)
+        self.assertIn("$result == 'applied'", text)
+        self.assertIsNone(steps["$a.$step == 'reputation'"].find('.//add_licence'))   # a pool faction: no player licences
+        # The two patches: one condition each on a stock cue, nothing else, and every overlay gets them under the stock names.
+        import native_gate_defaults as defaults
+        self.assertEqual(sorted(defaults.MD_PATCHES), ['md/notifications.xml', 'md/playerreputation.xml'])
+        cues = {'md/playerreputation.xml': "/mdscript/cues/cue[@name='TrackPlayerReputation']/cues/cue[@name='Base']/conditions",
+                'md/notifications.xml': "/mdscript/cues/cue[@name='Init']/cues/cue[@name='PlayerDiscountCommission']/conditions"}
+        for name, source in defaults.MD_PATCHES.items():
+            diff = ET.fromstring((DEV / source).read_text(encoding='utf-8'))
+            self.assertEqual(diff.tag, 'diff')
+            self.assertEqual([(e.tag, e.get('sel')) for e in diff], [('add', cues[name])])
+            self.assertEqual([(e.tag, e.attrib) for e in diff[0]], [('check_value', {'value': 'not @md.$X4LAN_QuietRelations'})])
+
     # Compiling the game schema takes about two minutes: opt in with X4LAN_MD_SCHEMA=1 (lxml + x4-re).
     @unittest.skipUnless(os.environ.get('X4LAN_MD_SCHEMA') == '1' and etree is not None and MD_XSD.is_file(),
                          'set X4LAN_MD_SCHEMA=1 with lxml and the read-only x4-re md.xsd')

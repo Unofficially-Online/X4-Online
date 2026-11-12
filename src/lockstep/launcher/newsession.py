@@ -67,7 +67,8 @@ class NewSessionOptions:
     starts: dict = field(default_factory=dict)   # slot -> gamestart id (slots 2..players)
     omit: dict = field(default_factory=dict)     # slot -> kit parts left out (money, reputation, ...)
     story: tuple = ()                            # slots whose start's story script runs for that slot's player
-    unpiloted: tuple = ()                        # slots whose start ship is made without an NPC pilot (in test)
+    unpiloted: tuple = ()                        # every slot's start ship has no NPC pilot now; kept for older scripts
+    piloted: tuple = ()                          # slots whose start ship keeps an NPC pilot (the form before)
     minutes: float = 40
     open: str = ''                               # build_play_overlay.py --open (hot-joinable slots)
     sets: list = field(default_factory=list)
@@ -87,7 +88,7 @@ def new_session(o, log=print):
         raise SystemExit(f'{out} exists (a session folder is made once; pick a new --out)')
     try:
         spec = session_start.build_spec(catalog(o.game, o.cache, log), o.base_start, o.players, o.mode, o.starts, o.omit,
-                                        story=o.story, unpiloted=o.unpiloted)
+                                        story=o.story, unpiloted=o.unpiloted, piloted=o.piloted)
     except session_start.SessionError as error:
         raise SystemExit(f'refused: {error}') from None
     out.mkdir(parents=True)

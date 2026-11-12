@@ -8,7 +8,9 @@
      order, as the saved ships they replace (their seat is then occupied, as it was; the slot's
      PlayerController takes control above it), the pilot as the identity's create step picks it. Slot 1: X4's own
      teleport_player takes the player out of the emergency eject's spacesuit, X4 then removes the suit.
-     Slots 2..N: the gate seats the slot's player at the fixed seat tick. Suit (native_gate_pilot_death_suit):
+     Slots 2..N: the gate seats the slot's player at the fixed seat tick. Suit (native_gate_pilot_death_suit; also a
+     walking slot 2..N leaving its living ship through the airlock, then in that ship's sector, and equipped with the
+     repair laser):
      a spacesuit of the player's macro for a dead slot 2..N, created as stock does for an entity
      (scenario_transport_refugees), minimum hull 100% as X4's own eject, oxygen paused; the gate seats the
      slot's player in it. X4's eject builds slot 1's. -->
@@ -58,7 +60,12 @@
     <set_value name="$n" exact="@State.$slots.{'$s' + $a.$slotname}"/>
     <set_value name="$suit" exact="null"/>
     <do_if value="typeof $n == datatype.table">
-     <create_ship name="$suit" macro="player.entity.spacesuitmacro" sector="$n.$sector" seed="$a.$seed">
+     <!-- through an airlock the ship lives: its sector now; after a death the sector noted at the start -->
+     <set_value name="$sector" exact="$n.$sector"/>
+     <do_if value="@$a.$object.isoperational and @$a.$object.sector.exists">
+      <set_value name="$sector" exact="$a.$object.sector"/>
+     </do_if>
+     <create_ship name="$suit" macro="player.entity.spacesuitmacro" sector="$sector" seed="$a.$seed">
       <owner exact="$n.$owner" overridenpc="true"/>
       <loadout><level exact="1.0"/><variation exact="0"/></loadout>
       <position x="($a.$x)m" y="($a.$y)m" z="($a.$z)m"/>
@@ -70,6 +77,19 @@
      <pause_spacesuit_oxygen object="$suit"/>
      <debug_text text="'[X4LAN] PILOT_RESPAWN_SUIT slot=%s macro=%s owner=%s time=%s'.[$a.$slotname, $suit.macro.id, $suit.owner.id, player.age]"/>
      <raise_lua_event name="'X4LAN_PilotRespawn.Suit' + $a.$slotname" param="$suit"/>
+     <!-- Its equipment. X4's eject creates its player's suit from a loadout of the player's suit wares; a suit made here
+          has its macro's engine and no weapon (live sx1, sx2). Standard issue: the repair laser on its mount (the suit's
+          mounts: con_primaryweapon_01 repair, _002 bomb launcher, _003 laser), added as stock adds a weapon to the
+          player's ship (scenario_tutorials), then the default weapon groups with group 1 active. -->
+     <create_loadout result="$loadout">
+      <macros>
+       <weapon macro="spacesuit_gen_repairweapon_01_macro" path="../con_primaryweapon_01" optional="1"/>
+      </macros>
+     </create_loadout>
+     <apply_loadout object="$suit" loadout="$loadout" flags="add weapons"/>
+     <reset_weapongroups object="$suit"/>
+     <activate_weapongroup object="$suit" weapongroup="1" primary="true"/>
+     <debug_text text="'[X4LAN] PILOT_RESPAWN_SUIT_EQUIP slot=%s range=%s time=%s'.[$a.$slotname, @$suit.maxcombatrange.all, player.age]"/>
     </do_if>
     <do_else>
      <debug_text text="'[X4LAN] PILOT_RESPAWN_SUIT slot=%s refused=create_failed'.[$a.$slotname]"/>
